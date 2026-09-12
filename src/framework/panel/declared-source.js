@@ -13,8 +13,6 @@
 // Main-thread only, and deliberately import-free beyond what a lookup needs: it
 // runs during panel construction, on every rebuild.
 
-const arr = (v) => (Array.isArray(v) ? v : []);
-
 // `images`/`vectors`/`fonts` may each be a plain map or a function of params —
 // the function form is what a control drives. Resolving it can throw (it is
 // author code running on every panel build), and a broken declaration must not

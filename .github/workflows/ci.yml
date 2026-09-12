@@ -56,6 +56,14 @@ jobs:
         with:
           node-version: 24
       - run: npm ci
+      # Correctness linting. Style is deliberately not linted (see
+      # eslint.config.js); what fails here is code that is wrong, not code that
+      # is unfashionable. First because it takes seconds.
+      - run: npm run lint
+      # Dead-code detection across the package's nine subpath exports, the CLI
+      # and the demo harness — the one class of rot the suite and the type
+      # checker both see straight through.
+      - run: npm run lint:dead
       - run: npm test
       # The shipped .d.ts files are hand-written, so nothing but tsc catches it when
       # they drift from the JS they describe.

@@ -71,7 +71,7 @@ test("measure crash without --json keeps the human message on stderr", () => {
 });
 
 test("failing verify checks carry hints in the written report", () => {
-  const err = runFail(["measure", "test/fixtures/bad-verify-part.js", "--out", `${OUT}/bad.json`]);
+  runFail(["measure", "test/fixtures/bad-verify-part.js", "--out", `${OUT}/bad.json`]);
   const report = JSON.parse(readFileSync(`${OUT}/bad.json`, "utf8"));
   expect(report.verify.failures.length).toBeGreaterThan(0);
   for (const f of report.verify.failures) expect(f.hint, `${f.metric} lacks a hint`).toBeTruthy();

@@ -270,7 +270,7 @@ describe("ambient drop with a catalog", () => {
   });
 
   test("an ambient drop still accepts a dropped font", async () => {
-    const root = mount(catalog());
+    mount(catalog());
     const params = { face: "" };
     document.body.innerHTML = '<div id="root2"></div>';
     const r2 = document.getElementById("root2");

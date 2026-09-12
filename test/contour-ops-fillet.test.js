@@ -1,5 +1,5 @@
-import { describe, test, expect, vi } from "vitest";
-import { filletProfile, chamferProfile, profileCorners } from "../src/framework/geometry/contour-ops.js";
+import { test, expect, vi } from "vitest";
+import { filletProfile, chamferProfile } from "../src/framework/geometry/contour-ops.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
 import { ringArea } from "../src/framework/geometry/shape2d-regions.js";
 

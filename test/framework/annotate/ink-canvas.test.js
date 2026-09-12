@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // Overlay canvas renderer: DOM lifecycle, typed-element halo+core draw passes,
 // overlay adornments, PNG export (elements only, no overlay).
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test } from "vitest";
 import { createInkCanvas } from "../../../src/framework/annotate/ink-canvas.js";
 
 afterEach(() => { document.body.innerHTML = ""; });

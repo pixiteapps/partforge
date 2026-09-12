@@ -3,7 +3,6 @@
 // running twist plus an alternating half-facet offset, so the facets zig-zag into a
 // woven look. A second, wall-inset loft is cut from the body to hollow it (Manifold
 // backend, so it stays fast — no OCCT). See docs/AUTHORING-PARTS.md for the conventions.
-import { regularPolygon } from "partforge/geometry";
 
 const RINGS = 28; // silhouette resolution (ring count up the height)
 

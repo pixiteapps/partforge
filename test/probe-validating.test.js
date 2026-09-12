@@ -66,7 +66,7 @@ test("a runaway loop trips the op ceiling instead of hanging", () => {
 // worker. This must be bounded exactly like any other op.
 test("a query-only runaway loop trips the op ceiling instead of hanging", () => {
   const r = runValidatingProbe(
-    partWith((k) => { const s = k.box({ size: [1, 1, 1] }); let v = 0; for (;;) v += s.volume(); }),
+    partWith((k) => { const s = k.box({ size: [1, 1, 1] }); let _v = 0; for (;;) _v += s.volume(); }),
     {}, {}, { maxOps: 500 },
   );
   expect(r.runaway).toBe(true);
