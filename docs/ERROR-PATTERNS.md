@@ -68,6 +68,18 @@ The framework itself rebuilds each sub-part fresh per job and applies `place` on
 - **Detected:** The exact kernel now refuses the common cylindrical form of this contact up front — several swept faces lying exactly on one cylindrical face fail the boolean immediately with `<op> between exactly-touching surfaces: … (radius <r>)` and the fix menu below, instead of grinding. Scope, honestly: the guard needs the contact to tile the cylinder (a thread does, ~6+ hugging faces per turn; a sub-turn thread can slip under it — that is the old grinding behavior, not a new one), it covers swept-face-on-cylinder contact only (two swept faces mated exactly, or contact with non-cylindrical faces, can still hang), and a hand-sunk thread whose chord-bands happen to hug the wall can be refused even though it would have built — `k.tappedBore` resolves that refusal too, since its internal composition is exempt. The rule below applies everywhere regardless.
 - **Fix:** For a tapped hole — far and away the most common cause — use `k.tappedBore({ d, pitch, turns, depth })`, which returns the bore and its thread as one tool and cannot put them on the same face. Otherwise: give the surfaces a deliberate clearance instead of letting them land on the same number. Derive one from the other with an explicit gap — `const boreD = threadRootD - 2 * boreClearance;` with `boreClearance` around 0.05-0.1 mm — rather than reusing the same expression for both. The gap is far below a printable layer, so the fit is unchanged. The same rule covers a cut that ends exactly flush with a face (overshoot it by a few tenths, as the surrounding examples do with `+ 0.4` / `- 0.2`) and two tools that abut exactly end-to-end.
 
+## boolean-dropped-operand
+
+- **Symptom:** `dropped an operand` — the full message reads `boolean result invalid: <op> dropped an operand — the result's volume (<v>) equals operand <i>'s exactly, but operand <j> (<vj>) has <x> mm³ of material outside it that the union lost.`, thrown from a `union` (or from `cutAll`, labelled `cutAll (tools)`, whose tools are fused before the cut; or labelled `k.tappedBore's bore ∪ thread union`, in which case the author wrote no union — the framework's own composition failed, report it). Before partforge 0.110 the same construction shipped silently: a STEP export that is a plain cylinder, a preview missing the thread, a `measure` volume equal to the core's alone ([screw-thread-vanishes-on-occt](#screw-thread-vanishes-on-occt)).
+- **Cause:** The exact kernel's fuse failed without reporting it and returned one operand instead of the union — a thin or near-self-touching swept operand (a sub-pitch thread ridge riding a core, a thread tool whose root sits on the bore wall) is the case seen on real parts. The gate (`boolean-gate.js`) noticed because the result's volume is one operand's to float precision while the other operand has material outside it, which no union can lose.
+- **Fix:** Give the operands genuine overlap rather than a tangent contact (sink one 0.05 mm or more into the other — derive one radius from the other with an explicit offset, never the same expression twice). Build a thread in the **periodic** `screwSweep` form, which needs no union at all, or a tapped hole with `k.tappedBore`, which owns the bore and thread together. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Helical & threaded features". Do not "fix" it by catching the error — the geometry it refused is wrong, and the previous good preview stays on screen while you correct the construction.
+
+## boolean-impossible-result
+
+- **Symptom:** `produced an impossible result` — the full message reads `boolean result invalid: <op> produced an impossible result — …`, thrown from `union`, `cut`, `cutAll` or `intersect`, naming one of: `a negative volume`, `a union smaller than its largest operand`, `a cut larger than its body`, `a cut that emptied its body although the tools cover at most <x> mm³ of its <y> mm³`, `an intersection larger than its smallest operand`.
+- **Cause:** The kernel's boolean returned geometry that violates the one property no boolean may (a union contains its inputs, a cut only removes, an intersection lies inside each input, a solid has non-negative volume) without reporting an error. On the exact kernel this follows a tangent or self-touching contact the coincidence guard could not recognise up front ([boolean-coincident-faces-hang](#boolean-coincident-faces-hang) covers the form it does refuse); on the mesh kernel it should never happen and would be a kernel bug worth reporting. The gate carries 1% slack on the largest operand, so volume-integration noise cannot trip it.
+- **Fix:** The same menu as the coincidence guard's — genuine overlap or genuine clearance (0.05 mm or more) instead of exact contact, cut tools overcut past the faces they pierce, threads in the periodic `screwSweep` form or via `k.tappedBore`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Gotchas". A refusal is a throw, not a warning, on purpose: the alternative is the silently wrong part these rules exist to stop, and a live preview keeps its last good mesh on screen across a failed rebuild.
+
 ## chamfer-rescue-bisection
 
 - **Symptom:** `partforge: chamfer` warning saying the distance `over-ran the geometry — reduced to` a smaller one (or `has no valid distance`), with an attempt count and elapsed seconds, alongside slow builds.
@@ -574,6 +586,13 @@ Variant literal for a curve-adjacent corner: `filletProfile: corner <i> at (<x>,
 - **Cause:** the thread was built as a thin sub-pitch helical sliver and unioned
   onto a core. OCCT's boolean fails on a near-self-touching swept operand and
   silently returns the other operand — or nothing — rather than throwing.
+- **Detected:** since partforge 0.110 the boolean result gate refuses both
+  outcomes instead of shipping them — `boolean result invalid: union dropped an
+  operand` when the core comes back alone
+  ([boolean-dropped-operand](#boolean-dropped-operand)), `… produced an
+  impossible result` when nothing does
+  ([boolean-impossible-result](#boolean-impossible-result)). The fix below is
+  unchanged; the symptom is now a build error naming it.
 - **Fix:** build the thread in the **periodic** form instead — a profile spanning
   exactly one `pitch` with equal first and last radius encloses the axis, so
   `k.screwSweep` yields the whole threaded body with no boolean at all. See

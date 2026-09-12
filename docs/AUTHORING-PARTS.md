@@ -3456,6 +3456,16 @@ symptom first** — it maps error text → cause → fix. The invariants, one li
   For the case that causes this most often — a tapped hole — reach for
   `k.tappedBore`, which owns the bore and the thread together and cannot land them
   on the same face.
+- **A boolean that comes back geometrically impossible is a build error, not a
+  part.** Every `cut`/`cutAll`/`intersect`/`union` result is judged by volume against
+  its operands on both backends: a union smaller than an input, a cut that grew, a
+  negative volume, or the exact kernel's silent "returned one operand instead of the
+  union" all throw `boolean result invalid: …` with the fix menu above instead of
+  shipping a wrong preview or STEP file
+  ([boolean-dropped-operand](ERROR-PATTERNS.md#boolean-dropped-operand),
+  [boolean-impossible-result](ERROR-PATTERNS.md#boolean-impossible-result)). A
+  legitimately degenerate design — a hole wider than its plate — is not impossible and
+  builds as before; `verify` is what catches that.
 
 ---
 

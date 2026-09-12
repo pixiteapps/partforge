@@ -487,6 +487,44 @@ exactly the old behavior. The same array also carries *job-level* notices that
 belong to no single sub-part — currently a font source refused by its control's
 `allow` list — as entries with `part: null`.
 
+**Boolean result gate** (both backends, partforge 0.110, `boolean-gate.js`): every
+author-facing boolean — `cut`, `cutAll`, `intersect`, `union` in both forms, and the
+B-rep backend's internal tool fuse inside `cutAll` — is judged AFTER it runs, by
+volume against its operands, and a result that violates the one property no boolean
+may violate **throws** (`code: "BOOLEAN_RESULT_INVALID"`, message leading
+`boolean result invalid:`): a union smaller than any operand, a cut larger than its
+body, an intersection larger than its smallest operand, a negative volume. Each
+inequality carries 1% of the operand it is compared AGAINST as slack (floored at
+1e-6 mm³) — never of the largest operand, which would switch the cut and intersect
+rules off whenever the tool is the big one — so volume-integration noise can never
+fire them. Two signatures the inequalities cannot decide are confirmed lazily, on that
+signature only: first a free bounding-box enclosure test, then ONE extra intersect. A
+union whose volume equals one operand's to float precision is refused when the other
+operand has material outside it, judged against that operand's OWN size (the
+documented silent failure — a thin thread ridge dropped, the core returned alone);
+a cut that came back empty is refused when its tools cannot have covered the body. A
+probe that fails is inconclusive, never a refusal, and so is a negative OPERAND (broken
+input, not this boolean's doing). On the B-rep class the probe intersect runs through
+the coincidence guard like every other boolean — it runs on exactly the pair that just
+misbehaved — and a guard refusal counts as "nothing inside", which on the equal-volume
+signature is the refusal the gate was about to make anyway rather than an unabortable
+grind. A refusal is remembered by cache key, so a live edit does not re-pay the failing
+boolean per rebuild. This is deliberately NOT the warnings channel: a skipped fillet is
+an honest part minus a feature, whereas a union that lost its core is wrong, and the two
+other provably-wrong cases in this contract (an empty `Shape2D` reaching `extrude`, the
+coincidence guard) throw for the same reason; a refusal raised by a boolean INSIDE a
+degrading feature (the mesh fillet's own cutters and fillers, a B-rep `safeOp`) is
+caught by that feature's policy and reported as its skip, message included. Results are
+judged once, before they enter the solid cache. A conforming mesh kernel is expected
+never to trip it — the rule is stated for both classes so that a mesh-class refusal
+reads as the kernel bug it would be; measured, the volume reads cost ~0.4% on a
+hundred-cut chain there. Classification: additive, `CONTRACT_VERSION` stays 4. The
+Versioning rule below counts "tightened validation that rejects previously valid
+input" as breaking; this rejects input the kernel previously ACCEPTED but never built
+correctly — every refused result is wrong geometry the author could not have wanted —
+so no previously valid part changes, and a part it refuses was already broken on that
+backend, with the breakage now named.
+
 ## Shape2D (2-D booleans)
 
 `k.shape2d(profile)` (`KERNEL_OPS`) lifts a point list, `{outer,
