@@ -1,7 +1,6 @@
 // test/export-controller.test.js
 import { expect, test, vi } from "vitest";
 import { createExportController, backendForFormat } from "../src/framework/export-controller.js";
-import { triggerDownload, downloadParts } from "../src/framework/download.js";
 
 test("backendForFormat: step always routes to occt regardless of the default", () => {
   expect(backendForFormat("step", () => "manifold")).toBe("occt");

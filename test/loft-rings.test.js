@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { liftLoftRings, classifyLoftRings, loftRingsKey, LOFT_SEGS } from "../src/framework/geometry/loft-rings.js";
+import { liftLoftRings, classifyLoftRings, loftRingsKey } from "../src/framework/geometry/loft-rings.js";
 import { roundedProfile, regularPolygon, circleProfile } from "../src/framework/geometry/polygon.js";
 import { pointsToContour } from "../src/framework/geometry/profile.js";
 
@@ -103,7 +103,7 @@ test("loftRingsKey substitutes a Shape2D with its _hash and is h()-stable", () =
 });
 
 import { matchedTessellation } from "../src/framework/geometry/loft-rings.js";
-import { arcGeometry, sampleArc } from "../src/framework/geometry/profile.js";
+import { arcGeometry } from "../src/framework/geometry/profile.js";
 
 test("arcGeometry matches sampleArc's implicit circle (90° arc r=2)", () => {
   const g = arcGeometry([2, 0], [Math.SQRT2, Math.SQRT2], [0, 2]);

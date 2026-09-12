@@ -15,7 +15,7 @@
 // Neither test boots OCCT for real: (1) asserts the message posted immediately
 // before the boot starts, and (2) exercises the job branch on a Manifold kernel,
 // since the branch's whole job is to be reached only after kernelFor() resolved.
-import { expect, test, beforeAll, vi } from "vitest";
+import { expect, test, vi } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { handle } from "../src/framework/jobs.js";
 

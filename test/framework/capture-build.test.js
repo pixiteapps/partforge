@@ -1,4 +1,4 @@
-import { expect, test, vi } from "vitest";
+import { expect, test } from "vitest";
 import { createCaptureBuild } from "../../src/framework/capture-build.js";
 
 test("request resolves with the meshes from the matching capture-meshes reply", async () => {

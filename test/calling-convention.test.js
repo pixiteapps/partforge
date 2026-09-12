@@ -8,7 +8,6 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import { detectBackend } from "../src/framework/backend-select.js";
-import { KernelCapabilityError } from "../src/framework/geometry/errors.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });

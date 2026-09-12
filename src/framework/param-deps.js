@@ -5,7 +5,6 @@
 import { createProbeKernel } from "./geometry/probe.js";
 import { byteAwareReplacer } from "./geometry/solid-hash.js";
 import { viewSubParts } from "./part-model.js";
-import { resolveDerived } from "./derive.js";
 
 export const RELEVANT_ALL = Symbol("relevant-all");
 

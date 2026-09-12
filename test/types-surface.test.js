@@ -311,7 +311,7 @@ describe("the partforge-vector declarations match the shipped documents", () => 
     // The union must list them all, so a new kind cannot be declared and orphaned.
     const union = /^export type VectorContour\s*=([^;]+);/m.exec(src);
     expect(union, "types/ingest.d.ts declares no type VectorContour").not.toBeNull();
-    for (const [kind, iface] of declared) {
+    for (const [, iface] of declared) {
       expect(union[1], `VectorContour omits ${iface}`).toContain(iface);
     }
     const used = new Set();

@@ -22,10 +22,7 @@ import {
   isLoopbackOrigin, isLoopbackHost,
 } from "./endpoint.js";
 
-export {
-  PICK_SERVER_DEFAULT_PORT, PICK_SERVER_DEFAULT_TIMEOUT_MS, PICK_SERVER_DEFAULT_HOST,
-  PICK_SERVER_DEFAULT_URL,
-} from "./endpoint.js";
+export { PICK_SERVER_DEFAULT_PORT, PICK_SERVER_DEFAULT_TIMEOUT_MS } from "./endpoint.js";
 
 const MAX_BODY_BYTES = 256 * 1024;   // no route needs more; anything bigger is abuse
 const MAX_SELECTION_CHARS = 16 * 1024;

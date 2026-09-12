@@ -1,4 +1,4 @@
-import { beforeAll, expect, test, vi } from "vitest";
+import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import { handle } from "../src/framework/jobs.js";
 

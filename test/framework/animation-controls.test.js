@@ -488,11 +488,11 @@ test("orbit during a gated intro settles the gate instead of stranding playback"
   const container = document.createElement("div");
   document.body.append(container);
   const frameCbs = new Set(); const orbitCbs = new Set();
-  let pendingComplete = null;
+  let _pendingComplete = null;
   const viewer = {
     onFrame: (cb) => { frameCbs.add(cb); return () => frameCbs.delete(cb); },
     onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
-    tweenCameraTo: vi.fn((view, { onComplete } = {}) => { pendingComplete = onComplete ?? null; }),
+    tweenCameraTo: vi.fn((view, { onComplete } = {}) => { _pendingComplete = onComplete ?? null; }),
     cancelCameraTween: vi.fn(),
   };
   const applied = [];
@@ -956,7 +956,7 @@ test("PageDown restarts the current chapter, or steps back from its start", () =
 // a chapter the playhead was not in, and any later arrow-key nudge re-derived
 // `t` from that rounded value and silently moved the user a chapter.
 test("a chapter jump lands where the scrubber can report it", () => {
-  const { ctl, scrub, press, chapter } = thirdsHarness();
+  const { scrub, press, chapter } = thirdsHarness();
 
   press("PageUp");
   expect(chapter()).toBe("B");

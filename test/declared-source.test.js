@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import { declaredSourceLookup } from "../src/framework/panel/declared-source.js";
 
 // A part keeps its bundled default in the `images`/`vectors` DECLARATION, not in
