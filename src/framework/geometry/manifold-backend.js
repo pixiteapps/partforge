@@ -18,6 +18,7 @@ import { creasedNormals } from "./creased-normals.js";
 import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
 import { meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
+import { checkBooleanResult } from "./boolean-gate.js";
 import { KernelCapabilityError } from "./errors.js";
 import { heightfieldMesh, hashGridData } from "./heightfield.js";
 
@@ -55,6 +56,42 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // while Manifold's own batch operator evaluates the same union as a balanced tree.
   // A one-solid "union" returns the operand's own Manifold untouched (see union below).
   const unionRaw = (ms) => (ms.length === 1 ? ms[0] : T(Manifold.union(ms)));
+  // Boolean result gate (boolean-gate.js): every author-facing boolean's result is
+  // judged by volume against its operands before it enters the cache, and an
+  // impossible result throws instead of shipping. Mesh CSG is exact arithmetic,
+  // so this backend is expected never to trip it — it is here because the gate
+  // is one kernel-contract rule, not an OCCT special case, and a refusal on this
+  // backend would itself be a kernel bug worth seeing. Measured at ~0.4% on a
+  // hundred-cut chain: `volume()` forces the lazy CSG node, but chained booleans
+  // were never batched in this binding, so nothing is lost to the read. Volumes
+  // are memoized per Manifold object (a result judged here is an operand a step
+  // later). The probes run only on the dropped-operand / emptied-body
+  // signatures: an enclosure test off bounding boxes first, and an intersect
+  // whose result is freed as soon as its one number is read — NOT tracked, so
+  // an n-ary union of buried features does not hold n intermediates to cleanup.
+  const volumes = new WeakMap();
+  const volumeOf = (mm) => {
+    let v = volumes.get(mm);
+    if (v === undefined) { v = mm.volume(); volumes.set(mm, v); }
+    return v;
+  };
+  const BOX_SLACK = 1e-3; // mm — an enclosure test, not a measurement
+  const judged = (op, operandMs, resultM) => {
+    const box = (mm) => mm.boundingBox();
+    const err = checkBooleanResult(op, operandMs.map(volumeOf), volumeOf(resultM), {
+      overlap: (i, j) => {
+        const x = operandMs[i].intersect(operandMs[j]);
+        try { return x.volume(); } finally { x.delete?.(); }
+      },
+      encloses: (i, j) => {
+        const a = box(operandMs[i]), b = box(operandMs[j]);
+        return [0, 1, 2].every((k) => b.min[k] >= a.min[k] - BOX_SLACK && b.max[k] <= a.max[k] + BOX_SLACK);
+      },
+    });
+    if (err) throw err;
+    return resultM;
+  };
+  const judgedUnion = (ms) => judged("union", ms, unionRaw(ms));
 
   const cache = createSolidCache();
   // Feature-skip warnings (the OCCT backend's safeOp policy, adopted here): a
@@ -348,7 +385,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     _m: m,
     _hash: hash,
     _canon: canon,
-    cut: (t) => cached(h("cut", hash, t._hash), () => T(m.subtract(t._m))),
+    cut: (t) => cached(h("cut", hash, t._hash), () => judged("cut", [m, t._m], T(m.subtract(t._m)))),
     // THROWING forms. These are the composition primitives — internal callers
     // that have their own recovery (prismRoundAllFast, which answers a failed
     // fillet by falling back to the reference Minkowski roundAll) must use
@@ -411,10 +448,12 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     },
     // batch difference: first minus the union of the rest, evaluated as one boolean
     // tree — no materialized intermediate union (the unionRaw memory note applies)
-    cutAll: (tools) => cached(h("cutAll", hash, tools.map((t) => t._hash)),
-      () => T(Manifold.difference([m, ...tools.map((t) => t._m)]))),
-    intersect: (t) => cached(h("intersect", hash, t._hash), () => T(m.intersect(t._m))),
-    union: (t) => cached(h("union", [hash, t._hash]), () => unionRaw([m, t._m])),
+    cutAll: (tools) => cached(h("cutAll", hash, tools.map((t) => t._hash)), () => {
+      const ms = [m, ...tools.map((t) => t._m)];
+      return judged("cutAll", ms, T(Manifold.difference(ms)));
+    }),
+    intersect: (t) => cached(h("intersect", hash, t._hash), () => judged("intersect", [m, t._m], T(m.intersect(t._m)))),
+    union: (t) => cached(h("union", [hash, t._hash]), () => judged("union", [m, t._m], unionRaw([m, t._m]))),
     clone: () => wrap(m, hash),
     // Name this solid's surface for hover/pick feature attribution. asOriginal()
     // stamps a fresh originalID that survives transforms and booleans, so every
@@ -724,8 +763,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // would pin one WASM object under two entries and eviction would dispose it twice.
     union: (solids) => solids.length === 1
       ? solids[0]
-      : hoistBoolean("union", solids, (ops) => unionRaw(ops.map((s) => s._m)))
-        ?? cached(h("union", solids.map((s) => s._hash)), () => unionRaw(solids.map((s) => s._m))),
+      : hoistBoolean("union", solids, (ops) => judgedUnion(ops.map((s) => s._m)))
+        ?? cached(h("union", solids.map((s) => s._hash)), () => judgedUnion(solids.map((s) => s._m))),
     // Imported geometry, registered pre-build by the framework via `_registerImport`
     // (ensureImports, Task 8). The master Manifold is kernel-lifetime (untracked —
     // see `imports` above); wrap() is free, so every call is cheap.

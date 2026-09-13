@@ -85,6 +85,8 @@ const BASELINE_IDS = [
   "svg-no-geometry",
   "svg-painting-order",
   "svg-overlapping-subpaths",
+  "boolean-dropped-operand",
+  "boolean-impossible-result",
 ];
 
 const entries = parsePatterns(doc);
