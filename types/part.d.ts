@@ -408,6 +408,13 @@ export interface DfmProfile {
   bed?: [number, number, number];
   /** Minimum wall in mm — a warning, never a gate. */
   minWall?: number;
+  /**
+   * Steepest unsupported face the process prints cleanly, in degrees from
+   * vertical (45 on the FDM profiles; absent on resin). Checked only for a part
+   * that also declares `verify.orientation: "print"`; `null` switches it off
+   * under a named base. A warning, never a gate.
+   */
+  overhang?: number | null;
   /** Carried for a future gap check; not enforced yet. */
   clearance?: number;
   /** Inherit from a named profile and override the rest. */
@@ -441,6 +448,12 @@ export interface SubPartExpectations {
   boundsMin?: Expectation;
   boundsMax?: Expectation;
   minWall?: Expectation;
+  /**
+   * Unsupported downward-facing surface in mm² (faces steeper than the profile's
+   * `overhang` angle, bed at the sub-part's own lowest Z). Measured only under
+   * `verify.orientation: "print"`; a warning, never a gate.
+   */
+  overhangArea?: Expectation;
   /** Symmetric-difference volume vs. the sub-part's declared `reference` import. */
   refXorVolume?: Expectation;
   /** Percent volume delta vs. the sub-part's declared `reference` import. */
@@ -476,6 +489,13 @@ export interface ExpectMap {
 export interface VerifyBlock<P = ResolvedParams, D = Derived> {
   /** A named DFM profile or an inline one. */
   process?: DfmProfileName | DfmProfile;
+  /**
+   * `"print"` declares the part is laid out for its bed — Z up, each sub-part's
+   * bed at its own lowest Z — which is the only way the profile's `overhang`
+   * check is armed. Omit it while a part is still being shaped or is bound for
+   * another process.
+   */
+  orientation?: "print";
   /** Which cases to check; default is `"defaults"` plus every preset name. */
   cases?: string[];
   /**

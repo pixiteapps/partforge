@@ -250,6 +250,17 @@ export function minWall(
   totalTriangles: number;
 } | null;
 
+/**
+ * Unsupported downward-facing surface (oracle/overhang.js): the mm² of faces
+ * steeper than `maxAngle` from vertical, excluding the footprint on the bed
+ * (`bedZ`, else the mesh's lowest Z) and a near-bed band. One pass, no index;
+ * `null` only for an empty mesh. Bridges and bore ceilings count.
+ */
+export function overhang(
+  mesh: Mesh,
+  opts?: { maxAngle?: number; bedZ?: number; bedEps?: number; bedBand?: number },
+): { area: number; worstAngle: number | null; at: Point3 | null } | null;
+
 // --- measure ----------------------------------------------------------------
 
 export interface SubPartFacts {
@@ -272,6 +283,16 @@ export interface SubPartFacts {
   minWallAt: number[] | null;
   minWallSampled: boolean;
   minWallSamples: { sampled: number; total: number } | null;
+  /**
+   * Unsupported downward-facing area in mm² (oracle/overhang.js), `null` when the
+   * part is not laid out for a bed (`verify.orientation: "print"` under a
+   * profile with an `overhang` angle). Bridges and bore ceilings count.
+   */
+  overhangArea: number | null;
+  /** Steepest offending face, degrees from vertical; `null` when none. */
+  overhangAngle: number | null;
+  /** Centroid of the largest offending face; `null` when none. */
+  overhangAt: number[] | null;
 }
 
 export interface AggregateFacts {
@@ -289,6 +310,8 @@ export interface MeasureReport {
   view: string;
   /** Whether this run cast min-wall rays at all. */
   measuredMinWall: boolean;
+  /** The overhang angle every sub-part's `overhangArea` was measured against, `null` when the pass did not run. */
+  measuredOverhang: number | null;
   subparts: SubPartFacts[];
   aggregate: AggregateFacts;
   overlaps: Overlap[];
@@ -308,6 +331,12 @@ export function measure(
   params?: ResolvedParams,
   opts?: {
     minWall?: boolean;
+    /**
+     * The overhang angle to measure against (degrees from vertical), or `null`
+     * for "not checked". Omitted, measure derives it from the part's own
+     * `verify` block the way verify does.
+     */
+    overhang?: number | null;
     gapThreshold?: number;
     /**
      * A build of this view the caller already has, measured instead of building a
@@ -323,7 +352,8 @@ export function measure(
 export type CheckStatus = "pass" | "fail" | "warn" | "skip";
 
 export interface VerifyCheck {
-  scope: "view" | "subpart";
+  /** `"part"` is the vacuous-verify notice; `"case"` the quick-lap "not measured" marker. */
+  scope: "view" | "subpart" | "part" | "case";
   /** The sub-part name, `"a×b"` for a pair check, or `null` for a scalar view metric. */
   subpart: string | null;
   metric: string;
@@ -339,7 +369,7 @@ export interface VerifyCheck {
   hint?: string;
   /** A stable ERROR-PATTERNS.md entry id. */
   pattern?: string;
-  /** A caveat about HOW the value was measured — today only `minWall` sets one. */
+  /** A measurement caveat or companion reading — `minWall` (sampling) and `overhangArea` (the steepest angle) set one. */
   note?: string;
   /** `[x, y, z]` in mm, for the metrics that have one. */
   location?: number[] | null;
@@ -353,13 +383,25 @@ export interface VerifyCaseResult {
 }
 
 export interface VerifyReport {
-  /** True when no check has status `"fail"`. */
-  ok: boolean;
+  /**
+   * Tri-state: `true` when every declared check passed, `false` on any gate
+   * failure, `null` when no verdict can be given — a quick lap that could not
+   * measure a gate, or a part that declared no expectations at all (`declared`
+   * is 0 and `warnings` carries a `no expectations declared` notice). Never read
+   * `null` as a pass.
+   */
+  ok: boolean | null;
   view: string;
   cases: VerifyCaseResult[];
   /** Every failing check, flattened, each tagged with its `case`. */
   failures: Array<VerifyCheck & { case: string }>;
   warnings: Array<VerifyCheck & { case: string }>;
+  /** Checks a quick lap could not evaluate. */
+  unevaluated: Array<VerifyCheck & { case: string }>;
+  /** Check instances the part or its profile declared, across cases (near-miss notices excluded). */
+  declared: number;
+  /** Of `declared`, how many were actually answered — a skipped or unevaluated check is not. Zero withholds `ok`. */
+  evaluated: number;
 }
 
 /**

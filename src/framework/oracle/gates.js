@@ -10,7 +10,7 @@
 // `expect` function throws, is reported as GATED — the conservative direction, since
 // that is the full-resolution behaviour every part had before budgets existed. The
 // real error surfaces from verify, which is where a reader can act on it.
-import { resolveProfile } from "./dfm-profiles.js";
+import { resolveProfile, overhangAngleFor } from "./dfm-profiles.js";
 import { expandCases } from "./cases.js";
 import { resolveParams } from "../part-model.js";
 
@@ -36,6 +36,15 @@ export function expandExpectations(part) {
     });
   if (part && typeof part === "object") expansions.set(part, { spec, expanded });
   return expanded;
+}
+
+// The overhang angle a part is checked against, or null when it is not checked
+// (dfm-profiles.js overhangAngleFor holds the rule). Total, like the rest of this
+// file: a malformed orientation or profile answers null here and raises from
+// verify, where a reader can act on it. measure() asks so the fact is computed
+// for exactly the parts that will be judged on it.
+export function partOverhangAngle(part, { process, expanded } = {}) {
+  try { return overhangAngleFor(part, process, { expanded: expanded ?? expandExpectations(part) }); } catch { return null; }
 }
 
 export function partGatesMinWall(part, { process, expanded } = {}) {

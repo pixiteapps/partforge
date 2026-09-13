@@ -49,6 +49,10 @@ describe("deviation gate", () => {
     const r = measure(kernel, p, "main");
     expect(r.subparts.find((s) => s.name === "body").deviation).toBeNull();
     const v = verify(kernel, p, { view: "main" });
-    expect(v.ok).toBe(true); // ref* checks report status "skip", not fail
+    expect(v.failures).toEqual([]); // ref* checks report status "skip", not fail…
+    // …and a part whose EVERY declared check skipped has verified nothing: the
+    // verdict is withheld (vacuous verify), with the notice that says why.
+    expect(v.ok).toBeNull();
+    expect(v.warnings.find((w) => w.metric === "expectations")?.message).toBe("no expectation could be evaluated");
   });
 });

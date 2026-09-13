@@ -914,8 +914,8 @@ The recurring constraint: every op here is implementable on **both** a mesh-CSG 
 and a B-rep kernel (see `docs/geometry-backend-strategy.md` for why that dual-backend
 property is worth protecting — OCCT booleans are ~75–1400× slower). Generation *safety*
 comes not from a restricted DSL but from the verify loop (`measure`/`verify` gates:
-`bbox`, `volume`, `holes`, `watertight`, overlaps — plus `minWall` *warnings*, which
-report but never fail) — a generator gets machine-checkable
+`bbox`, `volume`, `holes`, `watertight`, overlaps — plus `minWall` and `overhangArea`
+*warnings*, which report but never fail) — a generator gets machine-checkable
 pass/fail feedback per part, which a syntax could never provide.
 
 ## Conformance checklist for a new backend or host

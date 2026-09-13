@@ -187,7 +187,7 @@ the installed package, so let the publish finish before bumping the dep there.
   option — is documented in `docs/AUTHORING-PARTS.md`'s "Getting files into a
   part".
 - **`src/framework/oracle/`** - the geometric oracle: `measure.js`, `verify.js`,
-  `build.js`, `gaps.js`, `min-wall.js`, `bvh.js`, `mesh.js`, `assert-dsl.js`,
+  `build.js`, `gaps.js`, `min-wall.js`, `overhang.js`, `bvh.js`, `mesh.js`, `assert-dsl.js`,
   `dfm-profiles.js`, `cases.js`. Despite reading like test code this is shared
   runtime: the browser worker runs it for the `inspect` job, and `lint` reads its
   DFM profiles and assertion grammar. It is therefore DOM-free, `three`-free and

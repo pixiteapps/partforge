@@ -12,7 +12,7 @@ export {
   type MeasureReport, type SubPartFacts, type AggregateFacts, type BuiltSubPart,
   type VerifyReport, type VerifyCaseResult, type VerifyCheck, type CheckStatus,
   // mesh facts, gaps, BVH, min wall
-  meshVolume, bboxSize, bounds, meshArea, assemblyGaps, meshGaps, buildBVH, meshTriangles, minWall,
+  meshVolume, bboxSize, bounds, meshArea, assemblyGaps, meshGaps, buildBVH, meshTriangles, minWall, overhang,
   type Gap, type BVH,
   // mesh file parsers (the import pipeline's own readers)
   parseStl, parse3MF,

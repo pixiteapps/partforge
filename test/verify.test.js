@@ -316,7 +316,8 @@ test("end-to-end: contacts gate fails on the real 0.2mm gap part", () => {
 });
 
 test("end-to-end: undeclared near miss is a warning; verify still ok", () => {
-  const v = verify(k, { ...gapPart, verify: { expect: {} } });
+  // one declared expectation, so the verdict is not withheld as vacuous
+  const v = verify(k, { ...gapPart, verify: { expect: { _view: { overlaps: 0 } } } });
   expect(v.ok).toBe(true);
   expect(v.warnings.some((w) => w.metric === "nearMiss")).toBe(true);
 });
@@ -480,4 +481,135 @@ test("seeded and unseeded verify produce identical reports", () => {
   const part = { ...tube(12, 10), verify: { process: "fdm-pla", expect: { tube: { holes: 1 }, _view: { overlaps: 0 } } } };
   const result = measureReal(k, part, "v", {}, { minWall: true });
   expect(verify(k, part, { seed: { params: {}, result } })).toEqual(verify(k, part));
+});
+
+// ── overhang (opt-in) and the vacuous-verify rule ─────────────────────────────
+
+// A T: a wide slab riding a narrow stem — the slab's underside beyond the stem is
+// a 90° ceiling on each side, 8×10 mm² per side.
+const tee = () => ({
+  meta: { title: "Tee", units: "mm" },
+  defaults: { w: 20 },
+  parts: { tee: { views: ["v"], build: (kk, p) => kk.box({ size: [p.w, 10, 4] }).translate([-p.w / 2, 0, 6])
+    .union(kk.box({ size: [4, 10, 6] }).translate([-2, 0, 0])) } },
+  views: { v: { label: "V" } },
+});
+
+test("overhang: opted in with orientation: print under an FDM profile, the ceiling warns with area and location", () => {
+  const v = verify(k, { ...tee(), verify: { process: "fdm-pla", orientation: "print", expect: { tee: { holes: 0 } } } });
+  expect(v.ok).toBe(true); // a warning, never a gate
+  const oh = v.cases[0].checks.find((c) => c.metric === "overhangArea");
+  expect(oh.status).toBe("warn");
+  expect(oh.actual).toBeCloseTo(160, 3);
+  expect(oh.location).toHaveLength(3);
+  expect(oh.location[2]).toBeCloseTo(6, 3);           // on the slab's underside
+  expect(oh.note).toMatch(/90\.0° from vertical/);
+  expect(oh.hint).toMatch(/reorient|chamfer|supports/);
+});
+
+test("overhang: not checked without the orientation key (even under FDM) or under a profile with no angle; a clean part passes", () => {
+  expect(verify(k, { ...tee(), verify: { process: "fdm-pla", expect: { tee: { holes: 0 } } } }).cases[0].checks.some((c) => c.metric === "overhangArea")).toBe(false);
+  expect(verify(k, { ...tee(), verify: { process: "resin", orientation: "print", expect: { tee: { holes: 0 } } } }).cases[0].checks.some((c) => c.metric === "overhangArea")).toBe(false);
+  const box = verify(k, { ...tube(12, 10), verify: { process: "fdm-pla", orientation: "print", expect: { tube: { holes: 1 } } } });
+  const oh = box.cases[0].checks.find((c) => c.metric === "overhangArea");
+  expect(oh.status).toBe("pass");
+  expect(oh.actual).toBe(0);
+  expect(() => verify(k, { ...tee(), verify: { orientation: "sideways" } })).toThrow(/unknown verify.orientation/);
+});
+
+test("vacuous verify: a part that declares nothing gets no verdict, and says why — in warnings, never inside a case", () => {
+  for (const part of [tube(12, 10), { ...tube(12, 10), verify: { expect: {} } }, { ...tube(12, 10), verify: { expect: { tube: {} } } }]) {
+    const v = verify(k, part);
+    expect(v.ok).toBeNull();
+    expect(v.declared).toBe(0);
+    expect(v.evaluated).toBe(0);
+    expect(v.failures).toEqual([]);
+    const notice = v.warnings.find((w) => w.metric === "expectations");
+    expect(notice.scope).toBe("part");
+    expect(notice.case).toBeNull();
+    expect(notice.message).toBe("no expectations declared");
+    expect(notice.hint).toMatch(/verify\.expect/);
+    for (const c of v.cases) expect(c.checks.some((ch) => ch.metric === "expectations")).toBe(false);
+  }
+});
+
+test("vacuous verify: an undeclared near miss is still just a warning — the notice sits beside it and the nearMiss does not count as declared", () => {
+  const v = verify(k, { ...gapPart, verify: { expect: {} } });
+  expect(v.ok).toBeNull();
+  expect(v.declared).toBe(0);
+  expect(v.warnings.map((w) => w.metric).sort()).toEqual(["expectations", "nearMiss"]);
+});
+
+test("vacuous verify: declared but nothing answerable — every check skipped — is withheld with its own notice", () => {
+  // a ref metric on a sub-part that declares no reference always skips
+  const v = verify(k, { ...tube(12, 10), verify: { expect: { tube: { refVolumeDeltaPct: "<=1" } } } });
+  expect(v.ok).toBeNull();
+  expect(v.declared).toBe(3);
+  expect(v.evaluated).toBe(0);
+  expect(v.warnings.find((w) => w.metric === "expectations").message).toBe("no expectation could be evaluated");
+});
+
+test("vacuous verify: a quick lap whose seed matches no case is withheld through `unevaluated`, with NO false 'nothing declared' notice", () => {
+  const part = { ...tube(12, 10), verify: { process: "fdm-pla", expect: { tube: { holes: 1 } } } };
+  const seed = { params: { od: 99, h: 99 }, result: measureReal(k, part, "v", { od: 99, h: 99, label: "a" }, { minWall: true }) };
+  const v = verify(k, part, { quick: true, seed });
+  expect(v.ok).toBeNull();
+  expect(v.unevaluated.length).toBeGreaterThan(0);
+  expect(v.warnings.some((w) => w.metric === "expectations")).toBe(false);
+});
+
+test("vacuous verify: one answerable expectation — or a profile — is enough for a verdict", () => {
+  expect(verify(k, { ...tube(12, 10), verify: { process: "fdm-pla" } }).evaluated).toBeGreaterThan(0);
+  expect(verify(k, { ...tube(12, 10), verify: { process: "fdm-pla" } }).ok).toBe(true);
+  const v = verify(k, { ...tube(12, 10), verify: { expect: { tube: { holes: 1 } } } });
+  expect(v.ok).toBe(true);
+  expect(v.declared).toBe(3); // one per case: defaults + 2 presets
+  expect(v.evaluated).toBe(3);
+  expect(v.warnings.some((w) => w.metric === "expectations")).toBe(false);
+});
+
+// ── overhang: the seams the review found ──────────────────────────────────────
+
+test("overhang: an author's own overhangArea expectation arms the measurement without the orientation key", () => {
+  const v = verify(k, { ...tee(), verify: { process: "fdm-pla", expect: { tee: { overhangArea: "<=0.5" } } } });
+  const oh = v.cases[0].checks.find((c) => c.metric === "overhangArea");
+  expect(oh.status).toBe("warn");            // declared by the author as a warn-class metric: 160 > 0.5
+  expect(oh.actual).toBeCloseTo(160, 3);
+  // and on resin (no angle) it measures against the 45° default rather than answering "unavailable"
+  const resin = verify(k, { ...tee(), verify: { process: "resin", expect: { tee: { overhangArea: "<=0.5" } } } });
+  expect(resin.cases[0].checks.find((c) => c.metric === "overhangArea").actual).toBeCloseTo(160, 3);
+  expect(resin.ok).toBe(true);
+});
+
+test("overhang: a seed measured against a different angle is not reused — a process override re-measures", () => {
+  const part = { ...tee(), verify: { process: "resin", orientation: "print", expect: { tee: { holes: 0 } } } };
+  const seed = { params: {}, result: measureReal(k, part, "v", { ...part.defaults }, { minWall: true }) };
+  expect(seed.result.measuredOverhang).toBeNull(); // resin: not checked
+  const unseeded = verify(k, part, { process: "fdm-pla" });
+  const seeded = verify(k, part, { process: "fdm-pla", seed });
+  const pick = (v) => v.cases[0].checks.find((c) => c.metric === "overhangArea");
+  expect(pick(seeded)).toEqual(pick(unseeded));
+  expect(pick(seeded).status).toBe("warn");
+  expect(pick(seeded).actual).toBeCloseTo(160, 3);
+});
+
+test("overhang: a bottom-edge fillet does not warn — its lower curl is inside the near-bed band", () => {
+  const plate = {
+    meta: { title: "Plate", units: "mm" }, defaults: { r: 1 },
+    parts: { plate: { views: ["v"], build: (kk, p) => kk.roundedBox({ size: [20, 20, 5], round: p.r }) } },
+    views: { v: { label: "V" } },
+  };
+  const v = verify(k, { ...plate, verify: { process: "fdm-pla", orientation: "print", expect: { plate: { holes: 0 } } } });
+  const oh = v.cases[0].checks.find((c) => c.metric === "overhangArea");
+  expect(oh.status).toBe("pass");
+  expect(oh.actual).toBe(0);
+});
+
+test("overhang: an exportable: false sub-part is not judged", () => {
+  const part = tee();
+  part.parts.ghost = { views: ["v"], exportable: false, build: (kk) => kk.box({ size: [20, 10, 4] }).translate([-10, 0, 20]).union(kk.box({ size: [4, 10, 6] }).translate([-2, 0, 14])) };
+  const v = verify(k, { ...part, verify: { process: "fdm-pla", orientation: "print", expect: { tee: { holes: 0 } } } });
+  const byName = Object.fromEntries(v.cases[0].checks.filter((c) => c.metric === "overhangArea").map((c) => [c.subpart, c]));
+  expect(byName.tee.status).toBe("warn");
+  expect(byName.ghost.status).toBe("skip");
 });
