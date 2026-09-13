@@ -5,7 +5,10 @@
 // a call is options form when the op receives exactly one plain-object argument.
 // kernel-front.js and solid-sugar.js apply these at the backend-shared seams, so
 // backends stay positional and the Manifold solid cache hashes normalized args —
-// both spellings of a call share one cache entry. Geometry-free by design.
+// both spellings of a call share one cache entry. Geometry-free by design — it is
+// inside partforge/lint's import closure (test/lint-purity.test.js), so it may not
+// import profile-warnings.js either: that reaches paper.js through contour-ops.js.
+// The `warn` slots take everything they need on the warner they are handed.
 
 export function isPlainOptions(x) {
   if (x === null || typeof x !== "object") return false;
@@ -259,7 +262,7 @@ export const KERNEL_OP_SPECS = {
     checkNonEmptyProfile("extrude", profile);
     checkScaleTop("extrude")(profile, h, opts);
   }, warn: (warnProfile, profile) => warnProfile?.("extrude: profile", profile) },
-  revolve:  { toArgs: revolveArgs, warn: (warnProfile, pts) => warnProfile?.("revolve: profile", pts), check: (pts) => {
+  revolve:  { toArgs: revolveArgs, check: (pts) => {
     checkNonEmptyProfile("revolve", pts);
     if (pts && pts._shape2d) {
       // The B-rep backend's Drawing bounding box is tolerance-padded (1e-6 on
@@ -269,11 +272,30 @@ export const KERNEL_OP_SPECS = {
       if (pts.boundingBox().min[0] < -1e-5) throw new Error("revolve: profile radius must be ≥ 0");
       return;
     }
+    // revolve takes a lathe POINT LIST or a Shape2D — it has no contour path, and a
+    // {start, segments} contour used to reach the loop below and die as a bare
+    // "pts is not iterable" TypeError. Name the real problem instead.
+    if (!Array.isArray(pts) || !pts.every((p) => Array.isArray(p)))
+      throw new Error("revolve: profile must be an [[r, z], …] point list or a Shape2D (a {start, segments} contour is not accepted — lift it with k.shape2d first)");
     for (const [r] of pts) if (r < 0) throw new Error("revolve: profile radius must be ≥ 0");
-  } },
+  }, warn: (warnProfile, pts) => warnProfile?.("revolve: profile", pts) },
+  // The loft ceiling is an AGGREGATE over the rings, never per ring: loftSmooth
+  // densifies a handful of control sections into dozens of rings, each of which
+  // sits comfortably under the per-profile bound, so a per-ring ceiling let a
+  // many-ring loft revalidate the whole stack on every rebuild (+30% measured on
+  // src/parts/propeller.js). Sum first; past the ceiling the whole loft is skipped.
   loft:     { toArgs: loftArgs, warn: (warnProfile, rings) => {
-    if (!Array.isArray(rings)) return;
-    rings.forEach((r, i) => { if (r?.polygon && !r.polygon._shape2d) warnProfile?.(`loft: ring ${i}`, r.polygon); });
+    if (!Array.isArray(rings) || !warnProfile) return;
+    const authored = (r) => r?.polygon && !r.polygon._shape2d;
+    // `segmentCount`/`maxSegments` ride on the warner (makeProfileWarner) rather
+    // than being imported, to keep this module geometry-free — see the header. A
+    // warner without them can still warn; it just cannot bound the whole loft.
+    if (warnProfile.segmentCount) {
+      let total = 0;
+      for (const r of rings) if (authored(r)) total += warnProfile.segmentCount(r.polygon);
+      if (total > warnProfile.maxSegments) return;
+    }
+    rings.forEach((r, i) => { if (authored(r)) warnProfile(`loft: ring ${i}`, r.polygon); });
   } },
   sweep:    { toArgs: sweepArgs, warn: (warnProfile, profile) => warnProfile?.("sweep: profile", profile) },
   boredCylinder:  { toArgs: passThrough("boredCylinder", ["od", "h", "bore"], ["od", "h", "bore"]) },
