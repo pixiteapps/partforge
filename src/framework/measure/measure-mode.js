@@ -54,7 +54,15 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getP
   const pinListeners = new Set();
   const notifyPins = () => { for (const cb of [...pinListeners]) cb(); };
   const modeListeners = new Set();
-  const notifyMode = () => { for (const cb of [...modeListeners]) cb(); };
+  // Every listener hears every transition: the host application registers its
+  // relay AFTER mount.js's own listeners, so a throw in one of ours must not
+  // end the loop before the host is told — and must never escape setEnabled,
+  // which send() calls after the ink is already discarded.
+  const notifyMode = () => {
+    for (const cb of [...modeListeners]) {
+      try { cb(); } catch (err) { console.error("mode listener failed", err); }
+    }
+  };
 
   let enabled = false;
   let units = "mm";            // display only; values stay mm internally

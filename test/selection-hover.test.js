@@ -190,6 +190,21 @@ test("touch-only standalone and injected usage are inert", () => {
   expect(document.getElementById("pf-hover-tip")).toBeNull();
 });
 
+test("touch-only hover still answers the whole interface", () => {
+  // mount.js calls setSuppressed from measure's and annotate's mode-change
+  // listeners without asking which device it is on. On a phone the old stub
+  // had no such method, so every pencil tap threw inside notifyMode and the
+  // listeners registered after it — the embedding app's own relay — never
+  // heard the mode change (partforge-cloud: the sketch composer never opened,
+  // and a Send left "couldn't send" up with the ink already discarded).
+  vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false })));
+  const hover = attachHoverLabels(makeViewer(), { part });
+  expect(typeof hover.setSuppressed).toBe("function");
+  expect(() => hover.setSuppressed(true)).not.toThrow();
+  expect(() => hover.setSuppressed(false)).not.toThrow();
+  hover.detach();
+});
+
 test("hovering a labeled feature shows 'feature · sub-part' and a highlight overlay", () => {
   const viewer = makeViewer();
   const h = attachHoverLabels(viewer, { part, schedule: sync });
