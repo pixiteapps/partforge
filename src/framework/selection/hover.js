@@ -11,8 +11,14 @@ export function attachHoverLabels(
   viewer,
   { part, schedule = (cb) => requestAnimationFrame(cb), tooltip } = {},
 ) {
-  // Hover is a mouse idiom — skip entirely on touch-only devices.
-  if (globalThis.matchMedia && !matchMedia("(hover: hover)").matches) return { detach: () => {} };
+  // Hover is a mouse idiom — skip entirely on touch-only devices. The stub
+  // still answers the WHOLE interface: mount.js calls setSuppressed from the
+  // measure and annotate mode-change listeners without asking which device it
+  // is on, and a missing method there threw inside notifyMode on every phone —
+  // aborting the listener loop before the host application's own relay ran.
+  if (globalThis.matchMedia && !matchMedia("(hover: hover)").matches) {
+    return { setSuppressed: () => {}, detach: () => {} };
+  }
 
   const ownsTooltip = !tooltip;
   const tooltipPresenter = tooltip ?? createTooltipPresenter();

@@ -560,6 +560,22 @@ test("onModeChange fires on enable and disable", () => {
   expect(cb).toHaveBeenCalledTimes(2);
 });
 
+test("a mode listener that throws does not silence the listeners after it", () => {
+  // Listeners are registered in mount order: partforge's own first, the host
+  // application's relay last. One throwing listener used to abort the loop,
+  // so the host was never told the mode changed — and the throw escaped
+  // setEnabled(false) inside send(), AFTER the ink had been discarded.
+  const { mode } = fixture();
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const later = vi.fn();
+  mode.onModeChange(() => { throw new Error("boom"); });
+  mode.onModeChange(later);
+  expect(() => mode.setEnabled(true)).not.toThrow();
+  expect(later).toHaveBeenCalledTimes(1);
+  expect(error).toHaveBeenCalled();
+  error.mockRestore();
+});
+
 describe("camera block under each projection", () => {
   it("is version 3 and reports a perspective camera by name", () => {
     // A consumer reconstructing the camera must be told which projection it is

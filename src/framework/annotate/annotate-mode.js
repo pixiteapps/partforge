@@ -84,7 +84,15 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
   let hoverProbe = null; // hand tool: what's under the pointer right now (no gesture)
   const modeListeners = new Set();
   const toolListeners = new Set();
-  const notifyMode = () => { for (const cb of [...modeListeners]) cb(); };
+  // Every listener hears every transition: the host application registers its
+  // relay AFTER mount.js's own listeners, so a throw in one of ours must not
+  // end the loop before the host is told — and must never escape setEnabled,
+  // which send() calls after the ink is already discarded.
+  const notifyMode = () => {
+    for (const cb of [...modeListeners]) {
+      try { cb(); } catch (err) { console.error("mode listener failed", err); }
+    }
+  };
   const notifyTool = () => { for (const cb of [...toolListeners]) cb(); };
 
   const rectOf = () => canvas.element.getBoundingClientRect();
