@@ -250,12 +250,16 @@ export const KERNEL_OP_SPECS = {
   cylinder: { toArgs: cylinderArgs },
   sphere:   { toArgs: sphereArgs },
   box:      { toArgs: boxArgs },
-  prism:    { toArgs: prismArgs, check: checkScaleTop("prism") },
+  // `warn` (finishKernel calls it after `check`, with the kernel's profile
+  // warner first) reports a self-crossing hand-authored profile as a build
+  // warning — the build proceeds; see profile-warnings.js.
+  prism:    { toArgs: prismArgs, check: checkScaleTop("prism"),
+    warn: (warnProfile, points) => warnProfile?.("prism: profile", points) },
   extrude:  { toArgs: extrudeArgs, check: (profile, h, opts) => {
     checkNonEmptyProfile("extrude", profile);
     checkScaleTop("extrude")(profile, h, opts);
-  } },
-  revolve:  { toArgs: revolveArgs, check: (pts) => {
+  }, warn: (warnProfile, profile) => warnProfile?.("extrude: profile", profile) },
+  revolve:  { toArgs: revolveArgs, warn: (warnProfile, pts) => warnProfile?.("revolve: profile", pts), check: (pts) => {
     checkNonEmptyProfile("revolve", pts);
     if (pts && pts._shape2d) {
       // The B-rep backend's Drawing bounding box is tolerance-padded (1e-6 on
@@ -267,8 +271,11 @@ export const KERNEL_OP_SPECS = {
     }
     for (const [r] of pts) if (r < 0) throw new Error("revolve: profile radius must be ≥ 0");
   } },
-  loft:     { toArgs: loftArgs },
-  sweep:    { toArgs: sweepArgs },
+  loft:     { toArgs: loftArgs, warn: (warnProfile, rings) => {
+    if (!Array.isArray(rings)) return;
+    rings.forEach((r, i) => { if (r?.polygon && !r.polygon._shape2d) warnProfile?.(`loft: ring ${i}`, r.polygon); });
+  } },
+  sweep:    { toArgs: sweepArgs, warn: (warnProfile, profile) => warnProfile?.("sweep: profile", profile) },
   boredCylinder:  { toArgs: passThrough("boredCylinder", ["od", "h", "bore"], ["od", "h", "bore"]) },
   helixSweptTube: { toArgs: passThrough("helixSweptTube",
     ["pathR", "profileR", "pitch", "turns", "z0", "lefthand"], ["pathR", "profileR", "pitch", "turns"]) },

@@ -49,13 +49,18 @@ const checkProfile = (x) => {
 // occt-backend). Corner ops CLAMP a magnitude the geometry cannot take rather
 // than throwing, and a clamp that only reached the console would leave a caller
 // believing it got the radius it asked for.
-export function makeShape2dFactory({ segs, extrude, revolve, recordWarning }) {
+export function makeShape2dFactory({ segs, extrude, revolve, recordWarning, warnProfile }) {
   // Lift any accepted profile form into stored regions: a live Shape2D is deep-copied out
   // via its own toContours() (value semantics — never alias another shape's storage);
-  // anything else goes through liftProfile + per-ring winding normalization.
-  const liftRegions = (x) => {
+  // anything else goes through liftProfile + per-ring winding normalization. A raw
+  // profile is also the one place a hand-authored outline enters 2-D storage — from
+  // k.shape2d(x) or as a boolean operand — so it is where a self-crossing one is
+  // reported (profile-warnings.js). `trusted` skips that for the kernel's own
+  // machine-resolved lifts (text2d glyphs, vector2d documents).
+  const liftRegions = (x, { trusted = false } = {}) => {
     if (x && x._shape2d) return deepCopy(x._regions);
     checkProfile(x);
+    if (!trusted) warnProfile?.("shape2d: profile", x);
     return liftProfile(x).regions.map(ensureRegionWinding);
   };
 
@@ -99,5 +104,6 @@ export function makeShape2dFactory({ segs, extrude, revolve, recordWarning }) {
     return addShape2dSugar(s, { shape2d, extrude, revolve });
   };
   const shape2d = (profile) => (profile && profile._shape2d ? profile : make(liftRegions(profile)));
+  shape2d.trusted = (profile) => (profile && profile._shape2d ? profile : make(liftRegions(profile, { trusted: true })));
   return shape2d;
 }

@@ -13,6 +13,7 @@ import { addSugar } from "./solid-sugar.js";
 import { makeShape2dFactory } from "./shape2d.js";
 import { offsetRegions } from "./contour-offset.js";
 import { finishKernel } from "./kernel-front.js";
+import { makeProfileWarner } from "./profile-warnings.js";
 import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
 import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
@@ -116,6 +117,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // every degrade in the build lands in one drainable list rather than only in
   // the console.
   const recordWarning = (msg) => { buildWarnings.push(msg); console.warn(`partforge: ${msg}`); };
+  // Profile-validity warnings (profile-warnings.js): one warner per kernel so a
+  // self-crossing profile built six times records ONE line; reset per drain.
+  const profileWarner = makeProfileWarner(recordWarning);
   const skipFeature = (key, op, magnitude, err) => {
     const msg = `${op} ${magnitude} failed (${String(err?.message || err).slice(0, 200)}) — feature skipped, edges left sharp`;
     skippedOps.set(key, msg);
@@ -166,6 +170,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     extrude: (o) => kernel.extrude(o),
     revolve: (o) => kernel.revolve(o),
     recordWarning,
+    warnProfile: profileWarner.warn,
   });
   // Lazy CrossSection materialization, memoized through the solid cache by content
   // hash + LOD: the same shape extruded twice (or extruded and revolved) tessellates
@@ -831,10 +836,12 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // Drain the feature-skip warnings recorded since the last drain (see
     // buildWarnings above). jobs.js calls this per sub-part so a warning is
     // attributed to the sub-part whose build recorded it.
-    takeBuildWarnings: () => buildWarnings.splice(0),
+    takeBuildWarnings: () => { profileWarner.reset(); return buildWarnings.splice(0); },
     // Internal (underscore = not the contract surface): the recorder shared,
     // backend-neutral helpers report their own degrades through.
     _recordWarning: recordWarning,
+    // Internal: the profile-validity warner the kernel front's `warn` slot calls.
+    _warnProfile: profileWarner.warn,
     // Free every WASM object created since the last cleanup EXCEPT solids the cache
     // still pins (they must survive for the next build to resume from them).
     cleanup: () => { for (const o of tracked) if (!cache.isPinned(o)) o.delete?.(); tracked.length = 0; },

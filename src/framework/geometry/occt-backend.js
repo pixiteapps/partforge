@@ -22,6 +22,7 @@ import { toFaceFinder } from "./face-selector.js";
 import { addSugar } from "./solid-sugar.js";
 import { makeShape2dFactory } from "./shape2d.js";
 import { finishKernel } from "./kernel-front.js";
+import { makeProfileWarner } from "./profile-warnings.js";
 import { createOcctRepair } from "./occt-repair.js";
 import { occtRoundAll } from "./occt-roundall.js";
 import { classifyFaceGroups } from "./feature-attribution.js";
@@ -119,6 +120,9 @@ export function createOcctKernel(replicad) {
   // Manifold backend's fillet/chamfer degradation.
   const buildWarnings = [];
   const recordWarning = (msg) => { buildWarnings.push(msg); console.warn(`partforge: ${msg}`); };
+  // Profile-validity warnings (profile-warnings.js): one warner per kernel so a
+  // self-crossing profile built six times records ONE line; reset per drain.
+  const profileWarner = makeProfileWarner(recordWarning);
   // The raw OCCT instance, for the coincident-boolean guard (occt-coincidence.js).
   // Absent (older replicad, or a boot path that skipped setOC) the guard is a no-op —
   // detection is an upgrade, never a dependency.
@@ -534,6 +538,7 @@ export function createOcctKernel(replicad) {
     extrude: (o) => kernel.extrude(o),
     revolve: (o) => kernel.revolve(o),
     recordWarning,
+    warnProfile: profileWarner.warn,
   });
   // Lazy Drawing materialization for the kernel ops that need one. drawingFromRegions
   // draws a FRESH Drawing on every call, so callers never need to .clone() the result
@@ -797,10 +802,12 @@ export function createOcctKernel(replicad) {
     resetCacheStats: () => cache.resetStats(),
     // Drain the feature-skip warnings recorded since the last drain — the
     // Manifold backend's channel, mirrored (see occt-repair.js for the sources).
-    takeBuildWarnings: () => buildWarnings.splice(0),
+    takeBuildWarnings: () => { profileWarner.reset(); return buildWarnings.splice(0); },
     // Internal: the recorder shared, backend-neutral helpers report through
     // (rim-bevel, roundedBox's clamp, Shape2D corner-op clamps).
     _recordWarning: recordWarning,
+    // Internal: the profile-validity warner the kernel front's `warn` slot calls.
+    _warnProfile: profileWarner.warn,
   });
   return kernel;
 }
