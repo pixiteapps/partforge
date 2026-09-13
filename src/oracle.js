@@ -21,6 +21,7 @@ export { measure } from "./framework/oracle/measure.js";
 export { verify } from "./framework/oracle/verify.js";
 export { buildBVH, meshTriangles } from "./framework/oracle/bvh.js";
 export { minWall } from "./framework/oracle/min-wall.js";
+export { overhang } from "./framework/oracle/overhang.js";
 // Mesh file parsers — the import pipeline's own readers, browser-safe pure
 // functions; the oracle package's corpus tests read real files through them.
 export { parseStl } from "./framework/geometry/stl-parse.js";

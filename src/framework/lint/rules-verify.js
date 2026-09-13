@@ -4,7 +4,7 @@
 // Catching them statically removes both the wasted boot and the stdout caveat.
 import { err } from "./finding.js";
 import { SUBPART_METRICS, VIEW_METRICS } from "../verify-metrics.js";
-import { PROFILES } from "../oracle/dfm-profiles.js";
+import { PROFILES, ORIENTATIONS } from "../oracle/dfm-profiles.js";
 import { parseAssertion } from "../oracle/assert-dsl.js";
 import { suggest } from "../geometry/op-options.js";
 
@@ -283,6 +283,22 @@ export const VERIFY_RULES = [
       if (!process) return [];
       const valid = Object.keys(PROFILES);
       return checkProcessSpec(process, "verify.process", valid, new Set());
+    },
+  },
+  {
+    // dfm-profiles.js overhangAngleFor throws on an orientation outside
+    // ORIENTATIONS — the overhang opt-in's one legal value — with the same
+    // mid-run loudness as an unknown profile name, so it gets the same rule.
+    id: "verify-unknown-orientation",
+    run: ({ part }) => {
+      const orientation = part?.verify?.orientation;
+      if (orientation == null) return [];
+      if (typeof orientation === "string" && ORIENTATIONS.includes(orientation)) return [];
+      const hint = safeSuggest(orientation, ORIENTATIONS);
+      return [err("verify-unknown-orientation",
+        `\`verify.orientation\` is ${describe(orientation)}, which is not a known orientation`,
+        `Use ${ORIENTATIONS.map((o) => `"${o}"`).join(", ")}${hint ? ` — did you mean "${hint}"?` : ""} (declares the part is laid out for its print bed, arming the profile's overhang check), or omit the key.`,
+        "verify.orientation")];
     },
   },
 ];

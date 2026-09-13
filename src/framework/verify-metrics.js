@@ -46,6 +46,14 @@ export const SUBPART_METRICS = {
         ? `no reading from the ${sampled} of ${total} triangles sampled — not a clean bill of health; a thin spot may exist between samples`
         : `sampled ${sampled} of ${total} triangles — an upper bound; a thinner spot may exist between samples`;
     } },
+  // Unsupported downward-facing area (oracle/overhang.js), in mm². Measured only
+  // for a part that declares `verify.orientation: "print"` under a profile with
+  // an `overhang` angle; elsewhere `extract` returns null and check() skips it.
+  // A warning, never a gate: a bridge reads as a ceiling and cannot be told apart.
+  overhangArea: { kind: "warn", extract: (s) => s.overhangArea,
+    hint: "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature, or accept supports",
+    locate: (s) => s.overhangAt,
+    note: (s) => (s.overhangAngle != null ? `steepest unsupported face ${s.overhangAngle.toFixed(1)}° from vertical` : null) },
   // `s.deviation` (measure.js) exists only for a sub-part declaring `reference:
   // "<import name>"`; on every other sub-part `extract` returns null, which
   // `check()` already reports as status "skip" rather than a fail — the

@@ -1,7 +1,7 @@
 import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
 import { measure as defaultMeasure } from "./measure.js";
 import { pairKey, CONTACT_EPS } from "./gaps.js";
-import { resolveProfile } from "./dfm-profiles.js";
+import { resolveProfile, overhangAngleFor } from "./dfm-profiles.js";
 import { expandExpectations, partGatesMinWall } from "./gates.js";
 import { subPartReadKeys, relevanceHash, RELEVANT_ALL } from "../param-deps.js";
 import { byteAwareReplacer } from "../geometry/solid-hash.js";
@@ -153,7 +153,10 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
 }
 
 // Pure policy: profile rules + per-part expect → checks for one case's facts.
-export function evaluateCase(facts, { profile, expect, subPartNames }) {
+// `overhang` is the angle the part opted into (dfm-profiles.js overhangAngleFor),
+// or null/undefined: only then does the profile's overhang rule apply, as a
+// 1 mm² warning floor — a chamfer sitting exactly on the angle sheds slivers.
+export function evaluateCase(facts, { profile, expect, subPartNames, overhang = null }) {
   const checks = [];
   // contacts/clearance are per-pair, not scalar view metrics — peel them off
   // before the registry loop and hand them to pairGapChecks.
@@ -170,9 +173,14 @@ export function evaluateCase(facts, { profile, expect, subPartNames }) {
   // rays were cast and all missed, wrong when they were never cast. The stamp is
   // what tells those apart, and it is measure()'s own, never a caller's claim.
   const minWallSkipped = facts.measuredMinWall === false;
+  // Same shape for overhang: the rule is armed but these facts were measured
+  // without the pass (a quick lap reusing a seed that had no angle), so the check
+  // is withheld rather than read as "unavailable" — which would count as answered.
+  const overhangSkipped = overhang != null && (facts.measuredOverhang ?? null) === null;
   for (const s of facts.subparts) {
     const merged = {
       ...(profile?.minWall != null ? { minWall: `>=${profile.minWall}` } : {}),
+      ...(overhang != null ? { overhangArea: "<=1" } : {}),
       ...(expect?.[s.name] ?? {}),
     };
     for (const [metric, expr] of Object.entries(merged)) {
@@ -180,6 +188,11 @@ export function evaluateCase(facts, { profile, expect, subPartNames }) {
       if (minWallSkipped && metric === "minWall" && c.actual == null) {
         checks.push({ ...c, unevaluated: true, message: "not measured (quick check)",
           hint: "re-run this check without `quick` to measure min wall" });
+        continue;
+      }
+      if (overhangSkipped && metric === "overhangArea" && c.actual == null) {
+        checks.push({ ...c, unevaluated: true, message: "not measured (quick check)",
+          hint: "re-run this check without `quick` to measure overhang" });
         continue;
       }
       checks.push(c);
@@ -208,6 +221,8 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // budget by it) and must not derive it separately — see there.
   const expanded = expandExpectations(part);
   const needMinWall = partGatesMinWall(part, { process, expanded });
+  // Throws on a bad `verify.orientation`, the same loudness as a bad profile name.
+  const overhangAngle = overhangAngleFor(part, process, { expanded });
   const readKeys = subPartReadKeys(part, view, part.defaults);
   // byteAwareReplacer on the RELEVANT_ALL branch too: an unattributable derive()
   // still might read a byte-valued image param, and this memo key gates whether
@@ -263,7 +278,13 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // a min-wall-less seed is reused, and the min-wall gate it cannot answer becomes
   // `unevaluated` instead of being re-measured. The rule exists to stop a coarse
   // reading standing in for a gate's verdict, and a withheld verdict does that too.
-  if (seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && seed.result.view === view) {
+  // The overhang half of the same rule: a seed is admitted only when it was
+  // measured against the angle THIS run needs (both null when neither checks) —
+  // `measuredOverhang` is stamped by measure() itself. A `process` override that
+  // changes the angle therefore re-measures rather than reusing the inspect
+  // job's seed, which was taken against the part's own profile.
+  const overhangMatches = (seed?.result?.measuredOverhang ?? null) === (overhangAngle ?? null);
+  if (seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && (quick || overhangMatches) && seed.result.view === view) {
     memo.set(signature({ ...part.defaults, ...(seed.params ?? {}) }), seed.result);
   }
 
@@ -274,7 +295,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     // `probes: false` — no gate reads probe values, so re-running their booleans
     // for every case buys nothing. (A seed measured WITH probes is a superset in
     // the same way a min-wall seed is: the extra key is simply never read here.)
-    memo.set(key, measureFn(kernel, part, view, params, { minWall: needMinWall, probes: false }));
+    memo.set(key, measureFn(kernel, part, view, params, { minWall: needMinWall, probes: false, overhang: overhangAngle }));
     return memo.get(key);
   };
 
@@ -291,19 +312,63 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   }];
   const caseResults = expanded.map(({ name, params, expect }) => {
     const facts = measureCase(params);
-    return { name, params, checks: facts ? evaluateCase(facts, { profile, expect, subPartNames }) : notMeasured(name) };
+    return { name, params, checks: facts ? evaluateCase(facts, { profile, expect, subPartNames, overhang: overhangAngle }) : notMeasured(name) };
   });
+  // VACUOUS VERIFY. A part that declares nothing — no profile, an empty or absent
+  // `expect` — used to come back `ok: true` with zero checks, and every reader
+  // (the CLI's exit code, the cloud agent's "verify passes" stop rule) took that
+  // as verified. Nothing was. Two counts, and the difference between them is a
+  // second thing this used to hide:
+  //   `declared`  — checks the part or its profile asked for, as produced: the
+  //                 undeclared near-miss warnings are facts the oracle volunteers
+  //                 and the quick-lap "not measured" marker stands for a case,
+  //                 so neither counts;
+  //   `evaluated` — the declared checks that were actually answered. A check
+  //                 that SKIPPED (a `ref*` metric on a sub-part with no
+  //                 reference, `holes` on the OCCT backend, a pair on a disabled
+  //                 sub-part) was declared, but it verified nothing.
+  // Zero evaluated withholds the verdict — the same `null` a quick lap uses for
+  // "could not check", because that is what it is. Whether anything was DECLARED
+  // is decided from the declaration itself (`profile`, the expanded `expect`
+  // maps, an armed overhang angle), never from the produced checks: on a quick
+  // lap whose seed matches no case there are no checks at all, and counting
+  // those would print "no expectations declared" at a part that declares plenty.
+  // The notice rides `warnings`, the channel every host already shows, and is
+  // deliberately NOT pushed into any case's check list — it is about the part,
+  // not about `defaults`. A quick lap that withheld gates explains itself through
+  // `unevaluated` and gets no notice.
+  const isDeclared = (c) => c.scope !== "case" && c.metric !== "nearMiss";
   const all = caseResults.flatMap((c) => c.checks.map((ch) => ({ case: c.name, ...ch })));
+  let declared = 0, evaluated = 0;
+  for (const c of all) {
+    if (!isDeclared(c)) continue;
+    declared++;
+    if (c.status !== "skip" && !c.unevaluated) evaluated++;
+  }
+  const declaresAnything = profile != null || overhangAngle != null
+    || expanded.some(({ expect }) => Object.values(expect ?? {}).some((o) => o && typeof o === "object" && Object.keys(o).length > 0));
   const failures = all.filter((c) => c.status === "fail");
   const unevaluated = all.filter((c) => c.unevaluated);
+  const warnings = all.filter((c) => c.status === "warn");
+  if (evaluated === 0 && unevaluated.length === 0) {
+    warnings.push({ case: null, scope: "part", subpart: null, metric: "expectations", kind: "warn", expr: "evaluated",
+      actual: 0, status: "warn", pass: null,
+      message: declaresAnything ? "no expectation could be evaluated" : "no expectations declared",
+      hint: declaresAnything
+        ? "every declared check skipped — see the skip reasons above (a metric this backend cannot read, a reference the sub-part does not declare, a disabled sub-part) and declare something this run can answer"
+        : "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them" });
+  }
   return {
     // Tri-state, and the order matters: a real failure is still a failure even on a
-    // lap that skipped other gates, so `false` outranks the withheld `null`.
-    ok: failures.length ? false : unevaluated.length ? null : true,
+    // lap that skipped other gates, so `false` outranks the withheld `null`; and a
+    // part on which nothing was evaluated has no verdict to give.
+    ok: failures.length ? false : unevaluated.length || evaluated === 0 ? null : true,
     view,
     cases: caseResults,
     failures,
-    warnings: all.filter((c) => c.status === "warn"),
+    warnings,
     unevaluated,
+    declared,
+    evaluated,
   };
 }

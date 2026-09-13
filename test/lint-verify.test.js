@@ -232,3 +232,22 @@ test("a first-call-throwing expect() produces exactly one finding, no cascade", 
   expect(calls).toBe(1);
   expect(ids(r.errors)).toEqual(["verify-expect-throws"]);
 });
+
+// `verify.orientation` (the overhang opt-in) throws from verify() on an unknown
+// value, the same way an unknown profile name does — and gets the same static
+// rule, with a suggestion, so a typo is a lint finding before the kernel boots.
+test("an unknown verify.orientation is an error, with a suggestion", () => {
+  const r = lintPart(partWith({ orientation: "Print", expect: {} }));
+  expect(ids(r.errors)).toContain("verify-unknown-orientation");
+  expect(find(r, "verify-unknown-orientation").hint).toMatch(/"print"/);
+  expect(find(r, "verify-unknown-orientation").path).toBe("verify.orientation");
+});
+
+test("the known orientation, or none, is accepted", () => {
+  expect(ids(lintPart(partWith({ process: "fdm-pla", orientation: "print", expect: {} })).errors)).not.toContain("verify-unknown-orientation");
+  expect(ids(lintPart(partWith({ process: "fdm-pla", expect: {} })).errors)).not.toContain("verify-unknown-orientation");
+});
+
+test("a non-string orientation is an error too", () => {
+  expect(ids(lintPart(partWith({ orientation: true, expect: {} })).errors)).toContain("verify-unknown-orientation");
+});

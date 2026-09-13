@@ -400,7 +400,9 @@ expectType<number>(facts.overlaps.length);
 expectType<number>(facts.nearMisses[0]!.distance);
 
 const v = verify(kernel, spacer, { process: "resin", view: "spacer", seed: { params: {}, result: facts } });
-expectType<boolean>(v.ok);
+expectType<boolean | null>(v.ok);   // tri-state: null = no verdict (quick lap, or nothing declared)
+expectType<number>(v.declared);
+expectType<number | null>(facts.subparts[0]!.overhangArea);
 expectType<string>(v.failures[0]!.case);
 expectType<"pass" | "fail" | "warn" | "skip">(v.cases[0]!.checks[0]!.status);
 expectType<"gate" | "warn">(v.cases[0]!.checks[0]!.kind);

@@ -5,7 +5,8 @@ import { resolveParams } from "../part-model.js";
 import { meshGaps, pairKey, CONTACT_EPS, GAP_THRESHOLD } from "./gaps.js";
 import { bounds, meshArea, meshCentroid } from "./mesh.js";
 import { minWall, DIAGNOSTIC_SAMPLES } from "./min-wall.js";
-import { partGatesMinWall } from "./gates.js";
+import { overhang } from "./overhang.js";
+import { partGatesMinWall, partOverhangAngle } from "./gates.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
 const unionBounds = (list) => list.reduce(
@@ -123,6 +124,14 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // inward ray per sampled triangle plus the BVH those rays need — and on an
   // ungated part it buys a fact nobody checks, at full price, on every agent edit.
   const minWallSamples = partGatesMinWall(part) ? undefined : DIAGNOSTIC_SAMPLES;
+  // Overhang is measured only for a part that opted in (dfm-profiles.js
+  // overhangAngleFor) — everything else reads null. verify hands the angle it
+  // resolved in (a `process` override changes it); `null` there is an explicit
+  // "not checked", not a fallback. The angle used is stamped on the result as
+  // `measuredOverhang`, and verify refuses a seed whose stamp disagrees with the
+  // angle it needs — the min-wall superset rule's counterpart, since a reading
+  // taken against the wrong threshold is worse than none.
+  const overhangAngle = opts.overhang !== undefined ? opts.overhang : partOverhangAngle(part);
   const subBounds = [];
   const subparts = built.map(({ name, solid, mesh }) => {
     const b = bounds(mesh.positions);
@@ -130,6 +139,14 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // Resolved lazily and only when asked for: without min-wall, a single-sub-part
     // view (no meshGaps) must still build no index at all.
     const mw = opts.minWall ? minWall(mesh, { bvh: cachedBVH(mesh, bvhCache), maxSamples: minWallSamples }) : null;
+    // One pass over the triangles, no index — cheap enough for every lap. The bed
+    // is this sub-part's own lowest Z, already in hand from bounds(). A sub-part
+    // that is never printed (`exportable: false` — a reference ghost, a probe
+    // slab, a placeholder) is not judged. Judged in the DISPLAY pose, which is
+    // what measure builds; a part whose export pose differs (a lid that prints
+    // flat beside its base) is a known gap, stated in the authoring docs.
+    const printed = part.parts[name]?.exportable !== false;
+    const oh = overhangAngle != null && printed ? overhang(mesh, { maxAngle: overhangAngle, bedZ: b.min[2] }) : null;
     const vol = solid.volume();
     // Deviation-from-reference: only for a sub-part that declares `reference:
     // "<import name>"` (Task 12 — the gate that holds a parametric rebuild to
@@ -172,6 +189,11 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       // `measuredMinWall` false is "never looked".
       minWallSampled: mw?.sampled ?? false,
       minWallSamples: mw ? { sampled: mw.sampledTriangles, total: mw.totalTriangles } : null,
+      // Unsupported downward-facing area in mm² (overhang.js), null when the part
+      // is not laid out for a bed: bridges and bore ceilings count, by design.
+      overhangArea: oh ? oh.area : null,
+      overhangAngle: oh?.worstAngle ?? null,
+      overhangAt: oh?.at ?? null,
     };
   });
 
@@ -231,6 +253,10 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // nothing measured it, which reads identically to "no reading available";
     // verify's seeding rule turns on exactly this distinction (see verify.js).
     measuredMinWall: !!opts.minWall,
+    // The overhang angle every sub-part's `overhangArea` was measured against,
+    // or null when the pass did not run — read by verify's seed gate, never a
+    // caller's claim.
+    measuredOverhang: overhangAngle ?? null,
     // Companion stamp to measuredMinWall, and read the same way: whether the pass
     // ran, said by the pass itself rather than claimed by whoever holds the result.
     measuredGaps,

@@ -222,11 +222,17 @@ const commands = {
       };
       if (flags.out) writeOut();
       let vok = true;
-      if ((part.verify || flags.process) && !flags["no-verify"]) {
+      // Always, not only when the part has a `verify` block: a part with none is
+      // the most vacuous case of all, and the "nothing verified" verdict below
+      // exists to say so rather than let a clean exit read as verified.
+      if (!flags["no-verify"]) {
         const v = verify(kernel, part, { process: flags.process, view });
         if (!flags.json) printVerify(v);
         report.verify = v;
-        vok = v.ok;
+        // Tri-state: `null` is a withheld verdict (nothing declared, or a check
+        // that could not run), not a failure — the notice prints; the exit code
+        // reports only what actually failed.
+        vok = v.ok !== false;
         if (flags.out) writeOut();
       }
       if (flags.out) console.log(`\nwrote ${flags.out}`);
@@ -542,8 +548,21 @@ function printVerify(v) {
       }
     }
   }
+  // Part-level notices live only in `warnings` (they are about the part, not a
+  // case), so they print here, after the cases.
+  for (const n of v.warnings.filter((c) => c.scope === "part")) {
+    console.log(`  part`);
+    console.log(`    ⚠ ${n.metric}  (${n.message})`);
+    if (n.hint) console.log(`        hint: ${n.hint}`);
+  }
   const f = v.failures.length, w = v.warnings.length;
-  console.log(`  result: ${f ? `${f} gate failure(s)` : "all gates passed"}${w ? `, ${w} warning(s)` : ""}`);
+  // One switch on the tri-state verdict, so the line and `ok` cannot disagree.
+  const verdict = v.ok === false ? `${f} gate failure(s)`
+    : v.ok === true ? "all gates passed"
+    : v.unevaluated?.length ? `verdict withheld (${v.unevaluated.length} check(s) not evaluated)`
+    : v.declared ? "nothing verified (every declared check skipped)"
+    : "nothing verified (no expectations declared)";
+  console.log(`  result: ${verdict}${w ? `, ${w} warning(s)` : ""}`);
 }
 
 function printLint(r) {

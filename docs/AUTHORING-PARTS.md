@@ -2860,6 +2860,7 @@ probe runs).
 
 **Verify block** — `verify-unknown-metric`, `verify-unknown-subpart`,
 `verify-bad-expr`, `verify-bad-pair-check`, `verify-unknown-process`,
+`verify-unknown-orientation`,
 `verify-expect-throws` (all errors). Note `_view` also accepts the pair-wise
 `contacts` / `clearance` keys, which are not scalar view metrics; they are
 validated by `verify-bad-pair-check`, matching `verify.js`'s own handling.
@@ -2993,11 +2994,13 @@ carries:
 - `hint` — one self-contained corrective sentence (always present),
 - `pattern` — a stable [ERROR-PATTERNS.md](ERROR-PATTERNS.md) entry ID when one
   applies (follow it with `ERROR-PATTERNS.md#<id>`),
-- `note` — an optional caveat about *how* the value was measured, attached
-  whatever the verdict. Today only `minWall` sets one, when the reading came
-  from a sample rather than every triangle (see below),
+- `note` — an optional caveat about *how* the value was measured, or a companion
+  reading, attached whatever the verdict. `minWall` sets one when the reading came
+  from a sample rather than every triangle (see below); `overhangArea` sets one
+  naming the steepest unsupported face's angle,
 - `location` — `[x, y, z]` in mm where the metric has one: `minWall` (thinnest
-  sample point) and `overlaps` (the center of the first offending intersection's
+  sample point), `overhangArea` (the largest unsupported face's centroid) and
+  `overlaps` (the center of the first offending intersection's
   *bounding box* — a nearby indicator, not an exact point: when a pair overlaps in
   more than one place the bbox center can fall in the empty space between regions)
   and the pair checks `contact` / `clearance` / `nearMiss` (the midpoint between
@@ -3010,6 +3013,11 @@ exists, e.g. the OCCT backend or min-wall measurement turned off, matching
 per triangle, which is unbounded work on a dense mesh, so past a sample budget
 it casts from a spread, deterministic subset instead — `minWallSampled` (boolean)
 and `minWallSamples` (`{ sampled, total }` or `null`) say whether that happened.
+A part that opted into the overhang check (see the `verify` block) also carries
+`overhangArea` (mm² of unsupported downward-facing surface, `null` when not
+checked or on an `exportable: false` sub-part), `overhangAngle` (the steepest such
+face, degrees from vertical) and `overhangAt` (that face's centroid); the report's
+`measuredOverhang` stamps the angle the pass ran against, or `null`.
 **The budget depends on whether the reading is checked against anything**: a part
 that declares a min-wall gate — a `verify.process` profile, or an `expect`
 mentioning `minWall` — gets 50,000, because a gate's verdict rides on it; a part
@@ -3099,7 +3107,9 @@ A part can declare how it should be checked, co-located with its schema, so
 ```js
 verify: {
   process: "fdm-pla",            // a DFM profile: fdm-pla | fdm-petg | resin, or an
-                                  // inline { bed:[x,y,z], minWall, clearance } object
+                                  // inline { bed:[x,y,z], minWall, clearance, overhang } object
+  orientation: "print",          // optional; ONLY with this is overhang checked — it says the
+                                  // part is laid out for its bed (Z up, bed at the lowest Z)
   cases: ["defaults", "M3"],     // optional; default = defaults + every preset
   expect: {                      // design intent, by sub-part name (+ "_view")
     spacer: { holes: 1, bbox: "<=[60,60,60]", volume: "0.4..0.6cm3" },
@@ -3110,10 +3120,30 @@ verify: {
 }
 ```
 
-**What the profile gives you:** a hard **bed-fit** gate (the view bbox must fit `bed`)
-and a **min-wall** warning. **What `expect` gives you:** per-sub-part assertions on the
-facts `measure` already reports — `holes` (through-bores / genus), `volume`,
-`surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`, `boundsMin` / `boundsMax`
+**What the profile gives you:** a hard **bed-fit** gate (the view bbox must fit `bed`),
+a **min-wall** warning, and — only for a part that also declares
+`orientation: "print"` — an **overhang** warning: `overhangArea` is the mm² of
+downward-facing surface steeper than the profile's `overhang` angle (45° from vertical
+on the FDM profiles; resin carries none, since it prints on supports), measured per
+sub-part with the bed at that sub-part's own lowest Z, and warned past 1 mm². The
+opt-in is deliberate: a profile says what a process can print, the orientation key
+says this part is laid out for it, and a part still being shaped, or one bound for a
+different process, should not be nagged about its underside. Writing your own
+`overhangArea` expectation is the other way in — it arms the measurement by itself,
+against the profile's angle or 45° when the profile names none, so a declared
+expectation is never answered "unavailable". Two bands next to the bed are never
+counted: the footprint itself, and faces whose centroid sits within 1 mm of the bed
+(the lower curl of a bottom-edge fillet or chamfer, which prints fine). A bridge (a
+flat underside spanning two supports) and the ceiling of a horizontal bore are
+reported as overhangs — the mesh alone cannot tell a bridge from a ceiling — which
+is why this is a warning and never a gate. Two more limits, stated: it is judged in
+the DISPLAY pose, so a sub-part whose `place` differs for export (a lid that prints
+flat beside its base) is measured as displayed, and `exportable: false` sub-parts
+are skipped. Switch it off under an FDM profile with an inline
+`{ base: "fdm-pla", overhang: null }`. **What `expect` gives you:** per-sub-part
+assertions on the facts `measure` already reports — `holes` (through-bores / genus),
+`volume`, `surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`,
+`overhangArea`, `boundsMin` / `boundsMax`
 (the axis-aligned `{min,max}` corner positions — where the geometry sits, vs
 `bbox` which is only its size) and `centerOfMass` (`[x,y,z]`, the volume-weighted
 centroid; `null` for a degenerate/zero-volume sub-part); and `_view` assertions `bbox`,
@@ -3150,9 +3180,25 @@ verify: { expect: {
 
 **Gates vs. warnings:** exact facts are **gates** (a failure sets a non-zero exit code);
 `minWall` is computed (a ray/shot wall-thickness measurement) and reported as a
-**warning** — it flags walls below the profile's minimum but never fails the build.
-`holes`/`watertight` are Manifold-only, so those assertions **skip** on OCCT parts
-rather than fail.
+**warning** — it flags walls below the profile's minimum but never fails the build —
+and so is `overhangArea` (see above). `holes`/`watertight` are Manifold-only, so those
+assertions **skip** on OCCT parts rather than fail.
+
+**A verify block that declares nothing verifies nothing.** `verify.ok` is tri-state:
+`true` when every declared check passed, `false` on any gate failure, and `null` when
+no verdict can be given — a quick lap that could not measure a gate, or a part with
+**no declared expectations** at all (no `verify` block, an empty `expect`, no profile).
+That last case used to read as `ok: true` with zero checks, which every reader took as
+"verified". It now comes back `ok: null` with `evaluated: 0` and a `no expectations
+declared` warning whose hint says what to pin; the CLI runs verify on every part, block
+or no block, prints *nothing verified* and exits 0 (a withheld verdict is not a
+failure). The same `null` covers a part that declared checks none of which could be
+answered — every one SKIPPED (a `ref*` metric on a sub-part with no `reference`,
+`holes` on the OCCT backend, a pair on a disabled sub-part) — with a `no expectation
+could be evaluated` warning instead; `declared` and `evaluated` on the report tell
+the two apart. A single answerable expectation — or a process profile, which brings
+the bed-fit gate — is enough for a verdict. Treat `null` as "not verified", never as
+a pass.
 
 **Per-case expectations.** Checks run across defaults **and every preset**, so a
 static `expect` breaks the moment a preset legitimately changes an asserted fact —
