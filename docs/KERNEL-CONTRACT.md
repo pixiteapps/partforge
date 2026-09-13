@@ -703,6 +703,15 @@ the helpers come along unmodified. (`test/kernel-contract.test.js` asserts every
 - `pathProfile` — fluent builder for a curve-native path contour (`lineTo` /
   `arcTo` / `cubicTo` / `close`); cubic segments become exact B-rep on OCCT and
   facet at mesh LOD on Manifold.
+- **Profile validation on the way in** (0.112): `prism`, `extrude`, `revolve`, `sweep`,
+  `loft` (per ring) and `shape2d` (including boolean operands) run `validateProfile` on a
+  hand-authored profile — a point list, a `{start, segments}` contour, a `{outer, holes}`
+  region — and record each `self-intersection` issue on the build's warnings
+  (`takeBuildWarnings()`), prefixed `<op>: profile` / `loft: ring <i>`, deduplicated per
+  drain. It never throws and never changes the built geometry; a `Shape2D` is never
+  re-validated; profiles over 4000 segments are skipped. This lives in the shared front
+  (`profile-warnings.js`), so both backends emit identical text — a host implementing the
+  kernel gets it for free. Not a contract-version change (additive, the import-op precedent).
 
 ### 2-D editing ops
 
