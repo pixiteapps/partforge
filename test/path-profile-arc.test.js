@@ -97,6 +97,48 @@ describe("pathProfile arcTo radius form — boundary and error cases", () => {
     expect(() => pathProfile([0, 0]).arcTo([10, 0], 5).close())
       .toThrow(/needs a via/);
   });
+
+  test("arcTo(to) — no second argument — throws /needs a via/", () => {
+    expect(() => pathProfile([0, 0]).arcTo([10, 0]).close())
+      .toThrow(/needs a via/);
+  });
+
+  test("arcTo(to, null) throws /needs a via/", () => {
+    expect(() => pathProfile([0, 0]).arcTo([10, 0], null).close())
+      .toThrow(/needs a via/);
+  });
+
+  test("r: Infinity throws /must be > 0 and finite/ rather than emitting via: [NaN, NaN]", () => {
+    expect(() => pathProfile([0, 0]).arcTo([10, 0], { r: Infinity }).close())
+      .toThrow(/must be > 0 and finite/);
+  });
+
+  test('r: "6" (a string, not a number) throws /must be > 0 and finite/', () => {
+    expect(() => pathProfile([0, 0]).arcTo([10, 0], { r: "6" }).close())
+      .toThrow(/must be > 0 and finite/);
+  });
+
+  test("r: true (a boolean, not a number) throws /must be > 0 and finite/", () => {
+    expect(() => pathProfile([0, 0]).arcTo([10, 0], { r: true }).close())
+      .toThrow(/must be > 0 and finite/);
+  });
+
+  test('an unknown key ("largeArc") throws naming it and the three legal keys', () => {
+    expect(() => pathProfile([0, 0]).arcTo([10, 0], { r: 6, largeArc: true }).close())
+      .toThrow(/"largeArc".*r, sweep, large/);
+  });
+
+  test('a plausible-but-wrong key ("radius") throws naming it, not "r must be > 0"', () => {
+    expect(() => pathProfile([0, 0]).arcTo([10, 0], { radius: 6 }).close())
+      .toThrow(/"radius".*r, sweep, large/);
+  });
+
+  test("a sweep typo is reported even when r would also fail — enum/boolean checks run before the numeric ones", () => {
+    // r=1 on a 10mm chord is also invalid (shorter than the d/2=5 minimum), but the
+    // sweep typo must be reported on its own rather than masked by that radius error.
+    expect(() => pathProfile([0, 0]).arcTo([10, 0], { r: 1, sweep: "clockwise" }).close())
+      .toThrow(/sweep must be/);
+  });
 });
 
 describe("pathProfile arcTo radius form — real outlines validate", () => {

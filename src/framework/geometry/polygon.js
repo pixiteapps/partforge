@@ -189,23 +189,32 @@ export function pathProfile(start) {
         return api;
       }
       if (second !== null && typeof second === "object") {
+        const ARC_SPEC_KEYS = ["r", "sweep", "large"];
+        const unknownKeys = Object.keys(second).filter((k) => !ARC_SPEC_KEYS.includes(k));
+        if (unknownKeys.length > 0)
+          throw new Error(
+            `pathProfile: arcTo arc spec has unknown ${unknownKeys.length > 1 ? "keys" : "key"} ${unknownKeys.map((k) => JSON.stringify(k)).join(", ")} — the keys are r, sweep, large`,
+          );
         const { r, sweep = "ccw", large = false } = second;
+        // Cheap key/enum/boolean checks run BEFORE the numeric ones below, so a
+        // typo'd sweep/large is reported on its own rather than being masked by
+        // an unrelated radius complaint on the same call.
+        if (sweep !== "ccw" && sweep !== "cw")
+          throw new Error(`pathProfile: arcTo sweep must be "ccw" or "cw", got ${JSON.stringify(sweep)}`);
+        if (typeof large !== "boolean")
+          throw new Error("pathProfile: arcTo large must be a boolean");
         const [x0, y0] = cur;
         const [x1, y1] = p1;
         const dx = x1 - x0, dy = y1 - y0;
         const d = Math.hypot(dx, dy);
         if (d < 1e-9)
           throw new Error(`pathProfile: arcTo to (${x1}, ${y1}) coincides with the current point`);
-        if (!(r > 0))
-          throw new Error("pathProfile: arcTo r must be > 0");
+        if (!(r > 0) || !Number.isFinite(r))
+          throw new Error(`pathProfile: arcTo r must be > 0 and finite, got ${JSON.stringify(r)}`);
         if (r < d / 2 - 1e-9)
           throw new Error(
             `pathProfile: arcTo r=${r} is shorter than half the chord (${(d / 2).toFixed(4)}) from (${x0}, ${y0}) to (${x1}, ${y1}) — the smallest arc that can join these points has r=${(d / 2).toFixed(4)} (a semicircle)`,
           );
-        if (sweep !== "ccw" && sweep !== "cw")
-          throw new Error(`pathProfile: arcTo sweep must be "ccw" or "cw", got ${JSON.stringify(sweep)}`);
-        if (typeof large !== "boolean")
-          throw new Error("pathProfile: arcTo large must be a boolean");
         const rr = Math.max(r, d / 2);                    // absorb the 1e-9 tolerance so h is never NaN
         const h = Math.sqrt(rr * rr - (d / 2) * (d / 2));  // centre's distance from the chord midpoint
         const ux = dx / d, uy = dy / d;                    // unit chord direction
