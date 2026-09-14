@@ -86,6 +86,8 @@ export interface PathProfileBuilder {
   lineTo(to: Point2): PathProfileBuilder;
   /** A circular arc to `to` passing through `via`. */
   arcTo(to: Point2, via: Point2): PathProfileBuilder;
+  /** A circular arc to `to` of radius `r`; `via` is computed from the current point. */
+  arcTo(to: Point2, arc: { r: number; sweep?: "ccw" | "cw"; large?: boolean }): PathProfileBuilder;
   /** A cubic Bézier to `to` with control points `c1`/`c2`. */
   cubicTo(to: Point2, c1: Point2, c2: Point2): PathProfileBuilder;
   /** Close the contour and return it. Needs at least one segment. */

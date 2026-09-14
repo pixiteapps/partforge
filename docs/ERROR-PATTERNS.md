@@ -316,6 +316,12 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
 - **Cause:** A cubic segment is missing `c1` or `c2`, or a control point is not a finite `[x,y]` (e.g. `NaN`, wrong length).
 - **Fix:** Provide both control points as finite `[x,y]`. A cubic Bézier needs two controls between the previous point and `to`.
 
+## arcto-radius-too-short
+
+- **Symptom:** `pathProfile: arcTo r=<r> is shorter than half the chord (<half-chord>) from (<x0>, <y0>) to (<x1>, <y1>) — the smallest arc that can join these points has r=<half-chord> (a semicircle)`
+- **Cause:** `pathProfile().arcTo(to, { r, sweep?, large? })`'s `r` is smaller than half the distance between the current point and `to` — no circle of that radius passes through both points.
+- **Fix:** Raise `r` to at least half the chord (the message states the exact minimum), or move the endpoint closer. Unlike SVG's arc command, partforge refuses rather than silently scaling `r` up to fit — the model should learn the number it wrote was wrong rather than have it quietly corrected.
+
 ## shape2d-simple-not-single-region
 
 - **Symptom:** `Shape2D.simple: result has N regions, not 1 (use toRegions())`
