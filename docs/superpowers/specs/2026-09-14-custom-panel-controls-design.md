@@ -359,9 +359,9 @@ the extended `readValue` is savable; no warning.
   onDirty, onCommit, opts)` with a single untitled section, the factory's
   own `onChange`/`onCommit` as the callbacks, and the outer `opts`
   (`fontCatalog`, `imageCatalog`, `onAssetUpload`, `declaredSource`) passed
-  through. `custom` inside a sub-panel is refused (one level; a nested
-  custom control is a lint warning `custom-control-nested` and a runtime
-  panel error).
+  through. `custom` inside a sub-panel is refused at runtime (one level
+  only): the entry is skipped and a panel error with `phase: "create"` names
+  the path.
 - The returned dispose tears the sub-panel down; every open sub-panel is
   disposed automatically before the widget's own `dispose`.
 - Sub-control `key` paths are not part registry keys, so
@@ -377,13 +377,9 @@ the extended `readValue` is savable; no warning.
   - `control-default-not-primitive`: exempts owned custom keys.
   - `control-default-not-literal` (`rules-source.js`): accepts
     `readJsonLiteral` spellings for owned custom keys.
-  - `custom-control-nested` (warning): a `custom` entry inside
-    `host.controls` cannot be linted statically; this rule covers the static
-    case of a `custom` control listed inside a `group` nested under another
-    custom control's declared sub-controls, which does not exist in the
-    schema, so in practice the rule is the runtime panel error above. Keep
-    only the runtime check; drop this bullet if it has no static case at
-    plan time.
+  - No lint rule for a nested `custom` control: the sub-control arrays are
+    runtime arguments to `host.controls`, so there is nothing static to scan.
+    The refusal is the runtime panel error in section 5.
   - `unknown-control-field` / `unknown-control-type` need no change beyond
     the registry entry.
 - Runtime: `panel.errors()` → `runtime.getPanelErrors()` as in section 2.
