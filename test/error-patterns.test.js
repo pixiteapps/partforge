@@ -88,6 +88,7 @@ const BASELINE_IDS = [
   "svg-overlapping-subpaths",
   "boolean-dropped-operand",
   "boolean-impossible-result",
+  "arcto-radius-too-short",
 ];
 
 const entries = parsePatterns(doc);

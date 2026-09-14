@@ -436,6 +436,7 @@ offsetPolygon(outline, -wall, { corners: "sharp" });                     // inse
 const tab = pathProfile([0, -w / 2])
   .lineTo([len, -w / 2])
   .arcTo([len, w / 2], [len + w / 2, 0])   // tip, via the apex
+  // same arc: .arcTo([len, w / 2], { r: w / 2 }) — radius form, no via to compute
   .lineTo([0, w / 2])
   .close();
 k.extrude({ profile: tab, h: 3 });
@@ -445,6 +446,7 @@ const lip = pathProfile([0, 0])
   .lineTo([20, 0]).lineTo([20, 8])
   .cubicTo([0, 8], [14, 16], [6, 16])   // curved top edge
   .close();
+k.extrude({ profile: lip, h: 3 });
 
 // Rounded enclosure: soft vertical edges, a softer lid, a flat base.
 const shell = k.roundedBox({ size: [60, 40, 22], round: { side: 4, top: 2, bottom: 0 } });
@@ -470,7 +472,7 @@ dumbbell past its waist) **throws** a greppable error rather than returning dege
 geometry. Being pure, it works in `derive()` as well as `build()` — the natural home for
 clearance math.
 `pathProfile(start)` is a fluent builder for a curve-native path contour (`lineTo` / `arcTo` / `cubicTo` / `close`); cubic segments become exact B-rep spline edges on the OCCT/STEP backend and facet at the mesh LOD on Manifold — the same exact-vs-faceted split as `roundedProfile` arcs.
-`arcTo(to, via)` is a **three-point arc**: `via` is any point on the arc between the current point and `to` (its midpoint is the natural choice), and the sweep is whichever direction passes through it — so an arc's direction is a property of a point you can see, never of a sign. Build the symmetric half of a profile once and `mirrorProfile` it (see "Editing profiles") rather than writing the mirrored arcs by hand. `loft` accepts these contours as rings (every ring with the same segment signature lofts curve-to-curve).
+`arcTo(to, via)` is a **three-point arc**: `via` is any point on the arc between the current point and `to` (its midpoint is the natural choice), and the sweep is whichever direction passes through it — so an arc's direction is a property of a point you can see, never of a sign. `arcTo(to, { r, sweep?, large? })` is the **radius form** for when you know the radius, not a point on the arc: it computes `via` from the current point, `to`, and `r`, emitting the exact same `{to, via}` segment the three-point form does. `sweep` names the direction the arc itself is traversed (default `"ccw"`), so on a counter-clockwise outline `"ccw"` bulges OUTWARD (a convex bump), and inward on a clockwise hole; `"cw"` is the reverse. `large` (default `false`) picks the major arc over the minor one when both are possible. A radius shorter than half the distance between the current point and `to` throws rather than being silently scaled up (the way SVG's arc command does) — the smallest circle joining the two points is a semicircle at `r = d/2`. Build the symmetric half of a profile once and `mirrorProfile` it (see "Editing profiles") rather than writing the mirrored arcs by hand. `loft` accepts these contours as rings (every ring with the same segment signature lofts curve-to-curve).
 **`pathProfile` or an authored vector file?** Reach for `pathProfile` (and the polygon helpers above) when the geometry is **computed from parameters** — a profile whose dimensions come from `p`/`d`, which a JSON file cannot see. Reach for an authored `partforge-vector` document (`k.vector2d`, see "Vector geometry" below) when the geometry is **drawn** — a logo, a faceplate outline, a decorative cutout, where each number means one thing and gets edited on its own. The two are freely composable: both produce ordinary 2-D geometry that the same booleans and editing ops accept.
 **Import geometry helpers from `partforge/geometry`, never from `partforge`** — the main
 entry pulls in the DOM viewer/controls, and your build functions run in a Web Worker

@@ -157,8 +157,9 @@ export function filletPolygon(points, r, { segs = 8 } = {}) {
 }
 
 // Fluent builder for a curve-native path contour { start, segments }. Segment kinds:
-// lineTo → {to}, arcTo → {to,via} (three-point arc), cubicTo → {to,c1,c2} (cubic Bézier).
-// close() returns the plain contour object (feeds extrude/revolve/prism), not a Solid.
+// lineTo → {to}, arcTo → {to,via} (three-point arc) or {to,via} computed from a radius
+// spec, cubicTo → {to,c1,c2} (cubic Bézier). close() returns the plain contour object
+// (feeds extrude/revolve/prism), not a Solid.
 export function pathProfile(start) {
   const fin2 = (p, what) => {
     if (!Array.isArray(p) || p.length < 2 || !Number.isFinite(p[0]) || !Number.isFinite(p[1]))
@@ -166,12 +167,73 @@ export function pathProfile(start) {
     return [p[0], p[1]];
   };
   const s = fin2(start, "start");
+  let cur = s;
   const segments = [];
   const api = {
-    lineTo(to) { segments.push({ to: fin2(to, "lineTo point") }); return api; },
-    arcTo(to, via) { segments.push({ to: fin2(to, "arcTo point"), via: fin2(via, "arcTo via") }); return api; },
+    lineTo(to) {
+      const p = fin2(to, "lineTo point");
+      segments.push({ to: p });
+      cur = p;
+      return api;
+    },
+    // arcTo(to, via) is the three-point form: `via` is any point on the arc.
+    // arcTo(to, { r, sweep?, large? }) is the radius form: `via` is computed here
+    // from the current point, `to`, and the radius spec so the emitted segment is
+    // byte-for-byte what the three-point form emits (see docs/AUTHORING-PARTS.md).
+    arcTo(to, second) {
+      const p1 = fin2(to, "arcTo point");
+      if (Array.isArray(second)) {
+        const via = fin2(second, "arcTo via");
+        segments.push({ to: p1, via });
+        cur = p1;
+        return api;
+      }
+      if (second !== null && typeof second === "object") {
+        const ARC_SPEC_KEYS = ["r", "sweep", "large"];
+        const unknownKeys = Object.keys(second).filter((k) => !ARC_SPEC_KEYS.includes(k));
+        if (unknownKeys.length > 0)
+          throw new Error(
+            `pathProfile: arcTo arc spec has unknown ${unknownKeys.length > 1 ? "keys" : "key"} ${unknownKeys.map((k) => JSON.stringify(k)).join(", ")} — the keys are r, sweep, large`,
+          );
+        const { r, sweep = "ccw", large = false } = second;
+        // Cheap key/enum/boolean checks run BEFORE the numeric ones below, so a
+        // typo'd sweep/large is reported on its own rather than being masked by
+        // an unrelated radius complaint on the same call.
+        if (sweep !== "ccw" && sweep !== "cw")
+          throw new Error(`pathProfile: arcTo sweep must be "ccw" or "cw", got ${JSON.stringify(sweep)}`);
+        if (typeof large !== "boolean")
+          throw new Error("pathProfile: arcTo large must be a boolean");
+        const [x0, y0] = cur;
+        const [x1, y1] = p1;
+        const dx = x1 - x0, dy = y1 - y0;
+        const d = Math.hypot(dx, dy);
+        if (d < 1e-9)
+          throw new Error(`pathProfile: arcTo to (${x1}, ${y1}) coincides with the current point`);
+        if (!(r > 0) || !Number.isFinite(r))
+          throw new Error(`pathProfile: arcTo r must be > 0 and finite, got ${JSON.stringify(r)}`);
+        if (r < d / 2 - 1e-9)
+          throw new Error(
+            `pathProfile: arcTo r=${r} is shorter than half the chord (${(d / 2).toFixed(4)}) from (${x0}, ${y0}) to (${x1}, ${y1}) — the smallest arc that can join these points has r=${(d / 2).toFixed(4)} (a semicircle)`,
+          );
+        const rr = Math.max(r, d / 2);                    // absorb the 1e-9 tolerance so h is never NaN
+        const h = Math.sqrt(rr * rr - (d / 2) * (d / 2));  // centre's distance from the chord midpoint
+        const ux = dx / d, uy = dy / d;                    // unit chord direction
+        const nx = -uy, ny = ux;                           // unit LEFT normal of the direction of travel
+        const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+        const side = sweep === "ccw" ? -1 : 1;             // which side of the chord the arc bulges to
+        const sgn = large ? side : -side;
+        const cx = mx + nx * h * sgn, cy = my + ny * h * sgn;
+        const via = [cx + nx * rr * side, cy + ny * rr * side]; // the arc's midpoint
+        segments.push({ to: p1, via });
+        cur = p1;
+        return api;
+      }
+      throw new Error("pathProfile: arcTo needs a via [x,y] or an { r, sweep?, large? } arc spec");
+    },
     cubicTo(to, c1, c2) {
-      segments.push({ to: fin2(to, "cubicTo point"), c1: fin2(c1, "cubicTo c1"), c2: fin2(c2, "cubicTo c2") });
+      const p = fin2(to, "cubicTo point");
+      segments.push({ to: p, c1: fin2(c1, "cubicTo c1"), c2: fin2(c2, "cubicTo c2") });
+      cur = p;
       return api;
     },
     close() {
