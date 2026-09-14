@@ -158,7 +158,7 @@ export function finishKernel(k) {
       : k.loft({ rings: smoothLoftRings(sections, { stations, samples, closed }), ...(shading ? { shading } : {}), closed });
   };
 
-  for (const [op, { toArgs, check }] of Object.entries(KERNEL_OP_SPECS)) {
+  for (const [op, { toArgs, check, warn }] of Object.entries(KERNEL_OP_SPECS)) {
     const raw = k[op];
     if (!raw) continue;
     k[op] = (...a) => {
@@ -167,6 +167,10 @@ export function finishKernel(k) {
       // degrade has to reach the build's warning list, not just the console.
       const pos = a.length === 1 && isPlainOptions(a[0]) ? toArgs(a[0], k._recordWarning) : a;
       check?.(...pos);
+      // A self-crossing hand-authored profile is a warning, never a failure
+      // (profile-warnings.js). Runs after `check` so a rejected input reports
+      // the op's own error, and before the backend so both backends warn alike.
+      warn?.(k._warnProfile, ...pos);
       return raw(...pos);
     };
   }
@@ -231,7 +235,9 @@ export function finishKernel(k) {
     const parsed = resolveFont(font);
     const regions = textGlyphs(parsed, string, { size, align, valign, lineHeight, tracking, kerning });
     if (regions.length === 0) throw new Error("text2d: string produced no glyph geometry (empty or all-whitespace?)");
-    return regions.map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
+    // Glyph regions are machine-resolved by curve-fill — trusted, so a text
+    // part does not pay profile validation per glyph per rebuild.
+    return regions.map((r) => k.shape2d.trusted(r)).reduce((a, b) => a.union(b));
   };
 
   // 2-D vector art as a Shape2D. Backend-agnostic for the same reason text2d is:
@@ -250,8 +256,9 @@ export function finishKernel(k) {
       throw new Error("vector2d: first argument must be the name of an entry in the part's `vectors` field");
     const doc = k._vectors.get(name);
     if (!doc) throw new Error(`vector2d: unknown vector "${name}" — declare it in the part's \`vectors\` field`);
+    // vector documents carry their own validation (VECTOR-FORMAT.md); trusted lift
     const lift = (regions, measureAgainst = regions) =>
-      placeRegions(regions, doc.units, opts, { measureAgainst, name }).map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
+      placeRegions(regions, doc.units, opts, { measureAgainst, name }).map((r) => k.shape2d.trusted(r)).reduce((a, b) => a.union(b));
     if (opts.shape != null) {
       const entry = doc.shapes.get(opts.shape);
       if (!entry) {

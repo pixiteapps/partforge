@@ -10,7 +10,10 @@ export function addShape2dSugar(s, { shape2d, extrude, revolve }) {
     return regions[0];
   };
   // .regions() → scission: each disjoint region as its own live Shape2D (booleanable further).
-  s.regions = () => s.toRegions().map((r) => shape2d(r));
+  // `trusted`: these regions are this shape's own, already validated when it was
+  // lifted and resolved by every boolean since — re-lifting them untrusted would
+  // re-run profile validation on machine-produced geometry on every call.
+  s.regions = () => s.toRegions().map((r) => shape2d.trusted(r));
   // .extrude({ h, twist?, scaleTop? }) / .revolve({ degrees? }) → Solid. Sugar for
   // k.extrude({ profile: shape, … }) / k.revolve({ profile: shape, … }). Passed as an
   // options object (not positional) so the kernel op's key/required-arg validation still

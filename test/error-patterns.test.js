@@ -69,6 +69,7 @@ const BASELINE_IDS = [
   "images-only-png-supported",
   "png-interlaced-unsupported",
   "heightfield-sew-failed",
+  "profile-self-intersects",
   "vector-unknown-name",
   "vector-size-required",
   "vector-size-options-conflict",

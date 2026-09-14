@@ -14,6 +14,20 @@ test("a bowtie self-intersects", () => {
   expect(r.issues[0].point[0]).toBeCloseTo(5, 6);
 });
 
+test("a hole touching its outer is a cross-contour contact, tagged `crosses`", () => {
+  // The hole's mouth sits ON the outer's bottom edge. The solid builds exactly as
+  // drawn; validateProfile still files the contact under self-intersection, so the
+  // `crosses` key is what separates it from a contour crossing ITSELF (the bowtie
+  // below carries no such key). profile-warnings.js reports only the latter.
+  const r = validateProfile({ outer: [[0, 0], [20, 0], [20, 10], [0, 10]], holes: [[[5, 0], [5, 5], [10, 5], [10, 0]]] });
+  const hits = r.issues.filter((i) => i.type === "self-intersection");
+  expect(hits.length).toBeGreaterThan(0);
+  expect(hits.every((i) => i.crosses === 1)).toBe(true);
+  expect(validateProfile([[0, 0], [10, 10], [10, 0], [0, 10]]).issues
+    .filter((i) => i.type === "self-intersection")
+    .every((i) => !("crosses" in i))).toBe(true);
+});
+
 test("a CW outer is a winding issue (when passed as an explicit region)", () => {
   const r = validateProfile({ outer: [[0, 0], [0, 10], [10, 10], [10, 0]], holes: [] });
   expect(r.issues.some((i) => i.type === "winding")).toBe(true);

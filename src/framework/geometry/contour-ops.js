@@ -1109,9 +1109,16 @@ function selfIntersectionInRegion(contours) {
         if (!pt) continue;
         const first = eI.contourIndex <= eJ.contourIndex ? eI : eJ;
         const other = first === eI ? eJ : eI;
-        const crossSuffix = other.contourIndex === first.contourIndex ? "" : ` (or crosses contour ${other.contourIndex})`;
+        const crossContour = other.contourIndex !== first.contourIndex;
+        const crossSuffix = crossContour ? ` (or crosses contour ${other.contourIndex})` : "";
         issues.push({
           type: "self-intersection", contourIndex: first.contourIndex, segmentIndex: first.segmentIndex, point: pt,
+          // `crosses` (present ONLY on a contact between two contours of this
+          // region — an outer and its own hole, typically a hole drawn flush with
+          // the outer wall) separates that case from a contour crossing ITSELF.
+          // Both are reported; only the latter inverts the fill, so the build
+          // warning in profile-warnings.js reports the ones without this key.
+          ...(crossContour ? { crosses: other.contourIndex } : {}),
           message: `contour ${first.contourIndex} self-intersects${crossSuffix} near (${pt[0].toFixed(4)}, ${pt[1].toFixed(4)})`,
         });
         flagged.add(eI.contourIndex); flagged.add(eJ.contourIndex);

@@ -430,12 +430,21 @@ k.prism({ points: roundedProfile(bracketOutline, 3), h: 4 });  // true CIRCLE co
 k.extrude({ profile: offsetPolygon(slotPolygon(20, 3), 0.2), h: 10 });   // slot cut 0.2 mm looser all around
 offsetPolygon(outline, -wall, { corners: "sharp" });                     // inset a wall (see planter.js)
 
-// A tab with one free-form curved side (exact on STEP, faceted at mesh LOD):
-const tab = pathProfile([0, 0])
+// A mounting tab: square at the root, semicircular at the tip. The arc names the
+// point it must pass THROUGH (its apex), so its direction can never flip — there is
+// no sweep sign to get wrong, and no Math.cos loop to write.
+const tab = pathProfile([0, -w / 2])
+  .lineTo([len, -w / 2])
+  .arcTo([len, w / 2], [len + w / 2, 0])   // tip, via the apex
+  .lineTo([0, w / 2])
+  .close();
+k.extrude({ profile: tab, h: 3 });
+
+// A free-form curved side (exact on STEP, faceted at mesh LOD):
+const lip = pathProfile([0, 0])
   .lineTo([20, 0]).lineTo([20, 8])
   .cubicTo([0, 8], [14, 16], [6, 16])   // curved top edge
   .close();
-k.extrude({ profile: tab, h: 3 });
 
 // Rounded enclosure: soft vertical edges, a softer lid, a flat base.
 const shell = k.roundedBox({ size: [60, 40, 22], round: { side: 4, top: 2, bottom: 0 } });
@@ -448,8 +457,7 @@ every corner of a CCW polygon (per-corner radius clamped so neighbouring arcs ne
 and returns points usable by `prism`/`extrude`/`loft` on both backends — but it **bakes each
 corner into line facets**, so STEP corners are faceted. `roundedProfile(points, r | r[])`
 rounds corners the same way but keeps them **mathematically true** — it carries the arc
-symbolically so STEP export gets real circular edges. Use it for `prism`/`extrude` (not yet
-`loft` — arc rings are rejected there in v1). A scalar `r` rounds every corner; a per-corner
+symbolically so STEP export gets real circular edges. Use it for `prism`/`extrude`/`loft` alike (loft lifts arc rings into its curve mode). A scalar `r` rounds every corner; a per-corner
 `r[]` (length = points) rounds selectively (a `0`, a zero-length edge, or a straight/180°
 corner stays sharp). `offsetPolygon(profile, delta, { corners?, segs? })` offsets a
 point-list polygon or `{ outer, holes }` region by `delta` mm — positive grows material,
@@ -462,6 +470,7 @@ dumbbell past its waist) **throws** a greppable error rather than returning dege
 geometry. Being pure, it works in `derive()` as well as `build()` — the natural home for
 clearance math.
 `pathProfile(start)` is a fluent builder for a curve-native path contour (`lineTo` / `arcTo` / `cubicTo` / `close`); cubic segments become exact B-rep spline edges on the OCCT/STEP backend and facet at the mesh LOD on Manifold — the same exact-vs-faceted split as `roundedProfile` arcs.
+`arcTo(to, via)` is a **three-point arc**: `via` is any point on the arc between the current point and `to` (its midpoint is the natural choice), and the sweep is whichever direction passes through it — so an arc's direction is a property of a point you can see, never of a sign. Build the symmetric half of a profile once and `mirrorProfile` it (see "Editing profiles") rather than writing the mirrored arcs by hand. `loft` accepts these contours as rings (every ring with the same segment signature lofts curve-to-curve).
 **`pathProfile` or an authored vector file?** Reach for `pathProfile` (and the polygon helpers above) when the geometry is **computed from parameters** — a profile whose dimensions come from `p`/`d`, which a JSON file cannot see. Reach for an authored `partforge-vector` document (`k.vector2d`, see "Vector geometry" below) when the geometry is **drawn** — a logo, a faceplate outline, a decorative cutout, where each number means one thing and gets edited on its own. The two are freely composable: both produce ordinary 2-D geometry that the same booleans and editing ops accept.
 **Import geometry helpers from `partforge/geometry`, never from `partforge`** — the main
 entry pulls in the DOM viewer/controls, and your build functions run in a Web Worker
@@ -1416,6 +1425,7 @@ Three rules worth internalizing before reaching for any of this:
   on a narrow profile can produce arcs that cross the far side). `validateProfile`
   never throws, so it's cheap to call after any edit and inspect `issues` before
   committing to the result.
+  Since 0.112 the kernel runs it for you on the way IN to `extrude`/`prism`/`revolve`/`sweep`/`loft`/`shape2d` and reports each crossing as a build warning ([profile-self-intersects](ERROR-PATTERNS.md#profile-self-intersects)); the manual call is for inspecting a result BEFORE committing to it.
 - **Guard vanishing features with `isEmpty()`.** A boolean chain can legitimately
   produce an *empty* shape (an `intersect` of shapes a parameter drove apart, a `cut`
   that removed everything). The empty shape is a fine 2-D value — further booleans,
@@ -3485,6 +3495,13 @@ symptom first** — it maps error text → cause → fix. The invariants, one li
 - **`build` is a pure function of `(k, p, d)`** — impurity silently defeats the geometry
   cache ([impure-build-stale-preview](ERROR-PATTERNS.md#impure-build-stale-preview)).
 - **Units are millimetres** throughout.
+- **Never sample an arc into points by hand.** A `Math.cos` loop hides the sweep direction
+  in a sign, and a wrong sign produces a self-crossing outline that builds with inverted
+  fill and no error — only a `profile-self-intersects` warning
+  ([profile-self-intersects](ERROR-PATTERNS.md#profile-self-intersects)). Build curved
+  outlines with `pathProfile().arcTo(to, via)`, `roundedProfile`, `filletPolygon`,
+  `slotPolygon`, `ringSectorPolygon` and `circleProfile`; mirror a symmetric half with
+  `mirrorProfile`.
 - **Preview vs print quality:** Manifold bakes segment counts in at primitive creation,
   so builds are quality-agnostic; the export path uses a separate high-res "print" kernel.
 - **Display placement is view-independent**; only `place(..., { purpose: "export" })` may
