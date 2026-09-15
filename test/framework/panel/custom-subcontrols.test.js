@@ -39,7 +39,7 @@ test("`when` inside a sub-panel evaluates against the scoped values", () => {
     { key: "kind", type: "radio", options: ["flat", "tall"] },
     { key: "height", label: "H", min: 0, max: 30, step: 1, when: { kind: "tall" } },
   ], { path: "0" });
-  const heightWrap = box.querySelector(".slider");
+  const heightWrap = box.querySelector('input[type="range"]').closest(".slider");
   expect(heightWrap.classList.contains("hidden")).toBe(true);
   box.querySelectorAll(".seg button")[1].click();
   expect(params.tiles[0].kind).toBe("tall");
