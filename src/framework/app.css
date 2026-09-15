@@ -64,8 +64,10 @@ canvas { display: block; }
    Condition-hidden sections (.hidden, a `when` that evaluated false) are excluded
    for the same reason. Do not simplify this to `.section:first-child { border-top: 0 }` — that
    matches DOM position rather than visibility, and leaves a stray divider
-   floating at the top whenever applyRelevance hides the first section. */
-.section:not(.section-hidden):not(.hidden) ~ .section:not(.section-hidden):not(.hidden) {
+   floating at the top whenever applyRelevance hides the first section. A bare
+   sub-panel section (host.controls inside a custom control) never gets the divider
+   because the widget owns its framing. */
+.section:not(.section-hidden):not(.hidden) ~ .section:not(.section-hidden):not(.hidden):not(.bare) {
   border-top: 1px solid var(--pf-border);
 }
 /* Section disclosure header: the whole row is the click target (render.js
@@ -422,7 +424,6 @@ button.action:disabled { opacity: .5; cursor: default; }
 /* A sub-panel inside a custom control (host.controls): no header, no indent. */
 .section.bare > .sec-body { padding: 0; }
 .section.bare { padding: 0; border: 0; }
-.section ~ .section.bare { border-top: 0; margin-top: 0; padding-top: 0; }
 
 .dl { margin-top: 14px; }
 .dl-head {
