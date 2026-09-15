@@ -105,7 +105,7 @@ test("a listener installed through host.h that throws retires the widget with ph
     h.el.append(h.h("button", { onclick: () => { throw new Error("click boom"); } }, "go"));
     return { update };
   } }), params, () => {});
-  r.querySelector("button").click();
+  r.querySelector(".pf-custom-slot button").click();
   expect(panel.errors()[0]).toMatchObject({ phase: "event", message: "click boom" });
   expect(r.querySelector(".pf-custom-error")).not.toBeNull();
   panel.syncValues(["tiles"]);
@@ -140,7 +140,7 @@ test("host.svg parses an svg string and refuses anything else; host.svgFromVecto
   expect(el.querySelector("#w1")).not.toBeNull();
   expect(host.svg("<div>no</div>")).toBeNull();
   expect(host.svg(42)).toBeNull();
-  const doc = { units: "mm", shapes: { a: { role: "add", regions: [{ outer: [[0, 0], [10, 0], [10, 10]], holes: [] }] } } };
+  const doc = { units: "mm", shapes: { a: { role: "add", regions: [{ outer: { kind: "polygon", points: [[0, 0], [10, 0], [10, 10]] }, holes: [] }] } } };
   expect(host.svgFromVector(doc)?.tagName.toLowerCase()).toBe("svg");
   expect(host.svgFromVector({})).toBeNull();
 });
