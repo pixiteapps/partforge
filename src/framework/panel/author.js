@@ -44,6 +44,11 @@ function authoredControl(c) {
     allow: c.allow,
     preview: c.preview,
     sourceField: c.sourceField,
+    // Custom controls (type: "custom"): the author's widget function and the
+    // extra scalar keys it may write. Both are on this allow-list for the same
+    // reason `allow` is (see above) — a field missing here is silently dropped.
+    widget: c.widget,
+    keys: c.keys,
     preserveOn: false,
     marksCustom: true,
   };

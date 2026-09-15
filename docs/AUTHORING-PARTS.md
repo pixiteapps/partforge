@@ -745,6 +745,7 @@ Every control accepts `key`, `type`, `label`, `description`, `hidden`, `when` an
 | `"font"` | a typeface picker with a catalog, else a drop target | `allow`, `preview`, `sourceField` |
 | `"image"` | an image picker with a catalog, else a drop target showing the artwork | `allow`, `sourceField` |
 | `"vector"` | a drop target showing the artwork — no catalog exists | `sourceField` |
+| `"custom"` | a widget the part draws itself — see "Custom controls" below | `widget`, `keys` |
 
 Numeric controls always show the number box: drag the slider *or* type an exact
 value. Typed values may be finer than `step` and may sit **outside `[min, max]`**:
