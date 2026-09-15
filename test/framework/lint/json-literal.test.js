@@ -31,6 +31,16 @@ test("applies the value caps", () => {
   expect(readJsonLiteral(`["${"x".repeat(16384)}"]`)).toBeNull();
 });
 
+test("pathological nesting fails fast during parsing instead of overflowing the stack", () => {
+  // The depth guard must fire WHILE parsing, before a RangeError has any
+  // chance to happen — readJsonLiteral only catches its own JsonLiteralError,
+  // so an uncaught RangeError would escape to a host outside runRules' try/catch.
+  expect(() => readJsonLiteral("[".repeat(50000))).not.toThrow();
+  expect(readJsonLiteral("[".repeat(50000))).toBeNull();
+  expect(() => readJsonLiteral("{a:".repeat(50000))).not.toThrow();
+  expect(readJsonLiteral("{a:".repeat(50000))).toBeNull();
+});
+
 test("writes compact JSON under 80 chars, indented JSON above it, relative to the entry's indent", () => {
   expect(writeJsonLiteral([1, 2, 3])).toBe("[1,2,3]");
   const long = Array.from({ length: 12 }, (_, i) => ({ q: i, r: 0, height: 10 + i }));

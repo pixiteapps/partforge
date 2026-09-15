@@ -22,7 +22,7 @@
 // FALSE NEGATIVES — a derailed scan finds no defaults literal and no tokens,
 // so a rule says nothing rather than something wrong.
 
-import { isJsonValue } from "../panel/json-value.js";
+import { isJsonValue, CUSTOM_VALUE_MAX_DEPTH } from "../panel/json-value.js";
 
 // Span of the object literal after the first `defaults:` key (indices into
 // `source`, end exclusive, covering `{...}`). String- and comment-aware so a
@@ -237,6 +237,15 @@ function readKey(text, i, end) {
 // every value this reads, writeJsonLiteral can write back and this can read
 // again. A parse failure is null, never a throw: the entry simply stays
 // unreadable, exactly as an expression does.
+//
+// `depth` is threaded through value/array/object and checked BEFORE
+// recursing into a container, so pathological nesting (thousands of `[`)
+// fails fast during parsing instead of blowing the JS call stack — a
+// RangeError would escape readJsonLiteral's try/catch (it only catches
+// JsonLiteralError) and reach a host outside runRules' own try/catch. The
+// threshold matches json-value.js's own depth check exactly (same "depth at
+// which this container sits" numbering), so this is a fast-fail that agrees
+// with the post-parse isJsonValue call below, never a stricter or looser one.
 
 class JsonLiteralError extends Error {}
 
@@ -244,11 +253,11 @@ function jsonParser(text) {
   let i = 0;
   const fail = () => { throw new JsonLiteralError(); };
   const ws = () => { while (i < text.length && /\s/.test(text[i])) i++; };
-  const value = () => {
+  const value = (depth = 0) => {
     ws();
     const c = text[i];
-    if (c === "{") return object();
-    if (c === "[") return array();
+    if (c === "{") return object(depth);
+    if (c === "[") return array(depth);
     if (c === '"' || c === "'") {
       const end = skipQuoted(text, i, text.length);
       const s = decodeStringLiteral(text.slice(i, end));
@@ -262,17 +271,19 @@ function jsonParser(text) {
     if (text.startsWith("false", i)) { i += 5; return false; }
     return fail();
   };
-  const array = () => {
+  const array = (depth) => {
+    if (depth >= CUSTOM_VALUE_MAX_DEPTH) fail();
     i++; // [
     const out = [];
     for (;;) {
       ws();
       if (text[i] === "]") { i++; return out; }
       if (out.length) { if (text[i] !== ",") fail(); i++; ws(); if (text[i] === "]") { i++; return out; } }
-      out.push(value());
+      out.push(value(depth + 1));
     }
   };
-  const object = () => {
+  const object = (depth) => {
+    if (depth >= CUSTOM_VALUE_MAX_DEPTH) fail();
     i++; // {
     const out = {};
     let n = 0;
@@ -286,7 +297,7 @@ function jsonParser(text) {
       ws();
       if (text[i] !== ":") fail();
       i++;
-      const v = value();
+      const v = value(depth + 1);
       Object.defineProperty(out, k.key, { value: v, enumerable: true, writable: true, configurable: true });
       n++;
     }
