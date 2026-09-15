@@ -2792,7 +2792,9 @@ previously didn't; that's the fix working as intended, not a regression.
 `preset-key-not-in-defaults`, `mixed-section-shape`,
 `duplicate-preset-name`, `duplicate-node-id`, `select-options-missing`,
 `select-default-not-in-options`, `log-scale-needs-positive-min`,
-`when-key-not-in-defaults`, `when-unknown-operator`, `unknown-control-type` (errors);
+`when-key-not-in-defaults`, `when-unknown-operator`, `unknown-control-type`,
+`custom-control-widget-not-function`, `custom-default-not-json`,
+`custom-keys-not-in-defaults` (errors);
 `slider-range-excludes-default`, `unknown-control-field`, `duplicate-control-key`,
 `default-not-exposed`, `readout-unknown-derived-key`, `slider-refinement-invalid`,
 `group-depth`, `section-too-many-controls` (warnings).
@@ -2803,6 +2805,10 @@ can't coexist, since mixing them would make the render order arbitrary. Move
 the legacy entries into `controls` (a toggle becomes a checkbox control,
 `advanced` becomes a nested group, `presets` becomes `{ type: "preset" }`
 nodes), or drop `controls` and stay legacy.
+`custom-default-not-json` is `control-default-not-primitive`'s counterpart for a
+`type: "custom"` control, whose key may hold a JSON value (see "Custom controls"):
+it names the first member that is not one — `null`, a function, a class instance,
+a forbidden key, or a value past the 16 KB / depth-8 caps.
 `duplicate-preset-name` fires when the same preset name is declared twice
 (legacy `presets` and/or `{ type: "preset" }` nodes both count) — preset names
 are global to the part, and `verify()` expands one case per name and throws on
