@@ -284,14 +284,18 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
     const secEl = el("div", "section");
     nodeEls.set(section.id, secEl);
     const body = el("div", "sec-body");
-    body.id = `pf-sec-${section.id.replaceAll("/", "-")}`;
 
     if (opts.bare) {
       // A sub-panel inside a custom control (host.controls): controls only,
-      // no header row and no disclosure — the widget owns the framing.
+      // no header row and no disclosure — the widget owns the framing, so
+      // there is no aria-controls to point at the body and it gets no id
+      // (a mounted sub-panel would otherwise collide with the outer panel's
+      // own pf-sec-<id>, or with another sub-panel's, since ids are not
+      // scoped to a mount).
       secEl.classList.add("bare");
       secEl.append(body);
     } else {
+      body.id = `pf-sec-${section.id.replaceAll("/", "-")}`;
       const header = el("div", "sec-header");
       const title = el("button", "sec-title");
       title.type = "button";
@@ -406,25 +410,33 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
       const out = {};
       let budget = PANEL_STATE_MAX_BYTES;
       for (const [key, w] of customWidgets) {
-        const state = w.getState();
-        if (!state || typeof state !== "object" || Object.keys(state).length === 0) continue;
-        if (!isJsonValue(state, { maxBytes: Infinity })) {
+        try {
+          const state = w.getState();
+          if (!state || typeof state !== "object" || Object.keys(state).length === 0) continue;
+          if (!isJsonValue(state, { maxBytes: Infinity })) {
+            if (!reportedStateDrops.has(key)) {
+              reportedStateDrops.add(key);
+              customCtx.onError({ key, label: w.label, phase: "state", message: "panel state is not a JSON value; dropped" });
+            }
+            continue;
+          }
+          const size = new TextEncoder().encode(JSON.stringify(state)).length;
+          if (size > budget) {
+            if (!reportedStateDrops.has(key)) {
+              reportedStateDrops.add(key);
+              customCtx.onError({ key, label: w.label, phase: "state", message: `panel state (${size} bytes) exceeds the ${PANEL_STATE_MAX_BYTES}-byte budget; dropped` });
+            }
+            continue;
+          }
+          budget -= size;
+          out[key] = structuredClone(state);
+        } catch (e) {
           if (!reportedStateDrops.has(key)) {
             reportedStateDrops.add(key);
-            customCtx.onError({ key, label: w.label, phase: "state", message: "panel state is not a JSON value; dropped" });
+            const message = (e && typeof e.message === "string" && e.message) || String(e);
+            customCtx.onError({ key, label: w.label, phase: "state", message: `panel state could not be read: ${message}` });
           }
-          continue;
         }
-        const size = new TextEncoder().encode(JSON.stringify(state)).length;
-        if (size > budget) {
-          if (!reportedStateDrops.has(key)) {
-            reportedStateDrops.add(key);
-            customCtx.onError({ key, label: w.label, phase: "state", message: `panel state (${size} bytes) exceeds the ${PANEL_STATE_MAX_BYTES}-byte budget; dropped` });
-          }
-          continue;
-        }
-        budget -= size;
-        out[key] = structuredClone(state);
       }
       return out;
     },

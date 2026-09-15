@@ -46,6 +46,34 @@ test("`when` inside a sub-panel evaluates against the scoped values", () => {
   expect(heightWrap.classList.contains("hidden")).toBe(false);
 });
 
+test("a sub-control write that pushes the owned value past the JSON cap is refused, not thrown", () => {
+  const r = root();
+  const params = { tiles: { note: "x".repeat(16300) } };
+  let host;
+  const panel = buildControls(r, [{ id: "s", controls: [{ key: "tiles", type: "custom", label: "Tiles", widget: (h) => { host = h; } }] }],
+    params, () => {});
+  const box = document.createElement("div");
+  host.el.append(box);
+  host.controls(box, [{ key: "note", type: "text", label: "Note" }], { path: "" });
+  const field = box.querySelector(".text-input");
+  field.value = "x".repeat(17000);
+  expect(() => field.dispatchEvent(new Event("input"))).not.toThrow();
+  expect(params.tiles).toEqual({ note: "x".repeat(16300) });    // the edit is refused; unchanged
+  expect(panel.errors()).toEqual([expect.objectContaining({ phase: "event" })]);
+  expect(panel.errors()[0].message).toMatch(/bytes serialized/);
+});
+
+test("a bare sub-panel's body gets no section id — nothing to point aria-controls at", () => {
+  const r = root();
+  const params = { tiles: [{ h: 1 }] };
+  let host;
+  buildControls(r, [{ id: "s", controls: [{ key: "tiles", type: "custom", widget: (h) => { host = h; } }] }], params, () => {});
+  const box = document.createElement("div");
+  host.el.append(box);
+  host.controls(box, [{ key: "h", label: "H", min: 0, max: 9, step: 1 }], { path: "0" });
+  expect(document.querySelectorAll('[id^="pf-sec-"]')).toHaveLength(1);   // only the outer section's
+});
+
 test("a custom control inside host.controls is dropped and reported; sub-panels die with the widget", () => {
   const r = root();
   const params = { tiles: [{ h: 1 }] };

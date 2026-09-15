@@ -1031,7 +1031,7 @@ export function tilePicker(host) {
 | `host.commit(keys?)` | Ends a deferred gesture. A no-op when nothing changed. |
 | `host.derived` | The latest `derive()` output, the same object readouts show. |
 | `host.state`, `host.setState(patch)` | Transient JSON (a selection, an open panel). Not a param, never persisted, but it **survives a remount**, which every edit performs. |
-| `host.controls(container, controls, {path})` | Mount ordinary built-in controls bound *inside* the owned value at a dotted `path` (`"3"`, `"walls.north"`). Their edits commit the owning key. Returns a disposer. One level: no custom control inside. |
+| `host.controls(container, controls, {path})` | Mount ordinary built-in controls bound *inside* the owned value at a dotted `path` (`"3"`, `"walls.north"`). Their edits commit the owning key. Returns a disposer. One level: no custom control inside, and no `font`, `image` or `vector` sub-control at a path (their asset lookups are keyed on the part's real param names). |
 | `host.h(tag, attrs, ...children)` | Element builder. SVG tags get the SVG namespace; `on<event>` attrs become listeners; `class` and `style` pass through. |
 | `host.svg(text)` | Parse an SVG string to an element you can append and wire up. |
 | `host.svgFromVector(doc)` | A partforge-vector document → inline `<svg>` (the same renderer the `vector` control uses). |
@@ -1053,9 +1053,12 @@ export function tilePicker(host) {
    remounts the part and your function runs again.
 4. Hand `set` a new value. `get` returns a clone precisely so the stored value is never
    edited in place.
-5. A throw anywhere in your code — creation, `update`, a listener, `dispose` —
-   replaces the widget with an error card and reports it (a hosting agent sees it in
-   the apply result as `panelErrors`). Other controls keep working.
+5. A throw in creation, `update`, or a listener installed through `host.h` replaces
+   the widget with an error card and reports it (a hosting agent sees it in the apply
+   result as `panelErrors`); other controls keep working. A throw in `dispose` is
+   reported the same way but leaves no card — there is nothing left to show it on. A
+   listener you attach yourself with `addEventListener`, rather than through `host.h`,
+   is **not** guarded — wire listeners through `host.h`, or wrap your own in try/catch.
 
 **Looking native.** The slot inherits the rail's font, colours and light/dark theme.
 Bare `<button>`, `<input>` and `<select>` elements pick up the built-in looks
@@ -1072,9 +1075,11 @@ needed; or read it with `host.file("assets/emblem.svg")` and inline it with
 `host.svg(text)`. Give regions ids and wire `pointerdown` on `#wall-3` to toggle
 `walls[3]` in the owned value.
 
-**What a widget cannot do.** No `fetch` (the hosted sandbox has no network), no
-imports beyond the part's own files, nothing outside `host.el`, and no reading of
-`params` except through `host`.
+**What a widget cannot do.** Never `fetch` or otherwise reach the network — a widget
+is a pure function of the part and its params, and a hosted sandbox may refuse the
+request or have no credentials to make it with. Also: no imports beyond the part's
+own files, nothing outside `host.el`, and no reading of `params` except through
+`host`.
 
 ### Legacy section shapes (still supported)
 

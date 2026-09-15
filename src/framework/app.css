@@ -394,21 +394,23 @@ button.action:disabled { opacity: .5; cursor: default; }
 .pf-custom { margin: 9px 0; }
 .pf-custom.hidden { display: none; }
 .pf-custom-slot { display: flow-root; }
-.pf-custom svg { display: block; max-width: 100%; height: auto; }
-.pf-custom button {
+/* :where() keeps these bare-element defaults at zero specificity, so a named
+   built-in class (.seg button, .text-input, select.select-input, …) always wins. */
+:where(.pf-custom) svg { display: block; max-width: 100%; height: auto; }
+:where(.pf-custom) button {
   font: inherit; font-size: 12px; padding: 5px 9px; cursor: pointer;
   background: transparent; border: 1px solid var(--pf-border); color: var(--pf-text-2);
   border-radius: var(--pf-radius-control);
 }
-.pf-custom button:hover:not(:disabled) { background: var(--pf-surface-2); }
-.pf-custom button:disabled { opacity: .5; cursor: default; }
-.pf-custom input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
-.pf-custom select {
+:where(.pf-custom) button:hover:not(:disabled) { background: var(--pf-surface-2); }
+:where(.pf-custom) button:disabled { opacity: .5; cursor: default; }
+:where(.pf-custom) input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+:where(.pf-custom) select {
   font: 12px/1.4 var(--pf-mono);
   background: var(--pf-input-bg); color: var(--pf-text-strong);
   border: 1px solid var(--pf-border); border-radius: var(--pf-radius-control); padding: 6px 8px;
 }
-.pf-custom input:focus, .pf-custom select:focus, .pf-custom button:focus-visible {
+:where(.pf-custom) input:focus, :where(.pf-custom) select:focus, :where(.pf-custom) button:focus-visible {
   outline: none; border-color: var(--pf-accent);
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
 }

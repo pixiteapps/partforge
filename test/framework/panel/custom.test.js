@@ -229,6 +229,28 @@ test("getState skips empty state, drops oversize state with a recorded error", (
   expect(panel.errors()).toHaveLength(1);
 });
 
+test("getState never throws — a widget whose state getter throws is recorded and skipped", () => {
+  const r = root();
+  let host;
+  const panel = buildControls(r, sec({ key: "tiles", type: "custom", label: "Tiles", widget: (h) => { host = h; } }), { tiles: [] }, () => {});
+  let n = 0;
+  Object.defineProperty(host.state, "x", { get() { return ++n < 3 ? "a" : () => {}; }, enumerable: true });
+  expect(() => panel.getState()).not.toThrow();
+  expect(panel.errors()).toEqual([{ key: "tiles", label: "Tiles", phase: "state", message: expect.stringMatching(/^panel state could not be read: /) }]);
+});
+
+test("panel.dispose() retires the host: further host.set calls are silent no-ops", () => {
+  const r = root();
+  const params = { tiles: [] };
+  let dirty = 0;
+  let host;
+  const panel = buildControls(r, sec({ key: "tiles", type: "custom", widget: (h) => { host = h; } }), params, () => dirty++);
+  panel.dispose();
+  expect(() => host.set([{ q: 1 }])).not.toThrow();
+  expect(params.tiles).toEqual([]);
+  expect(dirty).toBe(0);
+});
+
 test("dispose calls the widget's dispose once and records a throw without propagating", () => {
   const r = root();
   const dispose = vi.fn(() => { throw new Error("bye"); });

@@ -187,7 +187,13 @@ export function makeCustom(node, params, { onChange, onCommit, info, custom = {}
         report("create", `custom control "${key}" cannot be nested inside "${node.key}"`));
       const scoped = scopedParams({
         read: () => host.get(),
-        write: (next) => host.set(next, { commit: false }),
+        // A sub-control write can push the owned value past the JSON cap —
+        // that is the value contract refusing one edit, not widget code
+        // failing, so it is reported and swallowed rather than left to throw
+        // out of the built-in factory's own (unguarded) input handler.
+        write: (next) => {
+          try { host.set(next, { commit: false }); } catch (e) { report("event", errorText(e)); }
+        },
         path,
         onError: (message) => report("event", message),
       });
@@ -239,6 +245,9 @@ export function makeCustom(node, params, { onChange, onCommit, info, custom = {}
       // an open sub-panel's DOM — that its own dispose() is the only code
       // that knows how to release.
       try { instance?.dispose?.(); } catch (e) { report("dispose", errorText(e)); }
+      // A disposed panel's host must stop accepting writes: host.set/commit
+      // are silent no-ops once retired, same as after a widget's own throw.
+      retired = true;
     },
   };
 }
