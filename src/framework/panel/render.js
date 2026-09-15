@@ -7,6 +7,10 @@ import { computeState } from "./panel-state.js";
 import { WIDGET_FACTORIES } from "./widgets/index.js";
 import { makeReadout } from "./widgets/readout.js";
 import { createInfoPopover, attachInfo } from "./info.js";
+import { isJsonValue } from "./json-value.js";
+
+// The budget every custom control's transient state shares (getState below).
+export const PANEL_STATE_MAX_BYTES = 65536;
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -47,6 +51,21 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
   const disclosures = new Map(); // id -> { body, button, el }
   indexNodes(tree, nodeById);
   let relevant = null;
+
+  const panelErrors = [];         // {key, label, phase, message} from custom controls
+  const customWidgets = new Map(); // param key -> { label, getState } for custom controls
+  // What a custom control's host reaches back into the panel for: the part's
+  // own files (host.file), the state a previous mount left (host.state), the
+  // error sink, and the sub-panel builder — a re-entry into buildControls with
+  // a scoped params view and no section header (opts.bare, Task 5).
+  const customCtx = {
+    files: opts.files ?? null,
+    panelState: opts.panelState ?? null,
+    onError: (e) => { panelErrors.push(e); opts.onPanelError?.(e); },
+    buildSubPanel: (container, controls, scoped, onSubDirty, onSubCommit) =>
+      buildControls(container, [{ controls }], scoped, onSubDirty, onSubCommit,
+        { ...opts, bare: true, panelState: null, onPanelError: customCtx.onError }),
+  };
 
   // Re-apply state after any change that could flip a condition. This is what
   // reproduces the legacy feature behavior generically: ticking a feature's
@@ -224,29 +243,39 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
     };
     const widget = factory(node, params, {
       onChange: () => { markCustom(); onEdit(); },
-      onCommit: () => commit([node.key]),
+      // A factory may name the keys it committed (custom controls own several);
+      // the built-ins call onCommit() bare and get their own key, as before.
+      onCommit: (keys) => commit(Array.isArray(keys) && keys.length ? keys : [node.key]),
       info,
       fontCatalog: opts.fontCatalog,
       imageCatalog: opts.imageCatalog,
       onAssetUpload: opts.onAssetUpload,
       declaredSource: opts.declaredSource,
+      custom: customCtx,
     });
     nodeEls.set(node.id, widget.el);
     if (node.key && !keyToId.has(node.key)) keyToId.set(node.key, node.id);
     widgetSyncs.set(node.id, widget.sync);
     if (widget.dispose) disposers.push(widget.dispose);
+    // A custom control reads derive() output like a readout does, and keeps
+    // transient state the host may carry across a remount.
+    if (typeof widget.onDerived === "function") displayUpdates.set(node.id, widget.onDerived);
+    if (typeof widget.getState === "function" && node.key) {
+      customWidgets.set(node.key, { label: node.label ?? node.key, getState: widget.getState });
+    }
     container.append(widget.el);
 
     // The raw sync is what a PRESET application uses — it must not mark itself
     // Custom (controls.test.js:366). The registered sync is what an external
     // syncValues() uses, and for a preset-section control it does drop the
     // picker to Custom (controls.test.js:350), because a programmatic edit
-    // diverges from the preset exactly as a user edit does.
+    // diverges from the preset exactly as a user edit does. A widget that owns
+    // several keys (custom's `keys`) registers under each of them.
     if (sectionCtx) rawSyncs.get(sectionCtx.id).push({ key: node.key, sync: widget.sync });
-    syncFns.push({
-      key: node.key,
-      sync: () => { widget.sync(); markCustom(); },
-    });
+    const ownedKeys = Array.isArray(widget.keys) && widget.keys.length ? widget.keys : [node.key];
+    for (const key of ownedKeys) {
+      syncFns.push({ key, sync: () => { widget.sync(); markCustom(); } });
+    }
   }
 
   for (const section of tree) {
@@ -356,6 +385,35 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
         primary.querySelector("input, select, textarea, .seg button")?.focus({ preventScroll: true });
       }
       return true;
+    },
+    // What custom controls reported failing this mount, in order. A host that
+    // remounts per edit (partforge-cloud) reads this after mount and hands it
+    // to the agent beside the build's own warnings.
+    errors: () => panelErrors.map((e) => ({ ...e })),
+    // Every custom control's non-empty transient state, keyed by param, as
+    // plain JSON — hand it back as mount({ panelState }) so a selection survives
+    // the remount an edit performs. One shared budget: a state that would push
+    // the total past it is dropped and recorded (phase "state") rather than
+    // silently lost.
+    getState: () => {
+      const out = {};
+      let budget = PANEL_STATE_MAX_BYTES;
+      for (const [key, w] of customWidgets) {
+        const state = w.getState();
+        if (!state || typeof state !== "object" || Object.keys(state).length === 0) continue;
+        if (!isJsonValue(state, { maxBytes: Infinity })) {
+          customCtx.onError({ key, label: w.label, phase: "state", message: "panel state is not a JSON value; dropped" });
+          continue;
+        }
+        const size = new TextEncoder().encode(JSON.stringify(state)).length;
+        if (size > budget) {
+          customCtx.onError({ key, label: w.label, phase: "state", message: `panel state (${size} bytes) exceeds the ${PANEL_STATE_MAX_BYTES}-byte budget; dropped` });
+          continue;
+        }
+        budget -= size;
+        out[key] = structuredClone(state);
+      }
+      return out;
     },
     // replaceChildren() only reaches what is INSIDE root; a widget that parked
     // DOM (or a document-level listener) elsewhere has to be told to let go.
