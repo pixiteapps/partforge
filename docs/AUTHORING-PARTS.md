@@ -955,6 +955,127 @@ pickers in one section both need to show divergence, give each its own section.
 case per preset name (so every preset gets measured), and a repeated name throws
 there. `duplicate-preset-name` catches it at lint time instead.
 
+### Custom controls
+
+A `type: "custom"` control renders a widget the part draws itself — a clickable hex
+grid, an organizer whose walls toggle on click, a picture of the part's own outline
+with hot regions. Reach for it when the user configures **many similar things
+individually**, or makes a **spatial choice** no slider or select can express.
+Never for a value an existing control already covers: a slider is still a slider.
+
+```js
+// part.js
+import { tilePicker } from "./tile-picker.js";
+
+export default {
+  defaults: {
+    tileSize: 20,
+    tiles: [{ q: 0, r: 0, height: 10 }, { q: 1, r: 0, height: 14 }],
+  },
+  parameters: [{
+    title: "Tiles",
+    controls: [
+      { type: "slider", key: "tileSize", min: 10, max: 40 },
+      { type: "custom", key: "tiles", label: "Tile layout", widget: tilePicker,
+        description: "Click a tile to select it. Drag to move it." },
+    ],
+  }],
+  parts: { tiles: { build: (k, p) => /* p.tiles is the array */ } },
+};
+```
+
+- `key` names the param the widget owns. It may hold a **JSON value**: numbers,
+  strings, booleans, arrays and plain objects of those, at most 16 KB serialized and
+  8 levels deep, never `null` (`custom-default-not-json`). `build()` reads it like any
+  other param. This is the one place the "a control writes one scalar" rule is relaxed.
+- `keys` (optional) lists further scalar params the widget may also write.
+- `widget` is a function `(host) => …`, normally imported from a sibling file so
+  `part.js` stays readable (`custom-control-widget-not-function`).
+- `label`, `description`, `hidden`, `when` and `whenFalse` behave as on any control.
+
+**The widget function.** It runs once per mount and draws into `host.el` with plain
+DOM and SVG. It may return `{ update, dispose }`.
+
+```js
+// tile-picker.js
+export function tilePicker(host) {
+  const svg = host.h("svg", { viewBox: "0 0 200 160", width: "100%" });
+  const detail = host.h("div");
+  host.el.append(svg, detail);
+  let stopDetail = null;
+
+  function draw() {
+    const tiles = host.get();                 // a fresh clone of the owned value
+    const sel = host.state.selected ?? null;  // survives the remount an edit performs
+    svg.replaceChildren(...tiles.map((t, i) => host.h("polygon", {
+      points: hexPoints(t.q, t.r), class: i === sel ? "pf-hit selected" : "pf-hit",
+      onpointerdown: () => { host.setState({ selected: i }); draw(); },
+    })));
+    stopDetail?.();
+    stopDetail = sel === null ? null : host.controls(detail, [
+      { type: "slider", key: "height", label: "Height", min: 4, max: 30 },
+    ], { path: `${sel}` });
+  }
+  draw();
+  return { update: draw, dispose: () => stopDetail?.() };
+}
+```
+
+**The host.**
+
+| Member | Meaning |
+|---|---|
+| `host.el`, `host.doc` | The slot to draw into, and its document. |
+| `host.get(key?)` | A clone of the current value (default: the owned key). Any param is readable. |
+| `host.set(value, {key?, commit?})` | Replace a value with a **new** one — never mutate what `get` returned. Schedules the rebuild and commits, unless `commit: false`; then call `host.commit()` when the gesture ends (a drag). Throws for a key you do not own or a value outside the contract. On a **retired** widget (one whose code already threw) `set`, `commit` and `setState` are silent no-ops. |
+| `host.commit(keys?)` | Ends a deferred gesture. A no-op when nothing changed. |
+| `host.derived` | The latest `derive()` output, the same object readouts show. |
+| `host.state`, `host.setState(patch)` | Transient JSON (a selection, an open panel). Not a param, never persisted, but it **survives a remount**, which every edit performs. |
+| `host.controls(container, controls, {path})` | Mount ordinary built-in controls bound *inside* the owned value at a dotted `path` (`"3"`, `"walls.north"`). Their edits commit the owning key. Returns a disposer. One level: no custom control inside. |
+| `host.h(tag, attrs, ...children)` | Element builder. SVG tags get the SVG namespace; `on<event>` attrs become listeners; `class` and `style` pass through. |
+| `host.svg(text)` | Parse an SVG string to an element you can append and wire up. |
+| `host.svgFromVector(doc)` | A partforge-vector document → inline `<svg>` (the same renderer the `vector` control uses). |
+| `host.file(pathOrToken)` | Text of one of the part's own files, by path or a `pfc-tree://` token, or null. |
+| `host.disabled` | Whether a `when`/`whenFalse: "disable"` currently disables this control. |
+
+`update({reason, disabled})` is called when your key changes from outside the widget
+(`reason: "sync"` — a preset, undo, `setParams`), when `derived` changes
+(`"derived"`), and once after `host.state` was restored on mount (`"restore"`). It is
+**not** called for your own `set`. `dispose()` runs on teardown.
+
+**Rules that keep it working.**
+
+1. Size SVG with `viewBox` plus `width: 100%`. The rail is 288px wide by default and
+   narrower on a phone, where it is the bottom sheet.
+2. Use pointer events, not mouse events, and put `class="pf-drag"` (or
+   `touch-action: none`) on anything dragged — otherwise a finger scrolls the sheet.
+3. Keep selection and similar state in `host.state`, not in a closure: every edit
+   remounts the part and your function runs again.
+4. Hand `set` a new value. `get` returns a clone precisely so the stored value is never
+   edited in place.
+5. A throw anywhere in your code — creation, `update`, a listener, `dispose` —
+   replaces the widget with an error card and reports it (a hosting agent sees it in
+   the apply result as `panelErrors`). Other controls keep working.
+
+**Looking native.** The slot inherits the rail's font, colours and light/dark theme.
+Bare `<button>`, `<input>` and `<select>` elements pick up the built-in looks
+automatically; the built-in classes are available by name for the exact thing:
+`row`, `seg` (a segmented row of buttons), `action`, `ghost`, `num`, `text-input`,
+`select-input`; and for SVG, `pf-hit` (clickable, with a `selected` state) and
+`pf-drag`. Sub-controls mounted through `host.controls` *are* the built-in widgets.
+
+**Reading the part's own files.** Artwork can live beside the code (the tree is text,
+so an SVG, a `partforge-vector` JSON document or a JSON data file — not a PNG).
+Two routes: store the SVG as a string in a JS module (`assets/emblem.svg.js` exporting
+a template literal) and import it like any sibling file — no framework support
+needed; or read it with `host.file("assets/emblem.svg")` and inline it with
+`host.svg(text)`. Give regions ids and wire `pointerdown` on `#wall-3` to toggle
+`walls[3]` in the owned value.
+
+**What a widget cannot do.** No `fetch` (the hosted sandbox has no network), no
+imports beyond the part's own files, nothing outside `host.el`, and no reading of
+`params` except through `host`.
+
 ### Legacy section shapes (still supported)
 
 Everything above is what a **new part should write**. The original array-based shapes
@@ -1144,6 +1265,10 @@ defaulting everything to a slider:
   reason for a two-position slider to exist.
 - **A computed value the user should see but not set** → `"readout"`. It costs no
   parameter and answers the "so what did that do?" question in place.
+- **Many similar things configured individually, or a spatial choice** (which tiles
+  exist and how tall each is; which walls of an organizer are present) →
+  `"custom"`: a widget the part draws, holding one JSON value. See "Custom controls"
+  above; use it only when no built-in control expresses the choice.
 
 Then gate what doesn't always apply. A control that is meaningless in the current mode
 should carry a **`when`** rather than sit there inert — hide it by default, or use
