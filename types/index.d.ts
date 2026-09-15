@@ -200,6 +200,17 @@ export interface MountOptions {
    */
   viewerState?: ViewerState | null;
   /**
+   * A previous mount's `runtime.getPanelState()`: the transient state of the
+   * part's custom controls (a selected tile), keyed by param. Same remount
+   * story as `viewerState`; omit on a first mount. Never persisted by partforge.
+   */
+  panelState?: PanelState | null;
+  /**
+   * The part's own source tree as text, for custom controls' `host.file(path)`.
+   * Omit and `host.file` answers null.
+   */
+  files?: Record<string, string>;
+  /**
    * A provider backing every `type: "font"` control in the part. partforge
    * ships none — without one, a font control renders as a plain URL field.
    */
@@ -523,6 +534,10 @@ export interface PartRuntime {
    * view-cube click, Reframe, or an animation cue).
    */
   getViewerState(): ViewerState;
+  /** Every custom control's non-empty transient state, keyed by param. Hand back as `panelState`. */
+  getPanelState(): PanelState;
+  /** What custom controls reported failing this mount, in order. */
+  getPanelErrors(): PanelError[];
   /**
    * Subscribe to WebGL context loss — i.e. the GPU or the OS gave up — so a host
    * can say so rather than showing a dead canvas. The listener takes no
