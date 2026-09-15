@@ -1873,3 +1873,33 @@ test("a carried projection outranks the persisted one", () => {
   localStorage.clear();
   runtime.dispose();
 });
+
+test("mount carries files and panelState into custom controls and reads state/errors back", () => {
+  const { workers, createWorker } = makeWorkers();
+  const part = makePart();
+  part.defaults.tiles = [{ q: 0 }];
+  let host;
+  part.parameters = [{ id: "t", title: "Tiles", controls: [
+    { key: "tiles", type: "custom", label: "Tiles", widget: (h) => { host = h; } },
+    { key: "bad", type: "custom", label: "Bad", widget: () => { throw new Error("nope"); } },
+  ] }];
+  part.defaults.bad = [];
+  const runtime = mount(part, {
+    createWorker, elements: makeElements(),
+    files: { "assets/a.svg": "<svg/>" },
+    panelState: { tiles: { selected: 2 } },
+  });
+  finishFirstBuild(workers);
+  expect(host.file("assets/a.svg")).toBe("<svg/>");
+  expect(host.state).toEqual({ selected: 2 });
+  host.setState({ selected: 4 });
+  expect(runtime.getPanelState()).toEqual({ tiles: { selected: 4 } });
+  expect(runtime.getPanelErrors()).toEqual([{ key: "bad", label: "Bad", phase: "create", message: "nope" }]);
+  runtime.dispose();
+});
+
+test("makeHandle defaults getPanelState/getPanelErrors when a mount resolves no panel", () => {
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} });
+  expect(h.getPanelState()).toEqual({});
+  expect(h.getPanelErrors()).toEqual([]);
+});

@@ -279,6 +279,12 @@ statement of this rule.
 - **Units are millimetres** throughout. **Display placement must not depend on
   the active view** (display meshes cache across views); only
   `place(..., {purpose:"export"})` may.
+- `type: "custom"` controls (`panel/widgets/custom.js`, `panel/scoped-params.js`,
+  `panel/json-value.js`) run PART-AUTHORED functions in the panel's realm. The value
+  contract is `isJsonValue`, shared with hosts through `partforge/panel-values`; a
+  widget throw becomes an error card + `runtime.getPanelErrors()`, never a panel
+  crash; `runtime.getPanelState()` / `mount({panelState})` is the panel twin of
+  `viewerState`. Spec: `docs/superpowers/specs/2026-09-14-custom-panel-controls-design.md`.
 
 ### Wiring a part into an app
 

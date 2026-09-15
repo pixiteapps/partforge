@@ -75,6 +75,28 @@ describe("control-default-not-literal", () => {
     expect(found[0].message).not.toMatch(/[\u0000-\u001f\u007f]/);
     expect(found[0].message).toContain("[1, 2]");
   });
+
+  it("accepts a JSON literal on a key a custom control owns", () => {
+    const part = partWith({ wall: 2 }, ["wall"]);
+    part.defaults.tiles = [{ q: 0, h: 10 }];
+    part.parameters[0].controls.push({ key: "tiles", type: "custom", label: "Tiles", widget: () => {} });
+    const report = lintPart(part, {
+      sources: srcWith("{\n    wall: 2,\n    tiles: [{ q: 0, h: 10 }],\n  }"),
+    });
+    expect(findingsFor(report, "control-default-not-literal")).toHaveLength(0);
+  });
+
+  it("still errors on an expression inside a custom control's JSON literal", () => {
+    const part = partWith({ wall: 2 }, ["wall"]);
+    part.defaults.tiles = [{ q: 0, h: 13 / 3 }];
+    part.parameters[0].controls.push({ key: "tiles", type: "custom", label: "Tiles", widget: () => {} });
+    const report = lintPart(part, {
+      sources: srcWith("{\n    wall: 2,\n    tiles: [{ q: 0, h: 13 / 3 }],\n  }"),
+    });
+    const found = findingsFor(report, "control-default-not-literal");
+    expect(found).toHaveLength(1);
+    expect(found[0].path).toBe("defaults.tiles");
+  });
 });
 
 // A statically hidden control renders no widget, so no panel edit of it can be

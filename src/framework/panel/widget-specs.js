@@ -39,6 +39,7 @@ export const WIDGET_SPECS = [
   { type: "font", kind: "control", fields: [...AUTHOR_COMMON, "allow", "preview", "sourceField"] },
   { type: "image", kind: "control", fields: [...AUTHOR_COMMON, "allow", "sourceField"] },
   { type: "vector", kind: "control", fields: [...AUTHOR_COMMON, "allow", "sourceField"] },
+  { type: "custom", kind: "control", fields: [...AUTHOR_COMMON, "widget", "keys"] },
   { type: "readout", kind: "display", fields: ["type", "label", "description", "unit", "derivedKey", "hidden", "when", "whenFalse"] },
 ];
 
@@ -60,6 +61,7 @@ const AUTHOR_EXTRAS = {
   font: ["allow", "preview", "sourceField"],
   image: ["allow", "sourceField"],
   vector: ["allow", "sourceField"],
+  custom: ["widget", "keys"],
 };
 const AUTHOR_FIELDS = new Map(Object.entries(AUTHOR_EXTRAS).map(
   ([type, extra]) => [type, [...AUTHOR_COMMON, ...extra]]));
