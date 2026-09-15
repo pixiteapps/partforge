@@ -283,38 +283,44 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
     groupIds.add(section.id);
     const secEl = el("div", "section");
     nodeEls.set(section.id, secEl);
-
-    const header = el("div", "sec-header");
-    const title = el("button", "sec-title");
-    title.type = "button";
-    // The chev span carries NO text — its glyph comes from CSS (::before) —
-    // because sectionByTitle-style lookups match `.sec-title` by exact
-    // textContent === title (controls.test.js:210), and a text chevron here
-    // would break that match.
-    title.append(el("span", "sec-name", section.title ?? ""));
-    header.append(title);
-    // Row order: title (flex:1), then ⓘ, then the chevron on the far right.
-    // The ⓘ is a SIBLING of the button, never a child: attachInfo appends a
-    // <button>, and a button nested in a button is invalid HTML that never
-    // receives clicks.
-    attachInfo(header, section.description, info);
-    header.append(el("span", "chev"));
-    secEl.append(header);
-
     const body = el("div", "sec-body");
     body.id = `pf-sec-${section.id.replaceAll("/", "-")}`;
-    title.setAttribute("aria-controls", body.id);
-    secEl.append(body);
 
-    // The whole header row toggles: the title button's own click bubbles up
-    // here, the chevron and the empty row space hit it directly, and the ⓘ
-    // stops propagation in attachInfo. aria state stays on the title button.
-    header.addEventListener("click", () => {
-      const nowHidden = body.classList.toggle("hidden");
-      title.setAttribute("aria-expanded", String(!nowHidden));
-      secEl.classList.toggle("collapsed", nowHidden);
-    });
-    disclosures.set(section.id, { body, button: title, el: secEl });
+    if (opts.bare) {
+      // A sub-panel inside a custom control (host.controls): controls only,
+      // no header row and no disclosure — the widget owns the framing.
+      secEl.classList.add("bare");
+      secEl.append(body);
+    } else {
+      const header = el("div", "sec-header");
+      const title = el("button", "sec-title");
+      title.type = "button";
+      // The chev span carries NO text — its glyph comes from CSS (::before) —
+      // because sectionByTitle-style lookups match `.sec-title` by exact
+      // textContent === title (controls.test.js:210), and a text chevron here
+      // would break that match.
+      title.append(el("span", "sec-name", section.title ?? ""));
+      header.append(title);
+      // Row order: title (flex:1), then ⓘ, then the chevron on the far right.
+      // The ⓘ is a SIBLING of the button, never a child: attachInfo appends a
+      // <button>, and a button nested in a button is invalid HTML that never
+      // receives clicks.
+      attachInfo(header, section.description, info);
+      header.append(el("span", "chev"));
+      secEl.append(header);
+      title.setAttribute("aria-controls", body.id);
+      secEl.append(body);
+
+      // The whole header row toggles: the title button's own click bubbles up
+      // here, the chevron and the empty row space hit it directly, and the ⓘ
+      // stops propagation in attachInfo. aria state stays on the title button.
+      header.addEventListener("click", () => {
+        const nowHidden = body.classList.toggle("hidden");
+        title.setAttribute("aria-expanded", String(!nowHidden));
+        secEl.classList.toggle("collapsed", nowHidden);
+      });
+      disclosures.set(section.id, { body, button: title, el: secEl });
+    }
 
     // `preset` is filled in when a preset node renders. Controls read it late, so
     // one appearing after them in the children array still works.
