@@ -102,3 +102,14 @@ test("a readout entry becomes a display node, not a control", () => {
   });
   expect(sec.children[0].key).toBeUndefined();
 });
+
+test("a custom control keeps its widget function and keys list", () => {
+  const widget = () => {};
+  const [node] = authoredSection({ title: "T", controls: [
+    { key: "tiles", type: "custom", label: "Tiles", widget, keys: ["tileSize"] },
+  ] }).children;
+  expect(node.kind).toBe("control");
+  expect(node.type).toBe("custom");
+  expect(node.widget).toBe(widget);
+  expect(node.keys).toEqual(["tileSize"]);
+});

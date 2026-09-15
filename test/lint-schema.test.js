@@ -226,3 +226,56 @@ test("a non-primitive default with no control is left alone", () => {
   const r = lintPart(part);
   expect(ids(r.errors)).not.toContain("control-default-not-primitive");
 });
+
+// `size` is bound to a slider so `default-not-exposed` stays quiet; it is the
+// key the `keys` test below lists.
+const customPart = (over = {}) => ({
+  meta: { title: "Test", units: "mm" },
+  parameters: [{ id: "t", title: "Tiles", controls: [
+    { key: "tiles", type: "custom", label: "Tiles", widget: () => {}, ...over },
+    { key: "size", label: "Size", min: 1, max: 40, step: 1 },
+  ] }],
+  defaults: { tiles: [{ q: 0, h: 10 }], size: 20 },
+  parts: { body: { views: ["main"], build: (k) => k.box({ size: [1, 1, 1] }) } },
+  views: { main: { label: "Main" } },
+});
+
+test("a custom control over a JSON default is clean — no primitive finding", () => {
+  const r = lintPart(customPart());
+  expect(ids(r.errors)).toEqual([]);
+  expect(ids(r.warnings)).toEqual([]);
+});
+
+test("a custom control whose widget is not a function is an error", () => {
+  const r = lintPart(customPart({ widget: "hexPicker" }));
+  expect(ids(r.errors)).toContain("custom-control-widget-not-function");
+  expect(find(r, "custom-control-widget-not-function").path).toBe("parameters[0].controls[0].widget");
+  const missing = customPart(); delete missing.parameters[0].controls[0].widget;
+  expect(ids(lintPart(missing).errors)).toContain("custom-control-widget-not-function");
+});
+
+test("a custom default outside the JSON contract is custom-default-not-json, with the reason", () => {
+  const part = customPart(); part.defaults.tiles = [{ q: 0, h: null }];
+  const r = lintPart(part);
+  expect(ids(r.errors)).toContain("custom-default-not-json");
+  expect(ids(r.errors)).not.toContain("control-default-not-primitive");
+  expect(find(r, "custom-default-not-json").message).toContain("is null at [0].h");
+  expect(find(r, "custom-default-not-json").path).toBe("defaults.tiles");
+  const fn = customPart(); fn.defaults.tiles = { f() {} };
+  expect(ids(lintPart(fn).errors)).toContain("custom-default-not-json");
+});
+
+test("a scalar default on a custom control is fine, and a slider over an array still errs", () => {
+  const scalar = customPart(); scalar.defaults.tiles = 3;
+  expect(ids(lintPart(scalar).errors)).toEqual([]);
+  const slider = customPart(); slider.parameters[0].controls[0] = { key: "tiles", label: "T", min: 0, max: 9, step: 1 };
+  expect(ids(lintPart(slider).errors)).toContain("control-default-not-primitive");
+});
+
+test("keys a custom control may write must exist in defaults", () => {
+  const r = lintPart(customPart({ keys: ["size", "missing"] }));
+  expect(ids(r.errors)).toContain("custom-keys-not-in-defaults");
+  expect(find(r, "custom-keys-not-in-defaults").message).toContain('"missing"');
+  expect(find(r, "custom-keys-not-in-defaults").path).toBe("parameters[0].controls[0].keys[1]");
+  expect(ids(lintPart(customPart({ keys: ["size"] })).errors)).toEqual([]);
+});

@@ -11,7 +11,7 @@ export default {
     name: "abc\\nd",     // readable, escape
     flag: true,          // readable
     bad: 13 / 3,         // expression
-    pts: [1, 2],         // array
+    pts: [1, 2],         // readable, JSON-literal array (Task 2)
     tpl: \`x\`,            // template
     hex: 0xff,           // deliberately unreadable
     sep: 1_000,          // deliberately unreadable
@@ -36,7 +36,8 @@ describe("defaultsEntriesIn", () => {
     expect(byKey.wall.readable).toBe(true);
     expect(byKey.name.readable).toBe(true);
     expect(byKey.flag.readable).toBe(true);
-    for (const k of ["bad", "pts", "tpl", "hex", "sep"]) expect(byKey[k].readable).toBe(false);
+    expect(byKey.pts.readable).toBe(true);
+    for (const k of ["bad", "tpl", "hex", "sep"]) expect(byKey[k].readable).toBe(false);
     expect(byKey.bad.raw).toBe("13 / 3");
     // index points at the value inside the whole source
     expect(SRC.slice(byKey.bad.index, byKey.bad.index + 6)).toBe("13 / 3");
