@@ -109,6 +109,7 @@ export function makeCustom(node, params, { onChange, onCommit, info, custom = {}
     get(key = node.key) { return cloneValue(params[key]); },
 
     set(value, { key = node.key, commit = true } = {}) {
+      if (retired) return;
       if (!ownedKeys.includes(key)) {
         throw new TypeError(`custom control "${node.key}" may not write "${key}" — list it in \`keys\``);
       }
@@ -125,13 +126,14 @@ export function makeCustom(node, params, { onChange, onCommit, info, custom = {}
     },
 
     commit(keys = [node.key]) {
+      if (retired) return;
       const changed = keys.filter((k) => pending.has(k));
       if (!changed.length) return;
       for (const k of changed) pending.delete(k);
       onCommit?.(changed);
     },
 
-    setState(patch) { Object.assign(host.state, patch); },
+    setState(patch) { if (retired) return; Object.assign(host.state, patch); },
 
     // Element builder: SVG tags get the SVG namespace, `on<event>` attrs
     // become listeners (wrapped: a throw retires the widget), everything else
@@ -200,10 +202,13 @@ export function makeCustom(node, params, { onChange, onCommit, info, custom = {}
     if (typeof node.widget !== "function") throw new TypeError("`widget` is not a function");
     const r = node.widget(host);
     instance = r && typeof r === "object" ? r : null;
-    if (restoredState) instance?.update?.({ reason: "restore", disabled: host.disabled });
   });
 
   const update = (reason) => guarded("update", () => instance?.update?.({ reason, disabled: host.disabled }));
+
+  // Restoring panel state is not part of creation: a throw here is a bad
+  // `update`, not a bad `create` — the widget did construct successfully.
+  if (restoredState && !retired) update("restore");
 
   return {
     el: wrap,
@@ -211,8 +216,16 @@ export function makeCustom(node, params, { onChange, onCommit, info, custom = {}
     sync: () => update("sync"),
     onDerived: (derived) => {
       const next = derived ?? {};
-      const s = JSON.stringify(next);
       host.derived = next;
+      let s;
+      try {
+        s = JSON.stringify(next);
+      } catch {
+        // Not everything is stringifiable (a cycle, a BigInt). Treat that as
+        // "changed" rather than let it escape into panel.refresh().
+        update("derived");
+        return;
+      }
       if (s === lastDerived) return;
       lastDerived = s;
       update("derived");
@@ -221,7 +234,10 @@ export function makeCustom(node, params, { onChange, onCommit, info, custom = {}
     dispose: () => {
       for (const d of [...subPanels]) { try { d(); } catch { /* disposing anyway */ } }
       subPanels.clear();
-      if (retired) return;
+      // Attempted even when retired: a widget that already failed once (a
+      // throwing listener, say) still owns resources — timers, observers,
+      // an open sub-panel's DOM — that its own dispose() is the only code
+      // that knows how to release.
       try { instance?.dispose?.(); } catch (e) { report("dispose", errorText(e)); }
     },
   };

@@ -54,6 +54,7 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
 
   const panelErrors = [];         // {key, label, phase, message} from custom controls
   const customWidgets = new Map(); // param key -> { label, getState } for custom controls
+  const reportedStateDrops = new Set(); // keys already recorded as a dropped getState() — getState may be called many times
   // What a custom control's host reaches back into the panel for: the part's
   // own files (host.file), the state a previous mount left (host.state), the
   // error sink, and the sub-panel builder — a re-entry into buildControls with
@@ -402,12 +403,18 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
         const state = w.getState();
         if (!state || typeof state !== "object" || Object.keys(state).length === 0) continue;
         if (!isJsonValue(state, { maxBytes: Infinity })) {
-          customCtx.onError({ key, label: w.label, phase: "state", message: "panel state is not a JSON value; dropped" });
+          if (!reportedStateDrops.has(key)) {
+            reportedStateDrops.add(key);
+            customCtx.onError({ key, label: w.label, phase: "state", message: "panel state is not a JSON value; dropped" });
+          }
           continue;
         }
         const size = new TextEncoder().encode(JSON.stringify(state)).length;
         if (size > budget) {
-          customCtx.onError({ key, label: w.label, phase: "state", message: `panel state (${size} bytes) exceeds the ${PANEL_STATE_MAX_BYTES}-byte budget; dropped` });
+          if (!reportedStateDrops.has(key)) {
+            reportedStateDrops.add(key);
+            customCtx.onError({ key, label: w.label, phase: "state", message: `panel state (${size} bytes) exceeds the ${PANEL_STATE_MAX_BYTES}-byte budget; dropped` });
+          }
           continue;
         }
         budget -= size;

@@ -112,6 +112,46 @@ test("a listener installed through host.h that throws retires the widget with ph
   expect(update).not.toHaveBeenCalled();                  // retired: no more calls into widget code
 });
 
+test("a retired widget's host.set/commit/setState are silent no-ops", () => {
+  const r = root();
+  const params = { tiles: [] };
+  let dirty = 0; const commits = [];
+  let host;
+  const panel = buildControls(r, sec({ key: "tiles", type: "custom", widget: (h) => {
+    host = h;
+    h.el.append(h.h("button", { onclick: () => { throw new Error("boom"); } }, "go"));
+  } }), params, () => dirty++, (keys) => commits.push(keys));
+  r.querySelector(".pf-custom-slot button").click();
+  expect(panel.errors()[0]).toMatchObject({ phase: "event" });
+  expect(() => host.set([{ q: 9 }])).not.toThrow();
+  expect(() => host.commit(["tiles"])).not.toThrow();
+  expect(() => host.setState({ x: 1 })).not.toThrow();
+  expect(params.tiles).toEqual([]);
+  expect(dirty).toBe(0);
+  expect(commits).toEqual([]);
+});
+
+test("dispose is still attempted on a widget already retired by a listener throw", () => {
+  const r = root();
+  const dispose = vi.fn();
+  const panel = buildControls(r, sec({ key: "t", type: "custom", label: "T", widget: (h) => {
+    h.el.append(h.h("button", { onclick: () => { throw new Error("boom"); } }, "go"));
+    return { dispose };
+  } }), { t: [] }, () => {});
+  r.querySelector(".pf-custom-slot button").click();
+  expect(panel.errors()[0]).toMatchObject({ phase: "event" });
+  expect(() => panel.dispose()).not.toThrow();
+  expect(dispose).toHaveBeenCalledTimes(1);
+});
+
+test("a widget whose update throws on restore records phase update, not create", () => {
+  const r = root();
+  const update = vi.fn(({ reason }) => { if (reason === "restore") throw new Error("restore boom"); });
+  const panel = buildControls(r, sec({ key: "tiles", type: "custom", label: "Tiles", widget: () => ({ update }) }), { tiles: [] }, () => {}, undefined,
+    { panelState: { tiles: { selected: 1 } } });
+  expect(panel.errors()).toEqual([{ key: "tiles", label: "Tiles", phase: "update", message: "restore boom" }]);
+});
+
 test("host.h builds SVG in the SVG namespace, passes class/style through, and flattens children", () => {
   const r = root();
   let host;
@@ -185,6 +225,8 @@ test("getState skips empty state, drops oversize state with a recorded error", (
   b.setState({ ok: true });
   expect(panel.getState()).toEqual({ b: { ok: true } });
   expect(panel.errors()).toEqual([{ key: "a", label: "A", phase: "state", message: expect.stringMatching(/exceeds the 65536-byte budget/) }]);
+  panel.getState();                                        // a second call must not re-record the same drop
+  expect(panel.errors()).toHaveLength(1);
 });
 
 test("dispose calls the widget's dispose once and records a throw without propagating", () => {
