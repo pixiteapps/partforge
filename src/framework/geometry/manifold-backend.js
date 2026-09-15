@@ -19,6 +19,7 @@ import { creasedNormals } from "./creased-normals.js";
 import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
 import { meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
+import { SEGS, circleSegs } from "./circle-segs.js";
 import { checkBooleanResult } from "./boolean-gate.js";
 import { KernelCapabilityError } from "./errors.js";
 import { heightfieldMesh, hashGridData } from "./heightfield.js";
@@ -26,7 +27,10 @@ import { heightfieldMesh, hashGridData } from "./heightfield.js";
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
 // by the export path — Manifold meshing is cheap, so we tessellate generously).
-const SEGS = { preview: 116, print: 480 };       // circular segments
+// Full-circle segment counts live in circle-segs.js: preview is a flat SEGS.preview,
+// print sizes each circle by chord tolerance through circleSegs (floored at the
+// preview count, capped at SEGS.print). `segs` below is the tier's cap — the hash
+// key and the count handed to consumers that size themselves (mesh-fillet, loft).
 const TUBE = { preview: { stationsPerTurn: 38, ringSegs: 24 }, print: { stationsPerTurn: 160, ringSegs: 40 } };
 
 // true axis-angle rotation as a column-major 4x4 (manifold Mat4), translation 0
@@ -44,6 +48,9 @@ function axisAngleMat4(axis, deg) {
 export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const { Manifold, CrossSection } = wasm;
   const segs = SEGS[quality], tube = TUBE[quality];
+  // Per-radius count for every site that facets a circle it knows the radius of; the
+  // samplers behind prism/extrude/Shape2D take it as a function (profile.js).
+  const segsAt = (r) => circleSegs(r, quality);
 
   // Manifold/CrossSection are WASM objects with no garbage collection — every
   // primitive and boolean op allocates a new one. Track them all and free them
@@ -166,7 +173,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // on it in pure JS; no CrossSection is built until a shape is handed to a kernel op.
   // `extrude`/`revolve` are thunks because `kernel` below is defined after this.
   const shape2d = makeShape2dFactory({
-    segs,
+    segs: segsAt, // the readbacks (toRegions/simple) tessellate at the same per-radius LOD as the kernel ops
     extrude: (o) => kernel.extrude(o),
     revolve: (o) => kernel.revolve(o),
     recordWarning,
@@ -177,7 +184,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // once, and the cache's pin/dispose keeps the WASM object alive exactly as long as
   // the entry (cleanup() skips pinned objects).
   const csFor = (shape) => cache.lookup(h("cs2d", shape._hash, segs), () => {
-    const cs = T(CrossSection.ofPolygons(regionPolys(shape._regions, segs), "EvenOdd"));
+    const cs = T(CrossSection.ofPolygons(regionPolys(shape._regions, segsAt), "EvenOdd"));
     return { value: cs, pin: cs, dispose: () => cs.delete?.() };
   });
 
@@ -401,13 +408,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       if (typeof selector === "function") throw new KernelCapabilityError("fillet: function selectors need the OCCT backend");
       if (r === 0) return wrap(m, hash); // contract: zero magnitude is the identity
       return cached(h("fillet", hash, r, selector ?? null, segs), () =>
-        meshCadOp("fillet", m, () => meshFillet(kernel, wrap(m, hash), { r, edges: selector, segs })));
+        meshCadOp("fillet", m, () => meshFillet(kernel, wrap(m, hash), { r, edges: selector, segs, segsAt })));
     },
     _chamferRaw: (d, selector) => {
       if (typeof selector === "function") throw new KernelCapabilityError("chamfer: function selectors need the OCCT backend");
       if (d === 0) return wrap(m, hash);
       return cached(h("chamfer", hash, d, selector ?? null, segs), () =>
-        meshCadOp("chamfer", m, () => meshChamfer(kernel, wrap(m, hash), { d, edges: selector, segs })));
+        meshCadOp("chamfer", m, () => meshChamfer(kernel, wrap(m, hash), { d, edges: selector, segs, segsAt })));
     },
 
     // The AUTHOR-FACING ops degrade on failure instead of failing the build (the
@@ -628,14 +635,16 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   };
 
   const kernel = finishKernel({
-    cylinder: (rb, rt, h2, { center = false } = {}) =>
-      wrap(T(Manifold.cylinder(h2, rb, rt, segs, center)), h("cylinder", rb, rt, h2, center, segs)),
+    cylinder: (rb, rt, h2, { center = false } = {}) => {
+      const n = segsAt(Math.max(rb, rt)); // a cone is sized by its wider end
+      return wrap(T(Manifold.cylinder(h2, rb, rt, n, center)), h("cylinder", rb, rt, h2, center, n));
+    },
     // Compound op: hashed ATOMICALLY from its own args, so it is a single cache
     // node — its internal cylinders/cut are never retained. The template for
     // future compounds: build internals with T(), return the final tracked solid.
-    boredCylinder: ({ od, h: height, bore }) => cached(h("boredCylinder", od, height, bore, segs), () => {
-      const body = T(Manifold.cylinder(height, od / 2, od / 2, segs, false));
-      const tool0 = T(Manifold.cylinder(height + 4, bore / 2, bore / 2, segs, false));
+    boredCylinder: ({ od, h: height, bore }) => cached(h("boredCylinder", od, height, bore, segsAt(od / 2), segsAt(bore / 2)), () => {
+      const body = T(Manifold.cylinder(height, od / 2, od / 2, segsAt(od / 2), false));
+      const tool0 = T(Manifold.cylinder(height + 4, bore / 2, bore / 2, segsAt(bore / 2), false));
       const tool = T(tool0.translate([0, 0, -2])); // raw ops: track each result
       return T(body.subtract(tool));
     }),
@@ -644,19 +653,20 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // spec). Reuses loftMesh's stitch/cap/winding machinery. Atomic cache
     // node hashed from its own args, like boredCylinder.
     roundedBox: ({ size, center, round }) => cached(
-      h("roundedBox", size, center, round.side, round.top, round.bottom, segs),
+      h("roundedBox", size, center, round.side, round.top, round.bottom, segsAt(Math.max(round.side, round.top, round.bottom))),
       () => {
-        const solid = T(loftMesh(wasm, roundedBoxRings(size, round, segs)));
+        // One count serves every corner and rim arc, so it is sized for the largest.
+        const solid = T(loftMesh(wasm, roundedBoxRings(size, round, segsAt(Math.max(round.side, round.top, round.bottom)))));
         return center ? T(solid.translate([0, 0, -size[2] / 2])) : solid;
       }),
-    sphere: (r) => wrap(T(Manifold.sphere(r, segs)), h("sphere", r, segs)),
+    sphere: (r) => wrap(T(Manifold.sphere(r, segsAt(r))), h("sphere", r, segsAt(r))),
     box: (min, max) => {
       const cube = T(Manifold.cube([max[0] - min[0], max[1] - min[1], max[2] - min[2]]));
       return wrap(T(cube.translate(min)), h("box", min, max));
     },
     prism: (pts, height, { twist = 0, scaleTop = 1 } = {}) =>
       cached(h("prism", pts, height, twist, scaleTop, segs), () => {
-        const cs = T(CrossSection.ofPolygons([tessellateContour(pts, segs)]));
+        const cs = T(CrossSection.ofPolygons([tessellateContour(pts, segsAt)]));
         if (twist === 0 && scaleTop === 1) return T(cs.extrude(height));
         const nDiv = Math.max(1, Math.ceil(Math.abs(twist) / 5));
         // Manifold's extrude scaleTop is a Vec2 — a scalar is NOT broadcast (it scales
@@ -711,7 +721,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       const shape = profile && profile._shape2d ? profile : null;
       return cached(h("extrude", shape ? shape._hash : profile, height, twist, scaleTop, segs), () => {
         const cs = shape ? csFor(shape) : (() => {
-          const { outer, holes } = tessellateProfile(profile, segs);
+          const { outer, holes } = tessellateProfile(profile, segsAt);
           return T(CrossSection.ofPolygons([outer, ...holes], "EvenOdd"));
         })();
         if (twist === 0 && scaleTop === 1) return T(cs.extrude(height));
@@ -757,10 +767,26 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // opts.segs may only COARSEN below the kernel's quality (min), never exceed it:
     // callers use it where a small feature's sagitta bound needs fewer facets than
     // the per-circle quality would spend (mesh-fillet's free-standing corner arcs).
+    // Density around the axis: by default sized for the profile's outermost radius —
+    // the largest circle the revolve sweeps — through the tier's per-radius rule. An
+    // explicit `segs` is the caller's own sizing (mesh-fillet's blend tools compute
+    // theirs from a 1 µm sagitta bound and rely on getting exactly that count — the
+    // dephase and horn-containment arithmetic assume it), bounded only by the tier's
+    // cap: it may still never EXCEED kernel quality, but it is not re-bounded by the
+    // part-scale rule meant for circles nobody sized by hand.
     revolve: (pts, { degrees = 360, segs: segsOverride } = {}) => {
-      const density = Math.min(segs, segsOverride ?? segs);
-      if (pts && pts._shape2d)
-        return cached(h("revolve", pts._hash, degrees, density), () => T(csFor(pts).revolve(density, degrees)));
+      const densityFor = (maxR) => segsOverride != null ? Math.min(segs, segsOverride) : segsAt(maxR);
+      if (pts && pts._shape2d) {
+        // Keyed on the override, not the resolved density, so a cache hit never
+        // materializes the CrossSection just to measure its bounds.
+        return cached(h("revolve", pts._hash, degrees, segsOverride ?? null), () => {
+          const cs = csFor(pts);
+          const b = cs.bounds();
+          return T(cs.revolve(densityFor(Math.max(Math.abs(b.min[0]), Math.abs(b.max[0]))), degrees));
+        });
+      }
+      const maxR = Array.isArray(pts) ? pts.reduce((m, p) => Math.max(m, Math.abs(p?.[0] ?? 0)), 0) : 0;
+      const density = densityFor(maxR);
       return cached(h("revolve", pts, degrees, density), () => T(Manifold.revolve([pts], density, degrees)));
     },
     // A one-solid union is an identity — no new WASM / cache entry (avoids double-free):

@@ -670,8 +670,12 @@ function prismTool(k, chain, magnitude, mode, segs, pSegs = segs) {
 // closed-revolve dephase, which are about matching the neighboring tessellation and
 // must not follow the blend cap. `pSegs` is the sagitta-bounded density for the blend
 // cross-section itself (blendSegs above).
-function revolveTool(k, chain, magnitude, mode, segs, pSegs = segs) {
+function revolveTool(k, chain, magnitude, mode, segs, pSegs = segs, flankAt = () => segs) {
   const { O, w, u0, v0, R, span, closed, n1, n2, convex } = chain;
+  // The count the flank's own circle was built at (see apply): the cap on a flat
+  // tier, the per-radius rule on print. Every "matching the neighbouring
+  // tessellation" figure below reads this, never `segs`.
+  const flankSegs = flankAt(R);
   // Seam-grazing guard. The edge circle passes through the flank tessellation's
   // VERTICES (circumradius) while its facets sit at the apothem, so a revolved
   // tool built exactly at R grazes every facet seam tangentially — Manifold
@@ -689,7 +693,7 @@ function revolveTool(k, chain, magnitude, mode, segs, pSegs = segs) {
   // and a radial knife-fin of wall survived both cutters, drawing a line along the
   // band (the label-backing bug). A synthetic corner arc measures nothing — its two
   // points span the whole corner, and its flanks are planes, not a tessellation.
-  const kernelSag = (R + magnitude) * (1 - Math.cos(Math.PI / segs));
+  const kernelSag = (R + magnitude) * (1 - Math.cos(Math.PI / flankSegs));
   let dip = 0;
   if (!chain.synthetic) {
     const pts = chain.points;
@@ -732,7 +736,7 @@ function revolveTool(k, chain, magnitude, mode, segs, pSegs = segs) {
   // with the flank's own tessellation of the same circle (the dephase note below).
   // A SYNTHETIC corner arc (cornerArcAt) is free-standing between planes, so its
   // angular density follows the same sagitta bound as the cross-section.
-  const aSegs = chain.synthetic ? cornerArcSegs(segs, R, magnitude) : segs;
+  const aSegs = chain.synthetic ? cornerArcSegs(segs, R, magnitude) : flankSegs;
   let tool = k.revolve(poly, { degrees, segs: aSegs });
   // pose: Z → w, then twist so the revolve's start azimuth (+X) lands on the
   // chain's start direction (backed off by the angular overshoot)
@@ -749,7 +753,7 @@ function revolveTool(k, chain, magnitude, mode, segs, pSegs = segs) {
   // vertex at every step (the degenerate-needle generator). Half a step lands
   // every crossing mid-facet. Partial arcs have a slightly different pitch
   // (degrees don't divide evenly) and never align in the first place.
-  const dephase = closed ? Math.PI / segs : 0;
+  const dephase = closed ? Math.PI / flankSegs : 0;
   const twist = Math.atan2(dot(w, cross(xImage, startDir)), dot(xImage, startDir)) + dephase;
   if (Math.abs(twist) > 1e-9) tool = tool.rotateAbout({ axis: w, deg: (twist * 180) / Math.PI });
   return tool.translate(O);
@@ -891,7 +895,7 @@ function weldChainPoints(pts, wallNs, closed) {
   return { pts: outP, wallNs: outW };
 }
 
-function planarTool(k, chain, magnitude, mode, segs, pSegs = segs, endTins = null) {
+function planarTool(k, chain, magnitude, mode, segs, pSegs = segs, endTins = null, flankAt = () => segs) {
   const { points, closed, convex, faceN } = chain;
   let { wallNs } = chain;
   let pts = closed ? points.slice(0, -1) : points;   // drop the duplicated closure point
@@ -1095,9 +1099,9 @@ function planarTool(k, chain, magnitude, mode, segs, pSegs = segs, endTins = nul
       tools.push(...buildStretch(path, wallNs[s % nSeg]));
     }
     for (const got of cornerArcs.values()) {
-      tools.push(revolveTool(k, got.arc, magnitude, mode, segs, pSegs));
+      tools.push(revolveTool(k, got.arc, magnitude, mode, segs, pSegs, flankAt));
       if (len(sub(got.vertex, got.arc.O)) - got.arc.R > 0.02 * magnitude)
-        tools.push(cornerHornTool(k, got, magnitude, segs));
+        tools.push(cornerHornTool(k, got, magnitude, segs, flankAt));
     }
     for (const piv of pivots) tools.push(reflexPivotTool(k, piv, magnitude, mode, segs, pSegs));
     return tools;
@@ -1211,7 +1215,7 @@ function cornerArcAt(vertex, f, tin1, tin2, wall1, wall2, len1, len2, magnitude,
 // of its step count, so its apothem ≥ R·cos(π/aSegs) > every horn vertex radius. The
 // cost is a micron-deep extra bite at the corner base, covered near the tangent lines
 // by the neighbors' own overshoot.
-function cornerHornTool(k, { vertex, f, arc }, magnitude, segs) {
+function cornerHornTool(k, { vertex, f, arc }, magnitude, segs, flankAt = () => segs) {
   const { O, w, u0, R, span } = arc;
   const delta = 0.02 * magnitude;
   const rH = R * Math.cos(Math.PI / cornerArcSegs(segs, R, magnitude)) - Math.min(1e-3, 0.02 * magnitude);
@@ -1488,7 +1492,7 @@ function roundSalientCorners(selected, magnitude) {
 // cube's outer walls land inside the material the edge cutters already remove,
 // so the only new surface is the octant. Non-orthogonal corners keep the mitre
 // — the safe, documented default.
-function cornerPatches(k, selected, r, segs) {
+function cornerPatches(k, selected, r, segs, flankAt = () => segs) {
   const byVertex = new Map();
   const push = (pt, dirOut) => {
     const key = pt.map((v) => Math.round(v * 1e4)).join(",");
@@ -1527,7 +1531,7 @@ function cornerPatches(k, selected, r, segs) {
     // is tangent to each flat face at a point and meets the edge-fillet
     // cylinders tangentially at the cube walls, and tessellated tangency
     // produces the same grazing-noise creases the edge tools guard against.
-    const bury = r * (1 - Math.cos(Math.PI / segs)) + 1e-3;
+    const bury = r * (1 - Math.cos(Math.PI / flankAt(r))) + 1e-3; // the kernel sphere below is built at flankAt(r)
     const inward = norm(add(add(e1, e2), e3));
     // corner block: cube spanned by the edge frame, oversized only outward
     let block = k.box({ min: [-dOut, -dOut, -dOut], max: [r, r, r] });
@@ -1554,8 +1558,17 @@ function cornerPatches(k, selected, r, segs) {
 export function meshFillet(k, solid, opts) { return apply(k, solid, "fillet", opts?.r, opts); }
 export function meshChamfer(k, solid, opts) { return apply(k, solid, "chamfer", opts?.d, opts); }
 
-function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg = 20 } = {}) {
+// `segs` is the kernel's per-circle CAP: it bounds the blend densities (blendSegs)
+// and is what every circle was built at on a flat tier. `segsAt(r)` is what a circle
+// of radius r was ACTUALLY built at — the print tier sizes circles by chord tolerance
+// (circle-segs.js), so a flank's facet pitch is no longer the cap. The three places
+// that reason about the neighbouring tessellation (revolveTool's seam-grazing sag and
+// closed-revolve dephase, cornerHornTool's sphere burial) ask it; everything sized
+// from the blend's own sagitta bound keeps the cap. Absent, it is the cap — the
+// pre-print-rule behaviour, and byte-identical at preview either way.
+function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg = 20, segsAt = null } = {}) {
   if (!(magnitude > 0)) throw new Error(`mesh ${mode}: magnitude must be > 0`);
+  const flankAt = segsAt ?? (() => segs);
   const chains = chainEdges(detectSharpEdges(solid.toIndexedMesh(), { sharpDeg }));
   const selected = chains.filter((ch) => matchesSelector(ch, edges));
   if (!selected.length) throw new UnsupportedEdgeError(`${mode} selector matched no sharp edges`);
@@ -1597,13 +1610,15 @@ function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg
   const pSegs = blendSegs(segs, magnitude);
   const toolsFor = (ch) =>
     ch.kind === "planar"
-      ? planarTool(k, ch, magnitude, mode, segs, pSegs, endTins)
-      : [(ch.kind === "arc" ? revolveTool : prismTool)(k, ch, magnitude, mode, segs, pSegs)];
+      ? planarTool(k, ch, magnitude, mode, segs, pSegs, endTins, flankAt)
+      : ch.kind === "arc"
+        ? [revolveTool(k, ch, magnitude, mode, segs, pSegs, flankAt)]
+        : [prismTool(k, ch, magnitude, mode, segs, pSegs)];
   const cutters = [...effective, ...arcs].filter((ch) => ch.convex).flatMap(toolsFor);
-  cutters.push(...horns.map((h) => cornerHornTool(k, h, magnitude, segs)));
+  cutters.push(...horns.map((h) => cornerHornTool(k, h, magnitude, segs, flankAt)));
   cutters.push(...pivots.map((p) => reflexPivotTool(k, p, magnitude, mode, segs, pSegs)));
   const fillers = effective.filter((ch) => !ch.convex).flatMap(toolsFor);
-  if (mode === "fillet") cutters.push(...cornerPatches(k, effective, magnitude, segs));
+  if (mode === "fillet") cutters.push(...cornerPatches(k, effective, magnitude, segs, flankAt));
   let out = solid;
   if (cutters.length) out = out.cutAll(cutters);
   if (fillers.length) out = k.union([out, ...fillers]);

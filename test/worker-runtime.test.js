@@ -4,9 +4,12 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { runWorker } from "../src/framework/worker.js";
 
+// A metre-wide cylinder: the print tier sizes circles by chord tolerance (circle-segs.js)
+// and a small radius facets identically at both tiers, so only a circle past the cap
+// radius (~467 mm) still shows the 116 → 480 gap this test tells the kernels apart by.
 const part = {
   defaults: {}, views: { v: { label: "V" } },
-  parts: { a: { views: ["v"], build: (k) => k.cylinder({ r: 5, h: 10 }) } },
+  parts: { a: { views: ["v"], build: (k) => k.cylinder({ r: 500, h: 10 }) } },
 };
 
 afterEach(() => { delete globalThis.self; delete globalThis.postMessage; });
@@ -38,7 +41,7 @@ test("the manifold worker picks its kernel from msg.quality, not the job type", 
     return d;
   }, { timeout: 30_000 });
   const [preview, print] = downloads.map(stlTriangles);
-  expect(print).toBeGreaterThan(preview * 3); // print tessellates ~4× finer than preview
+  expect(print).toBeGreaterThan(preview * 3); // at the cap radius print tessellates ~4× finer than preview
 });
 
 test("the occt worker announces ready at startup, before its kernel boots", () => {

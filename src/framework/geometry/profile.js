@@ -79,13 +79,16 @@ export function arcGeometry(p0, via, p1) {
 // three points; the sweep direction is the one whose arc actually passes through `via`
 // (sign-free, winding-free). Facet count scales with the sweep's fraction of the kernel's
 // full-circle resolution `segs`, matching the piePolygon/circleProfile convention, so an
-// arc and a circleProfile of equal radius facet identically. A degenerate (collinear)
-// triple falls back to a single straight segment to p1 — the same "plain line" the OCCT
-// side gets when roundedProfile emits no `via`.
+// arc and a circleProfile of equal radius facet identically. `segs` is either that count
+// or a function of the arc's radius returning one — the mesh backend's print tier sizes
+// circles by chord tolerance (circle-segs.js) and hands the samplers the rule rather
+// than a number. A degenerate (collinear) triple falls back to a single straight segment
+// to p1 — the same "plain line" the OCCT side gets when roundedProfile emits no `via`.
 export function sampleArc(p0, via, p1, segs) {
   const g = arcGeometry(p0, via, p1);
   if (!g) return [[p1[0], p1[1]]];                        // collinear → straight line
-  const steps = Math.max(2, Math.ceil((segs * Math.abs(g.dA)) / (2 * Math.PI)));
+  const n = typeof segs === "function" ? segs(g.r) : segs;
+  const steps = Math.max(2, Math.ceil((n * Math.abs(g.dA)) / (2 * Math.PI)));
   const out = [];
   for (let s = 1; s <= steps; s++) {
     const ang = g.a0 + g.dA * (s / steps);
@@ -102,8 +105,26 @@ export function sampleArc(p0, via, p1, segs) {
 // cubic tracing a circular arc facets like the arc primitive at the same segs. Summing
 // |turn| at BOTH interior control points also catches S-curves a pure endpoint-tangent
 // test would miss. Depth cap guarantees termination. Pure in (args, segs).
+//
+// `segs` may be a function of radius (see sampleArc). A cubic has no single radius, so
+// the budget is decided per sub-curve from the radius it traces, recovered from its
+// chord c and turn t as the circle on which a chord c subtends t: r = c / (2·sin(t/2)).
+// That is EXACT for a circular arc. For any other cubic the control polygon's turn t
+// overstates the curve's, so r errs small and the count errs LOW — a slightly coarser
+// budget, not a finer one. The bias is bounded by the ratio of polygon turn to curve
+// turn, which the recursion drives to 1 as the pieces shrink, and at the turns that
+// pass (≤ 2π/116) it is under 0.02 % of the count. A cubic tracing a circle of radius
+// r therefore facets like the arc primitive of radius r under the same rule.
 export function sampleBezier(p0, c1, c2, p1, segs) {
-  const maxTurn = (2 * Math.PI) / Math.max(3, segs);
+  const segsAt = typeof segs === "function" ? segs : null;
+  const flatTurn = segsAt ? null : (2 * Math.PI) / Math.max(3, segs);
+  const maxTurnFor = (a, d, t) => {
+    if (!segsAt) return flatTurn;
+    const chord = Math.hypot(d[0] - a[0], d[1] - a[1]);
+    const half = Math.sin(t / 2);                    // t ≤ 2π here: two turns of ≤ π each
+    const r = half > 1e-9 ? chord / (2 * half) : Infinity; // straight (t ≈ 0): the cap, and t ≤ budget anyway
+    return (2 * Math.PI) / Math.max(3, segsAt(r));
+  };
   const out = [];
   const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
   const turn = (u, v) => {
@@ -117,7 +138,8 @@ export function sampleBezier(p0, c1, c2, p1, segs) {
     const ab = [b[0] - a[0], b[1] - a[1]];
     const bc = [c[0] - b[0], c[1] - b[1]];
     const cd = [d[0] - c[0], d[1] - c[1]];
-    if (depth >= 12 || turn(ab, bc) + turn(bc, cd) <= maxTurn) { out.push([d[0], d[1]]); return; }
+    const t = turn(ab, bc) + turn(bc, cd);
+    if (depth >= 12 || t <= maxTurnFor(a, d, t)) { out.push([d[0], d[1]]); return; }
     const p01 = mid(a, b), p12 = mid(b, c), p23 = mid(c, d);
     const p012 = mid(p01, p12), p123 = mid(p12, p23), m = mid(p012, p123);
     recurse(a, p01, p012, m, depth + 1);
