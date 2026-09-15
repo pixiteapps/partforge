@@ -382,6 +382,48 @@ button.ghost { background: transparent; border: 1px solid var(--pf-border); colo
 button.ghost:hover:not(:disabled) { background: var(--pf-surface-2); }
 button.action:disabled { opacity: .5; cursor: default; }
 
+/* Custom controls (type: "custom"): a part-authored widget in the rail. The
+   slot inherits the rail's cascade (font, colours, --pf-* tokens); these rules
+   give BARE elements the built-in controls' look so a widget written with
+   plain <button>/<input>/<select> still reads as native, and provide two
+   opt-in classes for SVG: .pf-hit (a clickable region) and .pf-drag (a
+   dragged one — touch-action: none is what lets a finger drag it on a phone
+   instead of scrolling the sheet). */
+.pf-custom { margin: 9px 0; }
+.pf-custom.hidden { display: none; }
+.pf-custom-slot { display: flow-root; }
+.pf-custom svg { display: block; max-width: 100%; height: auto; }
+.pf-custom button {
+  font: inherit; font-size: 12px; padding: 5px 9px; cursor: pointer;
+  background: transparent; border: 1px solid var(--pf-border); color: var(--pf-text-2);
+  border-radius: var(--pf-radius-control);
+}
+.pf-custom button:hover:not(:disabled) { background: var(--pf-surface-2); }
+.pf-custom button:disabled { opacity: .5; cursor: default; }
+.pf-custom input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+.pf-custom select {
+  font: 12px/1.4 var(--pf-mono);
+  background: var(--pf-input-bg); color: var(--pf-text-strong);
+  border: 1px solid var(--pf-border); border-radius: var(--pf-radius-control); padding: 6px 8px;
+}
+.pf-custom input:focus, .pf-custom select:focus, .pf-custom button:focus-visible {
+  outline: none; border-color: var(--pf-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
+}
+.pf-custom .pf-hit { cursor: pointer; }
+.pf-custom .pf-hit:hover { fill: color-mix(in oklab, var(--pf-accent) 25%, transparent); }
+.pf-custom .pf-hit.selected { fill: color-mix(in oklab, var(--pf-accent) 45%, transparent); stroke: var(--pf-accent); }
+.pf-custom .pf-drag { touch-action: none; }
+.pf-custom-error {
+  margin: 4px 0; padding: 6px 8px; border: 1px solid var(--pf-err); border-radius: var(--pf-radius-control);
+  color: var(--pf-err); font-family: var(--pf-mono); font-size: 11px; line-height: 1.4; word-break: break-word;
+}
+.pf-custom-error-title { font-weight: 600; margin-bottom: 2px; }
+/* A sub-panel inside a custom control (host.controls): no header, no indent. */
+.section.bare > .sec-body { padding: 0; }
+.section.bare { padding: 0; border: 0; }
+.section ~ .section.bare { border-top: 0; margin-top: 0; padding-top: 0; }
+
 .dl { margin-top: 14px; }
 .dl-head {
   font-family: var(--pf-mono); font-size: 10px; font-weight: 600;
