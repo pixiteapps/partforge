@@ -400,14 +400,14 @@ button.action:disabled { opacity: .5; cursor: default; }
    like .text-input (0,1,0) or .row .num (0,2,0). At true zero specificity,
    any class rule wins, so a named built-in class (.seg button, .text-input,
    select.select-input, …) always beats these bare-element defaults. */
-:where(.pf-custom) svg { display: block; max-width: 100%; height: auto; }
-:where(.pf-custom) button {
+:where(.pf-custom) :where(svg) { display: block; max-width: 100%; height: auto; }
+:where(.pf-custom) :where(button) {
   font: inherit; font-size: 12px; padding: 5px 9px; cursor: pointer;
   background: transparent; border: 1px solid var(--pf-border); color: var(--pf-text-2);
   border-radius: var(--pf-radius-control);
 }
-:where(.pf-custom) button:hover:not(:disabled) { background: var(--pf-surface-2); }
-:where(.pf-custom) button:disabled { opacity: .5; cursor: default; }
+:where(.pf-custom) :where(button:hover:not(:disabled)) { background: var(--pf-surface-2); }
+:where(.pf-custom) :where(button:disabled) { opacity: .5; cursor: default; }
 :where(.pf-custom) :where(input:not([type="range"]):not([type="checkbox"]):not([type="radio"]), select) {
   font: 12px/1.4 var(--pf-mono);
   background: var(--pf-input-bg); color: var(--pf-text-strong);
