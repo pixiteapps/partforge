@@ -256,6 +256,57 @@ export interface ViewerState {
   cutaway: CutawayState | null;
 }
 
+/** Custom controls' transient state, keyed by the param each control owns. Plain JSON. */
+export type PanelState = Record<string, Record<string, unknown>>;
+
+export interface PanelError {
+  /** The param the failing control owns. */
+  key: string;
+  label: string;
+  phase: "create" | "update" | "event" | "dispose" | "state";
+  message: string;
+}
+
+/** What a `type: "custom"` control's `widget(host)` receives. */
+export interface CustomControlHost {
+  /** The slot to draw into, inside the rail. */
+  el: HTMLElement;
+  doc: Document;
+  /** The param this control owns. */
+  key: string;
+  /** A structured clone of the current value of `key` (default: the owned key). */
+  get(key?: string): unknown;
+  /**
+   * Replace a value. Refused (throws TypeError) for a key the control does not
+   * own or a value outside the contract (owned key: a JSON value; `keys`: a
+   * scalar). Stores a clone, schedules a rebuild, and commits unless
+   * `commit: false` — then call `commit()` when the gesture ends.
+   */
+  set(value: unknown, opts?: { key?: string; commit?: boolean }): void;
+  commit(keys?: string[]): void;
+  /** The latest `derive()` output. */
+  derived: Record<string, unknown>;
+  /** Transient JSON state that survives a remount; never a param. */
+  state: Record<string, unknown>;
+  setState(patch: Record<string, unknown>): void;
+  /** Mount built-in controls bound at `path` inside the owned value. Returns a disposer. */
+  controls(container: HTMLElement, controls: import("./part.js").PanelEntry[], opts?: { path?: string }): () => void;
+  /** Element builder; SVG tags get the SVG namespace, `on*` attrs become listeners. */
+  h(tag: string, attrs?: Record<string, unknown>, ...children: unknown[]): Element;
+  /** Parse an SVG string to its root element, or null. */
+  svg(text: string): SVGSVGElement | null;
+  /** Render a partforge-vector document to an inline `<svg>`, or null. */
+  svgFromVector(doc: unknown): SVGSVGElement | null;
+  /** Text of one of the part's own files, by path or `pfc-tree://` token, or null. */
+  file(pathOrToken: string): string | null;
+  readonly disabled: boolean;
+}
+
+export interface CustomControlInstance {
+  update?(ctx: { reason: "sync" | "derived" | "restore"; disabled: boolean }): void;
+  dispose?(): void;
+}
+
 export interface ExportPartsOptions {
   /** Sub-part names, as `listExportableParts()` reports them. */
   parts: string[];
