@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { WIDGET_SPECS, WIDGET_TYPES, specFor, fieldsFor } from "../../../src/framework/panel/widget-specs.js";
 
 test("the registry covers exactly the types this phase supports", () => {
-  expect(WIDGET_TYPES.sort()).toEqual(["checkbox", "font", "image", "number", "radio", "readout", "select", "slider", "text", "textarea", "vector"]);
+  expect(WIDGET_TYPES.sort()).toEqual(["checkbox", "custom", "font", "image", "number", "radio", "readout", "select", "slider", "text", "textarea", "vector"]);
 });
 
 test("every spec declares a kind and a non-empty field list", () => {
@@ -23,6 +23,12 @@ test("every numeric type accepts the legacy control fields", () => {
 test("checkbox accepts the legacy toggle and feature fields", () => {
   for (const f of ["key", "label", "on", "hidden", "description"]) {
     expect(fieldsFor("checkbox"), `checkbox is missing "${f}"`).toContain(f);
+  }
+});
+
+test("custom accepts widget and keys beside the common fields", () => {
+  for (const f of ["key", "type", "label", "description", "hidden", "when", "whenFalse", "widget", "keys"]) {
+    expect(fieldsFor("custom"), `custom is missing "${f}"`).toContain(f);
   }
 });
 

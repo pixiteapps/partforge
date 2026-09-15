@@ -12,12 +12,17 @@
 // closure (test/lint-purity.test.js) so lintPart keeps running in Node, the
 // browser sandbox iframe, and Deno.
 //
+// The one exception is json-value.js, which itself imports nothing — the
+// shared predicate for a `type: "custom"` control's value.
+//
 // KNOWN BLIND SPOT — regex literals are not tokenized: a `/[/*]/` or `/x\/y/`
 // reads as a comment opener and can blank the rest of the file, and a regex
 // containing a quote can likewise derail string skipping.
 // It is parity-correct (the cloud rewriter has the same gap) and fails toward
 // FALSE NEGATIVES — a derailed scan finds no defaults literal and no tokens,
 // so a rule says nothing rather than something wrong.
+
+import { isJsonValue, CUSTOM_VALUE_MAX_DEPTH } from "../panel/json-value.js";
 
 // Span of the object literal after the first `defaults:` key (indices into
 // `source`, end exclusive, covering `{...}`). String- and comment-aware so a
@@ -191,8 +196,9 @@ function decodeStringLiteral(raw) {
 // into a different spelling of themselves.
 const NUMBER_RE = /^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 
-// One value's source text → { value }, or null when it is not a primitive
-// literal this module can read AND write back.
+// One value's source text → { value }, or null when it is not a literal this
+// module can read AND write back. Primitives first; then the JSON-literal
+// grammar a `type: "custom"` control's value is written in.
 function readValue(raw) {
   if (raw === "true") return { value: true };
   if (raw === "false") return { value: false };
@@ -205,6 +211,7 @@ function readValue(raw) {
     const s = decodeStringLiteral(raw);
     return s === null ? null : { value: s };
   }
+  if (q === "[" || q === "{") return readJsonLiteral(raw);
   return null;
 }
 
@@ -218,6 +225,113 @@ function readKey(text, i, end) {
   }
   const m = /^[A-Za-z_$][\w$]*/.exec(text.slice(i, end));
   return m ? { key: m[0], next: i + m[0].length } : null;
+}
+
+// --- JSON literals ----------------------------------------------------------
+//
+// The grammar a custom control's owned value is spelled in inside `defaults`:
+// object and array literals of primitives, nested; bare or quoted keys; JS
+// string escapes (the same decoder as above); decimal numbers; true/false;
+// trailing commas; whitespace. NOTHING else — no comments inside the span, no
+// expressions, identifiers, templates, `null`, computed keys, spreads — so
+// every value this reads, writeJsonLiteral can write back and this can read
+// again. A parse failure is null, never a throw: the entry simply stays
+// unreadable, exactly as an expression does.
+//
+// `depth` is threaded through value/array/object and checked BEFORE
+// recursing into a container, so pathological nesting (thousands of `[`)
+// fails fast during parsing instead of blowing the JS call stack — a
+// RangeError would escape readJsonLiteral's try/catch (it only catches
+// JsonLiteralError) and reach a host outside runRules' own try/catch. The
+// threshold matches json-value.js's own depth check exactly (same "depth at
+// which this container sits" numbering), so this is a fast-fail that agrees
+// with the post-parse isJsonValue call below, never a stricter or looser one.
+
+class JsonLiteralError extends Error {}
+
+function jsonParser(text) {
+  let i = 0;
+  const fail = () => { throw new JsonLiteralError(); };
+  const ws = () => { while (i < text.length && /\s/.test(text[i])) i++; };
+  const value = (depth = 0) => {
+    ws();
+    const c = text[i];
+    if (c === "{") return object(depth);
+    if (c === "[") return array(depth);
+    if (c === '"' || c === "'") {
+      const end = skipQuoted(text, i, text.length);
+      const s = decodeStringLiteral(text.slice(i, end));
+      if (s === null) fail();
+      i = end;
+      return s;
+    }
+    const m = /^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/.exec(text.slice(i));
+    if (m) { i += m[0].length; const n = Number(m[0]); if (!Number.isFinite(n)) fail(); return n; }
+    if (text.startsWith("true", i)) { i += 4; return true; }
+    if (text.startsWith("false", i)) { i += 5; return false; }
+    return fail();
+  };
+  const array = (depth) => {
+    if (depth >= CUSTOM_VALUE_MAX_DEPTH) fail();
+    i++; // [
+    const out = [];
+    for (;;) {
+      ws();
+      if (text[i] === "]") { i++; return out; }
+      if (out.length) { if (text[i] !== ",") fail(); i++; ws(); if (text[i] === "]") { i++; return out; } }
+      out.push(value(depth + 1));
+    }
+  };
+  const object = (depth) => {
+    if (depth >= CUSTOM_VALUE_MAX_DEPTH) fail();
+    i++; // {
+    const out = {};
+    let n = 0;
+    for (;;) {
+      ws();
+      if (text[i] === "}") { i++; return out; }
+      if (n) { if (text[i] !== ",") fail(); i++; ws(); if (text[i] === "}") { i++; return out; } }
+      const k = readKey(text, i, text.length);
+      if (!k) fail();
+      i = k.next;
+      ws();
+      if (text[i] !== ":") fail();
+      i++;
+      const v = value(depth + 1);
+      Object.defineProperty(out, k.key, { value: v, enumerable: true, writable: true, configurable: true });
+      n++;
+    }
+  };
+  return { value, done: () => { ws(); return i === text.length; } };
+}
+
+// An array or object literal's source text → { value }, or null. Applies the
+// custom-value caps (json-value.js) so a literal lint accepts is one the panel
+// would accept too.
+export function readJsonLiteral(text) {
+  if (typeof text !== "string") return null;
+  const first = text.trimStart()[0];
+  if (first !== "[" && first !== "{") return null;
+  try {
+    const p = jsonParser(text);
+    const v = p.value();
+    if (!p.done()) return null;
+    return isJsonValue(v) ? { value: v } : null;
+  } catch (e) {
+    if (e instanceof JsonLiteralError) return null;
+    throw e;
+  }
+}
+
+// The source text for a JSON value being written into `defaults`: compact
+// when it fits on a line, else indented two spaces deeper than the entry's
+// own indentation (`indent`, the whitespace before the entry's key) so a large
+// layout diffs line by line. Always plain JSON — quoted keys — so the reader
+// above accepts it unchanged.
+export function writeJsonLiteral(value, { indent = "" } = {}) {
+  const compact = JSON.stringify(value);
+  if (compact.length <= 80) return compact;
+  return JSON.stringify(value, null, 2).replace(/\n/g, `\n${indent}`);
 }
 
 // Split `{ … }` into entries in source order. `readable` says whether the

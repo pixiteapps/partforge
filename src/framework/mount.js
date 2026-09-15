@@ -63,7 +63,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): animations are
@@ -101,6 +101,14 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
       projection: viewer.getProjection?.() ?? "perspective",
       cutaway: viewer.getCutawayState?.() ?? null,
     }),
+    // Every custom control's transient state (selection, a scroll position),
+    // keyed by param, as plain JSON — the panel's twin of getViewerState. Hand
+    // it back as mount()'s `panelState` and a remount comes up with the same
+    // tile selected. {} when the mount resolved no panel.
+    getPanelState: getPanelState ?? (() => ({})),
+    // What custom controls reported failing this mount ({key, label, phase,
+    // message}), for a host to relay to whoever authored the part.
+    getPanelErrors: getPanelErrors ?? (() => []),
     // Park/unpark the viewer: stops the render loop and frees the drawing
     // buffer and the cached capture target. For an embedder that hides the
     // canvas without unmounting it — `visibility: hidden`, an off-screen tab —
@@ -305,6 +313,13 @@ function createCleanupStack() {
 //                                         // first mount — the viewer then restores its own persisted
 //                                         // camera as before. Restore is best-effort per field: a pose
 //                                         // this part cannot support is dropped, never fatal.
+// panelState: PanelState                 // a previous mount's runtime.getPanelState(): the transient
+//                                         // state of the part's custom controls (a selected tile), keyed
+//                                         // by param. Same remount story as viewerState; omit on a first
+//                                         // mount. Never persisted by partforge.
+// files: { [path]: string }              // the part's own source tree as text, for custom controls'
+//                                         // host.file(path) — an SVG or a vector document that lives
+//                                         // beside the code. Omit and host.file answers null.
 // annotateSend: "viewbar" | "host"       // who owns the Send affordance. "viewbar" (default) puts
 //                                         // Send in the sketch toolbar alongside the other tools.
 //                                         // "host" drops it: the host draws its own send control —
@@ -331,6 +346,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
                               imageCatalog,
                               onAssetUpload,
                               viewerState,
+                              files, panelState,
                               annotateSend = "viewbar",
                               container: legacyContainer, controls: legacyControls } = {}) {
   // --- element resolution (the only getElementById calls in the framework, save the ?pickserver client's optional #viewbar lookup) ----
@@ -1017,7 +1033,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       // showing the bundled default instead of an empty tile. Rebuilt per panel
       // build, because the declaration is a function of the current params.
       { fontCatalog, imageCatalog, onAssetUpload,
-        declaredSource: declaredSourceLookup(part, params) });
+        declaredSource: declaredSourceLookup(part, params),
+        files, panelState });
     cleanup.defer(() => panel.dispose());
     panelRef = panel;
     const updateRelevance = () => {
@@ -1194,6 +1211,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       getView: view,                         // () => tabsCtl.current()
       setView: (name) => tabsCtl.select(name),
       captureView,
+      getPanelState: () => panelRef?.getState() ?? {},
+      getPanelErrors: () => panelRef?.errors() ?? [],
       listExportableParts: () =>
         exportablePartNames(part, params).map((name) => ({ name, label: partLabel(part, name) })),
       exportParts: (opts) => exportCtl.exportParts(opts),

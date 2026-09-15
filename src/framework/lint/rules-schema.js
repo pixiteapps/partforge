@@ -4,6 +4,7 @@
 // resolve against `defaults`, which produce a control that silently does nothing.
 import { err, warn } from "./finding.js";
 import { suggest } from "../geometry/op-options.js";
+import { jsonValueProblem } from "../panel/json-value.js";
 import { fieldsFor, authorFieldsFor, WIDGET_TYPES, GROUP_FIELDS, PRESET_FIELDS, SECTION_FIELDS, normalizeOptions } from "../panel/widget-specs.js";
 import { sectionRenders, desugar } from "../panel/legacy.js";
 import { buildTree, WHEN_OPS } from "../panel/model.js";
@@ -253,6 +254,9 @@ export const SCHEMA_RULES = [
       const defaults = part.defaults;
       return collectDescriptors(part)
         .filter(({ container }) => !container)
+        // A custom control's OWN key may hold a JSON value; custom-default-not-json
+        // (below) is its rule. Its `keys` stay under this one via their own controls.
+        .filter(({ d }) => d.type !== "custom")
         .filter(({ d }) => typeof d.key === "string" && Object.hasOwn(defaults, d.key))
         .filter(({ d }) => !isEditableValue(defaults[d.key]))
         .map(({ d, path }) => err("control-default-not-primitive",
@@ -622,6 +626,58 @@ export const SCHEMA_RULES = [
             `parameters[${si}]`));
         }
       });
+      return out;
+    },
+  },
+  {
+    // The whole feature is the function: a missing or non-function `widget`
+    // renders the error card in the rail and nothing else, every time.
+    id: "custom-control-widget-not-function",
+    run: ({ part }) => collectDescriptors(part)
+      .filter(({ container, authored, d }) => authored && !container && d.type === "custom" && typeof d.widget !== "function")
+      .map(({ d, path }) => err("custom-control-widget-not-function",
+        `custom control "${d.key}" has no \`widget\` function`,
+        "Set `widget` to a function `(host) => …` — usually imported from a sibling file of the part — that draws into `host.el`. See \"Custom controls\" in AUTHORING-PARTS.md.",
+        `${path}.widget`)),
+  },
+  {
+    // The one relaxation of control-default-not-primitive: a custom control's
+    // key may hold a JSON value (json-value.js), and nothing else — a host that
+    // persists panel settings writes it back as a JSON literal.
+    id: "custom-default-not-json",
+    run: ({ part }) => {
+      if (!isPlainObject(part?.defaults)) return [];
+      const defaults = part.defaults;
+      return collectDescriptors(part)
+        .filter(({ container, authored, d }) => authored && !container && d.type === "custom")
+        .filter(({ d }) => typeof d.key === "string" && Object.hasOwn(defaults, d.key))
+        .map(({ d }) => ({ d, problem: jsonValueProblem(defaults[d.key]) }))
+        .filter(({ problem }) => problem !== null)
+        .map(({ d, problem }) => err("custom-default-not-json",
+          `\`defaults.${d.key}\` ${problem}`,
+          `Give "${d.key}" a JSON value: numbers, strings, booleans, arrays and plain objects of those, at most 16 KB and 8 levels deep, with no null. A custom control stores and persists its value as JSON, so anything else is silently lost on reload.`,
+          `defaults.${d.key}`));
+    },
+  },
+  {
+    // `keys` are params the widget writes besides its own; each needs a
+    // default or the write lands on a key the build never reads.
+    id: "custom-keys-not-in-defaults",
+    run: ({ part }) => {
+      if (!isPlainObject(part?.defaults)) return [];
+      const known = defaultKeys(part);
+      const out = [];
+      for (const { d, path, container, authored } of collectDescriptors(part)) {
+        if (!authored || container || d.type !== "custom" || !Array.isArray(d.keys)) continue;
+        d.keys.forEach((k, i) => {
+          if (typeof k === "string" && known.has(k)) return;
+          const hint = typeof k === "string" ? suggest(k, [...known]) : null;
+          out.push(err("custom-keys-not-in-defaults",
+            `custom control "${d.key}" lists key "${k}", which is not in \`defaults\``,
+            `Add "${k}" to \`defaults\`${hint ? `, or correct it to "${hint}"` : ""} — a key the widget writes must exist for the build to read it.`,
+            `${path}.keys[${i}]`));
+        });
+      }
       return out;
     },
   },

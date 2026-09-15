@@ -58,7 +58,7 @@ export interface PartMeta {
 export type ControlKind = "slider" | "number" | "text" | "textarea";
 
 /** Every control type the panel can render. */
-export type ControlType = "slider" | "number" | "text" | "textarea" | "checkbox" | "select" | "radio";
+export type ControlType = "slider" | "number" | "text" | "textarea" | "checkbox" | "select" | "radio" | "font" | "image" | "vector" | "custom";
 
 /** A declarative visibility condition, evaluated against raw parameters. */
 export type WhenCondition =
@@ -94,6 +94,15 @@ export interface PanelControlEntry {
   snap?: boolean;
   /** slider: [lo, hi] band drawn on the track; outside it the value box takes a warning tint. */
   recommended?: [number, number];
+  /**
+   * custom: the widget function. Called once per mount with a host object
+   * (see `CustomControlHost` in index.d.ts); draws into `host.el`. The key
+   * this control owns may hold a JSON value (arrays and plain objects of
+   * primitives, ≤16 KB, depth ≤8).
+   */
+  widget?: (host: import("./index.js").CustomControlHost) => import("./index.js").CustomControlInstance | void;
+  /** custom: further scalar params the widget may write besides `key`. */
+  keys?: string[];
   hidden?: boolean;
   when?: WhenCondition;
   whenFalse?: "disable";
