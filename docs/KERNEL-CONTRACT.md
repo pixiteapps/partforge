@@ -375,7 +375,12 @@ Normative signatures: `kernel.js`'s `@typedef Solid`.
 
 `quality` (`"preview"` | `"print"`) is **advisory**: it trades tessellation density for
 speed and a backend may bake it at kernel creation (Manifold does). A part must never
-depend on triangle counts, segment counts, or normals being present.
+depend on triangle counts, segment counts, or normals being present. The in-repo
+backends both define `print` as a **chord tolerance of 0.01 mm** (OCCT's linear
+deflection; Manifold's per-circle segment rule in `geometry/circle-segs.js`, floored at
+the preview's 116 segments so print is never coarser than preview and capped at 480), so
+a small feature costs the export exactly what its preview cost — the property that makes
+"if it previews, it exports" hold. Preview is a flat 116 on Manifold, a visual choice.
 
 ### Shading intent (toMesh normals and edges)
 
@@ -554,8 +559,9 @@ curve-exact (they integrate the real curves; they do not measure a tessellation)
 so it is backend-identical too, like everything else in this list.
 
 **Lazy materialization.** Backend geometry is built only where it is unavoidable.
-Three readbacks tessellate to point rings at the backend's own LOD (Manifold 116
-preview / 480 print, OCCT 64): `toRegions()`, `simple()` (its unwrapped form), and
+Three readbacks tessellate to point rings at the backend's own LOD (Manifold 116 per
+circle at preview and, at print, the fewest segments holding a 0.01 mm chord sagitta
+between 116 and 480 — per arc, by its radius; OCCT 64): `toRegions()`, `simple()` (its unwrapped form), and
 `regions()` — scission currently round-trips through `toRegions()`, so each returned
 `Shape2D` is a faceted copy, not a curve-native slice of the original. `extrude` and
 `revolve` materialize the shape into the backend's own form instead (Manifold: a

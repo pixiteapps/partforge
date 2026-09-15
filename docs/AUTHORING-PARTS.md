@@ -3642,7 +3642,14 @@ symptom first** — it maps error text → cause → fix. The invariants, one li
   `slotPolygon`, `ringSectorPolygon` and `circleProfile`; mirror a symmetric half with
   `mirrorProfile`.
 - **Preview vs print quality:** Manifold bakes segment counts in at primitive creation,
-  so builds are quality-agnostic; the export path uses a separate high-res "print" kernel.
+  so builds are quality-agnostic; the export path uses a separate "print" kernel. Preview
+  facets every circle at 116 segments. Print sizes each circle by chord tolerance — the
+  fewest segments that keep the facet sagitta under 0.01 mm — never fewer than the
+  preview's 116 and never more than 480, so a small feature exports at exactly the density
+  you previewed and only circles wider than about 54 mm get finer. A part that previews
+  is a part that exports: the old flat 480 turned a 0.75 mm rivet into 115,200 triangles
+  and a body with a few hundred of them into an out-of-memory trap at export
+  ([export-kernel-out-of-memory](ERROR-PATTERNS.md#export-kernel-out-of-memory)).
 - **Display placement is view-independent**; only `place(..., { purpose: "export" })` may
   depend on `view` ([view-dependent-display-place](ERROR-PATTERNS.md#view-dependent-display-place)).
 - **Keep geometry backend-agnostic** (kernel calls only); only STEP requires OCCT
