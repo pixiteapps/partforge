@@ -58,6 +58,10 @@
       "types": "./types/ingest.d.ts",
       "default": "./src/ingest.js"
     },
+    "./panel-values": {
+      "types": "./types/panel-values.d.ts",
+      "default": "./src/panel-values.js"
+    },
     "./tokens.css": "./src/framework/tokens.css",
     "./chrome.css": "./src/framework/chrome.css"
   },
@@ -83,6 +87,9 @@
       ],
       "ingest": [
         "./types/ingest.d.ts"
+      ],
+      "panel-values": [
+        "./types/panel-values.d.ts"
       ]
     }
   },
