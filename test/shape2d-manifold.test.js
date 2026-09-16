@@ -47,16 +47,24 @@ test("an identical rebuilt shape hits the solid cache downstream (content hash)"
   k.endSubPart();
 });
 
-// The same shape used twice (extrude AND revolve) tessellates ONE CrossSection —
-// csFor memoizes it in the solid cache by shape hash + LOD.
-test("materialization is memoized: two kernel ops over one shape tessellate once", () => {
+// The same shape used twice by one op class tessellates ONE CrossSection — csFor
+// (extrude, prism) and csForLathe (revolve) each memoize theirs in the solid cache by
+// shape hash + LOD. The two classes deliberately do NOT share: a lathe profile's arcs
+// are sampled at the double-curvature count (circle-segs.js), an extrusion's at the
+// flat circle count, so the same shape revolved and extruded is two tessellations.
+test("materialization is memoized per op class: a shape used twice tessellates once", () => {
   k.beginSubPart("cs");
   k.resetCacheStats();
   const shape = k.shape2d(SQ(2, 0, 6));
   k.extrude({ profile: shape, h: 2 });
-  const before = k.cacheStats().hits;
+  const afterExtrude = k.cacheStats();
+  k.extrude({ profile: shape, h: 3 });                       // a different solid, the same CrossSection
+  expect(k.cacheStats().hits).toBeGreaterThan(afterExtrude.hits);
   k.revolve({ profile: shape, degrees: 360 });
-  expect(k.cacheStats().hits).toBeGreaterThan(before);
+  const afterRevolve = k.cacheStats();
+  expect(afterRevolve.misses).toBeGreaterThan(afterExtrude.misses); // its own lathe tessellation
+  k.revolve({ profile: shape, degrees: 180 });               // a different solid, the same lathe CrossSection
+  expect(k.cacheStats().hits).toBeGreaterThan(afterRevolve.hits);
   k.endSubPart();
 });
 

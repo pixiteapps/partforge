@@ -381,14 +381,20 @@ deflection; Manifold's per-circle segment rule in `geometry/circle-segs.js`, flo
 the preview's 116 segments so print is never coarser than preview and capped at 480), so
 a small feature costs the export exactly what its preview cost — the property that makes
 "if it previews, it exports" hold. Preview is a flat 116 on Manifold, a visual choice —
-with one exception: `sphere`, whose triangle count is quadratic in the segment count
-(8·(n/4)²), is sized by chord tolerance on BOTH tiers (`sphereSegs` in
+except for the DOUBLY-CURVED family, whose triangle count is quadratic in the segment
+count: `sphere` (8·(n/4)² triangles), a lathe's profile arcs (`revolve` of a
+`Shape2D`, so `torus`, `roundedCylinder` and any hand-drawn rounded profile — every
+arc sample becomes a full ring of the sweep) and a `roundedBox`'s corners (sphere
+octants). Those are sized by chord tolerance on BOTH tiers (`doubleCurvatureSegs` in
 `geometry/circle-segs.js`: 0.02 mm at preview, floored at 24 segments and capped at
 the flat 116; 0.01 mm at print, floored at the preview count, capped at 480). At the
-flat count a 0.75 mm rivet sphere was 6,728 triangles, and a part carrying a few
-hundred of them was a 2.7 GB preview build that phones could not survive; at the
-floor it is 288. Circles in extrusions, revolves and outlines keep the flat count,
-which the mesh fillet's arc gate and the roundAll fast path are tuned to.
+flat count a 0.75 mm rivet sphere was 6,728 triangles and an O-ring of that tube
+radius 27,376, and a part carrying a few hundred rivets was a 2.7 GB preview build
+that phones could not survive; at the floor they are 288 and ~6,000. A tolerance-sized
+surface reads slightly smaller than the exact one (about 2π²/(3n²): 0.8% on a 3 mm
+tube at 28 segments), which `measure` reports faithfully. A lathe's SWEEP, and
+circles in extrusions, cylinders and outlines, keep the flat count, which the mesh
+fillet's arc gate and the roundAll fast path are tuned to.
 
 ### Shading intent (toMesh normals and edges)
 
