@@ -146,10 +146,10 @@ describe("double-curvature primitives follow the rule on both tiers", () => {
   });
 
   test("large lathe solids keep exactly the flat-count density on both tiers", () => {
-    expect(tris(preview.torus({ rMajor: 1000, rMinor: 300 }))).toBe(27840);
-    expect(tris(print.torus({ rMajor: 1000, rMinor: 300 }))).toBe(372480);
-    expect(tris(preview.roundedCylinder({ r: 100, h: 300, round: 80 }))).toBe(13920);
-    expect(tris(print.roundedCylinder({ r: 100, h: 300, round: 80 }))).toBe(45492);
+    expect(tris(torusL(preview))).toBe(27840);
+    expect(tris(torusL(print))).toBe(372480);
+    expect(tris(rcylL(preview))).toBe(13920);
+    expect(tris(rcylL(print))).toBe(45492);
   });
 
   test("small lathe solids fall to a fraction of the flat count and export at preview density", () => {
