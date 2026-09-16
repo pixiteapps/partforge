@@ -380,7 +380,15 @@ backends both define `print` as a **chord tolerance of 0.01 mm** (OCCT's linear
 deflection; Manifold's per-circle segment rule in `geometry/circle-segs.js`, floored at
 the preview's 116 segments so print is never coarser than preview and capped at 480), so
 a small feature costs the export exactly what its preview cost — the property that makes
-"if it previews, it exports" hold. Preview is a flat 116 on Manifold, a visual choice.
+"if it previews, it exports" hold. Preview is a flat 116 on Manifold, a visual choice —
+with one exception: `sphere`, whose triangle count is quadratic in the segment count
+(8·(n/4)²), is sized by chord tolerance on BOTH tiers (`sphereSegs` in
+`geometry/circle-segs.js`: 0.02 mm at preview, floored at 24 segments and capped at
+the flat 116; 0.01 mm at print, floored at the preview count, capped at 480). At the
+flat count a 0.75 mm rivet sphere was 6,728 triangles, and a part carrying a few
+hundred of them was a 2.7 GB preview build that phones could not survive; at the
+floor it is 288. Circles in extrusions, revolves and outlines keep the flat count,
+which the mesh fillet's arc gate and the roundAll fast path are tuned to.
 
 ### Shading intent (toMesh normals and edges)
 

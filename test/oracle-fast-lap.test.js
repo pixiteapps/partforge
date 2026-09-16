@@ -8,11 +8,13 @@ let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
 
 // ~6.7k triangles: above the diagnostic sample budget, below the gate budget, so the
-// two resolutions are distinguishable on one mesh.
+// two resolutions are distinguishable on one mesh. r = 100 keeps the sphere at the
+// flat 116-segment cap — smaller spheres are sized per radius (circle-segs.js's
+// sphereSegs) and an r = 10 ball is 1,250 triangles, under the sample budget.
 const ball = (verify) => ({
   meta: { title: "Ball", units: "mm" },
   defaults: {},
-  parts: { ball: { views: ["v"], build: (kk) => kk.sphere({ r: 10 }) } },
+  parts: { ball: { views: ["v"], build: (kk) => kk.sphere({ r: 100 }) } },
   views: { v: { label: "V" } },
   ...(verify ? { verify } : {}),
 });

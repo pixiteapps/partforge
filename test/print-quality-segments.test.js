@@ -17,7 +17,7 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import Module from "manifold-3d";
 import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
-import { circleSegs, SEGS, SAGITTA_TOL } from "../src/framework/geometry/circle-segs.js";
+import { circleSegs, SEGS, SAGITTA_TOL, sphereSegs, SPHERE_FLOOR, SPHERE_SAGITTA_TOL } from "../src/framework/geometry/circle-segs.js";
 import { sampleArc, sampleBezier, tessellateContour } from "../src/framework/geometry/profile.js";
 
 let preview, print;
@@ -80,6 +80,48 @@ describe("circleSegs", () => {
   });
 });
 
+describe("sphereSegs", () => {
+  // A sphere spends the per-circle count squared (Manifold.sphere is 8·(n/4)²
+  // triangles), so it is the one primitive sized by tolerance on BOTH tiers.
+  test("the preview tier holds its sagitta between the floor and the flat cap", () => {
+    expect(SPHERE_SAGITTA_TOL.preview).toBe(0.02);
+    expect(SPHERE_FLOOR).toBe(24);
+    expect(sphereSegs(0.75, "preview")).toBe(SPHERE_FLOOR); // a rivet: the floor, 288 triangles instead of 6,728
+    expect(sphereSegs(4, "preview")).toBe(32);               // a goggle eye
+    expect(sphereSegs(10, "preview")).toBe(50);
+    expect(sphereSegs(60, "preview")).toBe(SEGS.preview);    // from here up, exactly the old flat count
+    expect(sphereSegs(300, "preview")).toBe(SEGS.preview);
+  });
+
+  test("the print tier is never coarser than the preview and never finer than the old cap", () => {
+    expect(SPHERE_SAGITTA_TOL.print).toBe(SAGITTA_TOL.print);
+    expect(sphereSegs(0.75, "print")).toBe(sphereSegs(0.75, "preview")); // a rivet exports at its preview density
+    expect(sphereSegs(10, "print")).toBe(71);                                // 0.01 mm at r = 10, above the preview's 50
+    expect(sphereSegs(300, "print")).toBe(circleSegs(300, "print"));        // large spheres follow the circle rule
+    expect(sphereSegs(Infinity, "print")).toBe(SEGS.print);
+  });
+
+  test("sphere sizing holds the tolerance wherever it is between its clamps, monotone in r", () => {
+    for (const tier of ["preview", "print"]) {
+      let prev = 0;
+      for (let r = 0.05; r <= 600; r *= 1.07) {
+        const n = sphereSegs(r, tier);
+        expect(n).toBeGreaterThanOrEqual(SPHERE_FLOOR);
+        expect(n).toBeLessThanOrEqual(SEGS[tier]);
+        expect(n).toBeGreaterThanOrEqual(prev);
+        if (n > SPHERE_FLOOR && n < SEGS[tier]) expect(sagitta(r, n)).toBeLessThanOrEqual(SPHERE_SAGITTA_TOL[tier] + 1e-12);
+        prev = n;
+      }
+    }
+  });
+
+  test("a degenerate radius or an unknown tier takes the preview floor rather than throwing", () => {
+    for (const r of [0, -1, NaN, undefined, null]) expect(sphereSegs(r, "preview")).toBe(SPHERE_FLOOR);
+    expect(sphereSegs(300, "nonsense")).toBe(SEGS.preview);
+    expect(sphereSegs(300, "toString")).toBe(SEGS.preview);
+  });
+});
+
 describe("primitives at print quality", () => {
   test("a small sphere exports at exactly the preview's density", () => {
     expect(tris(print.sphere({ r: 0.75 }))).toBe(tris(preview.sphere({ r: 0.75 })));
@@ -135,7 +177,8 @@ describe("primitives at print quality", () => {
 
   test("preview output is pinned by literal counts, not only by equality with print", () => {
     // Equality tests stay green if both tiers drift together; these do not.
-    expect(tris(preview.sphere({ r: 0.75 }))).toBe(6728);
+    expect(tris(preview.sphere({ r: 0.75 }))).toBe(288);  // 8·(24/4)²: the sphere floor
+    expect(tris(preview.sphere({ r: 300 }))).toBe(6728);  // 8·(116/4)²: the old flat count survives for big spheres
     expect(tris(preview.cylinder({ r: 1, h: 5 }))).toBe(460); // 2·116 wall + two (116 − 2)-triangle caps
     expect(tris(preview.revolve({ profile: [[4, 0], [6, 0], [6, 1], [4, 1]] }))).toBe(8 * SEGS.preview);
   });

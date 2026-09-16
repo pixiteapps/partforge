@@ -19,7 +19,7 @@ import { creasedNormals } from "./creased-normals.js";
 import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
 import { meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
-import { SEGS, circleSegs } from "./circle-segs.js";
+import { SEGS, circleSegs, sphereSegs } from "./circle-segs.js";
 import { checkBooleanResult } from "./boolean-gate.js";
 import { KernelCapabilityError } from "./errors.js";
 import { heightfieldMesh, hashGridData } from "./heightfield.js";
@@ -659,7 +659,10 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         const solid = T(loftMesh(wasm, roundedBoxRings(size, round, segsAt(Math.max(round.side, round.top, round.bottom)))));
         return center ? T(solid.translate([0, 0, -size[2] / 2])) : solid;
       }),
-    sphere: (r) => wrap(T(Manifold.sphere(r, segsAt(r))), h("sphere", r, segsAt(r))),
+    // Sized by its own per-radius rule (circle-segs.js: a sphere spends the per-circle
+    // count squared), on both tiers — the hash carries the count, so a sphere built at
+    // one tier never masquerades as the other's in the cache.
+    sphere: (r) => wrap(T(Manifold.sphere(r, sphereSegs(r, quality))), h("sphere", r, sphereSegs(r, quality))),
     box: (min, max) => {
       const cube = T(Manifold.cube([max[0] - min[0], max[1] - min[1], max[2] - min[2]]));
       return wrap(T(cube.translate(min)), h("box", min, max));
