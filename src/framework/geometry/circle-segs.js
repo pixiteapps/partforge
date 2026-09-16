@@ -43,18 +43,27 @@
 export const SEGS = { preview: 116, print: 480 };       // full-circle segments (flat / cap)
 export const SAGITTA_TOL = { print: 0.01 };             // mm — max chord sagitta per tier
 
+// THE formula, shared by every tolerance-sized circle in the mesh backend: the fewest
+// full-circle segments that keep the chord sagitta r·(1 − cos(π/n)) under `tol`,
+// clamped to [floor, cap]. acos(1 − tol/r) is the half-angle of a chord with sagitta
+// tol; π over it is the full-circle count. r = Infinity gives acos(1) = 0 → Infinity →
+// the cap. A degenerate radius (0, negative, NaN, undefined) or one no larger than the
+// tolerance takes the floor and never throws. The callers differ only in POLICY — which
+// tolerance, which clamps — and that is all they should ever add: `circleSegs` and
+// `sphereSegs` below, mesh-fillet's blendSegs and mesh-roundall's roundAllSegs.
+export function segsForSagitta(r, tol, floor, cap) {
+  if (!(r > tol)) return floor;
+  return Math.min(cap, Math.max(floor, Math.ceil(Math.PI / Math.acos(1 - tol / r))));
+}
+
 // Segments per full circle for a circle of radius `r` at `quality`. A tier with no
-// tolerance (preview, or an unknown tier) is flat. A degenerate radius (0, negative,
-// NaN, undefined) takes the floor: it facets like the preview and never throws.
+// tolerance (preview, or an unknown tier) is flat; print is sized by tolerance, floored
+// at the preview count and capped at its own.
 export function circleSegs(r, quality) {
   const cap = SEGS[quality] ?? SEGS.preview;
   const tol = SAGITTA_TOL[quality];
   if (tol === undefined) return cap;
-  const floor = SEGS.preview;
-  if (!(r > tol)) return floor;
-  // acos(1 − tol/r) is the half-angle of a chord with sagitta tol; π over it is the
-  // full-circle count. r = Infinity gives acos(1) = 0 → Infinity → the cap.
-  return Math.min(cap, Math.max(floor, Math.ceil(Math.PI / Math.acos(1 - tol / r))));
+  return segsForSagitta(r, tol, SEGS.preview, cap);
 }
 
 // Spheres are the one primitive whose triangle count is QUADRATIC in the segment
@@ -95,9 +104,6 @@ export const SPHERE_FLOOR = 24;                                                 
 // tier facets as preview; a degenerate radius takes the floor and never throws.
 export function sphereSegs(r, quality) {
   const tier = Object.hasOwn(SPHERE_SAGITTA_TOL, quality ?? "") ? quality : "preview";
-  const cap = SEGS[tier];
-  const tol = SPHERE_SAGITTA_TOL[tier];
   const floor = tier === "preview" ? SPHERE_FLOOR : sphereSegs(r, "preview");
-  if (!(r > tol)) return floor;
-  return Math.min(cap, Math.max(floor, Math.ceil(Math.PI / Math.acos(1 - tol / r))));
+  return segsForSagitta(r, SPHERE_SAGITTA_TOL[tier], floor, SEGS[tier]);
 }

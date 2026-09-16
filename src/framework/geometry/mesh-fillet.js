@@ -43,6 +43,7 @@
 // `dir` only ever matches straight chains, like replicad's inDirection.
 // Pure module: no DOM, no node:, no three — safe anywhere in the worker graph.
 import { sweepSeedFrame } from "./sweep.js";
+import { segsForSagitta } from "./circle-segs.js";
 
 const TOL = 1e-4;            // selector / coplanarity tolerance (mm)
 const WELD = 1e6;            // vertex weld quantization (1/WELD mm grid)
@@ -64,8 +65,7 @@ export class UnsupportedEdgeError extends Error {
 // angle (≤30°) under the viewer's 35° same-surface crease threshold.
 const BLEND_SAG = 1e-3; // mm — max chord sagitta of a blend cross-section
 function blendSegs(segs, r) {
-  const s = Math.min(BLEND_SAG, 0.02 * r);
-  return Math.min(segs, Math.max(12, Math.ceil(Math.PI / Math.acos(1 - s / r))));
+  return segsForSagitta(r, Math.min(BLEND_SAG, 0.02 * r), 12, segs);
 }
 // One derivation for a synthetic corner arc's angular density, shared by revolveTool
 // (which sweeps at it) and cornerHornTool (whose apothem bound below depends on it) —

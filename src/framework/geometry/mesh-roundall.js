@@ -28,13 +28,14 @@
 // is sized from the erosion ball (2r), the larger of the two, so the coarser of
 // the two facetings still meets the tier's sagitta tolerance.
 
+import { segsForSagitta } from "./circle-segs.js";
+
 // Sphere tessellation from the facet sagitta r·(1 − cos(π/segs)): pick the
-// fewest segments that keep it under the quality tier's tolerance.
+// fewest segments that keep it under the quality tier's tolerance — its own
+// tolerance table and 12..64 window, on the shared formula.
 const SAGITTA_TOL = { preview: 0.05, print: 0.01 }; // mm
 export function roundAllSegs(r, quality) {
-  const tol = SAGITTA_TOL[quality] ?? SAGITTA_TOL.preview;
-  if (!(r > tol)) return 12;
-  return Math.min(64, Math.max(12, Math.ceil(Math.PI / Math.acos(1 - tol / r))));
+  return segsForSagitta(r, SAGITTA_TOL[quality] ?? SAGITTA_TOL.preview, 12, 64);
 }
 
 export function meshRoundAll(wasm, m, r, quality) {
