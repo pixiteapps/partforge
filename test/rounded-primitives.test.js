@@ -23,11 +23,18 @@ test("roundedCylinder volume matches the lathe oracle", () => {
   expect(rel(v, roundedCylinderVolume(8, 20, { top: 3, bottom: 1.5 }))).toBeLessThan(0.005);
 });
 
+// Tolerance on the two lathe cases below: their profile arcs are sized by the
+// double-curvature rule (circle-segs.js), 36 segments at r = 5 and 28 at r = 3, and
+// an inscribed polygon's area deficit is ~2π²/(3n²) — 0.5% and 0.8% — which the
+// swept volume inherits. 1.5% keeps a construction error (a wrong radius, a missed
+// arc: several percent) visible while admitting the tessellation's own deficit.
+const LATHE_TOL = 0.015;
+
 test("capsule boundary (round = r, top + bottom = h) builds watertight — a sphere", () => {
   const s = k.roundedCylinder({ r: 5, h: 10, round: 5 });
   expect(s.isEmpty()).toBe(false);
   expect(s.genus()).toBe(0);
-  expect(rel(s.volume(), (4 / 3) * Math.PI * 125)).toBeLessThan(0.005);
+  expect(rel(s.volume(), (4 / 3) * Math.PI * 125)).toBeLessThan(LATHE_TOL);
 });
 
 test("round: 0 degenerates to the plain cylinder", () => {
@@ -45,7 +52,7 @@ test("torus: genus 1, volume 2π²·R·r²", () => {
   const s = k.torus({ rMajor: 10, rMinor: 3 });
   expect(s.genus()).toBe(1);
   expect(s.isEmpty()).toBe(false);
-  expect(rel(s.volume(), torusVolume(10, 3))).toBeLessThan(0.005);
+  expect(rel(s.volume(), torusVolume(10, 3))).toBeLessThan(LATHE_TOL);
 });
 
 test("torus bounding box spans z ∈ [−rMinor, rMinor]", () => {

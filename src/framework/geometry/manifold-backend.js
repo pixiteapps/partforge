@@ -2,7 +2,7 @@ import { helixTube } from "./helix-tube.js";
 import { loftMesh } from "./loft.js";
 import { resolveLoftRings, loftRingsKey } from "./loft-rings.js";
 import { sweepMesh } from "./sweep.js";
-import { roundedBoxRings } from "./rounded-solids.js";
+import { roundedBoxRings, roundedBoxArcSamples } from "./rounded-solids.js";
 import { tessellateContour, tessellateProfile } from "./profile.js";
 import { h } from "./solid-hash.js";
 import { ensureOutward, openEdgeCount } from "./mesh-repair.js";
@@ -19,7 +19,7 @@ import { creasedNormals } from "./creased-normals.js";
 import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
 import { meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
-import { SEGS, circleSegs, sphereSegs } from "./circle-segs.js";
+import { SEGS, circleSegs, doubleCurvatureSegs } from "./circle-segs.js";
 import { checkBooleanResult } from "./boolean-gate.js";
 import { KernelCapabilityError } from "./errors.js";
 import { heightfieldMesh, hashGridData } from "./heightfield.js";
@@ -51,6 +51,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // Per-radius count for every site that facets a circle it knows the radius of; the
   // samplers behind prism/extrude/Shape2D take it as a function (profile.js).
   const segsAt = (r) => circleSegs(r, quality);
+  // The doubly-curved family's own per-radius count (sphere, a lathe's profile arcs,
+  // a rounded box's corners) — circle-segs.js explains why they are sized apart.
+  const dcAt = (r) => doubleCurvatureSegs(r, quality);
 
   // Manifold/CrossSection are WASM objects with no garbage collection — every
   // primitive and boolean op allocates a new one. Track them all and free them
@@ -185,6 +188,14 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // the entry (cleanup() skips pinned objects).
   const csFor = (shape) => cache.lookup(h("cs2d", shape._hash, segs), () => {
     const cs = T(CrossSection.ofPolygons(regionPolys(shape._regions, segsAt), "EvenOdd"));
+    return { value: cs, pin: cs, dispose: () => cs.delete?.() };
+  });
+  // The same shape as a LATHE profile: its arcs sampled at the double-curvature count
+  // (every sample becomes a full ring of the sweep — the quadratic cost circle-segs.js
+  // describes), memoized apart from the extrude-facing tessellation above under its
+  // own key. Keyed on the tier, not a count: the count varies per arc radius.
+  const csForLathe = (shape) => cache.lookup(h("cs2d-lathe", shape._hash, quality), () => {
+    const cs = T(CrossSection.ofPolygons(regionPolys(shape._regions, dcAt), "EvenOdd"));
     return { value: cs, pin: cs, dispose: () => cs.delete?.() };
   });
 
@@ -653,16 +664,17 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // spec). Reuses loftMesh's stitch/cap/winding machinery. Atomic cache
     // node hashed from its own args, like boredCylinder.
     roundedBox: ({ size, center, round }) => cached(
-      h("roundedBox", size, center, round.side, round.top, round.bottom, segsAt(Math.max(round.side, round.top, round.bottom))),
+      h("roundedBox", size, center, round.side, round.top, round.bottom, roundedBoxArcSamples(segsAt(Math.max(round.side, round.top, round.bottom)), dcAt(Math.max(round.side, round.top, round.bottom)))),
       () => {
         // One count serves every corner and rim arc, so it is sized for the largest.
-        const solid = T(loftMesh(wasm, roundedBoxRings(size, round, segsAt(Math.max(round.side, round.top, round.bottom)))));
+        const rMax = Math.max(round.side, round.top, round.bottom);
+        const solid = T(loftMesh(wasm, roundedBoxRings(size, round, segsAt(rMax), roundedBoxArcSamples(segsAt(rMax), dcAt(rMax)))));
         return center ? T(solid.translate([0, 0, -size[2] / 2])) : solid;
       }),
-    // Sized by its own per-radius rule (circle-segs.js: a sphere spends the per-circle
+    // Sized by the double-curvature rule (circle-segs.js: a sphere spends the per-circle
     // count squared), on both tiers — the hash carries the count, so a sphere built at
     // one tier never masquerades as the other's in the cache.
-    sphere: (r) => wrap(T(Manifold.sphere(r, sphereSegs(r, quality))), h("sphere", r, sphereSegs(r, quality))),
+    sphere: (r) => wrap(T(Manifold.sphere(r, dcAt(r))), h("sphere", r, dcAt(r))),
     box: (min, max) => {
       const cube = T(Manifold.cube([max[0] - min[0], max[1] - min[1], max[2] - min[2]]));
       return wrap(T(cube.translate(min)), h("box", min, max));
@@ -782,8 +794,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       if (pts && pts._shape2d) {
         // Keyed on the override, not the resolved density, so a cache hit never
         // materializes the CrossSection just to measure its bounds.
-        return cached(h("revolve", pts._hash, degrees, segsOverride ?? null), () => {
-          const cs = csFor(pts);
+        return cached(h("revolve", pts._hash, degrees, segsOverride ?? null, quality), () => {
+          const cs = csForLathe(pts); // profile arcs at the double-curvature count; the sweep below stays on the circle rule
           const b = cs.bounds();
           return T(cs.revolve(densityFor(Math.max(Math.abs(b.min[0]), Math.abs(b.max[0]))), degrees));
         });

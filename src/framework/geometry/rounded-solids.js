@@ -34,13 +34,25 @@ export function roundedRectRing(hw, hd, rc, A) {
   return pts;
 }
 
+// Quarter-arc sample count for a rounded box's corners (and z-stations per rim
+// zone): the corners are sphere octants, so they take the double-curvature count
+// for the corner radius, a quarter of it per 90° arc — the facet angle the sphere
+// floor itself has (24 → 6 → 15°). Capped at what the flat circle count used to
+// give (ceil(circle/8): 15 at preview, up to 49 at a metre-scale print), so no
+// rounded box gets finer than before and a large one keeps exactly its old
+// density. Floor 2: the builder's own minimum for a valid ring.
+export function roundedBoxArcSamples(circleSegs, doubleCurvatureSegs) {
+  return Math.max(2, Math.min(Math.ceil(circleSegs / 8), Math.ceil(doubleCurvatureSegs / 4)));
+}
+
 // Ring stack for the Manifold roundedBox: ascending-z loft ring specs
 // [{ polygon, z }]. A (arc samples per corner AND z-stations per rim zone) is
-// derived from the kernel's segs so the z-sampling matches the in-plane LOD.
-// Consecutive duplicate stations (top + bottom = h) are deduped so the loft
-// never sees a zero-height band.
-export function roundedBoxRings([w, d, h], { side, top, bottom }, segs) {
-  const A = Math.max(2, Math.ceil(segs / 8));
+// derived from the kernel's segs — or passed outright as `arcSamples` (the
+// backend hands in roundedBoxArcSamples) — so the z-sampling matches the
+// in-plane LOD. Consecutive duplicate stations (top + bottom = h) are deduped
+// so the loft never sees a zero-height band.
+export function roundedBoxRings([w, d, h], { side, top, bottom }, segs, arcSamples = Math.max(2, Math.ceil(segs / 8))) {
+  const A = arcSamples;
   const st = [];
   const push = (z, delta) => {
     const last = st[st.length - 1];

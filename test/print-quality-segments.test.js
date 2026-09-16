@@ -17,8 +17,9 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import Module from "manifold-3d";
 import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
-import { circleSegs, SEGS, SAGITTA_TOL, sphereSegs, SPHERE_FLOOR, SPHERE_SAGITTA_TOL } from "../src/framework/geometry/circle-segs.js";
+import { circleSegs, SEGS, SAGITTA_TOL, doubleCurvatureSegs, DOUBLE_CURVATURE_FLOOR, DOUBLE_CURVATURE_SAGITTA_TOL } from "../src/framework/geometry/circle-segs.js";
 import { sampleArc, sampleBezier, tessellateContour } from "../src/framework/geometry/profile.js";
+import { roundedBoxArcSamples } from "../src/framework/geometry/rounded-solids.js";
 
 let preview, print;
 beforeAll(async () => {
@@ -80,45 +81,117 @@ describe("circleSegs", () => {
   });
 });
 
-describe("sphereSegs", () => {
-  // A sphere spends the per-circle count squared (Manifold.sphere is 8·(n/4)²
-  // triangles), so it is the one primitive sized by tolerance on BOTH tiers.
+describe("doubleCurvatureSegs", () => {
+  // A doubly-curved surface spends the per-circle count squared (Manifold.sphere is
+  // 8·(n/4)² triangles; a lathe's profile arcs multiply its sweep; a rounded box's
+  // corners are sphere octants), so that family is sized by tolerance on BOTH tiers.
   test("the preview tier holds its sagitta between the floor and the flat cap", () => {
-    expect(SPHERE_SAGITTA_TOL.preview).toBe(0.02);
-    expect(SPHERE_FLOOR).toBe(24);
-    expect(sphereSegs(0.75, "preview")).toBe(SPHERE_FLOOR); // a rivet: the floor, 288 triangles instead of 6,728
-    expect(sphereSegs(4, "preview")).toBe(32);               // a goggle eye
-    expect(sphereSegs(10, "preview")).toBe(50);
-    expect(sphereSegs(60, "preview")).toBe(SEGS.preview);    // from here up, exactly the old flat count
-    expect(sphereSegs(300, "preview")).toBe(SEGS.preview);
+    expect(DOUBLE_CURVATURE_SAGITTA_TOL.preview).toBe(0.02);
+    expect(DOUBLE_CURVATURE_FLOOR).toBe(24);
+    expect(doubleCurvatureSegs(0.75, "preview")).toBe(DOUBLE_CURVATURE_FLOOR); // a rivet: the floor, 288 triangles instead of 6,728
+    expect(doubleCurvatureSegs(4, "preview")).toBe(32);               // a goggle eye
+    expect(doubleCurvatureSegs(10, "preview")).toBe(50);
+    expect(doubleCurvatureSegs(60, "preview")).toBe(SEGS.preview);    // from here up, exactly the old flat count
+    expect(doubleCurvatureSegs(300, "preview")).toBe(SEGS.preview);
   });
 
   test("the print tier is never coarser than the preview and never finer than the old cap", () => {
-    expect(SPHERE_SAGITTA_TOL.print).toBe(SAGITTA_TOL.print);
-    expect(sphereSegs(0.75, "print")).toBe(sphereSegs(0.75, "preview")); // a rivet exports at its preview density
-    expect(sphereSegs(10, "print")).toBe(71);                                // 0.01 mm at r = 10, above the preview's 50
-    expect(sphereSegs(300, "print")).toBe(circleSegs(300, "print"));        // large spheres follow the circle rule
-    expect(sphereSegs(Infinity, "print")).toBe(SEGS.print);
+    expect(DOUBLE_CURVATURE_SAGITTA_TOL.print).toBe(SAGITTA_TOL.print);
+    expect(doubleCurvatureSegs(0.75, "print")).toBe(doubleCurvatureSegs(0.75, "preview")); // a rivet exports at its preview density
+    expect(doubleCurvatureSegs(10, "print")).toBe(71);                                // 0.01 mm at r = 10, above the preview's 50
+    expect(doubleCurvatureSegs(300, "print")).toBe(circleSegs(300, "print"));        // large spheres follow the circle rule
+    expect(doubleCurvatureSegs(Infinity, "print")).toBe(SEGS.print);
   });
 
   test("sphere sizing holds the tolerance wherever it is between its clamps, monotone in r", () => {
     for (const tier of ["preview", "print"]) {
       let prev = 0;
       for (let r = 0.05; r <= 600; r *= 1.07) {
-        const n = sphereSegs(r, tier);
-        expect(n).toBeGreaterThanOrEqual(SPHERE_FLOOR);
+        const n = doubleCurvatureSegs(r, tier);
+        expect(n).toBeGreaterThanOrEqual(DOUBLE_CURVATURE_FLOOR);
         expect(n).toBeLessThanOrEqual(SEGS[tier]);
         expect(n).toBeGreaterThanOrEqual(prev);
-        if (n > SPHERE_FLOOR && n < SEGS[tier]) expect(sagitta(r, n)).toBeLessThanOrEqual(SPHERE_SAGITTA_TOL[tier] + 1e-12);
+        if (n > DOUBLE_CURVATURE_FLOOR && n < SEGS[tier]) expect(sagitta(r, n)).toBeLessThanOrEqual(DOUBLE_CURVATURE_SAGITTA_TOL[tier] + 1e-12);
         prev = n;
       }
     }
   });
 
   test("a degenerate radius or an unknown tier takes the preview floor rather than throwing", () => {
-    for (const r of [0, -1, NaN, undefined, null]) expect(sphereSegs(r, "preview")).toBe(SPHERE_FLOOR);
-    expect(sphereSegs(300, "nonsense")).toBe(SEGS.preview);
-    expect(sphereSegs(300, "toString")).toBe(SEGS.preview);
+    for (const r of [0, -1, NaN, undefined, null]) expect(doubleCurvatureSegs(r, "preview")).toBe(DOUBLE_CURVATURE_FLOOR);
+    expect(doubleCurvatureSegs(300, "nonsense")).toBe(SEGS.preview);
+    expect(doubleCurvatureSegs(300, "toString")).toBe(SEGS.preview);
+  });
+});
+
+describe("double-curvature primitives follow the rule on both tiers", () => {
+  // Baselines are the flat-116 counts measured before the rule reached these ops;
+  // the LARGE cases must stay exactly there (nothing gets finer, and a feature the
+  // flat count already served well keeps its density), the SMALL ones must fall
+  // hard and export at their preview density.
+  const torusS = (k) => k.torus({ rMajor: 3, rMinor: 0.75 });            // an O-ring: was 27,376
+  const torusL = (k) => k.torus({ rMajor: 1000, rMinor: 300 });
+  const rcylS = (k) => k.roundedCylinder({ r: 2, h: 4, round: 0.5 });     // was 13,920
+  const rcylL = (k) => k.roundedCylinder({ r: 100, h: 300, round: 80 });
+  const capsule = (k) => k.roundedCylinder({ r: 1, h: 3, round: 1 });     // was 13,688
+  const rboxS = (k) => k.roundedBox({ size: [3, 3, 3], round: { side: 0.5, top: 0.5, bottom: 0.5 } }); // was 4,092
+  const rboxL = (k) => k.roundedBox({ size: [200, 200, 200], round: { side: 80, top: 80, bottom: 80 } });
+
+  test("a small torus: profile arcs at the double-curvature count, sweep at the circle count", () => {
+    // tube ring: four quarter arcs at doubleCurvatureSegs(0.75) = 24, plus the
+    // contour's start and seam points (the flat count gave 116 + 2 = 118 the same
+    // way) → 26 points; sweep: circleSegs(3.75) = 116 → 26 · 116 · 2 triangles.
+    expect(tris(preview.torus({ rMajor: 3, rMinor: 0.75 }))).toBe(26 * 116 * 2);
+    expect(tris(print.torus({ rMajor: 3, rMinor: 0.75 }))).toBe(tris(preview.torus({ rMajor: 3, rMinor: 0.75 })));
+  });
+
+  test("large lathe solids keep exactly the flat-count density on both tiers", () => {
+    expect(tris(preview.torus({ rMajor: 1000, rMinor: 300 }))).toBe(27840);
+    expect(tris(print.torus({ rMajor: 1000, rMinor: 300 }))).toBe(372480);
+    expect(tris(preview.roundedCylinder({ r: 100, h: 300, round: 80 }))).toBe(13920);
+    expect(tris(print.roundedCylinder({ r: 100, h: 300, round: 80 }))).toBe(45492);
+  });
+
+  test("small lathe solids fall to a fraction of the flat count and export at preview density", () => {
+    for (const [make, before] of [[torusS, 27376], [rcylS, 13920], [capsule, 13688]]) {
+      expect(tris(make(preview))).toBeLessThan(before / 3);
+      expect(tris(make(print))).toBe(tris(make(preview)));
+    }
+  });
+
+  test("a rounded box: small corners at the double-curvature density, large ones unchanged", () => {
+    expect(tris(rboxS(preview))).toBeLessThan(4092 / 3);
+    expect(tris(rboxS(print))).toBe(tris(rboxS(preview)));
+    expect(tris(rboxL(preview))).toBe(3884);
+    expect(tris(rboxL(print))).toBe(10444);
+  });
+
+  test("roundedBoxArcSamples: quarter-arc samples from the double-curvature count, never finer than before", () => {
+    // before: ceil(circle/8) — 15 at preview, 49 at a metre-scale print
+    expect(roundedBoxArcSamples(116, 24)).toBe(6);   // a 0.5 mm corner: 15° facets, the sphere floor's own
+    expect(roundedBoxArcSamples(116, 50)).toBe(13);  // r = 10 at preview
+    expect(roundedBoxArcSamples(116, 116)).toBe(15); // r ≥ 60: exactly the old count
+    expect(roundedBoxArcSamples(385, 385)).toBe(49); // a metre-scale print corner: exactly the old count
+    expect(roundedBoxArcSamples(116, 0)).toBe(2);    // degenerate: the builder's own floor
+  });
+
+  test("a revolve of a straight-sided profile is untouched: sweep at the circle count", () => {
+    const ring = [[4, 0], [6, 0], [6, 1], [4, 1]];
+    expect(tris(preview.revolve({ profile: ring }))).toBe(8 * SEGS.preview);
+    expect(tris(print.revolve({ profile: ring }))).toBe(8 * SEGS.preview);
+    const shape = (k) => k.shape2d(ring);
+    expect(tris(preview.revolve({ profile: shape(preview) }))).toBe(8 * SEGS.preview);
+  });
+
+  test("an author's own arc-profile revolve gets the same treatment as the built-ins", () => {
+    // a rounded-corner lathe profile written by hand: the corner arc (r = 0.5) at the
+    // double-curvature count, the sweep at the circle count — same as roundedCylinder.
+    const prof = (k) => k.shape2d([[0, 0], [2, 0], [2, 4], [0, 4]]).fillet(0.5);
+    const hand = tris(preview.revolve({ profile: prof(preview) }));
+    expect(hand).toBeLessThan(27376 / 4); // four 0.5 mm arcs at 24/circle, swept at 116: ~27 · 116 · 2
+    expect(tris(print.revolve({ profile: prof(print) }))).toBe(hand);
+    // and extruding the SAME shape still tessellates its arcs at the flat circle count
+    expect(tris(preview.extrude({ profile: prof(preview), h: 1 }))).toBe(tris(preview.extrude({ profile: prof(preview), h: 1 })));
   });
 });
 

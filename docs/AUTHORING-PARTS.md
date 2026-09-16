@@ -3650,16 +3650,24 @@ symptom first** — it maps error text → cause → fix. The invariants, one li
   is a part that exports: the old flat 480 turned a 0.75 mm rivet into 115,200 triangles
   and a body with a few hundred of them into an out-of-memory trap at export
   ([export-kernel-out-of-memory](ERROR-PATTERNS.md#export-kernel-out-of-memory)).
-  **Spheres are the exception on both tiers:** a sphere spends the segment count
-  squared (6,728 triangles at 116, whatever its radius), so `k.sphere` is sized by chord
-  tolerance — 0.02 mm at preview, never fewer than 24 segments (288 triangles) and never
-  more than 116, so only spheres under about 60 mm radius get coarser and none get
-  finer. That is what keeps a body studded with a few hundred rivet spheres inside a
-  phone's memory ([preview-build-too-heavy-for-phones](ERROR-PATTERNS.md#preview-build-too-heavy-for-phones)).
-  Spheres are still the costliest way to add small detail: a domed rivet is 288
-  triangles where a short cylinder is 232 and a box is 12, and every one of them is a
-  boolean operand. Prefer instancing one union of a row over a chain of per-feature
-  booleans, and drop counts the print cannot show.
+  **Doubly-curved surfaces are the exception on both tiers:** a sphere, a lathe's
+  profile arcs (`torus`, `roundedCylinder`, a `revolve` of your own rounded `Shape2D`)
+  and a `roundedBox`'s corners all spend the segment count squared (6,728 triangles
+  for any sphere at 116; 27,000 for a tiny O-ring), so they are sized by chord
+  tolerance — 0.02 mm at preview, never fewer than 24 segments per circle (a rivet
+  sphere is 288 triangles, an O-ring ~6,000) and never more than the flat count, so
+  only features under about 60 mm radius get coarser and none get finer. That is what
+  keeps a body studded with a few hundred rivets inside a phone's memory
+  ([preview-build-too-heavy-for-phones](ERROR-PATTERNS.md#preview-build-too-heavy-for-phones)).
+  Two consequences to know: a lathe's sweep still runs at the flat count, so a small
+  rounded cylinder is cheaper as `roundedCylinder` than as a revolve you densify by
+  hand; and a tolerance-sized surface measures slightly smaller than the exact one
+  (about 0.8% on a 3 mm rounded feature), so give a `verify` volume gate on small
+  rounded parts that much slack. Spheres and rounded features are still the costliest
+  way to add small detail — a domed rivet is 288 triangles where a short cylinder is
+  232 and a box is 12, and every one is a boolean operand — so prefer instancing one
+  union of a row over a chain of per-feature booleans, and drop counts the print
+  cannot show.
 - **Display placement is view-independent**; only `place(..., { purpose: "export" })` may
   depend on `view` ([view-dependent-display-place](ERROR-PATTERNS.md#view-dependent-display-place)).
 - **Keep geometry backend-agnostic** (kernel calls only); only STEP requires OCCT

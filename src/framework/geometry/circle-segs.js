@@ -35,7 +35,8 @@
 // helix tube's station/ring counts (TUBE in manifold-backend.js) and mesh-fillet's
 // blend bands keep their own sizing; loft rings keep LOFT_SEGS.
 //
-// The one exception is `sphere`, which has its own rule at the bottom of this file.
+// The exceptions are the doubly-curved surfaces — sphere, a lathe's profile arcs, a
+// rounded box's corners — which have their own rule at the bottom of this file.
 //
 // Pure, dependency-free: profile.js's samplers take a `(r) => n` function in place of
 // a count, and this is what the backend hands them.
@@ -66,44 +67,60 @@ export function circleSegs(r, quality) {
   return segsForSagitta(r, tol, SEGS.preview, cap);
 }
 
-// Spheres are the one primitive whose triangle count is QUADRATIC in the segment
-// count — Manifold.sphere(r, n) subdivides an octahedron n/4 times per edge, 8·(n/4)²
-// triangles — so the per-circle budget above, spent on a sphere, is spent squared:
-// at the flat preview 116 every sphere is 6,728 triangles whatever its radius, and a
-// 0.75 mm rivet sphere carries a chord error of 0.0003 mm, a hundredth of a screen
-// pixel at any zoom. A part carrying ~250 such rivets (the steampunk-spider feedback,
-// "not loading on phones") unioned 1.7 M triangles of rivets into a 100k body: 10 s
-// and a 2.7 GB peak on a desktop, which iOS Safari's content process does not
-// survive — with the rivets at 12 triangles each the same body was 4 s and 500 MB.
+// DOUBLE CURVATURE — the family whose triangle count is QUADRATIC in the segment
+// count, so the per-circle budget above, spent on one of them, is spent squared:
 //
-// So spheres are sized by chord tolerance on BOTH tiers, like print circles are:
+// - `sphere`: Manifold.sphere(r, n) subdivides an octahedron n/4 times per edge,
+//   8·(n/4)² triangles. At the flat preview 116 every sphere was 6,728 triangles
+//   whatever its radius; a 0.75 mm rivet carried a chord error of 0.0003 mm, a
+//   hundredth of a screen pixel at any zoom. A part with ~250 such rivets (the
+//   steampunk-spider feedback, "not loading on phones") unioned 1.7 M triangles of
+//   rivets into a 100k body: 10 s and a 2.7 GB peak on a desktop, which iOS Safari's
+//   content process does not survive — at 12 triangles each the same body was 4 s
+//   and 500 MB.
+// - a lathe's PROFILE ARCS (`revolve` of a Shape2D — `torus`, `roundedCylinder`, a
+//   hand-drawn rounded profile): every arc sample becomes a full ring of the sweep,
+//   so an O-ring of 0.75 mm tube radius was 27,376 triangles. The sweep itself stays
+//   on the circle rule (its rim is what the fillet machinery reads).
+// - a `roundedBox`'s corners: sphere octants, sampled per quarter arc AND per rim
+//   station, so a 3 mm rounded cube was 4,092 triangles (roundedBoxArcSamples in
+//   rounded-solids.js turns this count into that sample budget).
 //
-// - preview holds SPHERE_SAGITTA_TOL.preview (0.02 mm — an absolute chord error is
-//   what screen pixels measure, so one tolerance reads equally smooth at every radius
-//   and every zoom; 0.02 mm is a fifth of a pixel at a typical 100 mm-part zoom),
-//   floored at SPHERE_FLOOR segments (24 — ~15° facets, so a tiny ball never reads as
-//   a polygon under close zoom, and 288 triangles instead of 6,728) and capped at the
-//   old flat count (nothing gets FINER than before; a sphere of 60 mm radius and up
-//   keeps exactly the density it always had).
+// All three are sized by chord tolerance on BOTH tiers, like print circles are:
+//
+// - preview holds DOUBLE_CURVATURE_SAGITTA_TOL.preview (0.02 mm — an absolute chord
+//   error is what screen pixels measure, so one tolerance reads equally smooth at
+//   every radius and every zoom; 0.02 mm is a fifth of a pixel at a typical
+//   100 mm-part zoom), floored at DOUBLE_CURVATURE_FLOOR segments (24 — ~15° facets,
+//   so a tiny ball never reads as a polygon under close zoom; a rivet sphere is 288
+//   triangles instead of 6,728) and capped at the old flat count (nothing gets FINER
+//   than before; a radius of 60 mm and up keeps exactly the density it always had).
 // - print holds the print tier's 0.01 mm, floored at the preview count for the same
 //   radius (never coarser than the preview the user approved — the same property the
 //   circle rule keeps) and capped at 480.
 //
-// Circles in extrusions, revolves, cylinders and 2-D outlines stay on the flat preview
-// count on purpose: their cost is linear in the count, and the mesh fillet's arc gate,
-// the roundAll prism fast path and the shading policies are all tuned to that density
-// — a spike that made EVERY preview circle tolerance-based (0.05 mm, floor 24) turned
-// bore-rim fillets from revolve tools into planar sweeps and drew 26 feature lines
-// across a roundAll band that had none. A sphere has no sharp edges of its own and roundAll
-// sizes its own balls (roundAllSegs), so this rule touches nothing tuned to 116.
-export const SPHERE_SAGITTA_TOL = { preview: 0.02, print: SAGITTA_TOL.print }; // mm
-export const SPHERE_FLOOR = 24;                                                  // segments
+// A tolerance-sized surface reads a little SMALLER than the exact one — an inscribed
+// polygon's area deficit is about 2π²/(3n²), so 0.8% on a 3 mm tube at 28 segments
+// — and `measure` reports what the mesh holds. Gates on small rounded features should
+// carry that slack; print-scale features are unaffected at the cap.
+//
+// Circles in extrusions, cylinders, 2-D outlines and a lathe's SWEEP stay on the flat
+// preview count on purpose: their cost is linear in the count, and the mesh fillet's
+// arc gate, the roundAll prism fast path and the shading policies are all tuned to
+// that density — a spike that made EVERY preview circle tolerance-based (0.05 mm,
+// floor 24) turned bore-rim fillets from revolve tools into planar sweeps and drew 26
+// feature lines across a roundAll band that had none. None of the three surfaces
+// above has a sharp edge of its own, and roundAll sizes its own balls (roundAllSegs),
+// so this rule touches nothing tuned to 116.
+export const DOUBLE_CURVATURE_SAGITTA_TOL = { preview: 0.02, print: SAGITTA_TOL.print }; // mm
+export const DOUBLE_CURVATURE_FLOOR = 24;                                                  // segments
 
-// Segments for a sphere of radius `r` at `quality`: the fewest that keep the chord
-// sagitta under the tier's sphere tolerance, clamped as described above. An unknown
-// tier facets as preview; a degenerate radius takes the floor and never throws.
-export function sphereSegs(r, quality) {
-  const tier = Object.hasOwn(SPHERE_SAGITTA_TOL, quality ?? "") ? quality : "preview";
-  const floor = tier === "preview" ? SPHERE_FLOOR : sphereSegs(r, "preview");
-  return segsForSagitta(r, SPHERE_SAGITTA_TOL[tier], floor, SEGS[tier]);
+// Segments per full circle for a doubly-curved feature of radius `r` at `quality`: the
+// fewest that keep the chord sagitta under the tier's tolerance, clamped as described
+// above. An unknown tier facets as preview; a degenerate radius takes the floor and
+// never throws.
+export function doubleCurvatureSegs(r, quality) {
+  const tier = Object.hasOwn(DOUBLE_CURVATURE_SAGITTA_TOL, quality ?? "") ? quality : "preview";
+  const floor = tier === "preview" ? DOUBLE_CURVATURE_FLOOR : doubleCurvatureSegs(r, "preview");
+  return segsForSagitta(r, DOUBLE_CURVATURE_SAGITTA_TOL[tier], floor, SEGS[tier]);
 }
