@@ -1060,12 +1060,27 @@ export function tilePicker(host) {
    listener you attach yourself with `addEventListener`, rather than through `host.h`,
    is **not** guarded — wire listeners through `host.h`, or wrap your own in try/catch.
 
-**Looking native.** The slot inherits the rail's font, colours and light/dark theme.
-Bare `<button>`, `<input>` and `<select>` elements pick up the built-in looks
-automatically; the built-in classes are available by name for the exact thing:
+**Looking native.** The slot inherits the rail's font and text colour, and the
+built-in looks come for free: bare `<button>`, `<input>` and `<select>` elements
+are already styled, the built-in classes are there by name for the exact thing —
 `row`, `seg` (a segmented row of buttons), `action`, `ghost`, `num`, `text-input`,
-`select-input`; and for SVG, `pf-hit` (clickable, with a `selected` state) and
-`pf-drag`. Sub-controls mounted through `host.controls` *are* the built-in widgets.
+`select-input` — and sub-controls mounted through `host.controls` *are* the
+built-in widgets. For SVG there are two classes: `pf-hit` (a clickable region,
+with a `selected` state) and `pf-drag`.
+
+**Colour only with the rail's tokens.** Inheriting the rail's colours covers the
+text you did not style; it does not cover anything you colour yourself. For that,
+use a `--pf-*` custom property and never a hex literal or a named colour — the
+tokens flip with the light/dark theme and a literal cannot, so a `#333` border is
+a widget that is unreadable in one of the two themes. The ones worth knowing:
+`var(--pf-text)` and `var(--pf-text-2)` for text, `var(--pf-muted)` for a
+secondary label, `var(--pf-border)` for a rule or an outline,
+`var(--pf-surface-2)` for a filled chip, `var(--pf-accent)` with
+`var(--pf-on-accent)` for the selected or primary thing, and `var(--pf-err)` for
+a problem. The common case needs no colour from you at all: an SVG shape you
+leave unfilled inherits `var(--pf-text-2)` rather than SVG's own black, and a
+`pf-hit` region is filled and outlined at rest. To colour a region from your own
+data, set an inline `style` — a `fill="…"` attribute loses to the rail's rule.
 
 **Reading the part's own files.** Artwork can live beside the code (the tree is text,
 so an SVG, a `partforge-vector` JSON document or a JSON data file — not a PNG).

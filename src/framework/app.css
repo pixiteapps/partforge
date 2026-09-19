@@ -387,10 +387,10 @@ button.action:disabled { opacity: .5; cursor: default; }
 /* Custom controls (type: "custom"): a part-authored widget in the rail. The
    slot inherits the rail's cascade (font, colours, --pf-* tokens); these rules
    give BARE elements the built-in controls' look so a widget written with
-   plain <button>/<input>/<select> still reads as native, and provide two
-   opt-in classes for SVG: .pf-hit (a clickable region) and .pf-drag (a
-   dragged one — touch-action: none is what lets a finger drag it on a phone
-   instead of scrolling the sheet). */
+   plain <button>/<input>/<select> still reads as native, supply a themed
+   floor for hand-drawn SVG, and provide two opt-in classes for SVG: .pf-hit
+   (a clickable region) and .pf-drag (a dragged one — touch-action: none is
+   what lets a finger drag it on a phone instead of scrolling the sheet). */
 .pf-custom { margin: 9px 0; }
 .pf-custom.hidden { display: none; }
 .pf-custom-slot { display: flow-root; }
@@ -400,7 +400,12 @@ button.action:disabled { opacity: .5; cursor: default; }
    like .text-input (0,1,0) or .row .num (0,2,0). At true zero specificity,
    any class rule wins, so a named built-in class (.seg button, .text-input,
    select.select-input, …) always beats these bare-element defaults. */
-:where(.pf-custom) :where(svg) { display: block; max-width: 100%; height: auto; }
+/* `fill` inherits in SVG, so this is the floor for everything the widget draws
+   and did not colour — including <text>. SVG's own initial fill is BLACK, which
+   is invisible on the dark theme, and that is what an author gets for free
+   unless the rail supplies a token. Inherited rather than matched, so a child
+   carrying its own fill="…" attribute still wins. */
+:where(.pf-custom) :where(svg) { display: block; max-width: 100%; height: auto; fill: var(--pf-text-2); }
 :where(.pf-custom) :where(button) {
   font: inherit; font-size: 12px; padding: 5px 9px; cursor: pointer;
   background: transparent; border: 1px solid var(--pf-border); color: var(--pf-text-2);
@@ -417,7 +422,13 @@ button.action:disabled { opacity: .5; cursor: default; }
   outline: none; border-color: var(--pf-accent);
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
 }
-.pf-custom .pf-hit { cursor: pointer; }
+/* A region the reader clicks. The RESTING fill and stroke are what make it read
+   as a control: without them a .pf-hit polygon is a black slab with no border
+   until it is hovered or selected. Zero specificity, so a widget that colours
+   regions from its own data still wins — with an inline `style`, since a
+   `fill="…"` attribute loses to any rule that matches the element, even this
+   one. Hover and selected below keep their own (0,2,x) weight. */
+:where(.pf-custom) :where(.pf-hit) { cursor: pointer; fill: var(--pf-surface-2); stroke: var(--pf-border); }
 .pf-custom .pf-hit:hover { fill: color-mix(in oklab, var(--pf-accent) 25%, transparent); }
 .pf-custom .pf-hit.selected { fill: color-mix(in oklab, var(--pf-accent) 45%, transparent); stroke: var(--pf-accent); }
 .pf-custom .pf-drag { touch-action: none; }
