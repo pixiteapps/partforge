@@ -147,9 +147,22 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const images = new Map();
   // Boundary ops route through cache.lookup; on a miss `make` runs the WASM op,
   // tracks the result, and returns the triple the cache needs to pin/dispose it.
+  // Delete an embind handle once. Every WASM object a build makes is T()-tracked
+  // for cleanup(), and the cached ones are ALSO owned by the solid cache, which
+  // disposes them when a later round evicts them. Those two owners only stay
+  // apart because cleanup() normally runs at the end of every build round and
+  // empties `tracked` — a build that THROWS on a path without a finally-cleanup
+  // (the oracle's measure(), a host's own build loop) leaves that round's new
+  // cached solids on `tracked`; the next round evicts them, the cache deletes
+  // them, and the cleanup after that deletes them again: "Manifold instance
+  // already deleted", on every build for the rest of the kernel's life. Two
+  // failing builds in a row was the reproduction (2026-09-18: plate → boss →
+  // bad cut → hole → bad cut → anything). embind knows whether a handle is
+  // gone, so both owners ask before deleting instead of trusting the other.
+  const del = (o) => { if (!o?.isDeleted?.()) o?.delete?.(); };
   const cached = (hash, computeM) => cache.lookup(hash, () => {
     const m = computeM();                 // already T()-tracked by the op
-    return { value: wrap(m, hash), pin: m, dispose: () => m.delete?.() };
+    return { value: wrap(m, hash), pin: m, dispose: () => del(m) };
   });
 
   // Booleans commute with any invertible affine map, so a transform EVERY operand
@@ -188,7 +201,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // the entry (cleanup() skips pinned objects).
   const csFor = (shape) => cache.lookup(h("cs2d", shape._hash, segs), () => {
     const cs = T(CrossSection.ofPolygons(regionPolys(shape._regions, segsAt), "EvenOdd"));
-    return { value: cs, pin: cs, dispose: () => cs.delete?.() };
+    return { value: cs, pin: cs, dispose: () => del(cs) };
   });
   // The same shape as a LATHE profile: its arcs sampled at the double-curvature count
   // (every sample becomes a full ring of the sweep — the quadratic cost circle-segs.js
@@ -196,7 +209,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // own key. Keyed on the tier, not a count: the count varies per arc radius.
   const csForLathe = (shape) => cache.lookup(h("cs2d-lathe", shape._hash, quality), () => {
     const cs = T(CrossSection.ofPolygons(regionPolys(shape._regions, dcAt), "EvenOdd"));
-    return { value: cs, pin: cs, dispose: () => cs.delete?.() };
+    return { value: cs, pin: cs, dispose: () => del(cs) };
   });
 
   // Copy the mesh out into JS-owned arrays (so it survives cleanup) and free the
@@ -885,7 +898,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     _warnProfile: profileWarner.warn,
     // Free every WASM object created since the last cleanup EXCEPT solids the cache
     // still pins (they must survive for the next build to resume from them).
-    cleanup: () => { for (const o of tracked) if (!cache.isPinned(o)) o.delete?.(); tracked.length = 0; },
+    cleanup: () => { for (const o of tracked) if (!cache.isPinned(o)) del(o); tracked.length = 0; },
   });
   return kernel;
 }
