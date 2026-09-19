@@ -224,3 +224,50 @@ test("a docked rail pane keeps the shell's inset padding and overlays the rail i
   expect(rail.body).toMatch(/bottom:\s*0/);
   expect(rail.body).toMatch(/height:\s*var\(--pf-rail-dock-h/);
 });
+
+// A custom control draws its own SVG, and SVG's initial fill is BLACK — invisible
+// on the dark theme and a heavy slab on the light one. So the rail supplies a
+// token FLOOR (on the <svg>, where `fill` inherits, leaving an author's own
+// fill="…" to win) and a resting look for the one clickable class, which
+// otherwise had only :hover and .selected and so was unstyled at rest. This is
+// not a cosmetic default: without it a widget that follows the guide exactly
+// still renders unreadable, which is how it reached a user.
+test("a custom control's SVG gets a themed floor, and .pf-hit reads as a control at rest", () => {
+  const all = rules(read("app.css"));
+  const find = (sel) => all.find((r) => r.selector === sel);
+
+  const svg = find(":where(.pf-custom) :where(svg)");
+  expect(svg, "the custom-control svg default must exist").toBeTruthy();
+  expect(svg.body, "an unfilled shape or <text> must inherit a themed fill").toMatch(/fill:\s*var\(--pf-text-2\)/);
+
+  const hit = find(":where(.pf-custom) :where(.pf-hit)");
+  expect(hit, ".pf-hit needs a RESTING rule, not only hover/selected").toBeTruthy();
+  expect(hit.body, "a clickable region must be filled at rest").toMatch(/fill:\s*var\(--pf-surface-2\)/);
+  expect(hit.body, "a clickable region must be outlined at rest").toMatch(/stroke:\s*var\(--pf-border\)/);
+
+  // A label nested in the region must stay readable through all three states.
+  // Its fill would otherwise INHERIT the region's own — grey on grey at rest,
+  // accent on accent once selected.
+  const hitText = find(":where(.pf-custom) :where(.pf-hit) text");
+  expect(hitText, "a label inside a region needs its own fill").toBeTruthy();
+  expect(hitText.body, "a resting region's label must not inherit the region's fill").toMatch(
+    /fill:\s*var\(--pf-text-2\)/,
+  );
+  // `stroke` inherits too, and the region's outline colour painted around every
+  // glyph is most of the glyph at label sizes — pale ghosts of the numbers.
+  expect(hitText.body, "a label must not inherit the region's stroke").toMatch(/stroke:\s*none/);
+
+  // Selected must be the SOLID accent: a translucent one lands on a different
+  // value per theme, so no single label colour reads on both.
+  const selected = find(".pf-custom .pf-hit.selected");
+  expect(selected.body, "selected must be a solid accent fill").toMatch(/fill:\s*var\(--pf-accent\)\s*;/);
+  const selectedText = find(".pf-custom .pf-hit.selected text");
+  expect(selectedText, "a label over the selected accent needs on-accent").toBeTruthy();
+  expect(selectedText.body, "a label over the accent must use --pf-on-accent").toMatch(
+    /fill:\s*var\(--pf-on-accent\)/,
+  );
+
+  // A literal cannot flip with the theme, which is the whole point of these rules.
+  for (const r of [svg, hit, hitText, selected, selectedText])
+    expect(r.body, `${r.selector} must not hardcode a colour`).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+});
