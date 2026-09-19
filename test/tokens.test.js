@@ -245,7 +245,29 @@ test("a custom control's SVG gets a themed floor, and .pf-hit reads as a control
   expect(hit.body, "a clickable region must be filled at rest").toMatch(/fill:\s*var\(--pf-surface-2\)/);
   expect(hit.body, "a clickable region must be outlined at rest").toMatch(/stroke:\s*var\(--pf-border\)/);
 
-  // A literal cannot flip with the theme, which is the whole point of both rules.
-  for (const r of [svg, hit])
+  // A label nested in the region must stay readable through all three states.
+  // Its fill would otherwise INHERIT the region's own — grey on grey at rest,
+  // accent on accent once selected.
+  const hitText = find(":where(.pf-custom) :where(.pf-hit) text");
+  expect(hitText, "a label inside a region needs its own fill").toBeTruthy();
+  expect(hitText.body, "a resting region's label must not inherit the region's fill").toMatch(
+    /fill:\s*var\(--pf-text-2\)/,
+  );
+  // `stroke` inherits too, and the region's outline colour painted around every
+  // glyph is most of the glyph at label sizes — pale ghosts of the numbers.
+  expect(hitText.body, "a label must not inherit the region's stroke").toMatch(/stroke:\s*none/);
+
+  // Selected must be the SOLID accent: a translucent one lands on a different
+  // value per theme, so no single label colour reads on both.
+  const selected = find(".pf-custom .pf-hit.selected");
+  expect(selected.body, "selected must be a solid accent fill").toMatch(/fill:\s*var\(--pf-accent\)\s*;/);
+  const selectedText = find(".pf-custom .pf-hit.selected text");
+  expect(selectedText, "a label over the selected accent needs on-accent").toBeTruthy();
+  expect(selectedText.body, "a label over the accent must use --pf-on-accent").toMatch(
+    /fill:\s*var\(--pf-on-accent\)/,
+  );
+
+  // A literal cannot flip with the theme, which is the whole point of these rules.
+  for (const r of [svg, hit, hitText, selected, selectedText])
     expect(r.body, `${r.selector} must not hardcode a colour`).not.toMatch(/#[0-9a-f]{3,8}\b/i);
 });

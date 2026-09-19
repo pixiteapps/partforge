@@ -1077,10 +1077,24 @@ a widget that is unreadable in one of the two themes. The ones worth knowing:
 secondary label, `var(--pf-border)` for a rule or an outline,
 `var(--pf-surface-2)` for a filled chip, `var(--pf-accent)` with
 `var(--pf-on-accent)` for the selected or primary thing, and `var(--pf-err)` for
-a problem. The common case needs no colour from you at all: an SVG shape you
-leave unfilled inherits `var(--pf-text-2)` rather than SVG's own black, and a
-`pf-hit` region is filled and outlined at rest. To colour a region from your own
-data, set an inline `style` — a `fill="…"` attribute loses to the rail's rule.
+a problem. That palette is the whole palette: the accent blue for the one thing
+that is chosen or primary, the surface and border greys for everything else. A
+widget that reaches past it for a red or a green is a widget that has stopped
+looking like the rest of the panel.
+
+**Nest a region's label inside the region.** The common case then needs no colour
+from you at all: an SVG shape you leave unfilled inherits `var(--pf-text-2)`
+rather than SVG's own black, a `pf-hit` region is filled and outlined at rest,
+and a `<text>` *inside* that region stays readable through all three states —
+the rail gives it `var(--pf-text-2)` at rest and `var(--pf-on-accent)` once the
+region is selected and has gone solid accent underneath it, and clears the
+stroke it would otherwise inherit from the region's outline (SVG paints that
+around every glyph, which at label sizes leaves a pale ghost of the number).
+Draw the label as a sibling instead and none of that reaches it: a dark number
+sitting on the selected blue is the result, and you have to colour it yourself.
+To colour a
+region from your own data, set an inline `style` — a `fill="…"` attribute loses
+to the rail's rule.
 
 **Reading the part's own files.** Artwork can live beside the code (the tree is text,
 so an SVG, a `partforge-vector` JSON document or a JSON data file — not a PNG).

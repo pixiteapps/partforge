@@ -430,7 +430,21 @@ button.action:disabled { opacity: .5; cursor: default; }
    one. Hover and selected below keep their own (0,2,x) weight. */
 :where(.pf-custom) :where(.pf-hit) { cursor: pointer; fill: var(--pf-surface-2); stroke: var(--pf-border); }
 .pf-custom .pf-hit:hover { fill: color-mix(in oklab, var(--pf-accent) 25%, transparent); }
-.pf-custom .pf-hit.selected { fill: color-mix(in oklab, var(--pf-accent) 45%, transparent); stroke: var(--pf-accent); }
+/* Selected is the SOLID accent, not a wash of it. A translucent accent lands on a
+   different value in each theme — pale over the light background, dark over the
+   dark one — so no single label colour is readable on both. Solid accent is one
+   colour in both, which is what makes --pf-on-accent below a rule rather than a
+   guess. A widget that would rather tint its own region overrides with `style`. */
+.pf-custom .pf-hit.selected { fill: var(--pf-accent); stroke: var(--pf-accent); }
+/* A label NESTED inside the region — the structure to recommend, because it is the
+   only one where the rail can keep the text readable as the region changes colour
+   underneath it. `fill` inherits, so without these the label takes the region's OWN
+   fill: grey on grey at rest, and accent on accent once selected. `stroke` inherits
+   too, and that one is worse than it looks: the region's outline colour gets painted
+   around every glyph, which at label sizes is most of the glyph — pale ghosts of the
+   numbers at rest, blue ones when selected. Hence stroke: none, not just a fill. */
+:where(.pf-custom) :where(.pf-hit) text { fill: var(--pf-text-2); stroke: none; }
+.pf-custom .pf-hit.selected text { fill: var(--pf-on-accent); }
 .pf-custom .pf-drag { touch-action: none; }
 .pf-custom-error {
   margin: 4px 0; padding: 6px 8px; border: 1px solid var(--pf-err); border-radius: var(--pf-radius-control);
