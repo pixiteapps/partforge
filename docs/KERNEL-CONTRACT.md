@@ -614,9 +614,9 @@ backwards for the holes (see the migration note below).
 | `simple()` | `toRegions()` unwrapped — throws unless the result is exactly one region. |
 | `regions()` | Scission: each disjoint region as its own live `Shape2D[]` (each further boolean-able), vs `toRegions()` which returns raw `{outer, holes}` data. Goes through `toRegions()`, so the pieces are tessellated at the backend's LOD — curves do not survive scission. |
 | `translate([dx,dy])` / `rotate(deg, center?)` / `scale(f\|[sx,sy], center?)` / `mirror(axis)` | Rigid/similarity transforms on the contours (curve-preserving). `center` defaults to the origin; `axis` is `"x"`, `"y"`, or `{point, dir}`. `scale`'s factor is uniform when a bare number, per-axis when `[sx,sy]`. |
-| `fillet(r, {corners?})` / `chamfer(d, {corners?})` | Round (true arcs) or bevel (straight chords) selected corners. `corners` = `"all"` (default) / `"convex"` / `"concave"` / `{indices}` / `{near, count?}`; `r`/`d` may be an array paired positionally with `{indices}`. Throws when no corner matches. |
+| `fillet(r, {corners?})` / `chamfer(d, {corners?})` | Round (true arcs) or bevel (straight chords) selected corners. `corners` = `"all"` (default) / `"convex"` / `"concave"` / `{indices}` / `{near, count?, within?}`; `r`/`d` may be an array paired positionally with `{indices}`. `{indices}` entries are each corner's `position` in `corners()` and any entry out of range throws (never silently dropped). `{near}` takes the `count` (default 1) nearest corners; without `within` (mm) the nearest is always selected however far away, with it a pick that finds nothing inside the radius throws. Throws when no corner matches. |
 | `simplify(tolerance)` | Corner-preserving decimation/refit within `tolerance` mm — dense point rings become fewer segments (and refit arcs/cubics) without moving corners. |
-| `corners()` | The corner list — `{index, point, interiorAngleDeg, convex, segTypes}[]`. This positional order is what `fillet`/`chamfer`'s `{indices}` selects into. |
+| `corners()` | The corner list — `{index, position, point, interiorAngleDeg, convex, segTypes}[]`. `position` is the entry's place in this list and is what `fillet`/`chamfer`'s `{indices}` selects by; `index` is the joint's vertex number within its own contour (what smooth joints are skipped from), and the two diverge past any smooth joint. |
 | `contains([x,y])` | Point-in-shape test (inside an outer, not inside a hole). |
 | `isEmpty()` | `true` when the shape has no regions at all — a `cut`/`intersect` legitimately removed everything. Pure JS on the stored IR, backend-identical. See "Empty shapes" below. |
 | `extrude({h, twist?, scaleTop?})` | Sugar for `k.extrude({profile: this, …})` → `Solid`. Throws on an empty shape (see "Empty shapes"). |
@@ -766,7 +766,7 @@ being single-contour by nature, they throw on a region. The full set: `translate
 | | `mirrorProfile(input, axis)` | `axis: "x" \| "y" \| {point, dir}` |
 | Corners | `filletProfile(input, r, opts?)` | `r` may be an array paired with `{indices}` |
 | | `chamferProfile(input, dist, opts?)` | symmetric setback, straight connector |
-| | `profileCorners(input)` | `[{index, point, interiorAngleDeg, convex, segTypes}]` |
+| | `profileCorners(input)` | `[{index, position, point, interiorAngleDeg, convex, segTypes}]`; `{indices}` selects by `position` |
 | Queries | `profileLength(contour)` | mm; single contour only |
 | | `profilePointAt(contour, {t} \| {length})` | single contour only |
 | | `profileTangentAt(contour, {t} \| {length})` | unit vector; single contour only |

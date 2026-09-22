@@ -103,8 +103,15 @@ export interface ContourRegion {
 
 /** One corner of a `Shape2D`, as `Shape2D.corners()` reports it. */
 export interface Corner2D {
-  /** Index of the joint within its own contour. */
+  /**
+   * The joint's vertex number within its own contour. NOT what `fillet`/
+   * `chamfer`'s `{ indices }` takes — that is `position`. The two diverge as
+   * soon as a contour has a smooth joint (a collinear midpoint, a G1 arc-line
+   * join), and on region input `index` restarts per ring.
+   */
   index: number;
+  /** This corner's place in the `corners()` list — what `{ indices }` selects by. */
+  position: number;
   point: Point2;
   interiorAngleDeg: number;
   convex: boolean;
@@ -121,9 +128,17 @@ export type CornerSelector =
   | "all"
   | "convex"
   | "concave"
-  /** Positional indices into `corners()`; a per-corner `r`/`d` array pairs with these. */
+  /**
+   * Each corner's `position` in `corners()` (never its `index`); a per-corner
+   * `r`/`d` array pairs with these. Any entry out of range throws.
+   */
   | { indices: number[] }
-  | { near: Point2; count?: number };
+  /**
+   * The `count` (default 1) corners nearest `near`, optionally only those
+   * `within` mm of it. Without `within` the nearest corner is always selected,
+   * however far away it is.
+   */
+  | { near: Point2; count?: number; within?: number };
 
 /** A mirror line for `Shape2D.mirror`. */
 export type MirrorAxis2 = "x" | "y" | { point: Point2; dir: Point2 };
@@ -195,7 +210,7 @@ export interface Shape2D {
   chamfer(d: number | number[], opts?: { corners?: CornerSelector }): Shape2D;
   /** Corner-preserving decimation/refit within `tolerance` mm. */
   simplify(tolerance: number): Shape2D;
-  /** The corner list — the positional order `fillet`/`chamfer`'s `{ indices }` selects into. */
+  /** The corner list; each entry's `position` is what `fillet`/`chamfer`'s `{ indices }` selects by. */
   corners(): Corner2D[];
   /** Is `[x, y]` inside the shape (inside an outer, not inside a hole)? */
   contains(p: Point2): boolean;

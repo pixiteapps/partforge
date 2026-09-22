@@ -175,9 +175,11 @@ export function filletProfile(input: ProfileInput, r: number | number[], opts?: 
 export function chamferProfile(input: ProfileInput, dist: number | number[], opts?: { corners?: CornerSelector }): ProfileInput;
 
 /**
- * The corner list — `{index, point, interiorAngleDeg, convex, segTypes}[]`,
- * plus `{regionIndex, ring}` for region/regions input. This positional order
- * is what `filletProfile`/`chamferProfile`'s `{indices}` selects into.
+ * The corner list — `{index, position, point, interiorAngleDeg, convex,
+ * segTypes}[]`, plus `{regionIndex, ring}` for region/regions input. `position`
+ * (the entry's place in this list) is what `filletProfile`/`chamferProfile`'s
+ * `{indices}` selects by; `index` is the joint's vertex number within its
+ * contour, and the two diverge past any smooth joint.
  */
 export function profileCorners(input: ProfileInput): Corner2D[];
 

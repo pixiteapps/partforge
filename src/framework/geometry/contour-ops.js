@@ -188,15 +188,23 @@ function contourCorners(contour) {
   return out;
 }
 
+// Two numbers on every corner, and they are NOT interchangeable. `index` is the joint's
+// vertex number within its own contour (what buildCornerOpRing, simplify and the lofts
+// key on); `position` is the corner's place in THIS returned list — the one
+// `{corners: {indices}}` selects by. They diverge as soon as a contour has a smooth
+// joint (a collinear midpoint, a G1 arc-line join), and on region input `index`
+// restarts per ring while `position` runs on through the flattened order.
+const withPositions = (corners) => corners.map((c, position) => ({ ...c, position }));
+
 export function profileCorners(input) {
   const { kind, regions } = liftProfile(input);
-  if (kind === "points" || kind === "contour") return contourCorners(regions[0].outer);
+  if (kind === "points" || kind === "contour") return withPositions(contourCorners(regions[0].outer));
   const out = [];
   regions.forEach((rg, regionIndex) => {
     for (const c of contourCorners(rg.outer)) out.push({ regionIndex, ring: "outer", ...c });
     rg.holes.forEach((h, hi) => { for (const c of contourCorners(h)) out.push({ regionIndex, ring: { hole: hi }, ...c }); });
   });
-  return out;
+  return withPositions(out);
 }
 
 // ── Fillet / chamfer ─────────────────────────────────────────────────────────
@@ -205,6 +213,19 @@ export function profileCorners(input) {
 // indexes this array POSITIONALLY, matching profileCorners' documented contract).
 // r/dist may be an array paired positionally with {indices}; every other selector
 // broadcasts the scalar to every match. Throws when nothing matches.
+//
+// {indices} REJECTS any entry outside 0…corners.length-1 rather than dropping it.
+// It used to filter silently, and the author who wrote `.map((c) => c.index)` —
+// a vertex number, not a position — then filleted the wrong corners with no error
+// once the out-of-range ones fell away (partforge-cloud feedback #95: ~15 applies
+// chasing an L-bend whose arcs would not come out concentric). A throw that names
+// the two fields is the coaching that ends that loop on the first attempt.
+//
+// {near} takes an optional `within` (mm). WITHOUT it the nearest `count` corners
+// are always selected, however far away — "round the four outer corners" applied per
+// compartment happily rounds the four corners nearest a small pocket that touches
+// none of them. `within` turns a far pick into the same no-match error as any
+// other empty selector.
 function resolveCornerSelector(corners, param, opts, label) {
   const sel = (opts && opts.corners) ?? "all";
   const isArrayParam = Array.isArray(param);
@@ -218,14 +239,28 @@ function resolveCornerSelector(corners, param, opts, label) {
     const perCorner = isArrayParam ? param : null;
     if (perCorner && perCorner.length !== sel.indices.length)
       throw new Error(`${label}: per-corner radius array has ${perCorner.length} entries but {indices} has ${sel.indices.length}`);
-    picked = sel.indices
-      .map((idx, j) => ({ corner: corners[idx], param: perCorner ? perCorner[j] : param }))
-      .filter((p) => p.corner);
+    const n = corners.length;
+    picked = sel.indices.map((idx, j) => {
+      if (!Number.isInteger(idx))
+        throw new Error(`${label}: {indices} entry ${idx} is not an integer — {indices} takes each corner's \`position\` from profileCorners()`);
+      if (idx < 0 || idx >= n)
+        throw new Error(
+          `${label}: {indices} entry ${idx} is out of range — profileCorners() reported ${n} corner${n === 1 ? "" : "s"} (positions 0…${Math.max(0, n - 1)}). ` +
+          "{indices} takes each corner's `position` (its place in that list), not its `index` (its vertex number within the contour)",
+        );
+      return { corner: corners[idx], param: perCorner ? perCorner[j] : param };
+    });
   } else if (sel && Array.isArray(sel.near)) {
     const [nx, ny] = sel.near;
     const count = sel.count ?? 1;
+    const within = sel.within;
+    if (within !== undefined && !(Number.isFinite(within) && within > 0))
+      throw new Error(`${label}: {near} within must be a positive number of mm (got ${within})`);
     const distSq = (c) => (c.point[0] - nx) ** 2 + (c.point[1] - ny) ** 2;
-    picked = corners.slice().sort((a, b) => distSq(a) - distSq(b)).slice(0, count).map((corner) => ({ corner, param }));
+    const candidates = within === undefined ? corners.slice() : corners.filter((c) => distSq(c) <= within * within);
+    if (candidates.length === 0)
+      throw new Error(`${label}: no corner within ${within}mm of (${nx}, ${ny}) — the nearest is ${Math.sqrt(Math.min(...corners.map(distSq))).toFixed(3)}mm away`);
+    picked = candidates.sort((a, b) => distSq(a) - distSq(b)).slice(0, count).map((corner) => ({ corner, param }));
   } else picked = [];
   if (picked.length === 0) throw new Error(`${label}: no corner matched selector ${JSON.stringify(sel)}`);
   return picked;

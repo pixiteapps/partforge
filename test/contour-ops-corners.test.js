@@ -44,3 +44,18 @@ test("hole corners report material-relative convexity", () => {
   // (false === false) → convex: true, matching how the surrounding material bulges inward.
   for (const c of holeCorners) expect(c.convex).toBe(true);
 });
+
+test("each corner carries `position` (its place in the returned list) beside `index` (its vertex number)", () => {
+  // (5,0) is a collinear midpoint — a smooth joint, skipped — so vertex numbers and
+  // list positions diverge from there on. `{indices}` takes positions.
+  const corners = profileCorners([[0, 0], [5, 0], [10, 0], [10, 10], [0, 10]]);
+  expect(corners.map((c) => c.index)).toEqual([0, 2, 3, 4]);
+  expect(corners.map((c) => c.position)).toEqual([0, 1, 2, 3]);
+});
+
+test("`position` runs through the flattened region order while `index` restarts per ring", () => {
+  const region = { outer: [[0, 0], [20, 0], [20, 20], [0, 20]], holes: [[[5, 5], [5, 15], [15, 15], [15, 5]]] };
+  const corners = profileCorners(region);
+  expect(corners.map((c) => c.position)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  expect(corners.map((c) => c.index)).toEqual([0, 1, 2, 3, 0, 1, 2, 3]);
+});

@@ -74,3 +74,36 @@ test("a per-corner radius array whose length mismatches {indices} throws", () =>
     /filletProfile: per-corner radius array has 3 entries but \{indices\} has 2/,
   );
 });
+
+test("{indices} selects by `position`, so a corner past a smooth joint is reachable by its list place", () => {
+  // (5,0) is a smooth joint: corners are vertices 0,2,3,4 at positions 0,1,2,3.
+  const bent = [[0, 0], [5, 0], [10, 0], [10, 10], [0, 10]];
+  const out = filletProfile(bent, 2, { corners: { indices: [3] } });
+  const arc = out.segments.find((s) => s.via);
+  expect(out.segments.filter((s) => s.via).length).toBe(1);
+  expect(arc.to[0]).toBeCloseTo(0, 6);   // the (0,10) corner, not (10,10)
+  expect(arc.to[1]).toBeCloseTo(8, 6);
+});
+
+test("{indices} throws on ANY out-of-range or non-integer entry instead of silently dropping it", () => {
+  const bent = [[0, 0], [5, 0], [10, 0], [10, 10], [0, 10]];
+  // A vertex number (4) used where a position belongs — the trap this guards.
+  expect(() => filletProfile(bent, 2, { corners: { indices: [0, 4] } })).toThrow(
+    /filletProfile: \{indices\} entry 4 is out of range — profileCorners\(\) reported 4 corners \(positions 0…3\)\. \{indices\} takes each corner's `position`/,
+  );
+  expect(() => chamferProfile(sq, 1, { corners: { indices: [-1] } })).toThrow(/chamferProfile: \{indices\} entry -1 is out of range/);
+  expect(() => filletProfile(sq, 1, { corners: { indices: [1.5] } })).toThrow(/filletProfile: \{indices\} entry 1.5 is not an integer/);
+});
+
+test("{near, within} bounds the pick: nothing inside the radius throws, and count never reaches past it", () => {
+  expect(() => filletProfile(sq, 1, { corners: { near: [50, 50], within: 5 } })).toThrow(
+    /filletProfile: no corner within 5mm of \(50, 50\)/,
+  );
+  // count: 4 asks for four, but only the (10,10) corner lies within 2mm of (9,9).
+  const out = filletProfile(sq, 1, { corners: { near: [9, 9], count: 4, within: 2 } });
+  expect(out.segments.filter((s) => s.via).length).toBe(1);
+  // Without `within`, the same pick takes the nearest four however far away.
+  const unbounded = filletProfile(sq, 1, { corners: { near: [9, 9], count: 4 } });
+  expect(unbounded.segments.filter((s) => s.via).length).toBe(4);
+  expect(() => filletProfile(sq, 1, { corners: { near: [9, 9], within: 0 } })).toThrow(/within must be a positive number/);
+});
