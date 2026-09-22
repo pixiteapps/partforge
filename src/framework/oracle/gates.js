@@ -13,6 +13,7 @@
 import { resolveProfile, overhangAngleFor } from "./dfm-profiles.js";
 import { expandCases } from "./cases.js";
 import { resolveParams } from "../part-model.js";
+import { parseAssertion } from "./assert-dsl.js";
 
 // `expect` may be a function of a case's resolved params, so the answer is a property
 // of the EXPANDED cases, not of the raw spec — which means answering it costs a call
@@ -52,8 +53,31 @@ export function partGatesMinWall(part, { process, expanded } = {}) {
     const spec = process ?? part?.verify?.process;
     if (spec && resolveProfile(spec)?.minWall != null) return true;
     return (expanded ?? expandExpectations(part)).some(({ expect }) =>
-      Object.values(expect ?? {}).some((o) => o && typeof o === "object" && "minWall" in o));
+      Object.values(expect ?? {}).some((o) => o && typeof o === "object" && ("minWall" in o || "wall" in o)));
   } catch {
     return true; // unresolvable → measure it properly and let verify report the error
   }
+}
+
+// The wall bands a measurement of `params` must track, per sub-part, from the part's
+// own `verify.expect` — resolved for exactly these params (a function expect may
+// change the band per case). Range form only: the membership window needs both ends.
+// Throws on a bad form so verify reports it where a reader can act; measure's caller
+// (Task 6) lets that throw surface as the measure error it is.
+export function partWallBands(part, params = {}) {
+  const spec = part?.verify?.expect;
+  if (!spec) return {};
+  const { p, d } = resolveParams(part, params);
+  const expect = typeof spec === "function" ? (spec(p, d) ?? {}) : spec;
+  const out = {};
+  for (const [name, metrics] of Object.entries(expect)) {
+    if (name === "_view" || !metrics || typeof metrics !== "object" || !("wall" in metrics)) continue;
+    const raw = metrics.wall;
+    const expr = raw && typeof raw === "object" && "expr" in raw ? raw.expr : raw;
+    let parsed = null;
+    try { parsed = parseAssertion(expr); } catch { parsed = null; }
+    if (!parsed || parsed.op !== "range") throw new Error(`wall expectation for "${name}" must be a range like "1.8..2.2"`);
+    out[name] = { min: parsed.min, max: parsed.max };
+  }
+  return out;
 }

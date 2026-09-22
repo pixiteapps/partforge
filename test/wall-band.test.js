@@ -8,6 +8,7 @@ import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import { minWall } from "../src/framework/oracle/min-wall.js";
 import { circleProfile } from "../src/framework/geometry/polygon.js";
+import { partWallBands, partGatesMinWall } from "../src/framework/oracle/gates.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -59,4 +60,34 @@ test("a 1.2 mm floor under a 2 mm wall is ignored by the band", () => {
   expect(r.value).toBeCloseTo(1.2, 1);                  // min wall still sees the floor
   expect(r.band.value).toBeGreaterThanOrEqual(1.8);     // the band does not
   expect(r.band.value).toBeLessThanOrEqual(2.25);
+});
+
+const bandPart = (expect) => ({
+  meta: { title: "L", units: "mm" },
+  defaults: { concentric: 1 },
+  parts: { wall: { views: ["v"], build: (kk, p) => lWall(kk, p.concentric > 0) } },
+  views: { v: { label: "V" } },
+  verify: { expect },
+});
+
+test("partWallBands reads a static wall range per sub-part", () => {
+  expect(partWallBands(bandPart({ wall: { wall: "1.8..2.2" } }), {})).toEqual({ wall: { min: 1.8, max: 2.2 } });
+  expect(partWallBands(bandPart({ wall: { volume: ">0" } }), {})).toEqual({});
+  expect(partWallBands(bandPart(undefined), {})).toEqual({});
+});
+
+test("partWallBands resolves a function expect against the given params", () => {
+  const fn = (p) => ({ wall: { wall: p.concentric > 0 ? "1.8..2.2" : "2.4..2.8" } });
+  expect(partWallBands(bandPart(fn), {})).toEqual({ wall: { min: 1.8, max: 2.2 } });
+  expect(partWallBands(bandPart(fn), { concentric: 0 })).toEqual({ wall: { min: 2.4, max: 2.8 } });
+});
+
+test("a non-range wall expectation throws, naming the sub-part", () => {
+  expect(() => partWallBands(bandPart({ wall: { wall: "<=2" } }), {})).toThrow(/wall expectation for "wall" must be a range/);
+  expect(() => partWallBands(bandPart({ wall: { wall: 2 } }), {})).toThrow(/must be a range/);
+});
+
+test("a declared wall arms the full min-wall sample budget", () => {
+  expect(partGatesMinWall(bandPart({ wall: { wall: "1.8..2.2" } }))).toBe(true);
+  expect(partGatesMinWall(bandPart({ wall: { volume: ">0" } }))).toBe(false);
 });
