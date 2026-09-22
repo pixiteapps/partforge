@@ -4,7 +4,6 @@ import { summarizeContours, MAX_RING_ARCS, MAX_RING_CORNERS } from "../src/frame
 // Hand-built contour IR, the same shape Shape2D.toContours() returns.
 const square = { start: [0, 0], segments: [{ to: [10, 0] }, { to: [10, 10] }, { to: [0, 10] }, { to: [0, 0] }] };
 // A 10×10 square whose top-right corner is a true r=2 arc about (8, 8) (via at 45°).
-const k45 = 2 - 2 * Math.SQRT1_2; // 0.5858
 const roundedCorner = { start: [0, 0], segments: [
   { to: [10, 0] }, { to: [10, 8] },
   { to: [8, 10], via: [8 + 2 * Math.SQRT1_2, 8 + 2 * Math.SQRT1_2] },

@@ -2419,6 +2419,25 @@ declare a probe that reads the value, run `measure`, and bake the reported
 number into `defaults` — the probe then keeps watching it on every regen, so a
 swapped import shows up as a probe delta instead of silently stale defaults.
 
+**Reading a 2-D shape's arcs and corners.** Return the `Shape2D` itself and the
+report carries a summary instead of the object: every arc as `{ center, r, from,
+to, sweepDeg }` (exact for a `{to, via}` arc; a cubic — what a curve-adjacent
+fillet emits — is fitted through its start, midpoint and end and tagged `fit:
+"cubic"`), every corner as `{ point, interiorAngleDeg, convex }`, plus `area`,
+`bbox`, and a straight-segment count. This is the instrument for any question a
+render cannot settle to a fraction of a millimetre: whether two arcs share a
+centre (a bend's inner and outer radii), what radius a `fillet` actually took
+after clamping, whether a corner is still a corner. A ring lists at most 64 arcs
+and 64 corners and the summary says `truncated` when it had to cut, so keep the
+probe to the region in question — intersect with a small rectangle first.
+
+```js
+probes: {
+  bend: (k, p, d) => trayPocket(k, p, d).intersect(k.shape2d([[18, -6], [28, -6], [28, 4], [18, 4]])),
+}
+// → probes.bend.regions[0].outer.arcs: [{ center: [23.75, -3], r: 4, … }]
+```
+
 **Cost.** Probes run on every `measure`/`inspect` (including quick checks — the
 agent loop is exactly who reads them), so keep them proportionate: a handful of
 thin-slab booleans is cheap; a dense sweep of whole-part XORs is not. `verify`'s
