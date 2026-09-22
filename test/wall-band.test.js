@@ -10,6 +10,7 @@ import { minWall } from "../src/framework/oracle/min-wall.js";
 import { circleProfile } from "../src/framework/geometry/polygon.js";
 import { partWallBands, partGatesMinWall } from "../src/framework/oracle/gates.js";
 import { measure } from "../src/framework/oracle/measure.js";
+import { verify } from "../src/framework/oracle/verify.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -111,4 +112,16 @@ test("the offset bend's wall fact carries the deviation and its location", () =>
 test("no band declared, or min wall not measured, reads wall: null", () => {
   expect(measure(k, bandPart({ wall: { volume: ">0" } }), "v", {}, { minWall: true }).subparts[0].wall).toBeNull();
   expect(measure(k, bandPart({ wall: { wall: "1.8..2.2" } }), "v", {}).subparts[0].wall).toBeNull();
+});
+
+test("end to end: the offset bend warns, the concentric bend passes", () => {
+  const part = bandPart((p) => ({ wall: { wall: "1.8..2.2" } }));
+  const bad = verify(k, { ...part, defaults: { concentric: 0 } });
+  const badCheck = bad.warnings.find((c) => c.metric === "wall");
+  expect(badCheck).toBeDefined();
+  expect(badCheck.actual).toBeGreaterThan(2.4);
+  expect(badCheck.location[0]).toBeGreaterThan(5.5);
+  const good = verify(k, part);
+  expect(good.warnings.find((c) => c.metric === "wall")).toBeUndefined();
+  expect(good.ok).toBe(true);
 });

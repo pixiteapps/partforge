@@ -613,3 +613,39 @@ test("overhang: an exportable: false sub-part is not judged", () => {
   expect(byName.tee.status).toBe("warn");
   expect(byName.ghost.status).toBe("skip");
 });
+
+const wallFacts = (value, location = [8, 9, 5]) => ({
+  measuredMinWall: true,
+  subparts: [{ name: "wall", holes: 0, volume: 100, surfaceArea: 100, triangleCount: 10, bbox: [10, 12, 10], watertight: true, minWall: 2,
+    wall: value === undefined ? null : { value, location, band: { min: 1.8, max: 2.2 }, members: value === null ? 0 : 40 } }],
+  aggregate: { bbox: [10, 12, 10], volume: 100 },
+  overlaps: [],
+});
+
+test("wall outside its band is a located warning", () => {
+  const w = byKey(evaluateCase(wallFacts(2.62), { profile: null, expect: { wall: { wall: "1.8..2.2" } } }), "subpart", "wall");
+  expect(w.kind).toBe("warn");
+  expect(w.status).toBe("warn");
+  expect(w.location).toEqual([8, 9, 5]);
+  expect(w.message).toMatch(/2\.62 out of 1\.8\.\.2\.2/);
+  expect(w.hint).toMatch(/drifts from the declared band/);
+});
+
+test("wall inside its band passes and still reports the worst member", () => {
+  const w = byKey(evaluateCase(wallFacts(2.05), { profile: null, expect: { wall: { wall: "1.8..2.2" } } }), "subpart", "wall");
+  expect(w.status).toBe("pass");
+  expect(w.actual).toBe(2.05);
+});
+
+test("wall with no member skips with its own message", () => {
+  const w = byKey(evaluateCase(wallFacts(null), { profile: null, expect: { wall: { wall: "1.8..2.2" } } }), "subpart", "wall");
+  expect(w.status).toBe("skip");
+  expect(w.message).toBe("no wall in band");
+});
+
+test("wall on a quick lap is unevaluated, like minWall", () => {
+  const facts = { ...wallFacts(undefined), measuredMinWall: false };
+  const w = byKey(evaluateCase(facts, { profile: null, expect: { wall: { wall: "1.8..2.2" } } }), "subpart", "wall");
+  expect(w.unevaluated).toBe(true);
+  expect(w.message).toBe("not measured (quick check)");
+});

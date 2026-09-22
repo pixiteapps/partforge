@@ -134,7 +134,7 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
       if (note) out.note = note;
       return out;
     }
-    return { ...base, actual, status: "skip", pass: null, message: "unavailable" };
+    return { ...base, actual, status: "skip", pass: null, message: reg.unavailable ?? "unavailable" };
   }
   const { pass, message } = evaluateAssertion(parseAssertion(expr), actual);
   const status = pass ? "pass" : reg.kind === "warn" ? "warn" : "fail";
@@ -185,9 +185,9 @@ export function evaluateCase(facts, { profile, expect, subPartNames, overhang = 
     };
     for (const [metric, expr] of Object.entries(merged)) {
       const c = check("subpart", s.name, metric, expr, SUBPART_METRICS, s);
-      if (minWallSkipped && metric === "minWall" && c.actual == null) {
+      if (minWallSkipped && (metric === "minWall" || metric === "wall") && c.actual == null) {
         checks.push({ ...c, unevaluated: true, message: "not measured (quick check)",
-          hint: "re-run this check without `quick` to measure min wall" });
+          hint: `re-run this check without \`quick\` to measure ${metric === "wall" ? "the wall band" : "min wall"}` });
         continue;
       }
       if (overhangSkipped && metric === "overhangArea" && c.actual == null) {

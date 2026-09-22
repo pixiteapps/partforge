@@ -58,6 +58,20 @@ export const SUBPART_METRICS = {
   // "<import name>"`; on every other sub-part `extract` returns null, which
   // `check()` already reports as status "skip" rather than a fail — the
   // no-reference path needs nothing here.
+  // The declared wall band's worst member (min-wall.js `band`): the member thickness
+  // farthest from the range the part declared, located. Range form only — `form` is
+  // read by the linter's verify-bad-expr rule and by gates.js. A warning like minWall,
+  // because it is a sampled ray reading: a sample can miss the widest spot, never
+  // invent one. `unavailable` is the skip message when no ray fell in the window.
+  wall: { kind: "warn", form: "range", extract: (s) => s.wall?.value ?? null,
+    hint: "wall thickness drifts from the declared band at the reported location — a fillet radius, an offset or a boolean tool there is not tracking the wall",
+    locate: (s) => s.wall?.location ?? null,
+    unavailable: "no wall in band",
+    note: (s) => {
+      if (!s.wall) return null;
+      const sampled = s.minWallSampled && s.minWallSamples ? ` (sampled ${s.minWallSamples.sampled} of ${s.minWallSamples.total} triangles)` : "";
+      return `${s.wall.members} rays read as this wall${sampled}`;
+    } },
   refXorVolume: { kind: "gate", extract: (s) => s.deviation?.xorVolume ?? null,
     hint: "the rebuild's symmetric difference vs its reference import is too large — compare the ghost overlay, then adjust the governing dimensions toward the measured reference" },
   refVolumeDeltaPct: { kind: "gate", extract: (s) => s.deviation?.volumeDeltaPct ?? null,
