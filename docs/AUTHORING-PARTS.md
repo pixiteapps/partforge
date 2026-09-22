@@ -1534,20 +1534,32 @@ its coordinates, and the max that would work — rather than silently clamping:
 |---|---|
 | `filletProfile(input, r, opts?)` | `r`: number, or an array matched positionally with `opts.corners.indices` |
 | `chamferProfile(input, dist, opts?)` | symmetric setback, straight connector |
-| `profileCorners(input)` | `[{index, point, interiorAngleDeg, convex, segTypes}]` |
+| `profileCorners(input)` | `[{index, position, point, interiorAngleDeg, convex, segTypes}]` — `position` is the entry's place in this list, `index` the joint's vertex number within its contour |
 
 `opts.corners` selects which corners an op touches (default `"all"`):
 
 - `"all"` · `"convex"` · `"concave"`
-- `{indices: [...]}` — positions into `profileCorners(input)`'s own return order; pair
-  with an array `r`/`dist` for per-corner radii (the `roundedProfile` pattern)
-- `{near: [x,y], count?: 1}` — nearest-corner selection; the hook for a human pick or
-  an agent resolving "the top-left corner" from bbox reasoning
+- `{indices: [...]}` — each corner's **`position`** in `profileCorners(input)`'s return
+  list, never its `index`; pair with an array `r`/`dist` for per-corner radii (the
+  `roundedProfile` pattern). Any entry out of range throws, naming the range.
+- `{near: [x,y], count?: 1, within?: mm}` — nearest-corner selection; the hook for a
+  human pick or an agent resolving "the top-left corner" from bbox reasoning. **Without
+  `within` the nearest corner is always selected, however far away** — `count: 4`
+  applied around a small pocket rounds the four corners nearest it, which may all
+  belong to the outer wall. Pass `within` when the pick must be local; a `near` with
+  nothing inside `within` throws instead of reaching further.
+
+**`index` and `position` are different numbers.** `index` is the vertex number within
+the contour; `position` is the corner's place in the returned list. They agree only
+while every joint is a corner — the moment a contour has a smooth joint (a collinear
+midpoint, a G1 arc-to-line join, a fillet already applied) the vertex numbers skip
+ahead of the positions, and `.map((c) => c.index)` fed to `{indices}` fillets the
+wrong corners or throws out of range. Always map to `c.position`.
 
 ```js
 // Fillet only the two corners nearest the profile's top edge, 3mm and 1.5mm:
 const corners = profileCorners(outline);
-const top = corners.filter((c) => c.point[1] > 20).map((c) => c.index);
+const top = corners.filter((c) => c.point[1] > 20).map((c) => c.position);   // position, NOT index
 const rounded = filletProfile(outline, [3, 1.5], { corners: { indices: top } });
 
 // Fillet every convex corner of a Shape2D by the same amount:
