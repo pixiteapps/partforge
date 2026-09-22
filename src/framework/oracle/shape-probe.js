@@ -40,8 +40,8 @@
 // out at rings[] → ring → arcs[] → arc → center[] — 4 containers below the summary
 // object itself (5 including it), against the cloud's `DESCRIBE_MAX_DEPTH = 8`, with
 // headroom even wrapped in the paired-probe `{pair: {mine, ref}}` form.
-import { arcCenterAndSweep } from "../geometry/paper-bridge.js";
-import { cubicAt, profileCorners } from "../geometry/contour-ops.js";
+import { arcCenterAndSweep } from "../geometry/arc-math.js";
+import { cubicAt, profileCorners } from "../geometry/contour-corners.js";
 
 export const MAX_ARCS = 64;
 export const MAX_CORNERS = 64;
