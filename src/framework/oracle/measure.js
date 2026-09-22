@@ -7,6 +7,7 @@ import { bounds, meshArea, meshCentroid } from "./mesh.js";
 import { minWall, DIAGNOSTIC_SAMPLES } from "./min-wall.js";
 import { overhang } from "./overhang.js";
 import { partGatesMinWall, partOverhangAngle } from "./gates.js";
+import { summarizeContours } from "./shape-probe.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
 const unionBounds = (list) => list.reduce(
@@ -22,12 +23,27 @@ const unionBounds = (list) => list.reduce(
 // pipeline meant authoring throwaway `exportable: false` sub-parts and fishing
 // their facts out of the sub-part list (the "Probes" feedback report).
 // A Solid anywhere in the return value (duck-typed on volume+toMesh, the two
-// queries the facts need) is replaced by a fact object; scalars/arrays/objects
-// pass through; a throw becomes `{ error }` — probes are instrumentation, so
-// they never crash the measurement and never gate `ok`.
+// queries the facts need) is replaced by a fact object; a Shape2D by its arc/corner
+// summary (shape-probe.js); scalars/arrays/objects pass through; a throw becomes
+// `{ error }` — probes are instrumentation, so they never crash the measurement and
+// never gate `ok`.
 
 const isSolid = (v) => v !== null && typeof v === "object"
   && typeof v.volume === "function" && typeof v.toMesh === "function";
+
+// A Shape2D is a class instance with value semantics: walking it as a plain object
+// would leak its storage fields. Duck-typed on the two reads the summary needs.
+const isShape2D = (v) => v !== null && typeof v === "object"
+  && typeof v.toContours === "function" && typeof v.area === "function";
+
+const shapeProbeFacts = (shape) => {
+  const empty = typeof shape.isEmpty === "function" ? shape.isEmpty() : false;
+  return summarizeContours(shape.toContours(), {
+    isEmpty: empty,
+    area: empty ? 0 : shape.area(),
+    bbox: empty ? null : (typeof shape.boundingBox === "function" ? shape.boundingBox() : null),
+  });
+};
 
 function solidProbeFacts(solid) {
   const mesh = solid.toMesh();
@@ -60,6 +76,7 @@ function solidProbeFacts(solid) {
 const MAX_PROBE_VALUE_DEPTH = 4;
 function resolveProbeValue(v, depth = 0) {
   if (isSolid(v)) return solidProbeFacts(v);
+  if (isShape2D(v)) return shapeProbeFacts(v);
   if (v === null || typeof v !== "object") {
     return typeof v === "function" ? { error: "probe returned a function — return a Solid or plain JSON" } : v;
   }

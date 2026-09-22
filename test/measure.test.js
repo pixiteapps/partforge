@@ -226,3 +226,48 @@ test("no probes block, no probes key; opts.probes: false skips evaluation", () =
   expect(measure(k, boxPart, "v").probes).toBeUndefined();
   expect(measure(k, probedPart, "v", {}, { probes: false }).probes).toBeUndefined();
 });
+
+// A Shape2D anywhere in a probe's return value is summarised into arcs and corners
+// (shape-probe.js). This is the numeric channel for "are these two arcs concentric?" —
+// partforge-cloud feedback #95 was fifteen edits of eyeballing renders for exactly that.
+const shapeProbed = {
+  meta: { title: "Shaped", units: "mm" },
+  defaults: { r: 2 },
+  parts: { block: { views: ["v"], build: (kk) => kk.box({ min: [0, 0, 0], max: [10, 10, 5] }) } },
+  views: { v: { label: "V" } },
+  probes: {
+    outline: (kk, p) => kk.shape2d([[0, 0], [10, 0], [10, 10], [0, 10]]).fillet(p.r),
+    mixed: (kk, p) => ({ shape: kk.shape2d([[0, 0], [10, 0], [10, 10], [0, 10]]).fillet(p.r), solid: kk.box({ min: [0, 0, 0], max: [1, 1, 1] }) }),
+    nothing: (kk) => kk.shape2d([[0, 0], [1, 0], [1, 1], [0, 1]]).cut(kk.shape2d([[-1, -1], [2, -1], [2, 2], [-1, 2]])),
+  },
+};
+
+test("a probe returning a Shape2D reports its arcs with centre and radius", () => {
+  const r = measure(k, shapeProbed, "v");
+  const s = r.probes.outline;
+  expect(s.kind).toBe("shape2d");
+  expect(s.empty).toBe(false);
+  expect(s.area).toBeCloseTo(100 - (4 - Math.PI) * 4, 2); // four r=2 corners removed
+  const ring = s.regions[0].outer;
+  expect(ring.arcs).toHaveLength(4);
+  const centres = ring.arcs.map((a) => a.center.join(",")).sort();
+  expect(centres).toEqual(["2,2", "2,8", "8,2", "8,8"]);
+  for (const a of ring.arcs) expect(a.r).toBeCloseTo(2, 3);
+  expect(ring.corners).toHaveLength(0); // every corner is now a smooth joint
+});
+
+test("a Shape2D nested beside a Solid is summarised in place", () => {
+  const r = measure(k, shapeProbed, "v");
+  expect(r.probes.mixed.shape.kind).toBe("shape2d");
+  expect(r.probes.mixed.solid.volume).toBeCloseTo(1, 3);
+});
+
+test("an empty Shape2D probe reports empty, not an error", () => {
+  const r = measure(k, shapeProbed, "v");
+  expect(r.probes.nothing).toEqual({ kind: "shape2d", empty: true, area: 0, bbox: null, regions: [], truncated: false });
+});
+
+test("probe shape summaries follow the caller's params", () => {
+  const r = measure(k, shapeProbed, "v", { r: 3 });
+  for (const a of r.probes.outline.regions[0].outer.arcs) expect(a.r).toBeCloseTo(3, 3);
+});
