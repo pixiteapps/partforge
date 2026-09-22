@@ -60,7 +60,7 @@ export const SUBPART_METRICS = {
   // no-reference path needs nothing here.
   // The declared wall band's worst member (min-wall.js `band`): the member thickness
   // farthest from the range the part declared, located. Range form only — `form` is
-  // read by the linter's verify-bad-expr rule and by gates.js. A warning like minWall,
+  // read by the linter's verify-bad-expr rule only. A warning like minWall,
   // because it is a sampled ray reading: a sample can miss the widest spot, never
   // invent one. `unavailable` is the skip message when no ray fell in the window.
   wall: { kind: "warn", form: "range", extract: (s) => s.wall?.value ?? null,
