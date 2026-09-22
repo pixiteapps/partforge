@@ -266,3 +266,10 @@ test("a wall expectation that is not a range is a bad expression", () => {
   expect(find(r, "verify-bad-expr").message).toMatch(/wall.*must be a range/);
   expect(find(r, "verify-bad-expr").path).toBe("verify.expect.body.wall");
 });
+
+test("a wall range with min > max is a bad expression, not a warn-forever band", () => {
+  const r = lintPart(partWith({ expect: { body: { wall: "2.2..1.8" } } }));
+  expect(ids(r.errors)).toContain("verify-bad-expr");
+  expect(find(r, "verify-bad-expr").message).toMatch(/wall.*must be a range with min <= max/);
+  expect(find(r, "verify-bad-expr").path).toBe("verify.expect.body.wall");
+});

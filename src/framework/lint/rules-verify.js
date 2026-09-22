@@ -262,6 +262,11 @@ export const VERIFY_RULES = [
               `the expectation for ${target}.${metric} must be a range like "1.8..2.2" — the ${metric} metric needs both ends of its band`,
               `Write ${metric} as \`"<min>..<max>"\` in mm.`,
               `verify.expect.${target}.${metric}`));
+          } else if (form === "range" && parsed.op === "range" && parsed.min > parsed.max) {
+            out.push(err("verify-bad-expr",
+              `the expectation for ${target}.${metric} must be a range with min <= max, got "${exprOf(spec)}"`,
+              `Write ${metric} as \`"<min>..<max>"\` with min <= max, in mm.`,
+              `verify.expect.${target}.${metric}`));
           }
         }
       }

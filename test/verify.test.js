@@ -637,10 +637,13 @@ test("wall inside its band passes and still reports the worst member", () => {
   expect(w.actual).toBe(2.05);
 });
 
-test("wall with no member skips with its own message", () => {
+test("wall with no member warns with its own message, and counts as evaluated", () => {
   const w = byKey(evaluateCase(wallFacts(null), { profile: null, expect: { wall: { wall: "1.8..2.2" } } }), "subpart", "wall");
-  expect(w.status).toBe("skip");
+  expect(w.status).toBe("warn");
+  expect(w.pass).toBeNull();
   expect(w.message).toBe("no wall in band");
+  expect(w.hint).toMatch(/declared band may not match the geometry/);
+  expect(w.note).toBe("0 rays read as this wall");
 });
 
 test("wall on a quick lap is unevaluated, like minWall", () => {

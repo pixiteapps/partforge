@@ -100,10 +100,16 @@ export function minWall(mesh, { maxThickness, maxSamples = MAX_SAMPLES, bvh = bu
 
   // Band tracking: the member farthest from the band, or — while every member is
   // inside it — farthest from its midpoint. One comparison per ray, no new rays.
-  const bandLo = band ? BAND_FLOOR * band.min : 0, bandHi = band ? BAND_CEIL * band.max : 0;
-  const bandMid = band ? (band.min + band.max) / 2 : 0;
+  // All four locals below are meaningless without a band, so they stay undefined
+  // on the no-band path rather than holding dead zeroes nothing reads.
+  let bandLo, bandHi, bandMid, bandScore;
+  if (band) {
+    bandLo = BAND_FLOOR * band.min;
+    bandHi = BAND_CEIL * band.max;
+    bandMid = (band.min + band.max) / 2;
+    bandScore = (x) => x > band.max ? 1 + (x - band.max) : x < band.min ? 1 + (band.min - x) : Math.abs(x - bandMid) / (band.max - band.min + 1e-9);
+  }
   let bandWorst = -1, bandValue = null, bandLoc = null, members = 0;
-  const bandScore = (x) => x > band.max ? 1 + (x - band.max) : x < band.min ? 1 + (band.min - x) : Math.abs(x - bandMid) / (band.max - band.min + 1e-9);
 
   let best = Infinity, loc = null, t = 0;
   const tri = new Float64Array(9);                  // reused per triangle; no per-ray garbage
@@ -123,8 +129,8 @@ export function minWall(mesh, { maxThickness, maxSamples = MAX_SAMPLES, bvh = bu
     if (hit && hit.t < best) { best = hit.t; loc = c; }
     if (band && hit && hit.t >= bandLo && hit.t <= bandHi) {
       members++;
-      const s = bandScore(hit.t);
-      if (s > bandWorst) { bandWorst = s; bandValue = hit.t; bandLoc = c; }
+      const score = bandScore(hit.t);
+      if (score > bandWorst) { bandWorst = score; bandValue = hit.t; bandLoc = c; }
     }
   }
   // No hit anywhere still reports HOW it looked (see the header): a `value: null`

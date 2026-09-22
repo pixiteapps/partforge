@@ -25,7 +25,7 @@ const pocketConcentric = (kk) => kk.shape2d([[0, 10], [6, 10], [8, 12], [8, 20],
 // … or r=3.5 about C' = (4.5, 13.5), tangent to the same two faces (the bug).
 const pocketOffset = (kk) => kk.shape2d([[0, 10], [4.5, 10], [8, 13.5], [8, 20], [0, 20]])
   .union(kk.shape2d(circleProfile(3.5, [4.5, 13.5], 128)));
-export const lWall = (kk, concentric) => outerRegion(kk).cut(concentric ? pocketConcentric(kk) : pocketOffset(kk)).extrude({ h: 10 });
+const lWall = (kk, concentric) => outerRegion(kk).cut(concentric ? pocketConcentric(kk) : pocketOffset(kk)).extrude({ h: 10 });
 
 test("minWall without a band is unchanged and reports band: null", () => {
   const r = minWall(lWall(k, true).toMesh());
@@ -64,12 +64,12 @@ test("a 1.2 mm floor under a 2 mm wall is ignored by the band", () => {
   expect(r.band.value).toBeLessThanOrEqual(2.25);
 });
 
-const bandPart = (expect) => ({
+const bandPart = (expectations) => ({
   meta: { title: "L", units: "mm" },
   defaults: { concentric: 1 },
   parts: { wall: { views: ["v"], build: (kk, p) => lWall(kk, p.concentric > 0) } },
   views: { v: { label: "V" } },
-  verify: { expect },
+  verify: { expect: expectations },
 });
 
 test("partWallBands reads a static wall range per sub-part", () => {
@@ -87,6 +87,18 @@ test("partWallBands resolves a function expect against the given params", () => 
 test("a non-range wall expectation throws, naming the sub-part", () => {
   expect(() => partWallBands(bandPart({ wall: { wall: "<=2" } }), {})).toThrow(/wall expectation for "wall" must be a range/);
   expect(() => partWallBands(bandPart({ wall: { wall: 2 } }), {})).toThrow(/must be a range/);
+});
+
+test("a wall range with min > max throws, not a band that warns forever", () => {
+  expect(() => partWallBands(bandPart({ wall: { wall: "2.2..1.8" } }), {})).toThrow(/must be a range.*min <= max/);
+});
+
+test("an incidental throw from a function expect is swallowed, not reported here", () => {
+  // Unrelated to the wall band — verify's own expandExpectations path (via
+  // verify-expect-throws at lint time) is where a throwing expect is reported;
+  // partWallBands answers "no bands" rather than propagating a second time.
+  const fn = () => { throw new Error("boom, unrelated to wall"); };
+  expect(partWallBands(bandPart(fn), {})).toEqual({});
 });
 
 test("a declared wall arms the full min-wall sample budget", () => {
@@ -124,4 +136,18 @@ test("end to end: the offset bend warns, the concentric bend passes", () => {
   const good = verify(k, part);
   expect(good.warnings.find((c) => c.metric === "wall")).toBeUndefined();
   expect(good.ok).toBe(true);
+});
+
+test("end to end: a band matching no ray warns 'no wall in band', not a silent skip", () => {
+  // The fixture's own walls are 2 mm; every other surface (top/bottom, the
+  // extrude's h:10) reads ~10 mm. A [0.3, 0.75] membership window (0.75x/1.5x
+  // of "0.4..0.5") catches neither, so no ray is ever a member — the case a
+  // silent `skip` used to hide (see the spec's Amendments).
+  const part = bandPart({ wall: { wall: "0.4..0.5" } });
+  const v = verify(k, part);
+  const w = v.warnings.find((c) => c.metric === "wall");
+  expect(w).toBeDefined();
+  expect(w.status).toBe("warn");
+  expect(w.message).toBe("no wall in band");
+  expect(v.ok).not.toBe(false);
 });

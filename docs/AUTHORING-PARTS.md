@@ -3247,11 +3247,18 @@ A part that opted into the overhang check (see the `verify` block) also carries
 checked or on an `exportable: false` sub-part), `overhangAngle` (the steepest such
 face, degrees from vertical) and `overhangAt` (that face's centroid); the report's
 `measuredOverhang` stamps the angle the pass ran against, or `null`.
+A sub-part that declares `wall` (see the `verify` section below) also carries
+`wall` — `{ value, location, band, members }` or `null`: the declared band's
+worst member, located, with the band it was measured against and how many rays
+fell inside it. `null` unless the sub-part declares `wall` *and* min wall was
+measured for this run — the same "declared but not measured" gap `minWall`
+itself has.
 **The budget depends on whether the reading is checked against anything**: a part
 that declares a min-wall gate — a `verify.process` profile, or an `expect`
-mentioning `minWall` — gets 50,000, because a gate's verdict rides on it; a part
-that declares neither gets 5,000, because there the number is a diagnostic for a
-reader rather than an assertion. Declaring the gate is what buys the resolution.
+mentioning `minWall` or `wall` — gets 50,000, because a gate's verdict rides on
+it; a part that declares neither gets 5,000, because there the number is a
+diagnostic for a reader rather than an assertion. Declaring the gate is what
+buys the resolution.
 `sampled` is how many triangles the walk *selected*, not how many rays were
 cast: a degenerate (zero-area) triangle has no normal to cast along and is
 skipped. A sampled reading is an **upper bound**: it can miss a thin spot, never
@@ -3423,11 +3430,16 @@ verify: { expect: { tray: { wall: "1.8..2.2" } } }
 
 It rides the same inward rays as `minWall`. A ray reading inside `[0.75 × min,
 1.5 × max]` counts as this wall (a 1.2 mm floor under a 2 mm wall is another
-feature and is ignored); the check reports the member farthest from the band, with
-its location, and warns when it lies outside — `wall 2.62 out of 1.8..2.2 at (22.8,
--2.0, 15.1)` is a bend whose outer arc is not concentric with its inner one. Range
-form only (lint refuses `"<=2"`), a warning like `minWall` because it is a sampled
-reading, and a part that needs two thicknesses declares two sub-parts.
+feature and is ignored) — but the window discriminates by **thickness alone, not
+intent**: anything else on that sub-part whose thickness falls in the window is
+counted too, so declare `wall` on a sub-part that is mostly this one wall; a rib
+or boss inside the window reads as a deviation, and a part that needs two
+thicknesses declares two sub-parts. The check reports the member farthest from
+the band — or, when every member is inside it, the one farthest from its
+midpoint — with its location, and warns when it lies outside — `wall 2.62 out of
+1.8..2.2 at (22.8, -2.0, 15.1)` is a bend whose outer arc is not concentric with
+its inner one. Range form only (lint refuses `"<=2"`), a warning like `minWall`
+because it is a sampled reading.
 
 **A verify block that declares nothing verifies nothing.** `verify.ok` is tri-state:
 `true` when every declared check passed, `false` on any gate failure, and `null` when

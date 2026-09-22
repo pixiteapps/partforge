@@ -134,7 +134,22 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
       if (note) out.note = note;
       return out;
     }
-    return { ...base, actual, status: "skip", pass: null, message: reg.unavailable ?? "unavailable" };
+    // `reg.unavailable` marks a metric whose "no reading" is a real, actionable
+    // finding rather than an inert skip — today only `wall`: a declared band with
+    // zero members means the wall the part is tracking may have drifted away from
+    // the window entirely, which is exactly the case a silent skip would hide (a
+    // 2 mm wall collapsed to 0.9 mm under "1.8..2.2" has no members, and `ok` must
+    // not stay true for that). Data-driven on the registry entry, not a second
+    // `metric === "wall"` literal, so a future metric opts in the same way minWall
+    // did before it had its own branch.
+    if (reg.unavailable) {
+      const out = { ...base, actual, status: "warn", pass: null, message: reg.unavailable,
+        hint: partHint ?? "no ray read as this wall — the declared band may not match the geometry (check minWall for the real thickness), or a sampled run missed it" };
+      const note = reg.note?.(factsObj);
+      if (note) out.note = note;
+      return out;
+    }
+    return { ...base, actual, status: "skip", pass: null, message: "unavailable" };
   }
   const { pass, message } = evaluateAssertion(parseAssertion(expr), actual);
   const status = pass ? "pass" : reg.kind === "warn" ? "warn" : "fail";
