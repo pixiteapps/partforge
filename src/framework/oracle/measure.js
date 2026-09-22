@@ -7,6 +7,7 @@ import { bounds, meshArea, meshCentroid } from "./mesh.js";
 import { minWall, DIAGNOSTIC_SAMPLES } from "./min-wall.js";
 import { overhang } from "./overhang.js";
 import { partGatesMinWall, partOverhangAngle } from "./gates.js";
+import { summarizeContours } from "./shape-probe.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
 const unionBounds = (list) => list.reduce(
@@ -15,19 +16,36 @@ const unionBounds = (list) => list.reduce(
 );
 
 // ── probes ──────────────────────────────────────────────────────────────────
-// Part-declared measurements: `probes: { name: (k, p, d) => Solid | JSON }`,
+// Part-declared measurements: `probes: { name: (k, p, d) => Solid | Shape2D | JSON }`,
 // pure functions with build's exact contract but whose result lands in the
 // REPORT instead of the scene. The instrument a rebuild-against-reference
 // workflow needs — before this, getting a cross-section's numbers out of the
 // pipeline meant authoring throwaway `exportable: false` sub-parts and fishing
 // their facts out of the sub-part list (the "Probes" feedback report).
 // A Solid anywhere in the return value (duck-typed on volume+toMesh, the two
-// queries the facts need) is replaced by a fact object; scalars/arrays/objects
-// pass through; a throw becomes `{ error }` — probes are instrumentation, so
-// they never crash the measurement and never gate `ok`.
+// queries the facts need) is replaced by a fact object; a Shape2D by its arc/corner
+// summary (shape-probe.js); scalars/arrays/objects pass through; a throw becomes
+// `{ error }` — probes are instrumentation, so they never crash the measurement and
+// never gate `ok`.
 
 const isSolid = (v) => v !== null && typeof v === "object"
   && typeof v.volume === "function" && typeof v.toMesh === "function";
+
+// A Shape2D is a plain object carrying a `_shape2d` marker, not a class instance, but
+// walking it as generic JSON would still leak its storage fields (`_regions`, `_hash`)
+// and turn its methods into `{error}` entries. Duck-typed on the two reads the summary
+// needs, so a foreign shape-like value (same two methods, no marker) is still summarised.
+const isShape2D = (v) => v !== null && typeof v === "object"
+  && typeof v.toContours === "function" && typeof v.area === "function";
+
+const shapeProbeFacts = (shape) => {
+  const empty = typeof shape.isEmpty === "function" ? shape.isEmpty() : false;
+  return summarizeContours(shape.toContours(), {
+    isEmpty: empty,
+    area: empty ? 0 : shape.area(),
+    bbox: empty ? null : (typeof shape.boundingBox === "function" ? shape.boundingBox() : null),
+  });
+};
 
 function solidProbeFacts(solid) {
   const mesh = solid.toMesh();
@@ -60,8 +78,9 @@ function solidProbeFacts(solid) {
 const MAX_PROBE_VALUE_DEPTH = 4;
 function resolveProbeValue(v, depth = 0) {
   if (isSolid(v)) return solidProbeFacts(v);
+  if (isShape2D(v)) return shapeProbeFacts(v);
   if (v === null || typeof v !== "object") {
-    return typeof v === "function" ? { error: "probe returned a function — return a Solid or plain JSON" } : v;
+    return typeof v === "function" ? { error: "probe returned a function — return a Solid, a Shape2D or plain JSON" } : v;
   }
   if (depth >= MAX_PROBE_VALUE_DEPTH) return { error: `probe value deeper than ${MAX_PROBE_VALUE_DEPTH} levels` };
   if (Array.isArray(v)) return v.map((x) => resolveProbeValue(x, depth + 1));

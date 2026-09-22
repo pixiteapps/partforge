@@ -89,7 +89,7 @@ export default {
     },
   },
   views: { <name>: { label, default?, animations? } },  // view tabs; a view may own animations (below)
-  probes?,                                 // { name: (k, p, d) => Solid | plain JSON } — measurements reported by
+  probes?,                                 // { name: (k, p, d) => Solid | Shape2D | plain JSON } — measurements reported by
                                            // measure/inspect, never rendered or exported (see "Probes" below)
 };
 ```
@@ -2418,6 +2418,45 @@ To set parameter **defaults** from a reference (the "rebuild this STL" flow),
 declare a probe that reads the value, run `measure`, and bake the reported
 number into `defaults` — the probe then keeps watching it on every regen, so a
 swapped import shows up as a probe delta instead of silently stale defaults.
+
+**Reading a 2-D shape's arcs and corners.** Return the `Shape2D` itself and the
+report carries a summary instead of the object: a flat `rings` list — one entry
+per ring, each naming where it came from (`region`, `ring: "outer" | "hole"`,
+plus `hole` on a hole ring) — every arc as `{ center, r, from, to, sweepDeg }`
+(exact for a `{to, via}` arc; a cubic is fitted through its start, midpoint and
+end and tagged `fit: "cubic"`), every corner as `{ position, point,
+interiorAngleDeg, convex }`, plus `area`, `bbox`, and a straight-segment count
+per ring. `position` is a running count across every ring in that same order —
+region by region, outer then holes — which is exactly the positional index
+`fillet({corners: {indices}})` and `shape.corners()` select on, so a corner read
+here can be fed straight back into a fillet call.
+
+Fillet itself never emits a cubic — paper.js has no arc primitive, so an
+exactly-constructed `{to, via}` arc only becomes a cubic once the shape has been
+through a **boolean** (union/cut/intersect), a non-uniform transform, or
+`simplify`. So after any of those, every arc in the summary is `fit: "cubic"`,
+including ones a fillet placed exactly. For an unclipped arc that cubic fit is
+still exact to the reporting grid; when a boolean clips an arc **mid-sweep**,
+the fit's centre and radius drift, and the drift grows as the kept fragment
+shortens. So when you need an exact centre, read it off the **unclipped**
+shape and use a clip only to find which arc to look at — don't trust the centre
+reported on the clipped fragment itself:
+
+```js
+probes: {
+  fullBend: (k, p, d) => trayPocket(k, p, d),
+  // Clip only to locate the arc; read its numbers off fullBend above, not here.
+  bendNear: (k, p, d) => trayPocket(k, p, d).intersect(k.shape2d([[18, -6], [28, -6], [28, 4], [18, 4]])),
+}
+// → probes.fullBend.rings[0].arcs: [{ center: [23.75, -3], r: 4, … }, …]
+```
+
+This is the instrument for any question a render cannot settle to a fraction of
+a millimetre: whether two arcs share a centre (a bend's inner and outer radii),
+what radius a `fillet` actually took after clamping, whether a corner is still
+a corner. The summary lists at most 64 arcs and 64 corners **in total**, across
+every ring — not 64 each per ring — and says `truncated` when it had to cut, so
+keep the probe to the region in question.
 
 **Cost.** Probes run on every `measure`/`inspect` (including quick checks — the
 agent loop is exactly who reads them), so keep them proportionate: a handful of

@@ -13,8 +13,6 @@ import { fontsFor } from "../src/framework/fonts.js";
 import { imagesFor } from "../src/framework/images.js";
 import { isNoImageSource } from "../src/framework/image-source.js";
 import { viewAnimations, evaluate, cueAt } from "../src/framework/animation.js";
-import { measure } from "../src/framework/oracle/measure.js";
-import { verify } from "../src/framework/oracle/verify.js";
 import { renderViews } from "../src/testing/render.js";
 import {
   createPickServer, requestPicks, formatPickResult,
@@ -114,7 +112,20 @@ const readSources = (partPath) => {
 // `ingest` itself never touches these three. Deferring the import to the
 // commands that actually need them keeps every other verb's behavior
 // unchanged and keeps paper-core.js's first load in `ingest`'s hands.
+//
+// oracle/measure.js and oracle/verify.js join that list for the same reason,
+// since measure.js now statically imports oracle/shape-probe.js, which reaches
+// geometry/contour-ops.js -> geometry/paper-bridge.js -> paper-core just like
+// vectors.js does (verify.js reaches the same path through its own static
+// import of measure.js). A top-level `import { measure } ...`/`import { verify }
+// ...` here would load paper-core before `ingest`'s installNodeDom() runs on
+// every invocation, not only `measure`'s — deferring both to the one verb that
+// calls them keeps `ingest` first in line for paper-core's environment probe.
 const importVectors = () => import("../src/framework/vectors.js");
+const importOracle = () => Promise.all([
+  import("../src/framework/oracle/measure.js"),
+  import("../src/framework/oracle/verify.js"),
+]);
 
 // Pass the part's declared fonts through, mirroring the worker path (jobs.js) —
 // otherwise a part using a named font builds in the browser but dies headlessly
@@ -210,6 +221,7 @@ const commands = {
         }
       }
       const kernel = await bootKernel(part);
+      const [{ measure }, { verify }] = await importOracle();
       const report = measure(kernel, part, view);
       if (!flags.json) printMeasure(report);
       // Write --out right after measure succeeds, then re-write once verify has

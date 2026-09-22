@@ -226,3 +226,88 @@ test("no probes block, no probes key; opts.probes: false skips evaluation", () =
   expect(measure(k, boxPart, "v").probes).toBeUndefined();
   expect(measure(k, probedPart, "v", {}, { probes: false }).probes).toBeUndefined();
 });
+
+// A Shape2D anywhere in a probe's return value is summarised into arcs and corners
+// (shape-probe.js). This is the numeric channel for "are these two arcs concentric?" —
+// partforge-cloud feedback #95 was fifteen edits of eyeballing renders for exactly that.
+const shapeProbed = {
+  meta: { title: "Shaped", units: "mm" },
+  defaults: { r: 2 },
+  parts: { block: { views: ["v"], build: (kk) => kk.box({ min: [0, 0, 0], max: [10, 10, 5] }) } },
+  views: { v: { label: "V" } },
+  probes: {
+    outline: (kk, p) => kk.shape2d([[0, 0], [10, 0], [10, 10], [0, 10]]).fillet(p.r),
+    mixed: (kk, p) => ({ shape: kk.shape2d([[0, 0], [10, 0], [10, 10], [0, 10]]).fillet(p.r), solid: kk.box({ min: [0, 0, 0], max: [1, 1, 1] }) }),
+    nothing: (kk) => kk.shape2d([[0, 0], [1, 0], [1, 1], [0, 1]]).cut(kk.shape2d([[-1, -1], [2, -1], [2, 2], [-1, 2]])),
+  },
+};
+
+test("a probe returning a Shape2D reports its arcs with centre and radius", () => {
+  const r = measure(k, shapeProbed, "v");
+  const s = r.probes.outline;
+  expect(s.kind).toBe("shape2d");
+  expect(s.empty).toBe(false);
+  expect(s.area).toBeCloseTo(100 - (4 - Math.PI) * 4, 2); // four r=2 corners removed
+  expect(s.rings).toHaveLength(1);
+  const ring = s.rings[0];
+  expect(ring.region).toBe(0);
+  expect(ring.ring).toBe("outer");
+  expect(ring.arcs).toHaveLength(4);
+  const centres = ring.arcs.map((a) => a.center.join(",")).sort();
+  expect(centres).toEqual(["2,2", "2,8", "8,2", "8,8"]);
+  for (const a of ring.arcs) expect(a.r).toBeCloseTo(2, 3);
+  expect(ring.corners).toHaveLength(0); // every corner is now a smooth joint
+});
+
+test("a Shape2D nested beside a Solid is summarised in place", () => {
+  const r = measure(k, shapeProbed, "v");
+  expect(r.probes.mixed.shape.kind).toBe("shape2d");
+  expect(r.probes.mixed.solid.volume).toBeCloseTo(1, 3);
+});
+
+test("an empty Shape2D probe reports empty, not an error", () => {
+  const r = measure(k, shapeProbed, "v");
+  expect(r.probes.nothing).toEqual({ kind: "shape2d", empty: true, area: 0, bbox: null, rings: [], truncated: false });
+});
+
+test("probe shape summaries follow the caller's params", () => {
+  const r = measure(k, shapeProbed, "v", { r: 3 });
+  for (const a of r.probes.outline.rings[0].arcs) expect(a.r).toBeCloseTo(3, 3);
+});
+
+// Important 2 (feature1 review): fillet itself never emits a cubic — paper.js has no
+// arc primitive, so an exactly-constructed {to,via} arc only becomes a cubic once the
+// shape has been through a boolean, a non-uniform transform, or simplify. A boolean
+// that clips an arc MID-SWEEP additionally makes the refit inexact, and the error
+// grows as the kept fragment shortens (see shape-probe.js's header for the two
+// measured examples this pins numbers from).
+const clipProbed = {
+  meta: { title: "Clipped", units: "mm" },
+  defaults: {},
+  parts: { block: { views: ["v"], build: (kk) => kk.box({ min: [0, 0, 0], max: [20, 20, 5] }) } },
+  views: { v: { label: "V" } },
+  probes: {
+    // The plain fillet, no boolean: arcs should be exact to the reporting grid.
+    unclipped: (kk) => kk.shape2d([[0, 0], [20, 0], [20, 20], [0, 20]]).fillet(4),
+    // Intersected with a rectangle that cuts through the top-right corner's arc
+    // mid-sweep (at x=18, inside its [16,20]×[16,20] quadrant) while leaving the
+    // bottom-right corner (y<10) out of the kept region entirely.
+    clipped: (kk) => kk.shape2d([[0, 0], [20, 0], [20, 20], [0, 20]]).fillet(4)
+      .intersect(kk.shape2d([[0, 10], [18, 10], [18, 20], [0, 20]])),
+  },
+};
+
+test("an unclipped fillet's arcs are exact to the grid; a boolean-clipped arc is a cubic fit within 0.05 of the true corner", () => {
+  const r = measure(k, clipProbed, "v");
+  const unclippedArcs = r.probes.unclipped.rings.flatMap((ring) => ring.arcs);
+  expect(unclippedArcs).toHaveLength(4);
+  for (const a of unclippedArcs) expect(a.r).toBeCloseTo(4, 3);
+
+  const clippedArcs = r.probes.clipped.rings.flatMap((ring) => ring.arcs);
+  const nearTopRight = clippedArcs.find((a) => Math.abs(a.center[0] - 16) < 1 && Math.abs(a.center[1] - 16) < 1);
+  expect(nearTopRight).toBeDefined();
+  expect(nearTopRight.fit).toBe("cubic");
+  expect(nearTopRight.r).toBeCloseTo(4, 1);          // within 0.05 of the true r=4
+  expect(nearTopRight.center[0]).toBeCloseTo(16, 1); // within 0.05 of (16, 16)
+  expect(nearTopRight.center[1]).toBeCloseTo(16, 1);
+});
