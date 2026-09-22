@@ -17,11 +17,13 @@
 // clipped fragment itself. See docs/AUTHORING-PARTS.md's probes section.
 //
 // Either recovery (via or cubic) can also produce a near-infinite-radius circle from
-// floating-point noise on a segment that is actually straight — most visibly after
-// `simplify`, which can re-fit three collinear points into an almost-flat cubic. A
-// segment whose sagitta (the arc's peak deviation from its own chord, r·(1 − cos(Δ/2)))
-// falls below the 1e-4 mm reporting grid is reported as a line instead of a
-// kilometre-radius arc.
+// residual curvature on a segment that reads as straight — most visibly after
+// `simplify`, which can leave a nominally-straight edge with a fraction of a micron
+// of real (not floating-point-noise) bow. A segment whose sagitta (the arc's peak
+// deviation from its own chord, r·(1 − cos(Δ/2))) falls below STRAIGHT_SAGITTA_MM
+// (1e-3 mm, a micron — below anything a print or a reader can act on; an r=100 arc on
+// a 20 mm chord has 0.5 mm of sagitta and an r=1000 one 0.05 mm, so a real bend is
+// nowhere near this floor) is reported as a line instead of a kilometre-radius arc.
 //
 // Corners are profileCorners' reader-facing fields, plus `position`: a running count
 // across every ring in the summary's own order (region by region, outer then holes) —
@@ -43,6 +45,10 @@ import { cubicAt, profileCorners } from "../geometry/contour-ops.js";
 
 export const MAX_ARCS = 64;
 export const MAX_CORNERS = 64;
+// A micron: below anything a print or a reader can act on. An r=100 arc on a 20 mm
+// chord has 0.5 mm of sagitta and an r=1000 one 0.05 mm, so a real bend is nowhere
+// near this floor — only residual curvature left by simplify/boolean noise is.
+export const STRAIGHT_SAGITTA_MM = 1e-3;
 
 const round = (x) => {
   const v = Math.round(x * 1e4) / 1e4;
@@ -52,11 +58,11 @@ const pt = ([x, y]) => [round(x), round(y)];
 const toDeg = (rad) => (rad * 180) / Math.PI;
 
 // A recovered circle → an arc record, or null when its sagitta (peak deviation from
-// its own chord) is below the reporting grid — a near-straight segment reads as a
+// its own chord) is below STRAIGHT_SAGITTA_MM — a near-straight segment reads as a
 // line rather than a many-kilometre arc.
 function arcFromCircle(c, from, to, fit) {
   const sagitta = c.r * (1 - Math.cos(Math.abs(c.dA) / 2));
-  if (sagitta < 1e-4) return null;
+  if (sagitta < STRAIGHT_SAGITTA_MM) return null;
   const rec = { center: pt(c.center), r: round(c.r), from: pt(from), to: pt(to), sweepDeg: round(toDeg(c.dA)) };
   if (fit) rec.fit = fit;
   return rec;

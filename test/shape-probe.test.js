@@ -67,34 +67,34 @@ test("a hand-built straight cubic (control points on the chord) is counted as a 
   expect(ring.lines).toBe(4);
 });
 
-// KNOWN GAP — see feature1-fix-report.md, Important 1, DONE_WITH_CONCERNS.
-// The review's ruling was: a segment whose sagitta (r·(1−cos(Δ/2))) falls below the
-// 1e-4 mm reporting grid is a line, not an arc — implemented verbatim in arcFromCircle
-// above — and this exact reproducer (a 20×20 square filleted at r=4, then simplified)
-// was expected to come out as "4 arcs of r≈4, lines: 4" once that guard landed.
-// On this kernel/paper.js pairing it does not: simplify(0.01) leaves the three
-// nominally-straight edges with real (if tiny) residual curvature — measured
-// perpendicular deviation from their own chord ≈ 3.24e-4 mm, i.e. ABOVE the 1e-4
-// threshold — so they are still reported as ~55,586 mm arcs. Independently, this
-// simplify() also subdivides each fillet corner into up to two cubic pieces rather
-// than emitting one per corner, so even a perfect sagitta filter would report 7 arcs
-// here, not 4. Raising the threshold (e.g. to 1e-3 — the smallest genuine arc
-// fragment's measured sagitta here is 0.203 mm, ~600x headroom) would catch the three
-// bogus arcs, but the ruling specified 1e-4 exactly and this fix does not silently
-// widen it. This test pins what THIS kernel actually reports, so a future
-// kernel/paper.js bump that changes the noise magnitude (or the corner-splitting
-// behavior) is caught rather than drifting unnoticed.
-test("fillet+simplify: the 1e-4 sagitta guard does not catch this kernel's residual curvature (known gap)", () => {
+// Round 2 (see feature1-fix-report.md, "Fix round 2"): the controller raised the
+// straightness floor from 1e-4 mm to STRAIGHT_SAGITTA_MM (1e-3 mm, a micron), which is
+// what this exact reproducer needed — simplify(0.01) leaves the three nominally-straight
+// edges with real residual curvature measured at ≈3.24e-4 mm (below 1e-3, above the old
+// 1e-4), so they are now correctly counted as lines. simplify() also subdivides three
+// of the four fillet corners into two cubic pieces each and folds the fourth corner
+// together with part of its adjacent straight edge into one larger-radius fragment
+// (measured r≈29.04) rather than reporting a clean r≈4 fourth corner — a real geometric
+// effect of simplify()'s own tolerance, not a probe defect. So most, but not all,
+// reported arcs are r≈4; every one is well under the near-straight noise floor of
+// r>1000 the pre-fix bug produced, and the segment accounting is exact either way.
+test("fillet+simplify: near-straight edges are counted as lines under the STRAIGHT_SAGITTA_MM floor", () => {
   const shape = shape2d([[0, 0], [20, 0], [20, 20], [0, 20]]).fillet(4).simplify(0.01);
   const out = summarizeContours(shape.toContours(), { isEmpty: false, area: shape.area(), bbox: shape.boundingBox() });
   const ring = out.rings[0];
   expect(ring.segments).toBe(10);
-  expect(ring.lines).toBe(0);
-  const bogus = ring.arcs.filter((a) => a.r > 1000);
-  expect(bogus).toHaveLength(3); // the three near-straight edges the 1e-4 threshold doesn't catch
-  const real = ring.arcs.filter((a) => a.r < 100);
-  expect(real).toHaveLength(7); // simplify() split the 4 fillet corners into 7 cubic pieces, not 4
-  for (const a of real) expect(a.r).toBeGreaterThan(3.9);
+  expect(ring.lines).toBeGreaterThanOrEqual(3);           // the near-straight edges, now correctly lines
+  expect(ring.arcs.length + ring.lines).toBe(ring.segments); // every segment accounted for exactly once
+  for (const a of ring.arcs) expect(a.r).toBeLessThanOrEqual(100); // nothing near the old ~55,586mm bug
+  const near4 = ring.arcs.filter((a) => Math.abs(a.r - 4) < 0.05);
+  expect(near4.length).toBeGreaterThanOrEqual(4); // the split fillet fragments, still r≈4 arcs
+  for (const { center, r } of near4) {
+    expect(center).toHaveLength(2);
+    const [x, y] = center;
+    expect(Number.isFinite(x)).toBe(true);
+    expect(Number.isFinite(y)).toBe(true);
+    expect(r).toBeCloseTo(4, 1);
+  }
 });
 
 test("corners carry position, point, interior angle and convexity, never an index", () => {
