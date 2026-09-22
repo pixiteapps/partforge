@@ -3,6 +3,7 @@
 // package-global project — another consumer in the same worker may import paper too.
 import paper from "paper/dist/paper-core.js";
 import { tessellateContour, reverseContour, closeContourGap } from "./profile.js";
+import { arcCenterAndSweep } from "./arc-math.js";
 
 const ORIENT_SEGS = 8;   // points/segment for the local orientation sampler below
 
@@ -12,27 +13,9 @@ function paperScope() {
   return _scope;
 }
 
-// Circumcircle center + signed sweep for the arc through (p0, via, to) — the sweep is the
-// one passing through `via` (sign-free, winding-free), same recovery as profile.js's
-// sampleArc. Returns null for a collinear (degenerate) triple. Shared by arcToCubicSegments
-// below and contour-ops.js's jointTangents (arc tangents are ⊥ radius, oriented by dA's sign).
-export function arcCenterAndSweep(p0, via, to) {
-  const [ax, ay] = p0, [bx, by] = via, [cx, cy] = to;
-  const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
-  if (Math.abs(d) < 1e-12) return null;
-  const sa = ax*ax + ay*ay, sb = bx*bx + by*by, sc = cx*cx + cy*cy;
-  const ux = (sa * (by - cy) + sb * (cy - ay) + sc * (ay - by)) / d;
-  const uy = (sa * (cx - bx) + sb * (ax - cx) + sc * (bx - ax)) / d;
-  const r = Math.hypot(ax - ux, ay - uy);
-  const a0 = Math.atan2(ay - uy, ax - ux);
-  const av = Math.atan2(by - uy, bx - ux);
-  const a1 = Math.atan2(cy - uy, cx - ux);
-  const twoPi = 2 * Math.PI;
-  const ccw = (x) => { let v = x % twoPi; if (v < 0) v += twoPi; return v; };
-  const dCCW = ccw(a1 - a0), vCCW = ccw(av - a0);
-  const dA = vCCW <= dCCW ? dCCW : dCCW - twoPi;
-  return { center: [ux, uy], r, dA };
-}
+// arcCenterAndSweep now lives in arc-math.js (paper-free), re-exported here so every
+// existing importer of it from this module keeps working unchanged.
+export { arcCenterAndSweep } from "./arc-math.js";
 
 // Circular arc through (p0, via, to) → cubic Bézier segments, ≤90° each, endpoints
 // exact. Each piece uses the standard k = (4/3)·tan(θ/4) control-point offset.
