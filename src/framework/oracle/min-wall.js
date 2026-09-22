@@ -65,12 +65,19 @@ function sampleStride(n) {
   return s;
 }
 
+// Membership window for a declared wall band: a ray reading inside
+// [BAND_FLOOR × min, BAND_CEIL × max] belongs to that wall; anything outside is another
+// feature (a thinner floor, a solid boss) and is ignored. Constants, not knobs: a part
+// that needs two bands declares two sub-parts.
+export const BAND_FLOOR = 0.75;
+export const BAND_CEIL = 1.5;
+
 // `bvh` is an already-built index for THIS mesh — one mesh, one index, so there is
 // nothing to key here: measure() resolves it out of the Map it shares with meshGaps
 // (see cachedBVH for why that Map is the caller's) and passes the value. Omit it and
 // one is built. It does not interact with sampling — sampling picks WHICH rays to
 // cast, not how the index is built, so a shared BVH is equally valid sampled or exact.
-export function minWall(mesh, { maxThickness, maxSamples = MAX_SAMPLES, bvh = buildBVH(mesh) } = {}) {
+export function minWall(mesh, { maxThickness, maxSamples = MAX_SAMPLES, bvh = buildBVH(mesh), band = null } = {}) {
   const n = bvh.triangleCount;
   if (n === 0) return null;
   const V = bvh.vertices;
@@ -91,6 +98,13 @@ export function minWall(mesh, { maxThickness, maxSamples = MAX_SAMPLES, bvh = bu
   const sampled = budget < n;
   const stride = sampled ? sampleStride(n) : 1;   // stride 1 = every triangle, in mesh order
 
+  // Band tracking: the member farthest from the band, or — while every member is
+  // inside it — farthest from its midpoint. One comparison per ray, no new rays.
+  const bandLo = band ? BAND_FLOOR * band.min : 0, bandHi = band ? BAND_CEIL * band.max : 0;
+  const bandMid = band ? (band.min + band.max) / 2 : 0;
+  let bandWorst = -1, bandValue = null, bandLoc = null, members = 0;
+  const bandScore = (x) => x > band.max ? 1 + (x - band.max) : x < band.min ? 1 + (band.min - x) : Math.abs(x - bandMid) / (band.max - band.min + 1e-9);
+
   let best = Infinity, loc = null, t = 0;
   const tri = new Float64Array(9);                  // reused per triangle; no per-ray garbage
   for (let s = 0; s < budget; s++, t = t + stride < n ? t + stride : t + stride - n) {
@@ -107,9 +121,17 @@ export function minWall(mesh, { maxThickness, maxSamples = MAX_SAMPLES, bvh = bu
     const origin = [c[0] + dir[0] * 1e-4, c[1] + dir[1] * 1e-4, c[2] + dir[2] * 1e-4];
     const hit = bvh.raycast(origin, dir, { tMax: maxThickness, skipTri: t });
     if (hit && hit.t < best) { best = hit.t; loc = c; }
+    if (band && hit && hit.t >= bandLo && hit.t <= bandHi) {
+      members++;
+      const s = bandScore(hit.t);
+      if (s > bandWorst) { bandWorst = s; bandValue = hit.t; bandLoc = c; }
+    }
   }
   // No hit anywhere still reports HOW it looked (see the header): a `value: null`
   // with the sampling accounting intact, never a bare null that reads downstream as
   // "min wall was never measured".
-  return { value: best === Infinity ? null : best, location: loc, sampled, sampledTriangles: budget, totalTriangles: n };
+  return {
+    value: best === Infinity ? null : best, location: loc, sampled, sampledTriangles: budget, totalTriangles: n,
+    band: band ? { value: bandValue, location: bandLoc, members } : null,
+  };
 }
