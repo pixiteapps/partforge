@@ -9,6 +9,7 @@ import { bootManifoldKernel } from "../src/testing.js";
 import { minWall } from "../src/framework/oracle/min-wall.js";
 import { circleProfile } from "../src/framework/geometry/polygon.js";
 import { partWallBands, partGatesMinWall } from "../src/framework/oracle/gates.js";
+import { measure } from "../src/framework/oracle/measure.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -90,4 +91,24 @@ test("a non-range wall expectation throws, naming the sub-part", () => {
 test("a declared wall arms the full min-wall sample budget", () => {
   expect(partGatesMinWall(bandPart({ wall: { wall: "1.8..2.2" } }))).toBe(true);
   expect(partGatesMinWall(bandPart({ wall: { volume: ">0" } }))).toBe(false);
+});
+
+test("measure reports the wall band fact for a declared sub-part", () => {
+  const r = measure(k, bandPart({ wall: { wall: "1.8..2.2" } }), "v", {}, { minWall: true });
+  const s = r.subparts[0];
+  expect(s.wall.band).toEqual({ min: 1.8, max: 2.2 });
+  expect(s.wall.members).toBeGreaterThan(0);
+  expect(s.wall.value).toBeLessThanOrEqual(2.25);
+});
+
+test("the offset bend's wall fact carries the deviation and its location", () => {
+  const r = measure(k, bandPart({ wall: { wall: "1.8..2.2" } }), "v", { concentric: 0 }, { minWall: true });
+  const s = r.subparts[0];
+  expect(s.wall.value).toBeGreaterThan(2.4);
+  expect(s.wall.location[0]).toBeGreaterThan(5.5);
+});
+
+test("no band declared, or min wall not measured, reads wall: null", () => {
+  expect(measure(k, bandPart({ wall: { volume: ">0" } }), "v", {}, { minWall: true }).subparts[0].wall).toBeNull();
+  expect(measure(k, bandPart({ wall: { wall: "1.8..2.2" } }), "v", {}).subparts[0].wall).toBeNull();
 });
