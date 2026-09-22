@@ -49,13 +49,13 @@ export const SHAPE_RULES = [
       if (part?.probes === undefined) return [];
       if (!isPlainObject(part.probes)) {
         return [err("invalid-probes", "`probes` must be an object mapping names to functions",
-          "Declare probes as `probes: { name: (k, p, d) => Solid | plain JSON }` — each is measured into the report by `partforge measure` and the inspect job.",
+          "Declare probes as `probes: { name: (k, p, d) => Solid | Shape2D | plain JSON }` — each is measured into the report by `partforge measure` and the inspect job.",
           "probes")];
       }
       return Object.entries(part.probes)
         .filter(([, fn]) => typeof fn !== "function")
         .map(([name]) => err("invalid-probes", `probe "${name}" is not a function`,
-          "Every entry in `probes` must be a `(k, p, d)` function returning a Solid (measured into facts) or plain JSON (reported verbatim).",
+          "Every entry in `probes` must be a `(k, p, d)` function returning a Solid (measured into facts), a Shape2D (summarised into its arcs and corners), or plain JSON (reported verbatim).",
           `probes.${name}`));
     },
   },

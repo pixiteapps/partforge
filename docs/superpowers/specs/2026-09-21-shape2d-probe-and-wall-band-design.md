@@ -224,3 +224,61 @@ convention (a release-worthy PR bumps `package.json` itself).
 - Pin bump, `npm run docs:generate && npm run prompt:generate`, read the diff.
 - Re-run the headless build of the feedback #95 part with both declarations
   added and confirm the report names the defect.
+
+## Amendments (2026-09-21, Feature 1 final review)
+
+The final review of Feature 1's implementation found four corrections to this
+design, applied in `src/framework/oracle/shape-probe.js` before merge:
+
+- **`KERNEL-CONTRACT.md` has no probe row.** The line above ("`KERNEL-CONTRACT.md`'s
+  probe row names the new value kind") was never carried out and there is no
+  such row to update — `docs/KERNEL-CONTRACT.md`'s only uses of "probe" are the
+  unrelated kernel-capability-probing sense (`probe.js`, `ROUTED_CAD_OPS`).
+  Nothing in that file names a probe's return kind; the documentation home for
+  this feature is `AUTHORING-PARTS.md`'s probes section alone.
+- **Fillet does not emit cubics — booleans do.** This design's Feature 1
+  section says a cubic segment is "what `fillet` emits on the curve-adjacent
+  path." That's wrong: paper.js has no arc primitive, so an exactly-constructed
+  `{to, via}` arc only becomes a cubic once the shape has been through a
+  boolean (union/cut/intersect), a non-uniform transform, or `simplify`. A
+  plain `fillet()` with no boolean reports exact `via` arcs with no `fit` tag
+  at all (confirmed against this kernel: `shape2d([...]).fillet(4)`'s four
+  corners report `r: 4` exactly, no `fit` key). Once a boolean clips an arc
+  mid-sweep, the cubic refit's centre and radius also drift, and the drift
+  grows as the kept fragment shortens — measured on this kernel: a r=4 corner
+  clipped at x=18 reads back centre `[16.0063, 16.0184]`, r `3.9816`; a
+  separate r=100 arc clipped to a 20 mm band read back centre off by 0.59 mm,
+  r `100.586`. `AUTHORING-PARTS.md` and the module header now carry this
+  corrected story, with the advice to compare centres on the UNCLIPPED shape
+  and use a clip only to locate which arc to look at.
+- **`sanitizeProbes` needs a depth check in the cloud follow-through.** This
+  design's cloud-follow-through section says "`sanitizeProbes` already bounds
+  arbitrary JSON and needs nothing" — true for size, not for nesting depth.
+  The original per-region nested shape (`regions: [{outer: RING, holes:
+  [RING]}]`, RING itself `{segments, arcs: [{center: [x,y], ...}], corners:
+  [...]}}`) put a hole's arc centre 7 levels deep, 8 wrapped in the paired-probe
+  `{pair: {mine, ref}}` form — at or past a depth-8 `boundedJson` cap, nulling
+  exactly the coordinates a reader most wants from a hole. The restructure
+  below is what fixes this; the cloud follow-through must still add an
+  explicit depth check (`sanitizeProbes` cannot assume this module's shape is
+  the only shallow one) rather than relying on this fix alone.
+- **Caps are whole-summary, and the summary is a flat `rings` list.** The
+  design above caps 64 arcs and 64 corners **per ring** (`RING`'s own
+  `arcs`/`corners`), which bounds one ring but not the summary a many-holed
+  region can still produce. The shipped shape instead: (1) flattens
+  `regions: [{outer, holes}]` into a single `rings: [ring]` list, each ring
+  carrying `region` (0-based), `ring` (`"outer" | "hole"`), and `hole`
+  (0-based, holes only) — region by region, outer then holes, the same order
+  `profileCorners` numbers corners in; (2) gives every corner a `position`
+  field, a running counter across ALL rings in that order — exactly the
+  positional index `fillet({corners: {indices}})` and `shape.corners()` select
+  on, computed by calling `profileCorners` once over the whole shape rather
+  than per ring; (3) renames `MAX_RING_ARCS`/`MAX_RING_CORNERS` to
+  `MAX_ARCS`/`MAX_CORNERS` (both still 64) and counts each across the WHOLE
+  summary — once a budget is spent, later arcs/corners are dropped and
+  `truncated: true`, while `segments`/`lines` per ring stay exact counts. The
+  flat shape also fixes the depth problem above: `rings[] → ring → arcs[] →
+  arc → center[]` is 4 containers below the summary object (5 including it),
+  with headroom under a depth-8 cap even wrapped in `{pair: {mine, ref}}`.
+  `types/testing.d.ts`, `AUTHORING-PARTS.md`, and every test were updated for
+  the new shape; the `index` field is still deliberately absent.

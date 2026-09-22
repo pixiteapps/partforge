@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { summarizeContours, MAX_RING_ARCS, MAX_RING_CORNERS } from "../src/framework/oracle/shape-probe.js";
+import { summarizeContours, MAX_ARCS, MAX_CORNERS } from "../src/framework/oracle/shape-probe.js";
+import { makeShape2dFactory } from "../src/framework/geometry/shape2d.js";
 
 // Hand-built contour IR, the same shape Shape2D.toContours() returns.
 const square = { start: [0, 0], segments: [{ to: [10, 0] }, { to: [10, 10] }, { to: [0, 10] }, { to: [0, 0] }] };
@@ -11,9 +12,15 @@ const roundedCorner = { start: [0, 0], segments: [
 ] };
 const region = (outer, holes = []) => [{ outer, holes }];
 const facts = (regions) => summarizeContours(regions, { isEmpty: false, area: 100, bbox: { min: [0, 0], max: [10, 10] } });
+// `.fillet`/`.simplify` are backend-agnostic (paper.js, no WASM), so a fake
+// extrude/revolve is all a pure shape2d factory needs — see shape2d-storage.test.js.
+const shape2d = makeShape2dFactory({ segs: 64, extrude: () => ({}), revolve: () => ({}) });
 
 test("a via arc reports its exact centre, radius, endpoints and a CCW sweep", () => {
-  const ring = facts(region(roundedCorner)).regions[0].outer;
+  const ring = facts(region(roundedCorner)).rings[0];
+  expect(ring.region).toBe(0);
+  expect(ring.ring).toBe("outer");
+  expect(ring).not.toHaveProperty("hole");
   expect(ring.segments).toBe(5);
   expect(ring.lines).toBe(4);
   expect(ring.arcs).toHaveLength(1);
@@ -35,7 +42,7 @@ test("a cubic segment is fitted and tagged", () => {
     { to: [8, 10], c1: [10, 8 + kap], c2: [8 + kap, 10] },
     { to: [0, 10] }, { to: [0, 0] },
   ] };
-  const a = facts(region(cubicCorner)).regions[0].outer.arcs[0];
+  const a = facts(region(cubicCorner)).rings[0].arcs[0];
   expect(a.fit).toBe("cubic");
   expect(a.center[0]).toBeCloseTo(8, 2);
   expect(a.center[1]).toBeCloseTo(8, 2);
@@ -45,23 +52,64 @@ test("a cubic segment is fitted and tagged", () => {
 
 test("a collinear via triple is counted as a line", () => {
   const flat = { start: [0, 0], segments: [{ to: [10, 0], via: [5, 0] }, { to: [10, 10] }, { to: [0, 10] }, { to: [0, 0] }] };
-  const ring = facts(region(flat)).regions[0].outer;
+  const ring = facts(region(flat)).rings[0];
   expect(ring.arcs).toHaveLength(0);
   expect(ring.lines).toBe(4);
 });
 
-test("corners carry point, interior angle and convexity, never an index", () => {
-  const ring = facts(region(square)).regions[0].outer;
+test("a hand-built straight cubic (control points on the chord) is counted as a line, not a kilometre-radius arc", () => {
+  // c1/c2 sit exactly on the segment from (0,0) to (10,0) — a "cubic" with zero curvature.
+  const flatCubic = { start: [0, 0], segments: [
+    { to: [10, 0], c1: [10 / 3, 0], c2: [20 / 3, 0] }, { to: [10, 10] }, { to: [0, 10] }, { to: [0, 0] },
+  ] };
+  const ring = facts(region(flatCubic)).rings[0];
+  expect(ring.arcs).toHaveLength(0);
+  expect(ring.lines).toBe(4);
+});
+
+// KNOWN GAP — see feature1-fix-report.md, Important 1, DONE_WITH_CONCERNS.
+// The review's ruling was: a segment whose sagitta (r·(1−cos(Δ/2))) falls below the
+// 1e-4 mm reporting grid is a line, not an arc — implemented verbatim in arcFromCircle
+// above — and this exact reproducer (a 20×20 square filleted at r=4, then simplified)
+// was expected to come out as "4 arcs of r≈4, lines: 4" once that guard landed.
+// On this kernel/paper.js pairing it does not: simplify(0.01) leaves the three
+// nominally-straight edges with real (if tiny) residual curvature — measured
+// perpendicular deviation from their own chord ≈ 3.24e-4 mm, i.e. ABOVE the 1e-4
+// threshold — so they are still reported as ~55,586 mm arcs. Independently, this
+// simplify() also subdivides each fillet corner into up to two cubic pieces rather
+// than emitting one per corner, so even a perfect sagitta filter would report 7 arcs
+// here, not 4. Raising the threshold (e.g. to 1e-3 — the smallest genuine arc
+// fragment's measured sagitta here is 0.203 mm, ~600x headroom) would catch the three
+// bogus arcs, but the ruling specified 1e-4 exactly and this fix does not silently
+// widen it. This test pins what THIS kernel actually reports, so a future
+// kernel/paper.js bump that changes the noise magnitude (or the corner-splitting
+// behavior) is caught rather than drifting unnoticed.
+test("fillet+simplify: the 1e-4 sagitta guard does not catch this kernel's residual curvature (known gap)", () => {
+  const shape = shape2d([[0, 0], [20, 0], [20, 20], [0, 20]]).fillet(4).simplify(0.01);
+  const out = summarizeContours(shape.toContours(), { isEmpty: false, area: shape.area(), bbox: shape.boundingBox() });
+  const ring = out.rings[0];
+  expect(ring.segments).toBe(10);
+  expect(ring.lines).toBe(0);
+  const bogus = ring.arcs.filter((a) => a.r > 1000);
+  expect(bogus).toHaveLength(3); // the three near-straight edges the 1e-4 threshold doesn't catch
+  const real = ring.arcs.filter((a) => a.r < 100);
+  expect(real).toHaveLength(7); // simplify() split the 4 fillet corners into 7 cubic pieces, not 4
+  for (const a of real) expect(a.r).toBeGreaterThan(3.9);
+});
+
+test("corners carry position, point, interior angle and convexity, never an index", () => {
+  const ring = facts(region(square)).rings[0];
   expect(ring.corners).toHaveLength(4);
-  for (const c of ring.corners) {
+  ring.corners.forEach((c, i) => {
+    expect(c.position).toBe(i);
     expect(c.interiorAngleDeg).toBeCloseTo(90, 6);
     expect(c.convex).toBe(true);
     expect(c).not.toHaveProperty("index");
-    expect(Object.keys(c).sort()).toEqual(["convex", "interiorAngleDeg", "point"]);
-  }
+    expect(Object.keys(c).sort()).toEqual(["convex", "interiorAngleDeg", "point", "position"]);
+  });
 });
 
-test("a hole's arc sweeps clockwise (negative)", () => {
+test("a hole's arc sweeps clockwise (negative), and the hole ring names its region/hole index", () => {
   // Outer 20×20 CCW, hole = the rounded square above, reversed to CW.
   const outer = { start: [-5, -5], segments: [{ to: [15, -5] }, { to: [15, 15] }, { to: [-5, 15] }, { to: [-5, -5] }] };
   const hole = { start: [0, 0], segments: [
@@ -69,13 +117,30 @@ test("a hole's arc sweeps clockwise (negative)", () => {
     { to: [10, 8], via: [8 + 2 * Math.SQRT1_2, 8 + 2 * Math.SQRT1_2] },
     { to: [10, 0] }, { to: [0, 0] },
   ] };
-  const rg = facts(region(outer, [hole])).regions[0];
-  expect(rg.holes).toHaveLength(1);
-  expect(rg.holes[0].arcs[0].sweepDeg).toBeCloseTo(-90, 3);
+  const out = facts(region(outer, [hole]));
+  expect(out.rings).toHaveLength(2);
+  const outerRing = out.rings.find((r) => r.ring === "outer");
+  const holeRing = out.rings.find((r) => r.ring === "hole");
+  expect(outerRing.region).toBe(0);
+  expect(holeRing.region).toBe(0);
+  expect(holeRing.hole).toBe(0);
+  expect(holeRing.arcs[0].sweepDeg).toBeCloseTo(-90, 3);
 });
 
-test("rings past the caps are cut and flagged", () => {
-  const n = MAX_RING_ARCS + 5;
+test("corners' `position` runs across every ring in region-then-hole order, matching profileCorners", () => {
+  // A square hole punched dead-center in a bigger square: 4 outer corners (positions
+  // 0-3), then 4 hole corners (positions 4-7) — the same order profileCorners flattens.
+  const outer = { start: [-10, -10], segments: [{ to: [10, -10] }, { to: [10, 10] }, { to: [-10, 10] }, { to: [-10, -10] }] };
+  const hole = { start: [-2, -2], segments: [{ to: [-2, 2] }, { to: [2, 2] }, { to: [2, -2] }, { to: [-2, -2] }] };
+  const out = facts(region(outer, [hole]));
+  const outerRing = out.rings.find((r) => r.ring === "outer");
+  const holeRing = out.rings.find((r) => r.ring === "hole");
+  expect(outerRing.corners.map((c) => c.position)).toEqual([0, 1, 2, 3]);
+  expect(holeRing.corners.map((c) => c.position)).toEqual([4, 5, 6, 7]);
+});
+
+test("arcs past the cap are cut and flagged, counted across the WHOLE summary", () => {
+  const n = MAX_ARCS + 5;
   const segments = [];
   for (let i = 0; i < n; i++) {
     const a0 = (2 * Math.PI * i) / n, a1 = (2 * Math.PI * (i + 1)) / n, am = (a0 + a1) / 2;
@@ -83,15 +148,31 @@ test("rings past the caps are cut and flagged", () => {
   }
   const bumpy = { start: [10, 0], segments };
   const out = facts(region(bumpy));
-  expect(out.regions[0].outer.arcs).toHaveLength(MAX_RING_ARCS);
-  expect(out.regions[0].outer.segments).toBe(n);
+  expect(out.rings[0].arcs).toHaveLength(MAX_ARCS);
+  expect(out.rings[0].segments).toBe(n);
   expect(out.truncated).toBe(true);
-  expect(MAX_RING_CORNERS).toBe(64);
+});
+
+test("corners past the cap are cut and flagged (a 70-gon reports only 64)", () => {
+  const n = 70;
+  const segments = [];
+  // A convex n-gon whose interior angle (≈174.86° at n=70) still turns more than the
+  // 1° smooth-joint threshold, so every one of its straight-line vertices is a corner.
+  for (let i = 1; i <= n; i++) {
+    const a = (2 * Math.PI * i) / n;
+    segments.push({ to: [10 * Math.cos(a), 10 * Math.sin(a)] });
+  }
+  const gon = { start: [10, 0], segments };
+  const out = facts(region(gon));
+  expect(out.rings[0].corners).toHaveLength(MAX_CORNERS);
+  expect(out.rings[0].arcs).toHaveLength(0);
+  expect(out.rings[0].lines).toBe(n);
+  expect(out.truncated).toBe(true);
 });
 
 test("an empty shape is reported as empty with nothing else", () => {
   const out = summarizeContours([], { isEmpty: true, area: 0, bbox: null });
-  expect(out).toEqual({ kind: "shape2d", empty: true, area: 0, bbox: null, regions: [], truncated: false });
+  expect(out).toEqual({ kind: "shape2d", empty: true, area: 0, bbox: null, rings: [], truncated: false });
 });
 
 test("the summary is rounded to 1e-4 and carries kind/area/bbox", () => {
@@ -100,6 +181,16 @@ test("the summary is rounded to 1e-4 and carries kind/area/bbox", () => {
   expect(out.empty).toBe(false);
   expect(out.area).toBe(100);
   expect(out.bbox).toEqual({ min: [0, 0], max: [10, 10] });
-  const a = out.regions[0].outer.arcs[0];
-  expect(String(a.center[0]).length).toBeLessThanOrEqual(6); // "8" — no 7.999999999 tails
+  const a = out.rings[0].arcs[0];
+  expect(a.center[0]).toBe(8); // "8" exactly — no 7.999999999 tails
+});
+
+test("round() normalizes -0 to 0", () => {
+  // A hole ring reversed to CW naturally produces some negative-zero coordinates
+  // after rounding; center/point fields must never print a bare minus sign.
+  const outer = { start: [-5, -5], segments: [{ to: [5, -5] }, { to: [5, 5] }, { to: [-5, 5] }, { to: [-5, -5] }] };
+  const out = facts(region(outer));
+  for (const c of out.rings[0].corners) {
+    for (const v of c.point) expect(Object.is(v, -0)).toBe(false);
+  }
 });

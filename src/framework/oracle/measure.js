@@ -16,7 +16,7 @@ const unionBounds = (list) => list.reduce(
 );
 
 // ── probes ──────────────────────────────────────────────────────────────────
-// Part-declared measurements: `probes: { name: (k, p, d) => Solid | JSON }`,
+// Part-declared measurements: `probes: { name: (k, p, d) => Solid | Shape2D | JSON }`,
 // pure functions with build's exact contract but whose result lands in the
 // REPORT instead of the scene. The instrument a rebuild-against-reference
 // workflow needs — before this, getting a cross-section's numbers out of the
@@ -31,8 +31,10 @@ const unionBounds = (list) => list.reduce(
 const isSolid = (v) => v !== null && typeof v === "object"
   && typeof v.volume === "function" && typeof v.toMesh === "function";
 
-// A Shape2D is a class instance with value semantics: walking it as a plain object
-// would leak its storage fields. Duck-typed on the two reads the summary needs.
+// A Shape2D is a plain object carrying a `_shape2d` marker, not a class instance, but
+// walking it as generic JSON would still leak its storage fields (`_regions`, `_hash`)
+// and turn its methods into `{error}` entries. Duck-typed on the two reads the summary
+// needs, so a foreign shape-like value (same two methods, no marker) is still summarised.
 const isShape2D = (v) => v !== null && typeof v === "object"
   && typeof v.toContours === "function" && typeof v.area === "function";
 
@@ -78,7 +80,7 @@ function resolveProbeValue(v, depth = 0) {
   if (isSolid(v)) return solidProbeFacts(v);
   if (isShape2D(v)) return shapeProbeFacts(v);
   if (v === null || typeof v !== "object") {
-    return typeof v === "function" ? { error: "probe returned a function — return a Solid or plain JSON" } : v;
+    return typeof v === "function" ? { error: "probe returned a function — return a Solid, a Shape2D or plain JSON" } : v;
   }
   if (depth >= MAX_PROBE_VALUE_DEPTH) return { error: `probe value deeper than ${MAX_PROBE_VALUE_DEPTH} levels` };
   if (Array.isArray(v)) return v.map((x) => resolveProbeValue(x, depth + 1));

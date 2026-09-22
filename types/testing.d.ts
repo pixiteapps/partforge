@@ -317,13 +317,28 @@ export interface ProbeArc {
 }
 
 export interface ProbeRing {
+  /** 0-based index into the shape's `regions` — which region this ring belongs to. */
+  region: number;
+  /** Whether this is the region's outer boundary or one of its holes. */
+  ring: "outer" | "hole";
+  /** 0-based hole index within its region; present only when `ring === "hole"`. */
+  hole?: number;
   /** Total segment count, before any cap. */
   segments: number;
-  /** At most 64; `truncated` on the summary says when the list was cut. */
+  /** At most 64 across the WHOLE summary (all rings combined), not per ring;
+   * `truncated` on the summary says when the list was cut. */
   arcs: ProbeArc[];
   /** Straight segments, count only. */
   lines: number;
-  corners: Array<{ point: [number, number]; interiorAngleDeg: number; convex: boolean }>;
+  corners: Array<{
+    /** Running index across every ring in the summary's own order (region by region,
+     * outer then holes) — the positional index `fillet({corners: {indices}})` and
+     * `shape.corners()` select on. */
+    position: number;
+    point: [number, number];
+    interiorAngleDeg: number;
+    convex: boolean;
+  }>;
 }
 
 /** What a `Shape2D` returned from a probe becomes in the report. */
@@ -332,7 +347,11 @@ export interface ShapeProbeFacts {
   empty: boolean;
   area: number;
   bbox: { min: [number, number]; max: [number, number] } | null;
-  regions: Array<{ outer: ProbeRing; holes: ProbeRing[] }>;
+  /** A flat list of every ring across every region — region by region, outer then
+   * holes — never nested `{outer, holes}` objects. */
+  rings: ProbeRing[];
+  /** At most 64 arcs and 64 corners total, across every ring; true when either
+   * budget was spent and something was cut. */
   truncated: boolean;
 }
 
