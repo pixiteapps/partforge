@@ -284,6 +284,15 @@ export interface SubPartFacts {
   minWallSampled: boolean;
   minWallSamples: { sampled: number; total: number } | null;
   /**
+   * The declared wall band's worst member: the sampled thickness farthest from the
+   * range the part's `verify.expect.<name>.wall` declared (or, when every member is
+   * inside it, farthest from its midpoint), where it was read, the band, and how many
+   * rays fell in the membership window `[0.75 × min, 1.5 × max]`. `null` when the
+   * sub-part declares no band or min wall was not measured; `value` null when no ray
+   * read as this wall.
+   */
+  wall: { value: number | null; location: number[] | null; band: { min: number; max: number }; members: number } | null;
+  /**
    * Unsupported downward-facing area in mm² (oracle/overhang.js), `null` when the
    * part is not laid out for a bed (`verify.orientation: "print"` under a
    * profile with an `overhang` angle). Bridges and bore ceilings count.

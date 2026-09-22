@@ -3372,7 +3372,7 @@ are skipped. Switch it off under an FDM profile with an inline
 `{ base: "fdm-pla", overhang: null }`. **What `expect` gives you:** per-sub-part
 assertions on the facts `measure` already reports — `holes` (through-bores / genus),
 `volume`, `surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`,
-`overhangArea`, `boundsMin` / `boundsMax`
+`overhangArea`, `wall` (a range — see below), `boundsMin` / `boundsMax`
 (the axis-aligned `{min,max}` corner positions — where the geometry sits, vs
 `bbox` which is only its size) and `centerOfMass` (`[x,y,z]`, the volume-weighted
 centroid; `null` for a degenerate/zero-volume sub-part); and `_view` assertions `bbox`,
@@ -3412,6 +3412,22 @@ verify: { expect: {
 **warning** — it flags walls below the profile's minimum but never fails the build —
 and so is `overhangArea` (see above). `holes`/`watertight` are Manifold-only, so those
 assertions **skip** on OCCT parts rather than fail.
+
+**A wall that must stay one thickness: `wall`.** `minWall` answers "is anything too
+thin"; `wall` answers "does this wall stay what I declared" — the question a bend, a
+fillet or an offset silently breaks. Declare it as a range in mm, per sub-part:
+
+```js
+verify: { expect: { tray: { wall: "1.8..2.2" } } }
+```
+
+It rides the same inward rays as `minWall`. A ray reading inside `[0.75 × min,
+1.5 × max]` counts as this wall (a 1.2 mm floor under a 2 mm wall is another
+feature and is ignored); the check reports the member farthest from the band, with
+its location, and warns when it lies outside — `wall 2.62 out of 1.8..2.2 at (22.8,
+-2.0, 15.1)` is a bend whose outer arc is not concentric with its inner one. Range
+form only (lint refuses `"<=2"`), a warning like `minWall` because it is a sampled
+reading, and a part that needs two thicknesses declares two sub-parts.
 
 **A verify block that declares nothing verifies nothing.** `verify.ok` is tri-state:
 `true` when every declared check passed, `false` on any gate failure, and `null` when
