@@ -251,3 +251,25 @@ test("the known orientation, or none, is accepted", () => {
 test("a non-string orientation is an error too", () => {
   expect(ids(lintPart(partWith({ orientation: true, expect: {} })).errors)).toContain("verify-unknown-orientation");
 });
+
+// --- verify-bad-expr: wall is range-only ------------------------------------
+
+test("wall is a known sub-part metric", () => {
+  const r = lintPart(partWith({ expect: { body: { wall: "1.8..2.2" } } }));
+  expect(ids(r.errors)).not.toContain("verify-unknown-metric");
+  expect(ids(r.errors)).not.toContain("verify-bad-expr");
+});
+
+test("a wall expectation that is not a range is a bad expression", () => {
+  const r = lintPart(partWith({ expect: { body: { wall: "<=2" } } }));
+  expect(ids(r.errors)).toContain("verify-bad-expr");
+  expect(find(r, "verify-bad-expr").message).toMatch(/wall.*must be a range/);
+  expect(find(r, "verify-bad-expr").path).toBe("verify.expect.body.wall");
+});
+
+test("a wall range with min > max is a bad expression, not a warn-forever band", () => {
+  const r = lintPart(partWith({ expect: { body: { wall: "2.2..1.8" } } }));
+  expect(ids(r.errors)).toContain("verify-bad-expr");
+  expect(find(r, "verify-bad-expr").message).toMatch(/wall.*must be a range with min <= max/);
+  expect(find(r, "verify-bad-expr").path).toBe("verify.expect.body.wall");
+});

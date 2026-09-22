@@ -245,12 +245,27 @@ export const VERIFY_RULES = [
         // from this scalar-metric loop. `clearance`'s values are still assertions
         // though, so they get their own pass (with a pair-shaped path) below.
         const metrics = target === "_view" ? peelPairKeys(metricsRaw) : metricsRaw;
+        const registry = target === "_view" ? VIEW_METRICS : SUBPART_METRICS;
         for (const [metric, spec] of Object.entries(metrics)) {
-          try { parseAssertion(exprOf(spec)); }
+          let parsed;
+          try { parsed = parseAssertion(exprOf(spec)); }
           catch (e) {
             out.push(err("verify-bad-expr",
               `the expectation for ${target}.${metric} is not a valid assertion: ${e?.message || String(e)}`,
               "Use the assertion DSL: a bare value for equality, a comparison like `>=3`, a range like `2..5`, or a componentwise vector like `<=[60,60,60]` (with `*` to skip an axis).",
+              `verify.expect.${target}.${metric}`));
+            continue;
+          }
+          const form = registry[metric]?.form;
+          if (form === "range" && parsed.op !== "range") {
+            out.push(err("verify-bad-expr",
+              `the expectation for ${target}.${metric} must be a range like "1.8..2.2" — the ${metric} metric needs both ends of its band`,
+              `Write ${metric} as \`"<min>..<max>"\` in mm.`,
+              `verify.expect.${target}.${metric}`));
+          } else if (form === "range" && parsed.op === "range" && parsed.min > parsed.max) {
+            out.push(err("verify-bad-expr",
+              `the expectation for ${target}.${metric} must be a range with min <= max, got "${exprOf(spec)}"`,
+              `Write ${metric} as \`"<min>..<max>"\` with min <= max, in mm.`,
               `verify.expect.${target}.${metric}`));
           }
         }

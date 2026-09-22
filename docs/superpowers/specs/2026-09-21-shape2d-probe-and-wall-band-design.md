@@ -282,3 +282,26 @@ design, applied in `src/framework/oracle/shape-probe.js` before merge:
   with headroom under a depth-8 cap even wrapped in `{pair: {mine, ref}}`.
   `types/testing.d.ts`, `AUTHORING-PARTS.md`, and every test were updated for
   the new shape; the `index` field is still deliberately absent.
+
+## Amendments (2026-09-21, Feature 2 final review)
+
+**A declared `wall` with no member must not be a silent `skip` (found in
+final review, fixed before merge).** As specified above, a `wall` band that no
+ray falls inside read as `status: "skip"`, which `verify()` counts as
+declared-but-not-evaluated. That is exactly wrong for this metric: a `wall`
+band with zero members is the case where the wall the part is tracking may
+have drifted clean out of the window it was declared in — a 2 mm wall
+collapsed to 0.9 mm under `"1.8..2.2"` has no members, and a skip left
+`verify.ok` `true` for that part, silently. `oracle/verify.js`'s `check()` now
+answers `status: "warn"`, `pass: null`, message `no wall in band`, and a hint
+pointing at `minWall` for the real thickness — driven off `reg.unavailable` on
+the metric registry entry (`verify-metrics.js`'s `wall.unavailable`), so the
+branch is data, not a second `metric === "wall"` literal. It lands in
+`verify()`'s `warnings` and counts toward `evaluated`, the same as any other
+warn. See `test/verify.test.js` ("wall with no member …") and the end-to-end
+case in `test/wall-band.test.js`.
+
+**`wall: "2.2..1.8"` (min > max) is now a bad form, not a band that warns
+forever.** `gates.js`'s `partWallBands` and the lint rule `verify-bad-expr`
+both reject a range whose `min` is greater than its `max`, the same way they
+already reject a non-range expression.

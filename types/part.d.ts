@@ -458,6 +458,13 @@ export interface SubPartExpectations {
   boundsMax?: Expectation;
   minWall?: Expectation;
   /**
+   * A wall that must stay one thickness, as a range in mm (`"1.8..2.2"`; range
+   * form only). Rides the same inward rays as `minWall` — a ray reading inside
+   * `[0.75 × min, 1.5 × max]` counts as this wall — and warns when the member
+   * farthest from the band lies outside it. A warning, never a gate.
+   */
+  wall?: Expectation;
+  /**
    * Unsupported downward-facing surface in mm² (faces steeper than the profile's
    * `overhang` angle, bed at the sub-part's own lowest Z). Measured only under
    * `verify.orientation: "print"`; a warning, never a gate.

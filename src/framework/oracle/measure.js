@@ -6,7 +6,7 @@ import { meshGaps, pairKey, CONTACT_EPS, GAP_THRESHOLD } from "./gaps.js";
 import { bounds, meshArea, meshCentroid } from "./mesh.js";
 import { minWall, DIAGNOSTIC_SAMPLES } from "./min-wall.js";
 import { overhang } from "./overhang.js";
-import { partGatesMinWall, partOverhangAngle } from "./gates.js";
+import { partGatesMinWall, partOverhangAngle, partWallBands } from "./gates.js";
 import { summarizeContours } from "./shape-probe.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
@@ -143,6 +143,9 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // inward ray per sampled triangle plus the BVH those rays need — and on an
   // ungated part it buys a fact nobody checks, at full price, on every agent edit.
   const minWallSamples = partGatesMinWall(part) ? undefined : DIAGNOSTIC_SAMPLES;
+  // Declared wall bands, per sub-part, for exactly these params (Task 5). Resolved
+  // once per measure; a bad declaration throws here, which is a measure error.
+  const wallBands = opts.minWall ? partWallBands(part, params) : {};
   // Overhang is measured only for a part that opted in (dfm-profiles.js
   // overhangAngleFor) — everything else reads null. verify hands the angle it
   // resolved in (a `process` override changes it); `null` there is an explicit
@@ -157,7 +160,9 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     subBounds.push(b);
     // Resolved lazily and only when asked for: without min-wall, a single-sub-part
     // view (no meshGaps) must still build no index at all.
-    const mw = opts.minWall ? minWall(mesh, { bvh: cachedBVH(mesh, bvhCache), maxSamples: minWallSamples }) : null;
+    const mw = opts.minWall
+      ? minWall(mesh, { bvh: cachedBVH(mesh, bvhCache), maxSamples: minWallSamples, band: wallBands[name] ?? null })
+      : null;
     // One pass over the triangles, no index — cheap enough for every lap. The bed
     // is this sub-part's own lowest Z, already in hand from bounds(). A sub-part
     // that is never printed (`exportable: false` — a reference ghost, a probe
@@ -208,6 +213,11 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       // `measuredMinWall` false is "never looked".
       minWallSampled: mw?.sampled ?? false,
       minWallSamples: mw ? { sampled: mw.sampledTriangles, total: mw.totalTriangles } : null,
+      // The declared wall band's worst member (min-wall.js): null unless this
+      // sub-part declared `wall` and the pass ran.
+      wall: mw?.band && wallBands[name]
+        ? { value: mw.band.value, location: mw.band.location, band: wallBands[name], members: mw.band.members }
+        : null,
       // Unsupported downward-facing area in mm² (overhang.js), null when the part
       // is not laid out for a bed: bridges and bore ceilings count, by design.
       overhangArea: oh ? oh.area : null,

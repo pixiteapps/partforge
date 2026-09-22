@@ -134,6 +134,21 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
       if (note) out.note = note;
       return out;
     }
+    // `reg.unavailable` marks a metric whose "no reading" is a real, actionable
+    // finding rather than an inert skip — today only `wall`: a declared band with
+    // zero members means the wall the part is tracking may have drifted away from
+    // the window entirely, which is exactly the case a silent skip would hide (a
+    // 2 mm wall collapsed to 0.9 mm under "1.8..2.2" has no members, and `ok` must
+    // not stay true for that). Data-driven on the registry entry, not a second
+    // `metric === "wall"` literal, so a future metric opts in the same way minWall
+    // did before it had its own branch.
+    if (reg.unavailable) {
+      const out = { ...base, actual, status: "warn", pass: null, message: reg.unavailable,
+        hint: partHint ?? "no ray read as this wall — the declared band may not match the geometry (check minWall for the real thickness), or a sampled run missed it" };
+      const note = reg.note?.(factsObj);
+      if (note) out.note = note;
+      return out;
+    }
     return { ...base, actual, status: "skip", pass: null, message: "unavailable" };
   }
   const { pass, message } = evaluateAssertion(parseAssertion(expr), actual);
@@ -185,9 +200,9 @@ export function evaluateCase(facts, { profile, expect, subPartNames, overhang = 
     };
     for (const [metric, expr] of Object.entries(merged)) {
       const c = check("subpart", s.name, metric, expr, SUBPART_METRICS, s);
-      if (minWallSkipped && metric === "minWall" && c.actual == null) {
+      if (minWallSkipped && (metric === "minWall" || metric === "wall") && c.actual == null) {
         checks.push({ ...c, unevaluated: true, message: "not measured (quick check)",
-          hint: "re-run this check without `quick` to measure min wall" });
+          hint: `re-run this check without \`quick\` to measure ${metric === "wall" ? "the wall band" : "min wall"}` });
         continue;
       }
       if (overhangSkipped && metric === "overhangArea" && c.actual == null) {
