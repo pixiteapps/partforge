@@ -225,6 +225,9 @@ export function createViewer(container, part) {
   // has turned off this axis — a rotation, never a pan or zoom — swaps back to
   // perspective. Non-null exactly while ortho is live. See checkAutoProjection.
   let orthoAxis = null;
+  // Bumped by every change to what a ray down the view axis could hit — see
+  // sizeMatchDepth. Declared up here because the geometry setters bump it.
+  let matchGeneration = 0;
 
   const controls = new OrbitControls(activeCamera, renderer.domElement);
   controls.enableDamping = true;
@@ -1180,83 +1183,136 @@ export function createViewer(container, part) {
   //
   // Returned as the signed distance of that surface from the target, along
   // `towardCamera` (target -> camera). Positive is in front of the target.
-  //   - `maxDepth` caps it for a PERSPECTIVE camera, which cannot see a surface
+  //   - What is visible is what is DRAWN: an opaque sub-part's front face
+  //     that survives the cutaway, or — with the cutaway on — the section cap
+  //     where the ray crosses the plane inside solid material (the cap is not a
+  //     sub-part mesh, so the ray finds it by parity rather than by a hit).
+  //     Ghosted sub-parts (a static display opacity below 1) are seen through.
+  //   - `maxDepth` is where a PERSPECTIVE camera sits: it cannot see anything
   //     behind itself (an orthographic one can — its near plane may be
   //     negative, see depth-range.js — so the exit swap searches the whole
-  //     line). Past the cap it gives up rather than match at a surface the
-  //     camera is inside of.
+  //     line). A surface within MATCH_CLEARANCE of the camera is no surface
+  //     to match at: the target's depth is kept instead.
   //   - Nothing on the ray (a hole, a gap between bodies, an edge-on sheet)
   //     falls back to the front of the visible bounds: in a face view, the
   //     nearest face of the part.
   //   - Nothing at all shown: 0, the target's depth, as before.
-  // Both swaps (entry and exit) and the persisted-camera pair ask this same
-  // question of the same ray, which is what keeps every round trip lossless.
   const _matchRaycaster = new THREE.Raycaster();
   const _matchDir = new THREE.Vector3();
   const _matchOrigin = new THREE.Vector3();
   const _matchCorner = new THREE.Vector3();
   const _matchSphere = new THREE.Sphere();
+  const _matchNormal = new THREE.Vector3();
+  const _matchNormalMat = new THREE.Matrix3();
+  const _matchPlane = new THREE.Plane();
   const _equivDir = new THREE.Vector3();
-  // The answer is remembered per RAY (target, direction, visible bounds).
-  // Swapping in and back out asks about the same ray, but not bit-for-bit:
-  // controls.update() re-derives the camera position from spherical
-  // coordinates on every swap, so the direction comes back an ulp off — and a
-  // ray through a triangle edge (a target at the centre of a symmetric part
-  // is exactly that) can hit on one side of the ulp and miss on the other,
-  // which turned an untouched round trip into a 25% reframe. Asking again
-  // about the same ray reuses the answer; a pan (a new target), a rotation or
-  // a geometry change that moves the bounds asks afresh.
-  let matchMemo = null; // { target, dir, min, max, depth }
+  // Both sides of every triangle: the parity walk has to see the faces the ray
+  // LEAVES a solid through, which a FrontSide material hides from a raycast.
+  const _matchProxy = new THREE.Mesh(undefined, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  _matchProxy.matrixAutoUpdate = false;
+  const MATCH_CLEARANCE = 1e-3; // of the visible bounds' diagonal
+  // The ray's candidate surfaces are remembered per RAY and SCENE: the target,
+  // the direction, the cutaway's plane (null while off — so a toggle, drag,
+  // flip or reset asks afresh), and a generation bumped by every geometry,
+  // pose or visibility change (setSubGeometry, setSubPose, showAssembly,
+  // hideAssembly) — a regenerated pocket or a hidden inner sub-part can move
+  // the surface without moving the bounds. Swapping in and back out asks
+  // about the same ray, but not bit-for-bit: controls.update() re-derives the
+  // camera position from spherical coordinates on every swap, so the
+  // direction comes back an ulp off — and a ray through a triangle edge (a
+  // target at the centre of a symmetric part is exactly that) can hit on one
+  // side of the ulp and miss on the other, which turned an untouched round
+  // trip into a 25% reframe. What is remembered is the whole candidate list,
+  // not one answer, so a query from a different camera position (`maxDepth`)
+  // still gets its own, correct answer from it.
+  let matchMemo = null; // { generation, target, dir, plane, candidates, fallback, clearance }
   const RAY_EPS = 1e-9;
+  const samePlane = (a, b) => (a === null || b === null ? a === b
+    : a.normal.distanceTo(b.normal) <= RAY_EPS && Math.abs(a.constant - b.constant) <= RAY_EPS * (1 + Math.abs(a.constant)));
   function sizeMatchDepth(target, towardCamera, { maxDepth = Infinity } = {}) {
     if (towardCamera.lengthSq() === 0) return 0;
     const box = getVisibleWorldBounds();
     if (box.isEmpty()) return 0;
     _matchDir.copy(towardCamera).normalize();
+    const plane = cutaway.getPlane?.(_matchPlane) ?? null;
     const tol = RAY_EPS * (1 + box.max.distanceTo(box.min));
-    const m = matchMemo;
-    if (m && m.target.distanceTo(target) <= tol && m.dir.dot(_matchDir) >= 1 - RAY_EPS
-      && m.min.distanceTo(box.min) <= tol && m.max.distanceTo(box.max) <= tol
-      && !(Number.isFinite(maxDepth) && m.depth > maxDepth * 0.95)) {
-      return m.depth;
+    let m = matchMemo;
+    if (!(m && m.generation === matchGeneration && m.target.distanceTo(target) <= tol
+      && m.dir.dot(_matchDir) >= 1 - RAY_EPS && samePlane(m.plane, plane))) {
+      m = matchMemo = {
+        generation: matchGeneration,
+        target: target.clone(),
+        dir: _matchDir.clone(),
+        plane: plane && plane.clone(),
+        ...matchCandidates(target, box, plane),
+      };
     }
-    const depth = computeSizeMatchDepth(target, box, maxDepth);
-    matchMemo = { target: target.clone(), dir: _matchDir.clone(), min: box.min.clone(), max: box.max.clone(), depth };
-    return depth;
+    // Candidates are nearest-the-camera first: the first one in front of the
+    // camera, clear of it, is what the camera sees.
+    for (const depth of m.candidates) {
+      if (depth > maxDepth) continue; // behind a perspective camera
+      return maxDepth - depth < m.clearance ? 0 : depth;
+    }
+    if (maxDepth - m.fallback < m.clearance) return 0;
+    return m.fallback;
   }
-  function computeSizeMatchDepth(target, box, maxDepth) {
+  function matchCandidates(target, box, plane) {
     // Started outside everything shown rather than at the camera, so the ray
     // does not depend on where a perspective camera happens to be (an ortho
-    // camera's position is a direction more than a place). What a perspective
-    // camera cannot see — anything behind it — is filtered by depth instead.
+    // camera's position is a direction more than a place).
     box.getBoundingSphere(_matchSphere);
     const outside = target.distanceTo(_matchSphere.center) + _matchSphere.radius + 1;
     _matchOrigin.copy(target).addScaledVector(_matchDir, outside);
-    _matchRaycaster.set(_matchOrigin, _matchDir.negate());
-    _matchDir.negate(); // back to target -> camera
+    const rayDir = _matchDir.clone().negate(); // camera -> target
+    _matchRaycaster.set(_matchOrigin, rayDir);
     _matchRaycaster.far = 2 * outside;
-    const meshes = [];
-    for (const mesh of Object.values(subMesh)) {
-      if (mesh.visible && mesh.geometry?.boundingBox) meshes.push(mesh);
-    }
-    let depth = null;
-    for (const hit of _matchRaycaster.intersectObjects(meshes, false)) {
-      const at = outside - hit.distance;
-      if (at > maxDepth) continue; // behind a perspective camera
-      // Skip what a cutaway has sliced away: it is not on screen.
-      if (cutaway.isPointVisible?.(hit.point) ?? true) { depth = at; break; }
-    }
-    if (depth === null) {
-      depth = -Infinity;
-      for (let i = 0; i < 8; i++) {
-        _matchCorner.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
-        depth = Math.max(depth, _matchCorner.sub(target).dot(_matchDir));
+    const hits = [];
+    for (const n of names) {
+      const mesh = subMesh[n];
+      if (!mesh.visible || !mesh.geometry?.boundingBox) continue;
+      if ((part.parts[n].display?.opacity ?? 1) < 1) continue; // a ghost is seen through
+      mesh.updateWorldMatrix(true, false);
+      _matchProxy.geometry = mesh.geometry;
+      _matchProxy.matrixWorld.copy(mesh.matrixWorld);
+      _matchNormalMat.getNormalMatrix(mesh.matrixWorld);
+      for (const hit of _matchRaycaster.intersectObject(_matchProxy, false)) {
+        _matchNormal.copy(hit.face.normal).applyMatrix3(_matchNormalMat);
+        hits.push({ t: hit.distance, point: hit.point, entering: _matchNormal.dot(rayDir) < 0 });
       }
     }
-    // A perspective camera at or inside the surface: no depth in front of it
-    // to match at, so keep the target's.
-    if (Number.isFinite(maxDepth) && depth > maxDepth * 0.95) return 0;
-    return Number.isFinite(depth) ? depth : 0;
+    _matchProxy.geometry = undefined;
+    hits.sort((x, y) => x.t - y.t);
+    // Where the ray crosses the cut plane, heading INTO the half that is kept:
+    // a cap is drawn there if the crossing is inside solid material.
+    let capT = null;
+    if (plane) {
+      const denom = plane.normal.dot(rayDir);
+      if (denom > 0) {
+        const t = -(plane.normal.dot(_matchOrigin) + plane.constant) / denom;
+        if (t > 0) capT = t;
+      }
+    }
+    const candidates = [];
+    let inside = 0;
+    let capDone = capT === null;
+    for (const hit of hits) {
+      if (!capDone && hit.t >= capT) {
+        capDone = true;
+        if (inside > 0) candidates.push(outside - capT);
+      }
+      if (hit.entering && (cutaway.isPointVisible?.(hit.point) ?? true)) candidates.push(outside - hit.t);
+      inside += hit.entering ? 1 : -1;
+    }
+    let fallback = -Infinity;
+    for (let i = 0; i < 8; i++) {
+      _matchCorner.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
+      fallback = Math.max(fallback, _matchCorner.sub(target).dot(_matchDir));
+    }
+    return {
+      candidates,
+      fallback: Number.isFinite(fallback) ? fallback : 0,
+      clearance: MATCH_CLEARANCE * box.max.distanceTo(box.min),
+    };
   }
 
   // The perspective distance (target -> camera) that shows what the ortho
@@ -1449,6 +1505,7 @@ export function createViewer(container, part) {
   const subCache = Object.fromEntries(names.map((n) => [n, null]));
 
   function setSubGeometry(name, payload) {
+    matchGeneration++;
     setSubPose(name, null); // fresh worker mesh is baked at current params — clear any fast-path pose
     const prev = subCache[name];
     const next = buildGeometry(payload);
@@ -1467,6 +1524,7 @@ export function createViewer(container, part) {
   // three.js Matrix4 convention). Never affects exports or geometry — the worker
   // owns real placement; this only re-poses the delivered mesh.
   function setSubPose(name, mat16) {
+    matchGeneration++;
     for (const obj of [subMesh[name], subLines[name]]) {
       if (!obj) continue;
       obj.matrixAutoUpdate = false;
@@ -1527,6 +1585,7 @@ export function createViewer(container, part) {
   // frame the camera to them — done only on the initial show and on view (tab)
   // changes, NOT on regeneration, so a user's zoom/orbit survives editing params.
   function showAssembly(visibleNames, { frame = false } = {}) {
+    matchGeneration++;
     lastShown = [...visibleNames];
     for (const name of names) {
       if (visibleNames.includes(name)) {
@@ -1599,6 +1658,7 @@ export function createViewer(container, part) {
   }
 
   function hideAssembly() {
+    matchGeneration++;
     lastShown = [];
     for (const m of Object.values(subMesh)) m.visible = false;
     for (const l of Object.values(subLines)) l.visible = false;

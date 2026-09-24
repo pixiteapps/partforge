@@ -478,3 +478,183 @@ test("entering ortho keeps the surface under the screen centre the same size too
   expect(frontPlateNdcHeight(viewer) / persp).toBeCloseTo(1, 6);
   viewer.dispose();
 });
+
+// --- the size-match surface, against real solids and a real clip plane ------
+// A closed box, given in WORLD coordinates and converted to the model frame the
+// pivot rotates (model (x, y, z) -> world (x, z, -y)), wound outward — the
+// parity walk that finds a section cap reads which faces the ray enters by.
+function worldBox([x0, y0, z0], [x1, y1, z1]) {
+  const c = [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2];
+  const v = (i) => [i & 1 ? x1 : x0, i & 2 ? y1 : y0, i & 4 ? z1 : z0];
+  const quads = [[0, 1, 3, 2], [4, 5, 7, 6], [0, 1, 5, 4], [2, 3, 7, 6], [0, 2, 6, 4], [1, 3, 7, 5]];
+  const out = [];
+  for (const [a, b, cc, d] of quads) {
+    for (const tri of [[a, b, cc], [a, cc, d]]) {
+      let [p, q, r] = tri.map(v);
+      const n = new THREE.Vector3().subVectors(new THREE.Vector3(...q), new THREE.Vector3(...p))
+        .cross(new THREE.Vector3().subVectors(new THREE.Vector3(...r), new THREE.Vector3(...p)));
+      const centroid = [0, 1, 2].map((k) => (p[k] + q[k] + r[k]) / 3 - c[k]);
+      if (n.dot(new THREE.Vector3(...centroid)) < 0) [q, r] = [r, q];
+      for (const [wx, wy, wz] of [p, q, r]) out.push(wx, -wz, wy); // world -> model
+    }
+  }
+  return { positions: new Float32Array(out), triangles: out.length / 9 };
+}
+// World x, y in +/-10, z (toward the front camera) in +/-5.
+const slab = () => worldBox([-10, -10, -5], [10, 10, 5]);
+
+// A clip plane the fake cutaway really applies: three keeps the non-negative
+// side, and getPlane is null while off — the real cutaway's contract.
+function section(plane) {
+  state.cutaway.isEnabled = Boolean(plane);
+  state.cutaway.isPointVisible = vi.fn((p) => !plane || plane.distanceToPoint(p) >= -1e-6);
+  state.cutaway.getPlane = vi.fn((target = new THREE.Plane()) => (plane ? target.copy(plane) : null));
+}
+
+// Screen height (NDC) of a vertical segment at world depth z on the axis.
+const ndcHeightAt = (viewer, z) => {
+  viewer.camera.updateMatrixWorld();
+  const a = new THREE.Vector3(0, -4, z).project(viewer.camera);
+  const b = new THREE.Vector3(0, 4, z).project(viewer.camera);
+  return Math.abs(b.y - a.y);
+};
+
+function slabViewer(parts = { body: {} }, geometry = { body: slab() }) {
+  const viewer = createViewer(createContainer(), { meta: {}, parts });
+  for (const [n, g] of Object.entries(geometry)) viewer.setSubGeometry(n, g);
+  viewer.showAssembly(Object.keys(geometry), { frame: true });
+  return viewer;
+}
+
+test.each([
+  ["the cap, where a front cut crosses the solid", new THREE.Plane(new THREE.Vector3(0, 0, -1), 1), 1],
+  ["a deeper cap", new THREE.Plane(new THREE.Vector3(0, 0, -1), -3), -3],
+  ["the front face, when the cut takes the back away", new THREE.Plane(new THREE.Vector3(0, 0, 1), 2), 5],
+])("with the cutaway on, the size is matched at %s", (_label, plane, depth) => {
+  section(plane);
+  const viewer = slabViewer();
+  viewer.setCameraState({ pos: [0, 0, 60], target: [0, 0, 0] });
+  runFrames(2);
+  const persp = ndcHeightAt(viewer, depth);
+  viewer.setProjection("orthographic");
+  expect(ndcHeightAt(viewer, depth) / persp).toBeCloseTo(1, 6);
+  viewer.camera.zoom = 2;
+  viewer.camera.updateProjectionMatrix();
+  const ortho = ndcHeightAt(viewer, depth);
+  viewer.setProjection("perspective");
+  expect(ndcHeightAt(viewer, depth) / ortho).toBeCloseTo(1, 6);
+  viewer.dispose();
+});
+
+test("a sectioned, zoomed ortho face view survives a remount whose cutaway comes back after the camera", () => {
+  const plane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 1); // cap at z = 1
+  section(plane);
+  const viewer = slabViewer();
+  viewer.tweenCameraTo("front", CUBE);
+  runFrames();
+  viewer.camera.zoom = 3;
+  viewer.camera.updateProjectionMatrix();
+  const onScreen = viewer.camera.top / viewer.camera.zoom;
+  const carried = viewer.getCameraState();
+  viewer.dispose();
+
+  // mount's order: ortho, the pose, the cutaway, then the pose again.
+  section(null);
+  const next = slabViewer();
+  next.setProjection("orthographic");
+  next.setCameraState(carried);
+  section(plane);
+  next.setCameraState(carried);
+  expect(next.camera.top / next.camera.zoom).toBeCloseTo(onScreen, 6);
+  next.dispose();
+});
+
+test("moving the cut plane asks afresh (the remembered surface is keyed on it)", () => {
+  section(new THREE.Plane(new THREE.Vector3(0, 0, -1), 1)); // cap at z = 1
+  const viewer = slabViewer();
+  viewer.tweenCameraTo("front", CUBE);
+  runFrames();
+  viewer.camera.zoom = 2;
+  viewer.camera.updateProjectionMatrix();
+  runFrames(1);
+  section(new THREE.Plane(new THREE.Vector3(0, 0, -1), -3)); // dragged deeper: cap at z = -3
+  const ortho = ndcHeightAt(viewer, -3);
+  let atSwap = null;
+  viewer.onProjectionChange(() => { atSwap = ndcHeightAt(viewer, -3); });
+  state.controls._sphericalDelta.theta = 0.05;
+  runFrames(30);
+  expect(viewer.getProjection()).toBe("perspective");
+  expect(atSwap / ortho).toBeCloseTo(1, 2);
+  viewer.dispose();
+});
+
+test("a regenerate that keeps the bounds asks afresh (the remembered surface is keyed on the geometry)", () => {
+  // Same bounds both times; the second front sheet leaves the centre open, so
+  // the ray reaches the back sheet (wound toward the camera) at z = -5.
+  const sheet = (tri, z) => tri.flatMap(([x, y]) => [x, -z, y]);
+  // Counter-clockwise in world x-y, so a world +z normal (toward the camera);
+  // the pivot is a proper rotation and keeps the winding.
+  const facing = (a, b, c) => [a, b, c];
+  const covered = {
+    positions: new Float32Array([
+      ...sheet(facing([-10, -10], [10, -10], [0, 10]), 5),
+      ...sheet(facing([-10, -10], [10, -10], [0, 10]), -5),
+    ]),
+    triangles: 2,
+  };
+  const open = {
+    positions: new Float32Array([
+      ...sheet(facing([-10, -10], [10, -10], [10, -2]), 5),
+      ...sheet(facing([-10, -10], [10, -10], [0, 10]), -5),
+      ...sheet(facing([-10, 10], [10, 10], [0, 9]), 5), // keeps the bounds' top edge
+    ]),
+    triangles: 3,
+  };
+  const viewer = slabViewer({ body: {} }, { body: covered });
+  viewer.tweenCameraTo("front", CUBE);
+  runFrames();
+  viewer.camera.zoom = 2.5;
+  viewer.camera.updateProjectionMatrix();
+  runFrames(1);
+  viewer.getCameraState(); // prime the remembered surface on the covered sheet
+
+  viewer.setSubGeometry("body", open);
+  viewer.showAssembly(["body"], { frame: false });
+  // Asked along the very same ray (a swap after a rotation is off-axis and
+  // would ask afresh anyway): the carried pose must describe the surface on
+  // screen NOW, the back sheet 5mm behind the target, not the front sheet the
+  // ray used to stop at.
+  const onScreen = viewer.camera.top / viewer.camera.zoom;
+  expect((distanceOf(viewer) + 5) * HALF_FOV_TAN).toBeCloseTo(onScreen, 6);
+  viewer.dispose();
+});
+
+test("a ghosted sub-part is seen through, not matched at", () => {
+  const viewer = slabViewer(
+    { ghost: { display: { opacity: 0.4 } }, body: {} },
+    { ghost: worldBox([-10, -10, 3], [10, 10, 5]), body: worldBox([-10, -10, -5], [10, 10, -1]) },
+  );
+  viewer.setCameraState({ pos: [0, 0, 60], target: [0, 0, 0] });
+  runFrames(2);
+  const persp = ndcHeightAt(viewer, -1); // the opaque body's front face
+  viewer.setProjection("orthographic");
+  expect(ndcHeightAt(viewer, -1) / persp).toBeCloseTo(1, 6);
+  viewer.dispose();
+});
+
+test("a remount at a very high ortho zoom keeps its size (the surface is right by the camera)", () => {
+  const viewer = slabViewer();
+  viewer.tweenCameraTo("front", CUBE);
+  runFrames();
+  viewer.camera.zoom = 400; // the recovered camera sits ~0.13mm off the front face
+  viewer.camera.updateProjectionMatrix();
+  const onScreen = viewer.camera.top / viewer.camera.zoom;
+  const carried = viewer.getCameraState();
+  viewer.dispose();
+
+  const next = slabViewer();
+  next.setProjection("orthographic");
+  next.setCameraState(carried);
+  expect(next.camera.top / next.camera.zoom).toBeCloseTo(onScreen, 9);
+  next.dispose();
+});

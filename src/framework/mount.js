@@ -927,6 +927,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
           // fallback pose from the wrong view.)
           if (viewerState?.cutaway?.enabled && viewer.setCutawayState?.(viewerState.cutaway)) {
             cutawayChrome.sync(); // the button was not what turned it on
+            // …and place the camera again now the section is back. An ortho
+            // face view's size is matched at the surface on screen, which the
+            // cut decides (the cap, or whatever survives it): the carried pose
+            // was taken WITH the cut, and the first placement above measured
+            // against the uncut part, so without this a sectioned face view
+            // changes zoom on every remount. Same pose, so a perspective
+            // camera does not move.
+            if (cam) viewer.setCameraState(cam);
           }
           cameraRestored = true;
         }

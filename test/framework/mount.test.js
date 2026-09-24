@@ -1906,6 +1906,33 @@ test("the camera is restored before the cutaway", () => {
   runtime.dispose();
 });
 
+test("the camera is placed again once the cutaway is back, with the same pose", () => {
+  // An ortho face view's size is matched at the surface on screen, which the
+  // cut decides. The carried pose was taken with the cut on; the first
+  // placement (before the cut) measures the uncut part, so it has to be
+  // repeated after, or a sectioned face view changes zoom on every remount.
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const camera = { pos: [0, 0, 9], target: [0, 0, 0] };
+  const runtime = mount(makePart(), {
+    createWorker,
+    elements: els,
+    viewerState: {
+      camera,
+      projection: "orthographic",
+      cutaway: { enabled: true, flipped: false, pose: { position: [0, 0, 0], quaternion: [0, 0, 0, 1] } },
+    },
+  });
+  const viewer = fakeViewers.at(-1);
+  finishFirstBuild(workers);
+
+  const calls = viewer.setCameraState.mock.invocationCallOrder;
+  expect(calls).toHaveLength(2);
+  expect(calls[1]).toBeGreaterThan(viewer.setCutawayState.mock.invocationCallOrder[0]);
+  expect(viewer.setCameraState.mock.calls[1][0]).toEqual(camera);
+  runtime.dispose();
+});
+
 test("a cutaway that was off carries nothing and leaves the button alone", () => {
   const els = makeElements();
   const { workers, createWorker } = makeWorkers();

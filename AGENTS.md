@@ -135,12 +135,19 @@ the installed package, so let the publish finish before bumping the dep there.
   render loop) swaps back to perspective, size-preserving - Fusion 360's
   "Perspective with Ortho Faces". Both swaps match size at ONE depth, the
   visible surface under the screen centre (`sizeMatchDepth` in viewer.js: a
-  ray down the view axis through the target, else the front of the visible
-  bounds), never the target's own depth - that was the part's centre, and
-  an ortho zoom-in then made the swap back magnify the front face (22-53% on
-  the planter). The answer is memoized per ray, because a swap re-derives the
-  direction an ulp off and a ray through a triangle edge can flip between hit
-  and miss on it; that memo is what keeps an untouched round trip lossless. There is no projection control and it is
+  ray down the view axis through the target - the first opaque front face
+  the cutaway keeps, or the section cap where the ray crosses the plane
+  inside solid (found by entry/exit parity, since the cap is no sub-part
+  mesh); ghosts (display opacity < 1) are seen through; else the front of
+  the visible bounds), never the target's own depth - that was the part's
+  centre, and an ortho zoom-in then made the swap back magnify the front
+  face (22-53% on the planter). The ray's candidate surfaces are memoized,
+  keyed on the target, the direction, the cutaway's plane (null while off)
+  and a generation bumped by setSubGeometry / setSubPose / showAssembly /
+  hideAssembly: a swap re-derives the direction an ulp off and a ray through
+  a triangle edge can flip between hit and miss on it, so the memo is what
+  keeps an untouched round trip lossless. A cut changes the matched surface,
+  so mount.js places the carried camera AGAIN after restoring the cutaway. There is no projection control and it is
   not persisted; animation cues never pass `autoProjection`. The view style
   button (an eye) that replaced the cube's
   projection toggle now lives in the stage's `#viewbar`, inserted before
