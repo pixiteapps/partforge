@@ -152,7 +152,7 @@ async function bakeSpeckle(argv) {
   const tintFlag = argv.indexOf("--tint");
   const [baseR, baseG, baseB] = tintFlag !== -1
     ? argv[tintFlag + 1].split(",").map(Number)
-    : [196, 154, 82];
+    : [168, 134, 82];
   const amplitude = 34;
 
   const data = Buffer.alloc(size * size * 3);
