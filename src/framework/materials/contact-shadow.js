@@ -7,7 +7,7 @@ import * as THREE from "three";
 import { HorizontalBlurShader } from "three/addons/shaders/HorizontalBlurShader.js";
 import { VerticalBlurShader } from "three/addons/shaders/VerticalBlurShader.js";
 
-export function createContactShadow({ renderer, sizeMm = 400, resolution = 512, darkness = 0.9, blur = 3.5 }) {
+export function createContactShadow({ renderer, sizeMm = 400, resolution = 512, darkness = 1, blur = 6 }) {
   const group = new THREE.Group();
   const rt = new THREE.WebGLRenderTarget(resolution, resolution);
   rt.texture.generateMipmaps = false;
@@ -15,9 +15,14 @@ export function createContactShadow({ renderer, sizeMm = 400, resolution = 512, 
   rtBlur.texture.generateMipmaps = false;
 
   const planeGeo = new THREE.PlaneGeometry(1, 1).rotateX(Math.PI / 2);
-  const plane = new THREE.Mesh(planeGeo, new THREE.MeshBasicMaterial({ map: rt.texture, opacity: 1, transparent: true, depthWrite: false }));
+  // polygonOffset: the ground disc sits a hair below this plane and writes
+  // depth; at a normal viewing distance that hair is inside the depth
+  // buffer's precision, so without the offset the shadow z-fights the ground.
+  const plane = new THREE.Mesh(planeGeo, new THREE.MeshBasicMaterial({
+    map: rt.texture, opacity: 1, transparent: true, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4,
+  }));
   plane.renderOrder = 1;
-  plane.scale.y = -1; // the texture is rendered from below
   group.add(plane);
   const blurPlane = new THREE.Mesh(planeGeo);
   blurPlane.visible = false;
@@ -42,8 +47,14 @@ export function createContactShadow({ renderer, sizeMm = 400, resolution = 512, 
   const hBlur = new THREE.ShaderMaterial(HorizontalBlurShader); hBlur.depthTest = false;
   const vBlur = new THREE.ShaderMaterial(VerticalBlurShader); vBlur.depthTest = false;
 
+  // The meshes are scaled; the camera is SIZED. three leaves scale out of a
+  // camera's view matrix, so a camera sized by a scaled parent would see a
+  // 1 mm square (it did: the shadow was empty in every environment).
   function setSize(size, height = size) {
-    group.scale.set(size, 1, size);
+    plane.scale.set(size, -1, size); // y = -1: the texture is rendered from below
+    blurPlane.scale.set(size, 1, size);
+    cam.left = -size / 2; cam.right = size / 2;
+    cam.top = size / 2; cam.bottom = -size / 2;
     cam.far = height;
     cam.updateProjectionMatrix();
   }
