@@ -104,3 +104,14 @@ test("UltraHDRLoader slices each environment file into two whole, valid JPEGs", 
     expect(endsWithEoi(gainmapImage), `${e.hdr}: gainmap slice does not end with EOI (length ${gainmapImage.length})`).toBe(true);
   }
 });
+
+// The outdoor rig is lit by a bright overcast sky: an untinted concrete map
+// (sRGB ~185) rendered near-white and blue. Its ground is tinted down to a warm
+// mid-grey so it reads as concrete; this pins the direction, not the shade.
+test("the outdoor ground is tinted down to a warm grey", async () => {
+  const { ENVIRONMENTS } = await import("../../src/framework/materials/environments.js");
+  const t = ENVIRONMENTS.outdoor.ground.tint;
+  const [r, g, b] = [(t >> 16) & 255, (t >> 8) & 255, t & 255];
+  expect(Math.max(r, g, b)).toBeLessThanOrEqual(0xb0);
+  expect(r).toBeGreaterThanOrEqual(b);
+});

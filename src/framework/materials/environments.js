@@ -28,7 +28,9 @@ export const ENVIRONMENTS = {
   outdoor: {
     id: "outdoor", label: "Outdoor", exposure: 0.9,
     hdr: "env-outdoor.jpg",
-    ground: { texture: "ground-concrete.jpg", roughnessTexture: "ground-concrete-rough.jpg", sizeMm: 800, tint: 0xffffff },
+    // Tinted to a warm mid-grey: the overcast sky lights an untinted concrete
+    // map near-white and blue.
+    ground: { texture: "ground-concrete.jpg", roughnessTexture: "ground-concrete-rough.jpg", sizeMm: 800, tint: 0x9e9282 },
     backdrop: "blurred",
   },
 };
