@@ -48,11 +48,29 @@ export function srgbEncodeInPlace(data) {
   return data;
 }
 
-// Half-float readback (a realistic capture's HDR target) → linear floats.
-function halfToFloat(half) {
-  const out = new Float32Array(half.length);
-  for (let i = 0; i < half.length; i++) out[i] = THREE.DataUtils.fromHalfFloat(half[i]);
+// Readback (a realistic capture's target) → linear floats: half-float bits,
+// or linear bytes from the 8-bit fallback target.
+function readbackToLinear(buf) {
+  const out = new Float32Array(buf.length);
+  if (buf instanceof Uint16Array) for (let i = 0; i < buf.length; i++) out[i] = THREE.DataUtils.fromHalfFloat(buf[i]);
+  else for (let i = 0; i < buf.length; i++) out[i] = buf[i] / 255;
   return out;
+}
+
+// Can a realistic capture render HDR into a half-float target and read it
+// back? Both halves fail SILENTLY otherwise: three's readRenderTargetPixels
+// logs and returns when the type is not readable, and gl.readPixels with
+// RGBA/HALF_FLOAT raises an unseen INVALID_OPERATION unless that is the
+// implementation's read type — either way the buffer stays zero and the
+// capture is a valid, all-black JPEG. `readable` is three's
+// capabilities.textureTypeReadable(HalfFloatType) (needs a colour-buffer
+// float extension, which is also what makes the target renderable);
+// `readType` is the implementation read type for a bound, complete
+// half-float framebuffer, or null when no GL context was there to ask (a
+// failed probe passes something that is not `halfFloat`).
+export function halfFloatCaptureSupported({ readable, readType = null, halfFloat = null }) {
+  if (readable !== true) return false;
+  return readType === null || readType === halfFloat;
 }
 
 // Render a set of canonical views without disturbing the live camera/canvas.
@@ -704,7 +722,7 @@ export function createViewer(container, part) {
   // look is swapped in, so the swap does not stall on shader compilation.
   // Three keys a program on tone mapping and output colour space, and both
   // differ with a render target bound, so the canvas variant compiles under
-  // the realistic tone mapping and a capture's variant with a half-float
+  // the realistic tone mapping and a capture's variant with a render
   // target bound — each only for the synchronous compile() inside
   // compileAsync, so the view on screen is untouched while it waits.
   function compileRealistic(rig, { forCapture = false } = {}) {
@@ -718,7 +736,9 @@ export function createViewer(container, part) {
       proxy.add(new THREE.Mesh(geo, m));
     }
     const toneMappingBefore = renderer.toneMapping;
-    const probe = forCapture ? new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType }) : null;
+    // Any bound target gives the capture's key (NoToneMapping, linear output);
+    // an 8-bit one is always renderable.
+    const probe = forCapture ? new THREE.WebGLRenderTarget(1, 1) : null;
     if (probe) renderer.setRenderTarget(probe);
     else renderer.toneMapping = THREE.NeutralToneMapping;
     let compiling;
@@ -1278,6 +1298,37 @@ export function createViewer(container, part) {
   // the mask silently no-ops and every cap floods its whole plane with hatch —
   // no error, live view unaffected, wrong only in the capture.
   const RT_OPTIONS = { samples: 4, stencilBuffer: true };
+  // Decided once per viewer, on the first realistic capture (see
+  // halfFloatCaptureSupported). The probe binds a 1×1 half-float target and
+  // asks GL what it can read back from it.
+  let _hdrReadback = null;
+  function hdrCaptureReadback() {
+    if (_hdrReadback !== null) return _hdrReadback;
+    const readable = renderer.capabilities?.textureTypeReadable?.(THREE.HalfFloatType) === true;
+    let readType = null, halfFloat = null;
+    const gl = renderer.getContext?.();
+    if (readable && typeof gl?.getParameter === "function") {
+      halfFloat = gl.HALF_FLOAT;
+      const probe = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
+      try {
+        renderer.setRenderTarget(probe);
+        const complete = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+        readType = complete && gl.getParameter(gl.IMPLEMENTATION_COLOR_READ_FORMAT) === gl.RGBA
+          ? gl.getParameter(gl.IMPLEMENTATION_COLOR_READ_TYPE)
+          : -1;
+      } catch {
+        readType = -1;
+      } finally {
+        renderer.setRenderTarget(null);
+        probe.dispose();
+      }
+    }
+    _hdrReadback = halfFloatCaptureSupported({ readable, readType, halfFloat });
+    if (!_hdrReadback) {
+      console.warn("partforge: this device can't read back HDR renders; realistic captures are tone-mapped from 8-bit (highlights clip)");
+    }
+    return _hdrReadback;
+  }
   //
   // `viewOffset` ({ fullWidth, fullHeight, x, y }) renders the width×height
   // output as that sub-window of a larger virtual frame — the recentred
@@ -1292,11 +1343,14 @@ export function createViewer(container, part) {
     // mapped here (three tone-maps only the canvas path). It is lit by its
     // environment alone, so the CAD capture lights stay out of it. A throwaway
     // scene (renderMeshPayloads' thumbnails) is CAD whatever the live mode.
+    // Without HDR readback it falls back to the 8-bit target and tone-maps the
+    // clipped linear bytes: highlights clip, but it is still the realistic look.
     const realistic = renderScene === scene && renderMode === "realistic";
-    const cachedSize = !realistic && width === _rtSize && height === _rtSize;
+    const hdr = realistic && hdrCaptureReadback();
+    const cachedSize = !hdr && width === _rtSize && height === _rtSize;
     const rt = cachedSize
       ? (_rt = _rt ?? new THREE.WebGLRenderTarget(_rtSize, _rtSize, RT_OPTIONS))
-      : new THREE.WebGLRenderTarget(width, height, realistic ? { ...RT_OPTIONS, type: THREE.HalfFloatType } : RT_OPTIONS);
+      : new THREE.WebGLRenderTarget(width, height, hdr ? { ...RT_OPTIONS, type: THREE.HalfFloatType } : RT_OPTIONS);
     _capLights = _capLights ?? createCaptureLights();
     // Canonical captures never pass `projection`, so agent-facing renders and
     // the CLI stay perspective no matter what the user is looking at. Built
@@ -1311,7 +1365,7 @@ export function createViewer(container, part) {
     });
     if (viewOffset) cam.setViewOffset(viewOffset.fullWidth, viewOffset.fullHeight, viewOffset.x, viewOffset.y, width, height);
     const { position, up, target } = pose;
-    const buf = realistic ? new Uint16Array(width * height * 4) : new Uint8Array(width * height * 4);
+    const buf = hdr ? new Uint16Array(width * height * 4) : new Uint8Array(width * height * 4);
     // Swap the world-fixed key/fill for the camera-relative pair, for this one render
     // only. A DirectionalLight aims at its `target`, whose matrixWorld only updates
     // while it is in the scene graph, so both go in and both come back out.
@@ -1362,7 +1416,7 @@ export function createViewer(container, part) {
     const img = ctx.createImageData(width, height);
     // Linear pixels → sRGB bytes: tone-mapped for a realistic capture, only
     // transfer-encoded for CAD (which renders LDR with no tone mapping).
-    const encoded = realistic ? neutralToneMapToSrgb8(halfToFloat(buf), renderer.toneMappingExposure) : srgbEncodeInPlace(buf);
+    const encoded = realistic ? neutralToneMapToSrgb8(readbackToLinear(buf), renderer.toneMappingExposure) : srgbEncodeInPlace(buf);
     // flip rows (GL origin is bottom-left)
     for (let y = 0; y < height; y++) {
       const src = (height - 1 - y) * width * 4;

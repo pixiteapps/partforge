@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as THREE from "three";
 
-const state = vi.hoisted(() => ({ renderer: null }));
+const state = vi.hoisted(() => ({ renderer: null, hdrReadable: true }));
 
 const OriginalResizeObserver = globalThis.ResizeObserver;
 
@@ -29,7 +29,7 @@ vi.mock("three", async (importOriginal) => {
     getSize(target) { return target.set(400, 300); }
     setAnimationLoop(callback) { this.animationLoop = callback; }
     render() { this.frames += 1; }
-    get capabilities() { return { maxTextureSize: 8192 }; }
+    get capabilities() { return { maxTextureSize: 8192, textureTypeReadable: () => state.hdrReadable }; }
     setRenderTarget() {}
     getRenderTarget() { return null; }
     getClearAlpha() { return 1; }
@@ -59,7 +59,7 @@ vi.mock("../../src/framework/materials/environment.js", async () => {
   };
 });
 
-import { createViewer } from "../../src/framework/viewer.js";
+import { createViewer, halfFloatCaptureSupported } from "../../src/framework/viewer.js";
 
 function createContainer() {
   const container = document.createElement("div");
@@ -96,6 +96,7 @@ const lastRig = () => rigState.rigs.at(-1);
 
 beforeEach(() => {
   state.renderer = null;
+  state.hdrReadable = true;
   Object.assign(rigState, { fail: false, loads: 0, rigs: [], throwOnGround: false, gate: null });
   globalThis.ResizeObserver = class {
     observe() {}
@@ -628,9 +629,70 @@ test("a realistic capture compiles the render-target program variant first", asy
   const bound = [];
   let target = null;
   state.renderer.setRenderTarget = (t) => { target = t; };
-  state.renderer.compileAsync.mockImplementation(async () => { bound.push(target?.texture.type ?? null); });
+  state.renderer.compileAsync.mockImplementation(async () => { bound.push(target); });
   await v.renderViews(["iso"], { renderMode: "realistic" });
-  expect(bound).toContain(THREE.HalfFloatType);
+  expect(bound.some((t) => t?.isWebGLRenderTarget)).toBe(true);
   expect(target).toBe(null);
+  v.dispose();
+});
+
+test("HDR capture readback needs a readable half-float type AND a half-float read type", () => {
+  expect(halfFloatCaptureSupported({ readable: false })).toBe(false);
+  expect(halfFloatCaptureSupported({ readable: true })).toBe(true); // no GL context to ask
+  expect(halfFloatCaptureSupported({ readable: true, readType: 0x140b, halfFloat: 0x140b })).toBe(true);
+  expect(halfFloatCaptureSupported({ readable: true, readType: 0x1406, halfFloat: 0x140b })).toBe(false); // FLOAT only
+  expect(halfFloatCaptureSupported({ readable: true, readType: -1, halfFloat: 0x140b })).toBe(false); // failed probe
+});
+
+test("without HDR readback a realistic capture tone-maps the 8-bit target instead of coming back black", async () => {
+  const written = stubCanvas();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  state.hdrReadable = false;
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const renders = recordRenders(v);
+  const reads = [];
+  state.renderer.readRenderTargetPixels = (_rt, _x, _y, _w, _h, buf) => { reads.push(buf); buf.fill(46); };
+  v.captureCanonicalViews(["iso"]);
+  v.captureCanonicalViews(["iso"]);
+  expect(renders[0].type).toBe(THREE.UnsignedByteType);
+  expect(renders[0].material).toBeInstanceOf(THREE.MeshPhysicalMaterial); // still the realistic look
+  expect(reads[0]).toBeInstanceOf(Uint8Array);
+  // 46/255 = 0.1804 × 1.1 = 0.198 → the same 111 the half-float path gives, opaque.
+  expect([...written.at(-1).subarray(0, 4)]).toEqual([111, 111, 111, 255]);
+  expect(warn.mock.calls.filter(([m]) => /HDR/.test(m))).toHaveLength(1); // decided once per viewer
+  v.dispose();
+});
+
+function fakeGl(readType) {
+  return {
+    HALF_FLOAT: 0x140b, FLOAT: 0x1406, RGBA: 0x1908, FRAMEBUFFER: 0x8d40, FRAMEBUFFER_COMPLETE: 0x8cd5,
+    IMPLEMENTATION_COLOR_READ_FORMAT: 0x8b9b, IMPLEMENTATION_COLOR_READ_TYPE: 0x8b9a,
+    getContextAttributes: () => ({ stencil: true }),
+    checkFramebufferStatus: () => 0x8cd5,
+    getParameter(p) { return p === 0x8b9b ? 0x1908 : p === 0x8b9a ? readType : 0; },
+  };
+}
+
+test("a GL context that reads half-float back as HALF_FLOAT takes the HDR path", async () => {
+  stubCanvas();
+  const v = shown();
+  state.renderer.getContext = () => fakeGl(0x140b);
+  await v.setRenderMode("realistic");
+  const renders = recordRenders(v);
+  v.captureCanonicalViews(["iso"]);
+  expect(renders.at(-1).type).toBe(THREE.HalfFloatType);
+  v.dispose();
+});
+
+test("a GL context that only reads half-float back as FLOAT falls back to 8-bit", async () => {
+  stubCanvas();
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const v = shown();
+  state.renderer.getContext = () => fakeGl(0x1406);
+  await v.setRenderMode("realistic");
+  const renders = recordRenders(v);
+  v.captureCanonicalViews(["iso"]);
+  expect(renders.at(-1).type).toBe(THREE.UnsignedByteType);
   v.dispose();
 });
