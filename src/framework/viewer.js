@@ -572,7 +572,7 @@ export function createViewer(container, part) {
   const physicalMats = new Map();    // name -> MeshPhysicalMaterial (environment-independent, cached)
   const rigCache = new Map();        // environment id -> Promise<Rig>
   const loadedRigs = new Map();      // environment id -> Rig, once its load has landed (synchronous captures)
-  const thumbnailRigRefs = new Map(); // environment id -> count of in-flight renderStyleThumbnail calls using it
+  const borrowedRigRefs = new Map();  // environment id -> count of in-flight captures (thumbnails, renderViews) borrowing it
   const textureCache = new Map();    // asset file name -> Texture
   const textureLoader = new THREE.TextureLoader();
   let pmrem = null;
@@ -639,7 +639,7 @@ export function createViewer(container, part) {
     return rigCache.get(id);
   }
 
-  // A rig loaded only to draw a thumbnail is freed straight away: each holds
+  // A rig loaded only to draw a capture (a thumbnail, or renderViews from CAD) is freed straight away: each holds
   // its equirect (~16 MB of half-float) and a PMREM, and four of them resident
   // on a phone is not acceptable. The live one (or one a switch is loading) stays
   // — and only those: in CAD, the default environment is freed like any other.
@@ -652,20 +652,29 @@ export function createViewer(container, part) {
   // (still-intact) Texture object out of textureCache, so a later rigFor for
   // this id just re-uploads it on the next render, exactly like a first load.
   //
-  // Concurrent thumbnails of the same environment share one in-flight rig
+  // Concurrent captures of the same environment share one in-flight rig
   // promise (rigFor's own cache), and a rig's envMap is a PMREM render-target
   // texture that CANNOT re-upload once disposed — so releasing while a
   // sibling call is still capturing with it would leave that capture's
-  // reflections black. `p` is the exact promise this call awaited from
-  // rigFor: `thumbnailRigRefs` counts in-flight users of `id` (bumped by the
-  // caller right after rigFor, decremented here), and this only deletes/
+  // reflections black. EVERY async capture that awaits a rig must therefore
+  // borrow it through borrowRig and give it back through releaseRig in a
+  // `finally` (renderStyleThumbnail and renderViews both do). `p` is the
+  // exact promise borrowRig took from rigFor: `borrowedRigRefs` counts
+  // in-flight users of `id` (bumped synchronously in borrowRig, BEFORE any
+  // await, so an overlapping borrower is always already counted; decremented
+  // here), and this only deletes/
   // disposes once that count reaches 0 AND `rigCache.get(id) === p` — the
   // second check is what stops a call from freeing a *different* rig a later
   // load (or the live environment) has since put in the cache for the same id.
-  function releaseThumbnailRig(id, p) {
-    const refs = (thumbnailRigRefs.get(id) ?? 0) - 1;
-    if (refs > 0) { thumbnailRigRefs.set(id, refs); return; }
-    thumbnailRigRefs.delete(id);
+  function borrowRig(id) {
+    const p = rigFor(id);
+    borrowedRigRefs.set(id, (borrowedRigRefs.get(id) ?? 0) + 1);
+    return p;
+  }
+  function releaseRig(id, p) {
+    const refs = (borrowedRigRefs.get(id) ?? 0) - 1;
+    if (refs > 0) { borrowedRigRefs.set(id, refs); return; }
+    borrowedRigRefs.delete(id);
     // Keep only a rig that is (or is about to be) on screen. In CAD the
     // current environment's id alone is no reason: nothing is showing it, and
     // a realistic switch reloads it (from the texture cache) when asked.
@@ -994,7 +1003,7 @@ export function createViewer(container, part) {
     for (const p of rigCache.values()) p.then((r) => r.dispose(), () => {});
     rigCache.clear();
     loadedRigs.clear();
-    thumbnailRigRefs.clear();
+    borrowedRigRefs.clear();
     for (const m of physicalMats.values()) m.dispose();
     physicalMats.clear();
     for (const t of textureCache.values()) t.dispose();
@@ -1766,12 +1775,8 @@ export function createViewer(container, part) {
     const capture = () => currentFramingInCurrentLook({ size, quality: 0.8 });
     if (style === "cad") return captureIn("cad", null, capture);
     const id = resolveEnvironmentId(style).id;
-    // Grab the exact promise rigFor is caching for `id`, and register with it
-    // BEFORE awaiting: a second concurrent call for the same id must see this
-    // one already counted, or two overlapping releases could both drop the
-    // count to 0 and race each other to dispose.
-    const p = rigFor(id);
-    thumbnailRigRefs.set(id, (thumbnailRigRefs.get(id) ?? 0) + 1);
+    // Borrowed BEFORE awaiting (see releaseRig).
+    const p = borrowRig(id);
     try {
       const rig = await p;
       if (disposed) return null;
@@ -1797,7 +1802,7 @@ export function createViewer(container, part) {
         }
       }
     } finally {
-      releaseThumbnailRig(id, p);
+      releaseRig(id, p);
     }
   }
 
@@ -1812,13 +1817,22 @@ export function createViewer(container, part) {
   async function renderViews(viewNames, { renderMode: want = "cad" } = {}) {
     if (disposed) return [];
     if (want !== "realistic") return captureCanonicalViews(viewNames);
-    const rig = await rigFor(environmentId);
-    if (disposed) return [];
-    await compileRealistic(rig, { forCapture: true });
-    if (disposed) return [];
-    await whenTexturesSettled();
-    if (disposed) return [];
-    return withFeatureLines(false, () => captureIn("realistic", rig, () => canonicalViewsInCurrentLook(viewNames)));
+    // Borrowed like a thumbnail's rig, so a thumbnail of the same environment
+    // finishing first cannot dispose it mid-capture (and, in CAD, it is freed
+    // once this is done — it is not on screen).
+    const id = environmentId;
+    const p = borrowRig(id);
+    try {
+      const rig = await p;
+      if (disposed) return [];
+      await compileRealistic(rig, { forCapture: true });
+      if (disposed) return [];
+      await whenTexturesSettled();
+      if (disposed) return [];
+      return withFeatureLines(false, () => captureIn("realistic", rig, () => canonicalViewsInCurrentLook(viewNames)));
+    } finally {
+      releaseRig(id, p);
+    }
   }
 
   // Offscreen render of an arbitrary mesh set (a non-active view), for thumbnails.

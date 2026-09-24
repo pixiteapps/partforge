@@ -1164,3 +1164,28 @@ test("a thumbnail whose live-rig restore throws leaves CAD at the CAD pixel rati
   expect(ratios).toEqual([1]);                        // applyPixelRatio("cad") ran (devicePixelRatio 1)
   v.dispose();
 });
+
+test("in CAD, renderViews('realistic') and a thumbnail of the same environment share the rig; the thumbnail finishing first cannot dispose it", async () => {
+  stubCanvas();
+  const v = shown();
+  const resolvers = [];
+  state.renderer.compileAsync = vi.fn(() => new Promise((resolve) => resolvers.push(resolve)));
+  const views = v.renderViews(["iso"], { renderMode: "realistic" });
+  const thumb = v.renderStyleThumbnail("studio");     // the default environment
+  await flush();
+  expect(rigState.rigs.filter((r) => r.id === "studio")).toHaveLength(1);
+  expect(resolvers).toHaveLength(2);
+  const rig = rigState.rigs[0];
+  let disposedAtCapture = null;
+  state.renderer.render = () => { if (disposedAtCapture === null) disposedAtCapture = rig.dispose.mock.calls.length > 0; };
+  resolvers[1]();                                     // the thumbnail finishes first
+  await thumb;
+  expect(rig.dispose).not.toHaveBeenCalled();         // renderViews still holds it
+  disposedAtCapture = null;
+  resolvers[0]();
+  expect(await views).toHaveLength(1);
+  expect(disposedAtCapture).toBe(false);              // captured with a live rig
+  expect(v.getRenderMode()).toBe("cad");
+  expect(rig.dispose).toHaveBeenCalledTimes(1);       // released once both are done
+  v.dispose();
+});
