@@ -6,7 +6,8 @@ partforge-cloud `docs/superpowers/specs/2026-09-24-realistic-rendering-mode-desi
 ## Goal
 
 Every control that changes *how the part is drawn* moves into one popover,
-opened from a new **view style** button at the stage's top right. Today those
+opened from a new **view style** button beside the view cube (bottom right),
+where the projection toggle used to sit. Today those
 controls are scattered: the ✦ realistic toggle and the environment `<select>`
 sit in the bottom `#viewbar`, and the perspective/orthographic toggle sits on
 the view cube's corner. Feature lines have no control at all (always on in CAD,
@@ -14,12 +15,16 @@ always off in realistic).
 
 ## What the user sees
 
-**Top right.** One pill, same chrome as `#viewbar` (surface, border, pill
-radius, float shadow): `[view style] [drawer toggle]`. The drawer toggle is the
-host's existing `#rail-toggle`, moved into the pill. Where the rail hides the
-toggle (below the narrow breakpoint) the pill holds the view-style button alone.
+**Beside the view cube.** The view cube's small projection circle is replaced
+by the view style button — deliberately more visible: a 34 px button in
+`#viewbar`'s chrome (surface, border, float shadow), sitting at the cube's
+bottom-right corner where the projection button was. The drawer toggle at the
+top right is unchanged. The button lives in the view cube's stack, so it hides
+whenever the cube hides (Sketch mode, a crowded animation transport bar).
 
-**The popover**, anchored under the button, right-aligned to the pill:
+**The popover** opens ABOVE the button, right edges aligned, positioned from
+the button's rect at open time (so it follows the cube wherever the stage puts
+it):
 
 1. **Style** — a grid of five thumbnails: CAD, Studio, Workshop, Print bed,
    Outdoor (CAD first, then `ENVIRONMENTS` order). Each tile is a small render
@@ -56,8 +61,8 @@ is app appearance, not a view style.
     state change — the same contract as `captureIn`.
   - Feature lines in the thumbnail follow that style's stored setting.
 - Tiles render sequentially (one rig load at a time); each tile shows a neutral
-  placeholder until its image lands. Size: 96 px square at device pixel ratio
-  (≤ 2).
+  placeholder until its image lands. Rendered at 256 px (the capture path's
+  minimum) and shown about 80 px square.
 - **Memory:** a rig loaded only for a thumbnail is disposed after its capture
   unless it is the live environment — each rig holds its equirect (~16 MB
   half-float) and PMREM, and holding four on a phone is not acceptable.
@@ -78,8 +83,8 @@ is app appearance, not a view style.
   lines; realistic without) regardless of the live switch — they are the
   agent's measuring view, not the user's. `captureCurrent` (the gallery's
   "capture from viewer") follows the live switch, like everything else it does.
-- Persistence: `view-state.js` gains `loadFeatureLines(style)` /
-  `saveFeatureLines(style, on)` over one localStorage key
+- Persistence: `view-state.js` gains `loadFeatureLinesPrefs()` /
+  `saveFeatureLinesPrefs(prefs)` over one localStorage key
   (`partforge:featureLines`, a JSON object keyed by style id, unknown keys
   ignored). Defaults: `cad → true`, environments → `false`.
 - Whenever the style changes (by the popover, the runtime API, or a restore),
@@ -98,9 +103,7 @@ is app appearance, not a view style.
   view cube / `mobile-tabs.js` precedent), so a host needs no new markup.
   `elements.chrome.realistic` / `.environment` are removed from the mount
   contract; passing them is ignored (the ids simply stop being looked up).
-- The pill reparents the host's `railToggle`. rail.js's own hide/show and its
-  `toggleOriginal` restore keep working because they act on the element, not
-  its position; teardown puts the toggle back where it was.
+- The host's `railToggle` is untouched.
 
 ## Chrome & layout
 
@@ -108,20 +111,21 @@ is app appearance, not a view style.
   `realistic-controls.js`, which it replaces) and a small pure
   `view-style-state.js` (style list, per-style line defaults, cache staleness)
   so the logic is unit-testable without a DOM renderer.
-- `chrome.css`: `.pf-float-topright` takes `.pf-float-rail-toggle`'s placement
-  (top 12, right 12); the toggle inside it becomes `position: static`.
-  `app.css`: the pill's appearance (copied from `#viewbar`), the popover card
+- `viewcube-controls.js` loses its projection button and exposes its stack as
+  the anchor; `view-style-controls.js` appends its button there. `chrome.css` /
+  `app.css`: the button takes the old `.pf-viewcube-toggle` placement (over the
+  cube's bottom-right corner) with viewbar-style chrome; the popover card
   (surface, border, radius, float shadow, z-index above the viewbar), tiles,
   the switch and the segmented control — all on existing `--pf-*` tokens so
   light and dark both work.
-- Sketch mode hides the pill with the rest of the stage chrome (the list in
-  mount.js that already hides `#viewbar`).
+- When the cube hides (Sketch, crowding) the button goes with it and an open
+  popover closes.
 
 ## partforge-cloud follow-up
 
 A separate cloud PR after this publishes: bump the pin + regenerate prompts;
-check the pill under sheet/side mode (`pfc-stage-chrome-hidden` must hide it,
-the same as the viewbar); drop any scaffold reference to `#realistic` /
+check the button under sheet/side mode (`pfc-stage-chrome-hidden` must hide it
+with the cube); drop any scaffold reference to `#realistic` /
 `#environment` (Plan B's scaffold task changes accordingly — the popover
 replaces it).
 
@@ -130,8 +134,8 @@ replaces it).
 - Unit: `view-style-state` (defaults, per-style memory, staleness); the
   controls with a fake viewer (tile click → the right viewer calls, switch
   persists per style and re-applies on style change, projection control, open/
-  close/Escape/outside click, focus return, runtime changes reflected, teardown
-  restores the rail toggle); viewer `setFeatureLines` visibility in both modes;
+  close/Escape/outside click, focus return, runtime changes reflected, the popover
+  closes when the cube hides); viewer `setFeatureLines` visibility in both modes;
   `renderStyleThumbnail` restores the live look after a borrowed capture and
   disposes a thumbnail-only rig.
 - Browser: demo pages (desktop + narrow), both themes, via the Playwright
