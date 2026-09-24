@@ -2,7 +2,9 @@
 // One-shot DEV tool (outputs are committed; nothing runs this at build time).
 //
 //   node scripts/bake-environments.mjs <in.hdr> <out-name.jpg> [--size WxH]
-//     HDR -> UltraHDR (gainmap) JPEG, default 2048x1024.
+//     HDR -> UltraHDR (gainmap) JPEG, default 2048x1024. `--contrast K` (K > 1) raises
+//     each pixel's luminance about the image's log-average by the power K, keeping hue:
+//     the dim surroundings fall darker and the lights grow hotter — a harsher room.
 //   node scripts/bake-environments.mjs --texture <in.jpg|png> <out-name.jpg> [--gray] [--data] [--quality Q] [--tint r,g,b] [--modulate brightness,saturation] [--size N]
 //     Any raster -> square JPEG (default q82), default 1024x1024. `--data` is for maps
 //     that hold numbers rather than colours (normal maps): full-resolution chroma
@@ -39,6 +41,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
+import { DataUtils } from "three";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { encodeJPEGMetadata } from "@monogrid/gainmap-js/libultrahdr";
 
@@ -184,6 +187,25 @@ async function bakeCarbon(argv) {
   console.log(`${name}: ${buffer.length} bytes (procedural twill, ${size}x${size})`);
 }
 
+// Luminance power curve about the log-average (the scene "key"), applied as one
+// scale factor per pixel so colour ratios survive.
+function contrastHalfFloatRGBA(raw, k) {
+  if (!(k > 0)) throw new Error("bake-environments: --contrast takes a positive number");
+  const lum = (i) =>
+    0.2126 * DataUtils.fromHalfFloat(raw[i]) + 0.7152 * DataUtils.fromHalfFloat(raw[i + 1]) + 0.0722 * DataUtils.fromHalfFloat(raw[i + 2]);
+  let logSum = 0;
+  for (let i = 0; i < raw.length; i += 4) logSum += Math.log(lum(i) + 1e-4);
+  const key = Math.exp(logSum / (raw.length / 4));
+  const out = new Uint16Array(raw.length);
+  for (let i = 0; i < raw.length; i += 4) {
+    const l = lum(i) + 1e-4;
+    const f = Math.pow(l / key, k - 1);
+    for (let c = 0; c < 3; c++) out[i + c] = DataUtils.toHalfFloat(Math.min(DataUtils.fromHalfFloat(raw[i + c]) * f, 65000));
+    out[i + 3] = raw[i + 3];
+  }
+  return out;
+}
+
 async function bakeEnvironment(argv) {
   const [input, name] = argv;
   const [width, height] = parseSize(argv, [2048, 1024]);
@@ -200,6 +222,8 @@ async function bakeEnvironment(argv) {
   if (srcW !== width || srcH !== height) {
     raw = resizeHalfFloatRGBA(raw, srcW, srcH, width, height);
   }
+  const contrastFlag = argv.indexOf("--contrast");
+  if (contrastFlag !== -1) raw = contrastHalfFloatRGBA(raw, Number(argv[contrastFlag + 1]));
 
   const workDir = mkdtempSync(join(tmpdir(), "pf-bake-"));
   const rawPath = join(workDir, "in.raw");

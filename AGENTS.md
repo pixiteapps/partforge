@@ -174,8 +174,9 @@ the installed package, so let the publish finish before bumping the dep there.
   a browser into the worker graph. Everything that actually touches
   **three.js** - `physical.js` (CAD vs. `MeshPhysicalMaterial`), `uv.js`
   (box-projected UVs for anisotropy), `patterns.js` (below), `environment.js`
-  (the PMREM rig: lighting, backdrop, ground, contact shadow), and
-  `contact-shadow.js` - is a separate set of modules the viewer alone
+  (the PMREM rig: lighting, backdrop, ground, contact shadow), `print-bed.js`
+  (the print-bed environment's cut-out build plate and its canvas-drawn
+  markings), and `contact-shadow.js` - is a separate set of modules the viewer alone
   imports, not the worker. `patterns.js` is the **only** shader-injection
   site (`onBeforeCompile`) for layer lines, wood, carbon weave and SLS grain
   - a future TSL/WebGPU port only has to rewrite this one file. `assets.js`

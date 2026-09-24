@@ -14,7 +14,7 @@ file each render environment uses.
 | --- | --- | --- | --- | --- |
 | `env-studio.jpg` | Poly Haven HDRI "Studio Small 09" | https://polyhaven.com/a/studio_small_09 | 2026-09-24 | 2K `.hdr` -> `node scripts/bake-environments.mjs studio_small_09_2k.hdr env-studio.jpg` |
 | `env-workshop.jpg` | Poly Haven HDRI "Industrial Workshop Foundry" | https://polyhaven.com/a/industrial_workshop_foundry | 2026-09-24 | 2K `.hdr` -> `node scripts/bake-environments.mjs industrial_workshop_foundry_2k.hdr env-workshop.jpg` |
-| `env-print-bed.jpg` | Poly Haven HDRI "Brown Photostudio 02" | https://polyhaven.com/a/brown_photostudio_02 | 2026-09-24 | 2K `.hdr` -> `node scripts/bake-environments.mjs brown_photostudio_02_2k.hdr env-print-bed.jpg`. Chosen for its cool, softly blurred studio backdrop (the "printer enclosure" cue is the blur, not a literal printer), as the brief allows. |
+| `env-print-bed.jpg` | Poly Haven HDRI "Brown Photostudio 02" | https://polyhaven.com/a/brown_photostudio_02 | 2026-09-24 | 2K `.hdr` -> `node scripts/bake-environments.mjs brown_photostudio_02_2k.hdr env-print-bed.jpg --contrast 2`. The contrast curve (luminance raised to the power 2 about the image's log-average) darkens the room and sharpens its lights, for the inside of a printer enclosure; the environment record adds a hard overhead key light and dims the backdrop further. |
 | `env-outdoor.jpg` | Poly Haven HDRI "Kloofendal Overcast" | https://polyhaven.com/a/kloofendal_overcast | 2026-09-24 | 2K `.hdr` -> `node scripts/bake-environments.mjs kloofendal_overcast_2k.hdr env-outdoor.jpg` |
 
 Poly Haven publishes every asset under CC0 (https://polyhaven.com/license, checked

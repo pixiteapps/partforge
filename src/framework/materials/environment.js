@@ -8,6 +8,7 @@ import { ENVIRONMENTS } from "./environments.js";
 import { resolveEnvironmentId } from "./resolve.js";
 import { assetUrl } from "./assets.js";
 import { createContactShadow } from "./contact-shadow.js";
+import { createPrintBed } from "./print-bed.js";
 
 const GROUND_RADIUS_FACTOR = 4; // ground disc radius, in part radii
 
@@ -15,11 +16,12 @@ const GROUND_RADIUS_FACTOR = 4; // ground disc radius, in part radii
 // what three's tangent-space normal maps expect: a positive normalScale.
 const GROUND_NORMAL_SCALE = 1.5;
 
-function groundMaterial(tex, rough, normal, { tint, roughness = 1, normalScale = GROUND_NORMAL_SCALE }) {
+function groundMaterial(tex, rough, normal, { tint, roughness = 1, normalScale = GROUND_NORMAL_SCALE, bed = false }) {
   const m = new THREE.MeshStandardMaterial({
-    color: tint, map: tex, roughnessMap: rough ?? null, roughness, metalness: 0, transparent: true,
+    color: tint, map: tex, roughnessMap: rough ?? null, roughness, metalness: 0, transparent: !bed,
     ...(normal ? { normalMap: normal, normalScale: new THREE.Vector2(normalScale, normalScale) } : {}),
   });
+  if (bed) return m; // a build plate has a hard edge: no rim fade
   // Radial fade to transparent at the rim so the disc melts into the backdrop.
   m.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
@@ -33,7 +35,7 @@ function groundMaterial(tex, rough, normal, { tint, roughness = 1, normalScale =
   return m;
 }
 
-export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadTexture, pmrem }) {
+export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadTexture, pmrem, createCanvas }) {
   const { id } = resolveEnvironmentId(requestedId);
   const env = ENVIRONMENTS[id];
   const hdr = await loadHdr(assetUrl(env.hdr));
@@ -45,6 +47,7 @@ export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadT
   // equirect stays alive for the rig's life (freed in dispose()).
   const background = hdr;
   const backgroundBlurriness = env.blurriness ?? 0.6;
+  const backgroundIntensity = env.backgroundIntensity ?? 1;
 
   const tex = loadTexture(env.ground.texture);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
@@ -59,11 +62,42 @@ export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadT
   };
   const rough = dataMap(env.ground.roughnessTexture);
   const normal = dataMap(env.ground.normalTexture);
+  const shadow = createContactShadow({ renderer, sizeMm: env.ground.sizeMm });
+
+  // env.ground.bed: a standard-size build plate instead of the fading disc.
+  if (env.ground.bed) {
+    const material = groundMaterial(tex, rough, normal, { ...env.ground, bed: true });
+    const bed = createPrintBed({ pei: material, tileMm: env.ground.tileMm ?? env.ground.sizeMm, createCanvas });
+    // An enclosure's LED bar: one hard overhead light, riding with the bed so
+    // it always falls on the part from the same place.
+    let keyLight = null;
+    if (env.keyLight) {
+      keyLight = new THREE.DirectionalLight(0xffffff, env.keyLight.intensity);
+      keyLight.position.set(...env.keyLight.direction);
+      bed.object.add(keyLight, keyLight.target);
+    }
+    return {
+      id, exposure: env.exposure, envMap, background, backgroundBlurriness, backgroundIntensity,
+      rotationY: ((env.rotationDeg ?? 0) * Math.PI) / 180,
+      ground: bed.object,
+      shadow,
+      setGround({ y, centerX = 0, centerZ = 0, radius, footprintMm = radius }) {
+        bed.place({ y, centerX, centerZ, footprintMm });
+        shadow.group.position.set(centerX, y, centerZ);
+        // The shadow plane never hangs past the plate's edge into thin air.
+        const s = Math.min(Math.max(radius * 3, 20), bed.sizeMm);
+        shadow.setSize(s, Math.max(radius * 4, 20));
+      },
+      dispose() {
+        envMap.dispose(); hdr.dispose(); tex.dispose(); rough?.dispose(); normal?.dispose();
+        material.dispose(); bed.dispose(); shadow.dispose(); keyLight?.dispose();
+      },
+    };
+  }
+
   const discGeo = new THREE.CircleGeometry(0.5, 96).rotateX(-Math.PI / 2);
   const ground = new THREE.Mesh(discGeo, groundMaterial(tex, rough, normal, env.ground));
   ground.renderOrder = -1;
-
-  const shadow = createContactShadow({ renderer, sizeMm: env.ground.sizeMm });
 
   function setGround({ y, centerX = 0, centerZ = 0, radius }) {
     const r = Math.max(radius * GROUND_RADIUS_FACTOR, env.ground.sizeMm / 2);
@@ -84,6 +118,7 @@ export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadT
     envMap,
     background,
     backgroundBlurriness,
+    backgroundIntensity,
     rotationY: ((env.rotationDeg ?? 0) * Math.PI) / 180,
     ground,
     shadow,

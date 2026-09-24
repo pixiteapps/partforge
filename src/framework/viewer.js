@@ -640,7 +640,9 @@ export function createViewer(container, part) {
     if (b.isEmpty()) return;
     const center = b.getCenter(new THREE.Vector3());
     const size = b.getSize(new THREE.Vector3());
-    realisticRig.setGround({ y: b.min.y, centerX: center.x, centerZ: center.z, radius: size.length() / 2 });
+    realisticRig.setGround({
+      y: b.min.y, centerX: center.x, centerZ: center.z, radius: size.length() / 2, footprintMm: Math.max(size.x, size.z),
+    });
     shadowMovedAt = null; // this render is the full-resolution one
     renderShadow(undefined, { force });
   }
@@ -685,6 +687,7 @@ export function createViewer(container, part) {
       scene.environment = rig.envMap;
       scene.background = rig.background;
       scene.backgroundBlurriness = rig.backgroundBlurriness;
+      scene.backgroundIntensity = rig.backgroundIntensity ?? 1;
       scene.backgroundRotation.set(0, rig.rotationY ?? 0, 0);
       scene.environmentRotation.set(0, rig.rotationY ?? 0, 0);
       scene.add(rig.ground, rig.shadow.group);
@@ -719,6 +722,7 @@ export function createViewer(container, part) {
       scene.environment = null;
       scene.background = new THREE.Color(THEME[currentTheme].bg);
       scene.backgroundBlurriness = 0;
+      scene.backgroundIntensity = 1;
       scene.backgroundRotation.set(0, 0, 0);
       scene.environmentRotation.set(0, 0, 0);
     });

@@ -10,7 +10,8 @@
 // the environment (lighting and backdrop together) about the vertical axis.
 // ground.roughnessTexture and ground.normalTexture are optional data maps
 // (normal maps OpenGL-format, +Y up) tiled the same way as the colour map;
-// ground.roughness (default 1) scales the roughness map.
+// ground.roughness (default 1) scales the roughness map. backgroundIntensity
+// (default 1) dims the drawn backdrop without dimming the light on the part.
 
 export const DEFAULT_ENVIRONMENT_ID = "studio";
 
@@ -37,9 +38,22 @@ export const ENVIRONMENTS = {
     },
   },
   "print-bed": {
-    id: "print-bed", label: "Print bed", exposure: 0.8,
+    id: "print-bed", label: "Print bed", exposure: 0.42,
+    // The studio photo re-baked with --contrast: a darker, harsher room, like
+    // the inside of a printer's enclosure.
     hdr: "env-print-bed.jpg",
-    ground: { texture: "ground-pei.jpg", roughnessTexture: "ground-pei-rough.jpg", sizeMm: 256, tint: 0xffffff },
+    blurriness: 0.4,
+    backgroundIntensity: 0.6, // the enclosure walls sit darker than the light on the part
+    // A hard overhead light from above and a little in front, like the LED bar
+    // in a printer's enclosure (direction is toward the light, from the bed).
+    keyLight: { intensity: 4.5, direction: [0.4, 1, 0.6] },
+    // bed: a cut-out, standard-size build plate (print-bed.js) with printed
+    // markings, instead of a disc fading into the backdrop. tileMm is one PEI
+    // texture repeat.
+    ground: {
+      texture: "ground-pei.jpg", roughnessTexture: "ground-pei-rough.jpg", sizeMm: 256, tileMm: 128,
+      tint: 0xffffff, bed: true,
+    },
   },
   outdoor: {
     id: "outdoor", label: "Outdoor", exposure: 0.72,

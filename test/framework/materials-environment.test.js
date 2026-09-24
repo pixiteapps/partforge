@@ -108,3 +108,31 @@ test("environments without a normal map keep a plain ground", async () => {
   expect(rig.ground.material.normalMap).toBeNull();
   rig.dispose();
 });
+
+// The print bed is a cut-out, standard-size build plate under a harsh overhead
+// light, not a disc fading into the backdrop.
+test("the print bed is a plate sized to the part's footprint, with a hard key light and a dimmed backdrop", async () => {
+  const rig = await loadEnvironmentRig(fakeRenderer(), "print-bed", {
+    loadHdr: async () => new THREE.DataTexture(), loadTexture: () => new THREE.Texture(), pmrem, createCanvas: () => null,
+  });
+  expect(rig.ground).toBeInstanceOf(THREE.Group);
+  expect(rig.backgroundIntensity).toBeLessThan(1);
+  const key = rig.ground.children.find((c) => c.isDirectionalLight);
+  expect(key.intensity).toBeGreaterThan(0);
+  rig.setGround({ y: -3, centerX: 1, centerZ: 2, radius: 150, footprintMm: 200 });
+  expect(rig.ground.position.y).toBeCloseTo(-3, 1);
+  const plate = rig.ground.children.find((c) => c.isMesh && Array.isArray(c.material));
+  plate.geometry.computeBoundingBox();
+  expect(plate.geometry.boundingBox.max.x - plate.geometry.boundingBox.min.x).toBeCloseTo(256);
+  // the contact shadow never hangs off the plate's edge
+  expect(rig.shadow.setSize.mock.calls.at(-1)[0]).toBeLessThanOrEqual(256);
+  rig.dispose();
+});
+
+test("environments other than the print bed keep a full-strength backdrop", async () => {
+  const rig = await loadEnvironmentRig(fakeRenderer(), "studio", {
+    loadHdr: async () => new THREE.DataTexture(), loadTexture: () => new THREE.Texture(), pmrem,
+  });
+  expect(rig.backgroundIntensity).toBe(1);
+  rig.dispose();
+});
