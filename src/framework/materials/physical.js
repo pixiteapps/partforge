@@ -4,7 +4,9 @@
 // builds MeshPhysicalMaterial. Both read resolve.js, so the two modes can never
 // disagree about which preset a sub-part is.
 import * as THREE from "three";
-import { cadAppearance } from "./resolve.js";
+import { cadAppearance, resolveMaterial } from "./resolve.js";
+import { applyPattern } from "./patterns.js";
+import { PATTERN_TEXTURES } from "./assets.js";
 
 const APPEARANCE_KEYS = ["color", "opacity", "material", "roughness", "metalness", "clearcoat", "clearcoatRoughness", "anisotropy", "textureScale"];
 const hasAppearance = (display) => !!display && APPEARANCE_KEYS.some((k) => display[k] != null);
@@ -17,5 +19,29 @@ export function buildCadMaterial(display, base) {
   m.metalness = a.metalness;
   m.roughness = a.roughness;
   if (a.opacity < 1) { m.transparent = true; m.opacity = a.opacity; m.depthWrite = false; }
+  return m;
+}
+
+// Realistic-mode material. `loadTexture(fileName)` is injected (the viewer owns
+// a caching TextureLoader), so this stays unit-testable without a network.
+export function buildPhysicalMaterial(display, { printFrame, loadTexture } = {}) {
+  const { params } = resolveMaterial(display);
+  const m = new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(params.color),
+    metalness: params.metalness,
+    roughness: params.roughness,
+    clearcoat: params.clearcoat,
+    clearcoatRoughness: params.clearcoatRoughness,
+    transmission: params.transmission,
+    thickness: params.thickness,
+    ior: params.ior,
+    anisotropy: params.anisotropy,
+  });
+  if (params.opacity < 1) { m.transparent = true; m.opacity = params.opacity; m.depthWrite = false; }
+  m.userData.pfAnisotropic = params.anisotropy > 0;
+  const textureFile = PATTERN_TEXTURES[params.pattern];
+  const texture = textureFile && loadTexture ? loadTexture(textureFile) : undefined;
+  if (texture) { texture.wrapS = texture.wrapT = THREE.RepeatWrapping; texture.colorSpace = THREE.SRGBColorSpace; }
+  applyPattern(m, { kind: params.pattern, scale: params.textureScale, printFrame, texture });
   return m;
 }
