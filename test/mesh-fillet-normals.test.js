@@ -27,6 +27,29 @@ describe("filleted box shades with the true rolling-ball normals", () => {
     expect(smooth).toBeLessThan(0.1);
   });
 
+  test("the micro-ledges where a corner sphere meets its edge bands shade with the band", () => {
+    // the corner patch is buried a hair on purpose, leaving a step ≤ 12 µm tall whose
+    // triangles face 90° off the band; auditNormals skips them as geometry, so judge
+    // every corner here against the band's truth instead — a ledge shaded with its
+    // own facet drew a hairline around every corner on mirror materials
+    const m = box().toMesh(), P = m.positions, N = m.normals;
+    let ledges = 0;
+    for (let t = 0; t < m.triangles; t++) {
+      const o = t * 9;
+      const g = [0, 1, 2].map((j) => (P[o + j] + P[o + 3 + j] + P[o + 6 + j]) / 3);
+      const u = [0, 1, 2].map((j) => P[o + 3 + j] - P[o + j]), v = [0, 1, 2].map((j) => P[o + 6 + j] - P[o + j]);
+      const f = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+      const tg = filletedBoxTruth(g), cr = Math.hypot(...f);
+      if (!tg || !(cr > 0) || (f[0] * tg[0] + f[1] * tg[1] + f[2] * tg[2]) / cr > 0.5) continue; // ledges only
+      ledges++;
+      for (let c = 0; c < 3; c++) {
+        const i = o + c * 3, tn = filletedBoxTruth([P[i], P[i + 1], P[i + 2]].map((q, j) => q + 1e-2 * (g[j] - q)));
+        if (tn) expect(N[i] * tn[0] + N[i + 1] * tn[1] + N[i + 2] * tn[2]).toBeGreaterThan(Math.cos((1 * Math.PI) / 180));
+      }
+    }
+    expect(ledges).toBeGreaterThan(100); // the fixture still has them — else this test proves nothing
+  });
+
   test("a cut hole's rim stays hard", () => {
     const m = withHole().toMesh();
     const { worst } = auditNormals(m, filletedBoxTruth);

@@ -170,13 +170,41 @@ export function creasedNormals(g, { policies = null, featureLabels = null, surfa
       if (arr) arr.push(t); else incident.set(cv, [t]);
     }
 
+  // Micro-ledges. Where two independently tessellated blend surfaces meet — a
+  // corner sphere octant against its edge cylinders, buried a hair on purpose (see
+  // mesh-fillet's cornerPatches) — the boolean leaves a step a few µm tall whose
+  // triangles face 90° off the band. Sub-visible as geometry, but shaded with their
+  // own facet they draw a bright/dark hairline around every fillet corner on a
+  // mirror material. A triangle thinner than MIN_FACE cannot show a crease of its
+  // own (the line pass drops it for the same reason), so one that touches a blend
+  // takes the band's analytic normal at each corner, crease and surface filters
+  // notwithstanding.
+  const ledgeNormal = (v) => {
+    let ax = 0, ay = 0, az = 0, any = false;
+    for (const t2 of incident.get(weld[v])) {
+      if (thin[t2] < MIN_FACE) continue;
+      const an = analyticAt(t2, weld[v]);
+      if (an) { ax += an[0]; ay += an[1]; az += an[2]; any = true; }
+    }
+    const L = Math.hypot(ax, ay, az);
+    return any && L > 1e-9 ? [ax / L, ay / L, az / L] : null;
+  };
+
   const positions = new Float32Array(nTri * 9);
   const normals = new Float32Array(nTri * 9);
   for (let t = 0; t < nTri; t++) {
     const fx = fn[t * 3], fy = fn[t * 3 + 1], fz = fn[t * 3 + 2], oid = triOID[t];
     const sharpCos = cosFor(oid); // per-surface crease threshold
+    const ledge = runEval && thin[t] < MIN_FACE;
     for (let k = 0; k < 3; k++) {
       const v = tris[t * 3 + k];
+      const ln = ledge ? ledgeNormal(v) : null;
+      if (ln) {
+        const o = (t * 3 + k) * 3, vv = v * np;
+        positions[o] = vp[vv]; positions[o + 1] = vp[vv + 1]; positions[o + 2] = vp[vv + 2];
+        normals[o] = ln[0]; normals[o + 1] = ln[1]; normals[o + 2] = ln[2];
+        continue;
+      }
       let nx = 0, ny = 0, nz = 0, ax = 0, ay = 0, az = 0, analytic = false;
       for (const t2 of incident.get(weld[v])) {
         // different cut surface → hard, EXCEPT when a blend surface (boundaryLines)
