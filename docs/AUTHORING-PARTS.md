@@ -330,9 +330,22 @@ mode changes.
 **3D-print layer lines** (`pla-print`, `petg-print`) run perpendicular to the
 **export** pose's +Z — the way the part will be printed, not the way it is
 displayed. If the lines run the wrong way, fix the export pose with `place()`
-(`purpose: "export"`), not the material. `textureScale` is the layer height in
-mm (default 0.2). Wood, carbon fibre and SLS grain are fixed to the sub-part, so
-they never slide when the camera or an animation moves.
+(`purpose: "export"`), not the material. Wood, carbon fibre and SLS grain are
+fixed to the sub-part, so they never slide when the camera or an animation
+moves.
+
+**`textureScale` is millimetres, and what it measures depends on the preset's
+pattern** — so a value copied from one preset family is wrong on another (0.2
+on oak shrinks the grain to a 0.2 mm tile, i.e. invisible noise):
+
+| Pattern | Presets | `textureScale` means | Default |
+| --- | --- | --- | --- |
+| layer lines | `pla-print`, `petg-print` | layer height | 0.2 |
+| SLS grain | `nylon-sls` | grain size | 0.15 |
+| wood | `oak`, `walnut` | size of one texture tile (the grain repeats every this many mm) | 80 |
+| carbon weave | `carbon-fiber` | size of one texture tile | 48 |
+
+Presets without a pattern ignore it.
 
 **3MF export** carries each sub-part's colour (its `color`, else its preset's
 colour), so a multi-colour print opens in a slicer already split and coloured.
