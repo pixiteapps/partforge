@@ -40,6 +40,19 @@ same boost numbers back out, confirming the legacy block is self-consistent. See
 task brief originally sketched) is impractical in plain Node — no WebGL context is
 available, and this tree has no headless-GL shim.
 
+Before the re-merge, the baker also strips `ultrahdr_app`'s own APP2 MPF and ISO
+21496-1 metadata segments out of both the SDR and gain-map halves
+(`stripAppSegments` in the baker). Without this, `encodeJPEGMetadata` prepends its
+own freshly-computed MPF/XMP but leaves `ultrahdr_app`'s originals sitting later in
+the same file; three's `UltraHDRLoader` walks every top-level JPEG section across the
+whole concatenated file and keeps whichever MPF/ISO segment it sees LAST, so the
+stale one silently won — its offsets were computed for the old, smaller file, so the
+primary/gain-map slices it produced didn't even end on a real EOI marker. Verified
+fixed by driving three's actual `UltraHDRLoader.parse()` (via a `happy-dom` DOMParser
+polyfill, short-circuiting before the GPU decode step) against each committed file:
+the sliced primary and gain-map buffers now start with SOI (`FF D8`) and end with EOI
+(`FF D9`), and there is exactly one MPF segment and no leftover ISO box in the file.
+
 ## Ground and pattern textures
 
 | File | Source asset | Source URL | Fetched | Processing |
@@ -47,7 +60,7 @@ available, and this tree has no headless-GL shim.
 | `ground-paper.jpg` | ambientCG "Paper 001" (Color) | https://ambientcg.com/a/Paper001 | 2026-09-24 | 1K JPG -> `node scripts/bake-environments.mjs --texture Paper001_1K-JPG_Color.jpg ground-paper.jpg` |
 | `ground-oak.jpg` | ambientCG "Wood Floor 051" (Color) | https://ambientcg.com/a/WoodFloor051 | 2026-09-24 | 1K JPG -> `node scripts/bake-environments.mjs --texture WoodFloor051_1K-JPG_Color.jpg ground-oak.jpg` |
 | `ground-oak-rough.jpg` | ambientCG "Wood Floor 051" (Roughness) | https://ambientcg.com/a/WoodFloor051 | 2026-09-24 | 1K JPG, grayscale -> `node scripts/bake-environments.mjs --texture WoodFloor051_1K-JPG_Roughness.jpg ground-oak-rough.jpg --gray` |
-| `ground-pei.jpg` | ambientCG "Plastic 010" (Color), tinted | https://ambientcg.com/a/Plastic010 | 2026-09-24 | 1K JPG, gold-brown tint -> `node scripts/bake-environments.mjs --texture Plastic010_1K-JPG_Color.jpg ground-pei.jpg --tint 196,154,82`. Plastic010's own colour map is a near-uniform plastic base (stdev < 1 per channel); the fine "powder-coat" variation comes from its roughness map below, which is the intended split for a smooth-but-textured PEI sheet. |
+| `ground-pei.jpg` | None — procedural | n/a | n/a | Gold-brown fine-grain speckle, no external source. First attempt tinted ambientCG "Plastic 010"'s colour map (near-uniform, stdev < 1/channel — visibly flat, no grain, when actually viewed) gold-brown; that colour map carries no usable grain at all (its roughness map does, which is why `ground-pei-rough.jpg` below is still Plastic010's roughness). Checked ambientCG alternatives (Metal049A — also flat; Granite006A — real speckle but reads as rock, not powder-coat) and found nothing closer. Generated in-baker instead, same procedural precedent as `pattern-carbon.jpg`: per-pixel triangular-distributed noise around a `196,154,82` gold-brown base (asymmetric per channel so flecks warm rather than grey), then a 0.5px blur to turn single-pixel noise into soft grains -> `node scripts/bake-environments.mjs --speckle ground-pei.jpg --tint 196,154,82`. |
 | `ground-pei-rough.jpg` | ambientCG "Plastic 010" (Roughness) | https://ambientcg.com/a/Plastic010 | 2026-09-24 | 1K JPG, grayscale -> `node scripts/bake-environments.mjs --texture Plastic010_1K-JPG_Roughness.jpg ground-pei-rough.jpg --gray` |
 | `ground-concrete.jpg` | ambientCG "Concrete 034" (Color) | https://ambientcg.com/a/Concrete034 | 2026-09-24 | 1K JPG -> `node scripts/bake-environments.mjs --texture Concrete034_1K-JPG_Color.jpg ground-concrete.jpg` |
 | `ground-concrete-rough.jpg` | ambientCG "Concrete 034" (Roughness) | https://ambientcg.com/a/Concrete034 | 2026-09-24 | 1K JPG, grayscale -> `node scripts/bake-environments.mjs --texture Concrete034_1K-JPG_Roughness.jpg ground-concrete-rough.jpg --gray` |
