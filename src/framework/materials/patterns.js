@@ -193,3 +193,51 @@ export function applyPattern(material, { kind, scale = 1, printFrame, texture, n
   material.needsUpdate = true;
   return material;
 }
+
+// Brush frame for anisotropic (brushed) metal, chosen PER PIXEL. three follows the
+// tangent frame `tbn`; built from per-vertex data it interpolates across each
+// triangle, so wherever the brush direction has to turn (it must, somewhere, on
+// any closed part) the turn followed the triangulation — a jagged staircase across
+// a fillet corner's small facets. Here the box-projection rule (brush along object
+// X, or along Y where X dominates the normal) runs on the interpolated object
+// normal in the fragment, so the turn lands on the smooth |nx| = max(|ny|,|nz|)
+// contour instead. The frame is rebuilt from the final shading `normal`, just
+// before <lights_physical_fragment> reads it. Composes with a pattern's own
+// injection (applied first) rather than replacing it.
+const BRUSH_VERT_DECL = "varying vec3 vPfBrushN;\nvarying vec3 vPfBrushNmX;\nvarying vec3 vPfBrushNmY;\nvarying vec3 vPfBrushNmZ;\n";
+const BRUSH_VERT_BODY = "vPfBrushN = normal;\nvPfBrushNmX = normalMatrix[0];\nvPfBrushNmY = normalMatrix[1];\nvPfBrushNmZ = normalMatrix[2];\n";
+const BRUSH_FRAG_DECL = "varying vec3 vPfBrushN;\nvarying vec3 vPfBrushNmX;\nvarying vec3 vPfBrushNmY;\nvarying vec3 vPfBrushNmZ;\n";
+const BRUSH_FRAG_BODY = `
+  #ifdef USE_ANISOTROPY
+  {
+    vec3 pfN = normalize(vPfBrushN);
+    vec3 pfA = abs(pfN);
+    vec3 pfAxis = (pfA.x > pfA.y && pfA.x > pfA.z) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 pfT = mat3(vPfBrushNmX, vPfBrushNmY, vPfBrushNmZ) * (pfAxis - pfN * dot(pfAxis, pfN));
+    pfT = pfT - normal * dot(normal, pfT);
+    if (dot(pfT, pfT) > 1e-12) {
+      pfT = normalize(pfT);
+      tbn[0] = pfT;
+      tbn[1] = cross(normal, pfT);
+    }
+  }
+  #endif
+`;
+
+export function applyBrushFrame(material) {
+  const prev = material.onBeforeCompile;
+  const prevKey = material.customProgramCacheKey;
+  material.onBeforeCompile = (shader, renderer) => {
+    prev?.call(material, shader, renderer);
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", `#include <common>\n${BRUSH_VERT_DECL}`)
+      .replace("#include <begin_vertex>", `#include <begin_vertex>\n${BRUSH_VERT_BODY}`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", `#include <common>\n${BRUSH_FRAG_DECL}`)
+      .replace("#include <lights_physical_fragment>", `${BRUSH_FRAG_BODY}\n#include <lights_physical_fragment>`);
+  };
+  const base = prevKey && prevKey !== THREE.Material.prototype.customProgramCacheKey ? prevKey.call(material) : "";
+  material.customProgramCacheKey = () => `${base}|pf-brush`;
+  material.needsUpdate = true;
+  return material;
+}
