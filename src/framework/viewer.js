@@ -4,6 +4,7 @@ import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+import { buildCadMaterial } from "./materials/physical.js";
 import { createCutaway } from "./cutaway.js";
 import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
 import { flashWorldRadius, projectToScreen, anchorMoved } from "./pick-flash.js";
@@ -219,16 +220,11 @@ export function createViewer(container, part) {
   const partsGroup = new THREE.Group();
   pivot.add(partsGroup);
 
-  // Per-sub-part material: parts share the default material unless they declare
-  // `display: { color?, opacity? }` (e.g. a reference/ghost part shown in a
-  // distinct colour and/or semi-transparent so it reads as "not a printed part").
+  // Per-sub-part CAD material: the shared default unless the sub-part declares
+  // appearance in `display` (colour, opacity, or a library material flattened
+  // for the CAD view — materials/resolve.js cadAppearance).
   function materialFor(name) {
-    const disp = part.parts[name].display;
-    if (!disp || (disp.color == null && disp.opacity == null)) return material;
-    const m = material.clone();
-    if (disp.color != null) m.color = new THREE.Color(disp.color);
-    if (disp.opacity != null && disp.opacity < 1) { m.transparent = true; m.opacity = disp.opacity; m.depthWrite = false; }
-    return m;
+    return buildCadMaterial(part.parts[name].display, material);
   }
 
   const subMesh = Object.fromEntries(
