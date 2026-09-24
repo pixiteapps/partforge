@@ -718,10 +718,10 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    APPEARANCE only (placement lives in chrome.css, per the split at the top of
    this file).
 
-   The VIEW STYLE button now sits over the cube's bottom-right corner
-   (view-style-controls.js, 2026-09-24; its appearance is in the next section,
-   its placement in chrome.css). It replaced the projection toggle, whose
-   history there ran:
+   The VIEW STYLE button replaced the cube's projection toggle
+   (view-style-controls.js, 2026-09-24); it now lives in #viewbar, and only a
+   host without one gets it over the cube's corner (its appearance is in the
+   next section, its placement in chrome.css). The toggle's history there ran:
 
    Through 2026-08-19 the projection toggle sat in its own `.pf-viewcube-pill`
    card below the cube, deliberately borrowing #viewbar's chrome so it read as
@@ -732,28 +732,37 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    follow-up moved it OVER the cube's bottom-right corner, took its resting
    fill away (a tinted disc on the drawing read as a blob, not a control) and
    then its accent colour, leaving the glyph as the one signal of the
-   projection. The view style button goes the other way on purpose: the
-   request was for a control that is clearly SEEN, so it is back to #viewbar's
-   card chrome, at 30px. The projection itself is now a labelled segmented
-   control inside the popover rather than a glyph. */
+   projection. The view style button went the other way on purpose: the
+   request was for a control that is clearly SEEN — first #viewbar's card
+   chrome over the corner, now a button IN #viewbar. The projection itself is
+   a labelled segmented control inside the popover rather than a glyph. */
 .pf-viewcube-canvas {
   display: block;
   touch-action: none;
 }
 
 /* ---- view style button + popover (view-style-controls.js) -------------------
-   The button replaced the cube's small projection circle and is meant to be
-   SEEN: #viewbar's chrome (surface, border, float shadow). 30px, the
-   viewbar's own compact button size: it sits over the cube's corner, and at
-   34px it covered a third of the 101px narrow cube. */
-.pf-view-style-button {
+   In #viewbar the button is a plain `#viewbar button` (34px, transparent,
+   the bar's hover / `.on` / focus) and needs nothing here beyond the
+   divider that opens the appearance group. The card chrome below is the
+   FALLBACK's alone — the button over the cube's corner, for a host with no
+   #viewbar — where it has to read as a control on top of the drawing: 30px,
+   the viewbar's own compact button size (at 34px it covered a third of the
+   101px narrow cube). Scoped to the stack so none of it (the float shadow in
+   particular, which `#viewbar button` does not reset) leaks into the bar. */
+.pf-viewbar-divider {
+  width: 1px; align-self: stretch; margin: 6px 2px; flex: none;
+  background: var(--pf-border);
+}
+.pf-viewbar-divider[hidden] { display: none; }
+.pf-viewcube-stack > .pf-view-style-button {
   width: 30px; height: 30px; border: 1px solid var(--pf-border); border-radius: var(--pf-radius-control);
   background: var(--pf-surface); box-shadow: var(--pf-shadow-float);
   color: var(--pf-muted-2); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
 }
 .pf-view-style-button[hidden] { display: none; }
-.pf-view-style-button:hover, .pf-view-style-button.on { color: var(--pf-text); background: var(--pf-surface-2); }
+.pf-viewcube-stack > .pf-view-style-button:hover, .pf-viewcube-stack > .pf-view-style-button.on { color: var(--pf-text); background: var(--pf-surface-2); }
 .pf-view-style-popover {
   position: absolute; z-index: 30;
   width: min(300px, calc(100% - 24px)); overflow: auto;

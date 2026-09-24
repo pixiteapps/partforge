@@ -184,22 +184,118 @@ test("setHidden hides the button and closes the popover", () => {
   expect(c.isOpen()).toBe(false);
 });
 
-test("the button wears a movie-camera icon, not the palette", () => {
-  attachViewStyleControls(fakeViewer(), { stage, anchor });
+test("the button wears an eye icon (one icon, open or closed)", () => {
+  const c = attachViewStyleControls(fakeViewer(), { stage, anchor });
   const svg = stage.querySelector("#view-style svg");
   expect(svg.getAttribute("width")).toBe("16");
-  expect(svg.querySelector("rect")).not.toBeNull();     // the camera body
-  expect(svg.querySelectorAll("path")).toHaveLength(1); // the lens
-  expect(svg.querySelector("circle")).toBeNull();       // the palette's paint dots are gone
+  expect(svg.querySelectorAll("path")).toHaveLength(1);  // the eye's outline
+  expect(svg.querySelectorAll("circle")).toHaveLength(1); // the pupil
+  expect(svg.querySelector("rect")).toBeNull();           // the movie camera's body is gone
+  const closed = c.element.innerHTML;
+  c.open();
+  expect(c.element.innerHTML).toBe(closed);               // no eye-off swap
+  expect(c.element.getAttribute("aria-label")).toBe("View style");
 });
 
-test("the button sits over the cube's bottom-right corner, inside the stack's box", () => {
+test("fallback: the button sits over the cube's bottom-right corner, inside the stack's box", () => {
   const css = readFileSync(resolve("src/framework/chrome.css"), "utf8");
-  const rules = css.match(/^\.pf-view-style-button\s*\{[^}]*\}/gm) ?? [];
+  const rules = css.match(/^\.pf-viewcube-stack > \.pf-view-style-button\s*\{[^}]*\}/gm) ?? [];
   expect(rules).toHaveLength(1);
   const rule = rules[0].replace(/\s+/g, " ");
   expect(rule).toContain("position: absolute");
   expect(rule).toContain("right: 0;");
   expect(rule).toContain("bottom: 0;");
   expect(rule).not.toMatch(/calc\(100%/);               // not hung outside the stack (beside the cube)
+  // No unscoped placement rule that would also move the toolbar's button.
+  expect(css).not.toMatch(/^\.pf-view-style-button\s*\{/m);
+});
+
+test("fallback: the card chrome is scoped to the stack, so none of it reaches #viewbar", () => {
+  const css = readFileSync(resolve("src/framework/app.css"), "utf8");
+  expect(css).not.toMatch(/^\.pf-view-style-button\s*\{/m);
+  const rule = (css.match(/^\.pf-viewcube-stack > \.pf-view-style-button\s*\{[^}]*\}/m) ?? [""])[0];
+  expect(rule).toContain("box-shadow");
+  expect(css).toMatch(/^\.pf-viewbar-divider\s*\{[^}]*width: 1px;[^}]*align-self: stretch;/m);
+});
+
+// --- toolbar mode (the stage has a #viewbar) ---------------------------------
+function makeToolbar({ theme = true } = {}) {
+  const bar = document.createElement("div");
+  bar.id = "viewbar";
+  for (const id of ["annotate", "measure", "cutaway", ...(theme ? ["theme"] : [])]) {
+    const b = document.createElement("button");
+    b.id = id;
+    bar.append(b);
+  }
+  stage.append(bar);
+  return bar;
+}
+const ids = (bar) => [...bar.children].map((c) => c.id || c.className);
+
+test("toolbar: inserted before #theme behind a divider; not in the cube's stack; detach removes both", () => {
+  const bar = makeToolbar();
+  const c = attachViewStyleControls(fakeViewer(), { stage, toolbar: bar, anchor });
+  expect(c.placement).toBe("toolbar");
+  expect(ids(bar)).toEqual(["annotate", "measure", "cutaway", "pf-viewbar-divider", "view-style", "theme"]);
+  expect(bar.querySelector(".pf-viewbar-divider").getAttribute("aria-hidden")).toBe("true");
+  expect(anchor.querySelector("#view-style")).toBeNull();
+  expect(c.popover.parentNode).toBe(stage);
+  c.detach();
+  expect(ids(bar)).toEqual(["annotate", "measure", "cutaway", "theme"]);
+  expect(stage.querySelector("#pf-view-style-popover")).toBeNull();
+});
+
+test("toolbar: appended at the end (divider first) when there is no #theme", () => {
+  const bar = makeToolbar({ theme: false });
+  attachViewStyleControls(fakeViewer(), { stage, toolbar: bar, anchor });
+  expect(ids(bar)).toEqual(["annotate", "measure", "cutaway", "pf-viewbar-divider", "view-style"]);
+});
+
+test("toolbar: the popover opens above the pill, right edge flush with the PILL's", () => {
+  const bar = makeToolbar();
+  const c = attachViewStyleControls(fakeViewer(), { stage, toolbar: bar, anchor });
+  const rect = (r) => () => ({ ...r, width: r.right - r.left, height: r.bottom - r.top, x: r.left, y: r.top });
+  stage.getBoundingClientRect = rect({ left: 0, top: 0, right: 1000, bottom: 800 });
+  bar.getBoundingClientRect = rect({ left: 700, top: 744, right: 988, bottom: 788 });
+  c.element.getBoundingClientRect = rect({ left: 900, top: 749, right: 934, bottom: 783 });
+  c.open();
+  expect(c.popover.style.right).toBe("12px");        // the pill's inset, not the button's (66px)
+  expect(c.popover.style.bottom).toBe("64px");       // 8px above the pill's top (800 − 744 + 8)
+  expect(c.popover.style.maxHeight).toBe("728px");
+});
+
+test("toolbar: the popover closes when the toolbar hides (Sketch), and open() refuses then", async () => {
+  const bar = makeToolbar();
+  const c = attachViewStyleControls(fakeViewer(), { stage, toolbar: bar, anchor });
+  c.open();
+  bar.hidden = true;
+  await Promise.resolve();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(c.isOpen()).toBe(false);
+  c.open();
+  expect(c.isOpen()).toBe(false);
+});
+
+test("toolbar: the cube hiding (crowding) neither hides the button nor closes the popover", async () => {
+  const bar = makeToolbar();
+  const c = attachViewStyleControls(fakeViewer(), { stage, toolbar: bar, anchor });
+  c.open();
+  anchor.hidden = true;
+  await Promise.resolve();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(c.isOpen()).toBe(true);
+  expect(c.element.hidden).toBe(false);
+});
+
+test("fallback: with no toolbar the button is in the stack and placed from its own rect", () => {
+  const c = attachViewStyleControls(fakeViewer(), { stage, anchor });
+  expect(c.placement).toBe("anchor");
+  expect(anchor.querySelector("#view-style")).toBe(c.element);
+  expect(stage.querySelector(".pf-viewbar-divider")).toBeNull();
+  const rect = (r) => () => ({ ...r, width: r.right - r.left, height: r.bottom - r.top, x: r.left, y: r.top });
+  stage.getBoundingClientRect = rect({ left: 0, top: 0, right: 1000, bottom: 800 });
+  c.element.getBoundingClientRect = rect({ left: 958, top: 600, right: 988, bottom: 630 });
+  c.open();
+  expect(c.popover.style.right).toBe("12px");
+  expect(c.popover.style.bottom).toBe("208px");      // 8px above the button's top
 });

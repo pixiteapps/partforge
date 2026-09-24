@@ -392,10 +392,11 @@ function createCleanupStack() {
 //                                         // not a degraded one). A rejection is reported through the
 //                                         // control's own onError; the widget keeps the converted blob
 //                                         // so a retry costs a network call, not a reconvert.
-// (view style — no element)              // the view style button (#view-style) is GENERATED
-//                                         // into the view cube's stack and sits over the cube's
-//                                         // bottom-right corner, where the cube's projection
-//                                         // toggle used to be; its popover holds the
+// (view style — no element)              // the view style button (#view-style, an eye) is
+//                                         // GENERATED into the stage's #viewbar, before #theme
+//                                         // behind a divider (the bar's appearance group); a
+//                                         // stage with no #viewbar gets it over the view cube's
+//                                         // bottom-right corner instead. Its popover holds the
 //                                         // style (CAD or a realistic environment, as live
 //                                         // thumbnails) and the projection. Hosts need no markup
 //                                         // for it — the old elements.chrome.realistic /
@@ -651,7 +652,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
         }
       }));
     }
-    // Orientation cube (and, beside it, the view style button). Generated chrome — no host markup
+    // Orientation cube (and the view style button). Generated chrome — no host markup
     // declares it, so an embedder gets it for free. Restored BEFORE any framing
     // happens so a reload into ortho frames once instead of framing in
     // perspective and then visibly re-framing.
@@ -678,10 +679,18 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     if ((viewerState?.renderMode ?? loadRenderMode() ?? "cad") === "realistic") viewer.setRenderMode("realistic");
     const viewcube = attachViewcubeControls(viewer, { stage: els.viewer });
     cleanup.defer(() => viewcube.detach());
-    // The view style button + popover (style, projection), beside the cube,
-    // in its stack (the projection toggle's successor) — it hides with the
-    // cube (Sketch, a crowded transport bar) and closes its popover then.
-    const viewStyle = attachViewStyleControls(viewer, { stage: els.viewer, anchor: viewcube.element }, { tooltip });
+    // The view style button + popover (style, projection). With a #viewbar
+    // (looked up the same way sketchHides does) it joins the bottom toolbar's
+    // appearance group, before #theme behind a divider, and its popover
+    // closes when the bar hides (Sketch). Without one it falls back to the
+    // cube's bottom-right corner, in the stack, hiding with the cube. It is
+    // a #viewbar child, so --pf-viewbar-clear below measures it for free (the
+    // bar grows wider, not taller).
+    const viewStyle = attachViewStyleControls(viewer, {
+      stage: els.viewer,
+      toolbar: els.viewer.querySelector("#viewbar"),
+      anchor: viewcube.element,
+    }, { tooltip });
     cleanup.defer(() => viewStyle.detach());
     cleanup.defer(viewer.onProjectionChange((mode) => saveProjection(mode)));
     // setHidden takes one boolean, and there are two independent reasons to hide

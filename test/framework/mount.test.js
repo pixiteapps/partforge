@@ -1502,6 +1502,28 @@ test("mounts the view cube stack inside the stage", () => {
   expect(els.viewer.querySelector("#pf-view-style-popover")).toBeNull();
 });
 
+test("with a #viewbar, the view style button joins it before #theme, behind a divider", () => {
+  const els = makeElements();
+  const viewbar = document.createElement("div");
+  viewbar.id = "viewbar";
+  const theme = document.createElement("button");
+  theme.id = "theme";
+  viewbar.append(theme);
+  els.viewer.append(viewbar);
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  finishFirstBuild(workers);
+  const button = viewbar.querySelector("#view-style");
+  expect(button).not.toBeNull();
+  expect(button.nextElementSibling).toBe(theme);
+  expect(button.previousElementSibling.classList.contains("pf-viewbar-divider")).toBe(true);
+  expect(els.viewer.querySelector(".pf-viewcube-stack #view-style")).toBeNull(); // the corner is clear
+  runtime.dispose();
+  expect(viewbar.querySelector("#view-style")).toBeNull();
+  expect(viewbar.querySelector(".pf-viewbar-divider")).toBeNull();
+  expect(viewbar.querySelector("#theme")).toBe(theme);
+});
+
 test("exposes projection on the runtime and drives the viewer with it", () => {
   const els = makeElements();
   const { createWorker } = makeWorkers();

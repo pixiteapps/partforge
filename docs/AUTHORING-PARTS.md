@@ -2597,10 +2597,13 @@ Copy `demo.html` and change the title, the panel heading, and the `<script src>`
 workers are spawned from your one worker entry (`name` = `"manifold"` for preview/STL/3MF,
 `"occt"` for STEP — handled for you).
 
-**The view style button needs no markup.** `mount` generates it (`#view-style`)
-over the view cube's bottom-right corner (it replaces the old projection
-toggle there, and belongs to the cube's stack), so it hides whenever the cube does (Sketch mode, a
-crowded animation transport bar). It opens a popover holding every control that
+**The view style button needs no markup.** `mount` generates it (`#view-style`,
+an eye icon) into the stage's `#viewbar`, just before `#theme` behind a thin
+divider — the bar's "appearance" group — so a page that copies `demo.html` gets
+it in the bottom toolbar and it hides with the bar (Sketch mode). A stage with
+no `#viewbar` gets it over the view cube's bottom-right corner instead, where it
+hides whenever the cube does (Sketch mode, a crowded animation transport bar).
+Either way it replaces the old projection toggle. It opens a popover holding every control that
 changes *how* the part is drawn: the **style** — CAD or one of the realistic
 environments (see "Materials and appearance" above), each shown as a live
 thumbnail of the part, re-rendered on the next open after the part or theme
@@ -2759,7 +2762,7 @@ pane's pixel size:
 stay perspective unconditionally, so agent-facing output does not depend on a UI
 toggle. The choice persists across reloads under `partforge:projection` and is
 restored before the first framing. The orientation cube and the view style
-button on its corner are hidden while Sketch (annotate) mode is active, but that only governs
+button (in `#viewbar`, which Sketch hides) are hidden while Sketch (annotate) mode is active, but that only governs
 *user-driven* view changes — the framework does not police programmatic ones.
 The ink is a transparent overlay and the WebGL canvas keeps rendering beneath
 it, so a host that calls `runtime.projection.set()` mid-sketch **visibly

@@ -127,10 +127,13 @@ the installed package, so let the publish finish before bumping the dep there.
   the camera to canonical angles, with model-frame X/Y/Z arrows drawn in
   front of it - `cube-geom.js` is the pure projection/hit leaf, `cube-canvas.js`
   the 2D renderer, `viewcube-mode.js` the orchestrator, `viewcube-controls.js`
-  the stack chrome. The view style button sits over the cube's bottom-right
-  corner, where the projection toggle used to be (a DOM child of the stack,
-  so it hides with it, placed inside the stack's box so the published size is
-  unchanged), and belongs to
+  the stack chrome. The view style button (an eye) that replaced the cube's
+  projection toggle now lives in the stage's `#viewbar`, inserted before
+  `#theme` behind a `.pf-viewbar-divider` (the bar's appearance group; the
+  popover opens above the pill, right edges flush, and closes when the bar
+  hides for Sketch); only a stage with no `#viewbar` gets it over the cube's
+  bottom-right corner instead (a DOM child of the stack, so it hides with it,
+  inside the stack's box so the published size is unchanged). It belongs to
   `view-style-controls.js`: the button and its popover (style thumbnails,
   projection), with `view-style-state.js` as its
   pure half (the style list, thumbnail-cache freshness). Feature lines are

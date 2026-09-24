@@ -5,11 +5,25 @@
 // stage, not declared by the host (the view cube / mobile-tabs.js
 // precedent), so an embedder gets it with no markup.
 //
-// The button replaces the view cube's old projection toggle, in the same
-// place: a DOM child of the cube's stack (so it hides whenever the cube
-// does), over the cube's bottom-right corner (chrome.css), wearing #viewbar's
-// chrome so it reads as a control rather than a mark on the cube. The
-// popover opens ABOVE it, placed from the button's rect at open time.
+// WHERE the button goes is chosen once, at attach time:
+//
+//   - toolbar mode (a `toolbar` was passed — the stage's #viewbar): the
+//     button joins the bottom toolbar's APPEARANCE group, inserted just
+//     before #theme (appended when there is none) behind a divider
+//     (`.pf-viewbar-divider`), so the pill reads "tools | appearance". It is a
+//     plain `#viewbar button` there — no card chrome of its own — and it does
+//     not hide with the view cube (it is not on the cube any more). The
+//     popover opens ABOVE the pill, its right edge flush with the PILL's
+//     right edge. Moved here 2026-09-24 at the user's request after a live
+//     mock, following Fusion 360's display-settings-in-the-nav-bar convention.
+//   - fallback (no toolbar — a host that supplies no #viewbar): the button is
+//     a card-chromed child of the view cube's stack (`anchor`), over the
+//     cube's bottom-right corner (chrome.css), hiding whenever the cube does;
+//     the popover opens above the BUTTON.
+//
+// Either way the popover closes whenever the button's host (#viewbar, or the
+// cube's stack) is hidden — Sketch mode hides both. One code path for the
+// popover; only its reference rect and the observed host differ.
 //
 // The state shown is always the viewer's: a tile is pressed once the viewer
 // reports that style, and a runtime change made elsewhere shows up here.
@@ -17,9 +31,11 @@ import { STYLES, styleFor, createThumbnailCache } from "./view-style-state.js";
 import { saveRenderMode, saveEnvironment } from "./view-state.js";
 import { attachButtonTooltips } from "./tooltip.js";
 
-// A movie camera (lucide "video"): the button is about how the part is
-// RENDERED, not about colour — a palette read as a paint/colour picker.
-const ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg>`;
+// An eye (lucide "eye"): the button is about how the part is SEEN — a
+// palette read as a paint/colour picker, and a movie camera (its icon until
+// the move into the toolbar) as recording. One icon in both states: the
+// open popover is signalled by `.on` and aria-expanded, never an eye-off.
+const ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>`;
 const LABEL = "View style";
 
 function el(tag, className, attrs = {}) {
@@ -29,14 +45,26 @@ function el(tag, className, attrs = {}) {
   return e;
 }
 
-export function attachViewStyleControls(viewer, { stage, anchor } = {}, { tooltip } = {}) {
+export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor = null } = {}, { tooltip } = {}) {
   const button = el("button", "pf-view-style-button", {
     type: "button", id: "view-style", "aria-label": LABEL,
     "aria-haspopup": "dialog", "aria-expanded": "false", "aria-controls": "pf-view-style-popover",
   });
   button.innerHTML = ICON;
   if (!tooltip) button.title = LABEL;
-  (anchor ?? stage).append(button);
+  // The toolbar wins; see the header. `host` is the element whose `hidden`
+  // closes the popover, `placeRef` the rect the popover is placed from.
+  let divider = null;
+  const host = toolbar ?? anchor;
+  if (toolbar) {
+    divider = el("span", "pf-viewbar-divider", { "aria-hidden": "true" });
+    const theme = [...toolbar.children].find((c) => c.id === "theme") ?? null;
+    toolbar.insertBefore(divider, theme);
+    toolbar.insertBefore(button, theme);
+  } else {
+    (anchor ?? stage).append(button);
+  }
+  const placeRef = toolbar ?? button;
 
   const pop = el("div", "pf-view-style-popover", { id: "pf-view-style-popover", role: "dialog", "aria-label": LABEL });
   pop.hidden = true;
@@ -164,12 +192,13 @@ export function attachViewStyleControls(viewer, { stage, anchor } = {}, { toolti
   };
   button.addEventListener("keydown", onKey);
   pop.addEventListener("keydown", onKey);
-  // Above the button, right edges aligned, never past the stage's top — and
-  // clamped so it never runs off the stage's left edge either: a stage
-  // narrower than the popover plus the button's inset (today 12px; it was
-  // ~121px while the button sat beside the cube) would otherwise push it out.
+  // Above the reference (the toolbar pill, else the button), right edges
+  // aligned, 8px clear of its top, never past the stage's top — and clamped
+  // so it never runs off the stage's left edge either: a stage narrower than
+  // the popover plus the reference's inset (12px for either placement today)
+  // would otherwise push it out.
   function place() {
-    const s = stage.getBoundingClientRect(), b = button.getBoundingClientRect();
+    const s = stage.getBoundingClientRect(), b = placeRef.getBoundingClientRect();
     const width = pop.offsetWidth;
     let right = Math.max(8, s.right - b.right);
     if (width && s.width - right - width < 8) right = Math.max(8, s.width - width - 8);
@@ -178,7 +207,7 @@ export function attachViewStyleControls(viewer, { stage, anchor } = {}, { toolti
     pop.style.maxHeight = `${Math.max(160, b.top - s.top - 16)}px`;
   }
   function open() {
-    if (isOpen() || button.hidden || anchor?.hidden) return;
+    if (isOpen() || button.hidden || host?.hidden) return;
     // Unhidden before placing so its width can be measured (same frame: no paint between).
     pop.hidden = false;
     place();
@@ -207,15 +236,18 @@ export function attachViewStyleControls(viewer, { stage, anchor } = {}, { toolti
     viewer.onThemeChange?.(() => cache.invalidate()) ?? (() => {}),
   ];
   render();
-  // The cube hides for Sketch mode and for a crowded transport bar; the
-  // button goes with it (it is in the stack), and an open popover must too.
-  const hideObserver = anchor && typeof MutationObserver === "function"
-    ? new MutationObserver(() => { if (anchor.hidden) close({ focus: false }); })
+  // The popover closes whenever the button's host is hidden: #viewbar hides
+  // for Sketch mode; the cube's stack (fallback) for Sketch and for a crowded
+  // transport bar. Observing the host actually holding the button means the
+  // toolbar button does NOT go away when the cube hides for crowding.
+  const hideObserver = host && typeof MutationObserver === "function"
+    ? new MutationObserver(() => { if (host.hidden) close({ focus: false }); })
     : null;
-  hideObserver?.observe(anchor, { attributes: true, attributeFilter: ["hidden"] });
+  hideObserver?.observe(host, { attributes: true, attributeFilter: ["hidden"] });
 
   return {
     element: button,
+    placement: toolbar ? "toolbar" : "anchor",
     popover: pop,
     isOpen,
     open,
@@ -236,6 +268,7 @@ export function attachViewStyleControls(viewer, { stage, anchor } = {}, { toolti
       tooltipBinding?.detach();
       hideObserver?.disconnect();
       button.remove();
+      divider?.remove();
       pop.remove();
     },
   };
