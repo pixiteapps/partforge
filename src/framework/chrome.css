@@ -249,34 +249,40 @@
    56px fallback is the standard viewbar's 12px bottom + 44px height, so the
    stack still sits right if the observer never fires.
 
-   The corner over the cube's bottom-right is the VIEW STYLE button's
-   (view-style-controls.js, 2026-09-24), which replaced the projection toggle
-   there. The toggle had moved twice before it went: through 2026-08-19 it sat
-   in its own `.pf-viewcube-pill` card BELOW the cube, making the stack a
-   column; earlier on 2026-08-20 it became a bare circle BESIDE the cube,
-   making the stack a `row-reverse` flex row (`canvas + gap + button`, 167px
-   wide at the full 135px cube); later that day it moved OVER the cube's
-   bottom-right corner — absolutely positioned within the stack, right edge on
-   the stack's right edge and bottom edge on its bottom baseline, so the
-   stack's width collapsed back to the canvas alone (135px, or 101 below the
-   narrow breakpoint). The view style button keeps exactly that placement, so
-   the stack's measured box — the size viewcube-controls.js publishes and the
-   transport bar's crowding rule reads — is still the canvas alone. It is
-   bigger (34px against the toggle's 24, and card-chromed: it is meant to be
-   seen), but being absolutely positioned inside the stack it cannot widen
-   it; the cost is that it covers more of the cube's corner cell (a third of
-   the 101px narrow cube's width).
+   The VIEW STYLE button (view-style-controls.js, 2026-09-24) sits BESIDE the
+   cube, to its LEFT, 8px apart, TOP edges aligned — "down next to the camera
+   direction widget". It replaced the projection toggle, which had moved
+   three times: through 2026-08-19 it sat in its own `.pf-viewcube-pill` card
+   BELOW the cube (the stack a column); earlier on 2026-08-20 it became a bare
+   circle beside the cube (the stack a `row-reverse` flex row, 167px wide at
+   the full cube); later that day it moved OVER the cube's bottom-right corner.
+   The view style button first took that corner too, but at 34px and
+   card-chromed it covered a third of the 101px narrow cube, so it moved out
+   beside it.
 
-   That is also what satisfies "aligned with the right of the toolbar" without a
-   second offset: `.pf-float-viewbar` above is `right: 12px` too, so making the
-   button's right edge the STACK's right edge lines it up with the viewbar's by
-   construction — and it keeps doing so if that margin is ever retuned.
+   It stays a DOM child of the stack, so it hides whenever the cube does
+   (Sketch mode, a crowded transport bar), but it is absolutely positioned
+   OUTSIDE the stack's box (`right: calc(100% + 8px)`), so the stack's measured
+   box — the size viewcube-controls.js publishes as data-pf-w/h and the
+   transport bar's crowding rule reads — is still the canvas alone (135px, or
+   101 below the narrow breakpoint).
 
-   The button is a later sibling than the cube's wrapper, so it paints over the
-   canvas with no z-index of its own; the corner cell it covers is the least
-   informative part of the drawing, and the canvas keeps receiving pointer
-   events everywhere else. Its popover is NOT in the stack: it is appended to
-   the stage and placed from the button's rect at open time (it opens above).
+   Why TOP-aligned, not bottom: the button hangs outside the box the transport
+   bar's crowding rule checks, so the rule can leave the cube showing with the
+   animation bar running right up to the cube's left edge. Bottom-aligned, the
+   button then sat ON the bar — measured on hinged-box.html: a 700px stage
+   (narrow mode) overlapped it by 13px each way, and a 950-1000px one left the
+   two flush with no gap at all. The bar never rises above the stack's lower
+   ~60px (it sits at the viewbar's level, or just above it in narrow mode), so
+   a 34px button at the narrow stack's top clears it by 8px; at the full cube
+   it comes down 34px (see the rule below) and still clears it by 67 — the
+   nearest spot beside the cube that is clear at every width. It cannot meet #viewbar either: the whole stack is 3px above it.
+   Horizontally it needs 42px left of the cube, which a 400px stage has.
+
+   The stack keeps its right edge on the viewbar's (`.pf-float-viewbar` above
+   is `right: 12px` too), so the cube still lines up with the toolbar by
+   construction. The popover is NOT in the stack: it is appended to the stage
+   and placed from the button's rect at open time (it opens above).
 
    The 8px that used to sit between the stack and the viewbar is now 3px
    (2026-08-20: "lower the whole box so it's closer to the bottom bar"). 3
@@ -293,9 +299,9 @@
    this pair (3 + 5) is the whole slack that exists without either overlapping
    the viewbar or shrinking the cube.
 
-   The stack itself is pointer-transparent. With the button back inside the
-   canvas's footprint there is no dead gap left at all: the stack's box IS the
-   canvas's box, and both the canvas and the view style button opt back in below. The
+   The stack itself is pointer-transparent. Its box IS the canvas's box, so
+   there is no dead gap in it; the canvas and the view style button (which
+   hangs outside the box) opt back in below. The
    declaration stays because the stack's own box is still an element over the
    viewer, and a stray hit on it (its padding-free edges, or a future child
    before it opts in) should reach the model behind rather than be swallowed. */
@@ -309,9 +315,20 @@
 }
 .pf-viewcube-stack[hidden] { display: none; }
 .pf-viewcube-canvas, .pf-view-style-button { pointer-events: auto; }
-/* Over the cube's bottom-right corner. Absolute against the stack, which is
-   itself absolute and so already the containing block. */
-.pf-view-style-button { position: absolute; right: 0; bottom: 0; }
+/* Left of the cube, 8px gap; outside the stack's box so its published size is
+   unchanged (see above). Absolute against the stack, which is itself absolute
+   and so already the containing block, so `100%` is the stack's height.
+
+   Top-aligned at the 101px narrow cube, where the transport bar can run up
+   alongside the stack's lower 60px; at the full 135px cube the bar only ever
+   sits BELOW the stack (non-narrow layouts put it at the viewbar's level), so
+   the button can come down by the 34px difference, beside the drawn cube
+   rather than above it (the canvas's drawing sits in its lower part, see
+   cube-geom.js's CUBE_DOWN_BIAS_PX). `100% - 101px` is exactly that: 0 at the
+   narrow cube, 34 at the full one. 101 is cube-canvas.js's CUBE_SIZE_NARROW;
+   if that changes, this still resolves to top-aligned at the narrow size only
+   when the two agree. */
+.pf-view-style-button { position: absolute; right: calc(100% + 8px); top: max(0px, 100% - 101px); }
 
 /* The keyboard surface: six per-view buttons standing in for the DOM focus a
    canvas cannot give us. Visually hidden rather than display:none — the latter

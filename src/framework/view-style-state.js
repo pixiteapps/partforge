@@ -17,18 +17,16 @@ export const defaultFeatureLines = (style) => style === "cad";
 export const styleFor = (renderMode, environmentId) => (renderMode === "realistic" ? environmentId : "cad");
 
 // Thumbnails are rendered on OPEN and cached. `invalidate` (a part or theme
-// change) only marks them stale — the next open re-renders — and bumps a
-// generation so a render already in flight knows to stop painting.
+// change) only marks them stale — the next open re-renders. A render already
+// in flight keeps painting (view-style-controls.js says why).
 export function createThumbnailCache() {
   const images = new Map();
   let stale = true;
-  let gen = 0;
   return {
     get: (id) => images.get(id),
     set: (id, url) => { images.set(id, url); },
     isStale: () => stale,
     markFresh: () => { stale = false; },
-    invalidate: () => { stale = true; gen += 1; },
-    generation: () => gen,
+    invalidate: () => { stale = true; },
   };
 }

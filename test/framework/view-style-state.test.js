@@ -24,9 +24,7 @@ test("the thumbnail cache starts stale and a part change makes it stale again", 
   c.set("cad", "data:x");
   expect(c.isStale()).toBe(false);
   expect(c.get("cad")).toBe("data:x");
-  const g = c.generation();
   c.invalidate();
   expect(c.isStale()).toBe(true);
-  expect(c.generation()).toBe(g + 1);
   expect(c.get("cad")).toBe("data:x"); // old image stays until replaced
 });

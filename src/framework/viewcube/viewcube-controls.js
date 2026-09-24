@@ -9,10 +9,10 @@
 // positioned, so the stack stayed exactly as wide as the canvas (135px, or 101
 // below the rail's narrow breakpoint) and the size published below was the
 // canvas's alone. On 2026-09-24 the projection control moved into the view
-// style popover (view-style-controls.js), whose button now takes the toggle's
-// spot in this stack. That module appends it into `element` (the stack), so it
-// hides with the cube; it is absolutely positioned too, so the stack's
-// published size is still the canvas's. History of the toggle's earlier homes
+// style popover (view-style-controls.js), whose button sits BESIDE the cube, to
+// its left. That module appends it into `element` (the stack), so it hides
+// with the cube; it is absolutely positioned OUTSIDE the stack's box, so the
+// stack's published size is still the canvas's. History of the toggle's earlier homes
 // (a `.pf-viewcube-pill` card below the cube, then a circle beside it) is in
 // chrome.css/app.css's viewcube sections.
 import { runCleanupSteps } from "../teardown.js";

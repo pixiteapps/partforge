@@ -5,8 +5,9 @@
 // projection. Generated into the stage, not declared by the host (the view
 // cube / mobile-tabs.js precedent), so an embedder gets it with no markup.
 //
-// The button replaces the view cube's old projection toggle, in the cube's
-// stack (so it hides whenever the cube does), and wears #viewbar's chrome so
+// The button replaces the view cube's old projection toggle. It is a DOM
+// child of the cube's stack (so it hides whenever the cube does) but placed
+// BESIDE the cube, to its left (chrome.css), and wears #viewbar's chrome so
 // it reads as a control rather than a mark on the cube. The popover opens
 // ABOVE it, placed from the button's rect at open time.
 //
@@ -124,15 +125,29 @@ export function attachViewStyleControls(viewer, { stage, anchor } = {}, { toolti
     const url = cache.get(id);
     if (url) { img.src = url; img.hidden = false; } else { img.hidden = true; }
   }
+  // A part change WHILE open (a playing animation re-shows the assembly every
+  // frame) does not abort the loop: it only marks the cache stale for the
+  // next open. Aborting on it — the first version — left every tile after the
+  // first empty for as long as an animation played (seen on hinged-box.html).
+  // A slightly older pose is fine here: a thumbnail shows the style, not a
+  // live mirror (spec). What does stop a loop is a close (below), detach, or a
+  // newer loop started by a reopen.
+  let loopToken = 0;
   async function refreshThumbnails() {
     if (!cache.isStale()) return;
     cache.markFresh();
-    const gen = cache.generation();
+    const token = ++loopToken;
     // One at a time: each realistic style may load an environment.
     for (const s of STYLES) {
+      if (detached || token !== loopToken) return;
+      // Spec: thumbnails render on open, never while closed. A close mid-loop
+      // stops it here and marks the cache stale, so the next open resumes
+      // (re-rendering from the top; the finished ones are cheap to repeat and
+      // keep one freshness flag rather than per-style bookkeeping).
+      if (!isOpen()) { cache.invalidate(); return; }
       let url = null;
       try { url = await viewer.renderStyleThumbnail(s.id, { size: 256 }); } catch { url = null; }
-      if (detached || gen !== cache.generation()) return;
+      if (detached || token !== loopToken) return;
       cache.set(s.id, url);
       paint(s.id);
     }
@@ -143,23 +158,41 @@ export function attachViewStyleControls(viewer, { stage, anchor } = {}, { toolti
   const onOutside = (e) => {
     if (!pop.contains(e.target) && !button.contains(e.target)) close({ focus: false });
   };
-  const onKey = (e) => { if (e.key === "Escape") close(); };
-  // Above the button, right edges aligned, never past the stage's top.
+  // Escape is ours only while focus is in the popover or on the button: the
+  // listener sits on those two elements rather than on document, so it runs
+  // BEFORE the stage-level Escape handlers (measure, cutaway — they listen on
+  // the stage and #viewbar) and stopPropagation keeps them from also treating
+  // this key as their exit. Escape pressed anywhere else is left alone.
+  const onKey = (e) => {
+    if (e.key !== "Escape" || !isOpen()) return;
+    e.stopPropagation();
+    e.preventDefault();
+    close();
+  };
+  button.addEventListener("keydown", onKey);
+  pop.addEventListener("keydown", onKey);
+  // Above the button, right edges aligned, never past the stage's top — and,
+  // since the button now sits LEFT of the cube, clamped so a stage narrower
+  // than the popover plus the cube's width does not push it off the left edge
+  // (a 400px phone stage: the button's right edge is ~121px in from the right).
   function place() {
     const s = stage.getBoundingClientRect(), b = button.getBoundingClientRect();
-    pop.style.right = `${Math.max(8, s.right - b.right)}px`;
+    const width = pop.offsetWidth;
+    let right = Math.max(8, s.right - b.right);
+    if (width && s.width - right - width < 8) right = Math.max(8, s.width - width - 8);
+    pop.style.right = `${right}px`;
     pop.style.bottom = `${Math.max(8, s.bottom - b.top + 8)}px`;
     pop.style.maxHeight = `${Math.max(160, b.top - s.top - 16)}px`;
   }
   function open() {
     if (isOpen() || button.hidden || anchor?.hidden) return;
-    place();
+    // Unhidden before placing so its width can be measured (same frame: no paint between).
     pop.hidden = false;
+    place();
     button.setAttribute("aria-expanded", "true");
     button.classList.add("on");
     render();
     document.addEventListener("pointerdown", onOutside, true);
-    document.addEventListener("keydown", onKey);
     refreshThumbnails();
   }
   function close({ focus = true } = {}) {
@@ -168,7 +201,6 @@ export function attachViewStyleControls(viewer, { stage, anchor } = {}, { toolti
     button.setAttribute("aria-expanded", "false");
     button.classList.remove("on");
     document.removeEventListener("pointerdown", onOutside, true);
-    document.removeEventListener("keydown", onKey);
     if (focus) button.focus();
   }
   const onButton = () => (isOpen() ? close() : open());
@@ -206,6 +238,8 @@ export function attachViewStyleControls(viewer, { stage, anchor } = {}, { toolti
       detached = true;
       close({ focus: false });
       button.removeEventListener("click", onButton);
+      button.removeEventListener("keydown", onKey);
+      pop.removeEventListener("keydown", onKey);
       for (const off of offs) { try { off(); } catch { /* already gone */ } }
       tooltipBinding?.detach();
       hideObserver?.disconnect();

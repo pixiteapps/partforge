@@ -119,16 +119,67 @@ test("the projection control sets and follows the projection", () => {
   expect(ortho.getAttribute("aria-checked")).toBe("false");
 });
 
-test("Escape and an outside press close it; Escape returns focus to the button", () => {
+test("Escape with focus in the popover closes it, returns focus, and does not reach the stage", () => {
   const c = attachViewStyleControls(fakeViewer(), { stage, anchor });
   const button = stage.querySelector("#view-style");
+  const stageEscape = vi.fn(); // stands in for measure/cutaway's stage-level Escape
+  stage.addEventListener("keydown", stageEscape);
   c.open();
-  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  tile("studio").focus();
+  tile("studio").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   expect(c.isOpen()).toBe(false);
   expect(document.activeElement).toBe(button);
+  expect(stageEscape).not.toHaveBeenCalled();
+  // On the button itself, too.
   c.open();
+  button.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  expect(c.isOpen()).toBe(false);
+  expect(stageEscape).not.toHaveBeenCalled();
+});
+
+test("Escape with focus elsewhere is left alone; an outside press closes it", () => {
+  const c = attachViewStyleControls(fakeViewer(), { stage, anchor });
+  const other = document.createElement("button");
+  stage.append(other);
+  c.open();
+  other.focus();
+  other.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  expect(c.isOpen()).toBe(true);
   document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
   expect(c.isOpen()).toBe(false);
+  expect(document.activeElement).toBe(other); // an outside press does not steal focus
+});
+
+test("a part change while open (a playing animation) keeps filling the tiles, then re-renders on the next open", async () => {
+  const v = fakeViewer();
+  const c = attachViewStyleControls(v, { stage, anchor });
+  v.renderStyleThumbnail = vi.fn(async (s) => { v._fire.asm.forEach((cb) => cb()); return `data:${s}`; });
+  c.open();
+  for (let i = 0; i < 6; i += 1) await flush();
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(5);
+  expect([...stage.querySelectorAll(".pf-view-style-tile img")].every((i) => !i.hidden)).toBe(true);
+  c.close(); c.open();
+  for (let i = 0; i < 6; i += 1) await flush();
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(10);
+});
+
+test("closing mid-render stops the thumbnail loop; the next open resumes", async () => {
+  const v = fakeViewer();
+  const gates = [];
+  v.renderStyleThumbnail = vi.fn((s) => new Promise((r) => gates.push(() => r(`data:${s}`))));
+  const c = attachViewStyleControls(v, { stage, anchor });
+  c.open();
+  await flush();
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(1);
+  c.close();
+  gates.shift()(); await flush(); await flush();
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(1); // nothing more while closed
+  c.open(); await flush();
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(2); // resumed on open
+  while (gates.length) { gates.shift()(); await flush(); await flush(); }
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(6);
+  expect(tile("outdoor").querySelector("img").src).toBe("data:outdoor");
 });
 
 test("setHidden hides the button and closes the popover", () => {

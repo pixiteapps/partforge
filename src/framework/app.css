@@ -718,9 +718,10 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    APPEARANCE only (placement lives in chrome.css, per the split at the top of
    this file).
 
-   The cube's bottom-right corner now holds the VIEW STYLE button
-   (view-style-controls.js, 2026-09-24; its appearance is in the next section).
-   It replaced the projection toggle, whose history there ran:
+   The VIEW STYLE button now sits beside the cube, to its left
+   (view-style-controls.js, 2026-09-24; its appearance is in the next section,
+   its placement in chrome.css). It replaced the projection toggle, whose
+   history there ran:
 
    Through 2026-08-19 the projection toggle sat in its own `.pf-viewcube-pill`
    card below the cube, deliberately borrowing #viewbar's chrome so it read as

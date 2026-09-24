@@ -695,8 +695,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     const viewcube = attachViewcubeControls(viewer, { stage: els.viewer });
     cleanup.defer(() => viewcube.detach());
     // The view style button + popover (style, feature lines, projection),
-    // in the cube's stack where the projection toggle was — it hides with the
-    // cube (Sketch, a crowded transport bar) and closes its popover then.
+    // beside the cube, in its stack (the projection toggle's successor) — it
+    // hides with the cube (Sketch, a crowded transport bar) and closes its
+    // popover then.
     const viewStyle = attachViewStyleControls(viewer, { stage: els.viewer, anchor: viewcube.element }, { tooltip });
     cleanup.defer(() => viewStyle.detach());
     cleanup.defer(viewer.onProjectionChange((mode) => saveProjection(mode)));

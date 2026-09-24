@@ -2598,8 +2598,8 @@ workers are spawned from your one worker entry (`name` = `"manifold"` for previe
 `"occt"` for STEP — handled for you).
 
 **The view style button needs no markup.** `mount` generates it (`#view-style`)
-into the view cube's stack, over the cube's bottom-right corner where the
-projection toggle used to be, so it hides whenever the cube does (Sketch mode, a
+beside the view cube, to its left (it replaces the old projection toggle,
+and belongs to the cube's stack), so it hides whenever the cube does (Sketch mode, a
 crowded animation transport bar). It opens a popover holding every control that
 changes *how* the part is drawn: the **style** — CAD or one of the realistic
 environments (see "Materials and appearance" above), each shown as a live
