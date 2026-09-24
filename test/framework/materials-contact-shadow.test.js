@@ -91,3 +91,39 @@ test("the depth camera's frustum covers the shadow's footprint and height", () =
   expect(box.max.z - box.min.z).toBeCloseTo(100);
   shadow.dispose();
 });
+
+// The shadow is two layers: a tight one that follows the part's outline (its
+// blur a fixed reach in millimetres, not a fraction of however large the plane
+// is) over a soft one. While a part moves only the soft layer is redrawn, and
+// the tight outline is hidden rather than left where the part was.
+test("the tight layer's blur is millimetres whatever the plane size, and it hides while the part moves", () => {
+  const renderer = fakeRenderer();
+  const steps = [];
+  const shadow = createContactShadow({ renderer, sizeMm: 200 });
+  const scene = new THREE.Scene();
+  const caster = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+  scene.add(caster, shadow.group);
+  const [soft, tight] = shadow.group.children.filter((o) => o.isMesh && o.material.map);
+  renderer.render = (obj) => {
+    const m = obj.material;
+    if (m?.uniforms?.h) steps.push({ target: renderer.getRenderTarget(), h: m.uniforms.h.value });
+  };
+  const tightSteps = () => steps.filter((s) => s.target?.width === 1024).map((s) => s.h);
+
+  shadow.setSize(100);
+  shadow.render(scene, [caster]);
+  const at100 = tightSteps()[0];
+  steps.length = 0;
+  shadow.setSize(400);
+  shadow.render(scene, [caster]);
+  // same millimetre reach on a plane 4x larger is a quarter of the UV step
+  expect(tightSteps()[0]).toBeCloseTo(at100 / 4);
+  expect(tight.visible).toBe(true);
+
+  steps.length = 0;
+  shadow.render(scene, [caster], { lowRes: true });
+  expect(tightSteps()).toHaveLength(0);
+  expect(tight.visible).toBe(false);
+  expect(soft.visible).toBe(true);
+  shadow.dispose();
+});

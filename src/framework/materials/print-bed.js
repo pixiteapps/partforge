@@ -16,8 +16,8 @@ const THICKNESS_MM = 2.5;
 const CORNER_MM = 6;
 // The lift tab on the front edge: wide where it meets the plate, narrower at
 // its tip, so its two sides run diagonally.
-const TAB_BASE_MM = 44;
-const TAB_TIP_MM = 26;
+const TAB_BASE_MM = 132;
+const TAB_TIP_MM = 96;
 const TAB_DEPTH_MM = 9;
 
 export function bedSizeFor(footprintMm) {

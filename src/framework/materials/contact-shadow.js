@@ -1,29 +1,61 @@
 // src/framework/materials/contact-shadow.js
-// A soft contact shadow for realistic mode (after three's webgl_shadow_contact
-// example): render the casters' depth from BELOW into a small target, blur it,
-// and lay it on the ground. Rendered on demand — on geometry change, and at low
+// A contact shadow for realistic mode (after three's webgl_shadow_contact
+// example): render the casters' depth from BELOW into a target, blur it, and
+// lay it on the ground. Rendered on demand — on geometry change, and at low
 // resolution while an animation moves a sub-part — never every frame.
+//
+// Two layers, like a real shadow: a TIGHT one (high resolution, a millimetre
+// or so of blur, a steep height falloff) that follows the part's own outline
+// where it meets the ground, over a faint SOFT one (low resolution, a blur
+// that scales with the part) that stands in for the ambient darkening around
+// it. The tight layer alone reads as a cut-out; the soft one alone as a blob.
 import * as THREE from "three";
 import { HorizontalBlurShader } from "three/addons/shaders/HorizontalBlurShader.js";
 import { VerticalBlurShader } from "three/addons/shaders/VerticalBlurShader.js";
 
-export function createContactShadow({ renderer, sizeMm = 400, resolution = 512, darkness = 1, blur = 6 }) {
-  const group = new THREE.Group();
-  const rt = new THREE.WebGLRenderTarget(resolution, resolution);
-  rt.texture.generateMipmaps = false;
-  const rtBlur = new THREE.WebGLRenderTarget(resolution, resolution);
-  rtBlur.texture.generateMipmaps = false;
+const LAYERS = [
+  // blurMm: a fixed reach in millimetres; blurFrac: a reach as a fraction of
+  // the shadow plane (so it grows with the part). falloff: the power the
+  // height fade is raised to — higher is denser at contact, thinner above.
+  { name: "soft", resolution: 256, darkness: 0.22, blurFrac: 0.035, falloff: 1.5 },
+  { name: "tight", resolution: 1024, darkness: 0.42, blurMm: 1.2, falloff: 2.5 },
+];
 
+function depthMaterialFor(darkness, falloff) {
+  const m = new THREE.MeshDepthMaterial();
+  m.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "gl_FragColor = vec4( vec3( 1.0 - fragCoordZ ), opacity );",
+      `gl_FragColor = vec4( vec3( 0.0 ), pow( 1.0 - fragCoordZ, ${falloff.toFixed(2)} ) * ${darkness.toFixed(3)} );`,
+    );
+  };
+  m.customProgramCacheKey = () => `pf-contact-${darkness}-${falloff}`;
+  m.depthTest = false;
+  m.depthWrite = false;
+  return m;
+}
+
+export function createContactShadow({ renderer, sizeMm = 400 }) {
+  const group = new THREE.Group();
   const planeGeo = new THREE.PlaneGeometry(1, 1).rotateX(Math.PI / 2);
-  // polygonOffset: the ground disc sits a hair below this plane and writes
-  // depth; at a normal viewing distance that hair is inside the depth
-  // buffer's precision, so without the offset the shadow z-fights the ground.
-  const plane = new THREE.Mesh(planeGeo, new THREE.MeshBasicMaterial({
-    map: rt.texture, opacity: 1, transparent: true, depthWrite: false,
-    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4,
-  }));
-  plane.renderOrder = 1;
-  group.add(plane);
+
+  const layers = LAYERS.map((spec, i) => {
+    const rt = new THREE.WebGLRenderTarget(spec.resolution, spec.resolution);
+    rt.texture.generateMipmaps = false;
+    const rtBlur = new THREE.WebGLRenderTarget(spec.resolution, spec.resolution);
+    rtBlur.texture.generateMipmaps = false;
+    // polygonOffset: the ground sits a hair below this plane and writes
+    // depth; at a normal viewing distance that hair is inside the depth
+    // buffer's precision, so without the offset the shadow z-fights it.
+    const plane = new THREE.Mesh(planeGeo, new THREE.MeshBasicMaterial({
+      map: rt.texture, opacity: 1, transparent: true, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 - i,
+    }));
+    plane.renderOrder = 1 + i; // tight over soft
+    group.add(plane);
+    return { spec, rt, rtBlur, plane, depthMaterial: depthMaterialFor(spec.darkness, spec.falloff) };
+  });
+
   const blurPlane = new THREE.Mesh(planeGeo);
   blurPlane.visible = false;
   group.add(blurPlane);
@@ -32,26 +64,16 @@ export function createContactShadow({ renderer, sizeMm = 400, resolution = 512, 
   cam.rotation.x = Math.PI / 2;
   group.add(cam);
 
-  const depthMaterial = new THREE.MeshDepthMaterial();
-  depthMaterial.userData.darkness = { value: darkness };
-  depthMaterial.onBeforeCompile = (shader) => {
-    shader.uniforms.darkness = depthMaterial.userData.darkness;
-    shader.fragmentShader = `uniform float darkness;\n${shader.fragmentShader.replace(
-      "gl_FragColor = vec4( vec3( 1.0 - fragCoordZ ), opacity );",
-      "gl_FragColor = vec4( vec3( 0.0 ), ( 1.0 - fragCoordZ ) * darkness );",
-    )}`;
-  };
-  depthMaterial.depthTest = false;
-  depthMaterial.depthWrite = false;
-
   const hBlur = new THREE.ShaderMaterial(HorizontalBlurShader); hBlur.depthTest = false;
   const vBlur = new THREE.ShaderMaterial(VerticalBlurShader); vBlur.depthTest = false;
 
   // The meshes are scaled; the camera is SIZED. three leaves scale out of a
   // camera's view matrix, so a camera sized by a scaled parent would see a
   // 1 mm square (it did: the shadow was empty in every environment).
+  let planeSize = sizeMm;
   function setSize(size, height = size) {
-    plane.scale.set(size, -1, size); // y = -1: the texture is rendered from below
+    planeSize = size;
+    for (const l of layers) l.plane.scale.set(size, -1, size); // y = -1: rendered from below
     blurPlane.scale.set(size, 1, size);
     cam.left = -size / 2; cam.right = size / 2;
     cam.top = size / 2; cam.bottom = -size / 2;
@@ -61,14 +83,17 @@ export function createContactShadow({ renderer, sizeMm = 400, resolution = 512, 
   setSize(sizeMm);
 
   // The blur plane sits in the shadow group, i.e. in the user's scene, so it
-  // is hidden again even if a blur render throws.
-  function blurPass(amount) {
+  // is hidden again even if a blur render throws. three's blur shaders reach
+  // four taps either side, `h` apart in UV: a reach of `mm` millimetres on a
+  // plane `planeSize` across is h = mm / planeSize / 4.
+  function blurPass(layer, mm) {
+    const step = mm / planeSize / 4;
     blurPlane.visible = true;
     try {
-      blurPlane.material = hBlur; hBlur.uniforms.tDiffuse.value = rt.texture; hBlur.uniforms.h.value = amount / 256;
-      renderer.setRenderTarget(rtBlur); renderer.render(blurPlane, cam);
-      blurPlane.material = vBlur; vBlur.uniforms.tDiffuse.value = rtBlur.texture; vBlur.uniforms.v.value = amount / 256;
-      renderer.setRenderTarget(rt); renderer.render(blurPlane, cam);
+      blurPlane.material = hBlur; hBlur.uniforms.tDiffuse.value = layer.rt.texture; hBlur.uniforms.h.value = step;
+      renderer.setRenderTarget(layer.rtBlur); renderer.render(blurPlane, cam);
+      blurPlane.material = vBlur; vBlur.uniforms.tDiffuse.value = layer.rtBlur.texture; vBlur.uniforms.v.value = step;
+      renderer.setRenderTarget(layer.rt); renderer.render(blurPlane, cam);
     } finally {
       blurPlane.visible = false;
     }
@@ -81,6 +106,10 @@ export function createContactShadow({ renderer, sizeMm = 400, resolution = 512, 
   // compile failure) never leaves the user's scene with hidden objects, the
   // depth override material pinned, no background, or the wrong render
   // target bound.
+  //
+  // While a part moves (lowRes) only the soft layer is redrawn and the tight
+  // one is hidden: an outline left where the part WAS would be wrong, and the
+  // settle render that follows brings it back.
   function render(scene, casters, { lowRes = false } = {}) {
     const bg = scene.background;
     const overrideBefore = scene.overrideMaterial;
@@ -88,22 +117,28 @@ export function createContactShadow({ renderer, sizeMm = 400, resolution = 512, 
     const prevRT = renderer.getRenderTarget();
     const hidden = [];
     scene.traverseVisible((o) => { if (o.isMesh || o.isLine || o.isLineSegments || o.isSprite) if (!casters.includes(o)) { o.visible = false; hidden.push(o); } });
-    plane.visible = false;
+    for (const l of layers) l.plane.visible = false;
     try {
       scene.background = null;
-      scene.overrideMaterial = depthMaterial;
       renderer.setClearAlpha(0);
-      renderer.setRenderTarget(rt);
-      renderer.render(scene, cam);
-      scene.overrideMaterial = overrideBefore;
-      blurPass(lowRes ? blur * 0.6 : blur);
-      if (!lowRes) blurPass(blur * 0.4);
+      for (const l of layers) {
+        if (lowRes && l.spec.name === "tight") continue;
+        scene.overrideMaterial = l.depthMaterial;
+        renderer.setRenderTarget(l.rt);
+        renderer.render(scene, cam);
+        scene.overrideMaterial = overrideBefore;
+        const reach = l.spec.blurMm ?? l.spec.blurFrac * planeSize;
+        blurPass(l, reach);
+        if (!lowRes) blurPass(l, reach * 0.5);
+      }
     } finally {
       scene.overrideMaterial = overrideBefore;
       renderer.setRenderTarget(prevRT);
       renderer.setClearAlpha(clear);
-      plane.visible = true;
       for (const o of hidden) o.visible = true;
+      // After the restore above: the planes are in the scene too, so they were
+      // among `hidden`, and restoring them first would undo this.
+      for (const l of layers) l.plane.visible = !(lowRes && l.spec.name === "tight");
       scene.background = bg;
     }
   }
@@ -112,6 +147,9 @@ export function createContactShadow({ renderer, sizeMm = 400, resolution = 512, 
     group,
     render,
     setSize,
-    dispose() { rt.dispose(); rtBlur.dispose(); planeGeo.dispose(); plane.material.dispose(); depthMaterial.dispose(); hBlur.dispose(); vBlur.dispose(); },
+    dispose() {
+      for (const l of layers) { l.rt.dispose(); l.rtBlur.dispose(); l.plane.material.dispose(); l.depthMaterial.dispose(); }
+      planeGeo.dispose(); hBlur.dispose(); vBlur.dispose();
+    },
   };
 }
