@@ -978,3 +978,34 @@ git commit -m "View style popover: one top-right button for style, feature lines
 - [ ] **Step 1: Run the dev server and look.** `npx vite --port 5181 --strictPort` (background). With Playwright (`require("playwright")` from this worktree), open `/planter.html`, `/materials.html`, `/screw.html` at 1400×900 and 400×800, in both themes. Check: the view style button beside the cube reads clearly as a control and the drawer toggle at top right is unchanged; the popover opens above the button, tiles fill with thumbnails of the part, the current tile is ringed; a tile switches style; the lines switch toggles lines in both CAD and a realistic style (and each style remembers); the projection control works; Escape/outside click close; at 400 px the popover fits above the button; the old projection circle is gone; with the transport bar crowding the cube (hinged-box.html at a narrow width) the button hides with the cube. Screenshot each state to the session scratchpad.
 - [ ] **Step 2: Tune by eye** anything that reads wrong (line weight/opacity in realistic, popover spacing). Commit fixes with tests where behaviour changes.
 - [ ] **Step 3: Version bump.** `package.json` `"version": "0.123.0"` (if main has moved past 0.122.x by then, the next free minor). Commit: `git commit -am "0.123.0"`.
+
+---
+
+### Task 6: Wood grain runs one way on every face (added 2026-09-24 at the user's request)
+
+**Problem.** `patterns.js`'s triplanar wood samples each projection with fixed UVs — X-faces `(y, z)`, Y-faces `(x, z)`, Z-faces `(x, y)` — so the texture's grain axis lands on a different object axis depending on which face you look at. On the materials contact sheet (`materials.html`, `parts/material-swatches.js`) the oak and walnut swatches show grain running two different directions on adjacent faces.
+
+**Goal.** Real wood has one grain direction (the board's long axis). Per sub-part, pick a grain axis (the longest axis of the sub-part's object-space bounding box; X on a tie), and orient each projection so that on every face that CONTAINS the grain axis, the texture's grain runs along it. Faces perpendicular to the grain axis (end grain) keep a sensible sample (any orientation — there is no end-grain texture).
+
+**Files:**
+- Modify: `src/framework/materials/patterns.js` (the wood kind: colour, roughness AND the triplanar normal map — the normal map's tangent xy must rotate with its UVs or light catches a different grain than the colour shows), `src/framework/materials/physical.js` / `src/framework/viewer.js` as needed to set a per-sub-part `pfGrainAxis` uniform (0/1/2) from the geometry's bounding box when geometry arrives (mirror how print frames / box UVs reach the material; patterned materials share uniforms across clones — see `cloneKeepsPattern`).
+- First determine which texture axis the grain runs along in `pattern-oak-color.jpg` / `pattern-walnut-color.jpg` (look at the images) and state it in a comment.
+- Test: a unit test in the existing patterns/physical test file that the wood shader receives the grain axis uniform for a long-in-Y sub-part, and (if practical) a pure JS helper `grainAxisFor(box)` with tests.
+
+**Verify by eye:** render the materials contact sheet in Studio (`materials.html`, realistic on) and zoom on the oak and walnut swatches — every long face's grain must run the same way. Screenshot before/after to the SDD workspace.
+
+- [ ] Implement, test, verify by eye, commit (message ends with the Co-Authored-By line).
+
+---
+
+### Task 7: Hide the print-bed plate when the camera is below it (added 2026-09-24 at the user's request)
+
+**Problem.** The other environments' grounds are single-sided discs that vanish when the camera goes below them. The print bed is an extruded plate (`src/framework/materials/print-bed.js`) with a bottom cap and side walls, so orbiting under the part shows the underside of the plate covering it.
+
+**Goal.** When the camera rendering the frame is below the plate's top surface, the whole bed (plate, ink, key light's effect aside) is not drawn — matching the other floors. It must use the camera actually rendering (the live camera, an offscreen capture's camera), so a realistic "bottom" canonical render also sees the part, not the plate.
+
+**Approach.** three calls `scene.onBeforeRender(renderer, scene, camera)` at the start of `WebGLRenderer.render`, before objects are projected, so visibility set there applies to that render. Give the print-bed rig a `updateForCamera(camera)` (sets `bed.object.visible = camera world y >= plate top world y`, with a tiny epsilon) and have the viewer call the live rig's hook from the scene's `onBeforeRender` (chain any existing handler; clear it when the rig leaves). The contact shadow's depth pass renders from BELOW with its own camera — make sure hiding the bed there is harmless (the pass already hides every non-caster and restores visibility after; check nothing ends up permanently hidden). Keep the key light unaffected by the hide if it is a child of the bed group (a hidden parent hides its light too — move the light out or exempt it), so the part is lit the same from below.
+
+**Files:** `src/framework/materials/print-bed.js`, `src/framework/materials/environment.js`, `src/framework/viewer.js`; tests in `test/framework/materials-print-bed.test.js` / `materials-environment.test.js` / `viewer-realistic.test.js`.
+
+- [ ] Test first (the bed hides for a camera below the top and shows above it; the viewer applies it per render with the rendering camera), implement, verify by orbiting under a part on print-bed in the dev page, commit.
