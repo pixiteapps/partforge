@@ -29,23 +29,15 @@ function groundMaterial(tex, rough, tint) {
 export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadTexture, pmrem }) {
   const { id } = resolveEnvironmentId(requestedId);
   const env = ENVIRONMENTS[id];
-  let hdr = await loadHdr(assetUrl(env.hdr));
+  const hdr = await loadHdr(assetUrl(env.hdr));
   hdr.mapping = THREE.EquirectangularReflectionMapping;
   let envMap;
   try { envMap = pmrem.fromEquirectangular(hdr).texture; } catch (e) { hdr.dispose(); throw e; }
 
-  let background, backgroundBlurriness = 0;
-  if (env.backdrop === "gradient") {
-    background = new THREE.Color(env.gradient[1]);
-    // The equirect (~16 MB of half-float) was only needed for the PMREM
-    // filter above; a gradient backdrop never draws it, so on a phone it
-    // shouldn't sit in memory for the rig's life.
-    hdr.dispose();
-    hdr = null;
-  } else {
-    background = hdr;
-    backgroundBlurriness = 0.6;
-  }
+  // Every environment draws its own photo, blurred, as the backdrop — so the
+  // equirect stays alive for the rig's life (freed in dispose()).
+  const background = hdr;
+  const backgroundBlurriness = env.blurriness ?? 0.6;
 
   const tex = loadTexture(env.ground.texture);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
@@ -76,11 +68,12 @@ export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadT
     envMap,
     background,
     backgroundBlurriness,
+    rotationY: ((env.rotationDeg ?? 0) * Math.PI) / 180,
     ground,
     shadow,
     setGround,
     dispose() {
-      envMap.dispose(); hdr?.dispose(); tex.dispose(); rough?.dispose();
+      envMap.dispose(); hdr.dispose(); tex.dispose(); rough?.dispose();
       discGeo.dispose(); ground.material.dispose(); shadow.dispose();
     },
   };

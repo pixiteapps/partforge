@@ -679,6 +679,8 @@ export function createViewer(container, part) {
       scene.environment = rig.envMap;
       scene.background = rig.background;
       scene.backgroundBlurriness = rig.backgroundBlurriness;
+      scene.backgroundRotation.set(0, rig.rotationY ?? 0, 0);
+      scene.environmentRotation.set(0, rig.rotationY ?? 0, 0);
       scene.add(rig.ground, rig.shadow.group);
       for (const l of Object.values(liveLights)) l.visible = false;
       grid.visible = false;
@@ -711,6 +713,8 @@ export function createViewer(container, part) {
       scene.environment = null;
       scene.background = new THREE.Color(THEME[currentTheme].bg);
       scene.backgroundBlurriness = 0;
+      scene.backgroundRotation.set(0, 0, 0);
+      scene.environmentRotation.set(0, 0, 0);
     });
     attempt(() => { for (const l of Object.values(liveLights)) l.visible = true; });
     attempt(() => { grid.visible = true; });
