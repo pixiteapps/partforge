@@ -14,18 +14,20 @@ function fakeCanvas() {
 }
 
 test("the bed is the smallest standard size that leaves a margin round the footprint", () => {
-  expect(bedSizeFor(40)).toBe(BED_SIZES_MM[0]);
+  expect(BED_SIZES_MM).toEqual([180, 220, 256, 350]);
+  expect(bedSizeFor(40)).toBe(180);
+  expect(bedSizeFor(188)).toBe(220);
   expect(bedSizeFor(200)).toBe(256);
   expect(bedSizeFor(300)).toBe(350);
   // past the last standard size it rounds up to the next 50 mm
   expect(bedSizeFor(400)).toBe(450);
 });
 
-test("the markings name the plate's actual size, carry the wordmark in both front corners, and a ruler", () => {
+test("the markings name the plate's actual size, carry the wordmark once, and a ruler", () => {
   let canvas;
   expect(drawBedMarkings(256, () => (canvas = fakeCanvas()))).toBe(canvas);
   expect(canvas.texts).toContain("256 × 256 mm");
-  expect(canvas.texts.filter((t) => t === "partforge")).toHaveLength(2);
+  expect(canvas.texts.filter((t) => t === "partforge")).toHaveLength(1);
   expect(canvas.texts).toEqual(expect.arrayContaining(["50", "100", "150", "200", "250"]));
 });
 
@@ -42,6 +44,9 @@ test("without a 2D canvas the plate is unmarked, not broken", () => {
   plate.geometry.computeBoundingBox();
   expect(plate.geometry.boundingBox.max.y).toBeCloseTo(0);
   expect(plate.geometry.boundingBox.max.x - plate.geometry.boundingBox.min.x).toBeCloseTo(180);
+  // the lift tab sticks out past the front (+Z) edge only
+  expect(plate.geometry.boundingBox.min.z).toBeCloseTo(-90);
+  expect(plate.geometry.boundingBox.max.z).toBeGreaterThan(95);
   // PEI UVs are millimetres, so one texture repeat covers tileMm
   expect(pei.map.repeat.x).toBeCloseTo(1 / 128);
   bed.dispose();
@@ -53,9 +58,9 @@ test("a bigger part gets a bigger plate, with the markings redrawn for it", () =
   const bed = createPrintBed({ pei, tileMm: 128, createCanvas: () => { const c = fakeCanvas(); sizes.push(c); return c; } });
   bed.place({ y: 0, footprintMm: 60 });
   bed.place({ y: 0, footprintMm: 60 }); // same size: nothing redrawn
-  bed.place({ y: 0, footprintMm: 200 });
+  bed.place({ y: 0, footprintMm: 170 });
   expect(sizes).toHaveLength(2);
-  expect(sizes[1].texts).toContain("256 × 256 mm");
+  expect(sizes[1].texts).toContain("220 × 220 mm");
   expect(bed.object.children[1].visible).toBe(true);
   bed.dispose();
 });

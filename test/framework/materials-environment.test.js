@@ -119,13 +119,13 @@ test("the print bed is a plate sized to the part's footprint, with a hard key li
   expect(rig.backgroundIntensity).toBeLessThan(1);
   const key = rig.ground.children.find((c) => c.isDirectionalLight);
   expect(key.intensity).toBeGreaterThan(0);
-  rig.setGround({ y: -3, centerX: 1, centerZ: 2, radius: 150, footprintMm: 200 });
+  rig.setGround({ y: -3, centerX: 1, centerZ: 2, radius: 150, footprintMm: 170 });
   expect(rig.ground.position.y).toBeCloseTo(-3, 1);
   const plate = rig.ground.children.find((c) => c.isMesh && Array.isArray(c.material));
   plate.geometry.computeBoundingBox();
-  expect(plate.geometry.boundingBox.max.x - plate.geometry.boundingBox.min.x).toBeCloseTo(256);
+  expect(plate.geometry.boundingBox.max.x - plate.geometry.boundingBox.min.x).toBeCloseTo(220);
   // the contact shadow never hangs off the plate's edge
-  expect(rig.shadow.setSize.mock.calls.at(-1)[0]).toBeLessThanOrEqual(256);
+  expect(rig.shadow.setSize.mock.calls.at(-1)[0]).toBeLessThanOrEqual(220);
   rig.dispose();
 });
 

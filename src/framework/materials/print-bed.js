@@ -2,17 +2,23 @@
 // The print-bed environment's ground: not a disc fading into the backdrop but
 // a real build plate — a rounded, square PEI sheet of a standard size, cut out
 // of nothing, with white markings printed on it: a millimetre ruler along the
-// left and back edges, the plate's own size across the front, and the
-// partforge wordmark in the two front corners. Like the disc, it comes to the
+// left and back edges, the partforge wordmark in the front-left corner, the
+// plate's own size in the front-right, and a lift tab with diagonal sides off
+// the middle of the front edge. Like the disc, it comes to the
 // part (centred under its footprint) and never moves it.
 import * as THREE from "three";
 
 // Common square bed sizes, smallest first; a footprint past the last rounds up
 // to the next 50 mm.
-export const BED_SIZES_MM = [180, 256, 350];
+export const BED_SIZES_MM = [180, 220, 256, 350];
 const MARGIN_MM = 16; // clear plate kept around the footprint when picking a size
 const THICKNESS_MM = 2.5;
 const CORNER_MM = 6;
+// The lift tab on the front edge: wide where it meets the plate, narrower at
+// its tip, so its two sides run diagonally.
+const TAB_BASE_MM = 44;
+const TAB_TIP_MM = 26;
+const TAB_DEPTH_MM = 9;
 
 export function bedSizeFor(footprintMm) {
   const need = footprintMm + MARGIN_MM * 2;
@@ -22,7 +28,11 @@ export function bedSizeFor(footprintMm) {
 function plateGeometry(size) {
   const h = size / 2, r = CORNER_MM;
   const shape = new THREE.Shape();
+  // Shape y = -h is the FRONT edge (it lands at +Z once laid flat), and the
+  // lift tab sticks out of its middle: a trapezoid with diagonal sides.
+  const tb = TAB_BASE_MM / 2, tt = TAB_TIP_MM / 2, td = TAB_DEPTH_MM;
   shape.moveTo(-h + r, -h);
+  shape.lineTo(-tb, -h); shape.lineTo(-tt, -h - td); shape.lineTo(tt, -h - td); shape.lineTo(tb, -h);
   shape.lineTo(h - r, -h); shape.quadraticCurveTo(h, -h, h, -h + r);
   shape.lineTo(h, h - r); shape.quadraticCurveTo(h, h, h - r, h);
   shape.lineTo(-h + r, h); shape.quadraticCurveTo(-h, h, -h, h - r);
@@ -94,17 +104,16 @@ export function drawBedMarkings(size, createCanvas = defaultCanvas) {
   ctx.moveTo(c, c - arm); ctx.lineTo(c, c + arm);
   ctx.stroke();
 
-  // Front strip: the wordmark in both corners, the size between them.
+  // Front strip: the wordmark in the left corner, the plate's size in the
+  // right, leaving the middle clear for the lift tab.
   const front = (size - inset - 7) * k;
   ctx.textBaseline = "middle";
   ctx.font = mono(Math.min(8, size * 0.03));
   ctx.textAlign = "left";
   ctx.fillText("partforge", (inset + 5) * k, front);
   ctx.textAlign = "right";
-  ctx.fillText("partforge", (size - inset - 5) * k, front);
-  ctx.textAlign = "center";
-  ctx.font = mono(Math.min(4.5, size * 0.018), 500);
-  ctx.fillText(`${size} × ${size} mm`, c, front);
+  ctx.font = mono(Math.min(5, size * 0.02), 500);
+  ctx.fillText(`${size} × ${size} mm`, (size - inset - 5) * k, front);
   return canvas;
 }
 

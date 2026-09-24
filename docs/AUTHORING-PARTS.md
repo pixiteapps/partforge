@@ -380,7 +380,7 @@ A part with no `color` or `material` exports exactly as before.
 
 **Environments** (`meta.environment`, default `studio`; viewers can switch):
 `studio` (neutral soft boxes, paper sweep), `workshop` (warm interior, unfinished
-maple table), `print-bed` (a dim, hard-lit enclosure over a standard-size PEI build plate marked with its size), `outdoor` (overcast sky,
+maple table), `print-bed` (a dim, hard-lit enclosure over a standard-size PEI build plate (180, 220, 256 or 350 mm) marked with its size), `outdoor` (overcast sky,
 concrete).
 
 ---
