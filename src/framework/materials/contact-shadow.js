@@ -59,27 +59,37 @@ export function createContactShadow({ renderer, sizeMm = 400, resolution = 512, 
   }
 
   // `casters` are the visible sub-part meshes; everything else in `scene` is
-  // hidden for the depth pass so only the part casts.
+  // hidden for the depth pass so only the part casts. Every mutation here —
+  // to the scene and to the renderer's own state — is captured up front and
+  // restored in `finally`, so a throw mid-render (context loss, a shader
+  // compile failure) never leaves the user's scene with hidden objects, the
+  // depth override material pinned, no background, or the wrong render
+  // target bound.
   function render(scene, casters, { lowRes = false } = {}) {
-    const bg = scene.background; scene.background = null;
+    const bg = scene.background;
     const overrideBefore = scene.overrideMaterial;
+    const clear = renderer.getClearAlpha();
+    const prevRT = renderer.getRenderTarget();
     const hidden = [];
     scene.traverseVisible((o) => { if (o.isMesh || o.isLine || o.isLineSegments || o.isSprite) if (!casters.includes(o)) { o.visible = false; hidden.push(o); } });
     plane.visible = false;
-    scene.overrideMaterial = depthMaterial;
-    const clear = renderer.getClearAlpha();
-    renderer.setClearAlpha(0);
-    const prevRT = renderer.getRenderTarget();
-    renderer.setRenderTarget(rt);
-    renderer.render(scene, cam);
-    scene.overrideMaterial = overrideBefore;
-    blurPass(lowRes ? blur * 0.6 : blur);
-    if (!lowRes) blurPass(blur * 0.4);
-    renderer.setRenderTarget(prevRT);
-    renderer.setClearAlpha(clear);
-    plane.visible = true;
-    for (const o of hidden) o.visible = true;
-    scene.background = bg;
+    try {
+      scene.background = null;
+      scene.overrideMaterial = depthMaterial;
+      renderer.setClearAlpha(0);
+      renderer.setRenderTarget(rt);
+      renderer.render(scene, cam);
+      scene.overrideMaterial = overrideBefore;
+      blurPass(lowRes ? blur * 0.6 : blur);
+      if (!lowRes) blurPass(blur * 0.4);
+    } finally {
+      scene.overrideMaterial = overrideBefore;
+      renderer.setRenderTarget(prevRT);
+      renderer.setClearAlpha(clear);
+      plane.visible = true;
+      for (const o of hidden) o.visible = true;
+      scene.background = bg;
+    }
   }
 
   return {
