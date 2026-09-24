@@ -40,14 +40,14 @@ vi.mock("three", async (importOriginal) => {
   return { ...actual, WebGLRenderer: FakeRenderer };
 });
 
-const rigState = vi.hoisted(() => ({ fail: false, loads: 0, rigs: [], throwOnGround: false, gate: null }));
+const rigState = vi.hoisted(() => ({ fail: false, failIds: new Set(), loads: 0, rigs: [], throwOnGround: false, gate: null }));
 vi.mock("../../src/framework/materials/environment.js", async () => {
   const THREE = await import("three");
   return {
     loadEnvironmentRig: async (_r, id) => {
       rigState.loads++;
       if (rigState.gate) await rigState.gate;
-      if (rigState.fail) throw new Error("asset 404");
+      if (rigState.fail || rigState.failIds.has(id)) throw new Error("asset 404");
       const rig = {
         id: id ?? "studio", exposure: 1.1, envMap: new THREE.Texture(), background: new THREE.Color(0xffffff), backgroundBlurriness: 0,
         ground: new THREE.Mesh(), shadow: { group: new THREE.Group(), render: vi.fn(), setSize: vi.fn(), dispose: vi.fn() },
@@ -97,7 +97,7 @@ const lastRig = () => rigState.rigs.at(-1);
 beforeEach(() => {
   state.renderer = null;
   state.hdrReadable = true;
-  Object.assign(rigState, { fail: false, loads: 0, rigs: [], throwOnGround: false, gate: null });
+  Object.assign(rigState, { fail: false, failIds: new Set(), loads: 0, rigs: [], throwOnGround: false, gate: null });
   globalThis.ResizeObserver = class {
     observe() {}
     disconnect() {}
@@ -254,6 +254,39 @@ test("switching environment reuses a cached rig on the way back", async () => {
   const scene = v.__subMesh("body").parent.parent.parent;
   expect(scene.environment).toBe(rigState.rigs[0].envMap);
   expect(envs).toEqual(["workshop", "studio"]);
+  v.dispose();
+});
+
+test("a failed environment switch reverts to the environment still shown", async () => {
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const studio = lastRig();
+  const envs = [];
+  const modes = [];
+  v.onEnvironmentChange((id) => envs.push(id));
+  v.onRenderModeChange((e) => modes.push(e));
+  rigState.failIds.add("outdoor");
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  expect(await v.setEnvironment("outdoor")).toBe("studio");
+  expect(v.getEnvironment()).toBe("studio");
+  expect(v.getRenderMode()).toBe("realistic");
+  const scene = v.__subMesh("body").parent.parent.parent;
+  expect(scene.environment).toBe(studio.envMap);
+  // Told twice: the choice, then the revert — so a picker ends on what is shown.
+  expect(envs).toEqual(["outdoor", "studio"]);
+  expect(modes.at(-1)).toMatchObject({ mode: "realistic", busy: false, error: "couldn't load that environment" });
+  v.dispose();
+});
+
+test("in CAD an environment is recorded at once, with nothing loaded", async () => {
+  const v = shown();
+  const envs = [];
+  v.onEnvironmentChange((id) => envs.push(id));
+  rigState.failIds.add("workshop"); // would fail — but CAD never loads it
+  expect(await v.setEnvironment("workshop")).toBe("workshop");
+  expect(v.getEnvironment()).toBe("workshop");
+  expect(rigState.loads).toBe(0);
+  expect(envs).toEqual(["workshop"]);
   v.dispose();
 });
 

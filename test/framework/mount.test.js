@@ -49,6 +49,15 @@ vi.mock("../../src/framework/viewer.js", () => ({
         return projection;
       }),
       onProjectionChange: (cb) => { projectionCbs.add(cb); return () => projectionCbs.delete(cb); },
+      // Realistic mode's surface (mount wires the toggle, the environment
+      // picker and the handle to it); mount-realistic.test.js runs the real one.
+      getRenderMode: () => "cad",
+      setRenderMode: vi.fn(async () => "cad"),
+      onRenderModeChange: () => () => {},
+      getEnvironment: () => "studio",
+      setEnvironment: vi.fn(async (id) => id),
+      onEnvironmentChange: () => () => {},
+      setPrintFrames: vi.fn(),
       orbitBy: vi.fn(),
       _subMeshes: {},
       flashPoint: vi.fn(),
@@ -208,13 +217,15 @@ function makeElements() {
       measure: mk("button"),
       annotate: mk("button"),
       railToggle: mk("button"),
+      realistic: mk("button"),
+      environment: mk("select"),
     },
   };
   document.body.append(els.viewer, els.controls, els.rail, els.tabs,
     els.status.status, els.status.busy, els.status.phase,
     els.exports.stl, els.exports.step, els.exports.threeMf,
     els.chrome.reframe, els.chrome.theme, els.chrome.cutaway, els.chrome.measure,
-    els.chrome.annotate, els.chrome.railToggle);
+    els.chrome.annotate, els.chrome.railToggle, els.chrome.realistic, els.chrome.environment);
   return els;
 }
 

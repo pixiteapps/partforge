@@ -6,12 +6,17 @@
 // and a fresh session opens on the part's own default (see default-view.js).
 // Reads/writes are guarded: if storage is unavailable (private mode, disabled) or a
 // value is corrupt, reads return the documented default and writes are no-ops —
-// persistence never throws.
+// persistence never throws. `renderMode` and `environment` are viewer
+// preferences like `theme`; in the cloud's opaque-origin sandbox storage throws,
+// so there the host carries them in viewerState instead.
+import { ENVIRONMENTS } from "./materials/environments.js";
 
 const KEY = {
   camera: "partforge:camera",
   theme: "partforge:theme",
   projection: "partforge:projection",
+  renderMode: "partforge:renderMode",
+  environment: "partforge:environment",
 };
 
 const viewKey = (partKey) => `partforge:view:${partKey}`;
@@ -62,6 +67,27 @@ export function loadProjection() {
 
 export function saveProjection(mode) {
   if (mode === "perspective" || mode === "orthographic") write(KEY.projection, mode);
+}
+
+// null = nothing (valid) stored — the caller falls back to "cad".
+export function loadRenderMode() {
+  const raw = read(KEY.renderMode);
+  return raw === "realistic" || raw === "cad" ? raw : null;
+}
+
+export function saveRenderMode(mode) {
+  if (mode === "cad" || mode === "realistic") write(KEY.renderMode, mode);
+}
+
+// null = nothing stored, or an id this version doesn't know — the caller falls
+// back to the part's own meta.environment.
+export function loadEnvironment() {
+  const raw = read(KEY.environment);
+  return raw && Object.hasOwn(ENVIRONMENTS, raw) ? raw : null;
+}
+
+export function saveEnvironment(id) {
+  if (typeof id === "string" && Object.hasOwn(ENVIRONMENTS, id)) write(KEY.environment, id);
 }
 
 // `partKey` identifies the part — createViewTabs passes `meta.title`. Without one

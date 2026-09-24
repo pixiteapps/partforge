@@ -785,21 +785,31 @@ export function createViewer(container, part) {
       if (isStale(token)) return renderMode;
       realisticPending = false;
       console.warn("partforge: the realistic view failed to load", e);
+      // Still realistic means the previous rig is still what's on screen: the
+      // environment the switch asked for never landed, so the id (and anyone
+      // showing it) goes back to the one actually lit.
+      if (renderMode === "realistic" && realisticRig && realisticRig.id !== environmentId) {
+        announceEnvironment(realisticRig.id);
+      }
       publishMode({ error: wasRealistic && renderMode === "realistic" ? "couldn't load that environment" : "couldn't load realistic view" });
     }
     return renderMode;
   }
 
+  function announceEnvironment(id) {
+    environmentId = id;
+    for (const cb of [...envListeners]) {
+      try { cb(id); } catch (e) { console.warn("partforge: environment listener failed", e); }
+    }
+  }
+
   // The id is recorded (and announced) at once; in realistic mode — or on the
-  // way into it — the new rig then loads and replaces the current one.
+  // way into it — the new rig then loads and replaces the current one. If that
+  // load fails while realistic, setRenderMode reverts the id to the rig still
+  // shown and announces that too; in CAD nothing loads, so the id just stands.
   async function setEnvironment(id) {
     const next = resolveEnvironmentId(id).id;
-    if (next !== environmentId) {
-      environmentId = next;
-      for (const cb of [...envListeners]) {
-        try { cb(next); } catch (e) { console.warn("partforge: environment listener failed", e); }
-      }
-    }
+    if (next !== environmentId) announceEnvironment(next);
     if (renderMode === "realistic" || realisticPending) await setRenderMode("realistic");
     return environmentId;
   }
