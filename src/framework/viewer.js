@@ -420,6 +420,9 @@ export function createViewer(container, part) {
     applySubOpacity(name);
     const isZero = (animOpacity.get(name) ?? 1) <= 0;
     if (wasZero !== isZero) {
+      // A part faded to (or back from) nothing is a visibility change like
+      // showAssembly's, so the remembered size-match surface asks afresh.
+      matchGeneration++;
       cutaway.setVisible(effectiveVisible());
       if (realisticRig) shadowMovedAt = performance.now(); // a caster came or went
     }
@@ -430,6 +433,7 @@ export function createViewer(container, part) {
     const touched = [...animOpacity.keys()];
     animOpacity.clear();
     for (const n of touched) applySubOpacity(n);
+    matchGeneration++; // any part that was faded out is visible again
     cutaway.setVisible(effectiveVisible());
   }
 

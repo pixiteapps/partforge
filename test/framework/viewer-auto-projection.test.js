@@ -642,6 +642,29 @@ test("a ghosted sub-part is seen through, not matched at", () => {
   viewer.dispose();
 });
 
+test("a part faded out by an animation is no longer matched at (the remembered surface asks afresh)", () => {
+  const viewer = slabViewer(
+    { housing: {}, body: {} },
+    { housing: worldBox([-10, -10, 3], [10, 10, 5]), body: worldBox([-10, -10, -5], [10, 10, -1]) },
+  );
+  viewer.setCameraState({ pos: [0, 0, 60], target: [0, 0, 0] });
+  runFrames(2);
+  viewer.setProjection("orthographic");
+  viewer.camera.zoom = 2.5;
+  viewer.camera.updateProjectionMatrix();
+  viewer.getCameraState(); // remembers the housing's front face (z = 5)
+  const onScreen = viewer.camera.top / viewer.camera.zoom;
+
+  viewer.setSubPartOpacity("housing", 0); // a "reveal" cue fades the housing out
+  // Same ray: the carried pose must now describe the body's front face (1 mm
+  // behind the target), not the hidden housing's.
+  expect((distanceOf(viewer) + 1) * HALF_FOV_TAN).toBeCloseTo(onScreen, 6);
+
+  viewer.clearSubPartOpacities(); // and back: the housing is matched at again
+  expect((distanceOf(viewer) - 5) * HALF_FOV_TAN).toBeCloseTo(onScreen, 6);
+  viewer.dispose();
+});
+
 test("a remount at a very high ortho zoom keeps its size (the surface is right by the camera)", () => {
   const viewer = slabViewer();
   viewer.tweenCameraTo("front", CUBE);
