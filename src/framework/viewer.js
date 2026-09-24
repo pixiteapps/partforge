@@ -10,6 +10,7 @@ import { ensureBoxUVs } from "./materials/uv.js";
 import { loadEnvironmentRig } from "./materials/environment.js";
 import { assetUrl } from "./materials/assets.js";
 import { resolveEnvironmentId } from "./materials/resolve.js";
+import { neutralToneMapToSrgb8 } from "./materials/tonemap-readback.js";
 import { createCutaway } from "./cutaway.js";
 import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
 import { flashWorldRadius, projectToScreen, anchorMoved } from "./pick-flash.js";
@@ -45,6 +46,13 @@ export function srgbEncodeInPlace(data) {
     data[i + 2] = SRGB8[data[i + 2]];
   }
   return data;
+}
+
+// Half-float readback (a realistic capture's HDR target) → linear floats.
+function halfToFloat(half) {
+  const out = new Float32Array(half.length);
+  for (let i = 0; i < half.length; i++) out[i] = THREE.DataUtils.fromHalfFloat(half[i]);
+  return out;
 }
 
 // Render a set of canonical views without disturbing the live camera/canvas.
@@ -585,8 +593,10 @@ export function createViewer(container, part) {
   const castersNow = () => names
     .filter((n) => subMesh[n].visible && (part.parts[n].display?.opacity ?? 1) >= 1)
     .map((n) => subMesh[n]);
-  function renderShadow(opts) {
-    if (!realisticRig || !active) return;
+  // `force` renders even while parked: a capture is offscreen work a parked
+  // viewer still does, and it must not bake a stale (or absent) shadow.
+  function renderShadow(opts, { force = false } = {}) {
+    if (!realisticRig || (!active && !force)) return;
     try {
       if (opts) realisticRig.shadow.render(scene, castersNow(), opts);
       else realisticRig.shadow.render(scene, castersNow());
@@ -597,7 +607,7 @@ export function createViewer(container, part) {
   // The ground comes to the part: it sits at the bottom of what is visible and
   // is sized from it. Only on showAssembly (and on entering the mode) — an
   // animated pose change moves the shadow, never the floor.
-  function placeGround() {
+  function placeGround({ force = false } = {}) {
     if (!realisticRig) return;
     const b = getVisibleWorldBounds(); // shared Box3: read it out before anything else runs
     if (b.isEmpty()) return;
@@ -605,7 +615,7 @@ export function createViewer(container, part) {
     const size = b.getSize(new THREE.Vector3());
     realisticRig.setGround({ y: b.min.y, centerX: center.x, centerZ: center.z, radius: size.length() / 2 });
     shadowMovedAt = null; // this render is the full-resolution one
-    renderShadow();
+    renderShadow(undefined, { force });
   }
   // Called once per rendered frame: low-res while a part is moving, one full
   // render once it has settled, nothing while it is still.
@@ -632,8 +642,11 @@ export function createViewer(container, part) {
 
   // The two synchronous halves of a mode change. `live: false` is for a
   // capture that borrows a look for one synchronous render (it leaves the
-  // canvas's pixel ratio alone); nothing here publishes — setRenderMode does.
-  function enterRealistic(rig, { live = true } = {}) {
+  // canvas's pixel ratio alone, and renders the shadow even while parked);
+  // nothing here publishes — setRenderMode does. `reground: false` puts a rig
+  // back exactly where it was (after a CAD capture borrowed the scene): the
+  // ground only moves on showAssembly, never because a capture happened.
+  function enterRealistic(rig, { live = true, reground = true } = {}) {
     try {
       renderMode = "realistic";
       // A regen can land between the proxy compile and here, while the mode
@@ -650,7 +663,7 @@ export function createViewer(container, part) {
       grid.visible = false;
       renderer.toneMapping = THREE.NeutralToneMapping;
       renderer.toneMappingExposure = rig.exposure;
-      placeGround();
+      if (reground) placeGround({ force: !live });
       if (live) applyPixelRatio("realistic");
     } catch (e) {
       try { enterCad({ live }); } catch (rollback) { console.warn("partforge: rolling back to CAD failed", rollback); }
@@ -687,6 +700,35 @@ export function createViewer(container, part) {
 
   const isStale = (token) => disposed || token !== modeToken;
 
+  // Compile every built sub-part's physical program against the rig before the
+  // look is swapped in, so the swap does not stall on shader compilation.
+  // Three keys a program on tone mapping and output colour space, and both
+  // differ with a render target bound, so the canvas variant compiles under
+  // the realistic tone mapping and a capture's variant with a half-float
+  // target bound — each only for the synchronous compile() inside
+  // compileAsync, so the view on screen is untouched while it waits.
+  function compileRealistic(rig, { forCapture = false } = {}) {
+    const proxy = new THREE.Scene();
+    proxy.environment = rig.envMap;
+    for (const n of names) {
+      const m = physicalFor(n);
+      const geo = subCache[n];
+      if (!geo) continue; // not built yet: it compiles when it is first shown
+      if (m.userData.pfAnisotropic) ensureBoxUVs(geo);
+      proxy.add(new THREE.Mesh(geo, m));
+    }
+    const toneMappingBefore = renderer.toneMapping;
+    const probe = forCapture ? new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType }) : null;
+    if (probe) renderer.setRenderTarget(probe);
+    else renderer.toneMapping = THREE.NeutralToneMapping;
+    let compiling;
+    try { compiling = renderer.compileAsync?.(proxy, activeCamera); } finally {
+      renderer.toneMapping = toneMappingBefore;
+      if (probe) renderer.setRenderTarget(null);
+    }
+    return Promise.resolve(compiling).finally(() => probe?.dispose());
+  }
+
   // Resolves to the mode actually in effect. A later setRenderMode or
   // setEnvironment supersedes this one; a superseded completion changes
   // nothing (its rig and materials are cached, so there is nothing to undo).
@@ -714,23 +756,7 @@ export function createViewer(container, part) {
     try {
       const rig = await rigFor(envId);
       if (isStale(token)) return renderMode;
-      const proxy = new THREE.Scene();
-      proxy.environment = rig.envMap;
-      for (const n of names) {
-        const m = physicalFor(n);
-        const geo = subCache[n];
-        if (!geo) continue; // not built yet: it compiles when it is first shown
-        if (m.userData.pfAnisotropic) ensureBoxUVs(geo);
-        proxy.add(new THREE.Mesh(geo, m));
-      }
-      // Compile under the tone mapping the programs will render with (it is
-      // part of the program key), but only for the synchronous compile() inside
-      // compileAsync — the CAD view stays on screen, untouched, while it waits.
-      const toneMappingBefore = renderer.toneMapping;
-      renderer.toneMapping = THREE.NeutralToneMapping;
-      let compiling;
-      try { compiling = renderer.compileAsync?.(proxy, activeCamera); } finally { renderer.toneMapping = toneMappingBefore; }
-      await compiling;
+      await compileRealistic(rig);
       if (isStale(token)) return renderMode;
       enterRealistic(rig);
       realisticPending = false;
@@ -1262,10 +1288,15 @@ export function createViewer(container, part) {
                            { width = _rtSize, height = _rtSize, fov = 45, quality = 0.9,
                              projection = "perspective", orthoHalfH = 1, viewOffset, sceneBounds } = {},
                            renderScene = scene) {
-    const cachedSize = width === _rtSize && height === _rtSize;
+    // A realistic LIVE scene renders HDR into a half-float target and is tone
+    // mapped here (three tone-maps only the canvas path). It is lit by its
+    // environment alone, so the CAD capture lights stay out of it. A throwaway
+    // scene (renderMeshPayloads' thumbnails) is CAD whatever the live mode.
+    const realistic = renderScene === scene && renderMode === "realistic";
+    const cachedSize = !realistic && width === _rtSize && height === _rtSize;
     const rt = cachedSize
       ? (_rt = _rt ?? new THREE.WebGLRenderTarget(_rtSize, _rtSize, RT_OPTIONS))
-      : new THREE.WebGLRenderTarget(width, height, RT_OPTIONS);
+      : new THREE.WebGLRenderTarget(width, height, realistic ? { ...RT_OPTIONS, type: THREE.HalfFloatType } : RT_OPTIONS);
     _capLights = _capLights ?? createCaptureLights();
     // Canonical captures never pass `projection`, so agent-facing renders and
     // the CLI stay perspective no matter what the user is looking at. Built
@@ -1280,20 +1311,22 @@ export function createViewer(container, part) {
     });
     if (viewOffset) cam.setViewOffset(viewOffset.fullWidth, viewOffset.fullHeight, viewOffset.x, viewOffset.y, width, height);
     const { position, up, target } = pose;
-    const buf = new Uint8Array(width * height * 4);
+    const buf = realistic ? new Uint16Array(width * height * 4) : new Uint8Array(width * height * 4);
     // Swap the world-fixed key/fill for the camera-relative pair, for this one render
     // only. A DirectionalLight aims at its `target`, whose matrixWorld only updates
     // while it is in the scene graph, so both go in and both come back out.
-    const poses = captureLightPoses({ position, up, target });
     const { key: capKey, fill: capFill } = _capLights;
-    capKey.position.set(poses.key[0], poses.key[1], poses.key[2]);
-    capFill.position.set(poses.fill[0], poses.fill[1], poses.fill[2]);
-    for (const light of [capKey, capFill]) light.target.position.set(target[0], target[1], target[2]);
     // Restored to what they WERE, not to true: realistic mode keeps them off.
     const keyWas = liveLights.key.visible, fillWas = liveLights.fill.visible;
-    liveLights.key.visible = false;
-    liveLights.fill.visible = false;
-    scene.add(capKey, capKey.target, capFill, capFill.target);
+    if (!realistic) {
+      const poses = captureLightPoses({ position, up, target });
+      capKey.position.set(poses.key[0], poses.key[1], poses.key[2]);
+      capFill.position.set(poses.fill[0], poses.fill[1], poses.fill[2]);
+      for (const light of [capKey, capFill]) light.target.position.set(target[0], target[1], target[2]);
+      liveLights.key.visible = false;
+      liveLights.fill.visible = false;
+      scene.add(capKey, capKey.target, capFill, capFill.target);
+    }
     // A pick marker is transient UI feedback about a click, never part of the
     // part, so it belongs in no capture. It used to be near enough true that a
     // capture would miss one — a dot faded after 1200ms — but a HELD dot lives
@@ -1315,9 +1348,11 @@ export function createViewer(container, part) {
       // Never leave the user's own view unlit, pointed at the offscreen target,
       // or missing a marker the user is still looking at.
       renderer.setRenderTarget(null);
-      scene.remove(capKey, capKey.target, capFill, capFill.target);
-      liveLights.key.visible = keyWas;
-      liveLights.fill.visible = fillWas;
+      if (!realistic) {
+        scene.remove(capKey, capKey.target, capFill, capFill.target);
+        liveLights.key.visible = keyWas;
+        liveLights.fill.visible = fillWas;
+      }
       for (const dot of reshowFlashDots) dot.visible = true;
       if (!cachedSize) rt.dispose();
     }
@@ -1325,12 +1360,14 @@ export function createViewer(container, part) {
     canvas.width = width; canvas.height = height;
     const ctx = canvas.getContext("2d");
     const img = ctx.createImageData(width, height);
+    // Linear pixels → sRGB bytes: tone-mapped for a realistic capture, only
+    // transfer-encoded for CAD (which renders LDR with no tone mapping).
+    const encoded = realistic ? neutralToneMapToSrgb8(halfToFloat(buf), renderer.toneMappingExposure) : srgbEncodeInPlace(buf);
     // flip rows (GL origin is bottom-left)
     for (let y = 0; y < height; y++) {
       const src = (height - 1 - y) * width * 4;
-      img.data.set(buf.subarray(src, src + width * 4), y * width * 4);
+      img.data.set(encoded.subarray(src, src + width * 4), y * width * 4);
     }
-    srgbEncodeInPlace(img.data);
     ctx.putImageData(img, 0, 0);
     return canvas.toDataURL("image/jpeg", quality);
   }
@@ -1363,8 +1400,9 @@ export function createViewer(container, part) {
       bounds: { center, radius },
       // The ENCLOSING radius, which is a different number from the framing one
       // above: a box's corners reach √3 further than half its max extent, and
-      // the depth planes have to clear the corners.
-      sceneBounds: { center, radius: size.length() / 2 || 10 },
+      // the depth planes have to clear the corners. A realistic capture keeps
+      // its ground disc, which is several part radii across, so it counts too.
+      sceneBounds: (realisticRig && sceneDepthBounds()) || { center, radius: size.length() / 2 || 10 },
     });
   }
 
@@ -1393,6 +1431,53 @@ export function createViewer(container, part) {
       // framing, so a capture built from it would ignore the user's zoom.
       orthoHalfH: (orthoCamera.top - orthoCamera.bottom) / 2 / (orthoCamera.zoom || 1),
     });
+  }
+
+  // Run one synchronous capture in the `want` look, leaving the live view
+  // exactly as it was — even if the capture throws. The swap and the restore
+  // sit in one synchronous block, so the canvas never paints a borrowed frame,
+  // and nothing is published: the live mode never changed. A parked viewer
+  // still captures (offscreen work), so its shadow is rendered on demand.
+  function captureIn(want, rig, capture) {
+    if (want === renderMode) {
+      if (want === "realistic" && !active) renderShadow(undefined, { force: true });
+      return capture();
+    }
+    if (want === "realistic") {
+      enterRealistic(rig, { live: false }); // rolls itself back to CAD if it throws
+      try { return capture(); } finally { enterCad({ live: false }); }
+    }
+    const liveRig = realisticRig, movedAt = shadowMovedAt;
+    try {
+      enterCad({ live: false });
+      return capture();
+    } finally {
+      try {
+        enterRealistic(liveRig, { live: false, reground: false });
+        shadowMovedAt = movedAt;
+      } catch (e) {
+        // enterRealistic already rolled the scene back to CAD: make it the live mode.
+        console.warn("partforge: restoring the realistic view after a capture failed", e);
+        try { applyPixelRatio("cad"); } catch { /* the view is CAD either way */ }
+        publishMode({ error: "couldn't load realistic view" });
+      }
+    }
+  }
+
+  // Agent-facing canonical renders in a chosen appearance, whatever the live
+  // view shows. CAD is exactly captureCanonicalViews in the CAD look.
+  // Realistic waits for the current environment's rig and the capture's
+  // shader programs, then borrows the realistic look for the synchronous
+  // capture only if the live view is not already realistic. A rig that fails
+  // to load rejects rather than silently returning CAD images.
+  async function renderViews(viewNames, { renderMode: want = "cad" } = {}) {
+    if (disposed) return [];
+    if (want !== "realistic") return captureIn("cad", null, () => captureCanonicalViews(viewNames));
+    const rig = await rigFor(environmentId);
+    if (disposed) return [];
+    await compileRealistic(rig, { forCapture: true });
+    if (disposed) return [];
+    return captureIn("realistic", rig, () => captureCanonicalViews(viewNames));
   }
 
   // Offscreen render of an arbitrary mesh set (a non-active view), for thumbnails.
@@ -1800,6 +1885,7 @@ export function createViewer(container, part) {
     captureCanonicalViews,
     captureCurrent,
     renderMeshPayloads,
+    renderViews,
     onFrame,
     tweenCameraTo,
     cancelCameraTween,

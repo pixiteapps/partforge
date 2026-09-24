@@ -429,3 +429,208 @@ test("geometry delivered while realistic is compiling still gets UVs for brushed
   expect(v.__subMesh("body").geometry.attributes.uv).toBeDefined();
   v.dispose();
 });
+
+// --- realistic captures -------------------------------------------------------
+// happy-dom has no 2D canvas; stub just enough for a capture to complete, and
+// keep what was written so the encoded pixels can be read back.
+function stubCanvas() {
+  const written = [];
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => ({
+    createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+    putImageData(img) { written.push(img.data); },
+  }));
+  vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockImplementation(() => "data:image/jpeg;base64,TEST");
+  return written;
+}
+// What the scene looked like at each offscreen render: the target it went to
+// and the look it was drawn with.
+function recordRenders(v) {
+  const renders = [];
+  let target = null;
+  state.renderer.setRenderTarget = (t) => { target = t; };
+  state.renderer.render = (scene) => {
+    if (!target) return;
+    renders.push({
+      type: target.texture.type,
+      material: v.__subMesh("body").material,
+      environment: scene.environment,
+      toneMapping: state.renderer.toneMapping,
+      lights: scene.children.filter((o) => o.isLight && o.visible).length,
+    });
+  };
+  return renders;
+}
+const sceneOf = (v) => v.__subMesh("body").parent.parent.parent;
+
+test("renderViews('realistic') from a CAD view captures without changing the live mode", async () => {
+  stubCanvas();
+  const v = shown();
+  const shots = await v.renderViews(["iso"], { renderMode: "realistic" });
+  expect(shots).toHaveLength(1);
+  expect(v.getRenderMode()).toBe("cad");
+  expect(v.__subMesh("body").material).not.toBeInstanceOf(THREE.MeshPhysicalMaterial);
+  expect(v.__subLines("body").visible).toBe(true);
+  v.dispose();
+});
+
+test("renderViews('cad') equals captureCanonicalViews in CAD", async () => {
+  stubCanvas();
+  const v = shown();
+  expect((await v.renderViews(["iso"])).map((s) => s.view)).toEqual(v.captureCanonicalViews(["iso"]).map((s) => s.view));
+  v.dispose();
+});
+
+test("a borrowed realistic capture renders the realistic look into a half-float target, then restores CAD exactly", async () => {
+  stubCanvas();
+  const v = shown();
+  const cadMat = v.__subMesh("body").material;
+  const events = [];
+  v.onRenderModeChange((e) => events.push(e));
+  const renders = recordRenders(v);
+  await v.renderViews(["iso", "top"], { renderMode: "realistic" });
+  const rig = lastRig();
+  expect(renders).toHaveLength(2);
+  for (const r of renders) {
+    expect(r.type).toBe(THREE.HalfFloatType);
+    expect(r.material).toBeInstanceOf(THREE.MeshPhysicalMaterial);
+    expect(r.environment).toBe(rig.envMap);
+    expect(r.lights).toBe(0); // environment lighting only: no CAD capture key/fill
+  }
+  expect(rig.shadow.render).toHaveBeenCalled(); // the borrowed look includes its shadow
+  // The live view is exactly what it was, and nobody was told otherwise.
+  const scene = sceneOf(v);
+  expect(v.__subMesh("body").material).toBe(cadMat);
+  expect(scene.environment).toBe(null);
+  expect(scene.background.getHex()).toBe(0x15181d);
+  expect(rig.ground.parent).toBe(null);
+  expect(rig.shadow.group.parent).toBe(null);
+  expect(scene.children.filter((o) => o.isLight).every((l) => l.visible)).toBe(true);
+  expect(scene.children.find((o) => o.type === "GridHelper").visible).toBe(true);
+  expect(state.renderer.toneMapping).toBe(THREE.NoToneMapping);
+  expect(state.renderer.toneMappingExposure).toBe(1);
+  expect(events).toEqual([]);
+  v.dispose();
+});
+
+test("a realistic capture tone-maps the half-float readback at the rig's exposure", async () => {
+  const written = stubCanvas();
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const grey = THREE.DataUtils.toHalfFloat(0.18);
+  state.renderer.readRenderTargetPixels = (_rt, _x, _y, _w, _h, buf) => {
+    expect(buf).toBeInstanceOf(Uint16Array);
+    buf.fill(grey);
+  };
+  v.captureCanonicalViews(["iso"]);
+  // 0.18 × 1.1 exposure = 0.198 → −0.04 toe offset = 0.158 → sRGB 0.434 → 111.
+  expect([...written.at(-1).subarray(0, 4)]).toEqual([111, 111, 111, 255]);
+  v.dispose();
+});
+
+test("CAD captures and checkpoint thumbnails keep the 8-bit path, even while realistic", async () => {
+  stubCanvas();
+  const v = shown();
+  const renders = recordRenders(v);
+  v.captureCanonicalViews(["iso"]);
+  expect(renders.at(-1).type).toBe(THREE.UnsignedByteType);
+  await v.setRenderMode("realistic");
+  v.renderMeshPayloads([{ name: "body", ...payload() }]);
+  expect(renders.at(-1).type).toBe(THREE.UnsignedByteType);
+  v.dispose();
+});
+
+test("captureCurrent in realistic mode captures the realistic look", async () => {
+  stubCanvas();
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const renders = recordRenders(v);
+  expect(v.captureCurrent({ size: 512 })).toBe("data:image/jpeg;base64,TEST");
+  expect(renders).toHaveLength(1);
+  expect(renders[0].type).toBe(THREE.HalfFloatType);
+  expect(renders[0].material).toBeInstanceOf(THREE.MeshPhysicalMaterial);
+  v.dispose();
+});
+
+test("renderViews('cad') from a realistic view borrows CAD and puts the realistic view back where it was", async () => {
+  stubCanvas();
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const rig = lastRig();
+  const physical = v.__subMesh("body").material;
+  const groundCalls = rig.setGround.mock.calls.length;
+  const events = [];
+  v.onRenderModeChange((e) => events.push(e));
+  const renders = recordRenders(v);
+  const shots = await v.renderViews(["iso"], { renderMode: "cad" });
+  expect(shots.map((s) => s.view)).toEqual(["iso"]);
+  expect(renders[0].type).toBe(THREE.UnsignedByteType);
+  expect(renders[0].material).not.toBeInstanceOf(THREE.MeshPhysicalMaterial);
+  expect(renders[0].environment).toBe(null);
+  expect(renders[0].toneMapping).toBe(THREE.NoToneMapping);
+  const scene = sceneOf(v);
+  expect(v.getRenderMode()).toBe("realistic");
+  expect(v.__subMesh("body").material).toBe(physical);
+  expect(v.__subLines("body").visible).toBe(false);
+  expect(scene.environment).toBe(rig.envMap);
+  expect(scene.background).toBe(rig.background);
+  expect(rig.ground.parent).toBe(scene);
+  expect(rig.shadow.group.parent).toBe(scene);
+  expect(rig.setGround.mock.calls.length).toBe(groundCalls); // the floor did not move for a capture
+  expect(scene.children.filter((o) => o.isLight).every((l) => !l.visible)).toBe(true);
+  expect(scene.children.find((o) => o.type === "GridHelper").visible).toBe(false);
+  expect(state.renderer.toneMapping).toBe(THREE.NeutralToneMapping);
+  expect(state.renderer.toneMappingExposure).toBe(1.1);
+  expect(events).toEqual([]);
+  v.dispose();
+});
+
+test("a borrowed capture that throws still leaves the live view as it was", async () => {
+  stubCanvas();
+  const v = shown();
+  const cadMat = v.__subMesh("body").material;
+  state.renderer.render = () => { throw new Error("gl lost"); };
+  await expect(v.renderViews(["iso"], { renderMode: "realistic" })).rejects.toThrow("gl lost");
+  expect(v.getRenderMode()).toBe("cad");
+  expect(v.__subMesh("body").material).toBe(cadMat);
+  expect(sceneOf(v).environment).toBe(null);
+  expect(lastRig().ground.parent).toBe(null);
+  expect(state.renderer.toneMapping).toBe(THREE.NoToneMapping);
+  v.dispose();
+});
+
+test("a borrowed CAD capture that throws still puts the realistic view back", async () => {
+  stubCanvas();
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const rig = lastRig();
+  state.renderer.render = () => { throw new Error("gl lost"); };
+  await expect(v.renderViews(["iso"], { renderMode: "cad" })).rejects.toThrow("gl lost");
+  expect(v.getRenderMode()).toBe("realistic");
+  expect(v.__subMesh("body").material).toBeInstanceOf(THREE.MeshPhysicalMaterial);
+  expect(rig.ground.parent).toBe(sceneOf(v));
+  expect(state.renderer.toneMapping).toBe(THREE.NeutralToneMapping);
+  v.dispose();
+});
+
+test("a parked viewer still captures realistic views, shadow included", async () => {
+  stubCanvas();
+  const v = shown();
+  v.setActive(false);
+  const shots = await v.renderViews(["iso"], { renderMode: "realistic" });
+  expect(shots).toHaveLength(1);
+  expect(lastRig().shadow.render).toHaveBeenCalled();
+  v.dispose();
+});
+
+test("a realistic capture compiles the render-target program variant first", async () => {
+  stubCanvas();
+  const v = shown();
+  const bound = [];
+  let target = null;
+  state.renderer.setRenderTarget = (t) => { target = t; };
+  state.renderer.compileAsync.mockImplementation(async () => { bound.push(target?.texture.type ?? null); });
+  await v.renderViews(["iso"], { renderMode: "realistic" });
+  expect(bound).toContain(THREE.HalfFloatType);
+  expect(target).toBe(null);
+  v.dispose();
+});
