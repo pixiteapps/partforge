@@ -226,20 +226,36 @@ test("a canvas rotation leaves ortho for perspective, preserving apparent size",
   const viewer = orthoFrontViewer();
   viewer.camera.zoom = 2;
   viewer.camera.updateProjectionMatrix();
-  const halfH = viewer.camera.top / viewer.camera.zoom; // what is on screen
+  runFrames(1);
+  // The triangle lies in the floor plane, so the front view sees it edge-on:
+  // no surface under the screen centre, and the size is matched at the front
+  // of the part — its front edge, world (-5, 0, 5) to (5, 0, 5).
+  const edgeWidth = () => {
+    viewer.camera.updateMatrixWorld();
+    const a = new THREE.Vector3(-5, 0, 5).project(viewer.camera);
+    const b = new THREE.Vector3(5, 0, 5).project(viewer.camera);
+    return Math.abs(b.x - a.x);
+  };
+  const inOrtho = edgeWidth();
 
   // A drag as OrbitControls records it: a pending azimuth change it applies,
   // damped, over the next update()s. 0.05 rad is ~2.9°, well past the
   // half-degree epsilon.
   const seenOffAxis = [];
-  viewer.onProjectionChange(() => seenOffAxis.push(offAxisDeg(viewer, [0, 0, 1])));
+  let atSwap = null;
+  viewer.onProjectionChange(() => {
+    seenOffAxis.push(offAxisDeg(viewer, [0, 0, 1]));
+    atSwap = edgeWidth();
+  });
   state.controls._sphericalDelta.theta = 0.05;
   runFrames(30);
 
   expect(viewer.getProjection()).toBe("perspective");
   expect(viewer.camera.isPerspectiveCamera).toBe(true);
-  // The perspective half-height at the new distance matches the ortho frame.
-  expect(distanceOf(viewer) * HALF_FOV_TAN).toBeCloseTo(halfH, 6);
+  // The front edge is the same width in the first perspective frame, to within
+  // what the <1° the view has already turned does to it (0.3% here; matching
+  // at the target's depth instead, as this used to, is 45% out).
+  expect(atSwap / inOrtho).toBeCloseTo(1, 2);
   // …and it swapped the first frame past the epsilon, not late.
   expect(seenOffAxis).toHaveLength(1);
   expect(seenOffAxis[0]).toBeGreaterThan(0.5);
@@ -379,5 +395,86 @@ test("reframing after a pan keeps an ortho face view (the view direction, not th
   runFrames(5);
   expect(viewer.getProjection()).toBe("orthographic");
   expect(offAxisDeg(viewer, [0, 0, 1])).toBeLessThan(0.01);
+  viewer.dispose();
+});
+
+// The user report behind this: "zoom out, switch to a face view that turns on
+// orthographic, zoom in and then rotate — the part jumps because the zooms
+// mismatch." A projection swap can only preserve size at ONE depth. It used to
+// be the orbit target's (the part's centre), but what a face view shows is the
+// part's FRONT surface, which sits nearer the camera than the centre — so the
+// swap back to perspective magnified it by distance / (distance - depth), and
+// the recovered distance shrinks as the ortho zoom grows, which is why zooming
+// in made it worse. The match is made at the surface under the screen centre.
+//
+// Two parallel plates 10mm apart, facing world +Z (the front view): the front
+// one is what the user is looking at, 5mm in front of the target.
+const plates = () => {
+  // Model coordinates (the pivot maps model (x, y, z) to world (x, z, -y)), so
+  // model y = -5 is world z = +5. Wound to face model -y, i.e. the camera.
+  const plate = (y, s) => [-10, y, -10 * s, 10, y, -10 * s, 0, y, 10 * s];
+  return {
+    positions: new Float32Array([...plate(-5, 1), ...plate(5, -1)]),
+    normals: new Float32Array([0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]),
+    triangles: 2,
+  };
+};
+
+// Screen height (NDC) of a vertical segment ON the front plate.
+const frontPlateNdcHeight = (viewer) => {
+  viewer.camera.updateMatrixWorld();
+  const a = new THREE.Vector3(0, -4, 5).project(viewer.camera);
+  const b = new THREE.Vector3(0, 4, 5).project(viewer.camera);
+  return Math.abs(b.y - a.y);
+};
+
+test("zoom out, face view, ortho zoom in, rotate: the surface on screen keeps its size", () => {
+  const viewer = createViewer(createContainer(), { meta: {}, parts: { body: {} } });
+  viewer.setSubGeometry("body", plates());
+  viewer.showAssembly(["body"], { frame: true });
+  runFrames(5);
+
+  // Zoom a long way out in perspective (a dolly moves the camera).
+  const { pos, target } = viewer.getCameraState();
+  viewer.setCameraState({ pos: pos.map((v, i) => target[i] + (v - target[i]) * 12), target });
+  runFrames(5);
+
+  // A face pick settles into orthographic.
+  viewer.tweenCameraTo("front", CUBE);
+  runFrames();
+  expect(viewer.getProjection()).toBe("orthographic");
+
+  // Zoom in, orthographically.
+  viewer.camera.zoom = 2.5;
+  viewer.camera.updateProjectionMatrix();
+  runFrames(5);
+  const lastOrtho = frontPlateNdcHeight(viewer);
+
+  // Rotate: the first frame off the axis swaps to perspective. Measure in that
+  // frame, from inside the swap.
+  let firstPersp = null;
+  viewer.onProjectionChange((mode) => { if (mode === "perspective") firstPersp = frontPlateNdcHeight(viewer); });
+  state.controls._sphericalDelta.theta = 0.05;
+  runFrames(30);
+
+  expect(viewer.getProjection()).toBe("perspective");
+  expect(firstPersp).not.toBeNull();
+  expect(firstPersp / lastOrtho).toBeCloseTo(1, 3);
+  viewer.dispose();
+});
+
+test("entering ortho keeps the surface under the screen centre the same size too", () => {
+  const viewer = createViewer(createContainer(), { meta: {}, parts: { body: {} } });
+  viewer.setSubGeometry("body", plates());
+  viewer.showAssembly(["body"], { frame: true });
+  viewer.setCameraState({ pos: [0, 0, 40], target: [0, 0, 0] }); // head-on, perspective
+  runFrames(2);
+  const persp = frontPlateNdcHeight(viewer);
+  viewer.setProjection("orthographic");
+  expect(frontPlateNdcHeight(viewer) / persp).toBeCloseTo(1, 6);
+  // …and straight back is lossless: the same depth is matched both ways.
+  viewer.setProjection("perspective");
+  expect(distanceOf(viewer)).toBeCloseTo(40, 6);
+  expect(frontPlateNdcHeight(viewer) / persp).toBeCloseTo(1, 6);
   viewer.dispose();
 });

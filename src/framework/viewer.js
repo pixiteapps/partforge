@@ -1095,6 +1095,8 @@ export function createViewer(container, part) {
         syncOrthoToPerspectiveFraming({
           distance: new THREE.Vector3().fromArray(pose.position)
             .distanceTo(new THREE.Vector3().fromArray(pose.target)),
+          target: new THREE.Vector3().fromArray(pose.target),
+          direction: toDir,
         });
       }
       // Still ortho at the end (a face-to-face tween, a cue onto a face, or the
@@ -1164,20 +1166,136 @@ export function createViewer(container, part) {
     orthoCamera.updateProjectionMatrix();
   }
 
-  // Re-derive the ortho frustum from the perspective camera's fov at the
-  // camera's CURRENT distance from the orbit target. Called on every swap into
-  // ortho and after any reframe, which is what keeps the two projections
-  // showing the same amount of part.
+  // Where a projection swap matches size. The two projections agree on the
+  // size of things at exactly ONE depth — an orthographic view draws every
+  // depth at one scale, a perspective one magnifies whatever is nearer — so the
+  // swap has to choose it, and it chooses the surface the user is looking AT:
+  // the first visible surface under the screen centre, found by a ray down the
+  // view axis through the orbit target. It used to be the target's own depth
+  // (the part's CENTRE, for a view cube face), while a face view shows the
+  // part's FRONT: the swap back to perspective then magnified the surface on
+  // screen by distance / (distance - depth), and since that distance is the
+  // ortho zoom recovered as a dolly, zooming in made the jump grow (a planter
+  // zoomed 2.27x jumped 22% wider and 53% taller).
   //
-  // `distance` overrides "current": tweenCameraTo's refit runs from the tween's
-  // completion callback, which fires one frame BEFORE the final pose reaches the
-  // camera, so it frames from the distance it asked for rather than from where
-  // the camera happens to be at that instant.
-  function syncOrthoToPerspectiveFraming({ distance: atDistance } = {}) {
-    const distance = atDistance || activeCamera.position.distanceTo(controls.target) || 1;
+  // Returned as the signed distance of that surface from the target, along
+  // `towardCamera` (target -> camera). Positive is in front of the target.
+  //   - `maxDepth` caps it for a PERSPECTIVE camera, which cannot see a surface
+  //     behind itself (an orthographic one can — its near plane may be
+  //     negative, see depth-range.js — so the exit swap searches the whole
+  //     line). Past the cap it gives up rather than match at a surface the
+  //     camera is inside of.
+  //   - Nothing on the ray (a hole, a gap between bodies, an edge-on sheet)
+  //     falls back to the front of the visible bounds: in a face view, the
+  //     nearest face of the part.
+  //   - Nothing at all shown: 0, the target's depth, as before.
+  // Both swaps (entry and exit) and the persisted-camera pair ask this same
+  // question of the same ray, which is what keeps every round trip lossless.
+  const _matchRaycaster = new THREE.Raycaster();
+  const _matchDir = new THREE.Vector3();
+  const _matchOrigin = new THREE.Vector3();
+  const _matchCorner = new THREE.Vector3();
+  const _matchSphere = new THREE.Sphere();
+  const _equivDir = new THREE.Vector3();
+  // The answer is remembered per RAY (target, direction, visible bounds).
+  // Swapping in and back out asks about the same ray, but not bit-for-bit:
+  // controls.update() re-derives the camera position from spherical
+  // coordinates on every swap, so the direction comes back an ulp off — and a
+  // ray through a triangle edge (a target at the centre of a symmetric part
+  // is exactly that) can hit on one side of the ulp and miss on the other,
+  // which turned an untouched round trip into a 25% reframe. Asking again
+  // about the same ray reuses the answer; a pan (a new target), a rotation or
+  // a geometry change that moves the bounds asks afresh.
+  let matchMemo = null; // { target, dir, min, max, depth }
+  const RAY_EPS = 1e-9;
+  function sizeMatchDepth(target, towardCamera, { maxDepth = Infinity } = {}) {
+    if (towardCamera.lengthSq() === 0) return 0;
+    const box = getVisibleWorldBounds();
+    if (box.isEmpty()) return 0;
+    _matchDir.copy(towardCamera).normalize();
+    const tol = RAY_EPS * (1 + box.max.distanceTo(box.min));
+    const m = matchMemo;
+    if (m && m.target.distanceTo(target) <= tol && m.dir.dot(_matchDir) >= 1 - RAY_EPS
+      && m.min.distanceTo(box.min) <= tol && m.max.distanceTo(box.max) <= tol
+      && !(Number.isFinite(maxDepth) && m.depth > maxDepth * 0.95)) {
+      return m.depth;
+    }
+    const depth = computeSizeMatchDepth(target, box, maxDepth);
+    matchMemo = { target: target.clone(), dir: _matchDir.clone(), min: box.min.clone(), max: box.max.clone(), depth };
+    return depth;
+  }
+  function computeSizeMatchDepth(target, box, maxDepth) {
+    // Started outside everything shown rather than at the camera, so the ray
+    // does not depend on where a perspective camera happens to be (an ortho
+    // camera's position is a direction more than a place). What a perspective
+    // camera cannot see — anything behind it — is filtered by depth instead.
+    box.getBoundingSphere(_matchSphere);
+    const outside = target.distanceTo(_matchSphere.center) + _matchSphere.radius + 1;
+    _matchOrigin.copy(target).addScaledVector(_matchDir, outside);
+    _matchRaycaster.set(_matchOrigin, _matchDir.negate());
+    _matchDir.negate(); // back to target -> camera
+    _matchRaycaster.far = 2 * outside;
+    const meshes = [];
+    for (const mesh of Object.values(subMesh)) {
+      if (mesh.visible && mesh.geometry?.boundingBox) meshes.push(mesh);
+    }
+    let depth = null;
+    for (const hit of _matchRaycaster.intersectObjects(meshes, false)) {
+      const at = outside - hit.distance;
+      if (at > maxDepth) continue; // behind a perspective camera
+      // Skip what a cutaway has sliced away: it is not on screen.
+      if (cutaway.isPointVisible?.(hit.point) ?? true) { depth = at; break; }
+    }
+    if (depth === null) {
+      depth = -Infinity;
+      for (let i = 0; i < 8; i++) {
+        _matchCorner.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
+        depth = Math.max(depth, _matchCorner.sub(target).dot(_matchDir));
+      }
+    }
+    // A perspective camera at or inside the surface: no depth in front of it
+    // to match at, so keep the target's.
+    if (Number.isFinite(maxDepth) && depth > maxDepth * 0.95) return 0;
+    return Number.isFinite(depth) ? depth : 0;
+  }
+
+  // The perspective distance (target -> camera) that shows what the ortho
+  // camera shows now, at the size-match surface above. OrbitControls zooms an
+  // ortho camera through camera.zoom rather than by moving it, which is why
+  // this reads the zoom. Falls back to the target's depth if the surface is so
+  // far BEHIND the target that the camera would have to sit behind the target
+  // to match it (a target panned out in front of everything).
+  function orthoEquivalentDistance() {
+    const halfH = (orthoCamera.top - orthoCamera.bottom) / 2 || 1;
+    // `|| 1` on the zoom for the same reason captureCurrent guards it: a zero
+    // would make this non-finite.
+    const atSurface = perspectiveDistance({ halfH, zoom: orthoCamera.zoom || 1, fovDeg: camera.fov });
+    const depth = sizeMatchDepth(controls.target, _equivDir.copy(orthoCamera.position).sub(controls.target));
+    const distance = atSurface + depth;
+    return distance > atSurface * 0.05 ? distance : atSurface;
+  }
+
+  // Re-derive the ortho frustum from the perspective camera's fov so that it
+  // shows what a perspective camera at the CURRENT distance from the orbit
+  // target shows at the size-match surface (sizeMatchDepth). Called on every
+  // swap into ortho and after any reframe, which is what keeps the two
+  // projections showing the same amount of part.
+  //
+  // `distance` / `target` / `direction` override "current": tweenCameraTo's
+  // refit runs from the tween's completion callback, which fires one frame
+  // BEFORE the final pose reaches the camera, so it frames from the pose it
+  // asked for rather than from where the camera happens to be at that instant.
+  const _syncTarget = new THREE.Vector3();
+  const _syncDir = new THREE.Vector3();
+  function syncOrthoToPerspectiveFraming({ distance: atDistance, target, direction } = {}) {
+    _syncTarget.copy(target ?? controls.target);
+    if (direction) _syncDir.copy(direction);
+    else _syncDir.copy(activeCamera.position).sub(_syncTarget);
+    const distance = atDistance || _syncDir.length() || 1;
+    const depth = sizeMatchDepth(_syncTarget, _syncDir, { maxDepth: distance });
     applyOrthoFrustum(orthoFrustum({
       fovDeg: camera.fov,
-      distance,
+      distance: distance - depth,
       aspect: camera.aspect || 1,
     }));
     // The frustum now expresses the whole framing, so any dolly-by-zoom the user
@@ -1202,7 +1320,8 @@ export function createViewer(container, part) {
     } else {
       // Recover whatever dolly the user did while in ortho: OrbitControls
       // changes camera.zoom there rather than moving the camera, so the zoom
-      // has to come back as a distance or the part jumps size.
+      // has to come back as a distance or the part jumps size — matched at the
+      // surface the user is looking at (orthoEquivalentDistance).
       //
       // The bound exists because ortho zoom is UNBOUNDED and zooming a long way
       // out costs nothing there (an ortho projection has no depth falloff) —
@@ -1215,15 +1334,13 @@ export function createViewer(container, part) {
       // too eager: frameTo frames at 2.6r + 6 MILLIMETRES, so an everyday 300mm
       // part sits at 786mm and a plain swap would silently reframe it closer.
       // Hence the max with the distance the camera is already at, which makes an
-      // untouched round trip (zoom === 1, where orthoFrustum/perspectiveDistance
-      // are exact inverses) lossless for a part of ANY size, and still never lets
-      // a degenerate zoom move the camera further out than it already was.
-      // `|| 1` on the zoom for the same reason captureCurrent guards it: a zero
-      // would make this non-finite.
-      const halfH = (orthoCamera.top - orthoCamera.bottom) / 2 || 1;
+      // untouched round trip (zoom === 1, where the entry and this exit match at
+      // the same surface and are exact inverses) lossless for a part of ANY
+      // size, and still never lets a degenerate zoom move the camera further
+      // out than it already was.
       const offset = from.position.clone().sub(controls.target);
       const distance = Math.min(
-        perspectiveDistance({ halfH, zoom: orthoCamera.zoom || 1, fovDeg: camera.fov }),
+        orthoEquivalentDistance(),
         Math.max(from.far * 0.9, offset.length()),
       );
       camera.position.copy(controls.target).addScaledVector(offset.normalize(), distance);
@@ -2077,8 +2194,7 @@ export function createViewer(container, part) {
     if (projectionMode === "orthographic") {
       const offset = activeCamera.position.clone().sub(t);
       if (offset.lengthSq() > 0) {
-        const halfH = (orthoCamera.top - orthoCamera.bottom) / 2 || 1;
-        const d = perspectiveDistance({ halfH, zoom: orthoCamera.zoom || 1, fovDeg: camera.fov });
+        const d = orthoEquivalentDistance();
         const p = offset.normalize().multiplyScalar(d).add(t);
         return { pos: [p.x, p.y, p.z], target: [t.x, t.y, t.z] };
       }

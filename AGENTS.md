@@ -133,7 +133,14 @@ the installed package, so let the publish finish before bumping the dep there.
   iso tween is perspective, and in a face view pan and zoom keep ortho while
   the first rotation (a view-direction change, checked per frame in the
   render loop) swaps back to perspective, size-preserving - Fusion 360's
-  "Perspective with Ortho Faces". There is no projection control and it is
+  "Perspective with Ortho Faces". Both swaps match size at ONE depth, the
+  visible surface under the screen centre (`sizeMatchDepth` in viewer.js: a
+  ray down the view axis through the target, else the front of the visible
+  bounds), never the target's own depth - that was the part's centre, and
+  an ortho zoom-in then made the swap back magnify the front face (22-53% on
+  the planter). The answer is memoized per ray, because a swap re-derives the
+  direction an ulp off and a ray through a triangle edge can flip between hit
+  and miss on it; that memo is what keeps an untouched round trip lossless. There is no projection control and it is
   not persisted; animation cues never pass `autoProjection`. The view style
   button (an eye) that replaced the cube's
   projection toggle now lives in the stage's `#viewbar`, inserted before
