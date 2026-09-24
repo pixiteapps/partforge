@@ -2576,13 +2576,24 @@ stylesheet). `mount` looks up these element IDs:
 | `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` and opens the resolved default (see the "Which view the viewer opens on" rule above) |
 | `#download-step` / `#download` / `#download-3mf` | STEP / STL / 3MF export buttons |
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
-| `#viewbar` with `#annotate` / `#measure` / `#cutaway` / `#reframe` / `#theme` | optional viewer controls (omit any you don't want) |
+| `#viewbar` with `#annotate` / `#measure` / `#cutaway` / `#reframe` / `#realistic` / `#environment` / `#theme` | optional viewer controls (omit any you don't want) |
 | `#panel` | the full-height controls rail (`class="pf-rail"`); programmatic hosts pass `elements.rail` instead |
 | `#rail-toggle` | optional — collapses/restores the rail; resolved the same way as `#reframe`/`#theme`. A sibling of `#viewbar`, not a child of it: give it `class="pf-float-rail-toggle"` and it floats at the stage's top right |
 
 Copy `demo.html` and change the title, the panel heading, and the `<script src>`. Two
 workers are spawned from your one worker entry (`name` = `"manifold"` for preview/STL/3MF,
 `"occt"` for STEP — handled for you).
+
+**`#realistic` (a `<button>`) / `#environment` (an empty `<select>`) are the
+realistic-mode viewbar controls**, resolved by id or as `elements.chrome.realistic`
+/ `elements.chrome.environment`. Both optional and independent: supply `#realistic`
+alone for a bare toggle, or add `#environment` too and `mount` fills it with the
+part's available environments (see "Materials and appearance" above) and keeps it
+in sync — hidden while the view is in CAD mode, showing the environment in effect
+once realistic lands. Omit either and drive `runtime.renderMode` /
+`runtime.environment` from your own UI instead (see below). Both preferences
+persist across reloads the same way the theme does, and are carried in
+`viewerState` (below), which outranks what is stored.
 
 **`#reframe` is supported but no longer shipped.** The framework's own pages dropped
 the button on 2026-08-20: clicking a face, edge or corner on the view cube reframes
@@ -2737,6 +2748,49 @@ elements stay where they were laid down while the model shifts out from under
 them, and the sketch that gets sent is misaligned, not merely mis-labelled.
 Deliberately unguarded, the same way it's always been free to call
 `setCameraState` during Sketch.
+
+### `runtime.renderMode`, `runtime.environment`, `runtime.renderViews`, `runtime.declaresMaterials`
+
+For an embedder driving realistic mode from its own UI instead of (or in
+addition to) the `#realistic` / `#environment` viewbar controls above:
+
+- `runtime.renderMode` — `{ get(), set(mode), onChange(cb) }` where `mode` is
+  `"cad"` or `"realistic"`. `set()` resolves to the mode actually in effect —
+  `"cad"` if the realistic environment's assets fail to load — and
+  `onChange` receives `{ mode, busy, error }` so a host can show its own
+  loading/error state. Same shape as `runtime.projection`; drives the live
+  view and `captureCurrent` only.
+- `runtime.environment` — `{ get(), set(id), onChange(cb), list() }` for the
+  realistic environment (`"studio"` | `"workshop"` | `"print-bed"` |
+  `"outdoor"`, per "Materials and appearance" above). `list()` returns every
+  environment as `[{ id, label }]`, for building your own picker. `set()`
+  resolves to the id actually in effect; a failed switch while realistic is
+  showing reverts to the environment still on screen, and `onChange` hears the
+  revert too.
+- `runtime.declaresMaterials` — `true` when any sub-part names a
+  `display.material`. A part with none still supports realistic mode (every
+  sub-part just renders under the library's `default` look), so use this to
+  decide whether to surface the realistic toggle at all, not whether it works.
+- `await runtime.renderViews(viewNames, { renderMode? })` — the appearance-aware
+  sibling of `runtime.captureViews` (canonical angles, framed to the visible
+  assembly, grid hidden): `{ renderMode: "cad" }` (the default) is exactly
+  `captureViews`, and `{ renderMode: "realistic" }` borrows the realistic look
+  for the capture — waiting on the chosen environment's assets — **without**
+  switching the live view. Rejects if the realistic assets fail to load.
+
+Both preferences round-trip through `mount()`'s `viewerState`: a
+previous mount's `runtime.getViewerState()` carries `viewerState.renderMode`
+(`"cad"` or `"realistic"`) and, only when the viewer's environment was
+actually CHOSEN rather than merely defaulted from `meta.environment`,
+`viewerState.environment`. `renderMode` reports the mode the user is **headed
+for**, not only the one on screen: a realistic restore or switch that's still
+loading reports `"realistic"`, so a host that remounts on every edit (as an
+embedder applying edits by remounting typically does) doesn't drop the
+in-flight choice — a load that ultimately fails still settles back to
+`"cad"`. Pass `viewerState` back into the next `mount()` call to resume both
+where the previous mount left them; omit it on a first mount and the viewer
+restores its own persisted choice instead, the same way it does for the
+camera and projection.
 
 ### The annotation payload's camera block
 
