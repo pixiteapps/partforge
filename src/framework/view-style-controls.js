@@ -153,6 +153,23 @@ export function attachViewStyleControls(viewer, { stage, anchor } = {}, { toolti
     }
   }
 
+  // A feature-lines change alters exactly one style's picture (the style it
+  // was made for). While open, that tile re-renders at once — the user just
+  // flipped the switch under it; the cache is also marked stale, so a loop
+  // that drew this style before the change cannot leave the old picture for
+  // the next open.
+  async function onLinesChange(evt) {
+    cache.invalidate();
+    if (!isOpen()) return;
+    const id = evt?.style ?? styleFor(viewer.getRenderMode(), viewer.getEnvironment());
+    if (!tiles.has(id)) return;
+    let url = null;
+    try { url = await viewer.renderStyleThumbnail(id, { size: 256 }); } catch { url = null; }
+    if (detached) return;
+    cache.set(id, url);
+    paint(id);
+  }
+
   // --- open / close ------------------------------------------------------------
   const isOpen = () => !pop.hidden;
   const onOutside = (e) => {
@@ -210,7 +227,7 @@ export function attachViewStyleControls(viewer, { stage, anchor } = {}, { toolti
     viewer.onRenderModeChange(() => render()),
     viewer.onEnvironmentChange(() => render()),
     viewer.onProjectionChange(() => render()),
-    viewer.onFeatureLinesChange(() => render()),
+    viewer.onFeatureLinesChange((evt) => { render(); onLinesChange(evt); }),
     viewer.onAssemblyChange?.(() => cache.invalidate()) ?? (() => {}),
     viewer.onThemeChange?.(() => cache.invalidate()) ?? (() => {}),
   ];

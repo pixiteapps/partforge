@@ -189,3 +189,31 @@ test("setHidden hides the button and closes the popover", () => {
   expect(c.element.hidden).toBe(true);
   expect(c.isOpen()).toBe(false);
 });
+
+test("a feature-lines change re-renders the current style's tile while open, and re-renders all on the next open", async () => {
+  const v = fakeViewer();
+  const c = attachViewStyleControls(v, { stage, anchor });
+  c.open(); await flush(); await flush();
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(5);
+  let n = 0;
+  v.renderStyleThumbnail.mockImplementation(async (s) => `data:${s}-v${++n}`);
+  stage.querySelector(".pf-view-style-switch").click();   // lines off for CAD
+  await flush();
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(6);
+  expect(v.renderStyleThumbnail.mock.calls.at(-1)[0]).toBe("cad");
+  expect(tile("cad").querySelector("img").src).toBe("data:cad-v1");
+  c.close(); c.open(); await flush(); await flush();
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(11); // stale → the whole set again
+});
+
+test("a feature-lines change while closed renders nothing until the next open", async () => {
+  const v = fakeViewer();
+  const c = attachViewStyleControls(v, { stage, anchor });
+  c.open(); await flush(); await flush();
+  c.close();
+  v.setFeatureLines(false);                                  // e.g. runtime.featureLines.set
+  await flush();
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(5);
+  c.open(); await flush(); await flush();
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(10);
+});
