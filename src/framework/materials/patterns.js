@@ -7,12 +7,17 @@
 // (print-frame.js: display→export), so they run the way the part will print.
 import * as THREE from "three";
 
-const VERT_DECL = "varying vec3 vPfObjPos;\nvarying vec3 vPfObjNormal;\n";
-const VERT_BODY = "vPfObjPos = position;\nvPfObjNormal = normal;\n";
+const VERT_DECL = "varying vec3 vPfObjPos;\nvarying vec3 vPfObjNormal;\nvarying vec3 vPfPrintUpView;\nuniform mat4 pfPrintFrame;\n";
+// vPfPrintUpView: the print direction (export +Z) in VIEW space — the gradient
+// of the layer height, carried by normalMatrix like any other normal — so the
+// layer-line normal map can tilt normals along it (identity print frame for the
+// other patterns, which never read it).
+const VERT_BODY = "vPfObjPos = position;\nvPfObjNormal = normal;\nvPfPrintUpView = normalMatrix * vec3(pfPrintFrame[0].z, pfPrintFrame[1].z, pfPrintFrame[2].z);\n";
 
 const FRAG_DECL = `
 varying vec3 vPfObjPos;
 varying vec3 vPfObjNormal;
+varying vec3 vPfPrintUpView;
 uniform float pfPatternScale;
 uniform mat4 pfPrintFrame;
 uniform sampler2D pfPatternMap;
@@ -41,7 +46,7 @@ const FRAG_BODY = {
     // ramps over 35% of it, the rest is flat), and past ~2.5 px it is gone —
     // point-sampling finer layers than that is what aliased into moiré.
     groove = mix(0.825, groove, 1.0 - smoothstep(0.16, 0.4, fwidth(h)));
-    diffuseColor.rgb *= mix(0.8, 1.0, groove);
+    diffuseColor.rgb *= mix(0.9, 1.0, groove); // the normal map (FRAG_NORMAL) carries most of the relief
     roughnessFactor = clamp(roughnessFactor + (1.0 - groove) * 0.18, 0.0, 1.0);
     // Filament mottling: a fine grain (~0.17 mm) over slow blotches (~2 mm),
     // fixed to the part, so a print doesn't read as flat injection-moulded plastic.
@@ -80,6 +85,27 @@ const FRAG_BODY = {
   }`,
 };
 
+// Per-kind NORMAL perturbation, injected after <normal_fragment_maps> (where the
+// view-space \`normal\` is final). Layer lines are a procedural normal map: each
+// layer is a round bead, so across one layer the surface normal swings from
+// facing down (bottom of the bead) through straight out to facing up, along
+// the print direction projected onto the surface. Faces parallel to the layers
+// (tops and bottoms) get no ridges, as on a real print. Same fwidth fade as the
+// colour bands, so far-away layers don't alias.
+const FRAG_NORMAL = {
+  "layer-lines": `
+  {
+    float h = (pfPrintFrame * vec4(vPfObjPos, 1.0)).z / pfPatternScale;
+    float aa = 1.0 - smoothstep(0.16, 0.4, fwidth(h));
+    float t = fract(h) * 2.0 - 1.0;                       // -1 at a seam, 0 bead crest, 1 next seam
+    float slope = clamp(t / sqrt(max(1.0 - t * t, 0.04)), -3.0, 3.0);
+    vec3 up = normalize(vPfPrintUpView);
+    vec3 along = up - normal * dot(normal, up);
+    float alongLen = length(along);
+    if (alongLen > 1e-3) normal = normalize(normal + (along / alongLen) * slope * 0.35 * aa);
+  }`,
+};
+
 export function applyPattern(material, { kind, scale = 1, printFrame, texture } = {}) {
   if (!kind || !FRAG_BODY[kind]) return material;
   const uniforms = {
@@ -95,7 +121,8 @@ export function applyPattern(material, { kind, scale = 1, printFrame, texture } 
       .replace("#include <begin_vertex>", `#include <begin_vertex>\n${VERT_BODY}`);
     shader.fragmentShader = shader.fragmentShader
       .replace("#include <common>", `#include <common>\n${FRAG_DECL}`)
-      .replace("#include <roughnessmap_fragment>", `#include <roughnessmap_fragment>\n${FRAG_BODY[kind]}`);
+      .replace("#include <roughnessmap_fragment>", `#include <roughnessmap_fragment>\n${FRAG_BODY[kind]}`)
+      .replace("#include <normal_fragment_maps>", `#include <normal_fragment_maps>\n${FRAG_NORMAL[kind] ?? ""}`);
   };
   material.customProgramCacheKey = () => `pf-pattern:${kind}`;
   material.needsUpdate = true;

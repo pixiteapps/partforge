@@ -84,3 +84,23 @@ test("layer lines carry filament mottling noise", () => {
   m.onBeforeCompile(s);
   expect(s.fragmentShader).toContain("mottle");
 });
+
+test("layer lines tilt the surface normal along the print direction (a procedural normal map)", () => {
+  const m = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "layer-lines", scale: 0.2 });
+  const s = {
+    uniforms: {},
+    vertexShader: "#include <common>\nvoid main(){\n#include <begin_vertex>\n}",
+    fragmentShader: "#include <common>\nvoid main(){\n#include <roughnessmap_fragment>\n#include <normal_fragment_maps>\n}",
+  };
+  m.onBeforeCompile(s);
+  expect(s.vertexShader).toContain("vPfPrintUpView = normalMatrix *");
+  const afterNormals = s.fragmentShader.slice(s.fragmentShader.indexOf("#include <normal_fragment_maps>"));
+  expect(afterNormals).toContain("normal = normalize(normal +");
+});
+
+test("wood gets no normal perturbation", () => {
+  const m = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "wood", scale: 80, texture: new THREE.Texture() });
+  const s = { uniforms: {}, vertexShader: "#include <common>\n#include <begin_vertex>", fragmentShader: "#include <common>\n#include <roughnessmap_fragment>\n#include <normal_fragment_maps>" };
+  m.onBeforeCompile(s);
+  expect(s.fragmentShader).not.toContain("normal = normalize(normal +");
+});
