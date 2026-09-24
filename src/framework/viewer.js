@@ -22,7 +22,6 @@ import { depthRangeFor } from "./depth-range.js";
 import { addViewerLights, captureLightPoses, createCaptureLights, createHemisphereLight } from "./viewer-lighting.js";
 import { makeCaptureCamera, recenteredView, captureDepthRange } from "./capture-frame.js";
 import { CANONICAL_VIEWS, cameraPoseForView } from "./view-angles.js";
-import { defaultFeatureLines, styleFor } from "./view-style-state.js";
 
 // three renders into a render target in the LINEAR working colour space: as of r184
 // WebGLRenderer only applies `outputColorSpace` on the canvas path (WebGLPrograms
@@ -296,10 +295,10 @@ export function createViewer(container, part) {
   const fadeLineMats = new Map();    // name -> lazily cloned LineMaterial
   const fadeUnregisters = new Map(); // fade material -> its cutaway unregister fn
   let lastShown = [];                // names last passed to showAssembly
-  // The render mode's LOOK, read by applySubOpacity (feature lines follow the
-  // per-style preference below, not the mode itself) and the depth range (the
-  // realistic ground disc). Declared here, ahead of everything that reads it;
-  // the mode itself lives in the realistic-mode block.
+  // The render mode's LOOK, read by applySubOpacity (feature lines are drawn
+  // only in "cad") and the depth range (the realistic ground disc). Declared
+  // here, ahead of everything that reads it; the mode itself lives in the
+  // realistic-mode block.
   let renderMode = "cad";
   let realisticRig = null;
   let shadowMovedAt = null;          // performance.now() of a pose change the contact shadow has not caught up with
@@ -385,7 +384,7 @@ export function createViewer(container, part) {
       // every-regen showAssembly path stays a no-op for un-faded sub-parts.
       if (hadFade) cutaway.resyncSubpart(name);
       mesh.visible = shown;
-      lines.visible = shown && linesOn();
+      lines.visible = shown && renderMode === "cad";
       return;
     }
     if (v <= 0) {
@@ -401,7 +400,7 @@ export function createViewer(container, part) {
     flm.opacity = v;
     lines.material = flm;
     mesh.visible = shown;
-    lines.visible = shown && linesOn();
+    lines.visible = shown && renderMode === "cad";
   }
 
   function setSubPartOpacity(name, value) {
@@ -537,37 +536,10 @@ export function createViewer(container, part) {
   let realisticPending = false;      // a realistic request is in flight (setEnvironment joins it)
   let environmentChosen = false;     // set by setEnvironment; false while seeded from meta/default
 
-  // Feature lines, remembered per style (view-style-state.js has the defaults).
-  // `linesOverride` pins them for a capture that must not follow the user's
-  // switch: agent-facing CAD renders always draw them, realistic ones never.
-  let featureLinesPrefs = {};
-  let linesOverride = null;
-  const linesListeners = new Set();
-  const currentStyle = () => styleFor(renderMode, realisticRig?.id ?? environmentId);
-  const linesOn = () => linesOverride ?? (featureLinesPrefs[currentStyle()] ?? defaultFeatureLines(currentStyle()));
+  // Feature lines are CAD-only: applySubOpacity reads the render mode
+  // directly, so this just re-applies it to every sub-part after a mode
+  // change (enterRealistic/enterCad both call it once they've set renderMode).
   function refreshFeatureLines() { for (const n of names) applySubOpacity(n); }
-  function withFeatureLines(on, fn) {
-    const before = linesOverride;
-    linesOverride = on;
-    refreshFeatureLines();
-    try { return fn(); } finally { linesOverride = before; refreshFeatureLines(); }
-  }
-  function announceFeatureLines() {
-    const evt = { style: currentStyle(), on: linesOn() };
-    for (const cb of [...linesListeners]) {
-      try { cb(evt); } catch (e) { console.warn("partforge: feature-lines listener failed", e); }
-    }
-  }
-  function setFeatureLines(on) {
-    featureLinesPrefs = { ...featureLinesPrefs, [currentStyle()]: !!on };
-    refreshFeatureLines();
-    announceFeatureLines();
-  }
-  function setFeatureLinesPrefs(prefs) {
-    featureLinesPrefs = { ...(prefs ?? {}) };
-    refreshFeatureLines();
-    announceFeatureLines();
-  }
 
   const physicalMats = new Map();    // name -> MeshPhysicalMaterial (environment-independent, cached)
   const rigCache = new Map();        // environment id -> Promise<Rig>
@@ -840,10 +812,7 @@ export function createViewer(container, part) {
       renderer.toneMappingExposure = rig.exposure;
       if (reground) placeGround({ force: !live });
       if (live) applyPixelRatio("realistic");
-      // setSubMaterials above already re-applied every sub-part, but it ran
-      // BEFORE realisticRig was reassigned, so it read the OLD style (still
-      // CAD, or the previous environment) — refresh now that currentStyle()
-      // answers correctly.
+      // Hides the lines on every sub-part now that renderMode reads realistic.
       refreshFeatureLines();
     } catch (e) {
       try { enterCad({ live }); } catch (rollback) { console.warn("partforge: rolling back to CAD failed", rollback); }
@@ -999,7 +968,6 @@ export function createViewer(container, part) {
     modeToken++;
     modeListeners.clear();
     envListeners.clear();
-    linesListeners.clear();
     for (const p of rigCache.values()) p.then((r) => r.dispose(), () => {});
     rigCache.clear();
     loadedRigs.clear();
@@ -1655,13 +1623,13 @@ export function createViewer(container, part) {
   // renders, and the editor's on-screen mode must never change what the agent
   // sees. A realistic live view lends its scene to CAD for the synchronous
   // capture and gets it back exactly (captureIn). renderViews is the one way
-  // to ask for realistic canonical views. Feature lines are pinned ON, ignoring
-  // the user's per-style switch — an agent-facing CAD drawing always has them.
+  // to ask for realistic canonical views. Feature lines are CAD-only, so
+  // borrowing CAD for this capture draws them for free.
   function captureCanonicalViews(viewNames) {
     if (disposed) return [];
     const box = getVisibleWorldBounds();
     if (!box || box.isEmpty()) return []; // nothing to draw: don't swap the look for it
-    return withFeatureLines(true, () => captureIn("cad", null, () => canonicalViewsInCurrentLook(viewNames)));
+    return captureIn("cad", null, () => canonicalViewsInCurrentLook(viewNames));
   }
   // The canonical views in whatever look the scene has right now — the body
   // both captureCanonicalViews and renderViews wrap in captureIn.
@@ -1767,7 +1735,7 @@ export function createViewer(container, part) {
   // popover. The live view is put back exactly (same contract as captureIn:
   // no publish, nothing persisted), whether it is CAD, or realistic in this
   // or another environment. The borrowed style brings its own feature-lines
-  // preference with it, because linesOn() reads the current style.
+  // visibility with it for free, since it's decided by render mode alone.
   async function renderStyleThumbnail(style, { size = 256 } = {}) {
     if (disposed) return null;
     const box = getVisibleWorldBounds();
@@ -1812,8 +1780,7 @@ export function createViewer(container, part) {
   // shader programs, then borrows the realistic look for the synchronous
   // capture only if the live view is not already realistic. A rig that fails
   // to load rejects rather than silently returning CAD images. Feature lines
-  // are pinned OFF here too, ignoring the user's switch — an agent-facing
-  // realistic render is always the photograph, never the annotated drawing.
+  // are CAD-only, so borrowing the realistic look draws without them for free.
   async function renderViews(viewNames, { renderMode: want = "cad" } = {}) {
     if (disposed) return [];
     if (want !== "realistic") return captureCanonicalViews(viewNames);
@@ -1829,7 +1796,7 @@ export function createViewer(container, part) {
       if (disposed) return [];
       await whenTexturesSettled();
       if (disposed) return [];
-      return withFeatureLines(false, () => captureIn("realistic", rig, () => canonicalViewsInCurrentLook(viewNames)));
+      return captureIn("realistic", rig, () => canonicalViewsInCurrentLook(viewNames));
     } finally {
       releaseRig(id, p);
     }
@@ -2291,13 +2258,6 @@ export function createViewer(container, part) {
     setRenderMode,
     getRenderMode: () => renderMode,
     onRenderModeChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },
-    // Feature lines, for the CURRENT style (setFeatureLines) or the whole
-    // per-style map (setFeatureLinesPrefs, e.g. a carried viewerState).
-    setFeatureLines,
-    getFeatureLines: () => linesOn(),
-    getFeatureLinesPrefs: () => ({ ...featureLinesPrefs }),
-    setFeatureLinesPrefs,
-    onFeatureLinesChange: (cb) => { linesListeners.add(cb); return () => linesListeners.delete(cb); },
     setEnvironment,
     getEnvironment: () => environmentId,
     // Whether the environment was named through setEnvironment (by the user or

@@ -473,24 +473,12 @@ test("with storage that throws on every access, a carried realistic view mounts,
   }
 });
 
-test("a carried viewerState.featureLines is filtered like storage before it outranks it", async () => {
-  localStorage.setItem("partforge:featureLines", JSON.stringify({ workshop: false }));
+test("a carried viewerState.featureLines (from an older mount) is simply ignored — no runtime.featureLines, no switch", async () => {
   const { runtime } = mountFixture({ material: "brass" }, {
-    viewerState: { featureLines: { cad: "false", moon: true, studio: true } },
+    viewerState: { featureLines: { cad: false, studio: true } },
   });
   await runtime.ready;
-  expect(runtime.getViewerState().featureLines).toEqual({ workshop: false, studio: true });
-  expect(runtime.featureLines.get()).toBe(true);     // CAD's default — the string "false" never landed
-  runtime.dispose();
-});
-
-test("feature lines: restored from storage, carried in viewerState, exposed on the runtime", async () => {
-  localStorage.setItem("partforge:featureLines", JSON.stringify({ cad: false }));
-  const { runtime } = mountFixture({ material: "brass" });
-  await runtime.ready;
-  expect(runtime.featureLines.get()).toBe(false);
-  runtime.featureLines.set(true);
-  expect(JSON.parse(localStorage.getItem("partforge:featureLines"))).toEqual({ cad: true });
-  expect(runtime.getViewerState().featureLines).toEqual({ cad: true });
+  expect(runtime.featureLines).toBeUndefined();
+  expect(runtime.getViewerState()).not.toHaveProperty("featureLines");
   runtime.dispose();
 });

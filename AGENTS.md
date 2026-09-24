@@ -132,8 +132,10 @@ the installed package, so let the publish finish before bumping the dep there.
   so it hides with it, placed inside the stack's box so the published size is
   unchanged), and belongs to
   `view-style-controls.js`: the button and its popover (style thumbnails,
-  per-style feature lines, projection), with `view-style-state.js` as its
-  pure half (the style list, line defaults, thumbnail-cache freshness). The stack hides for either of two independent reasons, OR-ed in
+  projection), with `view-style-state.js` as its
+  pure half (the style list, thumbnail-cache freshness). Feature lines are
+  CAD-only, not a popover control: they draw whenever the style is CAD and
+  never in a realistic style. The stack hides for either of two independent reasons, OR-ed in
   mount: Sketch mode, and a crowded animation transport bar - the stack
   publishes its size as `data-pf-w`/`data-pf-h` so
   `animation-controls.js` can judge that crowding against a footprint that does

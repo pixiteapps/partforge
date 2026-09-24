@@ -53,13 +53,6 @@ vi.mock("../../src/framework/viewer.js", () => ({
       getRenderMode: () => "cad",
       setRenderMode: vi.fn(async () => "cad"),
       onRenderModeChange: () => () => {},
-      // Feature lines' surface (mount restores/persists it, and wires the
-      // handle); mount-realistic.test.js exercises the real machinery.
-      getFeatureLines: () => true,
-      getFeatureLinesPrefs: vi.fn(() => ({})),
-      setFeatureLines: vi.fn(),
-      setFeatureLinesPrefs: vi.fn(),
-      onFeatureLinesChange: () => () => {},
       getEnvironment: () => "studio",
       setEnvironment: vi.fn(async (id) => id),
       onEnvironmentChange: () => () => {},

@@ -1,9 +1,9 @@
 // src/framework/view-style-controls.js
 // The view style button and its popover: every control that changes HOW the
 // part is drawn, in one place — the style (CAD or a realistic environment, as
-// live thumbnails of this part), feature lines for that style, and the
-// projection. Generated into the stage, not declared by the host (the view
-// cube / mobile-tabs.js precedent), so an embedder gets it with no markup.
+// live thumbnails of this part) and the projection. Generated into the
+// stage, not declared by the host (the view cube / mobile-tabs.js
+// precedent), so an embedder gets it with no markup.
 //
 // The button replaces the view cube's old projection toggle, in the same
 // place: a DOM child of the cube's stack (so it hides whenever the cube
@@ -60,14 +60,6 @@ export function attachViewStyleControls(viewer, { stage, anchor } = {}, { toolti
     tiles.set(s.id, { tile: t, img });
   }
 
-  const linesRow = el("div", "pf-view-style-row");
-  const linesLabel = el("span", "", { id: "pf-view-style-lines-label" });
-  linesLabel.textContent = "Feature lines";
-  const sw = el("button", "pf-view-style-switch", { type: "button", role: "switch", "aria-checked": "false", "aria-labelledby": "pf-view-style-lines-label" });
-  sw.append(el("span", "pf-view-style-knob"));
-  sw.addEventListener("click", () => viewer.setFeatureLines(!viewer.getFeatureLines()));
-  linesRow.append(linesLabel, sw);
-
   const projRow = el("div", "pf-view-style-row");
   const projLabel = el("span", "", { id: "pf-view-style-proj-label" });
   projLabel.textContent = "Projection";
@@ -82,7 +74,7 @@ export function attachViewStyleControls(viewer, { stage, anchor } = {}, { toolti
   });
   projRow.append(projLabel, seg);
 
-  pop.append(styleHead, grid, linesRow, projRow);
+  pop.append(styleHead, grid, projRow);
   stage.append(pop);
 
   const tooltipBinding = tooltip ? attachButtonTooltips(tooltip, [{ element: button }]) : null;
@@ -97,7 +89,6 @@ export function attachViewStyleControls(viewer, { stage, anchor } = {}, { toolti
       tile.setAttribute("aria-pressed", String(id === current));
       if (id === pendingStyle && id !== current) tile.dataset.busy = "true"; else delete tile.dataset.busy;
     }
-    sw.setAttribute("aria-checked", String(!!viewer.getFeatureLines()));
     const proj = viewer.getProjection();
     for (const b of projButtons) b.setAttribute("aria-checked", String(b.dataset.projection === proj));
     tooltipBinding?.sync();
@@ -153,23 +144,6 @@ export function attachViewStyleControls(viewer, { stage, anchor } = {}, { toolti
       cache.set(s.id, url);
       paint(s.id);
     }
-  }
-
-  // A feature-lines change alters exactly one style's picture (the style it
-  // was made for). While open, that tile re-renders at once — the user just
-  // flipped the switch under it; the cache is also marked stale, so a loop
-  // that drew this style before the change cannot leave the old picture for
-  // the next open.
-  async function onLinesChange(evt) {
-    cache.invalidate();
-    if (!isOpen()) return;
-    const id = evt?.style ?? styleFor(viewer.getRenderMode(), viewer.getEnvironment());
-    if (!tiles.has(id)) return;
-    let url = null;
-    try { url = await viewer.renderStyleThumbnail(id, { size: 256 }); } catch { url = null; }
-    if (detached) return;
-    cache.set(id, url);
-    paint(id);
   }
 
   // --- open / close ------------------------------------------------------------
@@ -229,7 +203,6 @@ export function attachViewStyleControls(viewer, { stage, anchor } = {}, { toolti
     viewer.onRenderModeChange(() => render()),
     viewer.onEnvironmentChange(() => render()),
     viewer.onProjectionChange(() => render()),
-    viewer.onFeatureLinesChange((evt) => { render(); onLinesChange(evt); }),
     viewer.onAssemblyChange?.(() => cache.invalidate()) ?? (() => {}),
     viewer.onThemeChange?.(() => cache.invalidate()) ?? (() => {}),
   ];

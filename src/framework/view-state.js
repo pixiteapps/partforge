@@ -17,7 +17,6 @@ const KEY = {
   projection: "partforge:projection",
   renderMode: "partforge:renderMode",
   environment: "partforge:environment",
-  featureLines: "partforge:featureLines",
 };
 
 const viewKey = (partKey) => `partforge:view:${partKey}`;
@@ -89,27 +88,6 @@ export function loadEnvironment() {
 
 export function saveEnvironment(id) {
   if (typeof id === "string" && Object.hasOwn(ENVIRONMENTS, id)) write(KEY.environment, id);
-}
-
-// Feature lines are remembered PER STYLE ("cad" or an environment id); a style
-// with no entry uses its default (view-style-state.js). Unknown styles and
-// non-boolean values are dropped, so an older or corrupt value reads as {}.
-// The one filter for a per-style map from outside — storage here, a carried
-// viewerState in mount.js — so neither can seed the viewer with a style it
-// does not know or a value that is not a boolean.
-const knownStyle = (id) => id === "cad" || Object.hasOwn(ENVIRONMENTS, id);
-export function sanitizeFeatureLinesPrefs(raw) {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  return Object.fromEntries(Object.entries(raw).filter(([k, v]) => knownStyle(k) && typeof v === "boolean"));
-}
-export function loadFeatureLinesPrefs() {
-  let raw;
-  try { raw = JSON.parse(read(KEY.featureLines) ?? "{}"); } catch { return {}; }
-  return sanitizeFeatureLinesPrefs(raw);
-}
-
-export function saveFeatureLinesPrefs(prefs) {
-  write(KEY.featureLines, JSON.stringify(prefs ?? {}));
 }
 
 // `partKey` identifies the part — createViewTabs passes `meta.title`. Without one

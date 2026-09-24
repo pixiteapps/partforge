@@ -2604,16 +2604,16 @@ crowded animation transport bar). It opens a popover holding every control that
 changes *how* the part is drawn: the **style** — CAD or one of the realistic
 environments (see "Materials and appearance" above), each shown as a live
 thumbnail of the part, re-rendered on the next open after the part or theme
-changes — a **Feature lines** switch for the current style, and a
-**Perspective / Orthographic** projection control. The old `#realistic` /
-`#environment` viewbar controls (`elements.chrome.realistic` /
-`.environment`) and the cube's own `#projection` button were retired with it
-(2026-09-24); a page that still carries `#realistic` / `#environment` markup
-just shows dead elements, so delete them. A host can still drive
-`runtime.renderMode` / `runtime.environment` / `runtime.featureLines` /
-`runtime.projection` from its own UI (see below). All of these preferences
-persist across reloads the same way the theme does, and are carried in
-`viewerState` (below), which outranks what is stored.
+changes — and a **Perspective / Orthographic** projection control. Feature
+lines are CAD-only and not a switch: they draw whenever the style is CAD and
+never in a realistic style. The old `#realistic` / `#environment` viewbar
+controls (`elements.chrome.realistic` / `.environment`) and the cube's own
+`#projection` button were retired with it (2026-09-24); a page that still
+carries `#realistic` / `#environment` markup just shows dead elements, so
+delete them. A host can still drive `runtime.renderMode` /
+`runtime.environment` / `runtime.projection` from its own UI (see below). All
+of these preferences persist across reloads the same way the theme does, and
+are carried in `viewerState` (below), which outranks what is stored.
 
 **`#reframe` is supported but no longer shipped.** The framework's own pages dropped
 the button on 2026-08-20: clicking a face, edge or corner on the view cube reframes
@@ -2800,16 +2800,9 @@ addition to) the generated view style button above:
   `display.material`. A part with none still supports realistic mode (every
   sub-part just renders under the library's `default` look), so use this to
   decide whether to surface your own realistic control at all, not whether it works.
-- `runtime.featureLines` — `{ get(), set(on), onChange(cb) }`, same shape as
-  `runtime.renderMode`. `on` is a boolean, and it applies to the **current
-  style** — CAD, or whichever environment is showing — remembered separately
-  per style: CAD defaults on (it's a drawing), a realistic style defaults off
-  (it's a photograph), and switching styles restores whatever that style was
-  last set to, not the CAD/realistic default. `onChange` receives
-  `{ style, on }`. It drives the live view only: `runtime.captureViews()` and
-  `renderViews(…, { renderMode: "cad" })` always draw lines, and
-  `renderViews(…, { renderMode: "realistic" })` never does, whatever the live
-  preference shows.
+  Feature lines are not a preference: they draw whenever `runtime.renderMode`
+  reads `"cad"` and never while it reads `"realistic"` — there is no switch
+  to drive independently of it.
 - `await runtime.renderViews(viewNames, { renderMode? })` — the appearance-aware
   sibling of `runtime.captureViews` (canonical angles, framed to the visible
   assembly, grid hidden): `{ renderMode: "cad" }` (the default) is exactly
@@ -2817,21 +2810,18 @@ addition to) the generated view style button above:
   for the capture — waiting on the chosen environment's assets — **without**
   switching the live view. Rejects if the realistic assets fail to load.
 
-All three preferences round-trip through `mount()`'s `viewerState`: a
-previous mount's `runtime.getViewerState()` carries `viewerState.renderMode`
-(`"cad"` or `"realistic"`) and, only when the viewer's environment was
-actually CHOSEN rather than merely defaulted from `meta.environment`,
-`viewerState.environment`, plus `viewerState.featureLines` — the whole
-per-style map (`{ cad: false, studio: true, … }`), keyed by style id, only for
-the styles a preference was ever set on. `renderMode` reports the mode the
-user is **headed for**, not only the one on screen: a realistic restore or
-switch that's still loading reports `"realistic"`, so a host that remounts on
-every edit (as an embedder applying edits by remounting typically does)
-doesn't drop the in-flight choice — a load that ultimately fails still
-settles back to `"cad"`. Pass `viewerState` back into the next `mount()` call
-to resume all three where the previous mount left them; omit it on a first
-mount and the viewer restores its own persisted choice instead, the same way
-it does for the camera and projection.
+Both preferences round-trip through `mount()`'s `viewerState`: a previous
+mount's `runtime.getViewerState()` carries `viewerState.renderMode` (`"cad"`
+or `"realistic"`) and, only when the viewer's environment was actually CHOSEN
+rather than merely defaulted from `meta.environment`, `viewerState.environment`.
+`renderMode` reports the mode the user is **headed for**, not only the one on
+screen: a realistic restore or switch that's still loading reports
+`"realistic"`, so a host that remounts on every edit (as an embedder applying
+edits by remounting typically does) doesn't drop the in-flight choice — a
+load that ultimately fails still settles back to `"cad"`. Pass `viewerState`
+back into the next `mount()` call to resume both where the previous mount
+left them; omit it on a first mount and the viewer restores its own persisted
+choice instead, the same way it does for the camera and projection.
 
 ### The annotation payload's camera block
 

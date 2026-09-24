@@ -74,6 +74,9 @@ is app appearance, not a view style.
 
 ## Feature lines
 
+**Removed 2026-09-24 at the user's request — lines are CAD-only; no toggle.**
+The section below is kept for history; none of it shipped in the final form.
+
 - Viewer: `setFeatureLines(on)` / `getFeatureLines()` / `onFeatureLinesChange(fn)`.
   The sub-part line visibility rule changes from `shown && renderMode === "cad"`
   to `shown && featureLines`. It applies in both modes; realistic draws the same

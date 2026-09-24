@@ -5,9 +5,9 @@ import { resolve } from "node:path";
 import { attachViewStyleControls } from "../../src/framework/view-style-controls.js";
 
 function fakeViewer() {
-  const l = { mode: new Set(), env: new Set(), proj: new Set(), lines: new Set(), asm: new Set(), theme: new Set() };
+  const l = { mode: new Set(), env: new Set(), proj: new Set(), asm: new Set(), theme: new Set() };
   const v = {
-    mode: "cad", env: "studio", proj: "perspective", lines: { cad: true },
+    mode: "cad", env: "studio", proj: "perspective",
     getRenderMode: () => v.mode,
     isRealisticPending: () => false,
     setRenderMode: vi.fn(async (m) => { v.mode = m; l.mode.forEach((cb) => cb({ mode: m })); return m; }),
@@ -15,13 +15,10 @@ function fakeViewer() {
     setEnvironment: vi.fn(async (id) => { v.env = id; l.env.forEach((cb) => cb(id)); return id; }),
     getProjection: () => v.proj,
     setProjection: vi.fn((p) => { v.proj = p; l.proj.forEach((cb) => cb(p)); }),
-    getFeatureLines: () => v.lines[v.mode === "cad" ? "cad" : v.env] ?? v.mode === "cad",
-    setFeatureLines: vi.fn((on) => { v.lines[v.mode === "cad" ? "cad" : v.env] = on; l.lines.forEach((cb) => cb({})); }),
     renderStyleThumbnail: vi.fn(async (s) => `data:${s}`),
     onRenderModeChange: (cb) => { l.mode.add(cb); return () => l.mode.delete(cb); },
     onEnvironmentChange: (cb) => { l.env.add(cb); return () => l.env.delete(cb); },
     onProjectionChange: (cb) => { l.proj.add(cb); return () => l.proj.delete(cb); },
-    onFeatureLinesChange: (cb) => { l.lines.add(cb); return () => l.lines.delete(cb); },
     onAssemblyChange: (cb) => { l.asm.add(cb); return () => l.asm.delete(cb); },
     onThemeChange: (cb) => { l.theme.add(cb); return () => l.theme.delete(cb); },
     _fire: l,
@@ -97,16 +94,11 @@ test("a tile switches style: an environment then realistic, or back to CAD", asy
   expect(v.setRenderMode).toHaveBeenLastCalledWith("cad");
 });
 
-test("the lines switch reflects and sets the current style's lines", async () => {
-  const v = fakeViewer();
-  const c = attachViewStyleControls(v, { stage, anchor });
+test("the popover has no feature-lines switch — lines are CAD-only", () => {
+  const c = attachViewStyleControls(fakeViewer(), { stage, anchor });
   c.open();
-  const sw = stage.querySelector(".pf-view-style-switch");
-  expect(sw.getAttribute("role")).toBe("switch");
-  expect(sw.getAttribute("aria-checked")).toBe("true");
-  sw.click();
-  expect(v.setFeatureLines).toHaveBeenCalledWith(false);
-  expect(sw.getAttribute("aria-checked")).toBe("false");
+  expect(stage.querySelector(".pf-view-style-switch")).toBeNull();
+  expect(stage.querySelector('[role="switch"]')).toBeNull();
 });
 
 test("the projection control sets and follows the projection", () => {
@@ -190,34 +182,6 @@ test("setHidden hides the button and closes the popover", () => {
   c.setHidden(true);
   expect(c.element.hidden).toBe(true);
   expect(c.isOpen()).toBe(false);
-});
-
-test("a feature-lines change re-renders the current style's tile while open, and re-renders all on the next open", async () => {
-  const v = fakeViewer();
-  const c = attachViewStyleControls(v, { stage, anchor });
-  c.open(); await flush(); await flush();
-  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(5);
-  let n = 0;
-  v.renderStyleThumbnail.mockImplementation(async (s) => `data:${s}-v${++n}`);
-  stage.querySelector(".pf-view-style-switch").click();   // lines off for CAD
-  await flush();
-  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(6);
-  expect(v.renderStyleThumbnail.mock.calls.at(-1)[0]).toBe("cad");
-  expect(tile("cad").querySelector("img").src).toBe("data:cad-v1");
-  c.close(); c.open(); await flush(); await flush();
-  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(11); // stale → the whole set again
-});
-
-test("a feature-lines change while closed renders nothing until the next open", async () => {
-  const v = fakeViewer();
-  const c = attachViewStyleControls(v, { stage, anchor });
-  c.open(); await flush(); await flush();
-  c.close();
-  v.setFeatureLines(false);                                  // e.g. runtime.featureLines.set
-  await flush();
-  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(5);
-  c.open(); await flush(); await flush();
-  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(10);
 });
 
 test("the button wears a movie-camera icon, not the palette", () => {

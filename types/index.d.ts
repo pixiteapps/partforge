@@ -271,8 +271,6 @@ export interface ViewerState {
   renderMode?: RenderMode;
   /** The realistic environment id, present only when one was CHOSEN (`environment.set`, the picker) — a merely seeded default is left out so the part's own `meta.environment` still applies on remount. An unknown id falls back to `"studio"`. */
   environment?: string;
-  /** Feature lines per style (`"cad"` or an environment id → on/off), for the styles the user switched explicitly. Always reported; optional on the way back in. Unknown styles and non-boolean values are dropped on restore. */
-  featureLines?: Record<string, boolean>;
 }
 
 /** The viewer's appearance: the drafting view, or physical materials under an environment. */
@@ -632,12 +630,6 @@ export interface PartRuntime {
     set(id: string): Promise<string>;
     onChange(cb: (id: string) => void): () => void;
     list(): Array<{ id: string; label: string }>;
-  };
-  /** Feature lines for the CURRENT style (`"cad"` or the environment in view). set() applies and persists for that style only; onChange hears explicit changes, with the style they were made for. */
-  featureLines: {
-    get(): boolean;
-    set(on: boolean): void;
-    onChange(cb: (e: { style: string; on: boolean }) => void): () => void;
   };
   /** True when any sub-part names a display.material. */
   declaresMaterials: boolean;
