@@ -60,13 +60,18 @@ export function createContactShadow({ renderer, sizeMm = 400, resolution = 512, 
   }
   setSize(sizeMm);
 
+  // The blur plane sits in the shadow group, i.e. in the user's scene, so it
+  // is hidden again even if a blur render throws.
   function blurPass(amount) {
     blurPlane.visible = true;
-    blurPlane.material = hBlur; hBlur.uniforms.tDiffuse.value = rt.texture; hBlur.uniforms.h.value = amount / 256;
-    renderer.setRenderTarget(rtBlur); renderer.render(blurPlane, cam);
-    blurPlane.material = vBlur; vBlur.uniforms.tDiffuse.value = rtBlur.texture; vBlur.uniforms.v.value = amount / 256;
-    renderer.setRenderTarget(rt); renderer.render(blurPlane, cam);
-    blurPlane.visible = false;
+    try {
+      blurPlane.material = hBlur; hBlur.uniforms.tDiffuse.value = rt.texture; hBlur.uniforms.h.value = amount / 256;
+      renderer.setRenderTarget(rtBlur); renderer.render(blurPlane, cam);
+      blurPlane.material = vBlur; vBlur.uniforms.tDiffuse.value = rtBlur.texture; vBlur.uniforms.v.value = amount / 256;
+      renderer.setRenderTarget(rt); renderer.render(blurPlane, cam);
+    } finally {
+      blurPlane.visible = false;
+    }
   }
 
   // `casters` are the visible sub-part meshes; everything else in `scene` is

@@ -46,6 +46,23 @@ test("render() restores scene and renderer state even when renderer.render() thr
   shadow.dispose();
 });
 
+// The blur plane lives in the shadow group, which is in the user's scene: a
+// blur render that throws must not leave it drawn there.
+test("a blur render that throws still hides the blur plane", () => {
+  const renderer = fakeRenderer();
+  const shadow = createContactShadow({ renderer, sizeMm: 200 });
+  const scene = new THREE.Scene();
+  const caster = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+  scene.add(caster, shadow.group);
+  renderer.render = (obj) => { if (obj !== scene) throw new Error("blur failed"); };
+  const blurPlane = shadow.group.children.find((o) => o.isMesh && !o.material.map);
+
+  expect(() => shadow.render(scene, [caster])).toThrow("blur failed");
+
+  expect(blurPlane.visible).toBe(false);
+  shadow.dispose();
+});
+
 // three (r15x+) leaves SCALE out of a camera's view matrix, so a depth camera
 // sized by scaling its parent group saw a 1 mm square and the shadow texture
 // stayed empty in every environment. The frustum has to be sized itself.
