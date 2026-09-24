@@ -8,13 +8,13 @@ export const DEFAULT_ENVIRONMENT_ID = "studio";
 
 export const ENVIRONMENTS = {
   studio: {
-    id: "studio", label: "Studio", exposure: 1.0,
+    id: "studio", label: "Studio", exposure: 0.8,
     hdr: "env-studio.jpg",
     ground: { texture: "ground-paper.jpg", sizeMm: 400, tint: 0xf2f2f2 },
     backdrop: "gradient", gradient: [0xf4f5f7, 0xc9ccd1],
   },
   workshop: {
-    id: "workshop", label: "Workshop", exposure: 1.1,
+    id: "workshop", label: "Workshop", exposure: 0.88,
     hdr: "env-workshop.jpg",
     ground: { texture: "ground-oak.jpg", roughnessTexture: "ground-oak-rough.jpg", sizeMm: 600, tint: 0xffffff },
     backdrop: "blurred",

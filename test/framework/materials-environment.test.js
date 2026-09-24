@@ -15,7 +15,7 @@ test("a rig carries its exposure, env map and a ground at the requested height",
     loadHdr: async () => new THREE.DataTexture(), loadTexture: () => new THREE.Texture(), pmrem,
   });
   expect(rig.id).toBe("workshop");
-  expect(rig.exposure).toBeCloseTo(1.1);
+  expect(rig.exposure).toBeCloseTo(0.88);
   expect(rig.envMap).toBeInstanceOf(THREE.Texture);
   rig.setGround({ y: -12, centerX: 3, centerZ: 4, radius: 50 });
   expect(rig.ground.position.y).toBeCloseTo(-12, 1);
