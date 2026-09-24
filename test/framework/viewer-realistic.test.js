@@ -918,3 +918,49 @@ test("agent renders ignore the switch: CAD always with lines, realistic always w
   expect(v.__subLines("body").visible).toBe(false); // live CAD, user's "off", restored
   v.dispose();
 });
+
+test("a CAD thumbnail from a realistic view borrows CAD and puts the view back", async () => {
+  stubCanvas();
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const physical = v.__subMesh("body").material;
+  expect(await v.renderStyleThumbnail("cad")).toBe("data:image/jpeg;base64,TEST");
+  expect(v.getRenderMode()).toBe("realistic");
+  expect(v.__subMesh("body").material).toBe(physical);
+  v.dispose();
+});
+
+test("an environment thumbnail from CAD renders that environment, leaves CAD, and frees a thumbnail-only rig", async () => {
+  stubCanvas();
+  const v = shown();
+  const renders = recordRenders(v);
+  expect(await v.renderStyleThumbnail("outdoor")).toBe("data:image/jpeg;base64,TEST");
+  const rig = rigState.rigs.find((r) => r.id === "outdoor");
+  expect(renders.some((r) => r.environment === rig.envMap)).toBe(true);
+  expect(v.getRenderMode()).toBe("cad");
+  expect(rig.dispose).toHaveBeenCalled();           // not the live environment
+  v.dispose();
+});
+
+test("a thumbnail of another environment while realistic restores the live rig and keeps it", async () => {
+  stubCanvas();
+  const v = shown();
+  await v.setRenderMode("realistic");               // studio
+  const live = lastRig();
+  const scene = sceneOf(v);
+  await v.renderStyleThumbnail("workshop");
+  expect(scene.environment).toBe(live.envMap);
+  expect(live.ground.parent).toBe(scene);
+  expect(live.dispose).not.toHaveBeenCalled();
+  expect(rigState.rigs.find((r) => r.id === "workshop").ground.parent).toBe(null);
+  v.dispose();
+});
+
+test("showAssembly announces an assembly change", () => {
+  const v = shown();
+  let n = 0;
+  v.onAssemblyChange(() => { n += 1; });
+  v.showAssembly(["body"]);
+  expect(n).toBe(1);
+  v.dispose();
+});

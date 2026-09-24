@@ -587,6 +587,26 @@ export function createViewer(container, part) {
     return rigCache.get(id);
   }
 
+  // A rig loaded only to draw a thumbnail is freed straight away: each holds
+  // its equirect (~16 MB of half-float) and a PMREM, and four of them resident
+  // on a phone is not acceptable. The live one (or one a switch is loading) stays.
+  // rig.dispose() also disposes the ground textures loadTexture cached — safe:
+  // each environment.js ground.texture/roughnessTexture/normalTexture is a
+  // distinct file (environments.js), so no two rigs ever share a Texture
+  // object, and Texture.dispose() only frees the GPU handle (via the
+  // renderer's 'dispose' listener) — it leaves texture.image and every field
+  // three's uploader reads untouched. loadTexture keeps returning that same
+  // (still-intact) Texture object out of textureCache, so a later rigFor for
+  // this id just re-uploads it on the next render, exactly like a first load.
+  function releaseThumbnailRig(id) {
+    if (id === environmentId || realisticRig?.id === id) return;
+    const p = rigCache.get(id);
+    if (!p) return;
+    rigCache.delete(id);
+    loadedRigs.delete(id);
+    p.then((r) => r.dispose(), () => {});
+  }
+
   // three's Material.copy carries neither onBeforeCompile nor
   // customProgramCacheKey, and it JSON-copies userData. For a patterned
   // physical material (patterns.js) that means every clone the cutaway or a
@@ -905,6 +925,10 @@ export function createViewer(container, part) {
   // (setActive(false)) automatically halts playback too: no loop, no ticks.
   const frameListeners = new Set();
   function onFrame(cb) { frameListeners.add(cb); return () => frameListeners.delete(cb); }
+
+  // Fired at the end of every showAssembly, for hosts that need to react to
+  // which sub-parts are visible (e.g. re-deriving a view style thumbnail).
+  const assemblyListeners = new Set();
 
   const camTween = createCameraTween();
 
@@ -1260,6 +1284,9 @@ export function createViewer(container, part) {
     if (frame) frameTo(visibleNames);
     cutaway.setVisible(effectiveVisible());
     placeGround(); // realistic only: the ground comes to the part, and the shadow re-renders
+    for (const cb of [...assemblyListeners]) {
+      try { cb(); } catch (e) { console.warn("partforge: assembly listener failed", e); }
+    }
   }
 
   // Re-frame whatever is currently visible (the reframe button).
@@ -1641,6 +1668,43 @@ export function createViewer(container, part) {
     }
   }
 
+  // One small render of the CURRENT framing in any style, for the view style
+  // popover. The live view is put back exactly (same contract as captureIn:
+  // no publish, nothing persisted), whether it is CAD, or realistic in this
+  // or another environment. The borrowed style brings its own feature-lines
+  // preference with it, because linesOn() reads the current style.
+  async function renderStyleThumbnail(style, { size = 256 } = {}) {
+    if (disposed) return null;
+    const box = getVisibleWorldBounds();
+    if (!box || box.isEmpty()) return null;
+    const capture = () => currentFramingInCurrentLook({ size, quality: 0.8 });
+    if (style === "cad") return captureIn("cad", null, capture);
+    const id = resolveEnvironmentId(style).id;
+    const rig = await rigFor(id);
+    if (disposed) return null;
+    await compileRealistic(rig, { forCapture: true });
+    if (disposed) return null;
+    try {
+      if (renderMode !== "realistic" || realisticRig === rig) return captureIn("realistic", rig, capture);
+      // Realistic in another environment: borrow this rig, then put the live one back.
+      const liveRig = realisticRig, movedAt = shadowMovedAt;
+      try {
+        enterRealistic(rig, { live: false });
+        return capture();
+      } finally {
+        try {
+          enterRealistic(liveRig, { live: false, reground: false });
+          shadowMovedAt = movedAt;
+        } catch (e) {
+          console.warn("partforge: restoring the realistic view after a thumbnail failed", e);
+          publishMode({ error: "couldn't load realistic view" });
+        }
+      }
+    } finally {
+      releaseThumbnailRig(id);
+    }
+  }
+
   // Agent-facing canonical renders in a chosen appearance, whatever the live
   // view shows. CAD is exactly captureCanonicalViews (which is always CAD).
   // Realistic waits for the current environment's rig and the capture's
@@ -2002,6 +2066,7 @@ export function createViewer(container, part) {
     controls.removeEventListener("start", onControlsStart);
     cameraStartListeners.clear();
     frameListeners.clear();
+    assemblyListeners.clear();
     themeListeners.clear();
     projectionListeners.clear();
     canonicalCaptureHidden.clear();
@@ -2065,7 +2130,9 @@ export function createViewer(container, part) {
     captureCurrent,
     renderMeshPayloads,
     renderViews,
+    renderStyleThumbnail,
     onFrame,
+    onAssemblyChange: (cb) => { assemblyListeners.add(cb); return () => assemblyListeners.delete(cb); },
     tweenCameraTo,
     cancelCameraTween,
     orbitBy,
