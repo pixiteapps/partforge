@@ -847,3 +847,29 @@ test("a GL context that only reads half-float back as FLOAT falls back to 8-bit"
   expect(renders.at(-1).type).toBe(THREE.UnsignedByteType);
   v.dispose();
 });
+
+// A capture renders into a 4× MSAA, stencilled half-float target. A GPU that
+// can read half-float back but can't RENDER that multisampled target would
+// pass a plain 1×1 probe and then produce black captures, so the probe checks
+// the target captures really use.
+test("the HDR probe checks the multisampled, stencilled half-float target captures render into", async () => {
+  stubCanvas();
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const v = shown();
+  const gl = fakeGl(0x140b);
+  let bound = null;
+  const probed = [];
+  gl.checkFramebufferStatus = () => {
+    probed.push({ samples: bound?.samples, stencil: bound?.stencilBuffer, type: bound?.texture.type });
+    return bound?.samples > 0 ? 0x8cdd /* FRAMEBUFFER_UNSUPPORTED */ : 0x8cd5;
+  };
+  state.renderer.getContext = () => gl;
+  await v.setRenderMode("realistic");
+  const renders = recordRenders(v);
+  const setTarget = state.renderer.setRenderTarget;
+  state.renderer.setRenderTarget = (t) => { bound = t; setTarget(t); };
+  v.captureCurrent({ size: 64 });
+  expect(probed).toContainEqual({ samples: 4, stencil: true, type: THREE.HalfFloatType });
+  expect(renders.at(-1).type).toBe(THREE.UnsignedByteType); // unsupported → the 8-bit path, not a black capture
+  v.dispose();
+});

@@ -1314,8 +1314,12 @@ export function createViewer(container, part) {
   // no error, live view unaffected, wrong only in the capture.
   const RT_OPTIONS = { samples: 4, stencilBuffer: true };
   // Decided once per viewer, on the first realistic capture (see
-  // halfFloatCaptureSupported). The probe binds a 1×1 half-float target and
-  // asks GL what it can read back from it.
+  // halfFloatCaptureSupported). Two 1×1 probes, because a capture needs two
+  // things of half-float: RENDERING into the exact target a capture uses (4×
+  // MSAA with a stencil — a GPU can support single-sampled half-float and
+  // still refuse a multisampled one, which would come back as a black capture),
+  // and READING BACK, which three does from the resolved single-sampled
+  // framebuffer, so the read format is asked of a plain half-float target.
   let _hdrReadback = null;
   function hdrCaptureReadback() {
     if (_hdrReadback !== null) return _hdrReadback;
@@ -1324,18 +1328,22 @@ export function createViewer(container, part) {
     const gl = renderer.getContext?.();
     if (readable && typeof gl?.getParameter === "function") {
       halfFloat = gl.HALF_FLOAT;
-      const probe = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
+      const complete = () => gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+      const renderProbe = new THREE.WebGLRenderTarget(1, 1, { ...RT_OPTIONS, type: THREE.HalfFloatType });
+      const readProbe = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
       try {
-        renderer.setRenderTarget(probe);
-        const complete = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
-        readType = complete && gl.getParameter(gl.IMPLEMENTATION_COLOR_READ_FORMAT) === gl.RGBA
+        renderer.setRenderTarget(renderProbe);
+        const renderable = complete();
+        renderer.setRenderTarget(readProbe);
+        readType = renderable && complete() && gl.getParameter(gl.IMPLEMENTATION_COLOR_READ_FORMAT) === gl.RGBA
           ? gl.getParameter(gl.IMPLEMENTATION_COLOR_READ_TYPE)
           : -1;
       } catch {
         readType = -1;
       } finally {
         renderer.setRenderTarget(null);
-        probe.dispose();
+        renderProbe.dispose();
+        readProbe.dispose();
       }
     }
     _hdrReadback = halfFloatCaptureSupported({ readable, readType, halfFloat });
