@@ -145,8 +145,9 @@ Restore is best-effort per field, so a state that no longer fits is dropped
 rather than fatal. The cut plane's world pose is restored exactly; its
 on-screen size is re-derived from the new geometry, since that is a property of
 the part rather than of the user's choice. Omit `viewerState` on a first mount
-— the viewer then restores its own persisted camera and projection, as it
-always has.
+— the viewer then restores its own persisted camera, as it always has, in
+perspective (the projection is automatic — orthographic only on a view cube
+face view — so it is not persisted).
 
 **Park the viewer when you hide it.** A host that hides the canvas with
 `display: none` needs nothing — the container collapses and the ResizeObserver

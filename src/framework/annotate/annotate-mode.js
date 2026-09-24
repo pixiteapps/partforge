@@ -515,8 +515,13 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
   }
 
   function cameraBlock(inv) {
-    const { pos, target } = viewer.getCameraState();
+    // The target from getCameraState, the position from the LIVE camera: under
+    // ortho getCameraState reports a perspective-equivalent position (for
+    // restoring a framing), while this block describes the camera that
+    // actually drew the frame.
+    const { target } = viewer.getCameraState();
     const cam = viewer.camera;
+    const pos = cam.position.toArray();
     const ortho = !!cam.isOrthographicCamera;
     // 4 decimals ≈ 0.1 µm at mm scale — far below anything a sketch encodes,
     // and it keeps float dust (1e-16 up-vector components) out of what an LLM

@@ -17,7 +17,7 @@ import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
 import { flashWorldRadius, projectToScreen, anchorMoved } from "./pick-flash.js";
 import { createCameraTween } from "./camera-tween.js";
 import { orbitPose } from "./camera-orbit.js";
-import { orthoFrustum, perspectiveDistance, isFaceAligned, hasLeftAxis } from "./projection.js";
+import { orthoFrustum, perspectiveDistance, isFaceAligned, FACE_ALIGN_COS } from "./projection.js";
 import { depthRangeFor } from "./depth-range.js";
 import { addViewerLights, captureLightPoses, createCaptureLights, createHemisphereLight } from "./viewer-lighting.js";
 import { makeCaptureCamera, recenteredView, captureDepthRange } from "./capture-frame.js";
@@ -1276,10 +1276,18 @@ export function createViewer(container, part) {
   // so setProjection's own controls.update() never runs nested inside one.
   // Skipped while a tween is in flight: it owns the camera, and decides the
   // projection itself (tweenCameraTo).
+  // Allocation-free (it runs every frame while ortho): one scratch vector and
+  // a dot product against the cosine of projection.js's epsilon — the same
+  // test as hasLeftAxis, inlined.
+  const _autoDir = new THREE.Vector3();
+  const _axisUnit = new THREE.Vector3();
   function checkAutoProjection() {
     if (projectionMode !== "orthographic" || !orthoAxis || camTween.isActive()) return;
-    const dir = activeCamera.position.clone().sub(controls.target);
-    if (hasLeftAxis(dir.toArray(), orthoAxis.toArray())) setProjection("perspective");
+    _autoDir.copy(activeCamera.position).sub(controls.target);
+    const len = _autoDir.length(), axisLen = orthoAxis.length();
+    if (len === 0 || axisLen === 0) return;
+    _axisUnit.copy(orthoAxis).divideScalar(axisLen);
+    if (_autoDir.dot(_axisUnit) / len < FACE_ALIGN_COS) setProjection("perspective");
   }
 
   // Fallback creasing for payloads with no kernel normals. Both backends now
@@ -1361,6 +1369,7 @@ export function createViewer(container, part) {
   // --- show / hide assembly -------------------------------------------------
   const _box = new THREE.Box3();
   const _posedBox = new THREE.Box3();
+  const _frameDir = new THREE.Vector3();
 
   // Recentre the assembly on the pivot and frame the camera to the named parts.
   // Cached bounding boxes are in the delivered mesh's own frame, so any fast-path
@@ -1381,7 +1390,16 @@ export function createViewer(container, part) {
     floorY = -size.z / 2;
     grid.position.y = floorY;
     const r = Math.max(size.x, size.y, size.z) || 12;
-    activeCamera.position.setLength(r * 2.6 + 6);
+    // Keep the VIEW DIRECTION (target -> camera), not the camera's direction
+    // from the origin: after a pan the target is off the origin, and scaling
+    // the position about the origin would turn the view — which, in an ortho
+    // face view, reads as a rotation and drops to perspective at an off-axis
+    // angle on the next frame. Falls back to the old origin-relative direction
+    // for a degenerate offset (camera on its target).
+    _frameDir.copy(activeCamera.position).sub(controls.target);
+    if (_frameDir.lengthSq() === 0) _frameDir.copy(activeCamera.position);
+    if (_frameDir.lengthSq() === 0) _frameDir.set(1, 1, 1);
+    activeCamera.position.copy(_frameDir.normalize().multiplyScalar(r * 2.6 + 6));
     controls.target.set(0, 0, 0);
     // Framing under ortho is a frustum, not a distance — without this the
     // reframe button moves the camera and nothing visibly changes.
@@ -2045,10 +2063,29 @@ export function createViewer(container, part) {
   }
 
   // --- camera state (read/write for persistence; mount.js owns storage) -------
+  // Under ortho, `pos` is the PERSPECTIVE-EQUIVALENT position: same view
+  // direction, at the distance whose perspective frame shows what the ortho
+  // frustum shows now (halfH / zoom — setProjection's own conversion). An
+  // ortho zoom never moves the camera, so the raw position would carry none of
+  // it, and setCameraState — which re-derives the frustum from the distance at
+  // zoom 1 — would bring a remount back at the unzoomed size. Every reader of
+  // this state (viewerState's carry-over, the reload-persisted camera) means
+  // "what the user was looking at", so they all want the equivalent. The live
+  // ortho camera's own position is viewer.camera.position.
   function getCameraState() {
+    const t = controls.target;
+    if (projectionMode === "orthographic") {
+      const offset = activeCamera.position.clone().sub(t);
+      if (offset.lengthSq() > 0) {
+        const halfH = (orthoCamera.top - orthoCamera.bottom) / 2 || 1;
+        const d = perspectiveDistance({ halfH, zoom: orthoCamera.zoom || 1, fovDeg: camera.fov });
+        const p = offset.normalize().multiplyScalar(d).add(t);
+        return { pos: [p.x, p.y, p.z], target: [t.x, t.y, t.z] };
+      }
+    }
     return {
       pos: [activeCamera.position.x, activeCamera.position.y, activeCamera.position.z],
-      target: [controls.target.x, controls.target.y, controls.target.z],
+      target: [t.x, t.y, t.z],
     };
   }
   function setCameraState({ pos, target }) {

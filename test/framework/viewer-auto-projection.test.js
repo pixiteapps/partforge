@@ -179,14 +179,14 @@ test.each(["top-front", "bottom-left", "top-front-right", "iso"])(
     const viewer = orthoFrontViewer();
     viewer.camera.zoom = 2; // the user dollied in
     viewer.camera.updateProjectionMatrix();
-    const orthoDistance = distanceOf(viewer);
+    const halfOnScreen = viewer.camera.top / viewer.camera.zoom;
 
     viewer.tweenCameraTo(view, CUBE);
 
     // Immediately, before any frame: the swap happens with the part still seen
-    // head-on, and recovers the dolly as distance (2x zoom == half the distance).
+    // head-on, and recovers the dolly as distance (the same apparent size).
     expect(viewer.getProjection()).toBe("perspective");
-    expect(distanceOf(viewer)).toBeCloseTo(orthoDistance / 2, 6);
+    expect(distanceOf(viewer) * HALF_FOV_TAN).toBeCloseTo(halfOnScreen, 6);
     runFrames();
     expect(viewer.getProjection()).toBe("perspective");
     viewer.dispose();
@@ -331,5 +331,53 @@ test("a user grab mid face-to-face tween, under ortho, returns to perspective", 
   viewer.cancelCameraTween();
   runFrames(1);
   expect(viewer.getProjection()).toBe("perspective");
+  viewer.dispose();
+});
+
+// partforge-cloud remounts on every edit, carrying getViewerState().camera. An
+// ortho zoom never moves the camera, so the carried pose has to express it as
+// distance, or the face view comes back at the unzoomed size.
+test("a zoomed ortho face view survives a remount at the same apparent size", () => {
+  const viewer = orthoFrontViewer();
+  viewer.camera.zoom = 3;
+  viewer.camera.updateProjectionMatrix();
+  const onScreen = viewer.camera.top / viewer.camera.zoom;
+  const carried = viewer.getCameraState();
+  viewer.dispose();
+
+  // What mount does with a carried face-view state: ortho first, then the pose.
+  const next = makeViewer();
+  next.setProjection("orthographic");
+  next.setCameraState(carried);
+  runFrames(5);
+
+  expect(next.getProjection()).toBe("orthographic");
+  expect(next.camera.top / next.camera.zoom).toBeCloseTo(onScreen, 6);
+  expect(offAxisDeg(next, [0, 0, 1])).toBeLessThan(0.01);
+  next.dispose();
+});
+
+test("getCameraState is the live pose in perspective, and keeps the view direction in ortho", () => {
+  const viewer = orthoFrontViewer();
+  viewer.camera.zoom = 2;
+  viewer.camera.updateProjectionMatrix();
+  const { pos, target } = viewer.getCameraState();
+  const dir = new THREE.Vector3().fromArray(pos).sub(new THREE.Vector3().fromArray(target)).normalize();
+  expect(dir.z).toBeCloseTo(1, 9);
+  // Twice the zoom, half the distance — the conversion setProjection uses.
+  expect(distanceOf(viewer) * HALF_FOV_TAN).toBeCloseTo(viewer.camera.top / 2, 6);
+  viewer.dispose();
+});
+
+test("reframing after a pan keeps an ortho face view (the view direction, not the origin's)", () => {
+  const viewer = orthoFrontViewer();
+  const shift = new THREE.Vector3(9, 4, 0);
+  state.controls.target.add(shift);
+  viewer.camera.position.add(shift);
+  runFrames(2);
+  viewer.frame();
+  runFrames(5);
+  expect(viewer.getProjection()).toBe("orthographic");
+  expect(offAxisDeg(viewer, [0, 0, 1])).toBeLessThan(0.01);
   viewer.dispose();
 });

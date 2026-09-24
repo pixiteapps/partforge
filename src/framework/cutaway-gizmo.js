@@ -53,7 +53,8 @@ export function createCutawayGizmo({
   onDragChange = () => {},
   pickHandle,
 }) {
-  // Reassignable: the viewer swaps cameras when the projection toggle flips,
+  // Reassignable: the viewer swaps cameras when the projection changes (a view
+  // cube face view settling into ortho, a rotation leaving it),
   // and this module holds fifteen references to it. One binding to move beats
   // threading a getter through all of them.
   let camera = initialCamera;

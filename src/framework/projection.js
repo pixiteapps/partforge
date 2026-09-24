@@ -29,7 +29,8 @@ export function perspectiveDistance({ halfH, zoom = 1, fovDeg }) {
 // view is never exactly on +Y) and far below any rotation a person could make
 // on purpose and expect to see.
 export const FACE_ALIGN_EPS_DEG = 0.5;
-const COS_EPS = Math.cos((FACE_ALIGN_EPS_DEG * Math.PI) / 180);
+export const FACE_ALIGN_COS = Math.cos((FACE_ALIGN_EPS_DEG * Math.PI) / 180);
+const COS_EPS = FACE_ALIGN_COS;
 
 function unit(v) {
   const l = Math.hypot(v[0], v[1], v[2]);
