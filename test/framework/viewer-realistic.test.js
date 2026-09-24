@@ -412,3 +412,20 @@ test("a capture while realistic leaves the live CAD key/fill lights off", async 
   expect(scene.children.filter((o) => o.isLight).every((l) => !l.visible)).toBe(true);
   v.dispose();
 });
+
+test("geometry delivered while realistic is compiling still gets UVs for brushed metal", async () => {
+  const brushed = { meta: { title: "t" }, parts: { body: { build: () => null, display: { material: "brushed-aluminum" } } } };
+  const v = createViewer(createContainer(), brushed);
+  v.setSubGeometry("body", payload());
+  v.showAssembly(["body"], { frame: true });
+  let open;
+  state.renderer.compileAsync.mockImplementationOnce(() => new Promise((r) => { open = r; }));
+  const p = v.setRenderMode("realistic");
+  await vi.waitFor(() => expect(state.renderer.compileAsync).toHaveBeenCalled());
+  v.setSubGeometry("body", payload()); // a regen lands mid-load, while the mode is still CAD
+  v.showAssembly(["body"]);
+  open();
+  expect(await p).toBe("realistic");
+  expect(v.__subMesh("body").geometry.attributes.uv).toBeDefined();
+  v.dispose();
+});

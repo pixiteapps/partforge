@@ -636,6 +636,9 @@ export function createViewer(container, part) {
   function enterRealistic(rig, { live = true } = {}) {
     try {
       renderMode = "realistic";
+      // A regen can land between the proxy compile and here, while the mode
+      // was still CAD, so setSubGeometry skipped the UVs. Idempotent.
+      for (const n of names) if (subCache[n] && physicalFor(n).userData.pfAnisotropic) ensureBoxUVs(subCache[n]);
       setSubMaterials(physicalFor);
       if (realisticRig && realisticRig !== rig) scene.remove(realisticRig.ground, realisticRig.shadow.group);
       realisticRig = rig;
