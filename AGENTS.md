@@ -165,24 +165,26 @@ the installed package, so let the publish finish before bumping the dep there.
   `rail.js` now also refuses below the breakpoint (previously reachable only
   with custom host CSS, since the seam is `display: none` there).
 - **`src/framework/materials/`** - the material library and realistic-mode
-  rendering. `presets.js` (the preset table) and `environments.js` (the
-  environment records) are plain **data modules** - deliberately three-free
-  and DOM-free so `lint`, the worker's 3MF writer and the docs-parity test can
-  all import them without dragging GL or a browser into the worker graph;
-  `resolve.js` (display-block -> library lookup, never throws) and
-  `print-frame.js`/`uv.js` (pose math for layer lines and box UVs) are pure
-  for the same reason. Everything that actually touches **three.js** -
-  `physical.js` (CAD vs. `MeshPhysicalMaterial`), `environment.js` (the PMREM
-  rig: lighting, backdrop, ground, contact shadow), `contact-shadow.js` - is a
-  separate set of modules the viewer alone imports. `patterns.js` is the
-  **only** shader-injection site (`onBeforeCompile`) for layer lines, wood,
-  carbon weave and SLS grain - a future TSL/WebGPU port only has to rewrite
-  this one file. `assets.js` is the **only** module allowed a literal `new
-  URL("./assets/x", import.meta.url)` (the same rule `docs/AUTHORING-PARTS.md`
-  states for fonts/imports/vectors, and the fix for the
-  `partforge/geometry`-class bug where a computed asset path is invisible to
-  the bundler and 404s in production). `tonemap-readback.js` tone-maps
-  realistic captures in plain JS because three applies tone mapping and output
+  rendering. `presets.js` (the preset table), `environments.js` (the
+  environment records), `resolve.js` (display-block -> library lookup, never
+  throws), `print-frame.js` (pose math for layer lines), `assets.js` (asset
+  filename -> URL) and `tonemap-readback.js` (below) import **no three.js at
+  all** - deliberately three-free and DOM-free so `lint`, the worker's 3MF
+  writer and the docs-parity test can all import them without dragging GL or
+  a browser into the worker graph. Everything that actually touches
+  **three.js** - `physical.js` (CAD vs. `MeshPhysicalMaterial`), `uv.js`
+  (box-projected UVs for anisotropy), `patterns.js` (below), `environment.js`
+  (the PMREM rig: lighting, backdrop, ground, contact shadow), and
+  `contact-shadow.js` - is a separate set of modules the viewer alone
+  imports, not the worker. `patterns.js` is the **only** shader-injection
+  site (`onBeforeCompile`) for layer lines, wood, carbon weave and SLS grain
+  - a future TSL/WebGPU port only has to rewrite this one file. `assets.js`
+  is the **only** module allowed a literal `new URL("./assets/x",
+  import.meta.url)` (the same rule `docs/AUTHORING-PARTS.md` states for
+  fonts/imports/vectors, and the fix for the `partforge/geometry`-class bug
+  where a computed asset path is invisible to the bundler and 404s in
+  production). `tonemap-readback.js` tone-maps realistic captures in plain JS
+  (no three import at all) because three applies tone mapping and output
   colour space only on the canvas path (a bound render target gets
   `NoToneMapping` and linear output on r184) - captures render HDR into a
   half-float target and finish there: exposure -> Khronos PBR Neutral -> sRGB.
