@@ -493,6 +493,17 @@ export function createCutaway({
     return true;
   }
 
+  // Swap one sub-part's SOURCE material (realistic mode). The render set
+  // re-derives its clipped clone and cap colour from it and reassigns
+  // mesh.material for the current enabled state.
+  function refreshSubpartMaterial(name, meshMaterial) {
+    if (disposed) return false;
+    const entry = renderSets.get(name);
+    if (!entry) return false;
+    entry.renderSet.refreshSourceMaterial(meshMaterial);
+    return true;
+  }
+
   // Per-frame maintenance while the cutaway is on: the gizmo rescales for the
   // camera, and every visible section re-slices its outline if anything it
   // depends on moved. Both are cheap no-ops when nothing changed.
@@ -581,6 +592,7 @@ export function createCutaway({
     setVisible,
     setEnabled,
     resyncSubpart,
+    refreshSubpartMaterial,
     reset,
     flip,
     getState,
