@@ -1,7 +1,7 @@
 // src/framework/view-style-controls.js
 // The view style button and its popover: every control that changes HOW the
 // part is drawn, in one place — the style (CAD or a realistic environment, as
-// live thumbnails of this part) and the projection. Generated into the
+// live thumbnails of this part). Generated into the
 // stage, not declared by the host (the view cube / mobile-tabs.js
 // precedent), so an embedder gets it with no markup.
 //
@@ -22,8 +22,16 @@
 //     the popover opens above the BUTTON.
 //
 // Either way the popover closes whenever the button's host (#viewbar, or the
-// cube's stack) is hidden — Sketch mode hides both. One code path for the
-// popover; only its reference rect and the observed host differ.
+// cube's stack) is hidden — Sketch mode hides both — whether by the `hidden`
+// attribute or by CSS (partforge-cloud hides #viewbar with a class, which is
+// display:none and no attribute at all). One code path for the popover; only
+// its reference rect and the observed host differ.
+//
+// Through 2026-09-24 the popover also held a Projection row (a Perspective /
+// Orthographic segmented control). It went when the projection became
+// AUTOMATIC — orthographic on a view cube face view, perspective everywhere
+// else (Fusion 360's "Perspective with Ortho Faces"; viewer.js's
+// tweenCameraTo) — so the popover is the style grid alone.
 //
 // The state shown is always the viewer's: a tile is pressed once the viewer
 // reports that style, and a runtime change made elsewhere shows up here.
@@ -88,21 +96,7 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
     tiles.set(s.id, { tile: t, img });
   }
 
-  const projRow = el("div", "pf-view-style-row");
-  const projLabel = el("span", "", { id: "pf-view-style-proj-label" });
-  projLabel.textContent = "Projection";
-  const seg = el("div", "pf-view-style-seg", { role: "radiogroup", "aria-labelledby": "pf-view-style-proj-label" });
-  const projButtons = [["perspective", "Perspective"], ["orthographic", "Orthographic"]].map(([id, text]) => {
-    const b = el("button", "", { type: "button", role: "radio", "aria-checked": "false" });
-    b.dataset.projection = id;
-    b.textContent = text;
-    b.addEventListener("click", () => { viewer.setProjection(id); render(); });
-    seg.append(b);
-    return b;
-  });
-  projRow.append(projLabel, seg);
-
-  pop.append(styleHead, grid, projRow);
+  pop.append(styleHead, grid);
   stage.append(pop);
 
   const tooltipBinding = tooltip ? attachButtonTooltips(tooltip, [{ element: button }]) : null;
@@ -117,8 +111,6 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
       tile.setAttribute("aria-pressed", String(id === current));
       if (id === pendingStyle && id !== current) tile.dataset.busy = "true"; else delete tile.dataset.busy;
     }
-    const proj = viewer.getProjection();
-    for (const b of projButtons) b.setAttribute("aria-checked", String(b.dataset.projection === proj));
     tooltipBinding?.sync();
   }
 
@@ -231,7 +223,6 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
   const offs = [
     viewer.onRenderModeChange(() => render()),
     viewer.onEnvironmentChange(() => render()),
-    viewer.onProjectionChange(() => render()),
     viewer.onAssemblyChange?.(() => cache.invalidate()) ?? (() => {}),
     viewer.onThemeChange?.(() => cache.invalidate()) ?? (() => {}),
   ];
@@ -240,10 +231,26 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
   // for Sketch mode; the cube's stack (fallback) for Sketch and for a crowded
   // transport bar. Observing the host actually holding the button means the
   // toolbar button does NOT go away when the cube hides for crowding.
+  //
+  // Two observers, because there are two ways to hide it. The `hidden`
+  // attribute is what this framework sets; a HOST may instead hide the bar with
+  // its own CSS (partforge-cloud toggles a class on #viewbar), which sets no
+  // attribute. That one is caught by size: a display:none element — or one
+  // inside a display:none ancestor — has no layout box, which a ResizeObserver
+  // reports as a 0x0 resize. Read off the element (getClientRects is empty for
+  // an element with no box) rather than the entry, so the test does not depend
+  // on which box the observer measured. An element that has simply not been
+  // laid out yet is never OPEN, so the early callback a ResizeObserver makes on
+  // observe() closes nothing.
+  const hostHidden = () => host.hidden || host.getClientRects().length === 0;
   const hideObserver = host && typeof MutationObserver === "function"
     ? new MutationObserver(() => { if (host.hidden) close({ focus: false }); })
     : null;
   hideObserver?.observe(host, { attributes: true, attributeFilter: ["hidden"] });
+  const sizeObserver = host && typeof ResizeObserver === "function"
+    ? new ResizeObserver(() => { if (isOpen() && hostHidden()) close({ focus: false }); })
+    : null;
+  sizeObserver?.observe(host);
 
   return {
     element: button,
@@ -252,9 +259,13 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
     isOpen,
     open,
     close,
+    // The divider belongs to the button (it separates the appearance group
+    // the button opens), so it goes with it — else a hidden button leaves a
+    // stray rule at the end of the tools group.
     setHidden(flag) {
       if (flag) close({ focus: false });
       button.hidden = !!flag;
+      if (divider) divider.hidden = !!flag;
     },
     sync: render,
     detach() {
@@ -267,6 +278,7 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
       for (const off of offs) { try { off(); } catch { /* already gone */ } }
       tooltipBinding?.detach();
       hideObserver?.disconnect();
+      sizeObserver?.disconnect();
       button.remove();
       divider?.remove();
       pop.remove();

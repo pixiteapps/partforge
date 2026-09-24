@@ -3,6 +3,36 @@
 Date: 2026-09-24. Follows the realistic rendering mode (partforge #222, spec in
 partforge-cloud `docs/superpowers/specs/2026-09-24-realistic-rendering-mode-design.md`).
 
+## Revisions (read these first)
+
+The sections below are the design as first written and are kept for history.
+Three things changed before it shipped:
+
+- **2026-09-24 — feature lines:** no switch; lines are CAD-only (see
+  "Feature lines").
+- **2026-09-24 — placement:** the button moved off the view cube into the
+  bottom toolbar (`#viewbar`), inserted before `#theme` behind a divider (the
+  bar's appearance group), with an **eye** icon; the popover opens above the
+  pill, right edges flush, and closes when the bar hides (by the `hidden`
+  attribute or a host's CSS). Only a stage with no `#viewbar` falls back to
+  the cube's bottom-right corner. Follows Fusion 360's display settings in the
+  navigation bar.
+- **2026-09-24 — projection is automatic:** the Projection row is gone, and
+  the popover is the Style grid alone. Following Fusion 360's "Perspective
+  with Ortho Faces" (and Blender's "Auto Perspective"): a view cube FACE click
+  (canvas or keyboard button) tweens there and settles into orthographic at
+  the end of the tween, size-preserving; edge, corner and iso views are
+  perspective (an ortho view swaps back as that tween starts, while the part
+  is still seen head-on); in a face view pan and zoom keep ortho, and the
+  first rotation — a view-direction change past half a degree, checked per
+  frame — returns to perspective. Only the cube opts in
+  (`tweenCameraTo(view, { autoProjection: true })`); animation cues never
+  switch into ortho. The projection is no longer persisted
+  (`partforge:projection` is not read); a remount restores ortho from
+  `viewerState` only with a face-view camera. `runtime.projection` stays for
+  hosts, and a host's `set("orthographic")` is left by rotation like any face
+  view. Agent-facing canonical renders stay perspective.
+
 ## Goal
 
 Every control that changes *how the part is drawn* moves into one popover,
@@ -36,6 +66,7 @@ it):
    every realistic style defaults off (today's behaviour). Flipping it in
    Studio changes Studio only.
 3. **Projection** — a two-segment control, Perspective | Orthographic.
+   *(2026-09-24: removed — the projection is automatic; see Revisions.)*
 
 Closes on Escape, an outside pointerdown, or the button again; focus returns
 to the button. Keyboard: the button has `aria-haspopup="dialog"` /

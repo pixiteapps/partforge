@@ -2607,16 +2607,17 @@ Either way it replaces the old projection toggle. It opens a popover holding eve
 changes *how* the part is drawn: the **style** — CAD or one of the realistic
 environments (see "Materials and appearance" above), each shown as a live
 thumbnail of the part, re-rendered on the next open after the part or theme
-changes — and a **Perspective / Orthographic** projection control. Feature
+changes. There is no projection control: the projection is **automatic** (see
+`runtime.projection` below). Feature
 lines are CAD-only and not a switch: they draw whenever the style is CAD and
 never in a realistic style. The old `#realistic` / `#environment` viewbar
 controls (`elements.chrome.realistic` / `.environment`) and the cube's own
 `#projection` button were retired with it (2026-09-24); a page that still
 carries `#realistic` / `#environment` markup just shows dead elements, so
 delete them. A host can still drive `runtime.renderMode` /
-`runtime.environment` / `runtime.projection` from its own UI (see below). All
-of these preferences persist across reloads the same way the theme does, and
-are carried in `viewerState` (below), which outranks what is stored.
+`runtime.environment` / `runtime.projection` from its own UI (see below). The
+style preferences persist across reloads the same way the theme does, and are
+carried in `viewerState` (below), which outranks what is stored.
 
 **`#reframe` is supported but no longer shipped.** The framework's own pages dropped
 the button on 2026-08-20: clicking a face, edge or corner on the view cube reframes
@@ -2757,11 +2758,24 @@ pane's pixel size:
 ### `runtime.projection`
 
 `{ get(), set(mode), onChange(cb) }` where `mode` is `"perspective"` or
-`"orthographic"`. Drives the **live view** and `captureCurrent` only —
+`"orthographic"`. The projection is **automatic**, the way Fusion 360's
+"Perspective with Ortho Faces" and Blender's "Auto Perspective" work: clicking
+one of the view cube's six **face** views (on the cube, or through its hidden
+per-face keyboard buttons) tweens there and settles into orthographic at the
+end of the tween, with no size jump; an edge, corner or iso view is perspective
+(an orthographic view switches back as that tween starts). In a face view,
+**pan and zoom keep it orthographic; the first rotation** (the view direction
+leaving the face axis by more than half a degree) swaps back to perspective,
+keeping the part's apparent size. Animation camera cues never switch into
+orthographic. There is no user control for it. `set("orthographic")` still
+works for a host, and is left the same way — by the first rotation — and
+`onChange` hears every automatic swap. It is **not persisted** across reloads
+(a reload opens in perspective); a remount carries it in `viewerState`, but
+only with a face-view camera — carried with any other camera it restores
+perspective. Drives the **live view** and `captureCurrent` only —
 `captureCanonicalViews`, `renderMeshPayloads`, and the CLI's `partforge render`
-stay perspective unconditionally, so agent-facing output does not depend on a UI
-toggle. The choice persists across reloads under `partforge:projection` and is
-restored before the first framing. The orientation cube and the view style
+stay perspective unconditionally, so agent-facing output does not depend on the
+live view. The orientation cube and the view style
 button (in `#viewbar`, which Sketch hides) are hidden while Sketch (annotate) mode is active, but that only governs
 *user-driven* view changes — the framework does not police programmatic ones.
 The ink is a transparent overlay and the WebGL canvas keeps rendering beneath
@@ -2824,7 +2838,7 @@ edits by remounting typically does) doesn't drop the in-flight choice — a
 load that ultimately fails still settles back to `"cad"`. Pass `viewerState`
 back into the next `mount()` call to resume both where the previous mount
 left them; omit it on a first mount and the viewer restores its own persisted
-choice instead, the same way it does for the camera and projection.
+choice instead, the same way it does for the camera.
 
 ### The annotation payload's camera block
 

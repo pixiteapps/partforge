@@ -792,14 +792,7 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 .pf-view-style-tile[data-busy] .pf-view-style-thumb { animation: pf-busy-pulse .8s ease-in-out infinite alternate; }
 @keyframes pf-busy-pulse { from { opacity: 1; } to { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { .pf-view-style-tile[data-busy] .pf-view-style-thumb { animation: none; } }
-.pf-view-style-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.pf-view-style-seg { display: flex; padding: 2px; gap: 2px; border-radius: var(--pf-radius-control); background: var(--pf-surface-2); }
-.pf-view-style-seg button {
-  border: 0; padding: 4px 8px; border-radius: calc(var(--pf-radius-control) - 2px);
-  background: transparent; color: var(--pf-muted-2); font: inherit; cursor: pointer;
-}
-.pf-view-style-seg button[aria-checked="true"] { background: var(--pf-surface); color: var(--pf-text); box-shadow: var(--pf-shadow-float); }
-.pf-view-style-button:focus-visible, .pf-view-style-tile:focus-visible, .pf-view-style-seg button:focus-visible {
+.pf-view-style-button:focus-visible, .pf-view-style-tile:focus-visible {
   outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
 }
 

@@ -127,15 +127,23 @@ the installed package, so let the publish finish before bumping the dep there.
   the camera to canonical angles, with model-frame X/Y/Z arrows drawn in
   front of it - `cube-geom.js` is the pure projection/hit leaf, `cube-canvas.js`
   the 2D renderer, `viewcube-mode.js` the orchestrator, `viewcube-controls.js`
-  the stack chrome. The view style button (an eye) that replaced the cube's
+  the stack chrome. The cube's six FACE clicks (and their visually-hidden
+  keyboard buttons) pass `autoProjection` to `tweenCameraTo`, which settles
+  a face view into orthographic at the end of the tween; an edge, corner or
+  iso tween is perspective, and in a face view pan and zoom keep ortho while
+  the first rotation (a view-direction change, checked per frame in the
+  render loop) swaps back to perspective, size-preserving - Fusion 360's
+  "Perspective with Ortho Faces". There is no projection control and it is
+  not persisted; animation cues never pass `autoProjection`. The view style
+  button (an eye) that replaced the cube's
   projection toggle now lives in the stage's `#viewbar`, inserted before
   `#theme` behind a `.pf-viewbar-divider` (the bar's appearance group; the
   popover opens above the pill, right edges flush, and closes when the bar
   hides for Sketch); only a stage with no `#viewbar` gets it over the cube's
   bottom-right corner instead (a DOM child of the stack, so it hides with it,
   inside the stack's box so the published size is unchanged). It belongs to
-  `view-style-controls.js`: the button and its popover (style thumbnails,
-  projection), with `view-style-state.js` as its
+  `view-style-controls.js`: the button and its popover (the style
+  thumbnails alone), with `view-style-state.js` as its
   pure half (the style list, thumbnail-cache freshness). Feature lines are
   CAD-only, not a popover control: they draw whenever the style is CAD and
   never in a realistic style. The stack hides for either of two independent reasons, OR-ed in
@@ -150,7 +158,8 @@ the installed package, so let the publish finish before bumping the dep there.
   leaves the viewer imports - eased spherical interpolation between camera
   poses (view switches, animation camera cues, viewcube clicks), spherical
   orbit math for external drag sources, the perspective/orthographic
-  framing pair, and the near/far planes, respectively. The last of those is
+  framing pair plus the face-alignment tests automatic projection runs on,
+  and the near/far planes, respectively. The last of those is
   derived per frame from the sphere enclosing what is being drawn (and again
   per offscreen capture, from `sceneBounds`) rather than fixed: a part big
   enough - a ~287mm cube is the first - used to have its back corner cut off

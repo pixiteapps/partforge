@@ -17,7 +17,7 @@ import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
 import { flashWorldRadius, projectToScreen, anchorMoved } from "./pick-flash.js";
 import { createCameraTween } from "./camera-tween.js";
 import { orbitPose } from "./camera-orbit.js";
-import { orthoFrustum, perspectiveDistance } from "./projection.js";
+import { orthoFrustum, perspectiveDistance, isFaceAligned, hasLeftAxis } from "./projection.js";
 import { depthRangeFor } from "./depth-range.js";
 import { addViewerLights, captureLightPoses, createCaptureLights, createHemisphereLight } from "./viewer-lighting.js";
 import { makeCaptureCamera, recenteredView, captureDepthRange } from "./capture-frame.js";
@@ -155,7 +155,7 @@ export function captureCurrentFromScene(
   const long = Math.min(Math.max(Math.round(size) || MIN_SIZE, MIN_SIZE), maxTextureSize ?? 2048);
   // An OrthographicCamera has no `aspect` — its aspect lives in the frustum. Read
   // it there, or the capture comes back SQUARE from a wide viewport the moment the
-  // user toggles to ortho: silent, and only wrong in the saved image.
+  // view goes ortho: silent, and only wrong in the saved image.
   const aspect = liveCamera.aspect
     || (liveCamera.isOrthographicCamera
       ? (liveCamera.right - liveCamera.left) / (liveCamera.top - liveCamera.bottom)
@@ -211,7 +211,7 @@ export function createViewer(container, part) {
 
   // Two cameras, one active. The perspective camera stays the source of truth
   // for fov and aspect; the ortho camera borrows both through projection.js so
-  // a toggle never changes the part's size on screen.
+  // a swap never changes the part's size on screen.
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
   camera.position.set(18, 12, 18);
   const orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
@@ -219,6 +219,12 @@ export function createViewer(container, part) {
   let activeCamera = camera;
   let projectionMode = "perspective";
   const projectionListeners = new Set();
+  // The view direction (target -> camera) orthographic was entered on. The
+  // projection is AUTOMATIC (Fusion 360's "Perspective with Ortho Faces"): a
+  // view cube face click settles into ortho, and the first frame the direction
+  // has turned off this axis — a rotation, never a pan or zoom — swaps back to
+  // perspective. Non-null exactly while ortho is live. See checkAutoProjection.
+  let orthoAxis = null;
 
   const controls = new OrbitControls(activeCamera, renderer.domElement);
   controls.enableDamping = true;
@@ -1040,7 +1046,23 @@ export function createViewer(container, part) {
   // the tween would re-zoom on every frame of a 0.6s cue (see setCameraState's
   // comment, which is where that reasoning is written down). Composed with the
   // caller's own onComplete rather than replacing it.
-  function tweenCameraTo(viewName, { duration = 0.6, onComplete, refit = false } = {}) {
+  //
+  // `autoProjection` is the view cube's alone (its canvas clicks and its
+  // per-face keyboard buttons): a tween that lands on a FACE view — straight
+  // down a world axis — settles into orthographic at the end. Deliberately an
+  // explicit option rather than inferred from the view name, because an
+  // animation camera cue to "front" means "look from the front", not "switch
+  // projection"; cues never pass it, so they never ENTER ortho.
+  //
+  // Leaving ortho is the same for every tween: one whose destination is not a
+  // face view (an edge, a corner, iso) swaps back to perspective at the START.
+  // At the start because the part is still seen head-on there, where the two
+  // projections differ least, and the rotation that follows then reads as the
+  // ordinary perspective orbit it is; swapping at the end instead would spin
+  // the part flat and then pop the depth in at an oblique angle, where the
+  // difference is largest. A tween between two faces while ortho stays ortho
+  // the whole way — no projection change at all, rather than two in 0.6s.
+  function tweenCameraTo(viewName, { duration = 0.6, onComplete, refit = false, autoProjection = false } = {}) {
     const box = getVisibleWorldBounds();
     if (!box || box.isEmpty()) { onComplete?.(); return; }
     const center = box.getCenter(new THREE.Vector3()).toArray();
@@ -1048,11 +1070,24 @@ export function createViewer(container, part) {
     // radius = full max extent (not half), matching frameTo's framing distance so a
     // live camera cue doesn't land twice as close as the reframe button and crop the part.
     const pose = cameraPoseForView(viewName, { center, radius: Math.max(size.x, size.y, size.z) || 12 });
+    const toDir = new THREE.Vector3().fromArray(pose.position).sub(new THREE.Vector3().fromArray(pose.target));
+    const toFace = isFaceAligned(toDir.toArray());
+    if (!toFace && projectionMode === "orthographic") setProjection("perspective");
     // The projection is read at COMPLETION, not now: a 0.6s tween is long
-    // enough for the user to have toggled projection under it.
+    // enough for a host to have changed it under it.
     const finish = () => {
       restoreDamping();
-      if (refit && projectionMode === "orthographic") {
+      if (autoProjection && toFace && projectionMode !== "orthographic") {
+        // Settle into the face view. The tween fires onComplete from inside its
+        // own update(), BEFORE the render loop writes the final pose onto the
+        // camera, so put it there first — the render loop then writes the same
+        // values onto the (now orthographic) camera. setProjection sizes the
+        // frustum from the camera's distance, which is the pose's framing
+        // distance, so this is also the refit, with zoom 1.
+        activeCamera.position.fromArray(pose.position);
+        controls.target.fromArray(pose.target);
+        setProjection("orthographic");
+      } else if (refit && projectionMode === "orthographic") {
         // The tween fires onComplete from inside its own update(), BEFORE the
         // render loop writes the final pose onto the camera — so the camera is
         // still a frame short of where it is going. Frame from the distance
@@ -1062,6 +1097,10 @@ export function createViewer(container, part) {
             .distanceTo(new THREE.Vector3().fromArray(pose.target)),
         });
       }
+      // Still ortho at the end (a face-to-face tween, a cue onto a face, or the
+      // switch just above): the face this tween landed on is the axis a
+      // rotation now has to leave.
+      if (projectionMode === "orthographic") orthoAxis = toDir.clone();
       onComplete?.();
     };
     suspendDamping();
@@ -1174,7 +1213,7 @@ export function createViewer(container, part) {
       // which is the camera that is still live and therefore the one
       // updateDepthRange has been keeping current. `far * 0.9` alone would be
       // too eager: frameTo frames at 2.6r + 6 MILLIMETRES, so an everyday 300mm
-      // part sits at 786mm and a plain toggle would silently reframe it closer.
+      // part sits at 786mm and a plain swap would silently reframe it closer.
       // Hence the max with the distance the camera is already at, which makes an
       // untouched round trip (zoom === 1, where orthoFrustum/perspectiveDistance
       // are exact inverses) lossless for a part of ANY size, and still never lets
@@ -1208,12 +1247,16 @@ export function createViewer(container, part) {
     // controls.update() ends in Object3D.lookAt, which does refresh matrixWorld
     // — but it refreshes BEFORE writing the new quaternion, so a rotation
     // applied inside that same update (damping momentum still decaying as the
-    // toggle lands) leaves the rotation one frame behind. One matrix compose is
+    // swap lands) leaves the rotation one frame behind. One matrix compose is
     // cheaper than depending on that ordering. Placed after controls.update()
     // for the same reason: it is the last writer of the pose.
     to.updateMatrixWorld();
     cutaway.setCamera(to);
     projectionMode = next;
+    // Ortho is armed on the direction it was entered on, whoever entered it (a
+    // face click, a host's runtime.projection.set, a restore): the first
+    // rotation off it returns to perspective the same way for all of them.
+    orthoAxis = next === "orthographic" ? to.position.clone().sub(controls.target) : null;
     for (const cb of [...projectionListeners]) cb(projectionMode);
     return projectionMode;
   }
@@ -1221,6 +1264,22 @@ export function createViewer(container, part) {
   function onProjectionChange(cb) {
     projectionListeners.add(cb);
     return () => projectionListeners.delete(cb);
+  }
+
+  // Run every frame, after controls.update() and the tween have written the
+  // pose: the first frame the view direction has turned off the ortho axis is a
+  // ROTATION (a canvas drag, the cube's drag, a user grab that cancelled a tween
+  // mid-turn), and it swaps back to perspective, size-preserving, from the
+  // pose it has only just left. Direction rather than OrbitControls' "start"
+  // event, because "start" also fires for pan and zoom, which keep the face
+  // view. Here in the render loop rather than in a controls "change" listener
+  // so setProjection's own controls.update() never runs nested inside one.
+  // Skipped while a tween is in flight: it owns the camera, and decides the
+  // projection itself (tweenCameraTo).
+  function checkAutoProjection() {
+    if (projectionMode !== "orthographic" || !orthoAxis || camTween.isActive()) return;
+    const dir = activeCamera.position.clone().sub(controls.target);
+    if (hasLeftAxis(dir.toArray(), orthoAxis.toArray())) setProjection("perspective");
   }
 
   // Fallback creasing for payloads with no kernel normals. Both backends now
@@ -1864,7 +1923,7 @@ export function createViewer(container, part) {
     try {
       // fov comes from the PERSPECTIVE camera, deliberately, not from whichever
       // camera is live: thumbnails are canonical captures and stay perspective
-      // however the user has the projection toggled. cameraPoseForView's distance
+      // whichever projection is live. cameraPoseForView's distance
       // is tuned to this fov, so a narrower one would crop long, thin parts.
       return renderOffscreen(
         pose,
@@ -1899,6 +1958,7 @@ export function createViewer(container, part) {
       activeCamera.position.fromArray(tw.position);
       controls.target.fromArray(tw.target);
     }
+    checkAutoProjection();
     // Per-listener guard, because three re-arms requestAnimationFrame only AFTER
     // this callback returns (WebGLAnimation.onAnimationFrame): a listener that
     // throws would stop the rAF chain outright and freeze the viewer for good, not
@@ -1996,7 +2056,7 @@ export function createViewer(container, part) {
     controls.target.set(target[0], target[1], target[2]);
     controls.update();
     // A saved pose carries an implied FRAMING, so the ortho frustum has to be
-    // re-derived from the restored distance. Without it, a reload in ortho comes
+    // re-derived from the restored distance. Without it, a remount in ortho comes
     // back at the wrong zoom: the projection is restored during mount setup,
     // while the camera is restored much later (showView, on the first accepted
     // build), so the frustum would stay sized for wherever the camera happened
@@ -2010,7 +2070,18 @@ export function createViewer(container, part) {
     // that really does mean "refit" opts in with `{ refit: true }`, which runs
     // this same sync exactly once, on the tween's completion; the view cube's
     // clicks are the only callers that do.
-    if (projectionMode === "orthographic") syncOrthoToPerspectiveFraming();
+    if (projectionMode === "orthographic") {
+      // A placed pose is not a rotation, so it re-arms rather than exits — as
+      // long as it is still a face view. Orthographic only ever holds on one
+      // (the projection is automatic), so a pose off every axis — an old
+      // stored state, a host restoring a free-orbit pose — comes back in
+      // perspective: from the frustum just synced to this distance, a lossless
+      // round trip.
+      syncOrthoToPerspectiveFraming();
+      const dir = activeCamera.position.clone().sub(controls.target);
+      if (isFaceAligned(dir.toArray())) orthoAxis = dir;
+      else setProjection("perspective");
+    }
   }
   function onCameraEnd(cb) { controls.addEventListener("end", cb); }
 
@@ -2225,7 +2296,7 @@ export function createViewer(container, part) {
     setCameraState,
     onCameraEnd,
     // A GETTER, not a value: the active camera changes when the projection is
-    // toggled, and every consumer (measure/dim3-scene.js, selection/raycast.js,
+    // swapped, and every consumer (measure/dim3-scene.js, selection/raycast.js,
     // annotate/annotate-mode.js, measure/measure-mode.js) reads viewer.camera
     // fresh at call time — so this is transparent to all of them.
     get camera() { return activeCamera; },

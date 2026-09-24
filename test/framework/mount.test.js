@@ -1610,31 +1610,61 @@ test("the cube's two hide reasons OR rather than overwrite each other", () => {
   runtime.dispose();
 });
 
-test("restores a persisted orthographic projection before the first framing", () => {
-  localStorage.setItem("partforge:projection", "orthographic");
+// The projection is automatic (orthographic only on a view cube face view), so
+// it is no longer a persisted preference — but a host that remounts per edit
+// carries it in viewerState, and a remount mid-face-view has to come back in
+// that face view.
+test("restores a carried orthographic face view before the first framing", () => {
   const els = makeElements();
   const { workers, createWorker } = makeWorkers();
-  const runtime = mount(makePart(), { createWorker, elements: els });
+  const camera = { pos: [0, 0, 80], target: [0, 0, 0] }; // front: a face view
+  const runtime = mount(makePart(), {
+    createWorker, elements: els, viewerState: { camera, projection: "orthographic", cutaway: null },
+  });
   const viewer = fakeViewers.at(-1);
   // Set synchronously during mount setup, well before any worker round-trip
   // could resolve — this alone pins "restored before the first build".
   expect(viewer.setProjection).toHaveBeenCalledWith("orthographic");
   finishFirstBuild(workers);
   // showAssembly's first call is the one that actually frames the camera
-  // (frame:true on the initial show — see showView in mount.js). Comparing
-  // invocation order against it is the real ordering claim: had the restore
-  // been moved to fire alongside the camera restore (inside showView, AFTER
-  // this call), this assertion would catch it. viewer.frame() (the reframe
-  // BUTTON's handler) is a different function and is never called on this
-  // path, so it can't stand in for "framing happened" — that was the flaw in
-  // the previous version of this test.
-  expect(viewer.showAssembly).toHaveBeenCalledWith(expect.anything(), { frame: true });
+  // (frame:true on the initial show — see showView in mount.js); the carried
+  // camera lands after it, through setCameraState, which re-arms the face view.
   const firstFrameCall = viewer.showAssembly.mock.calls.findIndex(([, opts]) => opts?.frame);
   expect(firstFrameCall).toBeGreaterThanOrEqual(0);
   expect(viewer.setProjection.mock.invocationCallOrder[0])
     .toBeLessThan(viewer.showAssembly.mock.invocationCallOrder[firstFrameCall]);
-  localStorage.clear();
+  expect(viewer.setCameraState).toHaveBeenCalledWith(camera);
   runtime.dispose();
+});
+
+test.each([
+  ["a free-orbit camera", { pos: [18, 12, 18], target: [0, 0, 0] }],
+  ["no camera", null],
+])("a carried orthographic state with %s restores perspective", (_label, camera) => {
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: els, viewerState: { camera, projection: "orthographic", cutaway: null },
+  });
+  const viewer = fakeViewers.at(-1);
+  expect(viewer.setProjection).toHaveBeenCalledWith("perspective");
+  expect(viewer.setProjection).not.toHaveBeenCalledWith("orthographic");
+  runtime.dispose();
+});
+
+test("the projection is neither restored from nor saved to storage", () => {
+  // A stale key from when the projection was a manual toggle.
+  localStorage.setItem("partforge:projection", "orthographic");
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  const viewer = fakeViewers.at(-1);
+  expect(viewer.setProjection).not.toHaveBeenCalledWith("orthographic");
+  localStorage.removeItem("partforge:projection");
+  runtime.projection.set("orthographic");
+  expect(localStorage.getItem("partforge:projection")).toBeNull();
+  runtime.dispose();
+  localStorage.clear();
 });
 
 // --- Sketch toolbar wiring (sdd 2026-08-27-sketch-tools, Task 10) ----------
@@ -1893,19 +1923,6 @@ test("a cutaway that was off carries nothing and leaves the button alone", () =>
 
   expect(viewer.setCutawayState).not.toHaveBeenCalled();
   expect(els.chrome.cutaway.getAttribute("aria-pressed")).toBe("false");
-  runtime.dispose();
-});
-
-test("a carried projection outranks the persisted one", () => {
-  localStorage.setItem("partforge:projection", "orthographic");
-  const els = makeElements();
-  const { createWorker } = makeWorkers();
-  const runtime = mount(makePart(), {
-    createWorker, elements: els, viewerState: { camera: null, projection: "perspective", cutaway: null },
-  });
-  const viewer = fakeViewers.at(-1);
-  expect(viewer.setProjection).toHaveBeenCalledWith("perspective");
-  localStorage.clear();
   runtime.dispose();
 });
 

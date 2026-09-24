@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { attachViewStyleControls } from "../../src/framework/view-style-controls.js";
@@ -101,16 +101,20 @@ test("the popover has no feature-lines switch — lines are CAD-only", () => {
   expect(stage.querySelector('[role="switch"]')).toBeNull();
 });
 
-test("the projection control sets and follows the projection", () => {
+test("the popover has no Projection row — projection is automatic (a cube face view is ortho)", () => {
   const v = fakeViewer();
   const c = attachViewStyleControls(v, { stage, anchor });
   c.open();
-  const ortho = stage.querySelector('.pf-view-style-seg [data-projection="orthographic"]');
-  ortho.click();
-  expect(v.setProjection).toHaveBeenCalledWith("orthographic");
-  expect(ortho.getAttribute("aria-checked")).toBe("true");
-  v.setProjection("perspective");
-  expect(ortho.getAttribute("aria-checked")).toBe("false");
+  expect(stage.querySelector('[data-projection]')).toBeNull();
+  expect(stage.querySelector('[role="radiogroup"]')).toBeNull();
+  expect(c.popover.textContent).not.toMatch(/projection|orthographic|perspective/i);
+  // The Style heading and grid are all that is left.
+  expect([...c.popover.children].map((n) => n.className))
+    .toEqual(["pf-view-style-heading", "pf-view-style-grid"]);
+  // …and nothing reaches for the projection API any more.
+  expect(v.setProjection).not.toHaveBeenCalled();
+  const css = readFileSync(resolve("src/framework/app.css"), "utf8");
+  expect(css).not.toMatch(/pf-view-style-seg|pf-view-style-row/);
 });
 
 test("Escape with focus in the popover closes it, returns focus, and does not reach the stage", () => {
@@ -182,6 +186,18 @@ test("setHidden hides the button and closes the popover", () => {
   c.setHidden(true);
   expect(c.element.hidden).toBe(true);
   expect(c.isOpen()).toBe(false);
+});
+
+test("toolbar: setHidden takes the divider with the button, and brings both back", () => {
+  const bar = makeToolbar();
+  const c = attachViewStyleControls(fakeViewer(), { stage, toolbar: bar, anchor });
+  const divider = bar.querySelector(".pf-viewbar-divider");
+  c.setHidden(true);
+  expect(c.element.hidden).toBe(true);
+  expect(divider.hidden).toBe(true);
+  c.setHidden(false);
+  expect(c.element.hidden).toBe(false);
+  expect(divider.hidden).toBe(false);
 });
 
 test("the button wears an eye icon (one icon, open or closed)", () => {
@@ -298,4 +314,46 @@ test("fallback: with no toolbar the button is in the stack and placed from its o
   c.open();
   expect(c.popover.style.right).toBe("12px");
   expect(c.popover.style.bottom).toBe("208px");      // 8px above the button's top
+});
+
+// A host may hide #viewbar with its OWN CSS — partforge-cloud toggles a class,
+// which is display:none and sets no `hidden` attribute, so the attribute
+// observer never hears it. A ResizeObserver does: an element with no layout box
+// reports a resize, and has no client rects.
+describe("toolbar hidden by CSS rather than the hidden attribute", () => {
+  let observers;
+  const OriginalRO = globalThis.ResizeObserver;
+  beforeEach(() => {
+    observers = [];
+    globalThis.ResizeObserver = class {
+      constructor(cb) { this.cb = cb; this.targets = []; observers.push(this); }
+      observe(el) { this.targets.push(el); }
+      disconnect() { this.targets = []; }
+    };
+  });
+  afterEach(() => { globalThis.ResizeObserver = OriginalRO; });
+  const fire = (el) => { for (const o of observers) if (o.targets.includes(el)) o.cb([{ target: el }]); };
+  const box = [{ width: 288, height: 44 }];
+
+  test("closes the popover when the bar loses its box", () => {
+    const bar = makeToolbar();
+    bar.getClientRects = () => box;
+    const c = attachViewStyleControls(fakeViewer(), { stage, toolbar: bar, anchor });
+    c.open();
+    fire(bar); // an ordinary resize (the stage got wider): still open
+    expect(c.isOpen()).toBe(true);
+    bar.getClientRects = () => []; // the host's class: display:none
+    fire(bar);
+    expect(c.isOpen()).toBe(false);
+  });
+
+  test("a resize while closed opens nothing, and detach stops observing", () => {
+    const bar = makeToolbar();
+    bar.getClientRects = () => [];
+    const c = attachViewStyleControls(fakeViewer(), { stage, toolbar: bar, anchor });
+    fire(bar);
+    expect(c.isOpen()).toBe(false);
+    c.detach();
+    expect(observers.every((o) => o.targets.length === 0)).toBe(true);
+  });
 });

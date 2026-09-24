@@ -6,7 +6,10 @@
 // and a fresh session opens on the part's own default (see default-view.js).
 // Reads/writes are guarded: if storage is unavailable (private mode, disabled) or a
 // value is corrupt, reads return the documented default and writes are no-ops —
-// persistence never throws. `renderMode` and `environment` are viewer
+// persistence never throws. The projection is not stored: it is automatic
+// (orthographic only on a view cube face view — viewer.js's tweenCameraTo), so
+// a reload opens in perspective; a stale `partforge:projection` key from when it
+// was a manual toggle is simply never read. `renderMode` and `environment` are viewer
 // preferences like `theme`; in the cloud's opaque-origin sandbox storage throws,
 // so there the host carries them in viewerState instead.
 import { ENVIRONMENTS } from "./materials/environments.js";
@@ -14,7 +17,6 @@ import { ENVIRONMENTS } from "./materials/environments.js";
 const KEY = {
   camera: "partforge:camera",
   theme: "partforge:theme",
-  projection: "partforge:projection",
   renderMode: "partforge:renderMode",
   environment: "partforge:environment",
 };
@@ -59,14 +61,6 @@ export function loadTheme() {
 
 export function saveTheme(mode) {
   if (mode === "light" || mode === "dark") write(KEY.theme, mode);
-}
-
-export function loadProjection() {
-  return read(KEY.projection) === "orthographic" ? "orthographic" : "perspective";
-}
-
-export function saveProjection(mode) {
-  if (mode === "perspective" || mode === "orthographic") write(KEY.projection, mode);
 }
 
 // null = nothing (valid) stored — the caller falls back to "cad".

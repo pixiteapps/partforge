@@ -2,7 +2,7 @@
 // as a jump in part size the instant the user hits the projection toggle, so
 // the round trip is asserted in both directions and through a dolly.
 import { describe, expect, it } from "vitest";
-import { orthoFrustum, perspectiveDistance } from "../../src/framework/projection.js";
+import { orthoFrustum, perspectiveDistance, isFaceAligned, isFaceAlignedState, hasLeftAxis } from "../../src/framework/projection.js";
 
 const FOV = 45;
 
@@ -43,5 +43,49 @@ describe("perspectiveDistance", () => {
   it("defaults zoom to 1", () => {
     const { halfH } = orthoFrustum({ fovDeg: FOV, distance: 42, aspect: 1 });
     expect(perspectiveDistance({ halfH, fovDeg: FOV })).toBeCloseTo(42, 8);
+  });
+});
+
+// Automatic projection: ortho only on a face view, left by a rotation.
+describe("isFaceAligned", () => {
+  it("accepts the six axes, at any length", () => {
+    for (const d of [[1, 0, 0], [-3, 0, 0], [0, 2, 0], [0, -1, 0], [0, 0, 9], [0, 0, -1]]) {
+      expect(isFaceAligned(d)).toBe(true);
+    }
+  });
+  it("accepts OrbitControls' 1e-6 rad pole clamp, rejects edges, corners and a visible tilt", () => {
+    expect(isFaceAligned([Math.sin(1e-6), Math.cos(1e-6), 0])).toBe(true);
+    expect(isFaceAligned([1, 1, 0])).toBe(false);
+    expect(isFaceAligned([1, 1, 1])).toBe(false);
+    const oneDeg = (Math.PI / 180);
+    expect(isFaceAligned([Math.sin(oneDeg), 0, Math.cos(oneDeg)])).toBe(false);
+  });
+  it("rejects the degenerate and the malformed", () => {
+    expect(isFaceAligned([0, 0, 0])).toBe(false);
+    expect(isFaceAligned([NaN, 0, 1])).toBe(false);
+    expect(isFaceAligned(null)).toBe(false);
+  });
+});
+
+describe("isFaceAlignedState", () => {
+  it("reads a { pos, target } camera state", () => {
+    expect(isFaceAlignedState({ pos: [5, 5, 40], target: [5, 5, 0] })).toBe(true);
+    expect(isFaceAlignedState({ pos: [18, 12, 18], target: [0, 0, 0] })).toBe(false);
+  });
+  it("is false for a missing or malformed state", () => {
+    expect(isFaceAlignedState(null)).toBe(false);
+    expect(isFaceAlignedState({ pos: [0, 0, 1] })).toBe(false);
+    expect(isFaceAlignedState({ pos: [0, 1], target: [0, 0, 0] })).toBe(false);
+  });
+});
+
+describe("hasLeftAxis", () => {
+  it("is false for the same direction at any length (a pan or an ortho zoom)", () => {
+    expect(hasLeftAxis([0, 0, 50], [0, 0, 1])).toBe(false);
+  });
+  it("is true once the direction turns past half a degree", () => {
+    const tilt = (deg) => [Math.sin((deg * Math.PI) / 180), 0, Math.cos((deg * Math.PI) / 180)];
+    expect(hasLeftAxis(tilt(0.4), [0, 0, 1])).toBe(false);
+    expect(hasLeftAxis(tilt(0.6), [0, 0, 1])).toBe(true);
   });
 });

@@ -68,7 +68,7 @@ describe("keyboard access", () => {
     // so they carry the same `refit` — without it, reaching a view by keyboard
     // under orthographic would change the angle and leave the dolly alone.
     stage.querySelector('.pf-viewcube-key button[data-view="top"]').click();
-    expect(viewer.tweenCameraTo).toHaveBeenCalledWith("top", { duration: 0.6, refit: true });
+    expect(viewer.tweenCameraTo).toHaveBeenCalledWith("top", { duration: 0.6, refit: true, autoProjection: true });
   });
 });
 

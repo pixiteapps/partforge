@@ -8,13 +8,16 @@
 // a small bare circle laid OVER the cube's bottom-right corner — absolutely
 // positioned, so the stack stayed exactly as wide as the canvas (135px, or 101
 // below the rail's narrow breakpoint) and the size published below was the
-// canvas's alone. On 2026-09-24 the projection control moved into the view
-// style popover (view-style-controls.js), whose button sits BESIDE the cube, to
-// its left. That module appends it into `element` (the stack), so it hides
-// with the cube; it is absolutely positioned OUTSIDE the stack's box, so the
-// stack's published size is still the canvas's. History of the toggle's earlier homes
-// (a `.pf-viewcube-pill` card below the cube, then a circle beside it) is in
-// chrome.css/app.css's viewcube sections.
+// canvas's alone. There is no projection control any more: since 2026-09-24
+// the projection is AUTOMATIC (Fusion 360's "Perspective with Ortho Faces") —
+// a face click, on the canvas or through the keyboard buttons below, settles
+// into orthographic, and rotating off the face returns to perspective (see
+// viewer.js's tweenCameraTo). The view style button (view-style-controls.js)
+// lives in the bottom toolbar (#viewbar); only a host with no #viewbar gets it
+// in this stack, over the cube's bottom-right corner, absolutely positioned so
+// the stack's published size is still the canvas's. History of the toggle's
+// earlier homes (a `.pf-viewcube-pill` card below the cube, then a circle
+// beside it) is in chrome.css/app.css's viewcube sections.
 import { runCleanupSteps } from "../teardown.js";
 import { createViewcubeMode } from "./viewcube-mode.js";
 
@@ -52,8 +55,9 @@ export function attachViewcubeControls(viewer, { stage } = {}) {
 
   const keyHandlers = keyButtons.map((b) => {
     // Same user intent as clicking the face on the canvas, so the same
-    // `refit` — these buttons ARE the keyboard route to that click.
-    const handler = () => viewer.tweenCameraTo(b.dataset.view, { duration: 0.6, refit: true });
+    // `refit` and `autoProjection` (a face view settles into orthographic) —
+    // these buttons ARE the keyboard route to that click.
+    const handler = () => viewer.tweenCameraTo(b.dataset.view, { duration: 0.6, refit: true, autoProjection: true });
     b.addEventListener("click", handler);
     return handler;
   });
