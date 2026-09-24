@@ -5,11 +5,11 @@
 // projection. Generated into the stage, not declared by the host (the view
 // cube / mobile-tabs.js precedent), so an embedder gets it with no markup.
 //
-// The button replaces the view cube's old projection toggle. It is a DOM
-// child of the cube's stack (so it hides whenever the cube does) but placed
-// BESIDE the cube, to its left (chrome.css), and wears #viewbar's chrome so
-// it reads as a control rather than a mark on the cube. The popover opens
-// ABOVE it, placed from the button's rect at open time.
+// The button replaces the view cube's old projection toggle, in the same
+// place: a DOM child of the cube's stack (so it hides whenever the cube
+// does), over the cube's bottom-right corner (chrome.css), wearing #viewbar's
+// chrome so it reads as a control rather than a mark on the cube. The
+// popover opens ABOVE it, placed from the button's rect at open time.
 //
 // The state shown is always the viewer's: a tile is pressed once the viewer
 // reports that style, and a runtime change made elsewhere shows up here.
@@ -17,7 +17,9 @@ import { STYLES, styleFor, createThumbnailCache } from "./view-style-state.js";
 import { saveRenderMode, saveEnvironment } from "./view-state.js";
 import { attachButtonTooltips } from "./tooltip.js";
 
-const ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z"/><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/></svg>`;
+// A movie camera (lucide "video"): the button is about how the part is
+// RENDERED, not about colour — a palette read as a paint/colour picker.
+const ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg>`;
 const LABEL = "View style";
 
 function el(tag, className, attrs = {}) {
@@ -188,10 +190,10 @@ export function attachViewStyleControls(viewer, { stage, anchor } = {}, { toolti
   };
   button.addEventListener("keydown", onKey);
   pop.addEventListener("keydown", onKey);
-  // Above the button, right edges aligned, never past the stage's top — and,
-  // since the button now sits LEFT of the cube, clamped so a stage narrower
-  // than the popover plus the cube's width does not push it off the left edge
-  // (a 400px phone stage: the button's right edge is ~121px in from the right).
+  // Above the button, right edges aligned, never past the stage's top — and
+  // clamped so it never runs off the stage's left edge either: a stage
+  // narrower than the popover plus the button's inset (today 12px; it was
+  // ~121px while the button sat beside the cube) would otherwise push it out.
   function place() {
     const s = stage.getBoundingClientRect(), b = button.getBoundingClientRect();
     const width = pop.offsetWidth;

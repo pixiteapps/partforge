@@ -718,7 +718,7 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    APPEARANCE only (placement lives in chrome.css, per the split at the top of
    this file).
 
-   The VIEW STYLE button now sits beside the cube, to its left
+   The VIEW STYLE button now sits over the cube's bottom-right corner
    (view-style-controls.js, 2026-09-24; its appearance is in the next section,
    its placement in chrome.css). It replaced the projection toggle, whose
    history there ran:
@@ -734,7 +734,7 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    then its accent colour, leaving the glyph as the one signal of the
    projection. The view style button goes the other way on purpose: the
    request was for a control that is clearly SEEN, so it is back to #viewbar's
-   card chrome, at 34px. The projection itself is now a labelled segmented
+   card chrome, at 30px. The projection itself is now a labelled segmented
    control inside the popover rather than a glyph. */
 .pf-viewcube-canvas {
   display: block;
@@ -743,9 +743,11 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 
 /* ---- view style button + popover (view-style-controls.js) -------------------
    The button replaced the cube's small projection circle and is meant to be
-   SEEN: #viewbar's chrome (surface, border, float shadow) on a 34px button. */
+   SEEN: #viewbar's chrome (surface, border, float shadow). 30px, the
+   viewbar's own compact button size: it sits over the cube's corner, and at
+   34px it covered a third of the 101px narrow cube. */
 .pf-view-style-button {
-  width: 34px; height: 34px; border: 1px solid var(--pf-border); border-radius: var(--pf-radius-control);
+  width: 30px; height: 30px; border: 1px solid var(--pf-border); border-radius: var(--pf-radius-control);
   background: var(--pf-surface); box-shadow: var(--pf-shadow-float);
   color: var(--pf-muted-2); cursor: pointer;
   display: flex; align-items: center; justify-content: center;

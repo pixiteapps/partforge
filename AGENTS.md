@@ -127,9 +127,10 @@ the installed package, so let the publish finish before bumping the dep there.
   the camera to canonical angles, with model-frame X/Y/Z arrows drawn in
   front of it - `cube-geom.js` is the pure projection/hit leaf, `cube-canvas.js`
   the 2D renderer, `viewcube-mode.js` the orchestrator, `viewcube-controls.js`
-  the stack chrome. The view style button sits beside the cube, to its left
-  (a DOM child of the stack, so it hides with it, but positioned outside the
-  stack's measured box), and belongs to
+  the stack chrome. The view style button sits over the cube's bottom-right
+  corner, where the projection toggle used to be (a DOM child of the stack,
+  so it hides with it, placed inside the stack's box so the published size is
+  unchanged), and belongs to
   `view-style-controls.js`: the button and its popover (style thumbnails,
   per-style feature lines, projection), with `view-style-state.js` as its
   pure half (the style list, line defaults, thumbnail-cache freshness). The stack hides for either of two independent reasons, OR-ed in

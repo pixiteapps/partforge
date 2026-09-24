@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { attachViewStyleControls } from "../../src/framework/view-style-controls.js";
 
 function fakeViewer() {
@@ -216,4 +218,24 @@ test("a feature-lines change while closed renders nothing until the next open", 
   expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(5);
   c.open(); await flush(); await flush();
   expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(10);
+});
+
+test("the button wears a movie-camera icon, not the palette", () => {
+  attachViewStyleControls(fakeViewer(), { stage, anchor });
+  const svg = stage.querySelector("#view-style svg");
+  expect(svg.getAttribute("width")).toBe("16");
+  expect(svg.querySelector("rect")).not.toBeNull();     // the camera body
+  expect(svg.querySelectorAll("path")).toHaveLength(1); // the lens
+  expect(svg.querySelector("circle")).toBeNull();       // the palette's paint dots are gone
+});
+
+test("the button sits over the cube's bottom-right corner, inside the stack's box", () => {
+  const css = readFileSync(resolve("src/framework/chrome.css"), "utf8");
+  const rules = css.match(/^\.pf-view-style-button\s*\{[^}]*\}/gm) ?? [];
+  expect(rules).toHaveLength(1);
+  const rule = rules[0].replace(/\s+/g, " ");
+  expect(rule).toContain("position: absolute");
+  expect(rule).toContain("right: 0;");
+  expect(rule).toContain("bottom: 0;");
+  expect(rule).not.toMatch(/calc\(100%/);               // not hung outside the stack (beside the cube)
 });
