@@ -310,9 +310,13 @@ export function createViewer(container, part) {
   // THAT render with the camera actually doing it: the live canvas, an
   // offscreen capture (renderOffscreen reuses this same `scene`), and the
   // contact shadow's own depth pass (which renders `scene` from below with
-  // its own camera; that pass already hides every non-caster and restores
-  // them in `finally`, so the print bed's own visibility flag here is just
-  // one more thing it restores). No-op outside realistic mode or for a rig
+  // its own camera, hiding every non-caster and restoring them in `finally`).
+  // That restore is not exact for the print bed: if the bed group was already
+  // hidden going in, the hook can set it visible for the shadow camera and
+  // leave it that way after the pass. Harmless — the next render's hook
+  // recomputes the flag for ITS camera before anything is drawn, and the
+  // plate lies outside the shadow camera's frustum, so the depth pass never
+  // draws it either way. No-op outside realistic mode or for a rig
   // whose environment has nothing to hide (the ground discs already cull by
   // their material's own side).
   const priorSceneOnBeforeRender = scene.onBeforeRender;
@@ -584,15 +588,44 @@ export function createViewer(container, part) {
 
   // Anisotropic filtering: the ground disc and the wood grain are seen at grazing
   // angles, where plain trilinear mip selection blurs them into smeared blocks.
+  //
+  // TextureLoader.load returns at once and fills `image` later, so a rig (or a
+  // physical material) is "ready" long before its maps are: a capture taken
+  // straight away draws the floor and the wood untextured. Each load therefore
+  // records a settle promise (resolved on load AND on error — a missing map is
+  // drawn without it, never an error), and whenTexturesSettled() waits for them.
+  const pendingTextures = new Set();
   const loadTexture = (file) => {
     let t = textureCache.get(file);
     if (!t) {
-      t = textureLoader.load(assetUrl(file));
+      let settle;
+      const settled = new Promise((resolve) => { settle = resolve; });
+      pendingTextures.add(settled);
+      settled.then(() => pendingTextures.delete(settled));
+      t = textureLoader.load(assetUrl(file), () => settle(), undefined, () => settle());
       t.anisotropy = Math.min(8, renderer.capabilities?.getMaxAnisotropy?.() ?? 1);
       textureCache.set(file, t);
     }
     return t;
   };
+  // Every texture requested so far has loaded or failed. Loops, because waiting
+  // can overlap more requests (a material built by a later compile). Bounded:
+  // an image request that never answers must not hang a mode switch or a
+  // capture forever — past the cap it draws with whatever has arrived.
+  const TEXTURE_SETTLE_CAP_MS = 15000;
+  async function whenTexturesSettled() {
+    const deadline = Date.now() + TEXTURE_SETTLE_CAP_MS;
+    while (pendingTextures.size) {
+      const left = deadline - Date.now();
+      if (left <= 0) return;
+      let timer;
+      await Promise.race([
+        Promise.all([...pendingTextures]),
+        new Promise((resolve) => { timer = setTimeout(resolve, left); }),
+      ]);
+      clearTimeout(timer);
+    }
+  }
   const loadHdr = (url) => new UltraHDRLoader().setDataType(THREE.HalfFloatType).loadAsync(url);
   function rigFor(id) {
     if (!rigCache.has(id)) {
@@ -608,7 +641,8 @@ export function createViewer(container, part) {
 
   // A rig loaded only to draw a thumbnail is freed straight away: each holds
   // its equirect (~16 MB of half-float) and a PMREM, and four of them resident
-  // on a phone is not acceptable. The live one (or one a switch is loading) stays.
+  // on a phone is not acceptable. The live one (or one a switch is loading) stays
+  // — and only those: in CAD, the default environment is freed like any other.
   // rig.dispose() also disposes the ground textures loadTexture cached — safe:
   // each environment.js ground.texture/roughnessTexture/normalTexture is a
   // distinct file (environments.js), so no two rigs ever share a Texture
@@ -632,7 +666,10 @@ export function createViewer(container, part) {
     const refs = (thumbnailRigRefs.get(id) ?? 0) - 1;
     if (refs > 0) { thumbnailRigRefs.set(id, refs); return; }
     thumbnailRigRefs.delete(id);
-    if (id === environmentId || realisticRig?.id === id) return;
+    // Keep only a rig that is (or is about to be) on screen. In CAD the
+    // current environment's id alone is no reason: nothing is showing it, and
+    // a realistic switch reloads it (from the texture cache) when asked.
+    if (realisticRig?.id === id || (realisticPending && id === environmentId)) return;
     if (rigCache.get(id) !== p) return;
     rigCache.delete(id);
     loadedRigs.delete(id);
@@ -898,6 +935,10 @@ export function createViewer(container, part) {
       if (isStale(token)) return renderMode;
       await compileRealistic(rig);
       if (isStale(token)) return renderMode;
+      // The ground's and materials' maps: without this the floor pops in a
+      // frame or two after the switch, untextured first.
+      await whenTexturesSettled();
+      if (isStale(token)) return renderMode;
       enterRealistic(rig);
       realisticPending = false;
       publishMode();
@@ -958,6 +999,7 @@ export function createViewer(container, part) {
     physicalMats.clear();
     for (const t of textureCache.values()) t.dispose();
     textureCache.clear();
+    pendingTextures.clear();
     pmrem?.dispose();
     pmrem = null;
   }
@@ -1735,6 +1777,8 @@ export function createViewer(container, part) {
       if (disposed) return null;
       await compileRealistic(rig, { forCapture: true });
       if (disposed) return null;
+      await whenTexturesSettled();
+      if (disposed) return null;
       if (renderMode !== "realistic" || realisticRig === rig) return captureIn("realistic", rig, capture);
       // Realistic in another environment: borrow this rig, then put the live one back.
       const liveRig = realisticRig, movedAt = shadowMovedAt;
@@ -1746,7 +1790,9 @@ export function createViewer(container, part) {
           enterRealistic(liveRig, { live: false, reground: false });
           shadowMovedAt = movedAt;
         } catch (e) {
+          // enterRealistic already rolled the scene back to CAD: make it the live mode.
           console.warn("partforge: restoring the realistic view after a thumbnail failed", e);
+          try { applyPixelRatio("cad"); } catch { /* the view is CAD either way */ }
           publishMode({ error: "couldn't load realistic view" });
         }
       }
@@ -1769,6 +1815,8 @@ export function createViewer(container, part) {
     const rig = await rigFor(environmentId);
     if (disposed) return [];
     await compileRealistic(rig, { forCapture: true });
+    if (disposed) return [];
+    await whenTexturesSettled();
     if (disposed) return [];
     return withFeatureLines(false, () => captureIn("realistic", rig, () => canonicalViewsInCurrentLook(viewNames)));
   }

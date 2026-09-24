@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as THREE from "three";
 
-const state = vi.hoisted(() => ({ renderer: null, hdrReadable: true }));
+const state = vi.hoisted(() => ({ renderer: null, hdrReadable: true, holdTextures: false, textureLoads: [] }));
 
 const OriginalResizeObserver = globalThis.ResizeObserver;
 
@@ -37,15 +37,28 @@ vi.mock("three", async (importOriginal) => {
     readRenderTargetPixels() {}
     dispose() {}
   }
-  return { ...actual, WebGLRenderer: FakeRenderer };
+  // No network: a load answers on a microtask, or — with `holdTextures` — only
+  // when the test calls its `settle` (the way a real image arrives later).
+  class FakeTextureLoader {
+    load(url, onLoad, _onProgress, onError) {
+      const t = new actual.Texture();
+      const entry = { url, texture: t, settle: (ok = true) => (ok ? onLoad?.(t) : onError?.(new Error("404"))) };
+      state.textureLoads.push(entry);
+      if (!state.holdTextures) queueMicrotask(() => entry.settle());
+      return t;
+    }
+  }
+  return { ...actual, WebGLRenderer: FakeRenderer, TextureLoader: FakeTextureLoader };
 });
 
-const rigState = vi.hoisted(() => ({ fail: false, failIds: new Set(), loads: 0, rigs: [], throwOnGround: false, gate: null }));
+const rigState = vi.hoisted(() => ({ fail: false, failIds: new Set(), loads: 0, rigs: [], throwOnGround: false, gate: null, groundTexture: null }));
 vi.mock("../../src/framework/materials/environment.js", async () => {
   const THREE = await import("three");
   return {
-    loadEnvironmentRig: async (_r, id) => {
+    loadEnvironmentRig: async (_r, id, { loadTexture } = {}) => {
       rigState.loads++;
+      // The real rig asks for its ground maps and resolves without waiting for them.
+      if (rigState.groundTexture) loadTexture(rigState.groundTexture);
       if (rigState.gate) await rigState.gate;
       if (rigState.fail || rigState.failIds.has(id)) throw new Error("asset 404");
       const rig = {
@@ -98,7 +111,9 @@ const lastRig = () => rigState.rigs.at(-1);
 beforeEach(() => {
   state.renderer = null;
   state.hdrReadable = true;
-  Object.assign(rigState, { fail: false, failIds: new Set(), loads: 0, rigs: [], throwOnGround: false, gate: null });
+  state.holdTextures = false;
+  state.textureLoads = [];
+  Object.assign(rigState, { fail: false, failIds: new Set(), loads: 0, rigs: [], throwOnGround: false, gate: null, groundTexture: null });
   globalThis.ResizeObserver = class {
     observe() {}
     disconnect() {}
@@ -1045,5 +1060,107 @@ test("a thumbnail started after an earlier pair fully released gets its own fres
   expect(rig2).not.toBe(rig1);
   expect(rig2.dispose).toHaveBeenCalledTimes(1);       // released on its own
   expect(rig1.dispose).toHaveBeenCalledTimes(1);       // and never touched again
+  v.dispose();
+});
+
+// --- textures: captures wait for the maps, not just the rig -----------------
+const flush = async (n = 20) => { for (let i = 0; i < n; i++) await Promise.resolve(); };
+
+test("an environment thumbnail waits for the ground's texture before it captures", async () => {
+  stubCanvas();
+  state.holdTextures = true;
+  rigState.groundTexture = "ground-paper.jpg";
+  const v = shown();
+  const renders = recordRenders(v);
+  let done = false;
+  const shot = v.renderStyleThumbnail("outdoor").then((r) => { done = true; return r; });
+  await flush();
+  expect(state.textureLoads.map((l) => l.url)).toEqual([expect.stringContaining("ground-paper")]);
+  expect(done).toBe(false);
+  expect(renders).toHaveLength(0);                   // nothing drawn with a blank floor
+  state.textureLoads[0].settle();
+  expect(await shot).toBe("data:image/jpeg;base64,TEST");
+  expect(renders.length).toBeGreaterThan(0);
+  v.dispose();
+});
+
+test("a texture that fails to load still lets the capture run", async () => {
+  stubCanvas();
+  state.holdTextures = true;
+  rigState.groundTexture = "ground-paper.jpg";
+  const v = shown();
+  const shot = v.renderViews(["iso"], { renderMode: "realistic" });
+  await flush();
+  state.textureLoads[0].settle(false);
+  expect(await shot).toHaveLength(1);
+  v.dispose();
+});
+
+test("renderViews('realistic') and the live switch wait for textures too", async () => {
+  stubCanvas();
+  state.holdTextures = true;
+  rigState.groundTexture = "ground-paper.jpg";
+  const v = shown();
+  let viewsDone = false;
+  const views = v.renderViews(["iso"], { renderMode: "realistic" }).then(() => { viewsDone = true; });
+  let modeDone = false;
+  const mode = v.setRenderMode("realistic").then(() => { modeDone = true; });
+  await flush();
+  expect(viewsDone).toBe(false);
+  expect(modeDone).toBe(false);
+  expect(v.getRenderMode()).toBe("cad");             // no untextured floor on screen
+  for (const l of state.textureLoads) l.settle();
+  await Promise.all([views, mode]);
+  expect(v.getRenderMode()).toBe("realistic");
+  v.dispose();
+});
+
+test("in CAD, a thumbnail of the default environment frees its rig too", async () => {
+  stubCanvas();
+  const v = shown();
+  await v.renderStyleThumbnail("studio");            // the part's (default) environment
+  const rig = rigState.rigs.find((r) => r.id === "studio");
+  expect(rig.dispose).toHaveBeenCalledTimes(1);
+  // …and a realistic switch afterwards simply loads it again.
+  expect(await v.setRenderMode("realistic")).toBe("realistic");
+  expect(rigState.rigs.filter((r) => r.id === "studio")).toHaveLength(2);
+  v.dispose();
+});
+
+test("a thumbnail of the environment a realistic switch is loading keeps that rig", async () => {
+  stubCanvas();
+  const v = shown();
+  let open;
+  rigState.gate = new Promise((r) => { open = r; });
+  const thumb = v.renderStyleThumbnail("studio");
+  const mode = v.setRenderMode("realistic");         // joins the same in-flight load
+  open();
+  await Promise.all([thumb, mode]);
+  const rig = rigState.rigs.find((r) => r.id === "studio");
+  expect(v.getRenderMode()).toBe("realistic");
+  expect(rig.dispose).not.toHaveBeenCalled();
+  v.dispose();
+});
+
+test("a thumbnail whose live-rig restore throws leaves CAD at the CAD pixel ratio", async () => {
+  stubCanvas();
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const v = shown();
+  await v.setRenderMode("realistic");                 // studio
+  const ratios = [];
+  state.renderer.getPixelRatio = () => 99;           // anything but the CAD ratio
+  state.renderer.setPixelRatio = (r) => ratios.push(r);
+  const events = [];
+  v.onRenderModeChange((e) => events.push(e));
+  const live = lastRig();
+  // The restore re-enters the live rig; make that throw.
+  const scene = sceneOf(v);
+  const add = scene.add.bind(scene);
+  let calls = 0;
+  scene.add = (...objs) => { if (objs.includes(live.ground) && ++calls === 1) throw new Error("restore boom"); return add(...objs); };
+  await v.renderStyleThumbnail("workshop");
+  expect(v.getRenderMode()).toBe("cad");
+  expect(events.at(-1)).toEqual(expect.objectContaining({ error: expect.stringContaining("couldn't load") }));
+  expect(ratios).toEqual([1]);                        // applyPixelRatio("cad") ran (devicePixelRatio 1)
   v.dispose();
 });
