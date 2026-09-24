@@ -269,9 +269,9 @@ export interface ViewerState {
   camera: { pos: [number, number, number]; target: [number, number, number] } | null;
   projection: "perspective" | "orthographic";
   cutaway: CutawayState | null;
-  /** Always reported by `getViewerState()`; optional on the way back in (a state saved by an older partforge has none). */
+  /** Always reported by `getViewerState()` — the mode being headed for, so a realistic switch still loading reads `"realistic"` (a failed one settles to `"cad"`). Optional on the way back in (a state saved by an older partforge has none). */
   renderMode?: RenderMode;
-  /** The realistic environment id; an unknown one falls back to `"studio"`. */
+  /** The realistic environment id, present only when one was CHOSEN (`environment.set`, the picker) — a merely seeded default is left out so the part's own `meta.environment` still applies on remount. An unknown id falls back to `"studio"`. */
   environment?: string;
 }
 

@@ -511,6 +511,7 @@ export function createViewer(container, part) {
   let environmentId = resolveEnvironmentId(part.meta?.environment).id;
   let modeToken = 0;                 // bumped by every request; a stale completion does nothing
   let realisticPending = false;      // a realistic request is in flight (setEnvironment joins it)
+  let environmentChosen = false;     // set by setEnvironment; false while seeded from meta/default
   const physicalMats = new Map();    // name -> MeshPhysicalMaterial (environment-independent, cached)
   const rigCache = new Map();        // environment id -> Promise<Rig>
   const textureCache = new Map();    // asset file name -> Texture
@@ -809,6 +810,7 @@ export function createViewer(container, part) {
   // shown and announces that too; in CAD nothing loads, so the id just stands.
   async function setEnvironment(id) {
     const next = resolveEnvironmentId(id).id;
+    environmentChosen = true;
     if (next !== environmentId) announceEnvironment(next);
     if (renderMode === "realistic" || realisticPending) await setRenderMode("realistic");
     return environmentId;
@@ -1998,6 +2000,13 @@ export function createViewer(container, part) {
     onRenderModeChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },
     setEnvironment,
     getEnvironment: () => environmentId,
+    // Whether the environment was named through setEnvironment (by the user or
+    // a host) rather than seeded from the part's meta.environment / the
+    // default — so a carried viewer state only pins an environment someone chose.
+    isEnvironmentChosen: () => environmentChosen,
+    // A realistic request is loading (getRenderMode still reads the mode on
+    // screen until it lands); false once it lands, fails, or is superseded.
+    isRealisticPending: () => realisticPending,
     onEnvironmentChange: (cb) => { envListeners.add(cb); return () => envListeners.delete(cb); },
     setPrintFrames,
     whenRealisticReady,

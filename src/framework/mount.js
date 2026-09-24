@@ -67,7 +67,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, renderMode, environment, declaresMaterials, renderViews }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, renderMode, environment, declaresMaterials, renderViews, intendedRenderMode }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): animations are
@@ -109,8 +109,16 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
       camera: viewer.getCameraState(),
       projection: viewer.getProjection?.() ?? "perspective",
       cutaway: viewer.getCutawayState?.() ?? null,
-      renderMode: viewer.getRenderMode?.() ?? "cad",
-      environment: viewer.getEnvironment?.() ?? "studio",
+      // The mode the user is headed for, not only the one on screen: a
+      // realistic restore or switch still loading reads "realistic", so a
+      // remount mid-load (the cloud remounts on every edit) doesn't drop it.
+      // A failed load settles back to "cad".
+      renderMode: intendedRenderMode?.()
+        ?? (viewer.isRealisticPending?.() ? "realistic" : viewer.getRenderMode?.() ?? "cad"),
+      // Only an environment someone CHOSE: carrying the one merely seeded
+      // from meta.environment (or the default) would outrank the part's own
+      // meta.environment on the next mount, masking an edit to it.
+      ...(viewer.isEnvironmentChosen?.() ? { environment: viewer.getEnvironment() } : {}),
     }),
     // Every custom control's transient state (selection, a scroll position),
     // keyed by param, as plain JSON — the panel's twin of getViewerState. Hand
@@ -640,11 +648,18 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // live answer, where the stored one is the last page-reload's.
     viewer.setProjection(viewerState?.projection ?? loadProjection());
     // The environment by the same precedence (carried, stored, then the part's
-    // own meta.environment — which the viewer already starts on). In CAD this
-    // only records the id, so the realistic restore below loads the right rig
-    // first time rather than the default and then this one.
-    const initialEnv = viewerState?.environment ?? loadEnvironment() ?? part.meta?.environment;
+    // own meta.environment — which the viewer already starts on, unchosen). A
+    // carried or stored one was chosen, so it stays chosen and carries on. In
+    // CAD this only records the id, so the realistic restore below loads the
+    // right rig first time rather than the default and then this one.
+    const initialEnv = viewerState?.environment ?? loadEnvironment();
     if (initialEnv) viewer.setEnvironment(initialEnv);
+    // Realistic mode by the same precedence, restored on the first accepted
+    // build (showView). Until it is issued the intent lives here, so
+    // getViewerState carries it through a remount before that build; any
+    // explicit mode change first (the handle, the toggle) supersedes it.
+    let restoreRealistic = (viewerState?.renderMode ?? loadRenderMode() ?? "cad") === "realistic";
+    cleanup.defer(viewer.onRenderModeChange(() => { restoreRealistic = false; }));
     const viewcube = attachViewcubeControls(viewer, { stage: els.viewer }, { tooltip });
     cleanup.defer(() => viewcube.detach());
     cleanup.defer(viewer.onProjectionChange((mode) => saveProjection(mode)));
@@ -862,8 +877,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
           // accepted build, so the ground has a part to come to. Async: the
           // CAD view shows until the environment's assets land (or, if they
           // fail, stays — the toggle reports the error).
-          const initialMode = viewerState?.renderMode ?? loadRenderMode() ?? "cad";
-          if (initialMode === "realistic") viewer.setRenderMode("realistic");
+          if (restoreRealistic) {
+            restoreRealistic = false; // the viewer's own pending flag takes over
+            viewer.setRenderMode("realistic");
+          }
           cameraRestored = true;
         }
       }
@@ -1341,6 +1358,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       },
       declaresMaterials: declaresMaterials(part),
       renderViews: (viewNames, opts) => viewer.renderViews(viewNames, opts),
+      intendedRenderMode: () =>
+        (restoreRealistic || viewer.isRealisticPending?.() ? "realistic" : viewer.getRenderMode()),
     });
   } catch (error) {
     try {

@@ -290,6 +290,34 @@ test("in CAD an environment is recorded at once, with nothing loaded", async () 
   v.dispose();
 });
 
+test("an environment counts as chosen only once setEnvironment names one", async () => {
+  const v = shown();
+  expect(v.isEnvironmentChosen()).toBe(false); // seeded from meta / the default
+  await v.setEnvironment("studio"); // naming the one already shown still chooses it
+  expect(v.isEnvironmentChosen()).toBe(true);
+  v.dispose();
+});
+
+test("isRealisticPending covers a realistic request until it settles", async () => {
+  let open;
+  rigState.gate = new Promise((r) => { open = r; });
+  const v = shown();
+  expect(v.isRealisticPending()).toBe(false);
+  const done = v.setRenderMode("realistic");
+  expect(v.isRealisticPending()).toBe(true);
+  open();
+  await done;
+  expect(v.isRealisticPending()).toBe(false);
+  rigState.gate = new Promise((r) => { open = r; });
+  const again = v.setEnvironment("workshop");
+  expect(v.isRealisticPending()).toBe(true);
+  await v.setRenderMode("cad"); // superseded: nothing pending any more
+  expect(v.isRealisticPending()).toBe(false);
+  open();
+  await again;
+  v.dispose();
+});
+
 test("an unknown environment id falls back to the default", async () => {
   const v = shown();
   expect(await v.setEnvironment("moon")).toBe("studio");

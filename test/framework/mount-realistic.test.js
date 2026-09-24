@@ -40,12 +40,14 @@ vi.mock("three", async (importOriginal) => {
   return { ...actual, WebGLRenderer: FakeRenderer };
 });
 
-const rigState = vi.hoisted(() => ({ loads: [] }));
+const rigState = vi.hoisted(() => ({ loads: [], fail: false, gate: null }));
 vi.mock("../../src/framework/materials/environment.js", async () => {
   const THREE = await import("three");
   return {
     loadEnvironmentRig: async (_r, id) => {
       rigState.loads.push(id);
+      if (rigState.gate) await rigState.gate;
+      if (rigState.fail) throw new Error("asset 404");
       return {
         id, exposure: 1, envMap: new THREE.Texture(), background: new THREE.Color(0xffffff), backgroundBlurriness: 0,
         ground: new THREE.Mesh(), shadow: { group: new THREE.Group(), render: vi.fn(), setSize: vi.fn(), dispose: vi.fn() },
@@ -146,6 +148,8 @@ beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   rigState.loads = [];
+  rigState.fail = false;
+  rigState.gate = null;
   viewers.length = 0;
   printFrameCalls.count = 0;
   globalThis.ResizeObserver = class { observe() {} disconnect() {} };
@@ -164,6 +168,9 @@ test("the runtime exposes renderMode/environment and carries them in viewer stat
   expect(runtime.environment.list().map((e) => e.id)).toEqual(["studio", "workshop", "print-bed", "outdoor"]);
   expect(runtime.environment.list()[2]).toEqual({ id: "print-bed", label: "Print bed" });
   expect(await runtime.renderMode.set("realistic")).toBe("realistic");
+  expect(runtime.getViewerState()).toMatchObject({ renderMode: "realistic" });
+  expect(runtime.getViewerState()).not.toHaveProperty("environment"); // the default, never chosen
+  await runtime.environment.set("studio");
   expect(runtime.getViewerState()).toMatchObject({ renderMode: "realistic", environment: "studio" });
   runtime.dispose();
 });
@@ -293,4 +300,89 @@ test("a part with no layer-line material never probes for print frames", async (
   await runtime.ready;
   expect(printFrameCalls.count).toBe(0);
   runtime.dispose();
+});
+
+// partforge-cloud remounts on EVERY edit, handing getViewerState() back, so
+// what that state carries decides what survives an edit.
+function mountPart(part, { viewerState, build = true } = {}) {
+  const workers = {};
+  const runtime = mount(part, {
+    createWorker: (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null }),
+    elements: makeElements(),
+    viewerState,
+  });
+  if (build) {
+    workers.manifold.onmessage({ data: { type: "ready" } });
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("body")], ms: 1 } });
+  }
+  return runtime;
+}
+const withMetaEnv = (environment) => {
+  const part = makePart({ material: "brass" });
+  part.meta = { ...part.meta, environment };
+  return part;
+};
+
+test("an environment nobody chose is not carried, so a later meta.environment applies", async () => {
+  const first = mountPart(makePart({ material: "brass" }));
+  await first.ready;
+  const carried = first.getViewerState();
+  first.dispose();
+  expect(carried.environment).toBeUndefined();
+  const second = mountPart(withMetaEnv("outdoor"), { viewerState: carried });
+  expect(second.environment.get()).toBe("outdoor");
+  second.dispose();
+});
+
+test("a chosen environment is carried and outranks meta.environment", async () => {
+  const first = mountPart(makePart({ material: "brass" }));
+  await first.ready;
+  await first.environment.set("workshop");
+  const carried = first.getViewerState();
+  first.dispose();
+  expect(carried.environment).toBe("workshop");
+  const second = mountPart(withMetaEnv("outdoor"), { viewerState: carried });
+  expect(second.environment.get()).toBe("workshop");
+  // …and stays chosen, so it carries again on the next remount.
+  expect(second.getViewerState().environment).toBe("workshop");
+  second.dispose();
+});
+
+test("a carried realistic mode survives a remount before the first build", () => {
+  const runtime = mountPart(makePart({ material: "brass" }), { viewerState: { renderMode: "realistic" }, build: false });
+  expect(runtime.renderMode.get()).toBe("cad");
+  expect(runtime.getViewerState().renderMode).toBe("realistic");
+  runtime.dispose();
+});
+
+test("a realistic switch still loading is reported as realistic", async () => {
+  let open;
+  rigState.gate = new Promise((r) => { open = r; });
+  const runtime = mountPart(makePart({ material: "brass" }), { viewerState: { renderMode: "realistic" } });
+  await runtime.ready;
+  await vi.waitFor(() => expect(rigState.loads).toHaveLength(1));
+  expect(runtime.renderMode.get()).toBe("cad");
+  expect(runtime.getViewerState().renderMode).toBe("realistic");
+  open();
+  await vi.waitFor(() => expect(runtime.renderMode.get()).toBe("realistic"));
+  runtime.dispose();
+});
+
+test("a restore whose assets fail settles to CAD in viewer state", async () => {
+  rigState.fail = true;
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const runtime = mountPart(makePart({ material: "brass" }), { viewerState: { renderMode: "realistic" } });
+  await runtime.ready;
+  await vi.waitFor(() => expect(warn).toHaveBeenCalledWith("partforge: the realistic view failed to load", expect.any(Error)));
+  expect(runtime.renderMode.get()).toBe("cad");
+  expect(runtime.getViewerState().renderMode).toBe("cad");
+  runtime.dispose();
+});
+
+test("an explicit CAD before the first build cancels the carried realistic", async () => {
+  const runtime = mountPart(makePart({ material: "brass" }), { viewerState: { renderMode: "realistic" }, build: false });
+  await runtime.renderMode.set("cad");
+  expect(runtime.getViewerState().renderMode).toBe("cad");
+  runtime.dispose();
+  expect(rigState.loads).toEqual([]);
 });
