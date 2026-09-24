@@ -1402,8 +1402,12 @@ export function createViewer(container, part) {
     // than via canonicalCaptureHidden: captureCurrent deliberately ignores that
     // set. Only dots that were actually shown are restored, so this cannot
     // resurrect one the live canvas had hidden for its own reasons.
+    // The pointer's hover highlight (selection/feature-highlight.js) is the
+    // same kind of transient feedback, and it TINTS the surface under it: a
+    // capture taken with the pointer resting on a part baked a translucent
+    // blue wash over it (an orange PLA sample came out pink).
     const reshowFlashDots = [];
-    for (const dot of flashDots) if (dot.visible) { dot.visible = false; reshowFlashDots.push(dot); }
+    for (const dot of [...flashDots, ...captureHidden]) if (dot.visible) { dot.visible = false; reshowFlashDots.push(dot); }
     try {
       renderer.setRenderTarget(rt);
       renderer.render(renderScene, cam);
@@ -1436,6 +1440,14 @@ export function createViewer(container, part) {
     }
     ctx.putImageData(img, 0, 0);
     return canvas.toDataURL("image/jpeg", quality);
+  }
+
+  // Pointer feedback excluded from EVERY offscreen render (renderOffscreen),
+  // showcase captures included — unlike canonicalCaptureHidden below.
+  const captureHidden = new Set();
+  function registerCaptureHidden(obj) {
+    captureHidden.add(obj);
+    return () => captureHidden.delete(obj);
   }
 
   // Objects excluded from CANONICAL captures only (agent renders must stay
@@ -1994,6 +2006,7 @@ export function createViewer(container, part) {
     getCutawayPlane: cutaway.getPlane,
     registerCutawayMaterial: cutaway.registerClippableMaterial,
     registerCanonicalCaptureHidden,
+    registerCaptureHidden,
     onCutawayHandleHover: cutaway.onHandleHoverChange,
     setRenderMode,
     getRenderMode: () => renderMode,
