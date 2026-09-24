@@ -34,3 +34,33 @@ test("a failed HDR load rejects (the viewer then stays in CAD)", async () => {
     loadHdr: async () => { throw new Error("404"); }, loadTexture: () => new THREE.Texture(), pmrem,
   })).rejects.toThrow("404");
 });
+
+// The equirect HDR is ~16 MB of half-float. A gradient backdrop (studio) only
+// needs it for the PMREM filter, so it goes as soon as that is done; a blurred
+// backdrop draws it, so it lives as long as the rig. Either way it is freed once.
+test("a gradient-backdrop rig frees its HDR right after filtering it, and only once", async () => {
+  const hdr = new THREE.DataTexture();
+  const dispose = vi.spyOn(hdr, "dispose");
+  const filtered = [];
+  const rig = await loadEnvironmentRig(fakeRenderer(), "studio", {
+    loadHdr: async () => hdr, loadTexture: () => new THREE.Texture(),
+    pmrem: { fromEquirectangular: (t) => { filtered.push(t); expect(dispose).not.toHaveBeenCalled(); return { texture: new THREE.Texture() }; } },
+  });
+  expect(filtered).toEqual([hdr]);
+  expect(dispose).toHaveBeenCalledTimes(1);
+  expect(rig.background).not.toBe(hdr);
+  rig.dispose();
+  expect(dispose).toHaveBeenCalledTimes(1);
+});
+
+test("a blurred-backdrop rig keeps its HDR as the background until the rig is disposed", async () => {
+  const hdr = new THREE.DataTexture();
+  const dispose = vi.spyOn(hdr, "dispose");
+  const rig = await loadEnvironmentRig(fakeRenderer(), "workshop", {
+    loadHdr: async () => hdr, loadTexture: () => new THREE.Texture(), pmrem,
+  });
+  expect(rig.background).toBe(hdr);
+  expect(dispose).not.toHaveBeenCalled();
+  rig.dispose();
+  expect(dispose).toHaveBeenCalledTimes(1);
+});

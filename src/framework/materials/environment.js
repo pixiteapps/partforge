@@ -29,13 +29,19 @@ function groundMaterial(tex, rough, tint) {
 export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadTexture, pmrem }) {
   const { id } = resolveEnvironmentId(requestedId);
   const env = ENVIRONMENTS[id];
-  const hdr = await loadHdr(assetUrl(env.hdr));
+  let hdr = await loadHdr(assetUrl(env.hdr));
   hdr.mapping = THREE.EquirectangularReflectionMapping;
-  const envMap = pmrem.fromEquirectangular(hdr).texture;
+  let envMap;
+  try { envMap = pmrem.fromEquirectangular(hdr).texture; } catch (e) { hdr.dispose(); throw e; }
 
   let background, backgroundBlurriness = 0;
   if (env.backdrop === "gradient") {
     background = new THREE.Color(env.gradient[1]);
+    // The equirect (~16 MB of half-float) was only needed for the PMREM
+    // filter above; a gradient backdrop never draws it, so on a phone it
+    // shouldn't sit in memory for the rig's life.
+    hdr.dispose();
+    hdr = null;
   } else {
     background = hdr;
     backgroundBlurriness = 0.6;
@@ -74,7 +80,7 @@ export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadT
     shadow,
     setGround,
     dispose() {
-      envMap.dispose(); hdr.dispose(); tex.dispose(); rough?.dispose();
+      envMap.dispose(); hdr?.dispose(); tex.dispose(); rough?.dispose();
       discGeo.dispose(); ground.material.dispose(); shadow.dispose();
     },
   };
