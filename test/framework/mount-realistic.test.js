@@ -431,3 +431,43 @@ test("a realistic view that lands before the first build still grounds the part 
   expect(runtime.renderMode.get()).toBe("realistic");
   runtime.dispose();
 });
+
+// partforge-cloud's sandbox frame has an opaque origin, where merely touching
+// localStorage throws. A carried realistic view still has to mount, restore
+// and report — including before the first build, which is when a host that
+// remounts per edit may ask for the state again.
+test("with storage that throws on every access, a carried realistic view mounts, restores and reports", async () => {
+  const STORES = ["localStorage", "sessionStorage"];
+  const ownerOf = (key) => (Object.hasOwn(window, key) ? window : Object.getPrototypeOf(window));
+  const saved = STORES.map((key) => [key, ownerOf(key), Object.getOwnPropertyDescriptor(ownerOf(key), key)]);
+  const denied = () => { throw new DOMException("denied", "SecurityError"); };
+  for (const key of STORES) Object.defineProperty(window, key, { configurable: true, get: denied });
+  try {
+    expect(() => localStorage).toThrow("denied"); // the bare globals the modules read
+    expect(() => sessionStorage).toThrow("denied");
+    const workers = {};
+    const runtime = mount(makePart({ material: "brass" }), {
+      createWorker: (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null }),
+      elements: makeElements({ realistic: true }),
+      viewerState: { renderMode: "realistic", environment: "workshop" },
+    });
+    // Before the first build.
+    expect(runtime.getViewerState()).toMatchObject({ renderMode: "realistic", environment: "workshop" });
+    workers.manifold.onmessage({ data: { type: "ready" } });
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("body")], ms: 1 } });
+    await runtime.ready;
+    await vi.waitFor(() => expect(runtime.renderMode.get()).toBe("realistic"));
+    expect(runtime.environment.get()).toBe("workshop");
+    expect(rigState.loads).toEqual(["workshop"]);
+    expect(runtime.getViewerState()).toMatchObject({ renderMode: "realistic", environment: "workshop" });
+    // Choosing again (which tries to persist) must not throw either.
+    await expect(runtime.environment.set("outdoor")).resolves.toBe("outdoor");
+    await expect(runtime.renderMode.set("cad")).resolves.toBe("cad");
+    runtime.dispose();
+  } finally {
+    for (const [key, owner, descriptor] of saved) {
+      delete window[key];
+      if (descriptor && !Object.getOwnPropertyDescriptor(owner, key)) Object.defineProperty(owner, key, descriptor);
+    }
+  }
+});
