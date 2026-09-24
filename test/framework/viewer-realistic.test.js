@@ -535,10 +535,98 @@ test("renderViews('realistic') from a CAD view captures without changing the liv
   v.dispose();
 });
 
-test("renderViews('cad') equals captureCanonicalViews in CAD", async () => {
+test("renderViews('cad') equals captureCanonicalViews in both live modes", async () => {
   stubCanvas();
   const v = shown();
-  expect((await v.renderViews(["iso"])).map((s) => s.view)).toEqual(v.captureCanonicalViews(["iso"]).map((s) => s.view));
+  for (const live of ["cad", "realistic"]) {
+    await v.setRenderMode(live);
+    const renders = recordRenders(v);
+    const viaRenderViews = await v.renderViews(["iso"], { renderMode: "cad" });
+    const viaCapture = v.captureCanonicalViews(["iso"]);
+    expect(viaRenderViews.map((s) => s.view)).toEqual(viaCapture.map((s) => s.view));
+    expect(renders).toHaveLength(2);
+    for (const r of renders) {
+      expect(r.type).toBe(THREE.UnsignedByteType);
+      expect(r.material).not.toBeInstanceOf(THREE.MeshPhysicalMaterial);
+      expect(r.environment).toBe(null);
+      expect(r.toneMapping).toBe(THREE.NoToneMapping);
+    }
+    expect(v.getRenderMode()).toBe(live);
+  }
+  v.dispose();
+});
+
+// The editor's on-screen mode never changes what the agent sees.
+test("captureCanonicalViews is always CAD, and a realistic live view is put back exactly", async () => {
+  stubCanvas();
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const rig = lastRig();
+  const physical = v.__subMesh("body").material;
+  const groundCalls = rig.setGround.mock.calls.length;
+  const events = [];
+  v.onRenderModeChange((e) => events.push(e));
+  const renders = recordRenders(v);
+  expect(v.captureCanonicalViews(["iso", "top"]).map((s) => s.view)).toEqual(["iso", "top"]);
+  expect(renders).toHaveLength(2);
+  for (const r of renders) {
+    expect(r.type).toBe(THREE.UnsignedByteType);
+    expect(r.material).not.toBeInstanceOf(THREE.MeshPhysicalMaterial);
+    expect(r.environment).toBe(null);
+    expect(r.toneMapping).toBe(THREE.NoToneMapping);
+    expect(r.lights).toBeGreaterThan(0); // the CAD capture key/fill
+  }
+  const scene = sceneOf(v);
+  expect(v.getRenderMode()).toBe("realistic");
+  expect(v.__subMesh("body").material).toBe(physical);
+  expect(v.__subLines("body").visible).toBe(false);
+  expect(scene.environment).toBe(rig.envMap);
+  expect(rig.ground.parent).toBe(scene);
+  expect(rig.setGround.mock.calls.length).toBe(groundCalls);
+  expect(state.renderer.toneMapping).toBe(THREE.NeutralToneMapping);
+  expect(events).toEqual([]);
+  v.dispose();
+});
+
+test("captureCurrent({renderMode: 'cad'}) from a realistic view borrows CAD and puts it back", async () => {
+  stubCanvas();
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const physical = v.__subMesh("body").material;
+  const renders = recordRenders(v);
+  expect(v.captureCurrent({ size: 64, renderMode: "cad" })).toBe("data:image/jpeg;base64,TEST");
+  expect(renders).toHaveLength(1);
+  expect(renders[0].type).toBe(THREE.UnsignedByteType);
+  expect(renders[0].material).not.toBeInstanceOf(THREE.MeshPhysicalMaterial);
+  expect(v.getRenderMode()).toBe("realistic");
+  expect(v.__subMesh("body").material).toBe(physical);
+  v.dispose();
+});
+
+test("captureCurrent({renderMode: 'realistic'}) from CAD borrows realistic once the environment has loaded", async () => {
+  stubCanvas();
+  const v = shown();
+  const cadMat = v.__subMesh("body").material;
+  await v.whenRealisticReady();
+  const renders = recordRenders(v);
+  v.captureCurrent({ size: 64, renderMode: "realistic" });
+  expect(renders).toHaveLength(1);
+  expect(renders[0].type).toBe(THREE.HalfFloatType);
+  expect(renders[0].material).toBeInstanceOf(THREE.MeshPhysicalMaterial);
+  expect(v.getRenderMode()).toBe("cad");
+  expect(v.__subMesh("body").material).toBe(cadMat);
+  expect(sceneOf(v).environment).toBe(null);
+  v.dispose();
+});
+
+test("captureCurrent({renderMode: 'realistic'}) before the environment has loaded falls back to the live look", async () => {
+  stubCanvas();
+  const v = shown();
+  const renders = recordRenders(v);
+  v.captureCurrent({ size: 64, renderMode: "realistic" });
+  expect(renders).toHaveLength(1);
+  expect(renders[0].material).not.toBeInstanceOf(THREE.MeshPhysicalMaterial);
+  expect(rigState.loads).toBe(0); // a synchronous capture never starts a load
   v.dispose();
 });
 
@@ -583,7 +671,7 @@ test("a realistic capture tone-maps the half-float readback at the rig's exposur
     expect(buf).toBeInstanceOf(Uint16Array);
     buf.fill(grey);
   };
-  v.captureCanonicalViews(["iso"]);
+  v.captureCurrent({ size: 64 });
   // 0.18 × 1.1 exposure = 0.198 → −0.04 toe offset = 0.158 → sRGB 0.434 → 111.
   expect([...written.at(-1).subarray(0, 4)]).toEqual([111, 111, 111, 255]);
   v.dispose();
@@ -596,6 +684,8 @@ test("CAD captures and checkpoint thumbnails keep the 8-bit path, even while rea
   v.captureCanonicalViews(["iso"]);
   expect(renders.at(-1).type).toBe(THREE.UnsignedByteType);
   await v.setRenderMode("realistic");
+  v.captureCanonicalViews(["iso"]);
+  expect(renders.at(-1).type).toBe(THREE.UnsignedByteType);
   v.renderMeshPayloads([{ name: "body", ...payload() }]);
   expect(renders.at(-1).type).toBe(THREE.UnsignedByteType);
   v.dispose();
@@ -714,8 +804,8 @@ test("without HDR readback a realistic capture tone-maps the 8-bit target instea
   const renders = recordRenders(v);
   const reads = [];
   state.renderer.readRenderTargetPixels = (_rt, _x, _y, _w, _h, buf) => { reads.push(buf); buf.fill(46); };
-  v.captureCanonicalViews(["iso"]);
-  v.captureCanonicalViews(["iso"]);
+  v.captureCurrent({ size: 64 });
+  v.captureCurrent({ size: 64 });
   expect(renders[0].type).toBe(THREE.UnsignedByteType);
   expect(renders[0].material).toBeInstanceOf(THREE.MeshPhysicalMaterial); // still the realistic look
   expect(reads[0]).toBeInstanceOf(Uint8Array);
@@ -741,7 +831,7 @@ test("a GL context that reads half-float back as HALF_FLOAT takes the HDR path",
   state.renderer.getContext = () => fakeGl(0x140b);
   await v.setRenderMode("realistic");
   const renders = recordRenders(v);
-  v.captureCanonicalViews(["iso"]);
+  v.captureCurrent({ size: 64 });
   expect(renders.at(-1).type).toBe(THREE.HalfFloatType);
   v.dispose();
 });
@@ -753,7 +843,7 @@ test("a GL context that only reads half-float back as FLOAT falls back to 8-bit"
   state.renderer.getContext = () => fakeGl(0x1406);
   await v.setRenderMode("realistic");
   const renders = recordRenders(v);
-  v.captureCanonicalViews(["iso"]);
+  v.captureCurrent({ size: 64 });
   expect(renders.at(-1).type).toBe(THREE.UnsignedByteType);
   v.dispose();
 });

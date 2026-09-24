@@ -514,6 +514,7 @@ export function createViewer(container, part) {
   let environmentChosen = false;     // set by setEnvironment; false while seeded from meta/default
   const physicalMats = new Map();    // name -> MeshPhysicalMaterial (environment-independent, cached)
   const rigCache = new Map();        // environment id -> Promise<Rig>
+  const loadedRigs = new Map();      // environment id -> Rig, once its load has landed (synchronous captures)
   const textureCache = new Map();    // asset file name -> Texture
   const textureLoader = new THREE.TextureLoader();
   let pmrem = null;
@@ -538,7 +539,8 @@ export function createViewer(container, part) {
       pmrem ??= new THREE.PMREMGenerator(renderer);
       const p = loadEnvironmentRig(renderer, id, { loadHdr, loadTexture, pmrem });
       // A failure is retryable, not memoized — but only drop THIS attempt.
-      p.catch(() => { if (rigCache.get(id) === p) rigCache.delete(id); });
+      p.then((rig) => { if (rigCache.get(id) === p) loadedRigs.set(id, rig); },
+        () => { if (rigCache.get(id) === p) rigCache.delete(id); });
       rigCache.set(id, p);
     }
     return rigCache.get(id);
@@ -832,6 +834,7 @@ export function createViewer(container, part) {
     envListeners.clear();
     for (const p of rigCache.values()) p.then((r) => r.dispose(), () => {});
     rigCache.clear();
+    loadedRigs.clear();
     for (const m of physicalMats.values()) m.dispose();
     physicalMats.clear();
     for (const t of textureCache.values()) t.dispose();
@@ -1461,8 +1464,21 @@ export function createViewer(container, part) {
 
   // Render the canonical camera angles offscreen, framed to whatever is visible,
   // without disturbing the user's live view. Returns [{ view, dataUrl }].
+  //
+  // Always the CAD look, whatever the live view shows: these are the agent's
+  // renders, and the editor's on-screen mode must never change what the agent
+  // sees. A realistic live view lends its scene to CAD for the synchronous
+  // capture and gets it back exactly (captureIn). renderViews is the one way
+  // to ask for realistic canonical views.
   function captureCanonicalViews(viewNames) {
     if (disposed) return [];
+    const box = getVisibleWorldBounds();
+    if (!box || box.isEmpty()) return []; // nothing to draw: don't swap the look for it
+    return captureIn("cad", null, () => canonicalViewsInCurrentLook(viewNames));
+  }
+  // The canonical views in whatever look the scene has right now — the body
+  // both captureCanonicalViews and renderViews wrap in captureIn.
+  function canonicalViewsInCurrentLook(viewNames) {
     const box = getVisibleWorldBounds();
     if (!box || box.isEmpty()) return [];
     const center = box.getCenter(new THREE.Vector3()).toArray();
@@ -1487,10 +1503,28 @@ export function createViewer(container, part) {
   // One offscreen render of the user's CURRENT framing (live camera pose +
   // orbit target, live aspect) at a caller-chosen resolution — the showcase
   // capture. Returns a JPEG data URL, or null when disposed / nothing visible.
+  //
+  // `renderMode` picks the look. Omitted, it follows the live view (a gallery
+  // "Capture from viewer" captures what the user sees). "cad" borrows CAD for
+  // the synchronous capture if the live view is realistic. "realistic" from a
+  // CAD view borrows the realistic look only if the current environment's
+  // assets have ALREADY loaded — this call is synchronous and cannot wait for
+  // them — and otherwise falls back to the live look; renderViews is the async
+  // path that guarantees realistic.
   function captureCurrent(opts) {
     if (disposed) return null;
     const box = getVisibleWorldBounds();
     if (!box || box.isEmpty()) return null;
+    const { renderMode: want, ...rest } = opts ?? {};
+    const capture = () => currentFramingInCurrentLook(rest);
+    if (want === "cad") return captureIn("cad", null, capture);
+    if (want === "realistic" && renderMode !== "realistic") {
+      const rig = loadedRigs.get(environmentId);
+      if (rig) return captureIn("realistic", rig, capture);
+    }
+    return capture();
+  }
+  function currentFramingInCurrentLook(opts) {
     return captureCurrentFromScene(opts, {
       renderer: { renderOffscreen },
       liveCamera: activeCamera,
@@ -1543,19 +1577,19 @@ export function createViewer(container, part) {
   }
 
   // Agent-facing canonical renders in a chosen appearance, whatever the live
-  // view shows. CAD is exactly captureCanonicalViews in the CAD look.
+  // view shows. CAD is exactly captureCanonicalViews (which is always CAD).
   // Realistic waits for the current environment's rig and the capture's
   // shader programs, then borrows the realistic look for the synchronous
   // capture only if the live view is not already realistic. A rig that fails
   // to load rejects rather than silently returning CAD images.
   async function renderViews(viewNames, { renderMode: want = "cad" } = {}) {
     if (disposed) return [];
-    if (want !== "realistic") return captureIn("cad", null, () => captureCanonicalViews(viewNames));
+    if (want !== "realistic") return captureCanonicalViews(viewNames);
     const rig = await rigFor(environmentId);
     if (disposed) return [];
     await compileRealistic(rig, { forCapture: true });
     if (disposed) return [];
-    return captureIn("realistic", rig, () => captureCanonicalViews(viewNames));
+    return captureIn("realistic", rig, () => canonicalViewsInCurrentLook(viewNames));
   }
 
   // Offscreen render of an arbitrary mesh set (a non-active view), for thumbnails.

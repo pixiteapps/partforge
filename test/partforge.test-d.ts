@@ -254,6 +254,7 @@ expectType<Array<{ view: string; dataUrl: string }>>(runtime.captureViews(["iso"
 expectType<Array<{ view: string; dataUrl: string }>>(runtime.captureViews());
 expectType<string | null>(runtime.captureCurrent({ size: 2048, hideGrid: false, quality: 0.9 }));
 expectType<string | null>(runtime.captureCurrent());
+expectType<string | null>(runtime.captureCurrent({ renderMode: "cad" }));
 expectType<void>(runtime.setActive(false));
 expectType<() => void>(runtime.onContextLost(() => {}));
 expectType<Array<{ name: string; label: string }>>(runtime.listExportableParts());

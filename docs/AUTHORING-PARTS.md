@@ -2758,8 +2758,17 @@ addition to) the `#realistic` / `#environment` viewbar controls above:
   `"cad"` or `"realistic"`. `set()` resolves to the mode actually in effect —
   `"cad"` if the realistic environment's assets fail to load — and
   `onChange` receives `{ mode, busy, error }` so a host can show its own
-  loading/error state. Same shape as `runtime.projection`; drives the live
-  view and `captureCurrent` only.
+  loading/error state. Same shape as `runtime.projection`. It drives the live
+  view, and `runtime.captureCurrent()` follows it by default (a "capture from
+  viewer" captures what the user sees). It never changes what an agent sees:
+  `runtime.captureViews()` is always CAD, in either live mode, and a
+  realistic agent render is only ever an explicit
+  `renderViews(…, { renderMode: "realistic" })`.
+- `runtime.captureCurrent({ renderMode })` — pins the showcase capture's look
+  instead of following the live view. `"cad"` always works. `"realistic"` from
+  a CAD view works only once the current environment's assets have loaded
+  (the call is synchronous and can't wait for them); before that it falls
+  back to the live look. Use `renderViews` when realistic must be guaranteed.
 - `runtime.environment` — `{ get(), set(id), onChange(cb), list() }` for the
   realistic environment (`"studio"` | `"workshop"` | `"print-bed"` |
   `"outdoor"`, per "Materials and appearance" above). `list()` returns every
@@ -2774,7 +2783,7 @@ addition to) the `#realistic` / `#environment` viewbar controls above:
 - `await runtime.renderViews(viewNames, { renderMode? })` — the appearance-aware
   sibling of `runtime.captureViews` (canonical angles, framed to the visible
   assembly, grid hidden): `{ renderMode: "cad" }` (the default) is exactly
-  `captureViews`, and `{ renderMode: "realistic" }` borrows the realistic look
+  `captureViews` — CAD whatever the live view shows — and `{ renderMode: "realistic" }` borrows the realistic look
   for the capture — waiting on the chosen environment's assets — **without**
   switching the live view. Rejects if the realistic assets fail to load.
 

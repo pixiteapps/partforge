@@ -81,9 +81,10 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     setView,
     // Offscreen render of a named view (default when omitted, or on an unknown name).
     captureView,
+    // Always CAD, whatever the live render mode: these are the agent's renders.
     captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames),
     // captureViews in a chosen appearance: renderMode "cad" (the default) is
-    // exactly captureViews(); "realistic" borrows the realistic look for the
+    // exactly captureViews() in either live mode; "realistic" borrows the realistic look for the
     // capture (waiting on the environment's assets) without switching the live
     // view. Rejects if realistic's assets fail to load.
     renderViews: renderViews ?? (async (viewNames) => viewer.captureCanonicalViews(viewNames)),
@@ -91,6 +92,8 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // screen the dimension labels — which sit beside the part, not on it —
     // could land outside the centred window. A dimensioned capture therefore
     // keeps the user's exact framing; a host wanting both re-frames first.
+    // Follows the live render mode unless opts.renderMode pins one ("realistic"
+    // only once the environment has loaded — see viewer.captureCurrent).
     captureCurrent: (opts) => viewer.captureCurrent(
       opts?.recenter && (measure ?? NOOP_MEASURE).isEnabled() && (measure ?? NOOP_MEASURE).pinCount() > 0
         ? { ...opts, recenter: false }
@@ -320,7 +323,10 @@ function createCleanupStack() {
 //                                         // "cad" | "realistic". set() resolves to the mode in
 //                                         // effect ("cad" if the realistic assets failed);
 //                                         // onChange gets {mode, busy, error}. Same shape as
-//                                         // projection. Drives the live view and captureCurrent.
+//                                         // projection. Drives the live view; captureCurrent
+//                                         // follows it unless given { renderMode }. captureViews
+//                                         // is always CAD — the live mode never changes what
+//                                         // the agent sees.
 //   runtime.environment: { get, set, onChange, list }
 //                                         // the realistic environment ("studio" | "workshop" |
 //                                         // "print-bed" | "outdoor"); list() → [{id, label}].
@@ -329,7 +335,8 @@ function createCleanupStack() {
 //   runtime.declaresMaterials             // true when any sub-part names a display.material
 //   await runtime.renderViews(["front"], { renderMode: "realistic" });
 //                                         // captureViews in a chosen appearance, without
-//                                         // switching the live view; "cad" is exactly captureViews()
+//                                         // switching the live view; "cad" is exactly captureViews(),
+//                                         // CAD in either live mode
 //   runtime.dispose();     // full teardown
 // onBuild fires per completed build, so it does NOT fire for a pose-only edit —
 // those are repaired in the viewer and produce no build at all.
