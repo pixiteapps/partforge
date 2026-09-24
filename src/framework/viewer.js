@@ -550,6 +550,7 @@ export function createViewer(container, part) {
   const physicalMats = new Map();    // name -> MeshPhysicalMaterial (environment-independent, cached)
   const rigCache = new Map();        // environment id -> Promise<Rig>
   const loadedRigs = new Map();      // environment id -> Rig, once its load has landed (synchronous captures)
+  const thumbnailRigRefs = new Map(); // environment id -> count of in-flight renderStyleThumbnail calls using it
   const textureCache = new Map();    // asset file name -> Texture
   const textureLoader = new THREE.TextureLoader();
   let pmrem = null;
@@ -598,10 +599,23 @@ export function createViewer(container, part) {
   // three's uploader reads untouched. loadTexture keeps returning that same
   // (still-intact) Texture object out of textureCache, so a later rigFor for
   // this id just re-uploads it on the next render, exactly like a first load.
-  function releaseThumbnailRig(id) {
+  //
+  // Concurrent thumbnails of the same environment share one in-flight rig
+  // promise (rigFor's own cache), and a rig's envMap is a PMREM render-target
+  // texture that CANNOT re-upload once disposed — so releasing while a
+  // sibling call is still capturing with it would leave that capture's
+  // reflections black. `p` is the exact promise this call awaited from
+  // rigFor: `thumbnailRigRefs` counts in-flight users of `id` (bumped by the
+  // caller right after rigFor, decremented here), and this only deletes/
+  // disposes once that count reaches 0 AND `rigCache.get(id) === p` — the
+  // second check is what stops a call from freeing a *different* rig a later
+  // load (or the live environment) has since put in the cache for the same id.
+  function releaseThumbnailRig(id, p) {
+    const refs = (thumbnailRigRefs.get(id) ?? 0) - 1;
+    if (refs > 0) { thumbnailRigRefs.set(id, refs); return; }
+    thumbnailRigRefs.delete(id);
     if (id === environmentId || realisticRig?.id === id) return;
-    const p = rigCache.get(id);
-    if (!p) return;
+    if (rigCache.get(id) !== p) return;
     rigCache.delete(id);
     loadedRigs.delete(id);
     p.then((r) => r.dispose(), () => {});
@@ -911,6 +925,7 @@ export function createViewer(container, part) {
     for (const p of rigCache.values()) p.then((r) => r.dispose(), () => {});
     rigCache.clear();
     loadedRigs.clear();
+    thumbnailRigRefs.clear();
     for (const m of physicalMats.values()) m.dispose();
     physicalMats.clear();
     for (const t of textureCache.values()) t.dispose();
@@ -1680,11 +1695,17 @@ export function createViewer(container, part) {
     const capture = () => currentFramingInCurrentLook({ size, quality: 0.8 });
     if (style === "cad") return captureIn("cad", null, capture);
     const id = resolveEnvironmentId(style).id;
-    const rig = await rigFor(id);
-    if (disposed) return null;
-    await compileRealistic(rig, { forCapture: true });
-    if (disposed) return null;
+    // Grab the exact promise rigFor is caching for `id`, and register with it
+    // BEFORE awaiting: a second concurrent call for the same id must see this
+    // one already counted, or two overlapping releases could both drop the
+    // count to 0 and race each other to dispose.
+    const p = rigFor(id);
+    thumbnailRigRefs.set(id, (thumbnailRigRefs.get(id) ?? 0) + 1);
     try {
+      const rig = await p;
+      if (disposed) return null;
+      await compileRealistic(rig, { forCapture: true });
+      if (disposed) return null;
       if (renderMode !== "realistic" || realisticRig === rig) return captureIn("realistic", rig, capture);
       // Realistic in another environment: borrow this rig, then put the live one back.
       const liveRig = realisticRig, movedAt = shadowMovedAt;
@@ -1701,7 +1722,7 @@ export function createViewer(container, part) {
         }
       }
     } finally {
-      releaseThumbnailRig(id);
+      releaseThumbnailRig(id, p);
     }
   }
 

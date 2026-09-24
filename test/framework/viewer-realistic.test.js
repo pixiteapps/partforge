@@ -964,3 +964,42 @@ test("showAssembly announces an assembly change", () => {
   expect(n).toBe(1);
   v.dispose();
 });
+
+test("concurrent thumbnails of the same environment share one rig and dispose it only once, after both resolve", async () => {
+  stubCanvas();
+  const v = shown();
+  const resolvers = [];
+  state.renderer.compileAsync = vi.fn(() => new Promise((resolve) => resolvers.push(resolve)));
+  const a = v.renderStyleThumbnail("outdoor");
+  const b = v.renderStyleThumbnail("outdoor");
+  await Promise.resolve(); await Promise.resolve();
+  expect(rigState.rigs.filter((r) => r.id === "outdoor")).toHaveLength(1); // one shared load
+  expect(resolvers).toHaveLength(2);                 // both mid-flight on the same rig
+  const rig = rigState.rigs.find((r) => r.id === "outdoor");
+  resolvers[0]();
+  await a;
+  expect(rig.dispose).not.toHaveBeenCalled();         // the other call is still using it
+  resolvers[1]();
+  await b;
+  expect(rig.dispose).toHaveBeenCalledTimes(1);
+  v.dispose();
+});
+
+test("a thumbnail started after an earlier pair fully released gets its own fresh, independently-disposed rig", async () => {
+  stubCanvas();
+  const v = shown();
+  const a = v.renderStyleThumbnail("outdoor");
+  const b = v.renderStyleThumbnail("outdoor");
+  await Promise.all([a, b]);
+  const rig1 = rigState.rigs.find((r) => r.id === "outdoor");
+  expect(rig1.dispose).toHaveBeenCalledTimes(1);
+  const c = await v.renderStyleThumbnail("outdoor");
+  expect(c).toBe("data:image/jpeg;base64,TEST");
+  const outdoorRigs = rigState.rigs.filter((r) => r.id === "outdoor");
+  expect(outdoorRigs).toHaveLength(2);                // a fresh load, not the already-disposed one
+  const rig2 = outdoorRigs[1];
+  expect(rig2).not.toBe(rig1);
+  expect(rig2.dispose).toHaveBeenCalledTimes(1);       // released on its own
+  expect(rig1.dispose).toHaveBeenCalledTimes(1);       // and never touched again
+  v.dispose();
+});
