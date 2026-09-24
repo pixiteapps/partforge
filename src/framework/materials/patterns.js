@@ -100,9 +100,13 @@ const FRAG_NORMAL = {
     float t = fract(h) * 2.0 - 1.0;                       // -1 at a seam, 0 bead crest, 1 next seam
     float slope = clamp(t / sqrt(max(1.0 - t * t, 0.04)), -3.0, 3.0);
     vec3 up = normalize(vPfPrintUpView);
+    // NOT normalised: its length is how steeply the surface cuts across the
+    // layers (1 on a vertical wall, 0 on a face parallel to them), so ridges fade
+    // out on tops and bottoms. Normalising it once made a flat top pick up a
+    // full-strength tilt in a direction set by rounding noise, flipping sign
+    // wherever the face sat on a layer boundary — a visible patch.
     vec3 along = up - normal * dot(normal, up);
-    float alongLen = length(along);
-    if (alongLen > 1e-3) normal = normalize(normal + (along / alongLen) * slope * 0.35 * aa);
+    normal = normalize(normal + along * slope * 0.35 * aa);
   }`,
 };
 

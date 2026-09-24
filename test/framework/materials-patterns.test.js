@@ -96,6 +96,10 @@ test("layer lines tilt the surface normal along the print direction (a procedura
   expect(s.vertexShader).toContain("vPfPrintUpView = normalMatrix *");
   const afterNormals = s.fragmentShader.slice(s.fragmentShader.indexOf("#include <normal_fragment_maps>"));
   expect(afterNormals).toContain("normal = normalize(normal +");
+  // The tilt scales with how steeply the surface cuts across the layers. A
+  // normalised direction gave flat tops a full-strength tilt from rounding noise.
+  expect(afterNormals).toContain("normal + along * slope");
+  expect(afterNormals).not.toContain("along / alongLen");
 });
 
 test("wood gets no normal perturbation", () => {
