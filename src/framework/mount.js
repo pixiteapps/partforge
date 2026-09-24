@@ -7,7 +7,7 @@ import { attachRail } from "./rail.js";
 import { declaredSourceLookup } from "./panel/declared-source.js";
 import { attachMobileTabs } from "./mobile-tabs.js";
 import { createTooltipPresenter, attachButtonTooltips } from "./tooltip.js";
-import { loadCamera, loadProjection, saveProjection, loadRenderMode, loadEnvironment } from "./view-state.js";
+import { loadCamera, loadProjection, saveProjection, loadRenderMode, loadEnvironment, loadFeatureLinesPrefs, saveFeatureLinesPrefs } from "./view-state.js";
 import { attachRealisticControls } from "./realistic-controls.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
 import { declaresMaterials, resolveMaterial } from "./materials/resolve.js";
@@ -67,7 +67,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, renderMode, environment, declaresMaterials, renderViews }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, renderMode, featureLines, environment, declaresMaterials, renderViews }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): animations are
@@ -121,6 +121,9 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
       // from meta.environment (or the default) would outrank the part's own
       // meta.environment on the next mount, masking an edit to it.
       ...(viewer.isEnvironmentChosen?.() ? { environment: viewer.getEnvironment() } : {}),
+      // Feature-line prefs, per style, so a remount doesn't fall back to
+      // storage over what this session already carries.
+      featureLines: viewer.getFeatureLinesPrefs?.() ?? {},
     }),
     // Every custom control's transient state (selection, a scroll position),
     // keyed by param, as plain JSON — the panel's twin of getViewerState. Hand
@@ -196,6 +199,9 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // if the realistic assets failed to load; onChange receives the viewer's
     // {mode, busy, error} event (busy while assets load).
     renderMode: renderMode ?? { get: () => "cad", set: async () => "cad", onChange: () => () => {} },
+    // Feature lines for the CURRENT style ("cad" or the environment in view);
+    // set() persists for that style only. onChange hears explicit changes.
+    featureLines: featureLines ?? { get: () => true, set: () => {}, onChange: () => () => {} },
     // The realistic environment. set() resolves to the id in effect (a failed
     // switch while realistic reverts to the one still shown, and onChange hears
     // both); list() is every environment as {id, label}, for a host picker.
@@ -326,6 +332,13 @@ function createCleanupStack() {
 //                                         // follows it unless given { renderMode }. captureViews
 //                                         // is always CAD — the live mode never changes what
 //                                         // the agent sees.
+//   runtime.featureLines: { get, set, onChange }
+//                                         // boolean, for the CURRENT style (CAD or the environment
+//                                         // in view). set() persists per style — remembered
+//                                         // separately for CAD and each environment; onChange
+//                                         // fires {style, on}. captureViews/renderViews ignore it:
+//                                         // agent-facing renders always draw CAD with lines and
+//                                         // realistic without, whatever the user's switch shows.
 //   runtime.environment: { get, set, onChange, list }
 //                                         // the realistic environment ("studio" | "workshop" |
 //                                         // "print-bed" | "outdoor"); list() → [{id, label}].
@@ -358,8 +371,9 @@ function createCleanupStack() {
 //                                         // KB of base64 apiece, so a host should not assume this
 //                                         // payload is small, only that it is bounded.
 // viewerState: ViewerState               // a previous mount's runtime.getViewerState(), handed back to
-//                                         // resume the camera, projection, cutaway, render mode and
-//                                         // environment where that mount
+//                                         // resume the camera, projection, cutaway, render mode,
+//                                         // environment and per-style feature-line preferences
+//                                         // where that mount
 //                                         // left them. For a host that applies edits by REMOUNTING: the
 //                                         // part changed, the user's view of it should not. Omit on a
 //                                         // first mount — the viewer then restores its own persisted
@@ -670,6 +684,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // While it loads the viewer reports it pending, which is what
     // getViewerState carries; an explicit mode change supersedes it, and a
     // failed load settles to CAD.
+    // Feature lines per style by the same precedence: this session's carried
+    // map wins over the stored one, key by key.
+    viewer.setFeatureLinesPrefs({ ...loadFeatureLinesPrefs(), ...(viewerState?.featureLines ?? {}) });
+    cleanup.defer(viewer.onFeatureLinesChange(() => saveFeatureLinesPrefs(viewer.getFeatureLinesPrefs())));
     if ((viewerState?.renderMode ?? loadRenderMode() ?? "cad") === "realistic") viewer.setRenderMode("realistic");
     const viewcube = attachViewcubeControls(viewer, { stage: els.viewer }, { tooltip });
     cleanup.defer(() => viewcube.detach());
@@ -1352,6 +1370,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
         get: () => viewer.getRenderMode(),
         set: (mode) => viewer.setRenderMode(mode),
         onChange: (cb) => viewer.onRenderModeChange(cb),
+      },
+      featureLines: {
+        get: () => viewer.getFeatureLines(),
+        set: (on) => viewer.setFeatureLines(on),
+        onChange: (cb) => viewer.onFeatureLinesChange(cb),
       },
       environment: {
         get: () => viewer.getEnvironment(),

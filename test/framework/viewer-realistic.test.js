@@ -873,3 +873,48 @@ test("the HDR probe checks the multisampled, stencilled half-float target captur
   expect(renders.at(-1).type).toBe(THREE.UnsignedByteType); // unsupported → the 8-bit path, not a black capture
   v.dispose();
 });
+
+test("feature lines follow a per-style preference in both modes", async () => {
+  const v = shown();
+  expect(v.getFeatureLines()).toBe(true);           // CAD default
+  v.setFeatureLines(false);
+  expect(v.__subLines("body").visible).toBe(false);
+  await v.setRenderMode("realistic");
+  expect(v.getFeatureLines()).toBe(false);          // studio default
+  v.setFeatureLines(true);
+  expect(v.__subLines("body").visible).toBe(true);  // lines in realistic now possible
+  await v.setEnvironment("workshop");
+  expect(v.__subLines("body").visible).toBe(false); // workshop keeps its own default
+  await v.setEnvironment("studio");
+  expect(v.__subLines("body").visible).toBe(true);
+  await v.setRenderMode("cad");
+  expect(v.__subLines("body").visible).toBe(false); // CAD remembered off
+  expect(v.getFeatureLinesPrefs()).toEqual({ cad: false, studio: true });
+  v.dispose();
+});
+
+test("setFeatureLinesPrefs replaces the map and re-applies; listeners hear explicit changes", async () => {
+  const v = shown();
+  const heard = [];
+  v.onFeatureLinesChange((e) => heard.push(e));
+  v.setFeatureLinesPrefs({ cad: false });
+  expect(v.__subLines("body").visible).toBe(false);
+  v.setFeatureLines(true);
+  expect(heard).toEqual([{ style: "cad", on: false }, { style: "cad", on: true }]);
+  v.dispose();
+});
+
+test("agent renders ignore the switch: CAD always with lines, realistic always without", async () => {
+  stubCanvas();
+  const v = shown();
+  v.setFeatureLinesPrefs({ cad: false, studio: true });
+  const seen = [];
+  state.renderer.render = () => { seen.push(v.__subLines("body").visible); };
+  state.renderer.setRenderTarget = () => {};
+  v.captureCanonicalViews(["iso"]);
+  expect(seen.at(-1)).toBe(true);
+  await v.renderViews(["iso"], { renderMode: "realistic" });
+  expect(seen.at(-1)).toBe(false);
+  expect(v.__subLines("body").visible).toBe(false); // live CAD, user's "off", restored
+  v.dispose();
+});

@@ -471,3 +471,14 @@ test("with storage that throws on every access, a carried realistic view mounts,
     }
   }
 });
+
+test("feature lines: restored from storage, carried in viewerState, exposed on the runtime", async () => {
+  localStorage.setItem("partforge:featureLines", JSON.stringify({ cad: false }));
+  const { runtime } = mountFixture({ material: "brass" });
+  await runtime.ready;
+  expect(runtime.featureLines.get()).toBe(false);
+  runtime.featureLines.set(true);
+  expect(JSON.parse(localStorage.getItem("partforge:featureLines"))).toEqual({ cad: true });
+  expect(runtime.getViewerState().featureLines).toEqual({ cad: true });
+  runtime.dispose();
+});
