@@ -406,6 +406,16 @@ are present:
 - `normals` — per-vertex shading normals. Smooth within one surface, hard
   across boolean-cut seams. OCCT ships analytic B-rep normals; Manifold ships
   the policy-aware crease pass (`src/framework/geometry/creased-normals.js`).
+  Fillet bands are analytic on both backends: each Manifold fillet tool registers
+  its rolling-ball spine (`src/framework/geometry/blend-surfaces.js` — a line,
+  circle, point or planar path), and the crease pass shades any smooth group the
+  band takes part in with that exact normal, so a band meets the faces it is
+  tangent to with matching normals (within 0.1° of the true surface on a
+  filleted box — `test/mesh-fillet-normals.test.js`, with its OCCT twin in
+  `test/occt-shading.test.js`). The spine follows the band through later
+  booleans, poses and `label()`. Planar-path bands (rims of extrusions) shade
+  the smooth curve their polyline samples; at a line-to-arc junction in that
+  polyline the normal is off by up to half an arc segment, as before.
 - `edges` — flat feature-edge segment pairs (6 floats per segment). An EMPTY
   array means "this solid has no feature edges"; it is not "unknown". OCCT
   ships true B-rep edges with tangent edges (fillet blends, seam lines)

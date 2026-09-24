@@ -86,6 +86,21 @@ const rotVec = (p, k, th) => { // Rodrigues rotation about unit axis k
   return add(add(scl(p, c), scl(cross(k, p), s)), scl(k, dot(k, p) * (1 - c)));
 };
 
+// Analytic shading. Each fillet tool's blend wall is a canal surface about a known
+// spine (blend-surfaces.js); tell the kernel, which registers it against the tool's
+// surface id so toMesh can emit the exact rolling-ball normals instead of facet
+// averages. `surf` is in the tool's CURRENT (posed, world) frame. A kernel without
+// the hook (or a chamfer, whose flat/conical walls facet-shade exactly already) just
+// gets the tool back.
+const markBlend = (k, tool, surf) => (k._markBlendSurface ? k._markBlendSurface(tool, surf) : tool);
+// The ball centre's offset from the edge point, given the two unit flank normals —
+// profile2D's C, in any dimension (2-D profile coordinates or 3-D world vectors).
+const ballOffset = (n1, n2, r, convex) => {
+  const c = clamp1(n1.reduce((acc, x, i) => acc + x * n2[i], 0));
+  const f = (convex ? 1 : -1) * (-r / (1 + c));
+  return n1.map((x, i) => f * (x + n2[i]));
+};
+
 // ---------------------------------------------------------------------------
 // Sharp-edge extraction: weld vertices, keep edges whose two incident triangles
 // meet at a dihedral sharper than sharpDeg, tag convexity and flank normals.
@@ -663,7 +678,8 @@ function prismTool(k, chain, magnitude, mode, segs, pSegs = segs) {
     { shading: "smooth" },
   );
   if (axis) tool = tool.rotateAbout({ axis, deg: (theta * 180) / Math.PI });
-  return tool.translate(a);
+  tool = tool.translate(a);
+  return mode === "fillet" ? markBlend(k, tool, { kind: "line", p: add(a, ballOffset(n1, n2, magnitude, convex)), d: e }) : tool;
 }
 
 // `segs` is the KERNEL quality — it sizes the flank-facet guards (sag/ext) and the
@@ -756,7 +772,11 @@ function revolveTool(k, chain, magnitude, mode, segs, pSegs = segs, flankAt = ()
   const dephase = closed ? Math.PI / flankSegs : 0;
   const twist = Math.atan2(dot(w, cross(xImage, startDir)), dot(xImage, startDir)) + dephase;
   if (Math.abs(twist) > 1e-9) tool = tool.rotateAbout({ axis: w, deg: (twist * 180) / Math.PI });
-  return tool.translate(O);
+  tool = tool.translate(O);
+  if (mode !== "fillet") return tool;
+  // spine: the ball centre's circle — profile C = [R, 0] + offset in (ρ, w)
+  const C = ballOffset(n1, n2, magnitude, convex);
+  return markBlend(k, tool, { kind: "circle", c: add(O, scl(w, C[1])), a: w, R: R + C[0] });
 }
 
 // ---------------------------------------------------------------------------
@@ -893,6 +913,32 @@ function weldChainPoints(pts, wallNs, closed) {
     outW.push(closingW);
   }
   return { pts: outP, wallNs: outW };
+}
+
+// The spine of a planar sweep tool, as a "path" blend surface (blend-surfaces.js).
+// The sweep transports the profile about the face normal, so the wall keeps its
+// face-normal component and its in-plane part turns with the path; the seed segment
+// (the one sweepSeedFrame is built ⟂ to: the first, or the closing one of a loop)
+// fixes which side that is. Vertex directions bisect their two segments' sides.
+function planarSpine(path, closed, faceN, wallN, magnitude, convex) {
+  const n = path.length, nSeg = closed ? n : n - 1;
+  const tan = (i) => norm(sub(path[(i + 1) % n], path[i]));
+  const tSeed = tan(closed ? n - 1 : 0);
+  const wallP = norm(sub(wallN, scl(tSeed, dot(wallN, tSeed))));
+  const cf = dot(wallP, faceN);
+  const wIn = sub(wallP, scl(faceN, cf));
+  const side = dot(wIn, cross(faceN, tSeed)) >= 0 ? 1 : -1;
+  const segSide = [];
+  for (let i = 0; i < nSeg; i++) segSide.push(scl(norm(cross(faceN, tan(i))), side));
+  const dirs = path.map((_, i) => {
+    const a = closed ? segSide[(i - 1 + nSeg) % nSeg] : segSide[Math.max(0, i - 1)];
+    const b = closed ? segSide[i % nSeg] : segSide[Math.min(nSeg - 1, i)];
+    const m = norm(add(a, b));
+    return len(m) > 0 ? m : a;
+  });
+  // ballOffset(faceN, wall) = K·(faceN + wall) with wall = cf·faceN + |wIn|·dir
+  const K = (convex ? 1 : -1) * (-magnitude / (1 + clamp1(cf)));
+  return { kind: "path", pts: path, closed, dirs, f: faceN, kf: K * (1 + cf), kd: K * len(wIn) };
 }
 
 function planarTool(k, chain, magnitude, mode, segs, pSegs = segs, endTins = null, flankAt = () => segs) {
@@ -1036,7 +1082,8 @@ function planarTool(k, chain, magnitude, mode, segs, pSegs = segs, endTins = nul
       return [q[0] / l, q[1] / l];
     };
     const poly = profile2D({ P: [0, 0], n1: p2(faceN), n2: p2(wallN), magnitude, mode, convex, segs: pSegs });
-    return k.sweep(poly, path3D, { closed: isClosed });
+    const tool = k.sweep(poly, path3D, { closed: isClosed });
+    return mode === "fillet" ? markBlend(k, tool, planarSpine(path3D, isClosed, faceN, wallN, magnitude, convex)) : tool;
   };
 
   // Sweep one open stretch; when the sweep refuses a VERTEX fold the pre-split
@@ -1333,7 +1380,9 @@ function reflexPivotTool(k, { vertex, f, u0, span }, magnitude, mode, segs, pSeg
   const xImage = axis ? rotVec([1, 0, 0], axis, theta) : [1, 0, 0];
   const twist = Math.atan2(dot(f, cross(xImage, startDir)), dot(xImage, startDir));
   if (Math.abs(twist) > 1e-9) tool = tool.rotateAbout({ axis: f, deg: (twist * 180) / Math.PI });
-  return tool.translate(vertex);
+  tool = tool.translate(vertex);
+  // spine: the ball centre swings on a circle of radius r, r below the face
+  return mode === "fillet" ? markBlend(k, tool, { kind: "circle", c: sub(vertex, scl(f, r)), a: f, R: r }) : tool;
 }
 
 function chainEndInfo(ch, end) {
@@ -1546,7 +1595,8 @@ function cornerPatches(k, selected, r, segs, flankAt = () => segs) {
     const twist = Math.atan2(dot(e1, cross(xImage, e2)), dot(xImage, e2));
     if (Math.abs(twist) > 1e-9) block = block.rotateAbout({ axis: e1, deg: (twist * 180) / Math.PI });
     block = block.translate(V);
-    patches.push(block.cut(k.sphere({ r }).at(add(C, scl(inward, bury)))));
+    const centre = add(C, scl(inward, bury));
+    patches.push(block.cut(markBlend(k, k.sphere({ r }).at(centre), { kind: "point", c: centre })));
   }
   return patches;
 }

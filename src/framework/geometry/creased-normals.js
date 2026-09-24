@@ -8,12 +8,30 @@
 // near-tangent), and a surface's own sharp edges stay crisp too. Each original
 // surface may carry a shading policy (shading-policy.js); surfaces without one
 // use SMOOTH, which reproduces the pre-policy behavior exactly.
+//
+// Analytic blend normals: a surface id with a registered blend-surface descriptor
+// (`surfaces`, blend-surfaces.js — mesh fillet bands) shades with the EXACT normal of
+// its rolling-ball surface instead of a facet average. Wherever such a surface takes
+// part in a vertex's smooth group, the group's normal is the average of the analytic
+// normals alone: at a band's tangent boundary that is the neighbouring face's own
+// normal (the surfaces meet with zero angle), so the face side of the seam, the band
+// side, and any band vertex riding a face edge as a T-junction all agree.
 import { SMOOTH, COPLANAR_ANGLE, MIN_EDGE, MIN_FACE, cosDeg } from "./shading-policy.js";
+import { affineAt, IDENTITY, runEvaluator } from "./blend-surfaces.js";
 
 const COPLANAR_COS = cosDeg(COPLANAR_ANGLE);
 const MIN_EDGE2 = MIN_EDGE * MIN_EDGE;
+// A descriptor's normal is trusted on a triangle only while it stays within this of
+// the facet: a blend facet spans at most 30° of arc (blendSegs' floor of 12), so its
+// normal is ≤15° from any of its vertices' — anything further is a tool face that is
+// NOT the blend wall (a filler's flush end cap, a cutter's closing wall).
+const ANALYTIC_COS = cosDeg(25);
+// Shading-adjacency weld radius (mm): far below anything visible, above the boolean's
+// nanometre seam splits (see the weld below).
+const SHADE_WELD = 5e-5;
+const SHADE_CELL = 1e-3; // its hash-grid cell
 
-export function creasedNormals(g, { policies = null, featureLabels = null } = {}) {
+export function creasedNormals(g, { policies = null, featureLabels = null, surfaces = null } = {}) {
   const np = g.numProp, vp = g.vertProperties, tris = g.triVerts;
   const nTri = (tris.length / 3) | 0, nVert = (vp.length / np) | 0;
 
@@ -37,6 +55,43 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
   const ri = g.runIndex, roid = g.runOriginalID;
   for (let r = 0; r < roid.length; r++)
     for (let t = ri[r] / 3; t < ri[r + 1] / 3; t++) triOID[t] = roid[r];
+
+  // per-run analytic evaluators (only runs whose surface id has a descriptor), and
+  // each triangle's run — evaluated lazily, memoized per (run, vertex)
+  let triRun = null, runEval = null;
+  if (surfaces?.size) {
+    const rt = g.runTransform;
+    runEval = new Array(roid.length).fill(null);
+    let any = false;
+    for (let r = 0; r < roid.length; r++) {
+      const desc = surfaces.get(roid[r]);
+      if (!desc) continue;
+      runEval[r] = runEvaluator(desc, rt && rt.length >= (r + 1) * 12 ? affineAt(rt, r) : IDENTITY);
+      any ||= !!runEval[r];
+    }
+    if (any) {
+      triRun = new Uint32Array(nTri);
+      for (let r = 0; r < roid.length; r++)
+        for (let t = ri[r] / 3; t < ri[r + 1] / 3; t++) triRun[t] = r;
+    } else runEval = null;
+  }
+  const analyticMemo = new Map();
+  // analytic normal of triangle t at vertex v, oriented with the facet — or null
+  const analyticAt = (t, v) => {
+    const r = triRun[t], ev = runEval[r];
+    if (!ev) return null;
+    const key = r * nVert + v;
+    let n = analyticMemo.get(key);
+    if (n === undefined) {
+      const o = v * np;
+      n = ev([vp[o], vp[o + 1], vp[o + 2]]);
+      analyticMemo.set(key, n);
+    }
+    if (!n) return null;
+    const d = n[0] * fn[t * 3] + n[1] * fn[t * 3 + 1] + n[2] * fn[t * 3 + 2];
+    if (Math.abs(d) < ANALYTIC_COS) return null;
+    return d < 0 ? [-n[0], -n[1], -n[2]] : n;
+  };
 
   // per-triangle face normals, plus each triangle's minimum height (2·area /
   // longest edge) — the "thinness" the feature-edge pass gates on below
@@ -69,14 +124,40 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
   // pass below deliberately keeps `remap` (Manifold's own topology): welding
   // its edge keys would make pairing at collapsed seams order-dependent and
   // could pair a boundary ring's edges away.
+  //
+  // The join is within SHADE_WELD, not float-exact: a seam where a fillet band meets
+  // a curved flank comes out of the boolean as two or three vertex columns a few
+  // NANOmetres apart (measured 0.5-4 nm on a cylinder rim fillet), so an exact key
+  // left the flank's rim vertices shading on their own facet while the band beside
+  // them shaded smooth — a ~1.5° lighting step along every rim, which mirror-like
+  // materials show as a seam.
   const weld = Uint32Array.from(remap);
   {
-    const byPos = new Map();
+    // cells SHADE_CELL wide (≫ SHADE_WELD), so a vertex probes a neighbor cell only
+    // on the axes where it sits within SHADE_WELD of the cell wall — one lookup for
+    // almost every vertex. Numeric hashed keys; a collision only adds candidates,
+    // and every candidate is distance-checked.
+    const inv = 1 / SHADE_CELL, edge = SHADE_WELD / SHADE_CELL, tol2 = SHADE_WELD * SHADE_WELD;
+    const cells = new Map();
+    const hash = (x, y, z) => (Math.imul(x, 73856093) ^ Math.imul(y, 19349663) ^ Math.imul(z, 83492791)) | 0;
+    const offs = (f) => (f < edge ? [0, -1] : f > 1 - edge ? [0, 1] : [0]);
     for (let i = 0; i < nVert; i++) {
-      const o = i * np;
-      const key = `${vp[o]}|${vp[o + 1]}|${vp[o + 2]}`;
-      const first = byPos.get(key);
-      if (first === undefined) byPos.set(key, weld[i]); else weld[i] = first;
+      const o = i * np, x = vp[o], y = vp[o + 1], z = vp[o + 2];
+      const fx = x * inv, fy = y * inv, fz = z * inv;
+      const cx = Math.floor(fx), cy = Math.floor(fy), cz = Math.floor(fz);
+      let hit = -1;
+      search: for (const dx of offs(fx - cx)) for (const dy of offs(fy - cy)) for (const dz of offs(fz - cz)) {
+        const reps = cells.get(hash(cx + dx, cy + dy, cz + dz));
+        if (!reps) continue;
+        for (const j of reps) {
+          const q = j * np;
+          if ((vp[q] - x) ** 2 + (vp[q + 1] - y) ** 2 + (vp[q + 2] - z) ** 2 <= tol2) { hit = j; break search; }
+        }
+      }
+      if (hit >= 0) { weld[i] = weld[hit]; continue; }
+      const key = hash(cx, cy, cz);
+      const reps = cells.get(key);
+      if (reps) reps.push(i); else cells.set(key, [i]);
     }
   }
 
@@ -96,7 +177,7 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
     const sharpCos = cosFor(oid); // per-surface crease threshold
     for (let k = 0; k < 3; k++) {
       const v = tris[t * 3 + k];
-      let nx = 0, ny = 0, nz = 0;
+      let nx = 0, ny = 0, nz = 0, ax = 0, ay = 0, az = 0, analytic = false;
       for (const t2 of incident.get(weld[v])) {
         // different cut surface → hard, EXCEPT when a blend surface (boundaryLines)
         // is involved on either side. Blend↔blend: one band is many tool surfaces
@@ -112,7 +193,12 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
           !(polFor(triOID[t2]).boundaryLines || polFor(oid).boundaryLines)) continue;
         if (fn[t2 * 3] * fx + fn[t2 * 3 + 1] * fy + fn[t2 * 3 + 2] * fz < sharpCos) continue; // sharp same-surface edge → hard
         nx += fn[t2 * 3]; ny += fn[t2 * 3 + 1]; nz += fn[t2 * 3 + 2];
+        if (runEval) {
+          const an = analyticAt(t2, weld[v]);
+          if (an) { ax += an[0]; ay += an[1]; az += an[2]; analytic = true; }
+        }
       }
+      if (analytic && Math.hypot(ax, ay, az) > 1e-9) { nx = ax; ny = ay; nz = az; }
       const L = Math.hypot(nx, ny, nz) || 1;
       const o = (t * 3 + k) * 3, vv = v * np;
       positions[o] = vp[vv]; positions[o + 1] = vp[vv + 1]; positions[o + 2] = vp[vv + 2];
