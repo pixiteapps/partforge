@@ -68,4 +68,10 @@ export default {
   // The package's own subpath exports are the public API; their exports are
   // the product, not dead code.
   includeEntryExports: false,
+  // scripts/bake-environments.mjs shells out to `ultrahdr_app` (Google's libultrahdr
+  // CLI, `brew install libultrahdr`) to encode UltraHDR gainmap JPEGs — a system
+  // binary, never an npm dependency, so knip cannot find it in package.json and
+  // reports it as "unlisted". It is a one-shot dev tool; the binary is not needed to
+  // build, test, or run the published package.
+  ignoreBinaries: ["ultrahdr_app"],
 };
