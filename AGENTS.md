@@ -125,10 +125,13 @@ the installed package, so let the publish finish before bumping the dep there.
   exit), `viewcube/` (the orientation
   cube: a ghost cube whose 26 regions - 6 faces, 12 edges, 8 corners - tween
   the camera to canonical angles, with model-frame X/Y/Z arrows drawn in
-  front of it and a perspective/orthographic toggle beneath -
-  `cube-geom.js` is the pure projection/hit leaf, `cube-canvas.js` the 2D
-  renderer, `viewcube-mode.js` the orchestrator, `viewcube-controls.js` the
-  stack chrome. The stack hides for either of two independent reasons, OR-ed in
+  front of it - `cube-geom.js` is the pure projection/hit leaf, `cube-canvas.js`
+  the 2D renderer, `viewcube-mode.js` the orchestrator, `viewcube-controls.js`
+  the stack chrome. The view style button sits over the cube's bottom-right
+  corner, in the stack (so it hides with it), but belongs to
+  `view-style-controls.js`: the button and its popover (style thumbnails,
+  per-style feature lines, projection), with `view-style-state.js` as its
+  pure half (the style list, line defaults, thumbnail-cache freshness). The stack hides for either of two independent reasons, OR-ed in
   mount: Sketch mode, and a crowded animation transport bar - the stack
   publishes its size as `data-pf-w`/`data-pf-h` so
   `animation-controls.js` can judge that crowding against a footprint that does

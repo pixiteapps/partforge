@@ -224,15 +224,13 @@ function makeElements() {
       measure: mk("button"),
       annotate: mk("button"),
       railToggle: mk("button"),
-      realistic: mk("button"),
-      environment: mk("select"),
     },
   };
   document.body.append(els.viewer, els.controls, els.rail, els.tabs,
     els.status.status, els.status.busy, els.status.phase,
     els.exports.stl, els.exports.step, els.exports.threeMf,
     els.chrome.reframe, els.chrome.theme, els.chrome.cutaway, els.chrome.measure,
-    els.chrome.annotate, els.chrome.railToggle, els.chrome.realistic, els.chrome.environment);
+    els.chrome.annotate, els.chrome.railToggle);
   return els;
 }
 
@@ -1502,9 +1500,13 @@ test("mounts the view cube stack inside the stage", () => {
   const runtime = mount(makePart(), { createWorker, elements: els });
   finishFirstBuild(workers);
   expect(els.viewer.querySelector(".pf-viewcube-stack")).not.toBeNull();
-  expect(els.viewer.querySelector("#projection")).not.toBeNull();
+  // The view style button took the projection toggle's place in the stack.
+  expect(els.viewer.querySelector(".pf-viewcube-stack #view-style")).not.toBeNull();
+  expect(els.viewer.querySelector("#projection")).toBeNull();
   runtime.dispose();
   expect(els.viewer.querySelector(".pf-viewcube-stack")).toBeNull();
+  expect(els.viewer.querySelector("#view-style")).toBeNull();
+  expect(els.viewer.querySelector("#pf-view-style-popover")).toBeNull();
 });
 
 test("exposes projection on the runtime and drives the viewer with it", () => {

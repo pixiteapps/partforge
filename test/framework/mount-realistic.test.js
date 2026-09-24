@@ -115,7 +115,7 @@ const payload = (name) => ({
   edges: new Float32Array(0),
 });
 
-function makeElements({ realistic = false } = {}) {
+function makeElements() {
   const mk = (tag = "div") => document.createElement(tag);
   const els = {
     viewer: mk(), controls: mk(), rail: mk(),
@@ -124,7 +124,6 @@ function makeElements({ realistic = false } = {}) {
     exports: { stl: mk("button"), step: mk("button"), threeMf: mk("button") },
     chrome: {
       reframe: mk("button"), theme: mk("button"), cutaway: mk("button"), railToggle: mk("button"),
-      ...(realistic ? { realistic: mk("button"), environment: mk("select") } : {}),
     },
   };
   Object.defineProperties(els.viewer, { clientWidth: { value: 400 }, clientHeight: { value: 300 } });
@@ -132,14 +131,14 @@ function makeElements({ realistic = false } = {}) {
   return els;
 }
 
-function mountFixture(display, { viewerState, realistic } = {}) {
+function mountFixture(display, { viewerState } = {}) {
   const workers = {};
   const createWorker = (name) => {
     const w = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null };
     workers[name] = w;
     return w;
   };
-  const els = makeElements({ realistic });
+  const els = makeElements();
   const runtime = mount(makePart(display), { createWorker, elements: els, viewerState });
   workers.manifold.onmessage({ data: { type: "ready" } });
   workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("body")], ms: 1 } });
@@ -258,21 +257,23 @@ test("renderViews renders through the viewer in the requested mode", async () =>
   runtime.dispose();
 });
 
-test("the viewbar toggle and environment menu drive the viewer", async () => {
-  const { runtime, els } = mountFixture({ material: "brass" }, { realistic: true });
+test("the view style popover's tiles drive the viewer and persist what took effect", async () => {
+  const { runtime, els } = mountFixture({ material: "brass" });
   await runtime.ready;
-  const { realistic: toggle, environment: menu } = els.chrome;
-  expect(menu.options.length).toBe(4);
-  expect(menu.hidden).toBe(true);
-  toggle.click();
+  const button = els.viewer.querySelector(".pf-viewcube-stack #view-style");
+  const tile = (id) => els.viewer.querySelector(`.pf-view-style-tile[data-style="${id}"]`);
+  expect(tile("cad").getAttribute("aria-pressed")).toBe("true");
+  button.click();
+  expect(button.getAttribute("aria-expanded")).toBe("true");
+  tile("workshop").click();
   await vi.waitFor(() => expect(runtime.renderMode.get()).toBe("realistic"));
-  expect(toggle.getAttribute("aria-pressed")).toBe("true");
-  expect(menu.hidden).toBe(false);
-  menu.value = "workshop";
-  menu.dispatchEvent(new Event("change"));
-  await vi.waitFor(() => expect(runtime.environment.get()).toBe("workshop"));
+  expect(runtime.environment.get()).toBe("workshop");
   await vi.waitFor(() => expect(localStorage.getItem("partforge:environment")).toBe("workshop"));
-  expect(localStorage.getItem("partforge:renderMode")).toBe("realistic");
+  await vi.waitFor(() => expect(localStorage.getItem("partforge:renderMode")).toBe("realistic"));
+  expect(tile("workshop").getAttribute("aria-pressed")).toBe("true");
+  tile("cad").click();
+  await vi.waitFor(() => expect(runtime.renderMode.get()).toBe("cad"));
+  await vi.waitFor(() => expect(localStorage.getItem("partforge:renderMode")).toBe("cad"));
   runtime.dispose();
 });
 
@@ -448,7 +449,7 @@ test("with storage that throws on every access, a carried realistic view mounts,
     const workers = {};
     const runtime = mount(makePart({ material: "brass" }), {
       createWorker: (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null }),
-      elements: makeElements({ realistic: true }),
+      elements: makeElements(),
       viewerState: { renderMode: "realistic", environment: "workshop" },
     });
     // Before the first build.

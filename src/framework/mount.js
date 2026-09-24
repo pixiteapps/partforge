@@ -8,7 +8,7 @@ import { declaredSourceLookup } from "./panel/declared-source.js";
 import { attachMobileTabs } from "./mobile-tabs.js";
 import { createTooltipPresenter, attachButtonTooltips } from "./tooltip.js";
 import { loadCamera, loadProjection, saveProjection, loadRenderMode, loadEnvironment, loadFeatureLinesPrefs, saveFeatureLinesPrefs } from "./view-state.js";
-import { attachRealisticControls } from "./realistic-controls.js";
+import { attachViewStyleControls } from "./view-style-controls.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
 import { declaresMaterials, resolveMaterial } from "./materials/resolve.js";
 import { printFrameMatrix } from "./materials/print-frame.js";
@@ -404,13 +404,18 @@ function createCleanupStack() {
 //                                         // not a degraded one). A rejection is reported through the
 //                                         // control's own onError; the widget keeps the converted blob
 //                                         // so a retry costs a network call, not a reconvert.
-// elements.chrome.realistic / .environment  // optional realistic-mode viewbar controls — a
-//                                         // <button> toggle and an (empty) <select> the mount
-//                                         // fills with the environments; default ids #realistic
-//                                         // and #environment. Without them the host drives
-//                                         // runtime.renderMode / runtime.environment itself.
-//                                         // Both preferences persist like the theme (and carry
-//                                         // in viewerState, which outranks what is stored).
+// (view style — no element)              // the view style button (#view-style) is GENERATED
+//                                         // into the view cube's stack, where the cube's
+//                                         // projection toggle used to be; its popover holds the
+//                                         // style (CAD or a realistic environment, as live
+//                                         // thumbnails), feature lines for that style, and the
+//                                         // projection. Hosts need no markup for it — the old
+//                                         // elements.chrome.realistic / .environment (#realistic,
+//                                         // #environment) are gone. A host can still drive
+//                                         // runtime.renderMode / .environment / .featureLines /
+//                                         // .projection itself. The preferences persist like the
+//                                         // theme (and carry in viewerState, which outranks
+//                                         // what is stored).
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
@@ -453,8 +458,6 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       measure: elements.chrome?.measure ?? byId("measure"),
       annotate: elements.chrome?.annotate ?? byId("annotate"),
       railToggle: elements.chrome?.railToggle ?? byId("rail-toggle"),
-      realistic: elements.chrome?.realistic ?? byId("realistic"),
-      environment: elements.chrome?.environment ?? byId("environment"),
     },
   };
 
@@ -660,7 +663,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
         }
       }));
     }
-    // Orientation cube + projection toggle. Generated chrome — no host markup
+    // Orientation cube (and, beside it, the view style button). Generated chrome — no host markup
     // declares it, so an embedder gets it for free. Restored BEFORE any framing
     // happens so a reload into ortho frames once instead of framing in
     // perspective and then visibly re-framing.
@@ -689,8 +692,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     viewer.setFeatureLinesPrefs({ ...loadFeatureLinesPrefs(), ...(viewerState?.featureLines ?? {}) });
     cleanup.defer(viewer.onFeatureLinesChange(() => saveFeatureLinesPrefs(viewer.getFeatureLinesPrefs())));
     if ((viewerState?.renderMode ?? loadRenderMode() ?? "cad") === "realistic") viewer.setRenderMode("realistic");
-    const viewcube = attachViewcubeControls(viewer, { stage: els.viewer }, { tooltip });
+    const viewcube = attachViewcubeControls(viewer, { stage: els.viewer });
     cleanup.defer(() => viewcube.detach());
+    // The view style button + popover (style, feature lines, projection),
+    // in the cube's stack where the projection toggle was — it hides with the
+    // cube (Sketch, a crowded transport bar) and closes its popover then.
+    const viewStyle = attachViewStyleControls(viewer, { stage: els.viewer, anchor: viewcube.element }, { tooltip });
+    cleanup.defer(() => viewStyle.detach());
     cleanup.defer(viewer.onProjectionChange((mode) => saveProjection(mode)));
     // setHidden takes one boolean, and there are two independent reasons to hide
     // the cube: Sketch mode (below) and a crowded transport bar (wired into the
@@ -1281,11 +1289,6 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // Optional host-page viewer chrome (reframe / theme) + camera persistence.
     const chrome = attachViewerControls(viewer, els.chrome, { tooltip });
     cleanup.defer(() => chrome.detach());
-    // Optional realistic-mode chrome: the toggle and the environment picker.
-    const realisticChrome = attachRealisticControls(viewer, {
-      toggle: els.chrome.realistic, envMenu: els.chrome.environment,
-    }, { tooltip });
-    cleanup.defer(() => realisticChrome.detach());
 
     // Full teardown of everything this mount created. Idempotent. A disposed runtime
     // can never surface a late build result (workers are terminated, the loop is

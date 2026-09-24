@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// The chrome: the stack element, the projection button, and the hidden
+// The chrome: the stack element and the hidden
 // per-view buttons that replace the DOM focus a canvas cannot give us.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { attachViewcubeControls } from "../../../src/framework/viewcube/viewcube-controls.js";
@@ -39,8 +39,6 @@ beforeEach(() => {
 });
 afterEach(() => handle?.detach());
 
-const projectionButton = () => stage.querySelector("#projection");
-
 describe("structure", () => {
   it("builds the stack inside the stage, not on document.body", () => {
     const stack = stage.querySelector(".pf-viewcube-stack");
@@ -48,50 +46,12 @@ describe("structure", () => {
     expect(stack.parentElement).toBe(stage);
   });
 
-  it("appends the cube before the projection button, so the button paints over it", () => {
-    // DOM order is cube-then-button, and since the 2026-08-20 revision that
-    // laid the button OVER the cube's bottom-right corner it is load-bearing:
-    // the button carries no z-index, so being the later sibling is the only
-    // thing putting it on top of the canvas (see chrome.css's comment).
-    const children = [...stage.querySelector(".pf-viewcube-stack").children];
-    expect(children[0].className).toContain("pf-viewcube");
-    expect(children[1]).toBe(projectionButton());
-  });
-
-  it("gives the projection button its own toggle class, no wrapping pill", () => {
-    // The button used to sit inside a `.pf-viewcube-pill` card; the
-    // 2026-08-20 revision made it a bare circle and dropped the wrapper.
-    expect(projectionButton().className).toBe("pf-viewcube-toggle");
+  it("carries no projection button of its own (it moved into the view style popover)", () => {
+    // Through 2026-09-23 the stack generated #projection over the cube's
+    // corner; view-style-controls.js now puts its own button in that spot.
+    expect(stage.querySelector("#projection")).toBeNull();
+    expect(stage.querySelector(".pf-viewcube-toggle")).toBeNull();
     expect(stage.querySelector(".pf-viewcube-pill")).toBeNull();
-  });
-
-  it("gives the projection button a type, label and title", () => {
-    const button = projectionButton();
-    expect(button.type).toBe("button");
-    expect(button.getAttribute("aria-pressed")).toBe("false");
-    expect(button.getAttribute("aria-label")).toMatch(/orthographic/i);
-  });
-});
-
-describe("projection button", () => {
-  it("switches to orthographic on click and reflects it", () => {
-    projectionButton().click();
-    expect(viewer.setProjection).toHaveBeenCalledWith("orthographic");
-    expect(projectionButton().classList.contains("on")).toBe(true);
-    expect(projectionButton().getAttribute("aria-pressed")).toBe("true");
-    expect(projectionButton().getAttribute("aria-label")).toMatch(/perspective/i);
-  });
-
-  it("switches back on a second click", () => {
-    projectionButton().click();
-    projectionButton().click();
-    expect(viewer.setProjection).toHaveBeenLastCalledWith("perspective");
-    expect(projectionButton().classList.contains("on")).toBe(false);
-  });
-
-  it("follows a projection change it did not initiate", () => {
-    viewer.setProjection("orthographic");
-    expect(projectionButton().classList.contains("on")).toBe(true);
   });
 });
 
@@ -113,7 +73,7 @@ describe("keyboard access", () => {
 });
 
 describe("hiding", () => {
-  it("hides the whole stack, projection button included", () => {
+  it("hides the whole stack", () => {
     handle.setHidden(true);
     expect(stage.querySelector(".pf-viewcube-stack").hidden).toBe(true);
     handle.setHidden(false);

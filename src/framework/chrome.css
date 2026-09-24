@@ -249,14 +249,23 @@
    56px fallback is the standard viewbar's 12px bottom + 44px height, so the
    stack still sits right if the observer never fires.
 
-   The projection toggle has moved twice. Through 2026-08-19 it sat in its own
-   `.pf-viewcube-pill` card BELOW the cube, making the stack a column. Earlier
-   on 2026-08-20 it became a bare circle BESIDE the cube, making the stack a
-   `row-reverse` flex row (`canvas + gap + button`, 167px wide at the full
-   135px cube). It now sits OVER the cube's bottom-right corner instead:
-   absolutely positioned within the stack, right edge on the stack's right edge
-   and bottom edge on its bottom baseline, so the stack's width collapses back
-   to the canvas alone (135px, or 101 below the narrow breakpoint).
+   The corner over the cube's bottom-right is the VIEW STYLE button's
+   (view-style-controls.js, 2026-09-24), which replaced the projection toggle
+   there. The toggle had moved twice before it went: through 2026-08-19 it sat
+   in its own `.pf-viewcube-pill` card BELOW the cube, making the stack a
+   column; earlier on 2026-08-20 it became a bare circle BESIDE the cube,
+   making the stack a `row-reverse` flex row (`canvas + gap + button`, 167px
+   wide at the full 135px cube); later that day it moved OVER the cube's
+   bottom-right corner — absolutely positioned within the stack, right edge on
+   the stack's right edge and bottom edge on its bottom baseline, so the
+   stack's width collapsed back to the canvas alone (135px, or 101 below the
+   narrow breakpoint). The view style button keeps exactly that placement, so
+   the stack's measured box — the size viewcube-controls.js publishes and the
+   transport bar's crowding rule reads — is still the canvas alone. It is
+   bigger (34px against the toggle's 24, and card-chromed: it is meant to be
+   seen), but being absolutely positioned inside the stack it cannot widen
+   it; the cost is that it covers more of the cube's corner cell (a third of
+   the 101px narrow cube's width).
 
    That is also what satisfies "aligned with the right of the toolbar" without a
    second offset: `.pf-float-viewbar` above is `right: 12px` too, so making the
@@ -264,9 +273,10 @@
    construction — and it keeps doing so if that margin is ever retuned.
 
    The button is a later sibling than the cube's wrapper, so it paints over the
-   canvas with no z-index of its own; 24px over the corner cell — the least
-   informative part of the drawing — is small enough not to hide anything worth
-   clicking, and the canvas keeps receiving pointer events everywhere else.
+   canvas with no z-index of its own; the corner cell it covers is the least
+   informative part of the drawing, and the canvas keeps receiving pointer
+   events everywhere else. Its popover is NOT in the stack: it is appended to
+   the stage and placed from the button's rect at open time (it opens above).
 
    The 8px that used to sit between the stack and the viewbar is now 3px
    (2026-08-20: "lower the whole box so it's closer to the bottom bar"). 3
@@ -285,7 +295,7 @@
 
    The stack itself is pointer-transparent. With the button back inside the
    canvas's footprint there is no dead gap left at all: the stack's box IS the
-   canvas's box, and both the canvas and the button opt back in below. The
+   canvas's box, and both the canvas and the view style button opt back in below. The
    declaration stays because the stack's own box is still an element over the
    viewer, and a stray hit on it (its padding-free edges, or a future child
    before it opts in) should reach the model behind rather than be swallowed. */
@@ -298,10 +308,10 @@
   pointer-events: none;
 }
 .pf-viewcube-stack[hidden] { display: none; }
-.pf-viewcube-canvas, .pf-viewcube-toggle { pointer-events: auto; }
+.pf-viewcube-canvas, .pf-view-style-button { pointer-events: auto; }
 /* Over the cube's bottom-right corner. Absolute against the stack, which is
    itself absolute and so already the containing block. */
-.pf-viewcube-toggle { position: absolute; right: 0; bottom: 0; }
+.pf-view-style-button { position: absolute; right: 0; bottom: 0; }
 
 /* The keyboard surface: six per-view buttons standing in for the DOM focus a
    canvas cannot give us. Visually hidden rather than display:none — the latter

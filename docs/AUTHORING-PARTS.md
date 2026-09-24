@@ -2589,7 +2589,7 @@ stylesheet). `mount` looks up these element IDs:
 | `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` and opens the resolved default (see the "Which view the viewer opens on" rule above) |
 | `#download-step` / `#download` / `#download-3mf` | STEP / STL / 3MF export buttons |
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
-| `#viewbar` with `#annotate` / `#measure` / `#cutaway` / `#reframe` / `#realistic` / `#environment` / `#theme` | optional viewer controls (omit any you don't want) |
+| `#viewbar` with `#annotate` / `#measure` / `#cutaway` / `#reframe` / `#theme` | optional viewer controls (omit any you don't want) |
 | `#panel` | the full-height controls rail (`class="pf-rail"`); programmatic hosts pass `elements.rail` instead |
 | `#rail-toggle` | optional — collapses/restores the rail; resolved the same way as `#reframe`/`#theme`. A sibling of `#viewbar`, not a child of it: give it `class="pf-float-rail-toggle"` and it floats at the stage's top right |
 
@@ -2597,14 +2597,21 @@ Copy `demo.html` and change the title, the panel heading, and the `<script src>`
 workers are spawned from your one worker entry (`name` = `"manifold"` for preview/STL/3MF,
 `"occt"` for STEP — handled for you).
 
-**`#realistic` (a `<button>`) / `#environment` (an empty `<select>`) are the
-realistic-mode viewbar controls**, resolved by id or as `elements.chrome.realistic`
-/ `elements.chrome.environment`. Both optional and independent: supply `#realistic`
-alone for a bare toggle, or add `#environment` too and `mount` fills it with the
-part's available environments (see "Materials and appearance" above) and keeps it
-in sync — hidden while the view is in CAD mode, showing the environment in effect
-once realistic lands. Omit either and drive `runtime.renderMode` /
-`runtime.environment` from your own UI instead (see below). Both preferences
+**The view style button needs no markup.** `mount` generates it (`#view-style`)
+into the view cube's stack, over the cube's bottom-right corner where the
+projection toggle used to be, so it hides whenever the cube does (Sketch mode, a
+crowded animation transport bar). It opens a popover holding every control that
+changes *how* the part is drawn: the **style** — CAD or one of the realistic
+environments (see "Materials and appearance" above), each shown as a live
+thumbnail of the part, re-rendered on the next open after the part or theme
+changes — a **Feature lines** switch for the current style, and a
+**Perspective / Orthographic** projection control. The old `#realistic` /
+`#environment` viewbar controls (`elements.chrome.realistic` /
+`.environment`) and the cube's own `#projection` button were retired with it
+(2026-09-24); a page that still carries `#realistic` / `#environment` markup
+just shows dead elements, so delete them. A host can still drive
+`runtime.renderMode` / `runtime.environment` / `runtime.featureLines` /
+`runtime.projection` from its own UI (see below). All of these preferences
 persist across reloads the same way the theme does, and are carried in
 `viewerState` (below), which outranks what is stored.
 
@@ -2751,8 +2758,8 @@ pane's pixel size:
 `captureCanonicalViews`, `renderMeshPayloads`, and the CLI's `partforge render`
 stay perspective unconditionally, so agent-facing output does not depend on a UI
 toggle. The choice persists across reloads under `partforge:projection` and is
-restored before the first framing. The orientation cube and its projection
-button are hidden while Sketch (annotate) mode is active, but that only governs
+restored before the first framing. The orientation cube and the view style
+button beside it are hidden while Sketch (annotate) mode is active, but that only governs
 *user-driven* view changes — the framework does not police programmatic ones.
 The ink is a transparent overlay and the WebGL canvas keeps rendering beneath
 it, so a host that calls `runtime.projection.set()` mid-sketch **visibly
@@ -2765,7 +2772,7 @@ Deliberately unguarded, the same way it's always been free to call
 ### `runtime.renderMode`, `runtime.environment`, `runtime.renderViews`, `runtime.declaresMaterials`
 
 For an embedder driving realistic mode from its own UI instead of (or in
-addition to) the `#realistic` / `#environment` viewbar controls above:
+addition to) the generated view style button above:
 
 - `runtime.renderMode` — `{ get(), set(mode), onChange(cb) }` where `mode` is
   `"cad"` or `"realistic"`. `set()` resolves to the mode actually in effect —
@@ -2792,7 +2799,7 @@ addition to) the `#realistic` / `#environment` viewbar controls above:
 - `runtime.declaresMaterials` — `true` when any sub-part names a
   `display.material`. A part with none still supports realistic mode (every
   sub-part just renders under the library's `default` look), so use this to
-  decide whether to surface the realistic toggle at all, not whether it works.
+  decide whether to surface your own realistic control at all, not whether it works.
 - `runtime.featureLines` — `{ get(), set(on), onChange(cb) }`, same shape as
   `runtime.renderMode`. `on` is a boolean, and it applies to the **current
   style** — CAD, or whichever environment is showing — remembered separately

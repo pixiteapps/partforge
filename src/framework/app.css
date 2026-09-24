@@ -476,8 +476,8 @@ button.action:disabled { opacity: .5; cursor: default; }
 /* keyboard focus ring shared across the panel's interactive controls */
 .seg button:focus-visible, select.preset:focus-visible, .dl-row button:focus-visible,
 button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible, #viewbar button:focus-visible,
-#viewbar select:focus-visible, .pf-view-select:focus-visible,
-.pf-viewcube-toggle:focus-visible, .pf-float-rail-toggle:focus-visible, .pf-sketch-toolbar button:focus-visible {
+.pf-view-select:focus-visible,
+.pf-float-rail-toggle:focus-visible, .pf-sketch-toolbar button:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
 }
@@ -595,21 +595,6 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 #viewbar button:disabled:hover { color: var(--pf-muted-2); background: transparent; }
 #viewbar button:hover { color: var(--pf-text); background: var(--pf-surface-2); }
 #viewbar button.on { background: var(--pf-accent); color: var(--pf-on-accent); }
-/* Realistic view (realistic-controls.js). The toggle is an ordinary viewbar
-   button that pulses while its environment loads; the environment picker is a
-   native <select> — the accessible choice on a phone — dressed as a viewbar
-   button, shown only while realistic. Keyed on `#viewbar select` rather than
-   an id so a host's own element in the pill gets the same look. */
-#viewbar button[data-busy] { animation: pf-busy-pulse .8s ease-in-out infinite alternate; }
-@keyframes pf-busy-pulse { from { opacity: 1; } to { opacity: .45; } }
-@media (prefers-reduced-motion: reduce) { #viewbar button[data-busy] { animation: none; opacity: .6; } }
-#viewbar select {
-  height: 34px; padding: 0 8px; border: 0; border-radius: var(--pf-radius-control);
-  background: transparent; color: var(--pf-muted-2); cursor: pointer;
-  font: inherit; font-size: 13px;
-}
-#viewbar select:hover { color: var(--pf-text); background: var(--pf-surface-2); }
-#viewbar select[hidden] { display: none; }
 
 /* Sketch-mode toolbar: the #viewbar pill idiom, top-centre, owning the mode
    while the viewbar itself is hidden (mount toggles both).
@@ -733,57 +718,88 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    APPEARANCE only (placement lives in chrome.css, per the split at the top of
    this file).
 
+   The cube's bottom-right corner now holds the VIEW STYLE button
+   (view-style-controls.js, 2026-09-24; its appearance is in the next section).
+   It replaced the projection toggle, whose history there ran:
+
    Through 2026-08-19 the projection toggle sat in its own `.pf-viewcube-pill`
    card below the cube, deliberately borrowing #viewbar's chrome so it read as
    one of the viewer controls. The 2026-08-20 revision moved it beside the
    cube instead, at a size and a bottom-aligned baseline that a #viewbar-style
-   card could not shrink to — so it is now a small bare circle in its own
-   right (`.pf-viewcube-toggle`), no card, no border, no shadow.
-
-   A same-day follow-up moved it again, from beside the cube to OVER its
-   bottom-right corner (placement in chrome.css, as ever). Nothing here
-   changed: a bare transparent circle was already what made that legal — it
-   has no card edge to cut across the drawing underneath it, so overlapping
-   costs the cube nothing but the 24px it covers.
-
-   A later revision that same day took the resting fill away entirely: now
-   that the button sits ON the cube's drawing, a persistent accent-tinted
-   disc in orthographic mode read as a blob over the geometry rather than as
-   a control. A background appears on HOVER only, in both states.
-
-   The last revision of the day took the accent COLOUR away too, so the
-   orthographic state now carries exactly ONE visual signal: the icon GLYPH (a
-   perspective frustum becomes an axonometric box). The button is grey in both
-   projections, resting and hovered, and there is deliberately no `.on` rule
-   below — viewcube-controls.js still adds the class, and `aria-pressed` still
-   carries the state for assistive tech. That is a choice, not an oversight: a
-   blue icon sitting on the cube's own drawing read as a stray tint rather than
-   as a mode, and the glyph is the tell that survives any colour scheme anyway.
-   Do not reintroduce a tint without asking. */
+   card could not shrink to — so it became a small bare 24px circle in its own
+   right (`.pf-viewcube-toggle`), no card, no border, no shadow. A same-day
+   follow-up moved it OVER the cube's bottom-right corner, took its resting
+   fill away (a tinted disc on the drawing read as a blob, not a control) and
+   then its accent colour, leaving the glyph as the one signal of the
+   projection. The view style button goes the other way on purpose: the
+   request was for a control that is clearly SEEN, so it is back to #viewbar's
+   card chrome, at 34px. The projection itself is now a labelled segmented
+   control inside the popover rather than a glyph. */
 .pf-viewcube-canvas {
   display: block;
   touch-action: none;
 }
-.pf-viewcube-toggle {
-  /* 24px: the low end of "small" so the bare circle reads as understated next
-     to the cube rather than as a second focal point competing with it — a
-     card's border/background used to do that visual quieting; a transparent
-     shape has nothing else to lean on but size. */
-  width: 24px; height: 24px;
-  border: 0; border-radius: 50%;
-  background: transparent; box-shadow: none;
+
+/* ---- view style button + popover (view-style-controls.js) -------------------
+   The button replaced the cube's small projection circle and is meant to be
+   SEEN: #viewbar's chrome (surface, border, float shadow) on a 34px button. */
+.pf-view-style-button {
+  width: 34px; height: 34px; border: 1px solid var(--pf-border); border-radius: var(--pf-radius-control);
+  background: var(--pf-surface); box-shadow: var(--pf-shadow-float);
   color: var(--pf-muted-2); cursor: pointer;
-  font-size: 14px; line-height: 1;
   display: flex; align-items: center; justify-content: center;
 }
-.pf-viewcube-toggle:hover { color: var(--pf-text); background: var(--pf-surface-2); }
-/* The focus ring is NOT restated here: the toggle joins the shared
-   :focus-visible selector list above, beside #viewbar's own.
-
-   No narrow-width shrink rule here: unlike the old pill (which borrowed
-   #viewbar's chrome and had to shrink in lockstep with it, below), a bare
-   24px circle has no card to keep in step with a smaller viewbar — it stays
-   its one fixed size at every width. */
+.pf-view-style-button[hidden] { display: none; }
+.pf-view-style-button:hover, .pf-view-style-button.on { color: var(--pf-text); background: var(--pf-surface-2); }
+.pf-view-style-popover {
+  position: absolute; z-index: 30;
+  width: min(300px, calc(100% - 24px)); overflow: auto;
+  padding: 12px; display: flex; flex-direction: column; gap: 12px;
+  background: var(--pf-surface); border: 1px solid var(--pf-border);
+  border-radius: 12px; box-shadow: var(--pf-shadow-float);
+  color: var(--pf-text); font-size: 12px;
+}
+.pf-view-style-popover[hidden] { display: none; }
+.pf-view-style-heading { margin: 0; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pf-muted-2); }
+.pf-view-style-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.pf-view-style-tile {
+  display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0;
+  background: none; color: var(--pf-muted-2); cursor: pointer; font: inherit; text-align: center;
+}
+.pf-view-style-thumb {
+  display: block; aspect-ratio: 1; border-radius: 8px; overflow: hidden;
+  background: var(--pf-surface-2); border: 1px solid var(--pf-border);
+}
+.pf-view-style-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.pf-view-style-thumb img[hidden] { display: none; }
+.pf-view-style-tile[aria-pressed="true"] { color: var(--pf-text); }
+.pf-view-style-tile[aria-pressed="true"] .pf-view-style-thumb { border-color: var(--pf-accent); box-shadow: 0 0 0 1px var(--pf-accent); }
+.pf-view-style-tile[data-busy] .pf-view-style-thumb { opacity: 0.6; }
+/* A tile whose environment is still loading pulses (the retired viewbar ✦
+   toggle's signal, moved onto the thing that was clicked). */
+.pf-view-style-tile[data-busy] .pf-view-style-thumb { animation: pf-busy-pulse .8s ease-in-out infinite alternate; }
+@keyframes pf-busy-pulse { from { opacity: 1; } to { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .pf-view-style-tile[data-busy] .pf-view-style-thumb { animation: none; } }
+.pf-view-style-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pf-view-style-switch {
+  position: relative; width: 32px; height: 18px; padding: 0; border: 0; border-radius: 9px;
+  background: var(--pf-surface-2); box-shadow: inset 0 0 0 1px var(--pf-border); cursor: pointer;
+}
+.pf-view-style-switch[aria-checked="true"] { background: var(--pf-accent); box-shadow: none; }
+.pf-view-style-knob {
+  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; transition: transform 120ms ease;
+}
+.pf-view-style-switch[aria-checked="true"] .pf-view-style-knob { transform: translateX(14px); }
+.pf-view-style-seg { display: flex; padding: 2px; gap: 2px; border-radius: var(--pf-radius-control); background: var(--pf-surface-2); }
+.pf-view-style-seg button {
+  border: 0; padding: 4px 8px; border-radius: calc(var(--pf-radius-control) - 2px);
+  background: transparent; color: var(--pf-muted-2); font: inherit; cursor: pointer;
+}
+.pf-view-style-seg button[aria-checked="true"] { background: var(--pf-surface); color: var(--pf-text); box-shadow: var(--pf-shadow-float); }
+.pf-view-style-button:focus-visible, .pf-view-style-tile:focus-visible, .pf-view-style-switch:focus-visible, .pf-view-style-seg button:focus-visible {
+  outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
+}
 
 /* At very narrow widths the full-size viewbar (5 icon buttons + cutaway's
    Flip/Reset, ~314px) is wider than a small phone's viewport minus the
