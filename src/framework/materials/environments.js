@@ -27,14 +27,13 @@ export const ENVIRONMENTS = {
   workshop: {
     id: "workshop", label: "Workshop", exposure: 0.88,
     hdr: "env-workshop.jpg",
-    // Poly Haven "Wood Table 001", a full PBR set. Tiled at 600 mm rather than
-    // its scanned 1.5 m: a 1K map spread over 1.5 m is 1.5 mm a texel, a blur
-    // under a hand-sized part. Its roughness map (mean ~0.23, a varnished top) is
-    // scaled up so the floor reads satin rather than mirroring the workshop's
-    // windows at grazing angles.
+    // Unfinished maple: Poly Haven "Oak Veneer 01" lightened and desaturated
+    // at bake time, with its normal map at a gentle strength and NO roughness
+    // map — a flat, fully matte roughness, so the floor never shows a glossy
+    // spot. Tiled at 600 mm (finer grain than the 1.83 m scan, as maple is).
     ground: {
-      texture: "ground-wood-color.jpg", normalTexture: "ground-wood-normal.jpg", roughnessTexture: "ground-wood-rough.jpg",
-      sizeMm: 600, tileMm: 600, roughness: 1.8, tint: 0xffffff,
+      texture: "ground-maple-color.jpg", normalTexture: "ground-maple-normal.jpg",
+      sizeMm: 600, tileMm: 600, roughness: 0.92, normalScale: 0.8, tint: 0xffffff,
     },
   },
   "print-bed": {

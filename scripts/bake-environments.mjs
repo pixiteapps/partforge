@@ -3,7 +3,7 @@
 //
 //   node scripts/bake-environments.mjs <in.hdr> <out-name.jpg> [--size WxH]
 //     HDR -> UltraHDR (gainmap) JPEG, default 2048x1024.
-//   node scripts/bake-environments.mjs --texture <in.jpg|png> <out-name.jpg> [--gray] [--data] [--quality Q] [--tint r,g,b] [--size N]
+//   node scripts/bake-environments.mjs --texture <in.jpg|png> <out-name.jpg> [--gray] [--data] [--quality Q] [--tint r,g,b] [--modulate brightness,saturation] [--size N]
 //     Any raster -> square JPEG (default q82), default 1024x1024. `--data` is for maps
 //     that hold numbers rather than colours (normal maps): full-resolution chroma
 //     (4:4:4 — the default 4:2:0 halves the X/Y channels' resolution) and no tint or
@@ -101,6 +101,11 @@ async function bakeTexture(argv) {
   if (tintFlag !== -1) {
     const [r, g, b] = argv[tintFlag + 1].split(",").map(Number);
     img = img.tint({ r, g, b });
+  }
+  const modFlag = argv.indexOf("--modulate");
+  if (modFlag !== -1) {
+    const [brightness, saturation] = argv[modFlag + 1].split(",").map(Number);
+    img = img.modulate({ brightness, saturation });
   }
   if (gray) img = img.grayscale();
   const buffer = await img.jpeg({ quality, mozjpeg: true, ...(data ? { chromaSubsampling: "4:4:4" } : {}) }).toBuffer();

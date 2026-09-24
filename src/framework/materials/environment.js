@@ -15,10 +15,10 @@ const GROUND_RADIUS_FACTOR = 4; // ground disc radius, in part radii
 // what three's tangent-space normal maps expect: a positive normalScale.
 const GROUND_NORMAL_SCALE = 1.5;
 
-function groundMaterial(tex, rough, normal, { tint, roughness = 1 }) {
+function groundMaterial(tex, rough, normal, { tint, roughness = 1, normalScale = GROUND_NORMAL_SCALE }) {
   const m = new THREE.MeshStandardMaterial({
     color: tint, map: tex, roughnessMap: rough ?? null, roughness, metalness: 0, transparent: true,
-    ...(normal ? { normalMap: normal, normalScale: new THREE.Vector2(GROUND_NORMAL_SCALE, GROUND_NORMAL_SCALE) } : {}),
+    ...(normal ? { normalMap: normal, normalScale: new THREE.Vector2(normalScale, normalScale) } : {}),
   });
   // Radial fade to transparent at the rim so the disc melts into the backdrop.
   m.onBeforeCompile = (shader) => {

@@ -379,8 +379,8 @@ A part with no `color` or `material` exports exactly as before.
 | `carbon-fiber` | Carbon fibre | — | 2x2 twill carbon fibre under clear coat. |
 
 **Environments** (`meta.environment`, default `studio`; viewers can switch):
-`studio` (neutral soft boxes, paper sweep), `workshop` (warm interior, wood
-table), `print-bed` (daylight, textured PEI sheet), `outdoor` (overcast sky,
+`studio` (neutral soft boxes, paper sweep), `workshop` (warm interior, unfinished
+maple table), `print-bed` (daylight, textured PEI sheet), `outdoor` (overcast sky,
 concrete).
 
 ---
