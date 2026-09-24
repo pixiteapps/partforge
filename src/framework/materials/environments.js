@@ -3,6 +3,10 @@
 // are FILE NAMES under ./assets/, resolved to URLs by assets.js (which is the only
 // module that may use `new URL(..., import.meta.url)`, so this one stays importable
 // by lint and the worker).
+//
+// ground.sizeMm is the smallest the ground disc ever gets (and the shadow's
+// starting size); ground.tileMm, when set, is how many millimetres one repeat of
+// the ground texture covers — defaulting to sizeMm.
 
 export const DEFAULT_ENVIRONMENT_ID = "studio";
 
@@ -10,7 +14,7 @@ export const ENVIRONMENTS = {
   studio: {
     id: "studio", label: "Studio", exposure: 0.8,
     hdr: "env-studio.jpg",
-    ground: { texture: "ground-paper.jpg", sizeMm: 400, tint: 0xf2f2f2 },
+    ground: { texture: "ground-paper.jpg", sizeMm: 400, tileMm: 200, tint: 0xf2f2f2 },
     backdrop: "gradient", gradient: [0xf4f5f7, 0xc9ccd1],
   },
   workshop: {
@@ -20,13 +24,13 @@ export const ENVIRONMENTS = {
     backdrop: "blurred",
   },
   "print-bed": {
-    id: "print-bed", label: "Print bed", exposure: 1.0,
+    id: "print-bed", label: "Print bed", exposure: 0.8,
     hdr: "env-print-bed.jpg",
     ground: { texture: "ground-pei.jpg", roughnessTexture: "ground-pei-rough.jpg", sizeMm: 256, tint: 0xffffff },
     backdrop: "blurred",
   },
   outdoor: {
-    id: "outdoor", label: "Outdoor", exposure: 0.9,
+    id: "outdoor", label: "Outdoor", exposure: 0.72,
     hdr: "env-outdoor.jpg",
     // Tinted to a warm mid-grey: the overcast sky lights an untinted concrete
     // map near-white and blue.

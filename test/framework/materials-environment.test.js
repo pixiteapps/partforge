@@ -64,3 +64,14 @@ test("a blurred-backdrop rig keeps its HDR as the background until the rig is di
   rig.dispose();
   expect(dispose).toHaveBeenCalledTimes(1);
 });
+
+test("the ground texture repeats per tileMm when set, so studio paper grain is finer than the disc's size", async () => {
+  const tex = new THREE.Texture();
+  const rig = await loadEnvironmentRig(fakeRenderer(), "studio", {
+    loadHdr: async () => new THREE.DataTexture(), loadTexture: () => tex, pmrem,
+  });
+  rig.setGround({ y: 0, radius: 10 });
+  // disc is max(10*4, 400/2)=200 mm radius → 400 mm across; tileMm 200 → 2 repeats
+  expect(tex.repeat.x).toBeCloseTo(2);
+  rig.dispose();
+});

@@ -43,6 +43,11 @@ const FRAG_BODY = {
     groove = mix(0.825, groove, 1.0 - smoothstep(0.16, 0.4, fwidth(h)));
     diffuseColor.rgb *= mix(0.8, 1.0, groove);
     roughnessFactor = clamp(roughnessFactor + (1.0 - groove) * 0.18, 0.0, 1.0);
+    // Filament mottling: a fine grain (~0.5 mm) over slow blotches (~6 mm),
+    // fixed to the part, so a print doesn't read as flat injection-moulded plastic.
+    float mottle = pfNoise(vPfObjPos * 2.0) * 0.6 + pfNoise(vPfObjPos * 0.17) * 0.4;
+    diffuseColor.rgb *= mix(0.86, 1.08, mottle);
+    roughnessFactor = clamp(roughnessFactor + (mottle - 0.5) * 0.12, 0.0, 1.0);
   }`,
   "sls-grain": `
   {

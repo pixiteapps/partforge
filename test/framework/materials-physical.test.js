@@ -56,3 +56,12 @@ test("pattern masks are sampled raw, not decoded as sRGB colour", () => {
     expect(tex.wrapS).toBe(THREE.RepeatWrapping);
   }
 });
+
+test("prints are lit less by the environment and reflect less, so their colour holds", () => {
+  const pla = buildPhysicalMaterial({ material: "pla-print", color: 0xe0592a }, { loadTexture });
+  expect(pla.envMapIntensity).toBeCloseTo(0.6);
+  expect(pla.specularIntensity).toBeCloseTo(0.5);
+  const brass = buildPhysicalMaterial({ material: "brass" }, { loadTexture });
+  expect(brass.envMapIntensity).toBe(1);
+  expect(brass.specularIntensity).toBe(1);
+});

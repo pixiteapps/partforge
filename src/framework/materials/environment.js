@@ -63,7 +63,7 @@ export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadT
     ground.position.set(centerX, y - 0.01, centerZ);
     ground.scale.setScalar(r * 2);
     // Keep the texture at real millimetres however large the disc is.
-    const repeat = (r * 2) / env.ground.sizeMm;
+    const repeat = (r * 2) / (env.ground.tileMm ?? env.ground.sizeMm);
     tex.repeat.set(repeat, repeat);
     if (rough) rough.repeat.set(repeat, repeat);
     shadow.group.position.set(centerX, y, centerZ);

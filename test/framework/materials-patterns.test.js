@@ -77,3 +77,10 @@ test("wood and carbon modulate around their texture's mean", () => {
     expect(s.fragmentShader).toContain(`(l - ${mean})`);
   }
 });
+
+test("layer lines carry filament mottling noise", () => {
+  const m = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "layer-lines", scale: 0.2 });
+  const s = fakeShader();
+  m.onBeforeCompile(s);
+  expect(s.fragmentShader).toContain("mottle");
+});

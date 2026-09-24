@@ -40,6 +40,8 @@ export function resolveMaterial(display) {
     ior: preset.ior ?? 1.5,
     pattern: preset.pattern ?? null,
     textureScale: preset.textureScale ?? 1,
+    envIntensity: preset.envIntensity ?? 1,
+    specularIntensity: preset.specularIntensity ?? 1,
     opacity: 1,
   };
   if (isColor(d.color)) params.color = d.color;

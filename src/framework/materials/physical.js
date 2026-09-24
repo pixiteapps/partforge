@@ -36,6 +36,8 @@ export function buildPhysicalMaterial(display, { printFrame, loadTexture } = {})
     thickness: params.thickness,
     ior: params.ior,
     anisotropy: params.anisotropy,
+    envMapIntensity: params.envIntensity,
+    specularIntensity: params.specularIntensity,
   });
   if (params.opacity < 1) { m.transparent = true; m.opacity = params.opacity; m.depthWrite = false; }
   m.userData.pfAnisotropic = params.anisotropy > 0;
