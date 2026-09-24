@@ -36,7 +36,12 @@ const FRAG_BODY = {
     float h = (pfPrintFrame * vec4(vPfObjPos, 1.0)).z / pfPatternScale;
     float ridge = abs(fract(h) - 0.5) * 2.0;            // 0 at a layer seam, 1 mid-layer
     float groove = smoothstep(0.0, 0.35, ridge);
-    diffuseColor.rgb *= mix(0.86, 1.0, groove);
+    // Anti-alias: fwidth(h) is layers per pixel. Where a layer spans fewer
+    // than ~6 px the band fades to its mean over a period (0.825: the groove
+    // ramps over 35% of it, the rest is flat), and past ~2.5 px it is gone —
+    // point-sampling finer layers than that is what aliased into moiré.
+    groove = mix(0.825, groove, 1.0 - smoothstep(0.16, 0.4, fwidth(h)));
+    diffuseColor.rgb *= mix(0.8, 1.0, groove);
     roughnessFactor = clamp(roughnessFactor + (1.0 - groove) * 0.18, 0.0, 1.0);
   }`,
   "sls-grain": `

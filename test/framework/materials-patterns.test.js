@@ -52,3 +52,16 @@ test("ensureBoxUVs adds a uv per vertex once and leaves positions alone", () => 
   ensureBoxUVs(g);
   expect(g.attributes.uv).toBe(uv);
 });
+
+// Layers are 0.2 mm: at an ordinary viewing distance several fall in one
+// pixel, and point-sampling them aliased into moiré. The shader filters by
+// screen-space frequency (fwidth), fading each band to the period's mean.
+test("layer lines fade to their mean where a layer is too fine for the pixel grid", () => {
+  const m = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "layer-lines", scale: 0.2 });
+  const s = fakeShader();
+  m.onBeforeCompile(s);
+  expect(s.fragmentShader).toMatch(/fwidth\(\s*h\s*\)/);
+  // The fade target is the band's exact average over one period: grooves over
+  // 35% of it ramp 0→1 (mean 0.5), the rest is flat 1 — 0.175 + 0.65.
+  expect(s.fragmentShader).toContain("mix(0.825, groove,");
+});
