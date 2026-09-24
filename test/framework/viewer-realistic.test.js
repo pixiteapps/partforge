@@ -50,8 +50,9 @@ vi.mock("../../src/framework/materials/environment.js", async () => {
       if (rigState.fail || rigState.failIds.has(id)) throw new Error("asset 404");
       const rig = {
         id: id ?? "studio", exposure: 1.1, envMap: new THREE.Texture(), background: new THREE.Color(0xffffff), backgroundBlurriness: 0,
-        ground: new THREE.Mesh(), shadow: { group: new THREE.Group(), render: vi.fn(), setSize: vi.fn(), dispose: vi.fn() },
+        ground: new THREE.Mesh(), lights: [], shadow: { group: new THREE.Group(), render: vi.fn(), setSize: vi.fn(), dispose: vi.fn() },
         setGround: vi.fn(() => { if (rigState.throwOnGround) throw new Error("ground boom"); }), dispose: vi.fn(),
+        updateForCamera: vi.fn(),
       };
       rigState.rigs.push(rig);
       return rig;
@@ -674,6 +675,49 @@ test("a realistic capture tone-maps the half-float readback at the rig's exposur
   v.captureCurrent({ size: 64 });
   // 0.18 × 1.1 exposure = 0.198 → −0.04 toe offset = 0.158 → sRGB 0.434 → 111.
   expect([...written.at(-1).subarray(0, 4)]).toEqual([111, 111, 111, 255]);
+  v.dispose();
+});
+
+// three calls scene.onBeforeRender(renderer, scene, camera) at the start of
+// every WebGLRenderer.render, after matrixWorld is current and before objects
+// are projected — the fake renderer here is a plain stub that never makes
+// that call itself, so this exercises the hook the viewer installs on `scene`
+// directly, the way a real WebGLRenderer would call it: with the camera
+// ACTUALLY doing that render. That is what lets a print-bed plate hide itself
+// on an offscreen "bottom" capture too, not just the live canvas — captures
+// (renderOffscreen) and the contact shadow's own depth pass both render this
+// same `scene` object with their own camera.
+test("the viewer's scene.onBeforeRender hook asks the live rig to update for the rendering camera, only in realistic mode", async () => {
+  stubCanvas();
+  const v = shown();
+  const scene = sceneOf(v);
+  const someCamera = new THREE.PerspectiveCamera();
+
+  // CAD: no rig yet, so the hook is a harmless no-op.
+  expect(() => scene.onBeforeRender(state.renderer, scene, someCamera)).not.toThrow();
+
+  await v.setRenderMode("realistic");
+  const rig = lastRig();
+  scene.onBeforeRender(state.renderer, scene, someCamera);
+  expect(rig.updateForCamera).toHaveBeenCalledWith(someCamera);
+
+  // A different camera — an offscreen capture's, say, or the depth pass's own
+  // below-facing one — is passed straight through, not some cached "current"
+  // camera.
+  const belowCamera = new THREE.PerspectiveCamera();
+  belowCamera.position.set(0, -50, 0);
+  rig.updateForCamera.mockClear();
+  scene.onBeforeRender(state.renderer, scene, belowCamera);
+  expect(rig.updateForCamera).toHaveBeenCalledWith(belowCamera);
+  expect(rig.updateForCamera).not.toHaveBeenCalledWith(someCamera);
+
+  // Back in CAD, the hook stands down again even though the rig object (and
+  // its spy) still exist from the earlier realistic session.
+  await v.setRenderMode("cad");
+  rig.updateForCamera.mockClear();
+  scene.onBeforeRender(state.renderer, scene, someCamera);
+  expect(rig.updateForCamera).not.toHaveBeenCalled();
+
   v.dispose();
 });
 

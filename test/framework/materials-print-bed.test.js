@@ -64,3 +64,33 @@ test("a bigger part gets a bigger plate, with the markings redrawn for it", () =
   expect(bed.object.children[1].visible).toBe(true);
   bed.dispose();
 });
+
+test("the bed hides for a camera below the plate's top and shows for one above it", () => {
+  const pei = new THREE.MeshStandardMaterial();
+  const bed = createPrintBed({ pei, tileMm: 128, createCanvas: () => null });
+  bed.place({ y: 10, centerX: 0, centerZ: 0, footprintMm: 60 }); // plate top world y ~= 9.99
+
+  const camera = new THREE.PerspectiveCamera();
+  camera.position.set(0, 50, 0);
+  bed.updateForCamera(camera);
+  expect(bed.object.visible).toBe(true);
+
+  camera.position.set(0, -5, 0);
+  bed.updateForCamera(camera);
+  expect(bed.object.visible).toBe(false);
+
+  // right at the top surface: still shown, not flickering off from float noise
+  camera.position.set(0, 9.99, 0);
+  bed.updateForCamera(camera);
+  expect(bed.object.visible).toBe(true);
+
+  // a camera nested under a parent transform: the world position is what counts
+  const rig = new THREE.Group();
+  rig.position.set(5, 0, 0);
+  rig.add(camera);
+  camera.position.set(0, -20, 0); // world y = -20, well below the plate
+  bed.updateForCamera(camera);
+  expect(bed.object.visible).toBe(false);
+
+  bed.dispose();
+});

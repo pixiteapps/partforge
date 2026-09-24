@@ -154,12 +154,29 @@ export function createPrintBed({ pei, tileMm, createCanvas }) {
     ink.scale.set(size, 1, size);
   }
 
+  // Below this, the whole plate hides — like the other environments' single-
+  // sided ground discs, which cull away once the camera passes their back
+  // face. The epsilon keeps a camera sitting exactly at plate height from
+  // flickering the bed in and out as float error nudges it either side.
+  const HIDE_EPSILON_MM = 0.05;
+  const _camWorld = new THREE.Vector3();
+  const _topWorld = new THREE.Vector3();
+
   return {
     object: group,
     get sizeMm() { return size; },
     place({ y, centerX = 0, centerZ = 0, footprintMm }) {
       setSize(bedSizeFor(footprintMm));
       group.position.set(centerX, y - 0.01, centerZ);
+    },
+    // Called once per render, with the camera actually doing the rendering
+    // (the live camera, or an offscreen capture's) — never a cached "current
+    // view" — so a canonical "from below" render also sees the part rather
+    // than the plate's underside.
+    updateForCamera(camera) {
+      camera.getWorldPosition(_camWorld);
+      group.getWorldPosition(_topWorld); // local y = 0 is the plate's top surface
+      group.visible = _camWorld.y >= _topWorld.y - HIDE_EPSILON_MM;
     },
     dispose() {
       plate.geometry.dispose(); ink.geometry.dispose();

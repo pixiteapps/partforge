@@ -304,6 +304,23 @@ export function createViewer(container, part) {
   let realisticRig = null;
   let shadowMovedAt = null;          // performance.now() of a pose change the contact shadow has not caught up with
 
+  // three calls scene.onBeforeRender(renderer, scene, camera, target) at the
+  // very start of WebGLRenderer.render — after scene/camera matrixWorld are
+  // current, before objects are projected — so visibility set here applies to
+  // THAT render with the camera actually doing it: the live canvas, an
+  // offscreen capture (renderOffscreen reuses this same `scene`), and the
+  // contact shadow's own depth pass (which renders `scene` from below with
+  // its own camera; that pass already hides every non-caster and restores
+  // them in `finally`, so the print bed's own visibility flag here is just
+  // one more thing it restores). No-op outside realistic mode or for a rig
+  // whose environment has nothing to hide (the ground discs already cull by
+  // their material's own side).
+  const priorSceneOnBeforeRender = scene.onBeforeRender;
+  scene.onBeforeRender = (r, s, camera, target) => {
+    priorSceneOnBeforeRender?.(r, s, camera, target);
+    if (renderMode === "realistic") realisticRig?.updateForCamera?.(camera);
+  };
+
   const effectiveVisible = () => lastShown.filter((n) => (animOpacity.get(n) ?? 1) > 0);
 
   // A fade clone is a material the cutaway does not own, so it has to be told
@@ -762,7 +779,7 @@ export function createViewer(container, part) {
       // was still CAD, so setSubGeometry skipped the UVs. Idempotent.
       for (const n of names) if (subCache[n] && physicalFor(n).userData.pfAnisotropic) ensureBoxUVs(subCache[n]);
       setSubMaterials(physicalFor);
-      if (realisticRig && realisticRig !== rig) scene.remove(realisticRig.ground, realisticRig.shadow.group);
+      if (realisticRig && realisticRig !== rig) scene.remove(realisticRig.ground, realisticRig.shadow.group, ...(realisticRig.lights ?? []));
       realisticRig = rig;
       scene.environment = rig.envMap;
       scene.background = rig.background;
@@ -770,7 +787,7 @@ export function createViewer(container, part) {
       scene.backgroundIntensity = rig.backgroundIntensity ?? 1;
       scene.backgroundRotation.set(0, rig.rotationY ?? 0, 0);
       scene.environmentRotation.set(0, rig.rotationY ?? 0, 0);
-      scene.add(rig.ground, rig.shadow.group);
+      scene.add(rig.ground, rig.shadow.group, ...(rig.lights ?? []));
       for (const l of Object.values(liveLights)) l.visible = false;
       grid.visible = false;
       renderer.toneMapping = THREE.NeutralToneMapping;
@@ -799,7 +816,7 @@ export function createViewer(container, part) {
     });
     renderMode = "cad";
     attempt(() => {
-      if (realisticRig) scene.remove(realisticRig.ground, realisticRig.shadow.group);
+      if (realisticRig) scene.remove(realisticRig.ground, realisticRig.shadow.group, ...(realisticRig.lights ?? []));
     });
     realisticRig = null;
     shadowMovedAt = null;

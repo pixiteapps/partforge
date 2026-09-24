@@ -94,21 +94,32 @@ export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadT
   if (env.ground.bed) {
     const material = groundMaterial(tex, rough, normal, { ...env.ground, bed: true });
     const bed = createPrintBed({ pei: material, tileMm: env.ground.tileMm ?? env.ground.sizeMm, createCanvas });
-    // An enclosure's LED bar: one hard overhead light, riding with the bed so
-    // it always falls on the part from the same place.
+    // An enclosure's LED bar: one hard overhead light, aimed at the bed's own
+    // origin. The LIGHT itself is deliberately not a child of bed.object:
+    // updateForCamera hides that whole group from below, and a hidden parent
+    // stops three from rendering its children too — the light would go dark
+    // exactly when the part needs it lit from underneath. It rides in
+    // `lights` instead and is repositioned by hand wherever the bed moves.
+    // The target CAN stay a child (matrixWorld updates regardless of
+    // visibility), which is what lets it keep tracking the bed for free.
     let keyLight = null;
     if (env.keyLight) {
       keyLight = new THREE.DirectionalLight(0xffffff, env.keyLight.intensity);
-      keyLight.position.set(...env.keyLight.direction);
-      bed.object.add(keyLight, keyLight.target);
+      bed.object.add(keyLight.target);
     }
     return {
       id, exposure: env.exposure, envMap, background, backgroundBlurriness, backgroundIntensity,
       rotationY: ((env.rotationDeg ?? 0) * Math.PI) / 180,
       ground: bed.object,
+      lights: keyLight ? [keyLight] : [],
       shadow,
+      updateForCamera(camera) { bed.updateForCamera(camera); },
       setGround({ y, centerX = 0, centerZ = 0, radius, footprintMm = radius }) {
         bed.place({ y, centerX, centerZ, footprintMm });
+        if (keyLight) {
+          const p = bed.object.position; // the fixed offset off the bed's origin
+          keyLight.position.set(p.x + env.keyLight.direction[0], p.y + env.keyLight.direction[1], p.z + env.keyLight.direction[2]);
+        }
         shadow.group.position.set(centerX, y, centerZ);
         // The shadow plane never hangs past the plate's edge into thin air.
         const s = Math.min(Math.max(radius * 3, 20), bed.sizeMm);
@@ -147,6 +158,7 @@ export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadT
     backgroundIntensity,
     rotationY: ((env.rotationDeg ?? 0) * Math.PI) / 180,
     ground,
+    lights: [],
     shadow,
     setGround,
     dispose() {
