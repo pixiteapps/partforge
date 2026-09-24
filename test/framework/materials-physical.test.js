@@ -34,10 +34,27 @@ test("brushed presets are anisotropic and flag their geometry for UVs", () => {
   expect(m.userData.pfAnisotropic).toBe(true);
 });
 
-test("textured presets load their pattern texture through the injected loader", () => {
-  const seen = [];
-  buildPhysicalMaterial({ material: "oak" }, { loadTexture: (f) => { seen.push(f); return new THREE.Texture(); } });
-  expect(seen).toEqual(["pattern-wood.jpg"]);
+test("wood presets load a full PBR set: colour as sRGB, normal and roughness as data", () => {
+  for (const material of ["oak", "walnut"]) {
+    const seen = {};
+    const m = buildPhysicalMaterial({ material }, { loadTexture: (f) => (seen[f] = new THREE.Texture()) });
+    expect(Object.keys(seen).sort()).toEqual([`pattern-${material}-color.jpg`, `pattern-${material}-normal.jpg`, `pattern-${material}-rough.jpg`]);
+    expect(seen[`pattern-${material}-color.jpg`].colorSpace).toBe(THREE.SRGBColorSpace);
+    expect(seen[`pattern-${material}-normal.jpg`].colorSpace).toBe(THREE.NoColorSpace);
+    expect(seen[`pattern-${material}-rough.jpg`].colorSpace).toBe(THREE.NoColorSpace);
+    for (const t of Object.values(seen)) expect(t.wrapS).toBe(THREE.RepeatWrapping);
+    const u = m.userData.patternUniforms;
+    expect(u.pfPatternMap.value).toBe(seen[`pattern-${material}-color.jpg`]);
+    expect(u.pfNormalMap.value).toBe(seen[`pattern-${material}-normal.jpg`]);
+    expect(u.pfRoughMap.value).toBe(seen[`pattern-${material}-rough.jpg`]);
+  }
+});
+
+// The colour map carries the wood's colour; the preset colour is its average,
+// kept for CAD and 3MF. An explicit colour still tints the map.
+test("a wood material starts white so the map shows, and an explicit colour tints it", () => {
+  expect(buildPhysicalMaterial({ material: "oak" }, { loadTexture }).color.getHex()).toBe(0xffffff);
+  expect(buildPhysicalMaterial({ material: "walnut", color: 0x808080 }, { loadTexture }).color.getHex()).toBe(0x808080);
 });
 
 test("no display → the default look, as a physical material", () => {
@@ -45,16 +62,15 @@ test("no display → the default look, as a physical material", () => {
   expect(m.color.getHex()).toBe(0x9fb4cc);
 });
 
-// The wood and carbon textures are luminance MASKS, not colours: decoding them
-// as sRGB crushed their range to a few hundredths of linear light, and the
-// grain and weave vanished at swatch distance.
-test("pattern masks are sampled raw, not decoded as sRGB colour", () => {
-  for (const material of ["oak", "walnut", "carbon-fiber"]) {
-    let tex;
-    buildPhysicalMaterial({ material }, { loadTexture: () => (tex = new THREE.Texture()) });
-    expect(tex.colorSpace).toBe(THREE.NoColorSpace);
-    expect(tex.wrapS).toBe(THREE.RepeatWrapping);
-  }
+// The carbon texture is a luminance MASK, not a colour: decoding it as sRGB
+// crushed its range to a few hundredths of linear light, and the weave vanished
+// at swatch distance.
+test("the carbon mask is sampled raw, not decoded as sRGB colour", () => {
+  const seen = [];
+  buildPhysicalMaterial({ material: "carbon-fiber" }, { loadTexture: (f) => { const t = new THREE.Texture(); seen.push([f, t]); return t; } });
+  expect(seen.map(([f]) => f)).toEqual(["pattern-carbon.jpg"]);
+  expect(seen[0][1].colorSpace).toBe(THREE.NoColorSpace);
+  expect(seen[0][1].wrapS).toBe(THREE.RepeatWrapping);
 });
 
 test("prints are lit less by the environment and reflect less, so their colour holds", () => {

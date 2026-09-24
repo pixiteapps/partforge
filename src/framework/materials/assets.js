@@ -10,17 +10,25 @@ const URLS = {
   "env-print-bed.jpg": new URL("./assets/env-print-bed.jpg", import.meta.url).href,
   "env-outdoor.jpg": new URL("./assets/env-outdoor.jpg", import.meta.url).href,
   "ground-paper.jpg": new URL("./assets/ground-paper.jpg", import.meta.url).href,
-  "ground-oak.jpg": new URL("./assets/ground-oak.jpg", import.meta.url).href,
-  "ground-oak-rough.jpg": new URL("./assets/ground-oak-rough.jpg", import.meta.url).href,
+  "ground-wood-color.jpg": new URL("./assets/ground-wood-color.jpg", import.meta.url).href,
+  "ground-wood-normal.jpg": new URL("./assets/ground-wood-normal.jpg", import.meta.url).href,
+  "ground-wood-rough.jpg": new URL("./assets/ground-wood-rough.jpg", import.meta.url).href,
   "ground-pei.jpg": new URL("./assets/ground-pei.jpg", import.meta.url).href,
   "ground-pei-rough.jpg": new URL("./assets/ground-pei-rough.jpg", import.meta.url).href,
   "ground-concrete.jpg": new URL("./assets/ground-concrete.jpg", import.meta.url).href,
   "ground-concrete-rough.jpg": new URL("./assets/ground-concrete-rough.jpg", import.meta.url).href,
-  "pattern-wood.jpg": new URL("./assets/pattern-wood.jpg", import.meta.url).href,
+  "pattern-oak-color.jpg": new URL("./assets/pattern-oak-color.jpg", import.meta.url).href,
+  "pattern-oak-normal.jpg": new URL("./assets/pattern-oak-normal.jpg", import.meta.url).href,
+  "pattern-oak-rough.jpg": new URL("./assets/pattern-oak-rough.jpg", import.meta.url).href,
+  "pattern-walnut-color.jpg": new URL("./assets/pattern-walnut-color.jpg", import.meta.url).href,
+  "pattern-walnut-normal.jpg": new URL("./assets/pattern-walnut-normal.jpg", import.meta.url).href,
+  "pattern-walnut-rough.jpg": new URL("./assets/pattern-walnut-rough.jpg", import.meta.url).href,
   "pattern-carbon.jpg": new URL("./assets/pattern-carbon.jpg", import.meta.url).href,
 };
 
-export const PATTERN_TEXTURES = { wood: "pattern-wood.jpg", carbon: "pattern-carbon.jpg", concrete: "ground-concrete.jpg" };
+// Single-mask patterns. Wood is a full PBR set named per preset (presets.js
+// `textures`), so it has no entry here.
+export const PATTERN_TEXTURES = { carbon: "pattern-carbon.jpg", concrete: "ground-concrete.jpg" };
 
 export function assetUrl(name) {
   const url = URLS[name];

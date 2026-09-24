@@ -11,8 +11,15 @@ import { createContactShadow } from "./contact-shadow.js";
 
 const GROUND_RADIUS_FACTOR = 4; // ground disc radius, in part radii
 
-function groundMaterial(tex, rough, tint) {
-  const m = new THREE.MeshStandardMaterial({ color: tint, map: tex, roughnessMap: rough ?? null, roughness: 1, metalness: 0, transparent: true });
+// A ground normal map is OpenGL-format (+Y up, Poly Haven's "nor_gl"), which is
+// what three's tangent-space normal maps expect: a positive normalScale.
+const GROUND_NORMAL_SCALE = 1.5;
+
+function groundMaterial(tex, rough, normal, { tint, roughness = 1 }) {
+  const m = new THREE.MeshStandardMaterial({
+    color: tint, map: tex, roughnessMap: rough ?? null, roughness, metalness: 0, transparent: true,
+    ...(normal ? { normalMap: normal, normalScale: new THREE.Vector2(GROUND_NORMAL_SCALE, GROUND_NORMAL_SCALE) } : {}),
+  });
   // Radial fade to transparent at the rim so the disc melts into the backdrop.
   m.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
@@ -42,10 +49,18 @@ export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadT
   const tex = loadTexture(env.ground.texture);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
-  const rough = env.ground.roughnessTexture ? loadTexture(env.ground.roughnessTexture) : null;
-  if (rough) rough.wrapS = rough.wrapT = THREE.RepeatWrapping;
+  // Roughness and normal maps are data, not colour: never sRGB-decoded.
+  const dataMap = (file) => {
+    if (!file) return null;
+    const t = loadTexture(file);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = THREE.NoColorSpace;
+    return t;
+  };
+  const rough = dataMap(env.ground.roughnessTexture);
+  const normal = dataMap(env.ground.normalTexture);
   const discGeo = new THREE.CircleGeometry(0.5, 96).rotateX(-Math.PI / 2);
-  const ground = new THREE.Mesh(discGeo, groundMaterial(tex, rough, env.ground.tint));
+  const ground = new THREE.Mesh(discGeo, groundMaterial(tex, rough, normal, env.ground));
   ground.renderOrder = -1;
 
   const shadow = createContactShadow({ renderer, sizeMm: env.ground.sizeMm });
@@ -58,6 +73,7 @@ export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadT
     const repeat = (r * 2) / (env.ground.tileMm ?? env.ground.sizeMm);
     tex.repeat.set(repeat, repeat);
     if (rough) rough.repeat.set(repeat, repeat);
+    if (normal) normal.repeat.set(repeat, repeat);
     shadow.group.position.set(centerX, y, centerZ);
     shadow.setSize(Math.max(radius * 3, 20), Math.max(radius * 4, 20));
   }
@@ -73,7 +89,7 @@ export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadT
     shadow,
     setGround,
     dispose() {
-      envMap.dispose(); hdr.dispose(); tex.dispose(); rough?.dispose();
+      envMap.dispose(); hdr.dispose(); tex.dispose(); rough?.dispose(); normal?.dispose();
       discGeo.dispose(); ground.material.dispose(); shadow.dispose();
     },
   };

@@ -8,6 +8,10 @@
 import * as THREE from "three";
 
 const VERT_DECL = "varying vec3 vPfObjPos;\nvarying vec3 vPfObjNormal;\nvarying vec3 vPfPrintUpView;\nuniform mat4 pfPrintFrame;\n";
+// Wood's triplanar normal map builds its normal in OBJECT space; the fragment
+// stage has no normalMatrix, so its three columns ride along as varyings.
+const VERT_DECL_NM = "varying vec3 vPfNmX;\nvarying vec3 vPfNmY;\nvarying vec3 vPfNmZ;\n";
+const VERT_BODY_NM = "vPfNmX = normalMatrix[0];\nvPfNmY = normalMatrix[1];\nvPfNmZ = normalMatrix[2];\n";
 // vPfPrintUpView: the print direction (export +Z) in VIEW space — the gradient
 // of the layer height, carried by normalMatrix like any other normal — so the
 // layer-line normal map can tilt normals along it (identity print frame for the
@@ -30,6 +34,39 @@ float pfNoise(vec3 x) {
 vec3 pfTriplanar(sampler2D map, vec3 p, vec3 n, float scale) {
   vec3 w = pow(abs(normalize(n)), vec3(4.0)); w /= (w.x + w.y + w.z);
   return texture2D(map, p.yz / scale).rgb * w.x + texture2D(map, p.xz / scale).rgb * w.y + texture2D(map, p.xy / scale).rgb * w.z;
+}
+`;
+
+// Extra declarations only the wood kind needs: its normal and roughness maps and
+// the normal-matrix varyings. Kept out of FRAG_DECL so the other kinds don't bind
+// two empty samplers.
+const FRAG_DECL_WOOD = `
+uniform sampler2D pfNormalMap;
+uniform sampler2D pfRoughMap;
+uniform float pfRoughMean;
+uniform float pfNormalStrength;
+varying vec3 vPfNmX;
+varying vec3 vPfNmY;
+varying vec3 vPfNmZ;
+vec3 pfTriplanarWeights(vec3 n) { vec3 w = pow(abs(n), vec3(4.0)); return w / (w.x + w.y + w.z); }
+// Triplanar tangent-space normal map, whiteout-blended (Golus, "Normal Mapping
+// for a Triplanar Shader"). Each projection's map is read as a height field over
+// the two object axes its UVs run along, so its tangent normal (x, y) is a slope
+// along those axes and z points along the face's own axis — the whiteout form
+// (t.xy + n.<uv axes>, |t.z| * n.<face axis>) needs no per-side sign flips: on
+// the back face n.<face axis> is negative and the swizzle follows the same height
+// field, so light still catches the same grain. OpenGL-format maps (+Y up), the
+// Poly Haven "nor_gl" convention. Returns an OBJECT-space unit normal.
+vec3 pfTriplanarNormal(vec3 p, vec3 n, float scale) {
+  vec3 w = pfTriplanarWeights(n);
+  vec3 tx = texture2D(pfNormalMap, p.yz / scale).xyz * 2.0 - 1.0;
+  vec3 ty = texture2D(pfNormalMap, p.xz / scale).xyz * 2.0 - 1.0;
+  vec3 tz = texture2D(pfNormalMap, p.xy / scale).xyz * 2.0 - 1.0;
+  tx.xy *= pfNormalStrength; ty.xy *= pfNormalStrength; tz.xy *= pfNormalStrength;
+  tx = vec3(tx.xy + n.yz, abs(tx.z) * n.x);   // uv = (y, z), face axis x
+  ty = vec3(ty.xy + n.xz, abs(ty.z) * n.y);   // uv = (x, z), face axis y
+  tz = vec3(tz.xy + n.xy, abs(tz.z) * n.z);   // uv = (x, y), face axis z
+  return normalize(tx.zxy * w.x + ty.xzy * w.y + tz.xyz * w.z);
 }
 `;
 
@@ -60,16 +97,22 @@ const FRAG_BODY = {
     diffuseColor.rgb *= mix(0.92, 1.04, g);
     roughnessFactor = clamp(roughnessFactor + (g - 0.5) * 0.1, 0.0, 1.0);
   }`,
-  // Wood and carbon sample luminance MASKS (raw, not sRGB-decoded: physical.js)
-  // and modulate around the texture's own mean (0.238 wood, 0.171 carbon; their
-  // spread is ~0.11 and ~0.06), so a mipmapped far swatch keeps its preset
-  // colour and the grain/weave reads at full contrast up close.
+  // Wood is a full PBR set sampled triplanar in object space: the colour map
+  // (sRGB, so already linear here) multiplies diffuseColor — white unless the
+  // author tinted it, physical.js — and the roughness map varies roughnessFactor
+  // around the preset's value (divided by the map's own mean, so the preset sets
+  // the average). Mipmaps (and RepeatWrapping) do the far-distance filtering.
   wood: `
   {
-    vec3 t = pfTriplanar(pfPatternMap, vPfObjPos, vPfObjNormal, pfPatternScale);
-    float l = dot(t, vec3(0.2126, 0.7152, 0.0722));
-    diffuseColor.rgb *= clamp(1.0 + (l - 0.238) * 4.0, 0.35, 1.6);
+    vec3 pfN = normalize(vPfObjNormal);
+    diffuseColor.rgb *= pfTriplanar(pfPatternMap, vPfObjPos, pfN, pfPatternScale);
+    float r = pfTriplanar(pfRoughMap, vPfObjPos, pfN, pfPatternScale).g;
+    roughnessFactor = clamp(roughnessFactor * r / pfRoughMean, 0.02, 1.0);
   }`,
+  // Carbon samples a luminance MASK (raw, not sRGB-decoded: physical.js) and
+  // modulates around the texture's own mean (0.171; its spread is ~0.06), so a
+  // mipmapped far swatch keeps its preset colour and the weave reads at full
+  // contrast up close.
   carbon: `
   {
     vec3 t = pfTriplanar(pfPatternMap, vPfObjPos, vPfObjNormal, pfPatternScale);
@@ -108,23 +151,41 @@ const FRAG_NORMAL = {
     vec3 along = up - normal * dot(normal, up);
     normal = normalize(normal + along * slope * 0.35 * aa);
   }`,
+  // Wood replaces the view-space normal with its triplanar normal map, built in
+  // object space and carried to view space through the normal matrix. A
+  // double-sided back face is flipped the way <normal_fragment_begin> flips it.
+  wood: `
+  {
+    vec3 pfObjN = pfTriplanarNormal(vPfObjPos, normalize(vPfObjNormal), pfPatternScale);
+    normal = normalize(mat3(vPfNmX, vPfNmY, vPfNmZ) * pfObjN);
+    #ifdef DOUBLE_SIDED
+      normal *= faceDirection;
+    #endif
+  }`,
 };
 
-export function applyPattern(material, { kind, scale = 1, printFrame, texture } = {}) {
+export function applyPattern(material, { kind, scale = 1, printFrame, texture, normalMap, roughnessMap, roughnessMean = 0.5, normalScale = 1 } = {}) {
   if (!kind || !FRAG_BODY[kind]) return material;
+  const wood = kind === "wood";
   const uniforms = {
     pfPatternScale: { value: scale },
     pfPrintFrame: { value: new THREE.Matrix4().fromArray(printFrame ?? new THREE.Matrix4().toArray()) },
     pfPatternMap: { value: texture ?? null },
+    ...(wood ? {
+      pfNormalMap: { value: normalMap ?? null },
+      pfRoughMap: { value: roughnessMap ?? null },
+      pfRoughMean: { value: roughnessMean },
+      pfNormalStrength: { value: normalScale },
+    } : {}),
   };
   material.userData.patternUniforms = uniforms;
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", `#include <common>\n${VERT_DECL}`)
-      .replace("#include <begin_vertex>", `#include <begin_vertex>\n${VERT_BODY}`);
+      .replace("#include <common>", `#include <common>\n${VERT_DECL}${wood ? VERT_DECL_NM : ""}`)
+      .replace("#include <begin_vertex>", `#include <begin_vertex>\n${VERT_BODY}${wood ? VERT_BODY_NM : ""}`);
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", `#include <common>\n${FRAG_DECL}`)
+      .replace("#include <common>", `#include <common>\n${FRAG_DECL}${wood ? FRAG_DECL_WOOD : ""}`)
       .replace("#include <roughnessmap_fragment>", `#include <roughnessmap_fragment>\n${FRAG_BODY[kind]}`)
       .replace("#include <normal_fragment_maps>", `#include <normal_fragment_maps>\n${FRAG_NORMAL[kind] ?? ""}`);
   };

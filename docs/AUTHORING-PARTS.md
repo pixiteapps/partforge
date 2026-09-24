@@ -342,7 +342,7 @@ on oak shrinks the grain to a 0.2 mm tile, i.e. invisible noise):
 | --- | --- | --- | --- |
 | layer lines | `pla-print`, `petg-print` | layer height | 0.2 |
 | SLS grain | `nylon-sls` | grain size | 0.15 |
-| wood | `oak`, `walnut` | size of one texture tile (the grain repeats every this many mm) | 80 |
+| wood | `oak`, `walnut` | size of one texture tile (the grain repeats every this many mm) | 250 (`oak`), 400 (`walnut`) |
 | carbon weave | `carbon-fiber` | size of one texture tile | 48 |
 
 Presets without a pattern ignore it.
@@ -379,7 +379,7 @@ A part with no `color` or `material` exports exactly as before.
 | `carbon-fiber` | Carbon fibre | — | 2x2 twill carbon fibre under clear coat. |
 
 **Environments** (`meta.environment`, default `studio`; viewers can switch):
-`studio` (neutral soft boxes, paper sweep), `workshop` (warm interior, oak
+`studio` (neutral soft boxes, paper sweep), `workshop` (warm interior, wood
 table), `print-bed` (daylight, textured PEI sheet), `outdoor` (overcast sky,
 concrete).
 

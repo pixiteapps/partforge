@@ -528,9 +528,15 @@ export function createViewer(container, part) {
     try { return typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches; } catch { return false; }
   };
 
+  // Anisotropic filtering: the ground disc and the wood grain are seen at grazing
+  // angles, where plain trilinear mip selection blurs them into smeared blocks.
   const loadTexture = (file) => {
     let t = textureCache.get(file);
-    if (!t) { t = textureLoader.load(assetUrl(file)); textureCache.set(file, t); }
+    if (!t) {
+      t = textureLoader.load(assetUrl(file));
+      t.anisotropy = Math.min(8, renderer.capabilities?.getMaxAnisotropy?.() ?? 1);
+      textureCache.set(file, t);
+    }
     return t;
   };
   const loadHdr = (url) => new UltraHDRLoader().setDataType(THREE.HalfFloatType).loadAsync(url);

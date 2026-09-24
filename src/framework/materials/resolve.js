@@ -42,6 +42,7 @@ export function resolveMaterial(display) {
     textureScale: preset.textureScale ?? 1,
     envIntensity: preset.envIntensity ?? 1,
     specularIntensity: preset.specularIntensity ?? 1,
+    textures: preset.textures ?? null,
     opacity: 1,
   };
   if (isColor(d.color)) params.color = d.color;
@@ -60,7 +61,9 @@ export function resolveMaterial(display) {
   for (const key of Object.keys(d)) {
     if (!DISPLAY_KEYS.includes(key)) issues.push({ kind: "material-key-unknown", key, value: d[key] });
   }
-  return { preset, params, issues };
+  // `tinted`: the author named a colour. A textured preset's colour map carries
+  // its own colour, so only an explicit tint multiplies it (physical.js).
+  return { preset, params, issues, tinted: isColor(d.color) };
 }
 
 // CAD-view appearance: the resolved colour on the CAD MeshStandardMaterial,

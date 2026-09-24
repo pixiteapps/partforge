@@ -66,10 +66,24 @@ export const PRESETS = {
   rubber: P("rubber", "Rubber", "plastic", "Matte elastomer: gaskets, feet, grips; tint with `color`.",
     { color: 0x1a1a1a, metalness: 0, roughness: 0.9, tintable: true }),
 
+  // Wood is a full PBR texture set (colour, normal, roughness — Poly Haven scans,
+  // assets/SOURCES.md), projected triplanar in object space (patterns.js).
+  // textureScale is one tile in mm. It is NOT the scans' stated size (1.83 m oak,
+  // 2 m walnut): a 1K map spread that wide is ~2 mm a texel, so a hand-sized part
+  // showed blurred blotches and no grain. 250/400 mm keep the grain crisp at part
+  // scale and still read as plausible figure (checked in the contact sheet). `color` is the
+  // texture's average colour: what the CAD view and a 3MF export show. In realistic
+  // mode the texture carries the colour itself; an explicit `color` tints it.
+  // `roughnessMean` is the roughness map's mean, so the preset `roughness` (or an
+  // override) sets the AVERAGE roughness and the map only varies it. `normalScale`
+  // strengthens the normal map: these scans' tangent normals barely leave +Z (a
+  // ~1% tilt), which reads as flat under an environment map.
   oak: P("oak", "Oak", "natural", "Light oak with open grain.",
-    { color: 0xb88a5a, metalness: 0, roughness: 0.6, pattern: "wood", textureScale: 80 }),
+    { color: 0xa17e57, metalness: 0, roughness: 0.65, pattern: "wood", textureScale: 250,
+      textures: { color: "pattern-oak-color.jpg", normal: "pattern-oak-normal.jpg", roughness: "pattern-oak-rough.jpg", roughnessMean: 0.53, normalScale: 2.5 } }),
   walnut: P("walnut", "Walnut", "natural", "Dark oiled walnut.",
-    { color: 0x5d3a24, metalness: 0, roughness: 0.5, clearcoat: 0.3, clearcoatRoughness: 0.4, pattern: "wood", textureScale: 80 }),
+    { color: 0x5d2a18, metalness: 0, roughness: 0.5, clearcoat: 0.3, clearcoatRoughness: 0.4, pattern: "wood", textureScale: 400,
+      textures: { color: "pattern-walnut-color.jpg", normal: "pattern-walnut-normal.jpg", roughness: "pattern-walnut-rough.jpg", roughnessMean: 0.628, normalScale: 3 } }),
   "carbon-fiber": P("carbon-fiber", "Carbon fibre", "natural", "2x2 twill carbon fibre under clear coat.",
     { color: 0x1b1c1e, metalness: 0.2, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.05, pattern: "carbon", textureScale: 48 }),
 };

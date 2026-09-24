@@ -69,13 +69,26 @@ test("layer lines fade to their mean where a layer is too fine for the pixel gri
 // A mask's modulation is centred on the texture's own mean, so where the
 // texture is mipmapped down to its average (a far swatch) the multiplier is 1
 // and the preset colour shows as defined.
-test("wood and carbon modulate around their texture's mean", () => {
-  for (const [kind, mean] of [["wood", "0.238"], ["carbon", "0.171"]]) {
-    const m = applyPattern(new THREE.MeshPhysicalMaterial(), { kind, scale: 10, texture: new THREE.Texture() });
-    const s = fakeShader();
-    m.onBeforeCompile(s);
-    expect(s.fragmentShader).toContain(`(l - ${mean})`);
-  }
+test("carbon modulates around its texture's mean", () => {
+  const m = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "carbon", scale: 10, texture: new THREE.Texture() });
+  const s = fakeShader();
+  m.onBeforeCompile(s);
+  expect(s.fragmentShader).toContain("(l - 0.171)");
+});
+
+test("wood samples its colour and roughness maps triplanar, roughness around the map's mean", () => {
+  const maps = { texture: new THREE.Texture(), normalMap: new THREE.Texture(), roughnessMap: new THREE.Texture() };
+  const m = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "wood", scale: 250, ...maps, roughnessMean: 0.53, normalScale: 2.5 });
+  const s = fakeShader();
+  m.onBeforeCompile(s);
+  expect(s.fragmentShader).toContain("diffuseColor.rgb *= pfTriplanar(pfPatternMap");
+  expect(s.fragmentShader).toContain("pfTriplanar(pfRoughMap");
+  expect(s.fragmentShader).toContain("/ pfRoughMean");
+  expect(s.uniforms.pfPatternMap.value).toBe(maps.texture);
+  expect(s.uniforms.pfNormalMap.value).toBe(maps.normalMap);
+  expect(s.uniforms.pfRoughMap.value).toBe(maps.roughnessMap);
+  expect(s.uniforms.pfRoughMean.value).toBeCloseTo(0.53);
+  expect(s.uniforms.pfNormalStrength.value).toBeCloseTo(2.5);
 });
 
 test("layer lines carry filament mottling noise", () => {
@@ -102,9 +115,28 @@ test("layer lines tilt the surface normal along the print direction (a procedura
   expect(afterNormals).not.toContain("along / alongLen");
 });
 
-test("wood gets no normal perturbation", () => {
-  const m = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "wood", scale: 80, texture: new THREE.Texture() });
+// Wood's normal map is triplanar too: three tangent-space samples, whiteout-
+// blended into an OBJECT-space normal, carried to view space (where three's
+// \`normal\` lives after <normal_fragment_maps>) by the normal matrix, which the
+// fragment stage only has through varyings.
+test("wood replaces the view-space normal with a triplanar, whiteout-blended normal map", () => {
+  const m = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "wood", scale: 250, texture: new THREE.Texture(), normalMap: new THREE.Texture() });
   const s = { uniforms: {}, vertexShader: "#include <common>\n#include <begin_vertex>", fragmentShader: "#include <common>\n#include <roughnessmap_fragment>\n#include <normal_fragment_maps>" };
   m.onBeforeCompile(s);
-  expect(s.fragmentShader).not.toContain("normal = normalize(normal +");
+  expect(s.vertexShader).toContain("vPfNmX = normalMatrix[0]");
+  expect(s.fragmentShader).toContain("pfTriplanarNormal");
+  expect(s.fragmentShader).toContain("abs(tx.z) * n.x");
+  const afterNormals = s.fragmentShader.slice(s.fragmentShader.indexOf("#include <normal_fragment_maps>"));
+  expect(afterNormals).toContain("normal = normalize(mat3(vPfNmX, vPfNmY, vPfNmZ) * pfObjN)");
+  expect(afterNormals).toContain("faceDirection");
+});
+
+test("only wood declares the normal and roughness samplers", () => {
+  for (const kind of ["layer-lines", "sls-grain", "carbon"]) {
+    const m = applyPattern(new THREE.MeshPhysicalMaterial(), { kind, scale: 1, texture: new THREE.Texture() });
+    const s = fakeShader();
+    m.onBeforeCompile(s);
+    expect(s.fragmentShader, kind).not.toContain("pfNormalMap");
+    expect(s.vertexShader, kind).not.toContain("vPfNmX");
+  }
 });

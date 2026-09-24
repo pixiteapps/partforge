@@ -14,6 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { ENVIRONMENTS } from "../../src/framework/materials/environments.js";
+import { PRESETS } from "../../src/framework/materials/presets.js";
 import { PATTERN_TEXTURES } from "../../src/framework/materials/assets.js";
 import { UltraHDRLoader } from "three/addons/loaders/UltraHDRLoader.js";
 
@@ -24,6 +25,10 @@ const files = () => {
   for (const e of Object.values(ENVIRONMENTS)) {
     out.add(e.hdr); out.add(e.ground.texture);
     if (e.ground.roughnessTexture) out.add(e.ground.roughnessTexture);
+    if (e.ground.normalTexture) out.add(e.ground.normalTexture);
+  }
+  for (const p of Object.values(PRESETS)) {
+    for (const k of ["color", "normal", "roughness"]) if (p.textures?.[k]) out.add(p.textures[k]);
   }
   return [...out];
 };
@@ -114,4 +119,15 @@ test("the outdoor ground is tinted down to a warm grey", async () => {
   const [r, g, b] = [(t >> 16) & 255, (t >> 8) & 255, t & 255];
   expect(Math.max(r, g, b)).toBeLessThanOrEqual(0xb0);
   expect(r).toBeGreaterThanOrEqual(b);
+});
+
+// Every committed asset is referenced somewhere: a file nothing loads is dead
+// weight in every consumer's build (assets.js lists them all literally).
+test("no asset file sits in the directory unreferenced", async () => {
+  const { readdirSync } = await import("node:fs");
+  const used = new Set(files());
+  for (const f of readdirSync(dir)) {
+    if (f === "SOURCES.md") continue;
+    expect(used.has(f), `${f} is not referenced`).toBe(true);
+  }
 });

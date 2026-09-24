@@ -123,3 +123,20 @@ test("resolveEnvironmentId falls back to studio", () => {
   expect(resolveEnvironmentId("moon")).toEqual({ id: "studio", known: false });
   expect(resolveEnvironmentId(undefined)).toEqual({ id: "studio", known: true });
 });
+
+// Textured presets name their PBR maps as plain file names (three-free data, like
+// the rest of the library) and say what the roughness map averages to.
+test("wood presets carry a full texture set", () => {
+  for (const id of ["oak", "walnut"]) {
+    const t = PRESETS[id].textures;
+    for (const k of ["color", "normal", "roughness"]) expect(t[k], `${id}.${k}`).toMatch(/^pattern-[a-z]+-[a-z]+\.jpg$/);
+    expect(t.roughnessMean > 0 && t.roughnessMean < 1, id).toBe(true);
+    expect(resolveMaterial({ material: id }).params.textures).toBe(t);
+  }
+  expect(resolveMaterial({ material: "brass" }).params.textures).toBeNull();
+});
+
+test("resolveMaterial reports whether the author named a colour", () => {
+  expect(resolveMaterial({ material: "oak" }).tinted).toBe(false);
+  expect(resolveMaterial({ material: "oak", color: 0x123456 }).tinted).toBe(true);
+});

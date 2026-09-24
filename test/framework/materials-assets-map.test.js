@@ -4,6 +4,7 @@
 // silent fallback — a typo must fail a test, not a render).
 import { expect, test } from "vitest";
 import { ENVIRONMENTS } from "../../src/framework/materials/environments.js";
+import { PRESETS } from "../../src/framework/materials/presets.js";
 import { assetUrl, PATTERN_TEXTURES } from "../../src/framework/materials/assets.js";
 
 const referencedNames = () => {
@@ -12,6 +13,10 @@ const referencedNames = () => {
     names.add(env.hdr);
     names.add(env.ground.texture);
     if (env.ground.roughnessTexture) names.add(env.ground.roughnessTexture);
+    if (env.ground.normalTexture) names.add(env.ground.normalTexture);
+  }
+  for (const p of Object.values(PRESETS)) {
+    for (const k of ["color", "normal", "roughness"]) if (p.textures?.[k]) names.add(p.textures[k]);
   }
   return [...names];
 };

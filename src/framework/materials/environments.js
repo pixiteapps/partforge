@@ -8,6 +8,9 @@
 // starting size); ground.tileMm, when set, is how many millimetres one repeat of
 // the ground texture covers — defaulting to sizeMm. rotationDeg, when set, turns
 // the environment (lighting and backdrop together) about the vertical axis.
+// ground.roughnessTexture and ground.normalTexture are optional data maps
+// (normal maps OpenGL-format, +Y up) tiled the same way as the colour map;
+// ground.roughness (default 1) scales the roughness map.
 
 export const DEFAULT_ENVIRONMENT_ID = "studio";
 
@@ -24,7 +27,15 @@ export const ENVIRONMENTS = {
   workshop: {
     id: "workshop", label: "Workshop", exposure: 0.88,
     hdr: "env-workshop.jpg",
-    ground: { texture: "ground-oak.jpg", roughnessTexture: "ground-oak-rough.jpg", sizeMm: 600, tint: 0xffffff },
+    // Poly Haven "Wood Table 001", a full PBR set. Tiled at 600 mm rather than
+    // its scanned 1.5 m: a 1K map spread over 1.5 m is 1.5 mm a texel, a blur
+    // under a hand-sized part. Its roughness map (mean ~0.23, a varnished top) is
+    // scaled up so the floor reads satin rather than mirroring the workshop's
+    // windows at grazing angles.
+    ground: {
+      texture: "ground-wood-color.jpg", normalTexture: "ground-wood-normal.jpg", roughnessTexture: "ground-wood-rough.jpg",
+      sizeMm: 600, tileMm: 600, roughness: 1.8, tint: 0xffffff,
+    },
   },
   "print-bed": {
     id: "print-bed", label: "Print bed", exposure: 0.8,

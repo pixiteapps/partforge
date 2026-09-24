@@ -78,3 +78,34 @@ test("an environment without rotation or blur settings keeps the defaults", asyn
   expect(rig.backgroundBlurriness).toBeCloseTo(0.6);
   rig.dispose();
 });
+
+// The workshop floor is a full PBR set: colour (sRGB) plus normal and roughness
+// maps, which are data and must never be sRGB-decoded. Its normal map is
+// OpenGL-format, three's own convention, so normalScale stays positive.
+test("the workshop floor carries a normal and a roughness map, both raw data, tiled with the colour", async () => {
+  const loaded = {};
+  const rig = await loadEnvironmentRig(fakeRenderer(), "workshop", {
+    loadHdr: async () => new THREE.DataTexture(), loadTexture: (f) => (loaded[f] = new THREE.Texture()), pmrem,
+  });
+  const m = rig.ground.material;
+  expect(m.map).toBe(loaded["ground-wood-color.jpg"]);
+  expect(m.map.colorSpace).toBe(THREE.SRGBColorSpace);
+  expect(m.normalMap).toBe(loaded["ground-wood-normal.jpg"]);
+  expect(m.normalMap.colorSpace).toBe(THREE.NoColorSpace);
+  expect(m.roughnessMap).toBe(loaded["ground-wood-rough.jpg"]);
+  expect(m.roughnessMap.colorSpace).toBe(THREE.NoColorSpace);
+  expect(m.normalScale.x).toBeGreaterThan(0);
+  expect(m.normalScale.y).toBeGreaterThan(0);
+  rig.setGround({ y: 0, radius: 10 });
+  expect(m.normalMap.repeat.x).toBeCloseTo(m.map.repeat.x);
+  expect(m.roughnessMap.repeat.x).toBeCloseTo(m.map.repeat.x);
+  rig.dispose();
+});
+
+test("environments without a normal map keep a plain ground", async () => {
+  const rig = await loadEnvironmentRig(fakeRenderer(), "studio", {
+    loadHdr: async () => new THREE.DataTexture(), loadTexture: () => new THREE.Texture(), pmrem,
+  });
+  expect(rig.ground.material.normalMap).toBeNull();
+  rig.dispose();
+});

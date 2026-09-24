@@ -3,8 +3,11 @@
 //
 //   node scripts/bake-environments.mjs <in.hdr> <out-name.jpg> [--size WxH]
 //     HDR -> UltraHDR (gainmap) JPEG, default 2048x1024.
-//   node scripts/bake-environments.mjs --texture <in.jpg|png> <out-name.jpg> [--gray] [--tint r,g,b] [--size N]
-//     Any raster -> square JPEG q82, default 1024x1024.
+//   node scripts/bake-environments.mjs --texture <in.jpg|png> <out-name.jpg> [--gray] [--data] [--quality Q] [--tint r,g,b] [--size N]
+//     Any raster -> square JPEG (default q82), default 1024x1024. `--data` is for maps
+//     that hold numbers rather than colours (normal maps): full-resolution chroma
+//     (4:4:4 — the default 4:2:0 halves the X/Y channels' resolution) and no tint or
+//     grayscale, so the values pass through as they were authored.
 //   node scripts/bake-environments.mjs --carbon <out-name.jpg> [--size N]
 //     Procedural 2x2 twill weave tile (no source asset) -> square JPEG q82, default 256x256.
 //   node scripts/bake-environments.mjs --speckle <out-name.jpg> [--tint r,g,b] [--size N]
@@ -87,8 +90,12 @@ function parseSize(argv, fallback) {
 async function bakeTexture(argv) {
   const [input, name] = argv;
   const gray = argv.includes("--gray");
+  const data = argv.includes("--data");
+  if (data && (gray || argv.includes("--tint"))) throw new Error("bake-environments: --data maps take no --gray or --tint");
   const [size] = parseSize(argv, [1024]);
   const tintFlag = argv.indexOf("--tint");
+  const qualityFlag = argv.indexOf("--quality");
+  const quality = qualityFlag === -1 ? 82 : Number(argv[qualityFlag + 1]);
 
   let img = sharp(input).resize(size, size, { fit: "cover" });
   if (tintFlag !== -1) {
@@ -96,7 +103,7 @@ async function bakeTexture(argv) {
     img = img.tint({ r, g, b });
   }
   if (gray) img = img.grayscale();
-  const buffer = await img.jpeg({ quality: 82, mozjpeg: true }).toBuffer();
+  const buffer = await img.jpeg({ quality, mozjpeg: true, ...(data ? { chromaSubsampling: "4:4:4" } : {}) }).toBuffer();
   writeFileSync(outPath(name), buffer);
   console.log(`${name}: ${buffer.length} bytes`);
 }
