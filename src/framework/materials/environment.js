@@ -16,14 +16,40 @@ const GROUND_RADIUS_FACTOR = 4; // ground disc radius, in part radii
 // what three's tangent-space normal maps expect: a positive normalScale.
 const GROUND_NORMAL_SCALE = 1.5;
 
-function groundMaterial(tex, rough, normal, { tint, roughness = 1, normalScale = GROUND_NORMAL_SCALE, bed = false }) {
+// ground.detail: {scale, strength} re-samples the colour map `scale` times
+// finer and multiplies it in at `strength`, so a ground seen up close under a
+// small part keeps crisp grain after the base map's texels have gone soft.
+// `mean` is the map's average linear luminance, so the detail layer darkens
+// and lightens about 1 rather than shifting the ground's overall tone.
+function injectDetail(shader, { scale, strength, mean }) {
+  shader.fragmentShader = shader.fragmentShader.replace(
+    "#include <map_fragment>",
+    `#include <map_fragment>
+#ifdef USE_MAP
+  {
+    float pfDl = dot(texture2D(map, vMapUv * ${scale.toFixed(3)}).rgb, vec3(0.3333));
+    diffuseColor.rgb *= mix(1.0, pfDl / ${mean.toFixed(3)}, ${strength.toFixed(3)});
+  }
+#endif`,
+  );
+}
+
+function groundMaterial(tex, rough, normal, { tint, roughness = 1, normalScale = GROUND_NORMAL_SCALE, bed = false, detail }) {
   const m = new THREE.MeshStandardMaterial({
     color: tint, map: tex, roughnessMap: rough ?? null, roughness, metalness: 0, transparent: !bed,
     ...(normal ? { normalMap: normal, normalScale: new THREE.Vector2(normalScale, normalScale) } : {}),
   });
-  if (bed) return m; // a build plate has a hard edge: no rim fade
+  if (bed) {
+    // a build plate has a hard edge: no rim fade
+    if (detail) {
+      m.onBeforeCompile = (shader) => injectDetail(shader, detail);
+      m.customProgramCacheKey = () => "pf-ground-bed-detail";
+    }
+    return m;
+  }
   // Radial fade to transparent at the rim so the disc melts into the backdrop.
   m.onBeforeCompile = (shader) => {
+    if (detail) injectDetail(shader, detail);
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec2 vPfDisc;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvPfDisc = position.xz;");
@@ -31,7 +57,7 @@ function groundMaterial(tex, rough, normal, { tint, roughness = 1, normalScale =
       .replace("#include <common>", "#include <common>\nvarying vec2 vPfDisc;")
       .replace("#include <dithering_fragment>", "#include <dithering_fragment>\ngl_FragColor.a *= 1.0 - smoothstep(0.35, 0.5, length(vPfDisc));");
   };
-  m.customProgramCacheKey = () => "pf-ground";
+  m.customProgramCacheKey = () => (detail ? "pf-ground-detail" : "pf-ground");
   return m;
 }
 

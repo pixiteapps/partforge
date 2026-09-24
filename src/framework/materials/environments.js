@@ -12,6 +12,8 @@
 // (normal maps OpenGL-format, +Y up) tiled the same way as the colour map;
 // ground.roughness (default 1) scales the roughness map. backgroundIntensity
 // (default 1) dims the drawn backdrop without dimming the light on the part.
+// ground.detail ({scale, strength, mean}) blends the colour map back in at a
+// finer scale so the ground keeps grain up close (environment.js).
 
 export const DEFAULT_ENVIRONMENT_ID = "studio";
 
@@ -59,7 +61,15 @@ export const ENVIRONMENTS = {
     id: "outdoor", label: "Outdoor", exposure: 0.72,
     hdr: "env-outdoor.jpg",
     // Tinted to a warm mid-grey: the overcast sky lights an untinted concrete
-    // map near-white and blue.
-    ground: { texture: "ground-concrete.jpg", roughnessTexture: "ground-concrete-rough.jpg", sizeMm: 800, tint: 0x9e9282 },
+    // map near-white and blue. Exposed-aggregate concrete with its own normal
+    // map, tiled at 400 mm so the grain stays crisp (about 0.4 mm a texel)
+    // under a small part seen up close.
+    ground: {
+      texture: "ground-concrete.jpg", roughnessTexture: "ground-concrete-rough.jpg",
+      normalTexture: "ground-concrete-normal.jpg", normalScale: 1,
+      sizeMm: 800, tileMm: 400, tint: 0x9e9282,
+      // Micro-grain for close-ups: the same map ~7x finer, blended lightly.
+      detail: { scale: 7.13, strength: 0.35, mean: 0.5 },
+    },
   },
 };

@@ -16,6 +16,7 @@ const URLS = {
   "ground-pei-rough.jpg": new URL("./assets/ground-pei-rough.jpg", import.meta.url).href,
   "ground-concrete.jpg": new URL("./assets/ground-concrete.jpg", import.meta.url).href,
   "ground-concrete-rough.jpg": new URL("./assets/ground-concrete-rough.jpg", import.meta.url).href,
+  "ground-concrete-normal.jpg": new URL("./assets/ground-concrete-normal.jpg", import.meta.url).href,
   "pattern-oak-color.jpg": new URL("./assets/pattern-oak-color.jpg", import.meta.url).href,
   "pattern-oak-normal.jpg": new URL("./assets/pattern-oak-normal.jpg", import.meta.url).href,
   "pattern-oak-rough.jpg": new URL("./assets/pattern-oak-rough.jpg", import.meta.url).href,

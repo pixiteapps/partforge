@@ -136,3 +136,24 @@ test("environments other than the print bed keep a full-strength backdrop", asyn
   expect(rig.backgroundIntensity).toBe(1);
   rig.dispose();
 });
+
+// Outdoor concrete is seen up close under small parts: exposed-aggregate
+// colour on a 400 mm tile, its own normal map, and a finer detail layer
+// blended into the colour so the grain stays crisp past the map's texels.
+test("the outdoor concrete carries a normal map, a tight tile and a detail layer", async () => {
+  const loaded = {};
+  const rig = await loadEnvironmentRig(fakeRenderer(), "outdoor", {
+    loadHdr: async () => new THREE.DataTexture(), loadTexture: (f) => (loaded[f] = new THREE.Texture()), pmrem,
+  });
+  const m = rig.ground.material;
+  expect(m.normalMap).toBe(loaded["ground-concrete-normal.jpg"]);
+  expect(m.normalMap.colorSpace).toBe(THREE.NoColorSpace);
+  rig.setGround({ y: 0, radius: 10 });
+  // 800 mm disc / 400 mm tile
+  expect(m.map.repeat.x).toBeCloseTo(2);
+  expect(m.customProgramCacheKey()).toBe("pf-ground-detail");
+  const shader = { vertexShader: "#include <common>\n#include <begin_vertex>", fragmentShader: "#include <common>\n#include <map_fragment>\n#include <dithering_fragment>" };
+  m.onBeforeCompile(shader);
+  expect(shader.fragmentShader).toContain("vMapUv * 7.130");
+  rig.dispose();
+});
