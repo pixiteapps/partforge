@@ -18,6 +18,7 @@ import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
 import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
+import { affineAt, invertAffine, mapSurface } from "./blend-surfaces.js";
 import { meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
 import { SEGS, circleSegs, doubleCurvatureSegs } from "./circle-segs.js";
 import { checkBooleanResult } from "./boolean-gate.js";
@@ -137,6 +138,11 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   };
   const featureLabels = new Map(); // originalID -> label string (grows per label(); tiny)
   const oidPolicies = new Map();   // originalID -> shading policy (grows per faceted/hinted loft; tiny)
+  // originalID -> analytic blend-surface descriptor in that original's own frame
+  // (blend-surfaces.js; registered by mesh-fillet's tools through _markBlendSurface).
+  // Keyed on geometry, not on use: a cached tool reused elsewhere IS that surface, so
+  // the entry is true wherever the id shows up. Grows per fillet tool, like oidPolicies.
+  const blendSurfaces = new Map();
   // name -> { m, digest, hash } | { error, digest } — imported geometry the framework
   // registers pre-build (ensureImports, Task 8). Kernel-lifetime, NOT tracked/T()'d:
   // these masters must survive cleanup() and be read again on every subsequent build.
@@ -216,7 +222,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // transient mesh handle.
   function meshOut(m, asStl) {
     const g = m.getMesh();
-    const r = asStl ? stlFromMesh(g) : creasedNormals(g, { policies: oidPolicies, featureLabels });
+    const r = asStl ? stlFromMesh(g) : creasedNormals(g, { policies: oidPolicies, featureLabels, surfaces: blendSurfaces });
     g.delete?.();
     return r;
   }
@@ -282,6 +288,23 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // mesh-fillet-perf.test.js. Shading is unchanged (BLEND shades like SMOOTH), and
   // label() on a blend result already handles a mixed-original mesh (the majority
   // vote below).
+  // Fresh ids for a blend-aware re-stamp (label(), the roundAll decouple): ONE base id
+  // for every non-blend run, and one fresh id PER blend surface — each keeps its BLEND
+  // policy and its analytic descriptor (runTransform rides through the MeshGL
+  // round-trip, so the descriptor's original frame stays valid). Folding the band
+  // into a single blend id, as this used to, lost every descriptor with it: a labeled
+  // fillet shaded with facet normals again.
+  const reserveBlendRestamp = (oids) => {
+    const blends = [...oids].filter((oid) => !!oidPolicies.get(oid)?.boundaryLines);
+    const baseId = Manifold.reserveIDs(1 + blends.length);
+    const blendIdFor = new Map(blends.map((oid, i) => [oid, baseId + 1 + i]));
+    for (const [oid, id2] of blendIdFor) {
+      oidPolicies.set(id2, BLEND);
+      const surf = blendSurfaces.get(oid);
+      if (surf) blendSurfaces.set(id2, surf);
+    }
+    return { baseId, blendIdFor, blendIds: [...blendIdFor.values()] };
+  };
   const runOids = (mm) => { const g = mm.getMesh(); const s = new Set(g.runOriginalID); g.delete?.(); return s; };
   const meshCadOp = (op, baseM, run) => {
     try {
@@ -373,16 +396,16 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         // folded blend and base into one fresh surface, erasing the distinction
         // the band-boundary lines need — a roundAll'd prism rendered with no
         // feature lines at all, unlike the identical geometry from fillet().
-        // Re-stamp as two reserved ids instead (base stays unregistered → SMOOTH,
-        // the extruded section has no policy of its own) so the result draws
-        // exactly the lines the fillet drew.
+        // Re-stamp onto fresh reserved ids instead — one base id (unregistered →
+        // SMOOTH, the extruded section has no policy of its own) and one per blend
+        // surface (reserveBlendRestamp) — so the result draws exactly the lines, and
+        // shades with exactly the normals, the fillet did.
         const g0 = filleted._m.getMesh();
         try {
           const isBlend = (oid) => !!oidPolicies.get(oid)?.boundaryLines;
           if (![...new Set(g0.runOriginalID)].some(isBlend)) return T(filleted._m.asOriginal());
-          const baseId = Manifold.reserveIDs(2), blendId = baseId + 1;
-          g0.runOriginalID = Uint32Array.from(g0.runOriginalID, (o) => (isBlend(o) ? blendId : baseId));
-          oidPolicies.set(blendId, BLEND);
+          const { baseId, blendIdFor } = reserveBlendRestamp(new Set(g0.runOriginalID));
+          g0.runOriginalID = Uint32Array.from(g0.runOriginalID, (o) => (isBlend(o) ? blendIdFor.get(o) : baseId));
           // The constructor re-welds, and that can pinch a latent sliver off a
           // component as fresh femto-debris (the same rebirth dropDebris's own
           // compose() loop guards against) — sweep the reconstruction too.
@@ -507,8 +530,10 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         // Blend-aware re-stamp. If this mesh carries blend surfaces (the boundaryLines
         // policy), one asOriginal() would fold band and base into a single surface and
         // erase the band-boundary overlay on exactly the solids parts label — every
-        // real part labels its top-level solids. Re-stamp as TWO reserved ids instead,
-        // base and blend: the label covers both (same string → one feature entry), the
+        // real part labels its top-level solids. Re-stamp onto fresh reserved ids
+        // instead, one base id and one per blend surface (reserveBlendRestamp, which
+        // also carries each band's analytic normals): the label covers all of them
+        // (same string → one feature entry), the
         // distinction survives labeling and every later boolean, and reserved ids are
         // fresh so cached-solid reuse under another label cannot collide — the same
         // guarantee asOriginal() gives the plain path below.
@@ -544,7 +569,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
           } };
         }
         if ([...oids0].some(isBlend)) {
-          const baseId = Manifold.reserveIDs(2), blendId = baseId + 1;
+          const { baseId, blendIdFor, blendIds } = reserveBlendRestamp(oids0);
           // base-group policy: the same triangle-weighted majority vote as the plain
           // path, but over the NON-blend runs only — blend runs would elect BLEND for
           // the base group and flag BOTH sides of every boundary seam, which is
@@ -561,16 +586,15 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
             const better = weight > bestWeight || (weight === bestWeight && !pol.sameSurfaceLines && basePol?.sameSurfaceLines);
             if (better) { bestWeight = weight; basePol = pol; }
           }
-          g0.runOriginalID = Uint32Array.from(roid, (o2) => (isBlend(o2) ? blendId : baseId));
+          g0.runOriginalID = Uint32Array.from(roid, (o2) => (isBlend(o2) ? blendIdFor.get(o2) : baseId));
           const o = T(new Manifold(g0));
           g0.delete?.();
           featureLabels.set(baseId, name);
-          featureLabels.set(blendId, name);
-          oidPolicies.set(blendId, BLEND);
+          for (const id2 of blendIds) featureLabels.set(id2, name);
           if (basePol !== undefined) oidPolicies.set(baseId, basePol);
           return { value: wrap(o, lh), pin: o, dispose: () => {
-            featureLabels.delete(baseId); featureLabels.delete(blendId);
-            oidPolicies.delete(baseId); oidPolicies.delete(blendId);
+            featureLabels.delete(baseId); oidPolicies.delete(baseId);
+            for (const id2 of blendIds) { featureLabels.delete(id2); oidPolicies.delete(id2); blendSurfaces.delete(id2); }
             o.delete?.();
           } };
         }
@@ -839,6 +863,23 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // is total; errors are lazy"). Re-registering the same name+digest is a no-op
     // EXCEPT an error entry is always upgradable (the post-crossover retry depends
     // on this — see `_importDigest`).
+    // Side-channel for mesh-fillet (underscore = off-contract): `surf` describes the
+    // tool's blend wall in its current frame. Stored per surface id in the id's
+    // ORIGINAL frame (inverse runTransform), so any later pose or boolean — which
+    // carry runTransform along — still evaluates it exactly.
+    _markBlendSurface: (tool, surf) => {
+      const g = tool._m.getMesh();
+      try {
+        const roid = g.runOriginalID, rt = g.runTransform;
+        for (let r = 0; r < roid.length; r++) {
+          const inv = invertAffine(affineAt(rt, r));
+          if (inv) blendSurfaces.set(roid[r], mapSurface(surf, inv));
+        }
+      } finally {
+        g.delete?.();
+      }
+      return tool;
+    },
     _registerImport: ({ name, digest, positions, indices, error }) => {
       const prev = imports.get(name);
       if (!prev?.error && prev?.digest === digest) return; // error entries are always upgradable

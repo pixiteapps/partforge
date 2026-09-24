@@ -5,7 +5,7 @@
 // disagree about which preset a sub-part is.
 import * as THREE from "three";
 import { cadAppearance, resolveMaterial } from "./resolve.js";
-import { applyPattern } from "./patterns.js";
+import { applyBrushFrame, applyPattern } from "./patterns.js";
 import { PATTERN_TEXTURES } from "./assets.js";
 
 const APPEARANCE_KEYS = ["color", "opacity", "material", "roughness", "metalness", "clearcoat", "clearcoatRoughness", "anisotropy", "textureScale"];
@@ -24,7 +24,13 @@ export function buildCadMaterial(display, base) {
 
 // Realistic-mode material. `loadTexture(fileName)` is injected (the viewer owns
 // a caching TextureLoader), so this stays unit-testable without a network.
-export function buildPhysicalMaterial(display, { printFrame, loadTexture } = {}) {
+export function buildPhysicalMaterial(display, opts = {}) {
+  const m = buildPhysical(display, opts);
+  // brushed metal picks its brush direction per pixel (patterns.js applyBrushFrame)
+  return m.userData.pfAnisotropic ? applyBrushFrame(m) : m;
+}
+
+function buildPhysical(display, { printFrame, loadTexture } = {}) {
   const { params, tinted } = resolveMaterial(display);
   const set = params.textures;
   // A textured preset's colour map carries its own colour; the preset `color` is

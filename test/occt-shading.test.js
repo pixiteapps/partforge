@@ -1,5 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing/occt.js";
+import { auditNormals, filletedBoxTruth } from "./helpers/normal-truth.js";
 
 let k;
 beforeAll(async () => { k = await bootOcctKernel(); });
@@ -13,6 +14,14 @@ test("sphere: analytic radial normals everywhere and ZERO edge segments", () => 
     expect(dot).toBeGreaterThan(0.999); // normal ∥ radius — smooth by construction
   }
   expect(m.edges.length).toBe(0); // seam meridian + pole edges all filtered
+});
+
+// Parity twin of mesh-fillet-normals.test.js: the B-rep fillet's analytic normals
+// meet the same 0.1° bar the Manifold band now does, on the same box.
+test("filleted box: every face, band and corner vertex within 0.1° of the analytic normal", () => {
+  const { worst, at, judged } = auditNormals(k.box({ size: [30, 30, 12] }).fillet({ r: 3 }).toMesh(), filletedBoxTruth);
+  expect(judged).toBeGreaterThan(500);
+  expect(worst, `worst at ${at}`).toBeLessThan(0.1);
 });
 
 test("box: exactly 12 sharp edges, one straight segment each", () => {
