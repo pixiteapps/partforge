@@ -110,6 +110,10 @@ export interface MountElements {
     measure?: HTMLElement | null;
     annotate?: HTMLElement | null;
     railToggle?: HTMLElement | null;
+    /** Realistic-mode toggle (default id `#realistic`). */
+    realistic?: HTMLButtonElement | null;
+    /** Environment picker, an empty `<select>` the mount fills (default id `#environment`). Shown only while realistic. */
+    environment?: HTMLSelectElement | null;
   };
 }
 
@@ -265,6 +269,20 @@ export interface ViewerState {
   camera: { pos: [number, number, number]; target: [number, number, number] } | null;
   projection: "perspective" | "orthographic";
   cutaway: CutawayState | null;
+  /** Always reported by `getViewerState()` — the mode being headed for, so a realistic switch still loading reads `"realistic"` (a failed one settles to `"cad"`). Optional on the way back in (a state saved by an older partforge has none). */
+  renderMode?: RenderMode;
+  /** The realistic environment id, present only when one was CHOSEN (`environment.set`, the picker) — a merely seeded default is left out so the part's own `meta.environment` still applies on remount. An unknown id falls back to `"studio"`. */
+  environment?: string;
+}
+
+/** The viewer's appearance: the drafting view, or physical materials under an environment. */
+export type RenderMode = "cad" | "realistic";
+
+/** What `renderMode.onChange` listeners receive. `busy` while realistic's assets load; `error` when they failed. */
+export interface RenderModeEvent {
+  mode: RenderMode;
+  busy: boolean;
+  error: string | null;
 }
 
 /** Custom controls' transient state, keyed by the param each control owns. Plain JSON. */
@@ -342,6 +360,14 @@ export interface CaptureCurrentOptions {
    * Default false.
    */
   recenter?: boolean;
+  /**
+   * The look to capture in. Omitted: whatever the live view shows. `"cad"`
+   * always renders CAD. `"realistic"` from a CAD view renders realistic only
+   * once the current environment's assets have loaded (this call is
+   * synchronous and cannot wait); before that it falls back to the live look —
+   * `renderViews` is the async path that guarantees realistic.
+   */
+  renderMode?: RenderMode;
 }
 
 export interface CaptureViewOptions {
@@ -500,13 +526,15 @@ export interface PartRuntime {
   /**
    * Canonical-angle captures (fixed poses, framed to the visible assembly,
    * 1024², grid hidden) — sized for feeding a vision model. Defaults to
-   * `["iso", "front", "top"]`; unknown names are dropped.
+   * `["iso", "front", "top"]`; unknown names are dropped. Always the CAD look,
+   * whatever the live render mode — `renderViews` asks for realistic.
    */
   captureViews(viewNames?: CanonicalView[] | string[]): Array<{ view: string; dataUrl: string }>;
   /**
    * One offscreen render of the user's CURRENT framing at a chosen resolution —
    * the showcase capture. Returns a `data:image/jpeg;base64,…` string, or `null`
-   * when disposed or nothing is built yet. Never throws.
+   * when disposed or nothing is built yet. Never throws. Follows the live
+   * render mode unless `opts.renderMode` pins one.
    */
   captureCurrent(opts?: CaptureCurrentOptions): string | null;
   /** The active view (tab) name. Never null once mounted. */
@@ -527,7 +555,7 @@ export interface PartRuntime {
    */
   setActive(active: boolean): void;
   /**
-   * Snapshot the camera, projection and cutaway so a REMOUNT can resume them —
+   * Snapshot the camera, projection, cutaway, render mode and environment so a REMOUNT can resume them —
    * pass the result as the next `mount()`'s `viewerState`. Read at teardown
    * time, so it is the live pose, unlike the camera the viewer persists for a
    * page reload (which only records the end of an orbit drag, and so misses a
@@ -592,6 +620,23 @@ export interface PartRuntime {
   annotate: AnnotateRuntime;
   /** The pick marker's lifetime — hold it on screen and follow it across the canvas. Always present (a no-op stand-in outside `makeHandle` tests). */
   pickMarker: PickMarkerRuntime;
+  /** Realistic render mode (docs "Materials and appearance"). set() resolves to the mode actually in effect — "cad" if assets failed to load. */
+  renderMode: {
+    get(): RenderMode;
+    set(mode: RenderMode): Promise<RenderMode>;
+    onChange(cb: (e: RenderModeEvent) => void): () => void;
+  };
+  /** The realistic environment. set() resolves to the id in effect — a failed switch while realistic reverts, and onChange hears the revert. */
+  environment: {
+    get(): string;
+    set(id: string): Promise<string>;
+    onChange(cb: (id: string) => void): () => void;
+    list(): Array<{ id: string; label: string }>;
+  };
+  /** True when any sub-part names a display.material. */
+  declaresMaterials: boolean;
+  /** Canonical-view renders in a chosen appearance, without switching the live view; "cad" (the default) is exactly captureViews(), CAD in either live mode. */
+  renderViews(viewNames?: CanonicalView[] | string[], opts?: { renderMode?: RenderMode }): Promise<Array<{ view: string; dataUrl: string }>>;
 }
 
 /** Mount a full parametric-part app from a `PartDefinition`. */

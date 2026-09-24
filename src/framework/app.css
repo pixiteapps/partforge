@@ -476,7 +476,7 @@ button.action:disabled { opacity: .5; cursor: default; }
 /* keyboard focus ring shared across the panel's interactive controls */
 .seg button:focus-visible, select.preset:focus-visible, .dl-row button:focus-visible,
 button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible, #viewbar button:focus-visible,
-.pf-view-select:focus-visible,
+#viewbar select:focus-visible, .pf-view-select:focus-visible,
 .pf-viewcube-toggle:focus-visible, .pf-float-rail-toggle:focus-visible, .pf-sketch-toolbar button:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
@@ -595,6 +595,21 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 #viewbar button:disabled:hover { color: var(--pf-muted-2); background: transparent; }
 #viewbar button:hover { color: var(--pf-text); background: var(--pf-surface-2); }
 #viewbar button.on { background: var(--pf-accent); color: var(--pf-on-accent); }
+/* Realistic view (realistic-controls.js). The toggle is an ordinary viewbar
+   button that pulses while its environment loads; the environment picker is a
+   native <select> — the accessible choice on a phone — dressed as a viewbar
+   button, shown only while realistic. Keyed on `#viewbar select` rather than
+   an id so a host's own element in the pill gets the same look. */
+#viewbar button[data-busy] { animation: pf-busy-pulse .8s ease-in-out infinite alternate; }
+@keyframes pf-busy-pulse { from { opacity: 1; } to { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { #viewbar button[data-busy] { animation: none; opacity: .6; } }
+#viewbar select {
+  height: 34px; padding: 0 8px; border: 0; border-radius: var(--pf-radius-control);
+  background: transparent; color: var(--pf-muted-2); cursor: pointer;
+  font: inherit; font-size: 13px;
+}
+#viewbar select:hover { color: var(--pf-text); background: var(--pf-surface-2); }
+#viewbar select[hidden] { display: none; }
 
 /* Sketch-mode toolbar: the #viewbar pill idiom, top-centre, owning the mode
    while the viewbar itself is hidden (mount toggles both).

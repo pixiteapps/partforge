@@ -6,7 +6,7 @@
 // before any motion. Also shown: an intro camera + markdown description on
 // `open`, a looping autoplay `cycle`, and per-step cameras on `assemble`.
 export default {
-  meta: { title: "Hinged Box", units: "mm" },
+  meta: { title: "Hinged Box", units: "mm", environment: "workshop" },
   parameters: [
     {
       id: "box",
@@ -41,6 +41,7 @@ export default {
       label: "Base",
       views: ["box"],
       export: { name: "base" },
+      display: { material: "walnut" },
       build: (k, p) =>
         k.box({ min: [0, 0, 0], max: [p.width, p.depth, p.height] })
           .cut(k.box({ min: [p.wall, p.wall, p.wall], max: [p.width - p.wall, p.depth - p.wall, p.height + 1] })),
@@ -49,6 +50,7 @@ export default {
       label: "Lid",
       views: ["box"],
       export: { name: "lid" },
+      display: { material: "walnut" },
       build: (k, p) => k.box({ min: [0, 0, p.height], max: [p.width, p.depth, p.height + p.wall] }),
       // Display: swing about the hinge line (rear top edge, axis +X through
       // [0, depth, height]; negative angle opens upward), then the assembly

@@ -3,6 +3,7 @@
 // the oracle and the collision check can share it without importing this async,
 // kernel-bound module back.
 import { meshTo3MF } from "./geometry/threemf.js";
+import { printColor } from "./materials/resolve.js";
 import { exportablePartNames } from "./export-select.js";
 import { fontControlAllows, fontSourceAllowed, isNoFontSource } from "./font-source.js";
 import { fontsFor, resolveFonts } from "./fonts.js";
@@ -449,7 +450,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       const meshes = names.map((name) => {
         onProgress(`building ${label(name)}`);
         const { positions, indices } = posed(name, "export", onProgress).toIndexedMesh({ quality: msg.quality ?? "print" });
-        return { name: exportName(name), positions, indices };
+        return { name: exportName(name), positions, indices, color: printColor(part.parts[name]?.display) };
       });
       onProgress("writing 3MF file");
       const data = meshTo3MF(meshes);

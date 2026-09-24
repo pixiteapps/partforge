@@ -81,3 +81,34 @@ test("meshTo3MF bundles multiple parts as separate objects in one file", () => {
   expect(model).toContain('name="a"');
   expect(model).toContain('name="b"');
 });
+
+const tri = () => ({ positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]), indices: new Uint32Array([0, 1, 2, 0, 1, 3, 0, 2, 3, 1, 2, 3]) });
+const modelOf = (buf) => strFromU8(unzipSync(new Uint8Array(buf))["3D/3dmodel.model"]);
+
+test("meshTo3MF without colours is byte-for-byte unchanged", () => {
+  const a = meshTo3MF([{ name: "a", ...tri() }]);
+  const b = meshTo3MF([{ name: "a", ...tri(), color: null }]);
+  expect(modelOf(b)).toBe(modelOf(a));
+  expect(modelOf(a)).not.toContain("basematerials");
+});
+
+test("meshTo3MF writes one base material per distinct colour and points each object at it", () => {
+  const model = modelOf(meshTo3MF([
+    { name: "body", ...tri(), color: 0xb3261e },
+    { name: "lid", ...tri(), color: 0xffffff },
+    { name: "pin", ...tri(), color: 0xb3261e },
+  ]));
+  expect(model).toContain('<basematerials id="1000">');
+  expect((model.match(/<base /g) || []).length).toBe(2);
+  expect(model).toContain('displaycolor="#B3261EFF"');
+  expect(model).toContain('displaycolor="#FFFFFFFF"');
+  expect(model).toMatch(/<object id="1" type="model" name="body" pid="1000" pindex="0">/);
+  expect(model).toMatch(/<object id="2" type="model" name="lid" pid="1000" pindex="1">/);
+  expect(model).toMatch(/<object id="3" type="model" name="pin" pid="1000" pindex="0">/);
+});
+
+test("in a mixed export, an uncoloured object gets the viewer's default colour", () => {
+  const model = modelOf(meshTo3MF([{ name: "a", ...tri(), color: 0x123456 }, { name: "b", ...tri() }]));
+  expect(model).toContain('displaycolor="#9FB4CCFF"');
+  expect(model).toMatch(/name="b" pid="1000" pindex="1"/);
+});

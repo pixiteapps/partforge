@@ -48,6 +48,8 @@ export interface PartMeta {
   units?: string;
   /** Scene background as `0xRRGGBB`. */
   background?: number;
+  /** Realistic-mode lighting/ground preset. See docs/AUTHORING-PARTS.md "Materials and appearance". */
+  environment?: "studio" | "workshop" | "print-bed" | "outdoor" | string;
   /** Pin a backend instead of letting the probe route the part. */
   backend?: BackendName;
 }
@@ -383,8 +385,19 @@ export interface SubPartDefinition<P = ResolvedParams, D = Derived> {
    * / `refBboxDelta` gate metrics.
    */
   reference?: string;
-  /** Viewer-only override — `color` is `0xRRGGBB`, `opacity` is 0..1. */
-  display?: { color?: number; opacity?: number };
+  /** Viewer-only appearance. See docs/AUTHORING-PARTS.md "Materials and appearance". */
+  display?: {
+    color?: number;
+    opacity?: number;
+    /** A preset id from docs/AUTHORING-PARTS.md "Materials and appearance". */
+    material?: string;
+    roughness?: number;
+    metalness?: number;
+    clearcoat?: number;
+    clearcoatRoughness?: number;
+    anisotropy?: number;
+    textureScale?: number;
+  };
   /** Filename / object name on export; defaults to the key. */
   export?: { name: string };
 }

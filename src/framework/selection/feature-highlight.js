@@ -40,6 +40,8 @@ export function createFeatureHighlight(viewer) {
   const overlay = new THREE.Mesh(emptyOverlayGeometry, material);
   overlay.visible = false;
   overlay.renderOrder = CUTAWAY_OVERLAY_RENDER_ORDER;
+  // Pointer feedback, never part of a capture (it tints what it covers).
+  const unregisterCapture = viewer.registerCaptureHidden?.(overlay) ?? (() => {});
   let overlayParent = null;
   // Subset cache per sub-part: rebuilt when the sub-part's geometry object
   // changes (i.e. after a regenerate) — keyed on the geometry instance.
@@ -91,6 +93,7 @@ export function createFeatureHighlight(viewer) {
         () => subsets.clear(),
         () => emptyOverlayGeometry?.dispose(),
         unregisterCutaway,
+        unregisterCapture,
         () => material.dispose(),
       );
       runCleanupSteps(steps, "feature highlight cleanup failed");

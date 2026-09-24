@@ -48,6 +48,15 @@ vi.mock("../../src/framework/viewer.js", () => ({
         return projection;
       }),
       onProjectionChange: (cb) => { projectionCbs.add(cb); return () => projectionCbs.delete(cb); },
+      // Realistic mode's surface (mount wires the toggle, the environment
+      // picker and the handle to it); mount-realistic.test.js runs the real one.
+      getRenderMode: () => "cad",
+      setRenderMode: vi.fn(async () => "cad"),
+      onRenderModeChange: () => () => {},
+      getEnvironment: () => "studio",
+      setEnvironment: vi.fn(async (id) => id),
+      onEnvironmentChange: () => () => {},
+      setPrintFrames: vi.fn(),
       orbitBy: vi.fn(),
       _subMeshes: {},
       flashPoint: vi.fn(),

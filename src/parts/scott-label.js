@@ -71,6 +71,7 @@ export default {
     title: "Editable Layered Label",
     units: "mm",
     background: 0x171a20,
+    environment: "print-bed",
   },
 
   parameters: [
@@ -185,7 +186,7 @@ export default {
     backing: {
       label: "Lower outer layer",
       views: ["backing", "assembly"],
-      display: { color: 0x1e88e5 },
+      display: { material: "pla-print", color: 0x1e88e5 },
       build: (k, p, d) => {
         const rawTextProfile = k.text2d(d.textValue, {
           size: p.textSize,
@@ -209,7 +210,7 @@ export default {
     lettering: {
       label: "Editable lettering",
       views: ["lettering", "assembly"],
-      display: { color: 0xfdd835 },
+      display: { material: "pla-print", color: 0xfdd835 },
       build: (k, p, d) => {
         const rawLetteringProfile = k.text2d(d.textValue, {
           size: p.textSize,

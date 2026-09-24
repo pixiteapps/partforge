@@ -24,7 +24,7 @@ const ngon = (R, n) => {
 };
 
 export default {
-  meta: { title: "Faceted Planter", units: "mm", background: 0x15181d },
+  meta: { title: "Faceted Planter", units: "mm", background: 0x15181d, environment: "print-bed" },
   parameters: [
     {
       id: "body",
@@ -100,6 +100,7 @@ export default {
       label: "Planter",
       views: ["planter"],
       export: { name: "planter" },
+      display: { material: "pla-print", color: 0xc4622d },
       build: (k, p, d) => {
         const body = k.prism({ points: d.outerPts, h: p.height, scaleTop: p.taper, twist: p.twist }).label("Faceted wall");
         // Hollow it. The cavity is built from z=0 sharing the body's exact twist RATE and
