@@ -32,3 +32,21 @@ test("an untrusted probe falls back to identity", () => {
   const sp = { build: (k) => { const b = box(k); b.boundingBox(); return b; }, place: (s) => s.rotate(90, [0, 0, 0], [1, 0, 0]) };
   expect(close(printFrameMatrix(sp, { view: "v", p: {}, d: {} }), I)).toBe(true);
 });
+
+test("multiply order: display translate + export rotate → distinguishes E·D⁻¹ from D⁻¹·E", () => {
+  const sp = {
+    build: box,
+    place: (s, { purpose }) =>
+      purpose === "export"
+        ? s.rotate(90, [0, 0, 0], [0, 0, 1]) // export: rotate 90° about Z
+        : s.translate([10, 0, 0]),            // display: translate [10, 0, 0]
+  };
+  const m = printFrameMatrix(sp, { view: "v", p: {}, d: {} });
+  // E·D⁻¹·[0,1,0]: E = rotate(90° Z), D⁻¹ = translate([-10,0,0])
+  // E·D⁻¹ = [[0,-1,0,0], [1,0,0,-10], [0,0,1,0], [0,0,0,1]] (row-major)
+  // Apply: [0, -1, 0, -10] · [0,1,0]ᵀ = [-1, -10, 0]
+  // If swapped to D⁻¹·E: [[1,0,0,-10], [0,1,0,0], [0,0,1,0], [0,0,0,1]]·[[0,-1,0,0], [1,0,0,0], [0,0,1,0], [0,0,0,1]]
+  // = [[0,-1,0,-10], [-1,0,0,0], [0,0,1,0], [0,0,0,1]] (wrong!)
+  const q = apply(m, [0, 1, 0]);
+  expect(q.map((v) => Math.round(v * 1e9) / 1e9)).toEqual([-1, -10, 0]);
+});
