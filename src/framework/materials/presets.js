@@ -77,13 +77,16 @@ export const PRESETS = {
   // `roughnessMean` is the roughness map's mean, so the preset `roughness` (or an
   // override) sets the AVERAGE roughness and the map only varies it. `normalScale`
   // strengthens the normal map: these scans' tangent normals barely leave +Z (a
-  // ~1% tilt), which reads as flat under an environment map.
+  // ~1% tilt), which reads as flat under an environment map. `grain` is the
+  // texture axis the scan's figure runs along — oak's runs up the image ("v"),
+  // walnut's across it ("u") — so patterns.js can lay it along each sub-part's
+  // long axis.
   oak: P("oak", "Oak", "natural", "Light oak with open grain.",
     { color: 0xa17e57, metalness: 0, roughness: 0.65, pattern: "wood", textureScale: 250,
-      textures: { color: "pattern-oak-color.jpg", normal: "pattern-oak-normal.jpg", roughness: "pattern-oak-rough.jpg", roughnessMean: 0.53, normalScale: 2.5 } }),
+      textures: { color: "pattern-oak-color.jpg", normal: "pattern-oak-normal.jpg", roughness: "pattern-oak-rough.jpg", roughnessMean: 0.53, normalScale: 2.5, grain: "v" } }),
   walnut: P("walnut", "Walnut", "natural", "Dark oiled walnut.",
     { color: 0x5d2a18, metalness: 0, roughness: 0.5, clearcoat: 0.3, clearcoatRoughness: 0.4, pattern: "wood", textureScale: 400,
-      textures: { color: "pattern-walnut-color.jpg", normal: "pattern-walnut-normal.jpg", roughness: "pattern-walnut-rough.jpg", roughnessMean: 0.628, normalScale: 3 } }),
+      textures: { color: "pattern-walnut-color.jpg", normal: "pattern-walnut-normal.jpg", roughness: "pattern-walnut-rough.jpg", roughnessMean: 0.628, normalScale: 3, grain: "u" } }),
   "carbon-fiber": P("carbon-fiber", "Carbon fibre", "natural", "2x2 twill carbon fibre under clear coat.",
     { color: 0x1b1c1e, metalness: 0.2, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.05, pattern: "carbon", textureScale: 48 }),
 };

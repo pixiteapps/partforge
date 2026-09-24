@@ -6,6 +6,7 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { UltraHDRLoader } from "three/addons/loaders/UltraHDRLoader.js";
 import { buildCadMaterial, buildPhysicalMaterial } from "./materials/physical.js";
+import { grainAxisFor, setGrainAxis } from "./materials/patterns.js";
 import { ensureBoxUVs } from "./materials/uv.js";
 import { loadEnvironmentRig } from "./materials/environment.js";
 import { assetUrl } from "./materials/assets.js";
@@ -649,8 +650,18 @@ export function createViewer(container, part) {
     if (!m) {
       m = cloneKeepsPattern(buildPhysicalMaterial(part.parts[name].display, { printFrame: printFrames[name], loadTexture }));
       physicalMats.set(name, m);
+      syncGrain(name);
     }
     return m;
+  }
+  // Wood grain runs along the sub-part's longest axis (patterns.js). The
+  // uniforms are shared with every clone, so setting them once reaches the
+  // cutaway's and the fades' copies too. Called when the material is built and
+  // whenever new geometry lands (a regen can change which axis is longest).
+  function syncGrain(name) {
+    const m = physicalMats.get(name);
+    const geo = subCache[name];
+    if (m && geo) setGrainAxis(m, grainAxisFor(geo.boundingBox));
   }
 
   function publishMode(extra = {}) {
@@ -1224,6 +1235,7 @@ export function createViewer(container, part) {
     // Brushed metal needs UVs for its tangent frame; CAD meshes carry none.
     if (renderMode === "realistic" && physicalMats.get(name)?.userData.pfAnisotropic) ensureBoxUVs(next);
     subCache[name] = next;
+    syncGrain(name);
     // Section helpers must stop referring to the old buffers before those
     // buffers are released.
     cutaway.updateGeometry(name, next);

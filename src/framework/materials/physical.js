@@ -72,6 +72,7 @@ function buildPhysical(display, { printFrame, loadTexture } = {}) {
       roughnessMap: load(set.roughness, THREE.NoColorSpace),
       roughnessMean: set.roughnessMean,
       normalScale: set.normalScale,
+      grain: set.grain,
     });
     return m;
   }
