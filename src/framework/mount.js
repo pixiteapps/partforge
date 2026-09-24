@@ -7,7 +7,7 @@ import { attachRail } from "./rail.js";
 import { declaredSourceLookup } from "./panel/declared-source.js";
 import { attachMobileTabs } from "./mobile-tabs.js";
 import { createTooltipPresenter, attachButtonTooltips } from "./tooltip.js";
-import { loadCamera, loadProjection, saveProjection, loadRenderMode, loadEnvironment, loadFeatureLinesPrefs, saveFeatureLinesPrefs } from "./view-state.js";
+import { loadCamera, loadProjection, saveProjection, loadRenderMode, loadEnvironment, loadFeatureLinesPrefs, saveFeatureLinesPrefs, sanitizeFeatureLinesPrefs } from "./view-state.js";
 import { attachViewStyleControls } from "./view-style-controls.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
 import { declaresMaterials, resolveMaterial } from "./materials/resolve.js";
@@ -206,8 +206,8 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // switch while realistic reverts to the one still shown, and onChange hears
     // both); list() is every environment as {id, label}, for a host picker.
     environment: environment ?? { get: () => "studio", set: async (id) => id, onChange: () => () => {}, list: () => [] },
-    // True when any sub-part names a display.material — a host can offer the
-    // realistic toggle only where it shows something a CAD view does not.
+    // True when any sub-part names a display.material — a host can offer
+    // realistic rendering only where it shows something a CAD view does not.
     declaresMaterials: declaresMaterials ?? false,
   };
 }
@@ -405,8 +405,9 @@ function createCleanupStack() {
 //                                         // control's own onError; the widget keeps the converted blob
 //                                         // so a retry costs a network call, not a reconvert.
 // (view style — no element)              // the view style button (#view-style) is GENERATED
-//                                         // into the view cube's stack, where the cube's
-//                                         // projection toggle used to be; its popover holds the
+//                                         // into the view cube's stack and sits over the cube's
+//                                         // bottom-right corner, where the cube's projection
+//                                         // toggle used to be; its popover holds the
 //                                         // style (CAD or a realistic environment, as live
 //                                         // thumbnails), feature lines for that style, and the
 //                                         // projection. Hosts need no markup for it — the old
@@ -688,8 +689,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // getViewerState carries; an explicit mode change supersedes it, and a
     // failed load settles to CAD.
     // Feature lines per style by the same precedence: this session's carried
-    // map wins over the stored one, key by key.
-    viewer.setFeatureLinesPrefs({ ...loadFeatureLinesPrefs(), ...(viewerState?.featureLines ?? {}) });
+    // map wins over the stored one, key by key — filtered like storage is,
+    // since a host may have stored or posted the state it hands back.
+    viewer.setFeatureLinesPrefs({ ...loadFeatureLinesPrefs(), ...sanitizeFeatureLinesPrefs(viewerState?.featureLines) });
     cleanup.defer(viewer.onFeatureLinesChange(() => saveFeatureLinesPrefs(viewer.getFeatureLinesPrefs())));
     if ((viewerState?.renderMode ?? loadRenderMode() ?? "cad") === "realistic") viewer.setRenderMode("realistic");
     const viewcube = attachViewcubeControls(viewer, { stage: els.viewer });

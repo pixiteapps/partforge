@@ -473,6 +473,17 @@ test("with storage that throws on every access, a carried realistic view mounts,
   }
 });
 
+test("a carried viewerState.featureLines is filtered like storage before it outranks it", async () => {
+  localStorage.setItem("partforge:featureLines", JSON.stringify({ workshop: false }));
+  const { runtime } = mountFixture({ material: "brass" }, {
+    viewerState: { featureLines: { cad: "false", moon: true, studio: true } },
+  });
+  await runtime.ready;
+  expect(runtime.getViewerState().featureLines).toEqual({ workshop: false, studio: true });
+  expect(runtime.featureLines.get()).toBe(true);     // CAD's default — the string "false" never landed
+  runtime.dispose();
+});
+
 test("feature lines: restored from storage, carried in viewerState, exposed on the runtime", async () => {
   localStorage.setItem("partforge:featureLines", JSON.stringify({ cad: false }));
   const { runtime } = mountFixture({ material: "brass" });
