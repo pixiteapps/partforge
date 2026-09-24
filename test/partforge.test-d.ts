@@ -254,6 +254,7 @@ expectType<Array<{ view: string; dataUrl: string }>>(runtime.captureViews(["iso"
 expectType<Array<{ view: string; dataUrl: string }>>(runtime.captureViews());
 expectType<string | null>(runtime.captureCurrent({ size: 2048, hideGrid: false, quality: 0.9 }));
 expectType<string | null>(runtime.captureCurrent());
+expectType<string | null>(runtime.captureCurrent({ renderMode: "cad" }));
 expectType<void>(runtime.setActive(false));
 expectType<() => void>(runtime.onContextLost(() => {}));
 expectType<Array<{ name: string; label: string }>>(runtime.listExportableParts());
@@ -264,6 +265,18 @@ expectType<void>(runtime.setHostPane(null));
 expectType<AnimationRuntime | null>(runtime.animation);
 expectType<void | undefined>(runtime.animation?.play("open"));
 expectType<AnimationState | undefined>(runtime.animation?.state());
+// Realistic render mode and environments.
+expectType<"cad" | "realistic">(runtime.renderMode.get());
+expectType<Promise<"cad" | "realistic">>(runtime.renderMode.set("realistic"));
+expectType<() => void>(runtime.renderMode.onChange((e) => void [e.mode, e.busy, e.error]));
+expectType<Promise<string>>(runtime.environment.set("workshop"));
+expectType<Array<{ id: string; label: string }>>(runtime.environment.list());
+expectType<boolean>(runtime.declaresMaterials);
+expectType<Promise<Array<{ view: string; dataUrl: string }>>>(runtime.renderViews(["iso"], { renderMode: "realistic" }));
+expectType<"cad" | "realistic" | undefined>(runtime.getViewerState().renderMode);
+
+// @ts-expect-error - "photo" is not a render mode
+runtime.renderMode.set("photo");
 
 // @ts-expect-error - "sidebar" is not a pane
 runtime.setHostPane("sidebar");

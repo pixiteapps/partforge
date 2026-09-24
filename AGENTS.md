@@ -164,6 +164,41 @@ the installed package, so let the publish finish before bumping the dep there.
   zero and resize/collapse are refused — including keyboard seam resize, which
   `rail.js` now also refuses below the breakpoint (previously reachable only
   with custom host CSS, since the seam is `display: none` there).
+- **`src/framework/materials/`** - the material library and realistic-mode
+  rendering. `presets.js` (the preset table), `environments.js` (the
+  environment records), `resolve.js` (display-block -> library lookup, never
+  throws), `print-frame.js` (pose math for layer lines), `assets.js` (asset
+  filename -> URL) and `tonemap-readback.js` (below) import **no three.js at
+  all** - deliberately three-free and DOM-free so `lint`, the worker's 3MF
+  writer and the docs-parity test can all import them without dragging GL or
+  a browser into the worker graph. Everything that actually touches
+  **three.js** - `physical.js` (CAD vs. `MeshPhysicalMaterial`), `uv.js`
+  (box-projected UVs for anisotropy), `patterns.js` (below), `environment.js`
+  (the PMREM rig: lighting, backdrop, ground, contact shadow), `print-bed.js`
+  (the print-bed environment's cut-out build plate and its canvas-drawn
+  markings), and `contact-shadow.js` - is a separate set of modules the viewer alone
+  imports, not the worker. `patterns.js` is the **only** shader-injection
+  site (`onBeforeCompile`) for layer lines, wood, carbon weave and SLS grain
+  - a future TSL/WebGPU port only has to rewrite this one file. `assets.js`
+  is the **only** module allowed a literal `new URL("./assets/x",
+  import.meta.url)` (the same rule `docs/AUTHORING-PARTS.md` states for
+  fonts/imports/vectors, and the fix for the `partforge/geometry`-class bug
+  where a computed asset path is invisible to the bundler and 404s in
+  production). `tonemap-readback.js` tone-maps realistic captures in plain JS
+  (no three import at all) because three applies tone mapping and output
+  colour space only on the canvas path (a bound render target gets
+  `NoToneMapping` and linear output on r184) - captures render HDR into a
+  half-float target and finish there: exposure -> Khronos PBR Neutral -> sRGB.
+  Environment assets (`environment.js`'s baked UltraHDR JPEGs, the ground/wood/
+  carbon textures under `src/framework/materials/assets/`) are baked once by
+  `scripts/bake-environments.mjs`, a one-shot dev tool whose OUTPUTS ARE
+  COMMITTED (nothing runs it at build time); its HDR path shells out to
+  Google's `ultrahdr_app` CLI (`brew install libultrahdr`), which is a dev-only
+  dependency of that script alone, never of the shipped framework or a running
+  part. **`materials.html`** (dev-only, not in `vite.config.js`'s
+  `rollupOptions.input`) is the contact sheet - one 30mm sample of every
+  preset plus the layer-line orientation check - to check by eye after any
+  preset or shader change.
 - **`src/parts/`** - one file per part, default-exporting a `PartDefinition`.
 - **`src/framework/ingest/`** - the asset-ingest machinery behind both the panel's
   drop targets and the `partforge ingest` CLI verb. `sniff.js` classifies bytes by

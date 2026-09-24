@@ -113,7 +113,7 @@ export const bladeSections = (p) =>
   });
 
 export default {
-  meta: { title: "Propeller", units: "mm", background: 0x15181d },
+  meta: { title: "Propeller", units: "mm", background: 0x15181d, environment: "studio" },
   parameters: [
     {
       id: "prop",
@@ -173,6 +173,7 @@ export default {
   parts: {
     propeller: {
       label: "Propeller", views: ["propeller"], export: { name: "propeller" },
+      display: { material: "brushed-aluminum" },
       build: (k, p) => {
         const sections = bladeSections(p);
         const bladeUp = p.smooth

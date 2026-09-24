@@ -7,12 +7,16 @@ import { attachRail } from "./rail.js";
 import { declaredSourceLookup } from "./panel/declared-source.js";
 import { attachMobileTabs } from "./mobile-tabs.js";
 import { createTooltipPresenter, attachButtonTooltips } from "./tooltip.js";
-import { loadCamera, loadProjection, saveProjection } from "./view-state.js";
+import { loadCamera, loadProjection, saveProjection, loadRenderMode, loadEnvironment } from "./view-state.js";
+import { attachRealisticControls } from "./realistic-controls.js";
+import { ENVIRONMENTS } from "./materials/environments.js";
+import { declaresMaterials, resolveMaterial } from "./materials/resolve.js";
+import { printFrameMatrix } from "./materials/print-frame.js";
 import { buildControls } from "./controls.js";
 import { relevantParamKeys } from "./param-deps.js";
 import { createMeshCache } from "./mesh-cache.js";
 import { createGeometryService } from "./geometry-service.js";
-import { viewSubParts } from "./part-model.js";
+import { viewSubParts, resolveParams } from "./part-model.js";
 import { resolveDerived } from "./derive.js";
 import { createBackendPolicy } from "./backend-select.js";
 import { createDebugOverlay } from "./debug-overlay.js";
@@ -63,7 +67,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, renderMode, environment, declaresMaterials, renderViews }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): animations are
@@ -77,11 +81,19 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     setView,
     // Offscreen render of a named view (default when omitted, or on an unknown name).
     captureView,
+    // Always CAD, whatever the live render mode: these are the agent's renders.
     captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames),
+    // captureViews in a chosen appearance: renderMode "cad" (the default) is
+    // exactly captureViews() in either live mode; "realistic" borrows the realistic look for the
+    // capture (waiting on the environment's assets) without switching the live
+    // view. Rejects if realistic's assets fail to load.
+    renderViews: renderViews ?? (async (viewNames) => viewer.captureCanonicalViews(viewNames)),
     // `recenter` reads the sub-part geometry only, so with measurement pins on
     // screen the dimension labels — which sit beside the part, not on it —
     // could land outside the centred window. A dimensioned capture therefore
     // keeps the user's exact framing; a host wanting both re-frames first.
+    // Follows the live render mode unless opts.renderMode pins one ("realistic"
+    // only once the environment has loaded — see viewer.captureCurrent).
     captureCurrent: (opts) => viewer.captureCurrent(
       opts?.recenter && (measure ?? NOOP_MEASURE).isEnabled() && (measure ?? NOOP_MEASURE).pinCount() > 0
         ? { ...opts, recenter: false }
@@ -100,6 +112,15 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
       camera: viewer.getCameraState(),
       projection: viewer.getProjection?.() ?? "perspective",
       cutaway: viewer.getCutawayState?.() ?? null,
+      // The mode the user is headed for, not only the one on screen: a
+      // realistic restore or switch still loading reads "realistic", so a
+      // remount mid-load (the cloud remounts on every edit) doesn't drop it.
+      // A failed load settles back to "cad".
+      renderMode: viewer.isRealisticPending?.() ? "realistic" : viewer.getRenderMode?.() ?? "cad",
+      // Only an environment someone CHOSE: carrying the one merely seeded
+      // from meta.environment (or the default) would outrank the part's own
+      // meta.environment on the next mount, masking an edit to it.
+      ...(viewer.isEnvironmentChosen?.() ? { environment: viewer.getEnvironment() } : {}),
     }),
     // Every custom control's transient state (selection, a scroll position),
     // keyed by param, as plain JSON — the panel's twin of getViewerState. Hand
@@ -170,6 +191,18 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
       release: () => {},
       onAnchorChange: () => () => {},
     },
+    // Realistic render mode, a viewer-wide display mode like `projection` and
+    // in the same shape. set() resolves to the mode actually in effect — "cad"
+    // if the realistic assets failed to load; onChange receives the viewer's
+    // {mode, busy, error} event (busy while assets load).
+    renderMode: renderMode ?? { get: () => "cad", set: async () => "cad", onChange: () => () => {} },
+    // The realistic environment. set() resolves to the id in effect (a failed
+    // switch while realistic reverts to the one still shown, and onChange hears
+    // both); list() is every environment as {id, label}, for a host picker.
+    environment: environment ?? { get: () => "studio", set: async (id) => id, onChange: () => () => {}, list: () => [] },
+    // True when any sub-part names a display.material — a host can offer the
+    // realistic toggle only where it shows something a CAD view does not.
+    declaresMaterials: declaresMaterials ?? false,
   };
 }
 
@@ -285,6 +318,24 @@ function createCleanupStack() {
 //                                         // "perspective" | "orthographic". Drives the LIVE view
 //                                         // and captureCurrent only — captureCanonicalViews,
 //                                         // renderMeshPayloads and the CLI stay perspective.
+//   runtime.renderMode: { get, set, onChange }
+//                                         // "cad" | "realistic". set() resolves to the mode in
+//                                         // effect ("cad" if the realistic assets failed);
+//                                         // onChange gets {mode, busy, error}. Same shape as
+//                                         // projection. Drives the live view; captureCurrent
+//                                         // follows it unless given { renderMode }. captureViews
+//                                         // is always CAD — the live mode never changes what
+//                                         // the agent sees.
+//   runtime.environment: { get, set, onChange, list }
+//                                         // the realistic environment ("studio" | "workshop" |
+//                                         // "print-bed" | "outdoor"); list() → [{id, label}].
+//                                         // A failed switch while realistic reverts, and onChange
+//                                         // hears the revert.
+//   runtime.declaresMaterials             // true when any sub-part names a display.material
+//   await runtime.renderViews(["front"], { renderMode: "realistic" });
+//                                         // captureViews in a chosen appearance, without
+//                                         // switching the live view; "cad" is exactly captureViews(),
+//                                         // CAD in either live mode
 //   runtime.dispose();     // full teardown
 // onBuild fires per completed build, so it does NOT fire for a pose-only edit —
 // those are repaired in the viewer and produce no build at all.
@@ -307,7 +358,8 @@ function createCleanupStack() {
 //                                         // KB of base64 apiece, so a host should not assume this
 //                                         // payload is small, only that it is bounded.
 // viewerState: ViewerState               // a previous mount's runtime.getViewerState(), handed back to
-//                                         // resume the camera, projection and cutaway where that mount
+//                                         // resume the camera, projection, cutaway, render mode and
+//                                         // environment where that mount
 //                                         // left them. For a host that applies edits by REMOUNTING: the
 //                                         // part changed, the user's view of it should not. Omit on a
 //                                         // first mount — the viewer then restores its own persisted
@@ -338,6 +390,13 @@ function createCleanupStack() {
 //                                         // not a degraded one). A rejection is reported through the
 //                                         // control's own onError; the widget keeps the converted blob
 //                                         // so a retry costs a network call, not a reconvert.
+// elements.chrome.realistic / .environment  // optional realistic-mode viewbar controls — a
+//                                         // <button> toggle and an (empty) <select> the mount
+//                                         // fills with the environments; default ids #realistic
+//                                         // and #environment. Without them the host drives
+//                                         // runtime.renderMode / runtime.environment itself.
+//                                         // Both preferences persist like the theme (and carry
+//                                         // in viewerState, which outranks what is stored).
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
@@ -380,6 +439,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       measure: elements.chrome?.measure ?? byId("measure"),
       annotate: elements.chrome?.annotate ?? byId("annotate"),
       railToggle: elements.chrome?.railToggle ?? byId("rail-toggle"),
+      realistic: elements.chrome?.realistic ?? byId("realistic"),
+      environment: elements.chrome?.environment ?? byId("environment"),
     },
   };
 
@@ -592,6 +653,24 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // A carried state outranks the persisted preference: it is this session's
     // live answer, where the stored one is the last page-reload's.
     viewer.setProjection(viewerState?.projection ?? loadProjection());
+    // The environment by the same precedence (carried, stored, then the part's
+    // own meta.environment — which the viewer already starts on, unchosen). A
+    // carried or stored one was chosen, so it stays chosen and carries on. In
+    // CAD this only records the id, so the realistic restore below loads the
+    // right rig first time rather than the default and then this one.
+    const initialEnv = viewerState?.environment ?? loadEnvironment();
+    if (initialEnv) viewer.setEnvironment(initialEnv);
+    // Realistic mode by the same precedence, requested HERE rather than on the
+    // first accepted build: every mount has a fresh renderer, so the
+    // environment loads again, and starting now runs that alongside the build
+    // instead of showing CAD until the build lands and only then waiting on
+    // the assets (a CAD flash on every edit for a host that remounts per
+    // edit). Nothing needs a part yet — unbuilt sub-parts compile when first
+    // shown, and showAssembly brings the ground to the part when it arrives.
+    // While it loads the viewer reports it pending, which is what
+    // getViewerState carries; an explicit mode change supersedes it, and a
+    // failed load settles to CAD.
+    if ((viewerState?.renderMode ?? loadRenderMode() ?? "cad") === "realistic") viewer.setRenderMode("realistic");
     const viewcube = attachViewcubeControls(viewer, { stage: els.viewer }, { tooltip });
     cleanup.defer(() => viewcube.detach());
     cleanup.defer(viewer.onProjectionChange((mode) => saveProjection(mode)));
@@ -810,6 +889,25 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       }
     }
 
+    // Print frames for the layer-line pattern: the display → export map of the
+    // geometry just delivered, so layers run the way the part is printed rather
+    // than the way it is displayed. Computed at delivery (the frame describes
+    // the delivered mesh, which a later pose-only repair only moves) and only
+    // for sub-parts whose material draws layer lines — each one costs two
+    // geometry-free probe builds.
+    const layerLined = new Set(Object.keys(part.parts).filter((n) => {
+      try { return resolveMaterial(part.parts[n].display).params.pattern === "layer-lines"; } catch { return false; }
+    }));
+    const printFrames = {};
+    function recordPrintFrames(names) {
+      const wanted = names.filter((n) => layerLined.has(n));
+      if (!wanted.length) return;
+      let resolved;
+      try { resolved = resolveParams(part, params); } catch { return; } // diagnosed by the build
+      for (const n of wanted) printFrames[n] = printFrameMatrix(part.parts[n], { view: view(), ...resolved });
+      viewer.setPrintFrames({ ...printFrames });
+    }
+
     // Sub-parts whose latest fresh delivery had zero triangles (see the `meshes` case).
     const emptySubParts = new Set();
 
@@ -869,6 +967,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
               // delivered, which buildDone() true guarantees is at the live params.
               fastPath.recordDelivered(m.name);
             }
+            recordPrintFrames(data.meshes.map((m) => m.name));
             // A split dispatch answers in two meshes replies; the busy spinner
             // stays up until the view has everything (the other worker's job may
             // still be running — often OCCT, the slow one).
@@ -1164,6 +1263,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // Optional host-page viewer chrome (reframe / theme) + camera persistence.
     const chrome = attachViewerControls(viewer, els.chrome, { tooltip });
     cleanup.defer(() => chrome.detach());
+    // Optional realistic-mode chrome: the toggle and the environment picker.
+    const realisticChrome = attachRealisticControls(viewer, {
+      toggle: els.chrome.realistic, envMenu: els.chrome.environment,
+    }, { tooltip });
+    cleanup.defer(() => realisticChrome.detach());
 
     // Full teardown of everything this mount created. Idempotent. A disposed runtime
     // can never surface a late build result (workers are terminated, the loop is
@@ -1244,6 +1348,19 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
         release: () => viewer.releaseFlashPoints(),
         onAnchorChange: (cb) => viewer.onFlashAnchorChange(cb),
       },
+      renderMode: {
+        get: () => viewer.getRenderMode(),
+        set: (mode) => viewer.setRenderMode(mode),
+        onChange: (cb) => viewer.onRenderModeChange(cb),
+      },
+      environment: {
+        get: () => viewer.getEnvironment(),
+        set: (id) => viewer.setEnvironment(id),
+        onChange: (cb) => viewer.onEnvironmentChange(cb),
+        list: () => Object.values(ENVIRONMENTS).map(({ id, label }) => ({ id, label })),
+      },
+      declaresMaterials: declaresMaterials(part),
+      renderViews: (viewNames, opts) => viewer.renderViews(viewNames, opts),
     });
   } catch (error) {
     try {

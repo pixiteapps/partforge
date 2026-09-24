@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import {
   loadCamera, saveCamera, loadView, saveView,
   loadTheme, saveTheme,
+  loadRenderMode, saveRenderMode, loadEnvironment, saveEnvironment,
 } from "../src/framework/view-state.js";
 
 function mockStorage() {
@@ -101,4 +102,33 @@ test("storage that throws → loads return defaults, saves are no-ops", () => {
     saveView("Planter", "x");
     saveTheme("light");
   }).not.toThrow();
+});
+
+test("render mode persists and nothing stored reads as null", () => {
+  localStorage.clear();
+  expect(loadRenderMode()).toBeNull();
+  saveRenderMode("realistic");
+  expect(loadRenderMode()).toBe("realistic");
+  saveRenderMode("bogus");
+  expect(loadRenderMode()).toBe("realistic");
+});
+
+test("environment persists and an unknown stored id reads as null", () => {
+  localStorage.clear();
+  expect(loadEnvironment()).toBeNull();
+  saveEnvironment("workshop");
+  expect(loadEnvironment()).toBe("workshop");
+  localStorage.setItem("partforge:environment", "moon");
+  expect(loadEnvironment()).toBeNull();
+});
+
+test("render mode and environment tolerate storage that throws", () => {
+  const throwing = {
+    getItem: () => { throw new Error("denied"); },
+    setItem: () => { throw new Error("denied"); },
+  };
+  globalThis.localStorage = throwing;
+  expect(loadRenderMode()).toBeNull();
+  expect(loadEnvironment()).toBeNull();
+  expect(() => { saveRenderMode("realistic"); saveEnvironment("workshop"); }).not.toThrow();
 });

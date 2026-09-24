@@ -69,7 +69,7 @@ A part is a default-exported object. Full shape (optional fields marked `?`):
 
 ```js
 export default {
-  meta: { title, units, background? },     // title string; units e.g. "mm"; background = 0xRRGGBB scene colour
+  meta: { title, units, background?, environment? },     // title string; units e.g. "mm"; background = 0xRRGGBB scene colour
   parameters,                              // the control-panel schema (array of sections — see below)
   defaults,                                // flat { paramKey: value } — seeds params + control values
   fonts?,                                  // { name: source } — or (p) => ({ name: source }) when a control drives the typeface
@@ -83,7 +83,7 @@ export default {
       place?: (solid, { view, purpose, p, d }) => Solid,   // optional reposition; default identity
       views,                               // string[] — which views show this sub-part
       enabled?: (p) => boolean,            // optional — gate a conditional sub-part
-      display?: { color?, opacity? },      // optional viewer-only override (0xRRGGBB / 0..1) — e.g. a reference/ghost part
+      display?: { color?, opacity?, material?, …overrides }, // viewer-only appearance — see "Materials and appearance"
       export?: { name },                   // filename/object name on export; defaults to the key
       reference?: string,                  // name of a declared import — measure() computes a deviation fact against it (see below)
     },
@@ -291,6 +291,97 @@ the usual first-view default. If two views declare the same name the CLI stops
 and asks for the existing positional view argument
 (`partforge render <part> <view> --animation shared`) — there is no compound
 "view/name" syntax, and `--views` already means camera angles.
+
+---
+
+## Materials and appearance
+
+A sub-part's `display` block says how it LOOKS. Appearance never changes
+geometry, exports (other than 3MF colour, below), `measure` or `verify`, and a
+mistake in it never fails a build — lint warns and the viewer falls back.
+
+```js
+parts: {
+  body:   { build: …, display: { material: "anodized-aluminum", color: 0xb3261e } },
+  knob:   { build: …, display: { material: "abs-plastic", color: 0x111111, roughness: 0.25 } },
+  gasket: { build: …, display: { material: "rubber" } },
+},
+meta: { title: "…", units: "mm", environment: "studio" },
+```
+
+- `material` — a preset id from the table below. Without one the sub-part keeps
+  the default look.
+- `color` — the base colour (`0xRRGGBB`). With a preset it is the TINT. Presets
+  marked tintable are normally coloured this way (anodizing, plastic, paint);
+  the others have an intrinsic colour (brass) but still accept one.
+- Overrides — each clamped to its range: `roughness` (0–1), `metalness` (0–1),
+  `clearcoat` (0–1), `clearcoatRoughness` (0–1), `anisotropy` (0–1), `textureScale` (0.01–1000).
+  Transmission, index of refraction, sheen and iridescence come only from a preset.
+- `opacity` — unchanged: a ghost stays a ghost and casts no shadow.
+- **One material per sub-part.** Something that needs two finishes (a knurled
+  grip in rubber on an aluminium body) is two sub-parts.
+
+**Where it shows.** The CAD view (with feature lines) shows each material's
+colour, flattened so dark materials stay readable. **Realistic** mode — the
+viewer's toggle — shows the full material under environment lighting, with a
+ground and soft shadow and no feature lines. The part never moves when the
+mode changes.
+
+**3D-print layer lines** (`pla-print`, `petg-print`) run perpendicular to the
+**export** pose's +Z — the way the part will be printed, not the way it is
+displayed. If the lines run the wrong way, fix the export pose with `place()`
+(`purpose: "export"`), not the material. Wood, carbon fibre and SLS grain are
+fixed to the sub-part, so they never slide when the camera or an animation
+moves.
+
+**`textureScale` is millimetres, and what it measures depends on the preset's
+pattern** — so a value copied from one preset family is wrong on another (0.2
+on oak shrinks the grain to a 0.2 mm tile, i.e. invisible noise):
+
+| Pattern | Presets | `textureScale` means | Default |
+| --- | --- | --- | --- |
+| layer lines | `pla-print`, `petg-print` | layer height | 0.2 |
+| SLS grain | `nylon-sls` | grain size | 0.15 |
+| wood | `oak`, `walnut` | size of one texture tile (the grain repeats every this many mm) | 250 (`oak`), 400 (`walnut`) |
+| carbon weave | `carbon-fiber` | size of one texture tile | 48 |
+
+Presets without a pattern ignore it.
+
+**3MF export** carries each sub-part's colour (its `color`, else its preset's
+colour), so a multi-colour print opens in a slicer already split and coloured.
+A part with no `color` or `material` exports exactly as before.
+
+| Preset | Name | Tintable | Use |
+| --- | --- | --- | --- |
+| `machined-aluminum` | Machined aluminium | — | Bare CNC-milled aluminium, fine tool marks, satin sheen. |
+| `brushed-aluminum` | Brushed aluminium | — | Directionally brushed aluminium panels and enclosures. |
+| `anodized-aluminum` | Anodized aluminium | yes | Dyed anodized aluminium; tint with `color` (e.g. red, black, blue). |
+| `bead-blasted-aluminum` | Bead-blasted aluminium | — | Matte, even-textured aluminium (laptop-shell finish). |
+| `brushed-stainless` | Brushed stainless steel | — | Brushed 304 stainless: kitchen, marine and fastener hardware. |
+| `polished-chrome` | Polished chrome | — | Mirror chrome plating; shows the environment strongly. |
+| `black-oxide-steel` | Black-oxide steel | — | Blackened steel tooling and fasteners with a slight oily sheen. |
+| `cast-iron` | Cast iron | — | Raw sand-cast iron: dark, rough and matte. |
+| `titanium` | Titanium | — | Bare titanium: slightly warm grey, satin. |
+| `brass` | Brass | — | Yellow brass fittings and decorative hardware. |
+| `copper` | Copper | — | Bare copper: busbars, heat sinks, decorative parts. |
+| `bronze` | Bronze | — | Cast bronze bushings and sculpture. |
+| `powder-coat` | Powder coat | yes | Durable textured paint over metal; tint with `color`. |
+| `painted-metal` | Painted metal | yes | Glossy enamel or automotive-style paint; tint with `color`. |
+| `pla-print` | PLA print | yes | FDM-printed PLA with visible layer lines; tint with `color`. |
+| `petg-print` | PETG print | yes | FDM-printed PETG: glossier than PLA, visible layers; tint with `color`. |
+| `resin-print` | Resin print | yes | SLA/MSLA resin print: smooth, faintly waxy; tint with `color`. |
+| `nylon-sls` | Nylon SLS | yes | Powder-bed nylon: matte, grainy, usually white or dyed black. |
+| `abs-plastic` | ABS plastic | yes | Injection-moulded ABS housings and knobs; tint with `color`. |
+| `clear-acrylic` | Clear acrylic | yes | Transparent PMMA/polycarbonate windows and covers; tint for coloured acrylic. |
+| `rubber` | Rubber | yes | Matte elastomer: gaskets, feet, grips; tint with `color`. |
+| `oak` | Oak | — | Light oak with open grain. |
+| `walnut` | Walnut | — | Dark oiled walnut. |
+| `carbon-fiber` | Carbon fibre | — | 2x2 twill carbon fibre under clear coat. |
+
+**Environments** (`meta.environment`, default `studio`; viewers can switch):
+`studio` (neutral soft boxes, paper sweep), `workshop` (warm interior, unfinished
+maple table), `print-bed` (a dim, hard-lit enclosure over a standard-size PEI build plate (180, 220, 256 or 350 mm) marked with its size), `outdoor` (overcast sky,
+concrete).
 
 ---
 
@@ -2498,13 +2589,24 @@ stylesheet). `mount` looks up these element IDs:
 | `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` and opens the resolved default (see the "Which view the viewer opens on" rule above) |
 | `#download-step` / `#download` / `#download-3mf` | STEP / STL / 3MF export buttons |
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
-| `#viewbar` with `#annotate` / `#measure` / `#cutaway` / `#reframe` / `#theme` | optional viewer controls (omit any you don't want) |
+| `#viewbar` with `#annotate` / `#measure` / `#cutaway` / `#reframe` / `#realistic` / `#environment` / `#theme` | optional viewer controls (omit any you don't want) |
 | `#panel` | the full-height controls rail (`class="pf-rail"`); programmatic hosts pass `elements.rail` instead |
 | `#rail-toggle` | optional — collapses/restores the rail; resolved the same way as `#reframe`/`#theme`. A sibling of `#viewbar`, not a child of it: give it `class="pf-float-rail-toggle"` and it floats at the stage's top right |
 
 Copy `demo.html` and change the title, the panel heading, and the `<script src>`. Two
 workers are spawned from your one worker entry (`name` = `"manifold"` for preview/STL/3MF,
 `"occt"` for STEP — handled for you).
+
+**`#realistic` (a `<button>`) / `#environment` (an empty `<select>`) are the
+realistic-mode viewbar controls**, resolved by id or as `elements.chrome.realistic`
+/ `elements.chrome.environment`. Both optional and independent: supply `#realistic`
+alone for a bare toggle, or add `#environment` too and `mount` fills it with the
+part's available environments (see "Materials and appearance" above) and keeps it
+in sync — hidden while the view is in CAD mode, showing the environment in effect
+once realistic lands. Omit either and drive `runtime.renderMode` /
+`runtime.environment` from your own UI instead (see below). Both preferences
+persist across reloads the same way the theme does, and are carried in
+`viewerState` (below), which outranks what is stored.
 
 **`#reframe` is supported but no longer shipped.** The framework's own pages dropped
 the button on 2026-08-20: clicking a face, edge or corner on the view cube reframes
@@ -2659,6 +2761,58 @@ elements stay where they were laid down while the model shifts out from under
 them, and the sketch that gets sent is misaligned, not merely mis-labelled.
 Deliberately unguarded, the same way it's always been free to call
 `setCameraState` during Sketch.
+
+### `runtime.renderMode`, `runtime.environment`, `runtime.renderViews`, `runtime.declaresMaterials`
+
+For an embedder driving realistic mode from its own UI instead of (or in
+addition to) the `#realistic` / `#environment` viewbar controls above:
+
+- `runtime.renderMode` — `{ get(), set(mode), onChange(cb) }` where `mode` is
+  `"cad"` or `"realistic"`. `set()` resolves to the mode actually in effect —
+  `"cad"` if the realistic environment's assets fail to load — and
+  `onChange` receives `{ mode, busy, error }` so a host can show its own
+  loading/error state. Same shape as `runtime.projection`. It drives the live
+  view, and `runtime.captureCurrent()` follows it by default (a "capture from
+  viewer" captures what the user sees). It never changes what an agent sees:
+  `runtime.captureViews()` is always CAD, in either live mode, and a
+  realistic agent render is only ever an explicit
+  `renderViews(…, { renderMode: "realistic" })`.
+- `runtime.captureCurrent({ renderMode })` — pins the showcase capture's look
+  instead of following the live view. `"cad"` always works. `"realistic"` from
+  a CAD view works only once the current environment's assets have loaded
+  (the call is synchronous and can't wait for them); before that it falls
+  back to the live look. Use `renderViews` when realistic must be guaranteed.
+- `runtime.environment` — `{ get(), set(id), onChange(cb), list() }` for the
+  realistic environment (`"studio"` | `"workshop"` | `"print-bed"` |
+  `"outdoor"`, per "Materials and appearance" above). `list()` returns every
+  environment as `[{ id, label }]`, for building your own picker. `set()`
+  resolves to the id actually in effect; a failed switch while realistic is
+  showing reverts to the environment still on screen, and `onChange` hears the
+  revert too.
+- `runtime.declaresMaterials` — `true` when any sub-part names a
+  `display.material`. A part with none still supports realistic mode (every
+  sub-part just renders under the library's `default` look), so use this to
+  decide whether to surface the realistic toggle at all, not whether it works.
+- `await runtime.renderViews(viewNames, { renderMode? })` — the appearance-aware
+  sibling of `runtime.captureViews` (canonical angles, framed to the visible
+  assembly, grid hidden): `{ renderMode: "cad" }` (the default) is exactly
+  `captureViews` — CAD whatever the live view shows — and `{ renderMode: "realistic" }` borrows the realistic look
+  for the capture — waiting on the chosen environment's assets — **without**
+  switching the live view. Rejects if the realistic assets fail to load.
+
+Both preferences round-trip through `mount()`'s `viewerState`: a
+previous mount's `runtime.getViewerState()` carries `viewerState.renderMode`
+(`"cad"` or `"realistic"`) and, only when the viewer's environment was
+actually CHOSEN rather than merely defaulted from `meta.environment`,
+`viewerState.environment`. `renderMode` reports the mode the user is **headed
+for**, not only the one on screen: a realistic restore or switch that's still
+loading reports `"realistic"`, so a host that remounts on every edit (as an
+embedder applying edits by remounting typically does) doesn't drop the
+in-flight choice — a load that ultimately fails still settles back to
+`"cad"`. Pass `viewerState` back into the next `mount()` call to resume both
+where the previous mount left them; omit it on a first mount and the viewer
+restores its own persisted choice instead, the same way it does for the
+camera and projection.
 
 ### The annotation payload's camera block
 
@@ -3120,6 +3274,13 @@ motion — translate/rotate — never a reshape) (both errors). An untrusted pro
 (a query op or function selector reached during `build`/`place`) proves
 nothing either way and stays silent, matching `animation-track-rebuilds`'s own
 trust handling.
+
+**Appearance** (all warnings) — `unknown-material` (a `display.material` the
+library does not know; the viewer shows the default look), `unknown-environment`
+(`meta.environment` not known; realistic mode uses `studio`),
+`material-key-unknown` (a `display` key that is not colour, opacity, material
+or one of the six overrides; ignored), `material-override-clamped` (an override
+outside its range, or not a number; clamped).
 
 **Geometry imports** — `import-unknown-name` (a build calls `k.import` with a
 name the part's `imports` field doesn't declare — this throws at build time;

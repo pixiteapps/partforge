@@ -9,7 +9,7 @@
 import { roundedRectPolygon, circleProfile } from "partforge/geometry";
 
 export default {
-  meta: { title: "Cross bracket", units: "mm", background: 0x15181d },
+  meta: { title: "Cross bracket", units: "mm", background: 0x15181d, environment: "workshop" },
   parameters: [
     {
       id: "size",
@@ -58,6 +58,7 @@ export default {
       label: "Cross bracket",
       views: ["bracket"],
       export: { name: "cross-bracket" },
+      display: { material: "powder-coat", color: 0x2b2f36 },
       build: (k, p) => {
         const barH = k.shape2d(roundedRectPolygon(p.span, p.bar, p.corner));
         const barV = k.shape2d(roundedRectPolygon(p.bar, p.span, p.corner));

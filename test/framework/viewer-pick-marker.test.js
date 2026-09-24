@@ -203,6 +203,47 @@ test("a capture does not resurrect a marker the live view had already hidden", (
   viewer.dispose();
 });
 
+// --- the hover highlight never reaches a capture ----------------------------
+// The contact sheet's "capture-only colour corruption" (an orange PLA sample
+// captured pink, oak captured lavender) was the pointer's hover highlight: a
+// 35% blue overlay on whatever the pointer rests on, baked into captureCurrent.
+
+test("a capture-hidden overlay (the hover highlight) is hidden at draw time and restored", () => {
+  const viewer = framedViewer();
+  const overlay = new (viewer._subMeshes.body.constructor)();
+  viewer._subMeshes.body.add(overlay);
+  const unregister = viewer.registerCaptureHidden(overlay);
+
+  viewer.captureCurrent({ size: 64 });
+  expect(state.visibleAtDraw.get(overlay.uuid)).toBe(false);
+  expect(overlay.visible).toBe(true);
+
+  viewer.captureCanonicalViews(["front"]);
+  expect(state.visibleAtDraw.get(overlay.uuid)).toBe(false);
+  expect(overlay.visible).toBe(true);
+
+  unregister();
+  viewer.captureCurrent({ size: 64 });
+  expect(state.visibleAtDraw.get(overlay.uuid)).toBe(true);
+  viewer.dispose();
+});
+
+test("the real hover highlight registers its overlay as capture-hidden", async () => {
+  const { createFeatureHighlight } = await import("../../src/framework/selection/feature-highlight.js");
+  const viewer = framedViewer();
+  const mesh = viewer._subMeshes.body;
+  const hl = createFeatureHighlight(viewer);
+  hl.show({ mesh, subPart: "body", feature: null });
+  const overlay = mesh.children.find((c) => c.material?.opacity === 0.35);
+  expect(overlay.visible).toBe(true);
+
+  viewer.captureCurrent({ size: 64 });
+  expect(state.visibleAtDraw.get(overlay.uuid)).toBe(false);
+  expect(overlay.visible).toBe(true);
+  hl.dispose();
+  viewer.dispose();
+});
+
 // --- hold and release -------------------------------------------------------
 
 test("an unheld marker still fades on its own", () => {

@@ -27,7 +27,7 @@ const pkg = JSON.parse(read("package.json"));
 // is a failure, not a silent skip — the point is that nothing published escapes
 // the question "is this text?".
 const TEXT = new Set([".js", ".mjs", ".cjs", ".ts", ".css", ".md", ".json", ".svg", ".html", ".txt"]);
-const BINARY = new Set([".stl", ".ttf", ".woff", ".woff2", ".png", ".wasm"]);
+const BINARY = new Set([".stl", ".ttf", ".woff", ".woff2", ".png", ".wasm", ".jpg"]);
 
 function* shipped(rel) {
   const full = `${ROOT}/${rel}`;

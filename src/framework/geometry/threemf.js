@@ -1,6 +1,7 @@
 // Minimal 3MF writer. 3MF is an OPC package (a zip) holding an XML model; it's a
 // mesh format like STL but supports units and multiple named objects in one file,
 // so a multi-part view exports as a single .3mf. Built from indexed meshes.
+// Each object may carry an optional colour (0xRRGGBB).
 import { zipSync, strToU8 } from "fflate";
 
 const CONTENT_TYPES =
@@ -67,16 +68,44 @@ function weld(positions, indices) {
   return { verts, tris };
 }
 
-// parts: [{ name, positions: Float32Array (x,y,z per vertex), indices: Uint32Array (3 per triangle) }]
-// → ArrayBuffer of the .3mf zip (millimetre units; one <object> + <build> item per part).
+// Default for an uncoloured object in an export where some other object IS
+// coloured: the viewer's own default look (presets.js "default"). Written as a
+// literal so this module keeps its fflate-only import closure.
+const DEFAULT_DISPLAY_COLOR = 0x9fb4cc;
+// Base-material group id: outside the object id range (objects are 1..n).
+const BASE_MATERIALS_ID = 1000;
+const hexColor = (c) => `#${c.toString(16).padStart(6, "0").toUpperCase()}FF`;
+
+// parts: [{ name, positions, indices, color? }] → ArrayBuffer of the .3mf zip.
+// `color` (0xRRGGBB) is optional per part. When NO part carries one, the model is
+// byte-for-byte what it was before colour support — no <basematerials>, no pid.
+// When any does, every object points (pid/pindex) into one core-spec
+// <basematerials> group, one <base> per distinct colour, so a slicer opens the
+// file pre-split into coloured objects.
 export function meshTo3MF(parts) {
+  const colored = parts.some((p) => p.color != null);
+  const palette = [];
+  const pindexOf = (c) => {
+    const color = c ?? DEFAULT_DISPLAY_COLOR;
+    let i = palette.indexOf(color);
+    if (i < 0) { i = palette.length; palette.push(color); }
+    return i;
+  };
+  const pindex = colored ? parts.map((p) => pindexOf(p.color)) : [];
+
   const out = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">',
     "<resources>",
   ];
+  if (colored) {
+    out.push(`<basematerials id="${BASE_MATERIALS_ID}">`);
+    palette.forEach((c, i) => out.push(`<base name="color-${i + 1}" displaycolor="${hexColor(c)}"/>`));
+    out.push("</basematerials>");
+  }
   parts.forEach((p, i) => {
-    out.push(`<object id="${i + 1}" type="model" name="${xmlEsc(p.name)}"><mesh><vertices>`);
+    const mat = colored ? ` pid="${BASE_MATERIALS_ID}" pindex="${pindex[i]}"` : "";
+    out.push(`<object id="${i + 1}" type="model" name="${xmlEsc(p.name)}"${mat}><mesh><vertices>`);
     const { verts: v, tris: t } = weld(p.positions, p.indices);
     for (let k = 0; k < v.length; k += 3) out.push(`<vertex x="${v[k]}" y="${v[k + 1]}" z="${v[k + 2]}"/>`);
     out.push("</vertices><triangles>");

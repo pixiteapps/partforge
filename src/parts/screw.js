@@ -3,7 +3,7 @@
 // one screwSweep call yields the whole threaded shank with no boolean against a
 // core. See docs/AUTHORING-PARTS.md "Helical & threaded features".
 export default {
-  meta: { title: "Screw", units: "mm", background: 0x15181d },
+  meta: { title: "Screw", units: "mm", background: 0x15181d, environment: "studio" },
   parameters: [
     {
       id: "thread",
@@ -52,6 +52,7 @@ export default {
       label: "Screw",
       views: ["screw"],
       export: { name: "screw" },
+      display: { material: "brushed-stainless" },
       build: (k, p, d) => {
         // Periodic profile: exactly one pitch tall, first radius == last radius.
         const shank = k.screwSweep({
