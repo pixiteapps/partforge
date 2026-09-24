@@ -2,6 +2,8 @@ import * as THREE from "three";
 import { expect, test } from "vitest";
 import { applyPattern } from "../../src/framework/materials/patterns.js";
 import { ensureBoxUVs } from "../../src/framework/materials/uv.js";
+import { applyBrushFrame } from "../../src/framework/materials/patterns.js";
+import { buildPhysicalMaterial } from "../../src/framework/materials/physical.js";
 
 const fakeShader = () => ({
   uniforms: {},
@@ -51,6 +53,54 @@ test("ensureBoxUVs adds a uv per vertex once and leaves positions alone", () => 
   const uv = g.attributes.uv;
   ensureBoxUVs(g);
   expect(g.attributes.uv).toBe(uv);
+});
+
+// Brushed metal follows the tangent attribute. Without one three derives the frame
+// per triangle from UV derivatives, and a curved surface (a fillet, a sphere
+// corner) brushed as a patchwork of flat facets.
+test("ensureBoxUVs adds smooth unit brush tangents in the tangent plane", () => {
+  const g = new THREE.SphereGeometry(10, 48, 32).toNonIndexed();
+  ensureBoxUVs(g);
+  const t = g.attributes.tangent, n = g.attributes.normal;
+  expect(t.itemSize).toBe(4);
+  expect(t.count).toBe(g.attributes.position.count);
+  // coincident corners on a smooth surface share a normal — they must share a
+  // tangent too, or the brush would step at the shared edge
+  const byPos = new Map();
+  for (let i = 0; i < t.count; i++) {
+    const tv = [t.getX(i), t.getY(i), t.getZ(i)];
+    expect(Math.hypot(...tv)).toBeCloseTo(1, 5);
+    expect(Math.abs(tv[0] * n.getX(i) + tv[1] * n.getY(i) + tv[2] * n.getZ(i))).toBeLessThan(1e-5);
+    const key = [0, 1, 2].map((j) => g.attributes.position.array[i * 3 + j].toFixed(4)).join();
+    const prev = byPos.get(key);
+    if (prev) tv.forEach((q, j) => expect(q).toBeCloseTo(prev[j], 5)); else byPos.set(key, tv);
+  }
+  const before = t;
+  ensureBoxUVs(g);
+  expect(g.attributes.tangent).toBe(before);
+});
+
+// The brush direction is picked per pixel, so where it has to turn it follows the
+// smooth dominant-axis contour instead of the triangulation (a staircase across a
+// fillet corner's small facets when it rode the per-vertex tangent).
+test("brushed metal rebuilds its tangent frame per pixel, after any pattern injection", () => {
+  const m = buildPhysicalMaterial({ material: "brushed-stainless" });
+  const s = { uniforms: {}, vertexShader: "#include <common>\nvoid main(){\n#include <begin_vertex>\n}",
+    fragmentShader: "#include <common>\nvoid main(){\n#include <lights_physical_fragment>\n}" };
+  m.onBeforeCompile(s);
+  expect(s.vertexShader).toContain("vPfBrushN = normal;");
+  const f = s.fragmentShader;
+  expect(f.indexOf("tbn[0] = pfT;")).toBeGreaterThan(-1);
+  expect(f.indexOf("tbn[0] = pfT;")).toBeLessThan(f.indexOf("#include <lights_physical_fragment>"));
+  expect(m.customProgramCacheKey()).toContain("pf-brush");
+  // non-brushed presets are untouched
+  expect(buildPhysicalMaterial({ material: "polished-chrome" }).customProgramCacheKey()).not.toContain("pf-brush");
+  // composes with an existing injection instead of replacing it
+  const p = new THREE.MeshPhysicalMaterial();
+  let ran = false;
+  p.onBeforeCompile = () => { ran = true; };
+  applyBrushFrame(p).onBeforeCompile({ uniforms: {}, vertexShader: "", fragmentShader: "" });
+  expect(ran).toBe(true);
 });
 
 // Layers are 0.2 mm: at an ordinary viewing distance several fall in one
