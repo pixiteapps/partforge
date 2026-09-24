@@ -40,7 +40,7 @@ vi.mock("three", async (importOriginal) => {
   return { ...actual, WebGLRenderer: FakeRenderer };
 });
 
-const rigState = vi.hoisted(() => ({ loads: [], fail: false, gate: null }));
+const rigState = vi.hoisted(() => ({ loads: [], rigs: [], fail: false, gate: null }));
 vi.mock("../../src/framework/materials/environment.js", async () => {
   const THREE = await import("three");
   return {
@@ -48,11 +48,13 @@ vi.mock("../../src/framework/materials/environment.js", async () => {
       rigState.loads.push(id);
       if (rigState.gate) await rigState.gate;
       if (rigState.fail) throw new Error("asset 404");
-      return {
+      const rig = {
         id, exposure: 1, envMap: new THREE.Texture(), background: new THREE.Color(0xffffff), backgroundBlurriness: 0,
         ground: new THREE.Mesh(), shadow: { group: new THREE.Group(), render: vi.fn(), setSize: vi.fn(), dispose: vi.fn() },
         setGround: vi.fn(), dispose: vi.fn(),
       };
+      rigState.rigs.push(rig);
+      return rig;
     },
   };
 });
@@ -148,6 +150,7 @@ beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   rigState.loads = [];
+  rigState.rigs = [];
   rigState.fail = false;
   rigState.gate = null;
   viewers.length = 0;
@@ -380,9 +383,51 @@ test("a restore whose assets fail settles to CAD in viewer state", async () => {
 });
 
 test("an explicit CAD before the first build cancels the carried realistic", async () => {
+  let open;
+  rigState.gate = new Promise((r) => { open = r; });
   const runtime = mountPart(makePart({ material: "brass" }), { viewerState: { renderMode: "realistic" }, build: false });
   await runtime.renderMode.set("cad");
   expect(runtime.getViewerState().renderMode).toBe("cad");
+  open(); // the restore's load lands after the explicit CAD: it must not win
+  await vi.waitFor(() => expect(rigState.loads).toHaveLength(1));
+  await new Promise((r) => setTimeout(r, 0));
+  expect(runtime.renderMode.get()).toBe("cad");
+  expect(runtime.getViewerState().renderMode).toBe("cad");
   runtime.dispose();
-  expect(rigState.loads).toEqual([]);
+});
+
+// Every remount has a fresh renderer, so a carried realistic view has to load
+// its environment again: starting that at mount (not at the first build) runs
+// it alongside the build, instead of showing CAD until the build and then
+// waiting on the assets.
+test("a carried realistic mode starts loading its environment before the first build", () => {
+  const runtime = mountPart(makePart({ material: "brass" }), { viewerState: { renderMode: "realistic", environment: "workshop" }, build: false });
+  expect(rigState.loads).toEqual(["workshop"]);
+  expect(runtime.getViewerState().renderMode).toBe("realistic");
+  runtime.dispose();
+});
+
+test("a stored realistic preference starts loading before the first build too", () => {
+  localStorage.setItem("partforge:renderMode", "realistic");
+  const runtime = mountPart(makePart({ material: "brass" }), { build: false });
+  expect(rigState.loads).toEqual(["studio"]);
+  runtime.dispose();
+});
+
+test("a realistic view that lands before the first build still grounds the part once it arrives", async () => {
+  const workers = {};
+  const runtime = mount(makePart({ material: "brass" }), {
+    createWorker: (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null }),
+    elements: makeElements(),
+    viewerState: { renderMode: "realistic" },
+  });
+  await vi.waitFor(() => expect(runtime.renderMode.get()).toBe("realistic"));
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("body")], ms: 1 } });
+  await runtime.ready;
+  const rig = rigState.rigs[0];
+  expect(rig.setGround).toHaveBeenCalled(); // the ground came to the part when it arrived
+  expect(rig.setGround.mock.calls.at(-1)[0].radius).toBeGreaterThan(0);
+  expect(runtime.renderMode.get()).toBe("realistic");
+  runtime.dispose();
 });
