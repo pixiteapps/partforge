@@ -50,18 +50,23 @@ const FRAG_BODY = {
     diffuseColor.rgb *= mix(0.92, 1.04, g);
     roughnessFactor = clamp(roughnessFactor + (g - 0.5) * 0.1, 0.0, 1.0);
   }`,
+  // Wood and carbon sample luminance MASKS (raw, not sRGB-decoded: physical.js)
+  // and modulate around the texture's own mean (0.238 wood, 0.171 carbon; their
+  // spread is ~0.11 and ~0.06), so a mipmapped far swatch keeps its preset
+  // colour and the grain/weave reads at full contrast up close.
   wood: `
   {
     vec3 t = pfTriplanar(pfPatternMap, vPfObjPos, vPfObjNormal, pfPatternScale);
     float l = dot(t, vec3(0.2126, 0.7152, 0.0722));
-    diffuseColor.rgb *= mix(0.55, 1.25, l);
+    diffuseColor.rgb *= clamp(1.0 + (l - 0.238) * 4.0, 0.35, 1.6);
   }`,
   carbon: `
   {
     vec3 t = pfTriplanar(pfPatternMap, vPfObjPos, vPfObjNormal, pfPatternScale);
     float l = dot(t, vec3(0.2126, 0.7152, 0.0722));
-    diffuseColor.rgb *= mix(0.6, 1.6, l);
-    roughnessFactor = clamp(roughnessFactor + (0.5 - l) * 0.2, 0.0, 1.0);
+    float n = clamp((l - 0.171) / 0.06, -1.0, 1.0);
+    diffuseColor.rgb *= 1.0 + n * 0.75;
+    roughnessFactor = clamp(roughnessFactor - n * 0.2, 0.0, 1.0);
   }`,
   concrete: `
   {

@@ -65,3 +65,15 @@ test("layer lines fade to their mean where a layer is too fine for the pixel gri
   // 35% of it ramp 0→1 (mean 0.5), the rest is flat 1 — 0.175 + 0.65.
   expect(s.fragmentShader).toContain("mix(0.825, groove,");
 });
+
+// A mask's modulation is centred on the texture's own mean, so where the
+// texture is mipmapped down to its average (a far swatch) the multiplier is 1
+// and the preset colour shows as defined.
+test("wood and carbon modulate around their texture's mean", () => {
+  for (const [kind, mean] of [["wood", "0.238"], ["carbon", "0.171"]]) {
+    const m = applyPattern(new THREE.MeshPhysicalMaterial(), { kind, scale: 10, texture: new THREE.Texture() });
+    const s = fakeShader();
+    m.onBeforeCompile(s);
+    expect(s.fragmentShader).toContain(`(l - ${mean})`);
+  }
+});

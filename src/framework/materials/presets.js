@@ -71,5 +71,5 @@ export const PRESETS = {
   walnut: P("walnut", "Walnut", "natural", "Dark oiled walnut.",
     { color: 0x5d3a24, metalness: 0, roughness: 0.5, clearcoat: 0.3, clearcoatRoughness: 0.4, pattern: "wood", textureScale: 80 }),
   "carbon-fiber": P("carbon-fiber", "Carbon fibre", "natural", "2x2 twill carbon fibre under clear coat.",
-    { color: 0x1b1c1e, metalness: 0.2, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.05, pattern: "carbon", textureScale: 12 }),
+    { color: 0x1b1c1e, metalness: 0.2, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.05, pattern: "carbon", textureScale: 48 }),
 };

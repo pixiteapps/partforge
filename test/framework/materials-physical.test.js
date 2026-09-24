@@ -44,3 +44,15 @@ test("no display → the default look, as a physical material", () => {
   const m = buildPhysicalMaterial(undefined, { loadTexture });
   expect(m.color.getHex()).toBe(0x9fb4cc);
 });
+
+// The wood and carbon textures are luminance MASKS, not colours: decoding them
+// as sRGB crushed their range to a few hundredths of linear light, and the
+// grain and weave vanished at swatch distance.
+test("pattern masks are sampled raw, not decoded as sRGB colour", () => {
+  for (const material of ["oak", "walnut", "carbon-fiber"]) {
+    let tex;
+    buildPhysicalMaterial({ material }, { loadTexture: () => (tex = new THREE.Texture()) });
+    expect(tex.colorSpace).toBe(THREE.NoColorSpace);
+    expect(tex.wrapS).toBe(THREE.RepeatWrapping);
+  }
+});

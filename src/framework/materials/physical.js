@@ -41,7 +41,12 @@ export function buildPhysicalMaterial(display, { printFrame, loadTexture } = {})
   m.userData.pfAnisotropic = params.anisotropy > 0;
   const textureFile = PATTERN_TEXTURES[params.pattern];
   const texture = textureFile && loadTexture ? loadTexture(textureFile) : undefined;
-  if (texture) { texture.wrapS = texture.wrapT = THREE.RepeatWrapping; texture.colorSpace = THREE.SRGBColorSpace; }
+  // Wood and carbon textures are luminance masks, read raw; decoding them as
+  // sRGB crushed their contrast to nothing. Concrete is a colour map.
+  if (texture) {
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.colorSpace = params.pattern === "concrete" ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  }
   applyPattern(m, { kind: params.pattern, scale: params.textureScale, printFrame, texture });
   return m;
 }
