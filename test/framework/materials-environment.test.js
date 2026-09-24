@@ -101,11 +101,17 @@ test("the workshop floor is matte maple: colour + gentle normal map, no roughnes
   rig.dispose();
 });
 
-test("environments without a normal map keep a plain ground", async () => {
+// The studio paper's grain is in its relief (its colour map is nearly flat):
+// normal + roughness maps and a detail layer, so it stays crisp up close.
+test("the studio paper carries its fibre relief and a detail layer", async () => {
+  const loaded = {};
   const rig = await loadEnvironmentRig(fakeRenderer(), "studio", {
-    loadHdr: async () => new THREE.DataTexture(), loadTexture: () => new THREE.Texture(), pmrem,
+    loadHdr: async () => new THREE.DataTexture(), loadTexture: (f) => (loaded[f] = new THREE.Texture()), pmrem,
   });
-  expect(rig.ground.material.normalMap).toBeNull();
+  const m = rig.ground.material;
+  expect(m.normalMap).toBe(loaded["ground-paper-normal.jpg"]);
+  expect(m.roughnessMap).toBe(loaded["ground-paper-rough.jpg"]);
+  expect(m.customProgramCacheKey()).toBe("pf-ground-detail");
   rig.dispose();
 });
 

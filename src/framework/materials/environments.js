@@ -21,7 +21,14 @@ export const ENVIRONMENTS = {
   studio: {
     id: "studio", label: "Studio", exposure: 0.8,
     hdr: "env-studio.jpg",
-    ground: { texture: "ground-paper.jpg", sizeMm: 400, tileMm: 200, tint: 0xf2f2f2 },
+    // Paper 001's fibre relief (normal + roughness) does the work: its colour
+    // map is nearly flat, so without them the sweep read as soft blotches up
+    // close. The detail layer keeps the grain crisp under a small part.
+    ground: {
+      texture: "ground-paper.jpg", normalTexture: "ground-paper-normal.jpg", roughnessTexture: "ground-paper-rough.jpg",
+      normalScale: 0.6, sizeMm: 400, tileMm: 200, tint: 0xf2f2f2,
+      detail: { scale: 5.17, strength: 0.5, mean: 0.9 },
+    },
     // Turns the studio photo so its two octagonal softboxes glow behind the part
     // from the viewer's default camera, the classic product-shot backdrop.
     rotationDeg: 300,
@@ -66,10 +73,10 @@ export const ENVIRONMENTS = {
     // under a small part seen up close.
     ground: {
       texture: "ground-concrete.jpg", roughnessTexture: "ground-concrete-rough.jpg",
-      normalTexture: "ground-concrete-normal.jpg", normalScale: 1,
+      normalTexture: "ground-concrete-normal.jpg", normalScale: 0.7,
       sizeMm: 800, tileMm: 400, tint: 0x9e9282,
       // Micro-grain for close-ups: the same map ~7x finer, blended lightly.
-      detail: { scale: 7.13, strength: 0.35, mean: 0.5 },
+      detail: { scale: 7.13, strength: 0.245, mean: 0.5 },
     },
   },
 };

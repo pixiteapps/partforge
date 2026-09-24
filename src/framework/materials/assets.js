@@ -10,6 +10,8 @@ const URLS = {
   "env-print-bed.jpg": new URL("./assets/env-print-bed.jpg", import.meta.url).href,
   "env-outdoor.jpg": new URL("./assets/env-outdoor.jpg", import.meta.url).href,
   "ground-paper.jpg": new URL("./assets/ground-paper.jpg", import.meta.url).href,
+  "ground-paper-normal.jpg": new URL("./assets/ground-paper-normal.jpg", import.meta.url).href,
+  "ground-paper-rough.jpg": new URL("./assets/ground-paper-rough.jpg", import.meta.url).href,
   "ground-maple-color.jpg": new URL("./assets/ground-maple-color.jpg", import.meta.url).href,
   "ground-maple-normal.jpg": new URL("./assets/ground-maple-normal.jpg", import.meta.url).href,
   "ground-pei.jpg": new URL("./assets/ground-pei.jpg", import.meta.url).href,

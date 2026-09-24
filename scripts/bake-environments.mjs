@@ -5,8 +5,9 @@
 //     HDR -> UltraHDR (gainmap) JPEG, default 2048x1024. `--contrast K` (K > 1) raises
 //     each pixel's luminance about the image's log-average by the power K, keeping hue:
 //     the dim surroundings fall darker and the lights grow hotter — a harsher room.
-//   node scripts/bake-environments.mjs --texture <in.jpg|png> <out-name.jpg> [--gray] [--data] [--quality Q] [--tint r,g,b] [--modulate brightness,saturation] [--size N]
-//     Any raster -> square JPEG (default q82), default 1024x1024. `--data` is for maps
+//   node scripts/bake-environments.mjs --texture <in.jpg|png> <out-name.jpg> [--gray] [--data] [--quality Q] [--tint r,g,b] [--modulate brightness,saturation] [--flatten K] [--size N]
+//     Any raster -> square JPEG (default q82), default 1024x1024. `--flatten K` scales
+//     each pixel's distance from the image mean by K (0.7 = 30% less grain). `--data` is for maps
 //     that hold numbers rather than colours (normal maps): full-resolution chroma
 //     (4:4:4 — the default 4:2:0 halves the X/Y channels' resolution) and no tint or
 //     grayscale, so the values pass through as they were authored.
@@ -111,6 +112,23 @@ async function bakeTexture(argv) {
     img = img.modulate({ brightness, saturation });
   }
   if (gray) img = img.grayscale();
+  // --flatten K: scale every pixel's distance from the image's mean by K (< 1
+  // softens the grain, the mean stays where it was).
+  const flatFlag = argv.indexOf("--flatten");
+  if (flatFlag !== -1) {
+    const k = Number(argv[flatFlag + 1]);
+    const { data: raw, info } = await img.raw().toBuffer({ resolveWithObject: true });
+    const means = Array.from({ length: info.channels }, (_, c) => {
+      let sum = 0;
+      for (let i = c; i < raw.length; i += info.channels) sum += raw[i];
+      return sum / (raw.length / info.channels);
+    });
+    for (let i = 0; i < raw.length; i++) {
+      const m = means[i % info.channels];
+      raw[i] = clamp8(m + (raw[i] - m) * k);
+    }
+    img = sharp(raw, { raw: { width: info.width, height: info.height, channels: info.channels } });
+  }
   const buffer = await img.jpeg({ quality, mozjpeg: true, ...(data ? { chromaSubsampling: "4:4:4" } : {}) }).toBuffer();
   writeFileSync(outPath(name), buffer);
   console.log(`${name}: ${buffer.length} bytes`);
