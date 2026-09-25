@@ -1890,6 +1890,14 @@ export function createViewer(container, part) {
   // Pointer feedback excluded from EVERY offscreen render (renderOffscreen),
   // showcase captures included — unlike canonicalCaptureHidden below.
   const captureHidden = new Set();
+  // The cutaway's ghost plane is its gizmo, not its section: the part as the
+  // user sees it (clipped, with its hatched caps) goes into a capture, the
+  // translucent plane in front of it does not. It sits between the camera and
+  // everything the cut keeps, and a capture blends it in linear light, where
+  // it lands several times stronger than on the canvas — the view style
+  // popover's thumbnails came back with the part washed out behind a blue
+  // sheet, a dark part all but gone.
+  for (const obj of cutaway.captureExcluded ?? []) captureHidden.add(obj);
   function registerCaptureHidden(obj) {
     captureHidden.add(obj);
     return () => captureHidden.delete(obj);
@@ -2573,6 +2581,8 @@ export function createViewer(container, part) {
     registerCanonicalCaptureHidden,
     registerCaptureHidden,
     onCutawayHandleHover: cutaway.onHandleHoverChange,
+    // The section changed: on, off, or the plane moved. Listener gets no args.
+    onCutawayChange: cutaway.onChange,
     setRenderMode,
     getRenderMode: () => renderMode,
     onRenderModeChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },

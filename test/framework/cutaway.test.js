@@ -1362,3 +1362,61 @@ describe("getState / setState", () => {
     expect(unsupported.controller.isEnabled).toBe(false);
   });
 });
+
+// onChange: anything caching a picture of the part (the view style popover's
+// thumbnails) has to hear that the section changed — on, off, or moved.
+test("onChange fires when the cutaway turns on or off and whenever the plane moves", () => {
+  const fixture = createFixture();
+  addSubpart(fixture);
+  const listener = vi.fn();
+  const off = fixture.controller.onChange(listener);
+
+  fixture.controller.setEnabled(true);
+  expect(listener).toHaveBeenCalled();
+  listener.mockClear();
+
+  fixture.controller.flip();
+  expect(listener).toHaveBeenCalledTimes(1);
+  listener.mockClear();
+  fixture.controller.reset();
+  expect(listener).toHaveBeenCalled();
+  listener.mockClear();
+  fixture.controller.setState({
+    enabled: true,
+    flipped: false,
+    pose: { position: [1, 0, 0], quaternion: [0, 0, 0, 1] },
+  });
+  expect(listener).toHaveBeenCalled();
+  listener.mockClear();
+
+  fixture.controller.setEnabled(false);
+  expect(listener).toHaveBeenCalledTimes(1);
+  listener.mockClear();
+  fixture.controller.setEnabled(false); // already off: nothing changed
+  expect(listener).not.toHaveBeenCalled();
+
+  off();
+  fixture.controller.setEnabled(true);
+  expect(listener).not.toHaveBeenCalled();
+});
+
+test("a throwing onChange listener is reported and does not stop the change or later listeners", () => {
+  const fixture = createFixture();
+  addSubpart(fixture);
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const later = vi.fn();
+  fixture.controller.onChange(() => { throw new Error("boom"); });
+  fixture.controller.onChange(later);
+  expect(fixture.controller.setEnabled(true)).toBe(true);
+  expect(fixture.controller.isEnabled).toBe(true);
+  expect(later).toHaveBeenCalled();
+  expect(error).toHaveBeenCalled();
+  error.mockRestore();
+});
+
+test("captureExcluded names the gizmo's in-scene group (the ghost plane), not the section", () => {
+  const fixture = createFixture();
+  addSubpart(fixture);
+  expect(fixture.controller.captureExcluded).toEqual([findGizmo(fixture.scene)]);
+  expect(fixture.controller.captureExcluded).not.toContain(findCap(fixture.scene));
+});

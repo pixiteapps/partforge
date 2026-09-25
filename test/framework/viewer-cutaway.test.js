@@ -79,6 +79,9 @@ function createFakeCutaway() {
     registerClippableMaterial: vi.fn(() => () => {}),
     resyncSubpart: vi.fn(),
     onHandleHoverChange: vi.fn(),
+    onChange: vi.fn(() => () => {}),
+    // Stands in for the gizmo's ghost plane group (cutaway.js's captureExcluded).
+    captureExcluded: [new THREE.Group()],
     updateForCamera: vi.fn(),
     renderOverlay: vi.fn((renderer, camera) => {
       if (!cutaway.isEnabled) return false;
@@ -376,5 +379,64 @@ test("getBounds follows the mesh's own geometry, not a stale outline child", () 
   expect(bounds.min.x).toBeGreaterThan(-2);
   expect(bounds.max.x).toBeLessThan(2);
 
+  viewer.dispose();
+});
+
+// The ghost plane is the cutaway's CONTROL, drawn in the part's own scene. It
+// sits between the camera and everything the cut keeps, and a capture blends it
+// in linear light, where it lands far stronger than on screen — the view style
+// thumbnails came back with the part washed out behind it. Every offscreen
+// render leaves it out; the section itself (clipped part + caps) stays in.
+function builtViewer() {
+  const viewer = createViewer(createContainer(), { meta: {}, parts: { body: {} } });
+  viewer.setSubGeometry("body", {
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    triangles: 1,
+  });
+  viewer.showAssembly(["body"], { frame: true });
+  return viewer;
+}
+function recordGizmoAtOffscreenRender() {
+  const [gizmo] = state.cutaway.captureExcluded;
+  const seen = [];
+  let target = null;
+  const setRenderTarget = state.renderer.setRenderTarget.bind(state.renderer);
+  state.renderer.setRenderTarget = (t) => { target = t; setRenderTarget(t); };
+  const render = state.renderer.render.bind(state.renderer);
+  state.renderer.render = (scene, camera) => { if (target) seen.push(gizmo.visible); render(scene, camera); };
+  return { gizmo, seen };
+}
+
+test("offscreen captures leave the cutaway's ghost plane out, and put it back after", () => {
+  const viewer = builtViewer();
+  const { gizmo, seen } = recordGizmoAtOffscreenRender();
+  gizmo.visible = true; // the cutaway is on: its plane is showing
+
+  expect(viewer.captureCurrent({ size: 512 })).toMatch(/^data:image/);
+  expect(viewer.captureCanonicalViews(["iso"])).toHaveLength(1);
+
+  expect(seen.length).toBeGreaterThanOrEqual(2);
+  expect(seen.every((v) => v === false)).toBe(true);
+  expect(gizmo.visible).toBe(true); // the live view keeps it
+  viewer.dispose();
+});
+
+test("a ghost plane that was already hidden (cutaway off) stays hidden after a capture", () => {
+  const viewer = builtViewer();
+  const { gizmo } = recordGizmoAtOffscreenRender();
+  gizmo.visible = false;
+  viewer.captureCurrent({ size: 512 });
+  expect(gizmo.visible).toBe(false);
+  viewer.dispose();
+});
+
+test("viewer delegates cutaway change subscriptions (on/off, plane moves)", () => {
+  const viewer = createViewer(createContainer(), { meta: {}, parts: { body: {} } });
+  const unsubscribe = () => {};
+  state.cutaway.onChange.mockReturnValue(unsubscribe);
+  const listener = vi.fn();
+  expect(viewer.onCutawayChange(listener)).toBe(unsubscribe);
+  expect(state.cutaway.onChange).toHaveBeenCalledWith(listener);
   viewer.dispose();
 });

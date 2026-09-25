@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { attachViewStyleControls } from "../../src/framework/view-style-controls.js";
 
 function fakeViewer() {
-  const l = { mode: new Set(), env: new Set(), proj: new Set(), asm: new Set(), theme: new Set() };
+  const l = { mode: new Set(), env: new Set(), proj: new Set(), asm: new Set(), theme: new Set(), cutaway: new Set() };
   const v = {
     mode: "cad", env: "studio", proj: "perspective",
     getRenderMode: () => v.mode,
@@ -21,6 +21,7 @@ function fakeViewer() {
     onProjectionChange: (cb) => { l.proj.add(cb); return () => l.proj.delete(cb); },
     onAssemblyChange: (cb) => { l.asm.add(cb); return () => l.asm.delete(cb); },
     onThemeChange: (cb) => { l.theme.add(cb); return () => l.theme.delete(cb); },
+    onCutawayChange: (cb) => { l.cutaway.add(cb); return () => l.cutaway.delete(cb); },
     _fire: l,
   };
   return v;
@@ -80,6 +81,44 @@ test("thumbnails render once, and again only on the next open after the part cha
   expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(5); // not while closed
   c.open(); await flush(); await flush();
   expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(10);
+});
+
+test("a cutaway change (on, off, or the plane moving) re-renders the thumbnails on the next open", async () => {
+  // A set taken with the cutaway on used to outlive it: turning it off left
+  // every tile showing the section (only a part or theme change re-rendered).
+  const v = fakeViewer();
+  const c = attachViewStyleControls(v, { stage, anchor });
+  c.open(); await flush(); await flush();
+  c.close();
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(5);
+  v._fire.cutaway.forEach((cb) => cb());
+  c.open(); await flush(); await flush();
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(10);
+  c.detach();
+  expect(v._fire.cutaway.size).toBe(0); // unsubscribed
+});
+
+test("an empty or failed thumbnail is not cached: the tile blanks and the next open retries", async () => {
+  const v = fakeViewer();
+  let fail = true;
+  v.renderStyleThumbnail = vi.fn(async (s) => {
+    if (fail && s === "studio") return null;
+    if (fail && s === "workshop") throw new Error("boom");
+    return `data:${s}`;
+  });
+  const c = attachViewStyleControls(v, { stage, anchor });
+  c.open(); await flush(); await flush();
+  expect(tile("studio").querySelector("img").hidden).toBe(true);
+  expect(tile("workshop").querySelector("img").hidden).toBe(true);
+  expect(tile("cad").querySelector("img").src).toBe("data:cad");
+  c.close();
+  fail = false;
+  c.open(); await flush(); await flush();
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(10); // retried, with nothing else changing
+  expect(tile("studio").querySelector("img").src).toBe("data:studio");
+  expect(tile("studio").querySelector("img").hidden).toBe(false);
+  c.close(); c.open(); await flush();
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(10); // all good now: cached
 });
 
 test("a tile switches style: an environment then realistic, or back to CAD", async () => {

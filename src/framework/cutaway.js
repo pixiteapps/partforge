@@ -144,6 +144,29 @@ export function createCutaway({
     handleHoverSubscribers.clear();
   }
 
+  // "What the section looks like changed": the mode went on or off, or the
+  // plane moved (a drag, flip, reset or restore). For anything that caches a
+  // picture of the part — the view style popover's thumbnails — which would
+  // otherwise keep showing a section the user has since moved or closed.
+  // Fires often during a drag, so a listener must be cheap; no argument, since
+  // every caller only needs to know that it happened. A throwing listener is
+  // reported, never allowed to interrupt the controller work that fired it.
+  const changeListeners = new Set();
+  function notifyChange() {
+    for (const listener of [...changeListeners]) {
+      try {
+        listener();
+      } catch (error) {
+        try { console.error("Cutaway change listener failed", error); } catch { /* reporting only */ }
+      }
+    }
+  }
+  function onChange(listener) {
+    if (disposed || typeof listener !== "function") return () => {};
+    changeListeners.add(listener);
+    return () => changeListeners.delete(listener);
+  }
+
   function selected(name) {
     return selectedNames == null || selectedNames.has(name);
   }
@@ -213,6 +236,7 @@ export function createCutaway({
     gizmo.setFlipped(flipped);
     gizmo.setPose(pose);
     if (activeAppearance) showActive();
+    notifyChange();
   }
 
   function onPoseChange(nextPose) {
@@ -314,6 +338,7 @@ export function createCutaway({
     } finally {
       disabling = false;
     }
+    if (wasEnabled) notifyChange();
     if (firstError) throw firstError;
     return true;
   }
@@ -340,6 +365,7 @@ export function createCutaway({
     gizmo.setVisible(true);
     gizmo.updateForCamera();
     showActive();
+    notifyChange(); // applyPose above fired too, but before `enabled` meant on
     return true;
   }
 
@@ -360,6 +386,7 @@ export function createCutaway({
     planeFromPose(plane, planeNormal, pose.position, pose.quaternion, flipped);
     gizmo.setFlipped(flipped);
     showActive();
+    notifyChange();
     return true;
   }
 
@@ -579,6 +606,7 @@ export function createCutaway({
     publishHandleHover(null);
     drainHandleHoverPublications();
     clearHandleHoverSubscribers();
+    changeListeners.clear();
     attempt(() => overlayScene.clear());
     attempt(() => capGeometry.dispose());
     if (firstError) throw firstError;
@@ -605,6 +633,11 @@ export function createCutaway({
     updateForCamera,
     renderOverlay,
     onHandleHoverChange,
+    onChange,
+    // The gizmo's in-scene half (the ghost plane and its border). It is
+    // interactive UI drawn in the part's own scene, so the viewer keeps it out
+    // of every offscreen render (viewer.js's captureHidden).
+    captureExcluded: [gizmo.group],
     setCamera(next) {
       if (!next) return;
       camera = next;

@@ -2746,7 +2746,10 @@ pane's pixel size:
   target are restored after the render. Measurement-mode dimensions render directly
   in the scene, so a dimensioned capture needs no special handling — enable measure
   mode (`runtime.measure.setEnabled(true)`) and call `captureCurrent()`; the dims are
-  just part of the rendered frame.
+  just part of the rendered frame. With the cutaway on, the capture shows the section
+  the way the user sees it — the part clipped, its cut faces hatched — but never the
+  cutaway's translucent plane or its handles, which are controls, not the part (the
+  same holds for `captureViews` and the view style popover's thumbnails).
   `recenter: true` centres the part: the capture becomes the largest centred
   sub-window of the current framing that still holds every visible vertex (equal
   margins on both axes, rendered at the full `size` resolution through a view
