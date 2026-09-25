@@ -85,23 +85,79 @@ vec3 pfTriplanarNormal(vec3 p, vec3 n, float scale) {
 }
 `;
 
+// Layer lines are 0.2 mm, so at an ordinary viewing distance a layer spans a
+// few pixels or less, and point-sampling the bead profile per pixel aliased
+// into moiré (worst in the specular, through the bead normals). So one layer's
+// profile is baked into a small repeating texture sampled by layer height, and
+// the GPU's mipmaps band-limit it. Channels: R = groove shade, G = bead slope
+// (encoded slope/6 + 0.5), B = slope^2 / 9. A mip level averages G and B
+// separately, so B - G^2 is the slope VARIANCE inside the pixel — the ridges it
+// can no longer show — which widens the specular lobe instead (Toksvig / LEAN
+// mapping), so a far wall keeps its satin sheen rather than turning glossy.
+export const LAYER_PROFILE_WIDTH = 256;
+// Gradient scale on the profile lookup (+0.58 mip). A box-filtered mip chain at
+// 1x still carries the full fundamental at 2 px per layer (its 2-texel level),
+// right at Nyquist, which banded across a whole-part view; 1.5 clears that and
+// keeps the lines crisp close up (2 visibly softened them).
+const LAYER_BLUR = "1.5";
+
+// One layer's bead, t running -1 (a seam) through 0 (the crest) to 1 (the next
+// seam): the groove shade darkens the 35% of each half-bead nearest a seam, and
+// the slope is a round bead's (t / sqrt(1 - t^2)), clamped to ±3 where it goes
+// vertical. (The procedural version darkened the CREST instead — its ridge was
+// |t|, not 1 - |t| — half a layer off the valleys its own normals drew.)
+export function layerProfileData(width = LAYER_PROFILE_WIDTH) {
+  const data = new Uint8Array(width * 4);
+  for (let i = 0; i < width; i++) {
+    const t = ((i + 0.5) / width) * 2 - 1;
+    const g = Math.min(1, (1 - Math.abs(t)) / 0.35);
+    const groove = g * g * (3 - 2 * g);
+    const slope = Math.min(3, Math.max(-3, t / Math.sqrt(Math.max(1 - t * t, 0.04))));
+    data[i * 4] = Math.round(groove * 255);
+    data[i * 4 + 1] = Math.round((slope / 6 + 0.5) * 255);
+    data[i * 4 + 2] = Math.round((slope * slope / 9) * 255);
+    data[i * 4 + 3] = 255;
+  }
+  return data;
+}
+
+// One texture shared by every layer-lines material, built on first use.
+let layerProfileTex = null;
+function layerProfileTexture() {
+  if (layerProfileTex) return layerProfileTex;
+  const t = new THREE.DataTexture(layerProfileData(), LAYER_PROFILE_WIDTH, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.ClampToEdgeWrapping;
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
+  t.colorSpace = THREE.NoColorSpace;
+  t.needsUpdate = true;
+  return (layerProfileTex = t);
+}
+
+const FRAG_DECL_LAYERS = "uniform sampler2D pfLayerMap;\n";
+
 // Per-kind fragment code, injected after <roughnessmap_fragment> so it can
 // modulate both diffuseColor (already written by <map_fragment>) and roughnessFactor.
 const FRAG_BODY = {
+  // Declared at main() scope, not in a block: FRAG_NORMAL reads the same
+  // profile sample (pfLayer) rather than looking it up again.
   "layer-lines": `
+  float pfH = (pfPrintFrame * vec4(vPfObjPos, 1.0)).z / pfPatternScale;   // in layers
+  // fract() keeps the texel coordinate small (hundreds of layers x 256 texels
+  // loses sub-texel precision in the sampler); the explicit gradients are the
+  // unwrapped height's, so the wrap at each seam doesn't drop to the 1x1 mip.
+  vec4 pfLayer = textureGrad(pfLayerMap, vec2(fract(pfH), 0.5),
+    vec2(dFdx(pfH) * ${LAYER_BLUR}, 0.0), vec2(dFdy(pfH) * ${LAYER_BLUR}, 0.0));
   {
-    float h = (pfPrintFrame * vec4(vPfObjPos, 1.0)).z / pfPatternScale;
-    float ridge = abs(fract(h) - 0.5) * 2.0;            // 0 at a layer seam, 1 mid-layer
-    float groove = smoothstep(0.0, 0.35, ridge);
-    // Anti-alias: fwidth(h) is layers per pixel. Where a layer spans fewer
-    // than ~6 px the band fades to its mean over a period (0.825: the groove
-    // ramps over 35% of it, the rest is flat), and past ~2.5 px it is gone —
-    // point-sampling finer layers than that is what aliased into moiré.
-    groove = mix(0.825, groove, 1.0 - smoothstep(0.16, 0.4, fwidth(h)));
+    float groove = pfLayer.r;
     diffuseColor.rgb *= mix(0.9, 1.0, groove); // the normal map (FRAG_NORMAL) carries most of the relief
     roughnessFactor = clamp(roughnessFactor + (1.0 - groove) * 0.18, 0.0, 1.0);
     // Filament mottling: a fine grain (~0.17 mm) over slow blotches (~2 mm),
     // fixed to the part, so a print doesn't read as flat injection-moulded plastic.
+    // Hash noise, not a noise volume: a mipmapped 64^3 texture measured ~10%
+    // slower per frame on an M1 Max (a filtered 3D fetch reads 16 texels).
     float mottle = pfNoise(vPfObjPos * 6.0) * 0.6 + pfNoise(vPfObjPos * 0.51) * 0.4;
     diffuseColor.rgb *= mix(0.893, 1.047, mottle);
     roughnessFactor = clamp(roughnessFactor + (mottle - 0.5) * 0.084, 0.0, 1.0);
@@ -149,15 +205,14 @@ const FRAG_BODY = {
 // layer is a round bead, so across one layer the surface normal swings from
 // facing down (bottom of the bead) through straight out to facing up, along
 // the print direction projected onto the surface. Faces parallel to the layers
-// (tops and bottoms) get no ridges, as on a real print. Same fwidth fade as the
-// colour bands, so far-away layers don't alias.
+// (tops and bottoms) get no ridges, as on a real print. The slope comes from the
+// same mip-filtered profile sample as the colour bands, and the slope variance
+// the filter averaged away goes into roughness: alpha^2 += var(tilt).
 const FRAG_NORMAL = {
   "layer-lines": `
   {
-    float h = (pfPrintFrame * vec4(vPfObjPos, 1.0)).z / pfPatternScale;
-    float aa = 1.0 - smoothstep(0.16, 0.4, fwidth(h));
-    float t = fract(h) * 2.0 - 1.0;                       // -1 at a seam, 0 bead crest, 1 next seam
-    float slope = clamp(t / sqrt(max(1.0 - t * t, 0.04)), -3.0, 3.0);
+    float slope = pfLayer.g * 6.0 - 3.0;
+    float slopeVar = max(pfLayer.b * 9.0 - slope * slope, 0.0);
     vec3 up = normalize(vPfPrintUpView);
     // NOT normalised: its length is how steeply the surface cuts across the
     // layers (1 on a vertical wall, 0 on a face parallel to them), so ridges fade
@@ -165,7 +220,10 @@ const FRAG_NORMAL = {
     // full-strength tilt in a direction set by rounding noise, flipping sign
     // wherever the face sat on a layer boundary — a visible patch.
     vec3 along = up - normal * dot(normal, up);
-    normal = normalize(normal + along * slope * 0.35 * aa);
+    normal = normalize(normal + along * slope * 0.35);
+    // tilt = slope * 0.35 * |along|, so var(tilt) = slopeVar * 0.35^2 * |along|^2
+    float a = roughnessFactor * roughnessFactor;
+    roughnessFactor = min(sqrt(sqrt(a * a + slopeVar * 0.1225 * dot(along, along))), 1.0);
   }`,
   // Wood replaces the view-space normal with its triplanar normal map, built in
   // object space and carried to view space through the normal matrix. A
@@ -216,7 +274,11 @@ export function setGrainAxis(material, axis) {
 export function applyPattern(material, { kind, scale = 1, printFrame, texture, normalMap, roughnessMap, roughnessMean = 0.5, normalScale = 1, grain = "u" } = {}) {
   if (!kind || !FRAG_BODY[kind]) return material;
   const wood = kind === "wood";
+  const layers = kind === "layer-lines";
   const uniforms = {
+    ...(layers ? {
+      pfLayerMap: { value: layerProfileTexture() },
+    } : {}),
     pfPatternScale: { value: scale },
     pfPrintFrame: { value: new THREE.Matrix4().fromArray(printFrame ?? new THREE.Matrix4().toArray()) },
     pfPatternMap: { value: texture ?? null },
@@ -236,7 +298,7 @@ export function applyPattern(material, { kind, scale = 1, printFrame, texture, n
       .replace("#include <common>", `#include <common>\n${VERT_DECL}${wood ? VERT_DECL_NM : ""}`)
       .replace("#include <begin_vertex>", `#include <begin_vertex>\n${VERT_BODY}${wood ? VERT_BODY_NM : ""}`);
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", `#include <common>\n${FRAG_DECL}${wood ? FRAG_DECL_WOOD : ""}`)
+      .replace("#include <common>", `#include <common>\n${FRAG_DECL}${wood ? FRAG_DECL_WOOD : ""}${layers ? FRAG_DECL_LAYERS : ""}`)
       .replace("#include <roughnessmap_fragment>", `#include <roughnessmap_fragment>\n${FRAG_BODY[kind]}`)
       .replace("#include <normal_fragment_maps>", `#include <normal_fragment_maps>\n${FRAG_NORMAL[kind] ?? ""}`);
   };
