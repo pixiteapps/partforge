@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { expect, test } from "vitest";
-import { applyPattern } from "../../src/framework/materials/patterns.js";
+import { applyPattern, layerProfileData, LAYER_PROFILE_WIDTH } from "../../src/framework/materials/patterns.js";
 import { ensureBoxUVs } from "../../src/framework/materials/uv.js";
 import { applyBrushFrame, grainAxisFor, grainSwaps, setGrainAxis } from "../../src/framework/materials/patterns.js";
 import { buildPhysicalMaterial } from "../../src/framework/materials/physical.js";
@@ -104,16 +104,73 @@ test("brushed metal rebuilds its tangent frame per pixel, after any pattern inje
 });
 
 // Layers are 0.2 mm: at an ordinary viewing distance several fall in one
-// pixel, and point-sampling them aliased into moiré. The shader filters by
-// screen-space frequency (fwidth), fading each band to the period's mean.
-test("layer lines fade to their mean where a layer is too fine for the pixel grid", () => {
-  const m = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "layer-lines", scale: 0.2 });
+// pixel, and point-sampling them aliased into moiré. The bead profile is a
+// mipmapped texture looked up by layer height, so the GPU band-limits it.
+test("layer lines look up one mipmapped bead profile texture by layer height", () => {
+  const a = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "layer-lines", scale: 0.2 });
+  const b = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "layer-lines", scale: 0.3 });
   const s = fakeShader();
+  a.onBeforeCompile(s);
+  const tex = s.uniforms.pfLayerMap.value;
+  expect(tex).toBeInstanceOf(THREE.DataTexture);
+  expect(tex.image.width).toBe(LAYER_PROFILE_WIDTH);
+  expect(tex.generateMipmaps).toBe(true);
+  expect(tex.minFilter).toBe(THREE.LinearMipmapLinearFilter);
+  expect(tex.wrapS).toBe(THREE.RepeatWrapping);
+  expect(tex.colorSpace).toBe(THREE.NoColorSpace); // data, not colour
+  expect(b.userData.patternUniforms.pfLayerMap.value).toBe(tex); // shared, built once
+  // fract() keeps the coordinate small; the gradients are the unwrapped height's,
+  // so a seam doesn't drop to the smallest mip (a line of flat pixels per layer)
+  expect(s.fragmentShader).toMatch(/textureGrad\(pfLayerMap, vec2\(fract\(pfH\), 0\.5\),\s*vec2\(dFdx\(pfH\)/);
+  expect(s.fragmentShader).not.toMatch(/fwidth\(\s*h\s*\)/);
+  // other kinds don't bind it
+  const g = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "sls-grain", scale: 0.15 });
+  const gs = fakeShader();
+  g.onBeforeCompile(gs);
+  expect(gs.fragmentShader).not.toContain("pfLayerMap");
+  expect(gs.uniforms.pfLayerMap).toBeUndefined();
+});
+
+// What a fully minified (1x1) mip reads is the profile's average, so these are
+// the far-distance look: flat shade, no net tilt, and the whole bead's slope
+// variance handed to roughness.
+test("the layer profile averages to the band mean, zero tilt and the bead's full slope variance", () => {
+  const d = layerProfileData();
+  const n = LAYER_PROFILE_WIDTH;
+  const mean = (ch) => { let s = 0; for (let i = 0; i < n; i++) s += d[i * 4 + ch] / 255; return s / n; };
+  // grooves over 35% of each half-bead ramp 0→1 (mean 0.5), the rest is flat 1
+  expect(mean(0)).toBeCloseTo(0.825, 2);
+  const slope = mean(1) * 6 - 3;
+  expect(Math.abs(slope)).toBeLessThan(0.02); // a symmetric bead: tilts cancel
+  const slopeSq = mean(2) * 9;
+  expect(slopeSq - slope * slope).toBeGreaterThan(1); // a round bead is steep: var ~ 1.5
+  // unfiltered (one texel), the variance is quantisation only
+  for (const i of [0, n / 4, n / 2, n - 1]) {
+    const g = (d[i * 4 + 1] / 255) * 6 - 3;
+    expect(Math.abs((d[i * 4 + 2] / 255) * 9 - g * g)).toBeLessThan(0.1);
+  }
+  // seam at both ends, crest in the middle
+  // the groove shade is dark in the seams, where the normals draw the valleys
+  expect(d[0]).toBeLessThan(10);
+  expect(d[(n - 1) * 4]).toBeLessThan(10);
+  expect(d[(n / 2) * 4]).toBe(255);
+  expect(d[1]).toBeLessThan(10); // t = -1: slope clamped at -3
+  expect(d[(n - 1) * 4 + 1]).toBeGreaterThan(245); // t = +1: slope +3
+});
+
+// The ridges a pixel can no longer show still scatter light, so the filtered
+// slope's variance widens the GGX lobe (alpha^2 += var) instead of vanishing.
+test("layer lines fold the filtered slope variance into roughness", () => {
+  const m = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "layer-lines", scale: 0.2 });
+  const s = {
+    uniforms: {},
+    vertexShader: "#include <common>\nvoid main(){\n#include <begin_vertex>\n}",
+    fragmentShader: "#include <common>\nvoid main(){\n#include <roughnessmap_fragment>\n#include <normal_fragment_maps>\n}",
+  };
   m.onBeforeCompile(s);
-  expect(s.fragmentShader).toMatch(/fwidth\(\s*h\s*\)/);
-  // The fade target is the band's exact average over one period: grooves over
-  // 35% of it ramp 0→1 (mean 0.5), the rest is flat 1 — 0.175 + 0.65.
-  expect(s.fragmentShader).toContain("mix(0.825, groove,");
+  const afterNormals = s.fragmentShader.slice(s.fragmentShader.indexOf("#include <normal_fragment_maps>"));
+  expect(afterNormals).toContain("pfLayer.b * 9.0 - slope * slope");
+  expect(afterNormals).toMatch(/roughnessFactor = min\(sqrt\(sqrt\(a \* a \+ slopeVar/);
 });
 
 // A mask's modulation is centred on the texture's own mean, so where the
