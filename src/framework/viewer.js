@@ -232,6 +232,31 @@ export function createViewer(container, part) {
   const controls = new OrbitControls(activeCamera, renderer.domElement);
   controls.enableDamping = true;
 
+  // --- render on demand -------------------------------------------------------
+  // The loop ticks every animation frame (controls, tweens, frame listeners —
+  // playback, measure, the view cube all run there), but only DRAWS when
+  // something asked for it: a still view costs no GPU work. A frame is asked
+  // for by: any call through the returned viewer API (wrapped at the bottom of
+  // this function — a regen, a pose, a mode switch, a capture), the controls
+  // moving the camera (their damping included), a camera tween, input on the
+  // stage, and the internal async landings (a texture, a contact shadow, a
+  // resize, a marker timing out). Modules that edit the scene graph directly
+  // rather than through the API (measure's dims, the hover highlight, the
+  // animation driver) call viewer.requestRender() themselves.
+  //
+  // `graceMs` keeps drawing for a while after the request: input and API calls
+  // have follow-ups that land a frame or two later (hover.js picks in its own
+  // requestAnimationFrame; a regen's measure dims rebuild on the next tick).
+  const INPUT_GRACE_MS = 400;
+  const API_GRACE_MS = 150;
+  let renderRequested = true; // the first frame
+  let renderUntil = 0;
+  function requestRender(graceMs = 0) {
+    renderRequested = true;
+    if (graceMs > 0) renderUntil = Math.max(renderUntil, performance.now() + graceMs);
+  }
+  controls.addEventListener("change", () => requestRender());
+
   // --- lights + grid --------------------------------------------------------
   const liveLights = addViewerLights(scene);
   // 1 cm grid (mm units): 300 mm wide, 30 divisions -> 10 mm (1 cm) squares.
@@ -523,6 +548,7 @@ export function createViewer(container, part) {
     domElement: renderer.domElement,
     getBounds: getVisibleWorldBounds,
     edgeColor: THEME.dark.line,
+    requestRender: () => requestRender(),
   });
   for (const name of names) {
     cutaway.setSubpart(name, subMesh[name], subLines[name]);
@@ -589,7 +615,7 @@ export function createViewer(container, part) {
       const settled = new Promise((resolve) => { settle = resolve; });
       pendingTextures.add(settled);
       settled.then(() => pendingTextures.delete(settled));
-      t = textureLoader.load(assetUrl(file), () => settle(), undefined, () => settle());
+      t = textureLoader.load(assetUrl(file), () => { settle(); requestRender(); }, undefined, () => settle());
       t.anisotropy = Math.min(8, renderer.capabilities?.getMaxAnisotropy?.() ?? 1);
       textureCache.set(file, t);
     }
@@ -760,6 +786,7 @@ export function createViewer(container, part) {
     try {
       const plane = cutaway.getPlane?.(_shadowClipPlane) ?? null;
       realisticRig.shadow.render(scene, castersNow(), { ...opts, clippingPlanes: plane ? [plane] : null });
+      requestRender();
     } catch (e) {
       console.warn("partforge: contact shadow failed", e);
     }
@@ -796,6 +823,7 @@ export function createViewer(container, part) {
   // contact shadow: low-res while the plane is dragged, full once it settles —
   // the same schedule as a moving sub-part.
   cutaway.onChange?.(() => { if (realisticRig) shadowMovedAt = performance.now(); });
+  cutaway.onChange?.(() => requestRender());
 
   const livePixelRatio = (mode) =>
     Math.min(devicePixelRatio, mode === "realistic" && isCoarsePointer() ? 1.5 : 2);
@@ -1725,6 +1753,7 @@ export function createViewer(container, part) {
     lineMaterial.resolution.set(w, h); // fat lines need the viewport size for px width
     for (const m of fadeLineMats.values()) m.resolution.set(w, h); // clones need it too
     cutaway.setViewportSize(w, h, renderer.getPixelRatio());
+    requestRender(); // a resize clears the drawing buffer
   }
   const ro = new ResizeObserver(resize);
   ro.observe(container);
@@ -2254,11 +2283,12 @@ export function createViewer(container, part) {
   function renderFrame(time) {
     const dt = lastFrameTime == null ? 0 : Math.min(0.1, (time - lastFrameTime) / 1000);
     lastFrameTime = time;
-    controls.update();
+    controls.update(); // fires "change" (→ requestRender) while the camera moves, damping included
     const tw = camTween.update(dt);
     if (tw) {
       activeCamera.position.fromArray(tw.position);
       controls.target.fromArray(tw.target);
+      requestRender();
     }
     checkAutoProjection();
     // Per-listener guard, because three re-arms requestAnimationFrame only AFTER
@@ -2269,6 +2299,9 @@ export function createViewer(container, part) {
       try { cb(dt); } catch (e) { console.warn("partforge: frame listener failed", e); }
     }
     updateMovingShadow(); // after the listeners, so it sees this frame's poses
+    // Nothing asked for a frame: the canvas keeps showing the last one.
+    if (!renderRequested && performance.now() >= renderUntil) return;
+    renderRequested = false;
     // After the frame listeners, before anything reads the camera to draw with:
     // a playback frame may have moved sub-parts or the camera itself, and both
     // change where the planes belong.
@@ -2336,6 +2369,20 @@ export function createViewer(container, part) {
   // recoverable (three's own listener re-uploads on restore); the subscribers
   // let an embedder surface it instead of showing a dead rectangle.
   const contextLostListeners = new Set();
+  // Input on the stage: hover highlights, measure dims, cutaway gizmo hover and
+  // drag all react to it, some a frame or two later — draw through the grace.
+  const INPUT_EVENTS = ["pointermove", "pointerdown", "pointerup", "pointerleave", "pointercancel", "wheel"];
+  const onStageInput = () => requestRender(INPUT_GRACE_MS);
+  for (const type of INPUT_EVENTS) container.addEventListener(type, onStageInput, { capture: true, passive: true });
+  const onKeyInput = () => requestRender(INPUT_GRACE_MS);
+  window.addEventListener("keydown", onKeyInput, { capture: true, passive: true });
+  window.addEventListener("keyup", onKeyInput, { capture: true, passive: true });
+  // A restored context has re-uploaded everything but drawn nothing, and a
+  // returning tab may have had its drawing buffer discarded.
+  const onRedrawNeeded = () => requestRender();
+  renderer.domElement.addEventListener("webglcontextrestored", onRedrawNeeded);
+  document.addEventListener("visibilitychange", onRedrawNeeded);
+
   const onContextLostEvent = (event) => {
     event.preventDefault();
     for (const listener of [...contextLostListeners]) listener();
@@ -2453,6 +2500,7 @@ export function createViewer(container, part) {
   }
 
   function dropFlashDot(dot) {
+    requestRender();
     scene.remove(dot);
     dot.material.dispose(); // the geometry is shared and freed in dispose()
     flashDots.delete(dot);
@@ -2532,6 +2580,11 @@ export function createViewer(container, part) {
     // context left to lose, and a surviving listener would keep the embedder's
     // closure (and whatever it captured) alive.
     renderer.domElement.removeEventListener("webglcontextlost", onContextLostEvent);
+    for (const type of INPUT_EVENTS) container.removeEventListener(type, onStageInput, { capture: true });
+    window.removeEventListener("keydown", onKeyInput, { capture: true });
+    window.removeEventListener("keyup", onKeyInput, { capture: true });
+    renderer.domElement.removeEventListener("webglcontextrestored", onRedrawNeeded);
+    document.removeEventListener("visibilitychange", onRedrawNeeded);
     contextLostListeners.clear();
     controls.removeEventListener("start", onControlsStart);
     cameraStartListeners.clear();
@@ -2586,7 +2639,8 @@ export function createViewer(container, part) {
     renderer.domElement.remove();
   }
 
-  return {
+  return withRenderRequests({
+    requestRender,
     showAssembly,
     hideAssembly,
     setSubGeometry,
@@ -2666,5 +2720,25 @@ export function createViewer(container, part) {
     invalidatePrintFrames,
     whenRealisticReady,
     dispose,
-  };
+  }, () => requestRender(API_GRACE_MS));
+}
+
+// Every API method that can change what is drawn asks for a frame when called,
+// and again when a returned promise settles (a mode switch lands async). Pure
+// reads, subscriptions and hot per-frame queries are left unwrapped — a frame
+// listener polling getCutawayPlane() must not keep the loop drawing forever.
+// Getters (viewer.camera) and non-functions pass through untouched.
+const NO_RENDER_REQUEST = /^(get|is|has|on|__)|^(requestRender|projectPoint|subTriangles|cutawaySupported|cutawayEnabled|whenRealisticReady|dispose)$/;
+export function withRenderRequests(api, request) {
+  for (const [key, desc] of Object.entries(Object.getOwnPropertyDescriptors(api))) {
+    if (typeof desc.value !== "function" || NO_RENDER_REQUEST.test(key)) continue;
+    const fn = desc.value;
+    api[key] = function (...args) {
+      request();
+      const out = fn.apply(this, args);
+      if (out && typeof out.then === "function") out.then(request, request);
+      return out;
+    };
+  }
+  return api;
 }

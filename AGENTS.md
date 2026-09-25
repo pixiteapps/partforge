@@ -355,6 +355,14 @@ statement of this rule.
 - **Units are millimetres** throughout. **Display placement must not depend on
   the active view** (display meshes cache across views); only
   `place(..., {purpose:"export"})` may.
+- **The viewer draws on demand.** Its loop ticks every frame (controls, tweens,
+  `onFrame` listeners) but only renders when asked: calls through the viewer's
+  API ask automatically (`withRenderRequests` in `viewer.js`; pure reads —
+  `get*`/`is*`/`has*`/`on*` — don't), as do camera moves, stage input and the
+  viewer's own async landings. Code that edits the scene graph IN PLACE rather
+  than through an API call (`measure/dim3-scene.js`, `selection/feature-highlight.js`,
+  the cutaway's idle fade, the animation driver) must call
+  `viewer.requestRender()`, or the change shows up only on the next orbit.
 - `type: "custom"` controls (`panel/widgets/custom.js`, `panel/scoped-params.js`,
   `panel/json-value.js`) run PART-AUTHORED functions in the panel's realm. The value
   contract is `isJsonValue`, shared with hosts through `partforge/panel-values`; a

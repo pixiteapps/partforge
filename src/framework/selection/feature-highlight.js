@@ -61,8 +61,13 @@ export function createFeatureHighlight(viewer) {
     overlay.visible = true;
   }
 
+  // The overlay is edited in place, not through a viewer call, so it asks for
+  // the frame itself (the viewer draws on demand).
+  const redraw = () => viewer.requestRender?.();
+
   return {
     show(hit) {
+      redraw();
       if (!hit.feature) { mount(hit.mesh.geometry, hit.mesh); return; }
       const cached = subsets.get(hit.subPart);
       let byId = cached?.geo === hit.mesh.geometry ? cached.byId : null;
@@ -75,7 +80,7 @@ export function createFeatureHighlight(viewer) {
       if (!g) { g = featureSubset(hit.mesh.geometry, hit.feature.id); byId.set(hit.feature.id, g); }
       mount(g, hit.mesh);
     },
-    clear() { overlay.visible = false; },
+    clear() { overlay.visible = false; redraw(); },
     dispose() {
       // Every step isolated: a throw disposing one cached subset (or
       // unregistering from cutaway) must not skip the rest — same discipline

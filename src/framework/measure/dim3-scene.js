@@ -99,6 +99,10 @@ export function defaultPaintLabel({ text, palette }) {
 }
 
 export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) {
+  // Dims are scene objects edited in place, not through a viewer call, so they
+  // ask for the frame themselves (the viewer draws on demand). tick() needs no
+  // request: it only follows the camera, and a camera move is already a frame.
+  const redraw = () => viewer.requestRender?.();
   const group = new THREE.Group();
   group.name = "pf-dims";
   let attached = false;
@@ -238,6 +242,7 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
 
   function update(drawings) {
     if (!ensureAttached()) return;
+    redraw();
     disposeChildren();
     for (const d of drawings) {
       const key = matFor(d.tier);
@@ -423,6 +428,7 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
   function setTheme(mode) {
     if (!DIM_THEME[mode] || mode === theme) return;
     theme = mode;
+    redraw();
     lineMats.static.color.set(DIM_THEME[theme].static);
     lineMats.strong.color.set(DIM_THEME[theme].strong);
     fillMats.static.color.set(DIM_THEME[theme].static);
@@ -434,9 +440,10 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
     }
   }
 
-  function clear() { disposeChildren(); }
+  function clear() { disposeChildren(); redraw(); }
 
   function dispose() {
+    redraw();
     disposeChildren();
     unregisterCapture();
     if (attached) group.parent?.remove(group);

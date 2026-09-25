@@ -495,6 +495,9 @@ export function attachAnimationControls(viewer, part, {
   }
   function apply(r) {
     if (!r || !current) return;
+    // A playing frame always draws, whatever it changed: the viewer renders on
+    // demand, and playback must never stall waiting for something to ask.
+    viewer.requestRender?.();
     try {
       // Params go through applyValues (the slider path) only when the animation
       // actually drives some: an opacity-only frame must neither snapshot nor
