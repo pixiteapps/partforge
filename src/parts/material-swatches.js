@@ -3,7 +3,7 @@
 // judged by eye in every environment (materials.html). Not a reference part.
 import { PRESETS } from "../framework/materials/presets.js";
 
-const ids = Object.keys(PRESETS).filter((id) => id !== "default");
+const ids = Object.keys(PRESETS);
 const COLS = 6, PITCH = 40;
 
 const withHole = (k) =>
@@ -20,6 +20,13 @@ export default {
       build: (k) => withHole(k).translate([(i % COLS) * PITCH, -Math.floor(i / COLS) * PITCH, 0]),
       display: { material: id },
     }])),
+    // No material at all: the blue-grey CAD look, a PLA print in that colour in
+    // realistic mode (resolve.js).
+    no_material: {
+      label: "No material",
+      views: ["all"],
+      build: (k) => withHole(k).translate([(ids.length % COLS) * PITCH, -Math.floor(ids.length / COLS) * PITCH, 0]),
+    },
     upright_pla: {
       label: "PLA, displayed upright, printed flat",
       views: ["print"],

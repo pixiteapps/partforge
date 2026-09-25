@@ -562,6 +562,8 @@ export function createViewer(container, part) {
   const textureLoader = new THREE.TextureLoader();
   let pmrem = null;
   let printFrames = {};
+  let printFrameSource = null;       // () => frames; mount's lazy provider (setPrintFrameSource)
+  let printFramesStale = false;      // the source has frames the materials have not seen
   const modeListeners = new Set();
   const envListeners = new Set();
   const SHADOW_LOWRES_MS = 100;      // at most one low-res shadow per this, while a part moves
@@ -750,11 +752,14 @@ export function createViewer(container, part) {
     .map((n) => subMesh[n]);
   // `force` renders even while parked: a capture is offscreen work a parked
   // viewer still does, and it must not bake a stale (or absent) shadow.
+  // The cutaway's plane clips the shadow's casters too, so the half it cut
+  // away casts no shadow (cutaway.onChange below re-renders it as it moves).
+  const _shadowClipPlane = new THREE.Plane();
   function renderShadow(opts, { force = false } = {}) {
     if (!realisticRig || (!active && !force)) return;
     try {
-      if (opts) realisticRig.shadow.render(scene, castersNow(), opts);
-      else realisticRig.shadow.render(scene, castersNow());
+      const plane = cutaway.getPlane?.(_shadowClipPlane) ?? null;
+      realisticRig.shadow.render(scene, castersNow(), { ...opts, clippingPlanes: plane ? [plane] : null });
     } catch (e) {
       console.warn("partforge: contact shadow failed", e);
     }
@@ -787,6 +792,10 @@ export function createViewer(container, part) {
       renderShadow({ lowRes: true });
     }
   }
+  // A cutaway turned on or off, or its plane moved, changes what casts the
+  // contact shadow: low-res while the plane is dragged, full once it settles —
+  // the same schedule as a moving sub-part.
+  cutaway.onChange?.(() => { if (realisticRig) shadowMovedAt = performance.now(); });
 
   const livePixelRatio = (mode) =>
     Math.min(devicePixelRatio, mode === "realistic" && isCoarsePointer() ? 1.5 : 2);
@@ -805,6 +814,7 @@ export function createViewer(container, part) {
   // ground only moves on showAssembly, never because a capture happened.
   function enterRealistic(rig, { live = true, reground = true } = {}) {
     try {
+      syncPrintFrames(); // before the swap: the first realistic frame has the export-pose layers
       renderMode = "realistic";
       // A regen can land between the proxy compile and here, while the mode
       // was still CAD, so setSubGeometry skipped the UVs. Idempotent.
@@ -874,6 +884,7 @@ export function createViewer(container, part) {
   // target bound — each only for the synchronous compile() inside
   // compileAsync, so the view on screen is untouched while it waits.
   function compileRealistic(rig, { forCapture = false } = {}) {
+    syncPrintFrames();
     const proxy = new THREE.Scene();
     proxy.environment = rig.envMap;
     for (const n of names) {
@@ -972,6 +983,32 @@ export function createViewer(container, part) {
     printFrames = frames ?? {};
     const identity = new THREE.Matrix4().toArray();
     for (const [n, m] of physicalMats) m.userData.patternUniforms?.pfPrintFrame.value.fromArray(printFrames[n] ?? identity);
+  }
+
+  // The lazy form mount uses. Computing a frame runs the sub-part's pose probe
+  // (two geometry-free builds for a placed sub-part), and every sub-part with
+  // no material draws layer lines, so frames are PULLED only when something is
+  // about to draw the realistic look: the live view (or a switch loading),
+  // and any capture that borrows it — compileRealistic and enterRealistic are
+  // the two doors every such path goes through. A delivery just marks them
+  // stale (invalidatePrintFrames); in CAD nothing is computed.
+  function setPrintFrameSource(source) {
+    printFrameSource = typeof source === "function" ? source : null;
+    invalidatePrintFrames();
+  }
+  function invalidatePrintFrames() {
+    printFramesStale = true;
+    if (renderMode === "realistic" || realisticPending) syncPrintFrames();
+  }
+  function syncPrintFrames() {
+    if (!printFrameSource || !printFramesStale) return;
+    printFramesStale = false;
+    let frames;
+    try { frames = printFrameSource(); } catch (e) {
+      console.warn("partforge: computing print frames failed", e);
+      return;
+    }
+    setPrintFrames(frames);
   }
 
   // Resolves once the current environment's rig is loaded (captures wait on it).
@@ -1825,7 +1862,7 @@ export function createViewer(container, part) {
     for (const dot of [...flashDots, ...captureHidden]) if (dot.visible) { dot.visible = false; reshowFlashDots.push(dot); }
     try {
       renderer.setRenderTarget(rt);
-      renderer.render(renderScene, cam);
+      renderWithBackdrop(renderScene, cam);
       // render() resolves the multisample renderbuffer into the target texture, so this
       // reads antialiased pixels.
       renderer.readRenderTargetPixels(rt, 0, 0, width, height, buf);
@@ -1860,6 +1897,14 @@ export function createViewer(container, part) {
   // Pointer feedback excluded from EVERY offscreen render (renderOffscreen),
   // showcase captures included — unlike canonicalCaptureHidden below.
   const captureHidden = new Set();
+  // The cutaway's ghost plane is its gizmo, not its section: the part as the
+  // user sees it (clipped, with its hatched caps) goes into a capture, the
+  // translucent plane in front of it does not. It sits between the camera and
+  // everything the cut keeps, and a capture blends it in linear light, where
+  // it lands several times stronger than on the canvas — the view style
+  // popover's thumbnails came back with the part washed out behind a blue
+  // sheet, a dark part all but gone.
+  for (const obj of cutaway.captureExcluded ?? []) captureHidden.add(obj);
   function registerCaptureHidden(obj) {
     captureHidden.add(obj);
     return () => captureHidden.delete(obj);
@@ -2144,6 +2189,64 @@ export function createViewer(container, part) {
     }
   }
 
+  // --- the environment backdrop under an orthographic camera ---------------
+  // three draws a texture `scene.background` (the realistic environment photo)
+  // as a unit box around the camera, projected through the camera's own
+  // projection (WebGLBackground + the backgroundCube shader). Under a
+  // PerspectiveCamera that box fills the frame; under an OrthographicCamera it
+  // projects to a one-unit square in a frustum tens of millimetres wide or
+  // more — a speck behind the part — so an ortho face view (the view cube
+  // settles into one) lost its whole backdrop to the clear colour, on the
+  // canvas and in every capture of that framing. So under ortho the backdrop is
+  // its own pass: three's own background draw (same PMREM, blur, intensity,
+  // rotation) through a perspective camera with the ortho camera's orientation
+  // and the live perspective camera's fov, then the scene through the ortho
+  // camera on top, clearing depth and stencil but not colour. The backdrop is
+  // exactly what perspective shows looking the same way. A colour background
+  // (CAD) clears the same under either projection and keeps the one pass.
+  // Residual: a transmissive material in the scene pass refracts the clear
+  // colour rather than the environment (its transmission pass reads
+  // scene.background, which is null for that pass) — under ortho only.
+  const _backdropCam = new THREE.PerspectiveCamera(45, 1, 0.1, 10);
+  const _backdropScene = new THREE.Scene();
+  function renderWithBackdrop(renderScene, cam) {
+    const background = renderScene.background;
+    if (!cam.isOrthographicCamera || !background?.isTexture) {
+      renderer.render(renderScene, cam);
+      return;
+    }
+    cam.updateMatrixWorld();
+    cam.matrixWorld.decompose(_backdropCam.position, _backdropCam.quaternion, _backdropCam.scale);
+    _backdropCam.up.copy(cam.up);
+    _backdropCam.fov = camera.fov;
+    _backdropCam.aspect = (cam.right - cam.left) / (cam.top - cam.bottom) || 1;
+    // A recentred capture renders a sub-window of a larger frame: the backdrop
+    // is cropped the same way, so it lines up with the scene pass.
+    if (cam.view?.enabled) {
+      const { fullWidth, fullHeight, offsetX, offsetY, width, height } = cam.view;
+      _backdropCam.setViewOffset(fullWidth, fullHeight, offsetX, offsetY, width, height);
+    } else {
+      _backdropCam.clearViewOffset();
+    }
+    _backdropCam.updateProjectionMatrix();
+    _backdropCam.updateMatrixWorld(true);
+    _backdropScene.background = background;
+    _backdropScene.backgroundBlurriness = renderScene.backgroundBlurriness;
+    _backdropScene.backgroundIntensity = renderScene.backgroundIntensity;
+    _backdropScene.backgroundRotation.copy(renderScene.backgroundRotation);
+    const clearColorWas = renderer.autoClearColor;
+    try {
+      renderer.render(_backdropScene, _backdropCam);
+      renderScene.background = null;
+      renderer.autoClearColor = false;
+      renderer.render(renderScene, cam);
+    } finally {
+      renderScene.background = background;
+      renderer.autoClearColor = clearColorWas;
+      _backdropScene.background = null; // hold no reference to a rig's texture
+    }
+  }
+
   // --- render loop ----------------------------------------------------------
   // The tween is applied after controls.update() so the cue wins the frame, and
   // the frame listeners run before render so a playback frame draws its own pose.
@@ -2181,7 +2284,7 @@ export function createViewer(container, part) {
       const next = projectPoint([anchorDot.position.x, anchorDot.position.y, anchorDot.position.z]);
       if (anchorMoved(lastAnchor, next)) publishAnchor(next);
     }
-    renderer.render(scene, activeCamera);
+    renderWithBackdrop(scene, activeCamera);
     cutaway.renderOverlay(renderer, activeCamera);
   }
   renderer.setAnimationLoop(renderFrame);
@@ -2543,6 +2646,8 @@ export function createViewer(container, part) {
     registerCanonicalCaptureHidden,
     registerCaptureHidden,
     onCutawayHandleHover: cutaway.onHandleHoverChange,
+    // The section changed: on, off, or the plane moved. Listener gets no args.
+    onCutawayChange: cutaway.onChange,
     setRenderMode,
     getRenderMode: () => renderMode,
     onRenderModeChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },
@@ -2557,6 +2662,8 @@ export function createViewer(container, part) {
     isRealisticPending: () => realisticPending,
     onEnvironmentChange: (cb) => { envListeners.add(cb); return () => envListeners.delete(cb); },
     setPrintFrames,
+    setPrintFrameSource,
+    invalidatePrintFrames,
     whenRealisticReady,
     dispose,
   };

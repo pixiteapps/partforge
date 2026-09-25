@@ -19,6 +19,8 @@ vi.mock("three", async (importOriginal) => {
       this.frames = 0;
       this.toneMapping = 0;
       this.toneMappingExposure = 1;
+      this.autoClear = true;
+      this.autoClearColor = true;
       this.compileAsync = vi.fn(async () => {});
       state.renderer = this;
     }
@@ -29,6 +31,7 @@ vi.mock("three", async (importOriginal) => {
     getSize(target) { return target.set(400, 300); }
     setAnimationLoop(callback) { this.animationLoop = callback; }
     render() { this.frames += 1; }
+    clearDepth() {}
     get capabilities() { return { maxTextureSize: 8192, textureTypeReadable: () => state.hdrReadable }; }
     setRenderTarget() {}
     getRenderTarget() { return null; }
@@ -51,7 +54,7 @@ vi.mock("three", async (importOriginal) => {
   return { ...actual, WebGLRenderer: FakeRenderer, TextureLoader: FakeTextureLoader };
 });
 
-const rigState = vi.hoisted(() => ({ fail: false, failIds: new Set(), loads: 0, rigs: [], throwOnGround: false, gate: null, groundTexture: null }));
+const rigState = vi.hoisted(() => ({ fail: false, failIds: new Set(), loads: 0, rigs: [], throwOnGround: false, gate: null, groundTexture: null, textureBackground: false }));
 vi.mock("../../src/framework/materials/environment.js", async () => {
   const THREE = await import("three");
   return {
@@ -62,7 +65,8 @@ vi.mock("../../src/framework/materials/environment.js", async () => {
       if (rigState.gate) await rigState.gate;
       if (rigState.fail || rigState.failIds.has(id)) throw new Error("asset 404");
       const rig = {
-        id: id ?? "studio", exposure: 1.1, envMap: new THREE.Texture(), background: new THREE.Color(0xffffff), backgroundBlurriness: 0,
+        id: id ?? "studio", exposure: 1.1, envMap: new THREE.Texture(), background: rigState.textureBackground ? new THREE.Texture() : new THREE.Color(0xffffff),
+        backgroundBlurriness: rigState.textureBackground ? 0.5 : 0, backgroundIntensity: 0.8, rotationY: 0.7,
         ground: new THREE.Mesh(), lights: [], shadow: { group: new THREE.Group(), render: vi.fn(), setSize: vi.fn(), dispose: vi.fn() },
         setGround: vi.fn(() => { if (rigState.throwOnGround) throw new Error("ground boom"); }), dispose: vi.fn(),
         updateForCamera: vi.fn(),
@@ -91,6 +95,7 @@ const part = {
     body: { build: () => null, display: { material: "brass" } },
     ghost: { build: () => null, display: { opacity: 0.3 } },
     printed: { build: () => null, display: { material: "pla-print" } },
+    plain: { build: () => null },
   },
 };
 // A real volume (a unit tetrahedron), so the cutaway has bounds to seed its plane from.
@@ -113,7 +118,7 @@ beforeEach(() => {
   state.hdrReadable = true;
   state.holdTextures = false;
   state.textureLoads = [];
-  Object.assign(rigState, { fail: false, failIds: new Set(), loads: 0, rigs: [], throwOnGround: false, gate: null, groundTexture: null });
+  Object.assign(rigState, { fail: false, failIds: new Set(), loads: 0, rigs: [], throwOnGround: false, gate: null, groundTexture: null, textureBackground: false });
   globalThis.ResizeObserver = class {
     observe() {}
     disconnect() {}
@@ -440,7 +445,7 @@ test("while an animation moves a part the shadow re-renders low-res, then once f
   v.setSubPose("body", new THREE.Matrix4().makeTranslation(0, 0, 1).toArray());
   state.renderer.animationLoop();
   expect(render).toHaveBeenCalledTimes(1);
-  expect(render.mock.calls[0][2]).toEqual({ lowRes: true });
+  expect(render.mock.calls[0][2]).toEqual({ lowRes: true, clippingPlanes: null });
   now += 50; // inside the 100 ms throttle
   v.setSubPose("body", new THREE.Matrix4().makeTranslation(0, 0, 2).toArray());
   state.renderer.animationLoop();
@@ -451,7 +456,7 @@ test("while an animation moves a part the shadow re-renders low-res, then once f
   now += 250; // settled
   state.renderer.animationLoop();
   expect(render).toHaveBeenCalledTimes(3);
-  expect(render.mock.calls[2][2]).toBeUndefined();
+  expect(render.mock.calls[2][2]).toEqual({ clippingPlanes: null });
   now += 500;
   state.renderer.animationLoop();
   expect(render).toHaveBeenCalledTimes(3); // nothing moved: no more renders
@@ -464,6 +469,27 @@ test("print frames reach the patterned material's uniform", async () => {
   const frame = new THREE.Matrix4().makeTranslation(1, 2, 3).toArray();
   v.setPrintFrames({ printed: frame });
   expect(v.__subMesh("printed").material.userData.patternUniforms.pfPrintFrame.value.toArray()).toEqual(frame);
+  v.dispose();
+});
+
+// A sub-part with no material is a PLA print in realistic mode, so it draws
+// layer lines and takes its print frame like an explicit pla-print does — and
+// goes back to the unchanged blue-grey CAD material.
+test("a sub-part with no material draws layer lines in realistic and its print frame reaches it", async () => {
+  const v = shown();
+  const cad = v.__subMesh("plain").material;
+  expect(cad.color.getHex()).toBe(0x9fb4cc);
+  expect(cad.metalness).toBe(0.25);
+  await v.setRenderMode("realistic");
+  const m = v.__subMesh("plain").material;
+  expect(m).toBeInstanceOf(THREE.MeshPhysicalMaterial);
+  expect(m.color.getHex()).toBe(0x9fb4cc);
+  expect(m.customProgramCacheKey()).toContain("layer-lines");
+  const frame = new THREE.Matrix4().makeTranslation(4, 5, 6).toArray();
+  v.setPrintFrames({ plain: frame });
+  expect(v.__subMesh("plain").material.userData.patternUniforms.pfPrintFrame.value.toArray()).toEqual(frame);
+  await v.setRenderMode("cad");
+  expect(v.__subMesh("plain").material).toBe(cad);
   v.dispose();
 });
 
@@ -1170,5 +1196,162 @@ test("in CAD, renderViews('realistic') and a thumbnail of the same environment s
   expect(disposedAtCapture).toBe(false);              // captured with a live rig
   expect(v.getRenderMode()).toBe("cad");
   expect(rig.dispose).toHaveBeenCalledTimes(1);       // released once both are done
+  v.dispose();
+});
+
+// --- the environment backdrop under an orthographic camera -------------------
+// three draws a texture background as a unit box through the ACTIVE camera's
+// projection, which under ortho is a one-unit speck: an ortho face view in
+// realistic mode lost its backdrop to the clear colour. The viewer draws the
+// backdrop through a perspective camera looking the same way, then the scene
+// through the ortho camera without clearing colour.
+function recordPasses() {
+  const passes = [];
+  let target = null;
+  state.renderer.setRenderTarget = (t) => { target = t; };
+  state.renderer.render = (scene, camera) => {
+    passes.push({
+      target, scene, camera,
+      background: scene.background, blurriness: scene.backgroundBlurriness, intensity: scene.backgroundIntensity,
+      rotationY: scene.backgroundRotation.y, autoClearColor: state.renderer.autoClearColor,
+      quaternion: camera.quaternion.clone(), fov: camera.fov, aspect: camera.aspect,
+    });
+  };
+  return passes;
+}
+function expectBackdropThenScene([backdrop, main], v, cam) {
+  const scene = sceneOf(v);
+  const texture = lastRig().background;
+  expect(backdrop.camera.isPerspectiveCamera).toBe(true);
+  expect(backdrop.scene).not.toBe(scene);
+  expect(backdrop.background).toBe(texture);
+  expect(backdrop.blurriness).toBe(0.5);
+  expect(backdrop.intensity).toBe(0.8);
+  expect(backdrop.rotationY).toBeCloseTo(0.7);
+  expect(backdrop.autoClearColor).toBe(true); // the backdrop pass clears
+  expect(backdrop.quaternion.angleTo(cam.quaternion)).toBeCloseTo(0, 6);
+  expect(backdrop.fov).toBe(45); // the live perspective camera's
+  expect(backdrop.aspect).toBeCloseTo((cam.right - cam.left) / (cam.top - cam.bottom));
+  expect(main.scene).toBe(scene);
+  expect(main.camera).toBe(cam);
+  expect(main.background).toBe(null); // no second (speck) backdrop
+  expect(main.autoClearColor).toBe(false); // keeps the backdrop's colour
+  expect(main.target).toBe(backdrop.target);
+  // Everything put back.
+  expect(scene.background).toBe(texture);
+  expect(state.renderer.autoClearColor).toBe(true);
+}
+
+test("realistic + ortho: the live frame draws the backdrop through a perspective camera, then the scene through the ortho one", async () => {
+  rigState.textureBackground = true;
+  const v = shown();
+  await v.setRenderMode("realistic");
+  v.setProjection("orthographic");
+  const passes = recordPasses();
+  state.renderer.animationLoop(16);
+  const main = passes.filter((p) => p.scene === sceneOf(v));
+  expect(main).toHaveLength(1);
+  const i = passes.indexOf(main[0]);
+  expect(main[0].camera.isOrthographicCamera).toBe(true);
+  expectBackdropThenScene([passes[i - 1], passes[i]], v, main[0].camera);
+  v.dispose();
+});
+
+test("realistic + ortho: a capture of the current framing gets the same backdrop pass, into the capture target", async () => {
+  stubCanvas();
+  rigState.textureBackground = true;
+  const v = shown();
+  await v.setRenderMode("realistic");
+  v.setProjection("orthographic");
+  const passes = recordPasses();
+  expect(v.captureCurrent({ size: 64 })).toBe("data:image/jpeg;base64,TEST");
+  const offscreen = passes.filter((p) => p.target);
+  expect(offscreen).toHaveLength(2);
+  expect(offscreen[0].target.texture.type).toBe(THREE.HalfFloatType);
+  expect(offscreen[1].camera.isOrthographicCamera).toBe(true);
+  expectBackdropThenScene(offscreen, v, offscreen[1].camera);
+  v.dispose();
+});
+
+test("realistic + ortho: the 8-bit capture fallback gets the backdrop pass too", async () => {
+  stubCanvas();
+  state.hdrReadable = false;
+  rigState.textureBackground = true;
+  const v = shown();
+  await v.setRenderMode("realistic");
+  v.setProjection("orthographic");
+  const passes = recordPasses();
+  v.captureCurrent({ size: 64 });
+  const offscreen = passes.filter((p) => p.target);
+  expect(offscreen).toHaveLength(2);
+  expect(offscreen[0].target.texture.type).toBe(THREE.UnsignedByteType);
+  expectBackdropThenScene(offscreen, v, offscreen[1].camera);
+  v.dispose();
+});
+
+test("perspective realistic, and CAD under ortho, stay one pass", async () => {
+  stubCanvas();
+  rigState.textureBackground = true;
+  const v = shown();
+  await v.setRenderMode("realistic");
+  let passes = recordPasses();
+  state.renderer.animationLoop(16);
+  v.captureCurrent({ size: 64 });
+  expect(passes.map((p) => p.scene)).toEqual([sceneOf(v), sceneOf(v)]);
+  expect(passes.every((p) => p.background === lastRig().background && p.autoClearColor === true)).toBe(true);
+  // Canonical renders are perspective whatever the live view shows.
+  v.setProjection("orthographic");
+  passes = recordPasses();
+  await v.renderViews(["front"], { renderMode: "realistic" });
+  const offscreen = passes.filter((p) => p.target);
+  expect(offscreen).toHaveLength(1);
+  expect(offscreen[0].camera.isPerspectiveCamera).toBe(true);
+  expect(offscreen[0].background).toBe(lastRig().background);
+  await v.setRenderMode("cad");
+  passes = recordPasses();
+  state.renderer.animationLoop(32);
+  v.captureCurrent({ size: 64 });
+  expect(passes.map((p) => p.scene)).toEqual([sceneOf(v), sceneOf(v)]);
+  expect(passes.every((p) => p.camera.isOrthographicCamera && p.background?.isColor)).toBe(true);
+  v.dispose();
+});
+
+test("the backdrop pass puts the scene's background back even when a render throws", async () => {
+  rigState.textureBackground = true;
+  const v = shown();
+  await v.setRenderMode("realistic");
+  v.setProjection("orthographic");
+  let n = 0;
+  state.renderer.render = () => { if (++n === 2) throw new Error("gl lost"); };
+  stubCanvas();
+  expect(() => v.captureCurrent({ size: 64 })).toThrow("gl lost");
+  expect(sceneOf(v).background).toBe(lastRig().background);
+  expect(state.renderer.autoClearColor).toBe(true);
+  v.dispose();
+});
+
+// --- the contact shadow under a cutaway ---------------------------------------
+test("with the cutaway on, the contact shadow is clipped by its plane and re-renders when the plane changes", async () => {
+  let now = 1000;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const render = lastRig().shadow.render;
+  expect(render.mock.calls.at(-1)[2].clippingPlanes).toBe(null);
+  render.mockClear();
+  v.setCutawayEnabled(true);
+  now += 1000;
+  state.renderer.animationLoop(); // settled: one full render
+  expect(render).toHaveBeenCalled();
+  const planes = render.mock.calls.at(-1)[2].clippingPlanes;
+  expect(planes).toHaveLength(1);
+  const live = v.getCutawayPlane();
+  expect(planes[0].normal.toArray()).toEqual(live.normal.toArray());
+  expect(planes[0].constant).toBe(live.constant);
+  render.mockClear();
+  v.setCutawayEnabled(false);
+  now += 1000;
+  state.renderer.animationLoop();
+  expect(render.mock.calls.at(-1)[2].clippingPlanes).toBe(null);
   v.dispose();
 });

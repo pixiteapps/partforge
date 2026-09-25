@@ -3,12 +3,12 @@
 // block geometry, and the viewer already falls back (resolve.js). Pure — imports
 // only the three-free materials data (test/lint-purity.test.js).
 import { warn } from "./finding.js";
-import { PRESETS, DEFAULT_PRESET_ID } from "../materials/presets.js";
+import { PRESETS } from "../materials/presets.js";
 import { ENVIRONMENTS } from "../materials/environments.js";
 import { resolveMaterial, resolveEnvironmentId, OVERRIDE_RANGES } from "../materials/resolve.js";
 import { suggest } from "../geometry/op-options.js";
 
-const listedPresets = () => Object.keys(PRESETS).filter((id) => id !== DEFAULT_PRESET_ID);
+const listedPresets = () => Object.keys(PRESETS);
 const subParts = (part) => Object.entries(part?.parts ?? {}).filter(([, sp]) => sp && typeof sp === "object");
 const issuesOf = (part, kind) => subParts(part).flatMap(([name, sp]) =>
   resolveMaterial(sp.display).issues.filter((i) => i.kind === kind).map((i) => ({ name, ...i })));
@@ -20,7 +20,7 @@ export const MATERIAL_RULES = [
       const near = typeof value === "string" ? suggest(value, listedPresets()) : null;
       return warn("unknown-material",
         `sub-part "${name}" names material ${JSON.stringify(value)}, which is not in the library`,
-        `${near ? `Did you mean "${near}"? ` : ""}The viewer shows the default look instead. Known materials: ${listedPresets().join(", ")}.`,
+        `${near ? `Did you mean "${near}"? ` : ""}The viewer draws it as if it named no material instead (a PLA print in realistic mode). Known materials: ${listedPresets().join(", ")}.`,
         `parts.${name}.display.material`);
     }),
   },

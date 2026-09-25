@@ -150,6 +150,7 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
     if (!cache.isStale()) return;
     cache.markFresh();
     const token = ++loopToken;
+    let missed = false;
     // One at a time: each realistic style may load an environment.
     for (const s of STYLES) {
       if (detached || token !== loopToken) return;
@@ -161,9 +162,15 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
       let url = null;
       try { url = await viewer.renderStyleThumbnail(s.id, { size: 256 }); } catch { url = null; }
       if (detached || token !== loopToken) return;
+      // A failed or empty render (null) blanks its tile rather than leaving an
+      // older picture up, and leaves the cache stale so the next open tries
+      // again: caching it made one bad moment permanent until a part or theme
+      // change came along.
       cache.set(s.id, url);
+      if (!url) missed = true;
       paint(s.id);
     }
+    if (missed && token === loopToken) cache.invalidate();
   }
 
   // --- open / close ------------------------------------------------------------
@@ -225,6 +232,10 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
     viewer.onEnvironmentChange(() => render()),
     viewer.onAssemblyChange?.(() => cache.invalidate()) ?? (() => {}),
     viewer.onThemeChange?.(() => cache.invalidate()) ?? (() => {}),
+    // A thumbnail shows the section as it was when it was taken, so turning
+    // the cutaway on or off, or moving its plane, stales them all — without
+    // this a set taken with the cutaway on outlived the cutaway itself.
+    viewer.onCutawayChange?.(() => cache.invalidate()) ?? (() => {}),
   ];
   render();
   // The popover closes whenever the button's host is hidden: #viewbar hides

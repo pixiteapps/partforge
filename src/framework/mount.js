@@ -943,22 +943,42 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
 
     // Print frames for the layer-line pattern: the display → export map of the
     // geometry just delivered, so layers run the way the part is printed rather
-    // than the way it is displayed. Computed at delivery (the frame describes
-    // the delivered mesh, which a later pose-only repair only moves) and only
-    // for sub-parts whose material draws layer lines — each one costs two
-    // geometry-free probe builds.
+    // than the way it is displayed. Each frame describes the delivered mesh
+    // (which a later pose-only repair only moves), and only sub-parts whose
+    // material draws layer lines have one — which includes every
+    // sub-part naming no material, since realistic mode shows those as PLA
+    // (resolve.js). One without a place() is identity at once; one with it
+    // costs two geometry-free probe builds.
     const layerLined = new Set(Object.keys(part.parts).filter((n) => {
       try { return resolveMaterial(part.parts[n].display).params.pattern === "layer-lines"; } catch { return false; }
     }));
+    // LAZY: a delivery only records the view and params it was built at; the
+    // viewer pulls the frames (computePrintFrames) when it is about to draw the
+    // realistic look — live, loading, or borrowed by a capture — so a CAD-only
+    // session never probes (viewer.js setPrintFrameSource). The snapshot keeps
+    // a late computation describing the mesh actually delivered.
     const printFrames = {};
+    const undrawnFrames = new Map(); // sub-part -> { view, params } at its delivery
     function recordPrintFrames(names) {
       const wanted = names.filter((n) => layerLined.has(n));
       if (!wanted.length) return;
-      let resolved;
-      try { resolved = resolveParams(part, params); } catch { return; } // diagnosed by the build
-      for (const n of wanted) printFrames[n] = printFrameMatrix(part.parts[n], { view: view(), ...resolved });
-      viewer.setPrintFrames({ ...printFrames });
+      const at = { view: view(), params: { ...params } };
+      for (const n of wanted) undrawnFrames.set(n, at);
+      viewer.invalidatePrintFrames?.();
     }
+    function computePrintFrames() {
+      const resolvedFor = new Map(); // one resolveParams per delivery, not per sub-part
+      for (const [n, at] of undrawnFrames) {
+        if (!resolvedFor.has(at)) {
+          try { resolvedFor.set(at, resolveParams(part, at.params)); } catch { resolvedFor.set(at, null); } // diagnosed by the build
+        }
+        const resolved = resolvedFor.get(at);
+        if (resolved) printFrames[n] = printFrameMatrix(part.parts[n], { view: at.view, ...resolved });
+      }
+      undrawnFrames.clear();
+      return { ...printFrames };
+    }
+    viewer.setPrintFrameSource?.(computePrintFrames);
 
     // Sub-parts whose latest fresh delivery had zero triangles (see the `meshes` case).
     const emptySubParts = new Set();

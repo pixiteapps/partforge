@@ -58,9 +58,14 @@ test("a wood material starts white so the map shows, and an explicit colour tint
   expect(buildPhysicalMaterial({ material: "walnut", color: 0x808080 }, { loadTexture }).color.getHex()).toBe(0x808080);
 });
 
-test("no display → the default look, as a physical material", () => {
+// Realistic shows a sub-part with no material as a PLA print in its CAD colour.
+test("no display → a layer-lined PLA print in the CAD blue-grey", () => {
   const m = buildPhysicalMaterial(undefined, { loadTexture });
   expect(m.color.getHex()).toBe(0x9fb4cc);
+  expect(m.metalness).toBe(0);
+  expect(m.envMapIntensity).toBe(0.6);
+  expect(m.userData.patternUniforms?.pfPrintFrame).toBeTruthy();
+  expect(buildPhysicalMaterial({ color: 0x1e88e5 }, { loadTexture }).color.getHex()).toBe(0x1e88e5);
 });
 
 // The carbon texture is a luminance MASK, not a colour: decoding it as sRGB

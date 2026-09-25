@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
-import { PRESETS, DEFAULT_PRESET_ID } from "../../src/framework/materials/presets.js";
+import { PRESETS } from "../../src/framework/materials/presets.js";
 import { ENVIRONMENTS } from "../../src/framework/materials/environments.js";
 import { OVERRIDE_RANGES } from "../../src/framework/materials/resolve.js";
 
@@ -15,7 +15,6 @@ test("the docs carry a Materials and appearance section", () => {
 });
 test("every listed preset appears in the section, with its tintable mark", () => {
   for (const p of Object.values(PRESETS)) {
-    if (p.id === DEFAULT_PRESET_ID) continue;
     expect(section, p.id).toContain(`\`${p.id}\``);
   }
 });

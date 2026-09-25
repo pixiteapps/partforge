@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { PRESETS, DEFAULT_PRESET_ID } from "../../src/framework/materials/presets.js";
+import { PRESETS } from "../../src/framework/materials/presets.js";
 import { ENVIRONMENTS, DEFAULT_ENVIRONMENT_ID } from "../../src/framework/materials/environments.js";
 import {
   OVERRIDE_RANGES, DISPLAY_KEYS, resolveMaterial, cadAppearance, printColor,
@@ -14,8 +14,10 @@ const LISTED = [
   "abs-plastic", "clear-acrylic", "rubber", "oak", "walnut", "carbon-fiber",
 ];
 
-test("the library lists exactly the 24 spec presets plus the hidden default", () => {
-  expect(Object.keys(PRESETS).sort()).toEqual([...LISTED, DEFAULT_PRESET_ID].sort());
+// The hidden "default" preset is retired: a sub-part with no material renders
+// as a PLA print (below), and its CAD look lives in resolve.js.
+test("the library lists exactly the 24 spec presets, no hidden default", () => {
+  expect(Object.keys(PRESETS).sort()).toEqual([...LISTED].sort());
 });
 
 test("every preset is physically plausible and self-consistent", () => {
@@ -41,11 +43,48 @@ test("the four environments exist and studio is the default", () => {
   expect(DEFAULT_ENVIRONMENT_ID).toBe("studio");
 });
 
-test("no display → the default preset, no issues", () => {
+// Realistic mode shows a sub-part that names no material as a PLA print: the
+// pla-print finish (layer lines, its roughness and reflection), in the part's own
+// colour, else the CAD view's blue-grey — the same colour in both views.
+const PLA = PRESETS["pla-print"];
+const plaLook = (params) => ({
+  metalness: params.metalness, roughness: params.roughness, pattern: params.pattern,
+  textureScale: params.textureScale, envIntensity: params.envIntensity, specularIntensity: params.specularIntensity,
+});
+const PLA_LOOK = {
+  metalness: PLA.metalness, roughness: PLA.roughness, pattern: "layer-lines",
+  textureScale: PLA.textureScale, envIntensity: PLA.envIntensity, specularIntensity: PLA.specularIntensity,
+};
+
+test("no display → a PLA print in the CAD view's blue-grey, no issues", () => {
   const r = resolveMaterial(undefined);
-  expect(r.preset.id).toBe(DEFAULT_PRESET_ID);
+  expect(r.preset.id).toBe("pla-print");
   expect(r.issues).toEqual([]);
   expect(r.params.color).toBe(0x9fb4cc);
+  expect(plaLook(r.params)).toEqual(PLA_LOOK);
+});
+
+test("no material but a colour → a PLA print in that colour", () => {
+  const r = resolveMaterial({ color: 0x1e88e5, opacity: 0.5 });
+  expect(r.params.color).toBe(0x1e88e5);
+  expect(r.params.opacity).toBe(0.5);
+  expect(plaLook(r.params)).toEqual(PLA_LOOK);
+  expect(r.issues).toEqual([]);
+});
+
+test("no material still takes the overrides", () => {
+  const r = resolveMaterial({ roughness: 0.2 });
+  expect(r.params.roughness).toBe(0.2);
+  expect(r.params.pattern).toBe("layer-lines");
+});
+
+test("an explicit material wins over the PLA default", () => {
+  const r = resolveMaterial({ material: "brass" });
+  expect(r.preset.id).toBe("brass");
+  expect(r.params.color).toBe(PRESETS.brass.color);
+  expect(r.params.pattern).toBeNull();
+  // …including pla-print itself, which keeps its own colour when untinted.
+  expect(resolveMaterial({ material: "pla-print" }).params.color).toBe(PLA.color);
 });
 
 test("color tints a preset; overrides replace values", () => {
@@ -56,10 +95,18 @@ test("color tints a preset; overrides replace values", () => {
   expect(r.issues).toEqual([]);
 });
 
-test("an unknown preset falls back to the default and reports it", () => {
+// An unknown material is "no usable material": the same PLA default as none.
+test("an unknown preset falls back to the no-material PLA look and reports it", () => {
   const r = resolveMaterial({ material: "unobtanium" });
-  expect(r.preset.id).toBe(DEFAULT_PRESET_ID);
+  expect(r.preset.id).toBe("pla-print");
+  expect(r.params.color).toBe(0x9fb4cc);
+  expect(plaLook(r.params)).toEqual(PLA_LOOK);
   expect(r.issues).toEqual([{ kind: "unknown-material", key: "material", value: "unobtanium" }]);
+  expect(resolveMaterial({ material: "unobtanium", color: 0x112233 }).params.color).toBe(0x112233);
+});
+
+test("\"default\" is no longer a material name", () => {
+  expect(resolveMaterial({ material: "default" }).issues).toEqual([{ kind: "unknown-material", key: "material", value: "default" }]);
 });
 
 test("an out-of-range override clamps and reports it", () => {
@@ -96,6 +143,17 @@ test("cadAppearance lifts very dark materials to a minimum luminance", () => {
 test("cadAppearance keeps a legacy color-only display exactly as today", () => {
   expect(cadAppearance({ color: 0x1e88e5 })).toEqual({ color: 0x1e88e5, metalness: 0.25, roughness: 0.55, opacity: 1 });
   expect(cadAppearance(undefined)).toEqual({ color: 0x9fb4cc, metalness: 0.25, roughness: 0.55, opacity: 1 });
+  expect(cadAppearance({ roughness: 0.1, opacity: 0.4 })).toEqual({ color: 0x9fb4cc, metalness: 0.25, roughness: 0.55, opacity: 0.4 });
+});
+
+// The PLA default is realistic-only: CAD keeps the blue-grey drafting look for an
+// unknown material exactly as it did when that fell back to the "default" preset.
+test("cadAppearance for an unknown material is unchanged by the PLA default", () => {
+  expect(cadAppearance({ material: "unobtanium" })).toEqual({ color: 0x9fb4cc, metalness: 0.25, roughness: 0.55, opacity: 1 });
+  expect(cadAppearance({ material: "unobtanium", roughness: 0.1, metalness: 0.9 })).toEqual({ color: 0x9fb4cc, metalness: 0.5, roughness: 0.3, opacity: 1 });
+  const dark = cadAppearance({ material: "unobtanium", color: 0x000000 });
+  expect(dark.color).not.toBe(0x000000); // still lifted, as before
+  expect(dark.metalness).toBe(0.25);
 });
 
 test("cadAppearance flattens metalness so metals stay readable without an environment", () => {
@@ -110,12 +168,17 @@ test("printColor: null without color/material, tint first, then preset colour", 
   expect(printColor({ color: 0x123456 })).toBe(0x123456);
   expect(printColor({ material: "brass" })).toBe(PRESETS.brass.color);
   expect(printColor({ material: "pla-print", color: 0xff0000 })).toBe(0xff0000);
+  // The realistic PLA default never reaches the 3MF: an unknown material still
+  // exports the blue-grey it always did, not pla-print's cream.
+  expect(printColor({ material: "unobtanium" })).toBe(0x9fb4cc);
 });
 
 test("declaresMaterials is true only when some sub-part names a material", () => {
   expect(declaresMaterials({ parts: { a: { display: { color: 1 } } } })).toBe(false);
   expect(declaresMaterials({ parts: { a: {}, b: { display: { material: "brass" } } } })).toBe(true);
   expect(declaresMaterials({})).toBe(false);
+  // The realistic PLA default is not a declared material.
+  expect(declaresMaterials({ parts: { a: {}, b: { display: { opacity: 0.5 } } } })).toBe(false);
 });
 
 test("resolveEnvironmentId falls back to studio", () => {

@@ -1,10 +1,11 @@
 // src/framework/materials/resolve.js
 // Pure resolution of a sub-part's `display` block against the library. Never
-// throws and never rejects a value: an unknown preset falls back to the default,
+// throws and never rejects a value: an unknown preset falls back to the
+// no-material look (below),
 // an out-of-range override clamps, an unknown key is ignored — and every one of
 // those is returned as an `issue` so lint can warn about it. Appearance must
 // never be able to fail a build.
-import { PRESETS, DEFAULT_PRESET_ID } from "./presets.js";
+import { PRESETS } from "./presets.js";
 import { ENVIRONMENTS, DEFAULT_ENVIRONMENT_ID } from "./environments.js";
 
 export const OVERRIDE_RANGES = {
@@ -20,16 +21,34 @@ export const DISPLAY_KEYS = ["color", "opacity", "material", ...Object.keys(OVER
 
 const isColor = (v) => Number.isInteger(v) && v >= 0 && v <= 0xffffff;
 
+// A sub-part with no usable material — none named, or one the library does not
+// know. The CAD view draws it in the viewer's neutral blue-grey drafting look
+// (the look every part had before the library existed; viewer.js's base
+// material and threemf.js's uncoloured-object colour are the same literal).
+// Realistic mode draws it as a PLA print — the pla-print finish, layer lines
+// and all — in that same colour, or the part's own `color`, so a part is the
+// same colour in both views, just printed. `declaresMaterials` still counts
+// only a NAMED material: this default never makes a part "declare" one.
+export const NO_MATERIAL_COLOR = 0x9fb4cc;
+export const NO_MATERIAL_PRESET_ID = "pla-print";
+const NO_MATERIAL_CAD = { color: NO_MATERIAL_COLOR, metalness: 0.25, roughness: 0.55 };
+
+const knownMaterial = (m) => typeof m === "string" && Object.hasOwn(PRESETS, m);
+
 export function resolveMaterial(display) {
   const d = display && typeof display === "object" ? display : {};
   const issues = [];
-  let preset = PRESETS[DEFAULT_PRESET_ID];
-  if (d.material != null) {
-    if (typeof d.material === "string" && Object.hasOwn(PRESETS, d.material)) preset = PRESETS[d.material];
-    else issues.push({ kind: "unknown-material", key: "material", value: d.material });
-  }
+  if (d.material != null && !knownMaterial(d.material)) issues.push({ kind: "unknown-material", key: "material", value: d.material });
+  const preset = knownMaterial(d.material) ? PRESETS[d.material] : PRESETS[NO_MATERIAL_PRESET_ID];
+  const baseColor = knownMaterial(d.material) ? preset.color : NO_MATERIAL_COLOR;
+  return { preset, ...applyDisplay(d, preset, baseColor, issues) };
+}
+
+// A preset record's numbers with the display block's colour, opacity and clamped
+// overrides applied. Pushes onto `issues`; returns them with the params.
+function applyDisplay(d, preset, baseColor, issues) {
   const params = {
-    color: preset.color,
+    color: baseColor,
     metalness: preset.metalness,
     roughness: preset.roughness,
     clearcoat: preset.clearcoat ?? 0,
@@ -63,7 +82,7 @@ export function resolveMaterial(display) {
   }
   // `tinted`: the author named a colour. A textured preset's colour map carries
   // its own colour, so only an explicit tint multiplies it (physical.js).
-  return { preset, params, issues, tinted: isColor(d.color) };
+  return { params, issues, tinted: isColor(d.color) };
 }
 
 // CAD-view appearance: the resolved colour on the CAD MeshStandardMaterial,
@@ -73,11 +92,15 @@ export function resolveMaterial(display) {
 const MIN_CAD_LUMA = 60; // 0..255, Rec. 709
 export function cadAppearance(display) {
   const d = display && typeof display === "object" ? display : {};
-  const { params } = resolveMaterial(d);
   if (d.material == null) {
-    // Byte-for-byte today's behaviour for a part without `material`.
-    return { color: params.color, metalness: 0.25, roughness: 0.55, opacity: params.opacity };
+    // The drafting look, untouched by overrides — as it always was.
+    const { params } = resolveMaterial(d);
+    return { color: params.color, metalness: NO_MATERIAL_CAD.metalness, roughness: NO_MATERIAL_CAD.roughness, opacity: params.opacity };
   }
+  // An unknown material flattens the drafting look rather than the realistic
+  // PLA default, exactly as it did when it fell back to the retired "default"
+  // preset.
+  const { params } = knownMaterial(d.material) ? resolveMaterial(d) : applyDisplay(d, NO_MATERIAL_CAD, NO_MATERIAL_COLOR, []);
   return {
     color: liftLuma(params.color, MIN_CAD_LUMA),
     metalness: Math.min(params.metalness, 0.5),
@@ -97,8 +120,9 @@ function liftLuma(color, min) {
 }
 
 // The colour a 3MF object carries: the explicit tint, else the preset's own
-// colour. Null when the sub-part says nothing about appearance, which is what
-// keeps an appearance-free export byte-for-byte unchanged.
+// colour (the blue-grey for an unknown material, never the realistic PLA
+// default's). Null when the sub-part says nothing about appearance, which is
+// what keeps an appearance-free export byte-for-byte unchanged.
 export function printColor(display) {
   if (!display || typeof display !== "object") return null;
   if (isColor(display.color)) return display.color;

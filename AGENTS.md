@@ -200,11 +200,19 @@ the installed package, so let the publish finish before bumping the dep there.
 - **`src/framework/materials/`** - the material library and realistic-mode
   rendering. `presets.js` (the preset table), `environments.js` (the
   environment records), `resolve.js` (display-block -> library lookup, never
-  throws), `print-frame.js` (pose math for layer lines), `assets.js` (asset
-  filename -> URL) and `tonemap-readback.js` (below) import **no three.js at
-  all** - deliberately three-free and DOM-free so `lint`, the worker's 3MF
-  writer and the docs-parity test can all import them without dragging GL or
-  a browser into the worker graph. Everything that actually touches
+  throws; a sub-part with no usable material - none named, or an unknown one -
+  keeps the blue-grey CAD look but resolves to `pla-print` in the part's colour
+  (else that blue-grey) for realistic mode, so its layer lines get a print
+  frame like any PLA part; there is no hidden `"default"` preset any more, and
+  `declaresMaterials` still counts only a named material), `print-frame.js`
+  (pose math for layer lines; frames are LAZY - `mount.js` only records each
+  delivery, and the viewer pulls them through `setPrintFrameSource` when it is
+  about to draw the realistic look, live or borrowed by a capture, so CAD
+  builds never run the pose probes), `assets.js` (asset filename -> URL) and
+  `tonemap-readback.js` (below) import **no three.js at all** - deliberately
+  three-free and DOM-free so `lint`, the worker's 3MF writer and the
+  docs-parity test can all import them without dragging GL or a browser into
+  the worker graph. Everything that actually touches
   **three.js** - `physical.js` (CAD vs. `MeshPhysicalMaterial`), `uv.js`
   (box-projected UVs for anisotropy), `patterns.js` (below), `environment.js`
   (the PMREM rig: lighting, backdrop, ground, contact shadow), `print-bed.js`

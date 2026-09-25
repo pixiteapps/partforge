@@ -127,3 +127,55 @@ test("the tight layer's blur is millimetres whatever the plane size, and it hide
   expect(soft.visible).toBe(true);
   shadow.dispose();
 });
+
+test("clippingPlanes clip the casters' depth pass, and a render without them clips nothing", () => {
+  const renderer = fakeRenderer();
+  const seen = [];
+  const shadow = createContactShadow({ renderer, sizeMm: 200 });
+  const scene = new THREE.Scene();
+  const caster = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+  scene.add(caster, shadow.group);
+  renderer.render = (obj) => { if (obj === scene) seen.push(scene.overrideMaterial.clippingPlanes); };
+  const plane = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);
+  shadow.render(scene, [caster], { clippingPlanes: [plane] });
+  expect(seen).toHaveLength(2);
+  expect(seen.every((p) => p?.length === 1 && p[0] === plane)).toBe(true);
+  seen.length = 0;
+  shadow.render(scene, [caster]);
+  expect(seen).toEqual([null, null]);
+  shadow.dispose();
+});
+
+test("a clipped depth pass draws both sides, depth-tested, so a caster whose underside the cut removed still casts a filled shadow", () => {
+  // Clipped from below (kept side facing up), the caster shows the depth
+  // camera only back faces at the cut; FrontSide would cull them.
+  const renderer = fakeRenderer();
+  const seen = [];
+  const shadow = createContactShadow({ renderer, sizeMm: 200 });
+  const scene = new THREE.Scene();
+  const caster = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+  scene.add(caster, shadow.group);
+  renderer.render = (obj) => {
+    if (obj !== scene) return;
+    const m = scene.overrideMaterial;
+    seen.push({ side: m.side, planes: m.clippingPlanes, depthTest: m.depthTest, depthWrite: m.depthWrite });
+  };
+  const keepUpper = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // removes y < 0: the underside
+  shadow.render(scene, [caster], { clippingPlanes: [keepUpper] });
+  expect(seen).toHaveLength(2);
+  for (const s of seen) {
+    expect(s.side).toBe(THREE.DoubleSide);
+    expect(s.planes).toEqual([keepUpper]);
+    // The lowest surface under a texel wins, not whichever face drew last.
+    expect(s.depthTest).toBe(true);
+    expect(s.depthWrite).toBe(true);
+  }
+  // Uncut, the pass is exactly as before: front faces, no depth test.
+  seen.length = 0;
+  shadow.render(scene, [caster]);
+  expect(seen).toEqual([
+    { side: THREE.FrontSide, planes: null, depthTest: false, depthWrite: false },
+    { side: THREE.FrontSide, planes: null, depthTest: false, depthWrite: false },
+  ]);
+  shadow.dispose();
+});

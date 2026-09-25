@@ -110,7 +110,12 @@ export function createContactShadow({ renderer, sizeMm = 400 }) {
   // While a part moves (lowRes) only the soft layer is redrawn and the tight
   // one is hidden: an outline left where the part WAS would be wrong, and the
   // settle render that follows brings it back.
-  function render(scene, casters, { lowRes = false } = {}) {
+  //
+  // `clippingPlanes` (world space) clip the casters the way the cutaway clips
+  // what is on screen. The depth pass draws every caster with the one override
+  // material, which carries none of the casters' own clipping planes, so
+  // without this the half the cutaway removed still cast its shadow.
+  function render(scene, casters, { lowRes = false, clippingPlanes = null } = {}) {
     const bg = scene.background;
     const overrideBefore = scene.overrideMaterial;
     const clear = renderer.getClearAlpha();
@@ -123,6 +128,7 @@ export function createContactShadow({ renderer, sizeMm = 400 }) {
       renderer.setClearAlpha(0);
       for (const l of layers) {
         if (lowRes && l.spec.name === "tight") continue;
+        setClipping(l.depthMaterial, clippingPlanes);
         scene.overrideMaterial = l.depthMaterial;
         renderer.setRenderTarget(l.rt);
         renderer.render(scene, cam);
@@ -141,6 +147,27 @@ export function createContactShadow({ renderer, sizeMm = 400 }) {
       for (const l of layers) l.plane.visible = !(lowRes && l.spec.name === "tight");
       scene.background = bg;
     }
+  }
+
+  // A new plane count needs a new program; the same planes moved do not (three
+  // reads their values every frame).
+  //
+  // A clipped pass also draws BOTH sides, depth-tested. The pass looks UP at
+  // the casters, and a cut that removes a part's underside (a kept side facing
+  // up, e.g. a top-view cut after Flip) leaves no downward-facing faces at the
+  // cut — from below only back faces remain, which FrontSide culls, and the
+  // shadow shrinks to a faint ring of side walls. The interior back faces fill
+  // the silhouette instead, and the depth test keeps the LOWEST surface under
+  // each texel (the one the ground's darkness is measured from) rather than
+  // whichever face drew last. Unclipped, the pass is exactly as before:
+  // front faces, no depth test.
+  function setClipping(material, planes) {
+    const next = planes?.length ? planes : null;
+    const side = next ? THREE.DoubleSide : THREE.FrontSide;
+    if ((material.clippingPlanes?.length ?? 0) !== (next?.length ?? 0) || material.side !== side) material.needsUpdate = true;
+    material.clippingPlanes = next;
+    material.side = side;
+    material.depthTest = material.depthWrite = !!next;
   }
 
   return {

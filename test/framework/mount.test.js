@@ -58,6 +58,8 @@ vi.mock("../../src/framework/viewer.js", () => ({
       setEnvironment: vi.fn(async (id) => id),
       onEnvironmentChange: () => () => {},
       setPrintFrames: vi.fn(),
+      setPrintFrameSource: vi.fn(),
+      invalidatePrintFrames: vi.fn(),
       orbitBy: vi.fn(),
       _subMeshes: {},
       flashPoint: vi.fn(),
@@ -267,6 +269,24 @@ test("ready resolves after the first successful build; no getElementById with fu
   expect(spy).not.toHaveBeenCalled();
   finishFirstBuild(workers);
   return expect(runtime.ready).resolves.toBeUndefined();
+});
+
+// makePart's body names no material, which realistic mode shows as a PLA print —
+// so it has a print frame for its layer lines like an explicit pla-print would.
+// Frames are lazy: a delivery only marks them stale, and the viewer pulls them
+// from the source when it draws realistic (mount-realistic.test.js runs that).
+test("a sub-part with no material has a print frame, offered lazily on delivery", () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+  const v = fakeViewers[0];
+  expect(v.setPrintFrameSource).toHaveBeenCalledOnce();
+  finishFirstBuild(workers);
+  expect(v.invalidatePrintFrames).toHaveBeenCalled();
+  expect(v.setPrintFrames).not.toHaveBeenCalled(); // nothing computed in CAD
+  const source = v.setPrintFrameSource.mock.calls[0][0];
+  expect(source()).toEqual({ body: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] });
+  expect(runtime.declaresMaterials).toBe(false);
+  runtime.dispose();
 });
 
 test("mount creates one tooltip presenter and shares it with every viewer consumer", () => {
