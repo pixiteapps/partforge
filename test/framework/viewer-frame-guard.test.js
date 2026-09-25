@@ -91,7 +91,9 @@ test("a listener that throws every frame keeps the loop alive", () => {
   const viewer = newViewer();
   vi.spyOn(console, "warn").mockImplementation(() => {});
   viewer.onFrame(() => { throw new Error("boom"); });
-  for (let i = 0; i < 5; i++) state.renderer.animationLoop();
+  // The viewer draws on demand, so ask for each frame: the point is that the
+  // loop is still alive to draw it.
+  for (let i = 0; i < 5; i++) { viewer.requestRender(); state.renderer.animationLoop(); }
   expect(state.renderer.frames).toBe(5);
   viewer.dispose();
 });

@@ -134,6 +134,7 @@ test("viewer skips per-frame cutaway camera updates while cutaway is disabled", 
   expect(state.cutaway.updateForCamera).not.toHaveBeenCalled();
 
   state.cutaway.isEnabled = true;
+  viewer.requestRender(); // the viewer draws on demand; the camera work rides a drawn frame
   state.renderer.animationLoop();
   expect(state.cutaway.updateForCamera).toHaveBeenCalledOnce();
 

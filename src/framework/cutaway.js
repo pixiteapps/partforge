@@ -40,6 +40,9 @@ export function createCutaway({
   edgeColor,
   schedule = defaultSchedule,
   now,
+  // The viewer draws on demand; the idle fade lands on a timer, with nothing
+  // else to ask for the frame that shows it.
+  requestRender = () => {},
 }) {
   // Reassignable: a projection swap (perspective <-> ortho) hands the cutaway
   // a new camera after construction, and the gizmo must follow it too.
@@ -191,7 +194,7 @@ export function createCutaway({
     gizmo.setActiveAppearance(true);
     const scheduled = schedule(() => {
       cancelIdle = null;
-      if (enabled && !disposed) gizmo.setActiveAppearance(false);
+      if (enabled && !disposed) { gizmo.setActiveAppearance(false); requestRender(); }
     }, IDLE_DELAY_MS);
     cancelIdle = typeof scheduled === "function"
       ? scheduled
