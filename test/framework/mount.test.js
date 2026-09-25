@@ -305,7 +305,7 @@ test("mount creates one tooltip presenter and shares it with every viewer consum
     { cutaway: els.chrome.cutaway },
     { tooltip, escapeGuard: expect.any(Function) },
   );
-  expect(attachHoverLabels).toHaveBeenCalledWith(viewer, { part, tooltip });
+  expect(attachHoverLabels).toHaveBeenCalledWith(viewer, { part, tooltip, hint: null });
   expect(attachViewerControls).toHaveBeenCalledWith(viewer, els.chrome, { tooltip });
   runtime.dispose();
 });
@@ -835,6 +835,18 @@ test("deprecated container/controls aliases still work", () => {
   expect(controlsEl.querySelector("input.num")).not.toBeNull(); // panel built into the alias target
   finishFirstBuild(workers);
   return expect(runtime.ready).resolves.toBeUndefined();
+});
+
+test("onPick gives the hover tooltip a 'Click to edit' hint, overridable via pickHint", () => {
+  const { createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn() });
+  expect(attachHoverLabels.mock.calls.at(-1)[1].hint).toBe("Click to edit");
+
+  mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn(), pickHint: "Click to change" });
+  expect(attachHoverLabels.mock.calls.at(-1)[1].hint).toBe("Click to change");
+
+  mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn(), pickHint: null });
+  expect(attachHoverLabels.mock.calls.at(-1)[1].hint).toBeNull();
 });
 
 test("onPick arms the picker permanently and delivers label/prompt/token/anchor", () => {

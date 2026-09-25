@@ -14,7 +14,10 @@ export function createTooltipPresenter({ id = "pf-hover-tip" } = {}) {
   const title = document.createElement("b");
   const subtitle = document.createElement("span");
   subtitle.className = "pf-hover-sub";
-  element.append(title, subtitle);
+  // A call-to-action line under the name ("Click to edit"); empty = hidden.
+  const hint = document.createElement("div");
+  hint.className = "pf-hover-hint";
+  element.append(title, subtitle, hint);
   document.body.appendChild(element);
   let disposed = false;
   const claims = [];
@@ -22,6 +25,7 @@ export function createTooltipPresenter({ id = "pf-hover-tip" } = {}) {
   function setContent(content) {
     title.textContent = content.title;
     subtitle.textContent = content.subtitle ?? "";
+    hint.textContent = content.hint ?? "";
   }
 
   function measureVisible(content, anchored) {

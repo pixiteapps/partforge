@@ -419,7 +419,7 @@ function createCleanupStack() {
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
-export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDownload, onViewChange, onParamsCommit, onAnnotationSend,
+export function mount(part, { createWorker, elements = {}, onBuild, onPick, pickHint = "Click to edit", onDownload, onViewChange, onParamsCommit, onAnnotationSend,
                               fontCatalog,
                               imageCatalog,
                               onAssetUpload,
@@ -497,7 +497,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       onRailLayout: () => railChrome.layoutChanged?.(),
     });
     cleanup.defer(() => paneTabs.detach());
-    const hover = attachHoverLabels(viewer, { part, tooltip }); // always-on hover inspection (no-op on touch-only devices)
+    // Always-on hover inspection (no-op on touch-only devices). With onPick the
+    // host acts on a click, so the tooltip nudges toward it with `pickHint`
+    // (a host passes its own wording, or null for none).
+    const hover = attachHoverLabels(viewer, { part, tooltip, hint: onPick ? pickHint : null });
     cleanup.defer(() => hover.detach());
     const ui = createStatusUi({ ...els.status, exports: [els.exports.stl, els.exports.step, els.exports.threeMf] });
     cleanup.defer(() => ui.setStatus(""));

@@ -1,15 +1,19 @@
 // Always-on hover inspection: a cursor-following tooltip naming the feature +
-// sub-part under the pointer, and an overlay mesh highlighting the feature's
-// surface. Feature names come from Solid.label() in the part's build, carried
-// per-triangle in the mesh payload (geometry.userData.featureIds/features).
+// sub-part under the pointer. Feature names come from Solid.label() in the
+// part's build, carried per-triangle in the mesh payload
+// (geometry.userData.featureIds/features).
+//
+// There is deliberately NO surface highlight: tinting just the feature under
+// the pointer read as "only this face is clickable", and people stopped
+// clicking elsewhere on the part. `hint` (e.g. "Click to edit") adds a line
+// under the name when a click does something — mount passes it with onPick.
 import { createTooltipPresenter } from "../tooltip.js";
 import { raycastViewer } from "./raycast.js";
-import { createFeatureHighlight } from "./feature-highlight.js";
 import { runCleanupSteps } from "../teardown.js";
 
 export function attachHoverLabels(
   viewer,
-  { part, schedule = (cb) => requestAnimationFrame(cb), tooltip } = {},
+  { part, schedule = (cb) => requestAnimationFrame(cb), tooltip, hint = null } = {},
 ) {
   // Hover is a mouse idiom — skip entirely on touch-only devices. The stub
   // still answers the WHOLE interface: mount.js calls setSuppressed from the
@@ -25,8 +29,6 @@ export function attachHoverLabels(
   let presentationToken;
   let hasPresented = false;
 
-  const highlight = createFeatureHighlight(viewer);
-
   const subLabel = (name) => part.parts[name]?.label ?? name;
 
   function hide() {
@@ -35,7 +37,6 @@ export function attachHoverLabels(
       tooltipPresenter.hide(presentationToken);
       presentationToken = undefined;
     }
-    highlight.clear();
   }
 
   function show(hit, x, y) {
@@ -45,7 +46,7 @@ export function attachHoverLabels(
     } else {
       content = { title: subLabel(hit.subPart), subtitle: "" };
     }
-    highlight.show(hit);
+    if (hint) content.hint = hint;
     if (hasPresented) {
       hasPresented = false;
       tooltipPresenter.hide(presentationToken);
@@ -119,7 +120,6 @@ export function attachHoverLabels(
         () => viewer.domElement.removeEventListener("pointerup", onUp),
         () => viewer.domElement.removeEventListener("pointerleave", onLeave),
         hide,
-        () => highlight.dispose(),
         () => { if (ownsTooltip) tooltipPresenter.dispose(); },
       ], "feature hover cleanup failed");
     },

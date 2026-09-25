@@ -1039,6 +1039,10 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 .pf-hover-tip .pf-hover-sub { color: var(--pf-muted); font-size: 11px; margin-left: 7px; }
 #pf-hover-tip .pf-hover-sub:empty,
 .pf-hover-tip .pf-hover-sub:empty { display: none; }
+#pf-hover-tip .pf-hover-hint,
+.pf-hover-tip .pf-hover-hint { color: var(--pf-muted); font-size: 10.5px; margin-top: 1px; }
+#pf-hover-tip .pf-hover-hint:empty,
+.pf-hover-tip .pf-hover-hint:empty { display: none; }
 
 /* request-a-pick: agent prompt banner, floated top-centre well below the part tabs,
    laid out like a chat message (avatar + text). Slides/fades in when shown; themed. */
