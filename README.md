@@ -108,6 +108,7 @@ const runtime = mount(part, {
   },
   onBuild: ({ status, ms, error }) => {},   // per accepted build: "success" | "error"
   onPick: ({ selection, label, prompt, token }) => {}, // programmatic click-to-select
+  pickHint: "Click to edit",                // hover-tooltip nudge while onPick is set (null = none)
 });
 await runtime.ready;   // first successful build (rejects on a first-build error)
 runtime.setHostPane("rail");  // narrow layout only: show just the controls
@@ -221,7 +222,10 @@ full contract.
 back to the sub-part label/name) for compact UI, `prompt` is the LLM-ready
 sentence, `token` the compact form, `selection` the raw object. When `onPick` is
 set, the `?pick` / `?pickserver` URL modes are ignored (one click listener ever
-live); hover labels stay always-on.
+live); hover labels stay always-on, and gain a `pickHint` line under the name
+("Click to edit" by default; pass your own wording, or `null` for none). Hover
+never tints the surface under the pointer — a per-face highlight read as "only
+this spot is clickable".
 
 ## Authoring guide
 
