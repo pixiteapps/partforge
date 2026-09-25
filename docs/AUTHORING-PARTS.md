@@ -2821,8 +2821,8 @@ addition to) the generated view style button above:
   revert too.
 - `runtime.declaresMaterials` — `true` when any sub-part names a
   `display.material`. A part with none still supports realistic mode (every
-  sub-part just renders under the library's `default` look), so use this to
-  decide whether to surface your own realistic control at all, not whether it works.
+  sub-part renders as a PLA print in its CAD colour), so use this to decide
+  whether to surface your own realistic control at all, not whether it works.
   Feature lines are not a preference: they draw whenever `runtime.renderMode`
   reads `"cad"` and never while it reads `"realistic"` — there is no switch
   to drive independently of it.

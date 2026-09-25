@@ -290,12 +290,91 @@ test("a layer-line material gets its print frame from the delivered pose", async
   workers.manifold.onmessage({ data: { type: "ready" } });
   workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("body")], ms: 1 } });
   await runtime.ready;
-  expect(printFrameCalls.count).toBeGreaterThan(0);
+  expect(printFrameCalls.count).toBe(0); // lazy: nothing probes while the view is CAD
   await runtime.renderMode.set("realistic");
+  expect(printFrameCalls.count).toBe(1); // computed on the way in
   const m = viewers[0].__subMesh("body").material.userData.patternUniforms.pfPrintFrame.value.elements;
   // A display-frame point 1mm up (+Z) is, in the export frame, 1mm along +Y.
   const q = [m[8], m[9], m[10]].map((v) => Math.round(v * 1e9) / 1e9 + 0);
   expect(q).toEqual([0, 1, 0]);
+  runtime.dispose();
+});
+
+// A placed sub-part with NO material: realistic shows it as PLA, so it has
+// layer lines — stood up a quarter turn for display, printed as built.
+const placedPlain = () => {
+  const part = makePart(undefined);
+  part.parts.body.place = (s, { purpose }) => (purpose === "export" ? s : s.rotate(90, [0, 0, 0], [1, 0, 0]));
+  return part;
+};
+const frameZ = (v) => {
+  const m = v.__subMesh("body").material.userData.patternUniforms.pfPrintFrame.value.elements;
+  return [m[8], m[9], m[10]].map((x) => Math.round(x * 1e9) / 1e9 + 0);
+};
+
+test("CAD builds of a placed no-material part never probe for print frames", async () => {
+  const workers = {};
+  const runtime = mount(placedPlain(), {
+    createWorker: (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null }),
+    elements: makeElements(),
+  });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  for (let i = 0; i < 3; i++) workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("body")], ms: 1 } });
+  await runtime.ready;
+  expect(printFrameCalls.count).toBe(0);
+  expect(runtime.renderMode.get()).toBe("cad");
+  runtime.dispose();
+});
+
+test("entering realistic computes a no-material part's print frame from the export pose", async () => {
+  const runtime = mountPart(placedPlain());
+  await runtime.ready;
+  expect(printFrameCalls.count).toBe(0);
+  await runtime.renderMode.set("realistic");
+  expect(printFrameCalls.count).toBe(1);
+  expect(frameZ(viewers[0])).toEqual([0, 1, 0]);
+  runtime.dispose();
+});
+
+test("a delivery while realistic recomputes the frame at once; back in CAD it does not", async () => {
+  const workers = {};
+  const runtime = mount(placedPlain(), {
+    createWorker: (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null }),
+    elements: makeElements(),
+  });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("body")], ms: 1 } });
+  await runtime.ready;
+  await runtime.renderMode.set("realistic");
+  const before = printFrameCalls.count;
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("body")], ms: 1 } });
+  expect(printFrameCalls.count).toBe(before + 1);
+  await runtime.renderMode.set("cad");
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("body")], ms: 1 } });
+  expect(printFrameCalls.count).toBe(before + 1);
+  runtime.dispose();
+});
+
+test("a realistic renderViews from CAD computes the frames it draws with", async () => {
+  const runtime = mountPart(placedPlain());
+  await runtime.ready;
+  const shots = await runtime.renderViews(["front"], { renderMode: "realistic" });
+  expect(shots).toHaveLength(1);
+  expect(runtime.renderMode.get()).toBe("cad");
+  expect(printFrameCalls.count).toBe(1);
+  // The material the capture drew with is cached; switching now reuses its frame.
+  await runtime.renderMode.set("realistic");
+  expect(printFrameCalls.count).toBe(1);
+  expect(frameZ(viewers[0])).toEqual([0, 1, 0]);
+  runtime.dispose();
+});
+
+test("a realistic style thumbnail from CAD computes the frames it draws with", async () => {
+  const runtime = mountPart(placedPlain());
+  await runtime.ready;
+  await viewers[0].renderStyleThumbnail("studio");
+  expect(runtime.renderMode.get()).toBe("cad");
+  expect(printFrameCalls.count).toBe(1);
   runtime.dispose();
 });
 

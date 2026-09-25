@@ -37,6 +37,9 @@ vi.mock("three", async (importOriginal) => {
 });
 
 import { createViewer } from "../../src/framework/viewer.js";
+import { unzipSync, strFromU8 } from "fflate";
+import { NO_MATERIAL_COLOR } from "../../src/framework/materials/resolve.js";
+import { meshTo3MF } from "../../src/framework/geometry/threemf.js";
 
 function createContainer() {
   const container = document.createElement("div");
@@ -88,4 +91,18 @@ test("a material shows its flattened CAD colour", () => {
   expect(m.color.getHex()).toBe(0xf8dc82);
   expect(m.metalness).toBeLessThanOrEqual(0.5);
   v.dispose();
+});
+
+// The no-material blue-grey is written three times — resolve.js (the one named
+// constant), viewer.js's base CAD material and threemf.js's uncoloured-object
+// colour (a literal there to keep that module's import closure fflate-only).
+// This pins the copies together without widening either module's exports.
+test("the viewer's base colour and the 3MF default colour equal resolve.js's NO_MATERIAL_COLOR", () => {
+  const v = createViewer(createContainer(), partWith(undefined));
+  expect(v.__subMesh("body").material.color.getHex()).toBe(NO_MATERIAL_COLOR);
+  v.dispose();
+  const tri = { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) };
+  const model = strFromU8(unzipSync(new Uint8Array(meshTo3MF([{ name: "a", ...tri, color: 0x123456 }, { name: "b", ...tri }])))["3D/3dmodel.model"]);
+  const hex = NO_MATERIAL_COLOR.toString(16).padStart(6, "0").toUpperCase();
+  expect(model).toContain(`displaycolor="#${hex}FF"`);
 });

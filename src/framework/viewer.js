@@ -562,6 +562,8 @@ export function createViewer(container, part) {
   const textureLoader = new THREE.TextureLoader();
   let pmrem = null;
   let printFrames = {};
+  let printFrameSource = null;       // () => frames; mount's lazy provider (setPrintFrameSource)
+  let printFramesStale = false;      // the source has frames the materials have not seen
   const modeListeners = new Set();
   const envListeners = new Set();
   const SHADOW_LOWRES_MS = 100;      // at most one low-res shadow per this, while a part moves
@@ -805,6 +807,7 @@ export function createViewer(container, part) {
   // ground only moves on showAssembly, never because a capture happened.
   function enterRealistic(rig, { live = true, reground = true } = {}) {
     try {
+      syncPrintFrames(); // before the swap: the first realistic frame has the export-pose layers
       renderMode = "realistic";
       // A regen can land between the proxy compile and here, while the mode
       // was still CAD, so setSubGeometry skipped the UVs. Idempotent.
@@ -874,6 +877,7 @@ export function createViewer(container, part) {
   // target bound — each only for the synchronous compile() inside
   // compileAsync, so the view on screen is untouched while it waits.
   function compileRealistic(rig, { forCapture = false } = {}) {
+    syncPrintFrames();
     const proxy = new THREE.Scene();
     proxy.environment = rig.envMap;
     for (const n of names) {
@@ -972,6 +976,32 @@ export function createViewer(container, part) {
     printFrames = frames ?? {};
     const identity = new THREE.Matrix4().toArray();
     for (const [n, m] of physicalMats) m.userData.patternUniforms?.pfPrintFrame.value.fromArray(printFrames[n] ?? identity);
+  }
+
+  // The lazy form mount uses. Computing a frame runs the sub-part's pose probe
+  // (two geometry-free builds for a placed sub-part), and every sub-part with
+  // no material draws layer lines, so frames are PULLED only when something is
+  // about to draw the realistic look: the live view (or a switch loading),
+  // and any capture that borrows it — compileRealistic and enterRealistic are
+  // the two doors every such path goes through. A delivery just marks them
+  // stale (invalidatePrintFrames); in CAD nothing is computed.
+  function setPrintFrameSource(source) {
+    printFrameSource = typeof source === "function" ? source : null;
+    invalidatePrintFrames();
+  }
+  function invalidatePrintFrames() {
+    printFramesStale = true;
+    if (renderMode === "realistic" || realisticPending) syncPrintFrames();
+  }
+  function syncPrintFrames() {
+    if (!printFrameSource || !printFramesStale) return;
+    printFramesStale = false;
+    let frames;
+    try { frames = printFrameSource(); } catch (e) {
+      console.warn("partforge: computing print frames failed", e);
+      return;
+    }
+    setPrintFrames(frames);
   }
 
   // Resolves once the current environment's rig is loaded (captures wait on it).
@@ -2557,6 +2587,8 @@ export function createViewer(container, part) {
     isRealisticPending: () => realisticPending,
     onEnvironmentChange: (cb) => { envListeners.add(cb); return () => envListeners.delete(cb); },
     setPrintFrames,
+    setPrintFrameSource,
+    invalidatePrintFrames,
     whenRealisticReady,
     dispose,
   };

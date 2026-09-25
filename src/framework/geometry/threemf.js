@@ -69,8 +69,9 @@ function weld(positions, indices) {
 }
 
 // Default for an uncoloured object in an export where some other object IS
-// coloured: the viewer's own no-material colour (resolve.js NO_MATERIAL_COLOR). Written as a
-// literal so this module keeps its fflate-only import closure.
+// coloured: the viewer's own no-material colour (resolve.js
+// NO_MATERIAL_COLOR). Written as a literal so this module keeps its
+// fflate-only import closure; viewer-materials.test.js pins the copies equal.
 const DEFAULT_DISPLAY_COLOR = 0x9fb4cc;
 // Base-material group id: outside the object id range (objects are 1..n).
 const BASE_MATERIALS_ID = 1000;
