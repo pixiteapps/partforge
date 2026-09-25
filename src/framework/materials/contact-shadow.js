@@ -151,10 +151,23 @@ export function createContactShadow({ renderer, sizeMm = 400 }) {
 
   // A new plane count needs a new program; the same planes moved do not (three
   // reads their values every frame).
+  //
+  // A clipped pass also draws BOTH sides, depth-tested. The pass looks UP at
+  // the casters, and a cut that removes a part's underside (a kept side facing
+  // up, e.g. a top-view cut after Flip) leaves no downward-facing faces at the
+  // cut — from below only back faces remain, which FrontSide culls, and the
+  // shadow shrinks to a faint ring of side walls. The interior back faces fill
+  // the silhouette instead, and the depth test keeps the LOWEST surface under
+  // each texel (the one the ground's darkness is measured from) rather than
+  // whichever face drew last. Unclipped, the pass is exactly as before:
+  // front faces, no depth test.
   function setClipping(material, planes) {
     const next = planes?.length ? planes : null;
-    if ((material.clippingPlanes?.length ?? 0) !== (next?.length ?? 0)) material.needsUpdate = true;
+    const side = next ? THREE.DoubleSide : THREE.FrontSide;
+    if ((material.clippingPlanes?.length ?? 0) !== (next?.length ?? 0) || material.side !== side) material.needsUpdate = true;
     material.clippingPlanes = next;
+    material.side = side;
+    material.depthTest = material.depthWrite = !!next;
   }
 
   return {
