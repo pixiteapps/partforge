@@ -8,15 +8,12 @@
 // converted to sRGB. Adding a preset is one record here plus a look at the
 // contact sheet (materials.html) in every environment.
 
-export const DEFAULT_PRESET_ID = "default";
-
 const P = (id, label, category, use, fields) => ({ id, label, category, use, tintable: false, ...fields });
 
 export const PRESETS = {
-  // The viewer's look before this library existed. Not documented as a choice:
-  // it is what a sub-part with no `material` renders as.
-  default: P("default", "Default", "default", "The viewer's neutral blue-grey, used when a sub-part names no material.",
-    { color: 0x9fb4cc, metalness: 0.25, roughness: 0.55 }),
+  // Every record here is a documented, nameable material. A sub-part that names
+  // none is drawn by resolve.js (the blue-grey CAD look; a PLA print in that
+  // colour in realistic mode) — there is no hidden "default" record any more.
 
   "machined-aluminum": P("machined-aluminum", "Machined aluminium", "aluminium", "Bare CNC-milled aluminium, fine tool marks, satin sheen.",
     { color: 0xf5f6f6, metalness: 1, roughness: 0.32 }),

@@ -945,8 +945,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // geometry just delivered, so layers run the way the part is printed rather
     // than the way it is displayed. Computed at delivery (the frame describes
     // the delivered mesh, which a later pose-only repair only moves) and only
-    // for sub-parts whose material draws layer lines — each one costs two
-    // geometry-free probe builds.
+    // for sub-parts whose material draws layer lines — which includes every
+    // sub-part naming no material, since realistic mode shows those as PLA
+    // (resolve.js). One without a place() is identity at once; one with it
+    // costs two geometry-free probe builds.
     const layerLined = new Set(Object.keys(part.parts).filter((n) => {
       try { return resolveMaterial(part.parts[n].display).params.pattern === "layer-lines"; } catch { return false; }
     }));

@@ -309,8 +309,14 @@ parts: {
 meta: { title: "…", units: "mm", environment: "studio" },
 ```
 
-- `material` — a preset id from the table below. Without one the sub-part keeps
-  the default look.
+- `material` — a preset id from the table below. Without one (or with one the
+  library does not know) the sub-part keeps the CAD view's look — its `color`,
+  else the viewer's blue-grey — and **realistic mode shows it as a PLA print**
+  (`pla-print`'s finish and layer lines) in that same colour. So an untouched
+  part looks printed in realistic mode; name a material when it is made some
+  other way. The PLA look is realistic-only: the CAD view, 3MF colours and
+  `declaresMaterials` are unaffected, and a part that names no material is not
+  treated as declaring one.
 - `color` — the base colour (`0xRRGGBB`). With a preset it is the TINT. Presets
   marked tintable are normally coloured this way (anodizing, plastic, paint);
   the others have an intrinsic colour (brass) but still accept one.
@@ -3302,7 +3308,8 @@ nothing either way and stays silent, matching `animation-track-rebuilds`'s own
 trust handling.
 
 **Appearance** (all warnings) — `unknown-material` (a `display.material` the
-library does not know; the viewer shows the default look), `unknown-environment`
+library does not know; the viewer draws it as if it named none — a PLA print
+in realistic mode), `unknown-environment`
 (`meta.environment` not known; realistic mode uses `studio`),
 `material-key-unknown` (a `display` key that is not colour, opacity, material
 or one of the six overrides; ignored), `material-override-clamped` (an override

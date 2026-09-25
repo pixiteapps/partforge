@@ -269,6 +269,17 @@ test("ready resolves after the first successful build; no getElementById with fu
   return expect(runtime.ready).resolves.toBeUndefined();
 });
 
+// makePart's body names no material, which realistic mode shows as a PLA print —
+// so it gets a print frame for its layer lines like an explicit pla-print would.
+test("a sub-part with no material gets a print frame on delivery", () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+  expect(fakeViewers[0].setPrintFrames).toHaveBeenCalledWith({ body: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] });
+  expect(runtime.declaresMaterials).toBe(false);
+  runtime.dispose();
+});
+
 test("mount creates one tooltip presenter and shares it with every viewer consumer", () => {
   const els = makeElements();
   const { createWorker } = makeWorkers();

@@ -91,6 +91,7 @@ const part = {
     body: { build: () => null, display: { material: "brass" } },
     ghost: { build: () => null, display: { opacity: 0.3 } },
     printed: { build: () => null, display: { material: "pla-print" } },
+    plain: { build: () => null },
   },
 };
 // A real volume (a unit tetrahedron), so the cutaway has bounds to seed its plane from.
@@ -464,6 +465,27 @@ test("print frames reach the patterned material's uniform", async () => {
   const frame = new THREE.Matrix4().makeTranslation(1, 2, 3).toArray();
   v.setPrintFrames({ printed: frame });
   expect(v.__subMesh("printed").material.userData.patternUniforms.pfPrintFrame.value.toArray()).toEqual(frame);
+  v.dispose();
+});
+
+// A sub-part with no material is a PLA print in realistic mode, so it draws
+// layer lines and takes its print frame like an explicit pla-print does — and
+// goes back to the unchanged blue-grey CAD material.
+test("a sub-part with no material draws layer lines in realistic and its print frame reaches it", async () => {
+  const v = shown();
+  const cad = v.__subMesh("plain").material;
+  expect(cad.color.getHex()).toBe(0x9fb4cc);
+  expect(cad.metalness).toBe(0.25);
+  await v.setRenderMode("realistic");
+  const m = v.__subMesh("plain").material;
+  expect(m).toBeInstanceOf(THREE.MeshPhysicalMaterial);
+  expect(m.color.getHex()).toBe(0x9fb4cc);
+  expect(m.customProgramCacheKey()).toContain("layer-lines");
+  const frame = new THREE.Matrix4().makeTranslation(4, 5, 6).toArray();
+  v.setPrintFrames({ plain: frame });
+  expect(v.__subMesh("plain").material.userData.patternUniforms.pfPrintFrame.value.toArray()).toEqual(frame);
+  await v.setRenderMode("cad");
+  expect(v.__subMesh("plain").material).toBe(cad);
   v.dispose();
 });
 

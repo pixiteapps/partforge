@@ -200,7 +200,11 @@ the installed package, so let the publish finish before bumping the dep there.
 - **`src/framework/materials/`** - the material library and realistic-mode
   rendering. `presets.js` (the preset table), `environments.js` (the
   environment records), `resolve.js` (display-block -> library lookup, never
-  throws), `print-frame.js` (pose math for layer lines), `assets.js` (asset
+  throws; a sub-part with no usable material - none named, or an unknown one -
+  keeps the blue-grey CAD look but resolves to `pla-print` in the part's colour
+  (else that blue-grey) for realistic mode, so its layer lines get a print
+  frame in `mount.js` like any PLA part; there is no hidden `"default"` preset
+  any more, and `declaresMaterials` still counts only a named material), `print-frame.js` (pose math for layer lines), `assets.js` (asset
   filename -> URL) and `tonemap-readback.js` (below) import **no three.js at
   all** - deliberately three-free and DOM-free so `lint`, the worker's 3MF
   writer and the docs-parity test can all import them without dragging GL or
