@@ -127,3 +127,21 @@ test("the tight layer's blur is millimetres whatever the plane size, and it hide
   expect(soft.visible).toBe(true);
   shadow.dispose();
 });
+
+test("clippingPlanes clip the casters' depth pass, and a render without them clips nothing", () => {
+  const renderer = fakeRenderer();
+  const seen = [];
+  const shadow = createContactShadow({ renderer, sizeMm: 200 });
+  const scene = new THREE.Scene();
+  const caster = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+  scene.add(caster, shadow.group);
+  renderer.render = (obj) => { if (obj === scene) seen.push(scene.overrideMaterial.clippingPlanes); };
+  const plane = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);
+  shadow.render(scene, [caster], { clippingPlanes: [plane] });
+  expect(seen).toHaveLength(2);
+  expect(seen.every((p) => p?.length === 1 && p[0] === plane)).toBe(true);
+  seen.length = 0;
+  shadow.render(scene, [caster]);
+  expect(seen).toEqual([null, null]);
+  shadow.dispose();
+});

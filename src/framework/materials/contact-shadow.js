@@ -110,7 +110,12 @@ export function createContactShadow({ renderer, sizeMm = 400 }) {
   // While a part moves (lowRes) only the soft layer is redrawn and the tight
   // one is hidden: an outline left where the part WAS would be wrong, and the
   // settle render that follows brings it back.
-  function render(scene, casters, { lowRes = false } = {}) {
+  //
+  // `clippingPlanes` (world space) clip the casters the way the cutaway clips
+  // what is on screen. The depth pass draws every caster with the one override
+  // material, which carries none of the casters' own clipping planes, so
+  // without this the half the cutaway removed still cast its shadow.
+  function render(scene, casters, { lowRes = false, clippingPlanes = null } = {}) {
     const bg = scene.background;
     const overrideBefore = scene.overrideMaterial;
     const clear = renderer.getClearAlpha();
@@ -123,6 +128,7 @@ export function createContactShadow({ renderer, sizeMm = 400 }) {
       renderer.setClearAlpha(0);
       for (const l of layers) {
         if (lowRes && l.spec.name === "tight") continue;
+        setClipping(l.depthMaterial, clippingPlanes);
         scene.overrideMaterial = l.depthMaterial;
         renderer.setRenderTarget(l.rt);
         renderer.render(scene, cam);
@@ -141,6 +147,14 @@ export function createContactShadow({ renderer, sizeMm = 400 }) {
       for (const l of layers) l.plane.visible = !(lowRes && l.spec.name === "tight");
       scene.background = bg;
     }
+  }
+
+  // A new plane count needs a new program; the same planes moved do not (three
+  // reads their values every frame).
+  function setClipping(material, planes) {
+    const next = planes?.length ? planes : null;
+    if ((material.clippingPlanes?.length ?? 0) !== (next?.length ?? 0)) material.needsUpdate = true;
+    material.clippingPlanes = next;
   }
 
   return {
