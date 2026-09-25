@@ -105,7 +105,7 @@ describe("click versus drag", () => {
     // refit: a click on the cube is the reframe control now that the framework's
     // pages ship no reframe button, and under orthographic a plain tween does
     // not refit (see viewer.js's tweenCameraTo).
-    expect(viewer.tweenCameraTo.mock.calls[0][1]).toMatchObject({ refit: true });
+    expect(viewer.tweenCameraTo.mock.calls[0][1]).toMatchObject({ refit: true, autoProjection: true });
     expect(viewer.orbitBy).not.toHaveBeenCalled();
   });
 

@@ -7,8 +7,9 @@ import { attachRail } from "./rail.js";
 import { declaredSourceLookup } from "./panel/declared-source.js";
 import { attachMobileTabs } from "./mobile-tabs.js";
 import { createTooltipPresenter, attachButtonTooltips } from "./tooltip.js";
-import { loadCamera, loadProjection, saveProjection, loadRenderMode, loadEnvironment } from "./view-state.js";
-import { attachRealisticControls } from "./realistic-controls.js";
+import { loadCamera, loadRenderMode, loadEnvironment } from "./view-state.js";
+import { isFaceAlignedState } from "./projection.js";
+import { attachViewStyleControls } from "./view-style-controls.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
 import { declaresMaterials, resolveMaterial } from "./materials/resolve.js";
 import { printFrameMatrix } from "./materials/print-frame.js";
@@ -200,8 +201,8 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // switch while realistic reverts to the one still shown, and onChange hears
     // both); list() is every environment as {id, label}, for a host picker.
     environment: environment ?? { get: () => "studio", set: async (id) => id, onChange: () => () => {}, list: () => [] },
-    // True when any sub-part names a display.material — a host can offer the
-    // realistic toggle only where it shows something a CAD view does not.
+    // True when any sub-part names a display.material — a host can offer
+    // realistic rendering only where it shows something a CAD view does not.
     declaresMaterials: declaresMaterials ?? false,
   };
 }
@@ -315,9 +316,18 @@ function createCleanupStack() {
 //                                 // every stroke/undo/clear, which is what a host driving its
 //                                 // own Send button gates that button on (strokeCount() > 0).
 //   runtime.projection: { get, set, onChange }
-//                                         // "perspective" | "orthographic". Drives the LIVE view
-//                                         // and captureCurrent only — captureCanonicalViews,
-//                                         // renderMeshPayloads and the CLI stay perspective.
+//                                         // "perspective" | "orthographic". AUTOMATIC in the UI
+//                                         // (Fusion 360's "Perspective with Ortho Faces"): a view
+//                                         // cube FACE click settles into orthographic, an edge or
+//                                         // corner click is perspective, and rotating off the face
+//                                         // returns to perspective (pan and zoom keep it). There
+//                                         // is no user control for it. set("orthographic") still
+//                                         // works for a host, and is left the same way — by the
+//                                         // first rotation. Not persisted across reloads; carried
+//                                         // in viewerState only with a face-view camera. Drives
+//                                         // the LIVE view and captureCurrent only —
+//                                         // captureCanonicalViews, renderMeshPayloads and the CLI
+//                                         // stay perspective.
 //   runtime.renderMode: { get, set, onChange }
 //                                         // "cad" | "realistic". set() resolves to the mode in
 //                                         // effect ("cad" if the realistic assets failed);
@@ -325,7 +335,8 @@ function createCleanupStack() {
 //                                         // projection. Drives the live view; captureCurrent
 //                                         // follows it unless given { renderMode }. captureViews
 //                                         // is always CAD — the live mode never changes what
-//                                         // the agent sees.
+//                                         // the agent sees. Feature lines follow it directly:
+//                                         // CAD always draws them, realistic never does.
 //   runtime.environment: { get, set, onChange, list }
 //                                         // the realistic environment ("studio" | "workshop" |
 //                                         // "print-bed" | "outdoor"); list() → [{id, label}].
@@ -358,8 +369,9 @@ function createCleanupStack() {
 //                                         // KB of base64 apiece, so a host should not assume this
 //                                         // payload is small, only that it is bounded.
 // viewerState: ViewerState               // a previous mount's runtime.getViewerState(), handed back to
-//                                         // resume the camera, projection, cutaway, render mode and
-//                                         // environment where that mount
+//                                         // resume the camera, projection, cutaway, render mode,
+//                                         // environment and per-style feature-line preferences
+//                                         // where that mount
 //                                         // left them. For a host that applies edits by REMOUNTING: the
 //                                         // part changed, the user's view of it should not. Omit on a
 //                                         // first mount — the viewer then restores its own persisted
@@ -390,13 +402,20 @@ function createCleanupStack() {
 //                                         // not a degraded one). A rejection is reported through the
 //                                         // control's own onError; the widget keeps the converted blob
 //                                         // so a retry costs a network call, not a reconvert.
-// elements.chrome.realistic / .environment  // optional realistic-mode viewbar controls — a
-//                                         // <button> toggle and an (empty) <select> the mount
-//                                         // fills with the environments; default ids #realistic
-//                                         // and #environment. Without them the host drives
-//                                         // runtime.renderMode / runtime.environment itself.
-//                                         // Both preferences persist like the theme (and carry
-//                                         // in viewerState, which outranks what is stored).
+// (view style — no element)              // the view style button (#view-style, an eye) is
+//                                         // GENERATED into the stage's #viewbar, before #theme
+//                                         // behind a divider (the bar's appearance group); a
+//                                         // stage with no #viewbar gets it over the view cube's
+//                                         // bottom-right corner instead. Its popover holds the
+//                                         // style (CAD or a realistic environment, as live
+//                                         // thumbnails). Hosts need no markup
+//                                         // for it — the old elements.chrome.realistic /
+//                                         // .environment (#realistic, #environment) are gone. A
+//                                         // host can still drive runtime.renderMode /
+//                                         // .environment itself. The preferences persist like the
+//                                         // theme (and carry in viewerState, which outranks what
+//                                         // is stored). There is no projection control: see
+//                                         // runtime.projection.
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
@@ -439,8 +458,6 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       measure: elements.chrome?.measure ?? byId("measure"),
       annotate: elements.chrome?.annotate ?? byId("annotate"),
       railToggle: elements.chrome?.railToggle ?? byId("rail-toggle"),
-      realistic: elements.chrome?.realistic ?? byId("realistic"),
-      environment: elements.chrome?.environment ?? byId("environment"),
     },
   };
 
@@ -646,13 +663,26 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
         }
       }));
     }
-    // Orientation cube + projection toggle. Generated chrome — no host markup
-    // declares it, so an embedder gets it for free. Restored BEFORE any framing
-    // happens so a reload into ortho frames once instead of framing in
-    // perspective and then visibly re-framing.
-    // A carried state outranks the persisted preference: it is this session's
-    // live answer, where the stored one is the last page-reload's.
-    viewer.setProjection(viewerState?.projection ?? loadProjection());
+    // Orientation cube (and the view style button). Generated chrome — no host markup
+    // declares it, so an embedder gets it for free. The projection is restored
+    // BEFORE any framing happens so a remount into ortho frames once instead of
+    // framing in perspective and then visibly re-framing.
+    //
+    // The projection is AUTOMATIC (viewer.js's tweenCameraTo): orthographic
+    // only on a face view, so it is not a preference and is not persisted —
+    // a page reload opens in perspective. What IS restored is a carried
+    // viewerState, because a host that remounts per edit (partforge-cloud)
+    // would otherwise drop the user out of the face view they were in. Only
+    // when the carried camera is itself a face view, though: an orthographic
+    // state carried with a free-orbit camera (an older host's token, from
+    // when projection was a manual toggle) comes back perspective. The camera
+    // itself lands later (showView); setCameraState re-arms the ortho view on
+    // it, so the first rotation still returns to perspective.
+    viewer.setProjection(
+      viewerState?.projection === "orthographic" && isFaceAlignedState(viewerState.camera)
+        ? "orthographic"
+        : "perspective",
+    );
     // The environment by the same precedence (carried, stored, then the part's
     // own meta.environment — which the viewer already starts on, unchosen). A
     // carried or stored one was chosen, so it stays chosen and carries on. In
@@ -671,9 +701,21 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // getViewerState carries; an explicit mode change supersedes it, and a
     // failed load settles to CAD.
     if ((viewerState?.renderMode ?? loadRenderMode() ?? "cad") === "realistic") viewer.setRenderMode("realistic");
-    const viewcube = attachViewcubeControls(viewer, { stage: els.viewer }, { tooltip });
+    const viewcube = attachViewcubeControls(viewer, { stage: els.viewer });
     cleanup.defer(() => viewcube.detach());
-    cleanup.defer(viewer.onProjectionChange((mode) => saveProjection(mode)));
+    // The view style button + popover (the style grid). With a #viewbar
+    // (looked up the same way sketchHides does) it joins the bottom toolbar's
+    // appearance group, before #theme behind a divider, and its popover
+    // closes when the bar hides (Sketch). Without one it falls back to the
+    // cube's bottom-right corner, in the stack, hiding with the cube. It is
+    // a #viewbar child, so --pf-viewbar-clear below measures it for free (the
+    // bar grows wider, not taller).
+    const viewStyle = attachViewStyleControls(viewer, {
+      stage: els.viewer,
+      toolbar: els.viewer.querySelector("#viewbar"),
+      anchor: viewcube.element,
+    }, { tooltip });
+    cleanup.defer(() => viewStyle.detach());
     // setHidden takes one boolean, and there are two independent reasons to hide
     // the cube: Sketch mode (below) and a crowded transport bar (wired into the
     // animation controls further down). Applied straight, whichever fires last
@@ -870,9 +912,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       if (frame) {
         framedView = view();
         if (!cameraRestored) {
-          // A carried camera beats the persisted one for the same reason the
-          // projection above does — and it is also the accurate one, since the
-          // persisted pose is only written at the end of an orbit drag.
+          // A carried camera beats the persisted one: it is this session's live
+          // answer, where the stored one is the last page-reload's — and it is
+          // also the accurate one, since the persisted pose is only written at
+          // the end of an orbit drag. An orthographic restore above was made
+          // only for a face-view camera, and this is the call that re-arms it.
           const cam = viewerState?.camera ?? loadCamera();
           if (cam) viewer.setCameraState(cam);
           // The cutaway goes back on AFTER the camera and only here, on the
@@ -883,6 +927,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
           // fallback pose from the wrong view.)
           if (viewerState?.cutaway?.enabled && viewer.setCutawayState?.(viewerState.cutaway)) {
             cutawayChrome.sync(); // the button was not what turned it on
+            // …and place the camera again now the section is back. An ortho
+            // face view's size is matched at the surface on screen, which the
+            // cut decides (the cap, or whatever survives it): the carried pose
+            // was taken WITH the cut, and the first placement above measured
+            // against the uncut part, so without this a sectioned face view
+            // changes zoom on every remount. Same pose, so a perspective
+            // camera does not move.
+            if (cam) viewer.setCameraState(cam);
           }
           cameraRestored = true;
         }
@@ -1263,11 +1315,6 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // Optional host-page viewer chrome (reframe / theme) + camera persistence.
     const chrome = attachViewerControls(viewer, els.chrome, { tooltip });
     cleanup.defer(() => chrome.detach());
-    // Optional realistic-mode chrome: the toggle and the environment picker.
-    const realisticChrome = attachRealisticControls(viewer, {
-      toggle: els.chrome.realistic, envMenu: els.chrome.environment,
-    }, { tooltip });
-    cleanup.defer(() => realisticChrome.detach());
 
     // Full teardown of everything this mount created. Idempotent. A disposed runtime
     // can never surface a late build result (workers are terminated, the loop is

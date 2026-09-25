@@ -128,9 +128,11 @@ export function createViewcubeMode(viewer, {
     const id = hitRegion(...localPoint(event), projected);
     // refit: clicking a region is now the only reframe control the framework's
     // own pages ship, so it has to actually refit — under orthographic a tween
-    // alone changes the angle and leaves the user's dolly in place. See
-    // viewer.js's tweenCameraTo.
-    if (id) viewer.tweenCameraTo(id, { duration: 0.6, refit: true });
+    // alone changes the angle and leaves the user's dolly in place.
+    // autoProjection: a FACE click settles into orthographic, an edge or corner
+    // click is perspective (Fusion 360's "Perspective with Ortho Faces"). Only
+    // the cube passes it — animation cues never do. See viewer.js's tweenCameraTo.
+    if (id) viewer.tweenCameraTo(id, { duration: 0.6, refit: true, autoProjection: true });
   };
 
   const onPointerLeave = () => {

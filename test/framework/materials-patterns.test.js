@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { expect, test } from "vitest";
 import { applyPattern } from "../../src/framework/materials/patterns.js";
 import { ensureBoxUVs } from "../../src/framework/materials/uv.js";
-import { applyBrushFrame } from "../../src/framework/materials/patterns.js";
+import { applyBrushFrame, grainAxisFor, grainSwaps, setGrainAxis } from "../../src/framework/materials/patterns.js";
 import { buildPhysicalMaterial } from "../../src/framework/materials/physical.js";
 
 const fakeShader = () => ({
@@ -131,8 +131,8 @@ test("wood samples its colour and roughness maps triplanar, roughness around the
   const m = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "wood", scale: 250, ...maps, roughnessMean: 0.53, normalScale: 2.5 });
   const s = fakeShader();
   m.onBeforeCompile(s);
-  expect(s.fragmentShader).toContain("diffuseColor.rgb *= pfTriplanar(pfPatternMap");
-  expect(s.fragmentShader).toContain("pfTriplanar(pfRoughMap");
+  expect(s.fragmentShader).toContain("diffuseColor.rgb *= pfTriplanarWood(pfPatternMap");
+  expect(s.fragmentShader).toContain("pfTriplanarWood(pfRoughMap");
   expect(s.fragmentShader).toContain("/ pfRoughMean");
   expect(s.uniforms.pfPatternMap.value).toBe(maps.texture);
   expect(s.uniforms.pfNormalMap.value).toBe(maps.normalMap);
@@ -189,4 +189,50 @@ test("only wood declares the normal and roughness samplers", () => {
     expect(s.fragmentShader, kind).not.toContain("pfNormalMap");
     expect(s.vertexShader, kind).not.toContain("vPfNmX");
   }
+});
+
+test("grainAxisFor picks the longest bounding-box axis, X on a tie", () => {
+  const box = (x, y, z) => new THREE.Box3(new THREE.Vector3(-1, -2, -3), new THREE.Vector3(x - 1, y - 2, z - 3));
+  expect(grainAxisFor(box(30, 30, 12))).toBe(0); // the swatch: X and Y tie
+  expect(grainAxisFor(box(10, 50, 12))).toBe(1);
+  expect(grainAxisFor(box(10, 10, 40))).toBe(2);
+  expect(grainAxisFor(box(10, 40, 40))).toBe(1); // Y/Z tie goes to the lower axis
+  expect(grainAxisFor(new THREE.Box3())).toBe(0);
+  expect(grainAxisFor(null)).toBe(0);
+});
+
+// Each projection samples (u, v) = X-faces (y, z), Y-faces (x, z), Z-faces (x, y).
+// A face containing the grain axis is transposed when that axis would otherwise
+// land on the texture axis the grain does NOT run along; the face across the
+// grain axis (end grain) is left alone.
+test("grainSwaps lays the texture's grain along the grain axis on every face containing it", () => {
+  const along = (axis, grain) => grainSwaps(axis, grain).map((swap, face) => {
+    if (face === axis) return null;
+    const uv = [[1, 2], [0, 2], [0, 1]][face];
+    const [u, v] = swap ? [uv[1], uv[0]] : uv;
+    return grain === "v" ? v : u; // the object axis the texture's grain runs along
+  });
+  for (const grain of ["u", "v"]) {
+    for (const axis of [0, 1, 2]) {
+      expect(along(axis, grain).filter((a) => a !== null), `${grain} ${axis}`).toEqual([axis, axis]);
+      expect(grainSwaps(axis, grain)[axis]).toBe(0);
+    }
+  }
+});
+
+test("wood transposes each projection's UVs and normal-map slopes together", () => {
+  const m = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "wood", scale: 250, texture: new THREE.Texture(), normalMap: new THREE.Texture(), grain: "v" });
+  const s = { uniforms: {}, vertexShader: "#include <common>\n#include <begin_vertex>", fragmentShader: "#include <common>\n#include <roughnessmap_fragment>\n#include <normal_fragment_maps>" };
+  m.onBeforeCompile(s);
+  expect(s.fragmentShader).toContain("pfTriplanarWood(pfPatternMap");
+  expect(s.fragmentShader).toContain("pfTriplanarWood(pfRoughMap");
+  expect(s.fragmentShader).toContain("pfGrainUv(p.yz, pfGrainSwap.x)");
+  expect(s.fragmentShader).toContain("tx.xy = pfGrainUv(tx.xy, pfGrainSwap.x)");
+  // shared uniforms: a later axis change reaches the compiled program
+  setGrainAxis(m, 2);
+  expect(s.uniforms.pfGrainSwap.value.toArray()).toEqual(grainSwaps(2, "v"));
+  // other kinds carry no grain uniform, and setGrainAxis leaves them alone
+  const c = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "carbon", scale: 10, texture: new THREE.Texture() });
+  setGrainAxis(c, 1);
+  expect(c.userData.patternUniforms.pfGrainSwap).toBeUndefined();
 });

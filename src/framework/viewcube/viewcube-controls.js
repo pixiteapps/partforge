@@ -1,32 +1,25 @@
-// The view cube's chrome: the bottom-right stack (the cube, with the projection
-// toggle over its bottom-right corner), and the visually-hidden per-view buttons
-// that stand in for the DOM focus a canvas cannot give us. Generated, not
-// declared — no part's HTML carries this, and partforge-cloud's scaffold does
-// not either (the mobile-tabs.js and animation-controls.js precedent).
+// The view cube's chrome: the bottom-right stack (the cube, and whatever sits
+// over its bottom-right corner), and the visually-hidden per-view buttons that
+// stand in for the DOM focus a canvas cannot give us. Generated, not declared —
+// no part's HTML carries this, and partforge-cloud's scaffold does not either
+// (the mobile-tabs.js and animation-controls.js precedent).
 //
-// The projection button deliberately lives OUTSIDE #viewbar: partforge-cloud's
-// sandbox-scaffold test enumerates #viewbar's buttons against what it renders,
-// and this one is the framework's own.
-//
-// The button used to sit in its own `.pf-viewcube-pill` card below the cube,
-// borrowing #viewbar's chrome. The 2026-08-20 revision made it a small bare
-// circle beside the cube instead (see chrome.css/app.css's viewcube sections),
-// so the pill card — which existed only to give a single button somewhere to
-// sit — is gone; the button is now a direct child of the stack.
-//
-// A same-day follow-up took it out of the stack's flex flow entirely and laid
-// it OVER the cube's bottom-right corner. The DOM is unchanged (still a direct
-// child, still after the cube's wrapper, which is what puts it on top); the
-// visible consequence is that the stack is now exactly as wide as the canvas
-// rather than `canvas + gap + button`, so the size it publishes below — and
-// therefore the crowding decision that reads it — went from 167px to 135
-// (101 below the rail's narrow breakpoint).
-import { attachButtonTooltips } from "../tooltip.js";
+// Through 2026-09-23 this file also generated the projection toggle (#projection),
+// a small bare circle laid OVER the cube's bottom-right corner — absolutely
+// positioned, so the stack stayed exactly as wide as the canvas (135px, or 101
+// below the rail's narrow breakpoint) and the size published below was the
+// canvas's alone. There is no projection control any more: since 2026-09-24
+// the projection is AUTOMATIC (Fusion 360's "Perspective with Ortho Faces") —
+// a face click, on the canvas or through the keyboard buttons below, settles
+// into orthographic, and rotating off the face returns to perspective (see
+// viewer.js's tweenCameraTo). The view style button (view-style-controls.js)
+// lives in the bottom toolbar (#viewbar); only a host with no #viewbar gets it
+// in this stack, over the cube's bottom-right corner, absolutely positioned so
+// the stack's published size is still the canvas's. History of the toggle's
+// earlier homes (a `.pf-viewcube-pill` card below the cube, then a circle
+// beside it) is in chrome.css/app.css's viewcube sections.
 import { runCleanupSteps } from "../teardown.js";
 import { createViewcubeMode } from "./viewcube-mode.js";
-
-const PERSPECTIVE_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4l18 3v10l-18 3z"/><path d="M3 4v16"/></svg>`;
-const ORTHOGRAPHIC_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="14" height="12" rx="1"/><path d="M7 6V3h14v12h-4"/></svg>`;
 
 // One hidden button per canonical FACE view. Edges and corners are reachable by
 // pointer only — six targets is a usable keyboard surface; twenty-six is a
@@ -40,18 +33,12 @@ const KEY_VIEWS = [
   ["bottom", "View from the bottom"],
 ];
 
-export function attachViewcubeControls(viewer, { stage } = {}, { tooltip } = {}) {
+export function attachViewcubeControls(viewer, { stage } = {}) {
   const stack = document.createElement("div");
   stack.className = "pf-viewcube-stack";
   stage.appendChild(stack);
 
   const mode = createViewcubeMode(viewer, { host: stack });
-
-  const button = document.createElement("button");
-  button.type = "button";
-  button.id = "projection";
-  button.className = "pf-viewcube-toggle";
-  stack.appendChild(button);
 
   const keys = document.createElement("div");
   keys.className = "pf-viewcube-key";
@@ -66,39 +53,14 @@ export function attachViewcubeControls(viewer, { stage } = {}, { tooltip } = {})
   });
   stack.appendChild(keys);
 
-  const tooltipBinding = tooltip
-    ? attachButtonTooltips(tooltip, [{ element: button }])
-    : null;
-
-  function sync() {
-    const ortho = viewer.getProjection() === "orthographic";
-    button.innerHTML = ortho ? ORTHOGRAPHIC_ICON : PERSPECTIVE_ICON;
-    button.classList.toggle("on", ortho);
-    button.setAttribute("aria-pressed", String(ortho));
-    const label = ortho ? "Switch to perspective view" : "Switch to orthographic view";
-    button.setAttribute("aria-label", label);
-    if (!tooltip) button.title = label;
-    tooltipBinding?.sync();
-  }
-
-  const onToggle = () => {
-    viewer.setProjection(viewer.getProjection() === "orthographic" ? "perspective" : "orthographic");
-    sync();
-  };
-  button.addEventListener("click", onToggle);
-
   const keyHandlers = keyButtons.map((b) => {
     // Same user intent as clicking the face on the canvas, so the same
-    // `refit` — these buttons ARE the keyboard route to that click.
-    const handler = () => viewer.tweenCameraTo(b.dataset.view, { duration: 0.6, refit: true });
+    // `refit` and `autoProjection` (a face view settles into orthographic) —
+    // these buttons ARE the keyboard route to that click.
+    const handler = () => viewer.tweenCameraTo(b.dataset.view, { duration: 0.6, refit: true, autoProjection: true });
     b.addEventListener("click", handler);
     return handler;
   });
-
-  // A host or another mode can flip projection without going through this
-  // button; the chrome follows rather than drifting out of sync.
-  const offProjection = viewer.onProjectionChange(sync);
-  sync();
 
   // Publish the stack's size on the element itself, in the data-pf-* convention
   // the shell already uses (data-pf-pane). animation-controls.js reads it to
@@ -144,11 +106,8 @@ export function attachViewcubeControls(viewer, { stage } = {}, { tooltip } = {})
       if (detached) return;
       detached = true;
       runCleanupSteps([
-        offProjection,
         () => sizeObserver?.disconnect(),
-        () => button.removeEventListener("click", onToggle),
         ...keyButtons.map((b, i) => () => b.removeEventListener("click", keyHandlers[i])),
-        () => tooltipBinding?.detach(),
         () => mode.detach(),
         () => stack.remove(),
       ], "viewcube control cleanup failed");

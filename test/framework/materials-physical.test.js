@@ -2,6 +2,7 @@
 import * as THREE from "three";
 import { expect, test } from "vitest";
 import { buildPhysicalMaterial } from "../../src/framework/materials/physical.js";
+import { grainAxisFor, setGrainAxis } from "../../src/framework/materials/patterns.js";
 
 const loadTexture = () => new THREE.Texture();
 
@@ -80,4 +81,21 @@ test("prints are lit less by the environment and reflect less, so their colour h
   const brass = buildPhysicalMaterial({ material: "brass" }, { loadTexture });
   expect(brass.envMapIntensity).toBe(1);
   expect(brass.specularIntensity).toBe(1);
+});
+
+// One grain direction per sub-part: a long-in-Y board lays each scan's figure
+// along Y on every face that contains Y. Oak's figure runs up its image (v),
+// walnut's across it (u), so the same board transposes different projections.
+test("wood shaders receive the grain axis of a long-in-Y sub-part", () => {
+  const box = new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(20, 80, 10));
+  const swapsFor = (material) => {
+    const m = buildPhysicalMaterial({ material }, { loadTexture });
+    setGrainAxis(m, grainAxisFor(box));
+    const s = { uniforms: {}, vertexShader: "#include <common>\n#include <begin_vertex>", fragmentShader: "#include <common>\n#include <roughnessmap_fragment>\n#include <normal_fragment_maps>" };
+    m.onBeforeCompile(s);
+    expect(m.userData.pfGrainAxis).toBe(1);
+    return s.uniforms.pfGrainSwap.value.toArray();
+  };
+  expect(swapsFor("oak")).toEqual([1, 0, 0]);    // X-faces sample (y, z): y must go to v
+  expect(swapsFor("walnut")).toEqual([0, 0, 1]); // Z-faces sample (x, y): y must go to u
 });

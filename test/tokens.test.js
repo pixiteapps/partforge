@@ -156,20 +156,30 @@ test("app.css gives the floating rail toggle its appearance, and only that", () 
   "a hover background is the whole affordance").toBe(true);
 });
 
-// Both bare floating buttons read GREY in either state (2026-08-20). Each has an
-// `.on` class its JS still toggles — rail.js on collapse, viewcube-controls.js
-// on orthographic — and each used to take the accent colour with it. The state
-// is carried by the icon instead (the rail toggle's chevron flips, the
-// projection toggle's glyph changes) plus aria-expanded / aria-pressed, so an
-// accent tint was a third signal that only made a bare icon over the model look
-// like a stray blob. Any `.on` rule for either one is a regression.
-test("no accent tint on the floating rail toggle or the projection toggle", () => {
+// The bare floating rail toggle reads GREY in either state (2026-08-20). Its
+// `.on` class (rail.js, on collapse) used to take the accent colour; the state
+// is carried by the chevron flipping plus aria-expanded, so an accent tint was
+// a third signal that only made a bare icon over the model look like a stray
+// blob. Any `.on` rule for it is a regression. (The projection toggle, the other
+// button this used to cover, was retired on 2026-09-24 for the view style
+// button, which is card-chromed and meant to be seen — its `.on` fill while
+// the popover is open is deliberate.)
+test("no accent tint on the floating rail toggle", () => {
   const css = read("app.css");
-  for (const base of [".pf-float-rail-toggle", ".pf-viewcube-toggle"]) {
-    const tinted = rules(css)
-      .filter((r) => r.selector.includes(`${base}.on`))
-      .map((r) => `${r.selector} {${r.body.trim()}}`);
-    expect(tinted, `${base}.on must not restyle the button`).toEqual([]);
+  const tinted = rules(css)
+    .filter((r) => r.selector.includes(".pf-float-rail-toggle.on"))
+    .map((r) => `${r.selector} {${r.body.trim()}}`);
+  expect(tinted, ".pf-float-rail-toggle.on must not restyle the button").toEqual([]);
+});
+
+// The view style button centres its icon with an author-origin `display: flex`,
+// which outranks the UA's `[hidden]` rule; setHidden() would do nothing without
+// this guard.
+test("app.css keeps the view style button and its popover hideable", () => {
+  const css = read("app.css");
+  for (const sel of [".pf-view-style-button[hidden]", ".pf-view-style-popover[hidden]"]) {
+    expect(rules(css).some((r) => r.selector === sel && /display\s*:\s*none/.test(r.body)),
+      `${sel} must be display: none`).toBe(true);
   }
 });
 

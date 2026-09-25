@@ -110,10 +110,6 @@ export interface MountElements {
     measure?: HTMLElement | null;
     annotate?: HTMLElement | null;
     railToggle?: HTMLElement | null;
-    /** Realistic-mode toggle (default id `#realistic`). */
-    realistic?: HTMLButtonElement | null;
-    /** Environment picker, an empty `<select>` the mount fills (default id `#environment`). Shown only while realistic. */
-    environment?: HTMLSelectElement | null;
   };
 }
 
@@ -194,13 +190,16 @@ export interface MountOptions {
   annotateSend?: "viewbar" | "host";
   /**
    * A previous mount's `runtime.getViewerState()`, handed back so this mount
-   * resumes the camera, projection and cutaway where that one left them. For a
+   * resumes the camera, projection, cutaway, render mode, chosen environment
+   * and per-style feature lines where that one left them (the last three
+   * outrank what is stored). For a
    * host that applies edits by REMOUNTING: the part changed, the user's view of
    * it should not.
    *
-   * Omit on a first mount — the viewer then restores its own persisted camera
-   * and projection as before. Restore is best-effort per field: a pose this
-   * part cannot support is dropped, never fatal.
+   * Omit on a first mount — the viewer then restores its own persisted camera,
+   * in perspective (the projection is automatic, so it is not persisted).
+   * Restore is best-effort per field: a pose this part cannot support is
+   * dropped, never fatal.
    */
   viewerState?: ViewerState | null;
   /**
@@ -267,6 +266,13 @@ export interface CutawayState {
 export interface ViewerState {
   /** The live camera pose, or `null` when the viewer could not report one. */
   camera: { pos: [number, number, number]; target: [number, number, number] } | null;
+  /**
+   * The live projection. It is AUTOMATIC — orthographic only on a view cube
+   * face view (Fusion 360's "Perspective with Ortho Faces"), left by the first
+   * rotation — so `"orthographic"` is restored only when `camera` is itself a
+   * face view (looking straight down a world axis); carried with any other
+   * camera, or none, the remount comes back in perspective.
+   */
   projection: "perspective" | "orthographic";
   cutaway: CutawayState | null;
   /** Always reported by `getViewerState()` — the mode being headed for, so a realistic switch still loading reads `"realistic"` (a failed one settles to `"cad"`). Optional on the way back in (a state saved by an older partforge has none). */

@@ -123,15 +123,50 @@ test("the print bed is a plate sized to the part's footprint, with a hard key li
   });
   expect(rig.ground).toBeInstanceOf(THREE.Group);
   expect(rig.backgroundIntensity).toBeLessThan(1);
-  const key = rig.ground.children.find((c) => c.isDirectionalLight);
+  // The key light is NOT a child of the bed group — updateForCamera hides
+  // that whole group from below, and a hidden parent would take its light
+  // down with it. It rides on the rig's own `lights` array instead.
+  expect(rig.ground.children.find((c) => c.isDirectionalLight)).toBeUndefined();
+  const [key] = rig.lights;
+  expect(key.isDirectionalLight).toBe(true);
   expect(key.intensity).toBeGreaterThan(0);
+  // its target still tracks the bed for free, as a child of the (possibly
+  // hidden) group: matrixWorld updates run regardless of .visible
+  expect(key.target.parent).toBe(rig.ground);
   rig.setGround({ y: -3, centerX: 1, centerZ: 2, radius: 150, footprintMm: 170 });
   expect(rig.ground.position.y).toBeCloseTo(-3, 1);
+  // the light itself moved to keep its fixed offset off the bed's new origin
+  expect(key.position.x).toBeCloseTo(1 + 0.4);
+  expect(key.position.z).toBeCloseTo(2 + 0.6);
   const plate = rig.ground.children.find((c) => c.isMesh && Array.isArray(c.material));
   plate.geometry.computeBoundingBox();
   expect(plate.geometry.boundingBox.max.x - plate.geometry.boundingBox.min.x).toBeCloseTo(220);
   // the contact shadow never hangs off the plate's edge
   expect(rig.shadow.setSize.mock.calls.at(-1)[0]).toBeLessThanOrEqual(220);
+  rig.dispose();
+});
+
+test("the print bed rig exposes updateForCamera, delegating to the bed's own hide/show", async () => {
+  const rig = await loadEnvironmentRig(fakeRenderer(), "print-bed", {
+    loadHdr: async () => new THREE.DataTexture(), loadTexture: () => new THREE.Texture(), pmrem, createCanvas: () => null,
+  });
+  rig.setGround({ y: 0, radius: 50, footprintMm: 60 });
+  const camera = new THREE.PerspectiveCamera();
+  camera.position.set(0, 50, 0);
+  rig.updateForCamera(camera);
+  expect(rig.ground.visible).toBe(true);
+  camera.position.set(0, -50, 0);
+  rig.updateForCamera(camera);
+  expect(rig.ground.visible).toBe(false);
+  rig.dispose();
+});
+
+test("environments other than the print bed carry no lights of their own and no updateForCamera (the disc culls by its material's own side)", async () => {
+  const rig = await loadEnvironmentRig(fakeRenderer(), "studio", {
+    loadHdr: async () => new THREE.DataTexture(), loadTexture: () => new THREE.Texture(), pmrem,
+  });
+  expect(rig.lights).toEqual([]);
+  expect(rig.updateForCamera).toBeUndefined();
   rig.dispose();
 });
 

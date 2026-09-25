@@ -6,6 +6,7 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { UltraHDRLoader } from "three/addons/loaders/UltraHDRLoader.js";
 import { buildCadMaterial, buildPhysicalMaterial } from "./materials/physical.js";
+import { grainAxisFor, setGrainAxis } from "./materials/patterns.js";
 import { ensureBoxUVs } from "./materials/uv.js";
 import { loadEnvironmentRig } from "./materials/environment.js";
 import { assetUrl } from "./materials/assets.js";
@@ -16,7 +17,7 @@ import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
 import { flashWorldRadius, projectToScreen, anchorMoved } from "./pick-flash.js";
 import { createCameraTween } from "./camera-tween.js";
 import { orbitPose } from "./camera-orbit.js";
-import { orthoFrustum, perspectiveDistance } from "./projection.js";
+import { orthoFrustum, perspectiveDistance, isFaceAligned, FACE_ALIGN_COS } from "./projection.js";
 import { depthRangeFor } from "./depth-range.js";
 import { addViewerLights, captureLightPoses, createCaptureLights, createHemisphereLight } from "./viewer-lighting.js";
 import { makeCaptureCamera, recenteredView, captureDepthRange } from "./capture-frame.js";
@@ -154,7 +155,7 @@ export function captureCurrentFromScene(
   const long = Math.min(Math.max(Math.round(size) || MIN_SIZE, MIN_SIZE), maxTextureSize ?? 2048);
   // An OrthographicCamera has no `aspect` — its aspect lives in the frustum. Read
   // it there, or the capture comes back SQUARE from a wide viewport the moment the
-  // user toggles to ortho: silent, and only wrong in the saved image.
+  // view goes ortho: silent, and only wrong in the saved image.
   const aspect = liveCamera.aspect
     || (liveCamera.isOrthographicCamera
       ? (liveCamera.right - liveCamera.left) / (liveCamera.top - liveCamera.bottom)
@@ -210,7 +211,7 @@ export function createViewer(container, part) {
 
   // Two cameras, one active. The perspective camera stays the source of truth
   // for fov and aspect; the ortho camera borrows both through projection.js so
-  // a toggle never changes the part's size on screen.
+  // a swap never changes the part's size on screen.
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
   camera.position.set(18, 12, 18);
   const orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
@@ -218,6 +219,15 @@ export function createViewer(container, part) {
   let activeCamera = camera;
   let projectionMode = "perspective";
   const projectionListeners = new Set();
+  // The view direction (target -> camera) orthographic was entered on. The
+  // projection is AUTOMATIC (Fusion 360's "Perspective with Ortho Faces"): a
+  // view cube face click settles into ortho, and the first frame the direction
+  // has turned off this axis — a rotation, never a pan or zoom — swaps back to
+  // perspective. Non-null exactly while ortho is live. See checkAutoProjection.
+  let orthoAxis = null;
+  // Bumped by every change to what a ray down the view axis could hit — see
+  // sizeMatchDepth. Declared up here because the geometry setters bump it.
+  let matchGeneration = 0;
 
   const controls = new OrbitControls(activeCamera, renderer.domElement);
   controls.enableDamping = true;
@@ -294,12 +304,34 @@ export function createViewer(container, part) {
   const fadeLineMats = new Map();    // name -> lazily cloned LineMaterial
   const fadeUnregisters = new Map(); // fade material -> its cutaway unregister fn
   let lastShown = [];                // names last passed to showAssembly
-  // The render mode's LOOK, read by applySubOpacity (feature lines are CAD-only)
-  // and the depth range (the realistic ground disc). Declared here, ahead of
-  // everything that reads it; the mode itself lives in the realistic-mode block.
+  // The render mode's LOOK, read by applySubOpacity (feature lines are drawn
+  // only in "cad") and the depth range (the realistic ground disc). Declared
+  // here, ahead of everything that reads it; the mode itself lives in the
+  // realistic-mode block.
   let renderMode = "cad";
   let realisticRig = null;
   let shadowMovedAt = null;          // performance.now() of a pose change the contact shadow has not caught up with
+
+  // three calls scene.onBeforeRender(renderer, scene, camera, target) at the
+  // very start of WebGLRenderer.render — after scene/camera matrixWorld are
+  // current, before objects are projected — so visibility set here applies to
+  // THAT render with the camera actually doing it: the live canvas, an
+  // offscreen capture (renderOffscreen reuses this same `scene`), and the
+  // contact shadow's own depth pass (which renders `scene` from below with
+  // its own camera, hiding every non-caster and restoring them in `finally`).
+  // That restore is not exact for the print bed: if the bed group was already
+  // hidden going in, the hook can set it visible for the shadow camera and
+  // leave it that way after the pass. Harmless — the next render's hook
+  // recomputes the flag for ITS camera before anything is drawn, and the
+  // plate lies outside the shadow camera's frustum, so the depth pass never
+  // draws it either way. No-op outside realistic mode or for a rig
+  // whose environment has nothing to hide (the ground discs already cull by
+  // their material's own side).
+  const priorSceneOnBeforeRender = scene.onBeforeRender;
+  scene.onBeforeRender = (r, s, camera, target) => {
+    priorSceneOnBeforeRender?.(r, s, camera, target);
+    if (renderMode === "realistic") realisticRig?.updateForCamera?.(camera);
+  };
 
   const effectiveVisible = () => lastShown.filter((n) => (animOpacity.get(n) ?? 1) > 0);
 
@@ -388,6 +420,9 @@ export function createViewer(container, part) {
     applySubOpacity(name);
     const isZero = (animOpacity.get(name) ?? 1) <= 0;
     if (wasZero !== isZero) {
+      // A part faded to (or back from) nothing is a visibility change like
+      // showAssembly's, so the remembered size-match surface asks afresh.
+      matchGeneration++;
       cutaway.setVisible(effectiveVisible());
       if (realisticRig) shadowMovedAt = performance.now(); // a caster came or went
     }
@@ -398,6 +433,7 @@ export function createViewer(container, part) {
     const touched = [...animOpacity.keys()];
     animOpacity.clear();
     for (const n of touched) applySubOpacity(n);
+    matchGeneration++; // any part that was faded out is visible again
     cutaway.setVisible(effectiveVisible());
   }
 
@@ -512,9 +548,16 @@ export function createViewer(container, part) {
   let modeToken = 0;                 // bumped by every request; a stale completion does nothing
   let realisticPending = false;      // a realistic request is in flight (setEnvironment joins it)
   let environmentChosen = false;     // set by setEnvironment; false while seeded from meta/default
+
+  // Feature lines are CAD-only: applySubOpacity reads the render mode
+  // directly, so this just re-applies it to every sub-part after a mode
+  // change (enterRealistic/enterCad both call it once they've set renderMode).
+  function refreshFeatureLines() { for (const n of names) applySubOpacity(n); }
+
   const physicalMats = new Map();    // name -> MeshPhysicalMaterial (environment-independent, cached)
   const rigCache = new Map();        // environment id -> Promise<Rig>
   const loadedRigs = new Map();      // environment id -> Rig, once its load has landed (synchronous captures)
+  const borrowedRigRefs = new Map();  // environment id -> count of in-flight captures (thumbnails, renderViews) borrowing it
   const textureCache = new Map();    // asset file name -> Texture
   const textureLoader = new THREE.TextureLoader();
   let pmrem = null;
@@ -530,15 +573,44 @@ export function createViewer(container, part) {
 
   // Anisotropic filtering: the ground disc and the wood grain are seen at grazing
   // angles, where plain trilinear mip selection blurs them into smeared blocks.
+  //
+  // TextureLoader.load returns at once and fills `image` later, so a rig (or a
+  // physical material) is "ready" long before its maps are: a capture taken
+  // straight away draws the floor and the wood untextured. Each load therefore
+  // records a settle promise (resolved on load AND on error — a missing map is
+  // drawn without it, never an error), and whenTexturesSettled() waits for them.
+  const pendingTextures = new Set();
   const loadTexture = (file) => {
     let t = textureCache.get(file);
     if (!t) {
-      t = textureLoader.load(assetUrl(file));
+      let settle;
+      const settled = new Promise((resolve) => { settle = resolve; });
+      pendingTextures.add(settled);
+      settled.then(() => pendingTextures.delete(settled));
+      t = textureLoader.load(assetUrl(file), () => settle(), undefined, () => settle());
       t.anisotropy = Math.min(8, renderer.capabilities?.getMaxAnisotropy?.() ?? 1);
       textureCache.set(file, t);
     }
     return t;
   };
+  // Every texture requested so far has loaded or failed. Loops, because waiting
+  // can overlap more requests (a material built by a later compile). Bounded:
+  // an image request that never answers must not hang a mode switch or a
+  // capture forever — past the cap it draws with whatever has arrived.
+  const TEXTURE_SETTLE_CAP_MS = 15000;
+  async function whenTexturesSettled() {
+    const deadline = Date.now() + TEXTURE_SETTLE_CAP_MS;
+    while (pendingTextures.size) {
+      const left = deadline - Date.now();
+      if (left <= 0) return;
+      let timer;
+      await Promise.race([
+        Promise.all([...pendingTextures]),
+        new Promise((resolve) => { timer = setTimeout(resolve, left); }),
+      ]);
+      clearTimeout(timer);
+    }
+  }
   const loadHdr = (url) => new UltraHDRLoader().setDataType(THREE.HalfFloatType).loadAsync(url);
   function rigFor(id) {
     if (!rigCache.has(id)) {
@@ -550,6 +622,52 @@ export function createViewer(container, part) {
       rigCache.set(id, p);
     }
     return rigCache.get(id);
+  }
+
+  // A rig loaded only to draw a capture (a thumbnail, or renderViews from CAD) is freed straight away: each holds
+  // its equirect (~16 MB of half-float) and a PMREM, and four of them resident
+  // on a phone is not acceptable. The live one (or one a switch is loading) stays
+  // — and only those: in CAD, the default environment is freed like any other.
+  // rig.dispose() also disposes the ground textures loadTexture cached — safe:
+  // each environment.js ground.texture/roughnessTexture/normalTexture is a
+  // distinct file (environments.js), so no two rigs ever share a Texture
+  // object, and Texture.dispose() only frees the GPU handle (via the
+  // renderer's 'dispose' listener) — it leaves texture.image and every field
+  // three's uploader reads untouched. loadTexture keeps returning that same
+  // (still-intact) Texture object out of textureCache, so a later rigFor for
+  // this id just re-uploads it on the next render, exactly like a first load.
+  //
+  // Concurrent captures of the same environment share one in-flight rig
+  // promise (rigFor's own cache), and a rig's envMap is a PMREM render-target
+  // texture that CANNOT re-upload once disposed — so releasing while a
+  // sibling call is still capturing with it would leave that capture's
+  // reflections black. EVERY async capture that awaits a rig must therefore
+  // borrow it through borrowRig and give it back through releaseRig in a
+  // `finally` (renderStyleThumbnail and renderViews both do). `p` is the
+  // exact promise borrowRig took from rigFor: `borrowedRigRefs` counts
+  // in-flight users of `id` (bumped synchronously in borrowRig, BEFORE any
+  // await, so an overlapping borrower is always already counted; decremented
+  // here), and this only deletes/
+  // disposes once that count reaches 0 AND `rigCache.get(id) === p` — the
+  // second check is what stops a call from freeing a *different* rig a later
+  // load (or the live environment) has since put in the cache for the same id.
+  function borrowRig(id) {
+    const p = rigFor(id);
+    borrowedRigRefs.set(id, (borrowedRigRefs.get(id) ?? 0) + 1);
+    return p;
+  }
+  function releaseRig(id, p) {
+    const refs = (borrowedRigRefs.get(id) ?? 0) - 1;
+    if (refs > 0) { borrowedRigRefs.set(id, refs); return; }
+    borrowedRigRefs.delete(id);
+    // Keep only a rig that is (or is about to be) on screen. In CAD the
+    // current environment's id alone is no reason: nothing is showing it, and
+    // a realistic switch reloads it (from the texture cache) when asked.
+    if (realisticRig?.id === id || (realisticPending && id === environmentId)) return;
+    if (rigCache.get(id) !== p) return;
+    rigCache.delete(id);
+    loadedRigs.delete(id);
+    p.then((r) => r.dispose(), () => {});
   }
 
   // three's Material.copy carries neither onBeforeCompile nor
@@ -580,8 +698,18 @@ export function createViewer(container, part) {
     if (!m) {
       m = cloneKeepsPattern(buildPhysicalMaterial(part.parts[name].display, { printFrame: printFrames[name], loadTexture }));
       physicalMats.set(name, m);
+      syncGrain(name);
     }
     return m;
+  }
+  // Wood grain runs along the sub-part's longest axis (patterns.js). The
+  // uniforms are shared with every clone, so setting them once reaches the
+  // cutaway's and the fades' copies too. Called when the material is built and
+  // whenever new geometry lands (a regen can change which axis is longest).
+  function syncGrain(name) {
+    const m = physicalMats.get(name);
+    const geo = subCache[name];
+    if (m && geo) setGrainAxis(m, grainAxisFor(geo.boundingBox));
   }
 
   function publishMode(extra = {}) {
@@ -682,7 +810,7 @@ export function createViewer(container, part) {
       // was still CAD, so setSubGeometry skipped the UVs. Idempotent.
       for (const n of names) if (subCache[n] && physicalFor(n).userData.pfAnisotropic) ensureBoxUVs(subCache[n]);
       setSubMaterials(physicalFor);
-      if (realisticRig && realisticRig !== rig) scene.remove(realisticRig.ground, realisticRig.shadow.group);
+      if (realisticRig && realisticRig !== rig) scene.remove(realisticRig.ground, realisticRig.shadow.group, ...(realisticRig.lights ?? []));
       realisticRig = rig;
       scene.environment = rig.envMap;
       scene.background = rig.background;
@@ -690,13 +818,15 @@ export function createViewer(container, part) {
       scene.backgroundIntensity = rig.backgroundIntensity ?? 1;
       scene.backgroundRotation.set(0, rig.rotationY ?? 0, 0);
       scene.environmentRotation.set(0, rig.rotationY ?? 0, 0);
-      scene.add(rig.ground, rig.shadow.group);
+      scene.add(rig.ground, rig.shadow.group, ...(rig.lights ?? []));
       for (const l of Object.values(liveLights)) l.visible = false;
       grid.visible = false;
       renderer.toneMapping = THREE.NeutralToneMapping;
       renderer.toneMappingExposure = rig.exposure;
       if (reground) placeGround({ force: !live });
       if (live) applyPixelRatio("realistic");
+      // Hides the lines on every sub-part now that renderMode reads realistic.
+      refreshFeatureLines();
     } catch (e) {
       try { enterCad({ live }); } catch (rollback) { console.warn("partforge: rolling back to CAD failed", rollback); }
       throw e;
@@ -714,7 +844,7 @@ export function createViewer(container, part) {
     });
     renderMode = "cad";
     attempt(() => {
-      if (realisticRig) scene.remove(realisticRig.ground, realisticRig.shadow.group);
+      if (realisticRig) scene.remove(realisticRig.ground, realisticRig.shadow.group, ...(realisticRig.lights ?? []));
     });
     realisticRig = null;
     shadowMovedAt = null;
@@ -730,6 +860,7 @@ export function createViewer(container, part) {
     attempt(() => { grid.visible = true; });
     for (const n of names) attempt(() => { if (baseMats[n] !== cadMats[n]) rebaseSubMaterial(n, cadMats[n]); else applySubOpacity(n); });
     if (live) attempt(() => applyPixelRatio("cad"));
+    attempt(refreshFeatureLines);
     if (firstError) throw firstError;
   }
 
@@ -795,6 +926,10 @@ export function createViewer(container, part) {
       if (isStale(token)) return renderMode;
       await compileRealistic(rig);
       if (isStale(token)) return renderMode;
+      // The ground's and materials' maps: without this the floor pops in a
+      // frame or two after the switch, untextured first.
+      await whenTexturesSettled();
+      if (isStale(token)) return renderMode;
       enterRealistic(rig);
       realisticPending = false;
       publishMode();
@@ -849,10 +984,12 @@ export function createViewer(container, part) {
     for (const p of rigCache.values()) p.then((r) => r.dispose(), () => {});
     rigCache.clear();
     loadedRigs.clear();
+    borrowedRigRefs.clear();
     for (const m of physicalMats.values()) m.dispose();
     physicalMats.clear();
     for (const t of textureCache.values()) t.dispose();
     textureCache.clear();
+    pendingTextures.clear();
     pmrem?.dispose();
     pmrem = null;
   }
@@ -863,6 +1000,10 @@ export function createViewer(container, part) {
   // (setActive(false)) automatically halts playback too: no loop, no ticks.
   const frameListeners = new Set();
   function onFrame(cb) { frameListeners.add(cb); return () => frameListeners.delete(cb); }
+
+  // Fired at the end of every showAssembly, for hosts that need to react to
+  // which sub-parts are visible (e.g. re-deriving a view style thumbnail).
+  const assemblyListeners = new Set();
 
   const camTween = createCameraTween();
 
@@ -912,7 +1053,23 @@ export function createViewer(container, part) {
   // the tween would re-zoom on every frame of a 0.6s cue (see setCameraState's
   // comment, which is where that reasoning is written down). Composed with the
   // caller's own onComplete rather than replacing it.
-  function tweenCameraTo(viewName, { duration = 0.6, onComplete, refit = false } = {}) {
+  //
+  // `autoProjection` is the view cube's alone (its canvas clicks and its
+  // per-face keyboard buttons): a tween that lands on a FACE view — straight
+  // down a world axis — settles into orthographic at the end. Deliberately an
+  // explicit option rather than inferred from the view name, because an
+  // animation camera cue to "front" means "look from the front", not "switch
+  // projection"; cues never pass it, so they never ENTER ortho.
+  //
+  // Leaving ortho is the same for every tween: one whose destination is not a
+  // face view (an edge, a corner, iso) swaps back to perspective at the START.
+  // At the start because the part is still seen head-on there, where the two
+  // projections differ least, and the rotation that follows then reads as the
+  // ordinary perspective orbit it is; swapping at the end instead would spin
+  // the part flat and then pop the depth in at an oblique angle, where the
+  // difference is largest. A tween between two faces while ortho stays ortho
+  // the whole way — no projection change at all, rather than two in 0.6s.
+  function tweenCameraTo(viewName, { duration = 0.6, onComplete, refit = false, autoProjection = false } = {}) {
     const box = getVisibleWorldBounds();
     if (!box || box.isEmpty()) { onComplete?.(); return; }
     const center = box.getCenter(new THREE.Vector3()).toArray();
@@ -920,11 +1077,24 @@ export function createViewer(container, part) {
     // radius = full max extent (not half), matching frameTo's framing distance so a
     // live camera cue doesn't land twice as close as the reframe button and crop the part.
     const pose = cameraPoseForView(viewName, { center, radius: Math.max(size.x, size.y, size.z) || 12 });
+    const toDir = new THREE.Vector3().fromArray(pose.position).sub(new THREE.Vector3().fromArray(pose.target));
+    const toFace = isFaceAligned(toDir.toArray());
+    if (!toFace && projectionMode === "orthographic") setProjection("perspective");
     // The projection is read at COMPLETION, not now: a 0.6s tween is long
-    // enough for the user to have toggled projection under it.
+    // enough for a host to have changed it under it.
     const finish = () => {
       restoreDamping();
-      if (refit && projectionMode === "orthographic") {
+      if (autoProjection && toFace && projectionMode !== "orthographic") {
+        // Settle into the face view. The tween fires onComplete from inside its
+        // own update(), BEFORE the render loop writes the final pose onto the
+        // camera, so put it there first — the render loop then writes the same
+        // values onto the (now orthographic) camera. setProjection sizes the
+        // frustum from the camera's distance, which is the pose's framing
+        // distance, so this is also the refit, with zoom 1.
+        activeCamera.position.fromArray(pose.position);
+        controls.target.fromArray(pose.target);
+        setProjection("orthographic");
+      } else if (refit && projectionMode === "orthographic") {
         // The tween fires onComplete from inside its own update(), BEFORE the
         // render loop writes the final pose onto the camera — so the camera is
         // still a frame short of where it is going. Frame from the distance
@@ -932,8 +1102,14 @@ export function createViewer(container, part) {
         syncOrthoToPerspectiveFraming({
           distance: new THREE.Vector3().fromArray(pose.position)
             .distanceTo(new THREE.Vector3().fromArray(pose.target)),
+          target: new THREE.Vector3().fromArray(pose.target),
+          direction: toDir,
         });
       }
+      // Still ortho at the end (a face-to-face tween, a cue onto a face, or the
+      // switch just above): the face this tween landed on is the axis a
+      // rotation now has to leave.
+      if (projectionMode === "orthographic") orthoAxis = toDir.clone();
       onComplete?.();
     };
     suspendDamping();
@@ -997,20 +1173,189 @@ export function createViewer(container, part) {
     orthoCamera.updateProjectionMatrix();
   }
 
-  // Re-derive the ortho frustum from the perspective camera's fov at the
-  // camera's CURRENT distance from the orbit target. Called on every swap into
-  // ortho and after any reframe, which is what keeps the two projections
-  // showing the same amount of part.
+  // Where a projection swap matches size. The two projections agree on the
+  // size of things at exactly ONE depth — an orthographic view draws every
+  // depth at one scale, a perspective one magnifies whatever is nearer — so the
+  // swap has to choose it, and it chooses the surface the user is looking AT:
+  // the first visible surface under the screen centre, found by a ray down the
+  // view axis through the orbit target. It used to be the target's own depth
+  // (the part's CENTRE, for a view cube face), while a face view shows the
+  // part's FRONT: the swap back to perspective then magnified the surface on
+  // screen by distance / (distance - depth), and since that distance is the
+  // ortho zoom recovered as a dolly, zooming in made the jump grow (a planter
+  // zoomed 2.27x jumped 22% wider and 53% taller).
   //
-  // `distance` overrides "current": tweenCameraTo's refit runs from the tween's
-  // completion callback, which fires one frame BEFORE the final pose reaches the
-  // camera, so it frames from the distance it asked for rather than from where
-  // the camera happens to be at that instant.
-  function syncOrthoToPerspectiveFraming({ distance: atDistance } = {}) {
-    const distance = atDistance || activeCamera.position.distanceTo(controls.target) || 1;
+  // Returned as the signed distance of that surface from the target, along
+  // `towardCamera` (target -> camera). Positive is in front of the target.
+  //   - What is visible is what is DRAWN: an opaque sub-part's front face
+  //     that survives the cutaway, or — with the cutaway on — the section cap
+  //     where the ray crosses the plane inside solid material (the cap is not a
+  //     sub-part mesh, so the ray finds it by parity rather than by a hit).
+  //     Ghosted sub-parts (a static display opacity below 1) are seen through.
+  //   - `maxDepth` is where a PERSPECTIVE camera sits: it cannot see anything
+  //     behind itself (an orthographic one can — its near plane may be
+  //     negative, see depth-range.js — so the exit swap searches the whole
+  //     line). A surface within MATCH_CLEARANCE of the camera is no surface
+  //     to match at: the target's depth is kept instead.
+  //   - Nothing on the ray (a hole, a gap between bodies, an edge-on sheet)
+  //     falls back to the front of the visible bounds: in a face view, the
+  //     nearest face of the part.
+  //   - Nothing at all shown: 0, the target's depth, as before.
+  const _matchRaycaster = new THREE.Raycaster();
+  const _matchDir = new THREE.Vector3();
+  const _matchOrigin = new THREE.Vector3();
+  const _matchCorner = new THREE.Vector3();
+  const _matchSphere = new THREE.Sphere();
+  const _matchNormal = new THREE.Vector3();
+  const _matchNormalMat = new THREE.Matrix3();
+  const _matchPlane = new THREE.Plane();
+  const _equivDir = new THREE.Vector3();
+  // Both sides of every triangle: the parity walk has to see the faces the ray
+  // LEAVES a solid through, which a FrontSide material hides from a raycast.
+  const _matchProxy = new THREE.Mesh(undefined, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  _matchProxy.matrixAutoUpdate = false;
+  const MATCH_CLEARANCE = 1e-3; // of the visible bounds' diagonal
+  // The ray's candidate surfaces are remembered per RAY and SCENE: the target,
+  // the direction, the cutaway's plane (null while off — so a toggle, drag,
+  // flip or reset asks afresh), and a generation bumped by every geometry,
+  // pose or visibility change (setSubGeometry, setSubPose, showAssembly,
+  // hideAssembly) — a regenerated pocket or a hidden inner sub-part can move
+  // the surface without moving the bounds. Swapping in and back out asks
+  // about the same ray, but not bit-for-bit: controls.update() re-derives the
+  // camera position from spherical coordinates on every swap, so the
+  // direction comes back an ulp off — and a ray through a triangle edge (a
+  // target at the centre of a symmetric part is exactly that) can hit on one
+  // side of the ulp and miss on the other, which turned an untouched round
+  // trip into a 25% reframe. What is remembered is the whole candidate list,
+  // not one answer, so a query from a different camera position (`maxDepth`)
+  // still gets its own, correct answer from it.
+  let matchMemo = null; // { generation, target, dir, plane, candidates, fallback, clearance }
+  const RAY_EPS = 1e-9;
+  const samePlane = (a, b) => (a === null || b === null ? a === b
+    : a.normal.distanceTo(b.normal) <= RAY_EPS && Math.abs(a.constant - b.constant) <= RAY_EPS * (1 + Math.abs(a.constant)));
+  function sizeMatchDepth(target, towardCamera, { maxDepth = Infinity } = {}) {
+    if (towardCamera.lengthSq() === 0) return 0;
+    const box = getVisibleWorldBounds();
+    if (box.isEmpty()) return 0;
+    _matchDir.copy(towardCamera).normalize();
+    const plane = cutaway.getPlane?.(_matchPlane) ?? null;
+    const tol = RAY_EPS * (1 + box.max.distanceTo(box.min));
+    let m = matchMemo;
+    if (!(m && m.generation === matchGeneration && m.target.distanceTo(target) <= tol
+      && m.dir.dot(_matchDir) >= 1 - RAY_EPS && samePlane(m.plane, plane))) {
+      m = matchMemo = {
+        generation: matchGeneration,
+        target: target.clone(),
+        dir: _matchDir.clone(),
+        plane: plane && plane.clone(),
+        ...matchCandidates(target, box, plane),
+      };
+    }
+    // Candidates are nearest-the-camera first: the first one in front of the
+    // camera, clear of it, is what the camera sees.
+    for (const depth of m.candidates) {
+      if (depth > maxDepth) continue; // behind a perspective camera
+      return maxDepth - depth < m.clearance ? 0 : depth;
+    }
+    if (maxDepth - m.fallback < m.clearance) return 0;
+    return m.fallback;
+  }
+  function matchCandidates(target, box, plane) {
+    // Started outside everything shown rather than at the camera, so the ray
+    // does not depend on where a perspective camera happens to be (an ortho
+    // camera's position is a direction more than a place).
+    box.getBoundingSphere(_matchSphere);
+    const outside = target.distanceTo(_matchSphere.center) + _matchSphere.radius + 1;
+    _matchOrigin.copy(target).addScaledVector(_matchDir, outside);
+    const rayDir = _matchDir.clone().negate(); // camera -> target
+    _matchRaycaster.set(_matchOrigin, rayDir);
+    _matchRaycaster.far = 2 * outside;
+    const hits = [];
+    for (const n of names) {
+      const mesh = subMesh[n];
+      if (!mesh.visible || !mesh.geometry?.boundingBox) continue;
+      if ((part.parts[n].display?.opacity ?? 1) < 1) continue; // a ghost is seen through
+      mesh.updateWorldMatrix(true, false);
+      _matchProxy.geometry = mesh.geometry;
+      _matchProxy.matrixWorld.copy(mesh.matrixWorld);
+      _matchNormalMat.getNormalMatrix(mesh.matrixWorld);
+      for (const hit of _matchRaycaster.intersectObject(_matchProxy, false)) {
+        _matchNormal.copy(hit.face.normal).applyMatrix3(_matchNormalMat);
+        hits.push({ t: hit.distance, point: hit.point, entering: _matchNormal.dot(rayDir) < 0 });
+      }
+    }
+    _matchProxy.geometry = undefined;
+    hits.sort((x, y) => x.t - y.t);
+    // Where the ray crosses the cut plane, heading INTO the half that is kept:
+    // a cap is drawn there if the crossing is inside solid material.
+    let capT = null;
+    if (plane) {
+      const denom = plane.normal.dot(rayDir);
+      if (denom > 0) {
+        const t = -(plane.normal.dot(_matchOrigin) + plane.constant) / denom;
+        if (t > 0) capT = t;
+      }
+    }
+    const candidates = [];
+    let inside = 0;
+    let capDone = capT === null;
+    for (const hit of hits) {
+      if (!capDone && hit.t >= capT) {
+        capDone = true;
+        if (inside > 0) candidates.push(outside - capT);
+      }
+      if (hit.entering && (cutaway.isPointVisible?.(hit.point) ?? true)) candidates.push(outside - hit.t);
+      inside += hit.entering ? 1 : -1;
+    }
+    let fallback = -Infinity;
+    for (let i = 0; i < 8; i++) {
+      _matchCorner.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
+      fallback = Math.max(fallback, _matchCorner.sub(target).dot(_matchDir));
+    }
+    return {
+      candidates,
+      fallback: Number.isFinite(fallback) ? fallback : 0,
+      clearance: MATCH_CLEARANCE * box.max.distanceTo(box.min),
+    };
+  }
+
+  // The perspective distance (target -> camera) that shows what the ortho
+  // camera shows now, at the size-match surface above. OrbitControls zooms an
+  // ortho camera through camera.zoom rather than by moving it, which is why
+  // this reads the zoom. Falls back to the target's depth if the surface is so
+  // far BEHIND the target that the camera would have to sit behind the target
+  // to match it (a target panned out in front of everything).
+  function orthoEquivalentDistance() {
+    const halfH = (orthoCamera.top - orthoCamera.bottom) / 2 || 1;
+    // `|| 1` on the zoom for the same reason captureCurrent guards it: a zero
+    // would make this non-finite.
+    const atSurface = perspectiveDistance({ halfH, zoom: orthoCamera.zoom || 1, fovDeg: camera.fov });
+    const depth = sizeMatchDepth(controls.target, _equivDir.copy(orthoCamera.position).sub(controls.target));
+    const distance = atSurface + depth;
+    return distance > atSurface * 0.05 ? distance : atSurface;
+  }
+
+  // Re-derive the ortho frustum from the perspective camera's fov so that it
+  // shows what a perspective camera at the CURRENT distance from the orbit
+  // target shows at the size-match surface (sizeMatchDepth). Called on every
+  // swap into ortho and after any reframe, which is what keeps the two
+  // projections showing the same amount of part.
+  //
+  // `distance` / `target` / `direction` override "current": tweenCameraTo's
+  // refit runs from the tween's completion callback, which fires one frame
+  // BEFORE the final pose reaches the camera, so it frames from the pose it
+  // asked for rather than from where the camera happens to be at that instant.
+  const _syncTarget = new THREE.Vector3();
+  const _syncDir = new THREE.Vector3();
+  function syncOrthoToPerspectiveFraming({ distance: atDistance, target, direction } = {}) {
+    _syncTarget.copy(target ?? controls.target);
+    if (direction) _syncDir.copy(direction);
+    else _syncDir.copy(activeCamera.position).sub(_syncTarget);
+    const distance = atDistance || _syncDir.length() || 1;
+    const depth = sizeMatchDepth(_syncTarget, _syncDir, { maxDepth: distance });
     applyOrthoFrustum(orthoFrustum({
       fovDeg: camera.fov,
-      distance,
+      distance: distance - depth,
       aspect: camera.aspect || 1,
     }));
     // The frustum now expresses the whole framing, so any dolly-by-zoom the user
@@ -1035,7 +1380,8 @@ export function createViewer(container, part) {
     } else {
       // Recover whatever dolly the user did while in ortho: OrbitControls
       // changes camera.zoom there rather than moving the camera, so the zoom
-      // has to come back as a distance or the part jumps size.
+      // has to come back as a distance or the part jumps size — matched at the
+      // surface the user is looking at (orthoEquivalentDistance).
       //
       // The bound exists because ortho zoom is UNBOUNDED and zooming a long way
       // out costs nothing there (an ortho projection has no depth falloff) —
@@ -1046,17 +1392,15 @@ export function createViewer(container, part) {
       // which is the camera that is still live and therefore the one
       // updateDepthRange has been keeping current. `far * 0.9` alone would be
       // too eager: frameTo frames at 2.6r + 6 MILLIMETRES, so an everyday 300mm
-      // part sits at 786mm and a plain toggle would silently reframe it closer.
+      // part sits at 786mm and a plain swap would silently reframe it closer.
       // Hence the max with the distance the camera is already at, which makes an
-      // untouched round trip (zoom === 1, where orthoFrustum/perspectiveDistance
-      // are exact inverses) lossless for a part of ANY size, and still never lets
-      // a degenerate zoom move the camera further out than it already was.
-      // `|| 1` on the zoom for the same reason captureCurrent guards it: a zero
-      // would make this non-finite.
-      const halfH = (orthoCamera.top - orthoCamera.bottom) / 2 || 1;
+      // untouched round trip (zoom === 1, where the entry and this exit match at
+      // the same surface and are exact inverses) lossless for a part of ANY
+      // size, and still never lets a degenerate zoom move the camera further
+      // out than it already was.
       const offset = from.position.clone().sub(controls.target);
       const distance = Math.min(
-        perspectiveDistance({ halfH, zoom: orthoCamera.zoom || 1, fovDeg: camera.fov }),
+        orthoEquivalentDistance(),
         Math.max(from.far * 0.9, offset.length()),
       );
       camera.position.copy(controls.target).addScaledVector(offset.normalize(), distance);
@@ -1080,12 +1424,16 @@ export function createViewer(container, part) {
     // controls.update() ends in Object3D.lookAt, which does refresh matrixWorld
     // — but it refreshes BEFORE writing the new quaternion, so a rotation
     // applied inside that same update (damping momentum still decaying as the
-    // toggle lands) leaves the rotation one frame behind. One matrix compose is
+    // swap lands) leaves the rotation one frame behind. One matrix compose is
     // cheaper than depending on that ordering. Placed after controls.update()
     // for the same reason: it is the last writer of the pose.
     to.updateMatrixWorld();
     cutaway.setCamera(to);
     projectionMode = next;
+    // Ortho is armed on the direction it was entered on, whoever entered it (a
+    // face click, a host's runtime.projection.set, a restore): the first
+    // rotation off it returns to perspective the same way for all of them.
+    orthoAxis = next === "orthographic" ? to.position.clone().sub(controls.target) : null;
     for (const cb of [...projectionListeners]) cb(projectionMode);
     return projectionMode;
   }
@@ -1093,6 +1441,30 @@ export function createViewer(container, part) {
   function onProjectionChange(cb) {
     projectionListeners.add(cb);
     return () => projectionListeners.delete(cb);
+  }
+
+  // Run every frame, after controls.update() and the tween have written the
+  // pose: the first frame the view direction has turned off the ortho axis is a
+  // ROTATION (a canvas drag, the cube's drag, a user grab that cancelled a tween
+  // mid-turn), and it swaps back to perspective, size-preserving, from the
+  // pose it has only just left. Direction rather than OrbitControls' "start"
+  // event, because "start" also fires for pan and zoom, which keep the face
+  // view. Here in the render loop rather than in a controls "change" listener
+  // so setProjection's own controls.update() never runs nested inside one.
+  // Skipped while a tween is in flight: it owns the camera, and decides the
+  // projection itself (tweenCameraTo).
+  // Allocation-free (it runs every frame while ortho): one scratch vector and
+  // a dot product against the cosine of projection.js's epsilon — the same
+  // test as hasLeftAxis, inlined.
+  const _autoDir = new THREE.Vector3();
+  const _axisUnit = new THREE.Vector3();
+  function checkAutoProjection() {
+    if (projectionMode !== "orthographic" || !orthoAxis || camTween.isActive()) return;
+    _autoDir.copy(activeCamera.position).sub(controls.target);
+    const len = _autoDir.length(), axisLen = orthoAxis.length();
+    if (len === 0 || axisLen === 0) return;
+    _axisUnit.copy(orthoAxis).divideScalar(axisLen);
+    if (_autoDir.dot(_axisUnit) / len < FACE_ALIGN_COS) setProjection("perspective");
   }
 
   // Fallback creasing for payloads with no kernel normals. Both backends now
@@ -1137,12 +1509,14 @@ export function createViewer(container, part) {
   const subCache = Object.fromEntries(names.map((n) => [n, null]));
 
   function setSubGeometry(name, payload) {
+    matchGeneration++;
     setSubPose(name, null); // fresh worker mesh is baked at current params — clear any fast-path pose
     const prev = subCache[name];
     const next = buildGeometry(payload);
     // Brushed metal needs UVs for its tangent frame; CAD meshes carry none.
     if (renderMode === "realistic" && physicalMats.get(name)?.userData.pfAnisotropic) ensureBoxUVs(next);
     subCache[name] = next;
+    syncGrain(name);
     // Section helpers must stop referring to the old buffers before those
     // buffers are released.
     cutaway.updateGeometry(name, next);
@@ -1154,6 +1528,7 @@ export function createViewer(container, part) {
   // three.js Matrix4 convention). Never affects exports or geometry — the worker
   // owns real placement; this only re-poses the delivered mesh.
   function setSubPose(name, mat16) {
+    matchGeneration++;
     for (const obj of [subMesh[name], subLines[name]]) {
       if (!obj) continue;
       obj.matrixAutoUpdate = false;
@@ -1173,6 +1548,7 @@ export function createViewer(container, part) {
   // --- show / hide assembly -------------------------------------------------
   const _box = new THREE.Box3();
   const _posedBox = new THREE.Box3();
+  const _frameDir = new THREE.Vector3();
 
   // Recentre the assembly on the pivot and frame the camera to the named parts.
   // Cached bounding boxes are in the delivered mesh's own frame, so any fast-path
@@ -1193,7 +1569,16 @@ export function createViewer(container, part) {
     floorY = -size.z / 2;
     grid.position.y = floorY;
     const r = Math.max(size.x, size.y, size.z) || 12;
-    activeCamera.position.setLength(r * 2.6 + 6);
+    // Keep the VIEW DIRECTION (target -> camera), not the camera's direction
+    // from the origin: after a pan the target is off the origin, and scaling
+    // the position about the origin would turn the view — which, in an ortho
+    // face view, reads as a rotation and drops to perspective at an off-axis
+    // angle on the next frame. Falls back to the old origin-relative direction
+    // for a degenerate offset (camera on its target).
+    _frameDir.copy(activeCamera.position).sub(controls.target);
+    if (_frameDir.lengthSq() === 0) _frameDir.copy(activeCamera.position);
+    if (_frameDir.lengthSq() === 0) _frameDir.set(1, 1, 1);
+    activeCamera.position.copy(_frameDir.normalize().multiplyScalar(r * 2.6 + 6));
     controls.target.set(0, 0, 0);
     // Framing under ortho is a frustum, not a distance — without this the
     // reframe button moves the camera and nothing visibly changes.
@@ -1204,6 +1589,7 @@ export function createViewer(container, part) {
   // frame the camera to them — done only on the initial show and on view (tab)
   // changes, NOT on regeneration, so a user's zoom/orbit survives editing params.
   function showAssembly(visibleNames, { frame = false } = {}) {
+    matchGeneration++;
     lastShown = [...visibleNames];
     for (const name of names) {
       if (visibleNames.includes(name)) {
@@ -1218,6 +1604,9 @@ export function createViewer(container, part) {
     if (frame) frameTo(visibleNames);
     cutaway.setVisible(effectiveVisible());
     placeGround(); // realistic only: the ground comes to the part, and the shadow re-renders
+    for (const cb of [...assemblyListeners]) {
+      try { cb(); } catch (e) { console.warn("partforge: assembly listener failed", e); }
+    }
   }
 
   // Re-frame whatever is currently visible (the reframe button).
@@ -1273,6 +1662,7 @@ export function createViewer(container, part) {
   }
 
   function hideAssembly() {
+    matchGeneration++;
     lastShown = [];
     for (const m of Object.values(subMesh)) m.visible = false;
     for (const l of Object.values(subLines)) l.visible = false;
@@ -1491,7 +1881,8 @@ export function createViewer(container, part) {
   // renders, and the editor's on-screen mode must never change what the agent
   // sees. A realistic live view lends its scene to CAD for the synchronous
   // capture and gets it back exactly (captureIn). renderViews is the one way
-  // to ask for realistic canonical views.
+  // to ask for realistic canonical views. Feature lines are CAD-only, so
+  // borrowing CAD for this capture draws them for free.
   function captureCanonicalViews(viewNames) {
     if (disposed) return [];
     const box = getVisibleWorldBounds();
@@ -1598,20 +1989,75 @@ export function createViewer(container, part) {
     }
   }
 
+  // One small render of the CURRENT framing in any style, for the view style
+  // popover. The live view is put back exactly (same contract as captureIn:
+  // no publish, nothing persisted), whether it is CAD, or realistic in this
+  // or another environment. The borrowed style brings its own feature-lines
+  // visibility with it for free, since it's decided by render mode alone.
+  async function renderStyleThumbnail(style, { size = 256 } = {}) {
+    if (disposed) return null;
+    const box = getVisibleWorldBounds();
+    if (!box || box.isEmpty()) return null;
+    const capture = () => currentFramingInCurrentLook({ size, quality: 0.8 });
+    if (style === "cad") return captureIn("cad", null, capture);
+    const id = resolveEnvironmentId(style).id;
+    // Borrowed BEFORE awaiting (see releaseRig).
+    const p = borrowRig(id);
+    try {
+      const rig = await p;
+      if (disposed) return null;
+      await compileRealistic(rig, { forCapture: true });
+      if (disposed) return null;
+      await whenTexturesSettled();
+      if (disposed) return null;
+      if (renderMode !== "realistic" || realisticRig === rig) return captureIn("realistic", rig, capture);
+      // Realistic in another environment: borrow this rig, then put the live one back.
+      const liveRig = realisticRig, movedAt = shadowMovedAt;
+      try {
+        enterRealistic(rig, { live: false });
+        return capture();
+      } finally {
+        try {
+          enterRealistic(liveRig, { live: false, reground: false });
+          shadowMovedAt = movedAt;
+        } catch (e) {
+          // enterRealistic already rolled the scene back to CAD: make it the live mode.
+          console.warn("partforge: restoring the realistic view after a thumbnail failed", e);
+          try { applyPixelRatio("cad"); } catch { /* the view is CAD either way */ }
+          publishMode({ error: "couldn't load realistic view" });
+        }
+      }
+    } finally {
+      releaseRig(id, p);
+    }
+  }
+
   // Agent-facing canonical renders in a chosen appearance, whatever the live
   // view shows. CAD is exactly captureCanonicalViews (which is always CAD).
   // Realistic waits for the current environment's rig and the capture's
   // shader programs, then borrows the realistic look for the synchronous
   // capture only if the live view is not already realistic. A rig that fails
-  // to load rejects rather than silently returning CAD images.
+  // to load rejects rather than silently returning CAD images. Feature lines
+  // are CAD-only, so borrowing the realistic look draws without them for free.
   async function renderViews(viewNames, { renderMode: want = "cad" } = {}) {
     if (disposed) return [];
     if (want !== "realistic") return captureCanonicalViews(viewNames);
-    const rig = await rigFor(environmentId);
-    if (disposed) return [];
-    await compileRealistic(rig, { forCapture: true });
-    if (disposed) return [];
-    return captureIn("realistic", rig, () => canonicalViewsInCurrentLook(viewNames));
+    // Borrowed like a thumbnail's rig, so a thumbnail of the same environment
+    // finishing first cannot dispose it mid-capture (and, in CAD, it is freed
+    // once this is done — it is not on screen).
+    const id = environmentId;
+    const p = borrowRig(id);
+    try {
+      const rig = await p;
+      if (disposed) return [];
+      await compileRealistic(rig, { forCapture: true });
+      if (disposed) return [];
+      await whenTexturesSettled();
+      if (disposed) return [];
+      return captureIn("realistic", rig, () => canonicalViewsInCurrentLook(viewNames));
+    } finally {
+      releaseRig(id, p);
+    }
   }
 
   // Offscreen render of an arbitrary mesh set (a non-active view), for thumbnails.
@@ -1676,7 +2122,7 @@ export function createViewer(container, part) {
     try {
       // fov comes from the PERSPECTIVE camera, deliberately, not from whichever
       // camera is live: thumbnails are canonical captures and stay perspective
-      // however the user has the projection toggled. cameraPoseForView's distance
+      // whichever projection is live. cameraPoseForView's distance
       // is tuned to this fov, so a narrower one would crop long, thin parts.
       return renderOffscreen(
         pose,
@@ -1711,6 +2157,7 @@ export function createViewer(container, part) {
       activeCamera.position.fromArray(tw.position);
       controls.target.fromArray(tw.target);
     }
+    checkAutoProjection();
     // Per-listener guard, because three re-arms requestAnimationFrame only AFTER
     // this callback returns (WebGLAnimation.onAnimationFrame): a listener that
     // throws would stop the rAF chain outright and freeze the viewer for good, not
@@ -1797,10 +2244,28 @@ export function createViewer(container, part) {
   }
 
   // --- camera state (read/write for persistence; mount.js owns storage) -------
+  // Under ortho, `pos` is the PERSPECTIVE-EQUIVALENT position: same view
+  // direction, at the distance whose perspective frame shows what the ortho
+  // frustum shows now (halfH / zoom — setProjection's own conversion). An
+  // ortho zoom never moves the camera, so the raw position would carry none of
+  // it, and setCameraState — which re-derives the frustum from the distance at
+  // zoom 1 — would bring a remount back at the unzoomed size. Every reader of
+  // this state (viewerState's carry-over, the reload-persisted camera) means
+  // "what the user was looking at", so they all want the equivalent. The live
+  // ortho camera's own position is viewer.camera.position.
   function getCameraState() {
+    const t = controls.target;
+    if (projectionMode === "orthographic") {
+      const offset = activeCamera.position.clone().sub(t);
+      if (offset.lengthSq() > 0) {
+        const d = orthoEquivalentDistance();
+        const p = offset.normalize().multiplyScalar(d).add(t);
+        return { pos: [p.x, p.y, p.z], target: [t.x, t.y, t.z] };
+      }
+    }
     return {
       pos: [activeCamera.position.x, activeCamera.position.y, activeCamera.position.z],
-      target: [controls.target.x, controls.target.y, controls.target.z],
+      target: [t.x, t.y, t.z],
     };
   }
   function setCameraState({ pos, target }) {
@@ -1808,7 +2273,7 @@ export function createViewer(container, part) {
     controls.target.set(target[0], target[1], target[2]);
     controls.update();
     // A saved pose carries an implied FRAMING, so the ortho frustum has to be
-    // re-derived from the restored distance. Without it, a reload in ortho comes
+    // re-derived from the restored distance. Without it, a remount in ortho comes
     // back at the wrong zoom: the projection is restored during mount setup,
     // while the camera is restored much later (showView, on the first accepted
     // build), so the frustum would stay sized for wherever the camera happened
@@ -1822,7 +2287,18 @@ export function createViewer(container, part) {
     // that really does mean "refit" opts in with `{ refit: true }`, which runs
     // this same sync exactly once, on the tween's completion; the view cube's
     // clicks are the only callers that do.
-    if (projectionMode === "orthographic") syncOrthoToPerspectiveFraming();
+    if (projectionMode === "orthographic") {
+      // A placed pose is not a rotation, so it re-arms rather than exits — as
+      // long as it is still a face view. Orthographic only ever holds on one
+      // (the projection is automatic), so a pose off every axis — an old
+      // stored state, a host restoring a free-orbit pose — comes back in
+      // perspective: from the frustum just synced to this distance, a lossless
+      // round trip.
+      syncOrthoToPerspectiveFraming();
+      const dir = activeCamera.position.clone().sub(controls.target);
+      if (isFaceAligned(dir.toArray())) orthoAxis = dir;
+      else setProjection("perspective");
+    }
   }
   function onCameraEnd(cb) { controls.addEventListener("end", cb); }
 
@@ -1957,6 +2433,7 @@ export function createViewer(container, part) {
     controls.removeEventListener("start", onControlsStart);
     cameraStartListeners.clear();
     frameListeners.clear();
+    assemblyListeners.clear();
     themeListeners.clear();
     projectionListeners.clear();
     canonicalCaptureHidden.clear();
@@ -2020,7 +2497,9 @@ export function createViewer(container, part) {
     captureCurrent,
     renderMeshPayloads,
     renderViews,
+    renderStyleThumbnail,
     onFrame,
+    onAssemblyChange: (cb) => { assemblyListeners.add(cb); return () => assemblyListeners.delete(cb); },
     tweenCameraTo,
     cancelCameraTween,
     orbitBy,
@@ -2034,7 +2513,7 @@ export function createViewer(container, part) {
     setCameraState,
     onCameraEnd,
     // A GETTER, not a value: the active camera changes when the projection is
-    // toggled, and every consumer (measure/dim3-scene.js, selection/raycast.js,
+    // swapped, and every consumer (measure/dim3-scene.js, selection/raycast.js,
     // annotate/annotate-mode.js, measure/measure-mode.js) reads viewer.camera
     // fresh at call time — so this is transparent to all of them.
     get camera() { return activeCamera; },

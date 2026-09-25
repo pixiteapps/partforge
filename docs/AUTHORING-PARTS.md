@@ -2589,7 +2589,7 @@ stylesheet). `mount` looks up these element IDs:
 | `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` and opens the resolved default (see the "Which view the viewer opens on" rule above) |
 | `#download-step` / `#download` / `#download-3mf` | STEP / STL / 3MF export buttons |
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
-| `#viewbar` with `#annotate` / `#measure` / `#cutaway` / `#reframe` / `#realistic` / `#environment` / `#theme` | optional viewer controls (omit any you don't want) |
+| `#viewbar` with `#annotate` / `#measure` / `#cutaway` / `#reframe` / `#theme` | optional viewer controls (omit any you don't want) |
 | `#panel` | the full-height controls rail (`class="pf-rail"`); programmatic hosts pass `elements.rail` instead |
 | `#rail-toggle` | optional — collapses/restores the rail; resolved the same way as `#reframe`/`#theme`. A sibling of `#viewbar`, not a child of it: give it `class="pf-float-rail-toggle"` and it floats at the stage's top right |
 
@@ -2597,16 +2597,27 @@ Copy `demo.html` and change the title, the panel heading, and the `<script src>`
 workers are spawned from your one worker entry (`name` = `"manifold"` for preview/STL/3MF,
 `"occt"` for STEP — handled for you).
 
-**`#realistic` (a `<button>`) / `#environment` (an empty `<select>`) are the
-realistic-mode viewbar controls**, resolved by id or as `elements.chrome.realistic`
-/ `elements.chrome.environment`. Both optional and independent: supply `#realistic`
-alone for a bare toggle, or add `#environment` too and `mount` fills it with the
-part's available environments (see "Materials and appearance" above) and keeps it
-in sync — hidden while the view is in CAD mode, showing the environment in effect
-once realistic lands. Omit either and drive `runtime.renderMode` /
-`runtime.environment` from your own UI instead (see below). Both preferences
-persist across reloads the same way the theme does, and are carried in
-`viewerState` (below), which outranks what is stored.
+**The view style button needs no markup.** `mount` generates it (`#view-style`,
+an eye icon) into the stage's `#viewbar`, just before `#theme` behind a thin
+divider — the bar's "appearance" group — so a page that copies `demo.html` gets
+it in the bottom toolbar and it hides with the bar (Sketch mode). A stage with
+no `#viewbar` gets it over the view cube's bottom-right corner instead, where it
+hides whenever the cube does (Sketch mode, a crowded animation transport bar).
+Either way it replaces the old projection toggle. It opens a popover holding every control that
+changes *how* the part is drawn: the **style** — CAD or one of the realistic
+environments (see "Materials and appearance" above), each shown as a live
+thumbnail of the part, re-rendered on the next open after the part or theme
+changes. There is no projection control: the projection is **automatic** (see
+`runtime.projection` below). Feature
+lines are CAD-only and not a switch: they draw whenever the style is CAD and
+never in a realistic style. The old `#realistic` / `#environment` viewbar
+controls (`elements.chrome.realistic` / `.environment`) and the cube's own
+`#projection` button were retired with it (2026-09-24); a page that still
+carries `#realistic` / `#environment` markup just shows dead elements, so
+delete them. A host can still drive `runtime.renderMode` /
+`runtime.environment` / `runtime.projection` from its own UI (see below). The
+style preferences persist across reloads the same way the theme does, and are
+carried in `viewerState` (below), which outranks what is stored.
 
 **`#reframe` is supported but no longer shipped.** The framework's own pages dropped
 the button on 2026-08-20: clicking a face, edge or corner on the view cube reframes
@@ -2747,12 +2758,25 @@ pane's pixel size:
 ### `runtime.projection`
 
 `{ get(), set(mode), onChange(cb) }` where `mode` is `"perspective"` or
-`"orthographic"`. Drives the **live view** and `captureCurrent` only —
+`"orthographic"`. The projection is **automatic**, the way Fusion 360's
+"Perspective with Ortho Faces" and Blender's "Auto Perspective" work: clicking
+one of the view cube's six **face** views (on the cube, or through its hidden
+per-face keyboard buttons) tweens there and settles into orthographic at the
+end of the tween, with no size jump; an edge, corner or iso view is perspective
+(an orthographic view switches back as that tween starts). In a face view,
+**pan and zoom keep it orthographic; the first rotation** (the view direction
+leaving the face axis by more than half a degree) swaps back to perspective,
+keeping the part's apparent size. Animation camera cues never switch into
+orthographic. There is no user control for it. `set("orthographic")` still
+works for a host, and is left the same way — by the first rotation — and
+`onChange` hears every automatic swap. It is **not persisted** across reloads
+(a reload opens in perspective); a remount carries it in `viewerState`, but
+only with a face-view camera — carried with any other camera it restores
+perspective. Drives the **live view** and `captureCurrent` only —
 `captureCanonicalViews`, `renderMeshPayloads`, and the CLI's `partforge render`
-stay perspective unconditionally, so agent-facing output does not depend on a UI
-toggle. The choice persists across reloads under `partforge:projection` and is
-restored before the first framing. The orientation cube and its projection
-button are hidden while Sketch (annotate) mode is active, but that only governs
+stay perspective unconditionally, so agent-facing output does not depend on the
+live view. The orientation cube and the view style
+button (in `#viewbar`, which Sketch hides) are hidden while Sketch (annotate) mode is active, but that only governs
 *user-driven* view changes — the framework does not police programmatic ones.
 The ink is a transparent overlay and the WebGL canvas keeps rendering beneath
 it, so a host that calls `runtime.projection.set()` mid-sketch **visibly
@@ -2765,7 +2789,7 @@ Deliberately unguarded, the same way it's always been free to call
 ### `runtime.renderMode`, `runtime.environment`, `runtime.renderViews`, `runtime.declaresMaterials`
 
 For an embedder driving realistic mode from its own UI instead of (or in
-addition to) the `#realistic` / `#environment` viewbar controls above:
+addition to) the generated view style button above:
 
 - `runtime.renderMode` — `{ get(), set(mode), onChange(cb) }` where `mode` is
   `"cad"` or `"realistic"`. `set()` resolves to the mode actually in effect —
@@ -2792,7 +2816,10 @@ addition to) the `#realistic` / `#environment` viewbar controls above:
 - `runtime.declaresMaterials` — `true` when any sub-part names a
   `display.material`. A part with none still supports realistic mode (every
   sub-part just renders under the library's `default` look), so use this to
-  decide whether to surface the realistic toggle at all, not whether it works.
+  decide whether to surface your own realistic control at all, not whether it works.
+  Feature lines are not a preference: they draw whenever `runtime.renderMode`
+  reads `"cad"` and never while it reads `"realistic"` — there is no switch
+  to drive independently of it.
 - `await runtime.renderViews(viewNames, { renderMode? })` — the appearance-aware
   sibling of `runtime.captureViews` (canonical angles, framed to the visible
   assembly, grid hidden): `{ renderMode: "cad" }` (the default) is exactly
@@ -2800,19 +2827,18 @@ addition to) the `#realistic` / `#environment` viewbar controls above:
   for the capture — waiting on the chosen environment's assets — **without**
   switching the live view. Rejects if the realistic assets fail to load.
 
-Both preferences round-trip through `mount()`'s `viewerState`: a
-previous mount's `runtime.getViewerState()` carries `viewerState.renderMode`
-(`"cad"` or `"realistic"`) and, only when the viewer's environment was
-actually CHOSEN rather than merely defaulted from `meta.environment`,
-`viewerState.environment`. `renderMode` reports the mode the user is **headed
-for**, not only the one on screen: a realistic restore or switch that's still
-loading reports `"realistic"`, so a host that remounts on every edit (as an
-embedder applying edits by remounting typically does) doesn't drop the
-in-flight choice — a load that ultimately fails still settles back to
-`"cad"`. Pass `viewerState` back into the next `mount()` call to resume both
-where the previous mount left them; omit it on a first mount and the viewer
-restores its own persisted choice instead, the same way it does for the
-camera and projection.
+Both preferences round-trip through `mount()`'s `viewerState`: a previous
+mount's `runtime.getViewerState()` carries `viewerState.renderMode` (`"cad"`
+or `"realistic"`) and, only when the viewer's environment was actually CHOSEN
+rather than merely defaulted from `meta.environment`, `viewerState.environment`.
+`renderMode` reports the mode the user is **headed for**, not only the one on
+screen: a realistic restore or switch that's still loading reports
+`"realistic"`, so a host that remounts on every edit (as an embedder applying
+edits by remounting typically does) doesn't drop the in-flight choice — a
+load that ultimately fails still settles back to `"cad"`. Pass `viewerState`
+back into the next `mount()` call to resume both where the previous mount
+left them; omit it on a first mount and the viewer restores its own persisted
+choice instead, the same way it does for the camera.
 
 ### The annotation payload's camera block
 

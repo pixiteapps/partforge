@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as THREE from "three";
 
-const state = vi.hoisted(() => ({ renderer: null, hdrReadable: true }));
+const state = vi.hoisted(() => ({ renderer: null, hdrReadable: true, holdTextures: false, textureLoads: [] }));
 
 const OriginalResizeObserver = globalThis.ResizeObserver;
 
@@ -37,21 +37,35 @@ vi.mock("three", async (importOriginal) => {
     readRenderTargetPixels() {}
     dispose() {}
   }
-  return { ...actual, WebGLRenderer: FakeRenderer };
+  // No network: a load answers on a microtask, or — with `holdTextures` — only
+  // when the test calls its `settle` (the way a real image arrives later).
+  class FakeTextureLoader {
+    load(url, onLoad, _onProgress, onError) {
+      const t = new actual.Texture();
+      const entry = { url, texture: t, settle: (ok = true) => (ok ? onLoad?.(t) : onError?.(new Error("404"))) };
+      state.textureLoads.push(entry);
+      if (!state.holdTextures) queueMicrotask(() => entry.settle());
+      return t;
+    }
+  }
+  return { ...actual, WebGLRenderer: FakeRenderer, TextureLoader: FakeTextureLoader };
 });
 
-const rigState = vi.hoisted(() => ({ fail: false, failIds: new Set(), loads: 0, rigs: [], throwOnGround: false, gate: null }));
+const rigState = vi.hoisted(() => ({ fail: false, failIds: new Set(), loads: 0, rigs: [], throwOnGround: false, gate: null, groundTexture: null }));
 vi.mock("../../src/framework/materials/environment.js", async () => {
   const THREE = await import("three");
   return {
-    loadEnvironmentRig: async (_r, id) => {
+    loadEnvironmentRig: async (_r, id, { loadTexture } = {}) => {
       rigState.loads++;
+      // The real rig asks for its ground maps and resolves without waiting for them.
+      if (rigState.groundTexture) loadTexture(rigState.groundTexture);
       if (rigState.gate) await rigState.gate;
       if (rigState.fail || rigState.failIds.has(id)) throw new Error("asset 404");
       const rig = {
         id: id ?? "studio", exposure: 1.1, envMap: new THREE.Texture(), background: new THREE.Color(0xffffff), backgroundBlurriness: 0,
-        ground: new THREE.Mesh(), shadow: { group: new THREE.Group(), render: vi.fn(), setSize: vi.fn(), dispose: vi.fn() },
+        ground: new THREE.Mesh(), lights: [], shadow: { group: new THREE.Group(), render: vi.fn(), setSize: vi.fn(), dispose: vi.fn() },
         setGround: vi.fn(() => { if (rigState.throwOnGround) throw new Error("ground boom"); }), dispose: vi.fn(),
+        updateForCamera: vi.fn(),
       };
       rigState.rigs.push(rig);
       return rig;
@@ -97,7 +111,9 @@ const lastRig = () => rigState.rigs.at(-1);
 beforeEach(() => {
   state.renderer = null;
   state.hdrReadable = true;
-  Object.assign(rigState, { fail: false, failIds: new Set(), loads: 0, rigs: [], throwOnGround: false, gate: null });
+  state.holdTextures = false;
+  state.textureLoads = [];
+  Object.assign(rigState, { fail: false, failIds: new Set(), loads: 0, rigs: [], throwOnGround: false, gate: null, groundTexture: null });
   globalThis.ResizeObserver = class {
     observe() {}
     disconnect() {}
@@ -677,6 +693,49 @@ test("a realistic capture tone-maps the half-float readback at the rig's exposur
   v.dispose();
 });
 
+// three calls scene.onBeforeRender(renderer, scene, camera) at the start of
+// every WebGLRenderer.render, after matrixWorld is current and before objects
+// are projected — the fake renderer here is a plain stub that never makes
+// that call itself, so this exercises the hook the viewer installs on `scene`
+// directly, the way a real WebGLRenderer would call it: with the camera
+// ACTUALLY doing that render. That is what lets a print-bed plate hide itself
+// on an offscreen "bottom" capture too, not just the live canvas — captures
+// (renderOffscreen) and the contact shadow's own depth pass both render this
+// same `scene` object with their own camera.
+test("the viewer's scene.onBeforeRender hook asks the live rig to update for the rendering camera, only in realistic mode", async () => {
+  stubCanvas();
+  const v = shown();
+  const scene = sceneOf(v);
+  const someCamera = new THREE.PerspectiveCamera();
+
+  // CAD: no rig yet, so the hook is a harmless no-op.
+  expect(() => scene.onBeforeRender(state.renderer, scene, someCamera)).not.toThrow();
+
+  await v.setRenderMode("realistic");
+  const rig = lastRig();
+  scene.onBeforeRender(state.renderer, scene, someCamera);
+  expect(rig.updateForCamera).toHaveBeenCalledWith(someCamera);
+
+  // A different camera — an offscreen capture's, say, or the depth pass's own
+  // below-facing one — is passed straight through, not some cached "current"
+  // camera.
+  const belowCamera = new THREE.PerspectiveCamera();
+  belowCamera.position.set(0, -50, 0);
+  rig.updateForCamera.mockClear();
+  scene.onBeforeRender(state.renderer, scene, belowCamera);
+  expect(rig.updateForCamera).toHaveBeenCalledWith(belowCamera);
+  expect(rig.updateForCamera).not.toHaveBeenCalledWith(someCamera);
+
+  // Back in CAD, the hook stands down again even though the rig object (and
+  // its spy) still exist from the earlier realistic session.
+  await v.setRenderMode("cad");
+  rig.updateForCamera.mockClear();
+  scene.onBeforeRender(state.renderer, scene, someCamera);
+  expect(rig.updateForCamera).not.toHaveBeenCalled();
+
+  v.dispose();
+});
+
 test("CAD captures and checkpoint thumbnails keep the 8-bit path, even while realistic", async () => {
   stubCanvas();
   const v = shown();
@@ -871,5 +930,245 @@ test("the HDR probe checks the multisampled, stencilled half-float target captur
   v.captureCurrent({ size: 64 });
   expect(probed).toContainEqual({ samples: 4, stencil: true, type: THREE.HalfFloatType });
   expect(renders.at(-1).type).toBe(THREE.UnsignedByteType); // unsupported → the 8-bit path, not a black capture
+  v.dispose();
+});
+
+test("feature lines are CAD-only: on in CAD, off in every realistic style, including after an environment switch", async () => {
+  const v = shown();
+  expect(v.__subLines("body").visible).toBe(true); // CAD
+  await v.setRenderMode("realistic");
+  expect(v.__subLines("body").visible).toBe(false);
+  await v.setEnvironment("workshop");
+  expect(v.__subLines("body").visible).toBe(false); // still off after switching environments
+  await v.setEnvironment("studio");
+  expect(v.__subLines("body").visible).toBe(false);
+  await v.setRenderMode("cad");
+  expect(v.__subLines("body").visible).toBe(true); // back on in CAD
+  v.dispose();
+});
+
+test("agent renders: canonical CAD always with lines, realistic renderViews always without", async () => {
+  stubCanvas();
+  const v = shown();
+  const seen = [];
+  state.renderer.render = () => { seen.push(v.__subLines("body").visible); };
+  state.renderer.setRenderTarget = () => {};
+  v.captureCanonicalViews(["iso"]);
+  expect(seen.at(-1)).toBe(true);
+  await v.renderViews(["iso"], { renderMode: "realistic" });
+  expect(seen.at(-1)).toBe(false);
+  expect(v.__subLines("body").visible).toBe(true); // live CAD restored, lines back on
+  v.dispose();
+});
+
+test("a CAD thumbnail from a realistic view borrows CAD and puts the view back", async () => {
+  stubCanvas();
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const physical = v.__subMesh("body").material;
+  expect(await v.renderStyleThumbnail("cad")).toBe("data:image/jpeg;base64,TEST");
+  expect(v.getRenderMode()).toBe("realistic");
+  expect(v.__subMesh("body").material).toBe(physical);
+  v.dispose();
+});
+
+test("an environment thumbnail from CAD renders that environment, leaves CAD, and frees a thumbnail-only rig", async () => {
+  stubCanvas();
+  const v = shown();
+  const renders = recordRenders(v);
+  expect(await v.renderStyleThumbnail("outdoor")).toBe("data:image/jpeg;base64,TEST");
+  const rig = rigState.rigs.find((r) => r.id === "outdoor");
+  expect(renders.some((r) => r.environment === rig.envMap)).toBe(true);
+  expect(v.getRenderMode()).toBe("cad");
+  expect(rig.dispose).toHaveBeenCalled();           // not the live environment
+  v.dispose();
+});
+
+test("a thumbnail of another environment while realistic restores the live rig and keeps it", async () => {
+  stubCanvas();
+  const v = shown();
+  await v.setRenderMode("realistic");               // studio
+  const live = lastRig();
+  const scene = sceneOf(v);
+  await v.renderStyleThumbnail("workshop");
+  expect(scene.environment).toBe(live.envMap);
+  expect(live.ground.parent).toBe(scene);
+  expect(live.dispose).not.toHaveBeenCalled();
+  expect(rigState.rigs.find((r) => r.id === "workshop").ground.parent).toBe(null);
+  v.dispose();
+});
+
+test("showAssembly announces an assembly change", () => {
+  const v = shown();
+  let n = 0;
+  v.onAssemblyChange(() => { n += 1; });
+  v.showAssembly(["body"]);
+  expect(n).toBe(1);
+  v.dispose();
+});
+
+test("concurrent thumbnails of the same environment share one rig and dispose it only once, after both resolve", async () => {
+  stubCanvas();
+  const v = shown();
+  const resolvers = [];
+  state.renderer.compileAsync = vi.fn(() => new Promise((resolve) => resolvers.push(resolve)));
+  const a = v.renderStyleThumbnail("outdoor");
+  const b = v.renderStyleThumbnail("outdoor");
+  await Promise.resolve(); await Promise.resolve();
+  expect(rigState.rigs.filter((r) => r.id === "outdoor")).toHaveLength(1); // one shared load
+  expect(resolvers).toHaveLength(2);                 // both mid-flight on the same rig
+  const rig = rigState.rigs.find((r) => r.id === "outdoor");
+  resolvers[0]();
+  await a;
+  expect(rig.dispose).not.toHaveBeenCalled();         // the other call is still using it
+  resolvers[1]();
+  await b;
+  expect(rig.dispose).toHaveBeenCalledTimes(1);
+  v.dispose();
+});
+
+test("a thumbnail started after an earlier pair fully released gets its own fresh, independently-disposed rig", async () => {
+  stubCanvas();
+  const v = shown();
+  const a = v.renderStyleThumbnail("outdoor");
+  const b = v.renderStyleThumbnail("outdoor");
+  await Promise.all([a, b]);
+  const rig1 = rigState.rigs.find((r) => r.id === "outdoor");
+  expect(rig1.dispose).toHaveBeenCalledTimes(1);
+  const c = await v.renderStyleThumbnail("outdoor");
+  expect(c).toBe("data:image/jpeg;base64,TEST");
+  const outdoorRigs = rigState.rigs.filter((r) => r.id === "outdoor");
+  expect(outdoorRigs).toHaveLength(2);                // a fresh load, not the already-disposed one
+  const rig2 = outdoorRigs[1];
+  expect(rig2).not.toBe(rig1);
+  expect(rig2.dispose).toHaveBeenCalledTimes(1);       // released on its own
+  expect(rig1.dispose).toHaveBeenCalledTimes(1);       // and never touched again
+  v.dispose();
+});
+
+// --- textures: captures wait for the maps, not just the rig -----------------
+const flush = async (n = 20) => { for (let i = 0; i < n; i++) await Promise.resolve(); };
+
+test("an environment thumbnail waits for the ground's texture before it captures", async () => {
+  stubCanvas();
+  state.holdTextures = true;
+  rigState.groundTexture = "ground-paper.jpg";
+  const v = shown();
+  const renders = recordRenders(v);
+  let done = false;
+  const shot = v.renderStyleThumbnail("outdoor").then((r) => { done = true; return r; });
+  await flush();
+  expect(state.textureLoads.map((l) => l.url)).toEqual([expect.stringContaining("ground-paper")]);
+  expect(done).toBe(false);
+  expect(renders).toHaveLength(0);                   // nothing drawn with a blank floor
+  state.textureLoads[0].settle();
+  expect(await shot).toBe("data:image/jpeg;base64,TEST");
+  expect(renders.length).toBeGreaterThan(0);
+  v.dispose();
+});
+
+test("a texture that fails to load still lets the capture run", async () => {
+  stubCanvas();
+  state.holdTextures = true;
+  rigState.groundTexture = "ground-paper.jpg";
+  const v = shown();
+  const shot = v.renderViews(["iso"], { renderMode: "realistic" });
+  await flush();
+  state.textureLoads[0].settle(false);
+  expect(await shot).toHaveLength(1);
+  v.dispose();
+});
+
+test("renderViews('realistic') and the live switch wait for textures too", async () => {
+  stubCanvas();
+  state.holdTextures = true;
+  rigState.groundTexture = "ground-paper.jpg";
+  const v = shown();
+  let viewsDone = false;
+  const views = v.renderViews(["iso"], { renderMode: "realistic" }).then(() => { viewsDone = true; });
+  let modeDone = false;
+  const mode = v.setRenderMode("realistic").then(() => { modeDone = true; });
+  await flush();
+  expect(viewsDone).toBe(false);
+  expect(modeDone).toBe(false);
+  expect(v.getRenderMode()).toBe("cad");             // no untextured floor on screen
+  for (const l of state.textureLoads) l.settle();
+  await Promise.all([views, mode]);
+  expect(v.getRenderMode()).toBe("realistic");
+  v.dispose();
+});
+
+test("in CAD, a thumbnail of the default environment frees its rig too", async () => {
+  stubCanvas();
+  const v = shown();
+  await v.renderStyleThumbnail("studio");            // the part's (default) environment
+  const rig = rigState.rigs.find((r) => r.id === "studio");
+  expect(rig.dispose).toHaveBeenCalledTimes(1);
+  // …and a realistic switch afterwards simply loads it again.
+  expect(await v.setRenderMode("realistic")).toBe("realistic");
+  expect(rigState.rigs.filter((r) => r.id === "studio")).toHaveLength(2);
+  v.dispose();
+});
+
+test("a thumbnail of the environment a realistic switch is loading keeps that rig", async () => {
+  stubCanvas();
+  const v = shown();
+  let open;
+  rigState.gate = new Promise((r) => { open = r; });
+  const thumb = v.renderStyleThumbnail("studio");
+  const mode = v.setRenderMode("realistic");         // joins the same in-flight load
+  open();
+  await Promise.all([thumb, mode]);
+  const rig = rigState.rigs.find((r) => r.id === "studio");
+  expect(v.getRenderMode()).toBe("realistic");
+  expect(rig.dispose).not.toHaveBeenCalled();
+  v.dispose();
+});
+
+test("a thumbnail whose live-rig restore throws leaves CAD at the CAD pixel ratio", async () => {
+  stubCanvas();
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const v = shown();
+  await v.setRenderMode("realistic");                 // studio
+  const ratios = [];
+  state.renderer.getPixelRatio = () => 99;           // anything but the CAD ratio
+  state.renderer.setPixelRatio = (r) => ratios.push(r);
+  const events = [];
+  v.onRenderModeChange((e) => events.push(e));
+  const live = lastRig();
+  // The restore re-enters the live rig; make that throw.
+  const scene = sceneOf(v);
+  const add = scene.add.bind(scene);
+  let calls = 0;
+  scene.add = (...objs) => { if (objs.includes(live.ground) && ++calls === 1) throw new Error("restore boom"); return add(...objs); };
+  await v.renderStyleThumbnail("workshop");
+  expect(v.getRenderMode()).toBe("cad");
+  expect(events.at(-1)).toEqual(expect.objectContaining({ error: expect.stringContaining("couldn't load") }));
+  expect(ratios).toEqual([1]);                        // applyPixelRatio("cad") ran (devicePixelRatio 1)
+  v.dispose();
+});
+
+test("in CAD, renderViews('realistic') and a thumbnail of the same environment share the rig; the thumbnail finishing first cannot dispose it", async () => {
+  stubCanvas();
+  const v = shown();
+  const resolvers = [];
+  state.renderer.compileAsync = vi.fn(() => new Promise((resolve) => resolvers.push(resolve)));
+  const views = v.renderViews(["iso"], { renderMode: "realistic" });
+  const thumb = v.renderStyleThumbnail("studio");     // the default environment
+  await flush();
+  expect(rigState.rigs.filter((r) => r.id === "studio")).toHaveLength(1);
+  expect(resolvers).toHaveLength(2);
+  const rig = rigState.rigs[0];
+  let disposedAtCapture = null;
+  state.renderer.render = () => { if (disposedAtCapture === null) disposedAtCapture = rig.dispose.mock.calls.length > 0; };
+  resolvers[1]();                                     // the thumbnail finishes first
+  await thumb;
+  expect(rig.dispose).not.toHaveBeenCalled();         // renderViews still holds it
+  disposedAtCapture = null;
+  resolvers[0]();
+  expect(await views).toHaveLength(1);
+  expect(disposedAtCapture).toBe(false);              // captured with a live rig
+  expect(v.getRenderMode()).toBe("cad");
+  expect(rig.dispose).toHaveBeenCalledTimes(1);       // released once both are done
   v.dispose();
 });

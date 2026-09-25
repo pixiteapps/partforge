@@ -45,10 +45,22 @@ uniform sampler2D pfNormalMap;
 uniform sampler2D pfRoughMap;
 uniform float pfRoughMean;
 uniform float pfNormalStrength;
+uniform vec3 pfGrainSwap;
 varying vec3 vPfNmX;
 varying vec3 vPfNmY;
 varying vec3 vPfNmZ;
 vec3 pfTriplanarWeights(vec3 n) { vec3 w = pow(abs(n), vec3(4.0)); return w / (w.x + w.y + w.z); }
+// One grain direction on every face: each projection's UV pair is transposed
+// where pfGrainSwap says so (grainSwaps below), so the texture's grain lands on
+// the sub-part's grain axis. A transpose is a mirror, not a rotation, which is
+// what keeps the normal map exact: its slopes just swap axes (t.yx), no signs.
+vec2 pfGrainUv(vec2 ab, float s) { return mix(ab, ab.yx, s); }
+vec3 pfTriplanarWood(sampler2D map, vec3 p, vec3 n) {
+  vec3 w = pfTriplanarWeights(n);
+  return texture2D(map, pfGrainUv(p.yz, pfGrainSwap.x) / pfPatternScale).rgb * w.x
+       + texture2D(map, pfGrainUv(p.xz, pfGrainSwap.y) / pfPatternScale).rgb * w.y
+       + texture2D(map, pfGrainUv(p.xy, pfGrainSwap.z) / pfPatternScale).rgb * w.z;
+}
 // Triplanar tangent-space normal map, whiteout-blended (Golus, "Normal Mapping
 // for a Triplanar Shader"). Each projection's map is read as a height field over
 // the two object axes its UVs run along, so its tangent normal (x, y) is a slope
@@ -59,10 +71,13 @@ vec3 pfTriplanarWeights(vec3 n) { vec3 w = pow(abs(n), vec3(4.0)); return w / (w
 // Poly Haven "nor_gl" convention. Returns an OBJECT-space unit normal.
 vec3 pfTriplanarNormal(vec3 p, vec3 n, float scale) {
   vec3 w = pfTriplanarWeights(n);
-  vec3 tx = texture2D(pfNormalMap, p.yz / scale).xyz * 2.0 - 1.0;
-  vec3 ty = texture2D(pfNormalMap, p.xz / scale).xyz * 2.0 - 1.0;
-  vec3 tz = texture2D(pfNormalMap, p.xy / scale).xyz * 2.0 - 1.0;
-  tx.xy *= pfNormalStrength; ty.xy *= pfNormalStrength; tz.xy *= pfNormalStrength;
+  vec3 tx = texture2D(pfNormalMap, pfGrainUv(p.yz, pfGrainSwap.x) / scale).xyz * 2.0 - 1.0;
+  vec3 ty = texture2D(pfNormalMap, pfGrainUv(p.xz, pfGrainSwap.y) / scale).xyz * 2.0 - 1.0;
+  vec3 tz = texture2D(pfNormalMap, pfGrainUv(p.xy, pfGrainSwap.z) / scale).xyz * 2.0 - 1.0;
+  // a transposed sample's slopes run along the swapped axes
+  tx.xy = pfGrainUv(tx.xy, pfGrainSwap.x) * pfNormalStrength;
+  ty.xy = pfGrainUv(ty.xy, pfGrainSwap.y) * pfNormalStrength;
+  tz.xy = pfGrainUv(tz.xy, pfGrainSwap.z) * pfNormalStrength;
   tx = vec3(tx.xy + n.yz, abs(tx.z) * n.x);   // uv = (y, z), face axis x
   ty = vec3(ty.xy + n.xz, abs(ty.z) * n.y);   // uv = (x, z), face axis y
   tz = vec3(tz.xy + n.xy, abs(tz.z) * n.z);   // uv = (x, y), face axis z
@@ -102,11 +117,12 @@ const FRAG_BODY = {
   // author tinted it, physical.js — and the roughness map varies roughnessFactor
   // around the preset's value (divided by the map's own mean, so the preset sets
   // the average). Mipmaps (and RepeatWrapping) do the far-distance filtering.
+  // All three maps follow the grain axis (pfTriplanarWood / setGrainAxis).
   wood: `
   {
     vec3 pfN = normalize(vPfObjNormal);
-    diffuseColor.rgb *= pfTriplanar(pfPatternMap, vPfObjPos, pfN, pfPatternScale);
-    float r = pfTriplanar(pfRoughMap, vPfObjPos, pfN, pfPatternScale).g;
+    diffuseColor.rgb *= pfTriplanarWood(pfPatternMap, vPfObjPos, pfN);
+    float r = pfTriplanarWood(pfRoughMap, vPfObjPos, pfN).g;
     roughnessFactor = clamp(roughnessFactor * r / pfRoughMean, 0.02, 1.0);
   }`,
   // Carbon samples a luminance MASK (raw, not sRGB-decoded: physical.js) and
@@ -164,7 +180,40 @@ const FRAG_NORMAL = {
   }`,
 };
 
-export function applyPattern(material, { kind, scale = 1, printFrame, texture, normalMap, roughnessMap, roughnessMean = 0.5, normalScale = 1 } = {}) {
+// Wood grain: real wood has ONE grain direction, the board's long axis, but a
+// triplanar projection with fixed UVs (X-faces (y, z), Y-faces (x, z), Z-faces
+// (x, y)) lands the texture's grain on a different object axis per face — on a
+// block, adjacent faces showed grain at right angles. So each sub-part gets a
+// grain axis (its longest object-space bounding-box axis, X on a tie) and every
+// projection whose face CONTAINS that axis is transposed where needed so the
+// texture's grain runs along it. Faces across the axis are end grain; there is
+// no end-grain texture, so they keep the default sample.
+//
+// `grain` is which texture axis a scan's figure runs along ("u" horizontal, "v"
+// vertical in the image), declared per texture set in presets.js.
+const PLANE_AXES = [[1, 2], [0, 2], [0, 1]]; // each projection's (u, v) object axes
+export function grainAxisFor(box) {
+  if (!box || box.isEmpty?.()) return 0;
+  const s = [box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z];
+  const eps = Math.max(...s) * 1e-6;
+  let axis = 0;
+  for (let i = 1; i < 3; i++) if (s[i] > s[axis] + eps) axis = i;
+  return axis;
+}
+export function grainSwaps(axis, grain = "u") {
+  const want = grain === "v" ? 1 : 0;
+  return PLANE_AXES.map(([u], face) => (face === axis ? 0 : (axis === u ? 0 : 1) !== want ? 1 : 0));
+}
+// Point a wood material (and every clone sharing its uniforms) at a grain axis.
+// A no-op on any other material.
+export function setGrainAxis(material, axis) {
+  const u = material?.userData?.patternUniforms?.pfGrainSwap;
+  if (!u) return;
+  material.userData.pfGrainAxis = axis;
+  u.value.fromArray(grainSwaps(axis, material.userData.pfGrain));
+}
+
+export function applyPattern(material, { kind, scale = 1, printFrame, texture, normalMap, roughnessMap, roughnessMean = 0.5, normalScale = 1, grain = "u" } = {}) {
   if (!kind || !FRAG_BODY[kind]) return material;
   const wood = kind === "wood";
   const uniforms = {
@@ -176,9 +225,11 @@ export function applyPattern(material, { kind, scale = 1, printFrame, texture, n
       pfRoughMap: { value: roughnessMap ?? null },
       pfRoughMean: { value: roughnessMean },
       pfNormalStrength: { value: normalScale },
+      pfGrainSwap: { value: new THREE.Vector3() },
     } : {}),
   };
   material.userData.patternUniforms = uniforms;
+  if (wood) { material.userData.pfGrain = grain; setGrainAxis(material, 0); }
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader

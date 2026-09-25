@@ -249,24 +249,36 @@
    56px fallback is the standard viewbar's 12px bottom + 44px height, so the
    stack still sits right if the observer never fires.
 
-   The projection toggle has moved twice. Through 2026-08-19 it sat in its own
-   `.pf-viewcube-pill` card BELOW the cube, making the stack a column. Earlier
-   on 2026-08-20 it became a bare circle BESIDE the cube, making the stack a
-   `row-reverse` flex row (`canvas + gap + button`, 167px wide at the full
-   135px cube). It now sits OVER the cube's bottom-right corner instead:
-   absolutely positioned within the stack, right edge on the stack's right edge
-   and bottom edge on its bottom baseline, so the stack's width collapses back
-   to the canvas alone (135px, or 101 below the narrow breakpoint).
+   The VIEW STYLE button (view-style-controls.js) now lives in #viewbar, the
+   bottom toolbar, in its APPEARANCE group beside #theme (2026-09-24, at the
+   user's request after a live mock, following Fusion 360's
+   display-settings-in-the-nav-bar convention) — the cube's corner is clear
+   again. Only a host with NO #viewbar still gets it here, over the cube's
+   bottom-right corner (the `.pf-viewcube-stack > .pf-view-style-button`
+   rule below is scoped to exactly that fallback). Its history: the
+   PROJECTION TOGGLE it replaced had moved three times (through 2026-08-19 in
+   its own `.pf-viewcube-pill` card BELOW the cube, the stack a column;
+   earlier on 2026-08-20 a bare circle BESIDE the cube, the stack a
+   `row-reverse` flex row 167px wide at the full cube; later that day OVER
+   the cube's bottom-right corner). The view style button took that corner;
+   for a few hours on 2026-09-24 it moved out beside the cube, to its left
+   (at 34px and card-chromed it covered a third of the 101px narrow cube, and
+   beside the cube it had to dodge the animation transport bar); later that
+   day it came back over the corner ("to the bottom right of the direction
+   widget"), at 30px; and later still it moved into the bottom toolbar.
 
-   That is also what satisfies "aligned with the right of the toolbar" without a
-   second offset: `.pf-float-viewbar` above is `right: 12px` too, so making the
-   button's right edge the STACK's right edge lines it up with the viewbar's by
-   construction — and it keeps doing so if that margin is ever retuned.
+   In the fallback it sits inside the stack's box, so it cannot change the
+   stack's measured size — the size viewcube-controls.js publishes as
+   data-pf-w/h and the transport bar's crowding rule reads is still the
+   canvas alone (135px, or 101 below the narrow breakpoint). It is a later
+   sibling than the cube's wrapper, so it paints over the canvas with no
+   z-index of its own.
 
-   The button is a later sibling than the cube's wrapper, so it paints over the
-   canvas with no z-index of its own; 24px over the corner cell — the least
-   informative part of the drawing — is small enough not to hide anything worth
-   clicking, and the canvas keeps receiving pointer events everywhere else.
+   The stack keeps its right edge on the viewbar's (`.pf-float-viewbar` above
+   is `right: 12px` too), so the cube still lines up with the toolbar by
+   construction. The popover is NOT in the stack: it is appended to the stage
+   and placed at open time (above the toolbar pill, or above the fallback
+   button).
 
    The 8px that used to sit between the stack and the viewbar is now 3px
    (2026-08-20: "lower the whole box so it's closer to the bottom bar"). 3
@@ -283,9 +295,9 @@
    this pair (3 + 5) is the whole slack that exists without either overlapping
    the viewbar or shrinking the cube.
 
-   The stack itself is pointer-transparent. With the button back inside the
-   canvas's footprint there is no dead gap left at all: the stack's box IS the
-   canvas's box, and both the canvas and the button opt back in below. The
+   The stack itself is pointer-transparent. Its box IS the canvas's box, so
+   there is no dead gap in it; the canvas (and a fallback view style
+   button) opt back in below. The
    declaration stays because the stack's own box is still an element over the
    viewer, and a stray hit on it (its padding-free edges, or a future child
    before it opts in) should reach the model behind rather than be swallowed. */
@@ -298,10 +310,11 @@
   pointer-events: none;
 }
 .pf-viewcube-stack[hidden] { display: none; }
-.pf-viewcube-canvas, .pf-viewcube-toggle { pointer-events: auto; }
-/* Over the cube's bottom-right corner. Absolute against the stack, which is
-   itself absolute and so already the containing block. */
-.pf-viewcube-toggle { position: absolute; right: 0; bottom: 0; }
+.pf-viewcube-canvas, .pf-viewcube-stack > .pf-view-style-button { pointer-events: auto; }
+/* The fallback only (no #viewbar): over the cube's bottom-right corner.
+   Absolute against the stack, which is itself absolute and so already the
+   containing block. In #viewbar the button is an ordinary flex item. */
+.pf-viewcube-stack > .pf-view-style-button { position: absolute; right: 0; bottom: 0; }
 
 /* The keyboard surface: six per-view buttons standing in for the DOM focus a
    canvas cannot give us. Visually hidden rather than display:none — the latter
