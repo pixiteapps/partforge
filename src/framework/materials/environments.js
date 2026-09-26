@@ -19,7 +19,7 @@ export const DEFAULT_ENVIRONMENT_ID = "studio";
 
 export const ENVIRONMENTS = {
   studio: {
-    id: "studio", label: "Studio", exposure: 0.8,
+    id: "studio", label: "Studio", exposure: 0.64,
     hdr: "env-studio.jpg",
     // Paper 001's fibre relief (normal + roughness) does the work: its colour
     // map is nearly flat, so without them the sweep read as soft blotches up
@@ -35,7 +35,7 @@ export const ENVIRONMENTS = {
     blurriness: 0.3,
   },
   workshop: {
-    id: "workshop", label: "Workshop", exposure: 0.88,
+    id: "workshop", label: "Workshop", exposure: 0.7,
     hdr: "env-workshop.jpg",
     // Unfinished maple: Poly Haven "Oak Veneer 01" lightened and desaturated
     // at bake time, with its normal map at a gentle strength and NO roughness
