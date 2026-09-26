@@ -62,10 +62,22 @@ export function normalizeAnimation(name, spec) {
   const totalDuration = steps.reduce((sum, s) => sum + s.duration, 0) || 1;
   let acc = 0;
   const stepStarts = steps.map((s) => { const t = acc / totalDuration; acc += s.duration; return t; });
+  // Each cue carries `sweep`: how many seconds its camera move takes when
+  // playback crosses it. A per-step cue sweeps across its own step, and a
+  // cue-list entry until the next cue (or the end), so a slow orbit can be timed
+  // to the motion it frames. An intro cue — the one play() settles on before
+  // params move — ignores it and uses the driver's short fixed tween, since it
+  // gates playback and a long one would read as a stall.
   let cues;
-  if (typeof spec.camera === "string") cues = [{ t: 0, view: spec.camera }];
-  else if (Array.isArray(spec.camera)) cues = spec.camera.map(([t, view]) => ({ t, view }));
-  else cues = steps.flatMap((s, i) => (s.camera ? [{ t: stepStarts[i], view: s.camera }] : []));
+  // A lone angle name is only ever an intro, so it has no sweep of its own.
+  if (typeof spec.camera === "string") cues = [{ t: 0, view: spec.camera, sweep: null }];
+  else if (Array.isArray(spec.camera)) {
+    cues = spec.camera.map(([t, view], i, all) => ({
+      t, view, sweep: ((all[i + 1]?.[0] ?? 1) - t) * totalDuration,
+    }));
+  } else {
+    cues = steps.flatMap((s, i) => (s.camera ? [{ t: stepStarts[i], view: s.camera, sweep: s.duration }] : []));
+  }
   // Keys with at least one usable keyframe list in any step, for one field
   // ("tracks" or "opacity"). Shares usableKeyframes with segmentsFor — the
   // single rule both must agree on (see the comment on usableKeyframes).
@@ -200,6 +212,7 @@ export function createPlayback(anim) {
   let firedCueT = -1;     // cues with t <= firedCueT already fired this run
   let pendingCueT = null; // cue handed to an in-flight intro tween, not yet settled
   let stopAt = null;      // stepNext/playStep pause playback on reaching this t
+  let sweepingCue = null; // the cue tick() last fired, whose camera sweep may still be moving
 
   const snapshot = (cue = null) => ({ t, status, ...evaluate(anim, t), cue });
 
@@ -227,8 +240,24 @@ export function createPlayback(anim) {
     stopAt = null;
     return begin();
   }
+  // A stop mid-sweep cancels the camera where it is. Un-fire that cue so the
+  // next play() re-honors it (as an intro) instead of resuming with the camera
+  // stranded partway; a sweep that has already landed stays fired, so an
+  // ordinary pause/resume costs no extra tween.
+  // Only a cue crossed DURING playback sweeps; an intro lands its pose fully
+  // before params move, so it is never abandoned here.
+  function abandonSweep() {
+    const c = sweepingCue;
+    sweepingCue = null;
+    if (c && t < c.t + c.sweep / anim.totalDuration) {
+      let prev = -1;
+      for (const o of anim.cues) if (o.t < c.t) prev = o.t;
+      firedCueT = prev;
+    }
+  }
+
   function pause() {
-    if (status === "playing" || status === "intro") status = "paused";
+    if (status === "playing" || status === "intro") { status = "paused"; abandonSweep(); }
     pendingCueT = null; // an unsettled intro cue is abandoned, so resume re-issues it
     return snapshot();
   }
@@ -246,6 +275,7 @@ export function createPlayback(anim) {
     stopAt = null;
     firedCueT = -1; // a later play() re-honors the cue governing the new position
     pendingCueT = null;
+    sweepingCue = null;
     return snapshot();
   }
   function playStep(i) {
@@ -254,6 +284,7 @@ export function createPlayback(anim) {
     stopAt = idx + 1 < anim.steps.length ? anim.stepStarts[idx + 1] : 1;
     firedCueT = -1;
     pendingCueT = null;
+    sweepingCue = null;
     return begin();
   }
   function stepNext() {
@@ -264,11 +295,11 @@ export function createPlayback(anim) {
     return playStep(Math.max(0, stepIndexAt(anim, t) - 1));
   }
   function reset() {
-    t = 0; status = "idle"; stopAt = null; firedCueT = -1; pendingCueT = null; armed = true;
+    t = 0; status = "idle"; stopAt = null; firedCueT = -1; pendingCueT = null; armed = true; sweepingCue = null;
     return snapshot();
   }
   function disarmCues() { armed = false; }
-  function userEdited() { if (status === "playing" || status === "intro") status = "paused"; }
+  function userEdited() { if (status === "playing" || status === "intro") { status = "paused"; abandonSweep(); } }
 
   function tick(dt) {
     if (status !== "playing" || !(dt > 0)) return null;
@@ -277,17 +308,21 @@ export function createPlayback(anim) {
     // animation, so the two rarely coexist — but when they do, an explicit
     // "play this step" must still stop where it was told to, rather than being
     // swallowed by the wrap and running forever.
+    let stoppedAtBoundary = false;
     if (stopAt != null && t >= stopAt) {
-      t = stopAt; stopAt = null; status = "paused";
+      t = stopAt; stopAt = null; status = "paused"; stoppedAtBoundary = true;
     } else if (anim.loop) {
       if (t >= 1) t -= Math.floor(t);
     } else if (t >= 1) {
       t = 1; status = "done";
     }
     let cue = null;
-    if (armed) {
+    // Stopping on a step boundary does not start the next step's camera move:
+    // that cue belongs to the step that has not played yet, and would otherwise
+    // sweep on while playback sits paused. Playing that step intros to it.
+    if (armed && !stoppedAtBoundary) {
       for (const c of anim.cues) if (c.t <= t && c.t > firedCueT) cue = c;
-      if (cue) firedCueT = cue.t;
+      if (cue) { firedCueT = cue.t; sweepingCue = cue; }
     }
     return snapshot(cue);
   }

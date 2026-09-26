@@ -81,6 +81,13 @@ function buildOrientations() {
 export const ORIENTATIONS = buildOrientations();
 export const ORIENTATION_IDS = Object.keys(ORIENTATIONS);
 
+// Every angle an animation camera cue may name: the seven canonical names first,
+// then the view cube's other orientations (so "top-front-left" is iso seen from
+// the other front corner). cameraPoseForView resolves all of them; this list is
+// what lint holds cues to. Kept apart from CANONICAL_VIEWS for the reason the
+// comment on ORIENTATIONS gives.
+export const CAMERA_CUE_VIEWS = [...new Set([...CANONICAL_VIEWS, ...ORIENTATION_IDS])];
+
 const norm = (v) => {
   const l = Math.hypot(v[0], v[1], v[2]) || 1;
   return [v[0] / l, v[1] / l, v[2] / l];

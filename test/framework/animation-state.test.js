@@ -19,7 +19,7 @@ test("play with a governing cue gates in intro; introDone starts playback", () =
   const pb = createPlayback(open);
   const r = pb.play();
   expect(r.status).toBe("intro");
-  expect(r.cue).toEqual({ t: 0, view: "front" });
+  expect(r.cue).toMatchObject({ t: 0, view: "front" });
   expect(pb.tick(0.5)).toBeNull(); // params hold during the intro
   expect(pb.introDone().status).toBe("playing");
   const f = pb.tick(0.5); // 0.5s of 2s → t=0.25
@@ -60,7 +60,7 @@ test("seek pauses, and a later play re-honors the governing cue", () => {
   expect(s.values.angle).toBeCloseTo(55);
   const r = pb.play();
   expect(r.status).toBe("intro");
-  expect(r.cue).toEqual({ t: 0.5, view: "iso" });
+  expect(r.cue).toMatchObject({ t: 0.5, view: "iso" });
 });
 
 test("a mid-timeline cue fires during tick without gating", () => {
@@ -68,7 +68,7 @@ test("a mid-timeline cue fires during tick without gating", () => {
   pb.play(); pb.introDone(); // consumes the t=0 "left" cue
   const r = pb.tick(1.1); // crosses t=0.5
   expect(r.status).toBe("playing");
-  expect(r.cue).toEqual({ t: 0.5, view: "iso" });
+  expect(r.cue).toMatchObject({ t: 0.5, view: "iso" });
 });
 
 test("disarmCues stops all cue traffic until reset", () => {
@@ -129,16 +129,16 @@ test("reset returns to idle at t=0", () => {
 
 test("pausing mid-intro re-issues the cue on resume", () => {
   const pb = createPlayback(open);
-  expect(pb.play().cue).toEqual({ t: 0, view: "front" });
+  expect(pb.play().cue).toMatchObject({ t: 0, view: "front" });
   expect(pb.pause().status).toBe("paused");
   const again = pb.play();
   expect(again.status).toBe("intro");
-  expect(again.cue).toEqual({ t: 0, view: "front" });
+  expect(again.cue).toMatchObject({ t: 0, view: "front" });
 });
 
 test("a settled intro cue is not re-issued by a later pause/play", () => {
   const pb = createPlayback(open);
-  expect(pb.play().cue).toEqual({ t: 0, view: "front" });
+  expect(pb.play().cue).toMatchObject({ t: 0, view: "front" });
   expect(pb.introDone().status).toBe("playing");
   pb.pause();
   const again = pb.play();
@@ -195,4 +195,35 @@ test("only a literal true enables autoplay", () => {
     expect(a.autoplay, `autoplay: ${JSON.stringify(autoplay)}`).toBe(false);
   }
   expect(normalizeAnimation("x", { autoplay: true, duration: 1, tracks: { k: [[0, 0], [1, 1]] } }).autoplay).toBe(true);
+});
+
+test("pausing mid-sweep re-honors that cue on resume; after the sweep lands it does not", () => {
+  const pb = createPlayback(stepped);
+  pb.play(); pb.introDone();
+  expect(pb.tick(1.1).cue).toMatchObject({ view: "iso" }); // t=0.55, 1 s sweep still moving
+  pb.pause();
+  const resumed = pb.play();
+  expect(resumed.status).toBe("intro");
+  expect(resumed.cue).toMatchObject({ view: "iso" });
+
+  const settled = createPlayback(normalizeAnimation("s", {
+    steps: [
+      { camera: "left", duration: 1, tracks: { k: [[0, 0], [1, 1]] } },
+      { camera: "iso", duration: 0.5, tracks: { k: [[0, 1], [1, 2]] } },
+      { duration: 1, tracks: { k: [[0, 2], [1, 3]] } },
+    ],
+  }));
+  settled.play(); settled.introDone();
+  settled.tick(1.1); // iso fires at its step start
+  settled.tick(0.6); // past iso's 0.5 s sweep
+  settled.pause();
+  expect(settled.play().status).toBe("playing"); // camera already there: no re-intro
+});
+
+test("stopping on a step boundary does not start the next step's sweep", () => {
+  const pb = createPlayback(stepped);
+  pb.playStep(0); pb.introDone();
+  const r = pb.tick(5);
+  expect(r.status).toBe("paused");
+  expect(r.cue).toBeNull();
 });

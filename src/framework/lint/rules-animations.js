@@ -12,7 +12,7 @@
 // letting the author wonder why nothing plays.
 import { err, note } from "./finding.js";
 import { EASINGS } from "../animation.js";
-import { CANONICAL_VIEWS } from "../view-angles.js";
+import { CANONICAL_VIEWS, CAMERA_CUE_VIEWS } from "../view-angles.js";
 import { probeSubPartPose } from "../pose-probe-core.js";
 import { resolveDerived } from "../derive.js";
 import { desugar } from "../panel/legacy.js";
@@ -372,7 +372,9 @@ export const ANIMATION_RULES = [
     id: "animation-camera-invalid",
     run: ({ part }) => {
       const out = [];
-      const badName = (v) => typeof v !== "string" || !CANONICAL_VIEWS.includes(v);
+      const badName = (v) => typeof v !== "string" || !CAMERA_CUE_VIEWS.includes(v);
+      // The seven canonical names plus the view cube's corners and edges.
+      const angles = `${CANONICAL_VIEWS.join(", ")}, or a view-cube orientation such as top-front-left or top-back-right`;
       for (const { name, a, base } of animEntries(part)) {
         const stepCameras = Array.isArray(a.steps)
           ? a.steps.map((s, i) => [s?.camera, i]).filter(([c]) => c !== undefined && c !== null)
@@ -386,8 +388,8 @@ export const ANIMATION_RULES = [
         for (const [cam, i] of stepCameras) {
           if (badName(cam)) {
             out.push(err("animation-camera-invalid",
-              `animation "${name}" step ${i} camera "${cam}" is not a canonical angle`,
-              `Camera cues use the canonical angles: ${CANONICAL_VIEWS.join(", ")}.`,
+              `animation "${name}" step ${i} camera "${cam}" is not a camera angle`,
+              `Camera cues use ${angles}.`,
               `${base}.steps[${i}].camera`));
           }
         }
@@ -397,8 +399,8 @@ export const ANIMATION_RULES = [
         if (typeof a.camera === "string") {
           if (badName(a.camera)) {
             out.push(err("animation-camera-invalid",
-              `animation "${name}" camera "${a.camera}" is not a canonical angle`,
-              `Camera cues use the canonical angles: ${CANONICAL_VIEWS.join(", ")}.`,
+              `animation "${name}" camera "${a.camera}" is not a camera angle`,
+              `Camera cues use ${angles}.`,
               `${base}.camera`));
           }
         } else if (Array.isArray(a.camera)) {
@@ -409,7 +411,7 @@ export const ANIMATION_RULES = [
           if (!wellFormed || !sorted) {
             out.push(err("animation-camera-invalid",
               `animation "${name}" has an invalid camera cue list`,
-              `Cues are \`[[t, angle], …]\` with t strictly ascending in 0..1 and angles from: ${CANONICAL_VIEWS.join(", ")}.`,
+              `Cues are \`[[t, angle], …]\` with t strictly ascending in 0..1 and angles from: ${angles}.`,
               `${base}.camera`));
           }
         } else {

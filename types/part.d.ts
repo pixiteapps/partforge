@@ -556,11 +556,22 @@ export type Keyframes = Array<[number, number]>;
 export type CanonicalView = "iso" | "front" | "back" | "left" | "right" | "top" | "bottom";
 
 /**
- * A camera cue angle. `partforge lint` rejects anything outside the canonical
- * seven (`animation-camera-invalid`), so the type says so too. Cues fire during
- * play only; scrubbing never moves the camera.
+ * The view cube's other orientations: its edges and corners, named vertical,
+ * then depth, then side. `"top-front-right"` is the same camera as `"iso"`.
  */
-export type CameraCue = CanonicalView;
+export type ViewCubeOrientation =
+  | "top-front" | "top-back" | "top-left" | "top-right"
+  | "bottom-front" | "bottom-back" | "bottom-left" | "bottom-right"
+  | "front-left" | "front-right" | "back-left" | "back-right"
+  | "top-front-left" | "top-front-right" | "top-back-left" | "top-back-right"
+  | "bottom-front-left" | "bottom-front-right" | "bottom-back-left" | "bottom-back-right";
+
+/**
+ * A camera cue angle: one of the canonical seven or a view-cube orientation.
+ * `partforge lint` rejects anything else (`animation-camera-invalid`). Cues fire
+ * during play only; scrubbing never moves the camera.
+ */
+export type CameraCue = CanonicalView | ViewCubeOrientation;
 
 /** One step of a multi-step animation. Steps play in order; prev/next navigate them. */
 export interface AnimationStep {
@@ -586,7 +597,12 @@ export interface AnimationStep {
    * never affects params, export, measure, or verify.
    */
   opacity?: Record<string, Keyframes>;
-  /** Swing the camera to this angle when the step begins. */
+  /**
+   * Swing the camera to this angle, starting when the step begins and taking
+   * the step's whole duration — so a slow orbit can be timed to the motion it
+   * frames. (Starting playback at this step instead makes a short move there
+   * before anything else runs.)
+   */
   camera?: CameraCue;
 }
 
@@ -604,7 +620,8 @@ export interface AnimationSpecCommon {
   loop?: boolean;
   /**
    * One mechanism per animation: an angle (an intro cue at t=0), a
-   * `[[t, angle], …]` cue list, or per-step `camera` names.
+   * `[[t, angle], …]` cue list, or per-step `camera` names. A listed cue's
+   * camera move lasts until the next cue (or the end of the animation).
    */
   camera?: CameraCue | Array<[number, CameraCue]>;
   /**

@@ -27,7 +27,7 @@ test("animations are view-owned: box view carries all three", () => {
   const byView = viewAnimations(part);
   expect([...byView.keys()]).toEqual(["box"]);
   const [open, cycle, assemble] = byView.get("box");
-  expect(open.cues).toEqual([{ t: 0, view: "front" }]);
+  expect(open.cues).toMatchObject([{ t: 0, view: "front" }]);
   expect(cycle.loop).toBe(true);
   expect(assemble.steps.map((s) => s.label)).toEqual(
     ["Lid appears", "Lower the lid", "Open to check clearance"]);

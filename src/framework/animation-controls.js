@@ -513,7 +513,10 @@ export function attachAnimationControls(viewer, part, {
       for (const [n, v] of Object.entries(r.opacity ?? {})) viewer.setSubPartOpacity?.(n, v);
       if (r.cue) {
         viewer.tweenCameraTo(r.cue.view, {
-          duration: tweenDuration,
+          // An intro gates playback, so it is always the short tween; a cue
+          // crossed mid-timeline sweeps for as long as the cue asks (its step,
+          // or until the next cue) — see normalizeAnimation.
+          duration: reducedMotion ? 0 : r.status === "intro" ? tweenDuration : (r.cue.sweep ?? tweenDuration),
           // An intro cue gates playback until the tween settles; mid-timeline
           // cues overlap playback and need no completion signal.
           onComplete: r.status === "intro" ? () => guarded(() => playback.introDone()) : undefined,

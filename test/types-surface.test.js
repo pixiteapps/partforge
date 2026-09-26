@@ -34,7 +34,7 @@ import {
 import { SUBPART_METRICS, VIEW_METRICS } from "../src/framework/verify-metrics.js";
 import { VECTOR_UNITS } from "../src/framework/geometry/vector-format.js";
 import { PROFILES } from "../src/framework/oracle/dfm-profiles.js";
-import { CANONICAL_VIEWS } from "../src/framework/view-angles.js";
+import { CANONICAL_VIEWS, CAMERA_CUE_VIEWS } from "../src/framework/view-angles.js";
 
 // Vitest runs from the project root.
 //
@@ -250,13 +250,15 @@ describe("the verify declarations mirror the metric registries", () => {
     expect(sorted(unionMembers("types/part.d.ts", "CanonicalView"))).toEqual(sorted(CANONICAL_VIEWS));
   });
 
-  test("CameraCue is the canonical angle union, not a bare string", () => {
+  test("CameraCue is the angle union lint accepts, not a bare string", () => {
     // lint's animation-camera-invalid rejects anything else, so a bare `string`
     // here would let the declarations accept a cue lint refuses. Asserted on the
     // alias text rather than via unionMembers, which reads literal members only.
     const rhs = /^export type CameraCue\s*=([^;]+);/m.exec(stripComments(read("types/part.d.ts")));
     expect(rhs, "types/part.d.ts declares no type CameraCue").not.toBeNull();
-    expect(rhs[1].trim()).toBe("CanonicalView");
+    expect(rhs[1].trim()).toBe("CanonicalView | ViewCubeOrientation");
+    expect(sorted([...unionMembers("types/part.d.ts", "CanonicalView"), ...unionMembers("types/part.d.ts", "ViewCubeOrientation")]))
+      .toEqual(sorted(CAMERA_CUE_VIEWS));
   });
 });
 

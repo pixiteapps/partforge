@@ -47,7 +47,7 @@ export const ENVIRONMENTS = {
     },
   },
   "print-bed": {
-    id: "print-bed", label: "Print bed", exposure: 0.42,
+    id: "print-bed", label: "Print bed", exposure: 0.34,
     // The studio photo re-baked with --contrast: a darker, harsher room, like
     // the inside of a printer's enclosure.
     hdr: "env-print-bed.jpg",
@@ -65,7 +65,7 @@ export const ENVIRONMENTS = {
     },
   },
   outdoor: {
-    id: "outdoor", label: "Outdoor", exposure: 0.72,
+    id: "outdoor", label: "Outdoor", exposure: 0.58,
     hdr: "env-outdoor.jpg",
     // Tinted to a warm mid-grey: the overcast sky lights an untinted concrete
     // map near-white and blue. Exposed-aggregate concrete with its own normal
