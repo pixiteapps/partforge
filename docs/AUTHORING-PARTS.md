@@ -259,10 +259,32 @@ Rules (all lint-enforced):
 - Couple motions through `derive` (animate one master param; derive the rest),
   not by tracking dependent params separately.
 - `camera` cues use the seven canonical angles (`iso front back top bottom
-  left right`). One mechanism per animation: an animation-level name (an intro
-  cue at t=0), an animation-level `[[t, angle], …]` list, or per-step names.
+  left right`) or any view-cube orientation — an edge or corner named
+  vertical, then depth, then side (`top-front-left`, `top-back-right`,
+  `front-left`, `bottom-back-right`, …; `top-front-right` is `iso`). One
+  mechanism per animation: an animation-level name (an intro cue at t=0), an
+  animation-level `[[t, angle], …]` list, or per-step names.
   Cues fire during play only — scrubbing never moves the camera — and a user
   orbit disarms the remaining cues for that run.
+- **A camera move takes as long as its cue asks**: a per-step `camera` sweeps
+  across that step's whole `duration`, and a listed cue sweeps until the next
+  cue (or the end). The move that settles the camera BEFORE playback starts —
+  the first cue, or the governing one when play resumes mid-timeline — is
+  always a short swing, because params wait for it. So a slow orbit timed to a
+  motion is a camera-only opening step (the starting angle) followed by the
+  moving step carrying the destination angle.
+- **To turn the view, move the camera — never rotate the part.** A "spin"
+  param that rotates the geometry for a turntable effect looks right in CAD
+  mode but is wrong in realistic mode: the floor, shadow and backdrop stay put
+  in the world, so the part visibly slides around on them. Use cues instead:
+
+  ```js
+  steps: [
+    { label: "Start", camera: "top-front-left", duration: 0.3 },       // establishing angle
+    { label: "Open lid", camera: "iso", duration: 1.5,                  // orbits to iso over 1.5 s
+      tracks: { lidOpen: [[0, 0], [1, 100]] } },
+  ]
+  ```
 - Playback drives params through the real param pipeline: a **pose-only**
   param (feeds only rigid placement — see "Caching & determinism" below) plays
   at frame rate; anything else rebuilds best-effort at worker cadence. `lint`

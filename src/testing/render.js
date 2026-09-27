@@ -1,6 +1,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { safeName } from "../framework/safe-name.js";
+import { ORIENTATIONS } from "../framework/view-angles.js";
 import { buildView } from "../framework/oracle/build.js";
 import { bounds } from "../framework/oracle/mesh.js";
 
@@ -22,6 +23,17 @@ export const RENDER_ANGLES = {
   right:  { dir: [1, 0, 0],  up: [0, 0, 1] },
 };
 export const RENDER_VIEWS = Object.keys(RENDER_ANGLES);
+
+// The view cube's other orientations (animation camera cues may name them, and
+// a still defaults to its cue's angle), mapped from the viewer's Y-up world
+// back into model space: world (x, y, z) -> model (x, -z, y).
+export function renderAngle(name) {
+  if (Object.hasOwn(RENDER_ANGLES, name)) return RENDER_ANGLES[name];
+  const o = Object.hasOwn(ORIENTATIONS, name) ? ORIENTATIONS[name] : null;
+  if (!o) return null;
+  const toModel = ([x, y, z]) => [x, -z, y];
+  return { dir: toModel(o.dir), up: toModel(o.up) };
+}
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -93,8 +105,8 @@ export async function renderViews(kernel, part, view = Object.keys(part.views)[0
   const written = [];
 
   for (const angle of views) {
-    const a = RENDER_ANGLES[angle];
-    if (!a) throw new Error(`unknown angle "${angle}" (use: ${RENDER_VIEWS.join(", ")})`);
+    const a = renderAngle(angle);
+    if (!a) throw new Error(`unknown angle "${angle}" (use: ${RENDER_VIEWS.join(", ")}, or a view-cube orientation such as top-front-left)`);
     // orthographic camera basis: zc toward camera, xc right, yc up
     const zc = norm(a.dir), xc = norm(cross(a.up, zc)), yc = cross(zc, xc);
     // Key direction (toward the light), placed over the viewer's shoulder — up and to

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { RENDER_ANGLES, RENDER_VIEWS } from "../src/testing/render.js";
-import { CANONICAL_VIEWS, cameraPoseForView } from "../src/framework/view-angles.js";
+import { RENDER_ANGLES, RENDER_VIEWS, renderAngle } from "../src/testing/render.js";
+import { CANONICAL_VIEWS, CAMERA_CUE_VIEWS, cameraPoseForView } from "../src/framework/view-angles.js";
 
 // Two surfaces render the same canonical angles: the browser viewer's offscreen
 // captureViews (framework/view-angles.js, stated in the viewer's Y-up WORLD space)
@@ -56,5 +56,21 @@ describe("headless render angles", () => {
       ];
       expect(Math.hypot(...cross), `${view}`).toBeGreaterThan(1e-6);
     }
+  });
+});
+
+describe("headless render of view-cube angles (animation camera cues)", () => {
+  it("points every cue angle the same way as the viewer", () => {
+    for (const view of CAMERA_CUE_VIEWS) {
+      const pose = cameraPoseForView(view, BOUNDS);
+      const viewerDir = norm(sub(pose.position, pose.target));
+      const headlessDir = norm(toWorld(renderAngle(view).dir));
+      headlessDir.forEach((c, i) => expect(c).toBeCloseTo(viewerDir[i], 6));
+    }
+  });
+
+  it("refuses a name that is not an angle", () => {
+    expect(renderAngle("sideways")).toBeNull();
+    expect(renderAngle("constructor")).toBeNull();
   });
 });

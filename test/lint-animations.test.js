@@ -90,7 +90,10 @@ test("camera: canonical names, sorted in-range cues, one mechanism per animation
   ] } })))).toContain("animation-camera-invalid");
   // valid forms stay clean
   expect(ids(lintPart(withAnim("v", { x: { ...valid, camera: [[0, "iso"], [0.5, "front"]] } })))
+    .filter((i) => i === "animation-camera-invalid")).toEqual([]);  // view-cube corners and edges are camera angles too
+  expect(ids(lintPart(withAnim("v", { x: { ...valid, camera: [[0, "top-front-left"], [0.5, "back-right"]] } })))
     .filter((i) => i === "animation-camera-invalid")).toEqual([]);
+  expect(ids(lintPart(withAnim("v", { x: { ...valid, camera: "top-left-front" } })))).toContain("animation-camera-invalid");
 });
 
 test("classification: pose-only tracks are silent, geometry tracks get a note", () => {

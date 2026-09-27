@@ -246,6 +246,21 @@ test("a camera cue never asks for a refit or auto projection — it means 'look 
   }
 });
 
+test("the intro is the short tween; a cue crossed mid-play sweeps across its step", () => {
+  const defn = { ...part, views: { ...part.views, box: { label: "Box", animations: {
+    orbit: { label: "Orbit", steps: [
+      { label: "Hold", camera: "top-front-left", duration: 0.5, easing: "linear", tracks: { lidAngle: [[0, 0], [1, 0]] } },
+      { label: "Turn", camera: "iso", duration: 1.5, easing: "linear", tracks: { lidAngle: [[0, 0], [1, 110]] } },
+    ] },
+  } } } };
+  const { ctl } = setup(defn); handles.push(ctl);
+  const viewer = ctl.__viewer;
+  ctl.runtime.play();
+  expect(viewer.tweenCameraTo).toHaveBeenLastCalledWith("top-front-left", expect.objectContaining({ duration: 0.6 }));
+  viewer.frame(0.6); // crosses the Turn step's start
+  expect(viewer.tweenCameraTo).toHaveBeenLastCalledWith("iso", expect.objectContaining({ duration: 1.5 }));
+});
+
 test("reset restores the pre-animation param snapshot", () => {
   const { applied, ctl } = setup(); handles.push(ctl);
   ctl.runtime.play();

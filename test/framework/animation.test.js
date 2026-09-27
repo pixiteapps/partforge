@@ -29,18 +29,29 @@ test("single-track animation normalizes to one anonymous step", () => {
 });
 
 test("animation-level camera name desugars to a cue at t=0", () => {
-  expect(normalizeAnimation("open", open).cues).toEqual([{ t: 0, view: "front" }]);
+  expect(normalizeAnimation("open", open).cues).toEqual([{ t: 0, view: "front", sweep: null }]);
 });
 
 test("per-step cameras desugar to cues at step starts", () => {
   const a = normalizeAnimation("assemble", assemble);
   expect(a.stepStarts).toEqual([0, 0.5]);
-  expect(a.cues).toEqual([{ t: 0, view: "left" }, { t: 0.5, view: "iso" }]);
+  expect(a.cues).toEqual([{ t: 0, view: "left", sweep: 1 }, { t: 0.5, view: "iso", sweep: 1 }]);
+});
+
+test("a per-step cue sweeps across its own step, a cue-list cue until the next cue", () => {
+  const stepped = normalizeAnimation("s", { steps: [
+    { camera: "top-front-left", duration: 0.5, tracks: { k: [[0, 0], [1, 1]] } },
+    { duration: 2, tracks: { k: [[0, 1], [1, 2]] } },
+    { camera: "iso", duration: 1.5, tracks: { k: [[0, 2], [1, 3]] } },
+  ] });
+  expect(stepped.cues.map((c) => c.sweep)).toEqual([0.5, 1.5]);
+  const listed = normalizeAnimation("l", { duration: 4, camera: [[0, "iso"], [0.25, "top-back-left"]], tracks: { k: [[0, 0], [1, 1]] } });
+  expect(listed.cues.map((c) => c.sweep)).toEqual([1, 3]);
 });
 
 test("cue-list camera passes through", () => {
   const a = normalizeAnimation("x", { duration: 1, camera: [[0, "iso"], [0.4, "top"]], tracks: { k: [[0, 0], [1, 1]] } });
-  expect(a.cues).toEqual([{ t: 0, view: "iso" }, { t: 0.4, view: "top" }]);
+  expect(a.cues).toEqual([{ t: 0, view: "iso", sweep: 0.4 }, { t: 0.4, view: "top", sweep: 0.6 }]);
 });
 
 test("evaluate interpolates linearly under linear easing", () => {
@@ -74,8 +85,8 @@ test("stepIndexAt clamps and maps boundaries to the later step", () => {
 
 test("cueAt returns the governing (most recent at-or-before) cue", () => {
   const a = normalizeAnimation("assemble", assemble);
-  expect(cueAt(a, 0.3)).toEqual({ t: 0, view: "left" });
-  expect(cueAt(a, 0.9)).toEqual({ t: 0.5, view: "iso" });
+  expect(cueAt(a, 0.3)).toMatchObject({ t: 0, view: "left" });
+  expect(cueAt(a, 0.9)).toMatchObject({ t: 0.5, view: "iso" });
 });
 
 test("EASINGS endpoints are exact", () => {
