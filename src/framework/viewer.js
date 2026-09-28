@@ -794,15 +794,28 @@ export function createViewer(container, part) {
   // The ground comes to the part: it sits at the bottom of what is visible and
   // is sized from it. Only on showAssembly (and on entering the mode) — an
   // animated pose change moves the shadow, never the floor.
+  //
+  // An animation that REBUILDS geometry re-shows the assembly on every
+  // delivery, though, and re-deriving the floor from each frame's bounds slides
+  // it under the part as the bounds shift (feedback #138: a lid swinging open
+  // dragged the floor back with it). So while the animation driver holds the
+  // ground, a placement reuses the last one and may only LOWER it — never slide
+  // it sideways or resize it, and never lift it into the part. The hold is
+  // viewer-wide rather than per rig, so an environment switch mid-playback
+  // lands its floor in the same place.
+  let groundHeld = false;
+  let lastGround = null;
+  function holdGround(on) { groundHeld = !!on; }
   function placeGround({ force = false } = {}) {
     if (!realisticRig) return;
     const b = getVisibleWorldBounds(); // shared Box3: read it out before anything else runs
     if (b.isEmpty()) return;
     const center = b.getCenter(new THREE.Vector3());
     const size = b.getSize(new THREE.Vector3());
-    realisticRig.setGround({
-      y: b.min.y, centerX: center.x, centerZ: center.z, radius: size.length() / 2, footprintMm: Math.max(size.x, size.z),
-    });
+    lastGround = groundHeld && lastGround
+      ? { ...lastGround, y: Math.min(lastGround.y, b.min.y) }
+      : { y: b.min.y, centerX: center.x, centerZ: center.z, radius: size.length() / 2, footprintMm: Math.max(size.x, size.z) };
+    realisticRig.setGround(lastGround);
     shadowMovedAt = null; // this render is the full-resolution one
     renderShadow(undefined, { force });
   }
@@ -2658,6 +2671,7 @@ export function createViewer(container, part) {
     onFrame,
     onAssemblyChange: (cb) => { assemblyListeners.add(cb); return () => assemblyListeners.delete(cb); },
     tweenCameraTo,
+    holdGround,
     cancelCameraTween,
     orbitBy,
     onCameraStart,
