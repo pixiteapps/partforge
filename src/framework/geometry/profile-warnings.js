@@ -70,13 +70,124 @@ export function profileWarningMessages(prefix, profile) {
   return msgs;
 }
 
+// ── Sampled arcs ─────────────────────────────────────────────────────────────
+// A point list is built and exported exactly as written, so an arc sampled into it —
+// by a round *Polygon helper or a hand-written Math.cos loop — keeps its facets in
+// every export, where a path-contour arc is faceted by the kernel and refined for
+// print. A 36° bayonet lug from ringSectorPolygon at r = 30 mm had four 9° facets,
+// ~0.09 mm inside the true arc, on a fit with 0.25 mm of clearance (partforge-cloud
+// feedback #144). Nothing said so. This finds such runs and reports the worst one.
+//
+// A run is ≥ SAMPLED_ARC_MIN_EDGES consecutive edges of equal length meeting at equal
+// turns of at most SAMPLED_ARC_MAX_STEP_DEG — equal chords at equal turns lie on one
+// circle. The step bound keeps deliberate polygons out (a hexagon turns 60°, an
+// octagon 45°); SAMPLED_ARC_SAG_MM keeps out arcs sampled finely enough, or small
+// enough, that no print shows it (a 48-gon hole under ~23 mm radius, a dense loop).
+export const SAMPLED_ARC_SAG_MM = 0.05;
+export const SAMPLED_ARC_MAX_STEP_DEG = 20;
+export const SAMPLED_ARC_MIN_EDGES = 3;
+const REL_TOL = 1e-4;   // equal-length / equal-turn tolerance: float noise, not design
+
+const SAMPLED_ARC_COACH =
+  "a point list is built and exported exactly as written, so a print shows those facets. " +
+  "Build curves with the *Profile helpers (ringSectorProfile, slotProfile, pieProfile, " +
+  "roundedRectProfile, roundedProfile) or pathProfile().arcTo(…) — the kernel facets those, finer at export.";
+
+// The worst sampled-arc run in one closed point ring, or null.
+// → { r, stepDeg, sag } for the run with the largest chord sagitta.
+export function worstSampledArc(ring) {
+  if (!Array.isArray(ring)) return null;
+  let pts = ring;
+  const [fx, fy] = pts[0] ?? [], [lx, ly] = pts[pts.length - 1] ?? [];
+  if (pts.length > 1 && Math.hypot(lx - fx, ly - fy) < 1e-12) pts = pts.slice(0, -1);   // explicit closure
+  const n = pts.length;
+  if (n < SAMPLED_ARC_MIN_EDGES + 1 || n > PROFILE_VALIDATE_MAX_SEGMENTS) return null;
+  const len = [], dir = [];
+  for (let i = 0; i < n; i++) {
+    const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % n];
+    len.push(Math.hypot(bx - ax, by - ay));
+    dir.push(Math.atan2(by - ay, bx - ax));
+  }
+  // turn[i]: signed turn from edge i to edge i+1, in (-π, π]
+  const turn = dir.map((d, i) => {
+    let t = dir[(i + 1) % n] - d;
+    while (t <= -Math.PI) t += 2 * Math.PI;
+    while (t > Math.PI) t -= 2 * Math.PI;
+    return t;
+  });
+  const maxStep = (SAMPLED_ARC_MAX_STEP_DEG * Math.PI) / 180;
+  // Junction i (edge i → edge i+1) is arc-like when it turns a little, not at all or a
+  // lot, between two edges of the same length.
+  const joins = (i) => {
+    const t = Math.abs(turn[i]);
+    return t > 1e-9 && t <= maxStep + 1e-12 && len[i] > 1e-12 &&
+      Math.abs(len[(i + 1) % n] - len[i]) <= REL_TOL * len[i];
+  };
+  // Junction i extends the run junction i-1 is in when both are arc-like and turn alike.
+  const extends_ = (i) => {
+    const p = (i - 1 + n) % n;
+    return joins(p) && joins(i) && Math.abs(turn[i] - turn[p]) <= REL_TOL * Math.abs(turn[p]);
+  };
+  let worst = null;
+  // A run of j junctions spans j + 1 edges; its common turn IS the angular step.
+  const consider = (first, edges) => {
+    if (edges < SAMPLED_ARC_MIN_EDGES) return;
+    const step = Math.abs(turn[first]);
+    const r = len[first] / (2 * Math.sin(step / 2));
+    const sag = r * (1 - Math.cos(step / 2));
+    if (sag > SAMPLED_ARC_SAG_MM && (!worst || sag > worst.sag))
+      worst = { r, stepDeg: (step * 180) / Math.PI, sag };
+  };
+  // Start the walk at a break so no run is split across the wrap; a ring with no
+  // break (a regular n-gon, a circleProfile) is one run all the way round.
+  let start = -1;
+  for (let i = 0; i < n; i++) if (!extends_(i)) { start = i; break; }
+  if (start === -1) { if (joins(0)) consider(0, n); return worst; }
+  let first = start, junctions = 1;
+  for (let k = 1; k < n; k++) {
+    const i = (start + k) % n;
+    if (extends_(i)) { junctions++; continue; }
+    if (joins(first)) consider(first, junctions + 1);
+    first = i; junctions = 1;
+  }
+  if (joins(first)) consider(first, junctions + 1);
+  return worst;
+}
+
+// One message per profile naming its worst sampled arc, or [] when none shows. Only
+// point-list rings are examined: a path contour or a Shape2D carries its arcs
+// symbolically, so the kernel already facets them per tier.
+export function sampledArcMessages(prefix, profile) {
+  if (!profile || profile._shape2d) return [];
+  const rings = Array.isArray(profile)
+    ? [profile]
+    : profile.outer ? [profile.outer, ...(Array.isArray(profile.holes) ? profile.holes : [])] : [];
+  let worst = null;
+  for (const ring of rings) {
+    if (!Array.isArray(ring) || !Array.isArray(ring[0])) continue;   // a contour ring: exact
+    const w = worstSampledArc(ring);
+    if (w && (!worst || w.sag > worst.sag)) worst = w;
+  }
+  if (!worst) return [];
+  return [
+    `${prefix} traces an arc in straight facets (radius ≈ ${worst.r.toFixed(1)} mm, ` +
+    `${worst.stepDeg.toFixed(1)}° per facet, up to ${worst.sag.toFixed(2)} mm inside the true curve) — ` +
+    SAMPLED_ARC_COACH,
+  ];
+}
+
 // A per-kernel warner: `warn` records each distinct message at most once until
 // `reset` (the backend calls reset inside takeBuildWarnings, i.e. per drain).
+// `opts.sampledArcs` also reports a coarsely sampled arc — asked for only by the ops
+// where a path contour would be refined instead (prism, extrude, revolve); loft and
+// sweep sample curve rings at their own fixed LOD, so the advice would not hold there.
 export function makeProfileWarner(recordWarning) {
   const seen = new Set();
-  const warn = (prefix, profile) => {
+  const warn = (prefix, profile, opts) => {
     if (typeof recordWarning !== "function") return;
-    for (const msg of profileWarningMessages(prefix, profile)) {
+    const msgs = profileWarningMessages(prefix, profile);
+    if (opts?.sampledArcs) msgs.push(...sampledArcMessages(prefix, profile));
+    for (const msg of msgs) {
       if (seen.has(msg)) continue;
       seen.add(msg);
       recordWarning(msg);

@@ -60,7 +60,7 @@ export function makeShape2dFactory({ segs, extrude, revolve, recordWarning, warn
   const liftRegions = (x, { trusted = false } = {}) => {
     if (x && x._shape2d) return deepCopy(x._regions);
     checkProfile(x);
-    if (!trusted) warnProfile?.("shape2d: profile", x);
+    if (!trusted) warnProfile?.("shape2d: profile", x, { sampledArcs: true });
     return liftProfile(x).regions.map(ensureRegionWinding);
   };
 
