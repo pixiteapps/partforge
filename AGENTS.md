@@ -39,9 +39,12 @@ reused rounded-square ring, resample-mode square-to-circle shoulder), and
 `emblem.js` (the `k.vector2d` reference part — ingested vector art embossed on an
 authored millimetre plate, exercising both units modes, per-shape add/subtract
 roles, and all four contour kinds; the `{ shape }` selector is covered by
-test/vector2d.test.js rather than by the part), and
+test/vector2d.test.js rather than by the part),
 `relief.js` (the `images`/`k.heightfield` reference part - depth map to
-relief plate, swappable source).
+relief plate, swappable source), and `laser-box.js` (the sheet-parts reference
+part - five `fingerBox` panels and a lid as `sheetPart` sub-parts, two printed
+hinges keyed into slots; a test fixture and the guide's worked example, with no
+demo page).
 
 ## Node version
 
@@ -240,6 +243,26 @@ the installed package, so let the publish finish before bumping the dep there.
   `rollupOptions.input`) is the contact sheet - one 30mm sample of every
   preset plus the layer-line orientation check - to check by eye after any
   preset or shader change.
+- **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
+  (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
+  nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,
+  `worldToSheet`; imports only `constants.js`) are pure, because lint and the
+  oracle read them; `sheet/joinery.js` is the joinery library (`fingers`, `tabs`, `tSlots`,
+  `sheetPanel`, `matchingSlots`, `fingerBox`, `printedTab`, `sheetHole`);
+  `sheet/resolve.js` resolves a declaration into shapes and builds the preview;
+  `sheet/part.js` is `sheetPart()`; `process/registry.js` lists the
+  manufacturing processes (laser is #1, `process/laser/descriptor.js`, plain
+  data). All public names are re-exported from `partforge/geometry`; none is a
+  kernel op. Three rules hold it together. A sheet sub-part is recognized ONLY
+  by its plain-data `sp.sheet` (`isSheetPart`) — never `instanceof`, a
+  module-scoped `Symbol()` or a `WeakMap`, because partforge-cloud's part worker
+  holds two instances of this code. The generated build calls Shape2D/Solid
+  METHODS only — no `isEmpty`/`area`/`boundingBox`/`toContours` and no branching
+  on geometry — so the pose probe keeps trusting every sheet part (an empty mark
+  is dropped by matching the kernel's error text, `EMPTY_MARK_RE`). And
+  `resolve.js`/`pose.js`/`constants.js`/the registry stay paper-free, since the
+  oracle will import them. Spec: partforge-cloud
+  `docs/superpowers/specs/2026-09-28-sheet-parts-laser-kit-design.md`.
 - **`src/parts/`** - one file per part, default-exporting a `PartDefinition`.
 - **`src/framework/ingest/`** - the asset-ingest machinery behind both the panel's
   drop targets and the `partforge ingest` CLI verb. `sniff.js` classifies bytes by
