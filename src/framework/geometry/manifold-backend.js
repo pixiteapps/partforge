@@ -826,8 +826,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // dephase and horn-containment arithmetic assume it), bounded only by the tier's
     // cap: it may still never EXCEED kernel quality, but it is not re-bounded by the
     // part-scale rule meant for circles nobody sized by hand.
+    // A partial sweep spends the circle count in proportion to its angle: Manifold takes
+    // `density` as the slice count for the sweep it is given, so handing it the full-circle
+    // count put 116 slices into a 36° lug (932 triangles where 100 carry the same facet
+    // angle). Floored at 3, below which Manifold substitutes its own default.
     revolve: (pts, { degrees = 360, segs: segsOverride } = {}) => {
-      const densityFor = (maxR) => segsOverride != null ? Math.min(segs, segsOverride) : segsAt(maxR);
+      const sweep = (n) => (degrees >= 360 ? n : Math.max(3, Math.ceil((n * degrees) / 360)));
+      const densityFor = (maxR) => segsOverride != null ? Math.min(segs, segsOverride) : sweep(segsAt(maxR));
       if (pts && pts._shape2d) {
         // Keyed on the override, not the resolved density, so a cache hit never
         // materializes the CrossSection just to measure its bounds.

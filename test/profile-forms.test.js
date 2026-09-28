@@ -1,10 +1,9 @@
 // Which profile FORMS each factory op actually accepts — the ops' half of the
-// typedefs in kernel.js, pinned so the two cannot drift again. `prism` and
-// `extrude` take a `{start, segments}` contour; `revolve` and `sweep` do not, and
-// the typedefs claimed otherwise for both. `revolve` used to die on one as a bare
-// `TypeError: pts is not iterable` from inside its own radius check; it now says
-// what it wants. Contour support is deliberately NOT added to either op — for
-// `revolve` the lift is one `k.shape2d()` away and the error says so.
+// typedefs in kernel.js, pinned so the two cannot drift again. `prism`, `extrude`
+// and `revolve` take a `{start, segments}` contour; `sweep` does not. `revolve` used to
+// refuse one ("lift it with k.shape2d first"); since the *Profile curve helpers it lifts
+// the contour itself (finishKernel), so a curve helper works everywhere a point list
+// does. `sweep` still takes points only — its stations are placed point by point.
 //
 // Manifold only (AGENTS.md: the two backends must not boot in one file). The
 // forms are normalized in the shared front (op-options.js), so OCCT agrees by
@@ -12,8 +11,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { pathProfile } from "../src/framework/geometry/polygon.js";
-
-const CONTOUR_RE = /a \{start, segments\} contour is not accepted/;
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -33,13 +30,14 @@ describe("a {start, segments} contour", () => {
     expect(k.extrude({ profile: tab(), h: 5 }).volume()).toBeGreaterThan(0);
   });
 
-  it("is refused by revolve, by name, with the lift in the message", () => {
-    expect(() => k.revolve({ profile: lathe() })).toThrow(CONTOUR_RE);
-    expect(() => k.revolve({ profile: lathe() })).toThrow(/revolve: profile must be an \[\[r, z\]/);
+  it("builds through revolve, exactly as its Shape2D lift does", () => {
+    expect(k.revolve({ profile: lathe() }).volume())
+      .toBeCloseTo(k.revolve({ profile: k.shape2d(lathe()) }).volume(), 9);
   });
 
-  it("revolve takes the same contour once it is lifted to a Shape2D", () => {
-    expect(k.revolve({ profile: k.shape2d(lathe()) }).volume()).toBeGreaterThan(0);
+  it("revolve still names what it wants for a form it cannot take", () => {
+    expect(() => k.revolve({ profile: { outer: [[0, 0], [1, 0], [1, 1]] } }))
+      .toThrow(/revolve: profile must be an \[\[r, z\], …\] point list, a \{start, segments\} contour, or a Shape2D/);
   });
 
   it("is refused by sweep", () => {

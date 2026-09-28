@@ -19,6 +19,7 @@ import { normalizeOpentype, parseFont } from "./opentype-interop.js";
 const opentype = normalizeOpentype(opentypeNamespace);
 import { KernelCapabilityError } from "./errors.js";
 import { isPlainOptions, KERNEL_OP_SPECS } from "./op-options.js";
+import { isPathContour } from "./profile.js";
 import { textGlyphs } from "./text2d.js";
 import { placeRegions } from "./vector2d.js";
 import { beveledExtrude } from "./rim-bevel.js";
@@ -184,6 +185,21 @@ export function finishKernel(k) {
     a.length === 1 && isPlainOptions(a[0]) && a[0].bevel !== undefined
       ? beveledExtrude(k, a[0])
       : specExtrude(...a);
+
+  // revolve takes a {start, segments} path contour (pathProfile, roundedProfile, the
+  // *Profile helpers) by lifting it to a Shape2D here — before the spec-wrapped op —
+  // so a curve helper works everywhere a point list does and both backends get the
+  // Shape2D lathe path (profile arcs at the double-curvature count, true arcs on OCCT).
+  // The positional lift always passes its options argument: a lone Shape2D is a plain
+  // object, which the spec wrapper would read as an options-form call.
+  const specRevolve = k.revolve;
+  const isContour = (p) => isPathContour(p) && !p._shape2d;
+  k.revolve = (...a) => {
+    if (isContour(a[0])) return specRevolve(k.shape2d(a[0]), a[1] ?? {});
+    if (a.length === 1 && isPlainOptions(a[0]) && isContour(a[0].profile))
+      return specRevolve({ ...a[0], profile: k.shape2d(a[0].profile) });
+    return specRevolve(...a);
+  };
 
   k.toSTEP ??= () => { throw new KernelCapabilityError("toSTEP requires the OCCT backend"); };
   k.shape2d ??= () => { throw new KernelCapabilityError("shape2d requires the Manifold backend"); };

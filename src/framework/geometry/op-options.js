@@ -247,6 +247,10 @@ const passThrough = (op, valid, required) => (o) => {
   return [o];
 };
 
+// The ops where a point list's sampled arc is worth a warning: each takes a path
+// contour instead and facets it per tier (profile-warnings.js, "Sampled arcs").
+const SAMPLED_ARCS = Object.freeze({ sampledArcs: true });
+
 // Kernel factory ops under the options convention. finishKernel() wraps each:
 // normalize (if options form) → check → raw backend op.
 export const KERNEL_OP_SPECS = {
@@ -257,11 +261,11 @@ export const KERNEL_OP_SPECS = {
   // warner first) reports a self-crossing hand-authored profile as a build
   // warning — the build proceeds; see profile-warnings.js.
   prism:    { toArgs: prismArgs, check: checkScaleTop("prism"),
-    warn: (warnProfile, points) => warnProfile?.("prism: profile", points) },
+    warn: (warnProfile, points) => warnProfile?.("prism: profile", points, SAMPLED_ARCS) },
   extrude:  { toArgs: extrudeArgs, check: (profile, h, opts) => {
     checkNonEmptyProfile("extrude", profile);
     checkScaleTop("extrude")(profile, h, opts);
-  }, warn: (warnProfile, profile) => warnProfile?.("extrude: profile", profile) },
+  }, warn: (warnProfile, profile) => warnProfile?.("extrude: profile", profile, SAMPLED_ARCS) },
   revolve:  { toArgs: revolveArgs, check: (pts) => {
     checkNonEmptyProfile("revolve", pts);
     if (pts && pts._shape2d) {
@@ -272,13 +276,13 @@ export const KERNEL_OP_SPECS = {
       if (pts.boundingBox().min[0] < -1e-5) throw new Error("revolve: profile radius must be ≥ 0");
       return;
     }
-    // revolve takes a lathe POINT LIST or a Shape2D — it has no contour path, and a
-    // {start, segments} contour used to reach the loop below and die as a bare
-    // "pts is not iterable" TypeError. Name the real problem instead.
+    // A {start, segments} contour never gets here: finishKernel's revolve lifts it to a
+    // Shape2D before this check runs. Anything else that is not a point list used to die
+    // in the loop below as a bare "pts is not iterable" TypeError; name the problem.
     if (!Array.isArray(pts) || !pts.every((p) => Array.isArray(p)))
-      throw new Error("revolve: profile must be an [[r, z], …] point list or a Shape2D (a {start, segments} contour is not accepted — lift it with k.shape2d first)");
+      throw new Error("revolve: profile must be an [[r, z], …] point list, a {start, segments} contour, or a Shape2D");
     for (const [r] of pts) if (r < 0) throw new Error("revolve: profile radius must be ≥ 0");
-  }, warn: (warnProfile, pts) => warnProfile?.("revolve: profile", pts) },
+  }, warn: (warnProfile, pts) => warnProfile?.("revolve: profile", pts, SAMPLED_ARCS) },
   // The loft ceiling is an AGGREGATE over the rings, never per ring: loftSmooth
   // densifies a handful of control sections into dozens of rings, each of which
   // sits comfortably under the per-profile bound, so a per-ring ceiling let a
