@@ -31,7 +31,7 @@ test("STL export sends jobId + explicit parts on the default backend", () => {
   expect(sent).toHaveLength(1);
   expect(sent[0].backend).toBe("manifold");
   expect(sent[0].msg).toMatchObject({ type: "export-stl", parts: ["a", "b"], view: "all", name: "My Part" });
-  expect(Number.isInteger(sent[0].msg.jobId)).toBe(true);
+  expect(sent[0].msg.jobId).toMatch(/^export-\d+-\d+$/);
 });
 
 test("the sent message carries the live params from currentParams()", () => {
@@ -110,4 +110,33 @@ test("messages without a matching jobId are not consumed", () => {
   const { ctl } = setup();
   expect(ctl.handleMessage({ type: "meshes", jobId: undefined }, vi.fn())).toBe(false);
   expect(ctl.handleMessage({ type: "download", jobId: 999 }, vi.fn())).toBe(false);
+  // The other correlated channels on the same worker keep their replies:
+  // capture-build's "cap-N" and mount's tessellate-imports "tess-N".
+  expect(ctl.handleMessage({ type: "error", message: "x", jobId: "cap-1" }, vi.fn())).toBe(false);
+  expect(ctl.handleMessage({ type: "error", message: "x", jobId: "tess-1" }, vi.fn())).toBe(false);
+});
+
+// The ids are what keep one mount's replies from settling another's export on
+// a worker the host kept across mounts (see export-mount-wiring.test.js).
+test("two controllers never mint the same jobId", () => {
+  const first = setup();
+  const second = setup();
+  for (const { ctl } of [first, second]) {
+    ctl.exportParts({ parts: ["a"], format: "stl", onProgress: vi.fn() });
+    ctl.warmKernel();
+  }
+  const ids = [...first.sent, ...second.sent].map((s) => s.msg.jobId);
+  expect(new Set(ids).size).toBe(ids.length);
+});
+
+test("a reply to a job this controller already settled is claimed and dropped", async () => {
+  const { ctl, sent } = setup();
+  const sink = vi.fn();
+  const done = ctl.exportParts({ parts: ["a"], format: "step", onProgress: vi.fn() });
+  const { jobId } = sent[0].msg;
+  const reply = { type: "download", data: new ArrayBuffer(1), filename: "t.step", mime: "application/step", jobId };
+  expect(ctl.handleMessage(reply, sink)).toBe(true);
+  await done;
+  expect(ctl.handleMessage({ ...reply, data: new ArrayBuffer(1) }, sink)).toBe(true);
+  expect(sink).toHaveBeenCalledTimes(1);
 });

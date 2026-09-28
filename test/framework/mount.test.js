@@ -754,45 +754,42 @@ test("an unrelated build error does not disturb an outstanding tessellate-import
 });
 
 // Re-review finding: the tessellate-imports request and a headless STEP
-// export both post to the OCCT worker and both allocate their jobId from a
-// counter starting at 1 (export-controller.js's `nextId`, mount's own
-// `importTessellateJobSeq`). mount's onWorkerMessage gives exportCtl first
-// refusal on every message (`exportCtl.handleMessage(data, ...)` runs before
-// mount's own switch) via a raw `pending.get(m.jobId)` — a bare numeric
-// tessellate jobId colliding with a pending export's jobId would let the
-// export controller wrongly claim the tessellate worker's error reply,
-// rejecting the unrelated export AND leaving mount's own crossover latch
-// stranded at "requested" (its switch, which resets the latch, never runs).
-// The string-namespaced "tess-N" id (mirroring capture-build.js's "cap-N")
-// makes that collision structurally impossible; this test proves it by
-// forcing the exact numeric-collision setup and checking both jobs settle
-// independently and correctly.
-test("a tessellate-imports request never collides with a pending export's numeric jobId", async () => {
+// export both post to the OCCT worker, and both number their jobs from 1
+// (export-controller.js's `nextId`, mount's own `importTessellateJobSeq`).
+// mount's onWorkerMessage gives exportCtl first refusal on every message
+// (`exportCtl.handleMessage(data, ...)` runs before mount's own switch), and
+// exportCtl claims every id in its own "export-"/"warm-" namespace. A
+// tessellate jobId inside that namespace would let the export controller
+// wrongly claim the tessellate worker's error reply, rejecting the unrelated
+// export AND leaving mount's own crossover latch stranded at "requested" (its
+// switch, which resets the latch, never runs). The "tess-N" id (mirroring
+// capture-build.js's "cap-N") keeps it outside; this test runs both jobs at
+// once and checks each settles independently and correctly.
+test("a tessellate-imports request never collides with a pending export's jobId", async () => {
   const els = makeElements();
   const { workers, createWorker } = makeWorkers();
   const onDownload = vi.fn(); // sink, so triggerDownload never touches real DOM download APIs
   const runtime = mount(makePart(), { createWorker, elements: els, onDownload });
   finishFirstBuild(workers);
 
-  // A headless STEP export is in flight — export-controller.js hands it
-  // jobId 1 (its counter starts fresh at 1 for this mount instance), posted
-  // to the OCCT worker (STEP always routes there).
+  // A headless STEP export is in flight — this mount's first export job,
+  // posted to the OCCT worker (STEP always routes there).
   const exportPromise = runtime.exportParts({ parts: ["body"], format: "step", onProgress: vi.fn() });
   const exportJobId = workers.occt.postMessage.mock.calls
     .find(([m]) => m.type === "export-step")[0].jobId;
-  expect(exportJobId).toBe(1); // pins the exact collision this test defends against
+  expect(exportJobId).toMatch(/^export-\d+-1$/);
 
   // A STEP-on-Manifold crossover kicks off concurrently — mount's own jobId
-  // counter also starts at 1, so WITHOUT the "tess-" namespace this would be
-  // the identical id `1` on the same worker's message channel as the export above.
+  // counter also starts at 1, and the "tess-" prefix is what keeps this id out
+  // of the export controller's namespace on the same worker's message channel.
   workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 2, subparts: ["body"] } });
   const tessellateMsg = workers.occt.postMessage.mock.calls.find(([m]) => m.type === "tessellate-imports")[0];
   expect(tessellateMsg.jobId).toBe("tess-1");
-  expect(tessellateMsg.jobId).not.toBe(exportJobId); // never numerically equal, even by coincidence
+  expect(tessellateMsg.jobId).not.toBe(exportJobId);
 
   // The OCCT worker's tessellate job fails. If the export controller wrongly
-  // claimed this (a numeric-collision bug), it would reject exportPromise
-  // with the tessellation message and delete its pending entry.
+  // claimed this (an id-collision bug), it would reject exportPromise with the
+  // tessellation message and delete its pending entry.
   workers.occt.onmessage({ data: { type: "error", jobId: tessellateMsg.jobId, message: "malformed STEP" } });
   expect(els.status.status.textContent).toBe("failed: STEP import tessellation failed — malformed STEP");
 
@@ -802,6 +799,46 @@ test("a tessellate-imports request never collides with a pending export's numeri
     data: { type: "download", jobId: exportJobId, data: new ArrayBuffer(4), filename: "body.step", mime: "application/step" },
   });
   await expect(exportPromise).resolves.toBeUndefined();
+});
+
+// A host that keeps one worker across mounts (partforge-cloud's pool rebinds
+// it with setPart) hands a disposed mount's late replies to the next mount's
+// handler. Exports run to completion, so a STEP export sent before an edit
+// still answers after it — on the NEW mount's listener. Two separate fake
+// worker sets stand in for that pool: the first mount's reply is delivered to
+// the second mount's worker, exactly as the pool routes it.
+test("a disposed mount's late export reply neither settles the next mount's export nor reaches its status or sink", async () => {
+  const onDownload = vi.fn();
+  const first = makeWorkers();
+  const a = mount(makePart(), { createWorker: first.createWorker, elements: makeElements(), onDownload });
+  finishFirstBuild(first.workers);
+  const stale = a.exportParts({ parts: ["body"], format: "step", onProgress: vi.fn() });
+  const staleJobId = first.workers.occt.postMessage.mock.calls.find(([m]) => m.type === "export-step")[0].jobId;
+  a.dispose();
+  await expect(stale).rejects.toThrow("viewer disposed");
+
+  const els = makeElements();
+  const second = makeWorkers();
+  const b = mount(makePart(), { createWorker: second.createWorker, elements: els, onDownload });
+  finishFirstBuild(second.workers);
+  let retried = false;
+  const retry = b.exportParts({ parts: ["body"], format: "step", onProgress: vi.fn() }).then(() => { retried = true; });
+  const retryJobId = second.workers.occt.postMessage.mock.calls.find(([m]) => m.type === "export-step")[0].jobId;
+  const status = els.status.status.textContent;
+
+  const step = (jobId, filename) => ({ type: "download", jobId, data: new ArrayBuffer(4), filename, mime: "application/step" });
+  second.workers.occt.onmessage({ data: step(staleJobId, "before-the-edit.step") });
+  second.workers.occt.onmessage({ data: { type: "error", jobId: staleJobId, message: "stale failure" } });
+  await Promise.resolve();
+  expect(retried).toBe(false);
+  expect(onDownload).not.toHaveBeenCalled();
+  expect(els.status.status.textContent).toBe(status); // no "downloaded", no "failed: stale failure"
+
+  second.workers.occt.onmessage({ data: step(retryJobId, "after-the-edit.step") });
+  await retry;
+  expect(onDownload).toHaveBeenCalledTimes(1);
+  expect(onDownload.mock.calls[0][0].filename).toBe("after-the-edit.step");
+  b.dispose();
 });
 
 test("dispose() tears everything down and is idempotent", () => {

@@ -15,17 +15,32 @@ export function backendForFormat(format, defaultBackend) {
   return format === "step" ? "occt" : defaultBackend();
 }
 
+// Job ids are unique per controller, not just per mount: `export-<c>-<n>` and
+// `warm-<c>-<n>`, where <c> numbers the controllers this module has made. Each
+// mount makes one controller, but a host may keep a worker across mounts
+// (partforge-cloud's pool rebinds it with setPart), and that worker's replies
+// then reach whichever mount is listening now. Exports are never epoch-guarded
+// (KERNEL-CONTRACT), so a disposed mount's slow export still answers after the
+// remount. When every mount numbered its jobs from 1, that late reply settled
+// the next mount's same-numbered export with pre-edit geometry. A worker can
+// only be shared within one realm, and this counter covers the whole realm.
+let controllers = 0;
+// Every id any controller mints, so a reply to another controller's job is
+// recognised even though this controller never sent it.
+const CONTROLLER_JOB_ID = /^(?:export|warm)-\d+-\d+$/;
+
 export function createExportController({ send, currentView, title, defaultBackend = () => "manifold", currentParams = () => ({}) }) {
   const pending = new Map(); // jobId -> { resolve, reject, onProgress }
+  const controller = ++controllers;
   let nextId = 1;
-  // Warm jobs are STRING-namespaced ("warm-N") for the reason mount.js spells
-  // out for tessellate-imports: this map is keyed by jobId alone and read before
-  // any type check, so a bare numeric id here could be claimed by a pending
-  // export (both counters start at 1) and settle the wrong Promise.
+  // Warm jobs get their own prefix for the reason mount.js spells out for
+  // tessellate-imports: this map is keyed by jobId alone and read before any
+  // type check, so a warm and an export sharing an id would settle each
+  // other's Promise.
   let nextWarmId = 1;
 
   function exportParts({ parts, format, quality = "print", onProgress } = {}) {
-    const jobId = nextId++;
+    const jobId = `export-${controller}-${nextId++}`;
     const type = `export-${format}`;
     const backend = backendForFormat(format, defaultBackend);
     return new Promise((resolve, reject) => {
@@ -45,18 +60,25 @@ export function createExportController({ send, currentView, title, defaultBacken
   // failure or teardown, and NEVER rejects — a speculative warm must not become
   // an unhandled rejection in a host that fired it and moved on.
   function warmKernel() {
-    const jobId = `warm-${nextWarmId++}`;
+    const jobId = `warm-${controller}-${nextWarmId++}`;
     return new Promise((resolve) => {
       pending.set(jobId, { resolve: () => resolve(true), reject: () => resolve(false) });
       send({ type: "warm-kernel", jobId }, backendForFormat("step", defaultBackend));
     });
   }
 
-  // Returns true iff this message belonged to a pending export (so the caller
-  // can skip legacy handling). `sink` is partforge's onDownload.
+  // Returns true iff this message is a reply to an export-controller job (so
+  // the caller can skip legacy handling): a pending job is settled, any other
+  // is dropped. `sink` is partforge's onDownload.
   function handleMessage(m, sink) {
-    const entry = m && m.jobId != null ? pending.get(m.jobId) : undefined;
-    if (!entry) return false;
+    const jobId = m?.jobId;
+    const entry = jobId != null ? pending.get(jobId) : undefined;
+    // A controller's id with nothing pending here: a job this controller
+    // already settled, or one a disposed controller sent to a worker the host
+    // kept. Either way its Promise is already settled, so claim the reply and
+    // drop it. Passing it on would let mount's switch read an "error" as a
+    // failed build and a "download" as a viewbar save.
+    if (!entry) return typeof jobId === "string" && CONTROLLER_JOB_ID.test(jobId);
     if (m.type === "progress") { entry.onProgress?.(m.phase); return true; }
     if (m.type === "kernel-warm") { pending.delete(m.jobId); entry.resolve(); return true; }
     if (m.type === "download") {

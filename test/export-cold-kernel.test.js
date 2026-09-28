@@ -117,10 +117,10 @@ test("warmKernel resolves on its own kernel-warm and is never claimed by an expo
   const exportDone = ctl.exportParts({ parts: ["a"], format: "step", onProgress: vi.fn() });
   const warmJob = sent.find((m) => m.type === "warm-kernel");
   const exportJob = sent.find((m) => m.type === "export-step");
-  // String-namespaced ids ("warm-N") cannot collide with the export controller's
-  // plain numeric ones — the mount.js tessellate-imports lesson.
-  expect(typeof warmJob.jobId).toBe("string");
-  expect(typeof exportJob.jobId).toBe("number");
+  // Warm and export ids carry different prefixes, so one can never settle the
+  // other's Promise — the mount.js tessellate-imports lesson.
+  expect(warmJob.jobId).toMatch(/^warm-/);
+  expect(exportJob.jobId).toMatch(/^export-/);
 
   onMessage({ type: "kernel-warm", jobId: warmJob.jobId });
   await expect(warm).resolves.toBe(true);

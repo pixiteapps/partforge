@@ -12,10 +12,11 @@ export function createCaptureBuild({ send }) {
     // worker (a silent no-op) and its promise would hang forever. Resolve null instead
     // — captureView's documented "disposed runtime resolves null" contract.
     if (disposed) return Promise.resolve(null);
-    // String-namespaced ("cap-N") so a capture jobId can never collide with
-    // export-controller's numeric jobIds — both share the same worker message
-    // space, and exportCtl.handleMessage does a raw pending.get(m.jobId) before
-    // checking type, so a colliding id could otherwise settle the wrong promise.
+    // String-namespaced ("cap-N") so a capture jobId stays outside
+    // export-controller's "export-"/"warm-" ids — both share the same worker
+    // message space, and exportCtl.handleMessage claims every id in its own
+    // namespace before checking type, so a colliding id could otherwise settle
+    // the wrong promise.
     const jobId = `cap-${nextId++}`;
     return new Promise((resolve) => {
       pending.set(jobId, resolve);
