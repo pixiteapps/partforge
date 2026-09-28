@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { resolve, dirname, basename } from "node:path";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { detectBackend } from "../src/framework/backend-select.js";
+import { fmtMm } from "../src/framework/sheet/constants.js";
 import { fontsFor } from "../src/framework/fonts.js";
 import { imagesFor } from "../src/framework/images.js";
 import { isNoImageSource } from "../src/framework/image-source.js";
@@ -505,6 +506,11 @@ function printMeasure(r) {
     console.log(`  ${s.name}  bbox ${s.bbox.map((n) => n.toFixed(1)).join("×")}  ` +
       `vol ${(s.volume / 1000).toFixed(2)}cm³  area ${(s.surfaceArea / 100).toFixed(1)}cm²  ` +
       `tris ${s.triangleCount}  ${wt}  ${holes}`);
+    // A sheet part's stock and flat size — what the cut file will be.
+    if (s.sheet) {
+      console.log(`    sheet  ${s.sheet.material} ${fmtMm(s.sheet.thickness)} mm, ` +
+        `flat ${s.sheet.flat.map((n) => n.toFixed(1)).join(" × ")} mm, ${s.sheet.pieces} piece${s.sheet.pieces === 1 ? "" : "s"}`);
+    }
   }
   const a = r.aggregate;
   console.log(`  ── view  bbox ${a.bbox.map((n) => n.toFixed(1)).join("×")}  vol ${(a.volume / 1000).toFixed(2)}cm³  tris ${a.triangleCount}`);

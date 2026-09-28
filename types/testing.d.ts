@@ -263,6 +263,39 @@ export function overhang(
 
 // --- measure ----------------------------------------------------------------
 
+/**
+ * A sheet sub-part's 2-D facts (`sheetPart()`, partforge/geometry) — what its
+ * process's checks read. Lengths in mm, areas in mm². `bridge` and `gap` are
+ * bisected to 0.05 mm; `…Capped` says nothing narrower than twice the floor was
+ * found and the value is that ceiling. `at2d` is in the drawing frame; `at` is
+ * the same spot in the assembly at mid-thickness, `null` when the sub-part's
+ * pose could not be traced. `evaluated` false: the 2-D time budget ran out and
+ * `bridge`, `gap`, `marksOutside` and `marksArea` are `null`.
+ */
+export interface SheetFacts {
+  process: string;
+  material: string;
+  thickness: number;
+  /** `"<material, trimmed and lowercased>|<thickness to 0.01 mm>"`, e.g. `"birch plywood|3.00"`. */
+  group: string;
+  /** The cut layer's bounding-box size, nominal (no kerf). */
+  flat: [number, number];
+  area: number;
+  pieces: number;
+  customBuild: boolean;
+  marksArea: number | null;
+  bridge: number | null;
+  bridgeCapped: boolean;
+  gap: number | null;
+  gapCapped: boolean;
+  marksOutside: number | null;
+  /** Custom builds only: `100·|volume − (area·thickness − 0.2·marksArea)| / (area·thickness − 0.2·marksArea)`. */
+  solidMatchPct: number | null;
+  at2d: { bridge: [number, number] | null; gap: [number, number] | null; marks: [number, number] | null };
+  at: { bridge: number[] | null; gap: number[] | null; marks: number[] | null };
+  evaluated: boolean;
+}
+
 export interface SubPartFacts {
   name: string;
   /** Size only — `[dx, dy, dz]`. */
@@ -302,6 +335,14 @@ export interface SubPartFacts {
   overhangAngle: number | null;
   /** Centroid of the largest offending face; `null` when none. */
   overhangAt: number[] | null;
+  /** A sheet sub-part's 2-D facts, or `null` on every other sub-part. */
+  sheet: SheetFacts | null;
+  /**
+   * Present only in a view that holds a sheet part, on each printed
+   * (`exportable !== false`, non-sheet) sub-part: its size in the print (export)
+   * pose, which is what verify fits the process profile's bed to there.
+   */
+  printBbox?: number[];
 }
 
 export interface AggregateFacts {
@@ -404,6 +445,12 @@ export function measure(
      */
     overhang?: number | null;
     gapThreshold?: number;
+    /**
+     * Milliseconds the 2-D sheet checks may spend across every sheet sub-part in
+     * this call (default 1500). Past it the remaining readings are withheld —
+     * `sheet.evaluated` false — never the report.
+     */
+    sheetBudgetMs?: number;
     /**
      * A build of this view the caller already has, measured instead of building a
      * second time. It is trusted, not checked against `view`/`params` — hand in a
