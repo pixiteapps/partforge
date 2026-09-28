@@ -41,7 +41,11 @@ async function currentKeys() {
   const files = readdirSync(join(ROOT, "src/parts")).filter((f) => f.endsWith(".js") && !EXCLUDED.has(f)).sort();
   const keys = [];
   for (const file of files) {
-    const part = (await import(`../src/parts/${file}`)).default;
+    // The literal ".js" here (not folded into `file`) is a static extension hint for
+    // vite:dynamic-import-vars, which otherwise warns that it can't glob-analyze a
+    // template import ending in an interpolation. `file` itself keeps its own ".js"
+    // for the "<file>#<view>" key format below and the CLI arg in verifyOf().
+    const part = (await import(`../src/parts/${file.slice(0, -3)}.js`)).default;
     for (const view of Object.keys(part.views)) keys.push(`${file}#${view}`);
   }
   return keys;
