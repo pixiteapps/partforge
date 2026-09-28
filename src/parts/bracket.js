@@ -6,7 +6,7 @@
 //   • offset      — an optional print-clearance grow with rounded corners
 // The rounded corners and circular holes are true arcs (curve-native profiles), so
 // the whole outline stays curve-exact. Open /bracket.html after `npm run dev`.
-import { roundedRectPolygon, circleProfile } from "partforge/geometry";
+import { roundedRectProfile, circleProfile } from "partforge/geometry";
 
 export default {
   meta: { title: "Cross bracket", units: "mm", background: 0x15181d, environment: "workshop" },
@@ -60,8 +60,8 @@ export default {
       export: { name: "cross-bracket" },
       display: { material: "powder-coat", color: 0x2b2f36 },
       build: (k, p) => {
-        const barH = k.shape2d(roundedRectPolygon(p.span, p.bar, p.corner));
-        const barV = k.shape2d(roundedRectPolygon(p.bar, p.span, p.corner));
+        const barH = k.shape2d(roundedRectProfile(p.span, p.bar, p.corner));
+        const barV = k.shape2d(roundedRectProfile(p.bar, p.span, p.corner));
         let plate = barH.union(barV);                                        // union
         if (p.clip) plate = plate.intersect(k.shape2d(circleProfile(p.span / 2)));  // intersect
         const d = p.span / 2 - p.inset;

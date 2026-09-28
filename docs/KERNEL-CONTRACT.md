@@ -718,9 +718,12 @@ case appears; add its deterministic fixture and establish the source-domain trut
 `partforge/geometry` ships pure-JS helpers of several kinds. The **contour builders**
 (`piePolygon`, `hexPolygon`, `regularPolygon`, `roundedRectPolygon`, `ellipsePolygon`,
 `slotPolygon`, `starPolygon`, `ringSectorPolygon`, `circleProfile`, `cornerArc`,
-`filletPolygon`, `roundedProfile`) are pure functions from numbers to plain CCW point
-lists or arc profiles — *data already in this contract's input format*, with no kernel
-dependency at all. The **solid patterns** (`linearPattern`, `circularPattern`) take a
+`filletPolygon`, `roundedProfile`, `ringSectorProfile`, `pieProfile`, `slotProfile`,
+`roundedRectProfile`) are pure functions from numbers to plain CCW point lists or arc
+profiles — *data already in this contract's input format*, with no kernel dependency at
+all. The naming rule: `*Profile` builders return path contours with symbolic arcs,
+`*Polygon` builders return point lists (`circleProfile` is the one exception: a 48-point
+list, because `sweep`, `hull` and `loft` sections take points). The **solid patterns** (`linearPattern`, `circularPattern`) take a
 `Solid` and call only ops from the tables above (`clone`/`translate`/`rotate`/
 `boundingBox`). The **profile transform** (`offsetPolygon`) takes a point list or
 `{outer, holes}` region and grows or shrinks it by a delta in mm — printer-clearance
