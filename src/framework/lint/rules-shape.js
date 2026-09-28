@@ -3,6 +3,11 @@
 // defaults and build but not `views`, and had already drifted from the eval runner's
 // separate views check. One source of truth ends that split.
 import { err, warn } from "./finding.js";
+import { SHEET_DOC_ID } from "../sheet/constants.js";
+
+// A sub-part that carries a `sheet` declaration but no build was meant to be a sheet
+// part: point it at sheetPart(), which supplies build.
+const SHEET_NO_BUILD_HINT = "Every entry in `parts` needs a `build(k, p, d)` function that returns a solid. For a laser-cut flat part, wrap the whole sub-part in `sheetPart({ … })` from partforge/geometry — it supplies build and place.";
 
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 const partEntries = (part) => (isPlainObject(part?.parts) ? Object.entries(part.parts) : []);
@@ -35,9 +40,11 @@ export const SHAPE_RULES = [
       }
       return entries
         .filter(([, sp]) => typeof sp?.build !== "function")
-        .map(([name]) => err("no-buildable-parts", `sub-part "${name}" has no \`build\` function`,
-          "Every entry in `parts` needs a `build(k, p, d)` function that returns a solid.",
-          `parts.${name}.build`));
+        .map(([name, sp]) => (sp?.sheet !== undefined
+          ? err("no-buildable-parts", `sub-part "${name}" has no \`build\` function`, SHEET_NO_BUILD_HINT, `parts.${name}.build`, SHEET_DOC_ID)
+          : err("no-buildable-parts", `sub-part "${name}" has no \`build\` function`,
+            "Every entry in `parts` needs a `build(k, p, d)` function that returns a solid.",
+            `parts.${name}.build`)));
     },
   },
   {

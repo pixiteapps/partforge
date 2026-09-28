@@ -19,3 +19,6 @@ export const processFor = (sp) => (isSheetPart(sp) ? processById(sp.sheet.proces
 // into SUBPART_METRICS. Process metric names must not collide with each other or with
 // a print metric (test/verify-metrics.test.js).
 export const SHEET_METRICS = Object.assign({}, ...PROCESSES.map((d) => d.metrics));
+
+// Every process's own lint rules; lint/rules-sheet.js appends them to SHEET_RULES.
+export const PROCESS_LINT_RULES = PROCESSES.flatMap((d) => d.lintRules);

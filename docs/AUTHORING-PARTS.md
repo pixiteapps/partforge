@@ -1880,6 +1880,43 @@ is `[w, h, thickness]` for `k.box({ size: tongue })`. Build the printed part in 
 PRINT pose, `place` it for display, and cut the slot where the tongue lands:
 `k.shape2d(tab.slot).translate(worldToSheet(panelPose, tongueCentre))`.
 
+### What lint and verify check
+
+**Lint** (no kernel; judged at the part's defaults). Every finding carries
+`pattern: "sheet-parts"`:
+
+| Rule | Tier | Fires when |
+|---|---|---|
+| `sheet-invalid` | error | a hand-written `sheet` declaration is malformed |
+| `sheet-thickness-invalid` | error | `thickness(p, d)` is not a finite number above 0, or throws |
+| `sheet-pose-invalid` | error | a pose uses a non-axis word, or `up` is not perpendicular to `face` |
+| `sheet-thickness-literal` | warning | thickness is a fixed number, not the measured-value control |
+| `sheet-kerf-control` | warning | a control's key or label says kerf |
+| `sheet-custom-build` | warning | `build` replaced the one `sheetPart` generated |
+| `verify-process-sheets-only` | warning | `verify.process` is set but every exportable part is a sheet part |
+| `laser-thickness-range` | warning | a laser sheet is thinner than 0.5 mm or thicker than 12 mm |
+
+**Verify** runs the laser checks on every sheet part automatically. They are
+*volunteered* warnings: none counts toward `declared`/`evaluated`, so none makes
+`verify.ok` true on its own. Declare one in `expect` to make it count:
+
+| Metric | Reads | Checked at |
+|---|---|---|
+| `sheetBridge` | narrowest web or finger, mm | `>=` half the thickness, at least 0.5 mm |
+| `sheetGap` | narrowest hole, slot or notch, mm | the same floor |
+| `sheetMarks` | engrave/score regions outside the cut | `0` |
+| `sheetPieces` | regions in the profile | `1` |
+| `sheetSolidMatch` | a custom build's volume vs. profile area × thickness, % | `<=2` (custom builds only) |
+
+Widths come from shrinking and regrowing the cut outline with sharp corners,
+bisected to 0.05 mm; nothing narrower than twice the floor reads as that ceiling,
+with a note. A finding's `location` is its spot in the assembly at mid-thickness
+(none when the pose cannot be traced). The 2-D checks share a 1.5 s budget per
+measurement: past it a sheet gets one `sheetChecks` warning instead, and a
+declared sheet check comes back unevaluated. In a forge mixing sheet and printed
+parts, the profile's bed fits each **printed** part in its print (export) pose, not
+the assembled view, and `minWall` and the overhang check skip sheet parts.
+
 ## Convex hull
 
 `k.hull([a, b, …])` wraps its inputs (Shape2Ds, curve contours, or point lists) in a
@@ -3562,6 +3599,14 @@ fire on every correct millimetre file or guess at shape names. All three call
 rules judge the argument values the probe resolves under the part's default params, the
 same basis `import-unknown-name` uses; a call that only goes wrong for
 non-default params still fails correctly at build time.
+
+**Sheet parts** — `sheet-invalid`, `sheet-thickness-invalid`, `sheet-pose-invalid`
+(errors); `sheet-thickness-literal`, `sheet-kerf-control`, `sheet-custom-build`,
+`verify-process-sheets-only`, `laser-thickness-range` (warnings). Each carries
+`pattern: "sheet-parts"` and is described under "Sheet parts" → "What lint and
+verify check". `no-buildable-parts` points a sub-part with a `sheet` but no `build`
+at `sheetPart()`, and `verify-unknown-process` answers `process: "laser"` the same
+way.
 
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.

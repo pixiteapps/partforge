@@ -21,8 +21,9 @@ import { IMAGE_RULES } from "./rules-images.js";
 import { SOURCE_RULES } from "./rules-source.js";
 import { VECTOR_RULES } from "./rules-vector.js";
 import { MATERIAL_RULES } from "./rules-materials.js";
+import { SHEET_RULES } from "./rules-sheet.js";
 
-export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES, ...VERIFY_RULES, ...ANIMATION_RULES, ...PLACE_RULES, ...IMPORT_RULES, ...FONT_RULES, ...IMAGE_RULES, ...SOURCE_RULES, ...VECTOR_RULES, ...MATERIAL_RULES];
+export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES, ...VERIFY_RULES, ...ANIMATION_RULES, ...PLACE_RULES, ...IMPORT_RULES, ...FONT_RULES, ...IMAGE_RULES, ...SOURCE_RULES, ...VECTOR_RULES, ...MATERIAL_RULES, ...SHEET_RULES];
 
 // A usable sources input, or null. Deliberately forgiving: lintPart's callers
 // include hosted paths handing over user/LLM-authored trees, so a malformed

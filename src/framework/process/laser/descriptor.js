@@ -6,7 +6,11 @@
 // nothing reachable from here may touch a kernel, a Shape2D or paper
 // (test/lint-purity.test.js, test/oracle-no-paper.test.js). The writers that draw this
 // process's cut files live in process/laser/export.js, which only the kit loads.
-import { widthFloor, WIDTH_RESOLUTION, LOSS_TOL_MM2, SOLID_MATCH_PCT, SHEET_DOC_ID, fmtMm } from "../../sheet/constants.js";
+import {
+  widthFloor, WIDTH_RESOLUTION, LOSS_TOL_MM2, SOLID_MATCH_PCT, SHEET_DOC_ID, fmtMm,
+  isSheetPart, sheetMeta, LASER_THICKNESS_RANGE,
+} from "../../sheet/constants.js";
+import { warn } from "../../lint/finding.js";
 
 // ── 2-D design-for-manufacture facts ──────────────────────────────────────────
 // Read from the RESOLVED sheet (sheet/resolve.js) through Shape2D methods alone —
@@ -123,6 +127,29 @@ const METRICS = {
     hint: "this sheet part's custom build drifts from its profile (volume vs. profile area × thickness) — the cut file comes from the profile, so fix the profile or drop the custom build" },
 };
 
+// ── lint ───────────────────────────────────────────────────────────────────────
+// The laser's own rule; lint/rules-sheet.js appends every process's
+// (PROCESS_LINT_RULES). Kernel-free, and a warning: the part still builds. A
+// thickness that is not a finite number above 0 is sheet-thickness-invalid's error,
+// not also this warning — one cause, one finding.
+const LASER_RULES = [{
+  id: "laser-thickness-range",
+  run: ({ part, p, d, deriveError }) => {
+    if (deriveError || !part?.parts || typeof part.parts !== "object") return [];
+    const [lo, hi] = LASER_THICKNESS_RANGE;
+    return Object.entries(part.parts).flatMap(([name, sp]) => {
+      if (!isSheetPart(sp) || sp.sheet.process !== "laser" || typeof sp.build !== "function") return [];
+      const meta = sheetMeta(sp, p, d);
+      if (!meta || typeof meta.thickness !== "number" || !Number.isFinite(meta.thickness) || meta.thickness <= 0) return [];
+      if (meta.thickness >= lo && meta.thickness <= hi) return [];
+      return [warn("laser-thickness-range",
+        `sub-part "${name}": laser sheet thickness ${fmtMm(meta.thickness)} mm is outside ${fmtMm(lo)}–${fmtMm(hi)} mm`,
+        "Hobby lasers and cutting services handle roughly 0.5–12 mm stock; check that thickness is the measured value in mm (not inches or a stock code), or make this part another way.",
+        `parts.${name}.sheet.thickness`, SHEET_DOC_ID)];
+    });
+  },
+}];
+
 export const LASER = {
   id: "laser",
   label: "Laser cutting",
@@ -190,4 +217,5 @@ export const LASER = {
     };
   },
   metrics: METRICS,
+  lintRules: LASER_RULES,
 };

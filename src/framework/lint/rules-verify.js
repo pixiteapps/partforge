@@ -7,6 +7,8 @@ import { SUBPART_METRICS, VIEW_METRICS } from "../verify-metrics.js";
 import { PROFILES, ORIENTATIONS } from "../oracle/dfm-profiles.js";
 import { parseAssertion } from "../oracle/assert-dsl.js";
 import { suggest } from "../geometry/op-options.js";
+import { PROCESS_IDS } from "../process/registry.js";
+import { SHEET_DOC_ID } from "../sheet/constants.js";
 
 // Resolve `expect` to a plain object. The function form (p, d) => ({…}) is invoked
 // once with the probe's params so per-preset topology can be linted like any other.
@@ -157,6 +159,14 @@ function checkProcessSpec(spec, path, valid, seen, depth = 0) {
   if (depth > 50) return []; // pathological chain — bail rather than hang
   if (typeof spec === "string") {
     if (valid.includes(spec)) return [];
+    // A manufacturing-process id ("laser") is not a DFM profile: sheet parts get their
+    // checks from sheetPart(), and verify.process is for printing.
+    if (PROCESS_IDS.includes(spec)) {
+      return [err("verify-unknown-process",
+        `\`${path}\` names "${spec}", which is not a known DFM profile`,
+        `Laser-cut parts need no profile: build them with \`sheetPart()\` and the laser checks apply automatically (see "Sheet parts" in the authoring guide). verify.process is for 3D-printed parts — use one of: ${valid.join(", ")}.`,
+        path, SHEET_DOC_ID)];
+    }
     const hint = suggest(spec, valid);
     return [err("verify-unknown-process",
       `\`${path}\` names "${spec}", which is not a known DFM profile`,
