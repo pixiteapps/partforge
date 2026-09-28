@@ -857,6 +857,16 @@ Manifold backend, thrown from `imports.js`'s registration policy, not `errors.js
 `KernelCapabilityError`/`NEEDS_OCCT`) — is the same message shape and the same
 non-epoch-gated risk as `needs-occt`; a host handling one should handle both the same way.
 
+**Export replies cross a rebind by design.** Exports run to completion, so a host that
+keeps one worker across mounts, and routes that worker's messages to whichever mount is
+listening now, hands the next mount every reply to the previous mount's exports.
+`mount()` handles this itself. Its export jobIds (`export-<c>-<n>`, and `warm-<c>-<n>`
+for `warmExportKernel`) are unique to each mount, not numbered from 1 per mount. So a
+previous mount's reply can never settle the new mount's export with the old geometry.
+The new mount claims that reply and drops it, rather than letting its own handler read
+the reply's `error` as a failed build or its `download` as a viewbar save. The previous
+mount already rejected that export when it was disposed.
+
 **Cancellation granularity is the sub-part.** The guard is checked only between
 sub-parts (one macrotask yield each), so a single long WASM op — a big boolean, an OCCT
 fillet — runs to completion no matter how stale it is. That is by design: WASM kernel
