@@ -11,6 +11,9 @@
 // point [u, v, z] lands at  at + u·X + v·Y + (z − t)·F.
 import { AXIS_WORDS } from "./constants.js";
 
+// A sheet part with no pose: no transform at all — the canonical solid stays put.
+export const FLAT_POSE = null;
+
 const AXIS_VEC = {
   "+X": [1, 0, 0], "-X": [-1, 0, 0],
   "+Y": [0, 1, 0], "-Y": [0, -1, 0],
@@ -21,6 +24,7 @@ const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArr
 const finiteN = (v, n) => Array.isArray(v) && v.length === n && v.every((c) => typeof c === "number" && Number.isFinite(c));
 // `+ 0` folds a -0 component to 0, so frames and steps serialize cleanly.
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1] + 0, a[2] * b[0] - a[0] * b[2] + 0, a[0] * b[1] - a[1] * b[0] + 0];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
 // null when `pose` is a valid SheetPose, else the reason (callers add their prefix).
 export function validatePose(pose) {
@@ -77,4 +81,22 @@ export function poseSteps(pose, t) {
   if (rot) steps.push({ t: "rotate", deg: rot.deg, center: [0, 0, 0], axis: rot.axis });
   steps.push({ t: "translate", v: at });
   return steps;
+}
+
+// Drawing [u, v] (on the laser face, `depth` mm into the material) → world [x, y, z].
+export function sheetToWorld(pose, uv, depth = 0) {
+  checkPose(pose, "sheetToWorld");
+  if (!finiteN(uv, 2)) throw new Error(`sheetToWorld: point must be a finite [u, v], got ${JSON.stringify(uv)}`);
+  if (typeof depth !== "number" || !Number.isFinite(depth)) throw new Error(`sheetToWorld: depth must be a finite number (mm), got ${JSON.stringify(depth)}`);
+  const { X, Y, F, at } = poseFrame(pose);
+  return [0, 1, 2].map((i) => at[i] + uv[0] * X[i] + uv[1] * Y[i] - depth * F[i] + 0);
+}
+
+// World [x, y, z] → drawing [u, v]; the component along the face normal is dropped.
+export function worldToSheet(pose, xyz) {
+  checkPose(pose, "worldToSheet");
+  if (!finiteN(xyz, 3)) throw new Error(`worldToSheet: point must be a finite [x, y, z], got ${JSON.stringify(xyz)}`);
+  const { X, Y, at } = poseFrame(pose);
+  const rel = [xyz[0] - at[0], xyz[1] - at[1], xyz[2] - at[2]];
+  return [dot(rel, X) + 0, dot(rel, Y) + 0];
 }
