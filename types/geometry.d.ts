@@ -27,26 +27,40 @@ export type { ArcContour, Contour, Corner2D, CornerSelector, MirrorAxis2, Point2
  */
 export type ProfileInput = number[][] | Contour | Region2D | Region2D[];
 
-/** A pie/sector wedge with its tip at the origin. */
+/**
+ * A pie/sector wedge with its tip at the origin, as a FACETED point list.
+ * @deprecated Use `pieProfile` — its arc is exact and refined at export; this
+ * one's facets (32 per circle) are exported exactly as written.
+ */
 export function piePolygon(tipR: number, arcDeg: number, segs?: number): PointsContour;
 
 /** A regular hexagon of circumradius `r`. */
 export function hexPolygon(r: number): PointsContour;
 
-/** A `w` × `h` rectangle centred at the origin with corner radius `r`. */
+/**
+ * A `w` × `h` rectangle centred at the origin with corner radius `r`, as a FACETED point list.
+ * @deprecated Use `roundedRectProfile` — exact corner arcs, refined at export.
+ */
 export function roundedRectPolygon(w: number, h: number, r: number, segs?: number): PointsContour;
 
 /** A regular `n`-gon of circumradius `r`; `flat: true` seats a flat side down. */
 export function regularPolygon(n: number, r: number, opts?: { flat?: boolean }): PointsContour;
 
+/** An ellipse as a FACETED point list (`segs`, default 48) — there is no exact-curve form. */
 export function ellipsePolygon(rx: number, ry: number, segs?: number): PointsContour;
 
-/** A stadium/slot; overall length is `length + 2r`. */
+/**
+ * A stadium/slot; overall length is `length + 2r`, as a FACETED point list.
+ * @deprecated Use `slotProfile` — exact semicircles, refined at export.
+ */
 export function slotPolygon(length: number, r: number, segs?: number): PointsContour;
 
 export function starPolygon(points: number, outerR: number, innerR: number): PointsContour;
 
-/** An annular sector. `arcDeg` must be < 360 — a full ring is a contour-with-hole. */
+/**
+ * An annular sector, as a FACETED point list (32 facets per circle).
+ * @deprecated Use `ringSectorProfile` — exact arcs, refined at export.
+ */
 export function ringSectorPolygon(innerR: number, outerR: number, arcDeg: number, segs?: number): PointsContour;
 
 /**
@@ -69,7 +83,8 @@ export function cornerArc(
 
 /**
  * Round every corner of a CCW polygon, BAKING each arc into line facets — so
- * STEP corners are faceted. Use `roundedProfile` for true circular edges.
+ * STEP corners are faceted and export never refines them.
+ * @deprecated Use `roundedProfile` — the same corners, carried as exact arcs.
  */
 export function filletPolygon(points: PointsContour, r: number, opts?: { segs?: number }): PointsContour;
 
@@ -80,6 +95,24 @@ export function filletPolygon(points: PointsContour, r: number, opts?: { segs?: 
  * rounds selectively. Accepted by `prism`/`extrude`, not yet by `loft`.
  */
 export function roundedProfile(points: PointsContour, r: number | number[]): ArcContour;
+
+// ── Exact-curve profiles ──────────────────────────────────────────────────────
+// The naming rule: `*Profile` helpers return exact curves (a path contour whose arcs
+// the kernel facets per quality tier, finer at export, and OCCT keeps as true circles);
+// `*Polygon` helpers return straight-edged point lists, exported exactly as written.
+// Each of these traces the same outline as its `*Polygon` namesake.
+
+/** An annular sector from angle 0 to `arcDeg` (0 < arcDeg < 360; 0 < innerR < outerR). */
+export function ringSectorProfile(innerR: number, outerR: number, arcDeg: number): ArcContour;
+
+/** A circular sector ("pie slice") from the origin, radius `tipR`, from angle 0 to `arcDeg`. */
+export function pieProfile(tipR: number, arcDeg: number): ArcContour;
+
+/** A stadium slot: semicircle centres `length` apart (overall `length + 2r`); length 0 is a circle. */
+export function slotProfile(length: number, r: number): ArcContour;
+
+/** A `w` × `h` rectangle centred at the origin with radius-`r` corners (clamped to min(w, h)/2). */
+export function roundedRectProfile(w: number, h: number, r: number): ArcContour;
 
 /** The fluent builder `pathProfile` returns. `close()` snapshots the contour. */
 export interface PathProfileBuilder {

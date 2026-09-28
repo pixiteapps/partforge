@@ -274,6 +274,99 @@ export function roundedProfile(points, r) {
   return { start, segments, arc: true };
 }
 
+// ── Curve twins of the round *Polygon helpers ────────────────────────────────
+// ringSectorProfile / pieProfile / slotProfile / roundedRectProfile trace the SAME
+// outline as their *Polygon twins — same start point, same CCW direction, same
+// extent — but return a path contour { start, segments } whose arcs are symbolic
+// three-point arcs, like roundedProfile's. A point list is exported exactly as it
+// was written; a path contour is faceted by the kernel per quality tier (finer at
+// export) and becomes true CIRCLE edges on OCCT, so these are the ones to use for
+// any curve that shows or fits. The naming rule: *Profile = exact curves,
+// *Polygon = straight edges.
+
+const rad = (deg) => (deg * Math.PI) / 180;
+const polar = (r, deg) => [r * Math.cos(rad(deg)), r * Math.sin(rad(deg))];
+const SEG_EPS = 1e-9;
+
+// Accumulates a contour from `start`, dropping any line that would not move the pen
+// (a clamped rounded rect's straight run, a zero-length slot) — a zero-length
+// segment is a degenerate edge to every consumer downstream.
+function contourFrom(start) {
+  const segments = [];
+  let cur = start;
+  const moves = (p) => Math.hypot(p[0] - cur[0], p[1] - cur[1]) > SEG_EPS;
+  const api = {
+    line(to) { if (moves(to)) { segments.push({ to }); cur = to; } return api; },
+    arc(to, via) { segments.push({ to, via }); cur = to; return api; },
+    // Closes explicitly on `start`, so contour-ops' corner walk sees the real last edge.
+    close() { api.line(start); return { start, segments }; },
+  };
+  return api;
+}
+
+function checkSweep(name, arcDeg) {
+  if (!(arcDeg > 0 && arcDeg < 360))
+    throw new Error(`${name}: arcDeg must be between 0 and 360 (exclusive), got ${arcDeg}`);
+}
+
+// Annular sector from angle 0 to arcDeg: outer arc CCW, then the inner arc back.
+// arcDeg < 360 — a full ring is a region with a hole, so cut an inner cylinder from
+// an outer one (or extrude { outer, holes }) instead.
+export function ringSectorProfile(innerR, outerR, arcDeg) {
+  checkSweep("ringSectorProfile", arcDeg);
+  if (innerR === 0) throw new Error("ringSectorProfile: innerR must be > 0 — use pieProfile for a sector from the centre");
+  if (!(innerR > 0 && innerR < outerR))
+    throw new Error(`ringSectorProfile: innerR must be > 0 and < outerR, got innerR=${innerR}, outerR=${outerR}`);
+  return contourFrom([outerR, 0])
+    .arc(polar(outerR, arcDeg), polar(outerR, arcDeg / 2))
+    .line(polar(innerR, arcDeg))
+    .arc([innerR, 0], polar(innerR, arcDeg / 2))
+    .close();
+}
+
+// Circular sector ("pie slice") from the origin, radius tipR, from angle 0 to arcDeg.
+export function pieProfile(tipR, arcDeg) {
+  if (!(tipR > 0)) throw new Error(`pieProfile: tipR must be > 0, got ${tipR}`);
+  checkSweep("pieProfile", arcDeg);
+  return contourFrom([0, 0])
+    .line([tipR, 0])
+    .arc(polar(tipR, arcDeg), polar(tipR, arcDeg / 2))
+    .close();
+}
+
+// Stadium slot: two r-radius semicircles whose centres are `length` apart (overall
+// length = length + 2r), centred on the origin, long axis along X. length 0 is a circle.
+export function slotProfile(length, r) {
+  if (!(r > 0)) throw new Error(`slotProfile: r must be > 0, got ${r}`);
+  if (!(length >= 0)) throw new Error(`slotProfile: length must be ≥ 0, got ${length}`);
+  const hl = length / 2;
+  return contourFrom([hl, -r])
+    .arc([hl, r], [hl + r, 0])
+    .line([-hl, r])
+    .arc([-hl, -r], [-hl - r, 0])
+    .close();
+}
+
+// w × h rectangle centred on the origin with radius-r corners; r is clamped to
+// min(w, h)/2 like roundedRectPolygon's (fully clamped, it is a stadium or a circle),
+// and r ≤ 0 is the plain rectangle.
+export function roundedRectProfile(w, h, r) {
+  if (!(w > 0 && h > 0)) throw new Error(`roundedRectProfile: w and h must be > 0, got w=${w}, h=${h}`);
+  const hw = w / 2, hh = h / 2;
+  const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+  if (rr === 0) return contourFrom([hw, -hh]).line([hw, hh]).line([-hw, hh]).line([-hw, -hh]).close();
+  const m = rr * (1 - Math.SQRT1_2);   // a corner arc's midpoint sits m in from both edges
+  return contourFrom([hw, hh - rr])
+    .arc([hw - rr, hh], [hw - m, hh - m])
+    .line([-(hw - rr), hh])
+    .arc([-hw, hh - rr], [-(hw - m), hh - m])
+    .line([-hw, -(hh - rr)])
+    .arc([-(hw - rr), -hh], [-(hw - m), -(hh - m)])
+    .line([hw - rr, -hh])
+    .arc([hw, -(hh - rr)], [hw - m, -(hh - m)])
+    .close();
+}
+
 const PATTERN_AXIS = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
 
 // `count` copies of `solid` translated by i*step ([dx,dy,dz]) for i in 0..count-1.
