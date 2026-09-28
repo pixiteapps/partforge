@@ -6,6 +6,8 @@ import { expandExpectations, partGatesMinWall } from "./gates.js";
 import { subPartReadKeys, relevanceHash, RELEVANT_ALL } from "../param-deps.js";
 import { byteAwareReplacer } from "../geometry/solid-hash.js";
 import { SUBPART_METRICS, VIEW_METRICS } from "../verify-metrics.js";
+import { processById } from "../process/registry.js";
+import { SHEET_DOC_ID } from "../sheet/constants.js";
 
 // Re-exported for backwards compatibility: the registries moved to framework/ so
 // the linter can read the metric vocabulary without importing a geometry kernel.
@@ -170,6 +172,54 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
   return out;
 }
 
+// ── sheet parts ──────────────────────────────────────────────────────────────
+// A view holding a sheet part (sheetPart(), partforge/geometry — measure() stamps
+// its row with `sheet`) is judged per part: the process profile's bed fits each
+// PRINTED sub-part in its print pose (measure()'s `printBbox`), since laser-cut stock
+// never meets a print bed; a sheet part gets only what the part declared for it, plus
+// its process's own checks VOLUNTEERED. A volunteered check is a fact the oracle
+// offers, exactly like an undeclared near miss: it warns when it fails and never
+// counts toward `declared`/`evaluated` (isDeclared, in verify() below), so it can
+// never make verify.ok true on its own — without that, a sheet-only part with no
+// verify block would jump from "no expectations declared" to a pass.
+const PRINT_POSE_NOTE = "measured in the print (export) pose";
+
+// Standing in for a sheet's budget-gated volunteered checks when its 2-D budget ran
+// out (measure()'s `sheet.evaluated` false): one warning, never `unevaluated` — a
+// check nobody declared must not withhold a verdict. Exported for its hint's length test.
+export const SHEET_CHECKS_NOTICE = Object.freeze({
+  metric: "sheetChecks", kind: "warn", expr: "evaluated", actual: null, status: "warn", pass: null, volunteered: true,
+  message: "2-D sheet checks not evaluated (time budget)",
+  hint: "The laser checks (narrow webs and gaps, stray marks) ran out of their time budget. They are warnings only and never decide verify.ok; a simpler profile (fewer fingers, fewer engraved glyphs) makes them fit.",
+  pattern: SHEET_DOC_ID,
+});
+
+// One sheet row: the declared expectations, then the process's checks the part did
+// not declare, volunteered. A declared check the budget withheld is `unevaluated`,
+// as a quick lap's is.
+function sheetRowChecks(s, declaredExp) {
+  const out = [];
+  const outOfTime = s.sheet.evaluated === false;
+  const budgeted = (metric) => SUBPART_METRICS[metric]?.budgeted === true;
+  for (const [metric, expr] of Object.entries(declaredExp)) {
+    const c = check("subpart", s.name, metric, expr, SUBPART_METRICS, s);
+    out.push(outOfTime && budgeted(metric) && c.actual == null
+      ? { ...c, status: "skip", pass: null, unevaluated: true, message: "not evaluated (2-D check budget)" }
+      : c);
+  }
+  let noticed = false;
+  for (const [metric, expr] of Object.entries(processById(s.sheet.process)?.checks(s.sheet) ?? {})) {
+    if (Object.hasOwn(declaredExp, metric)) continue;
+    if (outOfTime && budgeted(metric)) {
+      if (!noticed) out.push({ scope: "subpart", subpart: s.name, ...SHEET_CHECKS_NOTICE });
+      noticed = true;
+      continue;
+    }
+    out.push({ ...check("subpart", s.name, metric, expr, SUBPART_METRICS, s), volunteered: true });
+  }
+  return out;
+}
+
 // Pure policy: profile rules + per-part expect → checks for one case's facts.
 // `overhang` is the angle the part opted into (dfm-profiles.js overhangAngleFor),
 // or null/undefined: only then does the profile's overhang rule apply, as a
@@ -179,8 +229,12 @@ export function evaluateCase(facts, { profile, expect, subPartNames, overhang = 
   // contacts/clearance are per-pair, not scalar view metrics — peel them off
   // before the registry loop and hand them to pairGapChecks.
   const { contacts, clearance, ...viewScalarExp } = expect?._view ?? {};
+  // No sheet part in the view: every line below runs exactly as it did before sheet
+  // parts existed (test/verify-golden.test.js). With one, the bed moves from the view
+  // to each printed sub-part — see the sheet-parts block above.
+  const anySheet = facts.subparts.some((s) => s.sheet);
   const viewExp = {
-    ...(profile?.bed ? { bbox: `<=[${profile.bed.join(",")}]` } : {}),
+    ...(profile?.bed && !anySheet ? { bbox: `<=[${profile.bed.join(",")}]` } : {}),
     ...viewScalarExp,
   };
   for (const [metric, expr] of Object.entries(viewExp)) checks.push(check("view", null, metric, expr, VIEW_METRICS, facts));
@@ -196,6 +250,11 @@ export function evaluateCase(facts, { profile, expect, subPartNames, overhang = 
   // is withheld rather than read as "unavailable" — which would count as answered.
   const overhangSkipped = overhang != null && (facts.measuredOverhang ?? null) === null;
   for (const s of facts.subparts) {
+    if (s.sheet) { checks.push(...sheetRowChecks(s, expect?.[s.name] ?? {})); continue; }
+    if (anySheet && profile?.bed && s.printBbox) {
+      checks.push({ ...check("subpart", s.name, "bbox", `<=[${profile.bed.join(",")}]`, SUBPART_METRICS, { ...s, bbox: s.printBbox }),
+        note: PRINT_POSE_NOTE });
+    }
     const merged = {
       ...(profile?.minWall != null ? { minWall: `>=${profile.minWall}` } : {}),
       ...(overhang != null ? { overhangArea: "<=1" } : {}),
@@ -355,7 +414,9 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // deliberately NOT pushed into any case's check list — it is about the part,
   // not about `defaults`. A quick lap that withheld gates explains itself through
   // `unevaluated` and gets no notice.
-  const isDeclared = (c) => c.scope !== "case" && c.metric !== "nearMiss";
+  // Volunteered checks (a sheet part's process checks, and the budget notice standing
+  // in for them) are facts the oracle offers, like an undeclared near miss.
+  const isDeclared = (c) => c.scope !== "case" && c.metric !== "nearMiss" && !c.volunteered;
   const all = caseResults.flatMap((c) => c.checks.map((ch) => ({ case: c.name, ...ch })));
   let declared = 0, evaluated = 0;
   for (const c of all) {

@@ -480,12 +480,21 @@ export interface VerifyCheck {
   message: string;
   /** One self-contained corrective sentence (part-authored `hint` wins). */
   hint?: string;
-  /** A stable ERROR-PATTERNS.md entry id. */
+  /** A stable ERROR-PATTERNS.md entry id — or `"sheet-parts"`, the authoring guide's "Sheet parts" section, on a sheet check. */
   pattern?: string;
   /** A measurement caveat or companion reading — `minWall` (sampling) and `overhangArea` (the steepest angle) set one. */
   note?: string;
   /** `[x, y, z]` in mm, for the metrics that have one. */
   location?: number[] | null;
+  /**
+   * A check the part never declared, offered by the oracle — a sheet part's
+   * process checks, or the notice standing in for them past the 2-D budget. It
+   * warns when it fails and never counts toward `declared`/`evaluated`, so it
+   * never decides `ok`.
+   */
+  volunteered?: boolean;
+  /** True when the check could not be evaluated this run (a quick lap, or a declared sheet check past the 2-D budget). */
+  unevaluated?: boolean;
 }
 
 export interface VerifyCaseResult {
