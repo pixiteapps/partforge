@@ -331,3 +331,41 @@ test("captureView()'s needs-import-mesh reply never touches the live crossover s
 
   runtime.dispose();
 });
+
+// A host that keeps one worker across mounts (partforge-cloud's pool rebinds
+// it with setPart) hands a disposed mount's late replies to whichever mount is
+// listening now. A capture-generate runs to completion, so a capture sent
+// before an edit still answers after it, on the NEW mount's listener. Two
+// separate fake worker sets stand in for that pool: the first mount's replies
+// are delivered to the second mount's worker, exactly as the pool routes them.
+test("a disposed mount's late capture reply neither settles the next mount's capture nor fails its build", async () => {
+  const first = await mountFixture();
+  const stale = first.runtime.captureView();
+  const staleJob = first.workers.manifold.postMessage.mock.calls.map(([m]) => m).findLast((m) => m.type === "capture-generate");
+  first.runtime.dispose();
+  await expect(stale).resolves.toBeNull();
+
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const onBuild = vi.fn();
+  const runtime = mount(makePart(), { createWorker, elements: els, onBuild });
+  finishFirstBuild(workers, ["body"]);
+  await runtime.ready;
+  onBuild.mockClear();
+  let settled = false;
+  const retry = runtime.captureView().then((url) => { settled = true; return url; });
+  const job = workers.manifold.postMessage.mock.calls.map(([m]) => m).findLast((m) => m.type === "capture-generate");
+  const status = els.status.status.textContent;
+
+  workers.manifold.onmessage({ data: { type: "capture-meshes", jobId: staleJob.jobId, meshes: [{ name: "before-the-edit" }] } });
+  workers.manifold.onmessage({ data: { type: "error", jobId: staleJob.jobId, message: "stale failure" } });
+  await new Promise((resolve) => setTimeout(resolve, 0)); // past captureView's whole await chain
+  expect(settled).toBe(false);
+  expect(fakeViewers[1].renderMeshPayloads).not.toHaveBeenCalled();
+  expect(onBuild).not.toHaveBeenCalled();
+  expect(els.status.status.textContent).toBe(status); // no "failed: stale failure"
+
+  workers.manifold.onmessage({ data: { type: "capture-meshes", jobId: job.jobId, meshes: [{ name: "after-the-edit" }] } });
+  await expect(retry).resolves.toBe("data:image/jpeg;base64,FAKE-after-the-edit");
+  runtime.dispose();
+});

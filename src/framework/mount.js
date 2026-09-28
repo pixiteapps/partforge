@@ -526,7 +526,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // Lets the "error" case below tell a correlated tessellation failure apart
     // from an unrelated build error sharing the same message type, so it can
     // reset the latch instead of stranding it at "requested" forever.
-    // String-namespaced ("tess-N"), mirroring capture-build.js's "cap-N" —
+    // String-namespaced ("tess-N"), mirroring capture-build.js's "cap-" ids —
     // this request shares the OCCT worker's message space with
     // export-controller's "export-"/"warm-" jobIds, and exportCtl.handleMessage
     // (called before mount's own switch, below) claims every id in its own
@@ -1015,6 +1015,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       if (exportCtl.handleMessage(data, onDownload)) return;
       // captureView's off-loop build channel: consume its replies before the
       // live `meshes` case — capture-meshes must never touch live cache/display.
+      // Like exportCtl, it also claims a disposed mount's late capture reply on
+      // a worker the host kept, so a stale "error" never reads as a failed build.
       if (captureBuild.handleMessage(data)) return;
       switch (data.type) {
         case "ready":

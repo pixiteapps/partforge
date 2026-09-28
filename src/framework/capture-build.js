@@ -2,7 +2,23 @@
 // does NOT go through the regen loop. Same shape as export-controller's pending
 // Map (export-controller.js): allocate a jobId, resolve when the matching
 // reply arrives. Pure — no DOM, no worker; `send` is injected.
+
+// Job ids are unique per capture build, not just per mount: `cap-<b>-<n>`,
+// where <b> numbers the capture builds this module has made. Each mount makes
+// one, but a host may keep a worker across mounts (partforge-cloud's pool
+// rebinds it with setPart), and that worker's replies then reach whichever
+// mount is listening now. A capture-generate runs to completion, so a disposed
+// mount's capture still answers after the remount. When every mount numbered
+// its captures from 1, that late reply settled the next mount's same-numbered
+// capture with pre-edit geometry. The same scheme as export-controller.js's
+// `export-<c>-<n>`.
+let builds = 0;
+// Every id any capture build mints, so a reply to another build's job is
+// recognised even though this build never sent it.
+const CAPTURE_JOB_ID = /^cap-\d+-\d+$/;
+
 export function createCaptureBuild({ send }) {
+  const build = ++builds;
   let nextId = 1;
   let disposed = false;
   const pending = new Map(); // jobId -> resolve
@@ -12,12 +28,12 @@ export function createCaptureBuild({ send }) {
     // worker (a silent no-op) and its promise would hang forever. Resolve null instead
     // — captureView's documented "disposed runtime resolves null" contract.
     if (disposed) return Promise.resolve(null);
-    // String-namespaced ("cap-N") so a capture jobId stays outside
+    // String-namespaced ("cap-") so a capture jobId stays outside
     // export-controller's "export-"/"warm-" ids — both share the same worker
     // message space, and exportCtl.handleMessage claims every id in its own
     // namespace before checking type, so a colliding id could otherwise settle
     // the wrong promise.
-    const jobId = `cap-${nextId++}`;
+    const jobId = `cap-${build}-${nextId++}`;
     return new Promise((resolve) => {
       pending.set(jobId, resolve);
       // cache:true so the worker reuses its per-sub-part geometry memo (the
@@ -26,13 +42,14 @@ export function createCaptureBuild({ send }) {
     });
   }
 
-  // Returns true iff this message was a reply this controller owns (so the
-  // caller — mount.js's onWorkerMessage — can skip it entirely). Keyed on
-  // membership in `pending` first: the namespaced jobId guarantees another
-  // channel's message never matches, so a hit here is always ours. A failed
-  // build (the worker's shared catch posts a generic error/needs-occt/
-  // needs-import-mesh, jobId intact) resolves to null rather than leaving the
-  // caller hanging forever — captureView treats null as "capture failed, skip".
+  // Returns true iff this message is a reply to a capture job (so the caller —
+  // mount.js's onWorkerMessage — can skip it entirely): a pending job is
+  // settled, any other capture id is dropped. Keyed on membership in `pending`
+  // first: the namespaced jobId guarantees another channel's message never
+  // matches, so a hit here is always ours. A failed build (the worker's shared
+  // catch posts a generic error/needs-occt/needs-import-mesh, jobId intact)
+  // resolves to null rather than leaving the caller hanging forever —
+  // captureView treats null as "capture failed, skip".
   // needs-import-mesh MUST be claimed here rather than falling through to
   // mount's live-loop crossover case: this capture job never went through the
   // regen loop, so treating its reply as a live crossover would call
@@ -43,7 +60,12 @@ export function createCaptureBuild({ send }) {
   // gets primed by the next live build instead.
   function handleMessage(data) {
     const jobId = data?.jobId;
-    if (jobId == null || !pending.has(jobId)) return false;
+    // A capture id with nothing pending here: a job this build already
+    // settled, or one a disposed build sent to a worker the host kept. Either
+    // way its promise is already settled, so claim the reply and drop it.
+    // Passing it on would let mount's switch read an "error" as a failed build
+    // and a needs-import-mesh as a live crossover.
+    if (jobId == null || !pending.has(jobId)) return typeof jobId === "string" && CAPTURE_JOB_ID.test(jobId);
     if (data.type === "capture-meshes") {
       pending.get(jobId)(data.meshes);
     } else if (data.type === "error" || data.type === "needs-occt" || data.type === "needs-import-mesh") {

@@ -111,8 +111,8 @@ test("messages without a matching jobId are not consumed", () => {
   expect(ctl.handleMessage({ type: "meshes", jobId: undefined }, vi.fn())).toBe(false);
   expect(ctl.handleMessage({ type: "download", jobId: 999 }, vi.fn())).toBe(false);
   // The other correlated channels on the same worker keep their replies:
-  // capture-build's "cap-N" and mount's tessellate-imports "tess-N".
-  expect(ctl.handleMessage({ type: "error", message: "x", jobId: "cap-1" }, vi.fn())).toBe(false);
+  // capture-build's "cap-<b>-<n>" and mount's tessellate-imports "tess-N".
+  expect(ctl.handleMessage({ type: "error", message: "x", jobId: "cap-1-1" }, vi.fn())).toBe(false);
   expect(ctl.handleMessage({ type: "error", message: "x", jobId: "tess-1" }, vi.fn())).toBe(false);
 });
 

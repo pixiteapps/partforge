@@ -21,6 +21,63 @@ test("handleMessage ignores non-capture and unknown-jobId messages", () => {
   const cb = createCaptureBuild({ send: () => {} });
   expect(cb.handleMessage({ type: "meshes", meshes: [] })).toBe(false);
   expect(cb.handleMessage({ type: "capture-meshes", jobId: 999, meshes: [] })).toBe(false);
+  // The other correlated channels on the same worker keep their replies:
+  // export-controller's "export-"/"warm-" ids and mount's tessellate-imports "tess-N".
+  expect(cb.handleMessage({ type: "error", message: "x", jobId: "export-1-1" })).toBe(false);
+  expect(cb.handleMessage({ type: "error", message: "x", jobId: "warm-1-1" })).toBe(false);
+  expect(cb.handleMessage({ type: "error", message: "x", jobId: "tess-1" })).toBe(false);
+});
+
+// The ids are what keep one mount's replies from settling another's capture on
+// a worker the host kept across mounts (see mount-capture-view.test.js).
+test("two capture builds never mint the same jobId", () => {
+  const sent = [];
+  const first = createCaptureBuild({ send: (msg) => sent.push(msg) });
+  const second = createCaptureBuild({ send: (msg) => sent.push(msg) });
+  for (const cb of [first, second, first, second]) {
+    cb.request({ subparts: ["a"], view: "assembly", params: {}, backend: "manifold" });
+  }
+  const ids = sent.map((m) => m.jobId);
+  expect(new Set(ids).size).toBe(ids.length);
+});
+
+// A capture-generate runs to completion, so a disposed build's job still
+// answers, on whichever build is listening now. That reply must not settle the
+// later build's capture with pre-edit meshes, and it must not fall through to
+// mount's switch, which reads an "error" as a failed build.
+test("a disposed capture build's late replies neither settle a later build's capture nor fall through", async () => {
+  const sentA = [];
+  const a = createCaptureBuild({ send: (msg) => sentA.push(msg) });
+  const stale = a.request({ subparts: ["a"], view: "assembly", params: {}, backend: "manifold" });
+  a.dispose();
+  await expect(stale).resolves.toBeNull();
+  const staleJobId = sentA[0].jobId;
+
+  const sentB = [];
+  const b = createCaptureBuild({ send: (msg) => sentB.push(msg) });
+  let settled = false;
+  const retry = b.request({ subparts: ["a"], view: "assembly", params: {}, backend: "manifold" })
+    .then((meshes) => { settled = true; return meshes; });
+
+  for (const type of ["capture-meshes", "error", "needs-occt", "needs-import-mesh"]) {
+    expect(b.handleMessage({ type, jobId: staleJobId, meshes: [{ name: "before-the-edit" }], message: "stale" })).toBe(true);
+  }
+  await Promise.resolve();
+  expect(settled).toBe(false);
+
+  const meshes = [{ name: "after-the-edit" }];
+  expect(b.handleMessage({ type: "capture-meshes", jobId: sentB[0].jobId, meshes })).toBe(true);
+  await expect(retry).resolves.toEqual(meshes);
+});
+
+test("a reply to a capture this build already settled is claimed and dropped", async () => {
+  const sent = [];
+  const cb = createCaptureBuild({ send: (msg) => sent.push(msg) });
+  const p = cb.request({ subparts: ["a"], view: "assembly", params: {}, backend: "manifold" });
+  const { jobId } = sent[0];
+  expect(cb.handleMessage({ type: "capture-meshes", jobId, meshes: [] })).toBe(true);
+  await p;
+  expect(cb.handleMessage({ type: "error", jobId, message: "late" })).toBe(true);
 });
 
 test("an error reply for a pending capture job resolves request() to null", async () => {
@@ -64,17 +121,16 @@ test("a needs-import-mesh reply for a pending capture job resolves request() to 
   await expect(p).resolves.toBeNull();
 });
 
-test("capture jobIds are namespaced strings, so they can't collide with export-controller's numeric jobIds", () => {
+test("capture jobIds are namespaced strings, so they can't collide with another channel's jobIds", () => {
   const sent = [];
   const cb = createCaptureBuild({ send: (msg) => sent.push(msg) });
 
   cb.request({ subparts: ["a"], view: "assembly", params: {}, backend: "manifold" });
 
   const { jobId } = sent[0];
-  expect(typeof jobId).toBe("string");
-  expect(jobId).toMatch(/^cap-/);
-  // An export-style numeric jobId of the same ordinal must not match — a
-  // shared-key collision would let one channel's reply settle the other's promise.
+  expect(jobId).toMatch(/^cap-\d+-1$/);
+  // A bare numeric jobId of the same ordinal must not match — a shared-key
+  // collision would let one channel's reply settle the other's promise.
   expect(cb.handleMessage({ type: "capture-meshes", jobId: 1, meshes: [] })).toBe(false);
 });
 
