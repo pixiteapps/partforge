@@ -1518,6 +1518,9 @@ returned `circlePolygon`'s points; it takes no `segs`.) For a round SOLID use `k
 and **use `k.torus({ rMajor, rMinor })` for a torus** — the primitive keeps real TORUS faces
 in STEP.
 
+**Laser-cut flat stock** (plywood, acrylic, MDF panels) is built differently — with
+`sheetPart()` and the joinery helpers; see [Sheet parts](#sheet-parts).
+
 **Patterns** (return `Solid[]` — feed to `k.union(...)` for features or `s.cutAll(...)` for holes):
 `linearPattern(solid, count, [dx,dy,dz])`, `circularPattern(solid, count, { center, axis, angle, rotateCopies })`.
 
@@ -1768,6 +1771,114 @@ New, all delegating to the pure functions above over the shape's stored contours
 that tessellates nothing, unlike `toRegions()`), `fillet(r, opts?)`, `chamfer(dist,
 opts?)`, `simplify(tolerance)`, `corners()`, `contains([x,y])`, `isEmpty()` (no
 regions left — see the vanishing-features rule above).
+
+## Sheet parts
+
+Laser-cut parts from flat stock — plywood, MDF, acrylic — for a laser cutter
+(LightBurn, xTool, Glowforge) or a cutting service (SendCutSend): flat-pack boxes,
+finger/box joints, tab and slot, T-slot screw joints, engraving and scoring. Build each
+piece cut from a sheet with `sheetPart()` from `partforge/geometry`; the cut & print
+kit turns them into SVG or DXF cut files, and kerf is chosen there, at download.
+
+### When a sub-part is a sheet part
+
+When it is cut out of one flat sheet: a 2-D outline with holes, marks on its face, the
+stock as its third dimension. A 3 mm plate you **print** is not one, nor is anything
+with pockets, steps or fillets. Mixing is normal — plywood panels, printed hinges.
+
+### sheetPart
+
+```js
+import { sheetPart, sheetHole } from "partforge/geometry";
+
+plate: sheetPart({
+  label: "Plate", views: ["main"], display: { material: "clear-acrylic" },
+  material: "clear acrylic",                  // stock label: groups pieces in the kit
+  thickness: (p) => p.t,                      // the MEASURED thickness, from a control
+  profile: (k, p) => k.shape2d([[0, 0], [p.w, 0], [p.w, p.h], [0, p.h]])
+    .cut(sheetHole({ d: 5, at: [8, 8] })),    // the cut layer
+  pose: (p) => ({ face: "-Y", up: "+Z", at: [-p.w / 2, 0, 0] }),
+}),
+```
+
+It returns an ordinary sub-part: `build`, `place` and a plain-data `sheet`. A field
+needing the kernel is `(k, p, d) => …`; a plain value is a literal or `(p, d) => …`.
+`material`, `thickness` and `profile` are required; `score`, `engrave`, `pose`,
+`process` (default `"laser"`) are optional; `label`, `views`, `display`, `export`,
+`enabled`, `exportable`, `reference` pass through; your own `place` runs after the
+pose. `build` is supplied — passing one throws, as do `kerf`, `outline`/`cut` (use
+`profile`) and `quantity` (the kit counts identical pieces).
+
+### Cut, score and engrave
+
+- **`profile`** is the CUT layer — outline plus holes, seen from the laser face, one
+  piece. Round holes: `sheetHole({ d, at })`, an exact circle (`circleProfile` is a
+  48-gon).
+- **`score`** returns an array: an entry of exactly two `[x, y]` points is a LINE;
+  anything else is a shape whose boundaries are all scored (`[[0, 0], [10, 0],
+  [10, 10]]` is a triangle). `null` entries are skipped.
+- **`engrave`** returns filled regions — `k.text2d(…)`, `k.vector2d(…)`, a Shape2D —
+  or `null`. No raster engraving.
+
+The preview pockets engraving and scores a groove 0.2 mm deep, so marks show in
+renders; the cut files carry vectors. Empty marks are dropped. Keep these functions
+chainable — no branching on `isEmpty()`/`area()`/`boundingBox()` — so pose-only
+sliders stay fast.
+
+### Thickness, clearance and kerf
+
+Three numbers, never mixed. **Thickness** is what you *measured* ("3 mm" plywood is
+often 2.7–3.3): bind it to a control, `thickness: (p) => p.t`; it is the extrusion and
+every joint's depth. **Clearance** is a finished joint's total play, on its own control
+(`fit`, 0–0.4 mm): fingers split it between the panels, slots take all of it. **Kerf**,
+what the beam burns away, never appears in the part: it is asked at download and
+applied once to the cut lines. Joinery refuses a `kerf` option; add no kerf control.
+
+### Placing panels: pose and worldToSheet
+
+A sheet part is drawn in its own frame: drawing in XY, material over z ∈ [0, t], laser
+face at z = t. `pose: { face, up, at }` places it — `face` is the laser face's outward
+normal, `up` the drawing's +y (axis words `"+X"`, `"-Y"`, …, at right angles), `at`
+where drawing `[0, 0]` lands; the material runs back along −`face`. Drawing +x is
+`up × face`, so an engraving is never mirrored. The pose holds for display AND export:
+STEP/3MF/STL come out assembled. No pose: flat at the origin. A box's front panel,
+laser face out: `{ face: "-Y", up: "+Z", at: [-W / 2, -D / 2, 0] }`.
+
+`worldToSheet(pose, [x, y, z])` → `[u, v]`: where a world point lands on the drawing —
+cut a slot where a printed tongue really is. `sheetToWorld(pose, [u, v], depth)` goes
+back.
+
+### Joinery helpers
+
+Pure and kernel-free — call them in `derive()`. They draw NOMINAL material.
+
+| Helper | Returns |
+|---|---|
+| `fingers({ thickness, clearance = 0.1, finger = 2t, side = "outer" })` | outer fingers protrude, inner ones notch |
+| `tabs({ thickness, count = 2, width = 3t })` | tongues protruding `thickness` |
+| `tSlots({ thickness, screw = "M3", screwLength = 12, at = [0.5], clearance = 0.2 })` | shank slot + nut trap (`JOINERY_SCREWS`) |
+| `sheetPanel({ width, height, edges: { bottom, right, top, left } })` | `{ outline, size }` |
+| `matchingSlots(joint, { line, clearance })` | holes the OTHER panel needs |
+| `fingerBox({ width, depth, height, thickness, clearance, finger })` | `{ bottom, front, back, left, right }` → `{ outline, size, pose }` |
+
+`sheetPanel`'s nominal edges are the box `[0, W] × [0, H]`; protrusions lie outside
+(`size` includes them). Edges run CCW — bottom, right, top, left — and positions are
+measured from an edge's start. Finger counts are odd, cells ≥ 2t, and every corner has
+one owner. `thickness` is the mating sheet's. `matchingSlots`' `line` is the tabbed
+panel's mid-plane in the slotted panel's frame, from the tabbed edge's start.
+
+```js
+derive: (p) => ({ box: fingerBox({ width: p.w, depth: p.d, height: p.h, thickness: p.t, clearance: p.fit }) }),
+front: sheetPart({ ...PLY, profile: (k, p, d) => d.box.front.outline, pose: (p, d) => d.box.front.pose }),
+```
+
+### Printed parts that key into sheets
+
+`printedTab({ size: [w, h], thickness, clearance = 0.3 })` gives a slot and its printed
+tongue from one spec: `slot` is `(w + c) × (h + c)`, centred (all the play); `tongue`
+is `[w, h, thickness]` for `k.box({ size: tongue })`. Build the printed part in its
+PRINT pose, `place` it for display, and cut the slot where the tongue lands:
+`k.shape2d(tab.slot).translate(worldToSheet(panelPose, tongueCentre))`.
 
 ## Convex hull
 
