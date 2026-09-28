@@ -530,6 +530,21 @@ export interface SubPartExpectations {
   refVolumeDeltaPct?: Expectation;
   /** Bounding-box corner drift `[dx, dy, dz]` vs. the sub-part's declared `reference` import. */
   refBboxDelta?: Expectation;
+  /**
+   * Sheet parts only (`sheetPart()`): the narrowest web or finger in the cut
+   * profile, mm. verify checks it on every sheet part at `>=` max(half the
+   * thickness, 0.5 mm) as a volunteered warning; declare it to make it count.
+   * Nothing narrower than twice that floor reads as the ceiling, with a note.
+   */
+  sheetBridge?: Expectation;
+  /** Sheet parts only: the narrowest hole, slot or notch in the cut profile, mm. Same floor as `sheetBridge`. */
+  sheetGap?: Expectation;
+  /** Sheet parts only: engrave/score mark regions lying outside the cut (volunteered check: `0`). */
+  sheetMarks?: Expectation;
+  /** Sheet parts only: separate regions in the cut profile (volunteered check: `1`). */
+  sheetPieces?: Expectation;
+  /** Sheet parts with a custom `build` only: % volume drift from profile area × thickness minus the marks (volunteered check: `<=2`). */
+  sheetSolidMatch?: Expectation;
 }
 
 /**

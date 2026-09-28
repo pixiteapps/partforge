@@ -273,3 +273,9 @@ test("a wall range with min > max is a bad expression, not a warn-forever band",
   expect(find(r, "verify-bad-expr").message).toMatch(/wall.*must be a range with min <= max/);
   expect(find(r, "verify-bad-expr").path).toBe("verify.expect.body.wall");
 });
+
+test("the sheet metrics are sub-part metrics lint accepts", () => {
+  const r = lintPart(partWith({ expect: { body: { sheetBridge: ">=1.5", sheetGap: ">=1.5", sheetMarks: 0, sheetPieces: 1, sheetSolidMatch: "<=2" } } }));
+  expect(ids(r.errors)).not.toContain("verify-unknown-metric");
+  expect(ids(r.errors)).not.toContain("verify-bad-expr");
+});

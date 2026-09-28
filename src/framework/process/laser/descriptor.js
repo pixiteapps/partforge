@@ -6,7 +6,7 @@
 // nothing reachable from here may touch a kernel, a Shape2D or paper
 // (test/lint-purity.test.js, test/oracle-no-paper.test.js). The writers that draw this
 // process's cut files live in process/laser/export.js, which only the kit loads.
-import { widthFloor, WIDTH_RESOLUTION, LOSS_TOL_MM2, SOLID_MATCH_PCT, SHEET_DOC_ID } from "../../sheet/constants.js";
+import { widthFloor, WIDTH_RESOLUTION, LOSS_TOL_MM2, SOLID_MATCH_PCT, SHEET_DOC_ID, fmtMm } from "../../sheet/constants.js";
 
 // ── 2-D design-for-manufacture facts ──────────────────────────────────────────
 // Read from the RESOLVED sheet (sheet/resolve.js) through Shape2D methods alone —
@@ -90,6 +90,39 @@ function marksFacts(s, spend) {
   return { marks, outside, at: outside ? centreOfLargest(off) : null };
 }
 
+// ── verify metrics ─────────────────────────────────────────────────────────────
+// SUBPART_METRICS-shaped (verify-metrics.js spreads SHEET_METRICS in). All warnings.
+// `doc` names the guide section a failing check points at — oracle/verify.js turns
+// it into the check's `pattern`; it is deliberately not `pattern`, which must name a
+// docs/ERROR-PATTERNS.md entry. `budgeted` marks the readings the 2-D deadline can
+// withhold, which verify reports as not evaluated rather than unavailable.
+const cappedNote = (key) => (s) => (s.sheet?.[`${key}Capped`]
+  ? `nothing narrower than ${fmtMm(s.sheet[key])} mm found — the value is the search ceiling`
+  : null);
+
+const METRICS = {
+  sheetBridge: { kind: "warn", doc: SHEET_DOC_ID, budgeted: true,
+    extract: (s) => (s.sheet?.evaluated ? s.sheet.bridge : null),
+    locate: (s) => s.sheet?.at?.bridge ?? null,
+    note: cappedNote("bridge"),
+    hint: "a web or finger of this sheet part is narrower than a laser can leave standing (the floor is half the sheet thickness, at least 0.5 mm) — widen the material between cuts at the reported location, or use fewer, wider fingers" },
+  sheetGap: { kind: "warn", doc: SHEET_DOC_ID, budgeted: true,
+    extract: (s) => (s.sheet?.evaluated ? s.sheet.gap : null),
+    locate: (s) => s.sheet?.at?.gap ?? null,
+    note: cappedNote("gap"),
+    hint: "a hole, slot or notch in this sheet part is narrower than a laser can reliably cut (half the sheet thickness, at least 0.5 mm) — widen it at the reported location" },
+  sheetMarks: { kind: "warn", doc: SHEET_DOC_ID, budgeted: true,
+    extract: (s) => (s.sheet?.evaluated ? s.sheet.marksOutside : null),
+    locate: (s) => s.sheet?.at?.marks ?? null,
+    hint: "an engrave or score mark lies outside the cut outline, so it would burn scrap or empty air — move it inside the profile" },
+  sheetPieces: { kind: "warn", doc: SHEET_DOC_ID,
+    extract: (s) => s.sheet?.pieces ?? null,
+    hint: "the profile is not exactly one piece — a sheet part must cut out as one region; join the pieces or split them into separate sheetPart sub-parts" },
+  sheetSolidMatch: { kind: "warn", doc: SHEET_DOC_ID, budgeted: true,
+    extract: (s) => s.sheet?.solidMatchPct ?? null,
+    hint: "this sheet part's custom build drifts from its profile (volume vs. profile area × thickness) — the cut file comes from the profile, so fix the profile or drop the custom build" },
+};
+
 export const LASER = {
   id: "laser",
   label: "Laser cutting",
@@ -156,4 +189,5 @@ export const LASER = {
       ...(f.customBuild ? { sheetSolidMatch: `<=${SOLID_MATCH_PCT}` } : {}),
     };
   },
+  metrics: METRICS,
 };

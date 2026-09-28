@@ -160,7 +160,10 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
   if (note) out.note = note;
   if (!pass) {
     out.hint = partHint ?? reg.hint;
-    if (reg.pattern) out.pattern = reg.pattern;
+    // `pattern` names an ERROR-PATTERNS.md entry; a sheet metric names the guide
+    // section instead (`doc: "sheet-parts"`), which rides the same field.
+    const pattern = reg.pattern ?? reg.doc;
+    if (pattern) out.pattern = pattern;
     const loc = reg.locate?.(factsObj);
     if (loc) out.location = loc;
   }
