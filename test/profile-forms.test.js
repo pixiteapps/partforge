@@ -36,7 +36,7 @@ describe("a {start, segments} contour", () => {
   });
 
   it("revolve still names what it wants for a form it cannot take", () => {
-    expect(() => k.revolve({ profile: { outer: [[0, 0], [1, 0], [1, 1]] } }))
+    expect(() => k.revolve({ profile: { points: [[0, 0], [1, 0], [1, 1]] } }))
       .toThrow(/revolve: profile must be an \[\[r, z\], …\] point list, a \{start, segments\} contour, or a Shape2D/);
   });
 

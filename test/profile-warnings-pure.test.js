@@ -5,11 +5,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   PROFILE_VALIDATE_MAX_SEGMENTS, PROFILE_WARN_MAX_PER_PROFILE,
-  makeProfileWarner, profileWarningMessages, sampledArcMessages, worstSampledArc,
+  makeProfileWarner, profileWarningMessages, sampledArcMessages, worstSampledArc, SAMPLED_ARC_MAX_PER_BUILD,
 } from "../src/framework/geometry/profile-warnings.js";
 import {
   pathProfile, ringSectorPolygon, ringSectorProfile, circleProfile, slotPolygon,
-  roundedRectPolygon, regularPolygon, starPolygon,
+  roundedRectPolygon, regularPolygon, starPolygon, offsetPolygon,
 } from "../src/framework/geometry/polygon.js";
 import { createValidatingProbe, runValidatingProbe } from "../src/framework/geometry/probe.js";
 
@@ -209,5 +209,65 @@ describe("makeProfileWarner and sampled arcs", () => {
     expect(record).toHaveBeenCalledTimes(1);
     w.warn("prism: profile", ringSectorPolygon(28, 30, 36), { sampledArcs: true });   // deduped
     expect(record).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sampled arcs survive the noise real point lists carry (review of 0.131)", () => {
+  const round = (pts, d) => pts.map(([x, y]) => [+x.toFixed(d), +y.toFixed(d)]);
+
+  it("coordinates rounded to 0.01 mm are still recognised", () => {
+    expect(worstSampledArc(round(ringSectorPolygon(28, 30, 36), 3))?.stepDeg).toBeCloseTo(9, 1);
+    expect(worstSampledArc(round(ringSectorPolygon(28, 30, 36), 2))?.stepDeg).toBeCloseTo(9, 0);
+    expect(worstSampledArc(round(circleProfile(40), 2))?.stepDeg).toBeCloseTo(7.5, 0);
+  });
+
+  it("a clearance-offset lug (trimmed end facets) is still recognised", () => {
+    const w = worstSampledArc(offsetPolygon(ringSectorPolygon(28, 30, 36), -0.25));
+    expect(w).not.toBeNull();
+    expect(w.stepDeg).toBeCloseTo(9, 3);
+  });
+
+  it("rounding noise does not turn a deliberate polygon into an arc", () => {
+    for (const quiet of [round(regularPolygon(6, 40), 2), round(starPolygon(24, 30, 20), 2), round(regularPolygon(12, 40), 2)])
+      expect(worstSampledArc(quiet)).toBeNull();
+  });
+
+  it("a longer straight neighbour does not count as a facet of the arc", () => {
+    // two 15° turns around a single 3 mm edge, between long straight sides: a bent bar, not an arc
+    const bend = [[0, 0], [50, 0], [52.9, 0.78], [55.5, 2.28], [100, 40], [0, 40]];
+    expect(worstSampledArc(bend)).toBeNull();
+  });
+});
+
+describe("makeProfileWarner bounds and quiets sampled arcs", () => {
+  it("records at most SAMPLED_ARC_MAX_PER_BUILD sampled-arc lines per build", () => {
+    const record = vi.fn();
+    const w = makeProfileWarner(record);
+    for (let r = 20; r < 30; r++) w.warn("prism: profile", ringSectorPolygon(r, r + 2, 36), { sampledArcs: true });
+    expect(record).toHaveBeenCalledTimes(SAMPLED_ARC_MAX_PER_BUILD);
+    w.reset();
+    w.warn("prism: profile", ringSectorPolygon(40, 42, 36), { sampledArcs: true });
+    expect(record).toHaveBeenCalledTimes(SAMPLED_ARC_MAX_PER_BUILD + 1);
+  });
+
+  it("quietArcs silences sampled arcs, but not crossings, for the duration of fn", () => {
+    const record = vi.fn();
+    const w = makeProfileWarner(record);
+    const out = w.warn.quietArcs(() => {
+      w.warn("extrude: profile", ringSectorPolygon(28, 30, 36), { sampledArcs: true });
+      w.warn("extrude: profile", BOW, { sampledArcs: true });
+      return 7;
+    });
+    expect(out).toBe(7);
+    expect(record).toHaveBeenCalledTimes(1);                       // the BOW crossing only
+    expect(record.mock.calls[0][0]).toMatch(/self-intersects/);
+    w.warn("extrude: profile", ringSectorPolygon(28, 30, 36), { sampledArcs: true });
+    expect(record).toHaveBeenCalledTimes(2);                       // quiet ended with fn
+  });
+
+  it("crossings: false checks sampled arcs alone", () => {
+    const record = vi.fn();
+    makeProfileWarner(record).warn("extrude: profile", BOW, { sampledArcs: true, crossings: false });
+    expect(record).not.toHaveBeenCalled();
   });
 });

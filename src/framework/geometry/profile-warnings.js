@@ -78,15 +78,24 @@ export function profileWarningMessages(prefix, profile) {
 // ~0.09 mm inside the true arc, on a fit with 0.25 mm of clearance (partforge-cloud
 // feedback #144). Nothing said so. This finds such runs and reports the worst one.
 //
-// A run is ≥ SAMPLED_ARC_MIN_EDGES consecutive edges of equal length meeting at equal
-// turns of at most SAMPLED_ARC_MAX_STEP_DEG — equal chords at equal turns lie on one
-// circle. The step bound keeps deliberate polygons out (a hexagon turns 60°, an
-// octagon 45°); SAMPLED_ARC_SAG_MM keeps out arcs sampled finely enough, or small
-// enough, that no print shows it (a 48-gon hole under ~23 mm radius, a dense loop).
+// A run is a stretch of consecutive vertices that all turn the same small amount
+// (≤ SAMPLED_ARC_MAX_STEP_DEG) between edges of one length — equal chords at equal turns
+// lie on one circle, and the turn IS the angular step. Its two END facets may be shorter
+// than the interior ones and still count: an offset or a boolean trims the first and last
+// facet of a sampled arc but leaves its turns alone (a clearance-shrunk lug is the #144
+// case exactly). A run is reported when it spans ≥ SAMPLED_ARC_MIN_EDGES facets and its
+// chord sits more than SAMPLED_ARC_SAG_MM inside the true arc. The step bound keeps
+// deliberate polygons out (a hexagon turns 60°, an octagon 45°); the sag bound keeps out
+// arcs sampled finely enough, or small enough, that no print shows it (a 48-gon hole
+// under ~23 mm radius, a dense loop). Two-facet arcs are not reported: one turn between
+// two edges cannot be told from a deliberate bend.
 export const SAMPLED_ARC_SAG_MM = 0.05;
 export const SAMPLED_ARC_MAX_STEP_DEG = 20;
 export const SAMPLED_ARC_MIN_EDGES = 3;
-const REL_TOL = 1e-4;   // equal-length / equal-turn tolerance: float noise, not design
+const REL_TOL = 1e-4;
+// Absolute point noise tolerated in an authored or derived point list: coordinates
+// rounded to 0.01 mm (toFixed(2)), or passed through a transform or an offset.
+const NOISE_MM = 0.01;
 
 const SAMPLED_ARC_COACH =
   "a point list is built and exported exactly as written, so a print shows those facets. " +
@@ -102,13 +111,13 @@ export function worstSampledArc(ring) {
   if (pts.length > 1 && Math.hypot(lx - fx, ly - fy) < 1e-12) pts = pts.slice(0, -1);   // explicit closure
   const n = pts.length;
   if (n < SAMPLED_ARC_MIN_EDGES + 1 || n > PROFILE_VALIDATE_MAX_SEGMENTS) return null;
+  // edge i runs p[i] → p[i+1]; junction i is the turn from edge i into edge i+1
   const len = [], dir = [];
   for (let i = 0; i < n; i++) {
     const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % n];
     len.push(Math.hypot(bx - ax, by - ay));
     dir.push(Math.atan2(by - ay, bx - ax));
   }
-  // turn[i]: signed turn from edge i to edge i+1, in (-π, π]
   const turn = dir.map((d, i) => {
     let t = dir[(i + 1) % n] - d;
     while (t <= -Math.PI) t += 2 * Math.PI;
@@ -116,41 +125,61 @@ export function worstSampledArc(ring) {
     return t;
   });
   const maxStep = (SAMPLED_ARC_MAX_STEP_DEG * Math.PI) / 180;
-  // Junction i (edge i → edge i+1) is arc-like when it turns a little, not at all or a
-  // lot, between two edges of the same length.
-  const joins = (i) => {
-    const t = Math.abs(turn[i]);
-    return t > 1e-9 && t <= maxStep + 1e-12 && len[i] > 1e-12 &&
-      Math.abs(len[(i + 1) % n] - len[i]) <= REL_TOL * len[i];
-  };
-  // Junction i extends the run junction i-1 is in when both are arc-like and turn alike.
-  const extends_ = (i) => {
+  const lenTol = (L) => Math.max(REL_TOL * L, 2 * NOISE_MM);
+  const arcTurn = (i) => { const t = Math.abs(turn[i]); return t > 1e-9 && t <= maxStep + 1e-12; };
+  // Junction i turns like junction i-1 across edge i (their shared edge): same direction,
+  // same amount within the noise an edge of that length can put on a direction.
+  const sameTurn = (i) => {
     const p = (i - 1 + n) % n;
-    return joins(p) && joins(i) && Math.abs(turn[i] - turn[p]) <= REL_TOL * Math.abs(turn[p]);
+    if (!arcTurn(p) || !arcTurn(i) || !(len[i] > 1e-12) || Math.sign(turn[i]) !== Math.sign(turn[p])) return false;
+    return Math.abs(turn[i] - turn[p]) <= Math.max(REL_TOL * Math.abs(turn[p]), (4 * NOISE_MM) / len[i]);
   };
   let worst = null;
-  // A run of j junctions spans j + 1 edges; its common turn IS the angular step.
-  const consider = (first, edges) => {
+  // A run of k ≥ 2 junctions from `first`: interior edges first+1 … first+k-1, all of
+  // length L; the end facets (edges first and first+k) count when no longer than L.
+  const consider = (first, k, L, turnSum) => {
+    if (k < 2) return;
+    const endLen = [len[first], len[(first + k) % n]];
+    const edges = (k - 1) + endLen.filter((e) => e <= L + lenTol(L)).length;
     if (edges < SAMPLED_ARC_MIN_EDGES) return;
-    const step = Math.abs(turn[first]);
-    const r = len[first] / (2 * Math.sin(step / 2));
+    const step = Math.abs(turnSum / k);
+    const r = L / (2 * Math.sin(step / 2));
     const sag = r * (1 - Math.cos(step / 2));
     if (sag > SAMPLED_ARC_SAG_MM && (!worst || sag > worst.sag))
       worst = { r, stepDeg: (step * 180) / Math.PI, sag };
   };
-  // Start the walk at a break so no run is split across the wrap; a ring with no
+  // Start the walk at a turn break so no run is split across the wrap. A ring with no
   // break (a regular n-gon, a circleProfile) is one run all the way round.
   let start = -1;
-  for (let i = 0; i < n; i++) if (!extends_(i)) { start = i; break; }
-  if (start === -1) { if (joins(0)) consider(0, n); return worst; }
-  let first = start, junctions = 1;
-  for (let k = 1; k < n; k++) {
-    const i = (start + k) % n;
-    if (extends_(i)) { junctions++; continue; }
-    if (joins(first)) consider(first, junctions + 1);
-    first = i; junctions = 1;
+  for (let i = 0; i < n; i++) if (!sameTurn(i)) { start = i; break; }
+  if (start === -1) {
+    const L = len[0];
+    if (arcTurn(0) && len.every((e) => Math.abs(e - L) <= lenTol(L))) {
+      const step = Math.abs(turn.reduce((a, t) => a + t, 0) / n);
+      const r = L / (2 * Math.sin(step / 2)), sag = r * (1 - Math.cos(step / 2));
+      if (sag > SAMPLED_ARC_SAG_MM) worst = { r, stepDeg: (step * 180) / Math.PI, sag };
+    }
+    return worst;
   }
-  if (joins(first)) consider(first, junctions + 1);
+  let first = start, k = 1, L = NaN, turnSum = turn[start];
+  for (let s = 1; s <= n; s++) {
+    const i = (start + s) % n;
+    // junction i extends the run when it turns alike AND its incoming edge (edge i, an
+    // interior edge of the run) matches the run's interior length
+    if (s < n && sameTurn(i) && (k === 1 || Math.abs(len[i] - L) <= lenTol(L))) {
+      if (k === 1) L = len[i];
+      k++; turnSum += turn[i];
+      continue;
+    }
+    consider(first, k, L, turnSum);
+    // a length break still leaves junction i turning alike with i-1: it may start a new
+    // run that shares that junction, so restart from i-1 when that is the case
+    if (s < n && sameTurn(i) && k > 1) {
+      first = (i - 1 + n) % n; k = 2; L = len[i]; turnSum = turn[first] + turn[i];
+    } else {
+      first = i; k = 1; L = NaN; turnSum = turn[i];
+    }
+  }
   return worst;
 }
 
@@ -176,17 +205,32 @@ export function sampledArcMessages(prefix, profile) {
   ];
 }
 
+// Sampled-arc lines per build. Each names a different radius, so dedupe alone does not
+// bound them, and the warning list is shared with every other degrade in the build.
+export const SAMPLED_ARC_MAX_PER_BUILD = 3;
+
 // A per-kernel warner: `warn` records each distinct message at most once until
 // `reset` (the backend calls reset inside takeBuildWarnings, i.e. per drain).
 // `opts.sampledArcs` also reports a coarsely sampled arc — asked for only by the ops
-// where a path contour would be refined instead (prism, extrude, revolve); loft and
-// sweep sample curve rings at their own fixed LOD, so the advice would not hold there.
+// where a path contour would be refined instead (prism, extrude, revolve, shape2d); loft
+// and sweep sample curve rings at their own fixed LOD, so the advice would not hold
+// there. `opts.crossings: false` skips the self-intersection check (a caller that
+// validates the same outline again downstream). `warn.quietArcs(fn)` runs a kernel
+// composition that tessellates curves itself (a rim bevel, a screw sweep) without
+// blaming its points on the author, who wrote curves.
 export function makeProfileWarner(recordWarning) {
   const seen = new Set();
+  let quiet = 0, arcLines = 0;
   const warn = (prefix, profile, opts) => {
     if (typeof recordWarning !== "function") return;
-    const msgs = profileWarningMessages(prefix, profile);
-    if (opts?.sampledArcs) msgs.push(...sampledArcMessages(prefix, profile));
+    const msgs = opts?.crossings === false ? [] : profileWarningMessages(prefix, profile);
+    if (opts?.sampledArcs && quiet === 0 && arcLines < SAMPLED_ARC_MAX_PER_BUILD) {
+      for (const msg of sampledArcMessages(prefix, profile)) {
+        if (seen.has(msg) || arcLines >= SAMPLED_ARC_MAX_PER_BUILD) continue;
+        arcLines++;
+        msgs.push(msg);
+      }
+    }
     for (const msg of msgs) {
       if (seen.has(msg)) continue;
       seen.add(msg);
@@ -200,5 +244,9 @@ export function makeProfileWarner(recordWarning) {
   // reaches paper.js through contour-ops.js.
   warn.segmentCount = profileSegmentCount;
   warn.maxSegments = PROFILE_VALIDATE_MAX_SEGMENTS;
-  return { reset: () => seen.clear(), warn };
+  warn.quietArcs = (fn) => {
+    quiet++;
+    try { return fn(); } finally { quiet--; }
+  };
+  return { reset: () => { seen.clear(); arcLines = 0; }, warn };
 }

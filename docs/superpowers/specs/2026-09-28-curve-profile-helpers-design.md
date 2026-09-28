@@ -89,21 +89,26 @@ only. Changing it would break a user's forge and pull `sweep`, `hull`, `loft` an
 `offsetPolygon` into the change.
 
 So `circleProfile` keeps returning its 48-point list. The docs name it as the rule's
-one exception and say what it is for: a sweep profile, a hull input, or a small hole
-(within 0.05 mm of round up to a 23 mm radius). A round solid is `k.cylinder`, and a
-large round hole is a cut cylinder. The warning in 5 flags a large one. The
+one exception and say what it is for: a sweep profile or a small hole (within 0.05 mm
+of round up to a 23 mm radius). An exact circle in a 2-D profile is `slotProfile(0, r)`
+(its documented length-0 case), and a round solid is `k.cylinder`. The warning in 5 flags a large one. The
 "`circleProfile` is a cylinder" doc line is corrected, and `KERNEL-CONTRACT.md` states
 the exception beside the naming rule.
 
-### 4. `revolve` accepts a path contour
+### 4. `revolve` accepts a path contour or a region
 
 `k.revolve` used to refuse a `{start, segments}` contour with "lift it with
-`k.shape2d` first". `finishKernel` now lifts a contour to a `Shape2D` before the
-spec-wrapped op runs, in both calling forms, the same way `extrude({ bevel })` is
-desugared. So a curve helper works everywhere a point list does, and the lathe gets
-the `Shape2D` path: profile arcs at the double-curvature count, true arcs on OCCT.
-The single-argument positional form passes an explicit options argument, because
-a lone `Shape2D` is a plain object that the spec wrapper would read as options.
+`k.shape2d` first". `finishKernel` now lifts a contour, or an `{outer, holes}` region
+(which `RevolveOptions` already promised), to a `Shape2D` before the spec-wrapped op
+runs, the same way `extrude({ bevel })` is desugared. So a curve helper works
+everywhere a point list does, and the lathe gets the `Shape2D` path: profile arcs at
+the double-curvature count, true arcs on OCCT.
+
+Both `k.revolve({ profile: contour })` and `k.revolve(contour, { degrees })` lift.
+A lone `k.revolve(contour)` does not. By KERNEL-CONTRACT's normative rule, a single
+plain-object argument is options form, and the lint probe applies that rule too. A
+kernel that accepted the lone contour would build a part that lint rejects, and the
+cloud loader blocks on lint errors. The kernel and lint refuse it identically.
 
 ### 5. Sampled-arc build warning
 
@@ -118,7 +123,20 @@ It examines point-list rings only (outer and holes), never a path contour or a
 `Shape2D`. The warner runs it only for ops that pass `{ sampledArcs: true }`:
 `prism`, `extrude`, `revolve` and `k.shape2d`, where a curve would be refined
 instead. `loft` and `sweep` don't ask, because the advice wouldn't hold there. The
-existing dedupe applies, so six placements of one lug are one line.
+existing dedupe applies, so six placements of one lug are one line, and at most
+three sampled-arc lines are recorded per build (each names its own radius, so dedupe
+alone doesn't bound them).
+
+The run's end facets may be shorter than its interior ones: an offset or a boolean
+trims them but leaves the turns alone, which is exactly the clearance-shrunk lug.
+Lengths and turns tolerate about 0.01 mm of point noise (coordinates rounded with
+`toFixed(2)`, or passed through a transform). A two-facet arc isn't reported,
+because one turn between two edges can't be told from a bend.
+
+Compositions that tessellate curves themselves don't blame the author. `hull`
+lifts its result through the trusted `k.shape2d` path, since a convex hull can't
+cross itself. A bevelled `extrude` and `screwSweep` run inside `warn.quietArcs`, and
+the bevel checks the author's own outline for sampled arcs up front.
 
 At 0.05 mm: the 32-per-circle helpers warn above about a 10 mm radius,
 `circleProfile`'s 48-gon above about 23 mm. Hexagons, octagons and 12-gons (turns
@@ -130,7 +148,7 @@ stay silent. Accepted: a deliberate 24-gon at a large radius warns.
 Manifold takes a revolve's segment count as the slice count for the sweep it is
 given. So a 36° revolve got a full circle's 116 slices: 932 triangles where 100
 carry the same facet angle. The default count is now
-`max(3, ceil(full × degrees / 360))`; below 3, Manifold substitutes its own default.
+`max(3, ceil(full × |degrees| / 360))`; below 3, Manifold substitutes its own default.
 An explicit `segs` (mesh-fillet's blend tools, which rely on exact counts) is left
 as given. OCCT is exact and unaffected.
 

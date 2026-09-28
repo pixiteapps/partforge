@@ -452,7 +452,7 @@ and the detection rule.
 | `k.roundedBox({ size, center?, round })` | box with rounded edges — `round` = number (all edges) or `{ side?, top?, bottom? }` (vertical edges / rims); built as one hand-meshed ring stack (no booleans at all, cheaper than `fillet`'s cutters); `side` must be 0 or ≥ the rim radii (between clamps with a warning); with `side > 0`, `top + bottom` must be strictly `< h` |
 | `k.roundedCylinder({ r\|d, h, center?, round })` | cylinder with rounded rims — `round` = number (both) or `{ top?, bottom? }`; `round: r` with `top+bottom = h` gives a sphere (capsule when `h > 2r`); one lathe revolve, curve-exact in STEP |
 | `k.torus({ rMajor, rMinor })` | torus centered at the origin (tube centerline in z=0); `0 < rMinor < rMajor` |
-| `k.revolve({ profile, degrees? })` | revolve a lathe profile `[[r,z],…]` (r ≥ 0) around the Z axis (full or partial) |
+| `k.revolve({ profile, degrees? })` | revolve a lathe profile in `[r, z]` (r ≥ 0) around the Z axis (full or partial): a point list, a `{start, segments}` path contour (its arcs stay exact), an `{outer, holes}` region, or a `Shape2D`. A partial sweep spends the circle count in proportion to its angle |
 | `k.helixSweptTube({ pathR, profileR, pitch, turns, z0, lefthand })` | circle swept along a helix (e.g. a rope groove). **Not for threads** — the profile is always circular and rides a frenet frame that rolls with the helix, tilting a tooth off-axis. For threads use `k.screwSweep` |
 | `k.screwSweep({ profile, pitch, turns, lefthand? })` | screw-motion sweep of an **axial** lathe profile `[[r, z], …]` (same convention as `k.revolve`) — threads, worms, helical ridges. `h = pitch · turns`. The profile's axial extent must not exceed `pitch`; a profile spanning exactly `pitch` must be **periodic** (first radius == last radius) and yields a complete threaded body with no boolean (both backends) |
 | `k.loftSmooth({ sections, stations?, samples?, shading?, closed? })` | smooth organic loft: ≥2 sparse control sections — point rings, `sides`+`radius`, curve contours, or `Shape2D`, vertex/corner counts may differ per section — interpolated with splines on both backends — the "here are 5 airfoil sections, make it smooth" op. The surface passes through every section exactly. A point section may tag `sharp: [indices]` to keep those vertices true corners instead of letting the spline round them off; a curve/`Shape2D` section gets its corners implicitly from its own non-smooth joints. All sections need the same corner count. `closed: true` closes the loft into a loop (Manifold-only, like `k.loft`). See the propeller reference part (`sharpTE` toggle) |
@@ -1505,12 +1505,12 @@ min(w,h)/2), `roundedProfile(points,r)` (round any polygon's corners), and `path
 `regularPolygon(n,r,{flat})`, `hexPolygon(r)`, `starPolygon(points,outerR,innerR)`, and
 `ellipsePolygon(rx,ry)` (a fixed 48-point ellipse — there is no exact-curve form).
 `circleProfile(r, center?)` — a circle of radius `r` centred at `[cx,cy]` (default origin), and
-**the one exception to the naming rule**: a fixed 48-point list, because `sweep`, `hull` and
-loft sections take points. Use it for a tube's `sweep` profile, a `hull` input, or a small
-hole (a 48-gon is within 0.05 mm of round up to a 23 mm radius). For a round SOLID use
-`k.cylinder` (a `circleProfile` prism is a 48-sided prism, never refined at export), for a
-large round hole cut a cylinder, and **use `k.torus({ rMajor, rMinor })` for a torus** — the
-primitive keeps real TORUS faces in STEP.
+**the one exception to the naming rule**: a fixed 48-point list, kept that way because `sweep`
+takes points only and parts reshape its points. Use it for a tube's `sweep` profile or a small
+hole (a 48-gon is within 0.05 mm of round up to a 23 mm radius). For an exact circle in a 2-D
+profile use `slotProfile(0, r)`; for a round SOLID use `k.cylinder` (a `circleProfile` prism is
+a 48-sided prism, never refined at export); and **use `k.torus({ rMajor, rMinor })` for a
+torus** — the primitive keeps real TORUS faces in STEP.
 
 **Patterns** (return `Solid[]` — feed to `k.union(...)` for features or `s.cutAll(...)` for holes):
 `linearPattern(solid, count, [dx,dy,dz])`, `circularPattern(solid, count, { center, axis, angle, rotateCopies })`.

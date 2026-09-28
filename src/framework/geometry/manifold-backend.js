@@ -831,7 +831,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // count put 116 slices into a 36° lug (932 triangles where 100 carry the same facet
     // angle). Floored at 3, below which Manifold substitutes its own default.
     revolve: (pts, { degrees = 360, segs: segsOverride } = {}) => {
-      const sweep = (n) => (degrees >= 360 ? n : Math.max(3, Math.ceil((n * degrees) / 360)));
+      const turn = Math.abs(degrees);   // a negative sweep is the same angle the other way
+      const sweep = (n) => (turn >= 360 ? n : Math.max(3, Math.ceil((n * turn) / 360)));
       const densityFor = (maxR) => segsOverride != null ? Math.min(segs, segsOverride) : sweep(segsAt(maxR));
       if (pts && pts._shape2d) {
         // Keyed on the override, not the resolved density, so a cache hit never

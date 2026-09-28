@@ -4,9 +4,11 @@
 //   • cutAll      — four corner bolt holes drilled in one batch
 //   • cut         — a central bore
 //   • offset      — an optional print-clearance grow with rounded corners
-// The rounded corners and circular holes are true arcs (curve-native profiles), so
-// the whole outline stays curve-exact. Open /bracket.html after `npm run dev`.
-import { roundedRectProfile, circleProfile } from "partforge/geometry";
+// The rounded corners and the clip disc are exact arcs (*Profile helpers; slotProfile(0, r)
+// is an exact circle), which the kernel refines at export. The small bolt holes use
+// circleProfile's fixed 48-gon, within 0.05 mm of round at this size.
+// Open /bracket.html after `npm run dev`.
+import { roundedRectProfile, slotProfile, circleProfile } from "partforge/geometry";
 
 export default {
   meta: { title: "Cross bracket", units: "mm", background: 0x15181d, environment: "workshop" },
@@ -63,7 +65,7 @@ export default {
         const barH = k.shape2d(roundedRectProfile(p.span, p.bar, p.corner));
         const barV = k.shape2d(roundedRectProfile(p.bar, p.span, p.corner));
         let plate = barH.union(barV);                                        // union
-        if (p.clip) plate = plate.intersect(k.shape2d(circleProfile(p.span / 2)));  // intersect
+        if (p.clip) plate = plate.intersect(k.shape2d(slotProfile(0, p.span / 2)));  // intersect (an exact disc)
         const d = p.span / 2 - p.inset;
         const holes = [[d, d], [-d, d], [d, -d], [-d, -d]].map((c) => circleProfile(p.hole_d / 2, c));
         plate = plate.cutAll(holes);                                         // batch cut

@@ -352,6 +352,7 @@ export function slotProfile(length, r) {
 // and r ≤ 0 is the plain rectangle.
 export function roundedRectProfile(w, h, r) {
   if (!(w > 0 && h > 0)) throw new Error(`roundedRectProfile: w and h must be > 0, got w=${w}, h=${h}`);
+  if (!Number.isFinite(r)) throw new Error(`roundedRectProfile: r must be a finite number (0 for square corners), got ${r}`);
   const hw = w / 2, hh = h / 2;
   const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
   if (rr === 0) return contourFrom([hw, -hh]).line([hw, hh]).line([-hw, hh]).line([-hw, -hh]).close();

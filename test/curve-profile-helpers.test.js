@@ -149,7 +149,9 @@ describe("input validation", () => {
     expect(() => slotProfile(-1, 2)).toThrow(/length must be ≥ 0/);
   });
 
-  test("roundedRectProfile needs positive w and h", () => {
+  test("roundedRectProfile needs positive w and h and a finite r", () => {
     expect(() => roundedRectProfile(0, 10, 1)).toThrow(/w and h must be > 0/);
+    expect(() => roundedRectProfile(10, 10, undefined)).toThrow(/r must be a finite number/);
+    expect(() => roundedRectProfile(10, 10, NaN)).toThrow(/r must be a finite number/);
   });
 });

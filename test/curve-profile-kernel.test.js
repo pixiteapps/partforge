@@ -10,7 +10,8 @@ import { beforeAll, describe, expect, test } from "vitest";
 import Module from "manifold-3d";
 import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
 import { SEGS } from "../src/framework/geometry/circle-segs.js";
-import { ringSectorPolygon, ringSectorProfile, pathProfile } from "../src/framework/geometry/polygon.js";
+import { ringSectorPolygon, ringSectorProfile, slotProfile, pathProfile } from "../src/framework/geometry/polygon.js";
+import { runValidatingProbe } from "../src/framework/geometry/probe.js";
 
 let preview, print;
 beforeAll(async () => {
@@ -79,8 +80,57 @@ describe("revolve takes a path contour directly", () => {
 
   test("the positional form lifts too, and degrees still apply", () => {
     const half = preview.revolve(lathe(), { degrees: 180 });
-    const full = preview.revolve(lathe());
+    const full = preview.revolve({ profile: lathe() });
     expect(half.volume()).toBeCloseTo(full.volume() / 2, 6);
+  });
+
+  test("a lone contour is options form (KERNEL-CONTRACT's rule), refused as the lint probe refuses it", () => {
+    expect(() => preview.revolve(lathe())).toThrow(/revolve: unknown option "start"/);
+    const part = { parts: { p: { build: (k) => k.revolve(lathe()) } } };
+    expect(runValidatingProbe(part, {}, {}).issues.map((i) => i.message))
+      .toEqual([expect.stringMatching(/revolve: unknown option "start"/)]);
+  });
+
+  test("the lint probe accepts both forms the kernel lifts", () => {
+    const part = { parts: { p: { build: (k) => {
+      k.revolve({ profile: lathe(), degrees: 90 });
+      return k.revolve(lathe(), { degrees: 90 });
+    } } } };
+    const r = runValidatingProbe(part, {}, {});
+    expect(r.issues).toEqual([]);
+    expect(r.throws).toEqual([]);
+  });
+
+  test("an {outer, holes} region revolves too (RevolveOptions.profile is a ProfileInput)", () => {
+    const ring = { outer: [[10, 0], [14, 0], [14, 4], [10, 4]], holes: [] };
+    expect(preview.revolve({ profile: ring }).volume())
+      .toBeCloseTo(preview.revolve({ profile: ring.outer }).volume(), 6);
+  });
+});
+
+describe("compositions that tessellate curves themselves do not blame the author", () => {
+  const arcLines = (k) => k.takeBuildWarnings().filter((w) => /traces an arc/.test(w));
+
+  test("a bevelled extrude of an exact curve is quiet; of a coarse point list, it reports once", () => {
+    preview.takeBuildWarnings();
+    preview.extrude({ profile: slotProfile(0, 45), h: 5, bevel: 1 });
+    preview.extrude({ profile: ringSectorProfile(40, 50, 90), h: 5, bevel: 1 });
+    expect(arcLines(preview)).toEqual([]);
+    preview.extrude({ profile: ringSectorPolygon(28, 30, 36), h: 5, bevel: 0.5 });
+    expect(arcLines(preview)).toHaveLength(1);
+  });
+
+  test("hull and hullChain are quiet", () => {
+    preview.takeBuildWarnings();
+    preview.hull([slotProfile(0, 60), [[200, 0], [201, 0], [200, 1]]]);
+    preview.hullChain([slotProfile(0, 60), slotProfile(0, 50), [[300, 0], [301, 0], [300, 1]]]);
+    expect(arcLines(preview)).toEqual([]);
+  });
+
+  test("a large screwSweep is quiet", () => {
+    preview.takeBuildWarnings();
+    preview.screwSweep({ profile: [[78, 0], [80, 1], [78, 2]], pitch: 2, turns: 1 });
+    expect(arcLines(preview)).toEqual([]);
   });
 });
 
