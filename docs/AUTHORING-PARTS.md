@@ -353,7 +353,10 @@ meta: { title: "…", units: "mm", environment: "studio" },
 colour, flattened so dark materials stay readable. **Realistic** mode — the
 viewer's toggle — shows the full material under environment lighting, with a
 ground and soft shadow and no feature lines. The part never moves when the
-mode changes.
+mode changes. The ground is placed under the part when a view is shown and
+after each edit; while an animation plays or is scrubbed it stays where it is
+(dropping lower only if the part would otherwise sink into it), so a motion
+that changes the part's footprint never slides the floor around under it.
 
 **3D-print layer lines** (`pla-print`, `petg-print`) run perpendicular to the
 **export** pose's +Z — the way the part will be printed, not the way it is

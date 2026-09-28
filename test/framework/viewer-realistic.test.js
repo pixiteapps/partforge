@@ -435,6 +435,42 @@ test("shaders compile under the realistic tone mapping without leaking it into C
   v.dispose();
 });
 
+test("a held ground keeps its place and size through rebuilds, and only ever lowers", async () => {
+  // Feedback #138: an animation track that rebuilds geometry re-shows the
+  // assembly each delivery, and the floor used to chase every frame's bounds.
+  const shifted = (dx, dz) => {
+    const p = payload();
+    for (let i = 0; i < p.positions.length; i += 3) { p.positions[i] += dx; p.positions[i + 2] += dz; }
+    return p;
+  };
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const rig = lastRig();
+  const placed = rig.setGround.mock.calls.at(-1)[0];
+
+  v.holdGround(true);
+  v.setSubGeometry("body", shifted(40, 0)); // bounds grow and their centre moves
+  v.showAssembly(Object.keys(part.parts));
+  expect(rig.setGround.mock.calls.at(-1)[0]).toEqual(placed);
+
+  v.setSubGeometry("body", shifted(40, -3)); // something now reaches below the floor
+  v.showAssembly(Object.keys(part.parts));
+  const lowered = rig.setGround.mock.calls.at(-1)[0];
+  expect(lowered).toEqual({ ...placed, y: expect.any(Number) });
+  expect(lowered.y).toBeLessThan(placed.y);
+
+  v.setSubGeometry("body", shifted(40, 0)); // back up: the floor does not follow it up
+  v.showAssembly(Object.keys(part.parts));
+  expect(rig.setGround.mock.calls.at(-1)[0]).toEqual(lowered);
+
+  v.holdGround(false); // released: the ground comes to the part again
+  v.showAssembly(Object.keys(part.parts));
+  const free = rig.setGround.mock.calls.at(-1)[0];
+  expect(free.centerX).not.toBeCloseTo(placed.centerX);
+  expect(free.y).toBeCloseTo(placed.y);
+  v.dispose();
+});
+
 test("while an animation moves a part the shadow re-renders low-res, then once full on settle", async () => {
   let now = 1000;
   vi.spyOn(performance, "now").mockImplementation(() => now);

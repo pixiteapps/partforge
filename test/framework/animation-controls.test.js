@@ -13,6 +13,7 @@ function fakeViewer() {
     onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
     tweenCameraTo: vi.fn((view, { onComplete } = {}) => onComplete?.()), // completes instantly
     cancelCameraTween: vi.fn(),
+    holdGround: vi.fn(),
     setSubPartOpacity: vi.fn(),
     clearSubPartOpacities: vi.fn(),
     frame: (dt) => { for (const cb of [...frameCbs]) cb(dt); },
@@ -259,6 +260,30 @@ test("the intro is the short tween; a cue crossed mid-play sweeps across its ste
   expect(viewer.tweenCameraTo).toHaveBeenLastCalledWith("top-front-left", expect.objectContaining({ duration: 0.6 }));
   viewer.frame(0.6); // crosses the Turn step's start
   expect(viewer.tweenCameraTo).toHaveBeenLastCalledWith("iso", expect.objectContaining({ duration: 1.5 }));
+});
+
+test("playback holds the realistic floor until an edit, reset or view switch — not the end", () => {
+  const { ctl, switchView } = setup(); handles.push(ctl);
+  const viewer = ctl.__viewer;
+  const held = () => viewer.holdGround.mock.calls.at(-1)?.[0];
+  ctl.runtime.play();
+  viewer.frame(0.5);
+  expect(held()).toBe(true);
+  viewer.frame(5); // runs to done
+  expect(ctl.runtime.state().status).toBe("done");
+  expect(held()).toBe(true); // releasing here would just move the jump to the last frame
+
+  ctl.notifyUserEdit();
+  expect(held()).toBe(false);
+
+  ctl.runtime.play(); viewer.frame(0.5);
+  expect(held()).toBe(true);
+  ctl.runtime.stop();
+  expect(held()).toBe(false);
+
+  ctl.runtime.play(); viewer.frame(0.5);
+  switchView("solo");
+  expect(held()).toBe(false);
 });
 
 test("reset restores the pre-animation param snapshot", () => {
