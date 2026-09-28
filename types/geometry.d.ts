@@ -8,15 +8,27 @@ import type {
   Contour,
   Corner2D,
   CornerSelector,
+  GeometryKernel,
   MirrorAxis2,
   Point2,
   Point3,
   PointsContour,
   Region2D,
+  Shape2D,
   Solid,
 } from "./kernel.js";
+import type {
+  AxisWord,
+  Derived,
+  PlaceContext,
+  ResolvedParams,
+  SheetPose,
+  SheetScoreEntry,
+  SubPartDefinition,
+} from "./part.js";
 
 export type { ArcContour, Contour, Corner2D, CornerSelector, MirrorAxis2, Point2, Point3, PointsContour, Region2D, Solid };
+export type { AxisWord, SheetPose };
 
 /**
  * Anything the 2-D editing ops below accept: a plain point list, a curve-native
@@ -282,3 +294,102 @@ export interface ProfileIssue {
  * geometric badness — only an unrecognized `input` shape throws.
  */
 export function validateProfile(input: ProfileInput): { ok: boolean; issues: ProfileIssue[] };
+
+// --- sheet parts (docs/AUTHORING-PARTS.md "Sheet parts") --------------------
+
+/**
+ * What `sheetPart` accepts. A field needing the kernel is `(k, p, d)`; a plain value
+ * is a literal or `(p, d)`. Unknown keys throw at load and name the fix (`kerf` is
+ * chosen at download, `outline`/`cut` are `profile`, `build` is supplied).
+ */
+export interface SheetPartSpec<P = ResolvedParams, D = Derived> {
+  /** Stock label ("birch plywood"); groups pieces in the kit. The LOOK is `display.material`. */
+  material: string | ((p: P, d: D) => string);
+  /** The MEASURED sheet thickness in mm: the extrusion depth and every joint's depth. */
+  thickness: number | ((p: P, d: D) => number);
+  /** The CUT layer: outline plus holes, seen from the laser face. */
+  profile: (k: GeometryKernel, p: P, d: D) => Shape2D | ProfileInput;
+  /** Exactly two points is a line; any other entry is a shape whose boundaries are scored. */
+  score?: ((k: GeometryKernel, p: P, d: D) => SheetScoreEntry[] | null) | null;
+  /** Filled regions burned into the laser face (`k.text2d`, `k.vector2d`, a Shape2D). */
+  engrave?: ((k: GeometryKernel, p: P, d: D) => Shape2D | ProfileInput | null) | null;
+  /** Where the piece sits, for display AND export. Omitted: flat, no transform. */
+  pose?: SheetPose | ((p: P, d: D) => SheetPose | null) | null;
+  process?: "laser";
+  label?: string;
+  views: string[];
+  display?: SubPartDefinition<P, D>["display"];
+  export?: { name: string };
+  enabled?: (p: P) => unknown;
+  exportable?: boolean;
+  reference?: string;
+  /** Your own placement; runs AFTER the pose. */
+  place?: (solid: Solid, ctx: PlaceContext<P, D>) => Solid;
+}
+
+/** A sub-part cut from flat stock: an ordinary sub-part with `build`, `place` and `sheet` filled in. */
+export function sheetPart<P = ResolvedParams, D = Derived>(spec: SheetPartSpec<P, D>): SubPartDefinition<P, D>;
+
+/** A metric screw size `tSlots` knows. */
+export type ScrewSize = "M2.5" | "M3" | "M4";
+
+/** One edge's joint — plain, JSON-safe data (it lives in `derive()` output). A plain edge is `undefined`. */
+export type EdgeJoint =
+  | { joint: "fingers"; thickness: number; clearance: number; finger: number; side: "outer" | "inner" }
+  | { joint: "tabs"; thickness: number; count: number; width: number }
+  | { joint: "tslots"; thickness: number; screw: ScrewSize; screwLength: number; at: number[]; clearance: number };
+
+/** Finger joint. `clearance` is the TOTAL play per finger; outer fingers protrude, inner ones notch. */
+export function fingers(opts: { thickness: number; clearance?: number; finger?: number; side?: "outer" | "inner" }): Extract<EdgeJoint, { joint: "fingers" }>;
+
+/** Tongues protruding `thickness` from the edge, `count` of them, each `width` wide. */
+export function tabs(opts: { thickness: number; count?: number; width?: number }): Extract<EdgeJoint, { joint: "tabs" }>;
+
+/** A screw-and-nut joint: a shank slot crossed by a nut trap, at fractions `at` along the edge. */
+export function tSlots(opts: { thickness: number; screw?: ScrewSize; screwLength?: number; at?: number[]; clearance?: number }): Extract<EdgeJoint, { joint: "tslots" }>;
+
+/** A panel's four edges, in CCW order; an omitted edge is plain. */
+export interface SheetPanelEdges {
+  bottom?: EdgeJoint;
+  right?: EdgeJoint;
+  top?: EdgeJoint;
+  left?: EdgeJoint;
+}
+
+/** A panel outline: nominal box [0, W] × [0, H] with each edge's joint; `size` includes protrusions. */
+export function sheetPanel(opts: { width: number; height: number; edges?: SheetPanelEdges }): { outline: PointsContour; size: [number, number] };
+
+/** The holes the OTHER panel needs for a tabs or T-slot edge; `line` is the tabbed panel's mid-plane in this panel's frame. */
+export function matchingSlots(joint: EdgeJoint, opts: { line: [Point2, Point2]; clearance?: number }): Contour[];
+
+/** One `fingerBox` panel: its outline in its own frame (bbox [0, 0]–size) and where it goes. */
+export interface FingerBoxPanel {
+  outline: PointsContour;
+  size: [number, number];
+  pose: SheetPose;
+}
+
+/** An open-top finger-jointed box, W × D × H outside: five panels, every corner owned once. */
+export function fingerBox(opts: {
+  width: number;
+  depth: number;
+  height: number;
+  thickness: number;
+  clearance?: number;
+  finger?: number;
+}): Record<"bottom" | "front" | "back" | "left" | "right", FingerBoxPanel>;
+
+/** A slot and the printed tongue that keys into it, from one spec; all the play is on the slot. */
+export function printedTab(opts: { size: [number, number]; thickness: number; clearance?: number }): { slot: PointsContour; tongue: [number, number, number] };
+
+/** An arc-exact round hole (a CCW circle of two arcs) for a sheet part's profile. */
+export function sheetHole(opts: { d: number; at: Point2 }): ArcContour;
+
+/** Clearance holes (ISO 273 medium) and hex nuts (ISO 4032) for `tSlots`, mm. */
+export const JOINERY_SCREWS: Readonly<Record<ScrewSize, { readonly hole: number; readonly nut: { readonly flats: number; readonly height: number } }>>;
+
+/** A drawing point on a posed sheet (`depth` mm into the material) → world [x, y, z]. */
+export function sheetToWorld(pose: SheetPose, uv: Point2, depth?: number): [number, number, number];
+
+/** A world point → where it lands on a posed sheet's drawing, [u, v]. */
+export function worldToSheet(pose: SheetPose, xyz: Point3): [number, number];
