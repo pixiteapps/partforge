@@ -41,35 +41,36 @@ warm full lap is under 6000 ms.
 ### Node v24.19.0 (darwin arm64) — 2026-09-29, 5 warm runs
 | part | lap | cold ms | warm median ms | 2-D checks ms (no budget) | sheets evaluated |
 |---|---|---|---|---|---|
-| laser-box | quick | 336 | 109 | 61 | 6/6 |
-| laser-box | full | 182 | 141 | 61 | 6/6 |
-| twelve-panel | quick | 351 | 262 | 241 | 12/12 |
-| twelve-panel | full | 314 | 324 | 241 | 12/12 |
-| screw-plate | quick | 58 | 37 | 10 | 1/1 |
-| screw-plate | full | 36 | 37 | 10 | 1/1 |
-| perforated | quick | 1560 | 551 | 148914 | 0/1 |
-| perforated | full | 581 | 552 | 148914 | 0/1 |
-| holes-web | quick | 246 | 173 | 56 | 1/1 |
-| holes-web | full | 147 | 163 | 56 | 1/1 |
+| laser-box | quick | 326 | 110 | 62 | 6/6 |
+| laser-box | full | 170 | 146 | 62 | 6/6 |
+| twelve-panel | quick | 351 | 261 | 261 | 12/12 |
+| twelve-panel | full | 330 | 362 | 261 | 12/12 |
+| screw-plate | quick | 90 | 44 | 11 | 1/1 |
+| screw-plate | full | 37 | 37 | 11 | 1/1 |
+| perforated | quick | 1462 | 546 | 103640 | 0/1 |
+| perforated | full | 581 | 509 | 103640 | 0/1 |
+| holes-web | quick | 155 | 116 | 40 | 1/1 |
+| holes-web | full | 115 | 113 | 40 | 1/1 |
 
-Both this block and the Chromium one were taken while the machine was under heavy load
-from other work (1-minute load average 14–119 on 10 cores); the rows are upper bounds.
+Both this block and the Chromium one were taken while the machine carried other work
+(1-minute load average 7–20 on 10 cores); earlier runs under heavier load read up to
+twice these, with the same sheets evaluated.
 
 ## Chromium
 
 ### Chromium 149.0.7827.55 (headless, module worker) — 2026-09-29, 5 warm runs
 | part | lap | cold ms | warm median ms | 2-D checks ms (no budget) | sheets evaluated |
 |---|---|---|---|---|---|
-| laser-box | quick | 340 | 107 | n/a | 6/6 |
-| laser-box | full | 246 | 131 | n/a | 6/6 |
-| twelve-panel | quick | 311 | 275 | n/a | 12/12 |
-| twelve-panel | full | 372 | 345 | n/a | 12/12 |
-| screw-plate | quick | 72 | 40 | n/a | 1/1 |
-| screw-plate | full | 40 | 39 | n/a | 1/1 |
-| perforated | quick | 1515 | 501 | n/a | 0/1 |
-| perforated | full | 465 | 467 | n/a | 0/1 |
-| holes-web | quick | 157 | 118 | n/a | 1/1 |
-| holes-web | full | 110 | 111 | n/a | 1/1 |
+| laser-box | quick | 298 | 104 | n/a | 6/6 |
+| laser-box | full | 151 | 126 | n/a | 6/6 |
+| twelve-panel | quick | 300 | 239 | n/a | 12/12 |
+| twelve-panel | full | 305 | 286 | n/a | 12/12 |
+| screw-plate | quick | 55 | 34 | n/a | 1/1 |
+| screw-plate | full | 34 | 34 | n/a | 1/1 |
+| perforated | quick | 1314 | 431 | n/a | 0/1 |
+| perforated | full | 400 | 409 | n/a | 0/1 |
+| holes-web | quick | 149 | 114 | n/a | 1/1 |
+| holes-web | full | 111 | 108 | n/a | 1/1 |
 
 ## iPhone (Safari)
 
@@ -103,21 +104,22 @@ v24.19.0 (darwin arm64) on 3 mm stock (search ceiling 3 mm), each step timed alo
 | difference, per cubic of both shapes, + 0.0005 × (all cubics)² | 0.4 | the offset engine returns a booleaned hole's 4 cubics as 16–32, and paper's boolean on that near-copy is quadratic: 1,024 result cubics 0.7 s, 2,048 2.0 s, 4,096 7.4–8.5 s |
 
 What that buys, measured on the reviewers' stress cases: one sheet's facts under the
-1,500 ms deadline, real time, at 3efdb6d9 (the cost pre-gate) and after this change,
-side by side on the same loaded machine:
+1,500 ms deadline, real time, at 3efdb6d9 (the cost pre-gate) and after this change. The
+before column ran at a 1-minute load average near 90; the after column read within a few
+percent of these figures both there and near 30:
 
 | profile | before | after |
 |---|---|---|
-| 100 perforations, d 3 at a 5 mm pitch | 1,571 ms, not evaluated | 1,003 ms, not evaluated |
-| 196 perforations | 2,633 ms, not evaluated | 661 ms, not evaluated |
-| 289 perforations | 2,202 ms, not evaluated | 1,356 ms, not evaluated |
-| 324 perforations | 2,643 ms, not evaluated | 8 ms, not started |
+| 100 perforations, d 3 at a 5 mm pitch | 1,571 ms, not evaluated | 1,031 ms, not evaluated |
+| 196 perforations | 2,633 ms, not evaluated | 653 ms, not evaluated |
+| 289 perforations | 2,202 ms, not evaluated | 1,354 ms, not evaluated |
+| 324 perforations | 2,643 ms, not evaluated | 7 ms, not started |
 | 24 booleaned d 6 holes + one 1 mm web | 4,178 ms, not evaluated | 17 ms, web read (1.03) |
-| 30 booleaned d 6 holes + one 1 mm web (holes-web) | 6,399 ms, not evaluated (one 5.5 s boolean) | 13 ms, web read (1.03) |
-| 3 rounded-rect cutouts r 1.2 + one 1 mm web | 2,238 ms, web read | 324 ms, web read |
-| 4 corner M3 holes 5 mm in + one 1 mm web | 565 ms, web read | 550 ms, web read |
-| 12 d 6 holes 3.5 mm from an edge + one 1 mm web | 1,749 ms, not evaluated | 41 ms, not evaluated (the difference priced out) |
-| 30 such holes + one 1 mm web | 6,240 ms, not evaluated | 99 ms, not evaluated (the difference priced out) |
+| 30 booleaned d 6 holes + one 1 mm web (holes-web) | 6,399 ms, not evaluated (one 5.5 s boolean) | 12 ms, web read (1.03) |
+| 3 rounded-rect cutouts r 1.2 + one 1 mm web | 2,238 ms, web read | 326 ms, web read |
+| 4 corner M3 holes 5 mm in + one 1 mm web | 565 ms, web read | 549 ms, web read |
+| 12 d 6 holes 3.5 mm from an edge + one 1 mm web | 1,749 ms, not evaluated | 39 ms, not evaluated (the difference priced out) |
+| 30 such holes + one 1 mm web | 6,240 ms, not evaluated | 102 ms, not evaluated (the difference priced out) |
 
 The last two rows are the class the prices withhold rather than read: holes within an
 opening's reach of an edge or of each other stay in the opening, and a test that finds
