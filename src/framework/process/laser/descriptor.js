@@ -96,12 +96,23 @@ function arcCircle(from, via, to) {
   const a0 = ang(from), toVia = mod(ang(via) - a0), toEnd = mod(ang(to) - a0);
   return { c, r: dist(from, c), a0, sweep: toVia <= toEnd ? toEnd : toEnd - TAU };   // + counter-clockwise
 }
-function flattenCubic(p0, c1, c2, p3, out, depth = 0) {
-  if (depth >= 10 || Math.max(pointSegDist(c1, p0, p3), pointSegDist(c2, p0, p3)) <= FLAT_TOL) { out.push(p3); return; }
+// How far a cubic's control polygon turns — at least as far as the curve does: the angles
+// between its legs, a leg of no length skipped.
+function polyTurn(p0, c1, c2, p3) {
+  const legs = [sub2(c1, p0), sub2(c2, c1), sub2(p3, c2)].filter((v) => Math.hypot(v[0], v[1]) > 1e-12);
+  let turn = 0;
+  for (let k = 1; k < legs.length; k++) turn += Math.abs(Math.atan2(cross2(legs[k - 1], legs[k]), dot2(legs[k - 1], legs[k])));
+  return turn;
+}
+// A cubic as the ends of lines within FLAT_TOL of it — each piece's control points within
+// FLAT_TOL of its chord — and, with `maxTurn`, each piece turning at most that far.
+function flattenCubic(p0, c1, c2, p3, out, maxTurn = Infinity, depth = 0) {
+  if (depth >= 10 || (Math.max(pointSegDist(c1, p0, p3), pointSegDist(c2, p0, p3)) <= FLAT_TOL
+    && (maxTurn === Infinity || polyTurn(p0, c1, c2, p3) <= maxTurn))) { out.push(p3); return; }
   const m = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
   const a = m(p0, c1), b = m(c1, c2), c = m(c2, p3), ab = m(a, b), bc = m(b, c), mid = m(ab, bc);
-  flattenCubic(p0, a, ab, mid, out, depth + 1);
-  flattenCubic(mid, bc, c, p3, out, depth + 1);
+  flattenCubic(p0, a, ab, mid, out, maxTurn, depth + 1);
+  flattenCubic(mid, bc, c, p3, out, maxTurn, depth + 1);
 }
 function segInfo(from, seg) {
   const line = () => {
@@ -156,8 +167,9 @@ const polyArea = (pts) => pts.reduce((a, q, i) => a + cross2(q, pts[(i + 1) % pt
 //     it only within min(1e-3·r, 2e-3·chord) of every cubic at every probe and joint,
 //     refusing a fit through three near-collinear points (a wave is not an arc);
 //   • every cubic left that the search could carry into the slow band becomes a polyline
-//     within FLAT_TOL of it (searchable): lines offset exactly, a line meets another edge at
-//     a corner the sharp join mitres exactly, and a test on lines costs what its price says.
+//     within FLAT_TOL of it, no piece turning more than SEARCH_TURN (searchable): lines
+//     offset exactly, a line meets another edge at a corner the sharp join mitres exactly,
+//     and a test on lines costs what its price says.
 //     At the widest test (h = ceiling/2) a cubic the search's first offset moves toward its
 //     centre of curvature is slow below about 2.2·h — the spike at 0.9–1.35·h and
 //     superlinear around it — and one moved away first below about 0.35·h (grown to r + h,
@@ -171,8 +183,20 @@ const polyArea = (pts) => pts.reduce((a, q, i) => a + cross2(q, pts[(i + 1) % pt
 // line-heavy test costs superlinearly (the prices below), so panels of ordinary elliptical
 // holes that read in tens of milliseconds as cubics were priced out — 106 of the 151
 // calibration panels read under the budget, against 114 this way.
+// What the lines READ is the cubics' reading wherever a web has length. Where it is a point
+// — two tight tips facing, two elliptical holes tip to tip — the search reads the width at
+// which LOSS_TOL_MM2 of area leaves, and that area grows so slowly past the true web that a
+// small change in the outline moves the reading a long way, either way. Cut to FLAT_TOL
+// alone, 2 × 5 mm ovals 1.2 mm apart on 3 mm stock read 1.83 (a silent pass; the exact
+// curves read 1.22), and 2 × 8 mm ovals 2.85 mm apart on 6 mm read 3.00. So no piece turns
+// more than SEARCH_TURN either: on the reviewer's 40 tip-to-tip rows under the budget that
+// leaves no silent pass the exact curves do not share, and six panels of the helpers-and-
+// ellipses fuzz (test/sheet-dfm.test.js) read the notice instead of a reading. Area on a
+// point contact is still the exact curves' own limit: they too pass some sub-floor tip
+// webs (docs/research/sheet-inspect-timing.md, "Point contacts").
 // Only the shapes the width searches run on: the area, pieces and marks read the profile.
 const TOWARD = 2.5, AWAY = 0.75;                      // × h at the ceiling — see above
+const SEARCH_TURN = (4 * Math.PI) / 180;             // per flattened piece — see above
 // A cubic's tightest radius of curvature: the radius at CURVE_SAMPLES + 1 points, and the
 // radius each sample interval turns through (its chord over its turn), whichever is
 // smaller — a turn too sharp to show at any sample still shows across its interval. A
@@ -231,7 +255,7 @@ function searchable(contours, ceiling, shrinks) {
     for (const g of r.segments) {
       if (g.c1 && isSlow(from, g.c1, g.c2, g.to, ceiling, shrinks)) {
         const pts = [];
-        flattenCubic(from, g.c1, g.c2, g.to, pts);
+        flattenCubic(from, g.c1, g.c2, g.to, pts, SEARCH_TURN);
         for (const q of pts) segments.push({ to: q });
         flat = true;
       } else segments.push(g);

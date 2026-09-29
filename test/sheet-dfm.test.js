@@ -667,13 +667,15 @@ describe("LASER.facts", () => {
   const overPrice = ({ steps, pace }) => steps.filter((st) => st.ms > 1.5 * st.price * pace + 25);
   const ellCorners = (t, q, sx) => plate({ profile: (kk) => kk.shape2d(rect(0, 0, 100 / sx, 60)).fillet(q * (t / 2) * sx).scale([sx, 1])
     .cutAll([[8, 8], [92, 8], [92, 52], [8, 52]].map((at) => sheetHole({ d: 3.4, at }))) });
-  test("elliptical corners a test carries into the slow band are read, in under 100 ms of CPU", () => {
-    for (const [t, q, sx] of [[3, 0.95, 1.3], [3, 1.1, 1.3], [3, 1.3, 1.3], [6, 1, 1.3], [6, 0.1, 1.6], [6, 0.15, 1.6]]) {
+  // The two tightest (0.1 and 0.15 × w/2) are cut into many more lines, since no piece turns
+  // more than 4° (the tip-to-tip test below): about 130 ms, where they were 20–30.
+  test("elliptical corners a test carries into the slow band are read, in 100 ms of CPU (400 for the tightest)", () => {
+    for (const [t, q, sx, cap] of [[3, 0.95, 1.3, 100], [3, 1.1, 1.3, 100], [3, 1.3, 1.3, 100], [6, 1, 1.3, 100], [6, 0.1, 1.6, 400], [6, 0.15, 1.6, 400]]) {
       const at = `${t} mm, rMin ${q} × w/2, x ${sx}`;
       const { f, ms, ...run } = stepsOf(ellCorners(t, q, sx), { t });
       expect(f, at).toMatchObject({ evaluated: true, bridgeCapped: true, readErrors: { bridge: null, gap: null } });
       expect(f.gap, at).toBeCloseTo(t > 3.4 ? 3.4 : t, 6);           // the M3 hole, where the ceiling allows
-      expect(ms, at).toBeLessThan(100);
+      expect(ms, at).toBeLessThan(cap);
       expect(overPrice(run), at).toEqual([]);
     }
   });
@@ -692,6 +694,28 @@ describe("LASER.facts", () => {
       expect(ms, at).toBeLessThan(1500 * pace + 100);
       if (!f.evaluated) expect(f, at).toMatchObject({ bridge: null, gap: null });  // withheld: verify's notice
       else expect(f.readErrors, at).toEqual({ bridge: null, gap: null, marks: null, marksArea: null });
+    }
+  });
+  // Two elliptical holes tip to tip meet at a point, and a point contact is read by area —
+  // the width at which LOSS_TOL_MM2 of it leaves — which grows so slowly past the true web
+  // that a small change in the outline moves the reading a long way. With the ovals' tight
+  // tips cut into lines to FLAT_TOL alone, a 1.2 mm web between 2 × 5 mm ovals on 3 mm stock
+  // read 1.83 and a 2.85 mm web between 2 × 8 mm ovals on 6 mm read 3.00: webs under the
+  // floor that passed silently. No flattened piece turns more than 4° now, and neither
+  // does — in full, or under the budget, where a withheld reading is verify's notice.
+  test("two elliptical holes tip to tip, a web under the floor apart, never pass silently", () => {
+    const tipToTip = (w, ry) => plate({ profile: (kk) => kk.shape2d(rect(0, 0, 60, 60))
+      .cut(kk.shape2d(slotProfile(0, 1)).scale([1, ry]).translate([30, 30 - w / 2 - ry]))
+      .cut(kk.shape2d(slotProfile(0, 1)).scale([1, ry]).translate([30, 30 + w / 2 + ry])) });
+    for (const [t, w, ry] of [[3, 1.2, 2.5], [6, 2.85, 4]]) {
+      const floor = t / 2, at = `${t} mm, 2 × ${2 * ry} mm ovals, web ${w}`;
+      const s = resolveSheet(k, tipToTip(w, ry), { t }, {});
+      const full = LASER.facts(s);
+      expect(full, at).toMatchObject({ evaluated: true, bridgeCapped: false, readErrors: { bridge: null } });
+      expect(full.bridge, at).toBeLessThan(floor);                       // were 1.83 and 3.00
+      const budgeted = LASER.facts(s, { deadline: cpuMs() + 1500, now: cpuMs });
+      if (budgeted.evaluated) expect(budgeted.bridge, `${at}, under the budget`).toBeLessThan(floor);
+      else expect(budgeted, `${at}, under the budget`).toMatchObject({ bridge: null, gap: null });
     }
   });
   // …and across #233's exact-curve helpers and ellipses, booleaned as holes and as panels,
