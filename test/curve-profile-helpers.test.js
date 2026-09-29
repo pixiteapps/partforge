@@ -9,8 +9,9 @@ import {
   piePolygon, pieProfile,
   slotPolygon, slotProfile,
   roundedRectPolygon, roundedRectProfile,
+  circlePolygon, circleProfile, offsetPolygon,
 } from "../src/framework/geometry/polygon.js";
-import { isPathContour, tessellateContour } from "../src/framework/geometry/profile.js";
+import { isPathContour, tessellateContour, contourToPoints } from "../src/framework/geometry/profile.js";
 
 const signedArea = (p) => {
   let a = 0;
@@ -153,5 +154,34 @@ describe("input validation", () => {
     expect(() => roundedRectProfile(0, 10, 1)).toThrow(/w and h must be > 0/);
     expect(() => roundedRectProfile(10, 10, undefined)).toThrow(/r must be a finite number/);
     expect(() => roundedRectProfile(10, 10, NaN)).toThrow(/r must be a finite number/);
+  });
+});
+
+// ── circlePolygon and the circleProfile transition (partforge 0.131) ─────────
+describe("circlePolygon", () => {
+  test("is exactly what circleProfile has always returned", () => {
+    for (const args of [[5], [30, [10, -4]], [0.8, [2, 2]], [12, [0, 0], 12]])
+      expect(circlePolygon(...args)).toEqual(circleProfile(...args));
+    expect(circlePolygon(5)).toHaveLength(48);
+    expect(Array.isArray(circleProfile(5))).toBe(true);   // unchanged until 0.132
+  });
+
+  test("names itself in its error", () => {
+    expect(() => circlePolygon(0)).toThrow(/circlePolygon: r must be > 0/);
+    expect(() => circleProfile(0)).toThrow(/circleProfile: r must be > 0/);
+  });
+});
+
+describe("offsetPolygon takes a path contour, sampled at 48 per circle", () => {
+  test("a contour offsets exactly as its sampled point ring does", () => {
+    const c = slotProfile(20, 4);
+    expect(offsetPolygon(c, 0.2)).toEqual(offsetPolygon(contourToPoints(c), 0.2));
+  });
+
+  test("so does a region whose rings are contours", () => {
+    const region = { outer: roundedRectProfile(40, 30, 4), holes: [slotProfile(0, 5)] };
+    const out = offsetPolygon(region, 0.2);
+    expect(out.outer).toEqual(offsetPolygon(contourToPoints(region.outer), 0.2));
+    expect(out.holes[0]).toEqual(offsetPolygon(contourToPoints(region.holes[0]), -0.2));
   });
 });

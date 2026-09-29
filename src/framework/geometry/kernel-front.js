@@ -19,7 +19,7 @@ import { normalizeOpentype, parseFont } from "./opentype-interop.js";
 const opentype = normalizeOpentype(opentypeNamespace);
 import { KernelCapabilityError } from "./errors.js";
 import { isPlainOptions, KERNEL_OP_SPECS } from "./op-options.js";
-import { isPathContour } from "./profile.js";
+import { isPathContour, contourToPoints } from "./profile.js";
 import { textGlyphs } from "./text2d.js";
 import { placeRegions } from "./vector2d.js";
 import { beveledExtrude } from "./rim-bevel.js";
@@ -214,6 +214,17 @@ export function finishKernel(k) {
   k.revolve = (...a) => {
     if (!(a.length === 1 && isPlainOptions(a[0]))) return specRevolve(liftLathe(a[0]), ...a.slice(1));
     return specRevolve("profile" in a[0] ? { ...a[0], profile: liftLathe(a[0].profile) } : a[0]);
+  };
+
+  // sweep places its profile point by point along the path, so a path contour is sampled
+  // to a point ring first — at a fixed 48 per circle (contourToPoints), the density a
+  // circleProfile tube has always had, not the per-tier rule: a tube's triangle count is
+  // its ring count times its stations, and a long path has many.
+  const specSweep = k.sweep;
+  const sweepRing = (p) => (p && !p._shape2d && isPathContour(p) ? contourToPoints(p) : p);
+  k.sweep = (...a) => {
+    if (!(a.length === 1 && isPlainOptions(a[0]))) return specSweep(sweepRing(a[0]), ...a.slice(1));
+    return specSweep("profile" in a[0] ? { ...a[0], profile: sweepRing(a[0].profile) } : a[0]);
   };
 
   k.toSTEP ??= () => { throw new KernelCapabilityError("toSTEP requires the OCCT backend"); };

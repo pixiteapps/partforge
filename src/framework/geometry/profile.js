@@ -209,6 +209,19 @@ export function tessellateContour(contour, segs) {
   return out;
 }
 
+// A path contour as a plain point ring for the consumers that take point lists only
+// (sweep's stations, offsetPolygon): sampled at a fixed full-circle resolution, not the
+// kernel's per-tier rule, with the explicit closing point dropped. 48 per circle is the
+// density circleProfile/circlePolygon has always had, so a circle swept or offset as a
+// curve comes out like the 48-gon that used to be passed there (sampleArc's ceiling can
+// add one facet at some radii — the same circle, one vertex finer).
+export const CURVE_POINT_SEGS = 48;
+export function contourToPoints(contour, segs = CURVE_POINT_SEGS) {
+  const ring = tessellateContour(closeContourGap(contour), segs);
+  const first = ring[0], last = ring[ring.length - 1];
+  return Math.hypot(last[0] - first[0], last[1] - first[1]) < 1e-9 ? ring.slice(0, -1) : ring;
+}
+
 // Normalize + tessellate a whole region to { outer:[[x,y],…], holes:[[[x,y],…],…] } of
 // point rings, ready for CrossSection.ofPolygons on the Manifold path.
 export function tessellateProfile(profile, segs) {

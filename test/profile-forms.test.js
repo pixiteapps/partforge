@@ -1,9 +1,9 @@
 // Which profile FORMS each factory op actually accepts — the ops' half of the
-// typedefs in kernel.js, pinned so the two cannot drift again. `prism`, `extrude`
-// and `revolve` take a `{start, segments}` contour; `sweep` does not. `revolve` used to
-// refuse one ("lift it with k.shape2d first"); since the *Profile curve helpers it lifts
-// the contour itself (finishKernel), so a curve helper works everywhere a point list
-// does. `sweep` still takes points only — its stations are placed point by point.
+// typedefs in kernel.js, pinned so the two cannot drift again. `prism`, `extrude`,
+// `revolve` and `sweep` all take a `{start, segments}` contour. `revolve` used to refuse
+// one ("lift it with k.shape2d first") and `sweep` to die on it; since the *Profile curve
+// helpers the kernel front lifts it — to a Shape2D for revolve, and to a point ring
+// sampled at 48 per circle for sweep, which places its profile point by point.
 //
 // Manifold only (AGENTS.md: the two backends must not boot in one file). The
 // forms are normalized in the shared front (op-options.js), so OCCT agrees by
@@ -11,6 +11,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { pathProfile } from "../src/framework/geometry/polygon.js";
+import { contourToPoints } from "../src/framework/geometry/profile.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -40,9 +41,12 @@ describe("a {start, segments} contour", () => {
       .toThrow(/revolve: profile must be an \[\[r, z\], …\] point list, a \{start, segments\} contour, or a Shape2D/);
   });
 
-  it("is refused by sweep", () => {
-    expect(() => k.sweep({ profile: tab(), path: [[0, 0, 0], [0, 0, 20]] }))
-      .toThrow(/profile2D must be an array of ≥3 \[x, ?y\] points/);
+  it("builds through sweep, sampled to a point ring first", () => {
+    const path = [[0, 0, 0], [0, 0, 20]];
+    const curve = k.sweep({ profile: tab(), path });
+    const points = k.sweep({ profile: contourToPoints(tab()), path });
+    expect(curve.volume()).toBeCloseTo(points.volume(), 9);
+    expect(k.sweep(tab(), path).volume()).toBeCloseTo(points.volume(), 9);   // positional too
   });
 });
 

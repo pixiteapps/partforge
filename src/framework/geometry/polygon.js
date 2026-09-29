@@ -1,4 +1,5 @@
 // 2-D polygon helpers shared by parts that call kernel.prism().
+import { isPathContour, contourToPoints } from "./profile.js";
 
 // CCW polygon points for a circular-sector "pie" from the origin, radius tipR.
 export function piePolygon(tipR, arcDeg, segs = 32) {
@@ -396,11 +397,12 @@ export function circularPattern(solid, count, { center = [0, 0, 0], axis = "Z", 
   return out;
 }
 
-// CCW circle of radius r centered at [cx, cy]. A shared 2-D profile primitive:
-// compose with the kernel's profile ops — e.g. revolve(circleProfile(minorR,
-// [majorR, 0])) is a torus, prism(circleProfile(r), h) a cylinder.
-export function circleProfile(r, center = [0, 0], segs = 48) {
-  if (!(r > 0)) throw new Error("circleProfile: r must be > 0");
+// CCW circle of radius r centred at [cx, cy] as a FIXED point list of `segs` vertices
+// (default 48), starting at angle 0. The point-list circle: a deliberately faceted
+// circle, point math of your own (mapping, indexing), or anything that must stay
+// exactly as written. Exported unchanged at every quality tier.
+export function circlePolygon(r, center = [0, 0], segs = 48) {
+  if (!(r > 0)) throw new Error("circlePolygon: r must be > 0");
   const [cx, cy] = center;
   const pts = [];
   for (let i = 0; i < segs; i++) {
@@ -408,6 +410,17 @@ export function circleProfile(r, center = [0, 0], segs = 48) {
     pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
   }
   return pts;
+}
+
+// A circle for passing to a kernel op (prism, extrude outline or hole, shape2d, revolve,
+// hull, loft, sweep). TRANSITIONAL: today it returns exactly circlePolygon's 48 points;
+// partforge 0.132 turns it into an exact curve like the other *Profile helpers. Stored
+// parts that do point math on it are migrated to circlePolygon before that release
+// (see docs/superpowers/specs/2026-09-28-curve-profile-helpers-design.md), so new code
+// should never map, index or spread its result — use circlePolygon for that.
+export function circleProfile(r, center = [0, 0], segs = 48) {
+  if (!(r > 0)) throw new Error("circleProfile: r must be > 0");
+  return circlePolygon(r, center, segs);
 }
 
 // --- offsetPolygon ---------------------------------------------------------
@@ -494,13 +507,17 @@ function lineIntersect(p, dp, q, dq) {
 // derive() and build() alike. See AUTHORING-PARTS.md "Profiles & patterns".
 export function offsetPolygon(profile, delta, opts = {}) {
   const { corners = "round", segs = 8 } = opts;
+  // A path contour is sampled to points first (48 per circle), since this offset is a
+  // point-list operation; k.shape2d(profile).offset(delta) offsets arcs exactly instead.
+  if (isPathContour(profile)) return offsetPolygon(contourToPoints(profile), delta, opts);
   if (profile !== null && typeof profile === "object" && !Array.isArray(profile)) {
-    if (!Array.isArray(profile.outer)) throw new Error("offsetPolygon: profile must be a point list or {outer, holes}");
-    const region = { outer: offsetPolygon(profile.outer, delta, opts) };
-    if (profile.holes) region.holes = profile.holes.map((h) => offsetPolygon(h, -delta, opts));
+    const ring = (c) => (isPathContour(c) ? contourToPoints(c) : c);
+    if (!Array.isArray(ring(profile.outer))) throw new Error("offsetPolygon: profile must be a point list, a path contour, or {outer, holes}");
+    const region = { outer: offsetPolygon(ring(profile.outer), delta, opts) };
+    if (profile.holes) region.holes = profile.holes.map((h) => offsetPolygon(ring(h), -delta, opts));
     return region;
   }
-  if (!Array.isArray(profile)) throw new Error("offsetPolygon: profile must be a point list or {outer, holes}");
+  if (!Array.isArray(profile)) throw new Error("offsetPolygon: profile must be a point list, a path contour, or {outer, holes}");
   if (typeof delta !== "number" || !Number.isFinite(delta)) throw new Error("offsetPolygon: delta must be a finite number");
   if (corners !== "round" && corners !== "chamfer" && corners !== "sharp")
     throw new Error('offsetPolygon: corners must be "round" | "chamfer" | "sharp"');

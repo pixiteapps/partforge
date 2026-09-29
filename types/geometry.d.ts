@@ -64,8 +64,17 @@ export function starPolygon(points: number, outerR: number, innerR: number): Poi
 export function ringSectorPolygon(innerR: number, outerR: number, arcDeg: number, segs?: number): PointsContour;
 
 /**
- * A CCW circle of radius `r` centred at `center`, as a FACETED point list
- * (`segs` segments). For curve-exact corners use `roundedProfile`/`pathProfile`.
+ * A CCW circle of radius `r` centred at `center`, as a FIXED point list of `segs`
+ * vertices (default 48), starting at angle 0. The point-list circle: for a deliberately
+ * faceted circle or point math of your own (mapping, indexing).
+ */
+export function circlePolygon(r: number, center?: Point2, segs?: number): PointsContour;
+
+/**
+ * A circle for passing to a kernel op (prism, extrude outline or hole, shape2d, revolve,
+ * hull, loft, sweep). Transitional: today it returns exactly `circlePolygon`'s 48 points,
+ * and partforge 0.132 turns it into an exact curve like the other `*Profile` helpers —
+ * so never map, index or spread its result; use `circlePolygon` for point math.
  */
 export function circleProfile(r: number, center?: Point2, segs?: number): PointsContour;
 
@@ -138,12 +147,14 @@ export type OffsetCorners = "round" | "chamfer" | "sharp";
 
 /**
  * Offset a point-list polygon or an `{ outer, holes }` region by `delta` mm —
- * positive grows material, negative insets (regions offset material-wise).
+ * positive grows material, negative insets (regions offset material-wise). A path
+ * contour (or a region of them) is sampled to points first, 48 per circle, and the
+ * result is always point lists; `k.shape2d(profile).offset(delta)` keeps arcs exact.
  * Simple polygon in, simple polygon out: an offset that would collapse or split
  * the contour THROWS. Pure, so it works in `derive()` as well as `build()`.
  */
 export function offsetPolygon(
-  profile: PointsContour,
+  profile: PointsContour | ArcContour,
   delta: number,
   opts?: { corners?: OffsetCorners; segs?: number },
 ): PointsContour;

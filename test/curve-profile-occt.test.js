@@ -50,3 +50,8 @@ test("revolve takes a path contour directly on OCCT too", () => {
   const lifted = k.revolve({ profile: k.shape2d(lathe) });
   expect(direct.volume()).toBeCloseTo(lifted.volume(), 6);
 });
+
+test("sweep takes a path contour on OCCT too (sampled to a point ring)", () => {
+  const tube = k.sweep({ profile: slotProfile(0, 3), path: [[0, 0, 0], [0, 0, 20], [15, 0, 20]], cornerRadius: 5 });
+  expect(tube.volume()).toBeGreaterThan(0);
+});

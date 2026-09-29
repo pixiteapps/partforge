@@ -77,23 +77,45 @@ to the curve twins. `regularPolygon`, `hexPolygon`, `starPolygon` and
 `ellipsePolygon` stay documented: they are straight-edged by nature, and
 `ellipsePolygon`'s doc line says it is a fixed 48-point list.
 
-### 3. `circleProfile` stays a point list: the rule's one named exception
+### 3. `circleProfile` becomes an exact curve, in stages
 
-Its name already promises a curve, so the rule would be cleanest if it returned one.
-A scan settled against it. Of the 68 public forges on www.partforge.ai (all cloned
-anonymously, 2026-09-28), six call `circleProfile`, and one live forge maps its
-result directly (`circleProfile(r).map(([x, y]) => …)`) to reshape `loftSmooth`
-sections; a `{start, segments}` return would throw there. It is also partforge's
-standard profile for a `sweep` tube and a `hull` input, and `sweep` takes point lists
-only. Changing it would break a user's forge and pull `sweep`, `hull`, `loft` and
-`offsetPolygon` into the change.
+Its name already promises a curve, so the rule is only clean if it returns one. A scan
+of the 68 public forges on www.partforge.ai (all cloned anonymously, 2026-09-28) found
+six calling `circleProfile`, and one live forge mapping its result directly
+(`circleProfile(r).map(([x, y]) => …)`) to reshape `loftSmooth` sections. A
+`{start, segments}` return would throw there. It is also partforge's standard `sweep`
+profile, and `sweep` took points only. So the flip is staged, and the stored forges are
+migrated in between:
 
-So `circleProfile` keeps returning its 48-point list. The docs name it as the rule's
-one exception and say what it is for: a sweep profile or a small hole (within 0.05 mm
-of round up to a 23 mm radius). An exact circle in a 2-D profile is `slotProfile(0, r)`
-(its documented length-0 case), and a round solid is `k.cylinder`. The warning in 5 flags a large one. The
-"`circleProfile` is a cylinder" doc line is corrected, and `KERNEL-CONTRACT.md` states
-the exception beside the naming rule.
+1. **0.131 (this change).**
+   - `circlePolygon(r, center?, segs = 48)` returns exactly what `circleProfile` always
+     has; it is the point-list circle.
+   - `sweep` and `offsetPolygon` accept path contours, sampled to a point ring at 48 per
+     circle (`contourToPoints`), which is the density a `circleProfile` tube or offset
+     has always had. With that, a curve circle works everywhere a point-list circle
+     does, except in array math.
+   - `circleProfile` itself doesn't change. Its docs call it transitional: pass it to
+     ops, never map it, and use `circlePolygon` for point math.
+2. **partforge-cloud migration**, after 0.131 is deployed. A script renames
+   `circleProfile` to `circlePolygon` in the head revision of every forge that uses it,
+   as a new revision. It is a pure rename (`circlePolygon` is byte-identical), so no
+   migrated forge changes geometry. `--dry-run` first.
+3. **0.132.** `circleProfile` returns an exact circle contour, starting at angle 0 like
+   today's points, and the naming rule has no exceptions.
+
+What the migration doesn't reach are revisions other than heads:
+- the published revision of a public forge, which visitors' viewers build with
+  whatever partforge the app ships;
+- older revisions restored by undo.
+
+After the flip these build `circleProfile` as a curve. Thanks to stage 1 they keep
+working and get smoother circles, except where they do array math on `circleProfile`.
+Today that is the one public forge above; the migration script lists public forges
+whose published revision uses `circleProfile` so they can be republished before 0.132
+ships.
+
+`gasket.js` moves its deliberately 12-sided tabs to `circlePolygon` now, because that
+explicit faceting has to survive the flip.
 
 ### 4. `revolve` accepts a path contour or a region
 
@@ -161,7 +183,8 @@ In `AUTHORING-PARTS.md`:
   facets of a sampled arc are frozen.
 - The "`circleProfile` is a cylinder" line is corrected (see 3).
 - The reference parts `nameplate.js` and `bracket.js` move from `roundedRectPolygon`
-  to `roundedRectProfile`, because agents read the reference parts as examples.
+  to `roundedRectProfile`, and `gasket.js`'s 12-sided tabs to `circlePolygon`, because
+  agents read the reference parts as examples.
   None of the reference parts trips the new warning at its defaults.
 
 `ERROR-PATTERNS.md` gains `profile-sampled-arc`. `types/geometry.d.ts` declares the
@@ -185,15 +208,14 @@ new helpers.
 
 ## Release and downstream
 
-A minor release (0.131.0), since it adds API and a new build warning. After it
+A minor release (0.131.0), since it adds API and a new build warning. The
+`circleProfile` flip (section 3, stage 3) is a separate release, 0.132.0. After it
 publishes, a partforge-cloud PR bumps the pin, regenerates the doc corpus and
 prompts, and rewrites the compact prompt's curve paragraph (partforge-cloud #376's
 stopgap) to the naming rule.
 
 ## Residuals
 
-- `circleProfile`'s name keeps promising a curve it doesn't deliver (see 3). A
-  future breaking release could turn it into a curve once `sweep` accepts contours.
 - Existing parts are not changed. They keep their facets until they are edited
   onto the curve helpers; the warning surfaces the coarse ones on their next build.
 - On OCCT-routed parts, a true-arc cutter at exactly the radius of a revolved face

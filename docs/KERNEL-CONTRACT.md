@@ -719,11 +719,12 @@ case appears; add its deterministic fixture and establish the source-domain trut
 (`piePolygon`, `hexPolygon`, `regularPolygon`, `roundedRectPolygon`, `ellipsePolygon`,
 `slotPolygon`, `starPolygon`, `ringSectorPolygon`, `circleProfile`, `cornerArc`,
 `filletPolygon`, `roundedProfile`, `ringSectorProfile`, `pieProfile`, `slotProfile`,
-`roundedRectProfile`) are pure functions from numbers to plain CCW point lists or arc
-profiles — *data already in this contract's input format*, with no kernel dependency at
-all. The naming rule: `*Profile` builders return path contours with symbolic arcs,
-`*Polygon` builders return point lists (`circleProfile` is the one exception: a 48-point
-list, kept because `sweep` takes points only and existing parts reshape its points). The **solid patterns** (`linearPattern`, `circularPattern`) take a
+`roundedRectProfile`, `circlePolygon`) are pure functions from numbers to plain CCW point
+lists or arc profiles — *data already in this contract's input format*, with no kernel
+dependency at all. The naming rule: `*Profile` builders return path contours with symbolic
+arcs, `*Polygon` builders return point lists. `circleProfile` is in transition: it still
+returns `circlePolygon`'s 48 points, and becomes a path contour in 0.132, once stored parts
+that do point math on it have been migrated to `circlePolygon`. The **solid patterns** (`linearPattern`, `circularPattern`) take a
 `Solid` and call only ops from the tables above (`clone`/`translate`/`rotate`/
 `boundingBox`). The **profile transform** (`offsetPolygon`) takes a point list or
 `{outer, holes}` region and grows or shrinks it by a delta in mm — printer-clearance

@@ -527,7 +527,8 @@ Pass `closed: true` to close the loft into a loop instead of capping both
 ends (Manifold-only, same restriction as `k.loft`'s `closed`; a part that
 needs STEP export can't use it).
 
-**`sweep`** takes the same CCW `polygon.js` outline as its `profile` and a plain `[[x,y,z],…]` point list as its
+**`sweep`** takes a CCW outline as its `profile` — a point list, or a path contour it samples to one at 48 points
+per circle (a tube's cost is its ring size times its stations) — and a plain `[[x,y,z],…]` point list as its
 `path`; the profile stays perpendicular to the path (a rotation-minimizing frame), with sharp mitered corners by
 default or `cornerRadius` fillets. Worked snippets:
 
@@ -577,7 +578,7 @@ const shell = k.roundedBox({ size: [60, 40, 22], round: { side: 4, top: 2, botto
 ```
 
 2-D profile helpers for `prism`/`extrude`/`revolve`/`loft`: `import { pathProfile, roundedProfile,
-ringSectorProfile, slotProfile, pieProfile, roundedRectProfile, circleProfile, hexPolygon,
+ringSectorProfile, slotProfile, pieProfile, roundedRectProfile, circleProfile, circlePolygon, hexPolygon,
 regularPolygon, starPolygon, offsetPolygon } from "partforge/geometry"`. **The naming rule:
 `*Profile` helpers return exact curves** — a path contour whose arcs the kernel facets per
 quality tier, finer at export, and OCCT keeps as true circles — **and `*Polygon` helpers return
@@ -587,7 +588,8 @@ radius clamped so neighbouring arcs never overlap) and carries each arc **symbol
 export gets real circular edges. Use it for `prism`/`extrude`/`loft` alike (loft lifts arc rings into its curve mode). A scalar `r` rounds every corner; a per-corner
 `r[]` (length = points) rounds selectively (a `0`, a zero-length edge, or a straight/180°
 corner stays sharp). `offsetPolygon(profile, delta, { corners?, segs? })` offsets a
-point-list polygon or `{ outer, holes }` region by `delta` mm — positive grows material,
+point-list polygon or `{ outer, holes }` region by `delta` mm (a path contour is sampled to
+points first, 48 per circle; `k.shape2d(profile).offset(delta)` keeps arcs exact) — positive grows material,
 negative insets; regions offset material-wise (outer `+delta`, holes `−delta`, so a
 clearance loosens the whole cut). `corners` picks the convex-corner style: `"round"`
 (default; the true Minkowski clearance), `"chamfer"`, or `"sharp"` (miter, falling back to
@@ -1502,14 +1504,18 @@ length = `length + 2r`; `length` 0 is a circle), `roundedRectProfile(w,h,r)` (r 
 min(w,h)/2), `roundedProfile(points,r)` (round any polygon's corners), and `pathProfile()`.
 
 *Straight edges* — CCW point arrays, built and exported exactly as written:
-`regularPolygon(n,r,{flat})`, `hexPolygon(r)`, `starPolygon(points,outerR,innerR)`, and
-`ellipsePolygon(rx,ry)` (a fixed 48-point ellipse — there is no exact-curve form).
-`circleProfile(r, center?)` — a circle of radius `r` centred at `[cx,cy]` (default origin), and
-**the one exception to the naming rule**: a fixed 48-point list, kept that way because `sweep`
-takes points only and parts reshape its points. Use it for a tube's `sweep` profile or a small
-hole (a 48-gon is within 0.05 mm of round up to a 23 mm radius). For an exact circle in a 2-D
-profile use `slotProfile(0, r)`; for a round SOLID use `k.cylinder` (a `circleProfile` prism is
-a 48-sided prism, never refined at export); and **use `k.torus({ rMajor, rMinor })` for a
+`regularPolygon(n,r,{flat})`, `hexPolygon(r)`, `starPolygon(points,outerR,innerR)`,
+`ellipsePolygon(rx,ry)` (a fixed 48-point ellipse — there is no exact-curve form), and
+`circlePolygon(r, center?, segs = 48)` — a circle as a fixed point list, for a deliberately
+faceted circle or point math of your own (mapping, indexing, spreading its points).
+
+*Circles.* `circleProfile(r, center?)` is the circle to hand to an op — `prism`, an `extrude`
+outline or hole, `k.shape2d`, `revolve`, `hull`, `loft`, `sweep`. **It is in transition**:
+today it returns the same 48 points as `circlePolygon`, and a coming release turns it into an
+exact curve like the other `*Profile` helpers. So pass it straight to an op and **never map,
+index or spread its result — use `circlePolygon` for that**. Until then, an exact circle in a
+2-D profile is `slotProfile(0, r)`. For a round SOLID use `k.cylinder` (a prism of 48 points is
+a 48-sided prism, never refined at export), and **use `k.torus({ rMajor, rMinor })` for a
 torus** — the primitive keeps real TORUS faces in STEP.
 
 **Patterns** (return `Solid[]` — feed to `k.union(...)` for features or `s.cutAll(...)` for holes):
@@ -1745,7 +1751,7 @@ Three rules worth internalizing before reaching for any of this:
 
 A practical trap with the broad selectors: `"all"`/`"convex"`/`"concave"` match **every**
 matching corner, including ones you didn't mean to touch. Union a curve-native outline
-with a *tessellated* point-list shape (e.g. `circleProfile`, still a faceted polygon —
+with a *tessellated* point-list shape (e.g. `circlePolygon`, a faceted polygon —
 see "Profiles & patterns") and every one of that polygon's facet vertices becomes its
 own small convex corner in the result; a `corners: "convex"` fillet then tries to round
 all of them, including the tiny ones whose neighboring facet is too short to hold any
