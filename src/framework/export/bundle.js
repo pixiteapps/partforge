@@ -239,25 +239,31 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
     }));
 
   // Names, in definition order. A name that was taken moves to name-2; the README's
-  // RENAMED FILES says which file it was and who held the name (spec D.10).
+  // RENAMED FILES says which file it was and who held the name (spec D.10). A piece
+  // claims its bare name as well as its files (the `parts/<name>/` key, which no file
+  // path can equal): `-x<n>` is a QUANTITY, so a second, different piece with the
+  // same name must be name-2 — never name.svg beside name-x2.svg, which reads as one
+  // piece at two quantities.
   const taken = new Set();
   const owners = new Map();
   const renamed = [];
   const claim = (base, filesOf, labels) => {
     const name = uniqueName(base, taken, filesOf);
+    const file = filesOf(name)[0];
     if (name !== base) {
-      const holder = filesOf(base).find((f) => owners.has(f));
-      renamed.push(`${filesOf(name)[0]}: ${labels.join(", ")}${holder ? ` (renamed: ${holder} is ${owners.get(holder).join(", ")})` : ""}`);
+      const holder = filesOf(base).map((f) => owners.get(f)).find(Boolean);
+      renamed.push(`${file}: ${labels.join(", ")}${holder ? ` (renamed: ${holder.file} is ${holder.labels.join(", ")})` : ""}`);
     }
-    for (const f of filesOf(name)) owners.set(f, labels);
+    for (const f of filesOf(name)) owners.set(f, { file, labels });
     return name;
   };
   for (const pc of pieces) {
     const sx = pc.qty > 1 ? `-x${pc.qty}` : "";
-    const filesOf = (n) => [`parts/${n}${sx}.${cutExt}`, ...(service && pc.hasMarks ? [`parts/${n}${sx}-marks.dxf`] : [])];
-    const files = filesOf(claim(kitName(pc.fileKey), filesOf, pc.labels));
-    pc.file = files[0];
-    pc.marksFile = files[1] ?? null;
+    const marks = service && pc.hasMarks;
+    const name = claim(kitName(pc.fileKey),
+      (n) => [`parts/${n}${sx}.${cutExt}`, ...(marks ? [`parts/${n}${sx}-marks.dxf`] : []), `parts/${n}/`], pc.labels);
+    pc.file = `parts/${name}${sx}.${cutExt}`;
+    pc.marksFile = marks ? `parts/${name}${sx}-marks.dxf` : null;
   }
 
   // Lay out each stock group. An own laser needs every piece to fit (layoutGroup
@@ -319,7 +325,7 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
     .map(({ item, members }) => ({ ...item, labels: members.map((m) => m.label), qty: members.length * o.sets }));
   for (const pp of prints) {
     const sx = pp.qty > 1 ? `-x${pp.qty}` : "";
-    const filesOf = (n) => [`print/${n}${sx}.${o.printFormat}`];
+    const filesOf = (n) => [`print/${n}${sx}.${o.printFormat}`, `print/${n}/`];
     pp.file = filesOf(claim(kitName(pp.fileKey), filesOf, pp.labels))[0];
     if (!pp.bytes) pp.bytes = new Uint8Array(meshTo3MF([{ name: pp.fileKey, ...pp.mesh, color: pp.color }]));
   }

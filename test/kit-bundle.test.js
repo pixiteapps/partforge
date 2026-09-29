@@ -215,6 +215,31 @@ describe("author names that start with a separator", () => {
   });
 });
 
+describe("two different pieces with one name", () => {
+  test("a quantity suffix never stands in for a rename: the second is name-2, and the README says why", async () => {
+    // a1 and a2 are identical and merge into Panel ×2; b shares their export name but
+    // not their shape — it must not become parts/panel.svg beside parts/panel-x2.svg,
+    // which reads as one piece at two quantities. The same goes for prints.
+    const panel = (w) => sheetPart({ ...ply, export: { name: "Panel" }, profile: (kk) => kk.shape2d(rect(w, 30)) });
+    const clip = (h) => ({ views: ["all"], export: { name: "Clip" }, build: (kk) => kk.box({ size: [10, 10, h] }) });
+    const r = await kit({
+      meta: { title: "Panels" }, defaults: { t: 3 }, views: { all: { label: "All" } },
+      parts: {
+        a1: { ...panel(40), label: "A1" }, a2: { ...panel(40), label: "A2" }, b: { ...panel(50), label: "B" },
+        c1: { ...clip(5), label: "C1" }, c2: { ...clip(5), label: "C2" }, d: { ...clip(8), label: "D" },
+      },
+    });
+    expect(r.error).toBeNull();
+    expect(r.names.filter((n) => /^(parts|print)\//.test(n))).toEqual([
+      "parts/panel-2.svg", "parts/panel-x2.svg", "print/clip-2.stl", "print/clip-x2.stl",
+    ]);
+    const readme = r.text("README.txt");
+    expect(readme).toContain("RENAMED FILES\n"
+      + "parts/panel-2.svg: B (renamed: parts/panel-x2.svg is A1, A2)\n"
+      + "print/clip-2.stl: D (renamed: print/clip-x2.stl is C1, C2)\n");
+  });
+});
+
 describe("download options", () => {
   test("own laser refuses a piece its stock cannot hold, naming it", async () => {
     const r = await kit(fixture, { options: { stock: [{ group: "*", size: [100, 100] }] } });
