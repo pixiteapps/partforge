@@ -248,6 +248,26 @@ describe("LASER.facts", () => {
     expect(f.readErrors.gap).toMatch(/null/);
   });
 
+  // The one-sided difference is a boolean between the profile and a near-copy of it, and
+  // paper's boolean on two curves that run a hair apart, split at other points, either
+  // refuses or comes back empty. A keyhole — a round hole with a slot run out of it — is
+  // the plainest case: its slot read no gap at all (a refusal), or read wider than it is
+  // (the closing that filled it came back as an empty difference). The difference is taken
+  // a margin clear of the searched shape, so it only meets curves where they really cross.
+  test("a keyhole's slot reads its own width", () => {
+    const keyhole = (d, sw) => (kk) => kk.shape2d(rect(0, 0, 100, 80)).cut(kk.shape2d(sheetHole({ d, at: [50, 40] })))
+      .cut(kk.shape2d(rect(50 - sw / 2, 40, 50 + sw / 2, 55)));
+    for (const [d, sw, t] of [[6, 1, 4], [6, 1.5, 4], [6, 4, 5], [6, 1.5, 3], [10, 2, 3], [10, 1, 5]]) {
+      const f = LASER.facts(resolveSheet(k, plate({ profile: keyhole(d, sw) }), { t }, {}));
+      const at = `d ${d}, slot ${sw}, ${t} mm`;
+      expect(f.readErrors.gap, at).toBeNull();
+      expect(f.gapCapped, at).toBe(false);
+      expect(f.gap, at).toBeGreaterThan(sw - 0.01);
+      expect(f.gap, at).toBeLessThanOrEqual(sw + 0.06);
+      expect(f.at2d.gap[0], at).toBeCloseTo(50, 0);
+    }
+  });
+
   // A hole below the floor is the laser gap check's first job. Under the sharp closing a
   // small hole used to come back as a phantom (contour-offset.js), so the closing grew it
   // instead of filling it and every such hole read "nothing narrower than 3 mm".

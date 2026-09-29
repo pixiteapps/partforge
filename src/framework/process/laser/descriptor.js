@@ -367,22 +367,45 @@ export function _meter(deadline, now) {
 // paper's worst case — so it is priced from the test's own result before it starts,
 // like every step. And it has no fallback: when paper refuses it, the refusal ends the
 // reading (narrowest), which verify reports as a check it could not take.
+//
+// It is measured MARGIN clear of the searched shape: what left the profile is what the
+// test lost of the profile shrunk by MARGIN, and what entered it is what the test gained
+// beyond the profile grown by MARGIN. Against the shape itself, every boundary the test
+// did not change runs within a hair of its twin, split at other points, and paper's
+// boolean on such a pair fails two ways: it refuses ("curve-fill: resolved hole has no
+// containing outer" — a clean keyhole read no gap at all), or it returns nothing — a
+// keyhole's 4 mm slot, filled by a closing at 4.3 and 4.5 mm, came back as an empty
+// difference and the gap read 4.55. MARGIN apart, the boolean meets curves only where
+// they really cross. It hides nothing a laser can make: only a web or slot under
+// 2·MARGIN (0.02 mm, a tenth of a kerf) fits inside the margin, and the offset engine's
+// approximation slivers along curves (OFFSET_TOL, 1e-3 mm) go with it. The margin shape
+// is one offset of the searched shape, made once per search when its first difference
+// runs and priced into that difference.
+const MARGIN = 0.01;
 function oneSided(difference, spend, price) {
   spend(price);
   const d = difference();
   return !d.isEmpty() && d.regions().some((r) => r.area() > LOSS_TOL_MM2) ? d : null;
 }
+// The searched shape moved `side` × MARGIN (−1 shrunk, +1 grown), kept on the search, and
+// what making it costs while it is not made yet: one offset, half a test at no width.
+function margined(search, side) {
+  return (search.margin ??= {})[side] ??= search.shape.offset(side * MARGIN, SHARP);
+}
+const marginPrice = (search, side) => (search.margin?.[side] ? 0 : testPrice(search, side, 0) / 2);
 
 function openingLoss(search, w, spend) {
   let opened;
   try { opened = search.shape.offset(-w / 2, SHARP).offset(w / 2, SHARP); }
   catch (e) { if (COLLAPSES.test(e?.message ?? "")) return search.shape; throw e; }
-  return oneSided(() => search.shape.cut(opened), spend, diffPrice(search.counts, countsOf(opened.toContours())));
+  return oneSided(() => margined(search, -1).cut(opened), spend,
+    marginPrice(search, -1) + diffPrice(search.counts, countsOf(opened.toContours())));
 }
 
 function closingGain(search, w, spend) {
   const closed = search.shape.offset(w / 2, SHARP).offset(-w / 2, SHARP);
-  return oneSided(() => closed.cut(search.shape), spend, diffPrice(search.counts, countsOf(closed.toContours())));
+  return oneSided(() => closed.cut(margined(search, 1)), spend,
+    marginPrice(search, 1) + diffPrice(search.counts, countsOf(closed.toContours())));
 }
 
 // The geometry engine refuses with a plain Error ("contour-winding: could not chain…",
