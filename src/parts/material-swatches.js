@@ -6,10 +6,10 @@ import { PRESETS } from "../framework/materials/presets.js";
 const ids = Object.keys(PRESETS);
 const COLS = 6, PITCH = 40;
 
-// Common filament colours for the "PLA colours" view: how the pla-print finish
-// reads across light, dark and saturated tints, since a preset tuned on one
-// colour can wash out another. The last is the no-material blue-grey.
-const PLA_COLOURS = [
+// Common filament colours for the "PLA colours" and "PETG colours" views: how
+// each print finish reads across light, dark and saturated tints, since a preset
+// tuned on one colour can wash out another. The last is the no-material blue-grey.
+const FILAMENT_COLOURS = [
   ["White", 0xf2f0eb], ["Cream (preset)", PRESETS["pla-print"].color], ["Light grey", 0xa3a6a8],
   ["Charcoal", 0x4a4c50], ["Black", 0x1e1f21], ["No-material blue-grey", 0x9fb4cc],
   ["Red", 0xc8102e], ["Orange", 0xe0592a], ["Yellow", 0xf2c500],
@@ -22,7 +22,7 @@ const withHole = (k) =>
 export default {
   meta: { title: "Material swatches", units: "mm", environment: "studio" },
   defaults: {},
-  views: { all: { label: "All presets", default: true }, colours: { label: "PLA colours" }, print: { label: "Layer lines" } },
+  views: { all: { label: "All presets", default: true }, colours: { label: "PLA colours" }, petg: { label: "PETG colours" }, print: { label: "Layer lines" } },
   parts: {
     ...Object.fromEntries(ids.map((id, i) => [id.replaceAll("-", "_"), {
       label: PRESETS[id].label,
@@ -37,11 +37,17 @@ export default {
       views: ["all"],
       build: (k) => withHole(k).translate([(ids.length % COLS) * PITCH, -Math.floor(ids.length / COLS) * PITCH, 0]),
     },
-    ...Object.fromEntries(PLA_COLOURS.map(([label, color], i) => [`pla_${i}`, {
+    ...Object.fromEntries(FILAMENT_COLOURS.map(([label, color], i) => [`pla_${i}`, {
       label: `PLA — ${label}`,
       views: ["colours"],
       build: (k) => withHole(k).translate([(i % COLS) * PITCH, -Math.floor(i / COLS) * PITCH, 0]),
       display: { material: "pla-print", color },
+    }])),
+    ...Object.fromEntries(FILAMENT_COLOURS.map(([label, color], i) => [`petg_${i}`, {
+      label: `PETG — ${label}`,
+      views: ["petg"],
+      build: (k) => withHole(k).translate([(i % COLS) * PITCH, -Math.floor(i / COLS) * PITCH, 0]),
+      display: { material: "petg-print", color },
     }])),
     upright_pla: {
       label: "PLA, displayed upright, printed flat",
