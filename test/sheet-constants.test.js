@@ -8,8 +8,9 @@ import {
   SHEET_DOC_ID, AXIS_WORDS, SHEET_KEYS, SUBPART_PASSTHROUGH_KEYS, RENAMED_KEYS, RESERVED_KEYS,
   MARK_DEPTH, MARK_OVERCUT, SCORE_WIDTH, WIDTH_FLOOR_FRACTION, WIDTH_FLOOR_MIN, WIDTH_RESOLUTION,
   LOSS_TOL_MM2, SOLID_MATCH_PCT, SHEET_CHECK_BUDGET_MS, LASER_THICKNESS_RANGE, EMPTY_MARK_RE,
-  isSheetPart, normalizeMaterial, sheetGroup, fmtMm, widthFloor, sheetMeta,
+  isSheetPart, normalizeMaterial, sheetGroup, fmtMm, widthFloor, sheetMeta, SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT,
 } from "../src/framework/sheet/constants.js";
+import * as verifyModule from "../src/framework/oracle/verify.js";
 import { PROCESSES, PROCESS_IDS, processById, processFor } from "../src/framework/process/registry.js";
 import { LASER } from "../src/framework/process/laser/descriptor.js";
 
@@ -113,4 +114,14 @@ describe("EMPTY_MARK_RE matches the kernel's own empty-mark errors (Manifold)", 
   test("an unrelated error does not match", () => {
     expect("box: unknown option \"sizes\"").not.toMatch(EMPTY_MARK_RE);
   });
+});
+
+// The sheet checks' two standing texts live here, import-free, so the kit (which may not
+// import oracle/*) repeats them from one place; verify.js re-exports the same values.
+test("the sheet check texts have one home, and verify re-exports the same values", () => {
+  expect(SHEET_CHECKS_NOTICE).toMatchObject({ metric: "sheetChecks", kind: "warn", pattern: SHEET_DOC_ID });
+  expect(Object.isFrozen(SHEET_CHECKS_NOTICE)).toBe(true);
+  expect(SHEET_READ_ERROR_HINT).toMatch(/^The 2-D laser check could not finish on this profile/);
+  expect(verifyModule.SHEET_CHECKS_NOTICE).toBe(SHEET_CHECKS_NOTICE);
+  expect(verifyModule.SHEET_READ_ERROR_HINT).toBe(SHEET_READ_ERROR_HINT);
 });

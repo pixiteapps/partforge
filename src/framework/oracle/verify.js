@@ -7,7 +7,9 @@ import { subPartReadKeys, relevanceHash, RELEVANT_ALL } from "../param-deps.js";
 import { byteAwareReplacer } from "../geometry/solid-hash.js";
 import { SUBPART_METRICS, VIEW_METRICS } from "../verify-metrics.js";
 import { processById } from "../process/registry.js";
-import { SHEET_DOC_ID } from "../sheet/constants.js";
+import { SHEET_DOC_ID, SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../sheet/constants.js";
+// Re-exported for the callers that read them from here; their one home is sheet/constants.js.
+export { SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../sheet/constants.js";
 
 // Re-exported for backwards compatibility: the registries moved to framework/ so
 // the linter can read the metric vocabulary without importing a geometry kernel.
@@ -184,15 +186,9 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
 // verify block would jump from "no expectations declared" to a pass.
 const PRINT_POSE_NOTE = "measured in the print (export) pose";
 
-// Standing in for a sheet's budget-gated volunteered checks when its 2-D budget ran
-// out (measure()'s `sheet.evaluated` false): one warning, never `unevaluated` — a
-// check nobody declared must not withhold a verdict. Exported for its hint's length test.
-export const SHEET_CHECKS_NOTICE = Object.freeze({
-  metric: "sheetChecks", kind: "warn", expr: "evaluated", actual: null, status: "warn", pass: null, volunteered: true,
-  message: "2-D sheet checks not evaluated (time budget)",
-  hint: "The laser checks (narrow webs and gaps, stray marks) did not fit their time budget, or the profile was too complex to start them. They are warnings only and never decide verify.ok. What they spend time on is edges, curved ones most: round holes crowded close to each other or to an edge, and corners rounded tighter than about the sheet thickness, cost the most.",
-  pattern: SHEET_DOC_ID,
-});
+// SHEET_CHECKS_NOTICE (sheet/constants.js) stands in for a sheet's budget-gated
+// volunteered checks when its 2-D budget ran out (measure()'s `sheet.evaluated` false):
+// one warning, never `unevaluated` — a check nobody declared must not withhold a verdict.
 
 // A DECLARED sheet check the budget withheld: `unevaluated`, as a quick lap's is, so it
 // withholds verify.ok — and it says how to get a verdict. Either the budget ran out
@@ -212,9 +208,9 @@ const PRINT_ONLY_HINT = "minWall, wall and overhangArea are print checks, and a 
 // skip it counted neither way, and one other declared check that passed made verify.ok true
 // over a check that was never taken — the rule at the top of this file, a declared gate
 // fails loudly and never skips.
-// On a valid profile a read error is the checker's own limit, so the hint never blames the
-// contour first. Exported: the kit's README repeats it, and it stays one text.
-export const SHEET_READ_ERROR_HINT = "The 2-D laser check could not finish on this profile (the engine stopped at the width in the message), so this reading was not taken; the part still builds. On a valid profile this is a limit of the checker, often near rounded corners or booleaned round holes — do not reshape the part for it; check widths near the one named by eye. Only if the profile really has overlapping or self-touching contours or a sliver, fix those and re-run.";
+// On a valid profile a read error is the checker's own limit, so the hint
+// (SHEET_READ_ERROR_HINT, sheet/constants.js — the kit's README repeats it, and it stays
+// one text) never blames the contour first.
 
 // One sheet row: the declared expectations, then the process's checks the part did
 // not declare, volunteered.

@@ -51,6 +51,22 @@ export const SOLID_MATCH_PCT = 2;
 export const SHEET_CHECK_BUDGET_MS = 1500;
 export const LASER_THICKNESS_RANGE = Object.freeze([0.5, 12]);
 
+// The two standing texts verify gives the laser checks (oracle/verify.js). They live here,
+// import-free, so every surface that repeats them — the kit's README, which may not import
+// oracle/* — reads one text; verify.js imports and re-exports them.
+// Standing in for a sheet's budget-gated volunteered checks when its 2-D budget ran out
+// (measure()'s `sheet.evaluated` false): one warning, never `unevaluated`.
+export const SHEET_CHECKS_NOTICE = Object.freeze({
+  metric: "sheetChecks", kind: "warn", expr: "evaluated", actual: null, status: "warn", pass: null, volunteered: true,
+  message: "2-D sheet checks not evaluated (time budget)",
+  hint: "The laser checks (narrow webs and gaps, stray marks) did not fit their time budget, or the profile was too complex to start them. They are warnings only and never decide verify.ok. What they spend time on is edges, curved ones most: round holes crowded close to each other or to an edge, and corners rounded tighter than about the sheet thickness, cost the most.",
+  pattern: SHEET_DOC_ID,
+});
+// Why a sheet reading the geometry engine could not take (SheetFacts.readErrors) has no
+// verdict. On a valid profile a read error is the checker's own limit, so it never blames the
+// contour first.
+export const SHEET_READ_ERROR_HINT = "The 2-D laser check could not finish on this profile (the engine stopped at the width in the message), so this reading was not taken; the part still builds. On a valid profile this is a limit of the checker, often near rounded corners or booleaned round holes — do not reshape the part for it; check widths near the one named by eye. Only if the profile really has overlapping or self-touching contours or a sliver, fix those and re-run.";
+
 // The two errors a mark that turned out empty can raise: extruding an empty Shape2D
 // (geometry/op-options.js, geometry/occt-backend.js) and an offset that collapses a
 // shape (geometry/contour-offset.js). The preview build drops such a mark instead of
