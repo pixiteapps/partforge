@@ -39,13 +39,18 @@ export function createExportController({ send, currentView, title, defaultBacken
   // other's Promise.
   let nextWarmId = 1;
 
-  function exportParts({ parts, format, quality = "print", onProgress } = {}) {
+  // `options` are the cut & print kit's download options (format "bundle"). They ride
+  // the message for any format when given — the worker's other export branches never
+  // read them — and are left off entirely when not, so every other export's message is
+  // exactly what it always was.
+  function exportParts({ parts, format, quality = "print", onProgress, options } = {}) {
     const jobId = `export-${controller}-${nextId++}`;
     const type = `export-${format}`;
     const backend = backendForFormat(format, defaultBackend);
     return new Promise((resolve, reject) => {
       pending.set(jobId, { resolve, reject, onProgress });
-      send({ type, jobId, parts, view: currentView(), params: currentParams(), name: title(), quality }, backend);
+      send({ type, jobId, parts, view: currentView(), params: currentParams(), name: title(), quality,
+        ...(options !== undefined ? { options } : {}) }, backend);
     });
   }
 
