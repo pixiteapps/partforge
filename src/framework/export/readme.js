@@ -49,6 +49,10 @@ const labelsOf = (labels) => labels.map(cleanLabel).join(", ");
 export function renderReadme(m) {
   const k = m.kerf;
   const kerfed = k > 0;
+  // A cutting service gets each piece's score and engrave lines in a separate
+  // -marks.dxf, which neither table lists — so the files are named here, or a service
+  // order built from the cut files alone silently leaves the marks off.
+  const marksFiles = m.pieces.map((pc) => pc.marksFile).filter(Boolean);
   const body = {
     "BEFORE YOU CUT": [
       ...m.stockNotes.map((g) =>
@@ -61,7 +65,9 @@ export function renderReadme(m) {
       ...m.scale.map((s) => `${cleanLabel(s.label)}: nominal ${s.nominal[0].toFixed(2)} × ${s.nominal[1].toFixed(2)} mm; this file draws ${
         kerfed ? `${s.drawn[0].toFixed(2)} × ${s.drawn[1].toFixed(2)} with ${k.toFixed(2)} mm kerf` : "the same (no kerf applied)"}`),
       m.cutFormat === "dxf" ? DXF_LEGEND : SVG_LEGEND,
-      ...(m.destination === "service" ? ["The sheets in sheets/ are for reference only — a cutting service lays out the pieces itself."] : []),
+      ...(marksFiles.length ? [`Score and engrave marks are in their own files, not in the cut files — send them with the cut files if you want the marks made: ${marksFiles.join(", ")}.`] : []),
+      // A service kit whose every piece is oversized writes no sheets/ at all.
+      ...(m.destination === "service" && m.sheets.length ? ["The sheets in sheets/ are for reference only — a cutting service lays out the pieces itself."] : []),
       "Test-cut one joint first.",
     ],
     SHEETS: table(["file", "material", "thickness", "size", "pieces", "used"], m.sheets.map((s) => [

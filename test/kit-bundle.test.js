@@ -185,6 +185,14 @@ describe("a cutting service", () => {
     const readme = r.text("README.txt");
     expect(readme).toContain("DXF layers: CUT (colour 1), SCORE (colour 5), ENGRAVE (colour 7) — set ENGRAVE to fill; R12 has no hatch.");
     expect(readme).toContain("The sheets in sheets/ are for reference only — a cutting service lays out the pieces itself.");
+    expect(readme).toContain("Score and engrave marks are in their own files, not in the cut files — send them with the cut files if you want the marks made: parts/front-marks.dxf.");
+  });
+
+  test("a kit whose every piece is oversized writes no sheets, and its README does not point at sheets/", async () => {
+    const r = await kit(fixture, { parts: ["front"], options: { destination: "service", stock: [{ group: "*", size: [100, 100] }] } });
+    expect(r.error).toBeNull();
+    expect(r.names.some((n) => n.startsWith("sheets/"))).toBe(false);
+    expect(r.text("README.txt")).not.toContain("sheets/");
   });
 
   test("a piece too big for the stock is listed in the README, not refused", async () => {

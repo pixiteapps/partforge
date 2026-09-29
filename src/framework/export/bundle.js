@@ -357,7 +357,7 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
     scale: pieces.map((pc) => ({ label: pc.labels.join(", "), nominal: pc.drawing.nominal, drawn: sizeOf(pc.drawing.bounds) })),
     sheets: sheets.map((sh) => ({ file: sh.file, material: sh.group.material, thickness: sh.group.thickness,
       size: sh.stock, pieces: sh.placements.length, used: sh.used })),
-    pieces: pieces.map((pc) => ({ file: pc.file, labels: pc.labels, material: groups.get(pc.group).material,
+    pieces: pieces.map((pc) => ({ file: pc.file, marksFile: pc.marksFile, labels: pc.labels, material: groups.get(pc.group).material,
       thickness: groups.get(pc.group).thickness, size: pc.drawing.nominal, quantity: pc.qty })),
     printed: prints.map((pp) => ({ file: pp.file, labels: pp.labels, quantity: pp.qty })),
     clearances: controls.filter((c) => CLEARANCE_RE.test(c.key) || CLEARANCE_RE.test(String(c.label ?? "")))

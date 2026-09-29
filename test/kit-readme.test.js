@@ -36,7 +36,10 @@ const service = {
   stockNotes: [{ material: "MDF", thickness: 6, control: "Thickness" }],
   scale: [{ label: "Base", nominal: [400, 250], drawn: [400, 250] }],
   sheets: [],
-  pieces: [{ file: "parts/base.dxf", labels: ["Base"], material: "MDF", thickness: 6, size: [400, 250], quantity: 1 }],
+  pieces: [
+    { file: "parts/base.dxf", marksFile: "parts/base-marks.dxf", labels: ["Base"], material: "MDF", thickness: 6, size: [400, 250], quantity: 1 },
+    { file: "parts/lid.dxf", marksFile: null, labels: ["Lid"], material: "MDF", thickness: 6, size: [100, 50], quantity: 1 },
+  ],
   printed: [], clearances: [], settings: [],
   checks: ["Base: 2 != 1 — the profile is not exactly one piece"],
   oversized: ["Base: 400.0 × 250.0 mm does not fit a 300 × 300 mm sheet after its 5 mm margin (MDF 6 mm) — cut it from parts/base.dxf"],
@@ -88,7 +91,7 @@ describe("renderReadme", () => {
     ].join("\n"));
   });
 
-  test("a cutting service, no kerf: DXF legend, reference sheets, oversized and renamed lists", () => {
+  test("a cutting service, no kerf: DXF legend, the marks files, oversized and renamed lists — and no sheets/ to mention", () => {
     expect(renderReadme(service)).toBe([
       "Tray — cut & print kit",
       "",
@@ -99,12 +102,13 @@ describe("renderReadme", () => {
       "Scale check — measure one cut piece against its line:",
       "Base: nominal 400.00 × 250.00 mm; this file draws the same (no kerf applied)",
       "DXF layers: CUT (colour 1), SCORE (colour 5), ENGRAVE (colour 7) — set ENGRAVE to fill; R12 has no hatch.",
-      "The sheets in sheets/ are for reference only — a cutting service lays out the pieces itself.",
+      "Score and engrave marks are in their own files, not in the cut files — send them with the cut files if you want the marks made: parts/base-marks.dxf.",
       "Test-cut one joint first.",
       "",
       "PIECES",
       "file | labels | material | thickness | size | quantity",
       "parts/base.dxf | Base | MDF | 6.00 mm | 400.00 × 250.00 mm | 1",
+      "parts/lid.dxf | Lid | MDF | 6.00 mm | 100.00 × 50.00 mm | 1",
       "",
       "CHECKS",
       "Base: 2 != 1 — the profile is not exactly one piece",
@@ -119,6 +123,14 @@ describe("renderReadme", () => {
       "Layout packs bounding boxes only: no nesting into holes, and grain direction is ignored.",
       "",
     ].join("\n"));
+  });
+
+  test("a service kit with sheets says they are for reference; one with no marks names no marks file", () => {
+    const sheets = [{ file: "sheets/mdf-6mm/sheet-1-of-1.dxf", material: "MDF", thickness: 6, size: [600, 400], pieces: 2, used: 50 }];
+    const text = renderReadme({ ...service, sheets, pieces: service.pieces.map((pc) => ({ ...pc, marksFile: null })) });
+    expect(text).toContain("\nThe sheets in sheets/ are for reference only — a cutting service lays out the pieces itself.\n");
+    expect(text).not.toContain("marks");
+    expect(renderReadme(ownLaser)).not.toContain("sheets/ are for reference");
   });
 
   test("plain text with no timestamp and no carriage return", () => {
