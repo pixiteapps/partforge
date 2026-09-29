@@ -337,7 +337,11 @@ the installed package, so let the publish finish before bumping the dep there.
   Most tests run the budget on a stopped clock (`measure(…, { now: () => 0 })`); the
   timing pins run it on main-thread CPU time and hold each step to 3× its price and to
   ABSOLUTE CPU caps (1–1.5 s a step, 2 s a reading) — never to a pace taken from the
-  steps they judge, which let a lone overrun set its own allowance. A view with no sheet
+  steps they judge, which let a lone overrun set its own allowance. Those caps are the
+  calibration desktop's: `test/helpers/cpu-pace.js`'s `cpuMs` is CPU time divided by a
+  PACE measured once per file on a fixed plate of lines and arcs (1 there, clamped at 6,
+  forced by `PF_CPU_PACE`), and the meter runs on that clock too, so a slower CI runner
+  reads what the desktop reads. A view with no sheet
   part verifies byte-identically — `test/verify-golden.test.js` pins it; re-record only
   for a deliberate verdict change (`PARTFORGE_RECORD_VERIFY_GOLDEN=1 npx vitest run
   test/verify-golden.test.js`). Timings: `docs/research/sheet-inspect-timing.md`.
