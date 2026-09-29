@@ -170,3 +170,14 @@ test("the lid swings shut about the knuckle axis without meeting a wall, on any 
     expect(min[2]).toBeLessThanOrEqual(p.height + HINGE_LIFT + 3 + 1e-6);
   }
 }, 60_000);
+
+// The Label control is free text; a label of only spaces is no label, not a throw from
+// text2d that stops the Front panel building.
+test("a label of only spaces engraves nothing, and the front still builds", () => {
+  const front = (label) => {
+    const { p, d } = resolveParams(part, { label });
+    return buildPosed(k, part, "front", { purpose: "display", view: "box", p, d }).volume();
+  };
+  expect(front("   ")).toBeCloseTo(front(""), 6);
+  expect(front("TOOLS")).toBeLessThan(front(""));
+});

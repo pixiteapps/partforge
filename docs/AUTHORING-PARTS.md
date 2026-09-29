@@ -2011,7 +2011,7 @@ export default {
       box: fingerBox({ width: p.width, depth: p.depth, height: p.height, thickness: p.t, clearance: p.fit }),
       hingeX: [-(p.width / 2 - 25), p.width / 2 - 25],
       axisZ,
-      tongueY: HINGE.tongueY + rise,                             // so the slots stay put
+      tongueY: HINGE.tongueY + rise,                             // slots stay put
       // Open 90°: laser face to the back, the drawing's front edge (v = 0) on top.
       lidPose: { face: "+Y", up: "-Z", at: [-p.width / 2, p.depth / 2, lidZ + p.depth] },
     };
@@ -2021,7 +2021,7 @@ export default {
     left: panel("left", "Left"),
     right: panel("right", "Right"),
     front: panel("front", "Front", {                              // u across, v up
-      engrave: (k, p) => (p.label ? k.text2d(p.label, { size: 14 }).translate([p.width / 2, p.height * 0.55]) : null),
+      engrave: (k, p) => (p.label?.trim() ? k.text2d(p.label, { size: 14 }).translate([p.width / 2, p.height * 0.55]) : null),
       score: (k, p) => [[[12, p.height * 0.35], [p.width - 12, p.height * 0.35]]],   // a two-point line
     }),
     back: panel("back", "Back", {
