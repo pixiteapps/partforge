@@ -4,7 +4,7 @@ import { assemblyOverlaps } from "../assembly.js";
 import { resolveParams, buildPosed } from "../part-model.js";
 import { probeSubPartPose } from "../pose-probe-core.js";
 import { composePose } from "../geometry/pose.js";
-import { isSheetPart, SHEET_CHECK_BUDGET_MS, MARK_DEPTH } from "../sheet/constants.js";
+import { isSheetPart, sheetMeta, SHEET_CHECK_BUDGET_MS, MARK_DEPTH } from "../sheet/constants.js";
 import { resolveSheet } from "../sheet/resolve.js";
 import { processFor } from "../process/registry.js";
 import { meshGaps, pairKey, CONTACT_EPS, GAP_THRESHOLD } from "./gaps.js";
@@ -131,11 +131,13 @@ const transformPoint = (m, [x, y, z]) => [
 // measure()). A 2-D location is lifted through the sub-part's DISPLAY pose, as the geometry-free
 // probe records it, at mid-thickness; a pose the probe cannot trust (a place() that
 // queries geometry) leaves `at` null and keeps the 2-D reading. Null for a process
-// id no descriptor answers to — lint's sheet-invalid reports that.
+// id no descriptor answers to (lint's sheet-invalid reports that) is still a sheet —
+// measure and verify ask the same question, isSheetPart — with nothing to check it by:
+// unknownProcessFacts.
 function sheetRowFacts(kernel, part, name, view, { p, d }, budget, volume) {
   const sp = part.parts[name];
   const proc = processFor(sp);
-  if (!proc) return null;
+  if (!proc) return unknownProcessFacts(kernel, sp, p, d);
   const resolved = resolveSheet(kernel, sp, p, d);
   const start = budget.now();
   const f = proc.facts(resolved, { deadline: start + budget.left, now: budget.now });
@@ -150,6 +152,31 @@ function sheetRowFacts(kernel, part, name, view, { p, d }, budget, volume) {
     solidMatchPct: f.customBuild && f.marksArea != null && expected > 1e-9
       ? (100 * Math.abs(volume - expected)) / expected
       : null,
+  };
+}
+
+// A sheet whose process no descriptor answers to: what can be read without one (the
+// cut layer's size, area and pieces, when the declaration resolves at all), and no
+// reading — `evaluated` false.
+function unknownProcessFacts(kernel, sp, p, d) {
+  const meta = sheetMeta(sp, p, d);
+  let flat = [0, 0], area = 0, pieces = 0;
+  try {
+    const { profile } = resolveSheet(kernel, sp, p, d);
+    pieces = profile.toContours().length;
+    if (pieces) {
+      const { min, max } = profile.boundingBox();
+      flat = [max[0] - min[0], max[1] - min[1]];
+      area = profile.area();
+    }
+  } catch { /* a declaration that does not resolve: sizes stay zero */ }
+  return {
+    process: sp.sheet.process, material: meta?.material ?? null, thickness: meta?.thickness ?? null, group: meta?.group ?? null,
+    flat, area, pieces, customBuild: sp.build !== sp.sheet.generatedBuild,
+    marksArea: null, bridge: null, bridgeCapped: false, gap: null, gapCapped: false, marksOutside: null, solidMatchPct: null,
+    at2d: { bridge: null, gap: null, marks: null }, at: { bridge: null, gap: null, marks: null },
+    readErrors: { bridge: null, gap: null, marks: null, marksArea: null },
+    evaluated: false,
   };
 }
 

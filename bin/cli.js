@@ -512,7 +512,7 @@ function printMeasure(r) {
       `tris ${s.triangleCount}  ${wt}  ${holes}`);
     // A sheet part's stock and flat size — what the cut file will be.
     if (s.sheet) {
-      console.log(`    sheet  ${s.sheet.material} ${fmtMm(s.sheet.thickness)} mm, ` +
+      console.log(`    sheet  ${s.sheet.material ?? "?"} ${s.sheet.thickness == null ? "?" : fmtMm(s.sheet.thickness)} mm, ` +
         `flat ${s.sheet.flat.map((n) => n.toFixed(1)).join(" × ")} mm, ${s.sheet.pieces} piece${s.sheet.pieces === 1 ? "" : "s"}`);
     }
   }

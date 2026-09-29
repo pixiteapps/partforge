@@ -213,3 +213,25 @@ test("a seed measured without print sizes is not reused for a bed", () => {
   expect(calls).toBe(1);
   expect(on(v, "rod", "bbox")[0]).toMatchObject({ status: "pass", note: "measured in the print (export) pose" });
 });
+
+// One test for "is this a sheet?" on both sides: isSheetPart, the plain-data rule. A
+// declaration naming no registered process (lint's sheet-invalid error; reachable with
+// --no-lint) used to be a sheet to measure() — no min-wall rays, no print size — and a
+// printed part to verify, which then fitted the view to the bed and read its min wall
+// as "unavailable". Now it is a sheet to both, with nothing to check it by.
+test("a sheet naming an unknown process is a sheet to measure and verify alike", () => {
+  const sp = plate(60, 40);
+  const cnc = { ...sp, sheet: { ...sp.sheet, process: "cnc" } };
+  const part = forge({ plate: cnc, block: printed([10, 10, 10], (s) => s.translate([100, 0, 0])) },
+    { process: "fdm-pla", expect: { plate: { sheetBridge: ">=1.5" } } });
+  const r = unhurried(k, part, "v", {}, { minWall: true });
+  expect(r.subparts[0]).toMatchObject({ minWall: null });
+  expect(r.subparts[0].sheet).toMatchObject({ process: "cnc", material: "birch plywood", thickness: 3, pieces: 1, evaluated: false });
+  const v = verifyUnhurried(k, part);
+  expect(checksOf(v).filter((c) => c.scope === "view" && c.metric === "bbox")).toEqual([]);
+  expect(on(v, "plate", "minWall")).toEqual([]);
+  expect(on(v, "block", "bbox")[0]).toMatchObject({ note: "measured in the print (export) pose" });
+  expect(on(v, "plate", "sheetBridge")[0]).toMatchObject({ status: "skip", pattern: "sheet-parts", message: 'not measured: no "cnc" process' });
+  expect(checksOf(v).filter((c) => c.subpart === "plate" && c.volunteered)).toEqual([]);
+});
+

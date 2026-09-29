@@ -212,6 +212,7 @@ const SHEET_READ_ERROR_HINT = "The geometry engine could not run this 2-D laser 
 // not declare, volunteered.
 function sheetRowChecks(s, declaredExp) {
   const out = [];
+  const proc = processById(s.sheet.process);
   const outOfTime = s.sheet.evaluated === false;
   const budgeted = (metric) => SUBPART_METRICS[metric]?.budgeted === true;
   const unread = (c, metric) => (c.actual == null ? SUBPART_METRICS[metric]?.readError?.(s) ?? null : null);
@@ -221,6 +222,10 @@ function sheetRowChecks(s, declaredExp) {
     if (PRINT_ONLY.has(metric)) {
       out.push({ scope: c.scope, subpart: c.subpart, metric, kind: c.kind, expr: c.expr, actual: null, status: "skip", pass: null,
         message: "not measured on a sheet part", hint: PRINT_ONLY_HINT, pattern: SHEET_DOC_ID });
+    } else if (!proc && c.actual == null) {
+      // A sheet naming no registered process (lint's sheet-invalid): nothing reads it.
+      out.push({ ...c, status: "skip", pass: null, message: `not measured: no "${s.sheet.process}" process`,
+        hint: "This sheet part names a process partforge does not know, so no sheet check reads it; lint's sheet-invalid says which. Use sheetPart() with a known process.", pattern: SHEET_DOC_ID });
     } else if (outOfTime && budgeted(metric) && c.actual == null) {
       out.push({ ...c, status: "skip", pass: null, unevaluated: true, message: "not evaluated (2-D check budget)",
         hint: SHEET_BUDGET_HINT, pattern: SHEET_DOC_ID });
@@ -230,7 +235,7 @@ function sheetRowChecks(s, declaredExp) {
     }
   }
   let noticed = false;
-  for (const [metric, expr] of Object.entries(processById(s.sheet.process)?.checks(s.sheet) ?? {})) {
+  for (const [metric, expr] of Object.entries(proc?.checks(s.sheet) ?? {})) {
     if (Object.hasOwn(declaredExp, metric)) continue;
     if (outOfTime && budgeted(metric)) {
       if (!noticed) out.push({ scope: "subpart", subpart: s.name, ...SHEET_CHECKS_NOTICE });
