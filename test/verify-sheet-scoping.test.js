@@ -214,8 +214,34 @@ test("a sheet reading that could not be taken says why", () => {
   expect(volunteered.warnings.find((c) => c.metric === "sheetGap")).toMatchObject({
     volunteered: true, status: "warn", pattern: "sheet-parts", message: expect.stringContaining("could not chain") });
   const declared = verifyUnhurried(k, forge({ plate: odd }, { expect: { plate: { sheetGap: ">=1.5" } } }));
-  expect(on(declared, "plate", "sheetGap")[0]).toMatchObject({ status: "skip", pattern: "sheet-parts", message: expect.stringContaining("could not chain") });
+  expect(on(declared, "plate", "sheetGap")[0]).toMatchObject({ status: "warn", pass: null, unevaluated: true, pattern: "sheet-parts",
+    message: expect.stringContaining("could not chain") });
   expect(declared).toMatchObject({ ok: null, declared: 1, evaluated: 0 });
+});
+
+// A DECLARED check the engine could not read has no verdict, so it must withhold verify.ok
+// — as a budget-withheld one does — and say why on the channel every host shows. As a bare
+// skip it was neither evaluated nor unevaluated, so any other declared check that passed made
+// verify.ok true with no failure and no warning, over a check that was never taken.
+test("a DECLARED sheet check the engine could not read withholds verify.ok beside one that passed", () => {
+  const refusing = (shape) => new Proxy(shape, { get(target, key) {
+    if (key === "offset") return (delta, ...rest) => {
+      if (delta > 0) throw new Error("contour-winding: could not chain offset boundary (incomplete intersection set)");
+      return refusing(target.offset(delta, ...rest));
+    };
+    const v = Reflect.get(target, key);
+    return typeof v === "function" ? v.bind(target) : v;
+  } });
+  const sp = plate(60, 40);
+  const odd = { ...sp, sheet: { ...sp.sheet, profile: (kk, p, d) => refusing(kk.shape2d(sp.sheet.profile(kk, p, d))) } };
+  const v = verifyUnhurried(k, forge({ plate: odd }, { expect: { plate: { sheetPieces: "1", sheetGap: ">=1.5" } } }));
+  expect(on(v, "plate", "sheetPieces")[0]).toMatchObject({ status: "pass", pass: true });
+  expect(v).toMatchObject({ ok: null, declared: 2, evaluated: 1 });
+  expect(v.unevaluated.map((c) => c.metric)).toEqual(["sheetGap"]);
+  const gap = v.warnings.find((c) => c.metric === "sheetGap");
+  expect(gap).toMatchObject({ status: "warn", pass: null, unevaluated: true, pattern: "sheet-parts" });
+  expect(gap.message).toMatch(/^not measured — .*could not chain/);
+  expect(gap.volunteered).toBeUndefined();
 });
 
 

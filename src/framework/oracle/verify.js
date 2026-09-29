@@ -207,7 +207,11 @@ const PRINT_ONLY = new Set(["minWall", "wall", "overhangArea"]);
 const PRINT_ONLY_HINT = "minWall, wall and overhangArea are print checks, and a sheet part is cut, not printed: nothing measures them here. For a laser part declare sheetBridge (the narrowest web or finger) or sheetGap (the narrowest hole or slot) instead.";
 
 // A sheet reading the geometry engine could not take (SheetFacts.readErrors): a
-// volunteered check warns with the reason, a declared one skips with it.
+// volunteered check warns with the reason; a declared one warns with it too, and is
+// `unevaluated`, so it withholds verify.ok exactly as a budget-withheld one does. As a bare
+// skip it counted neither way, and one other declared check that passed made verify.ok true
+// over a check that was never taken — the rule at the top of this file, a declared gate
+// fails loudly and never skips.
 const SHEET_READ_ERROR_HINT = "The geometry engine could not run this 2-D laser check on the profile (the reason is in the message). The part still builds; an overlapping or self-touching contour, or a sliver, is the usual cause — simplify the profile there and re-run.";
 
 // One sheet row: the declared expectations, then the process's checks the part did
@@ -233,7 +237,7 @@ function sheetRowChecks(s, declaredExp) {
         hint: SHEET_BUDGET_HINT, pattern: SHEET_DOC_ID });
     } else {
       const why = unread(c, metric);
-      out.push(why ? readFailure({ ...c, status: "skip", pass: null }, why) : c);
+      out.push(why ? readFailure({ ...c, status: "warn", pass: null, unevaluated: true }, why) : c);
     }
   }
   let noticed = false;
