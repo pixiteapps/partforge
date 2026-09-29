@@ -47,21 +47,25 @@ function centreOfLargest(shape) {
 // ({ to }), an arc ({ via, to }) or a cubic ({ c1, c2, to }).
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const cubicMid = (p0, { c1, c2, to }) => [0, 1].map((i) => (p0[i] + 3 * c1[i] + 3 * c2[i] + to[i]) / 8);
-// A hole ring that is a circle — every segment curved, every endpoint, arc midpoint and
-// cubic midpoint within 1 % of one radius — as { d, at }, else null.
+// A hole ring that is a circle — every segment curved, and the circle through each
+// segment's ends and midpoint (an arc's own, a cubic's through its midpoint) within 1 % of
+// one centre and radius — as { d, at }, else null. Read from each segment's circle, not a
+// bounding box of its points: recovered arcs (exactArcs) end wherever the fit split them.
 function roundHole(ring) {
   if (Array.isArray(ring) || !ring.segments?.length) return null;
-  const pts = [ring.start];
+  const circles = [];
   let from = ring.start;
   for (const seg of ring.segments) {
     if (!seg.via && !seg.c1) return null;
-    pts.push(seg.via ?? cubicMid(from, seg), seg.to);
+    const a = arcCircle(from, seg.via ?? cubicMid(from, seg), seg.to);
+    if (!a) return null;
+    circles.push(a);
     from = seg.to;
   }
-  const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
-  const at = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
-  const r = pts.reduce((acc, q) => acc + dist(q, at), 0) / pts.length;
-  return r > 0 && pts.every((q) => Math.abs(dist(q, at) - r) <= 0.01 * r) ? { d: 2 * r, at } : null;
+  const n = circles.length;
+  const at = [circles.reduce((x, a) => x + a.c[0], 0) / n, circles.reduce((y, a) => y + a.c[1], 0) / n];
+  const r = circles.reduce((acc, a) => acc + a.r, 0) / n;
+  return r > 0 && circles.every((a) => dist(a.c, at) <= 0.01 * r && Math.abs(a.r - r) <= 0.01 * r) ? { d: 2 * r, at } : null;
 }
 
 // Each segment of a ring as the hole plan and the prices see it: its end tangents, points
@@ -141,11 +145,42 @@ function ringParts(ring) {
 }
 const polyArea = (pts) => pts.reduce((a, q, i) => a + cross2(q, pts[(i + 1) % pts.length]), 0) / 2;
 
+// ── exact arcs for the searches ───────────────────────────────────────────────
+// paper hands every arc back from a boolean as cubics — a booleaned round hole as four, a
+// fillet as one — and the offset engine only approximates a cubic's offset. That made the
+// searches' two slowest cases: a cubic a test shrinks to just past w/2 (seconds each; one
+// test on an ordinary rounded mounting plate with four M3 holes ran 4–73 s), and the
+// one-sided difference against the test's near-copy (paper's boolean, quadratic in its
+// cubics). And a sharp join extends an arc along its circle but a cubic only along its
+// end tangent, which cuts short a corner where the curve meets another edge — a false
+// narrow web or gap there. So the searches read every run of cubics that lies on one
+// circle as that circle's arcs, through the resolved sheet's `recoverArcs`
+// (geometry/arc-fit.js, handed over by sheet/resolve.js: this file imports nothing). It
+// is the fit the kit draws the cut files with, so the searches read the geometry that is
+// cut: it fits a whole run at once, through the run's own ends (a split circle stays ONE
+// circle — fitted cubic by cubic, the pieces of a booleaned D met at a kink the offset
+// engine read as a false 1 mm web), and accepts a cubic only within 1e-3 of the radius
+// and 2e-3 of its own chord (paper's quarter circle is 2.7e-4·r off; a shallow cubic that
+// is not a circle is not read as one). Only the shapes the width searches run on: the
+// area, pieces and marks read the profile.
+// → the contours with those runs as arcs, or the same array when no ring changed.
+function exactArcs(contours, recover) {
+  let swapped = false;
+  const ring = (r) => {
+    if (Array.isArray(r) || !r.segments.some((g) => g.c1)) return r;
+    const arcs = recover(r);
+    if (arcs.segments.some((g) => g.via)) swapped = true;
+    return arcs;
+  };
+  const out = contours.map((rg) => ({ outer: ring(rg.outer), holes: rg.holes.map(ring) }));
+  return swapped ? out : contours;
+}
+
 // ── what a width search can leave out ────────────────────────────────────────
-// Every test shrinks and regrows the whole profile, and on booleaned geometry the whole
-// profile is the dominant cost: paper hands a booleaned round hole back as four cubics,
-// the offset engine returns each as 16–32 (its cubic offset is an approximation), and
-// the one-sided difference against that near-copy costs paper time quadratic in them
+// Every test shrinks and regrows the whole profile, so every ring a search can leave out
+// is work it does not do — most of all a curve the arc fit cannot read as a circle (above):
+// the offset engine returns each cubic as 16–32 (its cubic offset is an approximation),
+// and the one-sided difference against that near-copy costs paper time quadratic in them
 // (2,048 cubics: 2 s; 4,096: 8 s). A hole that cannot take part in what a search counts
 // is left out of it instead: the search runs on the profile rebuilt from its own rings
 // without that hole (the kernel's trusted lift — no boolean, no validation, arcs kept).
@@ -267,6 +302,12 @@ function holePlan(contours, ceiling) {
     ? contours.map((rg, ri) => ({ outer: rg.outer, holes: rg.holes.filter((_, hi) => !keys.has(`${ri}:${hi}`)) }))
     : null);
   return { open: without(open), close: without(close), round };
+}
+// The plan on the profile's exact arcs: what each search runs on (null: the profile itself).
+function searchPlan(contours, ceiling, recover) {
+  const exact = recover ? exactArcs(contours, recover) : contours;
+  const p = holePlan(exact, ceiling), own = exact === contours ? null : exact;
+  return { open: p.open ?? own, close: p.close ?? own, round: p.round };
 }
 
 // ── what a step costs ────────────────────────────────────────────────────────
@@ -447,7 +488,7 @@ function narrowest(test, ceiling, spend, price) {
 // The narrower of the two wins.
 function narrowestGap(search, round, ceiling, spend) {
   const gap = narrowest((w) => closingGain(search, w, spend), ceiling, spend, (w) => testPrice(search, -1, w));
-  const smallest = round.length ? round.reduce((a, b) => (b.d < a.d ? b : a)) : null;
+  const smallest = round.length ? round.reduce((a, b) => (b.d < a.d - 1e-9 ? b : a)) : null;   // the first of equals
   return smallest && smallest.d < ceiling && (gap.capped || smallest.d < gap.value)
     ? { value: round2(smallest.d), capped: false, at: smallest.at }
     : gap;
@@ -579,13 +620,14 @@ export const LASER = {
     };
     const spend = _meter(deadline, now);
     const ceiling = 2 * widthFloor(t);
-    // Each search's shape: the profile less the holes it can leave out, rebuilt from its
-    // own rings — or the profile itself, when nothing is left out or the kernel has no
-    // trusted lift. The plan is made inside the readings that use it (and kept once made),
-    // so whatever goes wrong in it costs those readings (readErrors), never these facts.
+    // Each search's shape: the profile with its circular cubics read as arcs (exactArcs),
+    // less the holes it can leave out, rebuilt from its own rings — or the profile itself,
+    // when neither changes it or the kernel has no trusted lift. The plan is made inside
+    // the readings that use it (and kept once made), so whatever goes wrong in it costs
+    // those readings (readErrors), never these facts.
     const lift = s.trustedShape2d;
     let planned = null;
-    const plan = () => (planned ??= lift && pieces ? holePlan(contours, ceiling) : { open: null, close: null, round: [] });
+    const plan = () => (planned ??= lift && pieces ? searchPlan(contours, ceiling, s.recoverArcs) : { open: null, close: null, round: [] });
     const searchOn = (reduced) => ({
       shape: reduced ? lift(reduced) : profile, counts: countsOf(reduced ?? contours), cubics: cubicsOf(reduced ?? contours),
     });

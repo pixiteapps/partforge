@@ -5,7 +5,7 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
 import { bootManifoldKernel } from "../src/testing.js";
-import { sheetPart, sheetHole } from "../src/framework/geometry/polygon.js";
+import { sheetPart, sheetHole, ringSectorProfile, slotProfile, roundedRectProfile, pieProfile } from "../src/framework/geometry/polygon.js";
 import { resolveSheet } from "../src/framework/sheet/resolve.js";
 import { LASER, _meter } from "../src/framework/process/laser/descriptor.js";
 import { measure } from "../src/framework/oracle/measure.js";
@@ -304,15 +304,99 @@ describe("LASER.facts", () => {
     expect(slot.at2d.gap[1]).toBeCloseTo(30.3, 0);
   });
 
+  // paper hands every arc back from a boolean as cubics — a booleaned round hole as four, a
+  // fillet as one — and the offset engine only approximates a cubic's offset: its slowest
+  // case (a cubic a test shrinks to just past w/2 took seconds each, and ordinary mounting
+  // plates took 4–73 s in one step) and the one-sided difference's (paper's boolean against
+  // the near-copy, quadratic in its cubics), and a sharp join can only extend a cubic along
+  // its end tangent. The width searches read every run of cubics that lies on one circle as
+  // that circle's arcs — and only the searches: the area and the pieces are the profile's.
+  // `shapesSearched` records, for every offset a search starts on its own shape (the
+  // profile, or one rebuilt from its rings by the lift), the cubics that shape carries.
+  const shapesSearched = (s) => {
+    const cubics = [];
+    const cubicsIn = (shape) => shape.toContours().flatMap((rg) => [rg.outer, ...rg.holes])
+      .reduce((n, ring) => n + (Array.isArray(ring) ? 0 : ring.segments.filter((g) => g.c1).length), 0);
+    const watched = (shape) => new Proxy(shape, { get(target, key) {
+      if (key === "offset") return (...a) => { cubics.push(cubicsIn(target)); return target.offset(...a); };
+      const v = Reflect.get(target, key);
+      return typeof v === "function" ? v.bind(target) : v;
+    } });
+    return { sheet: { ...s, profile: watched(s.profile), trustedShape2d: (c) => watched(s.trustedShape2d(c)) }, cubics };
+  };
+  test("booleaned round holes and fillets are searched as their exact arcs; the area stays the profile's", () => {
+    const s = resolveSheet(k, plate({ profile: (kk) => kk.shape2d(rect(0, 0, 100, 60)).fillet(3)
+      .cutAll([[8, 8], [92, 8], [92, 52], [8, 52]].map((at) => sheetHole({ d: 3.4, at }))) }), P, {});
+    const { sheet, cubics } = shapesSearched(s);
+    const f = LASER.facts(sheet, { deadline: 1500, now: () => 0 });
+    expect(f).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true, pieces: 1 });
+    expect(cubics.length).toBeGreaterThan(0);
+    expect(Math.max(...cubics)).toBe(0);                  // every search ran on arcs
+    expect(f.area).toBe(s.profile.area());                // the reported area is the profile's own
+  });
+
+  // #233's exact-curve profiles, booleaned the way an agent cuts them (and a few shapes
+  // everyone cuts), where an arc meets a line or another arc at a real corner. Each read a
+  // narrow web or gap that is not there — the 10 mm ring sector a 1.88 mm gap at every
+  // stock, a thumb notch a 1.5 mm web — or could not be read, and a stadium slot on 6 mm
+  // stock was priced out.
+  test("booleaned arc profiles read what they are at every stock: no false web or gap", () => {
+    const plate100 = (kk) => kk.shape2d(rect(0, 0, 100, 80));
+    const round = (kk, r, at) => kk.shape2d(slotProfile(0, r)).translate(at);
+    const cases = {
+      "ring sector 10..20 × 90° hole": { profile: (kk) => plate100(kk).cut(kk.shape2d(ringSectorProfile(10, 20, 90)).translate([40, 25])) },
+      "ring-sector panel 20..44 × 90° + d 8": { profile: (kk) => kk.shape2d(ringSectorProfile(20, 44, 90)).cutAll([sheetHole({ d: 8, at: [22.63, 22.63] })]) },
+      "stadium slot 26 × 6": { profile: (kk) => plate100(kk).cut(kk.shape2d(slotProfile(20, 3)).translate([50, 40])), gap: 6 },
+      "rounded-rect cutouts r 4 and r 1.5": { profile: (kk) => plate100(kk).cut(kk.shape2d(roundedRectProfile(30, 20, 4)).translate([25, 40]))
+        .cut(kk.shape2d(roundedRectProfile(30, 20, 1.5)).translate([70, 40])) },
+      "pie cutout 120°": { profile: (kk) => plate100(kk).cut(kk.shape2d(pieProfile(15, 120)).translate([50, 30])) },
+      "thumb notch r 5": { profile: (kk) => plate100(kk).cut(round(kk, 5, [50, 80])) },
+      "two overlapping d 10 holes": { profile: (kk) => plate100(kk).cut(round(kk, 5, [47, 40])).cut(round(kk, 5, [53, 40])) },
+    };
+    for (const [name, { profile, gap }] of Object.entries(cases)) for (const t of [3, 4, 6]) {
+      const f = LASER.facts(resolveSheet(k, plate({ profile }), { t }, {}), { deadline: 1500, now: () => 0 });
+      const at = `${name}, ${t} mm`;
+      expect(f, at).toMatchObject({ evaluated: true, bridgeCapped: true, readErrors: { bridge: null, gap: null } });
+      if (gap && gap < t) {
+        expect(f.gapCapped, at).toBe(false);
+        expect(f.gap, at).toBeGreaterThan(gap - 0.01);
+        expect(f.gap, at).toBeLessThanOrEqual(gap + 0.05);
+      } else expect(f.gap, at).toBeGreaterThanOrEqual(t - 0.05);       // capped, or a slot just the ceiling's width
+    }
+  });
+
+  // …and a real web between an arc and a booleaned hole is read where it is: an M3 hole in
+  // a 10..20 mm ring sector leaves 3.3 mm to each arc, which 4 and 6 mm stock can see.
+  test("a web between an arc and a booleaned hole reads its width, at the web", () => {
+    const panel = (kk) => kk.shape2d(ringSectorProfile(10, 20, 90)).cutAll([sheetHole({ d: 3.4, at: [10.6, 10.6] })]);
+    for (const t of [4, 6]) {
+      const f = LASER.facts(resolveSheet(k, plate({ profile: panel }), { t }, {}), { deadline: 1500, now: () => 0 });
+      expect(f, `${t} mm`).toMatchObject({ evaluated: true, bridgeCapped: false, readErrors: { bridge: null } });
+      expect(f.bridge).toBeGreaterThan(3.29);
+      expect(f.bridge).toBeLessThanOrEqual(3.35);
+      const r = Math.hypot(...f.at2d.bridge);
+      expect(r < 13.4 || r > 16.6, `at radius ${r}`).toBe(true);        // on one of the two webs, not in the hole
+      expect(f.gap).toBeCloseTo(3.4, 6);                                 // the hole, read directly
+    }
+  });
+
   // A test that finds nothing still runs its one-sided difference: a net area change
   // that reads "nothing changed" is exactly what an artifact elsewhere can fake. On a
-  // cubic near-copy that difference is paper's worst case — 48 booleaned holes: about
-  // 14 s — and at a 10 mm pitch the 4 mm webs are inside an opening's reach, so the
-  // opening keeps every hole (holePlan). The difference is priced like every step: the
-  // ceiling test runs, its difference does not fit, and the notice stands in for it.
-  test("many booleaned holes and nothing narrow: the difference is still priced, and here withheld", () => {
+  // cubic near-copy that difference is paper's worst case — 48 booleaned round holes took
+  // about 14 s — and at a 10 mm pitch the 4 mm webs are inside an opening's reach, so the
+  // opening keeps every hole (holePlan). Round holes are exact arcs to the searches now,
+  // and those 48 are read in milliseconds; holes the arc fit leaves alone (ellipses: no
+  // circle fits them) are still cubics, and their difference is priced like every step:
+  // the ceiling test runs, its difference does not fit, and the notice stands in for it.
+  test("48 booleaned round holes and nothing narrow are read: the arcs make every step cheap", () => {
     const holes = Array.from({ length: 48 }, (_, i) => sheetHole({ d: 6, at: [10 + (i % 16) * 10, 10 + Math.floor(i / 16) * 10] }));
-    const s = resolveSheet(k, plate({ profile: (kk) => kk.shape2d(rect(0, 0, 200, 44)).cutAll(holes) }), P, {});
+    const f = factsOf(plate({ profile: (kk) => kk.shape2d(rect(0, 0, 200, 44)).cutAll(holes) }), { deadline: 1500, now: () => 0 });
+    expect(f).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true });
+  });
+  test("…and booleaned elliptical holes: the difference is still priced, and here withheld", () => {
+    const holes = Array.from({ length: 48 }, (_, i) => (kk) => kk.shape2d(sheetHole({ d: 6, at: [0, 0] })).scale([1.2, 1])
+      .translate([10 + (i % 16) * 12, 10 + Math.floor(i / 16) * 10]));
+    const s = resolveSheet(k, plate({ profile: (kk) => kk.shape2d(rect(0, 0, 202, 40)).cutAll(holes.map((h) => h(kk))) }), P, {});
     let cuts = 0, offsets = 0;
     const counted = (shape) => new Proxy(shape, { get(target, key) {
       if (key === "cut") return (...a) => { cuts++; return counted(target.cut(...a)); };
@@ -320,7 +404,8 @@ describe("LASER.facts", () => {
       const v = Reflect.get(target, key);
       return typeof v === "function" ? v.bind(target) : v;
     } });
-    const f = LASER.facts({ ...s, profile: counted(s.profile) }, { deadline: 1500, now: () => 0 });
+    const f = LASER.facts({ ...s, profile: counted(s.profile), trustedShape2d: (c) => counted(s.trustedShape2d(c)) },
+      { deadline: 1500, now: () => 0 });
     expect(f).toMatchObject({ evaluated: false, bridge: null, gap: null });
     expect(offsets).toBe(2);                              // the opening's ceiling test ran…
     expect(cuts).toBe(0);                                 // …and its difference was priced out, not skipped
@@ -336,10 +421,10 @@ describe("LASER.facts", () => {
   });
 
   // Rounded-rect cutouts wider than the ceiling have nothing in them that closes, and
-  // holes never meet in a closing, so the closing leaves them out — the slow part of
-  // this panel (its inverting corners) never runs. A comb whose notches carry the same
-  // small rounded corners on the OUTLINE cannot be left out: every closing inverts them
-  // (the offset engine subdivides each to its depth limit), and it is not started.
+  // holes never meet in a closing, so the closing leaves them out. A comb whose notches
+  // carry the same small rounded corners on the OUTLINE cannot be left out: every closing
+  // inverts them. As cubics the offset engine subdivided each to its depth limit and the
+  // comb was not started; as the exact arcs they are, it is read in milliseconds.
   const cutouts = (kk) => {
     let s = kk.shape2d(rect(0, 0, 100, 60));
     for (let i = 0; i < 8; i++) s = s.cut(kk.shape2d(rect(5 + i * 11, 5, 13 + i * 11, 13)).fillet(1.2));
@@ -354,29 +439,28 @@ describe("LASER.facts", () => {
     const f = factsOf(plate({ profile: cutouts }), { deadline: 1500, now: () => 0 });
     expect(f).toMatchObject({ evaluated: true, gapCapped: true });
   });
-  // Inverting is not the only slow case: a closing that shrinks a cubic corner to within a
-  // few w/2 of nothing subdivides it almost as deeply, and the cost is superlinear in how
-  // many there are (32 r 2.5 corners closed at 3 mm: 1.8 s; 64: 29 s). They are priced so.
-  test("a comb whose rounded inner corners a closing shrinks near w/2 is not started either", () => {
+  // Inverting is not the only slow case for a cubic: a closing that shrinks a cubic corner
+  // to within a few w/2 of nothing subdivides it almost as deeply, superlinearly in how
+  // many there are (32 r 2.5 corners closed at 3 mm: 1.8 s; 64: 29 s). An arc just shrinks.
+  test("a comb whose rounded inner corners a closing shrinks near w/2 is read: they are arcs", () => {
     const shallow = (kk) => {
       let s = kk.shape2d(rect(0, 0, 234, 30));
       for (let i = 0; i < 16; i++) s = s.cut(kk.shape2d(rect(8 + i * 14, 18, 16 + i * 14, 40)).fillet(2.5));
       return s;
     };
-    expect(factsOf(plate({ profile: shallow }), { deadline: 1500, now: () => 0 }).evaluated).toBe(false);
+    expect(factsOf(plate({ profile: shallow }), { deadline: 1500, now: () => 0 })).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true });
   });
-  test("a comb of notches with small rounded inner corners is not started", () => {
-    expect(factsOf(plate({ profile: comb }), { deadline: 1500, now: () => 0 }).evaluated).toBe(false);
-    const f = factsOf(plate({ profile: (kk) => comb(kk).cut(kk.shape2d(rect(50, 5, 50.6, 12))) }));   // no deadline: read in full
+  test("a comb of notches with small rounded inner corners is read, and a 0.6 mm slot beside it", () => {
+    expect(factsOf(plate({ profile: comb }), { deadline: 1500, now: () => 0 })).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true });
+    const f = factsOf(plate({ profile: (kk) => comb(kk).cut(kk.shape2d(rect(50, 5, 50.6, 12))) }), { deadline: 1500, now: () => 0 });
     expect(f).toMatchObject({ evaluated: true, gapCapped: false });
     expect(f.gap).toBeLessThanOrEqual(0.65);
+    expect(f.at2d.gap[0]).toBeCloseTo(50.3, 0);
   });
-  // Where "near w/2" ends, measured: an opening at 3 mm (w/2 1.5) that shrinks rounded
-  // tab corners of r 2.7 (1.8 × w/2) costs 176 ms for 12 of them and 440 ms for 20; at
-  // r 2.8 (1.87 ×) it costs 16 ms. So r 3 tabs — the corner radius equal to the stock —
-  // are priced as the cheap test they are, and read; r 2 tabs (seconds) are not started.
-  // `offsets` counts the shrinks and regrows actually run: none, when the first test is
-  // priced out.
+  // Rounded tab corners, booleaned (a hole is cut after the fillet): as cubics an opening at
+  // 3 mm (w/2 1.5) that shrank r 2.7 corners (1.8 × w/2) cost 176 ms for 12 of them and
+  // 440 ms for 20, and r 2 tabs cost seconds and were not started. As arcs, r 2 and r 3
+  // tabs alike are read in milliseconds. `offsets` counts the shrinks and regrows run.
   const tabPanel = (n, r) => (kk) => {
     const pts = [[0, 0], [n * 20 + 10, 0], [n * 20 + 10, 30]];
     for (let i = n - 1; i >= 0; i--) pts.push([20 * i + 20, 30], [20 * i + 20, 40], [20 * i + 10, 40], [20 * i + 10, 30]);
@@ -399,11 +483,11 @@ describe("LASER.facts", () => {
       expect(f, `${n} tabs, r 3`).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true });
     }
   });
-  test("…and tabs rounded well under it are still not started", () => {
+  test("…and so are tabs rounded well under it: their corners are exact arcs", () => {
     for (const n of [4, 6, 8, 12]) {
       const { f, offsets } = offsetsRun(plate({ profile: tabPanel(n, 2) }));
-      expect(f.evaluated, `${n} tabs, r 2`).toBe(false);
-      expect(offsets).toBe(0);                            // priced out before the first test
+      expect(f, `${n} tabs, r 2`).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true });
+      expect(offsets).toBeGreaterThan(0);
     }
   });
 
@@ -443,16 +527,21 @@ describe("LASER.facts", () => {
   });
 
   // The same holes 3.5 mm from the edge (wider than the ceiling, so no finding, but inside
-  // an opening's reach) cannot be left out. The ceiling test's difference is priced from
-  // the test's own result — the holes' near-copy — and does not fit, so it is not
-  // started: no boolean runs, the notice stands in.
-  test("…but holes the opening cannot leave out: the found web's difference is priced out", () => {
+  // an opening's reach) cannot be left out. Their near-copy used to price the found web's
+  // difference out; as exact arcs every boolean is small, and the web is read where it is.
+  test("…and holes the opening cannot leave out: the web beside them is read, located", () => {
     const holes = Array.from({ length: 12 }, (_, i) => sheetHole({ d: 6, at: [10 + i * 12, 6.5] }));
     const edgeHoles = (kk) => kk.shape2d(rect(0, 0, 164, 60)).cutAll([...holes, rect(154, 45, 159, 55), rect(160, 45, 162, 55)]);
     const { sheet, cuts } = cutsOn(resolveSheet(k, plate({ profile: edgeHoles }), P, {}));
     const f = LASER.facts(sheet, { deadline: 1500, now: () => 0 });
-    expect(f).toMatchObject({ evaluated: false, bridge: null, gap: null });
-    expect(cuts).toEqual([]);
+    expect(f).toMatchObject({ evaluated: true, bridgeCapped: false, gapCapped: false });
+    expect(f.bridge).toBeGreaterThan(0.99);
+    expect(f.bridge).toBeLessThanOrEqual(1.05);
+    expect(f.at2d.bridge[0]).toBeCloseTo(159.5, 0);
+    expect(f.at2d.bridge[1]).toBeCloseTo(50, 0);
+    expect(f.gap).toBeGreaterThan(1.99);                  // the 2 mm slot
+    expect(f.gap).toBeLessThanOrEqual(2.05);
+    expect(Math.max(...cuts)).toBe(0);                    // every boolean on arcs and lines
   });
 
   // Prices are desktop milliseconds; the meter scales them by the pace this device has

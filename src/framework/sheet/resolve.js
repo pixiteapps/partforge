@@ -11,6 +11,7 @@
 // which reaches paper through contour-ops.js.
 import { EMPTY_MARK_RE, MARK_DEPTH, MARK_OVERCUT, SCORE_WIDTH, sheetGroup } from "./constants.js";
 import { poseSteps, validatePose } from "./pose.js";
+import { recoverArcs } from "../geometry/arc-fit.js";
 
 const fail = (sp, problem) => new Error(`sheet part${sp.label ? ` "${sp.label}"` : ""}: ${problem}`);
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
@@ -45,12 +46,15 @@ function shapeGroove(shape) {
 }
 
 // → ResolvedSheet: { process, material, thickness, group, label, pose, profile,
-//   score: { lines, shapes }, engrave, grooves, customBuild, trustedShape2d }. Throws a
-//   `sheet part "<label>": …` error for a field that resolves to something unusable.
-//   `trustedShape2d` is the kernel's lift for machine-produced regions (no profile
-//   validation, arcs kept), or null where the kernel has none (a probe): the process
-//   checks rebuild the profile from its own rings with it, less the holes a width
-//   search can leave out (process/laser/descriptor.js).
+//   score: { lines, shapes }, engrave, grooves, customBuild, trustedShape2d, recoverArcs }.
+//   Throws a `sheet part "<label>": …` error for a field that resolves to something
+//   unusable. `trustedShape2d` is the kernel's lift for machine-produced regions (no
+//   profile validation, arcs kept), or null where the kernel has none (a probe): the
+//   process checks rebuild the profile from its own rings with it, less the holes a width
+//   search can leave out (process/laser/descriptor.js). `recoverArcs` (geometry/arc-fit.js)
+//   reads a run of cubics that lies on one circle as that circle's arcs, the fit the cut
+//   files are drawn with; the checks run their width searches on those arcs. Both are
+//   handed over rather than imported, because a process descriptor imports nothing.
 export function resolveSheet(k, sp, p, d) {
   const s = sp.sheet;
   const thickness = typeof s.thickness === "function" ? s.thickness(p, d) : s.thickness;
@@ -99,6 +103,7 @@ export function resolveSheet(k, sp, p, d) {
     label: sp.label ?? null, pose, profile, score: { lines, shapes }, engrave, grooves,
     customBuild: sp.build !== s.generatedBuild,
     trustedShape2d: typeof k.shape2d?.trusted === "function" ? k.shape2d.trusted : null,
+    recoverArcs,
   };
 }
 

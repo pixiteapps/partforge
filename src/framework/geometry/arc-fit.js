@@ -14,9 +14,10 @@
 // interiors, not the accuracy of the result — see runFits for why there are two
 // of them and why a radius-relative one alone is not enough.
 //
-// Pure leaf: DOM-free, node-free.
-import { arcCenterAndSweep } from "./paper-bridge.js";
-import { cubicAt } from "./contour-ops.js";
+// Pure leaf: DOM-free, node-free and paper-free — the laser checks' resolver hands it to
+// the width searches (sheet/resolve.js), and the oracle and lint may not load paper.
+import { arcCenterAndSweep } from "./arc-math.js";
+import { cubicAt } from "./contour-corners.js";
 
 const ARC_TOL = 1e-3;            // relative to the FITTED radius
 const CHORD_TOL = 2e-3;          // relative to each cubic's OWN chord — see runFits
