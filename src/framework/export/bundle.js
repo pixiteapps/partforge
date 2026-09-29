@@ -29,8 +29,11 @@ export const KIT_ENTRY_RE = /^(README\.txt|parts\.csv|sheets\/[a-z0-9][a-z0-9._-
 
 // A path segment from an author string. safeName already lowercases, collapses runs and
 // refuses a leading dot or dash; folding every run of dots on top means no entry name
-// can ever carry "..".
-export const kitName = (s) => safeName(s, "part").replace(/\.{2,}/g, ".");
+// can ever carry "..". safeName keeps a leading underscore, which KIT_ENTRY_RE (copied
+// verbatim by the cloud) refuses, so it comes off here too — a sub-part keyed `_left`
+// is `left`, never a kit that fails at its last step — and a name that was nothing but
+// separators falls back to "part".
+export const kitName = (s) => safeName(s, "part").replace(/\.{2,}/g, ".").replace(/^[._-]+/, "") || "part";
 
 // The first of base, base-2, base-3, … whose files are all free, claimed in `taken`.
 // `filesOf(name)` lists every path a name produces — a piece's cut file and its -marks

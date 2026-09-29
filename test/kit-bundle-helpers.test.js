@@ -17,6 +17,12 @@ describe("kitName", () => {
     ["", "part"],
     ["日本語", "part"],
     ["birch plywood-2.7mm", "birch-plywood-2.7mm"],
+    // every entry segment must start with [a-z0-9] (KIT_ENTRY_RE): safeName keeps a
+    // leading underscore, so kitName strips it — a name is never refused for it
+    ["_left", "left"],
+    ["__init__", "init__"],
+    ["_", "part"],
+    ["_-.x", "x"],
   ])("%j → %j", (input, want) => expect(kitName(input)).toBe(want));
 });
 

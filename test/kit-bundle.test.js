@@ -196,6 +196,25 @@ describe("a cutting service", () => {
   });
 });
 
+describe("author names that start with a separator", () => {
+  test("a sheet keyed `_left`, a printed part keyed `_clip` and an `_ply` material still download", async () => {
+    const r = await kit({
+      meta: { title: "Underscores" }, defaults: { t: 3 }, views: { all: { label: "All" } },
+      parts: {
+        _left: sheetPart({ ...ply, material: "_ply", label: "Left", profile: (kk) => kk.shape2d(rect(40, 30)) }),
+        right: sheetPart({ ...ply, label: "Right", export: { name: "_Right panel" }, profile: (kk) => kk.shape2d(rect(40, 20)) }),
+        _clip: { label: "Clip", views: ["all"], build: (kk) => kk.box({ size: [10, 10, 5] }) },
+      },
+    });
+    expect(r.error).toBeNull();
+    expect(r.names).toEqual([
+      "README.txt", "parts.csv", "parts/left.svg", "parts/right-panel.svg", "print/clip.stl",
+      "sheets/birch-plywood-3mm/sheet-1-of-1.svg", "sheets/ply-3mm/sheet-1-of-1.svg",
+    ]);
+    expectSaneEntries(r.names);
+  });
+});
+
 describe("download options", () => {
   test("own laser refuses a piece its stock cannot hold, naming it", async () => {
     const r = await kit(fixture, { options: { stock: [{ group: "*", size: [100, 100] }] } });
