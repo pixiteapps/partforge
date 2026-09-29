@@ -110,3 +110,17 @@ test("the converters name themselves when a pose or point is bad", () => {
   expect(() => sheetToWorld(good, [1, 2], "3")).toThrow('sheetToWorld: depth must be a finite number (mm), got "3"');
   expect(() => worldToSheet(good, [1, 2])).toThrow("worldToSheet: point must be a finite [x, y, z], got [1,2]");
 });
+
+// A pose function may return FLAT_POSE (null): the canonical frame, as if
+// { face: "+Z", up: "+Y", at: [0, 0, t] }. The converters take it — worldToSheet as is,
+// sheetToWorld with the sheet's thickness, since the laser face sits at z = t.
+test("the flat pose (null) converts as the canonical frame", () => {
+  const same = { face: "+Z", up: "+Y", at: [0, 0, 3] };
+  expect(worldToSheet(FLAT_POSE, [12, -4, 7])).toEqual(worldToSheet(same, [12, -4, 7]));
+  expect(worldToSheet(null, [12, -4, 7])).toEqual([12, -4]);
+  expect(sheetToWorld(FLAT_POSE, [12, -4], 1, 3)).toEqual(sheetToWorld(same, [12, -4], 1));
+  expect(sheetToWorld(null, [12, -4], 0, 3)).toEqual([12, -4, 3]);
+  expect(() => sheetToWorld(null, [12, -4])).toThrow("sheetToWorld: a flat (null) pose needs the sheet's thickness — sheetToWorld(null, [u, v], depth, t)");
+  expect(() => sheetToWorld(null, [12, -4], 0, 0)).toThrow("sheetToWorld: a flat (null) pose needs the sheet's thickness");
+  expect(() => worldToSheet(null, [1, 2])).toThrow("worldToSheet: point must be a finite [x, y, z], got [1,2]");
+});

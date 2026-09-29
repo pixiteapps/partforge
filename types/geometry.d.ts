@@ -388,8 +388,12 @@ export function sheetHole(opts: { d: number; at: Point2 }): ArcContour;
 /** Clearance holes (ISO 273 medium) and hex nuts (ISO 4032) for `tSlots`, mm. */
 export const JOINERY_SCREWS: Readonly<Record<ScrewSize, { readonly hole: number; readonly nut: { readonly flats: number; readonly height: number } }>>;
 
-/** A drawing point on a posed sheet (`depth` mm into the material) → world [x, y, z]. */
-export function sheetToWorld(pose: SheetPose, uv: Point2, depth?: number): [number, number, number];
+/**
+ * A drawing point on a posed sheet (`depth` mm into the material) → world [x, y, z].
+ * `pose` null (`FLAT_POSE`) is the canonical frame; it needs the sheet's `thickness`,
+ * since the laser face then sits at z = thickness. Otherwise `thickness` is unused.
+ */
+export function sheetToWorld(pose: SheetPose | null, uv: Point2, depth?: number, thickness?: number): [number, number, number];
 
-/** A world point → where it lands on a posed sheet's drawing, [u, v]. */
-export function worldToSheet(pose: SheetPose, xyz: Point3): [number, number];
+/** A world point → where it lands on a posed sheet's drawing, [u, v]. `pose` null is the canonical frame. */
+export function worldToSheet(pose: SheetPose | null, xyz: Point3): [number, number];

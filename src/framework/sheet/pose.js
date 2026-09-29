@@ -83,8 +83,19 @@ export function poseSteps(pose, t) {
   return steps;
 }
 
+// The flat pose (FLAT_POSE, null) is the canonical frame itself — the same placement as
+// { face: "+Z", up: "+Y", at: [0, 0, t] } — which a pose function may return for some
+// params. The converters take it: worldToSheet needs nothing more, sheetToWorld needs
+// the sheet's thickness, since the laser face then sits at z = t.
+const flatFrame = (t) => ({ face: "+Z", up: "+Y", at: [0, 0, t] });
+
 // Drawing [u, v] (on the laser face, `depth` mm into the material) → world [x, y, z].
-export function sheetToWorld(pose, uv, depth = 0) {
+// `thickness` is read only for the flat pose.
+export function sheetToWorld(pose, uv, depth = 0, thickness) {
+  if (pose === FLAT_POSE && !(typeof thickness === "number" && Number.isFinite(thickness) && thickness > 0)) {
+    throw new Error("sheetToWorld: a flat (null) pose needs the sheet's thickness — sheetToWorld(null, [u, v], depth, t)");
+  }
+  if (pose === FLAT_POSE) pose = flatFrame(thickness);
   checkPose(pose, "sheetToWorld");
   if (!finiteN(uv, 2)) throw new Error(`sheetToWorld: point must be a finite [u, v], got ${JSON.stringify(uv)}`);
   if (typeof depth !== "number" || !Number.isFinite(depth)) throw new Error(`sheetToWorld: depth must be a finite number (mm), got ${JSON.stringify(depth)}`);
@@ -94,6 +105,7 @@ export function sheetToWorld(pose, uv, depth = 0) {
 
 // World [x, y, z] → drawing [u, v]; the component along the face normal is dropped.
 export function worldToSheet(pose, xyz) {
+  if (pose === FLAT_POSE) pose = flatFrame(0);
   checkPose(pose, "worldToSheet");
   if (!finiteN(xyz, 3)) throw new Error(`worldToSheet: point must be a finite [x, y, z], got ${JSON.stringify(xyz)}`);
   const { X, Y, at } = poseFrame(pose);
