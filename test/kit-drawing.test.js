@@ -5,7 +5,7 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import {
-  refitLineRuns, refitRing, ringsOf, LAYER_ORDER, LAYER_KIND,
+  refitLineRuns, refitRing, ringsOf, drawingBounds, canonicalDrawingKey, LAYER_ORDER, LAYER_KIND,
 } from "../src/framework/export/drawing.js";
 import { arcCenterAndSweep } from "../src/framework/geometry/arc-math.js";
 import { pointsToContour, reverseContour } from "../src/framework/geometry/profile.js";
@@ -132,5 +132,48 @@ describe("refitRing", () => {
     const { outer, holes } = ringsOf(regions);
     expect(outer).toHaveLength(2);
     expect(holes).toHaveLength(2);
+  });
+});
+
+describe("drawingBounds", () => {
+  const path = (start, segments, closed = true) => ({ start, segments, closed });
+
+  test("an arc's bulge counts, not just its endpoints", () => {
+    const b = drawingBounds([{ id: "cut-outer", paths: [path([10, 0], [{ to: [-10, 0], via: [0, 10] }, { to: [10, 0] }])] }]);
+    expect(b.min).toEqual([-10, 0]);
+    expect(b.max[0]).toBe(10);
+    expect(b.max[1]).toBeCloseTo(10, 12);
+  });
+
+  test("a clockwise arc bulges the other way", () => {
+    const b = drawingBounds([{ id: "score", paths: [path([10, 0], [{ to: [-10, 0], via: [0, -10] }], false)] }]);
+    expect(b.min[1]).toBeCloseTo(-10, 12);
+    expect(b.max[1]).toBeCloseTo(0, 12);
+  });
+
+  test("a cubic's extreme between its endpoints counts", () => {
+    const b = drawingBounds([{ id: "engrave", paths: [path([0, 0], [{ to: [10, 0], c1: [0, 8], c2: [10, 8] }, { to: [0, 0] }])] }]);
+    expect(b.max[1]).toBeCloseTo(6, 12);   // B(½) = ¾·8
+  });
+
+  test("no paths → null", () => {
+    expect(drawingBounds([])).toBe(null);
+  });
+});
+
+describe("canonicalDrawingKey", () => {
+  const drawingAt = ([dx, dy]) => {
+    const ring = { start: [dx, dy], segments: [{ to: [dx + 10, dy] }, { to: [dx + 10, dy + 5], via: [dx + 12.5, dy + 2.5] }, { to: [dx, dy] }], closed: true };
+    const layers = [{ id: "cut-outer", paths: [ring] }];
+    return { layers, bounds: drawingBounds(layers), nominal: [12.5, 5], kerf: 0 };
+  };
+
+  test("the same drawing anywhere has one key; a different one does not", () => {
+    expect(canonicalDrawingKey(drawingAt([0, 0]))).toBe(canonicalDrawingKey(drawingAt([120.5, -33.25])));
+    expect(canonicalDrawingKey(drawingAt([0, 0]))).toBe(canonicalDrawingKey(drawingAt([1e-6, 0])));   // under the 1e-4 rounding
+    const other = drawingAt([0, 0]);
+    other.layers[0].paths[0].segments[0].to = [11, 0];
+    other.bounds = drawingBounds(other.layers);
+    expect(canonicalDrawingKey(other)).not.toBe(canonicalDrawingKey(drawingAt([0, 0])));
   });
 });

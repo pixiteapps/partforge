@@ -26,6 +26,7 @@
 // It runs in the geometry worker, so it stays DOM-free and node:-free.
 import { recoverArcs } from "../geometry/arc-fit.js";
 import { arcCenterAndSweep } from "../geometry/arc-math.js";
+import { cubicAt } from "../geometry/contour-ops.js";
 
 // The cut order: marks first (the piece is still held by the sheet), holes before the
 // outline that frees the piece. Writers emit layers in this order.
@@ -37,6 +38,7 @@ const TAU = 2 * Math.PI;
 const CLOSE_EPS = 1e-9;   // mm — the storage invariant's "explicitly closed"
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const wrapPi = (a) => { a %= TAU; if (a > Math.PI) a -= TAU; else if (a <= -Math.PI) a += TAU; return a; };
+const wrapTau = (a) => ((a % TAU) + TAU) % TAU;
 const isLine = (s) => !s.via && !s.c1;
 
 // Signed turn (radians, CCW positive) from edge a→b to edge b→c; NaN when an edge has no
@@ -146,4 +148,69 @@ export function ringsOf(regions) {
     outer: regions.map((rg) => rg.outer),
     holes: regions.flatMap((rg) => rg.holes),
   };
+}
+
+// Exact bounding box of every path in `layers` — arcs by their axis extremes inside the
+// sweep, cubics by the roots of their derivative — or null when there is no path at all.
+export function drawingBounds(layers) {
+  let min = null, max = null;
+  const add = ([x, y]) => {
+    if (!min) { min = [x, y]; max = [x, y]; return; }
+    if (x < min[0]) min[0] = x; if (y < min[1]) min[1] = y;
+    if (x > max[0]) max[0] = x; if (y > max[1]) max[1] = y;
+  };
+  for (const layer of layers) for (const path of layer.paths) {
+    add(path.start);
+    let from = path.start;
+    for (const s of path.segments) {
+      add(s.to);
+      if (s.via) addArcExtremes(add, from, s);
+      else if (s.c1) addCubicExtremes(add, from, s);
+      from = s.to;
+    }
+  }
+  return min ? { min, max } : null;
+}
+
+function addArcExtremes(add, from, s) {
+  const g = arcCenterAndSweep(from, s.via, s.to);
+  if (!g) return;                                   // collinear: the endpoints bound it
+  const a0 = Math.atan2(from[1] - g.center[1], from[0] - g.center[0]);
+  for (let q = 0; q < 4; q++) {
+    const theta = (q * Math.PI) / 2;
+    const along = g.dA >= 0 ? wrapTau(theta - a0) : wrapTau(a0 - theta);
+    if (along <= Math.abs(g.dA)) add([g.center[0] + g.r * Math.cos(theta), g.center[1] + g.r * Math.sin(theta)]);
+  }
+}
+
+function addCubicExtremes(add, from, s) {
+  for (const axis of [0, 1]) {
+    const a = from[axis], b = s.c1[axis], c = s.c2[axis], d = s.to[axis];
+    // B'(t) / 3 = A t² + B t + C
+    const A = -a + 3 * b - 3 * c + d, B = 2 * (a - 2 * b + c), C = b - a;
+    const roots = [];
+    if (Math.abs(A) < 1e-12) { if (Math.abs(B) > 1e-12) roots.push(-C / B); }
+    else {
+      const disc = B * B - 4 * A * C;
+      if (disc >= 0) { const q = Math.sqrt(disc); roots.push((-B + q) / (2 * A), (-B - q) / (2 * A)); }
+    }
+    for (const t of roots) if (t > 0 && t < 1) add(cubicAt(from, s.c1, s.c2, s.to, t));
+  }
+}
+
+// The identity P2b's dedupe confirms with: the drawing translated so bounds.min is the
+// origin, every number rounded to 1e-4 mm, as JSON. A hash of this only NOMINATES a
+// duplicate; string equality of the key confirms it (design spec D.4).
+export function canonicalDrawingKey(drawing) {
+  const [ox, oy] = drawing.bounds.min;
+  const r = (v) => { const x = Math.round(v * 1e4) / 1e4; return x === 0 ? 0 : x; };
+  const pt = (p) => [r(p[0] - ox), r(p[1] - oy)];
+  const seg = (s) => (s.c1 ? { to: pt(s.to), c1: pt(s.c1), c2: pt(s.c2) } : s.via ? { to: pt(s.to), via: pt(s.via) } : { to: pt(s.to) });
+  return JSON.stringify({
+    kerf: r(drawing.kerf),
+    layers: drawing.layers.map((l) => ({
+      id: l.id,
+      paths: l.paths.map((p) => ({ closed: p.closed, start: pt(p.start), segments: p.segments.map(seg) })),
+    })),
+  });
 }
