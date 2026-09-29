@@ -248,6 +248,40 @@ describe("two different pieces with one name", () => {
   });
 });
 
+describe("the README names the right settings", () => {
+  const forge = (controls, defaults, thickness) => ({
+    meta: { title: "Settings" }, parameters: [{ id: "s", title: "S", controls }], defaults, views: { all: { label: "All" } },
+    parts: { a: sheetPart({ views: ["all"], material: (p) => p.material ?? "ply", thickness, label: "A", profile: (kk) => kk.shape2d(rect(40, 30)) }) },
+  });
+  const MATERIAL = { key: "material", label: "Material", type: "select", options: ["ply", "acrylic"] };
+  const assumes = (readme) => readme.split("\n").find((l) => l.startsWith("This kit assumes"));
+
+  test("the thickness line names the control whose value IS the thickness, not the first one read", async () => {
+    const r = await kit(forge(
+      [MATERIAL, { key: "plyT", label: "Plywood thickness", unit: "mm" }, { key: "acrylicT", label: "Acrylic thickness", unit: "mm" }],
+      { material: "ply", plyT: 3, acrylicT: 2.7 },
+      (p) => (p.material === "acrylic" ? p.acrylicT : p.plyT)));
+    expect(assumes(r.text("README.txt"))).toBe('This kit assumes 3.00 mm ply — if yours differs, change "Plywood thickness" and re-download.');
+  });
+
+  test("a thickness no control holds falls back to the generic wording", async () => {
+    const r = await kit(forge([MATERIAL], { material: "ply" }, (p) => (p.material === "acrylic" ? 2.7 : 3)));
+    expect(assumes(r.text("README.txt"))).toBe('This kit assumes 3.00 mm ply — if yours differs, change "the sheet thickness setting" and re-download.');
+  });
+
+  test("CLEARANCES lists fit, clearance and play settings — not every key that contains the letters", async () => {
+    const r = await kit(forge([
+      { key: "display", label: "Display", type: "toggle" }, { key: "displayMode", label: "Display mode", type: "select", options: ["a"] },
+      { key: "outfit", label: "Outfit" }, { key: "profit", label: "Margin" },
+      { key: "fingerClearance", label: "Finger clearance", unit: "mm" }, { key: "tab_play", label: "Tab slack", unit: "mm" },
+      { key: "pf", label: "Press fit", unit: "mm" },
+    ], { display: true, displayMode: "a", outfit: 1, profit: 2, fingerClearance: 0.1, tab_play: 0.05, pf: 0.02 }, 3));
+    const readme = r.text("README.txt");
+    const block = readme.slice(readme.indexOf("CLEARANCES (design fit, not kerf)\n"), readme.indexOf("\nSETTINGS\n"));
+    expect(block.split("\n").slice(1).filter(Boolean)).toEqual(["Finger clearance: 0.1 mm", "Tab slack: 0.05 mm", "Press fit: 0.02 mm"]);
+  });
+});
+
 describe("download options", () => {
   test("own laser refuses a piece its stock cannot hold, naming it", async () => {
     const r = await kit(fixture, { options: { stock: [{ group: "*", size: [100, 100] }] } });
