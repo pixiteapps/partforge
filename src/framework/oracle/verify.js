@@ -212,7 +212,9 @@ const PRINT_ONLY_HINT = "minWall, wall and overhangArea are print checks, and a 
 // skip it counted neither way, and one other declared check that passed made verify.ok true
 // over a check that was never taken — the rule at the top of this file, a declared gate
 // fails loudly and never skips.
-const SHEET_READ_ERROR_HINT = "The geometry engine could not run this 2-D laser check on the profile (the reason is in the message). The part still builds; an overlapping or self-touching contour, or a sliver, is the usual cause — simplify the profile there and re-run.";
+// On a valid profile a read error is the checker's own limit, so the hint never blames the
+// contour first. Exported: the kit's README repeats it, and it stays one text.
+export const SHEET_READ_ERROR_HINT = "The 2-D laser check could not finish on this profile (the engine stopped at the width in the message), so this reading was not taken; the part still builds. On a valid profile this is a limit of the checker, often near rounded corners or booleaned round holes — do not reshape the part for it; check widths near the one named by eye. Only if the profile really has overlapping or self-touching contours or a sliver, fix those and re-run.";
 
 // One sheet row: the declared expectations, then the process's checks the part did
 // not declare, volunteered.

@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { SHEET_RULES } from "../src/framework/lint/rules-sheet.js";
 import { SHEET_METRICS } from "../src/framework/process/registry.js";
-import { SHEET_CHECKS_NOTICE } from "../src/framework/oracle/verify.js";
+import { SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../src/framework/oracle/verify.js";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const guide = read("../docs/AUTHORING-PARTS.md");
@@ -75,6 +75,19 @@ test("every sheet verify hint stands alone in at most 500 characters", () => {
   for (const [name, m] of Object.entries(SHEET_METRICS)) expect(m.hint.length, name).toBeLessThanOrEqual(500);
   expect(SHEET_CHECKS_NOTICE.hint.length).toBeLessThanOrEqual(500);
   expect(SHEET_CHECKS_NOTICE.pattern).toBe("sheet-parts");
+  expect(SHEET_READ_ERROR_HINT.length).toBeLessThanOrEqual(500);
+});
+
+// A read error on a valid profile is the checker's limit, not the author's contour: the
+// hint used to call "an overlapping or self-touching contour, or a sliver" the usual cause
+// and ask for the profile to be simplified there, which sent an agent to reshape a clean
+// rounded plate. It says the part still builds, not to reshape it, and when a contour fix
+// really is the answer. One text, exported: the kit's README repeats it.
+test("the read-error hint blames the checker, not a valid profile", () => {
+  expect(SHEET_READ_ERROR_HINT).toMatch(/limit of the checker/);
+  expect(SHEET_READ_ERROR_HINT).toMatch(/do not reshape the part/);
+  expect(SHEET_READ_ERROR_HINT).toMatch(/the part still builds/);
+  expect(SHEET_READ_ERROR_HINT).not.toMatch(/is the usual cause/);
 });
 
 // The notice names what the checks actually spend time on. Asking for "fewer … rounded
