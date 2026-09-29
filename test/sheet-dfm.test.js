@@ -381,6 +381,42 @@ describe("LASER.facts", () => {
     }
   });
 
+  // A 110 × 60 plate whose top edge is a sine wave (amplitude 3, period 25, four periods
+  // from x 5, one cubic per quarter period), with an M3 hole 1 mm under a trough: a real
+  // 1 mm web on 3 mm stock (floor 1.5). The arc fit read 14 of the wave's cubics as ONE
+  // "arc" — a fit through three points collinear to float noise, radius about 1e17 — so
+  // the searched shape lost the wave, the web was not read, and a declared sheetBridge
+  // >= 1.5 passed with no warning at all.
+  const waveTop = (amp, period, periods, x0 = 5) => {
+    const n = periods * 4, dx = period / 4, k2 = (2 * Math.PI) / period, W = n * dx + 2 * x0;
+    const y = (x) => 60 + amp * Math.sin(k2 * (x - x0)), dy = (x) => amp * k2 * Math.cos(k2 * (x - x0));
+    const segments = [{ to: [W, 0] }, { to: [W, 60] }, { to: [x0 + n * dx, y(x0 + n * dx)] }];
+    for (let i = n; i > 0; i--) {
+      const a = x0 + i * dx, b = x0 + (i - 1) * dx, h3 = (b - a) / 3;
+      segments.push({ c1: [a + h3, y(a) + dy(a) * h3], c2: [b - h3, y(b) - dy(b) * h3], to: [b, y(b)] });
+    }
+    return { start: [0, 0], segments: [...segments, { to: [0, 60] }, { to: [0, 0] }] };
+  };
+  const wavePlate = plate({ profile: (kk) => kk.shape2d(waveTop(3, 25, 4)).cutAll([sheetHole({ d: 3.4, at: [23.75, 57 - 1 - 1.7] })]) });
+  test("a wavy edge is not read as one arc: the 1 mm web under a trough reads 1.03, at the web", () => {
+    const f = factsOf(wavePlate, { deadline: 1500, now: () => 0 });
+    expect(f).toMatchObject({ evaluated: true, bridgeCapped: false, readErrors: { bridge: null } });
+    expect(f.bridge).toBeGreaterThan(0.99);
+    expect(f.bridge).toBeLessThanOrEqual(1.05);
+    expect(f.at2d.bridge[0]).toBeCloseTo(23.75, 0);
+    expect(f.at2d.bridge[1]).toBeCloseTo(56.5, 0);
+  });
+  test("…and a declared sheetBridge >= 1.5 on it warns", () => {
+    const part = { meta: { title: "Wave", units: "mm" }, parameters: [], defaults: { t: 3 },
+      parts: { plate: wavePlate }, views: { v: { label: "V" } },
+      verify: { expect: { plate: { sheetBridge: ">=1.5", sheetPieces: "1" } } } };
+    const v = verify(k, part, { measureFn: (kk, pt, vw, pr, o) => measure(kk, pt, vw, pr, { ...o, now: () => 0 }) });
+    const bridge = v.warnings.filter((c) => c.metric === "sheetBridge");
+    expect(bridge).toHaveLength(1);
+    expect(bridge[0]).toMatchObject({ status: "warn", subpart: "plate" });
+    expect(bridge[0].message).toMatch(/^1\.0\d? not >= 1\.5/);
+  });
+
   // A test that finds nothing still runs its one-sided difference: a net area change
   // that reads "nothing changed" is exactly what an artifact elsewhere can fake. On a
   // cubic near-copy that difference is paper's worst case — 48 booleaned round holes took

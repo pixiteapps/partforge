@@ -193,3 +193,98 @@ test("genuine circles still recover across four orders of magnitude of radius", 
     expect(out.segments.every((s) => s.via), `r=${r} lost its arcs`).toBe(true);
   }
 });
+
+// --- a run whose fit points are collinear is not a circle --------------------
+//
+// The fit runs through a run's first, middle and last endpoints. On a sine-wave edge —
+// one cubic per quarter period — a run spanning whole periods has those three points on
+// one straight line to float noise: the fitted radius came out near 1e17, `dist − r`
+// cancelled to exactly 0 at every probe, and 14 of the wave's cubics were replaced by ONE
+// "arc" that is a straight chord. Its ±3 mm were gone from every shape built on it — the
+// laser checks' width searches read "nothing narrower than 3 mm" over a real 1 mm web
+// (test/sheet-dfm.test.js). A fit that far from its own points is refused, and a probe's
+// distance from the circle is measured without that cancellation.
+// A sine of amplitude `amp` and period `period` over `periods` periods, one Hermite cubic
+// per quarter period, run right to left as a plate's top edge runs.
+const sineWave = (amp, period, periods, x0 = 0, y0 = 60) => {
+  const n = periods * 4, dx = period / 4, k2 = (2 * Math.PI) / period;
+  const y = (x) => y0 + amp * Math.sin(k2 * (x - x0)), dy = (x) => amp * k2 * Math.cos(k2 * (x - x0));
+  const segments = [];
+  for (let i = n; i > 0; i--) {
+    const a = x0 + i * dx, b = x0 + (i - 1) * dx, h3 = (b - a) / 3;
+    segments.push({ c1: [a + h3, y(a) + dy(a) * h3], c2: [b - h3, y(b) - dy(b) * h3], to: [b, y(b)] });
+  }
+  return { start: [x0 + n * dx, y(x0 + n * dx)], segments };
+};
+test("a sine-wave edge is never read as one arc, however many periods it runs", () => {
+  for (const periods of [4, 6, 8, 500]) {
+    const out = recoverArcs(sineWave(3, 25, periods, 12.5));
+    expect(out.segments.filter((s) => s.via), `${periods} periods`).toEqual([]);
+  }
+});
+
+// What is and is not a circle. `turned(c, a)` rotates a contour about the origin, so a
+// collinear triple is collinear only to float noise, as it is on real artwork.
+const turned = (c, a) => {
+  const r = (p) => [p[0] * Math.cos(a) - p[1] * Math.sin(a), p[0] * Math.sin(a) + p[1] * Math.cos(a)];
+  return { start: r(c.start), segments: c.segments.map((s) => ({ to: r(s.to), ...(s.c1 ? { c1: r(s.c1), c2: r(s.c2) } : {}) })) };
+};
+// An arc of radius r about `c` from angle a0 sweeping `sweep`, as n cubics with the exact
+// circular handle — a run the fit must read as the circle it is.
+const circularRun = (c, r, a0, sweep, n) => {
+  const P = (a) => [c[0] + r * Math.cos(a), c[1] + r * Math.sin(a)];
+  const d = sweep / n, k = Math.abs((4 / 3) * Math.tan(d / 4) * r), s = Math.sign(d);
+  const segments = [];
+  for (let i = 0; i < n; i++) {
+    const a = a0 + i * d, b = a + d, pa = P(a), pb = P(b);
+    segments.push({ c1: [pa[0] - s * k * Math.sin(a), pa[1] + s * k * Math.cos(a)],
+      c2: [pb[0] + s * k * Math.sin(b), pb[1] - s * k * Math.cos(b)], to: pb });
+  }
+  return { start: P(a0), segments };
+};
+const circleOf = (start, arc) => arcCenterAndSweep(start, arc.via, arc.to);
+test.each([
+  ["three collinear straight cubics", { start: [0, 0], segments: [0, 1, 2].map((i) => ({ c1: [10 * i + 10 / 3, 0], c2: [10 * i + 20 / 3, 0], to: [10 * i + 10, 0] })) }],
+  ["a symmetric two-cubic S", { start: [0, 0], segments: [{ c1: [3, 4], c2: [7, 4], to: [10, 0] }, { c1: [13, -4], c2: [17, -4], to: [20, 0] }] }],
+  ["one period of a sine wave", sineWave(3, 25, 1, 0, 0)],
+  ["two periods of a shallow sine wave", sineWave(0.5, 30, 2, 0, 0)],
+])("%s stays cubic at any angle: no arc spans two of its cubics", (_, curve) => {
+  for (const a of [0, 0.3, Math.PI / 6, 1, 2.2]) {
+    const input = turned(curve, a);
+    // A single cubic may be read as the circle it is within tolerance (a shallow sine's
+    // quarter is); no ARC may run from one of the input's joints past the next.
+    const joints = [input.start, ...input.segments.map((s) => s.to)];
+    const jointOf = (p) => joints.findIndex((q) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-9);
+    const out = recoverArcs(input);
+    let from = out.start;
+    for (const s of out.segments) {
+      if (s.via) expect(jointOf(s.to) - jointOf(from), `angle ${a}`).toBe(1);
+      from = s.to;
+    }
+  }
+});
+test("a true large-radius arc is still read as its circle, exactly", () => {
+  for (const r of [5000, 1e5]) {                       // 100 mm spans: r up to 1000 × the span
+    const run = circularRun([0, -r], r, Math.PI / 2 - 50 / r, 100 / r, 4);
+    const out = recoverArcs(run);
+    expect(out.segments.every((s) => s.via), `r ${r}`).toBe(true);
+    const c = circleOf(out.start, out.segments[0]);
+    expect(c.r / r - 1, `r ${r}`).toBeLessThan(1e-9);
+    expect(Math.abs(c.center[1] + r) / r, `r ${r}`).toBeLessThan(1e-9);
+  }
+});
+test("quarter-circle Béziers from r 0.5 to 500 are read as their circles, either way round", () => {
+  for (const r of [0.5, 1, 5, 50, 500]) for (const [sweep, n] of [[Math.PI / 2, 1], [Math.PI, 2], [-Math.PI / 2, 1], [-Math.PI, 2], [1.5 * Math.PI, 3]]) {
+    const at = `r ${r}, sweep ${sweep.toFixed(2)} in ${n}`;
+    const out = recoverArcs(circularRun([3, 4], r, 0.3, sweep, n));
+    expect(out.segments.every((s) => s.via), at).toBe(true);
+    let from = out.start;
+    for (const s of out.segments) {
+      const c = circleOf(from, s);
+      expect(Math.abs(c.r - r) / r, at).toBeLessThan(2e-3);
+      expect(Math.hypot(c.center[0] - 3, c.center[1] - 4) / r, at).toBeLessThan(2e-3);
+      expect(Math.sign(c.dA), at).toBe(Math.sign(sweep));
+      from = s.to;
+    }
+  }
+});
