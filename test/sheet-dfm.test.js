@@ -231,6 +231,23 @@ describe("LASER.facts", () => {
     expect(f.readErrors.bridge).toMatch(/could not chain/);
   });
 
+  // The hole plan (which holes each width search leaves out) is reading work like the
+  // searches it feeds: a failure in it costs the bridge and gap readings, with the reason,
+  // never facts() — and so never measure()'s whole report. A ring the plan cannot walk
+  // stands in for a bug in it.
+  test("a failure planning the holes is a read error for the searches, not a lost report", () => {
+    const s = resolveSheet(k, plate({ profile: (kk) => kk.shape2d(WEB) }), P, {});
+    const broken = new Proxy(s.profile, { get(target, key) {
+      if (key === "toContours") return () => target.toContours().map((rg, i) => (i ? rg : { ...rg, holes: [...rg.holes, { start: [1, 1], segments: [null] }] }));
+      const v = Reflect.get(target, key);
+      return typeof v === "function" ? v.bind(target) : v;
+    } });
+    const f = LASER.facts({ ...s, profile: broken });
+    expect(f).toMatchObject({ evaluated: true, bridge: null, gap: null, marksOutside: 0, pieces: 1 });
+    expect(f.readErrors.bridge).toMatch(/null/);
+    expect(f.readErrors.gap).toMatch(/null/);
+  });
+
   // A hole below the floor is the laser gap check's first job. Under the sharp closing a
   // small hole used to come back as a phantom (contour-offset.js), so the closing grew it
   // instead of filling it and every such hole read "nothing narrower than 3 mm".

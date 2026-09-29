@@ -558,19 +558,21 @@ export const LASER = {
     const ceiling = 2 * widthFloor(t);
     // Each search's shape: the profile less the holes it can leave out, rebuilt from its
     // own rings — or the profile itself, when nothing is left out or the kernel has no
-    // trusted lift.
+    // trusted lift. The plan is made inside the readings that use it (and kept once made),
+    // so whatever goes wrong in it costs those readings (readErrors), never these facts.
     const lift = s.trustedShape2d;
-    const plan = lift && pieces ? holePlan(contours, ceiling) : { open: null, close: null, round: [] };
+    let planned = null;
+    const plan = () => (planned ??= lift && pieces ? holePlan(contours, ceiling) : { open: null, close: null, round: [] });
     const searchOn = (reduced) => ({
       shape: reduced ? lift(reduced) : profile, counts: countsOf(reduced ?? contours), cubics: cubicsOf(reduced ?? contours),
     });
     try {
       const errors = { bridge: null, gap: null, marks: null, marksArea: null };
       const bridge = reading(errors, "bridge", () => {
-        const search = searchOn(plan.open);
+        const search = searchOn(plan().open);
         return narrowest((w) => openingLoss(search, w, spend), ceiling, spend, (w) => testPrice(search, 1, w));
       });
-      const gap = reading(errors, "gap", () => narrowestGap(searchOn(plan.close), plan.round, ceiling, spend));
+      const gap = reading(errors, "gap", () => narrowestGap(searchOn(plan().close), plan().round, ceiling, spend));
       const m = reading(errors, "marks", () => marksFacts(s, spend));
       // A custom build is compared with profile area × thickness minus the marks'
       // removed volume (oracle/measure.js), so it needs the marks inside the cut.
