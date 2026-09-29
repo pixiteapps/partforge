@@ -27,6 +27,9 @@
 import { recoverArcs } from "../geometry/arc-fit.js";
 import { arcCenterAndSweep } from "../geometry/arc-math.js";
 import { cubicAt } from "../geometry/contour-ops.js";
+import { offsetRegions } from "../geometry/contour-offset.js";
+import { closeContourGap } from "../geometry/profile.js";
+import { KIT_OPTIONS_ERROR } from "./formats.js";
 
 // The cut order: marks first (the piece is still held by the sheet), holes before the
 // outline that frees the piece. Writers emit layers in this order.
@@ -213,4 +216,41 @@ export function canonicalDrawingKey(drawing) {
       paths: l.paths.map((p) => ({ closed: p.closed, start: pt(p.start), segments: p.segments.map(seg) })),
     })),
   });
+}
+
+const arcCount = (regions) => regions.reduce(
+  (n, rg) => n + [rg.outer, ...rg.holes].reduce((m, ring) => m + ring.segments.filter((s) => s.via).length, 0), 0);
+const holeCounts = (regions) => regions.map((rg) => rg.holes.length).sort((a, b) => a - b).join(",");
+
+// Offset the CUT regions (already refit) by +kerf/2 with round corners, so outlines grow
+// and holes shrink — the storage winding invariant (outer CCW, holes CW) makes one signed
+// offset do both (contour-offset.js). Lines and arcs offset exactly, so recovered arcs
+// stay arcs; the result is refit again for any cubic the offset produced.
+//
+// The offset engine silently DROPS a hole narrower than the offset, and merges regions
+// that grow into each other, so the before/after topology is compared and any change is
+// an options error naming the piece (design spec D.2): region count (fewer → pieces
+// joined), per-region hole counts sorted (any change → a slot closed or a mouth sealed),
+// arc count (fewer → an arc feature was consumed). `gap`, when known, is the piece's
+// narrowest opening (SheetFacts.gap) — the likeliest slot to have closed. kerf 0 returns
+// the SAME array: a zero kerf must be byte-identical to no kerf.
+export function applyKerf(regions, kerf, { label = "sheet part", gap = null } = {}) {
+  if (!(kerf > 0)) return regions;
+  const head = `${KIT_OPTIONS_ERROR} kerf ${kerf.toFixed(2)} mm`;
+  const intact = `${head} could not keep the outline of "${label}" intact — lower kerf, or set it to 0 and compensate in your laser software`;
+  let grown;
+  try {
+    grown = offsetRegions(regions, kerf / 2, { corners: "round" });
+  } catch (err) {
+    throw new Error(intact, { cause: err });
+  }
+  const out = grown.map((rg) => ({ outer: refitRing(closeContourGap(rg.outer)), holes: rg.holes.map((h) => refitRing(closeContourGap(h))) }));
+  if (out.length < regions.length) throw new Error(`${head} joins separate pieces of "${label}" — space them apart or lower kerf`);
+  if (out.length > regions.length) throw new Error(intact);
+  if (holeCounts(out) !== holeCounts(regions)) {
+    const slot = Number.isFinite(gap) ? `a ${gap.toFixed(2)} mm slot` : "a slot";
+    throw new Error(`${head} closes ${slot} in "${label}" — widen it or lower kerf`);
+  }
+  if (arcCount(out) < arcCount(regions)) throw new Error(intact);
+  return out;
 }

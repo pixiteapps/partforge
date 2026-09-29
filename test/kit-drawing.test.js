@@ -5,7 +5,7 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import {
-  refitLineRuns, refitRing, ringsOf, drawingBounds, canonicalDrawingKey, LAYER_ORDER, LAYER_KIND,
+  refitLineRuns, refitRing, ringsOf, applyKerf, drawingBounds, canonicalDrawingKey, LAYER_ORDER, LAYER_KIND,
 } from "../src/framework/export/drawing.js";
 import { arcCenterAndSweep } from "../src/framework/geometry/arc-math.js";
 import { pointsToContour, reverseContour } from "../src/framework/geometry/profile.js";
@@ -175,5 +175,50 @@ describe("canonicalDrawingKey", () => {
     other.layers[0].paths[0].segments[0].to = [11, 0];
     other.bounds = drawingBounds(other.layers);
     expect(canonicalDrawingKey(other)).not.toBe(canonicalDrawingKey(drawingAt([0, 0])));
+  });
+});
+
+const refitRegions = (regions) => regions.map((rg) => ({ outer: refitRing(rg.outer), holes: rg.holes.map(refitRing) }));
+
+describe("applyKerf", () => {
+  const plate = () => refitRegions(k.shape2d(RECT).cutAll([hole(20, 15, 5)]).toContours());
+
+  test("the outline grows and the hole shrinks by kerf/2, and the hole stays an exact circle", () => {
+    const out = applyKerf(plate(), 0.2, { label: "Front" });
+    const b = drawingBounds([{ id: "cut-outer", paths: ringsOf(out).outer.map((r) => ({ ...r, closed: true })) }]);
+    expect(b.min[0]).toBeCloseTo(-0.1, 9); expect(b.min[1]).toBeCloseTo(-0.1, 9);
+    expect(b.max[0]).toBeCloseTo(40.1, 9); expect(b.max[1]).toBeCloseTo(30.1, 9);
+    const h = ringsOf(out).holes[0];
+    expect(kinds(h)).toMatch(/^a+$/);
+    expectCircle(arcsOf(h), [20, 15], 4.9);
+    // round corners: the rectangle's four corners are now kerf/2 arcs
+    expect(arcsOf(ringsOf(out).outer[0]).map((g) => g.r)).toEqual(Array(4).fill(expect.closeTo(0.1, 9)));
+  });
+
+  test("kerf 0 returns the very same regions — byte-identical to no kerf", () => {
+    const regions = plate();
+    expect(applyKerf(regions, 0, { label: "Front" })).toBe(regions);
+  });
+
+  test("a slot the kerf closes is a named options error", () => {
+    const slotted = refitRegions(k.shape2d(RECT).cut([[10, 10], [10.15, 10], [10.15, 20], [10, 20]]).toContours());
+    expect(() => applyKerf(slotted, 0.2, { label: "Front", gap: 0.15 }))
+      .toThrow('cut kit options: kerf 0.20 mm closes a 0.15 mm slot in "Front" — widen it or lower kerf');
+    expect(() => applyKerf(slotted, 0.2, { label: "Front" }))
+      .toThrow('cut kit options: kerf 0.20 mm closes a slot in "Front" — widen it or lower kerf');
+  });
+
+  test("a mouth the kerf seals (a new hole) is the same error", () => {
+    const c = refitRegions(k.shape2d([[0, 0], [20, 0], [20, 20], [0, 20]]).cut([[5, 5], [15, 5], [15, 15], [5, 15]])
+      .cut([[9.95, 14], [10.05, 14], [10.05, 21], [9.95, 21]]).toContours());
+    expect(ringsOf(c).holes).toHaveLength(0);
+    expect(() => applyKerf(c, 0.2, { label: "Clip" })).toThrow('cut kit options: kerf 0.20 mm closes a slot in "Clip"');
+  });
+
+  test("pieces the kerf joins are a named options error", () => {
+    const two = refitRegions(k.shape2d([[0, 0], [10, 0], [10, 10], [0, 10]]).union([[10.15, 0], [20.15, 0], [20.15, 10], [10.15, 10]]).toContours());
+    expect(two).toHaveLength(2);
+    expect(() => applyKerf(two, 0.2, { label: "Feet" }))
+      .toThrow('cut kit options: kerf 0.20 mm joins separate pieces of "Feet" — space them apart or lower kerf');
   });
 });
