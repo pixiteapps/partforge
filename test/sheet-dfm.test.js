@@ -5,7 +5,7 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
 import { bootManifoldKernel } from "../src/testing.js";
-import { sheetPart, sheetHole, ringSectorProfile, slotProfile, roundedRectProfile, pieProfile } from "../src/framework/geometry/polygon.js";
+import { sheetPart, sheetHole, fingerBox, ringSectorProfile, slotProfile, roundedRectProfile, pieProfile } from "../src/framework/geometry/polygon.js";
 import { resolveSheet } from "../src/framework/sheet/resolve.js";
 import { LASER, _meter } from "../src/framework/process/laser/descriptor.js";
 import { measure } from "../src/framework/oracle/measure.js";
@@ -204,10 +204,11 @@ describe("LASER.facts", () => {
     } });
     const s = resolveSheet(k, plate({ profile: (kk) => kk.shape2d(WEB) }), P, {});
     const f = LASER.facts({ ...s, profile: refusing(s.profile), trustedShape2d: (c) => refusing(s.trustedShape2d(c)) });
-    expect(f).toMatchObject({ evaluated: true, bridge: null, bridgeCapped: false, gap: null, gapCapped: false });
-    expect(f.at2d).toMatchObject({ bridge: null, gap: null });
+    expect(f).toMatchObject({ evaluated: true, bridge: null, bridgeCapped: false });
+    expect(f.at2d.bridge).toBeNull();
     expect(f.readErrors.bridge).toBe(`${REFUSAL} (width search at 3 mm)`);
-    expect(f.readErrors.gap).toBe(`${REFUSAL} (width search at 3 mm)`);
+    // The closing changes nothing on these square holes, so it runs no difference to refuse.
+    expect(f).toMatchObject({ gap: 3, gapCapped: true, readErrors: { gap: null } });
   });
 
   // A refusal INSIDE the width search is not a finding. Counted as one, a refusal between a
@@ -572,7 +573,8 @@ describe("LASER.facts", () => {
   test("thirty booleaned holes and one narrow web: read in full, every step priced small", () => {
     const { sheet, cuts } = cutsOn(resolveSheet(k, webPlate.parts.plate, P, {}));
     const f = LASER.facts(sheet, { deadline: 100, now: () => 0 });
-    expect(cuts).toHaveLength(14);                        // every test ran its difference (2 searches × 7 widths)…
+    expect(cuts.length).toBeGreaterThan(0);               // the tests that changed something ran their difference
+    expect(cuts.length).toBeLessThan(14);                 // (2 searches × 7 widths: the rest handed back the same rings)…
     expect(Math.max(...cuts)).toBe(0);                    // …and none on a hole: all lines, both searches
     expect(f).toMatchObject({ evaluated: true, bridgeCapped: false, gapCapped: false });
     expect(f.gap).toBeGreaterThan(1.99);                  // the 2 mm slot, narrower than the 6 mm holes
@@ -599,6 +601,59 @@ describe("LASER.facts", () => {
     expect(f.gap).toBeGreaterThan(1.99);                  // the 2 mm slot
     expect(f.gap).toBeLessThanOrEqual(2.05);
     expect(Math.max(...cuts)).toBe(0);                    // every boolean on arcs and lines
+  });
+
+  // A test that finds nothing on straight edges hands back the rings it was given, cut at
+  // extra points where the miter joins meet the edges again. Ring for ring — collinear
+  // runs merged, each ring matched cyclically in the same orientation, every vertex (and
+  // every arc's centre, radius and ends) within 1e-9 mm of its twin — that is no loss, and
+  // the priced difference is not run for it: the symmetric difference lies in a 1e-9 band
+  // along the boundary, far under any region the difference could count. A finger panel
+  // with nothing narrow runs four tests and no boolean.
+  // `tests` lists every shrink-and-regrow run — its width, and whether a difference (a
+  // boolean) followed it; the difference's margin shape is an offset too, by 0.01, and is
+  // not a test. `cuts` counts the booleans.
+  const booleansOn = (sp) => {
+    const s = resolveSheet(k, sp, P, {});
+    let cuts = 0, halves = 0;
+    const tests = [];
+    const counted = (shape) => new Proxy(shape, { get(target, key) {
+      if (key === "cut") return (...a) => { cuts++; if (tests.length) tests.at(-1).diff = true; return counted(target.cut(...a)); };
+      if (key === "offset") return (d, ...a) => {
+        if (Math.abs(d) > 0.02 && halves++ % 2 === 0) tests.push({ w: 2 * Math.abs(d), diff: false });
+        return counted(target.offset(d, ...a));
+      };
+      const v = Reflect.get(target, key);
+      return typeof v === "function" ? v.bind(target) : v;
+    } });
+    const f = LASER.facts({ ...s, profile: counted(s.profile), trustedShape2d: (c) => counted(s.trustedShape2d(c)) });
+    return { f, cuts, tests };
+  };
+  test("a finger panel whose tests find nothing takes no difference", () => {
+    const box = fingerBox({ width: 160, depth: 110, height: 80, thickness: 3, clearance: 0.1 });
+    for (const panel of ["bottom", "front", "left"]) {
+      const { f, cuts, tests } = booleansOn(plate({ profile: (kk) => kk.shape2d(box[panel].outline) }));
+      expect(f, panel).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true });
+      expect(tests, panel).toHaveLength(2);                // the two ceiling tests…
+      expect(cuts, panel).toBe(0);                         // …and no boolean for either
+    }
+  });
+  // Anything that is not the same rings falls through to the difference: a chamfered
+  // corner whose short edge a test consumes regrows square, so every such test (the ceiling
+  // among them) takes its difference — and the plate still reads the web the chamfer's
+  // artifact used to hide. A test too narrow to consume the chamfer finds nothing and
+  // hands back the same rings.
+  test("…and a chamfered plate, whose corners regrow square, still takes the difference", () => {
+    const holes = [rect(10, 15, 20, 25), rect(20.8, 25 - 0.625, 30.8, 35 - 0.625)];
+    const { f, cuts, tests } = booleansOn(plate({ profile: (kk) => kk.shape2d(cornered(0.5, 1)).cut(kk.shape2d(holes[0])).cut(kk.shape2d(holes[1])) }));
+    expect(f).toMatchObject({ evaluated: true, bridgeCapped: false });
+    expect(f.bridge).toBeGreaterThan(0.79);
+    expect(f.bridge).toBeLessThanOrEqual(0.85);
+    expect(f.at2d.bridge[0]).toBeCloseTo(20.4, 0);
+    const opening = tests.slice(0, tests.findIndex((tst, i) => i > 0 && tst.w === 3));   // the bridge search's tests
+    expect(opening[0]).toMatchObject({ w: 3, diff: true });   // the ceiling: corners regrew square
+    for (const tst of opening) if (tst.w > 1.5) expect(tst.diff, `opening at ${tst.w}`).toBe(true);
+    expect(cuts).toBe(tests.filter((tst) => tst.diff).length);
   });
 
   // Prices are desktop milliseconds; the meter scales them by the pace this device has

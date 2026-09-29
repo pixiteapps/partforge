@@ -445,6 +445,102 @@ export function _meter(deadline, now) {
 // approximation slivers along curves (OFFSET_TOL, 1e-3 mm) go with it. The margin shape
 // is one offset of the searched shape, made once per search when its first difference
 // runs and priced into that difference.
+// ── no change ─────────────────────────────────────────────────────────────────
+// A test that finds nothing on straight edges and on arcs it does not cut short hands
+// back the rings it was given, cut at extra points: a miter join meets an edge again at
+// a vertex of its own, and a sharp join extends an arc along its own circle as a second
+// arc. Ring for ring — collinear line runs merged, co-circular arc runs merged, each ring
+// matched cyclically in the same orientation, every vertex and every arc's centre, radius
+// and ends within SAME_EPS of its twin — that is no loss and no gain, and the priced
+// difference is not run for it. It proves exactly what the difference would: the two
+// shapes differ only inside a SAME_EPS band along the boundary, whose regions hold at most
+// 2·SAME_EPS × their length, far under LOSS_TOL_MM2 and inside MARGIN besides. It compares
+// geometry, never a number artifacts could cancel. Anything else falls through to the
+// difference: a ring more or less, a corner regrown square, any cubic (an offset cubic
+// never comes back the same), a vertex a hair off — including every ring the offset's
+// winding resolver rebuilt, since it places arcs only as well as paper's cubic circle.
+const SAME_EPS = 1e-9;
+// A ring as its edges — { from, line } or { from, arc: { c, r, ccw } } — with runs merged,
+// or [{ circle }] for a ring that is one whole circle; null when it holds a cubic.
+function canonRing(ring) {
+  const c = asContour(ring), edges = [];
+  let from = c.start;
+  for (const seg of c.segments) {
+    if (seg.c1) return null;
+    const a = seg.via ? arcCircle(from, seg.via, seg.to) : null;
+    if (a) edges.push({ from, arc: { c: a.c, r: a.r, ccw: a.sweep > 0 }, sweep: Math.abs(a.sweep) });
+    else if (dist(from, seg.to) > SAME_EPS) edges.push({ from, line: true });
+    from = seg.to;
+  }
+  const sameCircle = (x, y) => x.arc && y.arc && dist(x.arc.c, y.arc.c) <= SAME_EPS && Math.abs(x.arc.r - y.arc.r) <= SAME_EPS && x.arc.ccw === y.arc.ccw;
+  if (edges.length && edges.every((e) => sameCircle(e, edges[0])) && Math.abs(edges.reduce((t, e) => t + e.sweep, 0) - 2 * Math.PI) < 1e-6)
+    return [{ circle: edges[0].arc }];
+  // Merge edge i+1 into edge i while it continues it: a line along the same line (its start
+  // within SAME_EPS of the chord from i's start to its end), an arc on the same circle.
+  for (let i = 0; edges.length > 1 && i < edges.length;) {
+    const j = (i + 1) % edges.length, e = edges[i], n = edges[j], end = edges[(j + 1) % edges.length].from;
+    const collinear = e.line && n.line && dist(e.from, end) > SAME_EPS
+      && Math.abs(cross2(sub2(n.from, e.from), sub2(end, e.from))) <= SAME_EPS * dist(e.from, end)
+      && dot2(sub2(n.from, e.from), sub2(end, n.from)) > 0;
+    if (collinear || (sameCircle(e, n) && e.sweep + n.sweep < 2 * Math.PI - 1e-6)) {
+      if (e.arc) e.sweep += n.sweep;
+      edges.splice(j, 1);
+      if (j < i) i--;                                   // the ring's first edge merged into its last
+    } else i++;
+  }
+  return edges;
+}
+const sameEdge = (x, y) => dist(x.from, y.from) <= SAME_EPS && !!x.line === !!y.line
+  && (x.line || (dist(x.arc.c, y.arc.c) <= SAME_EPS && Math.abs(x.arc.r - y.arc.r) <= SAME_EPS && x.arc.ccw === y.arc.ccw));
+function sameRing(x, y) {
+  if (x.length !== y.length) return false;
+  if (x[0].circle || y[0].circle) return !!(x[0].circle && y[0].circle) && dist(x[0].circle.c, y[0].circle.c) <= SAME_EPS
+    && Math.abs(x[0].circle.r - y[0].circle.r) <= SAME_EPS && x[0].circle.ccw === y[0].circle.ccw;
+  for (let k = 0; k < y.length; k++) {
+    if (dist(y[k].from, x[0].from) > SAME_EPS) continue;
+    if (x.every((e, i) => sameEdge(e, y[(k + i) % y.length]))) return true;
+  }
+  return false;
+}
+// A shape's rings in canonical form, bucketed by a key two equal rings share (their edge
+// count and first vertex rounded to 1e-6 mm, a circle's centre): a lookup that misses
+// only costs the difference. Null when a ring holds a cubic.
+const ringKey = (e) => {
+  const q = (v) => Math.round(v * 1e6);
+  if (e[0].circle) return `o${q(e[0].circle.c[0])},${q(e[0].circle.c[1])}`;
+  const v = e.reduce((m, x) => (x.from[0] < m[0] || (x.from[0] === m[0] && x.from[1] < m[1]) ? x.from : m), e[0].from);
+  return `${e.length}:${q(v[0])},${q(v[1])}`;
+};
+function canonShape(contours) {
+  const rings = new Map();
+  let count = 0;
+  for (const rg of contours) for (const ring of [rg.outer, ...rg.holes]) {
+    const e = canonRing(ring);
+    if (!e) return null;
+    const key = ringKey(e);
+    if (!rings.has(key)) rings.set(key, []);
+    rings.get(key).push(e);
+    count++;
+  }
+  return { regions: contours.length, count, rings };
+}
+// Whether `shape` is the search's own shape, ring for ring.
+function unchanged(search, shape) {
+  const mine = (search.canon ??= canonShape(search.shape.toContours()) ?? false);
+  if (!mine) return false;
+  const theirs = canonShape(shape.toContours());
+  if (!theirs || theirs.regions !== mine.regions || theirs.count !== mine.count) return false;
+  for (const [key, list] of theirs.rings) {
+    const pool = [...(mine.rings.get(key) ?? [])];
+    for (const e of list) {
+      const i = pool.findIndex((m) => sameRing(e, m));
+      if (i < 0) return false;
+      pool.splice(i, 1);
+    }
+  }
+  return true;
+}
+
 const MARGIN = 0.01;
 function oneSided(difference, spend, price) {
   spend(price);
@@ -462,12 +558,14 @@ function openingLoss(search, w, spend) {
   let opened;
   try { opened = search.shape.offset(-w / 2, SHARP).offset(w / 2, SHARP); }
   catch (e) { if (COLLAPSES.test(e?.message ?? "")) return search.shape; throw e; }
+  if (unchanged(search, opened)) return null;
   return oneSided(() => margined(search, -1).cut(opened), spend,
     marginPrice(search, -1) + diffPrice(search.counts, countsOf(opened.toContours())));
 }
 
 function closingGain(search, w, spend) {
   const closed = search.shape.offset(w / 2, SHARP).offset(-w / 2, SHARP);
+  if (unchanged(search, closed)) return null;
   return oneSided(() => closed.cut(margined(search, 1)), spend,
     marginPrice(search, 1) + diffPrice(search.counts, countsOf(closed.toContours())));
 }
