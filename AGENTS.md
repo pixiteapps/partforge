@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has eighteen: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has twenty: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -44,7 +44,8 @@ test/vector2d.test.js rather than by the part),
 relief plate, swappable source), and `laser-box.js` (the sheet-parts reference
 part - five `fingerBox` panels and a lid as `sheetPart` sub-parts, two printed
 hinges keyed into slots; a test fixture and the guide's worked example, with no
-demo page).
+demo page), and `material-swatches.js` (not a reference part: the dev-only
+contact sheet of material presets behind `materials.html`).
 
 ## Node version
 
@@ -262,7 +263,7 @@ the installed package, so let the publish finish before bumping the dep there.
   on geometry — so the pose probe keeps trusting every sheet part (an empty mark
   is dropped by matching the kernel's error text, `EMPTY_MARK_RE`). And
   `resolve.js`/`pose.js`/`constants.js`/the registry stay paper-free, since the
-  oracle will import them. Spec: partforge-cloud
+  oracle imports them (`oracle/measure.js`, `oracle/verify.js`). Spec: partforge-cloud
   `docs/superpowers/specs/2026-09-28-sheet-parts-laser-kit-design.md`.
 - **`src/parts/`** - one file per part, default-exporting a `PartDefinition`.
 - **`src/framework/ingest/`** - the asset-ingest machinery behind both the panel's
@@ -304,15 +305,20 @@ the installed package, so let the publish finish before bumping the dep there.
   message types, no error codes: apps without it must keep building.
 - **Sheet parts in the oracle.** `measure()` stamps every sub-part row with
   `sheet` — the process's 2-D facts for a `sheetPart()` sub-part (recognised by the
-  plain-data `sp.sheet` alone), else `null` — and, in a view holding a sheet part,
-  each printed row with `printBbox` (its export-pose size). `verify()` changes ONLY
-  for such a view: the profile's bed fits each printed sub-part in its print pose
-  instead of the assembled view, min wall and overhang skip sheets, and the
+  plain-data `sp.sheet` alone, `isSheetPart`, on both sides), else `null` — and, in a
+  view holding a sheet part whose profile has a bed, each printed row with `printBbox`
+  (its export-pose size; `printBboxError` when that pose throws). `verify()` changes
+  ONLY for such a view: the profile's bed fits each printed sub-part in its print pose
+  instead of the assembled view, min wall and overhang skip sheets (declared on one,
+  they skip — declared, never evaluated), and the
   process's checks (`sheetBridge`, `sheetGap`, `sheetMarks`, `sheetPieces`,
   `sheetSolidMatch`) are *volunteered* — warnings that never count toward
   `declared`/`evaluated`, so they never set `verify.ok`. The 2-D checks share
-  `SHEET_CHECK_BUDGET_MS` per `measure()` call; an overrun is one `sheetChecks`
-  warning, never a lost report. A view with no sheet part verifies
+  `SHEET_CHECK_BUDGET_MS` per `measure()` call, charged for 2-D work alone, and a
+  profile too complex to read within it is not started (the laser descriptor's cost
+  pre-gate); either way it is one `sheetChecks` warning, never a lost report. Tests
+  run the budget on a stopped clock (`measure(…, { now: () => 0 })`), never on the
+  runner's speed. A view with no sheet part verifies
   byte-identically — `test/verify-golden.test.js` pins it; re-record only for a
   deliberate verdict change (`PARTFORGE_RECORD_VERIFY_GOLDEN=1 npx vitest run
   test/verify-golden.test.js`). Timings: `docs/research/sheet-inspect-timing.md`.
