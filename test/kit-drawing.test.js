@@ -165,20 +165,25 @@ describe("refitLineRuns: a smooth curve that is not a circle is never moved (den
   });
 
   test("a long run that turns one way but fits no circle is refit in linear time", () => {
-    // 32k vertices turning 1–1.5° per step with varying step lengths: the old loop
-    // rescanned the whole in-band run from every vertex whose circle fit failed.
-    const pts = [[0, 0]];
-    let a = 0;
-    for (let i = 1; i < 32000; i++) {
-      a += ((1 + (0.5 * ((i * 7) % 11)) / 10) * Math.PI) / 180;
-      const step = 1 + 0.5 * Math.sin(i * 1.7);
-      pts.push([pts[i - 1][0] + step * Math.cos(a), pts[i - 1][1] + step * Math.sin(a)]);
-    }
-    const open = { start: pts[0], segments: pts.slice(1).map((p) => ({ to: p })) };
+    // Vertices turning 1–1.5° per step with varying step lengths: the old loop rescanned
+    // the whole in-band run from every vertex whose circle fit failed (32k: ~13 s).
+    const spiral = (n) => {
+      const pts = [[0, 0]];
+      let a = 0;
+      for (let i = 1; i < n; i++) {
+        a += ((1 + (0.5 * ((i * 7) % 11)) / 10) * Math.PI) / 180;
+        const step = 1 + 0.5 * Math.sin(i * 1.7);
+        pts.push([pts[i - 1][0] + step * Math.cos(a), pts[i - 1][1] + step * Math.sin(a)]);
+      }
+      return { pts, open: { start: pts[0], segments: pts.slice(1).map((p) => ({ to: p })) } };
+    };
+    const big = spiral(32000).open;
     const t0 = performance.now();
-    const out = refitLineRuns(open);
+    refitLineRuns(big);
     expect(performance.now() - t0).toBeLessThan(3000);
-    expect(worstVertexMove(pts, out)).toBeLessThan(0.01);
+    // and what it keeps is faithful (checked on a shorter stretch: the check is quadratic)
+    const { pts, open } = spiral(2000);
+    expect(worstVertexMove(pts, refitLineRuns(open))).toBeLessThan(0.01);
   });
 });
 
