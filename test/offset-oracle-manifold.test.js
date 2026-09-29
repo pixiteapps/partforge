@@ -396,9 +396,10 @@ describe("known divergences (parked) — Task 7C", () => {
   });
 
   // 2. A hole narrower than 2·delta vanishes under round dilation via the source-inradius
-  //    gate — and under SHARP too since the sheet-parts fix wave: a sharp dilation erodes a
-  //    hole at least as deeply as the disk (its miter reaches past the arc at the hole's
-  //    reflex corners), so the same gate is sound for it, and the oracle agrees. Chamfer's
+  //    gate — and under SHARP too since the sheet-parts fix wave: a sharp dilation whose
+  //    joins all take the miter erodes a hole at least as deeply as the disk (the miter
+  //    reaches past the arc at the hole's reflex corners), so the same gate is sound for it
+  //    (2b below is where it stops), and the oracle agrees. Chamfer's
   //    bevel removes LESS than the arc there, so the disk rule would be the wrong criterion
   //    for it; chamfer remains parked.
   const out1holeCount = (src, corners) =>
@@ -415,6 +416,33 @@ describe("known divergences (parked) — Task 7C", () => {
       const cornersGot = engineArea(src, 2, corners);
       expect(out1holeCount(src, corners), corners).toBe(0);
       expect(Math.abs(cornersGot - cornersTruth) / cornersTruth, corners).toBeLessThan(AREA_RTOL);
+    }
+  });
+
+  // 2b. NOT parked — the sharp half of case 2 has a boundary, and this pins it. The disk rule
+  //     is sound for sharp only while every join on the hole takes the miter: at a material
+  //     spike under 60° (a turn past 120°) the miter would reach past MITER_LIMIT·delta and
+  //     the engine bevels instead, and the bevel chord adds LESS material than the arc. So a
+  //     12-ray star hole whose rays leave 30° spikes between them keeps a real central pocket
+  //     (0.9–1.9 mm² here) under sharp corners after the disk has emptied it — the oracle,
+  //     built with the same miter limit, says so — and the gate must not drop it.
+  test("a star hole whose spikes take the miter-limit bevel keeps its pocket under sharp", () => {
+    const star = [];
+    for (let i = 0; i < 24; i++) {
+      const r = i % 2 ? 1.2 : 5, a = (Math.PI * i) / 12;
+      star.push([10 + r * Math.cos(a), 10 + r * Math.sin(a)]);
+    }
+    if (ringArea(star) > 0) star.reverse();                                          // CW: a hole
+    const src = [{ outer: ring([[0, 0], [20, 0], [20, 20], [0, 20]]), holes: [ring(star)] }];
+    const pts = src.map((rg) => ({ outer: pointRing(rg.outer), holes: rg.holes.map(pointRing) }));
+    for (const d of [1.3, 1.6, 2]) {
+      const out = offsetRegions(src, d, { corners: "sharp" });
+      const oracle = O.offset(pts, d, { corners: "sharp", fan: 4096 });
+      const truthRings = oracle.toPolygons();
+      oracle.delete?.();
+      expect(nativeTopology(out), `+${d}`).toEqual(ringTopology(truthRings));
+      expect(nativeTopology(out).holes, `+${d}`).toBe(1);
+      expectExact(engineArea(src, d, "sharp"), truthOf(src, d, "sharp"));
     }
   });
 

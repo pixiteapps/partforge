@@ -702,22 +702,28 @@ The currently parked limitations are narrower:
   instead of the 258.18 oracle truth under round corners; chamfer and sharp are exact.
 - **Fully eroded holes under chamfer can leave a remnant.** The source-inradius gate
   (a hole survives a positive offset only if it holds a disk of radius delta) runs for
-  round joins, whose structuring element is that disk, and for sharp ones, which erode a
-  hole at least as deeply — the miter reaches past the arc at the hole's reflex corners
-  (only the miter-limit bevel at a very acute spike keeps a sub-sliver the disk would
-  not). Without it a sharp dilation left the inverted ring as a phantom hole once delta
-  passed twice the hole's half-width. Chamfer's bevel removes less than the arc, so the
-  disk rule is the wrong criterion there: a 1×1 hole at +2 closes under round and sharp,
-  and the chamfer variant remains parked.
+  round joins, whose structuring element is that disk, and for sharp ones whose every
+  join on the hole takes the miter, which then erodes the hole at least as deeply — the
+  miter reaches past the arc at the hole's reflex corners. Without it a sharp dilation
+  left the inverted ring as a phantom hole once delta passed twice the hole's half-width.
+  A sharp hole with a spike of material under 60° is NOT gated: there the miter would
+  pass the limit, the join falls back to the bevel, and the bevel chord adds less than the
+  arc, so a real pocket survives that the disk would fill — a 12-ray star hole (rays 5,
+  spikes to 1.2) keeps 0.9–1.9 mm² at +1.3…+2, and the Minkowski oracle agrees. Such a
+  hole takes the ordinary path, which can still leave a phantom if it fully erodes.
+  Chamfer's bevel removes less than the arc at every reflex corner, so the disk rule is
+  the wrong criterion there: a 1×1 hole at +2 closes under round and sharp, and the
+  chamfer variant remains parked (four fuzz seeds at +2 are pinned exactly).
 - **Erosion can emit sub-0.001 mm² rings.** Five exact seeded cases are pinned in
   `test/offset-fuzz.test.js`. They are not automatically deleted: unlike positive
   dilation, erosion has no source-membership invariant that distinguishes a false island
   from a genuine surviving crumb.
 
-The fuzz oracle sweep covers 150 seeded shapes × 6 deltas × 3 styles and currently reports
-no region-count, hole-count, or area disagreements outside those explicit
-characterizations. Do not widen tolerances or add an area-based sliver filter when a new
-case appears; add its deterministic fixture and establish the source-domain truth first.
+The fuzz oracle sweep covers 150 seeded shapes × 7 deltas (five inward; outward, 1 and 2)
+× 3 styles and currently reports no region-count, hole-count, or area disagreements outside
+those explicit characterizations. Do not widen tolerances or add an area-based sliver
+filter when a new case appears; add its deterministic fixture and establish the
+source-domain truth first.
 ## The 2-D helper library
 
 `partforge/geometry` ships pure-JS helpers of several kinds. The **contour builders**
