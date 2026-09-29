@@ -1812,7 +1812,7 @@ pose. `build` is supplied — passing one throws, as do `kerf`, `outline`/`cut` 
 ### Cut, score and engrave
 
 - **`profile`** is the CUT layer — outline plus holes, seen from the laser face, one
-  piece. Round holes: `sheetHole({ d, at })`, an exact circle (`circleProfile` is a
+  piece. Round holes: `sheetHole({ d, at })`, an exact circle (`circlePolygon` is a
   48-gon).
 - **`score`** returns an array: an entry of exactly two `[x, y]` points is a LINE;
   anything else is a shape whose boundaries are all scored (`[[0, 0], [10, 0],
