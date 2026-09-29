@@ -10,6 +10,8 @@ import { resolveSheet } from "../src/framework/sheet/resolve.js";
 import { LASER } from "../src/framework/process/laser/descriptor.js";
 import { measure } from "../src/framework/oracle/measure.js";
 import { sheetToWorld } from "../src/framework/geometry/polygon.js";
+import { lintPart } from "../src/lint.js";
+import twelvePanel from "./fixtures/sheet-twelve-panel-part.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -190,3 +192,12 @@ test("partforge measure prints a sheet line under a sheet sub-part", () => {
   const out = execFileSync(process.execPath, ["bin/cli.js", "measure", "test/fixtures/sheet-plate-part.js", "--no-lint"], { encoding: "utf8" });
   expect(out).toContain("    sheet  birch plywood 3 mm, flat 120.0 × 80.0 mm, 1 piece\n");
 });
+
+test("the twelve-panel stress fixture: lint-clean, twelve sheet rows, no overlaps, all evaluated given time", () => {
+  expect(lintPart(twelvePanel).errors).toEqual([]);
+  const r = measure(k, twelvePanel, "kit", {}, { sheetBudgetMs: 60_000 });
+  const sheets = r.subparts.filter((s) => s.sheet);
+  expect(sheets).toHaveLength(12);
+  expect(sheets.every((s) => s.sheet.evaluated && s.sheet.pieces === 1)).toBe(true);
+  expect(r.overlaps).toEqual([]);
+}, 120_000);
