@@ -652,19 +652,21 @@ describe("LASER.facts", () => {
   // and then shrank back past their centres (2.3 s at 3 mm, 20 s at 6 mm, priced 317). The
   // searches read such a cubic as a polyline, and every step is priced for what it is.
   // `stepsOf` reads a profile on the CPU clock with the 1.5 s budget and returns every
-  // priced step that ran ({ price, ms }), the whole call's CPU time, and how much slower
-  // than the prices this machine runs (the meter's own pace, never below 1): a slower
-  // machine is allowed its pace, not a slower price.
+  // priced step that ran ({ price, ms }) and the whole call's CPU time. The limits below are
+  // ABSOLUTE CPU time, which the machine's load does not stretch. They were once scaled by
+  // a pace taken from the very steps they judged, so a lone overrun set its own allowance:
+  // with the flattening switched off, a 19.7 s step priced 77 passed. `overPrice` holds each
+  // step to 3 × its price: the prices are desktop-Node milliseconds and no calibration step
+  // ran past 0.93 of its price, so 3 × leaves a machine three times slower room, and a step
+  // in the spike class runs tens to hundreds of times its price.
   const stepsOf = (sp, params) => {
     const s = resolveSheet(k, sp, params, {});
     const steps = [];
     const t0 = cpuMs();
     const f = LASER.facts(s, { deadline: cpuMs() + 1500, now: cpuMs, onStep: (st) => steps.push(st) });
-    const ms = cpuMs() - t0;
-    const big = steps.filter((st) => st.price >= 20).map((st) => st.ms / st.price).sort((a, b) => a - b);
-    return { f, steps, ms, pace: Math.max(1, big[Math.floor(big.length / 2)] ?? 1) };
+    return { f, steps, ms: cpuMs() - t0 };
   };
-  const overPrice = ({ steps, pace }) => steps.filter((st) => st.ms > 1.5 * st.price * pace + 25);
+  const overPrice = (steps) => steps.filter((st) => st.ms > 3 * st.price + 25);
   const ellCorners = (t, q, sx) => plate({ profile: (kk) => kk.shape2d(rect(0, 0, 100 / sx, 60)).fillet(q * (t / 2) * sx).scale([sx, 1])
     .cutAll([[8, 8], [92, 8], [92, 52], [8, 52]].map((at) => sheetHole({ d: 3.4, at }))) });
   // The two tightest (0.1 and 0.15 × w/2) are cut into many more lines, since no piece turns
@@ -672,14 +674,16 @@ describe("LASER.facts", () => {
   test("elliptical corners a test carries into the slow band are read, in 100 ms of CPU (400 for the tightest)", () => {
     for (const [t, q, sx, cap] of [[3, 0.95, 1.3, 100], [3, 1.1, 1.3, 100], [3, 1.3, 1.3, 100], [6, 1, 1.3, 100], [6, 0.1, 1.6, 400], [6, 0.15, 1.6, 400]]) {
       const at = `${t} mm, rMin ${q} × w/2, x ${sx}`;
-      const { f, ms, ...run } = stepsOf(ellCorners(t, q, sx), { t });
+      const { f, ms, steps } = stepsOf(ellCorners(t, q, sx), { t });
       expect(f, at).toMatchObject({ evaluated: true, bridgeCapped: true, readErrors: { bridge: null, gap: null } });
       expect(f.gap, at).toBeCloseTo(t > 3.4 ? 3.4 : t, 6);           // the M3 hole, where the ceiling allows
       expect(ms, at).toBeLessThan(cap);
-      expect(overPrice(run), at).toEqual([]);
+      expect(overPrice(steps), at).toEqual([]);
     }
   });
-  test("a row of six booleaned 2 × 8 mm ovals is read or withheld inside the budget, no step past its price", () => {
+  // With every piece of their tips turning at most 4° (below), the ovals' first test is
+  // priced past the budget, and they are withheld at once.
+  test("a row of six booleaned 2 × 8 mm ovals is read or withheld inside the budget: no step past 3 × its price or 1 s", () => {
     const ovals = (pitch) => plate({ profile: (kk) => {
       let s = kk.shape2d(rect(0, 0, 40 + 6 * pitch, 40));
       for (let i = 0; i < 6; i++) s = s.cut(kk.shape2d(slotProfile(0, 1)).scale([1, 4]).translate([20 + i * pitch, 20]));
@@ -687,11 +691,11 @@ describe("LASER.facts", () => {
     } });
     for (const [t, pitch] of [[3, 4.4], [3, 8], [6, 6.8]]) {
       const at = `${t} mm, pitch ${pitch}`;
-      const { f, ms, steps, pace } = stepsOf(ovals(pitch), { t });
+      const { f, ms, steps } = stepsOf(ovals(pitch), { t });
       expect(steps.length, at).toBeGreaterThan(0);
-      expect(overPrice({ steps, pace }), at).toEqual([]);
-      expect(Math.max(...steps.map((st) => st.ms)), at).toBeLessThan(1000 * pace);   // was 2.3 s and 20 s
-      expect(ms, at).toBeLessThan(1500 * pace + 100);
+      expect(overPrice(steps), at).toEqual([]);
+      expect(Math.max(...steps.map((st) => st.ms)), at).toBeLessThan(1000);   // was 2.3 s and 20 s
+      expect(ms, at).toBeLessThan(2000);
       if (!f.evaluated) expect(f, at).toMatchObject({ bridge: null, gap: null });  // withheld: verify's notice
       else expect(f.readErrors, at).toEqual({ bridge: null, gap: null, marks: null, marksArea: null });
     }
@@ -720,9 +724,9 @@ describe("LASER.facts", () => {
   });
   // …and across #233's exact-curve helpers and ellipses, booleaned as holes and as panels,
   // at radii that put their curves on both sides of every band, on 2–6 mm stock: no step
-  // costs more than 1.5 × its price (at this machine's pace), and no reading takes more
-  // than the budget.
-  test("across #233's helpers and ellipses, at every radius and stock, no step costs more than 1.5 × its price", () => {
+  // costs more than 3 × its price or 1.5 s of CPU, and no reading more than 2 s (the budget
+  // and one step's overrun). The largest step here is about 0.7 s, the slowest reading 1 s.
+  test("across #233's helpers and ellipses, at every radius and stock, no step costs more than 3 × its price or 1.5 s", () => {
     const P100 = (kk) => kk.shape2d(rect(0, 0, 100, 80));
     const shapes = {
       ellipse: (r) => (kk) => P100(kk).cut(kk.shape2d(slotProfile(0, r)).scale([1.7, 1]).translate([50, 40])),
@@ -735,8 +739,8 @@ describe("LASER.facts", () => {
     const failures = [];
     for (const [name, make] of Object.entries(shapes)) for (const r of [0.4, 1.2, 3, 8]) for (const t of [2, 3, 6]) {
       const run = stepsOf(plate({ profile: make(r) }), { t });
-      const over = overPrice(run);
-      if (over.length || run.ms > 1500 * run.pace + 100) failures.push(`${name} r ${r}, ${t} mm: ${run.ms.toFixed(0)} ms, over ${JSON.stringify(over)}`);
+      const over = [...new Set([...overPrice(run.steps), ...run.steps.filter((st) => st.ms > 1500)])];
+      if (over.length || run.ms > 2000) failures.push(`${name} r ${r}, ${t} mm: ${run.ms.toFixed(0)} ms, over ${JSON.stringify(over)}`);
     }
     expect(failures).toEqual([]);
   });
