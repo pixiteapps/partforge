@@ -29,18 +29,39 @@ const escapeXml = (s) => String(s)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 
+// Every IR arc is written as ceil(|dA| / 90°) equal pieces about the IR's own centre.
+// An `A` command carries no centre: a reader rebuilds it from the radius and the two
+// ends (SVG 1.1 F.6.5), at sqrt(r² − (chord/2)²) from the chord — and at 180° that
+// root is of a number near zero, so the 4-decimal rounding of r and both ends moves the
+// centre by ~sqrt(2·r·1e-4): a quarter of a millimetre-scale error on an ordinary hole,
+// and exactly what the refit makes (a faceted circle comes back as two 180° arcs). At
+// 90° or less the rebuild is well conditioned and lands within ~1e-4 mm. The pieces'
+// inner ends come from the centre and angle, never from a rounded neighbour; the last
+// one is the IR's own `to`.
+const QUARTER = Math.PI / 2;
+function arcCommands(from, s, P) {
+  const g = arcCenterAndSweep(from, s.via, s.to);   // drawing frame: the turn keeps dA's sign
+  if (!g) return ` L${P(s.to)}`;                     // collinear "arc": a straight line
+  const n = Math.max(1, Math.ceil(Math.abs(g.dA) / QUARTER - 1e-9));
+  const a0 = Math.atan2(from[1] - g.center[1], from[0] - g.center[0]);
+  const step = g.dA / n;
+  let d = "";
+  for (let i = 1; i <= n; i++) {
+    const t = a0 + step * i;
+    const to = i === n ? s.to : [g.center[0] + g.r * Math.cos(t), g.center[1] + g.r * Math.sin(t)];
+    d += ` A${num(g.r)} ${num(g.r)} 0 ${Math.abs(step) > Math.PI ? 1 : 0} ${step > 0 ? 0 : 1} ${P(to)}`;
+  }
+  return d;
+}
+
 function pathData(path, place, H) {
   const P = (p) => { const [x, y] = place(p); return `${num(x)} ${num(H - y)}`; };
   let d = `M${P(path.start)}`;
   let from = path.start;
   for (const s of path.segments) {
     if (s.c1) d += ` C${P(s.c1)} ${P(s.c2)} ${P(s.to)}`;
-    else if (s.via) {
-      const g = arcCenterAndSweep(from, s.via, s.to);   // drawing frame: the turn keeps dA's sign
-      d += g
-        ? ` A${num(g.r)} ${num(g.r)} 0 ${Math.abs(g.dA) > Math.PI ? 1 : 0} ${g.dA > 0 ? 0 : 1} ${P(s.to)}`
-        : ` L${P(s.to)}`;                                // collinear "arc": a straight line
-    } else d += ` L${P(s.to)}`;
+    else if (s.via) d += arcCommands(from, s, P);
+    else d += ` L${P(s.to)}`;
     from = s.to;
   }
   return path.closed ? `${d} Z` : d;

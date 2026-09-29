@@ -87,30 +87,52 @@ describe("paint", () => {
 });
 
 describe("geometry, read back and un-flipped", () => {
-  test("an arc over 180° keeps its centre, radius and sweep — large-arc 1, sweep flag 0 for CCW", () => {
+  test("an arc over 180° is written as quarter arcs that keep its centre, radius and sweep — sweep flag 0 for CCW", () => {
     const text = renderSvg(sheet(pacman(), { at: [5, 5] }));   // bounds.min (10, 10) lands on (5, 5)
     const svg = parseSvg(text);
     const sub = svg.groups[0].paths[0].subpaths[0];
-    const arc = sub.segs[1];
-    expect(arc).toMatchObject({ cmd: "A", large: 1, sweep: 0 });
-    const g = arcGeometry(sub.segs[0].to, arc, svg.height);
-    expect(g.center[0]).toBeCloseTo(15, 4);
-    expect(g.center[1]).toBeCloseTo(15, 4);
-    expect(g.r).toBeCloseTo(10, 4);
-    expect(g.dA).toBeCloseTo((3 * Math.PI) / 2, 4);
+    // line, three 90° pieces of the one 270° IR arc, line
+    expect(sub.segs.map((s) => s.cmd)).toEqual(["L", "A", "A", "A", "L"]);
+    let from = sub.segs[0].to, total = 0;
+    for (const arc of sub.segs.slice(1, 4)) {
+      expect(arc).toMatchObject({ cmd: "A", large: 0, sweep: 0 });
+      const g = arcGeometry(from, arc, svg.height);
+      expect(g.center[0]).toBeCloseTo(15, 4);
+      expect(g.center[1]).toBeCloseTo(15, 4);
+      expect(g.r).toBeCloseTo(10, 4);
+      expect(g.dA).toBeCloseTo(Math.PI / 2, 4);
+      total += g.dA;
+      from = arc.to;
+    }
+    expect(total).toBeCloseTo((3 * Math.PI) / 2, 4);
     expect(ringArea(sub, svg.height)).toBeCloseTo(75 * Math.PI, 3);
   });
 
   test("a clockwise hole arc writes sweep flag 1 and reads back on its circle", () => {
     const svg = parseSvg(renderSvg(sheet(plate())));
     const sub = svg.groups.find((g) => g.attrs.id === "cut-inner").paths[0].subpaths[0];
-    expect(sub.segs.map((s) => [s.large, s.sweep])).toEqual([[0, 1], [0, 1]]);
+    // two 180° IR arcs, each written as two quarters: no written arc is near 180°
+    expect(sub.segs.map((s) => [s.large, s.sweep])).toEqual([[0, 1], [0, 1], [0, 1], [0, 1]]);
     let from = sub.start;
     for (const s of sub.segs) {
       const g = arcGeometry(from, s, svg.height);
       expect(g.center[0]).toBeCloseTo(20, 4); expect(g.center[1]).toBeCloseTo(15, 4); expect(g.r).toBeCloseTo(5, 4);
-      expect(g.dA).toBeCloseTo(-Math.PI, 4);
+      expect(g.dA).toBeCloseTo(-Math.PI / 2, 4);
       from = s.to;
+    }
+  });
+
+  test("a written arc never spans more than 90°, and a small one is written whole", () => {
+    // 100° → two 50° pieces; 90° → one piece; the final end is the IR's own `to`.
+    const arcAt = (deg) => {
+      const t = (deg * Math.PI) / 180;
+      return makeDrawing({ "cut-outer": [closed([0, 0], [{ to: [10, 0] },
+        { to: [10 * Math.cos(t), 10 * Math.sin(t)], via: [10 * Math.cos(t / 2), 10 * Math.sin(t / 2)] }, { to: [0, 0] }])] });
+    };
+    for (const [deg, pieces] of [[100, 2], [90, 1], [45, 1], [359, 4]]) {
+      const svg = parseSvg(renderSvg(sheet(arcAt(deg), { size: [30, 30], at: [10, 10] })));
+      const segs = svg.groups[0].paths[0].subpaths[0].segs;
+      expect(segs.filter((s) => s.cmd === "A"), `${deg}°`).toHaveLength(pieces);
     }
   });
 
