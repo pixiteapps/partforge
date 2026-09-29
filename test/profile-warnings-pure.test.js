@@ -8,7 +8,7 @@ import {
   makeProfileWarner, profileWarningMessages, sampledArcMessages, worstSampledArc, SAMPLED_ARC_MAX_PER_BUILD,
 } from "../src/framework/geometry/profile-warnings.js";
 import {
-  pathProfile, ringSectorPolygon, ringSectorProfile, circleProfile, slotPolygon,
+  pathProfile, ringSectorPolygon, ringSectorProfile, circlePolygon, circleProfile, slotPolygon,
   roundedRectPolygon, regularPolygon, starPolygon, offsetPolygon,
 } from "../src/framework/geometry/polygon.js";
 import { createValidatingProbe, runValidatingProbe } from "../src/framework/geometry/probe.js";
@@ -161,17 +161,17 @@ describe("sampledArcMessages", () => {
       "prism: profile traces an arc in straight facets (radius ≈ 30.0 mm, 9.0° per facet, up to 0.09 mm " +
       "inside the true curve) — a point list is built and exported exactly as written, so a print shows " +
       "those facets. Build curves with the *Profile helpers (ringSectorProfile, slotProfile, pieProfile, " +
-      "roundedRectProfile, roundedProfile) or pathProfile().arcTo(…) — the kernel facets those, finer at export.");
+      "roundedRectProfile, circleProfile, roundedProfile) or pathProfile().arcTo(…) — the kernel facets those, finer at export.");
   });
 
-  it("reports a large circleProfile, a slot and rounded-rect corners past the threshold", () => {
-    expect(sampledArcMessages("extrude: profile", circleProfile(30))).toHaveLength(1);         // 48-gon, 0.064 mm
+  it("reports a large circlePolygon, a slot and rounded-rect corners past the threshold", () => {
+    expect(sampledArcMessages("extrude: profile", circlePolygon(30))).toHaveLength(1);         // 48-gon, 0.064 mm
     expect(sampledArcMessages("extrude: profile", slotPolygon(40, 15))).toHaveLength(1);       // 16 per half
     expect(sampledArcMessages("extrude: profile", roundedRectPolygon(80, 60, 20))).toHaveLength(1);
   });
 
   it("finds a sampled arc in a hole of a region", () => {
-    const region = { outer: [[-50, -50], [50, -50], [50, 50], [-50, 50]], holes: [circleProfile(30)] };
+    const region = { outer: [[-50, -50], [50, -50], [50, 50], [-50, 50]], holes: [circlePolygon(30)] };
     expect(sampledArcMessages("extrude: profile", region)).toHaveLength(1);
   });
 
@@ -179,7 +179,8 @@ describe("sampledArcMessages", () => {
     for (const quiet of [
       regularPolygon(6, 40),               // hexagon: 60° turns
       regularPolygon(12, 40),              // 30° turns, still a polygon
-      circleProfile(5),                    // a 48-gon hole of 5 mm: 0.011 mm off round
+      circlePolygon(5),                    // a 48-gon hole of 5 mm: 0.011 mm off round
+      circleProfile(40),                   // an exact circle: the kernel facets it
       ringSectorPolygon(4, 6, 90),         // small radius
       ringSectorPolygon(28, 30, 20),       // two facets per arc: too short a run to call
       loop(30, 40, 1.5),                   // a dense hand loop: 0.0005 mm
@@ -218,7 +219,7 @@ describe("sampled arcs survive the noise real point lists carry (review of 0.131
   it("coordinates rounded to 0.01 mm are still recognised", () => {
     expect(worstSampledArc(round(ringSectorPolygon(28, 30, 36), 3))?.stepDeg).toBeCloseTo(9, 1);
     expect(worstSampledArc(round(ringSectorPolygon(28, 30, 36), 2))?.stepDeg).toBeCloseTo(9, 0);
-    expect(worstSampledArc(round(circleProfile(40), 2))?.stepDeg).toBeCloseTo(7.5, 0);
+    expect(worstSampledArc(round(circlePolygon(40), 2))?.stepDeg).toBeCloseTo(7.5, 0);
   });
 
   it("a clearance-offset lug (trimmed end facets) is still recognised", () => {

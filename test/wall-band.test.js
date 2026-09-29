@@ -7,7 +7,7 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import { minWall } from "../src/framework/oracle/min-wall.js";
-import { circleProfile } from "../src/framework/geometry/polygon.js";
+import { circlePolygon } from "../src/framework/geometry/polygon.js";
 import { partWallBands, partGatesMinWall } from "../src/framework/oracle/gates.js";
 import { measure } from "../src/framework/oracle/measure.js";
 import { verify } from "../src/framework/oracle/verify.js";
@@ -18,13 +18,13 @@ beforeAll(async () => { k = await bootManifoldKernel(); });
 const C = [6, 12];
 // Everything on the wall's side of the OUTER boundary (outer corner rounded r=4 about C).
 const outerRegion = (kk) => kk.shape2d([[0, 8], [6, 8], [10, 12], [10, 20], [0, 20]])
-  .union(kk.shape2d(circleProfile(4, C, 128)));
+  .union(kk.shape2d(circlePolygon(4, C, 128)));
 // The pocket: inner corner rounded r=2 about C (concentric) …
 const pocketConcentric = (kk) => kk.shape2d([[0, 10], [6, 10], [8, 12], [8, 20], [0, 20]])
-  .union(kk.shape2d(circleProfile(2, C, 128)));
+  .union(kk.shape2d(circlePolygon(2, C, 128)));
 // … or r=3.5 about C' = (4.5, 13.5), tangent to the same two faces (the bug).
 const pocketOffset = (kk) => kk.shape2d([[0, 10], [4.5, 10], [8, 13.5], [8, 20], [0, 20]])
-  .union(kk.shape2d(circleProfile(3.5, [4.5, 13.5], 128)));
+  .union(kk.shape2d(circlePolygon(3.5, [4.5, 13.5], 128)));
 const lWall = (kk, concentric) => outerRegion(kk).cut(concentric ? pocketConcentric(kk) : pocketOffset(kk)).extrude({ h: 10 });
 
 test("minWall without a band is unchanged and reports band: null", () => {

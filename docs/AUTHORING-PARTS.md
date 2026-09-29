@@ -1501,7 +1501,8 @@ in STEP. Use these for every round outline that shows or fits:
 ring is a region with a hole: extrude `{ outer, holes }` or cut an inner cylinder from an outer
 one), `pieProfile(tipR,arcDeg)` (a sector from the origin), `slotProfile(length,r)` (overall
 length = `length + 2r`; `length` 0 is a circle), `roundedRectProfile(w,h,r)` (r clamped to
-min(w,h)/2), `roundedProfile(points,r)` (round any polygon's corners), and `pathProfile()`.
+min(w,h)/2), `circleProfile(r, center?)` (a circle), `roundedProfile(points,r)` (round any
+polygon's corners), and `pathProfile()`.
 
 *Straight edges* — CCW point arrays, built and exported exactly as written:
 `regularPolygon(n,r,{flat})`, `hexPolygon(r)`, `starPolygon(points,outerR,innerR)`,
@@ -1509,14 +1510,13 @@ min(w,h)/2), `roundedProfile(points,r)` (round any polygon's corners), and `path
 `circlePolygon(r, center?, segs = 48)` — a circle as a fixed point list, for a deliberately
 faceted circle or point math of your own (mapping, indexing, spreading its points).
 
-*Circles.* `circleProfile(r, center?)` is the circle to hand to an op — `prism`, an `extrude`
-outline or hole, `k.shape2d`, `revolve`, `hull`, `loft`, `sweep`. **It is in transition**:
-today it returns the same 48 points as `circlePolygon`, and a coming release turns it into an
-exact curve like the other `*Profile` helpers. So pass it straight to an op and **never map,
-index or spread its result — use `circlePolygon` for that**. Until then, an exact circle in a
-2-D profile is `slotProfile(0, r)`. For a round SOLID use `k.cylinder` (a prism of 48 points is
-a 48-sided prism, never refined at export), and **use `k.torus({ rMajor, rMinor })` for a
-torus** — the primitive keeps real TORUS faces in STEP.
+*Circles.* `circleProfile(r, center?)` is an exact circle, like the other `*Profile` helpers:
+hand it to any op — `prism`, an `extrude` outline or hole, `k.shape2d`, `revolve`, `hull`,
+`loft`, `sweep` (sweep and `offsetPolygon` sample it at 48 points). It is a path contour, not
+an array, so for point math of your own use `circlePolygon`. (Before partforge 0.132 it
+returned `circlePolygon`'s points; it takes no `segs`.) For a round SOLID use `k.cylinder`,
+and **use `k.torus({ rMajor, rMinor })` for a torus** — the primitive keeps real TORUS faces
+in STEP.
 
 **Patterns** (return `Solid[]` — feed to `k.union(...)` for features or `s.cutAll(...)` for holes):
 `linearPattern(solid, count, [dx,dy,dz])`, `circularPattern(solid, count, { center, axis, angle, rotateCopies })`.

@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import {
   roundedRectPolygon, regularPolygon, ellipsePolygon,
-  slotPolygon, starPolygon, ringSectorPolygon, circleProfile,
+  slotPolygon, starPolygon, ringSectorPolygon, circleProfile, circlePolygon,
   roundedProfile, filletPolygon, pathProfile,
 } from "../src/framework/geometry/polygon.js";
 import { tessellateProfile, tessellateContour, normalizeProfile, isPathContour, sampleBezier } from "../src/framework/geometry/profile.js";
@@ -65,24 +65,44 @@ test("ringSectorPolygon rejects a full 360 ring", () => {
   expect(() => ringSectorPolygon(5, 10, 360)).toThrow(/< 360/);
 });
 
-test("circleProfile: CCW, segs points, all at radius r about center", () => {
-  const c = circleProfile(5, [10, 0], 32);
+test("circlePolygon: CCW, segs points, all at radius r about center", () => {
+  const c = circlePolygon(5, [10, 0], 32);
   expect(c.length).toBe(32);
   expect(signedArea(c)).toBeGreaterThan(0);
   for (const [x, y] of c) expect(Math.hypot(x - 10, y - 0)).toBeCloseTo(5, 6);
 });
 
-test("circleProfile spans 2r centered on `center`", () => {
-  const b = bbox(circleProfile(5, [10, 0]));
+test("circlePolygon spans 2r centered on `center`", () => {
+  const b = bbox(circlePolygon(5, [10, 0]));
   expect(b.w).toBeCloseTo(10, 6);
   expect(b.h).toBeCloseTo(10, 6);
 });
 
-test("circleProfile defaults center to origin and rejects r <= 0", () => {
-  const c = circleProfile(3);
+test("circlePolygon defaults center to origin and rejects r <= 0", () => {
+  const c = circlePolygon(3);
   for (const [x, y] of c) expect(Math.hypot(x, y)).toBeCloseTo(3, 6);
+  expect(() => circlePolygon(0)).toThrow(/r must be/);
+  expect(() => circlePolygon(-1)).toThrow(/r must be/);
+});
+
+// circleProfile is an exact curve since 0.132 (it was circlePolygon's points before).
+test("circleProfile is an exact two-arc circle starting at angle 0, CCW", () => {
+  const c = circleProfile(5, [10, 0]);
+  expect(isPathContour(c)).toBe(true);
+  expect(c.start).toEqual([15, 0]);
+  expect(c.segments).toEqual([{ to: [5, 0], via: [10, 5] }, { to: [15, 0], via: [10, -5] }]);
+  const ring = tessellateContour(c, 4096);
+  expect(signedArea(ring)).toBeCloseTo(Math.PI * 25, 3);
+  const b = bbox(ring);
+  expect(b.w).toBeCloseTo(10, 6);
+  expect(b.h).toBeCloseTo(10, 6);
+});
+
+test("circleProfile rejects r <= 0 and refuses the point list's segs by name", () => {
   expect(() => circleProfile(0)).toThrow(/r must be/);
   expect(() => circleProfile(-1)).toThrow(/r must be/);
+  expect(() => circleProfile(5, [0, 0], 32)).toThrow(/takes no segs — use circlePolygon/);
+  expect(() => circleProfile(5, [0, 0], undefined)).not.toThrow();
 });
 
 // ── roundedProfile (arc-aware sibling of filletPolygon) ─────────────────────────

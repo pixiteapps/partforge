@@ -23,7 +23,7 @@ import type {
   Solid,
   SubPartDefinition,
 } from "partforge";
-import { circleProfile, offsetPolygon, pathProfile, roundedProfile, roundedRectPolygon, circularPattern } from "partforge/geometry";
+import { circleProfile, circlePolygon, ringSectorProfile, offsetPolygon, pathProfile, roundedProfile, roundedRectPolygon, circularPattern } from "partforge/geometry";
 import type { ArcContour, Region2D } from "partforge/geometry";
 import { resolveDerived } from "partforge/derive";
 import { lintPart, RULES } from "partforge/lint";
@@ -368,7 +368,11 @@ body.shell({ t: 2 });
 // 5. partforge/geometry.
 // ---------------------------------------------------------------------------
 
-expectType<number[][]>(circleProfile(4, [1, 2], 64));
+expectType<number[][]>(circlePolygon(4, [1, 2], 64));
+expectType<ArcContour>(circleProfile(4, [1, 2]));
+// @ts-expect-error - an exact circle takes no segs; circlePolygon is the faceted one
+circleProfile(4, [1, 2], 64);
+expectType<ArcContour>(ringSectorProfile(28, 30, 36));
 expectType<ArcContour>(roundedProfile([[0, 0], [10, 0], [10, 10]], [2, 0, 2]));
 expectType<ArcContour>(pathProfile([0, 0]).lineTo([20, 0]).arcTo([20, 8], [22, 4]).cubicTo([0, 8], [14, 16], [6, 16]).close());
 expectType<number[][]>(offsetPolygon(roundedRectPolygon(20, 10, 2), -1, { corners: "sharp" }));

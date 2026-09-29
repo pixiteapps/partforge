@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { liftLoftRings, classifyLoftRings, loftRingsKey } from "../src/framework/geometry/loft-rings.js";
-import { roundedProfile, regularPolygon, circleProfile } from "../src/framework/geometry/polygon.js";
+import { roundedProfile, regularPolygon, circlePolygon } from "../src/framework/geometry/polygon.js";
 import { pointsToContour } from "../src/framework/geometry/profile.js";
 
 const SQ = [[-5, -5], [5, -5], [5, 5], [-5, 5]];
@@ -166,7 +166,7 @@ test("matched tessellation: cubic (Bézier) contour at two scales → equal N, c
 import { resampleTessellation } from "../src/framework/geometry/loft-rings.js";
 
 test("resample: square → circle rings come out equal-N, CCW, seam on the +X axis", () => {
-  const lifted = liftLoftRings([{ polygon: SQ, z: 0 }, { polygon: circleProfile(4), z: 9 }]);
+  const lifted = liftLoftRings([{ polygon: SQ, z: 0 }, { polygon: circlePolygon(4), z: 9 }]);
   const [sq, ci] = resampleTessellation(lifted);
   expect(sq.length).toBe(ci.length);
   // seams: first sample of each ring sits on its +X ray from centroid (y ≈ 0 for both)
@@ -180,7 +180,7 @@ test("resample: square → circle rings come out equal-N, CCW, seam on the +X ax
 });
 
 test("resample: the square's four corners survive exactly (corner snapping)", () => {
-  const lifted = liftLoftRings([{ polygon: SQ, z: 0 }, { polygon: circleProfile(4), z: 9 }]);
+  const lifted = liftLoftRings([{ polygon: SQ, z: 0 }, { polygon: circlePolygon(4), z: 9 }]);
   const [sq] = resampleTessellation(lifted);
   for (const [cx, cy] of SQ)
     expect(sq.some(([x, y]) => x === cx && y === cy)).toBe(true);
@@ -196,7 +196,7 @@ test("resample: N is the max ring vertex count", () => {
 
 test("resample: CW input ring is normalized CCW before resampling", () => {
   const CW = [[-5, -5], [-5, 5], [5, 5], [5, -5]];
-  const lifted = liftLoftRings([{ polygon: CW, z: 0 }, { polygon: circleProfile(4), z: 9 }]);
+  const lifted = liftLoftRings([{ polygon: CW, z: 0 }, { polygon: circlePolygon(4), z: 9 }]);
   const [sq] = resampleTessellation(lifted);
   const area = (ring) => ring.reduce((a, [x, y], i) => { const [nx, ny] = ring[(i + 1) % ring.length]; return a + x * ny - nx * y; }, 0) / 2;
   expect(area(sq)).toBeGreaterThan(0);
@@ -250,7 +250,7 @@ test("resolveLoftRings: an all-point-list ring set stays untouched even with a C
 });
 
 test("resolveLoftRings: resample mode has equal-N pts2d and null contours", () => {
-  const { mode, resolved } = resolveLoftRings([{ polygon: SQ, z: 0 }, { polygon: circleProfile(4), z: 9 }]);
+  const { mode, resolved } = resolveLoftRings([{ polygon: SQ, z: 0 }, { polygon: circlePolygon(4), z: 9 }]);
   expect(mode).toBe("resample");
   expect(resolved[0].pts2d.length).toBe(resolved[1].pts2d.length);
   expect(resolved[0].contour).toBeNull();
@@ -260,8 +260,8 @@ test("resample: corner snapping respects contest rule (closer corner wins via sn
   // Construct a contested case: two corners competing for one sample position.
   // Use a simple 2-ring loft where the resampled ring passes between two corners.
   // The smaller (closer) circle's point should claim the sample over the larger one.
-  const smallCircle = circleProfile(1);         // circle, radius 1
-  const largeCircle = circleProfile(3);         // circle, radius 3
+  const smallCircle = circlePolygon(1);         // circle, radius 1
+  const largeCircle = circlePolygon(3);         // circle, radius 3
   const lifted = liftLoftRings([{ polygon: smallCircle, z: 0 }, { polygon: largeCircle, z: 9 }]);
   const [small, large] = resampleTessellation(lifted);
   expect(small.length).toBe(large.length);
@@ -320,7 +320,7 @@ test("curve-mode shading provenance: a tangent-only contour (rounded square) is 
 });
 
 test("resample-mode shading provenance: square→circle sectors split at the snapped corners", () => {
-  const { mode, shading } = resolveLoftRings([{ polygon: SQ, z: 0 }, { polygon: circleProfile(4), z: 8 }]);
+  const { mode, shading } = resolveLoftRings([{ polygon: SQ, z: 0 }, { polygon: circlePolygon(4), z: 8 }]);
   expect(mode).toBe("resample");
   expect(new Set(shading.sectorOf).size).toBe(4);          // one sector per square corner span
   expect(shading.sectorSmooth.every((s) => s === true)).toBe(true); // gentle interior turns on both rings

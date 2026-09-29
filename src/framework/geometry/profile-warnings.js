@@ -100,7 +100,7 @@ const NOISE_MM = 0.01;
 const SAMPLED_ARC_COACH =
   "a point list is built and exported exactly as written, so a print shows those facets. " +
   "Build curves with the *Profile helpers (ringSectorProfile, slotProfile, pieProfile, " +
-  "roundedRectProfile, roundedProfile) or pathProfile().arcTo(…) — the kernel facets those, finer at export.";
+  "roundedRectProfile, circleProfile, roundedProfile) or pathProfile().arcTo(…) — the kernel facets those, finer at export.";
 
 // The worst sampled-arc run in one closed point ring, or null.
 // → { r, stepDeg, sag } for the run with the largest chord sagitta.

@@ -71,12 +71,12 @@ export function ringSectorPolygon(innerR: number, outerR: number, arcDeg: number
 export function circlePolygon(r: number, center?: Point2, segs?: number): PointsContour;
 
 /**
- * A circle for passing to a kernel op (prism, extrude outline or hole, shape2d, revolve,
- * hull, loft, sweep). Transitional: today it returns exactly `circlePolygon`'s 48 points,
- * and partforge 0.132 turns it into an exact curve like the other `*Profile` helpers —
- * so never map, index or spread its result; use `circlePolygon` for point math.
+ * An exact circle of radius `r` centred at `center`: a path contour of two semicircles
+ * starting at angle 0, which the kernel facets per tier (finer at export) and OCCT keeps as
+ * a true circle. Not an array — use `circlePolygon` for point math. (Until 0.132 this
+ * returned `circlePolygon`'s 48 points; it takes no `segs`.)
  */
-export function circleProfile(r: number, center?: Point2, segs?: number): PointsContour;
+export function circleProfile(r: number, center?: Point2): ArcContour;
 
 /**
  * Per-corner rounding geometry shared by `filletPolygon` and `roundedProfile`:
