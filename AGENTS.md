@@ -322,16 +322,24 @@ the installed package, so let the publish finish before bumping the dep there.
   itself; and prices every step (a test, the boolean it runs unless it handed back the
   searched shape's own rings, that boundary pass) before it starts, starting none that
   will not fit — so a profile too complex to read is not started. The prices are fitted
-  on a desktop: over the calibration corpus no step costs more than 0.93 of its price, a
-  test holds every step within 1.5× of it (at the runner's own pace) on #233's helpers
-  and ellipses, and the meter learns a slower device's pace from the steps it has run —
-  so the checks end inside their budget plus at most one step's overrun, never a
-  multi-second step. A sheet the budget stops is one `sheetChecks` warning; a DECLARED
-  check the engine could not read is unevaluated too. Most tests run the budget on a
-  stopped clock (`measure(…, { now: () => 0 })`); the timing pins run it on main-thread
-  CPU time and allow the runner's pace. A view with no sheet part verifies
-  byte-identically — `test/verify-golden.test.js` pins it; re-record only for a
-  deliberate verdict change (`PARTFORGE_RECORD_VERIFY_GOLDEN=1 npx vitest run
+  on a desktop: over the calibration corpus read under the budget no step costs more than
+  0.95 of its price and the largest runs 0.9 s (a search's setup is priced for the probes
+  its facing-line count makes, superlinear on dense short lines — per line alone it ran
+  6.6× on a dense grille); the meter learns a slower device's pace from the steps it has
+  run — so the checks end inside their budget plus at most one step's overrun, and a
+  device slower than the pace learned so far overruns that step by its own slowness. With
+  NO deadline (the bench's 2-D column) every test starts, however long: a line-heavy test
+  runs up to 1.8× its price there, and a reading can take tens of seconds. `recoverArcs`
+  runs before the first priced step and is unpriced: linear on real outlines (4,000
+  cubics in about 14 ms), still superlinear on some rings of thousands of cubics built to
+  keep its search long (up to 0.8 s at 4,000). A sheet the budget stops is one
+  `sheetChecks` warning; a DECLARED check the engine could not read is unevaluated too.
+  Most tests run the budget on a stopped clock (`measure(…, { now: () => 0 })`); the
+  timing pins run it on main-thread CPU time and hold each step to 3× its price and to
+  ABSOLUTE CPU caps (1–1.5 s a step, 2 s a reading) — never to a pace taken from the
+  steps they judge, which let a lone overrun set its own allowance. A view with no sheet
+  part verifies byte-identically — `test/verify-golden.test.js` pins it; re-record only
+  for a deliberate verdict change (`PARTFORGE_RECORD_VERIFY_GOLDEN=1 npx vitest run
   test/verify-golden.test.js`). Timings: `docs/research/sheet-inspect-timing.md`.
 - **`src/testing/`** - the genuinely Node-only harness, and only that:
   `manifold.js` / `occt.js` (boot a WASM kernel from disk), `render.js` (write
