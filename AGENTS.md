@@ -365,6 +365,20 @@ the installed package, so let the publish finish before bumping the dep there.
   `partforge/geometry` must never load it, and the whole stage must stay
   worker-safe (`test/kit-export-guards.test.js`, which also pins the exporter ids
   to `process/registry.js`'s).
+- **`src/framework/export/bundle.js`** - the cut & print kit itself,
+  `exportParts({ format: "bundle", options })`. `buildBundle` validates the options
+  before anything builds, draws every sheet part through its process's exporter,
+  merges identical pieces and prints into `-xN` files, lays each stock group out
+  (`layout.js`), writes the sheets, pieces and prints plus `readme.js`'s plain-text
+  README.txt and parts.csv, and zips them — asserting every entry name unique and
+  safe first. `jobs.js` reaches it only through `loadBundle`, a literal dynamic
+  import: `test/worker-layering.test.js` keeps every `export/` module and process
+  exporter out of worker boot (the main thread imports `formats.js` alone, through
+  `export-rows.js` for `listExportFormats()` and through `src/index.js` for the
+  options surface). The kit never loads `./oracle/*`
+  (`test/kit-layering.test.js` walks it and runs a real kit with every oracle module
+  mocked to throw), so the README's check lines are worded by `checkMessage`, a
+  restatement of `assert-dsl.js` that a test holds equal to it.
 - **`src/testing/`** - the genuinely Node-only harness, and only that:
   `manifold.js` / `occt.js` (boot a WASM kernel from disk), `render.js` (write
   PNGs), `error-patterns.js` (read `docs/ERROR-PATTERNS.md`). Never import these
