@@ -181,8 +181,8 @@ const polyArea = (pts) => pts.reduce((a, q, i) => a + cross2(q, pts[(i + 1) % pt
 // ceiling), and are priced per cubic like any segment. Flattening EVERY cubic was measured
 // and set aside: a benign curve becomes a hundred lines where it was four cubics, and a
 // line-heavy test costs superlinearly (the prices below), so panels of ordinary elliptical
-// holes that read in tens of milliseconds as cubics were priced out — 106 of the 151
-// calibration panels read under the budget, against 114 this way.
+// holes that read in tens of milliseconds as cubics were priced out — 97 of the 151
+// calibration panels read under the budget, against 105 this way.
 // What the lines READ is the cubics' reading wherever a web has length. Where it is a point
 // — two tight tips facing, two elliptical holes tip to tip — the search reads the width at
 // which LOSS_TOL_MM2 of area leaves, and that area grows so slowly past the true web that a
@@ -420,6 +420,37 @@ function facingLines(contours, reach) {
   facingPairs(contours, { reach, linesOnly: true }, (i, j) => { hit.add(i); hit.add(j); });
   return hit.size;
 }
+// What facingLines will cost, in one pass over the lines before it runs: its grid hands
+// every line each line bucketed within `reach` of it, on short, dense lines thousands. The
+// lines' midpoints binned in cells as wide as the grid's own (the reach, or the mean line
+// if longer), each cell's count times the count of it and the eight around it: within 15%
+// of the probes the grid makes on the calibration grilles.
+function facingWork(contours, reach) {
+  const mids = [];
+  let total = 0;
+  for (const rg of contours) for (const ring of [rg.outer, ...rg.holes]) for (const part of partsOf(ring)) {
+    if (!part.line) continue;
+    let from = part.from;
+    for (const to of part.pts) {
+      const len = dist(from, to);
+      if (len > 1e-12) { mids.push((from[0] + to[0]) / 2, (from[1] + to[1]) / 2); total += len; }
+      from = to;
+    }
+  }
+  const n = mids.length / 2;
+  if (!n) return 0;
+  const cell = Math.max(reach, total / n), cells = new Map();
+  for (let i = 0; i < mids.length; i += 2) {
+    const key = `${Math.floor(mids[i] / cell)},${Math.floor(mids[i + 1] / cell)}`;
+    cells.set(key, (cells.get(key) ?? 0) + 1);
+  }
+  let work = 0;
+  for (const [key, count] of cells) {
+    const [x, y] = key.split(",").map(Number);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) work += count * (cells.get(`${x + dx},${y + dy}`) ?? 0);
+  }
+  return work;
+}
 
 // → { open, close, round }: the contours each search runs on (null: the whole profile),
 // and the round holes the closing left out, whose diameters are read instead. The
@@ -504,9 +535,14 @@ function searchPlan(contours, ceiling, recover) {
 //     ellipses, 8,900 cubics and lines: 1.2 s, priced 1.5 s);
 //   the margin shape, once per search: one offset, half a test at no width;
 //   each search's setup (setupSearch) and the boundary pass (nearContacts), below.
-// Over the 151 calibration panels, read with no deadline, no test or difference costs more
-// than 0.93 of its price, no setup or boundary pass more than 0.93 (1.4 on steps under
-// 6 ms); under the budget the worst step is 0.83 (grilles of flattened ovals).
+// They were fitted before no flattened piece could turn more than SEARCH_TURN, which cuts
+// grilles of flattened ovals and ellipses into more lines, nearly all facing; only the
+// setup was re-fitted for that (setupSearch). Over the 151 calibration panels read under
+// the budget on the CPU clock, the worst step costs 0.95 of its price (a test on a row of
+// three flattened ovals) and the largest runs about 0.9 s. Read with no deadline every test
+// starts, however long, and tests on those grilles and on fine polyline waves cost up to
+// 1.8 × (a 30-period wave, 6.2–6.4 s priced 3.6 s); differences at most 0.78, setups 0.60,
+// the boundary pass 0.52 (steps of 6 ms and more).
 // The meter scales every price by how much slower than that this device has run the
 // steps it already took (never below 1), so a phone prices its own steps.
 const PRICE = {
@@ -542,15 +578,22 @@ function testPrice(search) {
   return linearTestPrice(search.counts) + arc * arc * P.arcPair + search.facing * search.facing * P.facingPair;
 }
 // A search's own setup — the profile rebuilt from its rings (the lift) and its facing lines
-// counted — is a step too, priced per segment before it runs (the facing count skipped
-// where the rest of the price is already FACING_CAP past any budget): a grille of 36
-// flattened ovals packed 1 mm apart, 2,300 lines, 43 ms, priced 46.
-const SETUP_PRICE = { line: 0.02, other: 0.002 };
+// counted — is a step too, priced before it runs: per segment, plus 40 ns for every probe
+// the facing count's grid will make (facingWork; the count is skipped, and so unpriced,
+// where the rest of the test's price is already FACING_CAP past any budget). Per segment
+// alone it ran short wherever lines are dense: every line probes every line within the
+// ceiling, so a grille of 36 flattened 1 × 2 mm ellipses 0.6 mm apart, 4,756 lines, took
+// 90 ms to count on 2 mm stock and 440 ms on 6 mm, both priced 95. The probes cost 37–42
+// ns each on those grilles, and the same setups are now priced 171 and 545; a grille of 36
+// flattened ovals packed 1 mm apart, 2,300 lines, 43 ms, was priced 46.
+const SETUP_PRICE = { line: 0.02, other: 0.002, probe: 0.00004 };
 function setupSearch(shapeOf, contours, ceiling, slow, spend) {
   const counts = countsOf(contours);
-  spend(counts.line * SETUP_PRICE.line + (counts.arc + counts.cubic) * SETUP_PRICE.other);
+  const facing = !slow && linearTestPrice(counts) + counts.arc * counts.arc * PRICE.test.arcPair <= FACING_CAP;
+  spend(counts.line * SETUP_PRICE.line + (counts.arc + counts.cubic) * SETUP_PRICE.other
+    + (facing ? facingWork(contours, ceiling) * SETUP_PRICE.probe : 0));
   const search = { shape: shapeOf(), counts, slow, facing: 0 };
-  if (!slow && linearTestPrice(counts) + counts.arc * counts.arc * PRICE.test.arcPair <= FACING_CAP) search.facing = facingLines(contours, ceiling);
+  if (facing) search.facing = facingLines(contours, ceiling);
   return search;
 }
 function diffPrice(a, b) {

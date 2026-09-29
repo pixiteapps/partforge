@@ -656,9 +656,10 @@ describe("LASER.facts", () => {
   // ABSOLUTE CPU time, which the machine's load does not stretch. They were once scaled by
   // a pace taken from the very steps they judged, so a lone overrun set its own allowance:
   // with the flattening switched off, a 19.7 s step priced 77 passed. `overPrice` holds each
-  // step to 3 × its price: the prices are desktop-Node milliseconds and no calibration step
-  // ran past 0.93 of its price, so 3 × leaves a machine three times slower room, and a step
-  // in the spike class runs tens to hundreds of times its price.
+  // step to 3 × its price: the prices are desktop-Node milliseconds, and across the
+  // calibration corpus read under the budget no step ran past 0.95 of its price there, so
+  // 3 × leaves a machine three times slower room, and a step in the spike class runs tens
+  // to hundreds of times its price.
   const stepsOf = (sp, params) => {
     const s = resolveSheet(k, sp, params, {});
     const steps = [];
@@ -699,6 +700,21 @@ describe("LASER.facts", () => {
       if (!f.evaluated) expect(f, at).toMatchObject({ bridge: null, gap: null });  // withheld: verify's notice
       else expect(f.readErrors, at).toEqual({ bridge: null, gap: null, marks: null, marksArea: null });
     }
+  });
+  // A search's setup counts the lines facing another line within the ceiling, and that
+  // count probes every line against every line bucketed near it: on a grille of short
+  // flattened lines, millions of probes, more on thicker stock. Thirty-six booleaned
+  // 2 × 1 mm ellipses 0.6 mm apart on 6 mm stock (4,756 lines) took 440 ms to set up,
+  // priced 95 per line alone; sixty took 1.05 s, priced 158. The setup is priced for its
+  // probes now.
+  test("a dense grille of booleaned ellipses: its setup is priced for the facing count, no step past 3 × its price", () => {
+    const grille = plate({ profile: (kk) => kk.shape2d(rect(0, 0, 10 + 12 * 2.6, 10 + 3 * 3.6)).cutAll(Array.from({ length: 36 }, (_, i) =>
+      kk.shape2d(slotProfile(0, 0.5)).scale([2, 1]).translate([6.3 + (i % 12) * 2.6, 6.8 + Math.floor(i / 12) * 3.6]))) });
+    const { f, ms, steps } = stepsOf(grille, { t: 6 });
+    expect(steps.length).toBeGreaterThan(0);
+    expect(overPrice(steps)).toEqual([]);                                  // was 440 ms priced 95
+    expect(ms).toBeLessThan(2000);
+    if (!f.evaluated) expect(f).toMatchObject({ bridge: null, gap: null });  // withheld: verify's notice
   });
   // Two elliptical holes tip to tip meet at a point, and a point contact is read by area —
   // the width at which LOSS_TOL_MM2 of it leaves — which grows so slowly past the true web
