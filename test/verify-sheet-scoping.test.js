@@ -200,3 +200,16 @@ test("a sheet reading that could not be taken says why", () => {
   expect(declared).toMatchObject({ ok: null, declared: 1, evaluated: 0 });
 });
 
+
+// measure() alone builds print poses only for the part's own bed, so the inspect job's
+// seed may lack them; verify asked for a bed (a `process` override) must not reuse it.
+test("a seed measured without print sizes is not reused for a bed", () => {
+  const part = forge({ plate: plate(300, 60), rod: rod(240) });
+  const seed = unhurried(k, part, "v", {}, { minWall: true });        // a superset in every other respect
+  expect(seed.measuredPrintBboxes).toBe(false);
+  let calls = 0;
+  const v = verify(k, part, { process: "fdm-pla", seed: { params: {}, result: seed },
+    measureFn: (...a) => { calls++; return unhurried(...a); } });
+  expect(calls).toBe(1);
+  expect(on(v, "rod", "bbox")[0]).toMatchObject({ status: "pass", note: "measured in the print (export) pose" });
+});

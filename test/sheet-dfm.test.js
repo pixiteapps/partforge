@@ -9,6 +9,7 @@ import { sheetPart, sheetHole } from "../src/framework/geometry/polygon.js";
 import { resolveSheet } from "../src/framework/sheet/resolve.js";
 import { LASER } from "../src/framework/process/laser/descriptor.js";
 import { measure } from "../src/framework/oracle/measure.js";
+import { verify } from "../src/framework/oracle/verify.js";
 import { sheetToWorld } from "../src/framework/geometry/polygon.js";
 import { lintPart } from "../src/lint.js";
 import twelvePanel from "./fixtures/sheet-twelve-panel-part.js";
@@ -283,8 +284,8 @@ describe("measure() on sheet parts", () => {
     expect("printBbox" in row(r, "block")).toBe(false);
   });
 
-  test("a sheet row carries its facts; a printed row beside it gets its print-pose size", () => {
-    const r = measure(k, forge({ plate: plate(), rod: rod(240) }), "v", {}, STOPPED);
+  test("a sheet row carries its facts; a printed row beside it gets its print-pose size for the bed", () => {
+    const r = measure(k, forge({ plate: plate(), rod: rod(240) }, { verify: { process: "fdm-pla" } }), "v", {}, STOPPED);
     expect(row(r, "plate").sheet).toMatchObject({ process: "laser", thickness: 3, pieces: 1, evaluated: true });
     expect("printBbox" in row(r, "plate")).toBe(false);
     expect(row(r, "rod").sheet).toBeNull();
@@ -346,6 +347,39 @@ describe("measure() on sheet parts", () => {
     expect(t).toBe(5000);
     expect(row(r, "heavy").deviation).not.toBeNull();
     for (const name of ["a", "b"]) expect(row(r, name).sheet, name).toMatchObject({ evaluated: true, bridgeCapped: false });
+  });
+
+  // Print (export) poses are built only for a bed that will read them, one printed part
+  // at a time: a place() that throws for purpose "export" costs that part its print
+  // size, never the whole report.
+  test("export poses are built only when a process bed will read them", () => {
+    let exports = 0;
+    const counting = printed([10, 10, 10], (s, { purpose }) => { if (purpose === "export") exports++; return s.translate([100, 0, 0]); });
+    const r = measure(k, forge({ plate: plate(), block: counting }), "v", {}, STOPPED);
+    expect(exports).toBe(0);
+    expect("printBbox" in row(r, "block")).toBe(false);
+    const bed = forge({ plate: plate(), block: counting }, { verify: { process: "fdm-pla" } });
+    expect(row(measure(k, bed, "v", {}, STOPPED), "block").printBbox).toEqual([10, 10, 10]);
+    expect(exports).toBe(1);
+    expect(row(measure(k, bed, "v", {}, { ...STOPPED, printBboxes: false }), "block")).not.toHaveProperty("printBbox");
+    expect(exports).toBe(1);
+  });
+
+  test("a printed part whose export pose throws loses only its print size", () => {
+    const part = forge({
+      plate: plate(),
+      block: printed([10, 10, 10], (s, { purpose }) => { if (purpose === "export") throw new Error("no export pose here"); return s.translate([100, 0, 0]); }),
+      rod: rod(100),
+    }, { verify: { process: "fdm-pla" } });
+    const r = measure(k, part, "v", {}, STOPPED);
+    expect(row(r, "block")).not.toHaveProperty("printBbox");
+    expect(row(r, "block").printBboxError).toContain("no export pose here");
+    expect(row(r, "rod").printBbox[2]).toBeCloseTo(100, 3);
+    const v = verify(k, part, { measureFn: (kk, pt, vw, pr, o) => measure(kk, pt, vw, pr, { ...o, ...STOPPED }) });
+    const bed = v.cases[0].checks.find((c) => c.subpart === "block" && c.metric === "bbox");
+    expect(bed).toMatchObject({ status: "skip", pass: null, unevaluated: true, note: "measured in the print (export) pose" });
+    expect(bed.message).toContain("no export pose here");
+    expect(v.ok).toBeNull();
   });
 
   // Spec C.6: the 2-D checks are cheap, so a quick lap (no min-wall rays, no pair

@@ -344,11 +344,14 @@ export interface SubPartFacts {
   /** A sheet sub-part's 2-D facts, or `null` on every other sub-part. */
   sheet: SheetFacts | null;
   /**
-   * Present only in a view that holds a sheet part, on each printed
-   * (`exportable !== false`, non-sheet) sub-part: its size in the print (export)
-   * pose, which is what verify fits the process profile's bed to there.
+   * Present only in a view that holds a sheet part, when a process bed will read it
+   * (`measuredPrintBboxes`), on each printed (`exportable !== false`, non-sheet)
+   * sub-part: its size in the print (export) pose, which is what verify fits the
+   * process profile's bed to there.
    */
   printBbox?: number[];
+  /** Instead of `printBbox` when this sub-part's export pose did not build: why. */
+  printBboxError?: string;
 }
 
 export interface AggregateFacts {
@@ -419,6 +422,11 @@ export interface MeasureReport {
   measuredMinWall: boolean;
   /** The overhang angle every sub-part's `overhangArea` was measured against, `null` when the pass did not run. */
   measuredOverhang: number | null;
+  /**
+   * Present only in a view holding a sheet part: whether the printed sub-parts' print
+   * (export) poses were built for `printBbox`.
+   */
+  measuredPrintBboxes?: boolean;
   subparts: SubPartFacts[];
   aggregate: AggregateFacts;
   overlaps: Overlap[];
@@ -459,6 +467,12 @@ export function measure(
     sheetBudgetMs?: number;
     /** The clock that budget runs on, in ms (default `Date.now`) — a test's seam. */
     now?: () => number;
+    /**
+     * In a view holding a sheet part, build each printed sub-part in its print (export)
+     * pose for `printBbox`. Default: when the part's own `verify.process` has a bed —
+     * the only check that reads it.
+     */
+    printBboxes?: boolean;
     /**
      * A build of this view the caller already has, measured instead of building a
      * second time. It is trusted, not checked against `view`/`params` — hand in a

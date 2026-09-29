@@ -61,6 +61,19 @@ export function partGatesMinWall(part, { process, expanded } = {}) {
   }
 }
 
+// Whether a verify of this part fits a process profile's print BED — the only reader of
+// measure()'s print-pose sizes in a view holding a sheet part. `process` is verify's own
+// override, else the part's `verify.process`. Unresolvable → true: measure the sizes
+// and let verify report the bad profile.
+export function partHasBed(part, { process } = {}) {
+  try {
+    const spec = process ?? part?.verify?.process;
+    return !!(spec && resolveProfile(spec)?.bed);
+  } catch {
+    return true;
+  }
+}
+
 // The wall bands a measurement of `params` must track, per sub-part, from the part's
 // own `verify.expect` — resolved for exactly these params (a function expect may
 // change the band per case). Range form only: the membership window needs both ends.

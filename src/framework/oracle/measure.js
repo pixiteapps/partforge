@@ -11,7 +11,7 @@ import { meshGaps, pairKey, CONTACT_EPS, GAP_THRESHOLD } from "./gaps.js";
 import { bounds, meshArea, meshCentroid } from "./mesh.js";
 import { minWall, DIAGNOSTIC_SAMPLES } from "./min-wall.js";
 import { overhang } from "./overhang.js";
-import { partGatesMinWall, partOverhangAngle, partWallBands } from "./gates.js";
+import { partGatesMinWall, partHasBed, partOverhangAngle, partWallBands } from "./gates.js";
 import { summarizeContours } from "./shape-probe.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
@@ -157,7 +157,8 @@ function sheetRowFacts(kernel, part, name, view, { p, d }, budget, volume) {
 // process profile's bed to in a view holding a sheet part: laser-cut stock never meets
 // a print bed, and a printed part is routinely displayed in an assembly pose that is
 // not how it prints. Its own cache round, like evaluateProbes: export-pose geometry
-// must not evict the view's.
+// must not evict the view's. One part at a time: an export pose that does not build
+// costs that part its size ({ error }, which verify reports), never the report.
 function printPoseBboxes(kernel, part, view, built, { p, d }) {
   kernel.beginSubPart?.(`oracle:print:${view}`);
   try {
@@ -165,8 +166,12 @@ function printPoseBboxes(kernel, part, view, built, { p, d }) {
     for (const { name } of built) {
       const sp = part.parts[name];
       if (sp?.exportable === false || isSheetPart(sp)) continue;
-      const { min, max } = buildPosed(kernel, part, name, { purpose: "export", view, p, d }).boundingBox();
-      out[name] = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+      try {
+        const { min, max } = buildPosed(kernel, part, name, { purpose: "export", view, p, d }).boundingBox();
+        out[name] = { size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]] };
+      } catch (e) {
+        out[name] = { error: String(e?.message || e).slice(0, 200) };
+      }
     }
     return out;
   } finally { kernel.endSubPart?.(); }
@@ -228,7 +233,11 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // declaration order). A view without a sheet part measures exactly as it always has.
   const sheetView = built.some(({ name }) => isSheetPart(part.parts[name]));
   const sheetParams = sheetView ? resolveParams(part, params) : null;
-  const printBboxes = sheetView ? printPoseBboxes(kernel, part, view, built, sheetParams) : null;
+  // The print-pose sizes are read by one check, the process bed (verify passes whether
+  // its profile has one; alone, measure asks the part's own profile), and each costs a
+  // second build of the part — so they are built only for a bed.
+  const measuredPrintBboxes = sheetView && (opts.printBboxes ?? partHasBed(part));
+  const printBboxes = measuredPrintBboxes ? printPoseBboxes(kernel, part, view, built, sheetParams) : null;
   // The clock the budget runs on is Date.now, or a test's own (opts.now).
   const sheetBudget = { left: opts.sheetBudgetMs ?? SHEET_CHECK_BUDGET_MS, now: opts.now ?? Date.now };
   const subparts = built.map(({ name, solid, mesh }) => {
@@ -306,7 +315,8 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       sheet: sheet
         ? sheetRowFacts(kernel, part, name, view, sheetParams, sheetBudget, vol)
         : null,
-      ...(printBboxes?.[name] ? { printBbox: printBboxes[name] } : {}),
+      ...(printBboxes?.[name]?.size ? { printBbox: printBboxes[name].size } : {}),
+      ...(printBboxes?.[name]?.error ? { printBboxError: printBboxes[name].error } : {}),
     };
   });
 
@@ -373,6 +383,9 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // Companion stamp to measuredMinWall, and read the same way: whether the pass
     // ran, said by the pass itself rather than claimed by whoever holds the result.
     measuredGaps,
+    // In a view holding a sheet part: whether the print-pose sizes were built (verify
+    // reuses a seed for a bed only when they were). Absent everywhere else.
+    ...(sheetView ? { measuredPrintBboxes } : {}),
     subparts,
     aggregate,
     overlaps,

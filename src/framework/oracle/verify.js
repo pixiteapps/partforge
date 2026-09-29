@@ -278,6 +278,11 @@ export function evaluateCase(facts, { profile, expect, subPartNames, overhang = 
     if (anySheet && profile?.bed && s.printBbox) {
       checks.push({ ...check("subpart", s.name, "bbox", `<=[${profile.bed.join(",")}]`, SUBPART_METRICS, { ...s, bbox: s.printBbox }),
         note: PRINT_POSE_NOTE });
+    } else if (anySheet && profile?.bed && s.printBboxError) {
+      checks.push({ scope: "subpart", subpart: s.name, metric: "bbox", kind: "gate", expr: `<=[${profile.bed.join(",")}]`,
+        actual: null, status: "skip", pass: null, unevaluated: true, note: PRINT_POSE_NOTE,
+        message: `not measured: its print (export) pose did not build — ${s.printBboxError}`,
+        hint: "This printed part's place() failed for purpose \"export\", so its print size — and its STL/3MF export — is unavailable. Fix place() for the export pose; the bed check then runs." });
     }
     const merged = {
       ...(profile?.minWall != null ? { minWall: `>=${profile.minWall}` } : {}),
@@ -385,7 +390,12 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // changes the angle therefore re-measures rather than reusing the inspect
   // job's seed, which was taken against the part's own profile.
   const overhangMatches = (seed?.result?.measuredOverhang ?? null) === (overhangAngle ?? null);
-  if (seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && (quick || overhangMatches) && seed.result.view === view) {
+  // The print-pose half (views holding a sheet part): a seed measured without the print
+  // sizes cannot answer a bed, so it is admitted only when this run needs no bed.
+  const needPrintBboxes = profile?.bed != null;
+  const printBboxesMatch = !needPrintBboxes || seed?.result?.measuredPrintBboxes !== false;
+  if (seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && (quick || overhangMatches) && printBboxesMatch
+    && seed.result.view === view) {
     memo.set(signature({ ...part.defaults, ...(seed.params ?? {}) }), seed.result);
   }
 
@@ -396,7 +406,8 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     // `probes: false` — no gate reads probe values, so re-running their booleans
     // for every case buys nothing. (A seed measured WITH probes is a superset in
     // the same way a min-wall seed is: the extra key is simply never read here.)
-    memo.set(key, measureFn(kernel, part, view, params, { minWall: needMinWall, probes: false, overhang: overhangAngle }));
+    memo.set(key, measureFn(kernel, part, view, params,
+      { minWall: needMinWall, probes: false, overhang: overhangAngle, printBboxes: needPrintBboxes }));
     return memo.get(key);
   };
 
