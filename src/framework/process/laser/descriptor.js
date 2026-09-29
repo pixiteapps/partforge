@@ -320,30 +320,44 @@ function searchPlan(contours, ceiling, recover) {
 // at all is not started — and every test's one-sided difference, priced from the
 // test's own result before it starts. With no deadline the caller asked for the whole
 // reading, however long, and gets it.
-// Prices are in units of about one desktop-Node millisecond, fitted to CPU time on 3 mm
-// stock (docs/research/sheet-inspect-timing.md, "What a profile costs"):
+// Prices are in units of about one desktop-Node millisecond, fitted to main-thread CPU
+// time on the searched shapes as they are now — circular cubics read as arcs (exactArcs),
+// every difference taken a margin clear (MARGIN) — on 3 and 6 mm stock
+// (docs/research/sheet-inspect-timing.md, "What a profile costs"):
 //   a test (two sharp offsets), per segment of the shape tested:
-//     line 1.2 (1,028: 1.1 s)   arc 2.5 (512 perforations with narrow webs: 1.1 s)
-//     cubic 3 (1,024 beside 1,028 lines: 5.2 s)
-//   and the offset engine's worst case, a cubic whose radius the test SHRINKS to near
-//   w/2 or past it (its cubic offset then subdivides toward the depth limit, and the
-//   winding resolver pays for every piece). A cubic bending the way the first offset
-//   shrinks (convex in an opening, concave in a closing) with radius under 1.85·w/2
-//   costs 16 × (their count)² — superlinear, and fitted to the worst measured: rounded
-//   tab corners opened at 3 mm, r 2–2.25 (1.33–1.5 × w/2), 12 of them 1.9–2.3 s, 20
-//   4.7–5.4 s; rounded-rect corners r 1.2 closed at 3 mm, 16 3.5 s, 64 50 s, 256 804 s.
-//   The edge of "near" is sharp and was measured: r 1.8 × w/2, 12 tab corners 176 ms
-//   and 20 440 ms; r 1.87 ×, 16 ms (at 1.5, 3 and 6 mm stock alike). One bending the
-//   other way is grown first and shrunk back, and costs 10 more when its radius is at
-//   most 1.5·w/2 (128 filleted tab corners closed at 1.5 mm: 1.2 s);
+//     line 1.2 (1,028: 1.1 s)   cubic 3 (1,024 beside 1,028 lines: 5.2 s)
+//     arc 2.5 plus 0.0015 × (the arcs)²: a grille of round holes whose webs a test
+//     collapses costs the winding resolver superlinearly (200 arcs 0.2 s, 578 1.3 s,
+//     1,058 4.1 s), and linear the first test of 400 holes and more was priced under its
+//     cost;
+//   and the offset engine's worst case, a cubic — one the arc fit left alone, so not a
+//   circle — that the test SHRINKS toward w/2 (its offset subdivides toward the depth
+//   limit and the winding resolver pays for every piece). Bending the way the first
+//   offset shrinks (convex in an opening, concave in a closing):
+//     • tightest radius from 0.9 to 1.35 × w/2: NOT STARTED, whatever the count — one
+//       test met four elliptical corners there and took 0.3–2.4 s at 3 mm and 1.6–4.5 s
+//       at 6 mm (priced 273 and 303), some ending in an engine refusal; no price follows
+//       it, so under a deadline the test is never started (with none it runs);
+//     • elsewhere under 1.85 × w/2: 16 × (their count)², superlinear, fitted to the worst
+//       measured (elliptical tab corners at 0.8 × w/2: 12 of them 0.75 s, 130 21.7 s;
+//       before the arc fit, circular tab and rounded-rect corners the same way);
+//     • from 1.85 to 2.2 × w/2: 0.2 × (their count)² more — past 1.85 a circle's cost
+//       fell away at once, an ellipse's only by 2.2 (130 elliptical corners at 2.0 × w/2:
+//       0.74 s against a linear 559);
+//   one bending the other way is grown first and shrunk back, and costs 10 more when its
+//   radius is at most 1.5·w/2 (128 filleted tab corners closed at 1.5 mm: 1.2 s);
 //   the one-sided difference, per segment of the shape tested and of its result:
-//     line 0.25, arc 0.5, cubic 0.4 plus 0.0005 × (all the cubics)², paper's cost on
-//     a cubic near-copy (1,024: 0.7 s, 2,048: 2 s, 4,096: 8 s).
+//     line 0.25, arc 0.5 (a grille of 196 round holes: 0.55 s, priced 0.94 s), cubic
+//     0.15 — no longer quadratic: against a near-copy paper's boolean was quadratic in
+//     its cubics (4,096: 8 s), a margin clear of it it is not (200 booleaned ellipses,
+//     8,900 cubics and lines: 1.2 s, priced 1.5 s; 14,400: 1.5 s, priced 2.2 s);
+//   the margin shape, once per search: one offset, half a test at no width.
 // The meter scales every price by how much slower than that this device has run the
 // steps it already took (never below 1), so a phone prices its own steps.
 const PRICE = {
-  test: { line: 1.2, arc: 2.5, cubic: 3, shrunkWithin: 1.85, shrunkPair: 16, grownBackWithin: 1.5, grownBack: 10 },
-  diff: { line: 0.25, arc: 0.5, cubic: 0.4, cubicPair: 0.0005 },
+  test: { line: 1.2, arc: 2.5, arcPair: 0.0015, cubic: 3, spike: [0.9, 1.35], shrunkWithin: 1.85, shrunkPair: 16,
+    nearWithin: 2.2, nearPair: 0.2, grownBackWithin: 1.5, grownBack: 10 },
+  diff: { line: 0.25, arc: 0.5, cubic: 0.15 },
 };
 const countsOf = (contours) => {
   const c = { line: 0, arc: 0, cubic: 0 };
@@ -356,20 +370,29 @@ const countsOf = (contours) => {
 // Which way each cubic of these rings bends, and its tightest radius (segInfo).
 const cubicsOf = (contours) => contours.flatMap((rg) => [rg.outer, ...rg.holes])
   .flatMap((ring) => partsOf(ring).filter((pt) => pt.cubic).map(({ dir, rMin }) => ({ dir, rMin })));
+// The per-segment part of a test's price: what one offset of the shape costs, twice.
+const linearTestPrice = ({ line, arc, cubic }) => line * PRICE.test.line + arc * PRICE.test.arc + cubic * PRICE.test.cubic;
 // One test at width w on a search's shape. `shrinks` is the way a cubic bends when the
 // test's first offset shrinks it: +1 (convex) in an opening, -1 (concave) in a closing.
+// Infinity where a cubic sits in the spike band: never started under a deadline.
 function testPrice(search, shrinks, w) {
-  const { line, arc, cubic } = search.counts, P = PRICE.test, h = w / 2;
-  let shrunk = 0, grownBack = 0;
+  const P = PRICE.test, h = w / 2;
+  let shrunk = 0, near = 0, grownBack = 0;
   for (const c of search.cubics) {
-    if (c.dir !== -shrinks && c.rMin < P.shrunkWithin * h) shrunk++;
+    if (c.dir !== -shrinks) {
+      if (c.rMin > P.spike[0] * h && c.rMin < P.spike[1] * h) return Infinity;
+      if (c.rMin < P.shrunkWithin * h) shrunk++;
+      else if (c.rMin < P.nearWithin * h) near++;
+    }
     if (c.dir !== shrinks && c.rMin <= P.grownBackWithin * h) grownBack++;
   }
-  return line * P.line + arc * P.arc + cubic * P.cubic + shrunk * shrunk * P.shrunkPair + grownBack * P.grownBack;
+  const { arc } = search.counts;
+  return linearTestPrice(search.counts) + arc * arc * P.arcPair
+    + shrunk * shrunk * P.shrunkPair + near * near * P.nearPair + grownBack * P.grownBack;
 }
 function diffPrice(a, b) {
-  const P = PRICE.diff, cubics = a.cubic + b.cubic;
-  return (a.line + b.line) * P.line + (a.arc + b.arc) * P.arc + cubics * P.cubic + cubics * cubics * P.cubicPair;
+  const P = PRICE.diff;
+  return (a.line + b.line) * P.line + (a.arc + b.arc) * P.arc + (a.cubic + b.cubic) * P.cubic;
 }
 // spend(price): not started unless `price` fits before the deadline, scaled by this
 // device's measured pace. Each call settles the step the last one priced. Exported for
@@ -380,7 +403,7 @@ export function _meter(deadline, now) {
     const t = now();
     if (open) { priced += open.price; took += t - open.at; open = null; }
     const pace = priced >= 50 ? Math.max(1, took / priced) : 1;
-    if (t + price * pace >= deadline) throw OUT_OF_TIME;
+    if (deadline !== Infinity && t + price * pace >= deadline) throw OUT_OF_TIME;
     open = { price, at: t };
   };
 }
@@ -433,7 +456,7 @@ function oneSided(difference, spend, price) {
 function margined(search, side) {
   return (search.margin ??= {})[side] ??= search.shape.offset(side * MARGIN, SHARP);
 }
-const marginPrice = (search, side) => (search.margin?.[side] ? 0 : testPrice(search, side, 0) / 2);
+const marginPrice = (search, side) => (search.margin?.[side] ? 0 : linearTestPrice(search.counts) / 2);
 
 function openingLoss(search, w, spend) {
   let opened;

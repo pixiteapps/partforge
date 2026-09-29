@@ -387,16 +387,17 @@ describe("LASER.facts", () => {
   // opening keeps every hole (holePlan). Round holes are exact arcs to the searches now,
   // and those 48 are read in milliseconds; holes the arc fit leaves alone (ellipses: no
   // circle fits them) are still cubics, and their difference is priced like every step:
-  // the ceiling test runs, its difference does not fit, and the notice stands in for it.
+  // 80 of them, and the ceiling test runs, its difference does not fit, and the notice
+  // stands in for it.
   test("48 booleaned round holes and nothing narrow are read: the arcs make every step cheap", () => {
     const holes = Array.from({ length: 48 }, (_, i) => sheetHole({ d: 6, at: [10 + (i % 16) * 10, 10 + Math.floor(i / 16) * 10] }));
     const f = factsOf(plate({ profile: (kk) => kk.shape2d(rect(0, 0, 200, 44)).cutAll(holes) }), { deadline: 1500, now: () => 0 });
     expect(f).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true });
   });
   test("…and booleaned elliptical holes: the difference is still priced, and here withheld", () => {
-    const holes = Array.from({ length: 48 }, (_, i) => (kk) => kk.shape2d(sheetHole({ d: 6, at: [0, 0] })).scale([1.2, 1])
-      .translate([10 + (i % 16) * 12, 10 + Math.floor(i / 16) * 10]));
-    const s = resolveSheet(k, plate({ profile: (kk) => kk.shape2d(rect(0, 0, 202, 40)).cutAll(holes.map((h) => h(kk))) }), P, {});
+    const holes = Array.from({ length: 80 }, (_, i) => (kk) => kk.shape2d(sheetHole({ d: 6, at: [0, 0] })).scale([1.2, 1])
+      .translate([10 + (i % 20) * 12, 10 + Math.floor(i / 20) * 10]));
+    const s = resolveSheet(k, plate({ profile: (kk) => kk.shape2d(rect(0, 0, 250, 50)).cutAll(holes.map((h) => h(kk))) }), P, {});
     let cuts = 0, offsets = 0;
     const counted = (shape) => new Proxy(shape, { get(target, key) {
       if (key === "cut") return (...a) => { cuts++; return counted(target.cut(...a)); };
@@ -466,8 +467,8 @@ describe("LASER.facts", () => {
     for (let i = n - 1; i >= 0; i--) pts.push([20 * i + 20, 30], [20 * i + 20, 40], [20 * i + 10, 40], [20 * i + 10, 30]);
     return kk.shape2d([...pts, [0, 30]]).fillet(r).cut(kk.shape2d(rect(5, 5, 15, 15)));
   };
-  const offsetsRun = (sp) => {
-    const s = resolveSheet(k, sp, P, {});
+  const offsetsRun = (sp, params = P) => {
+    const s = resolveSheet(k, sp, params, {});
     let offsets = 0;
     const counted = (shape) => new Proxy(shape, { get(target, key) {
       if (key === "offset") return (...a) => { offsets++; return counted(target.offset(...a)); };
@@ -488,6 +489,62 @@ describe("LASER.facts", () => {
       const { f, offsets } = offsetsRun(plate({ profile: tabPanel(n, 2) }));
       expect(f, `${n} tabs, r 2`).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true });
       expect(offsets).toBeGreaterThan(0);
+    }
+  });
+
+  // Main-thread CPU time: a clock the machine's load cannot stretch. The budget tests below
+  // run the meter on it, the way an unloaded desktop runs it — not on a stopped clock, on
+  // which only the prices can withhold a reading and no step's real cost is ever seen.
+  const cpuMs = () => { const u = process.threadCpuUsage(); return (u.user + u.system) / 1000; };
+  const onCpu = (sp, params) => {
+    const s = resolveSheet(k, sp, params, {});
+    const t0 = cpuMs();
+    const f = LASER.facts(s, { deadline: cpuMs() + 1500, now: cpuMs });
+    return { f, ms: cpuMs() - t0 };
+  };
+  // One priced step used to run 4–73 s inside the 1500 ms budget on ordinary rounded plates
+  // with holes: the boolean handed their fillets back as cubics, a test that shrank a cubic
+  // corner to just past w/2 took seconds per cubic, and it was priced like any other step
+  // (a 100 × 60 × 3 plate, corners r 1.7, four M3 holes 8 mm in: 61.8 s for one inspect).
+  // Read as the arcs they are, the whole reading takes milliseconds.
+  const mount = (r, inset) => plate({ profile: (kk) => kk.shape2d(rect(0, 0, 100, 60)).fillet(r)
+    .cutAll([[inset, inset], [100 - inset, inset], [100 - inset, 60 - inset], [inset, 60 - inset]].map((at) => sheetHole({ d: 3.4, at }))) });
+  test("rounded mounting plates with M3 holes read in under 100 ms of CPU", () => {
+    for (const [r, inset, t] of [[1.6, 5, 3], [1.6, 8, 3], [1.7, 5, 3], [1.7, 8, 3], [1.8, 5, 3], [1.8, 8, 3], [3.42, 10, 6]]) {
+      const { f, ms } = onCpu(mount(r, inset), { t });
+      const at = `${t} mm, r ${r}, holes ${inset} mm in`;
+      expect(f, at).toMatchObject({ evaluated: true, bridgeCapped: true, readErrors: { bridge: null, gap: null } });
+      expect(f.gap, at).toBeCloseTo(t > 3.4 ? 3.4 : t, 6);           // the M3 hole, read directly, where the ceiling allows
+      expect(ms, at).toBeLessThan(100);
+    }
+  });
+  // The same plate on 6 mm stock with r 3 corners and a 10 × 10 hole leaving a 5 mm web read
+  // 4.31, located at the middle of the plain top edge 45 mm from the hole: its straight edges
+  // came back from the cubic fillets' regrowth a hair inside the originals, one sliver over
+  // the loss tolerance along 94 mm. On arcs, with the difference taken a margin clear of the
+  // shape, it reads the web.
+  test("a 5 mm web under a hole on a 6 mm plate with r 3 corners reads 5.02, at the web", () => {
+    const { f, ms } = onCpu(plate({ profile: (kk) => kk.shape2d(rect(0, 0, 100, 60)).fillet(3).cut(kk.shape2d(rect(45, 5, 55, 15))) }), { t: 6 });
+    expect(f).toMatchObject({ evaluated: true, bridgeCapped: false, bridge: 5.02 });
+    expect(f.at2d.bridge[0]).toBeCloseTo(50, 0);
+    expect(f.at2d.bridge[1]).toBeCloseTo(2.5, 0);
+    expect(ms).toBeLessThan(100);
+  });
+
+  // A corner the arc fit leaves alone — one that is not a circle — still meets the offset
+  // engine's slowest case when a test shrinks it to just past w/2: four elliptical corners
+  // whose tightest radius is 0.93–1.3 × w/2 took 0.3–2.4 s at 3 mm and 1.6–4.5 s at 6 mm in
+  // ONE test priced 273 and 303, some ending in an engine refusal. No price follows it
+  // there, so a test that would meet one is never started under a deadline: the notice
+  // stands in. `offsets` counts the shrinks and regrows run: none.
+  test("an elliptical corner a test would shrink to just past w/2 is never started", () => {
+    for (const [t, q] of [[3, 0.95], [3, 1.1], [3, 1.3], [6, 1]]) {
+      const sx = 1.3, r = q * (t / 2) * sx;
+      const sp = plate({ profile: (kk) => kk.shape2d(rect(0, 0, 100 / sx, 60)).fillet(r).scale([sx, 1])
+        .cutAll([[8, 8], [92, 8], [92, 52], [8, 52]].map((at) => sheetHole({ d: 3.4, at }))) });
+      const { f, offsets } = offsetsRun(sp, { t });
+      expect(f.evaluated, `${t} mm, rMin ${q} × w/2`).toBe(false);
+      expect(offsets, `${t} mm, rMin ${q} × w/2`).toBe(0);
     }
   });
 
@@ -560,6 +617,9 @@ describe("LASER.facts", () => {
     const late = _meter(1500, clock);
     t = 1500;
     expect(() => late(0)).toThrow();                      // past the deadline nothing starts
+    t = 0;
+    expect(() => _meter(1e9, clock)(Infinity)).toThrow(); // a step no price follows is never started under a deadline…
+    expect(() => _meter(Infinity, clock)(Infinity)).not.toThrow();   // …and runs for a caller who asked for no deadline
   });
 
   test("an arc-exact hole cut with cutAll reads clean — no false web or gap", () => {
