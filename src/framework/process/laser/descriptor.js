@@ -335,31 +335,35 @@ function polyNear(A, boxA, B, reach) {
 // ── boundaries that face each other ──────────────────────────────────────────────
 // Two pieces of a profile's boundary FACE each other when they run within 60° of opposite
 // directions — the two sides of a web, a slot, a finger, a narrow hole — and come within
-// `reach` of each other. facingPairs calls visit(i, j) once for every such pair of pieces:
-// each ring cut along its flattened boundary (ringParts) into pieces no longer than
-// `step`, a piece's neighbours on its own ring skipped (they meet it at a vertex), and
-// visit(i, j, d) handed the pair's distance. The pieces are bucketed in a grid of cells at
-// least `reach` wide, so the work is linear in them and in the pairs found.
+// `reach` of each other. facingPairs calls visit(i, j, d) once for every such pair of
+// pieces, with their distance: each ring cut along its flattened boundary (ringParts) into
+// pieces no longer than `step` (a segment whole, by default) — only its lines' pieces with
+// `linesOnly` — a piece's neighbours on its own ring skipped (they meet it at a vertex). The
+// pieces are bucketed in a grid of cells at least `reach` and a mean piece wide, so the work
+// is linear in them and in the pairs found.
 // → the pieces, ring by ring in boundary order: { a, b, dir, len, ring, k, line }.
-function facingPairs(contours, reach, step, visit) {
+function facingPairs(contours, { reach, step = Infinity, linesOnly = false }, visit) {
   const pieces = [], rings = [];
   for (const rg of contours) for (const ring of [rg.outer, ...rg.holes]) {
-    const r = rings.length, start = pieces.length;
+    const r = rings.length;
+    let k = 0;
     for (const part of partsOf(ring)) {
       let from = part.from;
       for (const to of part.pts) {
         const len = dist(from, to), n = Math.max(1, Math.ceil(len / step));
-        if (len > 1e-12) for (let i = 0; i < n; i++) {
+        if (len > 1e-12) for (let i = 0; i < n; i++, k++) {
+          if (linesOnly && !part.line) continue;
           const a = [from[0] + ((to[0] - from[0]) * i) / n, from[1] + ((to[1] - from[1]) * i) / n];
           const b = [from[0] + ((to[0] - from[0]) * (i + 1)) / n, from[1] + ((to[1] - from[1]) * (i + 1)) / n];
-          pieces.push({ a, b, dir: [(to[0] - from[0]) / len, (to[1] - from[1]) / len], len: len / n, ring: r, k: pieces.length - start, line: !!part.line });
+          pieces.push({ a, b, dir: [(to[0] - from[0]) / len, (to[1] - from[1]) / len], len: len / n, ring: r, k, line: !!part.line });
         }
         from = to;
       }
     }
-    rings.push(pieces.length - start);
+    rings.push(k);
   }
-  const cell = Math.max(reach, step === Infinity ? reach : step), cells = new Map();
+  const mean = pieces.length ? pieces.reduce((t, pc) => t + pc.len, 0) / pieces.length : 0;
+  const cell = Math.max(reach, Number.isFinite(step) ? step : 0, mean), cells = new Map();
   const range = (lo, hi) => [Math.floor(lo / cell), Math.floor(hi / cell)];
   pieces.forEach((pc, i) => {
     const [x0, x1] = range(Math.min(pc.a[0], pc.b[0]) - reach, Math.max(pc.a[0], pc.b[0]) + reach);
@@ -386,13 +390,11 @@ function facingPairs(contours, reach, step, visit) {
   });
   return pieces;
 }
-// How many of a shape's lines face another piece of its boundary within `reach`.
+// How many of a shape's lines face another of its lines within `reach`.
 function facingLines(contours, reach) {
   const hit = new Set();
-  const pieces = facingPairs(contours, reach, Infinity, (i, j) => { hit.add(i); hit.add(j); });
-  let n = 0;
-  for (const i of hit) if (pieces[i].line) n++;
-  return n;
+  facingPairs(contours, { reach, linesOnly: true }, (i, j) => { hit.add(i); hit.add(j); });
+  return hit.size;
 }
 
 // → { open, close, round }: the contours each search runs on (null: the whole profile),
@@ -476,9 +478,11 @@ function searchPlan(contours, ceiling, recover) {
 //     line 0.1 (a grille of 50 drawn 32-facet circles: 0.28 s, priced 0.34 s), arc 0.5 (a
 //     grille of 196 round holes: 0.55 s, priced 0.94 s), cubic 0.15 (200 booleaned
 //     ellipses, 8,900 cubics and lines: 1.2 s, priced 1.5 s);
-//   the margin shape, once per search: one offset, half a test at no width.
-// Over the 151 calibration panels, read with no deadline, no step costs more than 0.88 of
-// its price; under the budget the worst is 0.85 (both are grilles of flattened ovals).
+//   the margin shape, once per search: one offset, half a test at no width;
+//   each search's setup (setupSearch) and the boundary pass (nearContacts), below.
+// Over the 151 calibration panels, read with no deadline, no test or difference costs more
+// than 0.93 of its price, no setup or boundary pass more than 0.93 (1.4 on steps under
+// 6 ms); under the budget the worst step is 0.83 (grilles of flattened ovals).
 // The meter scales every price by how much slower than that this device has run the
 // steps it already took (never below 1), so a phone prices its own steps.
 const PRICE = {
@@ -503,14 +507,27 @@ const slowCubics = (contours, ceiling, shrinks) => contours.flatMap((rg) => [rg.
 }, 0);
 // The per-segment part of a test's price: what one offset of the shape costs, twice.
 const linearTestPrice = ({ line, arc, cubic }) => line * PRICE.test.line + arc * PRICE.test.arc + cubic * PRICE.test.cubic;
+// Past this, a test's price needs no facing count: it is past any budget as it is.
+const FACING_CAP = 10000;
 // One test on a search's shape. A shape holds a slow cubic only where the kernel has no
 // trusted lift to rebuild the profile with (the profile itself is searched): no price
 // follows it, so that test is never started under a deadline (Infinity; with none, it runs).
 function testPrice(search) {
   const P = PRICE.test, { arc } = search.counts;
   if (search.slow) return Infinity;
-  const facing = (search.facing ??= facingLines(search.contours, search.reach));
-  return linearTestPrice(search.counts) + arc * arc * P.arcPair + facing * facing * P.facingPair;
+  return linearTestPrice(search.counts) + arc * arc * P.arcPair + search.facing * search.facing * P.facingPair;
+}
+// A search's own setup — the profile rebuilt from its rings (the lift) and its facing lines
+// counted — is a step too, priced per segment before it runs (the facing count skipped
+// where the rest of the price is already FACING_CAP past any budget): a grille of 36
+// flattened ovals packed 1 mm apart, 2,300 lines, 43 ms, priced 46.
+const SETUP_PRICE = { line: 0.02, other: 0.002 };
+function setupSearch(shapeOf, contours, ceiling, slow, spend) {
+  const counts = countsOf(contours);
+  spend(counts.line * SETUP_PRICE.line + (counts.arc + counts.cubic) * SETUP_PRICE.other);
+  const search = { shape: shapeOf(), counts, slow, facing: 0 };
+  if (!slow && linearTestPrice(counts) + counts.arc * counts.arc * PRICE.test.arcPair <= FACING_CAP) search.facing = facingLines(contours, ceiling);
+  return search;
 }
 function diffPrice(a, b) {
   const P = PRICE.diff;
@@ -713,11 +730,13 @@ function closingGain(search, w, spend) {
 // outside (a slot: the gap), counts once it is NEAR_RUN long — LOSS_TOL_MM2 of area at that
 // width, the rule the difference counts a loss by — so the two sides of a sharp tip, which
 // part at once, never do. It reads the narrowest such run's width, rounded up to 0.01 mm,
-// at the middle of its closest pair. Linear in the pieces; priced like a step.
+// at the middle of its closest pair. Whole segments are checked first — most profiles
+// have no two faces that close and are done there — and the 0.1 mm walk runs only when
+// they do. Linear in the pieces; priced as the walk, like a step.
 const NEAR = 2 * MARGIN, NEAR_STEP = 0.1, NEAR_RUN = LOSS_TOL_MM2 / NEAR;
 const NEAR_PRICE = 0.003;                   // per piece — see nearPrice
-// The near pass's price, per piece walked: a 900-hole grille's 91,000 pieces took 0.15 s, a
-// sign's worth of text 0.03 s (its pieces crowd the grid's cells).
+// The boundary pass's price, per piece of the 0.1 mm walk: a 900-hole grille's 91,000 took
+// 0.15 s walked, a sign's worth of text 0.03 s (its pieces crowd the grid's cells).
 const nearPrice = (contours) => {
   let pieces = 0;
   for (const rg of contours) for (const ring of [rg.outer, ...rg.holes]) for (const part of partsOf(ring)) {
@@ -728,8 +747,12 @@ const nearPrice = (contours) => {
 };
 // → { bridge, gap }: each { value, at } or null.
 function nearContacts(contours) {
+  // Whole segments first: most profiles have no two faces that close, and are done here.
+  let any = false;
+  facingPairs(contours, { reach: NEAR }, () => { any = true; });
+  if (!any) return { bridge: null, gap: null };
   const hits = [];
-  const pieces = facingPairs(contours, NEAR, NEAR_STEP, (i, j, d) => hits.push([i, j, d]));
+  const pieces = facingPairs(contours, { reach: NEAR, step: NEAR_STEP }, (i, j, d) => hits.push([i, j, d]));
   const mid = (pc) => [(pc.a[0] + pc.b[0]) / 2, (pc.a[1] + pc.b[1]) / 2];
   const best = new Map();
   for (const [i, j, d] of hits) for (const [x, y] of [[i, j], [j, i]]) {
@@ -951,10 +974,8 @@ export const LASER = {
     const lift = s.trustedShape2d;
     let planned = null;
     const plan = () => (planned ??= lift && pieces ? searchPlan(contours, ceiling, s.recoverArcs) : { open: null, close: null, round: [] });
-    const searchOn = (reduced, shrinks) => ({
-      shape: reduced ? lift(reduced) : profile, contours: reduced ?? contours, reach: ceiling,
-      counts: countsOf(reduced ?? contours), slow: reduced ? 0 : slowCubics(contours, ceiling, shrinks),
-    });
+    const searchOn = (reduced, shrinks) => setupSearch(() => (reduced ? lift(reduced) : profile), reduced ?? contours, ceiling,
+      reduced ? 0 : slowCubics(contours, ceiling, shrinks), spend);
     // What the difference's margin hides (nearContacts), read once, for both searches.
     let near = null;
     const nearOf = () => {
