@@ -5,7 +5,8 @@
 // profile-warnings-occt.test.js is the B-rep twin; the messages must match.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
-import { profileWarningMessages } from "../src/framework/geometry/profile-warnings.js";
+import { profileWarningMessages, sampledArcMessages } from "../src/framework/geometry/profile-warnings.js";
+import { ringSectorPolygon, ringSectorProfile } from "../src/framework/geometry/polygon.js";
 
 const BOW = [[0, 0], [10, 10], [10, 0], [0, 10]];
 const SQUARE = [[0, 0], [10, 0], [10, 10], [0, 10]];
@@ -124,6 +125,41 @@ describe("bounds", () => {
   });
   it("an invalid profile still throws the op's own error, with no warning", () => {
     expect(() => k.extrude({ profile: [[0, 0], [1, 1]], h: 5 })).toThrow();
+    expect(k.takeBuildWarnings()).toEqual([]);
+  });
+});
+
+// A coarsely sampled arc is reported by the ops where a path contour would be refined
+// instead (prism, extrude, revolve, shape2d) and never by loft or sweep, whose curve
+// rings sample at their own fixed LOD. See profile-warnings.js, "Sampled arcs".
+describe("sampled-arc warnings", () => {
+  const LUG = ringSectorPolygon(28, 30, 36);
+  it("prism, extrude and shape2d report the coarse lug once, and still build", () => {
+    const s = k.prism({ points: LUG, h: 2 });
+    expect(s.volume()).toBeGreaterThan(0);
+    k.extrude({ profile: LUG, h: 2 });
+    k.shape2d(LUG);
+    expect(k.takeBuildWarnings()).toEqual([
+      ...sampledArcMessages("prism: profile", LUG),
+      ...sampledArcMessages("extrude: profile", LUG),
+      ...sampledArcMessages("shape2d: profile", LUG),
+    ]);
+  });
+  it("six placements of one lug are one line", () => {
+    for (let i = 0; i < 6; i++) k.prism({ points: LUG, h: 2 });
+    expect(k.takeBuildWarnings()).toHaveLength(1);
+  });
+  it("revolve reports a hand-sampled lathe arc", () => {
+    // [[r, z]]: the axis foot, then a quarter circle sampled in six 15° steps up to the pole
+    const dome = [[0, 0]];
+    for (let i = 0; i < 6; i++) { const a = (i / 6) * (Math.PI / 2); dome.push([20 * Math.cos(a), 20 * Math.sin(a)]); }
+    dome.push([0, 20]);
+    k.revolve({ profile: dome });
+    expect(k.takeBuildWarnings()[0]).toMatch(/^revolve: profile traces an arc in straight facets/);
+  });
+  it("the curve twin and loft rings stay quiet", () => {
+    k.prism({ points: ringSectorProfile(28, 30, 36), h: 2 });
+    k.loft({ rings: [{ polygon: LUG, z: 0 }, { polygon: LUG, z: 5 }] });
     expect(k.takeBuildWarnings()).toEqual([]);
   });
 });

@@ -76,7 +76,7 @@ test("input validation errors", () => {
   expect(() => offsetPolygon(SQ(10), 1, { corners: "bevel" }))
     .toThrow('offsetPolygon: corners must be "round" | "chamfer" | "sharp"');
   expect(() => offsetPolygon([[0, 0], [1, NaN], [1, 1]], 1)).toThrow("offsetPolygon: coordinates must be finite numbers");
-  expect(() => offsetPolygon(null, 1)).toThrow("offsetPolygon: profile must be a point list or {outer, holes}");
+  expect(() => offsetPolygon(null, 1)).toThrow("offsetPolygon: profile must be a point list, a path contour, or {outer, holes}");
   const bowtie = [[0, 0], [10, 10], [10, 0], [0, 10]];
   expect(() => offsetPolygon(bowtie, 0.5)).toThrow("offsetPolygon: input polygon self-intersects");
 });

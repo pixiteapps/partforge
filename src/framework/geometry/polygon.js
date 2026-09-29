@@ -1,4 +1,5 @@
 // 2-D polygon helpers shared by parts that call kernel.prism().
+import { isPathContour, contourToPoints } from "./profile.js";
 
 // CCW polygon points for a circular-sector "pie" from the origin, radius tipR.
 export function piePolygon(tipR, arcDeg, segs = 32) {
@@ -274,6 +275,100 @@ export function roundedProfile(points, r) {
   return { start, segments, arc: true };
 }
 
+// ── Curve twins of the round *Polygon helpers ────────────────────────────────
+// ringSectorProfile / pieProfile / slotProfile / roundedRectProfile trace the SAME
+// outline as their *Polygon twins — same start point, same CCW direction, same
+// extent — but return a path contour { start, segments } whose arcs are symbolic
+// three-point arcs, like roundedProfile's. A point list is exported exactly as it
+// was written; a path contour is faceted by the kernel per quality tier (finer at
+// export) and becomes true CIRCLE edges on OCCT, so these are the ones to use for
+// any curve that shows or fits. The naming rule: *Profile = exact curves,
+// *Polygon = straight edges.
+
+const rad = (deg) => (deg * Math.PI) / 180;
+const polar = (r, deg) => [r * Math.cos(rad(deg)), r * Math.sin(rad(deg))];
+const SEG_EPS = 1e-9;
+
+// Accumulates a contour from `start`, dropping any line that would not move the pen
+// (a clamped rounded rect's straight run, a zero-length slot) — a zero-length
+// segment is a degenerate edge to every consumer downstream.
+function contourFrom(start) {
+  const segments = [];
+  let cur = start;
+  const moves = (p) => Math.hypot(p[0] - cur[0], p[1] - cur[1]) > SEG_EPS;
+  const api = {
+    line(to) { if (moves(to)) { segments.push({ to }); cur = to; } return api; },
+    arc(to, via) { segments.push({ to, via }); cur = to; return api; },
+    // Closes explicitly on `start`, so contour-ops' corner walk sees the real last edge.
+    close() { api.line(start); return { start, segments }; },
+  };
+  return api;
+}
+
+function checkSweep(name, arcDeg) {
+  if (!(arcDeg > 0 && arcDeg < 360))
+    throw new Error(`${name}: arcDeg must be between 0 and 360 (exclusive), got ${arcDeg}`);
+}
+
+// Annular sector from angle 0 to arcDeg: outer arc CCW, then the inner arc back.
+// arcDeg < 360 — a full ring is a region with a hole, so cut an inner cylinder from
+// an outer one (or extrude { outer, holes }) instead.
+export function ringSectorProfile(innerR, outerR, arcDeg) {
+  checkSweep("ringSectorProfile", arcDeg);
+  if (innerR === 0) throw new Error("ringSectorProfile: innerR must be > 0 — use pieProfile for a sector from the centre");
+  if (!(innerR > 0 && innerR < outerR))
+    throw new Error(`ringSectorProfile: innerR must be > 0 and < outerR, got innerR=${innerR}, outerR=${outerR}`);
+  return contourFrom([outerR, 0])
+    .arc(polar(outerR, arcDeg), polar(outerR, arcDeg / 2))
+    .line(polar(innerR, arcDeg))
+    .arc([innerR, 0], polar(innerR, arcDeg / 2))
+    .close();
+}
+
+// Circular sector ("pie slice") from the origin, radius tipR, from angle 0 to arcDeg.
+export function pieProfile(tipR, arcDeg) {
+  if (!(tipR > 0)) throw new Error(`pieProfile: tipR must be > 0, got ${tipR}`);
+  checkSweep("pieProfile", arcDeg);
+  return contourFrom([0, 0])
+    .line([tipR, 0])
+    .arc(polar(tipR, arcDeg), polar(tipR, arcDeg / 2))
+    .close();
+}
+
+// Stadium slot: two r-radius semicircles whose centres are `length` apart (overall
+// length = length + 2r), centred on the origin, long axis along X. length 0 is a circle.
+export function slotProfile(length, r) {
+  if (!(r > 0)) throw new Error(`slotProfile: r must be > 0, got ${r}`);
+  if (!(length >= 0)) throw new Error(`slotProfile: length must be ≥ 0, got ${length}`);
+  const hl = length / 2;
+  return contourFrom([hl, -r])
+    .arc([hl, r], [hl + r, 0])
+    .line([-hl, r])
+    .arc([-hl, -r], [-hl - r, 0])
+    .close();
+}
+
+// w × h rectangle centred on the origin with radius-r corners; r is clamped to
+// min(w, h)/2 like roundedRectPolygon's (fully clamped, it is a stadium or a circle),
+// and r ≤ 0 is the plain rectangle.
+export function roundedRectProfile(w, h, r) {
+  if (!(w > 0 && h > 0)) throw new Error(`roundedRectProfile: w and h must be > 0, got w=${w}, h=${h}`);
+  if (!Number.isFinite(r)) throw new Error(`roundedRectProfile: r must be a finite number (0 for square corners), got ${r}`);
+  const hw = w / 2, hh = h / 2;
+  const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+  if (rr === 0) return contourFrom([hw, -hh]).line([hw, hh]).line([-hw, hh]).line([-hw, -hh]).close();
+  const m = rr * (1 - Math.SQRT1_2);   // a corner arc's midpoint sits m in from both edges
+  return contourFrom([hw, hh - rr])
+    .arc([hw - rr, hh], [hw - m, hh - m])
+    .line([-(hw - rr), hh])
+    .arc([-hw, hh - rr], [-(hw - m), hh - m])
+    .line([-hw, -(hh - rr)])
+    .arc([-(hw - rr), -hh], [-(hw - m), -(hh - m)])
+    .line([hw - rr, -hh])
+    .arc([hw, -(hh - rr)], [hw - m, -(hh - m)])
+    .close();
+}
+
 const PATTERN_AXIS = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
 
 // `count` copies of `solid` translated by i*step ([dx,dy,dz]) for i in 0..count-1.
@@ -302,11 +397,12 @@ export function circularPattern(solid, count, { center = [0, 0, 0], axis = "Z", 
   return out;
 }
 
-// CCW circle of radius r centered at [cx, cy]. A shared 2-D profile primitive:
-// compose with the kernel's profile ops — e.g. revolve(circleProfile(minorR,
-// [majorR, 0])) is a torus, prism(circleProfile(r), h) a cylinder.
-export function circleProfile(r, center = [0, 0], segs = 48) {
-  if (!(r > 0)) throw new Error("circleProfile: r must be > 0");
+// CCW circle of radius r centred at [cx, cy] as a FIXED point list of `segs` vertices
+// (default 48), starting at angle 0. The point-list circle: a deliberately faceted
+// circle, point math of your own (mapping, indexing), or anything that must stay
+// exactly as written. Exported unchanged at every quality tier.
+export function circlePolygon(r, center = [0, 0], segs = 48) {
+  if (!(r > 0)) throw new Error("circlePolygon: r must be > 0");
   const [cx, cy] = center;
   const pts = [];
   for (let i = 0; i < segs; i++) {
@@ -314,6 +410,17 @@ export function circleProfile(r, center = [0, 0], segs = 48) {
     pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
   }
   return pts;
+}
+
+// A circle for passing to a kernel op (prism, extrude outline or hole, shape2d, revolve,
+// hull, loft, sweep). TRANSITIONAL: today it returns exactly circlePolygon's 48 points;
+// partforge 0.132 turns it into an exact curve like the other *Profile helpers. Stored
+// parts that do point math on it are migrated to circlePolygon before that release
+// (see docs/superpowers/specs/2026-09-28-curve-profile-helpers-design.md), so new code
+// should never map, index or spread its result — use circlePolygon for that.
+export function circleProfile(r, center = [0, 0], segs = 48) {
+  if (!(r > 0)) throw new Error("circleProfile: r must be > 0");
+  return circlePolygon(r, center, segs);
 }
 
 // --- offsetPolygon ---------------------------------------------------------
@@ -400,13 +507,17 @@ function lineIntersect(p, dp, q, dq) {
 // derive() and build() alike. See AUTHORING-PARTS.md "Profiles & patterns".
 export function offsetPolygon(profile, delta, opts = {}) {
   const { corners = "round", segs = 8 } = opts;
+  // A path contour is sampled to points first (48 per circle), since this offset is a
+  // point-list operation; k.shape2d(profile).offset(delta) offsets arcs exactly instead.
+  if (isPathContour(profile)) return offsetPolygon(contourToPoints(profile), delta, opts);
   if (profile !== null && typeof profile === "object" && !Array.isArray(profile)) {
-    if (!Array.isArray(profile.outer)) throw new Error("offsetPolygon: profile must be a point list or {outer, holes}");
-    const region = { outer: offsetPolygon(profile.outer, delta, opts) };
-    if (profile.holes) region.holes = profile.holes.map((h) => offsetPolygon(h, -delta, opts));
+    const ring = (c) => (isPathContour(c) ? contourToPoints(c) : c);
+    if (!Array.isArray(ring(profile.outer))) throw new Error("offsetPolygon: profile must be a point list, a path contour, or {outer, holes}");
+    const region = { outer: offsetPolygon(ring(profile.outer), delta, opts) };
+    if (profile.holes) region.holes = profile.holes.map((h) => offsetPolygon(ring(h), -delta, opts));
     return region;
   }
-  if (!Array.isArray(profile)) throw new Error("offsetPolygon: profile must be a point list or {outer, holes}");
+  if (!Array.isArray(profile)) throw new Error("offsetPolygon: profile must be a point list, a path contour, or {outer, holes}");
   if (typeof delta !== "number" || !Number.isFinite(delta)) throw new Error("offsetPolygon: delta must be a finite number");
   if (corners !== "round" && corners !== "chamfer" && corners !== "sharp")
     throw new Error('offsetPolygon: corners must be "round" | "chamfer" | "sharp"');

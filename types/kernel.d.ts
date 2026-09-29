@@ -359,7 +359,8 @@ export interface LoftOptions {
 }
 
 export interface SweepOptions {
-  profile: PointsContour;
+  /** A point list, or a `{start, segments}` path contour sampled to one (48 per circle). */
+  profile: PointsContour | ArcContour;
   /** A 3-D polyline, `[[x, y, z], …]`. */
   path: Point3[];
   /** Capless loop (must be planar) — Manifold only. */
@@ -370,7 +371,11 @@ export interface SweepOptions {
   smooth?: boolean;
 }
 
-/** `k.revolve` — a lathe profile `[[r, z], …]` with `r >= 0`, revolved about Z. */
+/**
+ * `k.revolve` — a lathe profile in `[r, z]` with `r >= 0`, revolved about Z: a point
+ * list, a `{start, segments}` path contour (lifted to a Shape2D, so its arcs stay
+ * exact), or a Shape2D.
+ */
 export interface RevolveOptions {
   profile: ProfileInput;
   degrees?: number;

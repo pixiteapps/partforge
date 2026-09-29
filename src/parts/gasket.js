@@ -10,7 +10,7 @@
 // on, so this build's `Shape2D.fillet` (backend-identical pure JS — KERNEL-CONTRACT.md
 // "One shared implementation") does not read as a CAD-only op, and the part
 // auto-routes to fast Manifold like any other non-B-rep part.
-import { pathProfile, circleProfile } from "partforge/geometry";
+import { pathProfile, circleProfile, circlePolygon } from "partforge/geometry";
 
 // Pure dimension math shared with test/gasket-part.test.js, which re-derives the same
 // 2-D profile with the free contour-ops/paper-bridge functions (no kernel) to check
@@ -77,7 +77,7 @@ export default {
         // Boss centers sit exactly ON the bottom edge (y = 0) — the coincident-edge
         // union case: each tab straddles the existing straight edge rather than
         // merely touching it at a point.
-        const tabs = [[-tabX, 0], [tabX, 0]].map(([cx, cy]) => circleProfile(tabR, [cx, cy], tabSegs));
+        const tabs = [[-tabX, 0], [tabX, 0]].map(([cx, cy]) => circlePolygon(tabR, [cx, cy], tabSegs));
 
         // Fillet the outer convex corners, THEN cut the bolt holes. Note this ordering
         // trades away the STEP-CIRCLE fidelity the "fillet after booleans" rule buys

@@ -5,9 +5,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   PROFILE_VALIDATE_MAX_SEGMENTS, PROFILE_WARN_MAX_PER_PROFILE,
-  makeProfileWarner, profileWarningMessages,
+  makeProfileWarner, profileWarningMessages, sampledArcMessages, worstSampledArc, SAMPLED_ARC_MAX_PER_BUILD,
 } from "../src/framework/geometry/profile-warnings.js";
-import { pathProfile } from "../src/framework/geometry/polygon.js";
+import {
+  pathProfile, ringSectorPolygon, ringSectorProfile, circleProfile, slotPolygon,
+  roundedRectPolygon, regularPolygon, starPolygon, offsetPolygon,
+} from "../src/framework/geometry/polygon.js";
 import { createValidatingProbe, runValidatingProbe } from "../src/framework/geometry/probe.js";
 
 const BOW = [[0, 0], [10, 10], [10, 0], [0, 10]];         // crosses itself at (5, 5)
@@ -136,5 +139,135 @@ describe("the lint probe never validates a profile", () => {
     expect(r.throws).toEqual([]);
     expect(r.issues).toEqual([]);                      // no unknown-op / invalid-options either
     expect(r.calls.every((c) => !/self-intersects/.test(JSON.stringify(c)))).toBe(true);
+  });
+});
+
+// ── Sampled arcs (partforge-cloud feedback #144) ─────────────────────────────
+describe("sampledArcMessages", () => {
+  const loop = (r, arcDeg, stepsPerDeg) => {
+    const n = Math.round(arcDeg * stepsPerDeg), out = [];
+    for (let i = 0; i <= n; i++) { const a = (i / n) * arcDeg * Math.PI / 180; out.push([r * Math.cos(a), r * Math.sin(a)]); }
+    for (let i = n; i >= 0; i--) { const a = (i / n) * arcDeg * Math.PI / 180; out.push([(r - 2) * Math.cos(a), (r - 2) * Math.sin(a)]); }
+    return out;
+  };
+
+  it("reports the coarse lug that printed badly: 4 × 9° facets at r = 30", () => {
+    const w = worstSampledArc(ringSectorPolygon(28, 30, 36));
+    expect(w.r).toBeCloseTo(30, 6);
+    expect(w.stepDeg).toBeCloseTo(9, 6);
+    expect(w.sag).toBeCloseTo(30 * (1 - Math.cos((4.5 * Math.PI) / 180)), 6);
+    const [msg] = sampledArcMessages("prism: profile", ringSectorPolygon(28, 30, 36));
+    expect(msg).toBe(
+      "prism: profile traces an arc in straight facets (radius ≈ 30.0 mm, 9.0° per facet, up to 0.09 mm " +
+      "inside the true curve) — a point list is built and exported exactly as written, so a print shows " +
+      "those facets. Build curves with the *Profile helpers (ringSectorProfile, slotProfile, pieProfile, " +
+      "roundedRectProfile, roundedProfile) or pathProfile().arcTo(…) — the kernel facets those, finer at export.");
+  });
+
+  it("reports a large circleProfile, a slot and rounded-rect corners past the threshold", () => {
+    expect(sampledArcMessages("extrude: profile", circleProfile(30))).toHaveLength(1);         // 48-gon, 0.064 mm
+    expect(sampledArcMessages("extrude: profile", slotPolygon(40, 15))).toHaveLength(1);       // 16 per half
+    expect(sampledArcMessages("extrude: profile", roundedRectPolygon(80, 60, 20))).toHaveLength(1);
+  });
+
+  it("finds a sampled arc in a hole of a region", () => {
+    const region = { outer: [[-50, -50], [50, -50], [50, 50], [-50, 50]], holes: [circleProfile(30)] };
+    expect(sampledArcMessages("extrude: profile", region)).toHaveLength(1);
+  });
+
+  it("stays quiet on deliberate polygons, small arcs, dense loops and exact curves", () => {
+    for (const quiet of [
+      regularPolygon(6, 40),               // hexagon: 60° turns
+      regularPolygon(12, 40),              // 30° turns, still a polygon
+      circleProfile(5),                    // a 48-gon hole of 5 mm: 0.011 mm off round
+      ringSectorPolygon(4, 6, 90),         // small radius
+      ringSectorPolygon(28, 30, 20),       // two facets per arc: too short a run to call
+      loop(30, 40, 1.5),                   // a dense hand loop: 0.0005 mm
+      starPolygon(24, 30, 20),             // equal edges, alternating turns
+      ringSectorProfile(28, 30, 36),       // a path contour: the kernel facets it
+    ]) expect(sampledArcMessages("prism: profile", quiet)).toEqual([]);
+  });
+
+  it("a hand-written Math.cos loop is reported just like a helper", () => {
+    expect(sampledArcMessages("prism: profile", loop(30, 36, 4 / 36))).toHaveLength(1);   // 4 steps on 36°
+  });
+
+  it("reports one message per profile, naming the worst run", () => {
+    const msgs = sampledArcMessages("prism: profile", ringSectorPolygon(10, 30, 36));   // outer r=30 worse than inner
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]).toMatch(/radius ≈ 30\.0 mm/);
+  });
+});
+
+describe("makeProfileWarner and sampled arcs", () => {
+  it("adds the sampled-arc message only when the op asks for it", () => {
+    const record = vi.fn();
+    const w = makeProfileWarner(record);
+    w.warn("loft: ring 0", ringSectorPolygon(28, 30, 36));
+    expect(record).not.toHaveBeenCalled();
+    w.warn("prism: profile", ringSectorPolygon(28, 30, 36), { sampledArcs: true });
+    expect(record).toHaveBeenCalledTimes(1);
+    w.warn("prism: profile", ringSectorPolygon(28, 30, 36), { sampledArcs: true });   // deduped
+    expect(record).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sampled arcs survive the noise real point lists carry (review of 0.131)", () => {
+  const round = (pts, d) => pts.map(([x, y]) => [+x.toFixed(d), +y.toFixed(d)]);
+
+  it("coordinates rounded to 0.01 mm are still recognised", () => {
+    expect(worstSampledArc(round(ringSectorPolygon(28, 30, 36), 3))?.stepDeg).toBeCloseTo(9, 1);
+    expect(worstSampledArc(round(ringSectorPolygon(28, 30, 36), 2))?.stepDeg).toBeCloseTo(9, 0);
+    expect(worstSampledArc(round(circleProfile(40), 2))?.stepDeg).toBeCloseTo(7.5, 0);
+  });
+
+  it("a clearance-offset lug (trimmed end facets) is still recognised", () => {
+    const w = worstSampledArc(offsetPolygon(ringSectorPolygon(28, 30, 36), -0.25));
+    expect(w).not.toBeNull();
+    expect(w.stepDeg).toBeCloseTo(9, 3);
+  });
+
+  it("rounding noise does not turn a deliberate polygon into an arc", () => {
+    for (const quiet of [round(regularPolygon(6, 40), 2), round(starPolygon(24, 30, 20), 2), round(regularPolygon(12, 40), 2)])
+      expect(worstSampledArc(quiet)).toBeNull();
+  });
+
+  it("a longer straight neighbour does not count as a facet of the arc", () => {
+    // two 15° turns around a single 3 mm edge, between long straight sides: a bent bar, not an arc
+    const bend = [[0, 0], [50, 0], [52.9, 0.78], [55.5, 2.28], [100, 40], [0, 40]];
+    expect(worstSampledArc(bend)).toBeNull();
+  });
+});
+
+describe("makeProfileWarner bounds and quiets sampled arcs", () => {
+  it("records at most SAMPLED_ARC_MAX_PER_BUILD sampled-arc lines per build", () => {
+    const record = vi.fn();
+    const w = makeProfileWarner(record);
+    for (let r = 20; r < 30; r++) w.warn("prism: profile", ringSectorPolygon(r, r + 2, 36), { sampledArcs: true });
+    expect(record).toHaveBeenCalledTimes(SAMPLED_ARC_MAX_PER_BUILD);
+    w.reset();
+    w.warn("prism: profile", ringSectorPolygon(40, 42, 36), { sampledArcs: true });
+    expect(record).toHaveBeenCalledTimes(SAMPLED_ARC_MAX_PER_BUILD + 1);
+  });
+
+  it("quietArcs silences sampled arcs, but not crossings, for the duration of fn", () => {
+    const record = vi.fn();
+    const w = makeProfileWarner(record);
+    const out = w.warn.quietArcs(() => {
+      w.warn("extrude: profile", ringSectorPolygon(28, 30, 36), { sampledArcs: true });
+      w.warn("extrude: profile", BOW, { sampledArcs: true });
+      return 7;
+    });
+    expect(out).toBe(7);
+    expect(record).toHaveBeenCalledTimes(1);                       // the BOW crossing only
+    expect(record.mock.calls[0][0]).toMatch(/self-intersects/);
+    w.warn("extrude: profile", ringSectorPolygon(28, 30, 36), { sampledArcs: true });
+    expect(record).toHaveBeenCalledTimes(2);                       // quiet ended with fn
+  });
+
+  it("crossings: false checks sampled arcs alone", () => {
+    const record = vi.fn();
+    makeProfileWarner(record).warn("extrude: profile", BOW, { sampledArcs: true, crossings: false });
+    expect(record).not.toHaveBeenCalled();
   });
 });

@@ -3,7 +3,7 @@
 // exact curve regions, then either raised above (emboss) or cut into (deboss) a
 // rounded plate. The plate itself is a Shape2D rounded-rectangle, so the part also
 // exercises shape2d + the extrude/boolean path. Open /nameplate.html after `npm run dev`.
-import { roundedRectPolygon } from "partforge/geometry";
+import { roundedRectProfile } from "partforge/geometry";
 
 export default {
   meta: { title: "Nameplate", units: "mm", background: 0x15181d },
@@ -76,7 +76,7 @@ export default {
         const w = (bb.max[0] - bb.min[0]) + 2 * p.margin;
         const h = (bb.max[1] - bb.min[1]) + 2 * p.margin;
         const corner = Math.max(0, Math.min(p.corner, Math.min(w, h) / 2 - 0.5));
-        const plate = k.extrude({ profile: k.shape2d(roundedRectPolygon(w, h, corner)), h: p.thickness }).label("Plate");
+        const plate = k.extrude({ profile: k.shape2d(roundedRectProfile(w, h, corner)), h: p.thickness }).label("Plate");
         const relief = k.extrude({ profile: text, h: p.depth });
         return p.engrave
           ? plate.cut(relief.translate([0, 0, p.thickness - p.depth]))

@@ -19,6 +19,7 @@ import { normalizeOpentype, parseFont } from "./opentype-interop.js";
 const opentype = normalizeOpentype(opentypeNamespace);
 import { KernelCapabilityError } from "./errors.js";
 import { isPlainOptions, KERNEL_OP_SPECS } from "./op-options.js";
+import { isPathContour, contourToPoints } from "./profile.js";
 import { textGlyphs } from "./text2d.js";
 import { placeRegions } from "./vector2d.js";
 import { beveledExtrude } from "./rim-bevel.js";
@@ -29,6 +30,11 @@ import { screwCrossSection } from "./screw-profile.js";
 import { smoothLoftRings } from "./loft-smooth.js";
 
 export function finishKernel(k) {
+  // Runs a composition that tessellates curves itself without its facets being reported
+  // as the author's sampled arcs (profile-warnings.js). The lint probe's kernel has no
+  // warner, so there it just runs fn.
+  const quietArcs = (fn) => (k._warnProfile?.quietArcs ? k._warnProfile.quietArcs(fn) : fn());
+
   // Compound default: bored-through cylinder (tool overshoots 2 mm each end for
   // a clean cut). Assigned BEFORE the wrap loop so the fallback composition gets
   // the same key validation as a backend-native override.
@@ -50,12 +56,14 @@ export function finishKernel(k) {
   // (see screw-profile.js for why that identity holds, and why the profile must be
   // densified first). No backend override: both backends twist natively, so this
   // is one implementation and STEP gets a real twisted B-rep rather than a loft.
+  // Its cross-section is densified here, not by the author, so its facets are quieted
+  // (see quietArcs below).
   k.screwSweep ??= ({ profile, pitch, turns, lefthand = false }) =>
-    k.extrude({
+    quietArcs(() => k.extrude({
       profile: screwCrossSection(profile, pitch, { lefthand }),
       h: pitch * turns,
       twist: (lefthand ? -360 : 360) * turns,
-    });
+    }));
 
   // Compound default: a tapped (internally threaded) hole, as ONE cut tool.
   //
@@ -179,11 +187,45 @@ export function finishKernel(k) {
   // into extrude + loft + intersect (rim-bevel.js), so both backends share one
   // implementation and the probe records no CAD-only op. beveledExtrude calls
   // back into the wrapped k.extrude/k.loft, so caching and validation apply.
+  // The bevel tessellates the author's curves itself (at its own LOD) before calling the
+  // wrapped extrude/loft, so its sampled arcs are quieted — they are not the author's —
+  // and the author's own outline is checked for sampled arcs up front instead.
   const specExtrude = k.extrude;
-  k.extrude = (...a) =>
-    a.length === 1 && isPlainOptions(a[0]) && a[0].bevel !== undefined
-      ? beveledExtrude(k, a[0])
-      : specExtrude(...a);
+  k.extrude = (...a) => {
+    if (!(a.length === 1 && isPlainOptions(a[0]) && a[0].bevel !== undefined)) return specExtrude(...a);
+    k._warnProfile?.("extrude: profile", a[0].profile, { sampledArcs: true, crossings: false });
+    return quietArcs(() => beveledExtrude(k, a[0]));
+  };
+
+  // revolve takes a {start, segments} path contour (pathProfile, roundedProfile, the
+  // *Profile helpers) by lifting it to a Shape2D here — before the spec-wrapped op —
+  // so a curve helper works everywhere a point list does and both backends get the
+  // Shape2D lathe path (profile arcs at the double-curvature count, true arcs on OCCT).
+  // An {outer, holes} region is lifted the same way. The options-form rule is the
+  // normative one (KERNEL-CONTRACT.md "Calling convention"): a lone plain object is an
+  // options bag, so `k.revolve(contour)` alone is options form and is refused exactly as
+  // the lint probe refuses it; the positional form takes the contour with its options,
+  // `k.revolve(contour, { degrees })`.
+  const specRevolve = k.revolve;
+  const liftLathe = (p) =>
+    p && typeof p === "object" && !p._shape2d && !Array.isArray(p) && (isPathContour(p) || p.outer !== undefined)
+      ? k.shape2d(p)
+      : p;
+  k.revolve = (...a) => {
+    if (!(a.length === 1 && isPlainOptions(a[0]))) return specRevolve(liftLathe(a[0]), ...a.slice(1));
+    return specRevolve("profile" in a[0] ? { ...a[0], profile: liftLathe(a[0].profile) } : a[0]);
+  };
+
+  // sweep places its profile point by point along the path, so a path contour is sampled
+  // to a point ring first — at a fixed 48 per circle (contourToPoints), the density a
+  // circleProfile tube has always had, not the per-tier rule: a tube's triangle count is
+  // its ring count times its stations, and a long path has many.
+  const specSweep = k.sweep;
+  const sweepRing = (p) => (p && !p._shape2d && isPathContour(p) ? contourToPoints(p) : p);
+  k.sweep = (...a) => {
+    if (!(a.length === 1 && isPlainOptions(a[0]))) return specSweep(sweepRing(a[0]), ...a.slice(1));
+    return specSweep("profile" in a[0] ? { ...a[0], profile: sweepRing(a[0].profile) } : a[0]);
+  };
 
   k.toSTEP ??= () => { throw new KernelCapabilityError("toSTEP requires the OCCT backend"); };
   k.shape2d ??= () => { throw new KernelCapabilityError("shape2d requires the Manifold backend"); };
@@ -291,7 +333,9 @@ export function finishKernel(k) {
   k.hull = (inputs) => {
     if (!Array.isArray(inputs) || inputs.length === 0)
       throw new Error("hull: inputs must be a non-empty array");
-    return k.shape2d(convexHull(inputs.flatMap(hullPoints)));
+    // Trusted: a convex hull cannot cross itself, and its points are sampled here, not by
+    // the author, so neither profile warning applies to it.
+    return k.shape2d.trusted(convexHull(inputs.flatMap(hullPoints)));
   };
   // Swept hull over an ordered sequence (≥2): union of the hull of each consecutive pair.
   k.hullChain = (inputs) => {

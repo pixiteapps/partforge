@@ -6,7 +6,8 @@
 // profile-warnings.test.js already pins the Manifold side directly.
 import { beforeAll, beforeEach, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing/occt.js";
-import { profileWarningMessages } from "../src/framework/geometry/profile-warnings.js";
+import { profileWarningMessages, sampledArcMessages } from "../src/framework/geometry/profile-warnings.js";
+import { ringSectorPolygon } from "../src/framework/geometry/polygon.js";
 
 const BOW = [[0, 0], [10, 10], [10, 0], [0, 10]];
 const SQUARE = [[0, 0], [10, 0], [10, 10], [0, 10]];
@@ -39,4 +40,11 @@ test("OCCT: one warning per distinct message per drain, none for a clean profile
   expect(occt.takeBuildWarnings()).toHaveLength(1);
   occt.extrude({ profile: SQUARE, h: 5 });
   expect(occt.takeBuildWarnings()).toEqual([]);
+});
+
+test("a coarse sampled arc warns per the shared pure function", () => {
+  const LUG = ringSectorPolygon(28, 30, 36);
+  occt.prism({ points: LUG, h: 2 });
+  occt.loft({ rings: [{ polygon: LUG, z: 0 }, { polygon: LUG, z: 5 }] });
+  expect(occt.takeBuildWarnings()).toEqual(sampledArcMessages("prism: profile", LUG));
 });
