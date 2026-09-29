@@ -158,6 +158,8 @@ test("a DECLARED sheet check on a profile too complex to start says so", () => {
   expect(c).toMatchObject({ status: "skip", unevaluated: true, message: "not evaluated (2-D check budget)" });
   expect(c.hint).toMatch(/too complex to start/);
   expect(c.hint).not.toMatch(/ran out of their time budget before this one/);
+  expect(c.hint).toMatch(/tighter than about the sheet thickness/);   // what costs — never "fewer rounded corners"
+  expect(c.hint).not.toMatch(/small rounded corners/);
   expect(c.hint.length).toBeLessThanOrEqual(500);
 });
 

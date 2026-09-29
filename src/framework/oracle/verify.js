@@ -190,7 +190,7 @@ const PRINT_POSE_NOTE = "measured in the print (export) pose";
 export const SHEET_CHECKS_NOTICE = Object.freeze({
   metric: "sheetChecks", kind: "warn", expr: "evaluated", actual: null, status: "warn", pass: null, volunteered: true,
   message: "2-D sheet checks not evaluated (time budget)",
-  hint: "The laser checks (narrow webs and gaps, stray marks) did not fit their time budget, or the profile was too complex to start them. They are warnings only and never decide verify.ok; fewer holes, fingers or small rounded corners make them fit.",
+  hint: "The laser checks (narrow webs and gaps, stray marks) did not fit their time budget, or the profile was too complex to start them. They are warnings only and never decide verify.ok. What they spend time on is edges, curved ones most: round holes crowded close to each other or to an edge, and corners rounded tighter than about the sheet thickness, cost the most.",
   pattern: SHEET_DOC_ID,
 });
 
@@ -198,7 +198,7 @@ export const SHEET_CHECKS_NOTICE = Object.freeze({
 // withholds verify.ok — and it says how to get a verdict. Either the budget ran out
 // before this check, or the profile was priced too complex to start the checks at all
 // (process/laser/descriptor.js); the hint covers both, as the notice's does.
-const SHEET_BUDGET_HINT = "The 2-D sheet checks did not fit their time budget — it ran out before this check, or the profile was too complex to start them — so this check has no verdict and verify.ok is withheld. Fewer holes, fingers or small rounded corners in the profile let the checks fit; they then read every sheet part.";
+const SHEET_BUDGET_HINT = "The 2-D sheet checks did not fit their time budget — it ran out before this check, or the profile was too complex to start them — so this check has no verdict and verify.ok is withheld. What they spend time on is edges, curved ones most: round holes crowded close to each other or to an edge, and corners rounded tighter than about the sheet thickness, cost the most.";
 
 // The print checks: measure() casts no rays and runs no overhang pass on a sheet part.
 // Declared on one, each is a skip — declared, never evaluated, so a sheet-only forge

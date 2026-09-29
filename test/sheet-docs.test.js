@@ -77,6 +77,15 @@ test("every sheet verify hint stands alone in at most 500 characters", () => {
   expect(SHEET_CHECKS_NOTICE.pattern).toBe("sheet-parts");
 });
 
+// The notice names what the checks actually spend time on. Asking for "fewer … rounded
+// corners" sent an agent after corners that cost milliseconds to check (a radius equal to
+// the stock); only corners rounded tighter than the stock, and round holes crowded
+// together, are what price a profile out.
+test("the budget notice says what costs, not to strip rounded corners", () => {
+  expect(SHEET_CHECKS_NOTICE.hint).toMatch(/tighter than about the sheet thickness/);
+  expect(SHEET_CHECKS_NOTICE.hint).not.toMatch(/rounded corners make them fit/);
+});
+
 test("Profiles & patterns points at the section (P1a's pointer)", () => {
   const i = guide.indexOf("\n## Profiles & patterns\n");
   expect(guide.slice(i, guide.indexOf("\n## ", i + 1))).toContain("[Sheet parts](#sheet-parts)");
