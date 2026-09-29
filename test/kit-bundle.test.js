@@ -172,8 +172,8 @@ describe("own laser (the defaults)", () => {
   test("the same forge builds the same kit", async () => {
     const again = await kit(fixture);
     expect(again.names).toEqual(own.names);
-    expect(again.text("README.txt")).toBe(own.text("README.txt"));
-    expect(again.text("parts.csv")).toBe(own.text("parts.csv"));
+    // every file, byte for byte — the cut files and prints included
+    for (const name of own.names) expect(Buffer.from(again.files[name]).equals(Buffer.from(own.files[name])), name).toBe(true);
   });
 });
 
