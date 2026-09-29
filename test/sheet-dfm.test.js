@@ -423,9 +423,9 @@ describe("LASER.facts", () => {
   // about 14 s — and at a 10 mm pitch the 4 mm webs are inside an opening's reach, so the
   // opening keeps every hole (holePlan). Round holes are exact arcs to the searches now,
   // and those 48 are read in milliseconds; holes the arc fit leaves alone (ellipses: no
-  // circle fits them) are still cubics, and their difference is priced like every step:
-  // 80 of them, and the ceiling test runs, its difference does not fit, and the notice
-  // stands in for it.
+  // circle fits them) and the opening grows first, far from the slow band, stay cubics, and
+  // their difference is priced like every step: 80 of them, and the ceiling test runs, its
+  // difference does not fit, and the notice stands in for it.
   test("48 booleaned round holes and nothing narrow are read: the arcs make every step cheap", () => {
     const holes = Array.from({ length: 48 }, (_, i) => sheetHole({ d: 6, at: [10 + (i % 16) * 10, 10 + Math.floor(i / 16) * 10] }));
     const f = factsOf(plate({ profile: (kk) => kk.shape2d(rect(0, 0, 200, 44)).cutAll(holes) }), { deadline: 1500, now: () => 0 });
@@ -578,21 +578,77 @@ describe("LASER.facts", () => {
     expect(ms).toBeLessThan(100);
   });
 
-  // A corner the arc fit leaves alone — one that is not a circle — still meets the offset
-  // engine's slowest case when a test shrinks it to just past w/2: four elliptical corners
-  // whose tightest radius is 0.93–1.3 × w/2 took 0.3–2.4 s at 3 mm and 1.6–4.5 s at 6 mm in
-  // ONE test priced 273 and 303, some ending in an engine refusal. No price follows it
-  // there, so a test that would meet one is never started under a deadline: the notice
-  // stands in. `offsets` counts the shrinks and regrows run: none.
-  test("an elliptical corner a test would shrink to just past w/2 is never started", () => {
-    for (const [t, q] of [[3, 0.95], [3, 1.1], [3, 1.3], [6, 1]]) {
-      const sx = 1.3, r = q * (t / 2) * sx;
-      const sp = plate({ profile: (kk) => kk.shape2d(rect(0, 0, 100 / sx, 60)).fillet(r).scale([sx, 1])
-        .cutAll([[8, 8], [92, 8], [92, 52], [8, 52]].map((at) => sheetHole({ d: 3.4, at }))) });
-      const { f, offsets } = offsetsRun(sp, { t });
-      expect(f.evaluated, `${t} mm, rMin ${q} × w/2`).toBe(false);
-      expect(offsets, `${t} mm, rMin ${q} × w/2`).toBe(0);
+  // A cubic that is not a circle, carried by a test into the offset engine's slow band, ran
+  // for seconds in ONE step no price followed: four elliptical corners whose tightest
+  // radius is 0.93–1.3 × w/2, shrunk by the opening (0.3–2.4 s at 3 mm, 1.6–4.5 s at 6 mm);
+  // the same plate's corners at 0.1 × w/2, grown first and shrunk back by the closing
+  // (1.56 s, priced 57); a row of six booleaned 2 × 8 mm ovals, whose tips the opening grew
+  // and then shrank back past their centres (2.3 s at 3 mm, 20 s at 6 mm, priced 317). The
+  // searches read such a cubic as a polyline, and every step is priced for what it is.
+  // `stepsOf` reads a profile on the CPU clock with the 1.5 s budget and returns every
+  // priced step that ran ({ price, ms }), the whole call's CPU time, and how much slower
+  // than the prices this machine runs (the meter's own pace, never below 1): a slower
+  // machine is allowed its pace, not a slower price.
+  const stepsOf = (sp, params) => {
+    const s = resolveSheet(k, sp, params, {});
+    const steps = [];
+    const t0 = cpuMs();
+    const f = LASER.facts(s, { deadline: cpuMs() + 1500, now: cpuMs, onStep: (st) => steps.push(st) });
+    const ms = cpuMs() - t0;
+    const big = steps.filter((st) => st.price >= 20).map((st) => st.ms / st.price).sort((a, b) => a - b);
+    return { f, steps, ms, pace: Math.max(1, big[Math.floor(big.length / 2)] ?? 1) };
+  };
+  const overPrice = ({ steps, pace }) => steps.filter((st) => st.ms > 1.5 * st.price * pace + 25);
+  const ellCorners = (t, q, sx) => plate({ profile: (kk) => kk.shape2d(rect(0, 0, 100 / sx, 60)).fillet(q * (t / 2) * sx).scale([sx, 1])
+    .cutAll([[8, 8], [92, 8], [92, 52], [8, 52]].map((at) => sheetHole({ d: 3.4, at }))) });
+  test("elliptical corners a test carries into the slow band are read, in under 100 ms of CPU", () => {
+    for (const [t, q, sx] of [[3, 0.95, 1.3], [3, 1.1, 1.3], [3, 1.3, 1.3], [6, 1, 1.3], [6, 0.1, 1.6], [6, 0.15, 1.6]]) {
+      const at = `${t} mm, rMin ${q} × w/2, x ${sx}`;
+      const { f, ms, ...run } = stepsOf(ellCorners(t, q, sx), { t });
+      expect(f, at).toMatchObject({ evaluated: true, bridgeCapped: true, readErrors: { bridge: null, gap: null } });
+      expect(f.gap, at).toBeCloseTo(t > 3.4 ? 3.4 : t, 6);           // the M3 hole, where the ceiling allows
+      expect(ms, at).toBeLessThan(100);
+      expect(overPrice(run), at).toEqual([]);
     }
+  });
+  test("a row of six booleaned 2 × 8 mm ovals is read or withheld inside the budget, no step past its price", () => {
+    const ovals = (pitch) => plate({ profile: (kk) => {
+      let s = kk.shape2d(rect(0, 0, 40 + 6 * pitch, 40));
+      for (let i = 0; i < 6; i++) s = s.cut(kk.shape2d(slotProfile(0, 1)).scale([1, 4]).translate([20 + i * pitch, 20]));
+      return s;
+    } });
+    for (const [t, pitch] of [[3, 4.4], [3, 8], [6, 6.8]]) {
+      const at = `${t} mm, pitch ${pitch}`;
+      const { f, ms, steps, pace } = stepsOf(ovals(pitch), { t });
+      expect(steps.length, at).toBeGreaterThan(0);
+      expect(overPrice({ steps, pace }), at).toEqual([]);
+      expect(Math.max(...steps.map((st) => st.ms)), at).toBeLessThan(1000 * pace);   // was 2.3 s and 20 s
+      expect(ms, at).toBeLessThan(1500 * pace + 100);
+      if (!f.evaluated) expect(f, at).toMatchObject({ bridge: null, gap: null });  // withheld: verify's notice
+      else expect(f.readErrors, at).toEqual({ bridge: null, gap: null, marks: null, marksArea: null });
+    }
+  });
+  // …and across #233's exact-curve helpers and ellipses, booleaned as holes and as panels,
+  // at radii that put their curves on both sides of every band, on 2–6 mm stock: no step
+  // costs more than 1.5 × its price (at this machine's pace), and no reading takes more
+  // than the budget.
+  test("across #233's helpers and ellipses, at every radius and stock, no step costs more than 1.5 × its price", () => {
+    const P100 = (kk) => kk.shape2d(rect(0, 0, 100, 80));
+    const shapes = {
+      ellipse: (r) => (kk) => P100(kk).cut(kk.shape2d(slotProfile(0, r)).scale([1.7, 1]).translate([50, 40])),
+      "ellipse row": (r) => (kk) => { let s = P100(kk); for (let i = 0; i < 4; i++) s = s.cut(kk.shape2d(slotProfile(0, r)).scale([1, 2.2]).translate([20 + i * (2 * r + 1.5), 40])); return s; },
+      "ellipse corners": (r) => (kk) => kk.shape2d(rect(0, 0, 60, 60)).fillet(Math.min(r, 20)).scale([1.6, 1]).cut(kk.shape2d(slotProfile(0, 2)).translate([48, 30])),
+      "pie + ring sector": (r) => (kk) => P100(kk).cut(kk.shape2d(pieProfile(2 * r, 70)).translate([30, 40])).cut(kk.shape2d(ringSectorProfile(r, 2.2 * r, 120)).translate([70, 40])),
+      "rounded rect x1.5 + slot": (r) => (kk) => P100(kk).cut(kk.shape2d(roundedRectProfile(30, 20, Math.min(r, 5))).scale([1.5, 1]).translate([30, 40])).cut(kk.shape2d(slotProfile(20, r / 2)).translate([70, 20])),
+      "ring-sector panel + ellipse": (r) => (kk) => kk.shape2d(ringSectorProfile(10, 20 + r, 90)).cut(kk.shape2d(slotProfile(0, r / 2 + 0.5)).scale([1.4, 1]).translate([11, 11])),
+    };
+    const failures = [];
+    for (const [name, make] of Object.entries(shapes)) for (const r of [0.4, 1.2, 3, 8]) for (const t of [2, 3, 6]) {
+      const run = stepsOf(plate({ profile: make(r) }), { t });
+      const over = overPrice(run);
+      if (over.length || run.ms > 1500 * run.pace + 100) failures.push(`${name} r ${r}, ${t} mm: ${run.ms.toFixed(0)} ms, over ${JSON.stringify(over)}`);
+    }
+    expect(failures).toEqual([]);
   });
 
   // The reviewers' panel (test/fixtures/sheet-web-plate-part.js): thirty booleaned d 6

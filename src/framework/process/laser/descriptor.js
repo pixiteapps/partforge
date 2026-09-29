@@ -50,7 +50,7 @@ const cubicMid = (p0, { c1, c2, to }) => [0, 1].map((i) => (p0[i] + 3 * c1[i] + 
 // A hole ring that is a circle — every segment curved, and the circle through each
 // segment's ends and midpoint (an arc's own, a cubic's through its midpoint) within 1 % of
 // one centre and radius — as { d, at }, else null. Read from each segment's circle, not a
-// bounding box of its points: recovered arcs (exactArcs) end wherever the fit split them.
+// bounding box of its points: recovered arcs (withArcs) end wherever the fit split them.
 function roundHole(ring) {
   if (Array.isArray(ring) || !ring.segments?.length) return null;
   const circles = [];
@@ -68,11 +68,11 @@ function roundHole(ring) {
   return r > 0 && circles.every((a) => dist(a.c, at) <= 0.01 * r && Math.abs(a.r - r) <= 0.01 * r) ? { d: 2 * r, at } : null;
 }
 
-// Each segment of a ring as the hole plan and the prices see it: its end tangents, points
-// along it to FLAT_TOL (its end included), and for a cubic which way it bends (+1 left:
-// toward the material, since storage winding keeps the material on the left of travel;
-// -1 right; 0 both ways, an inflected cubic) and its tightest radius. Zero-length lines
-// are dropped: they have no direction.
+// Each segment of a ring as the hole plan sees it: its end tangents and points along it to
+// FLAT_TOL (its end included). Zero-length lines are dropped: they have no direction.
+// FLAT_TOL is also how closely the searches' polylines follow a cubic (searchable, below):
+// a cubic is cut where its control points lie within FLAT_TOL of the chord, which puts
+// the curve within 3/4 of that (0.00375 mm) of the polyline.
 const FLAT_TOL = 0.005;
 const sub2 = (a, b) => [a[0] - b[0], a[1] - b[1]];
 const cross2 = (a, b) => a[0] * b[1] - a[1] * b[0];
@@ -96,8 +96,6 @@ function arcCircle(from, via, to) {
   const a0 = ang(from), toVia = mod(ang(via) - a0), toEnd = mod(ang(to) - a0);
   return { c, r: dist(from, c), a0, sweep: toVia <= toEnd ? toEnd : toEnd - TAU };   // + counter-clockwise
 }
-const bez1 = (p0, c1, c2, p3, t) => { const u = 1 - t; return [0, 1].map((i) => 3 * (u * u * (c1[i] - p0[i]) + 2 * u * t * (c2[i] - c1[i]) + t * t * (p3[i] - c2[i]))); };
-const bez2 = (p0, c1, c2, p3, t) => [0, 1].map((i) => 6 * ((1 - t) * (c2[i] - 2 * c1[i] + p0[i]) + t * (p3[i] - 2 * c2[i] + c1[i])));
 function flattenCubic(p0, c1, c2, p3, out, depth = 0) {
   if (depth >= 10 || Math.max(pointSegDist(c1, p0, p3), pointSegDist(c2, p0, p3)) <= FLAT_TOL) { out.push(p3); return; }
   const m = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
@@ -105,11 +103,10 @@ function flattenCubic(p0, c1, c2, p3, out, depth = 0) {
   flattenCubic(p0, a, ab, mid, out, depth + 1);
   flattenCubic(mid, bc, c, p3, out, depth + 1);
 }
-const CUBIC_SAMPLES = 16;
 function segInfo(from, seg) {
   const line = () => {
     const t = unit(sub2(seg.to, from));
-    return t && { from, to: seg.to, t0: t, t1: t, pts: [seg.to] };
+    return t && { from, to: seg.to, t0: t, t1: t, pts: [seg.to], line: true };
   };
   if (seg.via) {
     const a = arcCircle(from, seg.via, seg.to);
@@ -126,16 +123,9 @@ function segInfo(from, seg) {
   const t0 = unit(sub2(c1, from)) ?? unit(sub2(c2, from)) ?? unit(sub2(to, from));
   const t1 = unit(sub2(to, c2)) ?? unit(sub2(to, c1)) ?? unit(sub2(to, from));
   if (!t0 || !t1) return null;
-  let left = false, right = false, rMin = Infinity;
-  for (let k = 0; k <= CUBIC_SAMPLES; k++) {
-    const t = k / CUBIC_SAMPLES, d1 = bez1(from, c1, c2, to, t), d2 = bez2(from, c1, c2, to, t);
-    const x = cross2(d1, d2), speed = Math.hypot(d1[0], d1[1]);
-    if (x > 1e-12) left = true; else if (x < -1e-12) right = true;
-    if (Math.abs(x) > 1e-12 && speed > 1e-9) rMin = Math.min(rMin, speed ** 3 / Math.abs(x));
-  }
   const pts = [];
   flattenCubic(from, c1, c2, to, pts);
-  return { from, to, cubic: true, t0, t1, dir: left && right ? 0 : left ? 1 : right ? -1 : 0, rMin, pts };
+  return { from, to, t0, t1, pts };
 }
 function ringParts(ring) {
   const c = asContour(ring), parts = [];
@@ -145,45 +135,123 @@ function ringParts(ring) {
 }
 const polyArea = (pts) => pts.reduce((a, q, i) => a + cross2(q, pts[(i + 1) % pts.length]), 0) / 2;
 
-// ── exact arcs for the searches ───────────────────────────────────────────────
+// ── the shapes the searches run on ─────────────────────────────────────────────
 // paper hands every arc back from a boolean as cubics — a booleaned round hole as four, a
-// fillet as one — and the offset engine only approximates a cubic's offset. That made the
-// searches' two slowest cases: a cubic a test shrinks to just past w/2 (seconds each; one
-// test on an ordinary rounded mounting plate with four M3 holes ran 4–73 s), and the
-// one-sided difference against the test's near-copy (paper's boolean, quadratic in its
-// cubics). And a sharp join extends an arc along its circle but a cubic only along its
-// end tangent, which cuts short a corner where the curve meets another edge — a false
-// narrow web or gap there. So the searches read every run of cubics that lies on one
-// circle as that circle's arcs, through the resolved sheet's `recoverArcs`
-// (geometry/arc-fit.js, handed over by sheet/resolve.js: this file imports nothing). It
-// is the fit the kit draws the cut files with, so the searches read the geometry that is
-// cut: it fits a whole run at once, through the run's own ends (a split circle stays ONE
-// circle — fitted cubic by cubic, the pieces of a booleaned D met at a kink the offset
-// engine read as a false 1 mm web), and accepts a cubic only within 1e-3 of the radius
-// and 2e-3 of its own chord (paper's quarter circle is 2.7e-4·r off; a shallow cubic that
-// is not a circle is not read as one). Only the shapes the width searches run on: the
-// area, pieces and marks read the profile.
-// → the contours with those runs as arcs, or the same array when no ring changed.
-function exactArcs(contours, recover) {
-  let swapped = false;
+// fillet as one — and the offset engine only approximates a cubic's offset (adaptive
+// Tiller–Hanson, subdivided to OFFSET_TOL). That approximation has a slow band no price
+// follows: a cubic an offset moves toward its centre of curvature until little of its
+// radius is left subdivides toward the depth limit, and ONE step ran for seconds — 4–73 s
+// on an ordinary rounded mounting plate with four M3 holes; 20 s on a row of six booleaned
+// 2 × 8 mm ovals on 6 mm stock, whose tips a test grew first and then moved back past
+// their centres; 1.6 s closing a plate's elliptical corners. And a sharp join extends a
+// cubic only along its end tangent, which cuts short a corner where the curve meets
+// another edge — a false narrow web or gap there. So each search reads its shape in two
+// passes:
+//   • every run of cubics on one circle becomes that circle's arcs (withArcs), through the
+//     resolved sheet's `recoverArcs` (geometry/arc-fit.js, handed over by sheet/resolve.js:
+//     this file imports nothing) — the fit the kit draws the cut files with, so the
+//     searches read the geometry that is cut. It fits a whole run at once, through the
+//     run's own ends (a split circle stays ONE circle; fitted cubic by cubic, the pieces of
+//     a booleaned D met at a kink the offset engine read as a false 1 mm web), and accepts
+//     it only within min(1e-3·r, 2e-3·chord) of every cubic at every probe and joint,
+//     refusing a fit through three near-collinear points (a wave is not an arc);
+//   • every cubic left that the search could carry into the slow band becomes a polyline
+//     within FLAT_TOL of it (searchable): lines offset exactly, a line meets another edge at
+//     a corner the sharp join mitres exactly, and a test on lines costs what its price says.
+//     At the widest test (h = ceiling/2) a cubic the search's first offset moves toward its
+//     centre of curvature is slow below about 2.2·h — the spike at 0.9–1.35·h and
+//     superlinear around it — and one moved away first below about 0.35·h (grown to r + h,
+//     then moved toward its centre by h by the second offset); the edges are measured on
+//     elliptical corners and holes at 3 and 6 mm (docs/research/sheet-inspect-timing.md).
+//     A cubic under TOWARD·h, or AWAY·h, is flattened: margins of 1.1× and 2× over those
+//     edges, and a cubic that bends both ways is judged the strict way.
+// The cubics left are benign at every width the search tests (every width is at most the
+// ceiling), and are priced per cubic like any segment. Flattening EVERY cubic was measured
+// and set aside: a benign curve becomes a hundred lines where it was four cubics, and a
+// line-heavy test costs superlinearly (the prices below), so panels of ordinary elliptical
+// holes that read in tens of milliseconds as cubics were priced out — 106 of the 151
+// calibration panels read under the budget, against 114 this way.
+// Only the shapes the width searches run on: the area, pieces and marks read the profile.
+const TOWARD = 2.5, AWAY = 0.75;                      // × h at the ceiling — see above
+// A cubic's tightest radius of curvature: the radius at CURVE_SAMPLES + 1 points, and the
+// radius each sample interval turns through (its chord over its turn), whichever is
+// smaller — a turn too sharp to show at any sample still shows across its interval. A
+// cusp or a loop turns fast and reads tight.
+const CURVE_SAMPLES = 32;
+const bezAt = (p0, c1, c2, p3, t) => { const u = 1 - t; return [0, 1].map((i) => u * u * u * p0[i] + 3 * u * u * t * c1[i] + 3 * u * t * t * c2[i] + t * t * t * p3[i]); };
+const bez1 = (p0, c1, c2, p3, t) => { const u = 1 - t; return [0, 1].map((i) => 3 * (u * u * (c1[i] - p0[i]) + 2 * u * t * (c2[i] - c1[i]) + t * t * (p3[i] - c2[i]))); };
+const bez2 = (p0, c1, c2, p3, t) => [0, 1].map((i) => 6 * ((1 - t) * (c2[i] - 2 * c1[i] + p0[i]) + t * (p3[i] - 2 * c2[i] + c1[i])));
+// → { r: its tightest radius, dir: +1 when it bends toward the material everywhere
+// (left of travel: the storage winding keeps the material on the left), -1 away, 0 both }
+function curveOf(p0, c1, c2, p3) {
+  let r = Infinity, left = false, right = false, prev = null;
+  for (let k = 0; k <= CURVE_SAMPLES; k++) {
+    const t = k / CURVE_SAMPLES, v = bez1(p0, c1, c2, p3, t), a = bez2(p0, c1, c2, p3, t);
+    const speed = Math.hypot(v[0], v[1]), x = cross2(v, a);
+    if (speed < 1e-9) return { r: 0, dir: 0 };                    // a cusp
+    if (x > 1e-12) left = true; else if (x < -1e-12) right = true;
+    if (Math.abs(x) > 1e-12) r = Math.min(r, speed ** 3 / Math.abs(x));
+    const here = { q: bezAt(p0, c1, c2, p3, t), dir: [v[0] / speed, v[1] / speed] };
+    if (prev) {
+      const turn = Math.abs(Math.atan2(cross2(prev.dir, here.dir), dot2(prev.dir, here.dir)));
+      if (turn > 1e-9) r = Math.min(r, dist(prev.q, here.q) / turn);
+    }
+    prev = here;
+  }
+  return { r, dir: left && right ? 0 : left ? 1 : right ? -1 : 0 };
+}
+// Whether a search whose first offset moves the material `shrinks` (+1: an opening shrinks
+// it; -1: a closing grows it) must flatten this cubic. A shrink moves a cubic that bends
+// toward the material toward its centre.
+function isSlow(p0, c1, c2, p3, ceiling, shrinks) {
+  const { r, dir } = curveOf(p0, c1, c2, p3);
+  return r < (dir === -shrinks ? AWAY : TOWARD) * (ceiling / 2);
+}
+// The contours with every circular run of cubics read as its arcs, or the same array when
+// that changes nothing.
+function withArcs(contours, recover) {
+  let changed = false;
   const ring = (r) => {
     if (Array.isArray(r) || !r.segments.some((g) => g.c1)) return r;
     const arcs = recover(r);
-    if (arcs.segments.some((g) => g.via)) swapped = true;
+    if (arcs.segments.some((g) => g.via)) changed = true;
     return arcs;
   };
   const out = contours.map((rg) => ({ outer: ring(rg.outer), holes: rg.holes.map(ring) }));
-  return swapped ? out : contours;
+  return changed ? out : contours;
+}
+// The contours with every cubic a search moving the material `shrinks` could carry into
+// the slow band as a polyline, or the same array when there is none.
+function searchable(contours, ceiling, shrinks) {
+  let changed = false;
+  const ring = (r) => {
+    if (Array.isArray(r) || !r.segments.some((g) => g.c1)) return r;
+    const segments = [];
+    let from = r.start, flat = false;
+    for (const g of r.segments) {
+      if (g.c1 && isSlow(from, g.c1, g.c2, g.to, ceiling, shrinks)) {
+        const pts = [];
+        flattenCubic(from, g.c1, g.c2, g.to, pts);
+        for (const q of pts) segments.push({ to: q });
+        flat = true;
+      } else segments.push(g);
+      from = g.to;
+    }
+    if (!flat) return r;
+    changed = true;
+    return { start: r.start, segments };
+  };
+  const out = contours.map((rg) => ({ outer: ring(rg.outer), holes: rg.holes.map(ring) }));
+  return changed ? out : contours;
 }
 
 // ── what a width search can leave out ────────────────────────────────────────
 // Every test shrinks and regrows the whole profile, so every ring a search can leave out
-// is work it does not do — most of all a curve the arc fit cannot read as a circle (above):
-// the offset engine returns each cubic as 16–32 (its cubic offset is an approximation),
-// and the one-sided difference against that near-copy costs paper time quadratic in them
-// (2,048 cubics: 2 s; 4,096: 8 s). A hole that cannot take part in what a search counts
-// is left out of it instead: the search runs on the profile rebuilt from its own rings
-// without that hole (the kernel's trusted lift — no boolean, no validation, arcs kept).
+// is work it does not do — most of all a curve that is not a circle, which the searches
+// may read as a polyline of many short lines (above). A hole that cannot take part in what
+// a search counts is left out of it instead: the search runs on the profile rebuilt from
+// its own rings without that hole (the kernel's trusted lift — no boolean, no validation,
+// arcs kept).
 //   • The closing (gap) grows the material and shrinks it back, which shrinks each hole
 //     from its own boundary and regrows it alone: holes never meet in it. A round hole
 //     is read directly (its narrowest opening is its diameter), and a convex hole at
@@ -264,6 +332,67 @@ function polyNear(A, boxA, B, reach) {
   }
   return false;
 }
+// ── boundaries that face each other ──────────────────────────────────────────────
+// Two pieces of a profile's boundary FACE each other when they run within 60° of opposite
+// directions — the two sides of a web, a slot, a finger, a narrow hole — and come within
+// `reach` of each other. facingPairs calls visit(i, j) once for every such pair of pieces:
+// each ring cut along its flattened boundary (ringParts) into pieces no longer than
+// `step`, a piece's neighbours on its own ring skipped (they meet it at a vertex). The
+// pieces are bucketed in a grid of cells at least `reach` wide, so the work is linear in
+// them and in the pairs found. → the pieces: { a, b, dir, len, ring, k, line }.
+function facingPairs(contours, reach, step, visit) {
+  const pieces = [], rings = [];
+  for (const rg of contours) for (const ring of [rg.outer, ...rg.holes]) {
+    const r = rings.length, start = pieces.length;
+    for (const part of partsOf(ring)) {
+      let from = part.from;
+      for (const to of part.pts) {
+        const len = dist(from, to), n = Math.max(1, Math.ceil(len / step));
+        if (len > 1e-12) for (let i = 0; i < n; i++) {
+          const a = [from[0] + ((to[0] - from[0]) * i) / n, from[1] + ((to[1] - from[1]) * i) / n];
+          const b = [from[0] + ((to[0] - from[0]) * (i + 1)) / n, from[1] + ((to[1] - from[1]) * (i + 1)) / n];
+          pieces.push({ a, b, dir: [(to[0] - from[0]) / len, (to[1] - from[1]) / len], len: len / n, ring: r, k: pieces.length - start, line: !!part.line });
+        }
+        from = to;
+      }
+    }
+    rings.push(pieces.length - start);
+  }
+  const cell = Math.max(reach, step === Infinity ? reach : step), cells = new Map();
+  const range = (lo, hi) => [Math.floor(lo / cell), Math.floor(hi / cell)];
+  pieces.forEach((pc, i) => {
+    const [x0, x1] = range(Math.min(pc.a[0], pc.b[0]) - reach, Math.max(pc.a[0], pc.b[0]) + reach);
+    const [y0, y1] = range(Math.min(pc.a[1], pc.b[1]) - reach, Math.max(pc.a[1], pc.b[1]) + reach);
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+      const key = `${x},${y}`;
+      if (!cells.has(key)) cells.set(key, []);
+      cells.get(key).push(i);
+    }
+  });
+  pieces.forEach((pc, i) => {
+    const seen = new Set();
+    const [x0, x1] = range(Math.min(pc.a[0], pc.b[0]), Math.max(pc.a[0], pc.b[0]));
+    const [y0, y1] = range(Math.min(pc.a[1], pc.b[1]), Math.max(pc.a[1], pc.b[1]));
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) for (const j of cells.get(`${x},${y}`) ?? []) {
+      if (j <= i || seen.has(j)) continue;
+      seen.add(j);
+      const o = pieces[j];
+      if (o.ring === pc.ring) { const n = rings[pc.ring], d = Math.abs(o.k - pc.k); if (Math.min(d, n - d) <= 1) continue; }
+      if (dot2(pc.dir, o.dir) >= -0.5 || segSegDist(pc.a, pc.b, o.a, o.b) >= reach) continue;
+      visit(i, j);
+    }
+  });
+  return pieces;
+}
+// How many of a shape's lines face another piece of its boundary within `reach`.
+function facingLines(contours, reach) {
+  const hit = new Set();
+  const pieces = facingPairs(contours, reach, Infinity, (i, j) => { hit.add(i); hit.add(j); });
+  let n = 0;
+  for (const i of hit) if (pieces[i].line) n++;
+  return n;
+}
+
 // → { open, close, round }: the contours each search runs on (null: the whole profile),
 // and the round holes the closing left out, whose diameters are read instead. The
 // clearances are measured hole against outer (few) and against the holes a sweep over
@@ -303,11 +432,16 @@ function holePlan(contours, ceiling) {
     : null);
   return { open: without(open), close: without(close), round };
 }
-// The plan on the profile's exact arcs: what each search runs on (null: the profile itself).
+// The plan on the profile's arcs, and each search's shape (null: the profile itself) —
+// the plan's contours less the holes it leaves out, flattened for that search's direction.
 function searchPlan(contours, ceiling, recover) {
-  const exact = recover ? exactArcs(contours, recover) : contours;
-  const p = holePlan(exact, ceiling), own = exact === contours ? null : exact;
-  return { open: p.open ?? own, close: p.close ?? own, round: p.round };
+  const arcs = recover ? withArcs(contours, recover) : contours;
+  const p = holePlan(arcs, ceiling);
+  const own = (reduced, shrinks) => {
+    const flat = searchable(reduced ?? arcs, ceiling, shrinks);
+    return flat === contours ? null : flat;
+  };
+  return { open: own(p.open, 1), close: own(p.close, -1), round: p.round };
 }
 
 // ── what a step costs ────────────────────────────────────────────────────────
@@ -321,43 +455,33 @@ function searchPlan(contours, ceiling, recover) {
 // test's own result before it starts. With no deadline the caller asked for the whole
 // reading, however long, and gets it.
 // Prices are in units of about one desktop-Node millisecond, fitted to main-thread CPU
-// time on the searched shapes as they are now — circular cubics read as arcs (exactArcs),
-// every difference taken a margin clear (MARGIN) — on 3 and 6 mm stock
+// time on the searched shapes as they are now — circles as arcs, slow cubics as lines
+// (searchable), every difference taken a margin clear (MARGIN) — on 2–6 mm stock
 // (docs/research/sheet-inspect-timing.md, "What a profile costs"):
 //   a test (two sharp offsets), per segment of the shape tested:
-//     line 1.2 (1,028: 1.1 s)   cubic 3 (1,024 beside 1,028 lines: 5.2 s)
-//     arc 2.5 plus 0.0015 × (the arcs)²: a grille of round holes whose webs a test
-//     collapses costs the winding resolver superlinearly (200 arcs 0.2 s, 578 1.3 s,
-//     1,058 4.1 s), and linear the first test of 400 holes and more was priced under its
-//     cost;
-//   and the offset engine's worst case, a cubic — one the arc fit left alone, so not a
-//   circle — that the test SHRINKS toward w/2 (its offset subdivides toward the depth
-//   limit and the winding resolver pays for every piece). Bending the way the first
-//   offset shrinks (convex in an opening, concave in a closing):
-//     • tightest radius from 0.9 to 1.35 × w/2: NOT STARTED, whatever the count — one
-//       test met four elliptical corners there and took 0.3–2.4 s at 3 mm and 1.6–4.5 s
-//       at 6 mm (priced 273 and 303), some ending in an engine refusal; no price follows
-//       it, so under a deadline the test is never started (with none it runs);
-//     • elsewhere under 1.85 × w/2: 16 × (their count)², superlinear, fitted to the worst
-//       measured (elliptical tab corners at 0.8 × w/2: 12 of them 0.75 s, 130 21.7 s;
-//       before the arc fit, circular tab and rounded-rect corners the same way);
-//     • from 1.85 to 2.2 × w/2: 0.2 × (their count)² more — past 1.85 a circle's cost
-//       fell away at once, an ellipse's only by 2.2 (130 elliptical corners at 2.0 × w/2:
-//       0.74 s against a linear 559);
-//   one bending the other way is grown first and shrunk back, and costs 10 more when its
-//   radius is at most 1.5·w/2 (128 filleted tab corners closed at 1.5 mm: 1.2 s);
+//     line 1.2 (1,028: 1.1 s; 884 of a polyline-rounded tab panel: 0.92 s), plus
+//     0.002 × (the lines facing another piece of the boundary within the ceiling)²
+//     (facingLines): where a test brings two polylines nearly tangent — the webs of a
+//     grille of flattened ovals, a stroke of text — the winding resolver splits them into
+//     many pieces and probes each against every edge, many times over (24 flattened
+//     2 × 1 mm ovals on 2 mm stock, 964 lines all facing: 2.4 s, priced 3.0 s; six
+//     2 × 8 mm ovals on 6 mm, 436 lines, 384 facing: 0.72 s, priced 0.82 s). Linear alone,
+//     a grille of drawn polylines ran 2.3 s in one step priced 1.4 s;
+//     arc 2.5 plus 0.0015 × (the arcs)²: the same resolver on a grille of round holes whose
+//     webs a test collapses (200 arcs 0.2 s, 578 1.3 s, 1,058 4.1 s);
+//     cubic 3 — a cubic left as one is out of the slow band, at every width tested;
 //   the one-sided difference, per segment of the shape tested and of its result:
-//     line 0.25, arc 0.5 (a grille of 196 round holes: 0.55 s, priced 0.94 s), cubic
-//     0.15 — no longer quadratic: against a near-copy paper's boolean was quadratic in
-//     its cubics (4,096: 8 s), a margin clear of it it is not (200 booleaned ellipses,
-//     8,900 cubics and lines: 1.2 s, priced 1.5 s; 14,400: 1.5 s, priced 2.2 s);
+//     line 0.1 (a grille of 50 drawn 32-facet circles: 0.28 s, priced 0.34 s), arc 0.5 (a
+//     grille of 196 round holes: 0.55 s, priced 0.94 s), cubic 0.15 (200 booleaned
+//     ellipses, 8,900 cubics and lines: 1.2 s, priced 1.5 s);
 //   the margin shape, once per search: one offset, half a test at no width.
+// Over the 151 calibration panels, read with no deadline, no step costs more than 0.88 of
+// its price; under the budget the worst is 0.85 (both are grilles of flattened ovals).
 // The meter scales every price by how much slower than that this device has run the
 // steps it already took (never below 1), so a phone prices its own steps.
 const PRICE = {
-  test: { line: 1.2, arc: 2.5, arcPair: 0.0015, cubic: 3, spike: [0.9, 1.35], shrunkWithin: 1.85, shrunkPair: 16,
-    nearWithin: 2.2, nearPair: 0.2, grownBackWithin: 1.5, grownBack: 10 },
-  diff: { line: 0.25, arc: 0.5, cubic: 0.15 },
+  test: { line: 1.2, facingPair: 0.002, arc: 2.5, arcPair: 0.0015, cubic: 3 },
+  diff: { line: 0.1, arc: 0.5, cubic: 0.15 },
 };
 const countsOf = (contours) => {
   const c = { line: 0, arc: 0, cubic: 0 };
@@ -367,45 +491,50 @@ const countsOf = (contours) => {
   }
   return c;
 };
-// Which way each cubic of these rings bends, and its tightest radius (segInfo).
-const cubicsOf = (contours) => contours.flatMap((rg) => [rg.outer, ...rg.holes])
-  .flatMap((ring) => partsOf(ring).filter((pt) => pt.cubic).map(({ dir, rMin }) => ({ dir, rMin })));
+// How many cubics of these rings a search moving the material `shrinks` could carry into
+// the slow band: none in a shape searchable made.
+const slowCubics = (contours, ceiling, shrinks) => contours.flatMap((rg) => [rg.outer, ...rg.holes]).reduce((n, ring) => {
+  if (Array.isArray(ring)) return n;
+  let from = ring.start;
+  for (const g of ring.segments) { if (g.c1 && isSlow(from, g.c1, g.c2, g.to, ceiling, shrinks)) n++; from = g.to; }
+  return n;
+}, 0);
 // The per-segment part of a test's price: what one offset of the shape costs, twice.
 const linearTestPrice = ({ line, arc, cubic }) => line * PRICE.test.line + arc * PRICE.test.arc + cubic * PRICE.test.cubic;
-// One test at width w on a search's shape. `shrinks` is the way a cubic bends when the
-// test's first offset shrinks it: +1 (convex) in an opening, -1 (concave) in a closing.
-// Infinity where a cubic sits in the spike band: never started under a deadline.
-function testPrice(search, shrinks, w) {
-  const P = PRICE.test, h = w / 2;
-  let shrunk = 0, near = 0, grownBack = 0;
-  for (const c of search.cubics) {
-    if (c.dir !== -shrinks) {
-      if (c.rMin > P.spike[0] * h && c.rMin < P.spike[1] * h) return Infinity;
-      if (c.rMin < P.shrunkWithin * h) shrunk++;
-      else if (c.rMin < P.nearWithin * h) near++;
-    }
-    if (c.dir !== shrinks && c.rMin <= P.grownBackWithin * h) grownBack++;
-  }
-  const { arc } = search.counts;
-  return linearTestPrice(search.counts) + arc * arc * P.arcPair
-    + shrunk * shrunk * P.shrunkPair + near * near * P.nearPair + grownBack * P.grownBack;
+// One test on a search's shape. A shape holds a slow cubic only where the kernel has no
+// trusted lift to rebuild the profile with (the profile itself is searched): no price
+// follows it, so that test is never started under a deadline (Infinity; with none, it runs).
+function testPrice(search) {
+  const P = PRICE.test, { arc } = search.counts;
+  if (search.slow) return Infinity;
+  const facing = (search.facing ??= facingLines(search.contours, search.reach));
+  return linearTestPrice(search.counts) + arc * arc * P.arcPair + facing * facing * P.facingPair;
 }
 function diffPrice(a, b) {
   const P = PRICE.diff;
   return (a.line + b.line) * P.line + (a.arc + b.arc) * P.arc + (a.cubic + b.cubic) * P.cubic;
 }
 // spend(price): not started unless `price` fits before the deadline, scaled by this
-// device's measured pace. Each call settles the step the last one priced. Exported for
-// its unit test only.
-export function _meter(deadline, now) {
+// device's measured pace. Each call settles the step the last one priced, and
+// spend.settle() the last one; `onStep` hears each settled step as { price, ms }.
+// Exported for its unit test only.
+export function _meter(deadline, now, onStep) {
   let priced = 0, took = 0, open = null;
-  return (price = 0) => {
+  const settle = (t) => {
+    if (!open) return;
+    priced += open.price; took += t - open.at;
+    onStep?.({ price: open.price, ms: t - open.at });
+    open = null;
+  };
+  const spend = (price = 0) => {
     const t = now();
-    if (open) { priced += open.price; took += t - open.at; open = null; }
+    settle(t);
     const pace = priced >= 50 ? Math.max(1, took / priced) : 1;
     if (deadline !== Infinity && t + price * pace >= deadline) throw OUT_OF_TIME;
     open = { price, at: t };
   };
+  spend.settle = () => settle(now());
+  return spend;
 }
 
 // ── one width ─────────────────────────────────────────────────────────────────
@@ -608,7 +737,7 @@ function narrowest(test, ceiling, spend, price) {
 // a booleaned screw hole never enters the bisection (4.5 s for one M2.5 hole, before).
 // The narrower of the two wins.
 function narrowestGap(search, round, ceiling, spend) {
-  const gap = narrowest((w) => closingGain(search, w, spend), ceiling, spend, (w) => testPrice(search, -1, w));
+  const gap = narrowest((w) => closingGain(search, w, spend), ceiling, spend, () => testPrice(search));
   const smallest = round.length ? round.reduce((a, b) => (b.d < a.d - 1e-9 ? b : a)) : null;   // the first of equals
   return smallest && smallest.d < ceiling && (gap.capped || smallest.d < gap.value)
     ? { value: round2(smallest.d), capped: false, at: smallest.at }
@@ -721,8 +850,10 @@ export const LASER = {
   // run only until `deadline` (an absolute time in ms on `now`'s clock, Date.now by
   // default), and a step priced past it is not started (meter); then `evaluated` stays
   // false and each is null. The rest is cheap and always read. `at` and `solidMatchPct`
-  // need the 3-D part and are the oracle's to fill (oracle/measure.js).
-  facts(s, { deadline = Infinity, now = Date.now } = {}) {
+  // need the 3-D part and are the oracle's to fill (oracle/measure.js). `onStep`, a
+  // diagnostic for the timing bench and the tests, hears every priced step that ran as
+  // { price, ms } on `now`'s clock.
+  facts(s, { deadline = Infinity, now = Date.now, onStep } = {}) {
     const { profile, thickness: t } = s;
     const contours = profile.toContours();
     const pieces = contours.length;
@@ -739,26 +870,27 @@ export const LASER = {
       readErrors: { bridge: null, gap: null, marks: null, marksArea: null },
       evaluated: false,
     };
-    const spend = _meter(deadline, now);
+    const spend = _meter(deadline, now, onStep);
     const ceiling = 2 * widthFloor(t);
-    // Each search's shape: the profile with its circular cubics read as arcs (exactArcs),
-    // less the holes it can leave out, rebuilt from its own rings — or the profile itself,
-    // when neither changes it or the kernel has no trusted lift. The plan is made inside
-    // the readings that use it (and kept once made), so whatever goes wrong in it costs
-    // those readings (readErrors), never these facts.
+    // Each search's shape: the profile with its circular cubics read as arcs and its slow
+    // cubics as lines (searchPlan), less the holes it can leave out, rebuilt from its own
+    // rings — or the profile itself, when none of that changes it or the kernel has no
+    // trusted lift. The plan is made inside the readings that use it (and kept once made),
+    // so whatever goes wrong in it costs those readings (readErrors), never these facts.
     const lift = s.trustedShape2d;
     let planned = null;
     const plan = () => (planned ??= lift && pieces ? searchPlan(contours, ceiling, s.recoverArcs) : { open: null, close: null, round: [] });
-    const searchOn = (reduced) => ({
-      shape: reduced ? lift(reduced) : profile, counts: countsOf(reduced ?? contours), cubics: cubicsOf(reduced ?? contours),
+    const searchOn = (reduced, shrinks) => ({
+      shape: reduced ? lift(reduced) : profile, contours: reduced ?? contours, reach: ceiling,
+      counts: countsOf(reduced ?? contours), slow: reduced ? 0 : slowCubics(contours, ceiling, shrinks),
     });
     try {
       const errors = { bridge: null, gap: null, marks: null, marksArea: null };
       const bridge = reading(errors, "bridge", () => {
-        const search = searchOn(plan().open);
-        return narrowest((w) => openingLoss(search, w, spend), ceiling, spend, (w) => testPrice(search, 1, w));
+        const search = searchOn(plan().open, 1);
+        return narrowest((w) => openingLoss(search, w, spend), ceiling, spend, () => testPrice(search));
       });
-      const gap = reading(errors, "gap", () => narrowestGap(searchOn(plan().close), plan().round, ceiling, spend));
+      const gap = reading(errors, "gap", () => narrowestGap(searchOn(plan().close, -1), plan().round, ceiling, spend));
       const m = reading(errors, "marks", () => marksFacts(s, spend));
       // A custom build is compared with profile area × thickness minus the marks'
       // removed volume (oracle/measure.js), so it needs the marks inside the cut.
@@ -775,6 +907,7 @@ export const LASER = {
     } catch (e) {
       if (e !== OUT_OF_TIME) throw e;
     }
+    if (onStep) spend.settle();
     return f;
   },
   // The process's own expectations, VOLUNTEERED by verify on every sheet and never
