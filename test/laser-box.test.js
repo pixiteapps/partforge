@@ -96,7 +96,7 @@ test("on thick stock the axis rises, and the back panel's slots stay where they 
   for (const hx of d.hingeX)
     expect(worldToSheet(d.box.back.pose, [hx, p.depth / 2, d.axisZ - d.tongueY])[1]).toBeCloseTo(p.height - 7.75, 12);
   const v = verify(k, { ...part, defaults: { ...part.defaults, t: 6.5 } },
-    { measureFn: (kk, pt, vw, pr, o) => measure(kk, pt, vw, pr, { ...o, sheetBudgetMs: 60_000 }) });
+    { measureFn: (kk, pt, vw, pr, o) => measure(kk, pt, vw, pr, { ...o, now: () => 0 }) });   // a stopped clock: the budget never trips
   expect(v.failures).toEqual([]);
   expect(v.warnings.filter((c) => c.volunteered)).toEqual([]);
 });

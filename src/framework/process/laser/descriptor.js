@@ -322,11 +322,11 @@ export const LASER = {
   preview: undefined,
   destinations: [{ id: "own-laser", cutFormat: "svg" }, { id: "service", cutFormat: "dxf" }],
   // The sheet's 2-D facts (SheetFacts). Budget-gated readings — bridge, gap, marks —
-  // run only until `deadline` (an absolute Date.now() in ms, shared by every sheet in
-  // one measure() call); past it `evaluated` stays false and each is null. The rest
+  // run only until `deadline` (an absolute time in ms on `now`'s clock, Date.now by
+  // default); past it `evaluated` stays false and each is null. The rest
   // is cheap and always read. `at` and `solidMatchPct` need the 3-D part and are the
   // oracle's to fill (oracle/measure.js).
-  facts(s, { deadline = Infinity } = {}) {
+  facts(s, { deadline = Infinity, now = Date.now } = {}) {
     const { profile, thickness: t } = s;
     const contours = profile.toContours();
     const pieces = contours.length;
@@ -342,7 +342,7 @@ export const LASER = {
       at: { bridge: null, gap: null, marks: null },
       evaluated: false,
     };
-    const spend = () => { if (Date.now() >= deadline) throw OUT_OF_TIME; };
+    const spend = () => { if (now() >= deadline) throw OUT_OF_TIME; };
     const ceiling = 2 * widthFloor(t);
     if (Number.isFinite(deadline) && checkCost(contours, ceiling) > COST_UNITS) return f;
     try {

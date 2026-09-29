@@ -35,9 +35,14 @@ const checksOf = (v) => v.cases.flatMap((c) => c.checks);
 const on = (v, subpart, metric) => checksOf(v).filter((c) => c.subpart === subpart && c.metric === metric);
 // measure() with no 2-D budget at all, for verify's measureFn.
 const noBudget = (kk, part, view, params, opts) => measure(kk, part, view, params, { ...opts, sheetBudgetMs: 0 });
+// measure() on a stopped clock: the 2-D budget never runs out, so no assertion here
+// rides on a runner being fast enough (the cost pre-gate still applies). Every verify
+// below that is not about the budget measures this way.
+const unhurried = (kk, part, view, params, opts) => measure(kk, part, view, params, { ...opts, now: () => 0 });
+const verifyUnhurried = (kk, part, opts = {}) => verify(kk, part, { measureFn: unhurried, ...opts });
 
 test("a 300 mm plate beside a small printed block passes the FDM bed: the bed fits the printed part", () => {
-  const v = verify(k, forge({ plate: plate(300, 300), block: printed([20, 20, 20], (s) => s.translate([140, 140, 3])) },
+  const v = verifyUnhurried(k, forge({ plate: plate(300, 300), block: printed([20, 20, 20], (s) => s.translate([140, 140, 3])) },
     { process: "fdm-pla", expect: { _view: { overlaps: 0 } } }));
   expect(v.ok).toBe(true);
   expect(v.failures).toEqual([]);
@@ -48,14 +53,14 @@ test("a 300 mm plate beside a small printed block passes the FDM bed: the bed fi
 });
 
 test("the same plate as a printed part still fails the view bed — scoping is for sheet parts only", () => {
-  const v = verify(k, forge({ plate: printed([300, 300, 3]), block: printed([20, 20, 20], (s) => s.translate([140, 140, 3])) },
+  const v = verifyUnhurried(k, forge({ plate: printed([300, 300, 3]), block: printed([20, 20, 20], (s) => s.translate([140, 140, 3])) },
     { process: "fdm-pla", expect: { _view: { overlaps: 0 } } }));
   expect(v.ok).toBe(false);
   expect(v.failures.map((c) => `${c.scope}:${c.metric}`)).toContain("view:bbox");
 });
 
 test("a sheet-only forge with no verify block stays ok: null with the notice; its laser checks are volunteered", () => {
-  const v = verify(k, forge({ plate: plate(60, 40) }));
+  const v = verifyUnhurried(k, forge({ plate: plate(60, 40) }));
   expect(v).toMatchObject({ ok: null, declared: 0, evaluated: 0 });
   expect(v.warnings.find((c) => c.scope === "part")).toMatchObject({ message: "no expectations declared" });
   const volunteered = checksOf(v).filter((c) => c.volunteered);
@@ -64,7 +69,7 @@ test("a sheet-only forge with no verify block stays ok: null with the notice; it
 });
 
 test("a long printed part displayed lying down is bed-checked standing up, as it prints", () => {
-  const v = verify(k, forge({ plate: plate(300, 60), rod: rod(240) },
+  const v = verifyUnhurried(k, forge({ plate: plate(300, 60), rod: rod(240) },
     { process: "fdm-pla", expect: { rod: { bbox: "<=[250,20,20]" } } }));
   expect(v.ok).toBe(true);
   const [bed, own] = on(v, "rod", "bbox");
@@ -74,13 +79,13 @@ test("a long printed part displayed lying down is bed-checked standing up, as it
 });
 
 test("a printed part too tall for the bed in its print pose fails, saying where it was measured", () => {
-  const v = verify(k, forge({ plate: plate(300, 60), rod: rod(260) }, { process: "fdm-pla" }));
+  const v = verifyUnhurried(k, forge({ plate: plate(300, 60), rod: rod(260) }, { process: "fdm-pla" }));
   expect(v.ok).toBe(false);
   expect(v.failures[0]).toMatchObject({ subpart: "rod", metric: "bbox", note: "measured in the print (export) pose" });
 });
 
 test("a failing volunteered check warns, points at the guide and a 3-D spot, and never counts", () => {
-  const v = verify(k, forge({ plate: webbed() }, { expect: { _view: { overlaps: 0 } } }));
+  const v = verifyUnhurried(k, forge({ plate: webbed() }, { expect: { _view: { overlaps: 0 } } }));
   expect(v).toMatchObject({ ok: true, declared: 1, evaluated: 1 });
   const bridge = v.warnings.find((c) => c.metric === "sheetBridge");
   expect(bridge).toMatchObject({ volunteered: true, status: "warn", kind: "warn", pattern: "sheet-parts" });
@@ -89,7 +94,7 @@ test("a failing volunteered check warns, points at the guide and a 3-D spot, and
 });
 
 test("a declared sheet check counts like any other expectation", () => {
-  const v = verify(k, forge({ plate: webbed() }, { expect: { plate: { sheetBridge: ">=1.5" } } }));
+  const v = verifyUnhurried(k, forge({ plate: webbed() }, { expect: { plate: { sheetBridge: ">=1.5" } } }));
   expect(v).toMatchObject({ ok: true, declared: 1, evaluated: 1 });     // a warn never fails a gate
   const [c] = on(v, "plate", "sheetBridge");
   expect(c.volunteered).toBeUndefined();
@@ -108,7 +113,7 @@ test("each laser check fires as a volunteered warning on a plate built to fail i
     sheetSolidMatch: { ...plate(60, 40), build: (kk) => kk.box({ min: [0, 0, 0], max: [60, 40, 6] }) },
   };
   for (const [metric, sp] of Object.entries(FAILING)) {
-    const v = verify(k, forge({ plate: sp }));
+    const v = verifyUnhurried(k, forge({ plate: sp }));
     const c = v.warnings.find((w) => w.metric === metric);
     expect(c, metric).toMatchObject({ subpart: "plate", volunteered: true, status: "warn", kind: "warn", pattern: "sheet-parts" });
     if (SUBPART_METRICS[metric].locate) {
@@ -138,7 +143,7 @@ test("past the 2-D budget a DECLARED sheet check is unevaluated, which withholds
 });
 
 test("laser-box.js verifies: hinges fit the bed as printed, no laser warning", () => {
-  const v = verify(k, laserBox);
+  const v = verifyUnhurried(k, laserBox);
   expect(v.failures).toEqual([]);
   expect(v.ok).toBe(true);
   for (const hinge of ["hingeL", "hingeR"]) expect(on(v, hinge, "bbox")[0]).toMatchObject({ status: "pass", note: "measured in the print (export) pose" });
@@ -148,6 +153,6 @@ test("laser-box.js verifies: hinges fit the bed as printed, no laser warning", (
 test("recognition is plain data: a copied declaration measures and verifies the same", () => {
   const sp = webbed();
   const copy = { ...sp, sheet: { ...sp.sheet } };
-  expect(measure(k, forge({ plate: copy })).subparts[0].sheet).toEqual(measure(k, forge({ plate: sp })).subparts[0].sheet);
-  expect(checksOf(verify(k, forge({ plate: copy })))).toEqual(checksOf(verify(k, forge({ plate: sp }))));
+  expect(unhurried(k, forge({ plate: copy })).subparts[0].sheet).toEqual(unhurried(k, forge({ plate: sp })).subparts[0].sheet);
+  expect(checksOf(verifyUnhurried(k, forge({ plate: copy })))).toEqual(checksOf(verifyUnhurried(k, forge({ plate: sp }))));
 });

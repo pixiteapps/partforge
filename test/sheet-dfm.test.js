@@ -164,12 +164,12 @@ describe("LASER.facts", () => {
   // hole on its own, so round holes are read directly and filled before the closing runs.
   test("booleaned screw holes read as their diameter, well inside the budget", () => {
     const holes = [10, 30, 50, 70].map((x) => sheetHole({ d: 2.7, at: [x, 20] }));
-    const f = factsOf(plate({ profile: (kk) => kk.shape2d(rect(0, 0, 80, 40)).cutAll(holes) }), { deadline: Date.now() + 5000 });
+    const f = factsOf(plate({ profile: (kk) => kk.shape2d(rect(0, 0, 80, 40)).cutAll(holes) }), { deadline: 1500, now: () => 0 });
     expect(f).toMatchObject({ evaluated: true, gapCapped: false, gap: 2.7, bridgeCapped: true });
     expect(f.at2d.gap[0]).toBeCloseTo(10, 6);
     expect(f.at2d.gap[1]).toBeCloseTo(20, 6);
     const slot = factsOf(plate({ profile: (kk) => kk.shape2d(rect(0, 0, 80, 40)).cutAll([...holes, rect(20, 30, 40, 30.6)]) }),
-      { deadline: Date.now() + 5000 });
+      { deadline: 1500, now: () => 0 });
     expect(slot).toMatchObject({ evaluated: true, gapCapped: false });
     expect(slot.gap).toBeLessThanOrEqual(0.65);                       // the 0.6 mm slot is narrower than the holes
     expect(slot.at2d.gap[1]).toBeCloseTo(30.3, 0);
@@ -182,31 +182,34 @@ describe("LASER.facts", () => {
   // and its near-copy: 28 s for those 256 cubics, then refused.
   test("many booleaned holes and nothing narrow: no boolean against a near-copy", () => {
     const holes = Array.from({ length: 48 }, (_, i) => sheetHole({ d: 6, at: [10 + (i % 16) * 12, 10 + Math.floor(i / 16) * 12] }));
-    const t0 = Date.now();
-    const f = factsOf(plate({ profile: (kk) => kk.shape2d(rect(0, 0, 200, 44)).cutAll(holes) }));
-    expect(Date.now() - t0).toBeLessThan(5000);
+    const s = resolveSheet(k, plate({ profile: (kk) => kk.shape2d(rect(0, 0, 200, 44)).cutAll(holes) }), P, {});
+    let cuts = 0;
+    const counted = (shape) => new Proxy(shape, { get(target, key) {
+      if (key === "cut") return (...a) => { cuts++; return counted(target.cut(...a)); };
+      if (key === "offset" || key === "union") return (...a) => counted(target[key](...a));
+      const v = Reflect.get(target, key);
+      return typeof v === "function" ? v.bind(target) : v;
+    } });
+    const f = LASER.facts({ ...s, profile: counted(s.profile) });
     expect(f).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true });
+    expect(cuts).toBe(0);
   });
 
   // What no reading can bound is ONE test: the deadline is checked between them. A profile
   // whose single test would outrun the whole budget is not started under a deadline —
-  // evaluated stays false (verify's notice) — and without one it is read in full.
+  // evaluated stays false (verify's notice) — and without one it is read in full. On a
+  // stopped clock the budget never runs out, so `evaluated: false` is the gate's alone.
   test("a perforated panel too complex for the budget is not started", () => {
     const s = resolveSheet(k, perforated.parts.grille, P, {});
-    const t0 = Date.now();
-    const gated = LASER.facts(s, { deadline: Date.now() + 1500 });
-    expect(Date.now() - t0).toBeLessThan(1000);
-    expect(gated).toMatchObject({ evaluated: false, bridge: null, gap: null, pieces: 1 });
+    expect(LASER.facts(s, { deadline: 1500, now: () => 0 })).toMatchObject({ evaluated: false, bridge: null, gap: null, pieces: 1 });
   });
 
   test("so is a panel of many small rounded-rect cutouts", () => {
-    const f0 = Date.now();
     const f = factsOf(plate({ profile: (kk) => {
       let s = kk.shape2d(rect(0, 0, 100, 60));
       for (let i = 0; i < 8; i++) s = s.cut(kk.shape2d(rect(5 + i * 11, 5, 13 + i * 11, 13)).fillet(1.2));
       return s;
-    } }), { deadline: Date.now() + 1500 });
-    expect(Date.now() - f0).toBeLessThan(1000);
+    } }), { deadline: 1500, now: () => 0 });
     expect(f.evaluated).toBe(false);
   });
 
@@ -265,6 +268,9 @@ describe("LASER.checks", () => {
 const forge = (parts, extra = {}) => ({ meta: { title: "DFM", units: "mm" }, defaults: { t: 3 }, parts, views: { v: { label: "V" } }, ...extra });
 const printed = (max, place) => ({ views: ["v"], label: "Printed", build: (kk) => kk.box({ min: [0, 0, 0], max }), ...(place ? { place } : {}) });
 const row = (r, name) => r.subparts.find((s) => s.name === name);
+// The 2-D budget on a stopped clock: it never runs out, so an assertion that needs the
+// readings cannot flake on a slow runner, and the cost pre-gate still applies.
+const STOPPED = { now: () => 0 };
 const isVec3 = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
 // A rod printed standing up but displayed lying along X, on top of a 3 mm plate.
 const rod = (h) => printed([10, 10, h], (s, { purpose }) =>
@@ -278,7 +284,7 @@ describe("measure() on sheet parts", () => {
   });
 
   test("a sheet row carries its facts; a printed row beside it gets its print-pose size", () => {
-    const r = measure(k, forge({ plate: plate(), rod: rod(240) }));
+    const r = measure(k, forge({ plate: plate(), rod: rod(240) }), "v", {}, STOPPED);
     expect(row(r, "plate").sheet).toMatchObject({ process: "laser", thickness: 3, pieces: 1, evaluated: true });
     expect("printBbox" in row(r, "plate")).toBe(false);
     expect(row(r, "rod").sheet).toBeNull();
@@ -288,7 +294,7 @@ describe("measure() on sheet parts", () => {
 
   test("a finding's location is lifted into the assembly at mid-thickness", () => {
     const pose = { face: "-Y", up: "+Z", at: [0, 0, 0] };
-    const f = row(measure(k, forge({ plate: plate({ profile: (kk) => kk.shape2d(WEB), pose }) })), "plate").sheet;
+    const f = row(measure(k, forge({ plate: plate({ profile: (kk) => kk.shape2d(WEB), pose }) }), "v", {}, STOPPED), "plate").sheet;
     expect(isVec3(f.at.bridge)).toBe(true);
     const want = sheetToWorld(pose, f.at2d.bridge, 1.5);
     f.at.bridge.forEach((v, i) => expect(v).toBeCloseTo(want[i], 6));
@@ -297,7 +303,7 @@ describe("measure() on sheet parts", () => {
 
   test("a pose the probe cannot trust withholds the 3-D location, never the reading", () => {
     const sp = plate({ profile: (kk) => kk.shape2d(WEB), place: (s) => s.translate([0, 0, s.boundingBox().max[2]]) });
-    const f = row(measure(k, forge({ plate: sp })), "plate").sheet;
+    const f = row(measure(k, forge({ plate: sp }), "v", {}, STOPPED), "plate").sheet;
     expect(f.bridgeCapped).toBe(false);
     expect(f.at2d.bridge).not.toBeNull();
     expect(f.at.bridge).toBeNull();
@@ -305,7 +311,7 @@ describe("measure() on sheet parts", () => {
 
   test("a custom build's volume is compared with profile area × thickness", () => {
     const sp = plate();
-    const r = measure(k, forge({ plate: { ...sp, build: (kk) => kk.box({ min: [0, 0, 0], max: [60, 40, 6] }) } }));
+    const r = measure(k, forge({ plate: { ...sp, build: (kk) => kk.box({ min: [0, 0, 0], max: [60, 40, 6] }) } }), "v", {}, STOPPED);
     expect(row(r, "plate").sheet.solidMatchPct).toBeCloseTo(100, 3);   // 14400 mm³ against 7200
   });
 
@@ -325,10 +331,27 @@ describe("measure() on sheet parts", () => {
     expect(r.subparts).toHaveLength(2);
   });
 
+  // The 2-D budget pays for 2-D work alone. It used to run on the wall clock from the
+  // first sheet, so a printed row between two sheets (min-wall rays, a reference
+  // deviation) spent it, and the second sheet read evaluated: false.
+  test("a slow printed row between two sheets spends none of the 2-D budget", () => {
+    let t = 0;
+    const slow = new Proxy(k, { get: (target, key) => (key === "import"
+      ? () => { t += 5000; return target.box({ min: [0, 0, 0], max: [10, 10, 10] }); }
+      : Reflect.get(target, key)) });
+    const heavy = { ...printed([10, 10, 10], (s) => s.translate([100, 0, 0])), reference: "ref" };
+    const part = forge({ a: plate({ profile: (kk) => kk.shape2d(WEB) }), heavy,
+      b: plate({ profile: (kk) => kk.shape2d(WEB), pose: { face: "+Z", up: "+Y", at: [0, 100, 3] } }) });
+    const r = measure(slow, part, "v", {}, { now: () => t });
+    expect(t).toBe(5000);
+    expect(row(r, "heavy").deviation).not.toBeNull();
+    for (const name of ["a", "b"]) expect(row(r, name).sheet, name).toMatchObject({ evaluated: true, bridgeCapped: false });
+  });
+
   // Spec C.6: the 2-D checks are cheap, so a quick lap (no min-wall rays, no pair
   // distances — the inspect job's `checks: "quick"`) still reads them.
   test("a quick lap still reads the 2-D facts", () => {
-    const r = measure(k, forge({ plate: plate({ profile: (kk) => kk.shape2d(WEB) }) }), "v", {}, { minWall: false, gaps: false });
+    const r = measure(k, forge({ plate: plate({ profile: (kk) => kk.shape2d(WEB) }) }), "v", {}, { ...STOPPED, minWall: false, gaps: false });
     expect(row(r, "plate").sheet).toMatchObject({ evaluated: true, bridgeCapped: false });
     expect(row(r, "plate").sheet.bridge).toBeLessThanOrEqual(0.85);
   });
@@ -341,7 +364,7 @@ test("partforge measure prints a sheet line under a sheet sub-part", () => {
 
 test("the twelve-panel stress fixture: lint-clean, twelve sheet rows, no overlaps, all evaluated given time", () => {
   expect(lintPart(twelvePanel).errors).toEqual([]);
-  const r = measure(k, twelvePanel, "kit", {}, { sheetBudgetMs: 60_000 });
+  const r = measure(k, twelvePanel, "kit", {}, STOPPED);
   const sheets = r.subparts.filter((s) => s.sheet);
   expect(sheets).toHaveLength(12);
   expect(sheets.every((s) => s.sheet.evaluated && s.sheet.pieces === 1)).toBe(true);
@@ -350,10 +373,8 @@ test("the twelve-panel stress fixture: lint-clean, twelve sheet rows, no overlap
 
 test("the bench's plates: lint-clean; the screw plate reads in full, the grille is withheld at once", () => {
   for (const part of [screwPlate, perforated]) expect(lintPart(part).errors).toEqual([]);
-  const plate = measure(k, screwPlate, "panel").subparts[0].sheet;
+  const plate = measure(k, screwPlate, "panel", {}, STOPPED).subparts[0].sheet;
   expect(plate).toMatchObject({ evaluated: true, pieces: 1, bridgeCapped: true, gapCapped: true });
-  const t0 = Date.now();
-  const grille = measure(k, perforated, "panel").subparts[0].sheet;
+  const grille = measure(k, perforated, "panel", {}, STOPPED).subparts[0].sheet;
   expect(grille).toMatchObject({ evaluated: false, pieces: 1 });
-  expect(Date.now() - t0).toBeLessThan(10_000);
 }, 60_000);

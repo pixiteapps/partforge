@@ -447,10 +447,12 @@ export function measure(
     gapThreshold?: number;
     /**
      * Milliseconds the 2-D sheet checks may spend across every sheet sub-part in
-     * this call (default 1500). Past it the remaining readings are withheld —
-     * `sheet.evaluated` false — never the report.
+     * this call (default 1500), charged for 2-D work alone. Past it the remaining
+     * readings are withheld — `sheet.evaluated` false — never the report.
      */
     sheetBudgetMs?: number;
+    /** The clock that budget runs on, in ms (default `Date.now`) — a test's seam. */
+    now?: () => number;
     /**
      * A build of this view the caller already has, measured instead of building a
      * second time. It is trusted, not checked against `view`/`params` — hand in a

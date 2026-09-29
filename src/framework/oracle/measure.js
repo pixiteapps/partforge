@@ -127,16 +127,19 @@ const transformPoint = (m, [x, y, z]) => [
   m[2] * x + m[6] * y + m[10] * z + m[14],
 ];
 
-// One sheet row's facts. `deadline` is shared by every sheet in the measure() call.
-// A 2-D location is lifted through the sub-part's DISPLAY pose, as the geometry-free
+// One sheet row's facts, within `budget.left` ms of 2-D work, which it spends (see
+// measure()). A 2-D location is lifted through the sub-part's DISPLAY pose, as the geometry-free
 // probe records it, at mid-thickness; a pose the probe cannot trust (a place() that
 // queries geometry) leaves `at` null and keeps the 2-D reading. Null for a process
 // id no descriptor answers to — lint's sheet-invalid reports that.
-function sheetRowFacts(kernel, part, name, view, { p, d }, deadline, volume) {
+function sheetRowFacts(kernel, part, name, view, { p, d }, budget, volume) {
   const sp = part.parts[name];
   const proc = processFor(sp);
   if (!proc) return null;
-  const f = proc.facts(resolveSheet(kernel, sp, p, d), { deadline });
+  const resolved = resolveSheet(kernel, sp, p, d);
+  const start = budget.now();
+  const f = proc.facts(resolved, { deadline: start + budget.left, now: budget.now });
+  budget.left -= budget.now() - start;
   const probe = probeSubPartPose(sp, { view, purpose: "display", p, d });
   const m = probe.trusted ? composePose(probe.pose) : null;
   const lift = (uv) => (m && uv ? transformPoint(m, [uv[0], uv[1], f.thickness / 2]) : null);
@@ -219,12 +222,15 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   const subBounds = [];
   // Sheet parts: a view holding one sizes each printed sub-part in its print pose
   // (verify fits the bed per part there), and every sheet row gets its 2-D facts under
-  // ONE budget for the whole call — started at the first sheet, so a slow build before
-  // it does not spend it. A view without a sheet part measures exactly as it always has.
+  // ONE budget for the whole call, charged for 2-D work alone: each sheet's facts() is
+  // timed and the next is given what is left, so neither a slow build nor a printed
+  // row's min-wall rays between two sheets spend it (the verdict used to depend on
+  // declaration order). A view without a sheet part measures exactly as it always has.
   const sheetView = built.some(({ name }) => isSheetPart(part.parts[name]));
   const sheetParams = sheetView ? resolveParams(part, params) : null;
   const printBboxes = sheetView ? printPoseBboxes(kernel, part, view, built, sheetParams) : null;
-  let sheetDeadline = null;
+  // The clock the budget runs on is Date.now, or a test's own (opts.now).
+  const sheetBudget = { left: opts.sheetBudgetMs ?? SHEET_CHECK_BUDGET_MS, now: opts.now ?? Date.now };
   const subparts = built.map(({ name, solid, mesh }) => {
     const sheet = isSheetPart(part.parts[name]);
     const b = bounds(mesh.positions);
@@ -298,8 +304,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       overhangAt: oh?.at ?? null,
       // The process's 2-D facts on a sheet part (sheetRowFacts), null on every other.
       sheet: sheet
-        ? sheetRowFacts(kernel, part, name, view, sheetParams,
-          (sheetDeadline ??= Date.now() + (opts.sheetBudgetMs ?? SHEET_CHECK_BUDGET_MS)), vol)
+        ? sheetRowFacts(kernel, part, name, view, sheetParams, sheetBudget, vol)
         : null,
       ...(printBboxes?.[name] ? { printBbox: printBboxes[name] } : {}),
     };
