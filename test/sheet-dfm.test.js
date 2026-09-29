@@ -12,6 +12,8 @@ import { measure } from "../src/framework/oracle/measure.js";
 import { sheetToWorld } from "../src/framework/geometry/polygon.js";
 import { lintPart } from "../src/lint.js";
 import twelvePanel from "./fixtures/sheet-twelve-panel-part.js";
+import perforated from "./fixtures/sheet-perforated-panel-part.js";
+import screwPlate from "./fixtures/sheet-screw-plate-part.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -139,30 +141,73 @@ describe("LASER.facts", () => {
 
   // A hole below the floor is the laser gap check's first job. Under the sharp closing a
   // small hole used to come back as a phantom (contour-offset.js), so the closing grew it
-  // instead of filling it and every such hole read "nothing narrower than 3 mm". A hole
-  // cut with cutAll is cubics, and the engine refuses to regrow it from a near-point
-  // circle: that refusal counts as found (narrowest()), so its reading may come in under
-  // the true 1.2 mm — never over, and always under the 1.5 mm floor, so it warns.
+  // instead of filling it and every such hole read "nothing narrower than 3 mm".
   test("a hole below the floor reads as its own width — round, square, and round via cutAll", () => {
     const at = [30, 20];
-    const gapOf = (profile) => {
-      const f = factsOf(plate({ profile }));
-      expect(f.gapCapped).toBe(false);
-      expect(f.at2d.gap[0]).toBeCloseTo(30, 0);
-      expect(f.at2d.gap[1]).toBeCloseTo(20, 0);
-      return f.gap;
-    };
     for (const profile of [
       (kk) => kk.shape2d({ outer: PLATE, holes: [sheetHole({ d: 1.2, at })] }),
       (kk) => kk.shape2d({ outer: PLATE, holes: [rect(29.4, 19.4, 30.6, 20.6)] }),
+      (kk) => kk.shape2d(PLATE).cutAll([sheetHole({ d: 1.2, at })]),
     ]) {
-      const gap = gapOf(profile);
-      expect(gap).toBeGreaterThan(1.15);
-      expect(gap).toBeLessThanOrEqual(1.25);
+      const f = factsOf(plate({ profile }));
+      expect(f.gapCapped).toBe(false);
+      expect(f.gap).toBeGreaterThan(1.15);
+      expect(f.gap).toBeLessThanOrEqual(1.25);
+      expect(f.at2d.gap[0]).toBeCloseTo(30, 0);
+      expect(f.at2d.gap[1]).toBeCloseTo(20, 0);
     }
-    const cutAll = gapOf((kk) => kk.shape2d(PLATE).cutAll([sheetHole({ d: 1.2, at })]));
-    expect(cutAll).toBeGreaterThan(0.75);
-    expect(cutAll).toBeLessThanOrEqual(1.25);
+  });
+
+  // A booleaned round hole is four cubics, and shrinking one to a near-point and regrowing
+  // it is the offset engine's slowest case: one M2.5 clearance hole took 4.5 s, four took
+  // 47 s. A round hole's narrowest opening is its diameter, and the closing treats each
+  // hole on its own, so round holes are read directly and filled before the closing runs.
+  test("booleaned screw holes read as their diameter, well inside the budget", () => {
+    const holes = [10, 30, 50, 70].map((x) => sheetHole({ d: 2.7, at: [x, 20] }));
+    const f = factsOf(plate({ profile: (kk) => kk.shape2d(rect(0, 0, 80, 40)).cutAll(holes) }), { deadline: Date.now() + 5000 });
+    expect(f).toMatchObject({ evaluated: true, gapCapped: false, gap: 2.7, bridgeCapped: true });
+    expect(f.at2d.gap[0]).toBeCloseTo(10, 6);
+    expect(f.at2d.gap[1]).toBeCloseTo(20, 6);
+    const slot = factsOf(plate({ profile: (kk) => kk.shape2d(rect(0, 0, 80, 40)).cutAll([...holes, rect(20, 30, 40, 30.6)]) }),
+      { deadline: Date.now() + 5000 });
+    expect(slot).toMatchObject({ evaluated: true, gapCapped: false });
+    expect(slot.gap).toBeLessThanOrEqual(0.65);                       // the 0.6 mm slot is narrower than the holes
+    expect(slot.at2d.gap[1]).toBeCloseTo(30.3, 0);
+  });
+
+  // Offsetting a cubic is an approximation (OFFSET_TOL), so a profile of many cubics comes
+  // back from a test that changed nothing with its area moved a little all the same —
+  // about 1e-4 mm² per cubic, 0.022 mm² for 64 booleaned holes. Past LOSS_TOL_MM2 that
+  // noise sent every test into the one-sided difference, a boolean between the profile
+  // and its near-copy: 28 s for those 256 cubics, then refused.
+  test("many booleaned holes and nothing narrow: no boolean against a near-copy", () => {
+    const holes = Array.from({ length: 48 }, (_, i) => sheetHole({ d: 6, at: [10 + (i % 16) * 12, 10 + Math.floor(i / 16) * 12] }));
+    const t0 = Date.now();
+    const f = factsOf(plate({ profile: (kk) => kk.shape2d(rect(0, 0, 200, 44)).cutAll(holes) }));
+    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(f).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true });
+  });
+
+  // What no reading can bound is ONE test: the deadline is checked between them. A profile
+  // whose single test would outrun the whole budget is not started under a deadline —
+  // evaluated stays false (verify's notice) — and without one it is read in full.
+  test("a perforated panel too complex for the budget is not started", () => {
+    const s = resolveSheet(k, perforated.parts.grille, P, {});
+    const t0 = Date.now();
+    const gated = LASER.facts(s, { deadline: Date.now() + 1500 });
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(gated).toMatchObject({ evaluated: false, bridge: null, gap: null, pieces: 1 });
+  });
+
+  test("so is a panel of many small rounded-rect cutouts", () => {
+    const f0 = Date.now();
+    const f = factsOf(plate({ profile: (kk) => {
+      let s = kk.shape2d(rect(0, 0, 100, 60));
+      for (let i = 0; i < 8; i++) s = s.cut(kk.shape2d(rect(5 + i * 11, 5, 13 + i * 11, 13)).fillet(1.2));
+      return s;
+    } }), { deadline: Date.now() + 1500 });
+    expect(Date.now() - f0).toBeLessThan(1000);
+    expect(f.evaluated).toBe(false);
   });
 
   test("an arc-exact hole cut with cutAll reads clean — no false web or gap", () => {
@@ -302,3 +347,13 @@ test("the twelve-panel stress fixture: lint-clean, twelve sheet rows, no overlap
   expect(sheets.every((s) => s.sheet.evaluated && s.sheet.pieces === 1)).toBe(true);
   expect(r.overlaps).toEqual([]);
 }, 120_000);
+
+test("the bench's plates: lint-clean; the screw plate reads in full, the grille is withheld at once", () => {
+  for (const part of [screwPlate, perforated]) expect(lintPart(part).errors).toEqual([]);
+  const plate = measure(k, screwPlate, "panel").subparts[0].sheet;
+  expect(plate).toMatchObject({ evaluated: true, pieces: 1, bridgeCapped: true, gapCapped: true });
+  const t0 = Date.now();
+  const grille = measure(k, perforated, "panel").subparts[0].sheet;
+  expect(grille).toMatchObject({ evaluated: false, pieces: 1 });
+  expect(Date.now() - t0).toBeLessThan(10_000);
+}, 60_000);

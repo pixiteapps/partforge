@@ -1,6 +1,7 @@
 // Times the inspect job — the report a partforge-cloud apply waits on, under ONE 8 s
-// budget there — for the two sheet-part stress cases: src/parts/laser-box.js and
-// test/fixtures/sheet-twelve-panel-part.js (sheet parts spec C.6). Quick and full
+// budget there — for the sheet-part stress cases: src/parts/laser-box.js,
+// test/fixtures/sheet-twelve-panel-part.js, a 16-hole screw plate and a 900-hole
+// perforated grille (test/fixtures/sheet-*-part.js; sheet parts spec C.6). Quick and full
 // laps; the first run (cold) and the median of the rest (warm); and, in Node, what
 // the 2-D sheet checks cost alone with no budget, against their own 1500 ms one.
 // Prints a markdown block for docs/research/sheet-inspect-timing.md.
@@ -24,7 +25,7 @@ const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[Math.
 
 async function nodeRows() {
   const [{ bootManifoldKernel, handle }, { resolveParams }, { isSheetPart }, { resolveSheet }, { processFor },
-    { default: laserBox }, { default: twelvePanel }] = await Promise.all([
+    { default: laserBox }, { default: twelvePanel }, { default: screwPlate }, { default: perforated }] = await Promise.all([
     import("../src/testing.js"),
     import("../src/framework/part-model.js"),
     import("../src/framework/sheet/constants.js"),
@@ -32,6 +33,8 @@ async function nodeRows() {
     import("../src/framework/process/registry.js"),
     import("../src/parts/laser-box.js"),
     import("../test/fixtures/sheet-twelve-panel-part.js"),
+    import("../test/fixtures/sheet-screw-plate-part.js"),
+    import("../test/fixtures/sheet-perforated-panel-part.js"),
   ]);
   const kernel = await bootManifoldKernel();
   // One inspect through the worker's own job function, exactly as the geometry worker runs it.
@@ -50,14 +53,15 @@ async function nodeRows() {
     return Math.round(performance.now() - t0);
   };
   const rows = [];
-  for (const [part, def] of [["laser-box", laserBox], ["twelve-panel", twelvePanel]]) {
+  for (const [part, def] of [["laser-box", laserBox], ["twelve-panel", twelvePanel], ["screw-plate", screwPlate], ["perforated", perforated]]) {
+    const uncapped = sheetChecksMs(def);
     for (const lap of ["quick", "full"]) {
       const times = [];
       let report;
       for (let i = 0; i <= RUNS; i++) ({ ms: times[i], report } = await inspect(def, lap === "quick"));
       const sheets = report.measure.subparts.filter((s) => s.sheet);
       rows.push({ part, lap, coldMs: Math.round(times[0]), warmMs: Math.round(median(times.slice(1))),
-        sheetChecksMs: sheetChecksMs(def), sheetsEvaluated: `${sheets.filter((s) => s.sheet.evaluated).length}/${sheets.length}` });
+        sheetChecksMs: uncapped, sheetsEvaluated: `${sheets.filter((s) => s.sheet.evaluated).length}/${sheets.length}` });
     }
   }
   return { where: `Node ${process.version} (${process.platform} ${process.arch})`, rows };

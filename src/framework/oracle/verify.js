@@ -190,7 +190,7 @@ const PRINT_POSE_NOTE = "measured in the print (export) pose";
 export const SHEET_CHECKS_NOTICE = Object.freeze({
   metric: "sheetChecks", kind: "warn", expr: "evaluated", actual: null, status: "warn", pass: null, volunteered: true,
   message: "2-D sheet checks not evaluated (time budget)",
-  hint: "The laser checks (narrow webs and gaps, stray marks) ran out of their time budget. They are warnings only and never decide verify.ok; a simpler profile (fewer fingers, fewer engraved glyphs) makes them fit.",
+  hint: "The laser checks (narrow webs and gaps, stray marks) did not fit their time budget, or the profile was too complex to start them. They are warnings only and never decide verify.ok; fewer holes, fingers or small rounded corners make them fit.",
   pattern: SHEET_DOC_ID,
 });
 
