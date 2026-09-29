@@ -31,6 +31,12 @@ const loadInspect = () => Promise.all([
   import("./oracle/verify.js"),
 ]);
 
+// The cut & print kit loads the same way, on the first export-bundle job: its writers,
+// layout and README (export/*) and the process exporters behind them are dead weight to
+// a session that never downloads a kit. test/worker-layering.test.js keeps every one of
+// them out of worker boot, and test/kit-layering.test.js keeps the kit off ./oracle/*.
+const loadBundle = () => import("./export/bundle.js");
+
 // HOST JOBS — the extension seam. A host registers its own job types with
 // `runWorker(part, { jobs: { <type>: handler } })`, threaded here as `opts.jobs`, and
 // a message whose type matches no built-in below is handed to that handler with the
@@ -47,6 +53,8 @@ const loadInspect = () => Promise.all([
 //   { type:"generate", subparts, view, params } → { type:"meshes", meshes, ms }
 //   { type:"export-stl", view, params }         → { type:"download-parts", ext, mime, parts }
 //   { type:"export-step", view, params }        → { type:"download", data, filename, mime }
+//   { type:"export-bundle", view, params, parts, options }
+//                                               → { type:"download", data, filename, mime }  (the cut & print kit, a ZIP)
 // A generate also accepts `opts.isStale` — a caller-supplied predicate checked at each
 // sub-part boundary — and answers { type:"superseded" } instead of `meshes` when it
 // stops early (a build that ended without meshes, not an error; see KERNEL-CONTRACT.md).
@@ -455,6 +463,14 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       onProgress("writing 3MF file");
       const data = meshTo3MF(meshes);
       post({ type: "download", data, filename: `${fileBase}.3mf`, mime: "model/3mf", jobId: msg.jobId }, [bufferOf(data)]);
+    } else if (msg.type === "export-bundle") {
+      // The cut & print kit: sheet parts drawn flat from their 2-D declaration and laid
+      // out on the user's stock, printed parts as STL/3MF, a README — one ZIP. Every
+      // download-option problem throws a "cut kit options:" error, posted verbatim by the
+      // catch below like any other failed job.
+      const { buildBundle } = await loadBundle();
+      const { data, filename } = await buildBundle({ kernel, part, msg, p, d, posed, label, exportName, names: selected(), onProgress, fileBase });
+      post({ type: "download", data, filename, mime: "application/zip", jobId: msg.jobId }, [bufferOf(data)]);
     } else if (msg.type === "warm-kernel") {
       // Deliberately empty. worker.js awaits kernelFor() before calling handle(),
       // so REACHING this branch is the whole result: the backend this job was

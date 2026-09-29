@@ -852,7 +852,7 @@ maps that protocol onto `setPart` itself.
   readiness exactly as it would on a freshly spawned worker.
 
 **Epoch guard.** Generates supersede each other; exports (`export-stl`/`export-step`/
-`export-3mf`), `inspect`, and `lint` are **never** epoch-guarded — cancelling a user's
+`export-3mf`/`export-bundle`), `inspect`, and `lint` are **never** epoch-guarded — cancelling a user's
 export because an edit landed would be wrong. A generate that is stale by the time the
 job pump reaches it is skipped and never builds at all. A generate already running
 re-checks staleness at each sub-part boundary and, if it has been superseded, stops
