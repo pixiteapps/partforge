@@ -17,6 +17,15 @@ let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
 
 const rect = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+// An arc-exact rounded rectangle (quarter arcs as `via` segments, like sheetHole's).
+const roundedRect = (x0, y0, x1, y1, r) => {
+  const c = r * (1 - Math.SQRT1_2);
+  return { start: [x0 + r, y0], segments: [
+    { to: [x1 - r, y0] }, { to: [x1, y0 + r], via: [x1 - c, y0 + c] },
+    { to: [x1, y1 - r] }, { to: [x1 - r, y1], via: [x1 - c, y1 - c] },
+    { to: [x0 + r, y1] }, { to: [x0, y1 - r], via: [x0 + c, y1 - c] },
+    { to: [x0, y0 + r] }, { to: [x0 + r, y0], via: [x0 + c, y0 + c] }] };
+};
 const PLATE = rect(0, 0, 60, 40);
 // Two 10 mm square holes leaving a 0.8 mm web at x 20–20.8.
 const WEB = { outer: PLATE, holes: [rect(10, 15, 20, 25), rect(20.8, 15, 30.8, 25)] };
@@ -62,6 +71,70 @@ describe("LASER.facts", () => {
     expect(f.at2d.gap[0]).toBeCloseTo(30, 1);
     expect(f.at2d.gap[1]).toBeCloseTo(20, 1);
     expect(f.bridgeCapped).toBe(true);
+  });
+
+  // Rounded corners elsewhere on the panel must not hide a real web or slot. With sharp
+  // offsets a small convex fillet comes back as a square corner OUTSIDE the profile, and
+  // a small hole-corner fillet comes back square INSIDE the hole — each the opposite sign
+  // of what the test measures, so a net area change let the artifact cancel the finding.
+  test("a filleted outline does not hide a 0.8 mm bridge elsewhere on the plate", () => {
+    const holes = [rect(10, 15, 20, 25), rect(20.8, 24, 30.8, 34)];   // a 0.8 × 1 mm bridge at x 20–20.8, y 24–25
+    for (const r of [1, 1.4]) {
+      const f = factsOf(plate({ profile: (kk) => kk.shape2d(PLATE).fillet(r).cut(kk.shape2d(holes[0])).cut(kk.shape2d(holes[1])) }));
+      expect(f.bridgeCapped, `outline fillet r=${r}`).toBe(false);
+      expect(f.bridge).toBeGreaterThan(0.79);
+      expect(f.bridge).toBeLessThanOrEqual(0.85);
+      expect(f.at2d.bridge[0]).toBeCloseTo(20.4, 0);
+      expect(f.at2d.bridge[1]).toBeCloseTo(24.5, 0);
+    }
+  });
+
+  test("rounded-rect holes do not hide a 0.9 mm slot elsewhere on the plate", () => {
+    const f = factsOf(plate({ profile: (kk) => {
+      let s = kk.shape2d(rect(0, 0, 100, 60)).cut(kk.shape2d(rect(40, 30, 43, 30.9)));   // a 3 × 0.9 mm slot
+      for (let i = 0; i < 2; i++) s = s.cut(kk.shape2d(roundedRect(5 + i * 11, 5, 13 + i * 11, 13, 1.4)));
+      return s;
+    } }));
+    expect(f.gapCapped).toBe(false);
+    expect(f.gap).toBeGreaterThan(0.89);
+    expect(f.gap).toBeLessThanOrEqual(0.95);
+    expect(f.at2d.gap[0]).toBeCloseTo(41.5, 0);
+    expect(f.at2d.gap[1]).toBeCloseTo(30.45, 0);
+  });
+
+  // The offset engine approximates a cubic within OFFSET_TOL, leaving hundreds of
+  // sub-tolerance slivers along filleted corners. Summed — by the net area change, or by
+  // a one-sided difference's total — they crossed LOSS_TOL_MM2 and read three 8 mm
+  // rounded holes as a 2.91 mm gap. A loss or gain is one region above the tolerance.
+  test("approximation slivers along filleted holes are not a gap", () => {
+    const f = factsOf(plate({ profile: (kk) => {
+      let s = kk.shape2d(rect(0, 0, 100, 60));
+      for (let i = 0; i < 3; i++) s = s.cut(kk.shape2d(rect(5 + i * 11, 5, 13 + i * 11, 13)).fillet(2.5));
+      return s;
+    } }));
+    expect(f.gapCapped).toBe(true);          // the holes are 8 mm across; nothing narrower
+  });
+
+  // paper's boolean can refuse a difference the offsets produced ("curve-fill: resolved
+  // hole has no containing outer"). The one-sided test then falls back to the net area
+  // change it replaced — never a lost reading — and the finding goes unlocated.
+  test("a one-sided difference the engine refuses falls back to the net area change", () => {
+    const refusing = (shape) => new Proxy(shape, { get(target, key) {
+      if (key === "cut") return () => { throw new Error("curve-fill: resolved hole has no containing outer"); };
+      if (key === "offset") return (...a) => refusing(target.offset(...a));
+      const v = Reflect.get(target, key);
+      return typeof v === "function" ? v.bind(target) : v;
+    } });
+    const refused = (sp) => { const s = resolveSheet(k, sp, P, {}); return LASER.facts({ ...s, profile: refusing(s.profile) }); };
+    const web = refused(plate({ profile: (kk) => kk.shape2d(WEB) }));
+    expect(web).toMatchObject({ evaluated: true, bridgeCapped: false, gapCapped: true });
+    expect(web.bridge).toBeGreaterThan(0.79);
+    expect(web.bridge).toBeLessThanOrEqual(0.85);
+    expect(web.at2d.bridge).toBeNull();
+    const slot = refused(plate({ profile: (kk) => kk.shape2d(SLOT) }));
+    expect(slot).toMatchObject({ evaluated: true, gapCapped: false, bridgeCapped: true });
+    expect(slot.gap).toBeLessThanOrEqual(0.65);
+    expect(slot.at2d.gap).toBeNull();
   });
 
   test("an arc-exact hole cut with cutAll reads clean — no false web or gap", () => {

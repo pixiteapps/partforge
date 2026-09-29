@@ -42,6 +42,32 @@ function centreOfLargest(shape) {
   return [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2];
 }
 
+// ONE-SIDED, never a net area change. With sharp offsets a rounded corner narrower
+// than w does not come back as itself: a convex fillet on the outline regrows as a
+// square corner OUTSIDE the profile, and a hole's rounded corner closes back square
+// INSIDE the hole. Each lands on the side opposite the one being measured, so a net
+// area change let an ordinary fillet elsewhere cancel a real narrow web or slot
+// (capped, "nothing narrower found"). Counting only what left the profile (opening)
+// or only what entered it (closing) puts every such artifact on the uncounted side.
+// And a loss is ONE region above LOSS_TOL_MM2, never a sum: the cubic offset's own
+// approximation error (OFFSET_TOL) leaves hundreds of sub-tolerance slivers along
+// curved edges, and summed they read three 8 mm rounded holes as a 2.91 mm gap — the
+// same rule marksFacts counts stray marks by.
+//
+// paper's boolean can refuse a difference the offsets produced ("curve-fill: resolved
+// hole has no containing outer"). Then the test falls back to the net area change it
+// replaced, so the one-sided rule is never worse than it: the reading stays, the
+// finding goes unlocated (UNLOCATED), and only a fillet elsewhere can mask it again.
+const UNLOCATED = Object.freeze({ unlocated: true });
+function oneSided(difference, netChange) {
+  try {
+    const d = difference();
+    return !d.isEmpty() && d.regions().some((r) => r.area() > LOSS_TOL_MM2) ? d : null;
+  } catch {
+    return netChange() > LOSS_TOL_MM2 ? UNLOCATED : null;
+  }
+}
+
 // An OPENING at width w: shrink by w/2, regrow by w/2. Material narrower than w — a
 // web between holes, a thin finger — does not come back. Returns what was lost, or
 // null when nothing measurable was.
@@ -49,14 +75,14 @@ function openingLoss(profile, area, w) {
   let opened;
   try { opened = profile.offset(-w / 2, SHARP).offset(w / 2, SHARP); }
   catch (e) { if (COLLAPSES.test(e?.message ?? "")) return profile; throw e; }
-  return area - opened.area() > LOSS_TOL_MM2 ? profile.cut(opened) : null;
+  return oneSided(() => profile.cut(opened), () => area - opened.area());
 }
 
 // A CLOSING at width w: grow by w/2, shrink back. A hole, slot or notch narrower than
 // w fills in and stays filled. Returns what was gained, or null.
 function closingGain(profile, area, w) {
   const closed = profile.offset(w / 2, SHARP).offset(-w / 2, SHARP);
-  return closed.area() - area > LOSS_TOL_MM2 ? closed.cut(profile) : null;
+  return oneSided(() => closed.cut(profile), () => closed.area() - area);
 }
 
 // The narrowest width at which `test` finds something, bisected over [0, ceiling] to
@@ -74,7 +100,7 @@ function narrowest(test, ceiling, spend) {
     const hit = test(mid);
     if (hit) { hi = mid; found = hit; } else lo = mid;
   }
-  return { value: round2(hi), capped: false, at: centreOfLargest(found) };
+  return { value: round2(hi), capped: false, at: found === UNLOCATED ? null : centreOfLargest(found) };
 }
 
 // One budget-gated reading, or null when the geometry engine refused this profile (an
