@@ -140,6 +140,27 @@ describe("LASER.facts", () => {
     expect(slot.at2d.gap).toBeNull();
   });
 
+  // A refusal INSIDE the width search is not a finding. Counted as one, a refusal between a
+  // web's true width and the floor read as a sub-floor web — a false warning at the real
+  // web's spot. The reading is withheld instead and says why (readErrors), exactly as a
+  // refusal at the ceiling is.
+  test("an engine refusal below a ceiling hit is a read error, not a narrower web", () => {
+    const REFUSAL = "contour-winding: could not chain the offset arrangement";
+    const refusingBelow = (shape) => new Proxy(shape, { get(target, key) {
+      if (key === "offset") return (delta, ...rest) => {
+        if (Math.abs(delta) < 1.4) throw new Error(REFUSAL);          // every width under the 3 mm ceiling
+        return refusingBelow(target.offset(delta, ...rest));
+      };
+      const v = Reflect.get(target, key);
+      return typeof v === "function" ? v.bind(target) : v;
+    } });
+    const s = resolveSheet(k, plate({ profile: (kk) => kk.shape2d(WEB) }), P, {});
+    const f = LASER.facts({ ...s, profile: refusingBelow(s.profile) });
+    expect(f).toMatchObject({ evaluated: true, bridge: null, bridgeCapped: false });
+    expect(f.at2d.bridge).toBeNull();
+    expect(f.readErrors.bridge).toMatch(/could not chain/);
+  });
+
   // A hole below the floor is the laser gap check's first job. Under the sharp closing a
   // small hole used to come back as a phantom (contour-offset.js), so the closing grew it
   // instead of filling it and every such hole read "nothing narrower than 3 mm".

@@ -191,11 +191,12 @@ const noiseOf = (contours) => LOSS_TOL_MM2 + NOISE_PER_CURVE_MM2 * contours
 // WIDTH_RESOLUTION: the upper end of the last bracket (the first width that fails),
 // rounded to 0.01 mm. The ceiling is tried first — most panels have nothing that
 // narrow, and one test settles them — and then reads as the ceiling itself, `capped`.
-// Once the ceiling has found something, an engine refusal at a narrower width counts
-// as found there: the engine refuses closest to where a feature collapses, so the
-// reading can come in under the true width, never over it — a warning, where a null
-// reading would have hidden it. A refusal at the ceiling itself leaves the reading null
-// (reading()). The finding is located by the last shape actually found.
+// The finding is located by the last shape actually found.
+// An engine refusal at any width ends the reading: reading() records why and the value
+// is null, so verify says the check could not be taken. Counting a refusal below a
+// ceiling hit as "found there" read a refusal between a web's true width and the floor
+// as a sub-floor web, a false warning placed at the real web; the width it came at
+// rides along in the reason.
 function narrowest(test, ceiling, spend) {
   spend();
   let found = test(ceiling);
@@ -205,7 +206,10 @@ function narrowest(test, ceiling, spend) {
     spend();
     const mid = (lo + hi) / 2;
     let hit;
-    try { hit = test(mid); } catch (e) { if (!isRefusal(e)) throw e; hit = UNLOCATED; }
+    try { hit = test(mid); } catch (e) {
+      if (isRefusal(e)) throw new Error(`${e.message} (width search at ${fmtMm(mid)} mm)`);
+      throw e;
+    }
     if (hit) { hi = mid; if (hit !== UNLOCATED) found = hit; } else lo = mid;
   }
   return { value: round2(hi), capped: false, at: found === UNLOCATED ? null : centreOfLargest(found) };
