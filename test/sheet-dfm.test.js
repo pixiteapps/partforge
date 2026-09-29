@@ -334,6 +334,41 @@ describe("LASER.facts", () => {
     expect(f).toMatchObject({ evaluated: true, gapCapped: false });
     expect(f.gap).toBeLessThanOrEqual(0.65);
   });
+  // Where "near w/2" ends, measured: an opening at 3 mm (w/2 1.5) that shrinks rounded
+  // tab corners of r 2.7 (1.8 × w/2) costs 176 ms for 12 of them and 440 ms for 20; at
+  // r 2.8 (1.87 ×) it costs 16 ms. So r 3 tabs — the corner radius equal to the stock —
+  // are priced as the cheap test they are, and read; r 2 tabs (seconds) are not started.
+  // `offsets` counts the shrinks and regrows actually run: none, when the first test is
+  // priced out.
+  const tabPanel = (n, r) => (kk) => {
+    const pts = [[0, 0], [n * 20 + 10, 0], [n * 20 + 10, 30]];
+    for (let i = n - 1; i >= 0; i--) pts.push([20 * i + 20, 30], [20 * i + 20, 40], [20 * i + 10, 40], [20 * i + 10, 30]);
+    return kk.shape2d([...pts, [0, 30]]).fillet(r).cut(kk.shape2d(rect(5, 5, 15, 15)));
+  };
+  const offsetsRun = (sp) => {
+    const s = resolveSheet(k, sp, P, {});
+    let offsets = 0;
+    const counted = (shape) => new Proxy(shape, { get(target, key) {
+      if (key === "offset") return (...a) => { offsets++; return counted(target.offset(...a)); };
+      const v = Reflect.get(target, key);
+      return typeof v === "function" ? v.bind(target) : v;
+    } });
+    const f = LASER.facts({ ...s, profile: counted(s.profile), trustedShape2d: (c) => counted(s.trustedShape2d(c)) }, { deadline: 1500, now: () => 0 });
+    return { f, offsets };
+  };
+  test("rounded tabs whose corner radius matches the stock are read", () => {
+    for (const n of [4, 6, 8]) {
+      const { f } = offsetsRun(plate({ profile: tabPanel(n, 3) }));
+      expect(f, `${n} tabs, r 3`).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true });
+    }
+  });
+  test("…and tabs rounded well under it are still not started", () => {
+    for (const n of [4, 6, 8, 12]) {
+      const { f, offsets } = offsetsRun(plate({ profile: tabPanel(n, 2) }));
+      expect(f.evaluated, `${n} tabs, r 2`).toBe(false);
+      expect(offsets).toBe(0);                            // priced out before the first test
+    }
+  });
 
   // The reviewers' panel (test/fixtures/sheet-web-plate-part.js): thirty booleaned d 6
   // holes and one 1 mm web between two slots. A test that finds the web runs the

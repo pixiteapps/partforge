@@ -284,21 +284,24 @@ function holePlan(contours, ceiling) {
 //   a test (two sharp offsets), per segment of the shape tested:
 //     line 1.2 (1,028: 1.1 s)   arc 2.5 (512 perforations with narrow webs: 1.1 s)
 //     cubic 3 (1,024 beside 1,028 lines: 5.2 s)
-//   and the offset engine's worst case, a cubic whose radius the test SHRINKS to within
-//   a few w/2 (its cubic offset then subdivides toward the depth limit, and the winding
-//   resolver pays for every piece). A cubic bending the way the first offset shrinks
-//   (convex in an opening, concave in a closing) with radius at most 2.5·w/2 costs
-//   12 × (their count)² — superlinear, and fitted to the worst measured: 16 rounded-rect
-//   corners closed at 3 mm, 3.5 s; 64, 50 s; 256, 804 s. One bending the other way is
-//   grown first and shrunk back, and costs 10 more when its radius is at most 1.5·w/2
-//   (128 filleted tab corners closed at 1.5 mm: 1.2 s);
+//   and the offset engine's worst case, a cubic whose radius the test SHRINKS to near
+//   w/2 or past it (its cubic offset then subdivides toward the depth limit, and the
+//   winding resolver pays for every piece). A cubic bending the way the first offset
+//   shrinks (convex in an opening, concave in a closing) with radius under 1.85·w/2
+//   costs 16 × (their count)² — superlinear, and fitted to the worst measured: rounded
+//   tab corners opened at 3 mm, r 2–2.25 (1.33–1.5 × w/2), 12 of them 1.9–2.3 s, 20
+//   4.7–5.4 s; rounded-rect corners r 1.2 closed at 3 mm, 16 3.5 s, 64 50 s, 256 804 s.
+//   The edge of "near" is sharp and was measured: r 1.8 × w/2, 12 tab corners 176 ms
+//   and 20 440 ms; r 1.87 ×, 16 ms (at 1.5, 3 and 6 mm stock alike). One bending the
+//   other way is grown first and shrunk back, and costs 10 more when its radius is at
+//   most 1.5·w/2 (128 filleted tab corners closed at 1.5 mm: 1.2 s);
 //   the one-sided difference, per segment of the shape tested and of its result:
 //     line 0.25, arc 0.5, cubic 0.4 plus 0.0005 × (all the cubics)², paper's cost on
 //     a cubic near-copy (1,024: 0.7 s, 2,048: 2 s, 4,096: 8 s).
 // The meter scales every price by how much slower than that this device has run the
 // steps it already took (never below 1), so a phone prices its own steps.
 const PRICE = {
-  test: { line: 1.2, arc: 2.5, cubic: 3, shrunkPair: 12, grownBack: 10 },
+  test: { line: 1.2, arc: 2.5, cubic: 3, shrunkWithin: 1.85, shrunkPair: 16, grownBackWithin: 1.5, grownBack: 10 },
   diff: { line: 0.25, arc: 0.5, cubic: 0.4, cubicPair: 0.0005 },
 };
 const countsOf = (contours) => {
@@ -318,8 +321,8 @@ function testPrice(search, shrinks, w) {
   const { line, arc, cubic } = search.counts, P = PRICE.test, h = w / 2;
   let shrunk = 0, grownBack = 0;
   for (const c of search.cubics) {
-    if (c.dir !== -shrinks && c.rMin <= 2.5 * h) shrunk++;
-    if (c.dir !== shrinks && c.rMin <= 1.5 * h) grownBack++;
+    if (c.dir !== -shrinks && c.rMin < P.shrunkWithin * h) shrunk++;
+    if (c.dir !== shrinks && c.rMin <= P.grownBackWithin * h) grownBack++;
   }
   return line * P.line + arc * P.arc + cubic * P.cubic + shrunk * shrunk * P.shrunkPair + grownBack * P.grownBack;
 }
