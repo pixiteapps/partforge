@@ -24,6 +24,11 @@ const byKey = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 export function layoutGroup({ label, pieces, stock, margin, spacing, strict }) {
   const [W, H] = stock;
   const innerW = W - 2 * margin, innerH = H - 2 * margin;
+  // The options allow a 50 mm margin and a 10 mm stock side; together they leave a sheet
+  // with no inside at all, which is the options' fault, for either destination — not a
+  // "stock too small" quoting a negative size, nor a service kit with every piece oversized.
+  if (innerW <= EPS || innerH <= EPS)
+    throw new Error(`${KIT_OPTIONS_ERROR} a ${fmtMm(W)} × ${fmtMm(H)} mm sheet has no room inside a ${fmtMm(margin)} mm margin on every side (${label}) — lower margin or use larger stock`);
   const items = [];
   const oversized = [];
   for (const pc of pieces) {

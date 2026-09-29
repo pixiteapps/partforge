@@ -102,3 +102,14 @@ describe("a piece bigger than the sheet", () => {
     expect(lay([piece("base", rect(400, 250))], { strict: false })).toEqual({ sheets: [], oversized: ["base"] });
   });
 });
+
+describe("a margin that leaves no room", () => {
+  // KIT_LIMITS allows a 50 mm margin and a 10 mm stock side, and nothing else stops the
+  // two meeting: the sheet would have a negative inside.
+  test.each([true, false])("strict %s: an options error about the margin, for either destination", (strict) => {
+    expect(() => lay([piece("a", rect(5, 5))], { stock: [10, 10], margin: 50, strict }))
+      .toThrow("cut kit options: a 10 × 10 mm sheet has no room inside a 50 mm margin on every side (birch plywood 3 mm) — lower margin or use larger stock");
+    expect(() => lay([piece("a", rect(5, 5))], { stock: [300, 100], margin: 50, strict }))
+      .toThrow("cut kit options: a 300 × 100 mm sheet has no room inside a 50 mm margin on every side (birch plywood 3 mm) — lower margin or use larger stock");
+  });
+});
