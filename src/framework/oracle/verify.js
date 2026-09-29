@@ -194,18 +194,40 @@ export const SHEET_CHECKS_NOTICE = Object.freeze({
   pattern: SHEET_DOC_ID,
 });
 
+// A DECLARED sheet check the budget withheld: `unevaluated`, as a quick lap's is, so it
+// withholds verify.ok — and it says how to get a verdict.
+const SHEET_BUDGET_HINT = "The 2-D sheet checks ran out of their time budget before this one, so it has no verdict and verify.ok is withheld. Fewer holes, fingers or small rounded corners in the profile let the checks fit; they then read every sheet part.";
+
+// The print checks: measure() casts no rays and runs no overhang pass on a sheet part.
+// Declared on one, each is a skip — declared, never evaluated, so a sheet-only forge
+// that declares only these has no verdict rather than a vacuous pass.
+const PRINT_ONLY = new Set(["minWall", "wall", "overhangArea"]);
+const PRINT_ONLY_HINT = "minWall, wall and overhangArea are print checks, and a sheet part is cut, not printed: nothing measures them here. For a laser part declare sheetBridge (the narrowest web or finger) or sheetGap (the narrowest hole or slot) instead.";
+
+// A sheet reading the geometry engine could not take (SheetFacts.readErrors): a
+// volunteered check warns with the reason, a declared one skips with it.
+const SHEET_READ_ERROR_HINT = "The geometry engine could not run this 2-D laser check on the profile (the reason is in the message). The part still builds; an overlapping or self-touching contour, or a sliver, is the usual cause — simplify the profile there and re-run.";
+
 // One sheet row: the declared expectations, then the process's checks the part did
-// not declare, volunteered. A declared check the budget withheld is `unevaluated`,
-// as a quick lap's is.
+// not declare, volunteered.
 function sheetRowChecks(s, declaredExp) {
   const out = [];
   const outOfTime = s.sheet.evaluated === false;
   const budgeted = (metric) => SUBPART_METRICS[metric]?.budgeted === true;
+  const unread = (c, metric) => (c.actual == null ? SUBPART_METRICS[metric]?.readError?.(s) ?? null : null);
+  const readFailure = (c, why) => ({ ...c, message: `not measured — ${why}`, hint: SHEET_READ_ERROR_HINT, pattern: SHEET_DOC_ID });
   for (const [metric, expr] of Object.entries(declaredExp)) {
     const c = check("subpart", s.name, metric, expr, SUBPART_METRICS, s);
-    out.push(outOfTime && budgeted(metric) && c.actual == null
-      ? { ...c, status: "skip", pass: null, unevaluated: true, message: "not evaluated (2-D check budget)" }
-      : c);
+    if (PRINT_ONLY.has(metric)) {
+      out.push({ scope: c.scope, subpart: c.subpart, metric, kind: c.kind, expr: c.expr, actual: null, status: "skip", pass: null,
+        message: "not measured on a sheet part", hint: PRINT_ONLY_HINT, pattern: SHEET_DOC_ID });
+    } else if (outOfTime && budgeted(metric) && c.actual == null) {
+      out.push({ ...c, status: "skip", pass: null, unevaluated: true, message: "not evaluated (2-D check budget)",
+        hint: SHEET_BUDGET_HINT, pattern: SHEET_DOC_ID });
+    } else {
+      const why = unread(c, metric);
+      out.push(why ? readFailure({ ...c, status: "skip", pass: null }, why) : c);
+    }
   }
   let noticed = false;
   for (const [metric, expr] of Object.entries(processById(s.sheet.process)?.checks(s.sheet) ?? {})) {
@@ -215,7 +237,9 @@ function sheetRowChecks(s, declaredExp) {
       noticed = true;
       continue;
     }
-    out.push({ ...check("subpart", s.name, metric, expr, SUBPART_METRICS, s), volunteered: true });
+    const c = check("subpart", s.name, metric, expr, SUBPART_METRICS, s);
+    const why = unread(c, metric);
+    out.push({ ...(why ? readFailure({ ...c, status: "warn", pass: null }, why) : c), volunteered: true });
   }
   return out;
 }

@@ -269,8 +269,9 @@ export function overhang(
  * bisected to 0.05 mm; `…Capped` says nothing narrower than twice the floor was
  * found and the value is that ceiling. `at2d` is in the drawing frame; `at` is
  * the same spot in the assembly at mid-thickness, `null` when the sub-part's
- * pose could not be traced. `evaluated` false: the 2-D time budget ran out and
- * `bridge`, `gap`, `marksOutside` and `marksArea` are `null`.
+ * pose could not be traced. `evaluated` false: the 2-D time budget ran out, or
+ * the profile was too complex to start the checks under it, and `bridge`, `gap`,
+ * `marksOutside` and `marksArea` are `null`.
  */
 export interface SheetFacts {
   process: string;
@@ -293,6 +294,11 @@ export interface SheetFacts {
   solidMatchPct: number | null;
   at2d: { bridge: [number, number] | null; gap: [number, number] | null; marks: [number, number] | null };
   at: { bridge: number[] | null; gap: number[] | null; marks: number[] | null };
+  /**
+   * Why a reading is `null` although `evaluated` is true — the geometry engine refused
+   * the profile, or the reading threw — or `null` for each one that was taken.
+   */
+  readErrors: { bridge: string | null; gap: string | null; marks: string | null; marksArea: string | null };
   evaluated: boolean;
 }
 

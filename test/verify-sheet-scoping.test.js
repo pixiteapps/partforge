@@ -135,11 +135,30 @@ test("past the 2-D budget: one sheetChecks notice per sheet, and the verdict is 
   expect(v.ok).toBeNull();
 });
 
-test("past the 2-D budget a DECLARED sheet check is unevaluated, which withholds the verdict", () => {
+test("past the 2-D budget a DECLARED sheet check is unevaluated, which withholds the verdict — and says how to get one", () => {
   const v = verify(k, forge({ plate: plate(60, 40) }, { expect: { plate: { sheetBridge: ">=1.5" } } }), { measureFn: noBudget });
-  expect(on(v, "plate", "sheetBridge")[0]).toMatchObject({ status: "skip", pass: null, unevaluated: true, message: "not evaluated (2-D check budget)" });
+  const [c] = on(v, "plate", "sheetBridge");
+  expect(c).toMatchObject({ status: "skip", pass: null, unevaluated: true, message: "not evaluated (2-D check budget)", pattern: "sheet-parts" });
+  expect(c.hint.length).toBeGreaterThan(0);
+  expect(c.hint.length).toBeLessThanOrEqual(500);
   expect(v.unevaluated).toHaveLength(1);
   expect(v.ok).toBeNull();
+});
+
+// min wall, the wall band and overhang are print checks: measure() casts no rays on a
+// sheet part. Declared on one they used to answer "unavailable" as a WARN — counted as
+// evaluated, so a sheet-only forge declaring only minWall came back verify.ok true with
+// nothing verified. Now they skip: declared, never evaluated, pointing at the sheet checks.
+test("a print metric declared on a sheet part is not measured, and says what to declare", () => {
+  for (const [metric, expr] of [["minWall", ">=1.2"], ["wall", "2.5..3.5"], ["overhangArea", "<=1"]]) {
+    const v = verifyUnhurried(k, forge({ plate: plate(60, 40) }, { expect: { plate: { [metric]: expr } } }));
+    expect(v, metric).toMatchObject({ ok: null, declared: 1, evaluated: 0 });
+    const [c] = on(v, "plate", metric);
+    expect(c, metric).toMatchObject({ status: "skip", pass: null, actual: null, pattern: "sheet-parts", message: "not measured on a sheet part" });
+    expect(c.hint, metric).toMatch(/sheetBridge/);
+    expect(c.hint.length, metric).toBeLessThanOrEqual(500);
+    expect(c.note, metric).toBeUndefined();
+  }
 });
 
 test("laser-box.js verifies: hinges fit the bed as printed, no laser warning", () => {
@@ -156,3 +175,28 @@ test("recognition is plain data: a copied declaration measures and verifies the 
   expect(unhurried(k, forge({ plate: copy })).subparts[0].sheet).toEqual(unhurried(k, forge({ plate: sp })).subparts[0].sheet);
   expect(checksOf(verifyUnhurried(k, forge({ plate: copy })))).toEqual(checksOf(verifyUnhurried(k, forge({ plate: sp }))));
 });
+
+// A reading the geometry engine refused (or that threw for any other reason) is null —
+// never a failed report — but never silent either: facts carry the reason, a volunteered
+// check turns it into a warning, and a declared one skips with it.
+test("a sheet reading that could not be taken says why", () => {
+  const refusing = (shape) => new Proxy(shape, { get(target, key) {
+    if (key === "offset") return (delta, ...rest) => {
+      if (delta > 0) throw new Error("contour-winding: could not chain offset boundary (incomplete intersection set)");
+      return refusing(target.offset(delta, ...rest));
+    };
+    const v = Reflect.get(target, key);
+    return typeof v === "function" ? v.bind(target) : v;
+  } });
+  const sp = plate(60, 40);
+  const odd = { ...sp, sheet: { ...sp.sheet, profile: (kk, p, d) => refusing(kk.shape2d(sp.sheet.profile(kk, p, d))) } };
+  const r = unhurried(k, forge({ plate: odd }));
+  expect(r.subparts[0].sheet).toMatchObject({ evaluated: true, gap: null, readErrors: { gap: expect.stringContaining("could not chain") } });
+  const volunteered = verifyUnhurried(k, forge({ plate: odd }));
+  expect(volunteered.warnings.find((c) => c.metric === "sheetGap")).toMatchObject({
+    volunteered: true, status: "warn", pattern: "sheet-parts", message: expect.stringContaining("could not chain") });
+  const declared = verifyUnhurried(k, forge({ plate: odd }, { expect: { plate: { sheetGap: ">=1.5" } } }));
+  expect(on(declared, "plate", "sheetGap")[0]).toMatchObject({ status: "skip", pattern: "sheet-parts", message: expect.stringContaining("could not chain") });
+  expect(declared).toMatchObject({ ok: null, declared: 1, evaluated: 0 });
+});
+

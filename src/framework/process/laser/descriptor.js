@@ -233,11 +233,20 @@ function narrowestGap(profile, area, contours, ceiling, spend) {
     : gap;
 }
 
-// One budget-gated reading, or null when the geometry engine refused this profile (an
-// offset it could not chain) — a missing reading, never a failed report. Running out
-// of time is not caught here: it ends every gated reading at once (facts()).
-function reading(fn) {
-  try { return fn(); } catch (e) { if (e === OUT_OF_TIME) throw e; return null; }
+// One budget-gated reading, or null when it could not be taken — the geometry engine
+// refused this profile (an offset it could not chain), or anything else threw — a
+// missing reading, never a failed report. Never a silent one either: the reason lands in
+// `errors[key]` (SheetFacts.readErrors), and verify reports it (oracle/verify.js).
+// Running out of time is not caught here: it ends every gated reading at once (facts()).
+const READ_ERROR_CHARS = 200;
+function reading(errors, key, fn) {
+  try {
+    return fn();
+  } catch (e) {
+    if (e === OUT_OF_TIME) throw e;
+    errors[key] = String(e?.message || e).slice(0, READ_ERROR_CHARS);
+    return null;
+  }
 }
 
 // Engrave ∪ score grooves, and how many regions of it lie outside the cut.
@@ -255,7 +264,8 @@ function marksFacts(s, spend) {
 // `doc` names the guide section a failing check points at — oracle/verify.js turns
 // it into the check's `pattern`; it is deliberately not `pattern`, which must name a
 // docs/ERROR-PATTERNS.md entry. `budgeted` marks the readings the 2-D deadline can
-// withhold, which verify reports as not evaluated rather than unavailable.
+// withhold, which verify reports as not evaluated rather than unavailable; `readError`
+// returns why a reading could not be taken, which verify reports instead of a bare skip.
 const cappedNote = (key) => (s) => (s.sheet?.[`${key}Capped`]
   ? `nothing narrower than ${fmtMm(s.sheet[key])} mm found — the value is the search ceiling`
   : null);
@@ -264,22 +274,26 @@ const METRICS = {
   sheetBridge: { kind: "warn", doc: SHEET_DOC_ID, budgeted: true,
     extract: (s) => (s.sheet?.evaluated ? s.sheet.bridge : null),
     locate: (s) => s.sheet?.at?.bridge ?? null,
+    readError: (s) => s.sheet?.readErrors?.bridge ?? null,
     note: cappedNote("bridge"),
     hint: "a web or finger of this sheet part is narrower than a laser can leave standing (the floor is half the sheet thickness, at least 0.5 mm) — widen the material between cuts at the reported location, or use fewer, wider fingers" },
   sheetGap: { kind: "warn", doc: SHEET_DOC_ID, budgeted: true,
     extract: (s) => (s.sheet?.evaluated ? s.sheet.gap : null),
     locate: (s) => s.sheet?.at?.gap ?? null,
+    readError: (s) => s.sheet?.readErrors?.gap ?? null,
     note: cappedNote("gap"),
     hint: "a hole, slot or notch in this sheet part is narrower than a laser can reliably cut (half the sheet thickness, at least 0.5 mm) — widen it at the reported location" },
   sheetMarks: { kind: "warn", doc: SHEET_DOC_ID, budgeted: true,
     extract: (s) => (s.sheet?.evaluated ? s.sheet.marksOutside : null),
     locate: (s) => s.sheet?.at?.marks ?? null,
+    readError: (s) => s.sheet?.readErrors?.marks ?? null,
     hint: "an engrave or score mark lies outside the cut outline, so it would burn scrap or empty air — move it inside the profile" },
   sheetPieces: { kind: "warn", doc: SHEET_DOC_ID,
     extract: (s) => s.sheet?.pieces ?? null,
     hint: "the profile is not exactly one piece — a sheet part must cut out as one region; join the pieces or split them into separate sheetPart sub-parts" },
   sheetSolidMatch: { kind: "warn", doc: SHEET_DOC_ID, budgeted: true,
     extract: (s) => s.sheet?.solidMatchPct ?? null,
+    readError: (s) => s.sheet?.readErrors?.marksArea ?? null,
     hint: "this sheet part's custom build drifts from its profile (volume vs. profile area × thickness) — the cut file comes from the profile, so fix the profile or drop the custom build" },
 };
 
@@ -340,6 +354,7 @@ export const LASER = {
       marksOutside: null, solidMatchPct: null,
       at2d: { bridge: null, gap: null, marks: null },
       at: { bridge: null, gap: null, marks: null },
+      readErrors: { bridge: null, gap: null, marks: null, marksArea: null },
       evaluated: false,
     };
     const spend = () => { if (now() >= deadline) throw OUT_OF_TIME; };
@@ -347,14 +362,16 @@ export const LASER = {
     if (Number.isFinite(deadline) && checkCost(contours, ceiling) > COST_UNITS) return f;
     try {
       const noise = noiseOf(contours);
-      const bridge = reading(() => narrowest((w) => openingLoss(profile, area, w, noise), ceiling, spend));
-      const gap = reading(() => narrowestGap(profile, area, contours, ceiling, spend));
-      const m = reading(() => marksFacts(s, spend));
+      const errors = { bridge: null, gap: null, marks: null, marksArea: null };
+      const bridge = reading(errors, "bridge", () => narrowest((w) => openingLoss(profile, area, w, noise), ceiling, spend));
+      const gap = reading(errors, "gap", () => narrowestGap(profile, area, contours, ceiling, spend));
+      const m = reading(errors, "marks", () => marksFacts(s, spend));
       // A custom build is compared with profile area × thickness minus the marks'
       // removed volume (oracle/measure.js), so it needs the marks inside the cut.
       const marksArea = !s.customBuild || m === null ? null
-        : reading(() => { spend(); return m.marks ? m.marks.intersect(profile).area() : 0; });
+        : reading(errors, "marksArea", () => { spend(); return m.marks ? m.marks.intersect(profile).area() : 0; });
       Object.assign(f, {
+        readErrors: errors,
         bridge: bridge?.value ?? null, bridgeCapped: bridge?.capped ?? false,
         gap: gap?.value ?? null, gapCapped: gap?.capped ?? false,
         marksOutside: m?.outside ?? null, marksArea,
