@@ -54,15 +54,18 @@ async function nodeRows() {
   };
   const rows = [];
   for (const [part, def] of [["laser-box", laserBox], ["twelve-panel", twelvePanel], ["screw-plate", screwPlate], ["perforated", perforated]]) {
-    const uncapped = sheetChecksMs(def);
+    const partRows = [];
     for (const lap of ["quick", "full"]) {
       const times = [];
       let report;
       for (let i = 0; i <= RUNS; i++) ({ ms: times[i], report } = await inspect(def, lap === "quick"));
       const sheets = report.measure.subparts.filter((s) => s.sheet);
-      rows.push({ part, lap, coldMs: Math.round(times[0]), warmMs: Math.round(median(times.slice(1))),
-        sheetChecksMs: uncapped, sheetsEvaluated: `${sheets.filter((s) => s.sheet.evaluated).length}/${sheets.length}` });
+      partRows.push({ part, lap, coldMs: Math.round(times[0]), warmMs: Math.round(median(times.slice(1))),
+        sheetsEvaluated: `${sheets.filter((s) => s.sheet.evaluated).length}/${sheets.length}` });
     }
+    // Once per part, after its laps (warm): what the checks cost uncapped.
+    const uncapped = sheetChecksMs(def);
+    rows.push(...partRows.map((r) => ({ ...r, sheetChecksMs: uncapped })));
   }
   return { where: `Node ${process.version} (${process.platform} ${process.arch})`, rows };
 }
