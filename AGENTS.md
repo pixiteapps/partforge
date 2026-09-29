@@ -316,14 +316,20 @@ the installed package, so let the publish finish before bumping the dep there.
   `declared`/`evaluated`, so they never set `verify.ok`. The 2-D checks share
   `SHEET_CHECK_BUDGET_MS` per `measure()` call, charged for 2-D work alone; the laser
   descriptor runs each width search on the profile with its circular cubics read as arcs
-  (`recoverArcs`, handed over by `resolveSheet`), less the holes that cannot take part in
-  it, and prices every step (a test, and the boolean it runs unless it handed back the
-  searched shape's own rings) before it starts, starting none that will not fit — so a
-  profile too complex to read is not started, nor a test that would shrink a
-  non-circular cubic to just past w/2. Either way it is one `sheetChecks` warning, never a
-  lost report; a DECLARED check the engine could not read is unevaluated too. Tests
-  run the budget on a stopped clock (`measure(…, { now: () => 0 })`), never on the
-  runner's speed. A view with no sheet part verifies
+  (`recoverArcs`, handed over by `resolveSheet`) and every cubic the search could carry
+  into the offset engine's slow band as lines, less the holes that cannot take part in
+  it; reads a web or slot narrower than its boolean's 0.01 mm margin off the boundary
+  itself; and prices every step (a test, the boolean it runs unless it handed back the
+  searched shape's own rings, that boundary pass) before it starts, starting none that
+  will not fit — so a profile too complex to read is not started. The prices are fitted
+  on a desktop: over the calibration corpus no step costs more than 0.93 of its price, a
+  test holds every step within 1.5× of it (at the runner's own pace) on #233's helpers
+  and ellipses, and the meter learns a slower device's pace from the steps it has run —
+  so the checks end inside their budget plus at most one step's overrun, never a
+  multi-second step. A sheet the budget stops is one `sheetChecks` warning; a DECLARED
+  check the engine could not read is unevaluated too. Most tests run the budget on a
+  stopped clock (`measure(…, { now: () => 0 })`); the timing pins run it on main-thread
+  CPU time and allow the runner's pace. A view with no sheet part verifies
   byte-identically — `test/verify-golden.test.js` pins it; re-record only for a
   deliberate verdict change (`PARTFORGE_RECORD_VERIFY_GOLDEN=1 npx vitest run
   test/verify-golden.test.js`). Timings: `docs/research/sheet-inspect-timing.md`.
