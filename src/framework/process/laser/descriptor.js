@@ -80,6 +80,90 @@ function roundHole(ring) {
   return r > 0 && pts.every((q) => Math.abs(dist(q, at) - r) <= 0.01 * r) ? { d: 2 * r, at } : null;
 }
 
+// Each segment of a ring as the width search sees it: its end tangents, how far it turns
+// (signed, + to the left: toward the material, since storage winding keeps the material on
+// the left of travel), which way it bends (+1 left, -1 right, 0 both ways: an inflected
+// cubic), its tightest radius, and points along it to FLAT_TOL (its end included). Zero-
+// length lines are dropped: they have no direction.
+const FLAT_TOL = 0.005;
+const sub2 = (a, b) => [a[0] - b[0], a[1] - b[1]];
+const cross2 = (a, b) => a[0] * b[1] - a[1] * b[0];
+const dot2 = (a, b) => a[0] * b[0] + a[1] * b[1];
+const unit = (v) => { const L = Math.hypot(v[0], v[1]); return L > 1e-12 ? [v[0] / L, v[1] / L] : null; };
+const asContour = (ring) => (Array.isArray(ring)
+  ? { start: ring[0], segments: [...ring.slice(1).map((q) => ({ to: q })), { to: ring[0] }] }
+  : ring);
+const pointSegDist = (q, a, b) => {
+  const ab = sub2(b, a), L2 = dot2(ab, ab);
+  const t = L2 > 0 ? Math.max(0, Math.min(1, dot2(sub2(q, a), ab) / L2)) : 0;
+  return dist(q, [a[0] + t * ab[0], a[1] + t * ab[1]]);
+};
+function arcCircle(from, via, to) {
+  const d = 2 * (from[0] * (via[1] - to[1]) + via[0] * (to[1] - from[1]) + to[0] * (from[1] - via[1]));
+  if (Math.abs(d) < 1e-12) return null;
+  const n = (q) => q[0] * q[0] + q[1] * q[1];
+  const c = [(n(from) * (via[1] - to[1]) + n(via) * (to[1] - from[1]) + n(to) * (from[1] - via[1])) / d,
+    (n(from) * (to[0] - via[0]) + n(via) * (from[0] - to[0]) + n(to) * (via[0] - from[0])) / d];
+  const TAU = 2 * Math.PI, mod = (x) => ((x % TAU) + TAU) % TAU, ang = (q) => Math.atan2(q[1] - c[1], q[0] - c[0]);
+  const a0 = ang(from), toVia = mod(ang(via) - a0), toEnd = mod(ang(to) - a0);
+  return { c, r: dist(from, c), a0, sweep: toVia <= toEnd ? toEnd : toEnd - TAU };   // + counter-clockwise
+}
+const bez1 = (p0, c1, c2, p3, t) => { const u = 1 - t; return [0, 1].map((i) => 3 * (u * u * (c1[i] - p0[i]) + 2 * u * t * (c2[i] - c1[i]) + t * t * (p3[i] - c2[i]))); };
+const bez2 = (p0, c1, c2, p3, t) => [0, 1].map((i) => 6 * ((1 - t) * (c2[i] - 2 * c1[i] + p0[i]) + t * (p3[i] - 2 * c2[i] + c1[i])));
+function flattenCubic(p0, c1, c2, p3, out, depth = 0) {
+  if (depth >= 10 || Math.max(pointSegDist(c1, p0, p3), pointSegDist(c2, p0, p3)) <= FLAT_TOL) { out.push(p3); return; }
+  const m = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const a = m(p0, c1), b = m(c1, c2), c = m(c2, p3), ab = m(a, b), bc = m(b, c), mid = m(ab, bc);
+  flattenCubic(p0, a, ab, mid, out, depth + 1);
+  flattenCubic(mid, bc, c, p3, out, depth + 1);
+}
+const CUBIC_SAMPLES = 16;
+function segInfo(from, seg) {
+  const line = () => {
+    const t = unit(sub2(seg.to, from));
+    return t && { from, to: seg.to, curved: false, t0: t, t1: t, turn: 0, dir: 0, rMin: Infinity, pts: [seg.to] };
+  };
+  if (seg.via) {
+    const a = arcCircle(from, seg.via, seg.to);
+    if (!a) return line();
+    const tan = (q) => { const rad = sub2(q, a.c); return unit(a.sweep > 0 ? [-rad[1], rad[0]] : [rad[1], -rad[0]]); };
+    const steps = Math.min(512, Math.max(1, Math.ceil(Math.abs(a.sweep) / (2 * Math.acos(Math.max(-1, 1 - FLAT_TOL / a.r))))));
+    const pts = [];
+    for (let i = 1; i < steps; i++) { const t = a.a0 + (a.sweep * i) / steps; pts.push([a.c[0] + a.r * Math.cos(t), a.c[1] + a.r * Math.sin(t)]); }
+    pts.push(seg.to);
+    return { from, to: seg.to, curved: true, t0: tan(from), t1: tan(seg.to), turn: a.sweep, dir: Math.sign(a.sweep), rMin: a.r, pts };
+  }
+  if (!seg.c1) return line();
+  const { c1, c2, to } = seg;
+  const t0 = unit(sub2(c1, from)) ?? unit(sub2(c2, from)) ?? unit(sub2(to, from));
+  const t1 = unit(sub2(to, c2)) ?? unit(sub2(to, c1)) ?? unit(sub2(to, from));
+  if (!t0 || !t1) return null;
+  let turn = 0, left = false, right = false, rMin = Infinity, prev = null;
+  for (let k = 0; k <= CUBIC_SAMPLES; k++) {
+    const t = k / CUBIC_SAMPLES, d1 = bez1(from, c1, c2, to, t), d2 = bez2(from, c1, c2, to, t);
+    const x = cross2(d1, d2), speed = Math.hypot(d1[0], d1[1]);
+    if (x > 1e-12) left = true; else if (x < -1e-12) right = true;
+    if (Math.abs(x) > 1e-12 && speed > 1e-9) rMin = Math.min(rMin, speed ** 3 / Math.abs(x));
+    if (speed > 1e-9) { if (prev) turn += Math.atan2(cross2(prev, d1), dot2(prev, d1)); prev = d1; }
+  }
+  const pts = [];
+  flattenCubic(from, c1, c2, to, pts);
+  return { from, to, curved: true, t0, t1, turn, dir: left && right ? 0 : left ? 1 : right ? -1 : 0, rMin, pts };
+}
+function ringParts(ring) {
+  const c = asContour(ring), parts = [];
+  let from = c.start;
+  for (const seg of c.segments) { const p = segInfo(from, seg); if (p) parts.push(p); from = seg.to; }
+  return parts;
+}
+const polyArea = (pts) => pts.reduce((a, q, i) => a + cross2(q, pts[(i + 1) % pts.length]), 0) / 2;
+function lineMeet(P, u, Q, v) {
+  const d = cross2(u, v);
+  if (Math.abs(d) < 1e-12) return null;
+  const k = cross2(sub2(Q, P), v) / d;
+  return [P[0] + u[0] * k, P[1] + u[1] * k];
+}
+
 // ── the cost pre-gate ─────────────────────────────────────────────────────────
 // The deadline is checked BETWEEN tests; nothing interrupts one. So under a deadline a
 // profile whose single test would plainly outrun the whole budget is not started:
@@ -148,7 +232,14 @@ function checkCost(contours, ceiling) {
 // that changed nothing skips it: most tests, every capped panel's. "Nothing" allows for
 // the offset's approximation of curves, a systematic ~1e-4 mm² per cubic, measured
 // (0.022 mm² over 64 booleaned holes): the band is LOSS_TOL_MM2 plus 1e-4 per curved
-// segment. Only a real loss cancelled to within it by an artifact elsewhere could hide.
+// segment. But the net change is the real finding MINUS the artifacts, so near a
+// coincident dimension an artifact elsewhere cancels a real web or slot into the band
+// and the skip hides it again (a 0.8 × 1.07 mm bridge beside an r 1 filleted outline).
+// So the skip is taken only when even the most the artifacts could have cancelled
+// leaves the finding inside the band: the finding is at most net + bound, where bound
+// (artifactBound) is the area every artifact this width can make could reach. With
+// nothing that can make one — the common case, and every rectilinear panel — the bound
+// is 0 and the skip is exactly the old one.
 // When paper refuses the difference, the test falls back to the net area change it
 // replaced, so the one-sided rule is never worse than it: the reading stays, the
 // finding goes unlocated (UNLOCATED).
@@ -159,8 +250,8 @@ const UNLOCATED = Object.freeze({ unlocated: true });
 // is left to propagate so reading() can report it.
 const isRefusal = (e) => e instanceof Error && e.name === "Error";
 
-function oneSided(difference, net, noise) {
-  if (Math.abs(net) <= noise) return null;
+function oneSided(difference, net, noise, bound) {
+  if (net >= -noise && net + bound <= noise) return null;
   try {
     const d = difference();
     return !d.isEmpty() && d.regions().some((r) => r.area() > LOSS_TOL_MM2) ? d : null;
@@ -170,22 +261,95 @@ function oneSided(difference, net, noise) {
   }
 }
 
-function openingLoss(profile, area, w, noise) {
+function openingLoss(profile, area, w, band) {
   let opened;
   try { opened = profile.offset(-w / 2, SHARP).offset(w / 2, SHARP); }
   catch (e) { if (COLLAPSES.test(e?.message ?? "")) return profile; throw e; }
-  return oneSided(() => profile.cut(opened), area - opened.area(), noise);
+  return oneSided(() => profile.cut(opened), area - opened.area(), band.noise, artifactBound(band.artifacts.opening, w));
 }
 
-function closingGain(profile, area, w, noise) {
+function closingGain(profile, area, w, band) {
   const closed = profile.offset(w / 2, SHARP).offset(-w / 2, SHARP);
-  return oneSided(() => closed.cut(profile), closed.area() - area, noise);
+  return oneSided(() => closed.cut(profile), closed.area() - area, band.noise, artifactBound(band.artifacts.closing, w));
 }
 
-// LOSS_TOL_MM2 plus the curve noise band for these rings.
-const noiseOf = (contours) => LOSS_TOL_MM2 + NOISE_PER_CURVE_MM2 * contours
-  .flatMap((rg) => [rg.outer, ...rg.holes])
-  .reduce((n, ring) => n + (Array.isArray(ring) ? 0 : ring.segments.filter((seg) => seg.c1 || seg.via).length), 0);
+// What a sharp test at width w can put on the side it does not count. Material bends
+// LEFT of travel (storage winding), so:
+//   an opening (shrink, regrow) ADDS material — cancelling a loss — where
+//     • a run of curve bending left (a convex fillet, a rounded tab) has a radius at most
+//       w/2: it collapses to a corner and regrows square, adding what lies between the
+//       run and its two end tangents (r²·(tan(θ/2) − θ/2) for an arc: 0.215 mm² for a
+//       90° r 1 fillet); and where
+//     • an empty corner is sharper than 60° (a turn past 120°): shrinking bevels it, and
+//       regrowing fills its tip up to (w/2)·(1 − sin(φ/2)) from the apex, a triangle of
+//       (w/2)²·tan(φ/2)·(1 − sin(φ/2))²;
+//   a closing (grow, shrink back) REMOVES material — cancelling a gain — at the mirror
+//     images: runs bending right (a rounded notch or hole corner) and material spikes
+//     sharper than 60°.
+// A run that turns 180° or more, or bends both ways (an inflected cubic), has no finite
+// tangent region: its bound is infinite and a test that could collapse it never skips.
+// The planning is per profile, from the IR alone; artifactBound adds up what can fire at w.
+const ACUTE_TURN = (2 * Math.PI) / 3;          // past it the sharp join bevels (MITER_LIMIT 2)
+const SMOOTH_TURN = Math.PI / 180;             // 1°, the offset engine's own smooth joint
+function artifactPlan(contours) {
+  const plan = { opening: { runs: [], acute: [] }, closing: { runs: [], acute: [] } };
+  const add = (dir, entry, key) => {
+    if (dir >= 0) plan.opening[key].push(entry);
+    if (dir <= 0) plan.closing[key].push(entry);
+  };
+  for (const rg of contours) for (const ring of [rg.outer, ...rg.holes]) {
+    const parts = ringParts(ring), n = parts.length;
+    if (!n) continue;
+    // joint[i]: the turn from the end of part i-1 into part i, + to the left.
+    const joint = parts.map((pt, i) => { const a = parts[(i - 1 + n) % n].t1; return Math.atan2(cross2(a, pt.t0), dot2(a, pt.t0)); });
+    for (const ang of joint)                                    // left (+): a material spike
+      if (Math.abs(ang) > ACUTE_TURN) add(ang > 0 ? -1 : 1, Math.PI - Math.abs(ang), "acute");
+    const joins = (i) => parts[i].curved && parts[(i - 1 + n) % n].curved && Math.abs(joint[i]) < SMOOTH_TURN;
+    const start = parts.findIndex((_, i) => parts[i].curved && !joins(i));
+    if (start < 0) {                                          // one smooth curved loop, or no curve at all
+      if (parts.every((pt) => pt.curved)) {
+        const dirs = new Set(parts.map((pt) => pt.dir));
+        add(dirs.size === 1 ? [...dirs][0] : 0, { rMin: Math.min(...parts.map((pt) => pt.rMin)), area: Infinity }, "runs");
+      }
+      continue;
+    }
+    for (let k = 0; k < n; k++) {
+      const i = (start + k) % n;
+      if (!parts[i].curved || joins(i)) continue;
+      const run = [parts[i]];
+      for (let j = (i + 1) % n; j !== i && joins(j); j = (j + 1) % n) run.push(parts[j]);
+      const dirs = new Set(run.map((pt) => pt.dir));
+      const dir = dirs.size === 1 ? [...dirs][0] : 0;
+      add(dir, { rMin: Math.min(...run.map((pt) => pt.rMin)), area: dir === 0 ? Infinity : tangentRegion(run) }, "runs");
+    }
+  }
+  return plan;
+}
+// The area between a run of curve bending one way and the tangent lines at its two ends.
+function tangentRegion(run) {
+  let turn = 0;
+  run.forEach((pt, i) => { turn += pt.turn; if (i) turn += Math.atan2(cross2(run[i - 1].t1, pt.t0), dot2(run[i - 1].t1, pt.t0)); });
+  if (Math.abs(turn) >= Math.PI - 1e-6) return Infinity;
+  if (Math.abs(turn) < 1e-9) return 0;
+  const P0 = run[0].from, P1 = run.at(-1).to, X = lineMeet(P0, run[0].t0, P1, run.at(-1).t1);
+  return X ? Math.abs(polyArea([P0, ...run.flatMap((pt) => pt.pts), X])) : Infinity;
+}
+function artifactBound(side, w) {
+  const h = w / 2;
+  let bound = 0;
+  for (const run of side.runs) if (run.rMin <= h * (1 + 1e-6)) bound += run.area;
+  for (const phi of side.acute) bound += h * h * Math.tan(phi / 2) * (1 - Math.sin(phi / 2)) ** 2;
+  return bound;
+}
+
+// The band a search's tests skip inside: LOSS_TOL_MM2 plus the curve noise for these
+// rings, and what their artifacts could cancel (artifactPlan).
+const bandOf = (contours) => ({
+  noise: LOSS_TOL_MM2 + NOISE_PER_CURVE_MM2 * contours
+    .flatMap((rg) => [rg.outer, ...rg.holes])
+    .reduce((n, ring) => n + (Array.isArray(ring) ? 0 : ring.segments.filter((seg) => seg.c1 || seg.via).length), 0),
+  artifacts: artifactPlan(contours),
+});
 
 // The narrowest width at which `test` finds something, bisected over [0, ceiling] to
 // WIDTH_RESOLUTION: the upper end of the last bracket (the first width that fails),
@@ -207,7 +371,7 @@ function narrowest(test, ceiling, spend) {
     const mid = (lo + hi) / 2;
     let hit;
     try { hit = test(mid); } catch (e) {
-      if (isRefusal(e)) throw new Error(`${e.message} (width search at ${fmtMm(mid)} mm)`);
+      if (isRefusal(e)) throw new Error(`${e.message} (width search at ${fmtMm(mid)} mm)`, { cause: e });
       throw e;
     }
     if (hit) { hi = mid; if (hit !== UNLOCATED) found = hit; } else lo = mid;
@@ -229,8 +393,8 @@ function narrowestGap(profile, area, contours, ceiling, spend) {
     try { rest = profile.union(round.map((x) => ({ outer: x.ring, holes: [] }))); restArea = rest.area(); }
     catch (e) { if (!isRefusal(e)) throw e; rest = profile; }    // unfilled: the closing reads them itself
   }
-  const noise = noiseOf(rest === profile ? contours : rest.toContours());
-  const gap = narrowest((w) => closingGain(rest, restArea, w, noise), ceiling, spend);
+  const band = bandOf(rest === profile ? contours : rest.toContours());
+  const gap = narrowest((w) => closingGain(rest, restArea, w, band), ceiling, spend);
   const smallest = rest === profile ? null : round.map((x) => x.hole).reduce((a, b) => (b.d < a.d ? b : a));
   return smallest && smallest.d < ceiling && (gap.capped || smallest.d < gap.value)
     ? { value: round2(smallest.d), capped: false, at: smallest.at }
@@ -365,9 +529,11 @@ export const LASER = {
     const ceiling = 2 * widthFloor(t);
     if (Number.isFinite(deadline) && checkCost(contours, ceiling) > COST_UNITS) return f;
     try {
-      const noise = noiseOf(contours);
       const errors = { bridge: null, gap: null, marks: null, marksArea: null };
-      const bridge = reading(errors, "bridge", () => narrowest((w) => openingLoss(profile, area, w, noise), ceiling, spend));
+      const bridge = reading(errors, "bridge", () => {
+        const band = bandOf(contours);
+        return narrowest((w) => openingLoss(profile, area, w, band), ceiling, spend);
+      });
       const gap = reading(errors, "gap", () => narrowestGap(profile, area, contours, ceiling, spend));
       const m = reading(errors, "marks", () => marksFacts(s, spend));
       // A custom build is compared with profile area × thickness minus the marks'

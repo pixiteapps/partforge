@@ -92,6 +92,42 @@ describe("LASER.facts", () => {
     }
   });
 
+  // …nor at a COINCIDENT dimension. A test that changed nothing skips its one-sided
+  // difference, and "nothing" used to be a net area change inside the noise band — so a
+  // web whose loss the outline's regrown square corners (4·r²·(1 − π/4)) cancelled to
+  // within the band hid again. These heights are where the two cancel to 0 ± 0.008 mm².
+  test("a filleted outline does not hide a 0.8 mm bridge whose loss it cancels exactly", () => {
+    for (const [r, h0] of [[1, 1.0719], [1.4, 2.1009]]) for (const h of [h0 - 0.004, h0, h0 + 0.004]) {
+      const holes = [rect(10, 15, 20, 25), rect(20.8, 25 - h, 30.8, 35 - h)];     // a 0.8 × h bridge at x 20–20.8
+      const f = factsOf(plate({ profile: (kk) => kk.shape2d(PLATE).fillet(r).cut(kk.shape2d(holes[0])).cut(kk.shape2d(holes[1])) }));
+      expect(f.bridgeCapped, `r ${r}, h ${h.toFixed(4)}`).toBe(false);
+      expect(f.bridge).toBeGreaterThan(0.79);
+      expect(f.bridge).toBeLessThanOrEqual(0.85);
+      expect(f.at2d.bridge[0]).toBeCloseTo(20.4, 0);
+      expect(f.at2d.bridge[1]).toBeCloseTo(25 - h / 2, 0);
+    }
+  });
+
+  // The closing's twin: a notch whose inner corners are rounded under half the width
+  // closes back square — material LOST — and a small hole the closing fills can cancel
+  // it. The hole lengths are where the two cancel to 0 ± 0.004 mm².
+  test("a notch's rounded inner corners do not hide a small hole whose gain they cancel exactly", () => {
+    const notch = (r) => {                                  // arc-exact, reaching past the top edge
+      const c = r * (1 - Math.SQRT1_2), [x0, y0, x1, y1] = [40, 45, 60, 65];
+      return { start: [x0 + r, y0], segments: [
+        { to: [x1 - r, y0] }, { to: [x1, y0 + r], via: [x1 - c, y0 + c] }, { to: [x1, y1] },
+        { to: [x0, y1] }, { to: [x0, y0 + r] }, { to: [x0 + r, y0], via: [x0 + c, y0 + c] }] };
+    };
+    for (const [r, L0, gap] of [[1.2, 0.686, 0.69], [1.4, 0.9338, 0.9]]) for (const L of [L0 - 0.004, L0, L0 + 0.004]) {
+      const f = factsOf(plate({ profile: (kk) => kk.shape2d(rect(0, 0, 100, 60)).cut(kk.shape2d(notch(r))).cut(kk.shape2d(rect(70, 20, 70.9, 20 + L))) }));
+      expect(f.gapCapped, `r ${r}, L ${L.toFixed(4)}`).toBe(false);
+      expect(f.gap).toBeGreaterThan(gap - 0.06);
+      expect(f.gap).toBeLessThanOrEqual(gap + 0.05);
+      expect(f.at2d.gap[0]).toBeCloseTo(70.45, 0);
+      expect(f.at2d.gap[1]).toBeCloseTo(20 + L / 2, 0);
+    }
+  });
+
   test("rounded-rect holes do not hide a 0.9 mm slot elsewhere on the plate", () => {
     const f = factsOf(plate({ profile: (kk) => {
       let s = kk.shape2d(rect(0, 0, 100, 60)).cut(kk.shape2d(rect(40, 30, 43, 30.9)));   // a 3 × 0.9 mm slot
