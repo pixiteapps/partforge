@@ -275,10 +275,12 @@ export function overhang(
  */
 export interface SheetFacts {
   process: string;
-  material: string;
-  thickness: number;
-  /** `"<material, trimmed and lowercased>|<thickness to 0.01 mm>"`, e.g. `"birch plywood|3.00"`. */
-  group: string;
+  /** `null` only on a sheet naming no registered process whose declaration does not resolve (`evaluated` false). */
+  material: string | null;
+  /** `null` as for `material`. */
+  thickness: number | null;
+  /** `"<material, trimmed and lowercased>|<thickness to 0.01 mm>"`, e.g. `"birch plywood|3.00"`; `null` as for `material`. */
+  group: string | null;
   /** The cut layer's bounding-box size, nominal (no kerf). */
   flat: [number, number];
   area: number;

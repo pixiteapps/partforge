@@ -443,6 +443,17 @@ expectType<"gate" | "warn">(v.cases[0]!.checks[0]!.kind);
 
 expectType<number>(assemblyOverlaps(kernel, spacer, "spacer", {}, { tolerance: 0.5 }).length);
 
+// A sheet row's facts: a sheet naming no registered process, or one whose declaration
+// does not resolve, still gets facts, with its stock unread (null).
+const sheet = facts.subparts[0]!.sheet;
+if (sheet) {
+  expectType<string | null>(sheet.material);
+  expectType<number | null>(sheet.thickness);
+  expectType<string | null>(sheet.group);
+  // @ts-expect-error - the stock may be unread: material is not always a string
+  expectType<string>(sheet.material);
+}
+
 const built = buildView(kernel, spacer, "spacer");
 expectType<string>(built[0]!.name);
 const bvh = buildBVH(built[0]!.mesh);
