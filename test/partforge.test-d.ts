@@ -6,8 +6,11 @@
 // Everything imports through the package's own subpath specifiers, so this also
 // proves the `exports` map's `types` conditions resolve.
 
-import { mount } from "partforge";
+import { mount, EXPORT_FORMATS, KIT_OPTIONS_ERROR, KIT_DEFAULTS, validateKitOptions } from "partforge";
 import type {
+  ExportableSheetInfo,
+  ExportFormatInfo,
+  KitOptions,
   AnimationRuntime,
   AnimationSpec,
   AnimationState,
@@ -259,6 +262,18 @@ expectType<void>(runtime.setActive(false));
 expectType<() => void>(runtime.onContextLost(() => {}));
 expectType<Array<{ name: string; label: string }>>(runtime.listExportableParts());
 expectType<Promise<void>>(runtime.exportParts({ parts: ["spacer"], format: "stl", onProgress: (phase) => void phase }));
+// The cut & print kit: its format, its options, and the two lists an export UI reads.
+expectType<ExportFormatInfo[]>(runtime.listExportFormats());
+expectType<ExportableSheetInfo | undefined>(runtime.listExportableParts()[0]?.sheet);
+expectType<Promise<void>>(runtime.exportParts({
+  parts: ["spacer"], format: "bundle",
+  options: { destination: "service", kerf: 0.15, stock: [{ group: "*", size: [300, 300] }], sets: 2 },
+}));
+const kitOptions: KitOptions = { printFormat: "3mf", stock: null };
+expectType<Required<KitOptions>>(validateKitOptions(kitOptions));
+expectType<"cut kit options:">(KIT_OPTIONS_ERROR);
+expectType<ReadonlyArray<ExportFormatInfo>>(EXPORT_FORMATS);
+expectType<number>(KIT_DEFAULTS.margin);
 expectType<void>(runtime.setHostPane("rail"));
 expectType<void>(runtime.setHostPane(null));
 // Animation playback: null for a part that declares none, so every call is guarded.
@@ -283,6 +298,9 @@ runtime.setHostPane("sidebar");
 
 // @ts-expect-error - "obj" is not an export format
 runtime.exportParts({ parts: ["spacer"], format: "obj" });
+
+// @ts-expect-error - "cnc" is not a kit destination
+runtime.exportParts({ parts: ["spacer"], format: "bundle", options: { destination: "cnc" } });
 
 // @ts-expect-error - the handle has no such method
 runtime.setCamera({});

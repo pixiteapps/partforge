@@ -66,3 +66,11 @@ test("makeHandle lists no formats unless the mount wires them", () => {
   expect(makeHandle({ ...base, listExportFormats: exportFormatList }).listExportFormats().map((f) => f.id))
     .toEqual(["stl", "step", "3mf", "bundle"]);
 });
+
+test("the main entry exports the kit's options surface", async () => {
+  const main = await import("../src/index.js");
+  expect(main.KIT_OPTIONS_ERROR).toBe("cut kit options:");
+  expect(main.EXPORT_FORMATS.map((f) => f.id)).toEqual(["stl", "step", "3mf", "bundle"]);
+  expect(main.KIT_DEFAULTS.sets).toBe(1);
+  expect(main.validateKitOptions({}).destination).toBe("own-laser");
+});
