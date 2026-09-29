@@ -19,8 +19,11 @@
 //
 // Pure leaf: DOM-free, node-free and paper-free — the laser checks' resolver hands it to
 // the width searches (sheet/resolve.js), and the oracle and lint may not load paper.
-// Those run it before the first step they price, so its cost is linear in the cubics
-// wherever that can be shown not to change what it returns (recoverArcs).
+// Those run it before the first step they price, so its cost matters — cheap on real
+// outlines (4,000 cubics in 10–35 ms; growth is closer to n^1.6 than linear on a smooth
+// traced blob — docs/research/sheet-inspect-timing.md) — and its linear-time search
+// (recoverArcs) returns exactly what an exhaustive search of every run length would,
+// identity-checked over 280,000 synthetic rings.
 import { circumcircle } from "./arc-math.js";
 import { cubicAt } from "./contour-corners.js";
 
@@ -182,16 +185,23 @@ function cover(known, x, upTo) {
 // its last cubic — and of the missed probe. Two circles through one point differ, to first
 // order, by α + β·cos θ + γ·sin θ along the circle, so where they differ by e1 and e2 at the
 // other two fit points they differ by at most |L1|·e1 + |L2|·e2 at the probe (L the
-// trigonometric Lagrange basis on the three fit points' angles about c's centre). A miss
-// farther than that from any circle a longer run could fit, with a quarter's headroom and
-// the fits' rounding on top, is final.
+// trigonometric Lagrange basis on the three fit points' angles about c's centre). Those two
+// fit points sit exactly on c only by construction: for an ill-conditioned fit — two of the
+// three fit points close enough together that rounding swamps their geometry — c's own
+// circle can miss them by more than `noise` allows, and a longer circle is free to differ
+// from c by that same slop before the Lagrange bound above even starts to apply. e1 and e2
+// are that residual — c's own deviation at its middle and last fit points — added into reach
+// so a longer fit isn't cut off by headroom the rounding already spent. A miss farther than
+// the result from any circle a longer run could fit, with a quarter's headroom and the fits'
+// rounding on top, is final.
 function final(segs, i, j, runFrom, c, miss) {
   const n = j - i + 1, m = i + Math.floor((n + 1) / 2) - 1;       // the cubic ending at the middle fit point
   const bound = (k) => CHORD_TOL * dist(k === i ? runFrom : segs[k - 1].to, segs[k].to);
   const angle = (p) => Math.atan2(p[1] - c.center[1], p[0] - c.center[0]);
   const t0 = angle(runFrom), t1 = angle(segs[m].to), t2 = angle(segs[j].to), tq = angle(miss.at);
   const basis = (x, y, z) => Math.abs((Math.sin((tq - x) / 2) * Math.sin((tq - y) / 2)) / (Math.sin((z - x) / 2) * Math.sin((z - y) / 2)));
-  const reach = basis(t0, t2, t1) * (bound(m) + c.noise) + basis(t0, t1, t2) * (bound(j) + c.noise);
+  const e1 = Math.abs(offCircle(c, segs[m].to)), e2 = Math.abs(offCircle(c, segs[j].to));
+  const reach = basis(t0, t2, t1) * (bound(m) + c.noise + e1) + basis(t0, t1, t2) * (bound(j) + c.noise + e2);
   return miss.dev > miss.bound + 1.25 * reach + 2 * c.noise;
 }
 

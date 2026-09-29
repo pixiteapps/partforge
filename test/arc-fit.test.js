@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 import { recoverArcs } from "../src/framework/geometry/arc-fit.js";
 import { arcCenterAndSweep } from "../src/framework/geometry/paper-bridge.js";
@@ -336,8 +337,30 @@ test("1,600 and 4,000 cubics that are not a circle, or 4,000 that are, are read 
     const t0 = cpuMs();
     const out = recoverArcs(ring);
     const ms = cpuMs() - t0;
-    expect(ms, `${name} (pace ${PACE.toFixed(2)})`).toBeLessThan(150);   // were 3.4 s, ~50 s and 3.6 s
+    expect(ms, `${name} (pace ${PACE.toFixed(2)})`).toBeLessThan(150);   // were 3.4 s, 27 s and 3.6 s
     expect(out.segments.length, name).toBeGreaterThan(0);
   }
   expect(recoverArcs(circularRun([0, 0], 40, 0, 2 * Math.PI - 1e-3, 4000)).segments.every((s) => s.via)).toBe(true);
+});
+
+// --- the early-stop bound must not cut off a fit the exhaustive search would find --------
+//
+// The linear-time search above (`final`) stops looking for a longer run once no longer fit
+// could make up a miss. That bound assumes the run's OTHER two fit points sit exactly on
+// the circle c fits — they do by construction, except for an ILL-CONDITIONED fit, where two
+// of the three fit points sit close enough together that rounding swamps their separation.
+// There, c's own circle can miss its own fit points by more than the bound's rounding-noise
+// term allows, and without that residual added in, `final` can call the search done one
+// cubic before the exhaustive search would have joined it: a fitted circle that IS the run's
+// true circle reads as two arcs instead of one, because the proof that "no better fit
+// exists" was itself too tight. This ring (13 cubics, |coordinates| ≤ 104 mm, smallest chord
+// 2.8e-7 mm — from a boolean cut tangent to a tiny feature, well inside a laser plate's
+// range) is exactly that case: the exhaustive search (aba65564) reads one arc; the linear
+// search without the residual term read two.
+test("an ill-conditioned fit is not cut off early: one arc, matching the exhaustive search", () => {
+  const ring = JSON.parse(
+    readFileSync(new URL("./fixtures/arc-fit-ill-conditioned-ring.json", import.meta.url), "utf8"),
+  );
+  const out = recoverArcs(ring);
+  expect(out.segments.map((s) => (s.via ? "A" : "C")).join("")).toBe("A");
 });
