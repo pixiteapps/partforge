@@ -16,6 +16,7 @@
 // Units are mm ($INSUNITS 4 — an R12 reader may ignore it, which is why the README
 // prints a scale check per piece); y is NOT flipped, DXF is y-up like the Drawing.
 import { arcCenterAndSweep } from "../geometry/arc-math.js";
+import { placer } from "./placement.js";
 
 export const DXF_LAYERS = Object.freeze({ CUT: 1, SCORE: 5, ENGRAVE: 7 });   // layer → ACI colour
 const LAYER_FOR = Object.freeze({ engrave: "ENGRAVE", score: "SCORE", "cut-inner": "CUT", "cut-outer": "CUT" });
@@ -33,13 +34,6 @@ const CIRCLE_REL = 1e-6;
 const fixed = (x, digits) => { const v = Number(x.toFixed(digits)); const s = String(v === 0 ? 0 : v); return s.includes(".") ? s : `${s}.0`; };
 const coord = (x) => fixed(x, 6);
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-
-function placer({ drawing, at, rotated }) {
-  const { min, max } = drawing.bounds;
-  if (!rotated) return ([x, y]) => [x - min[0] + at[0], y - min[1] + at[1]];
-  // 90° CCW: (x, y) → (−y, x); the turned bounds' min corner is (−max.y, min.x)
-  return ([x, y]) => [max[1] - y + at[0], x - min[0] + at[1]];
-}
 
 // Distance from q to the SEGMENT a–b (not the infinite line: a cubic that overshoots an
 // endpoint is not flat).

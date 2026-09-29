@@ -15,6 +15,7 @@
 //     boundary: a hostile part shares the worker with this writer and can post its own
 //     bytes — the host's download allowlist is the boundary (design spec E.1).
 import { arcCenterAndSweep } from "../geometry/arc-math.js";
+import { placer } from "./placement.js";
 
 export const SVG_COLORS = Object.freeze({ engrave: "#000000", score: "#0000FF", "cut-inner": "#FF0000", "cut-outer": "#FF0000" });
 export const SVG_STROKE_MM = 0.025;   // a hairline: laser software cuts it as a vector
@@ -27,15 +28,6 @@ const escapeXml = (s) => String(s)
   .replace(/[\u0000-\u001f\u007f]/g, "")
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
-
-// Drawing frame → sheet frame for one placement: translate so the drawing's bounds.min
-// lands on `at`, after an optional 90° CCW turn (a proper rotation: arcs keep their sense).
-function placer({ drawing, at, rotated }) {
-  const { min, max } = drawing.bounds;
-  if (!rotated) return ([x, y]) => [x - min[0] + at[0], y - min[1] + at[1]];
-  // (x, y) → (−y, x); the turned bounds' min corner is (−max.y, min.x)
-  return ([x, y]) => [max[1] - y + at[0], x - min[0] + at[1]];
-}
 
 function pathData(path, place, H) {
   const P = (p) => { const [x, y] = place(p); return `${num(x)} ${num(H - y)}`; };
