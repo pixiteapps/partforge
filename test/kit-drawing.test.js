@@ -185,6 +185,27 @@ describe("refitLineRuns: a smooth curve that is not a circle is never moved (den
     const { pts, open } = spiral(2000);
     expect(worstVertexMove(pts, refitLineRuns(open))).toBeLessThan(0.01);
   });
+
+  test("a very long refused run is written back without a stack overflow (200,001 vertices)", () => {
+    // A 1000 mm plate whose top edge sits on a true R = 100 m circle: every turn is in
+    // band and one way, so the whole top run — about 200,000 vertices — is tried as one
+    // circle, then refused by the flatness guard (R far more than 50 × its 1000 mm
+    // chord). A refused run used to be written back with `out.push(...S.slice(k, e))`,
+    // spreading the whole run into `push` as call arguments — past V8's ~125k argument
+    // limit that throws "Maximum call stack size exceeded" instead of keeping the plate.
+    const R = 1e5, W = 1000, n = 200001;
+    const half = Math.asin(W / 2 / R);
+    const top = Array.from({ length: n }, (_, i) => {
+      const t = half - (2 * half * i) / (n - 1);
+      return [R * Math.sin(t), R * Math.cos(t) - R * Math.cos(half)];
+    });
+    const ring = { start: [W / 2, -50], segments: [...top, [-W / 2, -50], [W / 2, -50]].map((p) => ({ to: p })) };
+    let out;
+    expect(() => { out = refitLineRuns(ring); }).not.toThrow();
+    // Refused whole and nothing else in the plate qualifies (its other three edges are
+    // each a single segment): every vertex comes back exactly, the same object.
+    expect(out).toBe(ring);
+  });
 });
 
 describe("refitLineRuns: genuine polygons stay polygons (the same object back)", () => {

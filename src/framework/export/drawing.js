@@ -180,7 +180,7 @@ export function refitLineRuns(contour, { minVerts = 8, maxTurnDeg = 15 } = {}) {
     const pieces = arcPieces(Q[k], Q[e], run);
     // A refused run stays as drawn, whole: any run inside it lies on the same circle.
     if (keepRun(Q, k, e, run, pieces)) { out.push(...pieces); changed = true; }
-    else out.push(...S.slice(k, e));
+    else for (let i = k; i < e; i++) out.push(S[i]);
     k = e;
   }
   return changed ? { start: [Q[0][0], Q[0][1]], segments: out } : contour;
