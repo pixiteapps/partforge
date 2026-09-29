@@ -269,6 +269,51 @@ describe("LASER.facts", () => {
     }
   });
 
+  // The one-sided difference is taken 0.01 mm clear of the searched shape (MARGIN), and a
+  // web or slot narrower than twice that fits inside the margin: a slot a hair inside the
+  // plate's edge, or a hairline slit, read "nothing narrower than 3 mm" — exactly what a
+  // 0.1–0.2 mm kerf burns away. The margin cannot shrink (the winding resolver merges
+  // crossings 0.005 mm apart, and at 0.005 large arcs read false webs), so what it hides is
+  // found directly: two faces of the boundary within 0.02 mm of each other.
+  test("a web or slit narrower than the difference's margin is still read, where it is", () => {
+    for (const web of [0.005, 0.015, 0.019]) {
+      const f = factsOf(plate({ profile: (kk) => kk.shape2d(PLATE).cut(kk.shape2d(rect(10, web, 50, web + 3))) }));
+      const at = `slot ${web} from the edge`;
+      expect(f, at).toMatchObject({ evaluated: true, bridgeCapped: false, readErrors: { bridge: null } });
+      expect(f.bridge, at).toBeGreaterThanOrEqual(web - 1e-9);
+      expect(f.bridge, at).toBeLessThanOrEqual(0.05);
+      expect(f.at2d.bridge[0], at).toBeCloseTo(30, 0);
+      expect(f.at2d.bridge[1], at).toBeCloseTo(web / 2, 1);
+    }
+    for (const sw of [0.005, 0.015, 0.019]) {
+      const f = factsOf(plate({ profile: (kk) => kk.shape2d(PLATE).cut(kk.shape2d(rect(30, 20, 30 + sw, 41))) }));
+      const at = `slit ${sw} wide`;
+      expect(f, at).toMatchObject({ evaluated: true, gapCapped: false, readErrors: { gap: null } });
+      expect(f.gap, at).toBeGreaterThanOrEqual(sw - 1e-9);
+      expect(f.gap, at).toBeLessThanOrEqual(0.05);
+      expect(f.at2d.gap[0], at).toBeCloseTo(30, 1);
+      expect(f.at2d.gap[1], at).toBeCloseTo(30, -1);
+    }
+  });
+  // …and a declared check on it warns, where the reading used to pass it.
+  test("…and a declared sheetBridge >= 1.5 on a 0.015 mm web warns", () => {
+    const part = { meta: { title: "Hair", units: "mm" }, parameters: [], defaults: { t: 3 },
+      parts: { plate: plate({ profile: (kk) => kk.shape2d(PLATE).cut(kk.shape2d(rect(10, 0.015, 50, 3.015))) }) },
+      views: { v: { label: "V" } }, verify: { expect: { plate: { sheetBridge: ">=1.5" } } } };
+    const v = verify(k, part, { measureFn: (kk, pt, vw, pr, o) => measure(kk, pt, vw, pr, { ...o, now: () => 0 }) });
+    expect(v.warnings.filter((c) => c.metric === "sheetBridge")).toHaveLength(1);
+  });
+  // Nothing else is read as one: a sharp tip's sides meet at a vertex and part at once,
+  // and every other test in this file holds.
+  test("an acute tip and a tangent-ish hole are not read as sub-margin webs", () => {
+    for (const tipY of [30, 25, 22]) {                                  // 53°, 22° and 9° tips
+      const tip = factsOf(plate({ profile: (kk) => kk.shape2d([[0, 0], [60, 0], [60, 20], [80, tipY], [60, 2 * tipY - 20], [60, 40], [0, 40]]) }));
+      expect(tip.bridge, `tip to ${tipY}`).toBeGreaterThan(0.05);
+    }
+    const near = factsOf(plate({ profile: (kk) => kk.shape2d(PLATE).cutAll([sheetHole({ d: 6, at: [30, 3.05] })]) }));
+    expect(near.bridge).toBeGreaterThanOrEqual(0.05);                 // a 0.05 mm web at one point: the bisection's own reading
+  });
+
   // A hole below the floor is the laser gap check's first job. Under the sharp closing a
   // small hole used to come back as a phantom (contour-offset.js), so the closing grew it
   // instead of filling it and every such hole read "nothing narrower than 3 mm".

@@ -337,9 +337,10 @@ function polyNear(A, boxA, B, reach) {
 // directions — the two sides of a web, a slot, a finger, a narrow hole — and come within
 // `reach` of each other. facingPairs calls visit(i, j) once for every such pair of pieces:
 // each ring cut along its flattened boundary (ringParts) into pieces no longer than
-// `step`, a piece's neighbours on its own ring skipped (they meet it at a vertex). The
-// pieces are bucketed in a grid of cells at least `reach` wide, so the work is linear in
-// them and in the pairs found. → the pieces: { a, b, dir, len, ring, k, line }.
+// `step`, a piece's neighbours on its own ring skipped (they meet it at a vertex), and
+// visit(i, j, d) handed the pair's distance. The pieces are bucketed in a grid of cells at
+// least `reach` wide, so the work is linear in them and in the pairs found.
+// → the pieces, ring by ring in boundary order: { a, b, dir, len, ring, k, line }.
 function facingPairs(contours, reach, step, visit) {
   const pieces = [], rings = [];
   for (const rg of contours) for (const ring of [rg.outer, ...rg.holes]) {
@@ -378,8 +379,9 @@ function facingPairs(contours, reach, step, visit) {
       seen.add(j);
       const o = pieces[j];
       if (o.ring === pc.ring) { const n = rings[pc.ring], d = Math.abs(o.k - pc.k); if (Math.min(d, n - d) <= 1) continue; }
-      if (dot2(pc.dir, o.dir) >= -0.5 || segSegDist(pc.a, pc.b, o.a, o.b) >= reach) continue;
-      visit(i, j);
+      if (dot2(pc.dir, o.dir) >= -0.5) continue;
+      const d = segSegDist(pc.a, pc.b, o.a, o.b);
+      if (d < reach) visit(i, j, d);
     }
   });
   return pieces;
@@ -569,11 +571,11 @@ export function _meter(deadline, now, onStep) {
 // containing outer" — a clean keyhole read no gap at all), or it returns nothing — a
 // keyhole's 4 mm slot, filled by a closing at 4.3 and 4.5 mm, came back as an empty
 // difference and the gap read 4.55. MARGIN apart, the boolean meets curves only where
-// they really cross. It hides nothing a laser can make: only a web or slot under
-// 2·MARGIN (0.02 mm, a tenth of a kerf) fits inside the margin, and the offset engine's
-// approximation slivers along curves (OFFSET_TOL, 1e-3 mm) go with it. The margin shape
-// is one offset of the searched shape, made once per search when its first difference
-// runs and priced into that difference.
+// they really cross. The offset engine's approximation slivers along curves (OFFSET_TOL,
+// 1e-3 mm) go with the margin — and so would a web or slot under 2·MARGIN (0.02 mm), which
+// is exactly what a kerf burns away: those are read from the boundary itself instead
+// (nearContacts, below). The margin shape is one offset of the searched shape, made once
+// per search when its first difference runs and priced into that difference.
 // ── no change ─────────────────────────────────────────────────────────────────
 // A test that finds nothing on straight edges and on arcs it does not cut short hands
 // back the rings it was given, cut at extra points: a miter join meets an edge again at
@@ -698,6 +700,75 @@ function closingGain(search, w, spend) {
   return oneSided(() => closed.cut(margined(search, 1)), spend,
     marginPrice(search, 1) + diffPrice(search.counts, countsOf(closed.toContours())));
 }
+
+// ── what the margin hides ─────────────────────────────────────────────────────────
+// A web or a slot narrower than 2·MARGIN fits inside the margin, so the difference cannot
+// see it — a slot a hair inside the plate's edge, a hairline slit: exactly what a 0.1 mm
+// kerf burns away. The margin cannot shrink to let it through: the winding resolver merges
+// crossings CLUSTER_TOL (0.005 mm) apart, and at a 0.005 margin the corners of large arcs
+// read false webs of 4.7–5.7 mm on 6 mm stock (sector panels of radius 100–800). So what
+// it hides is found directly, from the profile's own boundary: two faces of it within
+// NEAR of each other (facingPairs), walked in NEAR_STEP pieces. A run of such pieces along
+// one ring, all with the material between the faces (a web: the bridge) or all with it
+// outside (a slot: the gap), counts once it is NEAR_RUN long — LOSS_TOL_MM2 of area at that
+// width, the rule the difference counts a loss by — so the two sides of a sharp tip, which
+// part at once, never do. It reads the narrowest such run's width, rounded up to 0.01 mm,
+// at the middle of its closest pair. Linear in the pieces; priced like a step.
+const NEAR = 2 * MARGIN, NEAR_STEP = 0.1, NEAR_RUN = LOSS_TOL_MM2 / NEAR;
+const NEAR_PRICE = 0.003;                   // per piece — see nearPrice
+// The near pass's price, per piece walked: a 900-hole grille's 91,000 pieces took 0.15 s, a
+// sign's worth of text 0.03 s (its pieces crowd the grid's cells).
+const nearPrice = (contours) => {
+  let pieces = 0;
+  for (const rg of contours) for (const ring of [rg.outer, ...rg.holes]) for (const part of partsOf(ring)) {
+    let from = part.from;
+    for (const to of part.pts) { pieces += Math.max(1, Math.ceil(dist(from, to) / NEAR_STEP)); from = to; }
+  }
+  return NEAR_PRICE * pieces;
+};
+// → { bridge, gap }: each { value, at } or null.
+function nearContacts(contours) {
+  const hits = [];
+  const pieces = facingPairs(contours, NEAR, NEAR_STEP, (i, j, d) => hits.push([i, j, d]));
+  const mid = (pc) => [(pc.a[0] + pc.b[0]) / 2, (pc.a[1] + pc.b[1]) / 2];
+  const best = new Map();
+  for (const [i, j, d] of hits) for (const [x, y] of [[i, j], [j, i]]) {
+    const px = pieces[x], side = cross2(px.dir, sub2(mid(pieces[y]), px.a)) > 0 ? "bridge" : "gap";
+    const cur = best.get(x);
+    if (!cur || d < cur.d) best.set(x, { d, side, other: y });
+  }
+  const out = { bridge: null, gap: null };
+  // A run is read at the middle of its narrowest stretch (within 1e-4 mm of its least width).
+  const found = (side, run) => {
+    const d = Math.min(...run.map((idx) => best.get(idx).d));
+    const narrowest = run.filter((idx) => best.get(idx).d <= d + 1e-4), i = narrowest[Math.floor(narrowest.length / 2)];
+    const at = [0, 1].map((c) => (mid(pieces[i])[c] + mid(pieces[best.get(i).other])[c]) / 2);
+    const value = Math.max(0.01, Math.ceil(d * 100 - 1e-9) / 100);
+    if (!out[side] || value < out[side].value) out[side] = { value, at };
+  };
+  for (let s0 = 0; s0 < pieces.length;) {
+    let n = 1;
+    while (s0 + n < pieces.length && pieces[s0 + n].ring === pieces[s0].ring) n++;
+    const sideOf = (k) => best.get(s0 + (k % n))?.side ?? null;
+    // Walk the ring from a piece whose side differs from its predecessor's, so that no run
+    // wraps across the walk's start; a ring whose pieces all agree is one run.
+    let first = 0;
+    while (first < n && sideOf(first) === sideOf(first + n - 1)) first++;
+    const stop = first === n ? n : first + n;
+    for (let k = first === n ? 0 : first; k < stop;) {
+      const side = sideOf(k), run = [];
+      let len = 0;
+      for (; k < stop && sideOf(k) === side; k++) { run.push(s0 + (k % n)); len += pieces[s0 + (k % n)].len; }
+      if (side && len >= NEAR_RUN) found(side, run);
+    }
+    s0 += n;
+  }
+  return out;
+}
+// The reading with what the margin hides beside it: the narrower of the two.
+const withNear = (reading, near) => (near && (reading.capped || near.value < reading.value)
+  ? { value: near.value, capped: false, at: near.at }
+  : reading);
 
 // The geometry engine refuses with a plain Error ("contour-winding: could not chain…",
 // "curve-fill: …"); a TypeError, RangeError or the like is a bug, never a refusal, and
@@ -884,13 +955,19 @@ export const LASER = {
       shape: reduced ? lift(reduced) : profile, contours: reduced ?? contours, reach: ceiling,
       counts: countsOf(reduced ?? contours), slow: reduced ? 0 : slowCubics(contours, ceiling, shrinks),
     });
+    // What the difference's margin hides (nearContacts), read once, for both searches.
+    let near = null;
+    const nearOf = () => {
+      if (!near) { spend(nearPrice(contours)); near = nearContacts(contours); }
+      return near;
+    };
     try {
       const errors = { bridge: null, gap: null, marks: null, marksArea: null };
       const bridge = reading(errors, "bridge", () => {
         const search = searchOn(plan().open, 1);
-        return narrowest((w) => openingLoss(search, w, spend), ceiling, spend, () => testPrice(search));
+        return withNear(narrowest((w) => openingLoss(search, w, spend), ceiling, spend, () => testPrice(search)), nearOf().bridge);
       });
-      const gap = reading(errors, "gap", () => narrowestGap(searchOn(plan().close, -1), plan().round, ceiling, spend));
+      const gap = reading(errors, "gap", () => withNear(narrowestGap(searchOn(plan().close, -1), plan().round, ceiling, spend), nearOf().gap));
       const m = reading(errors, "marks", () => marksFacts(s, spend));
       // A custom build is compared with profile area × thickness minus the marks'
       // removed volume (oracle/measure.js), so it needs the marks inside the cut.
