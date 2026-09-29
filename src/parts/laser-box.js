@@ -12,8 +12,8 @@ const HINGE = { width: 24, leaf: 18, leafT: 3, R: 3, gap: 0.4, pinR: 1.2, lift: 
 // ONE spec for a tongue and its slot; the slot carries the clearance.
 const tab = (p) => printedTab({ size: HINGE.tongue, thickness: p.t, clearance: p.printFit });
 
-function hinge(k, p) {
-  const { width: w, leaf, leafT, R, gap, pinR, tongueX, tongueY } = HINGE;
+function hinge(k, p, d) {
+  const { width: w, leaf, leafT, R, gap, pinR, tongueX } = HINGE, { tongueY } = d;
   const seg = (w - 2 * gap) / 3;                                  // three knuckles, `gap` apart
   const x0 = -w / 2, x1 = x0 + seg, x2 = x1 + gap, x3 = x2 + seg, x4 = x3 + gap, x5 = w / 2;
   const box = (min, max) => k.box({ min, max });
@@ -67,12 +67,14 @@ export default {
   ],
   defaults: { width: 160, depth: 110, height: 80, label: "TOOLS", t: 3, fit: 0.1, printFit: 0.3 },
   derive: (p) => {
-    const axisZ = p.height + HINGE.lift + HINGE.R;               // knuckle axis, above the back wall
+    const rise = Math.max(0, p.t - HINGE.R);                     // thick stock: the shut lid clears the walls
+    const axisZ = p.height + HINGE.lift + HINGE.R + rise;        // knuckle axis, above the back wall
     const lidZ = axisZ + HINGE.lift + HINGE.R;                   // hinge edge of the open lid
     return {
       box: fingerBox({ width: p.width, depth: p.depth, height: p.height, thickness: p.t, clearance: p.fit }),
       hingeX: [-(p.width / 2 - 25), p.width / 2 - 25],
       axisZ,
+      tongueY: HINGE.tongueY + rise,                             // so the slots stay put
       // Open 90°: laser face to the back, the drawing's front edge (v = 0) on top.
       lidPose: { face: "+Y", up: "-Z", at: [-p.width / 2, p.depth / 2, lidZ + p.depth] },
     };
@@ -87,12 +89,12 @@ export default {
     }),
     back: panel("back", "Back", {
       profile: (k, p, d) => k.shape2d(d.box.back.outline)
-        .cutAll(hingeSlots(k, p, d, d.box.back.pose, d.axisZ - HINGE.tongueY)),
+        .cutAll(hingeSlots(k, p, d, d.box.back.pose, d.axisZ - d.tongueY)),
     }),
     lid: sheetPart({
       ...PLY, label: "Lid",
       profile: (k, p, d) => k.shape2d([[0, 0], [p.width, 0], [p.width, p.depth], [0, p.depth]])
-        .cutAll(hingeSlots(k, p, d, d.lidPose, d.axisZ + HINGE.tongueY)),
+        .cutAll(hingeSlots(k, p, d, d.lidPose, d.axisZ + d.tongueY)),
       pose: (p, d) => d.lidPose,
     }),
     hingeL: { label: "Hinge (left)", views: ["box"], display: { material: "pla-print" },

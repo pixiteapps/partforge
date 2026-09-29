@@ -4,6 +4,7 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import part from "../src/parts/laser-box.js";
 import { bootManifoldKernel, measure } from "../src/testing.js";
+import { verify } from "../src/framework/oracle/verify.js";
 import { buildPosed, resolveParams } from "../src/framework/part-model.js";
 import { probeSubPartPose } from "../src/framework/pose-probe-core.js";
 import { subPartReadKeys, RELEVANT_ALL } from "../src/framework/param-deps.js";
@@ -13,6 +14,7 @@ import { poseSteps, worldToSheet } from "../src/framework/sheet/pose.js";
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
 
+const HINGE_LIFT = 0.25;   // laser-box.js HINGE.lift
 const SHEETS = ["bottom", "left", "right", "front", "back", "lid"];
 const PRINTED = ["hingeL", "hingeR"];
 
@@ -77,10 +79,26 @@ test("tongue slots sit where the tongues land: v = H − 7.75 on the back, D −
   const { p, d } = resolveParams(part, {});
   const H = p.height, D = p.depth;
   expect(d.axisZ).toBeCloseTo(H + 3.25, 12);
+  expect(d.tongueY).toBe(11);
   for (const hx of d.hingeX) {
     expect(worldToSheet(d.box.back.pose, [hx, D / 2, d.axisZ - 11])[1]).toBeCloseTo(H - 7.75, 12);
     expect(worldToSheet(d.lidPose, [hx, D / 2, d.axisZ + 11])[1]).toBeCloseTo(D - 7.75, 12);
   }
+});
+
+// Thick stock raises the knuckle axis (the shut lid must clear the walls, below); the
+// tongues ride down the leaf by the same amount, so the back panel's slots stay put and
+// the web above them stays above the laser floor.
+test("on thick stock the axis rises, and the back panel's slots stay where they were", () => {
+  const { p, d } = resolveParams(part, { t: 6.5 });
+  expect(d.axisZ).toBeCloseTo(p.height + 0.25 + 6.5, 12);
+  expect(d.tongueY).toBeCloseTo(11 + 3.5, 12);
+  for (const hx of d.hingeX)
+    expect(worldToSheet(d.box.back.pose, [hx, p.depth / 2, d.axisZ - d.tongueY])[1]).toBeCloseTo(p.height - 7.75, 12);
+  const v = verify(k, { ...part, defaults: { ...part.defaults, t: 6.5 } },
+    { measureFn: (kk, pt, vw, pr, o) => measure(kk, pt, vw, pr, { ...o, sheetBudgetMs: 60_000 }) });
+  expect(v.failures).toEqual([]);
+  expect(v.warnings.filter((c) => c.volunteered)).toEqual([]);
 });
 
 test("each hinge keys two tongues into the back panel and two into the lid (rotateX(90) turns them inward)", () => {
@@ -121,3 +139,34 @@ test("at the extremes of the sliders the box still assembles cleanly", () => {
     expect(r.overlaps, JSON.stringify(params)).toEqual([]);
   }
 });
+
+// The display shows the lid open 90°; closing it is a quarter turn about the knuckle
+// axis (x, y = D/2, z = axisZ). The lid's material runs t mm in from that plane, so the
+// axis must sit max(R, t) above the walls (plus the lift) or thick stock jams the lid
+// on the back wall's inside edge short of shut — at t = 6.5 it stopped 37° open.
+test("the lid swings shut about the knuckle axis without meeting a wall, on any stock", () => {
+  const WALLS = ["bottom", "left", "right", "front", "back"];
+  for (const params of [
+    {},
+    { t: 6 },
+    { width: 100, depth: 80, height: 50, t: 6.5, fit: 0.4, printFit: 0.8 },
+    { width: 400, depth: 300, height: 200, t: 2, fit: 0, printFit: 0.8 },
+  ]) {
+    const { p, d } = resolveParams(part, params);
+    const ctx = { purpose: "display", view: "box", p, d };
+    const lid = buildPosed(k, part, "lid", ctx);
+    const walls = WALLS.map((n) => [n, buildPosed(k, part, n, ctx)]);
+    for (const deg of [15, 30, 45, 60, 75, 90]) {
+      const swung = lid.rotate(deg, [0, p.depth / 2, d.axisZ], [1, 0, 0]);
+      for (const [n, wall] of walls)
+        expect(swung.intersect(wall).volume(), `${JSON.stringify(params)} ${n} at ${deg}°`).toBeLessThan(1e-6);
+    }
+    // Shut, it really is a lid: from the front wall back to the knuckle strip (the wall,
+    // or the 3 mm barrel on thinner stock, plus the lift), resting just above the walls.
+    const { min, max } = lid.rotate(90, [0, p.depth / 2, d.axisZ], [1, 0, 0]).boundingBox();
+    expect(min[1]).toBeLessThanOrEqual(-p.depth / 2 + 1e-6);
+    expect(max[1]).toBeGreaterThanOrEqual(p.depth / 2 - Math.max(p.t, 3) - HINGE_LIFT - 1e-6);
+    expect(min[2]).toBeGreaterThanOrEqual(p.height);
+    expect(min[2]).toBeLessThanOrEqual(p.height + HINGE_LIFT + 3 + 1e-6);
+  }
+}, 60_000);
