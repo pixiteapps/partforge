@@ -63,6 +63,7 @@ npx vitest run test/measure.test.js          # a single test file
 npx vitest run -t "assembly has no interpenetrating"   # a single test by name
 npm run check      # headless smoke test: boots an app in real Chromium (needs Playwright)
 node scripts/check-app.mjs demo.html         # smoke-test a specific app entry
+node scripts/time-sheet-inspect.mjs [--browser]    # inspect timing for the sheet-part stress cases (docs/research/sheet-inspect-timing.md)
 ```
 
 The CLI (also the agent-facing surface) builds parts in pure Node - no browser:
@@ -301,6 +302,20 @@ the installed package, so let the publish finish before bumping the dep there.
   its worker job through the generic seam `runWorker(part, { jobs })` (jobs.js's
   HOST JOBS comment). Never add anything oracle-shaped here — no package name, no
   message types, no error codes: apps without it must keep building.
+- **Sheet parts in the oracle.** `measure()` stamps every sub-part row with
+  `sheet` — the process's 2-D facts for a `sheetPart()` sub-part (recognised by the
+  plain-data `sp.sheet` alone), else `null` — and, in a view holding a sheet part,
+  each printed row with `printBbox` (its export-pose size). `verify()` changes ONLY
+  for such a view: the profile's bed fits each printed sub-part in its print pose
+  instead of the assembled view, min wall and overhang skip sheets, and the
+  process's checks (`sheetBridge`, `sheetGap`, `sheetMarks`, `sheetPieces`,
+  `sheetSolidMatch`) are *volunteered* — warnings that never count toward
+  `declared`/`evaluated`, so they never set `verify.ok`. The 2-D checks share
+  `SHEET_CHECK_BUDGET_MS` per `measure()` call; an overrun is one `sheetChecks`
+  warning, never a lost report. A view with no sheet part verifies
+  byte-identically — `test/verify-golden.test.js` pins it; re-record only for a
+  deliberate verdict change (`PARTFORGE_RECORD_VERIFY_GOLDEN=1 npx vitest run
+  test/verify-golden.test.js`). Timings: `docs/research/sheet-inspect-timing.md`.
 - **`src/testing/`** - the genuinely Node-only harness, and only that:
   `manifold.js` / `occt.js` (boot a WASM kernel from disk), `render.js` (write
   PNGs), `error-patterns.js` (read `docs/ERROR-PATTERNS.md`). Never import these
