@@ -6,6 +6,7 @@ import {
   KIT_ENTRY_RE, kitName, uniqueName, dedupe, checkMessage, sheetWarnings,
 } from "../src/framework/export/bundle.js";
 import { parseAssertion, evaluateAssertion } from "../src/framework/oracle/assert-dsl.js";
+import { evaluateCase } from "../src/framework/oracle/verify.js";
 import { SHEET_METRICS } from "../src/framework/process/registry.js";
 
 describe("kitName", () => {
@@ -113,12 +114,16 @@ describe("sheetWarnings", () => {
   // though the sheet as a whole WAS evaluated. oracle/verify.js reports that as
   // `not measured — <reason>`; the kit's README line must say the same thing.
   test("a check the geometry engine refused says so, worded like verify's own line", () => {
-    expect(sheetWarnings("Panel", facts({
+    // The expectation is verify's OWN output for the same facts row, not a copy of its
+    // wording: reword verify's hint or message and this fails.
+    const refused = facts({
       bridge: null,
       readErrors: { bridge: "offset: self-intersecting contour near (12.5, 40)", gap: null, marks: null, marksArea: null },
-    }))).toEqual([
-      "Panel: not measured — offset: self-intersecting contour near (12.5, 40) — The geometry engine could not run this 2-D laser check on the profile (the reason is in the message). The part still builds; an overlapping or self-touching contour, or a sliver, is the usual cause — simplify the profile there and re-run.",
-    ]);
+    });
+    const verifyLine = evaluateCase({ subparts: [{ name: "panel", sheet: refused }] }, { expect: {}, subPartNames: ["panel"] })
+      .find((c) => c.metric === "sheetBridge");
+    expect(verifyLine.message).toBe("not measured — offset: self-intersecting contour near (12.5, 40)");
+    expect(sheetWarnings("Panel", refused)).toEqual([`Panel: ${verifyLine.message} — ${verifyLine.hint}`]);
   });
 
   test("an unevaluated piece says so once instead of the checks it skipped", () => {

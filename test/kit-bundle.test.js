@@ -159,6 +159,16 @@ describe("own laser (the defaults)", () => {
     expect(own.phases.every((ph) => ph.length <= 120)).toBe(true);
   });
 
+  test("a label too long for a progress phase is clipped to exactly 120 characters, with an ellipsis", async () => {
+    const long = `Panel ${"x".repeat(200)}`;
+    const r = await kit({ ...fixture, parts: { ...fixture.parts, long: sheetPart({ ...ply, label: long, profile: (kk) => kk.shape2d(rect(20, 20)) }) } },
+      { parts: ["long"] });
+    const phase = r.phases.find((ph) => ph.startsWith("building Panel"));
+    expect(phase).toHaveLength(120);
+    expect(phase).toBe(`building ${long}`.slice(0, 119) + "…");
+    expect(r.phases.every((ph) => ph.length <= 120)).toBe(true);
+  });
+
   test("the same forge builds the same kit", async () => {
     const again = await kit(fixture);
     expect(again.names).toEqual(own.names);

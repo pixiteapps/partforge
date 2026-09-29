@@ -92,7 +92,8 @@ const NOT_EVALUATED = "2-D sheet checks not evaluated (time budget) — the kit 
 // oracle/verify.js's wording for a reading the geometry engine refused (SheetFacts's
 // readErrors, added past this file's own §5.4/§7.1 in the contract) — restated here
 // rather than imported, for the same reason checkMessage restates assert-dsl: the kit
-// must never load ./oracle/*. test/kit-bundle-helpers.test.js pins this string.
+// must never load ./oracle/*. test/kit-bundle-helpers.test.js holds the kit's line equal
+// to verify's own output for the same facts, so a reworded hint on either side fails.
 const SHEET_READ_ERROR_HINT = "The geometry engine could not run this 2-D laser check on the profile (the reason is in the message). The part still builds; an overlapping or self-touching contour, or a sliver, is the usual cause — simplify the profile there and re-run.";
 
 // The README's CHECKS lines for one piece: every volunteered check its process runs
