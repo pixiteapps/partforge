@@ -198,6 +198,57 @@ export function ringsOf(regions) {
   };
 }
 
+// Is point p inside `ring` (either winding)? The winding number, exact for lines and
+// arcs — an arc sweeps its chord's angle, plus a whole turn when p lies in the circular
+// segment between chord and arc — with cubics flattened. Exact matters: an island can
+// sit a fraction of a millimetre inside the hole around it, where any chorded stand-in
+// for the hole's arcs would put it outside.
+function encloses(ring, p) {
+  const turn = (a, b) => {
+    const ux = a[0] - p[0], uy = a[1] - p[1], vx = b[0] - p[0], vy = b[1] - p[1];
+    return Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+  };
+  const side = (a, b, q) => (b[0] - a[0]) * (q[1] - a[1]) - (b[1] - a[1]) * (q[0] - a[0]);
+  let w = 0, from = ring.start;
+  for (const s of ring.segments) {
+    if (s.c1) {
+      let a = from;
+      for (let i = 1; i <= 32; i++) { const b = i === 32 ? s.to : cubicAt(from, s.c1, s.c2, s.to, i / 32); w += turn(a, b); a = b; }
+    } else {
+      w += turn(from, s.to);
+      const g = s.via ? arcCenterAndSweep(from, s.via, s.to) : null;
+      if (g && dist(p, g.center) < g.r && Math.sign(side(from, s.to, p)) === Math.sign(side(from, s.to, s.via)))
+        w += Math.sign(g.dA) * TAU;
+    }
+    from = s.to;
+  }
+  return Math.abs(w) > Math.PI;
+}
+
+// The cut layer's rings in CUT ORDER: every ring before any ring that encloses it, so no
+// outline is cut on a piece that something else has already freed. A ring's depth is how
+// many other rings enclose it (rings of a valid profile never cross, so its start point
+// answers for all of it); deepest first, region order within a depth. `inner` is every
+// enclosed ring — holes, and islands standing in a hole with their own holes — and
+// `outer` the top-level outlines, the cuts that free the pieces. A piece of one region
+// comes back as its holes then its outline, exactly as ringsOf splits it.
+export function cutRings(regions) {
+  const rings = regions.flatMap((rg) => [rg.outer, ...rg.holes]);
+  let depth;
+  if (regions.length === 1) depth = rings.map((_, i) => (i === 0 ? 0 : 1));
+  else {
+    // a ring can only enclose a point inside its own bounding box
+    const box = rings.map((r) => drawingBounds([{ paths: [r] }]));
+    const inBox = (i, [x, y]) => x >= box[i].min[0] && x <= box[i].max[0] && y >= box[i].min[1] && y <= box[i].max[1];
+    depth = rings.map((r, i) => rings.reduce((n, q, j) => n + (j !== i && inBox(j, r.start) && encloses(q, r.start) ? 1 : 0), 0));
+  }
+  const order = rings.map((_, i) => i).sort((a, b) => depth[b] - depth[a] || a - b);
+  return {
+    inner: order.filter((i) => depth[i] > 0).map((i) => rings[i]),
+    outer: order.filter((i) => depth[i] === 0).map((i) => rings[i]),
+  };
+}
+
 // Exact bounding box of every path in `layers` — arcs by their axis extremes inside the
 // sweep, cubics by the roots of their derivative — or null when there is no path at all.
 export function drawingBounds(layers) {

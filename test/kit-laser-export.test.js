@@ -4,7 +4,7 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import laser from "../src/framework/process/laser/export.js";
-import { refitRing } from "../src/framework/export/drawing.js";
+import { refitRing, drawingBounds } from "../src/framework/export/drawing.js";
 import { validateKitOptions } from "../src/framework/export/formats.js";
 import { arcCenterAndSweep } from "../src/framework/geometry/arc-math.js";
 import { circleProfile, roundedRectPolygon } from "../src/framework/geometry/polygon.js";
@@ -29,6 +29,9 @@ const plate = () => resolved({
   shapes: [[[30, 20], [36, 20], [36, 26], [30, 26]]],
   engrave: k.shape2d([[8, 18], [16, 18], [16, 26], [8, 26]]).cut([[10, 20], [14, 20], [14, 24], [10, 24]]),
 });
+// the holes' left edges in the region order toContours() hands them back in
+const ringsOrder = (s) => s.profile.toContours().flatMap((rg) => rg.holes).map(refitRing)
+  .map((r) => drawingBounds([{ id: "cut-inner", paths: [r] }]).min[0]);
 const draw = (s, options = {}, ctx = { label: "Front" }) => laser.drawing(s, validateKitOptions(options), k, ctx);
 const expectOnCircle = (path, [cx, cy], r) => {
   let from = path.start;
@@ -105,6 +108,43 @@ describe("kerf", () => {
       .toThrow('cut kit options: kerf 0.20 mm closes a 0.15 mm slot in "Front" — widen it or lower kerf');
     expect(() => draw(slotted, { kerf: 0.2 }, { label: "Front", facts: { gap: 3, gapCapped: true } }))
       .toThrow('cut kit options: kerf 0.20 mm closes a slot in "Front" — widen it or lower kerf');
+  });
+});
+
+describe("cut order: every contour before any contour that encloses it", () => {
+  // The writers emit cut-inner before cut-outer, path by path. An island inside a hole
+  // (a stencil counter, a washer's loose centre) must be cut before the hole around it:
+  // cutting the hole first frees the slug the island sits on, and the island's outline
+  // is then cut on a loose, possibly fallen, piece.
+  const sq = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  const cutPaths = (d) => d.layers.filter((l) => l.id.startsWith("cut-")).map((l) => [l.id, l.paths]);
+  const minX = (path) => drawingBounds([{ id: "cut-outer", paths: [path] }]).min[0];
+
+  test("an island in a hole is cut before the hole, and a hole in the island before the island", () => {
+    const s = resolved({ profile: k.shape2d(sq(0, 0, 100, 100)).cut(sq(20, 20, 80, 80)).union(sq(40, 40, 60, 60)).cut(sq(45, 45, 55, 55)) });
+    const [[innerId, inner], [outerId, outer]] = cutPaths(draw(s));
+    expect([innerId, outerId]).toEqual(["cut-inner", "cut-outer"]);
+    // deepest first: the island's hole (x 45), the island (x 40), the plate's hole (x 20); the plate last
+    expect(inner.map(minX)).toEqual([45, 40, 20]);
+    expect(outer.map(minX)).toEqual([0]);
+  });
+
+  test("with kerf, and with arcs: a disc hugging the inside of a washer's hole still comes first", () => {
+    // 0.2 mm between the disc and the hole: a chorded containment test would miss it
+    const s = resolved({ profile: k.shape2d(circleProfile(120)).cut(circleProfile(100)).union(circleProfile(99.8)) });
+    for (const kerf of [0, 0.05]) {
+      const [[, inner], [, outer]] = cutPaths(draw(s, { kerf }));
+      // the disc is an outline, so it grows; the hole shrinks
+      expect(inner.map(minX)).toEqual([expect.closeTo(-99.8 - kerf / 2, 6), expect.closeTo(-100 + kerf / 2, 6)]);
+      expect(outer.map(minX)).toEqual([expect.closeTo(-120 - kerf / 2, 6)]);
+    }
+  });
+
+  test("a single-region piece keeps holes-then-outline in region order", () => {
+    const s = resolved({ profile: k.shape2d(RECT).cutAll([hole(10, 15, 3), hole(30, 15, 3)]) });
+    const [[, inner], [, outer]] = cutPaths(draw(s));
+    expect(inner.map(minX)).toEqual(ringsOrder(s));
+    expect(outer).toHaveLength(1);
   });
 });
 

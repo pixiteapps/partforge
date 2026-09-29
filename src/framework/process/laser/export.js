@@ -4,12 +4,14 @@
 // do; that is why a process is split into descriptor.js and export.js.
 //
 // Layers, from the piece's canonical-frame declaration (the pose is never read):
-//   cut-outer / cut-inner — the profile's outer rings / hole rings, refit, then kerf
+//   cut-outer / cut-inner — the profile's outlines / every ring they enclose (holes, and
+//                           an island in a hole), refit, then kerf, in cut order: every
+//                           ring before any ring that encloses it (drawing.js's cutRings)
 //   score — two-point lines as open paths, score shapes' every ring closed
 //   engrave — the engrave shape's rings, a filled region
 // Kerf offsets the cut layer ONLY: a score or engrave line is burned along its centre, so
 // widening the kerf never moves it.
-import { refitRing, ringsOf, applyKerf, drawingBounds, LAYER_ORDER } from "../../export/drawing.js";
+import { refitRing, ringsOf, cutRings, applyKerf, drawingBounds, LAYER_ORDER } from "../../export/drawing.js";
 import { KIT_DEFAULTS } from "../../export/formats.js";
 
 const closedPath = (ring) => ({ start: ring.start, segments: ring.segments, closed: true });
@@ -27,7 +29,7 @@ function drawing(s, o, k, ctx = {}) {
   if (nominal.length === 0) throw new Error(`cut kit: "${label}" has an empty profile — nothing to cut`);
   // A capped gap is the search ceiling, not a measured opening — don't name it.
   const gap = ctx.facts && !ctx.facts.gapCapped && Number.isFinite(ctx.facts.gap) ? ctx.facts.gap : null;
-  const cut = ringsOf(applyKerf(nominal, kerf, { label, gap }));
+  const cut = cutRings(applyKerf(nominal, kerf, { label, gap }));
 
   const byId = {
     engrave: s.engrave ? allRings(refitRegions(s.engrave.toContours())).map(closedPath) : [],
@@ -35,7 +37,7 @@ function drawing(s, o, k, ctx = {}) {
       ...s.score.lines.map(([a, b]) => ({ start: [a[0], a[1]], segments: [{ to: [b[0], b[1]] }], closed: false })),
       ...s.score.shapes.flatMap((shape) => allRings(refitRegions(shape.toContours())).map(closedPath)),
     ],
-    "cut-inner": cut.holes.map(closedPath),
+    "cut-inner": cut.inner.map(closedPath),
     "cut-outer": cut.outer.map(closedPath),
   };
   const layers = LAYER_ORDER.filter((id) => byId[id].length > 0).map((id) => ({ id, paths: byId[id] }));
