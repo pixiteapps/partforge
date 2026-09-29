@@ -111,6 +111,17 @@ describe("an ordinary sub-part with a plain-data marker", () => {
     expect(resolveSheet(k, sp, p, d).customBuild).toBe(false);
     expect(resolveSheet(k, custom, p, d).customBuild).toBe(true);
   });
+
+  // The process checks rebuild the profile from its own rings with it (the laser
+  // descriptor's hole plan); a kernel without one (a probe) gives null.
+  test("the resolved sheet carries the kernel's trusted lift, or null", () => {
+    const sp = sheetPart(panelSpec());
+    const { p, d } = resolveParams(partWith(sp), {});
+    expect(resolveSheet(k, sp, p, d).trustedShape2d).toBe(k.shape2d.trusted);
+    const { trusted: _, ...plain } = k.shape2d;
+    const bare = { ...k, shape2d: Object.assign((x) => k.shape2d(x), plain) };
+    expect(resolveSheet(bare, sp, p, d).trustedShape2d).toBeNull();
+  });
 });
 
 describe("the preview build (Manifold)", () => {

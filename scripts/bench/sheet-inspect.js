@@ -33,7 +33,7 @@ try {
   print("| part | lap | cold ms | warm median ms | 2-D checks ms (no budget) | sheets evaluated |");
   print("|---|---|---|---|---|---|");
   const rows = [];
-  for (const part of ["laser-box", "twelve-panel", "screw-plate", "perforated"]) {
+  for (const part of ["laser-box", "twelve-panel", "screw-plate", "perforated", "holes-web"]) {
     const rebound = next("ready");
     worker.postMessage({ type: "bench-part", name: part });
     await rebound;

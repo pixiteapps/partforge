@@ -36,7 +36,7 @@ const on = (v, subpart, metric) => checksOf(v).filter((c) => c.subpart === subpa
 // measure() with no 2-D budget at all, for verify's measureFn.
 const noBudget = (kk, part, view, params, opts) => measure(kk, part, view, params, { ...opts, sheetBudgetMs: 0 });
 // measure() on a stopped clock: the 2-D budget never runs out, so no assertion here
-// rides on a runner being fast enough (the cost pre-gate still applies). Every verify
+// rides on a runner being fast enough (the laser descriptor's prices still apply). Every verify
 // below that is not about the budget measures this way.
 const unhurried = (kk, part, view, params, opts) => measure(kk, part, view, params, { ...opts, now: () => 0 });
 const verifyUnhurried = (kk, part, opts = {}) => verify(kk, part, { measureFn: unhurried, ...opts });

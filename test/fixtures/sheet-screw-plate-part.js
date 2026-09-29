@@ -1,8 +1,9 @@
 // A mounting plate: 200 × 120 mm of 3 mm plywood with sixteen M3 clearance holes
 // (3.4 mm) cut with cutAll — booleaned, so each hole is four cubics, the offset
 // engine's slowest shape to shrink and regrow. The laser checks read a round hole's
-// width directly (process/laser/descriptor.js narrowestGap), so this plate is read in
-// full well inside the budget. Used by scripts/time-sheet-inspect.mjs.
+// width directly and leave these holes out of both width searches (they are round, and
+// far from everything else: process/laser/descriptor.js holePlan), so this plate is read
+// in full well inside the budget. Used by scripts/time-sheet-inspect.mjs.
 import { sheetPart, sheetHole } from "partforge/geometry";
 
 const HOLES = [];

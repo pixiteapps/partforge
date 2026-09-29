@@ -45,8 +45,12 @@ function shapeGroove(shape) {
 }
 
 // → ResolvedSheet: { process, material, thickness, group, label, pose, profile,
-//   score: { lines, shapes }, engrave, grooves, customBuild }. Throws a
+//   score: { lines, shapes }, engrave, grooves, customBuild, trustedShape2d }. Throws a
 //   `sheet part "<label>": …` error for a field that resolves to something unusable.
+//   `trustedShape2d` is the kernel's lift for machine-produced regions (no profile
+//   validation, arcs kept), or null where the kernel has none (a probe): the process
+//   checks rebuild the profile from its own rings with it, less the holes a width
+//   search can leave out (process/laser/descriptor.js).
 export function resolveSheet(k, sp, p, d) {
   const s = sp.sheet;
   const thickness = typeof s.thickness === "function" ? s.thickness(p, d) : s.thickness;
@@ -94,6 +98,7 @@ export function resolveSheet(k, sp, p, d) {
     process: s.process, material, thickness, group: sheetGroup(material, thickness),
     label: sp.label ?? null, pose, profile, score: { lines, shapes }, engrave, grooves,
     customBuild: sp.build !== s.generatedBuild,
+    trustedShape2d: typeof k.shape2d?.trusted === "function" ? k.shape2d.trusted : null,
   };
 }
 

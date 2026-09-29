@@ -1,8 +1,10 @@
 // A speaker-grille panel: 900 3 mm perforations at a 5 mm pitch in 3 mm plywood — the
 // laser checks' worst ordinary case (sheet parts spec C.6). Every web between holes is
 // 2 mm, and a single shrink-and-regrow of this profile merges hundreds of rings: one
-// such test took 14 s. The checks' cost pre-gate (process/laser/descriptor.js) must
-// withhold them — `evaluated: false`, one sheetChecks warning — without spending that.
+// such test took 14 s. No hole is far enough from its neighbours to be left out of the
+// width search, and the checks price that first test past their whole budget
+// (process/laser/descriptor.js), so they withhold it — `evaluated: false`, one
+// sheetChecks warning — without spending that.
 // Used by scripts/time-sheet-inspect.mjs.
 import { sheetPart, sheetHole } from "partforge/geometry";
 

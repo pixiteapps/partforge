@@ -15,6 +15,7 @@ import { lintPart } from "../src/lint.js";
 import twelvePanel from "./fixtures/sheet-twelve-panel-part.js";
 import perforated from "./fixtures/sheet-perforated-panel-part.js";
 import screwPlate from "./fixtures/sheet-screw-plate-part.js";
+import webPlate from "./fixtures/sheet-web-plate-part.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -237,20 +238,24 @@ describe("LASER.facts", () => {
   // back from a test that changed nothing with its area moved a little all the same —
   // about 1e-4 mm² per cubic, 0.022 mm² for 64 booleaned holes. Past LOSS_TOL_MM2 that
   // noise sent every test into the one-sided difference, a boolean between the profile
-  // and its near-copy: 28 s for those 256 cubics, then refused.
+  // and its near-copy: 28 s for those 256 cubics, then refused. At a 10 mm pitch the 4 mm
+  // webs are wider than the ceiling but inside an opening's reach, so the opening keeps
+  // every hole (holePlan) and the noise band is what spares it the boolean.
   test("many booleaned holes and nothing narrow: no boolean against a near-copy", () => {
-    const holes = Array.from({ length: 48 }, (_, i) => sheetHole({ d: 6, at: [10 + (i % 16) * 12, 10 + Math.floor(i / 16) * 12] }));
+    const holes = Array.from({ length: 48 }, (_, i) => sheetHole({ d: 6, at: [10 + (i % 16) * 10, 10 + Math.floor(i / 16) * 10] }));
     const s = resolveSheet(k, plate({ profile: (kk) => kk.shape2d(rect(0, 0, 200, 44)).cutAll(holes) }), P, {});
-    let cuts = 0;
+    let cuts = 0, offsets = 0;
     const counted = (shape) => new Proxy(shape, { get(target, key) {
       if (key === "cut") return (...a) => { cuts++; return counted(target.cut(...a)); };
-      if (key === "offset" || key === "union") return (...a) => counted(target[key](...a));
+      if (key === "offset") return (...a) => { offsets++; return counted(target.offset(...a)); };
+      if (key === "union") return (...a) => counted(target.union(...a));
       const v = Reflect.get(target, key);
       return typeof v === "function" ? v.bind(target) : v;
     } });
     const f = LASER.facts({ ...s, profile: counted(s.profile) });
     expect(f).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true });
-    expect(cuts).toBe(0);
+    expect(offsets).toBeGreaterThan(0);                   // the opening did run on every hole…
+    expect(cuts).toBe(0);                                 // …and no test ran the boolean
   });
 
   // What no reading can bound is ONE test: the deadline is checked between them. A profile
@@ -262,13 +267,84 @@ describe("LASER.facts", () => {
     expect(LASER.facts(s, { deadline: 1500, now: () => 0 })).toMatchObject({ evaluated: false, bridge: null, gap: null, pieces: 1 });
   });
 
-  test("so is a panel of many small rounded-rect cutouts", () => {
-    const f = factsOf(plate({ profile: (kk) => {
-      let s = kk.shape2d(rect(0, 0, 100, 60));
-      for (let i = 0; i < 8; i++) s = s.cut(kk.shape2d(rect(5 + i * 11, 5, 13 + i * 11, 13)).fillet(1.2));
-      return s;
-    } }), { deadline: 1500, now: () => 0 });
-    expect(f.evaluated).toBe(false);
+  // Rounded-rect cutouts wider than the ceiling have nothing in them that closes, and
+  // holes never meet in a closing, so the closing leaves them out — the slow part of
+  // this panel (its inverting corners) never runs. A comb whose notches carry the same
+  // small rounded corners on the OUTLINE cannot be left out: every closing inverts them
+  // (the offset engine subdivides each to its depth limit), and it is not started.
+  const cutouts = (kk) => {
+    let s = kk.shape2d(rect(0, 0, 100, 60));
+    for (let i = 0; i < 8; i++) s = s.cut(kk.shape2d(rect(5 + i * 11, 5, 13 + i * 11, 13)).fillet(1.2));
+    return s;
+  };
+  const comb = (kk) => {
+    let s = kk.shape2d(rect(0, 0, 106, 30));
+    for (let i = 0; i < 8; i++) s = s.cut(kk.shape2d(rect(8 + i * 12, 20, 14 + i * 12, 40)).fillet(1.2));
+    return s;
+  };
+  test("a panel of small rounded-rect cutouts is read: the closing leaves them out", () => {
+    const f = factsOf(plate({ profile: cutouts }), { deadline: 1500, now: () => 0 });
+    expect(f).toMatchObject({ evaluated: true, gapCapped: true });
+  });
+  test("a comb of notches with small rounded inner corners is not started", () => {
+    expect(factsOf(plate({ profile: comb }), { deadline: 1500, now: () => 0 }).evaluated).toBe(false);
+    const f = factsOf(plate({ profile: (kk) => comb(kk).cut(kk.shape2d(rect(50, 5, 50.6, 12))) }));   // no deadline: read in full
+    expect(f).toMatchObject({ evaluated: true, gapCapped: false });
+    expect(f.gap).toBeLessThanOrEqual(0.65);
+  });
+
+  // The reviewers' panel (test/fixtures/sheet-web-plate-part.js): thirty booleaned d 6
+  // holes and one 1 mm web between two slots. A test that finds the web runs the
+  // one-sided difference, and over the whole profile that was ONE boolean of 5.5 s against
+  // the holes' 3,840-cubic near-copy. Every hole clears every other ring by more than
+  // 1.5 × the 3 mm ceiling, so none can meet anything in an opening: the opening leaves
+  // them out, the closing reads their diameters, and every step is priced under 100 ms.
+  // Counts the booleans run on the profile itself (the shapes its offsets return too).
+  const cutsOn = (s) => {
+    const tally = { cuts: 0 };
+    const counted = (shape) => new Proxy(shape, { get(target, key) {
+      if (key === "cut") return (...a) => { tally.cuts++; return target.cut(...a); };
+      if (key === "offset") return (...a) => counted(target.offset(...a));
+      const v = Reflect.get(target, key);
+      return typeof v === "function" ? v.bind(target) : v;
+    } });
+    return { sheet: { ...s, profile: counted(s.profile) }, tally };
+  };
+  test("thirty booleaned holes and one narrow web: read in full, every step priced small", () => {
+    const { sheet, tally } = cutsOn(resolveSheet(k, webPlate.parts.plate, P, {}));
+    const f = LASER.facts(sheet, { deadline: 100, now: () => 0 });
+    expect(tally.cuts).toBe(0);                           // no boolean over the holes' near-copy
+    expect(f).toMatchObject({ evaluated: true, bridgeCapped: false, gapCapped: false });
+    expect(f.gap).toBeGreaterThan(1.99);                  // the 2 mm slot, narrower than the 6 mm holes
+    expect(f.gap).toBeLessThanOrEqual(2.05);
+    expect(f.bridge).toBeGreaterThan(0.99);
+    expect(f.bridge).toBeLessThanOrEqual(1.05);
+    expect(f.at2d.bridge[0]).toBeCloseTo(159.5, 0);
+    expect(f.at2d.bridge[1]).toBeCloseTo(50, 0);
+  });
+
+  // The same holes 3.5 mm from the edge (wider than the ceiling, so no finding, but inside
+  // an opening's reach) cannot be left out. The ceiling test finds the web; the difference
+  // it would then run is priced from the test's own result — the holes' near-copy — and
+  // does not fit, so it is not started: no boolean runs, the notice stands in.
+  test("…but holes the opening cannot leave out: the found web's difference is priced out", () => {
+    const holes = Array.from({ length: 12 }, (_, i) => sheetHole({ d: 6, at: [10 + i * 12, 6.5] }));
+    const edgeHoles = (kk) => kk.shape2d(rect(0, 0, 164, 60)).cutAll([...holes, rect(154, 45, 159, 55), rect(160, 45, 162, 55)]);
+    const { sheet, tally } = cutsOn(resolveSheet(k, plate({ profile: edgeHoles }), P, {}));
+    const f = LASER.facts(sheet, { deadline: 1500, now: () => 0 });
+    expect(f).toMatchObject({ evaluated: false, bridge: null, gap: null });
+    expect(tally.cuts).toBe(0);
+  });
+
+  // Prices are desktop milliseconds; the meter scales them by the pace this device has
+  // actually run at. Here every clock reading is 400 ms after the last: the first test,
+  // priced 139, "took" 400, so the difference after it costs three times its price and no
+  // longer fits — where a stopped clock (a desktop keeping to its prices) reads it.
+  test("a slower device prices its own steps", () => {
+    let t = 0;
+    const slow = () => (t += 400) - 400;
+    expect(factsOf(plate({ profile: cutouts }), { deadline: 1500, now: () => 0 }).evaluated).toBe(true);
+    expect(factsOf(plate({ profile: cutouts }), { deadline: 1500, now: slow }).evaluated).toBe(false);
   });
 
   test("an arc-exact hole cut with cutAll reads clean — no false web or gap", () => {
@@ -327,7 +403,7 @@ const forge = (parts, extra = {}) => ({ meta: { title: "DFM", units: "mm" }, def
 const printed = (max, place) => ({ views: ["v"], label: "Printed", build: (kk) => kk.box({ min: [0, 0, 0], max }), ...(place ? { place } : {}) });
 const row = (r, name) => r.subparts.find((s) => s.name === name);
 // The 2-D budget on a stopped clock: it never runs out, so an assertion that needs the
-// readings cannot flake on a slow runner, and the cost pre-gate still applies.
+// readings cannot flake on a slow runner, and the laser descriptor's prices still apply.
 const STOPPED = { now: () => 0 };
 const isVec3 = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
 // A rod printed standing up but displayed lying along X, on top of a 3 mm plate.
@@ -462,8 +538,11 @@ test("the twelve-panel stress fixture: lint-clean, twelve sheet rows, no overlap
   expect(r.overlaps).toEqual([]);
 }, 120_000);
 
-test("the bench's plates: lint-clean; the screw plate reads in full, the grille is withheld at once", () => {
-  for (const part of [screwPlate, perforated]) expect(lintPart(part).errors).toEqual([]);
+test("the bench's plates: lint-clean; the screw plate and the web plate read in full, the grille is withheld at once", () => {
+  for (const part of [screwPlate, perforated, webPlate]) expect(lintPart(part).errors).toEqual([]);
+  const web = measure(k, webPlate, "panel", {}, STOPPED).subparts[0].sheet;
+  expect(web).toMatchObject({ evaluated: true, pieces: 1, bridgeCapped: false });
+  expect(web.bridge).toBeLessThanOrEqual(1.05);
   const plate = measure(k, screwPlate, "panel", {}, STOPPED).subparts[0].sheet;
   expect(plate).toMatchObject({ evaluated: true, pieces: 1, bridgeCapped: true, gapCapped: true });
   const grille = measure(k, perforated, "panel", {}, STOPPED).subparts[0].sheet;
