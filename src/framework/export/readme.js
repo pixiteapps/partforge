@@ -18,8 +18,11 @@ const DXF_LEGEND = "DXF layers: CUT (colour 1), SCORE (colour 5), ENGRAVE (colou
 const LIMITS_LINE = "Layout packs bounding boxes only: no nesting into holes, and grain direction is ignored.";
 
 // C0 controls, DEL and C1 controls out of an author string, so a label can never ring a
-// bell, move a cursor or smuggle a line break into a table row.
-export const cleanLabel = (s) => String(s).replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+// bell, move a cursor or smuggle a line break into a table row — and the Unicode line
+// and paragraph separators (U+2028/U+2029, a line break in many editors) and the bidi
+// embeddings, overrides and isolates (U+202A–U+202E, U+2066–U+2069), which reorder the
+// text around them, for the same reason.
+export const cleanLabel = (s) => String(s).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, "");
 
 // One RFC 4180 cell. A cell starting with = + - or @ is a formula to Excel, Numbers and
 // Sheets, so it gets a leading ' first — before quoting, so no quote can be closed

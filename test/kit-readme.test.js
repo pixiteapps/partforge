@@ -194,7 +194,13 @@ describe("parts.csv", () => {
   });
 });
 
-test("cleanLabel strips C0, DEL and C1 controls and nothing else", () => {
+test("cleanLabel strips C0, DEL and C1 controls, line/paragraph separators and bidi overrides — and nothing else", () => {
   expect(cleanLabel("a\u0000b\u001fc\u007fd\u0085e f")).toBe("abcde f");
+  // U+2028/U+2029 render as line breaks in many editors; U+202A–U+202E and U+2066–U+2069
+  // reorder the text around them — none may reach a table row or a CSV cell
+  expect(cleanLabel("Top\u2028Lid\u2029 \u202aa\u202bb\u202cc\u202dd\u202ee \u2066f\u2067g\u2068h\u2069")).toBe("TopLid abcde fgh");
+  expect(cleanLabel("Côté 合板 — ½\u00a0in")).toBe("Côté 合板 — ½\u00a0in");
   expect(cleanLabel(42)).toBe("42");
+  expect(renderPartsCsv([{ file: "parts/top.svg", kind: "sheet", labels: ["Top\u2028\u202eLid"], material: "ply", thickness: 3, width: 1, height: 1, quantity: 1 }]))
+    .toBe(`${CSV_HEADER}\r\nparts/top.svg,sheet,TopLid,ply,3.00,1.00,1.00,1\r\n`);
 });
