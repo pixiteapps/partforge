@@ -305,6 +305,13 @@ describe("download options", () => {
     expect(r.phases.some((ph) => ph.startsWith("building"))).toBe(false);
   });
 
+  test("a margin that leaves no room fails before anything is built", async () => {
+    const r = await kit(fixture, { options: { margin: 50, stock: [{ group: "*", size: [10, 10] }] } });
+    expect(r.error).toBe(
+      "cut kit options: a 10 × 10 mm sheet has no room inside a 50 mm margin on every side (Birch Plywood 3 mm) — lower margin or use larger stock");
+    expect(r.phases.some((ph) => ph.startsWith("building"))).toBe(false);
+  });
+
   test("a kit needs a sheet part", async () => {
     const r = await kit(fixture, { parts: ["spacer"] });
     expect(r.error).toBe("cut kit options: none of the checked parts is a sheet part — check a sheet part or export STL/3MF instead");

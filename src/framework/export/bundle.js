@@ -20,7 +20,7 @@ import { validateKitOptions, resolveStock, KIT_OPTIONS_ERROR, KIT_LIMITS } from 
 import { canonicalDrawingKey } from "./drawing.js";
 import { renderSvg } from "./svg.js";
 import { renderDxf } from "./dxf.js";
-import { layoutGroup } from "./layout.js";
+import { layoutGroup, marginFitsStock } from "./layout.js";
 import { renderReadme, renderPartsCsv, cleanLabel } from "./readme.js";
 
 // Every entry name the kit may write (spec D.10). test/kit-bundle.test.js pins every
@@ -232,6 +232,10 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
     groupOf.set(name, meta.group);
   }
   const stockFor = resolveStock(o.stock, [...groups.values()].map((g) => ({ group: g.group, label: g.label })));
+  // A margin that leaves a group's stock with no inside at all is known right here —
+  // check it before any piece is drawn (spec D.3), not only once layoutGroup reaches
+  // that group after every sheet part has been built.
+  for (const g of groups.values()) marginFitsStock(stockFor.get(g.group), o.margin, g.label);
 
   // Draw every sheet part flat, from its 2-D declaration, with its 2-D facts under ONE
   // budget for the whole kit.

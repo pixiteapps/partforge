@@ -14,6 +14,22 @@ const EPS = 1e-9;
 const sizeOf = ({ min, max }) => [max[0] - min[0], max[1] - min[1]];
 const byKey = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
+// Throws when `margin` leaves a stock sheet with no inside at all — the options' fault,
+// for either destination, not a "stock too small" quoting a negative size, nor a service
+// kit with every piece oversized. `label` is the group's `${material} ${fmtMm(t)} mm`.
+// The options allow a 50 mm margin and a 10 mm stock side, which together can trigger
+// this. Exported so buildBundle can check every stock group right after resolveStock —
+// before any piece is drawn (spec D.3: a bad option must not wait behind a build) —
+// rather than only once a group finally reaches layoutGroup below, which calls this too
+// so a caller that skips the early check (or a future one) still gets it.
+export function marginFitsStock(stock, margin, label) {
+  const [W, H] = stock;
+  const innerW = W - 2 * margin, innerH = H - 2 * margin;
+  if (innerW <= EPS || innerH <= EPS)
+    throw new Error(`${KIT_OPTIONS_ERROR} a ${fmtMm(W)} × ${fmtMm(H)} mm sheet has no room inside a ${fmtMm(margin)} mm margin on every side (${label}) — lower margin or use larger stock`);
+  return [innerW, innerH];
+}
+
 // `pieces`: [{ key, label, drawing, qty }] — `key` names the piece in `oversized` and
 // breaks sort ties; `label` is what an error quotes. The `label` argument is the group's
 // `${material} ${fmtMm(t)} mm`; `group` is accepted and not needed here. `strict` (own
@@ -23,12 +39,7 @@ const byKey = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 // only packs.
 export function layoutGroup({ label, pieces, stock, margin, spacing, strict }) {
   const [W, H] = stock;
-  const innerW = W - 2 * margin, innerH = H - 2 * margin;
-  // The options allow a 50 mm margin and a 10 mm stock side; together they leave a sheet
-  // with no inside at all, which is the options' fault, for either destination — not a
-  // "stock too small" quoting a negative size, nor a service kit with every piece oversized.
-  if (innerW <= EPS || innerH <= EPS)
-    throw new Error(`${KIT_OPTIONS_ERROR} a ${fmtMm(W)} × ${fmtMm(H)} mm sheet has no room inside a ${fmtMm(margin)} mm margin on every side (${label}) — lower margin or use larger stock`);
+  const [innerW, innerH] = marginFitsStock(stock, margin, label);
   const items = [];
   const oversized = [];
   for (const pc of pieces) {
