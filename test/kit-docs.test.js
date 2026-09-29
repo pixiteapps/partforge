@@ -54,4 +54,8 @@ test("the headless-export docs carry the host's half of the kit", () => {
     "<title>-kit.zip", "README.txt", "-marks.dxf", "stock: [{ group, size: [w, h] }]",
     "EXPORT_FORMATS", "KIT_DEFAULTS", "validateKitOptions", "KIT_OPTIONS_ERROR", "cut kit options:",
   ]) expect(s, `headless export never mentions ${needle}`).toContain(needle);
+  // "*" is the fallback for groups with no entry of their own (formats.js resolveStock),
+  // never an override of every group
+  expect(s).toContain('a `"*"` entry sizes every group that has no entry of its own');
+  expect(s).not.toContain('`"*"` for every group');
 });

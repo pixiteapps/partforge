@@ -3022,12 +3022,14 @@ returns instead:
   score and engrave lines, and the DXF sheets are for reference. Every `options` key is
   optional: `destination` (`"own-laser"`, the default, or `"service"`), `kerf` (0–0.5 mm,
   applied to the cut lines only), `stock: [{ group, size: [w, h] }]` (a row's
-  `sheet.group`, or `"*"` for every group; 300 × 300 mm when omitted), `margin` (5 mm),
+  `sheet.group`; a `"*"` entry sizes every group that has no entry of its own; 300 × 300
+  mm when `stock` is omitted), `margin` (5 mm),
   `spacing` (3 mm), `printFormat` (`"stl"` or `"3mf"`) and `sets` (1–20). The main entry
   exports `EXPORT_FORMATS`, `KIT_DEFAULTS`, `validateKitOptions` and `KIT_OPTIONS_ERROR`
   for a host that draws its own options screen. An option the kit cannot honour — an
   unknown key, a kerf that closes a slot, a piece bigger than an own laser's sheet, a
-  stock entry naming no group, more than 200 pieces or 50 sheets of one material —
+  margin that leaves no room on the sheet, a stock entry naming no group, more than 200
+  pieces or 50 sheets of one material —
   rejects with a message starting `cut kit options:`: the user's setting to change, not
   the part's code.
 - `runtime.warmExportKernel() → Promise<boolean>` — pay OCCT's cold boot *before* an
