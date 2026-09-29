@@ -600,7 +600,9 @@ backend-independently on the contour IR — no backend `CrossSection` or `Drawin
 ever involved. Lines and arcs offset exactly (arcs stay arcs); cubics are
 approximated to ≤ 1e-3 mm deviation. `corners: "round"` inserts exact arc joins,
 `"chamfer"` a true 45°-bisecting bevel chord at every corner angle, `"sharp"` miters
-with limit 2 (falling back to the bevel chord past the limit). Self-intersecting raw
+with limit 2 (falling back to the bevel chord past the limit) — where an arc meets the
+corner it extends along its own circle, not its end tangent (OCCT's intersection join), so
+a sharp inset grown back by the same amount returns an arc-and-line corner exactly. Self-intersecting raw
 results are resolved through the shared planar boolean engine (paper.js), which may
 return arcs as cubic approximations — identical to boolean-op output. `segs` is
 accepted and ignored (there is no backend LOD to tune). Both backends produce
@@ -616,7 +618,7 @@ backwards for the holes (see the migration note below).
 | Op | Contract |
 |---|---|
 | `union(other)` / `cut(other)` / `cutAll(others[])` / `intersect(other)` | 2-D boolean ops; `other` may be a `Shape2D` or a raw profile (lifted via `shape2d` first). Curve-exact and backend-identical (paper.js). |
-| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. Runs backend-independently on the contour IR — lines/arcs offset exactly, cubics approximate to ≤ 1e-3 mm; `chamfer` is a true 45°-bisecting bevel at every corner angle, `sharp` miters with limit 2. Backend-identical by construction, like every other Shape2D op. Holes offset material-wise (`-delta` where the outer gets `delta`). `segs` is accepted and ignored. Empty in → empty out (short-circuits before the engine). Throws if the offset collapses the shape. |
+| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. Runs backend-independently on the contour IR — lines/arcs offset exactly, cubics approximate to ≤ 1e-3 mm; `chamfer` is a true 45°-bisecting bevel at every corner angle, `sharp` miters with limit 2 (an arc at the corner extends along its circle). Backend-identical by construction, like every other Shape2D op. Holes offset material-wise (`-delta` where the outer gets `delta`). `segs` is accepted and ignored. Empty in → empty out (short-circuits before the engine). Throws if the offset collapses the shape. |
 | `area()` | Net area (Σ\|outers\| − Σ\|holes\|), mm². Curve-exact. |
 | `boundingBox()` | `{min, max}` — axis-aligned 2-D bounds, curve-exact (no `center`/`size`, unlike `Solid.boundingBox`). |
 | `toRegions()` | Materialize into `{outer, holes}[]` point-ring region arrays (`assembleRegions`), tessellating curves at the backend's LOD; a boolean result may be several disjoint regions. |
