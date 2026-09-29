@@ -11,6 +11,10 @@ import { circlePolygon, roundedRectPolygon } from "../src/framework/geometry/pol
 import { sheetPart } from "../src/framework/sheet/part.js";
 import { resolveSheet } from "../src/framework/sheet/resolve.js";
 import { sheetHole } from "../src/framework/sheet/joinery.js";
+import { renderSvg } from "../src/framework/export/svg.js";
+import { renderDxf } from "../src/framework/export/dxf.js";
+import { parseSvg } from "./helpers/svg-subset.js";
+import { parseDxf } from "./helpers/dxf-subset.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -162,5 +166,96 @@ describe("from a real sheetPart", () => {
     expect(d).toMatchObject({ bounds: { min: [0, 0], max: [40, 30] }, nominal: [40, 30], kerf: 0 });
     expectOnCircle(d.layers.find((l) => l.id === "cut-inner").paths[0], [20, 15], 5);
     expect(d.layers.find((l) => l.id === "score").paths).toEqual([{ start: [5, 5], segments: [{ to: [35, 5] }], closed: false }]);
+  });
+});
+
+// ─── a sine-wave edge, PR1 fix 5's regression: no run may become one straight "arc" ────
+//
+// Fix 5 (188091db, geometry/arc-fit.js) found that a run of cubics spanning whole (or
+// half) periods of a sine has its first, middle and last fit points collinear — the
+// fitted "radius" came out near 1e17 and recoverArcs replaced the WHOLE run with one
+// straight-chord "arc", silently discarding the wave's own ±amplitude. recoverArcs now
+// refuses a fit that far from its own points. The kit's drawing stage
+// (export/drawing.js's refitRing) is recoverArcs's only caller outside the oracle's own
+// search shapes (sheet/resolve.js), so this proves the fix reaches the actual cut files
+// a user downloads, not just the internal width searches: the SVG keeps every cubic
+// (to SVG's own 4-decimal rounding) and the DXF's flattened polyline still tracks the
+// authored curve, never a collapsed chord.
+describe("a sine-wave edge survives export as cubics, never one straight arc", () => {
+  // One Hermite cubic per quarter period, right to left (a CCW plate's top edge runs
+  // right to left) — the same construction fix 5's own test/arc-fit.test.js uses for the
+  // same bug (a whole or half number of periods puts the run's first/middle/last points
+  // on one straight line).
+  const waveEdge = (amp, period, periods, x0, y0) => {
+    const n = periods * 4, dx = period / 4, k2 = (2 * Math.PI) / period;
+    const y = (x) => y0 + amp * Math.sin(k2 * (x - x0)), dy = (x) => amp * k2 * Math.cos(k2 * (x - x0));
+    const segs = [];
+    for (let i = n; i > 0; i--) {
+      const a = x0 + i * dx, b = x0 + (i - 1) * dx, h3 = (b - a) / 3;
+      segs.push({ c1: [a + h3, y(a) + dy(a) * h3], c2: [b - h3, y(b) - dy(b) * h3], to: [b, y(b)] });
+    }
+    return segs;
+  };
+  // 3 periods (odd — the collinearity trips on a half period too, not only a whole one).
+  const AMP = 0.5, PERIOD = 20, PERIODS = 3, LEN = PERIOD * PERIODS, TOP = 20;
+  const wave = waveEdge(AMP, PERIOD, PERIODS, 0, TOP);
+  // bottom-left → bottom-right → up to the wave's right end → the wave, right to left →
+  // closeContourGap's implicit line back down the left edge to (0, 0).
+  const wavePlate = () => ({ start: [0, 0], segments: [{ to: [LEN, 0] }, { to: [LEN, TOP] }, ...wave] });
+  const docFor = (d) => ({ title: "wave", size: [LEN + 10, TOP + AMP + 5], placements: [{ drawing: d, at: [0, 0], rotated: false }] });
+
+  const bez = (p0, c1, c2, p1, t) => {
+    const u = 1 - t;
+    return [
+      u * u * u * p0[0] + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t * t * t * p1[0],
+      u * u * u * p0[1] + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t * t * t * p1[1],
+    ];
+  };
+  const distToSegment = (q, a, b) => {
+    const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+    const t = L2 < 1e-24 ? 0 : Math.max(0, Math.min(1, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / L2));
+    return Math.hypot(q[0] - (a[0] + t * dx), q[1] - (a[1] + t * dy));
+  };
+  const distToPolyline = (p, verts) => {
+    let best = Infinity;
+    for (let i = 0; i < verts.length; i++) best = Math.min(best, distToSegment(p, verts[i], verts[(i + 1) % verts.length]));
+    return best;
+  };
+
+  test("recoverArcs leaves every wave cubic alone — the whole run is never read as one arc", () => {
+    const d = draw(resolved({ profile: wavePlate() }));
+    const path = d.layers.find((l) => l.id === "cut-outer").paths[0];
+    // bottom edge, right edge, the wave's 12 cubics untouched, the closing left edge —
+    // never a single "a" swallowing the run (the fix-5 bug) or even part of it.
+    expect(kinds(path)).toBe(`ll${"c".repeat(wave.length)}l`);
+    expect(path.segments.slice(2, 2 + wave.length)).toEqual(wave);
+  });
+
+  test("the SVG keeps every wave cubic, to its own 4-decimal rounding (~1e-4 mm)", () => {
+    const d = draw(resolved({ profile: wavePlate() }));
+    const { groups, height } = parseSvg(renderSvg(docFor(d)));
+    const svgWave = groups.find((g) => g.attrs.id === "cut-outer").paths[0].subpaths[0].segs.slice(2, 2 + wave.length);
+    expect(svgWave.every((s) => s.cmd === "C")).toBe(true);
+    const up = ([x, y]) => [x, height - y];
+    for (let i = 0; i < wave.length; i++) {
+      for (const key of ["c1", "c2", "to"]) {
+        const [px, py] = up(svgWave[i][key]);
+        expect(px).toBeCloseTo(wave[i][key][0], 3);
+        expect(py).toBeCloseTo(wave[i][key][1], 3);
+      }
+    }
+  });
+
+  test("the DXF's flattened polyline follows the authored curve within 0.005 mm at sampled points", () => {
+    const d = draw(resolved({ profile: wavePlate() }));
+    const { entities } = parseDxf(renderDxf(docFor(d)));
+    const poly = entities.find((e) => e.type === "POLYLINE");
+    expect(poly.closed).toBe(true);
+    const verts = poly.vertices.map((v) => v.at);
+    let from = [LEN, TOP];
+    for (const s of wave) {
+      for (let ti = 1; ti <= 19; ti++) expect(distToPolyline(bez(from, s.c1, s.c2, s.to, ti / 20), verts)).toBeLessThan(0.005);
+      from = s.to;
+    }
   });
 });
