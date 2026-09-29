@@ -18,7 +18,8 @@
 // second pass for those: a run becomes arcs only when at least `minVerts` consecutive
 // vertices sit on one circle AND every step turns by at most `maxTurnDeg`, all the same
 // way. A hexagon (60° turns) or a star (alternating turns) never qualifies; when the
-// test misses something the output is dense, never wrong.
+// test misses something the output is dense, never wrong — and "never wrong" is held in
+// millimetres: no authored vertex ends up more than REFIT_MAX_MOVE_MM from the output.
 //
 // LAZY: reachable only through process/exporters.js's dynamic import (and, from P2b,
 // export/bundle.js's). It reaches paper (arc-fit.js → paper-bridge.js), which is why
@@ -52,6 +53,16 @@ function turnAt(a, b, c) {
   return Math.atan2(u[0] * v[1] - u[1] * v[0], u[0] * v[0] + u[1] * v[1]);
 }
 
+// The refit's promise, in mm: no authored vertex ends up farther than this from the arcs
+// that replace its run. It caps the fit band — a band relative to the radius alone grows
+// with it, and the three-point circle of a gently curving stretch can be metres wide —
+// and every run is measured against its real output arcs before it is kept.
+export const REFIT_MAX_MOVE_MM = 0.005;
+// A run's radius may be at most this many times its chord (its diameter, for a run of
+// half a turn or more): past that the "arc" is a flat stretch of some other curve, which
+// the laser should trace as drawn, not a faceted circle to recover.
+const REFIT_MAX_FLATNESS = 50;
+
 // Fit the circle through vertices k..e of Q (via k, the one-third and the two-thirds
 // vertex — three distinct points even when the run is a whole ring and Q[e] is Q[k]),
 // then require EVERY vertex within tolerance of it, stepping round the centre in the
@@ -60,7 +71,7 @@ function fitRun(Q, k, e, sign) {
   const m = e - k;
   const c = arcCenterAndSweep(Q[k], Q[k + Math.round(m / 3)], Q[k + Math.round((2 * m) / 3)]);
   if (!c || !(c.r > 0)) return null;
-  const run = { center: c.center, r: c.r, tol: Math.max(1e-6, 1e-4 * c.r), sign, sweep: 0 };
+  const run = { center: c.center, r: c.r, tol: Math.min(Math.max(1e-6, 1e-4 * c.r), REFIT_MAX_MOVE_MM), sign, sweep: 0 };
   if (Math.abs(dist(Q[k], run.center) - run.r) > run.tol) return null;
   for (let i = k + 1; i <= e; i++) if (!extendRun(run, Q[i - 1], Q[i])) return null;
   return run;
@@ -93,12 +104,38 @@ function arcPieces(from, to, { center, r, sweep }) {
   return out;
 }
 
+// How far q is from the three-point arc from → via → to: the radial gap when q lies
+// inside the sweep, else the distance to the nearer end.
+function arcGap(q, from, { via, to }) {
+  const g = arcCenterAndSweep(from, via, to);
+  if (!g) return Infinity;
+  const a0 = Math.atan2(from[1] - g.center[1], from[0] - g.center[0]);
+  const along = wrapTau(Math.sign(g.dA) * (Math.atan2(q[1] - g.center[1], q[0] - g.center[0]) - a0));
+  if (along <= Math.abs(g.dA) + 1e-12) return Math.abs(dist(q, g.center) - g.r);
+  return Math.min(dist(q, from), dist(q, to));
+}
+
+// Keep a fitted run k..e only when it is a circle to recover and its arcs are faithful:
+// not far flatter than it is long, and every vertex it replaces within
+// REFIT_MAX_MOVE_MM of the arcs actually written (whose ends are the run's real,
+// slightly off-circle, first and last vertices — so this is measured, not assumed).
+function keepRun(Q, k, e, run, pieces) {
+  const chord = Math.abs(run.sweep) >= Math.PI ? 2 * run.r : dist(Q[k], Q[e]);
+  if (run.r > REFIT_MAX_FLATNESS * chord) return false;
+  for (let i = k + 1; i < e; i++) {
+    let from = Q[k], gap = Infinity;
+    for (const s of pieces) { gap = Math.min(gap, arcGap(Q[i], from, s)); from = s.to; }
+    if (!(gap <= REFIT_MAX_MOVE_MM)) return false;
+  }
+  return true;
+}
+
 // Runs of straight segments that trace a circle → three-point arcs. Curves pass through
 // untouched and break runs. A closed ring is first re-seated at a "hard break" (a vertex
 // no run can pass: a curve meets it, or it turns out of band) so a run that wraps the
 // ring's start is seen whole; a ring with no hard break — a faceted circle — is tried as
 // one run all the way round. Orientation is preserved. When nothing is refit the input
-// contour is returned as-is (same object).
+// contour is returned as-is (same object). Linear in the vertex count.
 export function refitLineRuns(contour, { minVerts = 8, maxTurnDeg = 15 } = {}) {
   const segs = contour.segments;
   const n = segs.length;
@@ -120,23 +157,31 @@ export function refitLineRuns(contour, { minVerts = 8, maxTurnDeg = 15 } = {}) {
 
   const out = [];
   let changed = false;
-  let k = 0;
+  let k = 0, j = 0, sign = 0;
   while (k < n) {
     // Segments k..j-1 are straight, and every joint between them turns in band, one way.
-    let j = k, sign = 0;
-    while (j < n && isLine(S[j])) {
-      if (j > k) {
-        const t = turnAt(Q[j - 1], Q[j], Q[j + 1]);
-        if (!inBand(t) || (sign !== 0 && Math.sign(t) !== sign)) break;
-        sign = Math.sign(t);
+    // Scanned once per run, not once per vertex: while a joint of the run lies ahead of
+    // k (k + 1 < j), the run from k is the same run — same end, same turning sign.
+    if (k + 1 >= j) {
+      j = k; sign = 0;
+      while (j < n && isLine(S[j])) {
+        if (j > k) {
+          const t = turnAt(Q[j - 1], Q[j], Q[j + 1]);
+          if (!inBand(t) || (sign !== 0 && Math.sign(t) !== sign)) break;
+          sign = Math.sign(t);
+        }
+        j++;
       }
-      j++;
     }
     let e = k + minVerts - 1;
-    let run = sign !== 0 && e <= j ? fitRun(Q, k, e, sign) : null;
-    while (run && e < j && extendRun(run, Q[e], Q[e + 1])) e++;
-    if (run) { out.push(...arcPieces(Q[k], Q[e], run)); changed = true; k = e; }
-    else { out.push(S[k]); k++; }
+    const run = sign !== 0 && e <= j ? fitRun(Q, k, e, sign) : null;
+    if (!run) { out.push(S[k]); k++; continue; }
+    while (e < j && extendRun(run, Q[e], Q[e + 1])) e++;
+    const pieces = arcPieces(Q[k], Q[e], run);
+    // A refused run stays as drawn, whole: any run inside it lies on the same circle.
+    if (keepRun(Q, k, e, run, pieces)) { out.push(...pieces); changed = true; }
+    else out.push(...S.slice(k, e));
+    k = e;
   }
   return changed ? { start: [Q[0][0], Q[0][1]], segments: out } : contour;
 }

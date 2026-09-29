@@ -98,6 +98,90 @@ describe("refitLineRuns: faceted circles come back as arcs", () => {
   });
 });
 
+// Distance from p to one contour segment: a line's nearest point, or an arc's radial gap
+// when p lies inside its sweep (else the nearer endpoint).
+const TAU = 2 * Math.PI;
+function segmentDistance(p, from, s) {
+  const g = s.via ? arcCenterAndSweep(from, s.via, s.to) : null;
+  if (!g) {
+    const dx = s.to[0] - from[0], dy = s.to[1] - from[1], L2 = dx * dx + dy * dy;
+    const t = L2 ? Math.max(0, Math.min(1, ((p[0] - from[0]) * dx + (p[1] - from[1]) * dy) / L2)) : 0;
+    return Math.hypot(p[0] - from[0] - t * dx, p[1] - from[1] - t * dy);
+  }
+  const a0 = Math.atan2(from[1] - g.center[1], from[0] - g.center[0]);
+  const ap = Math.atan2(p[1] - g.center[1], p[0] - g.center[0]);
+  const along = g.dA >= 0 ? (((ap - a0) % TAU) + TAU) % TAU : (((a0 - ap) % TAU) + TAU) % TAU;
+  if (along <= Math.abs(g.dA)) return Math.abs(Math.hypot(p[0] - g.center[0], p[1] - g.center[1]) - g.r);
+  return Math.min(Math.hypot(p[0] - from[0], p[1] - from[1]), Math.hypot(p[0] - s.to[0], p[1] - s.to[1]));
+}
+// The farthest any authored vertex sits from the refit contour.
+function worstVertexMove(pts, out) {
+  let worst = 0;
+  for (const p of pts) {
+    let best = Infinity, from = out.start;
+    for (const s of out.segments) { best = Math.min(best, segmentDistance(p, from, s)); from = s.to; }
+    worst = Math.max(worst, best);
+  }
+  return worst;
+}
+// A plate whose top edge is `f` sampled at n + 1 points, right to left (so the ring is CCW).
+const edgePlate = (len, n, f) => [[0, -20], [len, -20], ...Array.from({ length: n + 1 }, (_, i) => { const x = len - (len * i) / n; return [x, f(x)]; })];
+const sineEdge = (len, amp, n) => edgePlate(len, n, (x) => amp * Math.sin((TAU * x) / len));
+
+describe("refitLineRuns: a smooth curve that is not a circle is never moved (dense, never wrong — spec D.1)", () => {
+  // Every run the refit accepts is held to an absolute band, so a near-flat stretch of a
+  // gentle curve can no longer be swallowed by a huge three-point circle whose relative
+  // tolerance ran to millimetres.
+  test.each([
+    ["a 600 × 5 mm sine edge at 1200 points", sineEdge(600, 5, 1200)],
+    ["a 280 × 3 mm sine edge at 1120 points", sineEdge(280, 3, 1120)],
+    ["a 280 × 5 mm sine edge at 560 points", sineEdge(280, 5, 560)],
+    ["a 600 × 10 mm Gaussian bump sampled every 6 mm", edgePlate(600, 100, (x) => 10 * Math.exp(-(((x - 300) / 100) ** 2)))],
+    ["a dense 150 × 20 mm ellipse (96 points)", ellipsePolygon(150, 20, 96)],
+    ["a dense 150 × 20 mm ellipse (200 points)", ellipsePolygon(150, 20, 200)],
+  ])("%s: every authored vertex stays within 0.01 mm of the output", (_, pts) => {
+    expect(worstVertexMove(pts, refitLineRuns(pointsToContour(pts)))).toBeLessThan(0.01);
+  });
+
+  test("a near-straight run on a circle far wider than itself stays lines", () => {
+    // 41 points on r = 5000 over 20 mm: on one circle, every turn in band — but a
+    // 5000 mm arc spanning 20 mm is a flat line the laser should trace as drawn, not a
+    // faceted circle to recover.
+    const pts = Array.from({ length: 41 }, (_, i) => { const t = (i * 0.5) / 5000; return [5000 * Math.sin(t), 5000 * (1 - Math.cos(t))]; });
+    const open = { start: pts[0], segments: pts.slice(1).map((p) => ({ to: p })) };
+    expect(refitLineRuns(open)).toBe(open);
+  });
+
+  test("large and off-grid faceted circles still come back exact", () => {
+    for (const [r, c] of [[200, [0, 0]], [110 / 3, [41.2345, 17.891]]]) {
+      const out = refitLineRuns(pointsToContour(circleProfile(r, c)));
+      expect(kinds(out)).toBe("aa");
+      expectCircle(arcsOf(out), c, r);
+    }
+    const h = k.shape2d([[0, 0], [120, 0], [120, 120], [0, 120]]).cut(circleProfile(10, [60, 60])).toContours()[0].holes[0];
+    const out = refitLineRuns(h);
+    expect(kinds(out)).toBe("aa");
+    expectCircle(arcsOf(out), [60, 60], 10);
+  });
+
+  test("a long run that turns one way but fits no circle is refit in linear time", () => {
+    // 32k vertices turning 1–1.5° per step with varying step lengths: the old loop
+    // rescanned the whole in-band run from every vertex whose circle fit failed.
+    const pts = [[0, 0]];
+    let a = 0;
+    for (let i = 1; i < 32000; i++) {
+      a += ((1 + (0.5 * ((i * 7) % 11)) / 10) * Math.PI) / 180;
+      const step = 1 + 0.5 * Math.sin(i * 1.7);
+      pts.push([pts[i - 1][0] + step * Math.cos(a), pts[i - 1][1] + step * Math.sin(a)]);
+    }
+    const open = { start: pts[0], segments: pts.slice(1).map((p) => ({ to: p })) };
+    const t0 = performance.now();
+    const out = refitLineRuns(open);
+    expect(performance.now() - t0).toBeLessThan(3000);
+    expect(worstVertexMove(pts, out)).toBeLessThan(0.01);
+  });
+});
+
 describe("refitLineRuns: genuine polygons stay polygons (the same object back)", () => {
   test.each([
     ["a hexagon (60° turns)", hexPolygon(10)],
