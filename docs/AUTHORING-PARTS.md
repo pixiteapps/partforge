@@ -1918,6 +1918,10 @@ unevaluated. In a forge mixing sheet and printed
 parts, the profile's bed fits each **printed** part in its print (export) pose, not
 the assembled view, and `minWall` and the overhang check skip sheet parts.
 
+### The kit
+
+A host downloads sheet parts as one ZIP, the **cut & print kit** (`format: "bundle"`): `README.txt`, `parts.csv`, laid-out `sheets/`, one `parts/` file per distinct piece (plus a `-marks.dxf` for a cutting service) and `print/` for printed parts. Identical pieces merge into one `-xN` file named from `export: { name }`, else the key. Destination (`"own-laser"` or `"service"`), kerf and stock size are chosen at download, so draw nominal and bind `thickness` to the measured control. A choice the kit cannot honour fails with `cut kit options:`.
+
 ### Limits
 
 - One thickness per joint: fingers, tabs and T-slots join panels cut from the
@@ -2993,15 +2997,39 @@ view-bound export UI. An embedder that wants its own export UI (e.g. a "pick whi
 pick a format" modal) can skip those buttons and drive export off the handle `mount()`
 returns instead:
 
-- `runtime.listExportableParts() → [{ name, label }]` — every exportable sub-part
+- `runtime.listExportableParts() → [{ name, label, sheet? }]` — every exportable sub-part
   (excludes any `exportable: false` part, respects each part's `enabled(params)`),
-  **independent of the active view**. Use it to populate an export checklist.
-- `runtime.exportParts({ parts, format, quality?, onProgress }) → Promise<void>` — build
-  the given `parts` (sub-part names) in `format` (`"stl" | "step" | "3mf"`), streaming
+  **independent of the active view**. Use it to populate an export checklist. A sheet
+  part's row also carries `sheet: { process, material, thickness, group }`, evaluated at
+  the current params (omitted when that throws) — enough to tag it in the list and to
+  name its stock group in the kit's `stock` option.
+- `runtime.listExportFormats() → [{ id, label, ext, mime, needsSheet }]` — the formats
+  `exportParts` writes in this version, as fresh copies of `EXPORT_FORMATS`. `needsSheet`
+  marks the one that needs a sheet part checked: `"bundle"`, the cut & print kit.
+- `runtime.exportParts({ parts, format, quality?, onProgress, options? }) → Promise<void>` — build
+  the given `parts` (sub-part names) in `format` (`"stl" | "step" | "3mf" | "bundle"`), streaming
   phase strings to `onProgress(phase)`. Resolves once the file is written (handed to your
   `onDownload` sink, or downloaded directly if you don't supply one); rejects on
   build/export failure or an empty selection. Placement uses the current
-  view. STEP is routed to OCCT automatically.
+  view. STEP is routed to OCCT automatically. Only `"bundle"` reads `options`.
+- **The cut & print kit** (`format: "bundle"`) writes one `<title>-kit.zip`: `README.txt`
+  (the thickness each material assumes, the kerf applied, a scale check per piece, the
+  colour or DXF-layer legend, every 2-D check that warned), `parts.csv`,
+  `sheets/<material>-<t>mm/sheet-<i>-of-<n>.svg` (the pieces laid out on the user's
+  stock), `parts/<name>[-xN].svg` (one per distinct piece; identical pieces merge) and
+  `print/<name>[-xN].stl` or `.3mf` (the printed parts, in their export pose). With
+  `destination: "service"` each piece is a cut-only `.dxf` plus a `-marks.dxf` for its
+  score and engrave lines, and the DXF sheets are for reference. Every `options` key is
+  optional: `destination` (`"own-laser"`, the default, or `"service"`), `kerf` (0–0.5 mm,
+  applied to the cut lines only), `stock: [{ group, size: [w, h] }]` (a row's
+  `sheet.group`, or `"*"` for every group; 300 × 300 mm when omitted), `margin` (5 mm),
+  `spacing` (3 mm), `printFormat` (`"stl"` or `"3mf"`) and `sets` (1–20). The main entry
+  exports `EXPORT_FORMATS`, `KIT_DEFAULTS`, `validateKitOptions` and `KIT_OPTIONS_ERROR`
+  for a host that draws its own options screen. An option the kit cannot honour — an
+  unknown key, a kerf that closes a slot, a piece bigger than an own laser's sheet, a
+  stock entry naming no group, more than 200 pieces or 50 sheets of one material —
+  rejects with a message starting `cut kit options:`: the user's setting to change, not
+  the part's code.
 - `runtime.warmExportKernel() → Promise<boolean>` — pay OCCT's cold boot *before* an
   export needs it. Because STEP is pinned to OCCT and OCCT's ~11 MB WASM loads on its
   first job, a part whose preview ran on Manifold pays that whole boot inside its first
