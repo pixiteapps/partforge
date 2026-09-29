@@ -463,6 +463,9 @@ describe("LASER.facts", () => {
   // 3 mm (w/2 1.5) that shrank r 2.7 corners (1.8 × w/2) cost 176 ms for 12 of them and
   // 440 ms for 20, and r 2 tabs cost seconds and were not started. As arcs, r 2 and r 3
   // tabs alike are read in milliseconds. `offsets` counts the shrinks and regrows run.
+  // These two run on a STOPPED clock, on which only the prices can withhold a reading: they
+  // pin the prices, not what a real device reads. The third runs the meter on CPU time and
+  // pins that — 12 tabs, the count a real desktop used to withhold even at r 3.
   const tabPanel = (n, r) => (kk) => {
     const pts = [[0, 0], [n * 20 + 10, 0], [n * 20 + 10, 30]];
     for (let i = n - 1; i >= 0; i--) pts.push([20 * i + 20, 30], [20 * i + 20, 40], [20 * i + 10, 40], [20 * i + 10, 30]);
@@ -490,6 +493,13 @@ describe("LASER.facts", () => {
       const { f, offsets } = offsetsRun(plate({ profile: tabPanel(n, 2) }));
       expect(f, `${n} tabs, r 2`).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true });
       expect(offsets).toBeGreaterThan(0);
+    }
+  });
+  test("…and 12 rounded tabs are read on a real clock, in under 100 ms of CPU", () => {
+    for (const r of [2, 3]) {
+      const { f, ms } = onCpu(plate({ profile: tabPanel(12, r) }), P);
+      expect(f, `12 tabs, r ${r}`).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true });
+      expect(ms, `12 tabs, r ${r}`).toBeLessThan(100);
     }
   });
 

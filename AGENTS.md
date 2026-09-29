@@ -315,10 +315,13 @@ the installed package, so let the publish finish before bumping the dep there.
   `sheetSolidMatch`) are *volunteered* — warnings that never count toward
   `declared`/`evaluated`, so they never set `verify.ok`. The 2-D checks share
   `SHEET_CHECK_BUDGET_MS` per `measure()` call, charged for 2-D work alone; the laser
-  descriptor leaves out of each width search the holes that cannot take part in it, and
-  prices every step (a test, and the boolean a test that found something runs) before it
-  starts, starting none that will not fit — so a profile too complex to read is not
-  started. Either way it is one `sheetChecks` warning, never a lost report. Tests
+  descriptor runs each width search on the profile with its circular cubics read as arcs
+  (`recoverArcs`, handed over by `resolveSheet`), less the holes that cannot take part in
+  it, and prices every step (a test, and the boolean it runs unless it handed back the
+  searched shape's own rings) before it starts, starting none that will not fit — so a
+  profile too complex to read is not started, nor a test that would shrink a
+  non-circular cubic to just past w/2. Either way it is one `sheetChecks` warning, never a
+  lost report; a DECLARED check the engine could not read is unevaluated too. Tests
   run the budget on a stopped clock (`measure(…, { now: () => 0 })`), never on the
   runner's speed. A view with no sheet part verifies
   byte-identically — `test/verify-golden.test.js` pins it; re-record only for a
