@@ -1912,8 +1912,9 @@ Widths come from shrinking and regrowing the cut outline with sharp corners,
 bisected to 0.05 mm; nothing narrower than twice the floor reads as that ceiling,
 with a note. A finding's `location` is its spot in the assembly at mid-thickness
 (none when the pose cannot be traced). The 2-D checks share a 1.5 s budget per
-measurement: past it a sheet gets one `sheetChecks` warning instead, and a
-declared sheet check comes back unevaluated. In a forge mixing sheet and printed
+measurement: past it, or when a profile is plainly too complex for it, a sheet
+gets one `sheetChecks` warning instead, and a declared sheet check comes back
+unevaluated. In a forge mixing sheet and printed
 parts, the profile's bed fits each **printed** part in its print (export) pose, not
 the assembled view, and `minWall` and the overhang check skip sheet parts.
 
@@ -1932,7 +1933,7 @@ the assembled view, and `minWall` and the overhang check skip sheet parts.
 
 ### Worked example: laser-box.js
 
-`src/parts/laser-box.js`, verbatim — slots placed with `printedTab` and `worldToSheet`:
+`src/parts/laser-box.js`, verbatim:
 
 ```js
 // Finger-jointed plywood box: five laser-cut panels from fingerBox, a laser-cut lid,
