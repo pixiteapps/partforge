@@ -64,11 +64,11 @@ function roundHole(ring) {
   return r > 0 && pts.every((q) => Math.abs(dist(q, at) - r) <= 0.01 * r) ? { d: 2 * r, at } : null;
 }
 
-// Each segment of a ring as the width search sees it: its end tangents, how far it turns
-// (signed, + to the left: toward the material, since storage winding keeps the material on
-// the left of travel), which way it bends (+1 left, -1 right, 0 both ways: an inflected
-// cubic), its tightest radius, and points along it to FLAT_TOL (its end included). Zero-
-// length lines are dropped: they have no direction.
+// Each segment of a ring as the hole plan and the prices see it: its end tangents, points
+// along it to FLAT_TOL (its end included), and for a cubic which way it bends (+1 left:
+// toward the material, since storage winding keeps the material on the left of travel;
+// -1 right; 0 both ways, an inflected cubic) and its tightest radius. Zero-length lines
+// are dropped: they have no direction.
 const FLAT_TOL = 0.005;
 const sub2 = (a, b) => [a[0] - b[0], a[1] - b[1]];
 const cross2 = (a, b) => a[0] * b[1] - a[1] * b[0];
@@ -105,7 +105,7 @@ const CUBIC_SAMPLES = 16;
 function segInfo(from, seg) {
   const line = () => {
     const t = unit(sub2(seg.to, from));
-    return t && { from, to: seg.to, curved: false, t0: t, t1: t, turn: 0, dir: 0, rMin: Infinity, pts: [seg.to] };
+    return t && { from, to: seg.to, t0: t, t1: t, pts: [seg.to] };
   };
   if (seg.via) {
     const a = arcCircle(from, seg.via, seg.to);
@@ -115,24 +115,23 @@ function segInfo(from, seg) {
     const pts = [];
     for (let i = 1; i < steps; i++) { const t = a.a0 + (a.sweep * i) / steps; pts.push([a.c[0] + a.r * Math.cos(t), a.c[1] + a.r * Math.sin(t)]); }
     pts.push(seg.to);
-    return { from, to: seg.to, curved: true, t0: tan(from), t1: tan(seg.to), turn: a.sweep, dir: Math.sign(a.sweep), rMin: a.r, pts };
+    return { from, to: seg.to, t0: tan(from), t1: tan(seg.to), pts };
   }
   if (!seg.c1) return line();
   const { c1, c2, to } = seg;
   const t0 = unit(sub2(c1, from)) ?? unit(sub2(c2, from)) ?? unit(sub2(to, from));
   const t1 = unit(sub2(to, c2)) ?? unit(sub2(to, c1)) ?? unit(sub2(to, from));
   if (!t0 || !t1) return null;
-  let turn = 0, left = false, right = false, rMin = Infinity, prev = null;
+  let left = false, right = false, rMin = Infinity;
   for (let k = 0; k <= CUBIC_SAMPLES; k++) {
     const t = k / CUBIC_SAMPLES, d1 = bez1(from, c1, c2, to, t), d2 = bez2(from, c1, c2, to, t);
     const x = cross2(d1, d2), speed = Math.hypot(d1[0], d1[1]);
     if (x > 1e-12) left = true; else if (x < -1e-12) right = true;
     if (Math.abs(x) > 1e-12 && speed > 1e-9) rMin = Math.min(rMin, speed ** 3 / Math.abs(x));
-    if (speed > 1e-9) { if (prev) turn += Math.atan2(cross2(prev, d1), dot2(prev, d1)); prev = d1; }
   }
   const pts = [];
   flattenCubic(from, c1, c2, to, pts);
-  return { from, to, curved: true, cubic: true, t0, t1, turn, dir: left && right ? 0 : left ? 1 : right ? -1 : 0, rMin, pts };
+  return { from, to, cubic: true, t0, t1, dir: left && right ? 0 : left ? 1 : right ? -1 : 0, rMin, pts };
 }
 function ringParts(ring) {
   const c = asContour(ring), parts = [];
@@ -141,12 +140,6 @@ function ringParts(ring) {
   return parts;
 }
 const polyArea = (pts) => pts.reduce((a, q, i) => a + cross2(q, pts[(i + 1) % pts.length]), 0) / 2;
-function lineMeet(P, u, Q, v) {
-  const d = cross2(u, v);
-  if (Math.abs(d) < 1e-12) return null;
-  const k = cross2(sub2(Q, P), v) / d;
-  return [P[0] + u[0] * k, P[1] + u[1] * k];
-}
 
 // ── what a width search can leave out ────────────────────────────────────────
 // Every test shrinks and regrows the whole profile, and on booleaned geometry the whole
@@ -208,6 +201,8 @@ function minWidth(pts) {
   });
   return best;
 }
+// A corner sharper than 60° (a turn past 120°), where the sharp join bevels (MITER_LIMIT 2).
+const ACUTE_TURN = (2 * Math.PI) / 3;
 const sharpCorner = (ring) => {
   const parts = partsOf(ring);
   return parts.some((pt, i) => { const a = parts[(i - 1 + parts.length) % parts.length].t1; return Math.abs(Math.atan2(cross2(a, pt.t0), dot2(a, pt.t0))) > ACUTE_TURN; });
@@ -280,14 +275,13 @@ function holePlan(contours, ceiling) {
 // does not fit what is left of the budget is not started — the reading stays out
 // (evaluated: false, verify's notice), exactly as if the budget had run out, without a
 // multi-second offset or boolean running past it inside partforge-cloud's one 8 s
-// report. That covers the first test (the old cost pre-gate: a profile too complex to
-// read at all is not started) and every test after it, and — the step the old gate
-// could not see — the one-sided difference a test that found something runs, priced
-// from the test's own result before it starts. With no deadline the caller asked for
-// the whole reading, however long, and gets it.
+// report. That covers every test — the first one too, so a profile too complex to read
+// at all is not started — and every test's one-sided difference, priced from the
+// test's own result before it starts. With no deadline the caller asked for the whole
+// reading, however long, and gets it.
 // Prices are in units of about one desktop-Node millisecond, fitted to CPU time on 3 mm
 // stock (docs/research/sheet-inspect-timing.md, "What a profile costs"):
-//   a test (two sharp offsets and an area), per segment of the shape tested:
+//   a test (two sharp offsets), per segment of the shape tested:
 //     line 1.2 (1,028: 1.1 s)   arc 2.5 (512 perforations with narrow webs: 1.1 s)
 //     cubic 3 (1,024 beside 1,028 lines: 5.2 s)
 //   and the offset engine's worst case, a cubic whose radius the test SHRINKS to within
@@ -315,13 +309,18 @@ const countsOf = (contours) => {
   }
   return c;
 };
-// One test at width w on a search's shape. `first` is the half of the artifact plan the
-// test's first offset shrinks (an opening's convex runs, a closing's concave ones),
-// `other` the half it grows first.
-function testPrice(band, first, other, w) {
-  const { line, arc, cubic } = band.counts, P = PRICE.test, h = w / 2;
-  const cubicsWithin = (runs, r) => runs.reduce((n, run) => n + (run.rMin <= r ? run.cubics : 0), 0);
-  const shrunk = cubicsWithin(first, 2.5 * h), grownBack = cubicsWithin(other, 1.5 * h);
+// Which way each cubic of these rings bends, and its tightest radius (segInfo).
+const cubicsOf = (contours) => contours.flatMap((rg) => [rg.outer, ...rg.holes])
+  .flatMap((ring) => partsOf(ring).filter((pt) => pt.cubic).map(({ dir, rMin }) => ({ dir, rMin })));
+// One test at width w on a search's shape. `shrinks` is the way a cubic bends when the
+// test's first offset shrinks it: +1 (convex) in an opening, -1 (concave) in a closing.
+function testPrice(search, shrinks, w) {
+  const { line, arc, cubic } = search.counts, P = PRICE.test, h = w / 2;
+  let shrunk = 0, grownBack = 0;
+  for (const c of search.cubics) {
+    if (c.dir !== -shrinks && c.rMin <= 2.5 * h) shrunk++;
+    if (c.dir !== shrinks && c.rMin <= 1.5 * h) grownBack++;
+  }
   return line * P.line + arc * P.arc + cubic * P.cubic + shrunk * shrunk * P.shrunkPair + grownBack * P.grownBack;
 }
 function diffPrice(a, b) {
@@ -347,175 +346,73 @@ export function _meter(deadline, now) {
 // OPENING: shrink by w/2, regrow) or empty space narrower than w fills in (a CLOSING:
 // grow by w/2, shrink back), and returns what left (or entered) it, or null.
 //
-// ONE-SIDED, never a net area change. With sharp offsets a rounded corner narrower
-// than w does not come back as itself: a convex fillet on the outline regrows as a
-// square corner OUTSIDE the profile, and a hole's rounded corner closes back square
-// INSIDE the hole. Each lands on the side opposite the one being measured, so a net
-// area change let an ordinary fillet elsewhere cancel a real narrow web or slot
-// (capped, "nothing narrower found"). Counting only what left the profile (opening)
+// ONE-SIDED, never a net area change, and computed on every test. With sharp offsets a
+// corner narrower than w does not come back as itself: a convex fillet on the outline —
+// an arc, a cubic, a chamfer or a run of short straight segments alike — loses its short
+// edges and regrows as a square corner OUTSIDE the profile, and a hole's rounded or
+// chamfered corner closes back square INSIDE the hole. Each lands on the side opposite
+// the one being measured, so a net area change let an ordinary fillet elsewhere cancel
+// a real narrow web or slot (capped, "nothing narrower found"), and so did any shortcut
+// that read "nothing changed" off the net change — near a coincident dimension the
+// artifacts cancel the finding to zero. Counting only what left the profile (opening)
 // or only what entered it (closing) puts every such artifact on the uncounted side.
 // And a loss is ONE region above LOSS_TOL_MM2, never a sum: the cubic offset's own
 // approximation error (OFFSET_TOL) leaves hundreds of sub-tolerance slivers along
 // curved edges, and summed they read three 8 mm rounded holes as a 2.91 mm gap — the
 // same rule marksFacts counts stray marks by.
-//
 // That difference is a boolean between the profile and its near-copy — on curves
-// paper's worst case (64 booleaned holes: 1.8 s, 256: 28 s, then refused) — so a test
-// that changed nothing skips it: most tests, every capped panel's. "Nothing" allows for
-// the offset's approximation of curves, a systematic ~1e-4 mm² per cubic, measured
-// (0.022 mm² over 64 booleaned holes): the band is LOSS_TOL_MM2 plus 1e-4 per curved
-// segment. But the net change is the real finding MINUS the artifacts, so near a
-// coincident dimension an artifact elsewhere cancels a real web or slot into the band
-// and the skip hides it again (a 0.8 × 1.07 mm bridge beside an r 1 filleted outline).
-// So the skip is taken only when even the most the artifacts could have cancelled
-// leaves the finding inside the band: the finding is at most net + bound, where bound
-// (artifactBound) is the area every artifact this width can make could reach. With
-// nothing that can make one — the common case, and every rectilinear panel — the bound
-// is 0 and the skip is exactly the old one.
-// When paper refuses the difference, the test falls back to the net area change it
-// replaced, so the one-sided rule is never worse than it: the reading stays, the
-// finding goes unlocated (UNLOCATED).
-const NOISE_PER_CURVE_MM2 = 1e-4;
-const UNLOCATED = Object.freeze({ unlocated: true });
+// paper's worst case — so it is priced from the test's own result before it starts,
+// like every step. And it has no fallback: when paper refuses it, the refusal ends the
+// reading (narrowest), which verify reports as a check it could not take.
+function oneSided(difference, spend, price) {
+  spend(price);
+  const d = difference();
+  return !d.isEmpty() && d.regions().some((r) => r.area() > LOSS_TOL_MM2) ? d : null;
+}
+
+function openingLoss(search, w, spend) {
+  let opened;
+  try { opened = search.shape.offset(-w / 2, SHARP).offset(w / 2, SHARP); }
+  catch (e) { if (COLLAPSES.test(e?.message ?? "")) return search.shape; throw e; }
+  return oneSided(() => search.shape.cut(opened), spend, diffPrice(search.counts, countsOf(opened.toContours())));
+}
+
+function closingGain(search, w, spend) {
+  const closed = search.shape.offset(w / 2, SHARP).offset(-w / 2, SHARP);
+  return oneSided(() => closed.cut(search.shape), spend, diffPrice(search.counts, countsOf(closed.toContours())));
+}
+
 // The geometry engine refuses with a plain Error ("contour-winding: could not chain…",
 // "curve-fill: …"); a TypeError, RangeError or the like is a bug, never a refusal, and
 // is left to propagate so reading() can report it.
 const isRefusal = (e) => e instanceof Error && e.name === "Error";
-
-function oneSided(difference, net, noise, bound, price) {
-  if (net >= -noise && net + bound <= noise) return null;
-  price();
-  try {
-    const d = difference();
-    return !d.isEmpty() && d.regions().some((r) => r.area() > LOSS_TOL_MM2) ? d : null;
-  } catch (e) {
-    if (!isRefusal(e)) throw e;
-    return net > noise ? UNLOCATED : null;
-  }
-}
-
-// `spend` prices the difference from the test's own result before it starts (below).
-function openingLoss(profile, area, w, band, spend) {
-  let opened;
-  try { opened = profile.offset(-w / 2, SHARP).offset(w / 2, SHARP); }
-  catch (e) { if (COLLAPSES.test(e?.message ?? "")) return profile; throw e; }
-  return oneSided(() => profile.cut(opened), area - opened.area(), band.noise, artifactBound(band.artifacts.opening, w),
-    () => spend(diffPrice(band.counts, countsOf(opened.toContours()))));
-}
-
-function closingGain(profile, area, w, band, spend) {
-  const closed = profile.offset(w / 2, SHARP).offset(-w / 2, SHARP);
-  return oneSided(() => closed.cut(profile), closed.area() - area, band.noise, artifactBound(band.artifacts.closing, w),
-    () => spend(diffPrice(band.counts, countsOf(closed.toContours()))));
-}
-
-// What a sharp test at width w can put on the side it does not count. Material bends
-// LEFT of travel (storage winding), so:
-//   an opening (shrink, regrow) ADDS material — cancelling a loss — where
-//     • a run of curve bending left (a convex fillet, a rounded tab) has a radius at most
-//       w/2: it collapses to a corner and regrows square, adding what lies between the
-//       run and its two end tangents (r²·(tan(θ/2) − θ/2) for an arc: 0.215 mm² for a
-//       90° r 1 fillet); and where
-//     • an empty corner is sharper than 60° (a turn past 120°): shrinking bevels it, and
-//       regrowing fills its tip up to (w/2)·(1 − sin(φ/2)) from the apex, a triangle of
-//       (w/2)²·tan(φ/2)·(1 − sin(φ/2))²;
-//   a closing (grow, shrink back) REMOVES material — cancelling a gain — at the mirror
-//     images: runs bending right (a rounded notch or hole corner) and material spikes
-//     sharper than 60°.
-// A run that turns 180° or more, or bends both ways (an inflected cubic), has no finite
-// tangent region: its bound is infinite and a test that could collapse it never skips.
-// The planning is per profile, from the IR alone; artifactBound adds up what can fire at w.
-const ACUTE_TURN = (2 * Math.PI) / 3;          // past it the sharp join bevels (MITER_LIMIT 2)
-const SMOOTH_TURN = Math.PI / 180;             // 1°, the offset engine's own smooth joint
-function artifactPlan(contours) {
-  const plan = { opening: { runs: [], acute: [] }, closing: { runs: [], acute: [] } };
-  const add = (dir, entry, key) => {
-    if (dir >= 0) plan.opening[key].push(entry);
-    if (dir <= 0) plan.closing[key].push(entry);
-  };
-  for (const rg of contours) for (const ring of [rg.outer, ...rg.holes]) {
-    const parts = partsOf(ring), n = parts.length;
-    if (!n) continue;
-    // joint[i]: the turn from the end of part i-1 into part i, + to the left.
-    const joint = parts.map((pt, i) => { const a = parts[(i - 1 + n) % n].t1; return Math.atan2(cross2(a, pt.t0), dot2(a, pt.t0)); });
-    for (const ang of joint)                                    // left (+): a material spike
-      if (Math.abs(ang) > ACUTE_TURN) add(ang > 0 ? -1 : 1, Math.PI - Math.abs(ang), "acute");
-    const joins = (i) => parts[i].curved && parts[(i - 1 + n) % n].curved && Math.abs(joint[i]) < SMOOTH_TURN;
-    const start = parts.findIndex((_, i) => parts[i].curved && !joins(i));
-    if (start < 0) {                                          // one smooth curved loop, or no curve at all
-      if (parts.every((pt) => pt.curved)) {
-        const dirs = new Set(parts.map((pt) => pt.dir));
-        add(dirs.size === 1 ? [...dirs][0] : 0, { rMin: Math.min(...parts.map((pt) => pt.rMin)), area: Infinity, cubics: cubicsIn(parts) }, "runs");
-      }
-      continue;
-    }
-    for (let k = 0; k < n; k++) {
-      const i = (start + k) % n;
-      if (!parts[i].curved || joins(i)) continue;
-      const run = [parts[i]];
-      for (let j = (i + 1) % n; j !== i && joins(j); j = (j + 1) % n) run.push(parts[j]);
-      const dirs = new Set(run.map((pt) => pt.dir));
-      const dir = dirs.size === 1 ? [...dirs][0] : 0;
-      add(dir, { rMin: Math.min(...run.map((pt) => pt.rMin)), area: dir === 0 ? Infinity : tangentRegion(run), cubics: cubicsIn(run) }, "runs");
-    }
-  }
-  return plan;
-}
-const cubicsIn = (parts) => parts.filter((pt) => pt.cubic).length;
-// The area between a run of curve bending one way and the tangent lines at its two ends.
-function tangentRegion(run) {
-  let turn = 0;
-  run.forEach((pt, i) => { turn += pt.turn; if (i) turn += Math.atan2(cross2(run[i - 1].t1, pt.t0), dot2(run[i - 1].t1, pt.t0)); });
-  if (Math.abs(turn) >= Math.PI - 1e-6) return Infinity;
-  if (Math.abs(turn) < 1e-9) return 0;
-  const P0 = run[0].from, P1 = run.at(-1).to, X = lineMeet(P0, run[0].t0, P1, run.at(-1).t1);
-  return X ? Math.abs(polyArea([P0, ...run.flatMap((pt) => pt.pts), X])) : Infinity;
-}
-function artifactBound(side, w) {
-  const h = w / 2;
-  let bound = 0;
-  for (const run of side.runs) if (run.rMin <= h * (1 + 1e-6)) bound += run.area;
-  for (const phi of side.acute) bound += h * h * Math.tan(phi / 2) * (1 - Math.sin(phi / 2)) ** 2;
-  return bound;
-}
-
-// The band a search's tests skip inside: LOSS_TOL_MM2 plus the curve noise for these
-// rings, and what their artifacts could cancel (artifactPlan); and the rings' counts,
-// which the prices read.
-const bandOf = (contours) => ({
-  counts: countsOf(contours),
-  noise: LOSS_TOL_MM2 + NOISE_PER_CURVE_MM2 * contours
-    .flatMap((rg) => [rg.outer, ...rg.holes])
-    .reduce((n, ring) => n + (Array.isArray(ring) ? 0 : ring.segments.filter((seg) => seg.c1 || seg.via).length), 0),
-  artifacts: artifactPlan(contours),
-});
 
 // The narrowest width at which `test` finds something, bisected over [0, ceiling] to
 // WIDTH_RESOLUTION: the upper end of the last bracket (the first width that fails),
 // rounded to 0.01 mm. The ceiling is tried first — most panels have nothing that
 // narrow, and one test settles them — and then reads as the ceiling itself, `capped`.
 // The finding is located by the last shape actually found.
-// An engine refusal at any width ends the reading: reading() records why and the value
-// is null, so verify says the check could not be taken. Counting a refusal below a
-// ceiling hit as "found there" read a refusal between a web's true width and the floor
-// as a sub-floor web, a false warning placed at the real web; the width it came at
-// rides along in the reason.
+// An engine refusal at any width ends the reading: reading() records why, with the width
+// it came at, and the value is null, so verify says the check could not be taken.
+// Counting a refusal as found read a refusal between a web's true width and the floor as
+// a sub-floor web (a false warning placed at the real web); counting it as not found
+// would pass a check on nothing.
 function narrowest(test, ceiling, spend, price) {
-  spend(price(ceiling));
-  let found = test(ceiling);
+  const at = (w) => {
+    spend(price(w));
+    try { return test(w); } catch (e) {
+      if (isRefusal(e)) throw new Error(`${e.message} (width search at ${fmtMm(w)} mm)`, { cause: e });
+      throw e;
+    }
+  };
+  let found = at(ceiling);
   if (!found) return { value: ceiling, capped: true, at: null };
   let lo = 0, hi = ceiling;
   while (hi - lo > WIDTH_RESOLUTION) {
-    const mid = (lo + hi) / 2;
-    spend(price(mid));
-    let hit;
-    try { hit = test(mid); } catch (e) {
-      if (isRefusal(e)) throw new Error(`${e.message} (width search at ${fmtMm(mid)} mm)`, { cause: e });
-      throw e;
-    }
-    if (hit) { hi = mid; if (hit !== UNLOCATED) found = hit; } else lo = mid;
+    const mid = (lo + hi) / 2, hit = at(mid);
+    if (hit) { hi = mid; found = hit; } else lo = mid;
   }
-  return { value: round2(hi), capped: false, at: found === UNLOCATED ? null : centreOfLargest(found) };
+  return { value: round2(hi), capped: false, at: centreOfLargest(found) };
 }
 
 // The narrowest opening: the closing's reading on the profile less the holes it can
@@ -523,9 +420,7 @@ function narrowest(test, ceiling, spend, price) {
 // a booleaned screw hole never enters the bisection (4.5 s for one M2.5 hole, before).
 // The narrower of the two wins.
 function narrowestGap(search, round, ceiling, spend) {
-  const { opening, closing } = search.band.artifacts;
-  const gap = narrowest((w) => closingGain(search.shape, search.area, w, search.band, spend), ceiling, spend,
-    (w) => testPrice(search.band, closing.runs, opening.runs, w));
+  const gap = narrowest((w) => closingGain(search, w, spend), ceiling, spend, (w) => testPrice(search, -1, w));
   const smallest = round.length ? round.reduce((a, b) => (b.d < a.d ? b : a)) : null;
   return smallest && smallest.d < ceiling && (gap.capped || smallest.d < gap.value)
     ? { value: round2(smallest.d), capped: false, at: smallest.at }
@@ -663,17 +558,14 @@ export const LASER = {
     // trusted lift.
     const lift = s.trustedShape2d;
     const plan = lift && pieces ? holePlan(contours, ceiling) : { open: null, close: null, round: [] };
-    const searchOn = (reduced) => {
-      const shape = reduced ? lift(reduced) : profile;
-      return { shape, area: reduced ? shape.area() : area, band: bandOf(reduced ?? contours) };
-    };
+    const searchOn = (reduced) => ({
+      shape: reduced ? lift(reduced) : profile, counts: countsOf(reduced ?? contours), cubics: cubicsOf(reduced ?? contours),
+    });
     try {
       const errors = { bridge: null, gap: null, marks: null, marksArea: null };
       const bridge = reading(errors, "bridge", () => {
         const search = searchOn(plan.open);
-        const { opening, closing } = search.band.artifacts;
-        return narrowest((w) => openingLoss(search.shape, search.area, w, search.band, spend), ceiling, spend,
-          (w) => testPrice(search.band, opening.runs, closing.runs, w));
+        return narrowest((w) => openingLoss(search, w, spend), ceiling, spend, (w) => testPrice(search, 1, w));
       });
       const gap = reading(errors, "gap", () => narrowestGap(searchOn(plan.close), plan.round, ceiling, spend));
       const m = reading(errors, "marks", () => marksFacts(s, spend));

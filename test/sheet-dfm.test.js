@@ -93,10 +93,11 @@ describe("LASER.facts", () => {
     }
   });
 
-  // …nor at a COINCIDENT dimension. A test that changed nothing skips its one-sided
-  // difference, and "nothing" used to be a net area change inside the noise band — so a
-  // web whose loss the outline's regrown square corners (4·r²·(1 − π/4)) cancelled to
-  // within the band hid again. These heights are where the two cancel to 0 ± 0.008 mm².
+  // …nor at a COINCIDENT dimension. A test that "changed nothing" used to skip its
+  // one-sided difference, "nothing" read off the net area change — so a web whose loss the
+  // outline's regrown square corners (4·r²·(1 − π/4)) cancelled to within a noise band hid
+  // again. Every test runs its difference now. These heights are where the two cancel to
+  // 0 ± 0.008 mm².
   test("a filleted outline does not hide a 0.8 mm bridge whose loss it cancels exactly", () => {
     for (const [r, h0] of [[1, 1.0719], [1.4, 2.1009]]) for (const h of [h0 - 0.004, h0, h0 + 0.004]) {
       const holes = [rect(10, 15, 20, 25), rect(20.8, 25 - h, 30.8, 35 - h)];     // a 0.8 × h bridge at x 20–20.8
@@ -106,6 +107,28 @@ describe("LASER.facts", () => {
       expect(f.bridge).toBeLessThanOrEqual(0.85);
       expect(f.at2d.bridge[0]).toBeCloseTo(20.4, 0);
       expect(f.at2d.bridge[1]).toBeCloseTo(25 - h / 2, 0);
+    }
+  });
+
+  // The artifact need not be a curve. A chamfer, or a fillet drawn as straight segments,
+  // loses its short edges to a sharp shrink and regrows square exactly as an arc fillet
+  // does. `cornered(s, segs)`: the plate with each corner cut by `segs` straight segments
+  // along a quarter circle of radius s — one segment is a 45° chamfer of legs s.
+  const cornered = (s, segs) => [[60, 0, -0.5], [60, 40, 0], [0, 40, 0.5], [0, 0, 1]].flatMap(([x, y, a0]) => {
+    const c = [x + (x ? -s : s), y + (y ? -s : s)];
+    return Array.from({ length: segs + 1 }, (_, i) => { const a = Math.PI * (a0 + i / (2 * segs)); return [c[0] + s * Math.cos(a), c[1] + s * Math.sin(a)]; });
+  });
+  test("a chamfered or polyline-rounded outline does not hide a 0.8 mm bridge whose loss it cancels exactly", () => {
+    for (const [s, segs, h0] of [[0.5, 1, 0.625], [0.8, 1, 1.6], [1, 8, 1.09819], [1, 4, 1.17317], [1.4, 16, 2.11546]]) {
+      for (const h of [h0 - 0.004, h0, h0 + 0.004]) {
+        const holes = [rect(10, 15, 20, 25), rect(20.8, 25 - h, 30.8, 35 - h)];     // a 0.8 × h bridge at x 20–20.8
+        const f = factsOf(plate({ profile: (kk) => kk.shape2d(cornered(s, segs)).cut(kk.shape2d(holes[0])).cut(kk.shape2d(holes[1])) }));
+        expect(f.bridgeCapped, `corner ${s} × ${segs} segs, h ${h.toFixed(4)}`).toBe(false);
+        expect(f.bridge).toBeGreaterThan(0.79);
+        expect(f.bridge).toBeLessThanOrEqual(0.85);
+        expect(f.at2d.bridge[0]).toBeCloseTo(20.4, 0);
+        expect(f.at2d.bridge[1]).toBeCloseTo(25 - h / 2, 0);
+      }
     }
   });
 
@@ -124,6 +147,18 @@ describe("LASER.facts", () => {
       expect(f.gapCapped, `r ${r}, L ${L.toFixed(4)}`).toBe(false);
       expect(f.gap).toBeGreaterThan(gap - 0.06);
       expect(f.gap).toBeLessThanOrEqual(gap + 0.05);
+      expect(f.at2d.gap[0]).toBeCloseTo(70.45, 0);
+      expect(f.at2d.gap[1]).toBeCloseTo(20 + L / 2, 0);
+    }
+  });
+
+  test("a notch's chamfered inner corners do not hide a small hole whose gain they cancel exactly", () => {
+    const notch = (c) => [[40 + c, 45], [60 - c, 45], [60, 45 + c], [60, 65], [40, 65], [40, 45 + c]];   // reaching past the top edge
+    for (const [c, L0] of [[0.6, 0.4], [0.8, 0.71111]]) for (const L of [L0 - 0.004, L0, L0 + 0.004]) {
+      const f = factsOf(plate({ profile: (kk) => kk.shape2d(rect(0, 0, 100, 60)).cut(kk.shape2d(notch(c))).cut(kk.shape2d(rect(70, 20, 70.9, 20 + L))) }));
+      expect(f.gapCapped, `chamfer ${c}, L ${L.toFixed(4)}`).toBe(false);
+      expect(f.gap).toBeGreaterThan(L - 0.06);
+      expect(f.gap).toBeLessThanOrEqual(L + 0.05);
       expect(f.at2d.gap[0]).toBeCloseTo(70.45, 0);
       expect(f.at2d.gap[1]).toBeCloseTo(20 + L / 2, 0);
     }
@@ -156,25 +191,23 @@ describe("LASER.facts", () => {
   });
 
   // paper's boolean can refuse a difference the offsets produced ("curve-fill: resolved
-  // hole has no containing outer"). The one-sided test then falls back to the net area
-  // change it replaced — never a lost reading — and the finding goes unlocated.
-  test("a one-sided difference the engine refuses falls back to the net area change", () => {
+  // hole has no containing outer"). There is no honest reading without it: falling back
+  // to the net area change read "nothing narrower" wherever an artifact cancelled the
+  // finding. The refusal ends the reading instead, and says why and at what width.
+  test("a one-sided difference the engine refuses is a read error, never a net-area verdict", () => {
+    const REFUSAL = "curve-fill: resolved hole has no containing outer";
     const refusing = (shape) => new Proxy(shape, { get(target, key) {
-      if (key === "cut") return () => { throw new Error("curve-fill: resolved hole has no containing outer"); };
+      if (key === "cut") return () => { throw new Error(REFUSAL); };
       if (key === "offset") return (...a) => refusing(target.offset(...a));
       const v = Reflect.get(target, key);
       return typeof v === "function" ? v.bind(target) : v;
     } });
-    const refused = (sp) => { const s = resolveSheet(k, sp, P, {}); return LASER.facts({ ...s, profile: refusing(s.profile) }); };
-    const web = refused(plate({ profile: (kk) => kk.shape2d(WEB) }));
-    expect(web).toMatchObject({ evaluated: true, bridgeCapped: false, gapCapped: true });
-    expect(web.bridge).toBeGreaterThan(0.79);
-    expect(web.bridge).toBeLessThanOrEqual(0.85);
-    expect(web.at2d.bridge).toBeNull();
-    const slot = refused(plate({ profile: (kk) => kk.shape2d(SLOT) }));
-    expect(slot).toMatchObject({ evaluated: true, gapCapped: false, bridgeCapped: true });
-    expect(slot.gap).toBeLessThanOrEqual(0.65);
-    expect(slot.at2d.gap).toBeNull();
+    const s = resolveSheet(k, plate({ profile: (kk) => kk.shape2d(WEB) }), P, {});
+    const f = LASER.facts({ ...s, profile: refusing(s.profile), trustedShape2d: (c) => refusing(s.trustedShape2d(c)) });
+    expect(f).toMatchObject({ evaluated: true, bridge: null, bridgeCapped: false, gap: null, gapCapped: false });
+    expect(f.at2d).toMatchObject({ bridge: null, gap: null });
+    expect(f.readErrors.bridge).toBe(`${REFUSAL} (width search at 3 mm)`);
+    expect(f.readErrors.gap).toBe(`${REFUSAL} (width search at 3 mm)`);
   });
 
   // A refusal INSIDE the width search is not a finding. Counted as one, a refusal between a
@@ -234,28 +267,26 @@ describe("LASER.facts", () => {
     expect(slot.at2d.gap[1]).toBeCloseTo(30.3, 0);
   });
 
-  // Offsetting a cubic is an approximation (OFFSET_TOL), so a profile of many cubics comes
-  // back from a test that changed nothing with its area moved a little all the same —
-  // about 1e-4 mm² per cubic, 0.022 mm² for 64 booleaned holes. Past LOSS_TOL_MM2 that
-  // noise sent every test into the one-sided difference, a boolean between the profile
-  // and its near-copy: 28 s for those 256 cubics, then refused. At a 10 mm pitch the 4 mm
-  // webs are wider than the ceiling but inside an opening's reach, so the opening keeps
-  // every hole (holePlan) and the noise band is what spares it the boolean.
-  test("many booleaned holes and nothing narrow: no boolean against a near-copy", () => {
+  // A test that finds nothing still runs its one-sided difference: a net area change
+  // that reads "nothing changed" is exactly what an artifact elsewhere can fake. On a
+  // cubic near-copy that difference is paper's worst case — 48 booleaned holes: about
+  // 14 s — and at a 10 mm pitch the 4 mm webs are inside an opening's reach, so the
+  // opening keeps every hole (holePlan). The difference is priced like every step: the
+  // ceiling test runs, its difference does not fit, and the notice stands in for it.
+  test("many booleaned holes and nothing narrow: the difference is still priced, and here withheld", () => {
     const holes = Array.from({ length: 48 }, (_, i) => sheetHole({ d: 6, at: [10 + (i % 16) * 10, 10 + Math.floor(i / 16) * 10] }));
     const s = resolveSheet(k, plate({ profile: (kk) => kk.shape2d(rect(0, 0, 200, 44)).cutAll(holes) }), P, {});
     let cuts = 0, offsets = 0;
     const counted = (shape) => new Proxy(shape, { get(target, key) {
       if (key === "cut") return (...a) => { cuts++; return counted(target.cut(...a)); };
       if (key === "offset") return (...a) => { offsets++; return counted(target.offset(...a)); };
-      if (key === "union") return (...a) => counted(target.union(...a));
       const v = Reflect.get(target, key);
       return typeof v === "function" ? v.bind(target) : v;
     } });
-    const f = LASER.facts({ ...s, profile: counted(s.profile) });
-    expect(f).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true });
-    expect(offsets).toBeGreaterThan(0);                   // the opening did run on every hole…
-    expect(cuts).toBe(0);                                 // …and no test ran the boolean
+    const f = LASER.facts({ ...s, profile: counted(s.profile) }, { deadline: 1500, now: () => 0 });
+    expect(f).toMatchObject({ evaluated: false, bridge: null, gap: null });
+    expect(offsets).toBe(2);                              // the opening's ceiling test ran…
+    expect(cuts).toBe(0);                                 // …and its difference was priced out, not skipped
   });
 
   // What no reading can bound is ONE test: the deadline is checked between them. A profile
