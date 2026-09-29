@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import { recoverArcs } from "../src/framework/geometry/arc-fit.js";
 import { arcCenterAndSweep } from "../src/framework/geometry/paper-bridge.js";
+import { PACE, cpuMs } from "./helpers/cpu-pace.js";
 
 // A circle the way paper.js builds one: four cubics with the standard kappa
 // handle. This is the exact shape importSVG hands back for a <circle>.
@@ -314,7 +315,6 @@ test("a tiny arc far from the origin is one arc, though rounding swamps its shor
     expect(out.segments.map((s) => (s.via ? "A" : "C")).join(""), `a0 ${a0}`).toBe("A");
   }
 });
-const cpuMs = () => { const u = process.threadCpuUsage(); return (u.user + u.system) / 1000; };
 // A closed organic outline: Catmull-Rom cubics through n points of a wobbly ellipse, none of
 // them on one circle for long (the reviewer's ring); and a circle of n kappa cubics.
 const organicRing = (n) => {
@@ -328,13 +328,15 @@ const organicRing = (n) => {
   });
   return { start: pts[0], segments };
 };
+// `cpuMs` is main-thread CPU time in the calibration desktop's milliseconds
+// (test/helpers/cpu-pace.js): on a runner PACE times slower, 150 is 150 × PACE ms of its own.
 test("1,600 and 4,000 cubics that are not a circle, or 4,000 that are, are read in under 150 ms of CPU", () => {
   for (const [name, ring] of [["organic 1,600", organicRing(1600)], ["organic 4,000", organicRing(4000)],
     ["circle of 4,000", circularRun([0, 0], 40, 0, 2 * Math.PI - 1e-3, 4000)]]) {
     const t0 = cpuMs();
     const out = recoverArcs(ring);
     const ms = cpuMs() - t0;
-    expect(ms, name).toBeLessThan(150);                  // were 3.4 s, ~50 s and 3.6 s
+    expect(ms, `${name} (pace ${PACE.toFixed(2)})`).toBeLessThan(150);   // were 3.4 s, ~50 s and 3.6 s
     expect(out.segments.length, name).toBeGreaterThan(0);
   }
   expect(recoverArcs(circularRun([0, 0], 40, 0, 2 * Math.PI - 1e-3, 4000)).segments.every((s) => s.via)).toBe(true);

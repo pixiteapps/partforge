@@ -16,6 +16,7 @@ import twelvePanel from "./fixtures/sheet-twelve-panel-part.js";
 import perforated from "./fixtures/sheet-perforated-panel-part.js";
 import screwPlate from "./fixtures/sheet-screw-plate-part.js";
 import webPlate from "./fixtures/sheet-web-plate-part.js";
+import { PACE, cpuMs } from "./helpers/cpu-pace.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -580,14 +581,18 @@ describe("LASER.facts", () => {
     for (const r of [2, 3]) {
       const { f, ms } = onCpu(plate({ profile: tabPanel(12, r) }), P);
       expect(f, `12 tabs, r ${r}`).toMatchObject({ evaluated: true, bridgeCapped: true, gapCapped: true });
-      expect(ms, `12 tabs, r ${r}`).toBeLessThan(100);
+      expect(ms, paced(`12 tabs, r ${r}`)).toBeLessThan(100);
     }
   });
 
   // Main-thread CPU time: a clock the machine's load cannot stretch. The budget tests below
   // run the meter on it, the way an unloaded desktop runs it — not on a stopped clock, on
   // which only the prices can withhold a reading and no step's real cost is ever seen.
-  const cpuMs = () => { const u = process.threadCpuUsage(); return (u.user + u.system) / 1000; };
+  // `cpuMs` (test/helpers/cpu-pace.js) runs in the calibration desktop's milliseconds: on
+  // a runner PACE times slower every limit below is PACE times as long in its own CPU
+  // time, the 1500 ms budget included, and it reads what the desktop reads. PACE is 1
+  // there, and every failure message states it.
+  const paced = (label) => `${label} (pace ${PACE.toFixed(2)})`;
   const onCpu = (sp, params) => {
     const s = resolveSheet(k, sp, params, {});
     const t0 = cpuMs();
@@ -607,7 +612,7 @@ describe("LASER.facts", () => {
       const at = `${t} mm, r ${r}, holes ${inset} mm in`;
       expect(f, at).toMatchObject({ evaluated: true, bridgeCapped: true, readErrors: { bridge: null, gap: null } });
       expect(f.gap, at).toBeCloseTo(t > 3.4 ? 3.4 : t, 6);           // the M3 hole, read directly, where the ceiling allows
-      expect(ms, at).toBeLessThan(100);
+      expect(ms, paced(at)).toBeLessThan(100);
     }
   });
   // Before the first priced step the searches read the profile's cubics through the arc fit,
@@ -628,7 +633,7 @@ describe("LASER.facts", () => {
     for (const n of [1600, 4000]) {
       const { f, ms } = onCpu(plate({ profile: (kk) => kk.shape2d(organic(n)).cutAll([sheetHole({ d: 3.4, at: [-30, 0] }), sheetHole({ d: 3.4, at: [30, 0] })]) }), P);
       expect(f, `${n} cubics`).toMatchObject({ evaluated: false, bridge: null, gap: null });
-      expect(ms, `${n} cubics`).toBeLessThan(200);                     // was 3.4 s at 1,600
+      expect(ms, paced(`${n} cubics`)).toBeLessThan(200);              // was 3.4 s at 1,600
     }
   });
   // The same plate on 6 mm stock with r 3 corners and a 10 × 10 hole leaving a 5 mm web read
@@ -641,7 +646,7 @@ describe("LASER.facts", () => {
     expect(f).toMatchObject({ evaluated: true, bridgeCapped: false, bridge: 5.02 });
     expect(f.at2d.bridge[0]).toBeCloseTo(50, 0);
     expect(f.at2d.bridge[1]).toBeCloseTo(2.5, 0);
-    expect(ms).toBeLessThan(100);
+    expect(ms, paced("5 mm web")).toBeLessThan(100);
   });
 
   // A cubic that is not a circle, carried by a test into the offset engine's slow band, ran
@@ -653,13 +658,15 @@ describe("LASER.facts", () => {
   // searches read such a cubic as a polyline, and every step is priced for what it is.
   // `stepsOf` reads a profile on the CPU clock with the 1.5 s budget and returns every
   // priced step that ran ({ price, ms }) and the whole call's CPU time. The limits below are
-  // ABSOLUTE CPU time, which the machine's load does not stretch. They were once scaled by
-  // a pace taken from the very steps they judged, so a lone overrun set its own allowance:
-  // with the flattening switched off, a 19.7 s step priced 77 passed. `overPrice` holds each
-  // step to 3 × its price: the prices are desktop-Node milliseconds, and across the
-  // calibration corpus read under the budget no step ran past 0.95 of its price there, so
-  // 3 × leaves a machine three times slower room, and a step in the spike class runs tens
-  // to hundreds of times its price.
+  // ABSOLUTE CPU time, which the machine's load does not stretch, in the calibration
+  // desktop's milliseconds (cpuMs). They were once scaled by a pace taken from the very
+  // steps they judged, so a lone overrun set its own allowance: with the flattening
+  // switched off, a 19.7 s step priced 77 passed. PACE comes from a workload none of these
+  // steps is in. `overPrice` holds each step to 3 × its price: the prices are desktop-Node
+  // milliseconds, and across the calibration corpus read under the budget no step ran past
+  // 0.95 of its price there, so 3 × leaves room for a runner that is slower on these steps
+  // than on the pace workload, and a step in the spike class runs tens to hundreds of
+  // times its price.
   const stepsOf = (sp, params) => {
     const s = resolveSheet(k, sp, params, {});
     const steps = [];
@@ -678,8 +685,8 @@ describe("LASER.facts", () => {
       const { f, ms, steps } = stepsOf(ellCorners(t, q, sx), { t });
       expect(f, at).toMatchObject({ evaluated: true, bridgeCapped: true, readErrors: { bridge: null, gap: null } });
       expect(f.gap, at).toBeCloseTo(t > 3.4 ? 3.4 : t, 6);           // the M3 hole, where the ceiling allows
-      expect(ms, at).toBeLessThan(cap);
-      expect(overPrice(steps), at).toEqual([]);
+      expect(ms, paced(at)).toBeLessThan(cap);
+      expect(overPrice(steps), paced(at)).toEqual([]);
     }
   });
   // With every piece of their tips turning at most 4° (below), the ovals' first test is
@@ -694,9 +701,9 @@ describe("LASER.facts", () => {
       const at = `${t} mm, pitch ${pitch}`;
       const { f, ms, steps } = stepsOf(ovals(pitch), { t });
       expect(steps.length, at).toBeGreaterThan(0);
-      expect(overPrice(steps), at).toEqual([]);
-      expect(Math.max(...steps.map((st) => st.ms)), at).toBeLessThan(1000);   // was 2.3 s and 20 s
-      expect(ms, at).toBeLessThan(2000);
+      expect(overPrice(steps), paced(at)).toEqual([]);
+      expect(Math.max(...steps.map((st) => st.ms)), paced(at)).toBeLessThan(1000);   // was 2.3 s and 20 s
+      expect(ms, paced(at)).toBeLessThan(2000);
       if (!f.evaluated) expect(f, at).toMatchObject({ bridge: null, gap: null });  // withheld: verify's notice
       else expect(f.readErrors, at).toEqual({ bridge: null, gap: null, marks: null, marksArea: null });
     }
@@ -712,8 +719,8 @@ describe("LASER.facts", () => {
       kk.shape2d(slotProfile(0, 0.5)).scale([2, 1]).translate([6.3 + (i % 12) * 2.6, 6.8 + Math.floor(i / 12) * 3.6]))) });
     const { f, ms, steps } = stepsOf(grille, { t: 6 });
     expect(steps.length).toBeGreaterThan(0);
-    expect(overPrice(steps)).toEqual([]);                                  // was 440 ms priced 95
-    expect(ms).toBeLessThan(2000);
+    expect(overPrice(steps), paced("grille")).toEqual([]);                 // was 440 ms priced 95
+    expect(ms, paced("grille")).toBeLessThan(2000);
     if (!f.evaluated) expect(f).toMatchObject({ bridge: null, gap: null });  // withheld: verify's notice
   });
   // Two elliptical holes tip to tip meet at a point, and a point contact is read by area —
@@ -758,7 +765,7 @@ describe("LASER.facts", () => {
       const over = [...new Set([...overPrice(run.steps), ...run.steps.filter((st) => st.ms > 1500)])];
       if (over.length || run.ms > 2000) failures.push(`${name} r ${r}, ${t} mm: ${run.ms.toFixed(0)} ms, over ${JSON.stringify(over)}`);
     }
-    expect(failures).toEqual([]);
+    expect(failures, paced("#233's helpers")).toEqual([]);
   });
 
   // The reviewers' panel (test/fixtures/sheet-web-plate-part.js): thirty booleaned d 6
