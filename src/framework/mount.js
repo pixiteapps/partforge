@@ -27,7 +27,7 @@ import { createStatusUi } from "./status-ui.js";
 import { createViewTabs } from "./view-tabs.js";
 import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } from "./selection/index.js";
 import { createPickRequestClient, resolvePickServerUrl, PICK_SERVER_DEFAULT_URL } from "./pick-request/index.js";
-import { exportablePartNames, partLabel } from "./export-select.js";
+import { exportableRows, exportFormatList } from "./export-rows.js";
 import { createExportController, backendForFormat } from "./export-controller.js";
 import { createCaptureBuild } from "./capture-build.js";
 import { attachAnimationControls } from "./animation-controls.js";
@@ -68,7 +68,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, renderMode, environment, declaresMaterials, renderViews }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, renderMode, environment, declaresMaterials, renderViews }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): animations are
@@ -141,6 +141,10 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // say "the 3D view ran out of memory" instead of showing a dead canvas.
     onContextLost: (listener) => viewer.onContextLost(listener),
     listExportableParts,
+    // What exportParts can write, as { id, label, ext, mime, needsSheet } — the cut &
+    // print kit ("bundle") needs a sheet part checked. A makeHandle caller that wires
+    // no export (a test) lists none.
+    listExportFormats: listExportFormats ?? (() => []),
     exportParts,
     // Pay the exact kernel's cold boot ahead of an export. STEP is pinned to
     // OCCT, whose ~11 MB WASM loads on its first job, so a Manifold-previewed
@@ -251,8 +255,11 @@ function createCleanupStack() {
 //                                         // framing (live camera pose + viewport aspect) at the
 //                                         // given long-edge resolution → JPEG data URL, or null
 //                                         // when disposed / nothing built yet
-//   runtime.listExportableParts();        // [{ name, label }] — every exportable sub-part,
-//                                         // independent of the active view (for an embedder-drawn export UI)
+//   runtime.listExportableParts();        // [{ name, label, sheet? }] — every exportable sub-part,
+//                                         // independent of the active view (for an embedder-drawn export UI);
+//                                         // a sheet part's row adds sheet: { process, material, thickness, group }
+//   runtime.listExportFormats();          // [{ id, label, ext, mime, needsSheet }] — what exportParts writes;
+//                                         // format "bundle" (the cut & print kit) also takes `options`
 //   await runtime.exportParts({ parts: ["base"], format: "stl", onProgress });
 //                                         // headless export of a chosen subset; resolves when the file is
 //                                         // written (handed to your onDownload sink, or downloaded directly
@@ -1389,8 +1396,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       captureView,
       getPanelState: () => panelRef?.getState() ?? {},
       getPanelErrors: () => panelRef?.errors() ?? [],
-      listExportableParts: () =>
-        exportablePartNames(part, params).map((name) => ({ name, label: partLabel(part, name) })),
+      // A sheet part's row carries its stock, evaluated here on the main thread at the
+      // live params the way enabled() is, and omitted when it cannot be (export-rows.js).
+      listExportableParts: () => exportableRows(part, params),
+      listExportFormats: exportFormatList,
       exportParts: (opts) => exportCtl.exportParts(opts),
       warmExportKernel: () => exportCtl.warmKernel(),
       animation: animCtl?.runtime ?? null,
