@@ -137,6 +137,34 @@ describe("LASER.facts", () => {
     expect(slot.at2d.gap).toBeNull();
   });
 
+  // A hole below the floor is the laser gap check's first job. Under the sharp closing a
+  // small hole used to come back as a phantom (contour-offset.js), so the closing grew it
+  // instead of filling it and every such hole read "nothing narrower than 3 mm". A hole
+  // cut with cutAll is cubics, and the engine refuses to regrow it from a near-point
+  // circle: that refusal counts as found (narrowest()), so its reading may come in under
+  // the true 1.2 mm — never over, and always under the 1.5 mm floor, so it warns.
+  test("a hole below the floor reads as its own width — round, square, and round via cutAll", () => {
+    const at = [30, 20];
+    const gapOf = (profile) => {
+      const f = factsOf(plate({ profile }));
+      expect(f.gapCapped).toBe(false);
+      expect(f.at2d.gap[0]).toBeCloseTo(30, 0);
+      expect(f.at2d.gap[1]).toBeCloseTo(20, 0);
+      return f.gap;
+    };
+    for (const profile of [
+      (kk) => kk.shape2d({ outer: PLATE, holes: [sheetHole({ d: 1.2, at })] }),
+      (kk) => kk.shape2d({ outer: PLATE, holes: [rect(29.4, 19.4, 30.6, 20.6)] }),
+    ]) {
+      const gap = gapOf(profile);
+      expect(gap).toBeGreaterThan(1.15);
+      expect(gap).toBeLessThanOrEqual(1.25);
+    }
+    const cutAll = gapOf((kk) => kk.shape2d(PLATE).cutAll([sheetHole({ d: 1.2, at })]));
+    expect(cutAll).toBeGreaterThan(0.75);
+    expect(cutAll).toBeLessThanOrEqual(1.25);
+  });
+
   test("an arc-exact hole cut with cutAll reads clean — no false web or gap", () => {
     const f = factsOf(plate({ profile: (kk) => kk.shape2d(PLATE).cutAll([sheetHole({ d: 10, at: [30, 20] })]) }));
     expect(f.bridgeCapped).toBe(true);

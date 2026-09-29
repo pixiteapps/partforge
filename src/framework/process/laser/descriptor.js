@@ -59,11 +59,16 @@ function centreOfLargest(shape) {
 // replaced, so the one-sided rule is never worse than it: the reading stays, the
 // finding goes unlocated (UNLOCATED), and only a fillet elsewhere can mask it again.
 const UNLOCATED = Object.freeze({ unlocated: true });
+// The geometry engine refuses with a plain Error ("contour-winding: could not chain…",
+// "curve-fill: …"); a TypeError, RangeError or the like is a bug, never a refusal, and
+// is left to propagate so reading() can report it.
+const isRefusal = (e) => e instanceof Error && e.name === "Error";
 function oneSided(difference, netChange) {
   try {
     const d = difference();
     return !d.isEmpty() && d.regions().some((r) => r.area() > LOSS_TOL_MM2) ? d : null;
-  } catch {
+  } catch (e) {
+    if (!isRefusal(e)) throw e;
     return netChange() > LOSS_TOL_MM2 ? UNLOCATED : null;
   }
 }
@@ -89,6 +94,12 @@ function closingGain(profile, area, w) {
 // WIDTH_RESOLUTION: the upper end of the last bracket (the first width that fails),
 // rounded to 0.01 mm. The ceiling is tried first — most panels have nothing that
 // narrow, and one test settles them — and then reads as the ceiling itself, `capped`.
+// Once the ceiling has found something, an engine refusal at a narrower width counts
+// as found there: the engine refuses closest to where a feature collapses (a 1.2 mm
+// hole cut with cutAll, shrunk to a 0.04 mm circle and regrown, cannot be chained), so
+// the reading can come in under the true width, never over it — a warning, where a null
+// reading would have hidden the hole. It is located by the last shape actually found.
+// A refusal at the ceiling itself leaves the reading null (reading()).
 function narrowest(test, ceiling, spend) {
   spend();
   let found = test(ceiling);
@@ -97,8 +108,9 @@ function narrowest(test, ceiling, spend) {
   while (hi - lo > WIDTH_RESOLUTION) {
     spend();
     const mid = (lo + hi) / 2;
-    const hit = test(mid);
-    if (hit) { hi = mid; found = hit; } else lo = mid;
+    let hit;
+    try { hit = test(mid); } catch (e) { if (!isRefusal(e)) throw e; hit = UNLOCATED; }
+    if (hit) { hi = mid; if (hit !== UNLOCATED) found = hit; } else lo = mid;
   }
   return { value: round2(hi), capped: false, at: found === UNLOCATED ? null : centreOfLargest(found) };
 }
