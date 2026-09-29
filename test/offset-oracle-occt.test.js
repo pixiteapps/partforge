@@ -182,3 +182,63 @@ for (const { name, regions, deltas, curved, corners: styles = ["round", "sharp",
     });
   }
 }
+
+// Sharp joins at ARC corners (contour-offset.js extendedJoin): where an arc meets a line or
+// another arc at a real corner on the gap side, a sharp offset extends the arc along its
+// own circle — OCCT's intersection join (BRepOffsetAPI_MakeOffset with GeomAbs_Intersection,
+// replicad's Wire.offset2D(d, "intersection")), not the tangent miter replicad's
+// Drawing.offset builds and the rows above compare against. Every row is a shape and delta
+// where OCCT answers and no acute tip is involved (an acute corner takes the miter limit,
+// the documented divergence above). Where the extended pieces never meet within 2|delta| — a
+// 3..5 ring sector grown by 2, whose inner arc collapses — native falls back to the tangent
+// miter and neither oracle matches; KERNEL-CONTRACT.md says so, and no row asserts it.
+const P = (r, deg) => [r * Math.cos((deg * Math.PI) / 180), r * Math.sin((deg * Math.PI) / 180)];
+const ARC_CORNERS = [
+  { name: "D (r 5 arc, flat chord)", c: { start: [3, -4], segments: [{ to: [3, 4] }, { via: [-5, 0], to: [3, -4] }] }, deltas: [0.5, 2, 4, -1] },
+  { name: "pie 90° r 10", c: { start: [0, 0], segments: [{ to: [10, 0] }, { via: P(10, 45), to: [0, 10] }, { to: [0, 0] }] }, deltas: [1, 4, -1] },
+  { name: "pie 90° r 1 (small radius)", c: { start: [0, 0], segments: [{ to: [1, 0] }, { via: P(1, 45), to: [0, 1] }, { to: [0, 0] }] }, deltas: [1, 4] },
+  { name: "ring sector 10..20 × 90°", c: { start: [20, 0], segments: [{ via: P(20, 45), to: [0, 20] }, { to: [0, 10] }, { via: P(10, 45), to: [10, 0] }, { to: [20, 0] }] }, deltas: [2, 4, -1] },
+  { name: "lens (two r 5 arcs)", c: { start: [0, -4], segments: [{ via: [2, 0], to: [0, 4] }, { via: [-2, 0], to: [0, -4] }] }, deltas: [2, 4] },
+  { name: "plate with a r 3 notch (concave arc-line)", c: { start: [0, 0], segments: [{ to: [20, 0] }, { to: [20, 10] }, { to: [13, 10] }, { via: [10, 7], to: [7, 10] }, { to: [0, 10] }, { to: [0, 0] }] }, deltas: [1, -1] },
+  { name: "plate with a r 0.5 notch (small radius)", c: { start: [0, 0], segments: [{ to: [20, 0] }, { to: [20, 10] }, { to: [10.5, 10] }, { via: [10, 9.5], to: [9.5, 10] }, { to: [0, 10] }, { to: [0, 0] }] }, deltas: [-1] },
+  ...[5, 1.2].map((deg) => {
+    const e = 5 * Math.tan((deg * Math.PI) / 180), Rn = 6 / Math.sin((deg * Math.PI) / 180), sag = Rn - Math.sqrt(Rn * Rn - 36);
+    return [
+      { name: `stadium kinked ${deg}° (near-tangent)`, c: { start: [0, 0], segments: [{ to: [10, 0] }, { via: [10 - e + Math.hypot(e, 5), 5], to: [10, 10] }, { to: [0, 10] }, { via: [e - Math.hypot(e, 5), 5], to: [0, 0] }] }, deltas: [4] },
+      { name: `shallow notch, ${deg}° corners (near-tangent)`, c: { start: [0, 0], segments: [{ to: [20, 0] }, { to: [20, 10] }, { to: [16, 10] }, { via: [10, 10 - sag], to: [4, 10] }, { to: [0, 10] }, { to: [0, 0] }] }, deltas: [2, -2] },
+    ];
+  }).flat(),
+];
+const FINE = 1024;
+const drawingOf = (c) => {
+  let d = replicad.draw(c.start);
+  for (const s of c.segments) d = s.via ? d.threePointsArcTo(s.to, s.via) : d.lineTo(s.to);
+  return d.close();
+};
+// OCCT's intersection offset of one closed contour, as { area, rings }: offset2D's sign
+// convention depends on the wire's orientation, so both signs are tried and the one that
+// grows (delta > 0) or shrinks (delta < 0) the face is kept.
+function occtIntersection(c, delta) {
+  const faceArea = (w) => replicad.measureArea(replicad.makeFace(w));
+  const a0 = faceArea(drawingOf(c).sketchOnPlane("XY").wire);
+  for (const sign of [1, -1]) {
+    let w;
+    try { w = drawingOf(c).sketchOnPlane("XY").wire.offset2D(sign * Math.abs(delta), "intersection"); } catch { continue; }
+    const area = faceArea(w);
+    if (delta > 0 ? area > a0 : area < a0) {
+      const pts = [];
+      for (const e of w.edges) for (let i = 0; i < 256; i++) { const p = e.pointAt(i / 256); pts.push([p.x, p.y]); }
+      return { area, rings: [pts] };
+    }
+  }
+  throw new Error(`OCCT could not offset ${delta}`);
+}
+for (const { name, c, deltas } of ARC_CORNERS) for (const delta of deltas) {
+  test(`${name} delta=${delta} sharp matches OCCT's intersection join`, () => {
+    const native = offsetRegions([{ outer: c, holes: [] }], delta, { corners: "sharp" });
+    const nativeRings = native.flatMap((rg) => [tessellateContour(rg.outer, FINE), ...rg.holes.map((h) => tessellateContour(h, FINE))]);
+    const oracle = occtIntersection(c, delta);
+    expect(Math.abs(totalArea(nativeRings) - oracle.area) / oracle.area).toBeLessThan(1e-3);
+    expect(hausdorff(nativeRings, oracle.rings)).toBeLessThan(5e-3);      // the winding resolver's own precision
+  });
+}

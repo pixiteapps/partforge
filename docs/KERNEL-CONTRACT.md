@@ -601,8 +601,16 @@ ever involved. Lines and arcs offset exactly (arcs stay arcs); cubics are
 approximated to ≤ 1e-3 mm deviation. `corners: "round"` inserts exact arc joins,
 `"chamfer"` a true 45°-bisecting bevel chord at every corner angle, `"sharp"` miters
 with limit 2 (falling back to the bevel chord past the limit) — where an arc meets the
-corner it extends along its own circle, not its end tangent (OCCT's intersection join), so
-a sharp inset grown back by the same amount returns an arc-and-line corner exactly. Self-intersecting raw
+corner it extends along its own circle, not its end tangent (OCCT's intersection join,
+`BRepOffsetAPI_MakeOffset` with `GeomAbs_Intersection`: measured within 2e-3 mm of it on
+D shapes, pies, ring sectors, lenses and notches, `test/offset-oracle-occt.test.js`), so a
+sharp inset grown back by the same amount returns an arc-and-line corner to the winding
+resolver's precision (5e-3 mm), not exactly. The arc is extended up to 90° and the join
+takes the meeting point nearest the corner within 2·|delta|; where the extended pieces
+never meet there — an inner arc that collapses or curls away, as a 3..5 mm ring sector's
+does grown by 2 — the tangent miter applies, then the bevel, and the result matches
+neither OCCT join. A line meeting a line or a cubic is mitred along its end tangent, as
+before. Self-intersecting raw
 results are resolved through the shared planar boolean engine (paper.js), which may
 return arcs as cubic approximations — identical to boolean-op output. `segs` is
 accepted and ignored (there is no backend LOD to tune). Both backends produce
@@ -618,7 +626,7 @@ backwards for the holes (see the migration note below).
 | Op | Contract |
 |---|---|
 | `union(other)` / `cut(other)` / `cutAll(others[])` / `intersect(other)` | 2-D boolean ops; `other` may be a `Shape2D` or a raw profile (lifted via `shape2d` first). Curve-exact and backend-identical (paper.js). |
-| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. Runs backend-independently on the contour IR — lines/arcs offset exactly, cubics approximate to ≤ 1e-3 mm; `chamfer` is a true 45°-bisecting bevel at every corner angle, `sharp` miters with limit 2 (an arc at the corner extends along its circle). Backend-identical by construction, like every other Shape2D op. Holes offset material-wise (`-delta` where the outer gets `delta`). `segs` is accepted and ignored. Empty in → empty out (short-circuits before the engine). Throws if the offset collapses the shape. |
+| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. Runs backend-independently on the contour IR — lines/arcs offset exactly, cubics approximate to ≤ 1e-3 mm; `chamfer` is a true 45°-bisecting bevel at every corner angle, `sharp` miters with limit 2 (an arc at the corner extends along its circle — OCCT's intersection join, to the resolver's 5e-3 mm, the tangent miter where the extensions never meet). Backend-identical by construction, like every other Shape2D op. Holes offset material-wise (`-delta` where the outer gets `delta`). `segs` is accepted and ignored. Empty in → empty out (short-circuits before the engine). Throws if the offset collapses the shape. |
 | `area()` | Net area (Σ\|outers\| − Σ\|holes\|), mm². Curve-exact. |
 | `boundingBox()` | `{min, max}` — axis-aligned 2-D bounds, curve-exact (no `center`/`size`, unlike `Solid.boundingBox`). |
 | `toRegions()` | Materialize into `{outer, holes}[]` point-ring region arrays (`assembleRegions`), tessellating curves at the backend's LOD; a boolean result may be several disjoint regions. |
