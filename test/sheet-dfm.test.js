@@ -371,26 +371,31 @@ describe("LASER.facts", () => {
   });
 
   // The reviewers' panel (test/fixtures/sheet-web-plate-part.js): thirty booleaned d 6
-  // holes and one 1 mm web between two slots. A test that finds the web runs the
-  // one-sided difference, and over the whole profile that was ONE boolean of 5.5 s against
-  // the holes' 3,840-cubic near-copy. Every hole clears every other ring by more than
-  // 1.5 × the 3 mm ceiling, so none can meet anything in an opening: the opening leaves
-  // them out, the closing reads their diameters, and every step is priced under 100 ms.
-  // Counts the booleans run on the profile itself (the shapes its offsets return too).
+  // holes and one 1 mm web between two slots. Every test runs its one-sided difference,
+  // and over the whole profile that was ONE boolean of 5.5 s against the holes' 3,840-cubic
+  // near-copy. Every hole clears every other ring by more than 1.5 × the 3 mm ceiling, so
+  // none can meet anything in an opening: the opening leaves them out, the closing reads
+  // their diameters, and every step is priced under 100 ms.
+  // `cuts` holds, for every boolean a search runs — on the profile, on a shape rebuilt
+  // from its rings (the lift), or on what their offsets return — the cubics its two
+  // operands carry between them.
   const cutsOn = (s) => {
-    const tally = { cuts: 0 };
+    const cuts = [];
+    const cubicsIn = (shape) => shape.toContours().flatMap((rg) => [rg.outer, ...rg.holes])
+      .reduce((n, ring) => n + (Array.isArray(ring) ? 0 : ring.segments.filter((g) => g.c1).length), 0);
     const counted = (shape) => new Proxy(shape, { get(target, key) {
-      if (key === "cut") return (...a) => { tally.cuts++; return target.cut(...a); };
+      if (key === "cut") return (o) => { cuts.push(cubicsIn(target) + cubicsIn(o)); return target.cut(o); };
       if (key === "offset") return (...a) => counted(target.offset(...a));
       const v = Reflect.get(target, key);
       return typeof v === "function" ? v.bind(target) : v;
     } });
-    return { sheet: { ...s, profile: counted(s.profile) }, tally };
+    return { sheet: { ...s, profile: counted(s.profile), trustedShape2d: (c) => counted(s.trustedShape2d(c)) }, cuts };
   };
   test("thirty booleaned holes and one narrow web: read in full, every step priced small", () => {
-    const { sheet, tally } = cutsOn(resolveSheet(k, webPlate.parts.plate, P, {}));
+    const { sheet, cuts } = cutsOn(resolveSheet(k, webPlate.parts.plate, P, {}));
     const f = LASER.facts(sheet, { deadline: 100, now: () => 0 });
-    expect(tally.cuts).toBe(0);                           // no boolean over the holes' near-copy
+    expect(cuts).toHaveLength(14);                        // every test ran its difference (2 searches × 7 widths)…
+    expect(Math.max(...cuts)).toBe(0);                    // …and none on a hole: all lines, both searches
     expect(f).toMatchObject({ evaluated: true, bridgeCapped: false, gapCapped: false });
     expect(f.gap).toBeGreaterThan(1.99);                  // the 2 mm slot, narrower than the 6 mm holes
     expect(f.gap).toBeLessThanOrEqual(2.05);
@@ -401,16 +406,16 @@ describe("LASER.facts", () => {
   });
 
   // The same holes 3.5 mm from the edge (wider than the ceiling, so no finding, but inside
-  // an opening's reach) cannot be left out. The ceiling test finds the web; the difference
-  // it would then run is priced from the test's own result — the holes' near-copy — and
-  // does not fit, so it is not started: no boolean runs, the notice stands in.
+  // an opening's reach) cannot be left out. The ceiling test's difference is priced from
+  // the test's own result — the holes' near-copy — and does not fit, so it is not
+  // started: no boolean runs, the notice stands in.
   test("…but holes the opening cannot leave out: the found web's difference is priced out", () => {
     const holes = Array.from({ length: 12 }, (_, i) => sheetHole({ d: 6, at: [10 + i * 12, 6.5] }));
     const edgeHoles = (kk) => kk.shape2d(rect(0, 0, 164, 60)).cutAll([...holes, rect(154, 45, 159, 55), rect(160, 45, 162, 55)]);
-    const { sheet, tally } = cutsOn(resolveSheet(k, plate({ profile: edgeHoles }), P, {}));
+    const { sheet, cuts } = cutsOn(resolveSheet(k, plate({ profile: edgeHoles }), P, {}));
     const f = LASER.facts(sheet, { deadline: 1500, now: () => 0 });
     expect(f).toMatchObject({ evaluated: false, bridge: null, gap: null });
-    expect(tally.cuts).toBe(0);
+    expect(cuts).toEqual([]);
   });
 
   // Prices are desktop milliseconds; the meter scales them by the pace this device has
