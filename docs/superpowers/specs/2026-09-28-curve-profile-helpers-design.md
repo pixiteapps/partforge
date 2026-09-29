@@ -1,7 +1,9 @@
 # Curve profile helpers: `*Profile` means exact curves
 
 **Date:** 2026-09-28
-**Status:** approved design, implemented on `claude/arc-exact-profile-helpers`
+**Status:** approved design. Sections 1–2 and 4–7 and stage 1 of section 3 ship in 0.131
+(`claude/arc-exact-profile-helpers`); stage 3 of section 3, the `circleProfile` flip, ships
+in 0.132 (`claude/circle-profile-exact`) after the partforge-cloud migration has run.
 **Origin:** partforge-cloud feedback #144. A printed twist-lock lid didn't fit. The
 agent had built its bayonet lugs and tracks with `ringSectorPolygon`, which bakes
 32 facets per circle into a point list: 4 facets on a 36° lug, about 0.09 mm

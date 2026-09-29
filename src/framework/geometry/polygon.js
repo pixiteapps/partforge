@@ -412,15 +412,24 @@ export function circlePolygon(r, center = [0, 0], segs = 48) {
   return pts;
 }
 
-// A circle for passing to a kernel op (prism, extrude outline or hole, shape2d, revolve,
-// hull, loft, sweep). TRANSITIONAL: today it returns exactly circlePolygon's 48 points;
-// partforge 0.132 turns it into an exact curve like the other *Profile helpers. Stored
-// parts that do point math on it are migrated to circlePolygon before that release
-// (see docs/superpowers/specs/2026-09-28-curve-profile-helpers-design.md), so new code
-// should never map, index or spread its result — use circlePolygon for that.
-export function circleProfile(r, center = [0, 0], segs = 48) {
+// An exact circle of radius r centred at [cx, cy]: a path contour of two three-point
+// semicircles, starting at angle 0 like circlePolygon's points. The kernel facets it per
+// quality tier (finer at export) and OCCT keeps a true CIRCLE; sweep and offsetPolygon,
+// which take point lists, sample it at 48 per circle (contourToPoints) — the density it
+// had as a point list. Until partforge 0.132 this returned circlePolygon's 48 points;
+// stored parts that did point math on it were migrated to circlePolygon first. A third
+// `segs` argument belonged to the point list, so it is refused by name rather than
+// silently ignored.
+export function circleProfile(r, center = [0, 0], ...rest) {
   if (!(r > 0)) throw new Error("circleProfile: r must be > 0");
-  return circlePolygon(r, center, segs);
+  if (rest.length > 0 && rest[0] !== undefined)
+    throw new Error("circleProfile: an exact circle takes no segs — use circlePolygon(r, center, segs) for a faceted circle");
+  const [cx, cy] = center;
+  const start = [cx + r, cy];
+  return contourFrom(start)
+    .arc([cx - r, cy], [cx, cy + r])
+    .arc([cx + r, cy], [cx, cy - r])
+    .close();
 }
 
 // --- offsetPolygon ---------------------------------------------------------

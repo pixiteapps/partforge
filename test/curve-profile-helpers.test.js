@@ -159,11 +159,17 @@ describe("input validation", () => {
 
 // ── circlePolygon and the circleProfile transition (partforge 0.131) ─────────
 describe("circlePolygon", () => {
-  test("is exactly what circleProfile has always returned", () => {
-    for (const args of [[5], [30, [10, -4]], [0.8, [2, 2]], [12, [0, 0], 12]])
-      expect(circlePolygon(...args)).toEqual(circleProfile(...args));
+  test("is the 48-point circle circleProfile used to return; circleProfile is now its exact curve", () => {
     expect(circlePolygon(5)).toHaveLength(48);
-    expect(Array.isArray(circleProfile(5))).toBe(true);   // unchanged until 0.132
+    expect(isPathContour(circleProfile(5))).toBe(true);
+    // sampled at the point list's own density, the curve lands on circlePolygon's points
+    const pts = circlePolygon(30, [10, -4]);
+    const ring = contourToPoints(circleProfile(30, [10, -4]));
+    expect(ring).toHaveLength(48);
+    pts.forEach(([x, y], i) => {
+      expect(ring[i][0]).toBeCloseTo(x, 9);
+      expect(ring[i][1]).toBeCloseTo(y, 9);
+    });
   });
 
   test("names itself in its error", () => {

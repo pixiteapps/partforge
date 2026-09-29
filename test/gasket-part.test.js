@@ -13,7 +13,7 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import part, { gasketGeometry } from "../src/parts/gasket.js";
-import { pathProfile, circleProfile } from "../src/framework/geometry/polygon.js";
+import { pathProfile, circleProfile, circlePolygon } from "../src/framework/geometry/polygon.js";
 import { booleanRegions } from "../src/framework/geometry/paper-bridge.js";
 import { liftProfile, filletProfile, profileCorners, validateProfile } from "../src/framework/geometry/contour-ops.js";
 
@@ -46,7 +46,7 @@ function pureGasketFilletedRegions(overrides = {}) {
 
   let regions = liftProfile(outline).regions;
   for (const cx of [-tabX, tabX]) {
-    regions = booleanRegions(regions, liftProfile(circleProfile(tabR, [cx, 0], tabSegs)).regions, "unite");
+    regions = booleanRegions(regions, liftProfile(circlePolygon(tabR, [cx, 0], tabSegs)).regions, "unite");
   }
   if (filletR > 0) regions = filletProfile(regions, filletR, { corners: "convex" });
   return regions;

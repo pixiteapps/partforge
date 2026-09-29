@@ -1,7 +1,7 @@
 import { beforeAll, expect, test } from "vitest";
 import Module from "manifold-3d";
 import { sweepMesh, resolveSweepStations } from "../src/framework/geometry/sweep.js";
-import { circleProfile } from "../src/framework/geometry/polygon.js";
+import { circlePolygon } from "../src/framework/geometry/polygon.js";
 
 let wasm;
 beforeAll(async () => { wasm = await Module(); wasm.setup(); });
@@ -13,7 +13,7 @@ const L = 20;
 test("sweepMesh builds watertight manifolds for straight, mitered, and arc-fan paths (ofMesh does not throw)", () => {
   expect(() => sweepMesh(wasm, SQ, [[0, 0, 0], [0, 0, L]])).not.toThrow();                        // straight
   expect(() => sweepMesh(wasm, SQ, [[-L, 0, 0], [0, 0, 0], [0, L, 0]])).not.toThrow();            // sharp miter
-  expect(() => sweepMesh(wasm, circleProfile(3), [[0, 0, 0], [0, 0, L], [L, 0, L]], { cornerRadius: 6 })).not.toThrow(); // arc fan
+  expect(() => sweepMesh(wasm, circlePolygon(3), [[0, 0, 0], [0, 0, L], [L, 0, L]], { cornerRadius: 6 })).not.toThrow(); // arc fan
 });
 
 test("sweep is oriented outward: subtracting it from an enclosing blank REMOVES material", () => {
@@ -47,12 +47,12 @@ test("resolveSweepStations throws when the profile is too wide for a sharp bend 
 });
 
 test("resolveSweepStations throws when cornerRadius is below the profile half-width (inner-wall fold)", () => {
-  // circleProfile(3) → half-width 3; a 2mm corner radius would fold the inner wall
-  expect(() => resolveSweepStations(circleProfile(3), [[-L, 0, 0], [0, 0, 0], [0, L, 0]], { cornerRadius: 2 }))
+  // circlePolygon(3) → half-width 3; a 2mm corner radius would fold the inner wall
+  expect(() => resolveSweepStations(circlePolygon(3), [[-L, 0, 0], [0, 0, 0], [0, L, 0]], { cornerRadius: 2 }))
     .toThrow(/half-width|fold/);
 });
 
 test("resolveSweepStations throws when cornerRadius is too large for the segments", () => {
-  expect(() => resolveSweepStations(circleProfile(3), [[-6, 0, 0], [0, 0, 0], [0, 6, 0]], { cornerRadius: 12 }))
+  expect(() => resolveSweepStations(circlePolygon(3), [[-6, 0, 0], [0, 0, 0], [0, 6, 0]], { cornerRadius: 12 }))
     .toThrow(/too large|shorter segment/);
 });
