@@ -12,17 +12,21 @@ their own, `SHEET_CHECK_BUDGET_MS` = 1500 ms per `measure()` call, charged for 2
 work alone. The laser descriptor prices every step before it starts and starts none
 whose price will not fit what is left (below); a sheet it stops reads
 `evaluated: false` — one `sheetChecks` warning. The prices are fitted on this machine
-(over the calibration corpus below, read under the budget, the worst step costs 0.95 of
-its price — a test on a row of three flattened ovals, 643 ms priced 676 — and the largest
+(over the calibration corpus below, read under the budget, every step costs about its
+price (0.95–1.04 across runs) — the worst is a test on a row of three flattened ovals,
+643 ms priced 676 — and the largest
 runs about 0.9 s), so the checks end inside their budget plus at most one step's overrun;
 a device slower than the pace the meter has measured so far can overrun one step by its
 own slowness (the meter learns it after 50 priced units). What runs before the first
 priced step — the arc fit, the flattening and the hole plan — is not priced, nor is the
 pass over a search's lines that prices its setup (at most 2 ms on the grilles). The
-arc fit is linear in the cubics on real outlines: a ring of 4,000 organic cubics costs it
-14 ms of CPU, a circle of 4,000 cubics 6 ms. Some rings of thousands of cubics built to
+arc fit is cheap, not linear, on real outlines: a ring of 4,000 organic cubics costs it
+8.5–10.8 ms of CPU, a circle of 4,000 cubics 5.1–5.7 ms, and a smooth traced-style blob
+(Catmull-Rom through n points, what an imported SVG gives) scales closer to n^1.6 — 1.7 ms
+at 500 points, 11.6 ms at 2,000, 35 ms at 4,000, 104 ms at 8,000. Some rings of thousands
+of cubics built to
 keep its search long still cost it superlinearly — at 4,000 cubics, runs of collinear
-cubics 0.20–0.48 s, a dense near-circle (an ellipse of 1.01) 0.23 s, a circle through
+cubics 0.20–0.66 s (0.66 s measured under load), a dense near-circle (an ellipse of 1.01) 0.23 s, a circle through
 4,000 noisy points 0.83 s; 36–60 ms at 1,600. That cost is pre-existing (origin/main's
 fit spends 0.12–6.1 s on the same rings at 1,600) and unpriced; they are shapes built to
 keep the fit's search long, not ones the helpers or a boolean produce. "Cold" is the
@@ -205,12 +209,16 @@ than 4° (`SEARCH_TURN`), and both of those warn or are withheld
 elliptical holes tip to tip on 3 and 6 mm stock, webs 0.8–1.2 × the floor — read under
 the budget, the 24 sub-floor webs give 19 warnings, 3 withheld (the notice) and 2 silent
 passes: 2 × 8 mm holes 1.2 mm apart on 3 mm read 1.78, 2 × 5 mm 2.4 mm apart on 6 mm read
-3.05. The exact cubics pass both of those too (1.83, 3.05): area on a point contact is
+3.05. That 19/3 split is one run's — one row (6 mm, 2 × 5 mm, web 2.85) sits on the
+budget and is read or withheld depending on load. The exact cubics pass both of the
+silent passes too (1.83, 3.05): area on a point contact is
 their own limit, not the flattening's. None of the 16 webs over the floor warns; 4 are
 withheld. The cost is on grilles: 4° pieces cut flattened oval and ellipse grilles into
 more lines, all facing, and eight such calibration panels and a text stencil that read
 before are now withheld, along with six more of the helpers-and-ellipses fuzz's 72 panels
-(seven in all).
+(seven in all). An elliptical hole's tip is the same class: on a ring-sector panel with
+an r 0.4 ellipse, the gap reading moved 1.31 → 1.27–1.28 mm (2 / 3 / 6 mm stock) with the
+4° pieces; the exact cubics read 1.25–1.31 — inside the point-contact limit either way.
 
 ### Prices
 
@@ -244,8 +252,9 @@ probes every line against every line near it, on 36 flattened 1.5 × 3 mm ellips
 apart on 4 mm stock (4,756 lines, all facing), 120–146 ms priced 95 per line — and on
 denser grilles beyond the corpus, 6.6 × (1.05 s priced 158). So the setup is priced for its
 probes (the row above); nothing else was re-fitted. Read under the 1,500 ms budget on the
-CPU clock, 105 of the 151 are read, the worst step costs 0.95 of its price (a test on a
-row of three flattened 2 × 8 mm ovals, 643 ms priced 676) and the largest runs about
+CPU clock, 105 of the 151 are read, and every step costs about its price (0.95–1.04
+across runs — the worst is a test on a
+row of three flattened 2 × 8 mm ovals, 643–701 ms priced 676) and the largest runs about
 0.9 s (a test priced 1.36 s); across #233's helpers-and-ellipses fuzz (72 panels, 65 read)
 the worst is 0.67, and across grilles of 36–60 flattened ellipses on 2–6 mm stock 0.86. Read
 with no deadline, where every test starts however long it runs, tests on those grilles and
@@ -278,7 +287,7 @@ middle column is the fourth fix pass's (8ade9579), the rows below the rule this 
 | 100 × 60 plate, elliptical corners 0.1 h, 4 M3, 6 mm | withheld after a 1.56 s step (priced 57) | read in 125–134 ms (271–287) (b 6c, g 3.4) |
 | wavy top edge (4 periods) + M3 1 mm under a trough | "nothing narrower than 3 mm" (14 cubics read as one straight arc) | web 1.03 at the trough |
 | slot 0.015 mm inside the edge / 0.015 mm slit | "nothing narrower than 3 mm" (inside the difference's margin) | web 0.02 / gap 0.02, located |
-| the 151-panel calibration corpus | 96 read, worst step 62 × its price | 105 read, worst step 0.95 of its price |
+| the 151-panel calibration corpus | 96 read, worst step 62 × its price | 105 read, every step about its price (0.95–1.04 across runs) |
 
 Nothing in any row passes silently: a sheet the budget stops reads the notice. The
 sub-floor webs the re-review found reading as engine errors on r 0.6–0.8 plates read

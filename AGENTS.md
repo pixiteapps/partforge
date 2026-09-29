@@ -322,16 +322,17 @@ the installed package, so let the publish finish before bumping the dep there.
   itself; and prices every step (a test, the boolean it runs unless it handed back the
   searched shape's own rings, that boundary pass) before it starts, starting none that
   will not fit — so a profile too complex to read is not started. The prices are fitted
-  on a desktop: over the calibration corpus read under the budget no step costs more than
-  0.95 of its price and the largest runs 0.9 s (a search's setup is priced for the probes
+  on a desktop: over the calibration corpus read under the budget every step costs about
+  its price (0.95–1.04 across runs) and the largest runs 0.9 s (a search's setup is priced for the probes
   its facing-line count makes, superlinear on dense short lines — per line alone it ran
   6.6× on a dense grille); the meter learns a slower device's pace from the steps it has
   run — so the checks end inside their budget plus at most one step's overrun, and a
   device slower than the pace learned so far overruns that step by its own slowness. With
   NO deadline (the bench's 2-D column) every test starts, however long: a line-heavy test
   runs up to 1.8× its price there, and a reading can take tens of seconds. `recoverArcs`
-  runs before the first priced step and is unpriced: linear on real outlines (4,000
-  cubics in about 14 ms), still superlinear on some rings of thousands of cubics built to
+  runs before the first priced step and is unpriced: cheap on real outlines (4,000 cubics
+  in 10–35 ms — growth is closer to n^1.6 than linear on a smooth traced blob), still
+  superlinear on some rings of thousands of cubics built to
   keep its search long (up to 0.8 s at 4,000). A sheet the budget stops is one
   `sheetChecks` warning; a DECLARED check the engine could not read is unevaluated too.
   Most tests run the budget on a stopped clock (`measure(…, { now: () => 0 })`); the
