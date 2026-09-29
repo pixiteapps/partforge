@@ -315,6 +315,17 @@ describe("caps", () => {
     expect(r.error).toBe("cut kit options: the kit has 220 pieces — at most 200; lower sets");
   });
 
+  test("more than 200 checked sheet parts at one set asks for fewer parts, not fewer sets", async () => {
+    const lots = {
+      meta: { title: "Lots" }, defaults: { t: 3 }, views: { all: { label: "All" } },
+      parts: Object.fromEntries(Array.from({ length: 201 }, (_, i) =>
+        [`p${i}`, sheetPart({ ...ply, label: `P${i}`, profile: (kk) => kk.shape2d(rect(10, 10)) })])),
+    };
+    const r = await kit(lots);
+    expect(r.error).toBe("cut kit options: the kit has 201 pieces — at most 200; check fewer sheet parts");
+    expect(r.phases.some((ph) => ph.startsWith("building"))).toBe(false);
+  });
+
   test("more than 50 sheets of one material is an options error", async () => {
     const tiles = {
       meta: { title: "Tiles" }, defaults: { t: 3 }, views: { all: { label: "All" } },

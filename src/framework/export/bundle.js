@@ -193,10 +193,12 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
     throw new Error(`${KIT_OPTIONS_ERROR} none of the checked parts is a sheet part — check a sheet part or export STL/3MF instead`);
   }
   // The cut-piece count is sheet sub-parts × sets — exactly what the merged pieces sum
-  // to — so it is checked before the builds it would otherwise waste.
+  // to — so it is checked before the builds it would otherwise waste. The remedy named
+  // is one that can work: past the cap at a single set, only fewer parts will do.
   const cutCount = sheetNames.length * o.sets;
   if (cutCount > KIT_LIMITS.pieces) {
-    throw new Error(`${KIT_OPTIONS_ERROR} the kit has ${cutCount} pieces — at most ${KIT_LIMITS.pieces}; lower sets`);
+    const remedy = sheetNames.length > KIT_LIMITS.pieces ? "check fewer sheet parts" : "lower sets";
+    throw new Error(`${KIT_OPTIONS_ERROR} the kit has ${cutCount} pieces — at most ${KIT_LIMITS.pieces}; ${remedy}`);
   }
 
   // Stock groups from each part's material and thickness alone, so a stock entry that
