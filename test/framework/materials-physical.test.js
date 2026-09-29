@@ -63,7 +63,7 @@ test("no display → a layer-lined PLA print in the CAD blue-grey", () => {
   const m = buildPhysicalMaterial(undefined, { loadTexture });
   expect(m.color.getHex()).toBe(0x9fb4cc);
   expect(m.metalness).toBe(0);
-  expect(m.envMapIntensity).toBe(0.6);
+  expect(m.envMapIntensity).toBe(0.45);
   expect(m.userData.patternUniforms?.pfPrintFrame).toBeTruthy();
   expect(buildPhysicalMaterial({ color: 0x1e88e5 }, { loadTexture }).color.getHex()).toBe(0x1e88e5);
 });
@@ -81,8 +81,9 @@ test("the carbon mask is sampled raw, not decoded as sRGB colour", () => {
 
 test("prints are lit less by the environment and reflect less, so their colour holds", () => {
   const pla = buildPhysicalMaterial({ material: "pla-print", color: 0xe0592a }, { loadTexture });
-  expect(pla.envMapIntensity).toBeCloseTo(0.6);
-  expect(pla.specularIntensity).toBeCloseTo(0.5);
+  expect(pla.envMapIntensity).toBeCloseTo(0.45);
+  expect(pla.specularIntensity).toBeCloseTo(0.3);
+  expect(pla.roughness).toBeCloseTo(0.72);
   const brass = buildPhysicalMaterial({ material: "brass" }, { loadTexture });
   expect(brass.envMapIntensity).toBe(1);
   expect(brass.specularIntensity).toBe(1);

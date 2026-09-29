@@ -48,7 +48,7 @@ export const PRESETS = {
     { color: 0xb3261e, metalness: 0, roughness: 0.4, clearcoat: 1, clearcoatRoughness: 0.08, tintable: true }),
 
   "pla-print": P("pla-print", "PLA print", "print", "FDM-printed PLA with visible layer lines; tint with `color`.",
-    { color: 0xe8e4da, metalness: 0, roughness: 0.55, envIntensity: 0.6, specularIntensity: 0.5, pattern: "layer-lines", textureScale: 0.2, tintable: true }),
+    { color: 0xe8e4da, metalness: 0, roughness: 0.72, envIntensity: 0.45, specularIntensity: 0.3, pattern: "layer-lines", textureScale: 0.2, tintable: true }),
   "petg-print": P("petg-print", "PETG print", "print", "FDM-printed PETG: glossier than PLA, visible layers; tint with `color`.",
     { color: 0x2d6cdf, metalness: 0, roughness: 0.32, envIntensity: 0.7, specularIntensity: 0.7, pattern: "layer-lines", textureScale: 0.2, tintable: true }),
   "resin-print": P("resin-print", "Resin print", "print", "SLA/MSLA resin print: smooth, faintly waxy; tint with `color`.",
