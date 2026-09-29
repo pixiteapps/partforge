@@ -593,6 +593,11 @@ describe("LASER.facts", () => {
   // time, the 1500 ms budget included, and it reads what the desktop reads. PACE is 1
   // there, and every failure message states it.
   const paced = (label) => `${label} (pace ${PACE.toFixed(2)})`;
+  // vitest's 30 s test limit is WALL time, which files running in parallel stretch and
+  // PACE does not see: the #233 sweep below takes 8 s alone here, 15 s in the whole suite
+  // and 34 s beside a second suite. The two longest tests get 60 s × PACE instead — a
+  // hang guard, not a timing assertion; the CPU limits they state are those.
+  const LONG_MS = 60_000 * PACE;
   const onCpu = (sp, params) => {
     const s = resolveSheet(k, sp, params, {});
     const t0 = cpuMs();
@@ -744,7 +749,7 @@ describe("LASER.facts", () => {
       if (budgeted.evaluated) expect(budgeted.bridge, `${at}, under the budget`).toBeLessThan(floor);
       else expect(budgeted, `${at}, under the budget`).toMatchObject({ bridge: null, gap: null });
     }
-  });
+  }, LONG_MS);
   // …and across #233's exact-curve helpers and ellipses, booleaned as holes and as panels,
   // at radii that put their curves on both sides of every band, on 2–6 mm stock: no step
   // costs more than 3 × its price or 1.5 s of CPU, and no reading more than 2 s (the budget
@@ -766,7 +771,7 @@ describe("LASER.facts", () => {
       if (over.length || run.ms > 2000) failures.push(`${name} r ${r}, ${t} mm: ${run.ms.toFixed(0)} ms, over ${JSON.stringify(over)}`);
     }
     expect(failures, paced("#233's helpers")).toEqual([]);
-  });
+  }, LONG_MS);
 
   // The reviewers' panel (test/fixtures/sheet-web-plate-part.js): thirty booleaned d 6
   // holes and one 1 mm web between two slots. Every test runs its one-sided difference,
