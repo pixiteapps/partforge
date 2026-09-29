@@ -145,6 +145,22 @@ test("past the 2-D budget a DECLARED sheet check is unevaluated, which withholds
   expect(v.ok).toBeNull();
 });
 
+// A profile whose first step is priced past the whole budget is never started (the
+// laser descriptor's prices), and its declared check must not claim the checks "ran out
+// before this one" — nothing ran. On a stopped clock only the prices can withhold it.
+test("a DECLARED sheet check on a profile too complex to start says so", () => {
+  const grille = [];
+  for (let i = 0; i < 30; i++) for (let j = 0; j < 30; j++) grille.push({ start: [6.5 + i * 5, 5 + j * 5], segments: [
+    { via: [5 + i * 5, 3.5 + j * 5], to: [3.5 + i * 5, 5 + j * 5] }, { via: [5 + i * 5, 6.5 + j * 5], to: [6.5 + i * 5, 5 + j * 5] }] });
+  const perforated = plate(160, 160, { profile: (kk) => kk.shape2d({ outer: rect(0, 0, 160, 160), holes: grille }) });
+  const v = verifyUnhurried(k, forge({ plate: perforated }, { expect: { plate: { sheetBridge: ">=1.5" } } }));
+  const [c] = on(v, "plate", "sheetBridge");
+  expect(c).toMatchObject({ status: "skip", unevaluated: true, message: "not evaluated (2-D check budget)" });
+  expect(c.hint).toMatch(/too complex to start/);
+  expect(c.hint).not.toMatch(/ran out of their time budget before this one/);
+  expect(c.hint.length).toBeLessThanOrEqual(500);
+});
+
 // min wall, the wall band and overhang are print checks: measure() casts no rays on a
 // sheet part. Declared on one they used to answer "unavailable" as a WARN — counted as
 // evaluated, so a sheet-only forge declaring only minWall came back verify.ok true with

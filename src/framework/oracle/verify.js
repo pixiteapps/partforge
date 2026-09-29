@@ -195,8 +195,10 @@ export const SHEET_CHECKS_NOTICE = Object.freeze({
 });
 
 // A DECLARED sheet check the budget withheld: `unevaluated`, as a quick lap's is, so it
-// withholds verify.ok — and it says how to get a verdict.
-const SHEET_BUDGET_HINT = "The 2-D sheet checks ran out of their time budget before this one, so it has no verdict and verify.ok is withheld. Fewer holes, fingers or small rounded corners in the profile let the checks fit; they then read every sheet part.";
+// withholds verify.ok — and it says how to get a verdict. Either the budget ran out
+// before this check, or the profile was priced too complex to start the checks at all
+// (process/laser/descriptor.js); the hint covers both, as the notice's does.
+const SHEET_BUDGET_HINT = "The 2-D sheet checks did not fit their time budget — it ran out before this check, or the profile was too complex to start them — so this check has no verdict and verify.ok is withheld. Fewer holes, fingers or small rounded corners in the profile let the checks fit; they then read every sheet part.";
 
 // The print checks: measure() casts no rays and runs no overhang pass on a sheet part.
 // Declared on one, each is a skip — declared, never evaluated, so a sheet-only forge
