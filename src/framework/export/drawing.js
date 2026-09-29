@@ -24,9 +24,11 @@
 // authored vertex ends up more than REFIT_MAX_MOVE_MM from the output.
 //
 // LAZY: reachable only through process/exporters.js's dynamic import (and, from P2b,
-// export/bundle.js's). It reaches paper (arc-fit.js → paper-bridge.js), which is why
-// lint, the oracle and partforge/geometry must never import it (test/kit-export-guards.test.js).
-// It runs in the geometry worker, so it stays DOM-free and node:-free.
+// export/bundle.js's). It reaches paper (offsetRegions: contour-offset.js →
+// paper-bridge.js — arc-fit.js is now a paper-free leaf, so recoverArcs no longer
+// carries this), which is why lint, the oracle and partforge/geometry must never
+// import it (test/kit-export-guards.test.js). It runs in the geometry worker, so it
+// stays DOM-free and node:-free.
 import { recoverArcs } from "../geometry/arc-fit.js";
 import { arcCenterAndSweep } from "../geometry/arc-math.js";
 import { cubicAt } from "../geometry/contour-ops.js";

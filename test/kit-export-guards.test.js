@@ -1,5 +1,6 @@
-// The kit's layering. The drawing stage reaches paper (arc-fit.js → paper-bridge.js), so
-// it must stay behind a dynamic import that only the export path takes: partforge/lint
+// The kit's layering. The drawing stage reaches paper (offsetRegions: contour-offset.js
+// → paper-bridge.js — arc-fit.js is a paper-free leaf), so it must stay behind a dynamic
+// import that only the export path takes: partforge/lint
 // must stay dependency-free (test/lint-purity.test.js), the oracle paper-free
 // (test/oracle-no-paper.test.js), and partforge/geometry's cloud chunk free of anything
 // but paper. And adding a process means one line in process/registry.js AND one in

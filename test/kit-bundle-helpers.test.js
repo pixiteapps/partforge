@@ -8,6 +8,7 @@ import {
 import { parseAssertion, evaluateAssertion } from "../src/framework/oracle/assert-dsl.js";
 import { evaluateCase } from "../src/framework/oracle/verify.js";
 import { SHEET_METRICS } from "../src/framework/process/registry.js";
+import { SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../src/framework/sheet/constants.js";
 
 describe("kitName", () => {
   test.each([
@@ -115,7 +116,9 @@ describe("sheetWarnings", () => {
   // `not measured — <reason>`; the kit's README line must say the same thing.
   test("a check the geometry engine refused says so, worded like verify's own line", () => {
     // The expectation is verify's OWN output for the same facts row, not a copy of its
-    // wording: reword verify's hint or message and this fails.
+    // wording: reword verify's hint or message and this fails. The hint is also asserted
+    // identical to the shared SHEET_READ_ERROR_HINT constant — bundle.js imports it from
+    // sheet/constants.js rather than keeping its own copy.
     const refused = facts({
       bridge: null,
       readErrors: { bridge: "offset: self-intersecting contour near (12.5, 40)", gap: null, marks: null, marksArea: null },
@@ -123,12 +126,15 @@ describe("sheetWarnings", () => {
     const verifyLine = evaluateCase({ subparts: [{ name: "panel", sheet: refused }] }, { expect: {}, subPartNames: ["panel"] })
       .find((c) => c.metric === "sheetBridge");
     expect(verifyLine.message).toBe("not measured — offset: self-intersecting contour near (12.5, 40)");
-    expect(sheetWarnings("Panel", refused)).toEqual([`Panel: ${verifyLine.message} — ${verifyLine.hint}`]);
+    expect(verifyLine.hint).toBe(SHEET_READ_ERROR_HINT);
+    expect(sheetWarnings("Panel", refused)).toEqual([`Panel: ${verifyLine.message} — ${SHEET_READ_ERROR_HINT}`]);
   });
 
   test("an unevaluated piece says so once instead of the checks it skipped", () => {
+    // The prefix is the shared SHEET_CHECKS_NOTICE.message — bundle.js imports it from
+    // sheet/constants.js rather than restating it — with the kit's own reason appended.
     expect(sheetWarnings("Panel", facts({ evaluated: false, bridge: null, gap: null, marksOutside: null }))).toEqual([
-      "Panel: 2-D sheet checks not evaluated (time budget) — the kit ran out of time checking this piece for narrow webs, narrow gaps and stray marks; look it over before cutting",
+      `Panel: ${SHEET_CHECKS_NOTICE.message} — the kit ran out of time checking this piece for narrow webs, narrow gaps and stray marks; look it over before cutting`,
     ]);
   });
 

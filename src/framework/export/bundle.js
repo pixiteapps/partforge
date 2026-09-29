@@ -12,7 +12,9 @@ import { safeName } from "../safe-name.js";
 import { meshTo3MF } from "../geometry/threemf.js";
 import { h } from "../geometry/solid-hash.js";
 import { printColor } from "../materials/resolve.js";
-import { isSheetPart, sheetMeta, fmtMm, SHEET_CHECK_BUDGET_MS } from "../sheet/constants.js";
+import {
+  isSheetPart, sheetMeta, fmtMm, SHEET_CHECK_BUDGET_MS, SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT,
+} from "../sheet/constants.js";
 import { resolveSheet } from "../sheet/resolve.js";
 import { processById, SHEET_METRICS } from "../process/registry.js";
 import { loadExporter } from "../process/exporters.js";
@@ -87,22 +89,21 @@ export function checkMessage(expr, actual) {
   return { pass, message: `${actual} ${pass ? "==" : "!="} ${value}` };
 }
 
-const NOT_EVALUATED = "2-D sheet checks not evaluated (time budget) — the kit ran out of time checking this piece for narrow webs, narrow gaps and stray marks; look it over before cutting";
-
-// oracle/verify.js's wording for a reading the geometry engine refused (SheetFacts's
-// readErrors, added past this file's own §5.4/§7.1 in the contract) — restated here
-// rather than imported, for the same reason checkMessage restates assert-dsl: the kit
-// must never load ./oracle/*. test/kit-bundle-helpers.test.js holds the kit's line equal
-// to verify's own output for the same facts, so a reworded hint on either side fails.
-const SHEET_READ_ERROR_HINT = "The geometry engine could not run this 2-D laser check on the profile (the reason is in the message). The part still builds; an overlapping or self-touching contour, or a sliver, is the usual cause — simplify the profile there and re-run.";
+// SHEET_CHECKS_NOTICE.message ("2-D sheet checks not evaluated (time budget)") is
+// oracle/verify.js's own wording for the same state, imported from sheet/constants.js —
+// the one place it lives, since the kit must never load ./oracle/*. The kit appends its
+// own reason to the shared prefix rather than restating the whole line.
+const NOT_EVALUATED = `${SHEET_CHECKS_NOTICE.message} — the kit ran out of time checking this piece for narrow webs, narrow gaps and stray marks; look it over before cutting`;
 
 // The README's CHECKS lines for one piece: every volunteered check its process runs
 // that fails, as `${label}: ${message} — ${hint}` with the metric's own hint. A metric
 // with no reading (budget-gated and not evaluated, or a custom build's volume match,
 // which needs a solid the kit never builds) is skipped; an unevaluated piece gets one
 // line saying so instead. A metric the geometry engine refused to read (readErrors) gets
-// its own line, worded like verify's: `not measured — <reason>`, with a fixed hint —
-// never the metric's own hint, which describes a value that was never taken.
+// its own line, worded like verify's: `not measured — <reason>`, with SHEET_READ_ERROR_HINT
+// (sheet/constants.js, imported above — the kit must never load ./oracle/* itself, so it
+// reads the one shared text rather than a copy) — never the metric's own hint, which
+// describes a value that was never taken.
 export function sheetWarnings(label, facts) {
   const desc = facts ? processById(facts.process) : null;
   if (!desc) return [];
