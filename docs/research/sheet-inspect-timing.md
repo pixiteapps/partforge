@@ -96,7 +96,8 @@ v24.19.0 (darwin arm64) on 3 mm stock (search ceiling 3 mm), each step timed alo
 | test, per line | 1.2 | 256 square holes (1,028 lines), holes merging: 1.1 s |
 | test, per arc | 2.5 | 256 perforations d 3 at a 5 mm pitch (512 arcs), webs merging: 1.1 s; with nothing merging, 0.02 s |
 | test, per cubic | 3 | 256 rounded-rect cutouts (1,024 cubics, 1,028 lines), merging: 4.7–5.2 s; 256 booleaned holes, nothing merging: 1.5–1.9 s |
-| test, per cubic that inverts at this width | +250 | radius ≤ w/2, bending the way the first offset shrinks: 16 rounded-rect corners r 1.2 closed at 3 mm, 3.5 s; 64 r 0.6 at 1.5 mm, 19.1 s (the offset engine subdivides each to its depth limit) |
+| test, cubics the first offset shrinks to within 2.5·w/2 (convex in an opening, concave in a closing) | +12 × (their count)² | the offset engine's worst case — the cubic offset subdivides toward its depth limit and the winding resolver pays for every piece, superlinearly: rounded-rect hole corners r 1.2 closed at 3 mm, 16 of them 3.5 s, 64 50 s, 256 804 s; r 2.5 (not inverting), 64 4.7 s, 256 73 s; a comb's r 2.5 inner corners, 32 1.8 s, 64 29 s |
+| test, cubics grown first and shrunk back to within 1.5·w/2 | +10 each | 128 filleted tab corners closed at 1.5 mm: 1.2 s |
 | difference, per line of both shapes | 0.25 | 1,028 + 1,036 lines: 0.45 s |
 | difference, per arc of both shapes | 0.5 | 512 + 512 arcs: 0.44 s |
 | difference, per cubic of both shapes, + 0.0005 × (all cubics)² | 0.4 | the offset engine returns a booleaned hole's 4 cubics as 16–32, and paper's boolean on that near-copy is quadratic: 1,024 result cubics 0.7 s, 2,048 2.0 s, 4,096 7.4–8.5 s |

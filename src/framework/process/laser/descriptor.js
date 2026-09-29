@@ -285,21 +285,26 @@ function holePlan(contours, ceiling) {
 // could not see — the one-sided difference a test that found something runs, priced
 // from the test's own result before it starts. With no deadline the caller asked for
 // the whole reading, however long, and gets it.
-// Prices are in units of about one desktop-Node millisecond, measured on 3 mm stock
-// (docs/research/sheet-inspect-timing.md, "What a profile costs"):
+// Prices are in units of about one desktop-Node millisecond, fitted to CPU time on 3 mm
+// stock (docs/research/sheet-inspect-timing.md, "What a profile costs"):
 //   a test (two sharp offsets and an area), per segment of the shape tested:
 //     line 1.2 (1,028: 1.1 s)   arc 2.5 (512 perforations with narrow webs: 1.1 s)
 //     cubic 3 (1,024 beside 1,028 lines: 5.2 s)
-//     and a cubic that INVERTS at this width — radius at most w/2, bending the way the
-//     first offset shrinks — 250 more: the offset engine subdivides it to its depth
-//     limit (16 inverting rounded-rect corners: 3.5 s, 64: 19 s);
+//   and the offset engine's worst case, a cubic whose radius the test SHRINKS to within
+//   a few w/2 (its cubic offset then subdivides toward the depth limit, and the winding
+//   resolver pays for every piece). A cubic bending the way the first offset shrinks
+//   (convex in an opening, concave in a closing) with radius at most 2.5·w/2 costs
+//   12 × (their count)² — superlinear, and fitted to the worst measured: 16 rounded-rect
+//   corners closed at 3 mm, 3.5 s; 64, 50 s; 256, 804 s. One bending the other way is
+//   grown first and shrunk back, and costs 10 more when its radius is at most 1.5·w/2
+//   (128 filleted tab corners closed at 1.5 mm: 1.2 s);
 //   the one-sided difference, per segment of the shape tested and of its result:
 //     line 0.25, arc 0.5, cubic 0.4 plus 0.0005 × (all the cubics)², paper's cost on
 //     a cubic near-copy (1,024: 0.7 s, 2,048: 2 s, 4,096: 8 s).
 // The meter scales every price by how much slower than that this device has run the
 // steps it already took (never below 1), so a phone prices its own steps.
 const PRICE = {
-  test: { line: 1.2, arc: 2.5, cubic: 3, inverting: 250 },
+  test: { line: 1.2, arc: 2.5, cubic: 3, shrunkPair: 12, grownBack: 10 },
   diff: { line: 0.25, arc: 0.5, cubic: 0.4, cubicPair: 0.0005 },
 };
 const countsOf = (contours) => {
@@ -310,19 +315,23 @@ const countsOf = (contours) => {
   }
   return c;
 };
-// One test at width w on a search's shape; `side` is the plan's opening or closing half.
-function testPrice(band, side, w) {
-  const { line, arc, cubic } = band.counts, P = PRICE.test;
-  const inverting = side.runs.reduce((n, run) => n + (run.rMin <= (w / 2) * (1 + 1e-6) ? run.cubics : 0), 0);
-  return line * P.line + arc * P.arc + cubic * P.cubic + inverting * P.inverting;
+// One test at width w on a search's shape. `first` is the half of the artifact plan the
+// test's first offset shrinks (an opening's convex runs, a closing's concave ones),
+// `other` the half it grows first.
+function testPrice(band, first, other, w) {
+  const { line, arc, cubic } = band.counts, P = PRICE.test, h = w / 2;
+  const cubicsWithin = (runs, r) => runs.reduce((n, run) => n + (run.rMin <= r ? run.cubics : 0), 0);
+  const shrunk = cubicsWithin(first, 2.5 * h), grownBack = cubicsWithin(other, 1.5 * h);
+  return line * P.line + arc * P.arc + cubic * P.cubic + shrunk * shrunk * P.shrunkPair + grownBack * P.grownBack;
 }
 function diffPrice(a, b) {
   const P = PRICE.diff, cubics = a.cubic + b.cubic;
   return (a.line + b.line) * P.line + (a.arc + b.arc) * P.arc + cubics * P.cubic + cubics * cubics * P.cubicPair;
 }
 // spend(price): not started unless `price` fits before the deadline, scaled by this
-// device's measured pace. Each call settles the step the last one priced.
-function meter(deadline, now) {
+// device's measured pace. Each call settles the step the last one priced. Exported for
+// its unit test only.
+export function _meter(deadline, now) {
   let priced = 0, took = 0, open = null;
   return (price = 0) => {
     const t = now();
@@ -514,8 +523,9 @@ function narrowest(test, ceiling, spend, price) {
 // a booleaned screw hole never enters the bisection (4.5 s for one M2.5 hole, before).
 // The narrower of the two wins.
 function narrowestGap(search, round, ceiling, spend) {
+  const { opening, closing } = search.band.artifacts;
   const gap = narrowest((w) => closingGain(search.shape, search.area, w, search.band, spend), ceiling, spend,
-    (w) => testPrice(search.band, search.band.artifacts.closing, w));
+    (w) => testPrice(search.band, closing.runs, opening.runs, w));
   const smallest = round.length ? round.reduce((a, b) => (b.d < a.d ? b : a)) : null;
   return smallest && smallest.d < ceiling && (gap.capped || smallest.d < gap.value)
     ? { value: round2(smallest.d), capped: false, at: smallest.at }
@@ -646,7 +656,7 @@ export const LASER = {
       readErrors: { bridge: null, gap: null, marks: null, marksArea: null },
       evaluated: false,
     };
-    const spend = meter(deadline, now);
+    const spend = _meter(deadline, now);
     const ceiling = 2 * widthFloor(t);
     // Each search's shape: the profile less the holes it can leave out, rebuilt from its
     // own rings — or the profile itself, when nothing is left out or the kernel has no
@@ -661,8 +671,9 @@ export const LASER = {
       const errors = { bridge: null, gap: null, marks: null, marksArea: null };
       const bridge = reading(errors, "bridge", () => {
         const search = searchOn(plan.open);
+        const { opening, closing } = search.band.artifacts;
         return narrowest((w) => openingLoss(search.shape, search.area, w, search.band, spend), ceiling, spend,
-          (w) => testPrice(search.band, search.band.artifacts.opening, w));
+          (w) => testPrice(search.band, opening.runs, closing.runs, w));
       });
       const gap = reading(errors, "gap", () => narrowestGap(searchOn(plan.close), plan.round, ceiling, spend));
       const m = reading(errors, "marks", () => marksFacts(s, spend));

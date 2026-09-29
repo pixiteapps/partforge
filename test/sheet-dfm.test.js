@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { bootManifoldKernel } from "../src/testing.js";
 import { sheetPart, sheetHole } from "../src/framework/geometry/polygon.js";
 import { resolveSheet } from "../src/framework/sheet/resolve.js";
-import { LASER } from "../src/framework/process/laser/descriptor.js";
+import { LASER, _meter } from "../src/framework/process/laser/descriptor.js";
 import { measure } from "../src/framework/oracle/measure.js";
 import { verify } from "../src/framework/oracle/verify.js";
 import { sheetToWorld } from "../src/framework/geometry/polygon.js";
@@ -286,6 +286,17 @@ describe("LASER.facts", () => {
     const f = factsOf(plate({ profile: cutouts }), { deadline: 1500, now: () => 0 });
     expect(f).toMatchObject({ evaluated: true, gapCapped: true });
   });
+  // Inverting is not the only slow case: a closing that shrinks a cubic corner to within a
+  // few w/2 of nothing subdivides it almost as deeply, and the cost is superlinear in how
+  // many there are (32 r 2.5 corners closed at 3 mm: 1.8 s; 64: 29 s). They are priced so.
+  test("a comb whose rounded inner corners a closing shrinks near w/2 is not started either", () => {
+    const shallow = (kk) => {
+      let s = kk.shape2d(rect(0, 0, 234, 30));
+      for (let i = 0; i < 16; i++) s = s.cut(kk.shape2d(rect(8 + i * 14, 18, 16 + i * 14, 40)).fillet(2.5));
+      return s;
+    };
+    expect(factsOf(plate({ profile: shallow }), { deadline: 1500, now: () => 0 }).evaluated).toBe(false);
+  });
   test("a comb of notches with small rounded inner corners is not started", () => {
     expect(factsOf(plate({ profile: comb }), { deadline: 1500, now: () => 0 }).evaluated).toBe(false);
     const f = factsOf(plate({ profile: (kk) => comb(kk).cut(kk.shape2d(rect(50, 5, 50.6, 12))) }));   // no deadline: read in full
@@ -337,14 +348,21 @@ describe("LASER.facts", () => {
   });
 
   // Prices are desktop milliseconds; the meter scales them by the pace this device has
-  // actually run at. Here every clock reading is 400 ms after the last: the first test,
-  // priced 139, "took" 400, so the difference after it costs three times its price and no
-  // longer fits — where a stopped clock (a desktop keeping to its prices) reads it.
-  test("a slower device prices its own steps", () => {
+  // actually run at, so a phone prices its own steps.
+  test("the meter prices each step at the pace this device ran the ones before", () => {
     let t = 0;
-    const slow = () => (t += 400) - 400;
-    expect(factsOf(plate({ profile: cutouts }), { deadline: 1500, now: () => 0 }).evaluated).toBe(true);
-    expect(factsOf(plate({ profile: cutouts }), { deadline: 1500, now: slow }).evaluated).toBe(false);
+    const clock = () => t;
+    const desk = _meter(1500, clock);
+    desk(100); t = 100;                                   // priced 100, took 100: pace 1
+    expect(() => desk(1000)).not.toThrow();               // 100 + 1000 fits in 1500
+    t = 0;
+    const slow = _meter(1500, clock);
+    slow(100); t = 300;                                   // priced 100, took 300: pace 3
+    expect(() => slow(1000)).toThrow();                   // 300 + 3 × 1000 does not
+    t = 0;
+    const late = _meter(1500, clock);
+    t = 1500;
+    expect(() => late(0)).toThrow();                      // past the deadline nothing starts
   });
 
   test("an arc-exact hole cut with cutAll reads clean — no false web or gap", () => {
