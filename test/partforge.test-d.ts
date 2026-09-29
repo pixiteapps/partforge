@@ -35,6 +35,7 @@ import {
   assemblyOverlaps,
   bootManifoldKernel,
   buildBVH,
+  handle,
   buildView,
   matchMasks,
   matchViews,
@@ -260,7 +261,10 @@ expectType<string | null>(runtime.captureCurrent());
 expectType<string | null>(runtime.captureCurrent({ renderMode: "cad" }));
 expectType<void>(runtime.setActive(false));
 expectType<() => void>(runtime.onContextLost(() => {}));
-expectType<Array<{ name: string; label: string }>>(runtime.listExportableParts());
+// The kit-era row: every row names a part; a sheet part's also carries its stock, typed.
+expectType<Array<{ name: string; label: string; sheet?: ExportableSheetInfo }>>(runtime.listExportableParts());
+// @ts-expect-error - a sheet's thickness is a number, not a string (fails if `sheet` widens to any)
+runtime.listExportableParts()[0]?.sheet?.thickness.toUpperCase();
 expectType<Promise<void>>(runtime.exportParts({ parts: ["spacer"], format: "stl", onProgress: (phase) => void phase }));
 // The cut & print kit: its format, its options, and the two lists an export UI reads.
 expectType<ExportFormatInfo[]>(runtime.listExportFormats());
@@ -460,6 +464,18 @@ expectType<"pass" | "fail" | "warn" | "skip">(v.cases[0]!.checks[0]!.status);
 expectType<"gate" | "warn">(v.cases[0]!.checks[0]!.kind);
 
 expectType<number>(assemblyOverlaps(kernel, spacer, "spacer", {}, { tolerance: 0.5 }).length);
+
+// The job loop runs the cut & print kit headlessly: an export-bundle job with its options.
+const post = (m: Record<string, unknown>) => void m;
+expectType<Promise<void>>(handle(kernel, spacer, {
+  type: "export-bundle", jobId: "export-1", parts: ["spacer"], view: "spacer", params: {}, quality: "print",
+  options: { destination: "service", kerf: 0.15, sets: 2 },
+}, post));
+expectType<Promise<void>>(handle(kernel, spacer, { type: "export-stl", jobId: 7, parts: ["spacer"] }, post));
+// @ts-expect-error - "laser" is not a destination
+handle(kernel, spacer, { type: "export-bundle", options: { destination: "laser" } }, post);
+// @ts-expect-error - "export-dxf" is not a job
+handle(kernel, spacer, { type: "export-dxf" }, post);
 
 // A sheet row's facts: a sheet naming no registered process, or one whose declaration
 // does not resolve, still gets facts, with its stock unread (null).
