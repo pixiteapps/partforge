@@ -867,6 +867,12 @@ The new mount claims that reply and drops it, rather than letting its own handle
 the reply's `error` as a failed build or its `download` as a viewbar save. The previous
 mount already rejected that export when it was disposed.
 
+`captureView` replies cross a rebind the same way, and `mount()` handles them the same
+way. Its `capture-generate` jobIds (`cap-<b>-<n>`) are unique to each mount, so a previous
+mount's `capture-meshes` can never settle the new mount's capture with the old geometry,
+and the new mount claims and drops that reply, including an `error`. The previous mount
+already resolved that capture to `null` when it was disposed.
+
 **Cancellation granularity is the sub-part.** The guard is checked only between
 sub-parts (one macrotask yield each), so a single long WASM op — a big boolean, an OCCT
 fillet — runs to completion no matter how stale it is. That is by design: WASM kernel

@@ -763,7 +763,7 @@ test("an unrelated build error does not disturb an outstanding tessellate-import
 // wrongly claim the tessellate worker's error reply, rejecting the unrelated
 // export AND leaving mount's own crossover latch stranded at "requested" (its
 // switch, which resets the latch, never runs). The "tess-N" id (mirroring
-// capture-build.js's "cap-N") keeps it outside; this test runs both jobs at
+// capture-build.js's "cap-" ids) keeps it outside; this test runs both jobs at
 // once and checks each settles independently and correctly.
 test("a tessellate-imports request never collides with a pending export's jobId", async () => {
   const els = makeElements();
