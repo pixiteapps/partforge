@@ -288,3 +288,54 @@ test("quarter-circle Béziers from r 0.5 to 500 are read as their circles, eithe
     }
   }
 });
+
+// --- the search: the longest run that fits, found in time linear in the cubics -----------
+//
+// The fit is tried for every length a run from a given cubic can reach, and the longest that
+// fits wins. A shorter run that does not fit rules nothing out: a gentle large-radius arc's
+// short runs are refused as too flat for their span, and the same arc tiny and far from the
+// origin has short runs whose three-point fits rounding swamps — both read as one arc only
+// because the search looks past those failures. It stops at a miss no longer run can make
+// up, and does not re-probe what a longer fit could not have changed; trying every length
+// and re-probing each whole made one ring of 1,600 cubics that are not a circle cost 3.4 s
+// (roughly cubic), and a circle of 4,000 cubics 3.6 s (quadratic) — before the laser checks'
+// first priced step, since they read their shapes through this fit.
+test("a large-radius arc in many cubics is one arc, though its short runs are too flat to fit", () => {
+  for (const [r, length, n] of [[5e4, 12, 8], [1e5, 16, 8], [1e5, 24, 12], [1e6, 160, 8]]) {
+    const out = recoverArcs(circularRun([0, -r], r, Math.PI / 2 - length / 2 / r, length / r, n));
+    expect(out.segments.every((s) => s.via), `r ${r}, ${length} mm in ${n}`).toBe(true);
+    const c = circleOf(out.start, out.segments[0]);
+    expect(Math.abs(c.r / r - 1), `r ${r}`).toBeLessThan(1e-6);
+  }
+});
+test("a tiny arc far from the origin is one arc, though rounding swamps its short runs' fits", () => {
+  for (const a0 of [0, 1, 3, 5]) {                     // r 0.0972 mm, 0.763° in 8 cubics, ~1,200 mm out
+    const out = recoverArcs(circularRun([-773.7, 957.6], 0.0972, a0, (-0.763 * Math.PI) / 180, 8));
+    expect(out.segments.map((s) => (s.via ? "A" : "C")).join(""), `a0 ${a0}`).toBe("A");
+  }
+});
+const cpuMs = () => { const u = process.threadCpuUsage(); return (u.user + u.system) / 1000; };
+// A closed organic outline: Catmull-Rom cubics through n points of a wobbly ellipse, none of
+// them on one circle for long (the reviewer's ring); and a circle of n kappa cubics.
+const organicRing = (n) => {
+  const pts = Array.from({ length: n }, (_, i) => {
+    const th = (2 * Math.PI * i) / n, r = 40 + 6 * Math.sin(7 * th) + 2 * Math.sin(23 * th + 1) + Math.sin(51 * th + 2);
+    return [1.3 * r * Math.cos(th), r * Math.sin(th)];
+  });
+  const segments = pts.map((p1, i) => {
+    const p0 = pts[(i - 1 + n) % n], p2 = pts[(i + 1) % n], p3 = pts[(i + 2) % n];
+    return { c1: [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6], c2: [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6], to: p2 };
+  });
+  return { start: pts[0], segments };
+};
+test("1,600 and 4,000 cubics that are not a circle, or 4,000 that are, are read in under 150 ms of CPU", () => {
+  for (const [name, ring] of [["organic 1,600", organicRing(1600)], ["organic 4,000", organicRing(4000)],
+    ["circle of 4,000", circularRun([0, 0], 40, 0, 2 * Math.PI - 1e-3, 4000)]]) {
+    const t0 = cpuMs();
+    const out = recoverArcs(ring);
+    const ms = cpuMs() - t0;
+    expect(ms, name).toBeLessThan(150);                  // were 3.4 s, ~50 s and 3.6 s
+    expect(out.segments.length, name).toBeGreaterThan(0);
+  }
+  expect(recoverArcs(circularRun([0, 0], 40, 0, 2 * Math.PI - 1e-3, 4000)).segments.every((s) => s.via)).toBe(true);
+});

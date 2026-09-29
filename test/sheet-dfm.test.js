@@ -610,6 +610,27 @@ describe("LASER.facts", () => {
       expect(ms, at).toBeLessThan(100);
     }
   });
+  // Before the first priced step the searches read the profile's cubics through the arc fit,
+  // unpriced: an outline of 1,600 cubics that are not a circle — traced artwork, which any
+  // boolean hands back as cubics — cost it 3.4 s there, trying every length of every run.
+  // Now the fit's search is linear in the cubics, and the reading is withheld at once.
+  const organic = (n) => {
+    const pts = Array.from({ length: n }, (_, i) => {
+      const th = (2 * Math.PI * i) / n, r = 40 + 6 * Math.sin(7 * th) + 2 * Math.sin(23 * th + 1) + Math.sin(51 * th + 2);
+      return [1.3 * r * Math.cos(th), r * Math.sin(th)];
+    });
+    return { start: pts[0], segments: pts.map((p1, i) => {
+      const p0 = pts[(i - 1 + n) % n], p2 = pts[(i + 1) % n], p3 = pts[(i + 2) % n];
+      return { c1: [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6], c2: [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6], to: p2 };
+    }) };
+  };
+  test("an outline of 1,600 or 4,000 organic cubics is withheld in under 200 ms of CPU, arc fit included", () => {
+    for (const n of [1600, 4000]) {
+      const { f, ms } = onCpu(plate({ profile: (kk) => kk.shape2d(organic(n)).cutAll([sheetHole({ d: 3.4, at: [-30, 0] }), sheetHole({ d: 3.4, at: [30, 0] })]) }), P);
+      expect(f, `${n} cubics`).toMatchObject({ evaluated: false, bridge: null, gap: null });
+      expect(ms, `${n} cubics`).toBeLessThan(200);                     // was 3.4 s at 1,600
+    }
+  });
   // The same plate on 6 mm stock with r 3 corners and a 10 × 10 hole leaving a 5 mm web read
   // 4.31, located at the middle of the plain top edge 45 mm from the hole: its straight edges
   // came back from the cubic fillets' regrowth a hair inside the originals, one sliver over
