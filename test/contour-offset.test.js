@@ -172,6 +172,23 @@ describe("offsetRegions", () => {
     expect(out[0].holes.length).toBe(0);
     expect(profileArea(out)).toBeCloseTo(196, 6);
   });
+  // The test above sits at EXACTLY twice the hole's half-width. Past it the inverted ring
+  // used to survive as a phantom diamond hole — under a sharp dilation a small hole came
+  // back as a hole, and the laser gap check's closing then GREW it instead of filling it,
+  // so no hole below the laser floor was ever flagged. A hole with no room for a disk of
+  // radius delta vanishes under sharp corners exactly as under round ones.
+  test("a hole narrower than twice a sharp dilation vanishes — no phantom", () => {
+    const hole = { start: [4.4, 4.4], segments: [{ to: [4.4, 5.6] }, { to: [5.6, 5.6] }, { to: [5.6, 4.4] }, { to: [4.4, 4.4] }] };   // 1.2 × 1.2, CW
+    for (const d of [1.25, 1.5, 3]) {
+      const out = offsetRegions([region(sq(10), [hole])], d, { corners: "sharp" });
+      expect(out[0].holes, `delta ${d}`).toHaveLength(0);
+      expect(profileArea(out)).toBeCloseTo((10 + 2 * d) ** 2, 6);
+    }
+    const circle = { start: [5.6, 5], segments: [{ via: [5, 4.4], to: [4.4, 5] }, { via: [5, 5.6], to: [5.6, 5] }] };   // d 1.2, CW
+    const out = offsetRegions([region(sq(10), [circle])], 1.5, { corners: "sharp" });
+    expect(out[0].holes).toHaveLength(0);
+    expect(profileArea(out)).toBeCloseTo(169, 6);
+  });
   test("dumbbell inset splits into two regions via cleanup", () => {
     const out = offsetRegions([region(dumbbell())], -2, { corners: "sharp" });
     expect(out.length).toBe(2);

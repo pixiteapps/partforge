@@ -700,10 +700,15 @@ The currently parked limitations are narrower:
 - **Round erosion with several holes reaching the eroded outer can keep too much material.**
   The characterized 30×20 plate with three rectangular holes at −2 returns about 324.75
   instead of the 258.18 oracle truth under round corners; chamfer and sharp are exact.
-- **Fully eroded holes under sharp and chamfer can leave a remnant.** The source-inradius
-  gate is intentionally limited to round joins, whose structuring element is a Euclidean
-  disk. A 1×1 hole at +2 closes correctly under round, while the sharp/chamfer variants
-  remain parked rather than applying the wrong geometric criterion.
+- **Fully eroded holes under chamfer can leave a remnant.** The source-inradius gate
+  (a hole survives a positive offset only if it holds a disk of radius delta) runs for
+  round joins, whose structuring element is that disk, and for sharp ones, which erode a
+  hole at least as deeply — the miter reaches past the arc at the hole's reflex corners
+  (only the miter-limit bevel at a very acute spike keeps a sub-sliver the disk would
+  not). Without it a sharp dilation left the inverted ring as a phantom hole once delta
+  passed twice the hole's half-width. Chamfer's bevel removes less than the arc, so the
+  disk rule is the wrong criterion there: a 1×1 hole at +2 closes under round and sharp,
+  and the chamfer variant remains parked.
 - **Erosion can emit sub-0.001 mm² rings.** Five exact seeded cases are pinned in
   `test/offset-fuzz.test.js`. They are not automatically deleted: unlike positive
   dilation, erosion has no source-membership invariant that distinguishes a false island

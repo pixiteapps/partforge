@@ -517,6 +517,17 @@ export function validateRawOffset(regions) {
 // before constructing the raw offset avoids the inverted pockets that fully-eroded curved
 // counters can otherwise leave behind. This deliberately examines the SOURCE contour, not
 // the self-tangled raw output — see the removed-prune history above.
+//
+// A SHARP offset erodes a hole at least as deeply: at the hole's convex corners the inset
+// lines meet exactly as the disk's would, and at its reflex corners a miter reaches past
+// the arc, so a hole with no room for the disk is gone under sharp corners too (the
+// miter-limit bevel keeps only a sub-sliver near a very acute spike). It gets the same
+// question. Without it the inverted ring survived: past twice a hole's half-width a
+// square came back as a small diamond hole and a circle as a mirrored one, so a sharp
+// closing (grow, shrink back) GREW a small hole — the laser gap check never flagged a
+// hole below its floor — and an inverted cubic counter subdivided to MAX_DEPTH and cost
+// the winding resolver seconds per hole. Chamfer is left alone: its bevel removes LESS
+// than the arc at a reflex corner, so an empty disk test does not prove an empty inset.
 const SOURCE_DISK_TOL = 5 * OFFSET_TOL;
 const SOURCE_DISK_FLAT_TOL = OFFSET_TOL / 2;
 const SOURCE_DISK_POINT_CAP = 16384;
@@ -661,7 +672,7 @@ function rawOffset(regions, delta, corners) {
     if (!o.contour) continue;
     const hs = rg.holes.map((h) => {
       const hole = closeContourGap(h);
-      if (delta > 0 && corners === "round" && !_sourceHoleContainsDisk(hole, delta))
+      if (delta > 0 && corners !== "chamfer" && !_sourceHoleContainsDisk(hole, delta))
         return { contour: null, dirty: false };
       return _offsetContour(hole, delta, corners);
     });
