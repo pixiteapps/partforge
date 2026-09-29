@@ -353,7 +353,7 @@ the installed package, so let the publish finish before bumping the dep there.
   "Back to options" — every error an export option causes must start with it.
   `drawing.js` holds the Drawing IR's services: `refitRing` (`recoverArcs`, then a
   conservative line-run refit — ≥ 8 vertices on one circle, every step turning ≤ 15°
-  — so `circleProfile` and chorded corners cut as arcs while hexagons and stars stay
+  — so a `circlePolygon` and chorded corners cut as arcs while hexagons and stars stay
   polygons) and `applyKerf` (`+kerf/2` on the cut layer only, refusing by name any
   kerf that closes a slot, joins pieces or loses an arc). `svg.js` (mm-sized, y
   flipped in the coordinates, every path fully styled) and `dxf.js` (R12: bulged

@@ -10,7 +10,7 @@ import {
 import { arcCenterAndSweep } from "../src/framework/geometry/arc-math.js";
 import { pointsToContour, reverseContour } from "../src/framework/geometry/profile.js";
 import {
-  circleProfile, roundedRectPolygon, slotPolygon, hexPolygon, starPolygon, regularPolygon, ellipsePolygon, piePolygon,
+  circlePolygon, roundedRectPolygon, slotPolygon, hexPolygon, starPolygon, regularPolygon, ellipsePolygon, piePolygon,
 } from "../src/framework/geometry/polygon.js";
 
 let k;
@@ -41,8 +41,8 @@ test("the layer order is the cut order, and only engrave is filled", () => {
 });
 
 describe("refitLineRuns: faceted circles come back as arcs", () => {
-  test("circleProfile's 48-gon becomes two exact half circles, closed, same start", () => {
-    const ring = pointsToContour(circleProfile(5, [10, 10]));
+  test("circlePolygon's 48-gon becomes two exact half circles, closed, same start", () => {
+    const ring = pointsToContour(circlePolygon(5, [10, 10]));
     const out = refitLineRuns(ring);
     expect(kinds(out)).toBe("aa");
     expectCircle(arcsOf(out), [10, 10], 5);
@@ -52,13 +52,13 @@ describe("refitLineRuns: faceted circles come back as arcs", () => {
   });
 
   test("orientation is kept: a clockwise 48-gon sweeps negative", () => {
-    const out = refitLineRuns(reverseContour(pointsToContour(circleProfile(5, [10, 10]))));
+    const out = refitLineRuns(reverseContour(pointsToContour(circlePolygon(5, [10, 10]))));
     expect(kinds(out)).toBe("aa");
     expect(arcsOf(out).every((g) => g.dA < 0)).toBe(true);
   });
 
   test("a 48-gon hole that a boolean re-seated mid-ring still comes back whole", () => {
-    const h = k.shape2d(RECT).cut(circleProfile(5, [20, 15])).toContours()[0].holes[0];
+    const h = k.shape2d(RECT).cut(circlePolygon(5, [20, 15])).toContours()[0].holes[0];
     expect(kinds(h)).toBe("l".repeat(48));
     const out = refitLineRuns(h);
     expect(kinds(out)).toBe("aa");
@@ -94,7 +94,7 @@ describe("refitLineRuns: faceted circles come back as arcs", () => {
   });
 
   test("a 4000-gon still refits to two arcs", () => {
-    expect(kinds(refitLineRuns(pointsToContour(circleProfile(50, [0, 0], 4000))))).toBe("aa");
+    expect(kinds(refitLineRuns(pointsToContour(circlePolygon(50, [0, 0], 4000))))).toBe("aa");
   });
 });
 
@@ -154,11 +154,11 @@ describe("refitLineRuns: a smooth curve that is not a circle is never moved (den
 
   test("large and off-grid faceted circles still come back exact", () => {
     for (const [r, c] of [[200, [0, 0]], [110 / 3, [41.2345, 17.891]]]) {
-      const out = refitLineRuns(pointsToContour(circleProfile(r, c)));
+      const out = refitLineRuns(pointsToContour(circlePolygon(r, c)));
       expect(kinds(out)).toBe("aa");
       expectCircle(arcsOf(out), c, r);
     }
-    const h = k.shape2d([[0, 0], [120, 0], [120, 120], [0, 120]]).cut(circleProfile(10, [60, 60])).toContours()[0].holes[0];
+    const h = k.shape2d([[0, 0], [120, 0], [120, 120], [0, 120]]).cut(circlePolygon(10, [60, 60])).toContours()[0].holes[0];
     const out = refitLineRuns(h);
     expect(kinds(out)).toBe("aa");
     expectCircle(arcsOf(out), [60, 60], 10);
@@ -222,7 +222,7 @@ describe("refitLineRuns: genuine polygons stay polygons (the same object back)",
   });
 
   test("the thresholds are options", () => {
-    const ring = pointsToContour(circleProfile(5));
+    const ring = pointsToContour(circlePolygon(5));
     expect(refitLineRuns(ring, { maxTurnDeg: 5 })).toBe(ring);    // 7.5° steps now out of band
     expect(kinds(refitLineRuns(pointsToContour(regularPolygon(20, 10)), { maxTurnDeg: 20 }))).toBe("aa");
   });

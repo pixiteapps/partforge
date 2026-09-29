@@ -7,7 +7,7 @@ import laser from "../src/framework/process/laser/export.js";
 import { refitRing, drawingBounds } from "../src/framework/export/drawing.js";
 import { validateKitOptions } from "../src/framework/export/formats.js";
 import { arcCenterAndSweep } from "../src/framework/geometry/arc-math.js";
-import { circleProfile, roundedRectPolygon } from "../src/framework/geometry/polygon.js";
+import { circlePolygon, roundedRectPolygon } from "../src/framework/geometry/polygon.js";
 import { sheetPart } from "../src/framework/sheet/part.js";
 import { resolveSheet } from "../src/framework/sheet/resolve.js";
 import { sheetHole } from "../src/framework/sheet/joinery.js";
@@ -63,7 +63,7 @@ describe("layers", () => {
   });
 
   test("faceted outlines come out as arcs", () => {
-    expect(kinds(draw(resolved({ profile: circleProfile(15, [15, 15]) })).layers[0].paths[0])).toBe("aa");
+    expect(kinds(draw(resolved({ profile: circlePolygon(15, [15, 15]) })).layers[0].paths[0])).toBe("aa");
     expect(kinds(draw(resolved({ profile: roundedRectPolygon(40, 20, 5) })).layers[0].paths[0])).toBe("alalalal");
   });
 
@@ -131,7 +131,7 @@ describe("cut order: every contour before any contour that encloses it", () => {
 
   test("with kerf, and with arcs: a disc hugging the inside of a washer's hole still comes first", () => {
     // 0.2 mm between the disc and the hole: a chorded containment test would miss it
-    const s = resolved({ profile: k.shape2d(circleProfile(120)).cut(circleProfile(100)).union(circleProfile(99.8)) });
+    const s = resolved({ profile: k.shape2d(circlePolygon(120)).cut(circlePolygon(100)).union(circlePolygon(99.8)) });
     for (const kerf of [0, 0.05]) {
       const [[, inner], [, outer]] = cutPaths(draw(s, { kerf }));
       // the disc is an outline, so it grows; the hole shrinks
