@@ -1,18 +1,20 @@
 # Sheet-part inspect timing
 
 What sheet parts cost the inspect job — the report a partforge-cloud apply waits on —
-for four stress cases: `src/parts/laser-box.js` (six panels, two printed hinges),
+for five stress cases: `src/parts/laser-box.js` (six panels, two printed hinges),
 `test/fixtures/sheet-twelve-panel-part.js` (twelve finger-jointed panels),
-`test/fixtures/sheet-screw-plate-part.js` (a plate with sixteen booleaned M3 holes)
-and `test/fixtures/sheet-perforated-panel-part.js` (a grille of 900 perforations)
-(sheet parts spec C.6). partforge-cloud gives the whole report ONE 8 s budget; the
-2-D sheet checks have their own, `SHEET_CHECK_BUDGET_MS` = 1500 ms per `measure()`
-call, charged for 2-D work alone. A sheet that runs past it, or whose profile is
-plainly too complex to read within it (the laser descriptor's cost pre-gate, below),
-reads `evaluated: false` — one `sheetChecks` warning, never a lost report. "Cold" is
-the first inspect of that lap type in the bench's shared worker (only the first row
-also pays the lazy oracle load); "warm" is the median of the runs after it. The 2-D
-column is every sheet's facts computed with no deadline — and so with no pre-gate.
+`test/fixtures/sheet-screw-plate-part.js` (a plate with sixteen booleaned M3 holes),
+`test/fixtures/sheet-perforated-panel-part.js` (a grille of 900 perforations) and
+`test/fixtures/sheet-web-plate-part.js` ("holes-web": thirty booleaned 6 mm holes and
+one 1 mm web, which the bridge check must find) (sheet parts spec C.6).
+partforge-cloud gives the whole report ONE 8 s budget; the 2-D sheet checks have
+their own, `SHEET_CHECK_BUDGET_MS` = 1500 ms per `measure()` call, charged for 2-D
+work alone. The laser descriptor prices every step before it starts and starts none
+whose price will not fit what is left (below); a sheet it stops reads
+`evaluated: false` — one `sheetChecks` warning, never a lost report. "Cold" is the
+first inspect of that lap type in the bench's shared worker (only the first row also
+pays the lazy oracle load); "warm" is the median of the runs after it. The 2-D column
+is every sheet's facts computed with no deadline — and so with nothing priced out.
 
 **Residual (contract §7.2):** `verify()` measures once per case, so a forge that
 declares presets spends up to one 2-D budget per case inside cloud's single 8 s
@@ -30,37 +32,44 @@ block is taken by hand: `npx vite --host --port 5195`, then open
 and copy what it prints.
 
 **Ship gate for 0.133.0:** in the Node and Chromium blocks, the laser-box,
-twelve-panel and screw-plate rows read all sheets evaluated (`n/n`), the perforated
-row reads `0/1` (withheld by the pre-gate, by design), and every warm full lap is
-under 6000 ms.
+twelve-panel, screw-plate and holes-web rows read all sheets evaluated (`n/n`), the
+perforated row reads `0/1` (priced out before its first test, by design), and every
+warm full lap is under 6000 ms.
 
 ## Node
 
 ### Node v24.19.0 (darwin arm64) — 2026-09-29, 5 warm runs
 | part | lap | cold ms | warm median ms | 2-D checks ms (no budget) | sheets evaluated |
 |---|---|---|---|---|---|
-| laser-box | quick | 311 | 103 | 58 | 6/6 |
-| laser-box | full | 156 | 130 | 58 | 6/6 |
-| twelve-panel | quick | 335 | 255 | 267 | 12/12 |
-| twelve-panel | full | 304 | 336 | 267 | 12/12 |
-| screw-plate | quick | 132 | 78 | 50 | 1/1 |
-| screw-plate | full | 76 | 74 | 50 | 1/1 |
-| perforated | quick | 1402 | 491 | 107475 | 0/1 |
-| perforated | full | 434 | 439 | 107475 | 0/1 |
+| laser-box | quick | 336 | 109 | 61 | 6/6 |
+| laser-box | full | 182 | 141 | 61 | 6/6 |
+| twelve-panel | quick | 351 | 262 | 241 | 12/12 |
+| twelve-panel | full | 314 | 324 | 241 | 12/12 |
+| screw-plate | quick | 58 | 37 | 10 | 1/1 |
+| screw-plate | full | 36 | 37 | 10 | 1/1 |
+| perforated | quick | 1560 | 551 | 148914 | 0/1 |
+| perforated | full | 581 | 552 | 148914 | 0/1 |
+| holes-web | quick | 246 | 173 | 56 | 1/1 |
+| holes-web | full | 147 | 163 | 56 | 1/1 |
+
+Both this block and the Chromium one were taken while the machine was under heavy load
+from other work (1-minute load average 14–119 on 10 cores); the rows are upper bounds.
 
 ## Chromium
 
 ### Chromium 149.0.7827.55 (headless, module worker) — 2026-09-29, 5 warm runs
 | part | lap | cold ms | warm median ms | 2-D checks ms (no budget) | sheets evaluated |
 |---|---|---|---|---|---|
-| laser-box | quick | 283 | 99 | n/a | 6/6 |
-| laser-box | full | 148 | 125 | n/a | 6/6 |
-| twelve-panel | quick | 291 | 238 | n/a | 12/12 |
-| twelve-panel | full | 281 | 276 | n/a | 12/12 |
-| screw-plate | quick | 125 | 81 | n/a | 1/1 |
-| screw-plate | full | 76 | 72 | n/a | 1/1 |
-| perforated | quick | 1217 | 446 | n/a | 0/1 |
-| perforated | full | 387 | 374 | n/a | 0/1 |
+| laser-box | quick | 340 | 107 | n/a | 6/6 |
+| laser-box | full | 246 | 131 | n/a | 6/6 |
+| twelve-panel | quick | 311 | 275 | n/a | 12/12 |
+| twelve-panel | full | 372 | 345 | n/a | 12/12 |
+| screw-plate | quick | 72 | 40 | n/a | 1/1 |
+| screw-plate | full | 40 | 39 | n/a | 1/1 |
+| perforated | quick | 1515 | 501 | n/a | 0/1 |
+| perforated | full | 465 | 467 | n/a | 0/1 |
+| holes-web | quick | 157 | 118 | n/a | 1/1 |
+| holes-web | full | 110 | 111 | n/a | 1/1 |
 
 ## iPhone (Safari)
 
@@ -68,29 +77,57 @@ Scott measures this by hand before the PR merges (spec launch gate 5).
 
 ## What a profile costs
 
-The measurements behind the laser descriptor's cost pre-gate
-(`src/framework/process/laser/descriptor.js`, `checkCost`): one sheet's 2-D facts in
-Node v24.19.0 (darwin arm64), 3 mm stock (so the width search's ceiling is 3 mm),
-no deadline. "One test" is a single uninterruptible shrink-and-regrow at the
-ceiling — the unit the deadline, checked between tests, cannot bound. "Units" is
-the pre-gate's estimate; above 1,500 (the budget) a profile is not started under
-a deadline.
+The measurements behind the laser descriptor's prices
+(`src/framework/process/laser/descriptor.js`, "what a step costs"). Nothing interrupts
+a step once started — the deadline is checked between steps — so under a deadline every
+step is priced before it starts and not started when its price, scaled by the pace this
+device has measured on the steps it already took, will not fit what is left. The steps
+are one test (a sharp shrink-and-regrow and an area) and the one-sided difference a test
+that found something then runs, priced from that test's own result. Before any of it,
+each width search leaves out the holes it cannot involve (`holePlan`): the closing, round
+holes (read directly) and convex holes wider than the ceiling; the opening, convex holes
+that clear every other ring by twice the ceiling (1.5 times for a round one).
 
-| profile | segments | one test | all readings | units | under the budget |
-|---|---|---|---|---|---|
-| 256 square holes | 1,028 lines | 0.6 s | 2.5 s | 1,028 | read until the budget runs out |
-| 400 perforations, d 3 at a 5 mm pitch | 800 arcs | 2.5 s | 21.8 s | 1,604 | not started |
-| 16 booleaned d 6 holes, nothing narrow | 64 cubics | 0.06 s | 0.07 s | 772 | read |
-| 96 booleaned d 6 holes, nothing narrow | 384 cubics | 0.3 s | 0.8 s | 4,612 | not started (a web beside them would cost a boolean per test: 32 holes and one web, 15.7 s) |
-| 16 rounded-rect cutouts, r 2.5 | 64 cubics | 4.7 s | 7.0 s | 2,628 | not started |
-| 4 rounded-rect cutouts, r 1.2 | 16 cubics | 3.2 s | 3.5 s | 1,620 | not started |
-| 3 rounded-rect cutouts, r 1.2 | 12 cubics | 1.9 s | 2.1 s | 1,216 | read (overruns by one test) |
-| 16 booleaned d 2.7 holes | 64 cubics | < 0.01 s | 0.05 s | 772 | read |
+Prices are in units of about one desktop-Node millisecond, fitted to CPU time in Node
+v24.19.0 (darwin arm64) on 3 mm stock (search ceiling 3 mm), each step timed alone:
 
-Before this fix wave the last row's shape was the engine's worst: a booleaned round
-hole shrinks to a near-point circle of cubics that the offset engine cannot cheaply
-regrow — one M2.5 hole took 4.5 s and four took 47 s, a single d 3.5 hole 4.3 s for
-one test. Round holes are now read directly (their narrowest opening is their
-diameter) and kept out of the width search, and the offset engine drops a hole a
-sharp dilation fully erodes (`contour-offset.js`).
+| step | price | calibration (CPU) |
+|---|---|---|
+| test, per line | 1.2 | 256 square holes (1,028 lines), holes merging: 1.1 s |
+| test, per arc | 2.5 | 256 perforations d 3 at a 5 mm pitch (512 arcs), webs merging: 1.1 s; with nothing merging, 0.02 s |
+| test, per cubic | 3 | 256 rounded-rect cutouts (1,024 cubics, 1,028 lines), merging: 4.7–5.2 s; 256 booleaned holes, nothing merging: 1.5–1.9 s |
+| test, per cubic that inverts at this width | +250 | radius ≤ w/2, bending the way the first offset shrinks: 16 rounded-rect corners r 1.2 closed at 3 mm, 3.5 s; 64 r 0.6 at 1.5 mm, 19.1 s (the offset engine subdivides each to its depth limit) |
+| difference, per line of both shapes | 0.25 | 1,028 + 1,036 lines: 0.45 s |
+| difference, per arc of both shapes | 0.5 | 512 + 512 arcs: 0.44 s |
+| difference, per cubic of both shapes, + 0.0005 × (all cubics)² | 0.4 | the offset engine returns a booleaned hole's 4 cubics as 16–32, and paper's boolean on that near-copy is quadratic: 1,024 result cubics 0.7 s, 2,048 2.0 s, 4,096 7.4–8.5 s |
 
+What that buys, measured on the reviewers' stress cases: one sheet's facts under the
+1,500 ms deadline, real time, at 3efdb6d9 (the cost pre-gate) and after this change,
+side by side on the same loaded machine:
+
+| profile | before | after |
+|---|---|---|
+| 100 perforations, d 3 at a 5 mm pitch | 1,571 ms, not evaluated | 1,003 ms, not evaluated |
+| 196 perforations | 2,633 ms, not evaluated | 661 ms, not evaluated |
+| 289 perforations | 2,202 ms, not evaluated | 1,356 ms, not evaluated |
+| 324 perforations | 2,643 ms, not evaluated | 8 ms, not started |
+| 24 booleaned d 6 holes + one 1 mm web | 4,178 ms, not evaluated | 17 ms, web read (1.03) |
+| 30 booleaned d 6 holes + one 1 mm web (holes-web) | 6,399 ms, not evaluated (one 5.5 s boolean) | 13 ms, web read (1.03) |
+| 3 rounded-rect cutouts r 1.2 + one 1 mm web | 2,238 ms, web read | 324 ms, web read |
+| 4 corner M3 holes 5 mm in + one 1 mm web | 565 ms, web read | 550 ms, web read |
+| 12 d 6 holes 3.5 mm from an edge + one 1 mm web | 1,749 ms, not evaluated | 41 ms, not evaluated (the difference priced out) |
+| 30 such holes + one 1 mm web | 6,240 ms, not evaluated | 99 ms, not evaluated (the difference priced out) |
+
+The last two rows are the class the prices withhold rather than read: holes within an
+opening's reach of an edge or of each other stay in the opening, and a test that finds
+the web would then run the difference against their exploded near-copy (3 s and 13 s
+with no deadline). Replacing a booleaned round hole's four cubics by the exact circle
+they approximate, inside the search only, would make that difference cheap — a
+follow-up, not done here.
+
+Earlier in this branch a booleaned round hole was the engine's worst shape outright: it
+shrinks to a near-point circle of cubics the offset engine could not cheaply regrow — one
+M2.5 hole took 4.5 s and four took 47 s. Round holes are read directly (their narrowest
+opening is their diameter), the offset engine drops a hole a sharp dilation fully erodes
+while every join on it takes the miter (`contour-offset.js`), and the width searches
+leave out the holes they cannot involve.
