@@ -6,9 +6,10 @@
 ## Summary
 
 In realistic mode a laser-cut `sheetPart` in a wood now looks laser-cut: its cut edges are
-charred, its engraving and score lines are scorched, and its faces stay wood. Nothing new is
-written by an author to get it — the burn follows from data the agent already writes (a laser
-sheet part and a wood material). Two companions ship with it:
+charred, with the wood's grain still showing through the char, its engraving and score lines
+are scorched, and its faces stay wood. Nothing new is written by an author to get it — the
+burn follows from data the agent already writes (a laser sheet part and a wood material). Two
+companions ship with it:
 
 - **A sheet part with no material stops looking 3D-printed.** Today it renders as a PLA print
   with layer lines. It now takes its look from its stock label: acrylic-like stock renders as
@@ -41,6 +42,14 @@ pass compiled only into qualifying sheets.
    `min(charcoal_i, 0.37 · face_i)`, not charcoal itself, so walnut chars darker in every
    channel. Char roughness is 0.68, not 0.85. §3 has the formula and the reason for each change;
    the sign-off captures show the shipped numbers.
+
+   **The grain, approved by Scott in the live viewer on 2026-09-30.** The char is no longer one
+   flat colour per surface. The average char above is multiplied by each texel's ratio to the
+   face average (`grain` = 1, a multiply blend), so the wood's grain shows through in its own
+   hue and the average darkness is unchanged. And char keeps 35% of the wood's normal-map
+   relief (`relief` = 0.35) instead of fading to the geometric normal outright. These two
+   supersede the decision's flat char and full normal fade; the burn numbers above are
+   unchanged. §3 has the formula.
 2. **Default material for sheet parts.** A laser sheet part with no `display.material` derives
    its realistic look from its stock string with one keyword table in one module: acrylic-like
    (`acrylic`, `perspex`, `plexi`, `pmma`, `polycarbonate`) → `clear-acrylic`; everything else
@@ -150,6 +159,8 @@ char_i = min(CHARCOAL_i, 0.37 · face_i)            per channel; CHARCOAL = #262
 k     = mix(0.74, 0.97, clamp((t − 3) / 6, 0, 1))
 edge  = mix(face, char, min(1, k + 0.1 · (1 − z/t)))       (exit side, z = 0, a little darker)
 mark  = mix(face, char, k − 0.1)                           (engrave / score floors)
+grain = mix(1, texel / max(face, 1e-4), 1)                 per channel; texel = the wood pixel
+edge, mark *= grain                                        (grain = 1: a pure multiply)
 ```
 
 The per-channel target (`charOfDark` = 0.37) replaces the first cut's single luminance scale,
@@ -160,6 +171,21 @@ lighter than the unburnt wall. Capping each channel at a fraction of the face's 
 means no channel can come out lighter than it went in. For oak and plywood the target is
 charcoal itself in every channel. For walnut, charOfDark takes over green and blue. No noise
 term at all.
+
+**The grain shows through (a multiply blend).** `edge` and `mark` are what the face AVERAGE
+chars to. Each texel then keeps its ratio to that average: `texel / face`, blended in by
+`BURN.grain`, multiplies the char. At `grain` = 1 that is a pure multiply, so every texel is
+scaled by the same per-channel factor, `char_i / face_i`. Three things follow, and the twin
+tests hold all three. The average darkness is exactly the average char above, so the burn
+numbers and the calibration floors below still describe it. No texel comes out lighter than
+it went in, whatever its ratio to the average, because the factor is at most 1 in every
+channel. That closes the first cut's residual: with a flat char, a texel darker than the char
+(walnut's darkest grain, about 6% of its texels under a 3 mm edge) read lighter burnt. And
+each texel keeps its own hue relative to the average, since the ratio is taken per channel,
+not as one luminance. The ratio reads `diffuseColor` while it still holds the wood, before the
+burn overwrites it, and divides by `max(face, 1e-4)` so a black face channel cannot blow up. A
+`grain` below 1 would lift a black texel to a grey lighter than itself, which is why the tests
+pin it at 1.
 
 k rose from the decision's 0.55 → 0.85 to 0.74 → 0.97 during the sign-off, in all four
 environments. The environments light by IBL alone (no key light), and the char's broader,
@@ -176,8 +202,9 @@ both outer plies are face-grain. The bands multiply the char, so they stay visib
 
 **Roughness** mixes to 0.68 on walls and floors (tuned down from the first cut's 0.85 in the
 sign-off, together with k). **Normal:** `normal = normalize(mix(normal,
-nonPerturbedNormal, max(wall, floor)))` — char has no grain. **Clearcoat:** `material.clearcoat
-*= 1 − max(wall, floor)` — walnut's lacquer comes off the char.
+nonPerturbedNormal, max(wall, floor) · (1 − relief)))`, with `relief` = 0.35 — char keeps a
+little of the wood's surface relief, where the first cut faded it out entirely. **Clearcoat:** `material.clearcoat *= 1 − max(wall, floor)` — walnut's lacquer comes
+off the char.
 
 **Injection points**, verified against three 0.184's meshphysical fragment order
 (`roughnessmap → metalnessmap → normal_fragment_begin → normal_fragment_maps → clearcoat normals
@@ -195,11 +222,13 @@ prove a burning program is exactly the plain wood program plus those blocks, and
 is untouched (the pass reads the varyings every pattern already has).
 
 **One statement of the numbers.** `BURN` in `sheet-look.js` holds every threshold and colour
-constant; `patterns.js` templates the GLSL from it, and two JS twins read the same object:
-`classifySheetSurface(pos, normal, t)` (the classification, which the frame test holds real
-geometry to) and `burnAlbedo(face, t, { kind, zFrac })` (the colour, which the calibration test
-holds to a visibility floor). The twins share the numbers, not the code, so they prove the frame
-math and the calibration — the shader's own correctness is proved by eye.
+constant (`grain` and `relief` included); `patterns.js` templates the GLSL from it, and three
+JS twins read the same object: `classifySheetSurface(pos, normal, t)` (the classification,
+which the frame test holds real geometry to), `burnAlbedo(face, t, { kind, zFrac })` (the
+AVERAGE char, which the calibration test holds to a visibility floor) and `burnTexel(texel,
+face, t, opts)` (one texel's char, the grain multiply on top of `burnAlbedo`). The twins share
+the numbers, not the code, so they prove the frame math and the calibration — the shader's own
+correctness is proved by eye.
 
 ### 4. Plumbing — one lazy frame channel, one per-sub-part gate
 
@@ -316,7 +345,14 @@ headroom, so the next edit to this section has to plan a trim.
   numbers, at 3 mm, edge / engrave: oak ΔE 25.8 / 20.7, luminance 0.313 / 0.406 of the face;
   plywood 34.1 / 27.4, 0.281 / 0.379; walnut, the binding case, 14.8 / 12.0, 0.452 / 0.526.
   These are albedo facts only. The thickness ordering among them holds for any roughness, so
-  it cannot prove the render orders the same way.
+  it cannot prove the render orders the same way. They are facts about the AVERAGE char, and
+  the grain multiply leaves the average unchanged, so they still hold with the grain showing.
+- **The grain, per texel** (`burnTexel`): at `grain` = 1 (pinned), each texel burns to its
+  unburnt value × (average char ÷ average face) per channel; no texel comes out lighter than
+  it went in at any ratio to the average, from black to 20×, including a face channel under
+  the shader's `1e-4` floor; and a set of texels averaging to the face burns to exactly the
+  average char. Checked for the three woods and three tints, at 3, 6, 9 and 12 mm, on both
+  ends of an edge and on an engrave floor.
 - **The render, measured at the same place.** Specular reflection is the same at every
   thickness and no albedo takes it away, so two swatches at different places on the sheet
   reflect different light. On the contact sheet the unburnt 9 mm walnut swatch's lit (right)
@@ -327,8 +363,10 @@ headroom, so the next edit to this section has to plan a trim.
   reads darker than the 3 mm one on both walls: studio 0.64 / 0.83, workshop 0.71 / 0.69
   (9 mm ÷ 3 mm, L / R). Measure a retune the same way.
 - **Shader structure against three's real source** (`THREE.ShaderLib.physical`): the injection
-  order above; the burning program minus its `pf-burn` blocks equals the plain wood program line
-  for line; identical vertex shaders; cache keys `pf-pattern:wood` vs `pf-pattern:wood|pf-burn`
+  order above, including the grain multiply (read after wood's body, applied to both chars
+  before either is drawn) and the normal fade's `relief` term — removing either fails it; the
+  burning program minus its `pf-burn` blocks equals the plain wood program line for line;
+  identical vertex shaders; cache keys `pf-pattern:wood` vs `pf-pattern:wood|pf-burn`
   (and `…|pf-burn|pf-brush` with an anisotropy override); the uniforms in `patternUniforms` with
   `pfSheetT = 0`; a no-op on non-wood.
 - **Wiring**: a burning sheet's frame reaches its material and the cutaway/fade clones; a
@@ -382,10 +420,10 @@ qualify — non-sheet wood (e.g. `hinged-box.js`'s walnut) included.
 - Coloured acrylic stock ("black acrylic") renders clear unless `display.color` tints it.
 - Before its first delivery a burning sub-part draws plain wood (`pfSheetT = 0`).
 - Score grooves are drawn at their real 0.3 mm width: near-invisible at whole-part scale.
-- Char is one uniform colour per surface (no smoke halo, no darker corners, no honeycomb marks).
-  It is mixed from the face's average, so a texel darker than the char reads lighter burnt:
-  walnut's darkest grain, about 6% of its texels under a 3 mm edge and 9% under an engrave, by
-  luminance. Oak and plywood: none.
+- Char is the wood's own grain darkened evenly across a surface, apart from the exit-side
+  gradient and the plies: no smoke halo, no darker corners, no honeycomb marks. (The first
+  cut's flat char, under which a texel darker than the char read lighter burnt, is gone: the
+  grain multiply darkens every texel.)
 - The plywood face is oak's figure re-tinted, until a CC0 birch-ply scan replaces it.
 - On walnut, whose char is near black, a lit wall's brightness is mostly specular reflection.
   So two walnut sheets in different places can read in either order whatever their thickness.
