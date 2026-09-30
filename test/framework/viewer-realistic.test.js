@@ -78,6 +78,7 @@ vi.mock("../../src/framework/materials/environment.js", async () => {
 });
 
 import { createViewer, halfFloatCaptureSupported } from "../../src/framework/viewer.js";
+import { sheetPart } from "../../src/framework/sheet/part.js";
 
 function createContainer() {
   const container = document.createElement("div");
@@ -1389,5 +1390,66 @@ test("with the cutaway on, the contact shadow is clipped by its plane and re-ren
   now += 1000;
   state.renderer.animationLoop();
   expect(render.mock.calls.at(-1)[2].clippingPlanes).toBe(null);
+  v.dispose();
+});
+
+// --- laser burns: sheet frames ride the one lazy frame channel ---------------
+// A laser sheet in oak beside an oak block that is not a sheet part: only the sheet
+// compiles the burn pass (sheet-look.js burnsFor), so every other program is untouched.
+const square = (k) => k.shape2d([[0, 0], [30, 0], [30, 30], [0, 30]]);
+const sheetPartDef = () => ({
+  meta: { title: "t" },
+  parts: {
+    panel: sheetPart({ views: ["main"], display: { material: "oak" }, material: "birch plywood", thickness: 3, profile: square }),
+    block: { build: () => null, display: { material: "oak" } },
+  },
+});
+function shownSheets() {
+  const v = createViewer(createContainer(), sheetPartDef());
+  for (const n of ["panel", "block"]) v.setSubGeometry(n, payload());
+  v.showAssembly(["panel", "block"], { frame: true });
+  return v;
+}
+
+test("only the laser sheet compiles the burn pass; the non-sheet oak keeps the plain wood program", async () => {
+  const v = shownSheets();
+  await v.setRenderMode("realistic");
+  expect(v.__subMesh("panel").material.customProgramCacheKey()).toBe("pf-pattern:wood|pf-burn");
+  expect(v.__subMesh("block").material.customProgramCacheKey()).toBe("pf-pattern:wood");
+  v.dispose();
+});
+
+test("sheet frames reach the burning material and its cutaway clone; a missing frame is plain wood", async () => {
+  const v = shownSheets();
+  await v.setRenderMode("realistic");
+  const base = v.__subMesh("panel").material;
+  expect(base.userData.patternUniforms.pfSheetT.value).toBe(0);
+  const frame = new THREE.Matrix4().makeTranslation(1, 2, 3).toArray();
+  v.setSheetFrames({ panel: { frame, t: 3, plies: 3 } });
+  v.setCutawayEnabled(true);
+  const clipped = v.__subMesh("panel").material;
+  expect(clipped).not.toBe(base);
+  const u = clipped.userData.patternUniforms;
+  expect(u).toBe(base.userData.patternUniforms);
+  expect(u.pfSheetFrame.value.toArray()).toEqual(frame);
+  expect(u.pfSheetT.value).toBe(3);
+  expect(u.pfPlies.value).toBe(3);
+  v.setSheetFrames({});
+  expect(u.pfSheetT.value).toBe(0);
+  v.dispose();
+});
+
+test("frames are pulled from the source only when the realistic look is drawn", async () => {
+  const v = shownSheets();
+  const frame = new THREE.Matrix4().makeTranslation(0, 0, -3).toArray();
+  const source = vi.fn(() => ({ print: {}, sheet: { panel: { frame, t: 3, plies: 0 } } }));
+  v.setFrameSource(source);
+  v.invalidateFrames();
+  expect(source).not.toHaveBeenCalled();              // CAD: nothing is computed
+  await v.setRenderMode("realistic");
+  expect(source).toHaveBeenCalledTimes(1);
+  expect(v.__subMesh("panel").material.userData.patternUniforms.pfSheetFrame.value.toArray()).toEqual(frame);
+  v.invalidateFrames();                               // a delivery while realistic: pulled at once
+  expect(source).toHaveBeenCalledTimes(2);
   v.dispose();
 });
