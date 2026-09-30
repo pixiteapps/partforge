@@ -1,0 +1,97 @@
+// The kit's SVG writer: a SheetDoc (placed Drawings on one sheet) → one SVG string,
+// built by hand — paper.js cannot export SVG in a worker (there is no DOM to serialize
+// through), and this module stays a paper-free leaf (arc-math.js only).
+//
+// Written for laser software, which reads styling far more literally than a browser:
+//   - Size is physical: width/height in mm, viewBox in mm, so 1 user unit = 1 mm.
+//   - y is flipped IN THE COORDINATES (svgY = H − y): the Drawing is y-up, SVG is y-down,
+//     and a transform on the root is exactly the kind of inherited state a laser importer
+//     may drop. The flip reverses every arc's sense, hence the sweep flag below.
+//   - Every <path> carries its whole style. Nothing on the root or a group: inherited
+//     style is where importers disagree. Cut and score paths carry fill="none" — an
+//     unfilled SVG path defaults to BLACK FILL, which Glowforge reads as an engrave.
+//   - Colours are LightBurn's convention (SVG_COLORS); groups are written in cut order.
+//   - The only text is the escaped <title>. Escaping is hygiene, not the security
+//     boundary: a hostile part shares the worker with this writer and can post its own
+//     bytes — the host's download allowlist is the boundary (design spec E.1).
+import { arcCenterAndSweep } from "../geometry/arc-math.js";
+import { placer } from "./placement.js";
+
+export const SVG_COLORS = Object.freeze({ engrave: "#000000", score: "#0000FF", "cut-inner": "#FF0000", "cut-outer": "#FF0000" });
+export const SVG_STROKE_MM = 0.025;   // a hairline: laser software cuts it as a vector
+// The group order is the cut order — the same list as drawing.js's LAYER_ORDER, which
+// this leaf cannot import (drawing.js reaches paper); test/kit-svg.test.js pins them equal.
+const ORDER = Object.keys(SVG_COLORS);
+
+const num = (x) => { const v = Number(x.toFixed(4)); return String(v === 0 ? 0 : v); };   // -0 → "0"
+const escapeXml = (s) => String(s)
+  .replace(/[\u0000-\u001f\u007f]/g, "")
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+
+// Every IR arc is written as ceil(|dA| / 90°) equal pieces about the IR's own centre.
+// An `A` command carries no centre: a reader rebuilds it from the radius and the two
+// ends (SVG 1.1 F.6.5), at sqrt(r² − (chord/2)²) from the chord — and at 180° that
+// root is of a number near zero, so the 4-decimal rounding of r and both ends moves the
+// centre by ~sqrt(2·r·1e-4): a quarter of a millimetre-scale error on an ordinary hole,
+// and exactly what the refit makes (a faceted circle comes back as two 180° arcs). At
+// 90° or less the rebuild is well conditioned and lands within ~1e-4 mm. The pieces'
+// inner ends come from the centre and angle, never from a rounded neighbour; the last
+// one is the IR's own `to`.
+const QUARTER = Math.PI / 2;
+function arcCommands(from, s, P) {
+  const g = arcCenterAndSweep(from, s.via, s.to);   // drawing frame: the turn keeps dA's sign
+  if (!g) return ` L${P(s.to)}`;                     // collinear "arc": a straight line
+  const n = Math.max(1, Math.ceil(Math.abs(g.dA) / QUARTER - 1e-9));
+  const a0 = Math.atan2(from[1] - g.center[1], from[0] - g.center[0]);
+  const step = g.dA / n;
+  let d = "";
+  for (let i = 1; i <= n; i++) {
+    const t = a0 + step * i;
+    const to = i === n ? s.to : [g.center[0] + g.r * Math.cos(t), g.center[1] + g.r * Math.sin(t)];
+    d += ` A${num(g.r)} ${num(g.r)} 0 ${Math.abs(step) > Math.PI ? 1 : 0} ${step > 0 ? 0 : 1} ${P(to)}`;
+  }
+  return d;
+}
+
+function pathData(path, place, H) {
+  const P = (p) => { const [x, y] = place(p); return `${num(x)} ${num(H - y)}`; };
+  let d = `M${P(path.start)}`;
+  let from = path.start;
+  for (const s of path.segments) {
+    if (s.c1) d += ` C${P(s.c1)} ${P(s.c2)} ${P(s.to)}`;
+    else if (s.via) d += arcCommands(from, s, P);
+    else d += ` L${P(s.to)}`;
+    from = s.to;
+  }
+  return path.closed ? `${d} Z` : d;
+}
+
+export function renderSvg(doc) {
+  const [W, H] = doc.size;
+  const lines = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="${num(W)}mm" height="${num(H)}mm" viewBox="0 0 ${num(W)} ${num(H)}">`,
+    `<title>${escapeXml(doc.title)}</title>`,
+  ];
+  for (const id of ORDER) {
+    const paths = [];
+    for (const placement of doc.placements) {
+      const layer = placement.drawing.layers.find((l) => l.id === id);
+      if (!layer || layer.paths.length === 0) continue;
+      const place = placer(placement);
+      if (id === "engrave") {
+        // one filled path per piece: all its engrave rings, even-odd, so a glyph's
+        // counter stays open whatever the rings' winding
+        const d = layer.paths.map((p) => pathData(p, place, H)).join(" ");
+        paths.push(`<path d="${d}" fill="${SVG_COLORS.engrave}" fill-rule="evenodd" stroke="none"/>`);
+      } else {
+        for (const p of layer.paths)
+          paths.push(`<path d="${pathData(p, place, H)}" fill="none" stroke="${SVG_COLORS[id]}" stroke-width="${SVG_STROKE_MM}"/>`);
+      }
+    }
+    if (paths.length) lines.push(`<g id="${id}">`, ...paths, "</g>");
+  }
+  lines.push("</svg>");
+  return `${lines.join("\n")}\n`;
+}

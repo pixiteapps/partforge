@@ -346,6 +346,39 @@ the installed package, so let the publish finish before bumping the dep there.
   part verifies byte-identically — `test/verify-golden.test.js` pins it; re-record only
   for a deliberate verdict change (`PARTFORGE_RECORD_VERIFY_GOLDEN=1 npx vitest run
   test/verify-golden.test.js`). Timings: `docs/research/sheet-inspect-timing.md`.
+- **`src/framework/export/`** - the cut & print kit's writers, process-agnostic.
+  `formats.js` is IMPORT-FREE: `EXPORT_FORMATS`, the kit's option contract
+  (`validateKitOptions`, `resolveStock`, `KIT_DEFAULTS`, `KIT_LIMITS`) and
+  `KIT_OPTIONS_ERROR`, the `cut kit options:` prefix partforge-cloud routes to
+  "Back to options" — every error an export option causes must start with it.
+  `drawing.js` holds the Drawing IR's services: `refitRing` (`recoverArcs`, then a
+  conservative line-run refit — ≥ 8 vertices on one circle, every step turning ≤ 15°
+  — so a `circlePolygon` and chorded corners cut as arcs while hexagons and stars stay
+  polygons) and `applyKerf` (`+kerf/2` on the cut layer only, refusing by name any
+  kerf that closes a slot, joins pieces or loses an arc). `svg.js` (mm-sized, y
+  flipped in the coordinates, every path fully styled) and `dxf.js` (R12: bulged
+  POLYLINEs, CIRCLE for an all-arc ring, cubics flattened to 0.01 mm) are paper-free
+  leaves, and `layout.js` packs one stock group onto sheets (deterministic shelves
+  over each piece's all-layer box). A process's exporter is
+  `process/<id>/export.js`, reached ONLY through `process/exporters.js`'s dynamic
+  import: the drawing stage reaches paper, so lint, the oracle and
+  `partforge/geometry` must never load it, and the whole stage must stay
+  worker-safe (`test/kit-export-guards.test.js`, which also pins the exporter ids
+  to `process/registry.js`'s).
+- **`src/framework/export/bundle.js`** - the cut & print kit itself,
+  `exportParts({ format: "bundle", options })`. `buildBundle` validates the options
+  before anything builds, draws every sheet part through its process's exporter,
+  merges identical pieces and prints into `-xN` files, lays each stock group out
+  (`layout.js`), writes the sheets, pieces and prints plus `readme.js`'s plain-text
+  README.txt and parts.csv, and zips them — asserting every entry name unique and
+  safe first. `jobs.js` reaches it only through `loadBundle`, a literal dynamic
+  import: `test/worker-layering.test.js` keeps every `export/` module and process
+  exporter out of worker boot (the main thread imports `formats.js` alone, through
+  `export-rows.js` for `listExportFormats()` and through `src/index.js` for the
+  options surface). The kit never loads `./oracle/*`
+  (`test/kit-layering.test.js` walks it and runs a real kit with every oracle module
+  mocked to throw), so the README's check lines are worded by `checkMessage`, a
+  restatement of `assert-dsl.js` that a test holds equal to it.
 - **`src/testing/`** - the genuinely Node-only harness, and only that:
   `manifold.js` / `occt.js` (boot a WASM kernel from disk), `render.js` (write
   PNGs), `error-patterns.js` (read `docs/ERROR-PATTERNS.md`). Never import these

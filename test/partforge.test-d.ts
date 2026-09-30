@@ -6,8 +6,11 @@
 // Everything imports through the package's own subpath specifiers, so this also
 // proves the `exports` map's `types` conditions resolve.
 
-import { mount } from "partforge";
+import { mount, EXPORT_FORMATS, KIT_OPTIONS_ERROR, KIT_DEFAULTS, validateKitOptions } from "partforge";
 import type {
+  ExportableSheetInfo,
+  ExportFormatInfo,
+  KitOptions,
   AnimationRuntime,
   AnimationSpec,
   AnimationState,
@@ -32,6 +35,7 @@ import {
   assemblyOverlaps,
   bootManifoldKernel,
   buildBVH,
+  handle,
   buildView,
   matchMasks,
   matchViews,
@@ -257,8 +261,23 @@ expectType<string | null>(runtime.captureCurrent());
 expectType<string | null>(runtime.captureCurrent({ renderMode: "cad" }));
 expectType<void>(runtime.setActive(false));
 expectType<() => void>(runtime.onContextLost(() => {}));
-expectType<Array<{ name: string; label: string }>>(runtime.listExportableParts());
+// The kit-era row: every row names a part; a sheet part's also carries its stock, typed.
+expectType<Array<{ name: string; label: string; sheet?: ExportableSheetInfo }>>(runtime.listExportableParts());
+// @ts-expect-error - a sheet's thickness is a number, not a string (fails if `sheet` widens to any)
+runtime.listExportableParts()[0]?.sheet?.thickness.toUpperCase();
 expectType<Promise<void>>(runtime.exportParts({ parts: ["spacer"], format: "stl", onProgress: (phase) => void phase }));
+// The cut & print kit: its format, its options, and the two lists an export UI reads.
+expectType<ExportFormatInfo[]>(runtime.listExportFormats());
+expectType<ExportableSheetInfo | undefined>(runtime.listExportableParts()[0]?.sheet);
+expectType<Promise<void>>(runtime.exportParts({
+  parts: ["spacer"], format: "bundle",
+  options: { destination: "service", kerf: 0.15, stock: [{ group: "*", size: [300, 300] }], sets: 2 },
+}));
+const kitOptions: KitOptions = { printFormat: "3mf", stock: null };
+expectType<Required<KitOptions>>(validateKitOptions(kitOptions));
+expectType<"cut kit options:">(KIT_OPTIONS_ERROR);
+expectType<ReadonlyArray<ExportFormatInfo>>(EXPORT_FORMATS);
+expectType<number>(KIT_DEFAULTS.margin);
 expectType<void>(runtime.setHostPane("rail"));
 expectType<void>(runtime.setHostPane(null));
 // Animation playback: null for a part that declares none, so every call is guarded.
@@ -283,6 +302,9 @@ runtime.setHostPane("sidebar");
 
 // @ts-expect-error - "obj" is not an export format
 runtime.exportParts({ parts: ["spacer"], format: "obj" });
+
+// @ts-expect-error - "cnc" is not a kit destination
+runtime.exportParts({ parts: ["spacer"], format: "bundle", options: { destination: "cnc" } });
 
 // @ts-expect-error - the handle has no such method
 runtime.setCamera({});
@@ -442,6 +464,18 @@ expectType<"pass" | "fail" | "warn" | "skip">(v.cases[0]!.checks[0]!.status);
 expectType<"gate" | "warn">(v.cases[0]!.checks[0]!.kind);
 
 expectType<number>(assemblyOverlaps(kernel, spacer, "spacer", {}, { tolerance: 0.5 }).length);
+
+// The job loop runs the cut & print kit headlessly: an export-bundle job with its options.
+const post = (m: Record<string, unknown>) => void m;
+expectType<Promise<void>>(handle(kernel, spacer, {
+  type: "export-bundle", jobId: "export-1", parts: ["spacer"], view: "spacer", params: {}, quality: "print",
+  options: { destination: "service", kerf: 0.15, sets: 2 },
+}, post));
+expectType<Promise<void>>(handle(kernel, spacer, { type: "export-stl", jobId: 7, parts: ["spacer"] }, post));
+// @ts-expect-error - "laser" is not a destination
+handle(kernel, spacer, { type: "export-bundle", options: { destination: "laser" } }, post);
+// @ts-expect-error - "export-dxf" is not a job
+handle(kernel, spacer, { type: "export-dxf" }, post);
 
 // A sheet row's facts: a sheet naming no registered process, or one whose declaration
 // does not resolve, still gets facts, with its stock unread (null).
