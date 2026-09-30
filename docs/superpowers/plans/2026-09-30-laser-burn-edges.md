@@ -1,5 +1,7 @@
 # Laser-Cut Wood Burns Implementation Plan
 
+> **History, not the as-built code.** The BURN numbers, the char formula and the stock table here are the pre-sign-off versions; the design spec (`docs/superpowers/specs/2026-09-30-laser-burn-edges-design.md`, §3, §5 and §8) has the formula and numbers that shipped.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** In realistic mode, a laser `sheetPart` in a wood shows charred cut edges and scorched engraving/score floors; a laser sheet part with no material takes its stock's look (`plywood` or `clear-acrylic`) instead of a PLA print; a new `plywood` preset ("Birch plywood") shows its plies under the char. CAD mode, exports and every non-sheet part are unchanged.

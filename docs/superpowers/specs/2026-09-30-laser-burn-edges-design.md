@@ -35,11 +35,18 @@ pass compiled only into qualifying sheets.
    clearcoat off on char; the wood normal faded to the geometric normal on char. The pass is
    gated per sub-part. The burn must be clearly visible on oak, walnut and plywood at 3 mm,
    judged by a same-pixel burn-on vs burn-off comparison, never wall vs face.
+
+   **As built — for Scott to ratify.** The sign-off tuning (plan Task 7) moved these numbers.
+   k is 0.74 at ≤ 3 mm → 0.97 at ≥ 9 mm, not ≈ 0.55 → 0.85. The char target is per channel,
+   `min(charcoal_i, 0.37 · face_i)`, not charcoal itself, so walnut chars darker in every
+   channel. Char roughness is 0.68, not 0.85. §3 has the formula and the reason for each change;
+   the sign-off captures show the shipped numbers.
 2. **Default material for sheet parts.** A laser sheet part with no `display.material` derives
    its realistic look from its stock string with one keyword table in one module: acrylic-like
    (`acrylic`, `perspex`, `plexi`, `pmma`, `polycarbonate`) → `clear-acrylic`; everything else
    → `plywood`. Documented in "## Materials and appearance". An explicit `display.material`
-   wins; a bare `display.color` gives tinted plywood, not PLA.
+   wins; a bare `display.color` gives tinted plywood, not PLA. *As built:* the table matches
+   word STARTS, not substrings, and knows more spellings (§5).
 3. **A real `plywood` preset now.** Id `plywood`, label "Birch plywood", category `natural`:
    pale birch face, fine grain, ply bands on cut edges under the char (3 mm → 3 plies, 6 → 5,
    9 → 7). Texture: an approved CC0 set, or the stated fallback (oak's scan re-tinted to birch,
@@ -139,24 +146,36 @@ Creased normals are hard at the 90° arris, so the split falls exactly on the ge
 
 ```
 face  = diffuse · pfFaceAvg                       (the tinted face's average colour)
-char  = CHARCOAL · min(1, 0.5 · Y(face) / Y(CHARCOAL))     CHARCOAL = #262220
-k     = mix(0.55, 0.85, clamp((t − 3) / 6, 0, 1))
+char_i = min(CHARCOAL_i, 0.37 · face_i)            per channel; CHARCOAL = #262220
+k     = mix(0.74, 0.97, clamp((t − 3) / 6, 0, 1))
 edge  = mix(face, char, min(1, k + 0.1 · (1 − z/t)))       (exit side, z = 0, a little darker)
 mark  = mix(face, char, k − 0.1)                           (engrave / score floors)
 ```
 
-The `min(1, …)` scale is an addition to decision 1's formula and fixes the critique's
-dark-tint problem: when a face is darker than twice charcoal's luminance, the char target is
-scaled down (neutral, to half the face's luminance) instead of being lighter than the face — so
-char is always darker than its own face — while every preset face, walnut included, is bright
-enough to keep plain charcoal. No noise term at all.
+The per-channel target (`charOfDark` = 0.37) replaces the first cut's single luminance scale,
+`CHARCOAL · min(1, 0.5 · Y(face) / Y(CHARCOAL))`. That scale kept char darker than its face
+OVERALL, but walnut's face is reddish: its blue sits below charcoal's, so mixing the whole
+vector toward charcoal raised that one channel, and on camera walnut's char read flat and
+lighter than the unburnt wall. Capping each channel at a fraction of the face's own value
+means no channel can come out lighter than it went in. For oak and plywood the target is
+charcoal itself in every channel. For walnut, charOfDark takes over green and blue. No noise
+term at all.
+
+k rose from the decision's 0.55 → 0.85 to 0.74 → 0.97 during the sign-off, in all four
+environments. The environments light by IBL alone (no key light), and the char's broader,
+flatter specular response is not the lacquered wood's. So at 0.55 walnut's burnt wall still
+rendered lighter than the unburnt one in some environments. A deeper thin end fixed that.
+Then the thick end rose too, so that 9 mm stays clearly darker than 3 mm on every wall. The
+twins cannot see any of this. They check albedo only, and the render adds specular light the
+albedo cannot take away. So the render was judged on captures (§8).
 
 **Plies** (plywood): on walls, `edge *= mix(1, 0.78, crossPly(z/t · plies))`, where `crossPly`
 is the square wave "1 on an odd ply" box-filtered over the pixel (its integral differenced across
 `fwidth`), so bands too thin to draw average out instead of shimmering. With an odd ply count
 both outer plies are face-grain. The bands multiply the char, so they stay visible under it.
 
-**Roughness** mixes to 0.85 on walls and floors. **Normal:** `normal = normalize(mix(normal,
+**Roughness** mixes to 0.68 on walls and floors (tuned down from the first cut's 0.85 in the
+sign-off, together with k). **Normal:** `normal = normalize(mix(normal,
 nonPerturbedNormal, max(wall, floor)))` — char has no grain. **Clearcoat:** `material.clearcoat
 *= 1 − max(wall, floor)` — walnut's lacquer comes off the char.
 
@@ -197,16 +216,27 @@ math and the calibration — the shader's own correctness is proved by eye.
   `faceAvg`. Nothing else calls it with `burn`.
 - **mount.js.** Beside `layerLined`, a `burning` set (`burnsFor`). Deliveries record either kind
   in the one `undrawnFrames` snapshot; `computeFrames()` resolves params once per delivery and
-  fills both maps. A sub-part can never be in both (layer lines vs wood).
+  fills both maps. A sub-part can never be in both (layer lines vs wood). *As built:* the
+  snapshot is the `{ view, params }` each generate job was DISPATCHED with, not the live params
+  at delivery. A delivery shown during animation playback was built at params the live ones
+  have already left. Framed at the live ones, a sheet whose pose and outline both read an
+  animated param would land its laser face a fraction of a millimetre off, and a whole face
+  would classify as a floor and draw scorched. A delivery whose params cannot be resolved on
+  the main thread drops a burning sheet's frame, so it draws plain wood.
 
 ### 5. The sheet default look — `realisticDisplay(sp)`
 
 One keyword table, `STOCK_LOOKS`, in `sheet-look.js`:
 
-| Stock label contains (case-insensitive) | Realistic look |
+| A word of the stock label starts with (case-insensitive) | Realistic look |
 |---|---|
-| `acrylic`, `perspex`, `plexi`, `pmma`, `polycarbonate` | `clear-acrylic` |
+| `acryl`, `perspex`, `plexi`, `pmma`, `methacryl`, `polycarb`, `lexan`, `makrolon`, `lucite` | `clear-acrylic` |
 | anything else — plywood, birch, basswood, poplar, MDF, hardboard, wood, cardboard — or no readable label | `plywood` (`DEFAULT_STOCK_LOOK`) |
+
+*As built:* a row matches when one of its stems STARTS a word of the label. A hyphenated word
+is also read joined, so `poly-carbonate` matches and `clear-acrylic` still has `acrylic`. The
+first cut matched raw substrings. That missed `Acrylite`, `Lexan`, `Makrolon` and `Lucite`, and
+sent `perplexing birch` and `nonacrylic veneer` to acrylic.
 
 `realisticDisplay(sp)` is the display realistic mode draws:
 
@@ -249,6 +279,9 @@ approval is not given: `pattern-plywood-color.jpg` baked from the committed
 ≈ `#e1c2a3`, softer grain), reusing oak's normal and roughness maps, `grain: "v"`, and a finer
 `textureScale` (150 against oak's 250).
 
+*As built:* fallback (b) shipped, with `color: 0xe1c2a3` (the baked map's measured average),
+oak's normal and roughness maps at `normalScale: 1.5`, `textureScale: 150`.
+
 **Docs:** one row in the preset table (24 documented ids → 25) and `plywood` in the wood row of
 the `textureScale` table.
 
@@ -257,7 +290,11 @@ the `textureScale` table.
 `const PLY = { …, display: { material: "plywood" }, … }` (was `"oak"`) — +4 characters, in
 `laser-box.js` and in its byte-pinned copy in the guide. `test/sheet-docs.test.js` has two caps;
 measured on this branch: the section is 15,906 / 16,000 and 15,345 / 15,350 excluding "The kit",
-so +4 leaves 1 character under the binding cap. Nothing else in the Sheet parts section changes.
+so +4 leaves 1 character under the binding cap. *As built:* the final review added one note.
+The Limits bullet that recommends an author `place` for an angled panel now says that place
+drops the realistic laser burns. It was paid for by tightening three sentences, never the
+worked example. The section ends at 15,907 / 16,000 and 15,346 / 15,350: 4 characters of
+headroom, so the next edit to this section has to plan a trim.
 
 ### 8. Verification
 
@@ -265,15 +302,30 @@ so +4 leaves 1 character under the binding cap. Nothing else in the Sheet parts 
   panel is built posed (as delivered) and flat (sheetPart's own build) with the Manifold kernel;
   the frame must map the posed mesh onto the flat one — the class histogram (walls; faces,
   backs and floors by height) must be identical — and the front panel's label and score show as
-  floors at `t − MARK_DEPTH`. Plus the null cases: non-sheet oak, acrylic, PLA, custom build,
-  author place (plain and mirrored), replaced place, hand-written declaration, unreadable pose
-  or thickness.
+  floors at `t − MARK_DEPTH`. The laser side of every posed panel (its triangles facing the
+  pose's `face`) must land as face or floor, never back: on a panel with no marks the histogram
+  is symmetric, so it cannot tell a panel turned over. Plus the null cases: non-sheet oak,
+  acrylic, PLA, custom build, author place (plain and mirrored), replaced place, hand-written
+  declaration, unreadable pose or thickness.
 - **Calibration, same pixel, burn on vs off**: at the albedo level the two differ only by the
   burn (lighting cancels on the diffuse term), so `burnAlbedo` is held to a visibility floor for
   each wood at 3 mm, at the lightest point of a wall: edge ΔE76 ≥ 12 and luminance ≤ 0.7 × face;
   engrave floor ΔE76 ≥ 10 and luminance ≤ 0.8 × face. Also: thicker is darker, the exit side is
-  darker, char is darker than its face under any tint, char never goes below its floor.
-  (Walnut is the binding case: ΔE 13.7, ratio 0.68 at k = 0.55.)
+  darker, char is darker than its face under any tint, char never goes below its floor, and
+  no channel of the char is lighter than the face average it is mixed from. At the shipped
+  numbers, at 3 mm, edge / engrave: oak ΔE 25.8 / 20.7, luminance 0.313 / 0.406 of the face;
+  plywood 34.1 / 27.4, 0.281 / 0.379; walnut, the binding case, 14.8 / 12.0, 0.452 / 0.526.
+  These are albedo facts only. The thickness ordering among them holds for any roughness, so
+  it cannot prove the render orders the same way.
+- **The render, measured at the same place.** Specular reflection is the same at every
+  thickness and no albedo takes it away, so two swatches at different places on the sheet
+  reflect different light. On the contact sheet the unburnt 9 mm walnut swatch's lit (right)
+  wall is already 1.7–2× lighter than the unburnt 3 mm swatch's, so comparing those two walls
+  said the 9 mm char was lighter (ratio 1.23–1.59, in all four environments). With walnut's
+  row swapped to 9 mm in the 3 mm swatch's place, and its wall measured over the same pixels
+  (z ∈ [0, 3]), the unburnt wall matches (studio R 0.1085 against 0.1086) and the 9 mm char
+  reads darker than the 3 mm one on both walls: studio 0.64 / 0.83, workshop 0.71 / 0.69
+  (9 mm ÷ 3 mm, L / R). Measure a retune the same way.
 - **Shader structure against three's real source** (`THREE.ShaderLib.physical`): the injection
   order above; the burning program minus its `pf-burn` blocks equals the plain wood program line
   for line; identical vertex shaders; cache keys `pf-pattern:wood` vs `pf-pattern:wood|pf-burn`
@@ -292,8 +344,9 @@ so +4 leaves 1 character under the binding cap. Nothing else in the Sheet parts 
   realistic mode in every environment and writes an amplified |burnt − unburnt| image per
   environment — the burn's exact footprint, pixel for pixel, with lighting cancelled: walls,
   engravings and scores light up; faces, the acrylic sheet and the non-sheet block stay black.
-  It fails on any console error, which is how a GLSL compile error surfaces. The final capture in
-  all four environments is Scott's sign-off.
+  It fails on any console error, which is how a GLSL compile error surfaces. It also fails when
+  a pair's captures differ in size or the burn moved too few pixels (`--min-moved`). The final
+  capture in all four environments is Scott's sign-off.
 - The two contact-sheet views are excluded from `test/verify-golden.test.js` (a sheet's laser
   checks run on a real clock, so their verdict is machine-dependent; the page is for judging by
   eye and has no verdict to guard).
@@ -305,7 +358,8 @@ paragraph with the `STOCK_LOOKS` table and what a bare `color` does; a **"Laser-
 paragraph — laser sheet parts in a wood char at their cut edges and scorch their marks, darker on
 thicker stock, plies showing on `plywood`; nothing to set and still one material; a custom
 `build` or an own `place` shows plain wood; CAD and exports unchanged — and the `plywood` rows.
-The "## Sheet parts" section changes by the example's four characters only. `AGENTS.md`'s
+The "## Sheet parts" section changes by the example's four characters and, after the final
+review, the Limits note that an author `place` drops the burns (§7). `AGENTS.md`'s
 materials paragraph learns `sheet-look.js`, the renamed frame channel and the contact sheet's
 laser views.
 
@@ -321,11 +375,21 @@ qualify — non-sheet wood (e.g. `hinged-box.js`'s walnut) included.
 - A sheet part with an author `place` — including a mirrored "left from right" panel — or a
   custom build shows plain wood.
 - A stock label computed by a function reads as unlabelled: plywood.
-- MDF, hardboard and card render as `plywood` (with ply bands) until the library has their looks.
+- MDF, hardboard and card render as `plywood` (with ply bands) until the library has their looks,
+  and so does stock that is neither wood nor acrylic — felt, leather, cork — burns and all. The
+  guide says so; an author names `display.material` for those.
+- A label naming acrylic as a finish ("acrylic-painted MDF") reads as acrylic stock.
 - Coloured acrylic stock ("black acrylic") renders clear unless `display.color` tints it.
 - Before its first delivery a burning sub-part draws plain wood (`pfSheetT = 0`).
 - Score grooves are drawn at their real 0.3 mm width: near-invisible at whole-part scale.
 - Char is one uniform colour per surface (no smoke halo, no darker corners, no honeycomb marks).
+  It is mixed from the face's average, so a texel darker than the char reads lighter burnt:
+  walnut's darkest grain, about 6% of its texels under a 3 mm edge and 9% under an engrave, by
+  luminance. Oak and plywood: none.
+- The plywood face is oak's figure re-tinted, until a CC0 birch-ply scan replaces it.
+- On walnut, whose char is near black, a lit wall's brightness is mostly specular reflection.
+  So two walnut sheets in different places can read in either order whatever their thickness.
+  At the same place the thicker one is darker (§8).
 - The ply count is a step table, not a measurement.
 - 3MF carries the face average; the burn is realistic-only.
 - On partforge-cloud's server laps the viewer is CAD-only, so an agent's realistic render there
