@@ -8,7 +8,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { strFromU8, unzipSync } from "fflate";
 import { bootManifoldKernel, handle } from "../src/testing.js";
 import {
-  sheetPart, circlePolygon, roundedRectProfile, slotProfile, ringSectorProfile, pieProfile,
+  sheetPart, circlePolygon, circleProfile, roundedRectProfile, slotProfile, ringSectorProfile, pieProfile,
 } from "../src/framework/geometry/polygon.js";
 import { sheetHole } from "../src/framework/sheet/joinery.js";
 import { arcCenterAndSweep } from "../src/framework/geometry/arc-math.js";
@@ -53,18 +53,15 @@ function svgRadialDeviation(sub, height, c, r) {
   return worst;
 }
 
-// An EXACT circle: two three-point arcs, sheetHole's shape and the one circleProfile
-// returns from partforge 0.132 (today circleProfile is still circlePolygon's 48 points).
-const arcCircle = (r, [x, y]) => ({ start: [x + r, y], segments: [{ to: [x - r, y], via: [x, y + r] }, { to: [x + r, y], via: [x, y - r] }] });
-
 describe("an off-grid circle stays round in the SVG", () => {
   // circlePolygon draws a 48-gon; the refit turns it back into arcs about the exact
   // centre. Cut through a boolean, the ring comes back re-seated at an arbitrary vertex,
   // so its arcs' ends land off the 1e-4 number grid — which is what a 180° arc cannot
   // survive: its centre sits ON the chord, and F.6.5 rebuilds it from sqrt(r² − c²).
-  // An exact circle takes the other roads — its arcs straight through, or, once a
-  // boolean has touched it, cubics that recoverArcs rebuilds — and must come out just
-  // as round.
+  // circleProfile is an exact circle since partforge 0.132 — two three-point arcs,
+  // sheetHole's shape — and takes the other roads: its arcs straight through (a region
+  // hole, a disc), or, once a boolean has touched it, cubics that recoverArcs rebuilds.
+  // It must come out just as round, and as one DXF CIRCLE.
   const cases = [
     { name: "a r 10 hole at (60, 60) in a 120 mm plate", layer: "cut-inner", center: [60, 60], r: 10, min: [0, 0],
       profile: (kk) => kk.shape2d(rect(120, 120)).cut(circlePolygon(10, [60, 60])) },
@@ -73,11 +70,13 @@ describe("an off-grid circle stays round in the SVG", () => {
     { name: "a r 110/3 disc off the origin", layer: "cut-outer", center: [41.2345, 17.891], r: 110 / 3,
       min: [41.2345 - 110 / 3, 17.891 - 110 / 3], grows: true,
       profile: (kk) => kk.shape2d(circlePolygon(110 / 3, [41.2345, 17.891])) },
-    { name: "an exact r 110/3 hole off centre in a 150 × 100 plate", layer: "cut-inner", center: [61.2345, 47.891], r: 110 / 3, min: [0, 0],
-      profile: (kk) => kk.shape2d(rect(150, 100)).cut(arcCircle(110 / 3, [61.2345, 47.891])) },
-    { name: "an exact r 110/3 disc off the origin", layer: "cut-outer", center: [41.2345, 17.891], r: 110 / 3,
+    { name: "a circleProfile r 110/3 hole cut off centre in a 150 × 100 plate", layer: "cut-inner", center: [61.2345, 47.891], r: 110 / 3, min: [0, 0],
+      profile: (kk) => kk.shape2d(rect(150, 100)).cut(circleProfile(110 / 3, [61.2345, 47.891])) },
+    { name: "a circleProfile r 110/3 region hole off centre in a 150 × 100 plate", layer: "cut-inner", center: [61.2345, 47.891], r: 110 / 3, min: [0, 0],
+      profile: (kk) => kk.shape2d({ outer: rect(150, 100), holes: [circleProfile(110 / 3, [61.2345, 47.891])] }) },
+    { name: "a circleProfile r 110/3 disc off the origin", layer: "cut-outer", center: [41.2345, 17.891], r: 110 / 3,
       min: [41.2345 - 110 / 3, 17.891 - 110 / 3], grows: true,
-      profile: (kk) => kk.shape2d(arcCircle(110 / 3, [41.2345, 17.891])) },
+      profile: (kk) => kk.shape2d(circleProfile(110 / 3, [41.2345, 17.891])) },
   ];
   const forge = (c) => ({ meta: { title: "Round" }, defaults: {}, views: { all: { label: "All" } },
     parts: { p: sheetPart({ ...ply, label: "P", profile: c.profile }) } });

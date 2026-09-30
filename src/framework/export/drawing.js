@@ -12,11 +12,11 @@
 //
 // Why two refits. Every Shape2D boolean turns arcs into cubics (paper-bridge.js), so a
 // hole cut with cutAll comes back as four cubics, and so does every exact arc a *Profile
-// helper drew once a boolean has touched it; recoverArcs (arc-fit.js) turns those back
-// into exact arcs. But a point list draws its curves as polygons — circlePolygon is a
-// 48-gon (so is circleProfile, until partforge 0.132 makes it exact), the round
-// *Polygon helpers' corners and ends are chords, a hand-sampled arc is its samples — and
-// a laser traces every facet. refitLineRuns is the conservative second pass for those:
+// helper drew (circleProfile's two, since partforge 0.132) once a boolean has touched
+// it; recoverArcs (arc-fit.js) turns those back into exact arcs. But a point list draws
+// its curves as polygons — circlePolygon is a 48-gon, the round *Polygon helpers'
+// corners and ends are chords, a hand-sampled arc is its samples — and a laser traces
+// every facet. refitLineRuns is the conservative second pass for those:
 // a run becomes arcs only when at least `minVerts` consecutive vertices sit on one
 // circle AND every step turns by at most `maxTurnDeg`, all the same way. A hexagon (60°
 // turns) or a star (alternating turns) never qualifies; when the test misses something
