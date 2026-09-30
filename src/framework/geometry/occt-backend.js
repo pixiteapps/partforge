@@ -37,6 +37,7 @@ import { composePose, transformPositions, rotateNormals } from "./pose.js";
 import { filterBrepEdges } from "./brep-edges.js";
 import { meshToStl } from "./mesh-stl.js";
 import { heightfieldMesh, hashGridData } from "./heightfield.js";
+import { writeStep } from "./occt-step.js";
 const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.25 }, print: { tolerance: 0.01, angularTolerance: 0.1 } };
 
 // Heightfield sew-time warning threshold, in triangles. Measured by the plan's
@@ -112,7 +113,7 @@ function stlBufferToShape(replicad, arrayBuffer) {
 
 export function createOcctKernel(replicad) {
   const { makeCylinder, makeBox, makeCircle, makeHelix, assembleWire, genericSweep,
-          loft, draw, exportSTEP, importSTEP, measureVolume, makeSphere, makeLine, Plane } = replicad;
+          loft, draw, importSTEP, measureVolume, makeSphere, makeLine, Plane } = replicad;
 
   // Feature-skip warnings: everything occt-repair (and roundAll) skips or rescues
   // is recorded here as well as console.warned, and jobs.js drains it per
@@ -755,7 +756,10 @@ export function createOcctKernel(replicad) {
     // region-in/region-out form directly. `_`-prefixed — not part of the public kernel
     // surface.
     _offsetRegions: offsetRegions,
-    toSTEP: (named) => exportSTEP(named.map(({ name, solid }) => ({ name, shape: solid._mat()._s }))).arrayBuffer(),
+    // Our own writer, not replicad's exportSTEP, so colours come out right (see
+    // occt-step.js). `color` per body is optional; jobs.js passes the sub-part's
+    // printColor, the same colour its .3mf object gets.
+    toSTEP: async (named) => writeStep(replicad, named.map(({ name, solid, color }) => ({ name, shape: solid._mat()._s, color }))),
     // Imported geometry, registered pre-build by the framework via `_registerImport`
     // (ensureImports, Task 8). Every call clones the master shape — replicad ops
     // consume their operands, and the master must never be handed out directly, or

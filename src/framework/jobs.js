@@ -447,7 +447,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       if (names.length === 0) throw new Error("no exportable parts selected");
       const solids = names.map((name) => {
         onProgress(`building ${label(name)}`);
-        return { name: exportName(name), solid: posed(name, "export", onProgress) };
+        return { name: exportName(name), solid: posed(name, "export", onProgress), color: printColor(part.parts[name]?.display) };
       });
       onProgress("writing STEP file");
       const data = await kernel.toSTEP(solids);
