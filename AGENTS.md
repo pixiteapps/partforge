@@ -216,7 +216,9 @@ the installed package, so let the publish finish before bumping the dep there.
   `declaresMaterials` still counts only a named material), `print-frame.js`
   and `sheet-look.js` (pose math for layer lines, and a laser sheet part's
   canonical frame for its burns - from data, no probe; frames are LAZY -
-  `mount.js` only records each delivery, and the viewer pulls both kinds
+  `mount.js` only records each delivery, against the params its generate job
+  was DISPATCHED with (a delivery shown during playback was built at params
+  the live ones have left), and the viewer pulls both kinds
   through `setFrameSource` when it is about to draw the realistic look, live
   or borrowed by a capture, so CAD builds never compute them), `assets.js`
   (asset filename -> URL) and
