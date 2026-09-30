@@ -382,10 +382,11 @@ fixed to the sub-part, so they never slide when the camera or an animation
 moves.
 
 **Laser-cut wood.** In realistic mode a laser `sheetPart` in a wood — `plywood`, `oak` or
-`walnut` — shows what the laser did: its cut edges are charred, darker on thicker stock (on
+`walnut`, named or its stock's default (so a plywood sheet that names no material burns too)
+— shows what the laser did: its cut edges are charred, darker on thicker stock (on
 `plywood` the plies show through), and its engraving and score lines are scorched, while its
 faces stay wood. There is nothing to set, and it is still one material: the char follows
-from the sheet and the material it names. It needs the sheet's own frame, so a sheet part
+from the sheet and the wood it is drawn in. It needs the sheet's own frame, so a sheet part
 with a custom `build` or its own `place` shows plain wood. The CAD view and every export are
 unchanged.
 
@@ -1831,8 +1832,8 @@ needing the kernel is `(k, p, d) => …`; a plain value is a literal or `(p, d) 
 `material`, `thickness` and `profile` are required; `score`, `engrave`, `pose`,
 `process` (default `"laser"`) are optional; `label`, `views`, `display`, `export`,
 `enabled`, `exportable`, `reference` pass through; your own `place` runs after the
-pose. `build` is supplied — passing one throws, as do `kerf`, `outline`/`cut` (use
-`profile`) and `quantity` (the kit counts identical pieces).
+pose. `build` is supplied — passing one throws, as do `kerf`, `outline`/`cut` and
+`quantity`; each error names the fix.
 
 ### Cut, score and engrave
 
@@ -1921,7 +1922,7 @@ PRINT pose, `place` it for display, and cut the slot where the tongue lands:
 | `verify-process-sheets-only` | warning | `verify.process` is set but every exportable part is a sheet part |
 | `laser-thickness-range` | warning | a laser sheet is thinner than 0.5 mm or thicker than 12 mm |
 
-**Verify** runs the laser checks on every sheet part. They are
+**Verify** runs the laser checks on every sheet part, as
 *volunteered* warnings: none counts toward `declared`/`evaluated`, so none makes
 `verify.ok` true on its own. Declare one in `expect` to make it count:
 
@@ -1951,12 +1952,13 @@ A host downloads sheet parts as one ZIP, the **cut & print kit** (`format: "bund
 
 - One thickness per joint: fingers, tabs and T-slots join panels cut from the
   same sheet.
-- Poses are rigid and axis-aligned: `face` and `up` are the six axis words. A
-  panel at an angle is an author `place` after the pose, or a printed part.
+- Poses are rigid and axis-aligned: `face` and `up` are the six axis words. An
+  angled panel is an author `place` after the pose (realistic mode then shows
+  no laser burns), or a printed part.
 - No bends, folds, living hinges or grain direction: `folds`, `bends` and
   `grain` are reserved keys and throw.
-- Cut and score are vector lines; engraving is filled regions. There is no raster
-  image engraving.
+- Cut and score are vector lines; engraving is filled regions, never a raster
+  image.
 - The laser checks are warnings. Sharp-corner shrinking can over-report at acute
   tips, and a web within 0.05 mm of the floor can read as passing.
 

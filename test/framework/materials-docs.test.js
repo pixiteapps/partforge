@@ -40,6 +40,8 @@ test("the Laser-cut wood paragraph says who burns, that nothing is set, and when
   for (const s of ["`sheetPart`", "`plywood`", "`oak`", "`walnut`", "realistic", "nothing to set", "custom `build`", "own `place`", "CAD"]) {
     expect(para, s).toContain(s);
   }
+  // A sheet that names no material burns too, as its stock's look (realisticDisplay).
+  expect(para.replace(/\s+/g, " ")).toContain("names no material burns too");
 });
 
 // The PLA fallback has one exception — a laser sheet part takes its stock's look — and the
