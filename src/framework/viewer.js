@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { guardStaleTouches } from "./stale-touch-guard.js";
 import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -232,6 +233,9 @@ export function createViewer(container, part) {
 
   const controls = new OrbitControls(activeCamera, renderer.domElement);
   controls.enableDamping = true;
+  // A finger a host gesture swallowed would otherwise stay "down" in the
+  // controls forever (every later drag zooms) — see stale-touch-guard.js.
+  const disposeTouchGuard = guardStaleTouches(renderer.domElement);
 
   // --- render on demand -------------------------------------------------------
   // The loop ticks every animation frame (controls, tweens, frame listeners —
@@ -2631,6 +2635,7 @@ export function createViewer(container, part) {
     canonicalCaptureHidden.clear();
     camTween.cancel();
     controls.dispose();
+    disposeTouchGuard();
     for (const t of flashTimers) clearTimeout(t);
     flashTimers.clear();
     // A dot whose timer was just cancelled — or one held indefinitely — still
