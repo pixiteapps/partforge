@@ -145,7 +145,7 @@ function lab(rgb) {
   return [116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))];
 }
 const dE = (a, b) => { const p = lab(a), q = lab(b); return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]); };
-const WOODS = ["oak", "walnut"];
+const WOODS = ["oak", "walnut", "plywood"];
 
 describe("the burn is clearly visible: the same pixel, burn on vs off", () => {
   test.each(WOODS)("%s at 3 mm", (id) => {
@@ -174,4 +174,11 @@ describe("the burn is clearly visible: the same pixel, burn on vs off", () => {
     const oak = srgbToLinear(PRESETS.oak.color);
     expect(luma(burnAlbedo(oak, 12, { zFrac: 0 }))).toBeGreaterThanOrEqual(luma(srgbToLinear(BURN.charcoal)) - 1e-12);
   });
+});
+
+test("a plywood sheet shows its plies: 3 mm → 3, 6 → 5, 9 → 7; other woods none", () => {
+  for (const [t, plies] of [[3, 3], [6, 5], [9, 7]]) {
+    expect(sheetFrameFor(panel({ display: { material: "plywood" }, thickness: t }), P).plies, `${t} mm`).toBe(plies);
+  }
+  expect(sheetFrameFor(panel(), P).plies).toBe(0);
 });

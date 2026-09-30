@@ -14,7 +14,7 @@ beforeAll(async () => { k = await bootManifoldKernel(); });
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const inView = (view) => Object.entries(part.parts).filter(([, sp]) => sp.views.includes(view));
 const keysIn = (view) => inView(view).map(([n]) => n.slice(n.indexOf("_") + 1));
-const BURNING = ["oak_3", "oak_6", "oak_9", "walnut_3", "walnut_6", "walnut_9", "oak_standing"];
+const BURNING = ["plywood_3", "plywood_6", "plywood_9", "oak_3", "oak_6", "oak_9", "walnut_3", "walnut_6", "walnut_9", "oak_standing"];
 
 test("the Laser-cut view and its unburnt twin hold the same swatches", () => {
   expect(keysIn("laser").length).toBeGreaterThan(0);

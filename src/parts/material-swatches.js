@@ -31,7 +31,7 @@ const withHole = (k) =>
 // material — so the two views differ ONLY by the burn and scripts/capture-contact-sheet.mjs
 // can diff them pixel for pixel.
 const SW = 30;
-const WOODS = ["oak", "walnut"];
+const WOODS = ["plywood", "oak", "walnut"];
 const CONTROLS_Y = -WOODS.length * PITCH;
 const LASER_SWATCHES = [
   ...WOODS.flatMap((material, row) => [3, 6, 9].map((t, col) => ({

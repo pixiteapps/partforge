@@ -77,13 +77,17 @@ export const PRESETS = {
   // ~1% tilt), which reads as flat under an environment map. `grain` is the
   // texture axis the scan's figure runs along — oak's runs up the image ("v"),
   // walnut's across it ("u") — so patterns.js can lay it along each sub-part's
-  // long axis.
+  // long axis. `laminated` (plywood) asks the burn pass (patterns.js applyBurn) for ply
+  // bands on laser-cut walls, at sheet-look.js's plyCount(t).
   oak: P("oak", "Oak", "natural", "Light oak with open grain.",
     { color: 0xa17e57, metalness: 0, roughness: 0.65, pattern: "wood", textureScale: 250,
       textures: { color: "pattern-oak-color.jpg", normal: "pattern-oak-normal.jpg", roughness: "pattern-oak-rough.jpg", roughnessMean: 0.53, normalScale: 2.5, grain: "v" } }),
   walnut: P("walnut", "Walnut", "natural", "Dark oiled walnut.",
     { color: 0x5d2a18, metalness: 0, roughness: 0.5, clearcoat: 0.3, clearcoatRoughness: 0.4, pattern: "wood", textureScale: 400,
       textures: { color: "pattern-walnut-color.jpg", normal: "pattern-walnut-normal.jpg", roughness: "pattern-walnut-rough.jpg", roughnessMean: 0.628, normalScale: 3, grain: "u" } }),
+  plywood: P("plywood", "Birch plywood", "natural", "Birch plywood sheet: a pale, fine-grained face; its plies show on laser-cut edges.",
+    { color: 0xe1c2a3, metalness: 0, roughness: 0.6, pattern: "wood", textureScale: 150, laminated: true,
+      textures: { color: "pattern-plywood-color.jpg", normal: "pattern-oak-normal.jpg", roughness: "pattern-oak-rough.jpg", roughnessMean: 0.53, normalScale: 1.5, grain: "v" } }),
   "carbon-fiber": P("carbon-fiber", "Carbon fibre", "natural", "2x2 twill carbon fibre under clear coat.",
     { color: 0x1b1c1e, metalness: 0.2, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.05, pattern: "carbon", textureScale: 48 }),
 };

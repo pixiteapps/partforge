@@ -11,12 +11,12 @@ const LISTED = [
   "brushed-stainless", "polished-chrome", "black-oxide-steel", "cast-iron", "titanium",
   "brass", "copper", "bronze", "powder-coat", "painted-metal",
   "pla-print", "petg-print", "resin-print", "nylon-sls",
-  "abs-plastic", "clear-acrylic", "rubber", "oak", "walnut", "carbon-fiber",
+  "abs-plastic", "clear-acrylic", "rubber", "oak", "walnut", "plywood", "carbon-fiber",
 ];
 
 // The hidden "default" preset is retired: a sub-part with no material renders
 // as a PLA print (below), and its CAD look lives in resolve.js.
-test("the library lists exactly the 24 spec presets, no hidden default", () => {
+test("the library lists exactly the 25 presets, no hidden default", () => {
   expect(Object.keys(PRESETS).sort()).toEqual([...LISTED].sort());
 });
 
@@ -190,7 +190,7 @@ test("resolveEnvironmentId falls back to studio", () => {
 // Textured presets name their PBR maps as plain file names (three-free data, like
 // the rest of the library) and say what the roughness map averages to.
 test("wood presets carry a full texture set", () => {
-  for (const id of ["oak", "walnut"]) {
+  for (const id of ["oak", "walnut", "plywood"]) {
     const t = PRESETS[id].textures;
     for (const k of ["color", "normal", "roughness"]) expect(t[k], `${id}.${k}`).toMatch(/^pattern-[a-z]+-[a-z]+\.jpg$/);
     expect(t.roughnessMean > 0 && t.roughnessMean < 1, id).toBe(true);
@@ -202,4 +202,9 @@ test("wood presets carry a full texture set", () => {
 test("resolveMaterial reports whether the author named a colour", () => {
   expect(resolveMaterial({ material: "oak" }).tinted).toBe(false);
   expect(resolveMaterial({ material: "oak", color: 0x123456 }).tinted).toBe(true);
+});
+
+test("plywood is a laminated wood; nothing else is laminated", () => {
+  expect(PRESETS.plywood).toMatchObject({ label: "Birch plywood", category: "natural", pattern: "wood", laminated: true, tintable: false });
+  expect(Object.values(PRESETS).filter((p) => p.laminated).map((p) => p.id)).toEqual(["plywood"]);
 });

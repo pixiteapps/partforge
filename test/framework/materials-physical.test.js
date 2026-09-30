@@ -119,3 +119,11 @@ test("burn: true adds the burn pass to a wood, keyed apart from plain wood", () 
     .toBe("pf-pattern:wood|pf-burn|pf-brush");
   expect(buildPhysicalMaterial({ material: "brass" }, { loadTexture, burn: true }).customProgramCacheKey()).not.toContain("pf-burn");
 });
+
+test("plywood loads its colour map as sRGB and burns like any wood", () => {
+  const seen = {};
+  const m = buildPhysicalMaterial({ material: "plywood" }, { loadTexture: (f) => (seen[f] = new THREE.Texture()), burn: true });
+  expect(seen["pattern-plywood-color.jpg"].colorSpace).toBe(THREE.SRGBColorSpace);
+  expect(m.customProgramCacheKey()).toBe("pf-pattern:wood|pf-burn");
+  expect(m.color.getHex()).toBe(0xffffff);
+});

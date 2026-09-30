@@ -373,7 +373,7 @@ on oak shrinks the grain to a 0.2 mm tile, i.e. invisible noise):
 | --- | --- | --- | --- |
 | layer lines | `pla-print`, `petg-print` | layer height | 0.2 |
 | SLS grain | `nylon-sls` | grain size | 0.15 |
-| wood | `oak`, `walnut` | size of one texture tile (the grain repeats every this many mm) | 250 (`oak`), 400 (`walnut`) |
+| wood | `oak`, `walnut`, `plywood` | size of one texture tile (the grain repeats every this many mm) | 250 (`oak`), 400 (`walnut`), 150 (`plywood`) |
 | carbon weave | `carbon-fiber` | size of one texture tile | 48 |
 
 Presets without a pattern ignore it.
@@ -407,6 +407,7 @@ A part with no `color` or `material` exports exactly as before.
 | `rubber` | Rubber | yes | Matte elastomer: gaskets, feet, grips; tint with `color`. |
 | `oak` | Oak | — | Light oak with open grain. |
 | `walnut` | Walnut | — | Dark oiled walnut. |
+| `plywood` | Birch plywood | — | Birch plywood sheet: a pale, fine-grained face; its plies show on laser-cut edges. |
 | `carbon-fiber` | Carbon fibre | — | 2x2 twill carbon fibre under clear coat. |
 
 **Environments** (`meta.environment`, default `studio`; viewers can switch):
