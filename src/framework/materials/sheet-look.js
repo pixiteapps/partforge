@@ -86,19 +86,30 @@ export function plyCount(t) {
 const lookOf = (sp) => resolveMaterial(realisticDisplay(sp));
 
 // A laser sheet with no usable material takes its look from its stock label: the first row
-// whose word the label contains (ignoring case), else DEFAULT_STOCK_LOOK — plywood for
-// birch, basswood, poplar, MDF, hardboard, card or anything unlabelled. Only a string label
-// is read: a (p, d) function would make a sub-part's look (and its program) depend on the
-// params it was first drawn at, so it counts as unlabelled.
+// with a stem that STARTS a word of the label (ignoring case; a hyphenated word is also read
+// joined, so "poly-carbonate" is one word and "clear-acrylic" still has "acrylic"), else
+// DEFAULT_STOCK_LOOK — plywood for birch, basswood, poplar, MDF, hardboard or anything
+// unlabelled. Word starts, not substrings, so "Plexiglas" and "Acrylite" match while
+// "perplexing" does not. A residual, named in the guide: stock that is neither wood nor
+// acrylic (felt, leather, card, cork) takes the plywood look too, burns and all. Only a
+// string label is read: a (p, d) function would make a sub-part's look (and its program)
+// depend on the params it was first drawn at, so it counts as unlabelled.
 export const STOCK_LOOKS = Object.freeze([
-  Object.freeze({ look: "clear-acrylic", words: Object.freeze(["acrylic", "perspex", "plexi", "pmma", "polycarbonate"]) }),
+  Object.freeze({ look: "clear-acrylic", words: Object.freeze([
+    "acryl", "perspex", "plexi", "pmma", "methacryl", "polycarb", "lexan", "makrolon", "lucite",
+  ]) }),
 ]);
 export const DEFAULT_STOCK_LOOK = "plywood";
 
+const labelWords = (label) => {
+  const lower = label.toLowerCase();
+  return [...lower.split(/[^\p{L}]+/u), ...lower.replace(/-/g, "").split(/[^\p{L}]+/u)].filter(Boolean);
+};
+
 export function stockLook(stock) {
   if (typeof stock !== "string") return DEFAULT_STOCK_LOOK;
-  const label = stock.toLowerCase();
-  return STOCK_LOOKS.find(({ words }) => words.some((w) => label.includes(w)))?.look ?? DEFAULT_STOCK_LOOK;
+  const words = labelWords(stock);
+  return STOCK_LOOKS.find((row) => row.words.some((stem) => words.some((w) => w.startsWith(stem))))?.look ?? DEFAULT_STOCK_LOOK;
 }
 
 // The stock's look for a laser sheet part, else null (lint names it in its fallback hint).

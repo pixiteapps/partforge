@@ -352,18 +352,20 @@ meta: { title: "…", units: "mm", environment: "studio" },
 
 **Sheet parts default to their stock.** A laser `sheetPart` that names no material (or
 one the library does not know) is not drawn as a PLA print: realistic mode shows it as the
-sheet its stock label names — the first row whose word the label contains, ignoring case:
+sheet its stock label names — the first row with a stem that starts a word of the label,
+ignoring case (so `Plexiglas`, `Acrylite` and `poly-carbonate` match; `perplexing` does not):
 
-| Stock label contains | Realistic look |
+| A word of the stock label starts with | Realistic look |
 | --- | --- |
-| `acrylic`, `perspex`, `plexi`, `pmma`, `polycarbonate` | `clear-acrylic` |
-| anything else — plywood, birch, basswood, poplar, MDF, hardboard, cardboard — or no readable label | `plywood` |
+| `acryl`, `perspex`, `plexi`, `pmma`, `methacryl`, `polycarb`, `lexan`, `makrolon`, `lucite` | `clear-acrylic` |
+| anything else — plywood, birch, basswood, poplar, MDF, hardboard — or no readable label | `plywood` |
 
-A `color` then tints that look, as it tints any preset (a stained plywood, a coloured
-acrylic); the CAD view still shows the `color` itself. Only a string label is read: a stock
-written as a `(p, d)` function counts as unreadable. Name `display.material` to choose the
-look yourself. Like the PLA look, this is realistic-only and never makes a part declare a
-material.
+Stock that is neither wood nor acrylic — felt, leather, card, cork — takes the `plywood`
+look too, charred edges and all. A `color` tints the look, as it tints any preset (a
+stained plywood, a coloured acrylic); the CAD view still shows the `color` itself. Only a
+string label is read: a stock written as a `(p, d)` function counts as unreadable. Name
+`display.material` to choose the look yourself — for such stock, or any other. Like the
+PLA look, this is realistic-only and never makes a part declare a material.
 
 **Where it shows.** The CAD view (with feature lines) shows each material's
 colour, flattened so dark materials stay readable. **Realistic** mode — the

@@ -242,12 +242,18 @@ test("a plywood sheet shows its plies: 3 mm → 3, 6 → 5, 9 → 7; other woods
 
 describe("a laser sheet with no usable material takes its stock's look", () => {
   test("one keyword table: acrylic-like stock is clear acrylic, everything else plywood", () => {
-    for (const stock of ["clear acrylic", "3 mm Perspex", "Plexiglas", "PMMA", "polycarbonate sheet", "Cast ACRYLIC"]) {
+    for (const stock of ["clear acrylic", "3 mm Perspex", "Plexiglas", "plexiglass", "PMMA", "3mm PMMA", "polycarbonate sheet",
+      "Cast ACRYLIC", "clear-acrylic", "Acrylite FF", "Acrylglas 3mm", "acrylique", "polymethyl methacrylate", "Lexan",
+      "Makrolon", "Lucite", "Poly-carbonate", "polycarb", "Perspex®"]) {
       expect(stockLook(stock), stock).toBe("clear-acrylic");
     }
-    for (const stock of ["birch plywood", "basswood", "poplar ply", "MDF", "hardboard", "wood", "cardboard", "", "?"]) {
+    // Words, not substrings: a stem has to START a word of the label.
+    for (const stock of ["birch plywood", "basswood", "poplar ply", "MDF", "hardboard", "wood", "cardboard", "", "?",
+      "perplexing birch", "nonacrylic veneer", "duplex board"]) {
       expect(stockLook(stock), stock).toBe("plywood");
     }
+    // A residual, named: stock that is neither wood nor acrylic takes the plywood look too.
+    for (const stock of ["felt", "leather", "card", "cork"]) expect(stockLook(stock), stock).toBe("plywood");
     expect(stockLook((p) => p.stock)).toBe(DEFAULT_STOCK_LOOK);   // a function label is not read
     for (const { look } of STOCK_LOOKS) expect(Object.keys(PRESETS)).toContain(look);
     expect(Object.keys(PRESETS)).toContain(DEFAULT_STOCK_LOOK);
