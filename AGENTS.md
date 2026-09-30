@@ -247,8 +247,10 @@ the installed package, so let the publish finish before bumping the dep there.
   dependency of that script alone, never of the shipped framework or a running
   part. **`materials.html`** (dev-only, not in `vite.config.js`'s
   `rollupOptions.input`) is the contact sheet - one 30mm sample of every
-  preset plus the layer-line orientation check - to check by eye after any
-  preset or shader change.
+  preset, the layer-line orientation check, and the Laser-cut views (burning
+  sheets beside an unburnt twin that differs only by the burn;
+  `scripts/capture-contact-sheet.mjs` renders both in every environment and
+  diffs them) - to check by eye after any preset or shader change.
 - **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
   (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
   nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,
