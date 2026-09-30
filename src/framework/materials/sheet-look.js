@@ -34,26 +34,41 @@ const IDENTITY = Object.freeze([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
 //               or score floor: half the preview's MARK_DEPTH, so the laser face (z = t) is
 //               never one and a mark's floor (z = t − MARK_DEPTH) always is.
 // Char is RELATIVE to the face, all in linear RGB: a cut wall is the face's average colour
-// mixed toward `charcoal` by k — kThin at ≤ tThin mm, kThick at ≥ tThick (thick stock takes
-// a longer dwell) — plus up to `exit` more toward the exit side (z = 0); an engrave or score
-// floor by `engraveLess` less. Under a face darker than twice charcoal's luminance, charcoal
-// is scaled down to `charOfDark` of the face's own luminance, so char is never LIGHTER than
-// its face (a dark tint). Char and scorched floors take `roughness`; on plywood's cut walls a
-// cross ply is `crossPly` of a face-grain ply. The colours are starting points from the
-// research, tuned by eye on the contact sheet — within the calibration floors that
-// test/framework/sheet-look.test.js holds them to.
+// mixed toward a charcoal TARGET by k — kThin at ≤ tThin mm, kThick at ≥ tThick (thick stock
+// takes a longer dwell) — plus up to `exit` more toward the exit side (z = 0); an engrave or
+// score floor by `engraveLess` less. The target is PER CHANNEL, not `charcoal` itself: each
+// channel is capped at `charOfDark` of the face's OWN channel (burnAlbedo's `target`), so char
+// is never lighter than its face in any single channel. A single luminance-derived cap (the
+// first cut) is not enough — walnut's face is reddish (high R, low G/B), so `charcoal`'s own,
+// more neutral B channel sits ABOVE walnut's near-black B even though charcoal reads darker
+// overall, and mixing the whole vector toward it raised that one channel, reading as a flat,
+// lighter char on camera despite passing the diffuse-only calibration (dE/luma) floors below.
+// Capping every channel at its own face's brightness, not just the vector's, closes that gap.
+// Char and scorched floors take `roughness`; on plywood's cut walls a cross ply is `crossPly`
+// of a face-grain ply. The colours are starting points from the research, tuned by eye on the
+// contact sheet — within the calibration floors that test/framework/sheet-look.test.js holds
+// them to. kThin and roughness were retuned (0.55 → 0.8, 0.85 → 0.65) during the
+// four-environment sign-off: the per-channel target above already made the burnt ALBEDO
+// darker on every wall, but studio/workshop/outdoor carry no key light — IBL alone, so a
+// wall's brightness is however much of the environment its own geometric normal happens to
+// face — and the unburnt wood's tight clearcoat/normal-mapped specular versus the burnt char's
+// broader, flatter one still left walnut's far (non-key-lit) wall reading brighter charred
+// than plain in three of the four environments. A deeper kThin (more charcoal mixed in at the
+// laser box's own 3 mm) plus a less-diffuse roughness (still clearly matte against walnut's
+// 0.5-roughness, clearcoat-3 lacquer) closed it in every environment; see this branch's sign-off
+// report for the measured before/after wall ratios per environment.
 export const BURN = Object.freeze({
   wallNz: Object.freeze([0.35, 0.65]),
   floorDepth: MARK_DEPTH / 2,
   charcoal: 0x262220,
-  kThin: 0.55,
+  kThin: 0.8,
   kThick: 0.85,
   tThin: 3,
   tThick: 9,
   exit: 0.1,
   engraveLess: 0.1,
   charOfDark: 0.5,
-  roughness: 0.85,
+  roughness: 0.65,
   crossPly: 0.78,
 });
 
@@ -144,7 +159,6 @@ export function classifySheetSurface(pos, normal, t) {
   return pos[2] <= t - BURN.floorDepth ? "floor" : "face";
 }
 
-const luma = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
 
 // The shader's burnt albedo, in JS (the calibration test's twin — same numbers, same
@@ -154,8 +168,12 @@ const clamp01 = (x) => Math.min(1, Math.max(0, x));
 // Ply bands are left out: they only modulate an edge.
 export function burnAlbedo(face, t, { kind = "edge", zFrac = 1 } = {}) {
   const charcoal = srgbToLinear(BURN.charcoal);
-  const scale = Math.min(1, (BURN.charOfDark * luma(face)) / luma(charcoal));
+  // The mix target, PER CHANNEL: whichever is darker of raw charcoal or charOfDark of this
+  // channel's own face value — never the whole vector scaled by one luminance ratio (see the
+  // BURN comment above). Multiplicative in the channel that governs it, so charring a face
+  // darker than charcoal in that channel still only ever removes light from it.
+  const target = charcoal.map((c, i) => Math.min(c, BURN.charOfDark * face[i]));
   const k = BURN.kThin + (BURN.kThick - BURN.kThin) * clamp01((t - BURN.tThin) / (BURN.tThick - BURN.tThin));
   const amount = kind === "engrave" ? k - BURN.engraveLess : Math.min(1, k + BURN.exit * (1 - clamp01(zFrac)));
-  return face.map((f, i) => f + (charcoal[i] * scale - f) * amount);
+  return face.map((f, i) => f + (target[i] - f) * amount);
 }

@@ -379,7 +379,6 @@ export function applyBrushFrame(material) {
 // striation would shimmer at part scale (the layer-lines lesson above).
 const glf = (x) => (Number.isInteger(x) ? x.toFixed(1) : String(x));
 const CHARCOAL = srgbToLinear(BURN.charcoal);
-const CHARCOAL_Y = 0.2126 * CHARCOAL[0] + 0.7152 * CHARCOAL[1] + 0.0722 * CHARCOAL[2];
 const burnBlock = (glsl) => `// pf-burn {\n${glsl}\n// } pf-burn`;
 
 const BURN_FRAG_DECL = burnBlock(`uniform mat4 pfSheetFrame;
@@ -405,7 +404,11 @@ if (pfSheetT > 0.0) {
   float pfK = mix(${glf(BURN.kThin)}, ${glf(BURN.kThick)}, clamp((pfSheetT - ${glf(BURN.tThin)}) / ${glf(BURN.tThick - BURN.tThin)}, 0.0, 1.0));
   float pfZ = clamp(pfC.z / pfSheetT, 0.0, 1.0);
   vec3 pfFace = diffuse * pfFaceAvg;
-  vec3 pfChar = vec3(${CHARCOAL.map((c) => c.toFixed(6)).join(", ")}) * min(1.0, ${glf(BURN.charOfDark)} * dot(pfFace, vec3(0.2126, 0.7152, 0.0722)) / ${CHARCOAL_Y.toFixed(6)});
+  // Per channel, not the vector scaled by one luminance ratio (sheet-look.js's burnAlbedo,
+  // this shader's twin, explains why): a channel where charOfDark·face is already below raw
+  // charcoal chars toward ITS OWN darker value, so no channel can come out lighter than it
+  // went in.
+  vec3 pfChar = min(vec3(${CHARCOAL.map((c) => c.toFixed(6)).join(", ")}), ${glf(BURN.charOfDark)} * pfFace);
   vec3 pfEdge = mix(pfFace, pfChar, min(1.0, pfK + ${glf(BURN.exit)} * (1.0 - pfZ)));
   if (pfPlies > 0.0) pfEdge *= mix(1.0, ${glf(BURN.crossPly)}, pfCrossPly(pfZ * pfPlies));
   vec3 pfMark = mix(pfFace, pfChar, pfK - ${glf(BURN.engraveLess)});

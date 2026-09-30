@@ -158,6 +158,20 @@ describe("the burn is clearly visible: the same pixel, burn on vs off", () => {
     expect(luma(mark)).toBeLessThanOrEqual(0.8 * luma(face));
   });
 
+  // The regression this pins: a face reddish enough that ONE channel (walnut's blue) already
+  // sits below raw `charcoal`'s own value in that channel. Mixing the whole charcoal VECTOR
+  // toward it (the luminance-only cap) let that one channel rise even while the overall dE/luma
+  // floors above still passed — on camera it read as a flat, lighter char on one of walnut's two
+  // visible walls in three of four sign-off environments. Every channel, for every burning wood,
+  // must come out no brighter than it went in.
+  test.each(WOODS)("%s: no channel of the char reads lighter than its own face", (id) => {
+    const face = srgbToLinear(PRESETS[id].color);
+    for (const kind of ["edge", "engrave"]) {
+      const result = burnAlbedo(face, 3, { kind });
+      result.forEach((c, i) => expect(c, `${kind} channel ${i}`).toBeLessThanOrEqual(face[i]));
+    }
+  });
+
   test("thicker stock chars darker, and the exit side darker than the laser face", () => {
     const face = srgbToLinear(PRESETS.oak.color);
     const at = (t, zFrac = 1) => luma(burnAlbedo(face, t, { zFrac }));
