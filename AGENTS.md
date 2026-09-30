@@ -427,7 +427,14 @@ and runs on either backend unchanged:
   (`mesh-fillet.js` — straight and circular-arc edge chains, tolerance-band
   parity with OCCT).
 - **OCCT / replicad** (OpenCASCADE WASM) - exact B-rep for STEP export, native
-  `shell`, and the fallback for edge classes the mesh fillet can't blend.
+  `shell`, and the fallback for edge classes the mesh fillet can't blend. STEP
+  is written by `geometry/occt-step.js`, NOT replicad's `exportSTEP`: replicad
+  paints a colourless body red and double-gamma-corrects the colours it is
+  given (sRGB hex into a linear constructor, then OCCT's writer converts to
+  sRGB again, so `#3366cc` came out `#7caae7`). The copy is replicad 0.23.1's
+  writer with only the colour construction changed; re-check it on a replicad
+  bump. `test/step-colours-occt.test.js` reads each body's colour back out of
+  the STEP text.
 
 Before building, the framework runs a **geometry-free probe** of `build` to
 detect probe-routed CAD ops (`ROUTED_CAD_OPS` = `shell` **on a Solid** —

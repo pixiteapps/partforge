@@ -319,7 +319,7 @@ and asks for the existing positional view argument
 ## Materials and appearance
 
 A sub-part's `display` block says how it LOOKS. Appearance never changes
-geometry, exports (other than 3MF colour, below), `measure` or `verify`, and a
+geometry, exports (other than export colours, below), `measure` or `verify`, and a
 mistake in it never fails a build — lint warns and the viewer falls back.
 
 ```js
@@ -337,7 +337,7 @@ meta: { title: "…", units: "mm", environment: "studio" },
   (`pla-print`'s finish and layer lines) in that same colour — except a laser
   `sheetPart`, which shows its stock instead (below). So an untouched part looks
   printed in realistic mode; name a material when it is made some other way. The
-  PLA look is realistic-only: the CAD view, 3MF colours and
+  PLA look is realistic-only: the CAD view, export colours and
   `declaresMaterials` are unaffected, and a part that names no material is not
   treated as declaring one.
 - `color` — the base colour (`0xRRGGBB`). With a preset it is the TINT. Presets
@@ -405,9 +405,11 @@ on oak shrinks the grain to a 0.2 mm tile, i.e. invisible noise):
 
 Presets without a pattern ignore it.
 
-**3MF export** carries each sub-part's colour (its `color`, else its preset's
-colour), so a multi-colour print opens in a slicer already split and coloured.
-A part with no `color` or `material` exports exactly as before.
+**3MF and STEP export** carry each sub-part's colour (its `color`, else its
+preset's colour), so a multi-colour print opens in a slicer already split and
+coloured, and each STEP body opens in a CAD tool in its own colour. A part with
+no `color` or `material` exports a 3MF exactly as before; its STEP bodies take
+the viewer's blue-grey.
 
 | Preset | Name | Tintable | Use |
 | --- | --- | --- | --- |
