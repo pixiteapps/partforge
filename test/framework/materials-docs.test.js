@@ -41,3 +41,19 @@ test("the Laser-cut wood paragraph says who burns, that nothing is set, and when
     expect(para, s).toContain(s);
   }
 });
+
+// The PLA fallback has one exception — a laser sheet part takes its stock's look — and the
+// lint hint says so. Every place the guide states the fallback must say it too, or the agent
+// reads two contradictory answers for one panel (the `linting` topic is served on its own).
+const items = docs.split(/\n\s*\n/).flatMap((block) => block.split(/\n(?=\s*- )/)).map((item) => item.replace(/\s+/g, " "));
+test("every statement of the PLA fallback names the laser-sheet exception", () => {
+  const stated = items.filter((item) => /PLA print/.test(item) && !item.trimStart().startsWith("|"));
+  expect(stated.length).toBeGreaterThanOrEqual(4); // the display bullet, the stock paragraph, declaresMaterials, the catalog
+  for (const item of stated) expect(item, item.trim().slice(0, 90)).toMatch(/sheet/);
+});
+test("the unknown-material catalog entry says what the lint hint says, both ways", () => {
+  const entry = items.find((item) => item.includes("`unknown-material` ("));
+  expect(entry).toBeDefined();
+  expect(entry).toContain("a PLA print in realistic mode"); // the hint on an ordinary sub-part
+  expect(entry).toMatch(/laser sheet part its stock's look/); // the hint on a laser sheet
+});

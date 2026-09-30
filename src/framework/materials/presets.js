@@ -13,7 +13,8 @@ const P = (id, label, category, use, fields) => ({ id, label, category, use, tin
 export const PRESETS = {
   // Every record here is a documented, nameable material. A sub-part that names
   // none is drawn by resolve.js (the blue-grey CAD look; a PLA print in that
-  // colour in realistic mode) — there is no hidden "default" record any more.
+  // colour in realistic mode, or a laser sheet part's stock look — sheet-look.js
+  // realisticDisplay) — there is no hidden "default" record any more.
 
   "machined-aluminum": P("machined-aluminum", "Machined aluminium", "aluminium", "Bare CNC-milled aluminium, fine tool marks, satin sheen.",
     { color: 0xf5f6f6, metalness: 1, roughness: 0.32 }),
