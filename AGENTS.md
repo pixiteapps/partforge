@@ -65,6 +65,7 @@ npx vitest run -t "assembly has no interpenetrating"   # a single test by name
 npm run check      # headless smoke test: boots an app in real Chromium (needs Playwright)
 node scripts/check-app.mjs demo.html         # smoke-test a specific app entry
 node scripts/time-sheet-inspect.mjs [--browser]    # inspect timing for the sheet-part stress cases (docs/research/sheet-inspect-timing.md)
+node scripts/capture-contact-sheet.mjs --out <dir> # realistic captures of materials.html in every environment + the laser-burn diffs
 ```
 
 The CLI (also the agent-facing surface) builds parts in pure Node - no browser:

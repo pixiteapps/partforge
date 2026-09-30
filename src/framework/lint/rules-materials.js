@@ -1,7 +1,7 @@
 // src/framework/lint/rules-materials.js
 // Appearance findings. All WARNINGS by design: a misspelled material must never
 // block geometry, and the viewer already falls back (resolve.js). Pure — imports
-// only the three-free materials data (test/lint-purity.test.js).
+// only three-free materials and sheet data (test/lint-purity.test.js).
 import { warn } from "./finding.js";
 import { PRESETS } from "../materials/presets.js";
 import { ENVIRONMENTS } from "../materials/environments.js";
@@ -19,9 +19,12 @@ export const MATERIAL_RULES = [
     id: "unknown-material",
     run: ({ part }) => issuesOf(part, "unknown-material").map(({ name, value }) => {
       const near = typeof value === "string" ? suggest(value, listedPresets()) : null;
-      // A laser sheet falls back to its stock's look, not to PLA (materials/sheet-look.js).
-      const stock = sheetStockLook(part.parts[name]);
-      const fallback = stock ? `in realistic mode \`${stock}\`, from its stock label` : "a PLA print in realistic mode";
+      // A laser sheet falls back to its stock's look, not to PLA (materials/sheet-look.js) —
+      // read from a string label only: a label written as a function takes the default look.
+      const sp = part.parts[name];
+      const stock = sheetStockLook(sp);
+      const why = typeof sp.sheet?.material === "string" ? ", from its stock label" : ": its stock label is a function";
+      const fallback = stock ? `in realistic mode \`${stock}\`${why}` : "a PLA print in realistic mode";
       return warn("unknown-material",
         `sub-part "${name}" names material ${JSON.stringify(value)}, which is not in the library`,
         `${near ? `Did you mean "${near}"? ` : ""}The viewer draws it as if it named no material instead (${fallback}). Known materials: ${listedPresets().join(", ")}.`,
