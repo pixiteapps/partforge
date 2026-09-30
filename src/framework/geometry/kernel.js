@@ -160,7 +160,7 @@ export const ROUTED_CAD_OPS = ["shell"];
  * @property {(profile: number[][]|{outer:number[][],holes?:number[][][]}|{start:number[],segments:object[]}|Shape2D) => Shape2D} shape2d   2-D boolean value; one shared contour-storage implementation on both backends
  * @property {(inputs: (Shape2D|number[][]|{start:number[],segments:object[]})[]) => Shape2D} hull   convex hull of all inputs → a convex Shape2D (faceted; pure-JS monotone chain)
  * @property {(inputs: (Shape2D|number[][]|{start:number[],segments:object[]})[]) => Shape2D} hullChain   swept hull over an ordered sequence (≥2): union of hull([inᵢ,inᵢ₊₁])
- * @property {(named:{name:string,solid:Solid}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only (Manifold throws KernelCapabilityError)
+ * @property {(named:{name:string,solid:Solid,color?:number|null}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only (Manifold throws KernelCapabilityError); `color` is 0xRRGGBB per body, absent = the viewer's no-material colour
  * @property {(name: string) => Solid} import   imported geometry declared in the part's imports field (registered pre-build by the framework via the underscore-prefixed `_registerImport`/`_importDigest`/`_acceptsStep`/`_acceptsMesh` side-channel, not a part author's calling surface)
  * @property {(name:string) => void} [beginSubPart]   open a per-sub-part solid-cache round (both backends)
  * @property {() => void} [endSubPart]                close the cache round (always pair with beginSubPart)
