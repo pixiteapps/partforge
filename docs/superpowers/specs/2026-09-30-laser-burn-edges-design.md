@@ -298,7 +298,7 @@ Not tintable (like oak and walnut; it still accepts a tint). `laminated` is an i
 (like `grain` and `roughnessMean`): it asks the burn pass for ply bands, at
 `plyCount(t)` — < 4.5 mm → 3, < 7.5 → 5, < 10.5 → 7, else 9 — which is 3 → 3, 6 → 5, 9 → 7.
 
-**Texture.** (a) An approved CC0 set (candidate: ambientCG Wood087/088/089), processed with
+**Texture.** (a) An approved CC0 set (ambientCG Wood087/088/089 were checked and show plywood edges, not a face; a birch-face set is still to be chosen), processed with
 `scripts/bake-environments.mjs` into `pattern-plywood-{color,normal,rough}.jpg`, each under
 `test/framework/materials-assets.test.js`'s 400 KB, with a `SOURCES.md` row per file — only if
 its colour map shows a birch FACE (long-grain veneer): a side/edge view with ply stripes cannot
