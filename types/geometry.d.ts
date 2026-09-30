@@ -382,7 +382,7 @@ export function fingerBox(opts: {
 /** A slot and the printed tongue that keys into it, from one spec; all the play is on the slot. */
 export function printedTab(opts: { size: [number, number]; thickness: number; clearance?: number }): { slot: PointsContour; tongue: [number, number, number] };
 
-/** An arc-exact round hole (a CCW circle of two arcs) for a sheet part's profile. */
+/** An arc-exact round hole (a CCW circle of two arcs) for a sheet part's profile: `circleProfile(d / 2, at)`, named by diameter. */
 export function sheetHole(opts: { d: number; at: Point2 }): ArcContour;
 
 /** Clearance holes (ISO 273 medium) and hex nuts (ISO 4032) for `tSlots`, mm. */

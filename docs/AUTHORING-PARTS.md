@@ -1812,10 +1812,10 @@ pose. `build` is supplied — passing one throws, as do `kerf`, `outline`/`cut` 
 ### Cut, score and engrave
 
 - **`profile`** is the CUT layer — outline plus holes, seen from the laser face, one
-  piece. Round holes: `sheetHole({ d, at })`, an exact circle (`circlePolygon` is a
-  48-gon).
+  piece. Round holes: `sheetHole({ d, at })` or `circleProfile(r, at)` — exact, not the
+  48-gon `circlePolygon`.
 - **`score`** returns an array: an entry of exactly two `[x, y]` points is a LINE;
-  anything else is a shape whose boundaries are all scored (`[[0, 0], [10, 0],
+  anything else is a shape whose boundaries are scored (`[[0, 0], [10, 0],
   [10, 10]]` is a triangle). `null` entries are skipped.
 - **`engrave`** returns filled regions — `k.text2d(…)`, `k.vector2d(…)`, a Shape2D —
   or `null`. No raster engraving.
@@ -1896,7 +1896,7 @@ PRINT pose, `place` it for display, and cut the slot where the tongue lands:
 | `verify-process-sheets-only` | warning | `verify.process` is set but every exportable part is a sheet part |
 | `laser-thickness-range` | warning | a laser sheet is thinner than 0.5 mm or thicker than 12 mm |
 
-**Verify** runs the laser checks on every sheet part automatically. They are
+**Verify** runs the laser checks on every sheet part. They are
 *volunteered* warnings: none counts toward `declared`/`evaluated`, so none makes
 `verify.ok` true on its own. Declare one in `expect` to make it count:
 

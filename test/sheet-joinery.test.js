@@ -8,6 +8,7 @@ import {
   fingers, tabs, tSlots, sheetPanel, matchingSlots, printedTab, sheetHole, JOINERY_SCREWS,
 } from "../src/framework/sheet/joinery.js";
 import { poseSteps } from "../src/framework/sheet/pose.js";
+import { circleProfile } from "../src/framework/geometry/polygon.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -198,6 +199,7 @@ describe("printedTab and sheetHole", () => {
     expect(hole).toEqual({ start: [13, 5], segments: [{ to: [7, 5], via: [10, 8] }, { to: [13, 5], via: [10, 2] }] });
     expect(profileArea(hole)).toBeGreaterThan(0);                            // CCW
     expect(Math.abs(profileArea(hole) / (Math.PI * 9) - 1)).toBeLessThan(1e-3);
+    expect(hole).toEqual(circleProfile(3, [10, 5]));                       // the same exact circle since 0.132
   });
 });
 

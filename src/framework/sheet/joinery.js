@@ -311,8 +311,9 @@ export function printedTab(opts) {
   return { slot: [[-a, -b], [a, -b], [a, b], [-a, b]], tongue: [w, h, thickness] };
 }
 
-// An arc-exact round hole: a CCW circle of diameter d as two three-point arcs. Prefer
-// it to circlePolygon (a 48-gon) on a sheet part — the cut file keeps a true circle.
+// An arc-exact round hole: a CCW circle of diameter d as two three-point arcs — the
+// contour circleProfile(d / 2, at) returns, named by diameter. Prefer either to
+// circlePolygon (a 48-gon) on a sheet part — the cut file keeps a true circle.
 export function sheetHole(opts) {
   const o = checkOptions("sheetHole", opts, ["d", "at"], "sheetHole({ d, at: [x, y] })");
   if (!isNum(o.d) || o.d <= 0) throw new Error(`sheetHole: d must be a number > 0 (mm), got ${JSON.stringify(o.d)}`);

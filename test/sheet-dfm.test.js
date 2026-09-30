@@ -5,7 +5,7 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
 import { bootManifoldKernel } from "../src/testing.js";
-import { sheetPart, sheetHole, fingerBox, ringSectorProfile, slotProfile, roundedRectProfile, pieProfile } from "../src/framework/geometry/polygon.js";
+import { sheetPart, sheetHole, fingerBox, ringSectorProfile, slotProfile, roundedRectProfile, pieProfile, circleProfile } from "../src/framework/geometry/polygon.js";
 import { resolveSheet } from "../src/framework/sheet/resolve.js";
 import { LASER, _meter } from "../src/framework/process/laser/descriptor.js";
 import { measure } from "../src/framework/oracle/measure.js";
@@ -617,6 +617,32 @@ describe("LASER.facts", () => {
       const at = `${t} mm, r ${r}, holes ${inset} mm in`;
       expect(f, at).toMatchObject({ evaluated: true, bridgeCapped: true, readErrors: { bridge: null, gap: null } });
       expect(f.gap, at).toBeCloseTo(t > 3.4 ? 3.4 : t, 6);           // the M3 hole, read directly, where the ceiling allows
+      expect(ms, paced(at)).toBeLessThan(100);
+    }
+  });
+  // circleProfile is an exact circle since partforge 0.132 — two arcs, sheetHole's own
+  // contour — where it was a 48-point list before. Four M3 holes drawn with it, left as
+  // region holes or booleaned in (paper hands those back as cubics, the arc fit reads
+  // them as arcs), read the way sheetHole's do: capped at 3 mm, the hole itself on 4 mm
+  // stock, at a hole, in milliseconds.
+  test("…and M3 holes drawn with circleProfile, an exact circle: read at a hole, in under 100 ms of CPU", () => {
+    const centres = [[-42, -22], [42, -22], [42, 22], [-42, 22]];
+    const holes = () => centres.map((c) => circleProfile(1.6, c));
+    const shapes = {
+      "region holes": (kk) => kk.shape2d({ outer: roundedRectProfile(100, 60, 4), holes: holes() }),
+      "cutAll": (kk) => kk.shape2d(roundedRectProfile(100, 60, 4)).cutAll(holes()),
+    };
+    for (const [how, profile] of Object.entries(shapes)) for (const t of [3, 4]) {
+      const at = `${how}, ${t} mm`;
+      const { f, ms } = onCpu(plate({ profile }), { t });
+      expect(f, at).toMatchObject({ evaluated: true, pieces: 1, bridgeCapped: true, readErrors: { bridge: null, gap: null } });
+      expect(f.area, at).toBeCloseTo(100 * 60 - (4 - Math.PI) * 16 - 4 * Math.PI * 1.6 ** 2, 1);
+      if (t === 3) expect(f, at).toMatchObject({ gap: 3, gapCapped: true });
+      else {
+        expect(f, at).toMatchObject({ gapCapped: false });
+        expect(f.gap, at).toBeCloseTo(3.2, 6);                        // the hole's diameter, read directly
+        expect(centres.some(([x, y]) => Math.hypot(f.at2d.gap[0] - x, f.at2d.gap[1] - y) < 1e-6), at).toBe(true);
+      }
       expect(ms, paced(at)).toBeLessThan(100);
     }
   });
