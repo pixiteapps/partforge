@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { expect, test } from "vitest";
 import { buildPhysicalMaterial } from "../../src/framework/materials/physical.js";
 import { grainAxisFor, setGrainAxis } from "../../src/framework/materials/patterns.js";
+import { srgbToLinear } from "../../src/framework/materials/sheet-look.js";
 
 const loadTexture = () => new THREE.Texture();
 
@@ -104,4 +105,17 @@ test("wood shaders receive the grain axis of a long-in-Y sub-part", () => {
   };
   expect(swapsFor("oak")).toEqual([1, 0, 0]);    // X-faces sample (y, z): y must go to v
   expect(swapsFor("walnut")).toEqual([0, 0, 1]); // Z-faces sample (x, y): y must go to u
+});
+
+// `burn` is the viewer's per-sub-part decision (sheet-look.js burnsFor). It adds the pass
+// to a wood and nothing else; the brush frame (an author's anisotropy override) composes on top.
+test("burn: true adds the burn pass to a wood, keyed apart from plain wood", () => {
+  expect(buildPhysicalMaterial({ material: "oak" }, { loadTexture }).customProgramCacheKey()).toBe("pf-pattern:wood");
+  const m = buildPhysicalMaterial({ material: "oak" }, { loadTexture, burn: true });
+  expect(m.customProgramCacheKey()).toBe("pf-pattern:wood|pf-burn");
+  const avg = m.userData.patternUniforms.pfFaceAvg.value.toArray();
+  srgbToLinear(0xa17e57).forEach((c, i) => expect(avg[i]).toBeCloseTo(c, 6));   // the preset's own colour, never a tint
+  expect(buildPhysicalMaterial({ material: "oak", anisotropy: 0.5 }, { loadTexture, burn: true }).customProgramCacheKey())
+    .toBe("pf-pattern:wood|pf-burn|pf-brush");
+  expect(buildPhysicalMaterial({ material: "brass" }, { loadTexture, burn: true }).customProgramCacheKey()).not.toContain("pf-burn");
 });

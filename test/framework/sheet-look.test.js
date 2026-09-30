@@ -12,7 +12,8 @@ import { sheetPart } from "../../src/framework/sheet/part.js";
 import { MARK_DEPTH } from "../../src/framework/sheet/constants.js";
 import { poseSteps } from "../../src/framework/sheet/pose.js";
 import { composePose, invertRigid, transformPositions } from "../../src/framework/geometry/pose.js";
-import { BURN, burnsFor, classifySheetSurface, plyCount, sheetFrameFor } from "../../src/framework/materials/sheet-look.js";
+import { BURN, burnAlbedo, burnsFor, classifySheetSurface, plyCount, sheetFrameFor, srgbToLinear } from "../../src/framework/materials/sheet-look.js";
+import { PRESETS } from "../../src/framework/materials/presets.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -129,4 +130,48 @@ test("classifySheetSurface: walls by the normal, floors by depth under the laser
   expect(classifySheetSurface([0, 0, 3], [0, 0, 1], 3)).toBe("face");
   expect(classifySheetSurface([0, 0, 3 - MARK_DEPTH], [0, 0, 1], 3)).toBe("floor");
   expect(classifySheetSurface([0, 0, 0], [0, 0, -1], 3)).toBe("back");
+});
+
+// "Clearly visible" is judged the only way that cannot be fooled by lighting: the SAME
+// pixel with the burn on and off. At the albedo level the two differ only by the burn (the
+// diffuse lighting multiplies both alike), so each wood's char is held to a floor at 3 mm —
+// the laser box's default, the thin end of the ramp — at the lightest point of a wall (the
+// laser-face end, zFrac 1). Never wall against face: studio light darkens walls anyway.
+const luma = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+function lab(rgb) {
+  const [r, g, b] = rgb;
+  const x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047, y = luma(rgb), z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883;
+  const f = (q) => (q > 216 / 24389 ? Math.cbrt(q) : (24389 / 27 * q + 16) / 116);
+  return [116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))];
+}
+const dE = (a, b) => { const p = lab(a), q = lab(b); return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]); };
+const WOODS = ["oak", "walnut"];
+
+describe("the burn is clearly visible: the same pixel, burn on vs off", () => {
+  test.each(WOODS)("%s at 3 mm", (id) => {
+    const face = srgbToLinear(PRESETS[id].color);          // the unburnt pixel's albedo: the texture's average
+    const edge = burnAlbedo(face, 3);
+    const mark = burnAlbedo(face, 3, { kind: "engrave" });
+    expect(dE(face, edge)).toBeGreaterThanOrEqual(12);
+    expect(luma(edge)).toBeLessThanOrEqual(0.7 * luma(face));
+    expect(dE(face, mark)).toBeGreaterThanOrEqual(10);
+    expect(luma(mark)).toBeLessThanOrEqual(0.8 * luma(face));
+  });
+
+  test("thicker stock chars darker, and the exit side darker than the laser face", () => {
+    const face = srgbToLinear(PRESETS.oak.color);
+    const at = (t, zFrac = 1) => luma(burnAlbedo(face, t, { zFrac }));
+    expect(at(9)).toBeLessThan(at(6));
+    expect(at(6)).toBeLessThan(at(3));
+    expect(at(3, 0)).toBeLessThan(at(3, 1));
+  });
+
+  test("char is darker than its own face under any tint, and never below its floor", () => {
+    for (const hex of [0x202020, 0x101010, 0x3a1c10]) {
+      const face = srgbToLinear(hex);
+      expect(luma(burnAlbedo(face, 3)), hex.toString(16)).toBeLessThan(luma(face));
+    }
+    const oak = srgbToLinear(PRESETS.oak.color);
+    expect(luma(burnAlbedo(oak, 12, { zFrac: 0 }))).toBeGreaterThanOrEqual(luma(srgbToLinear(BURN.charcoal)) - 1e-12);
+  });
 });

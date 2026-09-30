@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { expect, test } from "vitest";
 import { applyPattern, layerProfileData, LAYER_PROFILE_WIDTH } from "../../src/framework/materials/patterns.js";
 import { ensureBoxUVs } from "../../src/framework/materials/uv.js";
-import { applyBrushFrame, grainAxisFor, grainSwaps, setGrainAxis } from "../../src/framework/materials/patterns.js";
+import { applyBrushFrame, applyBurn, grainAxisFor, grainSwaps, setGrainAxis } from "../../src/framework/materials/patterns.js";
 import { buildPhysicalMaterial } from "../../src/framework/materials/physical.js";
 
 const fakeShader = () => ({
@@ -292,4 +292,76 @@ test("wood transposes each projection's UVs and normal-map slopes together", () 
   const c = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "carbon", scale: 10, texture: new THREE.Texture() });
   setGrainAxis(c, 1);
   expect(c.userData.patternUniforms.pfGrainSwap).toBeUndefined();
+});
+
+// The burn pass (patterns.js applyBurn), against three's REAL meshphysical source — the
+// three-line fakeShader cannot show where each snippet lands relative to the chunks.
+const physicalShader = () => ({
+  uniforms: {},
+  vertexShader: THREE.ShaderLib.physical.vertexShader,
+  fragmentShader: THREE.ShaderLib.physical.fragmentShader,
+});
+const compiled = (m) => { const s = physicalShader(); m.onBeforeCompile(s); return s; };
+const woodTextures = () => new THREE.Texture();
+// The shader's lines with every `// pf-burn {` … `// } pf-burn` block taken out,
+// indentation ignored (a snippet inserted before an indented #include takes its tab).
+const outsideBurn = (src) => {
+  const out = [];
+  let inside = false;
+  for (const line of src.split("\n").map((l) => l.trim())) {
+    if (line === "// pf-burn {") inside = true;
+    else if (line === "// } pf-burn") inside = false;
+    else if (!inside) out.push(line);
+  }
+  return out;
+};
+
+test("the burn pass lands in three's meshphysical order: after wood, before normals, lights and clearcoat", () => {
+  const f = compiled(buildPhysicalMaterial({ material: "walnut" }, { loadTexture: woodTextures, burn: true })).fragmentShader;
+  const at = (s) => { const i = f.indexOf(s); expect(i, s).toBeGreaterThan(-1); return i; };
+  // (a) colour + roughness: after wood's body and metalness, before the normals begin
+  expect(at("diffuseColor.rgb *= pfTriplanarWood(pfPatternMap")).toBeLessThan(at("float pfBurnWall = 0.0;"));
+  expect(at("#include <metalnessmap_fragment>")).toBeLessThan(at("float pfBurnWall = 0.0;"));
+  expect(at("pfBurnWall = 1.0 - smoothstep")).toBeLessThan(at("#include <normal_fragment_begin>"));
+  // (b) the normal fade: after wood's normal map and the clearcoat normals, before emissive
+  const fade = at("normal = normalize(mix(normal, nonPerturbedNormal, max(pfBurnWall, pfBurnFloor)));");
+  expect(at("normal = normalize(mat3(vPfNmX, vPfNmY, vPfNmZ) * pfObjN)")).toBeLessThan(fade);
+  expect(at("#include <clearcoat_normal_fragment_maps>")).toBeLessThan(fade);
+  expect(fade).toBeLessThan(at("#include <emissivemap_fragment>"));
+  // (c) clearcoat off the char: after lights_physical assigns it, before the lights use it
+  const coat = at("material.clearcoat *= 1.0 - max(pfBurnWall, pfBurnFloor);");
+  expect(at("#include <lights_physical_fragment>")).toBeLessThan(coat);
+  expect(coat).toBeLessThan(at("#include <lights_fragment_begin>"));
+});
+
+test("a burning program is the plain wood program plus its pf-burn blocks and nothing else", () => {
+  for (const material of ["oak", "walnut"]) {
+    const plain = compiled(buildPhysicalMaterial({ material }, { loadTexture: woodTextures }));
+    const burned = compiled(buildPhysicalMaterial({ material }, { loadTexture: woodTextures, burn: true }));
+    expect(burned.vertexShader, material).toBe(plain.vertexShader);
+    expect(outsideBurn(burned.fragmentShader), material).toEqual(plain.fragmentShader.split("\n").map((l) => l.trim()));
+    expect(plain.fragmentShader, material).not.toContain("pfBurn");
+  }
+});
+
+test("the burn uniforms ride the shared pattern uniforms, off until a frame arrives", () => {
+  const m = buildPhysicalMaterial({ material: "oak" }, { loadTexture: woodTextures, burn: true });
+  const u = m.userData.patternUniforms;
+  expect(u.pfSheetFrame.value).toBeInstanceOf(THREE.Matrix4);
+  expect(u.pfSheetFrame.value.equals(new THREE.Matrix4())).toBe(true);
+  expect(u.pfSheetT.value).toBe(0);
+  expect(u.pfPlies.value).toBe(0);
+  const s = compiled(m);
+  for (const name of ["pfSheetFrame", "pfSheetT", "pfPlies", "pfFaceAvg"]) expect(s.uniforms[name], name).toBe(u[name]);
+});
+
+test("the burn is a no-op on anything but wood", () => {
+  const carbon = applyPattern(new THREE.MeshPhysicalMaterial(), { kind: "carbon", scale: 10, texture: new THREE.Texture() });
+  const key = carbon.customProgramCacheKey();
+  applyBurn(carbon, { faceAvg: 0x1b1c1e });
+  expect(carbon.customProgramCacheKey()).toBe(key);
+  expect(carbon.userData.patternUniforms.pfSheetT).toBeUndefined();
+  const bare = new THREE.MeshPhysicalMaterial();
+  expect(applyBurn(bare, { faceAvg: 0 })).toBe(bare);
+  expect(Object.hasOwn(bare, "onBeforeCompile")).toBe(false);
 });
