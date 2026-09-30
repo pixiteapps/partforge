@@ -172,6 +172,23 @@ describe("offsetRegions", () => {
     expect(out[0].holes.length).toBe(0);
     expect(profileArea(out)).toBeCloseTo(196, 6);
   });
+  // The test above sits at EXACTLY twice the hole's half-width. Past it the inverted ring
+  // used to survive as a phantom diamond hole — under a sharp dilation a small hole came
+  // back as a hole, and the laser gap check's closing then GREW it instead of filling it,
+  // so no hole below the laser floor was ever flagged. A hole with no room for a disk of
+  // radius delta vanishes under sharp corners exactly as under round ones.
+  test("a hole narrower than twice a sharp dilation vanishes — no phantom", () => {
+    const hole = { start: [4.4, 4.4], segments: [{ to: [4.4, 5.6] }, { to: [5.6, 5.6] }, { to: [5.6, 4.4] }, { to: [4.4, 4.4] }] };   // 1.2 × 1.2, CW
+    for (const d of [1.25, 1.5, 3]) {
+      const out = offsetRegions([region(sq(10), [hole])], d, { corners: "sharp" });
+      expect(out[0].holes, `delta ${d}`).toHaveLength(0);
+      expect(profileArea(out)).toBeCloseTo((10 + 2 * d) ** 2, 6);
+    }
+    const circle = { start: [5.6, 5], segments: [{ via: [5, 4.4], to: [4.4, 5] }, { via: [5, 5.6], to: [5.6, 5] }] };   // d 1.2, CW
+    const out = offsetRegions([region(sq(10), [circle])], 1.5, { corners: "sharp" });
+    expect(out[0].holes).toHaveLength(0);
+    expect(profileArea(out)).toBeCloseTo(169, 6);
+  });
   test("dumbbell inset splits into two regions via cleanup", () => {
     const out = offsetRegions([region(dumbbell())], -2, { corners: "sharp" });
     expect(out.length).toBe(2);
@@ -818,5 +835,110 @@ describe("offsetRegions — the chain-incomplete fallback", () => {
     const dangling = [{ keep: true, reverse: false,
       piece: { from: [0, 0], segs: [{ to: [1, 0] }], vStart: 0, vEnd: 1 } }];
     expect(() => _chain(dangling, pool)).toThrow(CHAIN_INCOMPLETE_MESSAGE);
+  });
+});
+
+// A sharp join is where two offset pieces are extended until they meet. A line extends along
+// itself; an ARC extends along its own circle (OCCT's intersection join) — not along its end
+// tangent, which leaves the circle at once. Tangent-extended, a sharp dilation cut the corner
+// short wherever an arc met another edge at a real corner and curved away from the join, so
+// shrinking a shape and growing it back no longer returned the shape: a sliver beside the
+// corner went missing (0.013 mm² at a 1.9 mm test on a ring-sector hole — the laser checks
+// read it as a 1.88 mm gap in a 10 mm-wide hole). The shrink goes through the winding
+// resolver, which places an arc's new ends only as well as paper's cubic circle allows, so
+// "returns the shape" is measured to 5e-3 mm, both ways: every boundary point of each shape
+// lies that close to the other's boundary. Extended along the tangent, the cut corner stood
+// 0.011 mm off at the smallest test here and 0.086 mm at h 1.5.
+describe("offsetRegions — a sharp join extends an arc along its own circle", () => {
+  const C45 = Math.SQRT1_2;
+  // A 10..20 mm ring sector over 90°: two arcs, two radial lines, four 90° corners.
+  const sector = { start: [20, 0], segments: [
+    { via: [20 * C45, 20 * C45], to: [0, 20] }, { to: [0, 10] },
+    { via: [10 * C45, 10 * C45], to: [10, 0] }, { to: [20, 0] }] };
+  const reversed = (c) => {                 // the same ring traversed the other way (a hole)
+    const pts = [c.start, ...c.segments.map((sg) => sg.to)];
+    const segments = [];
+    for (let i = c.segments.length - 1; i >= 0; i--) segments.push(c.segments[i].via ? { via: c.segments[i].via, to: pts[i] } : { to: pts[i] });
+    return { start: pts.at(-1), segments };
+  };
+  const plate = (w, h) => ({ start: [0, 0], segments: [{ to: [w, 0] }, { to: [w, h] }, { to: [0, h] }, { to: [0, 0] }] });
+  const shifted = (c, [dx, dy]) => ({ start: [c.start[0] + dx, c.start[1] + dy],
+    segments: c.segments.map((sg) => ({ ...(sg.via ? { via: [sg.via[0] + dx, sg.via[1] + dy] } : {}), to: [sg.to[0] + dx, sg.to[1] + dy] })) });
+  // Every ring's boundary as points no more than 0.02 mm apart.
+  const dense = (regions) => regions.flatMap((rg) => [rg.outer, ...rg.holes]).map((ring) => {
+    const pts = tessellateContour(ring, 8192), out = [];
+    pts.forEach((p, i) => { const q = pts[(i + 1) % pts.length], n = Math.max(1, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) / 0.02));
+      for (let j = 0; j < n; j++) out.push([p[0] + ((q[0] - p[0]) * j) / n, p[1] + ((q[1] - p[1]) * j) / n]); });
+    return out;
+  });
+  const segDist = (p, a, b) => {
+    const ab = [b[0] - a[0], b[1] - a[1]], L2 = ab[0] * ab[0] + ab[1] * ab[1];
+    const t = L2 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / L2)) : 0;
+    return Math.hypot(p[0] - a[0] - t * ab[0], p[1] - a[1] - t * ab[1]);
+  };
+  // The farthest any boundary point of A lies from B's boundary, up to CELL (B's edges are
+  // bucketed on a CELL grid; a point with no edge in the 3 × 3 cells around it is ≥ CELL away).
+  const CELL = 0.25;
+  const oneWay = (A, B) => {
+    const grid = new Map(), key = (i, j) => `${i},${j}`;
+    for (const r of dense(B)) r.forEach((a, n) => {
+      const b = r[(n + 1) % r.length];
+      for (let i = Math.floor(Math.min(a[0], b[0]) / CELL); i <= Math.floor(Math.max(a[0], b[0]) / CELL); i++)
+        for (let j = Math.floor(Math.min(a[1], b[1]) / CELL); j <= Math.floor(Math.max(a[1], b[1]) / CELL); j++) {
+          const k = key(i, j);
+          if (!grid.has(k)) grid.set(k, []);
+          grid.get(k).push([a, b]);
+        }
+    });
+    let worst = 0;
+    for (const p of dense(A).flat()) {
+      const ci = Math.floor(p[0] / CELL), cj = Math.floor(p[1] / CELL);
+      let best = CELL;
+      for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++)
+        for (const [a, b] of grid.get(key(i, j)) ?? []) best = Math.min(best, segDist(p, a, b));
+      worst = Math.max(worst, best);
+    }
+    return worst;
+  };
+  const deviation = (A, B) => Math.max(oneWay(A, B), oneWay(B, A));
+  const SHARP = { corners: "sharp" };
+
+  test("shrinking a ring sector and growing it back returns the ring sector", () => {
+    for (const h of [0.5, 0.95, 1.5, 2.5]) {
+      const R = [region(sector)];
+      expect(deviation(R, offsetRegions(offsetRegions(R, -h, SHARP), h, SHARP)), `h ${h}`).toBeLessThan(5e-3);
+    }
+  });
+
+  test("…and a ring-sector hole grown shut and shrunk back returns the hole", () => {
+    for (const h of [0.5, 0.95, 1.5, 2.5]) {
+      const R = [region(plate(100, 80), [reversed(shifted(sector, [40, 25]))])];
+      expect(deviation(R, offsetRegions(offsetRegions(R, h, SHARP), -h, SHARP)), `h ${h}`).toBeLessThan(5e-3);
+    }
+  });
+
+  test("two overlapping circles meet at arc–arc corners, and those come back too", () => {
+    // d 10 circles 6 apart, as one hole: a CW ring of two arcs crossing at (50, 40 ± 4).
+    const lens = { start: [50, 44], segments: [{ via: [42, 40], to: [50, 36] }, { via: [58, 40], to: [50, 44] }] };
+    for (const h of [0.5, 1.5]) {
+      const R = [region(plate(100, 80), [reversed(lens)])];
+      expect(deviation(R, offsetRegions(offsetRegions(R, h, SHARP), -h, SHARP)), `close h ${h}`).toBeLessThan(5e-3);
+      expect(deviation(R, offsetRegions(offsetRegions(R, -h, SHARP), h, SHARP)), `open h ${h}`).toBeLessThan(5e-3);
+    }
+  });
+
+  test("a sharp outset of a D is the D of the grown circle and the grown flat", () => {
+    // A disc of radius 5 with a flat at x = 3 (corners 126.87°): grown by δ with its edges
+    // extended, it is the disc of radius 5 + δ with its flat at x = 3 + δ.
+    const D = { start: [3, -4], segments: [{ to: [3, 4] }, { via: [-5, 0], to: [3, -4] }] };
+    const keptOf = (R, d) => Math.PI * R * R - (R * R * Math.acos(d / R) - d * Math.sqrt(R * R - d * d));
+    for (const delta of [0.5, 1, 2]) {
+      const out = offsetRegions([region(D)], delta, SHARP);
+      expect(ringArea(tessellateContour(out[0].outer, 16384)), `δ ${delta}`).toBeCloseTo(keptOf(5 + delta, 3 + delta), 4);
+    }
+  });
+
+  test("a line–line corner still takes the tangent miter", () => {
+    expect(profileArea(offsetRegions([region(sq(10))], 1, SHARP))).toBeCloseTo(144, 9);
   });
 });

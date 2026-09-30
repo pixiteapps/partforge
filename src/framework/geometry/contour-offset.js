@@ -104,12 +104,82 @@ function lineIntersect(P, u, Q, v) {
   return add(P, scl(u, cross(w, v) / d));
 }
 
+// A sharp join's miter apex, or null where the miter would pass MITER_LIMIT·|delta| and the
+// join falls back to the bevel — a turn past 120°, i.e. a spike of material under 60°. One
+// spelling for the join itself and for the source-hole disk gate (sharpHoleTakesMiters),
+// which is only sound while no join on the hole bevels.
+function sharpMiter(corner, aEnd, bStart, inTan, outTan, delta, limit = MITER_LIMIT) {
+  const X = lineIntersect(aEnd, inTan, bStart, outTan);
+  return X && dist(X, corner) <= limit * Math.abs(delta) ? X : null;
+}
+
+// A SHARP join where an ARC meets the corner: the two pieces are extended until they meet,
+// the arc along its own circle and the other piece (a line, or a cubic by its end tangent)
+// along itself — OCCT's intersection join. A line–line corner is joinSegs' miter, which is
+// the same thing. Extended along its end TANGENT instead (the plain miter), an arc leaves its
+// circle at once, and the join cuts the corner short wherever the arc curves away from the
+// gap: shrinking a shape and growing it back then lost a sliver beside every such corner (a
+// ring sector's inner corners, a keyhole's, a thumb notch's), which the laser checks read as
+// narrow material. Extended along the circle, a shrink-and-regrow returns the corner exactly.
+// Returns the join's segments, or null where no meeting point lies ahead of both pieces within
+// MITER_LIMIT·|delta| of the corner (the caller then takes the miter, or the bevel).
+const EXTEND_MAX_SWEEP = Math.PI / 2;          // how far along its circle an arc may extend
+function arcCarrier(from, seg) {
+  if (!seg.via) return null;
+  const c = arcCenterAndSweep(from, seg.via, seg.to);
+  return c && c.r > JOIN_EPS ? { c: c.center, r: c.r, s: c.dA >= 0 ? 1 : -1 } : null;
+}
+const angleOf = (c, p) => Math.atan2(p[1] - c[1], p[0] - c[0]);
+// The angle swept from p to q around a carrier, in its own direction, in [0, 2π).
+function sweepAlong({ c, s }, p, q) {
+  const TAU = 2 * Math.PI;
+  const a = (s * (angleOf(c, q) - angleOf(c, p))) % TAU;
+  return a < 0 ? a + TAU : a;
+}
+const pointAlong = ({ c, r, s }, p, ang) => {
+  const t = angleOf(c, p) + s * ang;
+  return [c[0] + r * Math.cos(t), c[1] + r * Math.sin(t)];
+};
+function lineCircle(P, u, { c, r }) {
+  const w = sub(P, c), b = dot(w, u), disc = b * b - (dot(w, w) - r * r);
+  if (disc < 0) return [];
+  const q = Math.sqrt(disc);
+  return [add(P, scl(u, -b - q)), add(P, scl(u, -b + q))];
+}
+function circleCircle(A, B) {
+  const d = dist(A.c, B.c);
+  if (d < 1e-12 || d > A.r + B.r || d < Math.abs(A.r - B.r)) return [];
+  const a = (A.r * A.r - B.r * B.r + d * d) / (2 * d), hh = Math.sqrt(Math.max(0, A.r * A.r - a * a));
+  const e = scl(sub(B.c, A.c), 1 / d), m = add(A.c, scl(e, a)), nrm = [-e[1], e[0]];
+  return [add(m, scl(nrm, hh)), add(m, scl(nrm, -hh))];
+}
+function extendedJoin(corner, aFrom, aSeg, bStart, bSeg, inTan, outTan, delta) {
+  const A = arcCarrier(aFrom, aSeg), B = arcCarrier(bStart, bSeg);
+  if (!A && !B) return null;
+  const aEnd = aSeg.to;
+  const ahead = (X) => (A ? dist(X, aEnd) <= JOIN_EPS || sweepAlong(A, aEnd, X) <= EXTEND_MAX_SWEEP : dot(sub(X, aEnd), inTan) >= -JOIN_EPS);
+  const behind = (X) => (B ? dist(X, bStart) <= JOIN_EPS || sweepAlong(B, X, bStart) <= EXTEND_MAX_SWEEP : dot(sub(bStart, X), outTan) >= -JOIN_EPS);
+  let X = null, best = MITER_LIMIT * Math.abs(delta);
+  for (const P of A && B ? circleCircle(A, B) : A ? lineCircle(bStart, outTan, A) : lineCircle(aEnd, inTan, B)) {
+    const d = dist(P, corner);
+    if (d <= best && ahead(P) && behind(P)) { X = P; best = d; }
+  }
+  if (!X) return null;
+  // An extension too short to bend is a line; its end is snapped onto the next piece.
+  const along = (C, p, q) => { const ang = sweepAlong(C, p, q); return ang > 1e-9 ? { via: pointAlong(C, p, ang / 2), to: q } : { to: q }; };
+  const out = [];
+  if (dist(X, aEnd) > JOIN_EPS) out.push(A ? along(A, aEnd, X) : { to: X });
+  if (dist(X, bStart) > JOIN_EPS) out.push(B ? along(B, X, bStart) : { to: bStart });
+  else if (out.length) out[out.length - 1] = A ? along(A, aEnd, bStart) : { to: bStart };
+  return out.length ? out : [{ to: bStart }];
+}
+
 // Segments bridging aEnd → bStart around `corner` on the gap side.
 function joinSegs(corner, aEnd, bStart, inTan, outTan, delta, corners) {
   if (corners === "chamfer") return [{ to: bStart }];
   if (corners === "sharp") {
-    const X = lineIntersect(aEnd, inTan, bStart, outTan);
-    if (X && dist(X, corner) <= MITER_LIMIT * Math.abs(delta)) return [{ to: X }, { to: bStart }];
+    const X = sharpMiter(corner, aEnd, bStart, inTan, outTan, delta);
+    if (X) return [{ to: X }, { to: bStart }];
     return [{ to: bStart }];                               // miter-limit fallback = bevel
   }
   // round: exact arc about the corner, via on the displacement bisector
@@ -191,7 +261,15 @@ export function _offsetContour(contour, delta, corners) {
     // through to the overlap branch, flat-capping a requested round end; treat it as gap
     // side so the cap is honored (an inward spike's join makes an inverted loop the
     // winding rule cancels, so the choice is safe for either delta sign).
-    if (turn * delta > 0 || turn === 0) { joins[i] = joinSegs(point, aEnd, bStart, inTan, outTan, delta, corners); continue; }
+    if (turn * delta > 0 || turn === 0) {
+      // Sharp, where an arc meets the corner: extend it along its circle (extendedJoin). Not
+      // for a piece the offset inverted or collapsed (dirty): cleanup removes those.
+      const ext = corners === "sharp" && !prev.dirty && !next.dirty
+        ? extendedJoin(point, prev.segments.length > 1 ? prev.segments.at(-2).to : prev.start, prev.segments.at(-1), bStart, next.segments[0], inTan, outTan, delta)
+        : null;
+      joins[i] = ext ?? joinSegs(point, aEnd, bStart, inTan, outTan, delta, corners);
+      continue;
+    }
     // Overlap side: the two offset pieces run into each other instead of leaving a gap.
     // When both neighbors are plain lines and the two offset LINES cross WITHIN both
     // segments' own extents, that crossing is the true corner of the offset outline: trim
@@ -517,9 +595,58 @@ export function validateRawOffset(regions) {
 // before constructing the raw offset avoids the inverted pockets that fully-eroded curved
 // counters can otherwise leave behind. This deliberately examines the SOURCE contour, not
 // the self-tangled raw output — see the removed-prune history above.
+//
+// A SHARP offset erodes a hole at least as deeply — WHILE EVERY JOIN ON IT TAKES THE MITER.
+// At the hole's convex corners the inset lines meet exactly as the disk's would, and at
+// its reflex corners (spikes of material pointing into it) a miter reaches past the arc,
+// so a hole with no room for the disk is gone under sharp corners too. It gets the same
+// question. Without it the inverted ring survived: past twice a hole's half-width a
+// square came back as a small diamond hole and a circle as a mirrored one, so a sharp
+// closing (grow, shrink back) GREW a small hole — the laser gap check never flagged a
+// hole below its floor — and an inverted cubic counter subdivided to MAX_DEPTH and cost
+// the winding resolver seconds per hole.
+// The argument fails at the miter limit. A spike of material under 60° would miter past
+// MITER_LIMIT·delta, so joinSegs bevels it, and the bevel chord adds LESS than the arc:
+// the hole keeps a real pocket beyond the chord that the disk would have filled — a
+// 12-ray star hole (rays 5, spikes to 1.2) in a plate keeps 0.9–1.9 mm² at +1.3…+2, the
+// Minkowski oracle agrees (test/offset-oracle-manifold.test.js), and the gate must not
+// drop it. So a sharp hole is asked the disk question only when no join on it bevels
+// (sharpHoleTakesMiters); one that does takes the ordinary path, as before the gate ran
+// for sharp. Chamfer is left alone for the same reason everywhere: its bevel removes LESS
+// than the arc at every reflex corner, so an empty disk test does not prove an empty inset.
 const SOURCE_DISK_TOL = 5 * OFFSET_TOL;
 const SOURCE_DISK_FLAT_TOL = OFFSET_TOL / 2;
 const SOURCE_DISK_POINT_CAP = 16384;
+
+// Whether a sharp offset of `contour` by `delta` joins every gap-side corner with its miter
+// — the condition under which the disk gate above is sound for sharp. Mirrors
+// _offsetContour's own join decision (zero-length segments dropped, smooth joints skipped,
+// the gap side by the sign of the turn) and joinSegs' through sharpMiter, from the source
+// geometry alone: an offset piece starts and ends exactly one delta along its endpoint
+// normal. The limit is held a hair tighter so a spike sitting exactly on it reads as a
+// bevel and keeps the hole on the ordinary path — never the other way round.
+// An arc's corner may take extendedJoin instead of the miter; that join never bevels where
+// the miter would not (it falls back to the miter first), and its curves stay at least
+// delta from the corner, so it too reaches past the arc a disk would leave — the argument
+// above holds for it unchanged.
+const MITER_GATE_LIMIT = MITER_LIMIT * (1 - 1e-9);
+function sharpHoleTakesMiters(contour, delta) {
+  const froms = [];
+  { let p = contour.start; for (const s of contour.segments) { froms.push(p); p = s.to; } }
+  const keep = contour.segments.map((s, i) => s.c1 || s.via || dist(froms[i], s.to) > 1e-9);
+  const segs = contour.segments.filter((_, i) => keep[i]);
+  if (!segs.length) return true;
+  const start = froms.find((_, i) => keep[i]);
+  for (const { point, inTan, outTan } of jointTangents({ start, segments: segs })) {
+    const turn = cross(inTan, outTan);
+    const turnDeg = (Math.atan2(Math.abs(turn), Math.max(-1, Math.min(1, dot(inTan, outTan)))) * 180) / Math.PI;
+    if (turnDeg < SMOOTH_JOINT_DEG || !(turn * delta > 0 || turn === 0)) continue;   // smooth, or no join
+    const aEnd = add(point, scl(rightOf(inTan), delta)), bStart = add(point, scl(rightOf(outTan), delta));
+    if (dist(aEnd, bStart) <= JOIN_EPS) continue;
+    if (!sharpMiter(point, aEnd, bStart, inTan, outTan, delta, MITER_GATE_LIMIT)) return false;
+  }
+  return true;
+}
 
 function pointSegmentDistance(p, a, b) {
   const ab = sub(b, a);
@@ -661,8 +788,8 @@ function rawOffset(regions, delta, corners) {
     if (!o.contour) continue;
     const hs = rg.holes.map((h) => {
       const hole = closeContourGap(h);
-      if (delta > 0 && corners === "round" && !_sourceHoleContainsDisk(hole, delta))
-        return { contour: null, dirty: false };
+      const diskGate = delta > 0 && (corners === "round" || (corners === "sharp" && sharpHoleTakesMiters(hole, delta)));
+      if (diskGate && !_sourceHoleContainsDisk(hole, delta)) return { contour: null, dirty: false };
       return _offsetContour(hole, delta, corners);
     });
     // Only a SURVIVING hole's dirtiness can dirty the result. A hole that collapsed

@@ -24,11 +24,26 @@ import { minkowskiOracle } from "./helpers/minkowski-oracle.js";
 import { corpus, CORNER_STYLES } from "./helpers/offset-corpus.js";
 
 const SEGS = 64;
-// Fuzz slice: 6 of the rate script's 20 deltas, so the suite stays fast (~1.5 s for the
-// whole sweep). Five are inward, where severing — and every failure class this file has ever
-// found — lives; one is outward. 150 cases x 6 deltas x 3 styles = 2 700 comparisons, which
-// is the "a few hundred cases, not thousands" the corpus is meant to be.
-const DELTAS = [-0.5, -1.25, -2, -2.5, -3.25, 1];
+// Fuzz slice: 7 of the rate script's 20 deltas, so the suite stays fast (~1.5 s for the
+// whole sweep). Five are inward, where severing lives; two are outward. +2 joined in the
+// sheet-parts fix wave: it is where a SHARP dilation used to leave a fully eroded hole behind
+// as a phantom (seeds 27, 63, 73, 85 — one outward delta at +1 never reached them), so a
+// regression of that gate fails here. 150 cases x 7 deltas x 3 styles = 3 150 comparisons,
+// which is the "a few hundred cases, not thousands" the corpus is meant to be. The corpus
+// holds no hole with an acute spike of material, so the gate's other boundary — a sharp
+// join that bevels — is pinned by name instead (offset-oracle-manifold.test.js, the star).
+const DELTAS = [-0.5, -1.25, -2, -2.5, -3.25, 1, 2];
+
+// Fully eroded holes under CHAMFER still leave a remnant — parked, with its reason, in
+// docs/KERNEL-CONTRACT.md and offset-oracle-manifold.test.js (the 1×1 hole at +2). +2 reaches
+// four of them. They are the same four seeds sharp used to get wrong, and are pinned as an
+// exact list, so a fix shows up as loudly as a regression and neither can drift silently.
+const CHAMFER_REMNANTS = [
+  "seed 27 (multi-region) delta=2 chamfer: 2r/2h vs truth 2r/1h",
+  "seed 63 (multi-region) delta=2 chamfer: 2r/2h vs truth 2r/0h",
+  "seed 73 (pocket-plate) delta=2 chamfer: 1r/1h vs truth 1r/0h",
+  "seed 85 (pocket-plate) delta=2 chamfer: 1r/1h vs truth 1r/0h",
+];
 const CASES = 150;
 
 // A ring under this is not a feature; it is a resolver artifact. Applied to BOTH sides
@@ -83,7 +98,7 @@ beforeAll(async () => {
 // EVERY seed that is wrong rather than only the first — otherwise a change that breaks 40
 // cases is indistinguishable from one that breaks 1.
 function sweep() {
-  const topoBad = [], areaBad = [], chain = [], other = [], slivers = [];
+  const topoBad = [], areaBad = [], chain = [], other = [], slivers = [], remnants = [];
   let compared = 0, ambiguous = 0;
   for (const c of corpus(CASES)) {
     for (const delta of DELTAS) for (const corners of CORNER_STYLES) {
@@ -114,8 +129,10 @@ function sweep() {
       // reading the threshold, not the engine. Skipped, counted, and reported — never
       // silently tolerated.
       if (Math.min(got.smallest, truth.smallest) < 10 * SLIVER) { ambiguous++; continue; }
-      if (got.regions !== truth.regions || got.holes !== truth.holes)
-        topoBad.push(`${where}: ${got.regions}r/${got.holes}h vs truth ${truth.regions}r/${truth.holes}h`);
+      if (got.regions !== truth.regions || got.holes !== truth.holes) {
+        const line = `${where}: ${got.regions}r/${got.holes}h vs truth ${truth.regions}r/${truth.holes}h`;
+        (CHAMFER_REMNANTS.includes(line) ? remnants : topoBad).push(line);
+      }
       const rel = Math.abs(got.area - truth.area) / Math.abs(truth.area);
       // 1 % relative with a 0.02 mm² absolute floor. The engine's own everyday disagreement
       // with this oracle on cases that never failed runs to 0.43 % relative (task-7D), so 1 %
@@ -125,7 +142,7 @@ function sweep() {
         areaBad.push(`${where}: ${got.area.toFixed(4)} vs truth ${truth.area.toFixed(4)} (${(100 * rel).toFixed(2)} %)`);
     }
   }
-  return { topoBad, areaBad, chain, other, slivers, compared, ambiguous };
+  return { topoBad, areaBad, chain, other, slivers, remnants, compared, ambiguous };
 }
 
 let R;
@@ -136,9 +153,14 @@ test("no unexpected error escapes the offset engine", () => {
 });
 
 test("region and hole counts match the oracle on every fuzz case", () => {
-  // 2 629 comparisons; 9 more are skipped as ambiguous (a kept ring within 10x of the
-  // sliver cutoff — see the sweep). If this ever fails, the message names every seed.
+  // 3 080 comparisons (four of them the chamfer remnants pinned below); 14 more are skipped
+  // as ambiguous (a kept ring within 10x of the sliver cutoff — see the sweep). If this
+  // ever fails, the message names every seed.
   expect(R.topoBad.join("\n")).toBe("");
+});
+
+test("the fully eroded chamfer holes that leave a remnant are exactly the known ones", () => {
+  expect(R.remnants.join("\n")).toBe(CHAMFER_REMNANTS.join("\n"));
 });
 
 test("area matches the oracle within 1 % on every fuzz case", () => {

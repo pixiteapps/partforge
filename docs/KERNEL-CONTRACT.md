@@ -600,7 +600,17 @@ backend-independently on the contour IR — no backend `CrossSection` or `Drawin
 ever involved. Lines and arcs offset exactly (arcs stay arcs); cubics are
 approximated to ≤ 1e-3 mm deviation. `corners: "round"` inserts exact arc joins,
 `"chamfer"` a true 45°-bisecting bevel chord at every corner angle, `"sharp"` miters
-with limit 2 (falling back to the bevel chord past the limit). Self-intersecting raw
+with limit 2 (falling back to the bevel chord past the limit) — where an arc meets the
+corner it extends along its own circle, not its end tangent (OCCT's intersection join,
+`BRepOffsetAPI_MakeOffset` with `GeomAbs_Intersection`: measured within 2e-3 mm of it on
+D shapes, pies, ring sectors, lenses and notches, `test/offset-oracle-occt.test.js`), so a
+sharp inset grown back by the same amount returns an arc-and-line corner to the winding
+resolver's precision (5e-3 mm), not exactly. The arc is extended up to 90° and the join
+takes the meeting point nearest the corner within 2·|delta|; where the extended pieces
+never meet there — an inner arc that collapses or curls away, as a 3..5 mm ring sector's
+does grown by 2 — the tangent miter applies, then the bevel, and the result matches
+neither OCCT join. A line meeting a line or a cubic is mitred along its end tangent, as
+before. Self-intersecting raw
 results are resolved through the shared planar boolean engine (paper.js), which may
 return arcs as cubic approximations — identical to boolean-op output. `segs` is
 accepted and ignored (there is no backend LOD to tune). Both backends produce
@@ -616,7 +626,7 @@ backwards for the holes (see the migration note below).
 | Op | Contract |
 |---|---|
 | `union(other)` / `cut(other)` / `cutAll(others[])` / `intersect(other)` | 2-D boolean ops; `other` may be a `Shape2D` or a raw profile (lifted via `shape2d` first). Curve-exact and backend-identical (paper.js). |
-| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. Runs backend-independently on the contour IR — lines/arcs offset exactly, cubics approximate to ≤ 1e-3 mm; `chamfer` is a true 45°-bisecting bevel at every corner angle, `sharp` miters with limit 2. Backend-identical by construction, like every other Shape2D op. Holes offset material-wise (`-delta` where the outer gets `delta`). `segs` is accepted and ignored. Empty in → empty out (short-circuits before the engine). Throws if the offset collapses the shape. |
+| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. Runs backend-independently on the contour IR — lines/arcs offset exactly, cubics approximate to ≤ 1e-3 mm; `chamfer` is a true 45°-bisecting bevel at every corner angle, `sharp` miters with limit 2 (an arc at the corner extends along its circle — OCCT's intersection join, to the resolver's 5e-3 mm, the tangent miter where the extensions never meet). Backend-identical by construction, like every other Shape2D op. Holes offset material-wise (`-delta` where the outer gets `delta`). `segs` is accepted and ignored. Empty in → empty out (short-circuits before the engine). Throws if the offset collapses the shape. |
 | `area()` | Net area (Σ\|outers\| − Σ\|holes\|), mm². Curve-exact. |
 | `boundingBox()` | `{min, max}` — axis-aligned 2-D bounds, curve-exact (no `center`/`size`, unlike `Solid.boundingBox`). |
 | `toRegions()` | Materialize into `{outer, holes}[]` point-ring region arrays (`assembleRegions`), tessellating curves at the backend's LOD; a boolean result may be several disjoint regions. |
@@ -700,19 +710,30 @@ The currently parked limitations are narrower:
 - **Round erosion with several holes reaching the eroded outer can keep too much material.**
   The characterized 30×20 plate with three rectangular holes at −2 returns about 324.75
   instead of the 258.18 oracle truth under round corners; chamfer and sharp are exact.
-- **Fully eroded holes under sharp and chamfer can leave a remnant.** The source-inradius
-  gate is intentionally limited to round joins, whose structuring element is a Euclidean
-  disk. A 1×1 hole at +2 closes correctly under round, while the sharp/chamfer variants
-  remain parked rather than applying the wrong geometric criterion.
+- **Fully eroded holes under chamfer can leave a remnant.** The source-inradius gate
+  (a hole survives a positive offset only if it holds a disk of radius delta) runs for
+  round joins, whose structuring element is that disk, and for sharp ones whose every
+  join on the hole takes the miter, which then erodes the hole at least as deeply — the
+  miter reaches past the arc at the hole's reflex corners. Without it a sharp dilation
+  left the inverted ring as a phantom hole once delta passed twice the hole's half-width.
+  A sharp hole with a spike of material under 60° is NOT gated: there the miter would
+  pass the limit, the join falls back to the bevel, and the bevel chord adds less than the
+  arc, so a real pocket survives that the disk would fill — a 12-ray star hole (rays 5,
+  spikes to 1.2) keeps 0.9–1.9 mm² at +1.3…+2, and the Minkowski oracle agrees. Such a
+  hole takes the ordinary path, which can still leave a phantom if it fully erodes.
+  Chamfer's bevel removes less than the arc at every reflex corner, so the disk rule is
+  the wrong criterion there: a 1×1 hole at +2 closes under round and sharp, and the
+  chamfer variant remains parked (four fuzz seeds at +2 are pinned exactly).
 - **Erosion can emit sub-0.001 mm² rings.** Five exact seeded cases are pinned in
   `test/offset-fuzz.test.js`. They are not automatically deleted: unlike positive
   dilation, erosion has no source-membership invariant that distinguishes a false island
   from a genuine surviving crumb.
 
-The fuzz oracle sweep covers 150 seeded shapes × 6 deltas × 3 styles and currently reports
-no region-count, hole-count, or area disagreements outside those explicit
-characterizations. Do not widen tolerances or add an area-based sliver filter when a new
-case appears; add its deterministic fixture and establish the source-domain truth first.
+The fuzz oracle sweep covers 150 seeded shapes × 7 deltas (five inward; outward, 1 and 2)
+× 3 styles and currently reports no region-count, hole-count, or area disagreements outside
+those explicit characterizations. Do not widen tolerances or add an area-based sliver
+filter when a new case appears; add its deterministic fixture and establish the
+source-domain truth first.
 ## The 2-D helper library
 
 `partforge/geometry` ships pure-JS helpers of several kinds. The **contour builders**
@@ -736,6 +757,15 @@ the helpers come along unmodified. (`test/kernel-contract.test.js` asserts every
 - `pathProfile` — fluent builder for a curve-native path contour (`lineTo` /
   `arcTo` / `cubicTo` / `close`); cubic segments become exact B-rep on OCCT and
   facet at mesh LOD on Manifold.
+- **Sheet parts** — `sheetPart` wraps a laser-cut piece into an ordinary sub-part
+  (a generated `build` and `place` plus a plain-data `sheet` declaration); the
+  joinery helpers `fingers`, `tabs`, `tSlots`, `sheetPanel`, `matchingSlots`,
+  `fingerBox`, `printedTab`, `sheetHole` and the `JOINERY_SCREWS` table are pure
+  functions returning plain data in this contract's input format; `sheetToWorld` /
+  `worldToSheet` convert between a posed sheet's drawing and world coordinates. The
+  generated build calls only ops from the tables above (`shape2d`, `extrude`,
+  `offset`, `cut`, `cutAll`, `translate`, `rotate`), so a sheet part is portable by
+  construction too. None of these is a kernel op.
 
 **Profile validation on the way in** (0.112). `prism`, `extrude`, `revolve`, `sweep`,
 `loft` (per ring) and `shape2d` (including boolean operands) run `validateProfile` on a

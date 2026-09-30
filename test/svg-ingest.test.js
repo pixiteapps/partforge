@@ -185,3 +185,21 @@ test("a half-disc written as two 90-degree A commands round-trips", () => {
   const doc = ingestSvg(svg('<path fill="#111" d="M 4 24 A 10 10 0 0 1 14 14 A 10 10 0 0 1 24 24 Z"/>'));
   expect(netArea(doc)).toBeCloseTo(Math.PI * 100 / 2, 0);
 });
+
+// A sine-wave edge drawn as one cubic per quarter period: a run of whole periods has its
+// first, middle and last points on one line to float noise, and arc recovery used to fit
+// it a circle of radius about 1e17 and store the whole wave as ONE arc — a straight chord
+// in the document. It is not a circle, and it stays the cubics it was drawn with.
+test("a wavy edge stays cubics: no arc runs across the wave", () => {
+  const k2 = (2 * Math.PI) / 25, y = (x) => 30 + 3 * Math.sin(k2 * (x - 5)), dy = (x) => 3 * k2 * Math.cos(k2 * (x - 5));
+  let d = "M 0 0 L 110 0 L 110 30 L 105 30";
+  for (let i = 16; i > 0; i--) {
+    const a = 5 + i * 6.25, b = a - 6.25, h3 = (b - a) / 3;
+    d += ` C ${a + h3} ${y(a) + dy(a) * h3} ${b - h3} ${y(b) - dy(b) * h3} ${b} ${y(b)}`;
+  }
+  const doc = ingestSvg(svg(`<path fill="#111" d="${d} L 0 30 Z"/>`, 'viewBox="0 0 110 40"'));
+  const [region] = regionsOf(doc);
+  expect(region.outer.segments.filter((s) => s.via)).toEqual([]);
+  expect(region.outer.segments.filter((s) => s.c1).length).toBeGreaterThanOrEqual(16);
+  expect(netArea(doc)).toBeCloseTo(110 * 30, 0);
+});

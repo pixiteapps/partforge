@@ -1,12 +1,17 @@
 import { buildView } from "./build.js";
 import { cachedBVH } from "./bvh.js";
 import { assemblyOverlaps } from "../assembly.js";
-import { resolveParams } from "../part-model.js";
+import { resolveParams, buildPosed } from "../part-model.js";
+import { probeSubPartPose } from "../pose-probe-core.js";
+import { composePose } from "../geometry/pose.js";
+import { isSheetPart, sheetMeta, SHEET_CHECK_BUDGET_MS, MARK_DEPTH } from "../sheet/constants.js";
+import { resolveSheet } from "../sheet/resolve.js";
+import { processFor } from "../process/registry.js";
 import { meshGaps, pairKey, CONTACT_EPS, GAP_THRESHOLD } from "./gaps.js";
 import { bounds, meshArea, meshCentroid } from "./mesh.js";
 import { minWall, DIAGNOSTIC_SAMPLES } from "./min-wall.js";
 import { overhang } from "./overhang.js";
-import { partGatesMinWall, partOverhangAngle, partWallBands } from "./gates.js";
+import { partGatesMinWall, partHasBed, partOverhangAngle, partWallBands } from "./gates.js";
 import { summarizeContours } from "./shape-probe.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
@@ -107,6 +112,98 @@ function evaluateProbes(kernel, part, params) {
   } finally { kernel.endSubPart?.(); }
 }
 
+// ── sheet parts ──────────────────────────────────────────────────────────────
+// A sub-part made with sheetPart() (partforge/geometry) is recognised by its
+// plain-data `sheet` declaration alone (isSheetPart) — never by identity: in
+// partforge-cloud's part worker the part's partforge/geometry and this oracle are
+// separate module instances. Its checks are 2-D: its process's facts() reads the
+// resolved profile, score and engrave through Shape2D methods. The 3-D parts are
+// here — where a finding sits in the assembly, and a custom build's volume drift.
+
+// A column-major mat4 (geometry/pose.js composePose) applied to one point.
+const transformPoint = (m, [x, y, z]) => [
+  m[0] * x + m[4] * y + m[8] * z + m[12],
+  m[1] * x + m[5] * y + m[9] * z + m[13],
+  m[2] * x + m[6] * y + m[10] * z + m[14],
+];
+
+// One sheet row's facts, within `budget.left` ms of 2-D work, which it spends (see
+// measure()). A 2-D location is lifted through the sub-part's DISPLAY pose, as the geometry-free
+// probe records it, at mid-thickness; a pose the probe cannot trust (a place() that
+// queries geometry) leaves `at` null and keeps the 2-D reading. Null for a process
+// id no descriptor answers to (lint's sheet-invalid reports that) is still a sheet —
+// measure and verify ask the same question, isSheetPart — with nothing to check it by:
+// unknownProcessFacts.
+function sheetRowFacts(kernel, part, name, view, { p, d }, budget, volume) {
+  const sp = part.parts[name];
+  const proc = processFor(sp);
+  if (!proc) return unknownProcessFacts(kernel, sp, p, d);
+  const resolved = resolveSheet(kernel, sp, p, d);
+  const start = budget.now();
+  const f = proc.facts(resolved, { deadline: start + budget.left, now: budget.now });
+  budget.left -= budget.now() - start;
+  const probe = probeSubPartPose(sp, { view, purpose: "display", p, d });
+  const m = probe.trusted ? composePose(probe.pose) : null;
+  const lift = (uv) => (m && uv ? transformPoint(m, [uv[0], uv[1], f.thickness / 2]) : null);
+  const expected = f.area * f.thickness - MARK_DEPTH * (f.marksArea ?? 0);
+  return {
+    ...f,
+    at: { bridge: lift(f.at2d.bridge), gap: lift(f.at2d.gap), marks: lift(f.at2d.marks) },
+    solidMatchPct: f.customBuild && f.marksArea != null && expected > 1e-9
+      ? (100 * Math.abs(volume - expected)) / expected
+      : null,
+  };
+}
+
+// A sheet whose process no descriptor answers to: what can be read without one (the
+// cut layer's size, area and pieces, when the declaration resolves at all), and no
+// reading — `evaluated` false.
+function unknownProcessFacts(kernel, sp, p, d) {
+  const meta = sheetMeta(sp, p, d);
+  let flat = [0, 0], area = 0, pieces = 0;
+  try {
+    const { profile } = resolveSheet(kernel, sp, p, d);
+    pieces = profile.toContours().length;
+    if (pieces) {
+      const { min, max } = profile.boundingBox();
+      flat = [max[0] - min[0], max[1] - min[1]];
+      area = profile.area();
+    }
+  } catch { /* a declaration that does not resolve: sizes stay zero */ }
+  return {
+    process: sp.sheet.process, material: meta?.material ?? null, thickness: meta?.thickness ?? null, group: meta?.group ?? null,
+    flat, area, pieces, customBuild: sp.build !== sp.sheet.generatedBuild,
+    marksArea: null, bridge: null, bridgeCapped: false, gap: null, gapCapped: false, marksOutside: null, solidMatchPct: null,
+    at2d: { bridge: null, gap: null, marks: null }, at: { bridge: null, gap: null, marks: null },
+    readErrors: { bridge: null, gap: null, marks: null, marksArea: null },
+    evaluated: false,
+  };
+}
+
+// The size of every PRINTED sub-part in its print (export) pose — what verify fits the
+// process profile's bed to in a view holding a sheet part: laser-cut stock never meets
+// a print bed, and a printed part is routinely displayed in an assembly pose that is
+// not how it prints. Its own cache round, like evaluateProbes: export-pose geometry
+// must not evict the view's. One part at a time: an export pose that does not build
+// costs that part its size ({ error }, which verify reports), never the report.
+function printPoseBboxes(kernel, part, view, built, { p, d }) {
+  kernel.beginSubPart?.(`oracle:print:${view}`);
+  try {
+    const out = {};
+    for (const { name } of built) {
+      const sp = part.parts[name];
+      if (sp?.exportable === false || isSheetPart(sp)) continue;
+      try {
+        const { min, max } = buildPosed(kernel, part, name, { purpose: "export", view, p, d }).boundingBox();
+        out[name] = { size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]] };
+      } catch (e) {
+        out[name] = { error: String(e?.message || e).slice(0, 200) };
+      }
+    }
+    return out;
+  } finally { kernel.endSubPart?.(); }
+}
+
 // Headless geometric report for one view of a part (Manifold-only). Reads exact
 // solid facts (volume/genus/emptiness) and mesh facts (bbox/area/triangles), plus
 // the assembly overlap check plus pair gap distances (near misses are reported,
@@ -155,12 +252,29 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // taken against the wrong threshold is worse than none.
   const overhangAngle = opts.overhang !== undefined ? opts.overhang : partOverhangAngle(part);
   const subBounds = [];
+  // Sheet parts: a view holding one sizes each printed sub-part in its print pose
+  // (verify fits the bed per part there), and every sheet row gets its 2-D facts under
+  // ONE budget for the whole call, charged for 2-D work alone: each sheet's facts() is
+  // timed and the next is given what is left, so neither a slow build nor a printed
+  // row's min-wall rays between two sheets spend it (the verdict used to depend on
+  // declaration order). A view without a sheet part measures exactly as it always has.
+  const sheetView = built.some(({ name }) => isSheetPart(part.parts[name]));
+  const sheetParams = sheetView ? resolveParams(part, params) : null;
+  // The print-pose sizes are read by one check, the process bed (verify passes whether
+  // its profile has one; alone, measure asks the part's own profile), and each costs a
+  // second build of the part — so they are built only for a bed.
+  const measuredPrintBboxes = sheetView && (opts.printBboxes ?? partHasBed(part));
+  const printBboxes = measuredPrintBboxes ? printPoseBboxes(kernel, part, view, built, sheetParams) : null;
+  // The clock the budget runs on is Date.now, or a test's own (opts.now).
+  const sheetBudget = { left: opts.sheetBudgetMs ?? SHEET_CHECK_BUDGET_MS, now: opts.now ?? Date.now };
   const subparts = built.map(({ name, solid, mesh }) => {
+    const sheet = isSheetPart(part.parts[name]);
     const b = bounds(mesh.positions);
     subBounds.push(b);
     // Resolved lazily and only when asked for: without min-wall, a single-sub-part
-    // view (no meshGaps) must still build no index at all.
-    const mw = opts.minWall
+    // view (no meshGaps) must still build no index at all. A sheet part casts none:
+    // min wall is a print rule, and its laser checks read the 2-D profile instead.
+    const mw = opts.minWall && !sheet
       ? minWall(mesh, { bvh: cachedBVH(mesh, bvhCache), maxSamples: minWallSamples, band: wallBands[name] ?? null })
       : null;
     // One pass over the triangles, no index — cheap enough for every lap. The bed
@@ -169,7 +283,8 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // slab, a placeholder) is not judged. Judged in the DISPLAY pose, which is
     // what measure builds; a part whose export pose differs (a lid that prints
     // flat beside its base) is a known gap, stated in the authoring docs.
-    const printed = part.parts[name]?.exportable !== false;
+    // A sheet part is laser-cut, never printed: no overhang reading for it either.
+    const printed = part.parts[name]?.exportable !== false && !sheet;
     const oh = overhangAngle != null && printed ? overhang(mesh, { maxAngle: overhangAngle, bedZ: b.min[2] }) : null;
     const vol = solid.volume();
     // Deviation-from-reference: only for a sub-part that declares `reference:
@@ -223,6 +338,12 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       overhangArea: oh ? oh.area : null,
       overhangAngle: oh?.worstAngle ?? null,
       overhangAt: oh?.at ?? null,
+      // The process's 2-D facts on a sheet part (sheetRowFacts), null on every other.
+      sheet: sheet
+        ? sheetRowFacts(kernel, part, name, view, sheetParams, sheetBudget, vol)
+        : null,
+      ...(printBboxes?.[name]?.size ? { printBbox: printBboxes[name].size } : {}),
+      ...(printBboxes?.[name]?.error ? { printBboxError: printBboxes[name].error } : {}),
     };
   });
 
@@ -289,6 +410,9 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // Companion stamp to measuredMinWall, and read the same way: whether the pass
     // ran, said by the pass itself rather than claimed by whoever holds the result.
     measuredGaps,
+    // In a view holding a sheet part: whether the print-pose sizes were built (verify
+    // reuses a seed for a bed only when they were). Absent everywhere else.
+    ...(sheetView ? { measuredPrintBboxes } : {}),
     subparts,
     aggregate,
     overlaps,

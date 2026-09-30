@@ -9,13 +9,9 @@
 // sampleArc. Returns null for a collinear (degenerate) triple. Shared by arcToCubicSegments
 // (paper-bridge.js) and contour-ops.js's jointTangents (arc tangents are ⊥ radius, oriented by dA's sign).
 export function arcCenterAndSweep(p0, via, to) {
-  const [ax, ay] = p0, [bx, by] = via, [cx, cy] = to;
-  const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
-  if (Math.abs(d) < 1e-12) return null;
-  const sa = ax*ax + ay*ay, sb = bx*bx + by*by, sc = cx*cx + cy*cy;
-  const ux = (sa * (by - cy) + sb * (cy - ay) + sc * (ay - by)) / d;
-  const uy = (sa * (cx - bx) + sb * (ax - cx) + sc * (bx - ax)) / d;
-  const r = Math.hypot(ax - ux, ay - uy);
+  const circle = circumcircle(p0, via, to);
+  if (!circle) return null;
+  const { center: [ux, uy], r } = circle, [ax, ay] = p0, [bx, by] = via, [cx, cy] = to;
   const a0 = Math.atan2(ay - uy, ax - ux);
   const av = Math.atan2(by - uy, bx - ux);
   const a1 = Math.atan2(cy - uy, cx - ux);
@@ -24,4 +20,16 @@ export function arcCenterAndSweep(p0, via, to) {
   const dCCW = ccw(a1 - a0), vCCW = ccw(av - a0);
   const dA = vCCW <= dCCW ? dCCW : dCCW - twoPi;
   return { center: [ux, uy], r, dA };
+}
+
+// The circle through three points as { center, r } — arcCenterAndSweep's own, without the
+// sweep (arc-fit.js tries one for every length of a run). Null for a collinear triple.
+export function circumcircle(p0, via, to) {
+  const [ax, ay] = p0, [bx, by] = via, [cx, cy] = to;
+  const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+  if (Math.abs(d) < 1e-12) return null;
+  const sa = ax*ax + ay*ay, sb = bx*bx + by*by, sc = cx*cx + cy*cy;
+  const ux = (sa * (by - cy) + sb * (cy - ay) + sc * (ay - by)) / d;
+  const uy = (sa * (cx - bx) + sb * (ax - cx) + sc * (bx - ax)) / d;
+  return { center: [ux, uy], r: Math.hypot(ax - ux, ay - uy) };
 }

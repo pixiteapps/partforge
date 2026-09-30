@@ -39,7 +39,10 @@ export interface Finding {
    * within `file`.
    */
   line?: number;
-  /** A stable ERROR-PATTERNS.md entry id, when one applies. */
+  /**
+   * A stable ERROR-PATTERNS.md entry id, when one applies — or `"sheet-parts"`,
+   * the authoring guide's "Sheet parts" section, on a sheet-part finding.
+   */
   pattern?: string;
 }
 

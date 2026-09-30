@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has eighteen: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has twenty: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -39,9 +39,13 @@ reused rounded-square ring, resample-mode square-to-circle shoulder), and
 `emblem.js` (the `k.vector2d` reference part — ingested vector art embossed on an
 authored millimetre plate, exercising both units modes, per-shape add/subtract
 roles, and all four contour kinds; the `{ shape }` selector is covered by
-test/vector2d.test.js rather than by the part), and
+test/vector2d.test.js rather than by the part),
 `relief.js` (the `images`/`k.heightfield` reference part - depth map to
-relief plate, swappable source).
+relief plate, swappable source), and `laser-box.js` (the sheet-parts reference
+part - five `fingerBox` panels and a lid as `sheetPart` sub-parts, two printed
+hinges keyed into slots; a test fixture and the guide's worked example, with no
+demo page), and `material-swatches.js` (not a reference part: the dev-only
+contact sheet of material presets behind `materials.html`).
 
 ## Node version
 
@@ -60,6 +64,7 @@ npx vitest run test/measure.test.js          # a single test file
 npx vitest run -t "assembly has no interpenetrating"   # a single test by name
 npm run check      # headless smoke test: boots an app in real Chromium (needs Playwright)
 node scripts/check-app.mjs demo.html         # smoke-test a specific app entry
+node scripts/time-sheet-inspect.mjs [--browser]    # inspect timing for the sheet-part stress cases (docs/research/sheet-inspect-timing.md)
 ```
 
 The CLI (also the agent-facing surface) builds parts in pure Node - no browser:
@@ -240,6 +245,26 @@ the installed package, so let the publish finish before bumping the dep there.
   `rollupOptions.input`) is the contact sheet - one 30mm sample of every
   preset plus the layer-line orientation check - to check by eye after any
   preset or shader change.
+- **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
+  (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
+  nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,
+  `worldToSheet`; imports only `constants.js`) are pure, because lint and the
+  oracle read them; `sheet/joinery.js` is the joinery library (`fingers`, `tabs`, `tSlots`,
+  `sheetPanel`, `matchingSlots`, `fingerBox`, `printedTab`, `sheetHole`);
+  `sheet/resolve.js` resolves a declaration into shapes and builds the preview;
+  `sheet/part.js` is `sheetPart()`; `process/registry.js` lists the
+  manufacturing processes (laser is #1, `process/laser/descriptor.js`, plain
+  data). All public names are re-exported from `partforge/geometry`; none is a
+  kernel op. Three rules hold it together. A sheet sub-part is recognized ONLY
+  by its plain-data `sp.sheet` (`isSheetPart`) — never `instanceof`, a
+  module-scoped `Symbol()` or a `WeakMap`, because partforge-cloud's part worker
+  holds two instances of this code. The generated build calls Shape2D/Solid
+  METHODS only — no `isEmpty`/`area`/`boundingBox`/`toContours` and no branching
+  on geometry — so the pose probe keeps trusting every sheet part (an empty mark
+  is dropped by matching the kernel's error text, `EMPTY_MARK_RE`). And
+  `resolve.js`/`pose.js`/`constants.js`/the registry stay paper-free, since the
+  oracle imports them (`oracle/measure.js`, `oracle/verify.js`). Spec: partforge-cloud
+  `docs/superpowers/specs/2026-09-28-sheet-parts-laser-kit-design.md`.
 - **`src/parts/`** - one file per part, default-exporting a `PartDefinition`.
 - **`src/framework/ingest/`** - the asset-ingest machinery behind both the panel's
   drop targets and the `partforge ingest` CLI verb. `sniff.js` classifies bytes by
@@ -278,6 +303,49 @@ the installed package, so let the publish finish before bumping the dep there.
   its worker job through the generic seam `runWorker(part, { jobs })` (jobs.js's
   HOST JOBS comment). Never add anything oracle-shaped here — no package name, no
   message types, no error codes: apps without it must keep building.
+- **Sheet parts in the oracle.** `measure()` stamps every sub-part row with
+  `sheet` — the process's 2-D facts for a `sheetPart()` sub-part (recognised by the
+  plain-data `sp.sheet` alone, `isSheetPart`, on both sides), else `null` — and, in a
+  view holding a sheet part whose profile has a bed, each printed row with `printBbox`
+  (its export-pose size; `printBboxError` when that pose throws). `verify()` changes
+  ONLY for such a view: the profile's bed fits each printed sub-part in its print pose
+  instead of the assembled view, min wall and overhang skip sheets (declared on one,
+  they skip — declared, never evaluated), and the
+  process's checks (`sheetBridge`, `sheetGap`, `sheetMarks`, `sheetPieces`,
+  `sheetSolidMatch`) are *volunteered* — warnings that never count toward
+  `declared`/`evaluated`, so they never set `verify.ok`. The 2-D checks share
+  `SHEET_CHECK_BUDGET_MS` per `measure()` call, charged for 2-D work alone; the laser
+  descriptor runs each width search on the profile with its circular cubics read as arcs
+  (`recoverArcs`, handed over by `resolveSheet`) and every cubic the search could carry
+  into the offset engine's slow band as lines, less the holes that cannot take part in
+  it; reads a web or slot narrower than its boolean's 0.01 mm margin off the boundary
+  itself; and prices every step (a test, the boolean it runs unless it handed back the
+  searched shape's own rings, that boundary pass) before it starts, starting none that
+  will not fit — so a profile too complex to read is not started. The prices are fitted
+  on a desktop: over the calibration corpus read under the budget every step costs about
+  its price (0.95–1.04 across runs) and the largest runs 0.9 s (a search's setup is priced for the probes
+  its facing-line count makes, superlinear on dense short lines — per line alone it ran
+  6.6× on a dense grille); the meter learns a slower device's pace from the steps it has
+  run — so the checks end inside their budget plus at most one step's overrun, and a
+  device slower than the pace learned so far overruns that step by its own slowness. With
+  NO deadline (the bench's 2-D column) every test starts, however long: a line-heavy test
+  runs up to 1.8× its price there, and a reading can take tens of seconds. `recoverArcs`
+  runs before the first priced step and is unpriced: cheap on real outlines (4,000 cubics
+  in 10–35 ms — growth is closer to n^1.6 than linear on a smooth traced blob), still
+  superlinear on some rings of thousands of cubics built to
+  keep its search long (up to 0.8 s at 4,000). A sheet the budget stops is one
+  `sheetChecks` warning; a DECLARED check the engine could not read is unevaluated too.
+  Most tests run the budget on a stopped clock (`measure(…, { now: () => 0 })`); the
+  timing pins run it on main-thread CPU time and hold each step to 3× its price and to
+  ABSOLUTE CPU caps (1–1.5 s a step, 2 s a reading) — never to a pace taken from the
+  steps they judge, which let a lone overrun set its own allowance. Those caps are the
+  calibration desktop's: `test/helpers/cpu-pace.js`'s `cpuMs` is CPU time divided by a
+  PACE measured once per file on a fixed plate of lines and arcs (1 there, clamped at 6,
+  forced by `PF_CPU_PACE`), and the meter runs on that clock too, so a slower CI runner
+  reads what the desktop reads. A view with no sheet
+  part verifies byte-identically — `test/verify-golden.test.js` pins it; re-record only
+  for a deliberate verdict change (`PARTFORGE_RECORD_VERIFY_GOLDEN=1 npx vitest run
+  test/verify-golden.test.js`). Timings: `docs/research/sheet-inspect-timing.md`.
 - **`src/testing/`** - the genuinely Node-only harness, and only that:
   `manifold.js` / `occt.js` (boot a WASM kernel from disk), `render.js` (write
   PNGs), `error-patterns.js` (read `docs/ERROR-PATTERNS.md`). Never import these

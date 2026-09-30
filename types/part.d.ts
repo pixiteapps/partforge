@@ -9,7 +9,7 @@
 // src/framework/oracle/verify.js + src/framework/verify-metrics.js (the `verify`
 // block's metric vocabulary).
 
-import type { BackendName, GeometryKernel, Solid } from "./kernel.js";
+import type { BackendName, GeometryKernel, Point2, Point3, ProfileInput, Solid } from "./kernel.js";
 
 /**
  * A value the control panel can hold. Sliders and number boxes write numbers;
@@ -400,6 +400,47 @@ export interface SubPartDefinition<P = ResolvedParams, D = Derived> {
   };
   /** Filename / object name on export; defaults to the key. */
   export?: { name: string };
+  /**
+   * Set by `sheetPart()` (partforge/geometry) on a sub-part cut from flat stock: its
+   * cut/score/engrave declaration, and the one marker framework code recognizes a
+   * sheet part by. Never written by hand.
+   */
+  sheet?: SheetDeclaration<P, D>;
+}
+
+// --- sheet parts ------------------------------------------------------------
+
+/** An axis direction, as a sheet pose names its face and up. */
+export type AxisWord = "+X" | "-X" | "+Y" | "-Y" | "+Z" | "-Z";
+
+/**
+ * Where a sheet part sits in the assembly (docs/AUTHORING-PARTS.md "Sheet parts").
+ * The part is drawn in its own frame — profile in XY, material over z ∈ [0, t], the
+ * laser face at z = t. `face` is the laser face's outward normal, `up` the drawing's
+ * +y (perpendicular to `face`), `at` where drawing [0, 0] lands; drawing +x is
+ * `up × face`, so a pose is always a proper rotation and never mirrors.
+ */
+export interface SheetPose {
+  face: AxisWord;
+  up: AxisWord;
+  at: Point3;
+}
+
+/** One `score` entry: exactly two points is a LINE; anything else is a shape whose boundaries are all scored. */
+export type SheetScoreEntry = [Point2, Point2] | ProfileInput | null;
+
+/** The plain-data declaration `sheetPart()` attaches as `sub.sheet`. */
+export interface SheetDeclaration<P = ResolvedParams, D = Derived> {
+  process: string;
+  material: string | ((p: P, d: D) => string);
+  thickness: number | ((p: P, d: D) => number);
+  profile: (k: GeometryKernel, p: P, d: D) => ProfileInput;
+  score: ((k: GeometryKernel, p: P, d: D) => SheetScoreEntry[] | null) | null;
+  engrave: ((k: GeometryKernel, p: P, d: D) => ProfileInput | null) | null;
+  /** `null` = flat: no transform. */
+  pose: SheetPose | ((p: P, d: D) => SheetPose | null) | null;
+  /** The build `sheetPart` made; `sub.build !== sub.sheet.generatedBuild` is a custom build. */
+  generatedBuild: (k: GeometryKernel, p: P, d: D) => Solid;
 }
 
 export interface ViewDefinition {
@@ -489,6 +530,21 @@ export interface SubPartExpectations {
   refVolumeDeltaPct?: Expectation;
   /** Bounding-box corner drift `[dx, dy, dz]` vs. the sub-part's declared `reference` import. */
   refBboxDelta?: Expectation;
+  /**
+   * Sheet parts only (`sheetPart()`): the narrowest web or finger in the cut
+   * profile, mm. verify checks it on every sheet part at `>=` max(half the
+   * thickness, 0.5 mm) as a volunteered warning; declare it to make it count.
+   * Nothing narrower than twice that floor reads as the ceiling, with a note.
+   */
+  sheetBridge?: Expectation;
+  /** Sheet parts only: the narrowest hole, slot or notch in the cut profile, mm. Same floor as `sheetBridge`. */
+  sheetGap?: Expectation;
+  /** Sheet parts only: engrave/score mark regions lying outside the cut (volunteered check: `0`). */
+  sheetMarks?: Expectation;
+  /** Sheet parts only: separate regions in the cut profile (volunteered check: `1`). */
+  sheetPieces?: Expectation;
+  /** Sheet parts with a custom `build` only: % volume drift from profile area × thickness minus the marks (volunteered check: `<=2`). */
+  sheetSolidMatch?: Expectation;
 }
 
 /**

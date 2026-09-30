@@ -9,7 +9,7 @@ export type { GeometryKernel, Mesh, PartDefinition, ResolvedParams, Solid } from
 export {
   // measurement + verification
   measure, verify, buildView,
-  type MeasureReport, type SubPartFacts, type AggregateFacts, type BuiltSubPart,
+  type MeasureReport, type SubPartFacts, type SheetFacts, type AggregateFacts, type BuiltSubPart,
   type VerifyReport, type VerifyCaseResult, type VerifyCheck, type CheckStatus,
   // mesh facts, gaps, BVH, min wall
   meshVolume, bboxSize, bounds, meshArea, assemblyGaps, meshGaps, buildBVH, meshTriangles, minWall, overhang,

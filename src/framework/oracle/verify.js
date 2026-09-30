@@ -6,6 +6,10 @@ import { expandExpectations, partGatesMinWall } from "./gates.js";
 import { subPartReadKeys, relevanceHash, RELEVANT_ALL } from "../param-deps.js";
 import { byteAwareReplacer } from "../geometry/solid-hash.js";
 import { SUBPART_METRICS, VIEW_METRICS } from "../verify-metrics.js";
+import { processById } from "../process/registry.js";
+import { SHEET_DOC_ID, SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../sheet/constants.js";
+// Re-exported for the callers that read them from here; their one home is sheet/constants.js.
+export { SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../sheet/constants.js";
 
 // Re-exported for backwards compatibility: the registries moved to framework/ so
 // the linter can read the metric vocabulary without importing a geometry kernel.
@@ -160,9 +164,91 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
   if (note) out.note = note;
   if (!pass) {
     out.hint = partHint ?? reg.hint;
-    if (reg.pattern) out.pattern = reg.pattern;
+    // `pattern` names an ERROR-PATTERNS.md entry; a sheet metric names the guide
+    // section instead (`doc: "sheet-parts"`), which rides the same field.
+    const pattern = reg.pattern ?? reg.doc;
+    if (pattern) out.pattern = pattern;
     const loc = reg.locate?.(factsObj);
     if (loc) out.location = loc;
+  }
+  return out;
+}
+
+// ── sheet parts ──────────────────────────────────────────────────────────────
+// A view holding a sheet part (sheetPart(), partforge/geometry — measure() stamps
+// its row with `sheet`) is judged per part: the process profile's bed fits each
+// PRINTED sub-part in its print pose (measure()'s `printBbox`), since laser-cut stock
+// never meets a print bed; a sheet part gets only what the part declared for it, plus
+// its process's own checks VOLUNTEERED. A volunteered check is a fact the oracle
+// offers, exactly like an undeclared near miss: it warns when it fails and never
+// counts toward `declared`/`evaluated` (isDeclared, in verify() below), so it can
+// never make verify.ok true on its own — without that, a sheet-only part with no
+// verify block would jump from "no expectations declared" to a pass.
+const PRINT_POSE_NOTE = "measured in the print (export) pose";
+
+// SHEET_CHECKS_NOTICE (sheet/constants.js) stands in for a sheet's budget-gated
+// volunteered checks when its 2-D budget ran out (measure()'s `sheet.evaluated` false):
+// one warning, never `unevaluated` — a check nobody declared must not withhold a verdict.
+
+// A DECLARED sheet check the budget withheld: `unevaluated`, as a quick lap's is, so it
+// withholds verify.ok — and it says how to get a verdict. Either the budget ran out
+// before this check, or the profile was priced too complex to start the checks at all
+// (process/laser/descriptor.js); the hint covers both, as the notice's does.
+const SHEET_BUDGET_HINT = "The 2-D sheet checks did not fit their time budget — it ran out before this check, or the profile was too complex to start them — so this check has no verdict and verify.ok is withheld. What they spend time on is edges, curved ones most: round holes crowded close to each other or to an edge, and corners rounded tighter than about the sheet thickness, cost the most.";
+
+// The print checks: measure() casts no rays and runs no overhang pass on a sheet part.
+// Declared on one, each is a skip — declared, never evaluated, so a sheet-only forge
+// that declares only these has no verdict rather than a vacuous pass.
+const PRINT_ONLY = new Set(["minWall", "wall", "overhangArea"]);
+const PRINT_ONLY_HINT = "minWall, wall and overhangArea are print checks, and a sheet part is cut, not printed: nothing measures them here. For a laser part declare sheetBridge (the narrowest web or finger) or sheetGap (the narrowest hole or slot) instead.";
+
+// A sheet reading the geometry engine could not take (SheetFacts.readErrors): a
+// volunteered check warns with the reason; a declared one warns with it too, and is
+// `unevaluated`, so it withholds verify.ok exactly as a budget-withheld one does. As a bare
+// skip it counted neither way, and one other declared check that passed made verify.ok true
+// over a check that was never taken — the rule at the top of this file, a declared gate
+// fails loudly and never skips.
+// On a valid profile a read error is the checker's own limit, so the hint
+// (SHEET_READ_ERROR_HINT, sheet/constants.js — the kit's README repeats it, and it stays
+// one text) never blames the contour first.
+
+// One sheet row: the declared expectations, then the process's checks the part did
+// not declare, volunteered.
+function sheetRowChecks(s, declaredExp) {
+  const out = [];
+  const proc = processById(s.sheet.process);
+  const outOfTime = s.sheet.evaluated === false;
+  const budgeted = (metric) => SUBPART_METRICS[metric]?.budgeted === true;
+  const unread = (c, metric) => (c.actual == null ? SUBPART_METRICS[metric]?.readError?.(s) ?? null : null);
+  const readFailure = (c, why) => ({ ...c, message: `not measured — ${why}`, hint: SHEET_READ_ERROR_HINT, pattern: SHEET_DOC_ID });
+  for (const [metric, expr] of Object.entries(declaredExp)) {
+    const c = check("subpart", s.name, metric, expr, SUBPART_METRICS, s);
+    if (PRINT_ONLY.has(metric)) {
+      out.push({ scope: c.scope, subpart: c.subpart, metric, kind: c.kind, expr: c.expr, actual: null, status: "skip", pass: null,
+        message: "not measured on a sheet part", hint: PRINT_ONLY_HINT, pattern: SHEET_DOC_ID });
+    } else if (!proc && c.actual == null) {
+      // A sheet naming no registered process (lint's sheet-invalid): nothing reads it.
+      out.push({ ...c, status: "skip", pass: null, message: `not measured: no "${s.sheet.process}" process`,
+        hint: "This sheet part names a process partforge does not know, so no sheet check reads it; lint's sheet-invalid says which. Use sheetPart() with a known process.", pattern: SHEET_DOC_ID });
+    } else if (outOfTime && budgeted(metric) && c.actual == null) {
+      out.push({ ...c, status: "skip", pass: null, unevaluated: true, message: "not evaluated (2-D check budget)",
+        hint: SHEET_BUDGET_HINT, pattern: SHEET_DOC_ID });
+    } else {
+      const why = unread(c, metric);
+      out.push(why ? readFailure({ ...c, status: "warn", pass: null, unevaluated: true }, why) : c);
+    }
+  }
+  let noticed = false;
+  for (const [metric, expr] of Object.entries(proc?.checks(s.sheet) ?? {})) {
+    if (Object.hasOwn(declaredExp, metric)) continue;
+    if (outOfTime && budgeted(metric)) {
+      if (!noticed) out.push({ scope: "subpart", subpart: s.name, ...SHEET_CHECKS_NOTICE });
+      noticed = true;
+      continue;
+    }
+    const c = check("subpart", s.name, metric, expr, SUBPART_METRICS, s);
+    const why = unread(c, metric);
+    out.push({ ...(why ? readFailure({ ...c, status: "warn", pass: null }, why) : c), volunteered: true });
   }
   return out;
 }
@@ -176,8 +262,12 @@ export function evaluateCase(facts, { profile, expect, subPartNames, overhang = 
   // contacts/clearance are per-pair, not scalar view metrics — peel them off
   // before the registry loop and hand them to pairGapChecks.
   const { contacts, clearance, ...viewScalarExp } = expect?._view ?? {};
+  // No sheet part in the view: every line below runs exactly as it did before sheet
+  // parts existed (test/verify-golden.test.js). With one, the bed moves from the view
+  // to each printed sub-part — see the sheet-parts block above.
+  const anySheet = facts.subparts.some((s) => s.sheet);
   const viewExp = {
-    ...(profile?.bed ? { bbox: `<=[${profile.bed.join(",")}]` } : {}),
+    ...(profile?.bed && !anySheet ? { bbox: `<=[${profile.bed.join(",")}]` } : {}),
     ...viewScalarExp,
   };
   for (const [metric, expr] of Object.entries(viewExp)) checks.push(check("view", null, metric, expr, VIEW_METRICS, facts));
@@ -193,6 +283,16 @@ export function evaluateCase(facts, { profile, expect, subPartNames, overhang = 
   // is withheld rather than read as "unavailable" — which would count as answered.
   const overhangSkipped = overhang != null && (facts.measuredOverhang ?? null) === null;
   for (const s of facts.subparts) {
+    if (s.sheet) { checks.push(...sheetRowChecks(s, expect?.[s.name] ?? {})); continue; }
+    if (anySheet && profile?.bed && s.printBbox) {
+      checks.push({ ...check("subpart", s.name, "bbox", `<=[${profile.bed.join(",")}]`, SUBPART_METRICS, { ...s, bbox: s.printBbox }),
+        note: PRINT_POSE_NOTE });
+    } else if (anySheet && profile?.bed && s.printBboxError) {
+      checks.push({ scope: "subpart", subpart: s.name, metric: "bbox", kind: "gate", expr: `<=[${profile.bed.join(",")}]`,
+        actual: null, status: "skip", pass: null, unevaluated: true, note: PRINT_POSE_NOTE,
+        message: `not measured: its print (export) pose did not build — ${s.printBboxError}`,
+        hint: "This printed part's place() failed for purpose \"export\", so its print size — and its STL/3MF export — is unavailable. Fix place() for the export pose; the bed check then runs." });
+    }
     const merged = {
       ...(profile?.minWall != null ? { minWall: `>=${profile.minWall}` } : {}),
       ...(overhang != null ? { overhangArea: "<=1" } : {}),
@@ -299,7 +399,12 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // changes the angle therefore re-measures rather than reusing the inspect
   // job's seed, which was taken against the part's own profile.
   const overhangMatches = (seed?.result?.measuredOverhang ?? null) === (overhangAngle ?? null);
-  if (seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && (quick || overhangMatches) && seed.result.view === view) {
+  // The print-pose half (views holding a sheet part): a seed measured without the print
+  // sizes cannot answer a bed, so it is admitted only when this run needs no bed.
+  const needPrintBboxes = profile?.bed != null;
+  const printBboxesMatch = !needPrintBboxes || seed?.result?.measuredPrintBboxes !== false;
+  if (seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && (quick || overhangMatches) && printBboxesMatch
+    && seed.result.view === view) {
     memo.set(signature({ ...part.defaults, ...(seed.params ?? {}) }), seed.result);
   }
 
@@ -310,7 +415,8 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     // `probes: false` — no gate reads probe values, so re-running their booleans
     // for every case buys nothing. (A seed measured WITH probes is a superset in
     // the same way a min-wall seed is: the extra key is simply never read here.)
-    memo.set(key, measureFn(kernel, part, view, params, { minWall: needMinWall, probes: false, overhang: overhangAngle }));
+    memo.set(key, measureFn(kernel, part, view, params,
+      { minWall: needMinWall, probes: false, overhang: overhangAngle, printBboxes: needPrintBboxes }));
     return memo.get(key);
   };
 
@@ -352,7 +458,9 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // deliberately NOT pushed into any case's check list — it is about the part,
   // not about `defaults`. A quick lap that withheld gates explains itself through
   // `unevaluated` and gets no notice.
-  const isDeclared = (c) => c.scope !== "case" && c.metric !== "nearMiss";
+  // Volunteered checks (a sheet part's process checks, and the budget notice standing
+  // in for them) are facts the oracle offers, like an undeclared near miss.
+  const isDeclared = (c) => c.scope !== "case" && c.metric !== "nearMiss" && !c.volunteered;
   const all = caseResults.flatMap((c) => c.checks.map((ch) => ({ case: c.name, ...ch })));
   let declared = 0, evaluated = 0;
   for (const c of all) {

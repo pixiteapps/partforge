@@ -263,6 +263,47 @@ export function overhang(
 
 // --- measure ----------------------------------------------------------------
 
+/**
+ * A sheet sub-part's 2-D facts (`sheetPart()`, partforge/geometry) — what its
+ * process's checks read. Lengths in mm, areas in mm². `bridge` and `gap` are
+ * bisected to 0.05 mm; `…Capped` says nothing narrower than twice the floor was
+ * found and the value is that ceiling. `at2d` is in the drawing frame; `at` is
+ * the same spot in the assembly at mid-thickness, `null` when the sub-part's
+ * pose could not be traced. `evaluated` false: the 2-D time budget ran out, or
+ * the profile was too complex to start the checks under it, and `bridge`, `gap`,
+ * `marksOutside` and `marksArea` are `null`.
+ */
+export interface SheetFacts {
+  process: string;
+  /** `null` only on a sheet naming no registered process whose declaration does not resolve (`evaluated` false). */
+  material: string | null;
+  /** `null` as for `material`. */
+  thickness: number | null;
+  /** `"<material, trimmed and lowercased>|<thickness to 0.01 mm>"`, e.g. `"birch plywood|3.00"`; `null` as for `material`. */
+  group: string | null;
+  /** The cut layer's bounding-box size, nominal (no kerf). */
+  flat: [number, number];
+  area: number;
+  pieces: number;
+  customBuild: boolean;
+  marksArea: number | null;
+  bridge: number | null;
+  bridgeCapped: boolean;
+  gap: number | null;
+  gapCapped: boolean;
+  marksOutside: number | null;
+  /** Custom builds only: `100·|volume − (area·thickness − 0.2·marksArea)| / (area·thickness − 0.2·marksArea)`. */
+  solidMatchPct: number | null;
+  at2d: { bridge: [number, number] | null; gap: [number, number] | null; marks: [number, number] | null };
+  at: { bridge: number[] | null; gap: number[] | null; marks: number[] | null };
+  /**
+   * Why a reading is `null` although `evaluated` is true — the geometry engine refused
+   * the profile, or the reading threw — or `null` for each one that was taken.
+   */
+  readErrors: { bridge: string | null; gap: string | null; marks: string | null; marksArea: string | null };
+  evaluated: boolean;
+}
+
 export interface SubPartFacts {
   name: string;
   /** Size only — `[dx, dy, dz]`. */
@@ -302,6 +343,17 @@ export interface SubPartFacts {
   overhangAngle: number | null;
   /** Centroid of the largest offending face; `null` when none. */
   overhangAt: number[] | null;
+  /** A sheet sub-part's 2-D facts, or `null` on every other sub-part. */
+  sheet: SheetFacts | null;
+  /**
+   * Present only in a view that holds a sheet part, when a process bed will read it
+   * (`measuredPrintBboxes`), on each printed (`exportable !== false`, non-sheet)
+   * sub-part: its size in the print (export) pose, which is what verify fits the
+   * process profile's bed to there.
+   */
+  printBbox?: number[];
+  /** Instead of `printBbox` when this sub-part's export pose did not build: why. */
+  printBboxError?: string;
 }
 
 export interface AggregateFacts {
@@ -372,6 +424,11 @@ export interface MeasureReport {
   measuredMinWall: boolean;
   /** The overhang angle every sub-part's `overhangArea` was measured against, `null` when the pass did not run. */
   measuredOverhang: number | null;
+  /**
+   * Present only in a view holding a sheet part: whether the printed sub-parts' print
+   * (export) poses were built for `printBbox`.
+   */
+  measuredPrintBboxes?: boolean;
   subparts: SubPartFacts[];
   aggregate: AggregateFacts;
   overlaps: Overlap[];
@@ -405,6 +462,20 @@ export function measure(
     overhang?: number | null;
     gapThreshold?: number;
     /**
+     * Milliseconds the 2-D sheet checks may spend across every sheet sub-part in
+     * this call (default 1500), charged for 2-D work alone. Past it the remaining
+     * readings are withheld — `sheet.evaluated` false — never the report.
+     */
+    sheetBudgetMs?: number;
+    /** The clock that budget runs on, in ms (default `Date.now`) — a test's seam. */
+    now?: () => number;
+    /**
+     * In a view holding a sheet part, build each printed sub-part in its print (export)
+     * pose for `printBbox`. Default: when the part's own `verify.process` has a bed —
+     * the only check that reads it.
+     */
+    printBboxes?: boolean;
+    /**
      * A build of this view the caller already has, measured instead of building a
      * second time. It is trusted, not checked against `view`/`params` — hand in a
      * build of the same view you are asking about.
@@ -433,12 +504,21 @@ export interface VerifyCheck {
   message: string;
   /** One self-contained corrective sentence (part-authored `hint` wins). */
   hint?: string;
-  /** A stable ERROR-PATTERNS.md entry id. */
+  /** A stable ERROR-PATTERNS.md entry id — or `"sheet-parts"`, the authoring guide's "Sheet parts" section, on a sheet check. */
   pattern?: string;
   /** A measurement caveat or companion reading — `minWall` (sampling) and `overhangArea` (the steepest angle) set one. */
   note?: string;
   /** `[x, y, z]` in mm, for the metrics that have one. */
   location?: number[] | null;
+  /**
+   * A check the part never declared, offered by the oracle — a sheet part's
+   * process checks, or the notice standing in for them past the 2-D budget. It
+   * warns when it fails and never counts toward `declared`/`evaluated`, so it
+   * never decides `ok`.
+   */
+  volunteered?: boolean;
+  /** True when the check could not be evaluated this run (a quick lap, or a declared sheet check past the 2-D budget). */
+  unevaluated?: boolean;
 }
 
 export interface VerifyCaseResult {

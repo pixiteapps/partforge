@@ -1,0 +1,2833 @@
+{
+  "bracket.js#bracket": {
+    "ok": null,
+    "view": "bracket",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "span": 60,
+          "bar": 22,
+          "corner": 4,
+          "thickness": 4,
+          "hole_d": 5,
+          "inset": 8,
+          "center_d": 16,
+          "clip": 0,
+          "clearance": 0
+        },
+        "checks": []
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": null,
+        "scope": "part",
+        "subpart": null,
+        "metric": "expectations",
+        "kind": "warn",
+        "expr": "evaluated",
+        "actual": 0,
+        "status": "warn",
+        "pass": null,
+        "message": "no expectations declared",
+        "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
+      }
+    ],
+    "unevaluated": [],
+    "declared": 0,
+    "evaluated": 0
+  },
+  "demo.js#spacer": {
+    "ok": true,
+    "view": "spacer",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "od": 8,
+          "bore": 3.4,
+          "h": 10,
+          "flange_d": 0,
+          "flange_h": 2
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              8,
+              8,
+              10
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[8,8,10] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 2.19909313,
+            "status": "pass",
+            "pass": true,
+            "message": "2.199093128739919 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "1",
+            "actual": 1,
+            "status": "pass",
+            "pass": true,
+            "message": "1 == 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[60,60,60]",
+            "actual": [
+              8,
+              8,
+              10
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[8,8,10] <= [60,60,60]"
+          }
+        ]
+      },
+      {
+        "name": "M3",
+        "params": {
+          "od": 8,
+          "bore": 3.4,
+          "h": 10,
+          "flange_d": 0,
+          "flange_h": 2
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              8,
+              8,
+              10
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[8,8,10] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 2.19909313,
+            "status": "pass",
+            "pass": true,
+            "message": "2.199093128739919 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "1",
+            "actual": 1,
+            "status": "pass",
+            "pass": true,
+            "message": "1 == 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[60,60,60]",
+            "actual": [
+              8,
+              8,
+              10
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[8,8,10] <= [60,60,60]"
+          }
+        ]
+      },
+      {
+        "name": "M5",
+        "params": {
+          "od": 12,
+          "bore": 5.4,
+          "h": 16,
+          "flange_d": 0,
+          "flange_h": 2
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              12,
+              12,
+              16
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[12,12,16] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 3.19872627,
+            "status": "pass",
+            "pass": true,
+            "message": "3.198726267796771 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "1",
+            "actual": 1,
+            "status": "pass",
+            "pass": true,
+            "message": "1 == 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[60,60,60]",
+            "actual": [
+              12,
+              12,
+              16
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[12,12,16] <= [60,60,60]"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "unevaluated": [],
+    "declared": 15,
+    "evaluated": 15
+  },
+  "emblem.js#plate": {
+    "ok": true,
+    "view": "plate",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "art": "",
+          "plate_t": 3,
+          "emblem_w": 30,
+          "emboss": 1
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[41,25,5]",
+            "actual": [
+              40,
+              24,
+              4
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[40,24,4] <= [41,25,5]"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "volume",
+            "kind": "gate",
+            "expr": ">=2900",
+            "actual": 3013.05086,
+            "status": "pass",
+            "pass": true,
+            "message": "3013.0508550993895 >= 2900"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "3",
+            "actual": 3,
+            "status": "pass",
+            "pass": true,
+            "message": "3 == 3"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "unevaluated": [],
+    "declared": 5,
+    "evaluated": 5
+  },
+  "faceted-vase.js#vase": {
+    "ok": true,
+    "view": "vase",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "height": 150,
+          "baseR": 35,
+          "waistR": 26,
+          "rimR": 40,
+          "facets": 5,
+          "twist": 40,
+          "wall": 2,
+          "floor": 3
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              76.4346581,
+              78.8925972,
+              150
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[76.43465805053711,78.89259719848633,150] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 0.301605634,
+            "status": "warn",
+            "pass": false,
+            "message": "0.3016056341325522 not >= 1.2",
+            "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
+            "pattern": "minwall-sliver-triangles",
+            "location": [
+              -25.8058325,
+              -1.25677403,
+              3.78571431
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,230]",
+            "actual": [
+              76.4346581,
+              78.8925972,
+              150
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[76.43465805053711,78.89259719848633,150] <= [220,220,230]"
+          }
+        ]
+      },
+      {
+        "name": "Tulip vase",
+        "params": {
+          "height": 150,
+          "baseR": 35,
+          "waistR": 26,
+          "rimR": 40,
+          "facets": 5,
+          "twist": 40,
+          "wall": 2,
+          "floor": 3
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              76.4346581,
+              78.8925972,
+              150
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[76.43465805053711,78.89259719848633,150] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 0.301605634,
+            "status": "warn",
+            "pass": false,
+            "message": "0.3016056341325522 not >= 1.2",
+            "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
+            "pattern": "minwall-sliver-triangles",
+            "location": [
+              -25.8058325,
+              -1.25677403,
+              3.78571431
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,230]",
+            "actual": [
+              76.4346581,
+              78.8925972,
+              150
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[76.43465805053711,78.89259719848633,150] <= [220,220,230]"
+          }
+        ]
+      },
+      {
+        "name": "Barrel pot",
+        "params": {
+          "height": 90,
+          "baseR": 40,
+          "waistR": 44,
+          "rimR": 38,
+          "facets": 8,
+          "twist": 0,
+          "wall": 2.4,
+          "floor": 3
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              83.18367,
+              83.18367,
+              90
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[83.18367004394531,83.18367004394531,90] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 0.11795397,
+            "status": "warn",
+            "pass": false,
+            "message": "0.11795396961896032 not >= 1.2",
+            "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
+            "pattern": "minwall-sliver-triangles",
+            "location": [
+              13.1891766,
+              -34.6792488,
+              3.07142854
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,230]",
+            "actual": [
+              83.18367,
+              83.18367,
+              90
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[83.18367004394531,83.18367004394531,90] <= [220,220,230]"
+          }
+        ]
+      },
+      {
+        "name": "Twist column",
+        "params": {
+          "height": 180,
+          "baseR": 30,
+          "waistR": 30,
+          "rimR": 30,
+          "facets": 6,
+          "twist": 120,
+          "wall": 2,
+          "floor": 3
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              59.8322296,
+              60,
+              180
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[59.83222961425781,60,180] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 0.603003145,
+            "status": "warn",
+            "pass": false,
+            "message": "0.6030031450487564 not >= 1.2",
+            "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
+            "pattern": "minwall-sliver-triangles",
+            "location": [
+              -16.2691717,
+              -16.0778373,
+              4.14285707
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,230]",
+            "actual": [
+              59.8322296,
+              60,
+              180
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[59.83222961425781,60,180] <= [220,220,230]"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": "defaults",
+        "scope": "subpart",
+        "subpart": "vase",
+        "metric": "minWall",
+        "kind": "warn",
+        "expr": ">=1.2",
+        "actual": 0.301605634,
+        "status": "warn",
+        "pass": false,
+        "message": "0.3016056341325522 not >= 1.2",
+        "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
+        "pattern": "minwall-sliver-triangles",
+        "location": [
+          -25.8058325,
+          -1.25677403,
+          3.78571431
+        ]
+      },
+      {
+        "case": "Tulip vase",
+        "scope": "subpart",
+        "subpart": "vase",
+        "metric": "minWall",
+        "kind": "warn",
+        "expr": ">=1.2",
+        "actual": 0.301605634,
+        "status": "warn",
+        "pass": false,
+        "message": "0.3016056341325522 not >= 1.2",
+        "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
+        "pattern": "minwall-sliver-triangles",
+        "location": [
+          -25.8058325,
+          -1.25677403,
+          3.78571431
+        ]
+      },
+      {
+        "case": "Barrel pot",
+        "scope": "subpart",
+        "subpart": "vase",
+        "metric": "minWall",
+        "kind": "warn",
+        "expr": ">=1.2",
+        "actual": 0.11795397,
+        "status": "warn",
+        "pass": false,
+        "message": "0.11795396961896032 not >= 1.2",
+        "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
+        "pattern": "minwall-sliver-triangles",
+        "location": [
+          13.1891766,
+          -34.6792488,
+          3.07142854
+        ]
+      },
+      {
+        "case": "Twist column",
+        "scope": "subpart",
+        "subpart": "vase",
+        "metric": "minWall",
+        "kind": "warn",
+        "expr": ">=1.2",
+        "actual": 0.603003145,
+        "status": "warn",
+        "pass": false,
+        "message": "0.6030031450487564 not >= 1.2",
+        "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
+        "pattern": "minwall-sliver-triangles",
+        "location": [
+          -16.2691717,
+          -16.0778373,
+          4.14285707
+        ]
+      }
+    ],
+    "unevaluated": [],
+    "declared": 20,
+    "evaluated": 20
+  },
+  "filleted-box.js#box": {
+    "ok": null,
+    "view": "box",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "w": 40,
+          "d": 30,
+          "h": 16,
+          "fillet": 3,
+          "top": 2,
+          "chamfer": 0,
+          "bore": 8
+        },
+        "checks": []
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": null,
+        "scope": "part",
+        "subpart": null,
+        "metric": "expectations",
+        "kind": "warn",
+        "expr": "evaluated",
+        "actual": 0,
+        "status": "warn",
+        "pass": null,
+        "message": "no expectations declared",
+        "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
+      }
+    ],
+    "unevaluated": [],
+    "declared": 0,
+    "evaluated": 0
+  },
+  "gasket.js#gasket": {
+    "ok": true,
+    "view": "gasket",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "w": 44,
+          "h": 3,
+          "boltR": 1.6,
+          "cornerR": 2,
+          "clearance": 0
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              44,
+              35.3962576,
+              3
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[44,35.396257638931274,3] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "gasket",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.39449767,
+            "status": "pass",
+            "pass": true,
+            "message": "1.3944976729388052 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "gasket",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[60,50,6]",
+            "actual": [
+              44,
+              35.3962576,
+              3
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[44,35.396257638931274,3] <= [60,50,6]"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "gasket",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "2",
+            "actual": 2,
+            "status": "pass",
+            "pass": true,
+            "message": "2 == 2"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "unevaluated": [],
+    "declared": 5,
+    "evaluated": 5
+  },
+  "hinged-box.js#box": {
+    "ok": true,
+    "view": "box",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "width": 60,
+          "depth": 40,
+          "height": 24,
+          "wall": 2,
+          "lidAngle": 0,
+          "lidLift": 0
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              60,
+              40,
+              26
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[60,40,26] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "base",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.9999,
+            "status": "pass",
+            "pass": true,
+            "message": "1.9998999999999967 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "base",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[200,200,200]",
+            "actual": [
+              60,
+              40,
+              24
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[60,40,24] <= [200,200,200]"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lid",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.9999,
+            "status": "pass",
+            "pass": true,
+            "message": "1.9999000000000002 >= 1.2"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "unevaluated": [],
+    "declared": 5,
+    "evaluated": 5
+  },
+  "hull-sweep.js#sweep": {
+    "ok": null,
+    "view": "sweep",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "nodes": 3,
+          "length": 60,
+          "r0": 8,
+          "r1": 4,
+          "bow": 8,
+          "thickness": 4,
+          "wrap": 0,
+          "holes": 0
+        },
+        "checks": []
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": null,
+        "scope": "part",
+        "subpart": null,
+        "metric": "expectations",
+        "kind": "warn",
+        "expr": "evaluated",
+        "actual": 0,
+        "status": "warn",
+        "pass": null,
+        "message": "no expectations declared",
+        "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
+      }
+    ],
+    "unevaluated": [],
+    "declared": 0,
+    "evaluated": 0
+  },
+  "import-demo.js#assembly": {
+    "ok": true,
+    "view": "assembly",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "scanW": 20,
+          "scanD": 14,
+          "scanH": 8,
+          "fit": 1.05,
+          "margin": 3,
+          "plateH": 4,
+          "gap": 10
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              54,
+              20.7000008,
+              12
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[54,20.700000762939453,12] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 7.9999,
+            "status": "pass",
+            "pass": true,
+            "message": "7.9998999999999985 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[30,20,15]",
+            "actual": [
+              20,
+              14,
+              8
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[20,14,8] <= [30,20,15]"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "refXorVolume",
+            "kind": "gate",
+            "expr": "<=5mm3",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 5"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "refVolumeDeltaPct",
+            "kind": "gate",
+            "expr": "<=1",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "refBboxDelta",
+            "kind": "gate",
+            "expr": "<=[0.2,0.2,0.2]",
+            "actual": [
+              0,
+              0,
+              0
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[0,0,0] <= [0.2,0.2,0.2]"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mount",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 2.9999,
+            "status": "pass",
+            "pass": true,
+            "message": "2.9998999999999962 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mount",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "1",
+            "actual": 1,
+            "status": "pass",
+            "pass": true,
+            "message": "1 == 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mount",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mount",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[40,25,10]",
+            "actual": [
+              27,
+              20.7000008,
+              4
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[27,20.700000762939453,4] <= [40,25,10]"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "unevaluated": [],
+    "declared": 13,
+    "evaluated": 13
+  },
+  "import-demo.js#reference": {
+    "ok": false,
+    "view": "reference",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "scanW": 20,
+          "scanD": 14,
+          "scanH": 8,
+          "fit": 1.05,
+          "margin": 3,
+          "plateH": 4,
+          "gap": 10
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              20,
+              14,
+              8
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[20,14,8] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 1,
+            "status": "fail",
+            "pass": false,
+            "message": "1 != 0",
+            "hint": "sub-parts interpenetrate near the reported location — adjust placement or add clearance in derive()",
+            "location": [
+              10,
+              7,
+              4
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "ref",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 7.9999,
+            "status": "pass",
+            "pass": true,
+            "message": "7.9998999999999985 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 7.9999,
+            "status": "pass",
+            "pass": true,
+            "message": "7.9998999999999985 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[30,20,15]",
+            "actual": [
+              20,
+              14,
+              8
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[20,14,8] <= [30,20,15]"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "refXorVolume",
+            "kind": "gate",
+            "expr": "<=5mm3",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 5"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "refVolumeDeltaPct",
+            "kind": "gate",
+            "expr": "<=1",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "refBboxDelta",
+            "kind": "gate",
+            "expr": "<=[0.2,0.2,0.2]",
+            "actual": [
+              0,
+              0,
+              0
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[0,0,0] <= [0.2,0.2,0.2]"
+          }
+        ]
+      }
+    ],
+    "failures": [
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "overlaps",
+        "kind": "gate",
+        "expr": "0",
+        "actual": 1,
+        "status": "fail",
+        "pass": false,
+        "message": "1 != 0",
+        "hint": "sub-parts interpenetrate near the reported location — adjust placement or add clearance in derive()",
+        "location": [
+          10,
+          7,
+          4
+        ]
+      }
+    ],
+    "warnings": [],
+    "unevaluated": [],
+    "declared": 10,
+    "evaluated": 10
+  },
+  "lofted-bottle.js#bottle": {
+    "ok": true,
+    "view": "bottle",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "width": 40,
+          "bodyH": 70,
+          "cornerR": 8,
+          "belly": 1.15,
+          "neckD": 22,
+          "neckH": 25
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "bottle",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "bottle",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[120,120,165]",
+            "actual": [
+              46,
+              46,
+              95
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[46,46,95] <= [120,120,165]"
+          }
+        ]
+      },
+      {
+        "name": "Flask",
+        "params": {
+          "width": 40,
+          "bodyH": 70,
+          "cornerR": 8,
+          "belly": 1.15,
+          "neckD": 22,
+          "neckH": 25
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "bottle",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "bottle",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[120,120,165]",
+            "actual": [
+              46,
+              46,
+              95
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[46,46,95] <= [120,120,165]"
+          }
+        ]
+      },
+      {
+        "name": "Square jar",
+        "params": {
+          "width": 60,
+          "bodyH": 50,
+          "cornerR": 6,
+          "belly": 1,
+          "neckD": 40,
+          "neckH": 12
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "bottle",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "bottle",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[120,120,165]",
+            "actual": [
+              60,
+              60,
+              62
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[60,60,62] <= [120,120,165]"
+          }
+        ]
+      },
+      {
+        "name": "Slim vial",
+        "params": {
+          "width": 24,
+          "bodyH": 60,
+          "cornerR": 10,
+          "belly": 1.05,
+          "neckD": 14,
+          "neckH": 20
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "bottle",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "bottle",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[120,120,165]",
+            "actual": [
+              25.2000008,
+              25.2000008,
+              80
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[25.200000762939453,25.200000762939453,80] <= [120,120,165]"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "unevaluated": [],
+    "declared": 12,
+    "evaluated": 12
+  },
+  "material-swatches.js#all": {
+    "ok": null,
+    "view": "all",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {},
+        "checks": []
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": null,
+        "scope": "part",
+        "subpart": null,
+        "metric": "expectations",
+        "kind": "warn",
+        "expr": "evaluated",
+        "actual": 0,
+        "status": "warn",
+        "pass": null,
+        "message": "no expectations declared",
+        "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
+      }
+    ],
+    "unevaluated": [],
+    "declared": 0,
+    "evaluated": 0
+  },
+  "material-swatches.js#colours": {
+    "ok": null,
+    "view": "colours",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {},
+        "checks": []
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": null,
+        "scope": "part",
+        "subpart": null,
+        "metric": "expectations",
+        "kind": "warn",
+        "expr": "evaluated",
+        "actual": 0,
+        "status": "warn",
+        "pass": null,
+        "message": "no expectations declared",
+        "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
+      }
+    ],
+    "unevaluated": [],
+    "declared": 0,
+    "evaluated": 0
+  },
+  "material-swatches.js#petg": {
+    "ok": null,
+    "view": "petg",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {},
+        "checks": []
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": null,
+        "scope": "part",
+        "subpart": null,
+        "metric": "expectations",
+        "kind": "warn",
+        "expr": "evaluated",
+        "actual": 0,
+        "status": "warn",
+        "pass": null,
+        "message": "no expectations declared",
+        "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
+      }
+    ],
+    "unevaluated": [],
+    "declared": 0,
+    "evaluated": 0
+  },
+  "material-swatches.js#print": {
+    "ok": null,
+    "view": "print",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {},
+        "checks": []
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": null,
+        "scope": "part",
+        "subpart": null,
+        "metric": "expectations",
+        "kind": "warn",
+        "expr": "evaluated",
+        "actual": 0,
+        "status": "warn",
+        "pass": null,
+        "message": "no expectations declared",
+        "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
+      }
+    ],
+    "unevaluated": [],
+    "declared": 0,
+    "evaluated": 0
+  },
+  "mixed-smoke.js#assembly": {
+    "ok": null,
+    "view": "assembly",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "w": 30,
+          "t": 2
+        },
+        "checks": []
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": null,
+        "scope": "part",
+        "subpart": null,
+        "metric": "expectations",
+        "kind": "warn",
+        "expr": "evaluated",
+        "actual": 0,
+        "status": "warn",
+        "pass": null,
+        "message": "no expectations declared",
+        "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
+      }
+    ],
+    "unevaluated": [],
+    "declared": 0,
+    "evaluated": 0
+  },
+  "nameplate.js#plate": {
+    "ok": null,
+    "view": "plate",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "label": "PARTFORGE\nv0.20",
+          "size": 8,
+          "depth": 1.2,
+          "stroke": 0,
+          "margin": 4,
+          "corner": 3,
+          "thickness": 3,
+          "engrave": 0,
+          "face": ""
+        },
+        "checks": []
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": null,
+        "scope": "part",
+        "subpart": null,
+        "metric": "expectations",
+        "kind": "warn",
+        "expr": "evaluated",
+        "actual": 0,
+        "status": "warn",
+        "pass": null,
+        "message": "no expectations declared",
+        "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
+      }
+    ],
+    "unevaluated": [],
+    "declared": 0,
+    "evaluated": 0
+  },
+  "planter.js#planter": {
+    "ok": true,
+    "view": "planter",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "facets": 6,
+          "dia": 70,
+          "height": 90,
+          "taper": 1.2,
+          "wall": 1.6,
+          "twist": 30,
+          "drain": 8,
+          "floor": 3
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              74.5346756,
+              84,
+              90
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[74.53467559814453,84,90] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.35893557,
+            "status": "pass",
+            "pass": true,
+            "message": "1.3589355651490034 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "1",
+            "actual": 1,
+            "status": "pass",
+            "pass": true,
+            "message": "1 == 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              74.5346756,
+              84,
+              90
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[74.53467559814453,84,90] <= [220,220,250]"
+          }
+        ]
+      },
+      {
+        "name": "Pen cup",
+        "params": {
+          "facets": 6,
+          "dia": 80,
+          "height": 100,
+          "taper": 1,
+          "wall": 1.6,
+          "twist": 0,
+          "drain": 0,
+          "floor": 3
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              80,
+              69.2820358,
+              100
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[80,69.28203582763672,100] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.59990174,
+            "status": "pass",
+            "pass": true,
+            "message": "1.5999017384747451 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              80,
+              69.2820358,
+              100
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[80,69.28203582763672,100] <= [220,220,250]"
+          }
+        ]
+      },
+      {
+        "name": "Planter",
+        "params": {
+          "facets": 8,
+          "dia": 90,
+          "height": 80,
+          "taper": 0.9,
+          "wall": 1.6,
+          "twist": 0,
+          "drain": 8,
+          "floor": 3
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              83.1491547,
+              83.1491547,
+              80
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[83.14915466308594,83.14915466308594,80] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.59774173,
+            "status": "pass",
+            "pass": true,
+            "message": "1.5977417252854431 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "1",
+            "actual": 1,
+            "status": "pass",
+            "pass": true,
+            "message": "1 == 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              83.1491547,
+              83.1491547,
+              80
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[83.14915466308594,83.14915466308594,80] <= [220,220,250]"
+          }
+        ]
+      },
+      {
+        "name": "Vase",
+        "params": {
+          "facets": 5,
+          "dia": 70,
+          "height": 150,
+          "taper": 1.12,
+          "wall": 1.6,
+          "twist": 40,
+          "drain": 0,
+          "floor": 3
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              75.4039803,
+              74.6062813,
+              150
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[75.40398025512695,74.60628128051758,150] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.29768436,
+            "status": "pass",
+            "pass": true,
+            "message": "1.2976843558584732 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              75.4039803,
+              74.6062813,
+              150
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[75.40398025512695,74.60628128051758,150] <= [220,220,250]"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "unevaluated": [],
+    "declared": 20,
+    "evaluated": 20
+  },
+  "propeller.js#propeller": {
+    "ok": true,
+    "view": "propeller",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "blades": 3,
+          "span": 70,
+          "rootChord": 26,
+          "tipChord": 16,
+          "twistRoot": 62,
+          "twistTip": 30,
+          "thickness": 12,
+          "camber": 6,
+          "lefthand": 0,
+          "hubD": 30,
+          "hubH": 26,
+          "boreD": 8,
+          "smooth": 1,
+          "sharpTE": 1,
+          "stations": 48,
+          "samples": 128,
+          "sectionPts": 12
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "propeller",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "1",
+            "actual": 1,
+            "status": "pass",
+            "pass": true,
+            "message": "1 == 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "propeller",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[300,300,300]",
+            "actual": [
+              120.30793,
+              138.463036,
+              26
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[120.30792999267578,138.4630355834961,26] <= [300,300,300]"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "unevaluated": [],
+    "declared": 3,
+    "evaluated": 3
+  },
+  "relief.js#relief": {
+    "ok": true,
+    "view": "relief",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "relief": "",
+          "invert": 0,
+          "w": 60,
+          "d": 60,
+          "base": 1.5,
+          "maxZ": 3,
+          "pitch": 0.5
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              60,
+              60,
+              4.5
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[60,60,4.5] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.21115599,
+            "status": "pass",
+            "pass": true,
+            "message": "1.211155989449886 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[200,200,20]",
+            "actual": [
+              60,
+              60,
+              4.5
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[60,60,4.5] <= [200,200,20]"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "unevaluated": [],
+    "declared": 6,
+    "evaluated": 6
+  },
+  "scott-label.js#backing": {
+    "ok": true,
+    "view": "backing",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "text": "Scott",
+          "fontStyle": "roboto",
+          "bold": 0,
+          "italic": 0,
+          "backingStyle": "roundAll",
+          "textSize": 31,
+          "border": 5,
+          "backingThickness": 2.5,
+          "letterThickness": 2
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              108.875851,
+              41.8504543,
+              2.5
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[108.87585067749023,41.850454330444336,2.5] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": "backing×lettering",
+            "metric": "contact",
+            "kind": "gate",
+            "expr": "touching",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "message": "sub-part disabled in this case"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "backing",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 0.0000486283002,
+            "status": "warn",
+            "pass": false,
+            "message": "0.00004862830017938115 not >= 1.2",
+            "note": "sampled 50000 of 59660 triangles — an upper bound; a thinner spot may exist between samples",
+            "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
+            "pattern": "minwall-sliver-triangles",
+            "location": [
+              53.6678149,
+              -18.3265292,
+              2.21570985
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "backing",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "backing",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[*,*,8]",
+            "actual": [
+              108.875851,
+              41.8504543,
+              2.5
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[108.87585067749023,41.850454330444336,2.5] <= [*,*,8]"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": "defaults",
+        "scope": "subpart",
+        "subpart": "backing",
+        "metric": "minWall",
+        "kind": "warn",
+        "expr": ">=1.2",
+        "actual": 0.0000486283002,
+        "status": "warn",
+        "pass": false,
+        "message": "0.00004862830017938115 not >= 1.2",
+        "note": "sampled 50000 of 59660 triangles — an upper bound; a thinner spot may exist between samples",
+        "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
+        "pattern": "minwall-sliver-triangles",
+        "location": [
+          53.6678149,
+          -18.3265292,
+          2.21570985
+        ]
+      }
+    ],
+    "unevaluated": [],
+    "declared": 6,
+    "evaluated": 5
+  },
+  "scott-label.js#lettering": {
+    "ok": true,
+    "view": "lettering",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "text": "Scott",
+          "fontStyle": "roboto",
+          "bold": 0,
+          "italic": 0,
+          "backingStyle": "roundAll",
+          "textSize": 31,
+          "border": 5,
+          "backingThickness": 2.5,
+          "letterThickness": 2
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              98.8763733,
+              31.8516483,
+              2
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[98.87637329101562,31.851648330688477,2] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": "backing×lettering",
+            "metric": "contact",
+            "kind": "gate",
+            "expr": "touching",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "message": "sub-part disabled in this case"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lettering",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 0.0000488908026,
+            "status": "warn",
+            "pass": false,
+            "message": "0.00004889080255696863 not >= 1.2",
+            "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
+            "pattern": "minwall-sliver-triangles",
+            "location": [
+              -22.9996649,
+              -1.09290953,
+              4.20000664
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lettering",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lettering",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[*,*,14]",
+            "actual": [
+              98.8763733,
+              31.8516483,
+              2
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[98.87637329101562,31.851648330688477,2] <= [*,*,14]"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": "defaults",
+        "scope": "subpart",
+        "subpart": "lettering",
+        "metric": "minWall",
+        "kind": "warn",
+        "expr": ">=1.2",
+        "actual": 0.0000488908026,
+        "status": "warn",
+        "pass": false,
+        "message": "0.00004889080255696863 not >= 1.2",
+        "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
+        "pattern": "minwall-sliver-triangles",
+        "location": [
+          -22.9996649,
+          -1.09290953,
+          4.20000664
+        ]
+      }
+    ],
+    "unevaluated": [],
+    "declared": 6,
+    "evaluated": 5
+  },
+  "scott-label.js#assembly": {
+    "ok": true,
+    "view": "assembly",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "text": "Scott",
+          "fontStyle": "roboto",
+          "bold": 0,
+          "italic": 0,
+          "backingStyle": "roundAll",
+          "textSize": 31,
+          "border": 5,
+          "backingThickness": 2.5,
+          "letterThickness": 2
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              108.875851,
+              41.8504543,
+              4.5
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[108.87585067749023,41.850454330444336,4.5] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": "backing×lettering",
+            "metric": "contact",
+            "kind": "gate",
+            "expr": "touching",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "in contact"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "backing",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 0.0000486283002,
+            "status": "warn",
+            "pass": false,
+            "message": "0.00004862830017938115 not >= 1.2",
+            "note": "sampled 50000 of 59660 triangles — an upper bound; a thinner spot may exist between samples",
+            "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
+            "pattern": "minwall-sliver-triangles",
+            "location": [
+              53.6678149,
+              -18.3265292,
+              2.21570985
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "backing",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "backing",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[*,*,8]",
+            "actual": [
+              108.875851,
+              41.8504543,
+              2.5
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[108.87585067749023,41.850454330444336,2.5] <= [*,*,8]"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lettering",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 0.0000488908026,
+            "status": "warn",
+            "pass": false,
+            "message": "0.00004889080255696863 not >= 1.2",
+            "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
+            "pattern": "minwall-sliver-triangles",
+            "location": [
+              -22.9996649,
+              -1.09290953,
+              4.20000664
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lettering",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lettering",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[*,*,14]",
+            "actual": [
+              98.8763733,
+              31.8516483,
+              2
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[98.87637329101562,31.851648330688477,2] <= [*,*,14]"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": "defaults",
+        "scope": "subpart",
+        "subpart": "backing",
+        "metric": "minWall",
+        "kind": "warn",
+        "expr": ">=1.2",
+        "actual": 0.0000486283002,
+        "status": "warn",
+        "pass": false,
+        "message": "0.00004862830017938115 not >= 1.2",
+        "note": "sampled 50000 of 59660 triangles — an upper bound; a thinner spot may exist between samples",
+        "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
+        "pattern": "minwall-sliver-triangles",
+        "location": [
+          53.6678149,
+          -18.3265292,
+          2.21570985
+        ]
+      },
+      {
+        "case": "defaults",
+        "scope": "subpart",
+        "subpart": "lettering",
+        "metric": "minWall",
+        "kind": "warn",
+        "expr": ">=1.2",
+        "actual": 0.0000488908026,
+        "status": "warn",
+        "pass": false,
+        "message": "0.00004889080255696863 not >= 1.2",
+        "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
+        "pattern": "minwall-sliver-triangles",
+        "location": [
+          -22.9996649,
+          -1.09290953,
+          4.20000664
+        ]
+      }
+    ],
+    "unevaluated": [],
+    "declared": 9,
+    "evaluated": 9
+  },
+  "screw.js#screw": {
+    "ok": null,
+    "view": "screw",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "major": 10,
+          "pitch": 1.5,
+          "length": 30,
+          "lefthand": false,
+          "headAcross": 17,
+          "headH": 6.4
+        },
+        "checks": []
+      },
+      {
+        "name": "M6",
+        "params": {
+          "major": 6,
+          "pitch": 1,
+          "length": 20,
+          "lefthand": false,
+          "headAcross": 17,
+          "headH": 6.4
+        },
+        "checks": []
+      },
+      {
+        "name": "M10",
+        "params": {
+          "major": 10,
+          "pitch": 1.5,
+          "length": 30,
+          "lefthand": false,
+          "headAcross": 17,
+          "headH": 6.4
+        },
+        "checks": []
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": null,
+        "scope": "part",
+        "subpart": null,
+        "metric": "expectations",
+        "kind": "warn",
+        "expr": "evaluated",
+        "actual": 0,
+        "status": "warn",
+        "pass": null,
+        "message": "no expectations declared",
+        "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
+      }
+    ],
+    "unevaluated": [],
+    "declared": 0,
+    "evaluated": 0
+  },
+  "text-smoke.js#text": {
+    "ok": null,
+    "view": "text",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {},
+        "checks": []
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": null,
+        "scope": "part",
+        "subpart": null,
+        "metric": "expectations",
+        "kind": "warn",
+        "expr": "evaluated",
+        "actual": 0,
+        "status": "warn",
+        "pass": null,
+        "message": "no expectations declared",
+        "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
+      }
+    ],
+    "unevaluated": [],
+    "declared": 0,
+    "evaluated": 0
+  }
+}

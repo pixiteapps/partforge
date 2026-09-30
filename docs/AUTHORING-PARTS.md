@@ -1518,6 +1518,9 @@ returned `circlePolygon`'s points; it takes no `segs`.) For a round SOLID use `k
 and **use `k.torus({ rMajor, rMinor })` for a torus** — the primitive keeps real TORUS faces
 in STEP.
 
+**Laser-cut flat stock** (plywood, acrylic, MDF panels) is built differently — with
+`sheetPart()` and the joinery helpers; see [Sheet parts](#sheet-parts).
+
 **Patterns** (return `Solid[]` — feed to `k.union(...)` for features or `s.cutAll(...)` for holes):
 `linearPattern(solid, count, [dx,dy,dz])`, `circularPattern(solid, count, { center, axis, angle, rotateCopies })`.
 
@@ -1768,6 +1771,280 @@ New, all delegating to the pure functions above over the shape's stored contours
 that tessellates nothing, unlike `toRegions()`), `fillet(r, opts?)`, `chamfer(dist,
 opts?)`, `simplify(tolerance)`, `corners()`, `contains([x,y])`, `isEmpty()` (no
 regions left — see the vanishing-features rule above).
+
+## Sheet parts
+
+Laser-cut parts from flat stock — plywood, MDF, acrylic — for a laser cutter
+(LightBurn, xTool, Glowforge) or a cutting service (SendCutSend): flat-pack boxes,
+finger/box joints, tab and slot, T-slot screw joints, engraving and scoring. Build each
+piece cut from a sheet with `sheetPart()` from `partforge/geometry`; the cut & print
+kit turns them into SVG or DXF cut files, and kerf is chosen there, at download.
+
+### When a sub-part is a sheet part
+
+When it is cut out of one flat sheet: a 2-D outline with holes, marks on its face, the
+stock as its third dimension. A 3 mm plate you **print** is not one, nor is anything
+with pockets, steps or fillets. Mixing is normal — plywood panels, printed hinges.
+
+### sheetPart
+
+```js
+import { sheetPart, sheetHole } from "partforge/geometry";
+
+plate: sheetPart({
+  label: "Plate", views: ["main"], display: { material: "clear-acrylic" },
+  material: "clear acrylic",                  // stock label: groups pieces in the kit
+  thickness: (p) => p.t,                      // the MEASURED thickness, from a control
+  profile: (k, p) => k.shape2d([[0, 0], [p.w, 0], [p.w, p.h], [0, p.h]])
+    .cut(sheetHole({ d: 5, at: [8, 8] })),    // the cut layer
+  pose: (p) => ({ face: "-Y", up: "+Z", at: [-p.w / 2, 0, 0] }),
+}),
+```
+
+It returns an ordinary sub-part: `build`, `place` and a plain-data `sheet`. A field
+needing the kernel is `(k, p, d) => …`; a plain value is a literal or `(p, d) => …`.
+`material`, `thickness` and `profile` are required; `score`, `engrave`, `pose`,
+`process` (default `"laser"`) are optional; `label`, `views`, `display`, `export`,
+`enabled`, `exportable`, `reference` pass through; your own `place` runs after the
+pose. `build` is supplied — passing one throws, as do `kerf`, `outline`/`cut` (use
+`profile`) and `quantity` (the kit counts identical pieces).
+
+### Cut, score and engrave
+
+- **`profile`** is the CUT layer — outline plus holes, seen from the laser face, one
+  piece. Round holes: `sheetHole({ d, at })` or `circleProfile(r, at)` — exact, not the
+  48-gon `circlePolygon`.
+- **`score`** returns an array: an entry of exactly two `[x, y]` points is a LINE;
+  anything else is a shape whose boundaries are scored (`[[0, 0], [10, 0],
+  [10, 10]]` is a triangle). `null` entries are skipped.
+- **`engrave`** returns filled regions — `k.text2d(…)`, `k.vector2d(…)`, a Shape2D —
+  or `null`. No raster engraving.
+
+The preview pockets engraving and scores a groove 0.2 mm deep, so marks show in
+renders; the cut files carry vectors. Empty marks are dropped. Keep these functions
+chainable — no branching on `isEmpty()`/`area()`/`boundingBox()` — so pose-only
+sliders stay fast.
+
+### Thickness, clearance and kerf
+
+Three numbers, never mixed. **Thickness** is what you *measured* ("3 mm" plywood is
+often 2.7–3.3): bind it to a control, `thickness: (p) => p.t`; it is the extrusion and
+every joint's depth. **Clearance** is a finished joint's total play, on its own control
+(`fit`, 0–0.4 mm): fingers split it between the panels, slots take all of it. **Kerf**,
+what the beam burns away, never appears in the part: it is asked at download and
+applied once to the cut lines. Joinery refuses a `kerf` option; add no kerf control.
+
+### Placing panels: pose and worldToSheet
+
+A sheet part is drawn in its own frame: drawing in XY, material over z ∈ [0, t], laser
+face at z = t. `pose: { face, up, at }` places it — `face` is the laser face's outward
+normal, `up` the drawing's +y (axis words `"+X"`, `"-Y"`, …, at right angles), `at`
+where drawing `[0, 0]` lands; the material runs back along −`face`. Drawing +x is
+`up × face`, so an engraving is never mirrored. The pose holds for display AND export:
+STEP/3MF/STL come out assembled. No pose: flat at the origin. A box's front panel,
+laser face out: `{ face: "-Y", up: "+Z", at: [-W / 2, -D / 2, 0] }`.
+
+`worldToSheet(pose, [x, y, z])` → `[u, v]`: where a world point lands on the drawing —
+cut a slot where a printed tongue really is. `sheetToWorld(pose, [u, v], depth)` goes
+back.
+
+### Joinery helpers
+
+Pure and kernel-free — call them in `derive()`. They draw NOMINAL material.
+
+| Helper | Returns |
+|---|---|
+| `fingers({ thickness, clearance = 0.1, finger = 2t, side = "outer" })` | outer fingers protrude, inner ones notch |
+| `tabs({ thickness, count = 2, width = 3t })` | tongues protruding `thickness` |
+| `tSlots({ thickness, screw = "M3", screwLength = 12, at = [0.5], clearance = 0.2 })` | shank slot + nut trap (`JOINERY_SCREWS`) |
+| `sheetPanel({ width, height, edges: { bottom, right, top, left } })` | `{ outline, size }` |
+| `matchingSlots(joint, { line, clearance })` | holes the OTHER panel needs |
+| `fingerBox({ width, depth, height, thickness, clearance, finger })` | `{ bottom, front, back, left, right }` → `{ outline, size, pose }` |
+
+`sheetPanel`'s nominal edges are the box `[0, W] × [0, H]`; protrusions lie outside
+(`size` includes them). Edges run CCW — bottom, right, top, left — and positions are
+measured from an edge's start. Finger counts are odd, cells ≥ 2t, and every corner has
+one owner. `thickness` is the mating sheet's. `matchingSlots`' `line` is the tabbed
+panel's mid-plane in the slotted panel's frame, from the tabbed edge's start.
+
+```js
+derive: (p) => ({ box: fingerBox({ width: p.w, depth: p.d, height: p.h, thickness: p.t, clearance: p.fit }) }),
+front: sheetPart({ ...PLY, profile: (k, p, d) => d.box.front.outline, pose: (p, d) => d.box.front.pose }),
+```
+
+### Printed parts that key into sheets
+
+`printedTab({ size: [w, h], thickness, clearance = 0.3 })` gives a slot and its printed
+tongue from one spec: `slot` is `(w + c) × (h + c)`, centred (all the play); `tongue`
+is `[w, h, thickness]` for `k.box({ size: tongue })`. Build the printed part in its
+PRINT pose, `place` it for display, and cut the slot where the tongue lands:
+`k.shape2d(tab.slot).translate(worldToSheet(panelPose, tongueCentre))`.
+
+### What lint and verify check
+
+**Lint** (no kernel; judged at the part's defaults). Every finding carries
+`pattern: "sheet-parts"`:
+
+| Rule | Tier | Fires when |
+|---|---|---|
+| `sheet-invalid` | error | a hand-written `sheet` declaration is malformed |
+| `sheet-thickness-invalid` | error | `thickness(p, d)` is not a finite number above 0, or throws |
+| `sheet-pose-invalid` | error | a pose uses a non-axis word, or `up` is not perpendicular to `face` |
+| `sheet-thickness-literal` | warning | thickness is a fixed number, not the measured-value control |
+| `sheet-kerf-control` | warning | a control's key or label says kerf |
+| `sheet-custom-build` | warning | `build` replaced the one `sheetPart` generated |
+| `verify-process-sheets-only` | warning | `verify.process` is set but every exportable part is a sheet part |
+| `laser-thickness-range` | warning | a laser sheet is thinner than 0.5 mm or thicker than 12 mm |
+
+**Verify** runs the laser checks on every sheet part. They are
+*volunteered* warnings: none counts toward `declared`/`evaluated`, so none makes
+`verify.ok` true on its own. Declare one in `expect` to make it count:
+
+| Metric | Reads | Checked at |
+|---|---|---|
+| `sheetBridge` | narrowest web or finger, mm | `>=` half the thickness, at least 0.5 mm |
+| `sheetGap` | narrowest hole, slot or notch, mm | the same floor |
+| `sheetMarks` | engrave/score regions outside the cut | `0` |
+| `sheetPieces` | regions in the profile | `1` |
+| `sheetSolidMatch` | a custom build's volume vs. profile area × thickness, % | `<=2` (custom builds only) |
+
+Widths come from shrinking and regrowing the cut outline with sharp corners,
+bisected to 0.05 mm; nothing narrower than twice the floor reads as that ceiling,
+with a note. A finding's `location` is its spot in the assembly at mid-thickness
+(none when the pose cannot be traced). The 2-D checks share a 1.5 s budget per
+measurement: past it, or when a profile is plainly too complex for it, a sheet
+gets one `sheetChecks` warning instead, and a declared sheet check comes back
+unevaluated. In a forge mixing sheet and printed
+parts, the profile's bed fits each **printed** part in its print (export) pose, not
+the assembled view, and `minWall` and the overhang check skip sheet parts.
+
+### Limits
+
+- One thickness per joint: fingers, tabs and T-slots join panels cut from the
+  same sheet.
+- Poses are rigid and axis-aligned: `face` and `up` are the six axis words. A
+  panel at an angle is an author `place` after the pose, or a printed part.
+- No bends, folds, living hinges or grain direction: `folds`, `bends` and
+  `grain` are reserved keys and throw.
+- Cut and score are vector lines; engraving is filled regions. There is no raster
+  image engraving.
+- The laser checks are warnings. Sharp-corner shrinking can over-report at acute
+  tips, and a web within 0.05 mm of the floor can read as passing.
+
+### Worked example: laser-box.js
+
+`src/parts/laser-box.js`, verbatim:
+
+```js
+// Finger-jointed plywood box: five laser-cut panels from fingerBox, a laser-cut lid,
+// and two print-in-place hinges whose tongues key into slots in the back panel and
+// the lid; an engraved label and a score line on the front. A hinge prints flat and
+// flat is 90° open, so the box is shown with its lid standing up.
+import { sheetPart, fingerBox, printedTab, worldToSheet } from "partforge/geometry";
+
+// Hinge in its PRINT pose: leaves flat on the bed, knuckle axis along X at y = 0,
+// z = R, tongues up (+Z). Fixed leaf (y < 0) → back panel; lid leaf (y > 0) → lid.
+const HINGE = { width: 24, leaf: 18, leafT: 3, R: 3, gap: 0.4, pinR: 1.2, lift: 0.25,
+  tongue: [8, 3], tongueX: 6, tongueY: 11 };
+
+// ONE spec for a tongue and its slot; the slot carries the clearance.
+const tab = (p) => printedTab({ size: HINGE.tongue, thickness: p.t, clearance: p.printFit });
+
+function hinge(k, p, d) {
+  const { width: w, leaf, leafT, R, gap, pinR, tongueX } = HINGE, { tongueY } = d;
+  const seg = (w - 2 * gap) / 3;                                  // three knuckles, `gap` apart
+  const x0 = -w / 2, x1 = x0 + seg, x2 = x1 + gap, x3 = x2 + seg, x4 = x3 + gap, x5 = w / 2;
+  const box = (min, max) => k.box({ min, max });
+  const barrel = (a, b, r = R) => k.cylinder({ r, h: b - a }).along("+X").at([a, 0, R]);
+  const tongues = (y) => [-tongueX, tongueX].map((x) => k.box({ size: tab(p).tongue }).at([x, y, leafT]));
+  const fixed = k.union([
+    box([x0, -leaf, 0], [x5, -(R + gap), leafT]),
+    box([x0, -(R + gap), 0], [x1, 0, leafT]), box([x4, -(R + gap), 0], [x5, 0, leafT]),
+    barrel(x0, x1), barrel(x4, x5), barrel(x0, x5, pinR),         // outer knuckles + pin
+    ...tongues(-tongueY),
+  ]).label("Fixed leaf");
+  const moving = k.union([
+    box([x0, R + gap, 0], [x5, leaf, leafT]), box([x2, 0, 0], [x3, R + gap, leafT]),
+    barrel(x2, x3), ...tongues(tongueY),
+  ]).cut(barrel(x2 - 1, x3 + 1, pinR + gap)).label("Lid leaf");  // running clearance on the pin
+  return k.union([fixed, moving]);
+}
+
+// Display: flat hinge against the back panel's outside face, knuckles above the wall.
+// Export: the print pose, untouched — both hinges export the same solid.
+const hingePlace = (i) => (s, { purpose, p, d }) => (purpose === "export" ? s
+  : s.rotateX(90).at([d.hingeX[i], p.depth / 2 + HINGE.leafT, d.axisZ]));
+
+// Tongue slots for both hinges, cut where the tongues really land (world → sheet).
+const hingeSlots = (k, p, d, pose, z) => d.hingeX.flatMap((hx) =>
+  [hx - HINGE.tongueX, hx + HINGE.tongueX].map((x) =>
+    k.shape2d(tab(p).slot).translate(worldToSheet(pose, [x, p.depth / 2, z]))));
+
+const PLY = { views: ["box"], display: { material: "oak" }, material: "birch plywood", thickness: (p) => p.t };
+const panel = (name, label, extra = {}) => sheetPart({
+  ...PLY, label,
+  profile: (k, p, d) => d.box[name].outline,       // drawn as seen from outside
+  pose: (p, d) => d.box[name].pose,                // fingerBox knows where it goes
+  ...extra,
+});
+
+export default {
+  meta: { title: "Plywood box with printed hinges", units: "mm" },
+  parameters: [
+    { id: "box", title: "Box", description: "Outside size, lid excluded.", controls: [
+      { key: "width", label: "Width", unit: "mm", min: 100, max: 400, step: 1, description: "Outside width." },
+      { key: "depth", label: "Depth", unit: "mm", min: 80, max: 300, step: 1, description: "Hinges on the back." },
+      { key: "height", label: "Height", unit: "mm", min: 50, max: 200, step: 1, description: "Wall height." },
+      { key: "label", type: "text", label: "Label", description: "Engraved on the front; empty for none." },
+    ] },
+    { id: "stock", title: "Stock & fit", description: "Measure your sheet. Kerf is chosen when you download the kit.", controls: [
+      { key: "t", label: "Sheet thickness", unit: "mm", min: 2, max: 6.5, step: 0.05, description: "MEASURED — '3 mm' ply is often 2.7–3.3." },
+      { key: "fit", label: "Finger clearance", unit: "mm", min: 0, max: 0.4, step: 0.02, description: "Total play per finger joint." },
+      { key: "printFit", label: "Hinge tab clearance", unit: "mm", min: 0, max: 0.8, step: 0.05, description: "Slot minus printed tongue." },
+    ] },
+  ],
+  defaults: { width: 160, depth: 110, height: 80, label: "TOOLS", t: 3, fit: 0.1, printFit: 0.3 },
+  derive: (p) => {
+    const rise = Math.max(0, p.t - HINGE.R);                     // thick stock: the shut lid clears the walls
+    const axisZ = p.height + HINGE.lift + HINGE.R + rise;        // knuckle axis, above the back wall
+    const lidZ = axisZ + HINGE.lift + HINGE.R;                   // hinge edge of the open lid
+    return {
+      box: fingerBox({ width: p.width, depth: p.depth, height: p.height, thickness: p.t, clearance: p.fit }),
+      hingeX: [-(p.width / 2 - 25), p.width / 2 - 25],
+      axisZ,
+      tongueY: HINGE.tongueY + rise,                             // slots stay put
+      // Open 90°: laser face to the back, the drawing's front edge (v = 0) on top.
+      lidPose: { face: "+Y", up: "-Z", at: [-p.width / 2, p.depth / 2, lidZ + p.depth] },
+    };
+  },
+  parts: {
+    bottom: panel("bottom", "Bottom"),
+    left: panel("left", "Left"),
+    right: panel("right", "Right"),
+    front: panel("front", "Front", {                              // u across, v up
+      engrave: (k, p) => (p.label?.trim() ? k.text2d(p.label, { size: 14 }).translate([p.width / 2, p.height * 0.55]) : null),
+      score: (k, p) => [[[12, p.height * 0.35], [p.width - 12, p.height * 0.35]]],   // a two-point line
+    }),
+    back: panel("back", "Back", {
+      profile: (k, p, d) => k.shape2d(d.box.back.outline)
+        .cutAll(hingeSlots(k, p, d, d.box.back.pose, d.axisZ - d.tongueY)),
+    }),
+    lid: sheetPart({
+      ...PLY, label: "Lid",
+      profile: (k, p, d) => k.shape2d([[0, 0], [p.width, 0], [p.width, p.depth], [0, p.depth]])
+        .cutAll(hingeSlots(k, p, d, d.lidPose, d.axisZ + d.tongueY)),
+      pose: (p, d) => d.lidPose,
+    }),
+    hingeL: { label: "Hinge (left)", views: ["box"], display: { material: "pla-print" },
+      export: { name: "hinge" }, build: hinge, place: hingePlace(0) },
+    hingeR: { label: "Hinge (right)", views: ["box"], display: { material: "pla-print" },
+      build: hinge, place: hingePlace(1) },    // identical solid: the kit prints "hinge" ×2
+  },
+  views: { box: { label: "Box" } },
+  // `process` = the PRINTED parts' profile; sheet parts get the laser checks instead.
+  verify: { process: "fdm-pla", expect: { _view: { overlaps: 0 } } },
+};
+```
 
 ## Convex hull
 
@@ -3452,6 +3729,14 @@ rules judge the argument values the probe resolves under the part's default para
 same basis `import-unknown-name` uses; a call that only goes wrong for
 non-default params still fails correctly at build time.
 
+**Sheet parts** — `sheet-invalid`, `sheet-thickness-invalid`, `sheet-pose-invalid`
+(errors); `sheet-thickness-literal`, `sheet-kerf-control`, `sheet-custom-build`,
+`verify-process-sheets-only`, `laser-thickness-range` (warnings). Each carries
+`pattern: "sheet-parts"` and is described under "Sheet parts" → "What lint and
+verify check". `no-buildable-parts` points a sub-part with a `sheet` but no `build`
+at `sheetPart()`, and `verify-unknown-process` answers `process: "laser"` the same
+way.
+
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.
 
@@ -3463,7 +3748,8 @@ carries:
 
 - `hint` — one self-contained corrective sentence (always present),
 - `pattern` — a stable [ERROR-PATTERNS.md](ERROR-PATTERNS.md) entry ID when one
-  applies (follow it with `ERROR-PATTERNS.md#<id>`),
+  applies (follow it with `ERROR-PATTERNS.md#<id>`); on a sheet-part check it is
+  `sheet-parts`, this guide's "Sheet parts" section, instead,
 - `note` — an optional caveat about *how* the value was measured, or a companion
   reading, attached whatever the verdict. `minWall` sets one when the reading came
   from a sample rather than every triangle (see below); `overhangArea` sets one
@@ -3516,6 +3802,14 @@ pair: `{ a, b, distance, at }`, distance 0 = touching or overlapping) and
 `measuredGaps` is the companion to `measuredMinWall` for that pass, and `gaps` is
 **absent** rather than empty when it did not run — an empty table means "measured,
 and these pairs have no distance", which a declared `clearance` gate fails on.
+
+A sheet sub-part (`sheetPart()`) also carries `sheet` — its 2-D facts:
+`material`, `thickness`, `flat` (the cut layer's size), `area`, `pieces`, the
+bisected `bridge`/`gap` widths with their `bridgeCapped`/`gapCapped` flags,
+`marksOutside`, `evaluated` (false when the 2-D budget ran out) and `at` (each
+finding's spot in the assembly) — and `sheet: null` on every other sub-part. In a
+view that holds one, each printed sub-part also carries `printBbox`, its size in
+the print (export) pose.
 
 ### Quick checks
 
@@ -3697,6 +3991,15 @@ could be evaluated` warning instead; `declared` and `evaluated` on the report te
 the two apart. A single answerable expectation — or a process profile, which brings
 the bed-fit gate — is enough for a verdict. Treat `null` as "not verified", never as
 a pass.
+
+**Forges with sheet parts.** When a view holds a `sheetPart()` sub-part, the
+profile's bed fits each printed sub-part in its print (export) pose — the check
+carries the note "measured in the print (export) pose" — instead of the assembled
+view, and `minWall` and `overhangArea` skip the sheet parts. The laser checks
+(`sheetBridge`, `sheetGap`, `sheetMarks`, `sheetPieces`, `sheetSolidMatch`) run on
+every sheet part as volunteered warnings that never make `ok` true on their own;
+see "Sheet parts" → "What lint and verify check". A view with no sheet part is
+verified exactly as before.
 
 **Per-case expectations.** Checks run across defaults **and every preset**, so a
 static `expect` breaks the moment a preset legitimately changes an asserted fact —

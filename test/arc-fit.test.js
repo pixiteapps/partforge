@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 import { recoverArcs } from "../src/framework/geometry/arc-fit.js";
 import { arcCenterAndSweep } from "../src/framework/geometry/paper-bridge.js";
+import { PACE, cpuMs } from "./helpers/cpu-pace.js";
 
 // A circle the way paper.js builds one: four cubics with the standard kappa
 // handle. This is the exact shape importSVG hands back for a <circle>.
@@ -192,4 +194,173 @@ test("genuine circles still recover across four orders of magnitude of radius", 
     const out = recoverArcs(paperCircle(0, 0, r));
     expect(out.segments.every((s) => s.via), `r=${r} lost its arcs`).toBe(true);
   }
+});
+
+// --- a run whose fit points are collinear is not a circle --------------------
+//
+// The fit runs through a run's first, middle and last endpoints. On a sine-wave edge —
+// one cubic per quarter period — a run spanning whole periods has those three points on
+// one straight line to float noise: the fitted radius came out near 1e17, `dist − r`
+// cancelled to exactly 0 at every probe, and 14 of the wave's cubics were replaced by ONE
+// "arc" that is a straight chord. Its ±3 mm were gone from every shape built on it — the
+// laser checks' width searches read "nothing narrower than 3 mm" over a real 1 mm web
+// (test/sheet-dfm.test.js). A fit that far from its own points is refused, and a probe's
+// distance from the circle is measured without that cancellation.
+// A sine of amplitude `amp` and period `period` over `periods` periods, one Hermite cubic
+// per quarter period, run right to left as a plate's top edge runs.
+const sineWave = (amp, period, periods, x0 = 0, y0 = 60) => {
+  const n = periods * 4, dx = period / 4, k2 = (2 * Math.PI) / period;
+  const y = (x) => y0 + amp * Math.sin(k2 * (x - x0)), dy = (x) => amp * k2 * Math.cos(k2 * (x - x0));
+  const segments = [];
+  for (let i = n; i > 0; i--) {
+    const a = x0 + i * dx, b = x0 + (i - 1) * dx, h3 = (b - a) / 3;
+    segments.push({ c1: [a + h3, y(a) + dy(a) * h3], c2: [b - h3, y(b) - dy(b) * h3], to: [b, y(b)] });
+  }
+  return { start: [x0 + n * dx, y(x0 + n * dx)], segments };
+};
+test("a sine-wave edge is never read as one arc, however many periods it runs", () => {
+  for (const periods of [4, 6, 8, 500]) {
+    const out = recoverArcs(sineWave(3, 25, periods, 12.5));
+    expect(out.segments.filter((s) => s.via), `${periods} periods`).toEqual([]);
+  }
+});
+
+// What is and is not a circle. `turned(c, a)` rotates a contour about the origin, so a
+// collinear triple is collinear only to float noise, as it is on real artwork.
+const turned = (c, a) => {
+  const r = (p) => [p[0] * Math.cos(a) - p[1] * Math.sin(a), p[0] * Math.sin(a) + p[1] * Math.cos(a)];
+  return { start: r(c.start), segments: c.segments.map((s) => ({ to: r(s.to), ...(s.c1 ? { c1: r(s.c1), c2: r(s.c2) } : {}) })) };
+};
+// An arc of radius r about `c` from angle a0 sweeping `sweep`, as n cubics with the exact
+// circular handle — a run the fit must read as the circle it is.
+const circularRun = (c, r, a0, sweep, n) => {
+  const P = (a) => [c[0] + r * Math.cos(a), c[1] + r * Math.sin(a)];
+  const d = sweep / n, k = Math.abs((4 / 3) * Math.tan(d / 4) * r), s = Math.sign(d);
+  const segments = [];
+  for (let i = 0; i < n; i++) {
+    const a = a0 + i * d, b = a + d, pa = P(a), pb = P(b);
+    segments.push({ c1: [pa[0] - s * k * Math.sin(a), pa[1] + s * k * Math.cos(a)],
+      c2: [pb[0] + s * k * Math.sin(b), pb[1] - s * k * Math.cos(b)], to: pb });
+  }
+  return { start: P(a0), segments };
+};
+const circleOf = (start, arc) => arcCenterAndSweep(start, arc.via, arc.to);
+test.each([
+  ["three collinear straight cubics", { start: [0, 0], segments: [0, 1, 2].map((i) => ({ c1: [10 * i + 10 / 3, 0], c2: [10 * i + 20 / 3, 0], to: [10 * i + 10, 0] })) }],
+  ["a symmetric two-cubic S", { start: [0, 0], segments: [{ c1: [3, 4], c2: [7, 4], to: [10, 0] }, { c1: [13, -4], c2: [17, -4], to: [20, 0] }] }],
+  ["one period of a sine wave", sineWave(3, 25, 1, 0, 0)],
+  ["two periods of a shallow sine wave", sineWave(0.5, 30, 2, 0, 0)],
+])("%s stays cubic at any angle: no arc spans two of its cubics", (_, curve) => {
+  for (const a of [0, 0.3, Math.PI / 6, 1, 2.2]) {
+    const input = turned(curve, a);
+    // A single cubic may be read as the circle it is within tolerance (a shallow sine's
+    // quarter is); no ARC may run from one of the input's joints past the next.
+    const joints = [input.start, ...input.segments.map((s) => s.to)];
+    const jointOf = (p) => joints.findIndex((q) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-9);
+    const out = recoverArcs(input);
+    let from = out.start;
+    for (const s of out.segments) {
+      if (s.via) expect(jointOf(s.to) - jointOf(from), `angle ${a}`).toBe(1);
+      from = s.to;
+    }
+  }
+});
+test("a true large-radius arc is still read as its circle, exactly", () => {
+  for (const r of [5000, 1e5]) {                       // 100 mm spans: r up to 1000 × the span
+    const run = circularRun([0, -r], r, Math.PI / 2 - 50 / r, 100 / r, 4);
+    const out = recoverArcs(run);
+    expect(out.segments.every((s) => s.via), `r ${r}`).toBe(true);
+    const c = circleOf(out.start, out.segments[0]);
+    expect(c.r / r - 1, `r ${r}`).toBeLessThan(1e-9);
+    expect(Math.abs(c.center[1] + r) / r, `r ${r}`).toBeLessThan(1e-9);
+  }
+});
+test("quarter-circle Béziers from r 0.5 to 500 are read as their circles, either way round", () => {
+  for (const r of [0.5, 1, 5, 50, 500]) for (const [sweep, n] of [[Math.PI / 2, 1], [Math.PI, 2], [-Math.PI / 2, 1], [-Math.PI, 2], [1.5 * Math.PI, 3]]) {
+    const at = `r ${r}, sweep ${sweep.toFixed(2)} in ${n}`;
+    const out = recoverArcs(circularRun([3, 4], r, 0.3, sweep, n));
+    expect(out.segments.every((s) => s.via), at).toBe(true);
+    let from = out.start;
+    for (const s of out.segments) {
+      const c = circleOf(from, s);
+      expect(Math.abs(c.r - r) / r, at).toBeLessThan(2e-3);
+      expect(Math.hypot(c.center[0] - 3, c.center[1] - 4) / r, at).toBeLessThan(2e-3);
+      expect(Math.sign(c.dA), at).toBe(Math.sign(sweep));
+      from = s.to;
+    }
+  }
+});
+
+// --- the search: the longest run that fits, found in time linear in the cubics -----------
+//
+// The fit is tried for every length a run from a given cubic can reach, and the longest that
+// fits wins. A shorter run that does not fit rules nothing out: a gentle large-radius arc's
+// short runs are refused as too flat for their span, and the same arc tiny and far from the
+// origin has short runs whose three-point fits rounding swamps — both read as one arc only
+// because the search looks past those failures. It stops at a miss no longer run can make
+// up, and does not re-probe what a longer fit could not have changed; trying every length
+// and re-probing each whole made one ring of 1,600 cubics that are not a circle cost 3.4 s
+// (roughly cubic), and a circle of 4,000 cubics 3.6 s (quadratic) — before the laser checks'
+// first priced step, since they read their shapes through this fit.
+test("a large-radius arc in many cubics is one arc, though its short runs are too flat to fit", () => {
+  for (const [r, length, n] of [[5e4, 12, 8], [1e5, 16, 8], [1e5, 24, 12], [1e6, 160, 8]]) {
+    const out = recoverArcs(circularRun([0, -r], r, Math.PI / 2 - length / 2 / r, length / r, n));
+    expect(out.segments.every((s) => s.via), `r ${r}, ${length} mm in ${n}`).toBe(true);
+    const c = circleOf(out.start, out.segments[0]);
+    expect(Math.abs(c.r / r - 1), `r ${r}`).toBeLessThan(1e-6);
+  }
+});
+test("a tiny arc far from the origin is one arc, though rounding swamps its short runs' fits", () => {
+  for (const a0 of [0, 1, 3, 5]) {                     // r 0.0972 mm, 0.763° in 8 cubics, ~1,200 mm out
+    const out = recoverArcs(circularRun([-773.7, 957.6], 0.0972, a0, (-0.763 * Math.PI) / 180, 8));
+    expect(out.segments.map((s) => (s.via ? "A" : "C")).join(""), `a0 ${a0}`).toBe("A");
+  }
+});
+// A closed organic outline: Catmull-Rom cubics through n points of a wobbly ellipse, none of
+// them on one circle for long (the reviewer's ring); and a circle of n kappa cubics.
+const organicRing = (n) => {
+  const pts = Array.from({ length: n }, (_, i) => {
+    const th = (2 * Math.PI * i) / n, r = 40 + 6 * Math.sin(7 * th) + 2 * Math.sin(23 * th + 1) + Math.sin(51 * th + 2);
+    return [1.3 * r * Math.cos(th), r * Math.sin(th)];
+  });
+  const segments = pts.map((p1, i) => {
+    const p0 = pts[(i - 1 + n) % n], p2 = pts[(i + 1) % n], p3 = pts[(i + 2) % n];
+    return { c1: [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6], c2: [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6], to: p2 };
+  });
+  return { start: pts[0], segments };
+};
+// `cpuMs` is main-thread CPU time in the calibration desktop's milliseconds
+// (test/helpers/cpu-pace.js): on a runner PACE times slower, 150 is 150 × PACE ms of its own.
+test("1,600 and 4,000 cubics that are not a circle, or 4,000 that are, are read in under 150 ms of CPU", () => {
+  for (const [name, ring] of [["organic 1,600", organicRing(1600)], ["organic 4,000", organicRing(4000)],
+    ["circle of 4,000", circularRun([0, 0], 40, 0, 2 * Math.PI - 1e-3, 4000)]]) {
+    const t0 = cpuMs();
+    const out = recoverArcs(ring);
+    const ms = cpuMs() - t0;
+    expect(ms, `${name} (pace ${PACE.toFixed(2)})`).toBeLessThan(150);   // were 3.4 s, 27 s and 3.6 s
+    expect(out.segments.length, name).toBeGreaterThan(0);
+  }
+  expect(recoverArcs(circularRun([0, 0], 40, 0, 2 * Math.PI - 1e-3, 4000)).segments.every((s) => s.via)).toBe(true);
+});
+
+// --- the early-stop bound must not cut off a fit the exhaustive search would find --------
+//
+// The linear-time search above (`final`) stops looking for a longer run once no longer fit
+// could make up a miss. That bound assumes the run's OTHER two fit points sit exactly on
+// the circle c fits — they do by construction, except for an ILL-CONDITIONED fit, where two
+// of the three fit points sit close enough together that rounding swamps their separation.
+// There, c's own circle can miss its own fit points by more than the bound's rounding-noise
+// term allows, and without that residual added in, `final` can call the search done one
+// cubic before the exhaustive search would have joined it: a fitted circle that IS the run's
+// true circle reads as two arcs instead of one, because the proof that "no better fit
+// exists" was itself too tight. This ring (13 cubics, |coordinates| ≤ 104 mm, smallest chord
+// 2.8e-7 mm — from a boolean cut tangent to a tiny feature, well inside a laser plate's
+// range) is exactly that case: the exhaustive search (aba65564) reads one arc; the linear
+// search without the residual term read two.
+test("an ill-conditioned fit is not cut off early: one arc, matching the exhaustive search", () => {
+  const ring = JSON.parse(
+    readFileSync(new URL("./fixtures/arc-fit-ill-conditioned-ring.json", import.meta.url), "utf8"),
+  );
+  const out = recoverArcs(ring);
+  expect(out.segments.map((s) => (s.via ? "A" : "C")).join("")).toBe("A");
 });

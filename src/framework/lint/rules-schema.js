@@ -27,7 +27,8 @@ const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArr
 // It is read only by controlBoundKeys({ excludeHidden }); every other rule
 // ignores it, so their populations are unchanged. `when` is deliberately not
 // hiddenness — a `when`-conditioned node can still appear.
-function collectDescriptors(part) {
+// Exported for rules-sheet.js's sheet-kerf-control, which reads every control's key and label.
+export function collectDescriptors(part) {
   const out = [];
   sections(part).forEach((sec, si) => {
     const secHidden = sec?.hidden === true;

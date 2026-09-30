@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { resolve, dirname, basename } from "node:path";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { detectBackend } from "../src/framework/backend-select.js";
+import { SHEET_DOC_ID, fmtMm } from "../src/framework/sheet/constants.js";
 import { fontsFor } from "../src/framework/fonts.js";
 import { imagesFor } from "../src/framework/images.js";
 import { isNoImageSource } from "../src/framework/image-source.js";
@@ -30,6 +31,10 @@ import { normalizeOpentype, parseFont } from "../src/framework/geometry/opentype
 const die = (msg) => { console.error(msg); process.exit(1); };
 
 const USAGE = "usage: partforge <lint|measure|render|pick-serve|pick|ingest> …";
+
+// Where a finding's `pattern` points: an ERROR-PATTERNS.md entry — or, for a sheet-part
+// finding, the authoring guide's "Sheet parts" section, which rides the same field.
+const patternRef = (pattern) => (pattern === SHEET_DOC_ID ? 'AUTHORING-PARTS.md "Sheet parts"' : `ERROR-PATTERNS.md#${pattern}`);
 
 // Crash contract (issue #27): with --json, a thrown error becomes structured
 // stdout JSON; either way the message is matched against ERROR-PATTERNS.md and
@@ -505,6 +510,11 @@ function printMeasure(r) {
     console.log(`  ${s.name}  bbox ${s.bbox.map((n) => n.toFixed(1)).join("×")}  ` +
       `vol ${(s.volume / 1000).toFixed(2)}cm³  area ${(s.surfaceArea / 100).toFixed(1)}cm²  ` +
       `tris ${s.triangleCount}  ${wt}  ${holes}`);
+    // A sheet part's stock and flat size — what the cut file will be.
+    if (s.sheet) {
+      console.log(`    sheet  ${s.sheet.material ?? "?"} ${s.sheet.thickness == null ? "?" : fmtMm(s.sheet.thickness)} mm, ` +
+        `flat ${s.sheet.flat.map((n) => n.toFixed(1)).join(" × ")} mm, ${s.sheet.pieces} piece${s.sheet.pieces === 1 ? "" : "s"}`);
+    }
   }
   const a = r.aggregate;
   console.log(`  ── view  bbox ${a.bbox.map((n) => n.toFixed(1)).join("×")}  vol ${(a.volume / 1000).toFixed(2)}cm³  tris ${a.triangleCount}`);
@@ -556,7 +566,7 @@ function printVerify(v) {
       if (ch.note) console.log(`        note: ${ch.note}`);
       if (ch.status === "fail" || ch.status === "warn") {
         if (ch.location) console.log(`        at [${ch.location.map((n) => n.toFixed(1)).join(", ")}]`);
-        if (ch.hint) console.log(`        hint: ${ch.hint}${ch.pattern ? ` (ERROR-PATTERNS.md#${ch.pattern})` : ""}`);
+        if (ch.hint) console.log(`        hint: ${ch.hint}${ch.pattern ? ` (${patternRef(ch.pattern)})` : ""}`);
       }
     }
   }
@@ -589,7 +599,7 @@ function printLint(r) {
     const at = f.file ? `  ${f.file}:${f.line ?? "?"}` : "";
     console.log(`  ${icon} ${f.rule}${f.path ? `  ${f.path}` : ""}${at}`);
     console.log(`      ${f.message}`);
-    console.log(`      hint: ${f.hint}${f.pattern ? ` (ERROR-PATTERNS.md#${f.pattern})` : ""}`);
+    console.log(`      hint: ${f.hint}${f.pattern ? ` (${patternRef(f.pattern)})` : ""}`);
   }
   const e = r.errors.length, w = r.warnings.length, n = (r.notes ?? []).length;
   console.log(`  result: ${e ? `${e} error(s)` : "no errors"}${w ? `, ${w} warning(s)` : ""}${n ? `, ${n} note(s)` : ""}`);

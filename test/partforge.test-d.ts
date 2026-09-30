@@ -23,8 +23,8 @@ import type {
   Solid,
   SubPartDefinition,
 } from "partforge";
-import { circleProfile, circlePolygon, ringSectorProfile, offsetPolygon, pathProfile, roundedProfile, roundedRectPolygon, circularPattern } from "partforge/geometry";
-import type { ArcContour, Region2D } from "partforge/geometry";
+import { circleProfile, circlePolygon, ringSectorProfile, offsetPolygon, pathProfile, roundedProfile, roundedRectPolygon, circularPattern, fingerBox, sheetHole, sheetPart, worldToSheet } from "partforge/geometry";
+import type { ArcContour, Region2D, SheetPose } from "partforge/geometry";
 import { resolveDerived } from "partforge/derive";
 import { lintPart, RULES } from "partforge/lint";
 import { runWorker } from "partforge/worker";
@@ -382,6 +382,23 @@ expectType<Solid[]>(circularPattern(k.sphere({ r: 1 }), 8, { axis: "Z", angle: 1
 // @ts-expect-error - `close()` needs at least one segment, and the builder is not itself a contour
 expectType<ArcContour>(pathProfile([0, 0]));
 
+// Sheet parts: plain-data joinery, a posed sub-part, the drawing ↔ world converters.
+const box = fingerBox({ width: 160, depth: 110, height: 80, thickness: 3 });
+expectType<SheetPose>(box.front.pose);
+expectType<number[][]>(box.bottom.outline);
+expectType<ArcContour>(sheetHole({ d: 5, at: [10, 10] }));
+expectType<[number, number]>(worldToSheet(box.back.pose, [0, 55, 40]));
+expectType<SubPartDefinition>(sheetPart({
+  views: ["main"], material: "birch plywood", thickness: 3,
+  profile: (kk) => kk.shape2d(box.front.outline), pose: box.front.pose,
+}));
+
+// @ts-expect-error - kerf is chosen when the kit is downloaded, never in the part
+sheetPart({ views: ["main"], material: "ply", thickness: 3, profile: () => [[0, 0], [1, 0], [1, 1]], kerf: 0.1 });
+
+// @ts-expect-error - a pose names axis words, not vectors
+expectType<SheetPose>({ face: [0, 0, 1], up: "+Y", at: [0, 0, 0] });
+
 // ---------------------------------------------------------------------------
 // 6. partforge/derive, /lint, /worker.
 // ---------------------------------------------------------------------------
@@ -425,6 +442,17 @@ expectType<"pass" | "fail" | "warn" | "skip">(v.cases[0]!.checks[0]!.status);
 expectType<"gate" | "warn">(v.cases[0]!.checks[0]!.kind);
 
 expectType<number>(assemblyOverlaps(kernel, spacer, "spacer", {}, { tolerance: 0.5 }).length);
+
+// A sheet row's facts: a sheet naming no registered process, or one whose declaration
+// does not resolve, still gets facts, with its stock unread (null).
+const sheet = facts.subparts[0]!.sheet;
+if (sheet) {
+  expectType<string | null>(sheet.material);
+  expectType<number | null>(sheet.thickness);
+  expectType<string | null>(sheet.group);
+  // @ts-expect-error - the stock may be unread: material is not always a string
+  expectType<string>(sheet.material);
+}
 
 const built = buildView(kernel, spacer, "spacer");
 expectType<string>(built[0]!.name);

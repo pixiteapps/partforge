@@ -10,7 +10,11 @@
 // `verify.expect` metrics is part of the PartDefinition CONTRACT, which both the
 // verify runner (oracle/verify.js) and the linter (partforge/lint) must agree on.
 // Keeping it here lets the linter import the vocabulary without reaching
-// measure.js, which pulls in the geometry kernels. Must stay import-free.
+// measure.js, which pulls in the geometry kernels. Its one import is the process
+// registry, whose closure is import-free in turn (the process descriptors,
+// sheet/constants.js, lint/finding.js) — so the linter's stays kernel-free.
+import { SHEET_METRICS } from "./process/registry.js";
+
 export const SUBPART_METRICS = {
   holes: { kind: "gate", manifoldOnly: true, extract: (s) => s.holes,
     hint: "genus is wrong — an unintended tunnel exists or an intended bore is blocked; make cut tools pierce fully (overcut past the faces)" },
@@ -78,6 +82,9 @@ export const SUBPART_METRICS = {
     hint: "rebuild volume differs from the reference import by more than the allowed percentage — a feature is missing, doubled, or mis-scaled vs the reference" },
   refBboxDelta: { kind: "gate", extract: (s) => s.deviation?.bboxDelta ?? null,
     hint: "the rebuild's bounding-box corners drift from the reference import — check overall dimensions and that the rebuild is aligned to the reference's coordinates" },
+  // Sheet parts (sheetPart(), partforge/geometry): each process's own checks. verify
+  // volunteers them on every sheet sub-part; an author may declare them like any other.
+  ...SHEET_METRICS,
 };
 export const VIEW_METRICS = {
   bbox: { kind: "gate", extract: (r) => r.aggregate.bbox,
