@@ -33,46 +33,24 @@ const IDENTITY = Object.freeze([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
 //   floorDepth  an up-facing surface at least this far below the laser face is an engrave
 //               or score floor: half the preview's MARK_DEPTH, so the laser face (z = t) is
 //               never one and a mark's floor (z = t − MARK_DEPTH) always is.
-// Char is RELATIVE to the face, all in linear RGB: a cut wall is the face's average colour
-// mixed toward a charcoal TARGET by k — kThin at ≤ tThin mm, kThick at ≥ tThick (thick stock
-// takes a longer dwell) — plus up to `exit` more toward the exit side (z = 0); an engrave or
-// score floor by `engraveLess` less. The target is PER CHANNEL, not `charcoal` itself: each
-// channel is capped at `charOfDark` of the face's OWN channel (burnAlbedo's `target`), so char
-// is never lighter than its face in any single channel. A single luminance-derived cap (the
-// first cut) is not enough — walnut's face is reddish (high R, low G/B), so `charcoal`'s own,
-// more neutral B channel sits ABOVE walnut's near-black B even though charcoal reads darker
-// overall, and mixing the whole vector toward it raised that one channel, reading as a flat,
-// lighter char on camera despite passing the diffuse-only calibration (dE/luma) floors below.
-// Capping every channel at its own face's brightness, not just the vector's, closes that gap.
-// Char and scorched floors take `roughness`; on plywood's cut walls a cross ply is `crossPly`
-// of a face-grain ply. The colours are starting points from the research, tuned by eye on the
-// contact sheet — within the calibration floors that test/framework/sheet-look.test.js holds
-// them to. kThin and roughness were first retuned (0.55 → 0.8, 0.85 → 0.65) during the
-// four-environment sign-off: the per-channel target above already made the burnt ALBEDO
-// darker on every wall, but studio/workshop/outdoor carry no key light — IBL alone, so a
-// wall's brightness is however much of the environment its own geometric normal happens to
-// face — and the unburnt wood's tight clearcoat/normal-mapped specular versus the burnt char's
-// broader, flatter one still left walnut's far (non-key-lit) wall reading brighter charred
-// than plain in three of the four environments. A deeper kThin (more charcoal mixed in at the
-// laser box's own 3 mm) plus a less-diffuse roughness closed it in every environment — but that
-// pass leaned on roughness alone and shrank kThin/kThick's own gap to 0.05, so the SAME broader
-// specular response it needed at 3 mm also brightened every 9 mm wall's LIT face (9 mm's albedo
-// is untouched by a kThin change — only kThick governs it, and that stayed put), inverting
-// "9 mm chars darker than 3 mm" on oak's and plywood's lit wall in every environment — a
-// sign-off review caught it; the JS-only ordering test below cannot see a render-time specular
-// effect. The fix widens the kThin/kThick gap from BOTH ends instead of leaning on roughness:
-// kThick rose (0.85 → 0.97, the calibration floors have headroom for more charcoal at the
-// thick end) so the 9 mm albedo pulls further from 3 mm regardless of roughness; kThin came
-// back down a little (0.8 → 0.74); roughness rose partway back (0.65 → 0.68, still clearly less
-// diffuse than walnut's own 0.5-roughness, clearcoat-3 lacquer) to cut the specular contribution
-// on every wall; and `charOfDark` dropped (0.5 → 0.37) — WALNUT-ONLY, since it only bites a
-// channel already darker than raw charcoal — to keep the now-lower kThin still mixing walnut
-// dark enough at 3 mm. Walnut's own far wall's 9-mm-vs-3-mm ordering is a DIFFERENT, pre-existing
-// gap — present even at the ORIGINAL kThin/roughness, before any of this branch's retuning — that
-// this pass narrows but does not close; see this branch's fix-round report for the full
-// per-environment/per-wood wall-ratio table and why it is left as a residual rather than chased
-// further into roughness, which pulls walnut's 3 mm requirement and its 9 mm ordering in
-// opposite directions.
+// Char is RELATIVE to the face, all in linear RGB. A cut wall is the face's average colour
+// mixed toward a char TARGET by k — kThin at ≤ tThin mm, kThick at ≥ tThick (thick stock takes
+// a longer dwell) — plus up to `exit` more toward the exit side (z = 0); an engrave or score
+// floor mixes `engraveLess` less. The target is PER CHANNEL: min(charcoal_i, charOfDark ·
+// face_i) (burnAlbedo's `target`). For oak and plywood that is `charcoal` itself; charOfDark
+// takes a channel over wherever face_i < charcoal_i / charOfDark — walnut's green and blue —
+// so a dark or strongly tinted face still chars darker in every channel. Mixing toward
+// `charcoal` alone would RAISE walnut's near-black blue, since charcoal's is lighter. Char and
+// scorched floors take `roughness`, a matte finish, and shed any clearcoat; on plywood's cut
+// walls a cross ply is `crossPly` of a face-grain ply.
+//
+// The numbers were tuned by eye on the contact sheet in all four environments, inside the
+// calibration floors test/framework/sheet-look.test.js holds them to. The twins see only the
+// albedo. The render adds specular reflection — the same at every thickness — which no albedo
+// can take away, and on walnut, whose char is near black, it is most of what a lit wall shows.
+// So judge a retune on captures (scripts/capture-contact-sheet.mjs) compared at the SAME place
+// on the sheet, never on the twins alone: swatches in different places reflect different
+// light. The design spec records the measurements.
 export const BURN = Object.freeze({
   wallNz: Object.freeze([0.35, 0.65]),
   floorDepth: MARK_DEPTH / 2,
@@ -185,9 +163,10 @@ const clamp01 = (x) => Math.min(1, Math.max(0, x));
 export function burnAlbedo(face, t, { kind = "edge", zFrac = 1 } = {}) {
   const charcoal = srgbToLinear(BURN.charcoal);
   // The mix target, PER CHANNEL: whichever is darker of raw charcoal or charOfDark of this
-  // channel's own face value — never the whole vector scaled by one luminance ratio (see the
-  // BURN comment above). Multiplicative in the channel that governs it, so charring a face
-  // darker than charcoal in that channel still only ever removes light from it.
+  // channel's own face value — never one colour for the whole vector, which a channel darker
+  // than that colour would be pulled UP toward (the BURN comment above). Multiplicative in the
+  // channel that governs it, so charring a face darker than charcoal in that channel still
+  // only ever removes light from it.
   const target = charcoal.map((c, i) => Math.min(c, BURN.charOfDark * face[i]));
   const k = BURN.kThin + (BURN.kThick - BURN.kThin) * clamp01((t - BURN.tThin) / (BURN.tThick - BURN.tThin));
   const amount = kind === "engrave" ? k - BURN.engraveLess : Math.min(1, k + BURN.exit * (1 - clamp01(zFrac)));
