@@ -192,7 +192,8 @@ test("resolveEnvironmentId falls back to studio", () => {
 test("wood presets carry a full texture set", () => {
   for (const id of ["oak", "walnut", "plywood"]) {
     const t = PRESETS[id].textures;
-    for (const k of ["color", "normal", "roughness"]) expect(t[k], `${id}.${k}`).toMatch(/^pattern-[a-z]+-[a-z]+\.jpg$/);
+    // Each wood's maps are its own scan's: no preset borrows another's normal or roughness.
+    for (const k of ["color", "normal", "roughness"]) expect(t[k], `${id}.${k}`).toMatch(new RegExp(`^pattern-${id}-[a-z]+\\.jpg$`));
     expect(t.roughnessMean > 0 && t.roughnessMean < 1, id).toBe(true);
     expect(resolveMaterial({ material: id }).params.textures).toBe(t);
   }

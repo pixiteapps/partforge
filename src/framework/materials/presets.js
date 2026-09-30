@@ -74,10 +74,11 @@ export const PRESETS = {
   // mode the texture carries the colour itself; an explicit `color` tints it.
   // `roughnessMean` is the roughness map's mean, so the preset `roughness` (or an
   // override) sets the AVERAGE roughness and the map only varies it. `normalScale`
-  // strengthens the normal map: these scans' tangent normals barely leave +Z (a
-  // ~1% tilt), which reads as flat under an environment map. `grain` is the
+  // strengthens the normal map: the oak and walnut scans' tangent normals barely leave +Z (a
+  // ~1% tilt), which reads as flat under an environment map; plywood's carries about three
+  // times that, a sanded face's relief, so it keeps its own. `grain` is the
   // texture axis the scan's figure runs along — oak's runs up the image ("v"),
-  // walnut's across it ("u") — so patterns.js can lay it along each sub-part's
+  // walnut's and plywood's across it ("u") — so patterns.js can lay it along each sub-part's
   // long axis. `laminated` (plywood) asks the burn pass (patterns.js applyBurn) for ply
   // bands on laser-cut walls, at sheet-look.js's plyCount(t).
   oak: P("oak", "Oak", "natural", "Light oak with open grain.",
@@ -87,8 +88,8 @@ export const PRESETS = {
     { color: 0x5d2a18, metalness: 0, roughness: 0.5, clearcoat: 0.3, clearcoatRoughness: 0.4, pattern: "wood", textureScale: 400,
       textures: { color: "pattern-walnut-color.jpg", normal: "pattern-walnut-normal.jpg", roughness: "pattern-walnut-rough.jpg", roughnessMean: 0.628, normalScale: 3, grain: "u" } }),
   plywood: P("plywood", "Birch plywood", "natural", "Birch plywood sheet: a pale, fine-grained face; its plies show on laser-cut edges.",
-    { color: 0xe1c2a3, metalness: 0, roughness: 0.6, pattern: "wood", textureScale: 150, laminated: true,
-      textures: { color: "pattern-plywood-color.jpg", normal: "pattern-oak-normal.jpg", roughness: "pattern-oak-rough.jpg", roughnessMean: 0.53, normalScale: 1.5, grain: "v" } }),
+    { color: 0xe1c1a1, metalness: 0, roughness: 0.6, pattern: "wood", textureScale: 150, laminated: true,
+      textures: { color: "pattern-plywood-color.jpg", normal: "pattern-plywood-normal.jpg", roughness: "pattern-plywood-rough.jpg", roughnessMean: 0.749, normalScale: 1, grain: "u" } }),
   "carbon-fiber": P("carbon-fiber", "Carbon fibre", "natural", "2x2 twill carbon fibre under clear coat.",
     { color: 0x1b1c1e, metalness: 0.2, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.05, pattern: "carbon", textureScale: 48 }),
 };

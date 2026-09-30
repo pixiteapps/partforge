@@ -298,7 +298,7 @@ Not tintable (like oak and walnut; it still accepts a tint). `laminated` is an i
 (like `grain` and `roughnessMean`): it asks the burn pass for ply bands, at
 `plyCount(t)` — < 4.5 mm → 3, < 7.5 → 5, < 10.5 → 7, else 9 — which is 3 → 3, 6 → 5, 9 → 7.
 
-**Texture.** (a) An approved CC0 set (ambientCG Wood087/088/089 were checked and show plywood edges, not a face; a birch-face set is still to be chosen), processed with
+**Texture.** (a) An approved CC0 set (ambientCG Wood087/088/089 show plywood edges, and Wood090A/090B/091A/091B edge-glued strips, not a face; Poly Haven `plywood` is one continuous veneer), processed with
 `scripts/bake-environments.mjs` into `pattern-plywood-{color,normal,rough}.jpg`, each under
 `test/framework/materials-assets.test.js`'s 400 KB, with a `SOURCES.md` row per file — only if
 its colour map shows a birch FACE (long-grain veneer): a side/edge view with ply stripes cannot
@@ -308,8 +308,13 @@ approval is not given: `pattern-plywood-color.jpg` baked from the committed
 ≈ `#e1c2a3`, softer grain), reusing oak's normal and roughness maps, `grain: "v"`, and a finer
 `textureScale` (150 against oak's 250).
 
-*As built:* fallback (b) shipped, with `color: 0xe1c2a3` (the baked map's measured average),
-oak's normal and roughness maps at `normalScale: 1.5`, `textureScale: 150`.
+*As built:* fallback (b) shipped first, with `color: 0xe1c2a3`, oak's normal and roughness
+maps at `normalScale: 1.5`, `textureScale: 150`. (a) replaced it: Poly Haven `plywood`, lightened
+from its mid brown to a pale birch (`--modulate 1.85,0.9 --flatten 0.55`), with its own normal and
+roughness maps — `color: 0xe1c1a1` (the baked map's measured average), `roughnessMean: 0.749`,
+`normalScale: 1` (the scan's own relief is about three times oak's), `grain: "u"`,
+`textureScale: 150`. `materials-assets.test.js` holds each wood's `color` and `roughnessMean` to
+its committed maps' measured averages.
 
 **Docs:** one row in the preset table (24 documented ids → 25) and `plywood` in the wood row of
 the `textureScale` table.
@@ -343,7 +348,7 @@ headroom, so the next edit to this section has to plan a trim.
   darker, char is darker than its face under any tint, char never goes below its floor, and
   no channel of the char is lighter than the face average it is mixed from. At the shipped
   numbers, at 3 mm, edge / engrave: oak ΔE 25.8 / 20.7, luminance 0.313 / 0.406 of the face;
-  plywood 34.1 / 27.4, 0.281 / 0.379; walnut, the binding case, 14.8 / 12.0, 0.452 / 0.526.
+  plywood 34.1 / 27.3, 0.282 / 0.379; walnut, the binding case, 14.8 / 12.0, 0.452 / 0.526.
   These are albedo facts only. The thickness ordering among them holds for any roughness, so
   it cannot prove the render orders the same way. They are facts about the AVERAGE char, and
   the grain multiply leaves the average unchanged, so they still hold with the grain showing.
@@ -424,7 +429,8 @@ qualify — non-sheet wood (e.g. `hinged-box.js`'s walnut) included.
   gradient and the plies: no smoke halo, no darker corners, no honeycomb marks. (The first
   cut's flat char, under which a texel darker than the char read lighter burnt, is gone: the
   grain multiply darkens every texel.)
-- The plywood face is oak's figure re-tinted, until a CC0 birch-ply scan replaces it.
+- The plywood face is Poly Haven's `plywood` scan lightened to a pale birch; its species is
+  not stated, so it is birch in colour and grain scale, not by provenance.
 - On walnut, whose char is near black, a lit wall's brightness is mostly specular reflection.
   So two walnut sheets in different places can read in either order whatever their thickness.
   At the same place the thicker one is darker (§8).
