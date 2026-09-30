@@ -864,6 +864,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // to its own worker in parallel, so a mixed part previews its plain sub-parts at
     // Manifold speed while only the OCCT-routed ones wait. The return value is
     // the job count — the loop holds the cycle open until every group has replied.
+    // Each dispatched sub-part remembers the { view, params } its job was sent with
+    // (`dispatched`): the frames the realistic look reads must describe the geometry
+    // that job builds, and a delivery shown during playback was built at params the
+    // live ones have already left (see recordFrames). One cycle is in flight at a time,
+    // so a sub-part's entry is its in-flight job's until the cycle's last reply.
+    const dispatched = new Map(); // sub-part -> { view, params } its latest job was sent with
     const loop = createRegenLoop({
       missingParts,
       send: (missing) => {
@@ -871,6 +877,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // for the overlay; this build reports the poses repaired in its own cycle.
         lastGen = { skipped: needed.length - missing.length, rebuilt: missing.length, posed: pendingPosed.size };
         pendingPosed.clear(); // consumed — never counted against a second build
+        const at = { view: view(), params: { ...params } };
+        for (const n of missing) dispatched.set(n, at);
         ui.showBusy("generating");
         const backends = backendPolicy.backendsFor(params);
         let jobs = 0;
@@ -967,29 +975,33 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       try { return resolveMaterial(realisticDisplay(part.parts[n])).params.pattern === "layer-lines"; } catch { return false; }
     }));
     const burning = new Set(Object.keys(part.parts).filter((n) => burnsFor(part.parts[n])));
-    // LAZY: a delivery only records the view and params it was built at; the viewer pulls
-    // the frames (computeFrames) when it is about to draw the realistic look — live,
-    // loading, or borrowed by a capture — so a CAD-only session computes nothing
-    // (viewer.js setFrameSource). The snapshot keeps a late computation describing the
-    // mesh actually delivered.
+    // LAZY: a delivery only records the view and params its job was DISPATCHED with
+    // (`dispatched`, set where the loop sends) — not the live ones, which a delivery shown
+    // during playback was never built at; the viewer pulls the frames (computeFrames)
+    // when it is about to draw the realistic look — live, loading, or borrowed by a
+    // capture — so a CAD-only session computes nothing (viewer.js setFrameSource). The
+    // snapshot keeps a late computation describing the mesh actually delivered.
     const printFrames = {};
     const sheetFrames = {};
-    const undrawnFrames = new Map(); // sub-part -> { view, params } at its delivery
+    const undrawnFrames = new Map(); // sub-part -> { view, params } its delivered mesh was built at
     function recordFrames(names) {
       const wanted = names.filter((n) => layerLined.has(n) || burning.has(n));
       if (!wanted.length) return;
-      const at = { view: view(), params: { ...params } };
-      for (const n of wanted) undrawnFrames.set(n, at);
+      for (const n of wanted) undrawnFrames.set(n, dispatched.get(n) ?? null); // null: built at params nobody recorded
       viewer.invalidateFrames?.();
     }
     function computeFrames() {
       const resolvedFor = new Map(); // one resolveParams per delivery, not per sub-part
       for (const [n, at] of undrawnFrames) {
-        if (!resolvedFor.has(at)) {
+        if (at && !resolvedFor.has(at)) {
           try { resolvedFor.set(at, resolveParams(part, at.params)); } catch { resolvedFor.set(at, null); } // diagnosed by the build
         }
-        const resolved = resolvedFor.get(at);
-        if (!resolved) continue;
+        const resolved = at ? resolvedFor.get(at) : null;
+        // No params to frame this mesh by: a burning sheet draws plain wood rather than
+        // keep a frame that describes other geometry — a sub-millimetre lag along its
+        // normal is enough to char a whole face. A print frame keeps its last value (the
+        // worst it can do is run layer lines the wrong way).
+        if (!resolved) { delete sheetFrames[n]; continue; }
         if (layerLined.has(n)) printFrames[n] = printFrameMatrix(part.parts[n], { view: at.view, ...resolved });
         if (burning.has(n)) {
           const f = sheetFrameFor(part.parts[n], resolved);
@@ -1093,10 +1105,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           } else if (lastAnimApplyVersion === loop.version()) {
             // Stale ONLY because animation frames kept bumping the version:
             // show the delivered meshes anyway — that IS best-effort playback —
-            // but record NOTHING. Cache and fast-path stamps must describe
-            // geometry built at the live params, and this delivery wasn't; the
-            // fast-path stamp is dropped too, so a later pose-only repair can
-            // never re-pose this newer geometry off an older delivery's stamp.
+            // but record nothing about the LIVE params. Cache and fast-path stamps
+            // must describe geometry built at the live params, and this delivery
+            // wasn't; the fast-path stamp is dropped too, so a later pose-only
+            // repair can never re-pose this newer geometry off an older delivery's
+            // stamp. Its material frames are the exception: those are recorded
+            // against the params its job was dispatched with, which is what it was
+            // built at — keeping the last fresh delivery's frame instead would lay a
+            // sheet's burn over geometry that has moved along its normal.
             // A user edit mid-play pauses playback and bumps the version WITHOUT
             // touching lastAnimApplyVersion, so a genuinely user-stale result
             // fails this test and is discarded exactly as before.
@@ -1104,6 +1120,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
               viewer.setSubGeometry(m.name, m);
               fastPath.forget(m.name);
             }
+            recordFrames(data.meshes.map((m) => m.name));
             ui.hideBusy();
             refreshView();
           }

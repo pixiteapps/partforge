@@ -650,3 +650,81 @@ test("a laser sheet with no material gets a sheet frame, not a print frame", asy
   expect(runtime.declaresMaterials).toBe(true);               // the block names oak — the default never counts
   runtime.dispose();
 });
+
+// --- a delivery's frame describes the params it was BUILT at, not the live ones -------
+// A lid whose outline reads H and whose pose puts its laser face at z = H: a view
+// animation that moves H rebuilds it every frame, and during playback nearly every
+// delivery is stale (playback moved on). Its sheet frame has to be the one for the
+// params that job was dispatched with — a frame for any other H lands the laser face at
+// the wrong canonical depth, and a face 0.1 mm low classifies as an engrave floor and
+// draws scorched all over.
+const liftPose = (H) => ({ face: "+Z", up: "+Y", at: [0, 0, H] });
+const liftFixture = ({ derive } = {}) => ({
+  meta: { title: "Lift Fixture", backend: "manifold" },
+  defaults: { t: 3, H: 80 },
+  ...(derive ? { derive } : {}),
+  views: { main: { label: "Main", animations: { sink: { label: "Sink", duration: 2, easing: "linear", tracks: { H: [[0, 80], [1, 40]] } } } } },
+  parts: {
+    lid: sheetPart({ label: "Lid", views: ["main"], display: { material: "oak" }, material: "birch plywood",
+      thickness: (p) => p.t, profile: (k, p) => k.shape2d([[0, 0], [p.H, 0], [p.H, 30], [0, 30]]), pose: (p) => liftPose(p.H) }),
+  },
+  parameters: [{ id: "stock", title: "Stock", advanced: [
+    { key: "t", label: "Thickness", min: 1, max: 10, step: 0.5 }, { key: "H", label: "Height", min: 10, max: 200, step: 1 }] }],
+});
+async function mountLift(opts) {
+  const workers = {};
+  // A real postMessage clones; the params mount sends are its live, in-place-mutated object.
+  const sent = [];
+  const postMessage = (m) => { if (m?.type === "generate") sent.push({ ...m, params: { ...m.params } }); };
+  const runtime = mount(liftFixture(opts), {
+    createWorker: (name) => (workers[name] = { postMessage, terminate: vi.fn(), onmessage: null }),
+    elements: makeElements(),
+  });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("lid")], ms: 1 } });
+  await runtime.ready;
+  await runtime.renderMode.set("realistic");
+  const uniforms = viewers[0].__subMesh("lid").material.userData.patternUniforms;
+  const generates = () => sent;
+  const deliver = () => workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("lid")], ms: 5 } });
+  return { runtime, uniforms, generates, deliver };
+}
+const liftFrame = (H) => round9(invertRigid(composePose(poseSteps(liftPose(H), 3))));
+
+test("a delivery shown during playback is framed at the params its job was dispatched with", async () => {
+  const { runtime, uniforms, generates, deliver } = await mountLift();
+  expect(round9(uniforms.pfSheetFrame.value.toArray())).toEqual(liftFrame(80));
+  const before = generates().length;
+  let t = 1000;
+  const tick = (n) => { for (let i = 0; i < n; i++) { state.renderer.animationLoop(t); t += 100; } };
+  runtime.animation.play();
+  tick(4);
+  const first = generates()[before];
+  expect(first).toBeDefined();
+  deliver(); // stale: playback moved H on while it built
+  expect(uniforms.pfSheetT.value).toBe(3);
+  expect(round9(uniforms.pfSheetFrame.value.toArray())).toEqual(liftFrame(first.params.H));
+  tick(4);
+  const second = generates().at(-1);
+  expect(second).not.toBe(first);
+  expect(second.params.H).not.toBe(first.params.H);
+  deliver(); // stale again, built at the second job's H
+  expect(uniforms.pfSheetT.value).toBe(3);
+  expect(round9(uniforms.pfSheetFrame.value.toArray())).toEqual(liftFrame(second.params.H));
+  runtime.dispose();
+});
+
+test("a delivery whose params the main thread cannot resolve draws plain wood, never the previous frame", async () => {
+  // derive refuses H below 60 on the main thread; the (fake) worker delivered anyway.
+  const derive = (p) => { if (p.H < 60) throw new Error("too short"); return {}; };
+  const { runtime, uniforms, generates, deliver } = await mountLift({ derive });
+  expect(uniforms.pfSheetT.value).toBe(3);
+  const before = generates().length;
+  runtime.setParams({ H: 40 });
+  await vi.waitFor(() => expect(generates().length).toBe(before + 1));
+  expect(generates().at(-1).params.H).toBe(40);
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  deliver();
+  expect(uniforms.pfSheetT.value).toBe(0);
+  runtime.dispose();
+});
