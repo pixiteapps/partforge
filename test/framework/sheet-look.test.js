@@ -43,6 +43,29 @@ function histogram(solid, frame, t) {
   return h;
 }
 
+// Where the posed mesh's LASER side lands under `frame`: the class of every triangle whose
+// world normal is the pose's `face` (the laser face and any mark floors).
+const AXIS = { "+X": [1, 0, 0], "-X": [-1, 0, 0], "+Y": [0, 1, 0], "-Y": [0, -1, 0], "+Z": [0, 0, 1], "-Z": [0, 0, -1] };
+function laserSide(solid, frame, t, face) {
+  const world = Float64Array.from(solid.toMesh().positions);
+  const pos = Float64Array.from(world);
+  transformPositions(pos, frame);
+  const classes = {};
+  for (let i = 0; i < world.length; i += 9) {
+    const u = [world[i + 3] - world[i], world[i + 4] - world[i + 1], world[i + 5] - world[i + 2]];
+    const v = [world[i + 6] - world[i], world[i + 7] - world[i + 1], world[i + 8] - world[i + 2]];
+    const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    const len = Math.hypot(...n);
+    if (len < 1e-9 || (n[0] * face[0] + n[1] * face[1] + n[2] * face[2]) / len < 0.99) continue;
+    const cu = [pos[i + 3] - pos[i], pos[i + 4] - pos[i + 1], pos[i + 5] - pos[i + 2]];
+    const cv = [pos[i + 6] - pos[i], pos[i + 7] - pos[i + 1], pos[i + 8] - pos[i + 2]];
+    const cn = [cu[1] * cv[2] - cu[2] * cv[1], cu[2] * cv[0] - cu[0] * cv[2], cu[0] * cv[1] - cu[1] * cv[0]];
+    const cls = classifySheetSurface([0, 0, (pos[i + 2] + pos[i + 5] + pos[i + 8]) / 3], cn.map((c) => c / len), t);
+    classes[cls] = (classes[cls] ?? 0) + 1;
+  }
+  return classes;
+}
+
 describe("every laser-box panel's frame lands its display mesh on its canonical solid", () => {
   test.each(SHEETS)("%s", (name) => {
     const { p, d } = resolveParams(laserBox, {});
@@ -56,6 +79,15 @@ describe("every laser-box panel's frame lands its display mesh on its canonical 
     expect(got[`face@${p.t}`]).toBeGreaterThan(0);
     expect(got["back@0"]).toBeGreaterThan(0);
     expect(got.wall).toBeGreaterThan(0);
+    // …the right way up. On a panel with no marks the histogram is symmetric: a frame that
+    // turned it over (z → t − z) swaps face@t and back@0 one for one and matches. So the
+    // side the laser hits — every triangle facing the pose's `face` — must land as the
+    // laser face (or a mark's floor), never as the back.
+    const pose = typeof sp.sheet.pose === "function" ? sp.sheet.pose(p, d) : sp.sheet.pose;
+    const side = laserSide(posed, f.frame, p.t, AXIS[pose.face]);
+    expect(side.face).toBeGreaterThan(0);
+    expect(side.back ?? 0).toBe(0);
+    expect(side.wall ?? 0).toBe(0);
   });
 
   test("the front panel's frame is the inverse of its pose, and its label and score are floors", () => {
@@ -158,13 +190,17 @@ describe("the burn is clearly visible: the same pixel, burn on vs off", () => {
     expect(luma(mark)).toBeLessThanOrEqual(0.8 * luma(face));
   });
 
-  // The regression this pins: a face reddish enough that ONE channel (walnut's blue) already
-  // sits below raw `charcoal`'s own value in that channel. Mixing the whole charcoal VECTOR
-  // toward it (the luminance-only cap) let that one channel rise even while the overall dE/luma
-  // floors above still passed — on camera it read as a flat, lighter char on one of walnut's two
-  // visible walls in three of four sign-off environments. Every channel, for every burning wood,
-  // must come out no brighter than it went in.
-  test.each(WOODS)("%s: no channel of the char reads lighter than its own face", (id) => {
+  // What this guarantees, and what it does not. The char is mixed from ONE colour, the face's
+  // AVERAGE (the preset colour, which is its texture's average, times any tint — the shader's
+  // pfFace), toward a per-channel target; this holds that result no lighter than that average
+  // in any channel. The bug it guards, in the twin: a face reddish enough that one channel
+  // (walnut's blue) already sits below raw `charcoal`'s own, which the old luminance-only cap
+  // then RAISED while the dE/luma floors above still passed (on camera: a flat, lighter char on
+  // one of walnut's walls; the render itself is checked by eye, not here). It says nothing per
+  // texel: the char is flat, so a texel darker than it — walnut's darkest grain, about 6% of
+  // its texels under a 3 mm edge and 9% under an engrave, by luma — reads lighter burnt. That
+  // flat char is the chosen look, a residual in the spec.
+  test.each(WOODS)("%s: no channel of the char reads lighter than the face average it is mixed from", (id) => {
     const face = srgbToLinear(PRESETS[id].color);
     for (const kind of ["edge", "engrave"]) {
       const result = burnAlbedo(face, 3, { kind });
@@ -173,13 +209,12 @@ describe("the burn is clearly visible: the same pixel, burn on vs off", () => {
   });
 
   // This is an ALBEDO ordering, guaranteed by kThin < kThick alone — it holds for any
-  // roughness/charOfDark and is not proof the RENDER orders the same way: a sign-off review
-  // caught a real-render regression (roughness dropped uniformly across every thickness, so
-  // its specular contribution brightened the 9 mm lit wall more than the 3 mm one) that this
-  // JS-only test passed straight through, because it cannot see the render at all. Treat a
-  // green run here as "the mix math still ramps the right way," never as "the contact sheet's
-  // thickness gradient is intact" — that needs the real capture + wall-luma measurement
-  // (see BURN's own comment in sheet-look.js and the branch's task-7 fix-round report).
+  // roughness and is not proof the RENDER orders the same way: the specular term (the same
+  // at every thickness, set by BURN.roughness) adds light the albedo cannot take away, and a
+  // retune once let it invert the render while this passed. Treat a green run as "the mix math
+  // ramps the right way", never as "the render does": that needs a capture compared at the
+  // SAME place (two swatches elsewhere on the contact sheet reflect different light), per
+  // the design spec's calibration section.
   test("thicker stock chars darker, and the exit side darker than the laser face", () => {
     const face = srgbToLinear(PRESETS.oak.color);
     const at = (t, zFrac = 1) => luma(burnAlbedo(face, t, { zFrac }));

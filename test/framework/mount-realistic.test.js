@@ -647,7 +647,29 @@ test("a laser sheet with no material gets a sheet frame, not a print frame", asy
   expect(printFrameCalls.count).toBe(0);                      // no layer lines: it is no longer PLA
   expect(sheetFrameCalls.count).toBe(1);
   expect(viewers[0].__subMesh("panel").material.userData.patternUniforms.pfPlies.value).toBe(3);
-  expect(runtime.declaresMaterials).toBe(true);               // the block names oak — the default never counts
+  runtime.dispose();
+});
+
+// The stock's look is realistic-only, like the PLA default: it never makes a part declare a
+// material. Hosts resolve an "auto" view style against this flag, so a forge made only of
+// sheets that name no material must still read false — while it draws as plywood.
+test("sheets that name no material draw as their stock but never make the part declare a material", async () => {
+  const part = sheetFixture();
+  part.parts = { panel: sheetPart({ label: "Panel", views: ["main"], material: "birch plywood",
+    thickness: (p) => p.t, profile: (k) => k.shape2d([[0, 0], [30, 0], [30, 30], [0, 30]]), pose: SHEET_POSE }) };
+  const workers = {};
+  const runtime = mount(part, {
+    createWorker: (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null }),
+    elements: makeElements(),
+  });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("panel")], ms: 1 } });
+  await runtime.ready;
+  expect(runtime.declaresMaterials).toBe(false);
+  await runtime.renderMode.set("realistic");
+  const u = viewers[0].__subMesh("panel").material.userData.patternUniforms;
+  expect(u.pfPlies.value).toBe(3);                            // drawn as plywood, burning
+  expect(u.pfSheetT.value).toBe(3);
   runtime.dispose();
 });
 

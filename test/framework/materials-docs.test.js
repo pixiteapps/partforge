@@ -24,13 +24,21 @@ test("every environment and override (with its range) appears", () => {
   for (const [k, [lo, hi]] of Object.entries(OVERRIDE_RANGES)) expect(section, k).toContain(`\`${k}\` (${lo}–${hi})`);
 });
 
-test("the sheet-default table lists every stock word and look", () => {
-  expect(section).toContain("**Sheet parts default to their stock.**");
-  for (const { look, words } of STOCK_LOOKS) {
-    expect(section, look).toContain(`\`${look}\``);
-    for (const w of words) expect(section, w).toContain(`\`${w}\``);
-  }
-  expect(section).toContain(`\`${DEFAULT_STOCK_LOOK}\``);
+// Row for row, not mere presence: every look is also in the preset table, so a bare
+// "contains `plywood`" would pass with the stock table saying anything at all.
+test("the sheet-default table is STOCK_LOOKS, row for row, then the default", () => {
+  const i = section.indexOf("**Sheet parts default to their stock.**");
+  expect(i).toBeGreaterThan(-1);
+  const table = section.slice(i).split("\n\n").find((block) => block.startsWith("| "));
+  const cells = (row) => row.split("|").slice(1, -1).map((c) => c.trim());
+  const rows = table.split("\n").slice(2).map(cells);          // past the header and its rule
+  expect(rows).toHaveLength(STOCK_LOOKS.length + 1);
+  STOCK_LOOKS.forEach(({ look, words }, n) => {
+    expect(rows[n][0], look).toBe(words.map((w) => `\`${w}\``).join(", "));
+    expect(rows[n][1], look).toBe(`\`${look}\``);
+  });
+  expect(rows.at(-1)[0]).toMatch(/^anything else/);
+  expect(rows.at(-1)[1]).toBe(`\`${DEFAULT_STOCK_LOOK}\``);
 });
 
 test("the Laser-cut wood paragraph says who burns, that nothing is set, and when it does not", () => {
