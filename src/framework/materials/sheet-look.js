@@ -47,28 +47,44 @@ const IDENTITY = Object.freeze([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
 // Char and scorched floors take `roughness`; on plywood's cut walls a cross ply is `crossPly`
 // of a face-grain ply. The colours are starting points from the research, tuned by eye on the
 // contact sheet — within the calibration floors that test/framework/sheet-look.test.js holds
-// them to. kThin and roughness were retuned (0.55 → 0.8, 0.85 → 0.65) during the
+// them to. kThin and roughness were first retuned (0.55 → 0.8, 0.85 → 0.65) during the
 // four-environment sign-off: the per-channel target above already made the burnt ALBEDO
 // darker on every wall, but studio/workshop/outdoor carry no key light — IBL alone, so a
 // wall's brightness is however much of the environment its own geometric normal happens to
 // face — and the unburnt wood's tight clearcoat/normal-mapped specular versus the burnt char's
 // broader, flatter one still left walnut's far (non-key-lit) wall reading brighter charred
 // than plain in three of the four environments. A deeper kThin (more charcoal mixed in at the
-// laser box's own 3 mm) plus a less-diffuse roughness (still clearly matte against walnut's
-// 0.5-roughness, clearcoat-3 lacquer) closed it in every environment; see this branch's sign-off
-// report for the measured before/after wall ratios per environment.
+// laser box's own 3 mm) plus a less-diffuse roughness closed it in every environment — but that
+// pass leaned on roughness alone and shrank kThin/kThick's own gap to 0.05, so the SAME broader
+// specular response it needed at 3 mm also brightened every 9 mm wall's LIT face (9 mm's albedo
+// is untouched by a kThin change — only kThick governs it, and that stayed put), inverting
+// "9 mm chars darker than 3 mm" on oak's and plywood's lit wall in every environment — a
+// sign-off review caught it; the JS-only ordering test below cannot see a render-time specular
+// effect. The fix widens the kThin/kThick gap from BOTH ends instead of leaning on roughness:
+// kThick rose (0.85 → 0.97, the calibration floors have headroom for more charcoal at the
+// thick end) so the 9 mm albedo pulls further from 3 mm regardless of roughness; kThin came
+// back down a little (0.8 → 0.74); roughness rose partway back (0.65 → 0.68, still clearly less
+// diffuse than walnut's own 0.5-roughness, clearcoat-3 lacquer) to cut the specular contribution
+// on every wall; and `charOfDark` dropped (0.5 → 0.37) — WALNUT-ONLY, since it only bites a
+// channel already darker than raw charcoal — to keep the now-lower kThin still mixing walnut
+// dark enough at 3 mm. Walnut's own far wall's 9-mm-vs-3-mm ordering is a DIFFERENT, pre-existing
+// gap — present even at the ORIGINAL kThin/roughness, before any of this branch's retuning — that
+// this pass narrows but does not close; see this branch's fix-round report for the full
+// per-environment/per-wood wall-ratio table and why it is left as a residual rather than chased
+// further into roughness, which pulls walnut's 3 mm requirement and its 9 mm ordering in
+// opposite directions.
 export const BURN = Object.freeze({
   wallNz: Object.freeze([0.35, 0.65]),
   floorDepth: MARK_DEPTH / 2,
   charcoal: 0x262220,
-  kThin: 0.8,
-  kThick: 0.85,
+  kThin: 0.74,
+  kThick: 0.97,
   tThin: 3,
   tThick: 9,
   exit: 0.1,
   engraveLess: 0.1,
-  charOfDark: 0.5,
-  roughness: 0.65,
+  charOfDark: 0.37,
+  roughness: 0.68,
   crossPly: 0.78,
 });
 

@@ -172,6 +172,14 @@ describe("the burn is clearly visible: the same pixel, burn on vs off", () => {
     }
   });
 
+  // This is an ALBEDO ordering, guaranteed by kThin < kThick alone — it holds for any
+  // roughness/charOfDark and is not proof the RENDER orders the same way: a sign-off review
+  // caught a real-render regression (roughness dropped uniformly across every thickness, so
+  // its specular contribution brightened the 9 mm lit wall more than the 3 mm one) that this
+  // JS-only test passed straight through, because it cannot see the render at all. Treat a
+  // green run here as "the mix math still ramps the right way," never as "the contact sheet's
+  // thickness gradient is intact" — that needs the real capture + wall-luma measurement
+  // (see BURN's own comment in sheet-look.js and the branch's task-7 fix-round report).
   test("thicker stock chars darker, and the exit side darker than the laser face", () => {
     const face = srgbToLinear(PRESETS.oak.color);
     const at = (t, zFrac = 1) => luma(burnAlbedo(face, t, { zFrac }));
