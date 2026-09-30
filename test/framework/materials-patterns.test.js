@@ -4,6 +4,7 @@ import { applyPattern, layerProfileData, LAYER_PROFILE_WIDTH } from "../../src/f
 import { ensureBoxUVs } from "../../src/framework/materials/uv.js";
 import { applyBrushFrame, applyBurn, grainAxisFor, grainSwaps, setGrainAxis } from "../../src/framework/materials/patterns.js";
 import { buildPhysicalMaterial } from "../../src/framework/materials/physical.js";
+import { BURN } from "../../src/framework/materials/sheet-look.js";
 
 const fakeShader = () => ({
   uniforms: {},
@@ -303,6 +304,8 @@ const physicalShader = () => ({
 });
 const compiled = (m) => { const s = physicalShader(); m.onBeforeCompile(s); return s; };
 const woodTextures = () => new THREE.Texture();
+// A BURN number as patterns.js writes it into GLSL (its glf: a float literal, never an int).
+const glf = (x) => (Number.isInteger(x) ? x.toFixed(1) : String(x));
 // The shader's lines with every `// pf-burn {` … `// } pf-burn` block taken out,
 // indentation ignored (a snippet inserted before an indented #include takes its tab).
 const outsideBurn = (src) => {
@@ -323,8 +326,18 @@ test("the burn pass lands in three's meshphysical order: after wood, before norm
   expect(at("diffuseColor.rgb *= pfTriplanarWood(pfPatternMap")).toBeLessThan(at("float pfBurnWall = 0.0;"));
   expect(at("#include <metalnessmap_fragment>")).toBeLessThan(at("float pfBurnWall = 0.0;"));
   expect(at("pfBurnWall = 1.0 - smoothstep")).toBeLessThan(at("#include <normal_fragment_begin>"));
-  // (b) the normal fade: after wood's normal map and the clearcoat normals, before emissive
-  const fade = at("normal = normalize(mix(normal, nonPerturbedNormal, max(pfBurnWall, pfBurnFloor)));");
+  // the grain survives the char: each texel's ratio to the face average, read off
+  // diffuseColor while it still holds the wood, multiplies both chars before they are drawn
+  const grain = at(`vec3 pfGrain = mix(vec3(1.0), diffuseColor.rgb / max(pfFace, vec3(1e-4)), ${glf(BURN.grain)});`);
+  expect(at("vec3 pfMark = mix(pfFace, pfChar")).toBeLessThan(grain);
+  expect(grain).toBeLessThan(at("pfEdge *= pfGrain;"));
+  expect(grain).toBeLessThan(at("pfMark *= pfGrain;"));
+  expect(at("pfEdge *= pfGrain;")).toBeLessThan(at("diffuseColor.rgb = mix(diffuseColor.rgb, pfEdge, pfBurnWall);"));
+  expect(at("pfMark *= pfGrain;")).toBeLessThan(at("diffuseColor.rgb = mix(diffuseColor.rgb, pfEdge, pfBurnWall);"));
+  expect(at("diffuseColor.rgb = mix(diffuseColor.rgb, pfEdge, pfBurnWall);")).toBeLessThan(at("diffuseColor.rgb = mix(diffuseColor.rgb, pfMark, pfBurnFloor);"));
+  // (b) the normal fade, keeping `relief` of the wood's: after wood's normal map and the
+  // clearcoat normals, before emissive
+  const fade = at(`normal = normalize(mix(normal, nonPerturbedNormal, max(pfBurnWall, pfBurnFloor) * ${glf(1 - BURN.relief)}));`);
   expect(at("normal = normalize(mat3(vPfNmX, vPfNmY, vPfNmZ) * pfObjN)")).toBeLessThan(fade);
   expect(at("#include <clearcoat_normal_fragment_maps>")).toBeLessThan(fade);
   expect(fade).toBeLessThan(at("#include <emissivemap_fragment>"));

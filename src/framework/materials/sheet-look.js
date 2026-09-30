@@ -43,6 +43,12 @@ const IDENTITY = Object.freeze([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
 // `charcoal` alone would RAISE walnut's near-black blue, since charcoal's is lighter. Char and
 // scorched floors take `roughness`, a matte finish, and shed any clearcoat; on plywood's cut
 // walls a cross ply is `crossPly` of a face-grain ply.
+//   grain       how much of the wood's grain shows through the char: each texel's ratio to
+//               the face average, blended in by `grain`, multiplies the average char (1, a
+//               pure multiply: every texel darkens by the same per-channel factor, so the
+//               average is unchanged and no texel comes out lighter; burnTexel is the twin).
+//   relief      the share of the wood's surface relief (its normal map) that char and
+//               scorched floors keep; the rest fades to the geometric normal.
 //
 // The numbers were tuned by eye on the contact sheet in all four environments, inside the
 // calibration floors test/framework/sheet-look.test.js holds them to. The twins see only the
@@ -64,6 +70,8 @@ export const BURN = Object.freeze({
   charOfDark: 0.37,
   roughness: 0.68,
   crossPly: 0.78,
+  grain: 1,
+  relief: 0.35,
 });
 
 // sRGB 0xRRGGBB → linear [r, g, b]: the conversion three applies to a colour uniform.
@@ -170,7 +178,10 @@ const clamp01 = (x) => Math.min(1, Math.max(0, x));
 // formula): `face` is the unburnt face's average colour in linear RGB (the preset's texture
 // average times any tint), `t` the sheet thickness (mm), `kind` "edge" — a cut wall, `zFrac`
 // of the way from the exit side (0) up to the laser face (1) — or "engrave", a mark's floor.
-// Ply bands are left out: they only modulate an edge.
+// Ply bands are left out: they only modulate an edge. It returns the AVERAGE char — what the
+// face's average colour burns to. The shader then multiplies that by each texel's ratio to
+// the face average (texel ÷ face, blended by BURN.grain), so the grain shows through;
+// burnTexel below is that step's twin.
 export function burnAlbedo(face, t, { kind = "edge", zFrac = 1 } = {}) {
   const charcoal = srgbToLinear(BURN.charcoal);
   // The mix target, PER CHANNEL: whichever is darker of raw charcoal or charOfDark of this
@@ -182,4 +193,12 @@ export function burnAlbedo(face, t, { kind = "edge", zFrac = 1 } = {}) {
   const k = BURN.kThin + (BURN.kThick - BURN.kThin) * clamp01((t - BURN.tThin) / (BURN.tThick - BURN.tThin));
   const amount = kind === "engrave" ? k - BURN.engraveLess : Math.min(1, k + BURN.exit * (1 - clamp01(zFrac)));
   return face.map((f, i) => f + (target[i] - f) * amount);
+}
+
+// One texel's burnt albedo, in JS — the shader's pfGrain step on top of burnAlbedo: `texel`
+// is the unburnt texel in linear RGB (the wood texture times any tint), the rest is
+// burnAlbedo's. The average char times mix(1, texel ÷ face, BURN.grain), per channel, with
+// the shader's 1e-4 floor under the divide. At grain 1 that is texel × (char ÷ face).
+export function burnTexel(texel, face, t, opts) {
+  return burnAlbedo(face, t, opts).map((c, i) => c * (1 + (texel[i] / Math.max(face[i], 1e-4) - 1) * BURN.grain));
 }

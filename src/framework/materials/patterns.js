@@ -368,8 +368,9 @@ export function applyBrushFrame(material) {
 //       <roughnessmap_fragment> would land IN FRONT of wood's body, so it is not reused.
 //       pfBurnWall / pfBurnFloor are declared at main() scope, like pfLayer, for (b), (c).
 //   (b) the normal, before <emissivemap_fragment>: after wood's normal map and the
-//       clearcoat normals. Char has no grain, so the wood normal fades back to the
-//       geometric one (nonPerturbedNormal, set by <normal_fragment_begin>).
+//       clearcoat normals. Char flattens the wood's relief: the wood normal fades toward
+//       the geometric one (nonPerturbedNormal, set by <normal_fragment_begin>), keeping
+//       BURN.relief of it.
 //   (c) clearcoat, after <lights_physical_fragment>, which assigns material.clearcoat:
 //       walnut's lacquer comes off the char.
 // Every snippet sits between `// pf-burn {` and `// } pf-burn` lines: that is how the tests
@@ -412,12 +413,19 @@ if (pfSheetT > 0.0) {
   vec3 pfEdge = mix(pfFace, pfChar, min(1.0, pfK + ${glf(BURN.exit)} * (1.0 - pfZ)));
   if (pfPlies > 0.0) pfEdge *= mix(1.0, ${glf(BURN.crossPly)}, pfCrossPly(pfZ * pfPlies));
   vec3 pfMark = mix(pfFace, pfChar, pfK - ${glf(BURN.engraveLess)});
+  // The grain survives the char (sheet-look.js's burnTexel is the twin): pfEdge and pfMark
+  // are what the face AVERAGE chars to, and each texel keeps its ratio to that average,
+  // blended in by BURN.grain. At 1, a pure multiply, the average chars exactly as above and
+  // no texel comes out lighter than it went in.
+  vec3 pfGrain = mix(vec3(1.0), diffuseColor.rgb / max(pfFace, vec3(1e-4)), ${glf(BURN.grain)});
+  pfEdge *= pfGrain;
+  pfMark *= pfGrain;
   diffuseColor.rgb = mix(diffuseColor.rgb, pfEdge, pfBurnWall);
   diffuseColor.rgb = mix(diffuseColor.rgb, pfMark, pfBurnFloor);
   roughnessFactor = mix(roughnessFactor, ${glf(BURN.roughness)}, max(pfBurnWall, pfBurnFloor));
 }`);
 
-const BURN_FRAG_NORMAL = burnBlock("normal = normalize(mix(normal, nonPerturbedNormal, max(pfBurnWall, pfBurnFloor)));");
+const BURN_FRAG_NORMAL = burnBlock(`normal = normalize(mix(normal, nonPerturbedNormal, max(pfBurnWall, pfBurnFloor) * ${glf(1 - BURN.relief)}));`);
 
 const BURN_FRAG_CLEARCOAT = burnBlock(`#ifdef USE_CLEARCOAT
 material.clearcoat *= 1.0 - max(pfBurnWall, pfBurnFloor);

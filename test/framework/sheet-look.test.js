@@ -12,7 +12,7 @@ import { sheetPart } from "../../src/framework/sheet/part.js";
 import { MARK_DEPTH } from "../../src/framework/sheet/constants.js";
 import { poseSteps } from "../../src/framework/sheet/pose.js";
 import { composePose, invertRigid, transformPositions } from "../../src/framework/geometry/pose.js";
-import { BURN, DEFAULT_STOCK_LOOK, STOCK_LOOKS, burnAlbedo, burnsFor, classifySheetSurface, plyCount, realisticDisplay, sheetFrameFor, sheetStockLook, srgbToLinear, stockLook } from "../../src/framework/materials/sheet-look.js";
+import { BURN, DEFAULT_STOCK_LOOK, STOCK_LOOKS, burnAlbedo, burnTexel, burnsFor, classifySheetSurface, plyCount, realisticDisplay, sheetFrameFor, sheetStockLook, srgbToLinear, stockLook } from "../../src/framework/materials/sheet-look.js";
 import { PRESETS } from "../../src/framework/materials/presets.js";
 
 let k;
@@ -190,16 +190,14 @@ describe("the burn is clearly visible: the same pixel, burn on vs off", () => {
     expect(luma(mark)).toBeLessThanOrEqual(0.8 * luma(face));
   });
 
-  // What this guarantees, and what it does not. The char is mixed from ONE colour, the face's
-  // AVERAGE (the preset colour, which is its texture's average, times any tint — the shader's
-  // pfFace), toward a per-channel target; this holds that result no lighter than that average
-  // in any channel. The bug it guards, in the twin: a face reddish enough that one channel
-  // (walnut's blue) already sits below raw `charcoal`'s own, which the old luminance-only cap
-  // then RAISED while the dE/luma floors above still passed (on camera: a flat, lighter char on
-  // one of walnut's walls; the render itself is checked by eye, not here). It says nothing per
-  // texel: the char is flat, so a texel darker than it — walnut's darkest grain, about 6% of
-  // its texels under a 3 mm edge and 9% under an engrave, by luma — reads lighter burnt. That
-  // flat char is the chosen look, a residual in the spec.
+  // What this guarantees. The AVERAGE char is mixed from ONE colour, the face's average (the
+  // preset colour, which is its texture's average, times any tint — the shader's pfFace),
+  // toward a per-channel target; this holds that result no lighter than that average in any
+  // channel. The bug it guards, in the twin: a face reddish enough that one channel (walnut's
+  // blue) already sits below raw `charcoal`'s own, which the old luminance-only cap then
+  // RAISED while the dE/luma floors above still passed (on camera: a flat, lighter char on one
+  // of walnut's walls; the render itself is checked by eye, not here). Per texel, the grain
+  // tests below carry it on: each texel is scaled by this char ÷ face.
   test.each(WOODS)("%s: no channel of the char reads lighter than the face average it is mixed from", (id) => {
     const face = srgbToLinear(PRESETS[id].color);
     for (const kind of ["edge", "engrave"]) {
@@ -230,6 +228,66 @@ describe("the burn is clearly visible: the same pixel, burn on vs off", () => {
     }
     const oak = srgbToLinear(PRESETS.oak.color);
     expect(luma(burnAlbedo(oak, 12, { zFrac: 0 }))).toBeGreaterThanOrEqual(luma(srgbToLinear(BURN.charcoal)) - 1e-12);
+  });
+});
+
+describe("the grain shows through the char: every texel burns by the average's own factor", () => {
+  // The shader multiplies the average char (burnAlbedo) by each texel's ratio to the face
+  // average, blended by BURN.grain; burnTexel is its twin. The shipped grain is 1, a pure
+  // multiply, and the next two tests rest on it: below 1 a black texel would burn to a grey
+  // lighter than itself, above 1 to a negative colour.
+  test("the shipped grain is a pure multiply", () => {
+    expect(BURN.grain).toBe(1);
+  });
+
+  // Unburnt texels around each face average: per channel, the multipliers of `face` run from
+  // black (0) to twice the average and back, a different one in each channel, and every
+  // channel's multipliers average to exactly 1 — so the set averages to the face.
+  const RATIOS = [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 1.5, 1, 0.5];
+  const texelsAround = (face) => RATIOS.map((_, j) => face.map((f, i) => f * RATIOS[(j + 5 * i) % RATIOS.length]));
+  const FACES = [...WOODS.map((id) => srgbToLinear(PRESETS[id].color)), ...[0x202020, 0x101010, 0x3a1c10].map(srgbToLinear)];
+  const CASES = [3, 6, 9, 12].flatMap((t) => [{ t, kind: "edge", zFrac: 1 }, { t, kind: "edge", zFrac: 0 }, { t, kind: "engrave" }]);
+
+  test("each texel burns to its unburnt value × (average char ÷ average face), per channel", () => {
+    for (const face of FACES) {
+      for (const { t, ...opts } of CASES) {
+        const char = burnAlbedo(face, t, opts);
+        for (const texel of texelsAround(face)) {
+          burnTexel(texel, face, t, opts).forEach((c, i) => expect(c, `${opts.kind} ${t} mm channel ${i}`).toBeCloseTo(texel[i] * char[i] / face[i], 12));
+        }
+      }
+    }
+  });
+
+  test("no texel comes out lighter than it went in, whatever its ratio to the average", () => {
+    for (const face of FACES) {
+      for (const { t, ...opts } of CASES) {
+        for (const r of [0, 0.01, 0.3, 0.9, 1, 1.1, 2, 5, 20]) {
+          const texel = face.map((f) => f * r);
+          burnTexel(texel, face, t, opts).forEach((c, i) => expect(c, `${opts.kind} ${t} mm ×${r} channel ${i}`).toBeLessThanOrEqual(texel[i]));
+        }
+      }
+    }
+    // A face channel at or below the shader's 1e-4 floor under the divide still never lightens.
+    const nearBlack = [5e-5, 0.02, 0];
+    for (const texel of [[0, 0, 0], [0.3, 0.3, 0.3], [5e-5, 0.1, 1e-3]]) {
+      burnTexel(texel, nearBlack, 3).forEach((c, i) => expect(c, `channel ${i}`).toBeLessThanOrEqual(texel[i]));
+    }
+  });
+
+  test("the grain moves no average: the burnt texels average to the average char", () => {
+    for (const face of FACES) {
+      for (const { t, ...opts } of CASES) {
+        const texels = texelsAround(face);
+        const burnt = texels.map((texel) => burnTexel(texel, face, t, opts));
+        const mean = (rows, i) => rows.reduce((sum, row) => sum + row[i], 0) / rows.length;
+        const char = burnAlbedo(face, t, opts);
+        face.forEach((f, i) => {
+          expect(mean(texels, i), `channel ${i} of the unburnt set`).toBeCloseTo(f, 12);
+          expect(mean(burnt, i), `${opts.kind} ${t} mm channel ${i}`).toBeCloseTo(char[i], 12);
+        });
+      }
+    }
   });
 });
 
