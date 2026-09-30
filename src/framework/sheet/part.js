@@ -74,8 +74,13 @@ export function sheetPart(spec) {
   };
 
   // Placement (decision 10): the pose applies for display AND export, then the author's own
-  // place. Made BEFORE the record is frozen, so the record can name it.
+  // place. Made BEFORE the record is frozen, so the record can name it. Everything the
+  // place reads is taken NOW, into the same values the record freezes — never read off
+  // `spec` later, which an author may reuse and change for the next panel: the build and
+  // the burn's frame both read the frozen record, and a place that read the spec live would
+  // move the panel away from them.
   const pose = spec.pose ?? null;
+  const thickness = spec.thickness;
   const authorPlace = spec.place ?? null;
   const generatedPlace = pose !== null || authorPlace ? (solid, ctx) => {
     const resolved = typeof pose === "function" ? pose(ctx.p, ctx.d) : pose;
@@ -83,7 +88,7 @@ export function sheetPart(spec) {
     if (resolved !== null) {
       const reason = validatePose(resolved);
       if (reason) throw new Error(`sheet pose: ${reason}`);
-      const t = typeof spec.thickness === "function" ? spec.thickness(ctx.p, ctx.d) : spec.thickness;
+      const t = typeof thickness === "function" ? thickness(ctx.p, ctx.d) : thickness;
       posed = applyPose(solid, resolved, t);
     }
     return authorPlace ? authorPlace(posed, ctx) : posed;
@@ -92,7 +97,7 @@ export function sheetPart(spec) {
   const sheet = Object.freeze({
     process,
     material: spec.material,
-    thickness: spec.thickness,
+    thickness,
     profile: spec.profile,
     score: spec.score ?? null,
     engrave: spec.engrave ?? null,
