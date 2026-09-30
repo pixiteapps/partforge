@@ -84,6 +84,23 @@ describe("an ordinary sub-part with a plain-data marker", () => {
     expect(sheetPart(panelSpec({ pose: null, place: (s) => s })).place).toBeTypeOf("function");
   });
 
+  // The realistic look (materials/sheet-look.js) trusts a sheet's canonical frame only
+  // when it sits exactly on its pose: no author place, and sheetPart's own place still
+  // installed. So the record names both, the way generatedBuild names the build.
+  test("the record names the author's place and the place sheetPart installed", () => {
+    const own = (s) => s.translate([0, 0, 5]);
+    const posed = sheetPart(panelSpec());
+    expect(posed.sheet.place).toBeNull();
+    expect(posed.sheet.generatedPlace).toBe(posed.place);
+    const placed = sheetPart(panelSpec({ place: own }));
+    expect(placed.sheet.place).toBe(own);
+    expect(placed.sheet.generatedPlace).toBe(placed.place);
+    const flat = sheetPart(panelSpec({ pose: undefined }));
+    expect(flat.sheet.place).toBeNull();
+    expect(flat.sheet.generatedPlace).toBeNull();
+    expect("place" in flat).toBe(false);
+  });
+
   test("recognition is plain data: no class, no Symbol, survives a copy", () => {
     const sp = sheetPart(panelSpec());
     expect(Object.getPrototypeOf(sp.sheet)).toBe(Object.prototype);
