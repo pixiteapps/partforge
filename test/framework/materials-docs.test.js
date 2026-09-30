@@ -6,6 +6,7 @@ import { expect, test } from "vitest";
 import { PRESETS } from "../../src/framework/materials/presets.js";
 import { ENVIRONMENTS } from "../../src/framework/materials/environments.js";
 import { OVERRIDE_RANGES } from "../../src/framework/materials/resolve.js";
+import { STOCK_LOOKS, DEFAULT_STOCK_LOOK } from "../../src/framework/materials/sheet-look.js";
 
 const docs = readFileSync(fileURLToPath(new URL("../../docs/AUTHORING-PARTS.md", import.meta.url)), "utf8");
 const section = docs.slice(docs.indexOf("## Materials and appearance"), docs.indexOf("\n## ", docs.indexOf("## Materials and appearance") + 5));
@@ -21,4 +22,13 @@ test("every listed preset appears in the section, with its tintable mark", () =>
 test("every environment and override (with its range) appears", () => {
   for (const id of Object.keys(ENVIRONMENTS)) expect(section, id).toContain(`\`${id}\``);
   for (const [k, [lo, hi]] of Object.entries(OVERRIDE_RANGES)) expect(section, k).toContain(`\`${k}\` (${lo}–${hi})`);
+});
+
+test("the sheet-default table lists every stock word and look", () => {
+  expect(section).toContain("**Sheet parts default to their stock.**");
+  for (const { look, words } of STOCK_LOOKS) {
+    expect(section, look).toContain(`\`${look}\``);
+    for (const w of words) expect(section, w).toContain(`\`${w}\``);
+  }
+  expect(section).toContain(`\`${DEFAULT_STOCK_LOOK}\``);
 });

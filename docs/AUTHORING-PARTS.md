@@ -349,6 +349,21 @@ meta: { title: "…", units: "mm", environment: "studio" },
 - **One material per sub-part.** Something that needs two finishes (a knurled
   grip in rubber on an aluminium body) is two sub-parts.
 
+**Sheet parts default to their stock.** A laser `sheetPart` that names no material (or
+one the library does not know) is not drawn as a PLA print: realistic mode shows it as the
+sheet its stock label names — the first row whose word the label contains, ignoring case:
+
+| Stock label contains | Realistic look |
+| --- | --- |
+| `acrylic`, `perspex`, `plexi`, `pmma`, `polycarbonate` | `clear-acrylic` |
+| anything else — plywood, birch, basswood, poplar, MDF, hardboard, cardboard — or no readable label | `plywood` |
+
+A `color` then tints that look, as it tints any preset (a stained plywood, a coloured
+acrylic); the CAD view still shows the `color` itself. Only a string label is read: a stock
+written as a `(p, d)` function counts as unreadable. Name `display.material` to choose the
+look yourself. Like the PLA look, this is realistic-only and never makes a part declare a
+material.
+
 **Where it shows.** The CAD view (with feature lines) shows each material's
 colour, flattened so dark materials stay readable. **Realistic** mode — the
 viewer's toggle — shows the full material under environment lighting, with a

@@ -29,7 +29,8 @@ const withHole = (k) =>
 // "Laser-cut, unburnt" is its twin: the same swatches with an identity author `place`,
 // which shows plain wood (materials/sheet-look.js) — same geometry, same place, same
 // material — so the two views differ ONLY by the burn and scripts/capture-contact-sheet.mjs
-// can diff them pixel for pixel.
+// can diff them pixel for pixel — and one row of sheets that name no material, drawn as
+// their stock (sheet-look.js STOCK_LOOKS).
 const SW = 30;
 const WOODS = ["plywood", "oak", "walnut"];
 const CONTROLS_Y = -WOODS.length * PITCH;
@@ -40,6 +41,9 @@ const LASER_SWATCHES = [
   { key: "acrylic_3", label: "Clear acrylic, 3 mm", at: [0, CONTROLS_Y], t: 3, display: { material: "clear-acrylic" }, stock: "clear acrylic" },
   { key: "oak_standing", label: "Oak, 3 mm, standing", at: [PITCH, CONTROLS_Y], t: 3, display: { material: "oak" }, standing: true },
   { key: "oak_block", label: "Oak block (not a sheet part)", at: [2 * PITCH, CONTROLS_Y], t: 3, display: { material: "oak" }, block: true },
+  { key: "stock_plywood", label: "No material, \"birch plywood\" stock", at: [0, CONTROLS_Y - PITCH], t: 3, stock: "birch plywood" },
+  { key: "stock_acrylic", label: "No material, \"clear acrylic\" stock", at: [PITCH, CONTROLS_Y - PITCH], t: 3, stock: "clear acrylic" },
+  { key: "stock_stained", label: "A bare colour on \"birch plywood\" stock", at: [2 * PITCH, CONTROLS_Y - PITCH], t: 3, stock: "birch plywood", display: { color: 0x2e8b3d } },
 ];
 
 function laserSwatch(s, unburnt) {

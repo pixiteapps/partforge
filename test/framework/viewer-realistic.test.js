@@ -1453,3 +1453,26 @@ test("frames are pulled from the source only when the realistic look is drawn", 
   expect(source).toHaveBeenCalledTimes(2);
   v.dispose();
 });
+
+// A laser sheet naming no material draws as its stock (sheet-look.js realisticDisplay),
+// not as a PLA print — realistic-only: the CAD material is exactly as before.
+test("a laser sheet with no material draws its stock's look in realistic; CAD is unchanged", async () => {
+  const def = { meta: { title: "t" }, parts: {
+    ply: sheetPart({ views: ["main"], material: "birch plywood", thickness: 3, profile: square }),
+    acrylic: sheetPart({ views: ["main"], material: "3 mm Perspex", thickness: 3, profile: square }),
+    stained: sheetPart({ views: ["main"], display: { color: 0x2e8b3d }, material: "birch plywood", thickness: 3, profile: square }),
+  } };
+  const v = createViewer(createContainer(), def);
+  for (const n of Object.keys(def.parts)) v.setSubGeometry(n, payload());
+  v.showAssembly(Object.keys(def.parts), { frame: true });
+  const cad = v.__subMesh("ply").material;
+  expect(cad.color.getHex()).toBe(0x9fb4cc);
+  await v.setRenderMode("realistic");
+  expect(v.__subMesh("ply").material.customProgramCacheKey()).toBe("pf-pattern:wood|pf-burn");
+  expect(v.__subMesh("ply").material.color.getHex()).toBe(0xffffff);       // the map carries plywood's colour
+  expect(v.__subMesh("acrylic").material.transmission).toBe(1);
+  expect(v.__subMesh("stained").material.color.getHex()).toBe(0x2e8b3d);   // a bare colour tints the plywood
+  await v.setRenderMode("cad");
+  expect(v.__subMesh("ply").material).toBe(cad);
+  v.dispose();
+});

@@ -12,7 +12,7 @@ import { sheetPart } from "../../src/framework/sheet/part.js";
 import { MARK_DEPTH } from "../../src/framework/sheet/constants.js";
 import { poseSteps } from "../../src/framework/sheet/pose.js";
 import { composePose, invertRigid, transformPositions } from "../../src/framework/geometry/pose.js";
-import { BURN, burnAlbedo, burnsFor, classifySheetSurface, plyCount, sheetFrameFor, srgbToLinear } from "../../src/framework/materials/sheet-look.js";
+import { BURN, DEFAULT_STOCK_LOOK, STOCK_LOOKS, burnAlbedo, burnsFor, classifySheetSurface, plyCount, realisticDisplay, sheetFrameFor, sheetStockLook, srgbToLinear, stockLook } from "../../src/framework/materials/sheet-look.js";
 import { PRESETS } from "../../src/framework/materials/presets.js";
 
 let k;
@@ -181,4 +181,37 @@ test("a plywood sheet shows its plies: 3 mm → 3, 6 → 5, 9 → 7; other woods
     expect(sheetFrameFor(panel({ display: { material: "plywood" }, thickness: t }), P).plies, `${t} mm`).toBe(plies);
   }
   expect(sheetFrameFor(panel(), P).plies).toBe(0);
+});
+
+describe("a laser sheet with no usable material takes its stock's look", () => {
+  test("one keyword table: acrylic-like stock is clear acrylic, everything else plywood", () => {
+    for (const stock of ["clear acrylic", "3 mm Perspex", "Plexiglas", "PMMA", "polycarbonate sheet", "Cast ACRYLIC"]) {
+      expect(stockLook(stock), stock).toBe("clear-acrylic");
+    }
+    for (const stock of ["birch plywood", "basswood", "poplar ply", "MDF", "hardboard", "wood", "cardboard", "", "?"]) {
+      expect(stockLook(stock), stock).toBe("plywood");
+    }
+    expect(stockLook((p) => p.stock)).toBe(DEFAULT_STOCK_LOOK);   // a function label is not read
+    for (const { look } of STOCK_LOOKS) expect(Object.keys(PRESETS)).toContain(look);
+    expect(Object.keys(PRESETS)).toContain(DEFAULT_STOCK_LOOK);
+  });
+
+  test("realisticDisplay: an explicit known material wins; none, or an unknown one, takes the stock's look", () => {
+    const oak = panel();
+    expect(realisticDisplay(oak)).toBe(oak.display);
+    expect(realisticDisplay(panel({ display: undefined }))).toEqual({ material: "plywood" });
+    expect(realisticDisplay(panel({ display: { color: 0x2e8b3d } }))).toEqual({ color: 0x2e8b3d, material: "plywood" });
+    expect(realisticDisplay(panel({ display: { material: "birch" } }))).toEqual({ material: "plywood" });
+    expect(realisticDisplay(panel({ display: undefined, material: "clear acrylic" }))).toEqual({ material: "clear-acrylic" });
+    const block = { views: ["main"], build: () => null };
+    expect(realisticDisplay(block)).toBeUndefined();              // not a sheet: still a PLA print
+    expect(sheetStockLook(block)).toBeNull();
+  });
+
+  test("a default-plywood sheet burns and shows its plies; a default-acrylic one does not burn", () => {
+    const ply = panel({ display: undefined });
+    expect(burnsFor(ply)).toBe(true);
+    expect(sheetFrameFor(ply, P).plies).toBe(3);
+    expect(burnsFor(panel({ display: undefined, material: "clear acrylic" }))).toBe(false);
+  });
 });

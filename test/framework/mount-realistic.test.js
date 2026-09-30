@@ -630,3 +630,23 @@ test("a delivery while realistic recomputes the sheet frame; CAD deliveries do n
   expect(sheetFrameCalls.count).toBe(before + 1);
   runtime.dispose();
 });
+
+test("a laser sheet with no material gets a sheet frame, not a print frame", async () => {
+  const part = sheetFixture();
+  part.parts.panel = sheetPart({ label: "Panel", views: ["main"], material: "birch plywood",
+    thickness: (p) => p.t, profile: (k) => k.shape2d([[0, 0], [30, 0], [30, 30], [0, 30]]), pose: SHEET_POSE });
+  const workers = {};
+  const runtime = mount(part, {
+    createWorker: (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null }),
+    elements: makeElements(),
+  });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("panel"), payload("block")], ms: 1 } });
+  await runtime.ready;
+  await runtime.renderMode.set("realistic");
+  expect(printFrameCalls.count).toBe(0);                      // no layer lines: it is no longer PLA
+  expect(sheetFrameCalls.count).toBe(1);
+  expect(viewers[0].__subMesh("panel").material.userData.patternUniforms.pfPlies.value).toBe(3);
+  expect(runtime.declaresMaterials).toBe(true);               // the block names oak — the default never counts
+  runtime.dispose();
+});

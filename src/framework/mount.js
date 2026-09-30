@@ -13,7 +13,7 @@ import { attachViewStyleControls } from "./view-style-controls.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
 import { declaresMaterials, resolveMaterial } from "./materials/resolve.js";
 import { printFrameMatrix } from "./materials/print-frame.js";
-import { burnsFor, sheetFrameFor } from "./materials/sheet-look.js";
+import { burnsFor, realisticDisplay, sheetFrameFor } from "./materials/sheet-look.js";
 import { buildControls } from "./controls.js";
 import { relevantParamKeys } from "./param-deps.js";
 import { createMeshCache } from "./mesh-cache.js";
@@ -956,13 +956,15 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     //  - print frames for the layer-line pattern: the display → export map, so layers run
     //    the way the part is printed rather than the way it is displayed. Only sub-parts
     //    whose material draws layer lines have one — which includes every sub-part naming
-    //    no material, since realistic mode shows those as PLA (resolve.js). One without a
-    //    place() is identity at once; one with it costs two geometry-free probe builds.
+    //    no material, since realistic mode shows those as PLA (resolve.js) — except a laser
+    //    sheet part, which it shows as its stock (sheet-look.js realisticDisplay). One
+    //    without a place() is identity at once; one with it costs two geometry-free probe
+    //    builds.
     //  - sheet frames for the burn pass (materials/sheet-look.js): a laser sheet in a wood,
     //    mapped back into its canonical frame — from data, no probe.
     // Each describes the delivered mesh (which a later pose-only repair only moves).
     const layerLined = new Set(Object.keys(part.parts).filter((n) => {
-      try { return resolveMaterial(part.parts[n].display).params.pattern === "layer-lines"; } catch { return false; }
+      try { return resolveMaterial(realisticDisplay(part.parts[n])).params.pattern === "layer-lines"; } catch { return false; }
     }));
     const burning = new Set(Object.keys(part.parts).filter((n) => burnsFor(part.parts[n])));
     // LAZY: a delivery only records the view and params it was built at; the viewer pulls

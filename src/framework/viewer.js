@@ -11,7 +11,7 @@ import { ensureBoxUVs } from "./materials/uv.js";
 import { loadEnvironmentRig } from "./materials/environment.js";
 import { assetUrl } from "./materials/assets.js";
 import { resolveEnvironmentId } from "./materials/resolve.js";
-import { burnsFor } from "./materials/sheet-look.js";
+import { burnsFor, realisticDisplay } from "./materials/sheet-look.js";
 import { neutralToneMapToSrgb8 } from "./materials/tonemap-readback.js";
 import { createCutaway } from "./cutaway.js";
 import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
@@ -730,7 +730,8 @@ export function createViewer(container, part) {
       const sp = part.parts[name];
       // `burn` is decided once per sub-part (sheet-look.js burnsFor): only a laser sheet in
       // a wood compiles the burn pass, so every other program is exactly what it was.
-      m = cloneKeepsPattern(buildPhysicalMaterial(sp.display, { printFrame: printFrames[name], burn: burnsFor(sp), loadTexture }));
+      // realisticDisplay: a laser sheet with no material draws as its stock (sheet-look.js).
+      m = cloneKeepsPattern(buildPhysicalMaterial(realisticDisplay(sp), { printFrame: printFrames[name], burn: burnsFor(sp), loadTexture }));
       physicalMats.set(name, m);
       syncGrain(name);
       applySheetFrame(m, sheetFrames[name]);

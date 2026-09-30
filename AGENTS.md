@@ -208,7 +208,10 @@ the installed package, so let the publish finish before bumping the dep there.
   throws; a sub-part with no usable material - none named, or an unknown one -
   keeps the blue-grey CAD look but resolves to `pla-print` in the part's colour
   (else that blue-grey) for realistic mode, so its layer lines get a print
-  frame like any PLA part; there is no hidden `"default"` preset any more, and
+  frame like any PLA part; a laser sheet part is the exception -
+  `sheet-look.js`'s `realisticDisplay` gives it its stock's look (`plywood`,
+  or `clear-acrylic` for acrylic-like stock); there is no hidden `"default"`
+  preset any more, and
   `declaresMaterials` still counts only a named material), `print-frame.js`
   and `sheet-look.js` (pose math for layer lines, and a laser sheet part's
   canonical frame for its burns - from data, no probe; frames are LAZY -

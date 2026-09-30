@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import { lintPart } from "../src/lint.js";
+import { sheetPart } from "../src/framework/sheet/part.js";
 
 const goodPart = () => ({
   meta: { title: "Test", units: "mm" },
@@ -54,4 +55,17 @@ test("a legacy color/opacity display produces no material findings", () => {
   const part = goodPart();
   part.parts.body.display = { color: 0x1e88e5, opacity: 0.3 };
   expect(warnIds(part).filter((id) => id.includes("material"))).toEqual([]);
+});
+
+test("an unknown material on a laser sheet names the stock's look the viewer falls back to", () => {
+  const part = goodPart();
+  part.parts.body = sheetPart({ label: "Body", views: ["main"], display: { material: "birch" }, material: "birch plywood",
+    thickness: 3, profile: (k) => k.shape2d([[0, 0], [30, 0], [30, 30], [0, 30]]) });
+  const f = lintPart(part).warnings.find((w) => w.rule === "unknown-material");
+  expect(f.hint).toContain("`plywood`");
+  expect(f.hint).not.toContain("PLA print");
+  // an ordinary sub-part keeps the PLA wording
+  const plain = goodPart();
+  plain.parts.body.display = { material: "birch" };
+  expect(lintPart(plain).warnings.find((w) => w.rule === "unknown-material").hint).toContain("a PLA print in realistic mode");
 });

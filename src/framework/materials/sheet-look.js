@@ -12,10 +12,16 @@
 // is its inverse: computed from data, with no pose probe and no geometry. A sheet with an
 // author place, a replaced place or a custom build is not trusted with a frame — it draws
 // plain wood, never a frame that could char a face.
+//
+// It also says what a laser sheet part with no usable material looks like: not a PLA print
+// (resolve.js's default for every other sub-part) but the sheet its stock label names —
+// realisticDisplay, from the ONE keyword table STOCK_LOOKS. Realistic-only, like the PLA
+// default: the CAD view, 3MF colours and declaresMaterials read sp.display itself.
 import { isSheetPart, sheetMeta, MARK_DEPTH } from "../sheet/constants.js";
 import { poseSteps, validatePose } from "../sheet/pose.js";
 import { composePose, invertRigid } from "../geometry/pose.js";
 import { resolveMaterial } from "./resolve.js";
+import { PRESETS } from "./presets.js";
 
 const IDENTITY = Object.freeze([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
@@ -68,7 +74,40 @@ export function plyCount(t) {
 }
 
 // The material realistic mode draws this sub-part in.
-const lookOf = (sp) => resolveMaterial(sp.display);
+const lookOf = (sp) => resolveMaterial(realisticDisplay(sp));
+
+// A laser sheet with no usable material takes its look from its stock label: the first row
+// whose word the label contains (ignoring case), else DEFAULT_STOCK_LOOK — plywood for
+// birch, basswood, poplar, MDF, hardboard, card or anything unlabelled. Only a string label
+// is read: a (p, d) function would make a sub-part's look (and its program) depend on the
+// params it was first drawn at, so it counts as unlabelled.
+export const STOCK_LOOKS = Object.freeze([
+  Object.freeze({ look: "clear-acrylic", words: Object.freeze(["acrylic", "perspex", "plexi", "pmma", "polycarbonate"]) }),
+]);
+export const DEFAULT_STOCK_LOOK = "plywood";
+
+export function stockLook(stock) {
+  if (typeof stock !== "string") return DEFAULT_STOCK_LOOK;
+  const label = stock.toLowerCase();
+  return STOCK_LOOKS.find(({ words }) => words.some((w) => label.includes(w)))?.look ?? DEFAULT_STOCK_LOOK;
+}
+
+// The stock's look for a laser sheet part, else null (lint names it in its fallback hint).
+export function sheetStockLook(sp) {
+  return isSheetPart(sp) && sp.sheet.process === "laser" ? stockLook(sp.sheet.material) : null;
+}
+
+// The display realistic mode draws: sp.display itself, except that a laser sheet part
+// naming no KNOWN material — none, or one the library does not know, the same "no usable
+// material" resolve.js treats as one case — gets its stock's look. A `color` rides along,
+// so a bare colour tints that look (stained plywood, coloured acrylic).
+export function realisticDisplay(sp) {
+  const display = sp?.display;
+  const look = sheetStockLook(sp);
+  if (!look) return display;
+  if (typeof display?.material === "string" && Object.hasOwn(PRESETS, display.material)) return display;
+  return { ...(display && typeof display === "object" ? display : {}), material: look };
+}
 
 // Does this sub-part carry the burn pass at all? Static — it reads no params — so the
 // viewer decides a sub-part's PROGRAM once, and every sub-part that answers false keeps

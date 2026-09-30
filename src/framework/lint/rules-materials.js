@@ -7,6 +7,7 @@ import { PRESETS } from "../materials/presets.js";
 import { ENVIRONMENTS } from "../materials/environments.js";
 import { resolveMaterial, resolveEnvironmentId, OVERRIDE_RANGES } from "../materials/resolve.js";
 import { suggest } from "../geometry/op-options.js";
+import { sheetStockLook } from "../materials/sheet-look.js";
 
 const listedPresets = () => Object.keys(PRESETS);
 const subParts = (part) => Object.entries(part?.parts ?? {}).filter(([, sp]) => sp && typeof sp === "object");
@@ -18,9 +19,12 @@ export const MATERIAL_RULES = [
     id: "unknown-material",
     run: ({ part }) => issuesOf(part, "unknown-material").map(({ name, value }) => {
       const near = typeof value === "string" ? suggest(value, listedPresets()) : null;
+      // A laser sheet falls back to its stock's look, not to PLA (materials/sheet-look.js).
+      const stock = sheetStockLook(part.parts[name]);
+      const fallback = stock ? `in realistic mode \`${stock}\`, from its stock label` : "a PLA print in realistic mode";
       return warn("unknown-material",
         `sub-part "${name}" names material ${JSON.stringify(value)}, which is not in the library`,
-        `${near ? `Did you mean "${near}"? ` : ""}The viewer draws it as if it named no material instead (a PLA print in realistic mode). Known materials: ${listedPresets().join(", ")}.`,
+        `${near ? `Did you mean "${near}"? ` : ""}The viewer draws it as if it named no material instead (${fallback}). Known materials: ${listedPresets().join(", ")}.`,
         `parts.${name}.display.material`);
     }),
   },
