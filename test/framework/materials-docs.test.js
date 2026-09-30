@@ -32,3 +32,12 @@ test("the sheet-default table lists every stock word and look", () => {
   }
   expect(section).toContain(`\`${DEFAULT_STOCK_LOOK}\``);
 });
+
+test("the Laser-cut wood paragraph says who burns, that nothing is set, and when it does not", () => {
+  const i = section.indexOf("**Laser-cut wood.**");
+  expect(i).toBeGreaterThan(-1);
+  const para = section.slice(i, section.indexOf("\n\n", i));
+  for (const s of ["`sheetPart`", "`plywood`", "`oak`", "`walnut`", "realistic", "nothing to set", "custom `build`", "own `place`", "CAD"]) {
+    expect(para, s).toContain(s);
+  }
+});

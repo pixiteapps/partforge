@@ -380,6 +380,14 @@ displayed. If the lines run the wrong way, fix the export pose with `place()`
 fixed to the sub-part, so they never slide when the camera or an animation
 moves.
 
+**Laser-cut wood.** In realistic mode a laser `sheetPart` in a wood — `plywood`, `oak` or
+`walnut` — shows what the laser did: its cut edges are charred, darker on thicker stock (on
+`plywood` the plies show through), and its engraving and score lines are scorched, while its
+faces stay wood. There is nothing to set, and it is still one material: the char follows
+from the sheet and the material it names. It needs the sheet's own frame, so a sheet part
+with a custom `build` or its own `place` shows plain wood. The CAD view and every export are
+unchanged.
+
 **`textureScale` is millimetres, and what it measures depends on the preset's
 pattern** — so a value copied from one preset family is wrong on another (0.2
 on oak shrinks the grain to a 0.2 mm tile, i.e. invisible noise):
@@ -2000,7 +2008,7 @@ const hingeSlots = (k, p, d, pose, z) => d.hingeX.flatMap((hx) =>
   [hx - HINGE.tongueX, hx + HINGE.tongueX].map((x) =>
     k.shape2d(tab(p).slot).translate(worldToSheet(pose, [x, p.depth / 2, z]))));
 
-const PLY = { views: ["box"], display: { material: "oak" }, material: "birch plywood", thickness: (p) => p.t };
+const PLY = { views: ["box"], display: { material: "plywood" }, material: "birch plywood", thickness: (p) => p.t };
 const panel = (name, label, extra = {}) => sheetPart({
   ...PLY, label,
   profile: (k, p, d) => d.box[name].outline,       // drawn as seen from outside
