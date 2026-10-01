@@ -297,6 +297,20 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   const sheetBudget = { left: opts.sheetBudgetMs ?? SHEET_CHECK_BUDGET_MS, now: opts.now ?? Date.now };
   const subparts = built.map(({ name, solid, mesh }) => {
     const sheet = isSheetPart(part.parts[name]);
+    // Memo key = the inputs this sub-part's facts actually depend on, besides its
+    // own geometry hash: whether min-wall ran, at what sample budget and against
+    // which declared band, and the overhang angle. Withheld for sheet parts, a
+    // declared `reference` sub-part (deviation reads another import), any
+    // sub-part when the view holds a sheet part (the budgeted 2-D pass and
+    // print-pose sizes are call-scoped, not per-sub-part cacheable), and a solid
+    // with no `_hash` (nothing to key reuse on).
+    const memoKey = opts.memo && !sheetView && !sheet && !part.parts[name]?.reference && solid?._hash
+      ? JSON.stringify({ mw: !!opts.minWall, s: minWallSamples ?? null, band: wallBands[name] ?? null, oh: overhangAngle ?? null })
+      : null;
+    if (memoKey) {
+      const hit = opts.memo.get(name, solid._hash, memoKey);
+      if (hit) { subBounds.push(hit.bounds); return hit; }
+    }
     const b = bounds(mesh.positions);
     subBounds.push(b);
     // Resolved lazily and only when asked for: without min-wall, a single-sub-part
@@ -335,7 +349,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
         bboxDelta: [0, 1, 2].map((i) => Math.max(Math.abs(b.min[i] - rb.min[i]), Math.abs(b.max[i] - rb.max[i]))),
       };
     }
-    return {
+    const facts = {
       name,
       bbox: size(b),
       bounds: { min: b.min, max: b.max },
@@ -373,6 +387,8 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       ...(printBboxes?.[name]?.size ? { printBbox: printBboxes[name].size } : {}),
       ...(printBboxes?.[name]?.error ? { printBboxError: printBboxes[name].error } : {}),
     };
+    if (memoKey) opts.memo.set(name, solid._hash, memoKey, facts);
+    return facts;
   });
 
   // Declared probes, evaluated regardless of view (they are part-level facts —
@@ -394,7 +410,16 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // pairGapChecks reads an empty table as "measured, and this pair has no distance"
   // and fails a declared gate on it, while an absent table reads as no reading.
   const measuredGaps = opts.gaps !== false;
-  const gaps = measuredGaps ? (built.length > 1 ? meshGaps(built, { bvhCache }) : []) : undefined;
+  const hashOf = new Map(built.map(({ name, solid }) => [name, solid?._hash ?? null]));
+  const gaps = measuredGaps
+    ? (built.length > 1
+      ? meshGaps(built, {
+        bvhCache,
+        prior: opts.memo ? (a, b) => (hashOf.get(a) && hashOf.get(b) ? opts.memo.getPair(a, hashOf.get(a), b, hashOf.get(b)) : undefined) : undefined,
+        onPair: opts.memo ? (a, b, g) => { if (hashOf.get(a) && hashOf.get(b)) opts.memo.setPair(a, hashOf.get(a), b, hashOf.get(b), g); } : undefined,
+      })
+      : [])
+    : undefined;
 
   // Rebuilds with the same kernel and cleans up at its end — every solid fact
   // above is already read, so this is safe.
