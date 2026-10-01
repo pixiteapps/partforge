@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { guardStaleTouches } from "./stale-touch-guard.js";
 import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -11,6 +12,7 @@ import { ensureBoxUVs } from "./materials/uv.js";
 import { loadEnvironmentRig } from "./materials/environment.js";
 import { assetUrl } from "./materials/assets.js";
 import { resolveEnvironmentId } from "./materials/resolve.js";
+import { burnsFor, realisticDisplay } from "./materials/sheet-look.js";
 import { neutralToneMapToSrgb8 } from "./materials/tonemap-readback.js";
 import { createCutaway } from "./cutaway.js";
 import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
@@ -231,6 +233,9 @@ export function createViewer(container, part) {
 
   const controls = new OrbitControls(activeCamera, renderer.domElement);
   controls.enableDamping = true;
+  // A finger a host gesture swallowed would otherwise stay "down" in the
+  // controls forever (every later drag zooms) — see stale-touch-guard.js.
+  const disposeTouchGuard = guardStaleTouches(renderer.domElement);
 
   // --- render on demand -------------------------------------------------------
   // The loop ticks every animation frame (controls, tweens, frame listeners —
@@ -587,9 +592,11 @@ export function createViewer(container, part) {
   const textureCache = new Map();    // asset file name -> Texture
   const textureLoader = new THREE.TextureLoader();
   let pmrem = null;
-  let printFrames = {};
-  let printFrameSource = null;       // () => frames; mount's lazy provider (setPrintFrameSource)
-  let printFramesStale = false;      // the source has frames the materials have not seen
+  let printFrames = {};              // name -> mat4 array: layer lines' display → export map
+  let sheetFrames = {};              // name -> { frame, t, plies }: a burning sheet's canonical frame (sheet-look.js)
+  let frameSource = null;            // () => { print, sheet }; mount's lazy provider (setFrameSource)
+  let framesStale = false;           // the source has frames the materials have not seen
+  const IDENTITY_MAT4 = new THREE.Matrix4().toArray();
   const modeListeners = new Set();
   const envListeners = new Set();
   const SHADOW_LOWRES_MS = 100;      // at most one low-res shadow per this, while a part moves
@@ -724,9 +731,14 @@ export function createViewer(container, part) {
   function physicalFor(name) {
     let m = physicalMats.get(name);
     if (!m) {
-      m = cloneKeepsPattern(buildPhysicalMaterial(part.parts[name].display, { printFrame: printFrames[name], loadTexture }));
+      const sp = part.parts[name];
+      // `burn` is decided once per sub-part (sheet-look.js burnsFor): only a laser sheet in
+      // a wood compiles the burn pass, so every other program is exactly what it was.
+      // realisticDisplay: a laser sheet with no material draws as its stock (sheet-look.js).
+      m = cloneKeepsPattern(buildPhysicalMaterial(realisticDisplay(sp), { printFrame: printFrames[name], burn: burnsFor(sp), loadTexture }));
       physicalMats.set(name, m);
       syncGrain(name);
+      applySheetFrame(m, sheetFrames[name]);
     }
     return m;
   }
@@ -855,7 +867,7 @@ export function createViewer(container, part) {
   // ground only moves on showAssembly, never because a capture happened.
   function enterRealistic(rig, { live = true, reground = true } = {}) {
     try {
-      syncPrintFrames(); // before the swap: the first realistic frame has the export-pose layers
+      syncFrames(); // before the swap: the first realistic frame has the export-pose layers and the sheets' burns
       renderMode = "realistic";
       // A regen can land between the proxy compile and here, while the mode
       // was still CAD, so setSubGeometry skipped the UVs. Idempotent.
@@ -925,7 +937,7 @@ export function createViewer(container, part) {
   // target bound — each only for the synchronous compile() inside
   // compileAsync, so the view on screen is untouched while it waits.
   function compileRealistic(rig, { forCapture = false } = {}) {
-    syncPrintFrames();
+    syncFrames();
     const proxy = new THREE.Scene();
     proxy.environment = rig.envMap;
     for (const n of names) {
@@ -1026,30 +1038,45 @@ export function createViewer(container, part) {
     for (const [n, m] of physicalMats) m.userData.patternUniforms?.pfPrintFrame.value.fromArray(printFrames[n] ?? identity);
   }
 
-  // The lazy form mount uses. Computing a frame runs the sub-part's pose probe
-  // (two geometry-free builds for a placed sub-part), and every sub-part with
-  // no material draws layer lines, so frames are PULLED only when something is
-  // about to draw the realistic look: the live view (or a switch loading),
-  // and any capture that borrows it — compileRealistic and enterRealistic are
-  // the two doors every such path goes through. A delivery just marks them
-  // stale (invalidatePrintFrames); in CAD nothing is computed.
-  function setPrintFrameSource(source) {
-    printFrameSource = typeof source === "function" ? source : null;
-    invalidatePrintFrames();
+  // A burning sheet's canonical frame (sheet-look.js sheetFrameFor). No frame — not yet
+  // delivered, or not computable at these params — is pfSheetT = 0: plain wood.
+  function applySheetFrame(m, f) {
+    const u = m.userData.patternUniforms;
+    if (!u?.pfSheetFrame) return;
+    u.pfSheetFrame.value.fromArray(f?.frame ?? IDENTITY_MAT4);
+    u.pfSheetT.value = f?.t ?? 0;
+    u.pfPlies.value = f?.plies ?? 0;
   }
-  function invalidatePrintFrames() {
-    printFramesStale = true;
-    if (renderMode === "realistic" || realisticPending) syncPrintFrames();
+  function setSheetFrames(frames) {
+    sheetFrames = frames ?? {};
+    for (const [n, m] of physicalMats) applySheetFrame(m, sheetFrames[n]);
   }
-  function syncPrintFrames() {
-    if (!printFrameSource || !printFramesStale) return;
-    printFramesStale = false;
+
+  // The lazy form mount uses. Frames are PULLED only when something is about to draw the
+  // realistic look: the live view (or a switch loading), and any capture that borrows it —
+  // compileRealistic and enterRealistic are the two doors every such path goes through. A
+  // delivery just marks them stale (invalidateFrames); in CAD nothing is computed. One
+  // source carries both kinds: `print` (layer lines; a placed sub-part's costs two
+  // geometry-free probe builds, and every sub-part with no material draws layer lines) and
+  // `sheet` (a burning sheet's canonical frame, from data).
+  function setFrameSource(source) {
+    frameSource = typeof source === "function" ? source : null;
+    invalidateFrames();
+  }
+  function invalidateFrames() {
+    framesStale = true;
+    if (renderMode === "realistic" || realisticPending) syncFrames();
+  }
+  function syncFrames() {
+    if (!frameSource || !framesStale) return;
+    framesStale = false;
     let frames;
-    try { frames = printFrameSource(); } catch (e) {
-      console.warn("partforge: computing print frames failed", e);
+    try { frames = frameSource(); } catch (e) {
+      console.warn("partforge: computing material frames failed", e);
       return;
     }
-    setPrintFrames(frames);
+    setPrintFrames(frames?.print);
+    setSheetFrames(frames?.sheet);
   }
 
   // Resolves once the current environment's rig is loaded (captures wait on it).
@@ -2608,6 +2635,7 @@ export function createViewer(container, part) {
     canonicalCaptureHidden.clear();
     camTween.cancel();
     controls.dispose();
+    disposeTouchGuard();
     for (const t of flashTimers) clearTimeout(t);
     flashTimers.clear();
     // A dot whose timer was just cancelled — or one held indefinitely — still
@@ -2730,8 +2758,9 @@ export function createViewer(container, part) {
     isRealisticPending: () => realisticPending,
     onEnvironmentChange: (cb) => { envListeners.add(cb); return () => envListeners.delete(cb); },
     setPrintFrames,
-    setPrintFrameSource,
-    invalidatePrintFrames,
+    setSheetFrames,
+    setFrameSource,
+    invalidateFrames,
     whenRealisticReady,
     dispose,
   }, () => requestRender(API_GRACE_MS));

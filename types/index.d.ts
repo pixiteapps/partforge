@@ -25,8 +25,49 @@ export type HostRailLayout =
   | { mode: "overlay" }
   | null;
 
-/** An export file format. STEP is routed to OCCT automatically. */
-export type ExportFormat = "stl" | "step" | "3mf";
+/** An export file format. STEP is routed to OCCT automatically; `"bundle"` is the cut & print kit (a ZIP). */
+export type ExportFormat = "stl" | "step" | "3mf" | "bundle";
+
+/** One entry of `runtime.listExportFormats()` / `EXPORT_FORMATS`. `needsSheet` marks a format that needs a sheet part checked. */
+export interface ExportFormatInfo {
+  id: ExportFormat;
+  label: string;
+  ext: string;
+  mime: string;
+  needsSheet: boolean;
+}
+
+/** A sheet part's stock, as `listExportableParts()` reports it. `group` is the kit's stock-group key, e.g. `"birch plywood|3.00"`. */
+export interface ExportableSheetInfo {
+  process: string;
+  material: string;
+  thickness: number;
+  group: string;
+}
+
+/**
+ * The cut & print kit's download options — `exportParts({ format: "bundle", options })`.
+ * Every key is optional; `validateKitOptions` fills the defaults and throws an error
+ * starting `"cut kit options:"` for anything it cannot honour.
+ */
+export interface KitOptions {
+  /** `"own-laser"` (default): SVG, laid out on sheets. `"service"`: DXF, one cut-only file per piece. */
+  destination?: "own-laser" | "service";
+  /** Derived from `destination`; when given it must match. */
+  cutFormat?: "svg" | "dxf";
+  /** mm, 0–0.5: the cut lines move out by half of it. Default 0 (nominal geometry). */
+  kerf?: number;
+  colors?: "lightburn";
+  /** Sheet size in mm per stock group; `"*"` is an explicit default. `null` (default) is 300 × 300 mm for every group. */
+  stock?: Array<{ group: string; size: [number, number] }> | null;
+  /** mm, 0–50. Default 5. */
+  margin?: number;
+  /** mm, 1–50. Default 3. */
+  spacing?: number;
+  printFormat?: "stl" | "3mf";
+  /** Whole number, 1–20. Default 1. */
+  sets?: number;
+}
 
 /**
  * A semantic click result: which sub-part was hit, where (in the sub-part's own
@@ -346,9 +387,11 @@ export interface ExportPartsOptions {
   /** Sub-part names, as `listExportableParts()` reports them. */
   parts: string[];
   format: ExportFormat;
-  /** Mesh quality for STL/3MF. Defaults to `"print"`. */
+  /** Mesh quality for STL/3MF (and a kit's printed parts). Defaults to `"print"`. */
   quality?: "preview" | "print";
   onProgress?: (phase: string) => void;
+  /** The cut & print kit's download options (`format: "bundle"`; the other formats ignore them). */
+  options?: KitOptions;
 }
 
 export interface CaptureCurrentOptions {
@@ -581,9 +624,12 @@ export interface PartRuntime {
   onContextLost(listener: () => void): () => void;
   /**
    * Every exportable sub-part — excludes any `exportable: false` part, respects
-   * each part's `enabled(params)` — INDEPENDENT of the active view.
+   * each part's `enabled(params)` — INDEPENDENT of the active view. A sheet
+   * part's row adds `sheet`, evaluated at the current params (omitted when that throws).
    */
-  listExportableParts(): Array<{ name: string; label: string }>;
+  listExportableParts(): Array<{ name: string; label: string; sheet?: ExportableSheetInfo }>;
+  /** The formats `exportParts` writes in this version — fresh copies of `EXPORT_FORMATS`. */
+  listExportFormats(): ExportFormatInfo[];
   /**
    * Headless export of a chosen subset. Resolves once the file is written
    * (handed to your `onDownload` sink, or downloaded directly); rejects on
@@ -647,6 +693,27 @@ export interface PartRuntime {
 
 /** Mount a full parametric-part app from a `PartDefinition`. */
 export function mount(part: PartDefinition, options: MountOptions): PartRuntime;
+
+/** Every format `exportParts` can write in this version (`runtime.listExportFormats()` returns copies). */
+export const EXPORT_FORMATS: ReadonlyArray<ExportFormatInfo>;
+
+/** The prefix every cut & print kit options error starts with. */
+export const KIT_OPTIONS_ERROR: "cut kit options:";
+
+/** The kit's option defaults; `stock: null` is 300 × 300 mm for every stock group. */
+export const KIT_DEFAULTS: Readonly<{
+  destination: "own-laser";
+  kerf: number;
+  colors: "lightburn";
+  stock: null;
+  margin: number;
+  spacing: number;
+  printFormat: "stl";
+  sets: number;
+}>;
+
+/** Normalise kit options — defaults filled, `cutFormat` derived — or throw a `"cut kit options: …"` error. */
+export function validateKitOptions(options: unknown): Required<KitOptions>;
 
 /**
  * The sub-parts a view shows: declared in the view and `enabled` for these

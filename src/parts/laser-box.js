@@ -42,7 +42,7 @@ const hingeSlots = (k, p, d, pose, z) => d.hingeX.flatMap((hx) =>
   [hx - HINGE.tongueX, hx + HINGE.tongueX].map((x) =>
     k.shape2d(tab(p).slot).translate(worldToSheet(pose, [x, p.depth / 2, z]))));
 
-const PLY = { views: ["box"], display: { material: "oak" }, material: "birch plywood", thickness: (p) => p.t };
+const PLY = { views: ["box"], display: { material: "plywood" }, material: "birch plywood", thickness: (p) => p.t };
 const panel = (name, label, extra = {}) => sheetPart({
   ...PLY, label,
   profile: (k, p, d) => d.box[name].outline,       // drawn as seen from outside

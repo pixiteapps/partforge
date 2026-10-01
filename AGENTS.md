@@ -65,6 +65,7 @@ npx vitest run -t "assembly has no interpenetrating"   # a single test by name
 npm run check      # headless smoke test: boots an app in real Chromium (needs Playwright)
 node scripts/check-app.mjs demo.html         # smoke-test a specific app entry
 node scripts/time-sheet-inspect.mjs [--browser]    # inspect timing for the sheet-part stress cases (docs/research/sheet-inspect-timing.md)
+node scripts/capture-contact-sheet.mjs --out <dir> # realistic captures of materials.html in every environment + the laser-burn diffs
 ```
 
 The CLI (also the agent-facing surface) builds parts in pure Node - no browser:
@@ -208,12 +209,19 @@ the installed package, so let the publish finish before bumping the dep there.
   throws; a sub-part with no usable material - none named, or an unknown one -
   keeps the blue-grey CAD look but resolves to `pla-print` in the part's colour
   (else that blue-grey) for realistic mode, so its layer lines get a print
-  frame like any PLA part; there is no hidden `"default"` preset any more, and
+  frame like any PLA part; a laser sheet part is the exception -
+  `sheet-look.js`'s `realisticDisplay` gives it its stock's look (`plywood`,
+  or `clear-acrylic` for acrylic-like stock); there is no hidden `"default"`
+  preset any more, and
   `declaresMaterials` still counts only a named material), `print-frame.js`
-  (pose math for layer lines; frames are LAZY - `mount.js` only records each
-  delivery, and the viewer pulls them through `setPrintFrameSource` when it is
-  about to draw the realistic look, live or borrowed by a capture, so CAD
-  builds never run the pose probes), `assets.js` (asset filename -> URL) and
+  and `sheet-look.js` (pose math for layer lines, and a laser sheet part's
+  canonical frame for its burns - from data, no probe; frames are LAZY -
+  `mount.js` only records each delivery, against the params its generate job
+  was DISPATCHED with (a delivery shown during playback was built at params
+  the live ones have left), and the viewer pulls both kinds
+  through `setFrameSource` when it is about to draw the realistic look, live
+  or borrowed by a capture, so CAD builds never compute them), `assets.js`
+  (asset filename -> URL) and
   `tonemap-readback.js` (below) import **no three.js at all** - deliberately
   three-free and DOM-free so `lint`, the worker's 3MF writer and the
   docs-parity test can all import them without dragging GL or a browser into
@@ -224,8 +232,10 @@ the installed package, so let the publish finish before bumping the dep there.
   (the print-bed environment's cut-out build plate and its canvas-drawn
   markings), and `contact-shadow.js` - is a separate set of modules the viewer alone
   imports, not the worker. `patterns.js` is the **only** shader-injection
-  site (`onBeforeCompile`) for layer lines, wood, carbon weave and SLS grain
-  - a future TSL/WebGPU port only has to rewrite this one file. `assets.js`
+  site (`onBeforeCompile`) for layer lines, wood, carbon weave, SLS grain and
+  the laser burn (compiled only into the sub-parts `sheet-look.js`'s
+  `burnsFor` picks) - a future TSL/WebGPU port only has to rewrite this one
+  file. `assets.js`
   is the **only** module allowed a literal `new URL("./assets/x",
   import.meta.url)` (the same rule `docs/AUTHORING-PARTS.md` states for
   fonts/imports/vectors, and the fix for the `partforge/geometry`-class bug
@@ -243,8 +253,10 @@ the installed package, so let the publish finish before bumping the dep there.
   dependency of that script alone, never of the shipped framework or a running
   part. **`materials.html`** (dev-only, not in `vite.config.js`'s
   `rollupOptions.input`) is the contact sheet - one 30mm sample of every
-  preset plus the layer-line orientation check - to check by eye after any
-  preset or shader change.
+  preset, the layer-line orientation check, and the Laser-cut views (burning
+  sheets beside an unburnt twin that differs only by the burn;
+  `scripts/capture-contact-sheet.mjs` renders both in every environment and
+  diffs them) - to check by eye after any preset or shader change.
 - **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
   (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
   nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,
@@ -346,6 +358,39 @@ the installed package, so let the publish finish before bumping the dep there.
   part verifies byte-identically — `test/verify-golden.test.js` pins it; re-record only
   for a deliberate verdict change (`PARTFORGE_RECORD_VERIFY_GOLDEN=1 npx vitest run
   test/verify-golden.test.js`). Timings: `docs/research/sheet-inspect-timing.md`.
+- **`src/framework/export/`** - the cut & print kit's writers, process-agnostic.
+  `formats.js` is IMPORT-FREE: `EXPORT_FORMATS`, the kit's option contract
+  (`validateKitOptions`, `resolveStock`, `KIT_DEFAULTS`, `KIT_LIMITS`) and
+  `KIT_OPTIONS_ERROR`, the `cut kit options:` prefix partforge-cloud routes to
+  "Back to options" — every error an export option causes must start with it.
+  `drawing.js` holds the Drawing IR's services: `refitRing` (`recoverArcs`, then a
+  conservative line-run refit — ≥ 8 vertices on one circle, every step turning ≤ 15°
+  — so a `circlePolygon` and chorded corners cut as arcs while hexagons and stars stay
+  polygons) and `applyKerf` (`+kerf/2` on the cut layer only, refusing by name any
+  kerf that closes a slot, joins pieces or loses an arc). `svg.js` (mm-sized, y
+  flipped in the coordinates, every path fully styled) and `dxf.js` (R12: bulged
+  POLYLINEs, CIRCLE for an all-arc ring, cubics flattened to 0.01 mm) are paper-free
+  leaves, and `layout.js` packs one stock group onto sheets (deterministic shelves
+  over each piece's all-layer box). A process's exporter is
+  `process/<id>/export.js`, reached ONLY through `process/exporters.js`'s dynamic
+  import: the drawing stage reaches paper, so lint, the oracle and
+  `partforge/geometry` must never load it, and the whole stage must stay
+  worker-safe (`test/kit-export-guards.test.js`, which also pins the exporter ids
+  to `process/registry.js`'s).
+- **`src/framework/export/bundle.js`** - the cut & print kit itself,
+  `exportParts({ format: "bundle", options })`. `buildBundle` validates the options
+  before anything builds, draws every sheet part through its process's exporter,
+  merges identical pieces and prints into `-xN` files, lays each stock group out
+  (`layout.js`), writes the sheets, pieces and prints plus `readme.js`'s plain-text
+  README.txt and parts.csv, and zips them — asserting every entry name unique and
+  safe first. `jobs.js` reaches it only through `loadBundle`, a literal dynamic
+  import: `test/worker-layering.test.js` keeps every `export/` module and process
+  exporter out of worker boot (the main thread imports `formats.js` alone, through
+  `export-rows.js` for `listExportFormats()` and through `src/index.js` for the
+  options surface). The kit never loads `./oracle/*`
+  (`test/kit-layering.test.js` walks it and runs a real kit with every oracle module
+  mocked to throw), so the README's check lines are worded by `checkMessage`, a
+  restatement of `assert-dsl.js` that a test holds equal to it.
 - **`src/testing/`** - the genuinely Node-only harness, and only that:
   `manifold.js` / `occt.js` (boot a WASM kernel from disk), `render.js` (write
   PNGs), `error-patterns.js` (read `docs/ERROR-PATTERNS.md`). Never import these

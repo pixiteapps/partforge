@@ -103,3 +103,12 @@ test("Profiles & patterns points at the section (P1a's pointer)", () => {
   const i = guide.indexOf("\n## Profiles & patterns\n");
   expect(guide.slice(i, guide.indexOf("\n## ", i + 1))).toContain("[Sheet parts](#sheet-parts)");
 });
+
+// The section recommends an author `place` for an angled panel; that place also takes the
+// laser burns off the panel in realistic mode (materials/sheet-look.js burnsFor), and this
+// topic is served on its own, so it has to say so where it recommends one.
+test("Limits' angled-panel advice says an author place costs the realistic laser burns", () => {
+  const bullet = subsection("Limits").split("\n- ").find((b) => b.includes("author `place`"));
+  expect(bullet).toBeDefined();
+  expect(bullet.replace(/\s+/g, " ")).toContain("no laser burns");
+});

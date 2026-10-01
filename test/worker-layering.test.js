@@ -120,3 +120,28 @@ test("the worker's EAGER import closure loads no oracle pipeline module", () => 
       : `oracle modules load lazily (first inspect/describe job), never at worker boot:\n  ${chainTo(file, importer, ROOT)}`).toBe(true);
   }
 });
+
+test("the worker's EAGER import closure loads no cut & print kit module", () => {
+  // The kit — export/* (formats, writers, layout, README, zip) and the process
+  // exporters behind it — loads the way the oracle does: jobs.js's `loadBundle` is a
+  // literal dynamic import(), so a session that never downloads a kit never downloads
+  // or parses one. export/formats.js is no exception: small, but nothing at worker boot
+  // needs it (the main thread imports it for listExportFormats()).
+  const { files, importer } = walk(ENTRY, "eager worker walk", { eager: true });
+  for (const file of files) {
+    const kit = file.includes("/src/framework/export/")
+      || /\/src\/framework\/process\/(exporters|[^/]+\/export)\.js$/.test(file);
+    expect(kit, kit
+      ? `the cut & print kit loads lazily (first export-bundle job), never at worker boot:\n  ${chainTo(file, importer, ROOT)}`
+      : "").toBe(false);
+  }
+});
+
+test("the kit is still in the worker's FULL closure — its lazy import resolves", () => {
+  // The guard for the guard above: if loadBundle's specifier stopped being a literal, or
+  // the kit moved, the eager test would pass for the wrong reason while the DOM/Node
+  // bans above silently stopped covering the kit.
+  const { files } = graph();
+  expect(files.has(`${ROOT}/src/framework/export/bundle.js`)).toBe(true);
+  expect(files.has(`${ROOT}/src/framework/process/laser/export.js`)).toBe(true);
+});

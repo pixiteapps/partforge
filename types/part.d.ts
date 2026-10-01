@@ -441,6 +441,10 @@ export interface SheetDeclaration<P = ResolvedParams, D = Derived> {
   pose: SheetPose | ((p: P, d: D) => SheetPose | null) | null;
   /** The build `sheetPart` made; `sub.build !== sub.sheet.generatedBuild` is a custom build. */
   generatedBuild: (k: GeometryKernel, p: P, d: D) => Solid;
+  /** The author's own `place` (the spec's), run after the pose; `null` when there is none. */
+  place: ((solid: Solid, ctx: PlaceContext<P, D>) => Solid) | null;
+  /** The `place` `sheetPart` installed (the pose, then the author's own), or `null`; `sub.place !== sub.sheet.generatedPlace` is a replaced place. */
+  generatedPlace: ((solid: Solid, ctx: PlaceContext<P, D>) => Solid) | null;
 }
 
 export interface ViewDefinition {

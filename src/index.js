@@ -4,3 +4,7 @@
 // Part build functions import geometry helpers from "partforge/geometry" instead.
 export { mount } from "./framework/index.js";
 export { viewSubParts } from "./framework/part-model.js";
+// The cut & print kit's options surface, for a host that draws its own options screen
+// (partforge-cloud's coupling test reads KIT_OPTIONS_ERROR from here). export/formats.js
+// is import-free, so this adds nothing to the app bundle but a few constants.
+export { EXPORT_FORMATS, KIT_OPTIONS_ERROR, KIT_DEFAULTS, validateKitOptions } from "./framework/export/formats.js";

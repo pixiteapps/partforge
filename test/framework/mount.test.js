@@ -58,8 +58,9 @@ vi.mock("../../src/framework/viewer.js", () => ({
       setEnvironment: vi.fn(async (id) => id),
       onEnvironmentChange: () => () => {},
       setPrintFrames: vi.fn(),
-      setPrintFrameSource: vi.fn(),
-      invalidatePrintFrames: vi.fn(),
+      setSheetFrames: vi.fn(),
+      setFrameSource: vi.fn(),
+      invalidateFrames: vi.fn(),
       orbitBy: vi.fn(),
       _subMeshes: {},
       flashPoint: vi.fn(),
@@ -279,12 +280,12 @@ test("a sub-part with no material has a print frame, offered lazily on delivery"
   const { workers, createWorker } = makeWorkers();
   const runtime = mount(makePart(), { createWorker, elements: makeElements() });
   const v = fakeViewers[0];
-  expect(v.setPrintFrameSource).toHaveBeenCalledOnce();
+  expect(v.setFrameSource).toHaveBeenCalledOnce();
   finishFirstBuild(workers);
-  expect(v.invalidatePrintFrames).toHaveBeenCalled();
+  expect(v.invalidateFrames).toHaveBeenCalled();
   expect(v.setPrintFrames).not.toHaveBeenCalled(); // nothing computed in CAD
-  const source = v.setPrintFrameSource.mock.calls[0][0];
-  expect(source()).toEqual({ body: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] });
+  const source = v.setFrameSource.mock.calls[0][0];
+  expect(source()).toEqual({ print: { body: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] }, sheet: {} });
   expect(runtime.declaresMaterials).toBe(false);
   runtime.dispose();
 });
@@ -2050,4 +2051,24 @@ test("makeHandle defaults getPanelState/getPanelErrors when a mount resolves no 
   const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} });
   expect(h.getPanelState()).toEqual({});
   expect(h.getPanelErrors()).toEqual([]);
+});
+
+test("the runtime lists the export formats and tags a sheet part's row with its stock", () => {
+  const { createWorker } = makeWorkers();
+  const part = makePart();
+  part.defaults.t = 3;
+  // A sheet sub-part written as plain data — the shape sheetPart() returns, and all the
+  // framework may recognise it by: the cloud's part worker holds a second module
+  // instance of partforge/geometry, so nothing can hang on identity.
+  const build = (k) => k.box({ min: [0, 0, 0], max: [40, 20, 3] });
+  part.parts.panel = { label: "Panel", views: ["main"], build,
+    sheet: { process: "laser", material: "Birch Plywood", thickness: (p) => p.t, profile: () => null,
+      score: null, engrave: null, pose: null, generatedBuild: build } };
+  const runtime = mount(part, { createWorker, elements: makeElements() });
+  expect(runtime.listExportFormats().map((f) => f.id)).toEqual(["stl", "step", "3mf", "bundle"]);
+  expect(runtime.listExportableParts()).toStrictEqual([
+    { name: "body", label: "Body" },
+    { name: "panel", label: "Panel", sheet: { process: "laser", material: "Birch Plywood", thickness: 3, group: "birch plywood|3.00" } },
+  ]);
+  runtime.dispose();
 });

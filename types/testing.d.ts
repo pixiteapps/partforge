@@ -8,6 +8,7 @@
 
 import type { GeometryKernel, Mesh, Point3, Solid } from "./kernel.js";
 import type { Derived, FontSource, PartDefinition, ResolvedParams } from "./part.js";
+import type { KitOptions } from "./index.js";
 
 export type { Derived, GeometryKernel, Mesh, PartDefinition, ResolvedParams, Solid };
 
@@ -46,7 +47,8 @@ export type MatchTarget =
 
 /** A job the worker loop accepts. */
 export interface WorkerJob {
-  type: "generate" | "export-stl" | "export-step" | "export-3mf" | "inspect";
+  /** `export-bundle` builds the cut & print kit (a ZIP) from `parts`, as `exportParts({ format: "bundle" })` does. */
+  type: "generate" | "export-stl" | "export-step" | "export-3mf" | "export-bundle" | "inspect";
   view?: string;
   params?: ResolvedParams;
   /** `generate`: which sub-parts to build. */
@@ -55,10 +57,12 @@ export interface WorkerJob {
   parts?: string[];
   quality?: "preview" | "print";
   cache?: boolean;
-  /** Correlation id echoed on every reply. */
-  jobId?: number;
+  /** Correlation id echoed on every reply (the export controller mints strings). */
+  jobId?: number | string;
   /** Single-file export name base. */
   name?: string;
+  /** `export-bundle` only: the kit's download options; absent means every default. */
+  options?: KitOptions;
   /**
    * `inspect`: score the part's six canonical silhouettes against these. Absent or
    * empty leaves `match` off the report entirely.

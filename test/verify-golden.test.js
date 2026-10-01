@@ -26,6 +26,10 @@ const FIXTURE = fileURLToPath(new URL("./fixtures/verify-golden.json", import.me
 const RECORD = process.env.PARTFORGE_RECORD_VERIFY_GOLDEN === "1";
 // laser-box.js is the sheet-part reference: it never had a pre-sheet verdict.
 const EXCLUDED = new Set(["laser-box.js"]);
+// The contact sheet's laser-cut views hold sheet parts too, and a sheet's laser checks run
+// on a real clock (SHEET_CHECK_BUDGET_MS) — so their verdict depends on the machine. They
+// are a dev page for judging the burn by eye, with no verdict to guard.
+const EXCLUDED_VIEWS = new Set(["material-swatches.js#laser", "material-swatches.js#unburnt"]);
 const TMP = mkdtempSync(join(tmpdir(), "pf-verify-golden-"));
 afterAll(() => rmSync(TMP, { recursive: true, force: true }));
 
@@ -46,7 +50,9 @@ async function currentKeys() {
     // template import ending in an interpolation. `file` itself keeps its own ".js"
     // for the "<file>#<view>" key format below and the CLI arg in verifyOf().
     const part = (await import(`../src/parts/${file.slice(0, -3)}.js`)).default;
-    for (const view of Object.keys(part.views)) keys.push(`${file}#${view}`);
+    for (const view of Object.keys(part.views)) {
+      if (!EXCLUDED_VIEWS.has(`${file}#${view}`)) keys.push(`${file}#${view}`);
+    }
   }
   return keys;
 }
@@ -86,7 +92,7 @@ test("verify() over every reference part matches the pre-sheet golden", async ()
   for (const key of keys) expect(now[key], key).toEqual(golden[key]);
 }, 300_000);
 
-test("the golden covers every view of every reference part except laser-box.js", async () => {
+test("the golden covers every view of every reference part except laser-box.js and the contact sheet's laser views", async () => {
   const golden = JSON.parse(readFileSync(FIXTURE, "utf8"));
   expect(Object.keys(golden), "a new reference part needs its golden — see this file's header to re-record")
     .toEqual(await currentKeys());

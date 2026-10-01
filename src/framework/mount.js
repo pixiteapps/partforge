@@ -13,6 +13,7 @@ import { attachViewStyleControls } from "./view-style-controls.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
 import { declaresMaterials, resolveMaterial } from "./materials/resolve.js";
 import { printFrameMatrix } from "./materials/print-frame.js";
+import { burnsFor, realisticDisplay, sheetFrameFor } from "./materials/sheet-look.js";
 import { buildControls } from "./controls.js";
 import { relevantParamKeys } from "./param-deps.js";
 import { createMeshCache } from "./mesh-cache.js";
@@ -27,7 +28,7 @@ import { createStatusUi } from "./status-ui.js";
 import { createViewTabs } from "./view-tabs.js";
 import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } from "./selection/index.js";
 import { createPickRequestClient, resolvePickServerUrl, PICK_SERVER_DEFAULT_URL } from "./pick-request/index.js";
-import { exportablePartNames, partLabel } from "./export-select.js";
+import { exportableRows, exportFormatList } from "./export-rows.js";
 import { createExportController, backendForFormat } from "./export-controller.js";
 import { createCaptureBuild } from "./capture-build.js";
 import { attachAnimationControls } from "./animation-controls.js";
@@ -68,7 +69,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, renderMode, environment, declaresMaterials, renderViews }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, renderMode, environment, declaresMaterials, renderViews }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): animations are
@@ -141,6 +142,10 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // say "the 3D view ran out of memory" instead of showing a dead canvas.
     onContextLost: (listener) => viewer.onContextLost(listener),
     listExportableParts,
+    // What exportParts can write, as { id, label, ext, mime, needsSheet } — the cut &
+    // print kit ("bundle") needs a sheet part checked. A makeHandle caller that wires
+    // no export (a test) lists none.
+    listExportFormats: listExportFormats ?? (() => []),
     exportParts,
     // Pay the exact kernel's cold boot ahead of an export. STEP is pinned to
     // OCCT, whose ~11 MB WASM loads on its first job, so a Manifold-previewed
@@ -251,8 +256,11 @@ function createCleanupStack() {
 //                                         // framing (live camera pose + viewport aspect) at the
 //                                         // given long-edge resolution → JPEG data URL, or null
 //                                         // when disposed / nothing built yet
-//   runtime.listExportableParts();        // [{ name, label }] — every exportable sub-part,
-//                                         // independent of the active view (for an embedder-drawn export UI)
+//   runtime.listExportableParts();        // [{ name, label, sheet? }] — every exportable sub-part,
+//                                         // independent of the active view (for an embedder-drawn export UI);
+//                                         // a sheet part's row adds sheet: { process, material, thickness, group }
+//   runtime.listExportFormats();          // [{ id, label, ext, mime, needsSheet }] — what exportParts writes;
+//                                         // format "bundle" (the cut & print kit) also takes `options`
 //   await runtime.exportParts({ parts: ["base"], format: "stl", onProgress });
 //                                         // headless export of a chosen subset; resolves when the file is
 //                                         // written (handed to your onDownload sink, or downloaded directly
@@ -856,6 +864,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // to its own worker in parallel, so a mixed part previews its plain sub-parts at
     // Manifold speed while only the OCCT-routed ones wait. The return value is
     // the job count — the loop holds the cycle open until every group has replied.
+    // Each dispatched sub-part remembers the { view, params } its job was sent with
+    // (`dispatched`): the frames the realistic look reads must describe the geometry
+    // that job builds, and a delivery shown during playback was built at params the
+    // live ones have already left (see recordFrames). One cycle is in flight at a time,
+    // so a sub-part's entry is its in-flight job's until the cycle's last reply.
+    const dispatched = new Map(); // sub-part -> { view, params } its latest job was sent with
     const loop = createRegenLoop({
       missingParts,
       send: (missing) => {
@@ -863,6 +877,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // for the overlay; this build reports the poses repaired in its own cycle.
         lastGen = { skipped: needed.length - missing.length, rebuilt: missing.length, posed: pendingPosed.size };
         pendingPosed.clear(); // consumed — never counted against a second build
+        const at = { view: view(), params: { ...params } };
+        for (const n of missing) dispatched.set(n, at);
         ui.showBusy("generating");
         const backends = backendPolicy.backendsFor(params);
         let jobs = 0;
@@ -944,44 +960,58 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       }
     }
 
-    // Print frames for the layer-line pattern: the display → export map of the
-    // geometry just delivered, so layers run the way the part is printed rather
-    // than the way it is displayed. Each frame describes the delivered mesh
-    // (which a later pose-only repair only moves), and only sub-parts whose
-    // material draws layer lines have one — which includes every
-    // sub-part naming no material, since realistic mode shows those as PLA
-    // (resolve.js). One without a place() is identity at once; one with it
-    // costs two geometry-free probe builds.
+    // Frames the realistic look reads, for the geometry just delivered:
+    //  - print frames for the layer-line pattern: the display → export map, so layers run
+    //    the way the part is printed rather than the way it is displayed. Only sub-parts
+    //    whose material draws layer lines have one — which includes every sub-part naming
+    //    no material, since realistic mode shows those as PLA (resolve.js) — except a laser
+    //    sheet part, which it shows as its stock (sheet-look.js realisticDisplay). One
+    //    without a place() is identity at once; one with it costs two geometry-free probe
+    //    builds.
+    //  - sheet frames for the burn pass (materials/sheet-look.js): a laser sheet in a wood,
+    //    mapped back into its canonical frame — from data, no probe.
+    // Each describes the delivered mesh (which a later pose-only repair only moves).
     const layerLined = new Set(Object.keys(part.parts).filter((n) => {
-      try { return resolveMaterial(part.parts[n].display).params.pattern === "layer-lines"; } catch { return false; }
+      try { return resolveMaterial(realisticDisplay(part.parts[n])).params.pattern === "layer-lines"; } catch { return false; }
     }));
-    // LAZY: a delivery only records the view and params it was built at; the
-    // viewer pulls the frames (computePrintFrames) when it is about to draw the
-    // realistic look — live, loading, or borrowed by a capture — so a CAD-only
-    // session never probes (viewer.js setPrintFrameSource). The snapshot keeps
-    // a late computation describing the mesh actually delivered.
+    const burning = new Set(Object.keys(part.parts).filter((n) => burnsFor(part.parts[n])));
+    // LAZY: a delivery only records the view and params its job was DISPATCHED with
+    // (`dispatched`, set where the loop sends) — not the live ones, which a delivery shown
+    // during playback was never built at; the viewer pulls the frames (computeFrames)
+    // when it is about to draw the realistic look — live, loading, or borrowed by a
+    // capture — so a CAD-only session computes nothing (viewer.js setFrameSource). The
+    // snapshot keeps a late computation describing the mesh actually delivered.
     const printFrames = {};
-    const undrawnFrames = new Map(); // sub-part -> { view, params } at its delivery
-    function recordPrintFrames(names) {
-      const wanted = names.filter((n) => layerLined.has(n));
+    const sheetFrames = {};
+    const undrawnFrames = new Map(); // sub-part -> { view, params } its delivered mesh was built at
+    function recordFrames(names) {
+      const wanted = names.filter((n) => layerLined.has(n) || burning.has(n));
       if (!wanted.length) return;
-      const at = { view: view(), params: { ...params } };
-      for (const n of wanted) undrawnFrames.set(n, at);
-      viewer.invalidatePrintFrames?.();
+      for (const n of wanted) undrawnFrames.set(n, dispatched.get(n) ?? null); // null: built at params nobody recorded
+      viewer.invalidateFrames?.();
     }
-    function computePrintFrames() {
+    function computeFrames() {
       const resolvedFor = new Map(); // one resolveParams per delivery, not per sub-part
       for (const [n, at] of undrawnFrames) {
-        if (!resolvedFor.has(at)) {
+        if (at && !resolvedFor.has(at)) {
           try { resolvedFor.set(at, resolveParams(part, at.params)); } catch { resolvedFor.set(at, null); } // diagnosed by the build
         }
-        const resolved = resolvedFor.get(at);
-        if (resolved) printFrames[n] = printFrameMatrix(part.parts[n], { view: at.view, ...resolved });
+        const resolved = at ? resolvedFor.get(at) : null;
+        // No params to frame this mesh by: a burning sheet draws plain wood rather than
+        // keep a frame that describes other geometry — a sub-millimetre lag along its
+        // normal is enough to char a whole face. A print frame keeps its last value (the
+        // worst it can do is run layer lines the wrong way).
+        if (!resolved) { delete sheetFrames[n]; continue; }
+        if (layerLined.has(n)) printFrames[n] = printFrameMatrix(part.parts[n], { view: at.view, ...resolved });
+        if (burning.has(n)) {
+          const f = sheetFrameFor(part.parts[n], resolved);
+          if (f) sheetFrames[n] = f; else delete sheetFrames[n];
+        }
       }
       undrawnFrames.clear();
-      return { ...printFrames };
+      return { print: { ...printFrames }, sheet: { ...sheetFrames } };
     }
-    viewer.setPrintFrameSource?.(computePrintFrames);
+    viewer.setFrameSource?.(computeFrames);
 
     // Sub-parts whose latest fresh delivery had zero triangles (see the `meshes` case).
     const emptySubParts = new Set();
@@ -1044,7 +1074,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
               // delivered, which buildDone() true guarantees is at the live params.
               fastPath.recordDelivered(m.name);
             }
-            recordPrintFrames(data.meshes.map((m) => m.name));
+            recordFrames(data.meshes.map((m) => m.name));
             // A split dispatch answers in two meshes replies; the busy spinner
             // stays up until the view has everything (the other worker's job may
             // still be running — often OCCT, the slow one).
@@ -1075,10 +1105,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           } else if (lastAnimApplyVersion === loop.version()) {
             // Stale ONLY because animation frames kept bumping the version:
             // show the delivered meshes anyway — that IS best-effort playback —
-            // but record NOTHING. Cache and fast-path stamps must describe
-            // geometry built at the live params, and this delivery wasn't; the
-            // fast-path stamp is dropped too, so a later pose-only repair can
-            // never re-pose this newer geometry off an older delivery's stamp.
+            // but record nothing about the LIVE params. Cache and fast-path stamps
+            // must describe geometry built at the live params, and this delivery
+            // wasn't; the fast-path stamp is dropped too, so a later pose-only
+            // repair can never re-pose this newer geometry off an older delivery's
+            // stamp. Its material frames are the exception: those are recorded
+            // against the params its job was dispatched with, which is what it was
+            // built at — keeping the last fresh delivery's frame instead would lay a
+            // sheet's burn over geometry that has moved along its normal.
             // A user edit mid-play pauses playback and bumps the version WITHOUT
             // touching lastAnimApplyVersion, so a genuinely user-stale result
             // fails this test and is discarded exactly as before.
@@ -1086,6 +1120,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
               viewer.setSubGeometry(m.name, m);
               fastPath.forget(m.name);
             }
+            recordFrames(data.meshes.map((m) => m.name));
             ui.hideBusy();
             refreshView();
           }
@@ -1389,8 +1424,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       captureView,
       getPanelState: () => panelRef?.getState() ?? {},
       getPanelErrors: () => panelRef?.errors() ?? [],
-      listExportableParts: () =>
-        exportablePartNames(part, params).map((name) => ({ name, label: partLabel(part, name) })),
+      // A sheet part's row carries its stock, evaluated here on the main thread at the
+      // live params the way enabled() is, and omitted when it cannot be (export-rows.js).
+      listExportableParts: () => exportableRows(part, params),
+      listExportFormats: exportFormatList,
       exportParts: (opts) => exportCtl.exportParts(opts),
       warmExportKernel: () => exportCtl.warmKernel(),
       animation: animCtl?.runtime ?? null,
