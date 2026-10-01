@@ -1,4 +1,16 @@
-import { beforeAll, expect, test } from "vitest";
+import { beforeAll, expect, test, vi } from "vitest";
+
+// Lets a test make one round's hash record come back null, as an overflowed record does.
+const overflow = vi.hoisted(() => ({ next: false }));
+vi.mock("../src/framework/geometry/solid-hash.js", async (importOriginal) => {
+  const m = await importOriginal();
+  return { ...m, stopHashRecording: () => {
+    const r = m.stopHashRecording();
+    if (!overflow.next) return r;
+    overflow.next = false;
+    return null;
+  } };
+});
 import { bootManifoldKernel } from "../src/testing.js";
 import { buildView } from "../src/framework/oracle/build.js";
 import { measure } from "../src/framework/oracle/measure.js";
@@ -143,6 +155,44 @@ test("budget exhausted before any verdict reports timeout alone", () => {
   inspect(t, lidOnly());
   const out = inspect(t, lidOnly((kk, p, d) => hinged.parts.lid.build(kk, p, d).union(kk.cylinder({ d: 6, h: 6 }))));
   expect(out).toEqual({ changesSkipped: "timeout" });
+});
+
+const knob = withLid((kk, p, d) => hinged.parts.lid.build(kk, p, d).union(kk.cylinder({ d: 6, h: 6 })));
+
+test("a mesh diff that throws falls back to the volume delta and still rotates the baseline", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  const orig = k._meshDiff;
+  k._meshDiff = () => { throw new Error("wasm fault"); };
+  let out;
+  try { out = inspect(t, knob); } finally { k._meshDiff = orig; }
+  const lid = out.changes.subparts.find((s) => s.name === "lid");
+  expect(lid.verdict).toBe("reshaped");
+  expect(lid.volumeDeltaMm3).toBeGreaterThan(100);
+  expect(out.changesSkipped).toBeUndefined();
+  // The next round compares against the build that threw, not the one before it.
+  expect(inspect(t, knob)).toEqual({ changes: { unchanged: true, subparts: [], unchangedSubparts: 2 } });
+});
+
+test("a failed capture forgets the baseline instead of leaving it two builds stale", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  t.begin("forge-1", "box");
+  const built = buildView(k, hinged, "box", {});
+  t.endBuild([{ name: "lid", solid: { toIndexedMesh: () => { throw new Error("oom"); } }, mesh: {} }]);
+  expect(t.finish(k, "box", built, null)).toEqual({});
+  k.cleanup();
+  expect(inspect(t, knob)).toEqual({});
+});
+
+test("an overflowed hash record names no root ops on the next round", () => {
+  const t = createChangeTracker();
+  overflow.next = true;
+  inspect(t, hinged);
+  const lid = inspect(t, withLid((kk, p, d) =>
+    hinged.parts.lid.build(kk, p, d).union(kk.cylinder({ d: 6, h: 6 }).label("knob")))).changes.subparts.find((s) => s.name === "lid");
+  expect(lid.verdict).toBe("added");
+  expect(lid.changedOps).toBeUndefined();
 });
 
 test("finish never throws", () => {

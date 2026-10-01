@@ -31,7 +31,7 @@ const indexedMeshOf = (solid, mesh) => {
 export function createChangeTracker({ now = Date.now, budgetMs = 2000, maxTriangles = 300000 } = {}) {
   let key = null;
   let view = null;         // the view this round is building (from begin)
-  let baseline = null;     // { view, hashes:Set, subparts: Map(name -> {hash, shape, mesh, volume}) }
+  let baseline = null;     // { view, hashes:Set|null (null: the record overflowed), subparts: Map(name -> {hash, shape, mesh, volume}) }
   let record = null;
   let captured = null;     // Map(name -> {hash, shape, mesh}) from endBuild
   let memoPrev = new Map(), memoNext = new Map();
@@ -79,7 +79,9 @@ export function createChangeTracker({ now = Date.now, budgetMs = 2000, maxTriang
     abort() { stopHashRecording(); clearRound(); },
     finish(kernel, v, built, measured) {
       try {
-        if (!Array.isArray(built) || !captured || v !== view) return {};
+        // No capture means no baseline can be stored for this build: forget the
+        // old one too, so the next round reports {} rather than diffing two builds back.
+        if (!Array.isArray(built) || !captured || v !== view) { reset(); return {}; }
         const start = now();
         const vol = new Map((measured?.subparts ?? []).map((s) => [s.name, s.volume]));
         const prev = prevFor(v);
@@ -92,7 +94,8 @@ export function createChangeTracker({ now = Date.now, budgetMs = 2000, maxTriang
           if (!old) { out.push({ name, verdict: "new" }); verdicts++; continue; }
           const { hash, shape, mesh } = entry;
           if (hash && hash === old.hash) { unchanged++; verdicts++; continue; }
-          const ops = record?.size && hash ? changedRoots(record, hash, prev.hashes) : [];
+          // Both graphs are needed: against a missing baseline graph every op reads as new.
+          const ops = record?.size && prev.hashes && hash ? changedRoots(record, hash, prev.hashes) : [];
           const withOps = (o) => (ops.length ? { ...o, changedOps: ops } : o);
           if (shape && shape === old.shape) {
             const a = centre(old.mesh.positions), b = centre(mesh.positions);
@@ -108,9 +111,13 @@ export function createChangeTracker({ now = Date.now, budgetMs = 2000, maxTriang
             out.push(withOps({ name, verdict: "reshaped", ...delta })); verdicts++; continue;
           }
           const floor = Math.max(0.5, 1e-4 * Math.abs(entry.volume ?? 0));
-          const d = kernel._meshDiff(old.mesh, mesh, { maxTriangles, minVolume: floor });
-          if (!d.ok) {
-            skipped ??= d.reason;
+          // A throw (a WASM fault, OOM) is not one of the reported skip reasons: it
+          // falls back to the volume delta and the loop goes on, so the baseline
+          // still rotates to this build.
+          let d;
+          try { d = kernel._meshDiff(old.mesh, mesh, { maxTriangles, minVolume: floor }); } catch { d = null; }
+          if (!d?.ok) {
+            if (d) skipped ??= d.reason;
             out.push(withOps({ name, verdict: "reshaped", ...delta })); verdicts++; continue;
           }
           const add = d.addedMm3 > floor, rem = d.removedMm3 > floor;
@@ -125,7 +132,7 @@ export function createChangeTracker({ now = Date.now, budgetMs = 2000, maxTriang
           verdicts++;
         }
         if (prev) for (const name of prev.subparts.keys()) if (!captured.has(name)) { out.push({ name, verdict: "deleted" }); verdicts++; }
-        baseline = { view: v, hashes: record ? new Set(record.keys()) : new Set(), subparts: captured };
+        baseline = { view: v, hashes: record ? new Set(record.keys()) : null, subparts: captured };
         memoPrev = memoNext; pairPrev = pairNext;
         if (!prev) return {};
         if (timedOut && verdicts === 0) return { changesSkipped: "timeout" };
@@ -136,6 +143,7 @@ export function createChangeTracker({ now = Date.now, budgetMs = 2000, maxTriang
           : { subparts: out, unchangedSubparts: unchanged };
         return skipped ? { changes, changesSkipped: skipped } : { changes };
       } catch {
+        reset();
         return {};
       } finally {
         clearRound();
