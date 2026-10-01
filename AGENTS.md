@@ -361,6 +361,29 @@ the installed package, so let the publish finish before bumping the dep there.
   part verifies byte-identically — `test/verify-golden.test.js` pins it; re-record only
   for a deliberate verdict change (`PARTFORGE_RECORD_VERIFY_GOLDEN=1 npx vitest run
   test/verify-golden.test.js`). Timings: `docs/research/sheet-inspect-timing.md`.
+- **Change tracking in the oracle** (`src/framework/oracle/changes.js`,
+  `createChangeTracker`). An `inspect` job that passes a non-empty `changesKey`
+  gets back `report.changes` (and/or `report.changesSkipped`) describing what
+  moved since the previous inspect under that same key; an inspect with no key —
+  or with non-default `params`, a different geometry that must never become or be
+  diffed against the baseline — gets exactly the old report, nothing added. The
+  tracker lives for the worker's lifetime (one baseline per key, not per job), so
+  it is **per worker and best-effort**: a new tab, a retired worker, a fresh key,
+  or a `view` switch simply has no baseline yet (`changes` is absent, not an
+  error). `changes` is either `{ unchanged: true, subparts: [], unchangedSubparts
+  }` or `{ subparts: [...], unchangedSubparts }`, where each entry is
+  `{ name, verdict }` — `new` / `deleted` / `moved` (+ `moved: [dx,dy,dz]`) /
+  `added` / `removed` / `reshaped` (+ `volumeDeltaMm3`, and for the latter three,
+  `addedMm3`/`removedMm3` plus up to 3 largest `regions` from a mesh boolean
+  diff) — each optionally carrying `changedOps`, the named root operations behind
+  a changed hash when the op graph covers it. `changesSkipped` names why some
+  sub-parts stopped short of a full region diff (`"timeout"`, a mesh-diff
+  `reason` like `"too-large"`/`"not-watertight"`) — the verdicts already computed
+  still ship. **What's memoized, and what never is**: a sub-part whose final hash
+  did not change reuses its previous `measure()` facts and pairwise gap distances
+  (via `measure`'s `memo` option, fed `changeTracker.memo`) instead of
+  recomputing them — every *changed* sub-part, and anything outside `measure`
+  (verify, match scoring), is computed fresh every time.
 - **`src/framework/export/`** - the cut & print kit's writers, process-agnostic.
   `formats.js` is IMPORT-FREE: `EXPORT_FORMATS`, the kit's option contract
   (`validateKitOptions`, `resolveStock`, `KIT_DEFAULTS`, `KIT_LIMITS`) and
