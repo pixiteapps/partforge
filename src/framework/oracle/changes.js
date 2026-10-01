@@ -39,11 +39,16 @@ export function createChangeTracker({ now = Date.now, budgetMs = 2000, maxTriang
   const mk = (hash, k2) => `${hash}\u0000${k2}`;      // facts depend on geometry, not the name
   const pk = (a, ha, b, hb) => `${a}\u0000${ha}\u0000${b}\u0000${hb}`;
 
+  // Stored under a structuredClone: the caller's `facts`/`gap` object is also
+  // handed out as part of the oracle's REPORT, which a consumer is free to
+  // mutate. Without the clone, that mutation reaches through the same object
+  // reference into the memo and poisons a later hit; cloning on write is what
+  // keeps the memo's copy independent of whatever happens to the report.
   const memo = {
     get: (name, hash, k2) => { const v = memoPrev.get(mk(hash, k2)); return v ? { ...v, name } : undefined; },
-    set: (name, hash, k2, facts) => { memoNext.set(mk(hash, k2), facts); },
+    set: (name, hash, k2, facts) => { memoNext.set(mk(hash, k2), structuredClone(facts)); },
     getPair: (a, ha, b, hb) => pairPrev.get(pk(a, ha, b, hb)),
-    setPair: (a, ha, b, hb, gap) => { pairNext.set(pk(a, ha, b, hb), gap); },
+    setPair: (a, ha, b, hb, gap) => { pairNext.set(pk(a, ha, b, hb), structuredClone(gap)); },
   };
 
   const reset = () => { baseline = null; memoPrev = new Map(); pairPrev = new Map(); };

@@ -299,17 +299,27 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     const sheet = isSheetPart(part.parts[name]);
     // Memo key = the inputs this sub-part's facts actually depend on, besides its
     // own geometry hash: whether min-wall ran, at what sample budget and against
-    // which declared band, and the overhang angle. Withheld for sheet parts, a
-    // declared `reference` sub-part (deviation reads another import), any
-    // sub-part when the view holds a sheet part (the budgeted 2-D pass and
-    // print-pose sizes are call-scoped, not per-sub-part cacheable), and a solid
-    // with no `_hash` (nothing to key reuse on).
+    // which declared band, the overhang angle, and whether the sub-part is
+    // exportable (it gates overhangArea/overhangAngle/overhangAt via `printed`,
+    // below — without it, toggling `exportable` on unchanged geometry would
+    // return a stale overhang reading, or a non-exportable ghost would share a
+    // real sub-part's entry). Withheld for sheet parts, a declared `reference`
+    // sub-part (deviation reads another import), any sub-part when the view
+    // holds a sheet part (the budgeted 2-D pass and print-pose sizes are
+    // call-scoped, not per-sub-part cacheable), and a solid with no `_hash`
+    // (nothing to key reuse on).
     const memoKey = opts.memo && !sheetView && !sheet && !part.parts[name]?.reference && solid?._hash
-      ? JSON.stringify({ mw: !!opts.minWall, s: minWallSamples ?? null, band: wallBands[name] ?? null, oh: overhangAngle ?? null })
+      ? JSON.stringify({
+        mw: !!opts.minWall, s: minWallSamples ?? null, band: wallBands[name] ?? null,
+        oh: overhangAngle ?? null, ex: part.parts[name]?.exportable !== false,
+      })
       : null;
     if (memoKey) {
       const hit = opts.memo.get(name, solid._hash, memoKey);
-      if (hit) { subBounds.push(hit.bounds); return hit; }
+      // Re-store on a hit: the memo rotates prev→next per round (changes.js), so
+      // a hit read only from `prev` and never re-written would be reused every
+      // OTHER round, not every round an unchanged sub-part is measured.
+      if (hit) { subBounds.push(hit.bounds); opts.memo.set(name, solid._hash, memoKey, hit); return hit; }
     }
     const b = bounds(mesh.positions);
     subBounds.push(b);

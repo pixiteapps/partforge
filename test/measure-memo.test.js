@@ -66,4 +66,67 @@ test("identical geometry under two names carries the current name", () => {
   const m1 = run(t, twin, "box", { minWall: false });
   const m2 = run(t, twin, "box", { minWall: false });
   expect(m2.subparts.map((s) => s.name)).toEqual(m1.subparts.map((s) => s.name));
+  // The copy actually joins the view (each sub-part's own `views: ["box"]`),
+  // so the twin pair is really exercised here, not silently skipped.
+  expect(m1.subparts.map((s) => s.name)).toContain("base2");
 });
+
+test("a hit is re-stored, so an unchanged sub-part is reused every round, not every other round", () => {
+  const t = createChangeTracker();
+  run(t, hinged, "box", { minWall: true, gaps: true });
+  let gets = 0;
+  const realGet = t.memo.get;
+  t.memo.get = (...a) => { const v = realGet(...a); if (v) gets++; return v; };
+  run(t, hinged, "box", { minWall: true, gaps: true }); // lap 2: reads from lap 1's write
+  expect(gets).toBeGreaterThan(0);
+  gets = 0;
+  run(t, hinged, "box", { minWall: true, gaps: true }); // lap 3: must still hit — not every OTHER lap
+  expect(gets).toBeGreaterThan(0);
+});
+
+// Reuse-equals-recompute must hold for every field the memo key itself names,
+// not only for a changed solid hash: each pair below keeps the lid's SOLID
+// HASH identical (same build function, same params that feed geometry) and
+// varies only one of the OTHER inputs measure's per-sub-part facts depend on.
+// `exportable` is the one this suite caught missing from the key before the
+// fix (CRITICAL, task review): a non-exportable sub-part gets no overhang
+// facts (measure.js's `printed`), so a stale hit from before the toggle
+// returned non-null overhangArea/overhangAngle/overhangAt where a fresh
+// measurement reads null — these tests FAIL on the pre-fix memoKey (no `ex`
+// field) for the "exportable" case.
+const overhangOptedIn = { ...hinged, verify: { ...hinged.verify, orientation: "print" } };
+const memoKeyFieldVariants = {
+  // The lid stops being judged for overhang at all — `printed` flips false.
+  exportable: [
+    overhangOptedIn,
+    { ...overhangOptedIn, parts: { ...overhangOptedIn.parts,
+      lid: { ...overhangOptedIn.parts.lid, exportable: false } } },
+  ],
+  // A param the BUILD never reads, but that `verify.expect`'s wall band is a
+  // function of (partWallBands) — geometry is unchanged, the declared band
+  // the min-wall pass is scored against is not.
+  wallBand: [
+    { ...hinged, defaults: { ...hinged.defaults, bandHint: 0 },
+      verify: { ...hinged.verify, expect: (p) => ({ ...hinged.verify.expect,
+        lid: { wall: p.bandHint > 5 ? "0.5..5" : "1..3" } }) } },
+    { ...hinged, defaults: { ...hinged.defaults, bandHint: 10 },
+      verify: { ...hinged.verify, expect: (p) => ({ ...hinged.verify.expect,
+        lid: { wall: p.bandHint > 5 ? "0.5..5" : "1..3" } }) } },
+  ],
+  // The overhang angle a part is judged against changes (process override),
+  // orientation stays opted in — geometry is unchanged, the threshold is not.
+  overhangAngle: [
+    overhangOptedIn,
+    { ...overhangOptedIn, verify: { ...overhangOptedIn.verify, process: { base: "fdm-pla", overhang: 30 } } },
+  ],
+};
+
+for (const [label, [base, variant]] of Object.entries(memoKeyFieldVariants)) {
+  test(`reuse equals recompute across a memo-key input change: ${label}`, () => {
+    const t = createChangeTracker();
+    run(t, base, "box", { minWall: true, gaps: true });
+    const reused = run(t, variant, "box", { minWall: true, gaps: true });
+    const fresh = run(null, variant, "box", { minWall: true, gaps: true });
+    expect(strip(reused)).toEqual(strip(fresh));
+  });
+}
