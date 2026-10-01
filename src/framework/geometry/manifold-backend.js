@@ -764,6 +764,44 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         build,
       );
     },
+    // The change tracker's boolean diff (oracle/changes.js): two plain meshes in,
+    // added (new − old) and removed (old − new) material out, split into connected
+    // pieces. Never cached — it runs outside any beginSubPart bracket — and every
+    // WASM object is T()-tracked, so the caller's cleanup() frees all of it.
+    _meshDiff: (oldMesh, newMesh, { maxTriangles = 300000, minVolume = 0 } = {}) => {
+      const tris = (mesh) => (mesh.indices?.length ?? 0) / 3;
+      if (tris(oldMesh) + tris(newMesh) > maxTriangles) return { ok: false, reason: "too-large" };
+      let a, b;
+      try {
+        a = T(manifoldFromMesh(wasm, oldMesh.positions, oldMesh.indices));
+        b = T(manifoldFromMesh(wasm, newMesh.positions, newMesh.indices));
+      } catch {
+        return { ok: false, reason: "not-watertight" };
+      }
+      const regions = (mm) => {
+        const pieces = mm.decompose().map((p) => T(p));
+        return pieces
+          .map((p) => {
+            const { min, max } = p.boundingBox();
+            return {
+              mm3: p.volume(),
+              at: [0, 1, 2].map((i) => (min[i] + max[i]) / 2),
+              size: [0, 1, 2].map((i) => max[i] - min[i]),
+            };
+          })
+          .filter((r) => r.mm3 >= minVolume)
+          .sort((x, y) => y.mm3 - x.mm3);
+      };
+      const added = T(b.subtract(a));
+      const removed = T(a.subtract(b));
+      return {
+        ok: true,
+        addedMm3: added.volume(),
+        removedMm3: removed.volume(),
+        added: regions(added),
+        removed: regions(removed),
+      };
+    },
     // Polygon-with-holes extrude in one op: even/odd fill turns the extra contours into
     // holes regardless of their winding (outer + holes, no per-hole boolean cut).
     // A Shape2D `profile` (curve-native, possibly multi-region) materializes through
