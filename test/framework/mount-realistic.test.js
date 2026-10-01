@@ -37,7 +37,11 @@ vi.mock("three", async (importOriginal) => {
     readRenderTargetPixels() {}
     dispose() {}
   }
-  return { ...actual, WebGLRenderer: FakeRenderer };
+  // No network: a texture "loads" on a microtask (the oak maps a burning sheet asks for).
+  class FakeTextureLoader {
+    load(_url, onLoad) { const t = new actual.Texture(); queueMicrotask(() => onLoad?.(t)); return t; }
+  }
+  return { ...actual, WebGLRenderer: FakeRenderer, TextureLoader: FakeTextureLoader };
 });
 
 const rigState = vi.hoisted(() => ({ loads: [], rigs: [], fail: false, gate: null }));
@@ -88,7 +92,17 @@ vi.mock("../../src/framework/materials/print-frame.js", async (importOriginal) =
   return { ...real, printFrameMatrix: (...args) => { printFrameCalls.count++; return real.printFrameMatrix(...args); } };
 });
 
+// Counts the sheet frames mount asks for (materials/sheet-look.js).
+const sheetFrameCalls = vi.hoisted(() => ({ count: 0 }));
+vi.mock("../../src/framework/materials/sheet-look.js", async (importOriginal) => {
+  const real = await importOriginal();
+  return { ...real, sheetFrameFor: (...args) => { sheetFrameCalls.count++; return real.sheetFrameFor(...args); } };
+});
+
 import { mount } from "../../src/framework/mount.js";
+import { sheetPart } from "../../src/framework/sheet/part.js";
+import { poseSteps } from "../../src/framework/sheet/pose.js";
+import { composePose, invertRigid } from "../../src/framework/geometry/pose.js";
 
 const OriginalResizeObserver = globalThis.ResizeObserver;
 
@@ -154,6 +168,7 @@ beforeEach(() => {
   rigState.gate = null;
   viewers.length = 0;
   printFrameCalls.count = 0;
+  sheetFrameCalls.count = 0;
   globalThis.ResizeObserver = class { observe() {} disconnect() {} };
 });
 afterEach(() => {
@@ -559,5 +574,179 @@ test("a carried viewerState.featureLines (from an older mount) is simply ignored
   await runtime.ready;
   expect(runtime.featureLines).toBeUndefined();
   expect(runtime.getViewerState()).not.toHaveProperty("featureLines");
+  runtime.dispose();
+});
+
+// --- laser burns: mount computes the sheet frame lazily, from data --------------
+// A laser sheet in oak, posed face -Y, beside a non-sheet oak block. Realistic mode chars
+// the sheet in its canonical frame, which mount computes lazily from the delivered pose and
+// thickness — from data, no probe.
+const SHEET_POSE = { face: "-Y", up: "+Z", at: [0, 0, 0] };
+const sheetFixture = () => ({
+  meta: { title: "Sheet Fixture", backend: "manifold" },
+  defaults: { t: 3 },
+  views: { main: { label: "Main" } },
+  parts: {
+    panel: sheetPart({ label: "Panel", views: ["main"], display: { material: "oak" }, material: "birch plywood",
+      thickness: (p) => p.t, profile: (k) => k.shape2d([[0, 0], [30, 0], [30, 30], [0, 30]]), pose: SHEET_POSE }),
+    block: { label: "Block", views: ["main"], display: { material: "oak" }, build: (k) => k.box({ size: [10, 10, 3] }) },
+  },
+  parameters: [{ id: "stock", title: "Stock", advanced: [{ key: "t", label: "Thickness", min: 1, max: 10, step: 0.5 }] }],
+});
+function mountSheets() {
+  const workers = {};
+  const runtime = mount(sheetFixture(), {
+    createWorker: (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null }),
+    elements: makeElements(),
+  });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("panel"), payload("block")], ms: 1 } });
+  return { runtime, workers };
+}
+const round9 = (a) => a.map((v) => Math.round(v * 1e9) / 1e9 + 0);
+
+test("a laser sheet in a wood gets its canonical frame lazily, from the delivered pose", async () => {
+  const { runtime } = mountSheets();
+  await runtime.ready;
+  expect(sheetFrameCalls.count).toBe(0);                      // CAD: nothing computed
+  await runtime.renderMode.set("realistic");
+  expect(sheetFrameCalls.count).toBe(1);                      // the panel; the block is no sheet
+  const u = viewers[0].__subMesh("panel").material.userData.patternUniforms;
+  expect(u.pfSheetT.value).toBe(3);
+  expect(round9(u.pfSheetFrame.value.toArray())).toEqual(round9(invertRigid(composePose(poseSteps(SHEET_POSE, 3)))));
+  expect(viewers[0].__subMesh("block").material.customProgramCacheKey()).not.toContain("pf-burn");
+  runtime.dispose();
+});
+
+test("a delivery while realistic recomputes the sheet frame; CAD deliveries do not", async () => {
+  const { runtime, workers } = mountSheets();
+  await runtime.ready;
+  await runtime.renderMode.set("realistic");
+  const before = sheetFrameCalls.count;
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("panel")], ms: 1 } });
+  expect(sheetFrameCalls.count).toBe(before + 1);
+  await runtime.renderMode.set("cad");
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("panel")], ms: 1 } });
+  expect(sheetFrameCalls.count).toBe(before + 1);
+  runtime.dispose();
+});
+
+test("a laser sheet with no material gets a sheet frame, not a print frame", async () => {
+  const part = sheetFixture();
+  part.parts.panel = sheetPart({ label: "Panel", views: ["main"], material: "birch plywood",
+    thickness: (p) => p.t, profile: (k) => k.shape2d([[0, 0], [30, 0], [30, 30], [0, 30]]), pose: SHEET_POSE });
+  const workers = {};
+  const runtime = mount(part, {
+    createWorker: (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null }),
+    elements: makeElements(),
+  });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("panel"), payload("block")], ms: 1 } });
+  await runtime.ready;
+  await runtime.renderMode.set("realistic");
+  expect(printFrameCalls.count).toBe(0);                      // no layer lines: it is no longer PLA
+  expect(sheetFrameCalls.count).toBe(1);
+  expect(viewers[0].__subMesh("panel").material.userData.patternUniforms.pfPlies.value).toBe(3);
+  runtime.dispose();
+});
+
+// The stock's look is realistic-only, like the PLA default: it never makes a part declare a
+// material. Hosts resolve an "auto" view style against this flag, so a forge made only of
+// sheets that name no material must still read false — while it draws as plywood.
+test("sheets that name no material draw as their stock but never make the part declare a material", async () => {
+  const part = sheetFixture();
+  part.parts = { panel: sheetPart({ label: "Panel", views: ["main"], material: "birch plywood",
+    thickness: (p) => p.t, profile: (k) => k.shape2d([[0, 0], [30, 0], [30, 30], [0, 30]]), pose: SHEET_POSE }) };
+  const workers = {};
+  const runtime = mount(part, {
+    createWorker: (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null }),
+    elements: makeElements(),
+  });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("panel")], ms: 1 } });
+  await runtime.ready;
+  expect(runtime.declaresMaterials).toBe(false);
+  await runtime.renderMode.set("realistic");
+  const u = viewers[0].__subMesh("panel").material.userData.patternUniforms;
+  expect(u.pfPlies.value).toBe(3);                            // drawn as plywood, burning
+  expect(u.pfSheetT.value).toBe(3);
+  runtime.dispose();
+});
+
+// --- a delivery's frame describes the params it was BUILT at, not the live ones -------
+// A lid whose outline reads H and whose pose puts its laser face at z = H: a view
+// animation that moves H rebuilds it every frame, and during playback nearly every
+// delivery is stale (playback moved on). Its sheet frame has to be the one for the
+// params that job was dispatched with — a frame for any other H lands the laser face at
+// the wrong canonical depth, and a face 0.1 mm low classifies as an engrave floor and
+// draws scorched all over.
+const liftPose = (H) => ({ face: "+Z", up: "+Y", at: [0, 0, H] });
+const liftFixture = ({ derive } = {}) => ({
+  meta: { title: "Lift Fixture", backend: "manifold" },
+  defaults: { t: 3, H: 80 },
+  ...(derive ? { derive } : {}),
+  views: { main: { label: "Main", animations: { sink: { label: "Sink", duration: 2, easing: "linear", tracks: { H: [[0, 80], [1, 40]] } } } } },
+  parts: {
+    lid: sheetPart({ label: "Lid", views: ["main"], display: { material: "oak" }, material: "birch plywood",
+      thickness: (p) => p.t, profile: (k, p) => k.shape2d([[0, 0], [p.H, 0], [p.H, 30], [0, 30]]), pose: (p) => liftPose(p.H) }),
+  },
+  parameters: [{ id: "stock", title: "Stock", advanced: [
+    { key: "t", label: "Thickness", min: 1, max: 10, step: 0.5 }, { key: "H", label: "Height", min: 10, max: 200, step: 1 }] }],
+});
+async function mountLift(opts) {
+  const workers = {};
+  // A real postMessage clones; the params mount sends are its live, in-place-mutated object.
+  const sent = [];
+  const postMessage = (m) => { if (m?.type === "generate") sent.push({ ...m, params: { ...m.params } }); };
+  const runtime = mount(liftFixture(opts), {
+    createWorker: (name) => (workers[name] = { postMessage, terminate: vi.fn(), onmessage: null }),
+    elements: makeElements(),
+  });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("lid")], ms: 1 } });
+  await runtime.ready;
+  await runtime.renderMode.set("realistic");
+  const uniforms = viewers[0].__subMesh("lid").material.userData.patternUniforms;
+  const generates = () => sent;
+  const deliver = () => workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("lid")], ms: 5 } });
+  return { runtime, uniforms, generates, deliver };
+}
+const liftFrame = (H) => round9(invertRigid(composePose(poseSteps(liftPose(H), 3))));
+
+test("a delivery shown during playback is framed at the params its job was dispatched with", async () => {
+  const { runtime, uniforms, generates, deliver } = await mountLift();
+  expect(round9(uniforms.pfSheetFrame.value.toArray())).toEqual(liftFrame(80));
+  const before = generates().length;
+  let t = 1000;
+  const tick = (n) => { for (let i = 0; i < n; i++) { state.renderer.animationLoop(t); t += 100; } };
+  runtime.animation.play();
+  tick(4);
+  const first = generates()[before];
+  expect(first).toBeDefined();
+  deliver(); // stale: playback moved H on while it built
+  expect(uniforms.pfSheetT.value).toBe(3);
+  expect(round9(uniforms.pfSheetFrame.value.toArray())).toEqual(liftFrame(first.params.H));
+  tick(4);
+  const second = generates().at(-1);
+  expect(second).not.toBe(first);
+  expect(second.params.H).not.toBe(first.params.H);
+  deliver(); // stale again, built at the second job's H
+  expect(uniforms.pfSheetT.value).toBe(3);
+  expect(round9(uniforms.pfSheetFrame.value.toArray())).toEqual(liftFrame(second.params.H));
+  runtime.dispose();
+});
+
+test("a delivery whose params the main thread cannot resolve draws plain wood, never the previous frame", async () => {
+  // derive refuses H below 60 on the main thread; the (fake) worker delivered anyway.
+  const derive = (p) => { if (p.H < 60) throw new Error("too short"); return {}; };
+  const { runtime, uniforms, generates, deliver } = await mountLift({ derive });
+  expect(uniforms.pfSheetT.value).toBe(3);
+  const before = generates().length;
+  runtime.setParams({ H: 40 });
+  await vi.waitFor(() => expect(generates().length).toBe(before + 1));
+  expect(generates().at(-1).params.H).toBe(40);
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  deliver();
+  expect(uniforms.pfSheetT.value).toBe(0);
   runtime.dispose();
 });

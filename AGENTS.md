@@ -65,6 +65,7 @@ npx vitest run -t "assembly has no interpenetrating"   # a single test by name
 npm run check      # headless smoke test: boots an app in real Chromium (needs Playwright)
 node scripts/check-app.mjs demo.html         # smoke-test a specific app entry
 node scripts/time-sheet-inspect.mjs [--browser]    # inspect timing for the sheet-part stress cases (docs/research/sheet-inspect-timing.md)
+node scripts/capture-contact-sheet.mjs --out <dir> # realistic captures of materials.html in every environment + the laser-burn diffs
 ```
 
 The CLI (also the agent-facing surface) builds parts in pure Node - no browser:
@@ -208,12 +209,19 @@ the installed package, so let the publish finish before bumping the dep there.
   throws; a sub-part with no usable material - none named, or an unknown one -
   keeps the blue-grey CAD look but resolves to `pla-print` in the part's colour
   (else that blue-grey) for realistic mode, so its layer lines get a print
-  frame like any PLA part; there is no hidden `"default"` preset any more, and
+  frame like any PLA part; a laser sheet part is the exception -
+  `sheet-look.js`'s `realisticDisplay` gives it its stock's look (`plywood`,
+  or `clear-acrylic` for acrylic-like stock); there is no hidden `"default"`
+  preset any more, and
   `declaresMaterials` still counts only a named material), `print-frame.js`
-  (pose math for layer lines; frames are LAZY - `mount.js` only records each
-  delivery, and the viewer pulls them through `setPrintFrameSource` when it is
-  about to draw the realistic look, live or borrowed by a capture, so CAD
-  builds never run the pose probes), `assets.js` (asset filename -> URL) and
+  and `sheet-look.js` (pose math for layer lines, and a laser sheet part's
+  canonical frame for its burns - from data, no probe; frames are LAZY -
+  `mount.js` only records each delivery, against the params its generate job
+  was DISPATCHED with (a delivery shown during playback was built at params
+  the live ones have left), and the viewer pulls both kinds
+  through `setFrameSource` when it is about to draw the realistic look, live
+  or borrowed by a capture, so CAD builds never compute them), `assets.js`
+  (asset filename -> URL) and
   `tonemap-readback.js` (below) import **no three.js at all** - deliberately
   three-free and DOM-free so `lint`, the worker's 3MF writer and the
   docs-parity test can all import them without dragging GL or a browser into
@@ -224,8 +232,10 @@ the installed package, so let the publish finish before bumping the dep there.
   (the print-bed environment's cut-out build plate and its canvas-drawn
   markings), and `contact-shadow.js` - is a separate set of modules the viewer alone
   imports, not the worker. `patterns.js` is the **only** shader-injection
-  site (`onBeforeCompile`) for layer lines, wood, carbon weave and SLS grain
-  - a future TSL/WebGPU port only has to rewrite this one file. `assets.js`
+  site (`onBeforeCompile`) for layer lines, wood, carbon weave, SLS grain and
+  the laser burn (compiled only into the sub-parts `sheet-look.js`'s
+  `burnsFor` picks) - a future TSL/WebGPU port only has to rewrite this one
+  file. `assets.js`
   is the **only** module allowed a literal `new URL("./assets/x",
   import.meta.url)` (the same rule `docs/AUTHORING-PARTS.md` states for
   fonts/imports/vectors, and the fix for the `partforge/geometry`-class bug
@@ -243,8 +253,10 @@ the installed package, so let the publish finish before bumping the dep there.
   dependency of that script alone, never of the shipped framework or a running
   part. **`materials.html`** (dev-only, not in `vite.config.js`'s
   `rollupOptions.input`) is the contact sheet - one 30mm sample of every
-  preset plus the layer-line orientation check - to check by eye after any
-  preset or shader change.
+  preset, the layer-line orientation check, and the Laser-cut views (burning
+  sheets beside an unburnt twin that differs only by the burn;
+  `scripts/capture-contact-sheet.mjs` renders both in every environment and
+  diffs them) - to check by eye after any preset or shader change.
 - **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
   (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
   nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,

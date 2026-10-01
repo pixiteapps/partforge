@@ -12,7 +12,9 @@ import { mount } from "./framework/index.js";
 // open /materials.html. Not part of the production build — check materials.html
 // by eye after any preset or shader change (see AGENTS.md "Architecture").
 // Dev-only: the handle is stashed on window so scripts/check-app.mjs can drive
-// the embedding contract (runtime.captureCurrent) the way an embedder would.
+// the embedding contract (runtime.captureCurrent) the way an embedder would, and
+// scripts/capture-contact-sheet.mjs can switch views and environments and call
+// runtime.renderViews — removing it breaks both.
 window.__pfRuntime = mount(materialSwatchesPart, {
   createWorker: (name) =>
     new Worker(new URL("./materials-worker.js", import.meta.url), { type: "module", name }),

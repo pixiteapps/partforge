@@ -9,6 +9,11 @@
 // `sp.sheet.generatedBuild` is the build made here; an author who replaces `build`
 // afterwards is detectable as `sp.build !== sp.sheet.generatedBuild`.
 //
+// Likewise `sp.sheet.generatedPlace` is the place made here (the pose, then the author's
+// own) and `sp.sheet.place` the author's own place, or null: the realistic look
+// (materials/sheet-look.js) trusts a sheet's canonical frame only with no author place
+// and `sp.place === sp.sheet.generatedPlace`.
+//
 // Placement (decision 10): the pose applies for display AND export, then the author's
 // own `place` — so STEP/3MF/STL files of a sheet forge come out assembled.
 import { RENAMED_KEYS, RESERVED_KEYS, SHEET_KEYS, SUBPART_PASSTHROUGH_KEYS } from "./constants.js";
@@ -67,32 +72,42 @@ export function sheetPart(spec) {
     const s = resolveSheet(k, sub, p, d);
     return (processById(s.process).preview ?? sheetPreview)(k, s);
   };
+
+  // Placement (decision 10): the pose applies for display AND export, then the author's own
+  // place. Made BEFORE the record is frozen, so the record can name it. Everything the
+  // place reads is taken NOW, into the same values the record freezes — never read off
+  // `spec` later, which an author may reuse and change for the next panel: the build and
+  // the burn's frame both read the frozen record, and a place that read the spec live would
+  // move the panel away from them.
+  const pose = spec.pose ?? null;
+  const thickness = spec.thickness;
+  const authorPlace = spec.place ?? null;
+  const generatedPlace = pose !== null || authorPlace ? (solid, ctx) => {
+    const resolved = typeof pose === "function" ? pose(ctx.p, ctx.d) : pose;
+    let posed = solid;
+    if (resolved !== null) {
+      const reason = validatePose(resolved);
+      if (reason) throw new Error(`sheet pose: ${reason}`);
+      const t = typeof thickness === "function" ? thickness(ctx.p, ctx.d) : thickness;
+      posed = applyPose(solid, resolved, t);
+    }
+    return authorPlace ? authorPlace(posed, ctx) : posed;
+  } : null;
+
   const sheet = Object.freeze({
     process,
     material: spec.material,
-    thickness: spec.thickness,
+    thickness,
     profile: spec.profile,
     score: spec.score ?? null,
     engrave: spec.engrave ?? null,
-    pose: spec.pose ?? null,
+    pose,
+    place: authorPlace,
     generatedBuild,
+    generatedPlace,
   });
   sub.build = generatedBuild;
-
-  const authorPlace = spec.place;
-  if (sheet.pose !== null || authorPlace) {
-    sub.place = (solid, ctx) => {
-      const pose = typeof sheet.pose === "function" ? sheet.pose(ctx.p, ctx.d) : sheet.pose;
-      let posed = solid;
-      if (pose !== null) {
-        const reason = validatePose(pose);
-        if (reason) throw new Error(`sheet pose: ${reason}`);
-        const t = typeof sheet.thickness === "function" ? sheet.thickness(ctx.p, ctx.d) : sheet.thickness;
-        posed = applyPose(solid, pose, t);
-      }
-      return authorPlace ? authorPlace(posed, ctx) : posed;
-    };
-  }
+  if (generatedPlace) sub.place = generatedPlace;
   sub.sheet = sheet;
   return sub;
 }

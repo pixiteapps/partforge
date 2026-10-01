@@ -334,9 +334,10 @@ meta: { title: "…", units: "mm", environment: "studio" },
 - `material` — a preset id from the table below. Without one (or with one the
   library does not know) the sub-part keeps the CAD view's look — its `color`,
   else the viewer's blue-grey — and **realistic mode shows it as a PLA print**
-  (`pla-print`'s finish and layer lines) in that same colour. So an untouched
-  part looks printed in realistic mode; name a material when it is made some
-  other way. The PLA look is realistic-only: the CAD view, export colours and
+  (`pla-print`'s finish and layer lines) in that same colour — except a laser
+  `sheetPart`, which shows its stock instead (below). So an untouched part looks
+  printed in realistic mode; name a material when it is made some other way. The
+  PLA look is realistic-only: the CAD view, export colours and
   `declaresMaterials` are unaffected, and a part that names no material is not
   treated as declaring one.
 - `color` — the base colour (`0xRRGGBB`). With a preset it is the TINT. Presets
@@ -348,6 +349,23 @@ meta: { title: "…", units: "mm", environment: "studio" },
 - `opacity` — unchanged: a ghost stays a ghost and casts no shadow.
 - **One material per sub-part.** Something that needs two finishes (a knurled
   grip in rubber on an aluminium body) is two sub-parts.
+
+**Sheet parts default to their stock.** A laser `sheetPart` that names no material (or
+one the library does not know) is not drawn as a PLA print: realistic mode shows it as the
+sheet its stock label names — the first row with a stem that starts a word of the label,
+ignoring case (so `Plexiglas`, `Acrylite` and `poly-carbonate` match; `perplexing` does not):
+
+| A word of the stock label starts with | Realistic look |
+| --- | --- |
+| `acryl`, `perspex`, `plexi`, `pmma`, `methacryl`, `polycarb`, `lexan`, `makrolon`, `lucite` | `clear-acrylic` |
+| anything else — plywood, birch, basswood, poplar, MDF, hardboard — or no readable label | `plywood` |
+
+Stock that is neither wood nor acrylic — felt, leather, card, cork — takes the `plywood`
+look too, charred edges and all. A `color` tints the look, as it tints any preset (a
+stained plywood, a coloured acrylic); the CAD view still shows the `color` itself. Only a
+string label is read: a stock written as a `(p, d)` function counts as unreadable. Name
+`display.material` to choose the look yourself — for such stock, or any other. Like the
+PLA look, this is realistic-only and never makes a part declare a material.
 
 **Where it shows.** The CAD view (with feature lines) shows each material's
 colour, flattened so dark materials stay readable. **Realistic** mode — the
@@ -365,6 +383,15 @@ displayed. If the lines run the wrong way, fix the export pose with `place()`
 fixed to the sub-part, so they never slide when the camera or an animation
 moves.
 
+**Laser-cut wood.** In realistic mode a laser `sheetPart` in a wood — `plywood`, `oak` or
+`walnut`, named or its stock's default (so a plywood sheet that names no material burns too)
+— shows what the laser did: its cut edges are charred, darker on thicker stock (on
+`plywood` the plies show through), and its engraving and score lines are scorched, while its
+faces stay wood. There is nothing to set, and it is still one material: the char follows
+from the sheet and the wood it is drawn in. It needs the sheet's own frame, so a sheet part
+with a custom `build` or its own `place` shows plain wood. The CAD view and every export are
+unchanged.
+
 **`textureScale` is millimetres, and what it measures depends on the preset's
 pattern** — so a value copied from one preset family is wrong on another (0.2
 on oak shrinks the grain to a 0.2 mm tile, i.e. invisible noise):
@@ -373,7 +400,7 @@ on oak shrinks the grain to a 0.2 mm tile, i.e. invisible noise):
 | --- | --- | --- | --- |
 | layer lines | `pla-print`, `petg-print` | layer height | 0.2 |
 | SLS grain | `nylon-sls` | grain size | 0.15 |
-| wood | `oak`, `walnut` | size of one texture tile (the grain repeats every this many mm) | 250 (`oak`), 400 (`walnut`) |
+| wood | `oak`, `walnut`, `plywood` | size of one texture tile (the grain repeats every this many mm) | 250 (`oak`), 400 (`walnut`), 150 (`plywood`) |
 | carbon weave | `carbon-fiber` | size of one texture tile | 48 |
 
 Presets without a pattern ignore it.
@@ -409,6 +436,7 @@ the viewer's blue-grey.
 | `rubber` | Rubber | yes | Matte elastomer: gaskets, feet, grips; tint with `color`. |
 | `oak` | Oak | — | Light oak with open grain. |
 | `walnut` | Walnut | — | Dark oiled walnut. |
+| `plywood` | Birch plywood | — | Birch plywood sheet: a pale, fine-grained face; its plies show on laser-cut edges. |
 | `carbon-fiber` | Carbon fibre | — | 2x2 twill carbon fibre under clear coat. |
 
 **Environments** (`meta.environment`, default `studio`; viewers can switch):
@@ -1808,8 +1836,8 @@ needing the kernel is `(k, p, d) => …`; a plain value is a literal or `(p, d) 
 `material`, `thickness` and `profile` are required; `score`, `engrave`, `pose`,
 `process` (default `"laser"`) are optional; `label`, `views`, `display`, `export`,
 `enabled`, `exportable`, `reference` pass through; your own `place` runs after the
-pose. `build` is supplied — passing one throws, as do `kerf`, `outline`/`cut` (use
-`profile`) and `quantity` (the kit counts identical pieces).
+pose. `build` is supplied — passing one throws, as do `kerf`, `outline`/`cut` and
+`quantity`; each error names the fix.
 
 ### Cut, score and engrave
 
@@ -1898,7 +1926,7 @@ PRINT pose, `place` it for display, and cut the slot where the tongue lands:
 | `verify-process-sheets-only` | warning | `verify.process` is set but every exportable part is a sheet part |
 | `laser-thickness-range` | warning | a laser sheet is thinner than 0.5 mm or thicker than 12 mm |
 
-**Verify** runs the laser checks on every sheet part. They are
+**Verify** runs the laser checks on every sheet part, as
 *volunteered* warnings: none counts toward `declared`/`evaluated`, so none makes
 `verify.ok` true on its own. Declare one in `expect` to make it count:
 
@@ -1928,12 +1956,13 @@ A host downloads sheet parts as one ZIP, the **cut & print kit** (`format: "bund
 
 - One thickness per joint: fingers, tabs and T-slots join panels cut from the
   same sheet.
-- Poses are rigid and axis-aligned: `face` and `up` are the six axis words. A
-  panel at an angle is an author `place` after the pose, or a printed part.
+- Poses are rigid and axis-aligned: `face` and `up` are the six axis words. An
+  angled panel is an author `place` after the pose (realistic mode then shows
+  no laser burns), or a printed part.
 - No bends, folds, living hinges or grain direction: `folds`, `bends` and
   `grain` are reserved keys and throw.
-- Cut and score are vector lines; engraving is filled regions. There is no raster
-  image engraving.
+- Cut and score are vector lines; engraving is filled regions, never a raster
+  image.
 - The laser checks are warnings. Sharp-corner shrinking can over-report at acute
   tips, and a web within 0.05 mm of the floor can read as passing.
 
@@ -1986,7 +2015,7 @@ const hingeSlots = (k, p, d, pose, z) => d.hingeX.flatMap((hx) =>
   [hx - HINGE.tongueX, hx + HINGE.tongueX].map((x) =>
     k.shape2d(tab(p).slot).translate(worldToSheet(pose, [x, p.depth / 2, z]))));
 
-const PLY = { views: ["box"], display: { material: "oak" }, material: "birch plywood", thickness: (p) => p.t };
+const PLY = { views: ["box"], display: { material: "plywood" }, material: "birch plywood", thickness: (p) => p.t };
 const panel = (name, label, extra = {}) => sheetPart({
   ...PLY, label,
   profile: (k, p, d) => d.box[name].outline,       // drawn as seen from outside
@@ -3177,7 +3206,8 @@ addition to) the generated view style button above:
   revert too.
 - `runtime.declaresMaterials` — `true` when any sub-part names a
   `display.material`. A part with none still supports realistic mode (every
-  sub-part renders as a PLA print in its CAD colour), so use this to decide
+  sub-part renders as a PLA print in its CAD colour, a laser sheet part as its
+  stock — "Sheet parts default to their stock"), so use this to decide
   whether to surface your own realistic control at all, not whether it works.
   Feature lines are not a preference: they draw whenever `runtime.renderMode`
   reads `"cad"` and never while it reads `"realistic"` — there is no switch
@@ -3665,7 +3695,8 @@ trust handling.
 
 **Appearance** (all warnings) — `unknown-material` (a `display.material` the
 library does not know; the viewer draws it as if it named none — a PLA print
-in realistic mode), `unknown-environment`
+in realistic mode, or for a laser sheet part its stock's look, per "Sheet parts
+default to their stock"), `unknown-environment`
 (`meta.environment` not known; realistic mode uses `studio`),
 `material-key-unknown` (a `display` key that is not colour, opacity, material
 or one of the six overrides; ignored), `material-override-clamped` (an override

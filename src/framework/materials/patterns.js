@@ -5,7 +5,10 @@
 // they move with the sub-part under animation and never slide when the camera
 // moves. Layer lines additionally map object space through `pfPrintFrame`
 // (print-frame.js: display→export), so they run the way the part will print.
+// A laser-cut wood sheet's burn (applyBurn) composes over the wood pass in the sheet's
+// canonical frame (sheet-look.js).
 import * as THREE from "three";
+import { BURN, srgbToLinear } from "./sheet-look.js";
 
 const VERT_DECL = "varying vec3 vPfObjPos;\nvarying vec3 vPfObjNormal;\nvarying vec3 vPfPrintUpView;\nuniform mat4 pfPrintFrame;\n";
 // Wood's triplanar normal map builds its normal in OBJECT space; the fragment
@@ -351,6 +354,106 @@ export function applyBrushFrame(material) {
   };
   const base = prevKey && prevKey !== THREE.Material.prototype.customProgramCacheKey ? prevKey.call(material) : "";
   material.customProgramCacheKey = () => `${base}|pf-brush`;
+  material.needsUpdate = true;
+  return material;
+}
+
+// --- laser burns ------------------------------------------------------------------
+// A laser-cut sheet in a wood shows what the laser did to it (sheet-look.js decides which
+// sub-parts, and mount hands the viewer each one's canonical frame): cut walls charred,
+// engrave and score floors scorched, faces untouched. Composes over the wood pass the way
+// applyBrushFrame does, injecting at three points in three's meshphysical order:
+//   (a) colour + roughness, before <normal_fragment_begin>: after wood's body (injected
+//       after <roughnessmap_fragment>) and <metalnessmap_fragment>. A second replace of
+//       <roughnessmap_fragment> would land IN FRONT of wood's body, so it is not reused.
+//       pfBurnWall / pfBurnFloor are declared at main() scope, like pfLayer, for (b), (c).
+//   (b) the normal, before <emissivemap_fragment>: after wood's normal map and the
+//       clearcoat normals. Char flattens the wood's relief: the wood normal fades toward
+//       the geometric one (nonPerturbedNormal, set by <normal_fragment_begin>), keeping
+//       BURN.relief of it.
+//   (c) clearcoat, after <lights_physical_fragment>, which assigns material.clearcoat:
+//       walnut's lacquer comes off the char.
+// Every snippet sits between `// pf-burn {` and `// } pf-burn` lines: that is how the tests
+// prove a burning program is the plain wood program plus these and nothing else. The
+// vertex stage is untouched — the pass reads the varyings every pattern already has. With
+// pfSheetT = 0 (no frame delivered yet) it draws plain wood. No noise term: an unfiltered
+// striation would shimmer at part scale (the layer-lines lesson above).
+const glf = (x) => (Number.isInteger(x) ? x.toFixed(1) : String(x));
+const CHARCOAL = srgbToLinear(BURN.charcoal);
+const burnBlock = (glsl) => `// pf-burn {\n${glsl}\n// } pf-burn`;
+
+const BURN_FRAG_DECL = burnBlock(`uniform mat4 pfSheetFrame;
+uniform float pfSheetT;
+uniform float pfPlies;
+uniform vec3 pfFaceAvg;
+// 1 on a cross ply (an odd one), 0 on a face-grain ply: the square wave box-filtered over
+// the pixel (its integral, differenced across fwidth), so plies too thin to draw average
+// out instead of shimmering.
+float pfCrossPlyI(float x) { return floor(x * 0.5) + max(0.0, fract(x * 0.5) * 2.0 - 1.0); }
+float pfCrossPly(float x) {
+  float w = max(fwidth(x), 1e-4);
+  return (pfCrossPlyI(x + 0.5 * w) - pfCrossPlyI(x - 0.5 * w)) / w;
+}`);
+
+const BURN_FRAG_BODY = burnBlock(`float pfBurnWall = 0.0;
+float pfBurnFloor = 0.0;
+if (pfSheetT > 0.0) {
+  vec3 pfC = (pfSheetFrame * vec4(vPfObjPos, 1.0)).xyz;
+  vec3 pfCn = normalize(mat3(pfSheetFrame) * vPfObjNormal);
+  pfBurnWall = 1.0 - smoothstep(${glf(BURN.wallNz[0])}, ${glf(BURN.wallNz[1])}, abs(pfCn.z));
+  pfBurnFloor = step(0.5, pfCn.z) * step(pfC.z, pfSheetT - ${glf(BURN.floorDepth)});
+  float pfK = mix(${glf(BURN.kThin)}, ${glf(BURN.kThick)}, clamp((pfSheetT - ${glf(BURN.tThin)}) / ${glf(BURN.tThick - BURN.tThin)}, 0.0, 1.0));
+  float pfZ = clamp(pfC.z / pfSheetT, 0.0, 1.0);
+  vec3 pfFace = diffuse * pfFaceAvg;
+  // Per channel, not the vector scaled by one luminance ratio (sheet-look.js's burnAlbedo,
+  // this shader's twin, explains why): a channel where charOfDark·face is already below raw
+  // charcoal chars toward ITS OWN darker value, so no channel can come out lighter than it
+  // went in.
+  vec3 pfChar = min(vec3(${CHARCOAL.map((c) => c.toFixed(6)).join(", ")}), ${glf(BURN.charOfDark)} * pfFace);
+  vec3 pfEdge = mix(pfFace, pfChar, min(1.0, pfK + ${glf(BURN.exit)} * (1.0 - pfZ)));
+  if (pfPlies > 0.0) pfEdge *= mix(1.0, ${glf(BURN.crossPly)}, pfCrossPly(pfZ * pfPlies));
+  vec3 pfMark = mix(pfFace, pfChar, pfK - ${glf(BURN.engraveLess)});
+  // The grain survives the char (sheet-look.js's burnTexel is the twin): pfEdge and pfMark
+  // are what the face AVERAGE chars to, and each texel keeps its ratio to that average,
+  // blended in by BURN.grain. At 1, a pure multiply, the average chars exactly as above and
+  // no texel comes out lighter than it went in.
+  vec3 pfGrain = mix(vec3(1.0), diffuseColor.rgb / max(pfFace, vec3(1e-4)), ${glf(BURN.grain)});
+  pfEdge *= pfGrain;
+  pfMark *= pfGrain;
+  diffuseColor.rgb = mix(diffuseColor.rgb, pfEdge, pfBurnWall);
+  diffuseColor.rgb = mix(diffuseColor.rgb, pfMark, pfBurnFloor);
+  roughnessFactor = mix(roughnessFactor, ${glf(BURN.roughness)}, max(pfBurnWall, pfBurnFloor));
+}`);
+
+const BURN_FRAG_NORMAL = burnBlock(`normal = normalize(mix(normal, nonPerturbedNormal, max(pfBurnWall, pfBurnFloor) * ${glf(1 - BURN.relief)}));`);
+
+const BURN_FRAG_CLEARCOAT = burnBlock(`#ifdef USE_CLEARCOAT
+material.clearcoat *= 1.0 - max(pfBurnWall, pfBurnFloor);
+#endif`);
+
+// `faceAvg` is the preset's own colour (0xRRGGBB) — its texture's average, never the tint:
+// the tint arrives as `diffuse`, so the shader's face colour is diffuse · pfFaceAvg.
+export function applyBurn(material, { faceAvg }) {
+  const uniforms = material.userData.patternUniforms;
+  if (!uniforms?.pfGrainSwap) return material; // wood only: the burn draws over the wood pass
+  Object.assign(uniforms, {
+    pfSheetFrame: { value: new THREE.Matrix4() },
+    pfSheetT: { value: 0 },
+    pfPlies: { value: 0 },
+    pfFaceAvg: { value: new THREE.Color(faceAvg) },
+  });
+  const prev = material.onBeforeCompile;
+  const prevKey = material.customProgramCacheKey;
+  material.onBeforeCompile = (shader, renderer) => {
+    prev?.call(material, shader, renderer); // applyPattern's hook copies `uniforms` — burn uniforms included
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", `#include <common>\n${BURN_FRAG_DECL}`)
+      .replace("#include <normal_fragment_begin>", `${BURN_FRAG_BODY}\n#include <normal_fragment_begin>`)
+      .replace("#include <emissivemap_fragment>", `${BURN_FRAG_NORMAL}\n#include <emissivemap_fragment>`)
+      .replace("#include <lights_physical_fragment>", `#include <lights_physical_fragment>\n${BURN_FRAG_CLEARCOAT}`);
+  };
+  const base = prevKey && prevKey !== THREE.Material.prototype.customProgramCacheKey ? prevKey.call(material) : "";
+  material.customProgramCacheKey = () => `${base}|pf-burn`;
   material.needsUpdate = true;
   return material;
 }

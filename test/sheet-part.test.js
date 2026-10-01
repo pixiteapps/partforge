@@ -12,6 +12,7 @@ import { resolveSheet } from "../src/framework/sheet/resolve.js";
 import { poseSteps } from "../src/framework/sheet/pose.js";
 import { MARK_DEPTH, SCORE_WIDTH, isSheetPart } from "../src/framework/sheet/constants.js";
 import { processFor } from "../src/framework/process/registry.js";
+import { sheetFrameFor } from "../src/framework/materials/sheet-look.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -82,6 +83,23 @@ describe("an ordinary sub-part with a plain-data marker", () => {
     expect("place" in flat).toBe(false);
     expect(flat.sheet.pose).toBeNull();
     expect(sheetPart(panelSpec({ pose: null, place: (s) => s })).place).toBeTypeOf("function");
+  });
+
+  // The realistic look (materials/sheet-look.js) trusts a sheet's canonical frame only
+  // when it sits exactly on its pose: no author place, and sheetPart's own place still
+  // installed. So the record names both, the way generatedBuild names the build.
+  test("the record names the author's place and the place sheetPart installed", () => {
+    const own = (s) => s.translate([0, 0, 5]);
+    const posed = sheetPart(panelSpec());
+    expect(posed.sheet.place).toBeNull();
+    expect(posed.sheet.generatedPlace).toBe(posed.place);
+    const placed = sheetPart(panelSpec({ place: own }));
+    expect(placed.sheet.place).toBe(own);
+    expect(placed.sheet.generatedPlace).toBe(placed.place);
+    const flat = sheetPart(panelSpec({ pose: undefined }));
+    expect(flat.sheet.place).toBeNull();
+    expect(flat.sheet.generatedPlace).toBeNull();
+    expect("place" in flat).toBe(false);
   });
 
   test("recognition is plain data: no class, no Symbol, survives a copy", () => {
@@ -200,6 +218,28 @@ describe("the pose: rigid, identical for display and export, probe-trusted", () 
     // face −Y, up +Z, at [−40, 0, 0]: u → +X, v → +Z, material toward +Y
     expect(bb.min.map((v) => +v.toFixed(9) + 0)).toEqual([-40, 0, 0]);
     expect(bb.max.map((v) => +v.toFixed(9) + 0)).toEqual([40, 3, 50]);
+  });
+
+  // One spec object reused for the next panel, changed in between: everything the first
+  // panel's place and frame read was fixed when it was made, like its build. A place that
+  // read the spec live would move the exported panel and put the burn's frame off its mesh.
+  test("a spec object changed after the call moves neither the panel nor its frame", () => {
+    const spec = panelSpec({ thickness: 3 });
+    const a = sheetPart(spec);
+    Object.assign(spec, { thickness: 6, pose: { face: "+Z", up: "+Y", at: [0, 0, 10] }, place: (s) => s.translate([0, 0, 5]) });
+    sheetPart(spec);
+    const fresh = sheetPart(panelSpec({ thickness: 3 }));
+    const { p, d } = resolveParams(partWith(a), {});
+    const box = (sp) => {
+      const bb = buildPosed(k, partWith(sp), "panel", { purpose: "export", view: "main", p, d }).boundingBox();
+      return [...bb.min, ...bb.max].map((v) => +v.toFixed(9) + 0);
+    };
+    expect(box(a)).toEqual(box(fresh));
+    expect(box(a)).toEqual([-40, 0, 0, 40, 3, 50]);
+    const frame = sheetFrameFor(a, { p, d });
+    expect(frame.t).toBe(3);
+    expect(frame.frame).toEqual(sheetFrameFor(fresh, { p, d }).frame);
+    expect(probeSubPartPose(a, { view: "main", purpose: "export", p, d }).pose).toEqual(poseSteps(POSE, 3));
   });
 
   test("a part made of sheet parts lints clean (validating probe, place rules)", () => {

@@ -27,8 +27,10 @@ const isColor = (v) => Number.isInteger(v) && v >= 0 && v <= 0xffffff;
 // material and threemf.js's uncoloured-object colour are the same literal).
 // Realistic mode draws it as a PLA print — the pla-print finish, layer lines
 // and all — in that same colour, or the part's own `color`, so a part is the
-// same colour in both views, just printed. `declaresMaterials` still counts
-// only a NAMED material: this default never makes a part "declare" one.
+// same colour in both views, just printed — except a laser sheet part, which
+// realistic mode draws as its stock instead (sheet-look.js realisticDisplay,
+// applied before this resolves). `declaresMaterials` still counts only a NAMED
+// material: this default never makes a part "declare" one.
 export const NO_MATERIAL_COLOR = 0x9fb4cc;
 export const NO_MATERIAL_PRESET_ID = "pla-print";
 const NO_MATERIAL_CAD = { color: NO_MATERIAL_COLOR, metalness: 0.25, roughness: 0.55 };

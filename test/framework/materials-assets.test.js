@@ -121,6 +121,30 @@ test("the outdoor ground is tinted down to a warm grey", async () => {
   expect(r).toBeGreaterThanOrEqual(b);
 });
 
+// A wood preset's `color` is its colour map's average — what the CAD view and a 3MF show,
+// and the face average the laser burn chars relative to (patterns.js pfFaceAvg, sheet-look.js
+// burnAlbedo and the calibration floors in sheet-look.test.js) — and `roughnessMean` is its
+// roughness map's mean. Measured off the committed files, so a re-baked map cannot leave the
+// preset (and the burn) on a stale average. Within 1/255 a channel: JPEG decoders round.
+test("each wood's colour and roughnessMean are its own maps' measured averages", async () => {
+  const { default: sharp } = await import("sharp");
+  const means = async (name) => {
+    const { data, info } = await sharp(assetPath(name)).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const sums = new Array(info.channels).fill(0);
+    for (let i = 0; i < data.length; i++) sums[i % info.channels] += data[i];
+    return sums.map((s) => s / (data.length / info.channels));
+  };
+  const woods = Object.values(PRESETS).filter((p) => p.pattern === "wood");
+  expect(woods.map((p) => p.id)).toEqual(["oak", "walnut", "plywood"]);
+  for (const p of woods) {
+    const avg = await means(p.textures.color);
+    [(p.color >> 16) & 255, (p.color >> 8) & 255, p.color & 255].forEach((c, i) =>
+      expect(Math.abs(avg[i] - c), `${p.id} colour channel ${i}: map ${avg[i].toFixed(2)}, preset ${c}`).toBeLessThanOrEqual(1));
+    const [rough] = await means(p.textures.roughness);
+    expect(Math.abs(rough / 255 - p.textures.roughnessMean), `${p.id} roughness mean ${(rough / 255).toFixed(4)}`).toBeLessThanOrEqual(0.002);
+  }
+});
+
 // Every committed asset is referenced somewhere: a file nothing loads is dead
 // weight in every consumer's build (assets.js lists them all literally).
 test("no asset file sits in the directory unreferenced", async () => {
