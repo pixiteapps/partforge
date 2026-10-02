@@ -778,9 +778,6 @@ function circumcentre(a, b, c) {
   return add(a, scl(t, 1 / (2 * ww)));
 }
 
-// Flip to true in Task 5 once blend-surfaces.js knows the "spine" kind.
-const SPINE_SHADING = false;
-
 // Grazing burial for general tools (see generalTool). GENERAL_EXT_MIN floors the
 // fillet arc's continuation past both contacts (radians); GENERAL_SAG_PAD is the
 // chamfer's burial pad beyond the facet-tilt sagitta (mm, capped at 2% of the
@@ -1058,7 +1055,35 @@ function generalTool(k, chain, magnitude, mode, pSegs, rays = null) {
     rings.push(rings[rings.length - 1].map((q) => add(q, scl(tN, over))));
   }
   const tool = k._ringStackSolid(rings, { closed });
-  return mode === "fillet" && SPINE_SHADING ? markBlend(k, tool, { kind: "spine", pts: centres, closed, r: magnitude }) : tool;
+  return mode === "fillet" ? markBlend(k, tool, { kind: "spine", pts: refineSpine(centres, closed), closed, r: magnitude }) : tool;
+}
+
+// The shading spine is nearest-point-on-polyline, so a coarse polyline tilts the
+// normal by up to half a turn angle on the concave side of a bend (2.4° on a tee at
+// ~3.5° per station). One interpolating 4-point subdivision pass (Dyn) quarters that;
+// a vertex turning past SPINE_SMOOTH_COS, or a missing neighbour (open ends), keeps
+// the plain midpoint so a real corner is never rounded or overshot.
+const SPINE_SMOOTH_COS = Math.cos((25 * Math.PI) / 180);
+function refineSpine(pts, closed) {
+  const n = pts.length;
+  if (n < 3) return pts;
+  const at = (i) => (closed ? pts[((i % n) + n) % n] : pts[i]);
+  const turnOk = (i) => {
+    const a = at(i - 1), b = at(i), c = at(i + 1);
+    if (!a || !b || !c) return false;
+    return dot(norm(sub(b, a)), norm(sub(c, b))) > SPINE_SMOOTH_COS;
+  };
+  const out = [];
+  const nSeg = closed ? n : n - 1;
+  for (let i = 0; i < nSeg; i++) {
+    out.push(pts[i]);
+    const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+    out.push(p0 && p3 && turnOk(i) && turnOk(i + 1)
+      ? [0, 1, 2].map((a) => (9 * (p1[a] + p2[a]) - p0[a] - p3[a]) / 16)
+      : [0, 1, 2].map((a) => (p1[a] + p2[a]) / 2));
+  }
+  if (!closed) out.push(pts[n - 1]);
+  return out;
 }
 
 // `segs` is the KERNEL quality — it sizes the flank-facet guards (sag/ext) and the
