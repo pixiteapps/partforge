@@ -21,6 +21,7 @@ import { toEdgeFinder } from "./edge-selector.js";
 import { toFaceFinder } from "./face-selector.js";
 import { addSugar } from "./solid-sugar.js";
 import { makeShape2dFactory } from "./shape2d.js";
+import { groupInteractingRegions } from "./region-interaction.js";
 import { finishKernel } from "./kernel-front.js";
 import { makeProfileWarner } from "./profile-warnings.js";
 import { createOcctRepair } from "./occt-repair.js";
@@ -519,15 +520,47 @@ export function createOcctKernel(replicad) {
     for (const hole of holes) region = region.cut(contourDrawing(hole));
     return region;
   };
-  // Region list -> fused Drawing: draw each region's outer contour, cut its holes
-  // out, then fuse every region together — the multi-region generalization of
-  // drawingFromProfile above. Used by extrude/revolve (via drawingFor below) to
-  // materialize a Shape2D's stored contours into a Drawing.
-  const drawingFromRegions = (regions) => regions.reduce((acc, rg) => {
-    let region = contourDrawing(rg.outer);
-    for (const hole of rg.holes) region = region.cut(contourDrawing(hole));
-    return acc ? acc.fuse(region) : region;
-  }, null);
+  // Region list -> Drawing, for extrude/revolve (via drawingFor below).
+  //
+  // A Shape2D's regions are NOT guaranteed disjoint: booleans/offset emit disjoint
+  // regions (an island inside a hole is its own top-level region), but k.shape2d([...])
+  // lifts a hand-authored region array verbatim, so two of them may overlap. The old
+  // left-fold `acc.fuse(region)` unioned them correctly but re-organised every
+  // accumulated blueprint on each fuse (replicad organiseBlueprints → containment
+  // search), so N regions cost O(N²) — a ~1,500-triangle lattice took ~45 s and
+  // gigabytes of embind wrappers. Now regions are grouped by whether they actually
+  // INTERACT (see regionsInteract); a region that touches no other is turned straight
+  // into Blueprints with no boolean at all, and only genuinely interacting clusters
+  // are fused, as a balanced tree.
+  //
+  // A region becomes an outer Blueprint plus its hole Blueprints in one CompoundBlueprint
+  // (outer first — what organiseBlueprints would produce); holes are never cut one at a
+  // time, since each cut2D re-organises too. Hole winding is irrelevant: replicad's
+  // CompoundSketch.face() runs ShapeFix_Face.FixOrientation.
+  const { Drawing, Blueprints, CompoundBlueprint } = replicad;
+  const bpOf = (contour) => contourDrawing(contour).innerShape;
+  const regionBlueprint = (rg) => (rg.holes.length
+    ? new CompoundBlueprint([bpOf(rg.outer), ...rg.holes.map(bpOf)])
+    : bpOf(rg.outer));
+  const fuseBalanced = (drawings) => {
+    while (drawings.length > 1) {
+      const next = [];
+      for (let i = 0; i < drawings.length; i += 2)
+        next.push(i + 1 < drawings.length ? drawings[i].fuse(drawings[i + 1]) : drawings[i]);
+      drawings = next;
+    }
+    return drawings[0];
+  };
+  const drawingFromRegions = (regions) => {
+    if (regions.length === 0) return null;
+    const parts = [];
+    for (const group of groupInteractingRegions(regions, SHAPE2D_SEGS)) {
+      if (group.length === 1) { parts.push(regionBlueprint(group[0])); continue; }
+      const fused = fuseBalanced(group.map((rg) => new Drawing(regionBlueprint(rg)))).innerShape;
+      parts.push(...(fused instanceof Blueprints ? fused.blueprints : [fused]));
+    }
+    return new Drawing(parts.length === 1 ? parts[0] : new Blueprints(parts));
+  };
 
   // 2-D boolean value: the SHARED Shape2D (shape2d.js), identical to the Manifold
   // backend's. Storage is the curve-native contour IR and every op — including
