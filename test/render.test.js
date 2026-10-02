@@ -5,6 +5,8 @@ import { PNG } from "pngjs";
 import { bootManifoldKernel } from "../src/testing.js";
 import { renderViews, RENDER_VIEWS } from "../src/testing/render.js";
 import part from "../src/parts/demo.js";
+import { RENDER_STYLES } from "../src/framework/renderStyles.js";
+const CAD_BG = [(RENDER_STYLES.cad.background >> 16) & 255, (RENDER_STYLES.cad.background >> 8) & 255, RENDER_STYLES.cad.background & 255];
 
 let k;
 const OUT = "test/.render-out";
@@ -21,7 +23,7 @@ test("renderViews writes a valid, non-blank PNG per requested angle", async () =
     expect(png.width).toBe(320);
     expect(png.height).toBe(240);
     // the part actually rendered — pixels differ from the scene background
-    const bg = [0x15, 0x18, 0x1d];
+    const bg = CAD_BG;
     let nonBg = 0;
     for (let i = 0; i < png.data.length; i += 4)
       if (Math.abs(png.data[i] - bg[0]) > 8 || Math.abs(png.data[i + 1] - bg[1]) > 8 || Math.abs(png.data[i + 2] - bg[2]) > 8) nonBg++;
@@ -37,7 +39,7 @@ test("renderViews handles every canonical angle, and they are not all the same p
 
   const pixels = files.map((f) => {
     const png = PNG.sync.read(readFileSync(f));
-    const bg = [0x15, 0x18, 0x1d];
+    const bg = CAD_BG;
     let nonBg = 0;
     for (let i = 0; i < png.data.length; i += 4)
       if (Math.abs(png.data[i] - bg[0]) > 8 || Math.abs(png.data[i + 1] - bg[1]) > 8 || Math.abs(png.data[i + 2] - bg[2]) > 8) nonBg++;

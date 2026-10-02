@@ -141,3 +141,9 @@ export function resolveEnvironmentId(id) {
   if (typeof id === "string" && Object.hasOwn(ENVIRONMENTS, id)) return { id, known: true };
   return { id: DEFAULT_ENVIRONMENT_ID, known: false };
 }
+
+// Whether a sub-part's `display` declares any appearance at all. Without one
+// the CAD view uses the shared default material untouched (physical.js
+// buildCadMaterial; softrender/index.js mirrors that rule).
+const APPEARANCE_KEYS = ["color", "opacity", "material", "roughness", "metalness", "clearcoat", "clearcoatRoughness", "anisotropy", "textureScale"];
+export const hasAppearance = (display) => !!display && APPEARANCE_KEYS.some((k) => display[k] != null);

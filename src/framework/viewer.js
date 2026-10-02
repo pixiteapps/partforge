@@ -25,31 +25,11 @@ import { addViewerLights, captureLightPoses, createCaptureLights, createHemisphe
 import { makeCaptureCamera, recenteredView, captureDepthRange } from "./capture-frame.js";
 import { CANONICAL_VIEWS, cameraPoseForView } from "./view-angles.js";
 
-// three renders into a render target in the LINEAR working colour space: as of r184
-// WebGLRenderer only applies `outputColorSpace` on the canvas path (WebGLPrograms
-// substitutes workingColorSpace whenever a render target is bound), so readback pixels
-// are linear no matter what the target texture's colorSpace says. Writing them straight
-// into a JPEG is what made captured views come back muddy and dark compared to the live
-// canvas. Encode the transfer function ourselves. The 8-bit LUT loses precision only in
-// the deepest shadows, which a quality-0.9 JPEG would not have preserved anyway.
-const SRGB8 = (() => {
-  const table = new Uint8Array(256);
-  for (let i = 0; i < 256; i++) {
-    const l = i / 255;
-    table[i] = Math.round(255 * (l <= 0.0031308 ? 12.92 * l : 1.055 * l ** (1 / 2.4) - 0.055));
-  }
-  return table;
-})();
-
-// Linear RGBA bytes → sRGB, in place. Alpha is a coverage value, not a colour: untouched.
-export function srgbEncodeInPlace(data) {
-  for (let i = 0; i < data.length; i += 4) {
-    data[i] = SRGB8[data[i]];
-    data[i + 1] = SRGB8[data[i + 1]];
-    data[i + 2] = SRGB8[data[i + 2]];
-  }
-  return data;
-}
+import { srgbEncodeInPlace, RENDER_STYLES, getRenderStyle, CAD_LIGHT_THEME, CAD_DARK_THEME } from "./renderStyles.js";
+import { stylePose, modelToWorld } from "./style-camera.js";
+import { contactShadowMask } from "./contact-shadow.js";
+import { buildContactShadowPlane } from "./contact-shadow-plane.js";
+export { srgbEncodeInPlace }; // was exported from here; keep the name importable
 
 // Readback (a realistic capture's target) → linear floats: half-float bits,
 // or linear bytes from the 8-bit fallback target.
@@ -80,7 +60,9 @@ export function halfFloatCaptureSupported({ readable, readType = null, halfFloat
 // `renderer.renderOffscreen(pose)` does the GL work (temp camera → offscreen
 // target → readback → JPEG data URL); injected so this is unit-testable without
 // a GL context. The grid is hidden for the whole synchronous pass and restored.
-export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, bounds, sceneBounds, hidden = [] }) {
+// `poseFor(view)`, when given, places each view's camera in place of
+// cameraPoseForView(view, bounds) — the viewer passes the cad style's fit.
+export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, bounds, sceneBounds, hidden = [], poseFor }) {
   const views = (viewNames?.length ? viewNames : ["iso", "front", "top"])
     .filter((v) => CANONICAL_VIEWS.includes(v))
     .slice(0, CANONICAL_VIEWS.length);
@@ -91,10 +73,11 @@ export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, b
   for (const o of hidden) o.visible = false;
   try {
     return views.map((view) => {
-      const pose = cameraPoseForView(view, bounds);
-      // `bounds` frames (half the max extent, by cameraPoseForView's contract);
-      // `sceneBounds` is the sphere the depth planes must hold. The grid is
-      // hidden for this whole pass, so the part alone is in the second one.
+      const pose = poseFor ? poseFor(view) : cameraPoseForView(view, bounds);
+      // `bounds` frames (half the max extent, by cameraPoseForView's contract)
+      // when there is no `poseFor`; `sceneBounds` is the sphere the depth planes
+      // must hold. The grid is hidden for this whole pass, so the part alone is
+      // in the second one.
       return { view, dataUrl: renderer.renderOffscreen(pose, { sceneBounds }) };
     });
   } finally {
@@ -106,23 +89,12 @@ export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, b
 
 // The off-loop thumbnail capture (renderMeshPayloads, behind the handle's
 // captureView) renders a THROWAWAY scene, so it gets no background from the
-// live scene's theme — and before this constant existed it set none at all,
-// which meant every thumbnail came back on the renderer's default opaque
-// black, in light mode as much as dark. One deliberately theme-INDEPENDENT
-// colour is the right answer rather than either THEME entry below: a thumbnail
-// is baked at capture time and displayed later under host chrome this renderer
-// cannot know (partforge-cloud's card grid draws them on both). Near the
-// perceptual midpoint of THEME.light.bg / THEME.dark.bg, so it commits to
-// neither, and clear of both the part material (0x9fb4cc, lighter) and the
-// feature-edge lines (0x1c232d, much darker).
-//
-// The near-ZERO chroma is the part that looks arbitrary and isn't: the default
-// part material is blue-grey, so a blue-grey background of the same value
-// (0x6b7280 was the first try) competes with it and the shaded side of a part
-// half-disappears into the plate. A neutral grey separates by hue as well as
-// value. Judged on real captures of demo.js and hinged-box.js — if this is
-// ever retuned, retune it the same way and not by eye on the hex.
-export const THUMBNAIL_BG = 0x6e6e73;
+// live scene's theme. Its background is the product-shot style's light
+// background (renderStyles.js): fixed, and never following the viewer theme,
+// because a thumbnail is baked at capture time and displayed later under host
+// chrome this renderer cannot know. Retune it in renderStyles.js, on real
+// captures against the CPU renderer's parity check, not by eye on the hex.
+export const THUMBNAIL_BG = RENDER_STYLES.thumbnail.background;
 
 // Resolve renderMeshPayloads' `background` option to what Scene.background
 // wants. Exported for its own sake: renderMeshPayloads needs a GL context and
@@ -202,8 +174,8 @@ export function createViewer(container, part) {
   // Light/dark scene palettes (the page chrome is themed separately, via CSS on the
   // host page). A part can override the dark background through meta.background.
   const THEME = {
-    dark:  { bg: part.meta?.background ?? 0x15181d, grid: [0x2c333d, 0x222831], line: 0x1c232d },
-    light: { bg: 0xe9edf2, grid: [0xc4ccd6, 0xd6dce4], line: 0x33414f },
+    dark:  { bg: part.meta?.background ?? CAD_DARK_THEME.bg, grid: [0x2c333d, 0x222831], line: CAD_DARK_THEME.line },
+    light: { bg: CAD_LIGHT_THEME.bg, grid: [0xc4ccd6, 0xd6dce4], line: CAD_LIGHT_THEME.line },
   };
   scene.background = new THREE.Color(THEME.dark.bg);
 
@@ -272,9 +244,9 @@ export function createViewer(container, part) {
 
   // --- material + part groups -----------------------------------------------
   const material = new THREE.MeshStandardMaterial({
-    color: 0x9fb4cc,
-    metalness: 0.25,
-    roughness: 0.55,
+    color: RENDER_STYLES.cad.material.color,
+    metalness: RENDER_STYLES.cad.material.metalness,
+    roughness: RENDER_STYLES.cad.material.roughness,
     flatShading: false,
     polygonOffset: true, // push the surface back so edge lines sit cleanly on top
     polygonOffsetFactor: 1,
@@ -488,6 +460,24 @@ export function createViewer(container, part) {
       _worldBounds.union(_meshBounds);
     }
     return _worldBounds;
+  }
+
+  // Every vertex of the visible sub-part meshes in WORLD space, flat xyz — what
+  // the canonical captures fit their framing to (getVisibleWorldBounds' meshes).
+  const _worldVertex = new THREE.Vector3();
+  function visibleWorldPositions() {
+    const meshes = Object.values(subMesh).filter((m) => m.visible && m.geometry?.attributes?.position);
+    const out = new Float32Array(meshes.reduce((n, m) => n + m.geometry.attributes.position.count * 3, 0));
+    let o = 0;
+    for (const mesh of meshes) {
+      mesh.updateWorldMatrix(true, false);
+      const pos = mesh.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++, o += 3) {
+        _worldVertex.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+        out[o] = _worldVertex.x; out[o + 1] = _worldVertex.y; out[o + 2] = _worldVertex.z;
+      }
+    }
+    return out;
   }
 
   // --- depth range ------------------------------------------------------------
@@ -1929,6 +1919,25 @@ export function createViewer(container, part) {
     // blue wash over it (an orange PLA sample came out pink).
     const reshowFlashDots = [];
     for (const dot of [...flashDots, ...captureHidden]) if (dot.visible) { dot.visible = false; reshowFlashDots.push(dot); }
+    // Fat lines (LineSegments2: part edges, their fade clones, the cutaway
+    // outline) take their pixel width from material.resolution, and three's
+    // LineSegments2.onBeforeRender resets that to the CANVAS viewport on every
+    // draw — so a 1px edge in a 1024² capture came out 1024/canvas px wide, under
+    // half a pixel on a high-DPI screen. For this render each visible line's hook
+    // is a no-op and each material's resolution is the target's width × height.
+    // With a viewOffset that is still width × height, not the full frame: the
+    // offset projection maps just the sub-window onto clip space, and the line
+    // shader converts its pixel width through clip space, so the pixels it
+    // counts are the target's. Put back exactly in the finally below.
+    const lineHooks = [];
+    const lineRes = new Map();
+    renderScene.traverseVisible((obj) => {
+      if (!obj.isLineSegments2) return;
+      lineHooks.push({ obj, own: Object.hasOwn(obj, "onBeforeRender"), hook: obj.onBeforeRender });
+      obj.onBeforeRender = () => {};
+      const m = obj.material;
+      if (m?.isLineMaterial && !lineRes.has(m)) { lineRes.set(m, m.resolution.clone()); m.resolution.set(width, height); }
+    });
     try {
       renderer.setRenderTarget(rt);
       renderWithBackdrop(renderScene, cam);
@@ -1945,6 +1954,8 @@ export function createViewer(container, part) {
         liveLights.fill.visible = fillWas;
       }
       for (const dot of reshowFlashDots) dot.visible = true;
+      for (const { obj, own, hook } of lineHooks) { if (own) obj.onBeforeRender = hook; else delete obj.onBeforeRender; }
+      for (const [m, res] of lineRes) m.resolution.copy(res);
       if (!cachedSize) rt.dispose();
     }
     const canvas = document.createElement("canvas");
@@ -2010,18 +2021,21 @@ export function createViewer(container, part) {
     if (!box || box.isEmpty()) return [];
     const center = box.getCenter(new THREE.Vector3()).toArray();
     const size = box.getSize(new THREE.Vector3());
-    const radius = Math.max(size.x, size.y, size.z) / 2 || 10;
+    // Framed like the CPU renderer frames the same views: the cad style's fit to
+    // the visible geometry's WORLD positions (stylePose), so a part fills the
+    // frame by its own silhouette rather than a fixed distance from its box.
+    const styleBox = { min: box.min.toArray(), max: box.max.toArray() };
+    const points = visibleWorldPositions();
     return captureViewsFromScene(viewNames, {
+      poseFor: (view) => stylePose(RENDER_STYLES.cad, view, styleBox, { aspect: 1, points }).pose,
       renderer: { renderOffscreen },
       // The live camera only to save/restore its position around the pass; the
       // renders themselves pass no `projection`, so they stay perspective.
       liveCamera: activeCamera,
       grid,
       hidden: [...canonicalCaptureHidden],
-      bounds: { center, radius },
-      // The ENCLOSING radius, which is a different number from the framing one
-      // above: a box's corners reach √3 further than half its max extent, and
-      // the depth planes have to clear the corners. A realistic capture keeps
+      // The ENCLOSING radius the depth planes must clear (half the diagonal: the
+      // box's corners, not just its faces). A realistic capture keeps
       // its ground disc, which is several part radii across, so it counts too.
       sceneBounds: (realisticRig && sceneDepthBounds()) || { center, radius: size.length() / 2 || 10 },
     });
@@ -2176,19 +2190,21 @@ export function createViewer(container, part) {
 
   // Offscreen render of an arbitrary mesh set (a non-active view), for thumbnails.
   // Assembles a THROWAWAY scene mirroring the live pivot convention, frames it from a
-  // canonical angle, renders through the parameterized renderOffscreen, and disposes
+  // canonical angle (fitted to the payloads' geometry), renders through the parameterized renderOffscreen, and disposes
   // everything. Never touches the live scene, camera, subMesh, or subCache. The scene
-  // gets THUMBNAIL_BG unless `background` says otherwise (`null` = no background, the
+  // renders the `thumbnail` style unless `style` says otherwise (the style's
+  // background unless `background` says otherwise; `null` = no background, the
   // renderer's clear colour). `payloads` is the worker's [{name, positions, normals,
   // indices, …}] array — placement is already baked into shared-frame coords, so
   // meshes are NOT recentred.
-  function renderMeshPayloads(payloads, { angle = "iso", size = 640, quality = 0.8, background } = {}) {
+  function renderMeshPayloads(payloads, { angle = "iso", size = 640, quality = 0.8, background, style = "thumbnail" } = {}) {
     if (disposed) return null; // same guard as captureCurrent/captureCanonicalViews — never touch a torn-down renderer
+    const st = getRenderStyle(style);
     const tmpScene = new THREE.Scene();
     // Deliberately the throwaway scene's own background, never the live one's:
     // this must not follow the viewer theme (see THUMBNAIL_BG) and must not
     // reach the live-scene captures, which correctly do follow it.
-    tmpScene.background = thumbnailBackground(background);
+    tmpScene.background = thumbnailBackground(background === undefined ? st.background : background);
     const tmpPivot = new THREE.Group();
     tmpPivot.rotation.x = -Math.PI / 2; // model Z (CAD up) -> vertical, same as live pivot
     tmpScene.add(tmpPivot);
@@ -2205,17 +2221,21 @@ export function createViewer(container, part) {
     // coords but rendered rotated by tmpPivot, so a model-space bbox centre would aim
     // the camera at the wrong point — an off-origin part would render off-centre or blank.
     tmpPivot.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(tmpPivot);
-    const center = box.getCenter(new THREE.Vector3()).toArray();
-    const radius = box.getSize(new THREE.Vector3()).length() / 2 || 1;
-    const pose = cameraPoseForView(angle, { center, radius });
+    const b3 = new THREE.Box3().setFromObject(tmpPivot);
+    const box = b3.isEmpty() ? null : { min: b3.min.toArray(), max: b3.max.toArray() };
+    // The same world positions frame the view (fit to the geometry, not its box)
+    // and cast the contact shadow below.
+    const worldPositions = payloads.map((p) => modelToWorld(p.positions));
+    const points = new Float32Array(worldPositions.reduce((n, a) => n + a.length, 0));
+    worldPositions.reduce((o, a) => { points.set(a, o); return o + a.length; }, 0);
+    const { pose, fov, sceneBounds } = stylePose(st, angle, box, { aspect: 1, points });
 
     // Light the throwaway scene ourselves: renderOffscreen's own key/fill (and the
     // persistent hemisphere) live in the LIVE scene, which is never rendered here — so
     // without our own ambient + camera-relative key/fill it comes back near-black.
-    const hemi = createHemisphereLight();
-    const capLights = createCaptureLights();
-    const poses = captureLightPoses(pose);
+    const hemi = createHemisphereLight(st.lights);
+    const capLights = createCaptureLights(st.lights);
+    const poses = captureLightPoses(pose, st.lights);
     capLights.key.position.set(poses.key[0], poses.key[1], poses.key[2]);
     capLights.fill.position.set(poses.fill[0], poses.fill[1], poses.fill[2]);
     for (const light of [capLights.key, capLights.fill]) {
@@ -2224,25 +2244,35 @@ export function createViewer(container, part) {
     tmpScene.add(hemi, capLights.key, capLights.key.target, capLights.fill, capLights.fill.target);
 
     // Feature-edge lines, so the thumbnail carries the same hole/seam/chamfer outlines the
-    // live viewer shows. A dedicated LineMaterial at the render resolution (the live one is
-    // sized to the on-screen canvas); added after framing so it can't perturb the bbox.
-    const lineMat = new LineMaterial({ color: THEME.dark.line, linewidth: 1.0 });
-    lineMat.resolution.set(size, size);
+    // live viewer shows. A dedicated LineMaterial in the style's colour and width
+    // (renderOffscreen sizes its resolution to the target, as for every capture); added
+    // after framing so it can't perturb the bbox.
+    const lineMat = new LineMaterial({ color: st.edges.color, linewidth: st.edges.widthPx, transparent: st.edges.opacity < 1, opacity: st.edges.opacity });
     for (const mesh of built) {
       const edges = mesh.geometry.userData.edges;
-      if (edges) tmpPivot.add(new LineSegments2(edges, lineMat));
+      if (!edges) continue;
+      tmpPivot.add(new LineSegments2(edges, lineMat));
+    }
+
+    // The product shot's contact shadow, the same mask the CPU renderer samples.
+    // Only from above: a camera under the floor would see the shadow's underside.
+    let shadowPlane = null;
+    if (st.shadow && box && pose.position[1] > box.min[1]) {
+      const worldMeshes = payloads.map((p, i) => ({ positions: worldPositions[i], indices: p.indices }));
+      const mask = contactShadowMask(worldMeshes, box, st.shadow);
+      if (mask) { shadowPlane = buildContactShadowPlane(mask, st.shadow); tmpScene.add(shadowPlane); }
     }
 
     try {
       // fov comes from the PERSPECTIVE camera, deliberately, not from whichever
       // camera is live: thumbnails are canonical captures and stay perspective
-      // whichever projection is live. cameraPoseForView's distance
-      // is tuned to this fov, so a narrower one would crop long, thin parts.
+      // whichever projection is live. The fit (stylePose) solves its distance
+      // for the style's own fov, and the render must use that same fov.
       return renderOffscreen(
         pose,
         // The throwaway scene holds these meshes and nothing else — no grid, no
         // gizmo — so its own bounds are the whole of what the planes must hold.
-        { width: size, height: size, fov: camera.fov, quality, sceneBounds: { center, radius } },
+        { width: size, height: size, fov, quality, sceneBounds },
         tmpScene,
       );
     } finally {
@@ -2252,6 +2282,7 @@ export function createViewer(container, part) {
         if (mesh.material !== material) mesh.material.dispose(); // clone only — never the shared singleton
       }
       lineMat.dispose();
+      if (shadowPlane) { shadowPlane.geometry.dispose(); shadowPlane.material.alphaMap.dispose(); shadowPlane.material.dispose(); }
       hemi.dispose?.();
       capLights.key.dispose?.();
       capLights.fill.dispose?.();

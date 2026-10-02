@@ -4,7 +4,7 @@ import {
   captureViewsFromScene, captureCurrentFromScene, srgbEncodeInPlace,
   thumbnailBackground, THUMBNAIL_BG,
 } from "../src/framework/viewer.js";
-import { CANONICAL_VIEWS } from "../src/framework/view-angles.js";
+import { CANONICAL_VIEWS, cameraPoseForView } from "../src/framework/view-angles.js";
 
 // captureViewsFromScene is the pure-ish core extracted so it can run without a
 // live GL context: it takes an injected renderer with render()/readPixels()/
@@ -50,6 +50,30 @@ describe("captureViewsFromScene", () => {
 
     expect(out.map((o) => o.view)).toEqual(CANONICAL_VIEWS);
     expect(fakeRenderer.renderOffscreen).toHaveBeenCalledTimes(CANONICAL_VIEWS.length);
+  });
+});
+
+describe("captureViewsFromScene poseFor", () => {
+  it("frames each view with poseFor(view) when given, in place of cameraPoseForView(view, bounds)", () => {
+    const liveCamera = new THREE.PerspectiveCamera();
+    const fakeRenderer = { renderOffscreen: vi.fn(() => "data:image/jpeg;base64,AAAA") };
+    const poseFor = vi.fn((view) => ({ position: [view.length, 2, 3], up: [0, 1, 0], target: [0, 0, 0] }));
+    const sceneBounds = { center: [0, 0, 0], radius: 5 };
+    captureViewsFromScene(["front", "iso"], {
+      renderer: fakeRenderer, liveCamera, grid: null, bounds: { center: [0, 0, 0], radius: 10 }, sceneBounds, poseFor,
+    });
+    expect(poseFor.mock.calls.map((c) => c[0])).toEqual(["front", "iso"]);
+    expect(fakeRenderer.renderOffscreen.mock.calls).toEqual([
+      [{ position: [5, 2, 3], up: [0, 1, 0], target: [0, 0, 0] }, { sceneBounds }],
+      [{ position: [3, 2, 3], up: [0, 1, 0], target: [0, 0, 0] }, { sceneBounds }],
+    ]);
+  });
+
+  it("without poseFor, frames with cameraPoseForView(view, bounds)", () => {
+    const fakeRenderer = { renderOffscreen: vi.fn(() => "data:image/jpeg;base64,AAAA") };
+    const bounds = { center: [1, 2, 3], radius: 10 };
+    captureViewsFromScene(["top"], { renderer: fakeRenderer, liveCamera: new THREE.PerspectiveCamera(), grid: null, bounds });
+    expect(fakeRenderer.renderOffscreen.mock.calls[0][0]).toEqual(cameraPoseForView("top", bounds));
   });
 });
 

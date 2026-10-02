@@ -4,12 +4,9 @@
 // builds MeshPhysicalMaterial. Both read resolve.js, so the two modes can never
 // disagree about which preset a sub-part is.
 import * as THREE from "three";
-import { cadAppearance, resolveMaterial } from "./resolve.js";
+import { cadAppearance, resolveMaterial, hasAppearance } from "./resolve.js";
 import { applyBrushFrame, applyBurn, applyPattern } from "./patterns.js";
 import { PATTERN_TEXTURES } from "./assets.js";
-
-const APPEARANCE_KEYS = ["color", "opacity", "material", "roughness", "metalness", "clearcoat", "clearcoatRoughness", "anisotropy", "textureScale"];
-const hasAppearance = (display) => !!display && APPEARANCE_KEYS.some((k) => display[k] != null);
 
 export function buildCadMaterial(display, base) {
   if (!hasAppearance(display)) return base;
