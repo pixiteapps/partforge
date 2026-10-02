@@ -124,7 +124,7 @@ test("renderMeshPayloads returns a JPEG data URL and never touches the live scen
   const liveScene = viewer._subMeshes.a.parent.parent.parent;
   const cameraBefore = viewer.camera.position.toArray();
 
-  const url = viewer.renderMeshPayloads([cubePayload("a")], { angle: "iso", size: 64 });
+  const url = viewer.renderMeshPayloads([cubePayload("a")], { angle: "iso", size: 64, style: "cad" });
 
   // (contract) returns a JPEG data URL
   expect(url).toMatch(/^data:image\/jpeg;base64,/);
@@ -151,7 +151,7 @@ test("renderMeshPayloads returns a JPEG data URL and never touches the live scen
 test("renderMeshPayloads disposes geometry even for multiple payloads", () => {
   const viewer = newViewer();
 
-  viewer.renderMeshPayloads([cubePayload("a"), cubePayload("b")], { size: 64 });
+  viewer.renderMeshPayloads([cubePayload("a"), cubePayload("b")], { size: 64, style: "cad" });
 
   expect(state.disposeCounts).toEqual({ geo: 2, edges: 2 });
   expect(viewer.hasSubMesh("a")).toBe(false);
@@ -171,7 +171,7 @@ test("renderMeshPayloads disposes a display-override clone material but not the 
   // "a" is plain, so its live sub-mesh material IS the shared singleton.
   const sharedMaterial = viewer._subMeshes.a.material;
 
-  viewer.renderMeshPayloads([cubePayload("a"), cubePayload("ghost")], { size: 64 });
+  viewer.renderMeshPayloads([cubePayload("a"), cubePayload("ghost")], { size: 64, style: "cad" });
 
   const meshes = [];
   state.lastRenderScene.traverse((o) => { if (o.isMesh && o.geometry && !o.isLineSegments2) meshes.push(o); });
@@ -218,11 +218,12 @@ test("renderMeshPayloads frames the camera on the world-space centre (after the 
     triangles: 1,
   };
 
-  viewer.renderMeshPayloads([atZ10], { angle: "iso", size: 64 });
+  viewer.renderMeshPayloads([atZ10], { angle: "iso", size: 64, style: "cad" });
 
   // model bbox centre (0.5,0.5,10) maps to world (0.5,10,-0.5) under (x,y,z)->(x,z,-y);
-  // size (1,1,0) is rotation-invariant in length, so radius is unchanged.
-  const expected = cameraPoseForView("iso", { center: [0.5, 10, -0.5], radius: Math.hypot(1, 1, 0) / 2 });
+  // The cad style frames canonically (stylePose): radius is half the MAX extent, as the
+  // live viewer's own framing does, not half the diagonal.
+  const expected = cameraPoseForView("iso", { center: [0.5, 10, -0.5], radius: 0.5 });
   const round = (v) => v.map((n) => +n.toFixed(3));
   expect(round(state.lastCamera.position.toArray())).toEqual(round(expected.position));
 
@@ -245,7 +246,7 @@ test("renderMeshPayloads returns null after the viewer is disposed", () => {
 test("renderMeshPayloads adds feature-edge lines to the temp scene", () => {
   const viewer = newViewer();
 
-  viewer.renderMeshPayloads([cubePayload("a")], { size: 64 });
+  viewer.renderMeshPayloads([cubePayload("a")], { size: 64, style: "cad" });
 
   const lines = [];
   state.lastRenderScene.traverse((o) => { if (o.isLineSegments2) lines.push(o); });
