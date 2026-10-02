@@ -2396,7 +2396,7 @@ The framework resolves these — fetch/read bytes, detect the format (filename e
 - **STL/3MF on Manifold** — native: parsed, repaired (vertex merge + winding/orientation fix), and handed to `Manifold.ofMesh`. A mesh still non-manifold after repair throws loudly with the open-edge count — see [ERROR-PATTERNS.md#import-mesh-not-solid](ERROR-PATTERNS.md#import-mesh-not-solid).
 - **STL/3MF on OCCT** — never attempted: mesh-to-B-rep conversion isn't in scope for v1. Declaring a mesh import on a part (or sub-part, under per-sub-part routing) that routes to OCCT is an error — see [ERROR-PATTERNS.md#import-mesh-on-occt](ERROR-PATTERNS.md#import-mesh-on-occt).
 
-`import` is not in `OCCT_ONLY_OPS` — a STEP import does not by itself force OCCT routing (the crossover exists precisely so it doesn't have to); backend selection is still driven by `fillet`/`chamfer`/`shell` on a `Solid`, or `meta.backend`.
+`import` is not in `OCCT_ONLY_OPS` — a STEP import does not by itself force OCCT routing (the crossover exists precisely so it doesn't have to); backend selection is still driven by `shell` on a `Solid` or `meta.backend` (`fillet`/`chamfer` run on Manifold and send a sub-part to OCCT only when an edge they select is one the mesh fillet cannot blend).
 
 **Units:** everything normalizes to millimetres at parse time — STEP units are honored by the OCCT importer, a 3MF file's `unit` attribute is converted, and **STL is assumed to already be in millimetres** (the format carries no unit metadata).
 
@@ -3009,14 +3009,16 @@ instead of (or in addition to) the built-in `#part` bar:
   `viewName` rendered offscreen (falling back to the resolved default view — see
   `resolveDefaultView` / `default-view.js` — when `viewName` is omitted or names a view the
   part doesn't declare). Never disturbs the active tab, the live camera, or the on-screen
-  scene; `opts` forwards to the underlying render (size, quality, angle, background).
+  scene; `opts` forwards to the underlying render (size, quality, angle, background, style).
   Resolves `null` on failure rather than throwing (a build error, a part with no sub-parts
   in that view, a disposed runtime). The render happens in a throwaway scene, so it takes
-  no colour from the viewer's light/dark theme: it gets a fixed neutral grey, on the
-  reasoning that a thumbnail is captured once and then displayed under host chrome
-  partforge cannot see. Pass `background` (any `THREE.Color`-compatible value) to choose
-  your own, or `background: null` for no background at all — which clears to opaque black
-  unless the embedder has set a clear colour.
+  no colour from the viewer's light/dark theme. The default `style` is `"thumbnail"`, the
+  product shot: a fixed light background, soft lights, lighter edges, a contact shadow and
+  fit framing — a thumbnail is captured once and then displayed under host chrome
+  partforge cannot see. `style: "cad"` gives the agent-render look instead. `style.view` is
+  only a default angle; an explicit `angle` wins. Pass `background` (any
+  `THREE.Color`-compatible value) to override the style's, or `background: null` for no
+  background at all — which clears to opaque black unless the embedder has set a clear colour.
 
 Pass `onViewChange(name)` to `mount()` to be told the active view: it fires once
 synchronously during mount with the initial resolved view (before `runtime.ready` settles),
@@ -3143,7 +3145,8 @@ pane's pixel size:
   or when measurement dimensions are pinned (their labels sit beside the part and
   could otherwise be cut off).
 - `runtime.captureViews(viewNames) → [{ view, dataUrl }]` — the canonical-angle
-  counterpart (fixed poses, framed to the visible assembly, 1024², grid hidden). Sized
+  counterpart (fixed view directions, each fitted so the visible assembly's projected
+  geometry fills 90% of the frame and sits centred in it; 1024², grid hidden). Sized
   for feeding a vision model, not for display; use `captureCurrent` for showcase images.
 
 ### `runtime.projection`
@@ -3468,6 +3471,11 @@ empty/degenerate results; `holes` is the informative topology number.)
 the part's first declared view. Treat renders as complementary evidence, not a ruler:
 use several views for complex parts and the interactive viewer's cutaway for hidden
 interfaces, but rely on `measure` / `verify` for dimensions, contact, and clearance.
+
+Headlessly, `renderViewImages(kernel, part, view, opts)` from `partforge/testing` returns
+the same stills in memory as `[{ angle, png }]` (PNG buffers; `renderViews` writes them to
+disk through it). Its `style` option is `"cad"` (default) or `"thumbnail"`; `style.view`
+is only a default, so explicit `views` always win.
 
 The `measure` function is also exported for vitest (boot a Manifold kernel as in
 "Testing a part", then `measure(kernel, part, "<view>")`):

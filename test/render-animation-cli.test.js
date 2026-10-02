@@ -14,6 +14,8 @@ import { expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import { renderViews } from "../src/testing/render.js";
 import animatedPart from "./fixtures/animated-part.js";
+import { RENDER_STYLES } from "../src/framework/renderStyles.js";
+const CAD_BG = [(RENDER_STYLES.cad.background >> 16) & 255, (RENDER_STYLES.cad.background >> 8) & 255, RENDER_STYLES.cad.background & 255];
 
 const PART = "test/fixtures/animated-part.js";
 const AMBIGUOUS = "test/fixtures/animated-ambiguous-part.js";
@@ -226,14 +228,15 @@ test("the CLI hands the animation's opacity to the renderer", async () => {
 
 test("a still mid-fade renders the faded part dimmer; at opacity 0 it is absent", async () => {
   // Bypasses the CLI: calls renderViews directly with an opacity map and
-  // compares total non-background luminance — absent < faded < full. This pins
+  // compares total ink (distance from the background) — absent < faded < full. This pins
   // the renderViews contract the CLI feeds evaluate()'s opacity into.
   const kernel = await bootManifoldKernel();
   const dir = out();
   const luminance = (file) => {
     const png = PNG.sync.read(readFileSync(file));
     let sum = 0;
-    for (let i = 0; i < png.data.length; i += 4) sum += png.data[i] + png.data[i + 1] + png.data[i + 2];
+    // Ink = distance from the (light) background, so absent < faded < full holds for any background.
+    for (let i = 0; i < png.data.length; i += 4) for (let c = 0; c < 3; c++) sum += Math.abs(png.data[i + c] - CAD_BG[c]);
     return sum;
   };
   const opts = { views: ["front"], out: dir, size: [200, 150] };
@@ -262,7 +265,7 @@ test("a sub-part fading through 0 does not reframe the still", async () => {
   const [drawn] = await renderViews(kernel, animatedPart, "assembly", { ...opts, tag: "frame-drawn", opacity: {} });
 
   // Bounding box of non-background pixels in the bottom half of the image.
-  const bg = [0x15, 0x18, 0x1d];
+  const bg = CAD_BG;
   const lowerInkBox = (file) => {
     const png = PNG.sync.read(readFileSync(file));
     const box = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
