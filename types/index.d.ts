@@ -426,6 +426,8 @@ export interface CaptureViewOptions {
   quality?: number;
   /** Canonical angle to render from. Default `"iso"`. */
   angle?: CanonicalView | string;
+  /** Capture style. `"thumbnail"` (the default) is the light product shot with a contact shadow; `"cad"` is the agent-facing CAD look. */
+  style?: "cad" | "thumbnail";
 }
 
 /**

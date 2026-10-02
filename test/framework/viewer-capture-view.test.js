@@ -17,6 +17,8 @@ const state = vi.hoisted(() => ({
   lastCamera: null,
   disposeCounts: null,
   disposedMaterials: null,
+  shadow: null,
+  lineDraws: null,
 }));
 
 const OriginalResizeObserver = globalThis.ResizeObserver;
@@ -39,11 +41,29 @@ vi.mock("three", async (importOriginal) => {
     // meshes present at draw time — the finally-block disposal fires afterwards.
     render(scene, camera) {
       this.frames += 1;
+      // WebGLRenderer calls each object's onBeforeRender just before drawing it;
+      // LineSegments2's resets its material's resolution to getViewport()'s (canvas) size.
+      // Record what each visible fat line is drawn at.
+      state.lineDraws = [];
+      scene.traverseVisible((o) => {
+        if (!o.isLineSegments2) return;
+        o.onBeforeRender(this, scene, camera, o.geometry, o.material);
+        state.lineDraws.push({ line: o, resolution: o.material.resolution.toArray() });
+      });
       state.lastRenderScene = scene;
       state.lastCamera = camera;
       state.disposeCounts = { geo: 0, edges: 0 };
       state.disposedMaterials = new Set();
+      state.shadow = null;
       scene.traverse((o) => {
+        // The product shot's contact-shadow plane: the one mesh with an alphaMap.
+        if (o.isMesh && o.material?.alphaMap) {
+          const sh = state.shadow = { geo: false, mat: false, tex: false };
+          o.geometry.addEventListener("dispose", () => { sh.geo = true; });
+          o.material.addEventListener("dispose", () => { sh.mat = true; });
+          o.material.alphaMap.addEventListener("dispose", () => { sh.tex = true; });
+          return;
+        }
         if (o.isLineSegments2) return; // edge lines (LineSegments2 extends Mesh) — counted via their surface mesh's userData.edges
         if (!o.isMesh || !o.geometry) return;
         o.geometry.addEventListener("dispose", () => { state.disposeCounts.geo += 1; });
@@ -52,6 +72,8 @@ vi.mock("three", async (importOriginal) => {
       });
     }
     get capabilities() { return { maxTextureSize: 8192 }; }
+    // three's getViewport reports the CANVAS viewport, whatever target is bound.
+    getViewport(v) { return v.set(0, 0, 1280, 800); }
     setRenderTarget() {}
     readRenderTargetPixels() {}
     dispose() {}
@@ -60,7 +82,8 @@ vi.mock("three", async (importOriginal) => {
 });
 
 import { createViewer } from "../../src/framework/viewer.js";
-import { cameraPoseForView } from "../../src/framework/view-angles.js";
+import { fitPoseToPoints, modelToWorld } from "../../src/framework/style-camera.js";
+import { RENDER_STYLES } from "../../src/framework/renderStyles.js";
 
 function createContainer() {
   const container = document.createElement("div");
@@ -93,6 +116,8 @@ beforeEach(() => {
   state.lastCamera = null;
   state.disposeCounts = null;
   state.disposedMaterials = null;
+  state.shadow = null;
+  state.lineDraws = null;
   globalThis.ResizeObserver = class {
     observe() {}
     disconnect() {}
@@ -124,7 +149,7 @@ test("renderMeshPayloads returns a JPEG data URL and never touches the live scen
   const liveScene = viewer._subMeshes.a.parent.parent.parent;
   const cameraBefore = viewer.camera.position.toArray();
 
-  const url = viewer.renderMeshPayloads([cubePayload("a")], { angle: "iso", size: 64 });
+  const url = viewer.renderMeshPayloads([cubePayload("a")], { angle: "iso", size: 64, style: "cad" });
 
   // (contract) returns a JPEG data URL
   expect(url).toMatch(/^data:image\/jpeg;base64,/);
@@ -151,7 +176,7 @@ test("renderMeshPayloads returns a JPEG data URL and never touches the live scen
 test("renderMeshPayloads disposes geometry even for multiple payloads", () => {
   const viewer = newViewer();
 
-  viewer.renderMeshPayloads([cubePayload("a"), cubePayload("b")], { size: 64 });
+  viewer.renderMeshPayloads([cubePayload("a"), cubePayload("b")], { size: 64, style: "cad" });
 
   expect(state.disposeCounts).toEqual({ geo: 2, edges: 2 });
   expect(viewer.hasSubMesh("a")).toBe(false);
@@ -171,7 +196,7 @@ test("renderMeshPayloads disposes a display-override clone material but not the 
   // "a" is plain, so its live sub-mesh material IS the shared singleton.
   const sharedMaterial = viewer._subMeshes.a.material;
 
-  viewer.renderMeshPayloads([cubePayload("a"), cubePayload("ghost")], { size: 64 });
+  viewer.renderMeshPayloads([cubePayload("a"), cubePayload("ghost")], { size: 64, style: "cad" });
 
   const meshes = [];
   state.lastRenderScene.traverse((o) => { if (o.isMesh && o.geometry && !o.isLineSegments2) meshes.push(o); });
@@ -218,11 +243,11 @@ test("renderMeshPayloads frames the camera on the world-space centre (after the 
     triangles: 1,
   };
 
-  viewer.renderMeshPayloads([atZ10], { angle: "iso", size: 64 });
+  viewer.renderMeshPayloads([atZ10], { angle: "iso", size: 64, style: "cad" });
 
   // model bbox centre (0.5,0.5,10) maps to world (0.5,10,-0.5) under (x,y,z)->(x,z,-y);
-  // size (1,1,0) is rotation-invariant in length, so radius is unchanged.
-  const expected = cameraPoseForView("iso", { center: [0.5, 10, -0.5], radius: Math.hypot(1, 1, 0) / 2 });
+  // the cad style fits the WORLD-space points (stylePose → fitPoseToPoints).
+  const expected = fitPoseToPoints("iso", modelToWorld(atZ10.positions), { fov: 45, aspect: 1, fill: RENDER_STYLES.cad.camera.fill });
   const round = (v) => v.map((n) => +n.toFixed(3));
   expect(round(state.lastCamera.position.toArray())).toEqual(round(expected.position));
 
@@ -245,13 +270,75 @@ test("renderMeshPayloads returns null after the viewer is disposed", () => {
 test("renderMeshPayloads adds feature-edge lines to the temp scene", () => {
   const viewer = newViewer();
 
-  viewer.renderMeshPayloads([cubePayload("a")], { size: 64 });
+  viewer.renderMeshPayloads([cubePayload("a")], { size: 64, style: "cad" });
 
   const lines = [];
   state.lastRenderScene.traverse((o) => { if (o.isLineSegments2) lines.push(o); });
   expect(lines).toHaveLength(1); // one edge-line object for the one payload
   // the edge geometry is still disposed with its surface mesh (no double count)
   expect(state.disposeCounts).toEqual({ geo: 1, edges: 1 });
+
+  viewer.dispose();
+});
+
+// LineSegments2.onBeforeRender resets its material's `resolution` to the renderer's
+// canvas viewport on every draw. An offscreen capture of another size must keep its
+// own: otherwise a 640px thumbnail's 1.5px edges come out 640/800 as wide on an
+// 800px-tall canvas — thinner, and dependent on the window size. renderOffscreen
+// handles it for every capture; the thumbnail's throwaway lines are one case.
+test("renderMeshPayloads edge lines keep the capture resolution through three's draw hook", () => {
+  const viewer = newViewer();
+
+  viewer.renderMeshPayloads([cubePayload("a")], { size: 64, style: "thumbnail" });
+
+  expect(state.lineDraws).toHaveLength(1);
+  expect(state.lineDraws[0].resolution).toEqual([64, 64]);
+
+  viewer.dispose();
+});
+
+// The live-scene captures (captureViews/captureCurrent) draw the part's own edge lines,
+// whose shared LineMaterial is sized to the canvas: for the capture it must be the
+// capture's size, and afterwards exactly what it was, hook included.
+test("renderOffscreen draws live fat lines at the capture size and restores them", () => {
+  const viewer = newViewer();
+  viewer.setSubGeometry("a", cubePayload("a"));
+  viewer.showAssembly(["a"]);
+  state.renderer.render(viewer._subMeshes.a.parent.parent.parent, viewer.camera); // a live frame
+  const live = state.lineDraws.map((d) => d.line);
+  expect(live.length).toBeGreaterThan(0);
+  const before = live.map((l) => ({ hook: l.onBeforeRender, own: Object.hasOwn(l, "onBeforeRender"), res: l.material.resolution.toArray() }));
+
+  viewer.captureCanonicalViews(["iso"]);
+  for (const d of state.lineDraws) expect(d.resolution).toEqual([1024, 1024]);
+  expect(state.lineDraws.map((d) => d.line)).toEqual(expect.arrayContaining(live));
+
+  live.forEach((l, i) => {
+    expect(l.onBeforeRender).toBe(before[i].hook);
+    expect(Object.hasOwn(l, "onBeforeRender")).toBe(before[i].own);
+    expect(l.material.resolution.toArray()).toEqual(before[i].res);
+  });
+
+  viewer.captureCurrent({ size: 512 }); // a non-square, non-cached size: 512×384 at 4:3
+  for (const d of state.lineDraws) expect(d.resolution).toEqual([512, 384]);
+  live.forEach((l, i) => expect(l.material.resolution.toArray()).toEqual(before[i].res));
+
+  viewer.dispose();
+});
+
+// The agent's canonical captures fit the visible geometry's WORLD positions (the cad
+// style through stylePose), not the bbox and not cameraPoseForView's fixed distance.
+test("captureCanonicalViews frames each view to the visible geometry (cad fit)", () => {
+  const viewer = newViewer();
+  const atZ10 = { ...cubePayload("a"), positions: new Float32Array([0, 0, 10, 4, 0, 10, 0, 1, 10]) };
+  viewer.setSubGeometry("a", atZ10);
+  viewer.showAssembly(["a"]);
+
+  viewer.captureCanonicalViews(["front"]);
+
+  const expected = fitPoseToPoints("front", modelToWorld(atZ10.positions), { fov: 45, aspect: 1, fill: RENDER_STYLES.cad.camera.fill });
+  const round = (v) => v.map((n) => +n.toFixed(3));
+  expect(round(state.lastCamera.position.toArray())).toEqual(round(expected.position));
 
   viewer.dispose();
 });
@@ -266,5 +353,31 @@ test("renderMeshPayloads renders at the live camera's fov, not a narrower one", 
   expect(state.lastCamera.fov).toBe(viewer.camera.fov); // 45, matching captureViews/captureCurrent
   expect(state.lastCamera.fov).toBe(45);
 
+  viewer.dispose();
+});
+
+// The default style is the product shot, which adds a contact-shadow plane to the
+// temp scene; its geometry, material and alpha texture must all be released.
+const solidPayload = (name) => ({
+  name,
+  // a closed tetrahedron, so the shadow mask has real area to project
+  positions: new Float32Array([0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2]),
+  normals: new Float32Array(12),
+  indices: new Uint32Array([0, 2, 1, 0, 1, 3, 1, 2, 3, 0, 3, 2]),
+  triangles: 4,
+});
+
+test("the default (thumbnail) style adds a shadow plane and disposes all of it", () => {
+  const viewer = newViewer();
+  viewer.renderMeshPayloads([solidPayload("a")], { angle: "iso", size: 64 });
+  expect(state.shadow).not.toBeNull(); // the plane was in the rendered scene
+  expect(state.shadow).toEqual({ geo: true, mat: true, tex: true }); // and released afterwards
+  viewer.dispose();
+});
+
+test("no shadow plane when the camera is below the floor", () => {
+  const viewer = newViewer();
+  viewer.renderMeshPayloads([solidPayload("a")], { angle: "bottom", size: 64 });
+  expect(state.shadow).toBeNull();
   viewer.dispose();
 });

@@ -1390,7 +1390,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // touches the active tab, getView(), or the live scene — best-effort: any
     // failure, including a resolved-null from a worker build failure (4A
     // settles rather than throwing), returns null. `opts` is spread last, so
-    // renderMeshPayloads' own options (including `background`) pass straight
+    // renderMeshPayloads' own options (including `background` and
+    // `style`: "thumbnail" by default, "cad" for the agent look) pass straight
     // through from the caller.
     const captureView = async (viewName, opts = {}) => {
       try {

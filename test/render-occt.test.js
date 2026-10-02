@@ -4,6 +4,8 @@ import { PNG } from "pngjs";
 import { bootOcctKernel } from "../src/testing/occt.js";
 import { renderViews } from "../src/testing/render.js";
 import part from "../src/parts/filleted-box.js";
+import { RENDER_STYLES } from "../src/framework/renderStyles.js";
+const CAD_BG = [(RENDER_STYLES.cad.background >> 16) & 255, (RENDER_STYLES.cad.background >> 8) & 255, RENDER_STYLES.cad.background & 255];
 
 let k;
 const OUT = "test/.render-occt";
@@ -19,7 +21,7 @@ test("renders an OCCT (indexed) part as a lit, non-blank image", async () => {
   const files = await renderViews(k, part, "box", { views: ["iso"], out: OUT, size: [240, 180] });
   expect(files).toHaveLength(1);
   const png = PNG.sync.read(readFileSync(files[0]));
-  const bg = [0x15, 0x18, 0x1d];
+  const bg = CAD_BG;
   let nonBg = 0, brightnessSum = 0;
   for (let i = 0; i < png.data.length; i += 4) {
     const r = png.data[i], g = png.data[i + 1], b = png.data[i + 2];

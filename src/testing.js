@@ -15,7 +15,8 @@ export { resolveDerived } from "./framework/derive.js";
 export { relevantParamKeys, RELEVANT_ALL } from "./framework/param-deps.js";
 export { assemblyOverlaps } from "./framework/assembly.js";
 export { bootOcctKernel } from "./testing/occt.js";
-export { renderViews, RENDER_VIEWS } from "./testing/render.js";
+export { renderViews, renderViewImages, RENDER_VIEWS } from "./testing/render.js";
+export { RENDER_STYLES } from "./framework/renderStyles.js";
 // The whole oracle surface (measure/verify/buildView, gaps/BVH/min-wall, silhouette
 // match scoring, and the semantic mesh oracle) comes through partforge/oracle — one
 // list of names, two doors. See src/oracle.js for what each group is.

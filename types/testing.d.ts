@@ -668,7 +668,7 @@ export function matchViews(
 export const RENDER_VIEWS: string[];
 
 /**
- * Render canonical-angle PNGs of one view with a pure-JS software rasterizer —
+ * Render canonical-angle PNGs of one view with the styled pure-JS renderer —
  * no native module, no browser. Returns the written file paths.
  */
 export function renderViews(
@@ -689,8 +689,34 @@ export function renderViews(
      * background. Absent keys render solid.
      */
     opacity?: Record<string, number>;
+    style?: "cad" | "thumbnail";
+    /** Samples per pixel per axis (default 2). */
+    supersample?: number;
   },
 ): Promise<string[]>;
+
+/** The built-in capture looks: "cad" (agent renders) and "thumbnail" (product shot). */
+export const RENDER_STYLES: Readonly<Record<"cad" | "thumbnail", unknown>>;
+
+/**
+ * Render canonical-angle PNGs of one view in memory with the styled pure-JS
+ * renderer — the same looks as the viewer's offscreen captures.
+ */
+export function renderViewImages(
+  kernel: GeometryKernel,
+  part: PartDefinition,
+  view?: string,
+  opts?: {
+    views?: string[];
+    size?: [number, number];
+    edges?: boolean;
+    params?: ResolvedParams;
+    opacity?: Record<string, number>;
+    style?: "cad" | "thumbnail";
+    /** Samples per pixel per axis (default 2). */
+    supersample?: number;
+  },
+): Promise<{ angle: string; png: Uint8Array }[]>;
 
 // --- sketch-annotation rays --------------------------------------------------
 export interface AnnotationRay { origin: [number, number, number]; dir: [number, number, number] }
