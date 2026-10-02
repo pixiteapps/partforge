@@ -8,6 +8,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { FIXTURES, GENUS, CASES, tightBend, dRodSlant } from "./fixtures/fillet-general-fixtures.js";
+import { meshFilletWork, GENERAL_WORK_BUDGET } from "../src/framework/geometry/mesh-fillet.js";
 
 const REF = JSON.parse(readFileSync(new URL("./fixtures/fillet-general-reference.json", import.meta.url), "utf8"));
 const relErr = (v, e) => Math.abs(v - e) / Math.abs(e);
@@ -58,5 +59,38 @@ describe("general-chain fillet and chamfer on Manifold", () => {
   it("print quality builds the fixtures watertight", async () => {
     const kp = await bootManifoldKernel({ quality: "print" });
     for (const [name, make] of Object.entries(FIXTURES)) expect(make(kp)._filletRaw(1).genus(), name).toBe(GENUS[name]);
+  });
+  // Work budget (mesh-fillet.js GENERAL_WORK_BUDGET): a selection containing a
+  // general chain whose estimated blend work is too large reroutes before any tool
+  // is built. A tube with 64 alternating cross holes: 128 general rims plus their
+  // ordinary neighbours — ~304 000 work units at preview, ~17 s to fillet at r=0.5
+  // with the budget lifted (measured 2026-10-02).
+  const holeyTube = (kk) => {
+    const N = 64;
+    const holes = Array.from({ length: N }, (_, i) => kk.cylinder({ r: 2, h: 40, center: true })
+      .rotateAbout({ axis: i % 2 ? "X" : "Y", deg: i % 2 ? 90 : 0 }).at([(i - (N - 1) / 2) * 10, 0, 0]));
+    return kk.cylinder({ r: 10, h: 10 * N, center: true }).rotateAbout({ axis: "Y", deg: 90 }).cutAll(holes);
+  };
+  it("a general selection over the work budget reroutes before building tools", () => {
+    const base = holeyTube(k);
+    expect(meshFilletWork(base, { magnitude: 0.5 }).work).toBeGreaterThan(GENERAL_WORK_BUDGET);
+    let err;
+    try { base._filletRaw(0.5); } catch (e) { err = e; }
+    expect(err?.name).toBe("KernelCapabilityError");
+    expect(err.code).toBe("NEEDS_OCCT");
+    expect(err.message).toMatch(new RegExp(`too complex for the mesh fillet \\(work \\d+ > budget ${GENERAL_WORK_BUDGET}\\)`));
+    expect(() => base._chamferRaw(0.5)).toThrow(/too complex for the mesh chamfer/);
+  });
+  it("the general-chain fixtures sit far under the work budget at both qualities", async () => {
+    const kp = await bootManifoldKernel({ quality: "print" });
+    for (const kk of [k, kp]) {
+      for (const [name, make] of Object.entries({ ...FIXTURES, dRodSlant })) {
+        for (const [mode, m] of CASES) {
+          const w = meshFilletWork(make(kk), { mode, magnitude: m });
+          expect(w.general, name).toBe(true);
+          expect(w.work, `${name} ${mode} ${m}`).toBeLessThan(GENERAL_WORK_BUDGET / 50);
+        }
+      }
+    }
   });
 });

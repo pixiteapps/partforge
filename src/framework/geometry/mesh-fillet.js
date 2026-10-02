@@ -858,11 +858,19 @@ function flankCurvature(rays, p, n, f, s) {
 }
 
 // Short-range ray casts against the part's own mesh, for flankCurvature. Local on
-// purpose: only the triangles whose bounds come within `margin` of a general chain's
-// box are kept, and rays are brute-forced over that subset (a few thousand triangles
-// around a rim). Deliberately NOT oracle/bvh.js — the cut & print kit loads this
-// module and must never load the oracle (test/kit-layering.test.js).
-function localRays({ positions: P, indices: I }, boxes) {
+// purpose: only the triangles whose bounds come within the padded box of a general
+// chain are kept. Deliberately NOT oracle/bvh.js — the cut & print kit loads this
+// module and must never load the oracle (test/kit-layering.test.js). Every probe is
+// short (range 2 × magnitude), so the kept triangles go into a uniform grid of
+// `cell`-sized cubes (cell = the probe range: a probe's box touches at most 2 cells
+// per axis) and a probe tests only the triangles sharing a cell with its segment's
+// box. That set contains every triangle the segment can hit, so the nearest hit is
+// exactly the brute-force one — the brute force over every kept triangle measured
+// 2.6 × 10⁹ triangle tests and 65 s on a chain-mail sheet (Task 4b report). A
+// triangle spanning more than GRID_BIG_CELLS cells (a long flat facet) is tested by
+// every probe instead of being copied into all of them.
+const GRID_BIG_CELLS = 512;
+function localRays({ positions: P, indices: I }, boxes, cell) {
   const keep = [];
   for (let t = 0; t < I.length; t += 3) {
     let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
@@ -872,25 +880,73 @@ function localRays({ positions: P, indices: I }, boxes) {
     }
     if (boxes.some((b) => x1 >= b[0] && x0 <= b[3] && y1 >= b[1] && y0 <= b[4] && z1 >= b[2] && z0 <= b[5])) keep.push(t);
   }
-  const V = new Float64Array(keep.length * 9);
+  const nT = keep.length;
+  const V = new Float64Array(nT * 9);
   keep.forEach((t, i) => { for (let j = 0; j < 3; j++) { const o = I[t + j] * 3; V[i * 9 + j * 3] = P[o]; V[i * 9 + j * 3 + 1] = P[o + 1]; V[i * 9 + j * 3 + 2] = P[o + 2]; } });
-  // nearest hit within (0, tMax] on a triangle whose unit normal passes `accept`
+  // grid over the kept triangles' bounds; a cell key is ix + nx·(iy + ny·iz), exact
+  // in a double for any grid this module can meet
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let b = 0; b < V.length; b += 3) for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], V[b + a]); hi[a] = Math.max(hi[a], V[b + a]); }
+  const pad = 1e-6 * cell;
+  const nx = Math.max(1, Math.floor((hi[0] - lo[0]) / cell) + 1), ny = Math.max(1, Math.floor((hi[1] - lo[1]) / cell) + 1);
+  const ci = (x, a) => Math.floor((x - lo[a]) / cell);
+  const cells = new Map(), big = [];
+  for (let i = 0; i < nT; i++) {
+    const b = i * 9;
+    const r0 = [0, 0, 0], r1 = [0, 0, 0];
+    for (let a = 0; a < 3; a++) {
+      const v0 = V[b + a], v1 = V[b + 3 + a], v2 = V[b + 6 + a];
+      r0[a] = ci(Math.min(v0, v1, v2) - pad, a); r1[a] = ci(Math.max(v0, v1, v2) + pad, a);
+    }
+    if ((r1[0] - r0[0] + 1) * (r1[1] - r0[1] + 1) * (r1[2] - r0[2] + 1) > GRID_BIG_CELLS) { big.push(i); continue; }
+    for (let z = r0[2]; z <= r1[2]; z++) for (let y = r0[1]; y <= r1[1]; y++) for (let x = r0[0]; x <= r1[0]; x++) {
+      const key = x + nx * (y + ny * z);
+      const list = cells.get(key);
+      if (list) list.push(i); else cells.set(key, [i]);
+    }
+  }
+  const stamp = new Int32Array(nT);
+  let probe = 0;
+  // nearest hit within (0, tMax] on a triangle whose unit normal passes `accept`.
+  // Möller–Trumbore with scalar temporaries, in the same operation order as the
+  // vector helpers (so a hit's t is bit-identical to the brute-force form).
+  const test = (i, o, d, tMax, accept, best) => {
+    const b = i * 9, ax = V[b], ay = V[b + 1], az = V[b + 2];
+    const e1x = V[b + 3] - ax, e1y = V[b + 4] - ay, e1z = V[b + 5] - az;
+    const e2x = V[b + 6] - ax, e2y = V[b + 7] - ay, e2z = V[b + 8] - az;
+    const px = d[1] * e2z - d[2] * e2y, py = d[2] * e2x - d[0] * e2z, pz = d[0] * e2y - d[1] * e2x;
+    const det = e1x * px + e1y * py + e1z * pz;
+    if (Math.abs(det) < 1e-12) return best;
+    const tx = o[0] - ax, ty = o[1] - ay, tz = o[2] - az;
+    const u = (tx * px + ty * py + tz * pz) / det;
+    if (u < 0 || u > 1) return best;
+    const qx = ty * e1z - tz * e1y, qy = tz * e1x - tx * e1z, qz = tx * e1y - ty * e1x;
+    const v = (d[0] * qx + d[1] * qy + d[2] * qz) / det;
+    if (v < 0 || u + v > 1) return best;
+    const t = (e2x * qx + e2y * qy + e2z * qz) / det;
+    if (!(t > 1e-9 && t <= tMax) || (best && t >= best.t)) return best;
+    if (!accept(norm(cross([e1x, e1y, e1z], [e2x, e2y, e2z])))) return best;
+    return { t };
+  };
   const nearest = (o, d, tMax, accept) => {
     let best = null;
-    for (let b = 0; b < V.length; b += 9) {
-      const a = [V[b], V[b + 1], V[b + 2]];
-      const e1 = [V[b + 3] - a[0], V[b + 4] - a[1], V[b + 5] - a[2]], e2 = [V[b + 6] - a[0], V[b + 7] - a[1], V[b + 8] - a[2]];
-      const pv = cross(d, e2), det = dot(e1, pv);
-      if (Math.abs(det) < 1e-12) continue;
-      const tv = sub(o, a), u = dot(tv, pv) / det;
-      if (u < 0 || u > 1) continue;
-      const qv = cross(tv, e1), v = dot(d, qv) / det;
-      if (v < 0 || u + v > 1) continue;
-      const t = dot(e2, qv) / det;
-      if (!(t > 1e-9 && t <= tMax) || (best && t >= best.t)) continue;
-      if (!accept(norm(cross(e1, e2)))) continue;
-      best = { t };
+    probe++;
+    const r0 = [0, 0, 0], r1 = [0, 0, 0];
+    for (let a = 0; a < 3; a++) {
+      const e = o[a] + d[a] * tMax;
+      r0[a] = Math.max(0, ci(Math.min(o[a], e) - pad, a)); r1[a] = ci(Math.max(o[a], e) + pad, a);
     }
+    for (let z = r0[2]; z <= r1[2]; z++) for (let y = r0[1]; y <= r1[1]; y++) for (let x = r0[0]; x <= r1[0]; x++) {
+      if (x >= nx || y >= ny) continue;
+      const list = cells.get(x + nx * (y + ny * z));
+      if (!list) continue;
+      for (const i of list) {
+        if (stamp[i] === probe) continue;
+        stamp[i] = probe;
+        best = test(i, o, d, tMax, accept, best);
+      }
+    }
+    for (const i of big) best = test(i, o, d, tMax, accept, best);
     return best;
   };
   return { nearest };
@@ -2012,17 +2068,9 @@ function cornerPatches(k, selected, r, segs, flankAt = () => segs) {
 export function meshFillet(k, solid, opts) { return apply(k, solid, "fillet", opts?.r, opts); }
 export function meshChamfer(k, solid, opts) { return apply(k, solid, "chamfer", opts?.d, opts); }
 
-// `segs` is the kernel's per-circle CAP: it bounds the blend densities (blendSegs)
-// and is what every circle was built at on a flat tier. `segsAt(r)` is what a circle
-// of radius r was ACTUALLY built at — the print tier sizes circles by chord tolerance
-// (circle-segs.js), so a flank's facet pitch is no longer the cap. The three places
-// that reason about the neighbouring tessellation (revolveTool's seam-grazing sag and
-// closed-revolve dephase, cornerHornTool's sphere burial) ask it; everything sized
-// from the blend's own sagitta bound keeps the cap. Absent, it is the cap — the
-// pre-print-rule behaviour, and byte-identical at preview either way.
-function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg = 20, segsAt = null } = {}) {
-  if (!(magnitude > 0)) throw new Error(`mesh ${mode}: magnitude must be > 0`);
-  const flankAt = segsAt ?? (() => segs);
+// Chain classification and corner planning shared by apply() and meshFilletWork():
+// everything up to (not including) building a single tool.
+function planChains(solid, mode, magnitude, edges, sharpDeg) {
   const mesh = solid.toIndexedMesh();
   const chains = chainEdges(detectSharpEdges(mesh, { sharpDeg }));
   const selected = chains.filter((ch) => matchesSelector(ch, edges));
@@ -2062,6 +2110,67 @@ function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg
     : ch.n1 && ch.n2 && dot(ch.n1, ch.n2) < -1 + 1e-6;
   effective = effective.filter((ch) => !knife(ch));
   arcs = arcs.filter((ch) => !knife(ch));
+  return { mesh, endTins, effective, arcs, horns, pivots };
+}
+
+// Work budget (Task 4b, 2026-10-02). A general chain admits sub-parts that used to
+// reroute on it — and those are disproportionately thread, knurl and texture
+// geometry, with thousands of OTHER sharp edges behind the general ones. Measured
+// over the fillet census (71 public forges + 56 eval cases, r = 0.5, preview
+// quality, one process per sub-part), the time is the booleans of the whole tool
+// set, not the general tools: a chain-mail sheet spent 10 s, of which its 27
+// general tools were 1.8 s and its 99 arc tools ~7 s; the larger sheets ran
+// 60–130 s at 1.5–4 GB and four of them exhausted the WASM heap. So the estimate
+// counts every tool, weighted by its measured relative cost (least-squares fit of
+// the per-kind counts against fillet time, rounded: line 1, arc rim 5, planar run
+// 11, corner horn / pivot 4, corner arc 6, general 0.1 per chain vertex), times
+// √(mesh triangles) (each boolean's cost grows with the body it cuts). Its fit to
+// fillet time is ~1 work unit ≈ 0.035 ms.
+//   GENERAL_WORK_BUDGET = 195 000: every census sub-part with a general chain that
+//   filleted OK in ≤ 5 s sits at or below 189 858 (the highest: e106d859 dibber,
+//   4.9 s); the lowest one above sits at 202 231 (ffacb618 chain-mail cells,
+//   10.4 s). The general-chain fixtures sit far below (see the test file).
+// Only a selection CONTAINING a general chain is budgeted: before general chains
+// existed every such selection rerouted, so refusing one is never a regression,
+// while a selection of ordinary chains keeps its old behaviour whatever it costs.
+// The count is deterministic — never wall-clock — so a build's result, and the
+// solid cache keyed on it, cannot depend on how loaded the machine was.
+export const GENERAL_WORK_BUDGET = 195000;
+const WORK_WEIGHT = { line: 1, arc: 5, planar: 11, corner: 4, cornerArc: 6, generalPoint: 0.1 };
+function blendWork({ mesh, effective, arcs, horns, pivots }) {
+  let units = WORK_WEIGHT.corner * (horns.length + pivots.length) + WORK_WEIGHT.cornerArc * arcs.length;
+  let general = false;
+  for (const ch of effective) {
+    if (ch.kind === "general") { general = true; units += WORK_WEIGHT.generalPoint * ch.points.length; }
+    else units += WORK_WEIGHT[ch.kind] ?? WORK_WEIGHT.line;
+  }
+  return { work: units * Math.sqrt(mesh.indices.length / 3), general };
+}
+
+// The budget estimate for a fillet/chamfer, without building anything: `work` is
+// what apply() compares against GENERAL_WORK_BUDGET when `general` is true. Throws
+// the same UnsupportedEdgeError apply would for an empty or unsupported selection.
+//   meshFilletWork(solid, { mode?, magnitude, edges?, sharpDeg? }) → { work, general, budget }
+export function meshFilletWork(solid, { mode = "fillet", magnitude, edges, sharpDeg = 20 } = {}) {
+  return { ...blendWork(planChains(solid, mode, magnitude, edges, sharpDeg)), budget: GENERAL_WORK_BUDGET };
+}
+
+// `segs` is the kernel's per-circle CAP: it bounds the blend densities (blendSegs)
+// and is what every circle was built at on a flat tier. `segsAt(r)` is what a circle
+// of radius r was ACTUALLY built at — the print tier sizes circles by chord tolerance
+// (circle-segs.js), so a flank's facet pitch is no longer the cap. The three places
+// that reason about the neighbouring tessellation (revolveTool's seam-grazing sag and
+// closed-revolve dephase, cornerHornTool's sphere burial) ask it; everything sized
+// from the blend's own sagitta bound keeps the cap. Absent, it is the cap — the
+// pre-print-rule behaviour, and byte-identical at preview either way.
+function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg = 20, segsAt = null } = {}) {
+  if (!(magnitude > 0)) throw new Error(`mesh ${mode}: magnitude must be > 0`);
+  const flankAt = segsAt ?? (() => segs);
+  const plan = planChains(solid, mode, magnitude, edges, sharpDeg);
+  const { mesh, endTins, effective, arcs, horns, pivots } = plan;
+  const { work, general } = blendWork(plan);
+  if (general && work > GENERAL_WORK_BUDGET)
+    throw new UnsupportedEdgeError(`general chain: too complex for the mesh ${mode} (work ${Math.round(work)} > budget ${GENERAL_WORK_BUDGET})`);
   const pSegs = blendSegs(segs, magnitude);
   // general fillet sections probe the flanks' section-plane curvature on the mesh
   const generals = mode === "fillet" ? effective.filter((ch) => ch.kind === "general") : [];
@@ -2069,7 +2178,7 @@ function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg
     const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], pad = 3 * magnitude;
     for (const p of ch.points) for (let a = 0; a < 3; a++) { b[a] = Math.min(b[a], p[a] - pad); b[a + 3] = Math.max(b[a + 3], p[a] + pad); }
     return b;
-  })) : null;
+  }), 2 * magnitude) : null;
   const toolsFor = (ch) =>
     ch.kind === "planar"
       ? planarTool(k, ch, magnitude, mode, segs, pSegs, endTins, flankAt)
