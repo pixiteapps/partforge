@@ -60,7 +60,9 @@ export function halfFloatCaptureSupported({ readable, readType = null, halfFloat
 // `renderer.renderOffscreen(pose)` does the GL work (temp camera → offscreen
 // target → readback → JPEG data URL); injected so this is unit-testable without
 // a GL context. The grid is hidden for the whole synchronous pass and restored.
-export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, bounds, sceneBounds, hidden = [] }) {
+// `poseFor(view)`, when given, places each view's camera in place of
+// cameraPoseForView(view, bounds) — the viewer passes the cad style's fit.
+export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, bounds, sceneBounds, hidden = [], poseFor }) {
   const views = (viewNames?.length ? viewNames : ["iso", "front", "top"])
     .filter((v) => CANONICAL_VIEWS.includes(v))
     .slice(0, CANONICAL_VIEWS.length);
@@ -71,10 +73,11 @@ export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, b
   for (const o of hidden) o.visible = false;
   try {
     return views.map((view) => {
-      const pose = cameraPoseForView(view, bounds);
-      // `bounds` frames (half the max extent, by cameraPoseForView's contract);
-      // `sceneBounds` is the sphere the depth planes must hold. The grid is
-      // hidden for this whole pass, so the part alone is in the second one.
+      const pose = poseFor ? poseFor(view) : cameraPoseForView(view, bounds);
+      // `bounds` frames (half the max extent, by cameraPoseForView's contract)
+      // when there is no `poseFor`; `sceneBounds` is the sphere the depth planes
+      // must hold. The grid is hidden for this whole pass, so the part alone is
+      // in the second one.
       return { view, dataUrl: renderer.renderOffscreen(pose, { sceneBounds }) };
     });
   } finally {
@@ -457,6 +460,24 @@ export function createViewer(container, part) {
       _worldBounds.union(_meshBounds);
     }
     return _worldBounds;
+  }
+
+  // Every vertex of the visible sub-part meshes in WORLD space, flat xyz — what
+  // the canonical captures fit their framing to (getVisibleWorldBounds' meshes).
+  const _worldVertex = new THREE.Vector3();
+  function visibleWorldPositions() {
+    const meshes = Object.values(subMesh).filter((m) => m.visible && m.geometry?.attributes?.position);
+    const out = new Float32Array(meshes.reduce((n, m) => n + m.geometry.attributes.position.count * 3, 0));
+    let o = 0;
+    for (const mesh of meshes) {
+      mesh.updateWorldMatrix(true, false);
+      const pos = mesh.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++, o += 3) {
+        _worldVertex.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+        out[o] = _worldVertex.x; out[o + 1] = _worldVertex.y; out[o + 2] = _worldVertex.z;
+      }
+    }
+    return out;
   }
 
   // --- depth range ------------------------------------------------------------
@@ -1979,18 +2000,21 @@ export function createViewer(container, part) {
     if (!box || box.isEmpty()) return [];
     const center = box.getCenter(new THREE.Vector3()).toArray();
     const size = box.getSize(new THREE.Vector3());
-    const radius = Math.max(size.x, size.y, size.z) / 2 || 10;
+    // Framed like the CPU renderer frames the same views: the cad style's fit to
+    // the visible geometry's WORLD positions (stylePose), so a part fills the
+    // frame by its own silhouette rather than a fixed distance from its box.
+    const styleBox = { min: box.min.toArray(), max: box.max.toArray() };
+    const points = visibleWorldPositions();
     return captureViewsFromScene(viewNames, {
+      poseFor: (view) => stylePose(RENDER_STYLES.cad, view, styleBox, { aspect: 1, points }).pose,
       renderer: { renderOffscreen },
       // The live camera only to save/restore its position around the pass; the
       // renders themselves pass no `projection`, so they stay perspective.
       liveCamera: activeCamera,
       grid,
       hidden: [...canonicalCaptureHidden],
-      bounds: { center, radius },
-      // The ENCLOSING radius, which is a different number from the framing one
-      // above: a box's corners reach √3 further than half its max extent, and
-      // the depth planes have to clear the corners. A realistic capture keeps
+      // The ENCLOSING radius the depth planes must clear (half the diagonal: the
+      // box's corners, not just its faces). A realistic capture keeps
       // its ground disc, which is several part radii across, so it counts too.
       sceneBounds: (realisticRig && sceneDepthBounds()) || { center, radius: size.length() / 2 || 10 },
     });

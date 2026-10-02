@@ -287,6 +287,23 @@ test("renderMeshPayloads edge lines keep the capture resolution through three's 
   viewer.dispose();
 });
 
+// The agent's canonical captures fit the visible geometry's WORLD positions (the cad
+// style through stylePose), not the bbox and not cameraPoseForView's fixed distance.
+test("captureCanonicalViews frames each view to the visible geometry (cad fit)", () => {
+  const viewer = newViewer();
+  const atZ10 = { ...cubePayload("a"), positions: new Float32Array([0, 0, 10, 4, 0, 10, 0, 1, 10]) };
+  viewer.setSubGeometry("a", atZ10);
+  viewer.showAssembly(["a"]);
+
+  viewer.captureCanonicalViews(["front"]);
+
+  const expected = fitPoseToPoints("front", modelToWorld(atZ10.positions), { fov: 45, aspect: 1, fill: RENDER_STYLES.cad.camera.fill });
+  const round = (v) => v.map((n) => +n.toFixed(3));
+  expect(round(state.lastCamera.position.toArray())).toEqual(round(expected.position));
+
+  viewer.dispose();
+});
+
 // Review fix 7: render at the live camera's fov (45°, which cameraPoseForView's distance is
 // tuned to), not the old 35° that cropped long, thin parts.
 test("renderMeshPayloads renders at the live camera's fov, not a narrower one", () => {
