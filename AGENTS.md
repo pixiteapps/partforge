@@ -406,6 +406,22 @@ the installed package, so let the publish finish before bumping the dep there.
   (`createManifoldKernel`, `measure`, `verify`, `assemblyOverlaps`,
   `bootOcctKernel`, `renderViews`, ...); downstream sees one surface and not the
   split.
+- **Capture styles** (`src/framework/renderStyles.js`): the two offscreen looks as
+  data — `cad` (agent renders; in the browser its background/edge colour still
+  follow the live theme) and `thumbnail` (the product shot: light background,
+  softer lights, lighter edges, contact shadow, fixed iso, fit framing). The
+  viewer (`viewer-lighting.js`, `renderMeshPayloads`) and the CPU renderer
+  (`src/framework/softrender/`, behind `partforge/testing`'s `renderViewImages`
+  and `renderViews`) both read them, and framing (`style-camera.js`) and the
+  shadow mask (`contact-shadow.js`) are shared functions, so the two renderers
+  cannot drift. Change a look in `renderStyles.js` only, then run
+  `npm run check:softrender` (needs Chromium) and read the diffs.
+  `renderStyles.js`, `style-camera.js`, `contact-shadow.js` and `softrender/`
+  must not import three — they run in the cloud's Vercel Sandbox under plain Node.
+  The CPU renderer keeps opacity as pre-blend-toward-background and draws no
+  cutaways; both are out of scope by decision, not oversight.
+  `npm run bench:softrender` times it: a 1024² cad render of a ~200k-triangle
+  part costs ~420ms locally at 2× supersampling (~255ms at 1×).
 - **`bin/cli.js`** - the `partforge` CLI dispatch.
 
 **`docs/AUTHORING-PARTS.md` is the authoritative guide** - read it before
