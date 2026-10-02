@@ -764,7 +764,7 @@ between the Manifold preview and the OCCT STEP export.
 ## mesh-fillet-unsupported-edge
 
 - **Symptom:** `fillet: ` or `chamfer: ` followed by an edge-class reason — e.g. `edge curve is not circular`, `flank angle varies along the arc`, `selector matched no sharp edges`, `~180° knife edge` — thrown as a `KernelCapabilityError`, or a preview sub-part silently rebuilding on the slow OCCT worker.
-- **Cause:** The mesh backend's native fillet/chamfer (`mesh-fillet.js`) covers straight and circular-arc sharp-edge chains; the selected edges fall outside that (helical edge, varying dihedral, non-circular curve, or nothing sharp matched), so the op signals `NEEDS_OCCT` and the framework reroutes that sub-part (the CLI re-execs once with `PARTFORGE_BACKEND=occt`).
+- **Cause:** The mesh backend's native fillet/chamfer (`mesh-fillet.js`) covers straight, circular, planar-rim and curved-face sharp-edge chains; the selected edges fall outside that (an edge that flips between convex and concave, a bend tighter than the radius, a knife edge, or nothing sharp matched), so the op signals `NEEDS_OCCT` and the framework reroutes that sub-part (the CLI re-execs once with `PARTFORGE_BACKEND=occt`).
 - **Fix:** Usually nothing — the reroute is the designed degrade and the OCCT result is correct, just slower. To stay on Manifold, restructure so the blend lands on a supported edge class (design the rounding into the profile, or fillet before the boolean that curves the edge). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Fillet, chamfer & shell".
 
 ## mesh-fillet-oversized-radius

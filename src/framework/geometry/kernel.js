@@ -106,8 +106,8 @@ export const ROUTED_CAD_OPS = ["shell"];
  *           `normals`/`edges` are authoritative shading intent from both backends — see docs/KERNEL-CONTRACT.md "Shading intent"; quality is advisory — the Manifold kernel bakes it at creation
  * @property {(opts?: {quality?: "preview"|"print"}) => Promise<ArrayBuffer>} toSTL
  * @property {() => {positions:Float32Array, indices:Uint32Array}} toIndexedMesh   indexed mesh, for 3MF
- * @property {(r:number|{r:number,edges?:object}) => Solid} fillet    round edges; mesh-native for straight/circular chains with automatic OCCT fallback; fillet(3) or fillet({r,edges}); legacy (r,selector) accepted for now (see file header)
- * @property {(d:number|{d:number,edges?:object}) => Solid} chamfer  bevel edges; mesh-native for straight/circular chains with automatic OCCT fallback; chamfer(1) or chamfer({d,edges}); legacy (d,selector) accepted for now (see file header)
+ * @property {(r:number|{r:number,edges?:object}) => Solid} fillet    round edges; mesh-native incl. curved-face edges, OCCT fallback otherwise; fillet(3) or fillet({r,edges}); legacy (r,selector) accepted for now (see file header)
+ * @property {(d:number|{d:number,edges?:object}) => Solid} chamfer  bevel edges; mesh-native incl. curved-face edges, OCCT fallback otherwise; chamfer(1) or chamfer({d,edges}); legacy (d,selector) accepted for now (see file header)
  * @property {(o:{t:number,open:object}) => Solid} shell   hollow inward (OCCT only); legacy (thickness,openFaces) accepted for now (see file header)
  * @property {() => number} [genus]     through-hole count (Manifold only)
  * @property {() => boolean} [isEmpty]  no geometry at all (Manifold only)

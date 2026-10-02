@@ -4148,9 +4148,11 @@ contract v3 that **includes fillet and chamfer**: the mesh backend blends straig
 edges, circular-arc edges (bore rims, cylinder rims, the arcs where fillets meet a
 face), and **planar contour edges at constant dihedral** — the top/bottom rims of any
 extruded profile, however curvy its outline: `text2d` lettering, `Shape2D.offset`
-outlines, spline profiles all round natively now. Only `shell` still routes a
+outlines, spline profiles all round natively now. Edges **between two curved faces** — a boss meeting a tube, a cross hole's rim, the
+ellipse where a plane cuts a cylinder — blend natively too (a per-vertex
+cross-section, since 0.137). Only `shell` still routes a
 sub-part to OCCT up front; a fillet/chamfer on an edge class the mesh backend can't
-blend (helical edges, varying dihedral) reroutes that sub-part to OCCT automatically
+blend (mixed convexity along one edge, a bend tighter than the fillet radius, knife edges) reroutes that sub-part to OCCT automatically
 at runtime — no declaration needed either way:
 
 | Op | Meaning |
