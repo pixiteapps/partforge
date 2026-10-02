@@ -48,12 +48,19 @@ list).
 implements `fillet` and `chamfer` natively** (`mesh-fillet.js` — tangent-tool CSG).
 Its coverage and tolerance band are part of the contract:
 
-- **Edge classes:** straight sharp edges with planar flanks, and circular-arc sharp
+- **Edge classes:** straight sharp edges with planar flanks; circular-arc sharp
   edges whose flanks are surfaces of revolution about the arc axis (bore rims,
-  cylinder rims, the arcs where blends meet a face) — full circles included. Convex
-  edges subtract a cutter; concave edges union a filler. Any other edge class
-  (helical edges, varying dihedral, non-circular curves, function selectors) throws
-  `KernelCapabilityError` so the host can reroute that build to a B-rep kernel.
+  cylinder rims, the arcs where blends meet a face) — full circles included;
+  planar-rim edges (an edge lying in a face plane at a constant wall angle — the
+  rims of any extruded outline); and, since 0.137, curved-face edges between two
+  curved faces (a boss meeting a tube, a cross hole's rim, the ellipse where a plane
+  cuts a cylinder), blended with a per-vertex cross-section. Convex edges subtract a
+  cutter; concave edges union a filler. A selection the mesh class cannot blend
+  throws `KernelCapabilityError` so the host can reroute that build to a B-rep
+  kernel: an edge that flips between convex and concave along its length, a bend
+  tighter than the radius, a knife edge (anti-parallel flanks), a curved-face
+  selection over the mesh fillet's complexity budget, or a function selector.
+  There is no partial blending — one such edge reroutes the whole sub-part.
 - **Tolerance band, not identity:** the blend surface is the exact rolling-ball
   (fillet) or setback-chord (chamfer) surface to within tessellation, plus
   micron-scale robustness allowances (tool overshoot past tangency and seam-grazing
@@ -370,7 +377,7 @@ Normative signatures: `kernel.js`'s `@typedef Solid`.
 | `toMesh({quality?})` | Render mesh: `{positions, normals, indices?, triangles, edges?, featureIds?, features?}`. `indices` optional (a backend may emit soup or indexed); `normals` and `edges` are authoritative shading intent from both backends — see [Shading intent](#shading-intent-tomesh-normals-and-edges) below; `featureIds`/`features` are optional metadata. |
 | `toSTL({quality?})` | `Promise<ArrayBuffer>`, binary STL, outward CCW winding. Stored facet normals may be zero — slicers recompute them (the mesh backend happens to write them). |
 | `toIndexedMesh({quality?})` | `{positions, indices}` indexed mesh (3MF path); defaults to `"print"` like `toSTL`. Coincident vertices need NOT be welded — the 3MF writer welds, because that format reads topology from the indices rather than re-stitching soup by position the way an STL consumer does. |
-| `fillet(r)` · `fillet({r, edges?})` / `chamfer(d)` · `chamfer({d, edges?})` / `shell({t, open})` | `fillet`/`chamfer`: implemented on BOTH in-repo classes since v3 — exactly on B-rep, tolerance-band on the mesh class for straight and circular-arc edge chains (see [Conformance classes](#conformance-classes)); an edge class the mesh kernel cannot blend throws `KernelCapabilityError` and reroutes. Zero magnitude — `fillet(0)` / `chamfer({d: 0})` — is the identity on every class (returns the solid unchanged, never throws; `shell` excluded, `t: 0` is degenerate). Scalar `fillet(3)`/`chamfer(1)` acts on all edges; the options form adds an `edges` selector. `shell` remains B-rep-only (core throws), hollows inward keeping outer dimensions; `open` (face selector) is required. |
+| `fillet(r)` · `fillet({r, edges?})` / `chamfer(d)` · `chamfer({d, edges?})` / `shell({t, open})` | `fillet`/`chamfer`: implemented on BOTH in-repo classes since v3 — exactly on B-rep, tolerance-band on the mesh class for straight, circular-arc, planar-rim and curved-face edge chains (see [Conformance classes](#conformance-classes)); an edge class the mesh kernel cannot blend throws `KernelCapabilityError` and reroutes. Zero magnitude — `fillet(0)` / `chamfer({d: 0})` — is the identity on every class (returns the solid unchanged, never throws; `shell` excluded, `t: 0` is degenerate). Scalar `fillet(3)`/`chamfer(1)` acts on all edges; the options form adds an `edges` selector. `shell` remains B-rep-only (core throws), hollows inward keeping outer dimensions; `open` (face selector) is required. |
 | `roundAll(r)` · `roundAll({r})` | Morphological close-then-open with a ball of radius `r`: rounds EVERY edge (convex and concave) at radius ≈ `r`; faces stay in place (within the class's tolerance band — the B-rep offset chain can drift ~0.1 mm); features smaller than the ball are consumed (walls < 2r melt, holes < 2r seal). Implemented natively on BOTH classes — never routes, never throws `KernelCapabilityError`. Parity-tolerant only while `r` is below the smallest feature size; at consuming radii the mesh class performs true consumption and a B-rep class MAY skip the whole op unchanged with a `roundall-skipped` warning (skip is the only permitted degrade). `roundAll(0)` is the identity on every class. |
 
 `quality` (`"preview"` | `"print"`) is **advisory**: it trades tessellation density for
@@ -942,7 +949,9 @@ now implement it (no stub, unlike the `OCCT_ONLY_OPS` ops).
 
 **v2 → v3** (partforge 0.62): `Solid.fillet` and `Solid.chamfer` are implemented
 natively on the mesh (core reference) kernel for straight and circular-arc edge
-chains, and are **no longer probe-routed to OCCT** — `ROUTED_CAD_OPS` (`shell`) is
+chains (coverage has since grown inside v3 with no contract bump: planar-rim edges,
+then curved-face edges in 0.137 — see [Conformance classes](#conformance-classes)),
+and are **no longer probe-routed to OCCT** — `ROUTED_CAD_OPS` (`shell`) is
 the remaining probe-routing set, and unsupported edge classes reroute at runtime via
 `KernelCapabilityError`. Semantics change for existing parts: a part using fillet or
 chamfer now previews (and STL/3MF-exports) from the mesh kernel's tolerance-band

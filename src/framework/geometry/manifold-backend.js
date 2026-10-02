@@ -863,12 +863,6 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       if (e.error) throw e.error; // lazy: unusable-format entries fail at use, not at registration
       return wrap(e.m, e.hash);
     },
-    // Side-channel (underscore = off-contract, probe-invisible). Registration is
-    // TOTAL — it never throws for an unusable format; an `{error}` entry is stored
-    // verbatim and thrown by `import(name)` above at call time (spec: "Registration
-    // is total; errors are lazy"). Re-registering the same name+digest is a no-op
-    // EXCEPT an error entry is always upgradable (the post-crossover retry depends
-    // on this — see `_importDigest`).
     // Side-channel for mesh-fillet's general-chain tools (underscore = off-contract):
     // a solid from a stack of equal-size 3-D rings (mesh-build.js ringStackManifold).
     _ringStackSolid: (rings, opts = {}) =>
@@ -890,6 +884,12 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       }
       return tool;
     },
+    // Side-channel (underscore = off-contract, probe-invisible). Registration is
+    // TOTAL — it never throws for an unusable format; an `{error}` entry is stored
+    // verbatim and thrown by `import(name)` above at call time (spec: "Registration
+    // is total; errors are lazy"). Re-registering the same name+digest is a no-op
+    // EXCEPT an error entry is always upgradable (the post-crossover retry depends
+    // on this — see `_importDigest`).
     _registerImport: ({ name, digest, positions, indices, error }) => {
       const prev = imports.get(name);
       if (!prev?.error && prev?.digest === digest) return; // error entries are always upgradable
