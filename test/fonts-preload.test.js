@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import opentype from "opentype.js";
-import { resolveFonts } from "../src/framework/fonts.js";
+import { resolveFonts, forgetFontSource } from "../src/framework/fonts.js";
 import { handle } from "../src/framework/jobs.js";
 
 function synthFont() {
@@ -89,4 +89,16 @@ test("handle surfaces an unreadable font as a named, actionable error", async ()
   expect(err.message).toContain('"greatVibes"');               // names the offending font
   expect(err.message).toMatch(/TTF|OTF/);                      // says what to provide instead
   expect(kernel._fonts.has("greatVibes")).toBe(false);         // nothing half-registered
+});
+
+test("forgetFontSource drops the memo, so the next resolve fetches again", async () => {
+  const url = "https://example.test/forget.ttf";
+  const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(new Uint8Array([1, 2, 3])));
+  fetchSpy.mockClear(); // an earlier test leaves a vi.fn on globalThis.fetch; count only our calls
+  try {
+    await resolveFonts({ a: url });
+    forgetFontSource(url);
+    await resolveFonts({ a: url });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  } finally { fetchSpy.mockRestore(); }
 });

@@ -6,7 +6,7 @@ import { meshTo3MF } from "./geometry/threemf.js";
 import { printColor } from "./materials/resolve.js";
 import { exportablePartNames } from "./export-select.js";
 import { fontControlAllows, fontSourceAllowed, isNoFontSource } from "./font-source.js";
-import { fontsFor, resolveFonts } from "./fonts.js";
+import { fontsFor, resolveFonts, forgetFontSource } from "./fonts.js";
 import { normalizeOpentype, parseFont } from "./geometry/opentype-interop.js";
 import { imageControlAllows, imageSourceAllowed, isNoImageSource } from "./image-source.js";
 import { imagesFor, ensureImages } from "./images.js";
@@ -15,6 +15,8 @@ import { safeName } from "./safe-name.js";
 import { vectorControlAllows, vectorSourceAllowed, isNoVectorSource } from "./vector-source.js";
 import { vectorsFor, ensureVectors } from "./vectors.js";
 import { exportSubParts, resolveParams, buildPosed } from "./part-model.js";
+
+export const FONT_SOURCE_CACHE_MAX = 4;
 
 // The oracle loads LAZILY, per job family, never at worker boot. It is the largest
 // JS payload in the worker's graph (measure/verify/build and silhouette/match), and
@@ -264,25 +266,45 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     if (part.fonts && kernel._fonts) {
       const declared = fontsToResolve ?? {};
       if (Object.keys(declared).length) {
-        onProgress("resolving fonts");
-        const opentype = normalizeOpentype(await import("opentype.js"));
-        const bufs = await resolveFonts(declared);
         // Keyed on the SOURCE, not the name. A name is not a font identity: one
         // worker outlives many parts (worker-rebind) and, once a font can come
         // from a param, many picks — all of which reuse the same declared name.
         // The old `if (!_fonts.has(name))` made the first bytes ever seen under a
         // name permanent for the life of the worker.
         //
-        // The source, not the resolved buffer: the two agree only because the
-        // resolver's own memo is unbounded and hands back the identical object
-        // every time. Key on that and this memo silently degrades to per-fetch
-        // identity — a re-parse per build — the day eviction is added there.
+        // The parse cache keys on the source and is the ONLY holder of a font:
+        // the resolver's memo is transient (forgotten once a font is parsed).
         kernel._fontsBySource ??= new Map();
-        for (const [name, buf] of bufs) {
-          const source = declared[name];
+        // Resolve only what this kernel has not parsed yet: a source already in
+        // the parse cache needs no bytes at all, which is what lets the resolver
+        // forget a buffer the moment its font is parsed (below).
+        const unparsed = Object.fromEntries(
+          Object.entries(declared).filter(([, src]) => !kernel._fontsBySource.has(src)),
+        );
+        let bufs = new Map();
+        if (Object.keys(unparsed).length) {
+          onProgress("resolving fonts");
+          bufs = await resolveFonts(unparsed);
+        }
+        const opentype = bufs.size ? normalizeOpentype(await import("opentype.js")) : null;
+        for (const [name, source] of Object.entries(declared)) {
           let font = kernel._fontsBySource.get(source);
-          if (!font) { font = parseFont(opentype, buf, name); kernel._fontsBySource.set(source, font); }
+          if (font) {
+            kernel._fontsBySource.delete(source);              // re-insert = most recent
+          } else {
+            font = parseFont(opentype, bufs.get(name), name);
+            forgetFontSource(source);                           // the parsed Font is what we keep
+          }
+          kernel._fontsBySource.set(source, font);
           kernel._fonts.set(name, font);
+        }
+        // Bounded (spec 2026-10-01 §3): auditioning fonts in the picker
+        // otherwise kept every face ever tried, per kernel, for the worker's
+        // life. Map order is recency (re-inserted on use above), and this
+        // build's own sources are the newest, so the bound never evicts one a
+        // build needs.
+        while (kernel._fontsBySource.size > FONT_SOURCE_CACHE_MAX) {
+          kernel._fontsBySource.delete(kernel._fontsBySource.keys().next().value);
         }
       }
       // Drop every name this build's declaration does not supply. `_fonts` is
