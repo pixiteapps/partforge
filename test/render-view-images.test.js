@@ -35,3 +35,15 @@ test("sub-part display materials reach the CPU render (hinged box is walnut)", a
 test("an unknown angle keeps its old message", async () => {
   await expect(renderViewImages(k, demo, "spacer", { views: ["sideways"] })).rejects.toThrow(/unknown angle "sideways"/);
 });
+
+test("an unknown style fails before the kernel is touched", async () => {
+  const kernel = new Proxy({}, { get() { throw new Error("kernel touched"); } });
+  await expect(renderViewImages(kernel, demo, "spacer", { style: "nope" })).rejects.toThrow(/unknown render style "nope"/);
+});
+
+test("a non-positive or non-finite supersample is refused", async () => {
+  for (const supersample of [0, -1, NaN, Infinity]) {
+    await expect(renderViewImages(k, demo, "spacer", { views: ["iso"], size: [32, 32], supersample }))
+      .rejects.toThrow("renderStyled: supersample must be a positive integer");
+  }
+});

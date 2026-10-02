@@ -4,6 +4,7 @@ import { safeName } from "../framework/safe-name.js";
 import { ORIENTATIONS } from "../framework/view-angles.js";
 import { buildView } from "../framework/oracle/build.js";
 import { renderStyled } from "../framework/softrender/index.js";
+import { getRenderStyle } from "../framework/renderStyles.js";
 
 // Canonical view directions in MODEL space (Z-up). `dir` is the direction from
 // the part centre toward the camera; `up` is the camera up vector.
@@ -53,6 +54,7 @@ export async function renderViewImages(kernel, part, view = Object.keys(part.vie
   style = "cad", supersample = 2,
 } = {}) {
   const { PNG } = await import("pngjs");
+  getRenderStyle(style); // a bad style fails here, before the kernel build
   for (const angle of views) {
     if (!renderAngle(angle)) throw new Error(`unknown angle "${angle}" (use: ${RENDER_VIEWS.join(", ")}, or a view-cube orientation such as top-front-left)`);
   }

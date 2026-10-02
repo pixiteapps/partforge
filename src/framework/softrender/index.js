@@ -21,7 +21,8 @@ export function renderStyled(subparts, { view, style = "cad", size = [1024, 1024
   const st = getRenderStyle(style);
   const angle = view ?? st.view ?? "iso";
   const [W, H] = size;
-  const ss = Math.max(1, Math.round(supersample));
+  const ss = Math.round(supersample);
+  if (!Number.isFinite(ss) || ss < 1) throw new Error("renderStyled: supersample must be a positive integer");
   const WS = W * ss, HS = H * ss;
 
   const parts = subparts.map((sp) => {
