@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
-import { detectSharpEdges, chainEdges, generalStations } from "../src/framework/geometry/mesh-fillet.js";
+import { detectSharpEdges, chainEdges, generalStations, matchesSelector } from "../src/framework/geometry/mesh-fillet.js";
 import { FIXTURES } from "./fixtures/fillet-general-fixtures.js";
 
 let k;
@@ -55,5 +55,11 @@ describe("general chains", () => {
       expect(chains.some((c) => c.kind === "general"), name).toBe(false);
       expect(chains.some((c) => c.kind === "unsupported"), name).toBe(false);
     }
+  });
+  it("a near selector on a closed general chain's closing member matches", () => {
+    const rim = chainsOf(FIXTURES.crossHole(k)).find((c) => c.kind === "general" && c.closed);
+    const n = rim.points.length, a = rim.points[n - 1], b = rim.points[0];
+    const near = [0, 1, 2].map((i) => (a[i] + b[i]) / 2);
+    expect(matchesSelector(rim, { near })).toBe(true);
   });
 });

@@ -651,8 +651,11 @@ export function matchesSelector(chain, sel) {
       }
     } else {
       let best = Infinity;
-      for (let i = 0; i + 1 < chain.points.length; i++) {
-        const a = chain.points[i], b = chain.points[i + 1];
+      // A closed general chain keeps no duplicated closing point, so its last
+      // member wraps points[n-1] -> points[0]; other kinds keep the original loop.
+      const pn = chain.points.length, wrap = chain.kind === "general" && chain.closed;
+      for (let i = 0; wrap ? i < pn : i + 1 < pn; i++) {
+        const a = chain.points[i], b = chain.points[(i + 1) % pn];
         const ab = sub(b, a), t = Math.max(0, Math.min(1, dot(sub(near, a), ab) / (dot(ab, ab) || 1)));
         best = Math.min(best, len(sub(near, add(a, scl(ab, t)))));
       }
