@@ -2396,7 +2396,7 @@ The framework resolves these — fetch/read bytes, detect the format (filename e
 - **STL/3MF on Manifold** — native: parsed, repaired (vertex merge + winding/orientation fix), and handed to `Manifold.ofMesh`. A mesh still non-manifold after repair throws loudly with the open-edge count — see [ERROR-PATTERNS.md#import-mesh-not-solid](ERROR-PATTERNS.md#import-mesh-not-solid).
 - **STL/3MF on OCCT** — never attempted: mesh-to-B-rep conversion isn't in scope for v1. Declaring a mesh import on a part (or sub-part, under per-sub-part routing) that routes to OCCT is an error — see [ERROR-PATTERNS.md#import-mesh-on-occt](ERROR-PATTERNS.md#import-mesh-on-occt).
 
-`import` is not in `OCCT_ONLY_OPS` — a STEP import does not by itself force OCCT routing (the crossover exists precisely so it doesn't have to); backend selection is still driven by `fillet`/`chamfer`/`shell` on a `Solid`, or `meta.backend`.
+`import` is not in `OCCT_ONLY_OPS` — a STEP import does not by itself force OCCT routing (the crossover exists precisely so it doesn't have to); backend selection is still driven by `shell` on a `Solid` or `meta.backend` (`fillet`/`chamfer` run on Manifold and send a sub-part to OCCT only when an edge they select is one the mesh fillet cannot blend).
 
 **Units:** everything normalizes to millimetres at parse time — STEP units are honored by the OCCT importer, a 3MF file's `unit` attribute is converted, and **STL is assumed to already be in millimetres** (the format carries no unit metadata).
 
