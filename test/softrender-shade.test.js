@@ -33,30 +33,18 @@ describe("shade", () => {
   const L = prepareLights(RENDER_STYLES.cad.lights, pose);
   const white = prepareMaterial({ color: 0xffffff, metalness: 0, roughness: 1 });
 
-  // Closed form of RE_IndirectDiffuse + RE_IndirectSpecular (no env radiance),
-  // dielectric white, from the LUT: (multi + diffuse·(1 − (single + multi)))·E/π.
-  function indirect(irr, roughness, dotNV) {
-    const [a, b] = dfgLut(roughness, dotNV);
-    const fss = 0.04 * a + b, ems = 1 - (a + b);
-    const favg = 0.04 + 0.96 / 21;
-    const multi = ((fss * favg) / (1 - ems * favg)) * ems;
-    return ((multi + (1 - (fss + multi))) * irr) / Math.PI;
-  }
-
-  it("hemisphere only: a normal straight up gets the LUT-compensated sky term", () => {
+  it("hemisphere only: a normal straight up gets sky · diffuse / π", () => {
     const o = out();
     shade([0, 1, 0], [0, 0, 1], white, noDir(L), o, 0);
     const sky = srgbHexToLinear(0xdce9ff).map((c) => c * 1.35);
-    [0, 1, 2].forEach((i) => expect(o[i]).toBeCloseTo(indirect(sky[i], 1, 0), 6));
-    // Within a few percent of the plain sky·diffuse/π the old model gave.
-    expect(o[0]).toBeGreaterThan(0.5 * sky[0] / Math.PI);
+    [0, 1, 2].forEach((i) => expect(o[i]).toBeCloseTo(sky[i] / Math.PI, 6));
   });
 
   it("a straight-down normal gets the ground colour", () => {
     const o = out();
     shade([0, -1, 0], [0, 0, 1], white, noDir(L), o, 0);
     const ground = srgbHexToLinear(0x687586).map((c) => c * 1.35);
-    expect(o[0]).toBeCloseTo(indirect(ground[0], 1, 0), 6);
+    expect(o[0]).toBeCloseTo(ground[0] / Math.PI, 6);
   });
 
   it("one light, N = L = V: direct = diffuse/π + single GGX + multiscatter, in closed form", () => {

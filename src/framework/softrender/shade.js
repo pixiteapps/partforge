@@ -5,10 +5,8 @@
 // lights_physical_fragment); if three changes them, re-port — the parity
 // script is what notices.
 //
-// r184 differs from the classic Lambert + GGX picture in two ways that matter
-// even with no env map: direct specular carries a multiscattering term, and the
-// hemisphere irradiance feeds `indirectSpecular` (multiScattering) as well as a
-// diffuse term darkened by the dielectric DFG energy. Both read the DFG LUT.
+// r184 differs from the classic Lambert + GGX picture even with no env map:
+// direct specular carries a multiscattering term that reads the DFG LUT.
 // Not ported: `geometryRoughness` (a screen-space derivative of the geometric
 // normal, nonzero only across creases / smooth-normal gradients).
 import { srgbHexToLinear } from "../renderStyles.js";
@@ -23,8 +21,6 @@ const sat = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 export function prepareMaterial({ color, metalness, roughness }) {
   const base = srgbHexToLinear(color);
   return {
-    base,
-    metalness,
     diffuse: base.map((c) => c * (1 - metalness)), // diffuseContribution
     f0: base.map((c) => 0.04 * (1 - metalness) + c * metalness), // specularColorBlended
     roughness: Math.min(Math.max(roughness, 0.0525), 1),
@@ -51,29 +47,20 @@ export function prepareLights(lights, pose) {
 }
 
 export function shade(N, V, mat, lights, out, o) {
-  const { base, metalness, diffuse, f0, roughness } = mat;
+  const { diffuse, f0, roughness } = mat;
   const dotNV = sat(N[0] * V[0] + N[1] * V[1] + N[2] * V[2]);
   const dfgV = dfgLut(roughness, dotNV);
   const EssV = dfgV[0] + dfgV[1];
   const EmsV = 1 - EssV;
   const col = [0, 0, 0];
 
-  // Indirect: hemisphere irradiance, no env radiance. computeMultiscattering
-  // runs for a dielectric (f0 = 0.04) and a metal (f0 = base colour), mixed by
-  // metalness; diffuse keeps what the DIELECTRIC path does not reflect.
+  // Indirect: hemisphere irradiance only reaches RE_IndirectDiffuse. three
+  // passes RE_IndirectSpecular the env-map irradiance/radiance, both 0 here,
+  // so it contributes nothing without an environment map.
   const w = 0.5 * (N[0] * lights.up[0] + N[1] * lights.up[1] + N[2] * lights.up[2]) + 0.5;
   for (let i = 0; i < 3; i++) {
     const irr = lights.ground[i] + (lights.sky[i] - lights.ground[i]) * w;
-    const scat = (fr) => {
-      const fss = fr * dfgV[0] + dfgV[1];
-      const favg = fr + (1 - fr) * FAVG_K;
-      return [fss, (fss * favg / (1 - EmsV * favg)) * EmsV];
-    };
-    const [ssD, msD] = scat(0.04);
-    const [, msM] = scat(base[i]);
-    const multi = msD + (msM - msD) * metalness;
-    const cosIrr = irr * RECIPROCAL_PI;
-    col[i] = multi * cosIrr + diffuse[i] * (1 - (ssD + msD)) * cosIrr;
+    col[i] = irr * diffuse[i] * RECIPROCAL_PI;
   }
 
   const alpha = roughness * roughness, a2 = alpha * alpha;

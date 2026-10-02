@@ -15,7 +15,7 @@ const CAD_LIGHTS = {
   hemisphere: { sky: 0xdce9ff, ground: 0x687586, intensity: 1.35 },
   // Offsets are camera-space multiples of the camera-to-target distance:
   // key over the viewer's shoulder, fill opposing it at eye level
-  // (viewer-lighting.js captureLightPoses places them).
+  // (style-camera.js captureLightPoses places them).
   key: { color: 0xffffff, intensity: 1.45, offset: { right: 0.45, up: 0.75 } },
   fill: { color: 0xe5efff, intensity: 0.65, offset: { right: -0.7, up: 0.15 } },
 };
