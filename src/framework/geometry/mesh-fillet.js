@@ -1633,6 +1633,19 @@ function planarSpine(path, closed, faceN, wallN, magnitude, convex) {
   return { kind: "path", pts: path, closed, dirs, f: faceN, kf: K * (1 + cf), kd: K * len(wIn) };
 }
 
+// planarTool's fold guard at vertex i (between segments iIn and i), shared with
+// planarizeArc so a rim is only handed to the sweep when the sweep can follow it in one
+// piece. See the reach discussion inside planarTool for the two bounds.
+function sweepFoldsAt(segDir, segLen, wallNs, i, iIn, nSeg, magnitude) {
+  const c = clamp1(dot(segDir[iIn], segDir[i]));
+  const turn = Math.acos(c);
+  // inside-of-bend direction ≈ change of travel; past the wall ⇒ reflex bend
+  const bendIn = norm(sub(segDir[i], segDir[iIn]));
+  const reflexBend = dot(bendIn, wallNs[iIn]) + dot(bendIn, wallNs[i % nSeg]) > 0;
+  const r = reflexBend ? 0.1 * magnitude : 1.1 * magnitude;
+  return c < -1 + 1e-6 || r * Math.tan(turn / 2) > 0.45 * Math.min(segLen[iIn], segLen[i]);
+}
+
 function planarTool(k, chain, magnitude, mode, segs, pSegs = segs, endTins = null, flankAt = () => segs) {
   const { points, closed, convex, faceN } = chain;
   let { wallNs } = chain;
@@ -1689,19 +1702,11 @@ function planarTool(k, chain, magnitude, mode, segs, pSegs = segs, endTins = nul
   // past the wall, where the profile reaches only the corner delta — the
   // symmetric bound there shattered concave arcs of the same radii (the
   // roundAll fast path's reflex arcs exactly).
-  const reach = magnitude * 1.1;
-  const reachWall = 0.1 * magnitude;
   const breaks = [];
   for (let i = closed ? 0 : 1; i < (closed ? m : m - 1); i++) {
     const iIn = (i - 1 + nSeg) % nSeg;
-    const c = clamp1(dot(segDir[iIn], segDir[i]));
-    const turn = Math.acos(c);
-    // inside-of-bend direction ≈ change of travel; past the wall ⇒ reflex bend
-    const bendIn = norm(sub(segDir[i], segDir[iIn]));
-    const reflexBend = dot(bendIn, wallNs[iIn]) + dot(bendIn, wallNs[i % nSeg]) > 0;
-    const r = reflexBend ? reachWall : reach;
-    const fold = c < -1 + 1e-6 || r * Math.tan(turn / 2) > 0.45 * Math.min(segLen[iIn], segLen[i]);
-    const sharp = turn > (SMOOTH_MAX_DEG * Math.PI) / 180;
+    const fold = sweepFoldsAt(segDir, segLen, wallNs, i, iIn, nSeg, magnitude);
+    const sharp = Math.acos(clamp1(dot(segDir[iIn], segDir[i]))) > (SMOOTH_MAX_DEG * Math.PI) / 180;
     if (fold || sharp) breaks.push(i);
   }
   // Corner arcs per break vertex, with each side's setback budget measured along the
@@ -2125,7 +2130,7 @@ function cornerBlendBetween(E1, E2, magnitude) {
 // each other, which roundSalientCorners never handled because it skips arc chains —
 // stops existing as a category. Selection still runs on the ARC form (near-selectors
 // match the fitted circle, not its chords); conversion happens after, in apply().
-function planarizeArc(ch) {
+function planarizeArc(ch, magnitude) {
   if (ch.kind !== "arc") return null;
   // face flank = the rotating-frame flank that is axial (±w, world-constant); ~3° bar
   const pick = Math.abs(ch.n1[0]) <= 0.05 ? 0 : Math.abs(ch.n2[0]) <= 0.05 ? 1 : -1;
@@ -2138,6 +2143,25 @@ function planarizeArc(ch) {
     const q = sub(scl(add(pts[i], pts[i + 1]), 0.5), ch.O);
     const rho = norm(sub(q, scl(ch.w, dot(q, ch.w))));
     wallNs.push(norm(add(scl(rho, wall[0]), scl(ch.w, wall[1]))));
+  }
+  // A full-circle rim the sweep would have to split (its fold guard firing — a fillet
+  // radius approaching the rim's own, r ≳ 0.82·R on a kernel circle) stays an arc:
+  // split at every vertex, the per-facet tools' coincident mitre caps leave a
+  // zero-thickness sheet per facet inside the band (a dashed ring in the line overlay,
+  // carried into exports), and near r ≈ R the result is no longer a valid solid. The
+  // revolve follows the circle in one piece, and refuses honestly once the profile
+  // reaches the axis. OPEN arcs keep the sweep regardless: a small corner round inside an
+  // outline is meant to collapse into a virtual corner there (collapseTightCorners).
+  if (magnitude != null && ch.closed) {
+    const ring = ch.closed ? pts.slice(0, -1) : pts, n = ring.length;
+    const nSeg = ch.closed ? n : n - 1, segDir = [], segLen = [];
+    for (let i = 0; i < nSeg; i++) {
+      const d = sub(ring[(i + 1) % n], ring[i]), l = len(d);
+      segDir.push(scl(d, 1 / (l || 1)));
+      segLen.push(l);
+    }
+    for (let i = ch.closed ? 0 : 1; i < (ch.closed ? n : n - 1); i++)
+      if (sweepFoldsAt(segDir, segLen, wallNs, i, (i - 1 + nSeg) % nSeg, nSeg, magnitude)) return null;
   }
   return { kind: "planar", points: pts.map((p) => [p[0], p[1], p[2]]), closed: ch.closed,
            convex: ch.convex, w: faceN, faceN, wallNs };
@@ -2312,7 +2336,7 @@ function planChains(solid, mode, magnitude, edges, sharpDeg) {
   // Face-plane arc rims sweep their own polyline (see planarizeArc); re-stitch so a
   // converted arc joins its planar neighbors — chainEdges' own stitch pass ran before
   // these chains were planar, so their junctions are still open here.
-  const planarized = stitchPlanarChains(selected.map((ch) => planarizeArc(ch) ?? ch), { absorbLines: true });
+  const planarized = stitchPlanarChains(selected.map((ch) => planarizeArc(ch, magnitude) ?? ch), { absorbLines: true });
   // Ends of selected chains, keyed by vertex — planarTool steers a SHARP break
   // corner only when another selected chain leaves that vertex out of the face
   // plane (a vertical edge being blended too, the roundAll/trihedral case where

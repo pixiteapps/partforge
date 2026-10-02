@@ -255,3 +255,43 @@ describe("errors and selectors", () => {
     expect(relErr(bored.volume() - out.volume(), 4 * CORNER(R) * H)).toBeLessThan(2e-3);
   });
 });
+
+// A face-plane circular rim whose radius approaches the fillet's own (a boss top rounded
+// almost to a dome) used to planarize into the swept tool, whose fold guard then split
+// the circle at EVERY vertex once r ≳ 0.82·R. The per-vertex tools' coincident mitre caps
+// left a zero-thickness sheet per facet inside the band — drawn by the line overlay as a
+// dashed ring around the middle of the fillet, carried into exports — and near r ≈ R the
+// result stopped being a valid solid at all (genus 37 at r = 2.9 on R = 3). Such a rim
+// stays on the revolve tool, which follows the circle in one piece.
+describe("face-plane rim tighter than the planar sweep can follow", () => {
+  const R = 3, H = 30;
+  // drawn segments lying on the band surface strictly between its two boundary lines
+  const bandLines = (out, r) => {
+    const { edges } = out.toMesh();
+    let n = 0;
+    for (let i = 0; i + 5 < edges.length; i += 6) {
+      const m = [0, 1, 2].map((j) => (edges[i + j] + edges[i + 3 + j]) / 2);
+      const rho = Math.hypot(m[0], m[1]);
+      if (m[2] < H - r - 0.05) continue;
+      if (Math.abs(Math.hypot(rho - (R - r), m[2] - (H - r)) - r) > 0.05) continue;
+      const a = (Math.atan2(m[2] - (H - r), rho - (R - r)) * 180) / Math.PI;
+      if (a > 5 && a < 85) n++;
+    }
+    return n;
+  };
+  // Pappus: spandrel area (1 − π/4)·r² at centroid radius R − r·(10 − 3π)/(12 − 3π)
+  const removed = (r) => (1 - Math.PI / 4) * r * r * 2 * Math.PI * (R - (r * (10 - 3 * Math.PI)) / (12 - 3 * Math.PI));
+  for (const r of [2.5, 2.75]) {
+    it(`r = ${r} on R = ${R}: one clean band, exact volume`, () => {
+      const cyl = k.cylinder({ r: R, h: H });
+      const out = cyl.fillet({ r, edges: { inPlane: "XY", at: H } });
+      expect(out.genus()).toBe(0);
+      expect(bandLines(out, r)).toBe(0);
+      expect(Math.abs(cyl.volume() - out.volume() - removed(r)) / removed(r)).toBeLessThan(0.002);
+    });
+  }
+  it("a radius the revolve cannot fit either refuses rather than building a broken solid", () => {
+    const cyl = k.cylinder({ r: R, h: H });
+    expect(() => cyl._filletRaw(2.9, { inPlane: "XY", at: H })).toThrow(KernelCapabilityError);
+  });
+});
