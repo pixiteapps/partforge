@@ -95,3 +95,49 @@ describe("spine blend descriptor", () => {
     expect(normals.every((x) => Number.isFinite(x))).toBe(true);
   });
 });
+
+// The boss wall next to the dome junction: tall wall strips run from the junction to
+// the top rim with vertices only at their ends, so one bad junction vertex shades a
+// streak up the whole strip. Visible wall triangles (on the boss cylinder, facing out)
+// with a vertex normal more than 5° off the exact radial normal, as a share of the
+// wall's area. The junction ALONE is selected: a top-rim blend on the same wall is a
+// separate, pre-existing source of streaks (sliver triangles from the revolve cut).
+// Before the chamfer took its setbacks on the wall: 14.2% (worst 23°) — the chamfer
+// face meets this wall at down to 27°, inside the wall's 35° crease angle, and the
+// wall's junction vertices smoothed into it.
+function bossWallBadShare(out) {
+  const { positions: P, normals: N } = out.toMesh();
+  const dB = (p) => Math.hypot(p[0] - 8, p[1]);
+  let bad = 0, total = 0;
+  for (let t = 0; t < P.length / 3; t += 3) {
+    const v = [0, 1, 2].map((j) => [P[(t + j) * 3], P[(t + j) * 3 + 1], P[(t + j) * 3 + 2]]);
+    if (!v.every((q) => Math.abs(dB(q) - 3) < 2e-3)) continue;
+    const u = [0, 1, 2].map((i) => v[1][i] - v[0][i]), w = [0, 1, 2].map((i) => v[2][i] - v[0][i]);
+    const fn = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]], l = Math.hypot(...fn);
+    if (!(l > 0) || Math.abs(fn[2] / l) > 0.2) continue; // the wall, not a rim or the dome
+    const c = [0, 1, 2].map((i) => (v[0][i] + v[1][i] + v[2][i]) / 3), ex = [(c[0] - 8) / 3, c[1] / 3, 0];
+    if (fn[0] * ex[0] + fn[1] * ex[1] < 0) continue; // inside-out boolean needles: no area
+    const err = Math.max(...[0, 1, 2].map((j) => deg([N[(t + j) * 3], N[(t + j) * 3 + 1], N[(t + j) * 3 + 2]], ex)));
+    total += l / 2;
+    if (err > 5) bad += l / 2;
+  }
+  return bad / total;
+}
+describe("the boss wall beside a general-chain band shades smooth", () => {
+  let junction;
+  beforeAll(() => {
+    // a point ON the junction polyline, so the selector picks that chain alone
+    const { positions: P } = FIXTURES.domeBoss(k).toMesh();
+    for (let i = 0; i < P.length && !junction; i += 3) {
+      const p = [P[i], P[i + 1], P[i + 2]];
+      if (p[2] > 5 && Math.abs(Math.hypot(p[0] - 8, p[1]) - 3) < 2e-3 && Math.abs(Math.hypot(...p) - 20) < 2e-2) junction = { near: p };
+    }
+  });
+  for (const mode of ["fillet", "chamfer"]) {
+    it(`domeBoss ${mode} 1.5 at the junction: < 1% of the boss wall shades > 5° off`, () => {
+      const base = FIXTURES.domeBoss(k);
+      const out = mode === "fillet" ? base._filletRaw(1.5, junction) : base._chamferRaw(1.5, junction);
+      expect(bossWallBadShare(out)).toBeLessThan(0.01);
+    });
+  }
+});
