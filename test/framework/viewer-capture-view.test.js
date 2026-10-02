@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
   disposeCounts: null,
   disposedMaterials: null,
   shadow: null,
+  lineDraws: null,
 }));
 
 const OriginalResizeObserver = globalThis.ResizeObserver;
@@ -40,6 +41,15 @@ vi.mock("three", async (importOriginal) => {
     // meshes present at draw time — the finally-block disposal fires afterwards.
     render(scene, camera) {
       this.frames += 1;
+      // WebGLRenderer calls each object's onBeforeRender just before drawing it;
+      // LineSegments2's resets its material's resolution to getViewport()'s (canvas) size.
+      // Record what each visible fat line is drawn at.
+      state.lineDraws = [];
+      scene.traverseVisible((o) => {
+        if (!o.isLineSegments2) return;
+        o.onBeforeRender(this, scene, camera, o.geometry, o.material);
+        state.lineDraws.push({ line: o, resolution: o.material.resolution.toArray() });
+      });
       state.lastRenderScene = scene;
       state.lastCamera = camera;
       state.disposeCounts = { geo: 0, edges: 0 };
@@ -107,6 +117,7 @@ beforeEach(() => {
   state.disposeCounts = null;
   state.disposedMaterials = null;
   state.shadow = null;
+  state.lineDraws = null;
   globalThis.ResizeObserver = class {
     observe() {}
     disconnect() {}
@@ -273,16 +284,44 @@ test("renderMeshPayloads adds feature-edge lines to the temp scene", () => {
 // LineSegments2.onBeforeRender resets its material's `resolution` to the renderer's
 // canvas viewport on every draw. An offscreen capture of another size must keep its
 // own: otherwise a 640px thumbnail's 1.5px edges come out 640/800 as wide on an
-// 800px-tall canvas — thinner, and dependent on the window size.
+// 800px-tall canvas — thinner, and dependent on the window size. renderOffscreen
+// handles it for every capture; the thumbnail's throwaway lines are one case.
 test("renderMeshPayloads edge lines keep the capture resolution through three's draw hook", () => {
   const viewer = newViewer();
 
   viewer.renderMeshPayloads([cubePayload("a")], { size: 64, style: "thumbnail" });
 
-  const lines = [];
-  state.lastRenderScene.traverse((o) => { if (o.isLineSegments2) lines.push(o); });
-  lines[0].onBeforeRender(state.renderer); // what WebGLRenderer does just before drawing it
-  expect(lines[0].material.uniforms.resolution.value.toArray()).toEqual([64, 64]);
+  expect(state.lineDraws).toHaveLength(1);
+  expect(state.lineDraws[0].resolution).toEqual([64, 64]);
+
+  viewer.dispose();
+});
+
+// The live-scene captures (captureViews/captureCurrent) draw the part's own edge lines,
+// whose shared LineMaterial is sized to the canvas: for the capture it must be the
+// capture's size, and afterwards exactly what it was, hook included.
+test("renderOffscreen draws live fat lines at the capture size and restores them", () => {
+  const viewer = newViewer();
+  viewer.setSubGeometry("a", cubePayload("a"));
+  viewer.showAssembly(["a"]);
+  state.renderer.render(viewer._subMeshes.a.parent.parent.parent, viewer.camera); // a live frame
+  const live = state.lineDraws.map((d) => d.line);
+  expect(live.length).toBeGreaterThan(0);
+  const before = live.map((l) => ({ hook: l.onBeforeRender, own: Object.hasOwn(l, "onBeforeRender"), res: l.material.resolution.toArray() }));
+
+  viewer.captureCanonicalViews(["iso"]);
+  for (const d of state.lineDraws) expect(d.resolution).toEqual([1024, 1024]);
+  expect(state.lineDraws.map((d) => d.line)).toEqual(expect.arrayContaining(live));
+
+  live.forEach((l, i) => {
+    expect(l.onBeforeRender).toBe(before[i].hook);
+    expect(Object.hasOwn(l, "onBeforeRender")).toBe(before[i].own);
+    expect(l.material.resolution.toArray()).toEqual(before[i].res);
+  });
+
+  viewer.captureCurrent({ size: 512 }); // a non-square, non-cached size: 512×384 at 4:3
+  for (const d of state.lineDraws) expect(d.resolution).toEqual([512, 384]);
+  live.forEach((l, i) => expect(l.material.resolution.toArray()).toEqual(before[i].res));
 
   viewer.dispose();
 });

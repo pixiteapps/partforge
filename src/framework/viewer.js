@@ -1919,6 +1919,25 @@ export function createViewer(container, part) {
     // blue wash over it (an orange PLA sample came out pink).
     const reshowFlashDots = [];
     for (const dot of [...flashDots, ...captureHidden]) if (dot.visible) { dot.visible = false; reshowFlashDots.push(dot); }
+    // Fat lines (LineSegments2: part edges, their fade clones, the cutaway
+    // outline) take their pixel width from material.resolution, and three's
+    // LineSegments2.onBeforeRender resets that to the CANVAS viewport on every
+    // draw — so a 1px edge in a 1024² capture came out 1024/canvas px wide, under
+    // half a pixel on a high-DPI screen. For this render each visible line's hook
+    // is a no-op and each material's resolution is the target's width × height.
+    // With a viewOffset that is still width × height, not the full frame: the
+    // offset projection maps just the sub-window onto clip space, and the line
+    // shader converts its pixel width through clip space, so the pixels it
+    // counts are the target's. Put back exactly in the finally below.
+    const lineHooks = [];
+    const lineRes = new Map();
+    renderScene.traverseVisible((obj) => {
+      if (!obj.isLineSegments2) return;
+      lineHooks.push({ obj, own: Object.hasOwn(obj, "onBeforeRender"), hook: obj.onBeforeRender });
+      obj.onBeforeRender = () => {};
+      const m = obj.material;
+      if (m?.isLineMaterial && !lineRes.has(m)) { lineRes.set(m, m.resolution.clone()); m.resolution.set(width, height); }
+    });
     try {
       renderer.setRenderTarget(rt);
       renderWithBackdrop(renderScene, cam);
@@ -1935,6 +1954,8 @@ export function createViewer(container, part) {
         liveLights.fill.visible = fillWas;
       }
       for (const dot of reshowFlashDots) dot.visible = true;
+      for (const { obj, own, hook } of lineHooks) { if (own) obj.onBeforeRender = hook; else delete obj.onBeforeRender; }
+      for (const [m, res] of lineRes) m.resolution.copy(res);
       if (!cachedSize) rt.dispose();
     }
     const canvas = document.createElement("canvas");
@@ -2223,19 +2244,14 @@ export function createViewer(container, part) {
     tmpScene.add(hemi, capLights.key, capLights.key.target, capLights.fill, capLights.fill.target);
 
     // Feature-edge lines, so the thumbnail carries the same hole/seam/chamfer outlines the
-    // live viewer shows. A dedicated LineMaterial at the render resolution (the live one is
-    // sized to the on-screen canvas); added after framing so it can't perturb the bbox.
+    // live viewer shows. A dedicated LineMaterial in the style's colour and width
+    // (renderOffscreen sizes its resolution to the target, as for every capture); added
+    // after framing so it can't perturb the bbox.
     const lineMat = new LineMaterial({ color: st.edges.color, linewidth: st.edges.widthPx, transparent: st.edges.opacity < 1, opacity: st.edges.opacity });
-    lineMat.resolution.set(size, size);
-    // LineSegments2.onBeforeRender resets `resolution` to the renderer's CANVAS
-    // viewport on every draw, which is wrong for a target of another size: the
-    // edges came out size/canvas-height as wide (thin, and window-dependent).
     for (const mesh of built) {
       const edges = mesh.geometry.userData.edges;
       if (!edges) continue;
-      const lines = new LineSegments2(edges, lineMat);
-      lines.onBeforeRender = () => {};
-      tmpPivot.add(lines);
+      tmpPivot.add(new LineSegments2(edges, lineMat));
     }
 
     // The product shot's contact shadow, the same mask the CPU renderer samples.
