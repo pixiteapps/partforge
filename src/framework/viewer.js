@@ -25,31 +25,8 @@ import { addViewerLights, captureLightPoses, createCaptureLights, createHemisphe
 import { makeCaptureCamera, recenteredView, captureDepthRange } from "./capture-frame.js";
 import { CANONICAL_VIEWS, cameraPoseForView } from "./view-angles.js";
 
-// three renders into a render target in the LINEAR working colour space: as of r184
-// WebGLRenderer only applies `outputColorSpace` on the canvas path (WebGLPrograms
-// substitutes workingColorSpace whenever a render target is bound), so readback pixels
-// are linear no matter what the target texture's colorSpace says. Writing them straight
-// into a JPEG is what made captured views come back muddy and dark compared to the live
-// canvas. Encode the transfer function ourselves. The 8-bit LUT loses precision only in
-// the deepest shadows, which a quality-0.9 JPEG would not have preserved anyway.
-const SRGB8 = (() => {
-  const table = new Uint8Array(256);
-  for (let i = 0; i < 256; i++) {
-    const l = i / 255;
-    table[i] = Math.round(255 * (l <= 0.0031308 ? 12.92 * l : 1.055 * l ** (1 / 2.4) - 0.055));
-  }
-  return table;
-})();
-
-// Linear RGBA bytes → sRGB, in place. Alpha is a coverage value, not a colour: untouched.
-export function srgbEncodeInPlace(data) {
-  for (let i = 0; i < data.length; i += 4) {
-    data[i] = SRGB8[data[i]];
-    data[i + 1] = SRGB8[data[i + 1]];
-    data[i + 2] = SRGB8[data[i + 2]];
-  }
-  return data;
-}
+import { srgbEncodeInPlace } from "./renderStyles.js";
+export { srgbEncodeInPlace }; // was exported from here; keep the name importable
 
 // Readback (a realistic capture's target) → linear floats: half-float bits,
 // or linear bytes from the 8-bit fallback target.
