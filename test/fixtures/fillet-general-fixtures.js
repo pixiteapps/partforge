@@ -17,6 +17,9 @@ export const FIXTURES = {
 };
 export const GENUS = { tee: 0, crossHole: 1, domeBoss: 0, slantCut: 0 };
 export const CASES = [["fillet", 1], ["fillet", 2], ["chamfer", 1], ["chamfer", 2]];
+// small-radius fillets, referenced but outside the full matrix: on a coarse mesh they
+// put the most facets under one section (the contact-margin cap's worst case)
+export const SMALL_CASES = [["fillet", 0.5]];
 // thin rod on a plate, top cut on a slant: its convex elliptical rim bends tighter
 // (radius ~1.5) than a 2 mm fillet section reaches — must reroute, not fold
 export const tightBend = (k) => k.box({ size: [20, 20, 2] })

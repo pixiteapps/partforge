@@ -89,6 +89,17 @@ describe("general-chain fillet and chamfer on Manifold", () => {
         });
       }
     }
+    // Small radius on coarse facets: the most facets under one section, where the
+    // contact margin's fold allowance (mesh-fillet.js CONTACT_MU_MAX) would reach
+    // 0.39·r uncapped. Measured: crossHole −1.5%, slantCut +7.1% against OCCT.
+    for (const name of ["crossHole", "slantCut"]) {
+      it(`${name} fillet 0.5 (contact-margin cap)`, () => {
+        const base = FIXTURES[name](kc);
+        const out = run(base, "fillet", 0.5);
+        expect(out.genus()).toBe(GENUS[name]);
+        expect(relErr(out.volume() - base.volume(), REF[name]["fillet0.5"])).toBeLessThan(0.1);
+      });
+    }
   });
   it("print quality builds the fixtures watertight", async () => {
     const kp = await bootManifoldKernel({ quality: "print" });

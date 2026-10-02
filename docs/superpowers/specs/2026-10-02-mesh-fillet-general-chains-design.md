@@ -205,3 +205,77 @@ A partforge minor release (after 0.135.1 and 0.135.2 land). Then a cloud pin bum
 `npm run docs:generate && npm run prompt:generate`; the regenerated op line and
 `AUTHORING-PARTS.md`'s fillet section should say Manifold handles curved-meets-curved
 edges. A small eval comparing fillet use before and after is the follow-up check.
+
+## Follow-up: clean band edges and smooth bands (2026-10-02)
+
+On the first build, the CAD overlay drew ragged lines along every general band and the
+bands looked a little lumpy. Measured on the cross hole at r = 1.5:
+
+- **Ragged lines.** The hole-side boundary was 37.0 mm of drawn line against an exact
+  contact curve of 19.7 mm. It was a staircase: two parallel lines ~0.09 mm apart, joined
+  by a rung at every hole facet seam.
+  - Cause: the band met the TRUE curved wall tangentially at the contact, but the wall
+    is planar facets sagging ~1 µm off that curve. Within ±~0.05 mm of the contact the
+    band ran closer to the wall than the sag, so each facet kept a sub-µm lens of uncut
+    (or, for a filler, unfilled) wall.
+  - The overlay draws every seam between a blend band and its wall, so it traced both
+    edges of every lens.
+- **Lumpy bands.** Shading was up to 7° off the exact rolling-ball normal, and the
+  solved ball centres jittered 5–25 µm from station to station.
+  - Cause: each station measured its flank normals at the EDGE, from facet normals that
+    step ~3° per facet. The ball's position depends on the wall where it touches it,
+    about r away from the edge.
+
+The fix makes one change to the section, in two parts. The line-drawing code is not
+touched.
+
+1. **Measure the wall at the contact.** Five ray hits around each current contact give
+   the wall's secant normal through a point on the facets. The probes are spaced ±0.3·r
+   along the section's in-face direction (capped at half the contact's distance from the
+   edge) and along the edge tangent. The ball is re-solved tangent to both measured
+   tangent lines.
+   - Two rounds. One round leaves the tee at 2.95°; a third round changes nothing.
+   - The patch half-width is flat from 0.15·r to 0.4·r in both shading and line
+     placement.
+   - There is no smoothing window along the edge.
+   - A station whose patch cannot be measured keeps its edge-measured section.
+2. **End on the wall.** The arc stops at the contacts, which are snapped onto the faceted
+   mesh, and the polygon's closing edge leaves each contact at 90° to the wall. The
+   contact and the arc points next to it sit on the tool side of the wall (the material
+   for a cutter, the air for a filler) by a margin:
+   - a floor of 2e-4·r, so no point lies exactly on a facet;
+   - plus L·fold/4, the most a chord can leave the wall between two probed points on
+     facets turned `fold` apart;
+   - the fold allowance counts only when the wall folds toward the tool side. The other
+     way the chord sinks on its own, and a margin there only adds a visible step;
+   - the whole margin is capped at 0.05·r. A coarse 32-gon asked for up to 0.39·r
+     uncapped; fine meshes never ask for more than 0.03·r, so the cap does not bind
+     there.
+
+   The boolean then cuts the wall along the contact polyline at a steep crossing, and
+   the band ends on one clean line.
+
+The shading spine changed too. Its 4-point subdivision midpoint is now the cubic through
+the four points at their chord-length parameters, instead of Dyn's (−1, 9, 9, −1)/16
+weights. With even spacing the two are identical. Where a station pair sits much closer
+than its neighbours, Dyn overshot: once the centres were accurate it turned 0.73° of
+polyline error into 2.2° of shading error on the tee at r = 1.
+
+Result:
+
+| | Before | After |
+|---|---|---|
+| Cross hole r = 1.5, hole-side line | 37.0 mm, staircase | 19.7 mm, ≤ 13 µm off the contact |
+| Cross hole and tee, every contact line | — | within 0.5% of exact length, ≤ 16 µm off |
+| Shading | up to 7.5° | ≤ 1.41° |
+
+- Volumes against OCCT and genus are unchanged within tolerance on fine, print and
+  coarse meshes.
+- General-tool time rose up to 1.5×; whole-fillet time is unchanged.
+- The work budget is untouched, since it counts stations, not probes.
+- Known residue: on 32-gon walls, where a convex facet ridge crosses between two widely
+  spaced stations, the band's contact edge and the wall seam are both drawn ~25–50 µm
+  apart. This adds 12.5% of tube-side line on the coarse cross hole, against 2× before
+  the fix.
+
+Tests: `test/mesh-fillet-general-lines.test.js` and the cross-hole shading test.

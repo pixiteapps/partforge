@@ -5,7 +5,7 @@
 // Usage: node scripts/fillet-general-reference.mjs
 import { writeFileSync } from "node:fs";
 import { bootOcctKernel } from "../src/testing/occt.js";
-import { FIXTURES, CASES } from "../test/fixtures/fillet-general-fixtures.js";
+import { FIXTURES, CASES, SMALL_CASES } from "../test/fixtures/fillet-general-fixtures.js";
 
 const k = await bootOcctKernel({});
 const out = {};
@@ -13,7 +13,7 @@ for (const [name, make] of Object.entries(FIXTURES)) {
   const base = make(k);
   const v0 = base.volume();
   out[name] = {};
-  for (const [mode, m] of CASES) {
+  for (const [mode, m] of [...CASES, ...SMALL_CASES]) {
     let dV = null;
     try {
       const s = mode === "fillet" ? base.fillet(m) : base.chamfer(m);

@@ -7,7 +7,7 @@
 // each contact is the spine point pushed r along the wall's normal.
 import { describe, it, expect, beforeAll } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
-import { FIXTURES } from "./fixtures/fillet-general-fixtures.js";
+import { FIXTURES, coarseKernel } from "./fixtures/fillet-general-fixtures.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -33,9 +33,9 @@ const distTo = (c, p) => Math.sqrt(Math.min(...c.map((q) => (q[0] - p[0]) ** 2 +
 // Drawn boundary segments of the top junction, classified by which wall they lie on.
 // The rim region reaches 2r from the hole/boss axis: the cross hole's tube contact
 // sits up to (Rh + r)·10/(10 − r) from it (5.29 mm at r = 1.5, past Rh + 1.5r).
-function boundaryLines(name, r) {
+function boundaryLines(name, r, kk = k) {
   const ex = exact(name, r);
-  const { edges } = FIXTURES[name](k)._filletRaw(r).toMesh();
+  const { edges } = FIXTURES[name](kk)._filletRaw(r).toMesh();
   const res = { ex, wallLen: 0, tubeLen: 0, wallDev: 0, tubeDev: 0 };
   for (let i = 0; i + 5 < edges.length; i += 6) {
     const a = [edges[i], edges[i + 1], edges[i + 2]], b = [edges[i + 3], edges[i + 4], edges[i + 5]];
@@ -65,6 +65,24 @@ describe("general-chain bands end on one clean line per contact", () => {
       expect(Math.abs(tubeLen / ex.tubeLen - 1)).toBeLessThan(0.1);
       expect(wallDev).toBeLessThan(0.02); // no staircase: every segment on the contact
       if (both) expect(tubeDev).toBeLessThan(0.02);
+    });
+  }
+  // Coarse 32-gon walls: the ball touches the FACETS, which sit up to their sag inside
+  // the exact cylinders (hole 3·(1 − cos π/32) = 14 µm, tube 48 µm), so the solved
+  // centre and with it each contact move off the exact curves by up to about both sags
+  // combined, and the chords between stations ~11° apart add as much again: the bound
+  // is 2·(14 + 48) ≈ 125 µm (measured 66 µm on the hole, 102 µm on the tube). Length
+  // is held on the hole side (measured +7.5%). The tube side is not: where a tube facet
+  // ridge crosses between two coarse stations the straight ring stack dips under it,
+  // and the wall-to-band seam and the band's own contact edge are both drawn there,
+  // ~25–50 µm apart (+12.5% of tube line at r = 1.5, no stray lines elsewhere). r = 1
+  // is where an uncapped contact margin shows (hole line +10.6% uncapped, −0.1% capped).
+  for (const r of [1.5, 1]) {
+    it(`crossHole r=${r} on 32-gon walls: the hole line stays single and on the contact`, () => {
+      const { ex, wallLen, wallDev, tubeDev } = boundaryLines("crossHole", r, coarseKernel(k, 32));
+      expect(Math.abs(wallLen / ex.wallLen - 1)).toBeLessThan(0.1);
+      expect(wallDev).toBeLessThan(0.125);
+      expect(tubeDev).toBeLessThan(0.125);
     });
   }
 });

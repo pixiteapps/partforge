@@ -1070,12 +1070,15 @@ function wallPatch(rays, P, n, f, t, df, dt, rho) {
   if (dot(nn, n) < 0) nn = scl(nn, -1);
   return { p: c.p, fn: c.fn, n: nn };
 }
+// the unit contact normals of a ball solution, pointing into the air from each wall
+const contactNormals = (sol, sgn) =>
+  [sol.T1, sol.T2].map((Tk) => norm2([sgn * (Tk[0] - sol.C[0]), sgn * (Tk[1] - sol.C[1])]));
 function refineBall(rays, sol, frame, t3, r, convex) {
-  if (!rays) return sol;
   const { p2, to3 } = frame, sgn = convex ? 1 : -1;
+  if (!rays) return { ...sol, N: contactNormals(sol, sgn) };
   const vec3 = ([x, y]) => sub(to3([x, y]), to3([0, 0]));
   let { C } = sol, T = [sol.T1, sol.T2];
-  let N = T.map((Tk) => norm2([sgn * (Tk[0] - C[0]), sgn * (Tk[1] - C[1])]));
+  let N = contactNormals(sol, sgn);
   const F = [sol.F1, sol.F2];
   let ok = false;
   for (let round = 0; round < CONTACT_ROUNDS; round++) {
@@ -1099,7 +1102,7 @@ function refineBall(rays, sol, frame, t3, r, convex) {
     if (!Tn.every((Tk, kk) => Tk[0] * F[kk].f[0] + Tk[1] * F[kk].f[1] > 0)) break;
     C = Cn; T = Tn; N = [A.n, B.n]; ok = true;
   }
-  if (!ok) return sol;
+  if (!ok) return { ...sol, N };
   const m1 = norm2([sgn * (T[0][0] - C[0]), sgn * (T[0][1] - C[1])]);
   const m2 = norm2([sgn * (T[1][0] - C[0]), sgn * (T[1][1] - C[1])]);
   const phi = Math.atan2(m1[0] * m2[1] - m1[1] * m2[0], clamp1(m1[0] * m2[0] + m1[1] * m2[1]));
@@ -1142,6 +1145,15 @@ const FLANK_SAMPLES = 4;
 // threatens the arc, ending the probe walk inward.
 const CONTACT_MU = 2e-4;
 const CONTACT_STOP = 3e-3;
+// The fold allowance is a worst-case bound (the ridge midway between the two
+// points) and a fold can reach ~1.2 rad under FLANK_FACING_COS (35° each side), so on a coarse
+// 32-gon with 1–2 mm station spacing it asked for up to 0.39·r (slantCut, r = 0.5)
+// — a step in the band, and a deeper cut than the fillet's. Fine meshes never ask
+// for more than 0.03·r (every fixture, r = 0.5–2). Capped at 0.05·r the coarse
+// fixtures keep their genus and move TOWARD OCCT (coarse slantCut r = 1: 9.3 →
+// 6.0%; r = 0.5: 5.7%), the coarse cross hole's lines stay single, and no fine
+// number moves.
+const CONTACT_MU_MAX = 0.05;
 function contactPolygon(sol, magnitude, nArc, tilt, ends) {
   const { C, a1, a2, m1, phi, F1, F2, bis, sgn, N } = sol;
   const r = magnitude, delta = 0.02 * magnitude;
@@ -1200,9 +1212,7 @@ function generalTool(k, chain, magnitude, mode, pSegs, rays = null, stations = n
   const m = st.length;
   // snap every contact onto the faceted wall and keep its facet normal
   const snaps = sols ? sols.map((sol, i) => {
-    const { to3 } = frames[i], sgn = convex ? 1 : -1;
-    const N = sol.N ?? [sol.T1, sol.T2].map((Tk) => norm2([sgn * (Tk[0] - sol.C[0]), sgn * (Tk[1] - sol.C[1])]));
-    sol.N = N;
+    const { to3 } = frames[i], { N } = sol;
     return [sol.T1, sol.T2].map((Tk, kk) => {
       const n3 = norm(sub(to3(N[kk]), to3([0, 0])));
       const h = rays ? contactHit(rays, to3(Tk), n3, st[i].t, CONTACT_D * magnitude) : null;
@@ -1213,9 +1223,15 @@ function generalTool(k, chain, magnitude, mode, pSegs, rays = null, stations = n
   // polygon and probes the wall under its contact (snapped, depth 0) and under the arc
   // points next to it, out to where the arc has left the wall by CONTACT_STOP; pass 2
   // gives each probed point its tool-side margin — the floor CONTACT_MU, plus L·fold/4
-  // for the chord to the same point of each neighbouring station, which leaves the wall
-  // by up to that much when the two sit on facets turned `fold` apart — and pushes the
-  // point along the contact normal until it is that deep.
+  // for the chord to the same point of each neighbouring station and to its neighbours
+  // in the section, which leaves the wall by up to that much when the two sit on facets
+  // turned `fold` apart. Only a fold TOWARD the tool side (a concave wall under a
+  // cutter, a convex one under a filler) lifts a chord out of it; the other way the
+  // chord sinks deeper on its own, and a margin there only opens a visible step
+  // (measured on the coarse cross hole's tube: 12% of doubled line, and coarse slantCut
+  // 3 points further from OCCT). The margin is capped at CONTACT_MU_MAX, each point is
+  // pushed along the contact normal until it is that deep, and when the last probed
+  // point still needed a push the walk continues inward at its margin.
   const sgn = convex ? 1 : -1;
   const lay = sols ? sols.map((sol, i) => {
     const { to3 } = frames[i];
@@ -1243,14 +1259,36 @@ function generalTool(k, chain, magnitude, mode, pSegs, rays = null, stations = n
     if (mode === "fillet") {
       const sol = sols[i], { pts, probes } = lay[i];
       for (let kk = 0; kk < 2; kk++) {
-        const Nk = sol.N[kk];
+        const Nk = sol.N[kk], { n3 } = snaps[i][kk];
+        let need = 0;
         probes[kk].forEach((q, j) => {
           let mu = CONTACT_MU * magnitude;
-          const rise = (o) => { if (o) mu = Math.max(mu, CONTACT_MU * magnitude + (len(sub(q.H, o.H)) * Math.acos(clamp1(dot(q.fn, o.fn)))) / 4); };
+          const rise = (o) => {
+            // only a wall folding TOWARD the tool side lifts the chord out of it
+            if (!o || sgn * (dot(q.fn, sub(o.H, q.H)) + dot(o.fn, sub(q.H, o.H))) <= 0) return;
+            mu = Math.max(mu, CONTACT_MU * magnitude + (len(sub(q.H, o.H)) * Math.acos(clamp1(dot(q.fn, o.fn)))) / 4);
+          };
           for (const nb of [i - 1, i + 1]) if (closed || (nb >= 0 && nb < m)) rise(lay[(nb + m) % m].probes[kk][j]);
           rise(probes[kk][j - 1]); rise(probes[kk][j + 1]);
+          mu = Math.min(mu, CONTACT_MU_MAX * magnitude);
+          need = mu;
           if (q.depth < mu) { const X = pts[q.idx], dd = mu - q.depth; pts[q.idx] = [X[0] - sgn * dd * Nk[0], X[1] - sgn * dd * Nk[1]]; }
         });
+        // the walk stopped at CONTACT_STOP, but the last point's margin can ask for
+        // more (coarse facets): keep walking inward at that margin until the arc is
+        // deep enough on its own
+        const last = probes[kk][probes[kk].length - 1];
+        if (rays && snaps[i][kk].hit && last.depth < need) {
+          for (let j = probes[kk].length; j < nArc / 2; j++) {
+            const idx = kk === 0 ? FLANK_SAMPLES + 2 + j : FLANK_SAMPLES + 2 + nArc - j;
+            const X = to3(pts[idx]), h = wallHit(rays, X, n3, 0.05 * magnitude);
+            if (!h) break;
+            const depth = -sgn * dot(sub(X, h.p), n3);
+            if (depth >= need) break;
+            const dd = need - depth;
+            pts[idx] = [pts[idx][0] - sgn * dd * Nk[0], pts[idx][1] - sgn * dd * Nk[1]];
+          }
+        }
       }
       poly = pts;
       centres.push(to3(sol.C));
