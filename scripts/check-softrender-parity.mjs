@@ -5,10 +5,12 @@
 // plain Node) — and compares them: silhouette IoU, mean colour difference
 // over the part, and windowed luma SSIM. A drift in framing, lighting,
 // colour space, edges or the contact shadow between the two shows up here.
+// Each page also compares the runtime's captureViews(["iso"]) — the agent's
+// live-scene capture — against a CPU cad render in the page's theme colours.
 //
 //   node scripts/check-softrender-parity.mjs [--out <dir>]
 //
-// With --out, writes <page>-<style>-{browser,cpu,diff}.png per comparison
+// With --out, writes <page>-<style|live-cad>-{browser,cpu,diff}.png per comparison
 // (diff = |a − b| × 4). Exits 1 if any comparison misses THRESHOLDS or a page
 // logged a console error. CHECK_PORT picks the Vite port (default 5192).
 // Needs Playwright's Chromium (`npx playwright install chromium`).
@@ -20,14 +22,16 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { bootManifoldKernel, renderViewImages } from "../src/testing.js";
-import { RENDER_STYLES } from "../src/framework/renderStyles.js";
+import { RENDER_STYLES, CAD_LIGHT_THEME, CAD_DARK_THEME } from "../src/framework/renderStyles.js";
 
-// Measured 2026-10-02 (512², iso; browser = headless Chromium on SwiftShader,
-// JPEG quality 1): worst IoU 0.9836
-// (propeller thumbnail — thin blades, so antialiased silhouette pixels weigh
-// heavily), worst meanDiff 2.71 and worst SSIM 0.9733 (propeller cad). Each set
-// at the worst value with a margin: IoU −0.005, meanDiff +2, SSIM −0.03.
-const THRESHOLDS = { iou: 0.978, meanDiff: 4.7, ssim: 0.943 };
+// Measured 2026-10-02, after both styles moved to the fitted framing (512², iso;
+// browser = headless Chromium on SwiftShader, JPEG quality 1; the live-cad rows
+// are 1024² at the runtime's own quality 0.9): worst IoU 0.9845 (propeller
+// thumbnail — thin blades, so antialiased silhouette pixels weigh heavily),
+// worst meanDiff 2.74 and worst SSIM 0.9752 (propeller cad). Each set at the
+// worst value with a margin: IoU −0.005, meanDiff +2, SSIM −0.03. The live-cad
+// rows land inside the same bounds, so they share them.
+const THRESHOLDS = { iou: 0.979, meanDiff: 4.7, ssim: 0.945 };
 
 const FIXTURES = [
   { page: "demo.html", part: "src/parts/demo.js" },
@@ -83,15 +87,31 @@ function ssim(a, b, w, h, ma, mb) {
   return count ? total / count : 1;
 }
 
-async function decode(buf) {
+async function decode(buf, size = SIZE) {
   const { data, info } = await sharp(buf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-  if (info.width !== SIZE || info.height !== SIZE) throw new Error(`expected ${SIZE}² but decoded ${info.width}×${info.height}`);
+  if (info.width !== size || info.height !== size) throw new Error(`expected ${size}² but decoded ${info.width}×${info.height}`);
   return data;
 }
-const png = (rgb, file) => sharp(Buffer.from(rgb), { raw: { width: SIZE, height: SIZE, channels: 3 } }).png().toFile(file);
+const png = (rgb, file, size = SIZE) => sharp(Buffer.from(rgb), { raw: { width: size, height: size, channels: 3 } }).png().toFile(file);
+const rgbOf = (hex) => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
 
 const errors = [];
 const failures = [];
+async function compare(label, a, b, bg, size, limits) {
+  const ma = silhouette(a, bg), mb = silhouette(b, bg);
+  const r = { iou: iou(ma, mb), meanDiff: meanDiff(a, b, ma, mb), ssim: ssim(a, b, size, size, ma, mb) };
+  const miss = [r.iou < limits.iou && "iou", r.meanDiff > limits.meanDiff && "meanDiff", r.ssim < limits.ssim && "ssim"].filter(Boolean);
+  console.log(`${label}: iou ${r.iou.toFixed(4)}  meanDiff ${r.meanDiff.toFixed(2)}  ssim ${r.ssim.toFixed(4)}${miss.length ? `  MISS ${miss.join(",")}` : ""}`);
+  if (miss.length) failures.push(`${label}: ${miss.join(", ")}`);
+  if (out) {
+    const stem = join(out, label.replace(/\.html/, "").replace(/ /g, "-"));
+    const d = Buffer.alloc(a.length);
+    for (let i = 0; i < d.length; i++) d[i] = Math.min(255, Math.abs(a[i] - b[i]) * 4);
+    await png(a, `${stem}-browser.png`, size);
+    await png(b, `${stem}-cpu.png`, size);
+    await png(d, `${stem}-diff.png`, size);
+  }
+}
 const kernel = await bootManifoldKernel();
 const vite = spawn(process.execPath, [viteBin, "--port", String(PORT), "--strictPort"], { cwd: root, detached: true, stdio: "ignore" });
 let browser;
@@ -127,22 +147,31 @@ try {
       const a = await decode(Buffer.from(dataUrl.slice(dataUrl.indexOf(",") + 1), "base64"));
       const [{ png: cpuPng }] = await renderViewImages(kernel, part, view, { views: ["iso"], size: [SIZE, SIZE], style });
       const b = await decode(cpuPng);
-      const hex = RENDER_STYLES[style].background;
-      const bg = [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
-      const ma = silhouette(a, bg), mb = silhouette(b, bg);
-      const r = { iou: iou(ma, mb), meanDiff: meanDiff(a, b, ma, mb), ssim: ssim(a, b, SIZE, SIZE, ma, mb) };
-      const miss = [r.iou < THRESHOLDS.iou && "iou", r.meanDiff > THRESHOLDS.meanDiff && "meanDiff", r.ssim < THRESHOLDS.ssim && "ssim"].filter(Boolean);
-      console.log(`${pageName} ${style}: iou ${r.iou.toFixed(4)}  meanDiff ${r.meanDiff.toFixed(2)}  ssim ${r.ssim.toFixed(4)}${miss.length ? `  MISS ${miss.join(",")}` : ""}`);
-      if (miss.length) failures.push(`${pageName} ${style}: ${miss.join(", ")}`);
-      if (out) {
-        const stem = join(out, `${pageName.replace(/\.html$/, "")}-${style}`);
-        const d = Buffer.alloc(a.length);
-        for (let i = 0; i < d.length; i++) d[i] = Math.min(255, Math.abs(a[i] - b[i]) * 4);
-        await png(a, `${stem}-browser.png`);
-        await png(b, `${stem}-cpu.png`);
-        await png(d, `${stem}-diff.png`);
+      await compare(`${pageName} ${style}`, a, b, rgbOf(RENDER_STYLES[style].background), SIZE, THRESHOLDS);
+    }
+    // The LIVE-scene agent capture (captureViews → captureCanonicalViews), which
+    // frames, lights and draws the part's own edges in the live scene rather
+    // than captureView's throwaway one. It follows the page theme, so the CPU
+    // side renders a cad variant in that theme's background and edge colour
+    // (read off the capture's corner pixel); everything else is plain cad.
+    let shots = [];
+    for (let tries = 0; !shots?.length; tries++) {
+      shots = await page.evaluate(() => window.__pfRuntime.captureViews(["iso"]));
+      if (!shots?.length) {
+        if (tries > 120) throw new Error(`${pageName}: captureViews never produced an image`);
+        await sleep(500);
       }
     }
+    const url = shots[0].dataUrl;
+    const meta = await sharp(Buffer.from(url.slice(url.indexOf(",") + 1), "base64")).metadata();
+    const a = await decode(Buffer.from(url.slice(url.indexOf(",") + 1), "base64"), meta.width);
+    const theme = [CAD_LIGHT_THEME, CAD_DARK_THEME]
+      .map((t) => ({ t, d: rgbOf(t.bg).reduce((s, c, i) => s + Math.abs(c - a[i]), 0) }))
+      .sort((x, y) => x.d - y.d)[0].t;
+    const live = { ...RENDER_STYLES.cad, background: theme.bg, edges: { ...RENDER_STYLES.cad.edges, color: theme.line } };
+    const [{ png: livePng }] = await renderViewImages(kernel, part, view, { views: ["iso"], size: [meta.width, meta.width], style: live });
+    const b = await decode(livePng, meta.width);
+    await compare(`${pageName} live-cad`, a, b, rgbOf(theme.bg), meta.width, THRESHOLDS);
     await page.close();
   }
 } finally {

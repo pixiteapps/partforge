@@ -409,13 +409,22 @@ the installed package, so let the publish finish before bumping the dep there.
 - **Capture styles** (`src/framework/renderStyles.js`): the two offscreen looks as
   data — `cad` (agent renders; in the browser its background/edge colour still
   follow the live theme) and `thumbnail` (the product shot: light background,
-  softer lights, lighter edges, contact shadow, fixed iso, fit framing). The
-  viewer (`viewer-lighting.js`, `renderMeshPayloads`) and the CPU renderer
+  softer lights, lighter edges, contact shadow, fixed iso). Both styles frame by
+  FIT (`fitPoseToPoints`): the canonical direction, at the distance that brings
+  the geometry's projected extent — its vertices, not its bounding box — to the
+  style's `fill` (cad 0.9, thumbnail 0.88), centred on it; the old canonical cad
+  distance (which cropped medium parts at iso) no longer applies, and the live
+  camera (`frameTo`, view cube, reframe) is unchanged. Every offscreen render
+  (`renderOffscreen`) sizes fat-line (`LineSegments2`) resolution to the capture
+  target for that render, since three's per-draw hook resets it to the canvas.
+  The viewer (`viewer-lighting.js`, `renderMeshPayloads`, the live-scene
+  `captureViews`) and the CPU renderer
   (`src/framework/softrender/`, behind `partforge/testing`'s `renderViewImages`
   and `renderViews`) both read them, and framing (`style-camera.js`) and the
   shadow mask (`contact-shadow.js`) are shared functions, so the two renderers
   cannot drift. Change a look in `renderStyles.js` only, then run
-  `npm run check:softrender` (needs Chromium) and read the diffs.
+  `npm run check:softrender` (needs Chromium; it also compares the live-scene
+  `captureViews` against the CPU cad render) and read the diffs.
   `renderStyles.js`, `style-camera.js`, `contact-shadow.js` and `softrender/`
   must not import three — they run in the cloud's Vercel Sandbox under plain Node.
   The CPU renderer keeps opacity as pre-blend-toward-background and draws no

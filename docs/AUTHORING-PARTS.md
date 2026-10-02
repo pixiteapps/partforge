@@ -3145,7 +3145,8 @@ pane's pixel size:
   or when measurement dimensions are pinned (their labels sit beside the part and
   could otherwise be cut off).
 - `runtime.captureViews(viewNames) → [{ view, dataUrl }]` — the canonical-angle
-  counterpart (fixed poses, framed to the visible assembly, 1024², grid hidden). Sized
+  counterpart (fixed view directions, each fitted so the visible assembly's projected
+  geometry fills 90% of the frame and sits centred in it; 1024², grid hidden). Sized
   for feeding a vision model, not for display; use `captureCurrent` for showcase images.
 
 ### `runtime.projection`
