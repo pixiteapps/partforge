@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import opentype from "opentype.js";
-import { handle } from "../src/framework/jobs.js";
+import { handle, FONT_SOURCE_CACHE_MAX } from "../src/framework/jobs.js";
 import { fontsFor, resolveFonts } from "../src/framework/fonts.js";
 
 // Two distinguishable synthetic fonts: same glyph, different advance width, so
@@ -155,4 +155,77 @@ test("the parse memo is keyed on the source, not on the resolved bytes", async (
     await handle(kernel, { fonts: { face: url }, parts: {}, defaults: {} }, job, () => {});
   } finally { globalThis.fetch = g; }
   expect([...kernel._fontsBySource.keys()]).toEqual([url]);
+});
+
+// Spec 2026-10-01 §3: auditioning fonts must not grow the worker's memory with N.
+async function buildWith(kernel, url, fetchStub) {
+  const g = globalThis.fetch;
+  globalThis.fetch = fetchStub;
+  try {
+    await handle(kernel, { fonts: { face: url }, parts: {}, defaults: {} }, job, () => {});
+  } finally { globalThis.fetch = g; }
+}
+
+test("the parsed-font cache keeps at most FONT_SOURCE_CACHE_MAX sources, newest kept", async () => {
+  const kernel = { _fonts: new Map(), cleanup() {} };
+  const bytes = synthFont(700);
+  const stub = async () => ({ ok: true, arrayBuffer: async () => bytes });
+  let lastUrl;
+  for (let i = 0; i < FONT_SOURCE_CACHE_MAX + 2; i++) {
+    lastUrl = `https://cdn.example.test/lru-${i}.ttf`;
+    await buildWith(kernel, lastUrl, stub);
+  }
+  expect(kernel._fontsBySource.size).toBe(FONT_SOURCE_CACHE_MAX);
+  expect([...kernel._fontsBySource.keys()].at(-1)).toBe(lastUrl);
+});
+
+test("re-using an old source refreshes its recency; the least recent is evicted", async () => {
+  const kernel = { _fonts: new Map(), cleanup() {} };
+  const bytes = synthFont(700);
+  const stub = async () => ({ ok: true, arrayBuffer: async () => bytes });
+  const u = (n) => `https://cdn.example.test/recency-${n}.ttf`;
+  for (const n of ["A", "B", "C", "D", "A", "E"]) await buildWith(kernel, u(n), stub);
+  const keys = [...kernel._fontsBySource.keys()];
+  expect(keys).toContain(u("A"));
+  expect(keys).not.toContain(u("B"));
+  expect(keys.at(-1)).toBe(u("E"));
+});
+
+test("a part declaring more than FONT_SOURCE_CACHE_MAX sources keeps them all: no refetch on rebuild", async () => {
+  const kernel = { _fonts: new Map(), cleanup() {} };
+  const bytes = synthFont(700);
+  const stub = vi.fn(async () => ({ ok: true, arrayBuffer: async () => bytes }));
+  const fonts = {};
+  for (let i = 0; i <= FONT_SOURCE_CACHE_MAX; i++) fonts[`f${i}`] = `https://cdn.example.test/many-${i}.ttf`;
+  const g = globalThis.fetch;
+  globalThis.fetch = stub;
+  try {
+    await handle(kernel, { fonts, parts: {}, defaults: {} }, job, () => {});
+    expect(stub).toHaveBeenCalledTimes(FONT_SOURCE_CACHE_MAX + 1);
+    await handle(kernel, { fonts, parts: {}, defaults: {} }, job, () => {});
+  } finally { globalThis.fetch = g; }
+  expect(stub).toHaveBeenCalledTimes(FONT_SOURCE_CACHE_MAX + 1);
+});
+
+test("a source already parsed is not fetched again on the next build", async () => {
+  const kernel = { _fonts: new Map(), cleanup() {} };
+  const bytes = synthFont(700);
+  const stub = vi.fn(async () => ({ ok: true, arrayBuffer: async () => bytes }));
+  const url = "https://cdn.example.test/parsed-once.ttf";
+  await buildWith(kernel, url, stub);
+  await buildWith(kernel, url, stub);
+  expect(stub).toHaveBeenCalledTimes(1);
+});
+
+test("a parsed source's raw bytes are released from the resolver", async () => {
+  const kernel = { _fonts: new Map(), cleanup() {} };
+  const bytes = synthFont(700);
+  const stub = vi.fn(async () => ({ ok: true, arrayBuffer: async () => bytes }));
+  const url = "https://cdn.example.test/released.ttf";
+  await buildWith(kernel, url, stub);
+  expect(stub).toHaveBeenCalledTimes(1);
+  const g = globalThis.fetch;
+  globalThis.fetch = stub;
+  try { await resolveFonts({ x: url }); } finally { globalThis.fetch = g; }
+  expect(stub).toHaveBeenCalledTimes(2);
 });

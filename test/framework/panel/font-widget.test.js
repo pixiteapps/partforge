@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { buildControls } from "../../../src/framework/panel/render.js";
-import { fontLabel } from "../../../src/framework/panel/widgets/font.js";
+import { fontLabel, makeFont } from "../../../src/framework/panel/widgets/font.js";
+import "../../../src/framework/panel/font-picker.js";
 
 const GS = "https://fonts.gstatic.com/s/playfairdisplay/v37/abcdef.ttf";
 const sec = (over = {}) => ({ id: "s", title: "S", controls: [
@@ -291,4 +292,77 @@ test("the URL field is off by default, leaving the drop zone", () => {
   buildControls(root, [sec()], { face: GS }, () => {});
   expect(root.querySelector("input.text-input"), "no field unless asked for").toBeNull();
   expect(root.querySelector("[data-pf-drop]"), "the drop zone is the way in").toBeTruthy();
+});
+
+// ── picker session commits once, on close ──────────────────────────────────
+const fam = (family, variants) => ({
+  id: family, family, category: "sans", menuUrl: `https://fonts.gstatic.com/menu/${family}.ttf`,
+  variants: variants.map((v) => ({ variant: v, label: v, url: `https://fonts.gstatic.com/s/${family}/v1/${v}.ttf`, bytes: 100 })),
+});
+const CATALOG = [fam("Anton", ["400"]), fam("Montserrat", ["400"]), fam("Roboto", ["400", "700"])];
+const catalog = { search: async (q) => CATALOG.filter((f) => !q || f.family.toLowerCase().includes(q.toLowerCase())) };
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
+function mountCatalogFont({ onChange, onCommit } = {}) {
+  document.body.innerHTML = "";
+  const params = { face: CATALOG[2].variants[0].url };
+  const widget = makeFont({ key: "face", type: "font" }, params, { onChange, onCommit, fontCatalog: catalog });
+  document.body.append(widget.el);
+  return { params, button: widget.el.querySelector(".font-btn"), widget };
+}
+const pickFamily = (name) =>
+  [...document.querySelectorAll(".pk-row")].find((r) => r.textContent.startsWith(name)).click();
+
+test("picks change live; the commit lands once, on close", async () => {
+  const onChange = vi.fn(), onCommit = vi.fn();
+  const { params, button } = mountCatalogFont({ onChange, onCommit });
+  button.click(); await flush();
+  pickFamily("Anton"); await flush();
+  pickFamily("Montserrat"); await flush();
+  expect(onChange).toHaveBeenCalledTimes(2);
+  expect(onCommit).not.toHaveBeenCalled();
+  document.querySelector(".pk-done").click();
+  expect(onCommit).toHaveBeenCalledTimes(1);
+  expect(params.face).toContain("/Montserrat/");
+});
+
+test("closing without changing the value commits nothing", async () => {
+  const onCommit = vi.fn();
+  const { button } = mountCatalogFont({ onCommit });
+  button.click(); await flush();
+  document.querySelector(".pk-x").click();
+  expect(onCommit).not.toHaveBeenCalled();
+});
+
+test("picking a family and then the original back commits nothing", async () => {
+  const onCommit = vi.fn();
+  const { params, button } = mountCatalogFont({ onCommit });
+  const atOpen = params.face;
+  button.click(); await flush();
+  pickFamily("Anton"); await flush();
+  expect(params.face).toContain("/Anton/");
+  pickFamily("Roboto"); await flush();
+  expect(params.face).toBe(atOpen);
+  document.querySelector(".pk-done").click();
+  expect(onCommit).not.toHaveBeenCalled();
+});
+
+test("a superseded picker still commits its change once", async () => {
+  const onCommit = vi.fn();
+  const { button } = mountCatalogFont({ onCommit });
+  button.click(); await flush();
+  pickFamily("Anton"); await flush();
+  button.click(); await flush();                  // re-open: supersedes the first session
+  expect(onCommit).toHaveBeenCalledTimes(1);
+  document.querySelector(".pk-done").click();     // second session changed nothing new
+  expect(onCommit).toHaveBeenCalledTimes(1);
+});
+
+test("dispose with an open picker commits the pending pick", async () => {
+  const onCommit = vi.fn();
+  const { button, widget } = mountCatalogFont({ onCommit });
+  button.click(); await flush();
+  pickFamily("Anton"); await flush();
+  widget.dispose();
+  expect(onCommit).toHaveBeenCalledTimes(1);
 });

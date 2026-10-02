@@ -145,9 +145,21 @@ export function makeFont(node, params, { onChange, onCommit, info, fontCatalog, 
   // the rail, outside the panel root, so tearing the panel down does not take it
   // with it. Without dispose() the element — and the `document` keydown listener
   // that only close() unhooks — would outlive the panel holding a stale `params`.
+  //
+  // A picker SESSION is one commit (spec 2026-10-01 §2): every pick rebuilds
+  // live through onChange, and the commit — "the user finished", the same
+  // split the slider makes on release — fires once, when the picker closes
+  // (Done, ×, Escape, a re-open superseding it, or dispose), and only if the
+  // value actually moved. A host that persists on commit (partforge-cloud
+  // vendors and saves) then pays once per session instead of once per pick.
   let picker = null;
   btn.addEventListener("click", () => {
-    picker = openFontPicker?.({ node, params, allow, fontCatalog, anchor: wrap, onPicked: () => { paint(); onChange?.(); onCommit?.(); } }) ?? null;
+    const atOpen = params[node.key];
+    picker = openFontPicker?.({
+      node, params, allow, fontCatalog, anchor: wrap,
+      onPicked: () => { paint(); onChange?.(); },
+      onClose: () => { picker = null; if (params[node.key] !== atOpen) onCommit?.(); },
+    }) ?? null;
   });
 
   // Ambient: this branch already has the catalog button as its visible way in, so
