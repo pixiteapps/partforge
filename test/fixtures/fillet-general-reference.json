@@ -33,5 +33,12 @@
     "fillet2": -124.5204,
     "chamfer1": null,
     "chamfer1.5": null
+  },
+  "sphereBox": {
+    "fillet1": -27.8095,
+    "fillet1.5": -63.8933,
+    "fillet2": -116.2124,
+    "chamfer1": null,
+    "chamfer1.5": null
   }
 }

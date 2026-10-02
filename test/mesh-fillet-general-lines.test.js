@@ -235,3 +235,37 @@ describe("a flat rim on a curved wall ends on one clean line per contact", () =>
   }
 });
 const unit3 = (v) => { const l = Math.hypot(...v); return [v[0] / l, v[1] / l, v[2] / l]; };
+
+// A closed rim whose wall is curved along half its length and flat along the rest:
+// sphere R = 20 in a 38 mm box, base rim = four sphere arcs and four straight runs on
+// the box sides, an 18° turn at each junction. It takes the general tool whole. Before
+// (the planar sweep): 564 drawn segments near the rim at fillet 1, 104 of them across
+// it, and genus −40 at fillet 2. Now ~270 segments; the few
+// across the rim are the band's own seams at the four junctions (16 at most).
+const BOX_REF = JSON.parse(readFileSync(new URL("./fixtures/fillet-general-reference.json", import.meta.url), "utf8")).sphereBox;
+describe("a flat rim on a partly curved wall, with corners, takes the general tool whole", () => {
+  const { make, edges } = RIM_FIXTURES.sphereBox;
+  for (const [mode, r] of RIM_CASES) {
+    it(`sphere in a box, base rim ${mode} ${r}: watertight, clean rim lines`, () => {
+      const base = make(k), out = mode === "fillet" ? base._filletRaw(r, edges) : base._chamferRaw(r, edges);
+      expect(out.genus()).toBe(0);
+      const { edges: E } = out.toMesh();
+      let segs = 0, across = 0;
+      for (let i = 0; i + 5 < E.length; i += 6) {
+        const m = [0, 1, 2].map((j) => (E[i + j] + E[i + 3 + j]) / 2);
+        if (m[2] > 3 * r) continue;
+        const L = Math.hypot(E[i + 3] - E[i], E[i + 4] - E[i + 1], E[i + 5] - E[i + 2]), rho = Math.hypot(m[0], m[1]);
+        segs++;
+        if (Math.abs((-m[1] * (E[i + 3] - E[i]) + m[0] * (E[i + 4] - E[i + 1])) / (rho * L)) < 0.5) across++;
+      }
+      expect(segs).toBeLessThan(350); // measured 266–284 (the sweep: 348–1543)
+      expect(across).toBeLessThanOrEqual(16);
+      // OCCT builds the fillets (measured +3.6–6.6% over it); it skips the chamfers
+      // (null in the reference), which are only held to removing material
+      const ref = BOX_REF[`${mode}${r}`];
+      const dV = out.volume() - base.volume();
+      if (ref != null) expect(Math.abs(dV / ref - 1)).toBeLessThan(0.1);
+      else expect(dV).toBeLessThan(0);
+    });
+  }
+});

@@ -290,6 +290,32 @@ describe("face-plane rim tighter than the planar sweep can follow", () => {
       expect(Math.abs(cyl.volume() - out.volume() - removed(r)) / removed(r)).toBeLessThan(0.002);
     });
   }
+  // A rim whose fold guard fires at ONE vertex — a 64-gon with one vertex moved a
+  // tenth of a step, the most unevenness the arc classifier accepts — still stays on
+  // the revolve: a single fold already means r is near the all-fold radius (8.1 here,
+  // 7.3 at the short chord), and the sweep split at that vertex drew a ~19 mm seam
+  // across the band and cut 1.7% over Pappus, against the revolve's clean 0.5%.
+  it("a circle that folds at one short chord keeps one clean band", () => {
+    const Rc = 10, Hc = 10, r = 7.5, n = 64;
+    const pts = Array.from({ length: n }, (_, i) => {
+      const a = (2 * Math.PI * (i === 5 ? 4.9 : i)) / n;
+      return [Rc * Math.cos(a), Rc * Math.sin(a)];
+    });
+    const base = k.prism({ points: pts, h: Hc });
+    const out = base._filletRaw(r, { inPlane: "XY", at: Hc });
+    expect(out.genus()).toBe(0);
+    const { edges } = out.toMesh();
+    let seams = 0;
+    for (let i = 0; i + 5 < edges.length; i += 6) {
+      const m = [0, 1, 2].map((j) => (edges[i + j] + edges[i + 3 + j]) / 2), rho = Math.hypot(m[0], m[1]);
+      if (Math.abs(Math.hypot(rho - (Rc - r), m[2] - (Hc - r)) - r) > 0.05) continue;
+      const a = (Math.atan2(m[2] - (Hc - r), rho - (Rc - r)) * 180) / Math.PI;
+      if (a > 5 && a < 85) seams++;
+    }
+    expect(seams).toBe(0);
+    const pappus = (1 - Math.PI / 4) * r * r * 2 * Math.PI * (Rc - (r * (10 - 3 * Math.PI)) / (12 - 3 * Math.PI));
+    expect(Math.abs(base.volume() - out.volume() - pappus) / pappus).toBeLessThan(0.01);
+  });
   it("a radius the revolve cannot fit either refuses rather than building a broken solid", () => {
     const cyl = k.cylinder({ r: R, h: H });
     expect(() => cyl._filletRaw(2.9, { inPlane: "XY", at: H })).toThrow(KernelCapabilityError);

@@ -20,6 +20,10 @@ export const FIXTURES = {
 // not straight in the section plane, so it takes the general tool's sections.
 export const RIM_FIXTURES = {
   domeRim: { make: (k) => k.sphere({ r: 20 }).intersect(k.box({ size: [60, 60, 30] })), edges: { inPlane: "XY", at: 0 } },
+  // the same sphere in a 38 mm box: its base rim is four sphere arcs joined by four
+  // straight runs on the box sides, an 18° turn at each junction — one closed rim whose
+  // wall is curved along half its length and flat along the rest
+  sphereBox: { make: (k) => k.sphere({ r: 20 }).intersect(k.box({ size: [38, 38, 38] })), edges: { inPlane: "XY", at: 0 } },
 };
 export const RIM_CASES = [["fillet", 1], ["fillet", 1.5], ["fillet", 2], ["chamfer", 1], ["chamfer", 1.5]];
 export const GENUS = { tee: 0, crossHole: 1, domeBoss: 0, slantCut: 0 };

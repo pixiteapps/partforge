@@ -280,6 +280,31 @@ Result:
 
 Tests: `test/mesh-fillet-general-lines.test.js` and the cross-hole shading test.
 
+### Tight full-circle rims stay on the revolve (2026-10-02)
+
+A face-plane circular rim used to be planarized into the swept tool every time. Once
+r passes about 0.82·R, the sweep's fold guard splits the circle at every vertex. The
+per-vertex tools' coincident mitre caps then leave a zero-thickness sheet per facet
+(a dashed ring in the overlay), and near r = R the result is not a valid solid
+(genus 37 at r = 2.9 on a 3 mm boss).
+
+- **The rule.** A closed rim at which the sweep's fold guard fires at any vertex now
+  stays an arc, and the revolve builds it in one piece or refuses.
+- **This is a deliberate exception** to "every chain the existing tools accept is
+  still accepted by the same tool".
+- **Census effect at r = 1:** three sub-parts (filamentAsm ×2, hingePins) go from an
+  "OK" that was actually broken (genus 8 / 32) to an honest reroute, "fillet crosses
+  the revolve axis".
+- **One fold is enough, by measurement.** The arc classifier accepts chords only
+  ~10% uneven, so a single folding vertex already means r is within ~10% of folding
+  everywhere. On a 64-gon (R = 10) with one vertex moved a tenth of a step, at
+  r = 7.5, the revolve leaves a clean band 0.5% under Pappus. Requiring half the
+  vertices to fold would sweep it instead, split at that vertex: a 19 mm seam across
+  the band and 1.7% over Pappus (test/mesh-fillet.test.js pins it).
+- **A remaining case of the same defect:** a half-dome's base rim (a semicircle plus a
+  straight edge) still leaves stray shells at r = 2. My reproduction gives genus −12
+  for both fillet and chamfer, unchanged from main; the reviewer measured −12 / −20.
+
 ### Chamfers: setbacks on the wall (2026-10-02)
 
 Chamfers had kept `profile2D`'s section, whose setbacks sit on each flank's tangent
@@ -364,6 +389,13 @@ usual, and fillets and chamfers then get contact-measured sections and the clean
 A rim cap cut below its sphere's centre (the sphere meeting the plane at an acute
 angle) went from 274 mm of line and 76 across segments to 215 mm and 0. The fillet
 takes ~90 ms against ~25 ms on the sweep.
+
+A mixed rim also takes the general tool whole: a sphere in a 38 mm box, whose base
+rim is four sphere arcs and four straight runs with an 18° turn between them. At
+fillet 1 its drawn segments near the rim went from 564 (104 across the rim) to ~270.
+The across segments left are at most 16, the band's seams at the four junctions.
+Genus is 0 everywhere; the sweep left genus −40 at fillet 2. Fillet volumes are
++3.6–6.6% against OCCT, and OCCT skips the chamfers.
 
 ### Shading: slivers no longer vote (2026-10-02, shared change)
 

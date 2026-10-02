@@ -2206,18 +2206,22 @@ function planarizeArc(ch, magnitude) {
   // zero-thickness sheet per facet inside the band (a dashed ring in the line overlay,
   // carried into exports), and near r ≈ R the result is no longer a valid solid. The
   // revolve follows the circle in one piece, and refuses honestly once the profile
-  // reaches the axis. OPEN arcs keep the sweep regardless: a small corner round inside an
-  // outline is meant to collapse into a virtual corner there (collapseTightCorners).
+  // reaches the axis. One folding vertex is enough: the arc classifier accepts chords
+  // only ~10% uneven (a 64-gon of R = 10 with one vertex moved 0.1 step stays an arc,
+  // 0.2 does not), so a single fold means r is within ~10% of folding everywhere, and
+  // there the revolve is the better tool — that 64-gon at r = 7.5 folds at one vertex:
+  // the revolve leaves a clean band 0.5% under Pappus, the sweep split there drew a
+  // 19 mm seam across the band and cut 1.7% over (test/mesh-fillet.test.js). OPEN arcs
+  // keep the sweep regardless: a small corner round inside an outline is meant to
+  // collapse into a virtual corner there (collapseTightCorners).
   if (magnitude != null && ch.closed) {
-    const ring = ch.closed ? pts.slice(0, -1) : pts, n = ring.length;
-    const nSeg = ch.closed ? n : n - 1, segDir = [], segLen = [];
-    for (let i = 0; i < nSeg; i++) {
+    const ring = pts.slice(0, -1), n = ring.length, segDir = [], segLen = [];
+    for (let i = 0; i < n; i++) {
       const d = sub(ring[(i + 1) % n], ring[i]), l = len(d);
       segDir.push(scl(d, 1 / (l || 1)));
       segLen.push(l);
     }
-    for (let i = ch.closed ? 0 : 1; i < (ch.closed ? n : n - 1); i++)
-      if (sweepFoldsAt(segDir, segLen, wallNs, i, (i - 1 + nSeg) % nSeg, nSeg, magnitude)) return null;
+    for (let i = 0; i < n; i++) if (sweepFoldsAt(segDir, segLen, wallNs, i, (i - 1 + n) % n, n, magnitude)) return null;
   }
   return { kind: "planar", points: pts.map((p) => [p[0], p[1], p[2]]), closed: ch.closed,
            convex: ch.convex, w: faceN, faceN, wallNs };
