@@ -36,37 +36,4 @@ export function createCaptureLights(lights = CAD) {
   return { key, fill };
 }
 
-// The offsets (renderStyles.js) are camera-space multiples of the camera-to-target
-// distance: the key sits over the viewer's shoulder (up and to the right, ~41° off the
-// view axis), the fill opposes it from the left at eye level. Both still shine mostly
-// ALONG the view direction, so whatever the camera can see is lit.
-
-const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const cross = (a, b) => [
-  a[1] * b[2] - a[2] * b[1],
-  a[2] * b[0] - a[0] * b[2],
-  a[0] * b[1] - a[1] * b[0],
-];
-const length = (v) => Math.hypot(v[0], v[1], v[2]);
-const norm = (v) => {
-  const l = length(v) || 1;
-  return [v[0] / l, v[1] / l, v[2] / l];
-};
-
-// World-space positions for the capture key/fill, given a camera pose (the same
-// `{position, up, target}` shape cameraPoseForView returns). Pure — no THREE, no scene.
-export function captureLightPoses({ position, up, target }, lights = CAD) {
-  const forward = norm(sub(target, position));
-  // Camera basis. A canonical view never passes an `up` parallel to its own view axis,
-  // but a caller could, and a degenerate basis would put NaN into the light positions.
-  let right = cross(forward, up);
-  if (length(right) < 1e-6) right = cross(forward, [0, 0, 1]);
-  if (length(right) < 1e-6) right = cross(forward, [0, 1, 0]);
-  right = norm(right);
-  const trueUp = norm(cross(right, forward));
-  const dist = length(sub(target, position)) || 1;
-  const place = (offset) => [0, 1, 2].map(
-    (i) => position[i] + (right[i] * offset.right + trueUp[i] * offset.up) * dist,
-  );
-  return { key: place(lights.key.offset), fill: place(lights.fill.offset) };
-}
+export { captureLightPoses } from "./style-camera.js";
