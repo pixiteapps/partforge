@@ -59,7 +59,7 @@ describe("stylePose", () => {
     const wide = box([-50, 0, -2], [50, 4, 2]);
     const { pose, fov } = stylePose(RENDER_STYLES.thumbnail, "front", wide, { aspect: 800 / 600 });
     const offs = corners(wide).map((c) => screen(pose, fov, 800 / 600, c));
-    expect(Math.max(...offs.map((o) => o[0]))).toBeLessThanOrEqual(0.82 + 1e-9);
+    expect(Math.max(...offs.map((o) => o[0]))).toBeLessThanOrEqual(RENDER_STYLES.thumbnail.camera.fill + 1e-9);
   });
 
   it("fit keeps the canonical view direction and up vector", () => {

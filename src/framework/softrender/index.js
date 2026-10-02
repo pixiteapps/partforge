@@ -54,11 +54,11 @@ export function renderStyled(subparts, { view, style = "cad", size = [1024, 1024
     ? contactShadowMask(visible.map((p) => ({ positions: p.positions, indices: p.indices })), box, st.shadow)
     : null;
 
-  const N = [0, 0, 0], V = [0, 0, 0], tmp = new Float32Array(3);
+  const N = [0, 0, 0], V = [0, 0, 0], R = [0, 0, 0], tmp = new Float32Array(3);
   const background = (k, sx, sy) => {
     let a = 0;
     if (mask) {
-      const r = cam.ray(sx, sy);
+      const r = cam.ray(sx, sy, R);
       if (r[1] < 0) {
         const t = (mask.y - cam.position[1]) / r[1];
         a = sampleShadowMask(mask, cam.position[0] + r[0] * t, cam.position[2] + r[2] * t) * st.shadow.opacity;
@@ -68,7 +68,7 @@ export function renderStyled(subparts, { view, style = "cad", size = [1024, 1024
   };
   const surface = (k, owner, sx, sy, out, o) => {
     N[0] = gb.normal[k * 3]; N[1] = gb.normal[k * 3 + 1]; N[2] = gb.normal[k * 3 + 2];
-    const r = cam.ray(sx, sy);
+    const r = cam.ray(sx, sy, R);
     const l = Math.hypot(r[0], r[1], r[2]);
     V[0] = -r[0] / l; V[1] = -r[1] / l; V[2] = -r[2] / l;
     const p = parts[owner];

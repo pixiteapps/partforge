@@ -52,6 +52,8 @@ vi.mock("three", async (importOriginal) => {
       });
     }
     get capabilities() { return { maxTextureSize: 8192 }; }
+    // three's getViewport reports the CANVAS viewport, whatever target is bound.
+    getViewport(v) { return v.set(0, 0, 1280, 800); }
     setRenderTarget() {}
     readRenderTargetPixels() {}
     dispose() {}
@@ -253,6 +255,23 @@ test("renderMeshPayloads adds feature-edge lines to the temp scene", () => {
   expect(lines).toHaveLength(1); // one edge-line object for the one payload
   // the edge geometry is still disposed with its surface mesh (no double count)
   expect(state.disposeCounts).toEqual({ geo: 1, edges: 1 });
+
+  viewer.dispose();
+});
+
+// LineSegments2.onBeforeRender resets its material's `resolution` to the renderer's
+// canvas viewport on every draw. An offscreen capture of another size must keep its
+// own: otherwise a 640px thumbnail's 1.5px edges come out 640/800 as wide on an
+// 800px-tall canvas — thinner, and dependent on the window size.
+test("renderMeshPayloads edge lines keep the capture resolution through three's draw hook", () => {
+  const viewer = newViewer();
+
+  viewer.renderMeshPayloads([cubePayload("a")], { size: 64, style: "thumbnail" });
+
+  const lines = [];
+  state.lastRenderScene.traverse((o) => { if (o.isLineSegments2) lines.push(o); });
+  lines[0].onBeforeRender(state.renderer); // what WebGLRenderer does just before drawing it
+  expect(lines[0].material.uniforms.resolution.value.toArray()).toEqual([64, 64]);
 
   viewer.dispose();
 });

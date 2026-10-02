@@ -21,9 +21,14 @@ const CAD_LIGHTS = {
 };
 const CAD_MATERIAL = { color: 0x9fb4cc, metalness: 0.25, roughness: 0.55 };
 
-// Starting values for the product shot, tuned against real parts in the
-// parity task (scripts/check-softrender-parity.mjs). Retune them there, on
-// captures, never by eye on the hex.
+// The product shot, tuned 2026-10-02 on demo / hinged-box / propeller captures
+// judged at card size (~300px from the 640px thumbnail): fill 0.88 (tighter than
+// cad, with room for the shadow and the card's corners), hemisphere 1.65, key
+// 1.25, fill light 1.05 (the shaded side stays off the background), 1.5px edges
+// at 0.7 (visible at card size, lighter than the editor's), and a contact shadow
+// of 0.5 opacity / 0.25 falloff / 0.07 blur (faint, but it reads — most of it
+// sits under the part at iso). Retune with scripts/check-softrender-parity.mjs
+// --out, on captures, never by eye on the hex; both renderers move together.
 const STYLES = {
   cad: {
     camera: { projection: "perspective", fov: 45, framing: "canonical" },
@@ -35,18 +40,18 @@ const STYLES = {
     view: null,
   },
   thumbnail: {
-    camera: { projection: "perspective", fov: 45, framing: "fit", fill: 0.82 },
+    camera: { projection: "perspective", fov: 45, framing: "fit", fill: 0.88 },
     lights: {
-      hemisphere: { ...CAD_LIGHTS.hemisphere, intensity: 1.55 },
+      hemisphere: { ...CAD_LIGHTS.hemisphere, intensity: 1.65 },
       key: { ...CAD_LIGHTS.key, intensity: 1.25 },
-      fill: { ...CAD_LIGHTS.fill, intensity: 0.85 },
+      fill: { ...CAD_LIGHTS.fill, intensity: 1.05 },
     },
     material: CAD_MATERIAL,
-    edges: { color: CAD_LIGHT_THEME.line, widthPx: 1, opacity: 0.6 },
+    edges: { color: CAD_LIGHT_THEME.line, widthPx: 1.5, opacity: 0.7 },
     background: 0xeef1f5,
     // falloff/blur are fractions of the part's bounding-box diagonal;
     // resolution is the mask's long side in cells.
-    shadow: { opacity: 0.25, falloff: 0.15, blur: 0.03, resolution: 128 },
+    shadow: { opacity: 0.5, falloff: 0.25, blur: 0.07, resolution: 128 },
     view: "iso",
   },
 };

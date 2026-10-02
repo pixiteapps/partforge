@@ -4,7 +4,7 @@
 // normal turned toward the camera. A triangle crossing the near plane is
 // skipped: the framing keeps the camera well outside the part, so only
 // degenerate input can produce one, and clipping it buys nothing here.
-import { triangleCount, triangleOffsets } from "./triangles.js";
+import { triangleCount } from "./triangles.js";
 
 export const NEAR = 1e-3;
 
@@ -19,14 +19,18 @@ export function rasterizeMesh(gb, cam, mesh, owner) {
   const P = mesh.positions, N = mesh.normals?.length ? mesh.normals : null;
   const { width: W, height: H, depth, normal, owner: own } = gb;
   const n = triangleCount(mesh);
+  const I = mesh.indices?.length ? mesh.indices : null;
+  const a = [0, 0, 0], b = [0, 0, 0], c = [0, 0, 0]; // scratch: no per-vertex allocation
   for (let t = 0; t < n; t++) {
-    const [ai, bi, ci] = triangleOffsets(mesh, t);
-    const a = cam.project(P[ai], P[ai + 1], P[ai + 2]);
-    const b = cam.project(P[bi], P[bi + 1], P[bi + 2]);
-    const c = cam.project(P[ci], P[ci + 1], P[ci + 2]);
+    // triangleOffsets, inlined: its returned array was a per-triangle allocation
+    const ai = I ? I[t * 3] * 3 : t * 9, bi = I ? I[t * 3 + 1] * 3 : t * 9 + 3, ci = I ? I[t * 3 + 2] * 3 : t * 9 + 6;
+    cam.project(P[ai], P[ai + 1], P[ai + 2], a);
+    cam.project(P[bi], P[bi + 1], P[bi + 2], b);
+    cam.project(P[ci], P[ci + 1], P[ci + 2], c);
     if (a[2] < NEAR || b[2] < NEAR || c[2] < NEAR) continue;
     const area = edge(a[0], a[1], b[0], b[1], c[0], c[1]);
     if (Math.abs(area) < 1e-12) continue;
+    const invArea = 1 / area;
 
     let fx = 0, fy = 0, fz = 0;
     if (!N) {
@@ -42,13 +46,15 @@ export function rasterizeMesh(gb, cam, mesh, owner) {
     const wa = 1 / a[2], wb = 1 / b[2], wc = 1 / c[2];
     const x0 = Math.max(0, Math.floor(Math.min(a[0], b[0], c[0]))), x1 = Math.min(W - 1, Math.ceil(Math.max(a[0], b[0], c[0])));
     const y0 = Math.max(0, Math.floor(Math.min(a[1], b[1], c[1]))), y1 = Math.min(H - 1, Math.ceil(Math.max(a[1], b[1], c[1])));
+    // Barycentrics are affine in screen space: step them per pixel instead of
+    // re-evaluating both edge functions (the dominant cost on dense meshes).
+    const d0x = -(c[1] - b[1]) * invArea, d1x = -(a[1] - c[1]) * invArea;
     for (let y = y0; y <= y1; y++) {
-      const py = y + 0.5;
-      for (let x = x0; x <= x1; x++) {
-        const px = x + 0.5;
-        // dividing by the signed area makes "inside" non-negative for either winding
-        const l0 = edge(b[0], b[1], c[0], c[1], px, py) / area;
-        const l1 = edge(c[0], c[1], a[0], a[1], px, py) / area;
+      const py = y + 0.5, px0 = x0 + 0.5;
+      // dividing by the signed area makes "inside" non-negative for either winding
+      let l0 = edge(b[0], b[1], c[0], c[1], px0, py) * invArea;
+      let l1 = edge(c[0], c[1], a[0], a[1], px0, py) * invArea;
+      for (let x = x0; x <= x1; x++, l0 += d0x, l1 += d1x) {
         const l2 = 1 - l0 - l1;
         if (l0 < 0 || l1 < 0 || l2 < 0) continue;
         const inv = l0 * wa + l1 * wb + l2 * wc;
@@ -61,7 +67,7 @@ export function rasterizeMesh(gb, cam, mesh, owner) {
           let nx = p0 * N[ai] + p1 * N[bi] + p2 * N[ci];
           let ny = p0 * N[ai + 1] + p1 * N[bi + 1] + p2 * N[ci + 1];
           let nz = p0 * N[ai + 2] + p1 * N[bi + 2] + p2 * N[ci + 2];
-          const l = Math.hypot(nx, ny, nz) || 1;
+          const l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
           normal[k * 3] = nx / l; normal[k * 3 + 1] = ny / l; normal[k * 3 + 2] = nz / l;
         } else {
           normal[k * 3] = fx; normal[k * 3 + 1] = fy; normal[k * 3 + 2] = fz;

@@ -11,9 +11,10 @@ export function drawEdges(color, gb, cam, segments, rgb, opacity, widthPx, ss, b
   const { width: W, height: H, depth } = gb;
   const mark = new Uint8Array(W * H);
   const half = Math.max(0.5, (widthPx * ss) / 2);
+  const p0 = [0, 0, 0], p1 = [0, 0, 0];
   for (let i = 0; i + 5 < segments.length; i += 6) {
-    const p0 = cam.project(segments[i], segments[i + 1], segments[i + 2]);
-    const p1 = cam.project(segments[i + 3], segments[i + 4], segments[i + 5]);
+    cam.project(segments[i], segments[i + 1], segments[i + 2], p0);
+    cam.project(segments[i + 3], segments[i + 4], segments[i + 5], p1);
     if (p0[2] < NEAR || p1[2] < NEAR) continue;
     const steps = Math.max(1, Math.ceil(Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) * 2));
     for (let s = 0; s <= steps; s++) {

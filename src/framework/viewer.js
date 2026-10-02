@@ -2198,9 +2198,15 @@ export function createViewer(container, part) {
     // sized to the on-screen canvas); added after framing so it can't perturb the bbox.
     const lineMat = new LineMaterial({ color: st.edges.color, linewidth: st.edges.widthPx, transparent: st.edges.opacity < 1, opacity: st.edges.opacity });
     lineMat.resolution.set(size, size);
+    // LineSegments2.onBeforeRender resets `resolution` to the renderer's CANVAS
+    // viewport on every draw, which is wrong for a target of another size: the
+    // edges came out size/canvas-height as wide (thin, and window-dependent).
     for (const mesh of built) {
       const edges = mesh.geometry.userData.edges;
-      if (edges) tmpPivot.add(new LineSegments2(edges, lineMat));
+      if (!edges) continue;
+      const lines = new LineSegments2(edges, lineMat);
+      lines.onBeforeRender = () => {};
+      tmpPivot.add(lines);
     }
 
     // The product shot's contact shadow, the same mask the CPU renderer samples.
