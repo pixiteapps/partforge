@@ -11,7 +11,7 @@ describe("render styles", () => {
     expect(lights.key).toEqual({ color: 0xffffff, intensity: 1.45, offset: { right: 0.45, up: 0.75 } });
     expect(lights.fill).toEqual({ color: 0xe5efff, intensity: 0.65, offset: { right: -0.7, up: 0.15 } });
     expect(material).toEqual({ color: 0x9fb4cc, metalness: 0.25, roughness: 0.55 });
-    expect(camera).toEqual({ projection: "perspective", fov: 45, framing: "canonical" });
+    expect(camera).toEqual({ projection: "perspective", fov: 45, framing: "fit", fill: 0.9 });
     expect(RENDER_STYLES.cad.background).toBe(CAD_LIGHT_THEME.bg);
     expect(RENDER_STYLES.cad.edges).toEqual({ color: CAD_LIGHT_THEME.line, widthPx: 1, opacity: 1 });
     expect(RENDER_STYLES.cad.shadow).toBeNull();

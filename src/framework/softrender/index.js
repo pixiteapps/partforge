@@ -39,7 +39,9 @@ export function renderStyled(subparts, { view, style = "cad", size = [1024, 1024
   });
   // Framing counts EVERY sub-part, visible or not: a fade must not reframe.
   const box = boundsOf(parts.map((p) => p.positions));
-  const { pose, fov, sceneBounds } = stylePose(st, angle, box, { aspect: W / H });
+  const points = new Float32Array(parts.reduce((n, p) => n + p.positions.length, 0));
+  parts.reduce((o, p) => { points.set(p.positions, o); return o + p.positions.length; }, 0);
+  const { pose, fov, sceneBounds } = stylePose(st, angle, box, { aspect: W / H, points });
   const cam = makeCamera(pose, { fov, width: WS, height: HS });
   const visible = parts.map((p, i) => ({ ...p, owner: i })).filter((p) => p.opacity > 0);
 

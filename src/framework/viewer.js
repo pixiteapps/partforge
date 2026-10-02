@@ -2145,7 +2145,7 @@ export function createViewer(container, part) {
 
   // Offscreen render of an arbitrary mesh set (a non-active view), for thumbnails.
   // Assembles a THROWAWAY scene mirroring the live pivot convention, frames it from a
-  // canonical angle, renders through the parameterized renderOffscreen, and disposes
+  // canonical angle (fitted to the payloads' geometry), renders through the parameterized renderOffscreen, and disposes
   // everything. Never touches the live scene, camera, subMesh, or subCache. The scene
   // renders the `thumbnail` style unless `style` says otherwise (the style's
   // background unless `background` says otherwise; `null` = no background, the
@@ -2178,7 +2178,12 @@ export function createViewer(container, part) {
     tmpPivot.updateMatrixWorld(true);
     const b3 = new THREE.Box3().setFromObject(tmpPivot);
     const box = b3.isEmpty() ? null : { min: b3.min.toArray(), max: b3.max.toArray() };
-    const { pose, fov, sceneBounds } = stylePose(st, angle, box, { aspect: 1 });
+    // The same world positions frame the view (fit to the geometry, not its box)
+    // and cast the contact shadow below.
+    const worldPositions = payloads.map((p) => modelToWorld(p.positions));
+    const points = new Float32Array(worldPositions.reduce((n, a) => n + a.length, 0));
+    worldPositions.reduce((o, a) => { points.set(a, o); return o + a.length; }, 0);
+    const { pose, fov, sceneBounds } = stylePose(st, angle, box, { aspect: 1, points });
 
     // Light the throwaway scene ourselves: renderOffscreen's own key/fill (and the
     // persistent hemisphere) live in the LIVE scene, which is never rendered here — so
@@ -2213,7 +2218,7 @@ export function createViewer(container, part) {
     // Only from above: a camera under the floor would see the shadow's underside.
     let shadowPlane = null;
     if (st.shadow && box && pose.position[1] > box.min[1]) {
-      const worldMeshes = payloads.map((p) => ({ positions: modelToWorld(p.positions), indices: p.indices }));
+      const worldMeshes = payloads.map((p, i) => ({ positions: worldPositions[i], indices: p.indices }));
       const mask = contactShadowMask(worldMeshes, box, st.shadow);
       if (mask) { shadowPlane = buildContactShadowPlane(mask, st.shadow); tmpScene.add(shadowPlane); }
     }
@@ -2221,8 +2226,8 @@ export function createViewer(container, part) {
     try {
       // fov comes from the PERSPECTIVE camera, deliberately, not from whichever
       // camera is live: thumbnails are canonical captures and stay perspective
-      // whichever projection is live. cameraPoseForView's distance
-      // is tuned to this fov, so a narrower one would crop long, thin parts.
+      // whichever projection is live. The fit (stylePose) solves its distance
+      // for the style's own fov, and the render must use that same fov.
       return renderOffscreen(
         pose,
         // The throwaway scene holds these meshes and nothing else — no grid, no

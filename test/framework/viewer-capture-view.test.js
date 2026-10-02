@@ -72,7 +72,8 @@ vi.mock("three", async (importOriginal) => {
 });
 
 import { createViewer } from "../../src/framework/viewer.js";
-import { cameraPoseForView } from "../../src/framework/view-angles.js";
+import { fitPoseToPoints, modelToWorld } from "../../src/framework/style-camera.js";
+import { RENDER_STYLES } from "../../src/framework/renderStyles.js";
 
 function createContainer() {
   const container = document.createElement("div");
@@ -234,9 +235,8 @@ test("renderMeshPayloads frames the camera on the world-space centre (after the 
   viewer.renderMeshPayloads([atZ10], { angle: "iso", size: 64, style: "cad" });
 
   // model bbox centre (0.5,0.5,10) maps to world (0.5,10,-0.5) under (x,y,z)->(x,z,-y);
-  // The cad style frames canonically (stylePose): radius is half the MAX extent, as the
-  // live viewer's own framing does, not half the diagonal.
-  const expected = cameraPoseForView("iso", { center: [0.5, 10, -0.5], radius: 0.5 });
+  // the cad style fits the WORLD-space points (stylePose → fitPoseToPoints).
+  const expected = fitPoseToPoints("iso", modelToWorld(atZ10.positions), { fov: 45, aspect: 1, fill: RENDER_STYLES.cad.camera.fill });
   const round = (v) => v.map((n) => +n.toFixed(3));
   expect(round(state.lastCamera.position.toArray())).toEqual(round(expected.position));
 

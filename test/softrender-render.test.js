@@ -49,9 +49,12 @@ describe("renderStyled", () => {
   it("antialiases: the silhouette has in-between pixels", () => {
     const img = renderStyled([{ name: "a", mesh: { ...cube(2), edges: undefined } }], { view: "iso", style: "cad", size: [64, 64], edges: false });
     const bg = hex(RENDER_STYLES.cad.background);
+    // Distinct values along the silhouette crossings of a few rows: more than
+    // background + the two faces a row can cross means in-between pixels.
+    // (Several rows, so the count does not hinge on where the framing puts one.)
     const values = new Set();
-    for (let x = 0; x < 64; x++) values.add(px(img, x, 32).join());
-    expect(values.size).toBeGreaterThan(4);
+    for (const y of [24, 32, 40]) for (let x = 0; x < 64; x++) values.add(px(img, x, y).join());
+    expect(values.size).toBeGreaterThan(6);
     expect(near(px(img, 0, 32), bg)).toBe(true);
   });
 
@@ -101,16 +104,29 @@ describe("renderStyled", () => {
   });
 
   it("renders a 0.5 mm part and a 2000 mm part the same way under fit framing (Review Focus 2)", () => {
-    // fit framing is scale-free, so the two must fill the frame alike; cad's
-    // canonical distance carries the viewer's fixed +6 mm, so there a tiny part
-    // is legitimately smaller — it only has to be visibly drawn.
-    const counts = [0.25, 1000].map((s) => {
-      const img = renderStyled([{ name: "a", mesh: cube(s) }], { style: "thumbnail", size: [96, 96] });
-      return countNot(img, hex(RENDER_STYLES.thumbnail.background), 10);
-    });
-    expect(Math.abs(counts[0] - counts[1]) / counts[1]).toBeLessThan(0.05);
-    const tinyCad = renderStyled([{ name: "a", mesh: cube(0.25) }], { view: "iso", size: [96, 96] });
-    expect(countNot(tinyCad, hex(RENDER_STYLES.cad.background))).toBeGreaterThan(20);
+    // fit framing is scale-free, so the two must fill the frame alike — in
+    // both styles, now that cad fits its points too.
+    for (const style of ["thumbnail", "cad"]) {
+      const counts = [0.25, 1000].map((s) => {
+        const img = renderStyled([{ name: "a", mesh: cube(s) }], { view: "iso", style, size: [96, 96] });
+        return countNot(img, hex(RENDER_STYLES[style].background), 10);
+      });
+      expect(Math.abs(counts[0] - counts[1]) / counts[1]).toBeLessThan(0.05);
+    }
+  });
+
+  it("cad no longer crops a medium part: nothing touches the frame (the hinged box's case)", () => {
+    // 120×80×60 in model coords: cube(1) spans [-1,1]×[-1,1]×[0,2], scaled per axis.
+    const unit = cube(1);
+    const k = [60, 40, 30];
+    const scale = (a) => a.map((v, i) => v * k[i % 3]);
+    const slab = { ...unit, positions: new Float32Array(scale(unit.positions)), edges: new Float32Array(scale(unit.edges)) };
+    const img = renderStyled([{ name: "a", mesh: slab }], { view: "iso", style: "cad", size: [256, 256] });
+    const bg = hex(RENDER_STYLES.cad.background);
+    for (let i = 0; i < 256; i++) {
+      for (const [x, y] of [[i, 0], [i, 255], [0, i], [255, i]]) expect(near(px(img, x, y), bg, 1)).toBe(true);
+    }
+    expect(countNot(img, bg)).toBeGreaterThan(256 * 256 * 0.25); // and it still fills the frame
   });
 
   it("degenerate input renders the background without throwing (Review Focus 1)", () => {

@@ -22,16 +22,21 @@ const CAD_LIGHTS = {
 const CAD_MATERIAL = { color: 0x9fb4cc, metalness: 0.25, roughness: 0.55 };
 
 // The product shot, tuned 2026-10-02 on demo / hinged-box / propeller captures
-// judged at card size (~300px from the 640px thumbnail): fill 0.88 (tighter than
-// cad, with room for the shadow and the card's corners), hemisphere 1.65, key
+// judged at card size (~300px from the 640px thumbnail): fill 0.88 (room for
+// the shadow and the card's corners), hemisphere 1.65, key
 // 1.25, fill light 1.05 (the shaded side stays off the background), 1.5px edges
 // at 0.7 (visible at card size, lighter than the editor's), and a contact shadow
 // of 0.5 opacity / 0.25 falloff / 0.07 blur (faint, but it reads — most of it
 // sits under the part at iso). Retune with scripts/check-softrender-parity.mjs
 // --out, on captures, never by eye on the hex; both renderers move together.
+// Both looks frame by "fit" (style-camera.js fitPoseToPoints): the canonical
+// direction, at the distance that brings the projected geometry to `fill` of
+// the frame, centred on it. cad's 0.9 leaves a margin so a silhouette never
+// touches the frame edge. "canonical" (cameraPoseForView's fixed distance)
+// stays valid for a caller-supplied style.
 const STYLES = {
   cad: {
-    camera: { projection: "perspective", fov: 45, framing: "canonical" },
+    camera: { projection: "perspective", fov: 45, framing: "fit", fill: 0.9 },
     lights: CAD_LIGHTS,
     material: CAD_MATERIAL,
     edges: { color: CAD_LIGHT_THEME.line, widthPx: 1, opacity: 1 },
