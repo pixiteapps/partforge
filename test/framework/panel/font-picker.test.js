@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { expect, test, vi } from "vitest";
-import { openFontPicker } from "../../../src/framework/panel/font-picker.js";
+import { openFontPicker, VARIANT_FACE_BUDGET } from "../../../src/framework/panel/font-picker.js";
 import { buildControls } from "../../../src/framework/panel/render.js";
 
 const fam = (family, variants, over = {}) => ({
@@ -171,6 +171,36 @@ test("each family's menu face is loaded once, and only from an allowed host", as
     await flush();
     expect(ff.seen.map((s) => s.family)).toEqual(["Anton", "Montserrat", "Roboto"]);
     expect(ff.seen.every((s) => s.src.includes("fonts.gstatic.com"))).toBe(true);
+  } finally { ff.restore(); }
+});
+
+test("closing the picker deletes the faces it added, except the selected family's menu face", async () => {
+  const ff = withFontFace((f) => Promise.resolve(f));
+  const deleted = [];
+  document.fonts.delete = (face) => { deleted.push(face.family); return true; };
+  try {
+    const { handle } = open();                     // params.face is a Roboto variant
+    await flush(); await flush();
+    handle.close();
+    expect(deleted).toContain("Anton");
+    expect(deleted).toContain("Montserrat");
+    expect(deleted).not.toContain("Roboto");      // the widget label renders in it
+  } finally { ff.restore(); }
+});
+
+test("opening a many-weight family loads the selected weight plus at most VARIANT_FACE_BUDGET others", async () => {
+  const weights = ["100", "200", "300", "400", "500", "600", "700", "800", "900", "100i", "400i", "700i"];
+  const big = fam("Big", weights);
+  const ff = withFontFace((f) => Promise.resolve(f));
+  try {
+    const cat = { search: vi.fn(async () => [big]) };
+    open({ fontCatalog: cat });
+    await flush();
+    document.querySelector(".pk-row").click();
+    await flush();
+    const variantLoads = ff.seen.filter((f) => f.family.startsWith("Big "));
+    expect(variantLoads.length).toBe(1 + VARIANT_FACE_BUDGET);
+    expect(variantLoads[0].family).toBe("Big 400");                    // the selected/default weight first
   } finally { ff.restore(); }
 });
 
