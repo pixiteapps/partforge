@@ -26,5 +26,12 @@
     "chamfer1": -61.2086,
     "chamfer2": -236.9852,
     "fillet0.5": -8.1127
+  },
+  "domeRim": {
+    "fillet1": -28.8938,
+    "fillet1.5": -67.429,
+    "fillet2": -124.5204,
+    "chamfer1": null,
+    "chamfer1.5": null
   }
 }

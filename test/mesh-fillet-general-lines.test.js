@@ -7,7 +7,8 @@
 // each contact is the spine point pushed r along the wall's normal.
 import { describe, it, expect, beforeAll } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
-import { FIXTURES, coarseKernel } from "./fixtures/fillet-general-fixtures.js";
+import { readFileSync } from "node:fs";
+import { FIXTURES, RIM_FIXTURES, RIM_CASES, coarseKernel } from "./fixtures/fillet-general-fixtures.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -169,3 +170,66 @@ describe("general-chain chamfers end on one clean line per setback", () => {
     });
   }
 });
+
+// A FLAT rim whose wall curves in section: the dome's base, sphere R = 20 meeting the
+// plane z = 0 at 90° (convex). It used to take the planar sweep, whose section treats
+// the wall as straight; the band grazed the faceted sphere near its contact and the
+// overlay drew a staircase there (fillet 1: 142.7 mm of sphere-side line against a
+// 125.5 mm ring, 88 segments across the rim; band shading up to 15.7° off; genus −24
+// at 2 mm). Exact rings — fillet: the ball centre sits at height r, ρc = √((20−r)² − r²)
+// from the axis; the plane contact ring has radius ρc, the sphere contact is the centre
+// scaled by 20/(20−r). Chamfer: the plane setback at radius 20 − d, the sphere setback
+// at chord d from the edge (polar angle 2·asin(d/40) above the equator).
+const RIM_REF = JSON.parse(readFileSync(new URL("./fixtures/fillet-general-reference.json", import.meta.url), "utf8")).domeRim;
+describe("a flat rim on a curved wall ends on one clean line per contact", () => {
+  const { make, edges } = RIM_FIXTURES.domeRim;
+  for (const [mode, r] of RIM_CASES) {
+    it(`dome base rim ${mode} ${r}: two clean rings, watertight, smooth band`, () => {
+      const base = make(k), out = mode === "fillet" ? base._filletRaw(r, edges) : base._chamferRaw(r, edges);
+      expect(out.genus()).toBe(0);
+      let planeEx, sphere;
+      if (mode === "fillet") { const rc = Math.sqrt((20 - r) ** 2 - r * r); planeEx = rc; sphere = [rc * 20 / (20 - r), 20 * r / (20 - r)]; }
+      else { const th = 2 * Math.asin(r / 40); planeEx = 20 - r; sphere = [20 * Math.cos(th), 20 * Math.sin(th)]; }
+      const { edges: E, positions, normals } = out.toMesh();
+      let planeLen = 0, sphereLen = 0, across = 0, dev = 0;
+      for (let i = 0; i + 5 < E.length; i += 6) {
+        const a = [E[i], E[i + 1], E[i + 2]], b = [E[i + 3], E[i + 4], E[i + 5]], m = a.map((x, j) => (x + b[j]) / 2);
+        const rho = Math.hypot(m[0], m[1]);
+        if (m[2] > 3 * r || rho < 20 - 3 * r) continue;
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+        if (Math.abs((-m[1] * (b[0] - a[0]) + m[0] * (b[1] - a[1])) / (rho * L)) < 0.5) across++;
+        if (Math.abs(m[2]) < 0.02) { planeLen += L; dev = Math.max(dev, Math.abs(rho - planeEx)); }
+        else if (Math.abs(Math.hypot(...m) - 20) < 0.08) { sphereLen += L; dev = Math.max(dev, Math.hypot(rho - sphere[0], m[2] - sphere[1])); }
+      }
+      expect(Math.abs(planeLen / (2 * Math.PI * planeEx) - 1)).toBeLessThan(0.1);
+      expect(Math.abs(sphereLen / (2 * Math.PI * sphere[0]) - 1)).toBeLessThan(0.1);
+      expect(across).toBe(0);
+      // on the rings (measured ≤ 54 µm: the preview sphere's facets sag ~40 µm)
+      expect(dev).toBeLessThan(0.08);
+      const dV = out.volume() - base.volume();
+      const ref = RIM_REF[`${mode}${r}`];
+      // OCCT skips both chamfers (null in the reference): hold them to Pappus instead —
+      // the section is the triangle with legs d (plane) and chord d (sphere), area ≈ d²/2,
+      // swept about the axis at its centroid radius ≈ 20 − d/3
+      expect(Math.abs(dV / (ref ?? -(r * r / 2) * 2 * Math.PI * (20 - r / 3)) - 1)).toBeLessThan(0.1);
+      if (mode !== "fillet") return;
+      // the band's own normals against the exact canal surface (a torus: spine circle
+      // ρc at height r), vertices strictly inside the band (10–90% of its arc)
+      const rc = planeEx, a1 = -Math.PI / 2, a2 = Math.atan2(sphere[1] - r, sphere[0] - rc);
+      let worst = 0, checked = 0;
+      for (let i = 0; i < positions.length; i += 3) {
+        const p = [positions[i], positions[i + 1], positions[i + 2]], rho = Math.hypot(p[0], p[1]);
+        const dr = rho - rc, dz = p[2] - r;
+        if (Math.abs(Math.hypot(dr, dz) - r) > 0.05 * r) continue;
+        const f = (Math.atan2(dz, dr) - a1) / (a2 - a1);
+        if (!(f > 0.1 && f < 0.9)) continue;
+        const ex = unit3([(dr * p[0]) / rho, (dr * p[1]) / rho, dz]);
+        worst = Math.max(worst, (Math.acos(Math.min(1, Math.abs(normals[i] * ex[0] + normals[i + 1] * ex[1] + normals[i + 2] * ex[2]))) * 180) / Math.PI);
+        checked++;
+      }
+      expect(checked).toBeGreaterThan(100);
+      expect(worst).toBeLessThan(2.5);
+    });
+  }
+});
+const unit3 = (v) => { const l = Math.hypot(...v); return [v[0] / l, v[1] / l, v[2] / l]; };

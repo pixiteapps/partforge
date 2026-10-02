@@ -20,10 +20,6 @@ const run = (solid, mode, m, edges) => (mode === "fillet" ? solid._filletRaw(m, 
 describe("general-chain fillet and chamfer on Manifold", () => {
   for (const name of Object.keys(FIXTURES)) {
     for (const [mode, m] of CASES) {
-      // domeBoss at 2 mm is left out: the dome's BASE rim (an ordinary arc chain, no
-      // general chain involved) already fails at 2 mm, fillet and chamfer alike — see
-      // the known-bug test below.
-      if (name === "domeBoss" && m === 2) continue;
       it(`${name} ${mode} ${m}: builds, watertight, volume matches OCCT where OCCT built it`, () => {
         const base = FIXTURES[name](k);
         const out = run(base, mode, m);
@@ -51,14 +47,13 @@ describe("general-chain fillet and chamfer on Manifold", () => {
     expect(out.genus()).toBe(0);
     expect(out.volume()).toBeLessThan(base.volume());
   });
-  it("dome base rim at 2 mm leaves 25 shells (pins a pre-existing arc-path defect)", () => {
-    // The plain dome — no boss, no general chain — through the existing arc path
-    // leaves 25 shells (genus −24) at 2 mm, fillet and chamfer alike (the fillet also
-    // ~8% under OCCT). This pins the DEFECT: when the arc path is fixed this test
-    // fails, and should flip to genus 0 with domeBoss 2 mm rejoining the matrix above.
+  it("dome base rim at 2 mm is watertight (was 25 shells through the planar sweep)", () => {
+    // The plain dome — no boss, no general chain. Its base rim's wall curves in
+    // section, so it takes the general tool's sections (mesh-fillet.js curvedWallRim);
+    // the planar sweep left 25 shells (genus −24) here, fillet and chamfer alike.
     const dome = k.sphere({ r: 20 }).intersect(k.box({ size: [60, 60, 30] }));
-    expect(dome._filletRaw(2, { inPlane: "XY", at: 0 }).genus()).toBe(-24);
-    expect(dome._chamferRaw(2, { inPlane: "XY", at: 0 }).genus()).toBe(-24);
+    expect(dome._filletRaw(2, { inPlane: "XY", at: 0 }).genus()).toBe(0);
+    expect(dome._chamferRaw(2, { inPlane: "XY", at: 0 }).genus()).toBe(0);
   });
   // Coarse tessellation (spec Testing + Risk 1): the same fixtures rebuilt from
   // 32-gon prisms and a 32 × 32 loft sphere (coarseKernel), where a station's
@@ -70,8 +65,6 @@ describe("general-chain fillet and chamfer on Manifold", () => {
   // as ~1/n² (8.4 / 3.6 / 1.4% above it at 32 / 48 / 64 segments). Every other case
   // is within 6%. Genus is exact. Before the facet-tilt lift and chord extension in
   // generalTool, 8 of these 16 cases came out with stray shells or handles.
-  // domeBoss stays in at 2 mm here: the coarse dome's base rim does not trip the
-  // arc-path defect pinned above.
   describe("coarse tessellation (32 segments)", () => {
     let kc;
     beforeAll(() => { kc = coarseKernel(k, 32); });

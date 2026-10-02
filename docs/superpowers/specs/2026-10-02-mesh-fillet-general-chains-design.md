@@ -322,3 +322,45 @@ cut leaves sub-µm sliver triangles spanning the wall strips. Their normals are
 18–31° off, inside the crease angle, and `creasedNormals` gives each one a full,
 unweighted vote at the strip's vertices. A plain cylinder with a top-rim fillet
 shows 12.5% of its wall area more than 5° off (chamfer 25%).
+
+### Flat rims on curved walls (2026-10-02)
+
+The dome's base rim (the sphere meeting z = 0) is a face-plane rim, so it took the
+planar sweep. That sweep's section treats the wall as straight in the section plane.
+The sphere curves there, and the band grazed its facets near the contact, the same
+lens mechanism as before. At r = 1 the sphere-side line measured 142.7 mm against a
+125.5 mm ring, with 88 segments across the rim. Band shading was up to 15.7° off, and
+at r = 2 the result had 25 shells (genus −24).
+
+A CLOSED planar rim whose wall curves in section is now handed to the general tool
+(`curvedWallRim`). Its members become the chain's flanks, its stations are smoothed as
+usual, and fillets and chamfers then get contact-measured sections and the clean cut.
+
+- **The test.** At each member, the wall is probed at 0.1, 0.5, 1 and 1.5 r from the
+  edge, along the section's in-face direction. A hit counts only if it lies within 10%
+  of the probe depth, which drops other geometry such as a short wall's next face. The
+  member's value is the largest angle between the first hit facet and a later one.
+  The rim counts as curved when the median over members is at least 0.02°.
+- **Measured spread** (217 census sub-parts at r = 0.5, plus the test suite).
+  Straight walls read at most 1.4e-3°: extrusions, cylinders, cones and offset text.
+  Curved walls read at least 0.126° (a nut), and the dome reads 0.74° at r = 1. The
+  0.02° threshold sits about 14× above the first and 6× below the second.
+- **Fallback.** If the general tool refuses a converted rim, the rim is swept as
+  before, so no selection newly reroutes. Two census parts (sun, pumpkin) hit the
+  general tool's fold guard on rims the sweep handles, and both stay OK.
+- **A coarse wall stays on the sweep.** On a 32-row sphere the first row of facets is
+  taller than 1.5 r, so the band only meets one flat facet and the rim reads 3e-5°.
+  The sweep is exact there, and its lines were already clean.
+- Open rims, arcs that stay revolves, and every straight-walled rim keep their old
+  tool. The work budget charges a converted rim as the planar run it was.
+
+| Dome base rim | Before | After |
+|---|---|---|
+| fillet 1 / 1.5 / 2: sphere-side line vs exact | 142.7 / 151.6 / 144.6 vs ~125 mm, 88 / 80 / 48 across | 125.2 / 125.0 / 124.4, 0 across |
+| band shading, worst | 15.7° | 1.9° / 1.1° / 1.0° |
+| genus at r = 2 (fillet and chamfer) | −24 | 0, so domeBoss at 2 mm rejoins the matrix |
+| fillet ΔV vs OCCT (1 / 1.5 / 2) | +0.6 / −3.8 / −8.2% | +5.8 / +1.1 / +2.9% (print: +1.7 / +2.1 / +1.5%) |
+
+A rim cap cut below its sphere's centre (the sphere meeting the plane at an acute
+angle) went from 274 mm of line and 76 across segments to 215 mm and 0. The fillet
+takes ~90 ms against ~25 ms on the sweep.

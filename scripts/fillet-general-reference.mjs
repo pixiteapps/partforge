@@ -5,7 +5,7 @@
 // Usage: node scripts/fillet-general-reference.mjs
 import { writeFileSync } from "node:fs";
 import { bootOcctKernel } from "../src/testing/occt.js";
-import { FIXTURES, CASES, SMALL_CASES } from "../test/fixtures/fillet-general-fixtures.js";
+import { FIXTURES, CASES, SMALL_CASES, RIM_FIXTURES, RIM_CASES } from "../test/fixtures/fillet-general-fixtures.js";
 
 const k = await bootOcctKernel({});
 const out = {};
@@ -17,6 +17,21 @@ for (const [name, make] of Object.entries(FIXTURES)) {
     let dV = null;
     try {
       const s = mode === "fillet" ? base.fillet(m) : base.chamfer(m);
+      const d = s.volume() - v0;
+      dV = Math.abs(d) > 1e-6 ? +d.toFixed(4) : null;
+    } catch { dV = null; }
+    out[name][`${mode}${m}`] = dV;
+  }
+}
+// selected-edge rims (RIM_FIXTURES): the same record for the edges they name
+for (const [name, { make, edges }] of Object.entries(RIM_FIXTURES)) {
+  const base = make(k);
+  const v0 = base.volume();
+  out[name] = {};
+  for (const [mode, m] of RIM_CASES) {
+    let dV = null;
+    try {
+      const s = mode === "fillet" ? base.fillet({ r: m, edges }) : base.chamfer({ d: m, edges });
       const d = s.volume() - v0;
       dV = Math.abs(d) > 1e-6 ? +d.toFixed(4) : null;
     } catch { dV = null; }

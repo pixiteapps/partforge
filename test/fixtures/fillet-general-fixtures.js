@@ -15,6 +15,13 @@ export const FIXTURES = {
   slantCut: (k) => k.cylinder({ r: 10, h: 40 })
     .cut(k.box({ size: [80, 80, 40] }).rotateAbout({ axis: "X", deg: 30 }).at([0, 0, 25])),
 };
+// A flat rim whose wall curves in section: the dome's base, where the sphere meets
+// z = 0 at 90°. It is a planar (face-plane) rim, not a general chain, but its wall is
+// not straight in the section plane, so it takes the general tool's sections.
+export const RIM_FIXTURES = {
+  domeRim: { make: (k) => k.sphere({ r: 20 }).intersect(k.box({ size: [60, 60, 30] })), edges: { inPlane: "XY", at: 0 } },
+};
+export const RIM_CASES = [["fillet", 1], ["fillet", 1.5], ["fillet", 2], ["chamfer", 1], ["chamfer", 1.5]];
 export const GENUS = { tee: 0, crossHole: 1, domeBoss: 0, slantCut: 0 };
 export const CASES = [["fillet", 1], ["fillet", 2], ["chamfer", 1], ["chamfer", 2]];
 // small-radius fillets, referenced but outside the full matrix: on a coarse mesh they

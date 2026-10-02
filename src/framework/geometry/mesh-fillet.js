@@ -2344,6 +2344,64 @@ function cornerPatches(k, selected, r, segs, flankAt = () => segs) {
   return patches;
 }
 
+// Curved-wall rims. A closed planar chain's sweep (planarTool) models the wall as
+// STRAIGHT in the section plane — exact for an extrusion wall, but a sphere or any
+// curved revolve/loft profile falls away from that tangent line, and the band then
+// grazes the faceted wall near its contact exactly as the first general tool did:
+// the dome's base rim at r = 1 drew 142.7 mm of sphere-side line against a 125.5 mm
+// ring (88 segments across it), shaded up to 15.7° off, and left 25 shells at r = 2.
+// Such a rim is handed to the general path, whose sections measure the wall at the
+// contact and cut it cleanly. The test: at each member, probe the wall at
+// CURVED_WALL_PROBES × r from the edge along the section's in-face direction (a hit
+// counts only within 10% of the probe depth, so a short wall's next face or another
+// feature is ignored) and take the largest turn between the first hit facet and a
+// later one; the rim is curved when the median over members reaches CURVED_WALL_TURN.
+// Measured over the fillet census (217 sub-parts, r = 0.5) and the test suite:
+// straight walls (extrusions, cylinders, cones, offset text) read ≤ 1.4e-3°, curved
+// ones ≥ 0.126° (a nut), the dome 0.74° at r = 1; 0.02° sits ~14× above the first and
+// ~6× below the second. A wall that is curved but faceted coarser than the probe
+// reach (a 32-row sphere: one flat facet row taller than 1.5·r) reads 0 and keeps the
+// sweep, which is exact on that facet. The budget charged this rim as the planar run
+// it was (blendWork ran first), and a rim the general tool refuses (its fold guard,
+// on rims the sweep handles: two census parts) is swept as before, so no selection
+// reroutes that did not.
+const CURVED_WALL_TURN = (0.02 * Math.PI) / 180;
+const CURVED_WALL_PROBES = [0.1, 0.5, 1, 1.5];
+function curvedWallRim(rays, ch, magnitude) {
+  if (!rays) return null;
+  const pts = ch.points, n = pts.length;
+  const ring = len(sub(pts[n - 1], pts[0])) < 1e-9 ? pts.slice(0, -1) : pts.slice();
+  if (ring.length < 3 || ch.wallNs.length !== ring.length) return null;
+  const perp = (v, t) => norm(sub(v, scl(t, dot(v, t))));
+  const turns = [];
+  const flanks = [];
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length], t = norm(sub(b, a)), p = scl(add(a, b), 0.5);
+    const n1 = perp(ch.faceN, t), n2 = perp(ch.wallNs[i], t), v = cross(t, n1);
+    flanks.push([ch.faceN, ch.wallNs[i]]);
+    // a knife-edge member (a sliver's flipped facet — the planar path skips those)
+    // has no wedge to measure: such a rim stays with the sweep
+    if (dot(n1, n2) < -1 + 1e-6) return null;
+    const flat = curvedBall({ n1: [1, 0], n2: [dot(n2, n1), dot(n2, v)], k1: 0, k2: 0, magnitude, convex: ch.convex });
+    if (!flat) return null;
+    const f3 = add(scl(n1, flat.F2.f[0]), scl(v, flat.F2.f[1]));
+    let worst = 0, base = null;
+    for (const sf of CURVED_WALL_PROBES) {
+      const S = add(p, scl(f3, sf * magnitude)), rho = sf * magnitude;
+      const h = rays.nearest(add(S, scl(n2, rho)), scl(n2, -1), 2 * rho, (fn) => dot(fn, n2) >= FLANK_FACING_COS);
+      if (!h || Math.abs(h.t - rho) > 0.1 * rho) continue;
+      if (!base) base = h.n; else worst = Math.max(worst, Math.acos(clamp1(dot(h.n, base))));
+    }
+    turns.push(worst);
+  }
+  const med = [...turns].sort((x, y) => x - y)[turns.length >> 1];
+  if (!(med >= CURVED_WALL_TURN)) return null;
+  const chain = { kind: "general", points: ring, closed: true, convex: ch.convex, flanks, rim: ch };
+  const stations = smoothStations(generalStations(chain), true, magnitude);
+  if (stations.length > MAX_GENERAL_STATIONS) return null;
+  return { chain, stations };
+}
+
 // ---------------------------------------------------------------------------
 // Entry points.
 //   meshFillet(k, solid, { r, edges?, segs?, sharpDeg? })  → Solid
@@ -2485,19 +2543,34 @@ function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg
   const pSegs = blendSegs(segs, magnitude);
   // general sections probe the walls on the mesh: a fillet's flank curvature and
   // contacts, a chamfer's setbacks
+  const rims = effective.filter((ch) => ch.kind === "planar" && ch.closed);
   const generals = effective.filter((ch) => ch.kind === "general");
-  const rays = generals.length ? localRays(mesh, generals.map((ch) => {
+  const rays = generals.length || rims.length ? localRays(mesh, [...generals, ...rims].map((ch) => {
     const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], pad = 3 * magnitude;
     for (const p of ch.points) for (let a = 0; a < 3; a++) { b[a] = Math.min(b[a], p[a] - pad); b[a + 3] = Math.max(b[a + 3], p[a] + pad); }
     return b;
   }), 2 * magnitude) : null;
+  for (const ch of rims) {
+    const g = curvedWallRim(rays, ch, magnitude);
+    if (!g) continue;
+    effective[effective.indexOf(ch)] = g.chain;
+    stations.set(g.chain, g.stations);
+  }
+  // a curved-wall rim the general tool refuses is swept as before (curvedWallRim)
+  const rimTools = (ch) => {
+    try { return [generalTool(k, ch, magnitude, mode, pSegs, rays, stations.get(ch))]; }
+    catch (e) {
+      if (!(e instanceof UnsupportedEdgeError)) throw e;
+      return planarTool(k, ch.rim, magnitude, mode, segs, pSegs, endTins, flankAt);
+    }
+  };
   const toolsFor = (ch) =>
     ch.kind === "planar"
       ? planarTool(k, ch, magnitude, mode, segs, pSegs, endTins, flankAt)
       : ch.kind === "arc"
         ? [revolveTool(k, ch, magnitude, mode, segs, pSegs, flankAt)]
         : ch.kind === "general"
-          ? [generalTool(k, ch, magnitude, mode, pSegs, rays, stations.get(ch))]
+          ? (ch.rim ? rimTools(ch) : [generalTool(k, ch, magnitude, mode, pSegs, rays, stations.get(ch))])
           : [prismTool(k, ch, magnitude, mode, segs, pSegs)];
   const cutters = [...effective, ...arcs].filter((ch) => ch.convex).flatMap(toolsFor);
   cutters.push(...horns.map((h) => cornerHornTool(k, h, magnitude, segs, flankAt)));
