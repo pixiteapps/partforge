@@ -13,7 +13,10 @@
 //   - planar contour chains at constant dihedral   → swept cutter/filler along the
 //     chain's own polyline (top/bottom rims of extruded text, offset outlines,
 //     splines — see tryPlanarChain/planarTool)
-// Anything else (helical edges, varying dihedral, branching curves) raises
+//   - general chains between two curved faces       → per-vertex cross-section ring
+//     (saddles, cross-hole rims, slanted cuts)          stack (buildGeneralPath /
+//                                                       generalTool), tried last
+// Anything a general chain also refuses (mixed convexity, knife edges, a bend tighter than the section) raises
 // UnsupportedEdgeError so a caller can reroute the build to the B-rep backend.
 //
 // Corner treatment, by how sharp the corner is. A SHARP salient corner (turn past
@@ -49,6 +52,7 @@ const TOL = 1e-4;            // selector / coplanarity tolerance (mm)
 const WELD = 1e6;            // vertex weld quantization (1/WELD mm grid)
 const COLLINEAR_DEG = 0.1;   // joints straighter than this extend a line run
 const SMOOTH_MAX_DEG = 30;   // joints turning more than this are corners (chain ends)
+const TOOL_FOR_GENERAL = false; // flipped by Task 4 when generalTool lands
 const DEFAULT_SEGS = 116;    // full-circle tessellation density (preview quality)
 
 export class UnsupportedEdgeError extends Error {
@@ -264,6 +268,12 @@ export function chainEdges(edges) {
     if (runChains.some((c) => c.kind === "unsupported")) {
       const rescue = buildPlanarPath(edges, path);
       if (rescue) { chains.push(rescue); continue; }
+      // Last resort before a reroute: the whole path as ONE general chain, whose tool
+      // builds its cross-section per vertex from that vertex's own flank normals
+      // (generalTool). Runs only where every fixed-section tool has already refused,
+      // so no chain any existing tool accepts can ever land here.
+      const general = buildGeneralPath(edges, path);
+      if (general) { chains.push(general); continue; }
     }
     chains.push(...runChains);
   }
@@ -359,6 +369,81 @@ function buildPlanarPath(edges, path) {
   const points = [vertPos(members[0], path.verts[0])];
   members.forEach((m, i) => points.push(vertPos(m, otherVid(m, path.verts[i]))));
   return tryPlanarChain(members, points, members[0].convex, path.loop);
+}
+
+// General-chain rescue (spec 2026-10-02): an edge between two curved faces — a pipe
+// tee's saddle, a cross hole's rim, an ellipse where a plane cuts a tube — fails every
+// constancy test the fixed-section tools need, yet the mesh still records BOTH exact
+// flank normals per member. Accept the whole path if it keeps one convexity and has
+// no knife edge; generalTool builds a cross-section per vertex from those normals.
+// Flanks are paired against the PREVIOUS member's pairing (continuity), never a world
+// frame: over a saddle the flank normals swing far enough that world pairing swaps
+// them partway round (fitArcChain's rotating-frame argument, made local).
+function buildGeneralPath(edges, path) {
+  const members = path.members.map((i) => edges[i]);
+  if (members.length < 2) return null;
+  const convex = members[0].convex;
+  if (!members.every((m) => m.convex === convex)) return null;
+  const points = [vertPos(members[0], path.verts[0])];
+  members.forEach((m, i) => points.push(vertPos(m, otherVid(m, path.verts[i]))));
+  const closed = !!path.loop;
+  if (closed) points.pop(); // loop: last vertex is the first; keep one copy
+  const flanks = [];
+  let prev = [members[0].n1, members[0].n2];
+  for (const m of members) {
+    const keep = dot(m.n1, prev[0]) + dot(m.n2, prev[1]) >= dot(m.n2, prev[0]) + dot(m.n1, prev[1]);
+    const pair = keep ? [m.n1, m.n2] : [m.n2, m.n1];
+    if (dot(pair[0], pair[1]) < -1 + 1e-6) return null; // knife edge: no wedge to blend
+    flanks.push(pair);
+    prev = pair;
+  }
+  if (closed) {
+    const f0 = flanks[0], fl = flanks[flanks.length - 1];
+    if (dot(f0[0], fl[0]) + dot(f0[1], fl[1]) < dot(f0[0], fl[1]) + dot(f0[1], fl[0])) return null; // pairing cannot close
+  }
+  return { kind: "general", points, closed, convex, flanks };
+}
+
+// One station per path vertex, plus interior stations on members much longer than the
+// median (a long facet between short ones would otherwise step the section). A
+// vertex's tangent bisects its two members; its flank normals average the incident
+// members' (paired) normals, projected perpendicular to the tangent. `tilt` is how far
+// that average sits from the incident facets — generalTool's grazing allowance.
+export function generalStations(chain) {
+  const { points, closed, flanks } = chain;
+  const n = points.length;
+  const nMem = closed ? n : n - 1;
+  const memDir = (i) => norm(sub(points[(i + 1) % n], points[i]));
+  const memLen = (i) => len(sub(points[(i + 1) % n], points[i]));
+  const perp = (v, t) => norm(sub(v, scl(t, dot(v, t))));
+  const angle = (a, b) => Math.acos(clamp1(dot(a, b)));
+  const lens = Array.from({ length: nMem }, (_, i) => memLen(i)).sort((a, b) => a - b);
+  const median = lens[lens.length >> 1];
+  const vertexStation = (v) => {
+    const inc = [];
+    if (closed || v > 0) inc.push((v - 1 + nMem) % nMem);
+    if (closed || v < n - 1) inc.push(v % nMem);
+    const t = norm(inc.reduce((acc, i) => add(acc, memDir(i)), [0, 0, 0]));
+    const raw1 = norm(inc.reduce((acc, i) => add(acc, flanks[i][0]), [0, 0, 0]));
+    const raw2 = norm(inc.reduce((acc, i) => add(acc, flanks[i][1]), [0, 0, 0]));
+    let tilt = 0;
+    for (const i of inc) tilt = Math.max(tilt, angle(raw1, flanks[i][0]), angle(raw2, flanks[i][1]));
+    return { p: points[v], t, n1: perp(raw1, t), n2: perp(raw2, t), tilt };
+  };
+  const out = [];
+  for (let v = 0; v < n; v++) {
+    out.push(vertexStation(v));
+    if (!closed && v === n - 1) break;
+    const L = memLen(v);
+    const extra = Math.ceil(L / (2 * median)) - 1;
+    const t = memDir(v), [f1, f2] = flanks[v];
+    for (let j = 1; j <= extra; j++) {
+      const s = j / (extra + 1);
+      out.push({ p: add(points[v], scl(sub(points[(v + 1) % n], points[v]), s)), t,
+        n1: perp(f1, t), n2: perp(f2, t), tilt: 0 });
+    }
+  }
+  return out;
 }
 
 // Rescue an unsupported path as a PLANAR chain: every point of the path lies in one plane,
@@ -1624,6 +1709,7 @@ function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg
   if (!selected.length) throw new UnsupportedEdgeError(`${mode} selector matched no sharp edges`);
   const unsupported = selected.find((ch) => ch.kind === "unsupported");
   if (unsupported) throw new UnsupportedEdgeError(`${mode}: ${unsupported.reason}`);
+  if (!TOOL_FOR_GENERAL && selected.some((ch) => ch.kind === "general")) throw new UnsupportedEdgeError(`${mode}: general chains not enabled`);
   // Face-plane arc rims sweep their own polyline (see planarizeArc); re-stitch so a
   // converted arc joins its planar neighbors — chainEdges' own stitch pass ran before
   // these chains were planar, so their junctions are still open here.
