@@ -52,7 +52,6 @@ const TOL = 1e-4;            // selector / coplanarity tolerance (mm)
 const WELD = 1e6;            // vertex weld quantization (1/WELD mm grid)
 const COLLINEAR_DEG = 0.1;   // joints straighter than this extend a line run
 const SMOOTH_MAX_DEG = 30;   // joints turning more than this are corners (chain ends)
-const TOOL_FOR_GENERAL = false; // flipped by Task 4 when generalTool lands
 const DEFAULT_SEGS = 116;    // full-circle tessellation density (preview quality)
 
 export class UnsupportedEdgeError extends Error {
@@ -673,7 +672,7 @@ export function matchesSelector(chain, sel) {
 // coplanar with a flank); concave profiles tuck the corner point into the
 // material so the filler welds on.
 const rot2 = ([x, y], th) => [x * Math.cos(th) - y * Math.sin(th), x * Math.sin(th) + y * Math.cos(th)];
-function profile2D({ P, n1, n2, magnitude, mode, convex, segs, ext = 0 }) {
+function profile2D({ P, n1, n2, magnitude, mode, convex, segs, ext = 0, nArc: nArcFixed }) {
   const c = clamp1(n1[0] * n2[0] + n1[1] * n2[1]);
   // `knifeEdge` marks the refusal as the anti-parallel-flank degeneracy, so the
   // planar rim machinery can SKIP a noise stretch (a sliver facet's flipped
@@ -721,7 +720,8 @@ function profile2D({ P, n1, n2, magnitude, mode, convex, segs, ext = 0 }) {
   // fillers alike. Prism cutters keep ext = 0: their tangent contact is
   // plane-on-plane, which the kernel resolves exactly.
   const s2 = Math.sign(phi) || 1, span = Math.abs(phi);
-  const nArc = Math.max(2, Math.ceil((span / (2 * Math.PI)) * segs));
+  // general chains pass a fixed count so every station's ring has the same size
+  const nArc = nArcFixed ?? Math.max(2, Math.ceil((span / (2 * Math.PI)) * segs));
   // Area-exact tessellation: an inscribed chord polygon under-sweeps the ball arc by a
   // first-order-in-facet-angle area deficit whose RELATIVE size is radius-independent
   // (~0.23/n² of the blend cross-section) — at the sagitta-bounded density above it
@@ -768,6 +768,297 @@ function prismTool(k, chain, magnitude, mode, segs, pSegs = segs) {
   if (axis) tool = tool.rotateAbout({ axis, deg: (theta * 180) / Math.PI });
   tool = tool.translate(a);
   return mode === "fillet" ? markBlend(k, tool, { kind: "line", p: add(a, ballOffset(n1, n2, magnitude, convex)), d: e }) : tool;
+}
+
+// Centre of the circle through a, b, c (null when collinear).
+function circumcentre(a, b, c) {
+  const e1 = sub(b, a), e2 = sub(c, a), w = cross(e1, e2), ww = dot(w, w);
+  if (ww < 1e-18) return null;
+  const t = add(scl(cross(w, e1), dot(e2, e2)), scl(cross(e2, w), dot(e1, e1)));
+  return add(a, scl(t, 1 / (2 * ww)));
+}
+
+// Flip to true in Task 5 once blend-surfaces.js knows the "spine" kind.
+const SPINE_SHADING = false;
+
+// Grazing burial for general tools (see generalTool). GENERAL_EXT_MIN floors the
+// fillet arc's continuation past both contacts (radians); GENERAL_SAG_PAD is the
+// chamfer's burial pad beyond the facet-tilt sagitta (mm, capped at 2% of the
+// chamfer). On the general fixtures (test/mesh-fillet-general.test.js) neither binds:
+// the facet tilt (~0.027 rad) already exceeds the floor, and every fixture stays a
+// single shell at preview AND print quality with either at 0. What did strand
+// slivers was the chamfer's side walls skimming the flank — fixed by the chord
+// extension in generalTool, not by deeper burial (a deeper sag made it worse).
+const GENERAL_EXT_MIN = 0.01;
+const GENERAL_SAG_PAD = 2e-4;
+
+// Station smoothing. generalStations places a station at every path vertex, and on a
+// mesh-boolean intersection those vertices are tessellation, not geometry: a facet
+// ridge crossing kinks the polyline, and two ridges a hair apart leave a sliver
+// segment whose three-point circumradius reads a 3 mm bend as 0.2 mm. Smooth before
+// building rings: stations closer than MERGE_FRAC × the median spacing merge into a
+// neighbour; each tangent becomes the chord between the points ~magnitude/2 of arc
+// length either side (clamped at open ends), with the flank normals re-projected
+// perpendicular to it; and the fold guard reads the circumcircle over that same span.
+// Ring planes then turn as smoothly as the geometry, so a kink cannot fold the stack.
+const MERGE_FRAC = 0.2;
+function smoothStations(st0, closed, magnitude) {
+  const m0 = st0.length;
+  const gaps = [];
+  for (let i = 0; i < (closed ? m0 : m0 - 1); i++) gaps.push(len(sub(st0[(i + 1) % m0].p, st0[i].p)));
+  const median = [...gaps].sort((a, b) => a - b)[gaps.length >> 1] || 0;
+  const minGap = MERGE_FRAC * median;
+  const st = [st0[0]];
+  for (let i = 1; i < m0; i++) {
+    if (len(sub(st0[i].p, st[st.length - 1].p)) >= minGap) st.push(st0[i]);
+    else if (!closed && i === m0 - 1 && st.length > 1) st[st.length - 1] = st0[i]; // open ends stay put
+  }
+  if (closed && st.length > 3 && len(sub(st[0].p, st[st.length - 1].p)) < minGap) st.pop();
+  const m = st.length;
+  const cum = [0];
+  for (let i = 1; i < m; i++) cum.push(cum[i - 1] + len(sub(st[i].p, st[i - 1].p)));
+  const L = closed ? cum[m - 1] + len(sub(st[0].p, st[m - 1].p)) : cum[m - 1];
+  const pointAt = (s) => {
+    if (closed) s = ((s % L) + L) % L;
+    else s = Math.max(0, Math.min(L, s));
+    let lo = 0, hi = m - 1;
+    if (s >= cum[m - 1]) { lo = m - 1; } else { while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (cum[mid] <= s) lo = mid; else hi = mid; } }
+    const a = st[lo].p, b = st[(lo + 1) % m].p;
+    const segL = (lo === m - 1 ? L : cum[lo + 1]) - cum[lo];
+    return segL > 0 ? add(a, scl(sub(b, a), (s - cum[lo]) / segL)) : a;
+  };
+  const h = magnitude / 2;
+  const perp = (v, t) => norm(sub(v, scl(t, dot(v, t))));
+  return st.map((s, i) => {
+    const prev = pointAt(cum[i] - h), next = pointAt(cum[i] + h);
+    const chord = sub(next, prev);
+    const t = len(chord) > 1e-12 ? norm(chord) : s.t;
+    const interior = closed || (cum[i] - h >= 0 && cum[i] + h <= L);
+    return { p: s.p, t, n1: perp(s.n1, t), n2: perp(s.n2, t), tilt: s.tilt, prev, next, interior };
+  });
+}
+
+// Osculating curvature of one flank in the section plane, signed so that κ < 0 is a
+// flank falling away from its tangent line into the material (a convex tube seen
+// from outside) and κ > 0 one rising into the air. Probe: step `s` along the flank's
+// in-face direction f from the edge point p, cast both ways along the flank normal n
+// (range 2s) and take the nearest hit on a triangle facing roughly along n (the
+// OTHER flank, and back-facing or far geometry, are skipped); the circle tangent to
+// the flank at p through that hit has κ = 2h/(s² + h²). A miss, or a bend too tight
+// to trust (|κ|·s ≥ 0.9), reads as a straight flank.
+const FLANK_FACING_COS = 0.82; // ~35°
+function flankCurvature(rays, p, n, f, s) {
+  if (!rays) return 0;
+  const S = add(p, scl(f, s));
+  let best = null;
+  for (const sign of [1, -1]) {
+    const hit = rays.nearest(S, scl(n, sign), 2 * s, (fn) => dot(fn, n) >= FLANK_FACING_COS);
+    if (hit && (!best || hit.t < best.t)) best = { t: hit.t, h: sign * hit.t };
+  }
+  if (!best) return 0;
+  const kappa = (2 * best.h) / (s * s + best.h * best.h);
+  return Math.abs(kappa) * s >= 0.9 ? 0 : kappa;
+}
+
+// Short-range ray casts against the part's own mesh, for flankCurvature. Local on
+// purpose: only the triangles whose bounds come within `margin` of a general chain's
+// box are kept, and rays are brute-forced over that subset (a few thousand triangles
+// around a rim). Deliberately NOT oracle/bvh.js — the cut & print kit loads this
+// module and must never load the oracle (test/kit-layering.test.js).
+function localRays({ positions: P, indices: I }, boxes) {
+  const keep = [];
+  for (let t = 0; t < I.length; t += 3) {
+    let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+    for (let j = 0; j < 3; j++) {
+      const o = I[t + j] * 3, x = P[o], y = P[o + 1], z = P[o + 2];
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z;
+    }
+    if (boxes.some((b) => x1 >= b[0] && x0 <= b[3] && y1 >= b[1] && y0 <= b[4] && z1 >= b[2] && z0 <= b[5])) keep.push(t);
+  }
+  const V = new Float64Array(keep.length * 9);
+  keep.forEach((t, i) => { for (let j = 0; j < 3; j++) { const o = I[t + j] * 3; V[i * 9 + j * 3] = P[o]; V[i * 9 + j * 3 + 1] = P[o + 1]; V[i * 9 + j * 3 + 2] = P[o + 2]; } });
+  // nearest hit within (0, tMax] on a triangle whose unit normal passes `accept`
+  const nearest = (o, d, tMax, accept) => {
+    let best = null;
+    for (let b = 0; b < V.length; b += 9) {
+      const a = [V[b], V[b + 1], V[b + 2]];
+      const e1 = [V[b + 3] - a[0], V[b + 4] - a[1], V[b + 5] - a[2]], e2 = [V[b + 6] - a[0], V[b + 7] - a[1], V[b + 8] - a[2]];
+      const pv = cross(d, e2), det = dot(e1, pv);
+      if (Math.abs(det) < 1e-12) continue;
+      const tv = sub(o, a), u = dot(tv, pv) / det;
+      if (u < 0 || u > 1) continue;
+      const qv = cross(tv, e1), v = dot(d, qv) / det;
+      if (v < 0 || u + v > 1) continue;
+      const t = dot(e2, qv) / det;
+      if (!(t > 1e-9 && t <= tMax) || (best && t >= best.t)) continue;
+      if (!accept(norm(cross(e1, e2)))) continue;
+      best = { t };
+    }
+    return best;
+  };
+  return { nearest };
+}
+
+// Rolling-ball section with curved flanks — pure 2-D, edge point at the origin. n1/n2
+// are the unit flank normals, k1/k2 their section-plane curvatures (flankCurvature's
+// sign convention; 0 = straight). Each flank is the circle tangent to its tangent line
+// at the edge with that curvature, or the line itself. The ball centre C sits at
+// distance r from both curves on the material side (convex: cutter) or the air side
+// (concave: filler) — profile2D's tangent-line centre is the Newton start, and the
+// solve falls back to it (straight flanks) when it does not converge nearby. Returns
+// C, the contacts T1/T2, the arc's start direction m1, signed sweep phi, and the
+// flank descriptions sectionPolygon needs.
+function curvedBall({ n1, n2, k1, k2, magnitude: r, convex }) {
+  const c = clamp1(n1[0] * n2[0] + n1[1] * n2[1]);
+  if (1 + c < 1e-6) throw Object.assign(new UnsupportedEdgeError("~180° knife edge"), { knifeEdge: true });
+  const sgn = convex ? 1 : -1;
+  const bl = Math.hypot(n1[0] + n2[0], n1[1] + n2[1]);
+  const bis = [(n1[0] + n2[0]) / bl, (n1[1] + n2[1]) / bl];
+  const inFace = (nv) => { let f = [-nv[1], nv[0]]; if (sgn * (f[0] * bis[0] + f[1] * bis[1]) > 0) f = [-f[0], -f[1]]; return f; };
+  const flank = (n, kap) => ({ n, f: inFace(n), kap, O: kap ? [n[0] / kap, n[1] / kap] : null, R: kap ? 1 / Math.abs(kap) : Infinity });
+  const solve = (F1, F2) => {
+    // signed distance to a flank, positive on its air side, and its gradient
+    const dist = (F, X) => {
+      if (!F.O) return { d: X[0] * F.n[0] + X[1] * F.n[1], g: F.n };
+      const dx = X[0] - F.O[0], dy = X[1] - F.O[1], D = Math.hypot(dx, dy) || 1e-12, sk = Math.sign(F.kap);
+      return { d: sk * (F.R - D), g: [(-sk * dx) / D, (-sk * dy) / D] };
+    };
+    const foot = (F, X) => {
+      if (!F.O) { const d = X[0] * F.n[0] + X[1] * F.n[1]; return [X[0] - d * F.n[0], X[1] - d * F.n[1]]; }
+      const dx = X[0] - F.O[0], dy = X[1] - F.O[1], D = Math.hypot(dx, dy);
+      return [F.O[0] + (F.R * dx) / D, F.O[1] + (F.R * dy) / D];
+    };
+    const C0 = [(-sgn * r * (n1[0] + n2[0])) / (1 + c), (-sgn * r * (n1[1] + n2[1])) / (1 + c)];
+    let C = C0, ok = false;
+    for (let it = 0; it < 40; it++) {
+      const a = dist(F1, C), b = dist(F2, C);
+      const e1 = a.d + sgn * r, e2 = b.d + sgn * r;
+      if (Math.abs(e1) < 1e-12 && Math.abs(e2) < 1e-12) { ok = true; break; }
+      const det = a.g[0] * b.g[1] - a.g[1] * b.g[0];
+      if (Math.abs(det) < 1e-12) break;
+      C = [C[0] - (e1 * b.g[1] - e2 * a.g[1]) / det, C[1] - (a.g[0] * e2 - b.g[0] * e1) / det];
+    }
+    if (!ok || Math.hypot(C[0] - C0[0], C[1] - C0[1]) > 2 * r) return null;
+    const T1 = foot(F1, C), T2 = foot(F2, C);
+    const a1 = T1[0] * F1.f[0] + T1[1] * F1.f[1], a2 = T2[0] * F2.f[0] + T2[1] * F2.f[1];
+    if (!(a1 > 0 && a2 > 0)) return null; // contact behind the edge: not this corner's ball
+    const m1 = norm2([sgn * (T1[0] - C[0]), sgn * (T1[1] - C[1])]);
+    const m2 = norm2([sgn * (T2[0] - C[0]), sgn * (T2[1] - C[1])]);
+    const phi = Math.atan2(m1[0] * m2[1] - m1[1] * m2[0], clamp1(m1[0] * m2[0] + m1[1] * m2[1]));
+    return { C, T1, T2, a1, a2, m1, phi, F1, F2, bis, sgn };
+  };
+  return solve(flank(n1, k1), flank(n2, k2)) ?? solve(flank(n1, 0), flank(n2, 0));
+}
+const norm2 = ([x, y]) => { const l = Math.hypot(x, y) || 1; return [x / l, y / l]; };
+
+// The fillet polygon for a curvedBall solution, in profile2D's layout: corner point
+// (delta past the edge along the bisector, outside the material for a cutter, inside
+// it for a filler), FLANK_SAMPLES points along flank 1 out to its contact, the ball arc
+// (fixed nArc, area-exact interior radius, continued `ext` past both contacts), then
+// flank 2's samples back toward the corner. The flank samples follow each flank's
+// circle — a straight chord would bite a lens of material out of a curved flank for a
+// cutter, or add one over it for a filler — lifted toward the harmless side by a
+// margin tapering from delta at the corner to 0 at the contact, the straight case's
+// wedge. Every call with the same nArc returns the same point count.
+const FLANK_SAMPLES = 4;
+function sectionPolygon(sol, magnitude, nArc, ext) {
+  const { C, a1, a2, m1, phi, F1, F2, bis, sgn } = sol;
+  const r = magnitude, delta = 0.02 * magnitude;
+  const onFlank = (F, a, lift) => {
+    let b = 0;
+    if (F.kap) { const R = 1 / F.kap; b = R - Math.sign(R) * Math.sqrt(Math.max(0, R * R - a * a)); }
+    return [a * F.f[0] + (b + sgn * lift) * F.n[0], a * F.f[1] + (b + sgn * lift) * F.n[1]];
+  };
+  const side = (F, aT) => Array.from({ length: FLANK_SAMPLES }, (_, j) => {
+    const q = (j + 1) / (FLANK_SAMPLES + 1);
+    return onFlank(F, aT * q, delta * (1 - q));
+  });
+  const pts = [[sgn * delta * bis[0], sgn * delta * bis[1]], ...side(F1, a1)];
+  const s2 = Math.sign(phi) || 1, span = Math.abs(phi);
+  const th = (span + 2 * ext) / nArc;
+  const rEq = r * Math.sqrt(th / Math.sin(th));
+  for (let i = 0; i <= nArc; i++) {
+    const nv = rot2(m1, s2 * (-ext + ((span + 2 * ext) * i) / nArc));
+    const ri = i === 0 || i === nArc ? r : rEq;
+    pts.push([C[0] + sgn * ri * nv[0], C[1] + sgn * ri * nv[1]]);
+  }
+  pts.push(...side(F2, a2).reverse());
+  return pts;
+}
+
+// General-chain tool: one ring per (smoothed) station, each the section in the plane
+// perpendicular to the edge, meshed as a ring stack. Fillet sections solve the
+// rolling ball against each flank's measured section-plane curvature (curvedBall —
+// the tangent-line profile2D section mis-sizes the spandrel by up to 1.7× where a
+// flank is a tube seen side-on); chamfers keep profile2D, whose setbacks curvature
+// barely moves. Every ring carries the same arc count — the widest station's — so
+// the stack stitches. Grazing guard per station: the arc continues past both contacts
+// by the station's facet tilt (floored at GENERAL_EXT_MIN), and a chamfer is buried
+// by the matching sagitta plus GENERAL_SAG_PAD. A bend tighter than the section's
+// reach toward its own centre would fold the stack: refuse it, which reroutes (the
+// spec's policy) rather than emitting a self-intersecting tool.
+function generalTool(k, chain, magnitude, mode, pSegs, rays = null) {
+  if (!k._ringStackSolid) throw new UnsupportedEdgeError("general chain: this kernel has no ring-stack builder");
+  const { convex, closed } = chain;
+  const st = smoothStations(generalStations(chain), closed, magnitude);
+  const frames = st.map((s) => {
+    const u = s.n1, v = cross(s.t, u);
+    return { u, v, p2: (w) => [dot(w, u), dot(w, v)], to3: ([x, y]) => add(s.p, add(scl(u, x), scl(v, y))) };
+  });
+  const sols = mode === "fillet" ? st.map((s, i) => {
+    const { p2 } = frames[i], n1 = p2(s.n1), n2 = p2(s.n2);
+    const flat = curvedBall({ n1, n2, k1: 0, k2: 0, magnitude, convex }); // for the in-face directions
+    if (!flat) throw new UnsupportedEdgeError(`general chain: no rolling-ball section for ${mode} ${magnitude}`);
+    const f3 = (f) => add(scl(frames[i].u, f[0]), scl(frames[i].v, f[1]));
+    const k1 = flankCurvature(rays, s.p, s.n1, f3(flat.F1.f), magnitude);
+    const k2 = flankCurvature(rays, s.p, s.n2, f3(flat.F2.f), magnitude);
+    return k1 || k2 ? curvedBall({ n1, n2, k1, k2, magnitude, convex }) : flat;
+  }) : null;
+  let maxSpan = 0;
+  for (let i = 0; i < st.length; i++)
+    maxSpan = Math.max(maxSpan, sols ? Math.abs(sols[i].phi) : Math.acos(clamp1(dot(st[i].n1, st[i].n2))));
+  const nArc = Math.max(2, Math.ceil((maxSpan / (2 * Math.PI)) * pSegs));
+  const rings = [], centres = [];
+  for (let i = 0; i < st.length; i++) {
+    const s = st[i], { p2, to3 } = frames[i];
+    let poly;
+    if (mode === "fillet") {
+      const ext = Math.min(0.4, Math.max(GENERAL_EXT_MIN, s.tilt));
+      poly = sectionPolygon(sols[i], magnitude, nArc, ext);
+      centres.push(to3(sols[i].C));
+    } else {
+      // ext > 0 selects profile2D's chord extension (2% of the chamfer past both
+      // contacts, as the revolve chamfer does): it keeps the side walls corner→T in
+      // the air instead of skimming the faceted flank, where the sag shift alone tucks
+      // them under the facets and strands slivers of flank as separate shells
+      poly = profile2D({ P: [0, 0], n1: p2(s.n1), n2: p2(s.n2), magnitude, mode, convex, segs: pSegs, ext: 1, nArc });
+      const sag = magnitude * (1 - Math.cos(s.tilt)) + Math.min(GENERAL_SAG_PAD, 0.02 * magnitude);
+      const [b1, b2] = p2(add(s.n1, s.n2)), bl = Math.hypot(b1, b2) || 1;
+      poly = poly.map(([x, y], j) => (j === 0 && convex ? [x, y] : [x - (sag * b1) / bl, y - (sag * b2) / bl]));
+    }
+    rings.push(poly.map(to3));
+  }
+  for (let i = 0; i < st.length; i++) {
+    const s = st[i];
+    if (!s.interior) continue;
+    const O = circumcentre(s.prev, s.p, s.next);
+    if (!O) continue;
+    const rho = len(sub(O, s.p)), beta = norm(sub(O, s.p));
+    let reach = 0;
+    for (const q of rings[i]) reach = Math.max(reach, dot(sub(q, s.p), beta));
+    if (reach > 0.9 * rho)
+      throw new UnsupportedEdgeError(`general chain: bend too tight for ${mode} ${magnitude} (local radius ${rho.toFixed(2)} mm)`);
+  }
+  const m = st.length;
+  if (!closed && convex) {
+    // convex cutters overshoot open ends (prismTool's rule); concave fillers end flush
+    const over = Math.max(1e-3, 0.05 * magnitude);
+    const t0 = st[0].t, tN = st[m - 1].t;
+    rings.unshift(rings[0].map((q) => sub(q, scl(t0, over))));
+    rings.push(rings[rings.length - 1].map((q) => add(q, scl(tN, over))));
+  }
+  const tool = k._ringStackSolid(rings, { closed });
+  return mode === "fillet" && SPINE_SHADING ? markBlend(k, tool, { kind: "spine", pts: centres, closed, r: magnitude }) : tool;
 }
 
 // `segs` is the KERNEL quality — it sizes the flank-facet guards (sag/ext) and the
@@ -1707,12 +1998,12 @@ export function meshChamfer(k, solid, opts) { return apply(k, solid, "chamfer", 
 function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg = 20, segsAt = null } = {}) {
   if (!(magnitude > 0)) throw new Error(`mesh ${mode}: magnitude must be > 0`);
   const flankAt = segsAt ?? (() => segs);
-  const chains = chainEdges(detectSharpEdges(solid.toIndexedMesh(), { sharpDeg }));
+  const mesh = solid.toIndexedMesh();
+  const chains = chainEdges(detectSharpEdges(mesh, { sharpDeg }));
   const selected = chains.filter((ch) => matchesSelector(ch, edges));
   if (!selected.length) throw new UnsupportedEdgeError(`${mode} selector matched no sharp edges`);
   const unsupported = selected.find((ch) => ch.kind === "unsupported");
   if (unsupported) throw new UnsupportedEdgeError(`${mode}: ${unsupported.reason}`);
-  if (!TOOL_FOR_GENERAL && selected.some((ch) => ch.kind === "general")) throw new UnsupportedEdgeError(`${mode}: general chains not enabled`);
   // Face-plane arc rims sweep their own polyline (see planarizeArc); re-stitch so a
   // converted arc joins its planar neighbors — chainEdges' own stitch pass ran before
   // these chains were planar, so their junctions are still open here.
@@ -1747,12 +2038,21 @@ function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg
   effective = effective.filter((ch) => !knife(ch));
   arcs = arcs.filter((ch) => !knife(ch));
   const pSegs = blendSegs(segs, magnitude);
+  // general fillet sections probe the flanks' section-plane curvature on the mesh
+  const generals = mode === "fillet" ? effective.filter((ch) => ch.kind === "general") : [];
+  const rays = generals.length ? localRays(mesh, generals.map((ch) => {
+    const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], pad = 3 * magnitude;
+    for (const p of ch.points) for (let a = 0; a < 3; a++) { b[a] = Math.min(b[a], p[a] - pad); b[a + 3] = Math.max(b[a + 3], p[a] + pad); }
+    return b;
+  })) : null;
   const toolsFor = (ch) =>
     ch.kind === "planar"
       ? planarTool(k, ch, magnitude, mode, segs, pSegs, endTins, flankAt)
       : ch.kind === "arc"
         ? [revolveTool(k, ch, magnitude, mode, segs, pSegs, flankAt)]
-        : [prismTool(k, ch, magnitude, mode, segs, pSegs)];
+        : ch.kind === "general"
+          ? [generalTool(k, ch, magnitude, mode, pSegs, rays)]
+          : [prismTool(k, ch, magnitude, mode, segs, pSegs)];
   const cutters = [...effective, ...arcs].filter((ch) => ch.convex).flatMap(toolsFor);
   cutters.push(...horns.map((h) => cornerHornTool(k, h, magnitude, segs, flankAt)));
   cutters.push(...pivots.map((p) => reflexPivotTool(k, p, magnitude, mode, segs, pSegs)));
