@@ -52,7 +52,19 @@ const listVariant = (f) =>
 // through here.
 let openPicker = null;
 
-export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPicked }) {
+// At most this many weights beyond the selected one load their real face per
+// family opened (the previous family's variant faces are released when another
+// opens, so resident variant faces stay <= 1 + this). A COUNT, not bytes: the cloud catalog reports `bytes: 0` for every
+// variant, so a byte budget would never bind (spec 2026-10-01 §3). Rows past
+// the budget render in the menu face with the weight synthesized.
+export const VARIANT_FACE_BUDGET = 6;
+
+// The menu face the last closed picker chose to keep (the widget label renders
+// in it). The next picker adopts it, so a session neither re-fetches that face
+// nor orphans it: its own close() deletes it if the selection moved on.
+let keptFace = null;
+
+export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPicked, onClose }) {
   // Takeover: the picker covers the rail on desktop and the single visible pane
   // below the narrow breakpoint. One layout for both widths (spec §6).
   const host = anchor?.closest?.(".pf-rail") ?? anchor?.parentElement ?? document.body;
@@ -148,6 +160,33 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
   // missing one must degrade to un-styled rows, never throw.
   const canLoadFaces = () => typeof FontFace === "function" && typeof document.fonts?.add === "function";
 
+  const addedFaces = [];           // every FontFace this picker put in document.fonts
+  let variantBudget = VARIANT_FACE_BUDGET;
+  const variantList = [];          // {face, url} for the ONE family whose variants are open
+  let variantFamily = null;
+  if (keptFace) {
+    addedFaces.push(keptFace);
+    faceRequested.add(keptFace.family);
+    faceSettled.add(keptFace.family);
+    keptFace = null;
+  }
+  // A face that finishes loading after close() would otherwise land in
+  // document.fonts with nobody left to delete it. The selected family's menu
+  // face is the one exception: it is kept on close by design.
+  const track = (loaded) => {
+    if (closed && (loaded.family !== selFamily || keptFace)) return;
+    document.fonts.add(loaded);
+    if (!closed) addedFaces.push(loaded);
+    else keptFace = loaded;                    // landed after close: hand it on
+  };
+  function releaseVariantFaces() {
+    for (const { face, url } of variantList) {
+      variantFaces.delete(url);
+      try { document.fonts.delete?.(face); } catch { /* already gone */ }
+    }
+    variantList.length = 0;
+  }
+
   function settle(family) {
     faceSettled.add(family);
     if (closed) return;
@@ -167,7 +206,7 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
       let face;
       try { face = new FontFace(f.family, `url(${f.menuUrl})`); } catch { settle(f.family); continue; }
       face.load()
-        .then((loaded) => { document.fonts.add(loaded); })
+        .then((loaded) => { track(loaded); })
         .catch(() => { /* a family that will not load stays in the panel font */ })
         .then(() => settle(f.family));
     }
@@ -177,14 +216,22 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
   // family name's glyphs at one weight, so it cannot show what 700 looks like.
   // Each face is registered under `<family> <variant>` so the weights do not
   // collide with each other or with the menu face.
-  function requestVariantFace(family, v) {
+  function requestVariantFace(family, v, { selected = false } = {}) {
     if (!canLoadFaces()) return;
     if (variantFaces.has(v.url) || !fontSourceAllowed(v.url, allow)) return;
     if (Number.isFinite(v.bytes) && v.bytes > VARIANT_FACE_MAX_BYTES) return;
+    if (!selected) {
+      if (variantBudget <= 0) return;
+      variantBudget -= 1;
+    }
     variantFaces.add(v.url);
     let face;
     try { face = new FontFace(`${family} ${v.variant}`, `url(${v.url})`); } catch { return; }
-    face.load().then((loaded) => document.fonts.add(loaded)).catch(() => {});
+    face.load().then((loaded) => {
+      if (closed || variantFamily !== family) { variantFaces.delete(v.url); return; }
+      document.fonts.add(loaded);
+      variantList.push({ face: loaded, url: v.url });
+    }).catch(() => {});
   }
 
   // ── the list ────────────────────────────────────────────────────────────
@@ -337,6 +384,11 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
 
   function openVariants(f) {
     openFamily = f;
+    if (variantFamily !== f.family) {
+      releaseVariantFaces();
+      variantFamily = f.family;
+      variantBudget = VARIANT_FACE_BUDGET;
+    }
     vtitle.textContent = f.family;
     vlist.textContent = "";
     for (const v of f.variants) {
@@ -351,9 +403,15 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
       // Commit WITHOUT leaving — you audition weights against the live
       // geometry, so committing and navigating are separate actions (spec §6).
       b.addEventListener("click", () => commit(f, v));
-      requestVariantFace(f.family, v);
       vlist.append(b);
     }
+    // Nearest weight to the selected one first, so the budget lands on the
+    // weights the user is most likely to compare.
+    const weightOf = (v) => Number(String(v.variant).replace(/i(talic)?$/, "")) || 400;
+    const selV = pickVariant(f);
+    const order = [...f.variants].sort((a, b) =>
+      (a === selV ? -1 : b === selV ? 1 : Math.abs(weightOf(a) - weightOf(selV)) - Math.abs(weightOf(b) - weightOf(selV))));
+    for (const v of order) requestVariantFace(f.family, v, { selected: v === selV });
     vlist.scrollTop = 0;
     picker.classList.add("at-variants");
   }
@@ -378,8 +436,21 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
     closed = true;
     clearTimeout(debounce);
     document.removeEventListener("keydown", onKey);
+    // Faces are the picker's, not the page's: every one auditioned would
+    // otherwise stay resident until the iframe dies (the 2026-10 Safari tab
+    // kill). Keep only the selected family's MENU face — the widget's button
+    // label renders in it.
+    if (typeof document.fonts?.delete === "function") {
+      for (const face of addedFaces) {
+        if (face.family === selFamily && !keptFace) { keptFace = face; continue; }
+        try { document.fonts.delete(face); } catch { /* already gone */ }
+      }
+    }
+    releaseVariantFaces();
     picker.remove();
     if (openPicker === handle) openPicker = null;
+    // After removal, so a host reacting to the close sees the rail as it will be.
+    try { onClose?.(); } catch { /* host's problem, not the picker's */ }
   }
   function onKey(ev) {
     if (ev.key !== "Escape") return;

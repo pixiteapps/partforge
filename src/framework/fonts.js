@@ -31,3 +31,11 @@ export async function resolveFonts(fontsDecl) {
   }
   return resolveDecl(fontsDecl, resolveOne);
 }
+
+// Drop one source's memo entry. jobs.js calls this once a font is PARSED: the
+// parsed Font is what the kernel keeps (kernel._fontsBySource, bounded), so
+// holding the raw ArrayBuffer here as well doubled the cost of every font a
+// session ever auditioned and released none of it (spec 2026-10-01 §3).
+export function forgetFontSource(source) {
+  cache.delete(source);
+}
