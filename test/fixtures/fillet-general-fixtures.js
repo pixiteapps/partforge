@@ -16,7 +16,7 @@ export const FIXTURES = {
     .cut(k.box({ size: [80, 80, 40] }).rotateAbout({ axis: "X", deg: 30 }).at([0, 0, 25])),
 };
 export const GENUS = { tee: 0, crossHole: 1, domeBoss: 0, slantCut: 0 };
-export const CASES = [["fillet", 1], ["fillet", 2], ["chamfer", 1]];
+export const CASES = [["fillet", 1], ["fillet", 2], ["chamfer", 1], ["chamfer", 2]];
 // thin rod on a plate, top cut on a slant: its convex elliptical rim bends tighter
 // (radius ~1.5) than a 2 mm fillet section reaches — must reroute, not fold
 export const tightBend = (k) => k.box({ size: [20, 20, 2] })
@@ -27,3 +27,22 @@ export const tightBend = (k) => k.box({ size: [20, 20, 2] })
 export const dRodSlant = (k) => k.cylinder({ r: 6, h: 30 })
   .cut(k.box({ min: [4, -10, -1], max: [10, 10, 40] }))
   .cut(k.box({ size: [80, 80, 40] }).rotateAbout({ axis: "X", deg: 30 }).at([0, 0, 20]));
+// The same fixtures at a COARSE tessellation (spec Risk 1: a facet tilts the mesh
+// normal at the edge by up to half its angle, and the section can graze). Every
+// cylinder becomes an n-gon prism and the sphere an n-gon loft over n latitude rings
+// — 11.25° facets at n = 32 against preview's 3.1° — built from explicit point lists,
+// so no quality tier can refine them. The latitude rings stop 0.05 rad short of the
+// poles; the dome's box clips those caps away anyway. Pass this in place of `k`.
+const ngon = (r, n) => Array.from({ length: n }, (_, i) => [r * Math.cos((2 * Math.PI * i) / n), r * Math.sin((2 * Math.PI * i) / n)]);
+export const coarseKernel = (k, n) => Object.assign(Object.create(k), {
+  cylinder: ({ r, h, center = false }) => {
+    const s = k.prism({ points: ngon(r, n), h });
+    return center ? s.at([0, 0, -h / 2]) : s;
+  },
+  sphere: ({ r }) => k.loft({
+    rings: Array.from({ length: n + 1 }, (_, j) => {
+      const phi = -Math.PI / 2 + 0.05 + (j / n) * (Math.PI - 0.1);
+      return { polygon: ngon(r * Math.cos(phi), n), z: r * Math.sin(phi) };
+    }),
+  }),
+});

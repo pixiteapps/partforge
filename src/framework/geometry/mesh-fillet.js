@@ -404,10 +404,20 @@ function buildGeneralPath(edges, path) {
 }
 
 // One station per path vertex, plus interior stations on members much longer than the
-// median (a long facet between short ones would otherwise step the section). A
+// median (a long facet between short ones would otherwise step the section) — at most
+// MAX_MEMBER_STATIONS per member. The median is by COUNT, so a path that is mostly
+// slivers has a tiny median and, uncapped, one long member between them asked for
+// ceil(L / 2·median) − 1 stations: 500 003 for a sliver(1e-5)–10 mm–sliver path, which
+// smoothing cannot merge and every ring of which went through ofMesh (and a zero
+// median — duplicate points — asked for infinitely many). The cap sits above every
+// count the fixtures and the fillet census ask for (largest: 329, on a knob; 71
+// public forges + 56 eval parts, preview and print), so no real part's stations
+// change; it only bounds the pathological case, which MAX_GENERAL_STATIONS then
+// bounds per chain. A
 // vertex's tangent bisects its two members; its flank normals average the incident
 // members' (paired) normals, projected perpendicular to the tangent. `tilt` is how far
 // that average sits from the incident facets — generalTool's grazing allowance.
+export const MAX_MEMBER_STATIONS = 512;
 export function generalStations(chain) {
   const { points, closed, flanks } = chain;
   const n = points.length;
@@ -434,7 +444,7 @@ export function generalStations(chain) {
     out.push(vertexStation(v));
     if (!closed && v === n - 1) break;
     const L = memLen(v);
-    const extra = Math.ceil(L / (2 * median)) - 1;
+    const extra = Math.min(MAX_MEMBER_STATIONS, Math.ceil(L / (2 * median)) - 1);
     const t = memDir(v), [f1, f2] = flanks[v];
     for (let j = 1; j <= extra; j++) {
       const s = j / (extra + 1);
@@ -862,9 +872,9 @@ function flankCurvature(rays, p, n, f, s) {
 // chain are kept. Deliberately NOT oracle/bvh.js — the cut & print kit loads this
 // module and must never load the oracle (test/kit-layering.test.js). Every probe is
 // short (range 2 × magnitude), so the kept triangles go into a uniform grid of
-// `cell`-sized cubes (cell = the probe range: a probe's box touches at most 2 cells
-// per axis) and a probe tests only the triangles sharing a cell with its segment's
-// box. That set contains every triangle the segment can hit, so the nearest hit is
+// `cell`-sized cubes (cell = the probe range: a probe's box is at most one cell
+// wide plus a hair of padding, so it touches at most 3 cells per axis — usually 2)
+// and a probe tests only the triangles sharing a cell with its segment's box. That set contains every triangle the segment can hit, so the nearest hit is
 // exactly the brute-force one — the brute force over every kept triangle measured
 // 2.6 × 10⁹ triangle tests and 65 s on a chain-mail sheet (Task 4b report). A
 // triangle spanning more than GRID_BIG_CELLS cells (a long flat facet) is tested by
@@ -1006,15 +1016,28 @@ const norm2 = ([x, y]) => { const l = Math.hypot(x, y) || 1; return [x / l, y / 
 
 // The fillet polygon for a curvedBall solution, in profile2D's layout: corner point
 // (delta past the edge along the bisector, outside the material for a cutter, inside
-// it for a filler), FLANK_SAMPLES points along flank 1 out to its contact, the ball arc
-// (fixed nArc, area-exact interior radius, continued `ext` past both contacts), then
-// flank 2's samples back toward the corner. The flank samples follow each flank's
-// circle — a straight chord would bite a lens of material out of a curved flank for a
-// cutter, or add one over it for a filler — lifted toward the harmless side by a
-// margin tapering from delta at the corner to 0 at the contact, the straight case's
-// wedge. Every call with the same nArc returns the same point count.
+// it for a filler), FLANK_SAMPLES points along flank 1 out to its contact, one point
+// above the arc's continuation, the ball arc (fixed nArc, area-exact interior radius,
+// continued `ext` past both contacts), then flank 2's points back toward the corner.
+// The flank points follow each flank's circle — a straight chord would bite a lens of
+// material out of a curved flank for a cutter, or add one over it for a filler — lifted
+// toward the harmless side (air for a cutter, material for a filler) by delta plus
+// a·sin(tilt): the station's normals are an average of the incident facets, so a real
+// facet leaves the modelled flank by up to a·sin(tilt) at distance a from the edge, and
+// a flank edge inside that band grazes the facets. Measured on the general fixtures
+// rebuilt from 32–100-segment tubes and spheres (test/mesh-fillet-general.test.js):
+// a constant lift strands shells (10 of 120 cases); a·sin(tilt) × 0.5, 1 or 1.5 leaves
+// every case at its genus. On fine tessellations (tilt ≈ 0.027) the lift moves the
+// volume by under 1.1e-5 of the part; on a 32-gon tube it removes the strip of facet
+// that rises above the averaged flank (up to ~3% of a fillet's volume change). The extra point
+// sits straight above where the arc continuation ends, so the polygon's closing edge
+// drops onto the arc there and crosses the flank decisively PAST the contact — the old
+// layout tapered the lift to zero at the contact, and a closing edge running nearly
+// along the flank to the arc's end could pass under the arc at the contact (a bowtie
+// ring, which the stack turns into handles; it is why a deeper `ext` made things
+// worse). Every call with the same nArc returns the same point count.
 const FLANK_SAMPLES = 4;
-function sectionPolygon(sol, magnitude, nArc, ext) {
+function sectionPolygon(sol, magnitude, nArc, ext, tilt) {
   const { C, a1, a2, m1, phi, F1, F2, bis, sgn } = sol;
   const r = magnitude, delta = 0.02 * magnitude;
   const onFlank = (F, a, lift) => {
@@ -1022,10 +1045,12 @@ function sectionPolygon(sol, magnitude, nArc, ext) {
     if (F.kap) { const R = 1 / F.kap; b = R - Math.sign(R) * Math.sqrt(Math.max(0, R * R - a * a)); }
     return [a * F.f[0] + (b + sgn * lift) * F.n[0], a * F.f[1] + (b + sgn * lift) * F.n[1]];
   };
-  const side = (F, aT) => Array.from({ length: FLANK_SAMPLES }, (_, j) => {
-    const q = (j + 1) / (FLANK_SAMPLES + 1);
-    return onFlank(F, aT * q, delta * (1 - q));
-  });
+  const lifted = (F, a) => onFlank(F, a, delta + a * Math.sin(tilt));
+  const side = (F, aT) => [
+    ...Array.from({ length: FLANK_SAMPLES }, (_, j) => lifted(F, (aT * (j + 1)) / (FLANK_SAMPLES + 1))),
+    lifted(F, aT),
+    lifted(F, aT + r * Math.sin(ext)),
+  ];
   const pts = [[sgn * delta * bis[0], sgn * delta * bis[1]], ...side(F1, a1)];
   const s2 = Math.sign(phi) || 1, span = Math.abs(phi);
   const th = (span + 2 * ext) / nArc;
@@ -1050,10 +1075,10 @@ function sectionPolygon(sol, magnitude, nArc, ext) {
 // by the matching sagitta plus GENERAL_SAG_PAD. A bend tighter than the section's
 // reach toward its own centre would fold the stack: refuse it, which reroutes (the
 // spec's policy) rather than emitting a self-intersecting tool.
-function generalTool(k, chain, magnitude, mode, pSegs, rays = null) {
+function generalTool(k, chain, magnitude, mode, pSegs, rays = null, stations = null) {
   if (!k._ringStackSolid) throw new UnsupportedEdgeError("general chain: this kernel has no ring-stack builder");
   const { convex, closed } = chain;
-  const st = smoothStations(generalStations(chain), closed, magnitude);
+  const st = stations ?? smoothStations(generalStations(chain), closed, magnitude);
   const frames = st.map((s) => {
     const u = s.n1, v = cross(s.t, u);
     return { u, v, p2: (w) => [dot(w, u), dot(w, v)], to3: ([x, y]) => add(s.p, add(scl(u, x), scl(v, y))) };
@@ -1077,14 +1102,25 @@ function generalTool(k, chain, magnitude, mode, pSegs, rays = null) {
     let poly;
     if (mode === "fillet") {
       const ext = Math.min(0.4, Math.max(GENERAL_EXT_MIN, s.tilt));
-      poly = sectionPolygon(sols[i], magnitude, nArc, ext);
+      poly = sectionPolygon(sols[i], magnitude, nArc, ext, s.tilt);
       centres.push(to3(sols[i].C));
     } else {
       // ext > 0 selects profile2D's chord extension (2% of the chamfer past both
       // contacts, as the revolve chamfer does): it keeps the side walls corner→T in
       // the air instead of skimming the faceted flank, where the sag shift alone tucks
-      // them under the facets and strands slivers of flank as separate shells
+      // them under the facets and strands slivers of flank as separate shells. That 2%
+      // only clears facets tilted under ~0.02 rad from the averaged normal; past it the
+      // chord continues to tilt × magnitude in all (measured on 32–64-segment tubes,
+      // where the station tilt reaches 0.05–0.1 and the 2% walls stranded a sliver per
+      // facet). A station tilted under 0.02 keeps exactly profile2D's polygon, and the
+      // extension lies in the air for a cutter and in the material for a filler, so it
+      // moves no volume.
       poly = profile2D({ P: [0, 0], n1: p2(s.n1), n2: p2(s.n2), magnitude, mode, convex, segs: pSegs, ext: 1, nArc });
+      const more = Math.max(0, s.tilt - 0.02) * magnitude;
+      if (more > 0) {
+        const [corner, T1, T2] = poly, ux = T1[0] - T2[0], uy = T1[1] - T2[1], ul = Math.hypot(ux, uy);
+        poly = [corner, [T1[0] + (more * ux) / ul, T1[1] + (more * uy) / ul], [T2[0] - (more * ux) / ul, T2[1] - (more * uy) / ul]];
+      }
       const sag = magnitude * (1 - Math.cos(s.tilt)) + Math.min(GENERAL_SAG_PAD, 0.02 * magnitude);
       const [b1, b2] = p2(add(s.n1, s.n2)), bl = Math.hypot(b1, b2) || 1;
       poly = poly.map(([x, y], j) => (j === 0 && convex ? [x, y] : [x - (sag * b1) / bl, y - (sag * b2) / bl]));
@@ -2110,7 +2146,12 @@ function planChains(solid, mode, magnitude, edges, sharpDeg) {
     : ch.n1 && ch.n2 && dot(ch.n1, ch.n2) < -1 + 1e-6;
   effective = effective.filter((ch) => !knife(ch));
   arcs = arcs.filter((ch) => !knife(ch));
-  return { mesh, endTins, effective, arcs, horns, pivots };
+  // every general chain's smoothed stations, computed once: blendWork charges them,
+  // the station cap reads them, and generalTool builds its rings from them
+  const stations = new Map();
+  for (const ch of effective)
+    if (ch.kind === "general") stations.set(ch, smoothStations(generalStations(ch), ch.closed, magnitude));
+  return { mesh, endTins, effective, arcs, horns, pivots, stations };
 }
 
 // Work budget (Task 4b, 2026-10-02). A general chain admits sub-parts that used to
@@ -2134,25 +2175,46 @@ function planChains(solid, mode, magnitude, edges, sharpDeg) {
 // existed every such selection rerouted, so refusing one is never a regression,
 // while a selection of ordinary chains keeps its old behaviour whatever it costs.
 // The count is deterministic — never wall-clock — so a build's result, and the
-// solid cache keyed on it, cannot depend on how loaded the machine was.
+// solid cache keyed on it, cannot depend on how loaded the machine was. It does
+// scale with √(mesh triangles), and print tessellates finer than preview, so a part
+// just under the budget at preview can reroute at print: the same reroute class, with
+// OCCT's result correct, only slower.
+// A general chain is charged by its vertices, or by its smoothed station (ring)
+// count / STATION_ALLOWANCE when that is larger. The 0.1-per-vertex weight was fitted
+// on census chains carrying at most 11.4 stations per vertex (a knob; most carry 1–4),
+// so with the allowance at 16 the fitted charge already covers their rings and every
+// fixture and census work number is unchanged; a sliver-dominated path whose long
+// members take hundreds of interior stations each (generalStations) is charged for
+// its rings instead. Separately, a chain over MAX_GENERAL_STATIONS rings refuses
+// outright (`too many sections`): 16 384 is 4.5× the longest census chain (3 609
+// stations, a cap rim at print, which fillets OK), and bounds one chain's ring stack
+// at a few hundred thousand vertices.
 export const GENERAL_WORK_BUDGET = 195000;
+export const MAX_GENERAL_STATIONS = 16384;
+const STATION_ALLOWANCE = 16;
 const WORK_WEIGHT = { line: 1, arc: 5, planar: 11, corner: 4, cornerArc: 6, generalPoint: 0.1 };
-function blendWork({ mesh, effective, arcs, horns, pivots }) {
+function blendWork({ mesh, effective, arcs, horns, pivots, stations }) {
   let units = WORK_WEIGHT.corner * (horns.length + pivots.length) + WORK_WEIGHT.cornerArc * arcs.length;
-  let general = false;
+  let general = false, maxStations = 0;
   for (const ch of effective) {
-    if (ch.kind === "general") { general = true; units += WORK_WEIGHT.generalPoint * ch.points.length; }
-    else units += WORK_WEIGHT[ch.kind] ?? WORK_WEIGHT.line;
+    if (ch.kind === "general") {
+      general = true;
+      const m = stations.get(ch).length;
+      maxStations = Math.max(maxStations, m);
+      units += WORK_WEIGHT.generalPoint * Math.max(ch.points.length, m / STATION_ALLOWANCE);
+    } else units += WORK_WEIGHT[ch.kind] ?? WORK_WEIGHT.line;
   }
-  return { work: units * Math.sqrt(mesh.indices.length / 3), general };
+  return { work: units * Math.sqrt(mesh.indices.length / 3), general, maxStations };
 }
 
 // The budget estimate for a fillet/chamfer, without building anything: `work` is
 // what apply() compares against GENERAL_WORK_BUDGET when `general` is true. Throws
 // the same UnsupportedEdgeError apply would for an empty or unsupported selection.
-//   meshFilletWork(solid, { mode?, magnitude, edges?, sharpDeg? }) → { work, general, budget }
+//   meshFilletWork(solid, { mode?, magnitude, edges?, sharpDeg? })
+//     → { work, general, budget, maxStations, stationCap }
 export function meshFilletWork(solid, { mode = "fillet", magnitude, edges, sharpDeg = 20 } = {}) {
-  return { ...blendWork(planChains(solid, mode, magnitude, edges, sharpDeg)), budget: GENERAL_WORK_BUDGET };
+  return { ...blendWork(planChains(solid, mode, magnitude, edges, sharpDeg)), budget: GENERAL_WORK_BUDGET,
+    stationCap: MAX_GENERAL_STATIONS };
 }
 
 // `segs` is the kernel's per-circle CAP: it bounds the blend densities (blendSegs)
@@ -2167,8 +2229,10 @@ function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg
   if (!(magnitude > 0)) throw new Error(`mesh ${mode}: magnitude must be > 0`);
   const flankAt = segsAt ?? (() => segs);
   const plan = planChains(solid, mode, magnitude, edges, sharpDeg);
-  const { mesh, endTins, effective, arcs, horns, pivots } = plan;
-  const { work, general } = blendWork(plan);
+  const { mesh, endTins, effective, arcs, horns, pivots, stations } = plan;
+  const { work, general, maxStations } = blendWork(plan);
+  if (maxStations > MAX_GENERAL_STATIONS)
+    throw new UnsupportedEdgeError(`general chain: too many sections for the mesh ${mode} (${maxStations} stations > ${MAX_GENERAL_STATIONS})`);
   if (general && work > GENERAL_WORK_BUDGET)
     throw new UnsupportedEdgeError(`general chain: too complex for the mesh ${mode} (work ${Math.round(work)} > budget ${GENERAL_WORK_BUDGET})`);
   const pSegs = blendSegs(segs, magnitude);
@@ -2185,7 +2249,7 @@ function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg
       : ch.kind === "arc"
         ? [revolveTool(k, ch, magnitude, mode, segs, pSegs, flankAt)]
         : ch.kind === "general"
-          ? [generalTool(k, ch, magnitude, mode, pSegs, rays)]
+          ? [generalTool(k, ch, magnitude, mode, pSegs, rays, stations.get(ch))]
           : [prismTool(k, ch, magnitude, mode, segs, pSegs)];
   const cutters = [...effective, ...arcs].filter((ch) => ch.convex).flatMap(toolsFor);
   cutters.push(...horns.map((h) => cornerHornTool(k, h, magnitude, segs, flankAt)));
