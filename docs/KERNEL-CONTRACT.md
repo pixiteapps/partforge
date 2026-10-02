@@ -52,7 +52,7 @@ Its coverage and tolerance band are part of the contract:
   edges whose flanks are surfaces of revolution about the arc axis (bore rims,
   cylinder rims, the arcs where blends meet a face) — full circles included;
   planar-rim edges (an edge lying in a face plane at a constant wall angle — the
-  rims of any extruded outline); and, since 0.137, curved-face edges between two
+  rims of any extruded outline); and, since 0.138, curved-face edges between two
   curved faces (a boss meeting a tube, a cross hole's rim, the ellipse where a plane
   cuts a cylinder), blended with a per-vertex cross-section. Convex edges subtract a
   cutter; concave edges union a filler. A selection the mesh class cannot blend
@@ -950,7 +950,7 @@ now implement it (no stub, unlike the `OCCT_ONLY_OPS` ops).
 **v2 → v3** (partforge 0.62): `Solid.fillet` and `Solid.chamfer` are implemented
 natively on the mesh (core reference) kernel for straight and circular-arc edge
 chains (coverage has since grown inside v3 with no contract bump: planar-rim edges,
-then curved-face edges in 0.137 — see [Conformance classes](#conformance-classes)),
+then curved-face edges in 0.138 — see [Conformance classes](#conformance-classes)),
 and are **no longer probe-routed to OCCT** — `ROUTED_CAD_OPS` (`shell`) is
 the remaining probe-routing set, and unsupported edge classes reroute at runtime via
 `KernelCapabilityError`. Semantics change for existing parts: a part using fillet or

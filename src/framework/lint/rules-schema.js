@@ -331,6 +331,33 @@ export const SCHEMA_RULES = [
     },
   },
   {
+    // The legacy section shape (`advanced`, `toggles`, `features`) gives every entry a
+    // fixed widget and never reads `type`: a `{ type: "select", options }` there used to
+    // draw only two "unrecognised field" warnings and render as a SLIDER, which then
+    // wrote numbers into a key the build compared against strings. `control:` is read,
+    // but only knows the slider family. Either way the panel shows the wrong widget, so
+    // this is an error, not a warning.
+    id: "legacy-shape-widget",
+    run: ({ part }) => {
+      const LEGACY_CONTROLS = ["slider", "number", "text", "textarea"];
+      const out = [];
+      for (const { d, path, authored, container } of collectDescriptors(part)) {
+        if (authored || container) continue;
+        const renders = path.includes(".toggles[") ? "checkbox" : (LEGACY_CONTROLS.includes(d.control) ? d.control : "slider");
+        const hint = "Move the section to the `controls` shape (`controls: [...]`), where `type` picks the widget — select, radio, checkbox and readout exist only there.";
+        if (typeof d.type === "string")
+          out.push(err("legacy-shape-widget",
+            `\`type: "${d.type}"\` is not read in the legacy section shape — this control renders as a ${renders}`,
+            hint, `${path}.type`));
+        if (typeof d.control === "string" && !LEGACY_CONTROLS.includes(d.control))
+          out.push(err("legacy-shape-widget",
+            `\`control: "${d.control}"\` is not a legacy widget (legacy \`control\` takes ${LEGACY_CONTROLS.join(", ")})`,
+            hint, `${path}.control`));
+      }
+      return out;
+    },
+  },
+  {
     id: "unknown-control-type",
     run: ({ part }) => collectDescriptors(part)
       .filter(({ container, authored, d }) => authored && !container && typeof d.type === "string" && !WIDGET_TYPES.includes(d.type))
