@@ -42,6 +42,29 @@ describe("spine blend descriptor", () => {
     expect(checked).toBeGreaterThan(20);
     expect(worst).toBeLessThan(2);
   });
+  it("the cross hole's rim band shades with the analytic rolling-ball normal", () => {
+    const r = 1.5, out = FIXTURES.crossHole(k)._filletRaw(r);
+    const { positions, normals } = out.toMesh();
+    // the ball touches hole (axis Z, R=3) and tube (axis X, R=10) from inside both:
+    // its centre lies at distance 3+r from Z and 10−r from X (top rim, z > 0)
+    const spine = [];
+    for (let i = 0; i < 7200; i++) {
+      const ph = (2 * Math.PI * i) / 7200, x = (3 + r) * Math.cos(ph), y = (3 + r) * Math.sin(ph);
+      spine.push([x, y, Math.sqrt((10 - r) ** 2 - y * y)]);
+    }
+    let checked = 0, worst = 0;
+    for (let i = 0; i < positions.length; i += 3) {
+      const p = [positions[i], positions[i + 1], positions[i + 2]];
+      const dTube = Math.hypot(p[1], p[2]), dHole = Math.hypot(p[0], p[1]);
+      if (p[2] < 0 || dTube > 10 - 0.2 * r || dHole < 3 + 0.2 * r || dTube < 10 - r || dHole > 3 + r) continue;
+      let best = Infinity, c = null;
+      for (const s of spine) { const dd = (s[0] - p[0]) ** 2 + (s[1] - p[1]) ** 2 + (s[2] - p[2]) ** 2; if (dd < best) { best = dd; c = s; } }
+      worst = Math.max(worst, deg([normals[i], normals[i + 1], normals[i + 2]], unit([p[0] - c[0], p[1] - c[1], p[2] - c[2]])));
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(20);
+    expect(worst).toBeLessThan(2.5);
+  });
   it("draws no stray lines across the tee's and cross hole's bands", () => {
     const r = 1;
     const bandLen = (out, inBand) => {
