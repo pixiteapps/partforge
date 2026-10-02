@@ -19,8 +19,9 @@ const cache = new Map();   // source → Promise<Uint8Array> (raw bytes)
 // source → { units, shapes }. The bytes memo above stops a refetch; this stops a re-PARSE
 // (UTF-8 decode + JSON.parse + validation + a bbox recomputation that tessellates
 // every contour). Without it every regen of a part with artwork redoes all of that.
-// Fonts solve the same problem with kernel._fontsBySource (jobs.js:206-212) and
-// imports with a digest comparison; this is the third pipeline's version of it.
+// Fonts solve the same problem with kernel._fontsBySource (jobs.js:277-312), a bounded
+// LRU keyed by source and the only holder of a parsed font (the resolver's memo is
+// transient); imports use a digest comparison. This is the third pipeline's version.
 // Keyed on the SOURCE, not the name: one worker outlives many parts, and a name is
 // not an identity. Only successes are cached — a parse failure must throw again
 // under the next name that declares it, with that name in the message.

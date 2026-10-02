@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { expect, test, vi } from "vitest";
-import { openFontPicker } from "../../../src/framework/panel/font-picker.js";
+import { openFontPicker, VARIANT_FACE_BUDGET } from "../../../src/framework/panel/font-picker.js";
 import { buildControls } from "../../../src/framework/panel/render.js";
 
 const fam = (family, variants, over = {}) => ({
@@ -23,7 +23,7 @@ function open(over = {}) {
 }
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-test("a single-variant family commits on row click without opening variants", async () => {
+test("a single-variant family picks on row click without opening variants", async () => {
   const { params } = open();
   await flush();
   const row = [...document.querySelectorAll(".pk-row")].find((r) => r.textContent.startsWith("Anton"));
@@ -43,7 +43,7 @@ test("a multi-variant family opens the variants pane", async () => {
   expect(params.face).toContain("/Montserrat/");        // default variant already committed
 });
 
-test("picking a weight commits and STAYS in the variants pane", async () => {
+test("picking a weight picks and STAYS in the variants pane", async () => {
   const { params } = open();
   await flush();
   [...document.querySelectorAll(".pk-row")].find((r) => r.textContent.startsWith("Montserrat")).click();
@@ -171,6 +171,116 @@ test("each family's menu face is loaded once, and only from an allowed host", as
     await flush();
     expect(ff.seen.map((s) => s.family)).toEqual(["Anton", "Montserrat", "Roboto"]);
     expect(ff.seen.every((s) => s.src.includes("fonts.gstatic.com"))).toBe(true);
+  } finally { ff.restore(); }
+});
+
+test("closing the picker deletes the faces it added, except the selected family's menu face", async () => {
+  const ff = withFontFace((f) => Promise.resolve(f));
+  const deleted = [];
+  document.fonts.delete = (face) => { deleted.push(face.family); return true; };
+  try {
+    const { handle } = open();                     // params.face is a Roboto variant
+    await flush(); await flush();
+    [...document.querySelectorAll(".pk-row")].find((r) => r.textContent.startsWith("Roboto")).click();
+    await flush();
+    handle.close();
+    expect(deleted).toContain("Roboto 400");      // the selected family's VARIANT faces do go
+    expect(deleted).toContain("Anton");
+    expect(deleted).toContain("Montserrat");
+    expect(deleted).not.toContain("Roboto");      // the widget label renders in it
+  } finally { ff.restore(); }
+});
+
+test("a second picker session adopts the kept menu face instead of creating another", async () => {
+  const ff = withFontFace((f) => Promise.resolve(f));
+  const deleted = [];
+  document.fonts.delete = (face) => { deleted.push(face.family); return true; };
+  try {
+    const first = open();                          // selected family: Roboto
+    await flush(); await flush();
+    first.handle.close();
+    const robotoMenus = () => ff.seen.filter((s) => s.family === "Roboto").length;
+    const afterFirst = robotoMenus();              // 0 or 1: module state may carry a face from an earlier test
+    const second = open();
+    await flush(); await flush();
+    expect(robotoMenus()).toBe(afterFirst);        // no second FontFace for Roboto
+    second.handle.close();
+    expect(deleted).not.toContain("Roboto");       // still selected, still kept
+  } finally { ff.restore(); }
+});
+
+test("a kept menu face is deleted by the next session once the selection has moved", async () => {
+  const ff = withFontFace((f) => Promise.resolve(f));
+  const deleted = [];
+  document.fonts.delete = (face) => { deleted.push(face.family); return true; };
+  const rowOf = (n) => [...document.querySelectorAll(".pk-row")].find((r) => r.textContent.startsWith(n));
+  try {
+    const first = open();                          // Roboto selected
+    await flush(); await flush();
+    first.handle.close();
+    expect(deleted).not.toContain("Roboto");
+    const second = open();
+    await flush(); await flush();
+    rowOf("Anton").click(); await flush();
+    second.handle.close();
+    expect(deleted).toContain("Roboto");           // the adopted face went with the old selection
+    expect(deleted.filter((d) => d === "Anton").length).toBe(1);   // only session 1's non-selected copy; session 2's is kept
+  } finally { ff.restore(); }
+});
+
+test("opening a many-weight family loads the selected weight plus at most VARIANT_FACE_BUDGET others", async () => {
+  const weights = ["100", "200", "300", "400", "500", "600", "700", "800", "900", "100i", "400i", "700i"];
+  const big = fam("Big", weights);
+  const ff = withFontFace((f) => Promise.resolve(f));
+  try {
+    const cat = { search: vi.fn(async () => [big]) };
+    open({ fontCatalog: cat });
+    await flush();
+    document.querySelector(".pk-row").click();
+    await flush();
+    const variantLoads = ff.seen.filter((f) => f.family.startsWith("Big "));
+    expect(variantLoads.length).toBe(1 + VARIANT_FACE_BUDGET);
+    expect(variantLoads[0].family).toBe("Big 400");                    // the selected/default weight first
+  } finally { ff.restore(); }
+});
+
+test("a face that finishes loading after close is never added to document.fonts", async () => {
+  const resolvers = [];
+  const ff = withFontFace((f) => new Promise((r) => resolvers.push(() => r(f))));
+  const added = [];
+  document.fonts.add = (f) => added.push(f.family);
+  try {
+    const { handle } = open();
+    await flush();
+    handle.close();
+    resolvers.forEach((r) => r());
+    await flush();
+    expect(added).not.toContain("Anton");
+    expect(added).not.toContain("Montserrat");
+  } finally { ff.restore(); }
+});
+
+test("the variant budget is per family opened; the previous family's variant faces are released", async () => {
+  const weights = ["100", "200", "300", "400", "500", "600", "700", "800", "900"];
+  const cat = { search: vi.fn(async () => [fam("Aa", weights), fam("Bb", weights)]) };
+  const ff = withFontFace((f) => Promise.resolve(f));
+  const deleted = [];
+  document.fonts.delete = (f) => { deleted.push(f.family); return true; };
+  const rowOf = (n) => [...document.querySelectorAll(".pk-row")].find((r) => r.textContent.startsWith(n));
+  const loads = (n) => ff.seen.filter((f) => f.family.startsWith(n + " ")).length;
+  try {
+    open({ fontCatalog: cat });
+    await flush();
+    rowOf("Aa").click(); await flush();
+    expect(loads("Aa")).toBe(1 + VARIANT_FACE_BUDGET);
+    document.querySelector(".pk-back")?.click();
+    rowOf("Bb").click(); await flush();
+    expect(deleted.filter((d) => d.startsWith("Aa ")).length).toBe(1 + VARIANT_FACE_BUDGET);
+    expect(deleted.some((d) => d === "Aa")).toBe(false);          // menu faces stay
+    expect(loads("Bb")).toBe(1 + VARIANT_FACE_BUDGET);
+    document.querySelector(".pk-back")?.click();
+    rowOf("Aa").click(); await flush();
+    expect(loads("Aa")).toBe(2 * (1 + VARIANT_FACE_BUDGET));       // reloaded
   } finally { ff.restore(); }
 });
 
@@ -306,4 +416,22 @@ test("dispose() closes an open picker instead of leaking its Escape handler", as
     expect(document.querySelector(".picker")).toBeNull();
     expect(keydown.count(), "the picker's document listener must be unhooked too").toBe(0);
   } finally { keydown.restore(); }
+});
+
+test("onClose fires exactly once, after the picker leaves the DOM", async () => {
+  const onClose = vi.fn(() => expect(document.querySelector(".picker")).toBeNull());
+  const { handle } = open({ onClose });
+  await flush();
+  handle.close();
+  handle.close();
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test("a superseded picker still reports its close", async () => {
+  const first = vi.fn();
+  open({ onClose: first });
+  await flush();
+  const { handle } = open({ onClose: vi.fn() });   // re-open supersedes the first
+  expect(first).toHaveBeenCalledTimes(1);
+  handle.close();
 });
