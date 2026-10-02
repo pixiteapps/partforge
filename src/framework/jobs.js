@@ -300,11 +300,16 @@ export async function handle(kernel, part, msg, post, opts = {}) {
         }
         // Bounded (spec 2026-10-01 §3): auditioning fonts in the picker
         // otherwise kept every face ever tried, per kernel, for the worker's
-        // life. Map order is recency (re-inserted on use above), and this
-        // build's own sources are the newest, so the bound never evicts one a
-        // build needs.
-        while (kernel._fontsBySource.size > FONT_SOURCE_CACHE_MAX) {
-          kernel._fontsBySource.delete(kernel._fontsBySource.keys().next().value);
+        // life. Map order is recency (re-inserted on use above), so eviction
+        // takes the oldest. A source THIS build declared is never evicted — a
+        // part declaring more than the bound would otherwise evict its own
+        // fonts and refetch/reparse them on every build — so the bound is
+        // max(FONT_SOURCE_CACHE_MAX, this build's distinct sources).
+        const keep = new Set(Object.values(declared));
+        const limit = Math.max(FONT_SOURCE_CACHE_MAX, keep.size);
+        for (const src of kernel._fontsBySource.keys()) {
+          if (kernel._fontsBySource.size <= limit) break;
+          if (!keep.has(src)) kernel._fontsBySource.delete(src);
         }
       }
       // Drop every name this build's declaration does not supply. `_fonts` is
