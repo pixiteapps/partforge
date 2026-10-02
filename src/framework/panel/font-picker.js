@@ -52,7 +52,7 @@ const listVariant = (f) =>
 // through here.
 let openPicker = null;
 
-export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPicked }) {
+export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPicked, onClose }) {
   // Takeover: the picker covers the rail on desktop and the single visible pane
   // below the narrow breakpoint. One layout for both widths (spec §6).
   const host = anchor?.closest?.(".pf-rail") ?? anchor?.parentElement ?? document.body;
@@ -380,6 +380,8 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
     document.removeEventListener("keydown", onKey);
     picker.remove();
     if (openPicker === handle) openPicker = null;
+    // After removal, so a host reacting to the close sees the rail as it will be.
+    try { onClose?.(); } catch { /* host's problem, not the picker's */ }
   }
   function onKey(ev) {
     if (ev.key !== "Escape") return;

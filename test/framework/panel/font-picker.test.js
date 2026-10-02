@@ -23,7 +23,7 @@ function open(over = {}) {
 }
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-test("a single-variant family commits on row click without opening variants", async () => {
+test("a single-variant family picks on row click without opening variants", async () => {
   const { params } = open();
   await flush();
   const row = [...document.querySelectorAll(".pk-row")].find((r) => r.textContent.startsWith("Anton"));
@@ -43,7 +43,7 @@ test("a multi-variant family opens the variants pane", async () => {
   expect(params.face).toContain("/Montserrat/");        // default variant already committed
 });
 
-test("picking a weight commits and STAYS in the variants pane", async () => {
+test("picking a weight picks and STAYS in the variants pane", async () => {
   const { params } = open();
   await flush();
   [...document.querySelectorAll(".pk-row")].find((r) => r.textContent.startsWith("Montserrat")).click();
@@ -306,4 +306,22 @@ test("dispose() closes an open picker instead of leaking its Escape handler", as
     expect(document.querySelector(".picker")).toBeNull();
     expect(keydown.count(), "the picker's document listener must be unhooked too").toBe(0);
   } finally { keydown.restore(); }
+});
+
+test("onClose fires exactly once, after the picker leaves the DOM", async () => {
+  const onClose = vi.fn(() => expect(document.querySelector(".picker")).toBeNull());
+  const { handle } = open({ onClose });
+  await flush();
+  handle.close();
+  handle.close();
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test("a superseded picker still reports its close", async () => {
+  const first = vi.fn();
+  open({ onClose: first });
+  await flush();
+  const { handle } = open({ onClose: vi.fn() });   // re-open supersedes the first
+  expect(first).toHaveBeenCalledTimes(1);
+  handle.close();
 });
