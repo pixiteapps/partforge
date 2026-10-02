@@ -77,13 +77,19 @@ export function fitPoseToPoints(view, points, { fov, aspect = 1, fill }) {
   const t = tanH * fill;
   const n = points.length - (points.length % 3);
 
+  // Per point: [depth, x, y] = r·d, r·right, r·up for r = p − target. Scalar
+  // and allocation-free — this runs over every vertex of the part, per view.
+  const project = (target, fn) => {
+    for (let i = 0; i < n; i += 3) {
+      const rx = points[i] - target[0], ry = points[i + 1] - target[1], rz = points[i + 2] - target[2];
+      fn(rx * d[0] + ry * d[1] + rz * d[2], rx * right[0] + ry * right[1] + rz * right[2], rx * up[0] + ry * up[1] + rz * up[2]);
+    }
+  };
   const distance = (target) => {
     let D = 0;
-    for (let i = 0; i < n; i += 3) {
-      const r = [points[i] - target[0], points[i + 1] - target[1], points[i + 2] - target[2]];
-      const depth = dot(r, d);
-      D = Math.max(D, depth + Math.abs(dot(r, right)) / (t * aspect), depth + Math.abs(dot(r, up)) / t);
-    }
+    project(target, (depth, x, y) => {
+      D = Math.max(D, depth + Math.abs(x) / (t * aspect), depth + Math.abs(y) / t);
+    });
     return D;
   };
 
@@ -94,14 +100,13 @@ export function fitPoseToPoints(view, points, { fov, aspect = 1, fill }) {
     // the eye plane (only a line along the view axis puts one there) has no
     // projection and is left out rather than poisoning the bbox with Infinity.
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (let i = 0; i < n; i += 3) {
-      const r = [points[i] - target[0], points[i + 1] - target[1], points[i + 2] - target[2]];
-      const z = D - dot(r, d);
-      if (!(z > 1e-12)) continue;
-      const nx = dot(r, right) / (z * tanH * aspect), ny = dot(r, up) / (z * tanH);
+    project(target, (depth, x, y) => {
+      const z = D - depth;
+      if (!(z > 1e-12)) return;
+      const nx = x / (z * tanH * aspect), ny = y / (z * tanH);
       if (nx < minX) minX = nx; if (nx > maxX) maxX = nx;
       if (ny < minY) minY = ny; if (ny > maxY) maxY = ny;
-    }
+    });
     if (!(minX <= maxX)) break;
     const sx = ((minX + maxX) / 2) * D * tanH * aspect, sy = ((minY + maxY) / 2) * D * tanH;
     target = [0, 1, 2].map((i) => target[i] + right[i] * sx + up[i] * sy);
