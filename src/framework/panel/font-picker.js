@@ -53,7 +53,8 @@ const listVariant = (f) =>
 let openPicker = null;
 
 // At most this many weights beyond the selected one load their real face per
-// picker. A COUNT, not bytes: the cloud catalog reports `bytes: 0` for every
+// family opened (the previous family's variant faces are released when another
+// opens, so resident variant faces stay <= 1 + this). A COUNT, not bytes: the cloud catalog reports `bytes: 0` for every
 // variant, so a byte budget would never bind (spec 2026-10-01 §3). Rows past
 // the budget render in the menu face with the weight synthesized.
 export const VARIANT_FACE_BUDGET = 6;
@@ -156,7 +157,23 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
 
   const addedFaces = [];           // every FontFace this picker put in document.fonts
   let variantBudget = VARIANT_FACE_BUDGET;
-  const track = (loaded) => { document.fonts.add(loaded); addedFaces.push(loaded); };
+  const variantList = [];          // {face, url} for the ONE family whose variants are open
+  let variantFamily = null;
+  // A face that finishes loading after close() would otherwise land in
+  // document.fonts with nobody left to delete it. The selected family's menu
+  // face is the one exception: it is kept on close by design.
+  const track = (loaded) => {
+    if (closed && loaded.family !== selFamily) return;
+    document.fonts.add(loaded);
+    if (!closed) addedFaces.push(loaded);
+  };
+  function releaseVariantFaces() {
+    for (const { face, url } of variantList) {
+      variantFaces.delete(url);
+      try { document.fonts.delete?.(face); } catch { /* already gone */ }
+    }
+    variantList.length = 0;
+  }
 
   function settle(family) {
     faceSettled.add(family);
@@ -198,7 +215,11 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
     variantFaces.add(v.url);
     let face;
     try { face = new FontFace(`${family} ${v.variant}`, `url(${v.url})`); } catch { return; }
-    face.load().then((loaded) => track(loaded)).catch(() => {});
+    face.load().then((loaded) => {
+      if (closed || variantFamily !== family) { variantFaces.delete(v.url); return; }
+      document.fonts.add(loaded);
+      variantList.push({ face: loaded, url: v.url });
+    }).catch(() => {});
   }
 
   // ── the list ────────────────────────────────────────────────────────────
@@ -351,6 +372,11 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
 
   function openVariants(f) {
     openFamily = f;
+    if (variantFamily !== f.family) {
+      releaseVariantFaces();
+      variantFamily = f.family;
+      variantBudget = VARIANT_FACE_BUDGET;
+    }
     vtitle.textContent = f.family;
     vlist.textContent = "";
     for (const v of f.variants) {
@@ -408,6 +434,7 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
         try { document.fonts.delete(face); } catch { /* already gone */ }
       }
     }
+    releaseVariantFaces();
     picker.remove();
     if (openPicker === handle) openPicker = null;
     // After removal, so a host reacting to the close sees the rail as it will be.

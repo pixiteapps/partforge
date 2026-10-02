@@ -181,7 +181,10 @@ test("closing the picker deletes the faces it added, except the selected family'
   try {
     const { handle } = open();                     // params.face is a Roboto variant
     await flush(); await flush();
+    [...document.querySelectorAll(".pk-row")].find((r) => r.textContent.startsWith("Roboto")).click();
+    await flush();
     handle.close();
+    expect(deleted).toContain("Roboto 400");      // the selected family's VARIANT faces do go
     expect(deleted).toContain("Anton");
     expect(deleted).toContain("Montserrat");
     expect(deleted).not.toContain("Roboto");      // the widget label renders in it
@@ -201,6 +204,46 @@ test("opening a many-weight family loads the selected weight plus at most VARIAN
     const variantLoads = ff.seen.filter((f) => f.family.startsWith("Big "));
     expect(variantLoads.length).toBe(1 + VARIANT_FACE_BUDGET);
     expect(variantLoads[0].family).toBe("Big 400");                    // the selected/default weight first
+  } finally { ff.restore(); }
+});
+
+test("a face that finishes loading after close is never added to document.fonts", async () => {
+  const resolvers = [];
+  const ff = withFontFace((f) => new Promise((r) => resolvers.push(() => r(f))));
+  const added = [];
+  document.fonts.add = (f) => added.push(f.family);
+  try {
+    const { handle } = open();
+    await flush();
+    handle.close();
+    resolvers.forEach((r) => r());
+    await flush();
+    expect(added).not.toContain("Anton");
+    expect(added).not.toContain("Montserrat");
+  } finally { ff.restore(); }
+});
+
+test("the variant budget is per family opened; the previous family's variant faces are released", async () => {
+  const weights = ["100", "200", "300", "400", "500", "600", "700", "800", "900"];
+  const cat = { search: vi.fn(async () => [fam("Aa", weights), fam("Bb", weights)]) };
+  const ff = withFontFace((f) => Promise.resolve(f));
+  const deleted = [];
+  document.fonts.delete = (f) => { deleted.push(f.family); return true; };
+  const rowOf = (n) => [...document.querySelectorAll(".pk-row")].find((r) => r.textContent.startsWith(n));
+  const loads = (n) => ff.seen.filter((f) => f.family.startsWith(n + " ")).length;
+  try {
+    open({ fontCatalog: cat });
+    await flush();
+    rowOf("Aa").click(); await flush();
+    expect(loads("Aa")).toBe(1 + VARIANT_FACE_BUDGET);
+    document.querySelector(".pk-back")?.click();
+    rowOf("Bb").click(); await flush();
+    expect(deleted.filter((d) => d.startsWith("Aa ")).length).toBe(1 + VARIANT_FACE_BUDGET);
+    expect(deleted.some((d) => d === "Aa")).toBe(false);          // menu faces stay
+    expect(loads("Bb")).toBe(1 + VARIANT_FACE_BUDGET);
+    document.querySelector(".pk-back")?.click();
+    rowOf("Aa").click(); await flush();
+    expect(loads("Aa")).toBe(2 * (1 + VARIANT_FACE_BUDGET));       // reloaded
   } finally { ff.restore(); }
 });
 
