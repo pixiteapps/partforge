@@ -1157,8 +1157,24 @@ function chamferSection(rays, flat, frame, s, d) {
     return { F: { ...F, kap }, T, a, N: dot2(N, F.n) < 0 ? [-N[0], -N[1]] : N };
   });
   const [A, B] = flanks;
+  // The step at each contact (CONTACT_MU) is a face of its own between the wall and
+  // the chamfer face. Leaving the contact along the wall normal, it meets the wall at
+  // 90° but the chamfer face at only 90° − α, where α is the chord's angle to the wall
+  // at that contact: past α ≈ 55° that is inside the 35° crease angle, and the step
+  // (a few µm tall wherever the fold allowance lifts the contact) shaded the chamfer
+  // face's contact vertices up to ~21° off. Leaning the step toward the edge by α/2
+  // puts it 90° − α/2 ≥ 45° from BOTH faces, whatever its height. S is that lean, in
+  // contactPolygon's convention (it scales by sgn like N).
+  const S = [A, B].map((Fk, kk) => {
+    const T = Fk.T, To = kk === 0 ? B.T : A.T, N = Fk.N;
+    let w = [N[1], -N[0]];
+    if (dot2(w, Fk.F.f) < 0) w = [-w[0], -w[1]]; // along the wall, away from the edge
+    const c = norm2([To[0] - T[0], To[1] - T[1]]);
+    const alpha = Math.acos(clamp1(-dot2(c, w))), beta = alpha / 2;
+    return norm2([Math.cos(beta) * N[0] - sgn * Math.sin(beta) * w[0], Math.cos(beta) * N[1] - sgn * Math.sin(beta) * w[1]]);
+  });
   // no ball: C, m1 and phi only feed the arc's interior, which a chord does not have
-  return { ...flat, C: [0, 0], T1: A.T, T2: B.T, a1: A.a, a2: B.a, F1: A.F, F2: B.F, m1: A.N, phi: 0, N: [A.N, B.N], sgn };
+  return { ...flat, C: [0, 0], T1: A.T, T2: B.T, a1: A.a, a2: B.a, F1: A.F, F2: B.F, m1: A.N, phi: 0, N: [A.N, B.N], S, sgn };
 }
 
 // The fillet (or chamfer) polygon ending ON the wall. Layout: corner point (delta past the edge
@@ -1199,12 +1215,14 @@ const FLANK_SAMPLES = 4;
 // For a chamfer that step is what keeps the wall's contact vertices off the chamfer
 // face — at a face-to-wall angle under the wall's 35° crease (down to 27° on the
 // boss-on-dome junction) they would otherwise smooth into it and streak the wall
-// (14% of the boss wall before) — and it must stay well over the shading weld
+// (14% of the boss wall before) — so it must stay well over the shading weld
 // (creased-normals.js SHADE_WELD, 5e-5 mm; 2e-4·r passes it for r ≥ 0.25 mm). The
-// step's own triangles are sub-MIN_FACE, and creasedNormals leaves those out of the
-// vertex-normal sum; were they counted, they would tilt the chamfer face's contact
-// vertices up to ~21° (41% of the cross hole's chamfer faces). Re-run
-// test/mesh-fillet-general-shading.test.js after changing either.
+// step is a face of its own, up to the fold allowance (CONTACT_MU_MAX·r) tall, so it
+// can be well over creased-normals' SHADE_SLIVER: a chamfer's step leans toward the
+// edge (chamferSection's S) to meet both the wall and the chamfer face at ≥ 45°, past
+// the crease angle, or it tilts the face's contact vertices up to ~21° (41% of the
+// cross hole's chamfer faces). Re-run test/mesh-fillet-general-shading.test.js after
+// changing either.
 const CONTACT_MU = 2e-4;
 const CONTACT_STOP = 3e-3;
 // The fold allowance is a worst-case bound (the ridge midway between the two
@@ -1217,7 +1235,7 @@ const CONTACT_STOP = 3e-3;
 // number moves.
 const CONTACT_MU_MAX = 0.05;
 function contactPolygon(sol, magnitude, nArc, tilt, ends) {
-  const { C, a1, a2, m1, phi, F1, F2, bis, sgn, N } = sol;
+  const { C, a1, a2, m1, phi, F1, F2, bis, sgn, N } = sol, S = sol.S ?? N;
   const r = magnitude, delta = 0.02 * magnitude;
   const onFlank = (F, a, lift) => {
     let b = 0;
@@ -1234,8 +1252,8 @@ function contactPolygon(sol, magnitude, nArc, tilt, ends) {
     const nv = rot2(m1, (s2 * span * i) / nArc);
     arc.push([C[0] + sgn * rEq * nv[0], C[1] + sgn * rEq * nv[1]]);
   }
-  return { pts: [[sgn * delta * bis[0], sgn * delta * bis[1]], ...side(F1, a1), above(ends[0], N[0], a1), ends[0],
-    ...arc, ends[1], above(ends[1], N[1], a2), ...side(F2, a2).reverse()], arcStart: FLANK_SAMPLES + 2 };
+  return { pts: [[sgn * delta * bis[0], sgn * delta * bis[1]], ...side(F1, a1), above(ends[0], S[0], a1), ends[0],
+    ...arc, ends[1], above(ends[1], S[1], a2), ...side(F2, a2).reverse()], arcStart: FLANK_SAMPLES + 2 };
 }
 
 // General-chain tool: one ring per (smoothed) station, each the section in the plane

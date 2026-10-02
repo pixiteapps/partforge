@@ -146,7 +146,7 @@ describe("the boss wall beside a general-chain band shades smooth", () => {
   // normals 18–31° off (inside the 35° crease), and an unweighted vertex-normal sum
   // gave each a full vote — 12.5% (fillet) / 25% (chamfer) of the plain cylinder's
   // wall and 9.4% / 25.8% of the dome boss's shaded > 5° off. creasedNormals now
-  // leaves sub-MIN_FACE triangles out of the sum.
+  // leaves triangles under SHADE_SLIVER (1e-3 mm) out of the sum.
   for (const mode of ["fillet", "chamfer"]) {
     it(`domeBoss ${mode} 1.5, every edge: < 1% of the boss wall shades > 5° off`, () => {
       const base = FIXTURES.domeBoss(k);
@@ -163,11 +163,13 @@ describe("the boss wall beside a general-chain band shades smooth", () => {
 // the stations do (a few degrees per station on these fixtures), so a vertex normal on
 // it should sit within a few degrees of its own triangle's facet normal — that facet
 // is the exact reference wherever the face is flat, and the 5° bar leaves room for
-// the station-to-station turn. Before creasedNormals left sub-MIN_FACE triangles out
-// of the sum, the sub-µm step at each contact (mesh-fillet.js CONTACT_MU, where the
-// face meets the wall at > ~55°) got a full vote at the face's contact vertices:
+// the station-to-station turn. The step at each contact (mesh-fillet.js CONTACT_MU)
+// is a face of its own, up to a few µm tall; leaving the contact along the wall
+// normal it met the chamfer face at 90° − α (α the chord's angle to the wall, > ~55°
+// here), inside the crease, and got a full vote at the face's contact vertices:
 // 36.7 mm² of the cross hole's two faces (41%, worst 21.5°) and 36.6 mm² of the slant
-// cut's (28%, worst 20°) shaded > 5° off their facets.
+// cut's (28%, worst 20°) shaded > 5° off their facets. It now leans to meet both
+// faces at ≥ 45°.
 const triAt = (P, t) => [0, 1, 2].map((j) => [P[(t + j) * 3], P[(t + j) * 3 + 1], P[(t + j) * 3 + 2]]);
 const facet = (v) => {
   const u = [0, 1, 2].map((i) => v[1][i] - v[0][i]), w = [0, 1, 2].map((i) => v[2][i] - v[0][i]);
