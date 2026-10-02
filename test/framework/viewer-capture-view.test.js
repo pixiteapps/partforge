@@ -17,6 +17,7 @@ const state = vi.hoisted(() => ({
   lastCamera: null,
   disposeCounts: null,
   disposedMaterials: null,
+  shadow: null,
 }));
 
 const OriginalResizeObserver = globalThis.ResizeObserver;
@@ -43,7 +44,16 @@ vi.mock("three", async (importOriginal) => {
       state.lastCamera = camera;
       state.disposeCounts = { geo: 0, edges: 0 };
       state.disposedMaterials = new Set();
+      state.shadow = null;
       scene.traverse((o) => {
+        // The product shot's contact-shadow plane: the one mesh with an alphaMap.
+        if (o.isMesh && o.material?.alphaMap) {
+          const sh = state.shadow = { geo: false, mat: false, tex: false };
+          o.geometry.addEventListener("dispose", () => { sh.geo = true; });
+          o.material.addEventListener("dispose", () => { sh.mat = true; });
+          o.material.alphaMap.addEventListener("dispose", () => { sh.tex = true; });
+          return;
+        }
         if (o.isLineSegments2) return; // edge lines (LineSegments2 extends Mesh) — counted via their surface mesh's userData.edges
         if (!o.isMesh || !o.geometry) return;
         o.geometry.addEventListener("dispose", () => { state.disposeCounts.geo += 1; });
@@ -95,6 +105,7 @@ beforeEach(() => {
   state.lastCamera = null;
   state.disposeCounts = null;
   state.disposedMaterials = null;
+  state.shadow = null;
   globalThis.ResizeObserver = class {
     observe() {}
     disconnect() {}
@@ -286,5 +297,31 @@ test("renderMeshPayloads renders at the live camera's fov, not a narrower one", 
   expect(state.lastCamera.fov).toBe(viewer.camera.fov); // 45, matching captureViews/captureCurrent
   expect(state.lastCamera.fov).toBe(45);
 
+  viewer.dispose();
+});
+
+// The default style is the product shot, which adds a contact-shadow plane to the
+// temp scene; its geometry, material and alpha texture must all be released.
+const solidPayload = (name) => ({
+  name,
+  // a closed tetrahedron, so the shadow mask has real area to project
+  positions: new Float32Array([0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2]),
+  normals: new Float32Array(12),
+  indices: new Uint32Array([0, 2, 1, 0, 1, 3, 1, 2, 3, 0, 3, 2]),
+  triangles: 4,
+});
+
+test("the default (thumbnail) style adds a shadow plane and disposes all of it", () => {
+  const viewer = newViewer();
+  viewer.renderMeshPayloads([solidPayload("a")], { angle: "iso", size: 64 });
+  expect(state.shadow).not.toBeNull(); // the plane was in the rendered scene
+  expect(state.shadow).toEqual({ geo: true, mat: true, tex: true }); // and released afterwards
+  viewer.dispose();
+});
+
+test("no shadow plane when the camera is below the floor", () => {
+  const viewer = newViewer();
+  viewer.renderMeshPayloads([solidPayload("a")], { angle: "bottom", size: 64 });
+  expect(state.shadow).toBeNull();
   viewer.dispose();
 });
