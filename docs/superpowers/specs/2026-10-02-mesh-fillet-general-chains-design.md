@@ -279,3 +279,46 @@ Result:
   the fix.
 
 Tests: `test/mesh-fillet-general-lines.test.js` and the cross-hole shading test.
+
+### Chamfers: setbacks on the wall (2026-10-02)
+
+Chamfers had kept `profile2D`'s section, whose setbacks sit on each flank's tangent
+line at the edge. On a curved wall that point stands off the facets by about d²κ/2.
+A filler's side wall along that line then adds a lens of material over the wall,
+from where the line leaves the facets out to the setback, and the overlay draws
+every edge of it. On the boss-on-dome junction at d = 1.5 the boss-side line was
+44 mm against a 19.75 mm setback curve, with 137 segments running across the
+junction.
+
+The chamfer section now uses the fillet's layout:
+
+- Each setback is the wall point at chord distance d from the edge, in the section
+  plane. It is found by walking the wall from the edge in four probed steps, then
+  sliding along the wall until the chord is d. A walk that misses (1 in ~500
+  stations on the fixtures) keeps the tangent-line setback.
+- The flank is modelled as the circle tangent to it at the edge through the setback.
+  The section is then laid out, snapped and margined exactly as a fillet's
+  (`contactPolygon`), with the straight chord in place of the arc.
+
+| d = 1.5 | Before | After |
+|---|---|---|
+| Dome boss, boss / dome line vs exact | 44.0 / 60.0 mm vs 19.75 / 28.99, 137 across | 19.67 / 28.80, 0 across |
+| Tee, boss / tube | 31.4 / 72.0 mm vs 31.97 / 41.40 | 31.87 / 41.31 |
+| Cross hole, hole / tube | 18.46 / 27.77 mm vs 18.96 / 28.39, up to 83 µm off | 18.89 / 28.32, ≤ 8 µm off |
+
+- Chamfer volumes move toward OCCT (fine tee d = 2: −2.0% → −0.1%). Genus is
+  unchanged at preview, print and coarse tessellation. Fillets are unchanged.
+- General chamfers now build the probe grid too. They take 1.3–1.9× longer, still
+  well under the fillets' time.
+- The boss-wall shading streaks next to the chamfer junction are gone with it. The
+  chamfer face meets the boss wall at as little as 27°, under the wall's 35° crease
+  angle, and the overlay's blend↔base rule smoothed the wall's junction vertices
+  into it. The setback is now a few hundred nm off the wall, at the end of a steep
+  step, so the wall's vertices no longer touch the chamfer face.
+
+Still open: the streaks that remain on the boss wall come from the TOP-RIM blend
+(the existing revolve tool), not the general chain, and are the same on main. That
+cut leaves sub-µm sliver triangles spanning the wall strips. Their normals are
+18–31° off, inside the crease angle, and `creasedNormals` gives each one a full,
+unweighted vote at the strip's vertices. A plain cylinder with a top-rim fillet
+shows 12.5% of its wall area more than 5° off (chamfer 25%).

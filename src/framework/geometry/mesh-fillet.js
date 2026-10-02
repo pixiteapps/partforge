@@ -788,15 +788,6 @@ function circumcentre(a, b, c) {
   return add(a, scl(t, 1 / (2 * ww)));
 }
 
-// Grazing burial for general chamfers (see generalTool): GENERAL_SAG_PAD is the
-// chamfer's burial pad beyond the facet-tilt sagitta (mm, capped at 2% of the
-// chamfer). On the general fixtures (test/mesh-fillet-general.test.js) it does not
-// bind: every fixture stays a single shell at preview AND print quality with it at 0.
-// What did strand slivers was the chamfer's side walls skimming the flank — fixed by
-// the chord extension in generalTool, not by deeper burial (a deeper sag made it
-// worse). General FILLETS end on the measured wall instead (contactPolygon).
-const GENERAL_SAG_PAD = 2e-4;
-
 // Station smoothing. generalStations places a station at every path vertex, and on a
 // mesh-boolean intersection those vertices are tessellation, not geometry: a facet
 // ridge crossing kinks the polyline, and two ridges a hair apart leave a sliver
@@ -1111,11 +1102,71 @@ function refineBall(rays, sol, frame, t3, r, convex) {
 }
 const dot2 = (a, b) => a[0] * b[0] + a[1] * b[1];
 
-// The fillet polygon ending ON the wall. Layout: corner point (delta past the edge
+// Chamfer setbacks measured ON the wall (chamferSection). profile2D's chamfer puts
+// each setback on the flank's tangent line at the edge; on a curved wall that point
+// stands off the facets by ~d²κ/2, and a filler's side wall along that line adds a
+// lens of material over the wall from where the line leaves the facets out to the
+// setback — the overlay drew every edge of it (boss-on-dome, d = 1.5: 44 mm of
+// boss-side line against a 19.75 mm setback curve, 137 segments across the junction;
+// the tee's tube side +74%). A cutter's tangent line stands off into the air and
+// costs only placement (the cross hole's tube-side line sat up to 83 µm off its
+// setback). The setback is the wall point at chord distance d from the edge in the
+// section plane: walk the wall from the edge in CHAMFER_STEPS steps, each re-probed
+// onto the facets along the last hit facet's in-plane normal (a step's reach d/steps
+// covers the wall's drop below a step's tangent, d²κ/(2·steps²), for any bend the
+// facing test accepts), then slide along the wall until the chord is d. The section's
+// flank is then the circle tangent to the flank at the edge through that setback —
+// contactPolygon's flank model, so the chamfer section is laid out, snapped and
+// margined exactly as a fillet's, with a straight chord in place of the ball arc. A
+// walk that misses keeps the tangent-line setback for that station.
+const CHAMFER_STEPS = 4;
+function wallSetback(rays, P, t3, n3, f3, d) {
+  const inPlane = (v) => norm(sub(v, scl(t3, dot(v, t3))));
+  let H = P, nl = n3, dir = f3;
+  const step = (X, reach) => {
+    const h = wallHit(rays, X, nl, reach);
+    if (!h) return false;
+    H = h.p;
+    nl = inPlane(h.fn);
+    if (dot(nl, n3) < 0) nl = scl(nl, -1);
+    let dn = inPlane(cross(t3, nl));
+    if (dot(dn, dir) < 0) dn = scl(dn, -1);
+    dir = dn;
+    return true;
+  };
+  for (let j = 0; j < CHAMFER_STEPS; j++) if (!step(add(H, scl(dir, d / CHAMFER_STEPS)), d / CHAMFER_STEPS)) return null;
+  for (let it = 0; it < 3; it++) {
+    const gap = d - len(sub(H, P));
+    if (Math.abs(gap) < 1e-6 * d) break;
+    if (!step(add(H, scl(dir, gap)), Math.max(2 * Math.abs(gap), 0.05 * d))) return null;
+  }
+  return H;
+}
+function chamferSection(rays, flat, frame, s, d) {
+  const { p2 } = frame, { sgn } = flat;
+  const vec3 = ([x, y]) => add(scl(frame.u, x), scl(frame.v, y));
+  const flanks = [flat.F1, flat.F2].map((F) => {
+    const H = rays ? wallSetback(rays, s.p, s.t, norm(vec3(F.n)), norm(vec3(F.f)), d) : null;
+    const T = H ? p2(sub(H, s.p)) : [d * F.f[0], d * F.f[1]];
+    const a = dot2(T, F.f), h = dot2(T, F.n);
+    // the circle tangent to the flank at the edge through T (straight if T is on the line)
+    const kap = H && a > 0 && Math.abs(h) > 1e-9 * d ? (2 * h) / (a * a + h * h) : 0;
+    if (!(a > 0)) return { F: { ...F, kap: 0 }, T: [d * F.f[0], d * F.f[1]], a: d, N: F.n };
+    // the circle's normal at T, pointing into the air like F.n
+    const N = kap ? norm2([(T[0] - F.n[0] / kap) * Math.sign(-kap), (T[1] - F.n[1] / kap) * Math.sign(-kap)]) : F.n;
+    return { F: { ...F, kap }, T, a, N: dot2(N, F.n) < 0 ? [-N[0], -N[1]] : N };
+  });
+  const [A, B] = flanks;
+  // no ball: C, m1 and phi only feed the arc's interior, which a chord does not have
+  return { ...flat, C: [0, 0], T1: A.T, T2: B.T, a1: A.a, a2: B.a, F1: A.F, F2: B.F, m1: A.N, phi: 0, N: [A.N, B.N], sgn };
+}
+
+// The fillet (or chamfer) polygon ending ON the wall. Layout: corner point (delta past the edge
 // along the bisector, outside the material for a cutter, inside it for a filler),
 // FLANK_SAMPLES points along flank 1 toward its contact, the point straight above
 // contact 1 (along the contact normal, on the harmless side), contact 1 itself, the
-// ball arc's interior (fixed nArc, area-exact radius), contact 2, the point above it,
+// ball arc's interior (fixed nArc, area-exact radius; none for a chamfer's chord, nArc =
+// 1), contact 2, the point above it,
 // and flank 2's samples back toward the corner. Every call with the same nArc returns
 // the same point count, so the stack stitches.
 // The flank points follow each flank's circle — a straight chord would bite a lens of
@@ -1166,7 +1217,7 @@ function contactPolygon(sol, magnitude, nArc, tilt, ends) {
   const above = (H, Nk, a) => [H[0] + sgn * (delta + a * Math.sin(tilt)) * Nk[0], H[1] + sgn * (delta + a * Math.sin(tilt)) * Nk[1]];
   const side = (F, aT) => Array.from({ length: FLANK_SAMPLES }, (_, j) => lifted(F, (aT * (j + 1)) / (FLANK_SAMPLES + 1)));
   const s2 = Math.sign(phi) || 1, span = Math.abs(phi);
-  const th = span / nArc, rEq = r * Math.sqrt(th / Math.sin(th));
+  const th = span / nArc, rEq = nArc > 1 ? r * Math.sqrt(th / Math.sin(th)) : r;
   const arc = [];
   for (let i = 1; i < nArc; i++) {
     const nv = rot2(m1, (s2 * span * i) / nArc);
@@ -1181,10 +1232,10 @@ function contactPolygon(sol, magnitude, nArc, tilt, ends) {
 // rolling ball against each flank's measured section-plane curvature (curvedBall —
 // the tangent-line profile2D section mis-sizes the spandrel by up to 1.7× where a
 // flank is a tube seen side-on), then re-solve it against the wall measured at the
-// contacts (refineBall) and end on the wall there (contactPolygon); chamfers keep
-// profile2D, whose setbacks curvature barely moves. Every ring carries the same arc
-// count — the widest station's — so the stack stitches. Grazing guard per chamfer
-// station: buried by the facet-tilt sagitta plus GENERAL_SAG_PAD. A bend tighter than the section's
+// contacts (refineBall) and end on the wall there (contactPolygon). Chamfer sections
+// take their setbacks on the wall (chamferSection) and are laid out the same way, the
+// chord standing in for the arc (nArc = 1). Every ring carries the same arc count —
+// the widest station's — so the stack stitches. A bend tighter than the section's
 // reach toward its own centre would fold the stack: refuse it, which reroutes (the
 // spec's policy) rather than emitting a self-intersecting tool.
 function generalTool(k, chain, magnitude, mode, pSegs, rays = null, stations = null) {
@@ -1195,31 +1246,32 @@ function generalTool(k, chain, magnitude, mode, pSegs, rays = null, stations = n
     const u = s.n1, v = cross(s.t, u);
     return { u, v, p2: (w) => [dot(w, u), dot(w, v)], to3: ([x, y]) => add(s.p, add(scl(u, x), scl(v, y))) };
   });
-  const sols = mode === "fillet" ? st.map((s, i) => {
+  const sols = st.map((s, i) => {
     const { p2 } = frames[i], n1 = p2(s.n1), n2 = p2(s.n2);
     const flat = curvedBall({ n1, n2, k1: 0, k2: 0, magnitude, convex }); // for the in-face directions
     if (!flat) throw new UnsupportedEdgeError(`general chain: no rolling-ball section for ${mode} ${magnitude}`);
+    if (mode === "chamfer") return chamferSection(rays, flat, frames[i], s, magnitude);
     const f3 = (f) => add(scl(frames[i].u, f[0]), scl(frames[i].v, f[1]));
     const k1 = flankCurvature(rays, s.p, s.n1, f3(flat.F1.f), magnitude);
     const k2 = flankCurvature(rays, s.p, s.n2, f3(flat.F2.f), magnitude);
     const sol = k1 || k2 ? curvedBall({ n1, n2, k1, k2, magnitude, convex }) : flat;
     return refineBall(rays, sol, frames[i], s.t, magnitude, convex);
-  }) : null;
+  });
   let maxSpan = 0;
-  for (let i = 0; i < st.length; i++)
-    maxSpan = Math.max(maxSpan, sols ? Math.abs(sols[i].phi) : Math.acos(clamp1(dot(st[i].n1, st[i].n2))));
-  const nArc = Math.max(2, Math.ceil((maxSpan / (2 * Math.PI)) * pSegs));
+  for (let i = 0; i < st.length; i++) maxSpan = Math.max(maxSpan, Math.abs(sols[i].phi));
+  // a chamfer's "arc" is its straight chord: contact to contact, no interior points
+  const nArc = mode === "chamfer" ? 1 : Math.max(2, Math.ceil((maxSpan / (2 * Math.PI)) * pSegs));
   const m = st.length;
   // snap every contact onto the faceted wall and keep its facet normal
-  const snaps = sols ? sols.map((sol, i) => {
+  const snaps = sols.map((sol, i) => {
     const { to3 } = frames[i], { N } = sol;
     return [sol.T1, sol.T2].map((Tk, kk) => {
       const n3 = norm(sub(to3(N[kk]), to3([0, 0])));
       const h = rays ? contactHit(rays, to3(Tk), n3, st[i].t, CONTACT_D * magnitude) : null;
       return { T: h ? frames[i].p2(sub(h.p, st[i].p)) : Tk, H: h ? h.p : to3(Tk), fn: h ? h.fn : n3, n3, hit: !!h };
     });
-  }) : null;
-  // Fillet sections end ON the wall (contactPolygon): pass 1 lays out every station's
+  });
+  // Sections end ON the wall (contactPolygon): pass 1 lays out every station's
   // polygon and probes the wall under its contact (snapped, depth 0) and under the arc
   // points next to it, out to where the arc has left the wall by CONTACT_STOP; pass 2
   // gives each probed point its tool-side margin — the floor CONTACT_MU, plus L·fold/4
@@ -1233,7 +1285,7 @@ function generalTool(k, chain, magnitude, mode, pSegs, rays = null, stations = n
   // pushed along the contact normal until it is that deep, and when the last probed
   // point still needed a push the walk continues inward at its margin.
   const sgn = convex ? 1 : -1;
-  const lay = sols ? sols.map((sol, i) => {
+  const lay = sols.map((sol, i) => {
     const { to3 } = frames[i];
     const { pts, arcStart } = contactPolygon(sol, magnitude, nArc, st[i].tilt, snaps[i].map((sn) => sn.T));
     const probes = [0, 1].map((kk) => {
@@ -1251,69 +1303,44 @@ function generalTool(k, chain, magnitude, mode, pSegs, rays = null, stations = n
       return list;
     });
     return { pts, probes };
-  }) : null;
+  });
   const rings = [], centres = [];
   for (let i = 0; i < st.length; i++) {
-    const s = st[i], { p2, to3 } = frames[i];
-    let poly;
-    if (mode === "fillet") {
-      const sol = sols[i], { pts, probes } = lay[i];
-      for (let kk = 0; kk < 2; kk++) {
-        const Nk = sol.N[kk], { n3 } = snaps[i][kk];
-        let need = 0;
-        probes[kk].forEach((q, j) => {
-          let mu = CONTACT_MU * magnitude;
-          const rise = (o) => {
-            // only a wall folding TOWARD the tool side lifts the chord out of it
-            if (!o || sgn * (dot(q.fn, sub(o.H, q.H)) + dot(o.fn, sub(q.H, o.H))) <= 0) return;
-            mu = Math.max(mu, CONTACT_MU * magnitude + (len(sub(q.H, o.H)) * Math.acos(clamp1(dot(q.fn, o.fn)))) / 4);
-          };
-          for (const nb of [i - 1, i + 1]) if (closed || (nb >= 0 && nb < m)) rise(lay[(nb + m) % m].probes[kk][j]);
-          rise(probes[kk][j - 1]); rise(probes[kk][j + 1]);
-          mu = Math.min(mu, CONTACT_MU_MAX * magnitude);
-          need = mu;
-          if (q.depth < mu) { const X = pts[q.idx], dd = mu - q.depth; pts[q.idx] = [X[0] - sgn * dd * Nk[0], X[1] - sgn * dd * Nk[1]]; }
-        });
-        // the walk stopped at CONTACT_STOP, but the last point's margin can ask for
-        // more (coarse facets): keep walking inward at that margin until the arc is
-        // deep enough on its own
-        const last = probes[kk][probes[kk].length - 1];
-        if (rays && snaps[i][kk].hit && last.depth < need) {
-          for (let j = probes[kk].length; j < nArc / 2; j++) {
-            const idx = kk === 0 ? FLANK_SAMPLES + 2 + j : FLANK_SAMPLES + 2 + nArc - j;
-            const X = to3(pts[idx]), h = wallHit(rays, X, n3, 0.05 * magnitude);
-            if (!h) break;
-            const depth = -sgn * dot(sub(X, h.p), n3);
-            if (depth >= need) break;
-            const dd = need - depth;
-            pts[idx] = [pts[idx][0] - sgn * dd * Nk[0], pts[idx][1] - sgn * dd * Nk[1]];
-          }
+    const { to3 } = frames[i], sol = sols[i], { pts, probes } = lay[i];
+    for (let kk = 0; kk < 2; kk++) {
+      const Nk = sol.N[kk], { n3 } = snaps[i][kk];
+      let need = 0;
+      probes[kk].forEach((q, j) => {
+        let mu = CONTACT_MU * magnitude;
+        const rise = (o) => {
+          // only a wall folding TOWARD the tool side lifts the chord out of it
+          if (!o || sgn * (dot(q.fn, sub(o.H, q.H)) + dot(o.fn, sub(q.H, o.H))) <= 0) return;
+          mu = Math.max(mu, CONTACT_MU * magnitude + (len(sub(q.H, o.H)) * Math.acos(clamp1(dot(q.fn, o.fn)))) / 4);
+        };
+        for (const nb of [i - 1, i + 1]) if (closed || (nb >= 0 && nb < m)) rise(lay[(nb + m) % m].probes[kk][j]);
+        rise(probes[kk][j - 1]); rise(probes[kk][j + 1]);
+        mu = Math.min(mu, CONTACT_MU_MAX * magnitude);
+        need = mu;
+        if (q.depth < mu) { const X = pts[q.idx], dd = mu - q.depth; pts[q.idx] = [X[0] - sgn * dd * Nk[0], X[1] - sgn * dd * Nk[1]]; }
+      });
+      // the walk stopped at CONTACT_STOP, but the last point's margin can ask for
+      // more (coarse facets): keep walking inward at that margin until the arc is
+      // deep enough on its own
+      const last = probes[kk][probes[kk].length - 1];
+      if (rays && snaps[i][kk].hit && last.depth < need) {
+        for (let j = probes[kk].length; j < nArc / 2; j++) {
+          const idx = kk === 0 ? FLANK_SAMPLES + 2 + j : FLANK_SAMPLES + 2 + nArc - j;
+          const X = to3(pts[idx]), h = wallHit(rays, X, n3, 0.05 * magnitude);
+          if (!h) break;
+          const depth = -sgn * dot(sub(X, h.p), n3);
+          if (depth >= need) break;
+          const dd = need - depth;
+          pts[idx] = [pts[idx][0] - sgn * dd * Nk[0], pts[idx][1] - sgn * dd * Nk[1]];
         }
       }
-      poly = pts;
-      centres.push(to3(sol.C));
-    } else {
-      // ext > 0 selects profile2D's chord extension (2% of the chamfer past both
-      // contacts, as the revolve chamfer does): it keeps the side walls corner→T in
-      // the air instead of skimming the faceted flank, where the sag shift alone tucks
-      // them under the facets and strands slivers of flank as separate shells. That 2%
-      // only clears facets tilted under ~0.02 rad from the averaged normal; past it the
-      // chord continues to tilt × magnitude in all (measured on 32–64-segment tubes,
-      // where the station tilt reaches 0.05–0.1 and the 2% walls stranded a sliver per
-      // facet). A station tilted under 0.02 keeps exactly profile2D's polygon, and the
-      // extension lies in the air for a cutter and in the material for a filler, so it
-      // moves no volume.
-      poly = profile2D({ P: [0, 0], n1: p2(s.n1), n2: p2(s.n2), magnitude, mode, convex, segs: pSegs, ext: 1, nArc });
-      const more = Math.max(0, s.tilt - 0.02) * magnitude;
-      if (more > 0) {
-        const [corner, T1, T2] = poly, ux = T1[0] - T2[0], uy = T1[1] - T2[1], ul = Math.hypot(ux, uy);
-        poly = [corner, [T1[0] + (more * ux) / ul, T1[1] + (more * uy) / ul], [T2[0] - (more * ux) / ul, T2[1] - (more * uy) / ul]];
-      }
-      const sag = magnitude * (1 - Math.cos(s.tilt)) + Math.min(GENERAL_SAG_PAD, 0.02 * magnitude);
-      const [b1, b2] = p2(add(s.n1, s.n2)), bl = Math.hypot(b1, b2) || 1;
-      poly = poly.map(([x, y], j) => (j === 0 && convex ? [x, y] : [x - (sag * b1) / bl, y - (sag * b2) / bl]));
     }
-    rings.push(poly.map(to3));
+    if (mode === "fillet") centres.push(to3(sol.C));
+    rings.push(pts.map(to3));
   }
   for (let i = 0; i < st.length; i++) {
     const s = st[i];
@@ -2456,8 +2483,9 @@ function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg
   if (general && work > GENERAL_WORK_BUDGET)
     throw new UnsupportedEdgeError(`general chain: too complex for the mesh ${mode} (work ${Math.round(work)} > budget ${GENERAL_WORK_BUDGET})`);
   const pSegs = blendSegs(segs, magnitude);
-  // general fillet sections probe the flanks' section-plane curvature on the mesh
-  const generals = mode === "fillet" ? effective.filter((ch) => ch.kind === "general") : [];
+  // general sections probe the walls on the mesh: a fillet's flank curvature and
+  // contacts, a chamfer's setbacks
+  const generals = effective.filter((ch) => ch.kind === "general");
   const rays = generals.length ? localRays(mesh, generals.map((ch) => {
     const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], pad = 3 * magnitude;
     for (const p of ch.points) for (let a = 0; a < 3; a++) { b[a] = Math.min(b[a], p[a] - pad); b[a + 3] = Math.max(b[a + 3], p[a] + pad); }
