@@ -59,6 +59,11 @@ let openPicker = null;
 // the budget render in the menu face with the weight synthesized.
 export const VARIANT_FACE_BUDGET = 6;
 
+// The menu face the last closed picker chose to keep (the widget label renders
+// in it). The next picker adopts it, so a session neither re-fetches that face
+// nor orphans it: its own close() deletes it if the selection moved on.
+let keptFace = null;
+
 export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPicked, onClose }) {
   // Takeover: the picker covers the rail on desktop and the single visible pane
   // below the narrow breakpoint. One layout for both widths (spec §6).
@@ -159,13 +164,20 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
   let variantBudget = VARIANT_FACE_BUDGET;
   const variantList = [];          // {face, url} for the ONE family whose variants are open
   let variantFamily = null;
+  if (keptFace) {
+    addedFaces.push(keptFace);
+    faceRequested.add(keptFace.family);
+    faceSettled.add(keptFace.family);
+    keptFace = null;
+  }
   // A face that finishes loading after close() would otherwise land in
   // document.fonts with nobody left to delete it. The selected family's menu
   // face is the one exception: it is kept on close by design.
   const track = (loaded) => {
-    if (closed && loaded.family !== selFamily) return;
+    if (closed && (loaded.family !== selFamily || keptFace)) return;
     document.fonts.add(loaded);
     if (!closed) addedFaces.push(loaded);
+    else keptFace = loaded;                    // landed after close: hand it on
   };
   function releaseVariantFaces() {
     for (const { face, url } of variantList) {
@@ -430,7 +442,7 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
     // label renders in it.
     if (typeof document.fonts?.delete === "function") {
       for (const face of addedFaces) {
-        if (face.family === selFamily) continue;
+        if (face.family === selFamily && !keptFace) { keptFace = face; continue; }
         try { document.fonts.delete(face); } catch { /* already gone */ }
       }
     }

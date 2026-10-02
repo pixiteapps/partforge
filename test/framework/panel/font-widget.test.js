@@ -334,6 +334,19 @@ test("closing without changing the value commits nothing", async () => {
   expect(onCommit).not.toHaveBeenCalled();
 });
 
+test("picking a family and then the original back commits nothing", async () => {
+  const onCommit = vi.fn();
+  const { params, button } = mountCatalogFont({ onCommit });
+  const atOpen = params.face;
+  button.click(); await flush();
+  pickFamily("Anton"); await flush();
+  expect(params.face).toContain("/Anton/");
+  pickFamily("Roboto"); await flush();
+  expect(params.face).toBe(atOpen);
+  document.querySelector(".pk-done").click();
+  expect(onCommit).not.toHaveBeenCalled();
+});
+
 test("a superseded picker still commits its change once", async () => {
   const onCommit = vi.fn();
   const { button } = mountCatalogFont({ onCommit });

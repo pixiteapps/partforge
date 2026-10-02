@@ -191,6 +191,43 @@ test("closing the picker deletes the faces it added, except the selected family'
   } finally { ff.restore(); }
 });
 
+test("a second picker session adopts the kept menu face instead of creating another", async () => {
+  const ff = withFontFace((f) => Promise.resolve(f));
+  const deleted = [];
+  document.fonts.delete = (face) => { deleted.push(face.family); return true; };
+  try {
+    const first = open();                          // selected family: Roboto
+    await flush(); await flush();
+    first.handle.close();
+    const robotoMenus = () => ff.seen.filter((s) => s.family === "Roboto").length;
+    const afterFirst = robotoMenus();              // 0 or 1: module state may carry a face from an earlier test
+    const second = open();
+    await flush(); await flush();
+    expect(robotoMenus()).toBe(afterFirst);        // no second FontFace for Roboto
+    second.handle.close();
+    expect(deleted).not.toContain("Roboto");       // still selected, still kept
+  } finally { ff.restore(); }
+});
+
+test("a kept menu face is deleted by the next session once the selection has moved", async () => {
+  const ff = withFontFace((f) => Promise.resolve(f));
+  const deleted = [];
+  document.fonts.delete = (face) => { deleted.push(face.family); return true; };
+  const rowOf = (n) => [...document.querySelectorAll(".pk-row")].find((r) => r.textContent.startsWith(n));
+  try {
+    const first = open();                          // Roboto selected
+    await flush(); await flush();
+    first.handle.close();
+    expect(deleted).not.toContain("Roboto");
+    const second = open();
+    await flush(); await flush();
+    rowOf("Anton").click(); await flush();
+    second.handle.close();
+    expect(deleted).toContain("Roboto");           // the adopted face went with the old selection
+    expect(deleted.filter((d) => d === "Anton").length).toBe(1);   // only session 1's non-selected copy; session 2's is kept
+  } finally { ff.restore(); }
+});
+
 test("opening a many-weight family loads the selected weight plus at most VARIANT_FACE_BUDGET others", async () => {
   const weights = ["100", "200", "300", "400", "500", "600", "700", "800", "900", "100i", "400i", "700i"];
   const big = fam("Big", weights);
