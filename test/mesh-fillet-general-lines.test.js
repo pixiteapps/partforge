@@ -134,8 +134,8 @@ function exactSetbacks(name, d, n = 2000) {
 }
 // Drawn junction lines classified by wall (within 0.08 mm of it, inside 2d of both
 // surfaces), with each segment's distance from its exact setback curve, and the
-// count of segments running ACROSS the junction (direction under 60° from the
-// azimuth about the small cylinder's axis): a clean setback line has none.
+// count of segments running ACROSS the junction (direction MORE than 60° off the
+// azimuth about the small cylinder's axis, |cos| < 0.5): a clean setback line has none.
 function chamferLines(name, d) {
   const g = CH[name], ex = exactSetbacks(name, d);
   const { edges } = FIXTURES[name](k)._chamferRaw(d).toMesh();
@@ -160,8 +160,9 @@ describe("general-chain chamfers end on one clean line per setback", () => {
   for (const [name, d] of [["domeBoss", 1], ["domeBoss", 1.5], ["tee", 1], ["tee", 1.5], ["crossHole", 1], ["crossHole", 1.5]]) {
     it(`${name} d=${d}: both setback lines follow the exact setback curves`, () => {
       const { ex, lenA, lenB, devA, devB, across } = chamferLines(name, d);
-      expect(Math.abs(lenA / ex.lenA - 1)).toBeLessThan(0.1);
-      expect(Math.abs(lenB / ex.lenB - 1)).toBeLessThan(0.1);
+      // measured within 0.7% (worst: domeBoss d = 1.5, dome side −0.67%)
+      expect(Math.abs(lenA / ex.lenA - 1)).toBeLessThan(0.03);
+      expect(Math.abs(lenB / ex.lenB - 1)).toBeLessThan(0.03);
       expect(across).toBe(0);
       // on the setback, not beside it (before: the cross hole's tube-side line sat up to
       // 83 µm off, on the tangent line). The dome's preview facets sag up to 43 µm under
@@ -201,8 +202,9 @@ describe("a flat rim on a curved wall ends on one clean line per contact", () =>
         if (Math.abs(m[2]) < 0.02) { planeLen += L; dev = Math.max(dev, Math.abs(rho - planeEx)); }
         else if (Math.abs(Math.hypot(...m) - 20) < 0.08) { sphereLen += L; dev = Math.max(dev, Math.hypot(rho - sphere[0], m[2] - sphere[1])); }
       }
-      expect(Math.abs(planeLen / (2 * Math.PI * planeEx) - 1)).toBeLessThan(0.1);
-      expect(Math.abs(sphereLen / (2 * Math.PI * sphere[0]) - 1)).toBeLessThan(0.1);
+      // measured within 0.4% (worst: fillet 2, sphere side −0.37%)
+      expect(Math.abs(planeLen / (2 * Math.PI * planeEx) - 1)).toBeLessThan(0.03);
+      expect(Math.abs(sphereLen / (2 * Math.PI * sphere[0]) - 1)).toBeLessThan(0.03);
       expect(across).toBe(0);
       // on the rings (measured ≤ 54 µm: the preview sphere's facets sag ~40 µm)
       expect(dev).toBeLessThan(0.08);

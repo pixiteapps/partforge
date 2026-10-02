@@ -364,3 +364,31 @@ usual, and fillets and chamfers then get contact-measured sections and the clean
 A rim cap cut below its sphere's centre (the sphere meeting the plane at an acute
 angle) went from 274 mm of line and 76 across segments to 215 mm and 0. The fillet
 takes ~90 ms against ~25 ms on the sweep.
+
+### Shading: sub-visible slivers no longer vote (2026-10-02, shared change)
+
+`creasedNormals` sums incident facet normals unweighted. A boolean's sub-µm sliver
+whose normal lands inside the crease angle therefore votes as much as a real face.
+Two such slivers were measured:
+
+- The ones a revolve cut leaves spanning a wall strip, with normals 18–31° off.
+- A chamfer's contact step.
+
+They streaked 12.5% (fillet) and 25% (chamfer) of a plain cylinder's wall under a
+top-rim blend, and the same on the boss-on-dome wall (identical on main). They also
+tilted up to 41% of a general chamfer's face by as much as 21°.
+
+Triangles thinner than MIN_FACE, the line pass's own gate, are now left out of the
+vertex-normal sum, and are used only when nothing else contributes.
+
+- **Result:** all of those cases are now at 0%.
+- **Blast radius**, from toMesh normals before and after on eight reference parts:
+  - Only vertices that touch a sub-MIN_FACE triangle change; every other normal is
+    bit-identical.
+  - filleted-box, planter, bracket and hinged-box: nothing changed.
+  - scott-label: 6.5k of 326k corners changed. Visible ones move toward their own
+    facet (worst off-facet 17.1° → 0.8° on the backing).
+  - nameplate: 132 corners, ≤ 1.6°.
+  - lofted-bottle: 81 corners, ≤ 5.6°. These sit next to genuinely thin facets of its
+    coarse curved loft, so the change is neither clearly better nor worse.
+  - screw: 21 corners on 0.17 mm².

@@ -205,7 +205,21 @@ export function creasedNormals(g, { policies = null, featureLabels = null, surfa
         normals[o] = ln[0]; normals[o + 1] = ln[1]; normals[o + 2] = ln[2];
         continue;
       }
+      // Sub-visible slivers vote last. The sum below is unweighted — every incident
+      // triangle that passes the surface and crease filters counts once, whatever its
+      // size — so a boolean's sub-µm sliver (a wall strip split a hair from its own
+      // diagonal by a revolve cut, a chamfer's contact step) whose noisy facet normal
+      // lands inside the crease angle gets the same vote as the real faces around it.
+      // At a tall wall strip's end vertex one or two of them (18–31° off) tilted the
+      // whole strip's shading 5–10°: 12.5% of a plain cylinder's wall streaked under a
+      // top-rim fillet, 25% under a chamfer, and a general chamfer's face shaded up to
+      // 21° off where its contact step met it. A triangle thinner than MIN_FACE cannot
+      // show a face of its own — the same gate the line pass below applies to feature
+      // edges — so such triangles are left out of the sum and used only when nothing
+      // else contributes (a corner surrounded by slivers keeps today's normal). This
+      // changes shading only at vertices touching a sub-MIN_FACE triangle.
       let nx = 0, ny = 0, nz = 0, ax = 0, ay = 0, az = 0, analytic = false;
+      let sx = 0, sy = 0, sz = 0, solid = false;
       for (const t2 of incident.get(weld[v])) {
         // different cut surface → hard, EXCEPT when a blend surface (boundaryLines)
         // is involved on either side. Blend↔blend: one band is many tool surfaces
@@ -220,12 +234,14 @@ export function creasedNormals(g, { policies = null, featureLabels = null, surfa
         if (triOID[t2] !== oid &&
           !(polFor(triOID[t2]).boundaryLines || polFor(oid).boundaryLines)) continue;
         if (fn[t2 * 3] * fx + fn[t2 * 3 + 1] * fy + fn[t2 * 3 + 2] * fz < sharpCos) continue; // sharp same-surface edge → hard
-        nx += fn[t2 * 3]; ny += fn[t2 * 3 + 1]; nz += fn[t2 * 3 + 2];
+        if (thin[t2] < MIN_FACE) { sx += fn[t2 * 3]; sy += fn[t2 * 3 + 1]; sz += fn[t2 * 3 + 2]; }
+        else { nx += fn[t2 * 3]; ny += fn[t2 * 3 + 1]; nz += fn[t2 * 3 + 2]; solid = true; }
         if (runEval) {
           const an = analyticAt(t2, weld[v]);
           if (an) { ax += an[0]; ay += an[1]; az += an[2]; analytic = true; }
         }
       }
+      if (!solid) { nx = sx; ny = sy; nz = sz; }
       if (analytic && Math.hypot(ax, ay, az) > 1e-9) { nx = ax; ny = ay; nz = az; }
       const L = Math.hypot(nx, ny, nz) || 1;
       const o = (t * 3 + k) * 3, vv = v * np;

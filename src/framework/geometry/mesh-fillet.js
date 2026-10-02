@@ -1194,6 +1194,17 @@ const FLANK_SAMPLES = 4;
 // sits exactly ON a facet, where the boolean would meet a coplanar touch instead of
 // a crossing — and CONTACT_STOP the arc depth past which the wall no longer
 // threatens the arc, ending the probe walk inward.
+// SHADING DEPENDS ON THIS STEP. The margin leaves a sub-µm step between the wall and
+// the section at every contact (the closing edge's run from the wall to the contact).
+// For a chamfer that step is what keeps the wall's contact vertices off the chamfer
+// face — at a face-to-wall angle under the wall's 35° crease (down to 27° on the
+// boss-on-dome junction) they would otherwise smooth into it and streak the wall
+// (14% of the boss wall before) — and it must stay well over the shading weld
+// (creased-normals.js SHADE_WELD, 5e-5 mm; 2e-4·r passes it for r ≥ 0.25 mm). The
+// step's own triangles are sub-MIN_FACE, and creasedNormals leaves those out of the
+// vertex-normal sum; were they counted, they would tilt the chamfer face's contact
+// vertices up to ~21° (41% of the cross hole's chamfer faces). Re-run
+// test/mesh-fillet-general-shading.test.js after changing either.
 const CONTACT_MU = 2e-4;
 const CONTACT_STOP = 3e-3;
 // The fold allowance is a worst-case bound (the ridge midway between the two

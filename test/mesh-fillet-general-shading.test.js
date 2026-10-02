@@ -135,9 +135,86 @@ describe("the boss wall beside a general-chain band shades smooth", () => {
   });
   for (const mode of ["fillet", "chamfer"]) {
     it(`domeBoss ${mode} 1.5 at the junction: < 1% of the boss wall shades > 5° off`, () => {
+      expect(junction).toBeDefined();
       const base = FIXTURES.domeBoss(k);
       const out = mode === "fillet" ? base._filletRaw(1.5, junction) : base._chamferRaw(1.5, junction);
       expect(bossWallBadShare(out)).toBeLessThan(0.01);
+    });
+  }
+  // Every edge, and a plain cylinder with only its top rim blended: the revolve cut
+  // at the rim leaves sub-µm sliver triangles spanning the wall strips, with facet
+  // normals 18–31° off (inside the 35° crease), and an unweighted vertex-normal sum
+  // gave each a full vote — 12.5% (fillet) / 25% (chamfer) of the plain cylinder's
+  // wall and 9.4% / 25.8% of the dome boss's shaded > 5° off. creasedNormals now
+  // leaves sub-MIN_FACE triangles out of the sum.
+  for (const mode of ["fillet", "chamfer"]) {
+    it(`domeBoss ${mode} 1.5, every edge: < 1% of the boss wall shades > 5° off`, () => {
+      const base = FIXTURES.domeBoss(k);
+      expect(bossWallBadShare(mode === "fillet" ? base._filletRaw(1.5) : base._chamferRaw(1.5))).toBeLessThan(0.01);
+    });
+    it(`a plain cylinder, top rim ${mode} 1.5: < 1% of the wall shades > 5° off`, () => {
+      const base = k.cylinder({ r: 3, h: 30 }).at([8, 0, 0]), top = { inPlane: "XY", at: 30 };
+      expect(bossWallBadShare(mode === "fillet" ? base._filletRaw(1.5, top) : base._chamferRaw(1.5, top))).toBeLessThan(0.01);
+    });
+  }
+});
+
+// A general chamfer's face is planar within each section and turns only as slowly as
+// the stations do (a few degrees per station on these fixtures), so a vertex normal on
+// it should sit within a few degrees of its own triangle's facet normal — that facet
+// is the exact reference wherever the face is flat, and the 5° bar leaves room for
+// the station-to-station turn. Before creasedNormals left sub-MIN_FACE triangles out
+// of the sum, the sub-µm step at each contact (mesh-fillet.js CONTACT_MU, where the
+// face meets the wall at > ~55°) got a full vote at the face's contact vertices:
+// 36.7 mm² of the cross hole's two faces (41%, worst 21.5°) and 36.6 mm² of the slant
+// cut's (28%, worst 20°) shaded > 5° off their facets.
+const triAt = (P, t) => [0, 1, 2].map((j) => [P[(t + j) * 3], P[(t + j) * 3 + 1], P[(t + j) * 3 + 2]]);
+const facet = (v) => {
+  const u = [0, 1, 2].map((i) => v[1][i] - v[0][i]), w = [0, 1, 2].map((i) => v[2][i] - v[0][i]);
+  const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]], l = Math.hypot(...n);
+  return { n: n.map((x) => x / l), a: l / 2 };
+};
+const sdeg = (a, b) => (Math.acos(Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]))) * 180) / Math.PI;
+function chamferFaceBadShare(name, d) {
+  let onA, onB, near;
+  if (name === "crossHole") {
+    onA = (p) => Math.abs(Math.hypot(p[0], p[1]) - 3) < 2e-3;
+    onB = (p) => Math.abs(Math.hypot(p[1], p[2]) - 10) < 2e-3;
+    near = (p) => Math.hypot(p[0], p[1]) < 3 + 2 * d && Math.hypot(p[1], p[2]) > 10 - 2 * d;
+  } else {
+    // slantCut's cut plane, read off the unblended mesh: its largest-area facet class
+    // that is neither axial nor radial
+    const { positions: P0 } = FIXTURES.slantCut(k).toMesh(), acc = new Map();
+    for (let t = 0; t < P0.length / 3; t += 3) {
+      const f = facet(triAt(P0, t));
+      if (!(f.a > 0) || Math.abs(f.n[2]) > 0.99 || Math.abs(f.n[2]) < 0.5) continue;
+      const key = f.n.map((x) => x.toFixed(4)).join(",");
+      const e = acc.get(key) ?? acc.set(key, { a: 0, p: triAt(P0, t)[0], n: f.n }).get(key);
+      e.a += f.a;
+    }
+    const pl = [...acc.values()].sort((x, y) => y.a - x.a)[0], dist = (p) => pl.n.reduce((s2, x, i) => s2 + x * (p[i] - pl.p[i]), 0);
+    onA = (p) => Math.abs(Math.hypot(p[0], p[1]) - 10) < 2e-3;
+    onB = (p) => Math.abs(dist(p)) < 2e-3;
+    near = (p) => Math.hypot(p[0], p[1]) > 10 - 2 * d && Math.abs(dist(p)) < 2 * d;
+  }
+  const { positions: P, normals: N } = FIXTURES[name](k)._chamferRaw(d).toMesh();
+  let bad = 0, total = 0;
+  for (let t = 0; t < P.length / 3; t += 3) {
+    const v = triAt(P, t);
+    if (!v.every(near) || v.every(onA) || v.every(onB)) continue; // the chamfer face only
+    const f = facet(v);
+    if (!(f.a > 0)) continue;
+    total += f.a;
+    if (Math.max(...[0, 1, 2].map((j) => sdeg([N[(t + j) * 3], N[(t + j) * 3 + 1], N[(t + j) * 3 + 2]], f.n))) > 5) bad += f.a;
+  }
+  return { share: bad / total, total };
+}
+describe("a general chamfer's face shades flat to its contacts", () => {
+  for (const name of ["crossHole", "slantCut"]) {
+    it(`${name} chamfer 1.5: < 1% of the chamfer face shades > 5° off its facets`, () => {
+      const { share, total } = chamferFaceBadShare(name, 1.5);
+      expect(total).toBeGreaterThan(50);
+      expect(share).toBeLessThan(0.01);
     });
   }
 });
