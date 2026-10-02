@@ -1,0 +1,22 @@
+{
+  "tee": {
+    "fillet1": -28.8169,
+    "fillet2": -111.8315,
+    "chamfer1": -59.509
+  },
+  "crossHole": {
+    "fillet1": -41.0524,
+    "fillet2": -180.2667,
+    "chamfer1": -81.4732
+  },
+  "domeBoss": {
+    "fillet1": -29.2052,
+    "fillet2": -125.0431,
+    "chamfer1": null
+  },
+  "slantCut": {
+    "fillet1": -32.0949,
+    "fillet2": -125.483,
+    "chamfer1": -61.2086
+  }
+}
