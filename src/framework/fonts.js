@@ -17,10 +17,7 @@ const resolveOne = makeAssetResolver(
 // params — the second form is what lets a `type: "font"` control drive the
 // typeface. Resolving it needs `p`, which is why this is a separate step from
 // resolveFonts rather than folded into it.
-export function fontsFor(part, p) {
-  const decl = part?.fonts;
-  return typeof decl === "function" ? decl(p) : decl;
-}
+export { fontsFor } from "./asset-decls.js";
 
 export async function resolveFonts(fontsDecl) {
   // A function reaching here means a caller passed `part.fonts` raw. It cannot

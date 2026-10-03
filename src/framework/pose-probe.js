@@ -4,9 +4,9 @@
 // without dragging in the part-model/jobs layer (purity).
 import { probeSubPartPose } from "./pose-probe-core.js";
 import { viewSubParts, resolveParams } from "./part-model.js";
-import { fontsFor } from "./fonts.js";
-import { imagesFor } from "./images.js";
-import { vectorsFor } from "./vectors.js";
+// From the import-free leaf, never fonts/images/vectors.js: vectors.js reaches paper
+// (test/mount-no-paper.test.js).
+import { fontsFor, imagesFor, vectorsFor } from "./asset-decls.js";
 import { h, byteAwareReplacer } from "./geometry/solid-hash.js";
 
 // The sources behind every NAMED asset a build can reach. A build says
