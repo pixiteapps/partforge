@@ -292,7 +292,23 @@ test("renderMeshPayloads edge lines keep the capture resolution through three's 
   viewer.renderMeshPayloads([cubePayload("a")], { size: 64, style: "thumbnail" });
 
   expect(state.lineDraws).toHaveLength(1);
-  expect(state.lineDraws[0].resolution).toEqual([64, 64]);
+  expect(state.lineDraws[0].resolution).toEqual([64, 48]); // 4:3, size = width
+
+  viewer.dispose();
+});
+
+// The product shot is captured at the 4:3 shape of the card it is shown in: `size` is
+// the long (width) edge, the style's camera.aspect sets the height. cad stays square.
+test("renderMeshPayloads captures the thumbnail style at 4:3 (size = width) and cad square", () => {
+  const viewer = newViewer();
+
+  viewer.renderMeshPayloads([cubePayload("a")], { size: 640 });
+  expect(state.lineDraws[0].resolution).toEqual([640, 480]);
+  expect(state.lastCamera.aspect).toBeCloseTo(4 / 3, 6);
+
+  viewer.renderMeshPayloads([cubePayload("a")], { size: 640, style: "cad" });
+  expect(state.lineDraws[0].resolution).toEqual([640, 640]);
+  expect(state.lastCamera.aspect).toBe(1);
 
   viewer.dispose();
 });

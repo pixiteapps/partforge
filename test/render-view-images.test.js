@@ -25,6 +25,15 @@ test("the thumbnail style renders the product shot", async () => {
   expect([png.data[0], png.data[1], png.data[2]].every((v, i) => Math.abs(v - bg[i]) <= 1)).toBe(true);
 });
 
+test("the thumbnail style defaults to its own 4:3 size; an explicit size is honoured", async () => {
+  const [def] = await renderViewImages(k, demo, "spacer", { views: ["iso"], style: "thumbnail", supersample: 1 });
+  const p = PNG.sync.read(def.png);
+  expect([p.width, p.height]).toEqual([640, 480]);
+  const [explicit] = await renderViewImages(k, demo, "spacer", { views: ["iso"], style: "thumbnail", size: [100, 100], supersample: 1 });
+  const e = PNG.sync.read(explicit.png);
+  expect([e.width, e.height]).toEqual([100, 100]);
+});
+
 test("sub-part display materials reach the CPU render (hinged box is walnut)", async () => {
   const [img] = await renderViewImages(k, hinged, "box", { views: ["front"], size: [64, 64], edges: false });
   const png = PNG.sync.read(img.png);

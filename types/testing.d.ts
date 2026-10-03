@@ -678,6 +678,7 @@ export function renderViews(
   opts?: {
     views?: string[];
     out?: string;
+    /** [width, height] px. Default: 800×600, or 640 wide at the style's aspect when it has one (thumbnail → 640×480). */
     size?: [number, number];
     edges?: boolean;
     params?: ResolvedParams;
@@ -708,6 +709,7 @@ export function renderViewImages(
   view?: string,
   opts?: {
     views?: string[];
+    /** [width, height] px. Default: 800×600, or 640 wide at the style's aspect when it has one (thumbnail → 640×480). */
     size?: [number, number];
     edges?: boolean;
     params?: ResolvedParams;

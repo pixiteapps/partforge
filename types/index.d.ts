@@ -420,7 +420,7 @@ export interface CaptureCurrentOptions {
 }
 
 export interface CaptureViewOptions {
-  /** Square render resolution in px. Default 640. */
+  /** Render width in px (the long edge). The style's aspect sets the height: `"thumbnail"` is 4:3 (640 → 640×480), `"cad"` is square. Default 640. */
   size?: number;
   /** JPEG quality, 0..1. Default 0.8. */
   quality?: number;
