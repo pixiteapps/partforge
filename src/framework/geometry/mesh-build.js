@@ -41,6 +41,38 @@ export function reverseWinding(Tr) {
   for (let t = 0; t < Tr.length; t += 3) { const tmp = Tr[t + 1]; Tr[t + 1] = Tr[t + 2]; Tr[t + 2] = tmp; }
 }
 
+// A solid from a stack of equal-size 3-D rings (mesh-fillet's general-chain tools:
+// one cross-section per edge vertex, each in its own plane). Consecutive rings are
+// stitched by sideQuads; `closed` stitches the last ring back to the first (a loop,
+// no caps), otherwise each end ring is capped by a fan from ITS vertex 0 — valid for
+// rings star-shaped about vertex 0, which every fillet/chamfer section is (vertex 0
+// is the section's corner). Ring orientation is arbitrary: the winding is normalized
+// by the mesh's signed volume, because ofMesh throws or imports an inverted solid
+// when it is wrong (see this file's header).
+export function ringStackManifold(wasm, rings, { closed = false } = {}) {
+  const n = rings[0]?.length ?? 0;
+  if (n < 3 || !rings.every((r) => r.length === n)) throw new Error("ringStack: rings must have equal size (≥ 3 points)");
+  const V = [], Tr = [];
+  for (const ring of rings) for (const p of ring) V.push(p[0], p[1], p[2]);
+  sideQuads(Tr, rings.length, n, closed);
+  if (!closed) {
+    const last = (rings.length - 1) * n;
+    for (let j = 1; j + 1 < n; j++) {
+      Tr.push(0, j + 1, j);                  // first cap (flip, as fanCap's bottom)
+      Tr.push(last, last + j, last + j + 1); // last cap
+    }
+  }
+  let vol6 = 0;
+  for (let t = 0; t < Tr.length; t += 3) {
+    const a = Tr[t] * 3, b = Tr[t + 1] * 3, c = Tr[t + 2] * 3;
+    vol6 += V[a] * (V[b + 1] * V[c + 2] - V[b + 2] * V[c + 1])
+      - V[a + 1] * (V[b] * V[c + 2] - V[b + 2] * V[c])
+      + V[a + 2] * (V[b] * V[c + 1] - V[b + 1] * V[c]);
+  }
+  if (vol6 < 0) reverseWinding(Tr);
+  return manifoldFromMesh(wasm, V, Tr);
+}
+
 // Import a flat vertex array + triangle indices as a watertight Manifold. merge() welds
 // coincident vertices so ofMesh sees a closed manifold; ofMesh consumes the mesh handle,
 // so free it here and let the caller track the returned Manifold.

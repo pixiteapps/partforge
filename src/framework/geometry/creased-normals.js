@@ -30,6 +30,8 @@ const ANALYTIC_COS = cosDeg(25);
 // nanometre seam splits (see the weld below).
 const SHADE_WELD = 5e-5;
 const SHADE_CELL = 1e-3; // its hash-grid cell
+// Vertex-normal sliver cutoff (mm of triangle height): see the smooth loop below.
+const SHADE_SLIVER = 1e-3;
 
 export function creasedNormals(g, { policies = null, featureLabels = null, surfaces = null } = {}) {
   const np = g.numProp, vp = g.vertProperties, tris = g.triVerts;
@@ -205,7 +207,25 @@ export function creasedNormals(g, { policies = null, featureLabels = null, surfa
         normals[o] = ln[0]; normals[o + 1] = ln[1]; normals[o + 2] = ln[2];
         continue;
       }
+      // Slivers vote last. The sum below is unweighted — every incident triangle that
+      // passes the surface and crease filters counts once, whatever its size — so a
+      // boolean's degenerate sliver (a wall strip split a hair from its own diagonal by
+      // a revolve cut; a loft seam's triangle with a collapsed edge) whose noisy facet
+      // normal lands inside the crease angle gets the same vote as the real faces
+      // around it. At a tall wall strip's end vertex one or two of them (18–31° off)
+      // tilted the whole strip's shading 5–10°: 12.5% of a plain cylinder's wall
+      // streaked under a top-rim fillet, 25% under a chamfer. Triangles under
+      // SHADE_SLIVER tall are left out of the sum and used only when nothing else
+      // contributes (a corner surrounded by slivers keeps today's normal), so shading
+      // changes only at vertices touching one. The cutoff sits in a measured gap: the
+      // streak slivers are ≤ ~2e-6 mm tall (and the loft seam's 5e-6), while the thin
+      // REAL facets of the reference parts (a coarse loft's, a screw's, a nameplate's)
+      // are 1e-3–4e-2 mm and keep their vote — MIN_FACE (0.04), the line pass's gate,
+      // took those out too and moved a lofted bottle's normals up to 5.6°.
+      // mesh-fillet's contact step leans to meet both neighbours at ≥ 45°, so it never
+      // passes the crease filter at all, whatever its height (see CONTACT_MU there).
       let nx = 0, ny = 0, nz = 0, ax = 0, ay = 0, az = 0, analytic = false;
+      let sx = 0, sy = 0, sz = 0, solid = false;
       for (const t2 of incident.get(weld[v])) {
         // different cut surface → hard, EXCEPT when a blend surface (boundaryLines)
         // is involved on either side. Blend↔blend: one band is many tool surfaces
@@ -220,12 +240,14 @@ export function creasedNormals(g, { policies = null, featureLabels = null, surfa
         if (triOID[t2] !== oid &&
           !(polFor(triOID[t2]).boundaryLines || polFor(oid).boundaryLines)) continue;
         if (fn[t2 * 3] * fx + fn[t2 * 3 + 1] * fy + fn[t2 * 3 + 2] * fz < sharpCos) continue; // sharp same-surface edge → hard
-        nx += fn[t2 * 3]; ny += fn[t2 * 3 + 1]; nz += fn[t2 * 3 + 2];
+        if (thin[t2] < SHADE_SLIVER) { sx += fn[t2 * 3]; sy += fn[t2 * 3 + 1]; sz += fn[t2 * 3 + 2]; }
+        else { nx += fn[t2 * 3]; ny += fn[t2 * 3 + 1]; nz += fn[t2 * 3 + 2]; solid = true; }
         if (runEval) {
           const an = analyticAt(t2, weld[v]);
           if (an) { ax += an[0]; ay += an[1]; az += an[2]; analytic = true; }
         }
       }
+      if (!solid) { nx = sx; ny = sy; nz = sz; }
       if (analytic && Math.hypot(ax, ay, az) > 1e-9) { nx = ax; ny = ay; nz = az; }
       const L = Math.hypot(nx, ny, nz) || 1;
       const o = (t * 3 + k) * 3, vv = v * np;

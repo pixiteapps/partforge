@@ -17,7 +17,9 @@ export default {
           description: "Axial rise per turn. A coarse pitch on a small major diameter runs the root radius down toward zero, which is why Major diameter starts at 4 mm. The 0.5 mm floor is the ISO fine pitch for the smallest diameter offered here — and a floor is needed, because cost scales with turns = length / pitch." },
         { key: "length", label: "Threaded length", unit: "mm", min: 5, max: 40, step: 1,
           description: "Length of the threaded shank, excluding the head. Capped at 40 mm so the worst case reachable from these sliders — 40 mm at a 0.5 mm pitch, 80 turns — stays a couple of seconds of preview rather than minutes." },
-        { key: "lefthand", label: "Left-hand thread", control: "toggle",
+      ],
+      toggles: [
+        { key: "lefthand", label: "Left-hand thread", on: true,
           description: "Reverses the helix. Rare outside gas fittings and bicycle pedals." },
       ],
     },

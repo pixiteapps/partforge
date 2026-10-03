@@ -19,6 +19,9 @@
 //                                   the swept path, f its face normal, dirs[i] the
 //                                   in-plane wall-side direction at vertex i, and the
 //                                   ball centre sits at kf·f + kd·dir off the edge
+//   { kind: "spine", pts, closed, r }
+//                                   general chain (mesh-fillet generalTool): the
+//                                   ball-centre polyline itself; r is the radius
 //
 // A path's polyline usually STANDS FOR a smooth curve (a circle's rim, an outline's
 // rounded corner): its per-segment cylinders would shade faceted around the curve,
@@ -97,6 +100,11 @@ export function mapSurface(desc, M) {
         dirs: desc.dirs.map((d) => norm(applyDir(M, d)) ?? d), f: norm(applyDir(M, desc.f)) ?? desc.f,
         kf: desc.kf * s, kd: desc.kd * s };
     }
+    case "spine": {
+      const s = Math.cbrt(Math.abs(
+        M[0] * (M[4] * M[8] - M[5] * M[7]) - M[3] * (M[1] * M[8] - M[2] * M[7]) + M[6] * (M[1] * M[5] - M[2] * M[4])));
+      return { kind: "spine", closed: desc.closed, pts: desc.pts.map((p) => applyPt(M, p)), r: desc.r * s };
+    }
     default: throw new Error(`blend surface: unknown kind ${desc.kind}`);
   }
 }
@@ -168,7 +176,7 @@ function segmentGrid(desc) {
   const { pts, closed } = desc, n = pts.length, nSeg = closed ? n : n - 1;
   let total = 0;
   for (let i = 0; i < nSeg; i++) { const p = pts[i], q = pts[(i + 1) % n]; total += Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]); }
-  const h = Math.max(total / Math.max(1, nSeg), Math.abs(desc.kf) + Math.abs(desc.kd), 1e-6);
+  const h = Math.max(total / Math.max(1, nSeg), Math.abs(desc.kf ?? 0) + Math.abs(desc.kd ?? 0) + (desc.r ?? 0), 1e-6);
   const cells = new Map();
   // numeric hashed cell keys: a collision only adds candidates, each distance-checked
   const key = (a, b, c) => (Math.imul(a, 73856093) ^ Math.imul(b, 19349663) ^ Math.imul(c, 83492791)) | 0;
@@ -232,6 +240,13 @@ function nearestSegment(desc, x) {
 // Unit spine→point direction at x in the descriptor's frame, or null where undefined.
 export function surfaceNormal(desc, x) {
   if (desc.kind === "path") return pathNormal(desc, x);
+  if (desc.kind === "spine") {
+    const { bi, bt } = nearestSegment(desc, x);
+    if (bi < 0) return null;
+    const p = desc.pts[bi], q = desc.pts[(bi + 1) % desc.pts.length];
+    const c = [p[0] + (q[0] - p[0]) * bt, p[1] + (q[1] - p[1]) * bt, p[2] + (q[2] - p[2]) * bt];
+    return norm([x[0] - c[0], x[1] - c[1], x[2] - c[2]]);
+  }
   const s = spinePoint(desc, x);
   return s ? norm([x[0] - s[0], x[1] - s[1], x[2] - s[2]]) : null;
 }
