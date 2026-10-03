@@ -12,7 +12,7 @@ import { resolveSheet } from "../src/framework/sheet/resolve.js";
 import { poseSteps } from "../src/framework/sheet/pose.js";
 import { MARK_DEPTH, SCORE_WIDTH, isSheetPart } from "../src/framework/sheet/constants.js";
 import { processFor } from "../src/framework/process/registry.js";
-import { sheetFrameFor } from "../src/framework/materials/sheet-look.js";
+import { classifySheetSurface, sheetFrameFor } from "../src/framework/materials/sheet-look.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -240,6 +240,31 @@ describe("the pose: rigid, identical for display and export, probe-trusted", () 
     expect(frame.t).toBe(3);
     expect(frame.frame).toEqual(sheetFrameFor(fresh, { p, d }).frame);
     expect(probeSubPartPose(a, { view: "main", purpose: "export", p, d }).pose).toEqual(poseSteps(POSE, 3));
+  });
+
+  test("a canonical sheet delivery's burn frame is identity and still classifies the real geometry", () => {
+    const a = sheetPart(panelSpec());
+    const { p, d } = resolveParams(partWith(a), {});
+    const f = sheetFrameFor(a, { p, d, frame: "canonical" });
+    expect(f.frame).toEqual([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    const posed = sheetFrameFor(a, { p, d });
+    expect(f.t).toBe(posed.t);
+    expect(f.plies).toBe(posed.plies);
+    // The canonical solid (a.build, no place): classify its real triangles under the identity frame.
+    const mesh = a.build(k, p, d).toMesh();
+    const pos = mesh.positions;
+    const seen = new Set();
+    for (let i = 0; i < pos.length; i += 9) {
+      const u = [pos[i + 3] - pos[i], pos[i + 4] - pos[i + 1], pos[i + 5] - pos[i + 2]];
+      const v = [pos[i + 6] - pos[i], pos[i + 7] - pos[i + 1], pos[i + 8] - pos[i + 2]];
+      const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+      const len = Math.hypot(...n);
+      if (len < 1e-9) continue;
+      const z = (pos[i + 2] + pos[i + 5] + pos[i + 8]) / 3;
+      seen.add(classifySheetSurface([0, 0, z], n.map((c) => c / len), f.t));
+    }
+    expect(seen.has("face")).toBe(true);
+    expect(seen.has("wall")).toBe(true);
   });
 
   test("a part made of sheet parts lints clean (validating probe, place rules)", () => {

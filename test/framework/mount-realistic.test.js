@@ -315,6 +315,28 @@ test("a layer-line material gets its print frame from the delivered pose", async
   runtime.dispose();
 });
 
+test("a canonical delivery's print frame is the export pose, still computed lazily", async () => {
+  const workers = {};
+  const part = makePart({ material: "pla-print" });
+  // Exported lying a quarter turn about X; displayed the same way (the place applies to
+  // both purposes). A canonical mesh's frame is the export pose itself, not E·D⁻¹ (identity).
+  part.parts.body.place = (s) => s.rotate(90, [0, 0, 0], [1, 0, 0]);
+  const runtime = mount(part, {
+    createWorker: (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null }),
+    elements: makeElements(),
+  });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ ...payload("body"), frame: "canonical" }], ms: 1 } });
+  await runtime.ready;
+  expect(printFrameCalls.count).toBe(0);
+  await runtime.renderMode.set("realistic");
+  expect(printFrameCalls.count).toBe(1);
+  const m = viewers[0].__subMesh("body").material.userData.patternUniforms.pfPrintFrame.value.elements;
+  const q = [m[8], m[9], m[10]].map((v) => Math.round(v * 1e9) / 1e9 + 0);
+  expect(q).toEqual([0, -1, 0]); // +Z rotated 90 about X
+  runtime.dispose();
+});
+
 // A placed sub-part with NO material: realistic shows it as PLA, so it has
 // layer lines — stood up a quarter turn for display, printed as built.
 const placedPlain = () => {

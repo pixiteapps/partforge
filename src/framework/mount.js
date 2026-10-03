@@ -1004,16 +1004,20 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // snapshot keeps a late computation describing the mesh actually delivered.
     const printFrames = {};
     const sheetFrames = {};
-    const undrawnFrames = new Map(); // sub-part -> { view, params } its delivered mesh was built at
-    function recordFrames(names) {
-      const wanted = names.filter((n) => layerLined.has(n) || burning.has(n));
+    const undrawnFrames = new Map(); // sub-part -> { at: { view, params } its delivered mesh was built at, frame }
+    // `meshes` are the reply's deliveries: each one's `frame` ("canonical" | "posed"; an older
+    // worker sends none, so posed) rides beside the view/params so the frames describe it.
+    function recordFrames(meshes) {
+      const wanted = meshes.filter((m) => layerLined.has(m.name) || burning.has(m.name));
       if (!wanted.length) return;
-      for (const n of wanted) undrawnFrames.set(n, dispatched.get(n) ?? null); // null: built at params nobody recorded
+      for (const m of wanted) {
+        undrawnFrames.set(m.name, { at: dispatched.get(m.name) ?? null, frame: m.frame ?? "posed" }); // at null: built at params nobody recorded
+      }
       viewer.invalidateFrames?.();
     }
     function computeFrames() {
       const resolvedFor = new Map(); // one resolveParams per delivery, not per sub-part
-      for (const [n, at] of undrawnFrames) {
+      for (const [n, { at, frame }] of undrawnFrames) {
         if (at && !resolvedFor.has(at)) {
           try { resolvedFor.set(at, resolveParams(part, at.params)); } catch { resolvedFor.set(at, null); } // diagnosed by the build
         }
@@ -1023,9 +1027,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // normal is enough to char a whole face. A print frame keeps its last value (the
         // worst it can do is run layer lines the wrong way).
         if (!resolved) { delete sheetFrames[n]; continue; }
-        if (layerLined.has(n)) printFrames[n] = printFrameMatrix(part.parts[n], { view: at.view, ...resolved });
+        if (layerLined.has(n)) printFrames[n] = printFrameMatrix(part.parts[n], { view: at.view, ...resolved, frame });
         if (burning.has(n)) {
-          const f = sheetFrameFor(part.parts[n], resolved);
+          const f = sheetFrameFor(part.parts[n], { ...resolved, frame });
           if (f) sheetFrames[n] = f; else delete sheetFrames[n];
         }
       }
@@ -1102,7 +1106,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             // its display pose now, after its geometry landed: a canonical mesh
             // place() at the live params, a posed one a cleared matrix.
             fastPath.apply(data.meshes.map((m) => m.name));
-            recordFrames(data.meshes.map((m) => m.name));
+            recordFrames(data.meshes);
             // A split dispatch answers in two meshes replies; the busy spinner
             // stays up until the view has everything (the other worker's job may
             // still be running — often OCCT, the slow one).
@@ -1155,7 +1159,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             // no geometry at those params), or cleared when the probe is untrusted.
             fastPath.apply(data.meshes.map((m) => m.name),
               Object.fromEntries(data.meshes.map((m) => [m.name, m.frame ?? "posed"])));
-            recordFrames(data.meshes.map((m) => m.name));
+            recordFrames(data.meshes);
             ui.hideBusy();
             refreshView();
           }
