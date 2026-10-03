@@ -2,7 +2,8 @@
 // Probe and delta math run for real; viewer and mesh-cache are minimal stubs.
 import { expect, test } from "vitest";
 import { createPoseFastPath } from "../../src/framework/pose-fast-path.js";
-import { composePose } from "../../src/framework/geometry/pose.js";
+import { composePose, poseDelta, mulMat4 as mul } from "../../src/framework/geometry/pose.js";
+import lattice from "../fixtures/lattice-lid-part.js";
 
 const posedPart = {
   defaults: { w: 10, angle: 0 },
@@ -17,30 +18,42 @@ const posedPart = {
   },
 };
 
-function harness(part) {
+function harness(part, viewName = "v") {
   const params = { ...part.defaults };
   let version = 0;
   const poses = {};   // name -> last mat16 or null
   const current = new Set();
   const reads = {};   // name -> Set of recorded keys (absent = unknown)
+  const frames = {};  // name -> delivery frame of the cache stamp (absent = no stamp)
   const viewer = {
     hasSubMesh: (n) => n in poses,
     setSubPose: (n, m) => { poses[n] = m; },
   };
   const cache = {
     isCurrent: (n) => current.has(n),
-    record: (n, r) => { current.add(n); if (r) reads[n] = new Set(r); else delete reads[n]; },
+    record: (n, r, _view, frame = "posed") => {
+      current.add(n); frames[n] = frame;
+      if (r) reads[n] = new Set(r); else delete reads[n];
+    },
     readsOf: (n) => reads[n] ?? null,
+    frameOf: (n) => frames[n] ?? null,
+    forget: (n) => { current.delete(n); delete frames[n]; },
   };
   const fp = createPoseFastPath(part, viewer, cache, {
-    params, getView: () => "v", getParamsVersion: () => version,
+    params, getView: () => viewName, getParamsVersion: () => version,
   });
   return {
-    params, poses, current, fp,
+    params, poses, current, frames, cache, fp,
+    get version() { return version; },
+    set version(v) { version = v; },
     readsFor(n, r) { reads[n] = new Set(r); },
     readsOf: (n) => reads[n] ?? null,
     edit(partial) { Object.assign(params, partial); version++; current.clear(); },
-    deliver(name) { poses[name] = null; current.add(name); fp.recordDelivered(name); },
+    // What mount does with a fresh reply: show the mesh (matrix reset), stamp the
+    // cache with its frame, then stamp the fast path's baseline.
+    deliver(name, frame = "posed") {
+      poses[name] = null; current.add(name); frames[name] = frame; fp.recordDelivered(name);
+    },
   };
 }
 
@@ -212,4 +225,182 @@ test("repair leaves an unknown stamp unknown", () => {
   hx.edit({ angle: 45 });
   hx.fp.repair();
   expect(hx.readsOf("a")).toBe(null);
+});
+
+// ---- The pose ladder: canonical deliveries (place-only rasterization) ----
+
+const latticePose = (deg) => composePose([
+  { t: "rotate", deg, center: [0, 0, 20], axis: [1, 0, 0] },
+  { t: "translate", v: [0, 0, 0] },
+]);
+
+test("rung 1: a current canonical sub-part is posed by the live place probe, no stamp consulted", () => {
+  const hx = harness(lattice, "assembly");
+  hx.deliver("insert", "canonical");
+  hx.fp.apply(["insert"]);
+  expect(hx.poses.insert).toEqual(latticePose(0));
+  hx.params.openAngle = 45; hx.version++;          // the cache stays current: openAngle is not a build read
+  expect(hx.fp.repair()).toEqual([]);              // rung 1 is not a repair
+  expect(hx.poses.insert).toEqual(latticePose(45));
+  expect(hx.current.has("insert")).toBe(true);
+});
+
+test("rung 1 never consults the stamp: a forgotten fast-path stamp still poses", () => {
+  const hx = harness(lattice, "assembly");
+  hx.deliver("insert", "canonical");
+  hx.fp.forget("insert");
+  hx.params.openAngle = 30; hx.version++;
+  hx.fp.repair();
+  expect(hx.poses.insert).toEqual(latticePose(30));
+});
+
+test("rung 1: the applied matrix is absolute, never accumulated across frames", () => {
+  const hx = harness(lattice, "assembly");
+  hx.deliver("insert", "canonical");
+  hx.params.openAngle = 30; hx.version++; hx.fp.repair();
+  hx.params.openAngle = 60; hx.version++; hx.fp.repair();
+  expect(hx.poses.insert).toEqual(latticePose(60));
+});
+
+test("rung 1: a canonical mesh whose live place() is untrusted is forgotten, never left unposed", () => {
+  const part = { defaults: { x: 0 }, views: { v: { label: "V" } }, parts: { a: { views: ["v"],
+    build: (k) => k.box({ size: [1, 1, 1] }),
+    place: (s, { p }) => (p.x > 5 ? s.translate(s.boundingBox().center) : s.translate([p.x, 0, 0])) } } };
+  const hx = harness(part);
+  hx.deliver("a", "canonical");
+  hx.params.x = 9; hx.version++;
+  hx.fp.repair();
+  expect(hx.current.has("a")).toBe(false);          // regen rebuilds it posed
+  expect(hx.poses.a).toBe(null);
+});
+
+const rung2Part = { defaults: { w: 10, angle: 0, lift: 0 }, views: { v: { label: "V" } }, parts: { a: { views: ["v"],
+  build: (k, p) => k.box({ min: [0, 0, 0], max: [p.w, 10, 5] }).rotateAbout({ axis: "X", deg: p.angle, through: [0, 0, 5] }),
+  place: (s, { p }) => s.translate([0, 0, p.lift]) } } };
+
+test("rung 2: a trailing transform inside build still re-poses by delta, composed with the place pose", () => {
+  const hx = harness(rung2Part);
+  hx.deliver("a", "canonical"); hx.readsFor("a", ["angle", "w"]);
+  hx.edit({ angle: 45, lift: 3 });                  // angle is a build read → stale
+  expect(hx.fp.repair()).toEqual(["a"]);
+  const delta = poseDelta([{ t: "rotate", deg: 45, center: [0, 0, 5], axis: [1, 0, 0] }], [{ t: "rotate", deg: 0, center: [0, 0, 5], axis: [1, 0, 0] }]);
+  expect(hx.poses.a).toEqual(mul(composePose([{ t: "translate", v: [0, 0, 3] }]), delta));   // place over build delta
+  expect(hx.current.has("a")).toBe(true);
+  expect(hx.frames.a).toBe("canonical");            // re-recorded keeping the delivery frame
+  expect([...hx.readsOf("a")].sort()).toEqual(["angle", "lift", "w"]);
+});
+
+test("rung 2: the delta is measured against the delivered build pose, not the previous frame", () => {
+  const hx = harness({ ...rung2Part, defaults: { w: 10, angle: 30, lift: 0 } });
+  hx.deliver("a", "canonical");
+  hx.edit({ angle: 45 }); hx.fp.repair();
+  hx.edit({ angle: 60 }); hx.fp.repair();
+  const rot = (deg) => [{ t: "rotate", deg, center: [0, 0, 5], axis: [1, 0, 0] }];
+  expect(hx.poses.a).toEqual(mul(composePose([{ t: "translate", v: [0, 0, 0] }]), poseDelta(rot(60), rot(30))));
+});
+
+test("rung 2 refuses when the build hash moved (a geometry param changed)", () => {
+  const hx = harness(rung2Part);
+  hx.deliver("a", "canonical");
+  hx.edit({ w: 12 });
+  expect(hx.fp.repair()).toEqual([]);
+  expect(hx.current.has("a")).toBe(false);
+  expect(hx.poses.a).toBe(null);
+});
+
+test("rung 2 refuses when the live place() is untrusted", () => {
+  const part = { ...rung2Part, parts: { a: { ...rung2Part.parts.a,
+    place: (s, { p }) => (p.lift > 5 ? s.translate([0, 0, s.volume()]) : s.translate([0, 0, p.lift])) } } };
+  const hx = harness(part);
+  hx.deliver("a", "canonical");
+  hx.edit({ angle: 45, lift: 9 });
+  expect(hx.fp.repair()).toEqual([]);
+  expect(hx.current.has("a")).toBe(false);
+});
+
+// A posed delivery (the worker baked place() in) keeps today's full-scope delta:
+// the matrix is delta(full now, full delivered), with nothing composed over it.
+// The pre-existing tests above all deliver "posed" (the harness default); this one
+// pins the distinction from rung 2 — a canonical reading would give rot(45), not rot(15).
+test("a posed delivery keeps today's full-scope delta path", () => {
+  const part = { defaults: { w: 10, angle: 30 }, views: { v: { label: "V" } }, parts: { a: { views: ["v"],
+    build: (k, p) => k.box({ min: [0, 0, 0], max: [p.w, 10, 5] }),
+    place: (s, { p }) => s.rotateAbout({ axis: "X", deg: p.angle, through: [0, 0, 5] }) } } };
+  const hx = harness(part);
+  hx.deliver("a", "posed");
+  hx.edit({ angle: 45 });
+  expect(hx.fp.repair()).toEqual(["a"]);
+  const rot = (deg) => [{ t: "rotate", deg, center: [0, 0, 5], axis: [1, 0, 0] }];
+  expect(hx.poses.a).toEqual(poseDelta(rot(45), rot(30)));
+  expect(hx.frames.a).toBe("posed");
+});
+
+test("apply on a posed delivery clears the sub-part's matrix", () => {
+  const hx = harness(posedPart);
+  hx.deliver("a", "posed");
+  hx.poses.a = composePose([{ t: "translate", v: [1, 2, 3] }]);
+  hx.fp.apply(["a"]);
+  expect(hx.poses.a).toBe(null);
+});
+
+test("apply skips names out of view, names without a mesh, and names with no frame", () => {
+  const hx = harness(lattice, "assembly");
+  hx.fp.apply(["insert", "nope"]);                  // no mesh delivered
+  expect("insert" in hx.poses).toBe(false);
+  hx.deliver("insert", "canonical");
+  hx.cache.forget("insert");                        // no stamp, no override: frame unknown
+  hx.poses.insert = "untouched";
+  hx.fp.apply(["insert"]);
+  expect(hx.poses.insert).toBe("untouched");
+});
+
+// Ruling B: mount's stale-shown branch forgets the stamps, then calls apply with
+// each delivered mesh's frame — frameOf is null by then, so the override decides.
+test("apply(names, frames) poses a stamp-less canonical delivery from the override", () => {
+  const hx = harness(lattice, "assembly");
+  hx.params.openAngle = 70;
+  hx.poses.insert = null;                           // shown, not recorded
+  hx.fp.apply(["insert"], { insert: "canonical" });
+  expect(hx.poses.insert).toEqual(latticePose(70));
+  expect(hx.current.has("insert")).toBe(false);     // still not current: the regen loop owes a build
+});
+
+test("the frames override wins over the cache stamp's frame", () => {
+  const hx = harness(lattice, "assembly");
+  hx.deliver("insert", "posed");
+  hx.params.openAngle = 20;
+  hx.fp.apply(["insert"], { insert: "canonical" });
+  expect(hx.poses.insert).toEqual(latticePose(20));
+});
+
+test("apply(names, frames) with an untrusted live place() clears the matrix and leaves the stamp forgotten", () => {
+  const part = { defaults: { x: 9 }, views: { v: { label: "V" } }, parts: { a: { views: ["v"],
+    build: (k) => k.box({ size: [1, 1, 1] }),
+    place: (s, { p }) => (p.x > 5 ? s.translate(s.boundingBox().center) : s.translate([p.x, 0, 0])) } } };
+  const hx = harness(part);
+  hx.poses.a = composePose([{ t: "translate", v: [1, 0, 0] }]);
+  hx.fp.apply(["a"], { a: "canonical" });
+  expect(hx.poses.a).toBe(null);
+  expect(hx.cache.frameOf("a")).toBe(null);
+});
+
+// The probe maps are lazy: a part with only posed deliveries never runs the place
+// or build probe, and rung 1 never runs a build probe at all.
+test("probes run lazily, only the scopes a frame needs", () => {
+  let builds = 0, places = 0;
+  const part = { defaults: { angle: 0 }, views: { v: { label: "V" } }, parts: { a: { views: ["v"],
+    build: (k) => { builds++; return k.box({ size: [1, 1, 1] }); },
+    place: (s, { p }) => { places++; return s.translate([p.angle, 0, 0]); } } } };
+  const posed = harness(part);
+  posed.deliver("a", "posed");                      // full probe: one build + one place
+  builds = places = 0;
+  posed.edit({ angle: 5 }); posed.fp.repair();
+  expect([builds, places]).toEqual([1, 1]);         // full scope only
+  const canon = harness(part);
+  canon.deliver("a", "canonical");
+  builds = places = 0;
+  canon.params.angle = 5; canon.version++; canon.fp.repair();
+  expect([builds, places]).toEqual([0, 1]);         // place scope only
+  canon.fp.repair();                                // same (version, view): memoized
+  expect([builds, places]).toEqual([0, 1]);
 });
