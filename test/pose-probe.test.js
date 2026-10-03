@@ -173,3 +173,67 @@ test("only subparts of the requested view are probed", () => {
   const m = probePoses(part, "v", {});
   expect([...m.keys()]).toEqual(["a"]);
 });
+
+// A named asset's SOURCE is geometry too. The build names a font ("face"), an
+// image or an artwork, and that name is the same whichever one a control
+// picked — so before the sources were folded in, a font pick probed as
+// "unchanged geometry" and the fast path re-posed the old letters (the Lattice
+// Box's raised text kept its previous typeface while the pocket cut from the
+// same text updated).
+const textPart = {
+  defaults: { face: "https://fonts.gstatic.com/s/a/v1/a.ttf", angle: 0 },
+  fonts: (p) => ({ face: p.face }),
+  views: { v: { label: "V" } },
+  parts: {
+    letters: {
+      views: ["v"],
+      build: (k, p) =>
+        k.text2d("Eddie", { size: 10, font: "face" })
+          .extrude({ h: 2 })
+          .rotateAbout({ axis: "X", deg: p.angle, through: [0, 0, 0] }),
+    },
+  },
+};
+
+test("a font pick changes baseHash even though the build names the same font", () => {
+  const a = probePoses(textPart, "v", { ...textPart.defaults }).get("letters");
+  const b = probePoses(textPart, "v", { ...textPart.defaults, face: "https://fonts.gstatic.com/s/b/v1/b.ttf" }).get("letters");
+  expect(a.trusted).toBe(true);
+  expect(b.trusted).toBe(true);
+  expect(b.baseHash).not.toBe(a.baseHash);
+});
+
+test("a pose-only change on a text part still takes the fast path", () => {
+  const a = probePoses(textPart, "v", { ...textPart.defaults, angle: 0 }).get("letters");
+  const b = probePoses(textPart, "v", { ...textPart.defaults, angle: 30 }).get("letters");
+  expect(b.baseHash).toBe(a.baseHash);
+  expect(b.pose).not.toEqual(a.pose);
+});
+
+test("byte-valued font sources are told apart by content, not identity", () => {
+  const bytes = (n) => new Uint8Array([1, 2, 3, n]).buffer;
+  const a = probePoses(textPart, "v", { ...textPart.defaults, face: bytes(4) }).get("letters");
+  const same = probePoses(textPart, "v", { ...textPart.defaults, face: bytes(4) }).get("letters");
+  const other = probePoses(textPart, "v", { ...textPart.defaults, face: bytes(5) }).get("letters");
+  expect(same.baseHash).toBe(a.baseHash);
+  expect(other.baseHash).not.toBe(a.baseHash);
+});
+
+test("image and vector picks change baseHash the same way", () => {
+  const part = {
+    defaults: { img: "a.png", art: "a.svg" },
+    images: (p) => ({ img: p.img }),
+    vectors: (p) => ({ art: p.art }),
+    views: { v: { label: "V" } },
+    parts: { a: { views: ["v"], build: (k) => k.heightfield("img", { size: [10, 10], h: 2 }).union(k.vector2d("art").extrude({ h: 1 })) } },
+  };
+  const base = probePoses(part, "v", { ...part.defaults }).get("a");
+  expect(base.trusted).toBe(true);
+  expect(probePoses(part, "v", { ...part.defaults, img: "b.png" }).get("a").baseHash).not.toBe(base.baseHash);
+  expect(probePoses(part, "v", { ...part.defaults, art: "b.svg" }).get("a").baseHash).not.toBe(base.baseHash);
+});
+
+test("a throwing asset declaration makes every sub-part untrusted rather than throwing", () => {
+  const part = { ...textPart, fonts: () => { throw new Error("boom"); } };
+  expect(probePoses(part, "v", { ...textPart.defaults }).get("letters").trusted).toBe(false);
+});
