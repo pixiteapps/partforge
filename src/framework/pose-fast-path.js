@@ -11,8 +11,8 @@ import { poseDelta } from "./geometry/pose.js";
 export function createPoseFastPath(part, viewer, cache, { params, getView, getParamsVersion }) {
   const stamps = {}; // name -> probe entry captured when that subpart's mesh was delivered
 
-  // Memoize the probe per (paramsVersion, view) — same discipline as
-  // createMeshCache's readsFor; params is the live in-place-mutated object.
+  // Memoize the probe per (paramsVersion, view), so it runs once per change
+  // rather than per sub-part; params is the live in-place-mutated object.
   let probeKey = null, probeMap = null;
   const probeFor = () => {
     const key = `${getParamsVersion()}|${getView()}`;

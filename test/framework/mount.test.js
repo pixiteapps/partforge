@@ -1347,25 +1347,35 @@ test("a build made stale only by playback is shown, but not recorded", () => {
   handle.dispose();
 });
 
-test("a stale-shown playback mesh carries no stamp, so it is rebuilt even if its reads look unchanged", () => {
+test("a stale-shown playback mesh carries no stamp: returning to the stamped params still rebuilds", () => {
+  vi.useFakeTimers();
   const els = makeElements();
   const { workers, createWorker } = makeWorkers();
   const handle = mount(makeAnimatedPart(), { createWorker, elements: els });
   workers.manifold.onmessage({ data: { type: "ready" } });
-  // body's recorded reads exclude `h`, so the animation's h changes alone never stale it...
-  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body", reads: ["tilt"] }], ms: 5 } });
+  // Fresh delivery at h=4: body's build reads both h and tilt.
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body", reads: ["h", "tilt"] }], ms: 5 } });
   const viewer = fakeViewers[0];
 
   handle.animation.play();
   viewer.tickFrame(0.5);
   viewer.tickFrame(0.5);
+  // A mesh delivered while playback moved on was built at OTHER params: shown, never stamped.
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body", reads: ["h", "tilt"] }], ms: 5 } });
+
+  // The user brings h back to the value the OLD stamp recorded. Left standing, that stamp
+  // would match again and the playback-built mesh on screen would read as current.
+  handle.animation.pause();
   const jobsBefore = workers.manifold.postMessage.mock.calls.length;
-  // ...but a mesh delivered while playback moved on was built at OTHER params: shown, unstamped.
-  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body", reads: ["tilt"] }], ms: 5 } });
+  handle.setParams({ h: 4 });
+  vi.advanceTimersByTime(250);
+  // the build the stale-shown delivery re-kicked is still in flight; its (user-stale) reply frees the loop
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body", reads: ["h", "tilt"] }], ms: 5 } });
 
   const jobs = workers.manifold.postMessage.mock.calls.slice(jobsBefore).map(([m]) => m);
   expect(jobs.some((m) => m.type === "generate" && m.subparts?.includes("body"))).toBe(true);
   handle.dispose();
+  vi.useRealTimers();
 });
 
 test("a user edit mid-playback still discards the stale meshes", () => {

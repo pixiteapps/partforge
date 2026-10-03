@@ -29,8 +29,9 @@ export function relevantParamKeys(part, view, params) {
 }
 
 // Per-sub-part version of relevantParamKeys: which raw params each ON-SCREEN
-// sub-part of the active view reads. This is the PREDICTION, used as a fallback
-// for sub-parts not yet built (built ones carry recorded reads). Errs to RELEVANT_ALL on any
+// sub-part of the active view reads. This is a PREDICTION: display consumers
+// (selection, measure) and the oracle use it until they move to recorded reads;
+// the mesh cache no longer does. Errs to RELEVANT_ALL on any
 // analysis failure (caller then treats every param as relevant — safe, just slower).
 export function subPartReadKeys(part, view, params) {
   try {
