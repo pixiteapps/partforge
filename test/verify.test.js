@@ -3,6 +3,7 @@ import { evaluateCase } from "../src/framework/oracle/verify.js";
 import { resolveProfile } from "../src/framework/oracle/dfm-profiles.js";
 import { measure as measureReal } from "../src/framework/oracle/measure.js";
 import { verify as verifyFromEntry } from "../src/testing.js";
+import { buildView } from "../src/framework/oracle/build.js";
 import demo from "../src/parts/demo.js";
 
 test("verify is exported from the partforge/testing entry", () => {
@@ -78,14 +79,65 @@ test("verify fails a violated gate", () => {
   expect(v.failures).toHaveLength(3);   // defaults + 2 presets
 });
 
-test("dedup: cases with the same param-deps signature reuse one measure call", () => {
-  // "Relabel" preset changes only `label`, which the build never reads → same
-  // signature as defaults; "Big" changes od/h → distinct. 3 cases, 2 measures.
+test("dedup: cases with the same recorded reads reuse one measure call", () => {
+  // "Relabel" preset changes only `label`, which the build never reads → the
+  // measurement's recorded reads agree with defaults; "Big" changes od/h → distinct. 3 cases, 2 measures.
   const part = { ...tube(12, 10), verify: { process: "fdm-pla", cases: ["defaults", "Relabel", "Big"] } };
   let calls = 0;
   const measureFn = (...args) => { calls++; return measureReal(...args); };
   const v = verify(k, part, { measureFn });
   expect(v.cases).toHaveLength(3);
+  expect(calls).toBe(2);
+});
+
+// A case carrying a key the entry's params never had cannot be judged by the
+// entry's reads (the build never saw that key at all), so it is never reused.
+test("a case with a key absent from a measured entry's params is not reused", () => {
+  const base = tube(12, 10);
+  const part = { ...base,
+    parameters: [{ id: "b", presets: { Extra: { undeclared: 1 } } }],
+    verify: { process: "fdm-pla", cases: ["defaults", "Extra"] } };
+  let calls = 0;
+  const measureFn = (...args) => { calls++; return measureReal(...args); };
+  const v = verify(k, part, { measureFn });
+  expect(v.cases).toHaveLength(2);
+  expect(calls).toBe(2);
+});
+
+// The #158 shape in the oracle: the build reads `cell` only past an isEmpty()
+// guard, so the probe's read set at defaults never contained it and the
+// "Fine" preset used to reuse the defaults measurement.
+const guardedTube = () => ({
+  meta: { title: "Guarded", units: "mm" },
+  defaults: { cell: 2, label: "a" },
+  parameters: [{ id: "b", presets: { Fine: { cell: 4 }, Relabel: { label: "z" } } }],
+  views: { v: { label: "V" } },
+  parts: { tube: { views: ["v"], build: (kk, p) => {
+    const body = kk.cylinder({ r: 8, h: 10 });
+    return body.isEmpty() ? body : body.cut(kk.cylinder({ r: p.cell, h: 14 }).translate([0, 0, -2]));
+  } } },
+});
+
+test("cases differing only in a geometry-guarded param are measured separately", () => {
+  const part = { ...guardedTube(), verify: { cases: ["defaults", "Fine", "Relabel"], expect: { tube: { holes: 1 } } } };
+  let calls = 0;
+  const measureFn = (...args) => { calls++; return measureReal(...args); };
+  verify(k, part, { measureFn });
+  expect(calls).toBe(2);   // defaults + Fine; Relabel (unread) still reuses defaults
+});
+
+test("measure() reports the params it read; a prebuilt view without a sink reports none", () => {
+  const part = guardedTube();
+  expect(measureReal(k, part, "v", {}).reads).toEqual(["cell"]);
+  const built = buildView(k, part, "v", {});
+  expect(measureReal(k, part, "v", {}, { built }).reads).toBe(undefined);
+});
+
+test("a stub measureFn without reads is reused only on identical params", () => {
+  const part = { ...tube(12, 10), verify: { cases: ["defaults", "Relabel"], expect: { tube: { holes: 1 } } } };
+  let calls = 0;
+  const stub = (...args) => { calls++; return { ...measureReal(...args), reads: undefined }; };
+  verify(k, part, { measureFn: stub });
   expect(calls).toBe(2);
 });
 

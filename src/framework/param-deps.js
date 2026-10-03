@@ -1,71 +1,12 @@
-// Which raw parameters affect the parts on screen in the active view. A removable
-// relevance layer: the panel uses this to dim controls / hide sections that don't
-// affect what's visible. Pure — no DOM, no real geometry (reuses the geometry-free
-// probe kernel). Errs toward RELEVANT_ALL whenever it can't analyze a build.
+// Pure — no DOM, no real geometry.
+// PREDICTED param dependencies — computed before building, against the geometry-free probe kernel. The mesh cache, panel, pickers and oracle use the reads RECORDED from the real build and fall back to this only for sub-parts not yet built. It is wrong whenever a build branches on a geometry query (isEmpty, volume, …), which the probe answers with stand-ins.
+import { recorder, expandDerivedReads } from "./read-recorder.js";
+import { resolveDerivedAttributed } from "./derive.js";
 import { createProbeKernel } from "./geometry/probe.js";
 import { byteAwareReplacer } from "./geometry/solid-hash.js";
 import { viewSubParts } from "./part-model.js";
 
 export const RELEVANT_ALL = Symbol("relevant-all");
-
-// A read-recording Proxy over a shallow clone of `obj`: records each top-level
-// property key read into `seen`, returns the real value so the build's conditionals
-// evaluate correctly, and never mutates the original `obj` (writes hit the clone).
-function recorder(obj, seen) {
-  return new Proxy({ ...obj }, {
-    get(target, key) {
-      if (typeof key === "string") seen.add(key);
-      return Reflect.get(target, key);
-    },
-  });
-}
-
-// Run derive with recorders. `allInputs` is every raw param derive reads.
-// For the grouped form (derive as an object of group functions — see derive.js),
-// `depsOf` maps each derived key to the raw params of just its own group,
-// transitively including the groups whose outputs it read. For the single-function
-// form there is no per-key attribution, so depsOf is null and callers fall back to
-// treating every derive input as feeding every derived key.
-function analyzeDerive(part, params) {
-  const allInputs = new Set();
-  if (!part.derive) return { derived: {}, allInputs, depsOf: null };
-  if (typeof part.derive === "function") {
-    const derived = part.derive(recorder(params, allInputs)) ?? {};
-    return { derived, allInputs, depsOf: null };
-  }
-  const derived = {};
-  const depsOf = new Map();
-  for (const fn of Object.values(part.derive)) {
-    const raw = new Set();
-    const fromEarlier = new Set();
-    const written = new Set();
-    // Reads are recorded (and guarded against not-yet-produced keys, matching
-    // resolveDerived); writes pass THROUGH to the real accumulator so a group
-    // that mutates `d` in place analyzes exactly like it runs in production.
-    const dProxy = new Proxy(derived, {
-      get(t, key) {
-        if (typeof key === "string" && key !== "then") {
-          if (!(key in t)) throw new Error(`derive: group read "${key}" before any earlier group produced it`);
-          fromEarlier.add(key);
-        }
-        return Reflect.get(t, key);
-      },
-      set(t, key, v) {
-        if (typeof key === "string") written.add(key);
-        return Reflect.set(t, key, v);
-      },
-    });
-    const out = fn(recorder(params, raw), dProxy) ?? {};
-    const deps = new Set(raw);
-    for (const k of fromEarlier) for (const dep of depsOf.get(k) ?? []) deps.add(dep);
-    for (const r of raw) allInputs.add(r);
-    for (const key of [...Object.keys(out), ...written]) {
-      depsOf.set(key, deps);
-      if (Object.hasOwn(out, key)) derived[key] = out[key];
-    }
-  }
-  return { derived, allInputs, depsOf };
-}
 
 export function relevantParamKeys(part, view, params) {
   // The union of every on-screen sub-part's read set (that's exactly what
@@ -89,12 +30,13 @@ export function relevantParamKeys(part, view, params) {
 }
 
 // Per-sub-part version of relevantParamKeys: which raw params each ON-SCREEN
-// sub-part of the active view reads. Used by Layer 1 (mount.js) to skip
-// regenerating sub-parts whose inputs are unchanged. Errs to RELEVANT_ALL on any
+// sub-part of the active view reads. This is a PREDICTION: display consumers
+// (selection, measure) and the oracle use it until they move to recorded reads;
+// the mesh cache no longer does. Errs to RELEVANT_ALL on any
 // analysis failure (caller then treats every param as relevant — safe, just slower).
 export function subPartReadKeys(part, view, params) {
   try {
-    const { derived, allInputs, depsOf } = analyzeDerive(part, params);
+    const { d: derived, depsOf, allInputs } = resolveDerivedAttributed(part, params);
     const { kernel } = createProbeKernel();
     const map = new Map();
     for (const name of viewSubParts(part, view, params)) {
@@ -107,16 +49,7 @@ export function subPartReadKeys(part, view, params) {
       // mesh), so its reads count — without this, a param consumed only by place()
       // would let the mesh cache skip a rebuild and leave the sub-part misplaced.
       if (sp.place) sp.place(built, { view, purpose: "display", p: recorder(params, reads), d: recorder(derived, dSeen) });
-      if (dSeen.size > 0) {
-        if (depsOf && [...dSeen].every((k) => depsOf.has(k))) {
-          for (const k of dSeen) for (const dep of depsOf.get(k)) reads.add(dep);
-        } else {
-          // single-function derive, or a derived key no group produced: no
-          // attribution possible — fold every derive input in (safe, coarser).
-          for (const dep of allInputs) reads.add(dep);
-        }
-      }
-      map.set(name, reads);
+      map.set(name, expandDerivedReads(reads, dSeen, { depsOf, allInputs }));
     }
     return map;
   } catch {
@@ -132,4 +65,47 @@ export function subPartReadKeys(part, view, params) {
 // array to one JSON number per byte (see solid-hash.js).
 export function relevanceHash(keys, params) {
   return JSON.stringify(keys.slice().sort().map((k) => [k, params[k]]), byteAwareReplacer);
+}
+
+// Which params one sub-part depends on, for DISPLAY consumers (pick scoping,
+// measure flash, runtime.controlsFor): its last real build's recorded reads
+// when there are any, else the prediction, else every param. The one ladder —
+// feature-level precision lands here later (spec §5).
+export function subPartParamKeys(part, view, params, readsOf, name) {
+  const rec = readsOf?.(name);
+  if (rec) {
+    // The worker records the BUILD's reads; the sub-part's own show/hide gate
+    // is added here, as the prediction rung does (subPartReadKeys runs enabled()).
+    const out = new Set(rec);
+    const sp = part.parts[name];
+    if (sp?.enabled) sp.enabled(recorder(params, out));
+    return [...out].sort();
+  }
+  const reads = subPartReadKeys(part, view, params);
+  const keys = reads === RELEVANT_ALL ? Object.keys(params) : [...(reads.get(name) ?? Object.keys(params))];
+  return keys.sort();
+}
+
+// Panel relevance from RECORDED reads: the union over on-screen sub-parts (a
+// not-yet-built one contributes its prediction — display only, so a wrong guess
+// costs one build's dimming), plus the gate params of every in-view sub-part.
+export function recordedRelevantKeys(part, view, params, readsOf) {
+  try {
+    const relevant = new Set();
+    let predicted = null;
+    for (const name of viewSubParts(part, view, params)) {
+      const rec = readsOf(name);
+      if (rec) { for (const k of rec) relevant.add(k); continue; }
+      predicted ??= subPartReadKeys(part, view, params);
+      if (predicted === RELEVANT_ALL) return RELEVANT_ALL;
+      for (const k of predicted.get(name) ?? []) relevant.add(k);
+    }
+    for (const name of Object.keys(part.parts)) {
+      const sp = part.parts[name];
+      if (sp.views.includes(view) && sp.enabled) sp.enabled(recorder(params, relevant));
+    }
+    return relevant;
+  } catch {
+    return RELEVANT_ALL;
+  }
 }

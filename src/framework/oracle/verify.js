@@ -3,8 +3,7 @@ import { measure as defaultMeasure } from "./measure.js";
 import { pairKey, CONTACT_EPS } from "./gaps.js";
 import { resolveProfile, overhangAngleFor } from "./dfm-profiles.js";
 import { expandExpectations, partGatesMinWall } from "./gates.js";
-import { subPartReadKeys, relevanceHash, RELEVANT_ALL } from "../param-deps.js";
-import { byteAwareReplacer } from "../geometry/solid-hash.js";
+import { relevanceHash } from "../param-deps.js";
 import { SUBPART_METRICS, VIEW_METRICS } from "../verify-metrics.js";
 import { processById } from "../process/registry.js";
 import { SHEET_DOC_ID, SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../sheet/constants.js";
@@ -338,17 +337,20 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   const needMinWall = partGatesMinWall(part, { process, expanded });
   // Throws on a bad `verify.orientation`, the same loudness as a bad profile name.
   const overhangAngle = overhangAngleFor(part, process, { expanded });
-  const readKeys = subPartReadKeys(part, view, part.defaults);
-  // byteAwareReplacer on the RELEVANT_ALL branch too: an unattributable derive()
-  // still might read a byte-valued image param, and this memo key gates whether
-  // a case's geometry gets rebuilt or an earlier result reused (see the seeding
-  // block below) — the same collision the relevanceHash branch guards against.
-  const signature = (params) =>
-    readKeys === RELEVANT_ALL
-      ? JSON.stringify(params, byteAwareReplacer)
-      : [...readKeys.entries()].map(([name, keys]) => `${name}:${relevanceHash([...keys], params)}`).join("|");
-
-  const memo = new Map();
+  // Reuse rule (spec §4): case B may reuse a measurement taken at params A when
+  // B agrees with A on every param that measurement READ (recorded by measure()
+  // itself). Sound for the same reason the mesh cache is: a deterministic build
+  // whose reads are unchanged replays the same path. A result with no recorded
+  // reads (a stub measureFn, or a caller-built view) is reused on identical
+  // params only.
+  const full = (params) => ({ ...part.defaults, ...(params ?? {}) });
+  const entries = []; // { params: full params, result }
+  const findEntry = (params) => entries.find((e) => {
+    // A key the entry was never measured with can't be judged by its reads.
+    if (Object.keys(params).some((k) => !(k in e.params))) return false;
+    const keys = e.result?.reads ?? Object.keys({ ...e.params, ...params });
+    return relevanceHash(keys, params) === relevanceHash(keys, e.params);
+  });
 
   // SEEDING. expandCases always yields a "defaults" case, and the inspect job
   // (framework/jobs.js) measures those exact params immediately before calling
@@ -377,10 +379,9 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // mutates facts (evaluateCase only reads), and that is what makes the sharing
   // safe; a future check that wants to annotate a fact must copy first.
   //
-  // Keyed through the SAME signature() the memo uses, never a JSON compare of the
-  // raw params — a separate compare would miss cases that share a signature (a
-  // preset touching only params the build never reads) and, worse, could hit on
-  // params that merely look equal. The seed's params are layered over
+  // Matched through the SAME reads rule every case uses, never a JSON compare of the
+  // raw params — a separate compare would miss cases that agree on everything the
+  // measurement read (a preset touching only unread params). The seed's params are layered over
   // part.defaults first because a caller's `{}` and the defaults case's
   // `{...part.defaults}` build identical geometry but hash differently
   // (JSON.stringify({}) is not JSON.stringify(defaults), and relevanceHash reads
@@ -405,19 +406,21 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   const printBboxesMatch = !needPrintBboxes || seed?.result?.measuredPrintBboxes !== false;
   if (seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && (quick || overhangMatches) && printBboxesMatch
     && seed.result.view === view) {
-    memo.set(signature({ ...part.defaults, ...(seed.params ?? {}) }), seed.result);
+    entries.push({ params: full(seed.params), result: seed.result });
   }
 
   const measureCase = (params) => {
-    const key = signature(params);
-    if (memo.has(key)) return memo.get(key);
+    const fp = full(params);
+    const hit = findEntry(fp);
+    if (hit) return hit.result;
     if (quick) return null;   // a case the seed does not cover — reported, never built
     // `probes: false` — no gate reads probe values, so re-running their booleans
     // for every case buys nothing. (A seed measured WITH probes is a superset in
     // the same way a min-wall seed is: the extra key is simply never read here.)
-    memo.set(key, measureFn(kernel, part, view, params,
-      { minWall: needMinWall, probes: false, overhang: overhangAngle, printBboxes: needPrintBboxes }));
-    return memo.get(key);
+    const result = measureFn(kernel, part, view, params,
+      { minWall: needMinWall, probes: false, overhang: overhangAngle, printBboxes: needPrintBboxes });
+    entries.push({ params: fp, result });
+    return result;
   };
 
   const subPartNames = Object.keys(part.parts);

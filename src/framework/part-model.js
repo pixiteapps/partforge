@@ -9,7 +9,8 @@
 // (oracle/) all call it. Keeping those four functions out of jobs.js — which is
 // async, imports the kernels, and pulls in the whole export stack — is what lets the
 // oracle depend on the part model without an import cycle back through the job loop.
-import { resolveDerived } from "./derive.js";
+import { resolveDerived, resolveDerivedAttributed } from "./derive.js";
+import { recorder } from "./read-recorder.js";
 
 // Names of the sub-parts a view shows: declared in the view and enabled for these
 // params. Order follows Object.keys(part.parts) (definition order).
@@ -39,10 +40,34 @@ export function exportSubParts(part, view, params) {
 // build() will see, or a refused value still reaches the geometry through `d`.
 // A hook rather than a second copy of this function in the caller, so "resolve a
 // part's params" keeps one definition.
-export function resolveParams(part, params, sanitize) {
+// resolveParams plus derive attribution, plain objects. `p` is passed to derive
+// itself (through), so a derive that writes p behaves exactly as unrecorded.
+export function resolveParamsAttributed(part, params, sanitize) {
   const p = { ...part.defaults, ...params };
   sanitize?.(p);
-  return { p, d: resolveDerived(part, p) };
+  const { d, depsOf, allInputs } = resolveDerivedAttributed(part, p, { through: true });
+  return { p, d, attribution: { depsOf, allInputs } };
+}
+
+// Record-through views of a resolved (p, d) into one read sink. Everything that
+// reads them — viewSubParts' enabled(), build(), place(), expect(p, d) — lands in
+// the sink with no change to the reader.
+export function recordedParams({ p, d }, sink) {
+  return { p: recorder(p, sink.raw, { through: true }), d: recorder(d, sink.dSeen, { through: true }) };
+}
+
+// `reads` (optional): a newReadSink() (read-recorder.js). When given, the returned
+// p/d record every key read into it, and the sink keeps the derive attribution
+// expandReads needs. The single seam the oracle threads its sink through.
+export function resolveParams(part, params, sanitize, reads) {
+  if (!reads) {
+    const p = { ...part.defaults, ...params };
+    sanitize?.(p);
+    return { p, d: resolveDerived(part, p) };
+  }
+  const resolved = resolveParamsAttributed(part, params, sanitize);
+  reads.attribution ??= resolved.attribution;
+  return recordedParams(resolved, reads);
 }
 
 // Build one sub-part and apply its optional place() for the given purpose/view.

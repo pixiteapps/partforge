@@ -1,6 +1,6 @@
 // test/param-deps-subpart.test.js
 import { expect, test } from "vitest";
-import { subPartReadKeys, relevantParamKeys, relevanceHash, RELEVANT_ALL } from "../src/framework/param-deps.js";
+import { subPartReadKeys, relevantParamKeys, relevanceHash, RELEVANT_ALL, recordedRelevantKeys, subPartParamKeys } from "../src/framework/param-deps.js";
 
 const view = { v: { label: "V" } };
 const part = {
@@ -59,4 +59,48 @@ test("relevanceHash is stable for equal values and differs when a value changes"
 test("an unanalyzable build yields RELEVANT_ALL (safe fallback)", () => {
   const bad = { defaults: {}, views: view, parts: { x: { views: ["v"], build: () => { throw new Error("nope"); } } } };
   expect(subPartReadKeys(bad, "v", {})).toBe(RELEVANT_ALL);
+});
+
+const gated = {
+  defaults: { pattern: "random", cellR: 2, showLid: false, lidT: 1, size: 10 },
+  views: { v: { label: "V" } },
+  parts: {
+    body: { views: ["v"], build: (k, p) => k.box({ min: [0, 0, 0], max: [p.size, p.size, 1] }) },
+    lid: { views: ["v"], enabled: (p) => p.showLid, build: (k, p) => k.box({ min: [0, 0, 0], max: [1, 1, p.lidT] }) },
+  },
+};
+
+test("recorded relevance: union of on-screen recorded reads plus every in-view gate", () => {
+  const readsOf = (n) => (n === "body" ? new Set(["size", "pattern"]) : null);
+  const r = recordedRelevantKeys(gated, "v", gated.defaults, readsOf);
+  expect([...r].sort()).toEqual(["pattern", "showLid", "size"]);
+});
+
+test("recorded relevance: a sub-part not yet built contributes its prediction", () => {
+  const params = { ...gated.defaults, showLid: true };
+  const readsOf = (n) => (n === "body" ? new Set(["size"]) : null);
+  const r = recordedRelevantKeys(gated, "v", params, readsOf);
+  expect(r.has("lidT")).toBe(true);
+  expect(r.has("size")).toBe(true);
+});
+
+test("subPartParamKeys: recorded, else predicted, else everything", () => {
+  expect(subPartParamKeys(gated, "v", gated.defaults, () => new Set(["cellR"]), "body")).toEqual(["cellR"]);
+  expect(subPartParamKeys(gated, "v", gated.defaults, () => null, "body")).toEqual(["size"]);
+  expect(subPartParamKeys(gated, "v", gated.defaults, undefined, "nope")).toEqual(Object.keys(gated.defaults).sort());
+});
+
+// The recorded rung must carry the sub-part's own show/hide gate, exactly as the
+// prediction rung does (subPartReadKeys runs enabled() first): a pick on a gated
+// lid offers `showLid` before AND after its first build. The worker records the
+// build's reads, not enabled()'s, so a recorded set never contains the gate.
+test("subPartParamKeys' recorded rung adds the sub-part's enabled() gate params", () => {
+  const gated = {
+    defaults: { a: 1, showLid: true }, views: view,
+    parts: { lid: { views: ["v"], enabled: (p) => p.showLid, build: (k, p) => k.cylinder({ r: p.a, h: p.a }) } },
+  };
+  const predicted = subPartParamKeys(gated, "v", gated.defaults, () => null, "lid");
+  const recorded = subPartParamKeys(gated, "v", gated.defaults, () => new Set(["a"]), "lid");
+  expect(predicted).toEqual(["a", "showLid"]);
+  expect(recorded).toEqual(["a", "showLid"]);
 });
