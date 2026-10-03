@@ -14,7 +14,8 @@ import { ensureImports, resolveImports } from "./imports.js";
 import { safeName } from "./safe-name.js";
 import { vectorControlAllows, vectorSourceAllowed, isNoVectorSource } from "./vector-source.js";
 import { vectorsFor, ensureVectors } from "./vectors.js";
-import { exportSubParts, resolveParams, buildPosed } from "./part-model.js";
+import { exportSubParts, resolveParamsAttributed, recordedParams, buildPosed } from "./part-model.js";
+import { newReadSink, expandReads } from "./read-recorder.js";
 
 export const FONT_SOURCE_CACHE_MAX = 4;
 
@@ -173,7 +174,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     // rewriting p[key] afterwards would leave derive() — and therefore `d`, and
     // therefore the geometry — holding the refused value while build() saw the
     // default.
-    const { p, d } = resolveParams(part, msg.params, (params) => {
+    const { p, d, attribution } = resolveParamsAttributed(part, msg.params, (params) => {
       // A param bound to a `type: "font"` control is user input — on a shared
       // link a STRING value is arbitrary attacker-supplied text that
       // `fonts: (p) => …` would turn into a fetch URL. A BYTE value
@@ -234,12 +235,17 @@ export async function handle(kernel, part, msg, post, opts = {}) {
         params[key] = part.defaults?.[key];
       }
     });
+    // Params the ASSET declarations read (fonts/images/vectors may be functions
+    // of p). A build names an asset, never the param that chose it, so these are
+    // attributed to every sub-part this job builds — coarse, sound (spec §1).
+    const assetSink = newReadSink();
+    const assetP = recordedParams({ p, d }, assetSink).p;
     // Preload any part-declared fonts into the kernel before building. A lazy
     // dynamic import because this is async context (unlike the synchronous
     // kernel-front), so it doesn't cost sync callers anything. The namespace
     // shape differs between bundler and Node resolution (a bare `.default`
     // here is undefined in every browser bundle) — normalize it.
-    const fontsDecl = fontsFor(part, p);
+    const fontsDecl = fontsFor(part, assetP);
     // A nullish/empty source means "no font declared" for that name, not an
     // error — e.g. `fonts: (p) => ({ face: p.face })` when p.face ended up
     // undefined because the refusal above had no default to fall back to, or
@@ -339,7 +345,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     // the kernel's image map (a host or test harness may have seeded it
     // directly via _registerImage).
     if (part.images && typeof kernel._registerImage === "function") {
-      const imagesDecl = imagesFor(part, p) ?? {};
+      const imagesDecl = imagesFor(part, assetP) ?? {};
       const declared = Object.fromEntries(
         Object.entries(imagesDecl).filter(([name, src]) => {
           if (!isNoImageSource(src)) return true;
@@ -380,7 +386,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     // on. An unset source declares NO artwork for that name; a build that
     // still calls k.vector2d on it gets the ordinary unknown-vector throw, and
     // the progress note keeps a genuine typo visible rather than swallowed.
-    const vectorsDecl = vectorsFor(part, p) ?? {};
+    const vectorsDecl = vectorsFor(part, assetP) ?? {};
     const declaredVectors = Object.fromEntries(
       Object.entries(vectorsDecl).filter(([name, src]) => {
         if (!isNoVectorSource(src)) return true;
@@ -391,6 +397,16 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     await ensureVectors(kernel, declaredVectors);
     // Local shorthand over the shared helper: kernel/part/view/p/d are fixed per job.
     const posed = (name, purpose, prog) => buildPosed(kernel, part, name, { purpose, view: msg.view, p, d, onProgress: prog });
+    // A display build plus the sorted raw keys it read (spec §1): its own p/d
+    // reads, derive-expanded, plus the job's asset-declaration reads.
+    const posedWithReads = (name) => {
+      const sink = newReadSink();
+      sink.attribution = attribution;
+      const rec = recordedParams({ p, d }, sink);
+      const solid = buildPosed(kernel, part, name, { purpose: "display", view: msg.view, p: rec.p, d: rec.d });
+      for (const key of assetSink.raw) sink.raw.add(key);
+      return { solid, reads: expandReads(sink) };
+    };
     // Explicit selection (headless exportParts) overrides view-derived selection.
     const selected = () =>
       msg.parts
@@ -413,8 +429,9 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       for (const [i, name] of msg.subparts.entries()) {
         if (useCache) kernel.beginSubPart?.(name); // open the per-sub-part cache round
         try {
-          const m = posed(name, "display").toMesh({ quality: "preview" });
-          meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features });
+          const { solid, reads } = posedWithReads(name);
+          const m = solid.toMesh({ quality: "preview" });
+          meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features, reads });
         } finally {
           for (const message of kernel.takeBuildWarnings?.() ?? []) warnings.push({ part: name, message });
           if (useCache) kernel.endSubPart?.(); // always close the bracket — a throw mid-build must not strand pinned solids
