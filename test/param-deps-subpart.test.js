@@ -1,6 +1,6 @@
 // test/param-deps-subpart.test.js
 import { expect, test } from "vitest";
-import { subPartReadKeys, relevantParamKeys, relevanceHash, RELEVANT_ALL } from "../src/framework/param-deps.js";
+import { subPartReadKeys, relevantParamKeys, relevanceHash, RELEVANT_ALL, recordedRelevantKeys, subPartParamKeys } from "../src/framework/param-deps.js";
 
 const view = { v: { label: "V" } };
 const part = {
@@ -59,4 +59,33 @@ test("relevanceHash is stable for equal values and differs when a value changes"
 test("an unanalyzable build yields RELEVANT_ALL (safe fallback)", () => {
   const bad = { defaults: {}, views: view, parts: { x: { views: ["v"], build: () => { throw new Error("nope"); } } } };
   expect(subPartReadKeys(bad, "v", {})).toBe(RELEVANT_ALL);
+});
+
+const gated = {
+  defaults: { pattern: "random", cellR: 2, showLid: false, lidT: 1, size: 10 },
+  views: { v: { label: "V" } },
+  parts: {
+    body: { views: ["v"], build: (k, p) => k.box({ min: [0, 0, 0], max: [p.size, p.size, 1] }) },
+    lid: { views: ["v"], enabled: (p) => p.showLid, build: (k, p) => k.box({ min: [0, 0, 0], max: [1, 1, p.lidT] }) },
+  },
+};
+
+test("recorded relevance: union of on-screen recorded reads plus every in-view gate", () => {
+  const readsOf = (n) => (n === "body" ? new Set(["size", "pattern"]) : null);
+  const r = recordedRelevantKeys(gated, "v", gated.defaults, readsOf);
+  expect([...r].sort()).toEqual(["pattern", "showLid", "size"]);
+});
+
+test("recorded relevance: a sub-part not yet built contributes its prediction", () => {
+  const params = { ...gated.defaults, showLid: true };
+  const readsOf = (n) => (n === "body" ? new Set(["size"]) : null);
+  const r = recordedRelevantKeys(gated, "v", params, readsOf);
+  expect(r.has("lidT")).toBe(true);
+  expect(r.has("size")).toBe(true);
+});
+
+test("subPartParamKeys: recorded, else predicted, else everything", () => {
+  expect(subPartParamKeys(gated, "v", gated.defaults, () => new Set(["cellR"]), "body")).toEqual(["cellR"]);
+  expect(subPartParamKeys(gated, "v", gated.defaults, () => null, "body")).toEqual(["size"]);
+  expect(subPartParamKeys(gated, "v", gated.defaults, undefined, "nope")).toEqual(Object.keys(gated.defaults).sort());
 });

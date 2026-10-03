@@ -67,3 +67,11 @@ test("an ordinary pick carries no cut-face marker", () => {
   const hit = { subPart: "one", pointLocal: [0, 0, 2], normalLocal: [0, 0, 1], feature: null };
   expect(resolveSelection(part, ctx, hit).onCutPlane).toBeUndefined();
 });
+
+test("scopeParams prefers the recorded reads in ctx.readsOf", () => {
+  const part = { defaults: { a: 1, b: 2, c: 3 }, views: { v: { label: "V" } },
+    parts: { s: { views: ["v"], build: (k, p) => k.cylinder({ r: p.a, h: 1 }) } } };
+  const ctx = { view: "v", params: { a: 1, b: 2, c: 3 }, readsOf: () => new Set(["c"]) };
+  const sel = resolveSelection(part, ctx, { subPart: "s", pointLocal: [0, 0, 0], normalLocal: [0, 0, 1] });
+  expect(sel.params).toEqual({ c: 3 });
+});

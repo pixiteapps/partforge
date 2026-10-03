@@ -617,6 +617,8 @@ export interface PartRuntime {
   getPanelState(): PanelState;
   /** What custom controls reported failing this mount, in order. */
   getPanelErrors(): PanelError[];
+  /** The param keys that shape a pick: the clicked sub-part's recorded build reads (else predicted, else all). */
+  controlsFor(selection: { subPart: string }): string[];
   /**
    * Subscribe to WebGL context loss — i.e. the GPU or the OS gave up — so a host
    * can say so rather than showing a dead canvas. The listener takes no

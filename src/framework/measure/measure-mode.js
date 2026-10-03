@@ -12,8 +12,7 @@ import * as THREE from "three";
 import { raycastViewer } from "../selection/raycast.js";
 import { createFeatureHighlight } from "../selection/feature-highlight.js";
 import { createDragTracker } from "../selection/drag-tracker.js";
-import { subPartReadKeys, RELEVANT_ALL } from "../param-deps.js";
-import { byteAwareReplacer } from "../geometry/solid-hash.js";
+import { subPartParamKeys } from "../param-deps.js";
 import { classifyFeature, bboxSpec, unionBounds } from "./feature-dims.js";
 import { paramMatches } from "./param-link.js";
 import { createPinStore, occurrenceOf } from "./pins.js";
@@ -49,7 +48,7 @@ function keyedCache(limit) {
   };
 }
 
-export function createMeasureMode(viewer, { part, getContext, revealParams, getParamsVersion, schedule = (cb) => requestAnimationFrame(cb) }) {
+export function createMeasureMode(viewer, { part, getContext, revealParams, getReads, schedule = (cb) => requestAnimationFrame(cb) }) {
   const pins = createPinStore();
   const pinListeners = new Set();
   const notifyPins = () => { for (const cb of [...pinListeners]) cb(); };
@@ -133,32 +132,9 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getP
     .filter(([, m]) => m.visible && m.geometry.getAttribute("position")?.count);
 
   // ---- param linking (scoped like selection/resolve.js scopeParams) --------
-  // Memoize the per-sub-part read-key map: subPartReadKeys runs probe builds
-  // (see mesh-cache.js's readsFor), so it must run once per (view, params)
-  // change, not once per pinned item per frame. mount's getContext() returns
-  // the SAME live params object every call (mutated in place on every edit),
-  // so identity is stable across edits and can't key the memo the way
-  // mesh-cache.js's paramsVersion getter does. mount hands in the SAME
-  // late-bound version thunk it gives createMeshCache/createPoseFastPath
-  // (`() => loop.version()`) so this keys on the cheap integer instead of
-  // hashing the whole params object every call; a caller that omits it (or a
-  // direct test) falls back to the content hash.
-  let readsKey = null, readsMap = null;
-  function readsFor(view, params) {
-    const key = `${view}|${getParamsVersion ? getParamsVersion() : JSON.stringify(params, byteAwareReplacer)}`;
-    if (readsKey !== key) {
-      readsKey = key;
-      try { readsMap = subPartReadKeys(part, view, params); } catch { readsMap = null; }
-    }
-    return readsMap;
-  }
   function readKeysFor(subPart) {
     const { view, params } = getContext();
-    const reads = readsFor(view, params);
-    if (!reads) return Object.keys(params);
-    return reads === RELEVANT_ALL
-      ? Object.keys(params)
-      : [...(reads.get(subPart) ?? Object.keys(params))];
+    return subPartParamKeys(part, view, params, getReads, subPart);
   }
   // Clicking a measurement flashes the controls whose value ACTUALLY matches
   // it (within the display quantum; radius-style params match a diameter at

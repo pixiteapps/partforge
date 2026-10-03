@@ -15,7 +15,7 @@ import { declaresMaterials, resolveMaterial } from "./materials/resolve.js";
 import { printFrameMatrix } from "./materials/print-frame.js";
 import { burnsFor, realisticDisplay, sheetFrameFor } from "./materials/sheet-look.js";
 import { buildControls } from "./controls.js";
-import { relevantParamKeys } from "./param-deps.js";
+import { recordedRelevantKeys, subPartParamKeys } from "./param-deps.js";
 import { createMeshCache } from "./mesh-cache.js";
 import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts, resolveParams } from "./part-model.js";
@@ -69,7 +69,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, renderMode, environment, declaresMaterials, renderViews }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): animations are
@@ -129,6 +129,7 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // it back as mount()'s `panelState` and a remount comes up with the same
     // tile selected. {} when the mount resolved no panel.
     getPanelState: getPanelState ?? (() => ({})),
+    controlsFor: controlsFor ?? (() => []),
     // What custom controls reported failing this mount ({key, label, phase,
     // message}), for a host to relay to whoever authored the part.
     getPanelErrors: getPanelErrors ?? (() => []),
@@ -589,15 +590,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // Measurement mode: in-scene dims + pins + dimension->controls reveal
     // (clicking a measurement flashes every control that can drive it). The
     // panel is built later in this function, so revealParams is a late-bound
-    // thunk — same idiom for getParamsVersion, which needs `loop` (created
-    // further below); readsFor's memo keys on it instead of hashing the whole
-    // params object per call, mirroring createMeshCache/createPoseFastPath.
+    // thunk. getReads reads the mesh cache (created further below) lazily.
     let panelRef = null;
     const measureMode = createMeasureMode(viewer, {
       part,
       getContext: () => ({ view: view(), params }),
       revealParams: (keys, focusKey) => panelRef?.revealParams(keys, focusKey),
-      getParamsVersion: () => loop.version(),
+      getReads: (name) => cache.readsOf(name),
     });
     cleanup.defer(() => measureMode.detach());
     // Annotation mode (spec 2026-08-18): freehand ink over the frozen view,
@@ -794,7 +793,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       let derived = {};
       // A throwing derive must not crash the pick flow — proceed without derived context.
       try { derived = resolveDerived(part, { ...part.defaults, ...params }); } catch { /* derived stays {} */ }
-      return { view: view(), params, derived };
+      return { view: view(), params, derived, readsOf: (name) => cache.readsOf(name) };
     };
 
     // Click-to-select. Precedence (one click listener is ever live): the programmatic
@@ -871,6 +870,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // live ones have already left (see recordFrames). One cycle is in flight at a time,
     // so a sub-part's entry is its in-flight job's until the cycle's last reply.
     const dispatched = new Map(); // sub-part -> { view, params } its latest job was sent with
+    let updateRelevance = () => {}; // assigned once the panel exists; message handlers call it
     const loop = createRegenLoop({
       missingParts,
       send: (missing) => {
@@ -1081,6 +1081,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             // still be running — often OCCT, the slow one).
             if (missingParts().length === 0) ui.hideBusy();
             refreshView();
+            updateRelevance(); // dimming follows each delivery's recorded reads
             // After refreshView, like the error case: its all-current branch
             // clears the status line, and this message has to outlive that.
             if (missingParts().length === 0) {
@@ -1250,13 +1251,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         files, panelState });
     cleanup.defer(() => panel.dispose());
     panelRef = panel;
-    const updateRelevance = () => {
+    updateRelevance = () => {
       // A throwing derive() must not break every slider drag — mount's pick
       // flow already guards its own resolveDerived call the same way
       // (mount.js ~:250). Readouts simply stay em-dashed.
       let derived = {};
       try { derived = resolveDerived(part, params); } catch { /* diagnosed by lint/build */ }
-      panel.refresh({ relevant: relevantParamKeys(part, view(), params), derived });
+      panel.refresh({ relevant: recordedRelevantKeys(part, view(), params, (n) => cache.readsOf(n)), derived });
     };
     updateRelevance(); // initial view
 
@@ -1427,6 +1428,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       captureView,
       getPanelState: () => panelRef?.getState() ?? {},
       getPanelErrors: () => panelRef?.errors() ?? [],
+      // The param keys relevant to a pick — today the clicked sub-part's recorded
+      // reads (spec §5). The one place a host asks "which controls shape this?".
+      controlsFor: (selection) => subPartParamKeys(part, view(), params, (n) => cache.readsOf(n), selection?.subPart),
       // A sheet part's row carries its stock, evaluated here on the main thread at the
       // live params the way enabled() is, and omitted when it cannot be (export-rows.js).
       listExportableParts: () => exportableRows(part, params),

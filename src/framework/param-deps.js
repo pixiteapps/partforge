@@ -65,3 +65,39 @@ export function subPartReadKeys(part, view, params) {
 export function relevanceHash(keys, params) {
   return JSON.stringify(keys.slice().sort().map((k) => [k, params[k]]), byteAwareReplacer);
 }
+
+// Which params one sub-part depends on, for DISPLAY consumers (pick scoping,
+// measure flash, runtime.controlsFor): its last real build's recorded reads
+// when there are any, else the prediction, else every param. The one ladder —
+// feature-level precision lands here later (spec §5).
+export function subPartParamKeys(part, view, params, readsOf, name) {
+  const rec = readsOf?.(name);
+  if (rec) return [...rec].sort();
+  const reads = subPartReadKeys(part, view, params);
+  const keys = reads === RELEVANT_ALL ? Object.keys(params) : [...(reads.get(name) ?? Object.keys(params))];
+  return keys.sort();
+}
+
+// Panel relevance from RECORDED reads: the union over on-screen sub-parts (a
+// not-yet-built one contributes its prediction — display only, so a wrong guess
+// costs one build's dimming), plus the gate params of every in-view sub-part.
+export function recordedRelevantKeys(part, view, params, readsOf) {
+  try {
+    const relevant = new Set();
+    let predicted = null;
+    for (const name of viewSubParts(part, view, params)) {
+      const rec = readsOf(name);
+      if (rec) { for (const k of rec) relevant.add(k); continue; }
+      predicted ??= subPartReadKeys(part, view, params);
+      if (predicted === RELEVANT_ALL) return RELEVANT_ALL;
+      for (const k of predicted.get(name) ?? []) relevant.add(k);
+    }
+    for (const name of Object.keys(part.parts)) {
+      const sp = part.parts[name];
+      if (sp.views.includes(view) && sp.enabled) sp.enabled(recorder(params, relevant));
+    }
+    return relevant;
+  } catch {
+    return RELEVANT_ALL;
+  }
+}

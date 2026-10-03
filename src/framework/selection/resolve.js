@@ -1,6 +1,6 @@
 // Pure core: turn a backend-agnostic raycast hit into a semantic Selection.
 // No three.js, no DOM, no kernel — only the param-deps read-key analysis.
-import { subPartReadKeys, RELEVANT_ALL } from "../param-deps.js";
+import { subPartParamKeys } from "../param-deps.js";
 
 const COS_3DEG = 0.99863; // a normal within 3° of an axis snaps to that axis
 const q2 = (x) => { const r = Math.round(x * 100) / 100; return r === 0 ? 0 : r; }; // 0.01mm, kill -0
@@ -23,14 +23,12 @@ export function snapNormal(n) {
   return [q2(u[0]), q2(u[1]), q2(u[2])];
 }
 
-// Only the params the clicked sub-part actually reads — "this geometry, at these inputs".
-function scopeParams(part, view, params, subPart) {
-  const reads = subPartReadKeys(part, view, params);
-  const keys = reads === RELEVANT_ALL
-    ? Object.keys(params)
-    : [...(reads.get(subPart) ?? Object.keys(params))];
+// Only the params the clicked sub-part reads — "this geometry, at these inputs".
+// Recorded from its last real build when the host passes ctx.readsOf (mount's
+// mesh cache), else predicted (param-deps.subPartParamKeys).
+function scopeParams(part, ctx, subPart) {
   const out = {};
-  for (const k of keys) out[k] = params[k];
+  for (const k of subPartParamKeys(part, ctx.view, ctx.params, ctx.readsOf, subPart)) out[k] = ctx.params[k];
   return out;
 }
 
@@ -40,7 +38,7 @@ export function resolveSelection(part, ctx, hit) {
     subPart: hit.subPart,
     point,
     normal: snapNormal(hit.normalLocal),
-    params: scopeParams(part, ctx.view, ctx.params, hit.subPart),
+    params: scopeParams(part, ctx, hit.subPart),
   };
   // Feature attribution from the mesh payload (Solid.label() in the part's build) —
   // the same name the hover tooltip shows, so user, agent, and viewer share vocabulary.
