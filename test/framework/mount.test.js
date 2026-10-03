@@ -1157,6 +1157,7 @@ test("?debug&nocache disables the fast path — a pose-only edit still rebuilds"
   const { workers, createWorker } = makeWorkers();
   const handle = mount(makePart(), { createWorker, elements: makeElements() });
   finishFirstBuild(workers);
+  fakeViewers[0].setSubPose.mockClear(); // the delivery's own pose (a cleared matrix) is not a repair
   const jobsBefore = workers.manifold.postMessage.mock.calls.length;
 
   const tilt = document.querySelectorAll('input[type="range"]')[1];
@@ -1194,6 +1195,159 @@ test("setParams applies the fast path synchronously and syncs the panel", () => 
   expect(workers.manifold.postMessage.mock.calls.length).toBe(jobsBefore);
   handle.dispose();
   vi.useRealTimers();
+});
+
+// --- canonical deliveries: mount applies the display pose -------------------
+// A sub-part with a rigid place() arrives in its CANONICAL frame (frame:
+// "canonical", build reads only); setSubGeometry resets its matrix, so mount must
+// apply place() as a matrix straight after — on every delivery, on playback, and
+// on a view switch. `a` is canonical (place reads lift, and in the "side" view a
+// fixed offset); `b`'s place queries the solid, so the worker poses it.
+const makePlacedPart = () => ({
+  meta: { title: "Placed", backend: "manifold" },
+  defaults: { w: 4, lift: 0 },
+  views: { main: { label: "Main" }, side: { label: "Side" } },
+  parts: {
+    a: { label: "A", views: ["main", "side"],
+      build: (k, p) => k.box({ min: [0, 0, 0], max: [p.w, p.w, p.w] }),
+      place: (s, { p, view }) => s.translate([0, 0, view === "side" ? 7 : p.lift]) },
+    b: { label: "B", views: ["main"],
+      build: (k, p) => k.box({ min: [0, 0, 0], max: [p.w, p.w, p.w] }),
+      place: (s, { p }) => s.translate([0, 0, s.boundingBox().max[2] + p.lift]) },
+  },
+  parameters: [{ id: "size", title: "Size",
+    advanced: [
+      { key: "w", label: "Width", min: 1, max: 10, step: 1 },
+      { key: "lift", label: "Lift", min: 0, max: 20, step: 1 },
+    ] }],
+});
+const deliverPlaced = (workers) => workers.manifold.onmessage({ data: { type: "meshes", ms: 5, meshes: [
+  { name: "a", reads: ["w"], frame: "canonical" },
+  { name: "b", reads: ["w", "lift"], frame: "posed" },
+] } });
+const translationOf = (m) => m.slice(12, 15);
+const posesOf = (v, name) => v.setSubPose.mock.calls.filter(([n]) => n === name);
+
+test("a canonical delivery is posed AFTER its geometry lands; a posed one has its matrix cleared", () => {
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePlacedPart(), { createWorker, elements: makeElements() });
+  handle.setParams({ lift: 3 }); // before the kernel is up, so the first build is dispatched at lift 3
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  const v = fakeViewers[0];
+  v.setSubPose.mockClear();
+  deliverPlaced(workers);
+
+  const geomA = v.setSubGeometry.mock.calls.findIndex(([n]) => n === "a");
+  const poseA = v.setSubPose.mock.calls.findIndex(([n, m]) => n === "a" && Array.isArray(m));
+  expect(geomA).toBeGreaterThan(-1);
+  expect(poseA).toBeGreaterThan(-1);
+  expect(v.setSubPose.mock.invocationCallOrder[poseA])
+    .toBeGreaterThan(v.setSubGeometry.mock.invocationCallOrder[geomA]);
+  expect(translationOf(v.setSubPose.mock.calls[poseA][1])).toEqual([0, 0, 3]);
+  // b was delivered posed (the worker baked place in): its matrix is cleared, never posed again
+  expect(v.setSubPose).toHaveBeenCalledWith("b", null);
+  expect(posesOf(v, "b").every(([, m]) => m === null)).toBe(true);
+  handle.dispose();
+});
+
+test("a place-only edit on a canonical sub-part re-poses with no job", () => {
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const part = makePlacedPart();
+  part.parts.b.views = []; // b reads lift too; keep the edit place-only for the whole view
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", ms: 5, meshes: [{ name: "a", reads: ["w"], frame: "canonical" }] } });
+  const v = fakeViewers[0];
+  v.setSubPose.mockClear();
+  const jobsBefore = workers.manifold.postMessage.mock.calls.length;
+
+  handle.setParams({ lift: 5 });
+  vi.advanceTimersByTime(250);
+
+  const last = posesOf(v, "a").at(-1);
+  expect(last).toBeTruthy();
+  expect(translationOf(last[1])).toEqual([0, 0, 5]);
+  const jobs = workers.manifold.postMessage.mock.calls.slice(jobsBefore).map(([m]) => m);
+  expect(jobs.some((m) => m.type === "generate")).toBe(false);
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+test("a view switch re-poses canonical sub-parts (place may read view)", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePlacedPart(), { createWorker, elements: els });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  deliverPlaced(workers);
+  const v = fakeViewers[0];
+  expect(translationOf(posesOf(v, "a").at(-1)[1])).toEqual([0, 0, 0]);
+  v.setSubPose.mockClear();
+
+  expect(handle.setView("side")).toBe(true);
+
+  const after = posesOf(v, "a");
+  expect(after.length).toBeGreaterThan(0);
+  expect(translationOf(after.at(-1)[1])).toEqual([0, 0, 7]); // the side view's place pose
+  expect(posesOf(v, "b")).toEqual([]); // not in the side view: left alone
+  handle.dispose();
+});
+
+test("a mesh without `frame` (older worker) is treated as posed", () => {
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePlacedPart(), { createWorker, elements: makeElements() });
+  handle.setParams({ lift: 3 });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  const v = fakeViewers[0];
+  v.setSubPose.mockClear();
+  workers.manifold.onmessage({ data: { type: "meshes", ms: 5, meshes: [{ name: "a", reads: ["w", "lift"] }] } });
+
+  // a has a rigid place(), but an older worker baked it in: never posed a second time
+  expect(v.setSubPose).toHaveBeenCalledWith("a", null);
+  expect(posesOf(v, "a").every(([, m]) => m === null)).toBe(true);
+  handle.dispose();
+});
+
+test("?debug reports the in-view delivery frames", () => {
+  vi.stubGlobal("location", { search: "?debug" });
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePlacedPart(), { createWorker, elements: makeElements() });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  deliverPlaced(workers);
+  expect(document.getElementById("pf-debug").textContent).toContain("1 canonical / 1 posed");
+  handle.dispose();
+});
+
+test("a canonical mesh shown during playback is posed at the live params", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const part = makePlacedPart();
+  part.parts.b.views = [];
+  // w is the geometry param, so every frame needs a build; lift rides along so
+  // the live place pose differs from the dispatched one.
+  part.views.main.animations = {
+    go: { label: "Go", duration: 2, easing: "linear", tracks: { w: [[0, 4], [1, 10]], lift: [[0, 0], [1, 20]] } },
+  };
+  const handle = mount(part, { createWorker, elements: els });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", ms: 5, meshes: [{ name: "a", reads: ["w"], frame: "canonical" }] } });
+  const v = fakeViewers[0];
+
+  handle.animation.play();
+  v.tickFrame(0.5);
+  v.tickFrame(0.5);
+  v.setSubPose.mockClear();
+  v.setSubGeometry.mockClear();
+  workers.manifold.onmessage({ data: { type: "meshes", ms: 5, meshes: [{ name: "a", reads: ["w"], frame: "canonical" }] } });
+
+  expect(v.setSubGeometry).toHaveBeenCalledWith("a", expect.anything()); // shown
+  const poseA = v.setSubPose.mock.calls.findIndex(([n, m]) => n === "a" && Array.isArray(m));
+  expect(poseA).toBeGreaterThan(-1);
+  expect(v.setSubPose.mock.invocationCallOrder[poseA])
+    .toBeGreaterThan(v.setSubGeometry.mock.invocationCallOrder[0]);
+  const z = v.setSubPose.mock.calls[poseA][1][14];
+  expect(z).toBeGreaterThan(0); // lift has moved on with playback: posed at the LIVE params
+  handle.dispose();
 });
 
 test("setParams on a geometry param syncs the panel and rebuilds", () => {

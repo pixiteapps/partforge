@@ -576,7 +576,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // that reads params (refreshView / updateRelevance / the loop kick) must
         // run after it. autoplayKick stays LAST — it starts the new view's own.
         animCtl?.viewChanged();
-        pendingPosed.clear(); cutawayChrome.reset(); refreshView(); updateRelevance(); loop.kick(); animCtl?.autoplayKick();
+        pendingPosed.clear(); cutawayChrome.reset(); refreshView();
+        // place() may read `view`: re-pose the incoming view's canonical meshes
+        // (and clear the posed ones' matrices) before anything else reads them.
+        fastPath.apply(viewSubParts(part, view(), params));
+        updateRelevance(); loop.kick(); animCtl?.autoplayKick();
         onViewChange?.(name);
       },
     });
@@ -906,6 +910,16 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       params, getView: view, getParamsVersion: () => loop.version(),
     });
 
+    // ?debug: how the in-view meshes were delivered, e.g. "3 canonical / 1 posed".
+    const frameSummary = () => {
+      const n = { canonical: 0, posed: 0 };
+      for (const name of viewSubParts(part, view(), params)) {
+        const f = cache.frameOf(name);
+        if (f in n) n[f]++;
+      }
+      return `${n.canonical} canonical / ${n.posed} posed`;
+    };
+
     // paramsVersion of the most recent animation-frame apply. It is what lets
     // the meshes handler tell "stale because playback moved on" (show it — that
     // IS best-effort playback) from "stale because the user edited" (discard).
@@ -1068,7 +1082,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           if (fresh) { // stale results (params changed mid-build) are discarded
             for (const m of data.meshes) {
               viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
-              cache.record(m.name, m.reads, dispatched.get(m.name)?.view ?? view()); // the view its job was SENT for
+              // The view its job was SENT for, and the frame the worker delivered
+              // in: "canonical" (place() not applied — mount poses it below) or
+              // "posed". An older worker sends no frame; its meshes are posed.
+              cache.record(m.name, m.reads, dispatched.get(m.name)?.view ?? view(), m.frame ?? "posed");
               // A sub-part that built into NOTHING. Manifold booleans return an
               // empty solid rather than throwing (a bore wider than its body),
               // and typed values may sit outside the authored range, so a
@@ -1081,6 +1098,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
               // delivered, which buildDone() true guarantees is at the live params.
               fastPath.recordDelivered(m.name);
             }
+            // setSubGeometry reset every delivered mesh's matrix, so each one gets
+            // its display pose now, after its geometry landed: a canonical mesh
+            // place() at the live params, a posed one a cleared matrix.
+            fastPath.apply(data.meshes.map((m) => m.name));
             recordFrames(data.meshes.map((m) => m.name));
             // A split dispatch answers in two meshes replies; the busy spinner
             // stays up until the view has everything (the other worker's job may
@@ -1098,7 +1119,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
               const tris = viewSubParts(part, view(), params).reduce((s, n) => s + viewer.subTriangles(n), 0);
               console.debug(`partforge: built ${tris.toLocaleString()} triangles in ${(data.ms / 1000).toFixed(1)} s`);
             }
-            dbg?.update({ ms: data.ms, hits: data.cache?.hits ?? 0, misses: data.cache?.misses ?? 0, skipped: lastGen.skipped, rebuilt: lastGen.rebuilt, posed: lastGen.posed });
+            dbg?.update({ ms: data.ms, hits: data.cache?.hits ?? 0, misses: data.cache?.misses ?? 0, skipped: lastGen.skipped, rebuilt: lastGen.rebuilt, posed: lastGen.posed, frame: frameSummary() });
             onBuild?.({ status: "success", ms: data.ms });
             // ready/autoplay wait for the WHOLE view: a split dispatch delivers in
             // two replies, and a host acting on `ready` (screenshotting, measuring)
@@ -1129,6 +1150,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
               fastPath.forget(m.name);
               cache.forget(m.name); // the stamp described the last FRESH delivery; this mesh was built at other params, so no stamp may describe it (spec §2)
             }
+            // With the stamps gone the frame comes from the reply: a canonical
+            // mesh is posed by place() at the LIVE params (a rigid place() needs
+            // no geometry at those params), or cleared when the probe is untrusted.
+            fastPath.apply(data.meshes.map((m) => m.name),
+              Object.fromEntries(data.meshes.map((m) => [m.name, m.frame ?? "posed"])));
             recordFrames(data.meshes.map((m) => m.name));
             ui.hideBusy();
             refreshView();
