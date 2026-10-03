@@ -2103,3 +2103,75 @@ test("the runtime lists the export formats and tags a sheet part's row with its 
   ]);
   runtime.dispose();
 });
+
+// --- recorded reads: stamps, dimming, controlsFor (spec 2026-10-03) ----------
+
+// A reply describes the view its job was DISPATCHED for. A tab switch doesn't
+// bump the params version, so a reply for `main` landing after a switch to
+// `other` still passes buildDone() as fresh — and must be stamped `main`, or the
+// shared sub-part (whose place() differs per view) reads as current in `other`
+// and is never rebuilt there.
+test("a reply landing after a tab switch is stamped with its dispatched view, so the shared sub-part is re-requested", () => {
+  const part = makePart();
+  part.views.other = { label: "Other" };
+  part.parts.body.views = ["main", "other"];
+  part.parts.body.place = (built, { view }) => (view === "other" ? built.at([5, 0, 0]) : built);
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  const generates = () => workers.manifold.postMessage.mock.calls.map(([m]) => m).filter((m) => m.type === "generate");
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  expect(generates()).toHaveLength(1);
+  expect(generates()[0]).toMatchObject({ view: "main", subparts: ["body"] });
+
+  expect(handle.setView("other")).toBe(true); // mid-build: the kick is absorbed
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body", reads: ["h", "tilt"] }], ms: 5 } });
+
+  expect(generates()).toHaveLength(2);
+  expect(generates()[1]).toMatchObject({ view: "other", subparts: ["body"] });
+  handle.dispose();
+});
+
+// The dimming half of #158: the panel follows each delivery's RECORDED reads.
+// The `reads` below are synthetic on purpose — body's real build reads both h
+// and tilt — because this test is about how the panel and controlsFor react to
+// the delivered set, not about what the worker records (jobs tests pin that).
+test("panel dimming and controlsFor follow each delivery's recorded reads", () => {
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePart(), { createWorker, elements: makeElements() });
+  const wrap = (t) => [...document.querySelectorAll(".slider")].find((w) => w.querySelector("label")?.textContent === t);
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  // Before any build: the prediction, which sees body read both.
+  expect(wrap("Tilt").classList.contains("irrelevant")).toBe(false);
+
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body", reads: ["h"] }], ms: 5 } });
+  expect(wrap("Height").classList.contains("irrelevant")).toBe(false);
+  expect(wrap("Tilt").classList.contains("irrelevant")).toBe(true);
+  expect(handle.controlsFor({ subPart: "body" })).toEqual(["h"]);
+
+  // A rebuild (h edit) whose delivery records tilt too un-dims it.
+  const height = wrap("Height").querySelector('input[type="range"]');
+  height.value = "6";
+  height.dispatchEvent(new Event("input", { bubbles: true }));
+  vi.advanceTimersByTime(250);
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body", reads: ["h", "tilt"] }], ms: 5 } });
+  expect(wrap("Tilt").classList.contains("irrelevant")).toBe(false);
+  expect(handle.controlsFor({ subPart: "body" })).toEqual(["h", "tilt"]);
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+// A reply carrying no `reads` is stamped every-param by the cache. Display
+// consumers must treat it the same way — every param — instead of falling back
+// to the probe's prediction for a mesh the cache considers to depend on all.
+test("an every-param stamp answers every param to display consumers, not the prediction", () => {
+  const part = makePart();
+  part.parts.body.build = (k, p) => k.box({ min: [0, 0, 0], max: [p.h, p.h, p.h] }); // predicted: h only
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  expect(handle.controlsFor({ subPart: "body" })).toEqual(["h"]); // no stamp yet: the prediction
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+  expect(handle.controlsFor({ subPart: "body" })).toEqual(["h", "tilt"]);
+  handle.dispose();
+});

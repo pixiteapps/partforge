@@ -346,6 +346,8 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   const full = (params) => ({ ...part.defaults, ...(params ?? {}) });
   const entries = []; // { params: full params, result }
   const findEntry = (params) => entries.find((e) => {
+    // A key the entry was never measured with can't be judged by its reads.
+    if (Object.keys(params).some((k) => !(k in e.params))) return false;
     const keys = e.result?.reads ?? Object.keys({ ...e.params, ...params });
     return relevanceHash(keys, params) === relevanceHash(keys, e.params);
   });

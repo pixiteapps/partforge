@@ -68,19 +68,10 @@ test("relevanceHash gives two different image buffers two different hashes", () 
 // true, and the old bug's hash — JSON.stringify(ArrayBuffer) === "{}" for
 // every image — never changes).
 test("mesh-cache isCurrent() reports stale when only an image buffer changes", () => {
-  const part = {
-    defaults: { relief: png(1), n: 5 },
-    views: { v: { label: "V" } },
-    parts: {
-      slab: {
-        views: ["v"],
-        build: (k, p) => { if (p.relief) { /* read, for subPartReadKeys to attribute */ } return k.box({ min: [0, 0, 0], max: [p.n, p.n, p.n] }); },
-      },
-    },
-  };
+  // An every-param stamp (no recorded reads), so the image key is in its hash.
   const params = { relief: png(1), n: 5 }; // mesh-cache.js: "params is a stable object mutated in place"
   const viewer = { hasSubMesh: () => true };
-  const cache = createMeshCache(part, viewer, {
+  const cache = createMeshCache(viewer, {
     params, getView: () => "v", getParamsVersion: () => 1, isCaching: () => true,
   });
   cache.record("slab");

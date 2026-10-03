@@ -6,7 +6,7 @@ import { guarded } from "./fixtures/guarded-part.js";
 
 const makeCache = (params, { caching = true } = {}) => {
   let version = 0, view = "v";
-  const cache = createMeshCache(guarded, { hasSubMesh: () => true }, {
+  const cache = createMeshCache({ hasSubMesh: () => true }, {
     params, getView: () => view, getParamsVersion: () => version, isCaching: () => caching,
   });
   return { cache, bump: () => { version++; }, setView: (v) => { view = v; } };
@@ -72,4 +72,24 @@ test("#158 end to end over the real worker", async () => {
   cache.record("insert", post.mock.calls.map(([m]) => m).find((m) => m.type === "meshes").meshes[0].reads);
   params.cellR = 4; bump();
   expect(cache.isCurrent("insert")).toBe(false);
+});
+
+test("record stamps the view it is given (the dispatched one), not the live one", () => {
+  const params = { ...guarded.defaults };
+  const { cache, setView } = makeCache(params);
+  setView("w");                         // the tab moved while the job was in flight
+  cache.record("insert", ["size"], "v"); // the job was sent for "v"
+  expect(cache.isCurrent("insert")).toBe(false);
+  setView("v");
+  expect(cache.isCurrent("insert")).toBe(true);
+});
+
+test("hasStamp tells an every-param stamp from no stamp; readsOf is null for both", () => {
+  const { cache } = makeCache({ ...guarded.defaults });
+  expect(cache.hasStamp("insert")).toBe(false);
+  cache.record("insert", undefined);
+  expect(cache.hasStamp("insert")).toBe(true);
+  expect(cache.readsOf("insert")).toBe(null);
+  cache.forget("insert");
+  expect(cache.hasStamp("insert")).toBe(false);
 });

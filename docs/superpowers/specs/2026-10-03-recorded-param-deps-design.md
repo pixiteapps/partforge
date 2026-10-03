@@ -134,7 +134,7 @@ Whichever wins, the answer comes out of `controlsFor` and travels as `featureRea
 - **Determinism.** `build`, `place`, `derive` and asset declarations must be pure functions of their inputs, with no randomness, clocks or mutable module state. Layer 2 already assumes this. Builds that violate it are already broken under caching, and this change does not make that worse.
 - **Reads through other channels.** A build that captures params in a closure from somewhere other than `p` and `d` cannot be tracked. Neither the probe nor the cache supports that today, and the authoring docs pass params only through `p` and `d`.
 - **Value identity.** `relevanceHash` compares values with `byteAwareReplacer`, as today, so byte-valued image and font params keep their fingerprinting.
-- **Cost.** Proxy `get` adds tens of nanoseconds per read. A build reads params hundreds to thousands of times against milliseconds of geometry work, so the overhead is negligible. A unit benchmark guards it.
+- **Cost.** Proxy `get` adds tens of nanoseconds per read. A build reads params hundreds to thousands of times against milliseconds of geometry work, so the overhead is negligible. The cost was measured (~29 ns/read via Proxy), not guarded by a test.
 
 ## What this does not change
 

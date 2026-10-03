@@ -596,7 +596,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       part,
       getContext: () => ({ view: view(), params }),
       revealParams: (keys, focusKey) => panelRef?.revealParams(keys, focusKey),
-      getReads: (name) => cache.readsOf(name),
+      getReads: (name) => displayReadsOf(name),
     });
     cleanup.defer(() => measureMode.detach());
     // Annotation mode (spec 2026-08-18): freehand ink over the frozen view,
@@ -793,7 +793,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       let derived = {};
       // A throwing derive must not crash the pick flow — proceed without derived context.
       try { derived = resolveDerived(part, { ...part.defaults, ...params }); } catch { /* derived stays {} */ }
-      return { view: view(), params, derived, readsOf: (name) => cache.readsOf(name) };
+      return { view: view(), params, derived, readsOf: (name) => displayReadsOf(name) };
     };
 
     // Click-to-select. Precedence (one click listener is ever live): the programmatic
@@ -849,13 +849,19 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
 
     // Per-sub-part cache-validity tracker (Layer 1): view/version/caching change over
     // time, so they're passed as getters; params is a stable in-place-mutated object.
-    const cache = createMeshCache(part, viewer, {
+    const cache = createMeshCache(viewer, {
       params,
       getView: view,
       getParamsVersion: () => loop.version(),
       isCaching: () => cachingOn,
     });
     const isCurrent = cache.isCurrent;
+    // Recorded reads for DISPLAY consumers (panel dimming, pickers, measure,
+    // controlsFor). A mesh the cache stamped every-param (its reply carried no
+    // reads) answers every param key, so the ladder never falls back to the
+    // probe for it; only a sub-part with no stamp at all gets the prediction.
+    // (cache.readsOf itself keeps null for both — the pose fast path needs that.)
+    const displayReadsOf = (name) => cache.readsOf(name) ?? (cache.hasStamp(name) ? new Set(Object.keys(params)) : null);
     const missingParts = () => viewSubParts(part, view(), params).filter((n) => !isCurrent(n));
 
     // The regenerate state machine (ready gating / debounce / stale-redo) lives in
@@ -1062,7 +1068,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           if (fresh) { // stale results (params changed mid-build) are discarded
             for (const m of data.meshes) {
               viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
-              cache.record(m.name, m.reads);
+              cache.record(m.name, m.reads, dispatched.get(m.name)?.view ?? view()); // the view its job was SENT for
               // A sub-part that built into NOTHING. Manifold booleans return an
               // empty solid rather than throwing (a bore wider than its body),
               // and typed values may sit outside the authored range, so a
@@ -1257,7 +1263,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       // (mount.js ~:250). Readouts simply stay em-dashed.
       let derived = {};
       try { derived = resolveDerived(part, params); } catch { /* diagnosed by lint/build */ }
-      panel.refresh({ relevant: recordedRelevantKeys(part, view(), params, (n) => cache.readsOf(n)), derived });
+      panel.refresh({ relevant: recordedRelevantKeys(part, view(), params, displayReadsOf), derived });
     };
     updateRelevance(); // initial view
 
@@ -1430,7 +1436,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       getPanelErrors: () => panelRef?.errors() ?? [],
       // The param keys relevant to a pick — today the clicked sub-part's recorded
       // reads (spec §5). The one place a host asks "which controls shape this?".
-      controlsFor: (selection) => subPartParamKeys(part, view(), params, (n) => cache.readsOf(n), selection?.subPart),
+      controlsFor: (selection) => subPartParamKeys(part, view(), params, displayReadsOf, selection?.subPart),
       // A sheet part's row carries its stock, evaluated here on the main thread at the
       // live params the way enabled() is, and omitted when it cannot be (export-rows.js).
       listExportableParts: () => exportableRows(part, params),

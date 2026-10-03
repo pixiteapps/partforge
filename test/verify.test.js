@@ -79,14 +79,28 @@ test("verify fails a violated gate", () => {
   expect(v.failures).toHaveLength(3);   // defaults + 2 presets
 });
 
-test("dedup: cases with the same param-deps signature reuse one measure call", () => {
-  // "Relabel" preset changes only `label`, which the build never reads → same
-  // signature as defaults; "Big" changes od/h → distinct. 3 cases, 2 measures.
+test("dedup: cases with the same recorded reads reuse one measure call", () => {
+  // "Relabel" preset changes only `label`, which the build never reads → the
+  // measurement's recorded reads agree with defaults; "Big" changes od/h → distinct. 3 cases, 2 measures.
   const part = { ...tube(12, 10), verify: { process: "fdm-pla", cases: ["defaults", "Relabel", "Big"] } };
   let calls = 0;
   const measureFn = (...args) => { calls++; return measureReal(...args); };
   const v = verify(k, part, { measureFn });
   expect(v.cases).toHaveLength(3);
+  expect(calls).toBe(2);
+});
+
+// A case carrying a key the entry's params never had cannot be judged by the
+// entry's reads (the build never saw that key at all), so it is never reused.
+test("a case with a key absent from a measured entry's params is not reused", () => {
+  const base = tube(12, 10);
+  const part = { ...base,
+    parameters: [{ id: "b", presets: { Extra: { undeclared: 1 } } }],
+    verify: { process: "fdm-pla", cases: ["defaults", "Extra"] } };
+  let calls = 0;
+  const measureFn = (...args) => { calls++; return measureReal(...args); };
+  const v = verify(k, part, { measureFn });
+  expect(v.cases).toHaveLength(2);
   expect(calls).toBe(2);
 });
 

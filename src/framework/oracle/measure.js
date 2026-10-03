@@ -221,8 +221,8 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // needs those meshes anyway — it rasterizes them for silhouette match scoring —
   // and a second buildView here would be a whole duplicate build of the part for
   // nothing. Absent, this measures its own build exactly as it always did.
-  // Every param this measurement depends on (spec §4): one sink through all five
-  // places it resolves params. A caller-supplied view (`opts.built`) is only
+  // Every param this measurement depends on (spec §4): one sink through every
+  // place it resolves params. A caller-supplied view (`opts.built`) is only
   // covered when the caller recorded its build into the same sink (opts.reads);
   // otherwise the result claims no reads and verify reuses it only on identical
   // params.

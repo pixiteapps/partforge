@@ -89,3 +89,18 @@ test("subPartParamKeys: recorded, else predicted, else everything", () => {
   expect(subPartParamKeys(gated, "v", gated.defaults, () => null, "body")).toEqual(["size"]);
   expect(subPartParamKeys(gated, "v", gated.defaults, undefined, "nope")).toEqual(Object.keys(gated.defaults).sort());
 });
+
+// The recorded rung must carry the sub-part's own show/hide gate, exactly as the
+// prediction rung does (subPartReadKeys runs enabled() first): a pick on a gated
+// lid offers `showLid` before AND after its first build. The worker records the
+// build's reads, not enabled()'s, so a recorded set never contains the gate.
+test("subPartParamKeys' recorded rung adds the sub-part's enabled() gate params", () => {
+  const gated = {
+    defaults: { a: 1, showLid: true }, views: view,
+    parts: { lid: { views: ["v"], enabled: (p) => p.showLid, build: (k, p) => k.cylinder({ r: p.a, h: p.a }) } },
+  };
+  const predicted = subPartParamKeys(gated, "v", gated.defaults, () => null, "lid");
+  const recorded = subPartParamKeys(gated, "v", gated.defaults, () => new Set(["a"]), "lid");
+  expect(predicted).toEqual(["a", "showLid"]);
+  expect(recorded).toEqual(["a", "showLid"]);
+});

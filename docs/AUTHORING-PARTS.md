@@ -1794,7 +1794,7 @@ away from 180°) — filter on that, or pass a coarser `segs` to the tessellated
 before unioning, rather than fighting the selector after the fact.
 
 **Which controls a sub-part depends on** is recorded from its real build. The worker notes every `p` and `d` key that `build()` and `place()` read:
-- a derived key expands to the params its `derive` group read;
+- a derived key expands to the params its `derive` group read. `derive` must return its values, not write them onto `p`: a key `derive` writes onto `p` isn't attributed to anything;
 - a param read by a `fonts`, `images` or `vectors` declaration counts for every sub-part.
 
 The viewer rebuilds a sub-part only when one of those values changes. The panel dims a control that no on-screen sub-part read. `verify` reuses a case's measurement only when the case agrees on the params that measurement read. Geometry-guarded branches such as `if (!pocket.isEmpty())` need no special handling.
@@ -3028,6 +3028,9 @@ instead of (or in addition to) the built-in `#part` bar:
   only a default angle; an explicit `angle` wins. Pass `background` (any
   `THREE.Color`-compatible value) to override the style's, or `background: null` for no
   background at all — which clears to opaque black unless the embedder has set a clear colour.
+- `runtime.controlsFor(selection) → string[]` — the param keys relevant to a pick
+  (`selection.subPart`): today the picked sub-part's recorded reads plus its show/hide gate
+  (`enabled()`) params.
 
 Pass `onViewChange(name)` to `mount()` to be told the active view: it fires once
 synchronously during mount with the initial resolved view (before `runtime.ready` settles),

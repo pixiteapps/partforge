@@ -1,3 +1,4 @@
+// Pure — no DOM, no real geometry.
 // PREDICTED param dependencies — computed before building, against the geometry-free probe kernel. The mesh cache, panel, pickers and oracle use the reads RECORDED from the real build and fall back to this only for sub-parts not yet built. It is wrong whenever a build branches on a geometry query (isEmpty, volume, …), which the probe answers with stand-ins.
 import { recorder, expandDerivedReads } from "./read-recorder.js";
 import { resolveDerivedAttributed } from "./derive.js";
@@ -72,7 +73,14 @@ export function relevanceHash(keys, params) {
 // feature-level precision lands here later (spec §5).
 export function subPartParamKeys(part, view, params, readsOf, name) {
   const rec = readsOf?.(name);
-  if (rec) return [...rec].sort();
+  if (rec) {
+    // The worker records the BUILD's reads; the sub-part's own show/hide gate
+    // is added here, as the prediction rung does (subPartReadKeys runs enabled()).
+    const out = new Set(rec);
+    const sp = part.parts[name];
+    if (sp?.enabled) sp.enabled(recorder(params, out));
+    return [...out].sort();
+  }
   const reads = subPartReadKeys(part, view, params);
   const keys = reads === RELEVANT_ALL ? Object.keys(params) : [...(reads.get(name) ?? Object.keys(params))];
   return keys.sort();
