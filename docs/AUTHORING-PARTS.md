@@ -792,8 +792,8 @@ lid's open angle, an exploded-view offset) therefore re-drags in ~0 ms even on t
 slow exact kernel — keep such transforms as the last ops in `build` (or in `place`)
 rather than baking them into the geometry earlier. In the app, such pose-only edits
 skip the worker entirely — the viewer re-poses the cached mesh — so they stay smooth
-even at animation rates (see `runtime.setParams`). `place()` needs no probe at all: the
-viewer reads the pose off it directly.
+even at animation rates (see `runtime.setParams`). `place()` needs no geometry: the viewer
+reads its pose off a geometry-free probe of `place()` alone, so `build()` may query freely.
 
 ---
 

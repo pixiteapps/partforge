@@ -110,7 +110,7 @@ the installed package, so let the publish finish before bumping the dep there.
 - **`src/framework/`** - the reusable engine (part-agnostic): `mount.js` (app
   entry), `controls.js` + `param-deps.js` (relevance-aware control panel; `pose-fast-path.js`
   is the pose ladder: rung 1 poses a canonical `place()`-able delivery by matrix,
-  rung 2 keeps the trailing-transform build-delta path, posed deliveries rebuild),
+  rung 2 keeps the trailing-transform build-delta path, posed deliveries keep the full-scope delta repair),
   `viewer.js` (three.js), `worker.js` / `jobs.js` / `geometry-service.js` (job
   loop across workers), `part-model.js` (the pure part model - `viewSubParts` /
   `resolveParams` / `buildPosed`; a deliberate leaf so the job loop, the
