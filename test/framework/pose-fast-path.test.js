@@ -37,6 +37,8 @@ function harness(part) {
   });
   return {
     params, poses, current, fp,
+    readsFor(n, r) { reads[n] = new Set(r); },
+    readsOf: (n) => reads[n] ?? null,
     edit(partial) { Object.assign(params, partial); version++; current.clear(); },
     deliver(name) { poses[name] = null; current.add(name); fp.recordDelivered(name); },
   };
@@ -184,4 +186,30 @@ test("repair applies the delta against the DELIVERED pose, not the previous fram
   hx.fp.repair();
   expect(hx.poses.a).toEqual(at30);
   expect(at60).not.toEqual(at30);
+});
+
+// The repaired stamp is the delivered build's reads UNIONED with what place()
+// read at the new pose, so a key only place() reads still invalidates later.
+test("repair re-stamps with the delivered reads unioned with the pose probe's", () => {
+  const part = {
+    defaults: { w: 10, angle: 0, tilt: 0 },
+    views: { v: { label: "V" } },
+    parts: { a: { views: ["v"],
+      build: (k, p) => k.box({ min: [0, 0, 0], max: [p.w, 10, 5] }),
+      place: (s, { p }) => s.rotateAbout({ axis: "X", deg: p.angle, through: [0, 0, 5] }) } },
+  };
+  const hx = harness(part);
+  hx.deliver("a");
+  hx.readsFor("a", ["w"]); // what the real build recorded
+  hx.edit({ angle: 45 });
+  expect(hx.fp.repair()).toEqual(["a"]);
+  expect([...hx.readsOf("a")].sort()).toEqual(["angle", "w"]);
+});
+
+test("repair leaves an unknown stamp unknown", () => {
+  const hx = harness(posedPart);
+  hx.deliver("a");
+  hx.edit({ angle: 45 });
+  hx.fp.repair();
+  expect(hx.readsOf("a")).toBe(null);
 });

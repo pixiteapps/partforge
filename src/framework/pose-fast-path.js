@@ -51,11 +51,11 @@ export function createPoseFastPath(part, viewer, cache, { params, getView, getPa
         const now = poses.get(name), was = stamps[name];
         if (!now?.trusted || !was?.trusted || now.baseHash !== was.baseHash) continue;
         viewer.setSubPose(name, poseDelta(now.pose, was.pose));
-        // Same geometry, new pose: keep the delivered build's recorded keys,
-        // re-hashed at the live params (spec §2). Task 4 adds the pose probe's
-        // own reads. An unknown stamp stays unknown.
+        // Same geometry, new pose: the delivered build's reads plus whatever
+        // place() read at THIS pose, re-hashed at the live params (spec §2).
+        // An unknown stamp stays unknown.
         const had = cache.readsOf(name);
-        cache.record(name, had ? [...had] : undefined); // current again — regen loop sees nothing missing
+        cache.record(name, had ? [...had, ...(now.reads ?? [])] : undefined); // current again — regen loop sees nothing missing
         posed.push(name);
       }
       return posed;

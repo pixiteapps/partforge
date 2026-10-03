@@ -3,7 +3,8 @@
 // walks the view's sub-parts; it stays separate so lint can import the core
 // without dragging in the part-model/jobs layer (purity).
 import { probeSubPartPose } from "./pose-probe-core.js";
-import { viewSubParts, resolveParams } from "./part-model.js";
+import { viewSubParts, resolveParamsAttributed, recordedParams } from "./part-model.js";
+import { newReadSink, expandReads } from "./read-recorder.js";
 // From the import-free leaf, never fonts/images/vectors.js: vectors.js reaches paper
 // (test/mount-no-paper.test.js).
 import { fontsFor, imagesFor, vectorsFor } from "./asset-decls.js";
@@ -30,16 +31,20 @@ export function probePoses(part, view, params) {
   const out = new Map();
   let resolved, assets;
   try {
-    resolved = resolveParams(part, params);
+    resolved = resolveParamsAttributed(part, params);
     assets = h("assets", JSON.stringify(assetSources(part, resolved.p), byteAwareReplacer));
   } catch {
     for (const name of viewSubParts(part, view, params)) out.set(name, { trusted: false });
     return out;
   }
-  const { p, d } = resolved;
   for (const name of viewSubParts(part, view, params)) {
-    const entry = probeSubPartPose(part.parts[name], { view, purpose: "display", p, d });
-    out.set(name, entry.trusted ? { ...entry, baseHash: h("with-assets", entry.baseHash, assets) } : entry);
+    const sink = newReadSink();
+    sink.attribution = resolved.attribution;
+    const rec = recordedParams(resolved, sink);
+    const entry = probeSubPartPose(part.parts[name], { view, purpose: "display", p: rec.p, d: rec.d });
+    out.set(name, entry.trusted
+      ? { ...entry, baseHash: h("with-assets", entry.baseHash, assets), reads: expandReads(sink) }
+      : entry);
   }
   return out;
 }

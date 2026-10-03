@@ -237,3 +237,16 @@ test("a throwing asset declaration makes every sub-part untrusted rather than th
   const part = { ...textPart, fonts: () => { throw new Error("boom"); } };
   expect(probePoses(part, "v", { ...textPart.defaults }).get("letters").trusted).toBe(false);
 });
+
+test("a trusted pose probe reports the raw params build+place read, derive expanded", () => {
+  const part = {
+    defaults: { r: 3, lift: 7, other: 1 },
+    views: { v: { label: "V" } },
+    derive: { pose: (p) => ({ z: p.lift * 2 }) },
+    parts: { a: { views: ["v"], build: (k, p) => k.cylinder({ r: p.r, h: 2 }),
+      place: (s, { d }) => s.translate([0, 0, d.z]) } },
+  };
+  const entry = probePoses(part, "v", part.defaults).get("a");
+  expect(entry.trusted).toBe(true);
+  expect(entry.reads).toEqual(["lift", "r"]);
+});
