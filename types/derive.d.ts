@@ -12,3 +12,17 @@ import type { Derived, PartDefinition, ResolvedParams } from "./part.js";
  * Returns `{}` when the part declares no `derive`.
  */
 export function resolveDerived(part: Pick<PartDefinition, "derive">, p: ResolvedParams): Derived;
+
+/**
+ * Resolve a part's `derive` plus attribution: which raw params each derived key came from.
+ *
+ * Produces the same `d` as `resolveDerived`, throws its errors, and (with `through`)
+ * leaves its writes on `p`. For grouped forms, `depsOf` maps each key to its group's
+ * raw reads, transitively through earlier groups it read. For single-function form,
+ * `depsOf` is null.
+ */
+export function resolveDerivedAttributed(
+  part: Pick<PartDefinition, "derive">,
+  p: ResolvedParams,
+  options?: { through?: boolean }
+): { d: Derived; depsOf: Map<string, Set<string>> | null; allInputs: Set<string> };
