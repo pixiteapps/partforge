@@ -1782,6 +1782,14 @@ Three rules worth internalizing before reaching for any of this:
   explicitly: `if (!pocket.isEmpty()) body = body.cut(pocket.extrude({ h }))`.
   (Symptom-keyed: `ERROR-PATTERNS.md#extrude-empty-shape2d`.)
 
+**Which controls a sub-part depends on** is recorded from its real build. The worker notes every `p` and `d` key that `build()` and `place()` read:
+- a derived key expands to the params its `derive` group read;
+- a param read by a `fonts`, `images` or `vectors` declaration counts for every sub-part.
+
+The viewer rebuilds a sub-part only when one of those values changes. The panel dims a control that no on-screen sub-part read. `verify` reuses a case's measurement only when the case agrees on the params that measurement read. Geometry-guarded branches such as `if (!pocket.isEmpty())` need no special handling.
+
+Builds must stay pure functions of `(k, p, d)`. They receive `p` and `d` through a read-recording Proxy, so use them like plain objects. Don't `structuredClone` them.
+
 A practical trap with the broad selectors: `"all"`/`"convex"`/`"concave"` match **every**
 matching corner, including ones you didn't mean to touch. Union a curve-native outline
 with a *tessellated* point-list shape (e.g. `circlePolygon`, a faceted polygon —
