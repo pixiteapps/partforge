@@ -1244,8 +1244,9 @@ test("a canonical delivery is posed AFTER its geometry lands; a posed one has it
   expect(v.setSubPose.mock.invocationCallOrder[poseA])
     .toBeGreaterThan(v.setSubGeometry.mock.invocationCallOrder[geomA]);
   expect(translationOf(v.setSubPose.mock.calls[poseA][1])).toEqual([0, 0, 3]);
-  // b was delivered posed (the worker baked place in): its matrix is cleared, never posed again
-  expect(v.setSubPose).toHaveBeenCalledWith("b", null);
+  // b was delivered posed (the worker baked place in): setSubGeometry already
+  // cleared its matrix, so the fast path sends no redundant clear and never poses it
+  expect(v.setSubGeometry).toHaveBeenCalledWith("b", expect.anything());
   expect(posesOf(v, "b").every(([, m]) => m === null)).toBe(true);
   handle.dispose();
 });
@@ -1293,6 +1294,27 @@ test("a view switch re-poses canonical sub-parts (place may read view)", () => {
   handle.dispose();
 });
 
+// Host and worker place probes agree by construction on a fresh delivery. If
+// they ever disagree (here: b's place() queries, so the host's probe is
+// untrusted, yet the reply says canonical), forgetting the stamp would rebuild
+// at identical params and disagree again, forever. The fresh delivery clears the
+// pose and keeps the stamp: no rebuild is dispatched.
+test("a fresh canonical delivery the host cannot probe is not forgotten (no forget→rebuild loop)", () => {
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePlacedPart(), { createWorker, elements: makeElements() });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  const v = fakeViewers[0];
+  workers.manifold.postMessage.mockClear();
+  workers.manifold.onmessage({ data: { type: "meshes", ms: 5, meshes: [
+    { name: "a", reads: ["w"], frame: "canonical" },
+    { name: "b", reads: ["w", "lift"], frame: "canonical" },
+  ] } });
+  const generates = workers.manifold.postMessage.mock.calls.map(([m]) => m).filter((m) => m?.type === "generate");
+  expect(generates).toEqual([]);
+  expect(posesOf(v, "b").every(([, m]) => m === null)).toBe(true);
+  handle.dispose();
+});
+
 test("a mesh without `frame` (older worker) is treated as posed", () => {
   const { workers, createWorker } = makeWorkers();
   const handle = mount(makePlacedPart(), { createWorker, elements: makeElements() });
@@ -1302,8 +1324,9 @@ test("a mesh without `frame` (older worker) is treated as posed", () => {
   v.setSubPose.mockClear();
   workers.manifold.onmessage({ data: { type: "meshes", ms: 5, meshes: [{ name: "a", reads: ["w", "lift"] }] } });
 
-  // a has a rigid place(), but an older worker baked it in: never posed a second time
-  expect(v.setSubPose).toHaveBeenCalledWith("a", null);
+  // a has a rigid place(), but an older worker baked it in: never posed a second
+  // time (setSubGeometry already cleared its matrix; no redundant clear is sent)
+  expect(v.setSubGeometry).toHaveBeenCalledWith("a", expect.anything());
   expect(posesOf(v, "a").every(([, m]) => m === null)).toBe(true);
   handle.dispose();
 });

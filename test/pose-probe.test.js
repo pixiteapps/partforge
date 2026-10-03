@@ -273,7 +273,10 @@ test("place scope: no place() is trusted with an empty pose", () => {
 
 test("place scope: a geometry op in place() is untrusted (the hash leaves CANONICAL)", () => {
   for (const place of [(s) => s.scale(2), (s) => s.mirror([0, 0, 0], [1, 0, 0]), (s, { p }) => s.union(s.translate([p.w, 0, 0]))]) {
-    expect(probeSubPartPose({ build: (k) => k.box({ size: [1, 1, 1] }), place }, ctx(lattice.defaults), { scope: "place" }).trusted).toBe(false);
+    const r = probeSubPartPose({ build: (k) => k.box({ size: [1, 1, 1] }), place }, ctx(lattice.defaults), { scope: "place" });
+    expect(r.trusted).toBe(false);
+    expect(r.baseHash).toBeDefined();          // readable: the probe recorded the op…
+    expect(r.baseHash).not.toBe(CANONICAL);    // …and it left the canonical hash
   }
 });
 

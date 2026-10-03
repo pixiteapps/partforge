@@ -23,8 +23,7 @@ test("a rigid place() behind a querying build delivers the canonical mesh with b
   expect(m.reads).toEqual(expect.arrayContaining(["w", "d", "h", "lidH", "wall", "frame", "cellR", "web", "fit"]));
   const { p, d } = resolveParams(lattice, params);
   const canonical = lattice.parts.insert.build(k, p, d).toMesh({ quality: "preview" });
-  expect(m.positions.length).toBe(canonical.positions.length);
-  expect(Array.from(m.positions.slice(0, 30))).toEqual(Array.from(canonical.positions.slice(0, 30)));
+  expect(Array.from(m.positions)).toEqual(Array.from(canonical.positions));
 });
 
 test("no place() delivers canonical too, with an identity pose implied", async () => {

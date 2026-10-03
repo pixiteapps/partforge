@@ -1104,8 +1104,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             }
             // setSubGeometry reset every delivered mesh's matrix, so each one gets
             // its display pose now, after its geometry landed: a canonical mesh
-            // place() at the live params, a posed one a cleared matrix.
-            fastPath.apply(data.meshes.map((m) => m.name));
+            // place() at the live params, a posed one a cleared matrix. `fresh`:
+            // an untrusted live place() here clears the pose but keeps the stamp
+            // (host and worker probes agree by construction at these params;
+            // forgetting on a disagreement would rebuild at the same params forever).
+            fastPath.apply(data.meshes.map((m) => m.name), undefined, { fresh: true });
             recordFrames(data.meshes);
             // A split dispatch answers in two meshes replies; the busy spinner
             // stays up until the view has everything (the other worker's job may

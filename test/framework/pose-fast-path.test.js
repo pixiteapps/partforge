@@ -23,12 +23,13 @@ function harness(part, viewName = "v") {
   const params = { ...part.defaults };
   let version = 0;
   const poses = {};   // name -> last mat16 or null
+  const calls = [];   // every setSubPose name, in order
   const current = new Set();
   const reads = {};   // name -> Set of recorded keys (absent = unknown)
   const frames = {};  // name -> delivery frame of the cache stamp (absent = no stamp)
   const viewer = {
     hasSubMesh: (n) => n in poses,
-    setSubPose: (n, m) => { poses[n] = m; },
+    setSubPose: (n, m) => { poses[n] = m; calls.push(n); },
   };
   const cache = {
     isCurrent: (n) => current.has(n),
@@ -44,7 +45,7 @@ function harness(part, viewName = "v") {
     params, getView: () => viewName, getParamsVersion: () => version,
   });
   return {
-    params, poses, current, frames, cache, fp,
+    params, poses, calls, current, frames, cache, fp,
     get version() { return version; },
     set version(v) { version = v; },
     readsFor(n, r) { reads[n] = new Set(r); },
@@ -279,6 +280,53 @@ test("rung 1 counts a name only when its matrix moved (honest during playback)",
   expect(hx.poses.a).toEqual(composePose([{ t: "translate", v: [2, 0, 0] }]));
 });
 
+// setSubPose is not free: it bumps the viewer's match generation and restarts
+// the realistic-mode contact-shadow cycle. repair() runs rung 1 over every
+// current canonical sub-part on every param change, so an unchanged matrix must
+// not reach the viewer at all.
+test("a param change that moves nothing calls setSubPose zero times", () => {
+  const part = { defaults: { x: 0, y: 0 }, views: { v: { label: "V" } }, parts: { a: { views: ["v"],
+    build: (k) => k.box({ size: [1, 1, 1] }),
+    place: (s, { p }) => s.translate([p.x, 0, 0]) } } };
+  const hx = harness(part);
+  hx.deliver("a", "canonical");
+  hx.fp.apply(["a"]);
+  hx.calls.length = 0;
+  hx.params.y = 3; hx.version++;                   // place() doesn't read y
+  hx.fp.repair();
+  hx.fp.apply(["a"]);                              // a re-apply at the same pose too
+  expect(hx.calls).toEqual([]);
+  hx.params.x = 2; hx.version++;
+  hx.fp.repair();
+  expect(hx.calls).toEqual(["a"]);
+});
+
+test("a posed delivery's apply does not touch the matrix setSubGeometry already reset", () => {
+  const hx = harness(posedPart);
+  hx.deliver("a", "posed");
+  hx.fp.apply(["a"]);
+  expect(hx.calls).toEqual([]);
+  expect(hx.poses.a).toBe(null);
+});
+
+// A fresh delivery is built at the live params, so host and worker place probes
+// agree by construction. Should they ever disagree, forgetting the stamp there
+// would rebuild at identical params and disagree again — a forget→rebuild loop.
+// The fresh call clears the pose (canonical frame shown) and keeps the stamp.
+test("apply(..., { fresh: true }) with an untrusted live place() clears the pose but keeps the stamp", () => {
+  const part = { defaults: { x: 9 }, views: { v: { label: "V" } }, parts: { a: { views: ["v"],
+    build: (k) => k.box({ size: [1, 1, 1] }),
+    place: (s, { p }) => (p.x > 5 ? s.translate(s.boundingBox().center) : s.translate([p.x, 0, 0])) } } };
+  const hx = harness(part);
+  hx.deliver("a", "canonical");
+  hx.fp.apply(["a"], undefined, { fresh: true });
+  expect(hx.poses.a).toBe(null);
+  expect(hx.current.has("a")).toBe(true);           // not forgotten: no rebuild at the same params
+  expect(hx.cache.frameOf("a")).toBe("canonical");
+  hx.fp.apply(["a"]);                               // every other call site still forgets
+  expect(hx.current.has("a")).toBe(false);
+});
+
 test("rung 1: a canonical mesh whose live place() is untrusted is forgotten and cleared", () => {
   const part = { defaults: { x: 0 }, views: { v: { label: "V" } }, parts: { a: { views: ["v"],
     build: (k) => k.box({ size: [1, 1, 1] }),
@@ -304,7 +352,10 @@ test("rung 2: a trailing transform inside build still re-poses by delta, compose
   expect(hx.poses.a).toEqual(mul(composePose([{ t: "translate", v: [0, 0, 3] }]), delta));   // place over build delta
   expect(hx.current.has("a")).toBe(true);
   expect(hx.frames.a).toBe("canonical");            // re-recorded keeping the delivery frame
-  expect([...hx.readsOf("a")].sort()).toEqual(["angle", "lift", "w"]);
+  // The build's reads only: lift is place()'s, and rung 1 owns place reads
+  // (spec §3 — recorded keys are the build's), so a later lift change keeps the
+  // stamp current and rung 1 re-poses it.
+  expect([...hx.readsOf("a")].sort()).toEqual(["angle", "w"]);
 });
 
 test("rung 2: the delta is measured against the delivered build pose, not the previous frame", () => {
@@ -353,12 +404,14 @@ test("a posed delivery keeps today's full-scope delta path", () => {
   expect(hx.frames.a).toBe("posed");
 });
 
-test("apply on a posed delivery clears the sub-part's matrix", () => {
-  const hx = harness(posedPart);
-  hx.deliver("a", "posed");
-  hx.poses.a = composePose([{ t: "translate", v: [1, 2, 3] }]);
-  hx.fp.apply(["a"]);
-  expect(hx.poses.a).toBe(null);
+test("apply on a posed sub-part clears a matrix this module applied", () => {
+  const hx = harness(lattice, "assembly");
+  hx.deliver("insert", "canonical");
+  hx.params.openAngle = 30; hx.version++;
+  hx.fp.apply(["insert"]);                          // canonical: posed by place()
+  expect(hx.poses.insert).toEqual(latticePose(30));
+  hx.fp.apply(["insert"], { insert: "posed" });     // posed frame, no stored delta: cleared
+  expect(hx.poses.insert).toBe(null);
 });
 
 test("apply skips names out of view, names without a mesh, and names with no frame", () => {
