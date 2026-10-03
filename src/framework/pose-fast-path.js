@@ -7,9 +7,13 @@
 // - canonical + current — rung 1: posed by place() alone at the live params
 //   (place-scope probe). No stamp, no delta. An untrusted live place() forgets
 //   the cache stamp so the regen loop rebuilds it (posed, at those params).
+//   repair() reports a rung-1 name only when its matrix actually CHANGED, so the
+//   debug `posed` count ("produced a pose and no job") stays honest during
+//   playback: a sub-part whose place() ignores the animated param is not counted.
 // - canonical + stale — rung 2: a trailing transform INSIDE build. When the live
 //   build-scope probe is trusted with the delivered baseHash, the matrix is
 //   place(now) · delta(build now, build delivered) and the mesh is re-stamped.
+//   An untrusted live place() refuses the rung (Ruling F): the regen loop rebuilds.
 // - posed (the worker baked place() in): today's full-scope delta, unchanged.
 // Anything else falls through to the normal regen loop.
 import { viewSubParts } from "./part-model.js";
@@ -32,20 +36,34 @@ export function createPoseFastPath(part, viewer, cache, { params, getView, getPa
     return (probeMaps[scope] ??= probePoses(part, getView(), params, { scope }));
   };
 
+  // The matrix this module last applied per name (null = cleared), so rung 1 can
+  // tell a pose that moved from one re-applied unchanged.
+  const shown = {};
+  const setPose = (name, m) => {
+    const was = shown[name];
+    shown[name] = m;
+    viewer.setSubPose(name, m);
+    return m != null && !(was && was.every((v, i) => v === m[i]));
+  };
+
   // Pose each in-view, meshed name from its frame (an override wins over the
   // cache stamp's — mount's stale-shown branch forgets the stamp first).
-  function apply(names, frames) {
+  // Returns the names given a CHANGED place pose (used by repair's count).
+  function poseByFrame(names, frames) {
+    const moved = [];
     const inView = new Set(viewSubParts(part, getView(), params));
     for (const name of names) {
       if (!inView.has(name) || !viewer.hasSubMesh(name)) continue;
       const frame = frames?.[name] ?? cache.frameOf(name);
-      if (frame === "posed") { viewer.setSubPose(name, null); continue; }
+      if (frame === "posed") { setPose(name, null); continue; }
       if (frame !== "canonical") continue; // unknown frame: nothing to say about the mesh
       const now = probe("place").get(name);
-      if (now?.trusted) viewer.setSubPose(name, composePose(now.pose));
-      else { cache.forget(name); viewer.setSubPose(name, null); }
+      if (!now?.trusted) { cache.forget(name); setPose(name, null); continue; }
+      if (setPose(name, composePose(now.pose))) moved.push(name);
     }
+    return moved;
   }
+  const apply = (names, frames) => { poseByFrame(names, frames); };
 
   return {
     // Stamp a freshly delivered mesh with its probe baseline at the current
@@ -71,12 +89,13 @@ export function createPoseFastPath(part, viewer, cache, { params, getView, getPa
     // Pose names right after a delivery or a view switch. See the header.
     apply,
 
-    // One call per param change. Re-poses every visible stale subpart whose base
-    // geometry is unchanged (rung 2, posed delta) and returns the NAMES repaired
-    // (empty = nothing pose-only to do). Names, not a count: a slider drag repairs
-    // the same subpart on every input event, so only the caller's set union
-    // across a drag is meaningful. Rung 1 is not a repair: every CURRENT
-    // canonical name is re-posed by apply() here and is not returned.
+    // One call per param change. Re-poses every visible current canonical
+    // subpart from place() (rung 1) and every visible stale subpart whose base
+    // geometry is unchanged (rung 2, posed delta). Returns the NAMES that change
+    // posed without a job — rung 2 and posed repairs always, rung 1 only when
+    // its matrix moved (empty = nothing pose-only to do). Names, not a count: a
+    // slider drag poses the same subpart on every input event, so only the
+    // caller's set union across a drag is meaningful.
     repair() {
       const posed = [], placeOnly = [];
       for (const name of viewSubParts(part, getView(), params)) {
@@ -100,7 +119,7 @@ export function createPoseFastPath(part, viewer, cache, { params, getView, getPa
           if (!now?.trusted || now.baseHash !== was.entry.baseHash) continue;
           matrix = poseDelta(now.pose, was.entry.pose);
         }
-        viewer.setSubPose(name, matrix);
+        setPose(name, matrix);
         // Same geometry, new pose: the delivered build's reads plus whatever the
         // probes read at THIS pose, re-hashed at the live params (spec §2), keeping
         // the delivery frame. An unknown stamp stays unknown.
@@ -108,8 +127,7 @@ export function createPoseFastPath(part, viewer, cache, { params, getView, getPa
         cache.record(name, had ? [...had, ...(now.reads ?? []), ...placeReads] : undefined, getView(), was.frame); // current again — regen loop sees nothing missing
         posed.push(name);
       }
-      apply(placeOnly);
-      return posed;
+      return [...poseByFrame(placeOnly), ...posed];
     },
   };
 }

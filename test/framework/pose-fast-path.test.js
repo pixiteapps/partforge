@@ -240,7 +240,7 @@ test("rung 1: a current canonical sub-part is posed by the live place probe, no 
   hx.fp.apply(["insert"]);
   expect(hx.poses.insert).toEqual(latticePose(0));
   hx.params.openAngle = 45; hx.version++;          // the cache stays current: openAngle is not a build read
-  expect(hx.fp.repair()).toEqual([]);              // rung 1 is not a repair
+  expect(hx.fp.repair()).toEqual(["insert"]);      // posed with no job: counted
   expect(hx.poses.insert).toEqual(latticePose(45));
   expect(hx.current.has("insert")).toBe(true);
 });
@@ -260,6 +260,20 @@ test("rung 1: the applied matrix is absolute, never accumulated across frames", 
   hx.params.openAngle = 30; hx.version++; hx.fp.repair();
   hx.params.openAngle = 60; hx.version++; hx.fp.repair();
   expect(hx.poses.insert).toEqual(latticePose(60));
+});
+
+test("rung 1 counts a name only when its matrix moved (honest during playback)", () => {
+  const part = { defaults: { x: 0, y: 0 }, views: { v: { label: "V" } }, parts: { a: { views: ["v"],
+    build: (k) => k.box({ size: [1, 1, 1] }),
+    place: (s, { p }) => s.translate([p.x, 0, 0]) } } };
+  const hx = harness(part);
+  hx.deliver("a", "canonical");
+  hx.fp.apply(["a"]);
+  hx.params.y = 3; hx.version++;                   // place() doesn't read y: same matrix
+  expect(hx.fp.repair()).toEqual([]);
+  hx.params.x = 2; hx.version++;
+  expect(hx.fp.repair()).toEqual(["a"]);
+  expect(hx.poses.a).toEqual(composePose([{ t: "translate", v: [2, 0, 0] }]));
 });
 
 test("rung 1: a canonical mesh whose live place() is untrusted is forgotten, never left unposed", () => {
@@ -308,14 +322,15 @@ test("rung 2 refuses when the build hash moved (a geometry param changed)", () =
   expect(hx.poses.a).toBe(null);
 });
 
-test("rung 2 refuses when the live place() is untrusted", () => {
+test("rung 2 refuses when the live place() is untrusted (Ruling F)", () => {
   const part = { ...rung2Part, parts: { a: { ...rung2Part.parts.a,
     place: (s, { p }) => (p.lift > 5 ? s.translate([0, 0, s.volume()]) : s.translate([0, 0, p.lift])) } } };
   const hx = harness(part);
   hx.deliver("a", "canonical");
   hx.edit({ angle: 45, lift: 9 });
-  expect(hx.fp.repair()).toEqual([]);
+  expect(hx.fp.repair()).toEqual([]);              // Ruling F: refused, not forgotten-and-cleared
   expect(hx.current.has("a")).toBe(false);
+  expect(hx.poses.a).toBe(null);                   // left as delivered; the regen loop rebuilds
 });
 
 // A posed delivery (the worker baked place() in) keeps today's full-scope delta:
