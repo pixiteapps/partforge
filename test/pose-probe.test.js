@@ -250,3 +250,58 @@ test("a trusted pose probe reports the raw params build+place read, derive expan
   expect(entry.trusted).toBe(true);
   expect(entry.reads).toEqual(["lift", "r"]);
 });
+
+import { probeSubPartPose, CANONICAL } from "../src/framework/pose-probe-core.js";
+import lattice from "./fixtures/lattice-lid-part.js";
+
+const ctx = (p, extra = {}) => ({ view: "assembly", purpose: "display", p, d: {}, ...extra });
+
+test("place scope: a querying build no longer matters — the insert's rigid place is trusted", () => {
+  const p = { ...lattice.defaults, openAngle: 45 };
+  expect(probeSubPartPose(lattice.parts.insert, ctx(p)).trusted).toBe(false);                      // full scope, as today
+  const r = probeSubPartPose(lattice.parts.insert, ctx(p), { scope: "place" });
+  expect(r).toMatchObject({ trusted: true, baseHash: CANONICAL });
+  expect(r.pose).toEqual([
+    { t: "rotate", deg: 45, center: [0, 0, 20], axis: [1, 0, 0] },
+    { t: "translate", v: [0, 0, 0] },
+  ]);
+});
+
+test("place scope: no place() is trusted with an empty pose", () => {
+  expect(probeSubPartPose(lattice.parts.body, ctx(lattice.defaults), { scope: "place" })).toEqual({ trusted: true, baseHash: CANONICAL, pose: [] });
+});
+
+test("place scope: a geometry op in place() is untrusted (the hash leaves CANONICAL)", () => {
+  for (const place of [(s) => s.scale(2), (s) => s.mirror([0, 0, 0], [1, 0, 0]), (s, { p }) => s.union(s.translate([p.w, 0, 0]))]) {
+    expect(probeSubPartPose({ build: (k) => k.box({ size: [1, 1, 1] }), place }, ctx(lattice.defaults), { scope: "place" }).trusted).toBe(false);
+  }
+});
+
+test("place scope: a scaling place is readable but untrusted, with a baseHash off CANONICAL", () => {
+  const r = probeSubPartPose({ build: (k) => k.box({ size: [1, 1, 1] }), place: (s) => s.scale(2) }, ctx({}), { scope: "place" });
+  expect(r.trusted).toBe(false);
+  expect(r.baseHash).toBeDefined();
+  expect(r.baseHash).not.toBe(CANONICAL);
+});
+
+test("place scope: a query or a function in place() is untrusted", () => {
+  const q = (s) => s.translate(s.boundingBox().center);
+  const f = (s) => s.fillet({ r: 1, edges: (e) => e });
+  for (const place of [q, f]) {
+    expect(probeSubPartPose({ build: (k) => k.box({ size: [1, 1, 1] }), place }, ctx({}), { scope: "place" }).trusted).toBe(false);
+  }
+});
+
+test("build scope ignores place(): the lid's build is trusted on its own and its hash holds across openAngle", () => {
+  const a = probeSubPartPose(lattice.parts.lid, ctx({ ...lattice.defaults, openAngle: 0 }), { scope: "build" });
+  const b = probeSubPartPose(lattice.parts.lid, ctx({ ...lattice.defaults, openAngle: 90 }), { scope: "build" });
+  expect(a.trusted && b.trusted).toBe(true);
+  expect(a.baseHash).toBe(b.baseHash);
+});
+
+test("probePoses in place scope records only place()'s reads", () => {
+  const m = probePoses(lattice, "assembly", lattice.defaults, { scope: "place" });
+  expect(m.get("insert").trusted).toBe(true);
+  expect(m.get("insert").reads).toEqual(["h", "lift", "openAngle"]);
+  expect(m.get("body").reads).toEqual([]);
+});
