@@ -769,5 +769,5 @@ Run the demo app against this branch (`npm run dev`, then the Hinged Box and a l
 - [ ] **Capture / thumbnail**: `captureView()` (the forge's card thumbnail) still shows the assembled pose; `render_part_views` in cloud returns the same framing as production.
 - [ ] **A part with a querying `place()`** (edit `hinged-box.js` locally: `s.translate(s.boundingBox().center)` in `place`): still renders, still animates best-effort, `?debug` shows `posed` frame, lint prints the reworded untrusted note.
 - [ ] **A laser sheet forge** (any kit forge in cloud): the burn still chars cut edges and engravings only, faces stay wood, in both views.
-- [ ] **View switch** on the Lattice Box between Assembly and the print views and back: no misplaced sub-part, no rebuild on the way back.
+- [ ] **View switch** on the Lattice Box between Assembly and the print views and back: no misplaced sub-part; a rebuild each way is expected (pre-existing, stamps are per-view).
 - [ ] Record anything that differs from production in the PR description; a difference in the print views or exports is a stop.

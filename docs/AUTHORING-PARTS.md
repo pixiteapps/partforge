@@ -117,6 +117,8 @@ export default {
   ([place-not-rigid](ERROR-PATTERNS.md#place-not-rigid)). If a part genuinely needs a
   reflected or resized form (e.g. a block that seats flipped), bake that into `build` so
   both purposes share one canonical solid, then pose it rigidly.
+  Branch on `purpose` so the export pose is the print orientation: an export pose that
+  follows an animated param pins the layer lines to the pose at the last rebuild.
 - `enabled(p)` gates a conditional sub-part (e.g. only present when a feature is on).
 - A view's sub-parts are derived, never hard-coded: those whose `views` include the view
   and whose `enabled(p)` is true.
@@ -291,7 +293,8 @@ Rules (all lint-enforced):
   ```
 - Playback drives params through the real param pipeline. A param read only
   inside `place()` plays at frame rate whatever `build()` does. A param
-  `build()` reads rebuilds at worker cadence. `lint` notes a track whose
+  `build()` reads rebuilds at worker cadence — except through a trailing
+  translate/rotate, which the viewer still re-poses by delta. `lint` notes a track whose
   `place()` it cannot read (a query on the solid, a function argument).
 - Playback pauses when the user edits any control; Reset restores the values
   the animation found. Because animated values are real params, exporting

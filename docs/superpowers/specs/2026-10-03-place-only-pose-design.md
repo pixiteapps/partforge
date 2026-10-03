@@ -184,6 +184,7 @@ On the Lattice Box all four notes go away: `openAngle`, `assemblyLift` and `pinI
 5. **Grain axis moves** for a wood sub-part with a rotating `place()` — from the posed longest axis to the canonical one. Correct per the documented rule, visible as a one-time change.
 6. **Old worker, new host / new worker, old host.** Covered by the `frame` default (§2); a new worker's canonical mesh reaching an old host is NOT possible since the two ship together.
 7. **Sheet burn frame.** A canonical sheet delivery with a wrong non-identity frame would char the wrong faces (sub-millimetre errors matter there — `mount.js` says so). The identity rule for canonical deliveries is pinned by a sheet-part test on real geometry (`classifySheetSurface`).
+8. **An export pose that follows an animated param.** A `place()` that does not branch on `purpose` makes the export pose follow animated params, so the layer-line frame is pinned to the pose at the last rebuild (rung 1 moves the display without one). Residual, documented in the `place` bullet: branch on `purpose` so the export pose is the print orientation.
 
 ## Decisions needed
 
@@ -200,7 +201,7 @@ On the Lattice Box all four notes go away: `openAngle`, `assemblyLift` and `pinI
 - `pose-probe.test.js`: place scope — trusted with the canonical hash for rigid places, untrusted for `scale`/`mirror`/a query/a function, trusted-empty for no `place`, reads recorded.
 - `recorded-reads-jobs.test.js` / new `place-only-jobs.test.js` (Manifold): a querying build with a rigid place delivers `frame: "canonical"` with build-only reads; a querying place delivers `"posed"` with both; no place delivers canonical with an empty pose; the canonical mesh's positions equal `sp.build(...).toMesh()`'s.
 - `mesh-cache-recorded.test.js`: `frameOf`, and a place-only key change leaving a canonical stamp current.
-- new `pose-apply.test.js` (pure, fake viewer + cache): rung 1 poses with the absolute matrix and no job; rung 2 composes place over the build delta and re-records the union; an untrusted live place forgets the stamp; posed deliveries take today's path.
+- new `pose-apply.test.js` (pure, fake viewer + cache): rung 1 poses with the absolute matrix and no job; rung 2 composes place over the build delta and re-records the delivered reads plus the build probe's (place reads are rung 1's); an untrusted live place forgets the stamp; posed deliveries take today's path.
 - `print-frame` tests: canonical → export pose; posed → today's delta; untrusted → identity. `sheet-part.test.js`: canonical sheet frame is identity and classifies real geometry correctly.
 - `lint-animations.test.js` / `lint-place.test.js`: the Lattice Box fixture reports zero `animation-track-rebuilds`; a querying place reports the reworded untrusted note; a mirroring export place behind a querying build reports `place-not-rigid`.
 - The fixture `test/fixtures/lattice-lid-part.js`, reduced from the reported part: a lid whose build queries (`boundingBox`, `isEmpty`, `toRegions`) and whose `place` articulates by `openAngle`. Its lint notes must be 0 and its `printFrameMatrix` non-identity.
