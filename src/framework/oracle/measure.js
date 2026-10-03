@@ -2,6 +2,7 @@ import { buildView } from "./build.js";
 import { cachedBVH } from "./bvh.js";
 import { assemblyOverlaps } from "../assembly.js";
 import { resolveParams, buildPosed } from "../part-model.js";
+import { newReadSink, expandReads } from "../read-recorder.js";
 import { probeSubPartPose } from "../pose-probe-core.js";
 import { composePose } from "../geometry/pose.js";
 import { isSheetPart, sheetMeta, SHEET_CHECK_BUDGET_MS, MARK_DEPTH } from "../sheet/constants.js";
@@ -95,8 +96,8 @@ function resolveProbeValue(v, depth = 0) {
 // Evaluate every declared probe with resolved (p, d). Reads all solid facts
 // eagerly, so the caller may free the kernel's objects afterwards. Never
 // throws: each probe's failure is its own `{ error }` entry.
-function evaluateProbes(kernel, part, params) {
-  const { p, d } = resolveParams(part, params);
+function evaluateProbes(kernel, part, params, reads) {
+  const { p, d } = resolveParams(part, params, undefined, reads);
   // Oracle-owned cache round, same reasoning as buildView's: probe geometry must
   // not evict what the viewer is showing, and the next round evicts this one.
   kernel.beginSubPart?.("oracle:probes");
@@ -220,7 +221,14 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // needs those meshes anyway — it rasterizes them for silhouette match scoring —
   // and a second buildView here would be a whole duplicate build of the part for
   // nothing. Absent, this measures its own build exactly as it always did.
-  const built = opts.built ?? buildView(kernel, part, view, params);
+  // Every param this measurement depends on (spec §4): one sink through all five
+  // places it resolves params. A caller-supplied view (`opts.built`) is only
+  // covered when the caller recorded its build into the same sink (opts.reads);
+  // otherwise the result claims no reads and verify reuses it only on identical
+  // params.
+  const reads = opts.reads ?? newReadSink();
+  const readsKnown = !opts.built || !!opts.reads;
+  const built = opts.built ?? buildView(kernel, part, view, params, { reads });
   // ONE BVH per sub-part mesh for this call, shared by the two passes that need
   // one: min-wall (inward rays per triangle) and meshGaps (pair distances). They
   // used to index the same mesh objects independently, so every sub-part of a
@@ -242,7 +250,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   const minWallSamples = partGatesMinWall(part) ? undefined : DIAGNOSTIC_SAMPLES;
   // Declared wall bands, per sub-part, for exactly these params (Task 5). Resolved
   // once per measure; a bad declaration throws here, which is a measure error.
-  const wallBands = opts.minWall ? partWallBands(part, params) : {};
+  const wallBands = opts.minWall ? partWallBands(part, params, reads) : {};
   // Overhang is measured only for a part that opted in (dfm-profiles.js
   // overhangAngleFor) — everything else reads null. verify hands the angle it
   // resolved in (a `process` override changes it); `null` there is an explicit
@@ -259,7 +267,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // row's min-wall rays between two sheets spend it (the verdict used to depend on
   // declaration order). A view without a sheet part measures exactly as it always has.
   const sheetView = built.some(({ name }) => isSheetPart(part.parts[name]));
-  const sheetParams = sheetView ? resolveParams(part, params) : null;
+  const sheetParams = sheetView ? resolveParams(part, params, undefined, reads) : null;
   // The print-pose sizes are read by one check, the process bed (verify passes whether
   // its profile has one; alone, measure asks the part's own profile), and each costs a
   // second build of the part — so they are built only for a bed.
@@ -353,7 +361,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // false` skips them: verify's per-case re-measures pass it because no gate
   // reads probe values, so re-running their booleans per case buys nothing.
   const probes = opts.probes !== false && part.probes && Object.keys(part.probes).length
-    ? evaluateProbes(kernel, part, params)
+    ? evaluateProbes(kernel, part, params, reads)
     : undefined;
 
   // Pair surface distances from the meshes already built — no kernel dependency,
@@ -371,7 +379,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // Rebuilds with the same kernel and cleans up at its end — every solid fact
   // above is already read, so this is safe.
   const canIntersect = built.length > 0 && typeof built[0].solid.intersect === "function";
-  const overlaps = canIntersect ? assemblyOverlaps(kernel, part, view, params) : [];
+  const overlaps = canIntersect ? assemblyOverlaps(kernel, part, view, params, { reads }) : [];
   kernel.cleanup?.();
 
   const overlapping = new Set(overlaps.map((o) => pairKey(o.a, o.b)));
@@ -403,6 +411,8 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // nothing measured it, which reads identically to "no reading available";
     // verify's seeding rule turns on exactly this distinction (see verify.js).
     measuredMinWall: !!opts.minWall,
+    // Params this measurement read (undefined = unknown: a caller-built view).
+    reads: readsKnown ? expandReads(reads) : undefined,
     // The overhang angle every sub-part's `overhangArea` was measured against,
     // or null when the pass did not run — read by verify's seed gate, never a
     // caller's claim.

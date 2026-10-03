@@ -580,9 +580,10 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       const quick = msg.checks === "quick";
       const [{ buildView }, { measure }, { verify }] = await loadInspect();
       const view = msg.view ?? Object.keys(part.views)[0];
-      const built = buildView(kernel, part, view, msg.params ?? {});
+      const reads = newReadSink();
+      const built = buildView(kernel, part, view, msg.params ?? {}, { reads });
       const measured = measure(kernel, part, view, msg.params ?? {},
-        { minWall: !quick, gaps: !quick, built });
+        { minWall: !quick, gaps: !quick, built, reads });
       const report = {
         measure: measured,
         verify: verify(kernel, part, {

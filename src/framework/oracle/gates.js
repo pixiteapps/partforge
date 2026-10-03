@@ -87,12 +87,12 @@ export function partHasBed(part, { process } = {}) {
 // spec and already lets that throw surface from `verify()` — reporting it a second
 // time here, mid-measure, would be a confusing duplicate. Swallow it and answer "no
 // bands", the same as a part that declares none.
-export function partWallBands(part, params = {}) {
+export function partWallBands(part, params = {}, reads) {
   const spec = part?.verify?.expect;
   if (!spec) return {};
   let expect;
   if (typeof spec === "function") {
-    const { p, d } = resolveParams(part, params);
+    const { p, d } = resolveParams(part, params, undefined, reads);
     try { expect = spec(p, d) ?? {}; } catch { return {}; }
   } else {
     expect = spec;

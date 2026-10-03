@@ -5,8 +5,8 @@ import { viewSubParts, resolveParams, buildPosed } from "../part-model.js";
 // `generate` path in jobs.js, but keeps solids LIVE (does NOT call
 // kernel.cleanup()) so callers can read exact solid facts (volume/genus/empty)
 // before they free the kernel. Meshes are JS-owned arrays and survive cleanup.
-export function buildView(kernel, part, view, params = {}) {
-  const { p, d } = resolveParams(part, params);
+export function buildView(kernel, part, view, params = {}, { reads } = {}) {
+  const { p, d } = resolveParams(part, params, undefined, reads);
   // Cache round for the whole view. The name is the ORACLE's, deliberately not the
   // display sub-part names the generate path brackets under: a distinct partition
   // still reuses those solids (the cache indexes entries by content hash across
