@@ -38,10 +38,7 @@ const resolveOne = makeAssetResolver(
 // `images` may be a plain { name: source } map or a function of the resolved
 // params — the second form is what lets a `type: "image"` control drive the
 // source. Mirrors fontsFor.
-export function imagesFor(part, p) {
-  const decl = part?.images;
-  return typeof decl === "function" ? decl(p) : decl;
-}
+export { imagesFor } from "./asset-decls.js";
 
 export async function resolveImages(imagesDecl) {
   // A function reaching here means a caller passed `part.images` raw. It

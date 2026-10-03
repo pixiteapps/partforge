@@ -88,10 +88,7 @@ const resolveOne = makeAssetResolver(
 // params — the second form is what lets a `type: "vector"` control drive the
 // artwork. Resolving it needs `p`, which is why this is a separate step from
 // resolveVectors rather than folded into it. Mirrors fontsFor/imagesFor.
-export function vectorsFor(part, p) {
-  const decl = part?.vectors;
-  return typeof decl === "function" ? decl(p) : decl;
-}
+export { vectorsFor } from "./asset-decls.js";
 
 export async function resolveVectors(vectorsDecl) {
   // A function reaching here means a caller passed `part.vectors` raw, the way
