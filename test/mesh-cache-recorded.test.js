@@ -93,3 +93,21 @@ test("hasStamp tells an every-param stamp from no stamp; readsOf is null for bot
   cache.forget("insert");
   expect(cache.hasStamp("insert")).toBe(false);
 });
+
+test("a canonical stamp stays current when a place-only param changes", () => {
+  const params = { w: 60, openAngle: 0 };
+  const { cache, bump } = makeCache(params);
+  cache.record("insert", ["w"], "v", "canonical");
+  expect(cache.frameOf("insert")).toBe("canonical");
+  params.openAngle = 90; bump();
+  expect(cache.isCurrent("insert")).toBe(true);
+});
+
+test("frame defaults to posed (an older worker's reply), and is null with no stamp", () => {
+  const { cache } = makeCache({ a: 1 });
+  expect(cache.frameOf("x")).toBe(null);
+  cache.record("x", ["a"]);
+  expect(cache.frameOf("x")).toBe("posed");
+  cache.forget("x");
+  expect(cache.frameOf("x")).toBe(null);
+});
