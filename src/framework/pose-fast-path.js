@@ -4,26 +4,35 @@
 // accumulates across frames and setSubGeometry's matrix reset stays correct.
 //
 // A mesh's delivery frame (the mesh cache's stamp, spec §3–4) picks the rung:
-// - canonical + current — rung 1: posed by place() alone at the live params
-//   (place-scope probe). No stamp, no delta. An untrusted live place() forgets
+// The applied matrix is place(now) · delta (canonical) or delta (posed), where
+// delta is the stamp's stored build/full delta: identity at every delivery (and
+// after forget), set only by a rung-2 or posed repair. Storing it is what keeps a
+// later rung-1 pose or apply() (an unrelated param, a view switch) from snapping
+// a delta-repaired mesh back to its delivered pose while the cache says current.
+//
+// - canonical + current — rung 1: posed by place() at the live params
+//   (place-scope probe) over the stored delta. An untrusted live place() forgets
 //   the cache stamp so the regen loop rebuilds it (posed, at those params).
 //   repair() reports a rung-1 name only when its matrix actually CHANGED, so the
 //   debug `posed` count ("produced a pose and no job") stays honest during
 //   playback: a sub-part whose place() ignores the animated param is not counted.
 // - canonical + stale — rung 2: a trailing transform INSIDE build. When the live
-//   build-scope probe is trusted with the delivered baseHash, the matrix is
-//   place(now) · delta(build now, build delivered) and the mesh is re-stamped.
+//   build-scope probe is trusted with the delivered baseHash, the delta becomes
+//   delta(build now, build delivered), the matrix place(now) · delta, and the
+//   mesh is re-stamped.
 //   An untrusted live place() refuses the rung (Ruling F): the regen loop rebuilds.
-// - posed (the worker baked place() in): today's full-scope delta, unchanged.
+// - posed (the worker baked place() in): today's full-scope delta; apply()
+//   re-applies the stored delta.
 // Anything else falls through to the normal regen loop.
 import { viewSubParts } from "./part-model.js";
 import { probePoses } from "./pose-probe.js";
 import { composePose, poseDelta, mulMat4 } from "./geometry/pose.js";
 
 export function createPoseFastPath(part, viewer, cache, { params, getView, getParamsVersion }) {
-  // name -> { frame, entry }: the delivery frame and, at the delivered params,
+  // name -> { frame, entry, delta }: the delivery frame; at the delivered params,
   // the build-scope probe entry (canonical — rung 2's baseline) or the
-  // full-scope one (posed).
+  // full-scope one (posed); and the delta the last repair applied (null =
+  // identity, as delivered).
   const stamps = {};
 
   // Three probe maps memoized per (paramsVersion, view), each computed lazily on
@@ -55,11 +64,13 @@ export function createPoseFastPath(part, viewer, cache, { params, getView, getPa
     for (const name of names) {
       if (!inView.has(name) || !viewer.hasSubMesh(name)) continue;
       const frame = frames?.[name] ?? cache.frameOf(name);
-      if (frame === "posed") { setPose(name, null); continue; }
+      const delta = stamps[name]?.delta ?? null; // no stamp (stale-shown): as delivered
+      if (frame === "posed") { setPose(name, delta); continue; }
       if (frame !== "canonical") continue; // unknown frame: nothing to say about the mesh
       const now = probe("place").get(name);
       if (!now?.trusted) { cache.forget(name); setPose(name, null); continue; }
-      if (setPose(name, composePose(now.pose))) moved.push(name);
+      const place = composePose(now.pose);
+      if (setPose(name, delta ? mulMat4(place, delta) : place)) moved.push(name);
     }
     return moved;
   }
@@ -72,7 +83,8 @@ export function createPoseFastPath(part, viewer, cache, { params, getView, getPa
     // worker built with.)
     recordDelivered(name) {
       const frame = cache.frameOf(name) ?? "posed";
-      stamps[name] = { frame, entry: probe(frame === "canonical" ? "build" : "full").get(name) };
+      stamps[name] = { frame, entry: probe(frame === "canonical" ? "build" : "full").get(name), delta: null };
+      shown[name] = null; // setSubGeometry just reset the mesh's matrix
     },
 
     // Drop a subpart's stamp: the mesh in the viewer is no longer known to
@@ -84,6 +96,7 @@ export function createPoseFastPath(part, viewer, cache, { params, getView, getPa
     // apply a delta measured against geometry that is no longer on screen.
     forget(name) {
       delete stamps[name];
+      shown[name] = null; // the shown-unrecorded mesh arrived with its matrix reset
     },
 
     // Pose names right after a delivery or a view switch. See the header.
@@ -106,19 +119,21 @@ export function createPoseFastPath(part, viewer, cache, { params, getView, getPa
         }
         const was = stamps[name];
         if (!was?.entry?.trusted) continue;
-        let matrix, placeReads = [], now;
+        let matrix, delta, placeReads = [], now;
         if (was.frame === "canonical") {
           now = probe("build").get(name);
           if (!now?.trusted || now.baseHash !== was.entry.baseHash) continue;
           const place = probe("place").get(name);
           if (!place?.trusted) continue;
-          matrix = mulMat4(composePose(place.pose), poseDelta(now.pose, was.entry.pose));
+          delta = poseDelta(now.pose, was.entry.pose);
+          matrix = mulMat4(composePose(place.pose), delta);
           placeReads = place.reads ?? [];
         } else {
           now = probe("full").get(name);
           if (!now?.trusted || now.baseHash !== was.entry.baseHash) continue;
-          matrix = poseDelta(now.pose, was.entry.pose);
+          matrix = delta = poseDelta(now.pose, was.entry.pose);
         }
+        was.delta = delta;
         setPose(name, matrix);
         // Same geometry, new pose: the delivered build's reads plus whatever the
         // probes read at THIS pose, re-hashed at the live params (spec §2), keeping

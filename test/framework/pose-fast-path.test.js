@@ -3,6 +3,7 @@
 import { expect, test } from "vitest";
 import { createPoseFastPath } from "../../src/framework/pose-fast-path.js";
 import { composePose, poseDelta, mulMat4 as mul } from "../../src/framework/geometry/pose.js";
+import { createMeshCache } from "../../src/framework/mesh-cache.js";
 import lattice from "../fixtures/lattice-lid-part.js";
 
 const posedPart = {
@@ -49,6 +50,8 @@ function harness(part, viewName = "v") {
     readsFor(n, r) { reads[n] = new Set(r); },
     readsOf: (n) => reads[n] ?? null,
     edit(partial) { Object.assign(params, partial); version++; current.clear(); },
+    // A change to params the stamps don't read: the cache stays current.
+    tweak(partial) { Object.assign(params, partial); version++; },
     // What mount does with a fresh reply: show the mesh (matrix reset), stamp the
     // cache with its frame, then stamp the fast path's baseline.
     deliver(name, frame = "posed") {
@@ -276,7 +279,7 @@ test("rung 1 counts a name only when its matrix moved (honest during playback)",
   expect(hx.poses.a).toEqual(composePose([{ t: "translate", v: [2, 0, 0] }]));
 });
 
-test("rung 1: a canonical mesh whose live place() is untrusted is forgotten, never left unposed", () => {
+test("rung 1: a canonical mesh whose live place() is untrusted is forgotten and cleared", () => {
   const part = { defaults: { x: 0 }, views: { v: { label: "V" } }, parts: { a: { views: ["v"],
     build: (k) => k.box({ size: [1, 1, 1] }),
     place: (s, { p }) => (p.x > 5 ? s.translate(s.boundingBox().center) : s.translate([p.x, 0, 0])) } } };
@@ -418,4 +421,78 @@ test("probes run lazily, only the scopes a frame needs", () => {
   expect([builds, places]).toEqual([0, 1]);         // place scope only
   canon.fp.repair();                                // same (version, view): memoized
   expect([builds, places]).toEqual([0, 1]);
+});
+
+// ---- A repaired delta survives later rung-1 poses and apply() ----
+// After a rung-2 or posed repair the cache says current, so the regen loop will
+// never rebuild the mesh: every later pose must still carry the repair's delta.
+
+const rot5 = (deg) => [{ t: "rotate", deg, center: [0, 0, 5], axis: [1, 0, 0] }];
+const lifted = (z) => composePose([{ t: "translate", v: [0, 0, z] }]);
+
+test("rung 2's delta survives a later unread-param change (repair) and apply() while current", () => {
+  const hx = harness({ ...rung2Part, defaults: { ...rung2Part.defaults, other: 0 } });
+  hx.deliver("a", "canonical");
+  hx.edit({ angle: 45 });
+  expect(hx.fp.repair()).toEqual(["a"]);
+  const want = mul(lifted(0), poseDelta(rot5(45), rot5(0)));
+  expect(hx.poses.a).toEqual(want);
+  hx.tweak({ other: 1 });                          // cache stays current → rung 1
+  expect(hx.fp.repair()).toEqual([]);              // matrix unchanged: not counted
+  expect(hx.poses.a).toEqual(want);
+  hx.fp.apply(["a"]);                              // a view switch / post-delivery apply
+  expect(hx.poses.a).toEqual(want);
+  hx.tweak({ lift: 4 });                           // rung 1 moves the place pose, keeps the delta
+  expect(hx.fp.repair()).toEqual(["a"]);
+  expect(hx.poses.a).toEqual(mul(lifted(4), poseDelta(rot5(45), rot5(0))));
+});
+
+test("a new delivery resets the stored delta to identity", () => {
+  const hx = harness(rung2Part);
+  hx.deliver("a", "canonical");
+  hx.edit({ angle: 45 }); hx.fp.repair();
+  hx.deliver("a", "canonical");                    // rebuilt at angle 45
+  hx.fp.apply(["a"]);
+  expect(hx.poses.a).toEqual(lifted(0));
+});
+
+test("a posed repair's delta survives apply() and a still-current repair", () => {
+  const part = { defaults: { w: 10, angle: 30, other: 0 }, views: { v: { label: "V" } }, parts: { a: { views: ["v"],
+    build: (k, p) => k.box({ min: [0, 0, 0], max: [p.w, 10, 5] }),
+    place: (s, { p }) => s.rotateAbout({ axis: "X", deg: p.angle, through: [0, 0, 5] }) } } };
+  const hx = harness(part);
+  hx.deliver("a", "posed");
+  hx.edit({ angle: 45 });
+  expect(hx.fp.repair()).toEqual(["a"]);
+  const want = poseDelta(rot5(45), rot5(30));
+  hx.tweak({ other: 1 });
+  expect(hx.fp.repair()).toEqual([]);
+  expect(hx.poses.a).toEqual(want);
+  hx.fp.apply(["a"]);                              // view switch must not snap back to the delivered pose
+  expect(hx.poses.a).toEqual(want);
+});
+
+// The reviewer's reproduction, on the REAL mesh cache: currency comes from the
+// recorded reads, not from a test-controlled set.
+test("real mesh cache: rung 2 then an unread param keeps place · delta", () => {
+  const part = { ...rung2Part, defaults: { ...rung2Part.defaults, other: 0 } };
+  const params = { ...part.defaults };
+  let version = 0;
+  const poses = {};
+  const viewer = { hasSubMesh: (n) => n in poses, setSubPose: (n, m) => { poses[n] = m; } };
+  const cache = createMeshCache(viewer, { params, getView: () => "v", getParamsVersion: () => version, isCaching: () => true });
+  const fp = createPoseFastPath(part, viewer, cache, { params, getView: () => "v", getParamsVersion: () => version });
+  poses.a = null;
+  cache.record("a", ["angle", "w"], "v", "canonical");
+  fp.recordDelivered("a");
+  params.angle = 45; version++;
+  expect(fp.repair()).toEqual(["a"]);
+  const want = mul(lifted(0), poseDelta(rot5(45), rot5(0)));
+  expect(poses.a).toEqual(want);
+  params.other = 1; version++;
+  expect(cache.isCurrent("a")).toBe(true);
+  fp.repair();
+  expect(poses.a).toEqual(want);
+  fp.apply(["a"]);
+  expect(poses.a).toEqual(want);
 });
