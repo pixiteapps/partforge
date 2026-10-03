@@ -1347,6 +1347,27 @@ test("a build made stale only by playback is shown, but not recorded", () => {
   handle.dispose();
 });
 
+test("a stale-shown playback mesh carries no stamp, so it is rebuilt even if its reads look unchanged", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makeAnimatedPart(), { createWorker, elements: els });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  // body's recorded reads exclude `h`, so the animation's h changes alone never stale it...
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body", reads: ["tilt"] }], ms: 5 } });
+  const viewer = fakeViewers[0];
+
+  handle.animation.play();
+  viewer.tickFrame(0.5);
+  viewer.tickFrame(0.5);
+  const jobsBefore = workers.manifold.postMessage.mock.calls.length;
+  // ...but a mesh delivered while playback moved on was built at OTHER params: shown, unstamped.
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body", reads: ["tilt"] }], ms: 5 } });
+
+  const jobs = workers.manifold.postMessage.mock.calls.slice(jobsBefore).map(([m]) => m);
+  expect(jobs.some((m) => m.type === "generate" && m.subparts?.includes("body"))).toBe(true);
+  handle.dispose();
+});
+
 test("a user edit mid-playback still discards the stale meshes", () => {
   vi.useFakeTimers();
   const els = makeElements();

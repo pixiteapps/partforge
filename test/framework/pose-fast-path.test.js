@@ -22,13 +22,15 @@ function harness(part) {
   let version = 0;
   const poses = {};   // name -> last mat16 or null
   const current = new Set();
+  const reads = {};   // name -> Set of recorded keys (absent = unknown)
   const viewer = {
     hasSubMesh: (n) => n in poses,
     setSubPose: (n, m) => { poses[n] = m; },
   };
   const cache = {
     isCurrent: (n) => current.has(n),
-    record: (n) => current.add(n),
+    record: (n, r) => { current.add(n); if (r) reads[n] = new Set(r); else delete reads[n]; },
+    readsOf: (n) => reads[n] ?? null,
   };
   const fp = createPoseFastPath(part, viewer, cache, {
     params, getView: () => "v", getParamsVersion: () => version,
