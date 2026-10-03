@@ -5,6 +5,7 @@
 // lives at `views.<view>.animations`, and every finding path says so.
 import { expect, test } from "vitest";
 import { lintPart } from "../src/lint.js";
+import lattice from "./fixtures/lattice-lid-part.js";
 
 const base = (overrides = {}) => ({
   meta: { title: "T" },
@@ -312,4 +313,56 @@ test("autoplay is per view: two views may each declare one", () => {
     },
   });
   expect(findingsFor(part, "animation-autoplay-invalid")).toHaveLength(0);
+});
+
+// Place-only pose (spec 2026-10-03-place-only-pose §8): the place-scope probe
+// decides whether a track can play at frame rate; build() may query freely.
+const trackNotes = (r) => r.notes.filter((f) => f.rule === "animation-track-rebuilds");
+const latticeWithTracks = (tracks) => ({ ...lattice, views: { assembly: { ...lattice.views.assembly,
+  animations: { cycle: { label: "Cycle", duration: 2, tracks } } } } });
+
+test("the Lattice Lid (#161): a querying build behind a rigid place() earns no rebuild note", () => {
+  const r = lintPart(lattice);
+  expect(r.errors).toEqual([]);
+  expect(trackNotes(r)).toEqual([]);
+});
+
+test("a place() the probe cannot read earns the untrusted note, and only that case does", () => {
+  const part = { ...lattice, parts: { ...lattice.parts, insert: { ...lattice.parts.insert,
+    place: (s, { p }) => s.translate([0, 0, p.lift + s.boundingBox().size[2]]) } } };
+  const n = trackNotes(lintPart(part));
+  expect(n.map((f) => f.message)).toEqual(expect.arrayContaining([expect.stringContaining("place()` cannot be probed")]));
+  // the readable lid place beside it does not change that; the untrusted note is the only kind here
+  expect(n.every((f) => f.message.includes("cannot be probed"))).toBe(true);
+  expect(n[0].hint).toMatch(/`build\(\)` may query freely/);
+});
+
+test("a track read by build() earns the rebuild note (build-scope hash moves)", () => {
+  // `wall` feeds the body's and the lid's query-free builds, so their build-scope
+  // hashes differ between the keyframe values.
+  const n = trackNotes(lintPart(latticeWithTracks({ wall: [[0, 2], [1, 3]] })));
+  expect(n).toHaveLength(1);
+  expect(n[0].message).toContain('track "wall" rebuilds geometry');
+});
+
+test("a track read by an untrusted build earns the rebuild note by its recorded read", () => {
+  // Only the insert reads cellR, and its build queries (untrusted build probe) —
+  // the note comes from the read the probe recorded, not from a hash.
+  const n = trackNotes(lintPart(latticeWithTracks({ cellR: [[0, 2], [1, 3]] })));
+  expect(n).toHaveLength(1);
+  expect(n[0].message).toContain('track "cellR" rebuilds geometry');
+});
+
+test("a param no build() reads plays as a pose even behind an untrusted build", () => {
+  expect(trackNotes(lintPart(latticeWithTracks({ openAngle: [[0, 0], [1, 90]] })))).toEqual([]);
+});
+
+test("a readable place() that reshapes on both purposes still classifies pose-only tracks as poses", () => {
+  // posed delivery: the full-scope delta fast path plays it, as before
+  const part = base({
+    parts: { p: { views: ["v"], build: (k) => k.box({ size: [10, 10, 10] }),
+      place: (s, { p }) => s.scale(2).rotate(-p.a, [0, 0, 0], [1, 0, 0]) } },
+    views: { v: { label: "V", animations: { x: { duration: 1, tracks: { a: [[0, 0], [1, 100]] } } } } },
+  });
+  expect(findingsFor(part, "animation-track-rebuilds")).toEqual([]);
 });

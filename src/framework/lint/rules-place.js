@@ -4,9 +4,13 @@
 //   1. Display placement must not depend on the active view (display meshes
 //      are cached across views; a view-dependent pose serves stale geometry).
 //   2. Display vs export may differ only by a rigid motion (translate/rotate).
-// Both checks run the geometry-free pose probe; an untrusted probe (query op /
-// function selector in build or place) proves nothing and stays silent — the
-// runtime declines the fast path for those sub-parts anyway.
+// Both checks run the place-scope pose probe: place() alone, on a canonical token,
+// so build() may query freely without hiding a finding. A READABLE result carries
+// `baseHash` (CANONICAL for translate/rotate only, another hash when place()
+// reshapes) and `pose`; a place() the probe cannot read (it queries the solid or
+// passes a function) returns `{ trusted: false }` with no baseHash, proves nothing,
+// and stays silent. Readability, not `trusted`, gates the rules: the same reshape
+// on both purposes is allowed, so a reshaping place() must still be compared.
 import { err } from "./finding.js";
 import { probeSubPartPose } from "../pose-probe-core.js";
 
@@ -23,6 +27,8 @@ function viewNames(part, view, p) {
 }
 
 const poseKey = (pose) => JSON.stringify(pose);
+const readable = (probe) => probe.baseHash !== undefined;
+const probePlace = (sp, ctx) => probeSubPartPose(sp, ctx, { scope: "place" });
 
 export const PLACE_RULES = [
   {
@@ -34,8 +40,8 @@ export const PLACE_RULES = [
       for (const [name, sp] of Object.entries(isPlainObject(part?.parts) ? part.parts : {})) {
         const inViews = views.filter((v) => viewNames(part, v, p).includes(name));
         if (inViews.length < 2) continue;
-        const probes = inViews.map((view) => probeSubPartPose(sp, { view, purpose: "display", p, d }));
-        if (probes.some((x) => !x.trusted)) continue;
+        const probes = inViews.map((view) => probePlace(sp, { view, purpose: "display", p, d }));
+        if (!probes.every(readable)) continue;
         const first = probes[0];
         const differs = probes.some((x) => x.baseHash !== first.baseHash || poseKey(x.pose) !== poseKey(first.pose));
         if (differs) {
@@ -57,9 +63,9 @@ export const PLACE_RULES = [
         if (!sp?.place) continue;
         for (const view of Object.keys(isPlainObject(part?.views) ? part.views : {})) {
           if (!viewNames(part, view, p).includes(name)) continue;
-          const display = probeSubPartPose(sp, { view, purpose: "display", p, d });
-          const exportP = probeSubPartPose(sp, { view, purpose: "export", p, d });
-          if (!display.trusted || !exportP.trusted) continue;
+          const display = probePlace(sp, { view, purpose: "display", p, d });
+          const exportP = probePlace(sp, { view, purpose: "export", p, d });
+          if (!readable(display) || !readable(exportP)) continue;
           if (display.baseHash !== exportP.baseHash) {
             out.push(err("place-not-rigid",
               `sub-part "${name}" display and export placements differ by more than a rigid motion (view "${view}")`,
