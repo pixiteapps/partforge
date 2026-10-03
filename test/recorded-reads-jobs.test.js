@@ -34,14 +34,28 @@ test("derived reads expand to the raw params of their own group", async () => {
   expect((await gen(part, ["a"], part.defaults)).meshes[0].reads).toEqual(["h", "w"]);
 });
 
-test("place() reads count", async () => {
+test("a rigid place() is delivered canonical: its reads do not count", async () => {
   const part = {
     defaults: { r: 3, lift: 7 },
     views: { v: { label: "V" } },
     parts: { a: { views: ["v"], build: (k, p) => k.cylinder({ r: p.r, h: 2 }),
       place: (s, { p }) => s.translate([0, 0, p.lift]) } },
   };
-  expect((await gen(part, ["a"], part.defaults)).meshes[0].reads).toEqual(["lift", "r"]);
+  const m = (await gen(part, ["a"], part.defaults)).meshes[0];
+  expect(m.frame).toBe("canonical");
+  expect(m.reads).toEqual(["r"]);
+});
+
+test("a querying place() is delivered posed: its reads count", async () => {
+  const part = {
+    defaults: { r: 3, lift: 7 },
+    views: { v: { label: "V" } },
+    parts: { a: { views: ["v"], build: (k, p) => k.cylinder({ r: p.r, h: 2 }),
+      place: (s, { p }) => s.translate([0, 0, p.lift + s.boundingBox().size[2]]) } },
+  };
+  const m = (await gen(part, ["a"], part.defaults)).meshes[0];
+  expect(m.frame).toBe("posed");
+  expect(m.reads).toEqual(["lift", "r"]);
 });
 
 test("asset declaration reads are attributed to every sub-part in the job", async () => {
