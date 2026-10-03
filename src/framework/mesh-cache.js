@@ -1,41 +1,32 @@
-import { subPartReadKeys, relevanceHash, RELEVANT_ALL } from "./param-deps.js";
+import { relevanceHash } from "./param-deps.js";
 
-// Tracks whether each sub-part's cached display mesh is still valid for the current
-// params ("Layer 1" of the cache — skipping regeneration of sub-parts whose inputs
-// didn't change). A sub-part's mesh is stamped with a relevance hash over just the
-// params that sub-part reads; it's current while that hash is unchanged and the mesh
-// is still in the viewer.
-//
-// The view/paramsVersion/caching state lives in mount and changes over time, so it's
-// passed as getters. `params` is a stable object mutated in place, so it's passed by
-// reference.
+// Whether each sub-part's cached display mesh is still valid ("Layer 1": skip
+// regenerating sub-parts whose inputs didn't change). Each delivered mesh is
+// stamped with the params its REAL build read (recorded in the worker, jobs.js),
+// their values, and the view it was built for. It stays current while those are
+// unchanged — sound for a deterministic build: unchanged reads replay the same
+// path (spec 2026-10-03). Nothing is predicted; a sub-part with no stamp is not
+// current. `params` is a stable object mutated in place; the rest are getters.
 export function createMeshCache(part, viewer, { params, getView, getParamsVersion, isCaching }) {
-  const cacheHash = {}; // name -> relevance hash the cached mesh was built at
+  const stamps = {}; // name -> { keys: string[] | null (null = every param), hash, view }
 
-  // Memoize the per-sub-part read-key map per (paramsVersion, view): subPartReadKeys
-  // runs probe builds, so we compute it once per change, not per sub-part.
-  let readsKey = null, readsMap = null;
-  const readsFor = () => {
-    const key = `${getParamsVersion()}|${getView()}`;
-    if (readsKey !== key) { readsKey = key; readsMap = subPartReadKeys(part, getView(), params); }
-    return readsMap;
-  };
-
-  // The relevance hash for one sub-part at the current params (RELEVANT_ALL → hash
-  // over ALL params, so any edit invalidates it — the safe fallback).
-  const hashFor = (name) => {
-    if (!isCaching()) return `v${getParamsVersion()}`; // caching off: any edit invalidates every sub-part
-    const reads = readsFor();
-    const keys = reads === RELEVANT_ALL ? Object.keys(params) : [...(reads.get(name) ?? Object.keys(params))];
-    return relevanceHash(keys, params);
+  const hashOf = (keys) => {
+    if (!isCaching()) return `v${getParamsVersion()}`; // caching off: any edit invalidates
+    return relevanceHash(keys ?? Object.keys(params), params);
   };
 
   return {
-    // A cached sub-part is current only if its relevance hash is unchanged.
-    isCurrent: (name) => viewer.hasSubMesh(name) && cacheHash[name] === hashFor(name),
-    // Stamp a freshly built mesh with the hash it was built at.
-    record: (name) => { cacheHash[name] = hashFor(name); },
-    // Drop a sub-part's stamp so it rebuilds next generate.
-    forget: (name) => { delete cacheHash[name]; },
+    isCurrent: (name) => {
+      const s = stamps[name];
+      return viewer.hasSubMesh(name) && s != null && s.view === getView() && s.hash === hashOf(s.keys);
+    },
+    // Stamp a mesh built at the LIVE params (mount's fresh branch, or the pose
+    // fast path's in-place repair). `reads` undefined = unknown → every param.
+    record: (name, reads) => {
+      const keys = reads == null ? null : [...new Set(reads)].sort();
+      stamps[name] = { keys, hash: hashOf(keys), view: getView() };
+    },
+    readsOf: (name) => (stamps[name]?.keys ? new Set(stamps[name].keys) : null),
+    forget: (name) => { delete stamps[name]; },
   };
 }

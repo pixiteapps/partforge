@@ -1062,7 +1062,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           if (fresh) { // stale results (params changed mid-build) are discarded
             for (const m of data.meshes) {
               viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
-              cache.record(m.name);
+              cache.record(m.name, m.reads);
               // A sub-part that built into NOTHING. Manifold booleans return an
               // empty solid rather than throwing (a bore wider than its body),
               // and typed values may sit outside the authored range, so a
@@ -1120,6 +1120,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             for (const m of data.meshes) {
               viewer.setSubGeometry(m.name, m);
               fastPath.forget(m.name);
+              cache.forget(m.name); // the stamp described the last FRESH delivery; this mesh was built at other params, so no stamp may describe it (spec §2)
             }
             recordFrames(data.meshes.map((m) => m.name));
             ui.hideBusy();

@@ -1101,7 +1101,7 @@ test("a mixed edit reports the posed sub-part alongside the rebuilt one", () => 
   const { workers, createWorker } = makeWorkers();
   const handle = mount(makeMixedPart(), { createWorker, elements: makeElements() });
   workers.manifold.onmessage({ data: { type: "ready" } });
-  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }, { name: "arm" }], ms: 42 } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body", reads: ["h"] }, { name: "arm", reads: ["tilt"] }], ms: 42 } });
 
   const [height, tilt] = document.querySelectorAll('input[type="range"]');
   tilt.value = "45";
@@ -1109,7 +1109,7 @@ test("a mixed edit reports the posed sub-part alongside the rebuilt one", () => 
   height.value = "6";
   height.dispatchEvent(new Event("input", { bubbles: true }));  // body: needs a rebuild
   vi.advanceTimersByTime(250);
-  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 7 } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body", reads: ["h"] }], ms: 7 } });
 
   expect(fakeViewers[0].setSubPose).toHaveBeenCalledWith("arm", expect.any(Array));
   expect(document.getElementById("pf-debug").textContent)
@@ -1119,7 +1119,7 @@ test("a mixed edit reports the posed sub-part alongside the rebuilt one", () => 
   height.value = "7";
   height.dispatchEvent(new Event("input", { bubbles: true }));
   vi.advanceTimersByTime(250);
-  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 8 } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body", reads: ["h"] }], ms: 8 } });
 
   expect(document.getElementById("pf-debug").textContent)
     .toContain("1 skipped / 1 rebuilt / 0 posed");

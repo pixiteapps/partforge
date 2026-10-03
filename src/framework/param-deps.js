@@ -29,8 +29,8 @@ export function relevantParamKeys(part, view, params) {
 }
 
 // Per-sub-part version of relevantParamKeys: which raw params each ON-SCREEN
-// sub-part of the active view reads. Used by Layer 1 (mount.js) to skip
-// regenerating sub-parts whose inputs are unchanged. Errs to RELEVANT_ALL on any
+// sub-part of the active view reads. This is the PREDICTION, used as a fallback
+// for sub-parts not yet built (built ones carry recorded reads). Errs to RELEVANT_ALL on any
 // analysis failure (caller then treats every param as relevant — safe, just slower).
 export function subPartReadKeys(part, view, params) {
   try {
