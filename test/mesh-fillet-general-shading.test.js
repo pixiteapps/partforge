@@ -1,0 +1,222 @@
+// test/mesh-fillet-general-shading.test.js
+import { describe, it, expect, beforeAll } from "vitest";
+import { bootManifoldKernel } from "../src/testing/manifold.js";
+import { surfaceNormal, mapSurface } from "../src/framework/geometry/blend-surfaces.js";
+import { FIXTURES, GENUS } from "./fixtures/fillet-general-fixtures.js";
+
+let k;
+beforeAll(async () => { k = await bootManifoldKernel(); });
+const deg = (a, b) => (Math.acos(Math.min(1, Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2]))) * 180) / Math.PI;
+const unit = (v) => { const l = Math.hypot(...v); return v.map((x) => x / l); };
+
+describe("spine blend descriptor", () => {
+  it("normal points from the nearest spine point, and survives mapping", () => {
+    const d = { kind: "spine", pts: [[0, 0, 0], [10, 0, 0], [10, 10, 0]], closed: false, r: 1 };
+    expect(deg(surfaceNormal(d, [5, 0, 2]), [0, 0, 1])).toBeLessThan(1e-9);
+    expect(deg(surfaceNormal(d, [11, 5, 0]), [1, 0, 0])).toBeLessThan(1e-9);
+    const moved = mapSurface(d, [1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 4, 5]); // translate by (3,4,5)
+    expect(deg(surfaceNormal(moved, [8, 4, 7]), [0, 0, 1])).toBeLessThan(1e-9);
+    expect(moved.r).toBeCloseTo(1, 12);
+  });
+  it("the tee's junction band shades with the analytic rolling-ball normal", () => {
+    const r = 2, out = FIXTURES.tee(k)._filletRaw(r);
+    const { positions, normals } = out.toMesh();
+    // the ball touches tube (axis X, R=10) and boss (axis Z, R=5) from outside: its
+    // centre lies at distance 10+r from X and 5+r from Z — sample that spine densely
+    const spine = [];
+    for (let i = 0; i < 7200; i++) {
+      const ph = (2 * Math.PI * i) / 7200, x = (5 + r) * Math.cos(ph), y = (5 + r) * Math.sin(ph);
+      spine.push([x, y, Math.sqrt((10 + r) ** 2 - y * y)]);
+    }
+    let checked = 0, worst = 0;
+    for (let i = 0; i < positions.length; i += 3) {
+      const p = [positions[i], positions[i + 1], positions[i + 2]];
+      const dTube = Math.hypot(p[1], p[2]), dBoss = Math.hypot(p[0], p[1]);
+      // strictly inside the band: off both cylinders by more than 0.2 r, near the junction
+      if (p[2] < 0 || dTube < 10 + 0.2 * r || dBoss < 5 + 0.2 * r || dTube > 10 + r || dBoss > 5 + r) continue;
+      let best = Infinity, c = null;
+      for (const s of spine) { const dd = (s[0] - p[0]) ** 2 + (s[1] - p[1]) ** 2 + (s[2] - p[2]) ** 2; if (dd < best) { best = dd; c = s; } }
+      worst = Math.max(worst, deg([normals[i], normals[i + 1], normals[i + 2]], unit([p[0] - c[0], p[1] - c[1], p[2] - c[2]])));
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(20);
+    expect(worst).toBeLessThan(2);
+  });
+  it("the cross hole's rim band shades with the analytic rolling-ball normal", () => {
+    const r = 1.5, out = FIXTURES.crossHole(k)._filletRaw(r);
+    const { positions, normals } = out.toMesh();
+    // the ball touches hole (axis Z, R=3) and tube (axis X, R=10) from inside both:
+    // its centre lies at distance 3+r from Z and 10−r from X (top rim, z > 0)
+    const spine = [];
+    for (let i = 0; i < 7200; i++) {
+      const ph = (2 * Math.PI * i) / 7200, x = (3 + r) * Math.cos(ph), y = (3 + r) * Math.sin(ph);
+      spine.push([x, y, Math.sqrt((10 - r) ** 2 - y * y)]);
+    }
+    let checked = 0, worst = 0;
+    for (let i = 0; i < positions.length; i += 3) {
+      const p = [positions[i], positions[i + 1], positions[i + 2]];
+      const dTube = Math.hypot(p[1], p[2]), dHole = Math.hypot(p[0], p[1]);
+      if (p[2] < 0 || dTube > 10 - 0.2 * r || dHole < 3 + 0.2 * r || dTube < 10 - r || dHole > 3 + r) continue;
+      let best = Infinity, c = null;
+      for (const s of spine) { const dd = (s[0] - p[0]) ** 2 + (s[1] - p[1]) ** 2 + (s[2] - p[2]) ** 2; if (dd < best) { best = dd; c = s; } }
+      worst = Math.max(worst, deg([normals[i], normals[i + 1], normals[i + 2]], unit([p[0] - c[0], p[1] - c[1], p[2] - c[2]])));
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(20);
+    expect(worst).toBeLessThan(2.5);
+  });
+  it("draws no stray lines across the tee's and cross hole's bands", () => {
+    const r = 1;
+    const bandLen = (out, inBand) => {
+      const { edges } = out.toMesh();
+      let L = 0;
+      for (let i = 0; i + 5 < edges.length; i += 6) {
+        const m = [(edges[i] + edges[i + 3]) / 2, (edges[i + 1] + edges[i + 4]) / 2, (edges[i + 2] + edges[i + 5]) / 2];
+        if (inBand(m)) L += Math.hypot(edges[i + 3] - edges[i], edges[i + 4] - edges[i + 1], edges[i + 5] - edges[i + 2]);
+      }
+      return L;
+    };
+    const tee = bandLen(FIXTURES.tee(k)._filletRaw(r), (m) => {
+      const dT = Math.hypot(m[1], m[2]), dB = Math.hypot(m[0], m[1]);
+      return m[2] > 0 && dT > 10 + 0.1 * r && dB > 5 + 0.1 * r && dT < 10 + 0.9 * r && dB < 5 + 0.9 * r;
+    });
+    const hole = bandLen(FIXTURES.crossHole(k)._filletRaw(r), (m) => {
+      const dT = Math.hypot(m[1], m[2]), dH = Math.hypot(m[0], m[1]);
+      return dT < 10 - 0.1 * r && dT > 10 - 0.9 * r && dH > 3 + 0.1 * r && dH < 3 + 0.9 * r;
+    });
+    // a saddle junction is ~35 mm long; stray lines would run along it
+    expect(tee).toBeLessThan(0.05 * 35);
+    expect(hole).toBeLessThan(0.05 * 2 * 22);
+  });
+  it("a mirror after the fillet keeps finite normals and the genus", () => {
+    const out = FIXTURES.tee(k)._filletRaw(1).mirror("YZ");
+    expect(out.genus()).toBe(GENUS.tee);
+    const { normals } = out.toMesh();
+    expect(normals.every((x) => Number.isFinite(x))).toBe(true);
+  });
+});
+
+// The boss wall next to the dome junction: tall wall strips run from the junction to
+// the top rim with vertices only at their ends, so one bad junction vertex shades a
+// streak up the whole strip. Visible wall triangles (on the boss cylinder, facing out)
+// with a vertex normal more than 5° off the exact radial normal, as a share of the
+// wall's area. The junction ALONE is selected: a top-rim blend on the same wall is a
+// separate, pre-existing source of streaks (sliver triangles from the revolve cut).
+// Before the chamfer took its setbacks on the wall: 14.2% (worst 23°) — the chamfer
+// face meets this wall at down to 27°, inside the wall's 35° crease angle, and the
+// wall's junction vertices smoothed into it.
+function bossWallBadShare(out) {
+  const { positions: P, normals: N } = out.toMesh();
+  const dB = (p) => Math.hypot(p[0] - 8, p[1]);
+  let bad = 0, total = 0;
+  for (let t = 0; t < P.length / 3; t += 3) {
+    const v = [0, 1, 2].map((j) => [P[(t + j) * 3], P[(t + j) * 3 + 1], P[(t + j) * 3 + 2]]);
+    if (!v.every((q) => Math.abs(dB(q) - 3) < 2e-3)) continue;
+    const u = [0, 1, 2].map((i) => v[1][i] - v[0][i]), w = [0, 1, 2].map((i) => v[2][i] - v[0][i]);
+    const fn = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]], l = Math.hypot(...fn);
+    if (!(l > 0) || Math.abs(fn[2] / l) > 0.2) continue; // the wall, not a rim or the dome
+    const c = [0, 1, 2].map((i) => (v[0][i] + v[1][i] + v[2][i]) / 3), ex = [(c[0] - 8) / 3, c[1] / 3, 0];
+    if (fn[0] * ex[0] + fn[1] * ex[1] < 0) continue; // inside-out boolean needles: no area
+    const err = Math.max(...[0, 1, 2].map((j) => deg([N[(t + j) * 3], N[(t + j) * 3 + 1], N[(t + j) * 3 + 2]], ex)));
+    total += l / 2;
+    if (err > 5) bad += l / 2;
+  }
+  return bad / total;
+}
+describe("the boss wall beside a general-chain band shades smooth", () => {
+  let junction;
+  beforeAll(() => {
+    // a point ON the junction polyline, so the selector picks that chain alone
+    const { positions: P } = FIXTURES.domeBoss(k).toMesh();
+    for (let i = 0; i < P.length && !junction; i += 3) {
+      const p = [P[i], P[i + 1], P[i + 2]];
+      if (p[2] > 5 && Math.abs(Math.hypot(p[0] - 8, p[1]) - 3) < 2e-3 && Math.abs(Math.hypot(...p) - 20) < 2e-2) junction = { near: p };
+    }
+  });
+  for (const mode of ["fillet", "chamfer"]) {
+    it(`domeBoss ${mode} 1.5 at the junction: < 1% of the boss wall shades > 5° off`, () => {
+      expect(junction).toBeDefined();
+      const base = FIXTURES.domeBoss(k);
+      const out = mode === "fillet" ? base._filletRaw(1.5, junction) : base._chamferRaw(1.5, junction);
+      expect(bossWallBadShare(out)).toBeLessThan(0.01);
+    });
+  }
+  // Every edge, and a plain cylinder with only its top rim blended: the revolve cut
+  // at the rim leaves sub-µm sliver triangles spanning the wall strips, with facet
+  // normals 18–31° off (inside the 35° crease), and an unweighted vertex-normal sum
+  // gave each a full vote — 12.5% (fillet) / 25% (chamfer) of the plain cylinder's
+  // wall and 9.4% / 25.8% of the dome boss's shaded > 5° off. creasedNormals now
+  // leaves triangles under SHADE_SLIVER (1e-3 mm) out of the sum.
+  for (const mode of ["fillet", "chamfer"]) {
+    it(`domeBoss ${mode} 1.5, every edge: < 1% of the boss wall shades > 5° off`, () => {
+      const base = FIXTURES.domeBoss(k);
+      expect(bossWallBadShare(mode === "fillet" ? base._filletRaw(1.5) : base._chamferRaw(1.5))).toBeLessThan(0.01);
+    });
+    it(`a plain cylinder, top rim ${mode} 1.5: < 1% of the wall shades > 5° off`, () => {
+      const base = k.cylinder({ r: 3, h: 30 }).at([8, 0, 0]), top = { inPlane: "XY", at: 30 };
+      expect(bossWallBadShare(mode === "fillet" ? base._filletRaw(1.5, top) : base._chamferRaw(1.5, top))).toBeLessThan(0.01);
+    });
+  }
+});
+
+// A general chamfer's face is planar within each section and turns only as slowly as
+// the stations do (a few degrees per station on these fixtures), so a vertex normal on
+// it should sit within a few degrees of its own triangle's facet normal — that facet
+// is the exact reference wherever the face is flat, and the 5° bar leaves room for
+// the station-to-station turn. The step at each contact (mesh-fillet.js CONTACT_MU)
+// is a face of its own, up to a few µm tall; leaving the contact along the wall
+// normal it met the chamfer face at 90° − α (α the chord's angle to the wall, > ~55°
+// here), inside the crease, and got a full vote at the face's contact vertices:
+// 36.7 mm² of the cross hole's two faces (41%, worst 21.5°) and 36.6 mm² of the slant
+// cut's (28%, worst 20°) shaded > 5° off their facets. It now leans to meet both
+// faces at ≥ 45°.
+const triAt = (P, t) => [0, 1, 2].map((j) => [P[(t + j) * 3], P[(t + j) * 3 + 1], P[(t + j) * 3 + 2]]);
+const facet = (v) => {
+  const u = [0, 1, 2].map((i) => v[1][i] - v[0][i]), w = [0, 1, 2].map((i) => v[2][i] - v[0][i]);
+  const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]], l = Math.hypot(...n);
+  return { n: n.map((x) => x / l), a: l / 2 };
+};
+const sdeg = (a, b) => (Math.acos(Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]))) * 180) / Math.PI;
+function chamferFaceBadShare(name, d) {
+  let onA, onB, near;
+  if (name === "crossHole") {
+    onA = (p) => Math.abs(Math.hypot(p[0], p[1]) - 3) < 2e-3;
+    onB = (p) => Math.abs(Math.hypot(p[1], p[2]) - 10) < 2e-3;
+    near = (p) => Math.hypot(p[0], p[1]) < 3 + 2 * d && Math.hypot(p[1], p[2]) > 10 - 2 * d;
+  } else {
+    // slantCut's cut plane, read off the unblended mesh: its largest-area facet class
+    // that is neither axial nor radial
+    const { positions: P0 } = FIXTURES.slantCut(k).toMesh(), acc = new Map();
+    for (let t = 0; t < P0.length / 3; t += 3) {
+      const f = facet(triAt(P0, t));
+      if (!(f.a > 0) || Math.abs(f.n[2]) > 0.99 || Math.abs(f.n[2]) < 0.5) continue;
+      const key = f.n.map((x) => x.toFixed(4)).join(",");
+      const e = acc.get(key) ?? acc.set(key, { a: 0, p: triAt(P0, t)[0], n: f.n }).get(key);
+      e.a += f.a;
+    }
+    const pl = [...acc.values()].sort((x, y) => y.a - x.a)[0], dist = (p) => pl.n.reduce((s2, x, i) => s2 + x * (p[i] - pl.p[i]), 0);
+    onA = (p) => Math.abs(Math.hypot(p[0], p[1]) - 10) < 2e-3;
+    onB = (p) => Math.abs(dist(p)) < 2e-3;
+    near = (p) => Math.hypot(p[0], p[1]) > 10 - 2 * d && Math.abs(dist(p)) < 2 * d;
+  }
+  const { positions: P, normals: N } = FIXTURES[name](k)._chamferRaw(d).toMesh();
+  let bad = 0, total = 0;
+  for (let t = 0; t < P.length / 3; t += 3) {
+    const v = triAt(P, t);
+    if (!v.every(near) || v.every(onA) || v.every(onB)) continue; // the chamfer face only
+    const f = facet(v);
+    if (!(f.a > 0)) continue;
+    total += f.a;
+    if (Math.max(...[0, 1, 2].map((j) => sdeg([N[(t + j) * 3], N[(t + j) * 3 + 1], N[(t + j) * 3 + 2]], f.n))) > 5) bad += f.a;
+  }
+  return { share: bad / total, total };
+}
+describe("a general chamfer's face shades flat to its contacts", () => {
+  for (const name of ["crossHole", "slantCut"]) {
+    it(`${name} chamfer 1.5: < 1% of the chamfer face shades > 5° off its facets`, () => {
+      const { share, total } = chamferFaceBadShare(name, 1.5);
+      expect(total).toBeGreaterThan(50);
+      expect(share).toBeLessThan(0.01);
+    });
+  }
+});

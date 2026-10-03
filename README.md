@@ -43,7 +43,8 @@ Two geometry backends run in Web Workers, and partforge routes each part to whic
 needs:
 
 - **[Manifold](https://github.com/elalish/manifold)** — fast preview meshes and STL / 3MF,
-  including mesh-native fillet and chamfer for straight and circular edges.
+  including mesh-native fillet and chamfer for straight, circular, planar-rim and
+  curved-face edges.
 - **[Replicad](https://replicad.xyz)** (OpenCASCADE-in-WebAssembly) — exact B-rep for STEP,
   shell, and automatic fallback for blend geometry Manifold cannot handle.
 

@@ -3583,7 +3583,7 @@ previously didn't; that's the fix working as intended, not a regression.
 `duplicate-preset-name`, `duplicate-node-id`, `select-options-missing`,
 `select-default-not-in-options`, `log-scale-needs-positive-min`,
 `when-key-not-in-defaults`, `when-unknown-operator`, `unknown-control-type`,
-`custom-control-widget-not-function`, `custom-default-not-json`,
+`legacy-shape-widget`, `custom-control-widget-not-function`, `custom-default-not-json`,
 `custom-keys-not-in-defaults` (errors);
 `slider-range-excludes-default`, `unknown-control-field`, `duplicate-control-key`,
 `default-not-exposed`, `readout-unknown-derived-key`, `slider-refinement-invalid`,
@@ -3626,6 +3626,13 @@ each comparison operator (`{ gt: 0 }`, `{ in: [...] }`, …) must be one
 `undefined` and an unknown operator is treated as false, so either way the
 condition is always false and the node never shows — which is why both are
 errors rather than warnings.
+
+`legacy-shape-widget` fires when an entry in the legacy shape (`advanced`, `toggles`,
+`features`) sets `type`, or sets `control` to anything but `slider`, `number`, `text` or
+`textarea`. The legacy shape never reads `type`, so a `{ type: "select", options }` there
+renders as a slider and writes numbers into a key the build compares against strings;
+put such a control in a `controls` section, where `type` picks the widget. A boolean in the
+legacy shape belongs in `toggles`.
 
 `unknown-control-type` fires when an authored control's `type` (e.g. a typo
 like `"sldier"`) isn't one of the recognised widget types — the renderer skips
@@ -4156,9 +4163,11 @@ contract v3 that **includes fillet and chamfer**: the mesh backend blends straig
 edges, circular-arc edges (bore rims, cylinder rims, the arcs where fillets meet a
 face), and **planar contour edges at constant dihedral** — the top/bottom rims of any
 extruded profile, however curvy its outline: `text2d` lettering, `Shape2D.offset`
-outlines, spline profiles all round natively now. Only `shell` still routes a
+outlines, spline profiles all round natively now. Edges **between two curved faces** — a boss meeting a tube, a cross hole's rim, the
+ellipse where a plane cuts a cylinder — blend natively too (a per-vertex
+cross-section, since 0.138). Only `shell` still routes a
 sub-part to OCCT up front; a fillet/chamfer on an edge class the mesh backend can't
-blend (helical edges, varying dihedral) reroutes that sub-part to OCCT automatically
+blend (mixed convexity along one edge, a bend tighter than the fillet radius, knife edges) reroutes that sub-part to OCCT automatically
 at runtime — no declaration needed either way:
 
 | Op | Meaning |

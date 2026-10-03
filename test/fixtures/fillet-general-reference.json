@@ -1,0 +1,44 @@
+{
+  "tee": {
+    "fillet1": -28.8169,
+    "fillet2": -111.8315,
+    "chamfer1": -59.509,
+    "chamfer2": -223.1398,
+    "fillet0.5": -7.3061
+  },
+  "crossHole": {
+    "fillet1": -41.0524,
+    "fillet2": -180.2667,
+    "chamfer1": -81.4732,
+    "chamfer2": -325.7519,
+    "fillet0.5": -9.9493
+  },
+  "domeBoss": {
+    "fillet1": -29.2052,
+    "fillet2": -125.0431,
+    "chamfer1": null,
+    "chamfer2": null,
+    "fillet0.5": -7.0764
+  },
+  "slantCut": {
+    "fillet1": -32.0949,
+    "fillet2": -125.483,
+    "chamfer1": -61.2086,
+    "chamfer2": -236.9852,
+    "fillet0.5": -8.1127
+  },
+  "domeRim": {
+    "fillet1": -28.8938,
+    "fillet1.5": -67.429,
+    "fillet2": -124.5204,
+    "chamfer1": null,
+    "chamfer1.5": null
+  },
+  "sphereBox": {
+    "fillet1": -27.8095,
+    "fillet1.5": -63.8933,
+    "fillet2": -116.2124,
+    "chamfer1": null,
+    "chamfer1.5": null
+  }
+}

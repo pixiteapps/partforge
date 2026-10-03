@@ -279,3 +279,37 @@ test("keys a custom control may write must exist in defaults", () => {
   expect(find(r, "custom-keys-not-in-defaults").path).toBe("parameters[0].controls[0].keys[1]");
   expect(ids(lintPart(customPart({ keys: ["size"] })).errors)).toEqual([]);
 });
+
+// The legacy section shape (`advanced`, `toggles`, `features`) renders every entry as
+// its own fixed widget and never reads `type` — a `{ type: "select", options }` placed
+// there drew only two "unrecognised field" warnings and rendered as a SLIDER, so moving
+// it wrote a number into a key the build compared against strings (the curved-fillets
+// demo's Edge treatment control, 2026-10-02). `control:` is read, but only knows the
+// slider-family widgets.
+test("a widget type in the legacy section shape is an error", () => {
+  const part = goodPart();
+  part.parameters[0].advanced.push({ key: "mode", type: "select", label: "Mode",
+    options: [{ value: "a", label: "A" }, { value: "b", label: "B" }] });
+  part.defaults.mode = "a";
+  const r = lintPart(part);
+  expect(r.ok).toBe(false);
+  const f = r.errors.find((e) => e.rule === "legacy-shape-widget");
+  expect(f.path).toBe("parameters[0].advanced[1].type");
+  expect(f.message).toMatch(/select/);
+  expect(f.hint).toMatch(/controls/);
+});
+
+test("a legacy `control:` naming a widget the legacy shape cannot render is an error", () => {
+  const part = goodPart();
+  part.parameters[0].advanced[0].control = "radio";
+  const r = lintPart(part);
+  expect(r.errors.find((e) => e.rule === "legacy-shape-widget")?.path).toBe("parameters[0].advanced[0].control");
+});
+
+test("legacy `control:` values the legacy shape renders stay clean", () => {
+  for (const control of ["slider", "number", "text", "textarea"]) {
+    const part = goodPart();
+    part.parameters[0].advanced[0].control = control;
+    expect(ids(lintPart(part).errors), control).not.toContain("legacy-shape-widget");
+  }
+});

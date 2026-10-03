@@ -175,3 +175,45 @@ test("feature labels map through runOriginalID unchanged", () => {
   expect(r.features).toEqual(["wall"]);
   expect(Array.from(r.featureIds)).toEqual([1, 0]); // tri A → feature 1, tri B unlabeled
 });
+
+// The sliver rule: triangles under SHADE_SLIVER (1e-3 mm) tall stay out of a vertex's
+// normal sum while a real face contributes, and are used only when nothing else does.
+// A sliver at v0: v0, (−1, ε·cos t, ε·sin t), (−1, 0, 0) — ε tall, its facet normal
+// tilted t about the x axis (inside the 35° crease, so it passes every other filter).
+function sliverFan(tilts, { withFace = true, eps = 1e-5 } = {}) {
+  const verts = [0, 0, 0], tris = [];
+  if (withFace) { verts.push(1, 0, 0, 0, 1, 0); tris.push(0, 1, 2); } // a real +Z face
+  for (const deg of tilts) {
+    const t = (deg * Math.PI) / 180, b = verts.length / 3;
+    verts.push(-1, eps * Math.cos(t), eps * Math.sin(t), -1, 0, 0);
+    tris.push(0, b, b + 1);
+  }
+  return {
+    numProp: 3,
+    vertProperties: Float32Array.from(verts),
+    triVerts: Uint32Array.from(tris),
+    mergeFromVert: new Uint32Array(0),
+    mergeToVert: new Uint32Array(0),
+    runIndex: Uint32Array.from([0, tris.length]),
+    runOriginalID: Uint32Array.from([7]),
+  };
+}
+const tiltOf = (n) => (Math.atan2(-n[1], n[2]) * 180) / Math.PI;
+
+test("a sub-SHADE_SLIVER sliver with a tilted normal does not tilt the real face's vertex", () => {
+  // control: the same triangle at 0.01 mm tall is a real face and does vote
+  const voted = creasedNormals(sliverFan([20], { eps: 1e-2 }));
+  expect(tiltOf(cornerNormal(voted, 0, 0))).toBeGreaterThan(5);
+  const r = creasedNormals(sliverFan([20]));
+  const n = cornerNormal(r, 0, 0); // the real face's copy of v0
+  expect(n[2]).toBeCloseTo(1, 6);
+  expect(Math.hypot(n[0], n[1])).toBeLessThan(1e-6);
+});
+
+test("a vertex whose incident triangles are ALL slivers falls back to their sum", () => {
+  const r = creasedNormals(sliverFan([10, 20], { withFace: false }));
+  const n = cornerNormal(r, 0, 0);
+  expect(n.every(Number.isFinite)).toBe(true);
+  expect(Math.hypot(...n)).toBeCloseTo(1, 5);
+  expect(tiltOf(n)).toBeCloseTo(15, 0); // the two slivers' bisector, not zero or NaN
+});

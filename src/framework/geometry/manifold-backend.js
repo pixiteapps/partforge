@@ -6,7 +6,7 @@ import { roundedBoxRings, roundedBoxArcSamples } from "./rounded-solids.js";
 import { tessellateContour, tessellateProfile } from "./profile.js";
 import { h } from "./solid-hash.js";
 import { ensureOutward, openEdgeCount } from "./mesh-repair.js";
-import { manifoldFromMesh } from "./mesh-build.js";
+import { manifoldFromMesh, ringStackManifold } from "./mesh-build.js";
 import { createSolidCache } from "./solid-cache.js";
 import { hoistCommonSuffix } from "./transform-hoist.js";
 import { addSugar } from "./solid-sugar.js";
@@ -863,12 +863,10 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       if (e.error) throw e.error; // lazy: unusable-format entries fail at use, not at registration
       return wrap(e.m, e.hash);
     },
-    // Side-channel (underscore = off-contract, probe-invisible). Registration is
-    // TOTAL — it never throws for an unusable format; an `{error}` entry is stored
-    // verbatim and thrown by `import(name)` above at call time (spec: "Registration
-    // is total; errors are lazy"). Re-registering the same name+digest is a no-op
-    // EXCEPT an error entry is always upgradable (the post-crossover retry depends
-    // on this — see `_importDigest`).
+    // Side-channel for mesh-fillet's general-chain tools (underscore = off-contract):
+    // a solid from a stack of equal-size 3-D rings (mesh-build.js ringStackManifold).
+    _ringStackSolid: (rings, opts = {}) =>
+      cached(h("ringStack", rings, { closed: !!opts.closed }), () => T(ringStackManifold(wasm, rings, { closed: !!opts.closed }))),
     // Side-channel for mesh-fillet (underscore = off-contract): `surf` describes the
     // tool's blend wall in its current frame. Stored per surface id in the id's
     // ORIGINAL frame (inverse runTransform), so any later pose or boolean — which
@@ -886,6 +884,12 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       }
       return tool;
     },
+    // Side-channel (underscore = off-contract, probe-invisible). Registration is
+    // TOTAL — it never throws for an unusable format; an `{error}` entry is stored
+    // verbatim and thrown by `import(name)` above at call time (spec: "Registration
+    // is total; errors are lazy"). Re-registering the same name+digest is a no-op
+    // EXCEPT an error entry is always upgradable (the post-crossover retry depends
+    // on this — see `_importDigest`).
     _registerImport: ({ name, digest, positions, indices, error }) => {
       const prev = imports.get(name);
       if (!prev?.error && prev?.digest === digest) return; // error entries are always upgradable
