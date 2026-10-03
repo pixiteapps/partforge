@@ -50,11 +50,15 @@ export function renderAngle(name) {
 // part still occludes what is behind it (real transparency needs a depth sort
 // this renderer does not do; stills only need to read as faded).
 export async function renderViewImages(kernel, part, view = Object.keys(part.views)[0], {
-  views = ["iso", "front", "top"], size = [800, 600], edges = true, params = {}, opacity = {},
+  views = ["iso", "front", "top"], size, edges = true, params = {}, opacity = {},
   style = "cad", supersample = 2,
 } = {}) {
   const { PNG } = await import("pngjs");
-  getRenderStyle(style); // a bad style fails here, before the kernel build
+  const resolved = getRenderStyle(style); // a bad style fails here, before the kernel build
+  // No size given: a style with its own aspect (the thumbnail's 4:3) sets the
+  // shape — 640 wide, the viewer's thumbnail size — else the 800×600 default.
+  // An explicit size is the caller's choice and is honoured as given.
+  if (!size) size = resolved.camera.aspect ? [640, Math.round(640 / resolved.camera.aspect)] : [800, 600];
   for (const angle of views) {
     if (!renderAngle(angle)) throw new Error(`unknown angle "${angle}" (use: ${RENDER_VIEWS.join(", ")}, or a view-cube orientation such as top-front-left)`);
   }

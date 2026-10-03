@@ -24,6 +24,19 @@ describe("render styles", () => {
     expect(RENDER_STYLES.thumbnail.shadow).not.toBeNull();
   });
 
+  it("thumbnail is captured at the 4:3 card shape; cad stays square", () => {
+    expect(RENDER_STYLES.thumbnail.camera.aspect).toBe(4 / 3);
+    expect(RENDER_STYLES.cad.camera.aspect).toBeUndefined();
+  });
+
+  it("validateRenderStyle rejects a camera.aspect outside [0.25, 4]", () => {
+    for (const aspect of [0, 10, NaN]) {
+      const bad = structuredClone(RENDER_STYLES.thumbnail);
+      bad.camera.aspect = aspect;
+      expect(() => validateRenderStyle(bad)).toThrow(/camera\.aspect/);
+    }
+  });
+
   it("styles are frozen all the way down", () => {
     expect(Object.isFrozen(RENDER_STYLES.cad.lights.key.offset)).toBe(true);
   });

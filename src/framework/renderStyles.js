@@ -45,7 +45,11 @@ const STYLES = {
     view: null,
   },
   thumbnail: {
-    camera: { projection: "perspective", fov: 45, framing: "fit", fill: 0.88 },
+    // aspect (width / height) is the shape of the card the product shot is
+    // shown in: 4:3 across the cloud's dashboard and library, so the shape-fitted
+    // framing fills the card exactly instead of being cropped by object-cover.
+    // A style without one (cad) is square.
+    camera: { projection: "perspective", fov: 45, framing: "fit", fill: 0.88, aspect: 4 / 3 },
     lights: {
       hemisphere: { ...CAD_LIGHTS.hemisphere, intensity: 1.65 },
       key: { ...CAD_LIGHTS.key, intensity: 1.25 },
@@ -71,6 +75,7 @@ export function validateRenderStyle(s) {
   check(inRange(s.camera.fov, 1, 120), "camera.fov");
   check(s.camera.framing === "canonical" || s.camera.framing === "fit", "camera.framing");
   if (s.camera.framing === "fit") check(inRange(s.camera.fill, 0.05, 1), "camera.fill");
+  if (s.camera.aspect !== undefined) check(inRange(s.camera.aspect, 0.25, 4), "camera.aspect");
   const h = s.lights?.hemisphere;
   check(isHex(h?.sky) && isHex(h?.ground) && inRange(h?.intensity, 0, 20), "lights.hemisphere");
   for (const k of ["key", "fill"]) {

@@ -30,7 +30,9 @@ import { RENDER_STYLES, CAD_LIGHT_THEME, CAD_DARK_THEME } from "../src/framework
 // thumbnail — thin blades, so antialiased silhouette pixels weigh heavily),
 // worst meanDiff 2.74 and worst SSIM 0.9752 (propeller cad). Each set at the
 // worst value with a margin: IoU −0.005, meanDiff +2, SSIM −0.03. The live-cad
-// rows land inside the same bounds, so they share them.
+// rows land inside the same bounds, so they share them. Re-run 2026-10-02 with the
+// thumbnail captured 4:3 (512×384): thumbnail worst IoU 0.9861, meanDiff 2.21,
+// SSIM 0.9801 (propeller) — inside the same bounds, so they are unchanged.
 const THRESHOLDS = { iou: 0.979, meanDiff: 4.7, ssim: 0.945 };
 
 const FIXTURES = [
@@ -87,19 +89,22 @@ function ssim(a, b, w, h, ma, mb) {
   return count ? total / count : 1;
 }
 
-async function decode(buf, size = SIZE) {
+// Sizes are [width, height]: the thumbnail is captured 4:3, the cad looks square.
+async function decode(buf, [w, h] = [SIZE, SIZE]) {
   const { data, info } = await sharp(buf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-  if (info.width !== size || info.height !== size) throw new Error(`expected ${size}² but decoded ${info.width}×${info.height}`);
+  if (info.width !== w || info.height !== h) throw new Error(`expected ${w}×${h} but decoded ${info.width}×${info.height}`);
   return data;
 }
-const png = (rgb, file, size = SIZE) => sharp(Buffer.from(rgb), { raw: { width: size, height: size, channels: 3 } }).png().toFile(file);
+const png = (rgb, file, [w, h]) => sharp(Buffer.from(rgb), { raw: { width: w, height: h, channels: 3 } }).png().toFile(file);
+// What each style's capture returns for a long edge of `long` px.
+const sizeFor = (style, long) => [long, Math.round(long / (RENDER_STYLES[style].camera.aspect ?? 1))];
 const rgbOf = (hex) => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
 
 const errors = [];
 const failures = [];
 async function compare(label, a, b, bg, size, limits) {
   const ma = silhouette(a, bg), mb = silhouette(b, bg);
-  const r = { iou: iou(ma, mb), meanDiff: meanDiff(a, b, ma, mb), ssim: ssim(a, b, size, size, ma, mb) };
+  const r = { iou: iou(ma, mb), meanDiff: meanDiff(a, b, ma, mb), ssim: ssim(a, b, size[0], size[1], ma, mb) };
   const miss = [r.iou < limits.iou && "iou", r.meanDiff > limits.meanDiff && "meanDiff", r.ssim < limits.ssim && "ssim"].filter(Boolean);
   console.log(`${label}: iou ${r.iou.toFixed(4)}  meanDiff ${r.meanDiff.toFixed(2)}  ssim ${r.ssim.toFixed(4)}${miss.length ? `  MISS ${miss.join(",")}` : ""}`);
   if (miss.length) failures.push(`${label}: ${miss.join(", ")}`);
@@ -144,10 +149,11 @@ try {
           await sleep(500);
         }
       }
-      const a = await decode(Buffer.from(dataUrl.slice(dataUrl.indexOf(",") + 1), "base64"));
-      const [{ png: cpuPng }] = await renderViewImages(kernel, part, view, { views: ["iso"], size: [SIZE, SIZE], style });
-      const b = await decode(cpuPng);
-      await compare(`${pageName} ${style}`, a, b, rgbOf(RENDER_STYLES[style].background), SIZE, THRESHOLDS);
+      const a = await decode(Buffer.from(dataUrl.slice(dataUrl.indexOf(",") + 1), "base64"), sizeFor(style, SIZE));
+      const cpuSize = sizeFor(style, SIZE);
+      const [{ png: cpuPng }] = await renderViewImages(kernel, part, view, { views: ["iso"], size: cpuSize, style });
+      const b = await decode(cpuPng, cpuSize);
+      await compare(`${pageName} ${style}`, a, b, rgbOf(RENDER_STYLES[style].background), cpuSize, THRESHOLDS);
     }
     // The LIVE-scene agent capture (captureViews → captureCanonicalViews), which
     // frames, lights and draws the part's own edges in the live scene rather
@@ -164,14 +170,15 @@ try {
     }
     const url = shots[0].dataUrl;
     const meta = await sharp(Buffer.from(url.slice(url.indexOf(",") + 1), "base64")).metadata();
-    const a = await decode(Buffer.from(url.slice(url.indexOf(",") + 1), "base64"), meta.width);
+    const liveSize = [meta.width, meta.height];
+    const a = await decode(Buffer.from(url.slice(url.indexOf(",") + 1), "base64"), liveSize);
     const theme = [CAD_LIGHT_THEME, CAD_DARK_THEME]
       .map((t) => ({ t, d: rgbOf(t.bg).reduce((s, c, i) => s + Math.abs(c - a[i]), 0) }))
       .sort((x, y) => x.d - y.d)[0].t;
     const live = { ...RENDER_STYLES.cad, background: theme.bg, edges: { ...RENDER_STYLES.cad.edges, color: theme.line } };
-    const [{ png: livePng }] = await renderViewImages(kernel, part, view, { views: ["iso"], size: [meta.width, meta.width], style: live });
-    const b = await decode(livePng, meta.width);
-    await compare(`${pageName} live-cad`, a, b, rgbOf(theme.bg), meta.width, THRESHOLDS);
+    const [{ png: livePng }] = await renderViewImages(kernel, part, view, { views: ["iso"], size: liveSize, style: live });
+    const b = await decode(livePng, liveSize);
+    await compare(`${pageName} live-cad`, a, b, rgbOf(theme.bg), liveSize, THRESHOLDS);
     await page.close();
   }
 } finally {

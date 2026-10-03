@@ -3013,8 +3013,9 @@ instead of (or in addition to) the built-in `#part` bar:
   Resolves `null` on failure rather than throwing (a build error, a part with no sub-parts
   in that view, a disposed runtime). The render happens in a throwaway scene, so it takes
   no colour from the viewer's light/dark theme. The default `style` is `"thumbnail"`, the
-  product shot: a fixed light background, soft lights, lighter edges, a contact shadow and
-  fit framing — a thumbnail is captured once and then displayed under host chrome
+  product shot: a fixed light background, soft lights, lighter edges, a contact shadow,
+  4:3 framing (`size` is the width: 640 → 640×480, the shape of the cards it is shown in;
+  `cad` stays square) and fit framing — a thumbnail is captured once and then displayed under host chrome
   partforge cannot see. `style: "cad"` gives the agent-render look instead. `style.view` is
   only a default angle; an explicit `angle` wins. Pass `background` (any
   `THREE.Color`-compatible value) to override the style's, or `background: null` for no

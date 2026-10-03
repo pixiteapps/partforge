@@ -409,7 +409,8 @@ the installed package, so let the publish finish before bumping the dep there.
 - **Capture styles** (`src/framework/renderStyles.js`): the two offscreen looks as
   data — `cad` (agent renders; in the browser its background/edge colour still
   follow the live theme) and `thumbnail` (the product shot: light background,
-  softer lights, lighter edges, contact shadow, fixed iso). Both styles frame by
+  softer lights, lighter edges, contact shadow, fixed iso, captured at 4:3 —
+  `camera.aspect`, the cloud's card shape; `size` is the width and cad stays square). Both styles frame by
   FIT (`fitPoseToPoints`): the canonical direction, at the distance that brings
   the geometry's projected extent — its vertices, not its bounding box — to the
   style's `fill` (cad 0.9, thumbnail 0.88), centred on it; the old canonical cad

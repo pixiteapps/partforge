@@ -2228,7 +2228,11 @@ export function createViewer(container, part) {
     const worldPositions = payloads.map((p) => modelToWorld(p.positions));
     const points = new Float32Array(worldPositions.reduce((n, a) => n + a.length, 0));
     worldPositions.reduce((o, a) => { points.set(a, o); return o + a.length; }, 0);
-    const { pose, fov, sceneBounds } = stylePose(st, angle, box, { aspect: 1, points });
+    // `size` is the long (width) edge; the style's aspect (the thumbnail's 4:3
+    // card shape) sets the height, and the fit frames for that same aspect.
+    const width = size;
+    const height = Math.max(1, Math.round(size / (st.camera.aspect ?? 1)));
+    const { pose, fov, sceneBounds } = stylePose(st, angle, box, { aspect: width / height, points });
 
     // Light the throwaway scene ourselves: renderOffscreen's own key/fill (and the
     // persistent hemisphere) live in the LIVE scene, which is never rendered here — so
@@ -2272,7 +2276,7 @@ export function createViewer(container, part) {
         pose,
         // The throwaway scene holds these meshes and nothing else — no grid, no
         // gizmo — so its own bounds are the whole of what the planes must hold.
-        { width: size, height: size, fov, quality, sceneBounds },
+        { width, height, fov, quality, sceneBounds },
         tmpScene,
       );
     } finally {
