@@ -242,8 +242,8 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.136.0: the font control commits once per picker
-// session, on close, not per pick):
+// Embedding contract (0.141.0: a place()-able sub-part is delivered in its
+// canonical frame and posed by the viewer; pose-only edits never rebuild):
 //   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload, onViewChange });
 //   await runtime.ready;   // first successful build of the default view
 //   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly

@@ -142,13 +142,13 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 
 - **Symptom:** A sub-part renders correctly in one view but appears misplaced (usually in its other-view pose) after switching views.
 - **Cause:** A `place` that depends on `ctx.view` for `purpose: "display"` — display meshes are built once per sub-part and cached across views.
-- **Fix:** Make display placement view-independent; only `place(..., { purpose: "export" })` may branch on `view`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "The `PartDefinition` contract".
+- **Fix:** Make display placement view-independent; only `place(..., { purpose: "export" })` may branch on `view`. The rule sees a `place()` behind any `build()`, including one that queries the solid; a `place()` it cannot read stays silent. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "The `PartDefinition` contract".
 
 ## place-not-rigid
 
 - **Symptom:** The exported/printed part is a mirror image of — or a different size than — the same part shown in the assembly/display view. Nothing throws: the preview looks right and only the STL/STEP is wrong, or vice-versa.
 - **Cause:** A `place` whose `purpose: "display"` and `"export"` branches differ by a non-rigid transform — `mirror` (flips handedness) or a non-identity `scale` (changes size) — so display and export are no longer the same solid, only its reflection/resize.
-- **Fix:** Keep the display-vs-export `place` difference a rigid motion (`translate`/`rotate`/`rotateAbout`/`along`/`at`) only. If the part genuinely needs a reflected or resized form, bake that into `build` so both purposes share one canonical solid and pose it rigidly. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "The `PartDefinition` contract".
+- **Fix:** Keep the display-vs-export `place` difference a rigid motion (`translate`/`rotate`/`rotateAbout`/`along`/`at`) only. If the part genuinely needs a reflected or resized form, bake that into `build` so both purposes share one canonical solid and pose it rigidly. The rule sees a `place()` behind any `build()`, including one that queries the solid; a `place()` it cannot read stays silent. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "The `PartDefinition` contract".
 
 ## wrong-node-version
 
@@ -485,8 +485,8 @@ Variant literal for a curve-adjacent corner: `filletProfile: corner <i> at (<x>,
 ## animation-plays-choppy
 
 - **Symptom:** An animation stutters or updates a few times a second instead of smoothly; `?debug` shows `rebuilt` counts climbing during playback.
-- **Cause:** A track drives a param that feeds real geometry (or a build the pose probe can't trust — a query op or function selector), so every frame is a worker rebuild instead of a pose repair.
-- **Fix:** Run `npx partforge lint <part>` — the `animation-track-rebuilds` note names the track. Restructure so the param only feeds rigid placement (`place()` or a trailing translate/rotate in `build`), or accept best-effort playback if geometry morphing is the intent. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Animations".
+- **Cause:** A track drives a param `build()` reads, or a `place()` the probe cannot read (it queries the solid or passes a function), so every frame is a worker rebuild instead of a matrix pose.
+- **Fix:** Run `npx partforge lint <part>` — the `animation-track-rebuilds` note names the track and says which case it is. Restructure so the param is read only by `place()` (a rigid translate/rotate of its argument, reading `p`/`d`), or accept best-effort playback if geometry morphing is the intent. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Animations".
 
 ## phantom-edges-on-curved-surface
 
