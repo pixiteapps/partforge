@@ -24,3 +24,21 @@ export function printFrameMatrix(subPart, { view, p, d, frame = "posed" }) {
   if (!disp.trusted || !exp.trusted || disp.baseHash !== exp.baseHash) return [...IDENTITY];
   return poseDelta(exp.pose, disp.pose);
 }
+
+const isIdentity = (m) => m.every((v, i) => Math.abs(v - IDENTITY[i]) < 1e-12);
+
+// The map from a DISPLAY-posed solid to the same piece in its print (export) pose, for
+// the oracle's overhang reading — or null when the two poses are the same (no place(),
+// or a place() that moves nothing between purposes) or cannot be read. Place-scope
+// probes first: both poses are place(build), so E · D⁻¹ needs only place() to be
+// readable, and a build that queries its solid cannot make it untrusted. A place()
+// that only the full-scope probe reads falls back to printFrameMatrix's posed branch.
+export function displayToPrintMatrix(subPart, { view, p, d }) {
+  if (!subPart?.place) return null;
+  const disp = probeSubPartPose(subPart, { view, purpose: "display", p, d }, { scope: "place" });
+  const exp = probeSubPartPose(subPart, { view, purpose: "export", p, d }, { scope: "place" });
+  const m = disp.trusted && exp.trusted
+    ? poseDelta(exp.pose, disp.pose)
+    : printFrameMatrix(subPart, { view, p, d, frame: "posed" });
+  return isIdentity(m) ? null : m;
+}

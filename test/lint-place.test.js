@@ -21,9 +21,9 @@ test("clean part: no place findings", () => {
   expect(ids(lintPart(mk((s) => s.translate([1, 0, 0])))).filter((i) => i.includes("place"))).toEqual([]);
 });
 
-test("display pose depending on view → view-dependent-display-place", () => {
+test("a display pose that depends on the view is allowed (the viewer re-poses per tab)", () => {
   const r = lintPart(mk((s, { view }) => (view === "w" ? s.translate([5, 0, 0]) : s)));
-  expect(ids(r)).toContain("view-dependent-display-place");
+  expect(ids(r).filter((i) => i.includes("place"))).toEqual([]);
 });
 
 test("non-rigid display/export delta → place-not-rigid", () => {
@@ -63,12 +63,6 @@ test("place-not-rigid is found behind a querying build (the full probe used to s
   const part = mk((s, { purpose }) => (purpose === "export" ? s.scale(2) : s));
   part.parts.p.build = (k) => { const b = k.box({ size: [1, 1, 1] }); b.boundingBox(); return b; };
   expect(ids(lintPart(part))).toContain("place-not-rigid");
-});
-
-test("view-dependent-display-place is found behind a querying build", () => {
-  const part = mk((s, { view }) => (view === "w" ? s.translate([5, 0, 0]) : s));
-  part.parts.p.build = (k) => { const b = k.box({ size: [1, 1, 1] }); b.volume(); return b; };
-  expect(ids(lintPart(part))).toContain("view-dependent-display-place");
 });
 
 test("the same reshape on both purposes is allowed", () => {
