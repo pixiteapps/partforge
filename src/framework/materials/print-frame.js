@@ -4,6 +4,7 @@
 // (lint place-not-rigid), and the geometry-free pose probe reports each as a
 // list of rigid steps — so the display→export map is E · D⁻¹, with no geometry.
 // Three-free and DOM-free: the pose probe and pose.js are pure.
+import { placeOf } from "../sub-part-views.js";
 import { probeSubPartPose } from "../pose-probe-core.js";
 import { poseDelta, composePose } from "../geometry/pose.js";
 
@@ -14,7 +15,7 @@ const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 // build that queries its solid cannot make it untrusted); a "posed" mesh already carries the
 // display pose, so the map is E · D⁻¹.
 export function printFrameMatrix(subPart, { view, p, d, frame = "posed" }) {
-  if (!subPart?.place) return [...IDENTITY];
+  if (!placeOf(subPart)) return [...IDENTITY];
   if (frame === "canonical") {
     const exp = probeSubPartPose(subPart, { view, purpose: "export", p, d }, { scope: "place" });
     return exp.trusted ? composePose(exp.pose) : [...IDENTITY];
@@ -34,7 +35,7 @@ const isIdentity = (m) => m.every((v, i) => Math.abs(v - IDENTITY[i]) < 1e-12);
 // readable, and a build that queries its solid cannot make it untrusted. A place()
 // that only the full-scope probe reads falls back to printFrameMatrix's posed branch.
 export function displayToPrintMatrix(subPart, { view, p, d }) {
-  if (!subPart?.place) return null;
+  if (!placeOf(subPart)) return null;
   const disp = probeSubPartPose(subPart, { view, purpose: "display", p, d }, { scope: "place" });
   const exp = probeSubPartPose(subPart, { view, purpose: "export", p, d }, { scope: "place" });
   const m = disp.trusted && exp.trusted

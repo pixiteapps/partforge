@@ -16,6 +16,7 @@
 // same source text at every value of `p.z`, so hashing it would hold baseHash
 // stable while the real geometry changed — precisely the false-positive the fast
 // path must never make. Untrusted subparts simply take the normal regen path.
+import { placeOf } from "./sub-part-views.js";
 import { h } from "./geometry/solid-hash.js";
 import { addSugar } from "./geometry/solid-sugar.js";
 import { SOLID_OPS, SOLID_OPTIONAL_OPS, SHAPE2D_OPS, OCCT_ONLY_OPS } from "./geometry/kernel.js";
@@ -127,15 +128,16 @@ const stepsFinite = (steps) => steps.every((st) =>
 export function probeSubPartPose(sp, { view, purpose = "display", p, d }, { scope = "full" } = {}) {
   try {
     const { kernel, state, token } = makeProbeSession(); // fresh op budget + trust per subpart
+    const place = placeOf(sp);
     if (scope === "place") {
       let s = token(CANONICAL, []);
-      if (!sp.place) return { trusted: true, baseHash: CANONICAL, pose: [] };
-      s = sp.place(s, { view, purpose, p, d });
+      if (!place) return { trusted: true, baseHash: CANONICAL, pose: [] };
+      s = place(s, { view, purpose, p, d });
       if (!(s && s.__poseToken) || state.queried || state.unhashable || !stepsFinite(s._pose)) return { trusted: false };
       return { trusted: s._hash === CANONICAL, baseHash: s._hash, pose: s._pose };
     }
     let s = sp.build(kernel, p, d);
-    if (scope === "full" && sp.place) s = sp.place(s, { view, purpose, p, d });
+    if (scope === "full" && place) s = place(s, { view, purpose, p, d });
     const ok = s && s.__poseToken && !state.queried && !state.unhashable && stepsFinite(s._pose);
     return ok ? { trusted: true, baseHash: s._hash, pose: s._pose } : { trusted: false };
   } catch {
