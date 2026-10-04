@@ -85,11 +85,13 @@ lid: {
   still written (a slicer can split plates); the export reports no error for it.
 - Translation only, so layer lines, overhang and the per-piece STL are unaffected, and
   the piece set dedupe in the cut kit (identical export solids) still holds.
-- Legacy parts (array `views` + `place`): the export solid is `place(…, "export")` as
-  today; the same layout then replaces whatever translation the author gave it. An
-  authored print layout in a legacy part's export branch is therefore discarded in 3MF
-  and STEP — accepted, since the layout exists to stop overlaps and an authored one is
-  re-derived to the same end.
+- **Map-form parts only.** Legacy parts (array `views` + `place`) export exactly as
+  today — `place(…, "export")`, no layout — so an author's hand-placed export (a
+  hinged-box lid translated beside its base) is byte-identical in 3MF and STEP. The
+  normalized record carries `form: "map" | "legacy"` (below) and the exporter lays out
+  only when every selected piece is map-form. A mixed selection (legacy and map pieces
+  in one part — possible only mid-migration) lays out the map pieces and leaves legacy
+  ones where their export pose put them.
 
 ## Compilation — one normalization at load
 
@@ -97,7 +99,7 @@ lid: {
 already reads:
 
 ```
-{ views: string[], place(s, { view, purpose, p, d }) }
+{ views: string[], place(s, { view, purpose, p, d }), form: "map" | "legacy" }
 ```
 
 - Map form: `views` = the map's keys in order; `place` = `purpose === "export" ? s :
@@ -178,7 +180,8 @@ validate the raw map's shape.
   parts.
 - Export layout: no two selected pieces' bboxes intersect in 3MF/STEP; translation only
   (each piece's mesh equals its STL up to translation); bed width from the profile;
-  deterministic order.
+  deterministic order. A legacy example's 3MF and STEP are byte-identical before and
+  after.
 - Pose ladder: a map-form animation track plays at frame rate (no rebuild) and the
   print frame is identity; a tab switch re-poses without a worker job.
 - Oracle: overhang and bed-fit on a map-form part read the canonical solid.
@@ -187,7 +190,7 @@ validate the raw map's shape.
 
 partforge minor (0.143.0) with the cloud pin bump and prompt change as the next cloud
 PR; the eval case above re-run on Flash, `-compact` arms, before merge. Saved forges are
-unaffected (legacy form) except for the 3MF/STEP layout rule.
+unaffected: legacy-form parts keep their views, poses and exports byte-for-byte.
 
 ## Open questions
 
