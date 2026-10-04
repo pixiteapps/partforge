@@ -135,8 +135,9 @@ const transformPoint = (m, [x, y, z]) => [
 // is carried into the export pose by a rigid matrix — no second build — and the bed is
 // that pose's own lowest Z; `at` comes back in display coordinates, where every other
 // finding of this view sits. An unreadable or identical pose measures as shown.
-function printPoseOverhang(mesh, sp, { view, p, d, maxAngle, displayBedZ }) {
-  const m = p ? displayToPrintMatrix(sp, { view, p, d }) : null;
+// `m` is displayToPrintMatrix's answer, resolved by the caller: the measure memo
+// keys on it, since the pose comes from place() and is not part of the solid's hash.
+function printPoseOverhang(mesh, m, { maxAngle, displayBedZ }) {
   if (!m) return overhang(mesh, { maxAngle, bedZ: displayBedZ });
   const positions = Float32Array.from(mesh.positions);
   transformPositions(positions, m);
@@ -297,13 +298,24 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   const sheetBudget = { left: opts.sheetBudgetMs ?? SHEET_CHECK_BUDGET_MS, now: opts.now ?? Date.now };
   const subparts = built.map(({ name, solid, mesh }) => {
     const sheet = isSheetPart(part.parts[name]);
+    // A sub-part that is never printed (`exportable: false` — a reference ghost, a
+    // probe slab, a placeholder) is not judged for overhang, and neither is a sheet
+    // part (laser-cut, never printed). For one that is, the display→print matrix
+    // (printPoseOverhang) is read off place() with the resolved params — geometry-free,
+    // so it is resolved here, ahead of the memo, which must key on it.
+    const printed = part.parts[name]?.exportable !== false && !sheet;
+    const printMatrix = overhangAngle != null && printed && poseParams?.p
+      ? displayToPrintMatrix(part.parts[name], { view, p: poseParams.p, d: poseParams.d })
+      : null;
     // Memo key = the inputs this sub-part's facts actually depend on, besides its
     // own geometry hash: whether min-wall ran, at what sample budget and against
     // which declared band, the overhang angle, and whether the sub-part is
     // exportable (it gates overhangArea/overhangAngle/overhangAt via `printed`,
     // below — without it, toggling `exportable` on unchanged geometry would
     // return a stale overhang reading, or a non-exportable ghost would share a
-    // real sub-part's entry). Withheld for sheet parts, a declared `reference`
+    // real sub-part's entry), and the display→print matrix the overhang reading
+    // poses the mesh by (it comes from place() and the params, not the geometry, so
+    // a param that moves only the print pose leaves the hash unchanged). Withheld for sheet parts, a declared `reference`
     // sub-part (deviation reads another import), any sub-part when the view
     // holds a sheet part (the budgeted 2-D pass and print-pose sizes are
     // call-scoped, not per-sub-part cacheable), and a solid with no `_hash`
@@ -311,7 +323,8 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     const memoKey = opts.memo && !sheetView && !sheet && !part.parts[name]?.reference && solid?._hash
       ? JSON.stringify({
         mw: !!opts.minWall, s: minWallSamples ?? null, band: wallBands[name] ?? null,
-        oh: overhangAngle ?? null, ex: part.parts[name]?.exportable !== false,
+        oh: overhangAngle ?? null, ex: printed,
+        pm: printMatrix ? Array.from(printMatrix) : null,
       })
       : null;
     if (memoKey) {
@@ -330,13 +343,10 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       ? minWall(mesh, { bvh: cachedBVH(mesh, bvhCache), maxSamples: minWallSamples, band: wallBands[name] ?? null })
       : null;
     // One pass over the triangles, no index — cheap enough for every lap. The bed
-    // is this sub-part's own lowest Z in its PRINT pose (printPoseOverhang). A
-    // sub-part that is never printed (`exportable: false` — a reference ghost, a
-    // probe slab, a placeholder) is not judged. A sheet part is laser-cut, never
-    // printed: no overhang reading for it either.
-    const printed = part.parts[name]?.exportable !== false && !sheet;
+    // is this sub-part's own lowest Z in its PRINT pose (printPoseOverhang); `printed`
+    // (above) says whether it is judged at all.
     const oh = overhangAngle != null && printed
-      ? printPoseOverhang(mesh, part.parts[name], { view, ...poseParams, maxAngle: overhangAngle, displayBedZ: b.min[2] })
+      ? printPoseOverhang(mesh, printMatrix, { maxAngle: overhangAngle, displayBedZ: b.min[2] })
       : null;
     const vol = solid.volume();
     // Deviation-from-reference: only for a sub-part that declares `reference:

@@ -383,7 +383,12 @@ the installed package, so let the publish finish before bumping the dep there.
   did not change reuses its previous `measure()` facts and pairwise gap distances
   (via `measure`'s `memo` option, fed `changeTracker.memo`) instead of
   recomputing them — every *changed* sub-part, and anything outside `measure`
-  (verify, match scoring), is computed fresh every time.
+  (verify, match scoring), is computed fresh every time. The hash covers only the
+  display geometry, so the memo key in `measure.js` must name every OTHER input a
+  sub-part's facts read (min-wall budget and band, overhang angle, `exportable`,
+  the display→print matrix the overhang reading poses the mesh by); a fact that
+  reads anything else — a sheet view, a `reference` sub-part — is never memoized.
+  `test/measure-memo.test.js` holds reuse equal to recompute across each input.
 - **`src/framework/export/`** - the cut & print kit's writers, process-agnostic.
   `formats.js` is IMPORT-FREE: `EXPORT_FORMATS`, the kit's option contract
   (`validateKitOptions`, `resolveStock`, `KIT_DEFAULTS`, `KIT_LIMITS`) and

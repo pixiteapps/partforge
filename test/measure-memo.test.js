@@ -95,6 +95,12 @@ test("a hit is re-stored, so an unchanged sub-part is reused every round, not ev
 // measurement reads null — these tests FAIL on the pre-fix memoKey (no `ex`
 // field) for the "exportable" case.
 const overhangOptedIn = { ...hinged, verify: { ...hinged.verify, orientation: "print" } };
+const tiltedLid = (printTilt) => ({ ...overhangOptedIn,
+  defaults: { ...overhangOptedIn.defaults, printTilt },
+  parts: { ...overhangOptedIn.parts, lid: { ...overhangOptedIn.parts.lid,
+    place: (s, ctx) => ctx.purpose === "export"
+      ? overhangOptedIn.parts.lid.place(s, ctx).rotate(ctx.p.printTilt, [0, 0, 0], [1, 0, 0])
+      : overhangOptedIn.parts.lid.place(s, ctx) } } });
 const memoKeyFieldVariants = {
   // The lid stops being judged for overhang at all — `printed` flips false.
   exportable: [
@@ -118,6 +124,14 @@ const memoKeyFieldVariants = {
   overhangAngle: [
     overhangOptedIn,
     { ...overhangOptedIn, verify: { ...overhangOptedIn.verify, process: { base: "fdm-pla", overhang: 30 } } },
+  ],  // A param only the lid's EXPORT pose reads (place(), purpose "export"): the
+  // display geometry — and so the solid hash — is unchanged, but the overhang
+  // reading poses the mesh for print (measure.js printPoseOverhang), so the
+  // display→print matrix is a memo-key input. Added on the rebase onto 0.142.0,
+  // which introduced print-pose overhang.
+  printPose: [
+    tiltedLid(0),
+    tiltedLid(30),
   ],
 };
 
