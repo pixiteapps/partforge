@@ -193,7 +193,7 @@ runtime.setParams({ openAngle: 45 });   // merges into the live params, syncs th
 
 The partial is merged into the current params and the control panel updates to
 match. Keys the part doesn't define are silently ignored. When every changed
-parameter only moves geometry (a rotation or translation in `place()`), the
+parameter only moves geometry (a rotation or translation in a `views` pose), the
 viewer re-poses the meshes it already has — instantly, with no worker rebuild;
 `onBuild` does not fire for those pose-only edits. Anything that changes the
 geometry itself rebuilds as usual.
