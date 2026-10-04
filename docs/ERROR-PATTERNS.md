@@ -162,6 +162,12 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 - **Cause:** A view entry that scales, mirrors or adds geometry instead of only moving the piece.
 - **Fix:** Entries only `translate`/`rotate`/`rotateAbout`/`at` their argument. Bake a resized or reflected form into `build()`.
 
+## views-invalid
+
+- **Symptom:** A sub-part is missing from every view, or lint refuses a sub-part whose `views` is absent, a string or a number.
+- **Cause:** `views` must be a map of view name to `true` or a pose (or, in the legacy form, an array of view names). Anything else shows the piece nowhere.
+- **Fix:** Give the sub-part a `views` map — e.g. `views: { assembly: true }` — naming each view it appears in.
+
 ## wrong-node-version
 
 - **Symptom:** Confusing failures during `npm install`, tests, or CLI runs — WASM load errors, syntax errors in dependencies, or kernels that never boot — on a machine that built fine before.

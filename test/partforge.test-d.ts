@@ -175,6 +175,20 @@ const noViews: PartDefinition = {
 };
 void noViews;
 
+// The views-map form: `true` or a pose per view.
+const mapForm: PartDefinition = {
+  ...spacer,
+  parts: { spacer: { views: { spacer: true, assembly: (s, p) => s.translate([0, 0, 1]) }, build: (k) => k.sphere({ r: 1 }) } },
+};
+void mapForm;
+
+const badMapEntry: PartDefinition = {
+  ...spacer,
+  // @ts-expect-error - a views entry is `true` or a pose function, never `false`
+  parts: { spacer: { views: { spacer: false }, build: (k) => k.sphere({ r: 1 }) } },
+};
+void badMapEntry;
+
 const noBuild: PartDefinition = {
   ...spacer,
   // @ts-expect-error - sub-part is missing `build`

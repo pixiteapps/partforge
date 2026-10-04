@@ -498,8 +498,10 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       }
       post({ type: "download-parts", ext: "stl", mime: "model/stl", parts: out, jobId: msg.jobId },
            out.map((pp) => bufferOf(pp.data)));
-    // 3MF/STEP hold every selected piece in one file; views-map pieces export as built, so they are laid out apart (export/bed-layout.js). STL is one file per piece and is never laid out.
     } else if (msg.type === "export-step") {
+      // 3MF/STEP hold every selected piece in one file; printed views-map pieces export as
+      // built, so they are laid out apart (export/bed-layout.js). Sheet pieces keep their
+      // assembled pose. STL is one file per piece and is never laid out.
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
       const { layoutExportPieces } = await loadBedLayout();

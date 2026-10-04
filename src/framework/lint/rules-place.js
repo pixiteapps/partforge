@@ -1,4 +1,4 @@
-// Lint ids here: place-not-rigid (legacy views-array + place() form), and for the views-map
+// Lint ids here: views-invalid (a sub-part whose views is neither form), place-not-rigid (legacy views-array + place() form), and for the views-map
 // form view-entry-invalid (an entry that is not true or a pose), views-and-place (an author
 // place beside a map) and view-pose-not-rigid (an entry that reshapes instead of moving).
 // Group 6 — the place() invariant (docs/AUTHORING-PARTS.md "Display vs export
@@ -63,6 +63,22 @@ export const PLACE_RULES = [
     },
   },
   {
+    id: "views-invalid",
+    run: ({ part }) => {
+      const out = [];
+      for (const [name, sp] of Object.entries(isPlainObject(part?.parts) ? part.parts : {})) {
+        const v = sp?.views;
+        if (Array.isArray(v) || isPlainObject(v)) continue;
+        out.push(err("views-invalid",
+          `sub-part "${name}" has no usable \`views\` (it is ${v === undefined ? "missing" : JSON.stringify(v) ?? String(v)})`,
+          "Give the sub-part a `views` map — e.g. `views: { assembly: true }` — naming each view it appears in.",
+          `parts.${name}.views`,
+          "views-invalid"));
+      }
+      return out;
+    },
+  },
+  {
     id: "view-entry-invalid",
     run: ({ part }) => {
       const out = [];
@@ -105,6 +121,7 @@ export const PLACE_RULES = [
         if (!isViewsMap(sp?.views)) continue;
         for (const [view, entry] of Object.entries(sp.views)) {
           if (typeof entry !== "function") continue;
+          // Display only: map poses never apply on export, so there is no second purpose to probe.
           const probe = probePlace(sp, { view, purpose: "display", p, d });
           if (!readable(probe) || probe.baseHash === CANONICAL) continue;
           out.push(err("view-pose-not-rigid",

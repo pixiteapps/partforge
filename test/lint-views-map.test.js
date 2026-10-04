@@ -67,3 +67,15 @@ test("an animation fading a map-form piece is accepted in a view the map lists",
   part.views.assembly.animations = { a: { duration: 1, opacity: { lid: [[0, 0], [1, 1]] } } };
   expect(ids(part)).not.toContain("animation-opacity-unknown-part");
 });
+
+test("views-invalid fires for missing views, a string and a number; array and map pass", () => {
+  for (const bad of [undefined, "assembly", 3]) {
+    const f = finding(mk({ views: bad }), "views-invalid");
+    expect(f, String(bad)).toBeTruthy();
+    expect(f.path).toBe("parts.lid.views");
+    expect(f.message).toContain('"lid"');
+    expect(f.hint).toContain("views: { assembly: true }");
+  }
+  expect(finding(mk({ views: ["assembly"] }), "views-invalid")).toBeUndefined();
+  expect(finding(mk({ views: { assembly: true } }), "views-invalid")).toBeUndefined();
+});

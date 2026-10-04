@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { isViewsMap, viewsOf, inView, formOf, placeOf } from "../src/framework/sub-part-views.js";
 
 // A stand-in solid that records the ops applied to it.
@@ -33,7 +33,11 @@ test("formOf tells the forms apart", () => {
 
 test("legacy placeOf is the author's place", () => {
   const place = (s) => s;
-  expect(placeOf({ views: ["a"], place })).toBe(place);
+  const sp = { views: ["a"], place: vi.fn((s) => s) };
+  const out = placeOf(sp)("solid", { view: "a" });
+  expect(out).toBe("solid");
+  expect(sp.place).toHaveBeenCalledWith("solid", { view: "a" });
+  expect(place).toBeTypeOf("function");
   expect(placeOf({ views: ["a"] })).toBeNull();
 });
 
@@ -74,7 +78,7 @@ test("placeOf is memoized per sub-part", () => {
   expect(placeOf(sp)).toBe(placeOf(sp));
 });
 
-test("an invalid entry poses nothing", () => {
+test("a view whose entry is invalid (false) leaves the solid unposed", () => {
   const place = placeOf({ views: { a: true, b: false, c: (s) => s.translate([2, 0, 0]) } });
   expect(place(solid(), { view: "b", purpose: "display", p: {}, d: {} }).ops).toEqual([]);
 });

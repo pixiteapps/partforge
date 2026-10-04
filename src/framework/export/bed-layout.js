@@ -8,6 +8,7 @@
 // Legacy (array views + place) pieces never come here: their author placed them.
 import { resolveProfile } from "../oracle/dfm-profiles.js";
 import { formOf } from "../sub-part-views.js";
+import { isSheetPart } from "../sheet/constants.js";
 
 const EPS = 1e-9;
 export const BED_SPACING = 10;
@@ -47,9 +48,11 @@ export function bedWidthFor(part) {
 }
 
 // `pieces`: [{ name, solid, ...rest }] in export order. Map-form pieces are laid out
-// together; legacy ones keep their export pose. Returns a new array, same order.
+// together; legacy ones keep their export pose, and so do sheet pieces — a sheet's pose IS
+// its placement, so sheet exports come out assembled. Returns a new array, same order.
 export function layoutExportPieces(part, pieces) {
-  const mapPieces = pieces.filter(({ name }) => formOf(part.parts[name]) === "map");
+  const laidOut = (sp) => formOf(sp) === "map" && !isSheetPart(sp);
+  const mapPieces = pieces.filter(({ name }) => laidOut(part.parts[name]));
   if (mapPieces.length === 0) return pieces;
   const offsets = bedLayout(
     mapPieces.map(({ name, solid }) => ({ key: name, ...solid.boundingBox() })),

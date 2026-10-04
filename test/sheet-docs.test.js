@@ -104,7 +104,7 @@ test("Profiles & patterns points at the section (P1a's pointer)", () => {
   expect(guide.slice(i, guide.indexOf("\n## ", i + 1))).toContain("[Sheet parts](#sheet-parts)");
 });
 
-// The section recommends an author `place` for an angled panel; that place also takes the
+// The section recommends an angled-panel `views` entry for an angled panel; that place also takes the
 // laser burns off the panel in realistic mode (materials/sheet-look.js burnsFor), and this
 // topic is served on its own, so it has to say so where it recommends one.
 test("Limits' angled-panel advice says a views entry costs the realistic laser burns", () => {

@@ -109,18 +109,20 @@ export default {
   spread them on the bed (`p.w + 10`, not a measurement).
 - A param that moves a piece (hinge angle, slide, explode distance) is read only in
   `views` entries; it then animates at frame rate with no rebuild.
-- List `assembly` first among the top-level `views` (the default tab, and what
+- List `assembly` first (or flag it `default: true`) among the top-level `views` (the default tab, and what
   headless `verify` checks), piece tabs next, `print` last.
 - A piece that is not printed (a filament pin, a bearing) is `exportable: false` and
   appears in `assembly` only.
+- Sheet pieces (`sheetPart`) keep their `pose`; their `views` entries are `true`, and they
+  stay out of `print` — they are cut, not printed, and export assembled.
 - Exports write the checked pieces as built. STL is one file per piece; a 3MF or STEP of
-  several pieces lays them out on the bed automatically, 10 mm apart.
+  several printed (non-sheet) pieces lays them out on the bed automatically, 10 mm apart.
 
-The Lattice Box's `lid` shows all of it (`src/parts/lattice-box.js` is the whole part):
+The Lattice Box's `lid` shows all of it (helpers elided — see `src/parts/lattice-box.js` for the whole part, whose `swing` is `(s, p, d) => s.rotate(-p.lidAngle, d.hinge, [1, 0, 0])`):
 
 ```js
 lid: {
-  build: (k, p, d) => makeLid(k, p, d),                    // flat, as printed
+  build: (k, p, d) => /* flat plate with the lattice window, as printed */ k.box({ min: [0, 0, 0], max: [p.w, p.d, p.t] }),
   views: {
     assembly: (s, p, d) => swing(s.translate([0, 0, p.h]), p, d),
     lid: true,
@@ -1961,7 +1963,7 @@ front: sheetPart({ ...PLY, profile: (k, p, d) => d.box.front.outline, pose: (p, 
 
 `printedTab({ size: [w, h], thickness, clearance = 0.3 })` gives a slot and its printed
 tongue from one spec: `slot` is `(w + c) × (h + c)`, centred (all the play); `tongue`
-is `[w, h, thickness]` for `k.box({ size: tongue })`. Build the printed part as it prints; its `assembly` entry moves it into place; the slot:
+is `[w, h, thickness]` for `k.box({ size: tongue })`. Build the printed part as it prints; its view entry moves it into place; the slot:
 `k.shape2d(tab.slot).translate(worldToSheet(panelPose, tongueCentre))`.
 
 ### What lint and verify check
@@ -3760,7 +3762,8 @@ affect `ok`, `measure`, or `--strict`.
 one animation's `animation-track-rebuilds` uses) against each `views` entry, even when
 `build()` queries the solid — `view-entry-invalid` (an entry that is neither `true` nor a
 pose function), `views-and-place` (an author `place` beside a `views` map) and
-`view-pose-not-rigid` (an entry that reshapes instead of moving; all errors), and
+`view-pose-not-rigid` (an entry that reshapes instead of moving), `views-invalid` (a sub-part
+whose `views` is missing or neither a map nor an array; all errors), and
 `place-not-rigid` (legacy `place()` form: display vs. export placement may differ only by a
 rigid motion — translate/rotate — never a reshape; an error). A pose the probe cannot read
 (it queries the solid or passes a function) stays silent for these rules and earns the

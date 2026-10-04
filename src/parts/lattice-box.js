@@ -77,7 +77,7 @@ export default {
     plate: {
       label: "Nameplate",
       display: { color: 0xffd400 },
-      // A thin plate, printed flat; stands on the front of the box in the assembly.
+      // A thin plate, printed flat; stands just off the front of the box (0.2 mm clear) in the assembly.
       build: (k) => k.box({ min: [0, 0, 0], max: [40, 12, 1.6] }),
       views: {
         assembly: (s, p) => s.rotateX(90).translate([(p.w - 40) / 2, -0.2, p.h / 2 - 6]),

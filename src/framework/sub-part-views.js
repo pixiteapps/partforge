@@ -35,8 +35,13 @@ const compiled = new WeakMap();
 
 export function placeOf(sp) {
   if (!sp) return null;
-  if (!isViewsMap(sp.views)) return sp.place ?? null;
   if (compiled.has(sp)) return compiled.get(sp);
+  if (!isViewsMap(sp.views)) {
+    // A wrapper, so a method-style place keeps `this` when callers invoke it detached.
+    const legacy = typeof sp.place === "function" ? (s, ctx) => sp.place(s, ctx) : null;
+    compiled.set(sp, legacy);
+    return legacy;
+  }
   const base = typeof sp.place === "function" ? sp.place : null;
   const entries = sp.views;
   const anyPose = Object.values(entries).some((v) => typeof v === "function");
