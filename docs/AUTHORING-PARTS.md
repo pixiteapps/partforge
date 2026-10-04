@@ -103,8 +103,8 @@ export default {
 - `place(solid, ctx)` is an optional escape hatch for parts whose **display pose differs
   from their export pose** (e.g. positioning a sub-part in an assembly). `ctx.purpose` is
   `"display"` or `"export"`; `ctx.view` is the active view. Default is identity, so simple
-  parts omit it. **Display placement must not depend on `view`** — display meshes are built
-  once per sub-part and cached across views (the viewer re-centres per view).
+  parts omit it. Display placement may depend on `view`: the viewer re-poses each
+  sub-part when the tab changes, so one sub-part can sit differently in two views.
   The viewer applies the display pose as a matrix over the canonical mesh, so `build()` may
   query geometry freely; only `place()` has to stay a rigid motion of its argument, reading
   `p` and `d`, for a pose-only param to play at frame rate and for layer lines to stay on
@@ -3721,12 +3721,11 @@ affect `ok`, `measure`, or `--strict`.
 
 **Place invariants**, found by running the geometry-free place probe (the same
 one animation's `animation-track-rebuilds` uses) against each sub-part's
-`place()`, even when `build()` queries the solid — `view-dependent-display-place` (display placement must not depend
-on the active view, since display meshes are cached across views) and
-`place-not-rigid` (display vs. export placement may differ only by a rigid
-motion — translate/rotate — never a reshape) (both errors). A `place()` the probe
-cannot read (it queries the solid or passes a function) stays silent for the two
-place rules and earns the `animation-track-rebuilds` note.
+`place()`, even when `build()` queries the solid — `place-not-rigid` (display vs.
+export placement may differ only by a rigid motion — translate/rotate — never a
+reshape; an error). A `place()` the probe cannot read (it queries the solid or
+passes a function) stays silent for the place rule and earns the
+`animation-track-rebuilds` note.
 
 **Appearance** (all warnings) — `unknown-material` (a `display.material` the
 library does not know; the viewer draws it as if it named none — a PLA print
@@ -3994,7 +3993,9 @@ a **min-wall** warning, and — only for a part that also declares
 `orientation: "print"` — an **overhang** warning: `overhangArea` is the mm² of
 downward-facing surface steeper than the profile's `overhang` angle (45° from vertical
 on the FDM profiles; resin carries none, since it prints on supports), measured per
-sub-part with the bed at that sub-part's own lowest Z, and warned past 1 mm². The
+sub-part in its print (export) pose — not as the view shows it — with the bed at that
+pose's own lowest Z, and warned past 1 mm²; the reported location is where the face sits
+in the view. The
 opt-in is deliberate: a profile says what a process can print, the orientation key
 says this part is laid out for it, and a part still being shaped, or one bound for a
 different process, should not be nagged about its underside. Writing your own
@@ -4429,8 +4430,6 @@ symptom first** — it maps error text → cause → fix. The invariants, one li
   232 and a box is 12, and every one is a boolean operand — so prefer instancing one
   union of a row over a chain of per-feature booleans, and drop counts the print
   cannot show.
-- **Display placement is view-independent**; only `place(..., { purpose: "export" })` may
-  depend on `view` ([view-dependent-display-place](ERROR-PATTERNS.md#view-dependent-display-place)).
 - **Keep geometry backend-agnostic** (kernel calls only); only STEP requires OCCT
   ([probe-routed-to-occt](ERROR-PATTERNS.md#probe-routed-to-occt),
   [occt-holes-watertight-na](ERROR-PATTERNS.md#occt-holes-watertight-na)).

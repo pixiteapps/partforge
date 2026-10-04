@@ -138,12 +138,6 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 - **Cause:** OCCT and Manifold WASM must not boot in the same process.
 - **Fix:** Keep OCCT-booting tests in their own files (vitest isolates per file) and boot via `bootOcctKernel()` in a `beforeAll`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Testing a part".
 
-## view-dependent-display-place
-
-- **Symptom:** A sub-part renders correctly in one view but appears misplaced (usually in its other-view pose) after switching views.
-- **Cause:** A `place` that depends on `ctx.view` for `purpose: "display"` — display meshes are built once per sub-part and cached across views.
-- **Fix:** Make display placement view-independent; only `place(..., { purpose: "export" })` may branch on `view`. The rule sees a `place()` behind any `build()`, including one that queries the solid; a `place()` it cannot read stays silent. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "The `PartDefinition` contract".
-
 ## place-not-rigid
 
 - **Symptom:** The exported/printed part is a mirror image of — or a different size than — the same part shown in the assembly/display view. Nothing throws: the preview looks right and only the STL/STEP is wrong, or vice-versa.
