@@ -49,6 +49,11 @@ function canon(x) {
 
 // FNV-1a folded to 32-bit space (collision risk acceptable: retained only for one
 // sub-part's build graph ~3–15 nodes, rebuilt each round, no accumulation).
+// These hashes are now also compared ACROSS inspect rounds: the oracle's change
+// tracker (oracle/changes.js) reads an equal final hash as "unchanged", and its
+// measure memo reuses that sub-part's facts. A collision there would report a
+// changed sub-part as unchanged and serve its stale measurements — the same
+// trust the solid cache already extends to these keys, and no wider.
 function fnv(s) {
   let hsh = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) { hsh ^= s.charCodeAt(i); hsh = Math.imul(hsh, 0x01000193); }

@@ -101,6 +101,17 @@ const tiltedLid = (printTilt) => ({ ...overhangOptedIn,
     place: (s, ctx) => ctx.purpose === "export"
       ? overhangOptedIn.parts.lid.place(s, ctx).rotate(ctx.p.printTilt, [0, 0, 0], [1, 0, 0])
       : overhangOptedIn.parts.lid.place(s, ctx) } } });
+// A lid carrying an upside-down cone: its 45° side wall is an overhang at a 30°
+// threshold and not at 60°, so the angle variant below moves the lid's own
+// overhang facts, not only the report-level `measuredOverhang`.
+const conedLid = { ...overhangOptedIn, parts: { ...overhangOptedIn.parts, lid: { ...overhangOptedIn.parts.lid,
+  build: (kk, p, d) => {
+    const s = hinged.parts.lid.build(kk, p, d);
+    const b = s.boundingBox();
+    return s.union(kk.cylinder({ d1: 4, d2: 20, h: 8 })
+      .translate([(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, b.max[2]]));
+  } } } };
+const withOverhang = (deg) => ({ ...conedLid, verify: { ...conedLid.verify, process: { base: "fdm-pla", overhang: deg } } });
 const memoKeyFieldVariants = {
   // The lid stops being judged for overhang at all — `printed` flips false.
   exportable: [
@@ -121,10 +132,8 @@ const memoKeyFieldVariants = {
   ],
   // The overhang angle a part is judged against changes (process override),
   // orientation stays opted in — geometry is unchanged, the threshold is not.
-  overhangAngle: [
-    overhangOptedIn,
-    { ...overhangOptedIn, verify: { ...overhangOptedIn.verify, process: { base: "fdm-pla", overhang: 30 } } },
-  ],  // A param only the lid's EXPORT pose reads (place(), purpose "export"): the
+  overhangAngle: [withOverhang(60), withOverhang(30)],
+  // A param only the lid's EXPORT pose reads (place(), purpose "export"): the
   // display geometry — and so the solid hash — is unchanged, but the overhang
   // reading poses the mesh for print (measure.js printPoseOverhang), so the
   // display→print matrix is a memo-key input. Added on the rebase onto 0.142.0,
@@ -142,5 +151,35 @@ for (const [label, [base, variant]] of Object.entries(memoKeyFieldVariants)) {
     const reused = run(t, variant, "box", { minWall: true, gaps: true });
     const fresh = run(null, variant, "box", { minWall: true, gaps: true });
     expect(strip(reused)).toEqual(strip(fresh));
+    // Non-vacuous: the input change really moves a fresh reading, so a stale
+    // memo hit would have been caught above.
+    expect(strip(run(null, base, "box", { minWall: true, gaps: true }))).not.toEqual(strip(fresh));
   });
 }
+
+test("the overhangAngle variant's two fresh readings differ in the overhang facts", () => {
+  const [base, variant] = memoKeyFieldVariants.overhangAngle;
+  const lidOf = (m) => m.subparts.find((s) => s.name === "lid");
+  const a = lidOf(run(null, base, "box", { minWall: true, gaps: true }));
+  const b = lidOf(run(null, variant, "box", { minWall: true, gaps: true }));
+  expect(a.overhangArea).toBe(0);
+  expect(b.overhangArea).toBeGreaterThan(100);
+});
+
+test("a fact structuredClone refuses is measured, not thrown", () => {
+  const t = createChangeTracker();
+  const realSet = t.memo.set;
+  t.memo.set = (name, hash, k2, facts) => realSet(name, hash, k2, { ...facts, poison: () => {} });
+  run(t, hinged, "box", { minWall: false, gaps: false });
+  const second = run(t, hinged, "box", { minWall: false, gaps: false });
+  expect(strip(second)).toEqual(strip(run(null, hinged, "box", { minWall: false, gaps: false })));
+});
+
+test("a memo hit is a deep copy: mutating a reported fact cannot poison the next hit", () => {
+  const t = createChangeTracker();
+  run(t, hinged, "box", { minWall: false, gaps: false });
+  const second = run(t, hinged, "box", { minWall: false, gaps: false });
+  for (const s of second.subparts) if (s.bounds) s.bounds.min[0] = 1e9;
+  const third = run(t, hinged, "box", { minWall: false, gaps: false });
+  expect(strip(third)).toEqual(strip(run(null, hinged, "box", { minWall: false, gaps: false })));
+});

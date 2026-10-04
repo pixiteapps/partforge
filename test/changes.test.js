@@ -14,7 +14,7 @@ vi.mock("../src/framework/geometry/solid-hash.js", async (importOriginal) => {
 import { bootManifoldKernel } from "../src/testing.js";
 import { buildView } from "../src/framework/oracle/build.js";
 import { measure } from "../src/framework/oracle/measure.js";
-import { createChangeTracker } from "../src/framework/oracle/changes.js";
+import { createChangeTracker, REPORT_SHARE_MS } from "../src/framework/oracle/changes.js";
 import hinged from "../src/parts/hinged-box.js";
 
 let k;
@@ -22,8 +22,9 @@ beforeAll(async () => { k = await bootManifoldKernel(); });
 
 // One inspect, the way jobs.js runs it: the tracker captures its meshes between
 // buildView and measure, because measure's cleanup frees the posed solids.
-function inspect(tracker, part, key = "forge-1", view = "box") {
+function inspect(tracker, part, key = "forge-1", view = "box", { afterBegin } = {}) {
   tracker.begin(key, view);
+  afterBegin?.();
   const built = buildView(k, part, view, {});
   tracker.endBuild(built);
   const measured = measure(k, part, view, {}, { built, minWall: false, gaps: false, memo: tracker.memo });
@@ -123,10 +124,14 @@ test("a new key forgets the baseline (forge switch)", () => {
 });
 
 test("a different view has no baseline", () => {
+  // hinged-box has one view, so build a second inline: the lid alone.
+  const twoViews = { ...hinged,
+    views: { ...hinged.views, lidOnly: { label: "Lid only" } },
+    parts: { ...hinged.parts, lid: { ...hinged.parts.lid, views: ["box", "lidOnly"] } } };
   const t = createChangeTracker();
-  inspect(t, hinged, "forge-1", "box");
-  const views = Object.keys(hinged.views);
-  if (views.length > 1) expect(inspect(t, hinged, "forge-1", views[1])).toEqual({});
+  inspect(t, twoViews, "forge-1", "box");
+  expect(inspect(t, twoViews, "forge-1", "box").changes.unchanged).toBe(true); // the baseline is real
+  expect(inspect(t, twoViews, "forge-1", "lidOnly")).toEqual({});
 });
 
 test("an aborted round leaves the baseline in place", () => {
@@ -155,6 +160,75 @@ test("budget exhausted before any verdict reports timeout alone", () => {
   inspect(t, lidOnly());
   const out = inspect(t, lidOnly((kk, p, d) => hinged.parts.lid.build(kk, p, d).union(kk.cylinder({ d: 6, h: 6 }))));
   expect(out).toEqual({ changesSkipped: "timeout" });
+});
+
+test("the diff deadline counts time spent before finish, from begin()", () => {
+  // A still clock that the test moves between begin() and finish(): buildView,
+  // endBuild's re-meshing and measure all count against the report's share.
+  for (const [elapsed, diffed] of [[REPORT_SHARE_MS + 500, false], [1000, true]]) {
+    let clock = 0;
+    const t = createChangeTracker({ now: () => clock });
+    inspect(t, hinged);
+    clock = 10_000;
+    const out = inspect(t, knob, "forge-1", "box", { afterBegin: () => { clock += elapsed; } });
+    const lid = out.changes.subparts.find((s) => s.name === "lid");
+    if (diffed) {
+      expect(lid.addedMm3).toBeGreaterThan(100);
+      expect(out.changesSkipped).toBeUndefined();
+    } else {
+      expect(lid).toBeUndefined();
+      expect(out.changesSkipped).toBe("timeout");
+    }
+  }
+});
+
+test("a sub-part over half the triangle cap is not re-meshed and next round falls back", () => {
+  const t = createChangeTracker({ maxTriangles: 20 });
+  inspect(t, hinged);
+  t.begin("forge-1", "box");
+  const built = buildView(k, knob, "box", {});
+  const lidSolid = built.find((b) => b.name === "lid").solid;
+  let remeshed = 0;
+  const orig = lidSolid.toIndexedMesh;
+  lidSolid.toIndexedMesh = (...a) => { remeshed++; return orig(...a); };
+  t.endBuild(built);
+  expect(remeshed).toBe(0);
+  const measured = measure(k, knob, "box", {}, { built, minWall: false, gaps: false, memo: t.memo });
+  t.finish(k, "box", built, measured);
+  k.cleanup();
+  let diffs = 0;
+  const realDiff = k._meshDiff;
+  k._meshDiff = (...a) => { diffs++; return realDiff(...a); };
+  let out;
+  try { out = inspect(t, hinged); } finally { k._meshDiff = realDiff; }
+  const lid = out.changes.subparts.find((s) => s.name === "lid");
+  expect(lid.verdict).toBe("reshaped");
+  expect(lid.volumeDeltaMm3).toBeLessThan(-100);
+  expect(out.changesSkipped).toBe("too-large");
+  expect(diffs).toBe(0);
+});
+
+test("a shape-equal sub-part rotated about its own centre is moved by ≈0 and rotated", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  const out = inspect(t, withLid((kk, p, d) => {
+    const s = hinged.parts.lid.build(kk, p, d);
+    const b = s.boundingBox();
+    return s.rotate(90, [0, 1, 2].map((i) => (b.min[i] + b.max[i]) / 2), [0, 0, 1]);
+  }));
+  const lid = out.changes.subparts.find((s) => s.name === "lid");
+  expect(lid.verdict).toBe("moved");
+  expect(lid.rotated).toBe(true);
+  lid.moved.forEach((v) => expect(v).toBeCloseTo(0, 3));
+});
+
+test("a pure translation carries no rotated flag", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  const lid = inspect(t, withLid((kk, p, d) => hinged.parts.lid.build(kk, p, d).translate([2, 0, 0])))
+    .changes.subparts.find((s) => s.name === "lid");
+  expect(lid.verdict).toBe("moved");
+  expect(lid.rotated).toBeUndefined();
 });
 
 const knob = withLid((kk, p, d) => hinged.parts.lid.build(kk, p, d).union(kk.cylinder({ d: 6, h: 6 })));

@@ -601,8 +601,10 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // (or be diffed against) the tracked baseline.
       const tracking = typeof msg.changesKey === "string" && msg.changesKey.length > 0
         && Object.keys(msg.params ?? {}).length === 0;
-      if (tracking) { changeTracker ??= createChangeTracker(); changeTracker.begin(msg.changesKey, view); }
       const reads = newReadSink();
+      // Nothing may sit between begin() and the try below: a throw there would
+      // leave the hash recording running with no abort().
+      if (tracking) { changeTracker ??= createChangeTracker(); changeTracker.begin(msg.changesKey, view); }
       let built;
       try {
         built = buildView(kernel, part, view, msg.params ?? {}, { reads });
@@ -633,7 +635,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       const match = await scoreMatchTargets(built, msg.matchTargets, onProgress);
       if (match) report.match = match;
       // Past measure()'s own kernel.cleanup(): finish() reads only `_hash` strings,
-      // `_canon.hash`, and JS-owned mesh/volume data, never a live solid.
+      // shape hashes, placement matrices, and JS-owned mesh/volume data, never a live solid.
       const changeFields = tracking ? changeTracker.finish(kernel, view, built, measured) : {};
       post({ type: "report", ...report, ...changeFields }, match?.map((m) => m.delta.data.buffer) ?? []);
     } else if (opts.jobs && Object.hasOwn(opts.jobs, msg.type)) {

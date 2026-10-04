@@ -372,14 +372,19 @@ the installed package, so let the publish finish before bumping the dep there.
   or a `view` switch simply has no baseline yet (`changes` is absent, not an
   error). `changes` is either `{ unchanged: true, subparts: [], unchangedSubparts
   }` or `{ subparts: [...], unchangedSubparts }`, where each entry is
-  `{ name, verdict }` — `new` / `deleted` / `moved` (+ `moved: [dx,dy,dz]`) /
+  `{ name, verdict }` — `new` / `deleted` / `moved` (+ `moved: [dx,dy,dz]`, the bounding-box centre's
+  offset, and `rotated: true` when the placement's orientation changed too — a
+  rotation about the centre reads as `moved` ≈ 0 without it) /
   `added` / `removed` / `reshaped` (+ `volumeDeltaMm3`, and for the latter three,
   `addedMm3`/`removedMm3` plus up to 3 largest `regions` from a mesh boolean
   diff) — each optionally carrying `changedOps`, the named root operations behind
   a changed hash when the op graph covers it. `changesSkipped` names why some
   sub-parts stopped short of a full region diff (`"timeout"`, a mesh-diff
   `reason` like `"too-large"`/`"not-watertight"`) — the verdicts already computed
-  still ship. **What's memoized, and what never is**: a sub-part whose final hash
+  still ship. The diffs share a deadline counted from the inspect's START
+  (`REPORT_SHARE_MS`, 6 s of partforge-cloud's 8 s whole-report timeout), and a
+  sub-part over half of `maxTriangles` is never re-meshed for a diff — it gets the
+  volume-delta `reshaped` verdict plus `changesSkipped: "too-large"`. **What's memoized, and what never is**: a sub-part whose final hash
   did not change reuses its previous `measure()` facts and pairwise gap distances
   (via `measure`'s `memo` option, fed `changeTracker.memo`) instead of
   recomputing them — every *changed* sub-part, and anything outside `measure`

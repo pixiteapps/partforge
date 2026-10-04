@@ -610,8 +610,13 @@ export interface ChangeRegion {
 export interface SubPartChange {
   name: string;
   verdict: "new" | "deleted" | "moved" | "added" | "removed" | "reshaped";
-  /** `verdict: "moved"` only: the sub-part's new centroid minus its old one, in mm. */
+  /**
+   * `verdict: "moved"` only: the sub-part's new bounding-box centre minus its old
+   * one, in mm. A rotation about that centre reads as ≈[0, 0, 0] — see `rotated`.
+   */
   moved?: [number, number, number];
+  /** `verdict: "moved"` only, present (true) when the placement's orientation changed too. */
+  rotated?: boolean;
   /** `verdict: "reshaped" | "added" | "removed"`: new volume minus old, in mm³. */
   volumeDeltaMm3?: number;
   /** `verdict: "added" | "removed" | "reshaped"`, when a mesh boolean diff ran. */
