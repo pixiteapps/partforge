@@ -5,12 +5,20 @@
 // list of rigid steps — so the display→export map is E · D⁻¹, with no geometry.
 // Three-free and DOM-free: the pose probe and pose.js are pure.
 import { probeSubPartPose } from "../pose-probe-core.js";
-import { poseDelta } from "../geometry/pose.js";
+import { poseDelta, composePose } from "../geometry/pose.js";
 
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
-export function printFrameMatrix(subPart, { view, p, d }) {
+// `frame` is the delivery's frame. A "canonical" mesh is the build before place(), so its
+// map to the printed part is the export pose itself (place-scope: no geometry is read, so a
+// build that queries its solid cannot make it untrusted); a "posed" mesh already carries the
+// display pose, so the map is E · D⁻¹.
+export function printFrameMatrix(subPart, { view, p, d, frame = "posed" }) {
   if (!subPart?.place) return [...IDENTITY];
+  if (frame === "canonical") {
+    const exp = probeSubPartPose(subPart, { view, purpose: "export", p, d }, { scope: "place" });
+    return exp.trusted ? composePose(exp.pose) : [...IDENTITY];
+  }
   const disp = probeSubPartPose(subPart, { view, purpose: "display", p, d });
   const exp = probeSubPartPose(subPart, { view, purpose: "export", p, d });
   if (!disp.trusted || !exp.trusted || disp.baseHash !== exp.baseHash) return [...IDENTITY];

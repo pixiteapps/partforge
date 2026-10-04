@@ -1,7 +1,9 @@
 // test/lint-place.test.js
 // The two place() invariants, promoted from doc-only to lint: display
 // placement must not read `view`, and display-vs-export must differ by a
-// rigid motion only. Both are probe-based; untrusted probes stay silent.
+// rigid motion only. Both run the place-scope probe (place() alone, on a canonical
+// token), so a querying build no longer hides them; a place() the probe cannot
+// read (it queries the solid or passes a function) stays silent.
 import { expect, test } from "vitest";
 import { lintPart } from "../src/lint.js";
 
@@ -51,8 +53,30 @@ test("a rigid display/export difference is allowed", () => {
   expect(ids(r).filter((i) => i.includes("place"))).toEqual([]);
 });
 
-test("an untrusted probe (query in build) stays silent", () => {
+test("a querying build behind a rigid place() earns no place finding", () => {
   const part = mk((s) => s);
   part.parts.p.build = (k) => { const b = k.box({ size: [1, 1, 1] }); b.volume(); return b; };
   expect(ids(lintPart(part)).filter((i) => i.includes("place"))).toEqual([]);
+});
+
+test("place-not-rigid is found behind a querying build (the full probe used to stay silent)", () => {
+  const part = mk((s, { purpose }) => (purpose === "export" ? s.scale(2) : s));
+  part.parts.p.build = (k) => { const b = k.box({ size: [1, 1, 1] }); b.boundingBox(); return b; };
+  expect(ids(lintPart(part))).toContain("place-not-rigid");
+});
+
+test("view-dependent-display-place is found behind a querying build", () => {
+  const part = mk((s, { view }) => (view === "w" ? s.translate([5, 0, 0]) : s));
+  part.parts.p.build = (k) => { const b = k.box({ size: [1, 1, 1] }); b.volume(); return b; };
+  expect(ids(lintPart(part))).toContain("view-dependent-display-place");
+});
+
+test("the same reshape on both purposes is allowed", () => {
+  const r = lintPart(mk((s, { purpose }) => (purpose === "export" ? s.scale(2).translate([5, 0, 0]) : s.scale(2))));
+  expect(ids(r).filter((i) => i.includes("place"))).toEqual([]);
+});
+
+test("a place() that queries the solid proves nothing and stays silent", () => {
+  const r = lintPart(mk((s, { purpose }) => (purpose === "export" ? s.scale(2) : s.translate([0, 0, s.boundingBox().size[2]]))));
+  expect(ids(r).filter((i) => i.includes("place"))).toEqual([]);
 });

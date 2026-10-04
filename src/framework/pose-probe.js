@@ -27,7 +27,7 @@ function assetSources(part, p) {
 
 // Probe every subpart the view shows. Never throws; a failing/queried/weird
 // subpart yields { trusted: false } and the others still probe.
-export function probePoses(part, view, params) {
+export function probePoses(part, view, params, { scope = "full", purpose = "display" } = {}) {
   const out = new Map();
   let resolved, assets;
   try {
@@ -41,9 +41,11 @@ export function probePoses(part, view, params) {
     const sink = newReadSink();
     sink.attribution = resolved.attribution;
     const rec = recordedParams(resolved, sink);
-    const entry = probeSubPartPose(part.parts[name], { view, purpose: "display", p: rec.p, d: rec.d });
+    const entry = probeSubPartPose(part.parts[name], { view, purpose, p: rec.p, d: rec.d }, { scope });
+    // Assets fold in only outside place scope: a place probe hashes nothing
+    // geometry-dependent, and the mesh cache's asset reads cover the font case.
     out.set(name, entry.trusted
-      ? { ...entry, baseHash: h("with-assets", entry.baseHash, assets), reads: expandReads(sink) }
+      ? { ...entry, baseHash: scope === "place" ? entry.baseHash : h("with-assets", entry.baseHash, assets), reads: expandReads(sink) }
       : entry);
   }
   return out;

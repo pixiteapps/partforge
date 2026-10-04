@@ -1,6 +1,10 @@
 // @vitest-environment node
-import { expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { printFrameMatrix } from "../../src/framework/materials/print-frame.js";
+import { composePose } from "../../src/framework/geometry/pose.js";
+import { probeSubPartPose } from "../../src/framework/pose-probe-core.js";
+import { resolveParams } from "../../src/framework/part-model.js";
+import lattice from "../fixtures/lattice-lid-part.js";
 
 const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const close = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 1e-9);
@@ -49,4 +53,37 @@ test("multiply order: display translate + export rotate → distinguishes E·D�
   // = [[0,-1,0,-10], [-1,0,0,0], [0,0,1,0], [0,0,0,1]] (wrong!)
   const q = apply(m, [0, 1, 0]);
   expect(q.map((v) => Math.round(v * 1e9) / 1e9)).toEqual([-1, -10, 0]);
+});
+
+describe("canonical deliveries (place-only pose)", () => {
+  const at = (openAngle) => resolveParams(lattice, { ...lattice.defaults, openAngle });
+  const insert = lattice.parts.insert;
+
+  test("fixture as-is, frame canonical → composePose(place-scope export pose), non-identity", () => {
+    const { p, d } = at(90);
+    const exp = probeSubPartPose(insert, { view: "assembly", purpose: "export", p, d }, { scope: "place" });
+    expect(exp.trusted).toBe(true);
+    const m = printFrameMatrix(insert, { view: "assembly", p, d, frame: "canonical" });
+    expect(close(m, composePose(exp.pose))).toBe(true);
+    expect(close(m, I)).toBe(false);
+  });
+
+  test("a place that is identity on export → canonical frame is identity", () => {
+    const { p, d } = at(90);
+    const sp = { ...insert, place: (s, ctx) => (ctx.purpose === "export" ? s : insert.place(s, ctx)) };
+    expect(close(printFrameMatrix(sp, { view: "assembly", p, d, frame: "canonical" }), I)).toBe(true);
+  });
+
+  test("canonical with an untrusted export place → identity", () => {
+    const sp = { build: box, place: (s, ctx) => { if (ctx.purpose === "export") s.boundingBox(); return s.rotate(90, [0, 0, 0], [1, 0, 0]); } };
+    expect(close(printFrameMatrix(sp, { view: "v", p: {}, d: {}, frame: "canonical" }), I)).toBe(true);
+  });
+
+  test("posed keeps the E·D⁻¹ rule, with frame given or omitted", () => {
+    const sp = { build: box, place: (s, { purpose }) => (purpose === "export" ? s.rotate(90, [0, 0, 0], [1, 0, 0]) : s) };
+    const omitted = printFrameMatrix(sp, { view: "v", p: {}, d: {} });
+    const posed = printFrameMatrix(sp, { view: "v", p: {}, d: {}, frame: "posed" });
+    expect(close(omitted, posed)).toBe(true);
+    expect(apply(posed, [0, 0, 1]).map((v) => Math.round(v * 1e9) / 1e9)).toEqual([0, -1, 0]);
+  });
 });

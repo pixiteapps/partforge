@@ -152,7 +152,9 @@ export function burnsFor(sp) {
 // object space into the canonical sheet frame, the sheet's thickness, and how many plies
 // its cut walls show (0 unless its preset is `laminated`). null when burnsFor says no or
 // the pose or thickness cannot be read (the build reports those).
-export function sheetFrameFor(sp, { p, d } = {}) {
+// `frame` "canonical": the delivered mesh is the sheet's own canonical solid (place() not
+// applied), so no frame maps it — identity, same t and plies.
+export function sheetFrameFor(sp, { p, d, frame: delivered = "posed" } = {}) {
   if (!burnsFor(sp)) return null;
   const meta = sheetMeta(sp, p, d);
   if (!meta) return null;
@@ -160,7 +162,7 @@ export function sheetFrameFor(sp, { p, d } = {}) {
   let pose;
   try { pose = typeof sp.sheet.pose === "function" ? sp.sheet.pose(p, d) : sp.sheet.pose; } catch { return null; }
   if (pose != null && validatePose(pose)) return null;
-  const frame = pose == null ? [...IDENTITY] : invertRigid(composePose(poseSteps(pose, t)));
+  const frame = delivered === "canonical" || pose == null ? [...IDENTITY] : invertRigid(composePose(poseSteps(pose, t)));
   return { frame, t, plies: lookOf(sp).preset.laminated ? plyCount(t) : 0 };
 }
 

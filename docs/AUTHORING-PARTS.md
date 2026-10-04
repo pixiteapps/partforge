@@ -105,6 +105,10 @@ export default {
   `"display"` or `"export"`; `ctx.view` is the active view. Default is identity, so simple
   parts omit it. **Display placement must not depend on `view`** — display meshes are built
   once per sub-part and cached across views (the viewer re-centres per view).
+  The viewer applies the display pose as a matrix over the canonical mesh, so `build()` may
+  query geometry freely; only `place()` has to stay a rigid motion of its argument, reading
+  `p` and `d`, for a pose-only param to play at frame rate and for layer lines to stay on
+  the part.
   **Any difference between the display and export pose must be a rigid motion** —
   `translate`/`rotate`/`rotateAbout`/`along`/`at` only. Never put a `mirror` or a
   non-identity `scale` on one purpose but not the other: the exported (printed) part is the
@@ -113,6 +117,8 @@ export default {
   ([place-not-rigid](ERROR-PATTERNS.md#place-not-rigid)). If a part genuinely needs a
   reflected or resized form (e.g. a block that seats flipped), bake that into `build` so
   both purposes share one canonical solid, then pose it rigidly.
+  Branch on `purpose` so the export pose is the print orientation: an export pose that
+  follows an animated param pins the layer lines to the pose at the last rebuild.
 - `enabled(p)` gates a conditional sub-part (e.g. only present when a feature is on).
 - A view's sub-parts are derived, never hard-coded: those whose `views` include the view
   and whose `enabled(p)` is true.
@@ -285,10 +291,11 @@ Rules (all lint-enforced):
       tracks: { lidOpen: [[0, 0], [1, 100]] } },
   ]
   ```
-- Playback drives params through the real param pipeline: a **pose-only**
-  param (feeds only rigid placement — see "Caching & determinism" below) plays
-  at frame rate; anything else rebuilds best-effort at worker cadence. `lint`
-  prints a note per track that can't take the fast path.
+- Playback drives params through the real param pipeline. A param read only
+  inside `place()` plays at frame rate whatever `build()` does. A param
+  `build()` reads rebuilds at worker cadence — except through a trailing
+  translate/rotate, which the viewer still re-poses by delta. `lint` notes a track whose
+  `place()` it cannot read (a query on the solid, a function argument).
 - Playback pauses when the user edits any control; Reset restores the values
   the animation found. Because animated values are real params, exporting
   while paused exports the posed state — by design.
@@ -788,7 +795,8 @@ lid's open angle, an exploded-view offset) therefore re-drags in ~0 ms even on t
 slow exact kernel — keep such transforms as the last ops in `build` (or in `place`)
 rather than baking them into the geometry earlier. In the app, such pose-only edits
 skip the worker entirely — the viewer re-poses the cached mesh — so they stay smooth
-even at animation rates (see `runtime.setParams`).
+even at animation rates (see `runtime.setParams`). `place()` needs no geometry: the viewer
+reads its pose off a geometry-free probe of `place()` alone, so `build()` may query freely.
 
 ---
 
@@ -3706,19 +3714,19 @@ key, which the runtime ignores), `animations-not-object`,
 `animation-autoplay-invalid` (all errors). One
 more rule does execute `build`, geometry-free: `animation-track-rebuilds` probes
 each track's endpoint values and emits a **note** when the animated param feeds
-real geometry (or the probe can't be trusted), because such a track plays
-best-effort rather than at frame rate. Notes are informational — they never
+real geometry, or when its `place()` can't be read (it queries the solid or
+passes a function), because such a track plays best-effort rather than at frame
+rate. Notes are informational — they never
 affect `ok`, `measure`, or `--strict`.
 
-**Place invariants**, found by running the geometry-free pose probe (the same
+**Place invariants**, found by running the geometry-free place probe (the same
 one animation's `animation-track-rebuilds` uses) against each sub-part's
-`place()` — `view-dependent-display-place` (display placement must not depend
+`place()`, even when `build()` queries the solid — `view-dependent-display-place` (display placement must not depend
 on the active view, since display meshes are cached across views) and
 `place-not-rigid` (display vs. export placement may differ only by a rigid
-motion — translate/rotate — never a reshape) (both errors). An untrusted probe
-(a query op or function selector reached during `build`/`place`) proves
-nothing either way and stays silent, matching `animation-track-rebuilds`'s own
-trust handling.
+motion — translate/rotate — never a reshape) (both errors). A `place()` the probe
+cannot read (it queries the solid or passes a function) stays silent for the two
+place rules and earns the `animation-track-rebuilds` note.
 
 **Appearance** (all warnings) — `unknown-material` (a `display.material` the
 library does not know; the viewer draws it as if it named none — a PLA print

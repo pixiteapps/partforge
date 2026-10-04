@@ -47,17 +47,18 @@ export function createDebugOverlay({ initialCachingOn = true, onToggle } = {}) {
   // figure doesn't blank the others: a pose-only edit ran no build and no L2 ops,
   // and would otherwise wipe the last build's timing back to "—" on its way to
   // showing a posed count.
-  const shown = { ms: null, hits: 0, misses: 0, skipped: 0, rebuilt: 0, posed: 0 };
+  const shown = { ms: null, hits: 0, misses: 0, skipped: 0, rebuilt: 0, posed: 0, frame: null };
 
   return {
     update(counts = {}) {
       Object.assign(shown, counts);
-      const { ms, hits, misses, skipped, rebuilt, posed } = shown;
+      const { ms, hits, misses, skipped, rebuilt, posed, frame } = shown;
       const l2 = cb.checked ? `${hits} hit / ${misses} miss` : "off";
       readout.textContent =
         `build: ${ms != null ? Math.round(ms) + " ms" : "—"}\n` +
         `L2 ops: ${l2}\n` +
-        `L1 parts: ${skipped} skipped / ${rebuilt} rebuilt / ${posed} posed`;
+        `L1 parts: ${skipped} skipped / ${rebuilt} rebuilt / ${posed} posed` +
+        (frame ? ` · ${frame}` : ""); // delivery frames of the in-view meshes
     },
     detach: () => box.remove(),
   };

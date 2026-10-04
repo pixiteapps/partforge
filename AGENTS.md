@@ -108,7 +108,9 @@ the installed package, so let the publish finish before bumping the dep there.
 ## Architecture
 
 - **`src/framework/`** - the reusable engine (part-agnostic): `mount.js` (app
-  entry), `controls.js` + `param-deps.js` (relevance-aware control panel),
+  entry), `controls.js` + `param-deps.js` (relevance-aware control panel; `pose-fast-path.js`
+  is the pose ladder: rung 1 poses a canonical `place()`-able delivery by matrix,
+  rung 2 keeps the trailing-transform build-delta path, posed deliveries keep the full-scope delta repair),
   `viewer.js` (three.js), `worker.js` / `jobs.js` / `geometry-service.js` (job
   loop across workers), `part-model.js` (the pure part model - `viewSubParts` /
   `resolveParams` / `buildPosed`; a deliberate leaf so the job loop, the
@@ -215,7 +217,8 @@ the installed package, so let the publish finish before bumping the dep there.
   preset any more, and
   `declaresMaterials` still counts only a named material), `print-frame.js`
   and `sheet-look.js` (pose math for layer lines, and a laser sheet part's
-  canonical frame for its burns - from data, no probe; frames are LAZY -
+  canonical frame for its burns - from data, no probe; a canonical delivery's
+  print frame is its export pose and its sheet burn frame is identity; frames are LAZY -
   `mount.js` only records each delivery, against the params its generate job
   was DISPATCHED with (a delivery shown during playback was built at params
   the live ones have left), and the viewer pulls both kinds

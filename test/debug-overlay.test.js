@@ -54,3 +54,12 @@ test("when caching is off, the L2 line reads 'off'", () => {
   const text = document.getElementById("pf-debug").textContent;
   expect(text).toContain("L2 ops: off");
 });
+
+test("the delivery-frame summary rides the L1 parts line once reported", () => {
+  const o = createDebugOverlay({ initialCachingOn: true, onToggle: () => {} });
+  o.update({ skipped: 0, rebuilt: 4 });
+  expect(document.getElementById("pf-debug").textContent).not.toContain("canonical");
+  o.update({ frame: "3 canonical / 1 posed" });
+  expect(document.getElementById("pf-debug").textContent)
+    .toContain("L1 parts: 0 skipped / 4 rebuilt / 0 posed · 3 canonical / 1 posed");
+});

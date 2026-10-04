@@ -5,7 +5,9 @@
 // are never compared to backend hashes, so they only need to be stable and to
 // fold every geometry-affecting argument.
 //
-// Trust model: any query op (boundingBox/volume/…) during a build marks that
+// Trust model (applies PER SCOPE — "full" = build+place, "build" = build alone,
+// "place" = place() alone on a canonical token whose rigidity test is its hash
+// staying CANONICAL): any query op (boundingBox/volume/…) during a build marks that
 // subpart untrusted — a query result could feed geometry OR pose, and the probe
 // returns dummies, so neither hash stability nor pose values can be believed.
 // A FUNCTION passed as (or nested inside) an op argument is untrusted for the
@@ -18,6 +20,9 @@ import { h } from "./geometry/solid-hash.js";
 import { addSugar } from "./geometry/solid-sugar.js";
 import { SOLID_OPS, SOLID_OPTIONAL_OPS, SHAPE2D_OPS, OCCT_ONLY_OPS } from "./geometry/kernel.js";
 import { MAX_PROBE_OPS, ProbeRunawayError } from "./geometry/probe.js";
+
+// The fixed hash a place-scope probe starts from; a rigid place() leaves it unchanged.
+export const CANONICAL = h("canonical");
 
 const NAN3 = () => [NaN, NaN, NaN];
 
@@ -102,7 +107,7 @@ function makeProbeSession() {
     },
   });
 
-  return { kernel, state };
+  return { kernel, state, token };
 }
 
 const finiteVec = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
@@ -111,16 +116,26 @@ const stepsFinite = (steps) => steps.every((st) =>
     ? finiteVec(st.v)
     : Number.isFinite(st.deg) && finiteVec(st.center) && finiteVec(st.axis));
 
-// Probe ONE sub-part's build+place at explicit params/purpose. The shared
-// primitive under probePoses (pose-probe.js) and the lint place/animation
-// rules — kept free of jobs.js imports so the lint import closure stays pure
-// (test/lint-purity.test.js). Never throws; a failing/queried/weird sub-part
-// yields { trusted: false }.
-export function probeSubPartPose(sp, { view, purpose = "display", p, d }) {
+// Probe ONE sub-part at explicit params/purpose. The shared primitive under
+// probePoses (pose-probe.js) and the lint place/animation rules — kept free of
+// jobs.js imports so the lint import closure stays pure (test/lint-purity.test.js).
+// Never throws; a failing/queried/weird sub-part yields { trusted: false }.
+// scope: "full" (build then place), "build" (build only), "place" (place() on a
+// canonical token; no build runs, so a querying build is irrelevant). In place
+// scope a readable but reshaping place() (scale/mirror/union) returns
+// { trusted: false, baseHash, pose } with baseHash !== CANONICAL — see Ruling A.
+export function probeSubPartPose(sp, { view, purpose = "display", p, d }, { scope = "full" } = {}) {
   try {
-    const { kernel, state } = makeProbeSession(); // fresh op budget + trust per subpart
+    const { kernel, state, token } = makeProbeSession(); // fresh op budget + trust per subpart
+    if (scope === "place") {
+      let s = token(CANONICAL, []);
+      if (!sp.place) return { trusted: true, baseHash: CANONICAL, pose: [] };
+      s = sp.place(s, { view, purpose, p, d });
+      if (!(s && s.__poseToken) || state.queried || state.unhashable || !stepsFinite(s._pose)) return { trusted: false };
+      return { trusted: s._hash === CANONICAL, baseHash: s._hash, pose: s._pose };
+    }
     let s = sp.build(kernel, p, d);
-    if (sp.place) s = sp.place(s, { view, purpose, p, d });
+    if (scope === "full" && sp.place) s = sp.place(s, { view, purpose, p, d });
     const ok = s && s.__poseToken && !state.queried && !state.unhashable && stepsFinite(s._pose);
     return ok ? { trusted: true, baseHash: s._hash, pose: s._pose } : { trusted: false };
   } catch {

@@ -16,6 +16,7 @@ import { vectorControlAllows, vectorSourceAllowed, isNoVectorSource } from "./ve
 import { vectorsFor, ensureVectors } from "./vectors.js";
 import { exportSubParts, resolveParamsAttributed, recordedParams, buildPosed } from "./part-model.js";
 import { newReadSink, expandReads } from "./read-recorder.js";
+import { probeSubPartPose } from "./pose-probe-core.js";
 
 export const FONT_SOURCE_CACHE_MAX = 4;
 
@@ -397,15 +398,23 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     await ensureVectors(kernel, declaredVectors);
     // Local shorthand over the shared helper: kernel/part/view/p/d are fixed per job.
     const posed = (name, purpose, prog) => buildPosed(kernel, part, name, { purpose, view: msg.view, p, d, onProgress: prog });
-    // A display build plus the sorted raw keys it read (spec §1): its own p/d
-    // reads, derive-expanded, plus the job's asset-declaration reads.
-    const posedWithReads = (name) => {
+    // Canonical delivery (spec 2026-10-03 place-only pose, §2): when place() can be read
+    // off a token — rigid, no query, no function — the mesh is built WITHOUT it and
+    // stamped with build reads alone; the viewer applies the display pose as a matrix.
+    // Otherwise the pose is baked and both halves' reads are recorded, as before.
+    // The probe runs on the plain p/d, never the recorders, so place reads cannot
+    // land in a canonical stamp.
+    const displayWithReads = (name) => {
+      const sp = part.parts[name];
       const sink = newReadSink();
       sink.attribution = attribution;
       const rec = recordedParams({ p, d }, sink);
-      const solid = buildPosed(kernel, part, name, { purpose: "display", view: msg.view, p: rec.p, d: rec.d });
+      const canonical = probeSubPartPose(sp, { view: msg.view, purpose: "display", p, d }, { scope: "place" }).trusted === true;
+      const solid = canonical
+        ? sp.build(kernel, rec.p, rec.d)
+        : buildPosed(kernel, part, name, { purpose: "display", view: msg.view, p: rec.p, d: rec.d });
       for (const key of assetSink.raw) sink.raw.add(key);
-      return { solid, reads: expandReads(sink) };
+      return { solid, reads: expandReads(sink), frame: canonical ? "canonical" : "posed" };
     };
     // Explicit selection (headless exportParts) overrides view-derived selection.
     const selected = () =>
@@ -429,9 +438,9 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       for (const [i, name] of msg.subparts.entries()) {
         if (useCache) kernel.beginSubPart?.(name); // open the per-sub-part cache round
         try {
-          const { solid, reads } = posedWithReads(name);
+          const { solid, reads, frame } = displayWithReads(name);
           const m = solid.toMesh({ quality: "preview" });
-          meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features, reads });
+          meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features, reads, frame });
         } finally {
           for (const message of kernel.takeBuildWarnings?.() ?? []) warnings.push({ part: name, message });
           if (useCache) kernel.endSubPart?.(); // always close the bracket — a throw mid-build must not strand pinned solids

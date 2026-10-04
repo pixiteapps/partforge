@@ -11,8 +11,9 @@
 
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
-// column-major 4x4 product: (A·B)[c][r] = Σk A[k][r]·B[c][k]
-function mulMat4(A, B) {
+// column-major 4x4 product: (A·B)[c][r] = Σk A[k][r]·B[c][k]. Exported for the
+// pose fast path, which composes a place pose over a build delta.
+export function mulMat4(A, B) {
   const o = new Array(16);
   for (let c = 0; c < 4; c++)
     for (let r = 0; r < 4; r++)

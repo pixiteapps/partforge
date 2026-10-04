@@ -14,7 +14,8 @@ import { err, note } from "./finding.js";
 import { EASINGS } from "../animation.js";
 import { CANONICAL_VIEWS, CAMERA_CUE_VIEWS } from "../view-angles.js";
 import { probeSubPartPose } from "../pose-probe-core.js";
-import { resolveDerived } from "../derive.js";
+import { resolveDerivedAttributed } from "../derive.js";
+import { recorder, expandDerivedReads } from "../read-recorder.js";
 import { desugar } from "../panel/legacy.js";
 import { controlNodes } from "../panel/model.js";
 
@@ -467,8 +468,10 @@ export const ANIMATION_RULES = [
           out.push(note("animation-track-rebuilds",
             cls === "rebuild"
               ? `animation "${name}" track "${key}" rebuilds geometry — playback is best-effort, not frame-rate`
-              : `animation "${name}" track "${key}" cannot use the pose fast path (untrusted probe) — playback is best-effort`,
-            "Frame-rate playback needs the param to feed only rigid placement (translate/rotate in `place()` or at the end of `build`). If that's the intent, restructure so the param never feeds a geometry op, a query, or a function selector; if geometry morphing is the intent, this is expected.",
+              : `animation "${name}" track "${key}" — \`place()\` cannot be probed (it queries the solid or passes a function), so playback is best-effort`,
+            cls === "rebuild"
+              ? "Frame-rate playback needs the param to be read only by `place()` (or by a trailing translate/rotate in `build`) — if geometry morphing is the intent, this note is expected."
+              : "Keep `place()` to translate/rotate of its argument, reading `p`/`d` only; `build()` may query freely.",
             base));
         }
       }
@@ -502,28 +505,54 @@ export const ANIMATION_RULES = [
   },
 ];
 
-// Classify one animated param by probing every sub-part the OWNING view can
-// show, at the track's two endpoint values: identical trusted baseHashes at
-// both ends → the param only re-poses ("pose"); differing hashes → real
-// geometry ("rebuild"); any untrusted probe → "untrusted" (the fast path will
-// decline it at runtime too). Mirrors the runtime trust model in
-// pose-probe-core.js. Sub-parts outside the owning view cannot be moved by this
-// animation, so probing them would only manufacture false notes.
+// Classify one animated param per sub-part the OWNING view can show, at the
+// track's two endpoint values (spec 2026-10-03-place-only-pose §8):
+//   1. place-scope probe unreadable at either end → "untrusted" — the only way
+//      the untrusted note fires: the viewer cannot pose that mesh without a rebuild.
+//   2. build-scope probe trusted at both ends with different baseHash → "rebuild".
+//   3. build-scope probe untrusted (build() queries) → "rebuild" when the build
+//      READ the key, recorded by the probe run itself and derive-expanded as
+//      subPartReadKeys does. A prediction: a read behind a dummy query branch is
+//      missed, which costs a missing note, never a wrong behaviour.
+//   4. otherwise → "pose".
+// A place() that is readable but RESHAPES (scale/mirror/boolean, so its baseHash
+// is not CANONICAL) is delivered posed and played by the full-scope delta fast
+// path, so it is classified as before that path changed: the full probe trusted
+// with equal hashes → "pose", anything else → "rebuild" (the runtime rebuilds it).
+// Sub-parts outside the owning view cannot be moved by this animation, so probing
+// them would only manufacture false notes.
 function classifyTrack(part, p, key, v0, v1, view) {
   let result = "pose";
   for (const sp of Object.values(isPlainObject(part?.parts) ? part.parts : {})) {
     if (!Array.isArray(sp?.views) || !sp.views.includes(view)) continue;
-    const probes = [];
+    const ends = [];
     for (const v of [v0, v1]) {
       const pv = { ...p, [key]: v };
-      let dv;
-      try { dv = resolveDerived(part, pv) ?? {}; } catch { return "untrusted"; }
-      try { if (sp.enabled && !sp.enabled(pv)) { probes.push(null); continue; } } catch { return "untrusted"; }
-      probes.push(probeSubPartPose(sp, { view, purpose: "display", p: pv, d: dv }));
+      // An endpoint whose derive() or enabled() throws cannot be shown to be
+      // pose-only; "best-effort" is the honest claim, and the untrusted note names
+      // place() specifically, so it would mislead here.
+      let attributed;
+      try { attributed = resolveDerivedAttributed(part, pv); } catch { return "rebuild"; }
+      const dv = attributed.d ?? {};
+      try { if (sp.enabled && !sp.enabled(pv)) { ends.push(null); continue; } } catch { return "rebuild"; }
+      const ctx = { view, purpose: "display", p: pv, d: dv };
+      const place = probeSubPartPose(sp, ctx, { scope: "place" });
+      if (place.baseHash === undefined) return "untrusted";
+      if (!place.trusted) { ends.push({ full: probeSubPartPose(sp, ctx) }); continue; }
+      const reads = new Set();
+      const dSeen = new Set();
+      const build = probeSubPartPose(sp, { ...ctx, p: recorder(pv, reads), d: recorder(dv, dSeen) }, { scope: "build" });
+      ends.push({ build, reads: expandDerivedReads(reads, dSeen, attributed) });
     }
-    if (probes.some((x) => x && !x.trusted)) return "untrusted";
-    const [a, b] = probes;
-    if (a && b && a.baseHash !== b.baseHash) result = "rebuild";
+    const [a, b] = ends;
+    if (!a || !b) continue;
+    if (a.full || b.full) {
+      if (!a.full?.trusted || !b.full?.trusted || a.full.baseHash !== b.full.baseHash) result = "rebuild";
+    } else if (a.build.trusted && b.build.trusted) {
+      if (a.build.baseHash !== b.build.baseHash) result = "rebuild";
+    } else if (a.reads.has(key) || b.reads.has(key)) {
+      result = "rebuild";
+    }
   }
   return result;
 }
