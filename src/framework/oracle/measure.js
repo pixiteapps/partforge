@@ -4,7 +4,8 @@ import { assemblyOverlaps } from "../assembly.js";
 import { resolveParams, buildPosed } from "../part-model.js";
 import { newReadSink, expandReads } from "../read-recorder.js";
 import { probeSubPartPose } from "../pose-probe-core.js";
-import { composePose } from "../geometry/pose.js";
+import { composePose, invertRigid, transformPositions } from "../geometry/pose.js";
+import { displayToPrintMatrix } from "../materials/print-frame.js";
 import { isSheetPart, sheetMeta, SHEET_CHECK_BUDGET_MS, MARK_DEPTH } from "../sheet/constants.js";
 import { resolveSheet } from "../sheet/resolve.js";
 import { processFor } from "../process/registry.js";
@@ -127,6 +128,21 @@ const transformPoint = (m, [x, y, z]) => [
   m[1] * x + m[5] * y + m[9] * z + m[13],
   m[2] * x + m[6] * y + m[10] * z + m[14],
 ];
+
+// Overhang of one printed sub-part in its PRINT pose. measure builds the display pose,
+// and a piece shown assembled (a lid closed over its box) is not how it prints: judging
+// its underside there flagged the wrong faces and missed the real ones. The display mesh
+// is carried into the export pose by a rigid matrix — no second build — and the bed is
+// that pose's own lowest Z; `at` comes back in display coordinates, where every other
+// finding of this view sits. An unreadable or identical pose measures as shown.
+function printPoseOverhang(mesh, sp, { view, p, d, maxAngle, displayBedZ }) {
+  const m = p ? displayToPrintMatrix(sp, { view, p, d }) : null;
+  if (!m) return overhang(mesh, { maxAngle, bedZ: displayBedZ });
+  const positions = Float32Array.from(mesh.positions);
+  transformPositions(positions, m);
+  const out = overhang({ positions, indices: mesh.indices }, { maxAngle });
+  return out?.at ? { ...out, at: transformPoint(invertRigid(m), out.at) } : out;
+}
 
 // One sheet row's facts, within `budget.left` ms of 2-D work, which it spends (see
 // measure()). A 2-D location is lifted through the sub-part's DISPLAY pose, as the geometry-free
@@ -268,6 +284,10 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // declaration order). A view without a sheet part measures exactly as it always has.
   const sheetView = built.some(({ name }) => isSheetPart(part.parts[name]));
   const sheetParams = sheetView ? resolveParams(part, params, undefined, reads) : null;
+  // The overhang reading poses each piece for print (printPoseOverhang), which reads the
+  // resolved params through place() — recorded into the same sink, since the reading
+  // depends on them.
+  const poseParams = overhangAngle != null ? (sheetParams ?? resolveParams(part, params, undefined, reads)) : null;
   // The print-pose sizes are read by one check, the process bed (verify passes whether
   // its profile has one; alone, measure asks the part's own profile), and each costs a
   // second build of the part — so they are built only for a bed.
@@ -286,14 +306,14 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       ? minWall(mesh, { bvh: cachedBVH(mesh, bvhCache), maxSamples: minWallSamples, band: wallBands[name] ?? null })
       : null;
     // One pass over the triangles, no index — cheap enough for every lap. The bed
-    // is this sub-part's own lowest Z, already in hand from bounds(). A sub-part
-    // that is never printed (`exportable: false` — a reference ghost, a probe
-    // slab, a placeholder) is not judged. Judged in the DISPLAY pose, which is
-    // what measure builds; a part whose export pose differs (a lid that prints
-    // flat beside its base) is a known gap, stated in the authoring docs.
-    // A sheet part is laser-cut, never printed: no overhang reading for it either.
+    // is this sub-part's own lowest Z in its PRINT pose (printPoseOverhang). A
+    // sub-part that is never printed (`exportable: false` — a reference ghost, a
+    // probe slab, a placeholder) is not judged. A sheet part is laser-cut, never
+    // printed: no overhang reading for it either.
     const printed = part.parts[name]?.exportable !== false && !sheet;
-    const oh = overhangAngle != null && printed ? overhang(mesh, { maxAngle: overhangAngle, bedZ: b.min[2] }) : null;
+    const oh = overhangAngle != null && printed
+      ? printPoseOverhang(mesh, part.parts[name], { view, ...poseParams, maxAngle: overhangAngle, displayBedZ: b.min[2] })
+      : null;
     const vol = solid.volume();
     // Deviation-from-reference: only for a sub-part that declares `reference:
     // "<import name>"` (Task 12 — the gate that holds a parametric rebuild to

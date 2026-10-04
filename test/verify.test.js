@@ -559,6 +559,34 @@ test("overhang: opted in with orientation: print under an FDM profile, the ceili
   expect(oh.hint).toMatch(/reorient|chamfer|supports/);
 });
 
+// The piece prints as BUILT (export pose = identity) but is shown flipped. Overhang is a
+// print fact, so it is read in the print pose: the display pose neither invents nor hides
+// one (it used to be read as shown, a gap the docs stated).
+const flipped = (build) => ({
+  meta: { title: "Flipped", units: "mm" },
+  defaults: { w: 20 },
+  parts: { tee: { views: ["v"], build,
+    place: (s, { purpose }) => (purpose === "export" ? s : s.rotate(180, [0, 0, 5], [1, 0, 0])) } },
+  views: { v: { label: "V" } },
+});
+const slabDownTee = (kk, p) => kk.box({ size: [p.w, 10, 4] }).translate([-p.w / 2, 0, 0])
+  .union(kk.box({ size: [4, 10, 6] }).translate([-2, 0, 4]));
+
+test("overhang: read in the print pose, so a piece shown upside down is not flagged for how it is shown", () => {
+  const v = verify(k, { ...flipped(slabDownTee), verify: { process: "fdm-pla", orientation: "print", expect: { tee: { holes: 0 } } } });
+  const oh = v.cases[0].checks.find((c) => c.metric === "overhangArea");
+  expect(oh.status).toBe("pass");
+});
+
+test("overhang: read in the print pose, so a display pose cannot hide a real one; its location is in display coordinates", () => {
+  const v = verify(k, { ...flipped((kk, p) => tee().parts.tee.build(kk, p)), verify: { process: "fdm-pla", orientation: "print", expect: { tee: { holes: 0 } } } });
+  const oh = v.cases[0].checks.find((c) => c.metric === "overhangArea");
+  expect(oh.status).toBe("warn");
+  expect(oh.actual).toBeCloseTo(160, 3);
+  // The slab's underside sits at z = 6 as built; flipped about z = 5 for display, z = 4.
+  expect(oh.location[2]).toBeCloseTo(4, 3);
+});
+
 test("overhang: not checked without the orientation key (even under FDM) or under a profile with no angle; a clean part passes", () => {
   expect(verify(k, { ...tee(), verify: { process: "fdm-pla", expect: { tee: { holes: 0 } } } }).cases[0].checks.some((c) => c.metric === "overhangArea")).toBe(false);
   expect(verify(k, { ...tee(), verify: { process: "resin", orientation: "print", expect: { tee: { holes: 0 } } } }).cases[0].checks.some((c) => c.metric === "overhangArea")).toBe(false);

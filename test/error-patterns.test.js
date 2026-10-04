@@ -28,7 +28,6 @@ const BASELINE_IDS = [
   "extrude-bevel-reduced",
   "boolean-not-watertight",
   "dual-kernel-same-process",
-  "view-dependent-display-place",
   "wrong-node-version",
   "worker-url-not-inline",
   "minwall-sliver-triangles",

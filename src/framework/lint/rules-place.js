@@ -1,10 +1,13 @@
-// Group 6 — the two place() invariants (docs/AUTHORING-PARTS.md "Display vs
-// export placement"), promoted from doc-only conventions to lint because the
-// animation system leans on place() for every pose-only track:
-//   1. Display placement must not depend on the active view (display meshes
-//      are cached across views; a view-dependent pose serves stale geometry).
-//   2. Display vs export may differ only by a rigid motion (translate/rotate).
-// Both checks run the place-scope pose probe: place() alone, on a canonical token,
+// Group 6 — the place() invariant (docs/AUTHORING-PARTS.md "Display vs export
+// placement"), promoted from a doc-only convention to lint because the animation
+// system leans on place() for every pose-only track: display vs export may differ
+// only by a rigid motion (translate/rotate). A second rule, view-dependent-display-
+// place, forbade a display pose that varies by view; it was retired in 0.142 — since
+// 0.141 the viewer meshes the canonical build once (the mesh cache stamps the view)
+// and re-poses it on every tab switch, so the stale-geometry hazard it named is gone,
+// and as a lint ERROR it refused to load the one-piece-per-sub-part shape a per-view
+// layout needs (partforge-cloud feedback #161/#162).
+// The check runs the place-scope pose probe: place() alone, on a canonical token,
 // so build() may query freely without hiding a finding. A READABLE result carries
 // `baseHash` (CANONICAL for translate/rotate only, another hash when place()
 // reshapes) and `pose`; a place() the probe cannot read (it queries the solid or
@@ -26,35 +29,10 @@ function viewNames(part, view, p) {
     .map(([name]) => name);
 }
 
-const poseKey = (pose) => JSON.stringify(pose);
 const readable = (probe) => probe.baseHash !== undefined;
 const probePlace = (sp, ctx) => probeSubPartPose(sp, ctx, { scope: "place" });
 
 export const PLACE_RULES = [
-  {
-    id: "view-dependent-display-place",
-    run: ({ part, p, d }) => {
-      const out = [];
-      const views = Object.keys(isPlainObject(part?.views) ? part.views : {});
-      if (views.length < 2) return out;
-      for (const [name, sp] of Object.entries(isPlainObject(part?.parts) ? part.parts : {})) {
-        const inViews = views.filter((v) => viewNames(part, v, p).includes(name));
-        if (inViews.length < 2) continue;
-        const probes = inViews.map((view) => probePlace(sp, { view, purpose: "display", p, d }));
-        if (!probes.every(readable)) continue;
-        const first = probes[0];
-        const differs = probes.some((x) => x.baseHash !== first.baseHash || poseKey(x.pose) !== poseKey(first.pose));
-        if (differs) {
-          out.push(err("view-dependent-display-place",
-            `sub-part "${name}" display placement differs between views (${inViews.join(", ")})`,
-            "Display meshes are built once per sub-part and cached across views, so a view-dependent display pose shows stale geometry after a tab switch. Only `place(..., { purpose: \"export\" })` may vary; keep the display branch view-independent.",
-            `parts.${name}.place`,
-            "view-dependent-display-place"));
-        }
-      }
-      return out;
-    },
-  },
   {
     id: "place-not-rigid",
     run: ({ part, p, d }) => {
