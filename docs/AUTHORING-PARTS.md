@@ -2021,17 +2021,16 @@ function hinge(k, p, d) {
   return k.union([fixed, moving]);
 }
 
-// Display: flat hinge against the back panel's outside face, knuckles above the wall.
-// Export: the print pose, untouched — both hinges export the same solid.
-const hingePlace = (i) => (s, { purpose, p, d }) => (purpose === "export" ? s
-  : s.rotateX(90).at([d.hingeX[i], p.depth / 2 + HINGE.leafT, d.axisZ]));
+// Each hinge is built in its PRINT pose (above); the box view stands it up on the back
+// panel. Identical builds, so the kit still prints "hinge" ×2.
+const hingePose = (i) => (s, p, d) => s.rotateX(90).at([d.hingeX[i], p.depth / 2 + HINGE.leafT, d.axisZ]);
 
 // Tongue slots for both hinges, cut where the tongues really land (world → sheet).
 const hingeSlots = (k, p, d, pose, z) => d.hingeX.flatMap((hx) =>
   [hx - HINGE.tongueX, hx + HINGE.tongueX].map((x) =>
     k.shape2d(tab(p).slot).translate(worldToSheet(pose, [x, p.depth / 2, z]))));
 
-const PLY = { views: ["box"], display: { material: "plywood" }, material: "birch plywood", thickness: (p) => p.t };
+const PLY = { views: { box: true }, display: { material: "plywood" }, material: "birch plywood", thickness: (p) => p.t };
 const panel = (name, label, extra = {}) => sheetPart({
   ...PLY, label,
   profile: (k, p, d) => d.box[name].outline,       // drawn as seen from outside
@@ -2086,10 +2085,10 @@ export default {
         .cutAll(hingeSlots(k, p, d, d.lidPose, d.axisZ + d.tongueY)),
       pose: (p, d) => d.lidPose,
     }),
-    hingeL: { label: "Hinge (left)", views: ["box"], display: { material: "pla-print" },
-      export: { name: "hinge" }, build: hinge, place: hingePlace(0) },
-    hingeR: { label: "Hinge (right)", views: ["box"], display: { material: "pla-print" },
-      build: hinge, place: hingePlace(1) },    // identical solid: the kit prints "hinge" ×2
+    hingeL: { label: "Hinge (left)", views: { box: hingePose(0) }, display: { material: "pla-print" },
+      export: { name: "hinge" }, build: hinge },
+    hingeR: { label: "Hinge (right)", views: { box: hingePose(1) }, display: { material: "pla-print" },
+      build: hinge },    // identical solid: the kit prints "hinge" ×2
   },
   views: { box: { label: "Box" } },
   // `process` = the PRINTED parts' profile; sheet parts get the laser checks instead.

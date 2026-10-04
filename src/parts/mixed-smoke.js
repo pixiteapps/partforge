@@ -21,7 +21,7 @@ export default {
   parts: {
     body: {
       label: "Body",
-      views: ["assembly"],
+      views: { assembly: true },
       export: { name: "body" },
       // The t > 0 branch is what drives the routing: the probe re-runs with live
       // params, so the shell call is only seen (and OCCT only engaged) when the
@@ -33,10 +33,9 @@ export default {
     },
     lid: {
       label: "Lid",
-      views: ["assembly"],
+      views: { assembly: (s) => s.at([0, 0, 12]) },
       export: { name: "lid" },
       build: (k, p) => k.box({ min: [0, 0, 0], max: [p.w, p.w, 2] }),
-      place: (s) => s.at([0, 0, 12]),
     },
   },
   views: { assembly: { label: "Assembly" } },
