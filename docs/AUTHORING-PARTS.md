@@ -3723,7 +3723,10 @@ affect `ok`, `measure`, or `--strict`.
 one animation's `animation-track-rebuilds` uses) against each sub-part's
 `place()`, even when `build()` queries the solid — `place-not-rigid` (display vs.
 export placement may differ only by a rigid motion — translate/rotate — never a
-reshape; an error). A `place()` the probe cannot read (it queries the solid or
+reshape; an error; legacy `views` array form), and for the views-map form `view-entry-invalid`
+(an entry that is neither `true` nor a pose function), `views-and-place` (an author `place`
+beside a `views` map) and `view-pose-not-rigid` (an entry that reshapes instead of moving;
+all errors). A `place()` the probe cannot read (it queries the solid or
 passes a function) stays silent for the place rule and earns the
 `animation-track-rebuilds` note.
 
