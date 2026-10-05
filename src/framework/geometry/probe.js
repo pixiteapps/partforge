@@ -51,6 +51,29 @@ function makeProbe(onCall) {
     toSTL: () => new ArrayBuffer(0),
     toIndexedMesh: () => ({ positions: new Float32Array(9), indices: new Uint32Array(3) }),
   };
+  // Solid's optional mesh-topology queries return numbers/booleans, not a handle.
+  Object.assign(solidQueries, { genus: () => 0, isEmpty: () => false });
+  // Shape2D ops that return DATA rather than another Shape2D. Without an entry here an
+  // op falls through to the chaining branch and hands back the Shape2D handle itself,
+  // so ordinary array/number use of the result (`.corners().map(…)`, `.area() * 2`)
+  // was recorded as an unknown Shape2D op and failed lint as `unknown-solid-op`.
+  // `regions()` returns live Shape2Ds, so its dummy is an array holding the handle.
+  // The dummy region is a unit square in the contour IR (closed: last point = first).
+  const square = [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]];
+  const shape2dQueries = {
+    ...solidQueries,
+    isEmpty: () => false,
+    area: () => 1,
+    boundingBox: () => ({ min: [0, 0], max: [1, 1], center: [0.5, 0.5], size: [1, 1] }),
+    toRegions: () => [{ outer: square.map((p) => [...p]), holes: [] }],
+    simple: () => ({ outer: square.map((p) => [...p]), holes: [] }),
+    toContours: () => [{ outer: { start: [0, 0], segments: square.slice(1).map((p) => ({ to: [...p] })) }, holes: [] }],
+    corners: () => [0, 1, 2, 3].map((i) => ({
+      index: i, position: i, point: [...square[i]], interiorAngleDeg: 90, convex: true, segTypes: ["line", "line"],
+    })),
+    contains: () => false,
+    regions: () => [shape2d],
+  };
   const kernelQueries = {
     toSTEP: () => Promise.resolve(new ArrayBuffer(0)),
     cleanup: () => {},
@@ -82,10 +105,8 @@ function makeProbe(onCall) {
     },
   });
 
-  // Shape2D handles reuse solidQueries: boundingBox/volume/… dummies chain the same
-  // either way, and a 3-component bbox is as good a dummy as a 2-component one.
   const proxy = opProxy(solidQueries, "solid", () => proxy);   // a solid handle: every op chains back to itself
-  const shape2d = opProxy(solidQueries, "shape2d",
+  const shape2d = opProxy(shape2dQueries, "shape2d",
     (key) => (SOLID_YIELDING_SHAPE2D_OPS.has(key) ? proxy : shape2d));
   const kernel = opProxy(kernelQueries, "kernel",             // factory ops (cylinder/box/prism/…) return a solid
     (key) => (SHAPE2D_YIELDING_KERNEL_OPS.has(key) ? shape2d : proxy));

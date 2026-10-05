@@ -10,11 +10,21 @@ import { parse3MF } from "./geometry/threemf-parse.js";
 
 const EXT = { step: "step", stp: "step", stl: "stl", "3mf": "3mf" };
 
+// Font files declared as an import. Without this a TTF fell through to the STL
+// fallback below and failed as "binary STL truncated: header says 3848966777
+// triangles" — an error about a mesh the author never meant (cloud feedback #148).
+const FONT_EXT = new Set(["ttf", "otf", "woff", "woff2"]);
+const FONT_MAGIC = ["\x00\x01\x00\x00", "OTTO", "true", "ttcf", "wOFF", "wOF2"];
+
 export function detectFormat(source, bytes) {
   const path = source instanceof URL ? source.pathname : typeof source === "string" ? source.split("?")[0] : null;
   const ext = path?.match(/\.([A-Za-z0-9]+)$/)?.[1]?.toLowerCase();
-  if (ext && EXT[ext]) return EXT[ext];
   const u8 = bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes;
+  const magic = u8 && u8.length >= 4 ? String.fromCharCode(...u8.slice(0, 4)) : "";
+  if ((ext && FONT_EXT.has(ext)) || FONT_MAGIC.includes(magic)) {
+    throw new Error(`a font file${path ? ` ("${path}")` : ""} is declared under \`imports\` — declare it under \`fonts\` and use it with text2d`);
+  }
+  if (ext && EXT[ext]) return EXT[ext];
   if (u8 && u8.length > 0) {
     const head = String.fromCharCode(...u8.slice(0, 64));
     if (head.startsWith("ISO-10303-21")) return "step";
