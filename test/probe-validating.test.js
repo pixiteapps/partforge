@@ -124,3 +124,26 @@ test("detectBackend still routes an OCCT-only op to occt", () => {
   expect(detectBackend(partWith((k) => k.box({ size: [1, 1, 1] }).shell({ t: 0.5, open: { dir: "Z" } })))).toBe("occt");
   expect(detectBackend(partWith((k) => k.box({ size: [1, 1, 1] })))).toBe("manifold");
 });
+
+// Feedback #153: Shape2D queries return data, not a handle, so using the result as
+// an array or number must not be reported as an unknown Shape2D op.
+test("Shape2D query results are data, not chainable handles", () => {
+  const r = runValidatingProbe(partWith((k) => {
+    const s = k.shape2d([[0, 0], [10, 0], [10, 10], [0, 10]]);
+    const ids = s.corners().filter((c) => c.convex).map((c) => c.position);
+    const n = s.regions().length + s.toRegions().length + s.toContours().length + s.simple().outer.length;
+    const a = s.area() * 2 + (s.contains([1, 1]) ? 1 : 0) + (s.isEmpty() ? 0 : 1);
+    return s.regions()[0].fillet(1, { corners: { indices: ids } }).extrude(a + n);
+  }), {}, {});
+  expect(r.throws).toEqual([]);
+  expect(r.issues).toEqual([]);
+});
+
+test("Solid topology queries return numbers, not a handle", () => {
+  const r = runValidatingProbe(partWith((k) => {
+    const c = k.cylinder({ r: 5, h: 10 });
+    return c.genus() > 0 || c.isEmpty() ? c : c.translate([1, 0, 0]);
+  }), {}, {});
+  expect(r.throws).toEqual([]);
+  expect(r.issues).toEqual([]);
+});

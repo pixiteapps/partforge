@@ -47,3 +47,14 @@ describe("resolveImports", () => {
     } finally { globalThis.fetch = g; }
   });
 });
+
+// Cloud feedback #148: a TTF declared as an import used to fall through to the
+// STL fallback and fail as a truncated binary STL. It names the real mistake now.
+it("detectFormat refuses a font file declared as an import, by extension or by bytes", () => {
+  const ttf = new Uint8Array([0x00, 0x01, 0x00, 0x00, 0x00, 0x10, 0x01, 0x00]);
+  expect(() => detectFormat("https://x/face.ttf", ttf)).toThrow(/declare it under `fonts`/);
+  expect(() => detectFormat("pfc-tree://abc", ttf)).toThrow(/font file/);
+  expect(() => detectFormat(null, new TextEncoder().encode("OTTO....")))
+    .toThrow(/font file/);
+  expect(detectFormat(null, new TextEncoder().encode("solid x\n"))).toBe("stl");
+});
