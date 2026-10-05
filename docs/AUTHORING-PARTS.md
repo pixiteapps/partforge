@@ -80,8 +80,7 @@ export default {
     <name>: {
       label?,                              // display name (tabs/progress); defaults to the key
       build: (k, p, d, onProgress?) => Solid,   // REQUIRED — see kernel API
-      place?: (solid, { view, purpose, p, d }) => Solid,   // optional reposition; default identity
-      views,                               // string[] — which views show this sub-part
+      views: { <view>: true | (s, p, d) => s },  // each view the piece appears in: true = as built, or a rigid pose — see Rules
       enabled?: (p) => boolean,            // optional — gate a conditional sub-part
       display?: { color?, opacity?, material?, …overrides }, // viewer-only appearance — see "Materials and appearance"
       export?: { name },                   // filename/object name on export; defaults to the key
@@ -96,31 +95,44 @@ export default {
 
 **Rules:**
 
-- `build(k, p, d, onProgress?)` returns the **canonical** solid (e.g. at the origin).
+- `build(k, p, d, onProgress?)` makes the piece **as it prints**: at the origin, flat
+  face on the bed (z = 0). It is the exported solid and the direction layer lines run.
   It is the only required function per sub-part. `p` is `{ ...defaults, ...userParams }`;
   `d` is `derive(p)` (or `{}`). `onProgress?.("phase")` is optional per-feature progress
   shown during export — call it before expensive steps.
-- `place(solid, ctx)` is an optional escape hatch for parts whose **display pose differs
-  from their export pose** (e.g. positioning a sub-part in an assembly). `ctx.purpose` is
-  `"display"` or `"export"`; `ctx.view` is the active view. Default is identity, so simple
-  parts omit it. Display placement may depend on `view`: the viewer re-poses each
-  sub-part when the tab changes, so one sub-part can sit differently in two views.
-  The viewer applies the display pose as a matrix over the canonical mesh, so `build()` may
-  query geometry freely; only `place()` has to stay a rigid motion of its argument, reading
-  `p` and `d`, for a pose-only param to play at frame rate and for layer lines to stay on
-  the part.
-  **Any difference between the display and export pose must be a rigid motion** —
-  `translate`/`rotate`/`rotateAbout`/`along`/`at` only. Never put a `mirror` or a
-  non-identity `scale` on one purpose but not the other: the exported (printed) part is the
-  same physical object you show in the assembly, and a reflection or resize there makes the
-  two silently disagree — you print the mirror image of what the viewer showed
-  ([place-not-rigid](ERROR-PATTERNS.md#place-not-rigid)). If a part genuinely needs a
-  reflected or resized form (e.g. a block that seats flipped), bake that into `build` so
-  both purposes share one canonical solid, then pose it rigidly.
-  Branch on `purpose` so the export pose is the print orientation: an export pose that
-  follows an animated param pins the layer lines to the pose at the last rebuild.
+- `views` maps each view the piece appears in to `true` (shown as built) or a pose
+  `(s, p, d) => s` that only translates or rotates its argument
+  (`translate`/`rotate`/`rotateAbout`/`along`/`at`) — no geometry queries, no
+  `scale`/`mirror`, no new solid. A view missing from the map does not show the piece.
+- One sub-part per physical piece — never separate "print" and "assembled" copies. A
+  piece's own tab is `true`; `assembly` entries move pieces into place; `print` entries
+  spread them on the bed (`p.w + 10`, not a measurement).
+- A param that moves a piece (hinge angle, slide, explode distance) is read only in
+  `views` entries; it then animates at frame rate with no rebuild.
+- List `assembly` first (or flag it `default: true`) among the top-level `views` (the default tab, and what
+  headless `verify` checks), piece tabs next, `print` last.
+- A piece that is not printed (a filament pin, a bearing) is `exportable: false` and
+  appears in `assembly` only.
+- Sheet pieces (`sheetPart`) keep their `pose`; their `views` entries are `true`, and they
+  stay out of `print` — they are cut, not printed, and export assembled.
+- Exports write the checked pieces as built. STL is one file per piece; a 3MF or STEP of
+  several printed (non-sheet) pieces lays them out on the bed automatically, 10 mm apart.
+
+The Lattice Box's `lid` shows all of it (helpers elided — see `src/parts/lattice-box.js` for the whole part, whose `swing` is `(s, p, d) => s.rotate(-p.lidAngle, d.hinge, [1, 0, 0])`):
+
+```js
+lid: {
+  build: (k, p, d) => /* flat plate with the lattice window, as printed */ k.box({ min: [0, 0, 0], max: [p.w, p.d, p.t] }),
+  views: {
+    assembly: (s, p, d) => swing(s.translate([0, 0, p.h]), p, d),
+    lid: true,
+    print: (s, p, d) => s.translate([p.w + d.gap, 0, 0]),
+  },
+},
+```
+
 - `enabled(p)` gates a conditional sub-part (e.g. only present when a feature is on).
-- A view's sub-parts are derived, never hard-coded: those whose `views` include the view
+- A view's sub-parts are derived, never hard-coded: those whose `views` map has the view
   and whose `enabled(p)` is true.
 - **Which view the viewer opens on** is resolved in this order: the first view flagged
   `default: true`; else the view placing the most sub-parts at `defaults` (counting
@@ -149,6 +161,36 @@ export default {
   rather than bytes or a URL pointing at it — which is the form to use when the artwork
   lives beside the part and is meant to stay hand-editable.
   See "Vector geometry" below for the full contract.
+
+### Legacy: views arrays and place()
+
+Parts written before 0.143 list views as an array and pose pieces with `place()`. They keep working unchanged, including their export poses; new parts use the `views` map above. A sub-part may not use both (`views-and-place`).
+
+```js
+<name>: {
+  build: (k, p, d, onProgress?) => Solid,
+  place?: (solid, { view, purpose, p, d }) => Solid,   // optional reposition; default identity
+  views: ["assembly", "print"],                        // string[] — which views show this sub-part
+},
+```
+
+- `place(solid, ctx)` is an optional escape hatch for parts whose **display pose differs
+  from their export pose**. `ctx.purpose` is `"display"` or `"export"`; `ctx.view` is the
+  active view. Default is identity. Display placement may depend on `view`: the viewer
+  re-poses each sub-part when the tab changes. The viewer applies the display pose as a
+  matrix over the canonical mesh, so `build()` may query geometry freely; only `place()`
+  has to stay a rigid motion of its argument, reading `p` and `d`, for a pose-only param
+  to play at frame rate and for layer lines to stay on the part.
+- **Any difference between the display and export pose must be a rigid motion** —
+  `translate`/`rotate`/`rotateAbout`/`along`/`at` only. Never put a `mirror` or a
+  non-identity `scale` on one purpose but not the other: you would print the mirror image
+  of what the viewer showed ([place-not-rigid](ERROR-PATTERNS.md#place-not-rigid)). Bake a
+  reflected or resized form into `build` so both purposes share one canonical solid, then
+  pose it rigidly.
+- Branch on `purpose` so the export pose is the print orientation: an export pose that
+  follows an animated param pins the layer lines to the pose at the last rebuild.
+- A param read only inside `place()` plays at frame rate; `lint` notes a track whose
+  `place()` it cannot read (a query on the solid, a function argument).
 
 ---
 
@@ -292,10 +334,10 @@ Rules (all lint-enforced):
   ]
   ```
 - Playback drives params through the real param pipeline. A param read only
-  inside `place()` plays at frame rate whatever `build()` does. A param
+  inside a `views` pose plays at frame rate whatever `build()` does. A param
   `build()` reads rebuilds at worker cadence — except through a trailing
   translate/rotate, which the viewer still re-poses by delta. `lint` notes a track whose
-  `place()` it cannot read (a query on the solid, a function argument).
+  pose it cannot read (a query on the solid, a function argument).
 - Playback pauses when the user edits any control; Reset restores the values
   the animation found. Because animated values are real params, exporting
   while paused exports the posed state — by design.
@@ -385,8 +427,8 @@ that changes the part's footprint never slides the floor around under it.
 
 **3D-print layer lines** (`pla-print`, `petg-print`) run perpendicular to the
 **export** pose's +Z — the way the part will be printed, not the way it is
-displayed. If the lines run the wrong way, fix the export pose with `place()`
-(`purpose: "export"`), not the material. Wood, carbon fibre and SLS grain are
+displayed. If the lines run the wrong way, fix `build()` so the piece is
+modelled in its print orientation, not the material. Wood, carbon fibre and SLS grain are
 fixed to the sub-part, so they never slide when the camera or an animation
 moves.
 
@@ -396,7 +438,7 @@ moves.
 `plywood` the plies show through), and its engraving and score lines are scorched, while its
 faces stay wood. There is nothing to set, and it is still one material: the char follows
 from the sheet and the wood it is drawn in. It needs the sheet's own frame, so a sheet part
-with a custom `build` or its own `place` shows plain wood. The CAD view and every export are
+with a custom `build` or a `views` pose of its own shows plain wood. The CAD view and every export are
 unchanged.
 
 **`textureScale` is millimetres, and what it measures depends on the preset's
@@ -792,11 +834,11 @@ This holds on **both backends** — and on OCCT, `translate`/`rotate` are additi
 *pose-lazy*: the backend re-poses the cached solid's cached tessellation instead of
 re-running any B-rep work. A parameter that only feeds a final placement rotation (a
 lid's open angle, an exploded-view offset) therefore re-drags in ~0 ms even on the
-slow exact kernel — keep such transforms as the last ops in `build` (or in `place`)
+slow exact kernel — keep such transforms as the last ops in `build` (or in a `views` pose)
 rather than baking them into the geometry earlier. In the app, such pose-only edits
 skip the worker entirely — the viewer re-poses the cached mesh — so they stay smooth
-even at animation rates (see `runtime.setParams`). `place()` needs no geometry: the viewer
-reads its pose off a geometry-free probe of `place()` alone, so `build()` may query freely.
+even at animation rates (see `runtime.setParams`). A `views` pose needs no geometry: the viewer
+reads it off a geometry-free probe of the pose alone, so `build()` may query freely.
 
 ---
 
@@ -1801,7 +1843,7 @@ cleanly tells a facet artifact (close to 180°, barely bent) from a real corner 
 away from 180°) — filter on that, or pass a coarser `segs` to the tessellated shape
 before unioning, rather than fighting the selector after the fact.
 
-**Which controls a sub-part depends on** is recorded from its real build. The worker notes every `p` and `d` key that `build()` and `place()` read:
+**Which controls a sub-part depends on** is recorded from its real build. The worker notes every `p` and `d` key that `build()` and the `views` poses read:
 - a derived key expands to the params its `derive` group read. `derive` must return its values, not write them onto `p`: a key `derive` writes onto `p` isn't attributed to anything;
 - a param read by a `fonts`, `images` or `vectors` declaration counts for every sub-part.
 
@@ -1838,7 +1880,7 @@ with pockets, steps or fillets. Mixing is normal — plywood panels, printed hin
 import { sheetPart, sheetHole } from "partforge/geometry";
 
 plate: sheetPart({
-  label: "Plate", views: ["main"], display: { material: "clear-acrylic" },
+  label: "Plate", views: { main: true }, display: { material: "clear-acrylic" },
   material: "clear acrylic",                  // stock label: groups pieces in the kit
   thickness: (p) => p.t,                      // the MEASURED thickness, from a control
   profile: (k, p) => k.shape2d([[0, 0], [p.w, 0], [p.w, p.h], [0, p.h]])
@@ -1847,12 +1889,11 @@ plate: sheetPart({
 }),
 ```
 
-It returns an ordinary sub-part: `build`, `place` and a plain-data `sheet`. A field
+It returns an ordinary sub-part: `build`, the pose's placement and a plain-data `sheet`. A field
 needing the kernel is `(k, p, d) => …`; a plain value is a literal or `(p, d) => …`.
 `material`, `thickness` and `profile` are required; `score`, `engrave`, `pose`,
 `process` (default `"laser"`) are optional; `label`, `views`, `display`, `export`,
-`enabled`, `exportable`, `reference` pass through; your own `place` runs after the
-pose. `build` is supplied — passing one throws, as do `kerf`, `outline`/`cut` and
+`enabled`, `exportable`, `reference` pass through; your `views` poses apply after the `pose`, in the viewer only. `build` is supplied — passing one throws, as do `kerf`, `outline`/`cut` and
 `quantity`; each error names the fix.
 
 ### Cut, score and engrave
@@ -1922,8 +1963,7 @@ front: sheetPart({ ...PLY, profile: (k, p, d) => d.box.front.outline, pose: (p, 
 
 `printedTab({ size: [w, h], thickness, clearance = 0.3 })` gives a slot and its printed
 tongue from one spec: `slot` is `(w + c) × (h + c)`, centred (all the play); `tongue`
-is `[w, h, thickness]` for `k.box({ size: tongue })`. Build the printed part in its
-PRINT pose, `place` it for display, and cut the slot where the tongue lands:
+is `[w, h, thickness]` for `k.box({ size: tongue })`. Build the printed part as it prints; its view entry moves it into place; the slot:
 `k.shape2d(tab.slot).translate(worldToSheet(panelPose, tongueCentre))`.
 
 ### What lint and verify check
@@ -1973,7 +2013,7 @@ A host downloads sheet parts as one ZIP, the **cut & print kit** (`format: "bund
 - One thickness per joint: fingers, tabs and T-slots join panels cut from the
   same sheet.
 - Poses are rigid and axis-aligned: `face` and `up` are the six axis words. An
-  angled panel is an author `place` after the pose (realistic mode then shows
+  angled panel is a `views` entry after the pose (realistic mode then shows
   no laser burns), or a printed part.
 - No bends, folds, living hinges or grain direction: `folds`, `bends` and
   `grain` are reserved keys and throw.
@@ -2021,17 +2061,16 @@ function hinge(k, p, d) {
   return k.union([fixed, moving]);
 }
 
-// Display: flat hinge against the back panel's outside face, knuckles above the wall.
-// Export: the print pose, untouched — both hinges export the same solid.
-const hingePlace = (i) => (s, { purpose, p, d }) => (purpose === "export" ? s
-  : s.rotateX(90).at([d.hingeX[i], p.depth / 2 + HINGE.leafT, d.axisZ]));
+// Each hinge is built in its PRINT pose (above); the box view stands it up on the back
+// panel. Identical builds, so the kit still prints "hinge" ×2.
+const hingePose = (i) => (s, p, d) => s.rotateX(90).at([d.hingeX[i], p.depth / 2 + HINGE.leafT, d.axisZ]);
 
 // Tongue slots for both hinges, cut where the tongues really land (world → sheet).
 const hingeSlots = (k, p, d, pose, z) => d.hingeX.flatMap((hx) =>
   [hx - HINGE.tongueX, hx + HINGE.tongueX].map((x) =>
     k.shape2d(tab(p).slot).translate(worldToSheet(pose, [x, p.depth / 2, z]))));
 
-const PLY = { views: ["box"], display: { material: "plywood" }, material: "birch plywood", thickness: (p) => p.t };
+const PLY = { views: { box: true }, display: { material: "plywood" }, material: "birch plywood", thickness: (p) => p.t };
 const panel = (name, label, extra = {}) => sheetPart({
   ...PLY, label,
   profile: (k, p, d) => d.box[name].outline,       // drawn as seen from outside
@@ -2086,10 +2125,10 @@ export default {
         .cutAll(hingeSlots(k, p, d, d.lidPose, d.axisZ + d.tongueY)),
       pose: (p, d) => d.lidPose,
     }),
-    hingeL: { label: "Hinge (left)", views: ["box"], display: { material: "pla-print" },
-      export: { name: "hinge" }, build: hinge, place: hingePlace(0) },
-    hingeR: { label: "Hinge (right)", views: ["box"], display: { material: "pla-print" },
-      build: hinge, place: hingePlace(1) },    // identical solid: the kit prints "hinge" ×2
+    hingeL: { label: "Hinge (left)", views: { box: hingePose(0) }, display: { material: "pla-print" },
+      export: { name: "hinge" }, build: hinge },
+    hingeR: { label: "Hinge (right)", views: { box: hingePose(1) }, display: { material: "pla-print" },
+      build: hinge },    // identical solid: the kit prints "hinge" ×2
   },
   views: { box: { label: "Box" } },
   // `process` = the PRINTED parts' profile; sheet parts get the laser checks instead.
@@ -2456,7 +2495,7 @@ parts: {
   // Ghost overlay: only in "reference" — never coincides with body in "assembly".
   ref: {
     label: "Reference (ghost)",
-    views: ["reference"],
+    views: { reference: true },
     exportable: false,
     display: { opacity: 0.3 },
     build: (k) => k.import("scan"),
@@ -2465,7 +2504,7 @@ parts: {
   // in "reference" for visual alignment checking.
   body: {
     label: "Rebuild",
-    views: ["assembly", "reference"],
+    views: { assembly: true, reference: true },
     reference: "scan",
     build: (k, p) => k.box({ min: [0, 0, 0], max: [p.scanW, p.scanD, p.scanH] }),
   },
@@ -3714,17 +3753,20 @@ key, which the runtime ignores), `animations-not-object`,
 `animation-autoplay-invalid` (all errors). One
 more rule does execute `build`, geometry-free: `animation-track-rebuilds` probes
 each track's endpoint values and emits a **note** when the animated param feeds
-real geometry, or when its `place()` can't be read (it queries the solid or
+real geometry, or when its pose can't be read (it queries the solid or
 passes a function), because such a track plays best-effort rather than at frame
 rate. Notes are informational — they never
 affect `ok`, `measure`, or `--strict`.
 
-**Place invariants**, found by running the geometry-free place probe (the same
-one animation's `animation-track-rebuilds` uses) against each sub-part's
-`place()`, even when `build()` queries the solid — `place-not-rigid` (display vs.
-export placement may differ only by a rigid motion — translate/rotate — never a
-reshape; an error). A `place()` the probe cannot read (it queries the solid or
-passes a function) stays silent for the place rule and earns the
+**View-pose invariants**, found by running the geometry-free pose probe (the same
+one animation's `animation-track-rebuilds` uses) against each `views` entry, even when
+`build()` queries the solid — `view-entry-invalid` (an entry that is neither `true` nor a
+pose function), `views-and-place` (an author `place` beside a `views` map) and
+`view-pose-not-rigid` (an entry that reshapes instead of moving), `views-invalid` (a sub-part
+whose `views` is missing or neither a map nor an array; all errors), and
+`place-not-rigid` (legacy `place()` form: display vs. export placement may differ only by a
+rigid motion — translate/rotate — never a reshape; an error). A pose the probe cannot read
+(it queries the solid or passes a function) stays silent for these rules and earns the
 `animation-track-rebuilds` note.
 
 **Appearance** (all warnings) — `unknown-material` (a `display.material` the
@@ -4007,7 +4049,7 @@ counted: the footprint itself, and faces whose centroid sits within 1 mm of the 
 flat underside spanning two supports) and the ceiling of a horizontal bore are
 reported as overhangs — the mesh alone cannot tell a bridge from a ceiling — which
 is why this is a warning and never a gate. Two more limits, stated: it is judged in
-the DISPLAY pose, so a sub-part whose `place` differs for export (a lid that prints
+the DISPLAY pose, so a sub-part whose `assembly` pose stands it differently from how it prints (a lid that prints
 flat beside its base) is measured as displayed, and `exportable: false` sub-parts
 are skipped. Switch it off under an FDM profile with an inline
 `{ base: "fdm-pla", overhang: null }`. **What `expect` gives you:** per-sub-part
@@ -4387,6 +4429,9 @@ symptom first** — it maps error text → cause → fix. The invariants, one li
 - **`build` is a pure function of `(k, p, d)`** — impurity silently defeats the geometry
   cache ([impure-build-stale-preview](ERROR-PATTERNS.md#impure-build-stale-preview)).
 - **Units are millimetres** throughout.
+- **One sub-part per physical piece, built as it prints; `views` poses it.** A `views`
+  entry is `true` or a rigid pose `(s, p, d) => s` — never a second "print" copy, never a
+  reshape ([view-pose-not-rigid](ERROR-PATTERNS.md#view-pose-not-rigid)).
 - **Never sample an arc into points by hand.** A `Math.cos` loop hides the sweep direction
   in a sign, and a wrong sign produces a self-crossing outline that builds with inverted
   fill and no error — only a `profile-self-intersects` warning

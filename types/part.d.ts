@@ -350,6 +350,7 @@ export type DeriveSpec<P = ResolvedParams, D = Derived> =
 
 // --- sub-parts --------------------------------------------------------------
 
+/** The argument to the LEGACY `place` (views-array form); the `views` map form needs none. */
 export interface PlaceContext<P = ResolvedParams, D = Derived> {
   /** The active view. Display placement must NOT depend on it. */
   view: string;
@@ -367,12 +368,18 @@ export interface SubPartDefinition<P = ResolvedParams, D = Derived> {
    */
   build: (k: GeometryKernel, p: P, d: D, onProgress?: (phase: string) => void) => Solid;
   /**
-   * Optional reposition (default identity), for a part whose display pose
+   * LEGACY form (with a `views` array); with a `views` map put each pose in its
+   * entry instead. Optional reposition (default identity), for a part whose display pose
    * differs from its export pose. Any such difference must be a RIGID motion.
    */
   place?: (solid: Solid, ctx: PlaceContext<P, D>) => Solid;
-  /** Which views show this sub-part. Every name must exist in `views`. */
-  views: string[];
+  /**
+   * Each view the sub-part appears in: a map of view name to `true` (shown as
+   * built) or a rigid pose `(s, p, d) => s.translate(…)`. Every name must exist in
+   * the part's `views`. The legacy form, an array of names (placed by `place`),
+   * still works.
+   */
+  views: string[] | Record<string, true | ((s: Solid, p: P, d: D) => Solid)>;
   /** Gate a conditional sub-part. Coerced with `!!`. */
   enabled?: (p: P) => unknown;
   /** `false` = reference/preview-only: shown in the viewer, never exported. */

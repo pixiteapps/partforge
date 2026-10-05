@@ -45,7 +45,7 @@ test("the Laser-cut wood paragraph says who burns, that nothing is set, and when
   const i = section.indexOf("**Laser-cut wood.**");
   expect(i).toBeGreaterThan(-1);
   const para = section.slice(i, section.indexOf("\n\n", i));
-  for (const s of ["`sheetPart`", "`plywood`", "`oak`", "`walnut`", "realistic", "nothing to set", "custom `build`", "own `place`", "CAD"]) {
+  for (const s of ["`sheetPart`", "`plywood`", "`oak`", "`walnut`", "realistic", "nothing to set", "custom `build`", "`views` pose", "CAD"]) {
     expect(para, s).toContain(s);
   }
   // A sheet that names no material burns too, as its stock's look (realisticDisplay).

@@ -317,7 +317,7 @@ export interface SheetPartSpec<P = ResolvedParams, D = Derived> {
   pose?: SheetPose | ((p: P, d: D) => SheetPose | null) | null;
   process?: "laser";
   label?: string;
-  views: string[];
+  views: string[] | Record<string, true | ((s: Solid, p: P, d: D) => Solid)>;
   display?: SubPartDefinition<P, D>["display"];
   export?: { name: string };
   enabled?: (p: P) => unknown;

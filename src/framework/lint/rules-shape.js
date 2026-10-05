@@ -3,6 +3,7 @@
 // defaults and build but not `views`, and had already drifted from the eval runner's
 // separate views check. One source of truth ends that split.
 import { err, warn } from "./finding.js";
+import { isViewsMap, viewsOf } from "../sub-part-views.js";
 import { SHEET_DOC_ID } from "../sheet/constants.js";
 
 // A sub-part that carries a `sheet` declaration but no build was meant to be a sheet
@@ -70,7 +71,7 @@ export const SHAPE_RULES = [
     id: "missing-views",
     run: ({ part }) => (isPlainObject(part?.views) && Object.keys(part.views).length > 0 ? [] : [
       err("missing-views", "the part has no `views` map",
-        "Add a top-level `views` object — e.g. `views: { main: { label: \"Main\" } }` — and list each view name in the owning sub-part's `views` array.",
+        "Add a top-level `views` object — e.g. `views: { main: { label: \"Main\" } }` — and give each sub-part a `views` map naming the views it appears in.",
         "views"),
     ]),
   },
@@ -81,15 +82,17 @@ export const SHAPE_RULES = [
       if (known.size === 0) return []; // missing-views already reported it; don't pile on
       const out = [];
       for (const [name, sp] of partEntries(part)) {
-        if (!Array.isArray(sp?.views)) continue;
-        sp.views.forEach((v, i) => {
+        const listed = Array.isArray(sp?.views) ? sp.views.map((v, i) => [v, `parts.${name}.views[${i}]`])
+          : isViewsMap(sp?.views) ? Object.keys(sp.views).map((v) => [v, `parts.${name}.views.${v}`])
+          : [];
+        for (const [v, path] of listed) {
           if (!known.has(v)) {
             out.push(err("part-view-unknown",
               `sub-part "${name}" lists view "${v}", which is not in the \`views\` map`,
               `Add "${v}" to the top-level \`views\` map, or correct the name to one of: ${[...known].join(", ")}.`,
-              `parts.${name}.views[${i}]`));
+              path));
           }
-        });
+        }
       }
       return out;
     },
@@ -100,12 +103,12 @@ export const SHAPE_RULES = [
       if (!isPlainObject(part?.views)) return [];
       const used = new Set();
       for (const [, sp] of partEntries(part)) {
-        if (Array.isArray(sp?.views)) for (const v of sp.views) used.add(v);
+        for (const v of viewsOf(sp)) used.add(v);
       }
       return Object.keys(part.views)
         .filter((v) => !used.has(v))
         .map((v) => warn("view-unused", `view "${v}" is not listed by any sub-part`,
-          `Either add "${v}" to a sub-part's \`views\` array or remove it from the \`views\` map — as it stands the view renders empty.`,
+          `Either add "${v}" to a sub-part's \`views\` or remove it from the \`views\` map — as it stands the view renders empty.`,
           `views.${v}`));
     },
   },
