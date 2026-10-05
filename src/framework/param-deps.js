@@ -3,6 +3,7 @@
 import { recorder, expandDerivedReads } from "./read-recorder.js";
 import { resolveDerivedAttributed } from "./derive.js";
 import { createProbeKernel } from "./geometry/probe.js";
+import { inView, placeOf } from "./sub-part-views.js";
 import { byteAwareReplacer } from "./geometry/solid-hash.js";
 import { viewSubParts } from "./part-model.js";
 
@@ -21,7 +22,7 @@ export function relevantParamKeys(part, view, params) {
     // sub-part is currently hidden (on-screen ones are already in `reads`).
     for (const name of Object.keys(part.parts)) {
       const sp = part.parts[name];
-      if (sp.views.includes(view) && sp.enabled) sp.enabled(recorder(params, relevant));
+      if (inView(sp, view) && sp.enabled) sp.enabled(recorder(params, relevant));
     }
     return relevant;
   } catch {
@@ -48,7 +49,8 @@ export function subPartReadKeys(part, view, params) {
       // place() shapes what's on screen too (display pose is baked into the cached
       // mesh), so its reads count — without this, a param consumed only by place()
       // would let the mesh cache skip a rebuild and leave the sub-part misplaced.
-      if (sp.place) sp.place(built, { view, purpose: "display", p: recorder(params, reads), d: recorder(derived, dSeen) });
+      const place = placeOf(sp);
+      if (place) place(built, { view, purpose: "display", p: recorder(params, reads), d: recorder(derived, dSeen) });
       map.set(name, expandDerivedReads(reads, dSeen, { depsOf, allInputs }));
     }
     return map;
@@ -102,7 +104,7 @@ export function recordedRelevantKeys(part, view, params, readsOf) {
     }
     for (const name of Object.keys(part.parts)) {
       const sp = part.parts[name];
-      if (sp.views.includes(view) && sp.enabled) sp.enabled(recorder(params, relevant));
+      if (inView(sp, view) && sp.enabled) sp.enabled(recorder(params, relevant));
     }
     return relevant;
   } catch {

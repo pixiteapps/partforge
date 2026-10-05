@@ -13,6 +13,7 @@
 import { err, note } from "./finding.js";
 import { EASINGS } from "../animation.js";
 import { CANONICAL_VIEWS, CAMERA_CUE_VIEWS } from "../view-angles.js";
+import { inView } from "../sub-part-views.js";
 import { probeSubPartPose } from "../pose-probe-core.js";
 import { resolveDerivedAttributed } from "../derive.js";
 import { recorder, expandDerivedReads } from "../read-recorder.js";
@@ -246,8 +247,8 @@ export const ANIMATION_RULES = [
         rawSteps(a).forEach((s, i) => {
           for (const key of Object.keys(isPlainObject(s.opacity) ? s.opacity : {})) {
             const sub = isPlainObject(part?.parts) ? part.parts[key] : undefined;
-            const inView = isPlainObject(sub) && Array.isArray(sub.views) && sub.views.includes(view);
-            if (!inView) {
+            const listed = isPlainObject(sub) && inView(sub, view);
+            if (!listed) {
               out.push(err("animation-opacity-unknown-part",
                 `animation "${name}" fades "${key}", which is not a sub-part of view "${view}"`,
                 `Opacity tracks name sub-parts of the owning view — add "${view}" to \`parts.${key}.views\`, or correct the key.`,
@@ -524,7 +525,7 @@ export const ANIMATION_RULES = [
 function classifyTrack(part, p, key, v0, v1, view) {
   let result = "pose";
   for (const sp of Object.values(isPlainObject(part?.parts) ? part.parts : {})) {
-    if (!Array.isArray(sp?.views) || !sp.views.includes(view)) continue;
+    if (!inView(sp, view)) continue;
     const ends = [];
     for (const v of [v0, v1]) {
       const pv = { ...p, [key]: v };

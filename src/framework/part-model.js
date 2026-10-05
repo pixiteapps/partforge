@@ -11,15 +11,15 @@
 // oracle depend on the part model without an import cycle back through the job loop.
 import { resolveDerived, resolveDerivedAttributed } from "./derive.js";
 import { recorder } from "./read-recorder.js";
+import { inView, placeOf } from "./sub-part-views.js";
 
 // Names of the sub-parts a view shows: declared in the view and enabled for these
 // params. Order follows Object.keys(part.parts) (definition order).
 export function viewSubParts(part, view, params) {
   return Object.keys(part.parts).filter((name) => {
     const sp = part.parts[name];
-    const inView = sp.views.includes(view);
     const on = sp.enabled ? !!sp.enabled(params) : true;
-    return inView && on;
+    return inView(sp, view) && on;
   });
 }
 
@@ -70,12 +70,13 @@ export function resolveParams(part, params, sanitize, reads) {
   return recordedParams(resolved, reads);
 }
 
-// Build one sub-part and apply its optional place() for the given purpose/view.
+// Build one sub-part and apply its placement (sub-part-views.js placeOf — a legacy place() or the compiled views map) for the given purpose/view.
 // `p`/`d` come from resolveParams(). This is the SINGLE definition of "a posed
 // sub-part solid" — the worker, the collision check, and the test harness all call
 // it, so display/export poses can never drift between the app and its tests.
 export function buildPosed(kernel, part, name, { purpose, view, p, d, onProgress } = {}) {
   const sp = part.parts[name];
   const solid = sp.build(kernel, p, d, onProgress);
-  return sp.place ? sp.place(solid, { view, purpose, p, d }) : solid;
+  const place = placeOf(sp);
+  return place ? place(solid, { view, purpose, p, d }) : solid;
 }

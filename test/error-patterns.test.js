@@ -88,6 +88,10 @@ const BASELINE_IDS = [
   "boolean-dropped-operand",
   "boolean-impossible-result",
   "arcto-radius-too-short",
+  "view-entry-invalid",
+  "views-and-place",
+  "view-pose-not-rigid",
+  "views-invalid",
 ];
 
 const entries = parsePatterns(doc);

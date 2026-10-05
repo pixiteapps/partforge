@@ -1027,6 +1027,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // normal is enough to char a whole face. A print frame keeps its last value (the
         // worst it can do is run layer lines the wrong way).
         if (!resolved) { delete sheetFrames[n]; continue; }
+        // For a views-map sub-part the export pose is the build itself (plus a sheet pose), so a canonical
+        // delivery's print frame is identity — no special case, the probe reads the compiled placement.
         if (layerLined.has(n)) printFrames[n] = printFrameMatrix(part.parts[n], { view: at.view, ...resolved, frame });
         if (burning.has(n)) {
           const f = sheetFrameFor(part.parts[n], { ...resolved, frame });

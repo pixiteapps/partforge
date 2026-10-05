@@ -15,7 +15,11 @@
 // and `sp.place === sp.sheet.generatedPlace`.
 //
 // Placement (decision 10): the pose applies for display AND export, then the author's
-// own `place` — so STEP/3MF/STL files of a sheet forge come out assembled.
+// own `place` — so STEP/3MF/STL files of a sheet forge come out assembled. With a views
+// map, the generated place is the BASE of the compiled placement (sub-part-views.js
+// placeOf): the pose applies for display and export, then the view's entry for display
+// only. Sheet entries are taught as `true`; a pose entry is allowed but drops the burn
+// pass (sheet-look.js burnsFor).
 import { RENAMED_KEYS, RESERVED_KEYS, SHEET_KEYS, SUBPART_PASSTHROUGH_KEYS } from "./constants.js";
 import { validatePose } from "./pose.js";
 import { applyPose, resolveSheet, sheetPreview } from "./resolve.js";

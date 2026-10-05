@@ -1390,6 +1390,598 @@
     "declared": 10,
     "evaluated": 10
   },
+  "lattice-box.js#assembly": {
+    "ok": true,
+    "view": "assembly",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "w": 80,
+          "d": 60,
+          "h": 40,
+          "wall": 2,
+          "t": 2.4,
+          "lidAngle": 0
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              80,
+              63.675,
+              42.4000015
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[80,63.674999952316284,42.400001525878906] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": "body×plate",
+            "metric": "nearMiss",
+            "kind": "warn",
+            "expr": "intent undeclared",
+            "actual": 0.200000003,
+            "status": "warn",
+            "pass": false,
+            "message": "0.200mm gap",
+            "hint": "sub-parts nearly touch here — if they should meet, declare the pair in verify.expect._view.contacts and close the gap; if a free fit is intended, declare it under clearance",
+            "pattern": "near-miss-gap",
+            "location": [
+              60,
+              -0.100000001,
+              14
+            ]
+          },
+          {
+            "scope": "view",
+            "subpart": "body×pin",
+            "metric": "nearMiss",
+            "kind": "warn",
+            "expr": "intent undeclared",
+            "actual": 0.125,
+            "status": "warn",
+            "pass": false,
+            "message": "0.125mm gap",
+            "hint": "sub-parts nearly touch here — if they should meet, declare the pair in verify.expect._view.contacts and close the gap; if a free fit is intended, declare it under clearance",
+            "pattern": "near-miss-gap",
+            "location": [
+              80,
+              60.0625,
+              40
+            ]
+          },
+          {
+            "scope": "view",
+            "subpart": "lid×mesh",
+            "metric": "nearMiss",
+            "kind": "warn",
+            "expr": "intent undeclared",
+            "actual": 0.199996948,
+            "status": "warn",
+            "pass": false,
+            "message": "0.200mm gap",
+            "hint": "sub-parts nearly touch here — if they should meet, declare the pair in verify.expect._view.contacts and close the gap; if a free fit is intended, declare it under clearance",
+            "pattern": "near-miss-gap",
+            "location": [
+              67.9000015,
+              47.7999992,
+              42.4000015
+            ]
+          },
+          {
+            "scope": "view",
+            "subpart": "lid×pin",
+            "metric": "nearMiss",
+            "kind": "warn",
+            "expr": "intent undeclared",
+            "actual": 0.125,
+            "status": "warn",
+            "pass": false,
+            "message": "0.125mm gap",
+            "hint": "sub-parts nearly touch here — if they should meet, declare the pair in verify.expect._view.contacts and close the gap; if a free fit is intended, declare it under clearance",
+            "pattern": "near-miss-gap",
+            "location": [
+              80,
+              60.0625,
+              40
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.9999,
+            "status": "pass",
+            "pass": true,
+            "message": "1.9998999999999967 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lid",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 2.39990153,
+            "status": "pass",
+            "pass": true,
+            "message": "2.399901525878903 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mesh",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.60381539,
+            "status": "pass",
+            "pass": true,
+            "message": "1.6038153876265568 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.59989995,
+            "status": "pass",
+            "pass": true,
+            "message": "1.599899949336052 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "pin",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.74925567,
+            "status": "pass",
+            "pass": true,
+            "message": "1.7492556680713962 >= 1.2"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": "body×plate",
+        "metric": "nearMiss",
+        "kind": "warn",
+        "expr": "intent undeclared",
+        "actual": 0.200000003,
+        "status": "warn",
+        "pass": false,
+        "message": "0.200mm gap",
+        "hint": "sub-parts nearly touch here — if they should meet, declare the pair in verify.expect._view.contacts and close the gap; if a free fit is intended, declare it under clearance",
+        "pattern": "near-miss-gap",
+        "location": [
+          60,
+          -0.100000001,
+          14
+        ]
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": "body×pin",
+        "metric": "nearMiss",
+        "kind": "warn",
+        "expr": "intent undeclared",
+        "actual": 0.125,
+        "status": "warn",
+        "pass": false,
+        "message": "0.125mm gap",
+        "hint": "sub-parts nearly touch here — if they should meet, declare the pair in verify.expect._view.contacts and close the gap; if a free fit is intended, declare it under clearance",
+        "pattern": "near-miss-gap",
+        "location": [
+          80,
+          60.0625,
+          40
+        ]
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": "lid×mesh",
+        "metric": "nearMiss",
+        "kind": "warn",
+        "expr": "intent undeclared",
+        "actual": 0.199996948,
+        "status": "warn",
+        "pass": false,
+        "message": "0.200mm gap",
+        "hint": "sub-parts nearly touch here — if they should meet, declare the pair in verify.expect._view.contacts and close the gap; if a free fit is intended, declare it under clearance",
+        "pattern": "near-miss-gap",
+        "location": [
+          67.9000015,
+          47.7999992,
+          42.4000015
+        ]
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": "lid×pin",
+        "metric": "nearMiss",
+        "kind": "warn",
+        "expr": "intent undeclared",
+        "actual": 0.125,
+        "status": "warn",
+        "pass": false,
+        "message": "0.125mm gap",
+        "hint": "sub-parts nearly touch here — if they should meet, declare the pair in verify.expect._view.contacts and close the gap; if a free fit is intended, declare it under clearance",
+        "pattern": "near-miss-gap",
+        "location": [
+          80,
+          60.0625,
+          40
+        ]
+      }
+    ],
+    "unevaluated": [],
+    "declared": 7,
+    "evaluated": 7
+  },
+  "lattice-box.js#body": {
+    "ok": true,
+    "view": "body",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "w": 80,
+          "d": 60,
+          "h": 40,
+          "wall": 2,
+          "t": 2.4,
+          "lidAngle": 0
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              80,
+              60,
+              40
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[80,60,40] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.9999,
+            "status": "pass",
+            "pass": true,
+            "message": "1.9998999999999967 >= 1.2"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "unevaluated": [],
+    "declared": 3,
+    "evaluated": 3
+  },
+  "lattice-box.js#lid": {
+    "ok": true,
+    "view": "lid",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "w": 80,
+          "d": 60,
+          "h": 40,
+          "wall": 2,
+          "t": 2.4,
+          "lidAngle": 0
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              80,
+              60,
+              2.4000001
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[80,60,2.4000000953674316] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lid",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 2.3999001,
+            "status": "pass",
+            "pass": true,
+            "message": "2.399900095367431 >= 1.2"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "unevaluated": [],
+    "declared": 3,
+    "evaluated": 3
+  },
+  "lattice-box.js#mesh": {
+    "ok": true,
+    "view": "mesh",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "w": 80,
+          "d": 60,
+          "h": 40,
+          "wall": 2,
+          "t": 2.4,
+          "lidAngle": 0
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              55.5999985,
+              35.5999985,
+              2.4000001
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[55.599998474121094,35.599998474121094,2.4000000953674316] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mesh",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.60381545,
+            "status": "pass",
+            "pass": true,
+            "message": "1.6038154469310686 >= 1.2"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "unevaluated": [],
+    "declared": 3,
+    "evaluated": 3
+  },
+  "lattice-box.js#plate": {
+    "ok": true,
+    "view": "plate",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "w": 80,
+          "d": 60,
+          "h": 40,
+          "wall": 2,
+          "t": 2.4,
+          "lidAngle": 0
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              40,
+              12,
+              1.60000002
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[40,12,1.600000023841858] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.59990002,
+            "status": "pass",
+            "pass": true,
+            "message": "1.599900023841858 >= 1.2"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "unevaluated": [],
+    "declared": 3,
+    "evaluated": 3
+  },
+  "lattice-box.js#print": {
+    "ok": true,
+    "view": "print",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "w": 80,
+          "d": 60,
+          "h": 40,
+          "wall": 2,
+          "t": 2.4,
+          "lidAngle": 0
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              170,
+              105.599998,
+              40
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[170,105.5999984741211,40] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.9999,
+            "status": "pass",
+            "pass": true,
+            "message": "1.9998999999999967 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lid",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 2.3999001,
+            "status": "pass",
+            "pass": true,
+            "message": "2.399900095367431 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mesh",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.60380982,
+            "status": "pass",
+            "pass": true,
+            "message": "1.6038098214547587 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 1.59990002,
+            "status": "pass",
+            "pass": true,
+            "message": "1.599900023841858 >= 1.2"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "unevaluated": [],
+    "declared": 6,
+    "evaluated": 6
+  },
   "lofted-bottle.js#bottle": {
     "ok": true,
     "view": "bottle",

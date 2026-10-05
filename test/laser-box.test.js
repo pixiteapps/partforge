@@ -181,3 +181,22 @@ test("a label of only spaces engraves nothing, and the front still builds", () =
   expect(front("   ")).toBeCloseTo(front(""), 6);
   expect(front("TOOLS")).toBeLessThan(front(""));
 });
+
+describe("export layout leaves sheet pieces assembled", () => {
+  test("layoutExportPieces moves the printed hinges but not a sheet panel", async () => {
+    const { layoutExportPieces } = await import("../src/framework/export/bed-layout.js");
+    const { p, d } = resolveParams(part, {});
+    const pieces = [...SHEETS, ...PRINTED].map((name) => ({
+      name, solid: buildPosed(k, part, name, { purpose: "export", view: "box", p, d }),
+    }));
+    const out = layoutExportPieces(part, pieces);
+    for (const n of SHEETS) {
+      const before = pieces.find((x) => x.name === n).solid.boundingBox();
+      const after = out.find((x) => x.name === n).solid.boundingBox();
+      expect(after, n).toEqual(before);
+    }
+    const moved = PRINTED.filter((n) => JSON.stringify(out.find((x) => x.name === n).solid.boundingBox())
+      !== JSON.stringify(pieces.find((x) => x.name === n).solid.boundingBox()));
+    expect(moved.length).toBeGreaterThan(0);
+  });
+});

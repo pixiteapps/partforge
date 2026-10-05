@@ -117,6 +117,11 @@ describe("who burns: a laser sheet in a wood, on its own build and pose", () => 
     expect(sheetFrameFor(sp, P)).toEqual({ frame: IDENTITY, t: 3, plies: 0 });
   });
 
+  test("a sheet part written with a views map keeps its burn when every entry is true, and loses it for a pose entry", () => {
+    expect(burnsFor(panel({ views: { main: true } }))).toBe(true);
+    expect(burnsFor(panel({ views: { main: (s) => s.translate([1, 0, 0]) } }))).toBe(false);
+  });
+
   test("walnut burns; acrylic, PLA and a non-sheet oak part do not", () => {
     expect(burnsFor(panel({ display: { material: "walnut" } }))).toBe(true);
     expect(burnsFor(panel({ display: { material: "clear-acrylic" } }))).toBe(false);

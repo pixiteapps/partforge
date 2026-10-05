@@ -17,6 +17,7 @@
 // (resolve.js's default for every other sub-part) but the sheet its stock label names —
 // realisticDisplay, from the ONE keyword table STOCK_LOOKS. Realistic-only, like the PLA
 // default: the CAD view, 3MF colours and declaresMaterials read sp.display itself.
+import { isViewsMap } from "../sub-part-views.js";
 import { isSheetPart, sheetMeta, MARK_DEPTH } from "../sheet/constants.js";
 import { poseSteps, validatePose } from "../sheet/pose.js";
 import { composePose, invertRigid } from "../geometry/pose.js";
@@ -145,6 +146,7 @@ export function burnsFor(sp) {
   if (sp.build !== sp.sheet.generatedBuild) return false;                   // a custom build is not the canonical sheet
   if (sp.sheet.place != null) return false;                                 // an author place moves it off its pose
   if ((sp.place ?? null) !== (sp.sheet.generatedPlace ?? null)) return false; // place replaced after sheetPart
+  if (isViewsMap(sp.views) && Object.values(sp.views).some((v) => typeof v === "function")) return false; // a pose entry moves it off its pose
   try { return lookOf(sp).params.pattern === "wood"; } catch { return false; }
 }
 
