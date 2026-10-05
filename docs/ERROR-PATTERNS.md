@@ -141,8 +141,32 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 ## place-not-rigid
 
 - **Symptom:** The exported/printed part is a mirror image of — or a different size than — the same part shown in the assembly/display view. Nothing throws: the preview looks right and only the STL/STEP is wrong, or vice-versa.
-- **Cause:** A `place` whose `purpose: "display"` and `"export"` branches differ by a non-rigid transform — `mirror` (flips handedness) or a non-identity `scale` (changes size) — so display and export are no longer the same solid, only its reflection/resize.
+- **Cause:** A legacy-form (`views` array + `place()`; the views-map form is checked by [view-pose-not-rigid](#view-pose-not-rigid)) `place` whose `purpose: "display"` and `"export"` branches differ by a non-rigid transform — `mirror` (flips handedness) or a non-identity `scale` (changes size) — so display and export are no longer the same solid, only its reflection/resize.
 - **Fix:** Keep the display-vs-export `place` difference a rigid motion (`translate`/`rotate`/`rotateAbout`/`along`/`at`) only. If the part genuinely needs a reflected or resized form, bake that into `build` so both purposes share one canonical solid and pose it rigidly. The rule sees a `place()` behind any `build()`, including one that queries the solid; a `place()` it cannot read stays silent. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "The `PartDefinition` contract".
+
+## view-entry-invalid
+
+- **Symptom:** A sub-part is missing from a view it names, and lint reports the entry.
+- **Cause:** A `views` map entry that is not `true` or a pose function — `false`, `null`, a string or an object.
+- **Fix:** Use `true` (shown as built) or `(s, p, d) => s.translate(…)`. To leave the piece out of a view, delete the key.
+
+## views-and-place
+
+- **Symptom:** Lint refuses a sub-part that declares a `views` map and `place`.
+- **Cause:** Two places a pose can live. With a map, each view's entry is its pose and `build()` is the export.
+- **Fix:** Move each view's pose into its entry and delete `place`. If the piece prints in a different orientation from how it is modelled, build it as it prints and move it into place in the `assembly` entry.
+
+## view-pose-not-rigid
+
+- **Symptom:** The piece in one view is a different size or a mirror image of the one exported.
+- **Cause:** A view entry that scales, mirrors or adds geometry instead of only moving the piece.
+- **Fix:** Entries only `translate`/`rotate`/`rotateAbout`/`at` their argument. Bake a resized or reflected form into `build()`.
+
+## views-invalid
+
+- **Symptom:** A sub-part is missing from every view, or lint refuses a sub-part whose `views` is absent, a string or a number.
+- **Cause:** `views` must be a map of view name to `true` or a pose (or, in the legacy form, an array of view names). Anything else shows the piece nowhere.
+- **Fix:** Give the sub-part a `views` map — e.g. `views: { assembly: true }` — naming each view it appears in.
 
 ## wrong-node-version
 

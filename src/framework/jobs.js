@@ -47,6 +47,9 @@ let changeTracker = null;
 // a session that never downloads a kit. test/worker-layering.test.js keeps every one of
 // them out of worker boot, and test/kit-layering.test.js keeps the kit off ./oracle/*.
 const loadBundle = () => import("./export/bundle.js");
+// The 3MF/STEP bed layout (export/bed-layout.js, which reads the DFM profile table) loads
+// the same way, on the first 3MF/STEP job.
+const loadBedLayout = () => import("./export/bed-layout.js");
 
 // HOST JOBS — the extension seam. A host registers its own job types with
 // `runWorker(part, { jobs: { <type>: handler } })`, threaded here as `opts.jobs`, and
@@ -503,21 +506,28 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       post({ type: "download-parts", ext: "stl", mime: "model/stl", parts: out, jobId: msg.jobId },
            out.map((pp) => bufferOf(pp.data)));
     } else if (msg.type === "export-step") {
+      // 3MF/STEP hold every selected piece in one file; printed views-map pieces export as
+      // built, so they are laid out apart (export/bed-layout.js). Sheet pieces keep their
+      // assembled pose. STL is one file per piece and is never laid out.
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
-      const solids = names.map((name) => {
+      const { layoutExportPieces } = await loadBedLayout();
+      const solids = layoutExportPieces(part, names.map((name) => {
         onProgress(`building ${label(name)}`);
-        return { name: exportName(name), solid: posed(name, "export", onProgress), color: printColor(part.parts[name]?.display) };
-      });
+        return { name, solid: posed(name, "export", onProgress) };
+      })).map(({ name, solid }) => ({ name: exportName(name), solid, color: printColor(part.parts[name]?.display) }));
       onProgress("writing STEP file");
       const data = await kernel.toSTEP(solids);
       post({ type: "download", data, filename: `${fileBase}.step`, mime: "application/step", jobId: msg.jobId }, [bufferOf(data)]);
     } else if (msg.type === "export-3mf") {
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
-      const meshes = names.map((name) => {
+      const { layoutExportPieces } = await loadBedLayout();
+      const meshes = layoutExportPieces(part, names.map((name) => {
         onProgress(`building ${label(name)}`);
-        const { positions, indices } = posed(name, "export", onProgress).toIndexedMesh({ quality: msg.quality ?? "print" });
+        return { name, solid: posed(name, "export", onProgress) };
+      })).map(({ name, solid }) => {
+        const { positions, indices } = solid.toIndexedMesh({ quality: msg.quality ?? "print" });
         return { name: exportName(name), positions, indices, color: printColor(part.parts[name]?.display) };
       });
       onProgress("writing 3MF file");

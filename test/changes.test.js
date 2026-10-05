@@ -60,14 +60,60 @@ test("a translated sub-part is moved by the exact offset, without booleans", () 
   expect(out.changes.unchangedSubparts).toBe(1);
 });
 
-test("a place-only change (assembly pose) is never unchanged", () => {
+// The legacy form: views is a list and place() poses the piece. A place()-only
+// change leaves build() alone, so only the posed solid's hash can see it.
+const legacyLid = (extra) => ({ ...hinged, parts: { ...hinged.parts, lid: { ...hinged.parts.lid,
+  views: ["box"],
+  place: (s, { p }) => { const posed = hinged.parts.lid.views.box(s, p); return extra ? posed.translate(extra) : posed; } } } });
+
+test("a legacy place-only change (assembly pose) is never unchanged", () => {
   const t = createChangeTracker();
-  inspect(t, hinged);
-  const placed = { ...hinged, parts: { ...hinged.parts, lid: { ...hinged.parts.lid,
-    place: (s, ctx) => (hinged.parts.lid.place ? hinged.parts.lid.place(s, ctx) : s).translate([1, 0, 0]) } } };
-  const lid = inspect(t, placed).changes.subparts.find((s) => s.name === "lid");
+  inspect(t, legacyLid(null));
+  const lid = inspect(t, legacyLid([1, 0, 0])).changes.subparts.find((s) => s.name === "lid");
   expect(lid.verdict).toBe("moved");
   lid.moved.forEach((v, i) => expect(v).toBeCloseTo([1, 0, 0][i], 3));
+});
+
+// The views-map form (0.143.0): the pose lives in the sub-part's `views` entry and
+// build() is untouched, so an entry-only edit must still read as moved.
+const mapLid = (box) => ({ ...hinged, parts: { ...hinged.parts, lid: { ...hinged.parts.lid, views: { box } } } });
+
+test("a views-map entry-only change is moved, never unchanged", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  const lid = inspect(t, mapLid((s, p, d) => hinged.parts.lid.views.box(s, p, d).translate([1, 0, 0])))
+    .changes.subparts.find((s) => s.name === "lid");
+  expect(lid.verdict).toBe("moved");
+  lid.moved.forEach((v, i) => expect(v).toBeCloseTo([1, 0, 0][i], 3));
+  expect(lid.rotated).toBeUndefined();
+});
+
+test("a views-map pose param (lidAngle) reads as moved and rotated", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  const opened = { ...hinged, defaults: { ...hinged.defaults, lidAngle: 40 } };
+  const out = inspect(t, opened);
+  const lid = out.changes.subparts.find((s) => s.name === "lid");
+  expect(lid.verdict).toBe("moved");
+  expect(lid.rotated).toBe(true);
+  expect(out.changes.unchangedSubparts).toBe(1); // the base is untouched
+});
+
+test("one piece posed differently in two views never shares a baseline", () => {
+  // Same lid, same build; the `open` view swings it. Inspecting `open` after `box`
+  // must not diff against `box` (that would read the pose difference as an edit),
+  // and coming back to `box` finds `open`'s baseline gone, not `box`'s stale one.
+  const twoPoses = { ...hinged,
+    views: { ...hinged.views, open: { label: "Open" } },
+    parts: { base: { ...hinged.parts.base, views: { box: true, open: true } },
+      lid: { ...hinged.parts.lid, views: { box: hinged.parts.lid.views.box,
+        open: (s, p, d) => hinged.parts.lid.views.box(s, { ...p, lidAngle: 90 }, d) } } } };
+  const t = createChangeTracker();
+  inspect(t, twoPoses, "forge-1", "box");
+  expect(inspect(t, twoPoses, "forge-1", "box").changes.unchanged).toBe(true);
+  expect(inspect(t, twoPoses, "forge-1", "open")).toEqual({});
+  expect(inspect(t, twoPoses, "forge-1", "open").changes.unchanged).toBe(true);
+  expect(inspect(t, twoPoses, "forge-1", "box")).toEqual({});
 });
 
 test("added material is located and its root op is named", () => {

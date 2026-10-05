@@ -9,6 +9,7 @@
 // verify / renderViews) deliberately do NOT use this — they stay on
 // Object.keys(part.views)[0], where a mechanically obvious rule matters more than a
 // convenient one.
+import { inView } from "./sub-part-views.js";
 
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 
@@ -20,7 +21,7 @@ function placedCount(part, view, defaults) {
   const parts = isPlainObject(part?.parts) ? part.parts : {};
   let n = 0;
   for (const sp of Object.values(parts)) {
-    if (!Array.isArray(sp?.views) || !sp.views.includes(view)) continue;
+    if (!inView(sp, view)) continue;
     if (typeof sp.enabled !== "function") { n++; continue; }
     try { if (sp.enabled(defaults)) n++; } catch { n++; }
   }

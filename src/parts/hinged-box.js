@@ -1,7 +1,7 @@
 // Animation reference part — a box with a hinged lid. Worked example for
 // docs/AUTHORING-PARTS.md "Animations": animations are VIEW-OWNED (declared
 // under `views.box.animations`, so the transport bar belongs to that view),
-// they drive pose-only params (lidAngle, lidLift) through place(), and
+// they drive pose-only params (lidAngle, lidLift) through the lid's `views` entry, and
 // `assemble` opens with an OPACITY fade that brings the lid in from nothing
 // before any motion. Also shown: an intro camera + markdown description on
 // `open`, a looping autoplay `cycle`, and per-step cameras on `assemble`.
@@ -39,7 +39,7 @@ export default {
   parts: {
     base: {
       label: "Base",
-      views: ["box"],
+      views: { box: true },
       export: { name: "base" },
       display: { material: "walnut" },
       build: (k, p) =>
@@ -48,19 +48,18 @@ export default {
     },
     lid: {
       label: "Lid",
-      views: ["box"],
       export: { name: "lid" },
       display: { material: "walnut" },
-      build: (k, p) => k.box({ min: [0, 0, p.height], max: [p.width, p.depth, p.height + p.wall] }),
-      // Display: swing about the hinge line (rear top edge, axis +X through
-      // [0, depth, height]; negative angle opens upward), then the assembly
-      // lift. Export: the lid prints flat beside the base. Both poses are
-      // rigid motions of the same solid, and neither reads `view` — the two
-      // invariants lint's place rules hold every part to.
-      place: (s, { purpose, p }) =>
-        purpose === "export"
-          ? s.translate([p.width + 10, 0, -p.height])
-          : s.rotate(-p.lidAngle, [0, p.depth, p.height], [1, 0, 0]).translate([0, 0, p.lidLift]),
+      // Built as it prints: a flat plate at the origin. The `box` view sets it on the
+      // base, swings it about the hinge line (rear top edge, axis +X through
+      // [0, depth, height]; negative angle opens upward) and applies the assembly
+      // lift. lidAngle and lidLift are read only here, so both animate at frame rate.
+      build: (k, p) => k.box({ min: [0, 0, 0], max: [p.width, p.depth, p.wall] }),
+      views: {
+        box: (s, p) => s.translate([0, 0, p.height])
+          .rotate(-p.lidAngle, [0, p.depth, p.height], [1, 0, 0])
+          .translate([0, 0, p.lidLift]),
+      },
     },
   },
   views: {

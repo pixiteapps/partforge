@@ -290,7 +290,7 @@ export function evaluateCase(facts, { profile, expect, subPartNames, overhang = 
       checks.push({ scope: "subpart", subpart: s.name, metric: "bbox", kind: "gate", expr: `<=[${profile.bed.join(",")}]`,
         actual: null, status: "skip", pass: null, unevaluated: true, note: PRINT_POSE_NOTE,
         message: `not measured: its print (export) pose did not build — ${s.printBboxError}`,
-        hint: "This printed part's place() failed for purpose \"export\", so its print size — and its STL/3MF export — is unavailable. Fix place() for the export pose; the bed check then runs." });
+        hint: "build() should make each piece as it prints — a printed piece shown in an assembly gets its assembled pose from its `views` entry, never from build(). Its export pose failed to build, so its print size — and its STL/3MF export — is unavailable. Fix the pose; the bed check then runs." });
     }
     const merged = {
       ...(profile?.minWall != null ? { minWall: `>=${profile.minWall}` } : {}),

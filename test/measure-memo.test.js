@@ -95,12 +95,16 @@ test("a hit is re-stored, so an unchanged sub-part is reused every round, not ev
 // measurement reads null — these tests FAIL on the pre-fix memoKey (no `ex`
 // field) for the "exportable" case.
 const overhangOptedIn = { ...hinged, verify: { ...hinged.verify, orientation: "print" } };
+// Legacy form (views list + place()), since only there can an export pose differ
+// from build() without the display pose — and so the hash — moving: a views-map
+// piece always exports as built (sub-part-views.js placeOf).
 const tiltedLid = (printTilt) => ({ ...overhangOptedIn,
   defaults: { ...overhangOptedIn.defaults, printTilt },
   parts: { ...overhangOptedIn.parts, lid: { ...overhangOptedIn.parts.lid,
+    views: ["box"],
     place: (s, ctx) => ctx.purpose === "export"
-      ? overhangOptedIn.parts.lid.place(s, ctx).rotate(ctx.p.printTilt, [0, 0, 0], [1, 0, 0])
-      : overhangOptedIn.parts.lid.place(s, ctx) } } });
+      ? s.rotate(ctx.p.printTilt, [0, 0, 0], [1, 0, 0])
+      : overhangOptedIn.parts.lid.views.box(s, ctx.p, ctx.d) } } });
 // A lid carrying an upside-down cone: its 45° side wall is an overhang at a 30°
 // threshold and not at 60°, so the angle variant below moves the lid's own
 // overhang facts, not only the report-level `measuredOverhang`.
@@ -156,6 +160,26 @@ for (const [label, [base, variant]] of Object.entries(memoKeyFieldVariants)) {
     expect(strip(run(null, base, "box", { minWall: true, gaps: true }))).not.toEqual(strip(fresh));
   });
 }
+
+// The views-map form (0.143.0): a pose-only param (lidAngle, read only in the lid's
+// `views.box` entry) moves the display solid — so its hash — AND the display→print
+// matrix the overhang reading uses (the piece prints as built). Either input alone
+// would miss the reuse; both are covered, so a reused reading equals a fresh one.
+test("reuse equals recompute across a views-map pose change (overhang opted in)", () => {
+  const at = (lidAngle) => ({ ...conedLid, defaults: { ...conedLid.defaults, lidAngle } });
+  const t = createChangeTracker();
+  run(t, at(0), "box", { minWall: true, gaps: true });
+  const reused = run(t, at(40), "box", { minWall: true, gaps: true });
+  const fresh = run(null, at(40), "box", { minWall: true, gaps: true });
+  expect(strip(reused)).toEqual(strip(fresh));
+  // Non-vacuous: the lid really is judged in its print pose, and the pose moves its reading.
+  const lidOf = (m) => m.subparts.find((s) => s.name === "lid");
+  expect(lidOf(fresh).overhangArea).not.toBeNull();
+  expect(strip(lidOf(run(null, at(0), "box", { minWall: true, gaps: true })))).not.toEqual(strip(lidOf(fresh)));
+  // Back to the first pose: reuse there must still equal a fresh reading.
+  expect(strip(run(t, at(0), "box", { minWall: true, gaps: true })))
+    .toEqual(strip(run(null, at(0), "box", { minWall: true, gaps: true })));
+});
 
 test("the overhangAngle variant's two fresh readings differ in the overhang facts", () => {
   const [base, variant] = memoKeyFieldVariants.overhangAngle;
