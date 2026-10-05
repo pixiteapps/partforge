@@ -205,9 +205,11 @@ export function createViewer(container, part) {
 
   const controls = new OrbitControls(activeCamera, renderer.domElement);
   controls.enableDamping = true;
-  // A finger a host gesture swallowed would otherwise stay "down" in the
-  // controls forever (every later drag zooms) — see stale-touch-guard.js.
-  const disposeTouchGuard = guardStaleTouches(renderer.domElement);
+  // A finger a host gesture swallowed would otherwise stay "down" forever in
+  // whatever it went down on — the controls (every later drag zooms), the view
+  // cube, the cutaway handles, measure mode — so the guard watches the whole
+  // container they all live in. See stale-touch-guard.js.
+  const disposeTouchGuard = guardStaleTouches(container);
 
   // --- render on demand -------------------------------------------------------
   // The loop ticks every animation frame (controls, tweens, frame listeners —
