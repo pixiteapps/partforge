@@ -19,6 +19,10 @@ export { meshVolume, bboxSize, bounds, meshArea } from "./framework/oracle/mesh.
 export { buildView } from "./framework/oracle/build.js";
 export { measure } from "./framework/oracle/measure.js";
 export { verify } from "./framework/oracle/verify.js";
+// Change tracking — the `inspect` job's opt-in "what changed since my last
+// inspect of this view" signal, re-exported so a downstream harness can run the
+// same tracker outside the job loop (e.g. across a scripted sequence of builds).
+export { createChangeTracker } from "./framework/oracle/changes.js";
 export { buildBVH, meshTriangles } from "./framework/oracle/bvh.js";
 export { minWall } from "./framework/oracle/min-wall.js";
 export { overhang } from "./framework/oracle/overhang.js";

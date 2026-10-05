@@ -11,6 +11,9 @@ export {
   measure, verify, buildView,
   type MeasureReport, type SubPartFacts, type SheetFacts, type AggregateFacts, type BuiltSubPart,
   type VerifyReport, type VerifyCaseResult, type VerifyCheck, type CheckStatus,
+  // change tracking
+  createChangeTracker,
+  type ChangeTracker, type ChangesReport, type SubPartChange, type ChangeRegion, type ChangeOpRef,
   // mesh facts, gaps, BVH, min wall
   meshVolume, bboxSize, bounds, meshArea, assemblyGaps, meshGaps, buildBVH, meshTriangles, minWall, overhang,
   type Gap, type BVH,

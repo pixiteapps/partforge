@@ -30,6 +30,7 @@ vi.mock("../src/framework/oracle/assert-dsl.js", () => refuse("assert-dsl.js"));
 vi.mock("../src/framework/oracle/build.js", () => refuse("build.js"));
 vi.mock("../src/framework/oracle/bvh.js", () => refuse("bvh.js"));
 vi.mock("../src/framework/oracle/cases.js", () => refuse("cases.js"));
+vi.mock("../src/framework/oracle/changes.js", () => refuse("changes.js"));
 vi.mock("../src/framework/oracle/dfm-profiles.js", () => refuse("dfm-profiles.js"));
 vi.mock("../src/framework/oracle/gaps.js", () => refuse("gaps.js"));
 vi.mock("../src/framework/oracle/gates.js", () => refuse("gates.js"));
@@ -37,6 +38,7 @@ vi.mock("../src/framework/oracle/match.js", () => refuse("match.js"));
 vi.mock("../src/framework/oracle/measure.js", () => refuse("measure.js"));
 vi.mock("../src/framework/oracle/mesh.js", () => refuse("mesh.js"));
 vi.mock("../src/framework/oracle/min-wall.js", () => refuse("min-wall.js"));
+vi.mock("../src/framework/oracle/op-graph.js", () => refuse("op-graph.js"));
 vi.mock("../src/framework/oracle/overhang.js", () => refuse("overhang.js"));
 vi.mock("../src/framework/oracle/shape-probe.js", () => refuse("shape-probe.js"));
 vi.mock("../src/framework/oracle/silhouette.js", () => refuse("silhouette.js"));
@@ -52,8 +54,9 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 // vi.mock specifiers must be literals, so the list above is written out; this keeps it
 // honest — a new oracle module fails here until it is mocked too.
 const MOCKED = [
-  "annotation-ray.js", "assert-dsl.js", "build.js", "bvh.js", "cases.js", "dfm-profiles.js", "gaps.js", "gates.js",
-  "match.js", "measure.js", "mesh.js", "min-wall.js", "overhang.js", "shape-probe.js", "silhouette.js", "verify.js",
+  "annotation-ray.js", "assert-dsl.js", "build.js", "bvh.js", "cases.js", "changes.js", "dfm-profiles.js", "gaps.js",
+  "gates.js", "match.js", "measure.js", "mesh.js", "min-wall.js", "op-graph.js", "overhang.js", "shape-probe.js",
+  "silhouette.js", "verify.js",
 ];
 
 test("the mock list names every oracle module", () => {

@@ -287,6 +287,7 @@ export function createOcctKernel(replicad) {
       _s: shape,
       _labels: labels,
       _hash: hash,
+      _baseHash: baseHash,
       _pose: pose,
       _mat: () => mat(),
       label: (name) => {

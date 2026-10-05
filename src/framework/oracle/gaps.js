@@ -20,17 +20,30 @@ export const pairKey = (a, b) => [a, b].sort().join("×");
 // `bvhCache` is an optional caller-owned Map — see cachedBVH for the doctrine;
 // measure() draws min-wall's index out of the same one, so each sub-part mesh is
 // indexed once, not twice.
+// `prior(a, b) → {distance, at}|undefined` lets a caller skip a pair's distance
+// query entirely (the measure memo: both sub-parts' hashes matched a stored
+// pair). `onPair(a, b, gap)` is called for every pair, computed or reused, so
+// the caller can re-store what it just confirmed or learned. BVHs are built
+// lazily, one per sub-part, only for a sub-part that has at least one pair not
+// covered by `prior` — an all-unchanged view builds no BVH at all.
 //   → [{ a, b, distance, at: [x,y,z] }]
-export function meshGaps(built, { bvhCache } = {}) {
+export function meshGaps(built, { bvhCache, prior, onPair } = {}) {
   const hasTris = (m) => (m.indices ? m.indices.length > 0 : m.positions.length > 0);
-  const bvhs = built
-    .filter(({ mesh }) => hasTris(mesh))
-    .map(({ name, mesh }) => ({ name, bvh: cachedBVH(mesh, bvhCache) }));
+  const items = built.filter(({ mesh }) => hasTris(mesh));
+  const bvhOf = new Map();
+  const bvh = (it) => {
+    if (!bvhOf.has(it.name)) bvhOf.set(it.name, cachedBVH(it.mesh, bvhCache));
+    return bvhOf.get(it.name);
+  };
   const out = [];
-  for (let i = 0; i < bvhs.length; i++) {
-    for (let j = i + 1; j < bvhs.length; j++) {
-      const { distance, at } = bvhs[i].bvh.distanceTo(bvhs[j].bvh);
-      out.push({ a: bvhs[i].name, b: bvhs[j].name, distance, at });
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      const a = items[i].name, b = items[j].name;
+      const reused = prior?.(a, b);
+      const { distance, at } = reused ?? bvh(items[i]).distanceTo(bvh(items[j]));
+      const g = { a, b, distance, at };
+      onPair?.(a, b, { distance, at });
+      out.push(g);
     }
   }
   return out;

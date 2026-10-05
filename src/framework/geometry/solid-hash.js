@@ -2,8 +2,43 @@
 // folds via FNV-1a → base36. Solid operands are passed as their own (already
 // computed) short `_hash` string, so composing two solids stays O(1) and the
 // resulting key length stays bounded no matter how deep the build graph is.
+
+// Optional hash-graph recording for the oracle's change tracker
+// (oracle/changes.js). Off by default — `h` pays one null check. While on, every
+// call records its result with the op name and the operand hashes it consumed, so
+// the tracker can tell WHICH op first produced a different hash between two builds.
+// Single-threaded by construction (one worker, one synchronous build).
+let recording = null; // { map, limit, overflow }
+
+export function startHashRecording({ limit = 20000 } = {}) {
+  recording = { map: new Map(), limit, overflow: false };
+}
+
+export function stopHashRecording() {
+  const r = recording;
+  recording = null;
+  if (!r || r.overflow) return null;
+  return r.map;
+}
+
+const stringLeaves = (x, out) => {
+  if (typeof x === "string") out.push(x);
+  else if (Array.isArray(x)) for (const y of x) stringLeaves(y, out);
+  return out;
+};
+
 export function h(...parts) {
-  return fnv(parts.map(canon).join("|"));
+  const out = fnv(parts.map(canon).join("|"));
+  if (recording && !recording.overflow) {
+    const { map } = recording;
+    if (map.size >= recording.limit) recording.overflow = true;
+    else if (!map.has(out)) {
+      const op = typeof parts[0] === "string" ? parts[0] : null;
+      const inputs = stringLeaves(parts.slice(1), []).filter((s) => map.has(s));
+      map.set(out, { op, inputs, label: op === "label" && typeof parts[2] === "string" ? parts[2] : null });
+    }
+  }
+  return out;
 }
 
 function canon(x) {
@@ -14,6 +49,11 @@ function canon(x) {
 
 // FNV-1a folded to 32-bit space (collision risk acceptable: retained only for one
 // sub-part's build graph ~3–15 nodes, rebuilt each round, no accumulation).
+// These hashes are now also compared ACROSS inspect rounds: the oracle's change
+// tracker (oracle/changes.js) reads an equal final hash as "unchanged", and its
+// measure memo reuses that sub-part's facts. A collision there would report a
+// changed sub-part as unchanged and serve its stale measurements — the same
+// trust the solid cache already extends to these keys, and no wider.
 function fnv(s) {
   let hsh = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) { hsh ^= s.charCodeAt(i); hsh = Math.imul(hsh, 0x01000193); }

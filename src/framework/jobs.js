@@ -33,7 +33,14 @@ const loadInspect = () => Promise.all([
   import("./oracle/build.js"),
   import("./oracle/measure.js"),
   import("./oracle/verify.js"),
+  import("./oracle/changes.js"),
 ]);
+
+// The change tracker's baseline lives for the worker's lifetime (a tab, a headless
+// pool member) — one per worker, not per job, so an `inspect` can diff against the
+// PREVIOUS one under the same `changesKey`. Created lazily on first use so a
+// session that never passes `changesKey` never allocates it.
+let changeTracker = null;
 
 // The cut & print kit loads the same way, on the first export-bundle job: its writers,
 // layout and README (export/*) and the process exporters behind them are dead weight to
@@ -597,12 +604,27 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // unrecognized value must never quietly buy less checking than the caller
       // asked for.
       const quick = msg.checks === "quick";
-      const [{ buildView }, { measure }, { verify }] = await loadInspect();
+      const [{ buildView }, { measure }, { verify }, { createChangeTracker }] = await loadInspect();
       const view = msg.view ?? Object.keys(part.views)[0];
+      // Only the defaults-params inspect is tracked: `msg.params` non-empty means a
+      // parameterized inspect, which is a different geometry and must never become
+      // (or be diffed against) the tracked baseline.
+      const tracking = typeof msg.changesKey === "string" && msg.changesKey.length > 0
+        && Object.keys(msg.params ?? {}).length === 0;
       const reads = newReadSink();
-      const built = buildView(kernel, part, view, msg.params ?? {}, { reads });
+      // Nothing may sit between begin() and the try below: a throw there would
+      // leave the hash recording running with no abort().
+      if (tracking) { changeTracker ??= createChangeTracker(); changeTracker.begin(msg.changesKey, view); }
+      let built;
+      try {
+        built = buildView(kernel, part, view, msg.params ?? {}, { reads });
+      } catch (e) {
+        if (tracking) changeTracker.abort();
+        throw e;
+      }
+      if (tracking) changeTracker.endBuild(built);
       const measured = measure(kernel, part, view, msg.params ?? {},
-        { minWall: !quick, gaps: !quick, built, reads });
+        { minWall: !quick, gaps: !quick, built, reads, ...(tracking ? { memo: changeTracker.memo } : {}) });
       const report = {
         measure: measured,
         verify: verify(kernel, part, {
@@ -622,7 +644,10 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // an inspect with no `matchTargets` answers on exactly the shape it always has.
       const match = await scoreMatchTargets(built, msg.matchTargets, onProgress);
       if (match) report.match = match;
-      post({ type: "report", ...report }, match?.map((m) => m.delta.data.buffer) ?? []);
+      // Past measure()'s own kernel.cleanup(): finish() reads only `_hash` strings,
+      // shape hashes, placement matrices, and JS-owned mesh/volume data, never a live solid.
+      const changeFields = tracking ? changeTracker.finish(kernel, view, built, measured) : {};
+      post({ type: "report", ...report, ...changeFields }, match?.map((m) => m.delta.data.buffer) ?? []);
     } else if (opts.jobs && Object.hasOwn(opts.jobs, msg.type)) {
       await opts.jobs[msg.type](kernel, part, msg, post, { isStale: opts.isStale });
     }

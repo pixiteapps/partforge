@@ -73,6 +73,16 @@ export interface WorkerJob {
    * relative order of the targets sharing that kind, never by index.
    */
   matchTargets?: MatchTarget[];
+  /**
+   * `inspect`: opt into change tracking. Opaque — the worker keeps one baseline
+   * per key, per worker lifetime, best-effort (a retired worker, a new key, or a
+   * new `view` simply has no baseline yet). A new key forgets whatever baseline
+   * the previous one held. Only an inspect with no (or empty) `params` is tracked
+   * — a parameterized inspect is a different geometry and never becomes, or is
+   * diffed against, the baseline. When present, `report.changes`/
+   * `report.changesSkipped` are added; absent, the report is unchanged.
+   */
+  changesKey?: string;
 }
 
 /**
@@ -485,6 +495,13 @@ export function measure(
      * build of the same view you are asking about.
      */
     built?: BuiltSubPart[];
+    /**
+     * A `ChangeTracker`'s `memo` — reuses a previous round's facts (and sub-part
+     * pair gap distances) for any sub-part whose final hash did not change,
+     * instead of re-deriving them. Opaque; hand in `changeTracker.memo` and
+     * nothing else.
+     */
+    memo?: unknown;
   },
 ): MeasureReport;
 
@@ -573,6 +590,92 @@ export function verify(
     seed?: { params?: ResolvedParams; result: MeasureReport };
   },
 ): VerifyReport;
+
+// --- change tracking ---------------------------------------------------------
+
+/** One root operation behind a sub-part's changed final hash, named by the op graph. */
+export interface ChangeOpRef {
+  op: string;
+  label?: string;
+}
+
+/** One connected region of material a mesh boolean diff found added or removed. */
+export interface ChangeRegion {
+  change: "added" | "removed";
+  mm3: number;
+  at: [number, number, number];
+  size: [number, number, number];
+}
+
+export interface SubPartChange {
+  name: string;
+  verdict: "new" | "deleted" | "moved" | "added" | "removed" | "reshaped";
+  /**
+   * `verdict: "moved"` only: the sub-part's new bounding-box centre minus its old
+   * one, in mm. A rotation about that centre reads as ≈[0, 0, 0] — see `rotated`.
+   */
+  moved?: [number, number, number];
+  /** `verdict: "moved"` only, present (true) when the placement's orientation changed too. */
+  rotated?: boolean;
+  /** `verdict: "reshaped" | "added" | "removed"`: new volume minus old, in mm³. */
+  volumeDeltaMm3?: number;
+  /** `verdict: "added" | "removed" | "reshaped"`, when a mesh boolean diff ran. */
+  addedMm3?: number;
+  removedMm3?: number;
+  /** Up to 3 largest added/removed regions from the mesh boolean diff, largest first. */
+  regions?: ChangeRegion[];
+  /** The named root operations behind the changed hash, when the op graph covers it. */
+  changedOps?: ChangeOpRef[];
+}
+
+export interface ChangesReport {
+  /** True only when every sub-part's final hash matched the previous build's. */
+  unchanged?: true;
+  subparts: SubPartChange[];
+  unchangedSubparts: number;
+}
+
+/**
+ * Per-worker, best-effort "what changed since the last inspect of this view"
+ * tracker behind `inspect`'s `changesKey`. One tracker holds exactly one
+ * baseline at a time (per `begin`'s `key`); a new key or a new `view` simply has
+ * no baseline yet, which is reported as `{}` from `finish`, not an error.
+ *
+ * Call order for one round: `begin` → `buildView` → `endBuild(built)` →
+ * (optionally `measure` with `{ memo: tracker.memo }`) → `finish`. A failure
+ * before `endBuild`/`finish` calls `abort()` instead, which forgets the round
+ * without touching the stored baseline.
+ */
+export interface ChangeTracker {
+  /** Hand to `measure`'s `memo` option to reuse facts for unchanged sub-parts. */
+  readonly memo: unknown;
+  /** Start a round. `key` identifies the baseline; a different key forgets it. */
+  begin(key: string, view: string): void;
+  /** Capture the just-built view. Call right after `buildView`, before `kernel.cleanup()`. */
+  endBuild(built: BuiltSubPart[]): void;
+  /** The round failed before `finish`: discard it without touching the baseline. */
+  abort(): void;
+  /**
+   * Diff this build against the stored baseline and roll it forward as the next
+   * baseline. Call after `measure()` — `measure` calls `kernel.cleanup()`
+   * internally, which is fine: `finish` reads only hash strings, JS-owned mesh
+   * arrays, and `measured.subparts[].volume`, never a live solid.
+   */
+  finish(
+    kernel: GeometryKernel,
+    view: string,
+    built: BuiltSubPart[],
+    measured: MeasureReport,
+  ): { changes?: ChangesReport; changesSkipped?: string };
+}
+
+export function createChangeTracker(opts?: {
+  now?: () => number;
+  /** Milliseconds the mesh boolean diff may spend across one `finish()` call (default 2000). */
+  budgetMs?: number;
+  /** Sub-parts whose combined old+new triangle count exceeds this skip the mesh diff (default 300000). */
+  maxTriangles?: number;
+}): ChangeTracker;
 
 // --- silhouette match scoring -----------------------------------------------
 

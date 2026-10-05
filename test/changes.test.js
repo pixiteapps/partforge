@@ -1,0 +1,323 @@
+import { beforeAll, expect, test, vi } from "vitest";
+
+// Lets a test make one round's hash record come back null, as an overflowed record does.
+const overflow = vi.hoisted(() => ({ next: false }));
+vi.mock("../src/framework/geometry/solid-hash.js", async (importOriginal) => {
+  const m = await importOriginal();
+  return { ...m, stopHashRecording: () => {
+    const r = m.stopHashRecording();
+    if (!overflow.next) return r;
+    overflow.next = false;
+    return null;
+  } };
+});
+import { bootManifoldKernel } from "../src/testing.js";
+import { buildView } from "../src/framework/oracle/build.js";
+import { measure } from "../src/framework/oracle/measure.js";
+import { createChangeTracker, REPORT_SHARE_MS } from "../src/framework/oracle/changes.js";
+import hinged from "../src/parts/hinged-box.js";
+
+let k;
+beforeAll(async () => { k = await bootManifoldKernel(); });
+
+// One inspect, the way jobs.js runs it: the tracker captures its meshes between
+// buildView and measure, because measure's cleanup frees the posed solids.
+function inspect(tracker, part, key = "forge-1", view = "box", { afterBegin } = {}) {
+  tracker.begin(key, view);
+  afterBegin?.();
+  const built = buildView(k, part, view, {});
+  tracker.endBuild(built);
+  const measured = measure(k, part, view, {}, { built, minWall: false, gaps: false, memo: tracker.memo });
+  const out = tracker.finish(k, view, built, measured);
+  k.cleanup();
+  return out;
+}
+
+const withLid = (build) => ({ ...hinged, parts: { ...hinged.parts, lid: { ...hinged.parts.lid, build } } });
+
+test("first inspect has no baseline", () => {
+  expect(inspect(createChangeTracker(), hinged)).toEqual({});
+});
+
+test("an identical rebuild is unchanged", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  expect(inspect(t, { ...hinged })).toEqual({ changes: { unchanged: true, subparts: [], unchangedSubparts: 2 } });
+});
+
+test("a translated sub-part is moved by the exact offset, without booleans", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  let calls = 0;
+  const orig = k._meshDiff;
+  k._meshDiff = (...a) => { calls++; return orig(...a); };
+  const out = inspect(t, withLid((kk, p, d) => hinged.parts.lid.build(kk, p, d).translate([0, 0, 5])));
+  k._meshDiff = orig;
+  const lid = out.changes.subparts.find((s) => s.name === "lid");
+  expect(lid.verdict).toBe("moved");
+  lid.moved.forEach((v, i) => expect(v).toBeCloseTo([0, 0, 5][i], 3));
+  expect(calls).toBe(0);
+  expect(out.changes.unchangedSubparts).toBe(1);
+});
+
+// The legacy form: views is a list and place() poses the piece. A place()-only
+// change leaves build() alone, so only the posed solid's hash can see it.
+const legacyLid = (extra) => ({ ...hinged, parts: { ...hinged.parts, lid: { ...hinged.parts.lid,
+  views: ["box"],
+  place: (s, { p }) => { const posed = hinged.parts.lid.views.box(s, p); return extra ? posed.translate(extra) : posed; } } } });
+
+test("a legacy place-only change (assembly pose) is never unchanged", () => {
+  const t = createChangeTracker();
+  inspect(t, legacyLid(null));
+  const lid = inspect(t, legacyLid([1, 0, 0])).changes.subparts.find((s) => s.name === "lid");
+  expect(lid.verdict).toBe("moved");
+  lid.moved.forEach((v, i) => expect(v).toBeCloseTo([1, 0, 0][i], 3));
+});
+
+// The views-map form (0.143.0): the pose lives in the sub-part's `views` entry and
+// build() is untouched, so an entry-only edit must still read as moved.
+const mapLid = (box) => ({ ...hinged, parts: { ...hinged.parts, lid: { ...hinged.parts.lid, views: { box } } } });
+
+test("a views-map entry-only change is moved, never unchanged", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  const lid = inspect(t, mapLid((s, p, d) => hinged.parts.lid.views.box(s, p, d).translate([1, 0, 0])))
+    .changes.subparts.find((s) => s.name === "lid");
+  expect(lid.verdict).toBe("moved");
+  lid.moved.forEach((v, i) => expect(v).toBeCloseTo([1, 0, 0][i], 3));
+  expect(lid.rotated).toBeUndefined();
+});
+
+test("a views-map pose param (lidAngle) reads as moved and rotated", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  const opened = { ...hinged, defaults: { ...hinged.defaults, lidAngle: 40 } };
+  const out = inspect(t, opened);
+  const lid = out.changes.subparts.find((s) => s.name === "lid");
+  expect(lid.verdict).toBe("moved");
+  expect(lid.rotated).toBe(true);
+  expect(out.changes.unchangedSubparts).toBe(1); // the base is untouched
+});
+
+test("one piece posed differently in two views never shares a baseline", () => {
+  // Same lid, same build; the `open` view swings it. Inspecting `open` after `box`
+  // must not diff against `box` (that would read the pose difference as an edit),
+  // and coming back to `box` finds `open`'s baseline gone, not `box`'s stale one.
+  const twoPoses = { ...hinged,
+    views: { ...hinged.views, open: { label: "Open" } },
+    parts: { base: { ...hinged.parts.base, views: { box: true, open: true } },
+      lid: { ...hinged.parts.lid, views: { box: hinged.parts.lid.views.box,
+        open: (s, p, d) => hinged.parts.lid.views.box(s, { ...p, lidAngle: 90 }, d) } } } };
+  const t = createChangeTracker();
+  inspect(t, twoPoses, "forge-1", "box");
+  expect(inspect(t, twoPoses, "forge-1", "box").changes.unchanged).toBe(true);
+  expect(inspect(t, twoPoses, "forge-1", "open")).toEqual({});
+  expect(inspect(t, twoPoses, "forge-1", "open").changes.unchanged).toBe(true);
+  expect(inspect(t, twoPoses, "forge-1", "box")).toEqual({});
+});
+
+test("added material is located and its root op is named", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  const out = inspect(t, withLid((kk, p, d) =>
+    hinged.parts.lid.build(kk, p, d).union(kk.cylinder({ d: 6, h: 6 }).label("knob"))));
+  const lid = out.changes.subparts.find((s) => s.name === "lid");
+  expect(["added", "reshaped"]).toContain(lid.verdict);
+  expect(lid.addedMm3).toBeGreaterThan(100);
+  expect(lid.regions[0].change).toBe("added");
+  expect(lid.changedOps.some((o) => o.label === "knob")).toBe(true);
+  expect(out.changes.unchangedSubparts).toBe(1);
+});
+
+test("a sub-part missing from the baseline is new, and one missing now is deleted", () => {
+  const t = createChangeTracker();
+  const { lid, ...rest } = hinged.parts;
+  inspect(t, { ...hinged, parts: rest });
+  expect(inspect(t, hinged).changes).toEqual({ subparts: [{ name: "lid", verdict: "new" }], unchangedSubparts: 1 });
+  expect(inspect(t, { ...hinged, parts: rest }).changes).toEqual({ subparts: [{ name: "lid", verdict: "deleted" }], unchangedSubparts: 1 });
+});
+
+test("a kernel without a mesh diff reports reshaped with the volume delta", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  const orig = k._meshDiff;
+  k._meshDiff = undefined;
+  try {
+    const out = inspect(t, withLid((kk, p, d) => hinged.parts.lid.build(kk, p, d).union(kk.cylinder({ d: 6, h: 6 }))));
+    const lid = out.changes.subparts.find((s) => s.name === "lid");
+    expect(lid.verdict).toBe("reshaped");
+    expect(lid.volumeDeltaMm3).toBeGreaterThan(100);
+    expect(out.changesSkipped).toBeUndefined();
+  } finally { k._meshDiff = orig; }
+});
+
+test("a refused mesh diff keeps the verdicts and names the reason", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  const orig = k._meshDiff;
+  k._meshDiff = () => ({ ok: false, reason: "too-large" });
+  try {
+    const out = inspect(t, withLid((kk, p, d) => hinged.parts.lid.build(kk, p, d).union(kk.cylinder({ d: 6, h: 6 }))));
+    expect(out.changesSkipped).toBe("too-large");
+    expect(out.changes.subparts.find((s) => s.name === "lid").verdict).toBe("reshaped");
+  } finally { k._meshDiff = orig; }
+});
+
+test("a new key forgets the baseline (forge switch)", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged, "forge-1");
+  expect(inspect(t, hinged, "forge-2")).toEqual({});
+});
+
+test("a different view has no baseline", () => {
+  // hinged-box has one view, so build a second inline: the lid alone.
+  const twoViews = { ...hinged,
+    views: { ...hinged.views, lidOnly: { label: "Lid only" } },
+    parts: { ...hinged.parts, lid: { ...hinged.parts.lid, views: ["box", "lidOnly"] } } };
+  const t = createChangeTracker();
+  inspect(t, twoViews, "forge-1", "box");
+  expect(inspect(t, twoViews, "forge-1", "box").changes.unchanged).toBe(true); // the baseline is real
+  expect(inspect(t, twoViews, "forge-1", "lidOnly")).toEqual({});
+});
+
+test("an aborted round leaves the baseline in place", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  t.begin("forge-1", "box");
+  t.abort();
+  expect(inspect(t, hinged).changes).toEqual({ unchanged: true, subparts: [], unchangedSubparts: 2 });
+});
+
+test("budget exhausted mid-diff keeps the verdicts reached and reports timeout", () => {
+  let clock = 0;
+  const t = createChangeTracker({ now: () => (clock += 5000), budgetMs: 1 });
+  inspect(t, hinged);
+  const out = inspect(t, withLid((kk, p, d) => hinged.parts.lid.build(kk, p, d).union(kk.cylinder({ d: 6, h: 6 }))));
+  expect(out.changesSkipped).toBe("timeout");
+  expect(out.changes.subparts.find((s) => s.name === "lid")).toBeUndefined();
+  expect(out.changes.unchanged).toBeUndefined();
+  expect(out.changes.unchangedSubparts).toBe(1);
+});
+
+test("budget exhausted before any verdict reports timeout alone", () => {
+  let clock = 0;
+  const t = createChangeTracker({ now: () => (clock += 5000), budgetMs: 1 });
+  const lidOnly = (build) => ({ ...hinged, parts: { lid: { ...hinged.parts.lid, ...(build ? { build } : {}) } } });
+  inspect(t, lidOnly());
+  const out = inspect(t, lidOnly((kk, p, d) => hinged.parts.lid.build(kk, p, d).union(kk.cylinder({ d: 6, h: 6 }))));
+  expect(out).toEqual({ changesSkipped: "timeout" });
+});
+
+test("the diff deadline counts time spent before finish, from begin()", () => {
+  // A still clock that the test moves between begin() and finish(): buildView,
+  // endBuild's re-meshing and measure all count against the report's share.
+  for (const [elapsed, diffed] of [[REPORT_SHARE_MS + 500, false], [1000, true]]) {
+    let clock = 0;
+    const t = createChangeTracker({ now: () => clock });
+    inspect(t, hinged);
+    clock = 10_000;
+    const out = inspect(t, knob, "forge-1", "box", { afterBegin: () => { clock += elapsed; } });
+    const lid = out.changes.subparts.find((s) => s.name === "lid");
+    if (diffed) {
+      expect(lid.addedMm3).toBeGreaterThan(100);
+      expect(out.changesSkipped).toBeUndefined();
+    } else {
+      expect(lid).toBeUndefined();
+      expect(out.changesSkipped).toBe("timeout");
+    }
+  }
+});
+
+test("a sub-part over half the triangle cap is not re-meshed and next round falls back", () => {
+  const t = createChangeTracker({ maxTriangles: 20 });
+  inspect(t, hinged);
+  t.begin("forge-1", "box");
+  const built = buildView(k, knob, "box", {});
+  const lidSolid = built.find((b) => b.name === "lid").solid;
+  let remeshed = 0;
+  const orig = lidSolid.toIndexedMesh;
+  lidSolid.toIndexedMesh = (...a) => { remeshed++; return orig(...a); };
+  t.endBuild(built);
+  expect(remeshed).toBe(0);
+  const measured = measure(k, knob, "box", {}, { built, minWall: false, gaps: false, memo: t.memo });
+  t.finish(k, "box", built, measured);
+  k.cleanup();
+  let diffs = 0;
+  const realDiff = k._meshDiff;
+  k._meshDiff = (...a) => { diffs++; return realDiff(...a); };
+  let out;
+  try { out = inspect(t, hinged); } finally { k._meshDiff = realDiff; }
+  const lid = out.changes.subparts.find((s) => s.name === "lid");
+  expect(lid.verdict).toBe("reshaped");
+  expect(lid.volumeDeltaMm3).toBeLessThan(-100);
+  expect(out.changesSkipped).toBe("too-large");
+  expect(diffs).toBe(0);
+});
+
+test("a shape-equal sub-part rotated about its own centre is moved by ≈0 and rotated", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  const out = inspect(t, withLid((kk, p, d) => {
+    const s = hinged.parts.lid.build(kk, p, d);
+    const b = s.boundingBox();
+    return s.rotate(90, [0, 1, 2].map((i) => (b.min[i] + b.max[i]) / 2), [0, 0, 1]);
+  }));
+  const lid = out.changes.subparts.find((s) => s.name === "lid");
+  expect(lid.verdict).toBe("moved");
+  expect(lid.rotated).toBe(true);
+  lid.moved.forEach((v) => expect(v).toBeCloseTo(0, 3));
+});
+
+test("a pure translation carries no rotated flag", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  const lid = inspect(t, withLid((kk, p, d) => hinged.parts.lid.build(kk, p, d).translate([2, 0, 0])))
+    .changes.subparts.find((s) => s.name === "lid");
+  expect(lid.verdict).toBe("moved");
+  expect(lid.rotated).toBeUndefined();
+});
+
+const knob = withLid((kk, p, d) => hinged.parts.lid.build(kk, p, d).union(kk.cylinder({ d: 6, h: 6 })));
+
+test("a mesh diff that throws falls back to the volume delta and still rotates the baseline", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  const orig = k._meshDiff;
+  k._meshDiff = () => { throw new Error("wasm fault"); };
+  let out;
+  try { out = inspect(t, knob); } finally { k._meshDiff = orig; }
+  const lid = out.changes.subparts.find((s) => s.name === "lid");
+  expect(lid.verdict).toBe("reshaped");
+  expect(lid.volumeDeltaMm3).toBeGreaterThan(100);
+  expect(out.changesSkipped).toBeUndefined();
+  // The next round compares against the build that threw, not the one before it.
+  expect(inspect(t, knob)).toEqual({ changes: { unchanged: true, subparts: [], unchangedSubparts: 2 } });
+});
+
+test("a failed capture forgets the baseline instead of leaving it two builds stale", () => {
+  const t = createChangeTracker();
+  inspect(t, hinged);
+  t.begin("forge-1", "box");
+  const built = buildView(k, hinged, "box", {});
+  t.endBuild([{ name: "lid", solid: { toIndexedMesh: () => { throw new Error("oom"); } }, mesh: {} }]);
+  expect(t.finish(k, "box", built, null)).toEqual({});
+  k.cleanup();
+  expect(inspect(t, knob)).toEqual({});
+});
+
+test("an overflowed hash record names no root ops on the next round", () => {
+  const t = createChangeTracker();
+  overflow.next = true;
+  inspect(t, hinged);
+  const lid = inspect(t, withLid((kk, p, d) =>
+    hinged.parts.lid.build(kk, p, d).union(kk.cylinder({ d: 6, h: 6 }).label("knob")))).changes.subparts.find((s) => s.name === "lid");
+  expect(lid.verdict).toBe("added");
+  expect(lid.changedOps).toBeUndefined();
+});
+
+test("finish never throws", () => {
+  const t = createChangeTracker();
+  t.begin("k", "box");
+  t.endBuild(null);
+  expect(t.finish(k, "box", null, null)).toEqual({});
+});
