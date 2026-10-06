@@ -18,6 +18,9 @@
 // side, and any band vertex riding a face edge as a T-junction all agree.
 import { SMOOTH, COPLANAR_ANGLE, MIN_EDGE, MIN_FACE, cosDeg } from "./shading-policy.js";
 import { affineAt, IDENTITY, runEvaluator } from "./blend-surfaces.js";
+import { hypot3 } from "./js-math.js";
+import { core } from "../core/core.js";
+import { creasedNormalsCore } from "../core/creased-normals-core.js";
 
 const COPLANAR_COS = cosDeg(COPLANAR_ANGLE);
 const MIN_EDGE2 = MIN_EDGE * MIN_EDGE;
@@ -33,7 +36,15 @@ const SHADE_CELL = 1e-3; // its hash-grid cell
 // Vertex-normal sliver cutoff (mm of triangle height): see the smooth loop below.
 const SHADE_SLIVER = 1e-3;
 
-export function creasedNormals(g, { policies = null, featureLabels = null, surfaces = null } = {}) {
+// The pass every Manifold mesh goes through: on the native core when it is on
+// (core/creased-normals-core.js — same bits, several times faster), else the JS
+// below. test/core-parity.test.js holds the two to identical output.
+export function creasedNormals(g, opts) {
+  const c = core();
+  return c ? creasedNormalsCore(c, g, opts) : creasedNormalsJS(g, opts);
+}
+
+export function creasedNormalsJS(g, { policies = null, featureLabels = null, surfaces = null } = {}) {
   const np = g.numProp, vp = g.vertProperties, tris = g.triVerts;
   const nTri = (tris.length / 3) | 0, nVert = (vp.length / np) | 0;
 
@@ -105,7 +116,7 @@ export function creasedNormals(g, { policies = null, featureLabels = null, surfa
     const vx = vp[c] - vp[a], vy = vp[c + 1] - vp[a + 1], vz = vp[c + 2] - vp[a + 2];
     const wx = vp[c] - vp[b], wy = vp[c + 1] - vp[b + 1], wz = vp[c + 2] - vp[b + 2];
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-    const L0 = Math.hypot(nx, ny, nz), L = L0 || 1; // the || 1 is for the normal divide ONLY
+    const L0 = hypot3(nx, ny, nz), L = L0 || 1; // the || 1 is for the normal divide ONLY
     fn[t * 3] = nx / L; fn[t * 3 + 1] = ny / L; fn[t * 3 + 2] = nz / L;
     const longest = Math.max(ux * ux + uy * uy + uz * uz, vx * vx + vy * vy + vz * vz, wx * wx + wy * wy + wz * wz);
     // |cross| / maxEdge = min height — from the RAW cross magnitude, never the
@@ -188,7 +199,7 @@ export function creasedNormals(g, { policies = null, featureLabels = null, surfa
       const an = analyticAt(t2, weld[v]);
       if (an) { ax += an[0]; ay += an[1]; az += an[2]; any = true; }
     }
-    const L = Math.hypot(ax, ay, az);
+    const L = hypot3(ax, ay, az);
     return any && L > 1e-9 ? [ax / L, ay / L, az / L] : null;
   };
 
@@ -248,8 +259,8 @@ export function creasedNormals(g, { policies = null, featureLabels = null, surfa
         }
       }
       if (!solid) { nx = sx; ny = sy; nz = sz; }
-      if (analytic && Math.hypot(ax, ay, az) > 1e-9) { nx = ax; ny = ay; nz = az; }
-      const L = Math.hypot(nx, ny, nz) || 1;
+      if (analytic && hypot3(ax, ay, az) > 1e-9) { nx = ax; ny = ay; nz = az; }
+      const L = hypot3(nx, ny, nz) || 1;
       const o = (t * 3 + k) * 3, vv = v * np;
       positions[o] = vp[vv]; positions[o + 1] = vp[vv + 1]; positions[o + 2] = vp[vv + 2];
       normals[o] = nx / L; normals[o + 1] = ny / L; normals[o + 2] = nz / L;

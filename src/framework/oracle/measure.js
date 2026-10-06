@@ -1,5 +1,5 @@
 import { buildView } from "./build.js";
-import { cachedBVH } from "./bvh.js";
+import { cachedBVH, disposeBVHs } from "./bvh.js";
 import { assemblyOverlaps } from "../assembly.js";
 import { resolveParams, buildPosed } from "../part-model.js";
 import { newReadSink, expandReads } from "../read-recorder.js";
@@ -440,6 +440,11 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       })
       : [])
     : undefined;
+  // Both BVH passes (min-wall above, gaps here) are done: free the indexes this
+  // call owns. A native-core index lives in WebAssembly memory until freed; a JS
+  // one needs nothing. (A throw before this point leaves them to the core's
+  // FinalizationRegistry backstop.)
+  disposeBVHs(bvhCache.values());
 
   // Rebuilds with the same kernel and cleans up at its end — every solid fact
   // above is already read, so this is safe.

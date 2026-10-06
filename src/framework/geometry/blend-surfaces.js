@@ -46,6 +46,7 @@
 // boolean and re-stamp that carries runTransform along (Manifold does, verified).
 // Pure module: no DOM, no node:, no three.
 
+import { hypot3 } from "./js-math.js";
 const EPS = 1e-12;
 
 // --- 3x4 column-major affine helpers (Manifold's runTransform layout) -------------
@@ -83,7 +84,7 @@ export function invertAffine(M) {
 }
 
 const norm = (v) => {
-  const l = Math.hypot(v[0], v[1], v[2]);
+  const l = hypot3(v[0], v[1], v[2]);
   return l > EPS ? [v[0] / l, v[1] / l, v[2] / l] : null;
 };
 
@@ -203,7 +204,7 @@ function segmentGrid(desc) {
   if (g) return g;
   const { pts, closed } = desc, n = pts.length, nSeg = closed ? n : n - 1;
   let total = 0;
-  for (let i = 0; i < nSeg; i++) { const p = pts[i], q = pts[(i + 1) % n]; total += Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]); }
+  for (let i = 0; i < nSeg; i++) { const p = pts[i], q = pts[(i + 1) % n]; total += hypot3(q[0] - p[0], q[1] - p[1], q[2] - p[2]); }
   const h = Math.max(total / Math.max(1, nSeg), Math.abs(desc.kf ?? 0) + Math.abs(desc.kd ?? 0) + (desc.r ?? 0), 1e-6);
   const cells = new Map();
   // numeric hashed cell keys: a collision only adds candidates, each distance-checked

@@ -265,6 +265,16 @@ export function minWall(
 } | null;
 
 /**
+ * Turn partforge's native core (src/framework/core/ — creasedNormals and the
+ * oracle's BVH + min-wall compiled to WebAssembly) on or off for this realm. On
+ * by default wherever WebAssembly exists. Output is bit-identical either way, so
+ * this is a performance and kill switch, never a behaviour choice. A worker is
+ * its own realm: set it there (or `globalThis.PARTFORGE_CORE = false` before the
+ * first build).
+ */
+export function setCoreEnabled(on: boolean): void;
+
+/**
  * Unsupported downward-facing surface (oracle/overhang.js): the mm² of faces
  * steeper than `maxAngle` from vertical, excluding the footprint on the bed
  * (`bedZ`, else the mesh's lowest Z) and a near-bed band. One pass, no index;

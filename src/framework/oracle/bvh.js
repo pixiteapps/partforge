@@ -37,6 +37,9 @@
 //             pointing at itself. Nodes are laid out in pre-order, so an internal
 //             node's left child is always the next node.
 
+import { core } from "../core/core.js";
+import { buildCoreBVH } from "../core/bvh-core.js";
+
 const LEAF = 4; // max triangles per leaf
 
 // Coords per triangle in a `vertices` store: v0,v1,v2 interleaved. The ONE place
@@ -285,11 +288,29 @@ function rayTri(ox, oy, oz, dx, dy, dz, V, base, tMin) {
 // meshes would keep an index alive for as long as anything held its mesh, which
 // is the quiet retention this pass exists to remove. Here the index's lifetime is
 // visibly the caller's scope.
+//
+// With the native core on (core/core.js), the index handed out here is the
+// core's (core/bvh-core.js): same queries, same bits, and it lives in WebAssembly
+// memory — so whoever owns the Map (or, with no Map, the caller) must free it
+// with disposeBVHs() when done. buildBVH() itself stays the JS index: it is
+// public API (partforge/oracle), and code outside partforge should never be
+// handed something it has to free.
 export function cachedBVH(mesh, cache) {
-  if (!cache) return buildBVH(mesh);
+  if (!cache) return indexFor(mesh);
   let bvh = cache.get(mesh);
-  if (!bvh) cache.set(mesh, (bvh = buildBVH(mesh)));
+  if (!bvh) cache.set(mesh, (bvh = indexFor(mesh)));
   return bvh;
+}
+
+function indexFor(mesh) {
+  const c = core();
+  return c ? buildCoreBVH(c, triangleVertices(mesh)) : buildBVH(mesh);
+}
+
+// Free every core index among `bvhs` (a Map's values, or any iterable); JS
+// indexes need nothing. Safe to call twice.
+export function disposeBVHs(bvhs) {
+  for (const b of bvhs) b?.dispose?.();
 }
 
 export function buildBVH(mesh) {
