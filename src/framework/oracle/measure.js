@@ -1,5 +1,5 @@
 import { buildView } from "./build.js";
-import { cachedBVH, disposeBVHs } from "./bvh.js";
+import { cachedBVH, coreBVHCache, disposeBVHs } from "./bvh.js";
 import { assemblyOverlaps } from "../assembly.js";
 import { resolveParams, buildPosed } from "../part-model.js";
 import { newReadSink, expandReads } from "../read-recorder.js";
@@ -257,7 +257,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // memory is unchanged (meshGaps already held every sub-part's index at once);
   // the cache just fills it earlier. min-wall indexes exactly one mesh, so it is
   // handed the resolved BVH rather than the Map.
-  const bvhCache = new Map();
+  const bvhCache = coreBVHCache();
   // Sample budget for the min-wall pass. A part that declares a min-wall gate (a
   // process profile or an `expect` mentioning it) gets the full resolution, because
   // a gate's verdict rides on the reading. Everything else gets the diagnostic

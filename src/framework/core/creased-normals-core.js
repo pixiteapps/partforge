@@ -7,6 +7,7 @@
 // flattening each fillet descriptor (blend-surfaces.js) into numbers once.
 // Everything per vertex or per triangle runs in C++.
 import { SMOOTH, COPLANAR_ANGLE, cosDeg } from "../geometry/shading-policy.js";
+import { releaseIfIdle } from "./core.js";
 
 const COPLANAR_COS = cosDeg(COPLANAR_ANGLE);
 const ANALYTIC_COS = cosDeg(25); // creased-normals.js's ANALYTIC_COS
@@ -35,6 +36,30 @@ function flattenDescriptor(desc, out) {
   }
 }
 
+// Can the core take this mesh? The C++ reads the arrays' raw bytes and trusts
+// their indices, where the JS tolerated (or simply read undefined from) a
+// malformed mesh — so anything but Manifold's own MeshGL shape, typed exactly
+// and with every index in range, goes to the JS pass instead. Cheap: O(runs +
+// merges), never O(triangles).
+export function coreAccepts(g) {
+  const vp = g?.vertProperties, tris = g?.triVerts, ri = g?.runIndex, roid = g?.runOriginalID;
+  if (!(vp instanceof Float32Array) || !(tris instanceof Uint32Array)) return false;
+  if (!(ri instanceof Uint32Array) || !(roid instanceof Uint32Array) || ri.length !== roid.length + 1) return false;
+  if (!(g.numProp >= 3) || tris.length % 3 !== 0) return false;
+  const nVert = (vp.length / g.numProp) | 0;
+  for (let r = 0; r < roid.length; r++) if (ri[r] > ri[r + 1] || ri[r + 1] > tris.length) return false;
+  const mf = g.mergeFromVert, mt = g.mergeToVert;
+  if (mf != null || mt != null) {
+    if (!(mf instanceof Uint32Array) || !(mt instanceof Uint32Array) || mf.length !== mt.length) return false;
+    for (let i = 0; i < mf.length; i++) if (mf[i] >= nVert || mt[i] >= nVert) return false;
+  }
+  // Triangle indices are range-checked in C++ (one pass it already makes);
+  // see cn_create. Here: the cheap structural facts.
+  return true;
+}
+
+// Returns null when the core refuses the mesh (see cn_create); the caller then
+// runs the JS pass.
 export function creasedNormalsCore(c, g, { policies = null, featureLabels = null, surfaces = null } = {}) {
   const { x } = c;
   const np = g.numProp, vp = g.vertProperties, tris = g.triVerts;
@@ -89,6 +114,10 @@ export function creasedNormalsCore(c, g, { policies = null, featureLabels = null
   // Inputs are borrowed by the state until destroy; free them after.
   const inputs = [c.copyIn(vp), c.copyIn(tris), c.copyIn(mf), c.copyIn(mt), c.copyIn(ri), c.copyIn(roid)];
   const state = x.cn_create(inputs[0], np, nVert, inputs[1], nTri, inputs[2], inputs[3], mf.length, inputs[4], inputs[5], roid.length);
+  if (!state) { // a triangle index out of range: not a mesh the core takes
+    for (const p of inputs) if (p) x.free(p);
+    return null;
+  }
   const args = [c.copyIn(oids), c.copyIn(creaseCos), c.copyIn(flags), c.copyIn(labelIds),
     c.copyIn(runDesc), c.copyIn(runXf), c.copyIn(descData), c.copyIn(descOffsets)];
   try {
@@ -109,5 +138,6 @@ export function creasedNormalsCore(c, g, { policies = null, featureLabels = null
   } finally {
     x.cn_destroy(state);
     for (const p of [...inputs, ...args]) if (p) x.free(p);
+    releaseIfIdle(c);
   }
 }

@@ -29,6 +29,8 @@ What keeping it exact takes, wherever you edit:
   bit (JavaScriptCore: libc++'s fused `std::hypot`; V8: Kahan-summed). The JS
   calls `hypot3` from `js-math.js`, the C++ calls `jsmath::hypot3`; both are
   `sqrt(x*x + y*y + z*z)`, rounded per operation.
+- **`Math.max`/`Math.min` are `jsmath::jsmax`/`jsmin`**, never `std::fmax`/
+  `fmin`: JS propagates NaN (and ranks +0 above -0); `fmax` drops NaN.
 - **No other transcendental computed here**: cosines etc. are computed once in
   JS and passed in, so a second libm never decides anything.
 - **No fused multiply-add**: the build passes `-ffp-contract=off` (clang on

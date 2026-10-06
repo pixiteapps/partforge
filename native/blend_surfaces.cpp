@@ -100,15 +100,15 @@ Descriptor::Grid& segmentGrid(Descriptor& desc) {
   }
   // Math.max(total / Math.max(1, nSeg), |kf ?? 0| + |kd ?? 0| + (r ?? 0), 1e-6)
   const double kf = desc.hasKfKd ? desc.kf : 0, kd = desc.hasKfKd ? desc.kd : 0, r = desc.hasR ? desc.r : 0;
-  g->h = std::fmax(std::fmax(total / std::fmax(1.0, (double)nSeg), std::fabs(kf) + std::fabs(kd) + r), 1e-6);
+  g->h = jsmath::jsmax(jsmath::jsmax(total / jsmath::jsmax(1.0, (double)nSeg), std::fabs(kf) + std::fabs(kd) + r), 1e-6);
   const double h = g->h;
   for (uint32_t i = 0; i < nSeg; i++) {
     const Vec& p = pts[i]; const Vec& q = pts[(i + 1) % n];
     const double pa[3] = {p.x, p.y, p.z}, qa[3] = {q.x, q.y, q.z};
     double lo[3], hi[3];
     for (int ax = 0; ax < 3; ax++) {
-      lo[ax] = std::floor(std::fmin(pa[ax], qa[ax]) / h);
-      hi[ax] = std::floor(std::fmax(pa[ax], qa[ax]) / h);
+      lo[ax] = std::floor(jsmath::jsmin(pa[ax], qa[ax]) / h);
+      hi[ax] = std::floor(jsmath::jsmax(pa[ax], qa[ax]) / h);
     }
     for (double a = lo[0]; a <= hi[0]; a++)
       for (double b = lo[1]; b <= hi[1]; b++)

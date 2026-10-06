@@ -20,7 +20,8 @@ extern "C" {
 
 typedef struct CNState CNState;
 
-// Manifold's MeshGL fields, as getMesh() returns them.
+// Manifold's MeshGL fields, as getMesh() returns them. Null when a triangle
+// names a vertex index >= numVert (the caller falls back to the JS pass).
 CNState* cn_create(const float* vertProperties, uint32_t numProp, uint32_t numVert,
                    const uint32_t* triVerts, uint32_t numTri,
                    const uint32_t* mergeFromVert, const uint32_t* mergeToVert, uint32_t numMerge,

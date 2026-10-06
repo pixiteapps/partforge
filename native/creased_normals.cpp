@@ -64,6 +64,11 @@ extern "C" CNState* cn_create(const float* vp, uint32_t np, uint32_t nVert,
                               const uint32_t* tris, uint32_t nTri,
                               const uint32_t* mf, const uint32_t* mt, uint32_t nMerge,
                               const uint32_t* ri, const uint32_t* roid, uint32_t nRun) {
+  // Refuse (null) a triangle naming a vertex that does not exist: the JS reads
+  // undefined there and carries on, this would read out of bounds. The caller
+  // runs the JS pass instead. (Run and merge tables are checked in JS.)
+  for (size_t i = 0; i < (size_t)nTri * 3; i++)
+    if (tris[i] >= nVert) return nullptr;
   CNState* s = new CNState();
   s->vp = vp; s->np = np; s->nVert = nVert; s->tris = tris; s->nTri = nTri; s->nRun = nRun;
 
@@ -86,8 +91,8 @@ extern "C" CNState* cn_create(const float* vp, uint32_t np, uint32_t nVert,
     const double nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
     const double L0 = jsHypot(nx, ny, nz), L = L0 != 0 && !std::isnan(L0) ? L0 : 1;
     s->fn[t * 3] = (float)(nx / L); s->fn[t * 3 + 1] = (float)(ny / L); s->fn[t * 3 + 2] = (float)(nz / L);
-    const double longest = std::fmax(ux * ux + uy * uy + uz * uz,
-                                     std::fmax(vx * vx + vy * vy + vz * vz, wx * wx + wy * wy + wz * wz));
+    const double longest = jsmath::jsmax(ux * ux + uy * uy + uz * uz,
+                                         jsmath::jsmax(vx * vx + vy * vy + vz * vz, wx * wx + wy * wy + wz * wz));
     s->thin[t] = longest > 0 ? (float)(L0 / std::sqrt(longest)) : 0.0f;
   }
 

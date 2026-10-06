@@ -19,8 +19,8 @@
 import { SMOOTH, COPLANAR_ANGLE, MIN_EDGE, MIN_FACE, cosDeg } from "./shading-policy.js";
 import { affineAt, IDENTITY, runEvaluator } from "./blend-surfaces.js";
 import { hypot3 } from "./js-math.js";
-import { core } from "../core/core.js";
-import { creasedNormalsCore } from "../core/creased-normals-core.js";
+import { core, poisonCore } from "../core/core.js";
+import { coreAccepts, creasedNormalsCore } from "../core/creased-normals-core.js";
 
 const COPLANAR_COS = cosDeg(COPLANAR_ANGLE);
 const MIN_EDGE2 = MIN_EDGE * MIN_EDGE;
@@ -38,10 +38,20 @@ const SHADE_SLIVER = 1e-3;
 
 // The pass every Manifold mesh goes through: on the native core when it is on
 // (core/creased-normals-core.js — same bits, several times faster), else the JS
-// below. test/core-parity.test.js holds the two to identical output.
+// below. test/core-parity.test.js holds the two to identical output. The core
+// takes only well-formed MeshGL (coreAccepts / cn_create); a fault inside it
+// poisons that instance and this mesh, and every one after, runs the JS.
 export function creasedNormals(g, opts) {
   const c = core();
-  return c ? creasedNormalsCore(c, g, opts) : creasedNormalsJS(g, opts);
+  if (c && coreAccepts(g)) {
+    try {
+      const out = creasedNormalsCore(c, g, opts);
+      if (out) return out;
+    } catch {
+      poisonCore(c);
+    }
+  }
+  return creasedNormalsJS(g, opts);
 }
 
 export function creasedNormalsJS(g, { policies = null, featureLabels = null, surfaces = null } = {}) {

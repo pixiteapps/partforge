@@ -25,7 +25,6 @@
 // measured", and the two used to be indistinguishable downstream.
 import { buildBVH, readTriangleInto } from "./bvh.js";
 import { hypot3 } from "../geometry/js-math.js";
-import { coreMinWall } from "../core/bvh-core.js";
 
 // Triangle budget above which minWall samples. Chosen so the parts people actually
 // author stay exact: everything in src/parts/ is 200–10,000 triangles, and a
@@ -81,8 +80,13 @@ export const BAND_CEIL = 1.5;
 // cast, not how the index is built, so a shared BVH is equally valid sampled or exact.
 export function minWall(mesh, { maxThickness, maxSamples = MAX_SAMPLES, bvh = buildBVH(mesh), band = null } = {}) {
   // A core BVH (cachedBVH's, when the native core is on) runs the whole pass in
-  // C++ — one call instead of a JS loop crossing into WebAssembly per ray.
-  if (bvh.core) return coreMinWall(bvh, { maxThickness, maxSamples, band });
+  // C++ — one call instead of a JS loop crossing into WebAssembly per ray. If
+  // the core cannot answer (undefined) the JS below runs on the index's JS twin.
+  if (bvh.core) {
+    const r = bvh.minWall({ maxThickness, maxSamples, band });
+    if (r !== undefined) return r;
+    bvh = bvh.jsIndex();
+  }
   const n = bvh.triangleCount;
   if (n === 0) return null;
   const V = bvh.vertices;

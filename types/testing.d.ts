@@ -269,8 +269,8 @@ export function minWall(
  * oracle's BVH + min-wall compiled to WebAssembly) on or off for this realm. On
  * by default wherever WebAssembly exists. Output is bit-identical either way, so
  * this is a performance and kill switch, never a behaviour choice. A worker is
- * its own realm: set it there (or `globalThis.PARTFORGE_CORE = false` before the
- * first build).
+ * its own realm: set it there (or `globalThis.PARTFORGE_CORE = false`, which is
+ * read on every use).
  */
 export function setCoreEnabled(on: boolean): void;
 

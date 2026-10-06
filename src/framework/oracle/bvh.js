@@ -37,7 +37,7 @@
 //             pointing at itself. Nodes are laid out in pre-order, so an internal
 //             node's left child is always the next node.
 
-import { core } from "../core/core.js";
+import { core, poisonCore } from "../core/core.js";
 import { buildCoreBVH } from "../core/bvh-core.js";
 
 const LEAF = 4; // max triangles per leaf
@@ -289,22 +289,38 @@ function rayTri(ox, oy, oz, dx, dy, dz, V, base, tMin) {
 // is the quiet retention this pass exists to remove. Here the index's lifetime is
 // visibly the caller's scope.
 //
-// With the native core on (core/core.js), the index handed out here is the
-// core's (core/bvh-core.js): same queries, same bits, and it lives in WebAssembly
-// memory — so whoever owns the Map (or, with no Map, the caller) must free it
-// with disposeBVHs() when done. buildBVH() itself stays the JS index: it is
-// public API (partforge/oracle), and code outside partforge should never be
-// handed something it has to free.
+// The native core (core/core.js) is used only where partforge OWNS the index's
+// lifetime: with no Map (the caller — meshGaps — frees it), or with a Map made
+// by coreBVHCache() (measure()'s, freed by measure()). Those get the core's
+// index (core/bvh-core.js): same queries, same bits, living in WebAssembly
+// memory until disposeBVHs(). A caller's own plain Map — meshGaps' public
+// `bvhCache` option — and buildBVH() itself keep getting the JS index, exactly
+// as before: code outside partforge is never handed something it must free.
 export function cachedBVH(mesh, cache) {
-  if (!cache) return indexFor(mesh);
+  if (!cache) return indexFor(mesh, true);
   let bvh = cache.get(mesh);
-  if (!bvh) cache.set(mesh, (bvh = indexFor(mesh)));
+  if (!bvh) cache.set(mesh, (bvh = indexFor(mesh, cache[CORE_CACHE] === true)));
   return bvh;
 }
 
-function indexFor(mesh) {
-  const c = core();
-  return c ? buildCoreBVH(c, triangleVertices(mesh)) : buildBVH(mesh);
+const CORE_CACHE = Symbol("coreBVHCache");
+// A Map for cachedBVH that may hold core indexes — its owner must disposeBVHs().
+export function coreBVHCache() {
+  const m = new Map();
+  m[CORE_CACHE] = true;
+  return m;
+}
+
+function indexFor(mesh, allowCore) {
+  const c = allowCore ? core() : null;
+  if (c) {
+    try {
+      return buildCoreBVH(c, triangleVertices(mesh), () => buildBVH(mesh));
+    } catch {
+      poisonCore(c); // a fault while building: this realm's core is done; JS from here
+    }
+  }
+  return buildBVH(mesh);
 }
 
 // Free every core index among `bvhs` (a Map's values, or any iterable); JS
@@ -428,6 +444,8 @@ export function buildBVH(mesh) {
   // distance at leaf pairs; early-exits at 0 (touching/intersecting). The stack
   // holds node-index PAIRS, pushed and popped two entries at a time.
   function distanceTo(other) {
+    // A core index on the other side (bvh-core.js) meets this one through its JS twin.
+    if (other?.jsIndex) other = other.jsIndex();
     const oV = other.vertices, oB = other._bounds, oM = other._meta, oO = other._order;
     let best = { d2: Infinity, a: null, b: null };
     const stack = [0, 0];

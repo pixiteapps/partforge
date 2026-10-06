@@ -21,4 +21,17 @@ inline double hypot3(double x, double y, double z) {
   return std::sqrt(x * x + y * y + z * z);
 }
 
+// Math.max / Math.min of two numbers: NaN if EITHER is NaN (std::fmax/fmin
+// drop it), and +0 beats -0 for max, -0 beats +0 for min.
+inline double jsmax(double a, double b) {
+  if (std::isnan(a) || std::isnan(b)) return NAN;
+  if (a == 0 && b == 0) return std::signbit(a) ? b : a;
+  return a > b ? a : b;
+}
+inline double jsmin(double a, double b) {
+  if (std::isnan(a) || std::isnan(b)) return NAN;
+  if (a == 0 && b == 0) return std::signbit(a) ? a : b;
+  return a < b ? a : b;
+}
+
 }  // namespace jsmath

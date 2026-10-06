@@ -35,13 +35,14 @@ int32_t bvh_closest_point(const BVH*, const double* p, double* out);
 // out = [distance, atx, aty, atz, ax, ay, az, bx, by, bz].
 int32_t bvh_distance_to(const BVH*, const BVH* other, double* out);
 
-// minWall (min-wall.js) over this BVH's own mesh. maxThickness NaN = the
-// default cap (root-bounds diagonal + 1). hasBand with bandMin/bandMax is the
+// minWall (min-wall.js) over this BVH's own mesh. hasMaxThickness 0 = the
+// default cap (root-bounds diagonal + 1); otherwise maxThickness as given
+// (NaN included — the JS honours a NaN cap, which finds nothing). hasBand with bandMin/bandMax is the
 // declared wall band. Returns 0 for an empty mesh (minWall's null), else 1;
 // out = [value (NaN = null), locx, locy, locz, sampled, sampledTriangles,
 //        totalTriangles, bandValue (NaN = null), bandLocx, bandLocy, bandLocz,
 //        members]   (a location's x is NaN when it is null)
-int32_t bvh_min_wall(const BVH*, double maxThickness, double maxSamples,
+int32_t bvh_min_wall(const BVH*, int32_t hasMaxThickness, double maxThickness, double maxSamples,
                      int32_t hasBand, double bandMin, double bandMax, double* out);
 
 void bvh_destroy(BVH*);

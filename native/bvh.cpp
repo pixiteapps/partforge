@@ -396,11 +396,11 @@ uint32_t sampleStride(uint32_t n) {
 }
 }  // namespace
 
-extern "C" int32_t bvh_min_wall(const BVH* T, double maxThickness, double maxSamples,
+extern "C" int32_t bvh_min_wall(const BVH* T, int32_t hasMaxThickness, double maxThickness, double maxSamples,
                                 int32_t hasBand, double bandMin, double bandMax, double* out) {
   const uint32_t n = T->count;
   if (n == 0) return 0;
-  if (std::isnan(maxThickness)) {
+  if (!hasMaxThickness) {
     const double* rb = T->bounds.data();
     maxThickness = jsHypot(rb[3] - rb[0], rb[4] - rb[1], rb[5] - rb[2]) + 1;
   }

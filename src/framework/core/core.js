@@ -14,23 +14,50 @@
 // is interpreted).
 //
 // The switch: on by default wherever WebAssembly exists. `setCoreEnabled(false)`
-// (exported from partforge/oracle and partforge/testing) or
-// `globalThis.PARTFORGE_CORE = false` before the first build turns it off for
-// that realm — a worker is its own realm, so a host sets it there. If the module
-// cannot be instantiated at all the passes quietly keep their JS.
+// (exported from partforge/oracle and partforge/testing), or
+// `globalThis.PARTFORGE_CORE = false` (read on every use, so it can be set any
+// time), turns it off for that realm — a worker is its own realm, so a host sets
+// it there. If the module cannot be instantiated the passes keep their JS.
+//
+// Failure is contained, never fatal: a failed allocation or a trap inside the
+// module POISONS that instance (poisonCore) — nothing touches it again — and
+// the pass that hit it, and every pass after, runs its JS instead. And because
+// WebAssembly memory only ever grows, an instance whose memory passed
+// RECYCLE_BYTES is dropped once nothing holds it (releaseIfIdle); the next pass
+// boots a fresh one in a few milliseconds and the old memory goes to the GC.
 import { CORE_WASM_BASE64 } from "./core-wasm.js";
 
-let enabled = !(globalThis.PARTFORGE_CORE === false || globalThis.PARTFORGE_CORE === "off");
-let booted; // undefined: not tried yet; null: unavailable
+const RECYCLE_BYTES = 256 * 1024 * 1024;
+
+let enabled = true;
+let booted; // undefined: not tried yet (or recycled); null: unavailable or poisoned
 
 export function setCoreEnabled(on) { enabled = !!on; }
 
-// The live core, or null when disabled or unavailable.
+const flagOff = () => globalThis.PARTFORGE_CORE === false || globalThis.PARTFORGE_CORE === "off";
+
+// The live core, or null when disabled, unavailable or poisoned.
 export function core() {
-  if (!enabled) return null;
+  if (!enabled || flagOff()) return null;
   if (booted === undefined) booted = boot();
   return booted;
 }
+
+// The instance `c` faulted (a trap, or an allocation that failed): never use it
+// again in this realm. Objects still holding it check `c.poisoned` and fall back.
+export function poisonCore(c) {
+  if (c) c.poisoned = true;
+  if (booted === c || c == null) booted = null;
+}
+
+// Drop `c` if its memory grew past RECYCLE_BYTES and nothing holds it (no live
+// BVH); the next core() boots a fresh, small instance.
+export function releaseIfIdle(c) {
+  if (booted === c && c.live === 0 && c.x.memory.buffer.byteLength > RECYCLE_BYTES) booted = undefined;
+}
+
+// Tests only: install a stand-in instance (or undefined to re-boot).
+export function setCoreForTesting(c) { booted = c; }
 
 const B64 = (() => {
   const t = new Uint8Array(128);
@@ -71,11 +98,20 @@ function boot() {
     return {
       x,
       scratch,
+      live: 0,         // core BVHs not yet disposed (they pin this instance)
+      poisoned: false,
+      // Never hands out 0: a failed malloc (memory exhausted) throws instead, so
+      // nothing is ever written over the module's low memory.
+      alloc(bytes) {
+        const ptr = x.malloc(bytes || 1);
+        if (!ptr) throw new Error("partforge core: out of WebAssembly memory");
+        return ptr;
+      },
       // Views are rebuilt per use: any call that grows memory detaches the old buffer.
       f64: () => new Float64Array(x.memory.buffer, scratch, 32),
       copyIn(arr) {
         if (!arr || arr.length === 0) return 0;
-        const ptr = x.malloc(arr.byteLength);
+        const ptr = this.alloc(arr.byteLength);
         new Uint8Array(x.memory.buffer, ptr, arr.byteLength).set(new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength));
         return ptr;
       },
