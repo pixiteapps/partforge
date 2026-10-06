@@ -18,8 +18,8 @@ import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
 import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
-import { affineAt, invertAffine, mapSurface } from "./blend-surfaces.js";
-import { meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
+import { affineAt, IDENTITY, invertAffine, mapSurface } from "./blend-surfaces.js";
+import { flatFacePlanes, meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
 import { SEGS, circleSegs, doubleCurvatureSegs } from "./circle-segs.js";
 import { checkBooleanResult } from "./boolean-gate.js";
 import { KernelCapabilityError } from "./errors.js";
@@ -294,12 +294,20 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // round-trip, so the descriptor's original frame stays valid). Folding the band
   // into a single blend id, as this used to, lost every descriptor with it: a labeled
   // fillet shaded with facet normals again.
+  //
+  // "Blend" here is any surface that must keep an id of its own: a fillet band (the
+  // boundaryLines policy) or a surface carrying an analytic descriptor at all —
+  // roundAll's flat-face planes ride on a SMOOTH surface, and folding that into the
+  // base id would drop them and bring the flat-face shading gradient back on every
+  // labeled roundAll. Each keeps the policy it had (none, for the roundAll surface).
+  const keepsOwnId = (oid) => !!oidPolicies.get(oid)?.boundaryLines || blendSurfaces.has(oid);
   const reserveBlendRestamp = (oids) => {
-    const blends = [...oids].filter((oid) => !!oidPolicies.get(oid)?.boundaryLines);
+    const blends = [...oids].filter(keepsOwnId);
     const baseId = Manifold.reserveIDs(1 + blends.length);
     const blendIdFor = new Map(blends.map((oid, i) => [oid, baseId + 1 + i]));
     for (const [oid, id2] of blendIdFor) {
-      oidPolicies.set(id2, BLEND);
+      const pol = oidPolicies.get(oid);
+      if (pol !== undefined) oidPolicies.set(id2, pol);
       const surf = blendSurfaces.get(oid);
       if (surf) blendSurfaces.set(id2, surf);
     }
@@ -405,7 +413,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
           const isBlend = (oid) => !!oidPolicies.get(oid)?.boundaryLines;
           if (![...new Set(g0.runOriginalID)].some(isBlend)) return T(filleted._m.asOriginal());
           const { baseId, blendIdFor } = reserveBlendRestamp(new Set(g0.runOriginalID));
-          g0.runOriginalID = Uint32Array.from(g0.runOriginalID, (o) => (isBlend(o) ? blendIdFor.get(o) : baseId));
+          g0.runOriginalID = Uint32Array.from(g0.runOriginalID, (o) => blendIdFor.get(o) ?? baseId);
           // The constructor re-welds, and that can pinch a latent sliver off a
           // component as fresh femto-debris (the same rebirth dropDebris's own
           // compose() loop guards against) — sweep the reconstruction too.
@@ -421,6 +429,39 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     } finally {
       sect?.cs?.delete?.();
     }
+  };
+
+  // The reference roundAll's flat faces (mesh-roundall.js flatFacePlanes): the
+  // input's flat faces, which the chain returns exactly to their planes, become a
+  // "planes" descriptor on the result's surface so creased-normals shades them —
+  // and the band's seams beside them — with the plane's own normal. The tolerance
+  // sits well under the first ring of band vertices off each face (the same ring
+  // meshRoundAll's simplify tolerance protects), so only the face and its seam
+  // vertices are on a plane. Keyed on geometry like every descriptor (see
+  // blendSurfaces above), so it is never removed with the cache entry.
+  const markFlatFaces = (input, out, r) => {
+    const gi = input.getMesh();
+    let planes;
+    try {
+      planes = flatFacePlanes(gi, { policyFor: (oid) => oidPolicies.get(oid) });
+    } finally {
+      gi.delete?.();
+    }
+    if (!planes.length) return out;
+    const segs = roundAllSegs(2 * r, quality);
+    const tol = Math.min(1e-3, 0.25 * r * (1 - Math.cos((2 * Math.PI) / segs)));
+    const go = out.getMesh();
+    try {
+      const roid = go.runOriginalID, rt = go.runTransform;
+      for (let i = 0; i < roid.length; i++) {
+        // a fresh original carries no runTransform at all — identity, as creased-normals reads it
+        const inv = rt && rt.length >= (i + 1) * 12 ? invertAffine(affineAt(rt, i)) : IDENTITY;
+        if (inv) blendSurfaces.set(roid[i], mapSurface({ kind: "planes", planes, tol }, inv));
+      }
+    } finally {
+      go.delete?.();
+    }
+    return out;
   };
 
   // Replay a recorded transform chain onto a solid. Each record maps back to the op
@@ -503,7 +544,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       // key omits it for the same reason); it just spells out that the ball
       // tessellation, and so the result, is tier-dependent.
       return cached(h("roundAll", hash, r, quality), () =>
-        prismRoundAllFast(m, hash, r) ?? T(meshRoundAll(wasm, m, r, quality)));
+        prismRoundAllFast(m, hash, r) ?? markFlatFaces(m, T(meshRoundAll(wasm, m, r, quality)), r));
     },
     // batch difference: first minus the union of the rest, evaluated as one boolean
     // tree — no materialized intermediate union (the unionRaw memory note applies)
@@ -538,7 +579,6 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         // fresh so cached-solid reuse under another label cannot collide — the same
         // guarantee asOriginal() gives the plain path below.
         const g0 = m.getMesh();
-        const isBlend = (oid) => !!oidPolicies.get(oid)?.boundaryLines;
         const oids0 = new Set(g0.runOriginalID);
         // Sector-aware re-stamp: a provenance-sectored loft (the `sector` policy
         // marker) must keep every run's identity — folding them (either the plain
@@ -561,14 +601,16 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
             featureLabels.set(newId, name);
             const pol = oidPolicies.get(oldId);
             if (pol !== undefined) oidPolicies.set(newId, pol);
+            const surf = blendSurfaces.get(oldId); // analytic normals ride the 1:1 stamp too
+            if (surf) blendSurfaces.set(newId, surf);
             setIds.push(newId);
           }
           return { value: wrap(o, lh), pin: o, dispose: () => {
-            for (const id2 of setIds) { featureLabels.delete(id2); oidPolicies.delete(id2); }
+            for (const id2 of setIds) { featureLabels.delete(id2); oidPolicies.delete(id2); blendSurfaces.delete(id2); }
             o.delete?.();
           } };
         }
-        if ([...oids0].some(isBlend)) {
+        if ([...oids0].some(keepsOwnId)) {
           const { baseId, blendIdFor, blendIds } = reserveBlendRestamp(oids0);
           // base-group policy: the same triangle-weighted majority vote as the plain
           // path, but over the NON-blend runs only — blend runs would elect BLEND for
@@ -578,7 +620,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
           const weightByKey = new Map();
           let bestWeight = -1, basePol;
           for (let r = 0; r < roid.length; r++) {
-            if (isBlend(roid[r])) continue;
+            if (blendIdFor.has(roid[r])) continue;
             const pol = oidPolicies.get(roid[r]) ?? SMOOTH;
             const key = `${pol.creaseAngle}/${pol.sameSurfaceLines}/${!!pol.boundaryLines}`;
             const weight = (weightByKey.get(key) || 0) + (ri[r + 1] / 3 - ri[r] / 3);
@@ -586,7 +628,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
             const better = weight > bestWeight || (weight === bestWeight && !pol.sameSurfaceLines && basePol?.sameSurfaceLines);
             if (better) { bestWeight = weight; basePol = pol; }
           }
-          g0.runOriginalID = Uint32Array.from(roid, (o2) => (isBlend(o2) ? blendIdFor.get(o2) : baseId));
+          g0.runOriginalID = Uint32Array.from(roid, (o2) => blendIdFor.get(o2) ?? baseId);
           const o = T(new Manifold(g0));
           g0.delete?.();
           featureLabels.set(baseId, name);

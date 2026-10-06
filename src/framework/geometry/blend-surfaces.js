@@ -22,6 +22,12 @@
 //   { kind: "spine", pts, closed, r }
 //                                   general chain (mesh-fillet generalTool): the
 //                                   ball-centre polyline itself; r is the radius
+//   { kind: "planes", planes: [{ n, d }], tol }
+//                                   roundAll's flat faces (mesh-roundall.js
+//                                   flatFacePlanes): a point within tol of one plane
+//                                   (n·x = d) takes its normal; anywhere else — the
+//                                   rounded band off its seams — there is none, and
+//                                   creased-normals keeps the facet average
 //
 // A path's polyline usually STANDS FOR a smooth curve (a circle's rim, an outline's
 // rounded corner): its per-segment cylinders would shade faceted around the curve,
@@ -105,8 +111,30 @@ export function mapSurface(desc, M) {
         M[0] * (M[4] * M[8] - M[5] * M[7]) - M[3] * (M[1] * M[8] - M[2] * M[7]) + M[6] * (M[1] * M[5] - M[2] * M[4])));
       return { kind: "spine", closed: desc.closed, pts: desc.pts.map((p) => applyPt(M, p)), r: desc.r * s };
     }
+    case "planes": {
+      const s = Math.cbrt(Math.abs(
+        M[0] * (M[4] * M[8] - M[5] * M[7]) - M[3] * (M[1] * M[8] - M[2] * M[7]) + M[6] * (M[1] * M[5] - M[2] * M[4])));
+      return { kind: "planes", tol: desc.tol * s, planes: desc.planes.map(({ n, d }) => {
+        const n2 = norm(applyDir(M, n)) ?? n;
+        const p = applyPt(M, [n[0] * d, n[1] * d, n[2] * d]);
+        return { n: n2, d: n2[0] * p[0] + n2[1] * p[1] + n2[2] * p[2] };
+      }) };
+    }
     default: throw new Error(`blend surface: unknown kind ${desc.kind}`);
   }
+}
+
+// The plane x lies on, or null — off every plane, or on two at once (where two
+// flat faces would meet, which a rounded result never shows, so no answer is right).
+function planeNormal(desc, x) {
+  let hit = null;
+  for (const pl of desc.planes) {
+    const n = pl.n;
+    if (Math.abs(n[0] * x[0] + n[1] * x[1] + n[2] * x[2] - pl.d) > desc.tol) continue;
+    if (hit) return null;
+    hit = n;
+  }
+  return hit;
 }
 
 // Nearest spine point to x, in the descriptor's own frame.
@@ -240,6 +268,7 @@ function nearestSegment(desc, x) {
 // Unit spine→point direction at x in the descriptor's frame, or null where undefined.
 export function surfaceNormal(desc, x) {
   if (desc.kind === "path") return pathNormal(desc, x);
+  if (desc.kind === "planes") return planeNormal(desc, x);
   if (desc.kind === "spine") {
     const { bi, bt } = nearestSegment(desc, x);
     if (bi < 0) return null;

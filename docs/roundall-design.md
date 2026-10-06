@@ -114,7 +114,12 @@ out = simplify(m2.minkowskiSum(sphere(r, segs)))
   `SEGS[quality]` for tessellation — Minkowski cost makes that unaffordable
   here, so `roundAll` owns its radius-scaled `roundAllSegs` helper.) Facets
   smooth-shade in the viewer via the creased-normals pass; only silhouettes
-  reveal them.
+  reveal them. The input's FLAT faces — the ones the input itself shades flat,
+  so never a curved wall's facets — are registered on the result as an analytic
+  `planes` descriptor (`flatFacePlanes`, `blend-surfaces.js`), and shade with
+  their exact plane normal, seam vertices included. Without it a large face's
+  corners averaged in the band facets around them (the vertex sum is
+  unweighted) and a sloped plate's top showed a shading gradient.
 - **Never throws `NEEDS_OCCT`.** The runtime reroute latch exists for ops the
   mesh backend can't do; for `roundAll` the mesh backend is the reference
   implementation, and rerouting would trade a correct result for a skip.
