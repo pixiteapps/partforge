@@ -5,6 +5,8 @@
 // its own backend.
 
 import type { PartDefinition } from "./part.js";
+export type { CoreStatus, CoreFallback, CoreFallbackReason } from "./testing.js";
+export { coreStatus, onCoreFallback, CORE_FALLBACK_REASONS } from "./testing.js";
 
 /** The rebind handle `runWorker` returns. */
 export interface WorkerHandle {

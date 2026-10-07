@@ -32,6 +32,9 @@
 // faults, with a fixed reason (CORE_FALLBACK_REASONS) and nothing else, so a host
 // can count fallbacks in its own telemetry.
 import { CORE_WASM_BASE64 } from "./core-wasm.js";
+import { recordFallback, resetCoreStatus, setStateProbe } from "./core-status.js";
+
+export { CORE_FALLBACK_REASONS, coreStatus, countRefusedMesh, onCoreFallback } from "./core-status.js";
 
 // What the core may keep holding between passes. Ordinary forges never grow it
 // past its 16 MB start; a preview mesh needs ~145 bytes/triangle at the peak
@@ -41,14 +44,7 @@ export const RECYCLE_BYTES = 64 * 1024 * 1024;
 
 let enabled = true;
 let booted; // undefined: not tried yet (or recycled); null: unavailable or poisoned
-let fallback = null; // { state: "unavailable" | "faulted", reason } once it happened
-let refused = 0;     // meshes the core declined (malformed MeshGL) — the JS took them
-const listeners = new Set();
-
 const OUT_OF_MEMORY = "partforge core: out of WebAssembly memory";
-// Every reason a fallback can carry. A fixed vocabulary on purpose: hosts record
-// it as telemetry, and an error message could carry anything.
-export const CORE_FALLBACK_REASONS = Object.freeze(["no_webassembly", "boot_failed", "out_of_memory", "trap", "error"]);
 
 function reasonOf(err) {
   if (err?.message === OUT_OF_MEMORY) return "out_of_memory";
@@ -56,37 +52,8 @@ function reasonOf(err) {
   return "error";
 }
 
-function fellBack(state, reason) {
-  if (fallback) return; // the first cause is the one worth knowing
-  fallback = { state, reason };
-  for (const fn of listeners) {
-    try { fn({ ...fallback }); } catch { /* a host listener must never break a build */ }
-  }
-}
-
-// Where this realm's core stands:
-//   state: "idle" (not needed yet) | "on" | "off" (switched off) |
-//          "unavailable" (could not start) | "faulted" (stopped after a fault)
-//   reason: one of CORE_FALLBACK_REASONS for unavailable/faulted, else null
-//   refusedMeshes: how many meshes went to the JS because the core declined them
-export function coreStatus() {
-  const state = fallback?.state
-    ?? (!enabled || flagOff() ? "off" : booted ? "on" : "idle");
-  return { state, reason: fallback?.reason ?? null, refusedMeshes: refused };
-}
-
-// Call `listener({ state, reason })` once when the core becomes unavailable or
-// faults — immediately if it already has. Returns an unsubscribe function.
-export function onCoreFallback(listener) {
-  if (fallback) {
-    try { listener({ ...fallback }); } catch { /* see fellBack */ }
-  }
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
-// A pass sent a mesh to the JS because the core declined it (not a fault).
-export function countRefusedMesh() { refused++; }
+// The live answer for coreStatus() (core-status.js) while nothing has failed.
+setStateProbe(() => (!enabled || flagOff() ? "off" : booted ? "on" : "idle"));
 
 export function setCoreEnabled(on) { enabled = !!on; }
 
@@ -105,7 +72,7 @@ export function core() {
 export function poisonCore(c, err) {
   if (c) c.poisoned = true;
   if (booted === c || c == null) booted = null;
-  fellBack("faulted", reasonOf(err));
+  recordFallback("faulted", reasonOf(err));
 }
 
 // Drop `c` if its memory grew past RECYCLE_BYTES and nothing holds it (no live
@@ -118,9 +85,7 @@ export function releaseIfIdle(c) {
 // any recorded fallback, refusal count and listeners.
 export function setCoreForTesting(c) {
   booted = c;
-  fallback = null;
-  refused = 0;
-  listeners.clear();
+  resetCoreStatus();
 }
 
 const B64 = (() => {
@@ -147,7 +112,7 @@ function decodeBase64(s) {
 
 function boot() {
   if (typeof WebAssembly !== "object") {
-    fellBack("unavailable", "no_webassembly");
+    recordFallback("unavailable", "no_webassembly");
     return null;
   }
   try {
@@ -185,7 +150,7 @@ function boot() {
       copyOut: (Ctor, ptr, len) => (ptr && len ? new Ctor(x.memory.buffer, ptr, len).slice() : new Ctor(0)),
     };
   } catch {
-    fellBack("unavailable", "boot_failed");
+    recordFallback("unavailable", "boot_failed");
     return null;
   }
 }
