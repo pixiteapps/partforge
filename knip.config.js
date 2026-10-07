@@ -73,5 +73,10 @@ export default {
   // binary, never an npm dependency, so knip cannot find it in package.json and
   // reports it as "unlisted". It is a one-shot dev tool; the binary is not needed to
   // build, test, or run the published package.
-  ignoreBinaries: ["ultrahdr_app"],
+  // `em++` is the same kind of thing for scripts/build-core-wasm.mjs: Emscripten's
+  // compiler (`brew install emscripten`), run only to rebuild the native core
+  // (native/README.md). CI never runs it — test/core-wasm.test.js checks the
+  // committed output instead.
+  // (a RegExp, not "em++": knip reads a string with regex characters as a pattern)
+  ignoreBinaries: ["ultrahdr_app", /^em\+\+$/],
 };

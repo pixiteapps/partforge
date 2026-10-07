@@ -24,6 +24,7 @@
 // 400k triangles and found no wall" is a very different statement from "nobody
 // measured", and the two used to be indistinguishable downstream.
 import { buildBVH, readTriangleInto } from "./bvh.js";
+import { hypot3 } from "../geometry/js-math.js";
 
 // Triangle budget above which minWall samples. Chosen so the parts people actually
 // author stay exact: everything in src/parts/ is 200–10,000 triangles, and a
@@ -78,6 +79,14 @@ export const BAND_CEIL = 1.5;
 // one is built. It does not interact with sampling — sampling picks WHICH rays to
 // cast, not how the index is built, so a shared BVH is equally valid sampled or exact.
 export function minWall(mesh, { maxThickness, maxSamples = MAX_SAMPLES, bvh = buildBVH(mesh), band = null } = {}) {
+  // A core BVH (cachedBVH's, when the native core is on) runs the whole pass in
+  // C++ — one call instead of a JS loop crossing into WebAssembly per ray. If
+  // the core cannot answer (undefined) the JS below runs on the index's JS twin.
+  if (bvh.core) {
+    const r = bvh.minWall({ maxThickness, maxSamples, band });
+    if (r !== undefined) return r;
+    bvh = bvh.jsIndex();
+  }
   const n = bvh.triangleCount;
   if (n === 0) return null;
   const V = bvh.vertices;
@@ -89,7 +98,7 @@ export function minWall(mesh, { maxThickness, maxSamples = MAX_SAMPLES, bvh = bu
   // are not in the tree; that only shrinks a ray cap, never a reading.)
   if (maxThickness == null) {
     const rb = bvh.rootBounds;
-    maxThickness = Math.hypot(rb[3] - rb[0], rb[4] - rb[1], rb[5] - rb[2]) + 1;
+    maxThickness = hypot3(rb[3] - rb[0], rb[4] - rb[1], rb[5] - rb[2]) + 1;
   }
 
   // `maxSamples: 0` (or any non-positive) is the explicit "no cap, cast everything"
@@ -119,7 +128,7 @@ export function minWall(mesh, { maxThickness, maxSamples = MAX_SAMPLES, bvh = bu
     const e1x = tri[3] - v0x, e1y = tri[4] - v0y, e1z = tri[5] - v0z;
     const e2x = tri[6] - v0x, e2y = tri[7] - v0y, e2z = tri[8] - v0z;
     let nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
-    const len = Math.hypot(nx, ny, nz);
+    const len = hypot3(nx, ny, nz);
     if (len < 1e-9) continue;                       // degenerate triangle: no normal, no ray
     nx /= len; ny /= len; nz /= len;                // outward normal (manifold winding)
     const c = [(v0x + tri[3] + tri[6]) / 3, (v0y + tri[4] + tri[7]) / 3, (v0z + tri[5] + tri[8]) / 3];

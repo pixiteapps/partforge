@@ -1,5 +1,5 @@
 import { buildView } from "./build.js";
-import { cachedBVH } from "./bvh.js";
+import { cachedBVH, disposeBVHs } from "./bvh.js";
 
 // A measured pair distance at or below this (mm) counts as touching — absorbs
 // posing float error while staying far below any real print clearance.
@@ -36,15 +36,20 @@ export function meshGaps(built, { bvhCache, prior, onPair } = {}) {
     return bvhOf.get(it.name);
   };
   const out = [];
-  for (let i = 0; i < items.length; i++) {
-    for (let j = i + 1; j < items.length; j++) {
-      const a = items[i].name, b = items[j].name;
-      const reused = prior?.(a, b);
-      const { distance, at } = reused ?? bvh(items[i]).distanceTo(bvh(items[j]));
-      const g = { a, b, distance, at };
-      onPair?.(a, b, { distance, at });
-      out.push(g);
+  try {
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        const a = items[i].name, b = items[j].name;
+        const reused = prior?.(a, b);
+        const { distance, at } = reused ?? bvh(items[i]).distanceTo(bvh(items[j]));
+        const g = { a, b, distance, at };
+        onPair?.(a, b, { distance, at });
+        out.push(g);
+      }
     }
+  } finally {
+    // With no caller Map these indexes are ours; with one, its owner frees them.
+    if (!bvhCache) disposeBVHs(bvhOf.values());
   }
   return out;
 }

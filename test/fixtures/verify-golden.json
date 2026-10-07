@@ -2516,7 +2516,7 @@
             "actual": 1.59990174,
             "status": "pass",
             "pass": true,
-            "message": "1.5999017384747451 >= 1.2"
+            "message": "1.5999017384747458 >= 1.2"
           },
           {
             "scope": "subpart",
@@ -2672,7 +2672,7 @@
             "actual": 1.29768436,
             "status": "pass",
             "pass": true,
-            "message": "1.2976843558584732 >= 1.2"
+            "message": "1.2976843558584727 >= 1.2"
           },
           {
             "scope": "subpart",
@@ -2944,7 +2944,7 @@
             "actual": 0.0000486283002,
             "status": "warn",
             "pass": false,
-            "message": "0.00004862830017938115 not >= 1.2",
+            "message": "0.000048628300179380955 not >= 1.2",
             "note": "sampled 50000 of 59660 triangles — an upper bound; a thinner spot may exist between samples",
             "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
             "pattern": "minwall-sliver-triangles",
@@ -2995,7 +2995,7 @@
         "actual": 0.0000486283002,
         "status": "warn",
         "pass": false,
-        "message": "0.00004862830017938115 not >= 1.2",
+        "message": "0.000048628300179380955 not >= 1.2",
         "note": "sampled 50000 of 59660 triangles — an upper bound; a thinner spot may exist between samples",
         "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
         "pattern": "minwall-sliver-triangles",
@@ -3074,7 +3074,7 @@
             "actual": 0.0000488908026,
             "status": "warn",
             "pass": false,
-            "message": "0.00004889080255696863 not >= 1.2",
+            "message": "0.00004889080255696864 not >= 1.2",
             "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
             "pattern": "minwall-sliver-triangles",
             "location": [
@@ -3124,7 +3124,7 @@
         "actual": 0.0000488908026,
         "status": "warn",
         "pass": false,
-        "message": "0.00004889080255696863 not >= 1.2",
+        "message": "0.00004889080255696864 not >= 1.2",
         "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
         "pattern": "minwall-sliver-triangles",
         "location": [
@@ -3202,7 +3202,7 @@
             "actual": 0.0000486283002,
             "status": "warn",
             "pass": false,
-            "message": "0.00004862830017938115 not >= 1.2",
+            "message": "0.000048628300179380955 not >= 1.2",
             "note": "sampled 50000 of 59660 triangles — an upper bound; a thinner spot may exist between samples",
             "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
             "pattern": "minwall-sliver-triangles",
@@ -3247,7 +3247,7 @@
             "actual": 0.0000488908026,
             "status": "warn",
             "pass": false,
-            "message": "0.00004889080255696863 not >= 1.2",
+            "message": "0.00004889080255696864 not >= 1.2",
             "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
             "pattern": "minwall-sliver-triangles",
             "location": [
@@ -3297,7 +3297,7 @@
         "actual": 0.0000486283002,
         "status": "warn",
         "pass": false,
-        "message": "0.00004862830017938115 not >= 1.2",
+        "message": "0.000048628300179380955 not >= 1.2",
         "note": "sampled 50000 of 59660 triangles — an upper bound; a thinner spot may exist between samples",
         "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
         "pattern": "minwall-sliver-triangles",
@@ -3317,7 +3317,7 @@
         "actual": 0.0000488908026,
         "status": "warn",
         "pass": false,
-        "message": "0.00004889080255696863 not >= 1.2",
+        "message": "0.00004889080255696864 not >= 1.2",
         "hint": "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
         "pattern": "minwall-sliver-triangles",
         "location": [

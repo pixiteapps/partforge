@@ -16,6 +16,8 @@ export {
   type ChangeTracker, type ChangesReport, type SubPartChange, type ChangeRegion, type ChangeOpRef,
   // mesh facts, gaps, BVH, min wall
   meshVolume, bboxSize, bounds, meshArea, assemblyGaps, meshGaps, buildBVH, meshTriangles, minWall, overhang,
+  // the native core's switch
+  setCoreEnabled,
   type Gap, type BVH,
   // mesh file parsers (the import pipeline's own readers)
   parseStl, parse3MF,
