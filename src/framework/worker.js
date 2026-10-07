@@ -9,6 +9,10 @@
 // guarantees about epochs, cache sweeps, and the re-posted ready) is normative
 // in docs/KERNEL-CONTRACT.md.
 import { handle } from "./jobs.js";
+// The native core's status (core/core-status.js): a host's worker entry
+// subscribes here to count fallbacks. That module carries no WebAssembly, so
+// re-exporting it costs a worker nothing at boot.
+export { coreStatus, onCoreFallback, CORE_FALLBACK_REASONS } from "./core/core-status.js";
 import { lintPart } from "../lint.js";
 import { cachedVectorDocs } from "./vectors.js";
 
