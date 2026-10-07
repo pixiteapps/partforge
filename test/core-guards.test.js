@@ -6,7 +6,7 @@ import { creasedNormals, creasedNormalsJS } from "../src/framework/geometry/crea
 import { buildBVH, cachedBVH, disposeBVHs } from "../src/framework/oracle/bvh.js";
 import { meshGaps } from "../src/framework/oracle/gaps.js";
 import { minWall } from "../src/framework/oracle/min-wall.js";
-import { core, setCoreEnabled, setCoreForTesting } from "../src/framework/core/core.js";
+import { core, RECYCLE_BYTES, releaseIfIdle, setCoreEnabled, setCoreForTesting } from "../src/framework/core/core.js";
 
 afterEach(() => {
   setCoreEnabled(true);
@@ -91,4 +91,32 @@ test("a JS index and a core index can still measure the distance between them", 
   expect(c.distanceTo(j)).toEqual(buildBVH(m1).distanceTo(j));
   expect(j.distanceTo(c)).toEqual(j.distanceTo(buildBVH(m1)));
   disposeBVHs([c]);
+});
+
+test("an idle instance that grew past RECYCLE_BYTES is dropped, and the next pass boots a small one", () => {
+  const c = core();
+  const grow = Math.ceil((RECYCLE_BYTES + 1 - c.x.memory.buffer.byteLength) / 65536);
+  c.x.memory.grow(grow); // stand-in for a big preview mesh's peak
+  const bvh = cachedBVH({ positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]) });
+  releaseIfIdle(c);
+  expect(core()).toBe(c); // a live core BVH pins it
+  disposeBVHs([bvh]); // ...and disposing the last one releases it
+  const next = core();
+  expect(next).not.toBe(c);
+  expect(next.x.memory.buffer.byteLength).toBeLessThan(RECYCLE_BYTES);
+  const g = fan(0.2);
+  same(creasedNormals(g), creasedNormalsJS(g)); // and the fresh instance still answers
+});
+
+test("a big creasedNormals pass recycles its instance once it returns", () => {
+  const side = 400; // 320k triangles: ~46 MB at ~145 B/tri, then pushed over by growing
+  const nv = (side + 1) ** 2, vp = new Float32Array(nv * 3), tv = new Uint32Array(side * side * 6);
+  for (let y = 0; y <= side; y++) for (let x = 0; x <= side; x++) { const i = (y * (side + 1) + x) * 3; vp[i] = x; vp[i + 1] = y; vp[i + 2] = Math.sin(x * 0.1) * Math.cos(y * 0.1); }
+  let t = 0;
+  for (let y = 0; y < side; y++) for (let x = 0; x < side; x++) { const a = y * (side + 1) + x, b = a + 1, c = a + side + 1, d = c + 1; tv.set([a, b, d, a, d, c], t); t += 6; }
+  const g = { numProp: 3, vertProperties: vp, triVerts: tv, runIndex: new Uint32Array([0, tv.length]), runOriginalID: new Uint32Array([1]) };
+  const c = core();
+  c.x.memory.grow(Math.ceil(RECYCLE_BYTES / 65536)); // already large before the pass
+  creasedNormals(g);
+  expect(core()).not.toBe(c);
 });

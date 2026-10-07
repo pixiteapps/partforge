@@ -438,7 +438,10 @@ the installed package, so let the publish finish before bumping the dep there.
   must be freed with `disposeBVHs`; the public `buildBVH` and a caller's own
   `bvhCache` stay JS. A fault inside the module poisons that instance and the
   JS pass answers instead, never a crash; an instance whose memory grew past
-  256 MB is recycled once idle (WebAssembly memory never shrinks). **Output is bit-identical with the core on or off** —
+  64 MB (`RECYCLE_BYTES`) is recycled once idle, since WebAssembly memory never
+  shrinks — that caps what the core holds between builds (Manifold's own
+  module, in the same worker, keeps its high-water mark regardless).
+  **Output is bit-identical with the core on or off** —
   `test/core-parity.test.js` is the contract and must never be loosened — so
   editing a ported JS pass means editing its C++ in the same PR and rebuilding
   (`test/core-wasm.test.js` fails on stale WebAssembly). The ported passes call

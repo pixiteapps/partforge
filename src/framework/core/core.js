@@ -27,7 +27,11 @@
 // boots a fresh one in a few milliseconds and the old memory goes to the GC.
 import { CORE_WASM_BASE64 } from "./core-wasm.js";
 
-const RECYCLE_BYTES = 256 * 1024 * 1024;
+// What the core may keep holding between passes. Ordinary forges never grow it
+// past its 16 MB start; a preview mesh needs ~145 bytes/triangle at the peak
+// (screw, 210k triangles: 29 MB; a 1M-triangle mesh: 138 MB). Re-booting costs a
+// few milliseconds — the module is 64 KB — so cap the retained memory low.
+export const RECYCLE_BYTES = 64 * 1024 * 1024;
 
 let enabled = true;
 let booted; // undefined: not tried yet (or recycled); null: unavailable or poisoned
