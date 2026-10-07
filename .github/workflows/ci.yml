@@ -53,8 +53,8 @@ jobs:
     runs-on: ubuntu-latest
     # Every job and slow step carries a ceiling. Without one a hang — a stalled
     # Chromium/apt download, a test that never settles — runs to GitHub's 6-hour
-    # default and holds the PR's checks (and the publish that waits on them)
-    # for that long; with one it fails in minutes and a re-run usually clears it.
+    # default and holds the PR's checks for that long; with one it fails in
+    # minutes and a re-run usually clears it.
     # Set at roughly 4x a healthy run (the job takes ~7 min, npm test ~3, the
     # Playwright install ~20 s), so a slow day still passes.
     timeout-minutes: 30
