@@ -6,7 +6,7 @@ import { creasedNormals, creasedNormalsJS } from "../src/framework/geometry/crea
 import { buildBVH, cachedBVH, disposeBVHs } from "../src/framework/oracle/bvh.js";
 import { meshGaps } from "../src/framework/oracle/gaps.js";
 import { minWall } from "../src/framework/oracle/min-wall.js";
-import { core, RECYCLE_BYTES, releaseIfIdle, setCoreEnabled, setCoreForTesting } from "../src/framework/core/core.js";
+import { core, coreStatus, onCoreFallback, RECYCLE_BYTES, releaseIfIdle, setCoreEnabled, setCoreForTesting } from "../src/framework/core/core.js";
 
 afterEach(() => {
   setCoreEnabled(true);
@@ -119,4 +119,50 @@ test("a big creasedNormals pass recycles its instance once it returns", () => {
   c.x.memory.grow(Math.ceil(RECYCLE_BYTES / 65536)); // already large before the pass
   creasedNormals(g);
   expect(core()).not.toBe(c);
+});
+
+test("coreStatus and onCoreFallback report a fault — once, with a fixed reason", () => {
+  expect(coreStatus()).toEqual({ state: "idle", reason: null, refusedMeshes: 0 });
+  creasedNormals(fan(0.2));
+  expect(coreStatus().state).toBe("on");
+  setCoreEnabled(false);
+  expect(coreStatus().state).toBe("off");
+  setCoreEnabled(true);
+
+  const seen = [];
+  onCoreFallback((f) => seen.push(f));
+  const broken = { x: {}, live: 0, poisoned: false, alloc() { throw new Error("partforge core: out of WebAssembly memory"); }, copyIn() { throw new Error("partforge core: out of WebAssembly memory"); } };
+  setCoreForTesting(broken); // also resets the record, as a fresh realm would be
+  onCoreFallback((f) => seen.push(f));
+  creasedNormals(fan(0.2));
+  creasedNormals(fan(0.3)); // a second pass after the fault: no second report
+  expect(seen).toEqual([{ state: "faulted", reason: "out_of_memory" }]);
+  expect(coreStatus()).toEqual({ state: "faulted", reason: "out_of_memory", refusedMeshes: 0 });
+
+  const late = [];
+  onCoreFallback((f) => late.push(f)); // subscribing after the fact still hears it
+  expect(late).toEqual([{ state: "faulted", reason: "out_of_memory" }]);
+});
+
+test("a trap is reported as a trap, and a refused mesh is counted, not reported", () => {
+  const seen = [];
+  onCoreFallback((f) => seen.push(f));
+  const bad = { ...fan(0.2), mergeFromVert: new Uint32Array([1]) };
+  creasedNormals(bad);
+  expect(coreStatus().refusedMeshes).toBe(1);
+  expect(seen).toEqual([]);
+  const trapping = { x: {}, live: 0, poisoned: false, alloc() { throw new WebAssembly.RuntimeError("memory access out of bounds"); }, copyIn() { throw new WebAssembly.RuntimeError("memory access out of bounds"); } };
+  setCoreForTesting(trapping);
+  onCoreFallback((f) => seen.push(f));
+  creasedNormals(fan(0.2));
+  expect(seen).toEqual([{ state: "faulted", reason: "trap" }]);
+});
+
+test("a listener that throws never breaks the pass", () => {
+  const broken = { x: {}, live: 0, poisoned: false, alloc() { throw new Error("boom"); }, copyIn() { throw new Error("boom"); } };
+  setCoreForTesting(broken);
+  onCoreFallback(() => { throw new Error("host bug"); });
+  const g = fan(0.2);
+  same(creasedNormals(g), creasedNormalsJS(g));
+  expect(coreStatus()).toMatchObject({ state: "faulted", reason: "error" });
 });

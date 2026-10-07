@@ -27,7 +27,7 @@ export { buildBVH, meshTriangles } from "./framework/oracle/bvh.js";
 export { minWall } from "./framework/oracle/min-wall.js";
 // The native core's switch (framework/core/core.js): bit-identical either way, so
 // this is a performance and kill switch, never a behaviour choice.
-export { setCoreEnabled } from "./framework/core/core.js";
+export { setCoreEnabled, coreStatus, onCoreFallback, CORE_FALLBACK_REASONS } from "./framework/core/core.js";
 export { overhang } from "./framework/oracle/overhang.js";
 // Mesh file parsers — the import pipeline's own readers, browser-safe pure
 // functions; the oracle package's corpus tests read real files through them.

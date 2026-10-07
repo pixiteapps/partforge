@@ -47,8 +47,8 @@ export function buildCoreBVH(c, verts, makeJsIndex) {
     if (c.poisoned) return fallback();
     try {
       return fn();
-    } catch {
-      poisonCore(c);
+    } catch (err) {
+      poisonCore(c, err);
       return fallback();
     }
   };

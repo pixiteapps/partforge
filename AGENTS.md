@@ -449,7 +449,10 @@ the installed package, so let the publish finish before bumping the dep there.
   V8 compute differently. `native/README.md` has the floating-point rules.
   `setCoreEnabled(false)` (partforge/oracle, partforge/testing) or
   `globalThis.PARTFORGE_CORE = false` (read on every use) turns it off per realm.
-  `test/core-guards.test.js` pins the failure handling.
+  `test/core-guards.test.js` pins the failure handling. Falling back is silent
+  to the user but not to the host: `coreStatus()` and `onCoreFallback(listener)`
+  (partforge/oracle) report it once per realm with a fixed reason
+  (`CORE_FALLBACK_REASONS`) — never an error message — for host telemetry.
 - **`src/testing/`** - the genuinely Node-only harness, and only that:
   `manifold.js` / `occt.js` (boot a WASM kernel from disk), `render.js` (write
   PNGs), `error-patterns.js` (read `docs/ERROR-PATTERNS.md`). Never import these

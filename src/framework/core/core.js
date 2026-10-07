@@ -25,6 +25,12 @@
 // WebAssembly memory only ever grows, an instance whose memory passed
 // RECYCLE_BYTES is dropped once nothing holds it (releaseIfIdle); the next pass
 // boots a fresh one in a few milliseconds and the old memory goes to the GC.
+//
+// Falling back is silent to the user (the answers are identical) but must not be
+// silent to the host: coreStatus() says where this realm stands, and
+// onCoreFallback(listener) is told — once — when the core becomes unavailable or
+// faults, with a fixed reason (CORE_FALLBACK_REASONS) and nothing else, so a host
+// can count fallbacks in its own telemetry.
 import { CORE_WASM_BASE64 } from "./core-wasm.js";
 
 // What the core may keep holding between passes. Ordinary forges never grow it
@@ -35,6 +41,52 @@ export const RECYCLE_BYTES = 64 * 1024 * 1024;
 
 let enabled = true;
 let booted; // undefined: not tried yet (or recycled); null: unavailable or poisoned
+let fallback = null; // { state: "unavailable" | "faulted", reason } once it happened
+let refused = 0;     // meshes the core declined (malformed MeshGL) — the JS took them
+const listeners = new Set();
+
+const OUT_OF_MEMORY = "partforge core: out of WebAssembly memory";
+// Every reason a fallback can carry. A fixed vocabulary on purpose: hosts record
+// it as telemetry, and an error message could carry anything.
+export const CORE_FALLBACK_REASONS = Object.freeze(["no_webassembly", "boot_failed", "out_of_memory", "trap", "error"]);
+
+function reasonOf(err) {
+  if (err?.message === OUT_OF_MEMORY) return "out_of_memory";
+  if (typeof WebAssembly === "object" && err instanceof WebAssembly.RuntimeError) return "trap";
+  return "error";
+}
+
+function fellBack(state, reason) {
+  if (fallback) return; // the first cause is the one worth knowing
+  fallback = { state, reason };
+  for (const fn of listeners) {
+    try { fn({ ...fallback }); } catch { /* a host listener must never break a build */ }
+  }
+}
+
+// Where this realm's core stands:
+//   state: "idle" (not needed yet) | "on" | "off" (switched off) |
+//          "unavailable" (could not start) | "faulted" (stopped after a fault)
+//   reason: one of CORE_FALLBACK_REASONS for unavailable/faulted, else null
+//   refusedMeshes: how many meshes went to the JS because the core declined them
+export function coreStatus() {
+  const state = fallback?.state
+    ?? (!enabled || flagOff() ? "off" : booted ? "on" : "idle");
+  return { state, reason: fallback?.reason ?? null, refusedMeshes: refused };
+}
+
+// Call `listener({ state, reason })` once when the core becomes unavailable or
+// faults — immediately if it already has. Returns an unsubscribe function.
+export function onCoreFallback(listener) {
+  if (fallback) {
+    try { listener({ ...fallback }); } catch { /* see fellBack */ }
+  }
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+// A pass sent a mesh to the JS because the core declined it (not a fault).
+export function countRefusedMesh() { refused++; }
 
 export function setCoreEnabled(on) { enabled = !!on; }
 
@@ -49,9 +101,11 @@ export function core() {
 
 // The instance `c` faulted (a trap, or an allocation that failed): never use it
 // again in this realm. Objects still holding it check `c.poisoned` and fall back.
-export function poisonCore(c) {
+// `err` is what was thrown; only its category is kept (reasonOf).
+export function poisonCore(c, err) {
   if (c) c.poisoned = true;
   if (booted === c || c == null) booted = null;
+  fellBack("faulted", reasonOf(err));
 }
 
 // Drop `c` if its memory grew past RECYCLE_BYTES and nothing holds it (no live
@@ -60,8 +114,14 @@ export function releaseIfIdle(c) {
   if (booted === c && c.live === 0 && c.x.memory.buffer.byteLength > RECYCLE_BYTES) booted = undefined;
 }
 
-// Tests only: install a stand-in instance (or undefined to re-boot).
-export function setCoreForTesting(c) { booted = c; }
+// Tests only: install a stand-in instance (or undefined to re-boot), and forget
+// any recorded fallback, refusal count and listeners.
+export function setCoreForTesting(c) {
+  booted = c;
+  fallback = null;
+  refused = 0;
+  listeners.clear();
+}
 
 const B64 = (() => {
   const t = new Uint8Array(128);
@@ -86,7 +146,10 @@ function decodeBase64(s) {
 }
 
 function boot() {
-  if (typeof WebAssembly !== "object") return null;
+  if (typeof WebAssembly !== "object") {
+    fellBack("unavailable", "no_webassembly");
+    return null;
+  }
   try {
     const stub = () => 0;
     // Synchronous on purpose: a pass asks mid-build and must get an answer now.
@@ -108,7 +171,7 @@ function boot() {
       // nothing is ever written over the module's low memory.
       alloc(bytes) {
         const ptr = x.malloc(bytes || 1);
-        if (!ptr) throw new Error("partforge core: out of WebAssembly memory");
+        if (!ptr) throw new Error(OUT_OF_MEMORY);
         return ptr;
       },
       // Views are rebuilt per use: any call that grows memory detaches the old buffer.
@@ -122,6 +185,7 @@ function boot() {
       copyOut: (Ctor, ptr, len) => (ptr && len ? new Ctor(x.memory.buffer, ptr, len).slice() : new Ctor(0)),
     };
   } catch {
+    fellBack("unavailable", "boot_failed");
     return null;
   }
 }

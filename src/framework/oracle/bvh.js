@@ -316,8 +316,8 @@ function indexFor(mesh, allowCore) {
   if (c) {
     try {
       return buildCoreBVH(c, triangleVertices(mesh), () => buildBVH(mesh));
-    } catch {
-      poisonCore(c); // a fault while building: this realm's core is done; JS from here
+    } catch (err) {
+      poisonCore(c, err); // a fault while building: this realm's core is done; JS from here
     }
   }
   return buildBVH(mesh);
