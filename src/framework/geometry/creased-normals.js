@@ -19,7 +19,7 @@
 import { SMOOTH, COPLANAR_ANGLE, MIN_EDGE, MIN_FACE, cosDeg } from "./shading-policy.js";
 import { affineAt, IDENTITY, runEvaluator } from "./blend-surfaces.js";
 import { hypot3 } from "./js-math.js";
-import { core, poisonCore } from "../core/core.js";
+import { core, countRefusedMesh, poisonCore } from "../core/core.js";
 import { coreAccepts, creasedNormalsCore } from "../core/creased-normals-core.js";
 
 const COPLANAR_COS = cosDeg(COPLANAR_ANGLE);
@@ -43,12 +43,16 @@ const SHADE_SLIVER = 1e-3;
 // poisons that instance and this mesh, and every one after, runs the JS.
 export function creasedNormals(g, opts) {
   const c = core();
-  if (c && coreAccepts(g)) {
-    try {
-      const out = creasedNormalsCore(c, g, opts);
-      if (out) return out;
-    } catch {
-      poisonCore(c);
+  if (c) {
+    if (!coreAccepts(g)) countRefusedMesh();
+    else {
+      try {
+        const out = creasedNormalsCore(c, g, opts);
+        if (out) return out;
+        countRefusedMesh();
+      } catch (err) {
+        poisonCore(c, err);
+      }
     }
   }
   return creasedNormalsJS(g, opts);

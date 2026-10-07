@@ -17,7 +17,8 @@ export {
   // mesh facts, gaps, BVH, min wall
   meshVolume, bboxSize, bounds, meshArea, assemblyGaps, meshGaps, buildBVH, meshTriangles, minWall, overhang,
   // the native core's switch
-  setCoreEnabled,
+  setCoreEnabled, coreStatus, onCoreFallback, CORE_FALLBACK_REASONS,
+  type CoreStatus, type CoreFallback, type CoreFallbackReason,
   type Gap, type BVH,
   // mesh file parsers (the import pipeline's own readers)
   parseStl, parse3MF,

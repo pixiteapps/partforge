@@ -274,6 +274,28 @@ export function minWall(
  */
 export function setCoreEnabled(on: boolean): void;
 
+/** Why the core stopped answering in this realm — a fixed vocabulary, safe to record. */
+export type CoreFallbackReason = "no_webassembly" | "boot_failed" | "out_of_memory" | "trap" | "error";
+export const CORE_FALLBACK_REASONS: readonly CoreFallbackReason[];
+export interface CoreFallback {
+  state: "unavailable" | "faulted";
+  reason: CoreFallbackReason;
+}
+export interface CoreStatus {
+  /** idle: not needed yet · on · off: switched off · unavailable: could not start · faulted: stopped after a fault */
+  state: "idle" | "on" | "off" | "unavailable" | "faulted";
+  reason: CoreFallbackReason | null;
+  /** Meshes sent to the JS pass because the core declined them (malformed MeshGL) — not a fault. */
+  refusedMeshes: number;
+}
+/** Where this realm's native core stands. Output is identical either way; this is for telemetry. */
+export function coreStatus(): CoreStatus;
+/**
+ * Called once when the core becomes unavailable or faults (immediately if it
+ * already has), so a host can count fallbacks. Returns an unsubscribe function.
+ */
+export function onCoreFallback(listener: (fallback: CoreFallback) => void): () => void;
+
 /**
  * Unsupported downward-facing surface (oracle/overhang.js): the mm² of faces
  * steeper than `maxAngle` from vertical, excluding the footprint on the bed
