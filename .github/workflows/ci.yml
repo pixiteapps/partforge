@@ -21,6 +21,7 @@ jobs:
   version:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -50,6 +51,13 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    # Every job and slow step carries a ceiling. Without one a hang — a stalled
+    # Chromium/apt download, a test that never settles — runs to GitHub's 6-hour
+    # default and holds the PR's checks (and the publish that waits on them)
+    # for that long; with one it fails in minutes and a re-run usually clears it.
+    # Set at roughly 4x a healthy run (the job takes ~7 min, npm test ~3, the
+    # Playwright install ~20 s), so a slow day still passes.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -65,10 +73,12 @@ jobs:
       # checker both see straight through.
       - run: npm run lint:dead
       - run: npm test
+        timeout-minutes: 15
       # The shipped .d.ts files are hand-written, so nothing but tsc catches it when
       # they drift from the JS they describe.
       - run: npm run typecheck
       - run: npx playwright install --with-deps chromium # browser for the smoke check
+        timeout-minutes: 10
       # Distinct ports per check: each run spawns `vite --strictPort`, and the prior
       # run's vite can still hold its port when the next starts (the npx-wrapper kill
       # orphans the vite child on the Linux runner), so a shared port fails the 2nd run.
