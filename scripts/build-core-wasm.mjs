@@ -29,7 +29,7 @@ export const EXPORTS = [
   "cn_create", "cn_finish", "cn_positions", "cn_normals", "cn_edges", "cn_edge_floats",
   "cn_feature_ids", "cn_feature_count", "cn_feature_labels", "cn_destroy",
   "bvh_build", "bvh_triangle_count", "bvh_root_bounds", "bvh_raycast", "bvh_closest_point",
-  "bvh_distance_to", "bvh_min_wall", "bvh_destroy",
+  "bvh_distance_to", "bvh_min_wall", "bvh_fingerprint", "bvh_destroy",
 ];
 // -ffp-contract=off: the core must round every operation exactly as the JS does
 // (see native/js_math.h). WebAssembly has no FMA to fuse into, but say so anyway.

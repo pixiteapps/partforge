@@ -11,7 +11,9 @@
 // With BENCH_BASELINE (an older build's src/framework/core/core-wasm.js, e.g.
 // `git show origin/main:src/framework/core/core-wasm.js > /tmp/base.js`), each
 // pass runs on both modules, alternating rep by rep so machine load hits both
-// alike, and the table shows base / new / speedup. The two must also agree.
+// alike, and the table shows base / new / speedup. Only the current build's
+// answers are checked against the JS: a baseline may predate an algorithm
+// change the JS made with it.
 import { expect, test, vi } from "vitest";
 import { bootManifoldKernel, buildView } from "../../src/testing.js";
 import { core } from "../../src/framework/core/core.js";
@@ -109,8 +111,8 @@ test("core benchmark", async () => {
 
     for (const { g, opts } of captured) {
       const want = creasedNormalsJS(g, opts);
-      for (const c of cores) {
-        const got = creasedNormalsCore(c, g, opts);
+      {
+        const got = creasedNormalsCore(cur, g, opts);
         for (const k of ["positions", "normals", "edges", "featureIds"]) expect(same(got[k], want[k]), `${name} ${k}`).toBe(true);
       }
       row.tris += want.triangles;
@@ -127,7 +129,8 @@ test("core benchmark", async () => {
     const pairs = [];
     for (let i = 0; i < meshes.length; i++) for (let j = i + 1; j < meshes.length; j++) pairs.push([i, j]);
     const wall = (b) => b.minWall({ maxThickness: undefined, maxSamples: MAX_SAMPLES });
-    for (const set of bvhs) {
+    {
+      const set = bvhs[bvhs.length - 1]; // the current build's
       set.forEach((b, i) => {
         expect(wall(b)).toEqual(minWall(meshes[i], { maxSamples: MAX_SAMPLES, bvh: js[i] }));
         qs[i].slice(0, 200).forEach((p) => expect(b.closestPoint(p)).toEqual(js[i].closestPoint(p)));

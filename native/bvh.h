@@ -20,8 +20,7 @@ typedef struct BVH BVH;
 // order) — bvh.js's triangleVertices() layout. `f64` says whether `verts`
 // holds doubles (an OCCT / plain-number mesh) or floats (a Manifold soup).
 // `adopt`: the BVH takes ownership of `verts` and frees it with free();
-// otherwise it copies. Returns null — having freed an adopted `verts` — for a
-// mesh it refuses: one with a NaN triangle centroid (see bvh.cpp).
+// otherwise it copies.
 BVH* bvh_build(void* verts, uint32_t count, int32_t f64, int32_t adopt);
 uint32_t bvh_triangle_count(const BVH*);
 // out[6]: the root node's AABB.
@@ -45,6 +44,10 @@ int32_t bvh_distance_to(const BVH*, const BVH* other, double* out);
 //        members]   (a location's x is NaN when it is null)
 int32_t bvh_min_wall(const BVH*, int32_t hasMaxThickness, double maxThickness, double maxSamples,
                      int32_t hasBand, double bandMin, double bandMax, double* out);
+
+// A hash of the tree itself (node boxes, links, leaf order) — for tests that
+// hold this build to bvh.js's, node for node.
+uint32_t bvh_fingerprint(const BVH*);
 
 void bvh_destroy(BVH*);
 

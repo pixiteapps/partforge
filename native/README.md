@@ -50,24 +50,28 @@ Only the ORDER of anything that decides a result has to be the JS's. How the
 data is held is not, and the ports use that: flat hash maps (`flat_map.h`), a
 vertex-major normals walk, edge pairing by sorted per-vertex buckets, a BVH
 stored as one node struct per node with its triangles copied into leaf order,
-fixed traversal stacks, a build sort that skips already-sorted ranges and
-radix-sorts large ones, and min-wall rays cast in leaf order with the JS's
-first-wins tie-break kept explicitly. The top comment of each `.cpp` says
-which of these it does and why each gives the same bits.
+fixed traversal stacks, a build that bins all three axes in one pass and
+takes each child's box from its parent's partition, and min-wall rays cast in
+leaf order with the JS's first-wins tie-break kept explicitly. The top
+comment of each `.cpp` says which of these it does and why each gives the
+same bits.
 
 Two rules come with that freedom:
 
-- **A structure the JS order cannot be derived from is refused, not
-  approximated.** The JS BVH sorts with the engine's own comparison sort,
-  which reads a NaN comparison as "equal" — an order no other sort
-  reproduces — so the core BVH declines a mesh with a NaN triangle centroid
-  and the oracle uses the JS index for it (counted in `coreStatus()`'s
-  `refusedMeshes`, like a refused creasedNormals mesh).
+- **Choose algorithms both sides can follow exactly.** The BVH build (bvh.js's
+  binned surface-area heuristic) has no sort in it on purpose: a comparison
+  sort's order under NaN keys is the sort algorithm's own, and no other sort
+  reproduces V8's. A stable partition and fixed arithmetic leave nothing to the
+  engine, NaN included.
 - **Every new structure gets a test that fails when it is broken.**
   `test/core-structures.test.js` builds the meshes the reference parts never
   produce (three- and four-way edges, a large fan, centroid ties at -0/+0, NaN
-  vertices, a plate where every min-wall ray ties); each of its cases was
-  checked by deliberately breaking the structure it covers.
+  and infinite coordinates, piles of coincident triangles, a tree past the
+  build's depth limit, a plate where every min-wall ray ties) and compares the
+  BVH itself through `bvh_fingerprint`, not only its answers; each case was
+  checked by deliberately breaking the structure it covers. The core's WASM
+  stack is 64 KB, so recursion keeps per-level state small (the build's bin
+  scratch lives on the builder, not the stack).
 
 Measure a change with `npm run bench:core` (`BENCH_BASELINE=<an older
 core-wasm.js>` runs both builds side by side, alternating, so machine load

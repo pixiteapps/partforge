@@ -2,13 +2,17 @@
 // files for WHY; comments here note only what bit-exact parity needs:
 //   - vertices stay in their source precision (float for a Manifold soup,
 //     double otherwise), arithmetic is double, as in the JS;
-//   - the build's median split is a STABLE sort (JS TypedArray#sort is);
+//   - the build is the JS's binned surface-area heuristic, step for step (no
+//     sort, a stable partition, the same bin and cost expressions);
 //   - traversal stacks push and pop in the JS's order, ties keep the first;
 //   - hypot is partforge's own (js_math.h / js-math.js); Math.round is
 //     round-half-up.
 //
-// The tree is the JS's tree, node for node; only its memory layout differs,
-// and none of these changes moves a bit of any answer:
+// The tree is the JS's tree, node for node — the build (Builder) follows
+// bvh.js's binned surface-area heuristic expression for expression: no sort, a
+// stable partition, the same bin index, the same costs in the same order, the
+// same first-wins ties. Only its memory layout differs, and none of that moves a
+// bit of any answer:
 //   - the index is templated on the vertex type, so no read branches on it;
 //   - a node is one struct — its box in the vertex type (a box's corners ARE
 //     vertex coordinates, so a float box is exact) and its two links — rather
@@ -16,15 +20,11 @@
 //   - after the build, triangles are copied into LEAF order, so a leaf's
 //     triangles are contiguous; `order` maps a leaf slot back to the source
 //     triangle id every query reports;
-//   - traversal stacks are fixed arrays (a median split bounds the depth by
-//     log2 of the triangle count), not a heap vector per query — min-wall
-//     casts one ray per triangle;
+//   - traversal stacks are fixed arrays (the build's depth limit bounds them),
+//     not a heap vector per query — min-wall casts one ray per triangle;
 //   - min-wall casts its rays in leaf order, so consecutive rays reuse the
 //     nodes the last one pulled into cache (ties still go to the JS's first;
-//     see minWall);
-//   - the build's stable sort runs on (key, id) pairs in reused buffers, and
-//     skips or radix-sorts where that gives the same permutation (see
-//     stableSortIds).
+//     see minWall).
 #include "bvh.h"
 
 #include <cmath>
@@ -36,12 +36,14 @@
 
 namespace {
 
-constexpr uint32_t LEAF = 4;
-// Stack bounds. A median split halves every range, so a tree over at most
-// 2^32 triangles is at most 32 internal levels deep: a single-tree walk holds
-// at most depth+1 entries, a pair walk at most depthA+depthB+1 pairs.
-constexpr int STACK = 64;
-constexpr int PAIR_STACK = 2 * 2 * STACK;
+// bvh.js's build constants.
+constexpr uint32_t BINS = 16, MAX_LEAF = 8, DEPTH_LIMIT = 48;
+// Stack bounds. The build splits by area down to DEPTH_LIMIT and halves ranges
+// below it, so a tree over at most 2^32 triangles is at most DEPTH_LIMIT + 32
+// internal levels deep: a single-tree walk holds at most depth + 1 entries, a
+// pair walk at most depthA + depthB + 1 pairs.
+constexpr int STACK = 128;
+constexpr int PAIR_STACK = 4 * STACK;
 
 double jsHypot(double a, double b, double c) { return jsmath::hypot3(a, b, c); }
 
@@ -70,25 +72,27 @@ struct Index {
   inline V3 at(size_t base) const { return {(double)verts[base], (double)verts[base + 1], (double)verts[base + 2]}; }
 };
 
+// Where the ray enters N's box within (tMin, best], or Infinity if it doesn't
+// meet it there (bvh.js's rayEntry).
 template <class T>
-bool rayHitsBox(double ox, double oy, double oz, double ix, double iy, double iz,
+double rayEntry(double ox, double oy, double oz, double ix, double iy, double iz,
                 const Node<T>& N, double tMin, double best) {
   double t0 = tMin, t1 = best;
   double lo = ((double)N.lo[0] - ox) * ix, hi = ((double)N.hi[0] - ox) * ix;
   if (lo > hi) { const double s = lo; lo = hi; hi = s; }
   if (lo > t0) t0 = lo;
   if (hi < t1) t1 = hi;
-  if (t0 > t1) return false;
+  if (t0 > t1) return INFINITY;
   lo = ((double)N.lo[1] - oy) * iy; hi = ((double)N.hi[1] - oy) * iy;
   if (lo > hi) { const double s = lo; lo = hi; hi = s; }
   if (lo > t0) t0 = lo;
   if (hi < t1) t1 = hi;
-  if (t0 > t1) return false;
+  if (t0 > t1) return INFINITY;
   lo = ((double)N.lo[2] - oz) * iz; hi = ((double)N.hi[2] - oz) * iz;
   if (lo > hi) { const double s = lo; lo = hi; hi = s; }
   if (lo > t0) t0 = lo;
   if (hi < t1) t1 = hi;
-  return t0 <= t1;
+  return t0 <= t1 ? t0 : INFINITY;
 }
 
 template <class T>
@@ -233,18 +237,21 @@ Best triTriDist(const Index<TA>& I1, size_t b1, const Index<TB>& I2, size_t b2) 
 }
 
 // The hit's source triangle id, or -1; tOut = the hit's t (tMax on a miss).
-// skipTri is a source id, as in the JS.
+// skipTri is a source id, as in the JS. Nearer child first, each pushed with
+// its entry distance, as in the JS.
 template <class T>
 int32_t raycast(const Index<T>& I, V3 o, V3 d, double tMin, double tMax, int32_t skipTri, double& tOut) {
   const double ix = 1 / d.x, iy = 1 / d.y, iz = 1 / d.z;
   double best = tMax; int32_t bestTri = -1;
-  uint32_t stack[STACK]; int sp = 0;
-  stack[sp++] = 0;
+  uint32_t stack[STACK]; double entry[STACK]; int sp = 0;
   const Node<T>* nodes = I.nodes.data();
+  const double e0 = rayEntry(o.x, o.y, o.z, ix, iy, iz, nodes[0], tMin, best);
+  if (e0 != INFINITY) { stack[sp] = 0; entry[sp++] = e0; }
   while (sp) {
-    const uint32_t n = stack[--sp];
+    --sp;
+    const uint32_t n = stack[sp];
+    if (entry[sp] > best) continue;
     const Node<T>& N = nodes[n];
-    if (!rayHitsBox(o.x, o.y, o.z, ix, iy, iz, N, tMin, best)) continue;
     if (N.packed) {
       for (uint32_t k = N.first, end = N.first + N.packed - 1; k < end; k++) {
         const uint32_t tri = I.order[k];
@@ -252,180 +259,199 @@ int32_t raycast(const Index<T>& I, V3 o, V3 d, double tMin, double tMax, int32_t
         const double t = rayTri(o.x, o.y, o.z, d.x, d.y, d.z, I.verts, (size_t)k * 9, tMin);
         if (t < best) { best = t; bestTri = (int32_t)tri; }
       }
-    } else { stack[sp++] = n + 1; stack[sp++] = N.first; }
+    } else {
+      const uint32_t l = n + 1, r = N.first;
+      const double tl = rayEntry(o.x, o.y, o.z, ix, iy, iz, nodes[l], tMin, best);
+      const double tr = rayEntry(o.x, o.y, o.z, ix, iy, iz, nodes[r], tMin, best);
+      if (tl <= tr) {
+        if (tr != INFINITY) { stack[sp] = r; entry[sp++] = tr; }
+        if (tl != INFINITY) { stack[sp] = l; entry[sp++] = tl; }
+      } else {
+        if (tl != INFINITY) { stack[sp] = l; entry[sp++] = tl; }
+        if (tr != INFINITY) { stack[sp] = r; entry[sp++] = tr; }
+      }
+    }
   }
   tOut = best;
   return bestTri;
 }
 
-uint32_t countNodes(uint32_t len, std::vector<uint32_t>& memoLen, std::vector<uint32_t>& memoN) {
-  if (len <= LEAF) return 1;
-  for (size_t i = 0; i < memoLen.size(); i++) if (memoLen[i] == len) return memoN[i];
-  const uint32_t mid = len >> 1;
-  const uint32_t n = 1 + countNodes(mid, memoLen, memoN) + countNodes(len - mid, memoLen, memoN);
-  memoLen.push_back(len); memoN.push_back(n);
-  return n;
+// Half a box's surface area (bvh.js's halfArea).
+inline double halfArea(double x0, double y0, double z0, double x1, double y1, double z1) {
+  const double x = x1 - x0, y = y1 - y0, z = z1 - z0;
+  return x * y + y * z + z * x;
 }
-
-// Stable sort of ids[0, len) by cent[id*3 + axis] under `<` — the same
-// permutation std::stable_sort with that comparator gives (a stable sort's
-// result is unique; build() refuses NaN keys, so `<` is a strict weak order
-// here). Keys are gathered next to their ids so the work streams through
-// memory instead of indexing `cent` per comparison. Then, cheapest first:
-//   - a range already in order is left alone (a stable sort of a sorted range
-//     is the identity) — every node split along its parent's axis, which an
-//     elongated part does level after level;
-//   - a large range is LSD-radix-sorted on an order-preserving integer form of
-//     the key, stable by construction and the same order as `<` once -0 is
-//     folded into +0 (`<` calls them equal);
-//   - otherwise a merge sort with `<` itself.
-struct Keyed { double k; uint32_t id; };
-
-inline uint64_t orderKey(double k) {
-  if (k == 0) k = 0;  // -0 -> +0
-  uint64_t b;
-  std::memcpy(&b, &k, 8);
-  return (b >> 63) ? ~b : (b | 0x8000000000000000ULL);
+// bvh.js's binOf: which bin a centroid coordinate falls in; NaN lands in 0.
+inline uint32_t binOf(double c, double lo, double scale) {
+  // floor() written as a truncating cast: the same value wherever the cast is
+  // reached (0 <= v < BINS).
+  const double v = (c - lo) * scale;
+  return v >= BINS ? BINS - 1 : v >= 0 ? (uint32_t)v : 0;
 }
+// The JS's `if (l < lo) lo = l; if (h > hi) hi = h;`, as selects rather than
+// branches (the same values, NaN and ±0 included: an equal or NaN candidate
+// keeps the old one).
+inline void grow(double& lo, double& hi, double l, double h) { lo = l < lo ? l : lo; hi = h > hi ? h : hi; }
 
-void stableSortIds(uint32_t* ids, uint32_t len, const double* cent, int axis,
-                   std::vector<Keyed>& a, std::vector<Keyed>& b) {
-  constexpr uint32_t RUN = 24, RADIX_MIN = 2048;
-  Keyed* A = a.data();
-  Keyed* B = b.data();
-  bool sorted = true;
-  for (uint32_t i = 0; i < len; i++) {
-    const double k = cent[(size_t)ids[i] * 3 + axis];
-    A[i] = {k, ids[i]};
-    if (i && k < A[i - 1].k) sorted = false;
+// What a node needs to know about its range before choosing a split: its box
+// and its centroids' box. The parent's partition pass computes both for each
+// child (same elements, same order, so the same values as a pass of their own).
+struct RangeBox {
+  double lo[3] = {INFINITY, INFINITY, INFINITY}, hi[3] = {-INFINITY, -INFINITY, -INFINITY};
+  double cLo[3] = {INFINITY, INFINITY, INFINITY}, cHi[3] = {-INFINITY, -INFINITY, -INFINITY};
+  template <class T>
+  void add(const T* b) {
+    for (int a = 0; a < 3; a++) {
+      const double l = b[a], h = b[3 + a], c = (l + h) / 2;
+      grow(lo[a], hi[a], l, h);
+      grow(cLo[a], cHi[a], c, c);
+    }
   }
-  if (sorted) return;
+};
 
-  if (len >= RADIX_MIN) {
-    uint32_t hist[8][256];
-    std::memset(hist, 0, sizeof hist);
-    for (uint32_t i = 0; i < len; i++) {
-      const uint64_t u = orderKey(A[i].k);
-      for (int d = 0; d < 8; d++) hist[d][(u >> (8 * d)) & 255]++;
-    }
-    for (int d = 0; d < 8; d++) {
-      uint32_t* h = hist[d];
-      bool constant = false;
-      for (int v = 0; v < 256; v++) if (h[v] == len) { constant = true; break; }
-      if (constant) continue;  // every key shares this digit: the pass is the identity
-      uint32_t sum = 0;
-      for (int v = 0; v < 256; v++) { const uint32_t c = h[v]; h[v] = sum; sum += c; }
-      for (uint32_t i = 0; i < len; i++) B[h[(orderKey(A[i].k) >> (8 * d)) & 255]++] = A[i];
-      Keyed* t = A; A = B; B = t;
-    }
-    for (uint32_t i = 0; i < len; i++) ids[i] = A[i].id;
-    return;
+// bvh.js's buildBVH, step for step (see the comments there for the why).
+template <class T>
+struct Builder {
+  Index<T>* I;
+  std::vector<T> tb, tbTmp;          // per-triangle boxes, in build order
+  std::vector<uint32_t> orderTmp;
+  // Bin scratch, reused by every node: it is done with before a node recurses,
+  // and on the WebAssembly stack (64 KB) one copy per tree level would not fit.
+  double binN[3][BINS], binB[3][BINS][6], rightArea[BINS], rightN[BINS];
+
+  RangeBox measure(uint32_t start, uint32_t len) const {
+    RangeBox r;
+    for (uint32_t k = start; k < start + len; k++) r.add(&tb[(size_t)k * 6]);
+    return r;
   }
 
-  for (uint32_t s = 0; s < len; s += RUN) {  // insertion-sort each run
-    const uint32_t e = s + RUN < len ? s + RUN : len;
-    for (uint32_t i = s + 1; i < e; i++) {
-      const Keyed x = A[i];
-      uint32_t j = i;
-      while (j > s && x.k < A[j - 1].k) { A[j] = A[j - 1]; j--; }
-      A[j] = x;
+  uint32_t emit(uint32_t start, uint32_t len, uint32_t depth, const RangeBox& rb) {
+    std::vector<Node<T>>& nodes = I->nodes;
+    std::vector<uint32_t>& order = I->order;
+    const uint32_t self = (uint32_t)nodes.size();
+    nodes.push_back({});
+    const double x0 = rb.lo[0], y0 = rb.lo[1], z0 = rb.lo[2], x1 = rb.hi[0], y1 = rb.hi[1], z1 = rb.hi[2];
+    const double* cLo = rb.cLo;
+    const double* cHi = rb.cHi;
+    {
+      Node<T>& N = nodes[self];
+      // Each corner is a vertex coordinate (or ±Infinity), so it converts back exactly.
+      N.lo[0] = (T)x0; N.lo[1] = (T)y0; N.lo[2] = (T)z0; N.hi[0] = (T)x1; N.hi[1] = (T)y1; N.hi[2] = (T)z1;
     }
-  }
-  for (uint32_t w = RUN; w < len; w *= 2) {  // merge runs; take right only if strictly less
-    for (uint32_t s = 0; s < len; s += 2 * w) {
-      const uint32_t m = s + w < len ? s + w : len, e = s + 2 * w < len ? s + 2 * w : len;
-      uint32_t i = s, j = m, o = s;
-      while (i < m && j < e) B[o++] = A[j].k < A[i].k ? A[j++] : A[i++];
-      while (i < m) B[o++] = A[i++];
-      while (j < e) B[o++] = A[j++];
+    auto leaf = [&]() { nodes[self].first = start; nodes[self].packed = len + 1; return self; };
+    if (len <= 1) return leaf();
+
+    if (depth < DEPTH_LIMIT) {
+      double bestCost = INFINITY; int bestAxis = -1; uint32_t bestSplit = 0;
+      // All three axes binned in ONE pass over the range (bvh.js bins them in
+      // three; each bin sees its triangles in the same order either way).
+      bool live[3]; double lo[3], scale[3];
+      for (int a = 0; a < 3; a++) {
+        const double ext = cHi[a] - cLo[a];
+        live[a] = ext > 0;
+        lo[a] = cLo[a]; scale[a] = live[a] ? BINS / ext : 0;
+        for (uint32_t i = 0; i < BINS; i++) {
+          binN[a][i] = 0;
+          binB[a][i][0] = binB[a][i][1] = binB[a][i][2] = INFINITY;
+          binB[a][i][3] = binB[a][i][4] = binB[a][i][5] = -INFINITY;
+        }
+      }
+      if (live[0] || live[1] || live[2]) {
+        for (uint32_t k = start; k < start + len; k++) {
+          const T* b = &tb[(size_t)k * 6];
+          for (int a = 0; a < 3; a++) {
+            if (!live[a]) continue;
+            const uint32_t bin = binOf(((double)b[a] + (double)b[3 + a]) / 2, lo[a], scale[a]);
+            binN[a][bin]++;
+            double* B = binB[a][bin];
+            for (int j = 0; j < 3; j++) grow(B[j], B[3 + j], b[j], b[3 + j]);
+          }
+        }
+      }
+      for (int a = 0; a < 3; a++) {
+        if (!live[a]) continue;
+        double rx0 = INFINITY, ry0 = INFINITY, rz0 = INFINITY, rx1 = -INFINITY, ry1 = -INFINITY, rz1 = -INFINITY, rn = 0;
+        for (uint32_t i = BINS - 1; i > 0; i--) {
+          const double* B = binB[a][i];
+          grow(rx0, rx1, B[0], B[3]); grow(ry0, ry1, B[1], B[4]); grow(rz0, rz1, B[2], B[5]);
+          rn += binN[a][i];
+          rightArea[i] = halfArea(rx0, ry0, rz0, rx1, ry1, rz1); rightN[i] = rn;
+        }
+        double lx0 = INFINITY, ly0 = INFINITY, lz0 = INFINITY, lx1 = -INFINITY, ly1 = -INFINITY, lz1 = -INFINITY, ln = 0;
+        for (uint32_t i = 0; i + 1 < BINS; i++) {
+          const double* B = binB[a][i];
+          grow(lx0, lx1, B[0], B[3]); grow(ly0, ly1, B[1], B[4]); grow(lz0, lz1, B[2], B[5]);
+          ln += binN[a][i];
+          if (!ln || !rightN[i + 1]) continue;
+          const double cost = halfArea(lx0, ly0, lz0, lx1, ly1, lz1) * ln + rightArea[i + 1] * rightN[i + 1];
+          if (cost < bestCost) { bestCost = cost; bestAxis = a; bestSplit = i; }
+        }
+      }
+      if (bestAxis >= 0) {
+        const double area = halfArea(x0, y0, z0, x1, y1, z1);
+        if (len <= MAX_LEAF && area + bestCost >= area * (double)len) return leaf();
+        const double lo = cLo[bestAxis], scale = BINS / (cHi[bestAxis] - lo);
+        uint32_t l = start, r = 0;
+        RangeBox lb, rbx;
+        for (uint32_t k = start; k < start + len; k++) {
+          T* b = &tb[(size_t)k * 6];
+          if (binOf(((double)b[bestAxis] + (double)b[3 + bestAxis]) / 2, lo, scale) <= bestSplit) {
+            lb.add(b);
+            order[l] = order[k];
+            for (int j = 0; j < 6; j++) tb[(size_t)l * 6 + j] = b[j];
+            l++;
+          } else {
+            rbx.add(b);
+            orderTmp[r] = order[k];
+            for (int j = 0; j < 6; j++) tbTmp[(size_t)r * 6 + j] = b[j];
+            r++;
+          }
+        }
+        for (uint32_t i = 0; i < r; i++) {
+          order[l + i] = orderTmp[i];
+          for (int j = 0; j < 6; j++) tb[(size_t)(l + i) * 6 + j] = tbTmp[(size_t)i * 6 + j];
+        }
+        emit(start, l - start, depth + 1, lb);
+        const uint32_t right = emit(l, len - (l - start), depth + 1, rbx);
+        nodes[self].first = right;
+        nodes[self].packed = 0;
+        return self;
+      }
     }
-    Keyed* t = A; A = B; B = t;
+    // No plane separates the centroids (they coincide), or the depth limit:
+    // halve the range as it stands.
+    if (len <= MAX_LEAF) return leaf();
+    const uint32_t mid = len >> 1;
+    emit(start, mid, depth + 1, measure(start, mid));
+    const uint32_t right = emit(start + mid, len - mid, depth + 1, measure(start + mid, len - mid));
+    nodes[self].first = right;
+    nodes[self].packed = 0;
+    return self;
   }
-  for (uint32_t i = 0; i < len; i++) ids[i] = A[i].id;
-}
+};
 
 template <class T>
 Index<T>* build(T* src, uint32_t count) {
   Index<T>* I = new Index<T>();
   I->count = count;
-  std::vector<uint32_t>& order = I->order;
-  order.resize(count);
+  I->order.resize(count);
   {
-    std::vector<double> cent((size_t)count * 3);
+    Builder<T> B{I, std::vector<T>((size_t)count * 6), std::vector<T>((size_t)count * 6), std::vector<uint32_t>(count), {}, {}, {}, {}};
     for (uint32_t t = 0; t < count; t++) {
-      order[t] = t;
-      const size_t o = (size_t)t * 9;
-      for (int a = 0; a < 3; a++) {
-        const double p = src[o + a], q = src[o + 3 + a], r = src[o + 6 + a];
-        const double lo = p < q ? (p < r ? p : r) : (q < r ? q : r);
-        const double hi = p > q ? (p > r ? p : r) : (q > r ? q : r);
-        const double c = (lo + hi) / 2;
-        // A NaN centroid (a NaN vertex, or a ±Infinity span) is refused: the
-        // JS sorts with the engine's comparison sort, which reads a NaN
-        // comparison as "equal" — no ordering at all, so its result depends on
-        // that sort's algorithm and nothing here can reproduce it.
-        if (c != c) { delete I; return nullptr; }
-        cent[(size_t)t * 3 + a] = c;
-      }
-    }
-    std::vector<uint32_t> memoLen, memoN;
-    I->nodes.resize(countNodes(count, memoLen, memoN));
-    std::vector<Keyed> sa(count), sb(count);
-    uint32_t next = 0;
-
-    // Pre-order emit, iterative over an explicit work list so deep meshes can't
-    // overflow the native stack; the slot order matches the JS recursion.
-    auto emitNode = [&](uint32_t start, uint32_t len) -> uint32_t {
-      const uint32_t self = next++;
+      I->order[t] = t;
       double x0 = INFINITY, y0 = INFINITY, z0 = INFINITY, x1 = -INFINITY, y1 = -INFINITY, z1 = -INFINITY;
-      for (uint32_t k = 0; k < len; k++) {
-        const T* v = src + (size_t)order[start + k] * 9;
-        for (int j = 0; j < 9; j += 3) {
-          const double x = v[j], y = v[j + 1], z = v[j + 2];
-          if (x < x0) x0 = x;
-          if (x > x1) x1 = x;
-          if (y < y0) y0 = y;
-          if (y > y1) y1 = y;
-          if (z < z0) z0 = z;
-          if (z > z1) z1 = z;
-        }
-      }
-      Node<T>& N = I->nodes[self];
-      // Each corner is a vertex coordinate (or ±Infinity for an empty mesh),
-      // so it converts back to T exactly.
-      N.lo[0] = (T)x0; N.lo[1] = (T)y0; N.lo[2] = (T)z0; N.hi[0] = (T)x1; N.hi[1] = (T)y1; N.hi[2] = (T)z1;
-      if (len <= LEAF) { N.first = start; N.packed = len + 1; return self; }
-      const double ex = x1 - x0, ey = y1 - y0, ez = z1 - z0;
-      const int axis = ex >= ey && ex >= ez ? 0 : ey >= ez ? 1 : 2;
-      stableSortIds(order.data() + start, len, cent.data(), axis, sa, sb);
-      return self;
-    };
-    struct Frame { uint32_t start, len, self, stage; };
-    std::vector<Frame> work;
-    work.push_back({0, count, 0, 0});
-    while (!work.empty()) {
-      Frame& f = work.back();
-      if (f.stage == 0) {
-        f.self = emitNode(f.start, f.len);
-        if (f.len <= LEAF) { work.pop_back(); continue; }
-        f.stage = 1;
-        const uint32_t mid = f.len >> 1, start = f.start;
-        work.push_back({start, mid, 0, 0});            // left child: slot self+1
-      } else if (f.stage == 1) {
-        f.stage = 2;
-        const uint32_t mid = f.len >> 1;
-        I->nodes[f.self].first = next;                 // right child's slot
-        I->nodes[f.self].packed = 0;
-        const uint32_t start = f.start + mid, len = f.len - mid;
-        work.push_back({start, len, 0, 0});
-      } else {
-        work.pop_back();
-      }
+      const T* v = src + (size_t)t * 9;
+      for (int j = 0; j < 9; j += 3) { grow(x0, x1, v[j], v[j]); grow(y0, y1, v[j + 1], v[j + 1]); grow(z0, z1, v[j + 2], v[j + 2]); }
+      T* b = &B.tb[(size_t)t * 6];
+      b[0] = (T)x0; b[1] = (T)y0; b[2] = (T)z0; b[3] = (T)x1; b[4] = (T)y1; b[5] = (T)z1;
     }
+    I->nodes.reserve(count > 1 ? (size_t)count * 2 - 1 : 1);
+    B.emit(0, count, 0, B.measure(0, count));
+    I->nodes.shrink_to_fit();
   }
   // Triangles into leaf order (the build's scratch is released first).
   I->verts = (T*)std::malloc(count ? (size_t)count * 9 * sizeof(T) : 1);
-  for (uint32_t k = 0; k < count; k++) std::memcpy(I->verts + (size_t)k * 9, src + (size_t)order[k] * 9, 9 * sizeof(T));
+  for (uint32_t k = 0; k < count; k++) std::memcpy(I->verts + (size_t)k * 9, src + (size_t)I->order[k] * 9, 9 * sizeof(T));
   return I;
 }
 
@@ -592,7 +618,6 @@ extern "C" BVH* bvh_build(void* verts, uint32_t count, int32_t f64, int32_t adop
   if (f64) T->d = build((double*)verts, count);
   else T->f = build((float*)verts, count);
   if (adopt) std::free(verts);
-  if (!T->f && !T->d) { delete T; return nullptr; }
   return T;
 }
 
@@ -625,6 +650,26 @@ extern "C" int32_t bvh_distance_to(const BVH* A, const BVH* O, double* out) {
 extern "C" int32_t bvh_min_wall(const BVH* T, int32_t hasMaxThickness, double maxThickness, double maxSamples,
                                 int32_t hasBand, double bandMin, double bandMax, double* out) {
   return visit(T, [&](const auto& I) { return minWall(I, hasMaxThickness, maxThickness, maxSamples, hasBand, bandMin, bandMax, out); });
+}
+
+// FNV-1a over the tree: each node's box as doubles (low word first), its two
+// links, then the leaf order. Tests compute the same over the JS BVH's arrays
+// to hold the two builds to the same tree, not merely to the same answers.
+extern "C" uint32_t bvh_fingerprint(const BVH* T) {
+  return visit(T, [](const auto& I) {
+    uint32_t h = 2166136261u;
+    auto mixWord = [&](uint32_t w) { for (int i = 0; i < 4; i++) { h ^= (w >> (8 * i)) & 255; h *= 16777619u; } };
+    for (const auto& N : I.nodes) {
+      for (int a = 0; a < 6; a++) {
+        const double v = a < 3 ? (double)N.lo[a] : (double)N.hi[a - 3];
+        uint64_t b; std::memcpy(&b, &v, 8);
+        mixWord((uint32_t)b); mixWord((uint32_t)(b >> 32));
+      }
+      mixWord(N.first); mixWord(N.packed);
+    }
+    for (uint32_t id : I.order) mixWord(id);
+    return h;
+  });
 }
 
 extern "C" void bvh_destroy(BVH* T) {
