@@ -20,7 +20,8 @@ typedef struct BVH BVH;
 // order) — bvh.js's triangleVertices() layout. `f64` says whether `verts`
 // holds doubles (an OCCT / plain-number mesh) or floats (a Manifold soup).
 // `adopt`: the BVH takes ownership of `verts` and frees it with free();
-// otherwise it copies.
+// otherwise it copies. Returns null — having freed an adopted `verts` — for a
+// mesh it refuses: one with a NaN triangle centroid (see bvh.cpp).
 BVH* bvh_build(void* verts, uint32_t count, int32_t f64, int32_t adopt);
 uint32_t bvh_triangle_count(const BVH*);
 // out[6]: the root node's AABB.

@@ -449,7 +449,13 @@ the installed package, so let the publish finish before bumping the dep there.
   V8 compute differently. `native/README.md` has the floating-point rules.
   `setCoreEnabled(false)` (partforge/oracle, partforge/testing) or
   `globalThis.PARTFORGE_CORE = false` (read on every use) turns it off per realm.
-  `test/core-guards.test.js` pins the failure handling. Falling back is silent
+  `test/core-guards.test.js` pins the failure handling. The C++ may hold data
+  differently from the JS (flat maps, leaf-ordered BVH, bucketed edge pairing —
+  `native/README.md` "Data structures"), never ORDER it differently; a mesh the
+  JS's order cannot be reproduced for (a NaN triangle centroid in the BVH sort)
+  is refused to the JS index, and `test/core-structures.test.js` holds each
+  structure to the JS on the cases the reference parts never reach. Measure a
+  native change with `npm run bench:core` (`BENCH_BASELINE` for an A/B). Falling back is silent
   to the user but not to the host: `coreStatus()` and `onCoreFallback(listener)`
   (partforge/oracle, and partforge/worker for a host's worker entry — from
   `core/core-status.js`, which carries no WebAssembly) report it once per realm with a fixed reason

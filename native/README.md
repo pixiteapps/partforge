@@ -11,6 +11,7 @@ binds the same C calls into its own JS engine.
 | `blend_surfaces.{h,cpp}` | `src/framework/geometry/blend-surfaces.js` — the analytic fillet normals that pass evaluates (all seven kinds: line, point, circle, path, spine, planes, and an unknown kind's "no normal") |
 | `bvh.{h,cpp}` | `src/framework/oracle/bvh.js` + `min-wall.js` — the oracle's triangle BVH (raycast, closestPoint, distanceTo) and the min-wall pass |
 | `js_math.h` | `src/framework/geometry/js-math.js` — partforge's own `hypot3` |
+| `flat_map.h` | (no JS twin) the open-addressing hash map the ports use in place of `std::unordered_map` |
 
 ## The contract: bit-identical, not close
 
@@ -42,6 +43,36 @@ What keeping it exact takes, wherever you edit:
 
 Changing a ported JS pass means changing its C++ in the same PR — the parity
 test fails otherwise, which is the point.
+
+## Data structures: free to differ, as long as no answer does
+
+Only the ORDER of anything that decides a result has to be the JS's. How the
+data is held is not, and the ports use that: flat hash maps (`flat_map.h`), a
+vertex-major normals walk, edge pairing by sorted per-vertex buckets, a BVH
+stored as one node struct per node with its triangles copied into leaf order,
+fixed traversal stacks, a build sort that skips already-sorted ranges and
+radix-sorts large ones, and min-wall rays cast in leaf order with the JS's
+first-wins tie-break kept explicitly. The top comment of each `.cpp` says
+which of these it does and why each gives the same bits.
+
+Two rules come with that freedom:
+
+- **A structure the JS order cannot be derived from is refused, not
+  approximated.** The JS BVH sorts with the engine's own comparison sort,
+  which reads a NaN comparison as "equal" — an order no other sort
+  reproduces — so the core BVH declines a mesh with a NaN triangle centroid
+  and the oracle uses the JS index for it (counted in `coreStatus()`'s
+  `refusedMeshes`, like a refused creasedNormals mesh).
+- **Every new structure gets a test that fails when it is broken.**
+  `test/core-structures.test.js` builds the meshes the reference parts never
+  produce (three- and four-way edges, a large fan, centroid ties at -0/+0, NaN
+  vertices, a plate where every min-wall ray ties); each of its cases was
+  checked by deliberately breaking the structure it covers.
+
+Measure a change with `npm run bench:core` (`BENCH_BASELINE=<an older
+core-wasm.js>` runs both builds side by side, alternating, so machine load
+hits both alike — absolute timings on a shared machine are not comparable
+run to run). It also checks every result against the JS.
 
 ## Building
 

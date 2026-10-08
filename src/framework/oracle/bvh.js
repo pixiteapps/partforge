@@ -37,7 +37,7 @@
 //             pointing at itself. Nodes are laid out in pre-order, so an internal
 //             node's left child is always the next node.
 
-import { core, poisonCore } from "../core/core.js";
+import { core, countRefusedMesh, poisonCore } from "../core/core.js";
 import { buildCoreBVH } from "../core/bvh-core.js";
 
 const LEAF = 4; // max triangles per leaf
@@ -315,7 +315,9 @@ function indexFor(mesh, allowCore) {
   const c = allowCore ? core() : null;
   if (c) {
     try {
-      return buildCoreBVH(c, triangleVertices(mesh), () => buildBVH(mesh));
+      const index = buildCoreBVH(c, triangleVertices(mesh), () => buildBVH(mesh));
+      if (index) return index;
+      countRefusedMesh(); // a mesh the core declines (not a fault): the JS index below
     } catch (err) {
       poisonCore(c, err); // a fault while building: this realm's core is done; JS from here
     }
