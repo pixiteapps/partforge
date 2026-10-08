@@ -99,6 +99,84 @@ describe("parse3MF", () => {
     expect(positions[2]).toBeCloseTo(30);
   });
 
+  it("reads a slicer project: root components pointing at another part via p:path", () => {
+    // Bambu Studio / Orca shape: the root part holds no mesh, only an object
+    // whose <components> reference meshes in 3D/Objects/object_1.model, and the
+    // .rels names the root. The objects part sorts FIRST among *.model entries
+    // in this zip, which is what used to make the reader pick it alone.
+    const NS = 'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"';
+    const objectsXml =
+      `<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" ${NS}><resources>` +
+      '<object id="1" type="model"><mesh><vertices>' +
+      '<vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/>' +
+      '</vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>' +
+      "</resources><build/></model>";
+    const rootXml =
+      `<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" ${NS}><resources>` +
+      '<object id="2" type="model"><components>' +
+      '<component p:path="/3D/Objects/object_1.model" objectid="1" transform="1 0 0 0 1 0 0 0 1 5 0 0"/>' +
+      '<component p:path="/3D/Objects/object_1.model" objectid="1" transform="2 0 0 0 2 0 0 0 2 0 0 0"/>' +
+      "</components></object></resources>" +
+      '<build><item objectid="2" transform="1 0 0 0 1 0 0 0 1 0 0 10" printable="1"></item></build></model>';
+    const zip = zipSync({
+      "3D/Objects/object_1.model": strToU8(objectsXml),
+      "[Content_Types].xml": CONTENT_TYPES,
+      "_rels/.rels": RELS,
+      "3D/3dmodel.model": strToU8(rootXml),
+    });
+    const { positions, indices } = parse3MF(zip);
+    expect(indices.length).toBe(6); // two instances of one triangle
+    // first instance: (1,0,0) + (5,0,0) + item (0,0,10) = (6,0,10)
+    expect([...positions.slice(3, 6)]).toEqual([6, 0, 10]);
+    // second instance: (1,0,0) * 2 + item = (2,0,10); (0,1,0) * 2 + item = (0,2,10)
+    expect([...positions.slice(12, 15)]).toEqual([2, 0, 10]);
+    expect([...positions.slice(15, 18)]).toEqual([0, 2, 10]);
+  });
+
+  it("composes nested component transforms child-first", () => {
+    const xml =
+      '<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources>' +
+      '<object id="1" type="model"><mesh><vertices>' +
+      '<vertex x="1" y="0" z="0"/><vertex x="0" y="0" z="0"/><vertex x="0" y="1" z="0"/>' +
+      '</vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>' +
+      // rotate 90° about z (x -> y) as the child, then translate +10 x as the parent
+      '<object id="2" type="model"><components><component objectid="1" transform="0 1 0 -1 0 0 0 0 1 0 0 0"/></components></object>' +
+      '<object id="3" type="model"><components><component objectid="2" transform="1 0 0 0 1 0 0 0 1 10 0 0"/></components></object>' +
+      '</resources><build><item objectid="3"/></build></model>';
+    const { positions } = parse3MF(buildZip(xml));
+    // (1,0,0) rotated -> (0,1,0), then +10 x -> (10,1,0)
+    expect(positions[0]).toBeCloseTo(10);
+    expect(positions[1]).toBeCloseTo(1);
+  });
+
+  it("with no build items, places only objects no component uses", () => {
+    const xml =
+      '<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources>' +
+      '<object id="1" type="model"><mesh><vertices>' +
+      '<vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/>' +
+      '</vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>' +
+      '<object id="2" type="model"><components><component objectid="1"/></components></object>' +
+      "</resources></model>";
+    expect(parse3MF(buildZip(xml)).indices.length).toBe(3);
+  });
+
+  it("names a component that points at a missing part", () => {
+    const xml =
+      '<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"><resources>' +
+      '<object id="2" type="model"><components><component p:path="/3D/Objects/gone.model" objectid="1"/></components></object>' +
+      '</resources><build><item objectid="2"/></build></model>';
+    expect(() => parse3MF(buildZip(xml))).toThrow(/missing model part/);
+  });
+
+  it("refuses a component loop instead of recursing forever", () => {
+    const xml =
+      '<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources>' +
+      '<object id="1" type="model"><components><component objectid="2"/></components></object>' +
+      '<object id="2" type="model"><components><component objectid="1"/></components></object>' +
+      '</resources><build><item objectid="1"/></build></model>';
+    expect(() => parse3MF(buildZip(xml))).toThrow(/loop/);
+  });
+
   it("throws on an unrecognized unit", () => {
     const xml =
       '<?xml version="1.0" encoding="UTF-8"?>' +
