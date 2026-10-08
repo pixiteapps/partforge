@@ -26,13 +26,17 @@ const pt = (a, i) => (Number.isNaN(a[i]) ? null : [a[i], a[i + 1], a[i + 2]]);
 
 // `verts`: bvh.js's triangleVertices(mesh) — 9 coords per triangle, mesh order.
 // `makeJsIndex`: builds the JS BVH of the same mesh (the fallback), on demand.
-// Throws if the module faults while building; the caller falls back.
+// Returns null when the core refuses the mesh (a NaN triangle centroid — see
+// native/bvh.cpp); throws if the module faults while building. Either way the
+// caller falls back to the JS index.
 export function buildCoreBVH(c, verts, makeJsIndex) {
   const { x } = c;
   const ptr = c.alloc(verts.byteLength);
   new Uint8Array(x.memory.buffer, ptr, verts.byteLength).set(new Uint8Array(verts.buffer, verts.byteOffset, verts.byteLength));
-  // adopt = 1: the C++ index owns the vertex buffer from here (no second copy)
+  // adopt = 1: the C++ index owns the vertex buffer from here (no second copy),
+  // and frees it itself when it refuses the mesh
   const handle = x.bvh_build(ptr, verts.length / 9, verts instanceof Float64Array ? 1 : 0, 1);
+  if (!handle) return null;
   x.bvh_root_bounds(handle, c.scratch + 64);
   const rb = c.f64().slice(8, 14);
   c.live++;
