@@ -50,8 +50,8 @@ Only the ORDER of anything that decides a result has to be the JS's. How the
 data is held is not, and the ports use that: flat hash maps (`flat_map.h`), a
 vertex-major normals walk, edge pairing by sorted per-vertex buckets, a BVH
 stored as one node struct per node with its triangles copied into leaf order,
-fixed traversal stacks, a build that bins all three axes in one pass and
-takes each child's box from its parent's partition, and min-wall rays cast in
+fixed traversal stacks, a build that resets and sweeps only the bins a node
+uses and takes each child's box from its parent's partition, and min-wall rays cast in
 leaf order with the JS's first-wins tie-break kept explicitly. The top
 comment of each `.cpp` says which of these it does and why each gives the
 same bits.

@@ -45,9 +45,11 @@ import { buildCoreBVH } from "../core/bvh-core.js";
 // where the two children's box areas, weighted by their triangle counts, sum
 // least — the split that makes a query least likely to have to visit both — so
 // sibling boxes overlap far less than a median split's do. Measured on the
-// reference parts against the median build this replaced: min-wall ~3x, closest
-// point ~2.5x, and mesh-to-mesh distance up to ~90x faster (lattice-box, whose
-// median boxes overlapped so badly that its gap check was nearly brute force).
+// reference parts against the median build this replaced (native core): min-wall
+// ~2.9x, closest point ~2x, mesh-to-mesh distance ~36x (lattice-box ~400x, whose
+// median boxes overlapped so badly that its gap check was nearly brute force),
+// and the build itself ~1.2x FASTER; in this JS, min-wall ~2.2x and the build
+// ~1.1x faster.
 //
 // It is DETERMINISTIC by construction and has a C++ twin (native/bvh.cpp) that
 // must build the same tree bit for bit, so: no sort anywhere (a NaN key would
@@ -371,10 +373,9 @@ export function buildBVH(mesh) {
   let bounds = new Float64Array(Math.max(1, 2 * count - 1) * 6);
   let meta = new Uint32Array(bounds.length / 3);
   let next = 0;
-  // Bin scratch for all three axes, reused by every node (done with before it recurses).
-  const binN = new Float64Array(3 * BINS), binB = new Float64Array(3 * BINS * 6);
+  // Bin scratch, reused by every node (done with before it recurses).
+  const binN = new Float64Array(BINS), binB = new Float64Array(BINS * 6);
   const rightArea = new Float64Array(BINS), rightN = new Float64Array(BINS);
-  const live = [false, false, false], binLo = [0, 0, 0], binScale = [0, 0, 0];
 
   // A range's box and its centroids' box, as 12 numbers: lo xyz, hi xyz,
   // centroid lo xyz, centroid hi xyz. The parent's partition pass fills one
@@ -405,51 +406,50 @@ export function buildBVH(mesh) {
     if (len <= 1) { meta[self * 2] = start; meta[self * 2 + 1] = len + 1; return self; }
 
     if (depth < DEPTH_LIMIT) {
+      // The split search: the axis of the widest centroid spread (ties to the
+      // lower axis), its BINS bins, the cheapest plane between them. One axis,
+      // not three: measured, binning all three bought queries 5-10% for a
+      // build ~1.8x as long in the native core.
+      const ex = R[9] - R[6], ey = R[10] - R[7], ez = R[11] - R[8];
+      const axis = ex >= ey && ex >= ez ? 0 : ey >= ez ? 1 : 2;
+      const ext = R[9 + axis] - R[6 + axis];
       let bestCost = Infinity, bestAxis = -1, bestSplit = 0;
-      for (let a = 0; a < 3; a++) {
-        const ext = R[9 + a] - R[6 + a];
-        live[a] = ext > 0; binLo[a] = R[6 + a]; binScale[a] = live[a] ? BINS / ext : 0;
-      }
-      binN.fill(0);
-      for (let i = 0; i < 3 * BINS; i++) {
-        binB[i * 6] = binB[i * 6 + 1] = binB[i * 6 + 2] = Infinity;
-        binB[i * 6 + 3] = binB[i * 6 + 4] = binB[i * 6 + 5] = -Infinity;
-      }
-      for (let a = 0; a < 3; a++) {
-        if (!live[a]) continue;
-        const lo = binLo[a], scale = binScale[a], base = a * BINS;
+      if (ext > 0) {
+        const lo = R[6 + axis], scale = BINS / ext;
+        binN.fill(0);
+        for (let i = 0; i < BINS; i++) {
+          binB[i * 6] = binB[i * 6 + 1] = binB[i * 6 + 2] = Infinity;
+          binB[i * 6 + 3] = binB[i * 6 + 4] = binB[i * 6 + 5] = -Infinity;
+        }
         for (let k = start; k < start + len; k++) {
-          const o = k * 6, bin = base + binOf((tb[o + a] + tb[o + 3 + a]) / 2, lo, scale), b = bin * 6;
+          const o = k * 6, bin = binOf((tb[o + axis] + tb[o + 3 + axis]) / 2, lo, scale), b = bin * 6;
           binN[bin]++;
           const l0 = tb[o], l1 = tb[o + 1], l2 = tb[o + 2], h0 = tb[o + 3], h1 = tb[o + 4], h2 = tb[o + 5];
           if (l0 < binB[b]) binB[b] = l0; if (h0 > binB[b + 3]) binB[b + 3] = h0;
           if (l1 < binB[b + 1]) binB[b + 1] = l1; if (h1 > binB[b + 4]) binB[b + 4] = h1;
           if (l2 < binB[b + 2]) binB[b + 2] = l2; if (h2 > binB[b + 5]) binB[b + 5] = h2;
         }
-      }
-      // Per axis: sweep from the right for each candidate's right side, then
-      // from the left, costing every plane that leaves triangles on both sides.
-      for (let a = 0; a < 3; a++) {
-        if (!live[a]) continue;
+        // Sweep from the right for each candidate's right side, then from the
+        // left, costing every plane that leaves triangles on both sides.
         let rx0 = Infinity, ry0 = Infinity, rz0 = Infinity, rx1 = -Infinity, ry1 = -Infinity, rz1 = -Infinity, rn = 0;
         for (let i = BINS - 1; i > 0; i--) {
-          const o = (a * BINS + i) * 6;
+          const o = i * 6;
           if (binB[o] < rx0) rx0 = binB[o]; if (binB[o + 3] > rx1) rx1 = binB[o + 3];
           if (binB[o + 1] < ry0) ry0 = binB[o + 1]; if (binB[o + 4] > ry1) ry1 = binB[o + 4];
           if (binB[o + 2] < rz0) rz0 = binB[o + 2]; if (binB[o + 5] > rz1) rz1 = binB[o + 5];
-          rn += binN[a * BINS + i];
+          rn += binN[i];
           rightArea[i] = halfArea(rx0, ry0, rz0, rx1, ry1, rz1); rightN[i] = rn;
         }
         let lx0 = Infinity, ly0 = Infinity, lz0 = Infinity, lx1 = -Infinity, ly1 = -Infinity, lz1 = -Infinity, ln = 0;
         for (let i = 0; i < BINS - 1; i++) {
-          const o = (a * BINS + i) * 6;
+          const o = i * 6;
           if (binB[o] < lx0) lx0 = binB[o]; if (binB[o + 3] > lx1) lx1 = binB[o + 3];
           if (binB[o + 1] < ly0) ly0 = binB[o + 1]; if (binB[o + 4] > ly1) ly1 = binB[o + 4];
           if (binB[o + 2] < lz0) lz0 = binB[o + 2]; if (binB[o + 5] > lz1) lz1 = binB[o + 5];
-          ln += binN[a * BINS + i];
+          ln += binN[i];
           if (!ln || !rightN[i + 1]) continue;
           const cost = halfArea(lx0, ly0, lz0, lx1, ly1, lz1) * ln + rightArea[i + 1] * rightN[i + 1];
-          if (cost < bestCost) { bestCost = cost; bestAxis = a; bestSplit = i; }
+          if (cost < bestCost) { bestCost = cost; bestAxis = axis; bestSplit = i; }
         }
       }
       if (bestAxis >= 0) {
@@ -462,7 +462,7 @@ export function buildBVH(mesh) {
         // Stable partition: bins <= bestSplit first, each side in its order.
         // The left side is compacted in place (it never overtakes k); the
         // right side waits in scratch and is appended after.
-        const lo = binLo[bestAxis], scale = binScale[bestAxis];
+        const lo = R[6 + bestAxis], scale = BINS / (R[9 + bestAxis] - R[6 + bestAxis]);
         const L = rangeBox(), Rt = rangeBox();
         let l = start, r = 0;
         for (let k = start; k < start + len; k++) {

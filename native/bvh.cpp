@@ -317,7 +317,7 @@ struct Builder {
   std::vector<uint32_t> orderTmp;
   // Bin scratch, reused by every node: it is done with before a node recurses,
   // and on the WebAssembly stack (64 KB) one copy per tree level would not fit.
-  double binN[3][BINS], binB[3][BINS][6], rightArea[BINS], rightN[BINS];
+  double binN[BINS], binB[BINS][6], rightArea[BINS], rightN[BINS];
 
   RangeBox measure(uint32_t start, uint32_t len) const {
     RangeBox r;
@@ -342,49 +342,54 @@ struct Builder {
     if (len <= 1) return leaf();
 
     if (depth < DEPTH_LIMIT) {
+      // bvh.js's split search: the axis of the widest centroid spread, its
+      // 16 bins, the cheapest plane between them.
+      const double ex = cHi[0] - cLo[0], ey = cHi[1] - cLo[1], ez = cHi[2] - cLo[2];
+      const int axis = ex >= ey && ex >= ez ? 0 : ey >= ez ? 1 : 2;
+      const double ext = cHi[axis] - cLo[axis];
       double bestCost = INFINITY; int bestAxis = -1; uint32_t bestSplit = 0;
-      // All three axes binned in ONE pass over the range (bvh.js bins them in
-      // three; each bin sees its triangles in the same order either way).
-      bool live[3]; double lo[3], scale[3];
-      for (int a = 0; a < 3; a++) {
-        const double ext = cHi[a] - cLo[a];
-        live[a] = ext > 0;
-        lo[a] = cLo[a]; scale[a] = live[a] ? BINS / ext : 0;
-        for (uint32_t i = 0; i < BINS; i++) {
-          binN[a][i] = 0;
-          binB[a][i][0] = binB[a][i][1] = binB[a][i][2] = INFINITY;
-          binB[a][i][3] = binB[a][i][4] = binB[a][i][5] = -INFINITY;
-        }
-      }
-      if (live[0] || live[1] || live[2]) {
+      if (ext > 0) {
+        const double lo = cLo[axis], scale = BINS / ext;
+        // A bin is reset on first use rather than all 16 per node: most nodes
+        // are small, and resetting every bin cost more than binning them.
+        uint32_t touched = 0;  // bit i: bin i is in use
         for (uint32_t k = start; k < start + len; k++) {
           const T* b = &tb[(size_t)k * 6];
-          for (int a = 0; a < 3; a++) {
-            if (!live[a]) continue;
-            const uint32_t bin = binOf(((double)b[a] + (double)b[3 + a]) / 2, lo[a], scale[a]);
-            binN[a][bin]++;
-            double* B = binB[a][bin];
-            for (int j = 0; j < 3; j++) grow(B[j], B[3 + j], b[j], b[3 + j]);
+          const uint32_t bin = binOf(((double)b[axis] + (double)b[3 + axis]) / 2, lo, scale);
+          double* B = binB[bin];
+          if (!(touched >> bin & 1)) {
+            touched |= 1u << bin;
+            binN[bin] = 0;
+            B[0] = B[1] = B[2] = INFINITY;
+            B[3] = B[4] = B[5] = -INFINITY;
           }
+          binN[bin]++;
+          for (int j = 0; j < 3; j++) grow(B[j], B[3 + j], b[j], b[3 + j]);
         }
-      }
-      for (int a = 0; a < 3; a++) {
-        if (!live[a]) continue;
-        double rx0 = INFINITY, ry0 = INFINITY, rz0 = INFINITY, rx1 = -INFINITY, ry1 = -INFINITY, rz1 = -INFINITY, rn = 0;
-        for (uint32_t i = BINS - 1; i > 0; i--) {
-          const double* B = binB[a][i];
-          grow(rx0, rx1, B[0], B[3]); grow(ry0, ry1, B[1], B[4]); grow(rz0, rz1, B[2], B[5]);
-          rn += binN[a][i];
-          rightArea[i] = halfArea(rx0, ry0, rz0, rx1, ry1, rz1); rightN[i] = rn;
-        }
-        double lx0 = INFINITY, ly0 = INFINITY, lz0 = INFINITY, lx1 = -INFINITY, ly1 = -INFINITY, lz1 = -INFINITY, ln = 0;
-        for (uint32_t i = 0; i + 1 < BINS; i++) {
-          const double* B = binB[a][i];
-          grow(lx0, lx1, B[0], B[3]); grow(ly0, ly1, B[1], B[4]); grow(lz0, lz1, B[2], B[5]);
-          ln += binN[a][i];
-          if (!ln || !rightN[i + 1]) continue;
-          const double cost = halfArea(lx0, ly0, lz0, lx1, ly1, lz1) * ln + rightArea[i + 1] * rightN[i + 1];
-          if (cost < bestCost) { bestCost = cost; bestAxis = a; bestSplit = i; }
+        // The cost sweep, over the NON-EMPTY bins only. bvh.js sweeps all 16;
+        // every plane between two consecutive non-empty bins splits the range
+        // the same way at the same cost, and its strict `<` keeps the first of
+        // them — the plane right after the left bin, which is the one costed
+        // here. Empty bins add nothing to a box or a count, so each cost is the
+        // same number.
+        uint32_t used[BINS], m = 0;
+        for (uint32_t bits = touched; bits; bits &= bits - 1) used[m++] = (uint32_t)__builtin_ctz(bits);
+        if (m >= 2) {
+          double rx0 = INFINITY, ry0 = INFINITY, rz0 = INFINITY, rx1 = -INFINITY, ry1 = -INFINITY, rz1 = -INFINITY, rn = 0;
+          for (uint32_t j = m - 1; j > 0; j--) {  // rightArea[j]: bins used[j..m-1]
+            const double* B = binB[used[j]];
+            grow(rx0, rx1, B[0], B[3]); grow(ry0, ry1, B[1], B[4]); grow(rz0, rz1, B[2], B[5]);
+            rn += binN[used[j]];
+            rightArea[j] = halfArea(rx0, ry0, rz0, rx1, ry1, rz1); rightN[j] = rn;
+          }
+          double lx0 = INFINITY, ly0 = INFINITY, lz0 = INFINITY, lx1 = -INFINITY, ly1 = -INFINITY, lz1 = -INFINITY, ln = 0;
+          for (uint32_t j = 0; j + 1 < m; j++) {  // the plane after bin used[j]
+            const double* B = binB[used[j]];
+            grow(lx0, lx1, B[0], B[3]); grow(ly0, ly1, B[1], B[4]); grow(lz0, lz1, B[2], B[5]);
+            ln += binN[used[j]];
+            const double cost = halfArea(lx0, ly0, lz0, lx1, ly1, lz1) * ln + rightArea[j + 1] * rightN[j + 1];
+            if (cost < bestCost) { bestCost = cost; bestAxis = axis; bestSplit = used[j]; }
+          }
         }
       }
       if (bestAxis >= 0) {
