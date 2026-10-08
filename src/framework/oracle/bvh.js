@@ -3,8 +3,8 @@
 // triangle, no `indices`) or OCCT indexed form (`positions` = 3 floats/vertex +
 // `indices` = 3 vertex-indices/triangle). A reusable spatial index: nearest ray hit
 // (raycast), nearest surface point (closestPoint), and exact mesh-to-mesh distance
-// (distanceTo). AABB tree, median split on the widest centroid axis, slab ray–box
-// test with pruning.
+// (distanceTo). AABB tree built by a binned surface-area heuristic (sahSplit),
+// slab ray–box test with nearer-child-first traversal and pruning.
 //
 // STORAGE — four flat typed arrays, no per-triangle and no per-node JS objects.
 // The nested-array representation this replaced ([[x,y,z],[x,y,z],[x,y,z]] per
@@ -26,21 +26,50 @@
 //             triangles). Read it through readTriangleInto() rather than
 //             open-coding the stride.
 //   order     Uint32 triangle ids, permuted by the build so each leaf owns a
-//             contiguous run. The vertices themselves never move.
+//             contiguous run (at most MAX_LEAF). The vertices themselves never
+//             move.
 //   bounds    Float64, 6 per node: [minx,miny,minz, maxx,maxy,maxz]. Kept at double
 //             precision whatever the vertices are — a narrowed bound would have to
 //             be rounded outward to stay conservative, and node bounds are a small
-//             fraction of the total anyway (~0.6 nodes per triangle).
+//             fraction of the total anyway (well under one node per triangle).
 //   meta      Uint32, 2 per node. A LEAF is [firstIndexIntoOrder, count + 1]; an
 //             INTERNAL node is [rightChildIndex, 0]. The +1 is what lets an empty
 //             mesh's root still read as a leaf instead of as an internal node
 //             pointing at itself. Nodes are laid out in pre-order, so an internal
 //             node's left child is always the next node.
 
-import { core, countRefusedMesh, poisonCore } from "../core/core.js";
+import { core, poisonCore } from "../core/core.js";
 import { buildCoreBVH } from "../core/bvh-core.js";
 
-const LEAF = 4; // max triangles per leaf
+// The build (buildBVH): a binned surface-area heuristic. Each node is split
+// where the two children's box areas, weighted by their triangle counts, sum
+// least — the split that makes a query least likely to have to visit both — so
+// sibling boxes overlap far less than a median split's do. Measured on the
+// reference parts against the median build this replaced (native core): min-wall
+// ~2.9x, closest point ~2x, mesh-to-mesh distance ~36x (lattice-box ~400x, whose
+// median boxes overlapped so badly that its gap check was nearly brute force),
+// and the build itself ~1.2x FASTER; in this JS, min-wall ~2.2x and the build
+// ~1.1x faster.
+//
+// It is DETERMINISTIC by construction and has a C++ twin (native/bvh.cpp) that
+// must build the same tree bit for bit, so: no sort anywhere (a NaN key would
+// make a comparison sort's order the algorithm's own), a STABLE partition, the
+// bin index and every cost computed by the same expressions in the same order,
+// ties going to the first candidate (lowest axis, then lowest bin).
+const BINS = 16;          // candidate split planes per axis, per node
+const MAX_LEAF = 8;       // a node over more triangles is always split
+const DEPTH_LIMIT = 48;   // past this depth, split ranges in half (bounds the tree's depth)
+
+// Which of the BINS bins a centroid coordinate falls in. NaN lands in bin 0.
+function binOf(c, lo, scale) {
+  const b = Math.floor((c - lo) * scale);
+  return b >= BINS ? BINS - 1 : b >= 0 ? b : 0;
+}
+// Half the surface area of a box (the factor of 2 cancels in every comparison).
+const halfArea = (x0, y0, z0, x1, y1, z1) => {
+  const x = x1 - x0, y = y1 - y0, z = z1 - z0;
+  return x * y + y * z + z * x;
+};
 
 // Coords per triangle in a `vertices` store: v0,v1,v2 interleaved. The ONE place
 // this layout is decoded outside the queries below — copy triangle `t` of `V` into
@@ -106,35 +135,22 @@ export function triangleVertices(mesh) {
   return verts;
 }
 
-// Node count for a subtree of `len` triangles. The split is a pure function of the
-// length (median at len>>1, leaf at <= LEAF), so the tree's shape — and therefore
-// its exact size — is known before a single triangle is sorted. That is what lets
-// `bounds`/`meta` be allocated once at the right size rather than grown or trimmed.
-function countNodes(len, memo) {
-  if (len <= LEAF) return 1;
-  const hit = memo.get(len);
-  if (hit !== undefined) return hit;
-  const mid = len >> 1;
-  const n = 1 + countNodes(mid, memo) + countNodes(len - mid, memo);
-  memo.set(len, n);
-  return n;
-}
-
-// slab test: does the ray meet node `nb`'s box within (tMin, best]?
-function rayHitsBox(ox, oy, oz, ix, iy, iz, B, nb, tMin, best) {
+// slab test: where the ray enters node `nb`'s box within (tMin, best], or
+// Infinity if it doesn't meet it there.
+function rayEntry(ox, oy, oz, ix, iy, iz, B, nb, tMin, best) {
   let t0 = tMin, t1 = best;
   let lo = (B[nb] - ox) * ix, hi = (B[nb + 3] - ox) * ix;
   if (lo > hi) { const s = lo; lo = hi; hi = s; }
   if (lo > t0) t0 = lo; if (hi < t1) t1 = hi;
-  if (t0 > t1) return false;
+  if (t0 > t1) return Infinity;
   lo = (B[nb + 1] - oy) * iy; hi = (B[nb + 4] - oy) * iy;
   if (lo > hi) { const s = lo; lo = hi; hi = s; }
   if (lo > t0) t0 = lo; if (hi < t1) t1 = hi;
-  if (t0 > t1) return false;
+  if (t0 > t1) return Infinity;
   lo = (B[nb + 2] - oz) * iz; hi = (B[nb + 5] - oz) * iz;
   if (lo > hi) { const s = lo; lo = hi; hi = s; }
   if (lo > t0) t0 = lo; if (hi < t1) t1 = hi;
-  return t0 <= t1;
+  return t0 <= t1 ? t0 : Infinity;
 }
 
 // nearest point on triangle `base` of `V` to P (Ericson), returns { point, d2 }
@@ -315,9 +331,7 @@ function indexFor(mesh, allowCore) {
   const c = allowCore ? core() : null;
   if (c) {
     try {
-      const index = buildCoreBVH(c, triangleVertices(mesh), () => buildBVH(mesh));
-      if (index) return index;
-      countRefusedMesh(); // a mesh the core declines (not a fault): the JS index below
+      return buildCoreBVH(c, triangleVertices(mesh), () => buildBVH(mesh));
     } catch (err) {
       poisonCore(c, err); // a fault while building: this realm's core is done; JS from here
     }
@@ -335,73 +349,176 @@ export function buildBVH(mesh) {
   const verts = triangleVertices(mesh);
   const count = verts.length / 9;
 
+  // Per-triangle boxes, held in BUILD order (permuted with `order`) so a node's
+  // pass over its range reads them sequentially. A box corner is a vertex
+  // coordinate, so the vertices' own array type holds it exactly. Transient,
+  // like the partition scratch.
+  const Store = verts.constructor;
   const order = new Uint32Array(count);
-  // AABB-midpoint centroids, one Float64 triple per triangle. Transient: only the
-  // median split reads them, and they are released explicitly below.
-  let cent = new Float64Array(count * 3);
+  let tb = new Store(count * 6), tbTmp = new Store(count * 6), orderTmp = new Uint32Array(count);
   for (let t = 0; t < count; t++) {
     order[t] = t;
     const o = t * 9;
-    for (let a = 0; a < 3; a++) {
-      const p = verts[o + a], q = verts[o + 3 + a], r = verts[o + 6 + a];
-      const lo = p < q ? (p < r ? p : r) : (q < r ? q : r);
-      const hi = p > q ? (p > r ? p : r) : (q > r ? q : r);
-      cent[t * 3 + a] = (lo + hi) / 2;
+    let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+    for (let j = 0; j < 9; j += 3) {
+      const x = verts[o + j], y = verts[o + j + 1], z = verts[o + j + 2];
+      if (x < x0) x0 = x; if (x > x1) x1 = x;
+      if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (z < z0) z0 = z; if (z > z1) z1 = z;
     }
+    tb[t * 6] = x0; tb[t * 6 + 1] = y0; tb[t * 6 + 2] = z0; tb[t * 6 + 3] = x1; tb[t * 6 + 4] = y1; tb[t * 6 + 5] = z1;
   }
 
-  const bounds = new Float64Array(countNodes(count, new Map()) * 6);
-  const meta = new Uint32Array(bounds.length / 3);
+  // A binary tree over n >= 1 leaves has at most 2n - 1 nodes; trimmed below.
+  let bounds = new Float64Array(Math.max(1, 2 * count - 1) * 6);
+  let meta = new Uint32Array(bounds.length / 3);
   let next = 0;
+  // Bin scratch, reused by every node (done with before it recurses).
+  const binN = new Float64Array(BINS), binB = new Float64Array(BINS * 6);
+  const rightArea = new Float64Array(BINS), rightN = new Float64Array(BINS);
 
-  // Pre-order emit: a node claims its slot, writes its own AABB, then either
-  // becomes a leaf over order[start, start+len) or sorts that range by the widest
-  // centroid axis and recurses. The left child lands at self+1 by construction, so
-  // only the right child's index needs storing.
-  function emit(start, len) {
+  // A range's box and its centroids' box, as 12 numbers: lo xyz, hi xyz,
+  // centroid lo xyz, centroid hi xyz. The parent's partition pass fills one
+  // per child (same triangles, same order — the same values a pass of the
+  // child's own would find), so a node never rescans its range just for these.
+  const rangeBox = () => Float64Array.of(Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity,
+    Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity);
+  function addTo(R, o) {
+    const l0 = tb[o], l1 = tb[o + 1], l2 = tb[o + 2], h0 = tb[o + 3], h1 = tb[o + 4], h2 = tb[o + 5];
+    const c0 = (l0 + h0) / 2, c1 = (l1 + h1) / 2, c2 = (l2 + h2) / 2;
+    if (l0 < R[0]) R[0] = l0; if (h0 > R[3]) R[3] = h0; if (c0 < R[6]) R[6] = c0; if (c0 > R[9]) R[9] = c0;
+    if (l1 < R[1]) R[1] = l1; if (h1 > R[4]) R[4] = h1; if (c1 < R[7]) R[7] = c1; if (c1 > R[10]) R[10] = c1;
+    if (l2 < R[2]) R[2] = l2; if (h2 > R[5]) R[5] = h2; if (c2 < R[8]) R[8] = c2; if (c2 > R[11]) R[11] = c2;
+  }
+  function measureRange(start, len) {
+    const R = rangeBox();
+    for (let k = start; k < start + len; k++) addTo(R, k * 6);
+    return R;
+  }
+
+  // Pre-order emit: a node claims its slot and writes its own AABB (`R`, its
+  // range's boxes), then either becomes a leaf over order[start, start+len) or
+  // partitions that range and recurses. The left child lands at self+1 by
+  // construction, so only the right child's index needs storing.
+  function emit(start, len, depth, R) {
     const self = next++, nb = self * 6;
-    let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
-    for (let k = 0; k < len; k++) {
-      const o = order[start + k] * 9;
-      for (let j = 0; j < 9; j += 3) {
-        const x = verts[o + j], y = verts[o + j + 1], z = verts[o + j + 2];
-        if (x < x0) x0 = x; if (x > x1) x1 = x;
-        if (y < y0) y0 = y; if (y > y1) y1 = y;
-        if (z < z0) z0 = z; if (z > z1) z1 = z;
+    for (let j = 0; j < 6; j++) bounds[nb + j] = R[j];
+    if (len <= 1) { meta[self * 2] = start; meta[self * 2 + 1] = len + 1; return self; }
+
+    if (depth < DEPTH_LIMIT) {
+      // The split search: the axis of the widest centroid spread (ties to the
+      // lower axis), its BINS bins, the cheapest plane between them. One axis,
+      // not three: measured, binning all three bought queries 5-10% for a
+      // build ~1.8x as long in the native core.
+      const ex = R[9] - R[6], ey = R[10] - R[7], ez = R[11] - R[8];
+      const axis = ex >= ey && ex >= ez ? 0 : ey >= ez ? 1 : 2;
+      const ext = R[9 + axis] - R[6 + axis];
+      let bestCost = Infinity, bestAxis = -1, bestSplit = 0;
+      if (ext > 0) {
+        const lo = R[6 + axis], scale = BINS / ext;
+        binN.fill(0);
+        for (let i = 0; i < BINS; i++) {
+          binB[i * 6] = binB[i * 6 + 1] = binB[i * 6 + 2] = Infinity;
+          binB[i * 6 + 3] = binB[i * 6 + 4] = binB[i * 6 + 5] = -Infinity;
+        }
+        for (let k = start; k < start + len; k++) {
+          const o = k * 6, bin = binOf((tb[o + axis] + tb[o + 3 + axis]) / 2, lo, scale), b = bin * 6;
+          binN[bin]++;
+          const l0 = tb[o], l1 = tb[o + 1], l2 = tb[o + 2], h0 = tb[o + 3], h1 = tb[o + 4], h2 = tb[o + 5];
+          if (l0 < binB[b]) binB[b] = l0; if (h0 > binB[b + 3]) binB[b + 3] = h0;
+          if (l1 < binB[b + 1]) binB[b + 1] = l1; if (h1 > binB[b + 4]) binB[b + 4] = h1;
+          if (l2 < binB[b + 2]) binB[b + 2] = l2; if (h2 > binB[b + 5]) binB[b + 5] = h2;
+        }
+        // Sweep from the right for each candidate's right side, then from the
+        // left, costing every plane that leaves triangles on both sides.
+        let rx0 = Infinity, ry0 = Infinity, rz0 = Infinity, rx1 = -Infinity, ry1 = -Infinity, rz1 = -Infinity, rn = 0;
+        for (let i = BINS - 1; i > 0; i--) {
+          const o = i * 6;
+          if (binB[o] < rx0) rx0 = binB[o]; if (binB[o + 3] > rx1) rx1 = binB[o + 3];
+          if (binB[o + 1] < ry0) ry0 = binB[o + 1]; if (binB[o + 4] > ry1) ry1 = binB[o + 4];
+          if (binB[o + 2] < rz0) rz0 = binB[o + 2]; if (binB[o + 5] > rz1) rz1 = binB[o + 5];
+          rn += binN[i];
+          rightArea[i] = halfArea(rx0, ry0, rz0, rx1, ry1, rz1); rightN[i] = rn;
+        }
+        let lx0 = Infinity, ly0 = Infinity, lz0 = Infinity, lx1 = -Infinity, ly1 = -Infinity, lz1 = -Infinity, ln = 0;
+        for (let i = 0; i < BINS - 1; i++) {
+          const o = i * 6;
+          if (binB[o] < lx0) lx0 = binB[o]; if (binB[o + 3] > lx1) lx1 = binB[o + 3];
+          if (binB[o + 1] < ly0) ly0 = binB[o + 1]; if (binB[o + 4] > ly1) ly1 = binB[o + 4];
+          if (binB[o + 2] < lz0) lz0 = binB[o + 2]; if (binB[o + 5] > lz1) lz1 = binB[o + 5];
+          ln += binN[i];
+          if (!ln || !rightN[i + 1]) continue;
+          const cost = halfArea(lx0, ly0, lz0, lx1, ly1, lz1) * ln + rightArea[i + 1] * rightN[i + 1];
+          if (cost < bestCost) { bestCost = cost; bestAxis = axis; bestSplit = i; }
+        }
+      }
+      if (bestAxis >= 0) {
+        // A small node stays a leaf unless splitting beats testing its
+        // triangles outright (one box test ~ one triangle test).
+        const area = halfArea(R[0], R[1], R[2], R[3], R[4], R[5]);
+        if (len <= MAX_LEAF && area + bestCost >= area * len) {
+          meta[self * 2] = start; meta[self * 2 + 1] = len + 1; return self;
+        }
+        // Stable partition: bins <= bestSplit first, each side in its order.
+        // The left side is compacted in place (it never overtakes k); the
+        // right side waits in scratch and is appended after.
+        const lo = R[6 + bestAxis], scale = BINS / (R[9 + bestAxis] - R[6 + bestAxis]);
+        const L = rangeBox(), Rt = rangeBox();
+        let l = start, r = 0;
+        for (let k = start; k < start + len; k++) {
+          const o = k * 6;
+          if (binOf((tb[o + bestAxis] + tb[o + 3 + bestAxis]) / 2, lo, scale) <= bestSplit) {
+            addTo(L, o);
+            order[l] = order[k];
+            for (let j = 0; j < 6; j++) tb[l * 6 + j] = tb[o + j];
+            l++;
+          } else {
+            addTo(Rt, o);
+            orderTmp[r] = order[k];
+            for (let j = 0; j < 6; j++) tbTmp[r * 6 + j] = tb[o + j];
+            r++;
+          }
+        }
+        for (let i = 0; i < r; i++) {
+          order[l + i] = orderTmp[i];
+          for (let j = 0; j < 6; j++) tb[(l + i) * 6 + j] = tbTmp[i * 6 + j];
+        }
+        emit(start, l - start, depth + 1, L);
+        meta[self * 2] = emit(l, r, depth + 1, Rt);
+        meta[self * 2 + 1] = 0;
+        return self;
       }
     }
-    bounds[nb] = x0; bounds[nb + 1] = y0; bounds[nb + 2] = z0;
-    bounds[nb + 3] = x1; bounds[nb + 4] = y1; bounds[nb + 5] = z1;
-    if (len <= LEAF) { meta[self * 2] = start; meta[self * 2 + 1] = len + 1; return self; }
-    const ex = x1 - x0, ey = y1 - y0, ez = z1 - z0;
-    const axis = ex >= ey && ex >= ez ? 0 : ey >= ez ? 1 : 2;
-    order.subarray(start, start + len).sort((p, q) => cent[p * 3 + axis] - cent[q * 3 + axis]);
-    // No empty-half guard: len > LEAF here (LEAF >= 1), so mid = len>>1 >= 2 and
-    // len - mid >= 3 — both halves always non-empty. The nested-array build this
-    // replaced carried such a check; it was dead code there too, and countNodes()
-    // assumes this same split, so a guard that ever fired would mis-size `bounds`.
+    // No plane separates the centroids (they coincide), or the depth limit:
+    // halve the range as it stands.
+    if (len <= MAX_LEAF) { meta[self * 2] = start; meta[self * 2 + 1] = len + 1; return self; }
     const mid = len >> 1;
-    emit(start, mid);
-    meta[self * 2] = emit(start + mid, len - mid);
+    emit(start, mid, depth + 1, measureRange(start, mid));
+    meta[self * 2] = emit(start + mid, len - mid, depth + 1, measureRange(start + mid, len - mid));
     meta[self * 2 + 1] = 0;
     return self;
   }
-  emit(0, count);
-  // Dropped explicitly, not left to scope: `emit` and the three query closures below
-  // share one function context, so a `cent` merely gone out of use would still be
-  // reachable from every returned BVH — 24 bytes/triangle of dead weight for the
-  // life of the index.
-  cent = null;
+  emit(0, count, 0, measureRange(0, count));
+  bounds = bounds.slice(0, next * 6);
+  meta = meta.slice(0, next * 2);
+  // Dropped explicitly, not left to scope: `emit` and the three query closures
+  // below share one function context, so build scratch merely gone out of use
+  // would stay reachable from every returned BVH for the life of the index.
+  tb = tbTmp = orderTmp = null;
 
   function raycast(origin, dir, { tMin = 1e-6, tMax = Infinity, skipTri = -1 } = {}) {
     const ox = origin[0], oy = origin[1], oz = origin[2];
     const dx = dir[0], dy = dir[1], dz = dir[2];
     const ix = 1 / dx, iy = 1 / dy, iz = 1 / dz;
     let best = tMax, bestTri = -1;
-    const stack = [0];
+    // Nearer child first, each pushed with its entry distance: a node whose box
+    // starts beyond the best hit found since is dropped on the pop.
+    const stack = [], entry = [];
+    const e0 = rayEntry(ox, oy, oz, ix, iy, iz, bounds, 0, tMin, best);
+    if (e0 !== Infinity) { stack.push(0); entry.push(e0); }
     while (stack.length) {
       const n = stack.pop();
-      if (!rayHitsBox(ox, oy, oz, ix, iy, iz, bounds, n * 6, tMin, best)) continue;
+      if (entry.pop() > best) continue;
       const packed = meta[n * 2 + 1];
       if (packed) {
         const start = meta[n * 2];
@@ -411,7 +528,18 @@ export function buildBVH(mesh) {
           const t = rayTri(ox, oy, oz, dx, dy, dz, verts, tri * 9, tMin);
           if (t < best) { best = t; bestTri = tri; }
         }
-      } else { stack.push(n + 1, meta[n * 2]); }
+      } else {
+        const l = n + 1, r = meta[n * 2];
+        const tl = rayEntry(ox, oy, oz, ix, iy, iz, bounds, l * 6, tMin, best);
+        const tr = rayEntry(ox, oy, oz, ix, iy, iz, bounds, r * 6, tMin, best);
+        if (tl <= tr) {
+          if (tr !== Infinity) { stack.push(r); entry.push(tr); }
+          if (tl !== Infinity) { stack.push(l); entry.push(tl); }
+        } else {
+          if (tl !== Infinity) { stack.push(l); entry.push(tl); }
+          if (tr !== Infinity) { stack.push(r); entry.push(tr); }
+        }
+      }
     }
     return bestTri === -1 ? null : { t: best, tri: bestTri };
   }

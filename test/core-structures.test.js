@@ -1,16 +1,17 @@
 // The native core's data structures (native/README.md) differ from the JS's —
 // flat hash maps, bucketed edge pairing, a vertex-major normals walk, a
-// leaf-ordered BVH whose build skips or radix-sorts where that gives the same
-// order — and each must still reach the JS's exact answer. The reference parts
+// leaf-ordered BVH — and the BVH build (a binned surface-area heuristic) has a
+// JS twin it must match node for node. Each must still reach the JS's exact
+// answer. The reference parts
 // (core-parity.test.js) are manifold, NaN-free and have no ties to speak of;
 // these meshes are built to reach the cases they don't.
 import { afterEach, expect, test } from "vitest";
 import { creasedNormalsJS } from "../src/framework/geometry/creased-normals.js";
 import { creasedNormalsCore } from "../src/framework/core/creased-normals-core.js";
 import { buildCoreBVH } from "../src/framework/core/bvh-core.js";
-import { buildBVH, cachedBVH, triangleVertices } from "../src/framework/oracle/bvh.js";
+import { buildBVH, triangleVertices } from "../src/framework/oracle/bvh.js";
 import { minWall } from "../src/framework/oracle/min-wall.js";
-import { core, coreStatus, setCoreForTesting } from "../src/framework/core/core.js";
+import { core, setCoreForTesting } from "../src/framework/core/core.js";
 
 afterEach(() => setCoreForTesting(undefined));
 
@@ -59,12 +60,11 @@ test("a vertex with a large fan (over the buckets' insertion-sort size) shades a
 });
 
 // A soup of `count` small triangles in cells of `dup` coincident copies —
-// exact centroid ties the build's stable sort must keep in order — shuffled
-// (deterministically) so the build's sorts have real work, large ranges taking
-// the radix path. Most cells lie flat in a row along x; every fifth instead
-// stands in the plane x = 0 — stacked above the row's middle, so the root's
-// sort along x meets all of them as one tie — its copies alternately at -0
-// and +0: centroids `<` calls equal but whose bits differ.
+// exact centroid ties the build's stable partition must keep in order —
+// shuffled (deterministically) so the build has real work. Most cells lie flat in a row along x; every fifth instead
+// stands in the plane x = 0 — stacked above the row's middle, so a split along
+// x meets all of them as one tie — its copies alternately at -0 and +0:
+// centroids that compare equal but whose bits differ.
 const plane = (cell) => cell % 5 === 0;
 function tiedSoup(count, dup, Store = Float32Array) {
   const cells = Math.floor(count / dup), half = Math.floor(cells / 2);
@@ -97,13 +97,27 @@ function probes(count, dup) {
   return out;
 }
 
+// native/bvh.cpp's bvh_fingerprint, over the JS BVH's arrays.
+function fingerprint(js) {
+  let h = 2166136261;
+  const word = (w) => { for (let i = 0; i < 4; i++) { h ^= (w >>> (8 * i)) & 255; h = Math.imul(h, 16777619) >>> 0; } };
+  const bits = new Uint32Array(js._bounds.buffer, js._bounds.byteOffset, js._bounds.length * 2);
+  for (let n = 0; n < js._meta.length / 2; n++) {
+    for (let k = 0; k < 12; k++) word(bits[n * 12 + k]);
+    word(js._meta[n * 2]); word(js._meta[n * 2 + 1]);
+  }
+  for (const id of js._order) word(id);
+  return h >>> 0;
+}
+
 function expectSameIndex(mesh, queries) {
   const c = core();
   expect(c).not.toBeNull();
   const js = buildBVH(mesh);
   const nat = buildCoreBVH(c, triangleVertices(mesh), () => buildBVH(mesh));
-  expect(nat).not.toBeNull();
   try {
+    // The same tree, node for node — then the same answers.
+    expect(c.x.bvh_fingerprint(nat.handle) >>> 0).toBe(fingerprint(js));
     expect(nat.rootBounds).toEqual(js.rootBounds);
     for (const { ray, point } of queries) {
       if (ray) expect(nat.raycast(...ray)).toEqual(js.raycast(...ray));
@@ -114,34 +128,45 @@ function expectSameIndex(mesh, queries) {
   }
 }
 
-test("BVH build: tied and signed-zero centroids sort the same as the JS (radix and merge paths)", () => {
-  for (const [count, dup] of [[6000, 3], [1500, 4]]) { // over and under the radix threshold
+test("BVH build: tied and signed-zero centroids build the same tree as the JS", () => {
+  // dup 20: piles of coincident triangles over MAX_LEAF, which no plane can
+  // separate — the build halves them as they stand.
+  for (const [count, dup] of [[6000, 3], [1500, 4], [2000, 20]]) {
     expectSameIndex(tiedSoup(count, dup), probes(count, dup));
     expectSameIndex(tiedSoup(count, dup, Float64Array), probes(count, dup));
   }
 });
 
-test("BVH build: a NaN centroid is refused, so the mesh gets the JS index", () => {
-  // The JS sorts with the engine's own sort, which reads a NaN comparison as
-  // "equal": that order is the sort algorithm's, not the data's, and no other
-  // sort reproduces it. So the core declines such a mesh outright.
-  const mesh = tiedSoup(5000, 2);
-  mesh.positions[9 * 1234 + 7] = NaN; // the third vertex's y: its min/max pick it, so the centroid is NaN
-  const c = core();
-  expect(buildCoreBVH(c, triangleVertices(mesh), () => buildBVH(mesh))).toBeNull();
-  const before = coreStatus().refusedMeshes;
-  const index = cachedBVH(mesh);
-  expect(index.core).toBeUndefined(); // the JS index
-  expect(coreStatus().refusedMeshes).toBe(before + 1);
-  expect(core()).not.toBeNull(); // a refusal is not a fault
-  // A NaN vertex the min/max skip leaves a real centroid, and is built by both
-  // the same way (bounds skip it too).
-  const skipped = tiedSoup(5000, 2);
-  skipped.positions[9 * 1234 + 1] = NaN;
-  expectSameIndex(skipped, probes(5000, 2));
-  const inf = tiedSoup(100, 2);
-  inf.positions[0] = -Infinity; inf.positions[3] = Infinity; // a ±Infinity span: centroid NaN
-  expect(buildCoreBVH(c, triangleVertices(inf), () => buildBVH(inf))).toBeNull();
+test("BVH build: NaN and infinite coordinates build the same tree as the JS", () => {
+  // No sort is involved, so a NaN is handled by the same expressions on both
+  // sides. A triangle's box skips a NaN coordinate, so one NaN vertex leaves
+  // its centroid real; a ±Infinity span makes every cost infinite (that node
+  // is halved); a triangle whose x coordinates are ALL NaN has a NaN centroid
+  // that reaches the bin formula, and an empty box whose negative extent wins
+  // the cost comparison.
+  const row = Array.from({ length: 200 }, (_, i) => [i, 0, 0, i + 0.5, 0, 0, i, 0.5, 0.1]);
+  for (const k of [0, 3, 6]) row[77][k] = NaN; // x all NaN, in a row split along x
+  expectSameIndex({ positions: Float64Array.from(row.flat()) }, []);
+  const nanMid = tiedSoup(5000, 2);
+  nanMid.positions[9 * 1234 + 7] = NaN;
+  expectSameIndex(nanMid, probes(5000, 2));
+  const nanFirst = tiedSoup(5000, 2);
+  nanFirst.positions[9 * 77 + 1] = NaN;
+  expectSameIndex(nanFirst, probes(5000, 2));
+  const inf = tiedSoup(3000, 3);
+  inf.positions[0] = -Infinity; inf.positions[3] = Infinity;
+  expectSameIndex(inf, probes(3000, 3));
+});
+
+test("BVH build: a mesh that drives the build past its depth limit matches the JS", () => {
+  // Triangles at doubling distances, each sized to its distance: the area
+  // heuristic peels a few off per level, so the tree passes DEPTH_LIMIT (48;
+  // this one reaches 52) and halves its ranges below it.
+  const n = 300, tris = [];
+  for (let i = 0; i < n; i++) { const x = 2 ** i, s = x / 1000; tris.push([x, 0, 0, x + s, 0, 0, x, s, 0]); }
+  const mesh = { positions: Float64Array.from(tris.flat()) };
+  const queries = tris.map(([x]) => ({ ray: [[x * 1.0002, x * 0.0002, x], [0, 0, -1]], point: [x * 1.0002, x * 0.0002, x * 0.001] }));
+  expectSameIndex(mesh, queries);
 });
 
 test("min-wall casts its rays in leaf order but keeps the JS's first-wins ties", () => {
@@ -170,3 +195,15 @@ test("min-wall casts its rays in leaf order but keeps the JS's first-wins ties",
     nat.dispose();
   }
 });
+
+test("BVH build: every reference part's tree is the JS's, node for node", async () => {
+  const { bootManifoldKernel, buildView } = await import("../src/testing.js");
+  const kernel = await bootManifoldKernel();
+  for (const name of ["filleted-box", "lattice-box", "propeller", "gasket"]) {
+    const part = (await import(`../src/parts/${name}.js`)).default;
+    for (const { mesh } of buildView(kernel, part, Object.keys(part.views)[0])) {
+      if (mesh.positions?.length) expectSameIndex(mesh, []);
+    }
+  }
+  kernel.cleanup?.();
+}, 120_000);
