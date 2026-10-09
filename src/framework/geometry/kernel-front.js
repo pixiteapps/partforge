@@ -21,6 +21,7 @@ import { KernelCapabilityError } from "./errors.js";
 import { isPlainOptions, KERNEL_OP_SPECS } from "./op-options.js";
 import { isPathContour, contourToPoints } from "./profile.js";
 import { textGlyphs } from "./text2d.js";
+import { unionMany } from "./union-many.js";
 import { placeRegions } from "./vector2d.js";
 import { beveledExtrude } from "./rim-bevel.js";
 import { DEFAULT_FONT_BYTES } from "./fonts/default-font.js";
@@ -279,7 +280,7 @@ export function finishKernel(k) {
     if (regions.length === 0) throw new Error("text2d: string produced no glyph geometry (empty or all-whitespace?)");
     // Glyph regions are machine-resolved by curve-fill — trusted, so a text
     // part does not pay profile validation per glyph per rebuild.
-    return regions.map((r) => k.shape2d.trusted(r)).reduce((a, b) => a.union(b));
+    return unionMany(regions.map((r) => k.shape2d.trusted(r)), k.shape2d.trusted);
   };
 
   // 2-D vector art as a Shape2D. Backend-agnostic for the same reason text2d is:
@@ -300,7 +301,7 @@ export function finishKernel(k) {
     if (!doc) throw new Error(`vector2d: unknown vector "${name}" — declare it in the part's \`vectors\` field`);
     // vector documents carry their own validation (VECTOR-FORMAT.md); trusted lift
     const lift = (regions, measureAgainst = regions) =>
-      placeRegions(regions, doc.units, opts, { measureAgainst, name }).map((r) => k.shape2d.trusted(r)).reduce((a, b) => a.union(b));
+      unionMany(placeRegions(regions, doc.units, opts, { measureAgainst, name }).map((r) => k.shape2d.trusted(r)), k.shape2d.trusted);
     if (opts.shape != null) {
       const entry = doc.shapes.get(opts.shape);
       if (!entry) {

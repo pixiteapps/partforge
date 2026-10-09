@@ -320,10 +320,10 @@
             "metric": "volume",
             "kind": "gate",
             "expr": ">=2900",
-            "actual": 3013.05086,
+            "actual": 3013.00565,
             "status": "pass",
             "pass": true,
-            "message": "3013.0508550993895 >= 2900"
+            "message": "3013.0056516202962 >= 2900"
           },
           {
             "scope": "subpart",
