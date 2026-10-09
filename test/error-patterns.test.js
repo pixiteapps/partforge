@@ -92,6 +92,7 @@ const BASELINE_IDS = [
   "views-and-place",
   "view-pose-not-rigid",
   "views-invalid",
+  "boolean-invalid-operand",
 ];
 
 const entries = parsePatterns(doc);
