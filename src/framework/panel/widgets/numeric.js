@@ -67,6 +67,10 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
   // the log mapping don't, so be explicit).
   const thumbFor = (v) => log ? toPosSafe(v) : Math.max(node.min, Math.min(node.max, v));
 
+  // Edited (an `input`) since the last `change`. A widget torn down mid-edit
+  // commits what it holds (dispose below): the DOM fires no `change` for a
+  // detached input on WebKit, and the value is already in params either way.
+  let dirty = false;
   let slider = null;
   if (!numeric) {
     slider = document.createElement("input");
@@ -78,9 +82,10 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
       params[node.key] = v;
       box.value = numStr(v);
       paintWarn();
+      dirty = true;
       onChange?.();
     });
-    slider.addEventListener("change", () => onCommit?.());
+    slider.addEventListener("change", () => { dirty = false; onCommit?.(); });
     wrap.append(slider);
   }
 
@@ -131,6 +136,7 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
     params[node.key] = v;
     if (slider) slider.value = thumbFor(v);
     paintWarn();
+    dirty = true;
     onChange?.();
   });
   box.addEventListener("change", () => {
@@ -140,6 +146,7 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
     box.value = numStr(v);
     if (slider) slider.value = thumbFor(v);
     paintWarn();
+    dirty = false;
     onChange?.();
     onCommit?.();
   });
@@ -150,5 +157,8 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
     paintWarn();
   };
   paintWarn();
-  return { el: wrap, sync };
+  // Torn down with an edit still uncommitted (a sub-panel rebuilt under the
+  // pointer, a remount): commit it, since no `change` is coming.
+  const dispose = () => { if (dirty) { dirty = false; onCommit?.(); } };
+  return { el: wrap, sync, dispose };
 }

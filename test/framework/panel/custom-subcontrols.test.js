@@ -91,3 +91,66 @@ test("a custom control inside host.controls is dropped and reported; sub-panels 
   panel.dispose();
   expect(box.querySelector('input[type="range"]')).toBeNull();
 });
+
+// Feedback #172 (partforge-cloud): the documented widget pattern rebuilds its
+// sub-panel on every update(), and a derived update lands after every build —
+// including the builds a slider drag or a number box keystroke triggers. The
+// rebuild tore the input the user was editing out of the DOM before its
+// `change` fired; Chromium dispatches `change` on detach, WebKit does not, so
+// on Safari the edit was applied to the viewer and never committed.
+test("a derived update is held while a sub-control gesture is in flight and delivered on commit", () => {
+  const r = root();
+  const params = { tiles: [{ height: 10 }] };
+  const commits = [];
+  let host; let draws = 0; let stop = null;
+  const draw = () => {
+    draws += 1;
+    stop?.();
+    stop = host.controls(host.el, [{ key: "height", label: "Height", min: 0, max: 30, step: 1 }], { path: "0" });
+  };
+  const panel = buildControls(r, [{ id: "s", controls: [{ key: "tiles", type: "custom", widget: (h) => { host = h; draw(); return { update: draw }; } }] }],
+    params, () => {}, (keys) => commits.push(keys));
+  expect(draws).toBe(1);
+  const slider = host.el.querySelector('input[type="range"]');
+  slider.value = "20"; slider.dispatchEvent(new Event("input"));
+  expect(params.tiles[0].height).toBe(20);
+  panel.refresh({ derived: { n: 1 } });                   // the build the drag triggered
+  expect(draws).toBe(1);                                  // held: the slider under the pointer survives
+  expect(slider.isConnected).toBe(true);
+  expect(host.derived).toEqual({ n: 1 });                 // but the derived value is already readable
+  slider.dispatchEvent(new Event("change"));              // the gesture ends
+  expect(commits).toEqual([["tiles"]]);
+  expect(draws).toBe(2);                                  // the held update is delivered once, after the commit
+  expect(host.el.querySelector('input[type="range"]').value).toBe("20");
+  panel.refresh({ derived: { n: 1 } });                   // unchanged derived: still no update
+  expect(draws).toBe(2);
+});
+
+test("a derived update with no gesture in flight is delivered at once, as before", () => {
+  const r = root();
+  const params = { tiles: [{ height: 10 }] };
+  let host; let draws = 0; let stop = null;
+  const draw = () => { draws += 1; stop?.(); stop = host.controls(host.el, [{ key: "height", min: 0, max: 30, step: 1 }], { path: "0" }); };
+  const panel = buildControls(r, [{ id: "s", controls: [{ key: "tiles", type: "custom", widget: (h) => { host = h; draw(); return { update: draw }; } }] }], params, () => {});
+  panel.refresh({ derived: { n: 1 } });
+  expect(draws).toBe(2);
+});
+
+test("disposing a sub-panel commits a slider edited but not yet committed, and nothing otherwise", () => {
+  const r = root();
+  const params = { tiles: [{ height: 10 }] };
+  const commits = [];
+  let host;
+  buildControls(r, [{ id: "s", controls: [{ key: "tiles", type: "custom", widget: (h) => { host = h; } }] }], params, () => {}, (keys) => commits.push(keys));
+  const box = document.createElement("div");
+  host.el.append(box);
+  let stop = host.controls(box, [{ key: "height", min: 0, max: 30, step: 1 }], { path: "0" });
+  stop();
+  expect(commits).toEqual([]);                            // nothing edited: nothing committed
+  stop = host.controls(box, [{ key: "height", min: 0, max: 30, step: 1 }], { path: "0" });
+  const slider = box.querySelector('input[type="range"]');
+  slider.value = "22"; slider.dispatchEvent(new Event("input"));
+  stop();                                                 // torn down mid-gesture (a sync, a remount)
+  expect(commits).toEqual([["tiles"]]);
+  expect(params.tiles[0].height).toBe(22);
+});

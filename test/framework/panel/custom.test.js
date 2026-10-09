@@ -265,3 +265,19 @@ test("a widget that is not a function is a create error, not a crash", () => {
   const panel = buildControls(r, sec({ key: "t", type: "custom", label: "T", widget: "nope" }), { t: [] }, () => {});
   expect(panel.errors()[0]).toMatchObject({ phase: "create", message: expect.stringMatching(/widget/) });
 });
+
+test("panel.dispose commits a number box edited but not yet committed; an edit already committed is not committed twice", () => {
+  const r = root();
+  const params = { od: 8, h: 3 };
+  const commits = [];
+  const panel = buildControls(r, [{ id: "s", title: "S", controls: [
+    { key: "od", label: "OD", min: 0, max: 30, step: 1 },
+    { key: "h", label: "H", min: 0, max: 30, step: 1 },
+  ] }], params, () => {}, (keys) => commits.push(keys));
+  const [od, h] = r.querySelectorAll(".num");
+  od.value = "12"; od.dispatchEvent(new Event("input"));
+  h.value = "5"; h.dispatchEvent(new Event("input")); h.dispatchEvent(new Event("change"));
+  expect(commits).toEqual([["h"]]);
+  panel.dispose();
+  expect(commits).toEqual([["h"], ["od"]]);
+});

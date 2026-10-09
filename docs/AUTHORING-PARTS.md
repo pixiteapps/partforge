@@ -1248,7 +1248,12 @@ export function tilePicker(host) {
 `update({reason, disabled})` is called when your key changes from outside the widget
 (`reason: "sync"` — a preset, undo, `setParams`), when `derived` changes
 (`"derived"`), and once after `host.state` was restored on mount (`"restore"`). It is
-**not** called for your own `set`. `dispose()` runs on teardown.
+**not** called for your own `set`, and a `"derived"` update is **held while a gesture is
+in flight** — a `set` with `commit: false`, or a `host.controls` sub-control being
+edited — and delivered once `host.commit()` ends it (`host.derived` is current
+throughout). That is what lets the pattern above rebuild its sub-panel on every
+`update` without pulling the slider or number box out from under the user: every
+build the drag itself triggers ends in a derived update. `dispose()` runs on teardown.
 
 **Rules that keep it working.**
 
