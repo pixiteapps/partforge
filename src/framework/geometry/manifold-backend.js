@@ -25,6 +25,21 @@ import { checkBooleanResult } from "./boolean-gate.js";
 import { KernelCapabilityError } from "./errors.js";
 import { heightfieldMesh, hashGridData } from "./heightfield.js";
 
+// A boolean whose operand was already broken. See `judged` below.
+const invalidOperand = (op, index, status) => new Error(
+  `${op}: operand ${index} is not a valid solid (Manifold status ${status}) — an earlier op ` +
+  "built nothing, so this boolean has nothing to work with. The usual causes are a primitive " +
+  "with a zero dimension (a radius, height or size driven to 0) and a profile that encloses no " +
+  "area (collinear, repeated, or self-cancelling points). Check the op that built this operand " +
+  "and the parameter values that size it. " +
+  "See ERROR-PATTERNS.md#boolean-invalid-operand.");
+
+// A point-list profile whose cross-section came out empty. Thrown at the op,
+// before the empty solid can reach a boolean and be misreported there.
+const emptyProfile = (op) => new Error(
+  `${op}: the profile encloses no area — nothing to build (its points may be collinear, ` +
+  "repeated, or cancel each other out). See ERROR-PATTERNS.md#boolean-invalid-operand.");
+
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
 // by the export path — Manifold meshing is cheap, so we tessellate generously).
@@ -89,6 +104,14 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   };
   const BOX_SLACK = 1e-3; // mm — an enclosure test, not a measurement
   const judged = (op, operandMs, resultM) => {
+    // An operand that is already in an error state (Manifold's status, e.g.
+    // InvalidConstruction from extruding an empty cross-section) makes the
+    // boolean return an empty error-state result. Judged by volume, that reads
+    // as "a union smaller than its largest operand" or "a cut that emptied
+    // its body", and the coaching sends the author hunting for tangent contacts
+    // that are not there. It is the operand's failure, so say that instead.
+    const bad = operandMs.findIndex((mm) => mm.status() !== "NoError");
+    if (bad >= 0) throw invalidOperand(op, bad, operandMs[bad].status());
     const box = (mm) => mm.boundingBox();
     const err = checkBooleanResult(op, operandMs.map(volumeOf), volumeOf(resultM), {
       overlap: (i, j) => {
@@ -760,7 +783,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     },
     prism: (pts, height, { twist = 0, scaleTop = 1 } = {}) =>
       cached(h("prism", pts, height, twist, scaleTop, segs), () => {
-        const cs = T(CrossSection.ofPolygons([tessellateContour(pts, segsAt)]));
+        // Even/odd like `extrude` below and like the OCCT prism, so the outline's
+        // winding does not matter. Under Manifold's default Positive rule a
+        // CLOCKWISE outline filled nothing: the extrude came back
+        // InvalidConstruction and the next boolean reported an "impossible
+        // result" (118 production builds in two weeks, every one a 0 mm³ result).
+        const cs = T(CrossSection.ofPolygons([tessellateContour(pts, segsAt)], "EvenOdd"));
+        if (cs.isEmpty()) throw emptyProfile("prism");
         if (twist === 0 && scaleTop === 1) return T(cs.extrude(height));
         const nDiv = Math.max(1, Math.ceil(Math.abs(twist) / 5));
         // Manifold's extrude scaleTop is a Vec2 — a scalar is NOT broadcast (it scales
@@ -856,6 +885,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
           const { outer, holes } = tessellateProfile(profile, segsAt);
           return T(CrossSection.ofPolygons([outer, ...holes], "EvenOdd"));
         })();
+        if (cs.isEmpty()) throw emptyProfile("extrude");
         if (twist === 0 && scaleTop === 1) return T(cs.extrude(height));
         const nDiv = Math.max(1, Math.ceil(Math.abs(twist) / 5));
         return T(cs.extrude(height, nDiv, twist, [scaleTop, scaleTop]));
