@@ -69,6 +69,10 @@ export function makeCustom(node, params, { onChange, onCommit, info, custom = {}
   let instance = null;
   let retired = false;
   let lastDerived = "{}";
+  // A derived update that arrived while a deferred gesture was in flight
+  // (`pending` non-empty): held, delivered once the gesture commits. See
+  // `update` below.
+  let heldUpdate = false;
 
   const report = (phase, message) => onError?.({ key: node.key, label, phase, message });
 
@@ -131,6 +135,9 @@ export function makeCustom(node, params, { onChange, onCommit, info, custom = {}
       if (!changed.length) return;
       for (const k of changed) pending.delete(k);
       onCommit?.(changed);
+      // The gesture is over: deliver the derived update it held back (once,
+      // for the latest derived — host.derived already carries it).
+      if (heldUpdate && pending.size === 0) { heldUpdate = false; update("derived"); }
     },
 
     setState(patch) { if (retired) return; Object.assign(host.state, patch); },
@@ -210,7 +217,21 @@ export function makeCustom(node, params, { onChange, onCommit, info, custom = {}
     instance = r && typeof r === "object" ? r : null;
   });
 
-  const update = (reason) => guarded("update", () => instance?.update?.({ reason, disabled: host.disabled }));
+  // A derived update is HELD while a deferred gesture is in flight — a
+  // `host.set(…, {commit: false})` or a host.controls sub-control edit that
+  // has not committed yet. Every build the gesture itself triggers (a slider
+  // drag's live preview, each keystroke in a number box) ends in a derived
+  // refresh, and the documented widget pattern answers update() by rebuilding
+  // its sub-panel — which tore the input being edited out of the DOM before
+  // its `change` could fire. Chromium dispatches `change` on detach; WebKit
+  // does not, so on Safari the edit reached the viewer and was never
+  // committed (partforge-cloud feedback #172). host.derived is still updated
+  // at once; only the call is deferred, to the commit that ends the gesture.
+  // `sync` is never held: an outside write supersedes the gesture.
+  const update = (reason) => {
+    if (reason === "derived" && pending.size > 0) { heldUpdate = true; return; }
+    guarded("update", () => instance?.update?.({ reason, disabled: host.disabled }));
+  };
 
   // Restoring panel state is not part of creation: a throw here is a bad
   // `update`, not a bad `create` — the widget did construct successfully.
