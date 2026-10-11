@@ -1,0 +1,155 @@
+// mountPreview: the kernel-free viewer. A cached preview GLB (partforge/gltf) in
+// the SAME viewer mount() uses — scene, camera, lights, materials, the view cube,
+// the view style and the theme — with no part source, no worker, no rail, no
+// export and no picking. For a page that only shows a model (partforge-cloud's
+// public forge page).
+//
+// createViewer needs a part's sub-part names at construction, so the viewer is
+// built once the GLB has decoded, from a synthetic part: one sub-part per glTF
+// mesh, carrying the `display` block the writer stored beside it (the exact CAD
+// look, and realistic mode too), and the file's background/environment meta.
+// Hence `ready`. Every handle method is safe before it resolves.
+import "./app.css";
+import { createViewer } from "./viewer.js";
+import { attachViewerControls } from "./viewer-controls.js";
+import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
+import { attachViewStyleControls } from "./view-style-controls.js";
+import { observeViewbarClear } from "./viewbar-clear.js";
+import { createTooltipPresenter } from "./tooltip.js";
+import { isFaceAlignedState } from "./projection.js";
+import { ENVIRONMENTS } from "./materials/environments.js";
+import { decodePreviewGlb } from "./gltf/decode-preview.js";
+
+function previewPart({ meshes, view, meta }) {
+  return {
+    meta: { title: "Preview", ...(meta ?? {}) },
+    defaults: {},
+    parameters: [],
+    views: { [view]: { label: view } },
+    parts: Object.fromEntries(meshes.map((m) => [m.name, {
+      label: m.name,
+      views: [view],
+      ...(m.display ? { display: m.display } : {}),
+    }])),
+  };
+}
+
+const relay = (listeners) => (event) => {
+  for (const cb of [...listeners]) {
+    try { cb(event); } catch (error) { console.warn("partforge: preview listener failed", error); }
+  }
+};
+
+export function mountPreview(container, { glb, elements = {}, viewerState = null } = {}) {
+  if (!container) throw new TypeError("mountPreview: a container element is required");
+  let disposed = false;
+  let active = true;
+  let carried = viewerState ?? null; // applied once the viewer exists, and on every setViewerState
+  let live = null;                   // { viewer, view } once the GLB has decoded
+  const cleanups = [];
+  const modeListeners = new Set();
+  const envListeners = new Set();
+  const lostListeners = new Set();
+
+  // Same precedence mount() uses: projection first (orthographic only for a
+  // face-view camera), then the camera, then environment and render mode.
+  function applyState(s) {
+    if (!s || !live) return;
+    const { viewer } = live;
+    viewer.setProjection(s.projection === "orthographic" && isFaceAlignedState(s.camera) ? "orthographic" : "perspective");
+    if (s.camera) viewer.setCameraState(s.camera);
+    if (typeof s.environment === "string") viewer.setEnvironment(s.environment);
+    if ((s.renderMode === "cad" || s.renderMode === "realistic") && s.renderMode !== viewer.getRenderMode()) {
+      viewer.setRenderMode(s.renderMode);
+    }
+  }
+
+  const ready = decodePreviewGlb(glb).then((decoded) => {
+    if (disposed) return;
+    if (decoded.meshes.length === 0) throw new Error("mountPreview: the preview holds no meshes");
+    const view = decoded.view ?? "preview";
+    const viewer = createViewer(container, previewPart({ ...decoded, view }));
+    cleanups.push(() => viewer.dispose());
+    const tooltip = createTooltipPresenter({ id: null });
+    cleanups.push(() => tooltip.dispose());
+    const viewcube = attachViewcubeControls(viewer, { stage: container });
+    cleanups.push(() => viewcube.detach());
+    const toolbar = container.querySelector("#viewbar");
+    const viewStyle = attachViewStyleControls(viewer, { stage: container, toolbar, anchor: viewcube.element }, { tooltip });
+    cleanups.push(() => viewStyle.detach());
+    cleanups.push(observeViewbarClear(container, toolbar));
+    const chrome = attachViewerControls(viewer, elements.chrome ?? {}, { tooltip });
+    cleanups.push(() => chrome.detach());
+    cleanups.push(viewer.onRenderModeChange(relay(modeListeners)));
+    cleanups.push(viewer.onEnvironmentChange(relay(envListeners)));
+    cleanups.push(viewer.onContextLost(relay(lostListeners)));
+    for (const m of decoded.meshes) viewer.setSubGeometry(m.name, m);
+    viewer.showAssembly(decoded.meshes.map((m) => m.name), { frame: true });
+    live = { viewer, view };
+    applyState(carried);
+    if (!active) viewer.setActive(false);
+  });
+  ready.catch(() => {}); // the host awaits it; never an unhandled rejection
+
+  function getViewerState() {
+    if (!live) return carried ?? { camera: null, projection: "perspective", cutaway: null, renderMode: "cad" };
+    const v = live.viewer;
+    return {
+      camera: v.getCameraState(),
+      projection: v.getProjection?.() ?? "perspective",
+      cutaway: null, // a preview has no live solid to section
+      renderMode: v.isRealisticPending?.() ? "realistic" : v.getRenderMode?.() ?? "cad",
+      ...(v.isEnvironmentChosen?.() ? { environment: v.getEnvironment() } : {}),
+    };
+  }
+
+  // A method that needs the viewer waits for it; a failed decode answers the default.
+  const whenLive = async (fn, fallback) => {
+    try { await ready; } catch { return fallback; }
+    return live ? fn(live.viewer) : fallback;
+  };
+
+  return {
+    ready,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      live = null;
+      const errors = [];
+      while (cleanups.length) {
+        try { cleanups.pop()(); } catch (error) { errors.push(error); }
+      }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) throw new AggregateError(errors, "partforge mountPreview cleanup failed");
+    },
+    getView: () => live?.view ?? null,
+    getViewerState,
+    setViewerState(next) {
+      carried = next ?? null;
+      applyState(carried);
+    },
+    setActive(next) {
+      active = next !== false;
+      live?.viewer.setActive(active);
+    },
+    onContextLost(listener) {
+      lostListeners.add(listener);
+      return () => lostListeners.delete(listener);
+    },
+    // No rail to place or pick: accepted so a host relaying mount()'s sticky state
+    // can send it here unchanged.
+    setHostPane: () => {},
+    setRailLayout: () => {},
+    renderMode: {
+      get: () => live?.viewer.getRenderMode() ?? "cad",
+      set: (mode) => whenLive((v) => v.setRenderMode(mode), "cad"),
+      onChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },
+    },
+    environment: {
+      get: () => live?.viewer.getEnvironment() ?? "studio",
+      set: (id) => whenLive((v) => v.setEnvironment(id), "studio"),
+      onChange: (cb) => { envListeners.add(cb); return () => envListeners.delete(cb); },
+      list: () => Object.values(ENVIRONMENTS).map(({ id, label }) => ({ id, label })),
+    },
+  };
+}

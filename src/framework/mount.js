@@ -41,7 +41,7 @@ import { attachSketchToolbar } from "./annotate/sketch-toolbar.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
 import { decodePreviewGlb } from "./gltf/decode-preview.js";
 import { createPreviewGate } from "./preview-gate.js";
-import { stageClearFor } from "./stage-clear.js";
+import { observeViewbarClear } from "./viewbar-clear.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
@@ -789,21 +789,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // action rows can change. A hidden bar (ours or a host stylesheet's)
     // claims 0 — stage-clear.js has the why; the observer fires on the hide
     // itself, since the bar's box goes to zero.
-    const viewbarEl = els.viewer.querySelector("#viewbar");
-    if (viewbarEl && typeof ResizeObserver === "function") {
-      const publishViewbarClear = () => {
-        const clear = stageClearFor(els.viewer.getBoundingClientRect(), viewbarEl.getBoundingClientRect());
-        els.viewer.style.setProperty("--pf-viewbar-clear", `${clear}px`);
-      };
-      const viewbarObserver = new ResizeObserver(publishViewbarClear);
-      viewbarObserver.observe(viewbarEl);
-      viewbarObserver.observe(els.viewer);
-      publishViewbarClear();
-      cleanup.defer(() => {
-        viewbarObserver.disconnect();
-        els.viewer.style.removeProperty("--pf-viewbar-clear");
-      });
-    }
+    cleanup.defer(observeViewbarClear(els.viewer, els.viewer.querySelector("#viewbar")));
     // escapeScope: cutaway's Flip/Reset buttons are canvas SIBLINGS inside
     // #viewbar, not descendants of the canvas — attaching Escape to
     // viewer.domElement alone would leave a guarded Escape from those buttons

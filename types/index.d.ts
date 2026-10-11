@@ -723,6 +723,52 @@ export interface PartRuntime {
 /** Mount a full parametric-part app from a `PartDefinition`. */
 export function mount(part: PartDefinition, options: MountOptions): PartRuntime;
 
+/** Options for `mountPreview`. */
+export interface MountPreviewOptions {
+  /** A GLB from `partforge/gltf`'s `encodePreviewGlb`, or a runtime's `exportPreview()`. */
+  glb: Uint8Array | ArrayBuffer;
+  /** Optional viewer buttons, wired as `mount()` wires them; `#viewbar` inside the container is found by id. */
+  elements?: { chrome?: { reframe?: HTMLElement | null; theme?: HTMLElement | null } };
+  /** A previous runtime's `getViewerState()`; `cutaway` is ignored (a preview has no live solid). */
+  viewerState?: ViewerState | null;
+}
+
+/** The handle `mountPreview()` returns. Every method is safe before `ready` settles. */
+export interface PreviewRuntime {
+  /** Resolves once the GLB is drawn; rejects when it will not decode or holds no meshes. */
+  ready: Promise<void>;
+  /** Full teardown. Idempotent. */
+  dispose(): void;
+  /** The view the file was written for (`null` until drawn, or when the file names none). */
+  getView(): string | null;
+  /** Camera, projection, render mode and environment; `cutaway` is always `null`. */
+  getViewerState(): ViewerState;
+  /** Apply a state (camera, projection, render mode, environment) now, or once drawn. */
+  setViewerState(state: ViewerState | null): void;
+  /** Park/unpark the viewer, as `PartRuntime.setActive`. */
+  setActive(active: boolean): void;
+  /** WebGL context loss. Returns an unsubscribe. */
+  onContextLost(listener: () => void): () => void;
+  /** Accepted and ignored — there is no rail. */
+  setHostPane(pane: HostPane): void;
+  /** Accepted and ignored — there is no rail. */
+  setRailLayout(layout: HostRailLayout): void;
+  renderMode: {
+    get(): RenderMode;
+    set(mode: RenderMode): Promise<RenderMode>;
+    onChange(cb: (e: RenderModeEvent) => void): () => void;
+  };
+  environment: {
+    get(): string;
+    set(id: string): Promise<string>;
+    onChange(cb: (id: string) => void): () => void;
+    list(): Array<{ id: string; label: string }>;
+  };
+}
+
+/** A kernel-free viewer for a cached preview GLB: the viewer, view cube, view style and theme — no part, no worker, no rail. */
+export function mountPreview(container: HTMLElement, options: MountPreviewOptions): PreviewRuntime;
+
 /** Every format `exportParts` can write in this version (`runtime.listExportFormats()` returns copies). */
 export const EXPORT_FORMATS: ReadonlyArray<ExportFormatInfo>;
 

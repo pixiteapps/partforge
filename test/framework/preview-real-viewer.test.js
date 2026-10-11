@@ -60,6 +60,7 @@ vi.mock("../../src/framework/viewer.js", async (importOriginal) => {
 });
 
 import { mount } from "../../src/framework/mount.js";
+import { mountPreview } from "../../src/framework/mount-preview.js";
 import { decodePreviewGlb } from "../../src/framework/gltf/decode-preview.js";
 import { boxSoup, boundsOf, previewGlbFor } from "../helpers/preview-glb.js";
 
@@ -169,4 +170,82 @@ test("exportPreview bakes a canonical sub-part's place() pose into the file", as
   expectNear(min, [10, 0, 0]);
   expectNear(max, [11, 1, 1]);
   runtime.dispose();
+});
+
+// --- mountPreview: the kernel-free viewer --------------------------------------
+const previewPart = { parts: { body: { display: { color: 0xff0000 } } } };
+let glbBytes = null;
+const glb = async () => (glbBytes ??= await previewGlbFor([boxSoup("body", [0, 0, 0], [4, 4, 4])], previewPart, "main"));
+
+test("mountPreview draws the GLB with no worker, framed, in the part's own look", async () => {
+  const Worker = vi.fn();
+  vi.stubGlobal("Worker", Worker);
+  const stage = makeStage();
+  const handle = mountPreview(stage, { glb: await glb() });
+  await handle.ready;
+  const v = viewers.at(-1);
+  expect(stage.contains(v.domElement)).toBe(true);
+  expect(v.hasSubMesh("body")).toBe(true);
+  expect(v.__subMesh("body").visible).toBe(true);
+  expect(v.__subMesh("body").material.color.getHex()).toBe(0xff0000);
+  expect(handle.getView()).toBe("main");
+  expect(Worker).not.toHaveBeenCalled();
+  handle.dispose();
+  expect(stage.contains(v.domElement)).toBe(false);
+  expect(stage.querySelector("canvas")).toBeNull(); // the view cube went with it
+  expect(() => handle.dispose()).not.toThrow();
+});
+
+test("mountPreview carries viewer state in and out", async () => {
+  const handle = mountPreview(makeStage(), {
+    glb: await glb(), viewerState: { camera: { pos: [40, 0, 0], target: [0, 0, 0] }, projection: "perspective", cutaway: null },
+  });
+  await handle.ready;
+  expectNear(handle.getViewerState().camera.pos, [40, 0, 0], 4);
+  handle.setViewerState({ camera: { pos: [0, 50, 0], target: [1, 1, 1] }, projection: "perspective", cutaway: null });
+  const s = handle.getViewerState();
+  expect(s).toMatchObject({ projection: "perspective", cutaway: null, renderMode: "cad" });
+  expectNear(s.camera.pos, [0, 50, 0], 4);
+  expectNear(s.camera.target, [1, 1, 1], 4);
+  handle.dispose();
+});
+
+test("a GLB that will not decode rejects ready and leaves the container untouched", async () => {
+  const stage = makeStage();
+  const handle = mountPreview(stage, { glb: new Uint8Array([1, 2, 3]) });
+  await expect(handle.ready).rejects.toThrow();
+  expect(stage.children).toHaveLength(0);
+  expect(viewers).toHaveLength(0);
+  expect(handle.getView()).toBeNull();
+  expect(() => handle.dispose()).not.toThrow();
+});
+
+test("dispose before the GLB decodes means nothing is ever drawn", async () => {
+  const stage = makeStage();
+  const handle = mountPreview(stage, { glb: await glb() });
+  handle.dispose();
+  await handle.ready;
+  expect(viewers).toHaveLength(0);
+  expect(stage.children).toHaveLength(0);
+});
+
+test("the sticky hooks a host relays are safe, before and after the decode", async () => {
+  const handle = mountPreview(makeStage(), { glb: await glb() });
+  handle.setActive(false); // remembered until the viewer exists
+  handle.setHostPane("rail");
+  handle.setRailLayout({ mode: "overlay" });
+  const lost = vi.fn();
+  handle.onContextLost(lost);
+  await handle.ready;
+  expect(state.renderer.animationLoop).toBeNull(); // parked
+  handle.setActive(true);
+  expect(typeof state.renderer.animationLoop).toBe("function");
+  expect(await handle.renderMode.set("cad")).toBe("cad");
+  expect(handle.renderMode.get()).toBe("cad");
+  expect(handle.environment.list().map((e) => e.id)).toContain("studio");
+  handle.dispose();
+});
+
+test("mountPreview requires a container", () => {
+  expect(() => mountPreview(null, { glb: new Uint8Array(0) })).toThrow(TypeError);
 });
