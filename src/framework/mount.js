@@ -71,13 +71,15 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview }) {
   return {
     ready, dispose, setParams,
     // Whether the `preview` GLB handed to mount() is on screen (see mount's
     // preview block). A GETTER, read live: a host that copies the handle object
     // freezes the value it had at that moment.
     get previewActive() { return isPreviewActive?.() ?? false; },
+    // The view on screen as a preview GLB (partforge/gltf), poses baked in.
+    exportPreview: exportPreview ?? (() => Promise.reject(new Error("exportPreview: this mount cannot encode a preview"))),
     // Part-declared animation playback (spec 2026-08-02): animations are
     // VIEW-owned, so this is null only when NO view declares any.
     // { play(name?), pause(), seek(t), stop(), state() } — play(name) resolves
@@ -248,8 +250,10 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.141.0: a place()-able sub-part is delivered in its
-// canonical frame and posed by the viewer; pose-only edits never rebuild):
+// Embedding contract (0.147.0: a cached `preview` GLB is drawn before the kernel
+// boots and swapped in place by the first build; 0.141.0: a place()-able sub-part
+// is delivered in its canonical frame and posed by the viewer; pose-only edits
+// never rebuild):
 //   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload, onViewChange });
 //   await runtime.ready;   // first successful build of the default view
 //   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly
@@ -364,6 +368,15 @@ function createCleanupStack() {
 //                                         // switching the live view; "cad" is exactly captureViews(),
 //                                         // CAD in either live mode
 //   runtime.dispose();     // full teardown
+//   runtime.previewActive  // true while the `preview` GLB is on screen (decoded, not yet
+//                          // replaced by a whole live build): picking, hover labels,
+//                          // measure, sketch and cutaway wait; orbit, the view cube,
+//                          // the view style and the rail work
+//   await runtime.exportPreview();  // the view on screen as a preview GLB (Uint8Array,
+//                          // partforge/gltf), fast-path poses baked in. Rejects while
+//                          // previewActive, before the view is fully built (a pending
+//                          // rebuild counts), for a view other than the one on screen,
+//                          // and after dispose
 // onBuild fires per completed build, so it does NOT fire for a pose-only edit —
 // those are repaired in the viewer and produce no build at all.
 // onViewChange fires once synchronously during mount with the initial resolved
@@ -393,6 +406,12 @@ function createCleanupStack() {
 //                                         // first mount — the viewer then restores its own persisted
 //                                         // camera as before. Restore is best-effort per field: a pose
 //                                         // this part cannot support is dropped, never fatal.
+// preview: Uint8Array | ArrayBuffer      // a GLB from encodePreviewGlb / exportPreview, drawn before
+//                                         // the worker is ready and replaced sub-part by sub-part by
+//                                         // the first live build, camera kept. Only a file for the view
+//                                         // on screen is drawn, and only its sub-parts of that view; a
+//                                         // file for another view, or one that will not decode, is
+//                                         // logged once and ignored.
 // panelState: PanelState                 // a previous mount's runtime.getPanelState(): the transient
 //                                         // state of the part's custom controls (a selected tile), keyed
 //                                         // by param. Same remount story as viewerState; omit on a first
@@ -1533,9 +1552,32 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       });
     }
 
+    // runtime.exportPreview: the view on screen as a preview GLB — every sub-part's
+    // drawn mesh with its fast-path pose baked in, the posed meshes a headless
+    // buildView returns. Only the view on screen (no other view's meshes are held),
+    // only when it is fully built at the live params (missingParts covers both a
+    // first build and an edit still rebuilding), never a cached preview. The
+    // encoder loads on first use: a host that never exports never pays for it.
+    async function exportPreview({ view: wanted } = {}) {
+      if (disposed) throw new Error("exportPreview: this mount is disposed");
+      if (previewGate.isActive()) throw new Error("exportPreview: a cached preview is showing — wait for the first build");
+      const current = view();
+      if (wanted != null && wanted !== current) {
+        throw new Error(`exportPreview: "${wanted}" is not the view on screen ("${current}")`);
+      }
+      const needed = viewSubParts(part, current, params);
+      if (needed.length === 0 || missingParts().length > 0) {
+        throw new Error("exportPreview: the view on screen is not fully built");
+      }
+      const meshes = needed.map((name) => viewer.getSubMeshPayload(name)).filter(Boolean);
+      const { encodePreviewGlb } = await import("./gltf/encode-preview.js");
+      return encodePreviewGlb({ meshes, part, view: current });
+    }
+
     return makeHandle({
       ready, dispose, viewer, setParams,
       isPreviewActive: () => previewGate.isActive(),
+      exportPreview,
       attachTooltips: attachHostTooltips,
       setHostPane: paneTabs.setHostPane,
       setRailLayout: paneTabs.setRailLayout,

@@ -630,6 +630,14 @@ export interface PartRuntime {
    * a copy of the handle freezes it.
    */
   readonly previewActive: boolean;
+  /**
+   * The view on screen as a preview GLB (`partforge/gltf`'s format), every
+   * sub-part posed exactly as drawn — what a later `mount({ preview })` shows
+   * before its kernel boots. Rejects while `previewActive`, before the view is
+   * fully built at the current params (a pending rebuild counts), for a `view`
+   * other than the one on screen, and after `dispose()`.
+   */
+  exportPreview(opts?: { view?: string }): Promise<Uint8Array>;
   /** Every custom control's non-empty transient state, keyed by param. Hand back as `panelState`. */
   getPanelState(): PanelState;
   /** What custom controls reported failing this mount, in order. */

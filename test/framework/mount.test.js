@@ -31,6 +31,12 @@ vi.mock("../../src/framework/viewer.js", () => ({
       setSubGeometry: vi.fn((name) => built.add(name)),
       setSubPose: vi.fn(),
       hasSubMesh: (name) => built.has(name),
+      // exportPreview's read: one 1mm triangle for every sub-part delivered.
+      getSubMeshPayload: vi.fn((name) => (built.has(name) ? {
+        name, triangles: 1, indices: null,
+        positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+        normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+      } : null)),
       subTriangles: () => 0,
       frame: vi.fn(),
       setTheme: vi.fn(),
@@ -190,6 +196,7 @@ vi.mock("../../src/framework/gltf/decode-preview.js", async (importOriginal) => 
 
 import { mount, makeHandle } from "../../src/framework/mount.js";
 import { boxSoup, previewGlbFor } from "../helpers/preview-glb.js";
+import { decodePreviewGlb } from "../../src/framework/gltf/decode-preview.js";
 import { attachPicker, attachPickToggle, attachHoverLabels } from "../../src/framework/selection/index.js";
 import { attachCutawayControls } from "../../src/framework/cutaway-controls.js";
 import { attachViewerControls } from "../../src/framework/viewer-controls.js";
@@ -2585,4 +2592,40 @@ test("makeHandle reads previewActive live and defaults it to false", () => {
   active = false;
   expect(h.previewActive).toBe(false);
   expect(makeHandle({ ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} }).previewActive).toBe(false);
+});
+
+// --- runtime.exportPreview ---------------------------------------------------
+test("exportPreview encodes the view on screen once it is fully built", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+  await expect(runtime.exportPreview()).rejects.toThrow(/not fully built/);
+  finishFirstBuild(workers);
+  const glb = await runtime.exportPreview();
+  expect(glb).toBeInstanceOf(Uint8Array);
+  expect(fakeViewers[0].getSubMeshPayload).toHaveBeenCalledWith("body");
+  const decoded = await decodePreviewGlb(glb);
+  expect(decoded.view).toBe("main");
+  expect(decoded.meshes.map((m) => m.name)).toEqual(["body"]);
+  expect(decoded.meshes[0].triangles).toBe(1);
+  await expect(runtime.exportPreview({ view: "main" })).resolves.toBeInstanceOf(Uint8Array);
+  await expect(runtime.exportPreview({ view: "side" })).rejects.toThrow(/not the view on screen/);
+  runtime.dispose();
+  await expect(runtime.exportPreview()).rejects.toThrow(/disposed/);
+});
+
+test("exportPreview refuses while a preview is showing or a rebuild is pending", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), preview: await previewFor() });
+  await settleDecodes();
+  await expect(runtime.exportPreview()).rejects.toThrow(/preview is showing/);
+  finishFirstBuild(workers);
+  await expect(runtime.exportPreview()).resolves.toBeInstanceOf(Uint8Array);
+  runtime.setParams({ h: 6 }); // the geometry on screen no longer matches the params
+  await expect(runtime.exportPreview()).rejects.toThrow(/not fully built/);
+  runtime.dispose();
+});
+
+test("makeHandle's exportPreview defaults to a rejection", async () => {
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} });
+  await expect(h.exportPreview()).rejects.toThrow(/cannot encode a preview/);
 });
