@@ -8,3 +8,6 @@ export { viewSubParts } from "./framework/part-model.js";
 // (partforge-cloud's coupling test reads KIT_OPTIONS_ERROR from here). export/formats.js
 // is import-free, so this adds nothing to the app bundle but a few constants.
 export { EXPORT_FORMATS, KIT_OPTIONS_ERROR, KIT_DEFAULTS, validateKitOptions } from "./framework/export/formats.js";
+// Which view mount() opens on — for a host that builds a part outside the viewer
+// (a cached preview, a server-side render) and must agree with it.
+export { resolveDefaultView } from "./framework/default-view.js";

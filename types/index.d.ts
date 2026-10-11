@@ -729,3 +729,11 @@ export function viewSubParts(
   params: Record<string, ParamValue>,
 ): string[];
 
+
+/**
+ * The view `mount()` opens on: a view flagged `default: true`, else the one
+ * placing the most sub-parts at the part's defaults (ties keep declaration
+ * order). `null` for a part with no views. Exported so a host building a part
+ * outside the viewer — a cached preview — opens the same view.
+ */
+export function resolveDefaultView(part: PartDefinition): string | null;

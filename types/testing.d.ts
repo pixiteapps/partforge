@@ -869,3 +869,6 @@ export function annotationRay(
 ): AnnotationRay;
 /** Intersect a ray with a plane; null on parallel / behind-origin misses. */
 export function rayPlane(ray: AnnotationRay, plane: PlaneSpec): RayPlaneHit | null;
+
+/** The view `mount()` opens on (see the main entry's declaration). */
+export function resolveDefaultView(part: PartDefinition): string | null;

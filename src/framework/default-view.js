@@ -5,10 +5,13 @@
 // declaration order, so every part written before this existed resolves to the view
 // it has always opened on.
 //
-// Pure: no DOM, no storage, no kernel, no build. The headless surfaces (measure /
-// verify / renderViews) deliberately do NOT use this — they stay on
+// Pure: no DOM, no storage, no kernel, no build. partforge's own headless surfaces
+// (measure / verify / renderViews) deliberately do NOT use this — they stay on
 // Object.keys(part.views)[0], where a mechanically obvious rule matters more than a
-// convenient one.
+// convenient one. It is exported (main entry and partforge/testing, 0.147.0) for a
+// host that must open the SAME view mount() does — a cached preview built off the
+// viewer has to match the live build it is swapped for. The signature is (part): it
+// reads part.defaults, never caller params.
 import { inView } from "./sub-part-views.js";
 
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
