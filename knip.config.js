@@ -2,7 +2,7 @@
 // demo harness.
 //
 // partforge is a PUBLISHED package, which changes what "reachable" means here
-// versus in an app: the nine subpath exports in package.json are the public
+// versus in an app: the ten subpath exports in package.json are the public
 // API, so anything they reach is live by definition even if nothing in this
 // repo calls it. knip reads those exports itself; what it cannot infer is the
 // demo harness, which is a pile of root-level HTML pages, and the smoke check,
