@@ -244,6 +244,15 @@ export interface MountOptions {
    */
   viewerState?: ViewerState | null;
   /**
+   * A cached preview GLB (from `partforge/gltf`'s `encodePreviewGlb`, or a previous
+   * runtime's `exportPreview()`) drawn before the worker is ready and replaced in
+   * place, sub-part by sub-part, by the first live build — the camera is kept.
+   * Only a file for the view the viewer opens on is drawn, and only meshes named
+   * for that view's sub-parts; a file for another view, or one that will not
+   * decode, is logged once and ignored. Carries no edge lines.
+   */
+  preview?: Uint8Array | ArrayBuffer | null;
+  /**
    * A previous mount's `runtime.getPanelState()`: the transient state of the
    * part's custom controls (a selected tile), keyed by param. Same remount
    * story as `viewerState`; omit on a first mount. Never persisted by partforge.
@@ -613,6 +622,14 @@ export interface PartRuntime {
    * view-cube click, Reframe, or an animation cue).
    */
   getViewerState(): ViewerState;
+  /**
+   * True while the `preview` GLB is on screen: from the moment it decodes until a
+   * build delivers the whole view (a build error leaves it on). Picking, hover
+   * labels, measure, sketch and cutaway wait meanwhile; orbit, zoom, pan, the view
+   * cube, the view style and the rail work. Read it from the runtime each time —
+   * a copy of the handle freezes it.
+   */
+  readonly previewActive: boolean;
   /** Every custom control's non-empty transient state, keyed by param. Hand back as `panelState`. */
   getPanelState(): PanelState;
   /** What custom controls reported failing this mount, in order. */
