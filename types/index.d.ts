@@ -244,6 +244,17 @@ export interface MountOptions {
    */
   viewerState?: ViewerState | null;
   /**
+   * A cached preview GLB (from `partforge/gltf`'s `encodePreviewGlb`, or a previous
+   * runtime's `exportPreview()`) drawn before the worker is ready and replaced in
+   * place, sub-part by sub-part, by the first live build — the camera is kept.
+   * Only a file for the view the viewer opens on is drawn, and only meshes named
+   * for that view's sub-parts; a file for another view, or one that will not
+   * decode, is logged once and ignored. A file written without a view (no `view`
+   * given to `encodePreviewGlb`) is drawn on sub-part name match alone, for any view.
+   * Carries no edge lines.
+   */
+  preview?: Uint8Array | ArrayBuffer | null;
+  /**
    * A previous mount's `runtime.getPanelState()`: the transient state of the
    * part's custom controls (a selected tile), keyed by param. Same remount
    * story as `viewerState`; omit on a first mount. Never persisted by partforge.
@@ -613,6 +624,22 @@ export interface PartRuntime {
    * view-cube click, Reframe, or an animation cue).
    */
   getViewerState(): ViewerState;
+  /**
+   * True while the `preview` GLB is on screen: from the moment it decodes until a
+   * build delivers the whole view (a build error leaves it on). Picking, hover
+   * labels, measure, sketch and cutaway wait meanwhile; orbit, zoom, pan, the view
+   * cube, the view style and the rail work. Read it from the runtime each time —
+   * a copy of the handle freezes it.
+   */
+  readonly previewActive: boolean;
+  /**
+   * The view on screen as a preview GLB (`partforge/gltf`'s format), every
+   * sub-part posed exactly as drawn — what a later `mount({ preview })` shows
+   * before its kernel boots. Rejects while `previewActive`, before the view is
+   * fully built at the current params (a pending rebuild counts), for a `view`
+   * other than the one on screen, and after `dispose()`.
+   */
+  exportPreview(opts?: { view?: string }): Promise<Uint8Array>;
   /** Every custom control's non-empty transient state, keyed by param. Hand back as `panelState`. */
   getPanelState(): PanelState;
   /** What custom controls reported failing this mount, in order. */
@@ -698,6 +725,52 @@ export interface PartRuntime {
 /** Mount a full parametric-part app from a `PartDefinition`. */
 export function mount(part: PartDefinition, options: MountOptions): PartRuntime;
 
+/** Options for `mountPreview`. */
+export interface MountPreviewOptions {
+  /** A GLB from `partforge/gltf`'s `encodePreviewGlb`, or a runtime's `exportPreview()`. */
+  glb: Uint8Array | ArrayBuffer;
+  /** Optional viewer buttons, wired as `mount()` wires them; `#viewbar` inside the container is found by id. */
+  elements?: { chrome?: { reframe?: HTMLElement | null; theme?: HTMLElement | null } };
+  /** A previous runtime's `getViewerState()`; `cutaway` is ignored (a preview has no live solid). */
+  viewerState?: ViewerState | null;
+}
+
+/** The handle `mountPreview()` returns. Every method is safe before `ready` settles. */
+export interface PreviewRuntime {
+  /** Resolves once the GLB is drawn; rejects when it will not decode or holds no meshes. */
+  ready: Promise<void>;
+  /** Full teardown. Idempotent. */
+  dispose(): void;
+  /** The view the file was written for (`null` until drawn, or when the file names none). */
+  getView(): string | null;
+  /** Camera, projection, render mode and environment; `cutaway` is always `null`. */
+  getViewerState(): ViewerState;
+  /** Apply a state (camera, projection, render mode, environment) now, or once drawn. */
+  setViewerState(state: ViewerState | null): void;
+  /** Park/unpark the viewer, as `PartRuntime.setActive`. */
+  setActive(active: boolean): void;
+  /** WebGL context loss. Returns an unsubscribe. */
+  onContextLost(listener: () => void): () => void;
+  /** Accepted and ignored — there is no rail. */
+  setHostPane(pane: HostPane): void;
+  /** Accepted and ignored — there is no rail. */
+  setRailLayout(layout: HostRailLayout): void;
+  renderMode: {
+    get(): RenderMode;
+    set(mode: RenderMode): Promise<RenderMode>;
+    onChange(cb: (e: RenderModeEvent) => void): () => void;
+  };
+  environment: {
+    get(): string;
+    set(id: string): Promise<string>;
+    onChange(cb: (id: string) => void): () => void;
+    list(): Array<{ id: string; label: string }>;
+  };
+}
+
+/** A kernel-free viewer for a cached preview GLB: the viewer, view cube, view style and theme — no part, no worker, no rail. */
+export function mountPreview(container: HTMLElement, options: MountPreviewOptions): PreviewRuntime;
+
 /** Every format `exportParts` can write in this version (`runtime.listExportFormats()` returns copies). */
 export const EXPORT_FORMATS: ReadonlyArray<ExportFormatInfo>;
 
@@ -729,3 +802,10 @@ export function viewSubParts(
   params: Record<string, ParamValue>,
 ): string[];
 
+/**
+ * The view `mount()` opens on: a view flagged `default: true`, else the one
+ * placing the most sub-parts at the part's defaults (ties keep declaration
+ * order). `null` for a part with no views. Exported so a host building a part
+ * outside the viewer — a cached preview — opens the same view.
+ */
+export function resolveDefaultView(part: PartDefinition): string | null;

@@ -260,6 +260,24 @@ the installed package, so let the publish finish before bumping the dep there.
   sheets beside an unburnt twin that differs only by the burn;
   `scripts/capture-contact-sheet.mjs` renders both in every environment and
   diffs them) - to check by eye after any preset or shader change.
+- **`src/framework/gltf/`** + **`src/framework/mount-preview.js`** - the cached
+  preview (0.147.0). `gltf/encode-preview.js` is `partforge/gltf`'s writer: one
+  view's POSED meshes as a GLB (one node/mesh/primitive per sub-part under a
+  single −90°-about-X root, materials from `cadAppearance`, the sub-part's
+  `display` block in node extras, then weld → quantize → meshopt "medium"). It is
+  worker-safe — no three.js, no DOM, no Blob (`test/gltf-layering.test.js`) — and
+  deterministic; bump `PREVIEW_ENCODER_VERSION` whenever its bytes change, since
+  downstream caches key on it. `gltf/decode-preview.js` reads one back with
+  three's GLTFLoader + MeshoptDecoder into the viewer's ordinary mesh payloads in
+  the Z-up model frame — NOT a scene graph under the pivot, which would rotate
+  the part twice — so `mount({ preview })` draws it through `setSubGeometry` and
+  the first whole live delivery replaces it in place (`preview-gate.js` holds
+  picking/hover/measure/sketch/cutaway off meanwhile, and a carried cutaway waits
+  for the live build). `runtime.exportPreview()` encodes the view on screen via
+  `viewer.getSubMeshPayload` (fast-path poses baked in) and loads the encoder
+  lazily, so the app bundle does not carry `@gltf-transform`. `mountPreview` is
+  the same viewer with a synthetic part built from the GLB's own node names — no
+  worker, no rail.
 - **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
   (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
   nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,

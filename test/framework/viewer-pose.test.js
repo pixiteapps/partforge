@@ -167,3 +167,55 @@ test("framing unions posed bounds, not the delivered geometry's bounds", () => {
 
   viewer.dispose();
 });
+
+// --- getSubMeshPayload: what exportPreview encodes --------------------------
+const expectNear = (got, want) => {
+  expect(got).toHaveLength(want.length);
+  [...got].forEach((g, i) => expect(g).toBeCloseTo(want[i], 5));
+};
+
+test("getSubMeshPayload returns the delivered geometry with its fast-path pose baked in", () => {
+  const viewer = makeViewer();
+  viewer.setSubGeometry("body", triangle());
+  // rotate 90° about Z, then slide 10mm along +X
+  const pose = new THREE.Matrix4().makeTranslation(10, 0, 0).multiply(new THREE.Matrix4().makeRotationZ(Math.PI / 2));
+  viewer.setSubPose("body", pose.toArray());
+
+  const out = viewer.getSubMeshPayload("body");
+
+  expect(out.name).toBe("body");
+  expect(out.triangles).toBe(1);
+  expect(out.indices).toBeNull();
+  expectNear(out.positions, [10, 0, 0, 10, 1, 0, 9, 0, 0]);
+  expectNear(out.normals, [0, 0, 1, 0, 0, 1, 0, 0, 1]); // a Z rotation keeps +Z
+  viewer.dispose();
+});
+
+test("normals turn with the pose and stay unit length", () => {
+  const viewer = makeViewer();
+  viewer.setSubGeometry("body", triangle());
+  viewer.setSubPose("body", new THREE.Matrix4().makeRotationX(Math.PI / 2).toArray());
+  expectNear(viewer.getSubMeshPayload("body").normals, [0, -1, 0, 0, -1, 0, 0, -1, 0]);
+  viewer.dispose();
+});
+
+test("unposed geometry comes back as delivered, as copies the caller may keep", () => {
+  const viewer = makeViewer();
+  const tri = { ...triangle(), indices: new Uint32Array([0, 1, 2]) };
+  viewer.setSubGeometry("body", tri);
+  const out = viewer.getSubMeshPayload("body");
+  expectNear(out.positions, [...tri.positions]);
+  expect([...out.indices]).toEqual([0, 1, 2]);
+  expect(out.positions).not.toBe(tri.positions);
+  out.positions[0] = 99;
+  expect(tri.positions[0]).toBe(0);
+  expect(viewer.getSubMeshPayload("body").positions[0]).toBe(0);
+  viewer.dispose();
+});
+
+test("getSubMeshPayload is null for a sub-part with nothing delivered, or no such sub-part", () => {
+  const viewer = makeViewer();
+  expect(viewer.getSubMeshPayload("lid")).toBeNull();
+  expect(viewer.getSubMeshPayload("nope")).toBeNull();
+  viewer.dispose();
+});

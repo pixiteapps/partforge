@@ -6,8 +6,9 @@
 // Everything imports through the package's own subpath specifiers, so this also
 // proves the `exports` map's `types` conditions resolve.
 
-import { mount, EXPORT_FORMATS, KIT_OPTIONS_ERROR, KIT_DEFAULTS, validateKitOptions } from "partforge";
+import { mount, mountPreview, resolveDefaultView, EXPORT_FORMATS, KIT_OPTIONS_ERROR, KIT_DEFAULTS, validateKitOptions } from "partforge";
 import type {
+  PreviewRuntime,
   ExportableSheetInfo,
   ExportFormatInfo,
   KitOptions,
@@ -31,6 +32,7 @@ import type { ArcContour, Region2D, SheetPose } from "partforge/geometry";
 import { resolveDerived } from "partforge/derive";
 import { lintPart, RULES } from "partforge/lint";
 import { runWorker } from "partforge/worker";
+import { encodePreviewGlb, PREVIEW_ENCODER_VERSION } from "partforge/gltf";
 import {
   assemblyOverlaps,
   bootManifoldKernel,
@@ -275,6 +277,23 @@ expectType<string | null>(runtime.captureCurrent());
 expectType<string | null>(runtime.captureCurrent({ renderMode: "cad" }));
 expectType<void>(runtime.setActive(false));
 expectType<() => void>(runtime.onContextLost(() => {}));
+// The cached preview (0.147.0).
+expectType<boolean>(runtime.previewActive);
+// @ts-expect-error - previewActive is read-only
+runtime.previewActive = true;
+expectType<Promise<Uint8Array>>(runtime.exportPreview());
+expectType<Promise<Uint8Array>>(runtime.exportPreview({ view: "main" }));
+expectType<PartRuntime>(mount(spacer, { ...options, preview: new Uint8Array(0) }));
+const previewRuntime: PreviewRuntime = mountPreview(document.body, { glb: new Uint8Array(0) });
+expectType<Promise<void>>(previewRuntime.ready);
+expectType<string | null>(previewRuntime.getView());
+expectType<void>(previewRuntime.setHostPane("rail"));
+expectType<string | null>(resolveDefaultView(spacer));
+expectType<number>(PREVIEW_ENCODER_VERSION);
+expectType<Promise<Uint8Array>>(encodePreviewGlb({ meshes: [{ name: "a", positions: new Float32Array(9) }], part: spacer, view: "main" }));
+expectType<Promise<Uint8Array>>(encodePreviewGlb({ meshes: [{ name: "a", positions: new Float32Array(9) }], part: { parts: { a: { display: { color: 0xff0000 } } }, meta: { background: 0xffffff, environment: "studio" } } }));
+// @ts-expect-error - meshes are required
+encodePreviewGlb({ view: "main" });
 // The kit-era row: every row names a part; a sheet part's also carries its stock, typed.
 expectType<Array<{ name: string; label: string; sheet?: ExportableSheetInfo }>>(runtime.listExportableParts());
 // @ts-expect-error - a sheet's thickness is a number, not a string (fails if `sheet` widens to any)

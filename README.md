@@ -169,6 +169,31 @@ Parking releases both large GPU allocations — the drawing buffer and the cache
 unchanged, so a host can still take a build screenshot of a hidden viewer; the
 first capture after parking just re-allocates its target.
 
+**Show a cached preview while the kernel boots (0.147.0+).** `partforge/gltf`'s
+`encodePreviewGlb({ meshes, part, view })` writes one view's posed display
+meshes as a small GLB — welded, quantized and meshopt-compressed, one node per
+sub-part, Y-up, millimetres — in Node, a page or a worker, and
+`runtime.exportPreview()` encodes the view on screen with it. Hand the file back
+as `mount()`'s `preview` and the viewer draws it before the worker is ready, then
+swaps each sub-part for the live build in place without re-framing;
+`runtime.previewActive` is true in between, while picking, measure, sketch and
+cutaway wait for the live build. A file for another view, or one that will not
+decode, is logged and ignored (a file written without a view is drawn on
+sub-part name match alone). `mountPreview(container, { glb, elements,
+viewerState })` is the kernel-free form — the same viewer, view cube, view style
+and theme, with no part, no worker and no rail — for a page that only shows a
+model (CAD look exact; realistic mode uses each sub-part's display only — no sheet
+stock, no layer-line frames). Previews carry no edge lines, textures or patterns.
+`resolveDefaultView(part)` (main entry and `partforge/testing`) names the view
+`mount()` opens on, so a preview built headlessly matches it.
+
+```js
+const glb = await runtime.exportPreview();               // Uint8Array: the view on screen
+mount(part, { createWorker, elements, preview: glb });   // drawn at once, replaced by the build
+const shown = mountPreview(stage, { glb });              // no kernel at all
+await shown.ready;
+```
+
 Every `elements` entry defaults to the legacy global ID (`#app`, `#controls`,
 `#panel` for `rail`, `#status`/`#busy`/`#phase`, `#part`,
 `#download`/`#download-step`/`#download-3mf`,

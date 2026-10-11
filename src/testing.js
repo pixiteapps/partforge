@@ -11,6 +11,7 @@ export { createManifoldKernel } from "./framework/geometry/manifold-backend.js";
 export { bootManifoldKernel } from "./testing/manifold.js";
 export { handle } from "./framework/jobs.js";
 export { viewSubParts } from "./framework/part-model.js";
+export { resolveDefaultView } from "./framework/default-view.js";
 export { resolveDerived } from "./framework/derive.js";
 export { relevantParamKeys, RELEVANT_ALL } from "./framework/param-deps.js";
 export { assemblyOverlaps } from "./framework/assembly.js";

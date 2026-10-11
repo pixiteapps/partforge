@@ -39,7 +39,8 @@ import { createAnnotateMode } from "./annotate/annotate-mode.js";
 import { attachAnnotateControls } from "./annotate/annotate-controls.js";
 import { attachSketchToolbar } from "./annotate/sketch-toolbar.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
-import { stageClearFor } from "./stage-clear.js";
+import { createPreviewGate } from "./preview-gate.js";
+import { observeViewbarClear } from "./viewbar-clear.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
@@ -69,9 +70,15 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway }) {
   return {
     ready, dispose, setParams,
+    // Whether the `preview` GLB handed to mount() is on screen (see mount's
+    // preview block). A GETTER, read live: a host that copies the handle object
+    // freezes the value it had at that moment.
+    get previewActive() { return isPreviewActive?.() ?? false; },
+    // The view on screen as a preview GLB (partforge/gltf), poses baked in.
+    exportPreview: exportPreview ?? (() => Promise.reject(new Error("exportPreview: this mount cannot encode a preview"))),
     // Part-declared animation playback (spec 2026-08-02): animations are
     // VIEW-owned, so this is null only when NO view declares any.
     // { play(name?), pause(), seek(t), stop(), state() } — play(name) resolves
@@ -113,7 +120,9 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     getViewerState: () => ({
       camera: viewer.getCameraState(),
       projection: viewer.getProjection?.() ?? "perspective",
-      cutaway: viewer.getCutawayState?.() ?? null,
+      // A carried cutaway not yet restored (the preview holds it back) is still
+      // what the user last had: echo it, or a remount in that window drops it.
+      cutaway: pendingCutaway?.() ?? viewer.getCutawayState?.() ?? null,
       // The mode the user is headed for, not only the one on screen: a
       // realistic restore or switch still loading reads "realistic", so a
       // remount mid-load (the cloud remounts on every edit) doesn't drop it.
@@ -242,8 +251,10 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.141.0: a place()-able sub-part is delivered in its
-// canonical frame and posed by the viewer; pose-only edits never rebuild):
+// Embedding contract (0.147.0: a cached `preview` GLB is drawn before the kernel
+// boots and swapped in place by the first build; 0.141.0: a place()-able sub-part
+// is delivered in its canonical frame and posed by the viewer; pose-only edits
+// never rebuild):
 //   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload, onViewChange });
 //   await runtime.ready;   // first successful build of the default view
 //   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly
@@ -358,6 +369,15 @@ function createCleanupStack() {
 //                                         // switching the live view; "cad" is exactly captureViews(),
 //                                         // CAD in either live mode
 //   runtime.dispose();     // full teardown
+//   runtime.previewActive  // true while the `preview` GLB is on screen (decoded, not yet
+//                          // replaced by a whole live build): picking, hover labels,
+//                          // measure, sketch and cutaway wait; orbit, the view cube,
+//                          // the view style and the rail work
+//   await runtime.exportPreview();  // the view on screen as a preview GLB (Uint8Array,
+//                          // partforge/gltf), fast-path poses baked in. Rejects while
+//                          // previewActive, before the view is fully built (a pending
+//                          // rebuild counts), for a view other than the one on screen,
+//                          // and after dispose
 // onBuild fires per completed build, so it does NOT fire for a pose-only edit —
 // those are repaired in the viewer and produce no build at all.
 // onViewChange fires once synchronously during mount with the initial resolved
@@ -387,6 +407,12 @@ function createCleanupStack() {
 //                                         // first mount — the viewer then restores its own persisted
 //                                         // camera as before. Restore is best-effort per field: a pose
 //                                         // this part cannot support is dropped, never fatal.
+// preview: Uint8Array | ArrayBuffer      // a GLB from encodePreviewGlb / exportPreview, drawn before
+//                                         // the worker is ready and replaced sub-part by sub-part by
+//                                         // the first live build, camera kept. Only a file for the view
+//                                         // on screen is drawn, and only its sub-parts of that view; a
+//                                         // file for another view, or one that will not decode, is
+//                                         // logged once and ignored.
 // panelState: PanelState                 // a previous mount's runtime.getPanelState(): the transient
 //                                         // state of the part's custom controls (a selected tile), keyed
 //                                         // by param. Same remount story as viewerState; omit on a first
@@ -433,7 +459,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
                               fontCatalog,
                               imageCatalog,
                               onAssetUpload,
-                              viewerState,
+                              viewerState, preview,
                               files, panelState,
                               annotateSend = "viewbar",
                               container: legacyContainer, controls: legacyControls } = {}) {
@@ -515,6 +541,15 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     const ui = createStatusUi({ ...els.status, exports: [els.exports.stl, els.exports.step, els.exports.threeMf] });
     cleanup.defer(() => ui.setStatus(""));
     cleanup.defer(() => ui.hideBusy());
+
+    // A cached preview (the `preview` option) is drawn before the kernel boots and
+    // held to the camera only — no feature ids, no live solids behind it — until
+    // the first whole live build replaces it. The gate is the flag, plus the
+    // chrome it disables meanwhile; picking and hover consult it per event. See
+    // the preview block just above `return makeHandle`.
+    const previewGate = createPreviewGate({
+      buttons: [els.chrome.cutaway, els.chrome.measure, els.chrome.annotate],
+    });
 
     // ?backend=occt|manifold forces the backend; otherwise it's re-detected per
     // regen with the live params (so a fillet dialed to 0 reverts to Manifold),
@@ -755,21 +790,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // action rows can change. A hidden bar (ours or a host stylesheet's)
     // claims 0 — stage-clear.js has the why; the observer fires on the hide
     // itself, since the bar's box goes to zero.
-    const viewbarEl = els.viewer.querySelector("#viewbar");
-    if (viewbarEl && typeof ResizeObserver === "function") {
-      const publishViewbarClear = () => {
-        const clear = stageClearFor(els.viewer.getBoundingClientRect(), viewbarEl.getBoundingClientRect());
-        els.viewer.style.setProperty("--pf-viewbar-clear", `${clear}px`);
-      };
-      const viewbarObserver = new ResizeObserver(publishViewbarClear);
-      viewbarObserver.observe(viewbarEl);
-      viewbarObserver.observe(els.viewer);
-      publishViewbarClear();
-      cleanup.defer(() => {
-        viewbarObserver.disconnect();
-        els.viewer.style.removeProperty("--pf-viewbar-clear");
-      });
-    }
+    cleanup.defer(observeViewbarClear(els.viewer, els.viewer.querySelector("#viewbar")));
     // escapeScope: cutaway's Flip/Reset buttons are canvas SIBLINGS inside
     // #viewbar, not descendants of the canvas — attaching Escape to
     // viewer.domElement alone would leave a guarded Escape from those buttons
@@ -787,9 +808,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // active — measure's highlight + dims take the pointer; annotate's overlay
     // canvas takes it entirely.
     const syncHoverSuppression = () =>
-      hover.setSuppressed(measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false));
+      hover.setSuppressed(previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false));
     cleanup.defer(measureMode.onModeChange(syncHoverSuppression));
     if (annotateMode) cleanup.defer(annotateMode.onModeChange(syncHoverSuppression));
+    cleanup.defer(previewGate.onChange(syncHoverSuppression));
+    // Deferred AFTER the cutaway/measure/annotate chrome attached, so at dispose
+    // (LIFO) the gate hands the buttons back before those controls restore the
+    // host's own attributes.
+    cleanup.defer(() => previewGate.end());
 
     // Current selection context for the pickers: the active view + live params +
     // derived values. Shared by every pick mode below.
@@ -815,7 +841,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // resync on mode changes. The ?pick/?pickserver harnesses below are
         // deliberately not guarded — one is armed by an explicit dev toggle,
         // the other per agent request.
-        suppressed: () => measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false),
+        suppressed: () => previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false),
         onPick: (selection, anchor) => onPick({
           selection,
           label: selection.feature?.label ?? part.parts[selection.subPart]?.label ?? selection.subPart,
@@ -850,6 +876,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
 
     let framedView = null; // the view the camera was last framed to (null until first show)
     let cameraRestored = false; // saved camera applied once, on the first frame after load
+    let cutawayRestored = false; // a carried cutaway, applied once — after any preview, never on one
 
     // Per-sub-part cache-validity tracker (Layer 1): view/version/caching change over
     // time, so they're passed as getters; params is a stable in-place-mutated object.
@@ -946,6 +973,17 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // view doesn't flicker. If nothing's built yet, show nothing.
     // Show the assembly, framing the camera only the first time we show a given view
     // (initial load / tab switch) — never on a regenerate, so zoom/orbit are kept.
+    // A carried cutaway goes back on once, and never onto a cached preview: the
+    // section needs live solids to cut. `cam` is the pose to place again after
+    // it (an ortho face view's size is matched at the surface the cut decides).
+    function restoreCarriedCutaway(cam) {
+      cutawayRestored = true;
+      if (viewerState?.cutaway?.enabled && viewer.setCutawayState?.(viewerState.cutaway)) {
+        cutawayChrome.sync(); // the button was not what turned it on
+        if (cam) viewer.setCameraState(cam);
+      }
+    }
+
     function showView(needed) {
       const frame = view() !== framedView;
       viewer.showAssembly(needed, { frame });
@@ -959,25 +997,22 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           // only for a face-view camera, and this is the call that re-arms it.
           const cam = viewerState?.camera ?? loadCamera();
           if (cam) viewer.setCameraState(cam);
+          cameraRestored = true;
           // The cutaway goes back on AFTER the camera and only here, on the
           // first accepted build: enabling it needs the sub-parts registered
           // and real bounds to size the plane against, neither of which exists
           // until showAssembly above has run. (Its initial pose also reads the
           // camera direction, so a restore before the camera would seed the
-          // fallback pose from the wrong view.)
-          if (viewerState?.cutaway?.enabled && viewer.setCutawayState?.(viewerState.cutaway)) {
-            cutawayChrome.sync(); // the button was not what turned it on
-            // …and place the camera again now the section is back. An ortho
-            // face view's size is matched at the surface on screen, which the
-            // cut decides (the cap, or whatever survives it): the carried pose
-            // was taken WITH the cut, and the first placement above measured
-            // against the uncut part, so without this a sectioned face view
-            // changes zoom on every remount. Same pose, so a perspective
-            // camera does not move.
-            if (cam) viewer.setCameraState(cam);
-          }
-          cameraRestored = true;
+          // fallback pose from the wrong view.) A cached preview defers it to
+          // the live build below.
+          if (!previewGate.isActive()) restoreCarriedCutaway(cam);
         }
+      }
+      if (cameraRestored && !cutawayRestored && !previewGate.isActive()) {
+        // The preview held the cut back and the live build is in. Re-place the
+        // camera the user is looking at NOW — they may have orbited the preview
+        // — not the carried one.
+        restoreCarriedCutaway(viewer.getCameraState());
       }
     }
 
@@ -1042,6 +1077,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
 
     // Sub-parts whose latest fresh delivery had zero triangles (see the `meshes` case).
     const emptySubParts = new Set();
+    // Any live delivery has landed. A preview decoded after this is dropped unseen.
+    let liveDelivered = false;
 
     function refreshView() {
       const needed = viewSubParts(part, view(), params);
@@ -1054,6 +1091,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         ui.setStatus("");
       } else if (needed.every((n) => viewer.hasSubMesh(n))) {
         showView(needed); // stale but present — keep it visible during regenerate
+        ui.setExportEnabled(false);
+      } else if (previewGate.isActive()) {
+        // A cached preview that covers only part of the view: show what it has.
+        showView(needed.filter((n) => viewer.hasSubMesh(n)));
         ui.setExportEnabled(false);
       } else {
         viewer.hideAssembly();
@@ -1086,6 +1127,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         case "meshes": {
           const fresh = loop.buildDone();
           if (fresh) { // stale results (params changed mid-build) are discarded
+            liveDelivered = true; // only a delivery that is applied beats a preview still decoding
             for (const m of data.meshes) {
               viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
               // The view its job was SENT for, and the frame the worker delivered
@@ -1112,6 +1154,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             // forgetting on a disagreement would rebuild at the same params forever).
             fastPath.apply(data.meshes.map((m) => m.name), undefined, { fresh: true });
             recordFrames(data.meshes);
+            // The whole view is live: every sub-part the preview drew has just been
+            // replaced in place, so the tools it held back come back. Before
+            // refreshView, so showView restores a carried cutaway on this build.
+            if (previewGate.isActive() && missingParts().length === 0) previewGate.end();
             // A split dispatch answers in two meshes replies; the busy spinner
             // stays up until the view has everything (the other worker's job may
             // still be running — often OCCT, the slow one).
@@ -1459,8 +1505,73 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       return binding;
     };
 
+    // Set by the first cleanup to run at dispose (LIFO): late async work checks it.
+    let disposed = false;
+    cleanup.defer(() => { disposed = true; });
+
+    // The cached preview: a GLB from partforge/gltf, decoded off the worker path
+    // and drawn through setSubGeometry like any delivery — so the first live
+    // `meshes` reply replaces it in place, sub-part by sub-part, and showView
+    // keeps the camera (the view was already framed). Only a file for the view on
+    // screen is drawn, and only its sub-parts of that view; anything else — or a
+    // file that will not decode — is logged once and ignored.
+    if (preview != null) {
+      // Loaded on demand: the GLTFLoader and meshopt decoder behind it stay out
+      // of every bundle that never passes a preview.
+      import("./gltf/decode-preview.js").then(({ decodePreviewGlb }) => (
+        disposed ? null : decodePreviewGlb(preview)
+      )).then((decoded) => {
+        if (decoded == null) return;
+        const { view: previewView, meshes } = decoded;
+        if (disposed || liveDelivered) return; // live geometry always wins
+        const current = view();
+        if (previewView != null && previewView !== current) {
+          console.warn(`partforge: preview ignored — it shows view "${previewView}", the viewer opened on "${current}"`);
+          return;
+        }
+        const needed = viewSubParts(part, current, params);
+        const shown = meshes.filter((m) => needed.includes(m.name));
+        if (shown.length === 0) {
+          console.warn("partforge: preview ignored — none of its meshes is a sub-part of the view on screen");
+          return;
+        }
+        measureMode.setEnabled(false);
+        annotateMode?.setEnabled(false);
+        previewGate.start();
+        for (const m of shown) viewer.setSubGeometry(m.name, m);
+        refreshView();
+      }).catch((error) => {
+        if (!disposed) console.warn(`partforge: preview ignored — ${error?.message ?? error}`);
+      });
+    }
+
+    // runtime.exportPreview: the view on screen as a preview GLB — every sub-part's
+    // drawn mesh with its fast-path pose baked in, the posed meshes a headless
+    // buildView returns. Only the view on screen (no other view's meshes are held),
+    // only when it is fully built at the live params (missingParts covers both a
+    // first build and an edit still rebuilding), never a cached preview. The
+    // encoder loads on first use: a host that never exports never pays for it.
+    async function exportPreview({ view: wanted } = {}) {
+      if (disposed) throw new Error("exportPreview: this mount is disposed");
+      if (previewGate.isActive()) throw new Error("exportPreview: a cached preview is showing — wait for the first build");
+      const current = view();
+      if (wanted != null && wanted !== current) {
+        throw new Error(`exportPreview: "${wanted}" is not the view on screen ("${current}")`);
+      }
+      const needed = viewSubParts(part, current, params);
+      if (needed.length === 0 || missingParts().length > 0) {
+        throw new Error("exportPreview: the view on screen is not fully built");
+      }
+      const meshes = needed.map((name) => viewer.getSubMeshPayload(name)).filter(Boolean);
+      const { encodePreviewGlb } = await import("./gltf/encode-preview.js");
+      return encodePreviewGlb({ meshes, part, view: current });
+    }
+
     return makeHandle({
       ready, dispose, viewer, setParams,
+      isPreviewActive: () => previewGate.isActive(),
+      pendingCutaway: () => (!cutawayRestored ? viewerState?.cutaway ?? null : null),
+      exportPreview,
       attachTooltips: attachHostTooltips,
       setHostPane: paneTabs.setHostPane,
       setRailLayout: paneTabs.setRailLayout,
@@ -1481,13 +1592,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       animation: animCtl?.runtime ?? null,
       measure: {
         isEnabled: measureMode.isEnabled,
-        setEnabled: measureMode.setEnabled,
+        // Held off while a cached preview shows (no feature ids to dimension).
+        setEnabled: (on) => { if (on && previewGate.isActive()) return; measureMode.setEnabled(on); },
         clearPins: measureMode.clearPins,
         pinCount: measureMode.pinCount,
       },
       annotate: annotateMode ? {
         isEnabled: annotateMode.isEnabled,
-        setEnabled: annotateMode.setEnabled,
+        setEnabled: (on) => { if (on && previewGate.isActive()) return; annotateMode.setEnabled(on); },
         undo: annotateMode.undo,
         clear: annotateMode.clear,
         strokeCount: annotateMode.strokeCount,

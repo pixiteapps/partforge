@@ -62,6 +62,7 @@ const RUNTIME = {
   "./testing": () => import("../src/testing.js"),
   "./ingest": () => import("../src/ingest.js"),
   "./panel-values": () => import("../src/panel-values.js"),
+  "./gltf": () => import("../src/gltf.js"),
 };
 
 // Same comment-stripping rule the import-graph walker uses: this codebase

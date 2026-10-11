@@ -3,6 +3,7 @@
 // The viewer and selection adapters are mocked (WebGL + raycasting are browser-only);
 // everything else — status-ui, view-tabs, controls, regen-loop, mesh-cache,
 // geometry-service — runs for real against fake workers.
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const fakeViewers = [];
@@ -31,6 +32,12 @@ vi.mock("../../src/framework/viewer.js", () => ({
       setSubGeometry: vi.fn((name) => built.add(name)),
       setSubPose: vi.fn(),
       hasSubMesh: (name) => built.has(name),
+      // exportPreview's read: one 1mm triangle for every sub-part delivered.
+      getSubMeshPayload: vi.fn((name) => (built.has(name) ? {
+        name, triangles: 1, indices: null,
+        positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+        normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+      } : null)),
       subTriangles: () => 0,
       frame: vi.fn(),
       setTheme: vi.fn(),
@@ -172,7 +179,25 @@ vi.mock("../../src/framework/animation-controls.js", async (importOriginal) => {
   };
 });
 
+// The preview decoder, wrapped so a test can await exactly the decodes mount
+// started. mount's own .then is chained on the same promise first, so once a
+// test has awaited the promise, mount's handler has run.
+const decodes = vi.hoisted(() => []);
+vi.mock("../../src/framework/gltf/decode-preview.js", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    decodePreviewGlb: vi.fn((bytes) => {
+      const p = real.decodePreviewGlb(bytes);
+      decodes.push(p);
+      return p;
+    }),
+  };
+});
+
 import { mount, makeHandle } from "../../src/framework/mount.js";
+import { boxSoup, previewGlbFor } from "../helpers/preview-glb.js";
+import { decodePreviewGlb } from "../../src/framework/gltf/decode-preview.js";
 import { attachPicker, attachPickToggle, attachHoverLabels } from "../../src/framework/selection/index.js";
 import { attachCutawayControls } from "../../src/framework/cutaway-controls.js";
 import { attachViewerControls } from "../../src/framework/viewer-controls.js";
@@ -256,6 +281,7 @@ beforeEach(() => {
   sessionStorage.clear();
   document.body.innerHTML = "";
   fakeViewers.length = 0;
+  decodes.length = 0;
   fakeTooltips.length = 0;
   crowdedHook.report = null; // never let one test's callback stand in for another's
   lastAnimCtl = null;
@@ -2351,4 +2377,289 @@ test("an every-param stamp answers every param to display consumers, not the pre
   workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
   expect(handle.controlsFor({ subPart: "body" })).toEqual(["h", "tilt"]);
   handle.dispose();
+});
+
+// --- the cached preview (mount's `preview`) ----------------------------------
+const settleDecodes = async () => {
+  // mount loads the decoder lazily: let that import resolve so its decode is in `decodes`.
+  await new Promise((r) => setTimeout(r, 0));
+  await Promise.allSettled(decodes);
+  await Promise.resolve();
+};
+let previewBytes = null;
+const previewFor = async () =>
+  (previewBytes ??= await previewGlbFor([boxSoup("body", [0, 0, 0], [4, 4, 4])], makePart(), "main"));
+const previewWarnings = (spy) => spy.mock.calls.filter(([m]) => String(m).startsWith("partforge: preview ignored"));
+
+test("a preview is drawn before the kernel is ready, framed once, with previewActive set", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), preview: await previewFor() });
+  expect(runtime.previewActive).toBe(false); // decoding is async
+  await settleDecodes();
+  const v = fakeViewers[0];
+  expect(runtime.previewActive).toBe(true);
+  const [name, payload] = v.setSubGeometry.mock.calls[0];
+  expect(name).toBe("body");
+  expect(payload.positions).toBeInstanceOf(Float32Array);
+  expect(payload.triangles).toBe(12);
+  expect(v.showAssembly).toHaveBeenLastCalledWith(["body"], { frame: true });
+  expect(workers.manifold.postMessage.mock.calls.some(([m]) => m?.type === "generate")).toBe(false);
+  let ready = false;
+  runtime.ready.then(() => { ready = true; }, () => {}); // the dispose below rejects it
+  await Promise.resolve();
+  expect(ready).toBe(false);
+  runtime.dispose();
+});
+
+test("the first live build replaces the preview in place and keeps the camera", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), preview: await previewFor() });
+  await settleDecodes();
+  const v = fakeViewers[0];
+  const cameraPlacements = v.setCameraState.mock.calls.length;
+  finishFirstBuild(workers);
+  await runtime.ready;
+  expect(runtime.previewActive).toBe(false);
+  expect(v.setSubGeometry).toHaveBeenLastCalledWith("body", { name: "body" });
+  expect(v.showAssembly).toHaveBeenLastCalledWith(["body"], { frame: false });
+  expect(v.showAssembly.mock.calls.filter(([, o]) => o?.frame)).toHaveLength(1);
+  expect(v.setCameraState.mock.calls.length).toBe(cameraPlacements);
+  runtime.dispose();
+});
+
+test("picking, hover, measure, sketch and cutaway are held while the preview shows", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const els = makeElements();
+  const runtime = mount(makePart(), {
+    createWorker, elements: els, preview: await previewFor(), onPick: vi.fn(), onAnnotationSend: vi.fn(),
+  });
+  const buttons = [els.chrome.cutaway, els.chrome.measure, els.chrome.annotate];
+  const before = buttons.map((b) => b.disabled);
+  const suppressed = attachPicker.mock.calls[0][1].suppressed;
+  const hover = attachHoverLabels.mock.results[0].value;
+  expect(suppressed()).toBe(false);
+  await settleDecodes();
+  expect(suppressed()).toBe(true);
+  expect(hover.setSuppressed).toHaveBeenLastCalledWith(true);
+  expect(buttons.map((b) => b.disabled)).toEqual([true, true, true]);
+  runtime.measure.setEnabled(true);
+  expect(runtime.measure.isEnabled()).toBe(false);
+  runtime.annotate.setEnabled(true);
+  expect(runtime.annotate.isEnabled()).toBe(false);
+
+  finishFirstBuild(workers);
+  expect(suppressed()).toBe(false);
+  expect(hover.setSuppressed).toHaveBeenLastCalledWith(false);
+  expect(buttons.map((b) => b.disabled)).toEqual(before);
+  runtime.measure.setEnabled(true);
+  expect(runtime.measure.isEnabled()).toBe(true);
+  runtime.dispose();
+});
+
+test("a carried cutaway waits for the live build; the carried camera lands at once", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const viewerState = {
+    camera: { pos: [5, 6, 7], target: [0, 0, 0] }, projection: "perspective",
+    cutaway: { enabled: true, flipped: false, pose: { position: [0, 0, 1], quaternion: [0, 0, 0, 1] } },
+  };
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), viewerState, preview: await previewFor() });
+  await settleDecodes();
+  const v = fakeViewers[0];
+  expect(v.setCameraState).toHaveBeenCalledWith(viewerState.camera);
+  expect(v.setCutawayState).not.toHaveBeenCalled();
+  finishFirstBuild(workers);
+  expect(v.setCutawayState).toHaveBeenCalledWith(viewerState.cutaway);
+  runtime.dispose();
+});
+
+test("a partial live delivery keeps the preview on for the sub-parts still building", async () => {
+  const makeTwoPart = () => ({
+    meta: { title: "Two", backend: "manifold" },
+    defaults: { h: 4 },
+    views: { main: { label: "Main" } },
+    parts: {
+      a: { label: "A", views: ["main"], build: (k, p) => k.box({ min: [0, 0, 0], max: [p.h, p.h, p.h] }) },
+      b: { label: "B", views: ["main"], build: (k, p) => k.box({ min: [0, 0, p.h], max: [p.h, p.h, 2 * p.h] }) },
+    },
+    parameters: [{ id: "size", title: "Size", advanced: [{ key: "h", label: "Height", min: 1, max: 10, step: 1 }] }],
+  });
+  const preview = await previewGlbFor([boxSoup("a", [0, 0, 0], [4, 4, 4]), boxSoup("b", [0, 0, 4], [4, 4, 8])], makeTwoPart());
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makeTwoPart(), { createWorker, elements: makeElements(), preview });
+  await settleDecodes();
+  const v = fakeViewers[0];
+  v.hideAssembly.mockClear();
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "a" }], ms: 1 } });
+  expect(runtime.previewActive).toBe(true);
+  expect(v.setSubGeometry.mock.calls.filter(([n]) => n === "b")).toHaveLength(1); // still the preview's
+  expect(v.hideAssembly).not.toHaveBeenCalled();
+  expect(v.showAssembly).toHaveBeenLastCalledWith(["a", "b"], { frame: false });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "b" }], ms: 1 } });
+  expect(runtime.previewActive).toBe(false);
+  await runtime.ready;
+  runtime.dispose();
+});
+
+test("a param edit during the preview keeps it on screen and the first build carries the edit", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), preview: await previewFor() });
+  await settleDecodes();
+  const v = fakeViewers[0];
+  v.hideAssembly.mockClear();
+  runtime.setParams({ h: 6 });
+  expect(v.hideAssembly).not.toHaveBeenCalled();
+  expect(v.showAssembly).toHaveBeenLastCalledWith(["body"], { frame: false });
+  expect(runtime.previewActive).toBe(true);
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  const generate = workers.manifold.postMessage.mock.calls.map(([m]) => m).find((m) => m?.type === "generate");
+  expect(generate.params.h).toBe(6);
+  runtime.dispose();
+});
+
+test("a first-build error leaves the preview on screen and ready rejects", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), preview: await previewFor() });
+  await settleDecodes();
+  const v = fakeViewers[0];
+  v.hideAssembly.mockClear();
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "error", message: "boom" } });
+  await expect(runtime.ready).rejects.toThrow("boom");
+  expect(runtime.previewActive).toBe(true);
+  expect(v.hideAssembly).not.toHaveBeenCalled();
+  runtime.dispose();
+});
+
+test("a malformed preview is logged once and ignored", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), preview: new Uint8Array([1, 2, 3]) });
+  await settleDecodes();
+  expect(previewWarnings(warn)).toHaveLength(1);
+  expect(runtime.previewActive).toBe(false);
+  expect(fakeViewers[0].setSubGeometry).not.toHaveBeenCalled();
+  finishFirstBuild(workers);
+  await expect(runtime.ready).resolves.toBeUndefined();
+  runtime.dispose();
+  warn.mockRestore();
+});
+
+test("a preview for another view is ignored with one warning", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { createWorker } = makeWorkers();
+  const preview = await previewGlbFor([boxSoup("body")], makePart(), "side");
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), preview });
+  await settleDecodes();
+  expect(previewWarnings(warn)).toHaveLength(1);
+  expect(previewWarnings(warn)[0][0]).toMatch(/"side"/);
+  expect(runtime.previewActive).toBe(false);
+  expect(fakeViewers[0].setSubGeometry).not.toHaveBeenCalled();
+  runtime.dispose();
+  warn.mockRestore();
+});
+
+test("a preview none of whose meshes is a sub-part of the view is ignored, not an error", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { createWorker } = makeWorkers();
+  const preview = await previewGlbFor([boxSoup("renamed")], null, "main");
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), preview });
+  await settleDecodes();
+  expect(previewWarnings(warn)).toHaveLength(1);
+  expect(runtime.previewActive).toBe(false);
+  runtime.dispose();
+  warn.mockRestore();
+});
+
+test("a preview that decodes after the first live build, or after dispose, is dropped unseen", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), preview: await previewFor() });
+  finishFirstBuild(workers); // before the decode settles
+  await settleDecodes();
+  expect(fakeViewers[0].setSubGeometry.mock.calls.map(([, p]) => p)).toEqual([{ name: "body" }]);
+  expect(runtime.previewActive).toBe(false);
+  runtime.dispose();
+
+  const second = makeWorkers();
+  const disposedEarly = mount(makePart(), { createWorker: second.createWorker, elements: makeElements(), preview: await previewFor() });
+  disposedEarly.ready.catch(() => {}); // dispose before the first build rejects ready
+  disposedEarly.dispose();
+  await settleDecodes();
+  expect(fakeViewers[1].setSubGeometry).not.toHaveBeenCalled();
+});
+
+test("a stale live reply does not stop a preview still decoding from drawing", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), preview: await previewFor() });
+  workers.manifold.onmessage({ data: { type: "ready" } }); // build 1 in flight
+  runtime.setParams({ h: 6 });                              // ... and now stale
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 9 } }); // discarded
+  await settleDecodes();
+  expect(runtime.previewActive).toBe(true);
+  expect(fakeViewers[0].setSubGeometry.mock.calls.map(([n]) => n)).toEqual(["body"]);
+  runtime.dispose();
+});
+
+test("getViewerState echoes a carried cutaway until it has been restored", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const cutaway = { enabled: true, flipped: false, pose: { position: [0, 0, 1], quaternion: [0, 0, 0, 1] } };
+  const viewerState = { camera: { pos: [5, 6, 7], target: [0, 0, 0] }, projection: "perspective", cutaway };
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), viewerState, preview: await previewFor() });
+  await settleDecodes();
+  expect(runtime.previewActive).toBe(true);
+  expect(runtime.getViewerState().cutaway).toEqual(cutaway);     // a remount in this window keeps it
+  finishFirstBuild(workers);
+  expect(fakeViewers[0].setCutawayState).toHaveBeenCalledWith(cutaway);
+  runtime.dispose();
+});
+
+test("mount.js statically imports neither the preview codecs nor gltf-transform", () => {
+  const src = readFileSync(`${process.cwd()}/src/framework/mount.js`, "utf8");
+  const staticImports = [...src.matchAll(/^\s*import\s[^;]*?from\s+["']([^"']+)["']/gm)].map((m) => m[1]);
+  expect(staticImports.filter((s) => /encode-preview|decode-preview|@gltf-transform/.test(s))).toEqual([]);
+});
+
+test("makeHandle reads previewActive live and defaults it to false", () => {
+  let active = true;
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {}, isPreviewActive: () => active });
+  expect(h.previewActive).toBe(true);
+  active = false;
+  expect(h.previewActive).toBe(false);
+  expect(makeHandle({ ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} }).previewActive).toBe(false);
+});
+
+// --- runtime.exportPreview ---------------------------------------------------
+test("exportPreview encodes the view on screen once it is fully built", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+  await expect(runtime.exportPreview()).rejects.toThrow(/not fully built/);
+  finishFirstBuild(workers);
+  const glb = await runtime.exportPreview();
+  expect(glb).toBeInstanceOf(Uint8Array);
+  expect(fakeViewers[0].getSubMeshPayload).toHaveBeenCalledWith("body");
+  const decoded = await decodePreviewGlb(glb);
+  expect(decoded.view).toBe("main");
+  expect(decoded.meshes.map((m) => m.name)).toEqual(["body"]);
+  expect(decoded.meshes[0].triangles).toBe(1);
+  await expect(runtime.exportPreview({ view: "main" })).resolves.toBeInstanceOf(Uint8Array);
+  await expect(runtime.exportPreview({ view: "side" })).rejects.toThrow(/not the view on screen/);
+  runtime.dispose();
+  await expect(runtime.exportPreview()).rejects.toThrow(/disposed/);
+});
+
+test("exportPreview refuses while a preview is showing or a rebuild is pending", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), preview: await previewFor() });
+  await settleDecodes();
+  await expect(runtime.exportPreview()).rejects.toThrow(/preview is showing/);
+  finishFirstBuild(workers);
+  await expect(runtime.exportPreview()).resolves.toBeInstanceOf(Uint8Array);
+  runtime.setParams({ h: 6 }); // the geometry on screen no longer matches the params
+  await expect(runtime.exportPreview()).rejects.toThrow(/not fully built/);
+  runtime.dispose();
+});
+
+test("makeHandle's exportPreview defaults to a rejection", async () => {
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} });
+  await expect(h.exportPreview()).rejects.toThrow(/cannot encode a preview/);
 });
