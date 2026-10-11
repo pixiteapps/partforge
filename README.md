@@ -178,10 +178,12 @@ as `mount()`'s `preview` and the viewer draws it before the worker is ready, the
 swaps each sub-part for the live build in place without re-framing;
 `runtime.previewActive` is true in between, while picking, measure, sketch and
 cutaway wait for the live build. A file for another view, or one that will not
-decode, is logged and ignored. `mountPreview(container, { glb, elements,
+decode, is logged and ignored (a file written without a view is drawn on
+sub-part name match alone). `mountPreview(container, { glb, elements,
 viewerState })` is the kernel-free form — the same viewer, view cube, view style
 and theme, with no part, no worker and no rail — for a page that only shows a
-model. Previews carry no edge lines, textures or patterns.
+model (CAD look exact; realistic mode uses each sub-part's display only — no sheet
+stock, no layer-line frames). Previews carry no edge lines, textures or patterns.
 `resolveDefaultView(part)` (main entry and `partforge/testing`) names the view
 `mount()` opens on, so a preview built headlessly matches it.
 

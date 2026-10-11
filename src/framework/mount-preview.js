@@ -6,8 +6,11 @@
 //
 // createViewer needs a part's sub-part names at construction, so the viewer is
 // built once the GLB has decoded, from a synthetic part: one sub-part per glTF
-// mesh, carrying the `display` block the writer stored beside it (the exact CAD
-// look, and realistic mode too), and the file's background/environment meta.
+// mesh, carrying the `display` block the writer stored beside it, and the file's
+// background/environment meta. The CAD look is exact; realistic mode uses each
+// sub-part's display only — no sheet stock, no layer-line print frames (a v1
+// residual alongside "no edges"). The decoder loads on demand (it carries the
+// GLTFLoader and meshopt), so a bundle that never mounts a preview never ships it.
 // Hence `ready`. Every handle method is safe before it resolves.
 import "./app.css";
 import { createViewer } from "./viewer.js";
@@ -18,7 +21,6 @@ import { observeViewbarClear } from "./viewbar-clear.js";
 import { createTooltipPresenter } from "./tooltip.js";
 import { isFaceAlignedState } from "./projection.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
-import { decodePreviewGlb } from "./gltf/decode-preview.js";
 
 function previewPart({ meshes, view, meta }) {
   return {
@@ -64,7 +66,7 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
     }
   }
 
-  const ready = decodePreviewGlb(glb).then((decoded) => {
+  const ready = import("./gltf/decode-preview.js").then(({ decodePreviewGlb }) => decodePreviewGlb(glb)).then((decoded) => {
     if (disposed) return;
     if (decoded.meshes.length === 0) throw new Error("mountPreview: the preview holds no meshes");
     const view = decoded.view ?? "preview";
@@ -92,7 +94,7 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
   ready.catch(() => {}); // the host awaits it; never an unhandled rejection
 
   function getViewerState() {
-    if (!live) return carried ?? { camera: null, projection: "perspective", cutaway: null, renderMode: "cad" };
+    if (!live) return { camera: null, projection: "perspective", renderMode: "cad", ...carried, cutaway: null };
     const v = live.viewer;
     return {
       camera: v.getCameraState(),
@@ -141,12 +143,12 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
     setHostPane: () => {},
     setRailLayout: () => {},
     renderMode: {
-      get: () => live?.viewer.getRenderMode() ?? "cad",
+      get: () => live?.viewer.getRenderMode() ?? carried?.renderMode ?? "cad",
       set: (mode) => whenLive((v) => v.setRenderMode(mode), "cad"),
       onChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },
     },
     environment: {
-      get: () => live?.viewer.getEnvironment() ?? "studio",
+      get: () => live?.viewer.getEnvironment() ?? carried?.environment ?? "studio",
       set: (id) => whenLive((v) => v.setEnvironment(id), "studio"),
       onChange: (cb) => { envListeners.add(cb); return () => envListeners.delete(cb); },
       list: () => Object.values(ENVIRONMENTS).map(({ id, label }) => ({ id, label })),

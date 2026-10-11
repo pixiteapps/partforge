@@ -249,7 +249,9 @@ export interface MountOptions {
    * place, sub-part by sub-part, by the first live build — the camera is kept.
    * Only a file for the view the viewer opens on is drawn, and only meshes named
    * for that view's sub-parts; a file for another view, or one that will not
-   * decode, is logged once and ignored. Carries no edge lines.
+   * decode, is logged once and ignored. A file written without a view (no `view`
+   * given to `encodePreviewGlb`) is drawn on sub-part name match alone, for any view.
+   * Carries no edge lines.
    */
   preview?: Uint8Array | ArrayBuffer | null;
   /**
@@ -799,7 +801,6 @@ export function viewSubParts(
   view: string,
   params: Record<string, ParamValue>,
 ): string[];
-
 
 /**
  * The view `mount()` opens on: a view flagged `default: true`, else the one

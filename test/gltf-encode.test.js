@@ -128,3 +128,11 @@ test("an empty sub-part gets no node; all-empty and malformed input is refused",
   await expect(encodePreviewGlb({ meshes: [{ name: "a", positions: new Float32Array(6) }] })).rejects.toThrow(/whole triangles/);
   await expect(encodePreviewGlb({ meshes: [{ ...boxSoup("a"), normals: new Float32Array(3) }] })).rejects.toThrow(/normals do not match/);
 });
+
+test("an index past the last vertex is refused up front, naming the mesh", async () => {
+  const bad = indexedBox("lid", [0, 0, 6], [4, 2, 7]);
+  const indices = new Uint32Array(bad.indices);
+  indices[0] = bad.positions.length / 3;
+  await expect(encodePreviewGlb({ meshes: [{ ...bad, indices }] })).rejects.toThrow(
+    'encodePreviewGlb: "lid" indices reference a vertex that does not exist');
+});

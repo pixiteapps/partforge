@@ -3,6 +3,7 @@
 // The viewer and selection adapters are mocked (WebGL + raycasting are browser-only);
 // everything else — status-ui, view-tabs, controls, regen-loop, mesh-cache,
 // geometry-service — runs for real against fake workers.
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const fakeViewers = [];
@@ -2380,6 +2381,8 @@ test("an every-param stamp answers every param to display consumers, not the pre
 
 // --- the cached preview (mount's `preview`) ----------------------------------
 const settleDecodes = async () => {
+  // mount loads the decoder lazily: let that import resolve so its decode is in `decodes`.
+  await new Promise((r) => setTimeout(r, 0));
   await Promise.allSettled(decodes);
   await Promise.resolve();
 };
@@ -2583,6 +2586,37 @@ test("a preview that decodes after the first live build, or after dispose, is dr
   disposedEarly.dispose();
   await settleDecodes();
   expect(fakeViewers[1].setSubGeometry).not.toHaveBeenCalled();
+});
+
+test("a stale live reply does not stop a preview still decoding from drawing", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), preview: await previewFor() });
+  workers.manifold.onmessage({ data: { type: "ready" } }); // build 1 in flight
+  runtime.setParams({ h: 6 });                              // ... and now stale
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 9 } }); // discarded
+  await settleDecodes();
+  expect(runtime.previewActive).toBe(true);
+  expect(fakeViewers[0].setSubGeometry.mock.calls.map(([n]) => n)).toEqual(["body"]);
+  runtime.dispose();
+});
+
+test("getViewerState echoes a carried cutaway until it has been restored", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const cutaway = { enabled: true, flipped: false, pose: { position: [0, 0, 1], quaternion: [0, 0, 0, 1] } };
+  const viewerState = { camera: { pos: [5, 6, 7], target: [0, 0, 0] }, projection: "perspective", cutaway };
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), viewerState, preview: await previewFor() });
+  await settleDecodes();
+  expect(runtime.previewActive).toBe(true);
+  expect(runtime.getViewerState().cutaway).toEqual(cutaway);     // a remount in this window keeps it
+  finishFirstBuild(workers);
+  expect(fakeViewers[0].setCutawayState).toHaveBeenCalledWith(cutaway);
+  runtime.dispose();
+});
+
+test("mount.js statically imports neither the preview codecs nor gltf-transform", () => {
+  const src = readFileSync(`${process.cwd()}/src/framework/mount.js`, "utf8");
+  const staticImports = [...src.matchAll(/^\s*import\s[^;]*?from\s+["']([^"']+)["']/gm)].map((m) => m[1]);
+  expect(staticImports.filter((s) => /encode-preview|decode-preview|@gltf-transform/.test(s))).toEqual([]);
 });
 
 test("makeHandle reads previewActive live and defaults it to false", () => {

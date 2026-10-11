@@ -1,6 +1,14 @@
 // partforge/gltf — the cached-preview writer. Worker-safe: no three.js, no DOM.
 
-import type { PartDefinition } from "./part.js";
+import type { SubPartDefinition } from "./part.js";
+
+/** The slice of a part `encodePreviewGlb` reads; any `PartDefinition` satisfies it, so does a plain object. */
+export interface PreviewPart {
+  parts?: Record<string, { display?: SubPartDisplay }>;
+  meta?: { background?: number; environment?: string };
+}
+
+type SubPartDisplay = NonNullable<SubPartDefinition["display"]>;
 
 /** One sub-part's posed display mesh — the shape the viewer, the worker's `meshes` reply and `buildView` hold. */
 export interface PreviewMesh {
@@ -20,7 +28,7 @@ export interface EncodePreviewInput {
   /** At least one; a zero-length mesh gets no node. */
   meshes: PreviewMesh[];
   /** Read for `parts[name].display` (materials) and `meta.background` / `meta.environment`. */
-  part?: Pick<PartDefinition, "parts" | "meta"> | null;
+  part?: PreviewPart | null;
   /** The view these meshes show; names the scene and lands in the file's extras as `partforgeView`. */
   view?: string | null;
 }

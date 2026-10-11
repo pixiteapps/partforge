@@ -291,6 +291,7 @@ expectType<void>(previewRuntime.setHostPane("rail"));
 expectType<string | null>(resolveDefaultView(spacer));
 expectType<number>(PREVIEW_ENCODER_VERSION);
 expectType<Promise<Uint8Array>>(encodePreviewGlb({ meshes: [{ name: "a", positions: new Float32Array(9) }], part: spacer, view: "main" }));
+expectType<Promise<Uint8Array>>(encodePreviewGlb({ meshes: [{ name: "a", positions: new Float32Array(9) }], part: { parts: { a: { display: { color: 0xff0000 } } }, meta: { background: 0xffffff, environment: "studio" } } }));
 // @ts-expect-error - meshes are required
 encodePreviewGlb({ view: "main" });
 // The kit-era row: every row names a part; a sheet part's also carries its stock, typed.

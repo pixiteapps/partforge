@@ -72,13 +72,26 @@ function checkMesh(m, seen) {
   if (m.normals != null && m.normals.length > 0 && m.normals.length !== m.positions.length) {
     throw new Error(`encodePreviewGlb: "${m.name}" normals do not match its positions`);
   }
+  if (indexed) {
+    const vertexCount = m.positions.length / 3;
+    for (let i = 0; i < m.indices.length; i++) {
+      if (!(m.indices[i] < vertexCount)) {
+        throw new Error(`encodePreviewGlb: "${m.name}" indices reference a vertex that does not exist`);
+      }
+    }
+  }
 }
 
 export async function encodePreviewGlb({ meshes, part = null, view = null } = {}) {
   if (!Array.isArray(meshes) || meshes.length === 0) throw new TypeError("encodePreviewGlb: meshes must be a non-empty array");
   const seen = new Set();
   for (const m of meshes) checkMesh(m, seen);
-  await (encoderReady ??= MeshoptEncoder.ready);
+  try {
+    await (encoderReady ??= MeshoptEncoder.ready);
+  } catch (error) {
+    encoderReady = null; // a failed wasm load must not be cached: a later call retries
+    throw error;
+  }
 
   const viewName = typeof view === "string" && view ? view : null;
   const doc = new Document();

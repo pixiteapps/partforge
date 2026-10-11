@@ -39,7 +39,6 @@ import { createAnnotateMode } from "./annotate/annotate-mode.js";
 import { attachAnnotateControls } from "./annotate/annotate-controls.js";
 import { attachSketchToolbar } from "./annotate/sketch-toolbar.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
-import { decodePreviewGlb } from "./gltf/decode-preview.js";
 import { createPreviewGate } from "./preview-gate.js";
 import { observeViewbarClear } from "./viewbar-clear.js";
 
@@ -71,7 +70,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway }) {
   return {
     ready, dispose, setParams,
     // Whether the `preview` GLB handed to mount() is on screen (see mount's
@@ -121,7 +120,9 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     getViewerState: () => ({
       camera: viewer.getCameraState(),
       projection: viewer.getProjection?.() ?? "perspective",
-      cutaway: viewer.getCutawayState?.() ?? null,
+      // A carried cutaway not yet restored (the preview holds it back) is still
+      // what the user last had: echo it, or a remount in that window drops it.
+      cutaway: pendingCutaway?.() ?? viewer.getCutawayState?.() ?? null,
       // The mode the user is headed for, not only the one on screen: a
       // realistic restore or switch still loading reads "realistic", so a
       // remount mid-load (the cloud remounts on every edit) doesn't drop it.
@@ -1124,9 +1125,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           ui.setStatus(`${data.phase}…`);
           break;
         case "meshes": {
-          liveDelivered = true;
           const fresh = loop.buildDone();
           if (fresh) { // stale results (params changed mid-build) are discarded
+            liveDelivered = true; // only a delivery that is applied beats a preview still decoding
             for (const m of data.meshes) {
               viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
               // The view its job was SENT for, and the frame the worker delivered
@@ -1515,7 +1516,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // screen is drawn, and only its sub-parts of that view; anything else — or a
     // file that will not decode — is logged once and ignored.
     if (preview != null) {
-      decodePreviewGlb(preview).then(({ view: previewView, meshes }) => {
+      // Loaded on demand: the GLTFLoader and meshopt decoder behind it stay out
+      // of every bundle that never passes a preview.
+      import("./gltf/decode-preview.js").then(({ decodePreviewGlb }) => (
+        disposed ? null : decodePreviewGlb(preview)
+      )).then((decoded) => {
+        if (decoded == null) return;
+        const { view: previewView, meshes } = decoded;
         if (disposed || liveDelivered) return; // live geometry always wins
         const current = view();
         if (previewView != null && previewView !== current) {
@@ -1563,6 +1570,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     return makeHandle({
       ready, dispose, viewer, setParams,
       isPreviewActive: () => previewGate.isActive(),
+      pendingCutaway: () => (!cutawayRestored ? viewerState?.cutaway ?? null : null),
       exportPreview,
       attachTooltips: attachHostTooltips,
       setHostPane: paneTabs.setHostPane,

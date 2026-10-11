@@ -210,6 +210,21 @@ test("mountPreview carries viewer state in and out", async () => {
   handle.dispose();
 });
 
+test("before the decode, state is the carried one — never a cutaway", async () => {
+  const handle = mountPreview(makeStage(), {
+    glb: await glb(),
+    viewerState: {
+      camera: { pos: [40, 0, 0], target: [0, 0, 0] }, projection: "perspective", renderMode: "realistic", environment: "outdoor",
+      cutaway: { enabled: true, flipped: false, pose: { position: [0, 0, 1], quaternion: [0, 0, 0, 1] } },
+    },
+  });
+  expect(handle.getViewerState()).toMatchObject({ renderMode: "realistic", environment: "outdoor", cutaway: null });
+  expect(handle.renderMode.get()).toBe("realistic");
+  expect(handle.environment.get()).toBe("outdoor");
+  await handle.ready;
+  handle.dispose();
+});
+
 test("a GLB that will not decode rejects ready and leaves the container untouched", async () => {
   const stage = makeStage();
   const handle = mountPreview(stage, { glb: new Uint8Array([1, 2, 3]) });
