@@ -1642,6 +1642,39 @@ export function createViewer(container, part) {
   const hasSubMesh = (name) => !!subCache[name];
   const subTriangles = (name) => subCache[name]?.userData.triangles ?? 0;
 
+  // The geometry drawn for one sub-part, as a fresh worker-style payload with its
+  // fast-path pose (setSubPose) baked in — the posed mesh a headless buildView
+  // would return. Copies: the caller (exportPreview → partforge/gltf) may keep or
+  // transfer them. null when nothing has been delivered under that name.
+  const _payloadV = new THREE.Vector3();
+  const _payloadNormal = new THREE.Matrix3();
+  function getSubMeshPayload(name) {
+    const geo = subCache[name];
+    if (!geo) return null;
+    const pose = subMesh[name].matrix; // identity unless the fast path posed it
+    _payloadNormal.getNormalMatrix(pose);
+    const pos = geo.getAttribute("position");
+    const positions = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      _payloadV.fromBufferAttribute(pos, i).applyMatrix4(pose).toArray(positions, i * 3);
+    }
+    const nor = geo.getAttribute("normal");
+    let normals = null;
+    if (nor) {
+      normals = new Float32Array(nor.count * 3);
+      for (let i = 0; i < nor.count; i++) {
+        _payloadV.fromBufferAttribute(nor, i).applyMatrix3(_payloadNormal).normalize().toArray(normals, i * 3);
+      }
+    }
+    return {
+      name,
+      positions,
+      normals,
+      indices: geo.index ? Uint32Array.from(geo.index.array) : null,
+      triangles: geo.userData.triangles ?? (geo.index ? geo.index.count : pos.count) / 3,
+    };
+  }
+
   // --- show / hide assembly -------------------------------------------------
   const _box = new THREE.Box3();
   const _posedBox = new THREE.Box3();
@@ -2727,6 +2760,7 @@ export function createViewer(container, part) {
     clearSubPartOpacities,
     hasSubMesh,
     subTriangles,
+    getSubMeshPayload,
     frame,
     captureCanonicalViews,
     captureCurrent,
