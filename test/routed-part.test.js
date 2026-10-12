@@ -5,6 +5,8 @@ import { routedPart } from "../src/framework/sheet/routed.js";
 import { routedPart as viaGeometry } from "../src/framework/geometry/polygon.js";
 import { sheetPart } from "../src/framework/sheet/part.js";
 import { isSheetPart } from "../src/framework/sheet/constants.js";
+import { probeSubPartPose } from "../src/framework/pose-probe-core.js";
+import { resolveParams } from "../src/framework/part-model.js";
 
 const RECT = [[0, 0], [100, 0], [100, 60], [0, 60]];
 const base = {
@@ -76,4 +78,24 @@ test("sheetPart with process cnc-router directly admits the router keys", () => 
   const sp = sheetPart({ ...base, process: "cnc-router", drills });
   expect(sp.sheet.drills).toBe(drills);
   expect(sp.sheet.pockets).toBeNull();
+});
+
+describe("the pose probe", () => {
+  test("a posed routed part with every op family is probe-trusted, and a pose-only change keeps its baseHash", () => {
+    const sp = routedPart({ ...base,
+      pose: (p) => ({ face: "-Y", up: "+Z", at: [p.x, 0, 0] }),
+      pockets: (k) => [{ region: k.shape2d([[10, 10], [40, 10], [40, 30], [10, 30]]), depth: 6 }],
+      drills: () => [{ at: [50, 30], d: 3.4, depth: 10 }, { at: [70, 30], d: 6, depth: 18 }],
+      extra: (k) => [{ solid: k.box({ size: [10, 10, 10] }).translate([85, 15, 13]), footprint: [[80, 10], [90, 10], [90, 20], [80, 20]], label: "notch", method: "chisel" }],
+      reference: () => [[[0, 30], [100, 30]]] });
+    const part = { meta: { title: "Plinth" }, parameters: [{ id: "s", title: "S", controls: [
+      { key: "t", label: "Thickness", min: 6, max: 30, step: 1 }, { key: "x", label: "X", min: -50, max: 50, step: 1 }] }],
+    defaults: { t: 18, x: 0 }, views: { main: { label: "Main" } }, parts: { plinth: sp } };
+    const probe = (x) => { const { p, d } = resolveParams(part, { x }); return probeSubPartPose(sp, { view: "main", purpose: "display", p, d }); };
+    const a = probe(0), b = probe(25);
+    expect(a.trusted).toBe(true);
+    expect(b.trusted).toBe(true);
+    expect(b.baseHash).toBe(a.baseHash);
+    expect(b.pose).not.toEqual(a.pose);
+  });
 });
