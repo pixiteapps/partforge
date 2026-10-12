@@ -625,5 +625,6 @@ export { translateProfile, rotateProfile, scaleProfile, mirrorProfile,
 // the drawing ↔ world converters. Plain JS over the contour IR — not kernel ops, so
 // they add nothing to the kernel contract's op lists.
 export { sheetPart } from "../sheet/part.js";
+export { routedPart } from "../sheet/routed.js";
 export { fingers, tabs, tSlots, sheetPanel, matchingSlots, fingerBox, printedTab, sheetHole, JOINERY_SCREWS } from "../sheet/joinery.js";
 export { sheetToWorld, worldToSheet } from "../sheet/pose.js";

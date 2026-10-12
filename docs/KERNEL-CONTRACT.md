@@ -765,7 +765,8 @@ the helpers come along unmodified. (`test/kernel-contract.test.js` asserts every
   `arcTo` / `cubicTo` / `close`); cubic segments become exact B-rep on OCCT and
   facet at mesh LOD on Manifold.
 - **Sheet parts** — `sheetPart` wraps a laser-cut piece into an ordinary sub-part
-  (a generated `build` and `place` plus a plain-data `sheet` declaration); the
+  (a generated `build` and `place` plus a plain-data `sheet` declaration), and
+  `routedPart` is the same wrapper for a CNC-routed piece (process `cnc-router`); the
   joinery helpers `fingers`, `tabs`, `tSlots`, `sheetPanel`, `matchingSlots`,
   `fingerBox`, `printedTab`, `sheetHole` and the `JOINERY_SCREWS` table are pure
   functions returning plain data in this contract's input format; `sheetToWorld` /

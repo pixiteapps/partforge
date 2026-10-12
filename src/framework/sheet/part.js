@@ -26,8 +26,8 @@ import { applyPose, resolveSheet, sheetPreview } from "./resolve.js";
 import { PROCESSES, PROCESS_IDS, processById } from "../process/registry.js";
 
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
-const KNOWN = [...SHEET_KEYS, ...SUBPART_PASSTHROUGH_KEYS];
-const KEY_LIST = `${SHEET_KEYS.join(", ")}, plus the sub-part keys ${SUBPART_PASSTHROUGH_KEYS.join(", ")}`;
+const KNOWN_BASE = [...SHEET_KEYS, ...SUBPART_PASSTHROUGH_KEYS];
+const keyList = (processKeys) => `${[...SHEET_KEYS, ...processKeys].join(", ")}, plus the sub-part keys ${SUBPART_PASSTHROUGH_KEYS.join(", ")}`;
 const optionalFn = (v) => v === undefined || v === null || typeof v === "function";
 
 // Every mistake throws here, at module load, naming the fix — in the order a reader
@@ -43,11 +43,21 @@ function checkSpec(spec) {
   const reservedKeys = [...RESERVED_KEYS, ...PROCESSES.flatMap((proc) => proc.reservedKeys ?? [])];
   const reserved = keys.find((key) => reservedKeys.includes(key));
   if (reserved) throw new Error(`sheetPart: "${reserved}" is reserved for a future process and not supported yet`);
-  const unknown = keys.find((key) => !KNOWN.includes(key));
-  if (unknown) throw new Error(`sheetPart: unknown key "${unknown}" — the keys are ${KEY_LIST}`);
-
   const process = spec.process ?? "laser";
-  if (!processById(process)) throw new Error(`sheetPart: unknown process ${JSON.stringify(process)} — valid: ${PROCESS_IDS.join(", ")}`);
+  const desc = processById(process);
+  if (!desc) {
+    throw new Error(`sheetPart: unknown process ${JSON.stringify(process)} — valid: ${PROCESS_IDS.join(", ")}; for CNC-routed stock with pockets and drills at depth use routedPart()`);
+  }
+  // A process's own declaration keys (sheet/constants.js ROUTED_KEYS for cnc-router).
+  // `reference` is routedPart's name for the score layer and arrives here already
+  // mapped onto `score`, so it is not admitted on the record itself.
+  const processKeys = (desc.keys ?? []).filter((key) => key !== "reference");
+  const unknown = keys.find((key) => !KNOWN_BASE.includes(key) && !processKeys.includes(key));
+  if (unknown) throw new Error(`sheetPart: unknown key "${unknown}" — the keys are ${keyList(processKeys)}`);
+  for (const key of processKeys) {
+    if (!optionalFn(spec[key])) throw new Error(`sheetPart: ${key} must be a function (k, p, d) => …, or omitted`);
+  }
+
   const { material: m, thickness: t } = spec;
   if (!(typeof m === "function" || (typeof m === "string" && m.trim() !== "")))
     throw new Error('sheetPart: material must be a non-empty string or a (p, d) => string function — a stock label like "birch plywood"');
@@ -63,11 +73,11 @@ function checkSpec(spec) {
     if (reason) throw new Error(`sheetPart: ${reason}`);
   }
   if (spec.place !== undefined && typeof spec.place !== "function") throw new Error("sheetPart: place must be a function (solid, ctx) => solid");
-  return process;
+  return { process, processKeys };
 }
 
 export function sheetPart(spec) {
-  const process = checkSpec(spec);
+  const { process, processKeys } = checkSpec(spec);
   const sub = {};
   for (const key of SUBPART_PASSTHROUGH_KEYS)
     if (key !== "place" && spec[key] !== undefined) sub[key] = spec[key];
@@ -109,6 +119,7 @@ export function sheetPart(spec) {
     place: authorPlace,
     generatedBuild,
     generatedPlace,
+    ...Object.fromEntries(processKeys.map((key) => [key, spec[key] ?? null])),
   });
   sub.build = generatedBuild;
   if (generatedPlace) sub.place = generatedPlace;
