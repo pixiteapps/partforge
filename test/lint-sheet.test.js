@@ -66,8 +66,8 @@ test("sheet-invalid: a malformed hand-edited declaration is one error, and the v
   expect(one(r, "sheet-invalid")).toMatchObject({ severity: "error", path: "parts.panel.sheet",
     message: 'sub-part "panel" has a malformed `sheet` declaration: material must be a non-empty string or a (p, d) => string function' });
   expect(sheetFindings(r).map((f) => f.rule)).toEqual(["sheet-invalid"]);
-  expect(one(lintPart(partWith({ panel: edited({ process: "cnc" }) })), "sheet-invalid").message)
-    .toBe('sub-part "panel" has a malformed `sheet` declaration: process must be one of: laser');
+  expect(one(lintPart(partWith({ panel: edited({ process: "waterjet" }) })), "sheet-invalid").message)
+    .toBe('sub-part "panel" has a malformed `sheet` declaration: process must be one of: laser, cnc-router');
 });
 
 test("sheet-invalid skips a sub-part with no build: no-buildable-parts owns it, with the sheet hint", () => {

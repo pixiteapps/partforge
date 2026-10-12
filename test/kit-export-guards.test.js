@@ -15,7 +15,7 @@ import laserExporter from "../src/framework/process/laser/export.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const src = (rel) => readFileSync(`${ROOT}/${rel}`, "utf8");
-const KIT_MODULES = ["src/framework/export/", "src/framework/process/exporters.js", "src/framework/process/laser/export.js"];
+const KIT_MODULES = ["src/framework/export/", "src/framework/process/exporters.js", "src/framework/process/laser/export.js", "src/framework/process/cnc-router/export.js"];
 
 test("every registered process has an exporter, in registry order", () => {
   expect(Object.keys(EXPORTER_LOADERS)).toEqual(PROCESS_IDS);
@@ -24,14 +24,14 @@ test("every registered process has an exporter, in registry order", () => {
 test("loadExporter hands back the process's exporter, and refuses an unknown id", async () => {
   expect(await loadExporter("laser")).toBe(laserExporter);
   expect(typeof laserExporter.drawing).toBe("function");
-  await expect(loadExporter("cnc")).rejects.toThrow('no exporter for process "cnc"');
+  await expect(loadExporter("waterjet")).rejects.toThrow('no exporter for process "waterjet"');
   await expect(loadExporter("toString")).rejects.toThrow('no exporter for process "toString"');
 });
 
 test("process/exporters.js reaches an exporter only through a dynamic import", () => {
   const text = src("src/framework/process/exporters.js");
   expect(importsOf(text, { eager: true })).toEqual([]);
-  expect(importsOf(text)).toEqual(["./laser/export.js"]);
+  expect(importsOf(text)).toEqual(["./laser/export.js", "./cnc-router/export.js"]);
 });
 
 test("export/formats.js imports nothing", () => {

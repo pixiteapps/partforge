@@ -75,8 +75,8 @@ describe("recognition and stock at (p, d)", () => {
 
 describe("the process registry", () => {
   test("laser is process #1, a static descriptor", () => {
-    expect(PROCESSES).toEqual([LASER]);
-    expect(PROCESS_IDS).toEqual(["laser"]);
+    expect(PROCESSES[0]).toBe(LASER);
+    expect(PROCESS_IDS[0]).toBe("laser");
     expect(LASER).toMatchObject({
       id: "laser", label: "Laser cutting", stock: "sheet", docId: "sheet-parts",
       layers: { profile: "region", score: "line", engrave: "region" },

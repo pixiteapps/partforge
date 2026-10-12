@@ -69,7 +69,7 @@ test("every process folder is a registered process, and each descriptor's id is 
     const descriptor = Object.values(mod).find((v) => v && typeof v === "object" && typeof v.id === "string");
     expect(descriptor?.id, folder).toBe(folder);
     expect(PROCESSES).toContain(descriptor);
-    expect(descriptor.docId).toBe("sheet-parts");
+    expect(["sheet-parts", "routed-parts"]).toContain(descriptor.docId);
   }
 });
 
