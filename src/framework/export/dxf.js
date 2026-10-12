@@ -136,13 +136,20 @@ export function renderDxf(doc, { include } = {}) {
   for (const placement of doc.placements) for (const layer of placement.drawing.layers)
     if (layer.name !== undefined && selected(layer) && !custom.includes(layer.id)) custom.push(layer.id);
   const ids = [...ORDER.filter((id) => !id.startsWith("cut") && want.has(INCLUDE_FOR[id])), ...custom, ...ORDER.filter((id) => id.startsWith("cut") && want.has(INCLUDE_FOR[id]))];
-  // The LAYER table declares every INCLUDED laser class whether or not a placement draws
-  // on it (byte-identical to the laser-only writer), with the custom layers that are
-  // present declared between the marks and CUT — the entity order.
+  // The LAYER table, in the entity order. A laser-only document (no named layer written)
+  // declares every INCLUDED laser class whether or not a placement draws on it — the
+  // laser writer's bytes, unchanged. A document with a named (routed) layer declares
+  // only the layers actually present, laser classes included, so a router file carries
+  // no empty ENGRAVE/SCORE rows.
+  const present = (id) => doc.placements.some((pl) => pl.drawing.layers.some((l) => l.id === id));
+  const onlyPresent = custom.length > 0;
   const names = [], colors = new Map();
   const declare = (name, color) => { if (!names.includes(name)) { names.push(name); colors.set(name, color); } };
   for (const id of ids) {
-    if (LAYER_FOR[id] !== undefined) { declare(LAYER_FOR[id], DXF_LAYERS[LAYER_FOR[id]]); continue; }
+    if (LAYER_FOR[id] !== undefined) {
+      if (!onlyPresent || present(id)) declare(LAYER_FOR[id], DXF_LAYERS[LAYER_FOR[id]]);
+      continue;
+    }
     for (const placement of doc.placements) {
       const layer = placement.drawing.layers.find((l) => l.id === id);
       if (layer) declare(layerNameOf(layer), layer.color);

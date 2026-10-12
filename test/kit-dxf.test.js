@@ -71,6 +71,15 @@ describe("the file", () => {
     expect(marks.entities).toHaveLength(0);
   });
 
+  test("a document with a named layer declares only the layers present — no empty laser classes", () => {
+    const pocket = closed([5, 5], [{ to: [15, 5] }, { to: [15, 15] }, { to: [5, 15] }, { to: [5, 5] }]);
+    const layers = [{ id: "pocket-3", name: "POCKET_3MM", color: 30, svgColor: "#E07000", paths: [pocket] }, { id: "cut-outer", paths: [RECT] }];
+    const bounds = drawingBounds(layers);
+    const dxf = parseDxf(renderDxf(piece({ layers, bounds, nominal: [40, 30], kerf: 0 })));
+    expect(dxf.layers.map((l) => l.name)).toEqual(["POCKET_3MM", "CUT"]);
+    expect(dxf.layers.map((l) => l.color)).toEqual([30, 1]);
+  });
+
   test("an unknown include is refused", () => {
     expect(() => renderDxf(piece(plate()), { include: ["cut", "mark"] }))
       .toThrow('renderDxf: include lists "cut", "score" and "engrave" only, got "mark"');

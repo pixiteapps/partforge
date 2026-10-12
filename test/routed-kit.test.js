@@ -60,7 +60,7 @@ describe("the cnc-router kit", () => {
     expect(r.names).toContain("parts/lid.dxf");
     expect(r.names).toContain("parts/lid-marks.dxf");
     const plinth = parseDxf(r.text("parts/plinth.dxf"));
-    expect(plinth.layers.map((l) => l.name)).toEqual(["ENGRAVE", "SCORE", "REFERENCE", "SECONDARY", "DRILL_D3.4_10MM", "POCKET_11.43MM", "CUT"]);
+    expect(plinth.layers.map((l) => l.name)).toEqual(["REFERENCE", "SECONDARY", "DRILL_D3.4_10MM", "POCKET_11.43MM", "CUT"]);
     expect(plinth.entities.filter((e) => e.type === "CIRCLE")).toHaveLength(2);
     const readme = r.text("README.txt");
     expect(README_HEADINGS).toContain("ROUTER OPERATIONS");
