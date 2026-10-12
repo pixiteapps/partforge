@@ -21,9 +21,10 @@ export const EXPORT_FORMATS = Object.freeze([
   Object.freeze({ id: "bundle", label: "Cut and print kit", ext: "zip", mime: "application/zip", needsSheet: true }),
 ]);
 
-// Destination → the cut-file format it writes. Pinned equal to the laser descriptor's
-// `destinations` by test/kit-formats.test.js — two spellings of one fact.
-export const DESTINATIONS = Object.freeze({ "own-laser": "svg", service: "dxf" });
+// Destination → the cut-file format it writes. Pinned equal to the union of every
+// process descriptor's `destinations` by test/routed-kit.test.js and
+// test/kit-formats.test.js — one fact, two spellings.
+export const DESTINATIONS = Object.freeze({ "own-laser": "svg", service: "dxf", "cnc-router": "dxf" });
 
 // 300 × 300 mm until the paying user's machine is known (design spec decision 12).
 export const DEFAULT_STOCK_SIZE = Object.freeze([300, 300]);
@@ -64,7 +65,7 @@ export function validateKitOptions(o) {
 
   const destination = pick("destination");
   if (typeof destination !== "string" || !Object.hasOwn(DESTINATIONS, destination))
-    throw fail(`destination must be "own-laser" or "service", got ${JSON.stringify(destination)}`);
+    throw fail(`destination must be "own-laser", "service" or "cnc-router", got ${JSON.stringify(destination)}`);
   const cutFormat = DESTINATIONS[destination];
   if (opts.cutFormat !== undefined && opts.cutFormat !== cutFormat)
     throw fail(`cutFormat ${JSON.stringify(opts.cutFormat)} does not match destination "${destination}" (which writes ${cutFormat})`);
@@ -72,6 +73,8 @@ export function validateKitOptions(o) {
   const kerf = pick("kerf");
   if (!inRange(kerf, KIT_LIMITS.kerf))
     throw fail(`kerf must be a number from ${KIT_LIMITS.kerf[0]} to ${KIT_LIMITS.kerf[1]} mm, got ${JSON.stringify(kerf)}`);
+  if (destination === "cnc-router" && kerf > 0)
+    throw fail("kerf does not apply to a CNC router — the CAM applies the tool offset; set kerf to 0");
   const colors = pick("colors");
   if (colors !== "lightburn") throw fail(`colors must be "lightburn", got ${JSON.stringify(colors)}`);
   const stock = normalizeStock(opts.stock);

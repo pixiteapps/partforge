@@ -1,0 +1,96 @@
+// The cut & print kit with routed parts: the cnc-router destination, routed pieces
+// written whole under every destination, the README's ROUTER OPERATIONS table.
+import { beforeAll, describe, expect, test } from "vitest";
+import { strFromU8, unzipSync } from "fflate";
+import { bootManifoldKernel, handle } from "../src/testing.js";
+import { sheetPart, routedPart } from "../src/framework/geometry/polygon.js";
+import { DESTINATIONS, validateKitOptions } from "../src/framework/export/formats.js";
+import { README_HEADINGS } from "../src/framework/export/readme.js";
+import { PROCESSES } from "../src/framework/process/registry.js";
+import { parseDxf } from "./helpers/dxf-subset.js";
+
+let k;
+beforeAll(async () => { k = await bootManifoldKernel(); });
+
+const rect = (w, h) => [[0, 0], [w, 0], [w, h], [0, h]];
+const fixture = {
+  meta: { title: "Board" },
+  parameters: [{ id: "stock", title: "Stock", controls: [{ key: "t", label: "Board thickness", unit: "mm", min: 6, max: 30, step: 1 }] }],
+  defaults: { t: 18 },
+  views: { all: { label: "All" } },
+  parts: {
+    plinth: routedPart({ views: ["all"], label: "Plinth", material: "walnut", thickness: (p) => p.t, export: { name: "plinth" },
+      profile: (kk) => kk.shape2d(rect(100, 60)),
+      pockets: () => [{ region: rect(30, 20).map(([x, y]) => [x + 10, y + 10]), depth: 11.43, label: "vault" }],
+      drills: () => [{ at: [50, 30], d: 3.4, depth: 10 }, { at: [60, 30], d: 3.4, depth: 10 }],
+      extra: (kk) => [{ solid: kk.box({ size: [10, 10, 10] }).translate([85, 15, 13]), footprint: rect(10, 10).map(([x, y]) => [x + 80, y + 10]), label: "notch", method: "chisel, 10 mm" }],
+      reference: () => [[[0, 30], [100, 30]]] }),
+    lid: sheetPart({ views: ["all"], label: "Lid", material: "birch plywood", thickness: 3,
+      profile: (kk) => kk.shape2d(rect(40, 40)), score: () => [[[5, 5], [35, 5]]] }),
+  },
+};
+
+async function kit(part, options, parts = Object.keys(part.parts)) {
+  const posts = [];
+  await handle(k, part, { type: "export-bundle", jobId: 7, parts, view: "all", params: {}, name: part.meta.title, quality: "preview", options }, (m) => posts.push(m));
+  const download = posts.find((m) => m.type === "download");
+  const files = download ? unzipSync(new Uint8Array(download.data)) : {};
+  return { error: posts.find((m) => m.type === "error")?.message ?? null, names: Object.keys(files).sort(), text: (f) => strFromU8(files[f]) };
+}
+
+describe("options", () => {
+  test("DESTINATIONS is the union of every process's destinations", () => {
+    expect(Object.entries(DESTINATIONS)).toEqual(PROCESSES.flatMap((p) => p.destinations.map((d) => [d.id, d.cutFormat])));
+    expect(DESTINATIONS["cnc-router"]).toBe("dxf");
+  });
+  test("kerf is refused for the router destination", () => {
+    expect(() => validateKitOptions({ destination: "cnc-router", kerf: 0.2 }))
+      .toThrow("cut kit options: kerf does not apply to a CNC router — the CAM applies the tool offset; set kerf to 0");
+    expect(validateKitOptions({ destination: "cnc-router" })).toMatchObject({ destination: "cnc-router", cutFormat: "dxf", kerf: 0 });
+  });
+});
+
+describe("the cnc-router kit", () => {
+  test("one layered DXF per routed piece, laser pieces as for a service, README table and legend", async () => {
+    const r = await kit(fixture, { destination: "cnc-router" });
+    expect(r.error).toBeNull();
+    expect(r.names).toContain("parts/plinth.dxf");
+    expect(r.names).not.toContain("parts/plinth-marks.dxf");
+    expect(r.names).toContain("parts/lid.dxf");
+    expect(r.names).toContain("parts/lid-marks.dxf");
+    const plinth = parseDxf(r.text("parts/plinth.dxf"));
+    expect(plinth.layers.map((l) => l.name)).toEqual(["ENGRAVE", "SCORE", "REFERENCE", "SECONDARY", "DRILL_D3.4_10MM", "POCKET_11.43MM", "CUT"]);
+    expect(plinth.entities.filter((e) => e.type === "CIRCLE")).toHaveLength(2);
+    const readme = r.text("README.txt");
+    expect(README_HEADINGS).toContain("ROUTER OPERATIONS");
+    expect(readme).toContain("ROUTER OPERATIONS");
+    expect(readme).toContain("Plinth (walnut 18.00 mm)");
+    expect(readme).toContain("pocket | vault | 30.00 × 20.00 mm | 11.43 mm");
+    expect(readme).toContain("drill | — | Ø3.4 mm × 2 | 10.00 mm");
+    expect(readme).toContain("extra | notch | 10.00 × 10.00 mm | to 5.00 mm | chisel, 10 mm");
+    expect(readme).toContain("Kerf: none — a CNC router's CAM applies the tool offset.");
+    expect(readme).toContain("DXF layers: CUT (colour 1) is the through cut; POCKET_<depth>MM and DRILL_D<dia>_<depth>MM / _THRU carry one depth each; SECONDARY outlines operations done with another tool (see ROUTER OPERATIONS); REFERENCE is layout only. Laser pieces keep CUT/SCORE/ENGRAVE.");
+  });
+
+  test("a routed piece under the service and own-laser destinations is still written whole", async () => {
+    const svc = await kit(fixture, { destination: "service" }, ["plinth"]);
+    expect(svc.names).toEqual(expect.arrayContaining(["parts/plinth.dxf"]));
+    expect(svc.names).not.toContain("parts/plinth-marks.dxf");
+    expect(parseDxf(svc.text("parts/plinth.dxf")).layers.map((l) => l.name)).toContain("POCKET_11.43MM");
+    const own = await kit(fixture, { destination: "own-laser" }, ["plinth"]);
+    expect(own.names).toContain("parts/plinth.svg");
+    expect(own.text("parts/plinth.svg")).toContain('stroke="#E07000"');
+  });
+
+  test("a routed piece too big for the router's stock is listed in the README, not refused", async () => {
+    const r = await kit(fixture, { destination: "cnc-router", stock: [{ group: "*", size: [80, 80] }] }, ["plinth"]);
+    expect(r.error).toBeNull();
+    expect(r.names).toContain("parts/plinth.dxf");
+    expect(r.text("README.txt")).toMatch(/\nOVERSIZED PIECES\nPlinth: 100\.0 × 60\.0 mm does not fit a 80 × 80 mm sheet/);
+  });
+
+  test("a kerf with a routed piece under a laser destination is the exporter's refusal, naming the piece", async () => {
+    const r = await kit(fixture, { destination: "service", kerf: 0.2 }, ["plinth"]);
+    expect(r.error).toContain('cut kit options: kerf does not apply to a CNC router — the CAM applies the tool offset; set kerf to 0 ("Plinth")');
+  });
+});

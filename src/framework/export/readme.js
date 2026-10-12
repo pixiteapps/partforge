@@ -8,13 +8,14 @@
 import { fmtMm } from "../sheet/constants.js";
 
 export const README_HEADINGS = Object.freeze([
-  "BEFORE YOU CUT", "SHEETS", "PIECES", "PRINTED PARTS", "CLEARANCES (design fit, not kerf)",
+  "BEFORE YOU CUT", "SHEETS", "PIECES", "ROUTER OPERATIONS", "PRINTED PARTS", "CLEARANCES (design fit, not kerf)",
   "SETTINGS", "CHECKS", "OVERSIZED PIECES", "RENAMED FILES", "LIMITS",
 ]);
 export const CSV_HEADER = "file,kind,labels,material,thickness_mm,width_mm,height_mm,quantity";
 
 const SVG_LEGEND = "Colours: engrave = filled black #000000, score = blue #0000FF, cut = red #FF0000 (inner cuts come before outer cuts).";
 const DXF_LEGEND = "DXF layers: CUT (colour 1), SCORE (colour 5), ENGRAVE (colour 7) — set ENGRAVE to fill; R12 has no hatch.";
+const ROUTER_LEGEND = "DXF layers: CUT (colour 1) is the through cut; POCKET_<depth>MM and DRILL_D<dia>_<depth>MM / _THRU carry one depth each; SECONDARY outlines operations done with another tool (see ROUTER OPERATIONS); REFERENCE is layout only. Laser pieces keep CUT/SCORE/ENGRAVE.";
 const LIMITS_LINE = "Layout packs bounding boxes only: no nesting into holes, and grain direction is ignored.";
 
 // C0 controls, DEL and C1 controls out of an author string, so a label can never ring a
@@ -52,6 +53,7 @@ const labelsOf = (labels) => labels.map(cleanLabel).join(", ");
 export function renderReadme(m) {
   const k = m.kerf;
   const kerfed = k > 0;
+  const router = m.destination === "cnc-router";
   // A cutting service gets each piece's score and engrave lines in a separate
   // -marks.dxf, which neither table lists — so the files are named here, or a service
   // order built from the cut files alone silently leaves the marks off.
@@ -60,14 +62,16 @@ export function renderReadme(m) {
     "BEFORE YOU CUT": [
       ...m.stockNotes.map((g) =>
         `This kit assumes ${g.thickness.toFixed(2)} mm ${cleanLabel(g.material)} — if yours differs, change "${cleanLabel(g.control ?? "the sheet thickness setting")}" and re-download.`),
-      kerfed
-        ? `Kerf: ${k.toFixed(2)} mm applied to the cut lines only. Set kerf in ONE place — these download options, or your laser software / cutting service — never both.`
-        : "Kerf: none applied — your laser software or cutting service must compensate.",
-      ...(kerfed ? [] : ["To have the files adjusted instead, download again with a kerf set, and turn compensation off in your laser software or service."]),
+      router
+        ? "Kerf: none — a CNC router's CAM applies the tool offset."
+        : kerfed
+          ? `Kerf: ${k.toFixed(2)} mm applied to the cut lines only. Set kerf in ONE place — these download options, or your laser software / cutting service — never both.`
+          : "Kerf: none applied — your laser software or cutting service must compensate.",
+      ...(kerfed || router ? [] : ["To have the files adjusted instead, download again with a kerf set, and turn compensation off in your laser software or service."]),
       "Scale check — measure one cut piece against its line:",
       ...m.scale.map((s) => `${cleanLabel(s.label)}: nominal ${s.nominal[0].toFixed(2)} × ${s.nominal[1].toFixed(2)} mm; this file draws ${
         kerfed ? `${s.drawn[0].toFixed(2)} × ${s.drawn[1].toFixed(2)} with ${k.toFixed(2)} mm kerf` : "the same (no kerf applied)"}`),
-      m.cutFormat === "dxf" ? DXF_LEGEND : SVG_LEGEND,
+      router ? ROUTER_LEGEND : m.cutFormat === "dxf" ? DXF_LEGEND : SVG_LEGEND,
       ...(marksFiles.length ? [`Score and engrave marks are in their own files, not in the cut files — send them with the cut files if you want the marks made: ${marksFiles.join(", ")}.`] : []),
       // A service kit whose every piece is oversized writes no sheets/ at all.
       ...(m.destination === "service" && m.sheets.length ? ["The sheets in sheets/ are for reference only — a cutting service lays out the pieces itself."] : []),
@@ -78,12 +82,21 @@ export function renderReadme(m) {
       String(s.pieces), `${Math.round(s.used)}%`])),
     PIECES: table(["file", "labels", "material", "thickness", "size", "quantity"], m.pieces.map((pc) => [
       pc.file, labelsOf(pc.labels), cleanLabel(pc.material), `${pc.thickness.toFixed(2)} mm`, mm2(pc.size), String(pc.quantity)])),
+    "ROUTER OPERATIONS": (m.router ?? []).flatMap((r) => [
+      `${labelsOf(r.labels)} (${cleanLabel(r.material)} ${r.thickness.toFixed(2)} mm) — depths from the machined face:`,
+      ...table(["op", "label", "size", "depth", "method"], [
+        ...r.pockets.map((pk) => ["pocket", pk.label ? cleanLabel(pk.label) : "—", mm2([pk.w, pk.h]), `${pk.depth.toFixed(2)} mm`, "mill"]),
+        ...r.drills.map((dr) => ["drill", dr.label ? cleanLabel(dr.label) : "—", `Ø${fmtMm(dr.d)} mm × ${dr.count}`, dr.through ? "through" : `${dr.depth.toFixed(2)} mm`, "drill"]),
+        ...r.extra.map((x) => ["extra", cleanLabel(x.label), mm2([x.w, x.h]), `to ${x.maxDepth.toFixed(2)} mm`, cleanLabel(x.method)]),
+      ]),
+    ]),
     "PRINTED PARTS": table(["file", "labels", "quantity"], m.printed.map((pp) => [pp.file, labelsOf(pp.labels), String(pp.quantity)])),
     "CLEARANCES (design fit, not kerf)": m.clearances.map((c) =>
       `${cleanLabel(c.label)}: ${settingValue(c.value)}${c.unit ? ` ${cleanLabel(c.unit)}` : ""}`),
     SETTINGS: m.settings.map((s) => `${cleanLabel(s.key)} = ${settingValue(s.value)}`),
     CHECKS: m.checks.length ? m.checks.map(cleanLabel) : ["none"],
-    "OVERSIZED PIECES": m.destination === "service" ? m.oversized.map(cleanLabel) : [],
+    // Only a non-strict layout (a service, a CNC router) can leave a piece off the sheets.
+    "OVERSIZED PIECES": m.destination === "service" || router ? m.oversized.map(cleanLabel) : [],
     "RENAMED FILES": m.renamed.map(cleanLabel),
     LIMITS: [LIMITS_LINE],
   };

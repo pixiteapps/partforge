@@ -156,7 +156,7 @@ describe("renderReadme", () => {
 
   test("the heading list is the contract's", () => {
     expect(README_HEADINGS).toEqual([
-      "BEFORE YOU CUT", "SHEETS", "PIECES", "PRINTED PARTS", "CLEARANCES (design fit, not kerf)",
+      "BEFORE YOU CUT", "SHEETS", "PIECES", "ROUTER OPERATIONS", "PRINTED PARTS", "CLEARANCES (design fit, not kerf)",
       "SETTINGS", "CHECKS", "OVERSIZED PIECES", "RENAMED FILES", "LIMITS",
     ]);
   });
