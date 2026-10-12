@@ -12,6 +12,7 @@
 import { EMPTY_MARK_RE, MARK_DEPTH, MARK_OVERCUT, SCORE_WIDTH, sheetGroup } from "./constants.js";
 import { poseSteps, validatePose } from "./pose.js";
 import { recoverArcs } from "../geometry/arc-fit.js";
+import { resolveRouted } from "./routed-resolve.js";
 
 const fail = (sp, problem) => new Error(`sheet part${sp.label ? ` "${sp.label}"` : ""}: ${problem}`);
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
@@ -45,8 +46,16 @@ function shapeGroove(shape) {
   return orEmpty(() => outer.cut(shape.offset(-SCORE_WIDTH / 2))) ?? outer;
 }
 
+// A process's own resolver, keyed by id, producing the `routed`-style field its
+// descriptor's facts/preview and its exporter read. The laser has none. Lives here,
+// not on the descriptor, because a descriptor may import nothing but constants and
+// finding.js, and a resolver lifts shapes with the kernel.
+const PROCESS_RESOLVERS = Object.freeze({ "cnc-router": resolveRouted });
+
 // → ResolvedSheet: { process, material, thickness, group, label, pose, profile,
-//   score: { lines, shapes }, engrave, grooves, customBuild, trustedShape2d, recoverArcs }.
+//   score: { lines, shapes }, engrave, grooves, customBuild, trustedShape2d, recoverArcs,
+//   routed? } — `routed` ({ pockets, drills, extra }, sheet/routed-resolve.js) only for the
+//   cnc-router process; a laser sheet has no such field.
 //   Throws a `sheet part "<label>": …` error for a field that resolves to something
 //   unusable. `trustedShape2d` is the kernel's lift for machine-produced regions (no
 //   profile validation, arcs kept), or null where the kernel has none (a probe): the
@@ -98,13 +107,15 @@ export function resolveSheet(k, sp, p, d) {
     ...shapes.map(shapeGroove),
   ];
 
-  return {
+  const base = {
     process: s.process, material, thickness, group: sheetGroup(material, thickness),
     label: sp.label ?? null, pose, profile, score: { lines, shapes }, engrave, grooves,
     customBuild: sp.build !== s.generatedBuild,
     trustedShape2d: typeof k.shape2d?.trusted === "function" ? k.shape2d.trusted : null,
     recoverArcs,
   };
+  const resolveProcess = PROCESS_RESOLVERS[s.process];
+  return resolveProcess ? { ...base, routed: resolveProcess(k, sp, p, d, base) } : base;
 }
 
 // The default preview: the profile extruded to the thickness, the engrave pocketed and

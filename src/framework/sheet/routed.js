@@ -7,7 +7,7 @@
 // assembly, the renders, the STEP and the kit all read the same declaration.
 //
 // Every mistake throws here, at module load, naming the fix. The per-(p, d) shapes are
-// resolved in resolveRouted (below), called by sheet/resolve.js for this process.
+// resolved in resolveRouted (./routed-resolve.js), called by sheet/resolve.js for this process.
 import { sheetPart } from "./part.js";
 import { ROUTED_KEYS } from "./constants.js";
 
