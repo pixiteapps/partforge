@@ -63,7 +63,8 @@ const caseOf = (row, expect) => evaluateCase(
 const declared = (checks, metric) => checks.find((c) => c.metric === metric && !c.volunteered);
 
 test("the sheet metrics join the sub-part vocabulary without replacing a print metric", () => {
-  expect(Object.keys(SHEET_METRICS).sort()).toEqual(["sheetBridge", "sheetGap", "sheetMarks", "sheetPieces", "sheetSolidMatch"]);
+  expect(Object.keys(SHEET_METRICS).sort()).toEqual([
+    "routedEmpty", "routedOutside", "routedPieces", "sheetBridge", "sheetGap", "sheetMarks", "sheetPieces", "sheetSolidMatch"]);
   for (const name of Object.keys(SHEET_METRICS)) {
     expect(PRINT_METRICS, `${name} collides with a print metric`).not.toContain(name);
     expect(SUBPART_METRICS[name]).toBe(SHEET_METRICS[name]);
@@ -71,10 +72,10 @@ test("the sheet metrics join the sub-part vocabulary without replacing a print m
   for (const name of PRINT_METRICS) expect(Object.keys(SUBPART_METRICS)).toContain(name);
 });
 
-test("every sheet metric is a warning that names the guide section, not an ERROR-PATTERNS entry", () => {
+test("every sheet metric is a warning that names its process's guide section, not an ERROR-PATTERNS entry", () => {
   for (const [name, m] of Object.entries(SHEET_METRICS)) {
     expect(m.kind, name).toBe("warn");
-    expect(m.doc, name).toBe("sheet-parts");
+    expect(m.doc, name).toBe(name.startsWith("routed") ? "routed-parts" : "sheet-parts");
     expect(m.pattern, name).toBeUndefined();
     expect(m.hint.length, `${name} hint`).toBeLessThanOrEqual(500);
   }

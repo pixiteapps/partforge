@@ -11,7 +11,7 @@ import { sheetPart } from "../src/framework/geometry/polygon.js";
 import laserBox from "../src/parts/laser-box.js";
 
 const SHEET_IDS = ["sheet-invalid", "sheet-thickness-invalid", "sheet-pose-invalid", "sheet-thickness-literal",
-  "sheet-kerf-control", "sheet-custom-build", "verify-process-sheets-only", "laser-thickness-range"];
+  "sheet-kerf-control", "sheet-custom-build", "verify-process-sheets-only", "laser-thickness-range", "routed-drill-depth"];
 const rect = (w, h) => [[0, 0], [w, 0], [w, h], [0, h]];
 const panel = (extra = {}) => sheetPart({
   views: ["main"], label: "Panel", material: "birch plywood", thickness: (p) => p.t,
@@ -49,7 +49,7 @@ const FIRING = {
   "laser-thickness-range": () => ({ ...partWith({ panel: panel() }), defaults: { t: 0.3, w: 100, h: 60 } }),
 };
 
-test("SHEET_RULES registers the seven sheet rules and the laser rule, in the lint registry", () => {
+test("SHEET_RULES registers the seven sheet rules, the laser rule and the router rule, in the lint registry", () => {
   expect(SHEET_RULES.map((r) => r.id)).toEqual(SHEET_IDS);
   for (const id of SHEET_IDS) expect(RULES.map((r) => r.id)).toContain(id);
 });

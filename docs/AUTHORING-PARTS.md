@@ -3881,6 +3881,9 @@ verify check". `no-buildable-parts` points a sub-part with a `sheet` but no `bui
 at `sheetPart()`, and `verify-unknown-process` answers `process: "laser"` the same
 way.
 
+**Routed parts** — `routed-drill-depth` (error): a `routedPart` drill deeper than
+the stock at the defaults. It carries `pattern: "routed-parts"`.
+
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.
 
