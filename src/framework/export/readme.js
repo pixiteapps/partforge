@@ -82,7 +82,7 @@ export function renderReadme(m) {
       String(s.pieces), `${Math.round(s.used)}%`])),
     PIECES: table(["file", "labels", "material", "thickness", "size", "quantity"], m.pieces.map((pc) => [
       pc.file, labelsOf(pc.labels), cleanLabel(pc.material), `${pc.thickness.toFixed(2)} mm`, mm2(pc.size), String(pc.quantity)])),
-    "ROUTER OPERATIONS": (m.router ?? []).flatMap((r) => [
+    "ROUTER OPERATIONS": [...(m.router ?? []).flatMap((r) => [
       `${labelsOf(r.labels)} (${cleanLabel(r.material)} ${r.thickness.toFixed(2)} mm) — depths from the machined face:`,
       ...table(["op", "label", "size", "depth", "method"], [
         ...r.pockets.map((pk) => ["pocket", pk.label ? cleanLabel(pk.label) : "—", mm2([pk.w, pk.h]), `${pk.depth.toFixed(2)} mm`, "mill"]),
@@ -90,6 +90,10 @@ export function renderReadme(m) {
         ...r.extra.map((x) => ["extra", cleanLabel(x.label), mm2([x.w, x.h]), `to ${x.maxDepth.toFixed(2)} mm`, cleanLabel(x.method)]),
       ]),
     ]),
+    // The layer legend: one colour per layer name across the whole kit.
+    ...((m.router ?? []).length && (m.layers ?? []).length
+      ? ["LAYERS (one colour per layer across the kit):", ...table(["layer", "colour", "depth"], m.layers.map((l) => [l.name, l.colour, l.depth]))]
+      : [])],
     "PRINTED PARTS": table(["file", "labels", "quantity"], m.printed.map((pp) => [pp.file, labelsOf(pp.labels), String(pp.quantity)])),
     "CLEARANCES (design fit, not kerf)": m.clearances.map((c) =>
       `${cleanLabel(c.label)}: ${settingValue(c.value)}${c.unit ? ` ${cleanLabel(c.unit)}` : ""}`),

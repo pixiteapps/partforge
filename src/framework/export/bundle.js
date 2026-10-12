@@ -19,7 +19,7 @@ import { resolveSheet } from "../sheet/resolve.js";
 import { processById, SHEET_METRICS } from "../process/registry.js";
 import { loadExporter } from "../process/exporters.js";
 import { validateKitOptions, resolveStock, KIT_OPTIONS_ERROR, KIT_LIMITS } from "./formats.js";
-import { canonicalDrawingKey } from "./drawing.js";
+import { canonicalDrawingKey, routedPalette } from "./drawing.js";
 import { renderSvg } from "./svg.js";
 import { renderDxf } from "./dxf.js";
 import { layoutGroup, marginFitsStock } from "./layout.js";
@@ -192,6 +192,29 @@ function sheetMetaOrThrow(kernel, sp, p, d, name) {
   throw new Error(`sheet part "${name}": its material or thickness could not be evaluated`);
 }
 
+// The README's layer legend: every routed layer name in the kit, once, with its colour
+// (ACI in a DXF kit, hex in an SVG one) and depth — REFERENCE, SECONDARY, then drills in
+// palette order, then pockets shallowest first. The palette is kit-wide, so a name has
+// one colour; the legend is the authority when a palette cycles.
+const LEGEND_RANK = { reference: 0, secondary: 1, drill: 2, pocket: 3 };
+const legendKind = (l) => (l.id.startsWith("drill-") ? "drill" : l.id.startsWith("pocket-") ? "pocket" : l.id);
+function routedLegend(pieces, cutExt) {
+  const rows = new Map();
+  for (const pc of pieces) {
+    for (const l of pc.drawing.layers) {
+      if (l.name === undefined || rows.has(l.name)) continue;
+      const kind = legendKind(l);
+      rows.set(l.name, { name: l.name, kind, order: rows.size,
+        colour: cutExt === "svg" ? l.svgColor : String(l.color),
+        depth: l.through ? "through" : typeof l.depth === "number" ? `${l.depth.toFixed(2)} mm` : "—", mm: l.depth ?? 0 });
+    }
+  }
+  return [...rows.values()]
+    .sort((a, b) => (LEGEND_RANK[a.kind] ?? 9) - (LEGEND_RANK[b.kind] ?? 9)
+      || (a.kind === "pocket" ? a.mm - b.mm : 0) || a.order - b.order)
+    .map(({ name, colour, depth }) => ({ name, colour, depth }));
+}
+
 // One export-bundle job's kit. `names` is the job's selected() — exportable, enabled, in
 // definition order — and `posed`/`label`/`exportName` are jobs.js's own, so a kit's
 // printed parts are built exactly the way the STL and 3MF exports build them.
@@ -202,9 +225,6 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
   const service = o.destination === "service";
   const router = o.destination === "cnc-router";
   const cutExt = o.cutFormat;                       // svg for own-laser, dxf otherwise
-  // A routed piece's drawing carries its own named layers (depth-named pockets and
-  // drills); a laser piece's layers are the three fixed classes, which carry no name.
-  const isRouted = (drawing) => drawing.layers.some((l) => l.name !== undefined);
   const say = (phase) => onProgress(clipPhase(phase));
   const nameOf = (name) => cleanLabel(label(name));
   if (names.length === 0) throw new Error("no exportable parts selected");
@@ -243,18 +263,27 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
 
   // Draw every sheet part flat, from its 2-D declaration, with its 2-D facts under ONE
   // budget for the whole kit.
+  // Resolved first, drawn second: a routed layer's colour comes from a palette over
+  // EVERY routed piece's depths (drawing.js routedPalette), so one depth is one colour
+  // in every file of the kit and on every sheet.
   const deadline = Date.now() + SHEET_CHECK_BUDGET_MS;
-  const drawn = [];
+  const resolved = [];
   for (const name of sheetNames) {
     say(`building ${nameOf(name)}`);
     const s = resolveSheet(kernel, part.parts[name], p, d);
     const desc = processById(s.process);
     if (!desc) throw new Error(`sheet part "${nameOf(name)}": unknown process "${s.process}"`);
-    const facts = desc.facts(s, { deadline });
+    resolved.push({ name, s, facts: desc.facts(s, { deadline }) });
+  }
+  const palette = routedPalette(resolved.filter((x) => x.s.process === "cnc-router").map((x) => x.s));
+  const drawn = [];
+  for (const { name, s, facts } of resolved) {
     const exporter = await loadExporter(s.process);
-    const drawing = exporter.drawing(s, o, kernel, { label: nameOf(name), facts });
+    const drawing = exporter.drawing(s, o, kernel, { label: nameOf(name), facts, palette });
+    // A routed piece is known by its process, never guessed from its layers: one with
+    // only a profile draws no named layer and is still routed.
     drawn.push({ name, label: nameOf(name), fileKey: exportName(name), group: groupOf.get(name),
-      drawing, facts, key: canonicalDrawingKey(drawing) });
+      drawing, facts, key: canonicalDrawingKey(drawing), routed: s.process === "cnc-router" });
   }
 
   // Identical pieces become one file ×N (spec D.4): the hash nominates; the canonical
@@ -267,7 +296,6 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
     .map(({ item, members }) => ({
       ...item, labels: members.map((m) => m.label), qty: members.length * o.sets,
       hasMarks: item.drawing.layers.some((l) => l.id === "score" || l.id === "engrave"),
-      routed: isRouted(item.drawing),
     }));
 
   // Names, in definition order. A name that was taken moves to name-2; the README's
@@ -397,6 +425,7 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
       thickness: groups.get(pc.group).thickness, size: pc.drawing.nominal, quantity: pc.qty })),
     router: pieces.filter((pc) => pc.routed && pc.facts?.routed).map((pc) => ({
       labels: pc.labels, material: groups.get(pc.group).material, thickness: groups.get(pc.group).thickness, ...pc.facts.routed })),
+    layers: routedLegend(pieces.filter((pc) => pc.routed), cutExt),
     printed: prints.map((pp) => ({ file: pp.file, labels: pp.labels, quantity: pp.qty })),
     clearances: controls.filter(isClearance)
       .map((c) => ({ label: c.label ?? c.key, value: p[c.key], unit: c.unit ?? "" })),

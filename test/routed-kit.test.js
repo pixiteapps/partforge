@@ -146,3 +146,40 @@ test("a routed part with an empty extra footprint builds a cnc-router kit with n
   expect(names).not.toContain("SECONDARY");
   expect(names).toContain("CUT");
 });
+
+test("a pocket depth carries one colour across the kit, and the README legend lists every routed layer", async () => {
+  const board = (label, pockets) => routedPart({ views: ["all"], label, material: "walnut", thickness: 18, export: { name: label.toLowerCase() },
+    profile: (kk) => kk.shape2d(rect(100, 60)), pockets: () => pockets });
+  const part = { meta: { title: "Boards" }, parameters: [], defaults: {}, views: { all: { label: "All" } }, parts: {
+    a: board("A", [{ region: rect(20, 20).map(([x, y]) => [x + 10, y + 10]), depth: 6 }, { region: rect(20, 20).map(([x, y]) => [x + 50, y + 10]), depth: 11.43 }]),
+    b: board("B", [{ region: rect(20, 20).map(([x, y]) => [x + 10, y + 10]), depth: 11.43 }]),
+  } };
+  const r = await kit(part, { destination: "cnc-router" });
+  expect(r.error).toBeNull();
+  const colourOf = (file) => parseDxf(r.text(file)).layers.find((l) => l.name === "POCKET_11.43MM").color;
+  expect(colourOf("parts/a.dxf")).toBe(40);
+  expect(colourOf("parts/b.dxf")).toBe(40);
+  const sheet = r.names.find((n) => n.startsWith("sheets/"));
+  expect(parseDxf(r.text(sheet)).layers.find((l) => l.name === "POCKET_11.43MM").color).toBe(40);
+  const readme = r.text("README.txt");
+  expect(readme).toContain("layer | colour | depth");
+  expect(readme).toContain("POCKET_6MM | 30 | 6.00 mm");
+  expect(readme).toContain("POCKET_11.43MM | 40 | 11.43 mm");
+});
+
+test("the legend lists drills (through ones as through) and SECONDARY/REFERENCE without a depth", async () => {
+  const r = await kit(fixture, { destination: "cnc-router" }, ["plinth"]);
+  const readme = r.text("README.txt");
+  expect(readme).toContain("REFERENCE | 8 | —");
+  expect(readme).toContain("SECONDARY | 6 | —");
+  expect(readme).toContain("DRILL_D3.4_10MM | 3 | 10.00 mm");
+  expect(readme).toContain("POCKET_11.43MM | 30 | 11.43 mm");
+});
+
+test("a routed piece with only a profile is still routed: it gets its ROUTER OPERATIONS block", async () => {
+  const part = { meta: { title: "Bare" }, parameters: [], defaults: {}, views: { all: { label: "All" } },
+    parts: { bare: routedPart({ views: ["all"], label: "Bare", material: "walnut", thickness: 18, profile: (kk) => kk.shape2d(rect(50, 50)) }) } };
+  const r = await kit(part, { destination: "cnc-router" });
+  expect(r.error).toBeNull();
+  expect(r.text("README.txt")).toMatch(/\nROUTER OPERATIONS\nBare \(walnut 18\.00 mm\) — depths from the machined face:/);
+});

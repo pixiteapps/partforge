@@ -2011,7 +2011,7 @@ the assembled view, and `minWall` and the overhang check skip sheet parts.
 
 ### The kit
 
-A host downloads sheet parts as one ZIP, the **cut & print kit** (`format: "bundle"`): `README.txt`, `parts.csv`, laid-out `sheets/`, one `parts/` file per distinct piece (plus a `-marks.dxf` for a cutting service) and `print/` for printed parts. Identical pieces merge into one `-xN` file named from `export: { name }`, else the key. Destination (`"own-laser"` or `"service"`), kerf and stock size are chosen at download, so draw nominal and bind `thickness` to the measured control. A choice the kit cannot honour fails with `cut kit options:`.
+A host downloads sheet parts as one ZIP, the **cut & print kit** (`format: "bundle"`): `README.txt`, `parts.csv`, laid-out `sheets/`, one `parts/` file per distinct piece (plus a `-marks.dxf` for a cutting service) and `print/` for printed parts. Identical pieces merge into one `-xN` file named from `export: { name }`, else the key. Destination (`"own-laser"`, `"service"` or `"cnc-router"`), kerf and stock size are chosen at download, so draw nominal and bind `thickness` to the measured control. A choice the kit cannot honour fails with `cut kit options:`.
 
 ### Limits
 
@@ -2196,7 +2196,8 @@ machined face at z = `thickness`; `pose` places it exactly as a sheet part's doe
   through pocket); deeper is a build error naming the pocket. Pockets whose depths agree to
   two decimals share a DXF layer.
 - **`drills`** — `[{ at: [x, y], d, depth, label? }]`: a round hole of diameter `d`.
-  `depth >= thickness` is a THROUGH hole. Written as a DXF `CIRCLE`, which is what lets
+  Set `depth` to the thickness to drill through — deeper is a `routed-drill-depth`
+  lint error. Written as a DXF `CIRCLE`, which is what lets
   the CAM offer a drilling toolpath instead of a profile cut.
 - **`extra`** — `[{ solid, footprint, label, method }]`: an operation the router cannot
   do straight down — a tilted slot, a scooped thumb hold, an undercut. `solid` is cut in
@@ -2210,15 +2211,18 @@ machined face at z = `thickness`; `pose` places it exactly as a sheet part's doe
 
 Keep these functions chainable — no branching on `isEmpty()`/`area()` — so pose-only
 sliders stay fast. `null` entries are skipped; an empty pocket region draws nothing and
-is counted by `routedEmpty`.
+is counted by `routedEmpty`, as is an extra op whose footprint is empty.
 
 ### The drawing
 
 One DXF per piece, R12, millimetres: `CUT` (colour 1) is the through cut — the outline and
 the profile's own holes; `POCKET_<depth>MM` one layer per distinct depth (colours 30, 40, 50, 20,
-10 from shallow to deep); `DRILL_D<dia>_<depth>MM` or `DRILL_D<dia>_THRU` per diameter
+10); `DRILL_D<dia>_<depth>MM` or `DRILL_D<dia>_THRU` per diameter
 and depth (colours 3, 4, 2, 140, 170); `SECONDARY` (6) the extra ops' footprints;
-`REFERENCE` (8) layout lines. Depth rides both the layer name and the colour. Kerf
+`REFERENCE` (8) layout lines. Depth rides both the layer name and the colour, and colours
+are assigned per kit — pockets shallowest depth first, drills in the order they appear —
+so one layer name has one colour in every file. A palette cycles past five depths; the
+README's LAYERS legend (layer, colour, depth) is the authority. Kerf
 never applies — the CAM applies the tool offset, and the kit refuses a kerf for this
 destination. The README's ROUTER OPERATIONS table lists every pocket, drill group and
 extra op with its depth and method.
@@ -3220,7 +3224,7 @@ returns instead:
   `destination: "service"` each piece is a cut-only `.dxf` plus a `-marks.dxf` for its
   score and engrave lines, and the DXF sheets are for reference. With `destination: "cnc-router"` every routed piece is one DXF carrying all its layers
   (depth per layer), laser pieces are written as for a service, and kerf must be 0. Every `options` key is
-  optional: `destination` (`"own-laser"`, the default, or `"service"`), `kerf` (0–0.5 mm,
+  optional: `destination` (`"own-laser"`, the default, `"service"` or `"cnc-router"`), `kerf` (0–0.5 mm,
   applied to the cut lines only), `stock: [{ group, size: [w, h] }]` (a row's
   `sheet.group`; a `"*"` entry sizes every group that has no entry of its own; 300 × 300
   mm when `stock` is omitted), `margin` (5 mm),

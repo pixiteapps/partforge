@@ -3,8 +3,13 @@
 // process/exporters.js. Kerf never applies: the CAM offsets for the tool, and
 // validateKitOptions has already refused a kerf for this destination — the check here
 // is the belt for a laser destination carrying a routed piece.
+//
+// Colours: `ctx.palette` (drawing.js routedPalette, built by the kit over EVERY routed
+// piece) when given, so one depth is one colour across the kit; without it — a direct
+// call — the piece ranks its own depths. Each named layer also carries its `depth` (mm,
+// two decimals) and drills `through`, which the README's layer legend reads.
 import {
-  refitRing, ringsOf, cutRings, drawingBounds, routedLayerName, depthToken, ROUTED_COLORS,
+  refitRing, ringsOf, cutRings, drawingBounds, routedLayerName, depthToken, drillKey, ROUTED_COLORS,
 } from "../../export/drawing.js";
 import { KIT_OPTIONS_ERROR } from "../../export/formats.js";
 
@@ -32,10 +37,13 @@ function drawing(s, o, k, ctx = {}) {
 
   // Drills grouped by (d, depth, through) in first-seen order; each hole a closed ring
   // of two exact arcs, which dxf.js writes as a CIRCLE.
+  const palette = ctx.palette ?? null;
   const drillGroups = new Map();
   drills.forEach((dr) => {
-    const key = `D${depthToken(dr.d)}-${dr.through ? "THRU" : depthToken(dr.depth)}`;
-    const g = drillGroups.get(key) ?? { id: `drill-${key}`, name: routedLayerName("drill", dr), ...ROUTED_COLORS.drill[drillGroups.size % ROUTED_COLORS.drill.length], paths: [] };
+    const key = drillKey(dr);
+    const colour = palette?.drill.get(key) ?? ROUTED_COLORS.drill[drillGroups.size % ROUTED_COLORS.drill.length];
+    const g = drillGroups.get(key) ?? { id: `drill-${key}`, name: routedLayerName("drill", dr), ...colour,
+      depth: Number(depthToken(dr.depth)), through: dr.through, paths: [] };
     g.paths.push(...ringsOfShape(dr.shape));
     drillGroups.set(key, g);
   });
@@ -51,8 +59,9 @@ function drawing(s, o, k, ctx = {}) {
     g.paths.push(...paths);
     pocketGroups.set(key, g);
   }
-  [...pocketGroups.values()].sort((a, b) => a.depth - b.depth).forEach(({ depth, ...g }, i) => {
-    layers.push({ ...g, ...ROUTED_COLORS.pocket[i % ROUTED_COLORS.pocket.length] });
+  [...pocketGroups.values()].sort((a, b) => a.depth - b.depth).forEach((g, i) => {
+    const colour = palette?.pocket.get(depthToken(g.depth)) ?? ROUTED_COLORS.pocket[i % ROUTED_COLORS.pocket.length];
+    layers.push({ ...g, ...colour });
   });
 
   if (cut.inner.length) layers.push({ id: "cut-inner", paths: cut.inner.map(closedPath) });
