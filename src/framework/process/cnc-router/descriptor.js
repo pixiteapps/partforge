@@ -5,7 +5,7 @@
 //
 // Import-free apart from sheet/constants.js and lint/finding.js (test/sheet-layering):
 // lint and the oracle read the registry. The resolver that turns pockets/drills/extra
-// into shapes lives in sheet/routed.js (it may import geometry); the writer in
+// into shapes lives in sheet/routed-resolve.js (it may import geometry); the writer in
 // process/cnc-router/export.js (it reaches paper), loaded only by the kit.
 import {
   EMPTY_MARK_RE, MARK_DEPTH, MARK_OVERCUT, ROUTED_DOC_ID, ROUTED_KEYS, LOSS_TOL_MM2, isSheetPart, sheetMeta, fmtMm,
@@ -87,13 +87,20 @@ function routedFacts(s) {
   }
   const drillRows = [...drillGroups.values()].map(({ labels, d, depth, through, count }) =>
     ({ label: labels.length ? labels.join(", ") : null, d, depth, through, count }));
-  const extraRows = extra.map((x) => {
+  // An extra op whose footprint resolved to nothing draws nothing: counted under
+  // `empty` with the empty pockets, never a row (its size has no bounding box).
+  const extraRows = [];
+  for (const x of extra) {
+    if (x.footprint.isEmpty()) { empty++; continue; }
     const [w, h] = sizeOf(x.footprint);
     noteOutside(x.footprint);
-    // How deep the op reaches below the machined face (z = t), within the stock.
-    const reach = t - x.solid.boundingBox().min[2];
-    return { label: x.label, method: x.method, w: round2(w), h: round2(h), maxDepth: round2(Math.max(0, Math.min(t, reach))) };
-  });
+    // How deep the op reaches below the machined face (z = t), within the stock. An
+    // empty solid has no bounding box and reaches nothing.
+    const bb = x.solid.boundingBox();
+    const bottom = bb?.min?.[2];
+    const reach = Number.isFinite(bottom) ? t - bottom : 0;
+    extraRows.push({ label: x.label, method: x.method, w: round2(w), h: round2(h), maxDepth: round2(Math.max(0, Math.min(t, reach))) });
+  }
 
   return {
     process: s.process, material: s.material, thickness: t, group: s.group,
@@ -116,7 +123,7 @@ const METRICS = {
     hint: "a pocket, drill or extra-op footprint of this routed part lies partly outside its profile — the router would cut air or the next piece; move it inside the outline, or widen the profile" },
   routedEmpty: { kind: "warn", doc: ROUTED_DOC_ID,
     extract: (s) => s.sheet?.routed?.empty ?? null,
-    hint: "a pocket of this routed part resolved to an empty region at these parameters, so nothing is cut and nothing is drawn for it — check the region's size and position, or drop the entry" },
+    hint: "a pocket or extra-op footprint of this routed part resolved to an empty region at these parameters, so nothing is drawn for it — check the region's size and position, or drop the entry" },
   routedPieces: { kind: "warn", doc: ROUTED_DOC_ID,
     extract: (s) => s.sheet?.pieces ?? null,
     hint: "the profile is not exactly one piece — a routed part must cut out as one region; join the pieces or split them into separate routedPart sub-parts" },

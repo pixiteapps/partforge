@@ -51,6 +51,29 @@ describe("facts", () => {
   });
 });
 
+describe("empty extra ops", () => {
+  const EMPTY = (kk) => kk.shape2d([[10, 10], [20, 10], [20, 20], [10, 20]]).cut([[0, 0], [30, 0], [30, 30], [0, 30]]);
+  test("an extra whose footprint is empty is counted under empty, never a row, never a throw", () => {
+    const f = facts({ extra: (kk) => [{ solid: kk.box({ size: [10, 10, 10] }).translate([65, 25, 13]), footprint: EMPTY(kk), label: "notch", method: "chisel" }] });
+    expect(f.routed.empty).toBe(1);
+    expect(f.routed.extra).toEqual([]);
+  });
+  test("an extra whose solid is empty reaches no depth", () => {
+    const f = facts({ extra: (kk) => [{ solid: kk.box({ size: [10, 10, 10] }).cut(kk.box({ size: [20, 20, 20] }).translate([-5, -5, -5])), footprint: [[60, 20], [70, 20], [70, 30], [60, 30]], label: "notch", method: "chisel" }] });
+    expect(f.routed.extra).toEqual([{ label: "notch", method: "chisel", w: 10, h: 10, maxDepth: 0 }]);
+  });
+  test("measure() reads a routed part with an empty extra footprint", () => {
+    const part = {
+      meta: { title: "Plinth" }, defaults: {}, views: { main: { label: "Main" } },
+      parts: { plinth: routedPart({ views: ["main"], label: "Plinth", material: "walnut", thickness: 18, profile: (kk) => kk.shape2d(RECT),
+        extra: (kk) => [{ solid: kk.box({ size: [10, 10, 10] }).translate([65, 25, 13]), footprint: EMPTY(kk), label: "notch", method: "chisel" }] }) },
+    };
+    const row = measure(k, part, "main").subparts.find((s) => s.name === "plinth");
+    expect(row.sheet.routed.empty).toBe(1);
+    expect(row.sheet.routed.extra).toEqual([]);
+  });
+});
+
 describe("checks and metrics", () => {
   test("three volunteered checks, all warnings carrying the routed doc id", () => {
     expect(ROUTER.checks(facts({}))).toEqual({ routedOutside: "0", routedEmpty: "0", routedPieces: "1" });

@@ -134,3 +134,15 @@ test("the docs' worked example builds a cnc-router kit with every layer family",
   const names = dxf.layers.map((l) => l.name);
   expect(names).toEqual(expect.arrayContaining(["REFERENCE", "SECONDARY", "DRILL_D3.43_10MM", "POCKET_6MM", "POCKET_11.43MM", "CUT"]));
 });
+
+test("a routed part with an empty extra footprint builds a cnc-router kit with no SECONDARY layer", async () => {
+  const part = { meta: { title: "Board" }, parameters: [], defaults: {}, views: { all: { label: "All" } },
+    parts: { plinth: routedPart({ views: ["all"], label: "Plinth", material: "walnut", thickness: 18, export: { name: "plinth" },
+      profile: (kk) => kk.shape2d(rect(100, 60)),
+      extra: (kk) => [{ solid: kk.box({ size: [10, 10, 10] }).translate([85, 15, 13]), footprint: kk.shape2d(rect(10, 10)).cut(rect(20, 20)), label: "notch", method: "chisel" }] }) } };
+  const r = await kit(part, { destination: "cnc-router" });
+  expect(r.error).toBeNull();
+  const names = parseDxf(r.text("parts/plinth.dxf")).layers.map((l) => l.name);
+  expect(names).not.toContain("SECONDARY");
+  expect(names).toContain("CUT");
+});
