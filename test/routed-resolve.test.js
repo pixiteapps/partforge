@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import { routedPart } from "../src/framework/sheet/routed.js";
 import { resolveSheet } from "../src/framework/sheet/resolve.js";
+import { sheetPart } from "../src/framework/sheet/part.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -16,6 +17,10 @@ const resolve = (sp) => resolveSheet(k, sp, P, {});
 
 describe("resolveRouted", () => {
   test("a laser sheet has no routed field; a routed part with nothing declared has empty lists", () => {
+    const laser = resolve(sheetPart({ views: ["main"], label: "Panel", material: "birch plywood", thickness: (p) => p.t,
+      profile: (kk) => kk.shape2d(RECT) }));
+    expect(laser.process).toBe("laser");
+    expect(laser).not.toHaveProperty("routed");
     const s = resolve(part());
     expect(s.process).toBe("cnc-router");
     expect(s.routed).toEqual({ pockets: [], drills: [], extra: [] });
@@ -36,6 +41,7 @@ describe("resolveRouted", () => {
     const s = resolve(part({ drills: () => [{ at: [50, 30], d: 3.4, depth: 10 }, { at: [20, 20], d: 6, depth: 18, label: "bolt" }, { at: [80, 20], d: 6, depth: 40 }] }));
     expect(s.routed.drills.map((x) => x.through)).toEqual([false, true, true]);
     expect(s.routed.drills[0].shape.area()).toBeCloseTo(Math.PI * 1.7 * 1.7, 2); // area() reads the arcs' cubic approximation (~0.03% over); the via check below is the exactness claim
+    expect(s.routed.drills[0].shape.toContours()[0].outer.segments).toHaveLength(2);
     expect(s.routed.drills[0].shape.toContours()[0].outer.segments.every((seg) => seg.via)).toBe(true);
     expect(s.routed.drills[1].label).toBe("bolt");
   });
