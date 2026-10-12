@@ -59,6 +59,7 @@ describe("the writers", () => {
   test("DXF declares the custom layers by name and colour, writes drills as CIRCLE, keeps cut-outer last", () => {
     const dxf = parseDxf(renderDxf(piece(draw(FULL))));
     expect(dxf.layers).toEqual([
+      { name: "ENGRAVE", color: 7, linetype: "CONTINUOUS" }, { name: "SCORE", color: 5, linetype: "CONTINUOUS" },
       { name: "REFERENCE", color: 8, linetype: "CONTINUOUS" }, { name: "SECONDARY", color: 6, linetype: "CONTINUOUS" },
       { name: "DRILL_D3.4_10MM", color: 3, linetype: "CONTINUOUS" }, { name: "DRILL_D6_THRU", color: 4, linetype: "CONTINUOUS" },
       { name: "POCKET_3MM", color: 30, linetype: "CONTINUOUS" }, { name: "POCKET_11.43MM", color: 40, linetype: "CONTINUOUS" },
