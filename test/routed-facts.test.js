@@ -103,3 +103,18 @@ test("measure() stamps the routed row with sheet.routed and verify volunteers th
   const volunteered = v.cases.flatMap((c) => c.checks).filter((c) => c.volunteered).map((c) => c.metric).sort();
   expect(volunteered).toEqual(["routedEmpty", "routedOutside", "routedPieces"]);
 });
+
+test("a pocket outside the profile: measure lifts its spot to 3-D and verify's volunteered routedOutside carries a location", () => {
+  const part = {
+    meta: { title: "Plinth" }, defaults: {}, views: { main: { label: "Main" } },
+    parts: { plinth: routedPart({ views: ["main"], label: "Plinth", material: "walnut", thickness: 18, profile: (kk) => kk.shape2d(RECT),
+      pockets: () => [{ region: [[90, 50], [110, 50], [110, 70], [90, 70]], depth: 3 }] }) },
+  };
+  const row = measure(k, part, "main").subparts.find((s) => s.name === "plinth");
+  expect(row.sheet.at.outside).toHaveLength(3);
+  const v = verify(k, part);
+  const check = v.cases.flatMap((c) => c.checks).find((c) => c.metric === "routedOutside");
+  expect(check.pass).toBe(false);
+  expect(check.location).not.toBeNull();
+  expect(check.location).toHaveLength(3);
+});

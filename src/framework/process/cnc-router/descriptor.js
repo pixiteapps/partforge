@@ -41,7 +41,7 @@ function routedPreview(k, s) {
 // In the laser facts' shape (the laser-only readings null), so oracle/measure.js's
 // sheetRowFacts reads a routed row unchanged; `routed` carries what the router does.
 // `at2d.outside` is the 2-D spot of the first region found outside the profile;
-// `at.outside` (its 3-D place) is left null here.
+// `at.outside` (its 3-D place) is left null here — measure.js's sheetRowFacts lifts it.
 const round2 = (x) => Math.round(x * 100) / 100;
 const sizeOf = (shape) => { const { min, max } = shape.boundingBox(); return [max[0] - min[0], max[1] - min[1]]; };
 // The centre of the bounding box of `shape`'s largest region; null when empty.
@@ -120,6 +120,7 @@ function routedFacts(s) {
 const METRICS = {
   routedOutside: { kind: "warn", doc: ROUTED_DOC_ID,
     extract: (s) => s.sheet?.routed?.outside ?? null,
+    locate: (s) => s.sheet?.at?.outside ?? null,
     hint: "a pocket, drill or extra-op footprint of this routed part lies partly outside its profile — the router would cut air or the next piece; move it inside the outline, or widen the profile" },
   routedEmpty: { kind: "warn", doc: ROUTED_DOC_ID,
     extract: (s) => s.sheet?.routed?.empty ?? null,
