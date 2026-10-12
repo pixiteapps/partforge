@@ -44,3 +44,9 @@ test("reference lines groove the face like a score", () => {
   expect(s.volume()).toBeLessThan(100 * 60 * 18);
   expect(s.volume()).toBeGreaterThan(100 * 60 * 18 - 100 * 0.3 * 0.2 - 1);
 });
+
+test("a through pocket (depth = thickness) removes region × thickness and leaves no skin at the bottom", () => {
+  const s = build({ pockets: () => [{ region: [[10, 10], [40, 10], [40, 30], [10, 30]], depth: 18 }] });
+  expect(s.volume()).toBeCloseTo(100 * 60 * 18 - 30 * 20 * 18, 2);
+  expect(s.boundingBox().min[2]).toBeCloseTo(0, 6);
+});

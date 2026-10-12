@@ -14,7 +14,7 @@ import { err } from "../../lint/finding.js";
 
 // The preview: the profile extruded to the thickness, each pocket cut `depth` down from
 // the machined face (z = t), each drill as a cylinder from the face to its depth —
-// through holes clear BOTH faces by MARK_OVERCUT so no cap is coplanar with a face
+// through holes and through pockets (depth = thickness) clear BOTH faces by MARK_OVERCUT so no cap is coplanar with a face
 // (OCCT's coplanar booleans are fragile) — each extra solid subtracted as given, and
 // the reference grooves cut like a laser score. A tool whose region turned out empty
 // (EMPTY_MARK_RE) is dropped, never a build failure; matched by message, never by
@@ -27,7 +27,9 @@ function routedPreview(k, s) {
   const body = s.profile.extrude({ h: t });
   const { pockets, drills, extra } = s.routed;
   const tools = [
-    ...pockets.map((pk) => orEmpty(() => pk.region.extrude({ h: pk.depth + MARK_OVERCUT }).translate([0, 0, t - pk.depth]))),
+    ...pockets.map((pk) => orEmpty(() => (pk.depth >= t
+      ? pk.region.extrude({ h: t + 2 * MARK_OVERCUT }).translate([0, 0, -MARK_OVERCUT])
+      : pk.region.extrude({ h: pk.depth + MARK_OVERCUT }).translate([0, 0, t - pk.depth])))),
     ...drills.map((dr) => (dr.through
       ? k.cylinder({ d: dr.d, h: t + 2 * MARK_OVERCUT }).translate([dr.at[0], dr.at[1], -MARK_OVERCUT])
       : k.cylinder({ d: dr.d, h: dr.depth + MARK_OVERCUT }).translate([dr.at[0], dr.at[1], t - dr.depth]))),
