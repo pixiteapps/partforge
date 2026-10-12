@@ -298,6 +298,13 @@ the installed package, so let the publish finish before bumping the dep there.
   `resolve.js`/`pose.js`/`constants.js`/the registry stay paper-free, since the
   oracle imports them (`oracle/measure.js`, `oracle/verify.js`). Spec: partforge-cloud
   `docs/superpowers/specs/2026-09-28-sheet-parts-laser-kit-design.md`.
+
+  Routed parts (`routedPart`, process `cnc-router`, 0.148.0): a second process module
+  under `src/framework/process/cnc-router/`; its resolver is `sheet/routed-resolve.js`
+  (the descriptor may import nothing but constants and finding.js); a Drawing layer may
+  carry its own DXF `name`/`color`/`svgColor`, which `dxf.js`/`svg.js` honour and
+  `include` lists never select; the kit never splits a routed piece's marks. Tests:
+  `test/routed-*.test.js`.
 - **`src/parts/`** - one file per part, default-exporting a `PartDefinition`.
 - **`src/framework/ingest/`** - the asset-ingest machinery behind both the panel's
   drop targets and the `partforge ingest` CLI verb. `sniff.js` classifies bytes by

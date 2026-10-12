@@ -772,7 +772,8 @@ the helpers come along unmodified. (`test/kernel-contract.test.js` asserts every
   functions returning plain data in this contract's input format; `sheetToWorld` /
   `worldToSheet` convert between a posed sheet's drawing and world coordinates. The
   generated build calls only ops from the tables above (`shape2d`, `extrude`,
-  `offset`, `cut`, `cutAll`, `translate`, `rotate`), so a sheet part is portable by
+  `offset`, `cut`, `cutAll`, `translate`, `rotate`, plus `cylinder` for a routed part's
+  drills), so a sheet part is portable by
   construction too. None of these is a kernel op.
 
 **Profile validation on the way in** (0.112). `prism`, `extrude`, `revolve`, `sweep`,

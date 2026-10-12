@@ -28,10 +28,10 @@ const subsection = (title) => {
   return section.slice(i, j < 0 ? undefined : j);
 };
 
-test("one Sheet parts section, after Editing profiles and before Convex hull", () => {
+test("one Sheet parts section, after Editing profiles and before Routed parts", () => {
   expect(start).toBeGreaterThan(guide.indexOf("\n## Editing profiles\n"));
   expect(guide.indexOf("\n## Sheet parts\n", start + 1)).toBe(-1);
-  expect(guide.slice(end + 1).startsWith("## Convex hull\n")).toBe(true);
+  expect(guide.slice(end + 1).startsWith("## Routed parts\n")).toBe(true);
 });
 
 test("the section fits the 16,000-character topic cap, leaving 650 for the kit", () => {

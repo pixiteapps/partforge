@@ -8,6 +8,7 @@ import { DESTINATIONS, validateKitOptions } from "../src/framework/export/format
 import { README_HEADINGS } from "../src/framework/export/readme.js";
 import { PROCESSES } from "../src/framework/process/registry.js";
 import { parseDxf } from "./helpers/dxf-subset.js";
+import plinth from "./fixtures/routed-plinth-part.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -124,4 +125,12 @@ describe("the cnc-router kit", () => {
     expect(r.error).toBeNull();
     expect(r.names).toContain("parts/left-x2.dxf");
   });
+});
+
+test("the docs' worked example builds a cnc-router kit with every layer family", async () => {
+  const r = await kit(plinth, { destination: "cnc-router" });
+  expect(r.error).toBeNull();
+  const dxf = parseDxf(r.text(r.names.find((n) => /^parts\/.*\.dxf$/.test(n))));
+  const names = dxf.layers.map((l) => l.name);
+  expect(names).toEqual(expect.arrayContaining(["REFERENCE", "SECONDARY", "DRILL_D3.43_10MM", "POCKET_6MM", "POCKET_11.43MM", "CUT"]));
 });
