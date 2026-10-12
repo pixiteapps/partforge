@@ -259,7 +259,11 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
 
   // Identical pieces become one file ×N (spec D.4): the hash nominates; the canonical
   // drawing and the stock group confirm.
-  const pieces = dedupe(drawn, (x) => h(x.key), (a, b) => a.key === b.key && a.group === b.group)
+  // A routed piece's operations table is confirmed too: an extra op's depth and method,
+  // and the op labels, are not in its drawing — only the README carries them, so two
+  // pieces that draw alike but machine differently must stay two files.
+  const sameOps = (a, b) => JSON.stringify(a.facts?.routed ?? null) === JSON.stringify(b.facts?.routed ?? null);
+  const pieces = dedupe(drawn, (x) => h(x.key), (a, b) => a.key === b.key && a.group === b.group && sameOps(a, b))
     .map(({ item, members }) => ({
       ...item, labels: members.map((m) => m.label), qty: members.length * o.sets,
       hasMarks: item.drawing.layers.some((l) => l.id === "score" || l.id === "engrave"),

@@ -93,4 +93,35 @@ describe("the cnc-router kit", () => {
     const r = await kit(fixture, { destination: "service", kerf: 0.2 }, ["plinth"]);
     expect(r.error).toContain('cut kit options: kerf does not apply to a CNC router — the CAM applies the tool offset; set kerf to 0 ("Plinth")');
   });
+
+  // Two routed pieces whose drawings match but whose operations do not must stay two
+  // files: an extra op's depth, method and the op labels live only in the README.
+  const twin = ({ notchTop = 13, pocketDepth = 11.43, name }) => routedPart({ views: ["all"], label: name, material: "walnut", thickness: 18, export: { name: name.toLowerCase() },
+    profile: (kk) => kk.shape2d(rect(100, 60)),
+    pockets: () => [{ region: rect(30, 20).map(([x, y]) => [x + 10, y + 10]), depth: pocketDepth, label: "vault" }],
+    extra: (kk) => [{ solid: kk.box({ size: [10, 10, 10] }).translate([85, 15, notchTop]), footprint: rect(10, 10).map(([x, y]) => [x + 80, y + 10]), label: "notch", method: "chisel, 10 mm" }] });
+  const pair = (a, b) => ({ meta: { title: "Twins" }, parameters: [], defaults: {}, views: { all: { label: "All" } }, parts: { a: twin({ ...a, name: "Left" }), b: twin({ ...b, name: "Right" }) } });
+
+  test("routed pieces differing only in an extra op's depth are not merged", async () => {
+    const r = await kit(pair({ notchTop: 13 }, { notchTop: 10 }), { destination: "cnc-router" });
+    expect(r.error).toBeNull();
+    expect(r.names).toEqual(expect.arrayContaining(["parts/left.dxf", "parts/right.dxf"]));
+    expect(r.names.some((n) => /-x2\./.test(n))).toBe(false);
+    const readme = r.text("README.txt");
+    expect(readme).toContain("extra | notch | 10.00 × 10.00 mm | to 5.00 mm | chisel, 10 mm");
+    expect(readme).toContain("extra | notch | 10.00 × 10.00 mm | to 8.00 mm | chisel, 10 mm");
+  });
+
+  test("routed pieces differing only in a pocket's depth are not merged", async () => {
+    const r = await kit(pair({ pocketDepth: 11.43 }, { pocketDepth: 6 }), { destination: "cnc-router" });
+    expect(r.error).toBeNull();
+    expect(r.names).toEqual(expect.arrayContaining(["parts/left.dxf", "parts/right.dxf"]));
+    expect(r.names.some((n) => /-x2\./.test(n))).toBe(false);
+  });
+
+  test("identical routed pieces still merge", async () => {
+    const r = await kit(pair({}, {}), { destination: "cnc-router" });
+    expect(r.error).toBeNull();
+    expect(r.names).toContain("parts/left-x2.dxf");
+  });
 });
