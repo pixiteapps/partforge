@@ -51,8 +51,8 @@ export interface ExportableSheetInfo {
  * starting `"cut kit options:"` for anything it cannot honour.
  */
 export interface KitOptions {
-  /** `"own-laser"` (default): SVG, laid out on sheets. `"service"`: DXF, one cut-only file per piece. */
-  destination?: "own-laser" | "service";
+  /** `"own-laser"` (default): SVG, laid out on sheets. `"service"`: DXF, one cut-only file per piece. `"cnc-router"`: DXF, one layered file per routed piece; kerf must be 0. */
+  destination?: "own-laser" | "service" | "cnc-router";
   /** Derived from `destination`; when given it must match. */
   cutFormat?: "svg" | "dxf";
   /** mm, 0–0.5: the cut lines move out by half of it. Default 0 (nominal geometry). */
