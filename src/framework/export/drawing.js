@@ -354,3 +354,21 @@ export function applyKerf(regions, kerf, { label = "sheet part", gap = null } = 
   if (arcCount(out) < arcCount(regions)) throw new Error(intact);
   return out;
 }
+
+// ── routed layers (process/cnc-router) ────────────────────────────────────────
+// Depth in millimetres as a layer-name token: up to two decimals, trailing zeros
+// dropped (11.43 → "11.43", 3 → "3"). Two depths that round alike share a layer.
+export const depthToken = (mm) => String(Number(mm.toFixed(2)));
+export function routedLayerName(kind, op) {
+  if (kind === "pocket") return `POCKET_${depthToken(op.depth)}MM`;
+  if (kind === "drill") return op.through ? `DRILL_D${depthToken(op.d)}_THRU` : `DRILL_D${depthToken(op.d)}_${depthToken(op.depth)}MM`;
+  throw new Error(`routedLayerName: unknown kind ${JSON.stringify(kind)}`);
+}
+// Palettes: ACI colours for DXF, hex for SVG. Drills cycle; pockets are assigned by
+// ascending depth (shallowest first).
+export const ROUTED_COLORS = Object.freeze({
+  reference: { color: 8, svgColor: "#808080" },
+  secondary: { color: 6, svgColor: "#FF00FF" },
+  drill: Object.freeze([{ color: 3, svgColor: "#00AA00" }, { color: 4, svgColor: "#00AAAA" }, { color: 2, svgColor: "#AAAA00" }, { color: 140, svgColor: "#0055AA" }, { color: 170, svgColor: "#5500AA" }]),
+  pocket: Object.freeze([{ color: 30, svgColor: "#E07000" }, { color: 40, svgColor: "#E0A000" }, { color: 50, svgColor: "#C0C000" }, { color: 20, svgColor: "#A06000" }, { color: 10, svgColor: "#804000" }]),
+});

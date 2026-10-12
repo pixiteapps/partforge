@@ -57,6 +57,8 @@ describe("the file", () => {
     expect(cutOnly.entities.every((e) => e.layer === "CUT")).toBe(true);
     const marks = parseDxf(renderDxf(piece(plate()), { include: ["score", "engrave"] }));
     expect(marks.entities.map((e) => e.layer)).toEqual(["ENGRAVE", "SCORE"]);
+    // a default (undefined) include is the full laser trio, exactly as before
+    expect(parseDxf(renderDxf(piece(plate()), {})).layers.map((l) => l.name)).toEqual(["ENGRAVE", "SCORE", "CUT"]);
   });
 
   test("an unknown include is refused", () => {
