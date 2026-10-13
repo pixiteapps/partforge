@@ -15,7 +15,7 @@ import { resolveEnvironmentId } from "./materials/resolve.js";
 import { burnsFor, realisticDisplay } from "./materials/sheet-look.js";
 import { effectiveDisplay, mergeOverride, sanitizeDisplayPatch, subPartVisibility, APPEARANCE_OVERRIDE_KEYS, VIEWING_KEYS } from "./materials/overrides.js";
 import { neutralToneMapToSrgb8 } from "./materials/tonemap-readback.js";
-import { createMaterialThumbCache } from "./materials/thumb-cache.js";
+import { createMaterialThumbCache, thumbDisplay } from "./materials/thumb-cache.js";
 import { createCutaway } from "./cutaway.js";
 import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
 import { flashWorldRadius, projectToScreen, anchorMoved } from "./pick-flash.js";
@@ -2396,12 +2396,15 @@ export function createViewer(container, part) {
     const key = thumbKey(display);
     const hit = materialThumbs.get(key);
     if (hit !== undefined) return hit;
+    // Built from the key's own fields only (the preset, tinted), never the
+    // sub-part's finish overrides or opacity — see thumb-cache.js.
+    const look = thumbDisplay(display);
     let mat = null;
     try {
       const tmp = new THREE.Scene();
       const rig = renderMode === "realistic" ? realisticRig : null;
       if (rig) {
-        mat = buildPhysicalMaterial(display, { loadTexture });
+        mat = buildPhysicalMaterial(look, { loadTexture });
         // A textured preset (oak) would otherwise draw untextured, and be cached so.
         await whenTexturesSettled();
         // The look moved while the maps loaded: this sphere is for a key nobody
@@ -2424,7 +2427,7 @@ export function createViewer(container, part) {
           tmp.add(d, d.target);
         }
       } else {
-        mat = buildCadMaterial(display, material);
+        mat = buildCadMaterial(look, material);
         tmp.background = new THREE.Color(THEME[currentTheme].bg);
         tmp.add(createHemisphereLight());
         const { key: k, fill: f } = createCaptureLights();

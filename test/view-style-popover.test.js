@@ -168,6 +168,21 @@ describe("view style popover: parts section", () => {
     expect(vs.isOpen()).toBe(false);
     vs.detach();
   });
+  it("a theme change repaints an open card's tiles (the viewer cleared its thumbnails)", async () => {
+    let themeCb = null;
+    const viewer = { ...viewerStub(), onThemeChange: (cb) => { themeCb = cb; return () => {}; }, renderMaterialThumbnail: vi.fn(async () => null) };
+    const vs = attachViewStyleControls(viewer, { stage, toolbar, parts: partsStub(ROWS()) });
+    expect(vs.openCard("lid")).toBe(true);
+    // Let the first paint finish: one call per material tile (the CAD tile has none).
+    const tiles = vs.popover.querySelectorAll('.pf-card-tile:not([data-material=""])').length;
+    await vi.waitFor(() => expect(viewer.renderMaterialThumbnail).toHaveBeenCalledTimes(tiles));
+    await new Promise((r) => setTimeout(r, 20));
+    const before = viewer.renderMaterialThumbnail.mock.calls.length;
+    expect(before).toBe(tiles);
+    themeCb("light");
+    await vi.waitFor(() => expect(viewer.renderMaterialThumbnail.mock.calls.length).toBeGreaterThan(before));
+    vs.detach();
+  });
   it("a card whose part disappears falls back to the list page", () => {
     const parts = partsStub(ROWS());
     const vs = attachViewStyleControls(viewerStub(), { stage, toolbar, parts });

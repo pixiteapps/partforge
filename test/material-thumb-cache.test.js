@@ -1,6 +1,6 @@
 // test/material-thumb-cache.test.js
 import { describe, it, expect } from "vitest";
-import { createMaterialThumbCache } from "../src/framework/materials/thumb-cache.js";
+import { createMaterialThumbCache, thumbDisplay } from "../src/framework/materials/thumb-cache.js";
 
 describe("material thumbnail cache", () => {
   it("keys on material, colour, environment, theme and mode; ignores finish overrides", () => {
@@ -20,5 +20,11 @@ describe("material thumbnail cache", () => {
     expect(c.get("k124")).toBe("u124");
     c.clear();
     expect(c.get("k124")).toBeUndefined();
+  });
+  it("the display a thumbnail is built from holds only the key's material and colour", () => {
+    expect(thumbDisplay({ material: "oak", color: 0x112233, roughness: 1, metalness: 0.5, clearcoat: 1, opacity: 0.3, hidden: true }))
+      .toEqual({ material: "oak", color: 0x112233 });
+    expect(thumbDisplay({ material: "brass", roughness: 0.1 })).toEqual({ material: "brass" });
+    expect(thumbDisplay(null)).toEqual({ material: undefined });
   });
 });

@@ -315,7 +315,9 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
     viewer.onRenderModeChange(() => { viewer.invalidateMaterialThumbnails?.(); if (pop.dataset.page === "card") card?.render(); }),
     viewer.onEnvironmentChange(() => { viewer.invalidateMaterialThumbnails?.(); if (pop.dataset.page === "card") card?.render(); }),
     viewer.onAssemblyChange?.(() => cache.invalidate()) ?? (() => {}),
-    viewer.onThemeChange?.(() => cache.invalidate()) ?? (() => {}),
+    // A theme change also clears the viewer's material thumbnails (setTheme):
+    // repaint an open card's tiles, or CAD tiles keep the old theme's backdrop.
+    viewer.onThemeChange?.(() => { cache.invalidate(); if (pop.dataset.page === "card") card?.render(); }) ?? (() => {}),
     // A thumbnail shows the section as it was when it was taken, so turning
     // the cutaway on or off, or moving its plane, stales them all — without
     // this a set taken with the cutaway on outlived the cutaway itself.
