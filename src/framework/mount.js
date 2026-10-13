@@ -1655,7 +1655,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       setHostPane: paneTabs.setHostPane,
       setRailLayout: paneTabs.setRailLayout,
       getView: view,                         // () => tabsCtl.current()
-      listSubParts: ({ view: v } = {}) => subPartRows(part, { view: v ?? view(), params, overrides: viewer.getDisplayOverrides?.() ?? {} }),
+      // `opts` may be null from a host (a destructuring default covers only undefined).
+      listSubParts: (opts) => subPartRows(part, { view: opts?.view ?? view(), params, overrides: viewer.getDisplayOverrides?.() ?? {} }),
       openAppearance: (name) => viewStyle.openCard?.(name) ?? false,
       setDisplaySaveState: (state) => viewStyle.setSaveState?.(state),
       setView: (name) => tabsCtl.select(name),

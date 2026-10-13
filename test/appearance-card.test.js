@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // test/appearance-card.test.js
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { attachAppearanceCard } from "../src/framework/appearance-card.js";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { attachAppearanceCard, textureScaleToPos, posToTextureScale } from "../src/framework/appearance-card.js";
 import { PRESETS } from "../src/framework/materials/presets.js";
 
 function partsStub(rows) {
@@ -21,6 +21,11 @@ const rows = () => [
   { name: "base", label: "Base", inView: true, hidden: false, opacity: 1, effective: {}, color: 0x9fb4cc, materialLabel: null, tintable: true, overridden: false },
 ];
 beforeEach(() => { document.body.innerHTML = ""; });
+afterEach(() => { vi.useRealTimers(); });
+// Deterministic frames: the card's throttles and its paint pass read
+// requestAnimationFrame (and setTimeout) when they run, so faking them before
+// attachAppearanceCard puts every frame under the test's control.
+const FAKE = { toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "performance", "Date"] };
 
 describe("appearance card", () => {
   it("shows the label, one tile per preset plus CAD, the pressed one being the effective material", () => {
@@ -77,7 +82,8 @@ describe("appearance card", () => {
     expect(parts.setDisplay).not.toHaveBeenCalled();
     card.detach();
   });
-  it("see-through writes opacity, 100% clears; the eye toggles hidden", () => {
+  it("see-through writes opacity (once per frame, the first at once), 100% clears; the eye toggles hidden", () => {
+    vi.useFakeTimers(FAKE);
     const parts = partsStub(rows());
     const card = attachAppearanceCard(parts, { onBack: () => {}, getSaveState: () => "screen-only" });
     document.body.append(card.element);
@@ -86,6 +92,9 @@ describe("appearance card", () => {
     range.value = "40"; range.dispatchEvent(new Event("input"));
     expect(parts.setDisplay).toHaveBeenLastCalledWith("lid", { opacity: 0.4 });
     range.value = "100"; range.dispatchEvent(new Event("input"));
+    expect(parts.setDisplay).toHaveBeenCalledTimes(1); // coalesced into the frame's end
+    vi.advanceTimersToNextFrame();
+    expect(parts.setDisplay).toHaveBeenCalledTimes(2);
     expect(parts.setDisplay).toHaveBeenLastCalledWith("lid", { opacity: null });
     card.element.querySelector(".pf-card-eye").click();
     expect(parts.setDisplay).toHaveBeenLastCalledWith("lid", { hidden: true });
@@ -138,7 +147,8 @@ describe("appearance card", () => {
     expect(onGone).toHaveBeenCalledWith("lid");
     card.detach();
   });
-  it("finish sliders and the native colour input write once per frame: the first event at once, later ones coalesced to the last value", async () => {
+  it("finish sliders and the native colour input write once per frame: the first event at once, later ones coalesced to the last value", () => {
+    vi.useFakeTimers(FAKE);
     const parts = partsStub(rows());
     const card = attachAppearanceCard(parts, { onBack: () => {}, getSaveState: () => "screen-only" });
     document.body.append(card.element);
@@ -149,17 +159,19 @@ describe("appearance card", () => {
     r.value = "0.7"; r.dispatchEvent(new Event("input"));
     expect(parts.setDisplay).toHaveBeenCalledTimes(1);
     expect(parts.setDisplay).toHaveBeenLastCalledWith("lid", { metalness: 0.2 });
-    await new Promise((res) => setTimeout(res, 40));
+    vi.advanceTimersToNextFrame();
     expect(parts.setDisplay).toHaveBeenCalledTimes(2);
     expect(parts.setDisplay).toHaveBeenLastCalledWith("lid", { metalness: 0.7 });
     parts.setDisplay.mockClear();
-    await new Promise((res) => setTimeout(res, 40)); // the frame after a quiet one writes nothing
+    vi.advanceTimersToNextFrame(); // the frame after a write closes its window...
+    vi.advanceTimersToNextFrame(); // ...and a quiet one writes nothing
+    expect(parts.setDisplay).not.toHaveBeenCalled();
     const native = card.element.querySelector(".pf-card-native");
     native.value = "#112233"; native.dispatchEvent(new Event("input"));
     native.value = "#445566"; native.dispatchEvent(new Event("input"));
     expect(parts.setDisplay).toHaveBeenCalledTimes(1);
     expect(parts.setDisplay).toHaveBeenLastCalledWith("lid", { color: 0x112233 });
-    await new Promise((res) => setTimeout(res, 40));
+    vi.advanceTimersToNextFrame();
     expect(parts.setDisplay).toHaveBeenCalledTimes(2);
     expect(parts.setDisplay).toHaveBeenLastCalledWith("lid", { color: 0x445566 });
     card.detach();
@@ -175,6 +187,74 @@ describe("appearance card", () => {
     expect(card.element.querySelector(".pf-card-tint-note").hidden).toBe(false);
     card.show("lid");
     expect(card.element.querySelector(".pf-card-tint-note").hidden).toBe(true);
+    card.detach();
+  });
+  it("picking an untintable preset clears an OVERRIDE colour; a tintable one leaves it", () => {
+    const r = rows(); r[0].override = { material: "anodized-aluminum", color: 0xff0000 };
+    const parts = partsStub(r);
+    const card = attachAppearanceCard(parts, { onBack: () => {}, getSaveState: () => "screen-only" });
+    document.body.append(card.element);
+    card.show("lid");
+    card.element.querySelector('.pf-card-tile[data-material="brass"]').click();
+    expect(parts.setDisplay).toHaveBeenLastCalledWith("lid", { material: "brass", color: null });
+    card.element.querySelector('.pf-card-tile[data-material="oak"]').click();
+    expect(parts.setDisplay).toHaveBeenLastCalledWith("lid", { material: "oak", color: null });
+    card.element.querySelector('.pf-card-tile[data-material="pla-print"]').click();
+    expect(parts.setDisplay).toHaveBeenLastCalledWith("lid", { material: "pla-print" });
+    card.detach();
+  });
+  it("an authored colour is left alone when an untintable preset is picked (only an override colour is cleared)", () => {
+    const parts = partsStub(rows()); // lid: override has no colour; its red is authored
+    const card = attachAppearanceCard(parts, { onBack: () => {}, getSaveState: () => "screen-only" });
+    document.body.append(card.element);
+    card.show("lid");
+    card.element.querySelector('.pf-card-tile[data-material="brass"]').click();
+    expect(parts.setDisplay).toHaveBeenLastCalledWith("lid", { material: "brass" });
+    card.detach();
+  });
+  it("texture scale is a log slider: 0.2 mm round-trips, values clamp, and the preset default shows", () => {
+    expect(Math.abs(posToTextureScale(textureScaleToPos(0.2)) - 0.2) / 0.2).toBeLessThan(0.01);
+    expect(Math.abs(posToTextureScale(textureScaleToPos(48)) - 48) / 48).toBeLessThan(0.01);
+    expect(posToTextureScale(0)).toBeCloseTo(0.01, 6);
+    expect(posToTextureScale(1)).toBeCloseTo(1000, 6);
+    expect(posToTextureScale(2)).toBeCloseTo(1000, 6);
+    expect(textureScaleToPos(0)).toBe(0);
+    const r = rows(); r[0].effective = { material: "pla-print" }; r[0].override = { material: "pla-print" };
+    const parts = partsStub(r);
+    const card = attachAppearanceCard(parts, { onBack: () => {}, getSaveState: () => "screen-only" });
+    document.body.append(card.element);
+    card.show("lid");
+    const input = card.element.querySelector('.pf-card-finish[data-key="textureScale"]');
+    const label = input.parentElement.querySelector(".pf-card-val");
+    expect(Number(input.value)).toBeCloseTo(textureScaleToPos(PRESETS["pla-print"].textureScale), 3);
+    expect(label.textContent).toBe(`${PRESETS["pla-print"].textureScale} mm`);
+    input.value = String(textureScaleToPos(0.2)); input.dispatchEvent(new Event("input"));
+    const written = parts.setDisplay.mock.lastCall[1].textureScale;
+    expect(Math.abs(written - 0.2) / 0.2).toBeLessThan(0.01);
+    card.detach();
+  });
+  it("tile thumbnails repaint at most once per 150 ms while the colour changes, with a frame between tiles", async () => {
+    vi.useFakeTimers(FAKE);
+    const parts = partsStub(rows());
+    const renderThumb = vi.fn(async () => null);
+    const card = attachAppearanceCard(parts, { onBack: () => {}, getSaveState: () => "screen-only", renderThumb });
+    document.body.append(card.element);
+    card.show("lid");
+    const firstId = Object.keys(PRESETS)[0];
+    const passStarts = () => renderThumb.mock.calls.filter(([id]) => id === firstId).length;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(passStarts()).toBe(1);
+    expect(renderThumb).toHaveBeenCalledTimes(1); // the next tile waits for a frame
+    await vi.advanceTimersByTimeAsync(200); // let show()'s pass and its repaint window finish
+    renderThumb.mockClear();
+    const native = card.element.querySelector(".pf-card-native");
+    native.value = "#112233"; native.dispatchEvent(new Event("input")); // writes at once -> render -> paint
+    await vi.advanceTimersByTimeAsync(20);
+    native.value = "#445566"; native.dispatchEvent(new Event("input")); // a later frame: writes, render held
+    await vi.advanceTimersByTimeAsync(60);
+    expect(passStarts()).toBe(1); // two colour writes inside 150 ms: one pass
+    await vi.advanceTimersByTimeAsync(200);
+    expect(passStarts()).toBe(2); // and one trailing pass for the last state
     card.detach();
   });
 });

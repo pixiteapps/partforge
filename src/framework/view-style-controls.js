@@ -123,7 +123,11 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
   let saveState = "screen-only";
   let card = null;
   const listNodes = () => [styleHead, grid, divider2, partsList?.element].filter(Boolean);
+  // Pages exist only with the `parts` seam: without it the popover carries no
+  // data-page and its style nodes are never touched, so its DOM is exactly the
+  // pre-parts popover's.
   function showPage(page) {
+    if (!parts) return;
     pop.dataset.page = page;
     for (const n of listNodes()) n.hidden = page !== "list";
     if (card) card.element.hidden = page !== "card";
@@ -162,7 +166,7 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
       ?? pop.querySelector(".pf-view-style-tile");
     target?.focus({ preventScroll: true });
   }
-  pop.dataset.page = "list";
+  if (parts) pop.dataset.page = "list";
   // Open the popover (if it is closed) on the card for `name`. False when there
   // is no card (no `parts` seam), the host is hidden, or `name` is not a sub-part.
   function openCard(name) {

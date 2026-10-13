@@ -25,8 +25,9 @@ const finite = (v) => typeof v === "number" && Number.isFinite(v);
 // as-is. Bad values are DROPPED (not clamped) where clamping would invent a
 // choice: a non-string material, a colour out of range. Numeric overrides clamp
 // to OVERRIDE_RANGES exactly as resolve.js clamps authored ones. `opacity`
-// floors at MIN_USER_OPACITY and reads >= 1 as a clear; `hidden` is coerced to
-// a boolean.
+// floors at MIN_USER_OPACITY and reads >= 1 as a clear; `hidden` must be a real
+// boolean (a host's "false" string would otherwise read as truthy and hide the
+// part), anything else is dropped.
 export function sanitizeDisplayPatch(patch) {
   if (!isObject(patch)) return {};
   const out = {};
@@ -37,7 +38,7 @@ export function sanitizeDisplayPatch(patch) {
     }
     if (key === "material") { if (typeof v === "string" && v.length > 0) out.material = v; continue; }
     if (key === "color") { if (isColor(v)) out.color = v; continue; }
-    if (key === "hidden") { out.hidden = !!v; continue; }
+    if (key === "hidden") { if (typeof v === "boolean") out.hidden = v; continue; }
     if (key === "opacity") {
       if (!finite(v)) continue;
       out.opacity = v >= 1 ? null : Math.max(MIN_USER_OPACITY, v);
@@ -87,7 +88,11 @@ export function pruneOverrides(map, part) {
   const out = {};
   if (!isObject(map)) return out;
   for (const [name, raw] of Object.entries(map)) {
-    const sp = part?.parts?.[name];
+    // Own names only: `parts` is a plain object, so "toString" or "constructor"
+    // would otherwise read as declared sub-parts and be replayed into the viewer.
+    const parts = part?.parts;
+    if (!isObject(parts) || !Object.hasOwn(parts, name)) continue;
+    const sp = parts[name];
     if (!sp) continue;
     const clean = mergeOverride(null, sanitizeDisplayPatch(raw));
     if (!clean) continue;

@@ -25,6 +25,30 @@ const ICONS = {
   eye: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>`,
   eyeOff: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/></svg>`,
 };
+// Texture scale spans 0.01–1000 mm, five decades: a linear slider over that puts
+// ~4 mm under each pixel and cannot land on the print presets' 0.2 mm. The
+// slider moves a POSITION in [0, 1] instead, mapped logarithmically onto
+// OVERRIDE_RANGES.textureScale; values are clamped to the range both ways.
+const [TS_LO, TS_HI] = OVERRIDE_RANGES.textureScale;
+const clampTs = (v) => Math.min(TS_HI, Math.max(TS_LO, v));
+export function textureScaleToPos(value) {
+  const v = Number.isFinite(value) ? clampTs(value) : TS_LO;
+  return Math.log(v / TS_LO) / Math.log(TS_HI / TS_LO);
+}
+export function posToTextureScale(pos) {
+  const p = Number.isFinite(pos) ? Math.min(1, Math.max(0, pos)) : 0;
+  return clampTs(TS_LO * (TS_HI / TS_LO) ** p);
+}
+// Sensible precision for a millimetre scale: 0.2 mm, 4.8 mm, 48 mm, 250 mm.
+function formatTextureScale(v) {
+  const digits = v < 1 ? 2 : v < 10 ? 1 : 0;
+  return `${Number(v.toFixed(digits))} mm`;
+}
+// The tiles' repaint is a pass over ~25 spheres, one per frame; a dragged colour
+// well re-renders the card every frame, so repaints are held to one per this
+// many milliseconds (leading edge, plus one trailing pass for the last state).
+const REPAINT_MS = 150;
+
 const parseHex = (s) => (/^#?[0-9a-f]{6}$/i.test(String(s).trim()) ? parseInt(String(s).trim().replace("#", ""), 16) : null);
 const known = (m) => typeof m === "string" && Object.hasOwn(PRESETS, m);
 
@@ -34,9 +58,11 @@ const known = (m) => typeof m === "string" && Object.hasOwn(PRESETS, m);
 // later ones in the same frame keep only their latest value, which is written
 // when the frame ends. requestAnimationFrame where there is one; a 16ms timer
 // otherwise (a test DOM, a worker-less host).
+const hasRaf = () => typeof requestAnimationFrame === "function";
+const nextFrame = () => new Promise((res) => (hasRaf() ? requestAnimationFrame(() => res()) : setTimeout(res, 16)));
 function frameThrottle(fn) {
-  const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (cb) => setTimeout(cb, 16);
-  const caf = typeof cancelAnimationFrame === "function" && typeof requestAnimationFrame === "function" ? cancelAnimationFrame : clearTimeout;
+  const raf = hasRaf() ? requestAnimationFrame : (cb) => setTimeout(cb, 16);
+  const caf = typeof cancelAnimationFrame === "function" && hasRaf() ? cancelAnimationFrame : clearTimeout;
   let handle = null;
   let pending = null; // [args] waiting for the frame's end, or null
   const tick = () => {
@@ -129,13 +155,19 @@ export function attachAppearanceCard(parts, { onBack, onClose, onGone, getSaveSt
     const r = el("label", "pf-card-row");
     const lab = el("span", "pf-card-lab"); lab.textContent = label;
     const val = el("span", "pf-card-val");
-    const input = el("input", "pf-card-finish", { type: "range", "data-key": key, min: String(lo), max: String(hi), step: key === "textureScale" ? "0.5" : "0.01", "aria-label": label });
+    // Texture scale's range input holds a log POSITION (textureScaleToPos), not mm.
+    const logScale = key === "textureScale";
+    const input = el("input", "pf-card-finish", logScale
+      ? { type: "range", "data-key": key, min: "0", max: "1", step: "0.001", "aria-label": label }
+      : { type: "range", "data-key": key, min: String(lo), max: String(hi), step: "0.01", "aria-label": label });
     r.append(lab, val, input);
     finish.append(r);
     finishInputs.set(key, { input, val });
     input.addEventListener("input", () => {
-      const v = Number(input.value);
-      if (name && Number.isFinite(v)) writeFinish(name, { [key]: Math.min(hi, Math.max(lo, v)) });
+      const raw = Number(input.value);
+      if (!name || !Number.isFinite(raw)) return;
+      const v = logScale ? posToTextureScale(raw) : raw;
+      writeFinish(name, { [key]: Math.min(hi, Math.max(lo, v)) });
     });
   }
 
@@ -150,15 +182,25 @@ export function attachAppearanceCard(parts, { onBack, onClose, onGone, getSaveSt
   back.addEventListener("click", () => onBack?.(name));
   close.addEventListener("click", () => onClose?.());
   eye.addEventListener("click", () => { if (name && row) parts.setDisplay(name, { hidden: !row.hidden }); });
+  // See-through rebuilds the fade clone on every write, like the finish sliders:
+  // once per frame, the first event at once.
+  const writeSee = frameThrottle((who, patch) => parts.setDisplay(who, patch));
   see.addEventListener("input", () => {
     if (!name) return;
     const v = Number(see.value) / 100;
-    parts.setDisplay(name, { opacity: v >= 1 ? null : v });
+    writeSee(name, { opacity: v >= 1 ? null : v });
   });
   tiles.addEventListener("click", (e) => {
     const t = e.target.closest(".pf-card-tile");
     if (!t || !name) return;
-    parts.setDisplay(name, { material: t.dataset.material === "" ? null : t.dataset.material });
+    const id = t.dataset.material;
+    if (id === "") { parts.setDisplay(name, { material: null }); return; }
+    // An untintable preset draws its own colour, and the card disables the
+    // colour row under it — so a colour the USER set would be stranded there
+    // (drawn as red brass, with nothing but Reset to clear it). Picking one
+    // clears the override colour. An authored colour is source and persists.
+    const ownColor = known(id) && !PRESETS[id].tintable && typeof parts.getState(name)?.override?.color === "number";
+    parts.setDisplay(name, ownColor ? { material: id, color: null } : { material: id });
   });
   colors.addEventListener("click", (e) => {
     const b = e.target.closest(".pf-card-color");
@@ -179,7 +221,7 @@ export function attachAppearanceCard(parts, { onBack, onClose, onGone, getSaveSt
       // nothing left to show, so hand the page back rather than leave a card
       // for a part that no longer exists.
       const gone = name;
-      name = null; row = null; thumbToken++;
+      name = null; row = null; thumbToken++; cancelRepaint();
       onGone?.(gone);
       return;
     }
@@ -216,21 +258,53 @@ export function attachAppearanceCard(parts, { onBack, onClose, onGone, getSaveSt
     for (const [key, { input, val }] of finishInputs) {
       const v = state.effective[key];
       const shown = typeof v === "number" ? v : (known(m) ? (PRESETS[m][key] ?? 0) : 0);
-      input.value = String(shown); val.textContent = key === "textureScale" ? `${shown} mm` : shown.toFixed(2);
+      if (key === "textureScale") {
+        const mm = shown > 0 ? clampTs(shown) : null;
+        input.value = String(textureScaleToPos(mm ?? TS_LO));
+        val.textContent = mm === null ? "—" : formatTextureScale(mm);
+      } else {
+        input.value = String(shown); val.textContent = shown.toFixed(2);
+      }
     }
     const f = FOOT[getSaveState?.() ?? "screen-only"] ?? FOOT["screen-only"];
     note.textContent = f.note; reset.textContent = f.reset;
-    if (renderThumb) paintThumbs(state.effective);
+    if (renderThumb) requestPaint(state.effective);
   }
 
-  // Thumbnails: one per tile, lazily, in order, cached by the renderer (Task 7).
+  // Repaints, held to one per REPAINT_MS: the first at once, then at most one
+  // trailing pass carrying the latest state when the window closes.
+  let repaintTimer = null;
+  let repaintPending = null;
+  function requestPaint(effective) {
+    if (repaintTimer !== null) { repaintPending = effective; return; }
+    paintThumbs(effective);
+    const windowEnd = () => {
+      repaintTimer = null;
+      if (!repaintPending) return;
+      const next = repaintPending; repaintPending = null;
+      paintThumbs(next);
+      repaintTimer = setTimeout(windowEnd, REPAINT_MS);
+    };
+    repaintTimer = setTimeout(windowEnd, REPAINT_MS);
+  }
+  function cancelRepaint() {
+    if (repaintTimer !== null) clearTimeout(repaintTimer);
+    repaintTimer = null; repaintPending = null;
+  }
+
+  // Thumbnails: one per tile, lazily, in order, cached by the renderer (Task 7),
+  // with a frame between tiles so a pass of cold renders never blocks a task
+  // for all ~25 spheres at once (CAD renders have no await of their own).
   let thumbToken = 0;
   async function paintThumbs(effective) {
     const token = ++thumbToken;
+    let first = true;
     for (const t of tiles.children) {
       if (token !== thumbToken || !root.isConnected) return;
       const id = t.dataset.material;
       if (id === "") continue;
+      if (!first) { await nextFrame(); if (token !== thumbToken || !root.isConnected) return; }
+      first = false;
       let url = null;
       try { url = await renderThumb(id, { ...effective, material: id }); } catch { url = null; }
       if (token !== thumbToken) return;
@@ -248,8 +322,8 @@ export function attachAppearanceCard(parts, { onBack, onClose, onGone, getSaveSt
       render();
       return true;
     },
-    hide() { name = null; thumbToken++; },
+    hide() { name = null; thumbToken++; cancelRepaint(); },
     render,
-    detach() { writeFinish.cancel(); writeNative.cancel(); thumbToken++; try { off(); } catch { /* gone */ } root.remove(); },
+    detach() { writeFinish.cancel(); writeNative.cancel(); writeSee.cancel(); cancelRepaint(); thumbToken++; try { off(); } catch { /* gone */ } root.remove(); },
   };
 }

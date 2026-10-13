@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 // test/view-style-popover.test.js
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { attachViewStyleControls } from "../src/framework/view-style-controls.js";
 
 const noop = () => () => {};
@@ -35,6 +35,8 @@ beforeEach(() => {
   stage = document.getElementById("stage"); toolbar = document.getElementById("viewbar");
 });
 
+afterEach(() => { vi.useRealTimers(); });
+
 describe("view style popover: parts section", () => {
   it("renders nothing new without a `parts` option (the cloud scaffold contract)", () => {
     const vs = attachViewStyleControls(viewerStub(), { stage, toolbar });
@@ -42,6 +44,10 @@ describe("view style popover: parts section", () => {
     expect(vs.popover.querySelector(".pf-parts-list")).toBeNull();
     expect(vs.popover.querySelectorAll(".pf-view-style-tile").length).toBe(5);
     expect(vs.openCard("body")).toBe(false);
+    vs.close();
+    // No pages without the seam: no data-page, and the style nodes untouched.
+    expect(vs.popover.hasAttribute("data-page")).toBe(false);
+    for (const n of vs.popover.children) expect(n.hasAttribute("hidden")).toBe(false);
     vs.detach();
   });
   it("lists the rows IN the active view, with label, material and an eye each", () => {
@@ -169,18 +175,19 @@ describe("view style popover: parts section", () => {
     vs.detach();
   });
   it("a theme change repaints an open card's tiles (the viewer cleared its thumbnails)", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "performance", "Date"] });
     let themeCb = null;
     const viewer = { ...viewerStub(), onThemeChange: (cb) => { themeCb = cb; return () => {}; }, renderMaterialThumbnail: vi.fn(async () => null) };
     const vs = attachViewStyleControls(viewer, { stage, toolbar, parts: partsStub(ROWS()) });
     expect(vs.openCard("lid")).toBe(true);
     // Let the first paint finish: one call per material tile (the CAD tile has none).
     const tiles = vs.popover.querySelectorAll('.pf-card-tile:not([data-material=""])').length;
-    await vi.waitFor(() => expect(viewer.renderMaterialThumbnail).toHaveBeenCalledTimes(tiles));
-    await new Promise((r) => setTimeout(r, 20));
-    const before = viewer.renderMaterialThumbnail.mock.calls.length;
-    expect(before).toBe(tiles);
+    // A frame per tile, then the repaint window: a second is far more than enough.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(viewer.renderMaterialThumbnail).toHaveBeenCalledTimes(tiles);
     themeCb("light");
-    await vi.waitFor(() => expect(viewer.renderMaterialThumbnail.mock.calls.length).toBeGreaterThan(before));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(viewer.renderMaterialThumbnail).toHaveBeenCalledTimes(tiles * 2); // one whole pass more
     vs.detach();
   });
   it("a card whose part disappears falls back to the list page", () => {

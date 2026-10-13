@@ -18,7 +18,13 @@ describe("sanitizeDisplayPatch", () => {
     expect(sanitizeDisplayPatch({
       material: "brass", color: 0xb3261e, roughness: 2, metalness: -1, textureScale: 0.001,
       opacity: 0, hidden: 1, bogus: 3, clearcoat: "x",
-    })).toEqual({ material: "brass", color: 0xb3261e, roughness: 1, metalness: 0, textureScale: 0.01, opacity: MIN_USER_OPACITY, hidden: true });
+    })).toEqual({ material: "brass", color: 0xb3261e, roughness: 1, metalness: 0, textureScale: 0.01, opacity: MIN_USER_OPACITY });
+  });
+  it("keeps hidden only as a real boolean (a host's \"false\" string must not hide the part)", () => {
+    expect(sanitizeDisplayPatch({ hidden: true })).toEqual({ hidden: true });
+    expect(sanitizeDisplayPatch({ hidden: false })).toEqual({ hidden: false });
+    expect(sanitizeDisplayPatch({ hidden: "false" })).toEqual({});
+    expect(sanitizeDisplayPatch({ hidden: 1 })).toEqual({});
   });
   it("keeps an unknown material id (resolve.js falls back; lint names it) and drops a non-string one", () => {
     expect(sanitizeDisplayPatch({ material: "unobtainium" })).toEqual({ material: "unobtainium" });
@@ -78,6 +84,14 @@ describe("isAppearanceNoop / pruneOverrides", () => {
   it("sanitizes what it keeps (a carried token from an older host may be malformed)", () => {
     expect(pruneOverrides({ body: { roughness: 9, bogus: 1 } }, part)).toEqual({ body: { roughness: 1 } });
     expect(pruneOverrides(null, part)).toEqual({});
+  });
+  it("drops built-in property names (toString, constructor) that a plain object would read as present", () => {
+    expect(pruneOverrides({
+      toString: { color: 5 },
+      constructor: { hidden: true },
+      hasOwnProperty: { material: "oak" },
+      body: { hidden: true },
+    }, part)).toEqual({ body: { hidden: true } });
   });
 });
 

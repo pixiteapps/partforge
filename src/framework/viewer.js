@@ -165,6 +165,11 @@ export function captureCurrentFromScene(
 
 export function createViewer(container, part) {
   const names = Object.keys(part.parts);
+  // Membership for host-supplied names. subMesh, cadMats and part.parts are
+  // plain objects, so "toString" or "constructor" would read as present on
+  // them; every name a host hands the override API is checked here instead.
+  const nameSet = new Set(names);
+  const has = (name) => nameSet.has(name);
 
   // --- renderer / scene / camera --------------------------------------------
   const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true });
@@ -277,7 +282,7 @@ export function createViewer(container, part) {
   // by applySubOpacity / effectiveVisible. Carried by mount in viewerState.
   const displayOverrides = new Map(); // name -> override (never empty)
   const displayListeners = new Set();
-  const effectiveDisplayOf = (name) => effectiveDisplay(part.parts[name]?.display, displayOverrides.get(name) ?? null);
+  const effectiveDisplayOf = (name) => (has(name) ? effectiveDisplay(part.parts[name]?.display, displayOverrides.get(name) ?? null) : {});
   const isHidden = (name) => displayOverrides.get(name)?.hidden === true;
   const userOpacityOf = (name) => displayOverrides.get(name)?.opacity; // undefined = none
 
@@ -415,6 +420,7 @@ export function createViewer(container, part) {
   // cutaway toggle or theme change. Guarded on hadFade so the every-regen
   // showAssembly path stays a no-op for un-faded sub-parts.
   function applySubOpacity(name) {
+    if (!has(name)) return;
     const mesh = subMesh[name], lines = subLines[name];
     if (!mesh) return;
     const { meshVisible, linesVisible, fade } = subPartVisibility({
@@ -496,13 +502,25 @@ export function createViewer(container, part) {
     cutaway.setVisible(effectiveVisible());
     if (realisticRig) { shadowMovedAt = performance.now(); placeGround(); }
   }
+  // Shallow, key-by-key: effective displays hold only primitives.
+  function sameDisplay(a, b) {
+    const ka = Object.keys(a), kb = Object.keys(b);
+    return ka.length === kb.length && ka.every((k) => Object.hasOwn(b, k) && Object.is(a[k], b[k]));
+  }
   function setSubPartDisplay(name, patch) {
-    if (!subMesh[name]) return null;
+    if (!has(name) || !subMesh[name]) return null;
     const before = displayOverrides.get(name) ?? null;
     const clean = sanitizeDisplayPatch(patch);
+    // Nothing survived sanitizing: not a change, so nothing is rebuilt and no
+    // listener hears it (a host saving on onDisplayChange would checkpoint a
+    // no-op). The mount-realistic tests pin this through material identity.
+    if (!Object.keys(clean).length) return before ? { ...before } : null;
+    const effectiveBefore = effectiveDisplayOf(name);
     const next = mergeOverride(before, clean);
     if (next) displayOverrides.set(name, next); else displayOverrides.delete(name);
-    const appearanceMoved = APPEARANCE_OVERRIDE_KEYS.some((k) => k in clean);
+    // An appearance key that lands on the value already drawn (the same
+    // material picked twice) rebuilds nothing.
+    const appearanceMoved = APPEARANCE_OVERRIDE_KEYS.some((k) => k in clean) && !sameDisplay(effectiveBefore, effectiveDisplayOf(name));
     const viewingMoved = VIEWING_KEYS.some((k) => k in clean);
     if (appearanceMoved) rematerialize(name); else if (viewingMoved) applySubOpacity(name);
     if (viewingMoved) visibilityChanged();
@@ -511,7 +529,7 @@ export function createViewer(container, part) {
     return next ? { ...next } : null;
   }
   function getSubPartDisplayState(name) {
-    if (!subMesh[name]) return null;
+    if (!has(name) || !subMesh[name]) return null;
     const override = displayOverrides.get(name) ?? null;
     return {
       authored: part.parts[name].display ?? null,
@@ -524,7 +542,7 @@ export function createViewer(container, part) {
   const getDisplayOverrides = () => Object.fromEntries([...displayOverrides].map(([n, o]) => [n, { ...o }]));
   // Clear the viewing keys, the appearance keys, or both — for one sub-part or all.
   function clearSubPartDisplay({ viewing = false, appearance = false, name = null } = {}) {
-    const targets = name ? (displayOverrides.has(name) ? [name] : []) : [...displayOverrides.keys()];
+    const targets = name ? (has(name) && displayOverrides.has(name) ? [name] : []) : [...displayOverrides.keys()];
     if (!targets.length) return;
     for (const n of targets) {
       const o = displayOverrides.get(n);
@@ -2200,8 +2218,13 @@ export function createViewer(container, part) {
   // put them back after — even if `fn` throws.
   function withRevealed(on, fn) {
     const reveal = on ? revealEntries() : [];
-    for (const r of reveal) r.show();
-    try { return fn(); } finally { for (const r of reveal) r.restore(); }
+    // Only entries whose show() ran (even partly, if it threw) are put back;
+    // restore() writes back values recorded before show(), so it is safe either way.
+    const shown = [];
+    try {
+      for (const r of reveal) { shown.push(r); r.show(); }
+      return fn();
+    } finally { for (const r of shown) r.restore(); }
   }
   const hasVisibleBounds = () => { const b = getVisibleWorldBounds(); return !!b && !b.isEmpty(); };
 

@@ -476,6 +476,47 @@ test("a carried viewerState.display is pruned for this part and applied before t
   runtime.dispose();
 });
 
+test("an empty or same-value display write rebuilds nothing and publishes nothing", async () => {
+  const { runtime, workers } = mountPlacedBrass();
+  await runtime.ready;
+  await runtime.renderMode.set("realistic");
+  runtime.setSubPartDisplay("body", { material: "pla-print" });
+  const frames = printFrameCalls.count;
+  const posts = workers.manifold.postMessage.mock.calls.length;
+  const mat = viewers[0].__subMesh("body").material;
+  const heard = vi.fn();
+  runtime.onSubPartDisplayChange(heard);
+  expect(runtime.setSubPartDisplay("body", {})).toEqual({ material: "pla-print" });
+  expect(runtime.setSubPartDisplay("body", { bogus: 1, hidden: "false" })).toEqual({ material: "pla-print" });
+  expect(heard).not.toHaveBeenCalled(); // nothing survived sanitizing: no event
+  runtime.setSubPartDisplay("body", { material: "pla-print" }); // the value already drawn
+  expect(viewers[0].__subMesh("body").material).toBe(mat); // not rematerialized
+  expect(printFrameCalls.count).toBe(frames);
+  expect(workers.manifold.postMessage.mock.calls.length).toBe(posts);
+  runtime.dispose();
+});
+
+test("built-in property names are not sub-parts: hops answer null and a carried token naming them is pruned", async () => {
+  const { runtime } = mountFixture({ material: "brass" }, {
+    viewerState: { display: { toString: { color: 5 }, constructor: { hidden: true }, body: { hidden: true } } },
+  });
+  await runtime.ready;
+  expect(runtime.getViewerState().display).toEqual({ body: { hidden: true } });
+  expect(runtime.setSubPartDisplay("toString", { color: 5 })).toBeNull();
+  expect(runtime.setSubPartDisplay("constructor", { hidden: true })).toBeNull();
+  expect(runtime.getSubPartDisplay("hasOwnProperty")).toBeNull();
+  expect(() => runtime.clearSubPartDisplay({ appearance: true, name: "toString" })).not.toThrow();
+  expect(Object.hasOwn(Object, "material")).toBe(false); // nothing written onto the global
+  runtime.dispose();
+});
+
+test("listSubParts accepts null options and falls back to the active view", async () => {
+  const { runtime } = mountFixture({ material: "brass" });
+  await runtime.ready;
+  expect(runtime.listSubParts(null).map((r) => r.name)).toEqual(runtime.listSubParts().map((r) => r.name));
+  runtime.dispose();
+});
+
 test("a part with no layer-line material never probes for print frames", async () => {
   const { runtime } = mountFixture({ material: "brass" });
   await runtime.ready;
