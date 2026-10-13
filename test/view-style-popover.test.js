@@ -153,6 +153,30 @@ describe("view style popover: parts section", () => {
     expect(vs.openCard("nope")).toBe(false);
     vs.close();
     expect(vs.popover.dataset.page).toBe("list"); // close always returns to the list
+    expect(vs.openCard("nope")).toBe(false);
+    expect(vs.isOpen()).toBe(false); // a bad name leaves a closed popover closed
+    vs.detach();
+  });
+  it("Back puts focus on the row the card was for, so Escape still closes", () => {
+    const vs = attachViewStyleControls(viewerStub(), { stage, toolbar, parts: partsStub(ROWS()) });
+    vs.open();
+    vs.popover.querySelector('.pf-parts-row[data-name="lid"] .pf-parts-swatch').click();
+    expect(document.activeElement.classList.contains("pf-card-back")).toBe(true);
+    vs.popover.querySelector(".pf-card-back").click();
+    expect(document.activeElement).toBe(vs.popover.querySelector('.pf-parts-row[data-name="lid"] .pf-parts-swatch'));
+    document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(vs.isOpen()).toBe(false);
+    vs.detach();
+  });
+  it("a card whose part disappears falls back to the list page", () => {
+    const parts = partsStub(ROWS());
+    const vs = attachViewStyleControls(viewerStub(), { stage, toolbar, parts });
+    expect(vs.openCard("lid")).toBe(true);
+    parts.rows.splice(1, 1); // a rebuild dropped "lid"
+    parts.clear({}); // fires onChange(null)
+    expect(vs.popover.dataset.page).toBe("list");
+    expect(vs.isOpen()).toBe(true);
+    expect(vs.popover.contains(document.activeElement)).toBe(true);
     vs.detach();
   });
 });

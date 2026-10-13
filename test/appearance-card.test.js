@@ -56,7 +56,12 @@ describe("appearance card", () => {
     expect(parts.setDisplay).toHaveBeenLastCalledWith("lid", { color: 0x1f5bd6 });
     card.show("knob");
     expect(card.element.querySelector(".pf-card-colors").classList.contains("disabled")).toBe(true);
+    expect(card.element.querySelector(".pf-card-color").disabled).toBe(true);
+    expect(card.element.querySelector(".pf-card-native").disabled).toBe(true);
     expect(card.element.querySelector(".pf-card-tint-note").textContent).toBe("Brass has its own colour. Pick a tintable preset to colour it.");
+    card.show("lid");
+    expect(card.element.querySelector(".pf-card-color").disabled).toBe(false);
+    expect(card.element.querySelector(".pf-card-native").disabled).toBe(false);
     card.detach();
   });
   it("the hex field and the native input write a colour; a bad hex writes nothing", () => {
@@ -118,7 +123,19 @@ describe("appearance card", () => {
     expect(card.show("nope")).toBe(false);
     expect(card.show("lid")).toBe(true);
     card.element.querySelector(".pf-card-back").click();
-    expect(onBack).toHaveBeenCalled();
+    expect(onBack).toHaveBeenCalledWith("lid");
+    card.detach();
+  });
+  it("calls onGone when a re-render finds the part gone", () => {
+    const r = rows();
+    const onGone = vi.fn();
+    const parts = partsStub(r);
+    const card = attachAppearanceCard(parts, { onBack: () => {}, onGone, getSaveState: () => "screen-only" });
+    document.body.append(card.element);
+    card.show("lid");
+    r.splice(0, 1);
+    parts.clear({});
+    expect(onGone).toHaveBeenCalledWith("lid");
     card.detach();
   });
   it("finish sliders and the native colour input write once per frame: the first event at once, later ones coalesced to the last value", async () => {

@@ -62,7 +62,10 @@ function el(tag, className, attrs = {}) {
 
 // `renderThumb(materialId, display) -> Promise<dataUrl|null>` (Task 7) paints a
 // sphere into a tile; absent, tiles stay flat discs in the preset colour.
-export function attachAppearanceCard(parts, { onBack, onClose, getSaveState, renderThumb = null } = {}) {
+// `onBack(name)` gets the name the card was showing, so the host can put focus
+// back on that row; `onGone(name)` fires when a re-render finds the part gone
+// (dropped by a rebuild), so the host can leave the card for the list.
+export function attachAppearanceCard(parts, { onBack, onClose, onGone, getSaveState, renderThumb = null } = {}) {
   const root = el("div", "pf-card");
   let name = null;
   let row = null;
@@ -144,7 +147,7 @@ export function attachAppearanceCard(parts, { onBack, onClose, getSaveState, ren
   root.append(head, seeRow, matHead, tiles, unknown, colHead, colors, hexRow, tintNote, finish, foot);
 
   // --- wiring ---
-  back.addEventListener("click", () => onBack?.());
+  back.addEventListener("click", () => onBack?.(name));
   close.addEventListener("click", () => onClose?.());
   eye.addEventListener("click", () => { if (name && row) parts.setDisplay(name, { hidden: !row.hidden }); });
   see.addEventListener("input", () => {
@@ -171,7 +174,15 @@ export function attachAppearanceCard(parts, { onBack, onClose, getSaveState, ren
     if (!name) return;
     row = parts.list().find((r) => r.name === name) ?? null;
     const state = parts.getState(name);
-    if (!row || !state) return;
+    if (!row || !state) {
+      // The part went away under the card (a rebuild dropped it): there is
+      // nothing left to show, so hand the page back rather than leave a card
+      // for a part that no longer exists.
+      const gone = name;
+      name = null; row = null; thumbToken++;
+      onGone?.(gone);
+      return;
+    }
     title.textContent = row.label;
     eye.innerHTML = row.hidden ? ICONS.eyeOff : ICONS.eye;
     eye.setAttribute("aria-pressed", String(row.hidden));
@@ -192,6 +203,10 @@ export function attachAppearanceCard(parts, { onBack, onClose, getSaveState, ren
     const ownColor = typeof state.effective.color === "number";
     colVal.textContent = row.tintable || ownColor ? hexColor(color) : "from the material";
     colors.classList.toggle("disabled", !row.tintable);
+    // Disabled for real, not only dimmed: pointer-events alone left the
+    // swatches and the colour well reachable by keyboard and screen reader.
+    for (const b of colors.querySelectorAll(".pf-card-color")) b.disabled = !row.tintable;
+    native.disabled = !row.tintable;
     hex.disabled = !row.tintable;
     for (const b of colors.querySelectorAll(".pf-card-color")) b.classList.toggle("on", parseHex(b.dataset.color) === color);
     native.value = hexColor(color);

@@ -136,8 +136,9 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
   function ensureCard() {
     if (card || !parts) return card;
     card = attachAppearanceCard(parts, {
-      onBack: () => showPage("list"),
+      onBack: (name) => backToList(name),
       onClose: () => close(),
+      onGone: () => { if (pop.dataset.page === "card") backToList(null); },
       getSaveState: () => saveState,
       renderThumb: viewer.renderMaterialThumbnail ? (id, display) => viewer.renderMaterialThumbnail(display, { size: 96 }) : null,
     });
@@ -145,11 +146,29 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
     pop.append(card.element);
     return card;
   }
+  // Back to the list, with focus on the row the card was for (its swatch), else
+  // the first row's eye, else the first style tile. The control that had focus
+  // (Back) is about to be hidden, and focus dropping to <body> would also take
+  // Escape away: its listener is on the popover and the button, not document.
+  function backToList(name) {
+    const hadFocus = card?.element.contains(document.activeElement);
+    showPage("list");
+    if (!hadFocus) return;
+    const rowFor = name != null
+      ? [...pop.querySelectorAll(".pf-parts-row")].find((r) => r.dataset.name === name)
+      : null;
+    const target = rowFor?.querySelector(".pf-parts-swatch")
+      ?? pop.querySelector(".pf-parts-row .pf-parts-eye")
+      ?? pop.querySelector(".pf-view-style-tile");
+    target?.focus({ preventScroll: true });
+  }
   pop.dataset.page = "list";
   // Open the popover (if it is closed) on the card for `name`. False when there
   // is no card (no `parts` seam), the host is hidden, or `name` is not a sub-part.
   function openCard(name) {
     if (!parts) return false;
+    // A bad name must leave a closed popover closed.
+    if (!parts.list().some((r) => r.name === name)) return false;
     if (!isOpen()) open();
     if (!isOpen()) return false; // the host is hidden: nothing to show on
     if (!ensureCard().show(name)) return false;
