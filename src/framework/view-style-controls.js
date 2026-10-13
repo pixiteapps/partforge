@@ -311,6 +311,9 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
   const offs = [
     viewer.onRenderModeChange(() => render()),
     viewer.onEnvironmentChange(() => render()),
+    // The card's sphere thumbnails show the look itself: a new one re-renders them.
+    viewer.onRenderModeChange(() => { viewer.invalidateMaterialThumbnails?.(); if (pop.dataset.page === "card") card?.render(); }),
+    viewer.onEnvironmentChange(() => { viewer.invalidateMaterialThumbnails?.(); if (pop.dataset.page === "card") card?.render(); }),
     viewer.onAssemblyChange?.(() => cache.invalidate()) ?? (() => {}),
     viewer.onThemeChange?.(() => cache.invalidate()) ?? (() => {}),
     // A thumbnail shows the section as it was when it was taken, so turning

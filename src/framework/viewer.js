@@ -15,6 +15,7 @@ import { resolveEnvironmentId } from "./materials/resolve.js";
 import { burnsFor, realisticDisplay } from "./materials/sheet-look.js";
 import { effectiveDisplay, mergeOverride, sanitizeDisplayPatch, subPartVisibility, APPEARANCE_OVERRIDE_KEYS, VIEWING_KEYS } from "./materials/overrides.js";
 import { neutralToneMapToSrgb8 } from "./materials/tonemap-readback.js";
+import { createMaterialThumbCache } from "./materials/thumb-cache.js";
 import { createCutaway } from "./cutaway.js";
 import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
 import { flashWorldRadius, projectToScreen, anchorMoved } from "./pick-flash.js";
@@ -330,6 +331,11 @@ export function createViewer(container, part) {
   let renderMode = "cad";
   let realisticRig = null;
   let shadowMovedAt = null;          // performance.now() of a pose change the contact shadow has not caught up with
+  // The appearance card's sphere thumbnails (renderMaterialThumbnail). Up here,
+  // ahead of every look change that clears it (setTheme, enterRealistic, enterCad).
+  const materialThumbs = createMaterialThumbCache();
+  let _thumbSphere = null;
+
 
   // three calls scene.onBeforeRender(renderer, scene, camera, target) at the
   // very start of WebGLRenderer.render — after scene/camera matrixWorld are
@@ -980,6 +986,9 @@ export function createViewer(container, part) {
       if (live) applyPixelRatio("realistic");
       // Hides the lines on every sub-part now that renderMode reads realistic.
       refreshFeatureLines();
+      // A capture's borrowed look (live: false) is put back at once: the
+      // thumbnails still describe the live one.
+      if (live) invalidateMaterialThumbnails();
     } catch (e) {
       try { enterCad({ live }); } catch (rollback) { console.warn("partforge: rolling back to CAD failed", rollback); }
       throw e;
@@ -1014,6 +1023,7 @@ export function createViewer(container, part) {
     for (const n of names) attempt(() => { if (baseMats[n] !== cadMats[n]) rebaseSubMaterial(n, cadMats[n]); else applySubOpacity(n); });
     if (live) attempt(() => applyPixelRatio("cad"));
     attempt(refreshFeatureLines);
+    if (live) invalidateMaterialThumbnails();
     if (firstError) throw firstError;
   }
 
@@ -1118,6 +1128,7 @@ export function createViewer(container, part) {
     environmentChosen = true;
     if (next !== environmentId) announceEnvironment(next);
     if (renderMode === "realistic" || realisticPending) await setRenderMode("realistic");
+    invalidateMaterialThumbnails();
     return environmentId;
   }
 
@@ -1886,6 +1897,7 @@ export function createViewer(container, part) {
     cutaway.setTheme(mode, t.line);
     reassertLiveFades(); // setTheme re-clones every section's materials and reassigns them
     currentTheme = THEME[mode] ? mode : "dark";
+    invalidateMaterialThumbnails();
     for (const cb of [...themeListeners]) cb(currentTheme);
   }
 
@@ -2001,7 +2013,9 @@ export function createViewer(container, part) {
     // scene (renderMeshPayloads' thumbnails) is CAD whatever the live mode.
     // Without HDR readback it falls back to the 8-bit target and tone-maps the
     // clipped linear bytes: highlights clip, but it is still the realistic look.
-    const realistic = renderScene === scene && renderMode === "realistic";
+    // A throwaway scene that carries an environment (renderMaterialThumbnail's
+    // realistic sphere) is realistic too; renderMeshPayloads' never has one.
+    const realistic = renderMode === "realistic" && (renderScene === scene || renderScene.environment != null);
     const hdr = realistic && hdrCaptureReadback();
     const cachedSize = !hdr && width === _rtSize && height === _rtSize;
     const rt = cachedSize
@@ -2362,6 +2376,80 @@ export function createViewer(container, part) {
       releaseRig(id, p);
     }
   }
+
+  // A sphere in `display`'s material under the current look, for the
+  // appearance card's tiles. A THROWAWAY scene (never the live one): in CAD it
+  // is the flattened CAD material under the capture lights; in realistic it is
+  // the physical material lit by the live rig's envMap with its tone mapping,
+  // in front of the rig's own backdrop (which is what a clear material shows
+  // through — three's transmission pass draws the background, and with none
+  // acrylic reads as black glass). The sphere slightly overfills the frame so
+  // the tile's round crop shows sphere only, never the backdrop's corners.
+  // Cached per (material, colour, environment, theme, mode); null on failure.
+  // The environment in the key is the rig actually LIT: setEnvironment
+  // announces the new id before its rig loads, and a sphere drawn in that
+  // window under the old rig must not be cached as the new one.
+  const thumbKey = (display) => materialThumbs.key(
+    display, (renderMode === "realistic" && realisticRig?.id) || environmentId, currentTheme, renderMode);
+  async function renderMaterialThumbnail(display, { size = 96 } = {}) {
+    if (disposed) return null;
+    const key = thumbKey(display);
+    const hit = materialThumbs.get(key);
+    if (hit !== undefined) return hit;
+    let mat = null;
+    try {
+      const tmp = new THREE.Scene();
+      const rig = renderMode === "realistic" ? realisticRig : null;
+      if (rig) {
+        mat = buildPhysicalMaterial(display, { loadTexture });
+        // A textured preset (oak) would otherwise draw untextured, and be cached so.
+        await whenTexturesSettled();
+        // The look moved while the maps loaded: this sphere is for a key nobody
+        // shows any more (the card re-renders on the change anyway).
+        if (disposed || rig !== realisticRig || key !== thumbKey(display)) {
+          mat.dispose();
+          return null;
+        }
+        tmp.environment = rig.envMap;
+        tmp.environmentRotation.set(0, rig.rotationY ?? 0, 0);
+        tmp.background = rig.background ?? null;
+        tmp.backgroundBlurriness = rig.backgroundBlurriness ?? 0;
+        tmp.backgroundIntensity = rig.backgroundIntensity ?? 1;
+        tmp.backgroundRotation.set(0, rig.rotationY ?? 0, 0);
+        // A rig's own lights (an enclosure's overhead LED bar) belong to the
+        // live scene; a fresh one of the same strength stands in from above.
+        for (const l of rig.lights ?? []) {
+          const d = new THREE.DirectionalLight(l.color, l.intensity);
+          d.position.set(0.5, 4, 1);
+          tmp.add(d, d.target);
+        }
+      } else {
+        mat = buildCadMaterial(display, material);
+        tmp.background = new THREE.Color(THEME[currentTheme].bg);
+        tmp.add(createHemisphereLight());
+        const { key: k, fill: f } = createCaptureLights();
+        k.position.set(3, 4, 5); f.position.set(-4, 1, 5);
+        tmp.add(k, k.target, f, f.target);
+      }
+      _thumbSphere = _thumbSphere ?? new THREE.SphereGeometry(1, 48, 32);
+      tmp.add(new THREE.Mesh(_thumbSphere, mat));
+      const url = renderOffscreen(
+        { position: [0, 0, 3.2], up: [0, 1, 0], target: [0, 0, 0] },
+        { width: size, height: size, fov: 35, quality: 0.85, sceneBounds: { center: [0, 0, 0], radius: 1.2 } },
+        tmp,
+      );
+      materialThumbs.set(key, url);
+      return url;
+    } catch (e) {
+      console.warn("partforge: material thumbnail failed", e);
+      return null;
+    } finally {
+      // Never the shared CAD base (buildCadMaterial returns it for a display
+      // with no appearance); the textures are loadTexture's cache, not ours.
+      if (mat && mat !== material) mat.dispose();
+    }
+  }
+  function invalidateMaterialThumbnails() { materialThumbs.clear(); }
 
   // Agent-facing canonical renders in a chosen appearance, whatever the live
   // view shows. CAD is exactly captureCanonicalViews (which is always CAD).
@@ -2888,6 +2976,8 @@ export function createViewer(container, part) {
     lastAnchor = null;
     anchorListeners.clear();
     flashGeometry.dispose();
+    _thumbSphere?.dispose();
+    materialThumbs.clear();
     cutaway.dispose();
     for (const n of names) {
       const g = subCache[n];
@@ -2943,6 +3033,8 @@ export function createViewer(container, part) {
     renderMeshPayloads,
     renderViews,
     renderStyleThumbnail,
+    renderMaterialThumbnail,
+    invalidateMaterialThumbnails,
     onFrame,
     onAssemblyChange: (cb) => { assemblyListeners.add(cb); return () => assemblyListeners.delete(cb); },
     tweenCameraTo,
