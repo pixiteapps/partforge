@@ -92,6 +92,46 @@ describe("view style popover: parts section", () => {
     expect([...vs.popover.querySelectorAll(".pf-parts-row")].map((r) => r.dataset.name)).toEqual(["body", "lid", "jig"]);
     vs.detach();
   });
+  it("re-renders on an assembly change", () => {
+    const rows = ROWS();
+    let asmCb = null;
+    const viewer = { ...viewerStub(), onAssemblyChange: (cb) => { asmCb = cb; return () => {}; } };
+    const vs = attachViewStyleControls(viewer, { stage, toolbar, parts: partsStub(rows) });
+    vs.open();
+    rows[2].inView = true; rows[0].label = "Shell";
+    asmCb();
+    const names = [...vs.popover.querySelectorAll(".pf-parts-row")];
+    expect(names.map((r) => r.dataset.name)).toEqual(["body", "lid", "jig"]);
+    expect(names[0].querySelector(".pf-parts-name").textContent).toBe("Shell");
+    vs.detach();
+  });
+  it("keeps focus on the same row's eye across the re-render a click causes, and renders once", async () => {
+    const parts = partsStub(ROWS());
+    const list = vi.spyOn(parts, "list");
+    const vs = attachViewStyleControls(viewerStub(), { stage, toolbar, parts });
+    vs.open();
+    const eye = vs.popover.querySelector('.pf-parts-row[data-name="lid"] .pf-parts-eye');
+    eye.focus();
+    list.mockClear();
+    eye.click();
+    await Promise.resolve();
+    const after = vs.popover.querySelector('.pf-parts-row[data-name="lid"] .pf-parts-eye');
+    expect(after).not.toBe(eye);
+    expect(document.activeElement).toBe(after);
+    expect(after.getAttribute("aria-pressed")).toBe("true");
+    expect(list).toHaveBeenCalledTimes(1);
+    vs.detach();
+  });
+  it("a display change from elsewhere re-renders on the next microtask", async () => {
+    const rows = ROWS();
+    const parts = partsStub(rows);
+    const vs = attachViewStyleControls(viewerStub(), { stage, toolbar, parts });
+    vs.open();
+    parts.setDisplay("body", { hidden: true });
+    await Promise.resolve();
+    expect(vs.popover.querySelector('.pf-parts-row[data-name="body"]').classList.contains("hidden")).toBe(true);
+    vs.detach();
+  });
   it("the style grid is five across", () => {
     const vs = attachViewStyleControls(viewerStub(), { stage, toolbar });
     expect(vs.popover.querySelector(".pf-view-style-grid").children.length).toBe(5);

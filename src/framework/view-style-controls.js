@@ -256,6 +256,10 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
     // A material or hide change shows in the thumbnails too (spec A.3), so it
     // stales them for the next open the same way.
     viewer.onDisplayChange?.(() => cache.invalidate()) ?? (() => {}),
+    // An assembly rebuild changes the Parts rows (a sub-part enabled or
+    // dropped, a label or material that follows a param), and the seam has no
+    // assembly hook of its own — so the popover re-renders the list here.
+    viewer.onAssemblyChange?.(() => partsList?.render()) ?? (() => {}),
   ];
   render();
   // The popover closes whenever the button's host is hidden: #viewbar hides
