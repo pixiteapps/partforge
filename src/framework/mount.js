@@ -1094,6 +1094,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     const sheetFrames = {};
     const deliveredAt = new Map(); // sub-part -> { at: { view, params }, frame } of its delivered mesh (kept, not consumed)
     const undrawnFrames = new Set(); // sub-part names whose frames are stale
+    // The (print, burn) pair each name's frames were last computed for. A display
+    // change re-stales a name only when its pair flips — hide, show, opacity and a
+    // swap between two layer-lined (or two burning) materials leave the frames
+    // valid, so a see-through drag in realistic mode never re-probes a placed piece.
+    const frameNeeds = new Map();
+    const needsKey = (n) => `${isLayerLined(n) ? 1 : 0}${isBurning(n) ? 1 : 0}`;
     // `meshes` are the reply's deliveries: each one's `frame` ("canonical" | "posed"; an older
     // worker sends none, so posed) rides beside the view/params so the frames describe it.
     function recordFrames(meshes) {
@@ -1110,6 +1116,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         if (!rec) continue;
         const { at, frame } = rec;
         const needPrint = isLayerLined(n), needBurn = isBurning(n);
+        frameNeeds.set(n, `${needPrint ? 1 : 0}${needBurn ? 1 : 0}`);
         if (!needPrint && !needBurn) { delete sheetFrames[n]; continue; }
         if (at && !resolvedFor.has(at)) {
           try { resolvedFor.set(at, resolveParams(part, at.params)); } catch { resolvedFor.set(at, null); } // diagnosed by the build
@@ -1131,11 +1138,19 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       undrawnFrames.clear();
       return { print: { ...printFrames }, sheet: { ...sheetFrames } };
     }
-    // A display change re-stales that sub-part's frames: computeFrames is lazy
-    // (viewer.js syncFrames) so a CAD-only session still computes nothing.
+    // A display change re-stales a delivered sub-part's frames when it changes
+    // WHICH frames that piece needs (frameNeeds above); a `null` event (a clear)
+    // re-checks every delivered name. computeFrames stays lazy (viewer.js
+    // syncFrames), so a CAD-only session still computes nothing.
     cleanup.defer(viewer.onDisplayChange?.((evt) => {
-      if (evt?.name) undrawnFrames.add(evt.name); else for (const n of deliveredAt.keys()) undrawnFrames.add(n);
-      viewer.invalidateFrames?.();
+      let stale = false;
+      for (const n of evt?.name ? [evt.name] : deliveredAt.keys()) {
+        if (!deliveredAt.has(n) || undrawnFrames.has(n)) continue; // nothing drawn yet, or already stale
+        if (frameNeeds.get(n) === needsKey(n)) continue;
+        undrawnFrames.add(n);
+        stale = true;
+      }
+      if (stale) viewer.invalidateFrames?.();
     }) ?? (() => {}));
     viewer.setFrameSource?.(computeFrames);
 
