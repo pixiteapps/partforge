@@ -59,9 +59,22 @@ export function attachPartsList(parts, { onSwatch } = {}) {
     queueMicrotask(() => { if (pending) render(); });
   }
 
+  // What the list last drew, as one string over every field a row or the
+  // Show all button reads. A render whose rows read the same leaves the DOM
+  // alone: a playing animation re-shows the assembly every frame, and each
+  // one reaches here through the popover's assembly hook, so rebuilding the
+  // rows unconditionally replaced the node under the pointer sixty times a
+  // second — a press landed on a row that was gone before the release, and no
+  // click ever fired (seen on hinged-box.html).
+  let drawn = null;
+  const keyOf = (all) => JSON.stringify(all.map((r) => [r.name, r.label, r.inView, r.hidden, r.opacity, r.color, r.materialLabel]));
+
   function render() {
     pending = false;
     const all = parts.list();
+    const key = keyOf(all);
+    if (key === drawn) return;
+    drawn = key;
     const rows = all.filter((r) => r.inView);
     const was = focusedControl();
     const scroller = section.parentElement;

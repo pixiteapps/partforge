@@ -111,6 +111,23 @@ describe("view style popover: parts section", () => {
     expect(names[0].querySelector(".pf-parts-name").textContent).toBe("Shell");
     vs.detach();
   });
+  it("an assembly change that leaves the rows as they were keeps the row nodes (a playing animation re-shows the assembly every frame)", () => {
+    const rows = ROWS();
+    let asmCb = null;
+    const viewer = { ...viewerStub(), onAssemblyChange: (cb) => { asmCb = cb; return () => {}; } };
+    const vs = attachViewStyleControls(viewer, { stage, toolbar, parts: partsStub(rows) });
+    vs.open();
+    const before = vs.popover.querySelector('.pf-parts-row[data-name="lid"] .pf-parts-open');
+    for (let i = 0; i < 60; i++) asmCb();
+    expect(vs.popover.querySelector('.pf-parts-row[data-name="lid"] .pf-parts-open')).toBe(before);
+    // A real change still rebuilds.
+    rows[1].materialLabel = "Bronze";
+    asmCb();
+    const after = vs.popover.querySelector('.pf-parts-row[data-name="lid"] .pf-parts-open');
+    expect(after).not.toBe(before);
+    expect(after.querySelector(".pf-parts-mat").textContent).toBe("Bronze");
+    vs.detach();
+  });
   it("keeps focus on the same row's eye across the re-render a click causes, and renders once", async () => {
     const parts = partsStub(ROWS());
     const list = vi.spyOn(parts, "list");
