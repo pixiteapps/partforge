@@ -817,6 +817,49 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 .pf-parts-name { font-size: 13px; color: var(--pf-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pf-parts-mat { font-size: 11.5px; color: var(--pf-muted); white-space: nowrap; }
 .pf-parts-eye:focus-visible, .pf-parts-swatch:focus-visible, .pf-parts-showall:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
+/* The appearance card (appearance-card.js): the popover's second page. The
+   popover shows one page at a time by hiding the other's nodes; the grid and
+   the Parts section set display, which beats the UA's [hidden] rule, so the
+   page switch needs this guard (the #viewbar button[hidden] trap). */
+.pf-view-style-popover > [hidden] { display: none; }
+.pf-card { display: flex; flex-direction: column; gap: 10px; }
+.pf-card[hidden] { display: none; }
+.pf-card-head { display: flex; align-items: center; gap: 4px; }
+.pf-card-title { flex: 1; min-width: 0; font-weight: 600; font-size: 13px; color: var(--pf-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-card-back, .pf-card-eye, .pf-card-close { width: 28px; height: 28px; border: 0; background: none; color: var(--pf-muted-2); border-radius: 6px; display: grid; place-items: center; cursor: pointer; }
+.pf-card-back:hover, .pf-card-eye:hover, .pf-card-close:hover { background: var(--pf-surface-2); color: var(--pf-text); }
+.pf-card-eye[aria-pressed="true"] { color: var(--pf-hint); }
+.pf-card-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: baseline; }
+.pf-card-row input[type="range"] { grid-column: 1 / -1; width: 100%; margin: 0; accent-color: var(--pf-accent); }
+.pf-card-lab-row { display: flex; justify-content: space-between; align-items: baseline; }
+.pf-card-lab { font-size: 12px; color: var(--pf-muted); }
+.pf-card-val { font-size: 12px; color: var(--pf-text-2); font-variant-numeric: tabular-nums; }
+.pf-card-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.pf-card-tile { display: grid; justify-items: center; gap: 3px; border: 0; background: none; padding: 3px 0; border-radius: 8px; cursor: pointer; font: inherit; color: var(--pf-muted); }
+.pf-card-tile:hover { background: var(--pf-surface-2); }
+.pf-card-tile[aria-pressed="true"] { background: var(--pf-accent-soft); color: var(--pf-accent); }
+.pf-card-ball { position: relative; width: 30px; height: 30px; border-radius: 50%; overflow: hidden; background: radial-gradient(circle at 35% 30%, color-mix(in oklab, var(--pf-swatch) 72%, white) 0, var(--pf-swatch) 48%, color-mix(in oklab, var(--pf-swatch) 68%, black) 100%); box-shadow: inset 0 -1px 2px rgb(0 0 0 / .25); }
+.pf-card-ball img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.pf-card-ball img[hidden] { display: none; }
+.pf-card-tile-label { font-size: 9.5px; line-height: 1.1; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-card-unknown { margin: 0; font-size: 11px; color: var(--pf-err); font-family: var(--pf-mono); }
+.pf-card-unknown[hidden] { display: none; }
+.pf-card-colors { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; }
+.pf-card-colors.disabled { opacity: .35; pointer-events: none; }
+.pf-card-color { width: 100%; aspect-ratio: 1; border-radius: 50%; border: 0; padding: 0; cursor: pointer; background: var(--pf-swatch); box-shadow: inset 0 0 0 1px rgb(0 0 0 / .18); }
+.pf-card-color.on, .pf-card-color:hover { box-shadow: inset 0 0 0 1px rgb(0 0 0 / .18), 0 0 0 2px var(--pf-surface), 0 0 0 4px var(--pf-accent); }
+.pf-card-native { width: 100%; min-width: 0; aspect-ratio: 1; border: 1px solid var(--pf-border); border-radius: 50%; padding: 0; background: none; cursor: pointer; }
+.pf-card-hex { width: 100%; font: 12px var(--pf-mono); padding: 5px 8px; border: 1px solid var(--pf-border); border-radius: var(--pf-radius-control); background: var(--pf-input-bg); color: var(--pf-text); }
+.pf-card-hex:disabled { opacity: .5; }
+.pf-card-tint-note { margin: 0; font-size: 12px; color: var(--pf-muted); }
+.pf-card-tint-note[hidden] { display: none; }
+.pf-card-finish-group summary { cursor: pointer; font-size: 12px; color: var(--pf-muted-2); list-style: none; display: flex; align-items: center; gap: 6px; }
+.pf-card-finish-group summary::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); }
+.pf-card-finish-group[open] summary::before { transform: rotate(45deg); }
+.pf-card-finish-group .pf-card-row { margin-top: 8px; }
+.pf-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--pf-muted); border-top: 1px solid var(--pf-border); padding-top: 10px; }
+.pf-card-reset { font: inherit; font-weight: 500; color: var(--pf-accent); background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
+.pf-card button:focus-visible, .pf-card input:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 
 /* At very narrow widths the full-size viewbar (5 icon buttons + cutaway's
    Flip/Reset, ~314px) is wider than a small phone's viewport minus the

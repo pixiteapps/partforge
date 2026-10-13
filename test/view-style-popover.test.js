@@ -137,4 +137,22 @@ describe("view style popover: parts section", () => {
     expect(vs.popover.querySelector(".pf-view-style-grid").children.length).toBe(5);
     vs.detach();
   });
+  it("a swatch opens the card page; Back returns; openCard() from outside opens the popover on the card", () => {
+    const vs = attachViewStyleControls(viewerStub(), { stage, toolbar, parts: partsStub(ROWS()) });
+    vs.open();
+    vs.popover.querySelector('.pf-parts-row[data-name="lid"] .pf-parts-swatch').click();
+    expect(vs.popover.dataset.page).toBe("card");
+    expect(vs.popover.querySelector(".pf-card-title").textContent).toBe("Lid");
+    expect(vs.popover.querySelector(".pf-view-style-grid").hidden).toBe(true);
+    vs.popover.querySelector(".pf-card-back").click();
+    expect(vs.popover.dataset.page).toBe("list");
+    vs.close();
+    expect(vs.openCard("body")).toBe(true);
+    expect(vs.isOpen()).toBe(true);
+    expect(vs.popover.dataset.page).toBe("card");
+    expect(vs.openCard("nope")).toBe(false);
+    vs.close();
+    expect(vs.popover.dataset.page).toBe("list"); // close always returns to the list
+    vs.detach();
+  });
 });

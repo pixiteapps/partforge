@@ -32,8 +32,10 @@
 // AUTOMATIC — orthographic on a view cube face view, perspective everywhere
 // else (Fusion 360's "Perspective with Ortho Faces"; viewer.js's
 // tweenCameraTo). Since 2026-10-13 a host that passes a `parts` seam also
-// gets a Parts section under the grid (parts-list.js); without one the popover
-// is the style grid alone, exactly as before.
+// gets a Parts section under the grid (parts-list.js), and a swatch there opens
+// that sub-part's appearance card as the popover's second page
+// (appearance-card.js); without one the popover is the style grid alone,
+// exactly as before.
 //
 // The state shown is always the viewer's: a tile is pressed once the viewer
 // reports that style, and a runtime change made elsewhere shows up here.
@@ -41,6 +43,7 @@ import { STYLES, styleFor, createThumbnailCache } from "./view-style-state.js";
 import { saveRenderMode, saveEnvironment } from "./view-state.js";
 import { attachButtonTooltips } from "./tooltip.js";
 import { attachPartsList } from "./parts-list.js";
+import { attachAppearanceCard } from "./appearance-card.js";
 
 // An eye (lucide "eye"): the button is about how the part is SEEN — a
 // palette read as a paint/colour picker, and a movie camera (its icon until
@@ -101,17 +104,58 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
 
   pop.append(styleHead, grid);
 
-  // Filled by the appearance card (Task 6); until then nothing opens.
-  let openCard = () => false;
-  let saveState = "screen-only";
   // The Parts section (parts-list.js) — only for a host that passes the seam.
   // Separated from the style grid by a rule so the popover reads as two
   // things: how the scene is drawn, then what is in it.
   let partsList = null;
+  let divider2 = null;
   if (parts) {
-    const divider2 = el("hr", "pf-popover-rule");
+    divider2 = el("hr", "pf-popover-rule");
     partsList = attachPartsList(parts, { onSwatch: (name) => openCard(name) });
     pop.append(divider2, partsList.element);
+  }
+
+  // The appearance card (appearance-card.js): the popover's second page, for
+  // one sub-part. The popover holds one page at a time — "list" (the style
+  // grid and the Parts section) or "card" — on `data-page`; placement, the
+  // close rules and the host-hidden observers are the same for both, and a
+  // close always returns to the list, so the next open starts there.
+  let saveState = "screen-only";
+  let card = null;
+  const listNodes = () => [styleHead, grid, divider2, partsList?.element].filter(Boolean);
+  function showPage(page) {
+    pop.dataset.page = page;
+    for (const n of listNodes()) n.hidden = page !== "list";
+    if (card) card.element.hidden = page !== "card";
+    if (page === "list") card?.hide();
+    if (isOpen()) place();
+  }
+  // Built on the first openCard, not at attach: until a card is wanted the
+  // document holds none of its ~40 controls (a host or test querying the page's
+  // range inputs or buttons would otherwise find the hidden card's first).
+  function ensureCard() {
+    if (card || !parts) return card;
+    card = attachAppearanceCard(parts, {
+      onBack: () => showPage("list"),
+      onClose: () => close(),
+      getSaveState: () => saveState,
+      renderThumb: viewer.renderMaterialThumbnail ? (id, display) => viewer.renderMaterialThumbnail(display, { size: 96 }) : null,
+    });
+    card.element.hidden = true;
+    pop.append(card.element);
+    return card;
+  }
+  pop.dataset.page = "list";
+  // Open the popover (if it is closed) on the card for `name`. False when there
+  // is no card (no `parts` seam), the host is hidden, or `name` is not a sub-part.
+  function openCard(name) {
+    if (!parts) return false;
+    if (!isOpen()) open();
+    if (!isOpen()) return false; // the host is hidden: nothing to show on
+    if (!ensureCard().show(name)) return false;
+    showPage("card");
+    card.element.querySelector(".pf-card-back")?.focus();
+    return true;
   }
   stage.append(pop);
 
@@ -236,6 +280,7 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
   function close({ focus = true } = {}) {
     if (!isOpen()) return;
     pop.hidden = true;
+    showPage("list");
     button.setAttribute("aria-expanded", "false");
     button.classList.remove("on");
     document.removeEventListener("pointerdown", onOutside, true);
@@ -304,7 +349,10 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
     },
     sync: render,
     openCard: (name) => openCard(name),
-    setSaveState(state) { saveState = state; },
+    setSaveState(state) {
+      saveState = state;
+      if (pop.dataset.page === "card") card?.render();
+    },
     getSaveState: () => saveState,
     detach() {
       if (detached) return;
@@ -315,6 +363,7 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
       pop.removeEventListener("keydown", onKey);
       for (const off of offs) { try { off(); } catch { /* already gone */ } }
       partsList?.detach();
+      card?.detach();
       tooltipBinding?.detach();
       hideObserver?.disconnect();
       sizeObserver?.disconnect();
