@@ -22,7 +22,7 @@ edit.
 ## What the user gets
 
 - **Behind the eye.** The View style popover (the eye in the pill) keeps its
-  Style tiles and gains a **Parts** section: the sub-parts in the active view,
+  Environment tiles and gains a **Parts** section: the sub-parts in the active view,
   each with an eye (hide / show) and a swatch. Show all clears every hide.
   Nothing is added to the pill.
 - **From the model.** Clicking a sub-part raises the pick bubble as today, now
@@ -44,7 +44,7 @@ edit.
 
 ## Decisions (from the mockups)
 
-1. The Parts list lives in the existing View style popover, Style above Parts;
+1. The Parts list lives in the existing View style popover, Environment above Parts;
    no new pill button.
 2. The bubble leads with the part (header row) and keeps its chips inline in
    the text area. The three layouts tried (header, toolbar, chip) are in the

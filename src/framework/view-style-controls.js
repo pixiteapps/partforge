@@ -84,8 +84,8 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
   pop.hidden = true;
 
   const styleHead = el("p", "pf-view-style-heading");
-  styleHead.textContent = "Style";
-  const grid = el("div", "pf-view-style-grid", { role: "group", "aria-label": "Style" });
+  styleHead.textContent = "Environment";
+  const grid = el("div", "pf-view-style-grid", { role: "group", "aria-label": "Environment" });
   const tiles = new Map();
   for (const s of STYLES) {
     const t = el("button", "pf-view-style-tile", { type: "button", "aria-pressed": "false" });
