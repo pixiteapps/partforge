@@ -774,10 +774,11 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 }
 .pf-view-style-popover[hidden] { display: none; }
 .pf-view-style-heading { margin: 0; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pf-muted-2); }
-.pf-view-style-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.pf-view-style-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
 .pf-view-style-tile {
   display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0;
   background: none; color: var(--pf-muted-2); cursor: pointer; font: inherit; text-align: center;
+  font-size: 10.5px;
 }
 .pf-view-style-thumb {
   display: block; aspect-ratio: 1; border-radius: 8px; overflow: hidden;
@@ -796,6 +797,26 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 .pf-view-style-button:focus-visible, .pf-view-style-tile:focus-visible {
   outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
 }
+/* The Parts section (parts-list.js): under the style grid, behind a rule. */
+.pf-popover-rule { border: 0; border-top: 1px solid var(--pf-border); margin: 0 -12px; }
+.pf-parts { display: flex; flex-direction: column; gap: 6px; }
+.pf-parts-head { display: flex; align-items: baseline; justify-content: space-between; }
+.pf-parts-showall { font: inherit; font-weight: 500; color: var(--pf-accent); background: none; border: 0; padding: 0; cursor: pointer; }
+.pf-parts-showall[hidden] { display: none; }
+.pf-parts-list { display: flex; flex-direction: column; gap: 2px; }
+.pf-parts-row { display: grid; grid-template-columns: 28px 22px 1fr auto; align-items: center; gap: 8px; padding: 3px 4px 3px 0; border-radius: var(--pf-radius-control); min-width: 0; }
+.pf-parts-row:hover { background: var(--pf-surface-2); }
+.pf-parts-eye { width: 28px; height: 28px; border: 0; background: none; color: var(--pf-muted-2); border-radius: 6px; display: grid; place-items: center; cursor: pointer; }
+.pf-parts-eye:hover { background: var(--pf-accent-soft); color: var(--pf-accent); }
+.pf-parts-row.hidden .pf-parts-eye { color: var(--pf-hint); }
+.pf-parts-row.faded .pf-parts-eye { opacity: .55; }
+.pf-parts-row.hidden .pf-parts-name { color: var(--pf-hint); }
+.pf-parts-row.hidden .pf-parts-swatch { opacity: .35; }
+.pf-parts-swatch { width: 22px; height: 22px; border-radius: 50%; border: 0; padding: 0; cursor: pointer; background: var(--pf-swatch, var(--pf-surface-2)); box-shadow: inset 0 0 0 1px rgb(0 0 0 / .18); }
+.pf-parts-swatch:hover { box-shadow: inset 0 0 0 1px rgb(0 0 0 / .18), 0 0 0 2px var(--pf-surface), 0 0 0 4px var(--pf-accent); }
+.pf-parts-name { font-size: 13px; color: var(--pf-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-parts-mat { font-size: 11.5px; color: var(--pf-muted); white-space: nowrap; }
+.pf-parts-eye:focus-visible, .pf-parts-swatch:focus-visible, .pf-parts-showall:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 
 /* At very narrow widths the full-size viewbar (5 icon buttons + cutaway's
    Flip/Reset, ~314px) is wider than a small phone's viewport minus the

@@ -31,13 +31,16 @@
 // Orthographic segmented control). It went when the projection became
 // AUTOMATIC — orthographic on a view cube face view, perspective everywhere
 // else (Fusion 360's "Perspective with Ortho Faces"; viewer.js's
-// tweenCameraTo) — so the popover is the style grid alone.
+// tweenCameraTo). Since 2026-10-13 a host that passes a `parts` seam also
+// gets a Parts section under the grid (parts-list.js); without one the popover
+// is the style grid alone, exactly as before.
 //
 // The state shown is always the viewer's: a tile is pressed once the viewer
 // reports that style, and a runtime change made elsewhere shows up here.
 import { STYLES, styleFor, createThumbnailCache } from "./view-style-state.js";
 import { saveRenderMode, saveEnvironment } from "./view-state.js";
 import { attachButtonTooltips } from "./tooltip.js";
+import { attachPartsList } from "./parts-list.js";
 
 // An eye (lucide "eye"): the button is about how the part is SEEN — a
 // palette read as a paint/colour picker, and a movie camera (its icon until
@@ -53,7 +56,7 @@ function el(tag, className, attrs = {}) {
   return e;
 }
 
-export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor = null } = {}, { tooltip } = {}) {
+export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor = null, parts = null } = {}, { tooltip } = {}) {
   const button = el("button", "pf-view-style-button", {
     type: "button", id: "view-style", "aria-label": LABEL,
     "aria-haspopup": "dialog", "aria-expanded": "false", "aria-controls": "pf-view-style-popover",
@@ -97,6 +100,19 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
   }
 
   pop.append(styleHead, grid);
+
+  // Filled by the appearance card (Task 6); until then nothing opens.
+  let openCard = () => false;
+  let saveState = "screen-only";
+  // The Parts section (parts-list.js) — only for a host that passes the seam.
+  // Separated from the style grid by a rule so the popover reads as two
+  // things: how the scene is drawn, then what is in it.
+  let partsList = null;
+  if (parts) {
+    const divider2 = el("hr", "pf-popover-rule");
+    partsList = attachPartsList(parts, { onSwatch: (name) => openCard(name) });
+    pop.append(divider2, partsList.element);
+  }
   stage.append(pop);
 
   const tooltipBinding = tooltip ? attachButtonTooltips(tooltip, [{ element: button }]) : null;
@@ -213,6 +229,7 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
     button.setAttribute("aria-expanded", "true");
     button.classList.add("on");
     render();
+    partsList?.render();
     document.addEventListener("pointerdown", onOutside, true);
     refreshThumbnails();
   }
@@ -236,6 +253,9 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
     // the cutaway on or off, or moving its plane, stales them all — without
     // this a set taken with the cutaway on outlived the cutaway itself.
     viewer.onCutawayChange?.(() => cache.invalidate()) ?? (() => {}),
+    // A material or hide change shows in the thumbnails too (spec A.3), so it
+    // stales them for the next open the same way.
+    viewer.onDisplayChange?.(() => cache.invalidate()) ?? (() => {}),
   ];
   render();
   // The popover closes whenever the button's host is hidden: #viewbar hides
@@ -279,6 +299,9 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
       if (divider) divider.hidden = !!flag;
     },
     sync: render,
+    openCard: (name) => openCard(name),
+    setSaveState(state) { saveState = state; },
+    getSaveState: () => saveState,
     detach() {
       if (detached) return;
       detached = true;
@@ -287,6 +310,7 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
       button.removeEventListener("keydown", onKey);
       pop.removeEventListener("keydown", onKey);
       for (const off of offs) { try { off(); } catch { /* already gone */ } }
+      partsList?.detach();
       tooltipBinding?.detach();
       hideObserver?.disconnect();
       sizeObserver?.disconnect();

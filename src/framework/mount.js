@@ -806,7 +806,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         list: () => subPartRows(part, { view: view(), params, overrides: viewer.getDisplayOverrides?.() ?? {} }),
         setDisplay: (name, patch) => viewer.setSubPartDisplay(name, patch),
         clear: (opts) => viewer.clearSubPartDisplay(opts),
-        onChange: (cb) => viewer.onDisplayChange(cb),
+        onChange: (cb) => viewer.onDisplayChange?.(cb) ?? (() => {}),
         onViewChange: (cb) => { viewChangeListeners.add(cb); return () => viewChangeListeners.delete(cb); },
         getState: (name) => viewer.getSubPartDisplayState(name),
       },
