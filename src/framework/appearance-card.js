@@ -16,7 +16,7 @@ const FINISH = [
 ];
 const FOOT = {
   "saved": { note: "Material and colour are saved to this forge. See-through and hiding are only on this screen.", reset: "Reset to authored" },
-  "screen-only": { note: "Only on this screen", reset: "Reset" },
+  "screen-only": { note: "", reset: "Reset" },
   "blocked": { note: "This part's look is set by code. Ask the assistant to change it.", reset: "Reset" },
 };
 const ICONS = {
@@ -123,7 +123,12 @@ export function attachAppearanceCard(parts, { onBack, onClose, onGone, getSaveSt
     t.append(ball, lab);
     return t;
   };
-  tiles.append(tileFor("", "CAD", 0x9fb4cc), ...Object.values(PRESETS).map((p) => tileFor(p.id, p.label, p.color)));
+  // One tile per preset. There is no "no material" tile: in the realistic
+  // view a part with no material looks like plain matte in its colour, which
+  // nothing on screen can tell from a neighbouring preset, so the tile read as
+  // dead. A part with no (or an unknown) material presses nothing; Reset is
+  // the way back to the authored look.
+  tiles.append(...Object.values(PRESETS).map((p) => tileFor(p.id, p.label, p.color)));
   const unknown = el("p", "pf-card-unknown"); unknown.hidden = true;
 
   const colHead = el("div", "pf-card-lab-row");
@@ -194,7 +199,6 @@ export function attachAppearanceCard(parts, { onBack, onClose, onGone, getSaveSt
     const t = e.target.closest(".pf-card-tile");
     if (!t || !name) return;
     const id = t.dataset.material;
-    if (id === "") { parts.setDisplay(name, { material: null }); return; }
     // An untintable preset draws its own colour, and the card disables the
     // colour row under it — so a colour the USER set would be stranded there
     // (drawn as red brass, with nothing but Reset to clear it). Picking one
@@ -233,8 +237,7 @@ export function attachAppearanceCard(parts, { onBack, onClose, onGone, getSaveSt
     const pct = Math.round(row.opacity * 100);
     see.value = String(pct); seeVal.textContent = `${pct}%`;
     const m = state.effective.material;
-    const pressed = known(m) ? m : "";
-    for (const t of tiles.children) t.setAttribute("aria-pressed", String(t.dataset.material === pressed));
+    for (const t of tiles.children) t.setAttribute("aria-pressed", String(known(m) && t.dataset.material === m));
     matVal.textContent = row.materialLabel ?? "None";
     unknown.hidden = !(m != null && !known(m));
     unknown.textContent = unknown.hidden ? "" : String(m);
@@ -267,7 +270,7 @@ export function attachAppearanceCard(parts, { onBack, onClose, onGone, getSaveSt
       }
     }
     const f = FOOT[getSaveState?.() ?? "screen-only"] ?? FOOT["screen-only"];
-    note.textContent = f.note; reset.textContent = f.reset;
+    note.textContent = f.note; note.hidden = !f.note; reset.textContent = f.reset;
     if (renderThumb) requestPaint(state.effective);
   }
 
@@ -294,7 +297,7 @@ export function attachAppearanceCard(parts, { onBack, onClose, onGone, getSaveSt
 
   // Thumbnails: one per tile, lazily, in order, cached by the renderer (Task 7),
   // with a frame between tiles so a pass of cold renders never blocks a task
-  // for all ~25 spheres at once (CAD renders have no await of their own).
+  // for all ~25 spheres at once.
   let thumbToken = 0;
   async function paintThumbs(effective) {
     const token = ++thumbToken;
@@ -302,7 +305,6 @@ export function attachAppearanceCard(parts, { onBack, onClose, onGone, getSaveSt
     for (const t of tiles.children) {
       if (token !== thumbToken || !root.isConnected) return;
       const id = t.dataset.material;
-      if (id === "") continue;
       if (!first) { await nextFrame(); if (token !== thumbToken || !root.isConnected) return; }
       first = false;
       let url = null;

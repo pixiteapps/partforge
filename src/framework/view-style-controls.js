@@ -161,7 +161,7 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
     const rowFor = name != null
       ? [...pop.querySelectorAll(".pf-parts-row")].find((r) => r.dataset.name === name)
       : null;
-    const target = rowFor?.querySelector(".pf-parts-swatch")
+    const target = rowFor?.querySelector(".pf-parts-open")
       ?? pop.querySelector(".pf-parts-row .pf-parts-eye")
       ?? pop.querySelector(".pf-view-style-tile");
     target?.focus({ preventScroll: true });

@@ -28,35 +28,36 @@ afterEach(() => { vi.useRealTimers(); });
 const FAKE = { toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "performance", "Date"] };
 
 describe("appearance card", () => {
-  it("shows the label, one tile per preset plus CAD, the pressed one being the effective material", () => {
+  it("shows the label, one tile per preset, the pressed one being the effective material", () => {
     const card = attachAppearanceCard(partsStub(rows()), { onBack: () => {}, getSaveState: () => "screen-only" });
     document.body.append(card.element);
     card.show("lid");
     expect(card.element.querySelector(".pf-card-title").textContent).toBe("Lid");
     const tiles = [...card.element.querySelectorAll(".pf-card-tile")];
-    expect(tiles.length).toBe(Object.keys(PRESETS).length + 1);
-    expect(tiles[0].textContent).toBe("CAD");
+    expect(tiles.length).toBe(Object.keys(PRESETS).length);
+    expect(tiles.every((t) => t.dataset.material !== "")).toBe(true);
     expect(tiles.find((t) => t.getAttribute("aria-pressed") === "true").dataset.material).toBe("anodized-aluminum");
     card.detach();
   });
-  it("CAD is pressed for no material; an unknown id presses CAD and names itself", () => {
-    const r = rows(); r[2].effective = { material: "unobtainium" };
+  it("no tile is pressed for no material; an unknown id presses nothing and names itself", () => {
+    const r = rows(); r[1].effective = { material: "unobtainium" };
     const card = attachAppearanceCard(partsStub(r), { onBack: () => {}, getSaveState: () => "screen-only" });
     document.body.append(card.element);
     card.show("base");
-    expect(card.element.querySelector('.pf-card-tile[data-material=""]').getAttribute("aria-pressed")).toBe("true");
+    expect(card.element.querySelector('.pf-card-tile[aria-pressed="true"]')).toBeNull();
+    expect(card.element.querySelector(".pf-card-unknown").hidden).toBe(true);
+    card.show("knob");
+    expect(card.element.querySelector('.pf-card-tile[aria-pressed="true"]')).toBeNull();
     expect(card.element.querySelector(".pf-card-unknown").textContent).toBe("unobtainium");
     card.detach();
   });
-  it("tiles write material (CAD writes null); colour writes an int; the colour row is disabled for an untintable preset", () => {
+  it("tiles write material; colour writes an int; the colour row is disabled for an untintable preset", () => {
     const parts = partsStub(rows());
     const card = attachAppearanceCard(parts, { onBack: () => {}, getSaveState: () => "screen-only" });
     document.body.append(card.element);
     card.show("lid");
     card.element.querySelector('.pf-card-tile[data-material="oak"]').click();
     expect(parts.setDisplay).toHaveBeenLastCalledWith("lid", { material: "oak" });
-    card.element.querySelector('.pf-card-tile[data-material=""]').click();
-    expect(parts.setDisplay).toHaveBeenLastCalledWith("lid", { material: null });
     card.element.querySelector('.pf-card-color[data-color="#1f5bd6"]').click();
     expect(parts.setDisplay).toHaveBeenLastCalledWith("lid", { color: 0x1f5bd6 });
     card.show("knob");
@@ -120,6 +121,9 @@ describe("appearance card", () => {
     expect(card.element.querySelector(".pf-card-reset").textContent).toBe("Reset to authored");
     state = "blocked"; card.render();
     expect(card.element.querySelector(".pf-card-foot-note").textContent).toBe("This part's look is set by code. Ask the assistant to change it.");
+    expect(card.element.querySelector(".pf-card-reset").textContent).toBe("Reset");
+    state = "screen-only"; card.render();
+    expect(card.element.querySelector(".pf-card-foot-note").hidden).toBe(true);
     expect(card.element.querySelector(".pf-card-reset").textContent).toBe("Reset");
     card.element.querySelector(".pf-card-reset").click();
     expect(parts.clear).toHaveBeenCalledWith({ appearance: true, name: "lid" });

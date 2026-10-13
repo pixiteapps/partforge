@@ -1,6 +1,6 @@
 // src/framework/parts-list.js
 // The View style popover's Parts section: the sub-parts in the active view,
-// one row each with an eye (hide / show) and a swatch (opens the appearance
+// one row each with an eye (hide / show) and a swatch + name (opens the appearance
 // card), plus Show all. DOM only; the row model is sub-part-list.js's and the
 // state is the viewer's — this module renders `parts.list()` and calls
 // `parts.setDisplay` / `parts.clear`, nothing more.
@@ -40,12 +40,12 @@ export function attachPartsList(parts, { onSwatch } = {}) {
     if (!a || !list.contains(a)) return null;
     const row = a.closest(".pf-parts-row");
     if (!row) return null;
-    return { name: row.dataset.name, kind: a.classList.contains("pf-parts-swatch") ? "swatch" : "eye" };
+    return { name: row.dataset.name, kind: a.classList.contains("pf-parts-open") ? "open" : "eye" };
   }
   function restoreFocus(was) {
     if (!was) return;
     const row = [...list.children].find((r) => r.dataset.name === was.name);
-    row?.querySelector(was.kind === "swatch" ? ".pf-parts-swatch" : ".pf-parts-eye")?.focus({ preventScroll: true });
+    row?.querySelector(was.kind === "open" ? ".pf-parts-open" : ".pf-parts-eye")?.focus({ preventScroll: true });
   }
 
   // One render path. Clicks render synchronously (a host whose `onChange`
@@ -74,13 +74,17 @@ export function attachPartsList(parts, { onSwatch } = {}) {
       eye.title = eye.getAttribute("aria-label");
       eye.innerHTML = r.hidden ? EYE_OFF : EYE;
       eye.addEventListener("click", () => { parts.setDisplay(r.name, { hidden: !r.hidden }); render(); });
-      const swatch = el("button", "pf-parts-swatch", { type: "button", "aria-label": `Change appearance of ${r.label}` });
-      swatch.title = swatch.getAttribute("aria-label");
+      // Swatch, name and material are ONE button: the whole row past the eye
+      // opens the card, not just the 22px disc.
+      const open = el("button", "pf-parts-open", { type: "button", "aria-label": `Change appearance of ${r.label}` });
+      open.title = open.getAttribute("aria-label");
+      const swatch = el("span", "pf-parts-swatch");
       swatch.style.setProperty("--pf-swatch", hexColor(r.color));
-      swatch.addEventListener("click", () => onSwatch?.(r.name));
       const name = el("span", "pf-parts-name"); name.textContent = r.label;
       const mat = el("span", "pf-parts-mat"); mat.textContent = r.materialLabel ?? "";
-      row.append(eye, swatch, name, mat);
+      open.append(swatch, name, mat);
+      open.addEventListener("click", () => onSwatch?.(r.name));
+      row.append(eye, open);
       return row;
     }));
     list.scrollTop = listTop;

@@ -804,19 +804,20 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 .pf-parts-showall { font: inherit; font-weight: 500; color: var(--pf-accent); background: none; border: 0; padding: 0; cursor: pointer; }
 .pf-parts-showall[hidden] { display: none; }
 .pf-parts-list { display: flex; flex-direction: column; gap: 2px; }
-.pf-parts-row { display: grid; grid-template-columns: 28px 22px 1fr auto; align-items: center; gap: 8px; padding: 3px 4px 3px 0; border-radius: var(--pf-radius-control); min-width: 0; }
-.pf-parts-row:hover { background: var(--pf-surface-2); }
+.pf-parts-row { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 4px; padding: 0; border-radius: var(--pf-radius-control); min-width: 0; }
+.pf-parts-open { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 3px 6px 3px 0; border: 0; border-radius: var(--pf-radius-control); background: none; font: inherit; text-align: left; cursor: pointer; }
+.pf-parts-open:hover { background: var(--pf-surface-2); }
 .pf-parts-eye { width: 28px; height: 28px; border: 0; background: none; color: var(--pf-muted-2); border-radius: 6px; display: grid; place-items: center; cursor: pointer; }
 .pf-parts-eye:hover { background: var(--pf-accent-soft); color: var(--pf-accent); }
 .pf-parts-row.hidden .pf-parts-eye { color: var(--pf-hint); }
 .pf-parts-row.faded .pf-parts-eye { opacity: .55; }
 .pf-parts-row.hidden .pf-parts-name { color: var(--pf-hint); }
 .pf-parts-row.hidden .pf-parts-swatch { opacity: .35; }
-.pf-parts-swatch { width: 22px; height: 22px; border-radius: 50%; border: 0; padding: 0; cursor: pointer; background: var(--pf-swatch, var(--pf-surface-2)); box-shadow: inset 0 0 0 1px rgb(0 0 0 / .18); }
-.pf-parts-swatch:hover { box-shadow: inset 0 0 0 1px rgb(0 0 0 / .18), 0 0 0 2px var(--pf-surface), 0 0 0 4px var(--pf-accent); }
+.pf-parts-swatch { width: 22px; height: 22px; border-radius: 50%; background: var(--pf-swatch, var(--pf-surface-2)); box-shadow: inset 0 0 0 1px rgb(0 0 0 / .18); }
+.pf-parts-open:hover .pf-parts-swatch { box-shadow: inset 0 0 0 1px rgb(0 0 0 / .18), 0 0 0 2px var(--pf-surface), 0 0 0 4px var(--pf-accent); }
 .pf-parts-name { font-size: 13px; color: var(--pf-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pf-parts-mat { font-size: 11.5px; color: var(--pf-muted); white-space: nowrap; }
-.pf-parts-eye:focus-visible, .pf-parts-swatch:focus-visible, .pf-parts-showall:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
+.pf-parts-eye:focus-visible, .pf-parts-open:focus-visible, .pf-parts-showall:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 /* The appearance card (appearance-card.js): the popover's second page. The
    popover shows one page at a time by hiding the other's nodes; the grid and
    the Parts section set display, which beats the UA's [hidden] rule, so the

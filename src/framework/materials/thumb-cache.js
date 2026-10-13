@@ -8,7 +8,7 @@
 // An UNTINTABLE preset (brass, oak, ...) draws its own colour whatever the
 // part's colour is, so its colour is dropped from both the render and the key:
 // every part shares one sphere for it, and a colour pick re-renders only the
-// tintable tiles. The CAD "no material" tile (and an unknown id) is tintable.
+// tintable tiles. No material (and an unknown id) counts as tintable.
 import { PRESETS } from "./presets.js";
 
 const CAP = 120;

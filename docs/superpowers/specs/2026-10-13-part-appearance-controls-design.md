@@ -38,8 +38,9 @@ edit.
 - **Hiding and see-through are never saved.** A part can be hidden with its
   eye or faded with a slider; both are ways of looking, like the cut plane:
   they survive every apply's remount and are cleared by Show all or a reload.
-- **Visitors get the same controls, screen-only.** The footer reads "Only on
-  this screen" and Reset returns to what the owner published.
+- **Visitors get the same controls, screen-only.** The footer carries no
+  note (a change that goes nowhere needs no caption) and Reset returns to
+  what the owner published.
 
 ## Decisions (from the mockups)
 
@@ -262,8 +263,10 @@ Style grid:
 <div class="pf-parts-list" role="list">
   <div class="pf-parts-row" role="listitem" data-name>
     <button class="pf-parts-eye" aria-pressed aria-label="Hide Lid">eye</button>
-    <button class="pf-parts-swatch" aria-label="Change appearance of Lid" style="--pf-swatch:#…"></button>
-    <span class="pf-parts-name">Lid</span><span class="pf-parts-mat">Anodized aluminium</span>
+    <button class="pf-parts-open" aria-label="Change appearance of Lid">
+      <span class="pf-parts-swatch" style="--pf-swatch:#…"></span>
+      <span class="pf-parts-name">Lid</span><span class="pf-parts-mat">Anodized aluminium</span>
+    </button>
   </div>…
 </div>
 ```
@@ -277,13 +280,14 @@ Style grid:
 - `.pf-view-style-grid` becomes `repeat(5, 1fr)` with a 6px gap; the thumb
   keeps `aspect-ratio: 1`; the label drops to 10.5px. `place()`'s `maxHeight`
   already bounds the popover to the stage; the list scrolls inside it.
-- The swatch is a flat disc in the resolved colour; a hidden row dims its
-  swatch and name. Rows carry `title`s for the tooltip binding like the
+- The swatch is a flat disc in the resolved colour; swatch, name and
+  material are one button, so the whole row past the eye opens the card. A
+  hidden row dims its swatch and name. Rows carry `title`s for the tooltip binding like the
   tiles.
 
 ### A.6 The popover: card page
 
-Clicking a swatch (or `runtime.openAppearance(name)`) swaps the popover's
+Clicking a row (or `runtime.openAppearance(name)`) swaps the popover's
 content for the card, with a Back button that returns to the list; the
 popover's placement, close rules and host-hidden observers are unchanged. The
 card:
@@ -292,10 +296,12 @@ card:
    close. Under it, **See-through**: one range input, 5–100%, writing
    `{opacity}`; at 100% the key clears. It sits with the eye rather than in
    Finish because it is the eye's partial form, and both are screen-only.
-2. **Materials**: a 6-column grid of tiles, one per `PRESETS` entry plus a
-   first "CAD" tile meaning "no material"; the pressed tile is `effective.
-   material` (CAD when null or unknown; an unknown id shows its text under the
-   CAD tile so the author's typo is visible). Tile thumbnails are small
+2. **Materials**: a 6-column grid of tiles, one per `PRESETS` entry; the
+   pressed tile is `effective.material` (none pressed when null or unknown;
+   an unknown id shows its text under the tiles so the author's typo is
+   visible). There is no "no material" tile: in the realistic view a part
+   with no material is plain matte in its colour, indistinguishable from a
+   neighbouring preset, so Reset is the way back to the authored look. Tile thumbnails are small
    sphere renders under the current environment, rendered lazily one per
    frame on first open of the card and cached per `(preset, environment,
    theme)` by the thumbnail cache; while pending, a flat disc in the preset's
@@ -310,7 +316,7 @@ card:
    writes `null`.
 5. **Footer**: copy from `setDisplaySaveState`: `saved` → "Material and
    colour are saved to this forge. See-through and hiding are only on this
-   screen." + **Reset to authored**; `screen-only` → "Only on this screen" +
+   screen." + **Reset to authored**; `screen-only` → no note, just
    **Reset**; `blocked` → "This part's look is set by code. Ask the assistant
    to change it." + Reset. Reset is `clearSubPartDisplay({appearance: true})`
    for this name only (the viewing keys are left alone; Show all is theirs).

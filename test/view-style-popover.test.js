@@ -169,7 +169,7 @@ describe("view style popover: parts section", () => {
     vs.popover.querySelector('.pf-parts-row[data-name="lid"] .pf-parts-swatch').click();
     expect(document.activeElement.classList.contains("pf-card-back")).toBe(true);
     vs.popover.querySelector(".pf-card-back").click();
-    expect(document.activeElement).toBe(vs.popover.querySelector('.pf-parts-row[data-name="lid"] .pf-parts-swatch'));
+    expect(document.activeElement).toBe(vs.popover.querySelector('.pf-parts-row[data-name="lid"] .pf-parts-open'));
     document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(vs.isOpen()).toBe(false);
     vs.detach();
@@ -180,8 +180,8 @@ describe("view style popover: parts section", () => {
     const viewer = { ...viewerStub(), onThemeChange: (cb) => { themeCb = cb; return () => {}; }, renderMaterialThumbnail: vi.fn(async () => null) };
     const vs = attachViewStyleControls(viewer, { stage, toolbar, parts: partsStub(ROWS()) });
     expect(vs.openCard("lid")).toBe(true);
-    // Let the first paint finish: one call per material tile (the CAD tile has none).
-    const tiles = vs.popover.querySelectorAll('.pf-card-tile:not([data-material=""])').length;
+    // Let the first paint finish: one call per tile.
+    const tiles = vs.popover.querySelectorAll('.pf-card-tile').length;
     // A frame per tile, then the repaint window: a second is far more than enough.
     await vi.advanceTimersByTimeAsync(1000);
     expect(viewer.renderMaterialThumbnail).toHaveBeenCalledTimes(tiles);
