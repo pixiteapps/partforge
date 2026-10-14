@@ -16,6 +16,8 @@ import { mount } from "./framework/index.js";
 // scripts/capture-contact-sheet.mjs can switch views and environments and call
 // runtime.renderViews — removing it breaks both.
 window.__pfRuntime = mount(materialSwatchesPart, {
+  onPick: (pick) => { window.__pfLastPick = pick; },
+  selectionPopover: { slot: false },
   createWorker: (name) =>
     new Worker(new URL("./materials-worker.js", import.meta.url), { type: "module", name }),
   onAnnotationSend: (payload) => {

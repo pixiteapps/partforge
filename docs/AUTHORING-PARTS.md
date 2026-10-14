@@ -3090,6 +3090,19 @@ instead of (or in addition to) the built-in `#part` bar:
 - `runtime.controlsFor(selection) → string[]` — the param keys relevant to a pick
   (`selection.subPart`): today the picked sub-part's recorded reads plus its show/hide gate
   (`enabled()`) params.
+- **The selection popover.** Pass `selectionPopover: { slot: true | false }` (with `onPick`)
+  and a pick opens a popover at the picked spot: the sub-part's swatch, label and material as
+  one button that opens its appearance card as the popover's second page, an eye that hides
+  it, and ✕. With `slot: true` the popover also holds an empty region the host fills with its
+  own UI (a chat box, say) floated over the frame: tell partforge how tall it must be with
+  `runtime.selection.setSlotHeight(px)` and hear where it is with
+  `runtime.selection.onSlotChange(({ state, rect }) => …)` — `state` is `"open"` (with a rect
+  in stage px), `"collapsed"` (the card page is showing) or `"closed"`.
+  `runtime.selection.onClose(({ reason }) => …)` says why partforge closed it (`"dismiss"`,
+  `"hide"`, `"gone"`); `runtime.selection.close()` closes it from the host. An open popover
+  rides `getViewerState().selection`, so a remount reopens it. `runtime.selection` is `null`
+  without the option. `runtime.controlsFor(selection)` is the intended source for a future
+  page of the controls that shape the picked spot.
 
 Pass `onViewChange(name)` to `mount()` to be told the active view: it fires once
 synchronously during mount with the initial resolved view (before `runtime.ready` settles),

@@ -26,6 +26,7 @@ import type {
   Shape2D,
   Solid,
   SubPartDefinition,
+  SelectionRuntime,
 } from "partforge";
 import { circleProfile, circlePolygon, ringSectorProfile, offsetPolygon, pathProfile, roundedProfile, roundedRectPolygon, circularPattern, fingerBox, sheetHole, sheetPart, worldToSheet } from "partforge/geometry";
 import type { ArcContour, Region2D, SheetPose } from "partforge/geometry";
@@ -326,6 +327,8 @@ expectType<Array<{ id: string; label: string }>>(runtime.environment.list());
 expectType<boolean>(runtime.declaresMaterials);
 expectType<Promise<Array<{ view: string; dataUrl: string }>>>(runtime.renderViews(["iso"], { renderMode: "realistic" }));
 expectType<"cad" | "realistic" | undefined>(runtime.getViewerState().renderMode);
+expectType<SelectionRuntime | null>(runtime.selection);
+expectType<{ subPart: string | null; point: [number, number, number]; page: "spot" | "appearance" } | undefined>(runtime.getViewerState().selection);
 
 // @ts-expect-error - "photo" is not a render mode
 runtime.renderMode.set("photo");

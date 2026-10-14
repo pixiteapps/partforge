@@ -212,6 +212,8 @@ export interface MountOptions {
    * and takes precedence over the `?pick` and `?pickserver` URL modes.
    */
   onPick?: (event: PickEvent) => void;
+  /** Opt in to the selection popover (requires `onPick`): a pick opens a popover at the spot with the sub-part's appearance controls, and with `slot: true` an empty region the host floats its own UI over (`runtime.selection`). */
+  selectionPopover?: { slot: boolean };
   /** Receive exported bytes instead of partforge's own DOM download. */
   onDownload?: (file: DownloadPayload) => void;
   /** The active view (tab) name — emitted once on mount, then on every change. */
@@ -316,6 +318,8 @@ export interface CutawayState {
  * `MountOptions.viewerState`.
  */
 export interface ViewerState {
+  /** The open selection popover, reopened by the next mount if the sub-part is still in the view. */
+  selection?: { subPart: string | null; point: [number, number, number]; page: "spot" | "appearance" };
   /** The live camera pose, or `null` when the viewer could not report one. */
   camera: { pos: [number, number, number]; target: [number, number, number] } | null;
   /**
@@ -520,6 +524,22 @@ export interface AnnotateRuntime {
  * on its own about a second after the pick, so `hold()` belongs in the `onPick`
  * handler, not behind a later user action.
  */
+export type SelectionSlotReport =
+  | { state: "open"; rect: { x: number; y: number; width: number; height: number } }
+  | { state: "collapsed" }
+  | { state: "closed" };
+
+export interface SelectionRuntime {
+  /** The height (CSS px, integer, 44–2000) the host's slot content needs. */
+  setSlotHeight(px: number): void;
+  /** Where the slot is, in stage CSS px; fires on every change. Never fires for `slot: false`. */
+  onSlotChange(cb: (report: SelectionSlotReport) => void): () => void;
+  /** Why partforge closed it. A host's own `close()` does not fire this. */
+  onClose(cb: (event: { reason: "dismiss" | "hide" | "gone" }) => void): () => void;
+  close(): void;
+  isOpen(): boolean;
+}
+
 export interface PickMarkerRuntime {
   /** Keep the newest marker on screen; false when there is none. Earlier held markers stay held. */
   hold(): boolean;
@@ -703,6 +723,8 @@ export interface PartRuntime {
   annotate: AnnotateRuntime;
   /** The pick marker's lifetime — hold it on screen and follow it across the canvas. Always present (a no-op stand-in outside `makeHandle` tests). */
   pickMarker: PickMarkerRuntime;
+  /** The selection popover, or `null` without the `selectionPopover` option. */
+  selection: SelectionRuntime | null;
   /** Realistic render mode (docs "Materials and appearance"). set() resolves to the mode actually in effect — "cad" if assets failed to load. */
   renderMode: {
     get(): RenderMode;
