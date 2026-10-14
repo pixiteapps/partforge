@@ -5,13 +5,9 @@ import { hypot3, pfSin, pfCos, pfAtan2 } from "../js-math.js";
 
 export const PRIM = Object.freeze({ SPHERE: 1, ELLIPSOID: 2, CAPSULE: 3, ROUNDCONE: 4, BOX: 5, CYLINDER: 6, TORUS: 7, HALFSPACE: 8 });
 export const BIG = 1e6;
-// Lipschitz bound of a primitive's field. Every field here is ≤ 1-Lipschitz (the ellipsoid
-// is the scaled-sphere form precisely so this holds). Task 7 reads this for culling.
+// Every primitive here is exactly 1-Lipschitz (the ellipsoid since it became the scaled-sphere
+// field); the (code, P) signature is kept so a future primitive can return a parameter-dependent bound.
 export function primLipschitz(code, P) { return 1; }
-// Lipschitz bound per primitive where it exceeds 1. The ellipsoid is Quilez's
-// approximate distance: measured gradient magnitude 3.888 on radii (4, 2, 1)
-// (theoretical ≤ rmax/rmin = 4); 3.888 × 1.05 rounded up.
-export const PRIM_LIPSCHITZ = Object.freeze({ 2: 4.09 });
 
 /** Precomputed round-cone constants (Quilez sdRoundCone, exact). */
 export function roundConeParams(a, b, r1, r2) {

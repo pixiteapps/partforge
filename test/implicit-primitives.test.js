@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { PRIM, PRIM_LIPSCHITZ, evalPrim, roundConeParams, unionN, intersectN, WARP, warpPoint, sanitize } from "../src/framework/geometry/implicit/primitives.js";
+import { PRIM, primLipschitz, evalPrim, roundConeParams, unionN, intersectN, WARP, warpPoint, sanitize } from "../src/framework/geometry/implicit/primitives.js";
 import { smin2 } from "../src/framework/geometry/implicit/expr-lower.js";
 
 const F = (...v) => Float64Array.of(...v);
@@ -28,7 +28,7 @@ describe("primitives", () => {
     expect(evalPrim(PRIM.HALFSPACE, F(0, 0, 1, 2), 0, 0, 5)).toBe(3);
     expect(evalPrim(PRIM.CAPSULE, F(0, 0, 0, 0, 10, 0, 1), 0, 5, 3)).toBe(2);
   });
-  test("every primitive's gradient magnitude stays within its Lipschitz bound (1 unless PRIM_LIPSCHITZ says otherwise)", () => {
+  test("every primitive's gradient magnitude stays within its Lipschitz bound (primLipschitz)", () => {
     const e = 1e-5;
     for (const [name, code, P] of CASES) {
       let worst = 0;
@@ -40,7 +40,7 @@ describe("primitives", () => {
         const gz = (evalPrim(code, P, x, y, z + e) - evalPrim(code, P, x, y, z - e)) / (2 * e);
         worst = Math.max(worst, Math.sqrt(gx * gx + gy * gy + gz * gz));
       }
-      expect(worst, name).toBeLessThanOrEqual((PRIM_LIPSCHITZ[code] ?? 1) + 1e-4);
+      expect(worst, name).toBeLessThanOrEqual(primLipschitz(code, P) + 1e-4);
     }
   });
   test("unionN of two children IS the normalized quadratic smin", () => {
