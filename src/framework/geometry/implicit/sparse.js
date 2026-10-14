@@ -1,13 +1,13 @@
 // src/framework/geometry/implicit/sparse.js
 // Coarse-to-fine sampling: blocks of TOP cells split in octants down to LEAF
-// cells; a block is skipped when its interval excludes [−snap, snap] (exact — see
+// cells; a block is skipped when its interval excludes 0 (exact — see
 // interval.js). Surviving leaves get the program emitted from their own decision
 // (shared across leaves with equal decisions) and their (LEAF+1)³ samples.
 import { blockDecision, fullDecision, decisionKey } from "./interval.js";
 import { emitProgram, evalBatch } from "./program.js";
 import { ImplicitSizeError } from "./errors.js";
 
-export const LEAF = 4, TOP = 32, SNAP_CELLS = 0.25, PAD_CELLS = 1;
+export const LEAF = 4, TOP = 32, SNAP_CELLS = 0, PAD_CELLS = 1;
 export const MAX_SAMPLES = 24_000_000, MAX_GRID_CELLS = 2e10;
 const SQRT3 = Math.sqrt(3);
 
@@ -34,12 +34,11 @@ export function sampleField(compiled, edge, { cull = true } = {}) {
       const r = (B * edge * SQRT3) / 2 + PAD_CELLS * edge;
       const cx = origin[0] + (i0 + B / 2) * edge, cy = origin[1] + (j0 + B / 2) * edge, cz = origin[2] + (l0 + B / 2) * edge;
       const a = blockDecision(compiled, cx, cy, cz, r);
-      // A sample is "on" the surface once |v| < snap: a block whose interval
-      // excludes [−snap, snap] holds no surface and no snapped sample.
-      // The inside cull (hi < -snap) is only taken for blocks touching no outer-layer
+      // No vertex snapping (snap = 0): a block whose interval excludes 0 holds no surface.
+      // The inside cull (hi < 0) is only taken for blocks touching no outer-layer
       // sample: those must be raised to 0.5·edge and flag `clipped`, so they are sampled.
       const interior = i0 > 0 && j0 > 0 && l0 > 0 && i0 + B < n[0] - 1 && j0 + B < n[1] - 1 && l0 + B < n[2] - 1;
-      if (a.lo > snap || (interior && a.hi < -snap)) return;
+      if (a.lo > 0 || (interior && a.hi < 0)) return;
       dec = a.dec;
     } else dec = fullDec;
     if (B > LEAF) {
@@ -69,7 +68,9 @@ export function sampleField(compiled, edge, { cull = true } = {}) {
         if (v <= 0) clipped = true;
         if (v < 0.5 * edge) v = 0.5 * edge;
       }
-      if (Math.abs(v) < snap) v = 0;
+      // An exactly-zero sample counts as outside; nudging it off zero keeps every crossing on its
+      // own edge vertex (a shared zero vertex would merge crossings and break manifoldness on thin features).
+      if (v === 0) v = 1e-30;
       vals[q] = v;
     }
     leaves.push({ i0, j0, l0, prog, vals });
