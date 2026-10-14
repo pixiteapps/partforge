@@ -5,6 +5,9 @@ import { hypot3, pfSin, pfCos, pfAtan2 } from "../js-math.js";
 
 export const PRIM = Object.freeze({ SPHERE: 1, ELLIPSOID: 2, CAPSULE: 3, ROUNDCONE: 4, BOX: 5, CYLINDER: 6, TORUS: 7, HALFSPACE: 8 });
 export const BIG = 1e6;
+// Lipschitz bound of a primitive's field. Every field here is ≤ 1-Lipschitz (the ellipsoid
+// is the scaled-sphere form precisely so this holds). Task 7 reads this for culling.
+export function primLipschitz(code, P) { return 1; }
 // Lipschitz bound per primitive where it exceeds 1. The ellipsoid is Quilez's
 // approximate distance: measured gradient magnitude 3.888 on radii (4, 2, 1)
 // (theoretical ≤ rmax/rmin = 4); 3.888 × 1.05 rounded up.
@@ -22,12 +25,9 @@ const sgn = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0);
 export function evalPrim(code, P, x, y, z) {
   switch (code) {
     case 1: return hypot3(x, y, z) - P[0];
-    case 2: {
-      const k0 = hypot3(x / P[0], y / P[1], z / P[2]);
-      if (k0 === 0) return -Math.min(P[0], P[1], P[2]);
-      const k1 = hypot3(x / (P[0] * P[0]), y / (P[1] * P[1]), z / (P[2] * P[2]));
-      return (k0 * (k0 - 1)) / k1;
-    }
+    // Scaled-sphere field min(r)·(k0−1): exactly 1-Lipschitz, not a true distance. Quilez's
+    // outside branch measured up to 30× (radii 10,1,1) so it was dropped (see primLipschitz).
+    case 2: return Math.min(P[0], P[1], P[2]) * (hypot3(x / P[0], y / P[1], z / P[2]) - 1);
     case 3: {
       const px = x - P[0], py = y - P[1], pz = z - P[2];
       const bx = P[3] - P[0], by = P[4] - P[1], bz = P[5] - P[2];

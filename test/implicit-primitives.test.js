@@ -9,6 +9,8 @@ const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294
 const CASES = [
   ["sphere", PRIM.SPHERE, F(3)],
   ["ellipsoid", PRIM.ELLIPSOID, F(4, 2, 1)],
+  ["ellipsoid long x", PRIM.ELLIPSOID, F(10, 1, 1)],
+  ["ellipsoid long y", PRIM.ELLIPSOID, F(1, 6, 2)],
   ["capsule", PRIM.CAPSULE, F(-2, 0, 0, 3, 1, 0, 1.5)],
   ["roundcone", PRIM.ROUNDCONE, roundConeParams([0, 0, 0], [0, 6, 0], 2, 1)],
   ["box", PRIM.BOX, F(2, 3, 1, 0.4)],
@@ -31,7 +33,8 @@ describe("primitives", () => {
     for (const [name, code, P] of CASES) {
       let worst = 0;
       for (let i = 0; i < 4000; i++) {
-        const x = rnd() * 9, y = rnd() * 9, z = rnd() * 9;
+        const sc = i % 4 === 0 ? 0.05 : 9;   // every fourth point is near the centre
+        const x = rnd() * sc, y = rnd() * sc, z = rnd() * sc;
         const gx = (evalPrim(code, P, x + e, y, z) - evalPrim(code, P, x - e, y, z)) / (2 * e);
         const gy = (evalPrim(code, P, x, y + e, z) - evalPrim(code, P, x, y - e, z)) / (2 * e);
         const gz = (evalPrim(code, P, x, y, z + e) - evalPrim(code, P, x, y, z - e)) / (2 * e);
