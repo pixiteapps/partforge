@@ -22,7 +22,11 @@ export function meshImplicit(compiled, edge) {
   if (compiled.thin < 2 * edge) {
     warnings.push(`implicit: thinnest feature (${compiled.thin.toFixed(2)} mm) is under 2 grid cells at ${edge} mm — it may break up or grow handles; mesh it as its own k.implicit with a finer grid, or thicken it`);
   }
-  if (store.clipped) warnings.push("implicit: the shape reached the edge of its sampling box and was clipped flat there — enlarge the `box` of any `expr` node, or reduce blend widths and displacement");
+  if (store.clipped) {
+    warnings.push(compiled.hasExpr
+      ? "implicit: the shape reached the edge of its sampling box and was clipped flat there — enlarge the `box` of the `expr` node(s) it reaches past, or reduce blend widths and displacement"
+      : "implicit: the shape reached the edge of its sampling box and was clipped flat there — its derived bounds were too tight (an engine limitation); reduce blend, round, onion or displace sizes");
+  }
   return { positions: mesh.positions, indices: mesh.indices, normals: mesh.normals, warnings,
     stats: { samples: store.samples, leaves: store.leaves.length, programs: store.programs.size } };
 }

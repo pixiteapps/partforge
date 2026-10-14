@@ -1,8 +1,16 @@
 // src/framework/geometry/implicit/ir.js
 // Spec → IR. Resolves frames, placements (plan decision 2), warps' bases, repeat
 // and tube expansion, expr lowering and texture slots; computes each node's box
-// (in its parent's coordinates), Lipschitz factor L and thinnest feature. The IR
-// is the single input to the reference evaluator, the interval pass and the emitter.
+// (in its parent's coordinates), Lipschitz factor L, thinnest feature and growth
+// bound G. The IR is the single input to the reference evaluator, the interval pass
+// and the emitter.
+//
+// G (0 < G ≤ 1) is a lower bound on how fast a node's field grows with distance
+// outside its box. Pads that move a surface outward by some amount (blend, round,
+// onion, displace) cover it only when the child's field grows at least at rate 1, so
+// they pad by amount / G: an ellipsoid grows at min(r)/max(r), an upscaling taper at
+// 1/scale, a twist and a bend slower toward their rims. An `expr` node's declared
+// box is its bound (its author owns it), so it counts as G = 1.
 import { resolveFrames, compose, invert, translation, rotation, axisVector, xformPoint, IDENTITY } from "./frames.js";
 import { compileExprSource } from "./expr-lower.js";
 import { makeTexture, checkTextureBudget } from "./textures.js";
@@ -61,6 +69,7 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
   };
 
   const add = (n) => { nodes.push(n); return nodes.length - 1; };
+  let hasExpr = false;
   const placeOf = (node, Wparent) => {
     const base = node.frame != null ? frames.get(node.frame).world : Wparent;
     return node.at ? compose(base, translation(node.at)) : base;
@@ -72,18 +81,19 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
     const W = placeOf(node, Wparent);
     const inv = localInv(W, Wparent);
     const toParent = inv ? invert(inv) : null;
-    const finish = (n, localBox, thin) => {
-      n.inv = inv; n.label = node.label ?? null; n.path = path;
+    const finish = (n, localBox, thin, G = 1) => {
+      n.inv = inv; n.label = node.label ?? null; n.path = path; n.G = G;
       n.box = toParent ? boxXform(localBox, toParent) : localBox;
       n.thin = thin;
       return add(n);
     };
-    const prim = (code, P, localBox, thin) => finish({ kind: "prim", prim: { code, P }, children: [], L: primLipschitz(code, P) }, localBox, thin);
+    const prim = (code, P, localBox, thin, G = 1) => finish({ kind: "prim", prim: { code, P }, children: [], L: primLipschitz(code, P) }, localBox, thin, G);
+    const minG = (ids) => Math.min(...ids.map((i) => nodes[i].G));
     const kids = (list, key = "children") => list.map((c, i) => lower(c, W, `${path}.${key}[${i}]`));
     const child = (c) => lower(c, W, `${path}.child`);
     switch (node.kind) {
       case "sphere": { const r = node.r; return prim(PRIM.SPHERE, Float64Array.of(r), box([-r, -r, -r], [r, r, r]), 2 * r); }
-      case "ellipsoid": { const [a, b, c] = node.r; return prim(PRIM.ELLIPSOID, Float64Array.of(a, b, c), box([-a, -b, -c], [a, b, c]), 2 * Math.min(a, b, c)); }
+      case "ellipsoid": { const [a, b, c] = node.r; return prim(PRIM.ELLIPSOID, Float64Array.of(a, b, c), box([-a, -b, -c], [a, b, c]), 2 * Math.min(a, b, c), Math.min(a, b, c) / Math.max(a, b, c)); }
       case "capsule": {
         const a = node.a ?? [0, 0, 0], b = node.b;
         const [r1, r2] = Array.isArray(node.r) ? node.r : [node.r, node.r];
@@ -103,7 +113,7 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
           ? { code: PRIM.CYLINDER, P: Float64Array.of(node.h / 2, node.r, node.round ?? 0), lb: box([-node.r, -node.r, -node.h / 2], [node.r, node.r, node.h / 2]), thin: 2 * Math.min(node.r, node.h / 2) }
           : { code: PRIM.TORUS, P: Float64Array.of(node.R, node.r), lb: box([-node.R - node.r, -node.R - node.r, -node.r], [node.R + node.r, node.R + node.r, node.r]), thin: 2 * node.r };
         if (!B) return prim(inner.code, inner.P, inner.lb, inner.thin);
-        const id = add({ kind: "prim", prim: { code: inner.code, P: inner.P }, children: [], L: primLipschitz(inner.code, inner.P), inv: B, label: null, path, box: boxXform(inner.lb, invert(B)), thin: inner.thin });
+        const id = add({ kind: "prim", prim: { code: inner.code, P: inner.P }, children: [], L: primLipschitz(inner.code, inner.P), inv: B, label: null, path, box: boxXform(inner.lb, invert(B)), thin: inner.thin, G: 1 });
         return finish({ kind: "union", k: 0, children: [id], L: nodes[id].L }, nodes[id].box, inner.thin);
       }
       case "halfspace": {
@@ -115,44 +125,47 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
         const segs = [];
         for (let i = 0; i + 1 < pts.length; i++) segs.push({ kind: "capsule", a: pts[i], b: pts[i + 1], r: radii[i] === radii[i + 1] ? radii[i] : [radii[i], radii[i + 1]] });
         const ids = kids(segs, "segments");
-        return finish({ kind: "union", k: 0, children: ids, L: Math.max(...ids.map((i) => nodes[i].L)) }, ids.map((i) => nodes[i].box).reduce(boxUnion), Math.min(...ids.map((i) => nodes[i].thin)));
+        return finish({ kind: "union", k: 0, children: ids, L: Math.max(...ids.map((i) => nodes[i].L)) }, ids.map((i) => nodes[i].box).reduce(boxUnion), Math.min(...ids.map((i) => nodes[i].thin)), minG(ids));
       }
       case "union": case "intersect": case "subtract": {
         const ids = kids(node.children);
-        const k = node.k ?? 0, bs = ids.map((i) => nodes[i].box);
-        const lb = node.kind === "union" ? boxPad(bs.reduce(boxUnion), ((ids.length - 1) * k) / 4)
+        const k = node.k ?? 0, bs = ids.map((i) => nodes[i].box), G = minG(ids);
+        const lb = node.kind === "union" ? boxPad(bs.reduce(boxUnion), ((ids.length - 1) * k) / 4 / G)
           : node.kind === "intersect" ? bs.reduce(boxInter) : bs[0];
-        return finish({ kind: node.kind, k, children: ids, L: Math.max(...ids.map((i) => nodes[i].L)) }, lb, Math.min(...ids.map((i) => nodes[i].thin)));
+        return finish({ kind: node.kind, k, children: ids, L: Math.max(...ids.map((i) => nodes[i].L)) }, lb, Math.min(...ids.map((i) => nodes[i].thin)), G);
       }
       case "mirror": {
         const id = child(node.child), axis = AXIS_INDEX[node.plane ?? "yz"], cb = nodes[id].box;
         const mb = box(cb.min.slice(), cb.max.slice());
         mb.min[axis] = -cb.max[axis]; mb.max[axis] = -cb.min[axis];
-        return finish({ kind: "mirror", axis, children: [id], L: nodes[id].L }, boxUnion(cb, mb), nodes[id].thin);
+        return finish({ kind: "mirror", axis, children: [id], L: nodes[id].L }, boxUnion(cb, mb), nodes[id].thin, nodes[id].G);
       }
-      case "round": { const id = child(node.child); return finish({ kind: "round", r: node.r, children: [id], L: nodes[id].L }, boxPad(nodes[id].box, node.r), nodes[id].thin + 2 * node.r); }
-      case "onion": { const id = child(node.child); return finish({ kind: "onion", t: node.t, children: [id], L: nodes[id].L }, boxPad(nodes[id].box, node.t), 2 * node.t); }
+      case "round": { const id = child(node.child), G = nodes[id].G; return finish({ kind: "round", r: node.r, children: [id], L: nodes[id].L }, boxPad(nodes[id].box, node.r / G), nodes[id].thin + 2 * node.r, G); }
+      case "onion": { const id = child(node.child), G = nodes[id].G; return finish({ kind: "onion", t: node.t, children: [id], L: nodes[id].L }, boxPad(nodes[id].box, node.t / G), 2 * node.t, G); }
       case "displace": {
         const id = child(node.child);
         const by = lowerSource(node.by.expr, node.by.uniforms, node.by.textures, `${path}.by.expr`);
-        return finish({ kind: "displace", amount: node.amount, by, children: [id], L: nodes[id].L }, boxPad(nodes[id].box, node.amount), nodes[id].thin);
+        const G = nodes[id].G;
+        return finish({ kind: "displace", amount: node.amount, by, children: [id], L: nodes[id].L }, boxPad(nodes[id].box, node.amount / G), nodes[id].thin, G);
       }
       case "twist": case "bend": case "taper": {
         const id = child(node.child);
         const B = warpBasis(node.axis ?? "z", node.kind === "bend" ? node.toward : undefined);
         const Bt = B ? invert(B) : null;
         const cb = B ? boxXform(nodes[id].box, B) : nodes[id].box;   // child box in basis coords
-        let wb, W;
+        let wb, W, G = nodes[id].G;
         if (node.kind === "twist") {
           W = { kind: WARP.TWIST, W: Float64Array.of((node.degPerMm * Math.PI) / 180) };
           const rho = Math.max(...[0, 1, 2, 3].map((c) => Math.hypot(c & 1 ? cb.max[0] : cb.min[0], c & 2 ? cb.max[1] : cb.min[1])));
           wb = box([-rho, -rho, cb.min[2]], [rho, rho, cb.max[2]]);
+          G /= 1 + Math.abs(W.W[0]) * rho;   // the rotation's sweep stretches distances by up to |rate|·ρ
         } else if (node.kind === "taper") {
           const [z0, s0] = node.from, [z1, s1] = node.to;
           if (z0 === z1) throw new ImplicitSpecError(`${path}: taper from/to positions must differ`);
           W = { kind: WARP.TAPER, W: Float64Array.of(z0, s0, z1, s1) };
           const s = Math.max(s0, s1);
           wb = box([cb.min[0] * s, cb.min[1] * s, cb.min[2]], [cb.max[0] * s, cb.max[1] * s, cb.max[2]]);
+          G /= Math.max(1, s);   // child(x/s, y/s, z): an upscale slows growth by 1/s
         } else {
           const R = node.radius;
           if (cb.max[0] >= R * 0.95) throw new ImplicitSpecError(`${path}.radius: bend radius ${R} must exceed the child's extent toward the bend (${cb.max[0].toFixed(3)} mm)`);
@@ -166,9 +179,10 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
             for (let a = 0; a < 3; a++) { wb.min[a] = Math.min(wb.min[a], q[a]); wb.max[a] = Math.max(wb.max[a], q[a]); }
           }
           wb = boxPad(wb, 0.02 * Math.hypot(...wb.max.map((v, a) => v - wb.min[a])));
+          G *= R / (R + Math.max(Math.abs(cb.min[0]), Math.abs(cb.max[0])));   // arc length shrinks toward the outer side
         }
         const lb = Bt ? boxXform(wb, Bt) : wb;
-        return finish({ kind: "warp", warp: { kind: W.kind, W: W.W, B, Bt }, children: [id], L: nodes[id].L }, lb, nodes[id].thin);
+        return finish({ kind: "warp", warp: { kind: W.kind, W: W.W, B, Bt }, children: [id], L: nodes[id].L }, lb, nodes[id].thin, G);
       }
       case "repeat": {
         const id = child(node.child);
@@ -177,11 +191,12 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
         else for (let i = 0; i < node.polar.count; i++) placements.push(rotation(node.polar.axis ?? "z", (360 * i) / node.polar.count));
         const refs = placements.map((P, i) => add({
           kind: "ref", inv: isIdentity(P) ? null : invert(P), children: [id], L: nodes[id].L,
-          box: boxXform(nodes[id].box, P), thin: nodes[id].thin, label: null, path: `${path}.instance[${i}]`,
+          box: boxXform(nodes[id].box, P), thin: nodes[id].thin, G: nodes[id].G, label: null, path: `${path}.instance[${i}]`,
         }));
-        return finish({ kind: "union", k: 0, children: refs, L: nodes[id].L }, refs.map((r) => nodes[r].box).reduce(boxUnion), nodes[id].thin);
+        return finish({ kind: "union", k: 0, children: refs, L: nodes[id].L }, refs.map((r) => nodes[r].box).reduce(boxUnion), nodes[id].thin, nodes[id].G);
       }
       case "expr": {
+        hasExpr = true;
         const lowered = lowerSource(node.sdf, node.uniforms, node.textures, `${path}.sdf`);
         return finish({ kind: "expr", expr: lowered, children: [], L: node.lipschitz ?? 1 }, box(node.box[0].slice(), node.box[1].slice()), INF);
       }
@@ -198,7 +213,7 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
     e.target = Math.max(e.size[0] / t.width, e.size[1] / t.height);
   }
   checkTextureBudget(textures);
-  return { ir: { nodes, root }, textures, bounds: rb, thin: nodes[root].thin, detail, digests: textures.map((t) => t.digest) };
+  return { ir: { nodes, root }, textures, bounds: rb, thin: nodes[root].thin, hasExpr, detail, digests: textures.map((t) => t.digest) };
 }
 
 const AXIS_OF = { x: 0, y: 1, z: 2 };
