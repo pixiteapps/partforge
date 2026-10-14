@@ -59,23 +59,44 @@ describe("mergeOverride", () => {
 describe("effectiveDisplay", () => {
   it("merges appearance keys over the authored display and never carries viewing keys", () => {
     const authored = { material: "pla-print", color: 0x112233, opacity: 0.3 };
-    expect(effectiveDisplay(authored, { material: "oak", hidden: true, opacity: 0.5 }))
-      .toEqual({ material: "oak", color: 0x112233, opacity: 0.3 });
+    expect(effectiveDisplay(authored, { material: "petg-print", hidden: true, opacity: 0.5 }))
+      .toEqual({ material: "petg-print", color: 0x112233, opacity: 0.3 });
     expect(effectiveDisplay(undefined, null)).toEqual({});
     expect(effectiveDisplay(undefined, { color: 0xff0000 })).toEqual({ color: 0xff0000 });
+  });
+  it("an untintable material pick drops the authored tint; a tintable pick keeps it; an override colour wins", () => {
+    const authored = { material: "pla-print", color: 0xc4622d };
+    expect(effectiveDisplay(authored, { material: "brass" })).toEqual({ material: "brass" });
+    expect(effectiveDisplay(authored, { material: "petg-print" })).toEqual({ material: "petg-print", color: 0xc4622d });
+    expect(effectiveDisplay(authored, { material: "brass", color: 0x00ff00 })).toEqual({ material: "brass", color: 0x00ff00 });
+    // Naming the authored (untintable) material is still a pick: the tint goes.
+    expect(effectiveDisplay({ material: "brass", color: 0x123456 }, { material: "brass" })).toEqual({ material: "brass" });
+    // An unknown id is tintable (it falls back to the PLA look, in the colour).
+    expect(effectiveDisplay(authored, { material: "unobtainium" })).toEqual({ material: "unobtainium", color: 0xc4622d });
   });
 });
 
 describe("isAppearanceNoop / pruneOverrides", () => {
-  const part = { parts: { lid: { display: { material: "oak", color: 0x112233 } }, body: {} } };
+  // A TINTABLE authored material: re-naming it in an override is a noop. (Oak
+  // would not be — see the untintable case below.)
+  const part = { parts: { lid: { display: { material: "anodized-aluminum", color: 0x112233 } }, body: {} } };
   it("is a noop when every appearance key equals the authored value", () => {
-    expect(isAppearanceNoop(part.parts.lid.display, { material: "oak", hidden: true })).toBe(true);
+    expect(isAppearanceNoop(part.parts.lid.display, { material: "anodized-aluminum", hidden: true })).toBe(true);
     expect(isAppearanceNoop(part.parts.lid.display, { material: "brass" })).toBe(false);
     expect(isAppearanceNoop(undefined, { color: 0x112233 })).toBe(false);
   });
+  it("re-picking an authored untintable material over an authored tint is NOT a noop, and the key survives pruning", () => {
+    const tinted = { parts: { knob: { display: { material: "brass", color: 0x123456 } } } };
+    expect(isAppearanceNoop(tinted.parts.knob.display, { material: "brass" })).toBe(false);
+    expect(pruneOverrides({ knob: { material: "brass" } }, tinted)).toEqual({ knob: { material: "brass" } });
+    // With no authored tint the same key IS a noop and goes.
+    const plain = { parts: { knob: { display: { material: "brass" } } } };
+    expect(isAppearanceNoop(plain.parts.knob.display, { material: "brass" })).toBe(true);
+    expect(pruneOverrides({ knob: { material: "brass" } }, plain)).toEqual({});
+  });
   it("drops unknown names, strips no-op appearance keys, keeps viewing keys, drops empties", () => {
     expect(pruneOverrides({
-      lid: { material: "oak", color: 0x112233, hidden: true },
+      lid: { material: "anodized-aluminum", color: 0x112233, hidden: true },
       body: { material: "brass" },
       gone: { material: "oak" },
       base: { color: 0x112233 },
