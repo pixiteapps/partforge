@@ -21,6 +21,7 @@ export const TREES = {
     { kind: "repeat", polar: { count: 6 }, child: { kind: "sphere", r: 1.8, at: [8, 0, 0] } },
     { kind: "mirror", plane: "xz", child: { kind: "tube", points: [[0, 3, 0], [4, 6, 2], [8, 6, 5]], r: [1, 1.5, 0.8] } },
   ] } },
+  bendCut: { root: { kind: "round", r: 6, child: { kind: "bend", radius: 10, child: { kind: "capsule", a: [0, 0, -27], b: [0, 0, -20], r: 1 } } } },
   formula: { root: { kind: "union", k: 1, children: [
     { kind: "expr", box: [[-6, -6, -6], [6, 6, 6]], lipschitz: 3.5, sdf: "float g = sin(p.x)*cos(p.y) + sin(p.y)*cos(p.z) + sin(p.z)*cos(p.x); return max(length(p) - 5.0, abs(g) - 0.4);" },
     { kind: "displace", amount: 0.5, by: { expr: "return sin(p.x * 2.0) * cos(p.y * 2.0);" }, at: [12, 0, 0], child: { kind: "sphere", r: 4 } },

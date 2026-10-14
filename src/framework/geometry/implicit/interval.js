@@ -34,7 +34,7 @@ function visit(c, id, x, y, z, r) {
       const rs = n.children.map((ch) => visit(c, ch, x, y, z, r));
       let H = Infinity;
       for (const a of rs) if (a.hi < H) H = a.hi;
-      const kids = rs.map((a) => (a.lo > H + n.k ? null : a.dec));
+      const kids = rs.map((a) => (a.lo > H + n.k + 1e-12 * (Math.abs(H) + n.k) ? null : a.dec));
       let lo = Infinity, kept = 0;
       rs.forEach((a, i) => { if (kids[i]) { kept++; if (a.lo < lo) lo = a.lo; } });
       if (n.k > 0) lo -= ((kept - 1) * n.k) / 4;
@@ -47,7 +47,7 @@ function visit(c, id, x, y, z, r) {
       });
       let Lmax = -Infinity;
       for (const a of rs) if (a.lo > Lmax) Lmax = a.lo;
-      const kids = rs.map((a) => (a.hi < Lmax - n.k ? null : a.dec));
+      const kids = rs.map((a) => (a.hi < Lmax - n.k - 1e-12 * (Math.abs(Lmax) + n.k) ? null : a.dec));
       let hi = -Infinity, kept = 0;
       rs.forEach((a, i) => { if (kids[i]) { kept++; if (a.hi > hi) hi = a.hi; } });
       if (n.k > 0) hi += ((kept - 1) * n.k) / 4;
@@ -57,7 +57,8 @@ function visit(c, id, x, y, z, r) {
       const A = visit(c, n.children[0], x, y, z, r), m = [0, 0, 0];
       mirrorPoint(m, n.axis, x, y, z);
       const B = visit(c, n.children[0], m[0], m[1], m[2], r);
-      const keepA = !(A.lo > B.hi), keepB = !(B.lo > A.hi);
+      const mA = 1e-12 * (Math.abs(A.lo) + Math.abs(B.hi)), mB = 1e-12 * (Math.abs(B.lo) + Math.abs(A.hi));
+      const keepA = !(A.lo > B.hi + mA), keepB = !(B.lo > A.hi + mB);
       const lo = Math.min(keepA ? A.lo : Infinity, keepB ? B.lo : Infinity), hi = Math.min(keepA ? A.hi : Infinity, keepB ? B.hi : Infinity);
       return { lo, hi, dec: { id, kids: [keepA ? A.dec : null, keepB ? B.dec : null] } };
     }
@@ -75,7 +76,7 @@ function visit(c, id, x, y, z, r) {
       if (kind === 1) S = 1 + Math.abs(W[0]) * (Math.sqrt(q[0] * q[0] + q[1] * q[1]) + r);
       else if (kind === 2) {
         const u = W[0] - q[0], rho = Math.sqrt(u * u + q[2] * q[2]);
-        if (rho <= r) return UNBOUNDED(c, id);
+        if (rho <= r || (Math.abs(q[2]) <= r && q[0] + r >= W[0])) return UNBOUNDED(c, id);
         S = Math.max(1, W[0] / (rho - r));
       } else {
         const sAt = (zz) => { let t = (zz - W[0]) / (W[2] - W[0]); t = t < 0 ? 0 : t > 1 ? 1 : t; return W[1] + (W[3] - W[1]) * t; };

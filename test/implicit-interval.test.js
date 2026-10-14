@@ -35,4 +35,34 @@ describe("interval pass", () => {
     expect(decisionKey(near.dec)).toBe(decisionKey(blockDecision(c, 0.1, 0, 0, 1).dec));
     expect(decisionKey(near.dec)).not.toBe(decisionKey(fullDecision(c)));
   });
+
+  test("bend branch cut: blocks near it stay sound", () => {
+    const c = lowerSpec(TREES.bendCut, { images: new Map() });
+    const { lo, hi } = blockDecision(c, 15, 0, 0.4, 1);
+    const v = evalReference(c, 15, 0, -0.5);
+    expect(v).toBeGreaterThanOrEqual(lo - 1e-9);
+    expect(v).toBeLessThanOrEqual(hi + 1e-9);
+  });
+  test("intersect and subtract prune far operands, keep relevant ones", () => {
+    const sub = lowerSpec({ root: { kind: "subtract", k: 1, children: [{ kind: "sphere", r: 3 }, { kind: "sphere", r: 1, at: [50, 0, 0] }, { kind: "sphere", r: 1, at: [3, 0, 0] }] } }, { images: new Map() });
+    const d = blockDecision(sub, 0, 0, 0, 0.5).dec;
+    expect(d.kids[1]).toBeNull();
+    expect(blockDecision(sub, 3, 0, 0, 0.5).dec.kids[2]).not.toBeNull();
+    const isec = lowerSpec({ root: { kind: "intersect", k: 1, children: [{ kind: "sphere", r: 3 }, { kind: "sphere", r: 1000, at: [0, 0, 0] }, { kind: "sphere", r: 3.2 }] } }, { images: new Map() });
+    expect(blockDecision(isec, 0, 0, 0, 0.5).dec.kids[1]).toBeNull();
+    expect(blockDecision(isec, 3, 0, 0, 0.5).dec.kids[2]).not.toBeNull();
+    expect(blockDecision(isec, 3, 0, 0, 0.5).dec.kids[1]).toBeNull();
+  });
+  test("pruned union slot exceeds the kept minimum by more than k", () => {
+    const k = 1;
+    const c = lowerSpec({ root: { kind: "union", k, children: [{ kind: "sphere", r: 1 }, { kind: "sphere", r: 1, at: [50, 0, 0] }] } }, { images: new Map() });
+    const one = lowerSpec({ root: { kind: "sphere", r: 1 } }, { images: new Map() });
+    const two = lowerSpec({ root: { kind: "sphere", r: 1, at: [50, 0, 0] } }, { images: new Map() });
+    expect(blockDecision(c, 0, 0, 0, 1).dec.kids[1]).toBeNull();
+    for (let s = 0; s < 50; s++) {
+      const x = rnd(), y = rnd(), z = rnd(), l = Math.hypot(x, y, z) || 1;
+      const px = x / l, py = y / l, pz = z / l;
+      expect(evalReference(two, px, py, pz)).toBeGreaterThan(evalReference(one, px, py, pz) + k);
+    }
+  });
 });
