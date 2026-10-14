@@ -518,17 +518,13 @@ export interface AnnotateRuntime {
   onModeChange(cb: () => void): () => void;
 }
 
-/**
- * The yellow marker a pick flashes, as a thing with a lifetime — for a host
- * that hangs its own UI (a chat bubble, a callout) off the dot. A marker fades
- * on its own about a second after the pick, so `hold()` belongs in the `onPick`
- * handler, not behind a later user action.
- */
+/** Where the selection popover's host slot is, in stage CSS px, or why it has none. */
 export type SelectionSlotReport =
   | { state: "open"; rect: { x: number; y: number; width: number; height: number } }
   | { state: "collapsed" }
   | { state: "closed" };
 
+/** The selection popover's host-facing controls (`runtime.selection`). */
 export interface SelectionRuntime {
   /** The height (CSS px, integer, 44–2000) the host's slot content needs. */
   setSlotHeight(px: number): void;
@@ -540,6 +536,12 @@ export interface SelectionRuntime {
   isOpen(): boolean;
 }
 
+/**
+ * The yellow marker a pick flashes, as a thing with a lifetime — for a host
+ * that hangs its own UI (a chat bubble, a callout) off the dot. A marker fades
+ * on its own about a second after the pick, so `hold()` belongs in the `onPick`
+ * handler, not behind a later user action.
+ */
 export interface PickMarkerRuntime {
   /** Keep the newest marker on screen; false when there is none. Earlier held markers stay held. */
   hold(): boolean;

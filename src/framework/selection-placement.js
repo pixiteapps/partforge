@@ -16,11 +16,15 @@ export function planSelectionPlacement({ anchor, box, stage }, options = {}) {
   // A box wider than the stage inverts the clamp; pin it to the left gutter.
   const left = maxLeft < minLeft ? minLeft : Math.min(Math.max(centred, minLeft), maxLeft);
   const belowTop = anchor.y + gap;
-  const aboveTop = anchor.y - gap - box.height;
-  const fitsBelow = belowTop + box.height <= stage.top + stage.height - gutter;
-  const fitsAbove = aboveTop >= stage.top + gutter;
-  // Neither fitting keeps `below`: overlapping an edge is recoverable.
-  const side = fitsBelow || !fitsAbove ? "below" : "above";
+  const roomBelow = stage.top + stage.height - gutter - belowTop;
+  const roomAbove = anchor.y - gap - (stage.top + gutter);
+  const fitsBelow = box.height <= roomBelow;
+  const fitsAbove = box.height <= roomAbove;
+  // Neither fitting takes the side with more room (ties below); the caller caps
+  // the box's height to `maxHeight` so it scrolls instead of leaving the stage.
+  const side = fitsBelow || (!fitsAbove && roomBelow >= roomAbove) ? "below" : "above";
+  const room = side === "below" ? roomBelow : roomAbove;
+  const aboveTop = anchor.y - gap - Math.min(box.height, Math.max(room, 0));
   // From the ROUNDED left — the edge actually painted — or an odd width puts
   // the tail a pixel off the dot.
   const painted = Math.round(left);
@@ -30,6 +34,7 @@ export function planSelectionPlacement({ anchor, box, stage }, options = {}) {
     left: painted,
     top: Math.round(side === "below" ? belowTop : aboveTop),
     side,
+    maxHeight: Math.max(0, Math.floor(room)),
     tailOffset: anchor.visible !== false && tailFits ? Math.round(tail) : null,
   };
 }

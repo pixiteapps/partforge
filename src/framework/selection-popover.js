@@ -46,7 +46,10 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
   spot.append(head);
   const slotEl = slot ? el("div", "pf-selection-slot") : null;
   if (slotEl) { slotEl.style.height = `${MIN_SLOT}px`; spot.append(slotEl); }
-  pop.append(tail, spot);
+  // Scrolls in here, not on the popover: the tail pokes out past the popover's edge.
+  const body = el("div", "pf-selection-body");
+  body.append(spot);
+  pop.append(tail, body);
   stage.append(pop);
 
   let current = null; // { subPart, anchor } while open
@@ -99,12 +102,13 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
   function place() {
     if (!isOpen() || !current?.anchor) return;
     const s = stage.getBoundingClientRect();
-    pop.style.maxHeight = `${Math.max(120, Math.round(s.height) - 24)}px`;
+    pop.style.maxHeight = ""; // measure the natural height, not last frame's cap
     const plan = planSelectionPlacement({
       anchor: current.anchor,
       box: { width: pop.offsetWidth, height: pop.offsetHeight },
       stage: { left: 0, top: 0, width: s.width, height: s.height },
     });
+    pop.style.maxHeight = `${plan.maxHeight}px`;
     pop.style.left = `${plan.left}px`;
     pop.style.top = `${plan.top}px`;
     pop.dataset.side = plan.side;
@@ -127,7 +131,7 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
       renderThumb,
     });
     card.element.hidden = true;
-    pop.append(card.element);
+    body.append(card.element);
     return card;
   }
 

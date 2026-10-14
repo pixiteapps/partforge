@@ -865,8 +865,8 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 /* The selection popover (selection-popover.js): at the picked spot. */
 .pf-selection-popover {
   position: absolute; z-index: 31;
-  width: min(320px, calc(100% - 24px)); overflow: auto;
-  padding: 8px; display: flex; flex-direction: column; gap: 8px;
+  width: min(320px, calc(100% - 24px)); overflow: visible;
+  padding: 8px; display: flex; flex-direction: column;
   background: var(--pf-surface); border: 1px solid var(--pf-border);
   border-radius: 16px; box-shadow: var(--pf-shadow-float);
   color: var(--pf-text); font-size: 12px;
@@ -878,6 +878,7 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 }
 .pf-selection-popover[data-side="below"] .pf-selection-tail { top: -7px; border-right: 0; border-bottom: 0; }
 .pf-selection-popover[data-side="above"] .pf-selection-tail { bottom: -7px; border-left: 0; border-top: 0; }
+.pf-selection-body { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; }
 .pf-selection-spot { display: flex; flex-direction: column; gap: 6px; }
 .pf-selection-head { display: flex; align-items: center; gap: 2px; }
 .pf-selection-open {

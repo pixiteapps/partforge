@@ -7,16 +7,23 @@ const box = { width: 300, height: 120 };
 describe("planSelectionPlacement", () => {
   it("centres below the dot with the tail on the dot", () => {
     const p = planSelectionPlacement({ anchor: { x: 400, y: 200, visible: true }, box, stage });
-    expect(p).toEqual({ left: 250, top: 210, side: "below", tailOffset: 150 });
+    expect(p).toEqual({ left: 250, top: 210, side: "below", tailOffset: 150, maxHeight: 378 });
   });
   it("goes above when only above fits", () => {
     const p = planSelectionPlacement({ anchor: { x: 400, y: 550 }, box, stage });
     expect(p.side).toBe("above");
     expect(p.top).toBe(550 - 10 - 120);
+    expect(p.maxHeight).toBe(528);
   });
-  it("stays below when neither side fits", () => {
-    const p = planSelectionPlacement({ anchor: { x: 400, y: 100 }, box: { width: 300, height: 560 }, stage });
-    expect(p.side).toBe("below");
+  it("neither fits: takes the side with more room and caps maxHeight", () => {
+    const tall = { width: 300, height: 560 };
+    const low = planSelectionPlacement({ anchor: { x: 400, y: 100 }, box: tall, stage });
+    expect(low.side).toBe("below");
+    expect(low.maxHeight).toBe(478);
+    const high = planSelectionPlacement({ anchor: { x: 400, y: 500 }, box: tall, stage });
+    expect(high.side).toBe("above");
+    expect(high.top).toBe(12);
+    expect(high.maxHeight).toBe(478);
   });
   it("clamps to the gutters on both edges", () => {
     expect(planSelectionPlacement({ anchor: { x: 5, y: 100 }, box, stage }).left).toBe(SELECTION_GUTTER);
