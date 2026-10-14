@@ -1,7 +1,9 @@
 // src/framework/geometry/implicit/project.js
 // Newton projection of mesh vertices onto d = 0, batched per leaf: each vertex is
-// evaluated with its own leaf's program, which is exact within PAD_CELLS of the
-// leaf (sparse.js), so every move stays inside that guarantee.
+// evaluated with its own leaf's program, which is exact within PAD_CELLS (1 cell)
+// of the leaf (sparse.js). Each move is clamped per step (`maxStep`); nothing bounds
+// the cumulative drift by construction, but on the fixtures it measured at most
+// 0.69 cell, inside the 1-cell pad.
 import { evalBatch } from "./program.js";
 
 export function projectVertices(store, positions, vertLeaf, { maxStep, which = null, normals = null }) {

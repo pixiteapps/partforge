@@ -50,13 +50,16 @@ describe("topology", () => {
     expect(Math.abs(a - b) / b).toBeLessThan(0.03);
   }, 60_000);
   test("seeded fuzz: 40 random trees mesh closed", () => {
+    let meshed = 0;
     for (let seed = 1; seed <= 40; seed++) {
       const spec = randomSpec(seed);
       let out;
       try { out = meshImplicit(compileImplicit(spec), spec.preview); } catch (e) { if (e.code === "IMPLICIT_SPEC") continue; throw e; }
       if (out.indices.length === 0) continue;
       expect(edgeCheck(out.indices), `seed ${seed}`).toEqual(CLOSED);
+      meshed++;
     }
+    expect(meshed).toBeGreaterThanOrEqual(30);   // 40 of 40 mesh today; a skip-everything fuzz must fail
   }, 120_000);
 });
 
