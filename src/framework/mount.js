@@ -14,6 +14,8 @@ import { ENVIRONMENTS } from "./materials/environments.js";
 import { declaresMaterials, resolveMaterial } from "./materials/resolve.js";
 import { printFrameMatrix } from "./materials/print-frame.js";
 import { burnsFor, realisticDisplay, sheetFrameFor } from "./materials/sheet-look.js";
+import { pruneOverrides } from "./materials/overrides.js";
+import { subPartRows } from "./sub-part-list.js";
 import { buildControls } from "./controls.js";
 import { recordedRelevantKeys, subPartParamKeys } from "./param-deps.js";
 import { createMeshCache } from "./mesh-cache.js";
@@ -70,7 +72,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState }) {
   return {
     ready, dispose, setParams,
     // Whether the `preview` GLB handed to mount() is on screen (see mount's
@@ -132,7 +134,29 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
       // from meta.environment (or the default) would outrank the part's own
       // meta.environment on the next mount, masking an edit to it.
       ...(viewer.isEnvironmentChosen?.() ? { environment: viewer.getEnvironment() } : {}),
+      // Only while something is overridden: an empty map would be noise in a
+      // token hosts compare and store.
+      ...(() => { const d = viewer.getDisplayOverrides?.(); return d && Object.keys(d).length ? { display: d } : {}; })(),
     }),
+    // --- per-sub-part display overrides (spec 2026-10-13 part appearance controls) ---
+    // Live, no rebuild: appearance keys (material, colour, finish) merge over
+    // the authored `display` for every render; `hidden` and `opacity` are how
+    // the user is looking and never reach a material read, an export or a
+    // host's save. All of it rides getViewerState().display above.
+    setSubPartDisplay: (name, patch) => viewer.setSubPartDisplay?.(name, patch) ?? null,
+    getSubPartDisplay: (name) => viewer.getSubPartDisplayState?.(name) ?? null,
+    clearSubPartDisplay: (opts) => viewer.clearSubPartDisplay?.(opts),
+    onSubPartDisplayChange: (cb) => viewer.onDisplayChange?.(cb) ?? (() => {}),
+    // Every sub-part as a row (sub-part-list.js), for a host's own list; the
+    // active view unless `view` names another.
+    listSubParts: listSubParts ?? (() => []),
+    // Open the popover on the appearance card for `name`; false when there is
+    // no popover (a host with neither #viewbar nor a view cube stack).
+    openAppearance: openAppearance ?? (() => false),
+    // "saved" | "screen-only" | "blocked": the card's footer copy. A host that
+    // persists overrides into source says "saved"; one that cannot, for this
+    // sub-part, says "blocked"; the default is "screen-only".
+    setDisplaySaveState: setDisplaySaveState ?? (() => {}),
     // Every custom control's transient state (selection, a scroll position),
     // keyed by param, as plain JSON — the panel's twin of getViewerState. Hand
     // it back as mount()'s `panelState` and a remount comes up with the same
@@ -400,8 +424,9 @@ function createCleanupStack() {
 //                                         // payload is small, only that it is bounded.
 // viewerState: ViewerState               // a previous mount's runtime.getViewerState(), handed back to
 //                                         // resume the camera, projection, cutaway, render mode,
-//                                         // environment and per-style feature-line preferences
-//                                         // where that mount
+//                                         // environment, per-style feature-line preferences and
+//                                         // per-sub-part display overrides (`display`, pruned for
+//                                         // this part) where that mount
 //                                         // left them. For a host that applies edits by REMOUNTING: the
 //                                         // part changed, the user's view of it should not. Omit on a
 //                                         // first mount — the viewer then restores its own persisted
@@ -604,6 +629,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
 
     // View tabs (generated from part.views) + live params. A tab switch shows the
     // cached assembly instantly if it's current, else auto-builds what's missing.
+    // The popover's Parts section (attachViewStyleControls' `parts` seam) follows
+    // the active view; declared here because tabsCtl's onChange reads it.
+    const viewChangeListeners = new Set();
     const tabsCtl = createViewTabs(els.tabs, part, {
       onChange: (name) => {
         // FIRST: the outgoing animation restores its param snapshot, so the
@@ -616,6 +644,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // (and clear the posed ones' matrices) before anything else reads them.
         fastPath.apply(viewSubParts(part, view(), params));
         updateRelevance(); loop.kick(); animCtl?.autoplayKick();
+        for (const cb of [...viewChangeListeners]) { try { cb(name); } catch { /* listener's problem */ } }
         onViewChange?.(name);
       },
     });
@@ -740,6 +769,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // right rig first time rather than the default and then this one.
     const initialEnv = viewerState?.environment ?? loadEnvironment();
     if (initialEnv) viewer.setEnvironment(initialEnv);
+    // Carried display overrides, pruned for THIS part (materials/overrides.js):
+    // a renamed sub-part's entry goes, and an appearance key that now equals the
+    // authored value goes — which is how an owner's saved change self-cleans
+    // after the remount that applied it. Restored before the first showView so
+    // the first frame already draws the override, hidden pieces included.
+    for (const [name, override] of Object.entries(pruneOverrides(viewerState?.display, part))) {
+      viewer.setSubPartDisplay(name, override);
+    }
     // Realistic mode by the same precedence, requested HERE rather than on the
     // first accepted build: every mount has a fresh renderer, so the
     // environment loads again, and starting now runs that alongside the build
@@ -764,6 +801,15 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       stage: els.viewer,
       toolbar: els.viewer.querySelector("#viewbar"),
       anchor: viewcube.element,
+      // The Parts section's seam (view-style-controls.js); an older popover ignores it.
+      parts: {
+        list: () => subPartRows(part, { view: view(), params, overrides: viewer.getDisplayOverrides?.() ?? {} }),
+        setDisplay: (name, patch) => viewer.setSubPartDisplay(name, patch),
+        clear: (opts) => viewer.clearSubPartDisplay(opts),
+        onChange: (cb) => viewer.onDisplayChange?.(cb) ?? (() => {}),
+        onViewChange: (cb) => { viewChangeListeners.add(cb); return () => viewChangeListeners.delete(cb); },
+        getState: (name) => viewer.getSubPartDisplayState(name),
+      },
     }, { tooltip });
     cleanup.defer(() => viewStyle.detach());
     // setHidden takes one boolean, and there are two independent reasons to hide
@@ -1027,10 +1073,17 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     //  - sheet frames for the burn pass (materials/sheet-look.js): a laser sheet in a wood,
     //    mapped back into its canonical frame — from data, no probe.
     // Each describes the delivered mesh (which a later pose-only repair only moves).
-    const layerLined = new Set(Object.keys(part.parts).filter((n) => {
-      try { return resolveMaterial(realisticDisplay(part.parts[n])).params.pattern === "layer-lines"; } catch { return false; }
-    }));
-    const burning = new Set(Object.keys(part.parts).filter((n) => burnsFor(part.parts[n])));
+    // Which sub-parts need frames is read off the EFFECTIVE display at the time
+    // the frames are computed, not fixed at mount: a live material change (the
+    // Parts section) can turn a plain piece into a layer-lined print, and it
+    // must get its print frame without a rebuild. So every delivery's
+    // dispatch record is kept (one small object per sub-part), and computeFrames
+    // decides per name.
+    const effectiveSubPart = (n) => ({ ...part.parts[n], display: viewer.effectiveDisplayOf?.(n) ?? part.parts[n].display });
+    const isLayerLined = (n) => {
+      try { return resolveMaterial(realisticDisplay(effectiveSubPart(n))).params.pattern === "layer-lines"; } catch { return false; }
+    };
+    const isBurning = (n) => burnsFor(effectiveSubPart(n));
     // LAZY: a delivery only records the view and params its job was DISPATCHED with
     // (`dispatched`, set where the loop sends) — not the live ones, which a delivery shown
     // during playback was never built at; the viewer pulls the frames (computeFrames)
@@ -1039,20 +1092,32 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // snapshot keeps a late computation describing the mesh actually delivered.
     const printFrames = {};
     const sheetFrames = {};
-    const undrawnFrames = new Map(); // sub-part -> { at: { view, params } its delivered mesh was built at, frame }
+    const deliveredAt = new Map(); // sub-part -> { at: { view, params }, frame } of its delivered mesh (kept, not consumed)
+    const undrawnFrames = new Set(); // sub-part names whose frames are stale
+    // The (print, burn) pair each name's frames were last computed for. A display
+    // change re-stales a name only when its pair flips — hide, show, opacity and a
+    // swap between two layer-lined (or two burning) materials leave the frames
+    // valid, so a see-through drag in realistic mode never re-probes a placed piece.
+    const frameNeeds = new Map();
+    const needsKey = (n) => `${isLayerLined(n) ? 1 : 0}${isBurning(n) ? 1 : 0}`;
     // `meshes` are the reply's deliveries: each one's `frame` ("canonical" | "posed"; an older
     // worker sends none, so posed) rides beside the view/params so the frames describe it.
     function recordFrames(meshes) {
-      const wanted = meshes.filter((m) => layerLined.has(m.name) || burning.has(m.name));
-      if (!wanted.length) return;
-      for (const m of wanted) {
-        undrawnFrames.set(m.name, { at: dispatched.get(m.name) ?? null, frame: m.frame ?? "posed" }); // at null: built at params nobody recorded
+      for (const m of meshes) {
+        deliveredAt.set(m.name, { at: dispatched.get(m.name) ?? null, frame: m.frame ?? "posed" }); // at null: built at params nobody recorded
+        undrawnFrames.add(m.name);
       }
       viewer.invalidateFrames?.();
     }
     function computeFrames() {
       const resolvedFor = new Map(); // one resolveParams per delivery, not per sub-part
-      for (const [n, { at, frame }] of undrawnFrames) {
+      for (const n of undrawnFrames) {
+        const rec = deliveredAt.get(n);
+        if (!rec) continue;
+        const { at, frame } = rec;
+        const needPrint = isLayerLined(n), needBurn = isBurning(n);
+        frameNeeds.set(n, `${needPrint ? 1 : 0}${needBurn ? 1 : 0}`);
+        if (!needPrint && !needBurn) { delete sheetFrames[n]; continue; }
         if (at && !resolvedFor.has(at)) {
           try { resolvedFor.set(at, resolveParams(part, at.params)); } catch { resolvedFor.set(at, null); } // diagnosed by the build
         }
@@ -1064,8 +1129,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         if (!resolved) { delete sheetFrames[n]; continue; }
         // For a views-map sub-part the export pose is the build itself (plus a sheet pose), so a canonical
         // delivery's print frame is identity — no special case, the probe reads the compiled placement.
-        if (layerLined.has(n)) printFrames[n] = printFrameMatrix(part.parts[n], { view: at.view, ...resolved, frame });
-        if (burning.has(n)) {
+        if (needPrint) printFrames[n] = printFrameMatrix(part.parts[n], { view: at.view, ...resolved, frame });
+        if (needBurn) {
           const f = sheetFrameFor(part.parts[n], { ...resolved, frame });
           if (f) sheetFrames[n] = f; else delete sheetFrames[n];
         }
@@ -1073,6 +1138,20 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       undrawnFrames.clear();
       return { print: { ...printFrames }, sheet: { ...sheetFrames } };
     }
+    // A display change re-stales a delivered sub-part's frames when it changes
+    // WHICH frames that piece needs (frameNeeds above); a `null` event (a clear)
+    // re-checks every delivered name. computeFrames stays lazy (viewer.js
+    // syncFrames), so a CAD-only session still computes nothing.
+    cleanup.defer(viewer.onDisplayChange?.((evt) => {
+      let stale = false;
+      for (const n of evt?.name ? [evt.name] : deliveredAt.keys()) {
+        if (!deliveredAt.has(n) || undrawnFrames.has(n)) continue; // nothing drawn yet, or already stale
+        if (frameNeeds.get(n) === needsKey(n)) continue;
+        undrawnFrames.add(n);
+        stale = true;
+      }
+      if (stale) viewer.invalidateFrames?.();
+    }) ?? (() => {}));
     viewer.setFrameSource?.(computeFrames);
 
     // Sub-parts whose latest fresh delivery had zero triangles (see the `meshes` case).
@@ -1576,6 +1655,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       setHostPane: paneTabs.setHostPane,
       setRailLayout: paneTabs.setRailLayout,
       getView: view,                         // () => tabsCtl.current()
+      // `opts` may be null from a host (a destructuring default covers only undefined).
+      listSubParts: (opts) => subPartRows(part, { view: opts?.view ?? view(), params, overrides: viewer.getDisplayOverrides?.() ?? {} }),
+      openAppearance: (name) => viewStyle.openCard?.(name) ?? false,
+      setDisplaySaveState: (state) => viewStyle.setSaveState?.(state),
       setView: (name) => tabsCtl.select(name),
       captureView,
       getPanelState: () => panelRef?.getState() ?? {},

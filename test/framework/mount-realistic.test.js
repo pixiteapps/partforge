@@ -415,6 +415,108 @@ test("a realistic style thumbnail from CAD computes the frames it draws with", a
   runtime.dispose();
 });
 
+// --- display overrides: frames follow the EFFECTIVE display (spec 2026-10-13) --------
+// A placed metal sub-part: no print frame at delivery. A live switch to a layer-line
+// material must get one without a rebuild — but only when realistic is drawing, and
+// only when the change flips which frames the piece needs.
+function mountPlacedBrass() {
+  const workers = {};
+  const part = makePart({ material: "brass" });
+  part.parts.body.place = (s, { purpose }) => (purpose === "export" ? s : s.rotate(90, [0, 0, 0], [1, 0, 0]));
+  const runtime = mount(part, {
+    createWorker: (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null }),
+    elements: makeElements(),
+  });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("body")], ms: 1 } });
+  return { runtime, workers };
+}
+
+test("a live switch to a layer-line material computes the print frame with no rebuild; viewing changes compute nothing", async () => {
+  const { runtime, workers } = mountPlacedBrass();
+  await runtime.ready;
+  await runtime.renderMode.set("realistic");
+  expect(printFrameCalls.count).toBe(0); // brass draws no layer lines
+  const posts = workers.manifold.postMessage.mock.calls.length;
+  runtime.setSubPartDisplay("body", { material: "pla-print" });
+  expect(printFrameCalls.count).toBe(1);
+  expect(workers.manifold.postMessage.mock.calls.length).toBe(posts); // no build
+  const m = viewers[0].__subMesh("body").material.userData.patternUniforms.pfPrintFrame.value.elements;
+  expect([m[8], m[9], m[10]].map((v) => Math.round(v * 1e9) / 1e9 + 0)).toEqual([0, 1, 0]); // the export pose
+  // How the user is looking never changes which frames the piece needs.
+  runtime.setSubPartDisplay("body", { opacity: 0.5 });
+  runtime.setSubPartDisplay("body", { opacity: 0.3 });
+  runtime.setSubPartDisplay("body", { hidden: true });
+  runtime.setSubPartDisplay("body", { hidden: false });
+  // Nor does a swap between two layer-line materials.
+  runtime.setSubPartDisplay("body", { material: "petg-print" });
+  expect(printFrameCalls.count).toBe(1);
+  runtime.dispose();
+});
+
+test("in CAD a live switch to a layer-line material computes nothing", async () => {
+  const { runtime } = mountPlacedBrass();
+  await runtime.ready;
+  runtime.setSubPartDisplay("body", { material: "pla-print" });
+  expect(printFrameCalls.count).toBe(0);
+  await runtime.renderMode.set("realistic");
+  expect(printFrameCalls.count).toBe(1); // computed on the way in, for the effective display
+  runtime.dispose();
+});
+
+test("a carried viewerState.display is pruned for this part and applied before the first frame", async () => {
+  const { runtime } = mountFixture({ material: "brass" }, {
+    viewerState: { display: { ghost: { material: "oak" }, body: { material: "brass", color: 0xff0000, hidden: true } } },
+  });
+  await runtime.ready;
+  // The unknown name is gone; the appearance key equal to the authored value is gone.
+  expect(runtime.getViewerState().display).toEqual({ body: { color: 0xff0000, hidden: true } });
+  expect(runtime.getSubPartDisplay("body")).toMatchObject({ hidden: true, override: { color: 0xff0000, hidden: true } });
+  expect(runtime.getSubPartDisplay("ghost")).toBeNull();
+  runtime.dispose();
+});
+
+test("an empty or same-value display write rebuilds nothing and publishes nothing", async () => {
+  const { runtime, workers } = mountPlacedBrass();
+  await runtime.ready;
+  await runtime.renderMode.set("realistic");
+  runtime.setSubPartDisplay("body", { material: "pla-print" });
+  const frames = printFrameCalls.count;
+  const posts = workers.manifold.postMessage.mock.calls.length;
+  const mat = viewers[0].__subMesh("body").material;
+  const heard = vi.fn();
+  runtime.onSubPartDisplayChange(heard);
+  expect(runtime.setSubPartDisplay("body", {})).toEqual({ material: "pla-print" });
+  expect(runtime.setSubPartDisplay("body", { bogus: 1, hidden: "false" })).toEqual({ material: "pla-print" });
+  expect(heard).not.toHaveBeenCalled(); // nothing survived sanitizing: no event
+  runtime.setSubPartDisplay("body", { material: "pla-print" }); // the value already drawn
+  expect(viewers[0].__subMesh("body").material).toBe(mat); // not rematerialized
+  expect(printFrameCalls.count).toBe(frames);
+  expect(workers.manifold.postMessage.mock.calls.length).toBe(posts);
+  runtime.dispose();
+});
+
+test("built-in property names are not sub-parts: hops answer null and a carried token naming them is pruned", async () => {
+  const { runtime } = mountFixture({ material: "brass" }, {
+    viewerState: { display: { toString: { color: 5 }, constructor: { hidden: true }, body: { hidden: true } } },
+  });
+  await runtime.ready;
+  expect(runtime.getViewerState().display).toEqual({ body: { hidden: true } });
+  expect(runtime.setSubPartDisplay("toString", { color: 5 })).toBeNull();
+  expect(runtime.setSubPartDisplay("constructor", { hidden: true })).toBeNull();
+  expect(runtime.getSubPartDisplay("hasOwnProperty")).toBeNull();
+  expect(() => runtime.clearSubPartDisplay({ appearance: true, name: "toString" })).not.toThrow();
+  expect(Object.hasOwn(Object, "material")).toBe(false); // nothing written onto the global
+  runtime.dispose();
+});
+
+test("listSubParts accepts null options and falls back to the active view", async () => {
+  const { runtime } = mountFixture({ material: "brass" });
+  await runtime.ready;
+  expect(runtime.listSubParts(null).map((r) => r.name)).toEqual(runtime.listSubParts().map((r) => r.name));
+  runtime.dispose();
+});
+
 test("a part with no layer-line material never probes for print frames", async () => {
   const { runtime } = mountFixture({ material: "brass" });
   await runtime.ready;
@@ -650,6 +752,25 @@ test("a delivery while realistic recomputes the sheet frame; CAD deliveries do n
   await runtime.renderMode.set("cad");
   workers.manifold.onmessage({ data: { type: "meshes", meshes: [payload("panel")], ms: 1 } });
   expect(sheetFrameCalls.count).toBe(before + 1);
+  runtime.dispose();
+});
+
+test("a live switch off a wood drops the burn; back to a wood recomputes the sheet frame, no rebuild", async () => {
+  const { runtime, workers } = mountSheets();
+  await runtime.ready;
+  await runtime.renderMode.set("realistic");
+  expect(sheetFrameCalls.count).toBe(1);
+  const posts = workers.manifold.postMessage.mock.calls.length;
+  runtime.setSubPartDisplay("panel", { material: "brass" });
+  expect(sheetFrameCalls.count).toBe(1);
+  expect(viewers[0].__subMesh("panel").material.customProgramCacheKey()).not.toContain("pf-burn");
+  runtime.setSubPartDisplay("panel", { material: "walnut" });
+  expect(sheetFrameCalls.count).toBe(2);
+  const u = viewers[0].__subMesh("panel").material.userData.patternUniforms;
+  expect(u.pfSheetT.value).toBe(3);
+  runtime.setSubPartDisplay("panel", { opacity: 0.5 }); // viewing only: nothing recomputed
+  expect(sheetFrameCalls.count).toBe(2);
+  expect(workers.manifold.postMessage.mock.calls.length).toBe(posts);
   runtime.dispose();
 });
 

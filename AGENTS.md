@@ -205,6 +205,7 @@ the installed package, so let the publish finish before bumping the dep there.
   zero and resize/collapse are refused — including keyboard seam resize, which
   `rail.js` now also refuses below the breakpoint (previously reachable only
   with custom host CSS, since the seam is `display: none` there).
+- **`src/framework/materials/overrides.js`** (the per-sub-part display override model), **`sub-part-list.js`**, **`parts-list.js`**, **`appearance-card.js`** - the Parts section and appearance card inside the View style popover (spec 2026-10-13); viewing keys never reach exports or agent captures.
 - **`src/framework/materials/`** - the material library and realistic-mode
   rendering. `presets.js` (the preset table), `environments.js` (the
   environment records), `resolve.js` (display-block -> library lookup, never

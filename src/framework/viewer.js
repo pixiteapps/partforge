@@ -13,7 +13,9 @@ import { loadEnvironmentRig } from "./materials/environment.js";
 import { assetUrl } from "./materials/assets.js";
 import { resolveEnvironmentId } from "./materials/resolve.js";
 import { burnsFor, realisticDisplay } from "./materials/sheet-look.js";
+import { effectiveDisplay, mergeOverride, sanitizeDisplayPatch, subPartVisibility, APPEARANCE_OVERRIDE_KEYS, VIEWING_KEYS } from "./materials/overrides.js";
 import { neutralToneMapToSrgb8 } from "./materials/tonemap-readback.js";
+import { createMaterialThumbCache, thumbDisplay } from "./materials/thumb-cache.js";
 import { createCutaway } from "./cutaway.js";
 import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
 import { flashWorldRadius, projectToScreen, anchorMoved } from "./pick-flash.js";
@@ -62,7 +64,7 @@ export function halfFloatCaptureSupported({ readable, readType = null, halfFloat
 // a GL context. The grid is hidden for the whole synchronous pass and restored.
 // `poseFor(view)`, when given, places each view's camera in place of
 // cameraPoseForView(view, bounds) — the viewer passes the cad style's fit.
-export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, bounds, sceneBounds, hidden = [], poseFor }) {
+export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, bounds, sceneBounds, hidden = [], reveal = [], poseFor }) {
   const views = (viewNames?.length ? viewNames : ["iso", "front", "top"])
     .filter((v) => CANONICAL_VIEWS.includes(v))
     .slice(0, CANONICAL_VIEWS.length);
@@ -71,6 +73,9 @@ export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, b
   if (grid) grid.visible = false;
   const hiddenWas = hidden.map((o) => o.visible);
   for (const o of hidden) o.visible = false;
+  // `reveal`: [{ show, restore }] — sub-parts the user hid or faded, shown as
+  // if untouched for THIS pass only (agent renders must never miss a piece).
+  for (const r of reveal) r.show();
   try {
     return views.map((view) => {
       const pose = poseFor ? poseFor(view) : cameraPoseForView(view, bounds);
@@ -81,6 +86,7 @@ export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, b
       return { view, dataUrl: renderer.renderOffscreen(pose, { sceneBounds }) };
     });
   } finally {
+    for (const r of reveal) r.restore();
     if (grid) grid.visible = gridWasVisible;
     hidden.forEach((o, i) => { o.visible = hiddenWas[i]; });
     liveCamera.position.copy(before); // belt-and-suspenders: never leak camera state
@@ -159,6 +165,11 @@ export function captureCurrentFromScene(
 
 export function createViewer(container, part) {
   const names = Object.keys(part.parts);
+  // Membership for host-supplied names. subMesh, cadMats and part.parts are
+  // plain objects, so "toString" or "constructor" would read as present on
+  // them; every name a host hands the override API is checked here instead.
+  const nameSet = new Set(names);
+  const has = (name) => nameSet.has(name);
 
   // --- renderer / scene / camera --------------------------------------------
   const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true });
@@ -265,11 +276,21 @@ export function createViewer(container, part) {
   const partsGroup = new THREE.Group();
   pivot.add(partsGroup);
 
-  // Per-sub-part CAD material: the shared default unless the sub-part declares
-  // appearance in `display` (colour, opacity, or a library material flattened
-  // for the CAD view — materials/resolve.js cadAppearance).
+  // --- per-sub-part display overrides (materials/overrides.js) ----------------
+  // Appearance keys merge over the authored display for EVERY material read
+  // below (effectiveDisplayOf); the viewing keys (hidden, opacity) are read only
+  // by applySubOpacity / effectiveVisible. Carried by mount in viewerState.
+  const displayOverrides = new Map(); // name -> override (never empty)
+  const displayListeners = new Set();
+  const effectiveDisplayOf = (name) => (has(name) ? effectiveDisplay(part.parts[name]?.display, displayOverrides.get(name) ?? null) : {});
+  const isHidden = (name) => displayOverrides.get(name)?.hidden === true;
+  const userOpacityOf = (name) => displayOverrides.get(name)?.opacity; // undefined = none
+
+  // Per-sub-part CAD material: the shared default unless the EFFECTIVE display
+  // declares appearance (colour, opacity, or a library material flattened for
+  // the CAD view — materials/resolve.js cadAppearance).
   function materialFor(name) {
-    return buildCadMaterial(part.parts[name].display, material);
+    return buildCadMaterial(effectiveDisplayOf(name), material);
   }
 
   const subMesh = Object.fromEntries(
@@ -315,6 +336,11 @@ export function createViewer(container, part) {
   let renderMode = "cad";
   let realisticRig = null;
   let shadowMovedAt = null;          // performance.now() of a pose change the contact shadow has not caught up with
+  // The appearance card's sphere thumbnails (renderMaterialThumbnail). Up here,
+  // ahead of every look change that clears it (setTheme, enterRealistic, enterCad).
+  const materialThumbs = createMaterialThumbCache();
+  let _thumbSphere = null;
+
 
   // three calls scene.onBeforeRender(renderer, scene, camera, target) at the
   // very start of WebGLRenderer.render — after scene/camera matrixWorld are
@@ -337,7 +363,11 @@ export function createViewer(container, part) {
     if (renderMode === "realistic") realisticRig?.updateForCamera?.(camera);
   };
 
-  const effectiveVisible = () => lastShown.filter((n) => (animOpacity.get(n) ?? 1) > 0);
+  // A sub-part the user hid, or faded to nothing (the user floor is above 0, so
+  // only the animation can), is out of the visible set: the cutaway, the
+  // ground, raycast and visible-bounds framing all follow.
+  const effectiveVisible = () => lastShown.filter((n) =>
+    !isHidden(n) && (animOpacity.get(n) ?? 1) > 0 && (userOpacityOf(n) ?? 1) > 0);
 
   // A fade clone is a material the cutaway does not own, so it has to be told
   // about the clipping plane explicitly — otherwise a mid-fade part renders
@@ -375,45 +405,48 @@ export function createViewer(container, part) {
     return m;
   }
 
-  // Re-derive one sub-part's material + visibility from (shown, override).
+  // Re-derive one sub-part's material + visibility from (shown, animation
+  // opacity, the user's hide/see-through) through the one pure decision,
+  // materials/overrides.js subPartVisibility.
+  //
+  // Restore ONLY from our own fade clone. showAssembly runs on every regen
+  // (mount.js's refreshView) without disabling the cutaway, and an enabled
+  // cutaway has swapped these onto its clipped clones
+  // (createSectionRenderSet.setEnabled) — an unconditional write here would
+  // silently drop clipping on every sub-part on the next param edit.
+  // When we just took the mesh off our clone, an enabled cutaway must get the
+  // chance to re-claim it onto its clipped clone — the base material we write
+  // carries no plane, and nothing else would put it back until the next
+  // cutaway toggle or theme change. Guarded on hadFade so the every-regen
+  // showAssembly path stays a no-op for un-faded sub-parts.
   function applySubOpacity(name) {
+    if (!has(name)) return;
     const mesh = subMesh[name], lines = subLines[name];
     if (!mesh) return;
-    const shown = lastShown.includes(name);
-    const v = animOpacity.get(name);
-    if (v === undefined) {
-      // Restore ONLY from our own fade clone. showAssembly runs on every regen
-      // (mount.js's refreshView) without disabling the cutaway, and an enabled
-      // cutaway has swapped these onto its clipped clones
-      // (createSectionRenderSet.setEnabled) — an unconditional write here would
-      // silently drop clipping on every sub-part on the next param edit.
+    const { meshVisible, linesVisible, fade } = subPartVisibility({
+      shown: lastShown.includes(name),
+      anim: animOpacity.get(name),
+      user: userOpacityOf(name),
+      hidden: isHidden(name),
+      renderMode,
+      staticOpacity: effectiveDisplayOf(name).opacity ?? 1,
+    });
+    if (fade === null) {
       const hadFade = mesh.material === fadeMats.get(name);
       if (hadFade) mesh.material = baseMats[name];
       if (lines.material === fadeLineMats.get(name)) lines.material = lineMaterial;
-      // We just took the mesh off our clone, so an enabled cutaway must get the
-      // chance to re-claim it onto its clipped clone — the base material we
-      // wrote above carries no plane, and nothing else would put it back until
-      // the next cutaway toggle or theme change. Guarded on hadFade so the
-      // every-regen showAssembly path stays a no-op for un-faded sub-parts.
       if (hadFade) cutaway.resyncSubpart(name);
-      mesh.visible = shown;
-      lines.visible = shown && renderMode === "cad";
-      return;
+    } else {
+      const fm = fadeMatFor(name);
+      fm.opacity = fade;
+      mesh.material = fm;
+      const flm = fadeLineMatFor(name);
+      const so = effectiveDisplayOf(name).opacity ?? 1;
+      flm.opacity = so > 0 ? fade / so : 0; // lines fade by the multiplier alone
+      lines.material = flm;
     }
-    if (v <= 0) {
-      mesh.visible = false;
-      lines.visible = false;
-      return;
-    }
-    const staticOpacity = part.parts[name].display?.opacity ?? 1;
-    const fm = fadeMatFor(name);
-    fm.opacity = staticOpacity * v;
-    mesh.material = fm;
-    const flm = fadeLineMatFor(name);
-    flm.opacity = v;
-    lines.material = flm;
-    mesh.visible = shown;
-    lines.visible = shown && renderMode === "cad";
+    mesh.visible = meshVisible;
+    lines.visible = linesVisible && meshVisible;
   }
 
   function setSubPartOpacity(name, value) {
@@ -440,6 +473,91 @@ export function createViewer(container, part) {
     matchGeneration++; // any part that was faded out is visible again
     cutaway.setVisible(effectiveVisible());
   }
+
+  // --- display overrides: the API (spec A.2) -----------------------------------
+  function publishDisplay(evt) {
+    for (const cb of [...displayListeners]) {
+      try { cb(evt); } catch (e) { console.warn("partforge: display listener failed", e); }
+    }
+  }
+  // Re-point one sub-part at the materials its EFFECTIVE display now means, in
+  // whichever mode is live — no geometry work (rebaseSubMaterial's contract).
+  // A sub-part with no appearance shares the base `material` (buildCadMaterial
+  // returns it), which every other such sub-part is also on: never dispose it.
+  function rematerialize(name) {
+    if (cadMats[name] !== material) cadMats[name]?.dispose();
+    const cad = materialFor(name);
+    cadMats[name] = cad;
+    const phys = physicalMats.get(name);
+    if (phys) { phys.dispose(); physicalMats.delete(name); }
+    if (renderMode === "realistic") {
+      if (subCache[name] && physicalFor(name).userData.pfAnisotropic) ensureBoxUVs(subCache[name]);
+      rebaseSubMaterial(name, physicalFor(name));
+    } else {
+      rebaseSubMaterial(name, cad);
+    }
+  }
+  function visibilityChanged() {
+    matchGeneration++;
+    cutaway.setVisible(effectiveVisible());
+    if (realisticRig) { shadowMovedAt = performance.now(); placeGround(); }
+  }
+  // Shallow, key-by-key: effective displays hold only primitives.
+  function sameDisplay(a, b) {
+    const ka = Object.keys(a), kb = Object.keys(b);
+    return ka.length === kb.length && ka.every((k) => Object.hasOwn(b, k) && Object.is(a[k], b[k]));
+  }
+  function setSubPartDisplay(name, patch) {
+    if (!has(name) || !subMesh[name]) return null;
+    const before = displayOverrides.get(name) ?? null;
+    const clean = sanitizeDisplayPatch(patch);
+    // Nothing survived sanitizing: not a change, so nothing is rebuilt and no
+    // listener hears it (a host saving on onDisplayChange would checkpoint a
+    // no-op). The mount-realistic tests pin this through material identity.
+    if (!Object.keys(clean).length) return before ? { ...before } : null;
+    const effectiveBefore = effectiveDisplayOf(name);
+    const next = mergeOverride(before, clean);
+    if (next) displayOverrides.set(name, next); else displayOverrides.delete(name);
+    // An appearance key that lands on the value already drawn (the same
+    // material picked twice) rebuilds nothing.
+    const appearanceMoved = APPEARANCE_OVERRIDE_KEYS.some((k) => k in clean) && !sameDisplay(effectiveBefore, effectiveDisplayOf(name));
+    const viewingMoved = VIEWING_KEYS.some((k) => k in clean);
+    if (appearanceMoved) rematerialize(name); else if (viewingMoved) applySubOpacity(name);
+    if (viewingMoved) visibilityChanged();
+    requestRender();
+    publishDisplay({ name, override: next ? { ...next } : null });
+    return next ? { ...next } : null;
+  }
+  function getSubPartDisplayState(name) {
+    if (!has(name) || !subMesh[name]) return null;
+    const override = displayOverrides.get(name) ?? null;
+    return {
+      authored: part.parts[name].display ?? null,
+      override: override ? { ...override } : null,
+      effective: effectiveDisplayOf(name),
+      hidden: isHidden(name),
+      opacity: userOpacityOf(name) ?? 1,
+    };
+  }
+  const getDisplayOverrides = () => Object.fromEntries([...displayOverrides].map(([n, o]) => [n, { ...o }]));
+  // Clear the viewing keys, the appearance keys, or both — for one sub-part or all.
+  function clearSubPartDisplay({ viewing = false, appearance = false, name = null } = {}) {
+    const targets = name ? (has(name) && displayOverrides.has(name) ? [name] : []) : [...displayOverrides.keys()];
+    if (!targets.length) return;
+    for (const n of targets) {
+      const o = displayOverrides.get(n);
+      const patch = {};
+      if (viewing) for (const k of VIEWING_KEYS) if (k in o) patch[k] = null;
+      if (appearance) for (const k of APPEARANCE_OVERRIDE_KEYS) if (k in o) patch[k] = null;
+      const next = mergeOverride(o, patch);
+      if (next) displayOverrides.set(n, next); else displayOverrides.delete(n);
+      if (appearance) rematerialize(n); else applySubOpacity(n);
+    }
+    visibilityChanged();
+    requestRender();
+    publishDisplay(null);
+  }
+  function onDisplayChange(cb) { displayListeners.add(cb); return () => displayListeners.delete(cb); }
 
   // The cutaway plane lives in world space, so its initial/reset bounds must
   // include the pivot rotation and the per-view recentering transform —
@@ -724,10 +842,13 @@ export function createViewer(container, part) {
     let m = physicalMats.get(name);
     if (!m) {
       const sp = part.parts[name];
-      // `burn` is decided once per sub-part (sheet-look.js burnsFor): only a laser sheet in
+      // `burn` is decided per sub-part material (sheet-look.js burnsFor): only a laser sheet in
       // a wood compiles the burn pass, so every other program is exactly what it was.
       // realisticDisplay: a laser sheet with no material draws as its stock (sheet-look.js).
-      m = cloneKeepsPattern(buildPhysicalMaterial(realisticDisplay(sp), { printFrame: printFrames[name], burn: burnsFor(sp), loadTexture }));
+      // Both read sp.display, so hand them a sub-part whose display is the EFFECTIVE one
+      // (authored + the user's appearance override).
+      const eff = { ...sp, display: effectiveDisplayOf(name) };
+      m = cloneKeepsPattern(buildPhysicalMaterial(realisticDisplay(eff), { printFrame: printFrames[name], burn: burnsFor(eff), loadTexture }));
       physicalMats.set(name, m);
       syncGrain(name);
       applySheetFrame(m, sheetFrames[name]);
@@ -776,9 +897,10 @@ export function createViewer(container, part) {
     }
   }
 
-  // Ghosts (a static display opacity below 1) cast no shadow.
+  // Ghosts (a static display opacity below 1) cast no shadow — a USER fade
+  // (see-through) counts as a ghost too.
   const castersNow = () => names
-    .filter((n) => subMesh[n].visible && (part.parts[n].display?.opacity ?? 1) >= 1)
+    .filter((n) => subMesh[n].visible && (effectiveDisplayOf(n).opacity ?? 1) >= 1 && userOpacityOf(n) === undefined)
     .map((n) => subMesh[n]);
   // `force` renders even while parked: a capture is offscreen work a parked
   // viewer still does, and it must not bake a stale (or absent) shadow.
@@ -882,6 +1004,9 @@ export function createViewer(container, part) {
       if (live) applyPixelRatio("realistic");
       // Hides the lines on every sub-part now that renderMode reads realistic.
       refreshFeatureLines();
+      // A capture's borrowed look (live: false) is put back at once: the
+      // thumbnails still describe the live one.
+      if (live) invalidateMaterialThumbnails();
     } catch (e) {
       try { enterCad({ live }); } catch (rollback) { console.warn("partforge: rolling back to CAD failed", rollback); }
       throw e;
@@ -916,6 +1041,7 @@ export function createViewer(container, part) {
     for (const n of names) attempt(() => { if (baseMats[n] !== cadMats[n]) rebaseSubMaterial(n, cadMats[n]); else applySubOpacity(n); });
     if (live) attempt(() => applyPixelRatio("cad"));
     attempt(refreshFeatureLines);
+    if (live) invalidateMaterialThumbnails();
     if (firstError) throw firstError;
   }
 
@@ -1020,6 +1146,7 @@ export function createViewer(container, part) {
     environmentChosen = true;
     if (next !== environmentId) announceEnvironment(next);
     if (renderMode === "realistic" || realisticPending) await setRenderMode("realistic");
+    invalidateMaterialThumbnails();
     return environmentId;
   }
 
@@ -1371,7 +1498,7 @@ export function createViewer(container, part) {
     for (const n of names) {
       const mesh = subMesh[n];
       if (!mesh.visible || !mesh.geometry?.boundingBox) continue;
-      if ((part.parts[n].display?.opacity ?? 1) < 1) continue; // a ghost is seen through
+      if ((effectiveDisplayOf(n).opacity ?? 1) < 1 || userOpacityOf(n) !== undefined) continue; // a ghost (authored or user see-through) is seen through
       mesh.updateWorldMatrix(true, false);
       _matchProxy.geometry = mesh.geometry;
       _matchProxy.matrixWorld.copy(mesh.matrixWorld);
@@ -1788,6 +1915,7 @@ export function createViewer(container, part) {
     cutaway.setTheme(mode, t.line);
     reassertLiveFades(); // setTheme re-clones every section's materials and reassigns them
     currentTheme = THEME[mode] ? mode : "dark";
+    invalidateMaterialThumbnails();
     for (const cb of [...themeListeners]) cb(currentTheme);
   }
 
@@ -1903,7 +2031,9 @@ export function createViewer(container, part) {
     // scene (renderMeshPayloads' thumbnails) is CAD whatever the live mode.
     // Without HDR readback it falls back to the 8-bit target and tone-maps the
     // clipped linear bytes: highlights clip, but it is still the realistic look.
-    const realistic = renderScene === scene && renderMode === "realistic";
+    // A throwaway scene that carries an environment (renderMaterialThumbnail's
+    // realistic sphere) is realistic too; renderMeshPayloads' never has one.
+    const realistic = renderMode === "realistic" && (renderScene === scene || renderScene.environment != null);
     const hdr = realistic && hdrCaptureReadback();
     const cachedSize = !hdr && width === _rtSize && height === _rtSize;
     const rt = cachedSize
@@ -2034,6 +2164,70 @@ export function createViewer(container, part) {
     return () => canonicalCaptureHidden.delete(obj);
   }
 
+  // Sub-parts the user hid or faded, as `reveal` entries: shown as if untouched
+  // for one capture pass (agent renders must never miss a piece), then put back.
+  // Built and shown INSIDE a borrowed look (captureIn), never around one: a look
+  // swap re-runs applySubOpacity on every sub-part, which would re-hide them.
+  //
+  // Accepted limitation: a mesh taken off a USER fade clone for the pass sits on
+  // baseMats[n], which carries no cutaway plane, so with the cutaway enabled that
+  // one piece renders unclipped in that one capture. A hidden, unfaded mesh keeps
+  // whatever material it was on (the cutaway's clipped clone included), the same
+  // hadFade rule applySubOpacity follows. The ground and contact shadow are not
+  // re-derived for the pass either: they stay as the live view placed them.
+  function revealEntries() {
+    const out = [];
+    for (const n of names) {
+      if (!lastShown.includes(n) || !subCache[n]) continue;
+      if (!isHidden(n) && userOpacityOf(n) === undefined) continue;
+      const mesh = subMesh[n], lines = subLines[n];
+      const fm = fadeMats.get(n), flm = fadeLineMats.get(n);
+      // The fade clones are shared with the live view, so their opacities are
+      // part of what the pass must put back, beside the assignments.
+      const was = {
+        mat: mesh.material, lmat: lines.material, vis: mesh.visible, lvis: lines.visible,
+        fmOpacity: fm?.opacity, flmOpacity: flm?.opacity,
+      };
+      out.push({
+        object: mesh,
+        show: () => {
+          const staticOpacity = effectiveDisplayOf(n).opacity ?? 1;
+          const { meshVisible, linesVisible, fade } = subPartVisibility({
+            shown: true, anim: animOpacity.get(n), user: undefined, hidden: false, renderMode, staticOpacity,
+          });
+          if (fade === null) {
+            if (mesh.material === fadeMats.get(n)) mesh.material = baseMats[n];
+            if (lines.material === fadeLineMats.get(n)) lines.material = lineMaterial;
+          } else {
+            const f = fadeMatFor(n); f.opacity = fade; mesh.material = f;
+            const fl = fadeLineMatFor(n); fl.opacity = staticOpacity > 0 ? fade / staticOpacity : 0; lines.material = fl;
+          }
+          mesh.visible = meshVisible; lines.visible = linesVisible && meshVisible;
+        },
+        restore: () => {
+          const f = fadeMats.get(n), fl = fadeLineMats.get(n);
+          if (f) f.opacity = was.fmOpacity ?? f.opacity;
+          if (fl) fl.opacity = was.flmOpacity ?? fl.opacity;
+          mesh.material = was.mat; lines.material = was.lmat; mesh.visible = was.vis; lines.visible = was.lvis;
+        },
+      });
+    }
+    return out;
+  }
+  // Run `fn` with the user's hidden/faded sub-parts revealed (when `on`), and
+  // put them back after — even if `fn` throws.
+  function withRevealed(on, fn) {
+    const reveal = on ? revealEntries() : [];
+    // Only entries whose show() ran (even partly, if it threw) are put back;
+    // restore() writes back values recorded before show(), so it is safe either way.
+    const shown = [];
+    try {
+      for (const r of reveal) { shown.push(r); r.show(); }
+      return fn();
+    } finally { for (const r of shown) r.restore(); }
+  }
+  const hasVisibleBounds = () => { const b = getVisibleWorldBounds(); return !!b && !b.isEmpty(); };
+
   // Render the canonical camera angles offscreen, framed to whatever is visible,
   // without disturbing the user's live view. Returns [{ view, dataUrl }].
   //
@@ -2045,13 +2239,21 @@ export function createViewer(container, part) {
   // borrowing CAD for this capture draws them for free.
   function captureCanonicalViews(viewNames) {
     if (disposed) return [];
-    const box = getVisibleWorldBounds();
-    if (!box || box.isEmpty()) return []; // nothing to draw: don't swap the look for it
+    // Asked with the hidden pieces revealed, or a part whose every sub-part the
+    // user hid would return [] instead of its render.
+    if (!withRevealed(true, hasVisibleBounds)) return []; // nothing to draw: don't swap the look for it
     return captureIn("cad", null, () => canonicalViewsInCurrentLook(viewNames));
   }
   // The canonical views in whatever look the scene has right now — the body
   // both captureCanonicalViews and renderViews wrap in captureIn.
+  // The user's hidden and faded sub-parts are revealed for the whole body,
+  // framing included: getVisibleWorldBounds reads mesh.visible before
+  // captureViewsFromScene runs (whose own `reveal` option stays for a caller
+  // that frames itself).
   function canonicalViewsInCurrentLook(viewNames) {
+    return withRevealed(true, () => canonicalViewsRevealed(viewNames));
+  }
+  function canonicalViewsRevealed(viewNames) {
     const box = getVisibleWorldBounds();
     if (!box || box.isEmpty()) return [];
     const center = box.getCenter(new THREE.Vector3()).toArray();
@@ -2087,12 +2289,15 @@ export function createViewer(container, part) {
   // assets have ALREADY loaded — this call is synchronous and cannot wait for
   // them — and otherwise falls back to the live look; renderViews is the async
   // path that guarantees realistic.
+  //
+  // `includeHidden: true` (build sight) renders the user's hidden and faded
+  // sub-parts as if untouched; omitted, the capture is what the user sees.
   function captureCurrent(opts) {
     if (disposed) return null;
-    const box = getVisibleWorldBounds();
-    if (!box || box.isEmpty()) return null;
-    const { renderMode: want, ...rest } = opts ?? {};
-    const capture = () => currentFramingInCurrentLook(rest);
+    const { renderMode: want, includeHidden = false, ...rest } = opts ?? {};
+    if (!withRevealed(includeHidden, hasVisibleBounds)) return null;
+    // Revealed inside the capture, so inside any borrowed look (revealEntries).
+    const capture = () => withRevealed(includeHidden, () => currentFramingInCurrentLook(rest));
     if (want === "cad") return captureIn("cad", null, capture);
     if (want === "realistic" && renderMode !== "realistic") {
       const rig = loadedRigs.get(environmentId);
@@ -2194,6 +2399,83 @@ export function createViewer(container, part) {
       releaseRig(id, p);
     }
   }
+
+  // A sphere in `display`'s material under the current look, for the
+  // appearance card's tiles. A THROWAWAY scene (never the live one): in CAD it
+  // is the flattened CAD material under the capture lights; in realistic it is
+  // the physical material lit by the live rig's envMap with its tone mapping,
+  // in front of the rig's own backdrop (which is what a clear material shows
+  // through — three's transmission pass draws the background, and with none
+  // acrylic reads as black glass). The sphere slightly overfills the frame so
+  // the tile's round crop shows sphere only, never the backdrop's corners.
+  // Cached per (material, colour, environment, theme, mode); null on failure.
+  // The environment in the key is the rig actually LIT: setEnvironment
+  // announces the new id before its rig loads, and a sphere drawn in that
+  // window under the old rig must not be cached as the new one.
+  const thumbKey = (display) => materialThumbs.key(
+    display, (renderMode === "realistic" && realisticRig?.id) || environmentId, currentTheme, renderMode);
+  async function renderMaterialThumbnail(display, { size = 96 } = {}) {
+    if (disposed) return null;
+    const key = thumbKey(display);
+    const hit = materialThumbs.get(key);
+    if (hit !== undefined) return hit;
+    // Built from the key's own fields only (the preset, tinted), never the
+    // sub-part's finish overrides or opacity — see thumb-cache.js.
+    const look = thumbDisplay(display);
+    let mat = null;
+    try {
+      const tmp = new THREE.Scene();
+      const rig = renderMode === "realistic" ? realisticRig : null;
+      if (rig) {
+        mat = buildPhysicalMaterial(look, { loadTexture });
+        // A textured preset (oak) would otherwise draw untextured, and be cached so.
+        await whenTexturesSettled();
+        // The look moved while the maps loaded: this sphere is for a key nobody
+        // shows any more (the card re-renders on the change anyway).
+        if (disposed || rig !== realisticRig || key !== thumbKey(display)) {
+          mat.dispose();
+          return null;
+        }
+        tmp.environment = rig.envMap;
+        tmp.environmentRotation.set(0, rig.rotationY ?? 0, 0);
+        tmp.background = rig.background ?? null;
+        tmp.backgroundBlurriness = rig.backgroundBlurriness ?? 0;
+        tmp.backgroundIntensity = rig.backgroundIntensity ?? 1;
+        tmp.backgroundRotation.set(0, rig.rotationY ?? 0, 0);
+        // A rig's own lights (an enclosure's overhead LED bar) belong to the
+        // live scene; a fresh one of the same strength stands in from above.
+        for (const l of rig.lights ?? []) {
+          const d = new THREE.DirectionalLight(l.color, l.intensity);
+          d.position.set(0.5, 4, 1);
+          tmp.add(d, d.target);
+        }
+      } else {
+        mat = buildCadMaterial(look, material);
+        tmp.background = new THREE.Color(THEME[currentTheme].bg);
+        tmp.add(createHemisphereLight());
+        const { key: k, fill: f } = createCaptureLights();
+        k.position.set(3, 4, 5); f.position.set(-4, 1, 5);
+        tmp.add(k, k.target, f, f.target);
+      }
+      _thumbSphere = _thumbSphere ?? new THREE.SphereGeometry(1, 48, 32);
+      tmp.add(new THREE.Mesh(_thumbSphere, mat));
+      const url = renderOffscreen(
+        { position: [0, 0, 3.2], up: [0, 1, 0], target: [0, 0, 0] },
+        { width: size, height: size, fov: 35, quality: 0.85, sceneBounds: { center: [0, 0, 0], radius: 1.2 } },
+        tmp,
+      );
+      materialThumbs.set(key, url);
+      return url;
+    } catch (e) {
+      console.warn("partforge: material thumbnail failed", e);
+      return null;
+    } finally {
+      // Never the shared CAD base (buildCadMaterial returns it for a display
+      // with no appearance); the textures are loadTexture's cache, not ours.
+      if (mat && mat !== material) mat.dispose();
+    }
+  }
+  function invalidateMaterialThumbnails() { materialThumbs.clear(); }
 
   // Agent-facing canonical renders in a chosen appearance, whatever the live
   // view shows. CAD is exactly captureCanonicalViews (which is always CAD).
@@ -2702,6 +2984,8 @@ export function createViewer(container, part) {
     assemblyListeners.clear();
     themeListeners.clear();
     projectionListeners.clear();
+    displayListeners.clear();
+    displayOverrides.clear();
     canonicalCaptureHidden.clear();
     camTween.cancel();
     controls.dispose();
@@ -2718,6 +3002,8 @@ export function createViewer(container, part) {
     lastAnchor = null;
     anchorListeners.clear();
     flashGeometry.dispose();
+    _thumbSphere?.dispose();
+    materialThumbs.clear();
     cutaway.dispose();
     for (const n of names) {
       const g = subCache[n];
@@ -2757,6 +3043,12 @@ export function createViewer(container, part) {
     setSubGeometry,
     setSubPose,
     setSubPartOpacity,
+    setSubPartDisplay,
+    getSubPartDisplayState,
+    getDisplayOverrides,
+    clearSubPartDisplay,
+    onDisplayChange,
+    effectiveDisplayOf,
     clearSubPartOpacities,
     hasSubMesh,
     subTriangles,
@@ -2767,6 +3059,8 @@ export function createViewer(container, part) {
     renderMeshPayloads,
     renderViews,
     renderStyleThumbnail,
+    renderMaterialThumbnail,
+    invalidateMaterialThumbnails,
     onFrame,
     onAssemblyChange: (cb) => { assemblyListeners.add(cb); return () => assemblyListeners.delete(cb); },
     tweenCameraTo,
