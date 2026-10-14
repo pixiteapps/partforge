@@ -95,6 +95,26 @@ describe("selection popover: opening", () => {
     expect(p.element.querySelector(".pf-selection-mat").textContent).toBe("Brass");
     p.detach();
   });
+  it("a slot-less popover closes with gone when its sub-part leaves the view; a slot one stays", () => {
+    const parts = partsStub(ROWS());
+    const p = attachSelectionPopover({ stage, canvas, parts });
+    const reasons = [];
+    p.onClose((e) => reasons.push(e.reason));
+    p.open({ subPart: "body", anchor: at });
+    parts.rows[0].inView = false;
+    parts.emit();
+    expect(reasons).toEqual(["gone"]);
+    expect(p.isOpen()).toBe(false);
+    p.detach();
+    const parts2 = partsStub(ROWS());
+    const q = attachSelectionPopover({ stage, canvas, slot: true, parts: parts2 });
+    q.open({ subPart: "body", anchor: at });
+    parts2.rows[0].inView = false;
+    parts2.emit();
+    expect(q.isOpen()).toBe(true);
+    expect(q.element.querySelector(".pf-selection-open").hidden).toBe(true);
+    q.detach();
+  });
 });
 
 describe("selection popover: the slot", () => {
@@ -144,6 +164,23 @@ describe("selection popover: closing", () => {
     p.open({ subPart: "body", anchor: at });
     return { p, parts, onClosed, reasons };
   }
+  it("showPage does nothing while closed", () => {
+    const { p } = opened();
+    p.close();
+    expect(p.showPage("appearance")).toBe(false);
+    expect(p.showPage("spot")).toBe(false);
+    expect(p.isOpen()).toBe(false);
+    expect(p.element.querySelector(".pf-card")).toBeNull();
+    p.detach();
+  });
+  it("onClosed runs before the close listeners", () => {
+    const order = [];
+    const { p } = opened({ onClosed: () => order.push("onClosed") });
+    p.onClose(() => order.push("listener"));
+    p.close("dismiss");
+    expect(order).toEqual(["onClosed", "listener"]);
+    p.detach();
+  });
   it("✕ closes with dismiss and calls onClosed", () => {
     const { p, onClosed, reasons } = opened();
     p.element.querySelector(".pf-selection-close").click();
@@ -202,5 +239,87 @@ describe("selection popover: closing", () => {
     expect(slot).not.toHaveBeenCalled();
     expect(stage.querySelector(".pf-selection-popover")).toBeNull();
     expect(p.open({ subPart: "body", anchor: at })).toBe(false);
+  });
+});
+
+describe("selection popover: the appearance page", () => {
+  function opened() {
+    const parts = partsStub(ROWS());
+    let save = "screen-only";
+    const p = attachSelectionPopover({ stage, canvas, slot: true, parts, getSaveState: () => save });
+    const reasons = []; const slots = [];
+    p.onClose((e) => reasons.push(e.reason));
+    p.onSlotChange((r) => slots.push(r.state));
+    p.open({ subPart: "body", anchor: at });
+    return { p, parts, reasons, slots, setSave: (s) => { save = s; } };
+  }
+  it("the head button opens the card, collapses the slot and focuses Back", () => {
+    const { p, slots } = opened();
+    p.element.querySelector(".pf-selection-open").click();
+    expect(p.getState()).toEqual({ subPart: "body", page: "appearance" });
+    expect(p.element.querySelector(".pf-selection-spot").hidden).toBe(true);
+    const card = p.element.querySelector(".pf-card");
+    expect(card.hidden).toBe(false);
+    expect(document.activeElement).toBe(card.querySelector(".pf-card-back"));
+    expect(slots).toEqual(["open", "collapsed"]);
+    p.detach();
+  });
+  it("Back returns to the spot page and the slot reopens", () => {
+    const { p, slots } = opened();
+    p.showPage("appearance");
+    p.element.querySelector(".pf-card-back").click();
+    expect(p.getState().page).toBe("spot");
+    expect(p.element.querySelector(".pf-card").hidden).toBe(true);
+    expect(slots.at(-1)).toBe("open");
+    p.detach();
+  });
+  it("the card's ✕ dismisses", () => {
+    const { p, reasons } = opened();
+    p.showPage("appearance");
+    p.element.querySelector(".pf-card-close").click();
+    expect(reasons).toEqual(["dismiss"]);
+    p.detach();
+  });
+  it("the card's part disappearing closes with gone", () => {
+    const { p, parts, reasons } = opened();
+    p.showPage("appearance");
+    parts.rows.splice(0, 1);
+    parts.emit();
+    expect(reasons).toEqual(["gone"]);
+    expect(p.isOpen()).toBe(false);
+    p.detach();
+  });
+  it("a new pick while on the card returns to the spot page", () => {
+    const { p } = opened();
+    p.showPage("appearance");
+    p.open({ subPart: "body", anchor: { x: 100, y: 100 } });
+    expect(p.getState().page).toBe("spot");
+    expect(p.element.querySelector(".pf-card").hidden).toBe(true);
+    p.detach();
+  });
+  it("there is no card for a sub-part-less pick", () => {
+    const parts = partsStub(ROWS());
+    const p = attachSelectionPopover({ stage, canvas, slot: true, parts });
+    p.open({ subPart: null, anchor: at });
+    expect(p.showPage("appearance")).toBe(false);
+    expect(p.getState().page).toBe("spot");
+    p.detach();
+  });
+  it("refreshSaveState re-renders the card's footer", () => {
+    const { p, setSave } = opened();
+    p.showPage("appearance");
+    setSave("blocked");
+    p.refreshSaveState();
+    expect(p.element.querySelector(".pf-card-foot-note").textContent).toContain("set by code");
+    p.detach();
+  });
+  it("a reopen after a close starts on the spot page", () => {
+    const { p } = opened();
+    p.showPage("appearance");
+    p.close();
+    p.open({ subPart: "body", anchor: at });
+    expect(p.getState().page).toBe("spot");
+    expect(p.element.querySelector(".pf-selection-spot").hidden).toBe(false);
+    p.detach();
   });
 });

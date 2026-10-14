@@ -9,6 +9,7 @@
 // It never decides anything about the slot's content: the host says how tall
 // it must be (setSlotHeight) and is told where it is (onSlotChange). Mount owns
 // the pick marker; this module is handed the marker's position in stage px.
+import { attachAppearanceCard } from "./appearance-card.js";
 import { hexColor } from "./parts-list.js";
 import { planSelectionPlacement } from "./selection-placement.js";
 
@@ -50,7 +51,7 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
 
   let current = null; // { subPart, anchor } while open
   let page = "spot";
-  let card = null;    // Task 3
+  let card = null;    // built on first use of the appearance page
   let lastSlotKey = null;
   let detached = false;
   const slotCbs = new Set();
@@ -112,13 +113,42 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     emitSlot();
   }
 
-  // Task 3 extends the "appearance" branch; here only "spot" exists.
+  // Built on first use, so a popover that never shows a card holds none of its
+  // ~40 controls (the view style popover's rule).
+  function ensureCard() {
+    if (card) return card;
+    card = attachAppearanceCard(parts, {
+      onBack: () => showPage("spot"),
+      onClose: () => close("dismiss"),
+      // A rebuild dropped the part this card was for: the spot it pointed at
+      // is gone too.
+      onGone: () => { if (isOpen() && page === "appearance") close("gone"); },
+      getSaveState,
+      renderThumb,
+    });
+    card.element.hidden = true;
+    pop.append(card.element);
+    return card;
+  }
+
   function showPage(next) {
-    if (next !== "spot") return false;
-    page = "spot";
+    if (!isOpen()) return false;
+    if (next === "appearance") {
+      const n = current?.subPart;
+      if (!rowFor(n)) return false;
+      if (!ensureCard().show(n)) return false;
+    } else if (next !== "spot") {
+      return false;
+    }
+    page = next;
     pop.dataset.page = page;
-    spot.hidden = false;
-    if (!slot && !openBtn.hidden) openBtn.focus({ preventScroll: true });
+    spot.hidden = page !== "spot";
+    if (card) {
+      card.element.hidden = page !== "appearance";
+      if (page !== "appearance") card.hide();
+    }
+    if (page === "appearance") card.element.querySelector(".pf-card-back")?.focus({ preventScroll: true });
+    else if (!slot && !openBtn.hidden) openBtn.focus({ preventScroll: true });
     place();
     return true;
   }
@@ -182,13 +212,18 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     current = null;
     document.removeEventListener("pointerdown", onOutside, true);
     emitSlot();
+    onClosed?.();
     if (reason) for (const cb of [...closeCbs]) {
       try { cb({ reason }); } catch (e) { console.warn("partforge: selection close listener failed", e); }
     }
-    onClosed?.();
   }
 
-  const offParts = parts.onChange?.(() => { if (isOpen()) { renderHead(); place(); } }) ?? (() => {});
+  const offParts = parts.onChange?.(() => {
+    if (!isOpen()) return;
+    // Without a slot there is nothing to show for a sub-part that left the view.
+    if (!renderHead() && !slot) { close("gone"); return; }
+    place();
+  }) ?? (() => {});
   const ro = typeof ResizeObserver === "function" ? new ResizeObserver(() => place()) : null;
   ro?.observe(stage);
   ro?.observe(pop);
@@ -204,7 +239,7 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     getState: () => (isOpen() ? { subPart: current.subPart, page } : null),
     onSlotChange: (cb) => { if (typeof cb !== "function") return () => {}; slotCbs.add(cb); return () => slotCbs.delete(cb); },
     onClose: (cb) => { if (typeof cb !== "function") return () => {}; closeCbs.add(cb); return () => closeCbs.delete(cb); },
-    refreshSaveState: () => {},
+    refreshSaveState: () => { if (isOpen() && page === "appearance") card?.render(); },
     detach() {
       if (detached) return;
       detached = true;
