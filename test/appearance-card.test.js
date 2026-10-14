@@ -207,7 +207,7 @@ describe("appearance card", () => {
     expect(parts.setDisplay).toHaveBeenLastCalledWith("lid", { material: "pla-print" });
     card.detach();
   });
-  it("an authored colour is left alone when an untintable preset is picked (only an override colour is cleared)", () => {
+  it("picking an untintable preset over an authored colour writes the material alone (effectiveDisplay drops the authored tint for it)", () => {
     const parts = partsStub(rows()); // lid: override has no colour; its red is authored
     const card = attachAppearanceCard(parts, { onBack: () => {}, getSaveState: () => "screen-only" });
     document.body.append(card.element);
