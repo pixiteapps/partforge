@@ -391,7 +391,9 @@ meta: { title: "…", units: "mm", environment: "studio" },
   treated as declaring one.
 - `color` — the base colour (`0xRRGGBB`). With a preset it is the TINT. Presets
   marked tintable are normally coloured this way (anodizing, plastic, paint);
-  the others have an intrinsic colour (brass) but still accept one.
+  the others have an intrinsic colour (brass) but still accept one. (A viewer
+  user PICKING an untintable preset drops an authored tint for that pick — see
+  the runtime section below.)
 - Overrides — each clamped to its range: `roughness` (0–1), `metalness` (0–1),
   `clearcoat` (0–1), `clearcoatRoughness` (0–1), `anisotropy` (0–1), `textureScale` (0.01–1000).
   Transmission, index of refraction, sheen and iridescence come only from a preset.
@@ -3423,7 +3425,11 @@ drive the same state:
 
 - `runtime.setSubPartDisplay(name, patch)` — merges `patch` over the sub-part's
   override and returns the override now held (`null` when nothing is left, or
-  for an unknown `name`). Appearance keys (`material`, `color`, `roughness`,
+  for an unknown `name`). An override `material` that names an untintable
+  preset (brass, oak, …) with no override `color` beside it drops the authored
+  `color` from the effective look — picking brass means brass, not red brass —
+  while a tintable pick keeps the authored colour; a host saving the pick into
+  source should remove `color` alongside writing `material`. Appearance keys (`material`, `color`, `roughness`,
   `metalness`, `clearcoat`, `clearcoatRoughness`, `anisotropy`, `textureScale`)
   merge over the authored `display` for every render — CAD, realistic and the
   `captureView` thumbnail — so a tile picked here is drawn exactly as if it had
