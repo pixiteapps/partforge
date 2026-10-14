@@ -37,3 +37,17 @@ export function volume(positions, indices) {
   }
   return v / 6;
 }
+
+/** Number of connected shells: triangles joined through shared vertex indices. */
+export function componentCount(indices) {
+  const parent = new Map();
+  const find = (a) => { while (parent.get(a) !== a) { parent.set(a, parent.get(parent.get(a))); a = parent.get(a); } return a; };
+  for (const v of indices) if (!parent.has(v)) parent.set(v, v);
+  for (let t = 0; t < indices.length; t += 3) {
+    const a = find(indices[t]);
+    for (let c = 1; c < 3; c++) { const b = find(indices[t + c]); if (b !== a) parent.set(b, a); }
+  }
+  let roots = 0;
+  for (const [v, p] of parent) if (v === p) roots++;
+  return roots;
+}

@@ -10,6 +10,7 @@ import { ImplicitSizeError } from "./errors.js";
 export const LEAF = 4, TOP = 32, SNAP_CELLS = 0, PAD_CELLS = 1;
 export const MAX_SAMPLES = 24_000_000, MAX_GRID_CELLS = 2e10;
 const SQRT3 = Math.sqrt(3);
+const ZERO_DIR = [1, 0.7071067811865476, 0.5773502691896258];
 
 export function sampleField(compiled, edge, { cull = true } = {}) {
   const { bounds } = compiled;
@@ -24,6 +25,9 @@ export function sampleField(compiled, edge, { cull = true } = {}) {
   const S = LEAF + 1, S3 = S * S * S;
   const programs = new Map(), leaves = [];
   const X = new Float64Array(S3), Y = new Float64Array(S3), Z = new Float64Array(S3), out = new Float64Array(S3);
+  const ZI = new Int32Array(S3);
+  // The zero-sample re-evaluation offset: 1e-6 of a cell along a fixed, axis-free direction.
+  const nudge = [1e-6 * edge, 1e-6 * edge * ZERO_DIR[1], 1e-6 * edge * ZERO_DIR[2]];
   const fullDec = cull ? null : fullDecision(compiled);
   // `samples` counts shared-face samples once per leaf (a conservative cap, not unique grid points).
   let samples = 0, clipped = false;
@@ -60,6 +64,7 @@ export function sampleField(compiled, edge, { cull = true } = {}) {
     }
     evalBatch(prog, compiled.textures, X, Y, Z, out);
     const vals = new Float32Array(S3);
+    let zeros = 0;
     q = 0;
     for (let l = 0; l < S; l++) for (let j = 0; j < S; j++) for (let i = 0; i < S; i++, q++) {
       let v = out[q];
@@ -68,10 +73,24 @@ export function sampleField(compiled, edge, { cull = true } = {}) {
         if (v <= 0) clipped = true;
         if (v < 0.5 * edge) v = 0.5 * edge;
       }
-      // An exactly-zero sample counts as outside; nudging it off zero keeps every crossing on its
-      // own edge vertex (a shared zero vertex would merge crossings and break manifoldness on thin features).
-      if (v === 0) v = 1e-30;
       vals[q] = v;
+      if (vals[q] === 0) ZI[zeros++] = q;   // zero once stored as float (exact, or too small for float32)
+    }
+    // A sample that is exactly zero sits on the surface: often a face two hard pieces share
+    // (a union, mirror or repeat of touching solids), where min(d1, d2) = 0 exactly. Reading
+    // it as outside would cut a sheet between the pieces; reading it as inside would grow a
+    // sheet on every flush subtract. Instead the leaf's own program decides at a fixed point
+    // a hair off the grid, in sample order (deterministic, + only). Never 0 afterwards: the
+    // crossings stay on their own edge vertices (a shared zero vertex breaks thin features).
+    if (zeros > 0) {
+      const ZX = new Float64Array(zeros), ZY = new Float64Array(zeros), ZZ = new Float64Array(zeros), Zout = new Float64Array(zeros);
+      for (let z = 0; z < zeros; z++) { const s = ZI[z]; ZX[z] = X[s] + nudge[0]; ZY[z] = Y[s] + nudge[1]; ZZ[z] = Z[s] + nudge[2]; }
+      evalBatch(prog, compiled.textures, ZX, ZY, ZZ, Zout);
+      for (let z = 0; z < zeros; z++) {
+        const s = ZI[z];
+        vals[s] = Zout[z];
+        if (vals[s] === 0) vals[s] = Zout[z] < 0 ? -1e-30 : 1e-30;
+      }
     }
     leaves.push({ i0, j0, l0, prog, vals });
   };

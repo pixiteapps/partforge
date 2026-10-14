@@ -3,7 +3,9 @@ import { describe, test, expect, beforeAll } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { handSpec, nailSpecs, vaseSpec, ADVERSARIAL, SUB_CELL_PLATE, randomSpec } from "./fixtures/implicit-trees.js";
-import { edgeCheck } from "./helpers/mesh-topology.js";
+import { edgeCheck, componentCount } from "./helpers/mesh-topology.js";
+import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
+import { sampleField } from "../src/framework/geometry/implicit/sparse.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -56,4 +58,46 @@ describe("topology", () => {
       expect(edgeCheck(out.indices), `seed ${seed}`).toEqual(CLOSED);
     }
   }, 120_000);
+});
+
+// Exactly-touching faces: a hard union, mirror or repeat whose pieces share a face
+// has d = 0 exactly on that face. When the face lies on a grid plane those samples
+// must not read as outside (a sheet splitting the solid in two).
+const TOUCHING = {
+  mirrorHalfBox: { root: { kind: "mirror", plane: "yz", child: { kind: "box", size: [10, 10, 10], at: [5, 0, 0] } } },
+  coincidentFaces: ADVERSARIAL.coincidentFaces,
+  repeatTouching: { root: { kind: "repeat", linear: { count: 3, step: [4, 0, 0] }, child: { kind: "box", size: [4, 4, 4] } } },
+};
+// Flush subtracts must stay clean: a tool sharing a face plane with the base adds no sheet.
+const FLUSH = {
+  flushTouchingTool: { root: { kind: "subtract", children: [{ kind: "box", size: [10, 10, 10] }, { kind: "box", size: [20, 20, 10], at: [0, 0, 10] }] } },
+  flushPocket: { root: { kind: "subtract", children: [{ kind: "box", size: [10, 10, 10] }, { kind: "box", size: [4, 4, 10], at: [0, 0, 5] }] } },
+};
+
+describe("exactly-touching faces", () => {
+  for (const [name, spec] of Object.entries({ ...TOUCHING, ...FLUSH })) {
+    for (const edge of [0.5, 0.6, 1.0, 1.5]) {
+      test(`${name} at ${edge} mm: one closed shell`, () => {
+        const out = meshImplicit(compileImplicit(spec), edge);
+        expect(edgeCheck(out.indices)).toEqual(CLOSED);
+        expect(componentCount(out.indices)).toBe(1);
+      });
+    }
+  }
+  for (const [name, spec] of Object.entries(TOUCHING)) {
+    test(`${name}: sparse samples equal the dense run's bit for bit`, () => {
+      const c = lowerSpec(spec, { images: new Map() });
+      for (const edge of [0.5, 1.0]) {
+        const sparse = sampleField(c, edge), dense = sampleField(c, edge, { cull: false });
+        const byKey = new Map(dense.leaves.map((l) => [`${l.i0},${l.j0},${l.l0}`, l]));
+        for (const l of sparse.leaves) expect(Array.from(l.vals)).toEqual(Array.from(byKey.get(`${l.i0},${l.j0},${l.l0}`).vals));
+      }
+    });
+  }
+  test("the zero re-evaluation is deterministic", () => {
+    const c = lowerSpec(TOUCHING.mirrorHalfBox, { images: new Map() });
+    const a = sampleField(c, 0.5), b = sampleField(c, 0.5);
+    expect(a.leaves.map((l) => Array.from(l.vals))).toEqual(b.leaves.map((l) => Array.from(l.vals)));
+    expect(a.leaves.some((l) => l.vals.some((v) => v < 0 && v > -1e-5))).toBe(true);   // the face samples read inside
+  });
 });
