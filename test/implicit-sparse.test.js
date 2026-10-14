@@ -31,6 +31,18 @@ describe("sparse sampler", () => {
     // around the sphere is sampled, versus the whole padded box. Bound = measured + 0.05.
     expect(sparse.samples).toBeLessThan(dense.samples * 0.35);
   });
+  test("an under-bounded large shape is clipped closed identically with and without culling", () => {
+    const c = lower({ root: { kind: "box", size: [40, 40, 40] } });
+    c.bounds = { min: [-10, -10, -10], max: [10, 10, 10] };
+    const sparse = sampleField(c, 0.5), dense = sampleField(c, 0.5, { cull: false });
+    expect(sparse.clipped).toBe(true);
+    const byKey = new Map(dense.leaves.map((l) => [`${l.i0},${l.j0},${l.l0}`, l]));
+    for (const l of sparse.leaves) expect(Array.from(l.vals)).toEqual(Array.from(byKey.get(`${l.i0},${l.j0},${l.l0}`).vals));
+    for (const l of sparse.leaves) for (let q = 0, k = 0; k < S; k++) for (let j = 0; j < S; j++) for (let i = 0; i < S; i++, q++) {
+      const gi = l.i0 + i, gj = l.j0 + j, gk = l.l0 + k;
+      if (gi === 0 || gj === 0 || gk === 0 || gi >= sparse.n[0] - 1 || gj >= sparse.n[1] - 1 || gk >= sparse.n[2] - 1) expect(l.vals[q]).toBeGreaterThanOrEqual(0.25);
+    }
+  });
   test("a shape reaching the grid edge is clipped closed and flagged", () => {
     const c = lower({ root: { kind: "displace", amount: 3, by: { expr: "return 1.0;" }, child: { kind: "sphere", r: 4 } } });
     c.bounds = { min: [-4, -4, -4], max: [4, 4, 4] };   // pretend the box was declared too small

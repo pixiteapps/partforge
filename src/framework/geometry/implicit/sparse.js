@@ -25,6 +25,7 @@ export function sampleField(compiled, edge, { cull = true } = {}) {
   const programs = new Map(), leaves = [];
   const X = new Float64Array(S3), Y = new Float64Array(S3), Z = new Float64Array(S3), out = new Float64Array(S3);
   const fullDec = cull ? null : fullDecision(compiled);
+  // `samples` counts shared-face samples once per leaf (a conservative cap, not unique grid points).
   let samples = 0, clipped = false;
 
   const visit = (i0, j0, l0, B) => {
@@ -35,7 +36,10 @@ export function sampleField(compiled, edge, { cull = true } = {}) {
       const a = blockDecision(compiled, cx, cy, cz, r);
       // A sample is "on" the surface once |v| < snap: a block whose interval
       // excludes [−snap, snap] holds no surface and no snapped sample.
-      if (a.lo > snap || a.hi < -snap) return;
+      // The inside cull (hi < -snap) is only taken for blocks touching no outer-layer
+      // sample: those must be raised to 0.5·edge and flag `clipped`, so they are sampled.
+      const interior = i0 > 0 && j0 > 0 && l0 > 0 && i0 + B < n[0] - 1 && j0 + B < n[1] - 1 && l0 + B < n[2] - 1;
+      if (a.lo > snap || (interior && a.hi < -snap)) return;
       dec = a.dec;
     } else dec = fullDec;
     if (B > LEAF) {
