@@ -43,5 +43,7 @@ describe("mount handle display hops", () => {
     expect(h.openAppearance("lid")).toBe(false);
     expect(h.setDisplaySaveState("saved")).toBeUndefined();
     expect(h.listSubParts()).toEqual([]);
+    expect(h.selection).toBeNull();
+    expect("selection" in h.getViewerState()).toBe(false);
   });
 });

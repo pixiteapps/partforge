@@ -862,6 +862,48 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 .pf-card-reset { font: inherit; font-weight: 500; color: var(--pf-accent); background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
 .pf-card button:focus-visible, .pf-card input:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 
+/* The selection popover (selection-popover.js): at the picked spot. */
+.pf-selection-popover {
+  position: absolute; z-index: 31;
+  width: min(320px, calc(100% - 24px)); overflow: visible;
+  padding: 8px; display: flex; flex-direction: column;
+  background: var(--pf-surface); border: 1px solid var(--pf-border);
+  border-radius: 16px; box-shadow: var(--pf-shadow-float);
+  color: var(--pf-text); font-size: 12px;
+}
+.pf-selection-popover[hidden], .pf-selection-popover [hidden] { display: none; }
+.pf-selection-tail {
+  position: absolute; width: 12px; height: 12px; transform: rotate(45deg);
+  background: var(--pf-surface); border: 1px solid var(--pf-border);
+}
+.pf-selection-popover[data-side="below"] .pf-selection-tail { top: -7px; border-right: 0; border-bottom: 0; }
+.pf-selection-popover[data-side="above"] .pf-selection-tail { bottom: -7px; border-left: 0; border-top: 0; }
+/* The 4px of padding (taken back by the negative margin) keeps a control's
+   3px focus ring inside the scroller, which would otherwise clip it. */
+.pf-selection-body { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; padding: 4px; margin: -4px; }
+.pf-selection-popover:focus { outline: none; }
+.pf-selection-spot { display: flex; flex-direction: column; gap: 6px; }
+.pf-selection-head { display: flex; align-items: center; gap: 2px; }
+.pf-selection-open {
+  flex: 1; min-width: 0; display: grid; grid-template-columns: 22px minmax(0, auto) minmax(0, 1fr);
+  align-items: center; gap: 8px; padding: 3px 6px; border: 0; border-radius: 999px;
+  background: none; font: inherit; color: var(--pf-text); text-align: left; cursor: pointer;
+}
+.pf-selection-open:hover { background: var(--pf-surface-2); }
+.pf-selection-name { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-selection-mat { color: var(--pf-muted-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-selection-head .pf-parts-swatch.is-hidden { opacity: .35; }
+.pf-selection-eye, .pf-selection-close {
+  width: 28px; height: 28px; border: 0; background: none; color: var(--pf-muted-2);
+  border-radius: 999px; display: grid; place-items: center; cursor: pointer; margin-left: auto;
+}
+.pf-selection-eye:hover, .pf-selection-close:hover { background: var(--pf-surface-2); color: var(--pf-text); }
+/* The host's slot: an empty, sized region its UI floats over. */
+.pf-selection-slot { flex: none; border-radius: 12px; }
+.pf-selection-open:focus-visible, .pf-selection-eye:focus-visible, .pf-selection-close:focus-visible {
+  outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
+}
+
 /* At very narrow widths the full-size viewbar (5 icon buttons + cutaway's
    Flip/Reset, ~314px) is wider than a small phone's viewport minus the
    stage's 12px margins, and .pf-shell { overflow: hidden } clips the excess
