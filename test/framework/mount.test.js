@@ -2814,3 +2814,83 @@ test("dispose emits no close", () => {
   expect(onClose).not.toHaveBeenCalled();
   expect(onSlot).not.toHaveBeenCalled();
 });
+
+test("a carried appearance page reopens on the card with one collapsed report", () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: makeElements(), onPick: vi.fn(), selectionPopover: { slot: true },
+    viewerState: { camera: null, projection: "perspective", cutaway: null, selection: { subPart: "body", point: [1, 2, 3], page: "appearance" } },
+  });
+  const viewer = fakeViewers.at(-1);
+  viewer.holdFlashPoint.mockImplementation(() => { viewer.emitFlashAnchor({ x: 50, y: 50, visible: true }); return true; });
+  // The card reads the part's display state off the viewer.
+  viewer.getSubPartDisplayState = vi.fn(() => ({ authored: null, override: null, effective: {}, hidden: false, opacity: 1 }));
+  const slots = [];
+  runtime.selection.onSlotChange((r) => slots.push(r));
+  finishFirstBuild(workers);
+  expect(slots).toEqual([{ state: "collapsed" }]);
+  expect(runtime.getViewerState().selection.page).toBe("appearance");
+  runtime.dispose();
+});
+
+test("whether a carried selection reopened is settled when ready resolves", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: makeElements(), onPick: vi.fn(), selectionPopover: { slot: true },
+    viewerState: { camera: null, projection: "perspective", cutaway: null, selection: { subPart: "body", point: [1, 2, 3], page: "spot" } },
+  });
+  const viewer = fakeViewers.at(-1);
+  viewer.holdFlashPoint.mockImplementation(() => { viewer.emitFlashAnchor({ x: 50, y: 50, visible: true }); return true; });
+  let openAtReady = null;
+  const seen = runtime.ready.then(() => { openAtReady = runtime.selection.isOpen(); });
+  finishFirstBuild(workers);
+  await seen;
+  expect(openAtReady).toBe(true);
+  runtime.dispose();
+});
+
+test("a carried selection the popover cannot show lets go of the marker it lit", () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: makeElements(), onPick: vi.fn(), selectionPopover: { slot: false },
+    viewerState: { camera: null, projection: "perspective", cutaway: null, selection: { subPart: null, point: [1, 2, 3], page: "spot" } },
+  });
+  const viewer = fakeViewers.at(-1);
+  viewer.holdFlashPoint.mockImplementation(() => { viewer.emitFlashAnchor({ x: 50, y: 50, visible: true }); return true; });
+  finishFirstBuild(workers);
+  expect(runtime.selection.isOpen()).toBe(false);
+  expect(viewer.releaseFlashPoints).toHaveBeenCalledTimes(1);
+  runtime.dispose();
+});
+
+test("slot-less: a pick it cannot show closes the open popover with dismiss", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn(), selectionPopover: { slot: false } });
+  const viewer = fakeViewers.at(-1);
+  const reasons = [];
+  runtime.selection.onClose((e) => reasons.push(e.reason));
+  pickBody();
+  expect(runtime.selection.isOpen()).toBe(true);
+  attachPicker.mock.calls.at(-1)[1].onPick({ subPart: null, point: [0, 0, 0], normal: [0, 0, 1], params: {} }, { x: 10, y: 10 });
+  expect(runtime.selection.isOpen()).toBe(false);
+  expect(reasons).toEqual(["dismiss"]);
+  expect(viewer.releaseFlashPoints).toHaveBeenCalledTimes(1);
+  runtime.dispose();
+});
+
+test("the marker's canvas anchor is converted to stage px at each placement", () => {
+  const { createWorker } = makeWorkers();
+  const els = makeElements();
+  const runtime = mount(makePart(), { createWorker, elements: els, onPick: vi.fn(), selectionPopover: { slot: true } });
+  const viewer = fakeViewers.at(-1);
+  els.viewer.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 });
+  let canvasLeft = 100;
+  viewer.domElement.getBoundingClientRect = () => ({ left: canvasLeft, top: 0, width: 700, height: 600, right: canvasLeft + 700, bottom: 600 });
+  attachPicker.mock.calls.at(-1)[1].onPick({ subPart: "body", point: [0, 0, 0], normal: [0, 0, 1], params: {} }, { x: 300, y: 30 });
+  const pop = els.viewer.querySelector(".pf-selection-popover");
+  expect(pop.style.left).toBe("400px"); // 300 + 100, popover 0 wide in happy-dom
+  canvasLeft = 200; // the canvas shifted within the stage; no new anchor
+  runtime.selection.setSlotHeight(60); // a re-place
+  expect(pop.style.left).toBe("500px");
+  runtime.dispose();
+});

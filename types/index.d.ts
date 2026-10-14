@@ -518,19 +518,38 @@ export interface AnnotateRuntime {
   onModeChange(cb: () => void): () => void;
 }
 
-/** Where the selection popover's host slot is, in stage CSS px, or why it has none. */
+/**
+ * Where the selection popover's host slot is, or why it has none. `rect` is in
+ * CSS px from the top-left of the border box of the stage element
+ * (`elements.viewer`), not the canvas. On a stage too short for the requested
+ * height the slot is given less, and `rect.height` is what it was given.
+ */
 export type SelectionSlotReport =
   | { state: "open"; rect: { x: number; y: number; width: number; height: number } }
   | { state: "collapsed" }
   | { state: "closed" };
 
-/** The selection popover's host-facing controls (`runtime.selection`). */
+/**
+ * The selection popover's host-facing controls (`runtime.selection`). A carried
+ * selection (`viewerState.selection`) has reopened, or not, by the time
+ * `runtime.ready` resolves — check `isOpen()` after `ready`, not right after
+ * `mount()`. (A failed first build tries again on the first successful one.)
+ */
 export interface SelectionRuntime {
-  /** The height (CSS px, integer, 44–2000) the host's slot content needs. */
+  /**
+   * The height (CSS px, integer, 44–2000) the host's slot content needs. A stage
+   * too short for it applies less (never below 44); the request is kept, so a
+   * roomier stage restores it.
+   */
   setSlotHeight(px: number): void;
-  /** Where the slot is, in stage CSS px; fires on every change. Never fires for `slot: false`. */
+  /** Where the slot is, relative to the stage element's border box; fires on every change. Never fires for `slot: false`. */
   onSlotChange(cb: (report: SelectionSlotReport) => void): () => void;
-  /** Why partforge closed it. A host's own `close()` does not fire this. */
+  /**
+   * Why partforge closed it. A host's own `close()` does not fire this.
+   * `"gone"` also fires when anything releases the pick marker
+   * (`runtime.pickMarker.release()` included). Any close releases every held
+   * marker, including one the host held itself.
+   */
   onClose(cb: (event: { reason: "dismiss" | "hide" | "gone" }) => void): () => void;
   close(): void;
   isOpen(): boolean;

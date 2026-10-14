@@ -3096,11 +3096,20 @@ instead of (or in addition to) the built-in `#part` bar:
   it, and ✕. With `slot: true` the popover also holds an empty region the host fills with its
   own UI (a chat box, say) floated over the frame: tell partforge how tall it must be with
   `runtime.selection.setSlotHeight(px)` and hear where it is with
-  `runtime.selection.onSlotChange(({ state, rect }) => …)` — `state` is `"open"` (with a rect
-  in stage px), `"collapsed"` (the card page is showing) or `"closed"`.
-  `runtime.selection.onClose(({ reason }) => …)` says why partforge closed it (`"dismiss"`,
-  `"hide"`, `"gone"`); `runtime.selection.close()` closes it from the host. An open popover
-  rides `getViewerState().selection`, so a remount reopens it. `runtime.selection` is `null`
+  `runtime.selection.onSlotChange(({ state, rect }) => …)` — `state` is `"open"` (with a
+  rect), `"collapsed"` (the card page is showing) or `"closed"`. The rect is in CSS px from
+  the top-left of the border box of the stage element (`elements.viewer`), not the canvas.
+  When the stage is too short for the height you asked for, the slot is given less and the
+  rect says so — scroll inside your own content; a later `setSlotHeight` or a roomier stage
+  goes back to what you asked for. `runtime.selection.onClose(({ reason }) => …)` says why
+  partforge closed it (`"dismiss"`, `"hide"`, `"gone"`); `"gone"` also fires when anything
+  releases the pick marker, `runtime.pickMarker.release()` included. Closing the popover, for
+  any reason, releases every held marker — including one the host held itself.
+  `runtime.selection.close()` closes it from the host. An open popover rides
+  `getViewerState().selection`, so a remount reopens it, on the page it was showing; whether
+  it did is settled by the time `runtime.ready` resolves, so check
+  `runtime.selection.isOpen()` after `ready`, not straight after `mount()` (a first build
+  that fails tries again on the first one that succeeds). `runtime.selection` is `null`
   without the option. `runtime.controlsFor(selection)` is the intended source for a future
   page of the controls that shape the picked spot.
 

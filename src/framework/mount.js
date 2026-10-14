@@ -851,20 +851,23 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // Every close lets the marker go. Its null anchor arrives with the
         // popover already closed, so the listener below ignores it.
         onClosed: () => viewer.releaseFlashPoints?.(),
+        // Converted at every placement, not once per anchor: the canvas can
+        // move within the stage (a dock inset) with no new anchor arriving.
+        toStage,
       });
       cleanup.defer(() => selPopover.detach());
       cleanup.defer(viewer.onFlashAnchorChange?.((a) => {
         if (pendingSelection && a) {
           const carried = pendingSelection;
           pendingSelection = null;
-          if (selPopover.open({ subPart: carried.subPart, anchor: toStage(a) }) && carried.page === "appearance") {
-            selPopover.showPage("appearance");
-          }
+          // Straight onto the carried page: one slot report, not open-then-collapsed.
+          // A refusal lets go of the marker restoreCarriedSelection lit and held.
+          if (!selPopover.open({ subPart: carried.subPart, anchor: a, page: carried.page })) viewer.releaseFlashPoints?.();
           return;
         }
         if (!selPopover.isOpen()) return;
         if (!a) { selPopover.close("gone"); return; }
-        selPopover.setAnchor(toStage(a));
+        selPopover.setAnchor(a);
       }) ?? (() => {}));
       const closeGone = () => selPopover.close("gone");
       viewChangeListeners.add(closeGone);
@@ -962,8 +965,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             anchor,
           });
           // After the host has its chip: open at the spot, and keep the marker.
-          if (selPopover && selPopover.open({ subPart: selection.subPart ?? null, anchor: toStage(anchor) })) {
+          if (selPopover && selPopover.open({ subPart: selection.subPart ?? null, anchor })) {
             viewer.holdFlashPoint?.();
+          } else if (selPopover?.isOpen()) {
+            // A pick it cannot show (slot-less, no listed sub-part) moves on from
+            // the open one rather than leaving it, and its held dot, behind.
+            selPopover.close("dismiss");
           }
         },
       });

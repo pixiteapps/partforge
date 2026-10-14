@@ -8,7 +8,9 @@
 //
 // It never decides anything about the slot's content: the host says how tall
 // it must be (setSlotHeight) and is told where it is (onSlotChange). Mount owns
-// the pick marker; this module is handed the marker's position in stage px.
+// the pick marker; this module is handed the marker's position as the marker
+// reports it, and `toStage` turns that into stage px at every placement (so a
+// canvas that moves within the stage is followed on the next re-place).
 import { attachAppearanceCard } from "./appearance-card.js";
 import { hexColor } from "./parts-list.js";
 import { planSelectionPlacement } from "./selection-placement.js";
@@ -27,7 +29,7 @@ function el(tag, className, attrs = {}) {
   return e;
 }
 
-export function attachSelectionPopover({ stage, canvas = null, slot = false, parts, renderThumb = null, getSaveState = () => "screen-only", onClosed = null } = {}) {
+export function attachSelectionPopover({ stage, canvas = null, slot = false, parts, renderThumb = null, getSaveState = () => "screen-only", onClosed = null, toStage = (a) => a } = {}) {
   const pop = el("div", "pf-selection-popover", { role: "dialog", "aria-label": "Selected spot" });
   pop.hidden = true;
   const tail = el("span", "pf-selection-tail", { "aria-hidden": "true" });
@@ -52,7 +54,8 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
   pop.append(tail, body);
   stage.append(pop);
 
-  let current = null; // { subPart, anchor } while open
+  let current = null; // { subPart, anchor } while open; anchor as handed in, before toStage
+  let requestedSlot = MIN_SLOT; // what the host asked for; place() may apply less
   let page = "spot";
   let card = null;    // built on first use of the appearance page
   let lastSlotKey = null;
@@ -101,13 +104,32 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
 
   function place() {
     if (!isOpen() || !current?.anchor) return;
+    const anchor = toStage(current.anchor);
+    if (!anchor) return;
     const s = stage.getBoundingClientRect();
-    pop.style.maxHeight = ""; // measure the natural height, not last frame's cap
-    const plan = planSelectionPlacement({
-      anchor: current.anchor,
+    const planFor = () => planSelectionPlacement({
+      anchor,
       box: { width: pop.offsetWidth, height: pop.offsetHeight },
       stage: { left: 0, top: 0, width: s.width, height: s.height },
     });
+    // Measure the natural height at the host's REQUESTED slot height, not last
+    // frame's cap — a taller stage or a new request starts from the request.
+    pop.style.maxHeight = "";
+    if (slotEl) slotEl.style.height = `${requestedSlot}px`;
+    let plan = planFor();
+    // Short of room, the slot gives up the difference so the whole popover fits
+    // and the rect reported is the slot's real one: a host UI floated at it then
+    // scrolls inside itself rather than spilling past the popover. The floor
+    // still holds, and only then does the body scroll.
+    const natural = pop.offsetHeight;
+    if (slotEl && page === "spot" && natural > plan.maxHeight) {
+      const laidOut = slotEl.getBoundingClientRect().height;
+      const applied = Math.max(MIN_SLOT, Math.min(requestedSlot, Math.floor(plan.maxHeight - (natural - laidOut))));
+      if (applied < requestedSlot) {
+        slotEl.style.height = `${applied}px`;
+        plan = planFor(); // the smaller box may now fit on a side it did not before
+      }
+    }
     pop.style.maxHeight = `${plan.maxHeight}px`;
     pop.style.left = `${plan.left}px`;
     pop.style.top = `${plan.top}px`;
@@ -181,7 +203,10 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
   });
   closeBtn.addEventListener("click", () => close("dismiss"));
 
-  function open({ subPart = null, anchor } = {}) {
+  // `page: "appearance"` opens straight onto the card (a carried selection
+  // reopening where it was) with one slot report, not an "open" then a
+  // "collapsed"; with no head row to open a card for, it is the spot page.
+  function open({ subPart = null, anchor, page: startPage = "spot" } = {}) {
     if (detached || !anchor) return false;
     const n = typeof subPart === "string" ? subPart : null;
     if (!slot && !rowFor(n)) return false;
@@ -190,7 +215,7 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     pop.hidden = false;
     renderHead();
     if (!wasOpen) document.addEventListener("pointerdown", onOutside, true);
-    showPage("spot");
+    if (startPage !== "appearance" || !showPage("appearance")) showPage("spot");
     return true;
   }
 
@@ -202,7 +227,8 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
 
   function setSlotHeight(px) {
     if (!slotEl || typeof px !== "number" || !Number.isFinite(px) || px < 0) return;
-    slotEl.style.height = `${Math.min(MAX_SLOT, Math.max(MIN_SLOT, Math.round(px)))}px`;
+    requestedSlot = Math.min(MAX_SLOT, Math.max(MIN_SLOT, Math.round(px)));
+    slotEl.style.height = `${requestedSlot}px`;
     place();
   }
 

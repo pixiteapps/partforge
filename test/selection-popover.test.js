@@ -323,3 +323,102 @@ describe("selection popover: the appearance page", () => {
     p.detach();
   });
 });
+
+// happy-dom does no layout: these stubs give the popover a 40px head row above
+// the slot, honour the popover's max-height cap, and put the slot's rect where
+// the popover was placed, so placement numbers mean something.
+function stubLayout(p, { head = 40, width = 320 } = {}) {
+  const pop = p.element;
+  const slotEl = pop.querySelector(".pf-selection-slot");
+  const slotH = () => parseFloat(slotEl.style.height) || 0;
+  Object.defineProperty(pop, "offsetWidth", { configurable: true, get: () => width });
+  Object.defineProperty(pop, "offsetHeight", { configurable: true, get: () => {
+    const natural = head + slotH();
+    const cap = parseFloat(pop.style.maxHeight);
+    return Number.isFinite(cap) ? Math.min(natural, cap) : natural;
+  } });
+  slotEl.getBoundingClientRect = () => {
+    const left = parseFloat(pop.style.left) || 0;
+    const top = (parseFloat(pop.style.top) || 0) + head;
+    return { left, top, width, height: slotH(), right: left + width, bottom: top + slotH() };
+  };
+  return slotEl;
+}
+
+describe("selection popover: a short stage caps the slot", () => {
+  const mid = { x: 400, y: 150, visible: true };
+  it("caps the slot's applied height so the popover fits, and reports the capped rect", () => {
+    stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 300, right: 800, bottom: 300 });
+    const p = attachSelectionPopover({ stage, canvas, slot: true, parts: partsStub(ROWS()) });
+    const slotEl = stubLayout(p);
+    const seen = [];
+    p.onSlotChange((r) => seen.push(r));
+    p.open({ subPart: "body", anchor: mid });
+    // 128px of room either side (300 − 12 gutter − 150 − 10 gap): the head row
+    // takes 40, so a 400px request is cut to 88.
+    p.setSlotHeight(400);
+    expect(slotEl.style.height).toBe("88px");
+    expect(seen.at(-1)).toMatchObject({ state: "open", rect: { height: 88 } });
+    // The request is kept: a smaller one that fits is applied as asked.
+    p.setSlotHeight(60);
+    expect(slotEl.style.height).toBe("60px");
+    expect(seen.at(-1).rect.height).toBe(60);
+    p.detach();
+  });
+  it("a taller stage restores the requested height, and the floor stays 44", () => {
+    let h = 300;
+    stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: h, right: 800, bottom: h });
+    const p = attachSelectionPopover({ stage, canvas, slot: true, parts: partsStub(ROWS()) });
+    const slotEl = stubLayout(p);
+    const seen = [];
+    p.onSlotChange((r) => seen.push(r));
+    p.open({ subPart: "body", anchor: mid });
+    p.setSlotHeight(400);
+    expect(slotEl.style.height).toBe("88px");
+    h = 1200;
+    p.setAnchor({ ...mid }); // a re-place, as a stage resize would make
+    expect(slotEl.style.height).toBe("400px");
+    expect(seen.at(-1).rect.height).toBe(400);
+    h = 100; // room ~28px: below the floor
+    p.setAnchor({ ...mid, y: 50 });
+    expect(slotEl.style.height).toBe("44px");
+    p.detach();
+  });
+});
+
+describe("selection popover: opening on a page", () => {
+  it("open with page 'appearance' lands on the card with exactly one collapsed report", () => {
+    const p = attachSelectionPopover({ stage, canvas, slot: true, parts: partsStub(ROWS()) });
+    const seen = [];
+    p.onSlotChange((r) => seen.push(r));
+    expect(p.open({ subPart: "body", anchor: at, page: "appearance" })).toBe(true);
+    expect(seen).toEqual([{ state: "collapsed" }]);
+    expect(p.getState()).toEqual({ subPart: "body", page: "appearance" });
+    expect(p.element.querySelector(".pf-card").hidden).toBe(false);
+    expect(p.element.querySelector(".pf-selection-spot").hidden).toBe(true);
+    p.detach();
+  });
+  it("page 'appearance' without a head row opens on the spot page", () => {
+    const p = attachSelectionPopover({ stage, canvas, slot: true, parts: partsStub(ROWS()) });
+    const seen = [];
+    p.onSlotChange((r) => seen.push(r.state));
+    expect(p.open({ subPart: null, anchor: at, page: "appearance" })).toBe(true);
+    expect(seen).toEqual(["open"]);
+    expect(p.getState().page).toBe("spot");
+    p.detach();
+  });
+});
+
+describe("selection popover: toStage", () => {
+  it("converts the stored anchor at every placement, not once at open", () => {
+    let dx = 0;
+    const p = attachSelectionPopover({ stage, canvas, slot: true, parts: partsStub(ROWS()), toStage: (a) => ({ ...a, x: a.x + dx }) });
+    stubLayout(p, { width: 200 });
+    p.open({ subPart: "body", anchor: { x: 300, y: 100, visible: true } });
+    expect(p.element.style.left).toBe("200px");
+    dx = 100; // the canvas moved within the stage
+    p.setSlotHeight(44); // any re-place (a resize would do the same)
+    expect(p.element.style.left).toBe("300px");
+    p.detach();
+  });
+});
