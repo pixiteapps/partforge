@@ -73,6 +73,7 @@ vi.mock("../../src/framework/viewer.js", () => ({
       flashPoint: vi.fn(),
       holdFlashPoint: vi.fn(() => true),
       releaseFlashPoints: vi.fn(),
+      getHeldAnchorPoint: vi.fn(() => [1, 2, 3]),
       onFlashAnchorChange: (cb) => { flashAnchorCbs.add(cb); return () => flashAnchorCbs.delete(cb); },
       // The test's hand on the viewer's anchor stream, as tickFrame is on the
       // frame loop — the real one fires from the render loop.
@@ -2662,4 +2663,154 @@ test("exportPreview refuses while a preview is showing or a rebuild is pending",
 test("makeHandle's exportPreview defaults to a rejection", async () => {
   const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} });
   await expect(h.exportPreview()).rejects.toThrow(/cannot encode a preview/);
+});
+
+// --- selection popover (spec 2026-10-14) -----------------------------------
+const pickBody = () => attachPicker.mock.calls.at(-1)[1].onPick(
+  { subPart: "body", point: [0, 0, 0], normal: [0, 0, 1], params: {} }, { x: 40, y: 30 });
+
+test("no selectionPopover: no popover node and runtime.selection is null", () => {
+  const { createWorker } = makeWorkers();
+  const els = makeElements();
+  const runtime = mount(makePart(), { createWorker, elements: els, onPick: vi.fn() });
+  pickBody();
+  expect(els.viewer.querySelector(".pf-selection-popover")).toBeNull();
+  expect(runtime.selection).toBeNull();
+  runtime.dispose();
+});
+
+test("a pick tells the host first, then opens the popover and holds the marker", () => {
+  const order = [];
+  const onPick = vi.fn(() => order.push("host"));
+  const { createWorker } = makeWorkers();
+  const els = makeElements();
+  const runtime = mount(makePart(), { createWorker, elements: els, onPick, selectionPopover: { slot: true } });
+  const viewer = fakeViewers.at(-1);
+  viewer.holdFlashPoint.mockImplementation(() => { order.push("hold"); return true; });
+  pickBody();
+  expect(order).toEqual(["host", "hold"]);
+  expect(runtime.selection.isOpen()).toBe(true);
+  expect(els.viewer.querySelector(".pf-selection-popover").hidden).toBe(false);
+  runtime.dispose();
+});
+
+test("selectionPopover that is not an object is ignored", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn(), selectionPopover: true });
+  expect(runtime.selection).toBeNull();
+  runtime.dispose();
+});
+
+test("closing releases the marker once; the release's null anchor does not re-close", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn(), selectionPopover: { slot: true } });
+  const viewer = fakeViewers.at(-1);
+  viewer.releaseFlashPoints.mockImplementation(() => viewer.emitFlashAnchor(null));
+  const reasons = [];
+  runtime.selection.onClose((e) => reasons.push(e.reason));
+  pickBody();
+  runtime.selection.close();
+  expect(viewer.releaseFlashPoints).toHaveBeenCalledTimes(1);
+  expect(reasons).toEqual([]);
+  runtime.dispose();
+});
+
+test("the marker going away (a host release) closes with gone", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn(), selectionPopover: { slot: true } });
+  const viewer = fakeViewers.at(-1);
+  const reasons = [];
+  runtime.selection.onClose((e) => reasons.push(e.reason));
+  pickBody();
+  viewer.emitFlashAnchor(null);
+  expect(reasons).toEqual(["gone"]);
+  runtime.dispose();
+});
+
+test("measure mode turning on closes it with gone", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn(), selectionPopover: { slot: true } });
+  const reasons = [];
+  runtime.selection.onClose((e) => reasons.push(e.reason));
+  pickBody();
+  runtime.measure.setEnabled(true);
+  expect(reasons).toEqual(["gone"]);
+  runtime.dispose();
+});
+
+test("anchors from the marker stream move the popover", () => {
+  const { createWorker } = makeWorkers();
+  const els = makeElements();
+  const runtime = mount(makePart(), { createWorker, elements: els, onPick: vi.fn(), selectionPopover: { slot: true } });
+  const viewer = fakeViewers.at(-1);
+  els.viewer.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 });
+  pickBody();
+  const pop = els.viewer.querySelector(".pf-selection-popover");
+  const before = pop.style.left;
+  viewer.emitFlashAnchor({ x: 700, y: 30, visible: true });
+  expect(pop.style.left).not.toBe(before);
+  runtime.dispose();
+});
+
+test("getViewerState carries the open selection and nothing when closed", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn(), selectionPopover: { slot: true } });
+  expect("selection" in runtime.getViewerState()).toBe(false);
+  pickBody();
+  expect(runtime.getViewerState().selection).toEqual({ subPart: "body", point: [1, 2, 3], page: "spot" });
+  runtime.selection.close();
+  expect("selection" in runtime.getViewerState()).toBe(false);
+  runtime.dispose();
+});
+
+test("a carried selection reopens after the first build without a host onPick", () => {
+  const onPick = vi.fn();
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: makeElements(), onPick, selectionPopover: { slot: true },
+    viewerState: { camera: null, projection: "perspective", cutaway: null, selection: { subPart: "body", point: [1, 2, 3], page: "spot" } },
+  });
+  const viewer = fakeViewers.at(-1);
+  viewer.holdFlashPoint.mockImplementation(() => { viewer.emitFlashAnchor({ x: 50, y: 50, visible: true }); return true; });
+  finishFirstBuild(workers);
+  expect(viewer.flashPoint).toHaveBeenCalledWith([1, 2, 3]);
+  expect(runtime.selection.isOpen()).toBe(true);
+  expect(onPick).not.toHaveBeenCalled();
+  runtime.dispose();
+});
+
+test("a carried selection whose sub-part is gone stays closed", () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: makeElements(), onPick: vi.fn(), selectionPopover: { slot: true },
+    viewerState: { camera: null, projection: "perspective", cutaway: null, selection: { subPart: "ghost", point: [1, 2, 3], page: "spot" } },
+  });
+  const viewer = fakeViewers.at(-1);
+  finishFirstBuild(workers);
+  expect(viewer.flashPoint).not.toHaveBeenCalled();
+  expect(runtime.selection.isOpen()).toBe(false);
+  runtime.dispose();
+});
+
+test("a malformed carried point is ignored", () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: makeElements(), onPick: vi.fn(), selectionPopover: { slot: true },
+    viewerState: { camera: null, projection: "perspective", cutaway: null, selection: { subPart: "body", point: [1, "x", 3], page: "spot" } },
+  });
+  finishFirstBuild(workers);
+  expect(fakeViewers.at(-1).flashPoint).not.toHaveBeenCalled();
+  runtime.dispose();
+});
+
+test("dispose emits no close", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn(), selectionPopover: { slot: true } });
+  const onClose = vi.fn(); const onSlot = vi.fn();
+  pickBody();
+  runtime.selection.onClose(onClose);
+  runtime.selection.onSlotChange(onSlot);
+  runtime.dispose();
+  expect(onClose).not.toHaveBeenCalled();
+  expect(onSlot).not.toHaveBeenCalled();
 });
