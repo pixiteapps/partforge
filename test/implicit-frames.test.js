@@ -30,3 +30,10 @@ describe("frames", () => {
     expect(() => resolveFrames({ a: { parent: "b" }, b: { parent: "a" } })).toThrow(/is its own ancestor/);
   });
 });
+
+describe("inherited property names are not frames", () => {
+  test("a parent named only on Object.prototype is an unknown frame", () => {
+    expect(() => resolveFrames({ a: { parent: "constructor" } })).toThrow(ImplicitSpecError);
+    expect(() => resolveFrames({ a: { parent: "constructor" } })).toThrow(/frames\.a\.parent: unknown frame "constructor"/);
+  });
+});

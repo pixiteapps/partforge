@@ -74,7 +74,7 @@ export function resolveFrames(frames = {}) {
   const visiting = new Set();
   const get = (name, from) => {
     if (out.has(name)) return out.get(name).world;
-    const def = frames[name];
+    const def = Object.hasOwn(frames, name) ? frames[name] : null;
     if (!def) throw new ImplicitSpecError(`${from}: unknown frame "${name}"`);
     if (visiting.has(name)) throw new ImplicitSpecError(`frames.${name}: frame "${name}" is its own ancestor`);
     visiting.add(name);

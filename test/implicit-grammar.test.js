@@ -54,3 +54,12 @@ describe("validateSpec", () => {
     }
   });
 });
+
+describe("inherited property names are not kinds", () => {
+  test("a node kind found only on Object.prototype is an unknown kind", () => {
+    expect(issues({ root: { kind: "constructor" } })).toContain('root.kind: unknown kind "constructor" (expected one of ' + Object.keys(NODE_KINDS).join(", ") + ")");
+  });
+  test("a detail kind found only on Object.prototype is an unknown detail kind", () => {
+    expect(issues({ root: { kind: "sphere", r: 1 }, detail: [{ kind: "toString" }] }).some((m) => m.startsWith('detail[0].kind: unknown detail kind "toString"'))).toBe(true);
+  });
+});

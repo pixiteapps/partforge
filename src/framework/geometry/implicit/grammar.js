@@ -109,7 +109,7 @@ function checkFields(obj, schema, common, path, ctx) {
 }
 
 function walkNode(node, path, ctx) {
-  const schema = NODE_KINDS[node.kind];
+  const schema = Object.hasOwn(NODE_KINDS, node.kind) ? NODE_KINDS[node.kind] : null;
   if (!schema) {
     ctx.issues.push(`${path}.kind: unknown kind ${JSON.stringify(node.kind)} (expected one of ${Object.keys(NODE_KINDS).join(", ")})`);
     return;
@@ -160,7 +160,7 @@ export function validateSpec(spec, { imageNames = null } = {}) {
     if (!Array.isArray(spec.detail)) issues.push("detail: must be an array");
     else spec.detail.forEach((d, i) => {
       const path = `detail[${i}]`;
-      const schema = isObj(d) && DETAIL_KINDS[d.kind];
+      const schema = isObj(d) && Object.hasOwn(DETAIL_KINDS, d.kind) ? DETAIL_KINDS[d.kind] : null;
       if (!schema) { issues.push(`${path}.kind: unknown detail kind ${JSON.stringify(d?.kind)} (expected one of ${Object.keys(DETAIL_KINDS).join(", ")})`); return; }
       checkFields(d, schema, DETAIL_COMMON, path, ctx);
       if (typeof d.frame === "string" && !ctx.frameNames.has(d.frame)) issues.push(`${path}.frame: unknown frame "${d.frame}"`);
