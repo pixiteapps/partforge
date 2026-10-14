@@ -44,7 +44,10 @@ describe("selection popover: opening", () => {
     expect(pop.querySelector(".pf-parts-swatch").style.getPropertyValue("--pf-swatch")).toBe("#3a3f47");
     expect(pop.querySelector(".pf-selection-open").getAttribute("aria-label")).toBe("Change appearance of Body");
     expect(pop.querySelector(".pf-selection-slot")).toBeNull();
-    expect(document.activeElement).toBe(pop.querySelector(".pf-selection-open"));
+    // Focus goes to the popover itself, not a button: a pick is a pointer
+    // action, and a focused button would draw its keyboard ring on open.
+    expect(document.activeElement).toBe(pop);
+    expect(pop.getAttribute("tabindex")).toBe("-1");
     p.detach();
   });
   it("slot-less: a pick with no sub-part, or one not in view, opens nothing", () => {
@@ -253,14 +256,14 @@ describe("selection popover: the appearance page", () => {
     p.open({ subPart: "body", anchor: at });
     return { p, parts, reasons, slots, setSave: (s) => { save = s; } };
   }
-  it("the head button opens the card, collapses the slot and focuses Back", () => {
+  it("the head button opens the card, collapses the slot and focuses the popover", () => {
     const { p, slots } = opened();
     p.element.querySelector(".pf-selection-open").click();
     expect(p.getState()).toEqual({ subPart: "body", page: "appearance" });
     expect(p.element.querySelector(".pf-selection-spot").hidden).toBe(true);
     const card = p.element.querySelector(".pf-card");
     expect(card.hidden).toBe(false);
-    expect(document.activeElement).toBe(card.querySelector(".pf-card-back"));
+    expect(document.activeElement).toBe(p.element);
     expect(slots).toEqual(["open", "collapsed"]);
     p.detach();
   });

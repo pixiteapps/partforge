@@ -878,7 +878,10 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 }
 .pf-selection-popover[data-side="below"] .pf-selection-tail { top: -7px; border-right: 0; border-bottom: 0; }
 .pf-selection-popover[data-side="above"] .pf-selection-tail { bottom: -7px; border-left: 0; border-top: 0; }
-.pf-selection-body { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; }
+/* The 4px of padding (taken back by the negative margin) keeps a control's
+   3px focus ring inside the scroller, which would otherwise clip it. */
+.pf-selection-body { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; padding: 4px; margin: -4px; }
+.pf-selection-popover:focus { outline: none; }
 .pf-selection-spot { display: flex; flex-direction: column; gap: 6px; }
 .pf-selection-head { display: flex; align-items: center; gap: 2px; }
 .pf-selection-open {

@@ -30,7 +30,7 @@ function el(tag, className, attrs = {}) {
 }
 
 export function attachSelectionPopover({ stage, canvas = null, slot = false, parts, renderThumb = null, getSaveState = () => "screen-only", onClosed = null, toStage = (a) => a } = {}) {
-  const pop = el("div", "pf-selection-popover", { role: "dialog", "aria-label": "Selected spot" });
+  const pop = el("div", "pf-selection-popover", { role: "dialog", "aria-label": "Selected spot", tabindex: "-1" });
   pop.hidden = true;
   const tail = el("span", "pf-selection-tail", { "aria-hidden": "true" });
   const spot = el("div", "pf-selection-spot");
@@ -173,8 +173,12 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
       card.element.hidden = page !== "appearance";
       if (page !== "appearance") card.hide();
     }
-    if (page === "appearance") card.element.querySelector(".pf-card-back")?.focus({ preventScroll: true });
-    else if (!slot && !openBtn.hidden) openBtn.focus({ preventScroll: true });
+    // Focus the popover itself, never one of its buttons: a pick (or a click
+    // on the head button) is a pointer action, and a button focused from
+    // script draws its keyboard ring in Chromium. On the popover, Escape still
+    // closes it and Tab reaches the first control. A host slot keeps focus on
+    // the spot page (the host's own UI owns it there).
+    if (page === "appearance" || !slot) pop.focus({ preventScroll: true });
     place();
     return true;
   }
