@@ -493,6 +493,13 @@ the viewer's blue-grey.
 maple table), `print-bed` (a dim, hard-lit enclosure over a standard-size PEI build plate (180, 220, 256 or 350 mm) marked with its size), `outdoor` (overcast sky,
 concrete).
 
+**Viewers can change a sub-part's look.** The View style popover's Parts
+section lets a user pick a material and colour per sub-part, fade it, or hide
+it, live and without a rebuild (`runtime.setSubPartDisplay` below). Material
+and colour draw exactly as if authored, and a host may write them back into
+`display`; hiding and see-through are only ever how the screen looks — exports,
+`captureViews` and `renderViews` never see them.
+
 ---
 
 ## Geometry: the kernel / `Solid` API
@@ -3405,6 +3412,48 @@ load that ultimately fails still settles back to `"cad"`. Pass `viewerState`
 back into the next `mount()` call to resume both where the previous mount
 left them; omit it on a first mount and the viewer restores its own persisted
 choice instead, the same way it does for the camera.
+
+### `runtime.setSubPartDisplay`, `runtime.listSubParts`, `runtime.openAppearance`
+
+A viewer user can change how one sub-part looks, or hide it, without a rebuild.
+The View style popover (the eye) has a **Parts** section — the sub-parts in the
+active view, an eye and a swatch each — and the swatch opens an appearance card
+(material presets, colour for tintable presets, finish, See-through). A host can
+drive the same state:
+
+- `runtime.setSubPartDisplay(name, patch)` — merges `patch` over the sub-part's
+  override and returns the override now held (`null` when nothing is left, or
+  for an unknown `name`). Appearance keys (`material`, `color`, `roughness`,
+  `metalness`, `clearcoat`, `clearcoatRoughness`, `anisotropy`, `textureScale`)
+  merge over the authored `display` for every render — CAD, realistic and the
+  `captureView` thumbnail — so a tile picked here is drawn exactly as if it had
+  been authored. Two **viewing** keys are different: `hidden` (boolean) and
+  `opacity` (0.05–1, a multiplier on an authored `display.opacity`). They are
+  how the user is looking: never part of a material read, an export, lint or
+  `declaresMaterials`, and `captureViews` / `renderViews` (the agent's renders)
+  draw every sub-part as if they were unset. `captureCurrent` follows them,
+  like the screen, unless called with `{ includeHidden: true }`. A `null` value
+  clears a key; `hidden: false` and `opacity: 1` clear theirs.
+- `runtime.getSubPartDisplay(name)` → `{ authored, override, effective, hidden,
+  opacity }`, or `null`.
+- `runtime.clearSubPartDisplay({ viewing?, appearance?, name? })` — Show all is
+  `{ viewing: true }`; the card's Reset is `{ appearance: true, name }`.
+- `runtime.onSubPartDisplayChange(cb)` — `cb({ name, override })` after a
+  change, `cb(null)` after a clear; returns the unsubscribe. A host that
+  persists overrides into source (partforge-cloud writes the sub-part's
+  `display` literal) listens here.
+- `runtime.listSubParts({ view? })` — every sub-part as `{ name, label, inView,
+  hidden, opacity, effective, color, materialLabel, tintable, overridden }`, in
+  definition order, for the active view unless `view` names another.
+- `runtime.openAppearance(name)` — opens the popover on the card for `name`;
+  `runtime.setDisplaySaveState("saved" | "screen-only" | "blocked")` sets the
+  card's footer line ("screen-only" is the default; a host that saves says so).
+
+The override map rides `viewerState.display` and comes back through
+`mount({ viewerState })`, pruned for the new part: an entry for a sub-part the
+part no longer declares is dropped, and an appearance key that now equals the
+authored value is dropped (a host that saved the change into source sees its
+override vanish on the next mount, which is the intended self-clean).
 
 ### The annotation payload's camera block
 

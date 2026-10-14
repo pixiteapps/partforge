@@ -31,13 +31,19 @@
 // Orthographic segmented control). It went when the projection became
 // AUTOMATIC — orthographic on a view cube face view, perspective everywhere
 // else (Fusion 360's "Perspective with Ortho Faces"; viewer.js's
-// tweenCameraTo) — so the popover is the style grid alone.
+// tweenCameraTo). Since 2026-10-13 a host that passes a `parts` seam also
+// gets a Parts section under the grid (parts-list.js), and a swatch there opens
+// that sub-part's appearance card as the popover's second page
+// (appearance-card.js); without one the popover is the style grid alone,
+// exactly as before.
 //
 // The state shown is always the viewer's: a tile is pressed once the viewer
 // reports that style, and a runtime change made elsewhere shows up here.
 import { STYLES, styleFor, createThumbnailCache } from "./view-style-state.js";
 import { saveRenderMode, saveEnvironment } from "./view-state.js";
 import { attachButtonTooltips } from "./tooltip.js";
+import { attachPartsList } from "./parts-list.js";
+import { attachAppearanceCard } from "./appearance-card.js";
 
 // An eye (lucide "eye"): the button is about how the part is SEEN — a
 // palette read as a paint/colour picker, and a movie camera (its icon until
@@ -53,7 +59,7 @@ function el(tag, className, attrs = {}) {
   return e;
 }
 
-export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor = null } = {}, { tooltip } = {}) {
+export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor = null, parts = null } = {}, { tooltip } = {}) {
   const button = el("button", "pf-view-style-button", {
     type: "button", id: "view-style", "aria-label": LABEL,
     "aria-haspopup": "dialog", "aria-expanded": "false", "aria-controls": "pf-view-style-popover",
@@ -78,8 +84,8 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
   pop.hidden = true;
 
   const styleHead = el("p", "pf-view-style-heading");
-  styleHead.textContent = "Style";
-  const grid = el("div", "pf-view-style-grid", { role: "group", "aria-label": "Style" });
+  styleHead.textContent = "Environment";
+  const grid = el("div", "pf-view-style-grid", { role: "group", "aria-label": "Environment" });
   const tiles = new Map();
   for (const s of STYLES) {
     const t = el("button", "pf-view-style-tile", { type: "button", "aria-pressed": "false" });
@@ -97,6 +103,83 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
   }
 
   pop.append(styleHead, grid);
+
+  // The Parts section (parts-list.js) — only for a host that passes the seam.
+  // Separated from the style grid by a rule so the popover reads as two
+  // things: how the scene is drawn, then what is in it.
+  let partsList = null;
+  let divider2 = null;
+  if (parts) {
+    divider2 = el("hr", "pf-popover-rule");
+    partsList = attachPartsList(parts, { onSwatch: (name) => openCard(name) });
+    pop.append(divider2, partsList.element);
+  }
+
+  // The appearance card (appearance-card.js): the popover's second page, for
+  // one sub-part. The popover holds one page at a time — "list" (the style
+  // grid and the Parts section) or "card" — on `data-page`; placement, the
+  // close rules and the host-hidden observers are the same for both, and a
+  // close always returns to the list, so the next open starts there.
+  let saveState = "screen-only";
+  let card = null;
+  const listNodes = () => [styleHead, grid, divider2, partsList?.element].filter(Boolean);
+  // Pages exist only with the `parts` seam: without it the popover carries no
+  // data-page and its style nodes are never touched, so its DOM is exactly the
+  // pre-parts popover's.
+  function showPage(page) {
+    if (!parts) return;
+    pop.dataset.page = page;
+    for (const n of listNodes()) n.hidden = page !== "list";
+    if (card) card.element.hidden = page !== "card";
+    if (page === "list") card?.hide();
+    if (isOpen()) place();
+  }
+  // Built on the first openCard, not at attach: until a card is wanted the
+  // document holds none of its ~40 controls (a host or test querying the page's
+  // range inputs or buttons would otherwise find the hidden card's first).
+  function ensureCard() {
+    if (card || !parts) return card;
+    card = attachAppearanceCard(parts, {
+      onBack: (name) => backToList(name),
+      onClose: () => close(),
+      onGone: () => { if (pop.dataset.page === "card") backToList(null); },
+      getSaveState: () => saveState,
+      renderThumb: viewer.renderMaterialThumbnail ? (id, display) => viewer.renderMaterialThumbnail(display, { size: 96 }) : null,
+    });
+    card.element.hidden = true;
+    pop.append(card.element);
+    return card;
+  }
+  // Back to the list, with focus on the row the card was for (its swatch), else
+  // the first row's eye, else the first style tile. The control that had focus
+  // (Back) is about to be hidden, and focus dropping to <body> would also take
+  // Escape away: its listener is on the popover and the button, not document.
+  function backToList(name) {
+    const hadFocus = card?.element.contains(document.activeElement);
+    showPage("list");
+    if (!hadFocus) return;
+    const rowFor = name != null
+      ? [...pop.querySelectorAll(".pf-parts-row")].find((r) => r.dataset.name === name)
+      : null;
+    const target = rowFor?.querySelector(".pf-parts-open")
+      ?? pop.querySelector(".pf-parts-row .pf-parts-eye")
+      ?? pop.querySelector(".pf-view-style-tile");
+    target?.focus({ preventScroll: true });
+  }
+  if (parts) pop.dataset.page = "list";
+  // Open the popover (if it is closed) on the card for `name`. False when there
+  // is no card (no `parts` seam), the host is hidden, or `name` is not a sub-part.
+  function openCard(name) {
+    if (!parts) return false;
+    // A bad name must leave a closed popover closed.
+    if (!parts.list().some((r) => r.name === name)) return false;
+    if (!isOpen()) open();
+    if (!isOpen()) return false; // the host is hidden: nothing to show on
+    if (!ensureCard().show(name)) return false;
+    showPage("card");
+    card.element.querySelector(".pf-card-back")?.focus();
+    return true;
+  }
   stage.append(pop);
 
   const tooltipBinding = tooltip ? attachButtonTooltips(tooltip, [{ element: button }]) : null;
@@ -213,12 +296,14 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
     button.setAttribute("aria-expanded", "true");
     button.classList.add("on");
     render();
+    partsList?.render();
     document.addEventListener("pointerdown", onOutside, true);
     refreshThumbnails();
   }
   function close({ focus = true } = {}) {
     if (!isOpen()) return;
     pop.hidden = true;
+    showPage("list");
     button.setAttribute("aria-expanded", "false");
     button.classList.remove("on");
     document.removeEventListener("pointerdown", onOutside, true);
@@ -230,12 +315,24 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
   const offs = [
     viewer.onRenderModeChange(() => render()),
     viewer.onEnvironmentChange(() => render()),
+    // The card's sphere thumbnails show the look itself: a new one re-renders them.
+    viewer.onRenderModeChange(() => { viewer.invalidateMaterialThumbnails?.(); if (pop.dataset.page === "card") card?.render(); }),
+    viewer.onEnvironmentChange(() => { viewer.invalidateMaterialThumbnails?.(); if (pop.dataset.page === "card") card?.render(); }),
     viewer.onAssemblyChange?.(() => cache.invalidate()) ?? (() => {}),
-    viewer.onThemeChange?.(() => cache.invalidate()) ?? (() => {}),
+    // A theme change also clears the viewer's material thumbnails (setTheme):
+    // repaint an open card's tiles, or CAD tiles keep the old theme's backdrop.
+    viewer.onThemeChange?.(() => { cache.invalidate(); if (pop.dataset.page === "card") card?.render(); }) ?? (() => {}),
     // A thumbnail shows the section as it was when it was taken, so turning
     // the cutaway on or off, or moving its plane, stales them all — without
     // this a set taken with the cutaway on outlived the cutaway itself.
     viewer.onCutawayChange?.(() => cache.invalidate()) ?? (() => {}),
+    // A material or hide change shows in the thumbnails too (spec A.3), so it
+    // stales them for the next open the same way.
+    viewer.onDisplayChange?.(() => cache.invalidate()) ?? (() => {}),
+    // An assembly rebuild changes the Parts rows (a sub-part enabled or
+    // dropped, a label or material that follows a param), and the seam has no
+    // assembly hook of its own — so the popover re-renders the list here.
+    viewer.onAssemblyChange?.(() => partsList?.render()) ?? (() => {}),
   ];
   render();
   // The popover closes whenever the button's host is hidden: #viewbar hides
@@ -279,6 +376,12 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
       if (divider) divider.hidden = !!flag;
     },
     sync: render,
+    openCard: (name) => openCard(name),
+    setSaveState(state) {
+      saveState = state;
+      if (pop.dataset.page === "card") card?.render();
+    },
+    getSaveState: () => saveState,
     detach() {
       if (detached) return;
       detached = true;
@@ -287,6 +390,8 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
       button.removeEventListener("keydown", onKey);
       pop.removeEventListener("keydown", onKey);
       for (const off of offs) { try { off(); } catch { /* already gone */ } }
+      partsList?.detach();
+      card?.detach();
       tooltipBinding?.detach();
       hideObserver?.disconnect();
       sizeObserver?.disconnect();
