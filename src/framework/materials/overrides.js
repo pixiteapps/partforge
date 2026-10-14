@@ -12,6 +12,7 @@
 //     animation opacity already uses), so a ghost can be faded further but not
 //     made solid from here.
 import { DISPLAY_KEYS, OVERRIDE_RANGES } from "./resolve.js";
+import { PRESETS } from "./presets.js";
 
 export const APPEARANCE_OVERRIDE_KEYS = DISPLAY_KEYS.filter((k) => k !== "opacity");
 export const VIEWING_KEYS = ["hidden", "opacity"];
@@ -65,19 +66,33 @@ export function mergeOverride(current, patch) {
   return Object.keys(next).length ? next : null;
 }
 
+// A preset whose colour is its own (brass, oak): an authored `color` still
+// tints it (resolve.js's contract), but a USER picking such a preset means
+// "make it look like that", so the pick drops the authored tint — red PLA
+// picked as brass is brass, not red brass. A tintable pick keeps the colour
+// (red PLA picked as PETG stays red). An explicit override colour wins either
+// way; the card only offers one for tintable presets.
+const untintable = (material) => typeof material === "string" && Object.hasOwn(PRESETS, material) && PRESETS[material].tintable !== true;
+
 // The display every material read sees: authored, with the override's
 // APPEARANCE keys on top. Viewing keys are never in it.
 export function effectiveDisplay(authored, override) {
   const out = isObject(authored) ? { ...authored } : {};
   if (!isObject(override)) return out;
   for (const key of APPEARANCE_OVERRIDE_KEYS) if (key in override) out[key] = override[key];
+  if ("material" in override && untintable(override.material) && !("color" in override)) delete out.color;
   return out;
 }
 
+const sameAppearance = (a, b) => APPEARANCE_OVERRIDE_KEYS.every((key) => a[key] === b[key]);
+
+// True when the override changes nothing about how the part is drawn — judged
+// on the EFFECTIVE display, not key by key, because an untintable material pick
+// with no colour of its own changes the look (the authored tint goes) while
+// naming the authored material.
 export function isAppearanceNoop(authored, override) {
   if (!isObject(override)) return true;
-  const a = isObject(authored) ? authored : {};
-  return APPEARANCE_OVERRIDE_KEYS.every((key) => !(key in override) || override[key] === a[key]);
+  return sameAppearance(effectiveDisplay(authored, null), effectiveDisplay(authored, override));
 }
 
 // A carried map, made safe for THIS part (spec A.4): names the part no longer
@@ -96,8 +111,17 @@ export function pruneOverrides(map, part) {
     if (!sp) continue;
     const clean = mergeOverride(null, sanitizeDisplayPatch(raw));
     if (!clean) continue;
+    // An appearance key goes when dropping it leaves the effective display as
+    // it is — which is "equals the authored value", except that an untintable
+    // material naming the authored material still earns its keep when it is
+    // what drops the authored tint.
     const authored = isObject(sp.display) ? sp.display : {};
-    for (const key of APPEARANCE_OVERRIDE_KEYS) if (key in clean && clean[key] === authored[key]) delete clean[key];
+    for (const key of APPEARANCE_OVERRIDE_KEYS) {
+      if (!(key in clean)) continue;
+      const without = { ...clean };
+      delete without[key];
+      if (sameAppearance(effectiveDisplay(authored, clean), effectiveDisplay(authored, without))) delete clean[key];
+    }
     if (Object.keys(clean).length) out[name] = clean;
   }
   return out;
