@@ -246,6 +246,54 @@ describe("selection popover: closing", () => {
 });
 
 describe("selection popover: the appearance page", () => {
+  // Browsers reset a scroller's scrollTop when its box stops overflowing, and
+  // place() clears the popover's max-height for a moment to measure. happy-dom
+  // does no layout, so the browser's reset is mimicked on the style write.
+  function mimicScrollReset(p) {
+    const body = p.element.querySelector(".pf-selection-body");
+    let top = 0;
+    Object.defineProperty(body, "scrollTop", { configurable: true, get: () => top, set: (v) => { top = v; } });
+    let mh = "";
+    Object.defineProperty(p.element.style, "maxHeight", { configurable: true, get: () => mh, set: (v) => { mh = v; if (v === "") top = 0; } });
+    return body;
+  }
+  it("a change made from the card keeps the card scrolled where it was", () => {
+    const parts = partsStub(ROWS());
+    const p = attachSelectionPopover({ stage, canvas, parts });
+    const body = mimicScrollReset(p);
+    p.open({ subPart: "body", anchor: at });
+    p.showPage("appearance");
+    body.scrollTop = 240;
+    parts.rows[0].materialLabel = "Brass";
+    parts.emit(); // what a finish slider's write does
+    expect(body.scrollTop).toBe(240);
+    p.setAnchor({ x: 420, y: 210, visible: true }); // and an orbit
+    expect(body.scrollTop).toBe(240);
+    p.detach();
+  });
+  it("a reopen after a close starts at the top", () => {
+    const parts = partsStub(ROWS());
+    const p = attachSelectionPopover({ stage, canvas, parts });
+    const body = mimicScrollReset(p);
+    p.open({ subPart: "body", anchor: at });
+    p.showPage("appearance");
+    body.scrollTop = 240;
+    p.close();
+    p.open({ subPart: "body", anchor: at, page: "appearance" });
+    expect(body.scrollTop).toBe(0);
+    p.detach();
+  });
+  it("switching page starts the new page at the top", () => {
+    const parts = partsStub(ROWS());
+    const p = attachSelectionPopover({ stage, canvas, parts });
+    const body = mimicScrollReset(p);
+    p.open({ subPart: "body", anchor: at });
+    p.showPage("appearance");
+    body.scrollTop = 240;
+    p.showPage("spot");
+    expect(body.scrollTop).toBe(0);
+    p.detach();
+  });
   function opened() {
     const parts = partsStub(ROWS());
     let save = "screen-only";

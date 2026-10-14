@@ -112,6 +112,11 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
       box: { width: pop.offsetWidth, height: pop.offsetHeight },
       stage: { left: 0, top: 0, width: s.width, height: s.height },
     });
+    // Clearing the cap below stops the body overflowing for a moment, and the
+    // browser answers by resetting its scroll to the top — so every slider
+    // write from the card (each re-places the popover) jumped back up. Keep
+    // the scroll across the measurement.
+    const scrolled = body.scrollTop;
     // Measure the natural height at the host's REQUESTED slot height, not last
     // frame's cap — a taller stage or a new request starts from the request.
     pop.style.maxHeight = "";
@@ -136,6 +141,7 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     pop.dataset.side = plan.side;
     tail.hidden = plan.tailOffset === null;
     if (plan.tailOffset !== null) tail.style.left = `${plan.tailOffset - 6}px`;
+    body.scrollTop = scrolled;
     emitSlot();
   }
 
@@ -166,6 +172,8 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     } else if (next !== "spot") {
       return false;
     }
+    // A new page starts at its top; place() below keeps whatever this leaves.
+    if (next !== page) body.scrollTop = 0;
     page = next;
     pop.dataset.page = page;
     spot.hidden = page !== "spot";
@@ -242,6 +250,7 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     card?.hide?.();
     if (card) card.element.hidden = true;
     page = "spot";
+    body.scrollTop = 0; // the next open starts at the top
     spot.hidden = false;
     current = null;
     document.removeEventListener("pointerdown", onOutside, true);
