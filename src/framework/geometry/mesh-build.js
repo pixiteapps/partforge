@@ -73,6 +73,18 @@ export function ringStackManifold(wasm, rings, { closed = false } = {}) {
   return manifoldFromMesh(wasm, V, Tr);
 }
 
+// Same import for a mesh whose vertices are ALREADY shared by index (welded) —
+// skips `merge()`, which re-derives vertex identity from positions and costs
+// about a third of the import on a 200k-triangle mesh. Only for meshes a
+// partforge mesher produced with index sharing (implicit/mesher.js); an
+// arbitrary soup still goes through manifoldFromMesh.
+export function manifoldFromWeldedMesh(wasm, V, Tr) {
+  const mesh = new wasm.Mesh({ numProp: 3, vertProperties: Float32Array.from(V), triVerts: Uint32Array.from(Tr) });
+  const out = wasm.Manifold.ofMesh(mesh);
+  mesh.delete?.();
+  return out;
+}
+
 // Import a flat vertex array + triangle indices as a watertight Manifold. merge() welds
 // coincident vertices so ofMesh sees a closed manifold; ofMesh consumes the mesh handle,
 // so free it here and let the caller track the returned Manifold.

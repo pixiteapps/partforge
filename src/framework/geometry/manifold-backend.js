@@ -6,7 +6,8 @@ import { roundedBoxRings, roundedBoxArcSamples } from "./rounded-solids.js";
 import { tessellateContour, tessellateProfile } from "./profile.js";
 import { h } from "./solid-hash.js";
 import { ensureOutward, openEdgeCount } from "./mesh-repair.js";
-import { manifoldFromMesh, ringStackManifold } from "./mesh-build.js";
+import { manifoldFromMesh, manifoldFromWeldedMesh, ringStackManifold } from "./mesh-build.js";
+import { compileImplicit, meshImplicit, implicitHashable, IMPLICIT_DEFAULTS } from "./implicit/index.js";
 import { createSolidCache } from "./solid-cache.js";
 import { hoistCommonSuffix } from "./transform-hoist.js";
 import { addSugar } from "./solid-sugar.js";
@@ -901,6 +902,24 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // provenance crease). Unsectored lofts keep the legacy single-surface path:
     // asOriginal() + one inferred policy. Either way the registrations live
     // exactly as long as the cache pins the solid.
+    // Signed-distance tree → solid (implicit/index.js). The engine meshes at the
+    // tier's grid (`preview` for preview, `resolution` for print) and hands
+    // Manifold one welded mesh; the result shades SMOOTH (one surface, no creases).
+    // Cached on the spec plus every bound image's digest, per quality tier.
+    implicit: (spec) => {
+      const compiled = compileImplicit(spec, { images });
+      const key = h("implicit", implicitHashable(spec, compiled), quality);
+      return cache.lookup(key, () => {
+        const edge = quality === "print" ? (spec.resolution ?? IMPLICIT_DEFAULTS.resolution) : (spec.preview ?? IMPLICIT_DEFAULTS.preview);
+        const out = meshImplicit(compiled, edge);
+        for (const w of out.warnings) recordWarning(w);
+        if (out.indices.length === 0) throw new Error(`implicit: the shape is empty at a ${edge} mm grid — nothing is inside it (check subtract order and sizes), or it is thinner than the grid`);
+        const m = T(T(manifoldFromWeldedMesh(wasm, out.positions, out.indices)).asOriginal());
+        const id = m.originalID();
+        oidPolicies.set(id, SMOOTH);
+        return { value: wrap(m, key), pin: m, dispose: () => { oidPolicies.delete(id); m.delete?.(); } };
+      });
+    },
     loft: (rings, opts = {}) => {
       const key = h("loft", loftRingsKey(rings), opts);
       return cache.lookup(key, () => {
