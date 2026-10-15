@@ -70,6 +70,30 @@ describe("appearance card", () => {
     expect(card.element.querySelector(".pf-card-native").disabled).toBe(false);
     card.detach();
   });
+  it("the Material row names the tile under the pointer or keyboard focus, then the material again", () => {
+    const card = attachAppearanceCard(partsStub(rows()), { onBack: () => {}, getSaveState: () => "screen-only" });
+    document.body.append(card.element);
+    card.show("lid");
+    const val = card.element.querySelector(".pf-card-tiles").previousElementSibling.querySelector(".pf-card-val");
+    const bead = card.element.querySelector('.pf-card-tile[data-material="bead-blasted-aluminum"]');
+    const label = (el) => el.querySelector(".pf-card-tile-label");
+    expect(val.textContent).toBe("Anodized aluminium");
+    label(bead).dispatchEvent(new PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" }));
+    expect(val.textContent).toBe("Bead-blasted aluminium");
+    expect(val.classList.contains("preview")).toBe(true);
+    bead.dispatchEvent(new PointerEvent("pointerout", { bubbles: true, pointerType: "mouse", relatedTarget: card.element }));
+    expect(val.textContent).toBe("Anodized aluminium");
+    expect(val.classList.contains("preview")).toBe(false);
+    // A touch names nothing: the tap applies the tile, and the row then names it as the material.
+    bead.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, pointerType: "touch" }));
+    expect(val.textContent).toBe("Anodized aluminium");
+    const oak = card.element.querySelector('.pf-card-tile[data-material="oak"]');
+    oak.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(val.textContent).toBe("Oak");
+    oak.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    expect(val.textContent).toBe("Anodized aluminium");
+    card.detach();
+  });
   it("the hex field and the native input write a colour; a bad hex writes nothing", () => {
     const parts = partsStub(rows());
     const card = attachAppearanceCard(parts, { onBack: () => {}, getSaveState: () => "screen-only" });

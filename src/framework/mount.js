@@ -10,6 +10,7 @@ import { createTooltipPresenter, attachButtonTooltips } from "./tooltip.js";
 import { loadCamera, loadRenderMode, loadEnvironment } from "./view-state.js";
 import { isFaceAlignedState } from "./projection.js";
 import { attachViewStyleControls } from "./view-style-controls.js";
+import { attachSelectionPopover } from "./selection-popover.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
 import { declaresMaterials, resolveMaterial } from "./materials/resolve.js";
 import { printFrameMatrix } from "./materials/print-frame.js";
@@ -72,7 +73,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState }) {
   return {
     ready, dispose, setParams,
     // Whether the `preview` GLB handed to mount() is on screen (see mount's
@@ -137,7 +138,12 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
       // Only while something is overridden: an empty map would be noise in a
       // token hosts compare and store.
       ...(() => { const d = viewer.getDisplayOverrides?.(); return d && Object.keys(d).length ? { display: d } : {}; })(),
+      // The open selection popover, so a remount reopens it where it was.
+      ...(() => { const s = selectionState?.(); return s ? { selection: s } : {}; })(),
     }),
+    // The selection popover (mount's `selectionPopover` option), or null:
+    // { setSlotHeight(px), onSlotChange(cb) → off, onClose(cb) → off, close(), isOpen() }.
+    selection: selection ?? null,
     // --- per-sub-part display overrides (spec 2026-10-13 part appearance controls) ---
     // Live, no rebuild: appearance keys (material, colour, finish) merge over
     // the authored `display` for every render; `hidden` and `opacity` are how
@@ -452,6 +458,14 @@ function createCleanupStack() {
 //                                         // message — and calls runtime.annotate.send() itself.
 //                                         // Ignored without onAnnotationSend (there is no toolbar
 //                                         // to place it in).
+// selectionPopover: { slot: boolean }    // opt in to the selection popover: a pick
+//                                         // (onPick required) opens a popover at the
+//                                         // spot — the sub-part's swatch/label/material
+//                                         // (opens its appearance card), an eye, ✕ —
+//                                         // and, with slot: true, an empty slot the
+//                                         // host floats its own UI over (see
+//                                         // runtime.selection). Absent or not an
+//                                         // object: no popover, exactly as before.
 // onAssetUpload(blob, { kind, filename }) // the drop widget's (widgets/file-drop.js) upload hook:
 //                                         // async, resolves to a source string (an https: URL or a
 //                                         // host token) that gets written into the param. `blob` is
@@ -487,6 +501,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
                               viewerState, preview,
                               files, panelState,
                               annotateSend = "viewbar",
+                              selectionPopover,
                               container: legacyContainer, controls: legacyControls } = {}) {
   // --- element resolution (the only getElementById calls in the framework, save the ?pickserver client's optional #viewbar lookup) ----
   const byId = (id) => document.getElementById(id);
@@ -797,21 +812,71 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // cube's bottom-right corner, in the stack, hiding with the cube. It is
     // a #viewbar child, so --pf-viewbar-clear below measures it for free (the
     // bar grows wider, not taller).
+    // The Parts seam (view-style-controls.js), shared with the selection
+    // popover below; an older popover ignores it.
+    const partsSeam = {
+      list: () => subPartRows(part, { view: view(), params, overrides: viewer.getDisplayOverrides?.() ?? {} }),
+      setDisplay: (name, patch) => viewer.setSubPartDisplay(name, patch),
+      clear: (opts) => viewer.clearSubPartDisplay(opts),
+      onChange: (cb) => viewer.onDisplayChange?.(cb) ?? (() => {}),
+      onViewChange: (cb) => { viewChangeListeners.add(cb); return () => viewChangeListeners.delete(cb); },
+      getState: (name) => viewer.getSubPartDisplayState(name),
+    };
     const viewStyle = attachViewStyleControls(viewer, {
       stage: els.viewer,
       toolbar: els.viewer.querySelector("#viewbar"),
       anchor: viewcube.element,
-      // The Parts section's seam (view-style-controls.js); an older popover ignores it.
-      parts: {
-        list: () => subPartRows(part, { view: view(), params, overrides: viewer.getDisplayOverrides?.() ?? {} }),
-        setDisplay: (name, patch) => viewer.setSubPartDisplay(name, patch),
-        clear: (opts) => viewer.clearSubPartDisplay(opts),
-        onChange: (cb) => viewer.onDisplayChange?.(cb) ?? (() => {}),
-        onViewChange: (cb) => { viewChangeListeners.add(cb); return () => viewChangeListeners.delete(cb); },
-        getState: (name) => viewer.getSubPartDisplayState(name),
-      },
+      parts: partsSeam,
     }, { tooltip });
     cleanup.defer(() => viewStyle.detach());
+    // The selection popover (spec 2026-10-14): opened by the picker below,
+    // following the held pick marker. Only with onPick, and only for a host
+    // that passed the option as an object.
+    const selectionOpt = onPick && selectionPopover && typeof selectionPopover === "object"
+      ? { slot: selectionPopover.slot === true } : null;
+    let selPopover = null;
+    let pendingSelection = null; // a carried selection waiting for its marker's first anchor
+    // The marker's anchor is in canvas px; the popover lives in the stage.
+    const toStage = (a) => {
+      if (!a) return null;
+      const s = els.viewer.getBoundingClientRect();
+      const c = viewer.domElement.getBoundingClientRect();
+      return { x: a.x + c.left - s.left, y: a.y + c.top - s.top, visible: a.visible !== false };
+    };
+    if (selectionOpt) {
+      selPopover = attachSelectionPopover({
+        stage: els.viewer, canvas: viewer.domElement, slot: selectionOpt.slot, parts: partsSeam,
+        renderThumb: viewer.renderMaterialThumbnail ? (id, display) => viewer.renderMaterialThumbnail(display, { size: 96 }) : null,
+        getSaveState: () => viewStyle.getSaveState?.() ?? "screen-only",
+        // Every close lets the marker go. Its null anchor arrives with the
+        // popover already closed, so the listener below ignores it.
+        onClosed: () => viewer.releaseFlashPoints?.(),
+        // Converted at every placement, not once per anchor: the canvas can
+        // move within the stage (a dock inset) with no new anchor arriving.
+        toStage,
+      });
+      cleanup.defer(() => selPopover.detach());
+      cleanup.defer(viewer.onFlashAnchorChange?.((a) => {
+        if (pendingSelection && a) {
+          const carried = pendingSelection;
+          pendingSelection = null;
+          // Straight onto the carried page: one slot report, not open-then-collapsed.
+          // A refusal lets go of the marker restoreCarriedSelection lit and held.
+          if (!selPopover.open({ subPart: carried.subPart, anchor: a, page: carried.page })) viewer.releaseFlashPoints?.();
+          return;
+        }
+        if (!selPopover.isOpen()) return;
+        if (!a) { selPopover.close("gone"); return; }
+        selPopover.setAnchor(a);
+      }) ?? (() => {}));
+      const closeGone = () => selPopover.close("gone");
+      viewChangeListeners.add(closeGone);
+      cleanup.defer(() => viewChangeListeners.delete(closeGone));
+      // A mode that claims the canvas closes it (measureMode and annotateMode
+      // are both created above).
+      cleanup.defer(measureMode.onModeChange(() => { if (measureMode.isEnabled()) selPopover.close("gone"); }));
+      if (annotateMode) cleanup.defer(annotateMode.onModeChange(() => { if (annotateMode.isEnabled()) selPopover.close("gone"); }));
+    }
     // setHidden takes one boolean, and there are two independent reasons to hide
     // the cube: Sketch mode (below) and a crowded transport bar (wired into the
     // animation controls further down). Applied straight, whichever fires last
@@ -888,16 +953,26 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // deliberately not guarded — one is armed by an explicit dev toggle,
         // the other per agent request.
         suppressed: () => previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false),
-        onPick: (selection, anchor) => onPick({
-          selection,
-          label: selection.feature?.label ?? part.parts[selection.subPart]?.label ?? selection.subPart,
-          prompt: formatSelection(selection, { style: "prompt" }),
-          token: formatSelection(selection, { style: "token" }),
-          // Where the marker is on the canvas, in CSS px from its top-left, so
-          // a host can put its own UI beside the dot on the first frame rather
-          // than a round trip later.
-          anchor,
-        }),
+        onPick: (selection, anchor) => {
+          onPick({
+            selection,
+            label: selection.feature?.label ?? part.parts[selection.subPart]?.label ?? selection.subPart,
+            prompt: formatSelection(selection, { style: "prompt" }),
+            token: formatSelection(selection, { style: "token" }),
+            // Where the marker is on the canvas, in CSS px from its top-left, so
+            // a host can put its own UI beside the dot on the first frame rather
+            // than a round trip later.
+            anchor,
+          });
+          // After the host has its chip: open at the spot, and keep the marker.
+          if (selPopover && selPopover.open({ subPart: selection.subPart ?? null, anchor })) {
+            viewer.holdFlashPoint?.();
+          } else if (selPopover?.isOpen()) {
+            // A pick it cannot show (slot-less, no listed sub-part) moves on from
+            // the open one rather than leaving it, and its held dot, behind.
+            selPopover.close("dismiss");
+          }
+        },
       });
       cleanup.defer(() => picker.detach());
       picker.setActive(true);
@@ -923,6 +998,18 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     let framedView = null; // the view the camera was last framed to (null until first show)
     let cameraRestored = false; // saved camera applied once, on the first frame after load
     let cutawayRestored = false; // a carried cutaway, applied once — after any preview, never on one
+    let selectionRestored = false; // a carried selection, tried once, after the camera
+    function restoreCarriedSelection() {
+      selectionRestored = true;
+      const c = viewerState?.selection;
+      if (!selPopover || !c || !Array.isArray(c.point) || c.point.length !== 3 || !c.point.every(Number.isFinite)) return;
+      const subPart = typeof c.subPart === "string" ? c.subPart : null;
+      if (subPart !== null && !partsSeam.list().some((r) => r.name === subPart && r.inView)) return;
+      pendingSelection = { subPart, page: c.page === "appearance" ? "appearance" : "spot" };
+      viewer.flashPoint(c.point);
+      // hold() publishes the marker's anchor synchronously; the listener opens us.
+      if (!viewer.holdFlashPoint?.()) pendingSelection = null;
+    }
 
     // Per-sub-part cache-validity tracker (Layer 1): view/version/caching change over
     // time, so they're passed as getters; params is a stable in-place-mutated object.
@@ -1060,6 +1147,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // — not the carried one.
         restoreCarriedCutaway(viewer.getCameraState());
       }
+      if (cameraRestored && !selectionRestored && !previewGate.isActive()) restoreCarriedSelection();
     }
 
     // Frames the realistic look reads, for the geometry just delivered:
@@ -1658,7 +1746,19 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       // `opts` may be null from a host (a destructuring default covers only undefined).
       listSubParts: (opts) => subPartRows(part, { view: opts?.view ?? view(), params, overrides: viewer.getDisplayOverrides?.() ?? {} }),
       openAppearance: (name) => viewStyle.openCard?.(name) ?? false,
-      setDisplaySaveState: (state) => viewStyle.setSaveState?.(state),
+      setDisplaySaveState: (state) => { viewStyle.setSaveState?.(state); selPopover?.refreshSaveState(); },
+      selection: selPopover ? {
+        setSlotHeight: (px) => selPopover.setSlotHeight(px),
+        onSlotChange: (cb) => selPopover.onSlotChange(cb),
+        onClose: (cb) => selPopover.onClose(cb),
+        close: () => selPopover.close(),
+        isOpen: () => selPopover.isOpen(),
+      } : null,
+      selectionState: () => {
+        const st = selPopover?.getState();
+        const point = st ? viewer.getHeldAnchorPoint?.() : null;
+        return st && point ? { subPart: st.subPart, point, page: st.page } : null;
+      },
       setView: (name) => tabsCtl.select(name),
       captureView,
       getPanelState: () => panelRef?.getState() ?? {},

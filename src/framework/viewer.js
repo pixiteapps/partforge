@@ -2947,6 +2947,12 @@ export function createViewer(container, part) {
     publishAnchor(null);
   }
 
+  // The world position of the held marker the anchor stream follows, so a host
+  // (mount's selection carry) can put the same marker back after a remount.
+  function getHeldAnchorPoint() {
+    return anchorDot ? [anchorDot.position.x, anchorDot.position.y, anchorDot.position.z] : null;
+  }
+
   function onFlashAnchorChange(cb) {
     // The `disposed` half is the same guard cutaway's onHandleHoverChange takes,
     // and for the same two reasons: a subscribe racing teardown (effect-cleanup
@@ -3092,6 +3098,7 @@ export function createViewer(container, part) {
     projectPoint,
     holdFlashPoint,
     releaseFlashPoints,
+    getHeldAnchorPoint,
     onFlashAnchorChange,
     cutawaySupported: () => cutaway.isSupported,
     cutawayEnabled: () => cutaway.isEnabled,
