@@ -1,7 +1,7 @@
 // test/implicit-sparse.test.js
 import { describe, test, expect } from "vitest";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
-import { sampleField, LEAF } from "../src/framework/geometry/implicit/sparse.js";
+import { sampleField, planLeaves, evaluateLeaves, LEAF } from "../src/framework/geometry/implicit/sparse.js";
 import { TREES } from "./fixtures/implicit-small-trees.js";
 
 const lower = (spec) => lowerSpec(spec, { images: new Map() });
@@ -56,5 +56,38 @@ describe("sparse sampler", () => {
     try { sampleField(c, 0.05); } catch (e) { err = e; }
     expect(err?.code).toBe("IMPLICIT_SIZE");
     expect(Date.now() - t0).toBeLessThan(2000);
+  });
+  test("planLeaves + evaluateLeaves is sampleField; the plan is plain data and stays untouched", () => {
+    const c = lower(TREES[Object.keys(TREES)[0]]);
+    const plan = planLeaves(c, 0.8);
+    expect(plan.clipped).toBe(false);
+    expect(plan.programs.every((p) => p instanceof Float64Array)).toBe(true);
+    for (const l of plan.leaves) expect(Object.keys(l)).toEqual(["i0", "j0", "l0", "progIndex"]);
+    // Programs are indexed in order of first emission.
+    let next = 0;
+    for (const l of plan.leaves) { if (l.progIndex === next) next++; else expect(l.progIndex).toBeLessThan(next); }
+    expect(next).toBe(plan.programs.length);
+    const a = evaluateLeaves(plan), b = sampleField(c, 0.8);
+    expect(Object.keys(plan.leaves[0])).toEqual(["i0", "j0", "l0", "progIndex"]);
+    expect(a.samples).toBe(b.samples);
+    expect(a.clipped).toBe(b.clipped);
+    expect(a.leaves.length).toBe(b.leaves.length);
+    a.leaves.forEach((l, k) => {
+      expect(l.prog).toBe(a.programs[l.progIndex]);
+      expect(Array.from(l.vals)).toEqual(Array.from(b.leaves[k].vals));
+    });
+  });
+  test("a sample whose double is below float32 range counts as exactly zero and is decided off the grid", () => {
+    // At the grid point (0, 0, 0) the formula is 1e-46: not 0 as a double, 0 once stored as float32.
+    const c = lower({ root: { kind: "expr", box: [[-5, -5, -5], [5, 5, 5]], sdf: "return max(p.x + 1e-46, length(p) - 4.0);" } });
+    const s = sampleField(c, 1);
+    expect(s.origin).toEqual([-7, -7, -7]);
+    let seen = 0;
+    for (const l of s.leaves) for (let q = 0, k = 0; k < S; k++) for (let j = 0; j < S; j++) for (let i = 0; i < S; i++, q++) {
+      if (l.i0 + i !== 7 || l.j0 + j !== 7 || l.l0 + k !== 7) continue;
+      seen++;
+      expect(l.vals[q]).toBe(Math.fround(1e-6));   // re-evaluated at the nudge point, x = 1e-6·edge
+    }
+    expect(seen).toBeGreaterThan(0);
   });
 });

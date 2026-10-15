@@ -28,7 +28,7 @@ export function meshImplicit(compiled, edge) {
       : "implicit: the shape reached the edge of its sampling box and was clipped flat there — its derived bounds were too tight (an engine limitation); reduce blend, round, onion or displace sizes");
   }
   return { positions: mesh.positions, indices: mesh.indices, normals: mesh.normals, warnings,
-    stats: { samples: store.samples, leaves: store.leaves.length, programs: store.programs.size } };
+    stats: { samples: store.samples, leaves: store.leaves.length, programs: store.programs.length } };
 }
 
 export const implicitHashable = (spec, compiled) => ({ spec, digests: compiled.digests });

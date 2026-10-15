@@ -10,8 +10,38 @@ import { sampleTexture } from "./textures.js";
 
 export const OP = Object.freeze({ END: 0, XFORM: 1, XDIR: 2, PRIM: 3, UNION: 4, INTER: 5, NEG: 6, MIN2: 7, MIRRORP: 8, ADDC: 9, ONION: 10, WARP: 11, DISP: 12, SANITIZE: 13, GET: 20, CONST: 21, UN: 22, BIN: 23, TER: 24, TEX: 25 });
 export const UN_NAMES = Object.keys(UN), BIN_NAMES = Object.keys(BIN), TER_NAMES = Object.keys(TER);
+// The fn codes UN/BIN/TER ops carry. Pinned by test: the native tables index these
+// arrays, so reordering or inserting a function is a program-format change.
+export const FN_CODES = Object.freeze({ UN: UN_NAMES, BIN: BIN_NAMES, TER: TER_NAMES });
 const UN_FN = UN_NAMES.map((k) => UN[k]), BIN_FN = BIN_NAMES.map((k) => BIN[k]), TER_FN = TER_NAMES.map((k) => TER[k]);
 export const BATCH = 256;
+
+function fnCode(names, fn) {
+  const c = names.indexOf(fn);
+  if (c < 0) throw new Error(`implicit: unknown expr function ${fn}`);
+  return c;
+}
+
+// Appends a lowered expr's ops: points read from register p, values in registers base + r.
+function emitExprOps(code, L, p, base) {
+  for (const o of L.ops) {
+    const d = base + o.dst;
+    if (o.op === "const") code.push(OP.CONST, d, o.val);
+    else if (o.op === "get") code.push(OP.GET, d, p, o.comp);
+    else if (o.op === "un") code.push(OP.UN, fnCode(UN_NAMES, o.fn), d, base + o.a);
+    else if (o.op === "bin") code.push(OP.BIN, fnCode(BIN_NAMES, o.fn), d, base + o.a, base + o.b);
+    else if (o.op === "ter") code.push(OP.TER, fnCode(TER_NAMES, o.fn), d, base + o.a, base + o.b, base + o.c);
+    else if (o.op === "tex") code.push(OP.TEX, d, o.slot, base + o.u, base + o.v);
+  }
+}
+
+/** A standalone program for one lowered expr (surface-detail heights). No SANITIZE: the caller maps NaN to 0. */
+export function emitExprProgram(L) {
+  const code = [];
+  emitExprOps(code, L, 0, 0);
+  code.push(OP.END, L.result);
+  return Float64Array.from([1, L.nregs, ...code]);
+}
 
 export function emitProgram(compiled, dec) {
   const code = [];
@@ -21,15 +51,7 @@ export function emitProgram(compiled, dec) {
 
   function emitExpr(L, p) {
     const base = nV; nV += L.nregs;
-    for (const o of L.ops) {
-      const d = base + o.dst;
-      if (o.op === "const") code.push(OP.CONST, d, o.val);
-      else if (o.op === "get") code.push(OP.GET, d, p, o.comp);
-      else if (o.op === "un") code.push(OP.UN, UN_NAMES.indexOf(o.fn), d, base + o.a);
-      else if (o.op === "bin") code.push(OP.BIN, BIN_NAMES.indexOf(o.fn), d, base + o.a, base + o.b);
-      else if (o.op === "ter") code.push(OP.TER, TER_NAMES.indexOf(o.fn), d, base + o.a, base + o.b, base + o.c);
-      else if (o.op === "tex") code.push(OP.TEX, d, o.slot, base + o.u, base + o.v);
-    }
+    emitExprOps(code, L, p, base);
     return base + L.result;
   }
 
@@ -89,12 +111,13 @@ export function emitProgram(compiled, dec) {
 let PX = [], PY = [], PZ = [], V = [];
 const ensure = (arr, count) => { while (arr.length < count) arr.push(new Float64Array(BATCH)); return arr; };
 const tmp = [0, 0, 0];
+let gather = new Float64Array(64);   // UNION/INTER operand gather, grown on demand
 
 export function runProgram(prog, textures, X, Y, Z, n, out) {
+  if (n > BATCH) throw new Error(`implicit: runProgram takes at most ${BATCH} lanes (got ${n})`);
   const nP = prog[0], nV = prog[1];
   ensure(PX, nP); ensure(PY, nP); ensure(PZ, nP); ensure(V, nV);
   PX[0].set(X.subarray(0, n)); PY[0].set(Y.subarray(0, n)); PZ[0].set(Z.subarray(0, n));
-  const gather = new Float64Array(64);
   let pc = 2;
   for (;;) {
     const op = prog[pc];
@@ -117,7 +140,8 @@ export function runProgram(prog, textures, X, Y, Z, n, out) {
       }
       case OP.UNION: case OP.INTER: {
         const dv = V[prog[pc + 1]], k = prog[pc + 2], cnt = prog[pc + 3];
-        const g = cnt <= gather.length ? gather : new Float64Array(cnt);
+        if (cnt > gather.length) gather = new Float64Array(Math.max(64, cnt));
+        const g = gather;
         for (let i = 0; i < n; i++) {
           for (let j = 0; j < cnt; j++) g[j] = V[prog[pc + 4 + j]][i];
           dv[i] = op === OP.UNION ? unionN(g, cnt, k) : intersectN(g, cnt, k);

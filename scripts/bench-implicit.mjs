@@ -23,7 +23,7 @@ for (const [name, spec, edge, imgs] of cases) {
     const [d, td] = time(() => (c.detail.length ? applySurfaceDetail(s, cl, c) : cl));
     if (warm === 0) continue;
     const total = tc + ts + tm + tcl + td;
-    console.log(`${name.padEnd(15)} ${tc.toFixed(0).padStart(7)} ${ts.toFixed(0).padStart(7)} ${tm.toFixed(0).padStart(5)} ${tcl.toFixed(0).padStart(8)} ${td.toFixed(0).padStart(7)} ${total.toFixed(0).padStart(6)} ${String(d.indices.length / 3).padStart(8)} ${String(s.samples).padStart(9)} ${String(s.programs.size).padStart(9)}`);
+    console.log(`${name.padEnd(15)} ${tc.toFixed(0).padStart(7)} ${ts.toFixed(0).padStart(7)} ${tm.toFixed(0).padStart(5)} ${tcl.toFixed(0).padStart(8)} ${td.toFixed(0).padStart(7)} ${total.toFixed(0).padStart(6)} ${String(d.indices.length / 3).padStart(8)} ${String(s.samples).padStart(9)} ${String(s.programs.length).padStart(9)}`);
   }
 }
 const [, tk] = time(() => k.implicit({ ...handSpec(), preview: 1.5 }));
