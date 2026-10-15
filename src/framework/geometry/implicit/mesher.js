@@ -15,6 +15,12 @@ export function meshStore(store) {
   const positions = [], indices = [], vertLeaf = [];
   const edgeVerts = new Map();
   const gIndex = (i, j, l) => (l * n[1] + j) * n[0] + i;
+  // Per-cell scratch: the 8 corner positions, a tet's corner split, its inside → outside
+  // direction, and the current triangle's 3 edge midpoints.
+  const CP = new Float64Array(24), negC = new Int32Array(4), posC = new Int32Array(4), g = new Float64Array(3), M = new Float64Array(9);
+  const setMid = (k, ca, cb) => {
+    M[3 * k] = (CP[3 * ca] + CP[3 * cb]) / 2; M[3 * k + 1] = (CP[3 * ca + 1] + CP[3 * cb + 1]) / 2; M[3 * k + 2] = (CP[3 * ca + 2] + CP[3 * cb + 2]) / 2;
+  };
 
   for (let L = 0; L < leaves.length; L++) {
     const { i0, j0, l0, vals } = leaves[L];
@@ -38,12 +44,12 @@ export function meshStore(store) {
       return v;
     };
     // Orientation is topological, not read from the interpolated positions: the triangle's
-    // edge midpoints (which depend only on the tet's corners and labels) are tested against the
-    // inside → outside direction, so slivers whose crossings sit almost on a corner cannot flip.
-    const tri = (a, b, c, ma, mb, mc, g) => {
-      if (a === b || b === c || a === c) return;   // two crossings welded to one vertex
-      const ux = mb[0] - ma[0], uy = mb[1] - ma[1], uz = mb[2] - ma[2];
-      const vx = mc[0] - ma[0], vy = mc[1] - ma[1], vz = mc[2] - ma[2];
+    // edge midpoints M (which depend only on the tet's corners and labels) are tested against
+    // the inside → outside direction g, so slivers whose crossings sit almost on a corner cannot flip.
+    // (Crossings on distinct grid edges are distinct vertices, so a triangle never repeats one.)
+    const tri = (a, b, c) => {
+      const ux = M[3] - M[0], uy = M[4] - M[1], uz = M[5] - M[2];
+      const vx = M[6] - M[0], vy = M[7] - M[1], vz = M[8] - M[2];
       const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
       if (nx * g[0] + ny * g[1] + nz * g[2] < 0) indices.push(a, c, b); else indices.push(a, b, c);
     };
@@ -52,36 +58,35 @@ export function meshStore(store) {
       let neg = 0;
       for (let c = 0; c < 8; c++) if (at(i + (c & 1), j + ((c >> 1) & 1), l + ((c >> 2) & 1)) < 0) neg++;
       if (neg === 0 || neg === 8) continue;
-      const cornerPos = (c) => posOf(i + (c & 1), j + ((c >> 1) & 1), l + ((c >> 2) & 1));
-      const mid = (ca, cb) => {
-        const pa = cornerPos(ca), pb = cornerPos(cb);
-        return [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2, (pa[2] + pb[2]) / 2];
-      };
+      for (let c = 0; c < 8; c++) {   // corner positions, as posOf computes them
+        CP[3 * c] = origin[0] + (i0 + (i + (c & 1))) * edge;
+        CP[3 * c + 1] = origin[1] + (j0 + (j + ((c >> 1) & 1))) * edge;
+        CP[3 * c + 2] = origin[2] + (l0 + (l + ((c >> 2) & 1))) * edge;
+      }
       for (const tet of KUHN) {
-        const negC = [], posC = [];
+        let nn = 0, np = 0;
         for (let q = 0; q < 4; q++) {
           const c = tet[q];
-          (at(i + (c & 1), j + ((c >> 1) & 1), l + ((c >> 2) & 1)) < 0 ? negC : posC).push(c);
+          if (at(i + (c & 1), j + ((c >> 1) & 1), l + ((c >> 2) & 1)) < 0) negC[nn++] = c; else posC[np++] = c;
         }
-        const inside = negC.length;
-        if (inside === 0 || inside === 4) continue;
-        const cn = negC.map(cornerPos), cp = posC.map(cornerPos), g = [0, 0, 0];
+        if (nn === 0 || nn === 4) continue;
         for (let a = 0; a < 3; a++) {
           let sn = 0, sp = 0;
-          for (const p of cn) sn += p[a];
-          for (const p of cp) sp += p[a];
-          g[a] = sp / cp.length - sn / cn.length;   // inside → outside
+          for (let q = 0; q < nn; q++) sn += CP[3 * negC[q] + a];
+          for (let q = 0; q < np; q++) sp += CP[3 * posC[q] + a];
+          g[a] = sp / np - sn / nn;   // inside → outside
         }
-        if (inside === 1 || inside === 3) {
-          const lone = inside === 1 ? negC[0] : posC[0], others = inside === 1 ? posC : negC;
-          tri(vertexOn(i, j, l, lone, others[0]), vertexOn(i, j, l, lone, others[1]), vertexOn(i, j, l, lone, others[2]),
-            mid(lone, others[0]), mid(lone, others[1]), mid(lone, others[2]), g);
+        if (nn === 1 || nn === 3) {
+          const lone = nn === 1 ? negC[0] : posC[0], others = nn === 1 ? posC : negC;
+          setMid(0, lone, others[0]); setMid(1, lone, others[1]); setMid(2, lone, others[2]);
+          tri(vertexOn(i, j, l, lone, others[0]), vertexOn(i, j, l, lone, others[1]), vertexOn(i, j, l, lone, others[2]));
         } else {
-          const [n0, n1] = negC, [q0, q1] = posC;
+          const n0 = negC[0], n1 = negC[1], q0 = posC[0], q1 = posC[1];
           const v00 = vertexOn(i, j, l, n0, q0), v01 = vertexOn(i, j, l, n0, q1), v10 = vertexOn(i, j, l, n1, q0), v11 = vertexOn(i, j, l, n1, q1);
-          const m00 = mid(n0, q0), m01 = mid(n0, q1), m10 = mid(n1, q0), m11 = mid(n1, q1);
-          tri(v00, v01, v11, m00, m01, m11, g);
-          tri(v00, v11, v10, m00, m11, m10, g);
+          setMid(0, n0, q0); setMid(1, n0, q1); setMid(2, n1, q1);
+          tri(v00, v01, v11);
+          setMid(0, n0, q0); setMid(1, n1, q1); setMid(2, n1, q0);
+          tri(v00, v11, v10);
         }
       }
     }
