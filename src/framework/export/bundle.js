@@ -19,7 +19,7 @@ import { resolveSheet } from "../sheet/resolve.js";
 import { processById, SHEET_METRICS } from "../process/registry.js";
 import { loadExporter } from "../process/exporters.js";
 import { validateKitOptions, resolveStock, KIT_OPTIONS_ERROR, KIT_LIMITS } from "./formats.js";
-import { canonicalDrawingKey } from "./drawing.js";
+import { canonicalDrawingKey, routedPalette } from "./drawing.js";
 import { renderSvg } from "./svg.js";
 import { renderDxf } from "./dxf.js";
 import { layoutGroup, marginFitsStock } from "./layout.js";
@@ -140,7 +140,6 @@ const wordsOf = (s) => String(s ?? "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").re
 // are listed, and "display", "outfit" and "profit" are not.
 const CLEARANCE_WORDS = new Set(["clearance", "clearances", "fit", "play"]);
 const isClearance = (c) => [...wordsOf(c.key), ...wordsOf(c.label)].some((w) => CLEARANCE_WORDS.has(w));
-const ALL_LAYERS = ["cut", "score", "engrave"];
 
 // Every control that owns a parameter key, whatever the section shape: authored
 // `controls` (groups nest), and the legacy `advanced`, `toggles`, `features` and a
@@ -193,6 +192,29 @@ function sheetMetaOrThrow(kernel, sp, p, d, name) {
   throw new Error(`sheet part "${name}": its material or thickness could not be evaluated`);
 }
 
+// The README's layer legend: every routed layer name in the kit, once, with its colour
+// (ACI in a DXF kit, hex in an SVG one) and depth — REFERENCE, SECONDARY, then drills in
+// palette order, then pockets shallowest first. The palette is kit-wide, so a name has
+// one colour; the legend is the authority when a palette cycles.
+const LEGEND_RANK = { reference: 0, secondary: 1, drill: 2, pocket: 3 };
+const legendKind = (l) => (l.id.startsWith("drill-") ? "drill" : l.id.startsWith("pocket-") ? "pocket" : l.id);
+function routedLegend(pieces, cutExt) {
+  const rows = new Map();
+  for (const pc of pieces) {
+    for (const l of pc.drawing.layers) {
+      if (l.name === undefined || rows.has(l.name)) continue;
+      const kind = legendKind(l);
+      rows.set(l.name, { name: l.name, kind, order: rows.size,
+        colour: cutExt === "svg" ? l.svgColor : String(l.color),
+        depth: l.through ? "through" : typeof l.depth === "number" ? `${l.depth.toFixed(2)} mm` : "—", mm: l.depth ?? 0 });
+    }
+  }
+  return [...rows.values()]
+    .sort((a, b) => (LEGEND_RANK[a.kind] ?? 9) - (LEGEND_RANK[b.kind] ?? 9)
+      || (a.kind === "pocket" ? a.mm - b.mm : 0) || a.order - b.order)
+    .map(({ name, colour, depth }) => ({ name, colour, depth }));
+}
+
 // One export-bundle job's kit. `names` is the job's selected() — exportable, enabled, in
 // definition order — and `posed`/`label`/`exportName` are jobs.js's own, so a kit's
 // printed parts are built exactly the way the STL and 3MF exports build them.
@@ -201,7 +223,8 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
   // not wait behind a build (spec D.3). An absent options object means every default.
   const o = validateKitOptions(msg.options ?? {});
   const service = o.destination === "service";
-  const cutExt = service ? "dxf" : "svg";
+  const router = o.destination === "cnc-router";
+  const cutExt = o.cutFormat;                       // svg for own-laser, dxf otherwise
   const say = (phase) => onProgress(clipPhase(phase));
   const nameOf = (name) => cleanLabel(label(name));
   if (names.length === 0) throw new Error("no exportable parts selected");
@@ -240,23 +263,36 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
 
   // Draw every sheet part flat, from its 2-D declaration, with its 2-D facts under ONE
   // budget for the whole kit.
+  // Resolved first, drawn second: a routed layer's colour comes from a palette over
+  // EVERY routed piece's depths (drawing.js routedPalette), so one depth is one colour
+  // in every file of the kit and on every sheet.
   const deadline = Date.now() + SHEET_CHECK_BUDGET_MS;
-  const drawn = [];
+  const resolved = [];
   for (const name of sheetNames) {
     say(`building ${nameOf(name)}`);
     const s = resolveSheet(kernel, part.parts[name], p, d);
     const desc = processById(s.process);
     if (!desc) throw new Error(`sheet part "${nameOf(name)}": unknown process "${s.process}"`);
-    const facts = desc.facts(s, { deadline });
+    resolved.push({ name, s, facts: desc.facts(s, { deadline }) });
+  }
+  const palette = routedPalette(resolved.filter((x) => x.s.process === "cnc-router").map((x) => x.s));
+  const drawn = [];
+  for (const { name, s, facts } of resolved) {
     const exporter = await loadExporter(s.process);
-    const drawing = exporter.drawing(s, o, kernel, { label: nameOf(name), facts });
+    const drawing = exporter.drawing(s, o, kernel, { label: nameOf(name), facts, palette });
+    // A routed piece is known by its process, never guessed from its layers: one with
+    // only a profile draws no named layer and is still routed.
     drawn.push({ name, label: nameOf(name), fileKey: exportName(name), group: groupOf.get(name),
-      drawing, facts, key: canonicalDrawingKey(drawing) });
+      drawing, facts, key: canonicalDrawingKey(drawing), routed: s.process === "cnc-router" });
   }
 
   // Identical pieces become one file ×N (spec D.4): the hash nominates; the canonical
   // drawing and the stock group confirm.
-  const pieces = dedupe(drawn, (x) => h(x.key), (a, b) => a.key === b.key && a.group === b.group)
+  // A routed piece's operations table is confirmed too: an extra op's depth and method,
+  // and the op labels, are not in its drawing — only the README carries them, so two
+  // pieces that draw alike but machine differently must stay two files.
+  const sameOps = (a, b) => JSON.stringify(a.facts?.routed ?? null) === JSON.stringify(b.facts?.routed ?? null);
+  const pieces = dedupe(drawn, (x) => h(x.key), (a, b) => a.key === b.key && a.group === b.group && sameOps(a, b))
     .map(({ item, members }) => ({
       ...item, labels: members.map((m) => m.label), qty: members.length * o.sets,
       hasMarks: item.drawing.layers.some((l) => l.id === "score" || l.id === "engrave"),
@@ -283,7 +319,8 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
   };
   for (const pc of pieces) {
     const sx = pc.qty > 1 ? `-x${pc.qty}` : "";
-    const marks = service && pc.hasMarks;
+    // A routed piece is never split: its depths are one layered file for the CAM.
+    const marks = (service || router) && pc.hasMarks && !pc.routed;
     const name = claim(kitName(pc.fileKey),
       (n) => [`parts/${n}${sx}.${cutExt}`, ...(marks ? [`parts/${n}${sx}-marks.dxf`] : []), `parts/${n}/`], pc.labels);
     pc.file = `parts/${name}${sx}.${cutExt}`;
@@ -301,7 +338,7 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
     say(`laying out ${g.material} ${fmtMm(g.thickness)} mm (${count} pieces)`);
     const stock = stockFor.get(g.group);
     const laid = layoutGroup({
-      group: g.group, label: g.label, stock, margin: o.margin, spacing: o.spacing, strict: !service,
+      group: g.group, label: g.label, stock, margin: o.margin, spacing: o.spacing, strict: !(service || router),
       pieces: inGroup.map((pc) => ({ key: pc.file, label: pc.labels[0], drawing: pc.drawing, qty: pc.qty })),
     });
     if (laid.sheets.length > KIT_LIMITS.sheetsPerGroup) {
@@ -354,20 +391,23 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
     if (!pp.bytes) pp.bytes = new Uint8Array(meshTo3MF([{ name: pp.fileKey, ...pp.mesh, color: pp.color }]));
   }
 
-  // The files (spec D.8): own laser — an SVG per sheet and per piece; service — a
-  // cut-only DXF per piece, a -marks.dxf where it has marks, and reference DXF sheets.
+  // The files (spec D.8): own laser — an SVG per sheet and per piece; service and CNC
+  // router — a cut-only DXF per laser piece, a -marks.dxf where it has marks, and
+  // reference DXF sheets. A routed piece is one file with every layer, whatever the
+  // destination.
   say("writing cut files");
   const title = cleanLabel(part.meta?.title ?? fileBase);
   const files = [];
   const put = (file, text) => files.push({ file, data: strToU8(text) });
   for (const sh of sheets) {
     const doc = { title: `${title} — ${sh.group.label} — sheet ${sh.index} of ${sh.count}`, size: sh.stock, placements: sh.placements };
-    put(sh.file, service ? renderDxf(doc, { include: ALL_LAYERS }) : renderSvg(doc));
+    put(sh.file, cutExt === "dxf" ? renderDxf(doc) : renderSvg(doc));
   }
   for (const pc of pieces) {
     const doc = { title: pc.labels.join(", "), size: sizeOf(pc.drawing.bounds),
       placements: [{ drawing: pc.drawing, at: [0, 0], rotated: false }] };
-    if (!service) { put(pc.file, renderSvg(doc)); continue; }
+    if (cutExt === "svg") { put(pc.file, renderSvg(doc)); continue; }
+    if (pc.routed) { put(pc.file, renderDxf(doc)); continue; }       // every layer, one file
     put(pc.file, renderDxf(doc, { include: ["cut"] }));
     if (pc.marksFile) put(pc.marksFile, renderDxf(doc, { include: ["score", "engrave"] }));
   }
@@ -383,6 +423,9 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
       size: sh.stock, pieces: sh.placements.length, used: sh.used })),
     pieces: pieces.map((pc) => ({ file: pc.file, marksFile: pc.marksFile, labels: pc.labels, material: groups.get(pc.group).material,
       thickness: groups.get(pc.group).thickness, size: pc.drawing.nominal, quantity: pc.qty })),
+    router: pieces.filter((pc) => pc.routed && pc.facts?.routed).map((pc) => ({
+      labels: pc.labels, material: groups.get(pc.group).material, thickness: groups.get(pc.group).thickness, ...pc.facts.routed })),
+    layers: routedLegend(pieces.filter((pc) => pc.routed), cutExt),
     printed: prints.map((pp) => ({ file: pp.file, labels: pp.labels, quantity: pp.qty })),
     clearances: controls.filter(isClearance)
       .map((c) => ({ label: c.label ?? c.key, value: p[c.key], unit: c.unit ?? "" })),

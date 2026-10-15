@@ -51,7 +51,7 @@ import {
   RELEVANT_ALL,
   verify,
 } from "partforge/testing";
-import type { SilhouetteMask } from "partforge/testing";
+import type { SilhouetteMask, SheetFacts, RoutedFacts } from "partforge/testing";
 
 // A tiny assertion helper: `expectType<T>(value)` fails to compile unless
 // `value` is assignable to `T`.
@@ -310,6 +310,19 @@ expectType<Promise<void>>(runtime.exportParts({
 const kitOptions: KitOptions = { printFormat: "3mf", stock: null };
 expectType<Required<KitOptions>>(validateKitOptions(kitOptions));
 expectType<"cut kit options:">(KIT_OPTIONS_ERROR);
+const routerOptions: KitOptions = { destination: "cnc-router", kerf: 0 };
+void routerOptions;
+// A sheet part declared with process "cnc-router" admits the routed keys.
+const routedSheet = sheetPart({ views: ["main"], material: "walnut", thickness: 18, process: "cnc-router",
+  profile: (k) => k.shape2d([[0, 0], [10, 0], [10, 10], [0, 10]]),
+  pockets: () => [{ region: [[1, 1], [4, 1], [4, 4], [1, 4]], depth: 3 }],
+  drills: () => [{ at: [5, 5], d: 3, depth: 18 }],
+  extra: () => [] });
+void routedSheet;
+declare const sheetFacts: SheetFacts;
+expectType<RoutedFacts | undefined>(sheetFacts.routed);
+expectType<number[] | null>(sheetFacts.at.outside);
+expectType<number | undefined>(sheetFacts.routed?.empty);
 expectType<ReadonlyArray<ExportFormatInfo>>(EXPORT_FORMATS);
 expectType<number>(KIT_DEFAULTS.margin);
 expectType<void>(runtime.setHostPane("rail"));

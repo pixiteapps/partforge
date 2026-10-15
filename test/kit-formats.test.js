@@ -6,7 +6,7 @@ import {
   EXPORT_FORMATS, KIT_OPTIONS_ERROR, KIT_DEFAULTS, DEFAULT_STOCK_SIZE, DESTINATIONS, KIT_LIMITS,
   validateKitOptions, resolveStock,
 } from "../src/framework/export/formats.js";
-import { LASER } from "../src/framework/process/laser/descriptor.js";
+import { PROCESSES } from "../src/framework/process/registry.js";
 
 const refuses = (o, message) => expect(() => validateKitOptions(o)).toThrow(message);
 
@@ -21,8 +21,8 @@ describe("tables", () => {
     expect(Object.isFrozen(EXPORT_FORMATS) && EXPORT_FORMATS.every(Object.isFrozen)).toBe(true);
   });
 
-  test("DESTINATIONS is the laser descriptor's destinations — one fact, two spellings", () => {
-    expect(Object.entries(DESTINATIONS)).toEqual(LASER.destinations.map((d) => [d.id, d.cutFormat]));
+  test("DESTINATIONS is every process's destinations — one fact, two spellings", () => {
+    expect(Object.entries(DESTINATIONS)).toEqual(PROCESSES.flatMap((p) => p.destinations.map((d) => [d.id, d.cutFormat])));
   });
 
   test("the prefix, defaults and limits", () => {
@@ -60,8 +60,8 @@ describe("validateKitOptions", () => {
     refuses([], "cut kit options: options must be an object");
     refuses("svg", "cut kit options: options must be an object");
     refuses({ foo: 1 }, 'cut kit options: unknown option "foo" — the options are destination, cutFormat, kerf, colors, stock, margin, spacing, printFormat, sets');
-    refuses({ destination: "laser" }, 'cut kit options: destination must be "own-laser" or "service", got "laser"');
-    refuses({ destination: "toString" }, 'cut kit options: destination must be "own-laser" or "service", got "toString"');
+    refuses({ destination: "laser" }, 'cut kit options: destination must be "own-laser", "service" or "cnc-router", got "laser"');
+    refuses({ destination: "toString" }, 'cut kit options: destination must be "own-laser", "service" or "cnc-router", got "toString"');
     refuses({ cutFormat: "dxf" }, 'cut kit options: cutFormat "dxf" does not match destination "own-laser" (which writes svg)');
     refuses({ kerf: 0.6 }, "cut kit options: kerf must be a number from 0 to 0.5 mm, got 0.6");
     refuses({ kerf: -0.1 }, "cut kit options: kerf must be a number from 0 to 0.5 mm, got -0.1");

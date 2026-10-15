@@ -315,7 +315,13 @@ export interface SheetPartSpec<P = ResolvedParams, D = Derived> {
   engrave?: ((k: GeometryKernel, p: P, d: D) => Shape2D | ProfileInput | null) | null;
   /** Where the piece sits, for display AND export. Omitted: flat, no transform. */
   pose?: SheetPose | ((p: P, d: D) => SheetPose | null) | null;
-  process?: "laser";
+  process?: "laser" | "cnc-router";
+  /** `process: "cnc-router"` only: flat-floored pockets at a depth (as `routedPart`). */
+  pockets?: ((k: GeometryKernel, p: P, d: D) => (RoutedPocket | null)[] | null) | null;
+  /** `process: "cnc-router"` only: drilled holes at a depth (as `routedPart`). */
+  drills?: ((p: P, d: D) => (RoutedDrill | null)[] | null) | null;
+  /** `process: "cnc-router"` only: operations done with another tool (as `routedPart`). */
+  extra?: ((k: GeometryKernel, p: P, d: D) => (RoutedExtra | null)[] | null) | null;
   label?: string;
   views: string[] | Record<string, true | ((s: Solid, p: P, d: D) => Solid)>;
   display?: SubPartDefinition<P, D>["display"];
@@ -329,6 +335,43 @@ export interface SheetPartSpec<P = ResolvedParams, D = Derived> {
 
 /** A sub-part cut from flat stock: an ordinary sub-part with `build`, `place` and `sheet` filled in. */
 export function sheetPart<P = ResolvedParams, D = Derived>(spec: SheetPartSpec<P, D>): SubPartDefinition<P, D>;
+
+// --- routed parts (docs/AUTHORING-PARTS.md "Routed parts") --------------------
+
+/** A flat-floored pocket machined `depth` mm down from the machined face. */
+export interface RoutedPocket { region: Shape2D | ProfileInput; depth: number; label?: string }
+/** A drilled hole; `depth` equal to the stock thickness drills through — deeper is a `routed-drill-depth` lint error. */
+export interface RoutedDrill { at: Point2; d: number; depth: number; label?: string }
+/** An operation done with another tool after the flat milling: the solid is cut in the preview and the STEP, the footprint is drawn, label and method go in the README. */
+export interface RoutedExtra { solid: Solid; footprint: Shape2D | ProfileInput; label: string; method: string }
+
+/**
+ * What `routedPart` accepts: `sheetPart`'s stock, profile and pose, plus pockets,
+ * drills and extra ops at depth. `score`/`engrave`/`process` are refused at load.
+ */
+export interface RoutedPartSpec<P = ResolvedParams, D = Derived> {
+  material: string | ((p: P, d: D) => string);
+  /** The MEASURED stock thickness in mm. */
+  thickness: number | ((p: P, d: D) => number);
+  /** The THROUGH cut: outline plus through holes, seen from the machined face. */
+  profile: (k: GeometryKernel, p: P, d: D) => Shape2D | ProfileInput;
+  pockets?: ((k: GeometryKernel, p: P, d: D) => (RoutedPocket | null)[] | null) | null;
+  drills?: ((p: P, d: D) => (RoutedDrill | null)[] | null) | null;
+  extra?: ((k: GeometryKernel, p: P, d: D) => (RoutedExtra | null)[] | null) | null;
+  /** Centerlines and layout marks: drawn on REFERENCE, cut nothing. Same entries as `score`. */
+  reference?: ((k: GeometryKernel, p: P, d: D) => SheetScoreEntry[] | null) | null;
+  pose?: SheetPose | ((p: P, d: D) => SheetPose | null) | null;
+  label?: string;
+  views: string[] | Record<string, true | ((s: Solid, p: P, d: D) => Solid)>;
+  display?: SubPartDefinition<P, D>["display"];
+  export?: { name: string };
+  enabled?: (p: P) => unknown;
+  exportable?: boolean;
+  place?: (solid: Solid, ctx: PlaceContext<P, D>) => Solid;
+}
+
+/** A sub-part CNC-routed from flat stock: an ordinary sub-part with `build`, `place` and a `sheet` record of process `"cnc-router"`. */
+export function routedPart<P = ResolvedParams, D = Derived>(spec: RoutedPartSpec<P, D>): SubPartDefinition<P, D>;
 
 /** A metric screw size `tSlots` knows. */
 export type ScrewSize = "M2.5" | "M3" | "M4";

@@ -57,6 +57,27 @@ describe("the file", () => {
     expect(cutOnly.entities.every((e) => e.layer === "CUT")).toBe(true);
     const marks = parseDxf(renderDxf(piece(plate()), { include: ["score", "engrave"] }));
     expect(marks.entities.map((e) => e.layer)).toEqual(["ENGRAVE", "SCORE"]);
+    // a default (undefined) include is the full laser trio, exactly as before
+    expect(parseDxf(renderDxf(piece(plate()), {})).layers.map((l) => l.name)).toEqual(["ENGRAVE", "SCORE", "CUT"]);
+  });
+
+  test("declares every included laser class even when no placement draws on it", () => {
+    const outline = { layers: [{ id: "cut-outer", paths: [{ start: [0, 0], segments: [{ to: [10, 0] }, { to: [10, 10] }, { to: [0, 10] }, { to: [0, 0] }], closed: true }] }], bounds: { min: [0, 0], max: [10, 10] } };
+    const doc = { title: "t", size: [10, 10], placements: [{ drawing: outline, at: [0, 0], rotated: false }] };
+    expect(parseDxf(renderDxf(doc)).layers.map((l) => l.name)).toEqual(["ENGRAVE", "SCORE", "CUT"]);
+    expect(parseDxf(renderDxf(doc, { include: ["cut"] })).layers.map((l) => l.name)).toEqual(["CUT"]);
+    const marks = parseDxf(renderDxf(doc, { include: ["score", "engrave"] }));
+    expect(marks.layers.map((l) => l.name)).toEqual(["ENGRAVE", "SCORE"]);
+    expect(marks.entities).toHaveLength(0);
+  });
+
+  test("a document with a named layer declares only the layers present — no empty laser classes", () => {
+    const pocket = closed([5, 5], [{ to: [15, 5] }, { to: [15, 15] }, { to: [5, 15] }, { to: [5, 5] }]);
+    const layers = [{ id: "pocket-3", name: "POCKET_3MM", color: 30, svgColor: "#E07000", paths: [pocket] }, { id: "cut-outer", paths: [RECT] }];
+    const bounds = drawingBounds(layers);
+    const dxf = parseDxf(renderDxf(piece({ layers, bounds, nominal: [40, 30], kerf: 0 })));
+    expect(dxf.layers.map((l) => l.name)).toEqual(["POCKET_3MM", "CUT"]);
+    expect(dxf.layers.map((l) => l.color)).toEqual([30, 1]);
   });
 
   test("an unknown include is refused", () => {

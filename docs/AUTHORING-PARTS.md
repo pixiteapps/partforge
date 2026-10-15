@@ -1906,7 +1906,7 @@ plate: sheetPart({
 It returns an ordinary sub-part: `build`, the pose's placement and a plain-data `sheet`. A field
 needing the kernel is `(k, p, d) => …`; a plain value is a literal or `(p, d) => …`.
 `material`, `thickness` and `profile` are required; `score`, `engrave`, `pose`,
-`process` (default `"laser"`) are optional; `label`, `views`, `display`, `export`,
+`process` (default `"laser"`; `"cnc-router"` is `routedPart`, below) are optional; `label`, `views`, `display`, `export`,
 `enabled`, `exportable`, `reference` pass through; your `views` poses apply after the `pose`, in the viewer only. `build` is supplied — passing one throws, as do `kerf`, `outline`/`cut` and
 `quantity`; each error names the fix.
 
@@ -2020,7 +2020,7 @@ the assembled view, and `minWall` and the overhang check skip sheet parts.
 
 ### The kit
 
-A host downloads sheet parts as one ZIP, the **cut & print kit** (`format: "bundle"`): `README.txt`, `parts.csv`, laid-out `sheets/`, one `parts/` file per distinct piece (plus a `-marks.dxf` for a cutting service) and `print/` for printed parts. Identical pieces merge into one `-xN` file named from `export: { name }`, else the key. Destination (`"own-laser"` or `"service"`), kerf and stock size are chosen at download, so draw nominal and bind `thickness` to the measured control. A choice the kit cannot honour fails with `cut kit options:`.
+A host downloads sheet parts as one ZIP, the **cut & print kit** (`format: "bundle"`): `README.txt`, `parts.csv`, laid-out `sheets/`, one `parts/` file per distinct piece (plus a `-marks.dxf` for a cutting service) and `print/` for printed parts. Identical pieces merge into one `-xN` file named from `export: { name }`, else the key. Destination (`"own-laser"`, `"service"` or `"cnc-router"`), kerf and stock size are chosen at download, so draw nominal and bind `thickness` to the measured control. A choice the kit cannot honour fails with `cut kit options:`.
 
 ### Limits
 
@@ -2149,6 +2149,112 @@ export default {
   verify: { process: "fdm-pla", expect: { _view: { overlaps: 0 } } },
 };
 ```
+
+## Routed parts
+
+CNC-routed parts from flat stock — hardwood, plywood, MDF, acrylic — for a 2.5D router
+CAM (Vectric VCarve, Carbide Create, Easel, Carveco): a through cut, flat-floored
+pockets at a depth, drilled holes at a depth, and operations done with another tool
+afterwards. Build each piece with `routedPart()` from `partforge/geometry`; the cut &
+print kit's **CNC router** destination writes one DXF per piece with one layer per depth,
+and a README table of every operation. A routed part is also the 3D sub-part — assembly,
+renders and STEP all come from the one declaration — so model it once.
+
+### When a sub-part is a routed part
+
+When it is machined from one face of a flat board: an outline, pockets with flat floors,
+holes, all straight down. A sculpted surface, a part machined from both faces, or
+anything that is not flat stock is an ordinary `build` (export it as STEP). A laser-cut
+plate is `sheetPart`.
+
+### routedPart
+
+```js
+import { routedPart, roundedRectProfile } from "partforge/geometry";
+
+plinth: routedPart({
+  label: "Hardwood base", views: { assembly: true, base: true }, display: { color: 0x6e3d23 },
+  material: "walnut",                           // stock label: groups pieces in the kit
+  thickness: (p) => p.baseThickness,            // the MEASURED board, from a control
+  profile: (k, p) => k.shape2d(roundedRectProfile(p.baseLength, p.baseWidth, 10)),   // the THROUGH cut
+  pockets: (k, p, d) => [
+    { region: k.shape2d(roundedRectProfile(d.vaultW, d.vaultL, 2)).translate([0, -9]), depth: 11.43, label: "peg vault" },
+    { region: k.shape2d(roundedRectProfile(d.pocketW, d.pocketL, 4)).translate([-58, -10]), depth: p.inlayThickness, label: "inlay pocket" },
+  ],
+  drills: (p, d) => d.pegHoles.map(([x, y]) => ({ at: [x, y], d: p.pegHoleDia, depth: 10 })),
+  extra: (k, p, d) => [{
+    solid: k.box({ size: [d.rackL, 12, 14] }).rotateX(-p.rackTilt).at([0, d.rackY, p.baseThickness - 9.5]),
+    footprint: k.shape2d(roundedRectProfile(d.rackL, 12, 2)).translate([0, d.rackY]),
+    label: "domino rack slot", method: `table saw, blade tilted ${p.rackTilt}°, 9.5 mm deep`,
+  }],
+  reference: (k, p) => [[[-p.baseLength / 2 + 10, 0], [p.baseLength / 2 - 10, 0]]],   // a centerline
+}),
+```
+
+`material`, `thickness` and `profile` are required; `pockets`, `drills`, `extra`,
+`reference` and `pose` are optional; `label`, `views`, `display`, `export`, `enabled`,
+`exportable` pass through. A field needing the kernel is `(k, p, d) => …`; `drills` is
+`(p, d) => …`. `build` is supplied — passing one throws, as do `kerf`, `score`,
+`engrave` and `process`; each error names the fix. The drawing is in XY with the
+machined face at z = `thickness`; `pose` places it exactly as a sheet part's does.
+
+### Pockets, drills, extra ops and reference lines
+
+- **`pockets`** — `[{ region, depth, label? }]`: a Shape2D or profile machined `depth`
+  mm down from the machined face, flat-floored. `depth` may equal `thickness` (a
+  through pocket); deeper is a build error naming the pocket. Pockets whose depths agree to
+  two decimals share a DXF layer.
+- **`drills`** — `[{ at: [x, y], d, depth, label? }]`: a round hole of diameter `d`.
+  Set `depth` to the thickness to drill through — deeper is a `routed-drill-depth`
+  lint error. Written as a DXF `CIRCLE`, which is what lets
+  the CAM offer a drilling toolpath instead of a profile cut.
+- **`extra`** — `[{ solid, footprint, label, method }]`: an operation the router cannot
+  do straight down — a tilted slot, a scooped thumb hold, an undercut. `solid` is cut in
+  the preview and the STEP; `footprint` (its outline on the machined face) is drawn on
+  the `SECONDARY` layer; `label` and `method` are REQUIRED and go in the README's
+  operations table so the operator knows what to make and how ("core box bit, 20 mm
+  radius"). Do not put a flat-floored pocket here to avoid stating its depth.
+- **`reference`** — the same entries as a sheet part's `score`: two points is a line,
+  anything else a shape whose boundaries are drawn. Centerlines and layout marks, on
+  the `REFERENCE` layer; they cut nothing (the preview grooves them 0.2 mm so they show).
+
+Keep these functions chainable — no branching on `isEmpty()`/`area()` — so pose-only
+sliders stay fast. `null` entries are skipped; an empty pocket region draws nothing and
+is counted by `routedEmpty`, as is an extra op whose footprint is empty.
+
+### The drawing
+
+One DXF per piece, R12, millimetres: `CUT` (colour 1) is the through cut — the outline and
+the profile's own holes; `POCKET_<depth>MM` one layer per distinct depth (colours 30, 40, 50, 20,
+10); `DRILL_D<dia>_<depth>MM` or `DRILL_D<dia>_THRU` per diameter
+and depth (colours 3, 4, 2, 140, 170); `SECONDARY` (6) the extra ops' footprints;
+`REFERENCE` (8) layout lines. Depth rides both the layer name and the colour, and colours
+are assigned per kit — pockets shallowest depth first, drills in the order they appear —
+so one layer name has one colour in every file. A palette cycles past five depths; the
+README's LAYERS legend (layer, colour, depth) is the authority. Kerf
+never applies — the CAM applies the tool offset, and the kit refuses a kerf for this
+destination. The README's ROUTER OPERATIONS table lists every pocket, drill group and
+extra op with its depth and method.
+
+### What lint and verify check
+
+Lint: `routed-drill-depth` (error) — a drill deeper than the stock at the defaults.
+Every sheet rule applies too (`sheet-thickness-literal`, `sheet-custom-build`, …); the
+laser's thickness range does not. A pocket deeper than the stock is a build error.
+
+Verify volunteers three warnings on every routed part, none counting toward
+`declared`/`evaluated`: `routedOutside` (pocket, drill or footprint regions outside the
+profile, `0`), `routedEmpty` (pockets that resolved empty, `0`), `routedPieces` (`1`).
+Each measured row carries `sheet.routed` — the operations table — beside the stock facts.
+
+### Limits
+
+- One machined face. A part worked from both faces is two routed parts or a `build`.
+- No tool-radius, dogbone or inside-corner checks: the CAM owns those.
+- No depth per extra op beyond its footprint and the solid's deepest point; the
+  `method` text is where the operator's instructions go.
+- A routed part is a sheet part of process `cnc-router` everywhere else: the sheet
+  checks' budget, stock grouping and the kit's layout apply unchanged.
 
 ## Convex hull
 
@@ -3147,8 +3253,9 @@ returns instead:
   stock), `parts/<name>[-xN].svg` (one per distinct piece; identical pieces merge) and
   `print/<name>[-xN].stl` or `.3mf` (the printed parts, in their export pose). With
   `destination: "service"` each piece is a cut-only `.dxf` plus a `-marks.dxf` for its
-  score and engrave lines, and the DXF sheets are for reference. Every `options` key is
-  optional: `destination` (`"own-laser"`, the default, or `"service"`), `kerf` (0–0.5 mm,
+  score and engrave lines, and the DXF sheets are for reference. With `destination: "cnc-router"` every routed piece is one DXF carrying all its layers
+  (depth per layer), laser pieces are written as for a service, and kerf must be 0. Every `options` key is
+  optional: `destination` (`"own-laser"`, the default, `"service"` or `"cnc-router"`), `kerf` (0–0.5 mm,
   applied to the cut lines only), `stock: [{ group, size: [w, h] }]` (a row's
   `sheet.group`; a `"*"` entry sizes every group that has no entry of its own; 300 × 300
   mm when `stock` is omitted), `margin` (5 mm),
@@ -3957,6 +4064,9 @@ non-default params still fails correctly at build time.
 verify check". `no-buildable-parts` points a sub-part with a `sheet` but no `build`
 at `sheetPart()`, and `verify-unknown-process` answers `process: "laser"` the same
 way.
+
+**Routed parts** — `routed-drill-depth` (error): a `routedPart` drill deeper than
+the stock at the defaults. It carries `pattern: "routed-parts"`.
 
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.

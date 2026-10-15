@@ -556,6 +556,12 @@ export interface SubPartExpectations {
   sheetPieces?: Expectation;
   /** Sheet parts with a custom `build` only: % volume drift from profile area × thickness minus the marks (volunteered check: `<=2`). */
   sheetSolidMatch?: Expectation;
+  /** Routed parts only: pocket, drill or extra-op footprint regions outside the profile (volunteered check: `0`). */
+  routedOutside?: Expectation;
+  /** Routed parts only: pockets whose region resolved empty (volunteered check: `0`). */
+  routedEmpty?: Expectation;
+  /** Routed parts only: separate regions in the cut profile (volunteered check: `1`). */
+  routedPieces?: Expectation;
 }
 
 /**

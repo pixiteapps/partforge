@@ -8,6 +8,7 @@
 // test/kit-export-guards.test.js fails until the two id lists agree.
 export const EXPORTER_LOADERS = Object.freeze({
   laser: () => import("./laser/export.js"),
+  "cnc-router": () => import("./cnc-router/export.js"),
 });
 
 // The process's ProcessExporter ({ drawing(s, o, k, ctx) }), loaded on first use.
