@@ -4,7 +4,7 @@ import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { sampleField } from "../src/framework/geometry/implicit/sparse.js";
 import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
 import { cleanupMesh } from "../src/framework/geometry/implicit/cleanup.js";
-import { applySurfaceDetail, detailHeight } from "../src/framework/geometry/implicit/detail.js";
+import { applySurfaceDetail, detailHeight, midpointNormal } from "../src/framework/geometry/implicit/detail.js";
 import { edgeCheck, eulerChar, volume } from "./helpers/mesh-topology.js";
 import { pfCos } from "../src/framework/geometry/js-math.js";
 
@@ -50,5 +50,27 @@ describe("surface detail", () => {
     for (let v = 0; v < out.positions.length / 3; v++) maxZ = Math.max(maxZ, out.positions[3 * v + 2]);
     expect(maxZ).toBeGreaterThan(2.4);
     expect(edgeCheck(out.indices)).toEqual({ boundary: 0, nonManifold: 0, misoriented: 0 });
+  });
+  test("a midpoint left without a normal takes its endpoints' normalized average", () => {
+    const N = [0, 0, 1, 1, 0, 0, 0, 0, 0];
+    midpointNormal(N, 0, 1, 2);
+    expect(N.slice(6)).toEqual([1 / Math.sqrt(2), 0, 1 / Math.sqrt(2)]);
+    const Z = [0, 0, 1, 0, 0, -1, 0, 0, 0];
+    midpointNormal(Z, 0, 1, 2);
+    expect(Z.slice(6)).toEqual([0, 0, 0]);   // opposite endpoints: stays zero
+    const K = [0, 0, 1, 1, 0, 0, 0, 1, 0];
+    midpointNormal(K, 0, 1, 2);
+    expect(K.slice(6)).toEqual([0, 1, 0]);   // a projected normal is kept
+  });
+  test("a vertex with a zero normal is not displaced (triplanar would read 0/0)", () => {
+    const data = new Uint16Array(4 * 4).fill(65535);
+    const images = new Map([["w", { digest: "w1", width: 4, height: 4, data }]]);
+    const { c, s, m } = build({ root: { kind: "box", size: [10, 10, 4] },
+      detail: [{ kind: "texture", image: "w", amplitude: 0.5, size: [10, 10], projection: "triplanar" }] }, images);
+    const normals = Float64Array.from(m.normals);
+    normals[0] = normals[1] = normals[2] = 0;
+    const out = applySurfaceDetail(s, { ...m, normals }, c);
+    expect(Array.from(out.positions.subarray(0, 3))).toEqual(Array.from(m.positions.subarray(0, 3)));
+    expect(out.positions.every(Number.isFinite)).toBe(true);
   });
 });

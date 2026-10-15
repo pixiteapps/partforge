@@ -77,6 +77,18 @@ function splitTri(out, v, m) {
   else out.push(M[0], V[1], M[1], V[0], M[0], M[1], V[0], M[1], V[2]);
 }
 
+/**
+ * A refinement midpoint m whose projection found no gradient keeps a zero normal; it
+ * takes the normalized sum of its endpoints' normals instead (zero if that is zero too).
+ */
+export function midpointNormal(N, a, b, m) {
+  if (N[3 * m] !== 0 || N[3 * m + 1] !== 0 || N[3 * m + 2] !== 0) return;
+  const x = N[3 * a] + N[3 * b], y = N[3 * a + 1] + N[3 * b + 1], z = N[3 * a + 2] + N[3 * b + 2];
+  const l = Math.sqrt(x * x + y * y + z * z);
+  if (!(l > 0)) return;
+  N[3 * m] = x / l; N[3 * m + 1] = y / l; N[3 * m + 2] = z / l;
+}
+
 export function applySurfaceDetail(store, mesh, compiled) {
   const entries = compiled.detail, tex = compiled.textures, edge = store.edge;
   let P = Array.from(mesh.positions), N = Array.from(mesh.normals), T = Array.from(mesh.indices), VL = Array.from(mesh.vertLeaf);
@@ -91,7 +103,7 @@ export function applySurfaceDetail(store, mesh, compiled) {
   for (let round = 0; round < MAX_REFINE_ROUNDS; round++) {
     const nv = P.length / 3, target = new Float64Array(nv);
     for (let v = 0; v < nv; v++) target[v] = targetAt(v);
-    const mid = new Map(), added = [];
+    const mid = new Map(), added = [], ends = [];
     const midpoint = (a, b) => {
       const key = a < b ? a * nv + b : b * nv + a;
       let m = mid.get(key);
@@ -101,7 +113,7 @@ export function applySurfaceDetail(store, mesh, compiled) {
       if (!(lim < Infinity) || dx * dx + dy * dy + dz * dz <= lim * lim) { mid.set(key, -1); return -1; }
       m = P.length / 3;
       P.push((P[3 * a] + P[3 * b]) / 2, (P[3 * a + 1] + P[3 * b + 1]) / 2, (P[3 * a + 2] + P[3 * b + 2]) / 2);
-      N.push(0, 0, 0); VL.push(VL[a]); added.push(m);
+      N.push(0, 0, 0); VL.push(VL[a]); added.push(m); ends.push(a, b);
       mid.set(key, m);
       return m;
     };
@@ -115,9 +127,11 @@ export function applySurfaceDetail(store, mesh, compiled) {
     const Pf = Float64Array.from(P), Nf = Float64Array.from(N);
     projectVertices(store, Pf, Int32Array.from(VL), { maxStep: edge, which: Int32Array.from(added), normals: Nf });
     P = Array.from(Pf); N = Array.from(Nf);
+    for (let q = 0; q < added.length; q++) midpointNormal(N, ends[2 * q], ends[2 * q + 1], added[q]);
   }
   const positions = Float64Array.from(P), normals = Float64Array.from(N);
   for (let v = 0; v < positions.length / 3; v++) {
+    if (normals[3 * v] === 0 && normals[3 * v + 1] === 0 && normals[3 * v + 2] === 0) continue;   // no direction to move along
     let h = 0;
     for (const e of entries) h += detailHeight(e, tex, positions[3 * v], positions[3 * v + 1], positions[3 * v + 2], normals[3 * v], normals[3 * v + 1], normals[3 * v + 2]);
     if (h === 0) continue;

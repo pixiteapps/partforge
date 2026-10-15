@@ -75,7 +75,9 @@ function collapse(P, T, vertLeaf, minLen) {
   return { positions: Float64Array.from(outP), indices: Uint32Array.from(outT), vertLeaf: Int32Array.from(outL) };
 }
 
-function relax(P, T, N, weight, maxMove) {
+// Tangential Laplacian smoothing. A vertex whose projection found no gradient has a
+// zero normal and no tangent plane, so it stays put.
+export function relax(P, T, N, weight, maxMove) {
   const nv = P.length / 3, sum = new Float64Array(3 * nv), cnt = new Uint32Array(nv);
   for (let t = 0; t < T.length; t += 3) for (let c = 0; c < 3; c++) {
     const a = T[t + c], b = T[t + ((c + 1) % 3)];
@@ -84,6 +86,7 @@ function relax(P, T, N, weight, maxMove) {
   }
   for (let v = 0; v < nv; v++) {
     if (!cnt[v]) continue;
+    if (N[3 * v] === 0 && N[3 * v + 1] === 0 && N[3 * v + 2] === 0) continue;
     let dx = sum[3 * v] / cnt[v] - P[3 * v], dy = sum[3 * v + 1] / cnt[v] - P[3 * v + 1], dz = sum[3 * v + 2] / cnt[v] - P[3 * v + 2];
     const nx = N[3 * v], ny = N[3 * v + 1], nz = N[3 * v + 2], dn = dx * nx + dy * ny + dz * nz;
     dx = (dx - dn * nx) * weight; dy = (dy - dn * ny) * weight; dz = (dz - dn * nz) * weight;

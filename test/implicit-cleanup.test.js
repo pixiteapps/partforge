@@ -3,7 +3,7 @@ import { describe, test, expect } from "vitest";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { sampleField } from "../src/framework/geometry/implicit/sparse.js";
 import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
-import { cleanupMesh, CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
+import { cleanupMesh, CLEANUP, relax } from "../src/framework/geometry/implicit/cleanup.js";
 import { evalReference } from "../src/framework/geometry/implicit/reference.js";
 import { edgeCheck, eulerChar } from "./helpers/mesh-topology.js";
 import { TREES } from "./fixtures/implicit-small-trees.js";
@@ -60,5 +60,14 @@ describe("cleanup", () => {
   });
   test("defaults are the documented ones", () => {
     expect(CLEANUP).toEqual({ collapseFrac: 0.2, relaxPasses: 2, relaxWeight: 0.5, maxMoveCells: 0.5 });
+  });
+  test("relax leaves a vertex with a zero normal where it is", () => {
+    // A tetrahedron; vertex 0's projection found no gradient, so it has no normal.
+    const P = Float64Array.of(0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1);
+    const T = Uint32Array.of(0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3);
+    const N = Float64Array.of(0, 0, 0, 0, -1, 0, -1, 0, 0, 0.5773502691896258, 0.5773502691896258, 0.5773502691896258);
+    relax(P, T, N, 0.5, 10);
+    expect(Array.from(P.subarray(0, 3))).toEqual([0, 0, 0]);
+    expect(Array.from(P.subarray(3, 6))).not.toEqual([1, 0, 0]);   // vertices with normals still relax
   });
 });
