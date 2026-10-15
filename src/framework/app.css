@@ -835,14 +835,16 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 .pf-card-lab-row { display: flex; justify-content: space-between; align-items: baseline; }
 .pf-card-lab { font-size: 12px; color: var(--pf-muted); }
 .pf-card-val { font-size: 12px; color: var(--pf-text-2); font-variant-numeric: tabular-nums; }
-.pf-card-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
-.pf-card-tile { display: grid; justify-items: center; gap: 3px; border: 0; background: none; padding: 3px 0; border-radius: 8px; cursor: pointer; font: inherit; color: var(--pf-muted); }
+.pf-card-val.preview { color: var(--pf-text); }
+.pf-card-tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px 2px; }
+.pf-card-tile { display: grid; justify-items: center; align-content: start; gap: 4px; border: 0; background: none; padding: 4px 1px 3px; border-radius: 8px; cursor: pointer; font: inherit; color: var(--pf-text-2); }
 .pf-card-tile:hover { background: var(--pf-surface-2); }
 .pf-card-tile[aria-pressed="true"] { background: var(--pf-accent-soft); color: var(--pf-accent); }
-.pf-card-ball { position: relative; width: 30px; height: 30px; border-radius: 50%; overflow: hidden; background: radial-gradient(circle at 35% 30%, color-mix(in oklab, var(--pf-swatch) 72%, white) 0, var(--pf-swatch) 48%, color-mix(in oklab, var(--pf-swatch) 68%, black) 100%); box-shadow: inset 0 -1px 2px rgb(0 0 0 / .25); }
+.pf-card-ball { position: relative; width: 36px; height: 36px; border-radius: 50%; overflow: hidden; background: radial-gradient(circle at 35% 30%, color-mix(in oklab, var(--pf-swatch) 72%, white) 0, var(--pf-swatch) 48%, color-mix(in oklab, var(--pf-swatch) 68%, black) 100%); box-shadow: inset 0 -1px 2px rgb(0 0 0 / .25); }
 .pf-card-ball img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .pf-card-ball img[hidden] { display: none; }
-.pf-card-tile-label { font-size: 9.5px; line-height: 1.1; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Two lines at most; the Material row names the hovered tile in full. */
+.pf-card-tile-label { font-size: 10.5px; line-height: 1.15; max-width: 100%; min-height: 2.3em; text-align: center; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
 .pf-card-unknown { margin: 0; font-size: 11px; color: var(--pf-err); font-family: var(--pf-mono); }
 .pf-card-unknown[hidden] { display: none; }
 .pf-card-colors { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; }

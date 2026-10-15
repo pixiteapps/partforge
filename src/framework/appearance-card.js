@@ -206,6 +206,30 @@ export function attachAppearanceCard(parts, { onBack, onClose, onGone, getSaveSt
     const ownColor = known(id) && !PRESETS[id].tintable && typeof parts.getState(name)?.override?.color === "number";
     parts.setDisplay(name, ownColor ? { material: id, color: null } : { material: id });
   });
+  // The Material row names the tile under the pointer (or keyboard focus),
+  // then the part's material again: a tile's own label clamps to two lines,
+  // so this is where a long name reads in full. A touch names nothing — a tap
+  // applies the tile, and the row then names it as the material anyway.
+  let previewLabel = null;
+  const showMaterialName = () => {
+    matVal.textContent = previewLabel ?? row?.materialLabel ?? "None";
+    matVal.classList.toggle("preview", previewLabel !== null);
+  };
+  const previewFrom = (e) => {
+    const t = e.target.closest?.(".pf-card-tile");
+    previewLabel = t ? t.title : null;
+    showMaterialName();
+  };
+  const previewEnd = (e) => {
+    const t = e.target.closest?.(".pf-card-tile");
+    if (!t || t.contains(e.relatedTarget)) return;
+    previewLabel = null;
+    showMaterialName();
+  };
+  tiles.addEventListener("pointerover", (e) => { if (e.pointerType !== "touch") previewFrom(e); });
+  tiles.addEventListener("pointerout", (e) => { if (e.pointerType !== "touch") previewEnd(e); });
+  tiles.addEventListener("focusin", previewFrom);
+  tiles.addEventListener("focusout", previewEnd);
   colors.addEventListener("click", (e) => {
     const b = e.target.closest(".pf-card-color");
     if (!b || !name) return;
@@ -238,7 +262,7 @@ export function attachAppearanceCard(parts, { onBack, onClose, onGone, getSaveSt
     see.value = String(pct); seeVal.textContent = `${pct}%`;
     const m = state.effective.material;
     for (const t of tiles.children) t.setAttribute("aria-pressed", String(known(m) && t.dataset.material === m));
-    matVal.textContent = row.materialLabel ?? "None";
+    showMaterialName();
     unknown.hidden = !(m != null && !known(m));
     unknown.textContent = unknown.hidden ? "" : String(m);
     const color = row.color;
@@ -320,7 +344,7 @@ export function attachAppearanceCard(parts, { onBack, onClose, onGone, getSaveSt
     element: root,
     show(next) {
       if (!parts.list().some((r) => r.name === next)) return false;
-      name = next;
+      name = next; previewLabel = null;
       render();
       return true;
     },
