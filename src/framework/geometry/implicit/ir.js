@@ -129,9 +129,13 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
       }
       case "union": case "intersect": case "subtract": {
         const ids = kids(node.children);
-        const k = node.k ?? 0, bs = ids.map((i) => nodes[i].box), G = minG(ids);
-        const lb = node.kind === "union" ? boxPad(bs.reduce(boxUnion), ((ids.length - 1) * k) / 4 / G)
+        const k = node.k ?? 0, bs = ids.map((i) => nodes[i].box), G0 = minG(ids);
+        const lb = node.kind === "union" ? boxPad(bs.reduce(boxUnion), ((ids.length - 1) * k) / 4 / G0)
           : node.kind === "intersect" ? bs.reduce(boxInter) : bs[0];
+        // The child bounds are per-axis (L-infinity), so min-of-children growth holds
+        // only per axis: a rotation above an intersect/subtract can turn the box so the
+        // straight-line growth is up to sqrt(3) slower. Union's box is the union itself.
+        const G = node.kind === "union" ? G0 : G0 / Math.sqrt(3);
         return finish({ kind: node.kind, k, children: ids, L: Math.max(...ids.map((i) => nodes[i].L)) }, lb, Math.min(...ids.map((i) => nodes[i].thin)), G);
       }
       case "mirror": {

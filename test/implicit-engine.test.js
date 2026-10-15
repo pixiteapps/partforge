@@ -59,3 +59,17 @@ describe("derived bounds", () => {
     expect(meshImplicit(withExpr, 0.5).warnings.join(" ")).toMatch(/enlarge the `box` of the `expr` node/);
   });
 });
+
+// An intersect's child bounds are per-axis; a rotation above the node (twist, polar
+// repeat, rotated frame) can turn the box so the real growth is up to sqrt(3) slower.
+describe("derived bounds: intersect under rotation", () => {
+  const I = { kind: "intersect", children: [{ kind: "box", size: [10, 10, 40], at: [-2.5, -2.5, 0] }, { kind: "box", size: [10, 10, 40], at: [2.5, 2.5, 0] }] };
+  const CASES = {
+    twist: { root: { kind: "round", r: 4, child: { kind: "twist", degPerMm: 2.25, child: I } } },
+    polarRepeat: { root: { kind: "round", r: 4, child: { kind: "repeat", polar: { count: 8 }, child: I } } },
+    rotatedFrame: { frames: { f: { rotate: { axis: "z", deg: 45 } } }, root: { kind: "round", r: 4, child: { ...I, frame: "f" } } },
+  };
+  for (const [name, spec] of Object.entries(CASES)) {
+    test(`${name}: not clipped`, () => expect(sampleField(compileImplicit(spec), 0.5).clipped).toBe(false));
+  }
+});
