@@ -43,7 +43,7 @@ function finger(name, spec, s, { flex, abduct, slender, knuckles, blend }) {
       { kind: "ellipsoid", frame: `${name}.pip`, r: [R[1] * 1.02 * bulge, R[1] * 1.25, R[1] * 1.02 * bulge] },
     ],
   };
-  return { frames, flesh, distal, tipR: R[3], tipFrame: `${name}.tip`, jointR: { pip: R[1], dip: R[2] } };
+  return { frames, flesh, distal, tipR: R[3], tipFrame: `${name}.tip`, dorsal: { pip: R[1] * 1.02 * bulge, dip: R[2] } };
 }
 
 /** A fingernail: a shell section around the distal phalanx clipped to an oval footprint, meshed on its own fine grid. */
@@ -69,11 +69,11 @@ function buildHand(pose = {}) {
     Object.assign(frames, f.frames);
     fingers.push(f.flesh);
     nails.push(() => nail(frames, f.distal, f.tipFrame, f.tipR, s));
-    // A crease's radius is measured from the joint's centre, so it must clear the
-    // finger's own radius there to reach the skin: R + 6·s leaves a ~6 mm band of
-    // creases across the dorsal side (side) of each PIP/DIP joint.
+    // A ~6 mm patch of creases on the dorsal skin of each PIP/DIP joint: centred on
+    // the skin above the joint (the PIP knuckle ellipsoid's top; the DIP capsule's),
+    // so the authored radius reaches it; `side` keeps them off the palm side.
     if (p.creases) for (const joint of ["pip", "dip"]) {
-      detail.push({ kind: "creases", frame: `${name}.${joint}`, amplitude: p.creaseDepth, wavelength: 1.6 * s, radius: f.jointR[joint] + 6 * s, axis: "y", side: [0, 0, 1] });
+      detail.push({ kind: "creases", frame: `${name}.${joint}`, at: [0, 0, f.dorsal[joint]], amplitude: p.creaseDepth, wavelength: 1.6 * s, radius: 6 * s, axis: "y", side: [0, 0, 1] });
     }
   }
   const tf = flexOf(p.flex.thumb);
@@ -95,7 +95,7 @@ function buildHand(pose = {}) {
     ],
   };
   nails.push(() => nail(frames, thumbDistal, "thumb.tip", T.r[3], s));
-  if (p.creases) detail.push({ kind: "creases", frame: "thumb.ip", amplitude: p.creaseDepth, wavelength: 1.8 * s, radius: T.r[2] + 7 * s, axis: "y", side: [0, 0, 1] });
+  if (p.creases) detail.push({ kind: "creases", frame: "thumb.ip", amplitude: p.creaseDepth, wavelength: 1.8 * s, at: [0, 0, T.r[2]], radius: 7 * s, axis: "y", side: [0, 0, 1] });
 
   const palm = {
     kind: "union", k: 10 * s, label: "palm", children: [

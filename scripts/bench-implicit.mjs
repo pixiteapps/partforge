@@ -74,6 +74,6 @@ for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
   const k = await bootManifoldKernel();
   k.implicit({ ...handSpec(), preview: 1.4 });   // warm-up (a different grid: no cache hit below)
   const [, tk] = time(() => k.implicit({ ...handSpec(), preview: 1.5 }));
-  console.log(`k.implicit(hand) end to end, after warm-up: ${tk.toFixed(0)} ms`);
+  console.log(`k.implicit(hand) end to end, after warm-up: ${tk.toFixed(0)} CPU ms`);
 }
 setCoreEnabled(true);

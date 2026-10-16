@@ -6,7 +6,8 @@ import { afterEach, describe, expect, test } from "vitest";
 import { core, coreStatus, onCoreFallback, RECYCLE_BYTES, setCoreEnabled, setCoreForTesting } from "../src/framework/core/core.js";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
-import { handSpec, SUB_CELL_PLATE } from "./fixtures/implicit-trees.js";
+import { handSpec, SUB_CELL_PLATE, vaseSpec } from "./fixtures/implicit-trees.js";
+import { planLeaves } from "../src/framework/geometry/implicit/sparse.js";
 
 afterEach(() => {
   setCoreEnabled(true);
@@ -77,10 +78,35 @@ describe("meshImplicit on the native core", () => {
     const trapping = { ...real, live: 0, poisoned: false,
       x: { ...real.x, ip_cleanup: () => { throw new WebAssembly.RuntimeError("unreachable"); } } };
     setCoreForTesting(trapping);
+    const seen = [];
+    onCoreFallback((f) => seen.push(f));
     const compiled = compileImplicit(SPHERE);
     sameResult(meshImplicit(compiled, 0.6), withCore(false, () => meshImplicit(compiled, 0.6)));
     expect(trapping.poisoned).toBe(true);
+    expect(trapping.live).toBe(0);
+    expect(seen).toEqual([{ state: "faulted", reason: "trap" }]);
     expect(coreStatus()).toMatchObject({ state: "faulted", reason: "trap" });
+  });
+
+  test("a core that will not open a session (id 0) is a counted refusal, never a silent fallback", () => {
+    const real = core();
+    const closed = { ...real, live: 0, poisoned: false, x: { ...real.x, ip_session_create: () => 0 } };
+    setCoreForTesting(closed);
+    const seen = [];
+    onCoreFallback((f) => seen.push(f));
+    const compiled = compileImplicit(SPHERE);
+    sameResult(meshImplicit(compiled, 0.6), withCore(false, () => meshImplicit(compiled, 0.6)));
+    expect(closed.poisoned).toBe(false);
+    expect(closed.live).toBe(0);
+    expect(seen).toEqual([]);
+    expect(coreStatus().refusedMeshes).toBe(1);
+  });
+
+  test("the plan's textures are the compiled tree's (detail slots and session slots agree)", () => {
+    const vase = vaseSpec();
+    const compiled = compileImplicit(vase.spec, { images: vase.images });
+    expect(compiled.textures.length).toBeGreaterThan(0);
+    expect(planLeaves(compiled, 1.2).textures).toBe(compiled.textures);
   });
 
   test("a refusal is counted, not reported, and leaves the core usable", () => {

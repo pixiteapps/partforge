@@ -37,7 +37,9 @@ export class NativeSession {
     this.io = 0;      // one block: X, Y, Z, out — `cap` doubles each, reused across eval calls
     this.cap = 0;
     this.id = this.#call(() => c.x.ip_session_create());
-    if (!this.id) throw CORE_FAULT;
+    // The core numbers sessions from 1 and an allocation failure inside it traps
+    // (a fault, above), so 0 is a refusal from an instance that will not open one.
+    if (!this.id) throw refusal("implicit: the core would not open a session");
     c.live++;         // a live session pins its instance, like a core BVH
   }
 
@@ -372,16 +374,16 @@ export function meshImplicitCore(compiled, edge, plan) {
   if (!c) return null;
   if (!acceptsPlan(plan)) { countRefusedMesh(); return null; }
   const flat = compiled.detail.length ? flattenDetail(compiled) : null;
-  let s = null;
+  let s = null, mesh, clipped;
   try {
     s = new NativeSession(c);
-    // Plan order: a leaf's progIndex and a program's texture slots are session indices.
+    // Plan order: a leaf's progIndex and a program's texture slots are session indices
+    // (plan.textures IS compiled.textures, so the detail's slots name the same ones).
     plan.textures.forEach((t, i) => { if (s.addTexture(t) !== i) throw refusal("implicit: the core numbered a texture out of plan order"); });
     plan.programs.forEach((p, i) => { if (s.addProgram(p) !== i) throw refusal("implicit: the core numbered a program out of plan order"); });
-    const { clipped } = s.sample(plan, { readBack: false });
+    ({ clipped } = s.sample(plan, { readBack: false }));
     s.mesh({ readBack: false });
-    const mesh = flat ? (s.cleanup(CLEANUP, { readBack: false }), s.detail(flat)) : s.cleanup(CLEANUP);
-    return implicitResult(compiled, edge, plan, mesh, clipped);
+    mesh = flat ? (s.cleanup(CLEANUP, { readBack: false }), s.detail(flat)) : s.cleanup(CLEANUP);
   } catch (err) {
     if (err === CORE_FAULT) return null;   // poisoned and reported already
     if (err?.code === CORE_REFUSED) { countRefusedMesh(); return null; }
@@ -390,4 +392,6 @@ export function meshImplicitCore(compiled, edge, plan) {
   } finally {
     s?.destroy();
   }
+  // Outside the try: pure JS, so a throw here can never poison the core.
+  return implicitResult(compiled, edge, plan, mesh, clipped);
 }
