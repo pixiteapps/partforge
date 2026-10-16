@@ -178,7 +178,11 @@ std::vector<Session*> g_sessions;   // id = index + 1; null once destroyed
 
 }  // namespace
 
-double eval_prim(int code, const double* P, double x, double y, double z) {
+namespace {
+void decode(Program& p);   // below run's helpers; validate calls it on success
+
+// eval_prim's body, forced inline so prim_lanes<CODE> folds the switch away.
+__attribute__((always_inline)) inline double prim_at(int code, const double* P, double x, double y, double z) {
   switch (code) {
     case 1: return hypot3(x, y, z) - P[0];
     case 2: return jsmin(jsmin(P[0], P[1]), P[2]) * (hypot3(x / P[0], y / P[1], z / P[2]) - 1);
@@ -219,6 +223,9 @@ double eval_prim(int code, const double* P, double x, double y, double z) {
     default: return P[0] * x + P[1] * y + P[2] * z - P[3];   // 8; validate() refuses others
   }
 }
+}  // namespace
+
+double eval_prim(int code, const double* P, double x, double y, double z) { return prim_at(code, P, x, y, z); }
 
 double sample_texture(const Texture& t, double u, double v) {
   const double uc = u > 0 ? (u < 1 ? u : 1) : 0;   // NaN fails `u > 0` -> 0
@@ -256,6 +263,7 @@ void validate(Program& p) {
       case END:
         if (!has(2) || !isV(pc + 1)) return;
         p.ok = true;
+        decode(p);
         return;
       case XFORM: case XDIR:
         if (!has(15) || !isP(pc + 1) || !isP(pc + 2)) return;
@@ -320,167 +328,309 @@ void validate(Program& p) {
   }
 }
 
+namespace {
+
+// The ops' register operands and sub-codes as ints, once per program (see Inst).
+void decode(Program& p) {
+  const double* c = p.code.data();
+  std::vector<Inst>& out = p.insts;
+  out.clear();
+  size_t pc = 2;
+  for (;;) {
+    Inst I{(int32_t)c[pc], -1, 0, 0, 0, 0, 0, 0};
+    switch (I.op) {
+      case END: I.a = (int32_t)c[pc + 1]; out.push_back(I); return;
+      case XFORM: case XDIR: I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 2]; I.at = (int32_t)(pc + 3); pc += 15; break;
+      case PRIM:
+        I.sub = (int32_t)c[pc + 1]; I.d = (int32_t)c[pc + 2]; I.a = (int32_t)c[pc + 3]; I.at = (int32_t)(pc + 5);
+        pc += 5 + (size_t)c[pc + 4]; break;
+      case UNION: case INTER:
+        I.d = (int32_t)c[pc + 1]; I.at = (int32_t)(pc + 2); I.cnt = (int32_t)c[pc + 3]; pc += 4 + (size_t)I.cnt; break;
+      case NEG: case SANITIZE: I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 2]; pc += 3; break;
+      case MIN2: I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 2]; I.b = (int32_t)c[pc + 3]; pc += 4; break;
+      case MIRRORP: {
+        const double axis = c[pc + 3];
+        I.sub = axis == 0 ? 0 : axis == 1 ? 1 : axis == 2 ? 2 : -1;
+        I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 2]; pc += 4; break;
+      }
+      case ADDC: case ONION: I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 2]; I.at = (int32_t)(pc + 3); pc += 4; break;
+      case WARP: {
+        const double kind = c[pc + 1];
+        I.sub = kind == 1 ? 1 : kind == 2 ? 2 : 0;
+        I.d = (int32_t)c[pc + 2]; I.a = (int32_t)c[pc + 3]; I.at = (int32_t)(pc + 5);
+        pc += 5 + (size_t)c[pc + 4]; break;
+      }
+      case DISP:
+        I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 2]; I.b = (int32_t)c[pc + 3]; I.at = (int32_t)(pc + 4); pc += 5; break;
+      case GET: {
+        const double comp = c[pc + 3];
+        I.sub = comp == 0 ? 0 : comp == 1 ? 1 : 2;
+        I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 2]; pc += 4; break;
+      }
+      case CONST: I.d = (int32_t)c[pc + 1]; I.at = (int32_t)(pc + 2); pc += 3; break;
+      case UN: I.sub = (int32_t)c[pc + 1]; I.d = (int32_t)c[pc + 2]; I.a = (int32_t)c[pc + 3]; pc += 4; break;
+      case BIN:
+        I.sub = (int32_t)c[pc + 1]; I.d = (int32_t)c[pc + 2]; I.a = (int32_t)c[pc + 3]; I.b = (int32_t)c[pc + 4]; pc += 5; break;
+      case TER:
+        I.sub = (int32_t)c[pc + 1]; I.d = (int32_t)c[pc + 2]; I.a = (int32_t)c[pc + 3]; I.b = (int32_t)c[pc + 4];
+        I.c = (int32_t)c[pc + 5]; pc += 6; break;
+      case TEX:
+        I.sub = (int32_t)c[pc + 2]; I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 3]; I.b = (int32_t)c[pc + 4]; pc += 5; break;
+      default: return;   // unreachable: decode runs on validated programs only
+    }
+    out.push_back(I);
+  }
+}
+
+// One primitive over n lanes: the code is dispatched once per op, the lane loop
+// is eval_prim's case body (inlined), with the same arithmetic per lane. The
+// ellipsoid's min(P0, P1, P2) is lane-invariant, so it is computed once — the
+// same double every lane would compute.
+template <int CODE>
+void prim_lanes(const double* P, const double* X, const double* Y, const double* Z, int n, double* d) {
+  if (CODE == 2) {
+    const double r = jsmin(jsmin(P[0], P[1]), P[2]), p0 = P[0], p1 = P[1], p2 = P[2];
+    for (int i = 0; i < n; i++) d[i] = r * (hypot3(X[i] / p0, Y[i] / p1, Z[i] / p2) - 1);
+  } else {
+    for (int i = 0; i < n; i++) d[i] = prim_at(CODE, P, X[i], Y[i], Z[i]);
+  }
+}
+
+// unionN / intersectN over n lanes, operand-major: each pass runs one operand
+// across every lane, and a lane's own operations are the same, in the same
+// operand order, as union_n / intersect_n (first-wins ties, the sum from +0).
+template <bool UNI>
+void blend_lanes(Session& s, const double* const* src, int cnt, double k, int n, double* d) {
+  double* m = s.um.data();
+  double* sum = s.us.data();
+  int32_t* am = s.uam.data();
+  const double* v0 = src[0];
+  for (int i = 0; i < n; i++) { m[i] = v0[i]; am[i] = 0; }
+  for (int j = 1; j < cnt; j++) {
+    const double* v = src[j];
+    for (int i = 0; i < n; i++) {
+      if (UNI ? v[i] < m[i] : v[i] > m[i]) { m[i] = v[i]; am[i] = j; }
+    }
+  }
+  if (!(k > 0)) { for (int i = 0; i < n; i++) d[i] = m[i]; return; }
+  for (int i = 0; i < n; i++) sum[i] = 0;
+  for (int j = 0; j < cnt; j++) {
+    const double* v = src[j];
+    for (int i = 0; i < n; i++) {
+      if (j == am[i]) continue;
+      const double g = UNI ? k - (v[i] - m[i]) : k - (m[i] - v[i]);
+      if (g > 0) { const double h = g / k; sum[i] += h * h; }
+    }
+  }
+  for (int i = 0; i < n; i++) d[i] = UNI ? m[i] - sum[i] * k * 0.25 : m[i] + sum[i] * k * 0.25;
+}
+
+}  // namespace
+
 void run(Session& s, const Program& p, const double* X, const double* Y, const double* Z, int n, double* out) {
   const size_t needP = (size_t)p.nP * BATCH, needV = (size_t)(p.nV > 0 ? p.nV : 1) * BATCH;
   if (s.PX.size() < needP) { s.PX.resize(needP); s.PY.resize(needP); s.PZ.resize(needP); }
   if (s.V.size() < needV) s.V.resize(needV);
+  if (s.um.size() < (size_t)BATCH) { s.um.resize(BATCH); s.us.resize(BATCH); s.uam.resize(BATCH); }
   double* PX = s.PX.data();
   double* PY = s.PY.data();
   double* PZ = s.PZ.data();
   double* V = s.V.data();
-  auto px = [&](double r) { return PX + (size_t)r * BATCH; };
-  auto py = [&](double r) { return PY + (size_t)r * BATCH; };
-  auto pz = [&](double r) { return PZ + (size_t)r * BATCH; };
-  auto vr = [&](double r) { return V + (size_t)r * BATCH; };
+  auto px = [&](int32_t r) { return PX + (size_t)r * BATCH; };
+  auto py = [&](int32_t r) { return PY + (size_t)r * BATCH; };
+  auto pz = [&](int32_t r) { return PZ + (size_t)r * BATCH; };
+  auto vr = [&](int32_t r) { return V + (size_t)r * BATCH; };
   std::memcpy(PX, X, sizeof(double) * n);
   std::memcpy(PY, Y, sizeof(double) * n);
   std::memcpy(PZ, Z, sizeof(double) * n);
   const double* c = p.code.data();
-  size_t pc = 2;
-  double tmp[3];
-  for (;;) {
-    switch ((int)c[pc]) {
+  for (const Inst& I : p.insts) {
+    switch (I.op) {
       case END: {
-        const double* v = vr(c[pc + 1]);
+        const double* v = vr(I.a);
         for (int i = 0; i < n; i++) out[i] = v[i];
         return;
       }
       case XFORM: case XDIR: {
-        const bool point = (int)c[pc] == XFORM;
-        const double* M = c + pc + 3;
-        const double *sx = px(c[pc + 2]), *sy = py(c[pc + 2]), *sz = pz(c[pc + 2]);
-        double *dx = px(c[pc + 1]), *dy = py(c[pc + 1]), *dz = pz(c[pc + 1]);
-        for (int i = 0; i < n; i++) {
-          if (point) xform_point(tmp, M, sx[i], sy[i], sz[i]); else xform_dir(tmp, M, sx[i], sy[i], sz[i]);
-          dx[i] = tmp[0]; dy[i] = tmp[1]; dz[i] = tmp[2];
+        const double* M = c + I.at;
+        const double m0 = M[0], m1 = M[1], m2 = M[2], m3 = M[3], m4 = M[4], m5 = M[5], m6 = M[6], m7 = M[7], m8 = M[8];
+        const double *sx = px(I.a), *sy = py(I.a), *sz = pz(I.a);
+        double *dx = px(I.d), *dy = py(I.d), *dz = pz(I.d);
+        if (I.op == XFORM) {
+          const double t0 = M[9], t1 = M[10], t2 = M[11];
+          for (int i = 0; i < n; i++) {
+            const double x = sx[i], y = sy[i], z = sz[i];
+            dx[i] = m0 * x + m1 * y + m2 * z + t0;
+            dy[i] = m3 * x + m4 * y + m5 * z + t1;
+            dz[i] = m6 * x + m7 * y + m8 * z + t2;
+          }
+        } else {
+          for (int i = 0; i < n; i++) {
+            const double x = sx[i], y = sy[i], z = sz[i];
+            dx[i] = m0 * x + m1 * y + m2 * z;
+            dy[i] = m3 * x + m4 * y + m5 * z;
+            dz[i] = m6 * x + m7 * y + m8 * z;
+          }
         }
-        pc += 15; break;
+        break;
       }
       case PRIM: {
-        const int code = (int)c[pc + 1];
-        double* dv = vr(c[pc + 2]);
-        const double *sx = px(c[pc + 3]), *sy = py(c[pc + 3]), *sz = pz(c[pc + 3]);
-        const size_t np = (size_t)c[pc + 4];
-        const double* P = c + pc + 5;
-        for (int i = 0; i < n; i++) dv[i] = eval_prim(code, P, sx[i], sy[i], sz[i]);
-        pc += 5 + np; break;
+        double* dv = vr(I.d);
+        const double *sx = px(I.a), *sy = py(I.a), *sz = pz(I.a);
+        const double* P = c + I.at;
+        switch (I.sub) {
+          case 1: prim_lanes<1>(P, sx, sy, sz, n, dv); break;
+          case 2: prim_lanes<2>(P, sx, sy, sz, n, dv); break;
+          case 3: prim_lanes<3>(P, sx, sy, sz, n, dv); break;
+          case 4: prim_lanes<4>(P, sx, sy, sz, n, dv); break;
+          case 5: prim_lanes<5>(P, sx, sy, sz, n, dv); break;
+          case 6: prim_lanes<6>(P, sx, sy, sz, n, dv); break;
+          case 7: prim_lanes<7>(P, sx, sy, sz, n, dv); break;
+          default: prim_lanes<8>(P, sx, sy, sz, n, dv); break;
+        }
+        break;
       }
       case UNION: case INTER: {
-        const bool uni = (int)c[pc] == UNION;
-        double* dv = vr(c[pc + 1]);
-        const double k = c[pc + 2];
-        const int cnt = (int)c[pc + 3];
-        if ((int)s.gather.size() < cnt) { s.gather.resize(cnt); s.gsrc.resize(cnt); }
-        double* g = s.gather.data();
+        const double k = c[I.at];
+        if ((int)s.gsrc.size() < I.cnt) s.gsrc.resize(I.cnt);
         const double** src = s.gsrc.data();
-        for (int j = 0; j < cnt; j++) src[j] = vr(c[pc + 4 + j]);
-        for (int i = 0; i < n; i++) {
-          for (int j = 0; j < cnt; j++) g[j] = src[j][i];
-          dv[i] = uni ? union_n(g, cnt, k) : intersect_n(g, cnt, k);
-        }
-        pc += 4 + cnt; break;
+        for (int j = 0; j < I.cnt; j++) src[j] = vr((int32_t)c[I.at + 2 + j]);
+        if (I.op == UNION) blend_lanes<true>(s, src, I.cnt, k, n, vr(I.d));
+        else blend_lanes<false>(s, src, I.cnt, k, n, vr(I.d));
+        break;
       }
       case NEG: {
-        double* d = vr(c[pc + 1]);
-        const double* a = vr(c[pc + 2]);
+        double* d = vr(I.d);
+        const double* a = vr(I.a);
         for (int i = 0; i < n; i++) d[i] = -a[i];
-        pc += 3; break;
+        break;
       }
       case MIN2: {
-        double* d = vr(c[pc + 1]);
-        const double *a = vr(c[pc + 2]), *b = vr(c[pc + 3]);
+        double* d = vr(I.d);
+        const double *a = vr(I.a), *b = vr(I.b);
         for (int i = 0; i < n; i++) d[i] = jsmin(a[i], b[i]);
-        pc += 4; break;
+        break;
       }
       case MIRRORP: {
-        const double axis = c[pc + 3];
-        const double *sx = px(c[pc + 2]), *sy = py(c[pc + 2]), *sz = pz(c[pc + 2]);
-        double *dx = px(c[pc + 1]), *dy = py(c[pc + 1]), *dz = pz(c[pc + 1]);
+        const double *sx = px(I.a), *sy = py(I.a), *sz = pz(I.a);
+        double *dx = px(I.d), *dy = py(I.d), *dz = pz(I.d);
+        const int axis = I.sub;
         for (int i = 0; i < n; i++) {
-          mirror_point(tmp, axis, sx[i], sy[i], sz[i]);
-          dx[i] = tmp[0]; dy[i] = tmp[1]; dz[i] = tmp[2];
+          const double x = sx[i], y = sy[i], z = sz[i];
+          dx[i] = axis == 0 ? -x : x; dy[i] = axis == 1 ? -y : y; dz[i] = axis == 2 ? -z : z;
         }
-        pc += 4; break;
+        break;
       }
       case ADDC: {
-        double* d = vr(c[pc + 1]);
-        const double* a = vr(c[pc + 2]);
-        const double k = c[pc + 3];
+        double* d = vr(I.d);
+        const double* a = vr(I.a);
+        const double k = c[I.at];
         for (int i = 0; i < n; i++) d[i] = a[i] + k;
-        pc += 4; break;
+        break;
       }
       case ONION: {
-        double* d = vr(c[pc + 1]);
-        const double* a = vr(c[pc + 2]);
-        const double t = c[pc + 3];
+        double* d = vr(I.d);
+        const double* a = vr(I.a);
+        const double t = c[I.at];
         for (int i = 0; i < n; i++) d[i] = std::fabs(a[i]) - t;
-        pc += 4; break;
+        break;
       }
       case WARP: {
-        const double kind = c[pc + 1];
-        const size_t np = (size_t)c[pc + 4];
-        const double* W = c + pc + 5;
-        const double *sx = px(c[pc + 3]), *sy = py(c[pc + 3]), *sz = pz(c[pc + 3]);
-        double *dx = px(c[pc + 2]), *dy = py(c[pc + 2]), *dz = pz(c[pc + 2]);
+        const double* W = c + I.at;
+        const double *sx = px(I.a), *sy = py(I.a), *sz = pz(I.a);
+        double *dx = px(I.d), *dy = py(I.d), *dz = pz(I.d);
+        const double kind = I.sub;   // 1 twist, 2 bend, 0 taper (warp_point's else)
+        double tmp[3];
         for (int i = 0; i < n; i++) {
           warp_point(tmp, kind, W, sx[i], sy[i], sz[i]);
           dx[i] = tmp[0]; dy[i] = tmp[1]; dz[i] = tmp[2];
         }
-        pc += 5 + np; break;
+        break;
       }
       case DISP: {
-        double* d = vr(c[pc + 1]);
-        const double *a = vr(c[pc + 2]), *b = vr(c[pc + 3]);
-        const double amt = c[pc + 4];
+        double* d = vr(I.d);
+        const double *a = vr(I.a), *b = vr(I.b);
+        const double amt = c[I.at];
         for (int i = 0; i < n; i++) d[i] = a[i] - amt * clamp_unit(b[i]);
-        pc += 5; break;
+        break;
       }
       case SANITIZE: {
-        double* d = vr(c[pc + 1]);
-        const double* a = vr(c[pc + 2]);
+        double* d = vr(I.d);
+        const double* a = vr(I.a);
         for (int i = 0; i < n; i++) d[i] = sanitize(a[i]);
-        pc += 3; break;
+        break;
       }
       case GET: {
-        double* d = vr(c[pc + 1]);
-        const double comp = c[pc + 3];
-        const double* src = comp == 0 ? px(c[pc + 2]) : comp == 1 ? py(c[pc + 2]) : pz(c[pc + 2]);
+        double* d = vr(I.d);
+        const double* src = I.sub == 0 ? px(I.a) : I.sub == 1 ? py(I.a) : pz(I.a);
         for (int i = 0; i < n; i++) d[i] = src[i];
-        pc += 4; break;
+        break;
       }
       case CONST: {
-        double* d = vr(c[pc + 1]);
-        const double k = c[pc + 2];
+        double* d = vr(I.d);
+        const double k = c[I.at];
         for (int i = 0; i < n; i++) d[i] = k;
-        pc += 3; break;
+        break;
       }
+#define PF_LANES(EXPR) for (int i = 0; i < n; i++) d[i] = (EXPR); break
       case UN: {
-        const int f = (int)c[pc + 1];
-        double* d = vr(c[pc + 2]);
-        const double* a = vr(c[pc + 3]);
-        for (int i = 0; i < n; i++) d[i] = un_fn(f, a[i]);
-        pc += 4; break;
+        double* d = vr(I.d);
+        const double* a = vr(I.a);
+        switch (I.sub) {
+          case U_NEG: PF_LANES(un_fn(U_NEG, a[i]));
+          case U_ABS: PF_LANES(un_fn(U_ABS, a[i]));
+          case U_FLOOR: PF_LANES(un_fn(U_FLOOR, a[i]));
+          case U_FRACT: PF_LANES(un_fn(U_FRACT, a[i]));
+          case U_SQRT: PF_LANES(un_fn(U_SQRT, a[i]));
+          case U_SIN: PF_LANES(un_fn(U_SIN, a[i]));
+          case U_COS: PF_LANES(un_fn(U_COS, a[i]));
+          default: PF_LANES(un_fn(U_NOT, a[i]));
+        }
+        break;
       }
       case BIN: {
-        const int f = (int)c[pc + 1];
-        double* d = vr(c[pc + 2]);
-        const double *a = vr(c[pc + 3]), *b = vr(c[pc + 4]);
-        for (int i = 0; i < n; i++) d[i] = bin_fn(f, a[i], b[i]);
-        pc += 5; break;
+        double* d = vr(I.d);
+        const double *a = vr(I.a), *b = vr(I.b);
+        switch (I.sub) {
+          case B_ADD: PF_LANES(bin_fn(B_ADD, a[i], b[i]));
+          case B_SUB: PF_LANES(bin_fn(B_SUB, a[i], b[i]));
+          case B_MUL: PF_LANES(bin_fn(B_MUL, a[i], b[i]));
+          case B_DIV: PF_LANES(bin_fn(B_DIV, a[i], b[i]));
+          case B_MIN: PF_LANES(bin_fn(B_MIN, a[i], b[i]));
+          case B_MAX: PF_LANES(bin_fn(B_MAX, a[i], b[i]));
+          case B_MOD: PF_LANES(bin_fn(B_MOD, a[i], b[i]));
+          case B_STEP: PF_LANES(bin_fn(B_STEP, a[i], b[i]));
+          case B_LT: PF_LANES(bin_fn(B_LT, a[i], b[i]));
+          case B_GT: PF_LANES(bin_fn(B_GT, a[i], b[i]));
+          case B_LE: PF_LANES(bin_fn(B_LE, a[i], b[i]));
+          case B_GE: PF_LANES(bin_fn(B_GE, a[i], b[i]));
+          case B_EQ: PF_LANES(bin_fn(B_EQ, a[i], b[i]));
+          case B_NE: PF_LANES(bin_fn(B_NE, a[i], b[i]));
+          case B_AND: PF_LANES(bin_fn(B_AND, a[i], b[i]));
+          default: PF_LANES(bin_fn(B_OR, a[i], b[i]));
+        }
+        break;
       }
       case TER: {
-        const int f = (int)c[pc + 1];
-        double* d = vr(c[pc + 2]);
-        const double *a = vr(c[pc + 3]), *b = vr(c[pc + 4]), *e = vr(c[pc + 5]);
-        for (int i = 0; i < n; i++) d[i] = ter_fn(f, a[i], b[i], e[i]);
-        pc += 6; break;
+        double* d = vr(I.d);
+        const double *a = vr(I.a), *b = vr(I.b), *e = vr(I.c);
+        switch (I.sub) {
+          case T_CLAMP: PF_LANES(ter_fn(T_CLAMP, a[i], b[i], e[i]));
+          case T_MIX: PF_LANES(ter_fn(T_MIX, a[i], b[i], e[i]));
+          case T_SMOOTHSTEP: PF_LANES(ter_fn(T_SMOOTHSTEP, a[i], b[i], e[i]));
+          case T_SMIN: PF_LANES(ter_fn(T_SMIN, a[i], b[i], e[i]));
+          case T_SMAX: PF_LANES(ter_fn(T_SMAX, a[i], b[i], e[i]));
+          default: PF_LANES(ter_fn(T_SELECT, a[i], b[i], e[i]));
+        }
+        break;
       }
+#undef PF_LANES
       case TEX: {
-        double* d = vr(c[pc + 1]);
-        const Texture& t = s.textures[(size_t)c[pc + 2]];
-        const double *u = vr(c[pc + 3]), *v = vr(c[pc + 4]);
+        double* d = vr(I.d);
+        const Texture& t = s.textures[(size_t)I.sub];
+        const double *u = vr(I.a), *v = vr(I.b);
         for (int i = 0; i < n; i++) d[i] = sample_texture(t, u[i], v[i]);
-        pc += 5; break;
+        break;
       }
       default: return;   // unreachable for a validated program
     }

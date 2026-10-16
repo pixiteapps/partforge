@@ -11,6 +11,9 @@ namespace ipm {
 
 // ECMAScript ToInt32: NaN/+-Inf -> 0, truncate toward zero, wrap modulo 2^32.
 inline int32_t to_int32(double x) {
+  // In int32 range a truncating conversion is ToInt32 (NaN fails both tests);
+  // fmod is a libc call in WebAssembly, so it is kept for the wrap-around alone.
+  if (x > -2147483649.0 && x < 2147483648.0) return (int32_t)x;
   if (!std::isfinite(x)) return 0;
   double t = std::trunc(x);
   double m = std::fmod(t, 4294967296.0);
@@ -38,7 +41,13 @@ inline double k_cos(double r) {
   return 1 - (0.5 * z - z * (z * (C1 + z * (C2 + z * (C3 + z * (C4 + z * (C5 + z * C6)))))));
 }
 // JS ((n % 4) + 4) % 4 — JS % is fmod.
-inline double quadrant(double n) { return std::fmod(std::fmod(n, 4.0) + 4.0, 4.0); }
+// ((n % 4) + 4) % 4 for an INTEGER n (the callers pass floor()'s result). Below
+// 2^52 the integer remainder is exact and gives the same value (-0 included: it
+// comes out +0 either way); NaN, infinities and larger n take the fmod path.
+inline double quadrant(double n) {
+  if (std::fabs(n) < 4503599627370496.0) { const int64_t i = (int64_t)n; return (double)(((i % 4) + 4) % 4); }
+  return std::fmod(std::fmod(n, 4.0) + 4.0, 4.0);
+}
 
 constexpr double ATANHI[4] = {4.63647609000806093515e-01, 7.85398163397448278999e-01,
                               9.82793723247329054082e-01, 1.57079632679489655800e+00};

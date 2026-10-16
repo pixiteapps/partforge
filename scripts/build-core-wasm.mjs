@@ -38,8 +38,15 @@ export const EXPORTS = [
 ];
 // -ffp-contract=off: the core must round every operation exactly as the JS does
 // (see native/js_math.h). WebAssembly has no FMA to fuse into, but say so anyway.
+// -msimd128 lets the compiler run independent lanes two at a time (the implicit
+// interpreter's lane loops): f64x2 add/sub/mul/div/sqrt round each lane exactly as
+// the scalar ops do, and without -ffast-math nothing is reassociated, so the bits
+// are unchanged (test/core-parity.test.js, test/implicit-native-*.test.js). Not
+// -mrelaxed-simd, whose madd is a fused multiply-add. Every engine partforge
+// targets has had SIMD since 2023 (Safari 16.4); one without it fails to compile
+// the module, which is the core's ordinary `boot_failed` fallback to the JS.
 export const FLAGS = [
-  "-O3", "-std=c++17", "-fno-exceptions", "-fno-rtti", "-ffp-contract=off",
+  "-O3", "-std=c++17", "-fno-exceptions", "-fno-rtti", "-ffp-contract=off", "-msimd128",
   "--no-entry", "-sSTANDALONE_WASM", "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=16MB",
   `-sEXPORTED_FUNCTIONS=${EXPORTS.map((e) => `_${e}`).join(",")}`,
 ];

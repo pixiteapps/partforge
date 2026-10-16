@@ -16,10 +16,12 @@
 //     ((n*n)*n)*n and the three reads summed left to right; an expr height runs
 //     its program on ONE lane and NaN reads as 0;
 //   - each round's targets are computed for every vertex before any split; the
-//     midpoint key is a < b ? a*nv + b : b*nv + a (64-bit; the JS's double is
-//     exact below 2^53), a refused edge is remembered as -1, and midpoints are
+//     midpoint key is the unordered pair {a, b} (the JS's a < b ? a*nv + b :
+//     b*nv + a, exact below 2^53, names the same pair), a refused edge answers -1
+//     every time (the JS remembers it as -1; the test is re-run instead), and midpoints are
 //     numbered in creation order: triangles in order, edges (v0v1, v1v2, v2v0)
-//     left to right. The map is only found and inserted, never iterated;
+//     left to right. The map (per-vertex chains here) is only found and
+//     inserted, never iterated;
 //   - splitTri's four cases with the JS's canonical rotations;
 //   - the new vertices are projected by ipm_mesh::project (maxStep = edge, with
 //     normals) in creation order, then a midpoint left without a normal takes
@@ -30,7 +32,6 @@
 #include <cstdint>
 #include <vector>
 
-#include "flat_map.h"
 #include "implicit_eval.h"
 #include "implicit_math.h"
 #include "implicit_mesh.h"
@@ -57,31 +58,48 @@ struct Ctx {
   std::vector<const ipe::Program*> progs;   // per entry: its expr program, or null
 };
 
-// Entry o's local point and normal (the entry's frame, when it has one).
-inline void local(double* p, double* n, const double* F, int o, double x, double y, double z, double nx, double ny, double nz) {
+// Entry o's local point, and its local direction (the entry's frame, when it
+// has one) — computed separately, so a vertex outside the entry's radius never
+// pays for the normal: the same products and sums as frames.js, per component.
+inline void localPoint(double* p, const double* F, int o, double x, double y, double z) {
   if (F[o + HAS_INV] != 0) {
     const double* M = F + o + INV;
     p[0] = M[0] * x + M[1] * y + M[2] * z + M[9];
     p[1] = M[3] * x + M[4] * y + M[5] * z + M[10];
     p[2] = M[6] * x + M[7] * y + M[8] * z + M[11];
+  } else { p[0] = x; p[1] = y; p[2] = z; }
+}
+inline void localDir(double* n, const double* F, int o, double nx, double ny, double nz) {
+  if (F[o + HAS_INV] != 0) {
+    const double* M = F + o + INV;
     n[0] = M[0] * nx + M[1] * ny + M[2] * nz;
     n[1] = M[3] * nx + M[4] * ny + M[5] * nz;
     n[2] = M[6] * nx + M[7] * ny + M[8] * nz;
-  } else { p[0] = x; p[1] = y; p[2] = z; n[0] = nx; n[1] = ny; n[2] = nz; }
+  } else { n[0] = nx; n[1] = ny; n[2] = nz; }
 }
 
-inline double weight(const double* F, int o, double lx, double ly, double lz, double nx, double ny, double nz) {
+// detail.js's weight at local point p (world normal nx, ny, nz). The JS tests the
+// side first and the radius second, returning 0 from whichever fails; both
+// return 0, so testing the radius first returns the same value and lets a
+// vertex outside the radius skip the normal's transform. A weight that passes
+// both is computed as the JS computes it: the side ramp, then w *= (1 - r2)^2.
+inline double weight(const double* F, int o, const double* p, double nx, double ny, double nz) {
+  const double radius = F[o + RADIUS];
+  double r2 = 0;
+  if (radius >= 0) {
+    r2 = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]) / (radius * radius);
+    if (r2 >= 1) return 0;
+  }
   double w = 1;
   if (F[o + HAS_SIDE] != 0) {
-    const double d = nx * F[o + SIDE] + ny * F[o + SIDE + 1] + nz * F[o + SIDE + 2];
+    double n[3];
+    localDir(n, F, o, nx, ny, nz);
+    const double d = n[0] * F[o + SIDE] + n[1] * F[o + SIDE + 1] + n[2] * F[o + SIDE + 2];
     const double s = (d - 0.15) / 0.5;
     w = s < 0 ? 0 : s > 1 ? 1 : s;
     if (w == 0) return 0;
   }
-  const double radius = F[o + RADIUS];
   if (radius >= 0) {
-    const double r2 = (lx * lx + ly * ly + lz * lz) / (radius * radius);
-    if (r2 >= 1) return 0;
     const double f = 1 - r2;
     w *= f * f;
   }
@@ -97,9 +115,10 @@ double entryHeight(Ctx& c, int k, double x, double y, double z, double nx, doubl
   const double* F = c.F;
   const int o = STRIDE * k;
   double p[3], n[3];
-  local(p, n, F, o, x, y, z, nx, ny, nz);
-  const double w = weight(F, o, p[0], p[1], p[2], n[0], n[1], n[2]);
+  localPoint(p, F, o, x, y, z);
+  const double w = weight(F, o, p, nx, ny, nz);
   if (w == 0) return 0;
+  localDir(n, F, o, nx, ny, nz);
   const double kind = F[o + KIND], axis = F[o + AXIS], amplitude = F[o + AMPLITUDE], wavelength = F[o + WAVELENGTH];
   if (kind == 1) return -amplitude * jsmath::jsmax(0, ipm::pf_cos((TWO_PI * at3(p, axis)) / wavelength)) * w;
   if (kind == 2) return amplitude * 2 * ipm::value_noise(p[0] / wavelength, p[1] / wavelength, p[2] / wavelength) * w;
@@ -128,12 +147,16 @@ double entryHeight(Ctx& c, int k, double x, double y, double z, double nx, doubl
 // detail.js's targetAt.
 double targetAt(Ctx& c, const std::vector<double>& P, const std::vector<double>& N, size_t v, double edge) {
   const double* F = c.F;
-  double t = INFINITY, lp[3], ln[3];
+  double t = INFINITY, lp[3];
   for (int k = 0; k < c.count; k++) {
     const int o = STRIDE * k;
     const double target = F[o + TARGET];
-    local(lp, ln, F, o, P[3 * v], P[3 * v + 1], P[3 * v + 2], N[3 * v], N[3 * v + 1], N[3 * v + 2]);
-    if (weight(F, o, lp[0], lp[1], lp[2], ln[0], ln[1], ln[2]) > 0) t = jsmath::jsmin(t, target == INFINITY ? edge / 2 : target);
+    const double tk = target == INFINITY ? edge / 2 : target;
+    // jsmin(t, tk) is t whenever t <= tk and t is not a zero (whose sign jsmin
+    // may change): the weight cannot matter then, so it is not computed.
+    if (t <= tk && t != 0) continue;
+    localPoint(lp, F, o, P[3 * v], P[3 * v + 1], P[3 * v + 2]);
+    if (weight(F, o, lp, N[3 * v], N[3 * v + 1], N[3 * v + 2]) > 0) t = jsmath::jsmin(t, tk);
   }
   return jsmath::jsmax(edge / 8, t);
 }
@@ -198,23 +221,40 @@ int detail(ipe::Session& s, const double* F, int count, const int32_t* progIndex
   std::vector<double> target;
   std::vector<int32_t> added;
   std::vector<uint32_t> ends, out;
+  std::vector<int32_t> head, nodeNext;
+  std::vector<uint32_t> nodeHi;
+  std::vector<int64_t> nodeVal;
   for (int round = 0; round < MAX_REFINE_ROUNDS; round++) {
     const size_t nv = P.size() / 3;
+    // A vertex's target reads only its own position and normal, the entries and
+    // the edge, and a round moves only the vertices it adds (projection and
+    // midpointNormal touch `added` alone): every older vertex keeps last round's
+    // target, so only the new ones are computed.
+    const size_t known = target.size();
     target.resize(nv);
-    for (size_t v = 0; v < nv; v++) target[v] = targetAt(c, P, N, v, edge);
-    flat::Map<int64_t> mid(s.indices.size() / 2);   // about one entry per edge
+    for (size_t v = known; v < nv; v++) target[v] = targetAt(c, P, N, v, edge);
+    // The midpoint map, as per-vertex chains: an edge lives in the chain of its
+    // lower endpoint, nodes appended in creation order. Only found and inserted
+    // (never iterated), like the JS Map it stands for; chains keep the lookups
+    // near the triangles that make them, where a hash table scattered them.
+    head.assign(nv, -1);
+    nodeNext.clear(); nodeHi.clear(); nodeVal.clear();
     added.clear();
     ends.clear();
     auto midpoint = [&](int64_t a, int64_t b) -> int64_t {
-      const uint64_t key = a < b ? (uint64_t)a * nv + (uint64_t)b : (uint64_t)b * nv + (uint64_t)a;
-      bool inserted = false;
-      int64_t& slot = mid.insert(key, -1, &inserted);
-      if (!inserted) return slot;
+      // The refusal test reads only the two endpoints, which no split moves, so
+      // it answers the same every time the edge is met: a refused edge returns
+      // -1 straight away instead of being remembered as -1 (the JS's map entry
+      // for it is only ever read back by this same test).
       const double lim = jsmath::jsmin(target[(size_t)a], target[(size_t)b]);
+      if (!(lim < INFINITY)) return -1;
       const double dx = P[3 * a] - P[3 * b], dy = P[3 * a + 1] - P[3 * b + 1], dz = P[3 * a + 2] - P[3 * b + 2];
-      if (!(lim < INFINITY) || dx * dx + dy * dy + dz * dz <= lim * lim) return -1;   // remembered as -1
+      if (dx * dx + dy * dy + dz * dz <= lim * lim) return -1;
+      const uint32_t lo = (uint32_t)(a < b ? a : b), hi = (uint32_t)(a < b ? b : a);
+      for (int32_t e = head[lo]; e >= 0; e = nodeNext[(size_t)e]) if (nodeHi[(size_t)e] == hi) return nodeVal[(size_t)e];
       const int64_t m = (int64_t)(P.size() / 3);
-      slot = m;   // before the vectors below grow (the reference stays valid: no insert in between)
+      nodeNext.push_back(head[lo]); nodeHi.push_back(hi); nodeVal.push_back(m);
+      head[lo] = (int32_t)(nodeVal.size() - 1);
       const double mx = (P[3 * a] + P[3 * b]) / 2, my = (P[3 * a + 1] + P[3 * b + 1]) / 2, mz = (P[3 * a + 2] + P[3 * b + 2]) / 2;
       P.push_back(mx); P.push_back(my); P.push_back(mz);
       N.push_back(0); N.push_back(0); N.push_back(0);

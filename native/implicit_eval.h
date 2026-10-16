@@ -25,11 +25,24 @@ struct Texture {
   std::vector<float> data;      // textures.js stores float32 in 0..1
 };
 
+// One op of a validated program, decoded once (validate) so the interpreter
+// reads integers instead of re-converting the code's doubles every call: the
+// register indices, the primitive / fn / warp kind / axis / component as a
+// small int, and `at`, the offset in `code` of the op's inline doubles
+// (parameters, matrix, operand list). Arithmetic still reads every constant
+// from `code`, as the JS reads it from the Float64Array.
+struct Inst {
+  int32_t op, sub;      // opcode; PRIM code, UN/BIN/TER fn, WARP kind (0 taper), MIRROR axis / GET comp (-1: none)
+  int32_t d, a, b, c;   // destination and source registers, by op
+  int32_t at, cnt;      // inline doubles' offset; UNION/INTER operand count
+};
+
 struct Program {
   std::vector<double> code;     // program.js's Float64Array format, verbatim
   bool ok = false;              // passed validate(): every op well-formed
   int nP = 0, nV = 0;
   int maxSlot = -1;             // highest texture slot a TEX op reads
+  std::vector<Inst> insts;      // the decoded ops, END last (only when ok)
 };
 
 struct Session {
@@ -38,8 +51,9 @@ struct Session {
   // Register files: nP point registers (x, y, z) and nV value registers, each a
   // block of BATCH lanes; grown on demand, never shrunk, reused across runs.
   std::vector<double> PX, PY, PZ, V;
-  std::vector<double> gather;   // UNION/INTER operand gather (program.js's `gather`)
-  std::vector<const double*> gsrc; // that op's operand registers, resolved once per op
+  std::vector<const double*> gsrc; // a UNION/INTER's operand registers, resolved once per op
+  std::vector<double> um, us;   // UNION/INTER per-lane running extreme and sum (BATCH each)
+  std::vector<int32_t> uam;     // UNION/INTER per-lane arg-extreme (BATCH)
 
   // The leaf store (implicit_mesh.cpp, sparse.js's Store): the sampled plan's grid,
   // its leaves (i0, j0, l0, program per leaf) and their (LEAF+1)^3 float32 samples
