@@ -5,9 +5,14 @@
 // jsmin in C++).
 import { unionN } from "./primitives.js";
 
-/** Near-miss clearance, in grid cells (a gap of 0 still keeps this many cells apart). */
-export const C_MIN_CELLS = 2;
-/** Default bulge distance (mm) at a contact patch. */
+// Tuned on the hand (docs/superpowers/specs/2026-10-15-implicit-contact-design.md, "Left to
+// the builder", has each value's reason).
+/**
+ * Near-miss clearance, in grid cells (a gap of 0 still keeps this many cells apart): the
+ * smallest that keeps the hand's 0.75 mm near miss bridge-free at 1.5 and 0.6 mm (1.25 bridged).
+ */
+export const C_MIN_CELLS = 1.5;
+/** Default bulge (mm): how far the skin swells at a full press, measured at the pad's rim. */
 export const BULGE_DEFAULT = 0.6;
 /** Packed attachment layout: [ia, ib, ax, ay, az, r0, band, k]; ia/ib index value slots. */
 export const ATTACH_STRIDE = 8;
@@ -16,12 +21,17 @@ export const ATTACH_STRIDE = 8;
  * gap-0 node; ia/ib index the pair's value slots, rho is the overlap cluster's radius.
  */
 export const FILL_STRIDE = 6;
+/**
+ * The pad's crease blend (mm): the pair fuses as a smooth union of this width (unionN's k),
+ * a crease about PAD_BLEND/4 deep rounded — a hard one samples jagged on the grid.
+ */
+export const PAD_BLEND = 1.5;
 /** The gate's band (mm): g = 1 within rho + cl + FILL_BAND of a region's centre, easing to 0 over a further FILL_BAND. */
 export const FILL_BAND = 2;
 
-// Contact-region search (regions.js) and the bulge profile. Task 5 tunes these.
-/** Leaf cell edge (mm) of the region search's octree. */
-export const REGION_CELL = 0.5;
+// Contact-region search (regions.js) and the bulge profile.
+/** Leaf cell edge (mm) of the region search's octree (1 mm splits thin contacts and misses a 0.5 mm press). */
+export const REGION_CELL = 0.75;
 /** Press depth δ (mm) at which a region's bulge reaches the node's full `bulge`. */
 export const BULGE_FULL_DEPTH = 1.5;
 /** A region's bulge falloff radius grows by this many mm per mm of press depth. */
@@ -56,6 +66,32 @@ export function gateWeight(F, o, cl, x, y, z) {
 const pair = new Float64Array(2);
 
 /**
+ * Slot i's cut piece: v_i maxed, in slot order, with its cut against every other slot j
+ * except `skip` — `cut = (v_i − v_j + cl)·0.5`, eased toward v_i by the pair's first
+ * attachment's weight (either order) when that is above 0. `w`: the attachment weights.
+ */
+function cutPiece(v, nK, i, skip, cl, att, nA, w) {
+  let ci = v[i];
+  for (let j = 0; j < nK; j++) {
+    if (j === i || j === skip) continue;
+    // The pair's weight: its first attachment's (either order), else 0.
+    let wij = 0;
+    for (let a = 0; a < nA; a++) {
+      const o = a * ATTACH_STRIDE, ia = att[o], ib = att[o + 1];
+      if ((ia === i && ib === j) || (ia === j && ib === i)) { wij = w[a]; break; }
+    }
+    // A bare cut of two pieces more than cl apart lies below v_i ≤ c_i, margin over its
+    // rounding: skipping it changes no bit (most pairs, most points).
+    if (!(wij > 0) && v[i] + v[j] > cl + CUT_SKIP * (Math.abs(v[i]) + Math.abs(v[j]) + cl)) continue;
+    const cut = (v[i] - v[j] + cl) * 0.5;
+    const u = wij > 0 ? cut + wij * (v[i] - cut) : cut;
+    ci = Math.max(ci, u);
+  }
+  return ci;
+}
+const CUT_SKIP = 1e-9;
+
+/**
  * The contact field at p from the children's values `v` (slot order; already bulged).
  * `F`/`nF` are the node's pad-fill regions (FILL_STRIDE each; used only when `fuse`). `w` (≥ nA) and `c` (≥ nK)
  * are scratch the caller may supply so a hot loop does not allocate; they are fully
@@ -66,31 +102,37 @@ export function contactValue(v, nK, cl, fuse, att, nA, F, nF, x, y, z, w = nA > 
   for (let a = 0; a < nA; a++) w[a] = attachWeight(att, a * ATTACH_STRIDE, x, y, z);
   let value = Infinity;
   for (let i = 0; i < nK; i++) {
-    let ci = v[i];
-    for (let j = 0; j < nK; j++) {
-      if (j === i) continue;
-      const cut = (v[i] - v[j] + cl) * 0.5;
-      // The pair's weight: its first attachment's (either order), else 0.
-      let wij = 0;
-      for (let a = 0; a < nA; a++) {
-        const o = a * ATTACH_STRIDE, ia = att[o], ib = att[o + 1];
-        if ((ia === i && ib === j) || (ia === j && ib === i)) { wij = w[a]; break; }
-      }
-      const u = wij > 0 ? cut + wij * (v[i] - cut) : cut;
-      ci = Math.max(ci, u);
-    }
+    const ci = cutPiece(v, nK, i, -1, cl, att, nA, w);
     c[i] = ci;
     value = Math.min(value, ci);
   }
   if (fuse) {
-    // The pad fill, one term per contact region r (pair a_r, b_r), in region order:
-    // value = min(value, max(v[a_r], v[b_r]) + (1 − g_r)·cl). Near its region the term is
-    // the pair's overlap (fused); away from it the term sits cl above the pair's own field,
-    // and it never involves a third piece. No regions: no fill.
+    // The pad fill, one term per contact region r (pair a_r, b_r), in region order, where
+    // its gate is open (g_r > 0): value = min(value, f + (1 − g_r)·cl), f = U(c'_a, c'_b)
+    // maxed with (min(v_a, v_b) − v_j + cl)/2 for every third slot j in slot order; c'_a is
+    // a_r cut against every piece but b_r (and c'_b likewise), U the smooth union of width
+    // PAD_BLEND. Near its region (g_r = 1) the term is the pair's union, each still
+    // held clear of third pieces: the pair fuses with a soft crease at the rim (a hard one
+    // samples jagged on the grid) instead of each stopping cl/2 short
+    // of the bisector (the pair's overlap alone, the earlier form, left a moat cl/2 deep
+    // around a pad shallower than cl, and a floating lens in it), and a neighbour beside
+    // the pad keeps its gap (the raw v_a would bring a's surface back against it). Easing
+    // out, it rises toward cl above that union, where the clearance cut takes over; with
+    // the gate shut it is no term at all (so a pruned slot's terms are exactly absent,
+    // interval.js rule (d)). No regions: no fill.
     for (let k = 0; k < nF; k++) {
       const o = k * FILL_STRIDE;
       const g = gateWeight(F, o, cl, x, y, z);
-      value = Math.min(value, Math.max(v[F[o]], v[F[o + 1]]) + (1 - g) * cl);
+      if (g > 0) {
+        const ia = F[o], ib = F[o + 1];
+        pair[0] = cutPiece(v, nK, ia, ib, cl, att, nA, w); pair[1] = cutPiece(v, nK, ib, ia, cl, att, nA, w);
+        let f = unionN(pair, 2, PAD_BLEND);
+        // The fused pair's own clearance from each third piece, so the blend's dip never
+        // closes a third piece's gap: at their bisector this is cl/2, as the cut pieces are.
+        const m = Math.min(v[ia], v[ib]);
+        for (let j = 0; j < nK; j++) if (j !== ia && j !== ib) f = Math.max(f, (m - v[j] + cl) * 0.5);
+        value = Math.min(value, f + (1 - g) * cl);
+      }
     }
   }
   for (let a = 0; a < nA; a++) {
@@ -185,43 +227,62 @@ export function attachWeightRange(out, att, o, x, y, z, r) {
   return out;
 }
 
+/** cutPiece's bounds over the ball from the kept slots' [lo, hi] (pruned slots change no cut): [lo, hi] in `out`. */
+function cutPieceRange(out, lo, hi, keep, N, i, skip, cl, att, nA, wr) {
+  let ilo = lo[i], ihi = hi[i];
+  for (let j = 0; j < N; j++) {
+    if (j === i || j === skip || !keep[j]) continue;
+    let live = false;
+    for (let a = 0; a < nA; a++) {
+      const o = a * ATTACH_STRIDE, ia = att[o], ib = att[o + 1];
+      if ((ia === i && ib === j) || (ia === j && ib === i)) { live = wr[a][1] > 0; break; }
+    }
+    const cutLo = (lo[i] - hi[j] + cl) * 0.5, cutHi = (hi[i] - lo[j] + cl) * 0.5;
+    // u = cut + w·(v_i − cut) lies between cut and v_i: below v_i adds nothing to c_i's lo.
+    if (!live) ilo = Math.max(ilo, cutLo);
+    ihi = Math.max(ihi, live ? Math.max(cutHi, hi[i]) : cutHi);
+  }
+  out[0] = ilo; out[1] = ihi;
+  return out;
+}
+
 /**
  * The contact node's interval over the ball from its children's intervals, over the KEPT
  * slots only (a pruned slot changes no value — interval.js) — contactValue's formula in
  * interval arithmetic: c_i ∈ [max(lo_i, cut_lo…), max(hi_i, cut_hi…)] with a pair's cut
  * widened to v_i's side when its attachment weight can be above 0; with fuse, a pad-fill term
- * per fill region with both sides kept, [max(lo_a, lo_b) + (1 − gh)·cl, max(hi_a, hi_b) +
- * (1 − gl)·cl]; each live attachment lowers lo by k·wh/4. `wr[a]` holds attachment a's
+ * per fill region with both sides kept and its gate open somewhere in the ball (gh > 0),
+ * [min(c'lo_a, c'lo_b) − PAD_BLEND/4 + (1 − gh)·cl, f_hi + (1 − gl)·cl] over the pair's
+ * cut pieces less each other, f_hi raised by the kept third slots' clearances (hi only when gl > 0: a shut gate is no term); each live attachment lowers lo by k·wh/4. `wr[a]` holds attachment a's
  * [wl, wh] (attachWeightRange), `gr[k]` fill region k's [gl, gh] (gateWeightRange; read only
  * when `fuse`). `lo`/`hi` are the bulged children's. Returns [lo, hi] in `out`.
  */
 export function contactInterval(out, lo, hi, keep, N, cl, fuse, att, nA, wr, F, nF, gr) {
   let vlo = Infinity, vhi = Infinity;
-  const clo = new Float64Array(N);
+  const clo = new Float64Array(N), cr = [0, 0], cr2 = [0, 0];
   for (let i = 0; i < N; i++) {
     if (!keep[i]) continue;
-    let ilo = lo[i], ihi = hi[i];
-    for (let j = 0; j < N; j++) {
-      if (j === i || !keep[j]) continue;
-      let live = false;
-      for (let a = 0; a < nA; a++) {
-        const o = a * ATTACH_STRIDE, ia = att[o], ib = att[o + 1];
-        if ((ia === i && ib === j) || (ia === j && ib === i)) { live = wr[a][1] > 0; break; }
-      }
-      const cutLo = (lo[i] - hi[j] + cl) * 0.5, cutHi = (hi[i] - lo[j] + cl) * 0.5;
-      // u = cut + w·(v_i − cut) lies between cut and v_i: below v_i adds nothing to c_i's lo.
-      if (!live) ilo = Math.max(ilo, cutLo);
-      ihi = Math.max(ihi, live ? Math.max(cutHi, hi[i]) : cutHi);
-    }
-    clo[i] = ilo;
-    vlo = Math.min(vlo, ilo); vhi = Math.min(vhi, ihi);
+    cutPieceRange(cr, lo, hi, keep, N, i, -1, cl, att, nA, wr);
+    clo[i] = cr[0];
+    vlo = Math.min(vlo, cr[0]); vhi = Math.min(vhi, cr[1]);
   }
   if (fuse) {
     for (let k = 0; k < nF; k++) {
       const o = k * FILL_STRIDE, ia = F[o], ib = F[o + 1];
-      if (!keep[ia] || !keep[ib]) continue;   // pruned side: the term never wins (interval.js rule (d))
-      vlo = Math.min(vlo, Math.max(lo[ia], lo[ib]) + (1 - gr[k][1]) * cl);
-      vhi = Math.min(vhi, Math.max(hi[ia], hi[ib]) + (1 - gr[k][0]) * cl);
+      if (!keep[ia] || !keep[ib]) continue;   // pruned side: the gate is shut over the ball (interval.js rule (d))
+      if (!(gr[k][1] > 0)) continue;   // shut everywhere in the ball: no term
+      cutPieceRange(cr, lo, hi, keep, N, ia, ib, cl, att, nA, wr);
+      cutPieceRange(cr2, lo, hi, keep, N, ib, ia, cl, att, nA, wr);
+      // unionN(·, 2, k) lies in [min − k/4, min]; the third-piece clearances only raise f
+      // (a pruned j's never reaches the union: interval.js rule (b)'s PAD_BLEND/2).
+      vlo = Math.min(vlo, Math.min(cr[0], cr2[0]) - PAD_BLEND / 4 + (1 - gr[k][1]) * cl);
+      // Shut somewhere in the ball, the term is absent there: it bounds hi only when open throughout.
+      if (gr[k][0] > 0) {
+        let fhi = Math.min(cr[1], cr2[1]);
+        const mhi = Math.min(hi[ia], hi[ib]);
+        for (let j = 0; j < N; j++) if (j !== ia && j !== ib && keep[j]) fhi = Math.max(fhi, (mhi - lo[j] + cl) * 0.5);
+        vhi = Math.min(vhi, fhi + (1 - gr[k][0]) * cl);
+      }
     }
   }
   for (let a = 0; a < nA; a++) {

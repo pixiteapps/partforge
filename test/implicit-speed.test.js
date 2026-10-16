@@ -19,7 +19,7 @@ import { meshImplicitCore } from "../src/framework/core/implicit-core.js";
 import { compileImplicit } from "../src/framework/geometry/implicit/index.js";
 import { planLeaves } from "../src/framework/geometry/implicit/sparse.js";
 import { CLEANUP, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
-import { handSpec } from "./fixtures/implicit-trees.js";
+import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 
 const SPEC_PREVIEW_MS = 150;
 const SPEC_PRINT_MS = 2000;
@@ -43,6 +43,21 @@ function medianMs(edge, opts, runs) {
   }
   return ms.sort((a, b) => a - b)[runs >> 1];
 }
+
+// The hand is one contact node (palm, thumb, fingers): compiling it searches every pair for
+// contact regions (regions.js). The default pose touches nowhere; the fist has four pads.
+// First in the file: after the meshing test's heap the main thread's GC doubles it.
+test("the hand compiles within 20 ms CPU with its contact search, open and in a fist", () => {
+  for (const [name, pose] of [["default pose", {}], ["fist", HAND_POSES.fist]]) {
+    const spec = handSpec(pose);
+    for (let i = 0; i < 5; i++) compileImplicit(spec);   // warm-up: the JIT settles on the search
+    const ms = [];
+    for (let i = 0; i < 5; i++) { const t0 = cpuMs(); compileImplicit(spec); ms.push(cpuMs() - t0); }
+    const med = ms.sort((a, b) => a - b)[2];
+    console.log(`hand compile, ${name}: ${med.toFixed(1)} paced CPU ms (pace ${PACE.toFixed(2)})`);
+    expect(med, name).toBeLessThanOrEqual(20);
+  }
+}, 60_000);
 
 test("the hand at full detail meshes natively within 3× the spec's targets (preview 1.5 mm, print 0.5 mm)", () => {
   setCoreEnabled(true);

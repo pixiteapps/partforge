@@ -6,7 +6,7 @@ import { xformPoint, xformDir } from "./frames.js";
 import { evalPrim, warpPoint, mirrorPoint, sanitize } from "./primitives.js";
 import { evalExprScalar } from "./expr-lower.js";
 import { sampleTexture } from "./textures.js";
-import { clearance, contactInterval, attachWeightRange, bulgeRange, gateWeightRange, ATTACH_STRIDE, BULGE_STRIDE, FILL_STRIDE, FILL_BAND } from "./contact.js";
+import { clearance, contactInterval, attachWeightRange, bulgeRange, gateWeightRange, ATTACH_STRIDE, BULGE_STRIDE, FILL_STRIDE, FILL_BAND, PAD_BLEND } from "./contact.js";
 
 // Inheriting a parent's decision (planLeaves' child blocks). `parentDec` is the decision of
 // a ball that CONTAINS this one; a slot it pruned FIRMLY (`dec.firm[i]`) is not walked
@@ -113,7 +113,8 @@ function visit(c, id, x, y, z, r, pd, e) {
     case "contact": {
       // Slot j is pruned when (a) lo_j > H2 (second-smallest hi over the other slots: j is
       // never among the two smallest values, so the min of the c_i does not move), (b) lo_i + lo_j > cl for every other slot i (the pair's cut
-      // never rises above v_i, so no other c_i moves) and (c) every attachment involving j
+      // never rises above v_i, so no other c_i moves; with pad fills, > cl + PAD_BLEND/2, so
+      // no pad's clearance from j rises above its blend either) and (c) every attachment involving j
       // has weight 0 over the ball (its kk is 0: no blend term), each with the union's
       // 1e-12 margin. Every condition only gets truer as the ball shrinks (lo rises, hi
       // falls, the near distance rises), so a firm prune holds in every child ball.
@@ -137,6 +138,9 @@ function visit(c, id, x, y, z, r, pd, e) {
       for (let a = 0; a < nA; a++) wr[a] = attachWeightRange(new Float64Array(3), att, a * ATTACH_STRIDE, x, y, z, r);
       const F = n.fillRegions, nF = n.fuse ? F.length / FILL_STRIDE : 0, gr = new Array(nF);
       for (let k = 0; k < nF; k++) gr[k] = gateWeightRange(new Float64Array(3), F, k * FILL_STRIDE, cl, x, y, z, r);
+      // (b)'s threshold: with pad fills, also PAD_BLEND/2 — a pad's third-piece clearance
+      // (min(v_a, v_b) − v_j + cl)/2 then stays below the pad's blend, min(v_a, v_b) − PAD_BLEND/4.
+      const clb = nF > 0 ? cl + PAD_BLEND / 2 : cl;
       const kids = new Array(N), keep = new Array(N);
       let firm = null;
       for (let j = 0; j < N; j++) {
@@ -152,7 +156,7 @@ function visit(c, id, x, y, z, r, pd, e) {
         // (b): every other walked slot.
         for (let i = 0; prune && i < N; i++) {
           if (i === j || rs[i] === null) continue;
-          const Tb = cl + 1e-12 * (Math.abs(lo[i]) + Math.abs(lo[j]) + cl);
+          const Tb = clb + 1e-12 * (Math.abs(lo[i]) + Math.abs(lo[j]) + clb);
           const s = lo[i] + lo[j];
           if (!(s > Tb)) prune = false;
           else if (!(s - Tb > firmTol(r, x, y, z, Math.abs(lo[i]) + Math.abs(lo[j]), Tb))) isFirm = false;

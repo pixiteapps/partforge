@@ -132,9 +132,14 @@ in JS; a program carries its clearance `cl` baked in):
   weights in attachment order; then for each slot i in order, c_i = v_i maxed
   with every other slot j's `cut + w·(v_i − cut)` (`cut = (v_i − v_j + cl) ·
   0.5`; w is the pair's FIRST attachment's weight, either order, else the bare
-  cut), and value = min over the c_i in slot order; then, if `fuse` is truthy
+  cut; a bare cut with `v_i + v_j > cl + 1e-9·(|v_i| + |v_j| + cl)` lies below
+  v_i and is skipped, on both sides, changing no bit), and value = min over the c_i in slot order; then, if `fuse` is truthy
   (JS truthiness: not 0, −0 or NaN), the pad fill per region in region order,
-  `min(value, max(v_a, v_b) + (1 − g)·cl)`; then each attachment with `k·w > 0`,
+  `min(value, f + (1 − g)·cl)` with f = `unionN([c'_a, c'_b], 2, PAD_BLEND)` (PAD_BLEND
+  = 1.5) maxed, in slot order, with `(min(v_a, v_b) − v_j + cl) · 0.5` for every slot j
+  other than a and b where its gate weight g > 0 (no term
+  where g is 0 or NaN), c'_a being c_a's max over every slot but b (and c'_b
+  likewise), in slot order; then each attachment with `k·w > 0`,
   in order, `min(value, unionN([c_a, c_b], 2, k·w))`. Distances are
   `sqrt(dx·dx + dy·dy + dz·dz)`. The pair → first attachment lookup reads only
   the program, so the core tables it once per op; it decides nothing the JS's

@@ -94,16 +94,23 @@ is a **mesh-time** value, passed to both engines with the edge, not a compiled c
   as a clean gap of at least `cl`, never a neck.
 - **`gap > 0`:** value `= min_i c_i`. Pieces never fuse; contact shows as two flat pads
   `cl` apart.
-- **`gap = 0`:** value `= min(min_i c_i, f)`, with a pad fill per contact region `r`
-  (between pieces `a_r`, `b_r`): `f = min_r (max(d_{a_r}, d_{b_r}) + (1 − g_r(x))·cl)`.
-  `max(d_a, d_b) < 0` exactly where that pair overlaps. `g_r` is 1 within the region (found
-  by the compiler, below) plus a margin of `cl + band` around it, falling smoothly to 0
-  beyond. Near a real contact the fill is the pair's overlap: the pad is filled and fused,
-  and the wedge around its rim fuses into a natural crease. Away from it the term is at
-  least `cl` above the pair's own field, so it never undercuts the clearance cut; and since
-  each term names its own pair, a third piece passing near the contact keeps its clean gap.
+- **`gap = 0`:** value `= min(min_i c_i, f_r …)`, with a pad fill per contact region `r`
+  (between pieces `a_r`, `b_r`), present only where its gate is open (`g_r > 0`):
+  `f_r = max(U(c'_a, c'_b), max_{j ≠ a,b} (min(d_a, d_b) − d_j + cl)/2) + (1 − g_r)·cl`.
+  `c'_a` is `a`'s cut piece taken against every piece but `b` (and `c'_b` likewise), `U` the
+  smooth union of width `PAD_BLEND`. `g_r` is 1 within the region (found by the compiler,
+  below) plus a margin of `cl + band` around it, falling smoothly to 0 beyond. Near a real
+  contact the fill is the pair's union: the pieces fuse with a soft crease at the rim, while
+  each stays clear of third pieces (through `c'`, and through the fused pair's own clearance
+  term, so the blend's dip never closes a third piece's gap). Away from it the term is at
+  least `cl` above that, so it never undercuts the clearance cut; with the gate shut it is no
+  term at all.
   (Amended 2026-10-16: an ungated fill re-closed near-miss gaps — the reported necks —
-  and a gate shared by all pairs fused a third piece near someone else's contact.)
+  and a gate shared by all pairs fused a third piece near someone else's contact.
+  Amended again in Task 5: the fill was the pair's overlap, `max(d_a, d_b)`, which leaves
+  each cut piece `cl/2` short of the bisector around the pad — for any press shallower than
+  `cl` that is a moat around a floating lens, seen on the fist as ragged rings at every
+  fingertip. The union replaces it.)
 
 The cut forms are built from min, max and `(d_i − m_i)/2`, so they are exactly L-Lipschitz
 when every child is (the fill gate adds `cl·|∇g|`): the upper Lipschitz bound `L` (which drives interval pruning) and the
@@ -217,10 +224,51 @@ near-miss clearance depends on the grid edge, PR 3's block-cache key must includ
 
 ## Left to the builder
 
-- The bulge profile and its default value.
-- The pruning rule's exact form.
-- The contact-region search tolerance and how regions are clustered (deterministic).
-- The near-miss clearance factor `c_min / edge`.
-- The attachment falloff band and how the joined and contact values are blended across it.
-- The hand's attachment radii.
+Decided while building; the constants live in `src/framework/geometry/implicit/contact.js`
+(the hand's attachments in `test/fixtures/implicit-trees.js`).
+
+- **Near-miss clearance** `C_MIN_CELLS = 1.5` (cl = 2.25 mm at the 1.5 mm preview grid,
+  0.9 mm at 0.6 mm): the smallest factor that keeps the hand's 0.75 mm near miss
+  (`HAND_POSES.nearMiss`) free of any triangle crossing the bisector at both grids; 1 and
+  1.25 bridged at 1.5 mm (103 and 4 crossing triangles). It also keeps the fist sweep
+  (flex 96–110) bridge-free.
+- **The bulge profile.** Per region, a bump centred on the region,
+  `A·φ(|p − c|/rb)`, `φ(t) = (1 − t²)²`, on both pieces. Falloff radius
+  `rb = rho + BULGE_SPREAD·δ + 2·bulge` (`BULGE_SPREAD = 2`): it grows with the press. Its
+  height is set at the rim, where the skin is seen: `A = bulge·min(1, δ/BULGE_FULL_DEPTH) /
+  φ(rho/rb)` (`BULGE_FULL_DEPTH = 1.5` mm), so `bulge` is the visible swell in mm, not a
+  buried peak (with the peak at `bulge` the fist's rims swelled only 0.38 mm of 0.6). The
+  centre-peaked bump was kept rather than a rim band: the band needs a program-format
+  change, and the bulge was not what broke `contactThree` (below).
+- **Default bulge** `BULGE_DEFAULT = 0.6` mm: on the fist the rim swells 0.64 mm and fades
+  by 7 mm beyond it — subtle on a 13 mm finger, visible as squish in a section; the dev
+  viewer's slider tries more.
+- **The pad's crease** `PAD_BLEND = 1.5` mm: the fused pair is a smooth union of this width;
+  a hard union's crease sampled jagged at the print grid, and 3 mm read as a fillet.
+- **The fill gate** `FILL_BAND = 2` mm (Task 3), unchanged.
+- **The pruning rule.** Tasks 2–3's rules (a)–(d); rule (b)'s threshold becomes
+  `cl + PAD_BLEND/2` on a node with pad fills, so a pruned third slot's clearance term never
+  rises above a pad's blend (`test/implicit-contact.test.js` holds a case where `cl` alone
+  pruned wrongly).
+- **The contact-region search.** An octree over the pair's box intersection with leaf cells
+  of `REGION_CELL = 0.75` mm, pruned by each piece's centre value and Lipschitz bound (the
+  interval pass was far looser: a smooth union's interval drops by `k/4`, so the blended palm
+  read "maybe inside" millimetres off its surface), cells wholly inside both taken without
+  evaluation, cells in an attachment's joined zone skipped; clusters 26-connected in
+  lattice order; δ refined by a pattern search. 0.75 mm, not 0.5, holds the fist's compile
+  at 7–10 ms CPU against the 20 ms gate (0.5 mm: 11–21 ms); 1 mm split a thin contact in two and missed a 0.5 mm press.
+  `MAX_REGION_CELLS = 20000`.
+- **Attachment band** default `radius/2` (Task 1); the blend across it is Task 1's: the
+  pair's cut eased toward the piece by the weight, and the union's width `k·w`.
+- **The hand's attachments**: each finger's radius is a third of its proximal phalanx
+  (11–15 mm), band 3 mm; the thumb's 40 mm, band 10 mm. In a fist a finger's base overlaps
+  the palm out to 12–15 mm from its knuckle and its tip pad starts 15–24 mm out (the pinky's
+  12.3 and 15.3 mm), so the joined zone must end between them — the default band
+  (radius/2) reached the pinky's pad and filleted it. The thumb's metacarpal lies in the
+  thenar out to 47 mm.
+- **`contactThree`'s tracked failure** was not the bulge: sweeping its first capsule's tip
+  through 12 depths, the tree fails the same cleanup bound at bulge 0 too (2 of 12, worst
+  0.30·edge), always on a cut piece's crease where it meets the surface (Newton projection's
+  central differences straddle the kink). The test now holds the bound off those creases
+  at both bulges, and half a cell on them.
 - The nail-outline root cause.

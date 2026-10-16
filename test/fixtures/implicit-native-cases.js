@@ -1,11 +1,11 @@
 // test/fixtures/implicit-native-cases.js
 // The case list the native stage parity tests share (implicit-native-sample/-mesh):
-// every small tree, the vase, the hand, every ADVERSARIAL spec and PR 1's
+// every small tree, the vase, the hand (open and in a fist), every ADVERSARIAL spec and PR 1's
 // exactly-touching-faces cases, each at the grid edges it is held at.
 import { core } from "../../src/framework/core/core.js";
 import { NativeSession } from "../../src/framework/core/implicit-core.js";
 import { TREES } from "./implicit-small-trees.js";
-import { vaseSpec, handSpec, ADVERSARIAL } from "./implicit-trees.js";
+import { vaseSpec, handSpec, HAND_POSES, ADVERSARIAL } from "./implicit-trees.js";
 
 const EDGES = [0.5, 1.0];
 const TOUCHING = {
@@ -23,6 +23,7 @@ export function nativeCases() {
     ...Object.entries(TREES).map(([k, spec]) => ({ name: k, spec, images: new Map(), edges: EDGES })),
     { name: "vase", spec: vase.spec, images: vase.images, edges: EDGES },
     { name: "hand", spec: handSpec(), images: new Map(), edges: [1.5, 0.8] },
+    { name: "hand fist", spec: handSpec(HAND_POSES.fist), images: new Map(), edges: [1.5] },   // contact: pads, bulges, attachments
     ...Object.entries(ADVERSARIAL).map(([k, spec]) => ({ name: `adversarial ${k}`, spec, images: new Map(), edges: EDGES })),
     ...Object.entries(TOUCHING).map(([k, spec]) => ({ name: `touching ${k}`, spec, images: new Map(), edges: EDGES })),
   ];

@@ -4,7 +4,7 @@ import { validateSpec } from "../src/framework/geometry/implicit/grammar.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { evalReference, evalNodeAt } from "../src/framework/geometry/implicit/reference.js";
 import { unionN } from "../src/framework/geometry/implicit/primitives.js";
-import { clearance, C_MIN_CELLS, ATTACH_STRIDE, bulgeOffset, REGION_CELL, BULGE_STRIDE, FILL_STRIDE } from "../src/framework/geometry/implicit/contact.js";
+import { clearance, C_MIN_CELLS, ATTACH_STRIDE, bulgeOffset, REGION_CELL, BULGE_STRIDE, FILL_STRIDE, PAD_BLEND, BULGE_FULL_DEPTH } from "../src/framework/geometry/implicit/contact.js";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { setCoreEnabled } from "../src/framework/core/core.js";
 import { cpuMs } from "./helpers/cpu-pace.js";
@@ -69,10 +69,27 @@ describe("contact reference field", () => {
     expect(evalReference(bulged, 0, 0, 0, 1)).toBeLessThan(evalReference(c, 0, 0, 0, 1));
     expect(c.ir.nodes[c.ir.root].fuse).toBe(1);
     expect(evalReference(c, 0, 0, 0, 1)).toBeLessThan(0);
+    // On the bisector the pad is the pair's smooth union (PAD_BLEND), not a moat cl/2 deep:
+    // both pieces read d there, so the blend sits PAD_BLEND/4 below it.
     for (const y of [0, 0.5, 1, 1.9, -1.9]) {
       const d = Math.hypot(4, y) - 5;
-      near(evalReference(c, 0, y, 0, 1), d);
+      near(evalReference(c, 0, y, 0, 1), d - PAD_BLEND / 4);
     }
+  });
+
+  test("a press shallower than the clearance fuses at its rim: no moat around the pad", () => {
+    // Spheres overlapping by 1 mm (δ = 0.5) at edge 1 (cl = 1.5): on a's surface just outside
+    // b (d_b = 0.4) the pad fill is the pair's union, so the skin stays where it is. The
+    // earlier fill (the pair's overlap alone) left a's cut piece there, (0 − 0.4 + cl)/2 =
+    // 0.55 above it: a moat around a floating lens, for any press shallower than cl.
+    const c = lower({ root: { kind: "contact", bulge: 0, children: [sph(-4.5), sph(4.5)] } }), node = c.ir.nodes[c.ir.root];
+    expect(node.fillRegions.length).toBe(FILL_STRIDE);
+    let lo = 0, hi = Math.PI / 2;   // θ on a's equator: d_b falls from 1 to below 0 as θ → 0
+    const at = (th) => [-4.5 + 5 * Math.cos(th), 5 * Math.sin(th), 0];
+    for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (Math.hypot(at(m)[0] - 4.5, at(m)[1]) - 5 < 0.4) lo = m; else hi = m; }
+    const p = at(lo), edge = 1, cl = clearance(0, edge);
+    expect((0 - 0.4 + cl) / 2).toBeGreaterThan(0.5);
+    expect(evalReference(c, ...p, edge)).toBeLessThanOrEqual(0);
   });
 
   test("gap keeps pads apart", () => {
@@ -281,8 +298,9 @@ describe("contact regions and bulge", () => {
     expect(Array.from(node.fillRegions.subarray(0, 2))).toEqual([0, 1]);   // the pair's slots
     expect(node.fillRegions.length).toBe(FILL_STRIDE);
     for (let i = 0; i < 3; i++) expect(Math.abs(a[i])).toBeLessThan(REGION_CELL);
-    // A = bulge·min(1, δ/BULGE_FULL_DEPTH) with the default bulge: recover δ.
-    const delta = (a[3] / node.bulge) * 1.5;
+    // A·φ(rho/rb) = bulge·min(1, δ/BULGE_FULL_DEPTH) with the default bulge (the swell at
+    // the rim, rho = the fill region's radius): recover δ.
+    const t = node.fillRegions[5] / a[4], delta = ((a[3] * (1 - t * t) * (1 - t * t)) / node.bulge) * BULGE_FULL_DEPTH;
     expect(Math.abs(delta - 1)).toBeLessThanOrEqual(REGION_CELL);
   });
 
@@ -406,6 +424,24 @@ describe("contact regions and bulge", () => {
     const prog = emitProgram(c, d, edge), o = new Float64Array(1);
     evalBatch(prog, c.textures, Float64Array.of(0), Float64Array.of(0), Float64Array.of(-C[2]), o);
     expect(o[0]).toBe(evalReference(c, 0, 0, -C[2], edge));
+  });
+
+  test("a third slot near a pad's blend is kept while its clearance could rise above the blend (rule (b)'s PAD_BLEND/2)", () => {
+    // a, b fused (2 mm overlap); P on their bisector just outside the pad, where the pad's
+    // smooth union dips PAD_BLEND/4 below both; c sits 1.7 mm from P. lo_a + lo_c clears cl
+    // over a 0.1 mm ball, so cl alone would prune c — but the pad's clearance from c,
+    // (min(v_a, v_b) − v_c + cl)/2, still lies above the blend there and sets the value.
+    const edge = 1, cl = clearance(0, edge), P = [0, 3.3, 0];
+    const c = lower({ root: { kind: "contact", bulge: 0, children: [sph(-4), sph(4), { kind: "sphere", r: 2, at: [0, 7, 0] }] } });
+    const m = Math.hypot(4, 3.3) - 5, vc = 7 - 3.3 - 2;
+    expect(m + vc).toBeGreaterThan(cl + 0.2);   // (b) with cl alone holds over the ball
+    expect((m - vc + cl) / 2).toBeGreaterThan(m - PAD_BLEND / 4 + 0.1);   // the clearance is above the blend
+    const d = blockDecision(c, ...P, 0.1, undefined, edge).dec;
+    expect(d.kids[2]).not.toBeNull();
+    const prog = emitProgram(c, d, edge), o = new Float64Array(1);
+    evalBatch(prog, c.textures, Float64Array.of(P[0]), Float64Array.of(P[1]), Float64Array.of(P[2]), o);
+    expect(o[0]).toBe(evalReference(c, ...P, edge));
+    near(o[0], (m - vc + cl) / 2);
   });
 
   test("a slot in a live pad-fill region is never pruned (rule (d))", () => {

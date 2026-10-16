@@ -147,6 +147,7 @@ constexpr int ATTACH_STRIDE = 8;   // [ia, ib, ax, ay, az, r0, band, k]
 constexpr int FILL_STRIDE = 6;     // [ia, ib, cx, cy, cz, rho]
 constexpr int BULGE_STRIDE = 5;    // [cx, cy, cz, A, rho]
 constexpr double FILL_BAND = 2;
+constexpr double PAD_BLEND = 1.5;   // contact.js PAD_BLEND
 
 // contact.js's attachWeight (A: one attachment's 8 doubles).
 inline double attach_weight(const double* A, double x, double y, double z) {
@@ -158,6 +159,23 @@ inline double attach_weight(const double* A, double x, double y, double z) {
 }
 
 // contact.js's gateWeight (G: one fill region's 6 doubles).
+// contact.js cutPiece: slot i's value maxed, in slot order, with its cut against every
+// other slot but `skip`, eased by the pair's first attachment's weight when above 0.
+inline double cut_piece(const double* g, int nK, int i, int skip, double cl, const int32_t* pairA, const double* w) {
+  double ci = g[i];
+  for (int j = 0; j < nK; j++) {
+    if (j == i || j == skip) continue;
+    const int32_t a = pairA[i * nK + j];
+    const double wij = a >= 0 ? w[a] : 0;
+    // contact.js: a bare cut of two pieces more than cl apart changes no bit; skip it.
+    if (!(wij > 0) && g[i] + g[j] > cl + 1e-9 * (std::fabs(g[i]) + std::fabs(g[j]) + cl)) continue;
+    const double cut = (g[i] - g[j] + cl) * 0.5;
+    const double u = wij > 0 ? cut + wij * (g[i] - cut) : cut;
+    ci = jsmax(ci, u);
+  }
+  return ci;
+}
+
 inline double gate_weight(const double* G, double cl, double x, double y, double z) {
   const double dx = x - G[2], dy = y - G[3], dz = z - G[4];
   const double d = std::sqrt(dx * dx + dy * dy + dz * dz);
@@ -585,15 +603,7 @@ void run(Session& s, const Program& p, const double* X, const double* Y, const d
           for (int j = 0; j < nK; j++) g[j] = src[j][l];
           double value = INFINITY;
           for (int i = 0; i < nK; i++) {
-            double ci = g[i];
-            for (int j = 0; j < nK; j++) {
-              if (j == i) continue;
-              const double cut = (g[i] - g[j] + cl) * 0.5;
-              const int32_t a = pairA[i * nK + j];
-              const double wij = a >= 0 ? w[a] : 0;
-              const double u = wij > 0 ? cut + wij * (g[i] - cut) : cut;
-              ci = jsmax(ci, u);
-            }
+            const double ci = cut_piece(g, nK, i, -1, cl, pairA, w);
             ci_[i] = ci;
             value = jsmin(value, ci);
           }
@@ -601,7 +611,13 @@ void run(Session& s, const Program& p, const double* X, const double* Y, const d
             for (int k = 0; k < nF; k++) {
               const double* G = F + (size_t)k * FILL_STRIDE;
               const double gw = gate_weight(G, cl, x, y, z);
-              value = jsmin(value, jsmax(g[(int)G[0]], g[(int)G[1]]) + (1 - gw) * cl);
+              if (gw > 0) {
+                const int ia = (int)G[0], ib = (int)G[1];
+                double f = union2(cut_piece(g, nK, ia, ib, cl, pairA, w), cut_piece(g, nK, ib, ia, cl, pairA, w), PAD_BLEND);
+                const double m = jsmin(g[ia], g[ib]);
+                for (int j = 0; j < nK; j++) if (j != ia && j != ib) f = jsmax(f, (m - g[j] + cl) * 0.5);
+                value = jsmin(value, f + (1 - gw) * cl);
+              }
             }
           }
           for (int a = 0; a < nA; a++) {

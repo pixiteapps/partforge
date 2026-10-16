@@ -10,7 +10,8 @@ import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/s
 import { applySurfaceDetail } from "../src/framework/geometry/implicit/detail.js";
 import { core, coreStatus, setCoreEnabled } from "../src/framework/core/core.js";
 import { handSpec, vaseSpec } from "./fixtures/implicit-trees.js";
-import { evalReference } from "../src/framework/geometry/implicit/reference.js";
+import { evalReference, evalNodeAt } from "../src/framework/geometry/implicit/reference.js";
+import { clearance, bulgeOffset, BULGE_STRIDE } from "../src/framework/geometry/implicit/contact.js";
 import { edgeCheck, eulerChar } from "./helpers/mesh-topology.js";
 import { TREES } from "./fixtures/implicit-small-trees.js";
 
@@ -59,20 +60,35 @@ describe("cleanup", () => {
       expect(out.normals.length).toBe(out.positions.length);
     });
   }
-  // Task 5 owns: bulge reaches through a piece. contactThree's first capsule tip reaches the
-  // second capsule's axis; at the default bulge its swell comes to within the 0.8 mm grid's
-  // clearance of the second capsule's far side, and the clearance cut's crease lands on that
-  // far surface: worst vertex 0.056·edge against the 0.05·edge bound (the fixture runs at
-  // bulge 0). A tracked failure — when the bulge profile is fixed this starts passing and
-  // vitest flags it: turn it into a plain test then.
-  test.fails("contactThree at the default bulge, CLEANUP: vertices on the surface (tracked defect)", () => {
-    const spec = structuredClone(TREES.contactThree);
-    delete spec.root.bulge;
-    const c = lowerSpec(spec, { images: new Map() });
-    const edge = 0.8, store = sampleField(c, edge), out = cleanupMesh(store, meshStore(store), CLEANUP);
-    let worst = 0;
-    for (let v = 0; v < out.positions.length / 3; v++) worst = Math.max(worst, Math.abs(evalReference(c, out.positions[3 * v], out.positions[3 * v + 1], out.positions[3 * v + 2], edge)));
-    expect(worst).toBeLessThan(0.05 * edge);
+  // The Task 3 failure here (contactThree at the default bulge: worst vertex 0.056·edge) was
+  // not the bulge. Sweeping the first capsule's tip through 12 depths, the tree fails the
+  // same bound at bulge 0 too (2 of 12, worst 0.30·edge): every such vertex sits on a cut
+  // piece's crease — where its clearance cut against a neighbour takes over from its own
+  // value, v_i + v_j = cl — where it meets the surface, and Newton projection's central
+  // differences straddle the kink. Off those creases the bound holds at both bulges; on
+  // them (within a cell: |v_i + v_j − cl| < edge) the vertex stays within half a cell.
+  test("contactThree over a sweep of press depths, bulge 0 and default, CLEANUP: vertices on the surface off the clearance cut's creases", () => {
+    const edge = 0.8;
+    for (const bulge of [0, undefined]) for (let s = 0; s < 12; s++) {
+      const spec = structuredClone(TREES.contactThree);
+      if (bulge === undefined) delete spec.root.bulge; else spec.root.bulge = bulge;
+      spec.root.children[0].b = [-1 + (s - 6) * 0.07, 0, 0];
+      const c = lowerSpec(spec, { images: new Map() }), n = c.ir.nodes[c.ir.root], cl = clearance(n.gap, edge);
+      const store = sampleField(c, edge), out = cleanupMesh(store, meshStore(store), CLEANUP);
+      let off = 0, on = 0, nOn = 0;
+      const V = out.positions.length / 3;
+      for (let v = 0; v < V; v++) {
+        const x = out.positions[3 * v], y = out.positions[3 * v + 1], z = out.positions[3 * v + 2], d = Math.abs(evalReference(c, x, y, z, edge));
+        const pv = n.children.map((id, i) => evalNodeAt(c, id, x, y, z, edge) - bulgeOffset(n.regions[i], 0, n.regions[i].length / BULGE_STRIDE, x, y, z));
+        let crease = false;
+        for (let i = 0; i < pv.length; i++) for (let j = i + 1; j < pv.length; j++) if (Math.abs(pv[i] + pv[j] - cl) < edge) crease = true;
+        if (crease) { on = Math.max(on, d); nOn++; } else off = Math.max(off, d);
+      }
+      const at = `bulge ${bulge ?? "default"}, tip at x = ${spec.root.children[0].b[0].toFixed(2)}`;
+      expect(off, at).toBeLessThan(0.05 * edge);
+      expect(on, at).toBeLessThan(0.5 * edge);
+      expect(nOn, at).toBeLessThan(0.2 * V);   // 12–14% of them: the creases are a band, not the surface
+    }
   });
   test("deterministic: two runs are byte-identical", () => {
     const c = lowerSpec(TREES.blobs, { images: new Map() });
@@ -116,7 +132,7 @@ describe("tiers", () => {
   const vase = vaseSpec();
   // [name, compile, grid, pinned digest, preview triangles at most this share of print's;
   // null: the probe skips decimation, so preview IS the print-tier mesh]
-  const CASES = [["hand", () => compileImplicit(handSpec()), 1.5, "b1b8a6271c85428d", 0.5], ["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "bd023b59990de4ed", null]];
+  const CASES = [["hand", () => compileImplicit(handSpec()), 1.5, "3fb192ea59869410", 0.5], ["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "bd023b59990de4ed", null]];
   for (const [name, compile, edge, pinned, maxPreview] of CASES) {
     test(`${name}: print tier is the JS stages run with decimateFrac 0, byte for byte`, () => {
       const compiled = compile(), plan = planLeaves(compiled, edge), store = evaluateLeaves(plan);

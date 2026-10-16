@@ -3,6 +3,7 @@ import { describe, test, expect } from "vitest";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { sampleField, planLeaves, evaluateLeaves, LEAF } from "../src/framework/geometry/implicit/sparse.js";
 import { TREES } from "./fixtures/implicit-small-trees.js";
+import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 
 const lower = (spec) => lowerSpec(spec, { images: new Map() });
 const S = LEAF + 1;
@@ -24,6 +25,17 @@ describe("sparse sampler", () => {
       }
     });
   }
+  test("the hand in a fist (contact: pads, bulges, attachments): culled leaves hold exactly the dense run's values", () => {
+    // Clipped to the fingertips' pads and the finger bases, where every pruning rule binds.
+    const c = lower(handSpec(HAND_POSES.fist));
+    c.bounds = { min: [-40, 60, -25], max: [40, 100, 8] };
+    for (const edge of [1.5, 0.8]) {
+      const sparse = sampleField(c, edge), dense = sampleField(c, edge, { cull: false });
+      expect(sparse.leaves.length).toBeLessThan(dense.leaves.length);
+      const byKey = new Map(dense.leaves.map((l) => [`${l.i0},${l.j0},${l.l0}`, l]));
+      for (const l of sparse.leaves) expect(Array.from(l.vals)).toEqual(Array.from(byKey.get(`${l.i0},${l.j0},${l.l0}`).vals));
+    }
+  }, 120_000);
   test("culling skips space away from the surface", () => {
     const c = lower({ root: { kind: "sphere", r: 20 } });
     const sparse = sampleField(c, 0.5), dense = sampleField(c, 0.5, { cull: false });
