@@ -164,13 +164,20 @@ const lookOf = (sp) => resolveMaterial(realisticDisplay(sp));
 // DEFAULT_STOCK_LOOK — plywood for birch, basswood, poplar, MDF, hardboard or anything
 // unlabelled. Word starts, not substrings, so "Plexiglas" and "Acrylite" match while
 // "perplexing" does not. A residual, named in the guide: stock that is neither wood nor
-// acrylic (felt, leather, card, cork) takes the plywood look too, burns and all. Only a
+// acrylic (felt, leather, card, cork) takes the plywood look too, burns and all; and a
+// species-faced ply ("walnut plywood", "oak ply") takes that species' SOLID look, with no
+// plies — name display.material to choose otherwise. Only a
 // string label is read: a (p, d) function would make a sub-part's look (and its program)
 // depend on the params it was first drawn at, so it counts as unlabelled.
 export const STOCK_LOOKS = Object.freeze([
   Object.freeze({ look: "clear-acrylic", words: Object.freeze([
     "acryl", "perspex", "plexi", "pmma", "methacryl", "polycarb", "lexan", "makrolon", "lucite",
   ]) }),
+  // The woods the library has a look for, so a board labelled by its species draws in it.
+  // Pine first: "pine plywood" and Douglas-fir sheet are softwood ply, the pine-plywood look.
+  Object.freeze({ look: "pine-plywood", words: Object.freeze(["pine", "douglas"]) }),
+  Object.freeze({ look: "walnut", words: Object.freeze(["walnut"]) }),
+  Object.freeze({ look: "oak", words: Object.freeze(["oak"]) }),
 ]);
 export const DEFAULT_STOCK_LOOK = "plywood";
 

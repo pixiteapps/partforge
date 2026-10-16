@@ -411,10 +411,14 @@ ignoring case (so `Plexiglas`, `Acrylite` and `poly-carbonate` match; `perplexin
 | A word of the stock label starts with | Realistic look |
 | --- | --- |
 | `acryl`, `perspex`, `plexi`, `pmma`, `methacryl`, `polycarb`, `lexan`, `makrolon`, `lucite` | `clear-acrylic` |
+| `pine`, `douglas` | `pine-plywood` |
+| `walnut` | `walnut` |
+| `oak` | `oak` |
 | anything else — plywood, birch, basswood, poplar, MDF, hardboard — or no readable label | `plywood` |
 
 Stock that is neither wood nor acrylic — felt, leather, card, cork — takes the `plywood`
-look too (charred edges and all, on a laser sheet). A `color` tints the look, as it tints any preset (a
+look too (charred edges and all, on a laser sheet), and a species-faced ply — `walnut
+plywood`, `oak ply` — takes that species' solid look, without plies. A `color` tints the look, as it tints any preset (a
 stained plywood, a coloured acrylic); the CAD view still shows the `color` itself. Only a
 string label is read: a stock written as a `(p, d)` function counts as unreadable. Name
 `display.material` to choose the look yourself — for such stock, or any other. Like the

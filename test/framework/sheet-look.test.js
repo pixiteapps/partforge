@@ -372,6 +372,16 @@ test("a plywood sheet shows its plies: 3 mm → 3, 6 → 5, 9 → 7; other woods
 });
 
 describe("a laser sheet with no usable material takes its stock's look", () => {
+  test("a stock named by a species the library has draws in it", () => {
+    for (const [stock, look] of [["walnut", "walnut"], ["Black Walnut 3/4\"", "walnut"], ["white oak", "oak"], ["Oak veneer", "oak"],
+      ["pine plywood", "pine-plywood"], ["Sanded Pine Ply", "pine-plywood"], ["douglas fir plywood", "pine-plywood"], ["Douglas-fir", "pine-plywood"],
+      ["walnut plywood", "walnut"], ["cloak", "plywood"], ["soak board", "plywood"], ["spine", "plywood"]]) {
+      expect(stockLook(stock), stock).toBe(look);
+    }
+    // acrylic still wins over a wood word, being first
+    expect(stockLook("walnut-tinted acrylic")).toBe("clear-acrylic");
+  });
+
   test("one keyword table: acrylic-like stock is clear acrylic, everything else plywood", () => {
     for (const stock of ["clear acrylic", "3 mm Perspex", "Plexiglas", "plexiglass", "PMMA", "3mm PMMA", "polycarbonate sheet",
       "Cast ACRYLIC", "clear-acrylic", "Acrylite FF", "Acrylglas 3mm", "acrylique", "polymethyl methacrylate", "Lexan",
