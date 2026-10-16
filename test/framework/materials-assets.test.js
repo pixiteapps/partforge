@@ -135,7 +135,7 @@ test("each wood's colour and roughnessMean are its own maps' measured averages",
     return sums.map((s) => s / (data.length / info.channels));
   };
   const woods = Object.values(PRESETS).filter((p) => p.pattern === "wood");
-  expect(woods.map((p) => p.id)).toEqual(["oak", "walnut", "plywood"]);
+  expect(woods.map((p) => p.id)).toEqual(["oak", "walnut", "plywood", "pine-plywood"]);
   for (const p of woods) {
     const avg = await means(p.textures.color);
     [(p.color >> 16) & 255, (p.color >> 8) & 255, p.color & 255].forEach((c, i) =>

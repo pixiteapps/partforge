@@ -32,11 +32,11 @@ const withHole = (k) =>
 // can diff them pixel for pixel — and one row of sheets that name no material, drawn as
 // their stock (sheet-look.js STOCK_LOOKS).
 const SW = 30;
-const WOODS = ["plywood", "oak", "walnut"];
+const WOODS = ["plywood", "pine-plywood", "oak", "walnut"];
 const CONTROLS_Y = -WOODS.length * PITCH;
 const LASER_SWATCHES = [
   ...WOODS.flatMap((material, row) => [3, 6, 9].map((t, col) => ({
-    key: `${material}_${t}`, label: `${PRESETS[material].label}, ${t} mm`, at: [col * PITCH, -row * PITCH], t, display: { material },
+    key: `${material.replaceAll("-", "_")}_${t}`, label: `${PRESETS[material].label}, ${t} mm`, at: [col * PITCH, -row * PITCH], t, display: { material },
   }))),
   { key: "acrylic_3", label: "Clear acrylic, 3 mm", at: [0, CONTROLS_Y], t: 3, display: { material: "clear-acrylic" }, stock: "clear acrylic" },
   { key: "oak_standing", label: "Oak, 3 mm, standing", at: [PITCH, CONTROLS_Y], t: 3, display: { material: "oak" }, standing: true },
