@@ -9,7 +9,7 @@ import { NativeSession, CORE_FAULT } from "../src/framework/core/implicit-core.j
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { blockDecision, fullDecision } from "../src/framework/geometry/implicit/interval.js";
 import { emitProgram, evalBatch, runProgram } from "../src/framework/geometry/implicit/program.js";
-import { TREES } from "./fixtures/implicit-small-trees.js";
+import { TREES, NATIVE_PENDING } from "./fixtures/implicit-small-trees.js";
 import { vaseSpec, ADVERSARIAL } from "./fixtures/implicit-trees.js";
 
 afterEach(() => setCoreForTesting(undefined));
@@ -33,7 +33,7 @@ float d = clamp(a, -2.0, 2.0) + mix(a, b, 0.3) + smoothstep(-1.0, 1.0, p.z) + sm
 return ((p.x < p.y && p.y > 0.0) || !(p.z <= 1.0) || (p.x >= 2.0 && p.x == p.y) || p.z != 0.25 ? d : -d) + texture(t, p.xy * 0.1 + 0.5) - 5.0;`;
 
 const CASES = {
-  ...Object.fromEntries(Object.entries(TREES).map(([k, spec]) => [k, { spec }])),
+  ...Object.fromEntries(Object.entries(TREES).filter(([k]) => !NATIVE_PENDING(k)).map(([k, spec]) => [k, { spec }])),
   vase: vaseSpec(),
   ...Object.fromEntries(Object.entries(ADVERSARIAL).map(([k, spec]) => [`adversarial ${k}`, { spec }])),
   allFunctions: {

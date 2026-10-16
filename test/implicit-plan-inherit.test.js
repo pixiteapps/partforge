@@ -17,7 +17,7 @@ import { randomSpec } from "./fixtures/implicit-trees.js";
 const lower = (spec, images = new Map()) => lowerSpec(spec, { images });
 
 const CASES = [
-  ...nativeCases(),   // every small tree (bendCut too), the vase, the hand, ADVERSARIAL, touching faces
+  ...nativeCases({ pending: true }),   // every small tree (bendCut too), the vase, the hand, ADVERSARIAL, touching faces
   ...Array.from({ length: 40 }, (_, i) => ({ name: `randomSpec(${i + 1})`, spec: randomSpec(i + 1), images: new Map(), edges: [0.5, 1.0] })),
 ];
 for (const k of CASES) if (k.name === "hand") k.edges = [1.5, 0.8, 0.5];

@@ -41,10 +41,10 @@ describe("cleanup", () => {
       // A bend's branch cut makes the field discontinuous; "distance to the surface" means nothing
       // within a cell of the jump (the bendCut tree puts it inside the rounded surface on purpose).
       const nearJump = (x, y, z, d) => [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
-        .some(([a, b, e]) => Math.abs(evalReference(c, x + a * edge, y + b * edge, z + e * edge) - d) > 4 * edge);
+        .some(([a, b, e]) => Math.abs(evalReference(c, x + a * edge, y + b * edge, z + e * edge, edge) - d) > 4 * edge);
       let worst = 0, skipped = 0;
       for (let v = 0; v < out.positions.length / 3; v++) {
-        const x = out.positions[3 * v], y = out.positions[3 * v + 1], z = out.positions[3 * v + 2], d = evalReference(c, x, y, z);
+        const x = out.positions[3 * v], y = out.positions[3 * v + 1], z = out.positions[3 * v + 2], d = evalReference(c, x, y, z, edge);   // the field at the grid edge it was meshed at (a contact's clearance)
         if (nearJump(x, y, z, d)) { skipped++; continue; }
         worst = Math.max(worst, Math.abs(d));
       }

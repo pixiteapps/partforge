@@ -4,7 +4,11 @@ import { validateSpec } from "../src/framework/geometry/implicit/grammar.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { evalReference, evalNodeAt } from "../src/framework/geometry/implicit/reference.js";
 import { unionN } from "../src/framework/geometry/implicit/primitives.js";
-import { clearance, C_MIN_CELLS, ATTACH_STRIDE } from "../src/framework/geometry/implicit/contact.js";
+import { clearance, C_MIN_CELLS, ATTACH_STRIDE, bulgeOffset } from "../src/framework/geometry/implicit/contact.js";
+import { blockDecision, fullDecision, decisionKey } from "../src/framework/geometry/implicit/interval.js";
+import { emitProgram, evalBatch, runProgram, OP } from "../src/framework/geometry/implicit/program.js";
+import { planLeaves } from "../src/framework/geometry/implicit/sparse.js";
+import { TREES } from "./fixtures/implicit-small-trees.js";
 
 const issues = (spec) => { try { validateSpec(spec); return []; } catch (e) { expect(e.code).toBe("IMPLICIT_SPEC"); return e.issues; } };
 const lower = (spec) => lowerSpec(spec, { images: new Map() });
@@ -109,5 +113,141 @@ describe("contact reference field", () => {
     const f = framed.ir.nodes[framed.ir.root];
     expect(Array.from(f.att.slice(2, 5)).map((v) => Math.round(v * 1e9) / 1e9 + 0)).toEqual([0, 0, 2]);
     expect(evalNodeAt(framed, framed.ir.root, ...map([0, 0, 2]), 0)).toBe(evalReference(framed, ...map([0, 0, 2]), 0));
+  });
+});
+
+let seed = 23;
+const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296) * 2 - 1;
+const CONTACT_TREES = Object.keys(TREES).filter((k) => k.startsWith("contact"));
+const ballPoints = (cx, cy, cz, r, N) => {
+  const X = new Float64Array(N), Y = new Float64Array(N), Z = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    const dx = rnd(), dy = rnd(), dz = rnd(), l = Math.hypot(dx, dy, dz) || 1, t = (Math.abs(rnd()) * r) / l;
+    X[i] = cx + dx * t; Y[i] = cy + dy * t; Z[i] = cz + dz * t;
+  }
+  return [X, Y, Z];
+};
+
+describe("contact pruning and bytecode", () => {
+  test("program carries the clearance", () => {
+    for (const name of CONTACT_TREES) {
+      const c = lower(TREES[name]), node = c.ir.nodes[c.ir.root];
+      const a = emitProgram(c, fullDecision(c, 0.5), 0.5), b = emitProgram(c, fullDecision(c, 1.5), 1.5);
+      expect(a.length).toBe(b.length);
+      const diff = [];
+      for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) diff.push(i);
+      const cl0 = clearance(node.gap, 0.5), cl1 = clearance(node.gap, 1.5);
+      expect(diff.length).toBe(cl0 === cl1 ? 0 : 1);
+      if (diff.length) {
+        expect(a[diff[0] - 3]).toBe(OP.CONTACT);
+        expect([a[diff[0]], b[diff[0]]]).toEqual([cl0, cl1]);
+      }
+    }
+  });
+
+  for (const name of CONTACT_TREES) {
+    test(`${name}: programs equal the reference at a nonzero grid edge, full and pruned`, () => {
+      const c = lower(TREES[name]);
+      for (const edge of [0.5, 1.5]) {
+        const N = 400, out = new Float64Array(N);
+        const [X, Y, Z] = ballPoints(0, 0, 0, 15, N);
+        evalBatch(emitProgram(c, fullDecision(c, edge), edge), c.textures, X, Y, Z, out);
+        for (let i = 0; i < N; i++) expect(out[i]).toBe(evalReference(c, X[i], Y[i], Z[i], edge));
+        for (let b = 0; b < 40; b++) {
+          const cx = rnd() * 12, cy = rnd() * 12, cz = rnd() * 12, r = 0.5 + Math.abs(rnd()) * 3;
+          const { lo, hi, dec } = blockDecision(c, cx, cy, cz, r, undefined, edge);
+          const M = 48, o = new Float64Array(M), [BX, BY, BZ] = ballPoints(cx, cy, cz, r, M);
+          evalBatch(emitProgram(c, dec, edge), c.textures, BX, BY, BZ, o);
+          for (let i = 0; i < M; i++) {
+            const v = evalReference(c, BX[i], BY[i], BZ[i], edge);
+            expect(o[i]).toBe(v);
+            expect(v).toBeGreaterThanOrEqual(lo - 1e-9);
+            expect(v).toBeLessThanOrEqual(hi + 1e-9);
+          }
+        }
+      }
+    });
+  }
+
+  test("a far third child is pruned beside a touching pair; two children never are", () => {
+    const c = lower(TREES.contactThree);
+    const d = blockDecision(c, 0, 0, 0, 1.5, undefined, 0.5).dec;
+    expect(d.kids[0]).not.toBeNull();
+    expect(d.kids[1]).not.toBeNull();
+    expect(d.kids[2]).toBeNull();
+    expect(d.firm[2]).toBe(true);
+    expect(blockDecision(c, 10, 0, 0, 1, undefined, 0.5).dec.kids.filter(Boolean).length).toBeGreaterThan(1);
+    const two = lower({ root: { kind: "contact", gap: 0.2, children: [sph(0), sph(60)] } });
+    expect(blockDecision(two, 0, 0, 0, 1, undefined, 0.5).dec.kids.every(Boolean)).toBe(true);
+  });
+
+  test("a pruned slot drops its attachments; the rest are re-indexed to the emitted slots", () => {
+    const c = lower(TREES.contactAttach);
+    const d = blockDecision(c, 0, 0, 2, 1.5, undefined, 0.5).dec;
+    expect(d.kids.map(Boolean)).toEqual([false, true, true]);
+    const prog = emitProgram(c, d, 0.5);
+    const pc = Array.from(prog).indexOf(OP.CONTACT, 2);
+    const nK = prog[pc + 5], nA = prog[pc + 6];
+    expect([nK, nA]).toEqual([2, 1]);
+    expect(Array.from(prog.subarray(pc + 7 + nK, pc + 9 + nK))).toEqual([0, 1]);
+    // Near the knob its attachment is live: the knob stays.
+    expect(blockDecision(c, 9, 0, 5, 1, undefined, 0.5).dec.kids[0]).not.toBeNull();
+  });
+
+  test("an attachment weight above zero in the ball keeps its slot", () => {
+    // Far knob, but the knob–palm attachment's band reaches the ball: (c) fails, so no prune.
+    const spec = structuredClone(TREES.contactAttach);
+    spec.root.attach[1].radius = 9;
+    const c = lower(spec);
+    expect(blockDecision(c, 0, 0, 2, 1.5, undefined, 0.5).dec.kids[0]).not.toBeNull();
+  });
+
+  test("planning threads the edge: every leaf program carries the clearance at that edge", () => {
+    const c = lower(TREES.contactNearMiss);
+    for (const edge of [0.5, 1]) {
+      const plan = planLeaves(c, edge);
+      expect(plan.programs.length).toBeGreaterThan(0);
+      for (const p of plan.programs) {
+        const pc = Array.from(p).indexOf(OP.CONTACT, 2);
+        if (pc >= 0) expect(p[pc + 3]).toBe(clearance(0.01, edge));
+      }
+    }
+  });
+
+  test("inherited decisions equal the full walk on contact trees at a nonzero edge", () => {
+    const c = lower(TREES.contactThree);
+    const parent = blockDecision(c, 0, 0, 0, 3, undefined, 0.5);
+    expect(parent.dec.kids[2]).toBeNull();
+    for (const [x, y, z] of [[0.5, 0.5, 0.5], [-1, 0, 0], [1, -1, 1]]) {
+      const inh = blockDecision(c, x, y, z, 1, parent.dec, 0.5), full = blockDecision(c, x, y, z, 1, undefined, 0.5);
+      expect([inh.lo, inh.hi, decisionKey(inh.dec)]).toEqual([full.lo, full.hi, decisionKey(full.dec)]);
+    }
+  });
+
+  test("BULGE subtracts the summed region offsets (hand-built program)", () => {
+    // [nP, nV, PRIM sphere r 3 → v0, BULGE v1 ← v0 at p0 with 2 regions, END v1]
+    const c = lower({ root: { kind: "sphere", r: 3 } });
+    const base = emitProgram(c, fullDecision(c));
+    const primOps = Array.from(base.subarray(2, base.length - 2));   // drop END
+    const R = [1, 0, 0, 0.6, 2, -1, 0.5, 0, 0.3, 1.5];
+    const prog = Float64Array.from([1, 2, ...primOps, OP.BULGE, 1, 0, 0, 2, ...R, OP.END, 1]);
+    const N = 200, out = new Float64Array(N);
+    const [X, Y, Z] = ballPoints(0, 0, 0, 5, N);
+    runProgram(prog, c.textures, X, Y, Z, N, out);
+    const Rf = Float64Array.from(R);
+    for (let i = 0; i < N; i++) {
+      const src = evalReference(c, X[i], Y[i], Z[i]);
+      let off = 0;
+      for (let k = 0; k < 2; k++) {
+        const o = k * 5, t = Math.hypot(X[i] - R[o], Y[i] - R[o + 1], Z[i] - R[o + 2]) / R[o + 4];
+        off += t < 1 ? R[o + 3] * (1 - t * t) * (1 - t * t) : 0;
+      }
+      near(out[i], src - off, 1e-12);
+      expect(out[i]).toBe(src - bulgeOffset(Rf, 0, 2, X[i], Y[i], Z[i]));
+    }
+    // Outside every region the field is untouched.
+    const o1 = new Float64Array(1);
+    runProgram(prog, c.textures, Float64Array.of(0, 0), Float64Array.of(4, 0), Float64Array.of(0, 0), 1, o1);
+    expect(o1[0]).toBe(evalReference(c, 0, 4, 0));
   });
 });
