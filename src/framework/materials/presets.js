@@ -90,13 +90,14 @@ export const PRESETS = {
   plywood: P("plywood", "Birch plywood", "natural", "Birch plywood sheet: a pale, fine-grained face; its plies show on cut edges.",
     { color: 0xe1c1a1, metalness: 0, roughness: 0.6, pattern: "wood", textureScale: 150, laminated: true,
       textures: { color: "pattern-plywood-color.jpg", normal: "pattern-plywood-normal.jpg", roughness: "pattern-plywood-rough.jpg", roughnessMean: 0.749, normalScale: 1, grain: "u" } }),
-  // Hardware-store 4 x 8 sheet plywood, sanded pine/fir face (ambientCG Wood048). Its
-  // textureScale is set for whole sheets, not hand-sized parts: one tile per metre, so the
-  // bold cathedral figure does not visibly repeat across a 1220 mm panel (the scan itself
-  // is 800 mm; 1000 is the top of OVERRIDE_RANGES.textureScale). Like plywood it is
+  // Hardware-store 4 x 8 sheet plywood, sanded pine/fir face (ambientCG Wood048). One tile
+  // per 400 mm, half the scan's own 800 mm: at the full scan size (1000 here, once) a 1K map
+  // is ~1 mm a texel and a hand-sized part showed a smear, not grain. 400 keeps the bold
+  // cathedral figure reading as a sheet face; the cost is a figure that repeats about three
+  // times across a full 1220 mm sheet. Like plywood it is
   // `laminated`: the ply pass draws its plies on every cut wall.
   "pine-plywood": P("pine-plywood", "Sanded pine plywood", "natural", "Hardware-store 4 × 8 sheet plywood (sanded pine/fir face): warm, bold grain; plies show on cut edges.",
-    { color: 0xe0b77d, metalness: 0, roughness: 0.6, pattern: "wood", textureScale: 1000, laminated: true,
+    { color: 0xe0b77d, metalness: 0, roughness: 0.6, pattern: "wood", textureScale: 400, laminated: true,
       textures: { color: "pattern-pine-plywood-color.jpg", normal: "pattern-pine-plywood-normal.jpg", roughness: "pattern-pine-plywood-rough.jpg", roughnessMean: 0.552, normalScale: 1, grain: "u" } }),
   "carbon-fiber": P("carbon-fiber", "Carbon fibre", "natural", "2x2 twill carbon fibre under clear coat.",
     { color: 0x1b1c1e, metalness: 0.2, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.05, pattern: "carbon", textureScale: 48 }),

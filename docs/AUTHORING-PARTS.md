@@ -463,7 +463,7 @@ on oak shrinks the grain to a 0.2 mm tile, i.e. invisible noise):
 | --- | --- | --- | --- |
 | layer lines | `pla-print`, `petg-print` | layer height | 0.2 |
 | SLS grain | `nylon-sls` | grain size | 0.15 |
-| wood | `oak`, `walnut`, `plywood`, `pine-plywood` | size of one texture tile (the grain repeats every this many mm) | 250 (`oak`), 400 (`walnut`), 150 (`plywood`), 1000 (`pine-plywood`, sized for whole 4 × 8 sheets) |
+| wood | `oak`, `walnut`, `plywood`, `pine-plywood` | size of one texture tile (the grain repeats every this many mm) | 250 (`oak`), 400 (`walnut`), 150 (`plywood`), 400 (`pine-plywood`; raise it toward 1000 for a whole 4 × 8 sheet with no visible repeat, at the cost of a softer grain) |
 | carbon weave | `carbon-fiber` | size of one texture tile | 48 |
 
 Presets without a pattern ignore it.
