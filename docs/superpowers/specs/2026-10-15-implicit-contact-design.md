@@ -94,14 +94,17 @@ is a **mesh-time** value, passed to both engines with the edge, not a compiled c
   as a clean gap of at least `cl`, never a neck.
 - **`gap > 0`:** value `= min_i c_i`. Pieces never fuse; contact shows as two flat pads
   `cl` apart.
-- **`gap = 0`:** value `= min(min_i c_i, s₂)`. `s₂ < 0` exactly where two or more pieces
-  overlap, so the overlap ("the pad") is filled and fused, while everywhere the pieces
-  merely come close the clearance cut applies. Around the rim of a pad this leaves a
-  clean crease about `cl` wide where the two skins meet. No region has an exact-zero
-  plateau (the earlier hard-union concern goes away).
+- **`gap = 0`:** value `= min(min_i c_i, f)` with the pad fill `f = s₂ + (1 − g(x))·cl`.
+  `s₂ < 0` exactly where two or more pieces overlap. `g` is 1 within a contact region
+  (found by the compiler, below) plus a margin of `cl + band` around it, falling smoothly to
+  0 beyond. Near a real contact the fill is `s₂`: the overlap ("the pad") is filled and
+  fused, and the wedge around its rim fuses into a natural crease. Away from every contact
+  `f ≥ s₂ + cl ≥ cl`, so it never undercuts the clearance cut and a near miss keeps its
+  clean gap. (Amended 2026-10-16: an ungated `s₂` fill was small and positive inside a
+  near-miss gap and re-closed it — the reported necks again. Caught in Task 1.)
 
-Both forms are built from min, max and `(d_i − m_i)/2`, so they are exactly L-Lipschitz
-when every child is: the upper Lipschitz bound `L` (which drives interval pruning) and the
+The cut forms are built from min, max and `(d_i − m_i)/2`, so they are exactly L-Lipschitz
+when every child is (the fill gate adds `cl·|∇g|`): the upper Lipschitz bound `L` (which drives interval pruning) and the
 growth bound `G` (which pads bounds) carry over unchanged.
 
 Cost of the clearance: geometry within `cl/2` of the bisector of two close pieces depends
