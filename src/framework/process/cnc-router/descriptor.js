@@ -155,7 +155,7 @@ const METRICS = {
 };
 
 // ── lint ──────────────────────────────────────────────────────────────────────
-const DRILL_DEPTH_HINT = "A drill's depth is measured from the machined face; a depth at or past the stock thickness is a through hole. Lower the depth, raise the stock thickness control, or set depth to the thickness to drill through.";
+const DRILL_DEPTH_HINT = "A drill's depth is measured from the op's own face (near or far); a depth at or past the stock thickness is a through hole. Lower the depth, raise the stock thickness control, or set depth to the thickness to drill through.";
 const ROUTER_RULES = [{
   id: "routed-drill-depth",
   run: ({ part, p, d, deriveError }) => {
