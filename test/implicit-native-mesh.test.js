@@ -40,6 +40,22 @@ describe("native marching tetrahedra", () => {
     }
   }
 
+  test("a dense plan (leaves clamped at the grid's far faces) meshes the same bytes", () => {
+    for (const name of ["blobs", "carved", "touching mirrorHalfBox"]) {
+      const { spec, images } = nativeCases().find((k) => k.name === name);
+      const plan = planLeaves(lowerSpec(spec, { images }), 1, { cull: false });
+      const js = meshStore(evaluateLeaves(plan));
+      const s = sessionFor(plan);
+      try {
+        s.sample(plan, { readBack: false });
+        const nat = s.mesh();
+        same("positions", nat.positions, js.positions);
+        same("indices", nat.indices, js.indices);
+        same("vertLeaf", nat.vertLeaf, js.vertLeaf);
+      } finally { s.destroy(); }
+    }
+  });
+
   test("an edge key past 2^32 welds like the JS (64-bit grid indices)", () => {
     // The same sphere's plan on a grid whose layers are n0·n1 = 2^29 points apart, so
     // the same (i, j) edge in adjacent layers differs by exactly 2^32 in its key: a

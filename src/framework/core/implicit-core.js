@@ -107,9 +107,9 @@ export class NativeSession {
    * evaluateLeaves(plan) on the core: { vals: a Float32Array per leaf, clipped }. The
    * plan's textures and programs must already be in the session, added in plan order
    * (a leaf's progIndex is the session's program index). The samples stay in the
-   * session for mesh().
+   * session for mesh(); with `readBack: false` they are not copied out (`vals` is null).
    */
-  sample(plan) {
+  sample(plan, { readBack = true } = {}) {
     const { c } = this;
     const { origin, edge, n, leaves } = plan ?? {};
     if (!isNumbers(origin) || origin.length !== 3 || !origin.every(Number.isFinite) || !(edge > 0) || !Number.isFinite(edge)
@@ -120,8 +120,12 @@ export class NativeSession {
     const L = new Int32Array(count * 4);
     for (let k = 0; k < count; k++) {
       const { i0, j0, l0, progIndex } = leaves[k];
-      if (!isInt32(i0) || !isInt32(j0) || !isInt32(l0) || !isInt32(progIndex) || i0 < 0 || j0 < 0 || l0 < 0) {
-        throw new Error("implicit: a plan leaf needs integer i0, j0, l0 >= 0 and a program index");
+      // planLeaves only emits leaves whose first cell is a grid cell (i0 < n[0] − 1, …);
+      // the mesher's weld keys rely on it. (A leaf may run past the grid's end — i0 + LEAF ≥ n
+      // is normal near the far faces — the mesher clamps its cells there.)
+      if (!isInt32(i0) || !isInt32(j0) || !isInt32(l0) || !isInt32(progIndex) || i0 < 0 || j0 < 0 || l0 < 0
+        || i0 >= n[0] - 1 || j0 >= n[1] - 1 || l0 >= n[2] - 1) {
+        throw new Error("implicit: a plan leaf needs integer i0, j0, l0 inside the grid's cells and a program index");
       }
       L[4 * k] = i0; L[4 * k + 1] = j0; L[4 * k + 2] = l0; L[4 * k + 3] = progIndex;
     }
@@ -139,9 +143,11 @@ export class NativeSession {
         if (pn) c.x.free(pn);
       }
       if (rc !== 0) return null;
-      return { all: c.copyOut(Float32Array, c.x.ip_leaf_vals(this.id), count * LEAF_SAMPLES), clipped: c.x.ip_clipped(this.id) === 1 };
+      const clipped = c.x.ip_clipped(this.id) === 1;
+      return { all: readBack ? c.copyOut(Float32Array, c.x.ip_leaf_vals(this.id), count * LEAF_SAMPLES) : null, clipped };
     });
     if (rc !== 0) throw new Error("implicit: the core refused the plan (a program index the session lacks, or a program it will not run)");
+    if (!readBack) return { vals: null, clipped: out.clipped };
     const vals = new Array(count);
     for (let k = 0; k < count; k++) vals[k] = out.all.subarray(k * LEAF_SAMPLES, (k + 1) * LEAF_SAMPLES);
     return { vals, clipped: out.clipped };

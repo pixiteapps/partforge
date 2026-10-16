@@ -12,6 +12,7 @@
 // once; the C ABI addresses them by id.
 #pragma once
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace ipe {
@@ -48,7 +49,8 @@ struct Session {
   int n[3] = {0, 0, 0};
   bool clipped = false;
   std::vector<int32_t> leaves;
-  std::vector<float> vals;
+  std::unique_ptr<float[]> vals;   // uninitialized: every sample is written before it is read
+  size_t valsCap = 0;
 
   // The mesh (mesher.js's meshStore output): xyz per vertex, three indices per
   // triangle, and the leaf each vertex was created in. `meshed` is false until
