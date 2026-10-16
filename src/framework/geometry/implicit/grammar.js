@@ -39,6 +39,21 @@ const TYPES = {
     v.forEach((c, i) => (isObj(c) ? walkNode(c, `${path}[${i}]`, ctx) : ctx.issues.push(`${path}[${i}]: must be a node object`)));
     return null;
   },
+  attach: (v, path, ctx) => {
+    if (!Array.isArray(v)) return "must be an array of { a, b, near, radius, k, band? }";
+    const known = { a: "string", b: "string", near: "string", radius: "pos", k: "nonneg", band: "pos" };
+    v.forEach((e, i) => {
+      const p = `${path}[${i}]`;
+      if (!isObj(e)) { ctx.issues.push(`${p}: must be { a, b, near, radius, k, band? }`); return; }
+      for (const key of Object.keys(e)) if (!(key in known)) ctx.issues.push(`${p}: unknown field "${key}"`);
+      for (const [key, type] of Object.entries(known)) {
+        if (e[key] === undefined) { if (key !== "band") ctx.issues.push(`${p}.${key}: required`); continue; }
+        const problem = TYPES[type](e[key]);
+        if (problem) ctx.issues.push(`${p}.${key}: ${problem}`);
+      }
+    });
+    return null;
+  },
   textureMap: (v, path, ctx) => {
     if (!isObj(v)) return "must be an object of { image } entries";
     for (const [name, t] of Object.entries(v)) {
@@ -75,6 +90,7 @@ export const NODE_KINDS = {
   union: { req: { children: "children" }, opt: { k: "nonneg" } },
   intersect: { req: { children: "children" }, opt: { k: "nonneg" } },
   subtract: { req: { children: "children" }, opt: { k: "nonneg" } },
+  contact: { req: { children: "children" }, opt: { gap: "nonneg", bulge: "nonneg", attach: "attach" } },
   mirror: { req: { child: "child" }, opt: { plane: "plane" } },
   round: { req: { child: "child", r: "pos" } },
   onion: { req: { child: "child", t: "pos" } },
@@ -108,6 +124,27 @@ function checkFields(obj, schema, common, path, ctx) {
   }
 }
 
+function checkContact(node, path, ctx) {
+  if (Array.isArray(node.children) && node.children.length < 2) ctx.issues.push(`${path}.children: contact needs at least 2 children`);
+  if (!Array.isArray(node.attach) || !Array.isArray(node.children)) return;
+  const labels = new Set(node.children.map((c) => (isObj(c) ? c.label : undefined)).filter((l) => typeof l === "string"));
+  const seen = new Set();
+  node.attach.forEach((e, i) => {
+    if (!isObj(e)) return;
+    const p = `${path}.attach[${i}]`;
+    for (const key of ["a", "b"]) {
+      if (typeof e[key] === "string" && e[key].length > 0 && !labels.has(e[key])) ctx.issues.push(`${p}.${key}: no child labelled "${e[key]}"`);
+    }
+    if (typeof e.a === "string" && e.a === e.b) ctx.issues.push(`${p}: a and b must name different children`);
+    if (typeof e.near === "string" && e.near.length > 0 && !ctx.frameNames.has(e.near)) ctx.issues.push(`${p}.near: unknown frame "${e.near}"`);
+    if (typeof e.a === "string" && typeof e.b === "string" && e.a !== e.b) {
+      const key = [e.a, e.b].sort().join("\u0000");
+      if (seen.has(key)) ctx.issues.push(`${p}: duplicate attachment for "${e.a}" and "${e.b}"`);
+      seen.add(key);
+    }
+  });
+}
+
 function walkNode(node, path, ctx) {
   const schema = Object.hasOwn(NODE_KINDS, node.kind) ? NODE_KINDS[node.kind] : null;
   if (!schema) {
@@ -117,6 +154,7 @@ function walkNode(node, path, ctx) {
   checkFields(node, schema, COMMON, path, ctx);
   if (typeof node.frame === "string" && !ctx.frameNames.has(node.frame)) ctx.issues.push(`${path}.frame: unknown frame "${node.frame}"`);
   if (node.kind === "repeat" && (node.linear == null) === (node.polar == null)) ctx.issues.push(`${path}: repeat needs exactly one of \`linear\` or \`polar\``);
+  if (node.kind === "contact") checkContact(node, path, ctx);
   if (node.kind === "tube" && Array.isArray(node.r) && Array.isArray(node.points) && node.r.length !== node.points.length) {
     ctx.issues.push(`${path}.r: needs one radius per point (${node.points.length})`);
   }

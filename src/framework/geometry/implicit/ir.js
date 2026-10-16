@@ -15,6 +15,7 @@ import { resolveFrames, compose, invert, translation, rotation, axisVector, xfor
 import { compileExprSource } from "./expr-lower.js";
 import { makeTexture, checkTextureBudget } from "./textures.js";
 import { PRIM, WARP, roundConeParams, primLipschitz } from "./primitives.js";
+import { BULGE_DEFAULT, ATTACH_STRIDE } from "./contact.js";
 import { ImplicitSpecError } from "./errors.js";
 
 const INF = Infinity;
@@ -137,6 +138,27 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
         // straight-line growth is up to sqrt(3) slower. Union's box is the union itself.
         const G = node.kind === "union" ? G0 : G0 / Math.sqrt(3);
         return finish({ kind: node.kind, k, children: ids, L: Math.max(...ids.map((i) => nodes[i].L)) }, lb, Math.min(...ids.map((i) => nodes[i].thin)), G);
+      }
+      case "contact": {
+        const ids = kids(node.children);
+        const gap = node.gap ?? 0, bulge = node.bulge ?? BULGE_DEFAULT;
+        const labelSlot = (l) => node.children.findIndex((c) => c.label === l);
+        const att = new Float64Array((node.attach?.length ?? 0) * ATTACH_STRIDE);
+        let maxK = 0;
+        (node.attach ?? []).forEach((e, i) => {
+          const wp = [0, 0, 0], an = [0, 0, 0];
+          xformPoint(wp, frames.get(e.near).world, 0, 0, 0);
+          xformPoint(an, invert(W), wp[0], wp[1], wp[2]);
+          att.set([labelSlot(e.a), labelSlot(e.b), an[0], an[1], an[2], e.radius, e.band ?? e.radius / 2, e.k], i * ATTACH_STRIDE);
+          maxK = Math.max(maxK, e.k);
+        });
+        const G0 = minG(ids);
+        const lb = boxPad(ids.map((i) => nodes[i].box).reduce(boxUnion), (bulge + maxK / 4) / G0);
+        return finish({
+          kind: "contact", children: ids, gap, bulge, fuse: gap === 0 ? 1 : 0, att,
+          regions: ids.map(() => new Float64Array(0)),
+          L: Math.max(...ids.map((i) => nodes[i].L)),
+        }, lb, Math.min(...ids.map((i) => nodes[i].thin)), G0);
       }
       case "mirror": {
         const id = child(node.child), axis = AXIS_INDEX[node.plane ?? "yz"], cb = nodes[id].box;
