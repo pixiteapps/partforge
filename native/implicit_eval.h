@@ -11,6 +11,7 @@
 // across calls so the hot loop never allocates. Several sessions may be live at
 // once; the C ABI addresses them by id.
 #pragma once
+#include <cstdint>
 #include <vector>
 
 namespace ipe {
@@ -38,6 +39,16 @@ struct Session {
   std::vector<double> PX, PY, PZ, V;
   std::vector<double> gather;   // UNION/INTER operand gather (program.js's `gather`)
   std::vector<const double*> gsrc; // that op's operand registers, resolved once per op
+
+  // The leaf store (implicit_mesh.cpp, sparse.js's Store): the sampled plan's grid,
+  // its leaves (i0, j0, l0, program per leaf) and their (LEAF+1)^3 float32 samples
+  // each, leaf after leaf in plan order. `sampled` is false until ip_sample succeeds.
+  bool sampled = false;
+  double origin[3] = {0, 0, 0}, edge = 0;
+  int n[3] = {0, 0, 0};
+  bool clipped = false;
+  std::vector<int32_t> leaves;
+  std::vector<float> vals;
 };
 
 // Checks a program's structure once (op codes, operand counts, register and fn

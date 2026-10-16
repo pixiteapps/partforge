@@ -32,6 +32,7 @@ export const EXPORTS = [
   "bvh_distance_to", "bvh_min_wall", "bvh_fingerprint", "bvh_destroy",
   "ip_math_probe",
   "ip_session_create", "ip_session_destroy", "ip_tex_add", "ip_prog_add", "ip_eval",
+  "ip_sample", "ip_leaf_vals", "ip_clipped",
 ];
 // -ffp-contract=off: the core must round every operation exactly as the JS does
 // (see native/js_math.h). WebAssembly has no FMA to fuse into, but say so anyway.

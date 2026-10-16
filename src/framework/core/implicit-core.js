@@ -12,6 +12,8 @@ import { OUT_OF_MEMORY, poisonCore, releaseIfIdle } from "./core.js";
 
 const isFault = (err) => (typeof WebAssembly === "object" && err instanceof WebAssembly.RuntimeError) || err?.message === OUT_OF_MEMORY;
 const isNumbers = (a) => ArrayBuffer.isView(a) || Array.isArray(a);
+const isInt32 = (v) => Number.isInteger(v) && v >= -0x80000000 && v <= 0x7fffffff;
+const LEAF_SAMPLES = 125;   // (LEAF + 1)³, sparse.js's LEAF = 4
 
 /** Thrown when the core faulted (or is already poisoned): run the JS path instead. */
 export const CORE_FAULT = Object.freeze(new Error("partforge core: the implicit session faulted"));
@@ -99,6 +101,50 @@ export class NativeSession {
     });
     if (rc !== 0) throw new Error(`implicit: the core refused program ${progIndex} (malformed, or a texture slot it lacks)`);
     return out;
+  }
+
+  /**
+   * evaluateLeaves(plan) on the core: { vals: a Float32Array per leaf, clipped }. The
+   * plan's textures and programs must already be in the session, added in plan order
+   * (a leaf's progIndex is the session's program index). The samples stay in the
+   * session for mesh().
+   */
+  sample(plan) {
+    const { c } = this;
+    const { origin, edge, n, leaves } = plan ?? {};
+    if (!isNumbers(origin) || origin.length !== 3 || !origin.every(Number.isFinite) || !(edge > 0) || !Number.isFinite(edge)
+      || !isNumbers(n) || n.length !== 3 || !n.every((v) => isInt32(v) && v >= 2) || !Array.isArray(leaves)) {
+      throw new Error("implicit: sample takes a plan with origin, edge, n and leaves");
+    }
+    const count = leaves.length;
+    const L = new Int32Array(count * 4);
+    for (let k = 0; k < count; k++) {
+      const { i0, j0, l0, progIndex } = leaves[k];
+      if (!isInt32(i0) || !isInt32(j0) || !isInt32(l0) || !isInt32(progIndex) || i0 < 0 || j0 < 0 || l0 < 0) {
+        throw new Error("implicit: a plan leaf needs integer i0, j0, l0 >= 0 and a program index");
+      }
+      L[4 * k] = i0; L[4 * k + 1] = j0; L[4 * k + 2] = l0; L[4 * k + 3] = progIndex;
+    }
+    let rc = 0;
+    const out = this.#call(() => {
+      let pl = 0, po = 0, pn = 0;
+      try {
+        pl = c.copyIn(L);
+        po = c.copyIn(Float64Array.from(origin));
+        pn = c.copyIn(Int32Array.from(n));
+        rc = c.x.ip_sample(this.id, pl, count, po, edge, pn);
+      } finally {
+        if (pl) c.x.free(pl);
+        if (po) c.x.free(po);
+        if (pn) c.x.free(pn);
+      }
+      if (rc !== 0) return null;
+      return { all: c.copyOut(Float32Array, c.x.ip_leaf_vals(this.id), count * LEAF_SAMPLES), clipped: c.x.ip_clipped(this.id) === 1 };
+    });
+    if (rc !== 0) throw new Error("implicit: the core refused the plan (a program index the session lacks, or a program it will not run)");
+    const vals = new Array(count);
+    for (let k = 0; k < count; k++) vals[k] = out.all.subarray(k * LEAF_SAMPLES, (k + 1) * LEAF_SAMPLES);
+    return { vals, clipped: out.clipped };
   }
 
   /** Frees the session. Safe to call twice, and on a poisoned instance (nothing is touched then). */
