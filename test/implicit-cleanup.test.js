@@ -59,6 +59,21 @@ describe("cleanup", () => {
       expect(out.normals.length).toBe(out.positions.length);
     });
   }
+  // Task 5 owns: bulge reaches through a piece. contactThree's first capsule tip reaches the
+  // second capsule's axis; at the default bulge its swell comes to within the 0.8 mm grid's
+  // clearance of the second capsule's far side, and the clearance cut's crease lands on that
+  // far surface: worst vertex 0.056·edge against the 0.05·edge bound (the fixture runs at
+  // bulge 0). A tracked failure — when the bulge profile is fixed this starts passing and
+  // vitest flags it: turn it into a plain test then.
+  test.fails("contactThree at the default bulge, CLEANUP: vertices on the surface (tracked defect)", () => {
+    const spec = structuredClone(TREES.contactThree);
+    delete spec.root.bulge;
+    const c = lowerSpec(spec, { images: new Map() });
+    const edge = 0.8, store = sampleField(c, edge), out = cleanupMesh(store, meshStore(store), CLEANUP);
+    let worst = 0;
+    for (let v = 0; v < out.positions.length / 3; v++) worst = Math.max(worst, Math.abs(evalReference(c, out.positions[3 * v], out.positions[3 * v + 1], out.positions[3 * v + 2], edge)));
+    expect(worst).toBeLessThan(0.05 * edge);
+  });
   test("deterministic: two runs are byte-identical", () => {
     const c = lowerSpec(TREES.blobs, { images: new Map() });
     const run = () => { const s = sampleField(c, 0.8); return cleanupMesh(s, meshStore(s)); };

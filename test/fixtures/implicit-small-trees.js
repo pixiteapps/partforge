@@ -50,5 +50,10 @@ export const TREES = {
     { kind: "capsule", a: [1, -6, 0], b: [1, 6, 0], r: 2 },
     { kind: "capsule", a: [10, 0, -5], b: [10, 0, 5], r: 1.5 },
   ] } },
+  // Gap 0: a, b fused by a 2 mm overlap; c passes 0.5 mm from both, beside their pad.
+  contactPassBy: { root: { kind: "contact", children: [
+    { kind: "sphere", r: 5, at: [-4, 0, 0] }, { kind: "sphere", r: 5, at: [4, 0, 0] },
+    { kind: "sphere", r: 2, at: [0, 0, -6.344288770224761] },
+  ] } },
   contactIdentical: { root: { kind: "contact", children: [{ kind: "sphere", r: 4, at: [1, 0, 0] }, { kind: "sphere", r: 4, at: [1, 0, 0] }] } },
 };

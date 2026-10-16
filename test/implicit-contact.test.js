@@ -4,7 +4,7 @@ import { validateSpec } from "../src/framework/geometry/implicit/grammar.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { evalReference, evalNodeAt } from "../src/framework/geometry/implicit/reference.js";
 import { unionN } from "../src/framework/geometry/implicit/primitives.js";
-import { clearance, C_MIN_CELLS, ATTACH_STRIDE, bulgeOffset, REGION_CELL, BULGE_STRIDE } from "../src/framework/geometry/implicit/contact.js";
+import { clearance, C_MIN_CELLS, ATTACH_STRIDE, bulgeOffset, REGION_CELL, BULGE_STRIDE, FILL_STRIDE } from "../src/framework/geometry/implicit/contact.js";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { setCoreEnabled } from "../src/framework/core/core.js";
 import { cpuMs } from "./helpers/cpu-pace.js";
@@ -65,7 +65,7 @@ describe("contact reference field", () => {
     // bulge 0: the pad itself, without the swell (the bulged twin is only deeper).
     const c = lower({ root: { kind: "contact", gap: 0, bulge: 0, children: [sph(-4), sph(4)] } });
     const bulged = lower({ root: { kind: "contact", gap: 0, children: [sph(-4), sph(4)] } });
-    expect(bulged.ir.nodes[bulged.ir.root].fillRegions.length).toBe(4);
+    expect(bulged.ir.nodes[bulged.ir.root].fillRegions.length).toBe(FILL_STRIDE);
     expect(evalReference(bulged, 0, 0, 0, 1)).toBeLessThan(evalReference(c, 0, 0, 0, 1));
     expect(c.ir.nodes[c.ir.root].fuse).toBe(1);
     expect(evalReference(c, 0, 0, 0, 1)).toBeLessThan(0);
@@ -278,7 +278,8 @@ describe("contact regions and bulge", () => {
     const [a, b] = regionsOf(c), node = c.ir.nodes[c.ir.root];
     expect([nRegions(a), nRegions(b)]).toEqual([1, 1]);
     expect(Array.from(a)).toEqual(Array.from(b));
-    expect(node.fillRegions.length).toBe(4);
+    expect(Array.from(node.fillRegions.subarray(0, 2))).toEqual([0, 1]);   // the pair's slots
+    expect(node.fillRegions.length).toBe(FILL_STRIDE);
     for (let i = 0; i < 3; i++) expect(Math.abs(a[i])).toBeLessThan(REGION_CELL);
     // A = bulge·min(1, δ/BULGE_FULL_DEPTH) with the default bulge: recover δ.
     const delta = (a[3] / node.bulge) * 1.5;
@@ -306,7 +307,7 @@ describe("contact regions and bulge", () => {
     expect(nRegions(A)).toBe(2);
     expect(Math.abs(A[1])).toBeLessThan(1);
     expect(Math.abs(A[BULGE_STRIDE + 1] - 20)).toBeLessThan(1);
-    expect(c.ir.nodes[c.ir.root].fillRegions.length).toBe(8);
+    expect(c.ir.nodes[c.ir.root].fillRegions.length).toBe(2 * FILL_STRIDE);
   });
 
   test("regions under a frame are in node-local coordinates", () => {
@@ -369,15 +370,15 @@ describe("contact regions and bulge", () => {
     const prog = emitProgram(c, fullDecision(c, 0.5), 0.5), node = c.ir.nodes[c.ir.root];
     const pc = Array.from(prog).indexOf(OP.CONTACT, 2), nK = prog[pc + 5], nA = prog[pc + 6], o = pc + 7 + nK + nA * ATTACH_STRIDE;
     expect(prog[o]).toBe(1);
-    expect(Array.from(prog.subarray(o + 1, o + 5))).toEqual(Array.from(node.fillRegions));
-    expect(prog[o + 5]).toBe(OP.END);
+    expect(Array.from(prog.subarray(o + 1, o + 1 + FILL_STRIDE))).toEqual(Array.from(node.fillRegions));
+    expect(prog[o + 1 + FILL_STRIDE]).toBe(OP.END);
     expect(Array.from(prog).filter((v, i) => i > 1 && v === OP.BULGE).length).toBeGreaterThanOrEqual(2);
   });
 
   test("bulged, gated trees: the inherited plan is the full walk's plan", () => {
-    for (const name of ["contactOverlap", "contactIdentical", "contactGap"]) {
+    for (const name of ["contactOverlap", "contactIdentical", "contactGap", "contactPassBy"]) {
       const c = lower(TREES[name]), node = c.ir.nodes[c.ir.root];
-      expect(node.fillRegions.length).toBeGreaterThan(0);
+      expect(node.fillRegions.length > 0).toBe(node.fuse === 1);   // gap > 0 never fuses: no fill regions
       expect(node.regions.some((R) => R.length > 0)).toBe(true);
       for (const edge of [0.5, 1]) {
         const a = planLeaves(c, edge), b = planLeaves(c, edge, { inherit: false });
@@ -385,6 +386,34 @@ describe("contact regions and bulge", () => {
         expect(a.programs.map((p) => Array.from(p))).toEqual(b.programs.map((p) => Array.from(p)));
       }
     }
+  });
+
+  test("the pad fill is per pair: a third sphere passing near a contact pad keeps a clean gap", () => {
+    // contactPassBy: spheres a, b fused (2 mm overlap); c passes 0.5 mm from a and b, beside
+    // their pad and within the old shared gate's margin (which fused it to them).
+    // bulge 0 so the gap's midpoint is the clearance cut's bisector (a bulge shifts it toward
+    // c a little; the fill is what this pins). The old shared gate gave s2 ≈ 0.25 here.
+    const c = lower({ root: { ...TREES.contactPassBy.root, bulge: 0 } }), node = c.ir.nodes[c.ir.root], edge = 1, cl = clearance(0, edge);
+    expect(node.fillRegions.length).toBe(FILL_STRIDE);
+    expect(Array.from(node.fillRegions.subarray(0, 2))).toEqual([0, 1]);
+    const C = [0, 0, -Math.sqrt(7.5 * 7.5 - 16)], A = [-4, 0, 0], t = 2.25 / 7.5;   // gap midpoint, c toward a
+    const mid = [0, 1, 2].map((i) => C[i] + (A[i] - C[i]) * t);
+    expect(Math.hypot(...[0, 1, 2].map((i) => mid[i] - node.fillRegions[2 + i]))).toBeLessThan(node.fillRegions[5] + cl + 2);
+    expect(evalReference(c, ...mid, edge)).toBeGreaterThanOrEqual(cl / 2 - 1e-12);
+    expect(evalReference(c, 0, 0, 0, edge)).toBeLessThan(0);   // the a-b pad itself still fuses
+    // A pruned block keeps the same value; the program drops a region with a pruned side.
+    const d = blockDecision(c, 0, 0, -C[2], 1, undefined, edge).dec;   // far above, beside nothing but a, b
+    const prog = emitProgram(c, d, edge), o = new Float64Array(1);
+    evalBatch(prog, c.textures, Float64Array.of(0), Float64Array.of(0), Float64Array.of(-C[2]), o);
+    expect(o[0]).toBe(evalReference(c, 0, 0, -C[2], edge));
+  });
+
+  test("a slot in a live pad-fill region is never pruned (rule (d))", () => {
+    // Beside a and c, far from b but inside the (a, b) region's gate: (a)(b)(c) would prune b
+    // (as they do in the gap > 0 twin, which has no fill), (d) keeps it.
+    const gap0 = lower(TREES.contactPassBy), cut = lower({ root: { ...TREES.contactPassBy.root, gap: 0.3 } });
+    expect(blockDecision(cut, -3, 0, -6, 0.3, undefined, 1).dec.kids[1]).toBeNull();
+    expect(blockDecision(gap0, -3, 0, -6, 0.3, undefined, 1).dec.kids[1]).not.toBeNull();
   });
 
   test("compile cost: a five-capsule fan compiles in ≤ 20 ms CPU", () => {

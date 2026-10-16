@@ -8,6 +8,7 @@
 // gates the gap-0 pad fill (`fillRegions`, FILL_STRIDE). Its own module, not contact.js:
 // the search walks the reference and interval passes, which import contact.js.
 import { evalNodeAt } from "./reference.js";
+import { hypot3 } from "../js-math.js";
 import { nodeInterval } from "./interval.js";
 import {
   attachWeight, ATTACH_STRIDE, BULGE_STRIDE,
@@ -27,7 +28,8 @@ const SEARCH_EDGE = 0;
  * { ir: { nodes }, textures } as far as lowering has got; `n` the contact node (children,
  * att, bulge). Works in the node's local coordinates from the UN-bulged children. Returns
  *  - regions: per slot, a Float64Array of (cx, cy, cz, A, rho) per region (BULGE_STRIDE);
- *  - fillRegions: (cx, cy, cz, rho) per region (FILL_STRIDE), the pad fill's gate;
+ *  - fillRegions: (ia, ib, cx, cy, cz, rho) per region (FILL_STRIDE) of a fusing (gap-0)
+ *    node — each the pad fill of its own pair; empty when the node does not fuse;
  *  - pad: the most any one slot's bulge can add to its field (Σ A), for the node's box;
  *  - Lb: the bulge's Lipschitz bound (a bulged piece is (L + Lb)-Lipschitz);
  *  - warnings: one per pair whose search ran past MAX_REGION_CELLS (it keeps no regions).
@@ -41,7 +43,7 @@ export function contactRegions(view, n, path) {
       continue;
     }
     for (const { c, delta, rho } of clusters) {
-      fill.push(c[0], c[1], c[2], rho);
+      if (n.fuse) fill.push(a, b, c[0], c[1], c[2], rho);   // the pair's pad fill (gap 0 only)
       const A = n.bulge * Math.min(1, delta / BULGE_FULL_DEPTH);
       if (!(A > 0)) continue;   // bulge 0: an all-zero offset; leave the slot unbulged
       const rb = rho + BULGE_SPREAD * delta + 2 * n.bulge;
@@ -131,7 +133,7 @@ function pairClusters(compiled, n, a, b) {   // compiled: the lowering view
     const minM = deepest(compiled, ia, ib, centre(cells[best]), cells[best][3]);
     const c = [sx / members.length, sy / members.length, sz / members.length];
     let far = 0;
-    for (const idx of members) { const q = centre(cells[idx]); far = Math.max(far, Math.hypot(q[0] - c[0], q[1] - c[1], q[2] - c[2])); }
+    for (const idx of members) { const q = centre(cells[idx]); far = Math.max(far, hypot3(q[0] - c[0], q[1] - c[1], q[2] - c[2])); }
     // The joined base of an attached pair is not a contact: no bulge, and its blend fills it.
     let attached = false;
     for (let o = 0; o < n.att.length; o += ATTACH_STRIDE) {

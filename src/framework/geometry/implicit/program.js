@@ -46,11 +46,10 @@ export function emitExprProgram(L) {
 
 // Layouts of the two contact ops (the rest are read off runProgram below):
 //   [CONTACT, dst, p, cl, fuse, nK, nA, kidReg × nK, (ia, ib, ax, ay, az, r0, band, k) × nA,
-//    nF, (cx, cy, cz, rho) × nF]
+//    nF, (ia, ib, cx, cy, cz, rho) × nF]
 //     cl is clearance(gap, edge) baked in; ia/ib index the EMITTED slots; an attachment with
-//     a pruned side is dropped (its weight is 0 over the block — interval.js rule (c)). The
-//     fill-gate regions are the node's, all of them, whatever was pruned (the gate depends on
-//     the point alone).
+//     a pruned side is dropped (its weight is 0 over the block — interval.js rule (c)), and
+//     so is a pad-fill region (its gate is 0 there — rule (d)). nF is 0 unless the node fuses.
 //   [BULGE, dst, src, p, nR, (cx, cy, cz, A, rho) × nR]   → src − bulgeOffset(...)
 //     emitted on a kept slot's register when that slot has regions, before CONTACT reads it.
 // `edge` is the grid edge the program is planned at (0, the default, is the bare gap).
@@ -103,8 +102,13 @@ export function emitProgram(compiled, dec, edge = 0) {
           atts.push(ia, ib, ...n.att.subarray(o + 2, o + ATTACH_STRIDE));
         }
         const out = newV();
-        const F = n.fillRegions;
-        code.push(OP.CONTACT, out, p, clearance(n.gap, edge), n.fuse, vs.length, atts.length / ATTACH_STRIDE, ...vs, ...atts, F.length / FILL_STRIDE, ...F);
+        const fills = [], F = n.fillRegions;
+        for (let o = 0; n.fuse && o < F.length; o += FILL_STRIDE) {
+          const ia = slot[F[o]], ib = slot[F[o + 1]];
+          if (ia < 0 || ib < 0) continue;
+          fills.push(ia, ib, ...F.subarray(o + 2, o + FILL_STRIDE));
+        }
+        code.push(OP.CONTACT, out, p, clearance(n.gap, edge), n.fuse, vs.length, atts.length / ATTACH_STRIDE, ...vs, ...atts, fills.length / FILL_STRIDE, ...fills);
         return out;
       }
       case "mirror": {

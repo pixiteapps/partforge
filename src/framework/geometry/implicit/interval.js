@@ -6,7 +6,7 @@ import { xformPoint, xformDir } from "./frames.js";
 import { evalPrim, warpPoint, mirrorPoint, sanitize } from "./primitives.js";
 import { evalExprScalar } from "./expr-lower.js";
 import { sampleTexture } from "./textures.js";
-import { clearance, contactInterval, attachWeightRange, bulgeRange, gateRange, ATTACH_STRIDE, BULGE_STRIDE, FILL_STRIDE } from "./contact.js";
+import { clearance, contactInterval, attachWeightRange, bulgeRange, gateWeightRange, ATTACH_STRIDE, BULGE_STRIDE, FILL_STRIDE, FILL_BAND } from "./contact.js";
 
 // Inheriting a parent's decision (planLeaves' child blocks). `parentDec` is the decision of
 // a ball that CONTAINS this one; a slot it pruned FIRMLY (`dec.firm[i]`) is not walked
@@ -112,8 +112,7 @@ function visit(c, id, x, y, z, r, pd, e) {
     }
     case "contact": {
       // Slot j is pruned when (a) lo_j > H2 (second-smallest hi over the other slots: j is
-      // never among the two smallest values, so neither the min of the c_i nor the fuse
-      // order statistic moves), (b) lo_i + lo_j > cl for every other slot i (the pair's cut
+      // never among the two smallest values, so the min of the c_i does not move), (b) lo_i + lo_j > cl for every other slot i (the pair's cut
       // never rises above v_i, so no other c_i moves) and (c) every attachment involving j
       // has weight 0 over the ball (its kk is 0: no blend term), each with the union's
       // 1e-12 margin. Every condition only gets truer as the ball shrinks (lo rises, hi
@@ -123,8 +122,9 @@ function visit(c, id, x, y, z, r, pd, e) {
       // could be pruned, and (b) for the pair already held when it was pruned. The interval
       // is taken over the kept slots alone, which is exact (a pruned slot changes no value).
       // Every rule reads the BULGED children's intervals (bulgeRange: the offset's bounds over
-      // the ball, which nest as the ball shrinks), as the field bulges before it cuts. The
-      // fill gate depends on the point alone, so it needs no prune condition of its own.
+      // the ball, which nest as the ball shrinks), as the field bulges before it cuts. (d) With
+      // fuse, every pad-fill region involving j has gate weight 0 over the ball (padded near
+      // distance, as (c)); the emitter then drops those regions, as it drops attachments.
       const N = n.children.length, cl = clearance(n.gap, e), att = n.att, nA = att.length / ATTACH_STRIDE;
       const rs = new Array(N), lo = new Float64Array(N), hi = new Float64Array(N), off = [0, 0];
       for (let i = 0; i < N; i++) {
@@ -135,6 +135,8 @@ function visit(c, id, x, y, z, r, pd, e) {
       }
       const wr = new Array(nA);
       for (let a = 0; a < nA; a++) wr[a] = attachWeightRange(new Float64Array(3), att, a * ATTACH_STRIDE, x, y, z, r);
+      const F = n.fillRegions, nF = n.fuse ? F.length / FILL_STRIDE : 0, gr = new Array(nF);
+      for (let k = 0; k < nF; k++) gr[k] = gateWeightRange(new Float64Array(3), F, k * FILL_STRIDE, cl, x, y, z, r);
       const kids = new Array(N), keep = new Array(N);
       let firm = null;
       for (let j = 0; j < N; j++) {
@@ -165,13 +167,22 @@ function visit(c, id, x, y, z, r, pd, e) {
             if (!(wr[a][2] - T > firmTol(r, x, y, z, wr[a][2], T))) isFirm = false;
           }
         }
+        // (d): every pad-fill region involving j has gate weight 0 over the ball.
+        for (let k = 0; prune && k < nF; k++) {
+          const o = k * FILL_STRIDE;
+          if (F[o] !== j && F[o + 1] !== j) continue;
+          if (gr[k][1] > 0) prune = false;
+          else {
+            const T = F[o + 5] + cl + FILL_BAND + FILL_BAND;
+            if (!(gr[k][2] - T > firmTol(r, x, y, z, gr[k][2], T))) isFirm = false;
+          }
+        }
         if (!prune) { kids[j] = rs[j].dec; keep[j] = true; continue; }
         kids[j] = null; keep[j] = false;
         if (firm === null) firm = new Array(N).fill(false);
         firm[j] = isFirm;
       }
-      const gr = gateRange([0, 0], n.fillRegions, n.fillRegions.length / FILL_STRIDE, cl, x, y, z, r);
-      const iv = contactInterval([0, 0], lo, hi, keep, N, cl, n.fuse, att, nA, wr, gr[0], gr[1]);
+      const iv = contactInterval([0, 0], lo, hi, keep, N, cl, n.fuse, att, nA, wr, F, nF, gr);
       return { lo: iv[0], hi: iv[1], dec: { id, kids, firm } };
     }
     case "mirror": {

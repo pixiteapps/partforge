@@ -11,8 +11,11 @@ export const C_MIN_CELLS = 2;
 export const BULGE_DEFAULT = 0.6;
 /** Packed attachment layout: [ia, ib, ax, ay, az, r0, band, k]; ia/ib index value slots. */
 export const ATTACH_STRIDE = 8;
-/** Packed fill-gate region layout: [cx, cy, cz, rho] (rho: the overlap cluster's radius). */
-export const FILL_STRIDE = 4;
+/**
+ * Packed pad-fill region layout: [ia, ib, cx, cy, cz, rho] — one per contact region of a
+ * gap-0 node; ia/ib index the pair's value slots, rho is the overlap cluster's radius.
+ */
+export const FILL_STRIDE = 6;
 /** The gate's band (mm): g = 1 within rho + cl + FILL_BAND of a region's centre, easing to 0 over a further FILL_BAND. */
 export const FILL_BAND = 2;
 
@@ -43,9 +46,9 @@ export function attachWeight(att, o, x, y, z) {
  * rho + cl + FILL_BAND of its centre, easing (smoothstep) to 0 across a further FILL_BAND.
  */
 export function gateWeight(F, o, cl, x, y, z) {
-  const dx = x - F[o], dy = y - F[o + 1], dz = z - F[o + 2];
+  const dx = x - F[o + 2], dy = y - F[o + 3], dz = z - F[o + 4];
   const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-  let t = (d - (F[o + 3] + cl + FILL_BAND)) / FILL_BAND;
+  let t = (d - (F[o + 5] + cl + FILL_BAND)) / FILL_BAND;
   t = Math.max(0, Math.min(1, t));
   return 1 - t * t * (3 - 2 * t);
 }
@@ -54,7 +57,7 @@ const pair = new Float64Array(2);
 
 /**
  * The contact field at p from the children's values `v` (slot order; already bulged).
- * `F`/`nF` are the node's fill-gate regions (FILL_STRIDE each). `w` (≥ nA) and `c` (≥ nK)
+ * `F`/`nF` are the node's pad-fill regions (FILL_STRIDE each; used only when `fuse`). `w` (≥ nA) and `c` (≥ nK)
  * are scratch the caller may supply so a hot loop does not allocate; they are fully
  * overwritten before being read.
  */
@@ -80,18 +83,15 @@ export function contactValue(v, nK, cl, fuse, att, nA, F, nF, x, y, z, w = nA > 
     value = Math.min(value, ci);
   }
   if (fuse) {
-    // s2: second-smallest of v (a tie counts twice).
-    let m1 = Infinity, m2 = Infinity;
-    for (let i = 0; i < nK; i++) {
-      const d = v[i];
-      if (d < m1) { m2 = m1; m1 = d; } else if (d < m2) m2 = d;
+    // The pad fill, one term per contact region r (pair a_r, b_r), in region order:
+    // value = min(value, max(v[a_r], v[b_r]) + (1 − g_r)·cl). Near its region the term is
+    // the pair's overlap (fused); away from it the term sits cl above the pair's own field,
+    // and it never involves a third piece. No regions: no fill.
+    for (let k = 0; k < nF; k++) {
+      const o = k * FILL_STRIDE;
+      const g = gateWeight(F, o, cl, x, y, z);
+      value = Math.min(value, Math.max(v[F[o]], v[F[o + 1]]) + (1 - g) * cl);
     }
-    // The pad fill, gated by the contact regions: f = s2 + (1 − g)·cl, g the max gate
-    // weight over the regions (0 with none) — so away from every real contact the fill
-    // never undercuts the clearance cut.
-    let g = 0;
-    for (let k = 0; k < nF; k++) g = Math.max(g, gateWeight(F, k * FILL_STRIDE, cl, x, y, z));
-    value = Math.min(value, m2 + (1 - g) * cl);
   }
   for (let a = 0; a < nA; a++) {
     const o = a * ATTACH_STRIDE;
@@ -144,21 +144,22 @@ export function bulgeRange(out, R, o, nR, x, y, z, r) {
 
 // The gate weight at a distance d from a fill region's centre (gateWeight's easing).
 function gateAt(F, o, cl, d) {
-  let t = (d - (F[o + 3] + cl + FILL_BAND)) / FILL_BAND;
+  let t = (d - (F[o + 5] + cl + FILL_BAND)) / FILL_BAND;
   t = Math.max(0, Math.min(1, t));
   return 1 - t * t * (3 - 2 * t);
 }
 
-/** The gate g's bounds over the ball: [gl, gh] in `out` (max over the regions of each end; 0 with none). */
-export function gateRange(out, F, nF, cl, x, y, z, r) {
-  let gl = 0, gh = 0;
-  for (let k = 0, o = 0; k < nF; k++, o += FILL_STRIDE) {
-    const dx = x - F[o], dy = y - F[o + 1], dz = z - F[o + 2];
-    const dc = Math.sqrt(dx * dx + dy * dy + dz * dz), pad = PAD * (dc + r + F[o + 3] + cl + FILL_BAND);
-    gl = Math.max(gl, gateAt(F, o, cl, dc + r + pad));
-    gh = Math.max(gh, gateAt(F, o, cl, Math.max(0, dc - r - pad)));
-  }
-  out[0] = gl; out[1] = gh;
+/**
+ * Fill region o's gate bounds over the ball: [gl, gh, near] in `out` (near: the padded near
+ * distance, for the prune test's firmness). gh = 0 means g_r is exactly 0 over the ball.
+ */
+export function gateWeightRange(out, F, o, cl, x, y, z, r) {
+  const dx = x - F[o + 2], dy = y - F[o + 3], dz = z - F[o + 4];
+  const dc = Math.sqrt(dx * dx + dy * dy + dz * dz), pad = PAD * (dc + r + F[o + 5] + cl + FILL_BAND);
+  const near = dc - r - pad;
+  out[0] = gateAt(F, o, cl, dc + r + pad);
+  out[1] = gateAt(F, o, cl, Math.max(0, near));
+  out[2] = near;
   return out;
 }
 
@@ -188,12 +189,13 @@ export function attachWeightRange(out, att, o, x, y, z, r) {
  * The contact node's interval over the ball from its children's intervals, over the KEPT
  * slots only (a pruned slot changes no value — interval.js) — contactValue's formula in
  * interval arithmetic: c_i ∈ [max(lo_i, cut_lo…), max(hi_i, cut_hi…)] with a pair's cut
- * widened to v_i's side when its attachment weight can be above 0; the fuse term's order
- * statistic per end plus (1 − g)·cl at g's other end; each live attachment lowers lo by
- * k·wh/4. `wr[a]` holds attachment a's [wl, wh] (attachWeightRange); [gl, gh] is the fill
- * gate's range (gateRange). `lo`/`hi` are the bulged children's. Returns [lo, hi] in `out`.
+ * widened to v_i's side when its attachment weight can be above 0; with fuse, a pad-fill term
+ * per fill region with both sides kept, [max(lo_a, lo_b) + (1 − gh)·cl, max(hi_a, hi_b) +
+ * (1 − gl)·cl]; each live attachment lowers lo by k·wh/4. `wr[a]` holds attachment a's
+ * [wl, wh] (attachWeightRange), `gr[k]` fill region k's [gl, gh] (gateWeightRange; read only
+ * when `fuse`). `lo`/`hi` are the bulged children's. Returns [lo, hi] in `out`.
  */
-export function contactInterval(out, lo, hi, keep, N, cl, fuse, att, nA, wr, gl = 0, gh = 0) {
+export function contactInterval(out, lo, hi, keep, N, cl, fuse, att, nA, wr, F, nF, gr) {
   let vlo = Infinity, vhi = Infinity;
   const clo = new Float64Array(N);
   for (let i = 0; i < N; i++) {
@@ -215,13 +217,12 @@ export function contactInterval(out, lo, hi, keep, N, cl, fuse, att, nA, wr, gl 
     vlo = Math.min(vlo, ilo); vhi = Math.min(vhi, ihi);
   }
   if (fuse) {
-    let a1 = Infinity, a2 = Infinity, b1 = Infinity, b2 = Infinity;
-    for (let i = 0; i < N; i++) {
-      if (!keep[i]) continue;
-      if (lo[i] < a1) { a2 = a1; a1 = lo[i]; } else if (lo[i] < a2) a2 = lo[i];
-      if (hi[i] < b1) { b2 = b1; b1 = hi[i]; } else if (hi[i] < b2) b2 = hi[i];
+    for (let k = 0; k < nF; k++) {
+      const o = k * FILL_STRIDE, ia = F[o], ib = F[o + 1];
+      if (!keep[ia] || !keep[ib]) continue;   // pruned side: the term never wins (interval.js rule (d))
+      vlo = Math.min(vlo, Math.max(lo[ia], lo[ib]) + (1 - gr[k][1]) * cl);
+      vhi = Math.min(vhi, Math.max(hi[ia], hi[ib]) + (1 - gr[k][0]) * cl);
     }
-    vlo = Math.min(vlo, a2 + (1 - gh) * cl); vhi = Math.min(vhi, b2 + (1 - gl) * cl);
   }
   for (let a = 0; a < nA; a++) {
     const o = a * ATTACH_STRIDE, ia = att[o], ib = att[o + 1], wh = wr[a][1];
