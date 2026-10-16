@@ -44,7 +44,7 @@ export const RECYCLE_BYTES = 64 * 1024 * 1024;
 
 let enabled = true;
 let booted; // undefined: not tried yet (or recycled); null: unavailable or poisoned
-const OUT_OF_MEMORY = "partforge core: out of WebAssembly memory";
+export const OUT_OF_MEMORY = "partforge core: out of WebAssembly memory";
 
 function reasonOf(err) {
   if (err?.message === OUT_OF_MEMORY) return "out_of_memory";
@@ -130,7 +130,7 @@ function boot() {
     return {
       x,
       scratch,
-      live: 0,         // core BVHs not yet disposed (they pin this instance)
+      live: 0,         // core BVHs not yet disposed and implicit sessions not yet destroyed (both pin this instance)
       poisoned: false,
       // Never hands out 0: a failed malloc (memory exhausted) throws instead, so
       // nothing is ever written over the module's low memory.

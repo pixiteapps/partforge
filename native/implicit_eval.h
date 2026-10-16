@@ -11,7 +11,6 @@
 // across calls so the hot loop never allocates. Several sessions may be live at
 // once; the C ABI addresses them by id.
 #pragma once
-#include <cstdint>
 #include <vector>
 
 namespace ipe {

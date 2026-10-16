@@ -5,9 +5,13 @@
 //
 // Failure is contained (core.js): a trap or a failed allocation poisons the
 // instance and the call throws CORE_FAULT, which the caller catches to run the
-// JS instead. Memory views are re-read after every call into the module, since
+// JS instead. A REFUSAL (bad input, a texture or program the core will not take)
+// is not a fault: it throws a plain Error and the instance stays usable. Memory views are re-read after every call into the module, since
 // any call may grow (and so detach) its memory.
-import { poisonCore, releaseIfIdle } from "./core.js";
+import { OUT_OF_MEMORY, poisonCore, releaseIfIdle } from "./core.js";
+
+const isFault = (err) => (typeof WebAssembly === "object" && err instanceof WebAssembly.RuntimeError) || err?.message === OUT_OF_MEMORY;
+const isNumbers = (a) => ArrayBuffer.isView(a) || Array.isArray(a);
 
 /** Thrown when the core faulted (or is already poisoned): run the JS path instead. */
 export const CORE_FAULT = Object.freeze(new Error("partforge core: the implicit session faulted"));
@@ -22,13 +26,15 @@ export class NativeSession {
     c.live++;         // a live session pins its instance, like a core BVH
   }
 
-  // Runs `fn` against the module; a fault poisons the instance and becomes CORE_FAULT.
+  // Runs `fn` against the module. A trap or a failed allocation poisons the
+  // instance and becomes CORE_FAULT; anything else is rethrown untouched.
   #call(fn) {
     const c = this.c;
     if (c.poisoned) throw CORE_FAULT;
     try {
       return fn();
     } catch (err) {
+      if (!isFault(err)) throw err;
       poisonCore(c, err);
       throw CORE_FAULT;
     }
@@ -37,22 +43,25 @@ export class NativeSession {
   /** A makeTexture() result ({ width, height, data: Float32Array }); returns its slot. */
   addTexture(t) {
     const { c } = this;
-    if (!(t.data instanceof Float32Array) || t.data.length !== t.width * t.height) throw new Error("implicit: a texture needs width × height float32 texels");
-    return this.#call(() => {
+    if (!(t?.data instanceof Float32Array) || !Number.isInteger(t.width) || !Number.isInteger(t.height) || t.data.length !== t.width * t.height) {
+      throw new Error("implicit: a texture needs integer width × height float32 texels");
+    }
+    const slot = this.#call(() => {
       const ptr = c.copyIn(t.data);
       try {
-        const slot = c.x.ip_tex_add(this.id, t.width, t.height, ptr);
-        if (slot < 0) throw new Error("implicit: the core refused a texture");
-        return slot;
+        return c.x.ip_tex_add(this.id, t.width, t.height, ptr);
       } finally {
         if (ptr) c.x.free(ptr);
       }
     });
+    if (slot < 0) throw new Error(`implicit: the core refused a ${t.width}×${t.height} texture`);
+    return slot;
   }
 
   /** An emitted program (program.js's Float64Array format); returns its index. */
   addProgram(prog) {
     const { c } = this;
+    if (!(prog instanceof Float64Array)) throw new Error("implicit: a program is a Float64Array");
     return this.#call(() => {
       const ptr = c.copyIn(prog);
       try {
@@ -65,10 +74,16 @@ export class NativeSession {
 
   /** evalBatch(prog, textures, X, Y, Z, out) on the core: a fresh Float64Array of field values. */
   eval(progIndex, X, Y, Z) {
-    const { c } = this, n = X.length;
+    const { c } = this;
+    if (!Number.isInteger(progIndex) || !isNumbers(X) || !isNumbers(Y) || !isNumbers(Z)) throw new Error("implicit: eval takes a program index and X, Y, Z number arrays");
+    const n = X.length;
     if (Y.length !== n || Z.length !== n) throw new Error("implicit: X, Y and Z must be the same length");
     let rc = 0;
     const out = this.#call(() => {
+      if (n === 0) {   // still checks the program; no buffers needed
+        rc = c.x.ip_eval(this.id, progIndex, 0, 0, 0, 0, 0);
+        return new Float64Array(0);
+      }
       if (n > this.cap) {
         if (this.io) c.x.free(this.io);
         this.io = 0;
