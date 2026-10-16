@@ -517,7 +517,7 @@ per-lane running minima (the same per-lane order and first-wins ties), and the
 core boots a `-msimd128` build of the module where the engine has wasm SIMD,
 so those loops run two lanes per `f64x2` op (IEEE-exact per lane; nothing is
 reassociated or fused). An engine without SIMD boots the scalar build of the
-same sources: same bits, sampling and cleanup 25–35 % slower (hand preview about 159 ms
+same sources: same bits, 13–34 % slower over a whole case (hand preview about 159 ms
 instead of 135, vase 210 instead of 156). Surface detail keeps
 the targets of vertices a refinement round did not add, answers refused edges
 without touching the midpoint map, and holds the map as per-vertex chains,

@@ -6,6 +6,8 @@
 // fallback:
 //   creasedNormals          geometry/creased-normals.js (+ blend-surfaces.js)
 //   the oracle's BVH        oracle/bvh.js, via cachedBVH (+ min-wall.js)
+//   the implicit engine     implicit/*: sample, mesh, project, cleanup and detail
+//                           sessions (core/implicit-core.js; native/implicit_*.cpp)
 //
 // Bit-exact is the contract, not an aspiration: test/core-parity.test.js builds
 // the reference parts both ways and requires identical output, so turning the
@@ -40,6 +42,8 @@ export { CORE_FALLBACK_REASONS, coreStatus, countRefusedMesh, onCoreFallback } f
 // past its 16 MB start; a preview mesh needs ~145 bytes/triangle at the peak
 // (screw, 210k triangles: 29 MB; a 1M-triangle mesh: 138 MB). Re-booting costs a
 // few milliseconds — the module is about 170 KB — so cap the retained memory low.
+// Implicit sessions grow it too (~88 MB at the 0.5 mm hand); the instance is
+// recycled once the sessions are destroyed and it is idle (releaseIfIdle).
 export const RECYCLE_BYTES = 64 * 1024 * 1024;
 
 let enabled = true;
@@ -122,21 +126,34 @@ function wantSimd() {
   try { return WebAssembly.validate(SIMD_PROBE); } catch { return false; }
 }
 
+function instantiate(simd) {
+  const stub = () => 0;
+  // Synchronous on purpose: a pass asks mid-build and must get an answer now.
+  // The module is small (well under every engine's synchronous-compile limit).
+  const bytes = decodeBase64(simd ? CORE_WASM_SIMD_BASE64 : CORE_WASM_BASE64);
+  return new WebAssembly.Instance(new WebAssembly.Module(bytes), {
+    env: { emscripten_notify_memory_growth: () => {} },
+    wasi_snapshot_preview1: { fd_close: stub, fd_write: stub, fd_seek: stub },
+  });
+}
+
 function boot() {
   if (typeof WebAssembly !== "object") {
     recordFallback("unavailable", "no_webassembly");
     return null;
   }
   try {
-    const stub = () => 0;
-    const simd = wantSimd();
-    // Synchronous on purpose: a pass asks mid-build and must get an answer now.
-    // The module is small (well under every engine's synchronous-compile limit).
-    const bytes = decodeBase64(simd ? CORE_WASM_SIMD_BASE64 : CORE_WASM_BASE64);
-    const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), {
-      env: { emscripten_notify_memory_growth: () => {} },
-      wasi_snapshot_preview1: { fd_close: stub, fd_write: stub, fd_seek: stub },
-    });
+    let simd = wantSimd();
+    let instance;
+    try {
+      instance = instantiate(simd);
+    } catch (err) {
+      // The probe passed but the SIMD build would not compile or instantiate:
+      // the scalar build has the same bits, so try it once before giving up.
+      if (!simd) throw err;
+      simd = false;
+      instance = instantiate(false);
+    }
     const x = instance.exports;
     x._initialize?.();
     // One 32-double scratch block for small inputs and outputs.

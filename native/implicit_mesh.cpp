@@ -44,6 +44,8 @@ constexpr double ZERO_DIR1 = 0.7071067811865476, ZERO_DIR2 = 0.5773502691896258;
 constexpr int RUN = 32;   // leaves per interpreter call (4000 lanes) when consecutive leaves share a program
 }
 
+// Precondition: every leaf satisfies 0 <= i0,j0,l0 < n-1 (enforced by implicit-core.js;
+// the weld keys rely on it).
 int sample(ipe::Session& s, const int32_t* leaves, int count, const double* origin, double edge, const int32_t* n) {
   if (count < 0) return 1;
   // Refuse before touching the store: every leaf's program must be one eval would run.
@@ -305,9 +307,12 @@ int mesh(ipe::Session& s) {
 //     decides no value: a vertex's move reads only its own position and its own
 //     leaf's program, writes only its own position and normal, and the
 //     interpreter is lane-local, so neither the batch a vertex rides in nor the
-//     order the batches run in can change a bit. (A vertex listed twice would
-//     read its own move in the JS only across a group boundary, never inside
-//     one; `which` is refused if it names a vertex twice, so that cannot arise.)
+//     order the batches run in can change a bit. (A vertex named twice by
+//     `which` is a different matter: in the JS both copies always land in the
+//     same leaf group, both stencils read the OLD position, and the move is
+//     applied twice. Here the program-batched 512-vertex chunks could split such
+//     a pair across calls, so the second copy would read the first's result;
+//     `which` is therefore refused if it names a vertex twice.)
 //   - collapse: triangles in order, corners c = 0, 1, 2 and the edge (c, c+1);
 //     the `locked` test, the squared length `>= min2`, the common-neighbour count
 //     of the two rings (sets, so the count is order-free), the no-flip test with
