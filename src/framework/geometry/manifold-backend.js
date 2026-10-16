@@ -944,8 +944,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
           for (const w of out.warnings) recordWarning(w);
           throw new Error(`implicit: the shape is empty at a ${edge} mm grid — nothing is inside it (check subtract order and sizes), or it is thinner than the grid`);
         }
-        const m = T(T(manifoldFromWeldedMesh(wasm, out.positions, out.indices)).asOriginal());
-        const id = m.originalID();
+        const id = wasm.Manifold.reserveIDs(1);
+        const m = T(manifoldFromWeldedMesh(wasm, out.positions, out.indices, id));
         oidPolicies.set(id, ORGANIC);
         const value = wrap(m, key);
         implicitWarnings.set(value, out.warnings);

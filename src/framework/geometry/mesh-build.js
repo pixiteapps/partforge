@@ -78,8 +78,16 @@ export function ringStackManifold(wasm, rings, { closed = false } = {}) {
 // about a third of the import on a 200k-triangle mesh. Only for meshes a
 // partforge mesher produced with index sharing (implicit/mesher.js); an
 // arbitrary soup still goes through manifoldFromMesh.
-export function manifoldFromWeldedMesh(wasm, V, Tr) {
-  const mesh = new wasm.Mesh({ numProp: 3, vertProperties: Float32Array.from(V), triVerts: Uint32Array.from(Tr) });
+// `originalID` (optional, from Manifold.reserveIDs) stamps the whole mesh as ONE
+// run carrying that id, so the import is already an "original" and needs no
+// separate asOriginal() pass.
+export function manifoldFromWeldedMesh(wasm, V, Tr, originalID) {
+  const opts = { numProp: 3, vertProperties: Float32Array.from(V), triVerts: Uint32Array.from(Tr) };
+  if (originalID !== undefined) {
+    opts.runIndex = Uint32Array.of(0, Tr.length);
+    opts.runOriginalID = Uint32Array.of(originalID);
+  }
+  const mesh = new wasm.Mesh(opts);
   const out = wasm.Manifold.ofMesh(mesh);
   mesh.delete?.();
   return out;
