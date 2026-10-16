@@ -2,7 +2,7 @@
 // meshImplicitCore): the same bytes either way, memory handed back when idle, and
 // every way the core can fail answered by the JS, never by a crash or a different
 // result. test/core-parity.test.js holds whole k.implicit builds core on == off.
-import { afterEach, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { core, coreStatus, onCoreFallback, RECYCLE_BYTES, setCoreEnabled, setCoreForTesting } from "../src/framework/core/core.js";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
@@ -30,7 +30,15 @@ const withCore = (on, fn) => {
 };
 const SPHERE = { root: { kind: "union", k: 1, children: [{ kind: "sphere", r: 4 }, { kind: "box", size: [3, 3, 9], round: 0.5 }] } };
 
-describe("meshImplicit on the native core", () => {
+// Both builds of the core (scripts/build-core-wasm.mjs): the SIMD one this engine
+// boots by default, and the scalar one an engine without wasm SIMD gets
+// (PARTFORGE_CORE_SIMD = false, read at each boot — afterEach re-boots).
+describe.each([["SIMD", true], ["scalar", false]])("meshImplicit on the native core (%s build)", (_, simd) => {
+  beforeAll(() => { if (!simd) globalThis.PARTFORGE_CORE_SIMD = false; setCoreForTesting(undefined); });
+  afterAll(() => { delete globalThis.PARTFORGE_CORE_SIMD; setCoreForTesting(undefined); });
+  test("this build is the one booted", () => {
+    expect(core().simd).toBe(simd);
+  });
   test("the hand at print tier (0.5 mm) builds identically, and the grown instance is recycled once idle", () => {
     const compiled = compileImplicit(handSpec());
     const js = withCore(false, () => meshImplicit(compiled, 0.5));

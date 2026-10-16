@@ -499,8 +499,8 @@ Against the design spec's performance targets (Node, M-series desktop):
 
 The gate times compile + `planLeaves` + the native session (what `k.implicit`
 runs before Manifold), on `test/helpers/cpu-pace.js`'s `cpuMs` (CPU time in the
-calibration desktop's milliseconds), as a median of five (1.5 mm) and three
-(0.5 mm) runs, at 3× the spec target. The hand here has its dorsal knuckle
+calibration desktop's milliseconds), as a median of five runs each, at 3× the
+spec target. The hand here has its dorsal knuckle
 creases (nine crease entries) and no nails.
 
 The gated targets are the engine's (as `bench:implicit` reports it). `k.implicit(hand)` end to end at 1.5 mm
@@ -509,13 +509,16 @@ result costs about 230 ms of it, more than the whole native engine — the next
 place to look for a live-posing rebuild, together with region reuse (PR 3).
 Cold, in a fresh process with the Manifold import, it is about 0.6 s.
 
-How the native engine got from about 3× to 6–8× faster than the JS without
+How the native engine got from about 4–5× to 7–8× faster than the JS without
 changing a bit: the interpreter decodes each program once (integer registers,
 inline-constant offsets) and dispatches the primitive or function once per op
 with a tight lane loop inside, unions/intersections run operand-major with
 per-lane running minima (the same per-lane order and first-wins ties), and the
-module is built with `-msimd128` so those loops run two lanes per `f64x2` op
-(IEEE-exact per lane; nothing is reassociated or fused). Surface detail keeps
+core boots a `-msimd128` build of the module where the engine has wasm SIMD,
+so those loops run two lanes per `f64x2` op (IEEE-exact per lane; nothing is
+reassociated or fused). An engine without SIMD boots the scalar build of the
+same sources: same bits, sampling and cleanup 25–35 % slower (hand preview about 159 ms
+instead of 135, vase 210 instead of 156). Surface detail keeps
 the targets of vertices a refinement round did not add, answers refused edges
 without touching the midpoint map, and holds the map as per-vertex chains,
 which keeps lookups near the triangles making them. Before those changes (same

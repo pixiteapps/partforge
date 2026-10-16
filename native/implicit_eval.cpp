@@ -49,34 +49,6 @@ inline double sgn(double v) { return v > 0 ? 1 : v < 0 ? -1 : 0; }
 inline double sanitize(double v) { return v == v ? (v > BIG ? BIG : v < -BIG ? -BIG : v) : BIG; }
 inline double clamp_unit(double v) { return v > -1 ? (v < 1 ? v : 1) : v == v ? -1 : 0; }
 
-double union_n(const double* v, int n, double k) {
-  double m = v[0];
-  int am = 0;
-  for (int i = 1; i < n; i++) if (v[i] < m) { m = v[i]; am = i; }
-  if (!(k > 0)) return m;
-  double s = 0;
-  for (int i = 0; i < n; i++) {
-    if (i == am) continue;
-    const double g = k - (v[i] - m);
-    if (g > 0) { const double h = g / k; s += h * h; }
-  }
-  return m - s * k * 0.25;
-}
-
-double intersect_n(const double* v, int n, double k) {
-  double M = v[0];
-  int aM = 0;
-  for (int i = 1; i < n; i++) if (v[i] > M) { M = v[i]; aM = i; }
-  if (!(k > 0)) return M;
-  double s = 0;
-  for (int i = 0; i < n; i++) {
-    if (i == aM) continue;
-    const double g = k - (M - v[i]);
-    if (g > 0) { const double h = g / k; s += h * h; }
-  }
-  return M + s * k * 0.25;
-}
-
 inline void warp_point(double* out, double kind, const double* W, double x, double y, double z) {
   if (kind == 1) {
     const double a = -W[0] * z, c = ipm::pf_cos(a), s = ipm::pf_sin(a);
@@ -90,22 +62,6 @@ inline void warp_point(double* out, double kind, const double* W, double x, doub
     const double s = W[1] + (W[3] - W[1]) * t;
     out[0] = x / s; out[1] = y / s; out[2] = z;
   }
-}
-
-inline void mirror_point(double* out, double axis, double x, double y, double z) {
-  out[0] = axis == 0 ? -x : x; out[1] = axis == 1 ? -y : y; out[2] = axis == 2 ? -z : z;
-}
-
-inline void xform_point(double* out, const double* M, double x, double y, double z) {
-  out[0] = M[0] * x + M[1] * y + M[2] * z + M[9];
-  out[1] = M[3] * x + M[4] * y + M[5] * z + M[10];
-  out[2] = M[6] * x + M[7] * y + M[8] * z + M[11];
-}
-
-inline void xform_dir(double* out, const double* M, double x, double y, double z) {
-  out[0] = M[0] * x + M[1] * y + M[2] * z;
-  out[1] = M[3] * x + M[4] * y + M[5] * z;
-  out[2] = M[6] * x + M[7] * y + M[8] * z;
 }
 
 // expr-lower.js's smin2 / smax2.
@@ -403,7 +359,8 @@ void prim_lanes(const double* P, const double* X, const double* Y, const double*
 
 // unionN / intersectN over n lanes, operand-major: each pass runs one operand
 // across every lane, and a lane's own operations are the same, in the same
-// operand order, as union_n / intersect_n (first-wins ties, the sum from +0).
+// operand order, as primitives.js's unionN / intersectN (first-wins ties, the sum
+// from +0).
 template <bool UNI>
 void blend_lanes(Session& s, const double* const* src, int cnt, double k, int n, double* d) {
   double* m = s.um.data();

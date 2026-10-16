@@ -83,7 +83,9 @@ inline void localDir(double* n, const double* F, int o, double nx, double ny, do
 // return 0, so testing the radius first returns the same value and lets a
 // vertex outside the radius skip the normal's transform. A weight that passes
 // both is computed as the JS computes it: the side ramp, then w *= (1 - r2)^2.
-inline double weight(const double* F, int o, const double* p, double nx, double ny, double nz) {
+// When the side test transformed the normal, it is left in `n` and `haveN` set,
+// so the caller does not transform it again.
+inline double weight(const double* F, int o, const double* p, double nx, double ny, double nz, double* n, bool& haveN) {
   const double radius = F[o + RADIUS];
   double r2 = 0;
   if (radius >= 0) {
@@ -92,8 +94,8 @@ inline double weight(const double* F, int o, const double* p, double nx, double 
   }
   double w = 1;
   if (F[o + HAS_SIDE] != 0) {
-    double n[3];
     localDir(n, F, o, nx, ny, nz);
+    haveN = true;
     const double d = n[0] * F[o + SIDE] + n[1] * F[o + SIDE + 1] + n[2] * F[o + SIDE + 2];
     const double s = (d - 0.15) / 0.5;
     w = s < 0 ? 0 : s > 1 ? 1 : s;
@@ -116,9 +118,10 @@ double entryHeight(Ctx& c, int k, double x, double y, double z, double nx, doubl
   const int o = STRIDE * k;
   double p[3], n[3];
   localPoint(p, F, o, x, y, z);
-  const double w = weight(F, o, p, nx, ny, nz);
+  bool haveN = false;
+  const double w = weight(F, o, p, nx, ny, nz, n, haveN);
   if (w == 0) return 0;
-  localDir(n, F, o, nx, ny, nz);
+  if (!haveN) localDir(n, F, o, nx, ny, nz);
   const double kind = F[o + KIND], axis = F[o + AXIS], amplitude = F[o + AMPLITUDE], wavelength = F[o + WAVELENGTH];
   if (kind == 1) return -amplitude * jsmath::jsmax(0, ipm::pf_cos((TWO_PI * at3(p, axis)) / wavelength)) * w;
   if (kind == 2) return amplitude * 2 * ipm::value_noise(p[0] / wavelength, p[1] / wavelength, p[2] / wavelength) * w;
@@ -147,7 +150,7 @@ double entryHeight(Ctx& c, int k, double x, double y, double z, double nx, doubl
 // detail.js's targetAt.
 double targetAt(Ctx& c, const std::vector<double>& P, const std::vector<double>& N, size_t v, double edge) {
   const double* F = c.F;
-  double t = INFINITY, lp[3];
+  double t = INFINITY, lp[3], ln[3];
   for (int k = 0; k < c.count; k++) {
     const int o = STRIDE * k;
     const double target = F[o + TARGET];
@@ -156,7 +159,8 @@ double targetAt(Ctx& c, const std::vector<double>& P, const std::vector<double>&
     // may change): the weight cannot matter then, so it is not computed.
     if (t <= tk && t != 0) continue;
     localPoint(lp, F, o, P[3 * v], P[3 * v + 1], P[3 * v + 2]);
-    if (weight(F, o, lp, N[3 * v], N[3 * v + 1], N[3 * v + 2]) > 0) t = jsmath::jsmin(t, tk);
+    bool haveN = false;
+    if (weight(F, o, lp, N[3 * v], N[3 * v + 1], N[3 * v + 2], ln, haveN) > 0) t = jsmath::jsmin(t, tk);
   }
   return jsmath::jsmax(edge / 8, t);
 }

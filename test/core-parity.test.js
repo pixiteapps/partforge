@@ -7,13 +7,13 @@
 //
 // When this fails, the C++ in native/ and its JS twin have drifted. Fix the port
 // (and rebuild: node scripts/build-core-wasm.mjs); never loosen this to a tolerance.
-import { afterAll, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { bootManifoldKernel, buildView, measure, setCoreEnabled } from "../src/testing.js";
-import { core, coreStatus } from "../src/framework/core/core.js";
+import { core, coreStatus, setCoreForTesting } from "../src/framework/core/core.js";
 import { handSpec, nailSpecs, vaseSpec, ADVERSARIAL } from "./fixtures/implicit-trees.js";
 import { TREES } from "./fixtures/implicit-small-trees.js";
 
-afterAll(() => setCoreEnabled(true));
+afterAll(() => { setCoreEnabled(true); delete globalThis.PARTFORGE_CORE_SIMD; setCoreForTesting(undefined); });
 
 const one = (build) => ({
   meta: { title: "core parity", units: "mm" }, parameters: [], defaults: {},
@@ -79,24 +79,36 @@ const cases = [
   ...Object.entries(INLINE).map(([name, part]) => [name, () => part]),
   ...Object.entries(IMPLICIT).map(([name, part]) => [name, () => part]),
 ];
-for (const [name, load] of cases) {
-  test(`core on == core off: ${name}`, async () => {
-    const part = await load();
-    const off = await run(part, false);
-    const refusedBefore = coreStatus().refusedMeshes;
-    const on = await run(part, true);
-    // The implicit cases must really have run on the core: nothing refused or faulted.
-    if (part.testImages) expect(coreStatus()).toEqual({ state: "on", reason: null, refusedMeshes: refusedBefore });
-    expect(on.meshes.length).toBe(off.meshes.length);
-    on.meshes.forEach((m, i) => {
-      const o = off.meshes[i];
-      expect(m.name).toBe(o.name);
-      expect(m.triangles).toBe(o.triangles);
-      expect(m.features).toEqual(o.features);
-      for (const k of ["positions", "normals", "edges", "featureIds"]) {
-        expect(m[k] === null ? null : Buffer.compare(m[k], o[k]), `${m.name}.${k}`).toBe(o[k] === null ? null : 0);
-      }
-    });
-    expect(on.measured).toEqual(off.measured);
-  }, 120_000);
-}
+// Both builds of the core (scripts/build-core-wasm.mjs): the SIMD one this engine
+// boots by default, and the scalar one an engine without wasm SIMD gets
+// (PARTFORGE_CORE_SIMD = false, read when the core boots).
+describe.each([["SIMD", true], ["scalar", false]])("%s build", (_, simd) => {
+  beforeAll(() => {
+    if (simd) delete globalThis.PARTFORGE_CORE_SIMD; else globalThis.PARTFORGE_CORE_SIMD = false;
+    setCoreForTesting(undefined);
+    setCoreEnabled(true);
+    expect(core().simd).toBe(simd);
+  });
+  for (const [name, load] of cases) {
+    test(`core on == core off: ${name}`, async () => {
+      const part = await load();
+      const off = await run(part, false);
+      const refusedBefore = coreStatus().refusedMeshes;
+      const on = await run(part, true);
+      expect(core().simd, "the build under test ran").toBe(simd);
+      // The implicit cases must really have run on the core: nothing refused or faulted.
+      if (part.testImages) expect(coreStatus()).toEqual({ state: "on", reason: null, refusedMeshes: refusedBefore });
+      expect(on.meshes.length).toBe(off.meshes.length);
+      on.meshes.forEach((m, i) => {
+        const o = off.meshes[i];
+        expect(m.name).toBe(o.name);
+        expect(m.triangles).toBe(o.triangles);
+        expect(m.features).toEqual(o.features);
+        for (const k of ["positions", "normals", "edges", "featureIds"]) {
+          expect(m[k] === null ? null : Buffer.compare(m[k], o[k]), `${m.name}.${k}`).toBe(o[k] === null ? null : 0);
+        }
+      });
+      expect(on.measured).toEqual(off.measured);
+    }, 120_000);
+  }
+});

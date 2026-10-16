@@ -47,7 +47,9 @@ test("the hand at full detail meshes natively within 3× the spec's targets (pre
   expect(core(), "the native core is available").toBeTruthy();
   nativeHand(1.4);   // warm-up on another grid: the JS front end tiers up, the core boots
   const preview = medianMs(1.5, 5);
-  expect(preview, `hand 1.5 mm: ${preview.toFixed(0)} ms (pace ${PACE.toFixed(2)})`).toBeLessThan(3 * SPEC_PREVIEW_MS);
-  const print = medianMs(0.5, 3);
-  expect(print, `hand 0.5 mm: ${print.toFixed(0)} ms (pace ${PACE.toFixed(2)})`).toBeLessThan(3 * SPEC_PRINT_MS);
+  const print = medianMs(0.5, 5);
+  const line = (name, ms, limit) => `${name}: ${ms.toFixed(0)} paced ms, limit ${limit} (pace ${PACE.toFixed(2)}, ${core().simd ? "SIMD" : "scalar"} core)`;
+  console.log(`${line("hand 1.5 mm", preview, 3 * SPEC_PREVIEW_MS)}\n${line("hand 0.5 mm", print, 3 * SPEC_PRINT_MS)}`);
+  expect(preview, line("hand 1.5 mm", preview, 3 * SPEC_PREVIEW_MS)).toBeLessThan(3 * SPEC_PREVIEW_MS);
+  expect(print, line("hand 0.5 mm", print, 3 * SPEC_PRINT_MS)).toBeLessThan(3 * SPEC_PRINT_MS);
 }, 120_000);

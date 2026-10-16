@@ -45,11 +45,17 @@ What keeping it exact takes, wherever you edit:
 - **No fused multiply-add**: the build passes `-ffp-contract=off` (clang on
   arm64 fuses `a*b + c` by default and the output drifts; measured, it buys no
   speed here — this code is bound by memory and branches).
-- **SIMD only where it rounds per lane**: the build passes `-msimd128`, so
-  independent lane loops (the implicit interpreter's) run two lanes per
-  `f64x2` op. Its add/sub/mul/div/sqrt round each lane exactly as the scalar
-  op, and without `-ffast-math` the compiler reassociates nothing, so the bits
-  do not change. Never `-mrelaxed-simd` (its `madd` fuses) or `-ffast-math`.
+- **SIMD only through per-lane exact ops**: the module is built twice from
+  the same sources and flags, scalar and with `-msimd128`, and `core.js`
+  boots the SIMD build when the engine validates a tiny v128 probe module
+  (else the scalar one; `globalThis.PARTFORGE_CORE_SIMD = false` forces it).
+  With `-msimd128` the compiler may vectorize ANY loop in any translation
+  unit, so the rule is not "where SIMD is used" but "only ops that are exact
+  per lane": `f64x2` add/sub/mul/div/sqrt round each lane exactly as the
+  scalar op, and without `-ffast-math` nothing is reassociated. Never
+  `-mrelaxed-simd` (its `madd` fuses) or `-ffast-math`. The parity suites
+  (`test/core-parity.test.js`, `test/implicit-native-path.test.js`) run both
+  builds.
 - **The JS's order wherever it picks a winner**: Map insertion order, stable
   sorts (JS `TypedArray#sort` is stable — use `std::stable_sort`), first-wins
   ties, the same traversal stack order.
@@ -135,9 +141,9 @@ node scripts/build-core-wasm.mjs          # needs Emscripten's em++ (brew instal
 node scripts/build-core-wasm.mjs --check  # no compiler: is core-wasm.js current?
 ```
 
-The output, `src/framework/core/core-wasm.js`, is committed: the WebAssembly
-base64-encoded in a plain ES module, plus a hash of these sources and the
-build flags. `test/core-wasm.test.js` recomputes that hash, so a C++ edit
+The output, `src/framework/core/core-wasm.js`, is committed: both builds of
+the WebAssembly (scalar and SIMD) base64-encoded in a plain ES module, plus a
+hash of these sources and the build flags. `test/core-wasm.test.js` recomputes that hash, so a C++ edit
 without a rebuild fails CI even though CI has no compiler. A JS module rather
 than a `.wasm` file because partforge ships as source into a browser worker,
 Node (the CLI, tests, a host's server), and `blob:` hosts — an import works in

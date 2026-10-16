@@ -31,7 +31,7 @@
 // onCoreFallback(listener) is told — once — when the core becomes unavailable or
 // faults, with a fixed reason (CORE_FALLBACK_REASONS) and nothing else, so a host
 // can count fallbacks in its own telemetry.
-import { CORE_WASM_BASE64 } from "./core-wasm.js";
+import { CORE_WASM_BASE64, CORE_WASM_SIMD_BASE64 } from "./core-wasm.js";
 import { recordFallback, resetCoreStatus, setStateProbe } from "./core-status.js";
 
 export { CORE_FALLBACK_REASONS, coreStatus, countRefusedMesh, onCoreFallback } from "./core-status.js";
@@ -39,7 +39,7 @@ export { CORE_FALLBACK_REASONS, coreStatus, countRefusedMesh, onCoreFallback } f
 // What the core may keep holding between passes. Ordinary forges never grow it
 // past its 16 MB start; a preview mesh needs ~145 bytes/triangle at the peak
 // (screw, 210k triangles: 29 MB; a 1M-triangle mesh: 138 MB). Re-booting costs a
-// few milliseconds — the module is 64 KB — so cap the retained memory low.
+// few milliseconds — the module is about 170 KB — so cap the retained memory low.
 export const RECYCLE_BYTES = 64 * 1024 * 1024;
 
 let enabled = true;
@@ -110,6 +110,18 @@ function decodeBase64(s) {
   return out;
 }
 
+// The smallest module using wasm SIMD (a function returning i8x16.popcnt of a
+// splat): an engine that validates it runs the SIMD build of the core.
+const SIMD_PROBE = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]);
+
+// Which build to boot: the SIMD one (the same bits, faster lane loops — see
+// scripts/build-core-wasm.mjs) unless the engine lacks wasm SIMD or
+// globalThis.PARTFORGE_CORE_SIMD === false (tests; read at each boot).
+function wantSimd() {
+  if (globalThis.PARTFORGE_CORE_SIMD === false) return false;
+  try { return WebAssembly.validate(SIMD_PROBE); } catch { return false; }
+}
+
 function boot() {
   if (typeof WebAssembly !== "object") {
     recordFallback("unavailable", "no_webassembly");
@@ -117,9 +129,11 @@ function boot() {
   }
   try {
     const stub = () => 0;
+    const simd = wantSimd();
     // Synchronous on purpose: a pass asks mid-build and must get an answer now.
     // The module is small (well under every engine's synchronous-compile limit).
-    const instance = new WebAssembly.Instance(new WebAssembly.Module(decodeBase64(CORE_WASM_BASE64)), {
+    const bytes = decodeBase64(simd ? CORE_WASM_SIMD_BASE64 : CORE_WASM_BASE64);
+    const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), {
       env: { emscripten_notify_memory_growth: () => {} },
       wasi_snapshot_preview1: { fd_close: stub, fd_write: stub, fd_seek: stub },
     });
@@ -129,6 +143,7 @@ function boot() {
     const scratch = x.malloc(32 * 8);
     return {
       x,
+      simd,            // which build this instance runs (true: CORE_WASM_SIMD_BASE64)
       scratch,
       live: 0,         // core BVHs not yet disposed and implicit sessions not yet destroyed (both pin this instance)
       poisoned: false,
