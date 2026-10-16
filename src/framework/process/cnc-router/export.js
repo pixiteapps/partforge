@@ -6,10 +6,11 @@
 //
 // Colours: `ctx.palette` (drawing.js routedPalette, built by the kit over EVERY routed
 // piece) when given, so one depth is one colour across the kit; without it — a direct
-// call — the piece ranks its own depths. Each named layer also carries its `depth` (mm,
+// call — routedPalette over the piece alone. Each named layer also carries its `depth` (mm,
 // two decimals) and drills `through`, which the README's layer legend reads.
 import {
   refitRing, ringsOf, cutRings, drawingBounds, routedLayerName, depthToken, drillKey, ROUTED_COLORS,
+  routedPalette, FLIP_AXIS, mirrorRings,
 } from "../../export/drawing.js";
 import { KIT_OPTIONS_ERROR } from "../../export/formats.js";
 
@@ -17,6 +18,45 @@ const closedPath = (ring) => ({ start: ring.start, segments: ring.segments, clos
 const refitRegions = (regions) => regions.map((rg) => ({ outer: refitRing(rg.outer), holes: rg.holes.map(refitRing) }));
 const allRings = (regions) => { const r = ringsOf(regions); return [...r.outer, ...r.holes]; };
 const ringsOfShape = (shape) => allRings(refitRegions(shape.toContours())).map(closedPath);
+
+// One face's operation layers: SECONDARY, then drills grouped by (d, depth, through) in
+// first-seen order, then pockets grouped by two-decimal depth, shallowest first. `place`
+// maps each layer's paths (identity for the near face, the flip's mirror for the far);
+// a far layer's id is prefixed `far-` and it carries `face: "far"` — a near layer has
+// no face key, so a one-sided piece draws exactly as before two-sided parts existed.
+function opLayers({ pockets, drills, extra }, palette, place) {
+  const tag = place ? { face: "far" } : {};
+  const id = (base) => (place ? `far-${base}` : base);
+  const at = place ?? ((paths) => paths);
+  const layers = [];
+  const secondary = extra.flatMap((x) => ringsOfShape(x.footprint));
+  if (secondary.length) layers.push({ id: id("secondary"), name: place ? "FAR_SECONDARY" : "SECONDARY", ...ROUTED_COLORS.secondary, ...tag, paths: at(secondary) });
+
+  // Each hole a closed ring of two exact arcs, which dxf.js writes as a CIRCLE.
+  const drillGroups = new Map();
+  drills.forEach((dr) => {
+    const key = drillKey(dr);
+    const g = drillGroups.get(key) ?? { id: id(`drill-${key}`), name: routedLayerName("drill", dr), ...palette.drill.get(key),
+      depth: Number(depthToken(dr.depth)), through: dr.through, ...tag, paths: [] };
+    g.paths.push(...at(ringsOfShape(dr.shape)));
+    drillGroups.set(key, g);
+  });
+  layers.push(...drillGroups.values());
+
+  // An empty region draws nothing.
+  const pocketGroups = new Map();
+  for (const pk of pockets) {
+    const paths = ringsOfShape(pk.region);
+    if (paths.length === 0) continue;
+    const key = depthToken(pk.depth);
+    const g = pocketGroups.get(key) ?? { id: id(`pocket-${key}`), name: routedLayerName("pocket", pk), depth: Number(key), ...tag, paths: [] };
+    g.paths.push(...at(paths));
+    pocketGroups.set(key, g);
+  }
+  [...pocketGroups.values()].sort((a, b) => a.depth - b.depth)
+    .forEach((g) => layers.push({ ...g, ...palette.pocket.get(depthToken(g.depth)) }));
+  return layers;
+}
 
 function drawing(s, o, k, ctx = {}) {
   const label = ctx.label ?? s.label ?? "routed part";
@@ -32,43 +72,26 @@ function drawing(s, o, k, ctx = {}) {
     ...s.score.shapes.flatMap(ringsOfShape),
   ];
   if (reference.length) layers.push({ id: "reference", name: "REFERENCE", ...ROUTED_COLORS.reference, paths: reference });
-  const secondary = extra.flatMap((x) => ringsOfShape(x.footprint));
-  if (secondary.length) layers.push({ id: "secondary", name: "SECONDARY", ...ROUTED_COLORS.secondary, paths: secondary });
-
-  // Drills grouped by (d, depth, through) in first-seen order; each hole a closed ring
-  // of two exact arcs, which dxf.js writes as a CIRCLE.
-  const palette = ctx.palette ?? null;
-  const drillGroups = new Map();
-  drills.forEach((dr) => {
-    const key = drillKey(dr);
-    const colour = palette?.drill.get(key) ?? ROUTED_COLORS.drill[drillGroups.size % ROUTED_COLORS.drill.length];
-    const g = drillGroups.get(key) ?? { id: `drill-${key}`, name: routedLayerName("drill", dr), ...colour,
-      depth: Number(depthToken(dr.depth)), through: dr.through, paths: [] };
-    g.paths.push(...ringsOfShape(dr.shape));
-    drillGroups.set(key, g);
-  });
-  layers.push(...drillGroups.values());
-
-  // Pockets grouped by two-decimal depth, shallowest layer first; an empty region draws nothing.
-  const pocketGroups = new Map();
-  for (const pk of pockets) {
-    const paths = ringsOfShape(pk.region);
-    if (paths.length === 0) continue;
-    const key = depthToken(pk.depth);
-    const g = pocketGroups.get(key) ?? { id: `pocket-${key}`, name: routedLayerName("pocket", pk), depth: Number(key), paths: [] };
-    g.paths.push(...paths);
-    pocketGroups.set(key, g);
-  }
-  [...pocketGroups.values()].sort((a, b) => a.depth - b.depth).forEach((g, i) => {
-    const colour = palette?.pocket.get(depthToken(g.depth)) ?? ROUTED_COLORS.pocket[i % ROUTED_COLORS.pocket.length];
-    layers.push({ ...g, ...colour });
-  });
+  // Near ops as they are; far ops (cut after the piece is turned over by the kit's flip)
+  // on their own `far-` layers, every ring mirrored about the piece's centre so the far
+  // face is drawn as the router sees it. One palette for both faces: a depth or drill
+  // setting is one colour whichever face it is on.
+  const palette = ctx.palette ?? routedPalette([s]);
+  const nb = drawingBounds([{ id: "cut-outer", paths: ringsOf(nominal).outer.map(closedPath) }]);
+  const axis = FLIP_AXIS[o?.flip ?? "left-right"];
+  const centre = axis === "x" ? (nb.min[0] + nb.max[0]) / 2 : (nb.min[1] + nb.max[1]) / 2;
+  const isFar = (op) => op.face === "far";
+  const near = opLayers({ pockets: pockets.filter((op) => !isFar(op)), drills: drills.filter((op) => !isFar(op)), extra: extra.filter((op) => !isFar(op)) }, palette);
+  const far = opLayers({ pockets: pockets.filter(isFar), drills: drills.filter(isFar), extra: extra.filter(isFar) }, palette,
+    (paths) => mirrorRings(paths, axis, centre));
+  layers.push(...near, ...far);
 
   if (cut.inner.length) layers.push({ id: "cut-inner", paths: cut.inner.map(closedPath) });
   layers.push({ id: "cut-outer", paths: cut.outer.map(closedPath) });
 
-  const nb = drawingBounds([{ id: "cut-outer", paths: ringsOf(nominal).outer.map(closedPath) }]);
-  return { layers, bounds: drawingBounds(layers), nominal: [nb.max[0] - nb.min[0], nb.max[1] - nb.min[1]], kerf: 0 };
+  const out = { layers, bounds: drawingBounds(layers), nominal: [nb.max[0] - nb.min[0], nb.max[1] - nb.min[1]], kerf: 0 };
+  if (far.length) out.farOutline = mirrorRings(ringsOf(nominal).outer, axis, centre).map(closedPath);
+  return out;
 }
 
 export default { drawing };

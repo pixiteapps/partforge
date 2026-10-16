@@ -84,3 +84,38 @@ describe("the writers", () => {
     expect(pocket.attrs.fill).toBe("none");
   });
 });
+
+describe("far face", () => {
+  const FAR = {
+    pockets: () => [{ region: [[10, 10], [40, 10], [40, 30], [10, 30]], depth: 3 }, { region: [[60, 40], [90, 40], [90, 50], [60, 50]], depth: 6, label: "recess", face: "far" }],
+    drills: () => [{ at: [80, 10], d: 5, depth: 8, face: "far" }, { at: [20, 50], d: 5, depth: 18, face: "far" }],
+    extra: (kk) => [{ solid: kk.box({ size: [10, 10, 4] }).translate([45, 5, 0]), footprint: [[45, 5], [55, 5], [55, 15], [45, 15]], label: "scoop", method: "core box", face: "far" }],
+  };
+  test("far layers are named, tagged, ordered after the near ones, and mirrored left-right about the piece's centre", () => {
+    const d = draw(FAR, { destination: "cnc-router" });
+    expect(d.layers.map((l) => l.name ?? l.id)).toEqual(["POCKET_3MM", "FAR_SECONDARY", "FAR_DRILL_D5_8MM", "FAR_DRILL_D5_THRU", "FAR_POCKET_6MM", "cut-outer"]);
+    expect(d.layers.filter((l) => l.face === "far").map((l) => l.id)).toEqual(["far-secondary", "far-drill-D5-8", "far-drill-D5-THRU", "far-pocket-6"]);
+    const dxf = parseDxf(renderDxf(piece(d)));
+    const circles = dxf.entities.filter((e) => e.type === "CIRCLE");
+    expect(circles.find((c) => c.layer === "FAR_DRILL_D5_8MM").center).toEqual([20, 10]);   // 100 − 80, centre x = 50
+    expect(circles.find((c) => c.layer === "FAR_DRILL_D5_THRU").center).toEqual([80, 50]);
+    const recess = dxf.entities.find((e) => e.layer === "FAR_POCKET_6MM");
+    const xs = recess.vertices.map((v) => v.at[0]);
+    expect([Math.min(...xs), Math.max(...xs)]).toEqual([10, 40]);  // 100 − 90 … 100 − 60
+    expect(d.farOutline).toHaveLength(1);
+    expect(d.layers.find((l) => l.id === "pocket-3").face).toBeUndefined();
+  });
+  test("end-over-end mirrors y instead", () => {
+    const dxf = parseDxf(renderDxf(piece(draw(FAR, { destination: "cnc-router", flip: "end-over-end" }))));
+    expect(dxf.entities.find((e) => e.type === "CIRCLE" && e.layer === "FAR_DRILL_D5_8MM").center).toEqual([80, 50]);   // 60 − 10, centre y = 30
+  });
+  test("a far pocket shares its colour with a near pocket of the same depth", () => {
+    const d = draw({ pockets: () => [{ region: [[10, 10], [20, 10], [20, 20], [10, 20]], depth: 6 }, { region: [[30, 10], [40, 10], [40, 20], [30, 20]], depth: 6, face: "far" }] }, { destination: "cnc-router" });
+    expect(d.layers.find((l) => l.name === "FAR_POCKET_6MM").color).toBe(d.layers.find((l) => l.name === "POCKET_6MM").color);
+  });
+  test("a one-sided piece's drawing is unchanged: no face keys, no farOutline", () => {
+    const d = draw(FULL, { destination: "cnc-router" });
+    expect(d.layers.every((l) => l.face === undefined)).toBe(true);
+    expect(d.farOutline).toBeUndefined();
+  });
+});
