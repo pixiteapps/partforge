@@ -16,6 +16,7 @@ import { compileExprSource } from "./expr-lower.js";
 import { makeTexture, checkTextureBudget } from "./textures.js";
 import { PRIM, WARP, roundConeParams, primLipschitz } from "./primitives.js";
 import { BULGE_DEFAULT, ATTACH_STRIDE } from "./contact.js";
+import { contactRegions, regionDigest } from "./regions.js";
 import { ImplicitSpecError } from "./errors.js";
 
 const INF = Infinity;
@@ -70,7 +71,8 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
   };
 
   const add = (n) => { nodes.push(n); return nodes.length - 1; };
-  let hasExpr = false;
+  let hasExpr = false, hasContact = false;
+  const warnings = [];
   const placeOf = (node, Wparent) => {
     const base = node.frame != null ? frames.get(node.frame).world : Wparent;
     return node.at ? compose(base, translation(node.at)) : base;
@@ -152,13 +154,17 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
           att.set([labelSlot(e.a), labelSlot(e.b), an[0], an[1], an[2], e.radius, e.band ?? e.radius / 2, e.k], i * ATTACH_STRIDE);
           maxK = Math.max(maxK, e.k);
         });
-        const G0 = minG(ids);
-        const lb = boxPad(ids.map((i) => nodes[i].box).reduce(boxUnion), (bulge + maxK / 4) / G0);
-        return finish({
-          kind: "contact", children: ids, gap, bulge, fuse: gap === 0 ? 1 : 0, att,
-          regions: ids.map(() => new Float64Array(0)),
-          L: Math.max(...ids.map((i) => nodes[i].L)),
-        }, lb, Math.min(...ids.map((i) => nodes[i].thin)), G0);
+        const G0 = minG(ids), Lk = Math.max(...ids.map((i) => nodes[i].L));
+        const n = { kind: "contact", children: ids, gap, bulge, fuse: gap === 0 ? 1 : 0, att };
+        // The contact regions (regions.js), from the lowered children: per slot, the bulge
+        // regions (BULGE_STRIDE each); per node, the pad fill's gate regions (FILL_STRIDE each).
+        const found = contactRegions({ ir: { nodes }, textures }, n, path);
+        n.regions = found.regions; n.fillRegions = found.fillRegions; n.L = Lk + found.Lb;
+        warnings.push(...found.warnings);
+        hasContact = true;
+        // A bulged piece's surface moves out by at most its Σ A (found.pad) over its growth G.
+        const lb = boxPad(ids.map((i) => nodes[i].box).reduce(boxUnion), (found.pad + maxK / 4) / G0);
+        return finish(n, lb, Math.min(...ids.map((i) => nodes[i].thin)), G0);
       }
       case "mirror": {
         const id = child(node.child), axis = AXIS_INDEX[node.plane ?? "yz"], cb = nodes[id].box;
@@ -239,7 +245,9 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
     e.target = Math.max(e.size[0] / t.width, e.size[1] / t.height);
   }
   checkTextureBudget(textures);
-  return { ir: { nodes, root }, textures, bounds: rb, thin: nodes[root].thin, hasExpr, detail, digests: textures.map((t) => t.digest) };
+  const digests = textures.map((t) => t.digest);
+  if (hasContact) digests.push(regionDigest(nodes));   // regions are part of the content hash
+  return { ir: { nodes, root }, textures, bounds: rb, thin: nodes[root].thin, hasExpr, detail, digests, warnings };
 }
 
 const AXIS_OF = { x: 0, y: 1, z: 2 };

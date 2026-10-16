@@ -6,7 +6,7 @@ import { xformPoint, xformDir } from "./frames.js";
 import { evalPrim, warpPoint, mirrorPoint, sanitize } from "./primitives.js";
 import { evalExprScalar } from "./expr-lower.js";
 import { sampleTexture } from "./textures.js";
-import { clearance, contactInterval, attachWeightRange, ATTACH_STRIDE } from "./contact.js";
+import { clearance, contactInterval, attachWeightRange, bulgeRange, gateRange, ATTACH_STRIDE, BULGE_STRIDE, FILL_STRIDE } from "./contact.js";
 
 // Inheriting a parent's decision (planLeaves' child blocks). `parentDec` is the decision of
 // a ball that CONTAINS this one; a slot it pruned FIRMLY (`dec.firm[i]`) is not walked
@@ -45,6 +45,12 @@ const FIRM_REL = 1e-9;
 // `edge`: the grid edge the block is planned at (a contact node's clearance depends on it);
 // 0 — the default — is the bare declared gap, as evalReference's default.
 export const blockDecision = (c, cx, cy, cz, r, parentDec, edge = 0) => visit(c, c.ir.root, cx, cy, cz, r, parentDec, edge);
+
+/** One IR node's interval over the ball (x, y, z; r) in its parent's coordinates (applying its own `inv`): { lo, hi }. */
+export function nodeInterval(c, id, x, y, z, r, edge = 0) {
+  const a = visit(c, id, x, y, z, r, undefined, edge);
+  return { lo: a.lo, hi: a.hi };
+}
 
 function full(c, id) {
   const n = c.ir.nodes[id];
@@ -116,12 +122,16 @@ function visit(c, id, x, y, z, r, pd, e) {
       // exceeds two other slots' hi, so its hi is never another slot's H2 when that slot
       // could be pruned, and (b) for the pair already held when it was pruned. The interval
       // is taken over the kept slots alone, which is exact (a pruned slot changes no value).
+      // Every rule reads the BULGED children's intervals (bulgeRange: the offset's bounds over
+      // the ball, which nest as the ball shrinks), as the field bulges before it cuts. The
+      // fill gate depends on the point alone, so it needs no prune condition of its own.
       const N = n.children.length, cl = clearance(n.gap, e), att = n.att, nA = att.length / ATTACH_STRIDE;
-      const rs = new Array(N), lo = new Float64Array(N), hi = new Float64Array(N);
+      const rs = new Array(N), lo = new Float64Array(N), hi = new Float64Array(N), off = [0, 0];
       for (let i = 0; i < N; i++) {
         if (skip(pd, i)) { rs[i] = null; continue; }
-        const a = visit(c, n.children[i], x, y, z, r, sub(pd, i), e);
+        const a = visit(c, n.children[i], x, y, z, r, sub(pd, i), e), R = n.regions[i];
         rs[i] = a; lo[i] = a.lo; hi[i] = a.hi;
+        if (R.length) { bulgeRange(off, R, 0, R.length / BULGE_STRIDE, x, y, z, r); lo[i] = a.lo - off[1]; hi[i] = a.hi - off[0]; }
       }
       const wr = new Array(nA);
       for (let a = 0; a < nA; a++) wr[a] = attachWeightRange(new Float64Array(3), att, a * ATTACH_STRIDE, x, y, z, r);
@@ -160,7 +170,8 @@ function visit(c, id, x, y, z, r, pd, e) {
         if (firm === null) firm = new Array(N).fill(false);
         firm[j] = isFirm;
       }
-      const iv = contactInterval([0, 0], lo, hi, keep, N, cl, n.fuse, att, nA, wr);
+      const gr = gateRange([0, 0], n.fillRegions, n.fillRegions.length / FILL_STRIDE, cl, x, y, z, r);
+      const iv = contactInterval([0, 0], lo, hi, keep, N, cl, n.fuse, att, nA, wr, gr[0], gr[1]);
       return { lo: iv[0], hi: iv[1], dec: { id, kids, firm } };
     }
     case "mirror": {

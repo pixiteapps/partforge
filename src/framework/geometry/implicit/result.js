@@ -3,7 +3,7 @@
 // from the same facts: the compiled tree, the grid edge, the leaf plan, the
 // final mesh and whether sampling clipped.
 export function implicitResult(compiled, edge, plan, mesh, clipped) {
-  const warnings = [];
+  const warnings = [...(compiled.warnings ?? [])];   // compile-time (e.g. a contact search that gave up)
   if (compiled.thin < 2 * edge) {
     warnings.push(`implicit: thinnest feature (${compiled.thin.toFixed(2)} mm) is under 2 grid cells at ${edge} mm — it may break up or grow handles; mesh it as its own k.implicit with a finer grid, or thicken it`);
   }

@@ -4,7 +4,10 @@ import { validateSpec } from "../src/framework/geometry/implicit/grammar.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { evalReference, evalNodeAt } from "../src/framework/geometry/implicit/reference.js";
 import { unionN } from "../src/framework/geometry/implicit/primitives.js";
-import { clearance, C_MIN_CELLS, ATTACH_STRIDE, bulgeOffset } from "../src/framework/geometry/implicit/contact.js";
+import { clearance, C_MIN_CELLS, ATTACH_STRIDE, bulgeOffset, REGION_CELL, BULGE_STRIDE } from "../src/framework/geometry/implicit/contact.js";
+import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
+import { setCoreEnabled } from "../src/framework/core/core.js";
+import { cpuMs } from "./helpers/cpu-pace.js";
 import { blockDecision, fullDecision, decisionKey } from "../src/framework/geometry/implicit/interval.js";
 import { emitProgram, evalBatch, runProgram, OP } from "../src/framework/geometry/implicit/program.js";
 import { planLeaves } from "../src/framework/geometry/implicit/sparse.js";
@@ -49,8 +52,21 @@ describe("contact reference field", () => {
     expect(evalReference(c, -0.25, 0, 0, 1)).toBeGreaterThanOrEqual(0);
   });
 
+  test("gap-0 near miss keeps a clearance", () => {
+    // No overlap region, so the pad fill is gated off (s2 + cl) and the cut holds the gap.
+    const c = lower({ root: { kind: "contact", gap: 0, children: [sph(-5.25), sph(5.25)] } });
+    expect(c.ir.nodes[c.ir.root].fuse).toBe(1);
+    expect(evalReference(c, 0, 0, 0, 1)).toBeGreaterThanOrEqual(clearance(0, 1) / 2 - 1e-12);
+    expect(evalReference(c, 0.25, 0, 0, 1)).toBeGreaterThanOrEqual(0);
+    expect(evalReference(c, -0.25, 0, 0, 1)).toBeGreaterThanOrEqual(0);
+  });
+
   test("overlap fuses a pad", () => {
-    const c = lower({ root: { kind: "contact", gap: 0, children: [sph(-4), sph(4)] } });
+    // bulge 0: the pad itself, without the swell (the bulged twin is only deeper).
+    const c = lower({ root: { kind: "contact", gap: 0, bulge: 0, children: [sph(-4), sph(4)] } });
+    const bulged = lower({ root: { kind: "contact", gap: 0, children: [sph(-4), sph(4)] } });
+    expect(bulged.ir.nodes[bulged.ir.root].fillRegions.length).toBe(4);
+    expect(evalReference(bulged, 0, 0, 0, 1)).toBeLessThan(evalReference(c, 0, 0, 0, 1));
     expect(c.ir.nodes[c.ir.root].fuse).toBe(1);
     expect(evalReference(c, 0, 0, 0, 1)).toBeLessThan(0);
     for (const y of [0, 0.5, 1, 1.9, -1.9]) {
@@ -249,5 +265,136 @@ describe("contact pruning and bytecode", () => {
     const o1 = new Float64Array(1);
     runProgram(prog, c.textures, Float64Array.of(0, 0), Float64Array.of(4, 0), Float64Array.of(0, 0), 1, o1);
     expect(o1[0]).toBe(evalReference(c, 0, 4, 0));
+  });
+});
+
+const cap = (a, b, r, label) => ({ kind: "capsule", a, b, r, ...(label ? { label } : {}) });
+const regionsOf = (c) => c.ir.nodes[c.ir.root].regions;
+const nRegions = (R) => R.length / BULGE_STRIDE;
+
+describe("contact regions and bulge", () => {
+  test("two spheres overlapping by 2 mm: one region, depth about 1 mm", () => {
+    const c = lower({ root: { kind: "contact", children: [sph(-4), sph(4)] } });
+    const [a, b] = regionsOf(c), node = c.ir.nodes[c.ir.root];
+    expect([nRegions(a), nRegions(b)]).toEqual([1, 1]);
+    expect(Array.from(a)).toEqual(Array.from(b));
+    expect(node.fillRegions.length).toBe(4);
+    for (let i = 0; i < 3; i++) expect(Math.abs(a[i])).toBeLessThan(REGION_CELL);
+    // A = bulge·min(1, δ/BULGE_FULL_DEPTH) with the default bulge: recover δ.
+    const delta = (a[3] / node.bulge) * 1.5;
+    expect(Math.abs(delta - 1)).toBeLessThanOrEqual(REGION_CELL);
+  });
+
+  test("near miss: no regions", () => {
+    const c = lower({ root: { kind: "contact", children: [sph(-5.25), sph(5.25)] } });
+    expect(regionsOf(c).map((R) => R.length)).toEqual([0, 0]);
+    expect(c.ir.nodes[c.ir.root].fillRegions.length).toBe(0);
+  });
+
+  test("parallel near miss: boxes overlap, no regions", () => {
+    const a = 1.98;   // centres 2a√2 = 5.6 apart, r 2: 1.6 mm between the surfaces
+    const c = lower({ root: { kind: "contact", children: [cap([a, a, 0], [a, a, 20], 2), cap([-a, -a, 0], [-a, -a, 20], 2)] } });
+    const [A, B] = c.ir.nodes[c.ir.root].children.map((i) => c.ir.nodes[i].box);
+    expect(A.min[0] < B.max[0] && A.min[1] < B.max[1]).toBe(true);
+    expect(regionsOf(c).map((R) => R.length)).toEqual([0, 0]);
+  });
+
+  test("two regions: bent capsules touching at both ends", () => {
+    const tube = (s) => ({ kind: "tube", points: [[s, 0, 0], [8 * s, 10, 0], [s, 20, 0]], r: 2 });
+    const c = lower({ root: { kind: "contact", children: [tube(-1), tube(1)] } });
+    const [A] = regionsOf(c);
+    expect(nRegions(A)).toBe(2);
+    expect(Math.abs(A[1])).toBeLessThan(1);
+    expect(Math.abs(A[BULGE_STRIDE + 1] - 20)).toBeLessThan(1);
+    expect(c.ir.nodes[c.ir.root].fillRegions.length).toBe(8);
+  });
+
+  test("regions under a frame are in node-local coordinates", () => {
+    const kids = [cap([-6, 0, 0], [0, 1, 0], 2), cap([0, -1, 0], [6, 0, 3], 2)];
+    const plain = lower({ root: { kind: "contact", children: kids } });
+    const framed = lower({ frames: { F: { at: [3, -2, 7], rotate: [{ axis: "x", deg: 37 }, { axis: "z", deg: -20 }] } }, root: { kind: "contact", frame: "F", children: kids } });
+    expect(nRegions(regionsOf(plain)[0])).toBe(1);
+    expect(regionsOf(framed).map((R) => Array.from(R))).toEqual(regionsOf(plain).map((R) => Array.from(R)));
+    expect(Array.from(framed.ir.nodes[framed.ir.root].fillRegions)).toEqual(Array.from(plain.ir.nodes[plain.ir.root].fillRegions));
+  });
+
+  test("bulge is zero without contact: a near miss meshes identically with bulge 0 and 2", () => {
+    setCoreEnabled(false);
+    try {
+      const m = (bulge) => meshImplicit(compileImplicit({ root: { kind: "contact", bulge, children: [sph(-5.25), sph(5.25)] } }), 1);
+      const a = m(0), b = m(2);
+      expect(a.positions.length).toBeGreaterThan(0);
+      expect(Array.from(b.positions)).toEqual(Array.from(a.positions));
+      expect(Array.from(b.indices)).toEqual(Array.from(a.indices));
+    } finally { setCoreEnabled(true); }
+  });
+
+  test("bulge grows with press depth", () => {
+    // Max outward displacement of piece a's surface (outside b) for overlaps 0.5, 1, 2 mm.
+    const disp = (o) => {
+      const h = 5 - o / 2, c = lower({ root: { kind: "contact", children: [sph(-h), sph(h)] } });
+      const R = regionsOf(c)[0];
+      let best = 0;
+      for (let k = 0; k <= 200; k++) {
+        const th = (k / 200) * Math.PI, x = -h + 5 * Math.cos(th), y = 5 * Math.sin(th);
+        if (Math.hypot(x - h, y) - 5 < 0) continue;   // inside b: the pad
+        best = Math.max(best, bulgeOffset(R, 0, nRegions(R), x, y, 0));
+      }
+      return best;
+    };
+    const d = [0.5, 1, 2].map(disp);
+    expect(d[0]).toBeGreaterThan(0);
+    expect(d[1]).toBeGreaterThan(d[0]);
+    expect(d[2]).toBeGreaterThan(d[1]);
+  });
+
+  test("attached base has no region", () => {
+    const spec = (attach) => ({ frames: { joint: { at: [0, 0, 2] } }, root: {
+      kind: "contact", ...(attach ? { attach: [{ a: "finger", b: "palm", near: "joint", radius: 10, band: 4, k: 3 }] } : {}),
+      children: [cap([0, 0, 2], [0, 0, 30], 3, "finger"), { kind: "box", size: [20, 20, 4], label: "palm" }],
+    } });
+    expect(regionsOf(lower(spec(true))).map((R) => R.length)).toEqual([0, 0]);
+    expect(regionsOf(lower(spec(false))).map(nRegions)).toEqual([1, 1]);
+  });
+
+  test("regions change the content digests", () => {
+    const d = (o) => compileImplicit({ root: { kind: "contact", children: [sph(-5 + o / 2), sph(5 - o / 2)] } }).digests;
+    expect(d(1).length).toBe(1);
+    expect(d(1)).not.toEqual(d(2));
+    expect(compileImplicit({ root: { kind: "sphere", r: 2 } }).digests).toEqual([]);
+  });
+
+  test("the fill gate is in the program: CONTACT carries the fill regions", () => {
+    const c = lower({ root: { kind: "contact", children: [sph(-4), sph(4)] } });
+    const prog = emitProgram(c, fullDecision(c, 0.5), 0.5), node = c.ir.nodes[c.ir.root];
+    const pc = Array.from(prog).indexOf(OP.CONTACT, 2), nK = prog[pc + 5], nA = prog[pc + 6], o = pc + 7 + nK + nA * ATTACH_STRIDE;
+    expect(prog[o]).toBe(1);
+    expect(Array.from(prog.subarray(o + 1, o + 5))).toEqual(Array.from(node.fillRegions));
+    expect(prog[o + 5]).toBe(OP.END);
+    expect(Array.from(prog).filter((v, i) => i > 1 && v === OP.BULGE).length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("bulged, gated trees: the inherited plan is the full walk's plan", () => {
+    for (const name of ["contactOverlap", "contactIdentical", "contactGap"]) {
+      const c = lower(TREES[name]), node = c.ir.nodes[c.ir.root];
+      expect(node.fillRegions.length).toBeGreaterThan(0);
+      expect(node.regions.some((R) => R.length > 0)).toBe(true);
+      for (const edge of [0.5, 1]) {
+        const a = planLeaves(c, edge), b = planLeaves(c, edge, { inherit: false });
+        expect(a.leaves).toEqual(b.leaves);
+        expect(a.programs.map((p) => Array.from(p))).toEqual(b.programs.map((p) => Array.from(p)));
+      }
+    }
+  });
+
+  test("compile cost: a five-capsule fan compiles in ≤ 20 ms CPU", () => {
+    const fan = { root: { kind: "contact", children: [0, 1, 2, 3, 4].map((i) => cap([(i - 2) * 3, 0, 0], [(i - 2) * 9, 0, 30], 2)) } };
+    compileImplicit(fan);   // warm-up
+    const ms = [];
+    for (let i = 0; i < 5; i++) { const t0 = cpuMs(); compileImplicit(fan); ms.push(cpuMs() - t0); }
+    const med = ms.sort((a, b) => a - b)[2];
+    console.log(`five-capsule fan compile: ${med.toFixed(2)} paced CPU ms`);
+    expect(nRegions(regionsOf(lower(fan))[1])).toBe(2);
+    expect(med).toBeLessThanOrEqual(20);
   });
 });

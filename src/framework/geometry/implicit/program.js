@@ -7,7 +7,7 @@ import { xformPoint, xformDir } from "./frames.js";
 import { evalPrim, unionN, intersectN, warpPoint, mirrorPoint, sanitize, clampUnit } from "./primitives.js";
 import { UN, BIN, TER } from "./expr-lower.js";
 import { sampleTexture } from "./textures.js";
-import { contactValue, clearance, bulgeOffset, ATTACH_STRIDE, BULGE_STRIDE } from "./contact.js";
+import { contactValue, clearance, bulgeOffset, ATTACH_STRIDE, BULGE_STRIDE, FILL_STRIDE } from "./contact.js";
 
 export const OP = Object.freeze({ END: 0, XFORM: 1, XDIR: 2, PRIM: 3, UNION: 4, INTER: 5, NEG: 6, MIN2: 7, MIRRORP: 8, ADDC: 9, ONION: 10, WARP: 11, DISP: 12, SANITIZE: 13, CONTACT: 14, BULGE: 15, GET: 20, CONST: 21, UN: 22, BIN: 23, TER: 24, TEX: 25 });
 export const UN_NAMES = Object.keys(UN), BIN_NAMES = Object.keys(BIN), TER_NAMES = Object.keys(TER);
@@ -45,10 +45,14 @@ export function emitExprProgram(L) {
 }
 
 // Layouts of the two contact ops (the rest are read off runProgram below):
-//   [CONTACT, dst, p, cl, fuse, nK, nA, kidReg × nK, (ia, ib, ax, ay, az, r0, band, k) × nA]
+//   [CONTACT, dst, p, cl, fuse, nK, nA, kidReg × nK, (ia, ib, ax, ay, az, r0, band, k) × nA,
+//    nF, (cx, cy, cz, rho) × nF]
 //     cl is clearance(gap, edge) baked in; ia/ib index the EMITTED slots; an attachment with
-//     a pruned side is dropped (its weight is 0 over the block — interval.js rule (c)).
+//     a pruned side is dropped (its weight is 0 over the block — interval.js rule (c)). The
+//     fill-gate regions are the node's, all of them, whatever was pruned (the gate depends on
+//     the point alone).
 //   [BULGE, dst, src, p, nR, (cx, cy, cz, A, rho) × nR]   → src − bulgeOffset(...)
+//     emitted on a kept slot's register when that slot has regions, before CONTACT reads it.
 // `edge` is the grid edge the program is planned at (0, the default, is the bare gap).
 export function emitProgram(compiled, dec, edge = 0) {
   const code = [];
@@ -83,7 +87,14 @@ export function emitProgram(compiled, dec, edge = 0) {
       }
       case "contact": {
         const vs = [], slot = new Array(d.kids.length).fill(-1);
-        d.kids.forEach((kd, i) => { if (kd) { slot[i] = vs.length; vs.push(emit(kd, p)); } });
+        d.kids.forEach((kd, i) => {
+          if (!kd) return;
+          slot[i] = vs.length;
+          let v = emit(kd, p);
+          const R = n.regions[i];
+          if (R.length) { const b = newV(); code.push(OP.BULGE, b, v, p, R.length / BULGE_STRIDE, ...R); v = b; }
+          vs.push(v);
+        });
         if (vs.length === 1) return vs[0];
         const atts = [];
         for (let o = 0; o < n.att.length; o += ATTACH_STRIDE) {
@@ -92,7 +103,8 @@ export function emitProgram(compiled, dec, edge = 0) {
           atts.push(ia, ib, ...n.att.subarray(o + 2, o + ATTACH_STRIDE));
         }
         const out = newV();
-        code.push(OP.CONTACT, out, p, clearance(n.gap, edge), n.fuse, vs.length, atts.length / ATTACH_STRIDE, ...vs, ...atts);
+        const F = n.fillRegions;
+        code.push(OP.CONTACT, out, p, clearance(n.gap, edge), n.fuse, vs.length, atts.length / ATTACH_STRIDE, ...vs, ...atts, F.length / FILL_STRIDE, ...F);
         return out;
       }
       case "mirror": {
@@ -172,16 +184,17 @@ export function runProgram(prog, textures, X, Y, Z, n, out) {
       }
       case OP.CONTACT: {
         const dv = V[prog[pc + 1]], s = prog[pc + 2], cl = prog[pc + 3], fuse = prog[pc + 4], cnt = prog[pc + 5], nA = prog[pc + 6];
-        const att = prog.subarray(pc + 7 + cnt, pc + 7 + cnt + nA * ATTACH_STRIDE);
+        const fo = pc + 7 + cnt + nA * ATTACH_STRIDE, nF = prog[fo];
+        const att = prog.subarray(pc + 7 + cnt, fo), F = prog.subarray(fo + 1, fo + 1 + nF * FILL_STRIDE);
         if (cnt > gather.length) gather = new Float64Array(Math.max(64, cnt));
         if (cnt > cScratch.length) cScratch = new Float64Array(cnt);
         if (nA > wScratch.length) wScratch = new Float64Array(nA);
         const g = gather, sx = PX[s], sy = PY[s], sz = PZ[s];
         for (let i = 0; i < n; i++) {
           for (let j = 0; j < cnt; j++) g[j] = V[prog[pc + 7 + j]][i];
-          dv[i] = contactValue(g, cnt, cl, fuse, att, nA, sx[i], sy[i], sz[i], wScratch, cScratch);
+          dv[i] = contactValue(g, cnt, cl, fuse, att, nA, F, nF, sx[i], sy[i], sz[i], wScratch, cScratch);
         }
-        pc += 7 + cnt + nA * ATTACH_STRIDE; break;
+        pc = fo + 1 + nF * FILL_STRIDE; break;
       }
       case OP.BULGE: {
         const dv = V[prog[pc + 1]], src = V[prog[pc + 2]], s = prog[pc + 3], nR = prog[pc + 4];

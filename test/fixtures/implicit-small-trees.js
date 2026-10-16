@@ -41,7 +41,11 @@ export const TREES = {
     { kind: "capsule", a: [0, 0, 1], b: [0, 0, 12], r: 2, label: "finger" },
     { kind: "box", size: [14, 10, 4], label: "palm" },
   ] } },
-  contactThree: { root: { kind: "contact", gap: 0.3, children: [
+  // bulge 0: the first capsule's tip reaches through the second to within the coarse grid's
+  // clearance of its far side, and a bulge there puts the clearance cut's crease on that far
+  // surface (cleanup's vertex bound fails at 0.8 mm). Bulge is covered by the gap-0 trees and
+  // contactGap; the profile is tuned on the hand (Task 5).
+  contactThree: { root: { kind: "contact", gap: 0.3, bulge: 0, children: [
     { kind: "capsule", a: [-9, 0, 0], b: [-1, 0, 0], r: 2 },
     { kind: "capsule", a: [1, -6, 0], b: [1, 6, 0], r: 2 },
     { kind: "capsule", a: [10, 0, -5], b: [10, 0, 5], r: 1.5 },
