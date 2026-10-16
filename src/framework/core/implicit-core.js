@@ -1,0 +1,108 @@
+// The implicit engine on the native core (native/implicit_eval.cpp, …) — a
+// SESSION per meshing run: the part's textures and emitted programs live in
+// WebAssembly memory and every stage runs there, bit for bit what the JS in
+// geometry/implicit/ computes (test/implicit-native-*.test.js hold each stage).
+//
+// Failure is contained (core.js): a trap or a failed allocation poisons the
+// instance and the call throws CORE_FAULT, which the caller catches to run the
+// JS instead. Memory views are re-read after every call into the module, since
+// any call may grow (and so detach) its memory.
+import { poisonCore, releaseIfIdle } from "./core.js";
+
+/** Thrown when the core faulted (or is already poisoned): run the JS path instead. */
+export const CORE_FAULT = Object.freeze(new Error("partforge core: the implicit session faulted"));
+
+export class NativeSession {
+  constructor(c) {
+    this.c = c;
+    this.io = 0;      // one block: X, Y, Z, out — `cap` doubles each, reused across eval calls
+    this.cap = 0;
+    this.id = this.#call(() => c.x.ip_session_create());
+    if (!this.id) throw CORE_FAULT;
+    c.live++;         // a live session pins its instance, like a core BVH
+  }
+
+  // Runs `fn` against the module; a fault poisons the instance and becomes CORE_FAULT.
+  #call(fn) {
+    const c = this.c;
+    if (c.poisoned) throw CORE_FAULT;
+    try {
+      return fn();
+    } catch (err) {
+      poisonCore(c, err);
+      throw CORE_FAULT;
+    }
+  }
+
+  /** A makeTexture() result ({ width, height, data: Float32Array }); returns its slot. */
+  addTexture(t) {
+    const { c } = this;
+    if (!(t.data instanceof Float32Array) || t.data.length !== t.width * t.height) throw new Error("implicit: a texture needs width × height float32 texels");
+    return this.#call(() => {
+      const ptr = c.copyIn(t.data);
+      try {
+        const slot = c.x.ip_tex_add(this.id, t.width, t.height, ptr);
+        if (slot < 0) throw new Error("implicit: the core refused a texture");
+        return slot;
+      } finally {
+        if (ptr) c.x.free(ptr);
+      }
+    });
+  }
+
+  /** An emitted program (program.js's Float64Array format); returns its index. */
+  addProgram(prog) {
+    const { c } = this;
+    return this.#call(() => {
+      const ptr = c.copyIn(prog);
+      try {
+        return c.x.ip_prog_add(this.id, ptr, prog.length);
+      } finally {
+        if (ptr) c.x.free(ptr);
+      }
+    });
+  }
+
+  /** evalBatch(prog, textures, X, Y, Z, out) on the core: a fresh Float64Array of field values. */
+  eval(progIndex, X, Y, Z) {
+    const { c } = this, n = X.length;
+    if (Y.length !== n || Z.length !== n) throw new Error("implicit: X, Y and Z must be the same length");
+    let rc = 0;
+    const out = this.#call(() => {
+      if (n > this.cap) {
+        if (this.io) c.x.free(this.io);
+        this.io = 0;
+        this.cap = 0;
+        this.io = c.alloc(n * 32);
+        this.cap = n;
+      }
+      const base = this.io, cap = this.cap;
+      const f64 = new Float64Array(c.x.memory.buffer, base, cap * 4);
+      f64.set(X, 0); f64.set(Y, cap); f64.set(Z, 2 * cap);
+      rc = c.x.ip_eval(this.id, progIndex, base, base + cap * 8, base + cap * 16, n, base + cap * 24);
+      return rc === 0 ? c.copyOut(Float64Array, base + cap * 24, n) : null;
+    });
+    if (rc !== 0) throw new Error(`implicit: the core refused program ${progIndex} (malformed, or a texture slot it lacks)`);
+    return out;
+  }
+
+  /** Frees the session. Safe to call twice, and on a poisoned instance (nothing is touched then). */
+  destroy() {
+    const { c } = this;
+    if (!this.id) return;
+    const id = this.id, io = this.io;
+    this.id = 0;
+    this.io = 0;
+    this.cap = 0;
+    c.live--;
+    if (!c.poisoned) {
+      try {
+        if (io) c.x.free(io);
+        c.x.ip_session_destroy(id);
+      } catch (err) {
+        poisonCore(c, err);
+      }
+    }
+    releaseIfIdle(c);
+  }
+}
