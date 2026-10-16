@@ -7,7 +7,41 @@ import { evalPrim, warpPoint, mirrorPoint, sanitize } from "./primitives.js";
 import { evalExprScalar } from "./expr-lower.js";
 import { sampleTexture } from "./textures.js";
 
-export const blockDecision = (c, cx, cy, cz, r) => visit(c, c.ir.root, cx, cy, cz, r);
+// Inheriting a parent's decision (planLeaves' child blocks). `parentDec` is the decision of
+// a ball that CONTAINS this one; a slot it pruned FIRMLY (`dec.firm[i]`) is not walked
+// again — it stays pruned. This gives exactly the full walk's answer, because the full walk
+// over the smaller ball would prune it too:
+//  - Every leaf interval nests: v ± L·r' at centre c' lies inside v ± L·r at c whenever
+//    |c' − c| + r' ≤ r (|v(c') − v(c)| ≤ L·|c' − c|; the frames, mirrors and warp bases are
+//    rigid, so the point keeps its distance). planLeaves' octants are tangent inside their
+//    parent: offset B·edge·√3/4, radius smaller by the same.
+//  - Every node maps nested children to a nested interval and prunes a superset: union
+//    prunes on lo_i − H − k − 1e-12·(|H| + k) > 0 (increasing in lo_i, decreasing in H: the
+//    margin's slope is ±1e-12), intersect/subtract on Lmax − k − 1e-12·(|Lmax| + k) − hi_i > 0,
+//    mirror on A.lo − B.hi − 1e-12·(|A.lo| + |B.hi|) > 0 — lo only rises and hi only falls
+//    in the child, so each condition only gets truer; their outputs (min of kept lo less
+//    (kept−1)·k/4, min of all hi; mirrored) move inward as the kept set shrinks. round,
+//    onion (distance of the interval from 0, max |·|), displace and ref are monotone maps.
+//  - Warps hand their child the ball (w(c), r·S) with S the stretch bound over the ball, so
+//    the child ball nests when S' ≤ S: twist 1 + |rate|·(ρ + r) and ρ' + r' ≤ ρ + r; bend
+//    R/(ρ − r) and ρ' − r' ≥ ρ − r; taper's sMin over [z − r, z + r] only rises and its
+//    ρ + r only falls (scales are > 0). Bend's UNBOUNDED test (ρ ≤ r, or |z| ≤ r and
+//    x + r ≥ R) holding for the child implies it for the parent, so a bounded parent never
+//    has an unbounded child; an UNBOUNDED parent's decision is full (no pruned slot), so
+//    its child starts from a full walk.
+//  - A pruned slot never attains the node's H (union: lo_i > H, so hi_i > H) or Lmax
+//    (intersect: hi_i < Lmax), nor decides the other mirror side (A pruned ⇒ B kept, and
+//    the result is B's interval), so skipping it changes no other number.
+// That argument is in real arithmetic, and the nesting is tangent: a floating-point
+// rounding of a few ulps can break a tie the parent decided by less. So a prune is FIRM
+// only when it holds by more than FIRM_REL·(|lo| + |threshold| + r + |x| + |y| + |z|) — far
+// above the rounding of an interval endpoint — and a prune inside that band is walked
+// again in the child, which then decides it exactly as the full walk does. It also rests
+// on declared Lipschitz bounds being true (an expr's `lipschitz`) — the assumption the
+// cull's own exactness already makes.
+const FIRM_REL = 1e-9;
+
+export const blockDecision = (c, cx, cy, cz, r, parentDec) => visit(c, c.ir.root, cx, cy, cz, r, parentDec);
 
 function full(c, id) {
   const n = c.ir.nodes[id];
@@ -24,51 +58,74 @@ export function decisionKey(dec) {
 
 const UNBOUNDED = (c, id) => ({ lo: -Infinity, hi: Infinity, dec: full(c, id) });
 
-function visit(c, id, x, y, z, r) {
+// `pd`: this node's decision in an enclosing ball (see above), or undefined for a full walk.
+const skip = (pd, i) => pd !== undefined && pd.kids[i] === null && pd.firm != null && pd.firm[i];
+const sub = (pd, i) => (pd === undefined || pd.kids[i] === null ? undefined : pd.kids[i]);
+const firmTol = (r, x, y, z, a, b) => FIRM_REL * (Math.abs(a) + Math.abs(b) + r + Math.abs(x) + Math.abs(y) + Math.abs(z));
+
+function visit(c, id, x, y, z, r, pd) {
   const n = c.ir.nodes[id];
   if (n.inv) { const q = [0, 0, 0]; xformPoint(q, n.inv, x, y, z); x = q[0]; y = q[1]; z = q[2]; }
   switch (n.kind) {
     case "prim": { const v = evalPrim(n.prim.code, n.prim.P, x, y, z); return { lo: v - n.L * r, hi: v + n.L * r, dec: { id } }; }
     case "expr": { const v = sanitize(evalExprScalar(n.expr, x, y, z, c.textures, sampleTexture)); return { lo: v - n.L * r, hi: v + n.L * r, dec: { id } }; }
-    case "union": {
-      const rs = n.children.map((ch) => visit(c, ch, x, y, z, r));
-      let H = Infinity;
-      for (const a of rs) if (a.hi < H) H = a.hi;
-      const kids = rs.map((a) => (a.lo > H + n.k + 1e-12 * (Math.abs(H) + n.k) ? null : a.dec));
-      let lo = Infinity, kept = 0;
-      rs.forEach((a, i) => { if (kids[i]) { kept++; if (a.lo < lo) lo = a.lo; } });
-      if (n.k > 0) lo -= ((kept - 1) * n.k) / 4;
-      return { lo, hi: H, dec: { id, kids } };
-    }
-    case "intersect": case "subtract": {
-      const rs = n.children.map((ch, i) => {
-        const a = visit(c, ch, x, y, z, r);
-        return n.kind === "subtract" && i > 0 ? { lo: -a.hi, hi: -a.lo, dec: a.dec } : a;
-      });
-      let Lmax = -Infinity;
-      for (const a of rs) if (a.lo > Lmax) Lmax = a.lo;
-      const kids = rs.map((a) => (a.hi < Lmax - n.k - 1e-12 * (Math.abs(Lmax) + n.k) ? null : a.dec));
-      let hi = -Infinity, kept = 0;
-      rs.forEach((a, i) => { if (kids[i]) { kept++; if (a.hi > hi) hi = a.hi; } });
-      if (n.k > 0) hi += ((kept - 1) * n.k) / 4;
-      return { lo: Lmax, hi, dec: { id, kids } };
+    case "union": case "intersect": case "subtract": {
+      // union keeps slot i unless lo_i > T = H + k + margin (H = min hi); intersect/subtract
+      // (operands after the first negated) unless hi_i < T = Lmax − k − margin (Lmax = max lo).
+      const isU = n.kind === "union", neg = n.kind === "subtract", N = n.children.length;
+      const rs = new Array(N);
+      let E = isU ? Infinity : -Infinity;   // H for a union, Lmax otherwise
+      for (let i = 0; i < N; i++) {
+        if (skip(pd, i)) { rs[i] = null; continue; }
+        let a = visit(c, n.children[i], x, y, z, r, sub(pd, i));
+        if (neg && i > 0) a = { lo: -a.hi, hi: -a.lo, dec: a.dec };
+        rs[i] = a;
+        if (isU) { if (a.hi < E) E = a.hi; } else if (a.lo > E) E = a.lo;
+      }
+      const T = isU ? E + n.k + 1e-12 * (Math.abs(E) + n.k) : E - n.k - 1e-12 * (Math.abs(E) + n.k);
+      const kids = new Array(N);
+      let firm = null, out = isU ? Infinity : -Infinity, kept = 0;
+      for (let i = 0; i < N; i++) {
+        const a = rs[i];
+        if (a !== null && !(isU ? a.lo > T : a.hi < T)) {
+          kids[i] = a.dec; kept++;
+          if (isU ? a.lo < out : a.hi > out) out = isU ? a.lo : a.hi;
+          continue;
+        }
+        kids[i] = null;
+        if (firm === null) firm = new Array(N).fill(false);
+        firm[i] = a === null || (isU ? a.lo - T : T - a.hi) > firmTol(r, x, y, z, isU ? a.lo : a.hi, T);
+      }
+      if (n.k > 0) { if (isU) out -= ((kept - 1) * n.k) / 4; else out += ((kept - 1) * n.k) / 4; }
+      return isU ? { lo: out, hi: E, dec: { id, kids, firm } } : { lo: E, hi: out, dec: { id, kids, firm } };
     }
     case "mirror": {
-      const A = visit(c, n.children[0], x, y, z, r), m = [0, 0, 0];
+      // A pruned side implies the other is kept (A.lo > B.hi ≥ B.lo and A.hi ≥ A.lo), so at
+      // most one side is skipped, and the result is then the other side's interval.
+      if (skip(pd, 0) || skip(pd, 1)) {
+        const s = skip(pd, 0) ? 1 : 0, m = [x, y, z];
+        if (s === 1) mirrorPoint(m, n.axis, x, y, z);
+        const K = visit(c, n.children[0], m[0], m[1], m[2], r, sub(pd, s));
+        return { lo: K.lo, hi: K.hi, dec: { id, kids: s === 0 ? [K.dec, null] : [null, K.dec], firm: [s === 1, s === 0] } };
+      }
+      const A = visit(c, n.children[0], x, y, z, r, sub(pd, 0)), m = [0, 0, 0];
       mirrorPoint(m, n.axis, x, y, z);
-      const B = visit(c, n.children[0], m[0], m[1], m[2], r);
+      const B = visit(c, n.children[0], m[0], m[1], m[2], r, sub(pd, 1));
       const mA = 1e-12 * (Math.abs(A.lo) + Math.abs(B.hi)), mB = 1e-12 * (Math.abs(B.lo) + Math.abs(A.hi));
       const keepA = !(A.lo > B.hi + mA), keepB = !(B.lo > A.hi + mB);
       const lo = Math.min(keepA ? A.lo : Infinity, keepB ? B.lo : Infinity), hi = Math.min(keepA ? A.hi : Infinity, keepB ? B.hi : Infinity);
-      return { lo, hi, dec: { id, kids: [keepA ? A.dec : null, keepB ? B.dec : null] } };
+      const kids = [keepA ? A.dec : null, keepB ? B.dec : null];
+      if (keepA && keepB) return { lo, hi, dec: { id, kids, firm: null } };
+      const firm = [!keepA && A.lo - (B.hi + mA) > firmTol(r, x, y, z, A.lo, B.hi + mA), !keepB && B.lo - (A.hi + mB) > firmTol(r, x, y, z, B.lo, A.hi + mB)];
+      return { lo, hi, dec: { id, kids, firm } };
     }
-    case "round": { const a = visit(c, n.children[0], x, y, z, r); return { lo: a.lo - n.r, hi: a.hi - n.r, dec: { id, kids: [a.dec] } }; }
+    case "round": { const a = visit(c, n.children[0], x, y, z, r, sub(pd, 0)); return { lo: a.lo - n.r, hi: a.hi - n.r, dec: { id, kids: [a.dec] } }; }
     case "onion": {
-      const a = visit(c, n.children[0], x, y, z, r);
+      const a = visit(c, n.children[0], x, y, z, r, sub(pd, 0));
       const lo = a.lo >= 0 ? a.lo : a.hi <= 0 ? -a.hi : 0, hi = Math.max(Math.abs(a.lo), Math.abs(a.hi));
       return { lo: lo - n.t, hi: hi - n.t, dec: { id, kids: [a.dec] } };
     }
-    case "displace": { const a = visit(c, n.children[0], x, y, z, r); return { lo: a.lo - Math.abs(n.amount), hi: a.hi + Math.abs(n.amount), dec: { id, kids: [a.dec] } }; }
+    case "displace": { const a = visit(c, n.children[0], x, y, z, r, sub(pd, 0)); return { lo: a.lo - Math.abs(n.amount), hi: a.hi + Math.abs(n.amount), dec: { id, kids: [a.dec] } }; }
     case "warp": {
       const q = [x, y, z], w = [0, 0, 0], { kind, W, B, Bt } = n.warp;
       if (B) xformDir(q, B, x, y, z);
@@ -86,10 +143,10 @@ function visit(c, id, x, y, z, r) {
       }
       warpPoint(w, kind, W, q[0], q[1], q[2]);
       if (Bt) xformDir(w, Bt, w[0], w[1], w[2]);
-      const a = visit(c, n.children[0], w[0], w[1], w[2], r * S);
+      const a = visit(c, n.children[0], w[0], w[1], w[2], r * S, sub(pd, 0));
       return { lo: a.lo, hi: a.hi, dec: { id, kids: [a.dec] } };
     }
-    case "ref": { const a = visit(c, n.children[0], x, y, z, r); return { lo: a.lo, hi: a.hi, dec: { id, kids: [a.dec] } }; }
+    case "ref": { const a = visit(c, n.children[0], x, y, z, r, sub(pd, 0)); return { lo: a.lo, hi: a.hi, dec: { id, kids: [a.dec] } }; }
     default: throw new Error(`implicit: unknown IR node kind ${n.kind}`);
   }
 }

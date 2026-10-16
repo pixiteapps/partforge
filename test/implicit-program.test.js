@@ -3,7 +3,7 @@ import { describe, test, expect } from "vitest";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { evalReference } from "../src/framework/geometry/implicit/reference.js";
 import { blockDecision, fullDecision } from "../src/framework/geometry/implicit/interval.js";
-import { emitProgram, evalBatch } from "../src/framework/geometry/implicit/program.js";
+import { emitProgram, evalBatch, runProgram, FN_CODES, UN_NAMES, BIN_NAMES, TER_NAMES, BATCH } from "../src/framework/geometry/implicit/program.js";
 import { TREES } from "./fixtures/implicit-small-trees.js";
 
 let seed = 5;
@@ -43,5 +43,31 @@ describe("bytecode", () => {
     const out = new Float64Array(1);
     evalBatch(prog, c.textures, Float64Array.of(0), Float64Array.of(0), Float64Array.of(0), out);
     expect(out[0]).toBe(-2);
+  });
+  test("fn codes are pinned (the native tables index these arrays)", () => {
+    expect(UN_NAMES).toEqual(["neg", "abs", "floor", "fract", "sqrt", "sin", "cos", "not"]);
+    expect(BIN_NAMES).toEqual(["add", "sub", "mul", "div", "min", "max", "mod", "step", "lt", "gt", "le", "ge", "eq", "ne", "and", "or"]);
+    expect(TER_NAMES).toEqual(["clamp", "mix", "smoothstep", "smin", "smax", "select"]);
+    expect(FN_CODES).toEqual({ UN: UN_NAMES, BIN: BIN_NAMES, TER: TER_NAMES });
+  });
+  test("an unknown expr function fails at emission, not as a bad fn code", () => {
+    const c = lowerSpec({ root: { kind: "expr", box: [[-1, -1, -1], [1, 1, 1]], sdf: "return abs(p.x) - 0.5;" } }, { images: new Map() });
+    c.ir.nodes[c.ir.root].expr.ops.find((o) => o.op === "un").fn = "tanh";
+    expect(() => emitProgram(c, fullDecision(c))).toThrow("implicit: unknown expr function tanh");
+  });
+  test("runProgram refuses more lanes than a batch holds", () => {
+    const c = lowerSpec({ root: { kind: "sphere", r: 1 } }, { images: new Map() });
+    const prog = emitProgram(c, fullDecision(c)), N = BATCH + 1;
+    const X = new Float64Array(N), out = new Float64Array(N);
+    expect(() => runProgram(prog, c.textures, X, X, X, N, out)).toThrow(/at most 256 lanes/);
+  });
+  test("a union wider than the shared gather buffer evaluates exactly", () => {
+    const children = Array.from({ length: 70 }, (_, i) => ({ kind: "sphere", r: 0.5, at: [i * 0.3 - 10, 0, 0] }));
+    const c = lowerSpec({ root: { kind: "union", k: 0.2, children } }, { images: new Map() });
+    const prog = emitProgram(c, fullDecision(c));
+    const N = 300, X = new Float64Array(N), Y = new Float64Array(N), Z = new Float64Array(N), out = new Float64Array(N);
+    for (let i = 0; i < N; i++) { X[i] = rnd() * 12; Y[i] = rnd(); Z[i] = rnd(); }
+    evalBatch(prog, c.textures, X, Y, Z, out);
+    for (let i = 0; i < N; i++) expect(out[i]).toBe(evalReference(c, X[i], Y[i], Z[i]));
   });
 });

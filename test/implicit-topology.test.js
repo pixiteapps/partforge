@@ -3,13 +3,78 @@ import { describe, test, expect, beforeAll } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { handSpec, nailSpecs, vaseSpec, ADVERSARIAL, SUB_CELL_PLATE, randomSpec } from "./fixtures/implicit-trees.js";
-import { edgeCheck, componentCount } from "./helpers/mesh-topology.js";
+import { edgeCheck, componentCount, volume } from "./helpers/mesh-topology.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
-import { sampleField } from "../src/framework/geometry/implicit/sparse.js";
+import { sampleField, planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
+import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
+import { cleanupMesh, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
 const CLOSED = { boundary: 0, nonManifold: 0, misoriented: 0 };
+// meshImplicit's tiers: "preview" decimates in cleanup, "print" does not (k above is a
+// preview kernel, so every k.implicit here is decimated).
+const TIERS = ["preview", "print"];
+
+// Two triangles over the same three vertices (a "pillow": a closed piece folded flat).
+const duplicateTriangles = (T) => {
+  const seen = new Set();
+  let dup = 0;
+  for (let t = 0; t < T.length; t += 3) {
+    const key = [T[t], T[t + 1], T[t + 2]].sort((a, b) => a - b).join();
+    if (seen.has(key)) dup++;
+    seen.add(key);
+  }
+  return dup;
+};
+
+describe("preview decimation", () => {
+  // Tiny spheres mesh as a handful of triangles; the preview tier's decimation used to
+  // collapse a tetrahedral piece into two triangles over the same vertices (zero volume,
+  // closed and Euler-correct, so edgeCheck alone missed it). The step-3.3 rows at 1.5 mm
+  // each made pillows before the tetrahedron guard.
+  const rows = [];
+  for (const [r, edge] of [[0.75, 1.5], [0.9, 1.5], [1.1, 1.5], [0.45, 1.0], [0.6, 1.0]]) for (const step of [2.5, 3.3, 6]) rows.push([r, edge, step]);
+  test("tiny spheres in a repeat, decimated with the probe and normal guards off: no duplicate triangles, closed", () => {
+    // The preview tier's probe skips decimation on most of these, and its normal guards
+    // refuse the folds anyway; with both off only the tetrahedron guard stands between
+    // these and the pillows (removing it fails this test).
+    const opts = { ...PREVIEW_CLEANUP, decimateMinAccept: 0, decimateMaxTurn: 0, decimateMaxSpread: 0 };
+    let decimated = 0;
+    for (const [r, edge, step] of rows) {
+      const store = evaluateLeaves(planLeaves(lowerSpec({ root: { kind: "repeat", linear: { count: 6, step: [step, 0, 0] }, child: { kind: "sphere", r } } }, { images: new Map() }), edge));
+      const raw = meshStore(store), out = cleanupMesh(store, raw, opts);
+      if (out.indices.length < cleanupMesh(store, raw).indices.length) decimated++;
+      expect(duplicateTriangles(out.indices), `r ${r} at ${edge} mm, step ${step}`).toBe(0);
+      expect(edgeCheck(out.indices), `r ${r} at ${edge} mm, step ${step}`).toEqual(CLOSED);
+    }
+    expect(decimated).toBeGreaterThanOrEqual(2);
+  });
+  for (const tier of TIERS) {
+    test(`tiny spheres in a repeat, ${tier} tier: no duplicate triangles, closed`, () => {
+      let meshed = 0;
+      for (const [r, edge, step] of rows) {
+        const spec = { root: { kind: "repeat", linear: { count: 6, step: [step, 0, 0] }, child: { kind: "sphere", r } } };
+        const out = meshImplicit(compileImplicit(spec), edge, { tier });
+        if (out.indices.length) meshed++;
+        expect(duplicateTriangles(out.indices), `r ${r} at ${edge} mm, step ${step}`).toBe(0);
+        expect(edgeCheck(out.indices), `r ${r} at ${edge} mm, step ${step}`).toEqual(CLOSED);
+      }
+      expect(meshed).toBeGreaterThanOrEqual(6);
+    });
+  }
+  test("spheres keep their volume: decimation adds < 2% loss, and r >= 2 cells stays within 5% of print", () => {
+    // Measured: the 1.5 mm grid itself loses 26/11/9/3.6/2.0/0.9% at r = 1.5/1.8/2.2/3/4.5/6
+    // against the print tier's 0.6 mm; decimation adds 0/0.5/0/0.1/0.3/1.3%.
+    for (const r of [1.5, 1.8, 2.2, 3, 4.5, 6]) {
+      const c = compileImplicit({ root: { kind: "sphere", r } });
+      const vol = (edge, tier) => { const o = meshImplicit(c, edge, { tier }); return volume(o.positions, o.indices); };
+      const preview = vol(1.5, "preview"), plain = vol(1.5, "print"), print = vol(0.6, "print");
+      expect(preview / plain, `r ${r}: decimated vs not`).toBeGreaterThan(0.98);
+      if (r >= 3) expect(preview / print, `r ${r}: preview vs print`).toBeGreaterThan(0.95);
+    }
+  });
+});
 
 describe("topology", () => {
   for (const curl of [0, 50, 100]) {
@@ -29,9 +94,8 @@ describe("topology", () => {
     expect(v.volume()).toBeGreaterThan(0);
   }, 60_000);
   for (const [name, spec] of Object.entries(ADVERSARIAL)) {
-    test(`adversarial ${name}: closed and accepted by Manifold (Review Focus 3)`, () => {
-      const out = meshImplicit(compileImplicit(spec), spec.preview);
-      expect(edgeCheck(out.indices)).toEqual(CLOSED);
+    test(`adversarial ${name}: closed at both tiers and accepted by Manifold (Review Focus 3)`, () => {
+      for (const tier of TIERS) expect(edgeCheck(meshImplicit(compileImplicit(spec), spec.preview, { tier }).indices), tier).toEqual(CLOSED);
       expect(k.implicit(spec).volume()).toBeGreaterThan(0);
     });
   }
@@ -39,7 +103,10 @@ describe("topology", () => {
     const spec = SUB_CELL_PLATE;
     const out = meshImplicit(compileImplicit(spec), spec.preview);
     expect(out.warnings.some((w) => /thinnest feature/.test(w))).toBe(true);
-    if (out.indices.length) expect(edgeCheck(out.indices)).toEqual(CLOSED);
+    for (const tier of TIERS) {
+      const t = meshImplicit(compileImplicit(spec), spec.preview, { tier });
+      if (t.indices.length) expect(edgeCheck(t.indices), tier).toEqual(CLOSED);
+    }
     let solid = null;
     try { solid = k.implicit(spec); } catch (e) { expect(e.message).toMatch(/implicit: the shape is empty/); }
     if (solid) expect(solid.volume()).toBeGreaterThan(0);
@@ -49,18 +116,20 @@ describe("topology", () => {
     const a = k.implicit({ ...spec, preview: 1.5 }).volume(), b = k.implicit({ ...spec, preview: 1.0 }).volume();
     expect(Math.abs(a - b) / b).toBeLessThan(0.03);
   }, 60_000);
-  test("seeded fuzz: 40 random trees mesh closed", () => {
-    let meshed = 0;
-    for (let seed = 1; seed <= 40; seed++) {
-      const spec = randomSpec(seed);
-      let out;
-      try { out = meshImplicit(compileImplicit(spec), spec.preview); } catch (e) { if (e.code === "IMPLICIT_SPEC") continue; throw e; }
-      if (out.indices.length === 0) continue;
-      expect(edgeCheck(out.indices), `seed ${seed}`).toEqual(CLOSED);
-      meshed++;
-    }
-    expect(meshed).toBeGreaterThanOrEqual(30);   // 40 of 40 mesh today; a skip-everything fuzz must fail
-  }, 120_000);
+  for (const tier of TIERS) {
+    test(`seeded fuzz, ${tier} tier: 40 random trees mesh closed`, () => {
+      let meshed = 0;
+      for (let seed = 1; seed <= 40; seed++) {
+        const spec = randomSpec(seed);
+        let out;
+        try { out = meshImplicit(compileImplicit(spec), spec.preview, { tier }); } catch (e) { if (e.code === "IMPLICIT_SPEC") continue; throw e; }
+        if (out.indices.length === 0) continue;
+        expect(edgeCheck(out.indices), `seed ${seed}`).toEqual(CLOSED);
+        meshed++;
+      }
+      expect(meshed).toBeGreaterThanOrEqual(30);   // 40 of 40 mesh today; a skip-everything fuzz must fail
+    }, 120_000);
+  }
 });
 
 // Exactly-touching faces: a hard union, mirror or repeat whose pieces share a face
@@ -80,10 +149,12 @@ const FLUSH = {
 describe("exactly-touching faces", () => {
   for (const [name, spec] of Object.entries({ ...TOUCHING, ...FLUSH })) {
     for (const edge of [0.5, 0.6, 1.0, 1.5]) {
-      test(`${name} at ${edge} mm: one closed shell`, () => {
-        const out = meshImplicit(compileImplicit(spec), edge);
-        expect(edgeCheck(out.indices)).toEqual(CLOSED);
-        expect(componentCount(out.indices)).toBe(1);
+      test(`${name} at ${edge} mm: one closed shell at both tiers`, () => {
+        for (const tier of TIERS) {
+          const out = meshImplicit(compileImplicit(spec), edge, { tier });
+          expect(edgeCheck(out.indices), tier).toEqual(CLOSED);
+          expect(componentCount(out.indices), tier).toBe(1);
+        }
       });
     }
   }

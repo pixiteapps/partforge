@@ -7,11 +7,13 @@
 //
 // When this fails, the C++ in native/ and its JS twin have drifted. Fix the port
 // (and rebuild: node scripts/build-core-wasm.mjs); never loosen this to a tolerance.
-import { afterAll, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { bootManifoldKernel, buildView, measure, setCoreEnabled } from "../src/testing.js";
-import { core } from "../src/framework/core/core.js";
+import { core, coreStatus, setCoreForTesting } from "../src/framework/core/core.js";
+import { handSpec, nailSpecs, vaseSpec, ADVERSARIAL } from "./fixtures/implicit-trees.js";
+import { TREES } from "./fixtures/implicit-small-trees.js";
 
-afterAll(() => setCoreEnabled(true));
+afterAll(() => { setCoreEnabled(true); delete globalThis.PARTFORGE_CORE_SIMD; setCoreForTesting(undefined); });
 
 const one = (build) => ({
   meta: { title: "core parity", units: "mm" }, parameters: [], defaults: {},
@@ -30,6 +32,26 @@ const INLINE = {
   "round-all step [planes]": one((k) => k.box({ min: [0, 0, 0], max: [30, 20, 12] })
     .union(k.box({ min: [6, 4, 12], max: [20, 16, 20] })).roundAll(2)),
 };
+// k.implicit runs its whole engine on the core (core/implicit-core.js); each image
+// a spec reads is registered on the kernel before the build. The kernel is a preview
+// one (cleanup decimates) unless `quality` says "print" (it does not).
+const implicitPart = (specs, images = new Map(), quality = "preview") => ({
+  ...one((k) => (specs.length === 1 ? k.implicit(specs[0]) : k.union(specs.map((sp) => k.implicit(sp))))),
+  testImages: images, testQuality: quality,
+});
+const vase = vaseSpec();
+const IMPLICIT = {
+  "implicit hand with nails": implicitPart([handSpec(), ...nailSpecs()]),
+  "implicit vase": implicitPart([vase.spec], vase.images),
+  "implicit bendCut": implicitPart([{ ...TREES.bendCut, preview: 0.8 }]),
+  "implicit formula": implicitPart([{ ...TREES.formula, preview: 0.8 }]),
+  "implicit coincident faces": implicitPart([ADVERSARIAL.coincidentFaces]),
+  "implicit mirrored half box": implicitPart([{ root: { kind: "mirror", plane: "yz", child: { kind: "box", size: [10, 10, 10], at: [5, 0, 0] } }, preview: 0.5 }]),
+  "implicit touching repeat": implicitPart([{ root: { kind: "repeat", linear: { count: 3, step: [4, 0, 0] }, child: { kind: "box", size: [4, 4, 4] } }, preview: 0.5 }]),
+  "implicit hand, print tier": implicitPart([{ ...handSpec(), resolution: 1.2 }], new Map(), "print"),
+  "implicit vase, print tier": implicitPart([{ ...vase.spec, resolution: 1.2 }], vase.images, "print"),
+  "implicit flush pocket": implicitPart([{ root: { kind: "subtract", children: [{ kind: "box", size: [10, 10, 10] }, { kind: "box", size: [4, 4, 10], at: [0, 0, 5] }] }, preview: 0.5 }]),
+};
 const REFERENCE = ["bracket", "demo", "faceted-vase", "filleted-box", "gasket", "hinged-box", "hull-sweep",
   "laser-box", "lattice-box", "lofted-bottle", "planter", "propeller", "screw"];
 
@@ -38,7 +60,8 @@ const bytes = (a) => (a ? Buffer.from(a.buffer, a.byteOffset, a.byteLength) : nu
 async function run(part, on) {
   setCoreEnabled(on);
   const view = Object.keys(part.views)[0];
-  const kernel = await bootManifoldKernel();
+  const kernel = await bootManifoldKernel({ quality: part.testQuality ?? "preview" });
+  for (const [name, im] of part.testImages ?? []) await kernel._registerImage({ name, ...im });
   const built = buildView(kernel, part, view);
   const meshes = built.map(({ name, mesh }) => ({
     name, triangles: mesh.triangles, features: mesh.features ?? null,
@@ -57,22 +80,38 @@ test("the core is available in this environment", () => {
 const cases = [
   ...REFERENCE.map((name) => [name, () => import(`../src/parts/${name}.js`).then((m) => m.default)]),
   ...Object.entries(INLINE).map(([name, part]) => [name, () => part]),
+  ...Object.entries(IMPLICIT).map(([name, part]) => [name, () => part]),
 ];
-for (const [name, load] of cases) {
-  test(`core on == core off: ${name}`, async () => {
-    const part = await load();
-    const off = await run(part, false);
-    const on = await run(part, true);
-    expect(on.meshes.length).toBe(off.meshes.length);
-    on.meshes.forEach((m, i) => {
-      const o = off.meshes[i];
-      expect(m.name).toBe(o.name);
-      expect(m.triangles).toBe(o.triangles);
-      expect(m.features).toEqual(o.features);
-      for (const k of ["positions", "normals", "edges", "featureIds"]) {
-        expect(m[k] === null ? null : Buffer.compare(m[k], o[k]), `${m.name}.${k}`).toBe(o[k] === null ? null : 0);
-      }
-    });
-    expect(on.measured).toEqual(off.measured);
-  }, 120_000);
-}
+// Both builds of the core (scripts/build-core-wasm.mjs): the SIMD one this engine
+// boots by default, and the scalar one an engine without wasm SIMD gets
+// (PARTFORGE_CORE_SIMD = false, read when the core boots).
+describe.each([["SIMD", true], ["scalar", false]])("%s build", (_, simd) => {
+  beforeAll(() => {
+    if (simd) delete globalThis.PARTFORGE_CORE_SIMD; else globalThis.PARTFORGE_CORE_SIMD = false;
+    setCoreForTesting(undefined);
+    setCoreEnabled(true);
+    expect(core().simd).toBe(simd);
+  });
+  for (const [name, load] of cases) {
+    test(`core on == core off: ${name}`, async () => {
+      const part = await load();
+      const off = await run(part, false);
+      const refusedBefore = coreStatus().refusedMeshes;
+      const on = await run(part, true);
+      expect(core().simd, "the build under test ran").toBe(simd);
+      // The implicit cases must really have run on the core: nothing refused or faulted.
+      if (part.testImages) expect(coreStatus()).toEqual({ state: "on", reason: null, refusedMeshes: refusedBefore });
+      expect(on.meshes.length).toBe(off.meshes.length);
+      on.meshes.forEach((m, i) => {
+        const o = off.meshes[i];
+        expect(m.name).toBe(o.name);
+        expect(m.triangles).toBe(o.triangles);
+        expect(m.features).toEqual(o.features);
+        for (const k of ["positions", "normals", "edges", "featureIds"]) {
+          expect(m[k] === null ? null : Buffer.compare(m[k], o[k]), `${m.name}.${k}`).toBe(o[k] === null ? null : 0);
+        }
+      });
+      expect(on.measured).toEqual(off.measured);
+    }, 120_000);
+  }
+});

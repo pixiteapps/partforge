@@ -6,22 +6,60 @@ import { pfCos, pfAtan2 } from "../js-math.js";
 import { xformPoint, xformDir } from "./frames.js";
 import { valueNoise } from "./noise.js";
 import { sampleTexture } from "./textures.js";
-import { evalExprScalar } from "./expr-lower.js";
+import { emitExprProgram, runProgram } from "./program.js";
 import { projectVertices } from "./project.js";
 
 export const MAX_REFINE_ROUNDS = 3;
 const TWO_PI = 2 * Math.PI;
 
-function weight(e, lx, ly, lz, nx, ny, nz) {
+// Every entry is flattened to DETAIL_STRIDE doubles (flattenDetail) and read only through
+// that layout, so the JS and the native core consume identical numbers:
+//   [kind, hasInv, inv[12], radius (−1 = none), hasSide, side[3], amplitude,
+//    wavelength (−1 = none), axis, slot (−1), projection, size0, size1, target,
+//    progIndex (−1)]
+export const DETAIL_STRIDE = 28;
+export const DETAIL_KIND = Object.freeze({ creases: 1, noise: 2, texture: 3, expr: 4 });
+export const DETAIL_PROJECTION = Object.freeze({ planar: 0, cylindrical: 1, triplanar: 2 });
+export const DF = Object.freeze({ KIND: 0, HAS_INV: 1, INV: 2, RADIUS: 14, HAS_SIDE: 15, SIDE: 16, AMPLITUDE: 19, WAVELENGTH: 20,
+  AXIS: 21, SLOT: 22, PROJECTION: 23, SIZE0: 24, SIZE1: 25, TARGET: 26, PROG: 27 });
+
+function flattenEntry(F, o, e, programs) {
+  F[o + DF.KIND] = DETAIL_KIND[e.kind] ?? 0;
+  F[o + DF.HAS_INV] = e.inv ? 1 : 0;
+  for (let i = 0; i < 12; i++) F[o + DF.INV + i] = e.inv ? e.inv[i] : 0;
+  F[o + DF.RADIUS] = e.radius != null ? e.radius : -1;
+  F[o + DF.HAS_SIDE] = e.side ? 1 : 0;
+  for (let i = 0; i < 3; i++) F[o + DF.SIDE + i] = e.side ? e.side[i] : 0;
+  F[o + DF.AMPLITUDE] = e.amplitude;
+  F[o + DF.WAVELENGTH] = e.wavelength != null ? e.wavelength : -1;
+  F[o + DF.AXIS] = e.axis;
+  F[o + DF.SLOT] = e.slot;
+  F[o + DF.PROJECTION] = DETAIL_PROJECTION[e.projection] ?? 0;
+  F[o + DF.SIZE0] = e.size ? e.size[0] : 0;
+  F[o + DF.SIZE1] = e.size ? e.size[1] : 0;
+  F[o + DF.TARGET] = e.target;
+  F[o + DF.PROG] = -1;
+  if (e.kind === "expr") { F[o + DF.PROG] = programs.length; programs.push(emitExprProgram(e.height)); }
+}
+
+/** The detail entries as flat data: { entries: Float64Array (DETAIL_STRIDE per entry), programs: expr-height programs }. */
+export function flattenDetail(compiled) {
+  const entries = new Float64Array(DETAIL_STRIDE * compiled.detail.length), programs = [];
+  compiled.detail.forEach((e, k) => flattenEntry(entries, DETAIL_STRIDE * k, e, programs));
+  return { entries, programs };
+}
+
+function weight(F, o, lx, ly, lz, nx, ny, nz) {
   let w = 1;
-  if (e.side) {
-    const d = nx * e.side[0] + ny * e.side[1] + nz * e.side[2];
+  if (F[o + DF.HAS_SIDE] !== 0) {
+    const d = nx * F[o + DF.SIDE] + ny * F[o + DF.SIDE + 1] + nz * F[o + DF.SIDE + 2];
     const s = (d - 0.15) / 0.5;
     w = s < 0 ? 0 : s > 1 ? 1 : s;
     if (w === 0) return 0;
   }
-  if (e.radius != null) {
-    const r2 = (lx * lx + ly * ly + lz * lz) / (e.radius * e.radius);
+  const radius = F[o + DF.RADIUS];
+  if (radius >= 0) {
+    const r2 = (lx * lx + ly * ly + lz * lz) / (radius * radius);
     if (r2 >= 1) return 0;
     const f = 1 - r2;
     w *= f * f;
@@ -29,37 +67,58 @@ function weight(e, lx, ly, lz, nx, ny, nz) {
   return w;
 }
 
-function planar(t, axis, lx, ly, lz, size) {
+function planar(t, axis, lx, ly, lz, size0, size1) {
   const u = axis === 2 ? lx : axis === 0 ? ly : lz, v = axis === 2 ? ly : axis === 0 ? lz : lx;
-  return sampleTexture(t, u / size[0] + 0.5, v / size[1] + 0.5);
+  return sampleTexture(t, u / size0 + 0.5, v / size1 + 0.5);
 }
 
-export function detailHeight(e, textures, x, y, z, nx, ny, nz) {
-  const p = [x, y, z], n = [nx, ny, nz];
-  if (e.inv) { xformPoint(p, e.inv, x, y, z); xformDir(n, e.inv, nx, ny, nz); }
-  const w = weight(e, p[0], p[1], p[2], n[0], n[1], n[2]);
+// Entry o's local point and normal (the entry's frame, when it has one).
+function local(p, n, F, o, x, y, z, nx, ny, nz) {
+  if (F[o + DF.HAS_INV] !== 0) {
+    const inv = F.subarray(o + DF.INV, o + DF.INV + 12);
+    xformPoint(p, inv, x, y, z); xformDir(n, inv, nx, ny, nz);
+  } else { p[0] = x; p[1] = y; p[2] = z; n[0] = nx; n[1] = ny; n[2] = nz; }
+}
+
+// One-lane scratch for expr heights (runProgram overwrites everything it reads).
+const LX = new Float64Array(1), LY = new Float64Array(1), LZ = new Float64Array(1), LO = new Float64Array(1);
+
+function entryHeight(F, o, programs, textures, x, y, z, nx, ny, nz) {
+  const p = [0, 0, 0], n = [0, 0, 0];
+  local(p, n, F, o, x, y, z, nx, ny, nz);
+  const w = weight(F, o, p[0], p[1], p[2], n[0], n[1], n[2]);
   if (w === 0) return 0;
-  switch (e.kind) {
-    case "creases": return -e.amplitude * Math.max(0, pfCos((TWO_PI * p[e.axis]) / e.wavelength)) * w;
-    case "noise": return e.amplitude * 2 * valueNoise(p[0] / e.wavelength, p[1] / e.wavelength, p[2] / e.wavelength) * w;
-    case "texture": {
-      const t = textures[e.slot];
+  const kind = F[o + DF.KIND], axis = F[o + DF.AXIS], amplitude = F[o + DF.AMPLITUDE], wavelength = F[o + DF.WAVELENGTH];
+  switch (kind) {
+    case 1: return -amplitude * Math.max(0, pfCos((TWO_PI * p[axis]) / wavelength)) * w;
+    case 2: return amplitude * 2 * valueNoise(p[0] / wavelength, p[1] / wavelength, p[2] / wavelength) * w;
+    case 3: {
+      const t = textures[F[o + DF.SLOT]], projection = F[o + DF.PROJECTION], size0 = F[o + DF.SIZE0], size1 = F[o + DF.SIZE1];
       let v;
-      if (e.projection === "cylindrical") {
-        const a = e.axis, u = pfAtan2(p[(a + 2) % 3], p[(a + 1) % 3]) / TWO_PI + 0.5;
-        v = sampleTexture(t, u, p[a] / e.size[1] + 0.5);
-      } else if (e.projection === "triplanar") {
+      if (projection === 1) {
+        const u = pfAtan2(p[(axis + 2) % 3], p[(axis + 1) % 3]) / TWO_PI + 0.5;
+        v = sampleTexture(t, u, p[axis] / size1 + 0.5);
+      } else if (projection === 2) {
         const ax = n[0] * n[0] * n[0] * n[0], ay = n[1] * n[1] * n[1] * n[1], az = n[2] * n[2] * n[2] * n[2], s = ax + ay + az;
-        v = (planar(t, 0, p[0], p[1], p[2], e.size) * ax + planar(t, 1, p[0], p[1], p[2], e.size) * ay + planar(t, 2, p[0], p[1], p[2], e.size) * az) / s;
-      } else v = planar(t, e.axis, p[0], p[1], p[2], e.size);
-      return e.amplitude * v * w;
+        v = (planar(t, 0, p[0], p[1], p[2], size0, size1) * ax + planar(t, 1, p[0], p[1], p[2], size0, size1) * ay + planar(t, 2, p[0], p[1], p[2], size0, size1) * az) / s;
+      } else v = planar(t, axis, p[0], p[1], p[2], size0, size1);
+      return amplitude * v * w;
     }
-    case "expr": {
-      const v = evalExprScalar(e.height, p[0], p[1], p[2], textures, sampleTexture);
+    case 4: {
+      LX[0] = p[0]; LY[0] = p[1]; LZ[0] = p[2];
+      runProgram(programs[F[o + DF.PROG]], textures, LX, LY, LZ, 1, LO);
+      const v = LO[0];
       return (Number.isNaN(v) ? 0 : v) * w;
     }
     default: return 0;
   }
+}
+
+/** The height one lowered detail entry adds at (x, y, z) with normal n — read through its flattened form. */
+export function detailHeight(e, textures, x, y, z, nx, ny, nz) {
+  const F = new Float64Array(DETAIL_STRIDE), programs = [];
+  flattenEntry(F, 0, e, programs);
+  return entryHeight(F, 0, programs, textures, x, y, z, nx, ny, nz);
 }
 
 // Split pattern for a triangle with midpoints m[0] (v0v1), m[1] (v1v2), m[2] (v2v0), −1 = none.
@@ -77,21 +136,37 @@ function splitTri(out, v, m) {
   else out.push(M[0], V[1], M[1], V[0], M[0], M[1], V[0], M[1], V[2]);
 }
 
+/**
+ * A refinement midpoint m whose projection found no gradient keeps a zero normal; it
+ * takes the normalized sum of its endpoints' normals instead (zero if that is zero too).
+ */
+export function midpointNormal(N, a, b, m) {
+  if (N[3 * m] !== 0 || N[3 * m + 1] !== 0 || N[3 * m + 2] !== 0) return;
+  const x = N[3 * a] + N[3 * b], y = N[3 * a + 1] + N[3 * b + 1], z = N[3 * a + 2] + N[3 * b + 2];
+  const l = Math.sqrt(x * x + y * y + z * z);
+  if (!(l > 0)) return;
+  N[3 * m] = x / l; N[3 * m + 1] = y / l; N[3 * m + 2] = z / l;
+}
+
 export function applySurfaceDetail(store, mesh, compiled) {
-  const entries = compiled.detail, tex = compiled.textures, edge = store.edge;
+  const { entries: F, programs } = flattenDetail(compiled), count = compiled.detail.length;
+  const tex = compiled.textures, edge = store.edge;
   let P = Array.from(mesh.positions), N = Array.from(mesh.normals), T = Array.from(mesh.indices), VL = Array.from(mesh.vertLeaf);
   // The refinement mask is exactly "some entry's weight is non-zero here".
+  const lp = [0, 0, 0], ln = [0, 0, 0];
   const targetAt = (v) => {
     let t = Infinity;
-    for (const e of entries) {
-      if (weight(e, ...localOf(e, P, N, v)) > 0) t = Math.min(t, e.target === Infinity ? edge / 2 : e.target);
+    for (let k = 0; k < count; k++) {
+      const o = DETAIL_STRIDE * k, target = F[o + DF.TARGET];
+      local(lp, ln, F, o, P[3 * v], P[3 * v + 1], P[3 * v + 2], N[3 * v], N[3 * v + 1], N[3 * v + 2]);
+      if (weight(F, o, lp[0], lp[1], lp[2], ln[0], ln[1], ln[2]) > 0) t = Math.min(t, target === Infinity ? edge / 2 : target);
     }
     return Math.max(edge / 8, t);
   };
   for (let round = 0; round < MAX_REFINE_ROUNDS; round++) {
     const nv = P.length / 3, target = new Float64Array(nv);
     for (let v = 0; v < nv; v++) target[v] = targetAt(v);
-    const mid = new Map(), added = [];
+    const mid = new Map(), added = [], ends = [];
     const midpoint = (a, b) => {
       const key = a < b ? a * nv + b : b * nv + a;
       let m = mid.get(key);
@@ -101,7 +176,7 @@ export function applySurfaceDetail(store, mesh, compiled) {
       if (!(lim < Infinity) || dx * dx + dy * dy + dz * dz <= lim * lim) { mid.set(key, -1); return -1; }
       m = P.length / 3;
       P.push((P[3 * a] + P[3 * b]) / 2, (P[3 * a + 1] + P[3 * b + 1]) / 2, (P[3 * a + 2] + P[3 * b + 2]) / 2);
-      N.push(0, 0, 0); VL.push(VL[a]); added.push(m);
+      N.push(0, 0, 0); VL.push(VL[a]); added.push(m); ends.push(a, b);
       mid.set(key, m);
       return m;
     };
@@ -115,19 +190,15 @@ export function applySurfaceDetail(store, mesh, compiled) {
     const Pf = Float64Array.from(P), Nf = Float64Array.from(N);
     projectVertices(store, Pf, Int32Array.from(VL), { maxStep: edge, which: Int32Array.from(added), normals: Nf });
     P = Array.from(Pf); N = Array.from(Nf);
+    for (let q = 0; q < added.length; q++) midpointNormal(N, ends[2 * q], ends[2 * q + 1], added[q]);
   }
   const positions = Float64Array.from(P), normals = Float64Array.from(N);
   for (let v = 0; v < positions.length / 3; v++) {
+    if (normals[3 * v] === 0 && normals[3 * v + 1] === 0 && normals[3 * v + 2] === 0) continue;   // no direction to move along
     let h = 0;
-    for (const e of entries) h += detailHeight(e, tex, positions[3 * v], positions[3 * v + 1], positions[3 * v + 2], normals[3 * v], normals[3 * v + 1], normals[3 * v + 2]);
+    for (let k = 0; k < count; k++) h += entryHeight(F, DETAIL_STRIDE * k, programs, tex, positions[3 * v], positions[3 * v + 1], positions[3 * v + 2], normals[3 * v], normals[3 * v + 1], normals[3 * v + 2]);
     if (h === 0) continue;
     positions[3 * v] += normals[3 * v] * h; positions[3 * v + 1] += normals[3 * v + 1] * h; positions[3 * v + 2] += normals[3 * v + 2] * h;
   }
   return { positions, indices: Uint32Array.from(T), vertLeaf: Int32Array.from(VL), normals };
-}
-
-function localOf(e, P, N, v) {
-  const p = [P[3 * v], P[3 * v + 1], P[3 * v + 2]], n = [N[3 * v], N[3 * v + 1], N[3 * v + 2]];
-  if (e.inv) { xformPoint(p, e.inv, p[0], p[1], p[2]); xformDir(n, e.inv, n[0], n[1], n[2]); }
-  return [p[0], p[1], p[2], n[0], n[1], n[2]];
 }
