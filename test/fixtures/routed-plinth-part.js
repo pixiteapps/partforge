@@ -1,5 +1,5 @@
-// The worked example from the guide's "Routed parts" section, made runnable: a walnut
-// plinth with two pockets at different depths, six peg holes, a tilted saw slot as an
+// The worked example from the guide's "Routed parts" section, made runnable: a pine-
+// plywood plinth with two pockets at different depths, six peg holes, a tilted saw slot as an
 // `extra` op and a centerline. test/routed-kit.test.js builds its cnc-router kit.
 import { routedPart, roundedRectProfile } from "partforge/geometry";
 
@@ -21,8 +21,8 @@ export default {
   views: { assembly: { label: "Assembly" }, base: { label: "Base" } },
   parts: {
     plinth: routedPart({
-      label: "Hardwood base", views: { assembly: true, base: true }, display: { color: 0x6e3d23 },
-      material: "walnut",
+      label: "Plywood base", views: { assembly: true, base: true }, display: { material: "pine-plywood" },
+      material: "pine plywood",
       thickness: (p) => p.baseThickness,
       profile: (k, p) => k.shape2d(roundedRectProfile(p.baseLength, p.baseWidth, 10)),
       pockets: (k, p, d) => [
