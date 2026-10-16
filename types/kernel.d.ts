@@ -534,6 +534,19 @@ export interface HeightfieldGrid {
   data: Uint16Array;
 }
 
+/** k.implicit — a signed-distance element tree meshed into a solid (docs/superpowers/specs/2026-10-14-implicit-organic-parts-design.md). */
+export interface ImplicitNode { kind: string; frame?: string; at?: [number, number, number]; label?: string; [field: string]: unknown; }
+export interface ImplicitFrame { parent?: string; at?: [number, number, number]; rotate?: { axis: "x" | "y" | "z" | [number, number, number]; deg: number } | Array<{ axis: "x" | "y" | "z" | [number, number, number]; deg: number }>; }
+export interface ImplicitOptions {
+  frames?: Record<string, ImplicitFrame>;
+  root: ImplicitNode;
+  detail?: Array<{ kind: "creases" | "noise" | "texture" | "expr"; [field: string]: unknown }>;
+  /** Print/export grid edge, mm. Default 0.6. */
+  resolution?: number;
+  /** Preview grid edge, mm. Default 1.5. */
+  preview?: number;
+}
+
 /** k.heightfield — a depth map as a relief solid. */
 export interface HeightfieldOptions {
   w: number;
@@ -621,6 +634,7 @@ export interface GeometryKernel {
    * a part author's calling surface).
    */
   heightfield(nameOrGrid: string | HeightfieldGrid, opts: HeightfieldOptions): Solid;
+  implicit(o: ImplicitOptions): Solid;
 
   // Backend-optional: the sub-part cache brackets and WASM lifetime hooks. Every
   // framework caller reaches these through `?.`, so a third-party backend may

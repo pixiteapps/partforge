@@ -6,7 +6,8 @@ import { roundedBoxRings, roundedBoxArcSamples } from "./rounded-solids.js";
 import { tessellateContour, tessellateProfile } from "./profile.js";
 import { h } from "./solid-hash.js";
 import { ensureOutward, openEdgeCount } from "./mesh-repair.js";
-import { manifoldFromMesh, ringStackManifold } from "./mesh-build.js";
+import { manifoldFromMesh, manifoldFromWeldedMesh, ringStackManifold } from "./mesh-build.js";
+import { compileImplicit, meshImplicit, implicitHashable, IMPLICIT_DEFAULTS } from "./implicit/index.js";
 import { createSolidCache } from "./solid-cache.js";
 import { hoistCommonSuffix } from "./transform-hoist.js";
 import { addSugar } from "./solid-sugar.js";
@@ -151,6 +152,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // every degrade in the build lands in one drainable list rather than only in
   // the console.
   const recordWarning = (msg) => { buildWarnings.push(msg); console.warn(`partforge: ${msg}`); };
+  // k.implicit's engine warnings, keyed by the cached solid they belong to (re-recorded on a hit).
+  const implicitWarnings = new WeakMap();
   // Profile-validity warnings (profile-warnings.js): one warner per kernel so a
   // self-crossing profile built six times records ONE line; reset per drain.
   const profileWarner = makeProfileWarner(recordWarning);
@@ -919,6 +922,36 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         oidPolicies.set(id, loftShadingPolicy(rl, opts));
         return { value: wrap(m, key), pin: m, dispose: () => { oidPolicies.delete(id); m.delete?.(); } };
       });
+    },
+    // Signed-distance tree → solid (implicit/index.js). The engine meshes at the
+    // tier's grid (`preview` for preview, `resolution` for print) and hands
+    // Manifold one welded mesh; the result shades SMOOTH (one surface, no creases).
+    // Cached on the spec plus every bound image's digest, per quality tier; the key
+    // holds only this tier's grid (defaulted), so editing the other tier's grid is
+    // a hit. The engine's warnings (thin feature, clipped) live beside the cached
+    // value and are recorded again on every hit, so each build that uses the solid
+    // reports them.
+    implicit: (spec) => {
+      const compiled = compileImplicit(spec, { images });
+      const { preview, resolution, ...rest } = spec;
+      const edge = quality === "print" ? (resolution ?? IMPLICIT_DEFAULTS.resolution) : (preview ?? IMPLICIT_DEFAULTS.preview);
+      const keySpec = quality === "print" ? { ...rest, resolution: edge } : { ...rest, preview: edge };
+      const key = h("implicit", implicitHashable(keySpec, compiled), quality);
+      const solid = cache.lookup(key, () => {
+        const out = meshImplicit(compiled, edge);
+        if (out.indices.length === 0) {
+          for (const w of out.warnings) recordWarning(w);
+          throw new Error(`implicit: the shape is empty at a ${edge} mm grid — nothing is inside it (check subtract order and sizes), or it is thinner than the grid`);
+        }
+        const m = T(T(manifoldFromWeldedMesh(wasm, out.positions, out.indices)).asOriginal());
+        const id = m.originalID();
+        oidPolicies.set(id, SMOOTH);
+        const value = wrap(m, key);
+        implicitWarnings.set(value, out.warnings);
+        return { value, pin: m, dispose: () => { oidPolicies.delete(id); m.delete?.(); } };
+      });
+      for (const w of implicitWarnings.get(solid) ?? []) recordWarning(w);
+      return solid;
     },
     // Sweep a fixed 2-D profile along a 3-D polyline: hand-meshed from the shared station
     // list (sweep.js), so it agrees with OCCT's ruled loft of the same stations by

@@ -398,3 +398,69 @@ about 0.4 s. The C++ evaluator now buys at most the mesher's 0.2 s in preview;
 its real value is the print tier and identical meshes on both backends. The
 next preview win is the import-plus-refine round trip, which a mesher that
 emits the refined, smoothed triangles directly would remove.
+
+## 8. JS engine (feat/implicit PR 1)
+
+The spike's pieces are now one pure-JavaScript engine under
+`src/framework/geometry/implicit/`: a coarse-to-fine sparse sampler with exact
+interval culling, marching tetrahedra with no vertex snapping, a cleanup pass
+(short-edge collapse, then tangential relaxation alternating with Newton
+projection onto the field) in place of Manifold's simplify/smoothOut/refine
+round trip, and surface detail on the cleaned mesh. This path is the fallback
+and the reference that PR 2's C++ port must match bit for bit, so its
+constants are frozen here.
+
+**Chosen constants:** LEAF = 4, TOP = 32, collapseFrac = 0.2, relaxPasses = 2,
+relaxWeight = 0.5, maxMoveCells = 0.5. These are the plan's defaults; no
+alternative tried was both faster and as good.
+
+Measured on an Apple M1 Max, Node 24 (`npm run bench:implicit`, warm run,
+milliseconds; the hand includes its knuckle creases, no nails):
+
+| case | compile | sample | mesh | cleanup | detail | total | triangles | samples | programs |
+|---|---|---|---|---|---|---|---|---|---|
+| hand preview (1.5 mm) | 1 | 134 | 91 | 353 | 104 | **683** | 157,194 | 544,625 | 202 |
+| hand print (0.8 mm) | 0 | 364 | 348 | 909 | 533 | **2,155** | 565,396 | 2,052,625 | 160 |
+| vase preview (1.2 mm) | 0 | 259 | 43 | 510 | 248 | **1,061** | 144,452 | 431,875 | 147 |
+
+`k.implicit(hand)` end to end, cold, including the Manifold import: about
+0.95 s. Run to run the totals move by about 5 %.
+
+Each setting was tried one at a time against those defaults. "p5 angle" is the
+5th-percentile minimum triangle angle of the final mesh (the hand at 1.5 mm /
+0.8 mm, and the mean over the small IR test trees at 0.8 mm); higher is better.
+
+| setting | hand preview | hand print | vase | p5 angle (hand 1.5 / 0.8 / small trees) | tests |
+|---|---|---|---|---|---|
+| **defaults** | 0.69 s | 2.15 s | 1.07 s | 22.9° / 23.1° / 20.7° | pass |
+| LEAF = 2 | 0.74 s | 2.60 s | 0.88 s | 23.0° / 23.2° / 20.7° | pass |
+| LEAF = 8 | 0.98 s | 2.50 s | 1.27 s | 22.8° / 23.0° / 20.6° | sparse culling test fails |
+| TOP = 16 | 0.71 s | 2.17 s | 1.10 s | 22.9° / 23.1° / 20.7° | pass |
+| LEAF = 8, TOP = 16 | 0.96 s | 2.58 s | 1.28 s | 22.8° / 23.0° / 20.6° | sparse culling test fails |
+| collapseFrac = 0.15 | 0.71 s | 2.14 s | 1.10 s | 23.3° / 23.3° / 20.6° | pass |
+| collapseFrac = 0.3 | 0.63 s | 1.93 s | 1.02 s | 22.5° / 22.5° / 20.4° | cleanup `bendCut` fails |
+| relaxPasses = 1 | 0.60 s | 1.87 s | 0.93 s | 18.9° / 19.8° / 16.8° | pass, but angles drop |
+| relaxPasses = 3 | 0.78 s | 2.35 s | 1.22 s | 23.7° / 23.8° / 21.5° | cleanup `bendCut` fails |
+
+LEAF = 2 is faster on the vase (smaller leaves fit its thin walls) but slower on
+both hands, where the extra coarse blocks cost more than the samples they save.
+The two settings that are faster overall either fail a test (collapseFrac = 0.3)
+or give up about 4° of minimum angle (relaxPasses = 1), so the defaults stay.
+
+Compared with the spike's sparse JS pass (§7d): the spike's hand preview was
+0.72 s plain and 1.5 s with nails and creases; here the same hand is 0.9 s with
+creases through `k.implicit` and about 1.3 s with the five nails unioned on.
+The print tier went from 1.5 s plain / 4.9 s full to about 2.8 s with creases /
+3.7 s full. The plain number is a little slower because the cleanup pass does
+in JavaScript what Manifold's smoothOut did natively, and there is no vertex
+snap; that same pass is what PR 2 moves into C++. The hand is genus 0 with its
+nails at curl 0, 50 and 100, and its volume at 1.5 mm and 1.0 mm grids agrees
+within 3 %.
+
+Features thinner than one grid cell can vanish, especially when a face lands
+exactly on a grid plane: a 0.9 mm plate at a 1 mm grid has no sample strictly
+inside it, so it meshes to nothing. That is expected, not a bug. Anything under
+two cells already triggers the thin-feature warning. The remedy is a finer grid,
+or meshing the feature as its own `k.implicit` on a finer grid and unioning it
+on, as the hand does with its nails. A 1.6 mm plate at the same grid (under two
+cells, so it is warned) still meshes closed.

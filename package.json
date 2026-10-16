@@ -116,7 +116,8 @@
     "offset-rates": "node scripts/offset-rates.mjs",
     "bench:softrender": "node scripts/bench-softrender.mjs",
     "check:softrender": "node scripts/check-softrender-parity.mjs",
-    "bench:core": "vitest run --config scripts/bench-core/vitest.config.js"
+    "bench:core": "vitest run --config scripts/bench-core/vitest.config.js",
+    "bench:implicit": "node scripts/bench-implicit.mjs"
   },
   "peerDependencies": {
     "happy-dom": ">=20"

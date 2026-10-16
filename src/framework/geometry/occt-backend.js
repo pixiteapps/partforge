@@ -744,11 +744,18 @@ export function createOcctKernel(replicad) {
     return cached(key, () => build(key));
   };
 
+  // k.implicit is mesh-native: its booleans are mesh booleans, which OCCT cannot
+  // run on a triangulated body. Tessellated STEP (feat/implicit PR 4) routes
+  // implicit sub-parts to Manifold and writes their meshes into the STEP file.
+  const implicit = () => {
+    throw new Error("implicit: builds on the Manifold backend only — set `meta.backend: \"manifold\"` for this part (STEP export of implicit sub-parts is not supported yet)");
+  };
+
   const kernel = finishKernel({
     cylinder, // boredCylinder: the kernel front's default composition is exactly right here
     box: (min, max) => cached(h("box", min, max), () => wrap(makeBox(min, max), [], h("box", min, max))),
     roundedBox,
-    prism, extrude, revolve, loft: loftOp, sweep, helixSweptTube, heightfield,
+    prism, extrude, revolve, loft: loftOp, sweep, helixSweptTube, heightfield, implicit,
     sphere: (r) => cached(h("sphere", r), () => wrap(makeSphere(r), [], h("sphere", r))),
     union: (solids) => {
       const key = h("union", solids.map((s) => s._hash));
