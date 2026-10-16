@@ -5,7 +5,9 @@ import { compileImplicit, meshImplicit } from "../src/framework/geometry/implici
 import { handSpec, nailSpecs, vaseSpec, ADVERSARIAL, SUB_CELL_PLATE, randomSpec } from "./fixtures/implicit-trees.js";
 import { edgeCheck, componentCount, volume } from "./helpers/mesh-topology.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
-import { sampleField } from "../src/framework/geometry/implicit/sparse.js";
+import { sampleField, planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
+import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
+import { cleanupMesh, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -33,6 +35,21 @@ describe("preview decimation", () => {
   // each made pillows before the tetrahedron guard.
   const rows = [];
   for (const [r, edge] of [[0.75, 1.5], [0.9, 1.5], [1.1, 1.5], [0.45, 1.0], [0.6, 1.0]]) for (const step of [2.5, 3.3, 6]) rows.push([r, edge, step]);
+  test("tiny spheres in a repeat, decimated with the probe and normal guards off: no duplicate triangles, closed", () => {
+    // The preview tier's probe skips decimation on most of these, and its normal guards
+    // refuse the folds anyway; with both off only the tetrahedron guard stands between
+    // these and the pillows (removing it fails this test).
+    const opts = { ...PREVIEW_CLEANUP, decimateMinAccept: 0, decimateMaxTurn: 0, decimateMaxSpread: 0 };
+    let decimated = 0;
+    for (const [r, edge, step] of rows) {
+      const store = evaluateLeaves(planLeaves(lowerSpec({ root: { kind: "repeat", linear: { count: 6, step: [step, 0, 0] }, child: { kind: "sphere", r } } }, { images: new Map() }), edge));
+      const raw = meshStore(store), out = cleanupMesh(store, raw, opts);
+      if (out.indices.length < cleanupMesh(store, raw).indices.length) decimated++;
+      expect(duplicateTriangles(out.indices), `r ${r} at ${edge} mm, step ${step}`).toBe(0);
+      expect(edgeCheck(out.indices), `r ${r} at ${edge} mm, step ${step}`).toEqual(CLOSED);
+    }
+    expect(decimated).toBeGreaterThanOrEqual(2);
+  });
   for (const tier of TIERS) {
     test(`tiny spheres in a repeat, ${tier} tier: no duplicate triangles, closed`, () => {
       let meshed = 0;

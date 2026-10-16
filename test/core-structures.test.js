@@ -281,18 +281,37 @@ test("implicit cleanup: decimation's repeated passes and angle guard decide what
     for (const [noise, seed] of [[0.6, 1], [0.7, 2], [0.8, 4]]) {
       const mesh = jitteredSphere(40, 8, noise, seed);
       const plain = cleanupMesh(store, mesh, CLEANUP);
-      for (const [decimateMinAngle, decimatePasses, decimateFrac, decimateMaxTurn, decimateMaxSpread] of [
-        [15, 4, 1.5, 0, 0], [30, 4, 1.5, 0, 0], [0, 2, 2, 0, 0], [15, 1, 3, 0, 0], [15, 4, 1.5, 20, 0], [0, 4, 2, 0, 25], [15, 4, 1.5, 20, 12]]) {
-        const opts = { ...PREVIEW_CLEANUP, decimateMinAngle, decimatePasses, decimateFrac, decimateMaxTurn, decimateMaxSpread };
+      // The last two rows run the first pass's probe (a threshold either side of what the
+      // spheres allow) and the early stop.
+      for (const [decimateMinAngle, decimatePasses, decimateFrac, decimateMaxTurn, decimateMaxSpread, decimateMinAccept = 0, decimateMinGain = 0] of [
+        [15, 4, 1.5, 0, 0], [30, 4, 1.5, 0, 0], [0, 2, 2, 0, 0], [15, 1, 3, 0, 0], [15, 4, 1.5, 20, 0], [0, 4, 2, 0, 25], [15, 4, 1.5, 20, 12],
+        [0, 6, 2, 0, 0, 0.05, 0.15], [0, 6, 2, 0, 0, 0.9, 0.05]]) {
+        const opts = { ...PREVIEW_CLEANUP, decimateMinAngle, decimatePasses, decimateFrac, decimateMaxTurn, decimateMaxSpread, decimateMinAccept, decimateMinGain };
         const js = cleanupMesh(store, mesh, opts);
         runs++;
         if (js.indices.length < plain.indices.length) decimated++;
         s.loadMesh(mesh);
         const nat = s.cleanup(opts);
-        for (const k of ["positions", "indices", "vertLeaf", "normals"]) expect(bytes(nat[k]), `${k} (seed ${seed}, ${decimateMinAngle}°, ${decimatePasses} passes, turn ${decimateMaxTurn}°, spread ${decimateMaxSpread}°)`).toBe(bytes(js[k]));
+        for (const k of ["positions", "indices", "vertLeaf", "normals"]) expect(bytes(nat[k]), `${k} (seed ${seed}, ${decimateMinAngle}°, ${decimatePasses} passes, turn ${decimateMaxTurn}°, spread ${decimateMaxSpread}°, probe ${decimateMinAccept}, stop ${decimateMinGain})`).toBe(bytes(js[k]));
       }
     }
-    expect(decimated, "settings that decimated").toBeGreaterThanOrEqual(runs - 3);   // only a tight spread guard may refuse all
+    // The probe's verdict at its own edge: bisect (in JS) the threshold where the first
+    // pass stops being skipped, then hold the core to the JS just below and just above
+    // it — a probe that tries other edges, or counts them differently, lands elsewhere.
+    const mesh = jitteredSphere(40, 8, 0.6, 1), base = { ...PREVIEW_CLEANUP, decimateFrac: 2, decimateMaxTurn: 0, decimateMaxSpread: 0, decimateMinGain: 0 };
+    const skipped = (x) => cleanupMesh(store, mesh, { ...base, decimateMinAccept: x }).indices.length === cleanupMesh(store, mesh, CLEANUP).indices.length;
+    let lo = 0, hi = 1;
+    expect(skipped(lo)).toBe(false);
+    expect(skipped(hi)).toBe(true);
+    for (let i = 0; i < 30; i++) { const mid = (lo + hi) / 2; if (skipped(mid)) hi = mid; else lo = mid; }
+    for (const x of [lo, hi]) {
+      const opts = { ...base, decimateMinAccept: x };
+      const js = cleanupMesh(store, mesh, opts);
+      s.loadMesh(mesh);
+      const nat = s.cleanup(opts);
+      for (const k of ["positions", "indices"]) expect(bytes(nat[k]), `${k} at probe threshold ${x}`).toBe(bytes(js[k]));
+    }
+    expect(decimated, "settings that decimated").toBeGreaterThanOrEqual(runs - 6);   // a tight spread guard, or the 0.9 probe, may refuse all
   } finally {
     s.destroy();
   }

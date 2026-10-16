@@ -68,14 +68,18 @@ describe("cleanup", () => {
   });
   test("defaults are the documented ones", () => {
     expect(CLEANUP).toEqual({ collapseFrac: 0.2, relaxPasses: 2, relaxWeight: 0.5, maxMoveCells: 0.5 });
-    expect(DECIMATE).toEqual({ decimateFrac: 0.7, decimatePasses: 4, decimateMinAngle: 15, decimateMaxTurn: 20, decimateMaxSpread: 12 });
+    expect(DECIMATE).toEqual({ decimateFrac: 0.7, decimatePasses: 4, decimateMinAngle: 15, decimateMaxTurn: 20, decimateMaxSpread: 12, decimateMinAccept: 0.4, decimateMinGain: 0.2 });
     expect(PREVIEW_CLEANUP).toEqual({ ...CLEANUP, ...DECIMATE });
   });
   for (const [name, spec] of Object.entries(TREES)) {
-    test(`${name}: decimation leaves fewer triangles`, () => {
+    // The probe skips decimation where its guards would refuse most collapses (carved,
+    // shells, warps, repeats and formula allow 1–33%); bendCut allows 48%.
+    test(`${name}: decimation never adds triangles${name === "bendCut" ? ", and removes some" : ""}`, () => {
       const c = lowerSpec(spec, { images: new Map() });
       const store = sampleField(c, 0.8), raw = meshStore(store);
-      expect(cleanupMesh(store, raw, PREVIEW_CLEANUP).indices.length).toBeLessThan(cleanupMesh(store, raw).indices.length);
+      const dec = cleanupMesh(store, raw, PREVIEW_CLEANUP).indices.length, plain = cleanupMesh(store, raw).indices.length;
+      if (name === "bendCut") expect(dec).toBeLessThan(plain);
+      else expect(dec).toBeLessThanOrEqual(plain);
     });
   }
 });
@@ -95,9 +99,9 @@ describe("tiers", () => {
     return h.digest("hex").slice(0, 16);
   };
   const vase = vaseSpec();
-  // [name, compile, grid, pinned digest, preview triangles at most this share of print's]
-  // (the vase's texture detail refines most of what decimation removes)
-  const CASES = [["hand", () => compileImplicit(handSpec()), 1.5, "b1b8a6271c85428d", 0.5], ["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "bd023b59990de4ed", 0.95]];
+  // [name, compile, grid, pinned digest, preview triangles at most this share of print's;
+  // null: the probe skips decimation, so preview IS the print-tier mesh]
+  const CASES = [["hand", () => compileImplicit(handSpec()), 1.5, "b1b8a6271c85428d", 0.5], ["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "bd023b59990de4ed", null]];
   for (const [name, compile, edge, pinned, maxPreview] of CASES) {
     test(`${name}: print tier is the JS stages run with decimateFrac 0, byte for byte`, () => {
       const compiled = compile(), plan = planLeaves(compiled, edge), store = evaluateLeaves(plan);
@@ -118,7 +122,8 @@ describe("tiers", () => {
           expect(digest(meshImplicit(compiled, edge))).toBe(pinned);
           const preview = meshImplicit(compiled, edge, { tier: "preview" });
           if (on) expect(coreStatus(), "the core answered every mesh").toMatchObject({ state: "on", reason: null, refusedMeshes: refused });
-          expect(preview.indices.length).toBeLessThan(maxPreview * print.indices.length);
+          if (maxPreview === null) expect(digest(preview), "the probe skipped decimation").toBe(pinned);
+          else expect(preview.indices.length).toBeLessThan(maxPreview * print.indices.length);
           expect(edgeCheck(preview.indices)).toEqual({ boundary: 0, nonManifold: 0, misoriented: 0 });
           expect(eulerChar(preview.positions, preview.indices)).toBe(eulerChar(print.positions, print.indices));
         }

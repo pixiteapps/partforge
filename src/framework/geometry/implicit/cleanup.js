@@ -13,8 +13,13 @@
 // surviving triangle's normal turning by more than `decimateMaxTurn`; and every
 // surviving triangle's new normal within `decimateMaxSpread` of their sum — the
 // fidelity guard: a fan's spread is about its size over the surface's radius, so
-// small, curved features keep their triangles. Without `decimateFrac` (CLEANUP,
-// the print tier) the result is exactly the single pass's. Angles are compared
+// small, curved features keep their triangles. Two stops keep decimation from
+// costing more than it saves: before the first pass a probe tries the edges of every
+// PROBE_STRIDE-th triangle and skips decimation outright when fewer than
+// `decimateMinAccept` of the short ones may collapse (a surface the guards mostly
+// keep), and the passes end once one removes fewer than `decimateMinGain` of the
+// triangles. Without `decimateFrac` (CLEANUP, the print tier) the result is exactly
+// the single pass's. Angles are compared
 // through cos² (products, sums and one division; no acos), so the core reproduces
 // them bit for bit.
 import { projectVertices } from "./project.js";
@@ -25,11 +30,17 @@ export const CLEANUP = Object.freeze({ collapseFrac: 0.2, relaxPasses: 2, relaxW
 // fidelity: at 12° decimation adds at most 0.5% volume loss to spheres of r 1.5–4.5 mm
 // (1.3% at 6 mm), where the per-triangle turn guard alone, at any angle from 15° to
 // 30°, still lost 6–8% at r = 3 mm; 15° lost 0.4–2%, 10° left the hand 7% more triangles.
-// 0.7 · edge then takes the hand's cleanup from 157k to 53k triangles (p5 corner
-// 23° → 28°); 0.8 reached 43k but let the sharpest corner fall to 0.2°. The corner
+// 0.7 · edge then takes the hand's cleanup from 157k to 53k triangles over four
+// passes (p5 corner 23° → 28°); 0.8 reached 43k but let the sharpest corner fall to 0.2°. The corner
 // guard at 15° and four passes as before; the turn guard (20°) changes almost
-// nothing beside the spread guard but bounds any single collapse.
-export const DECIMATE = Object.freeze({ decimateFrac: 0.7, decimatePasses: 4, decimateMinAngle: 15, decimateMaxTurn: 20, decimateMaxSpread: 12 });
+// nothing beside the spread guard but bounds any single collapse. The probe allows
+// 53% of the hand's edges and 30% of the vase's, whose four passes cost more than
+// they saved (k.implicit 328 → 400 ms for 145k → 130k triangles): at 0.4 the vase
+// is not decimated and the hand is. The early stop at 0.2 ends the hand after three
+// passes (the fourth removed 4%), 77k triangles; 0.03–0.05 kept the fourth pass and
+// were no faster end to end.
+export const DECIMATE = Object.freeze({ decimateFrac: 0.7, decimatePasses: 4, decimateMinAngle: 15, decimateMaxTurn: 20, decimateMaxSpread: 12,
+  decimateMinAccept: 0.4, decimateMinGain: 0.2 });
 /** The preview tier's cleanup: CLEANUP plus decimation. */
 export const PREVIEW_CLEANUP = Object.freeze({ ...CLEANUP, ...DECIMATE });
 
@@ -39,6 +50,9 @@ export const guardCos2 = (deg) => {
   const c = Math.cos((deg * Math.PI) / 180);
   return c * c;
 };
+
+// The decimation probe tests every PROBE_STRIDE-th triangle's edges (see collapse).
+const PROBE_STRIDE = 32;
 
 function triNormal(P, a, b, c, out) {
   const ux = P[3 * b] - P[3 * a], uy = P[3 * b + 1] - P[3 * a + 1], uz = P[3 * b + 2] - P[3 * a + 2];
@@ -76,56 +90,78 @@ function collapse(P, T, vertLeaf, minLen, dec = null) {
     for (const t of vt[v]) if (alive[t]) for (let c = 0; c < 3; c++) if (T[3 * t + c] !== v) s.add(T[3 * t + c]);
     return s;
   };
+  const short = (a, b) => {
+    const dx = P[3 * a] - P[3 * b], dy = P[3 * a + 1] - P[3 * b + 1], dz = P[3 * a + 2] - P[3 * b + 2];
+    return dx * dx + dy * dy + dz * dz < min2;
+  };
+  // May edge (a, b) collapse to its midpoint? Sets mx, my, mz. Reads only; P is restored.
+  let mx = 0, my = 0, mz = 0;
+  const allowed = (a, b) => {
+    const ra = ring(a), rb = ring(b);
+    if (dec && ra.size === 3 && rb.size === 3) return false;   // a tetrahedron: it would fold into a pillow
+    let common = 0;
+    for (const v of ra) if (rb.has(v)) common++;
+    if (common !== 2) return false;
+    mx = (P[3 * a] + P[3 * b]) / 2; my = (P[3 * a + 1] + P[3 * b + 1]) / 2; mz = (P[3 * a + 2] + P[3 * b + 2]) / 2;
+    // No flips: every surviving triangle around a or b keeps its orientation.
+    let ok = true, after = 0; fan.length = 0;   // the sharpest corner the collapse would leave (guard on)
+    const save = [P[3 * a], P[3 * a + 1], P[3 * a + 2], P[3 * b], P[3 * b + 1], P[3 * b + 2]];
+    for (const v of [a, b]) for (const tt of vt[v]) {
+      if (!ok || !alive[tt]) continue;
+      const i = T[3 * tt], j = T[3 * tt + 1], k = T[3 * tt + 2];
+      if ((i === a || j === a || k === a) && (i === b || j === b || k === b)) continue;
+      triNormal(P, i, j, k, n0);
+      P[3 * a] = P[3 * b] = mx; P[3 * a + 1] = P[3 * b + 1] = my; P[3 * a + 2] = P[3 * b + 2] = mz;
+      triNormal(P, i, j, k, n1);
+      if (cos2 > 0) after = Math.max(after, triSharpness(P, i, j, k));
+      if (scos2 > 0) fan.push(n1[0], n1[1], n1[2]);
+      P[3 * a] = save[0]; P[3 * a + 1] = save[1]; P[3 * a + 2] = save[2]; P[3 * b] = save[3]; P[3 * b + 1] = save[4]; P[3 * b + 2] = save[5];
+      const turn = n0[0] * n1[0] + n0[1] * n1[1] + n0[2] * n1[2];
+      if (turn <= 0) ok = false;
+      else if (ncos2 > 0 && turn * turn < ncos2 * ((n0[0] * n0[0] + n0[1] * n0[1] + n0[2] * n0[2]) * (n1[0] * n1[0] + n1[1] * n1[1] + n1[2] * n1[2]))) ok = false;
+    }
+    if (ok && scos2 > 0) {
+      // Spread: every surviving triangle's new normal within the spread angle of
+      // their sum (an area-weighted mean). The fan's spread grows with its size over
+      // the surface's radius, so this keeps triangles small where curvature is high.
+      let Nx = 0, Ny = 0, Nz = 0;
+      for (let q = 0; q < fan.length; q += 3) { Nx += fan[q]; Ny += fan[q + 1]; Nz += fan[q + 2]; }
+      const NN = Nx * Nx + Ny * Ny + Nz * Nz;
+      for (let q = 0; q < fan.length && ok; q += 3) {
+        const d = fan[q] * Nx + fan[q + 1] * Ny + fan[q + 2] * Nz;
+        if (d <= 0 || d * d < scos2 * ((fan[q] * fan[q] + fan[q + 1] * fan[q + 1] + fan[q + 2] * fan[q + 2]) * NN)) ok = false;
+      }
+    }
+    if (ok && cos2 > 0 && after > cos2) {
+      // Too sharp: allowed only if the corners around a and b now (the two triangles
+      // on the edge included) already had one at least as sharp.
+      let before = 0;
+      for (const v of [a, b]) for (const tt of vt[v]) if (alive[tt]) before = Math.max(before, triSharpness(P, T[3 * tt], T[3 * tt + 1], T[3 * tt + 2]));
+      if (after > before) ok = false;
+    }
+    return ok;
+  };
+  // The probe (a decimation pass given `minAccept`): test every edge of every
+  // PROBE_STRIDE-th triangle on the mesh as it stands, nothing collapsed; when fewer
+  // than minAccept of the short ones may collapse, the pass is skipped (the mesh is
+  // returned as it came, collapsed 0) — a curved surface the guards keep would pay
+  // a full pass, and more, for little.
+  if (dec && dec.minAccept > 0) {
+    let tried = 0, ok = 0;
+    for (let t = 0; t < nt; t += PROBE_STRIDE) for (let c = 0; c < 3; c++) {
+      const a = T[3 * t + c], b = T[3 * t + ((c + 1) % 3)];
+      if (!short(a, b)) continue;
+      tried++;
+      if (allowed(a, b)) ok++;
+    }
+    if (ok < dec.minAccept * tried) return { positions: P, indices: T, vertLeaf, collapsed: 0 };
+  }
   for (let t = 0; t < nt; t++) {
     if (!alive[t]) continue;
     for (let c = 0; c < 3; c++) {
       const a = T[3 * t + c], b = T[3 * t + ((c + 1) % 3)];
       if (locked[a] || locked[b]) continue;
-      const dx = P[3 * a] - P[3 * b], dy = P[3 * a + 1] - P[3 * b + 1], dz = P[3 * a + 2] - P[3 * b + 2];
-      if (dx * dx + dy * dy + dz * dz >= min2) continue;
-      const ra = ring(a), rb = ring(b);
-      if (dec && ra.size === 3 && rb.size === 3) continue;   // a tetrahedron: it would fold into a pillow
-      let common = 0;
-      for (const v of ra) if (rb.has(v)) common++;
-      if (common !== 2) continue;
-      const mx = (P[3 * a] + P[3 * b]) / 2, my = (P[3 * a + 1] + P[3 * b + 1]) / 2, mz = (P[3 * a + 2] + P[3 * b + 2]) / 2;
-      // No flips: every surviving triangle around a or b keeps its orientation.
-      let ok = true, after = 0; fan.length = 0;   // the sharpest corner the collapse would leave (guard on)
-      const save = [P[3 * a], P[3 * a + 1], P[3 * a + 2], P[3 * b], P[3 * b + 1], P[3 * b + 2]];
-      for (const v of [a, b]) for (const tt of vt[v]) {
-        if (!ok || !alive[tt]) continue;
-        const i = T[3 * tt], j = T[3 * tt + 1], k = T[3 * tt + 2];
-        if ((i === a || j === a || k === a) && (i === b || j === b || k === b)) continue;
-        triNormal(P, i, j, k, n0);
-        P[3 * a] = P[3 * b] = mx; P[3 * a + 1] = P[3 * b + 1] = my; P[3 * a + 2] = P[3 * b + 2] = mz;
-        triNormal(P, i, j, k, n1);
-        if (cos2 > 0) after = Math.max(after, triSharpness(P, i, j, k));
-        if (scos2 > 0) fan.push(n1[0], n1[1], n1[2]);
-        P[3 * a] = save[0]; P[3 * a + 1] = save[1]; P[3 * a + 2] = save[2]; P[3 * b] = save[3]; P[3 * b + 1] = save[4]; P[3 * b + 2] = save[5];
-        const turn = n0[0] * n1[0] + n0[1] * n1[1] + n0[2] * n1[2];
-        if (turn <= 0) ok = false;
-        else if (ncos2 > 0 && turn * turn < ncos2 * ((n0[0] * n0[0] + n0[1] * n0[1] + n0[2] * n0[2]) * (n1[0] * n1[0] + n1[1] * n1[1] + n1[2] * n1[2]))) ok = false;
-      }
-      if (ok && scos2 > 0) {
-        // Spread: every surviving triangle's new normal within the spread angle of
-        // their sum (an area-weighted mean). The fan's spread grows with its size over
-        // the surface's radius, so this keeps triangles small where curvature is high.
-        let Nx = 0, Ny = 0, Nz = 0;
-        for (let q = 0; q < fan.length; q += 3) { Nx += fan[q]; Ny += fan[q + 1]; Nz += fan[q + 2]; }
-        const NN = Nx * Nx + Ny * Ny + Nz * Nz;
-        for (let q = 0; q < fan.length && ok; q += 3) {
-          const d = fan[q] * Nx + fan[q + 1] * Ny + fan[q + 2] * Nz;
-          if (d <= 0 || d * d < scos2 * ((fan[q] * fan[q] + fan[q + 1] * fan[q + 1] + fan[q + 2] * fan[q + 2]) * NN)) ok = false;
-        }
-      }
-      if (ok && cos2 > 0 && after > cos2) {
-        // Too sharp: allowed only if the corners around a and b now (the two triangles
-        // on the edge included) already had one at least as sharp.
-        let before = 0;
-        for (const v of [a, b]) for (const tt of vt[v]) if (alive[tt]) before = Math.max(before, triSharpness(P, T[3 * tt], T[3 * tt + 1], T[3 * tt + 2]));
-        if (after > before) ok = false;
-      }
-      if (!ok) continue;
+      if (!short(a, b) || !allowed(a, b)) continue;
       P[3 * a] = mx; P[3 * a + 1] = my; P[3 * a + 2] = mz;
       for (const tt of vt[b]) {
         if (!alive[tt]) continue;
@@ -178,10 +214,13 @@ export function cleanupMesh(store, mesh, opts = CLEANUP) {
   const edge = store.edge;
   let m = collapse(Float64Array.from(mesh.positions), Uint32Array.from(mesh.indices), mesh.vertLeaf, opts.collapseFrac * edge);
   if ((opts.decimateFrac ?? 0) > 0) {
-    const dec = { cos2: guardCos2(opts.decimateMinAngle ?? 0), ncos2: guardCos2(opts.decimateMaxTurn ?? 0), scos2: guardCos2(opts.decimateMaxSpread ?? 0) }, passes = opts.decimatePasses ?? 0;
+    const dec = { cos2: guardCos2(opts.decimateMinAngle ?? 0), ncos2: guardCos2(opts.decimateMaxTurn ?? 0), scos2: guardCos2(opts.decimateMaxSpread ?? 0), minAccept: opts.decimateMinAccept ?? 0 };
+    const passes = opts.decimatePasses ?? 0, minGain = opts.decimateMinGain ?? 0;
     for (let pass = 0; pass < passes; pass++) {
-      m = collapse(m.positions, m.indices, m.vertLeaf, opts.decimateFrac * edge, dec);
-      if (m.collapsed === 0) break;
+      const before = m.indices.length / 3;
+      m = collapse(m.positions, m.indices, m.vertLeaf, opts.decimateFrac * edge, pass === 0 ? dec : { ...dec, minAccept: 0 });
+      // Stop once a pass removes too little to pay for the next (none removed: nothing will be).
+      if (m.collapsed === 0 || before - m.indices.length / 3 < minGain * before) break;
     }
   }
   const { collapsed: _collapsed, ...cleaned } = m;

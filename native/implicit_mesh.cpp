@@ -345,7 +345,11 @@ int mesh(ipe::Session& s) {
 //     (n . N)^2 < scos2 * (|n|^2 * |N|^2). It runs BEFORE the flip test here
 //     (cheaper: most refusals are its), which decides nothing — each test only
 //     refuses — as long as its fan is every surviving triangle's, which is what
-//     the JS's is whenever the flip test passed.
+//     the JS's is whenever the flip test passed. The test itself is one lambda,
+//     `allowed`, shared by the pass and the first pass's probe (every edge of every
+//     PROBE_STRIDE-th triangle, counted as doubles and compared as the JS's
+//     `ok < minAccept * tried`); the early stop compares the triangles removed with
+//     minGain * triangles before, in doubles, as the JS does.
 //   - relax: the per-triangle edge accumulation a += P[b], b += P[a] in the JS
 //     order, the zero-normal skip, and the same divisions and clamp.
 namespace {
@@ -360,6 +364,8 @@ inline void triNormal(At at, uint32_t a, uint32_t b, uint32_t c, double* out) {
   const double vx = C[0] - A[0], vy = C[1] - A[1], vz = C[2] - A[2];
   out[0] = uy * vz - uz * vy; out[1] = uz * vx - ux * vz; out[2] = ux * vy - uy * vx;
 }
+
+constexpr size_t PROBE_STRIDE = 32;   // cleanup.js's PROBE_STRIDE
 
 // cleanup.js's sharpness: cos^2 of the corner angle at a when acute, else 0.
 template <class At>
@@ -399,7 +405,7 @@ inline double triSharpness(At at, uint32_t i, uint32_t j, uint32_t k) {
 // their rings, the triangles around a and b, and the order the incident lists
 // hold them in (compaction keeps surviving triangles in order, and untouched
 // lists gain no appends). So the skip refuses exactly what the test would.
-size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double ncos2, double scos2,
+size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double ncos2, double scos2, double minAccept,
                 const std::vector<uint8_t>* prevDirty = nullptr, std::vector<uint8_t>* dirtyOut = nullptr) {
   std::vector<double>& P = s.positions;
   std::vector<uint32_t>& T = s.indices;
@@ -430,99 +436,122 @@ size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double nc
     return true;
   };
 
+  auto isShort = [&](uint32_t a, uint32_t b) {
+    const double dx = P[3 * a] - P[3 * b], dy = P[3 * a + 1] - P[3 * b + 1], dz = P[3 * a + 2] - P[3 * b + 2];
+    return dx * dx + dy * dy + dz * dz < min2;
+  };
+  // cleanup.js's allowed: may edge (a, b) collapse to its midpoint (left in `mid`)?
+  auto allowed = [&](uint32_t a, uint32_t b) -> bool {
+    // |ring(a) ∩ ring(b)|: mark ring(a), then count ring(b)'s distinct members marked.
+    stamp++;
+    int sizeA = 0, sizeB = 0;   // |ring(a)|, |ring(b)| (distinct members)
+    for (uint32_t q = off[a]; q < off[a + 1]; q++) {
+      const uint32_t tt = inc[q];
+      if (!alive[tt]) continue;
+      for (int k = 0; k < 3; k++) {
+        const uint32_t w = T[3 * tt + k];
+        if (w != a && markA[w] != stamp) { markA[w] = stamp; sizeA++; }
+      }
+    }
+    int common = 0;
+    for (uint32_t q = off[b]; q < off[b + 1]; q++) {
+      const uint32_t tt = inc[q];
+      if (!alive[tt]) continue;
+      for (int k = 0; k < 3; k++) {
+        const uint32_t w = T[3 * tt + k];
+        if (w == b || markB[w] == stamp) continue;
+        markB[w] = stamp;
+        sizeB++;
+        if (markA[w] == stamp) common++;
+      }
+    }
+    if (dec && sizeA == 3 && sizeB == 3) return false;   // a tetrahedron: it would fold into a pillow
+    if (common != 2) return false;
+    mid[0] = (P[3 * a] + P[3 * b]) / 2; mid[1] = (P[3 * a + 1] + P[3 * b + 1]) / 2; mid[2] = (P[3 * a + 2] + P[3 * b + 2]) / 2;
+    // No flips: every surviving triangle around a or b keeps its orientation.
+    auto before = [&](uint32_t v) -> const double* { return &P[3 * (size_t)v]; };
+    auto after = [&](uint32_t v) -> const double* { return v == a || v == b ? mid : &P[3 * (size_t)v]; };
+    bool ok = true;
+    // The spread guard first (the JS runs it after the flip test; every test only
+    // refuses, so the order decides nothing): the new normals of every surviving
+    // triangle, in the flip test's order — the fan the JS collects when nothing
+    // fails, and when something does the collapse is refused either way.
+    if (scos2 > 0) {
+      fan.clear();
+      for (int side = 0; side < 2; side++) {
+        const uint32_t v = side == 0 ? a : b;
+        for (uint32_t q = off[v]; q < off[v + 1]; q++) {
+          const uint32_t tt = inc[q];
+          if (!alive[tt]) continue;
+          const uint32_t i = T[3 * tt], j = T[3 * tt + 1], k = T[3 * tt + 2];
+          if ((i == a || j == a || k == a) && (i == b || j == b || k == b)) continue;
+          triNormal(after, i, j, k, n1);
+          fan.push_back(n1[0]); fan.push_back(n1[1]); fan.push_back(n1[2]);
+        }
+      }
+      double Nx = 0, Ny = 0, Nz = 0;
+      for (size_t q = 0; q < fan.size(); q += 3) { Nx += fan[q]; Ny += fan[q + 1]; Nz += fan[q + 2]; }
+      const double NN = Nx * Nx + Ny * Ny + Nz * Nz;
+      for (size_t q = 0; q < fan.size() && ok; q += 3) {
+        const double d = fan[q] * Nx + fan[q + 1] * Ny + fan[q + 2] * Nz;
+        if (d <= 0 || d * d < scos2 * ((fan[q] * fan[q] + fan[q + 1] * fan[q + 1] + fan[q + 2] * fan[q + 2]) * NN)) ok = false;
+      }
+      if (!ok) return false;
+    }
+    double sharpAfter = 0;   // the sharpest corner the collapse would leave (guard on)
+    for (int side = 0; side < 2 && ok; side++) {
+      const uint32_t v = side == 0 ? a : b;
+      for (uint32_t q = off[v]; q < off[v + 1] && ok; q++) {
+        const uint32_t tt = inc[q];
+        if (!alive[tt]) continue;
+        const uint32_t i = T[3 * tt], j = T[3 * tt + 1], k = T[3 * tt + 2];
+        if ((i == a || j == a || k == a) && (i == b || j == b || k == b)) continue;
+        triNormal(before, i, j, k, n0);
+        triNormal(after, i, j, k, n1);
+        if (cos2 > 0) sharpAfter = jsmath::jsmax(sharpAfter, triSharpness(after, i, j, k));
+        const double turn = n0[0] * n1[0] + n0[1] * n1[1] + n0[2] * n1[2];
+        if (turn <= 0) ok = false;
+        else if (ncos2 > 0 && turn * turn < ncos2 * ((n0[0] * n0[0] + n0[1] * n0[1] + n0[2] * n0[2]) * (n1[0] * n1[0] + n1[1] * n1[1] + n1[2] * n1[2]))) ok = false;
+      }
+    }
+    if (ok && cos2 > 0 && sharpAfter > cos2) {
+      double sharpBefore = 0;
+      for (int side = 0; side < 2; side++) {
+        const uint32_t v = side == 0 ? a : b;
+        for (uint32_t q = off[v]; q < off[v + 1]; q++) {
+          const uint32_t tt = inc[q];
+          if (!alive[tt]) continue;
+          sharpBefore = jsmath::jsmax(sharpBefore, triSharpness(before, T[3 * tt], T[3 * tt + 1], T[3 * tt + 2]));
+        }
+      }
+      if (sharpAfter > sharpBefore) ok = false;
+    }
+    return ok;
+  };
+  // cleanup.js's probe (see there): every edge of every PROBE_STRIDE-th triangle,
+  // nothing collapsed; too few allowed and the pass is skipped, mesh untouched.
+  if (dec && minAccept > 0) {
+    double tried = 0, accepted = 0;
+    for (size_t t = 0; t < nt; t += PROBE_STRIDE) for (int c = 0; c < 3; c++) {
+      const uint32_t a = T[3 * t + c], b = T[3 * t + (c + 1) % 3];
+      if (!isShort(a, b)) continue;
+      tried++;
+      if (allowed(a, b)) accepted++;
+    }
+    if (accepted < minAccept * tried) {
+      if (dirtyOut) dirtyOut->assign(nv, 0);
+      return 0;
+    }
+  }
+
   for (size_t t = 0; t < nt; t++) {
     if (!alive[t]) continue;
     for (int c = 0; c < 3; c++) {
       const uint32_t a = T[3 * t + c], b = T[3 * t + (c + 1) % 3];
       if (locked[a] || locked[b]) continue;
-      const double dx = P[3 * a] - P[3 * b], dy = P[3 * a + 1] - P[3 * b + 1], dz = P[3 * a + 2] - P[3 * b + 2];
-      if (dx * dx + dy * dy + dz * dz >= min2) continue;
+      if (!isShort(a, b)) continue;
       if (prevDirty && ringClean(a) && ringClean(b)) continue;   // refused last pass, nothing changed
-      // |ring(a) ∩ ring(b)|: mark ring(a), then count ring(b)'s distinct members marked.
-      stamp++;
-      int sizeA = 0, sizeB = 0;   // |ring(a)|, |ring(b)| (distinct members)
-      for (uint32_t q = off[a]; q < off[a + 1]; q++) {
-        const uint32_t tt = inc[q];
-        if (!alive[tt]) continue;
-        for (int k = 0; k < 3; k++) {
-          const uint32_t w = T[3 * tt + k];
-          if (w != a && markA[w] != stamp) { markA[w] = stamp; sizeA++; }
-        }
-      }
-      int common = 0;
-      for (uint32_t q = off[b]; q < off[b + 1]; q++) {
-        const uint32_t tt = inc[q];
-        if (!alive[tt]) continue;
-        for (int k = 0; k < 3; k++) {
-          const uint32_t w = T[3 * tt + k];
-          if (w == b || markB[w] == stamp) continue;
-          markB[w] = stamp;
-          sizeB++;
-          if (markA[w] == stamp) common++;
-        }
-      }
-      if (dec && sizeA == 3 && sizeB == 3) continue;   // a tetrahedron: it would fold into a pillow
-      if (common != 2) continue;
-      mid[0] = (P[3 * a] + P[3 * b]) / 2; mid[1] = (P[3 * a + 1] + P[3 * b + 1]) / 2; mid[2] = (P[3 * a + 2] + P[3 * b + 2]) / 2;
-      // No flips: every surviving triangle around a or b keeps its orientation.
-      auto before = [&](uint32_t v) -> const double* { return &P[3 * (size_t)v]; };
-      auto after = [&](uint32_t v) -> const double* { return v == a || v == b ? mid : &P[3 * (size_t)v]; };
-      bool ok = true;
-      // The spread guard first (the JS runs it after the flip test; every test only
-      // refuses, so the order decides nothing): the new normals of every surviving
-      // triangle, in the flip test's order — the fan the JS collects when nothing
-      // fails, and when something does the collapse is refused either way.
-      if (scos2 > 0) {
-        fan.clear();
-        for (int side = 0; side < 2; side++) {
-          const uint32_t v = side == 0 ? a : b;
-          for (uint32_t q = off[v]; q < off[v + 1]; q++) {
-            const uint32_t tt = inc[q];
-            if (!alive[tt]) continue;
-            const uint32_t i = T[3 * tt], j = T[3 * tt + 1], k = T[3 * tt + 2];
-            if ((i == a || j == a || k == a) && (i == b || j == b || k == b)) continue;
-            triNormal(after, i, j, k, n1);
-            fan.push_back(n1[0]); fan.push_back(n1[1]); fan.push_back(n1[2]);
-          }
-        }
-        double Nx = 0, Ny = 0, Nz = 0;
-        for (size_t q = 0; q < fan.size(); q += 3) { Nx += fan[q]; Ny += fan[q + 1]; Nz += fan[q + 2]; }
-        const double NN = Nx * Nx + Ny * Ny + Nz * Nz;
-        for (size_t q = 0; q < fan.size() && ok; q += 3) {
-          const double d = fan[q] * Nx + fan[q + 1] * Ny + fan[q + 2] * Nz;
-          if (d <= 0 || d * d < scos2 * ((fan[q] * fan[q] + fan[q + 1] * fan[q + 1] + fan[q + 2] * fan[q + 2]) * NN)) ok = false;
-        }
-        if (!ok) continue;
-      }
-      double sharpAfter = 0;   // the sharpest corner the collapse would leave (guard on)
-      for (int side = 0; side < 2 && ok; side++) {
-        const uint32_t v = side == 0 ? a : b;
-        for (uint32_t q = off[v]; q < off[v + 1] && ok; q++) {
-          const uint32_t tt = inc[q];
-          if (!alive[tt]) continue;
-          const uint32_t i = T[3 * tt], j = T[3 * tt + 1], k = T[3 * tt + 2];
-          if ((i == a || j == a || k == a) && (i == b || j == b || k == b)) continue;
-          triNormal(before, i, j, k, n0);
-          triNormal(after, i, j, k, n1);
-          if (cos2 > 0) sharpAfter = jsmath::jsmax(sharpAfter, triSharpness(after, i, j, k));
-          const double turn = n0[0] * n1[0] + n0[1] * n1[1] + n0[2] * n1[2];
-          if (turn <= 0) ok = false;
-          else if (ncos2 > 0 && turn * turn < ncos2 * ((n0[0] * n0[0] + n0[1] * n0[1] + n0[2] * n0[2]) * (n1[0] * n1[0] + n1[1] * n1[1] + n1[2] * n1[2]))) ok = false;
-        }
-      }
-      if (ok && cos2 > 0 && sharpAfter > cos2) {
-        double sharpBefore = 0;
-        for (int side = 0; side < 2; side++) {
-          const uint32_t v = side == 0 ? a : b;
-          for (uint32_t q = off[v]; q < off[v + 1]; q++) {
-            const uint32_t tt = inc[q];
-            if (!alive[tt]) continue;
-            sharpBefore = jsmath::jsmax(sharpBefore, triSharpness(before, T[3 * tt], T[3 * tt + 1], T[3 * tt + 2]));
-          }
-        }
-        if (sharpAfter > sharpBefore) ok = false;
-      }
-      if (!ok) continue;
+      if (!allowed(a, b)) continue;
       if (dirtyOut) for (int side = 0; side < 2; side++) {
         const uint32_t v = side == 0 ? a : b;
         for (uint32_t q = off[v]; q < off[v + 1]; q++) {
@@ -662,15 +691,18 @@ int project(ipe::Session& s, const int32_t* which, int whichCount, double maxSte
 }
 
 int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxWeight, double maxMoveCells,
-            double decimateFrac, int decimatePasses, double guardCos2, double normalCos2, double spreadCos2) {
+            double decimateFrac, int decimatePasses, double guardCos2, double normalCos2, double spreadCos2,
+            double minAccept, double minGain) {
   if (!s.meshed) return 1;
   const double edge = s.edge;
-  collapse(s, collapseFrac * edge, false, -1, -1, -1);
+  collapse(s, collapseFrac * edge, false, -1, -1, -1, 0);
   if (decimateFrac > 0) {
     std::vector<uint8_t> prev, next;   // the dirty flags (see collapse)
     for (int pass = 0; pass < decimatePasses; pass++) {
-      const size_t n = collapse(s, decimateFrac * edge, true, guardCos2, normalCos2, spreadCos2, pass > 0 ? &prev : nullptr, &next);
-      if (n == 0) break;
+      const double before = (double)(s.indices.size() / 3);
+      const size_t n = collapse(s, decimateFrac * edge, true, guardCos2, normalCos2, spreadCos2, pass == 0 ? minAccept : 0,
+                                pass > 0 ? &prev : nullptr, &next);
+      if (n == 0 || before - (double)(s.indices.size() / 3) < minGain * before) break;
       prev.swap(next);
     }
   }
@@ -772,12 +804,15 @@ int ip_project(int id, const int32_t* which, int whichCount, double maxStep, int
 // cleanupMesh over the session mesh, in place; fills the normals. 0 ok. With
 // decimateFrac > 0, up to decimatePasses decimation passes follow the first
 // collapse, guarded by guardCos2 (corners), normalCos2 (normal turn) and
-// spreadCos2 (fan spread) — each cleanup.js's guardCos2 of an angle; <= 0: off.
+// spreadCos2 (fan spread) — each cleanup.js's guardCos2 of an angle; <= 0: off —
+// with the first pass's probe (minAccept) and the early stop (minGain).
 int ip_cleanup(int id, double collapseFrac, int relaxPasses, double relaxWeight, double maxMoveCells,
-               double decimateFrac, int decimatePasses, double guardCos2, double normalCos2, double spreadCos2) {
+               double decimateFrac, int decimatePasses, double guardCos2, double normalCos2, double spreadCos2,
+            double minAccept, double minGain) {
   ipe::Session* s = ipe::session(id);
   if (!s) return 2;
-  return ipm_mesh::cleanup(*s, collapseFrac, relaxPasses, relaxWeight, maxMoveCells, decimateFrac, decimatePasses, guardCos2, normalCos2, spreadCos2);
+  return ipm_mesh::cleanup(*s, collapseFrac, relaxPasses, relaxWeight, maxMoveCells, decimateFrac, decimatePasses, guardCos2, normalCos2, spreadCos2,
+                           minAccept, minGain);
 }
 
 // The normals (double x3 per vertex), or null when none have been written.

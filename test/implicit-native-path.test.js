@@ -132,10 +132,13 @@ describe.each([["SIMD", true], ["scalar", false]])("meshImplicit on the native c
 
   test("the preview tier (decimating cleanup) builds identically, hand and vase", () => {
     const vase = vaseSpec();
-    for (const [compiled, edge] of [[compileImplicit(handSpec()), 1.5], [compileImplicit(vase.spec, { images: vase.images }), 1.2]]) {
+    // The hand decimates; the vase's probe skips decimation (its guards would refuse most collapses).
+    for (const [compiled, edge, decimates] of [[compileImplicit(handSpec()), 1.5, true], [compileImplicit(vase.spec, { images: vase.images }), 1.2, false]]) {
       const nat = meshImplicit(compiled, edge, { tier: "preview" });
       sameResult(nat, withCore(false, () => meshImplicit(compiled, edge, { tier: "preview" })));
-      expect(nat.indices.length).toBeLessThan(meshImplicit(compiled, edge, { tier: "print" }).indices.length);
+      const print = meshImplicit(compiled, edge, { tier: "print" });
+      if (decimates) expect(nat.indices.length).toBeLessThan(print.indices.length);
+      else sameResult(nat, print);
     }
     expect(coreStatus()).toMatchObject({ state: "on", reason: null, refusedMeshes: 0 });
   }, 120_000);

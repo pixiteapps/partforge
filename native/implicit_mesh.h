@@ -34,10 +34,13 @@ int project(ipe::Session& s, const int32_t* which, int whichCount, double maxSte
 // cleanupMesh over the session mesh: short-edge collapse, then (decimateFrac > 0,
 // the preview tier) up to decimatePasses guarded collapse passes at
 // decimateFrac x edge (guardCos2: corner guard, normalCos2: normal-turn guard,
-// spreadCos2: fan-spread guard; <= 0: that guard off), then projection and relaxation
+// spreadCos2: fan-spread guard; <= 0: that guard off; the first pass skipped when
+// its probe allows fewer than minAccept of the edges it tries, the passes ended
+// once one removes fewer than minGain of the triangles), then projection and relaxation
 // passes. Replaces the mesh with the cleaned one and fills s.normals. Returns 0,
 // or nonzero when there is no mesh.
 int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxWeight, double maxMoveCells,
-            double decimateFrac, int decimatePasses, double guardCos2, double normalCos2, double spreadCos2);
+            double decimateFrac, int decimatePasses, double guardCos2, double normalCos2, double spreadCos2,
+            double minAccept, double minGain);
 
 }  // namespace ipm_mesh
