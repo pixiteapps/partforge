@@ -36,7 +36,7 @@ export const REGION_CELL = 0.75;
 export const BULGE_FULL_DEPTH = 1.5;
 /** A region's bulge falloff radius grows by this many mm per mm of press depth. */
 export const BULGE_SPREAD = 2;
-/** Leaf cells one pair's search may visit before it gives up (no regions, a compile warning). */
+/** Search entries (leaf cells visited, plus blocks wholly inside both) one pair's search may take before it gives up (one conservative region over the pair's box intersection, and a compile warning). */
 export const MAX_REGION_CELLS = 20000;
 
 /** The clearance a pair is cut with: the declared gap, floored at C_MIN_CELLS grid cells. */
@@ -241,8 +241,13 @@ function cutPieceRange(out, lo, hi, keep, N, i, skip, cl, att, nA, wr) {
     }
     const cutLo = (lo[i] - hi[j] + cl) * 0.5, cutHi = (hi[i] - lo[j] + cl) * 0.5;
     // u = cut + w·(v_i − cut) lies between cut and v_i: below v_i adds nothing to c_i's lo.
+    // As evaluated the lerp can round a few ulps past both ends, so its hi carries a 1e-12
+    // pad (PAD) relative to the operands' magnitudes, to stay a strict bound.
     if (!live) ilo = Math.max(ilo, cutLo);
-    ihi = Math.max(ihi, live ? Math.max(cutHi, hi[i]) : cutHi);
+    if (live) {
+      const uHi = Math.max(cutHi, hi[i]);
+      ihi = Math.max(ihi, uHi + PAD * (Math.abs(cutLo) + Math.abs(cutHi) + Math.abs(lo[i]) + Math.abs(hi[i])));
+    } else ihi = Math.max(ihi, cutHi);
   }
   out[0] = ilo; out[1] = ihi;
   return out;

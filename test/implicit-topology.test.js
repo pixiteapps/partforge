@@ -207,6 +207,45 @@ describe("hand contact", () => {
     return out;
   };
 
+  // Whether an edge joining pieces a and b at q (node-local) is a legitimate join: a and b
+  // are in contact there (a fill region's gate is open at q), attached to each other at q,
+  // or both attached to one third piece with q inside BOTH of those attachment zones
+  // (within radius + band of each anchor) — neighbouring digits web together inside their
+  // zones at the palm and must keep clear of each other everywhere outside them.
+  const inZone = (node, o, q) => dist(q, [node.att[o + 2], node.att[o + 3], node.att[o + 4]]) < node.att[o + 5] + node.att[o + 6];
+  const zonesOf = (node, a, q) => {
+    const out = [];   // [other piece, attachment offset] for a's attachments whose zone holds q
+    for (let o = 0; o < node.att.length; o += ATTACH_STRIDE) {
+      if (!inZone(node, o, q)) continue;
+      if (node.att[o] === a) out.push(node.att[o + 1]);
+      if (node.att[o + 1] === a) out.push(node.att[o]);
+    }
+    return out;
+  };
+  const bridgeAllowed = (node, cl, a, b, q) => {
+    const ja = zonesOf(node, a, q), jb = zonesOf(node, b, q);
+    if (ja.includes(b) || ja.some((x) => jb.includes(x))) return true;
+    return fillPairs(node).some((r) => ((r.a === a && r.b === b) || (r.a === b && r.b === a)) && gateWeight(node.fillRegions, r.o, cl, ...q) > 0);
+  };
+
+  test("the bridge rule exempts finger webbing only inside the attachment zones", () => {
+    const spec = handSpec(HAND_POSES.nearMiss), c = compileImplicit(spec), node = c.ir.nodes[c.ir.root], cl = clearance(0, 1.5);
+    const index = slotOf(spec, "index"), middle = slotOf(spec, "middle");
+    const [im, mm, ip, mp] = ["index.mcp", "middle.mcp", "index.pip", "middle.pip"].map((f) => origin(spec, f));
+    // Between the two knuckles, inside both zones: the webbing is a legitimate join.
+    const web = im.map((x, i) => (x + mm[i]) / 2);
+    expect(bridgeAllowed(node, cl, index, middle, web)).toBe(true);
+    // Between the two PIP knuckles (the near miss), outside both zones: a bridge there fails.
+    const gap = ip.map((x, i) => (x + mp[i]) / 2);
+    const o = node.att.findIndex((_, i) => i % ATTACH_STRIDE === 0 && node.att[i] === index);
+    expect(inZone(node, o, gap)).toBe(false);
+    expect(bridgeAllowed(node, cl, index, middle, gap)).toBe(false);
+    // At the index knuckle: inside the index's zone but not the middle's — not webbing.
+    const om = node.att.findIndex((_, i) => i % ATTACH_STRIDE === 0 && node.att[i] === middle);
+    expect([inZone(node, o, im), inZone(node, om, im)]).toEqual([true, false]);
+    expect(bridgeAllowed(node, cl, index, middle, im)).toBe(false);
+  });
+
   test("near-miss fingers stay apart: index and middle 0.75 mm apart at their closest, a clean gap at preview and print", () => {
     // The brief's fingertips: a spread sweep brings these fingers closest at their PIP
     // knuckles (the fattest part), so the near miss is there.
@@ -330,16 +369,7 @@ describe("hand contact", () => {
         let best = Infinity;
         node.children.forEach((id, i) => { const d = evalNodeAt(c, id, P[3 * v], P[3 * v + 1], P[3 * v + 2]); if (d < best) { best = d; own[v] = i; } });
       }
-      const joinedTo = (a, q) => {
-        const out = [];
-        for (let o = 0; o < node.att.length; o += ATTACH_STRIDE) if (attachWeight(node.att, o, ...q) > 0) { if (node.att[o] === a) out.push(node.att[o + 1]); if (node.att[o + 1] === a) out.push(node.att[o]); }
-        return out;
-      };
-      const allowed = (a, b, q) => {
-        const ja = joinedTo(a, q), jb = joinedTo(b, q);
-        if (ja.includes(b) || ja.some((x) => jb.includes(x))) return true;
-        return fillPairs(node).some((r) => ((r.a === a && r.b === b) || (r.a === b && r.b === a)) && gateWeight(node.fillRegions, r.o, cl, ...q) > 0);
-      };
+      const allowed = (a, b, q) => bridgeAllowed(node, cl, a, b, q);
       let bridges = 0;
       for (let t = 0; t < T.length; t += 3) for (let e = 0; e < 3; e++) {
         const u = T[t + e], w = T[t + (e + 1) % 3];

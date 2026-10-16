@@ -8,6 +8,7 @@ import { clearance, C_MIN_CELLS, ATTACH_STRIDE, bulgeOffset, REGION_CELL, BULGE_
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { setCoreEnabled } from "../src/framework/core/core.js";
 import { cpuMs } from "./helpers/cpu-pace.js";
+import { edgeCheck, componentCount } from "./helpers/mesh-topology.js";
 import { blockDecision, fullDecision, decisionKey } from "../src/framework/geometry/implicit/interval.js";
 import { emitProgram, evalBatch, runProgram, OP } from "../src/framework/geometry/implicit/program.js";
 import { planLeaves } from "../src/framework/geometry/implicit/sparse.js";
@@ -35,6 +36,9 @@ describe("contact grammar", () => {
     expect(att({ zzz: 1 })).toContain('root.attach[0]: unknown field "zzz"');
     const dup = issues(base({ attach: [{ a: "a", b: "b", near: "j", radius: 5, k: 1 }, { a: "b", b: "a", near: "j", radius: 5, k: 1 }] }));
     expect(dup.some((s) => s.startsWith("root.attach[1]: duplicate attachment"))).toBe(true);
+    // Children are named by label: a label repeated within one contact is an error.
+    expect(issues(base({}, [sph(-4, "a"), sph(4, "b"), sph(0, "a")]))).toEqual(['root.children[2].label: duplicate label "a" in contact']);
+    expect(issues({ root: { kind: "union", children: [{ kind: "contact", children: [sph(-4, "x"), sph(4, "x")] }, sph(9, "x")] } })).toEqual(['root.children[0].children[1].label: duplicate label "x" in contact']);
   });
 });
 
@@ -183,6 +187,92 @@ describe("contact reference field", () => {
     }
     // 20 mm up the finger the attachment weight is 0: cut like any pair.
     for (const p of [[0, 0, 22], [4, 0, 24]]) near(evalReference(att, ...p, 0), evalReference(bare, ...p, 0), 0);
+  });
+
+  test("attachment falloff band: the finger's surface moves smoothly through it, no crease", () => {
+    // A finger rising off a slab, attached at its base: inside the radius the pair is a
+    // k = 8 smooth union (a fillet), beyond radius + band plain contact; the finger leaves the
+    // slab inside the band, so the fillet fades out there. Along lines on the finger's side
+    // through the band, the surface's offset from the axis (the zero crossing along the
+    // normal) must move continuously and turn gently: a hard switch (band 0.05) shows as a
+    // kink in that profile (curvature over 10 /mm at 0.05 mm steps; the default band's
+    // stays under 0.5, the hand's 3 mm band about 2).
+    const edge = 0.6, radius = 14, L = Math.hypot(40, 14), u = [40 / L, 0, 14 / L], n1 = [14 / L, 0, -40 / L];
+    const profile = (band) => {
+      const c = lower({ frames: { base: {} }, root: { kind: "contact", attach: [{ a: "finger", b: "palm", near: "base", radius, ...(band ? { band } : {}), k: 8 }], children: [
+        { kind: "box", size: [80, 80, 10], at: [10, 0, -5], label: "palm" },
+        { kind: "capsule", a: [0, 0, -2], b: [40, 0, 12], r: 4, label: "finger" },
+      ] } });
+      const reach = radius + (band ?? radius / 2), ds = 0.05;
+      let slope = 0, kappa = 0;
+      for (const deg of [30, 15, 0]) {   // the finger's side, from above-side to level (the slab lies below)
+        const th = (deg * Math.PI) / 180, d = [0, 1, 2].map((i) => Math.cos(th) * [0, 1, 0][i] - Math.sin(th) * n1[i]);
+        const t = (s) => {
+          const a = [0, 1, 2].map((i) => [0, 0, -2][i] + s * u[i]), f = (q) => evalReference(c, a[0] + q * d[0], a[1] + q * d[1], a[2] + q * d[2], edge);
+          let q = 2;
+          while (f(q) < 0) q += 0.05;
+          let lo = q - 0.05, hi = q;
+          for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (f(m) < 0) lo = m; else hi = m; }
+          return lo;
+        };
+        const T = [];
+        for (let s = radius - 2; s <= reach + 2; s += ds) T.push(t(s));
+        for (let i = 1; i < T.length - 1; i++) {
+          const d1 = (T[i + 1] - T[i - 1]) / (2 * ds), d2 = (T[i + 1] - 2 * T[i] + T[i - 1]) / (ds * ds);
+          slope = Math.max(slope, Math.abs(T[i] - T[i - 1]) / ds);
+          kappa = Math.max(kappa, Math.abs(d2) / (1 + d1 * d1) ** 1.5);
+        }
+      }
+      return { slope, kappa };
+    };
+    const dflt = profile(undefined), hand = profile(3), hard = profile(0.05);
+    // Successive offsets 0.05 mm apart differ by under 0.05 mm (no step), and the profile
+    // bends with a radius of a millimetre or more at the default band.
+    expect(dflt.slope).toBeLessThan(1);
+    expect(dflt.kappa).toBeLessThan(1);
+    expect(hand.slope).toBeLessThan(1);
+    expect(hand.kappa).toBeLessThan(3);
+    // The probe sees a crease where there is one.
+    expect(hard.kappa).toBeGreaterThan(10);
+  });
+
+  test("mixed contact: capsules touching at one end fuse there and keep a clean gap at the other", () => {
+    // A straight capsule and a bent tube: 1 mm of overlap where they start (x = 0), a
+    // 0.3 mm near miss where they end (x = 40), 40 mm away — far beyond the pad's gate,
+    // which shuts at rho + cl + 2·FILL_BAND (≈ 7.8 mm here at 1.5 mm) from the region.
+    const spec = { root: { kind: "contact", children: [
+      cap([0, 0, 0], [40, 0, 0], 3),
+      { kind: "tube", points: [[0, 5, 0], [20, 14, 0], [40, 6.3, 0]], r: 3 },
+    ] } };
+    const c = compileImplicit(spec), node = c.ir.nodes[c.ir.root];
+    expect(node.fillRegions.length).toBe(FILL_STRIDE);   // one region: the touching end
+    const rc = Array.from(node.fillRegions.subarray(2, 5)), rho = node.fillRegions[5];
+    expect(Math.hypot(rc[0], rc[1] - 2.5, rc[2])).toBeLessThan(REGION_CELL);
+    const pad = [0, 2.5, 0], mid = [40, 3.15, 0];   // the overlap's middle; the gap's midpoint (each surface 0.15 off)
+    const dA = (q) => evalNodeAt(c, node.children[0], ...q), dB = (q) => evalNodeAt(c, node.children[1], ...q);
+    near(dA(mid), 0.15, 1e-9); near(dB(mid), 0.15, 1e-9);
+    for (const edge of [1.5, 0.6]) {
+      const cl = clearance(0, edge);
+      expect(Math.hypot(mid[0] - rc[0], mid[1] - rc[1], mid[2] - rc[2]), `${edge} mm`).toBeGreaterThan(rho + cl + 2 * FILL_BAND);
+      expect(evalReference(c, ...pad, edge), `${edge} mm`).toBeLessThan(0);
+      expect(evalReference(c, ...mid, edge), `${edge} mm`).toBeGreaterThanOrEqual(cl / 2 - 1e-12);
+      const out = meshImplicit(c, edge), P = out.positions, T = out.indices;
+      expect(edgeCheck(T), `${edge} mm`).toEqual({ boundary: 0, nonManifold: 0, misoriented: 0 });
+      expect(componentCount(T), `${edge} mm`).toBe(1);   // fused at the pad
+      // Within 5 mm of the gap no triangle crosses the bisector d_A = d_B.
+      let crossing = 0, seen = 0;
+      for (let t = 0; t < T.length; t += 3) {
+        const sides = [T[t], T[t + 1], T[t + 2]].map((v) => {
+          const q = [P[3 * v], P[3 * v + 1], P[3 * v + 2]];
+          return Math.hypot(q[0] - mid[0], q[1] - mid[1], q[2] - mid[2]) > 5 ? null : dA(q) - dB(q);
+        });
+        if (sides.includes(null)) continue;
+        seen++;
+        if (Math.min(...sides) < 0 && Math.max(...sides) > 0) crossing++;
+      }
+      expect(seen, `${edge} mm`).toBeGreaterThan(10);
+      expect(crossing, `${edge} mm`).toBe(0);
+    }
   });
 
   test("framed contact", () => {
@@ -504,6 +594,25 @@ describe("contact regions and bulge", () => {
     const gap0 = lower(TREES.contactPassBy), cut = lower({ root: { ...TREES.contactPassBy.root, gap: 0.3 } });
     expect(blockDecision(cut, -3, 0, -6, 0.3, undefined, 1).dec.kids[1]).toBeNull();
     expect(blockDecision(gap0, -3, 0, -6, 0.3, undefined, 1).dec.kids[1]).not.toBeNull();
+  });
+
+  test("a deep overlap fuses at gap 0: big pairs resolve, or fall back to one region with the warning", () => {
+    // Two r = 20 spheres at x = ±10 (a 20 mm lens: its interior blocks count as one search
+    // entry each, so the search resolves it) and two r = 30 at ±20 (past the budget even
+    // so: one conservative region over the box intersection, and the warning). Before,
+    // both kept no region and were cut through the middle (+1.13 at the origin at 1.5 mm).
+    const edge = 1.5;
+    for (const [r, x, warned] of [[20, 10, false], [30, 20, true]]) {
+      const spec = { root: { kind: "contact", children: [sph(-x, undefined, r), sph(x, undefined, r)] } };
+      const c = compileImplicit(spec), node = c.ir.nodes[c.ir.root];
+      expect(node.fillRegions.length, `r ${r}`).toBe(FILL_STRIDE);
+      expect(evalReference(c, 0, 0, 0, edge), `r ${r}`).toBeLessThan(0);
+      const out = meshImplicit(c, edge, { tier: "preview" });
+      expect(edgeCheck(out.indices), `r ${r}`).toEqual({ boundary: 0, nonManifold: 0, misoriented: 0 });
+      expect(componentCount(out.indices), `r ${r}`).toBe(1);
+      const over = out.warnings.filter((w) => w.includes("too much overlap"));
+      expect(over, `r ${r}`).toEqual(warned ? ["implicit: root: the contact search between children 0 and 1 found too much overlap to resolve (over 20000 cells) — they get one region over their whole overlap (one bulge and fused pad); separate them, or make them one child"] : []);
+    }
   });
 
   test("compile cost: a five-capsule fan compiles in ≤ 20 ms CPU", () => {

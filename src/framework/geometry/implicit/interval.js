@@ -46,12 +46,6 @@ const FIRM_REL = 1e-9;
 // 0 — the default — is the bare declared gap, as evalReference's default.
 export const blockDecision = (c, cx, cy, cz, r, parentDec, edge = 0) => visit(c, c.ir.root, cx, cy, cz, r, parentDec, edge);
 
-/** One IR node's interval over the ball (x, y, z; r) in its parent's coordinates (applying its own `inv`): { lo, hi }. */
-export function nodeInterval(c, id, x, y, z, r, edge = 0) {
-  const a = visit(c, id, x, y, z, r, undefined, edge);
-  return { lo: a.lo, hi: a.hi };
-}
-
 function full(c, id) {
   const n = c.ir.nodes[id];
   if (n.children.length === 0) return { id };

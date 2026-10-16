@@ -39,4 +39,23 @@ test("seams between an organic surface and a mechanical one still draw", async (
   ]));
   const [{ mesh }] = buildView(k, p, "main");
   expect(mesh.edges?.length ?? 0).toBeGreaterThan(0);
+  // The lines run along the seam itself: segments with both ends on the sphere (within the
+  // 1 mm preview grid's chord error) and on the box's surface (x, y in ±5, z in [−12, −2]).
+  const boxDist = (x, y, z) => {
+    const q = [Math.abs(x) - 5, Math.abs(y) - 5, Math.abs(z + 7) - 5];
+    const out = Math.hypot(...q.map((v) => Math.max(v, 0)));
+    return out > 0 ? out : -Math.max(...q);
+  };
+  const onSeam = (e, o) => Math.abs(Math.hypot(e[o], e[o + 1], e[o + 2]) - 8) < 0.5 && Math.abs(boxDist(e[o], e[o + 1], e[o + 2])) < 0.05;
+  const E = mesh.edges;
+  let seam = 0, seamLength = 0;
+  for (let o = 0; o < E.length; o += 6) {
+    if (!onSeam(E, o) || !onSeam(E, o + 3)) continue;
+    seam++; seamLength += Math.hypot(E[o + 3] - E[o], E[o + 4] - E[o + 1], E[o + 5] - E[o + 2]);
+  }
+  // The seam: on each side face (x or y = ±5) the circle of radius √39 the sphere cuts,
+  // over |y| ≤ 5 — the box's top lies inside the sphere. Its lines trace most of it.
+  const R = Math.sqrt(39), seamTotal = 4 * 2 * Math.asin(5 / R) * R;
+  expect(seam).toBeGreaterThanOrEqual(20);
+  expect(seamLength).toBeGreaterThan(0.75 * seamTotal);
 });

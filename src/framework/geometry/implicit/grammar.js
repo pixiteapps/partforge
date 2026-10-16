@@ -126,6 +126,15 @@ function checkFields(obj, schema, common, path, ctx) {
 
 function checkContact(node, path, ctx) {
   if (Array.isArray(node.children) && node.children.length < 2) ctx.issues.push(`${path}.children: contact needs at least 2 children`);
+  if (Array.isArray(node.children)) {
+    // Attachments name children by label, so a label names one child of the node.
+    const first = new Set();
+    node.children.forEach((c, i) => {
+      if (!isObj(c) || typeof c.label !== "string") return;
+      if (first.has(c.label)) ctx.issues.push(`${path}.children[${i}].label: duplicate label "${c.label}" in contact`);
+      first.add(c.label);
+    });
+  }
   if (!Array.isArray(node.attach) || !Array.isArray(node.children)) return;
   const labels = new Set(node.children.map((c) => (isObj(c) ? c.label : undefined)).filter((l) => typeof l === "string"));
   const seen = new Set();

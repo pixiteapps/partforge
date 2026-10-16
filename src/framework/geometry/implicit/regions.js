@@ -31,21 +31,25 @@ const SEARCH_EDGE = 0;
  *    node — each the pad fill of its own pair; empty when the node does not fuse;
  *  - pad: the most any one slot's bulge can add to its field (Σ A), for the node's box;
  *  - Lb: the bulge's Lipschitz bound (a bulged piece is (L + Lb)-Lipschitz);
- *  - warnings: one per pair whose search ran past MAX_REGION_CELLS (it keeps no regions).
+ *  - warnings: one per pair whose search ran past MAX_REGION_CELLS (it gets one conservative
+ *    region over its whole box intersection instead of its clusters).
  */
 export function contactRegions(view, n, path) {
   const N = n.children.length, per = n.children.map(() => []), fill = [], warnings = [];
   for (let a = 0; a < N; a++) for (let b = a + 1; b < N; b++) {
-    const clusters = pairClusters(view, n, a, b);
-    if (clusters === null) {
-      warnings.push(`implicit: ${path}: the contact search between children ${a} and ${b} found too much overlap to resolve (over ${MAX_REGION_CELLS} cells) — they get no bulge and no fused pad; separate them, or make them one child`);
-      continue;
+    let clusters = pairClusters(view, n, a, b);
+    if (!Array.isArray(clusters)) {
+      // Too much overlap to resolve: one conservative region over the pair's whole box
+      // intersection, so a gap-0 pair still fuses rather than being cut through.
+      warnings.push(`implicit: ${path}: the contact search between children ${a} and ${b} found too much overlap to resolve (over ${MAX_REGION_CELLS} cells) — they get one region over their whole overlap (one bulge and fused pad); separate them, or make them one child`);
+      clusters = clusters.region ? [clusters.region] : [];
     }
     for (const { c, delta, rho } of clusters) {
       if (n.fuse) fill.push(a, b, c[0], c[1], c[2], rho);   // the pair's pad fill (gap 0 only)
       // The bump's falloff radius grows with the press depth; its peak is the node's bulge
-      // scaled by depth, so no skin anywhere swells more than `bulge` mm (a flat contact's
-      // sides lie well inside rho: a height set at the rim would blow up there).
+      // scaled by depth, so no one region swells a skin more than `bulge` mm — a piece's
+      // regions add where they overlap (a flat contact's sides lie well inside rho: a height
+      // set at the rim would blow up there).
       const rb = rho + BULGE_SPREAD * delta + 2 * n.bulge;
       const A = n.bulge * Math.min(1, delta / BULGE_FULL_DEPTH);
       if (!(A > 0)) continue;   // bulge 0: an all-zero offset; leave the slot unbulged
@@ -64,8 +68,11 @@ export function contactRegions(view, n, path) {
 }
 
 /**
- * The overlap clusters of slots a and b: [{ c, delta, rho }] in a deterministic order, or
- * null when the search passed MAX_REGION_CELLS leaf cells.
+ * The overlap clusters of slots a and b: [{ c, delta, rho }] in a deterministic order. A
+ * search that passes MAX_REGION_CELLS entries returns { over: true, region } instead: ONE
+ * conservative region over the whole box intersection (its centre, rho half its diagonal,
+ * δ the deepest overlap seen before stopping; null when that centre lies in the pair's
+ * attachment zone, as a cluster there would be dropped).
  */
 function pairClusters(compiled, n, a, b) {   // compiled: the lowering view
   const nodes = compiled.ir.nodes, ia = n.children[a], ib = n.children[b];
@@ -79,8 +86,18 @@ function pairClusters(compiled, n, a, b) {   // compiled: the lowering view
   const ext = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
   let S = 1;
   while (S * REGION_CELL < ext) S *= 2;
-  let cells = [];   // [i, j, k, m] with m = max(d_a, d_b) < 0 at the cell centre
+  // The leaves in range on each axis: index i < S is in range while lo + i·REGION_CELL ≤ hi.
+  const lim = [0, 1, 2].map((ax) => { let m = 0; while (m < S && lo[ax] + m * REGION_CELL <= hi[ax]) m++; return m; });
+  // Entries [i, j, k, s, m, ni, nj, nk]: an octree block of s³ leaves (s = 1: one leaf) at
+  // lattice corner (i, j, k), every leaf of it a region cell (m = max(d_a, d_b) < 0 at the
+  // centre it was decided by), (ni, nj, nk) its leaves in range per axis. A block wholly
+  // inside both pieces is one entry, so the budget counts the overlap's surface cells
+  // (and its blocks), not its volume.
+  let cells = [];
   let count = 0, over = false;
+  // The deepest overlap seen (m < 0 at a point inside both), for the overflow region's δ.
+  let bestM = Infinity, bestP = null;
+  const seen = (m, x, y, z) => { if (m < bestM) { bestM = m; bestP = [x, y, z]; } };
   const R3 = Math.sqrt(3) / 2;
   // The pair's attachment (its first, either order — contactValue's rule), if any: its
   // joined zone (weight > 0) is not a contact, so a cell whose centre lies in it is not a
@@ -92,12 +109,16 @@ function pairClusters(compiled, n, a, b) {   // compiled: the lowering view
     if ((sa === a && sb === b) || (sa === b && sb === a)) { ao = o; break; }
   }
   const zone = ao < 0 ? 0 : n.att[ao + 5] + n.att[ao + 6];   // the weight is > 0 below this distance
+  // The children's L as Lipschitz bounds. L is the IR's pruning bound, not a true one for
+  // every node (warp, displace and a nested contact can exceed it); a low bound only risks
+  // the search skipping a region cell — never a wrong field value, since the regions only
+  // place bulges and pad gates.
   const La = nodes[ia].L, Lb = nodes[ib].L;
   // pva/pvb: the parent cell's centre values (undefined at the root), r from it to this centre.
   const rec = (i0, j0, k0, sz, pva, pvb) => {
     if (over) return;
+    if (i0 >= lim[0] || j0 >= lim[1] || k0 >= lim[2]) return;
     const x0 = lo[0] + i0 * REGION_CELL, y0 = lo[1] + j0 * REGION_CELL, z0 = lo[2] + k0 * REGION_CELL;
-    if (x0 > hi[0] || y0 > hi[1] || z0 > hi[2]) return;
     const h = (sz * REGION_CELL) / 2, cx = x0 + h, cy = y0 + h, cz = z0 + h;
     const r = 2 * h * R3;
     let clear = true;   // the whole cell lies outside the attachment's joined zone
@@ -114,12 +135,12 @@ function pairClusters(compiled, n, a, b) {   // compiled: the lowering view
         // from the parent's): outside either piece, or inside both.
         const ra = La * r * (1 + 1e-9) + 1e-12, rb = Lb * r * (1 + 1e-9) + 1e-12;
         if (pva > ra || pvb > rb) return;
-        if (pva < -ra && pvb < -rb) { cells.push([i0, j0, k0, Math.max(pva, pvb)]); return; }
+        if (pva < -ra && pvb < -rb) { cells.push([i0, j0, k0, 1, Math.max(pva, pvb), 1, 1, 1]); return; }
       }
       const va = evalNodeAt(compiled, ia, cx, cy, cz, SEARCH_EDGE);
       if (!(va < 0)) return;   // not inside a: not a region cell (b need not be evaluated)
       const m = Math.max(va, evalNodeAt(compiled, ib, cx, cy, cz, SEARCH_EDGE));
-      if (m < 0) cells.push([i0, j0, k0, m]);
+      if (m < 0) { cells.push([i0, j0, k0, 1, m, 1, 1, 1]); seen(m, cx, cy, cz); }
       return;
     }
     // The pieces' values at the cell centre and their Lipschitz bounds: a piece more than
@@ -133,79 +154,126 @@ function pairClusters(compiled, n, a, b) {   // compiled: the lowering view
     if (vb > rb) return;
     if (clear && va < -ra && vb < -rb) {
       // Wholly inside both pieces (and clear of any joined zone): every leaf is a region
-      // cell, without evaluating it. Its m is the cell centre's — read only to pick the
-      // cluster's deepest start, whose own value is then evaluated (below).
+      // cell, without evaluating it — one entry. Its m is the cell centre's — read only to
+      // pick the cluster's deepest start, whose own value is then evaluated (below).
+      if (++count > MAX_REGION_CELLS) { over = true; return; }
       const mHi = Math.max(va, vb);
-      for (let i = i0; i < i0 + sz; i++) {
-        if (lo[0] + i * REGION_CELL > hi[0]) break;
-        for (let j = j0; j < j0 + sz; j++) {
-          if (lo[1] + j * REGION_CELL > hi[1]) break;
-          for (let k = k0; k < k0 + sz; k++) {
-            if (lo[2] + k * REGION_CELL > hi[2]) break;
-            if (++count > MAX_REGION_CELLS) { over = true; return; }
-            cells.push([i, j, k, mHi]);
-          }
-        }
-      }
+      cells.push([i0, j0, k0, sz, mHi, Math.min(sz, lim[0] - i0), Math.min(sz, lim[1] - j0), Math.min(sz, lim[2] - k0)]);
+      seen(mHi, cx, cy, cz);
       return;
     }
     const s = sz / 2;
     for (let o = 0; o < 8; o++) rec(i0 + (o & 1 ? s : 0), j0 + (o & 2 ? s : 0), k0 + (o & 4 ? s : 0), s, va, vb);
   };
   rec(0, 0, 0, S);
-  if (over) return null;
+  if (over) {
+    const c = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+    if (ao >= 0 && attachWeight(n.att, ao, c[0], c[1], c[2]) > 0) return { over: true, region: null };
+    let delta = 0;
+    if (bestP !== null) {
+      const v = Math.max(evalNodeAt(compiled, ia, bestP[0], bestP[1], bestP[2], SEARCH_EDGE), evalNodeAt(compiled, ib, bestP[0], bestP[1], bestP[2], SEARCH_EDGE));
+      delta = Math.max(0, -deepest(compiled, ia, ib, bestP, v));
+    }
+    return { over: true, region: { c, delta, rho: hypot3(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2 } };
+  }
   if (cells.length === 0) return [];
 
-  // 26-connected clusters, over the cells in sorted (i, j, k) order; a cluster is ordered
-  // by (and its sums run from) its first cell in that order. key orders cells as (i, j, k)
-  // does (j, k ≤ S); keys are unique, so packing the cell's index under its key sorts them.
+  // 26-connected clusters, over the entries in sorted (i, j, k) order of their corners (a
+  // block's corner is its first leaf in that order; corners are unique, blocks being
+  // disjoint); a cluster is ordered by (and its sums run from) its first entry. key orders
+  // corners as (i, j, k) does (j, k ≤ S); packing the entry's index under its key sorts them.
   const nC = cells.length, key = (i, j, k) => (i * (S + 1) + j) * (S + 1) + k;
   const packed = new Float64Array(nC);
   for (let idx = 0; idx < nC; idx++) packed[idx] = key(cells[idx][0], cells[idx][1], cells[idx][2]) * IDX_SPAN + idx;
   packed.sort();
   cells = Array.from(packed, (v) => cells[v % IDX_SPAN]);
-  // A cell → index lookup: a dense grid over the cells' bounding box (padded by one, so a
-  // neighbour is always in range), or, past DENSE_MAX entries, an open-addressed hash.
-  let i0 = Infinity, j0 = Infinity, k0 = Infinity, i1 = -Infinity, j1 = -Infinity, k1 = -Infinity;
-  for (const p of cells) { i0 = Math.min(i0, p[0]); i1 = Math.max(i1, p[0]); j0 = Math.min(j0, p[1]); j1 = Math.max(j1, p[1]); k0 = Math.min(k0, p[2]); k1 = Math.max(k1, p[2]); }
-  const NJ = j1 - j0 + 3, NK = k1 - k0 + 3, NV = (i1 - i0 + 3) * NJ * NK;
-  let lookup;
-  if (NV <= DENSE_MAX) {
-    const grid = new Int32Array(NV).fill(-1);
-    const at = (i, j, k) => ((i - i0 + 1) * NJ + (j - j0 + 1)) * NK + (k - k0 + 1);
-    for (let idx = 0; idx < nC; idx++) grid[at(cells[idx][0], cells[idx][1], cells[idx][2])] = idx;
-    lookup = (i, j, k) => grid[at(i, j, k)];
-  } else {
-    let P = 2, bits = 1;
-    while (P < 2 * nC) { P *= 2; bits++; }
-    const slotKey = new Float64Array(P), slotIdx = new Int32Array(P).fill(-1);
-    // Fibonacci hashing (the product's top bits) of the key's two 20-bit halves.
-    const slot = (kv) => Math.imul((kv % 1048576) ^ Math.imul(Math.floor(kv / 1048576), 0x85ebca6b), 0x9e3779b1) >>> (32 - bits);
-    for (let idx = 0; idx < nC; idx++) {
-      const kv = Math.floor(packed[idx] / IDX_SPAN);
-      let h = slot(kv);
-      while (slotIdx[h] >= 0) h = (h + 1) & (P - 1);
-      slotKey[h] = kv; slotIdx[h] = idx;
+  // Entry lookups. Blocks larger than a leaf (few): a Map per size, by corner. Leaves: a
+  // dense grid over their bounding box padded by one (so a neighbour is always in range),
+  // or, past DENSE_MAX entries, an open-addressed hash.
+  let i0 = Infinity, j0 = Infinity, k0 = Infinity, i1 = -Infinity, j1 = -Infinity, k1 = -Infinity, nLeaf = 0;
+  const bySize = new Map();   // size > 1 → (corner key → index)
+  for (let idx = 0; idx < nC; idx++) {
+    const p = cells[idx];
+    if (p[3] > 1) {
+      if (!bySize.has(p[3])) bySize.set(p[3], new Map());
+      bySize.get(p[3]).set(key(p[0], p[1], p[2]), idx);
+      continue;
     }
-    lookup = (i, j, k) => {
-      if (i < 0 || j < 0 || k < 0) return -1;
-      const kv = key(i, j, k);
-      for (let h = slot(kv); slotIdx[h] >= 0; h = (h + 1) & (P - 1)) if (slotKey[h] === kv) return slotIdx[h];
-      return -1;
-    };
+    nLeaf++;
+    i0 = Math.min(i0, p[0]); i1 = Math.max(i1, p[0]); j0 = Math.min(j0, p[1]); j1 = Math.max(j1, p[1]); k0 = Math.min(k0, p[2]); k1 = Math.max(k1, p[2]);
+  }
+  const sizes = [...bySize.keys()].sort((p, q) => p - q);   // the block sizes present, > 1
+  // The block of size ≥ s holding the size-s cube at (ni, nj, nk), else −1.
+  const blockAt = (ni, nj, nk, s, skipEqual) => {
+    for (const t of sizes) {
+      if (t < s || (skipEqual && t === s)) continue;
+      const other = bySize.get(t).get(key(ni - (ni % t), nj - (nj % t), nk - (nk % t)));
+      if (other !== undefined) return other;
+    }
+    return -1;
+  };
+  let leafAt = () => -1;   // the leaf entry at lattice position (i, j, k) of the leaves' padded box, else −1
+  if (nLeaf > 0) {
+    const NJ = j1 - j0 + 3, NK = k1 - k0 + 3, NV = (i1 - i0 + 3) * NJ * NK;
+    if (NV <= DENSE_MAX) {
+      const grid = new Int32Array(NV).fill(-1);
+      const at = (i, j, k) => ((i - i0 + 1) * NJ + (j - j0 + 1)) * NK + (k - k0 + 1);
+      for (let idx = 0; idx < nC; idx++) if (cells[idx][3] === 1) grid[at(cells[idx][0], cells[idx][1], cells[idx][2])] = idx;
+      leafAt = (i, j, k) => grid[at(i, j, k)];
+    } else {
+      let P = 2, bits = 1;
+      while (P < 2 * nLeaf) { P *= 2; bits++; }
+      const slotKey = new Float64Array(P), slotIdx = new Int32Array(P).fill(-1);
+      // Fibonacci hashing (the product's top bits) of the key's two 20-bit halves.
+      const slot = (kv) => Math.imul((kv % 1048576) ^ Math.imul(Math.floor(kv / 1048576), 0x85ebca6b), 0x9e3779b1) >>> (32 - bits);
+      for (let idx = 0; idx < nC; idx++) {
+        if (cells[idx][3] !== 1) continue;
+        const kv = Math.floor(packed[idx] / IDX_SPAN);
+        let h = slot(kv);
+        while (slotIdx[h] >= 0) h = (h + 1) & (P - 1);
+        slotKey[h] = kv; slotIdx[h] = idx;
+      }
+      leafAt = (i, j, k) => {
+        const kv = key(i, j, k);
+        for (let h = slot(kv); slotIdx[h] >= 0; h = (h + 1) & (P - 1)) if (slotKey[h] === kv) return slotIdx[h];
+        return -1;
+      };
+    }
   }
   const parent = new Int32Array(nC);
   for (let idx = 0; idx < nC; idx++) parent[idx] = idx;
   const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
-  // Each adjacency is seen from both of its cells, so linking every cell to its 13 lattice
-  // neighbours before it (BACK) links every pair once; roots are the smallest index either way.
+  const link = (x, y) => {
+    const ra = find(x), rb = find(y);
+    if (ra !== rb) { if (ra < rb) parent[rb] = ra; else parent[ra] = rb; }
+  };
+  // Leaves: each linked to the leaves among its 13 neighbours before it (IS_BACK) — a leaf
+  // pair is seen from both of its leaves, so that links it once; a leaf beside a block in
+  // another direction is linked from the block's side (below).
+  // Blocks: octree blocks of size t sit at multiples of t, so the same-size cube beside a
+  // block of size s lies wholly inside any block of size ≥ s that meets it — linking each
+  // block to the block (at most one) holding each of its 26 neighbour cubes, at its own size
+  // (13 directions, as for leaves) or larger, finds every block pair from its smaller side;
+  // and each block is linked to every leaf on its shell (the leaf positions touching it).
   for (let idx = 0; idx < nC; idx++) {
-    const i = cells[idx][0], j = cells[idx][1], k = cells[idx][2];
-    for (let d = 0; d < BACK.length; d++) {
-      const other = lookup(i + BACK[d][0], j + BACK[d][1], k + BACK[d][2]);
-      if (other < 0) continue;
-      const ra = find(idx), rb = find(other);
-      if (ra !== rb) { if (ra < rb) parent[rb] = ra; else parent[ra] = rb; }
+    const e = cells[idx], i = e[0], j = e[1], k = e[2], s = e[3];
+    for (let d = 0; d < DIRS.length; d++) {
+      if (s === 1 && !IS_BACK[d]) continue;
+      const ni = i + DIRS[d][0] * s, nj = j + DIRS[d][1] * s, nk = k + DIRS[d][2] * s;
+      if (ni < 0 || nj < 0 || nk < 0 || ni >= lim[0] || nj >= lim[1] || nk >= lim[2]) continue;
+      const other = s === 1 ? leafAt(ni, nj, nk) : blockAt(ni, nj, nk, s, !IS_BACK[d]);
+      if (other >= 0) link(idx, other);
+    }
+    if (s === 1 || nLeaf === 0) continue;
+    // The shell, clipped to the leaves' padded box (no leaf lies outside it).
+    const a0 = Math.max(i - 1, i0 - 1, 0), a1 = Math.min(i + e[5], i1 + 1, lim[0] - 1);
+    const b0 = Math.max(j - 1, j0 - 1, 0), b1 = Math.min(j + e[6], j1 + 1, lim[1] - 1);
+    const c0 = Math.max(k - 1, k0 - 1, 0), c1 = Math.min(k + e[7], k1 + 1, lim[2] - 1);
+    const touch = (x, y, z) => { const o = leafAt(x, y, z); if (o >= 0) link(idx, o); };
+    for (let x = a0; x <= a1; x++) for (let y = b0; y <= b1; y++) {
+      if (x < i || x >= i + e[5] || y < j || y >= j + e[6]) { for (let z = c0; z <= c1; z++) touch(x, y, z); continue; }
+      if (k - 1 >= c0) touch(x, y, k - 1);
+      if (k + e[7] <= c1) touch(x, y, k + e[7]);
     }
   }
   const groups = new Map();   // root (its smallest index) → member indices, ascending
@@ -214,18 +282,32 @@ function pairClusters(compiled, n, a, b) {   // compiled: the lowering view
     if (!groups.has(root)) groups.set(root, []);
     groups.get(root).push(idx);
   }
-  const centre = (p) => [lo[0] + (p[0] + 0.5) * REGION_CELL, lo[1] + (p[1] + 0.5) * REGION_CELL, lo[2] + (p[2] + 0.5) * REGION_CELL];
+  // A leaf's centre; an entry's first leaf's (its corner leaf).
+  const centre = (i, j, k) => [lo[0] + (i + 0.5) * REGION_CELL, lo[1] + (j + 0.5) * REGION_CELL, lo[2] + (k + 0.5) * REGION_CELL];
   const out = [];
   for (const root of [...groups.keys()].sort((p, q) => p - q)) {
     const members = groups.get(root);
-    let sx = 0, sy = 0, sz = 0, best = members[0];
-    for (const idx of members) { const q = centre(cells[idx]); sx += q[0]; sy += q[1]; sz += q[2]; if (cells[idx][3] < cells[best][3]) best = idx; }
-    // The deepest cell's m may be a filled block's centre value: refine from its own.
-    const p0 = centre(cells[best]);
+    let sx = 0, sy = 0, sz = 0, nLeaves = 0, best = members[0];
+    for (const idx of members) {
+      // An entry's leaves' centres sum to its leaf count times their centre.
+      const e = cells[idx], w = e[5] * e[6] * e[7];
+      sx += w * (lo[0] + (e[0] + e[5] / 2) * REGION_CELL);
+      sy += w * (lo[1] + (e[1] + e[6] / 2) * REGION_CELL);
+      sz += w * (lo[2] + (e[2] + e[7] / 2) * REGION_CELL);
+      nLeaves += w;
+      if (e[4] < cells[best][4]) best = idx;
+    }
+    // The deepest entry's m may be a filled block's centre value: refine from its first leaf's own.
+    const p0 = centre(cells[best][0], cells[best][1], cells[best][2]);
     const minM = deepest(compiled, ia, ib, p0, Math.max(evalNodeAt(compiled, ia, p0[0], p0[1], p0[2], SEARCH_EDGE), evalNodeAt(compiled, ib, p0[0], p0[1], p0[2], SEARCH_EDGE)));
-    const c = [sx / members.length, sy / members.length, sz / members.length];
+    const c = [sx / nLeaves, sy / nLeaves, sz / nLeaves];
     let far = 0;
-    for (const idx of members) { const q = centre(cells[idx]); far = Math.max(far, hypot3(q[0] - c[0], q[1] - c[1], q[2] - c[2])); }
+    // Per entry, the leaf centre farthest from c: on each axis, its end leaf farther from c.
+    const ext1 = (e, ax) => {
+      const a0 = lo[ax] + (e[ax] + 0.5) * REGION_CELL, a1 = lo[ax] + (e[ax] + e[5 + ax] - 0.5) * REGION_CELL;
+      return Math.max(Math.abs(a0 - c[ax]), Math.abs(a1 - c[ax]));
+    };
+    for (const idx of members) { const e = cells[idx]; far = Math.max(far, hypot3(ext1(e, 0), ext1(e, 1), ext1(e, 2))); }
     // The joined base of an attached pair is not a contact: no bulge, and its blend fills it.
     let attached = false;
     for (let o = 0; o < n.att.length; o += ATTACH_STRIDE) {
@@ -238,16 +320,16 @@ function pairClusters(compiled, n, a, b) {   // compiled: the lowering view
   return out;
 }
 
-// Cell indices packed under their keys (MAX_REGION_CELLS < IDX_SPAN).
+// Entry indices packed under their keys (entries ≤ MAX_REGION_CELLS + 1 < IDX_SPAN).
 const IDX_SPAN = 32768;
-// The largest dense cell-lookup grid (entries) before the clustering falls back to a hash.
+// The largest dense leaf-lookup grid (entries) before the clustering falls back to a hash.
 const DENSE_MAX = 1 << 21;
 
-// The 26 lattice directions, in a fixed order.
+// The 26 lattice directions, in a fixed order, and which of them lie lexicographically
+// before the origin.
 const DIRS = [];
 for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) if (dx || dy || dz) DIRS.push([dx, dy, dz]);
-// The 13 of them lexicographically before the origin.
-const BACK = DIRS.filter(([dx, dy, dz]) => dx < 0 || (dx === 0 && (dy < 0 || (dy === 0 && dz < 0))));
+const IS_BACK = DIRS.map(([dx, dy, dz]) => dx < 0 || (dx === 0 && (dy < 0 || (dy === 0 && dz < 0))));
 
 /**
  * Refines a cluster's depth below the cell lattice: a deterministic pattern search for the

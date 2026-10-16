@@ -167,8 +167,10 @@ Between the two zones the pair's value moves from one to the other over a fallof
 (the builder picks the band and the blend of the two values). The band must be smooth
 enough that no crease shows, with a stated Lipschitz bound feeding `L`.
 
-Only the attached pair is exempt. The same finger still keeps clear of its neighbours at
-its base, and other pairs are unaffected. Attachments are validated: unknown labels or
+Only the attached pair is exempt. Neighbouring digits attached to the same piece may web
+together inside their attachment zones (within radius + band of their anchors), as today's
+palm blend did; outside those zones they keep clear of each other, and other pairs are
+unaffected. Attachments are validated: unknown labels or
 frames, `a == b`, and duplicate pairs are compile errors with paths.
 
 The hand fixture puts the palm, the thumb and the four fingers into one `contact` node,
@@ -238,7 +240,8 @@ Decided while building; the constants live in `src/framework/geometry/implicit/c
   `A·φ(|p − c|/rb)`, `φ(t) = (1 − t²)²`, on both pieces. Falloff radius
   `rb = rho + BULGE_SPREAD·δ + 2·bulge` (`BULGE_SPREAD = 2`): it grows with the press. Its
   peak `A = bulge·min(1, δ/BULGE_FULL_DEPTH)` (`BULGE_FULL_DEPTH = 1.5` mm), so `bulge` is the
-  most any skin swells. (A height set at the rim instead, `A/φ(rho/rb)`, blew up on flat
+  most any one region swells a skin (a piece's regions add, so overlapping bumps on one
+  piece can swell it further). (A height set at the rim instead, `A/φ(rho/rb)`, blew up on flat
   contacts, whose sides lie well inside rho: 0.7 mm of swell at first detection between two
   boxes.) The centre-peaked bump was kept rather than a rim band: the band needs a
   program-format change.
@@ -252,7 +255,11 @@ Decided while building; the constants live in `src/framework/geometry/implicit/c
   ridge `PAD_BLEND/4` = 0.375 mm along the seam; the contact's box is padded for it. As the
   gate eases out the term rises by `cl + PAD_BLEND/4`, so it is clear of the clearance cut
   before it vanishes at any grid edge.
-- **The fill gate** `FILL_BAND = 2` mm (Task 3), unchanged.
+- **The fill gate** `FILL_BAND = 2` mm (Task 3), unchanged. A near miss on a pair that also
+  touches elsewhere keeps its clean gap only beyond the gate's reach from that pad's region:
+  `rho + cl + 2·FILL_BAND` from its centre (about 7.8 mm for a 1.5 mm-radius pad at the
+  1.5 mm preview grid). Nearer, the pad's fill is still open there and may join the pair
+  (`test/implicit-contact.test.js`, "mixed contact", holds a near miss 40 mm off).
 - **The pruning rule.** Tasks 2–3's rules (a)–(d); rule (b)'s threshold becomes
   `cl + PAD_BLEND/2` on a node with pad fills, so a pruned third slot's clearance term never
   rises above a pad's blend (`test/implicit-contact.test.js` holds a case where `cl` alone
@@ -262,9 +269,17 @@ Decided while building; the constants live in `src/framework/geometry/implicit/c
   interval pass was far looser: a smooth union's interval drops by `k/4`, so the blended palm
   read "maybe inside" millimetres off its surface), cells wholly inside both taken without
   evaluation, cells in an attachment's joined zone skipped; clusters 26-connected in
-  lattice order; δ refined by a pattern search. 0.75 mm, not 0.5, holds the fist's compile
+  lattice order; δ refined by a pattern search. A block wholly inside both pieces is one
+  search entry (the budget counts the overlap's surface, not its volume: two r = 20 mm
+  spheres pressed 20 mm together resolve), and clustering links blocks of any size. 0.75 mm, not 0.5, holds the fist's compile
   at 7–10 ms CPU against the 20 ms gate (0.5 mm: 11–21 ms); 1 mm split a thin contact in two and missed a 0.5 mm press.
-  `MAX_REGION_CELLS = 20000`.
+  `MAX_REGION_CELLS = 20000` entries. A pair past it (two r = 30 mm spheres 40 mm apart)
+  gets ONE conservative region instead of none — centred on the pair's box intersection,
+  `rho` half its diagonal, δ the deepest overlap seen before stopping — and a compile
+  warning, so a gap-0 pair still fuses rather than being cut through.
+  The search prunes with each child's IR `L` as a Lipschitz bound. `L` is the pruning
+  bound, not a true one for every node (warp, displace and a nested contact can exceed it);
+  a low bound only risks the search missing a region cell, never a wrong field value.
   Detection threshold: overlaps up to about 0.35 mm (two spheres, or two flat faces) find
   no region on the 0.75 mm lattice, so at gap 0 they still mesh with the clearance gap;
   at 0.4 mm they fuse — the moment two surfaces first meet, about 0.4 mm late.
