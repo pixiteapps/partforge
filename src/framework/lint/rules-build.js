@@ -69,9 +69,8 @@ export const BUILD_RULES = [
     // probe degrades at runtime to `{ error }` in the measure report rather
     // than crashing anything — this rule is what makes it loud anyway.
     id: "probe-throws",
-    run: ({ probe }) => probe().probeThrows.map(({ probe: name, message, queried }) => queried.length
-      ? stubbedThrow("probe-throws", `probe "${name}"`, message, queried, `probes.${name}`)
-      : err("probe-throws", `probe "${name}" threw during a geometry-free run: ${message}`,
+    run: ({ probe }) => probe().probeThrows.map(({ probe: name, message }) =>
+      err("probe-throws", `probe "${name}" threw during a geometry-free run: ${message}`,
         "Fix the error in the probe function. This was raised with no kernel attached, so it is a fault in the probe's own logic (bad arithmetic, a missing param, a null dereference) rather than a geometry failure — at runtime it would report `{ error }` instead of a measurement.",
         `probes.${name}`)),
   },

@@ -4,6 +4,7 @@
 // for the same input (the cloud keys its cache on them).
 import { expect, test } from "vitest";
 import { encodePreviewGlb, PREVIEW_ENCODER_VERSION } from "../src/gltf.js";
+import { sortSegments } from "../src/framework/gltf/encode-preview.js";
 import { cadAppearance } from "../src/framework/materials/resolve.js";
 import { boxEdges, boxSoup, denseGrid, indexedBox, poseArray, readGlb, worldBounds, glbJson } from "./helpers/preview-glb.js";
 
@@ -222,4 +223,37 @@ test("plain-array edges: empty writes nothing, non-empty encodes like a Float32A
   ], view: "v" }));
   expect(nodeNamed(doc, "none").getMesh().listPrimitives()).toHaveLength(1);
   expect(nodeNamed(doc, "plain").getMesh().listPrimitives().map((p) => p.getMode())).toEqual([4, 1]);
+});
+
+test("segments sort exactly as (low, high) pairs, indices above 2^21 included", () => {
+  // A float64 key a * 2^32 + b loses the low index's bits from 2^21 up; the sort must not.
+  const big = 2 ** 21;
+  const pairs = new Uint32Array([big + 7, big + 5, 2 ** 22 + 3, big + 9, 5, 2 ** 31 + 1, 2 ** 32 - 1, 2 ** 32 - 2, big + 5, big + 8]);
+  expect([...sortSegments(pairs)]).toEqual([
+    5, 2 ** 31 + 1,
+    big + 5, big + 7,
+    big + 5, big + 8,
+    big + 9, 2 ** 22 + 3,
+    2 ** 32 - 2, 2 ** 32 - 1,
+  ]);
+});
+
+test("an appended endpoint outside the surface's bounds keeps its own vertices; the surface quantizes as with no edges", async () => {
+  const box = boxSoup("base", [0, 0, 0], [4, 2, 6]);
+  const edges = new Float32Array([...boxEdges([0, 0, 0], [4, 2, 6]), 2, 1, 6, 2, 1, 9]); // a mast 3 mm above the lid
+  const withEdges = await encodePreviewGlb({ meshes: [{ ...box, edges }], view: "v" });
+  const bare = await readGlb(await encodePreviewGlb({ meshes: [box], view: "v" }));
+  const doc = await readGlb(withEdges);
+  const [surface, lines] = doc.getRoot().listMeshes()[0].listPrimitives();
+  const [bareSurface] = bare.getRoot().listMeshes()[0].listPrimitives();
+  expect(lines.getAttribute("POSITION")).not.toBe(surface.getAttribute("POSITION"));
+  expect(lines.getIndices()).toBeNull();
+  expect(lines.getAttribute("POSITION").getCount()).toBe(edges.length / 3);
+  // the surface's quantized vertices and its node's quantization transform are untouched
+  expect([...surface.getAttribute("POSITION").getArray()]).toEqual([...bareSurface.getAttribute("POSITION").getArray()]);
+  const nodeOf = (d) => d.getRoot().listNodes().find((n) => n.getName() === "base").getMatrix();
+  expect(nodeOf(doc)).toEqual(nodeOf(bare));
+  // and the lines land where they were written (world Y-up: model z 9 → glTF y 9)
+  const b = worldBounds(doc);
+  expectNear(b.max, [4, 9, 0], 2);
 });

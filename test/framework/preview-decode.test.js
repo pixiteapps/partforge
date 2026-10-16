@@ -196,3 +196,12 @@ test("lines whose off-surface endpoints would outnumber the surface keep vertice
   expect(segmentMismatch(out.meshes[0].edges, edges)).toBeNull();
   expect(out.meshes[0].triangles).toBe(12);
 });
+
+test("lines with an endpoint outside the surface's bounds round-trip in the model frame", async () => {
+  const body = posedBox("body");
+  const extra = poseArray(new Float32Array([1.5, 1, 5, 1.5, 1, 9]), 30, [12, -7, 4]); // a mast off the top
+  const edges = new Float32Array([...body.edges, ...extra]);
+  const out = await decodePreviewGlb(await encodePreviewGlb({ meshes: [{ ...body, edges }], view: "v" }));
+  expect(segmentMismatch(out.meshes[0].edges, edges, 1e-3)).toBeNull();
+  expect(out.meshes[0].triangles).toBe(12);
+});

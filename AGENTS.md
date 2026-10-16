@@ -272,7 +272,8 @@ the installed package, so let the publish finish before bumping the dep there.
   accessor and stores only endpoint indices (each endpoint snapped to the surface
   vertex at its position, bit-exact else within one 14-bit quantization step, or
   appended past the surface's vertices — the decoder stops the payload before
-  those). The pipeline is weld → reorder (surfaces only) → map + append →
+  those; a sub-part whose appended endpoints would leave the surface's bounds or
+  trip quantize()'s compaction keeps float line vertices of its own instead). The pipeline is weld → reorder (surfaces only) → map + append →
   quantize → add the line primitives → meshopt "medium" compression: weld,
   reorder and quantize each clone a primitive's accessors, so lines added before
   them would get their own vertex array back. Empty or absent `edges` writes none
@@ -591,9 +592,10 @@ parameters in both directions. Override with `meta.backend: "occt" |
 (OCCT booleans are about 75-1400x slower).
 The same proxy is lint's geometry-free build (`runValidatingProbe`): every query
 (`boundingBox`, `area`, `volume`, `contains`, `corners`, `toRegions`, …) returns a
-placeholder, so a build/probe that throws AFTER reading one is a `build-throws` /
-`probe-throws` NOTE, not an error (0.155.0) — the probe records the queries read
-per call, never across sub-parts. A throw with no query read stays an error.
+placeholder, so a build that throws AFTER reading one is a `build-throws` NOTE,
+not an error (0.155.0) — the probe records the queries read per call, never
+across sub-parts. A throw with no query read stays an error, and `probe-throws`
+(declared probes) stays an error regardless.
 
 ### Non-obvious invariants
 

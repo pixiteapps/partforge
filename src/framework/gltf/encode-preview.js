@@ -11,15 +11,22 @@
 //    pairs. Each endpoint is the surface vertex at its position — bit-exact
 //    first, else the nearest within one 14-bit quantization step of the mesh —
 //    and an endpoint on no vertex is APPENDED to that shared array, where no
-//    triangle references it, so the surface is unchanged and no edge is dropped.
+//    triangle references it, so the surface's triangles are unchanged and no
+//    edge is dropped.
 //    A sub-part whose `edges` is empty or absent has no line primitive; a reader
 //    takes that as "no feature edges" (never "derive them"). A reader must take
 //    the line primitive's INDICES, not its whole vertex array.
 //    Version 1 had no line primitives; version 2 gave the lines their own
 //    POSITION accessor on the same mesh (both still decode). Rare fallback, also
-//    in version 3: a sub-part whose off-vertex endpoints would outnumber its
-//    surface (quantize() would then compact the shared array and drop them)
-//    writes its lines version-2 style, with their own vertices.
+//    in version 3: a sub-part whose lines would need either
+//      (a) an appended endpoint OUTSIDE the surface's bounds — it would widen
+//          the mesh's quantization volume and coarsen the surface — or
+//      (b) so many appended endpoints that quantize() compacts the surface
+//          (its condition: index count < vertex count / 2, the appended
+//          vertices counted), dropping them,
+//    writes its lines with vertices of their own (unindexed, float, added after
+//    quantize() in the node's quantized frame), so the surface quantizes
+//    exactly as it would with no edges at all.
 //  - every sub-part node under ONE root node, "partforge", rotated −90° about X:
 //    partforge models Z-up in millimetres and glTF is Y-up. Units stay mm — the
 //    file is for partforge's own viewer; metres would only matter for AR.
@@ -172,31 +179,39 @@ function mapEdges(positions, edges, tol) {
 
 // Segments as (low, high) pairs in ascending order: the same set of lines, but an
 // index stream meshopt's delta coding compresses far better than the kernel's order.
-function sortSegments(pairs) {
+export function sortSegments(pairs) {
   const n = pairs.length / 2;
-  const keys = new Float64Array(n);
+  const keys = new BigUint64Array(n); // (low << 32) | high, exact for every Uint32 index
   for (let s = 0; s < n; s++) {
     const a = pairs[s * 2], b = pairs[s * 2 + 1];
-    keys[s] = Math.min(a, b) * 2 ** 32 + Math.max(a, b);
+    keys[s] = (BigInt(Math.min(a, b)) << 32n) | BigInt(Math.max(a, b));
   }
   keys.sort();
   const out = new Uint32Array(pairs.length);
   for (let s = 0; s < n; s++) {
-    out[s * 2] = Math.floor(keys[s] / 2 ** 32);
-    out[s * 2 + 1] = keys[s] % 2 ** 32;
+    out[s * 2] = Number(keys[s] >> 32n);
+    out[s * 2 + 1] = Number(keys[s] & 0xffffffffn);
   }
   return out;
 }
 
-function widestExtent(positions) {
-  let w = 0;
-  for (let a = 0; a < 3; a++) {
-    let lo = Infinity, hi = -Infinity;
-    for (let i = a; i < positions.length; i += 3) { if (positions[i] < lo) lo = positions[i]; if (positions[i] > hi) hi = positions[i]; }
-    if (hi - lo > w) w = hi - lo;
+function boundsOf(positions) {
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < positions.length; i += 3) {
+    for (let a = 0; a < 3; a++) {
+      if (positions[i + a] < min[a]) min[a] = positions[i + a];
+      if (positions[i + a] > max[a]) max[a] = positions[i + a];
+    }
   }
-  return w;
+  return { min, max };
 }
+const outside = (points, { min, max }) => {
+  for (let i = 0; i < points.length; i += 3) {
+    for (let a = 0; a < 3; a++) if (points[i + a] < min[a] || points[i + a] > max[a]) return true;
+  }
+  return false;
+};
 
 function checkMesh(m, seen) {
   if (!m || typeof m.name !== "string" || !m.name) throw new TypeError("encodePreviewGlb: every mesh needs a non-empty string name");
@@ -288,17 +303,19 @@ export async function encodePreviewGlb({ meshes, part = null, view = null } = {}
   // Map each endpoint onto those vertices; append the ones on none. Then quantize
   // with the appended vertices in place, and only then add the line primitives.
   const shared = [];
+  const ownVertices = []; // { mesh, edges } — the fallback, added after quantize()
   for (const { mesh, surface, edges } of pending) {
     const position = surface.getAttribute("POSITION");
     const positions = position.getArray();
-    const tol = widestExtent(positions) / 2 ** POSITION_BITS;
+    const bounds = boundsOf(positions);
+    const tol = Math.max(...bounds.max.map((hi, a) => hi - bounds.min[a])) / 2 ** POSITION_BITS;
     const { pairs, appended } = mapEdges(positions, edges, tol);
     const vertexCount = positions.length / 3 + appended.length / 3;
-    if (compactsAt(surface.getIndices().getCount(), vertexCount)) {
-      // quantize() would compact the surface and drop the appended endpoints:
-      // write these lines with their own vertices instead (version-2 shape).
-      mesh.addPrimitive(doc.createPrimitive().setMode(Primitive.Mode.LINES).setAttribute(
-        "POSITION", doc.createAccessor().setType("VEC3").setArray(edges).setBuffer(buffer)));
+    if (outside(appended, bounds) || compactsAt(surface.getIndices().getCount(), vertexCount)) {
+      // Appending would change the surface's quantization volume, or quantize()
+      // would compact the surface and drop the appended endpoints: these lines
+      // keep vertices of their own instead (see the file header).
+      ownVertices.push({ mesh, edges });
       continue;
     }
     if (appended.length) {
@@ -318,6 +335,20 @@ export async function encodePreviewGlb({ meshes, part = null, view = null } = {}
   }
 
   await doc.transform(quantize());
+
+  // The fallback lines: float positions mapped into the node's quantized frame
+  // (quantize() moved the mesh's offset and scale onto its node — a sub-part node
+  // has no children or animation, so its matrix is exactly that translate+scale).
+  for (const { mesh, edges } of ownVertices) {
+    const m = mesh.listParents().find((p) => typeof p.getMatrix === "function").getMatrix();
+    const scale = m[0];
+    const local = new Float32Array(edges.length);
+    for (let i = 0; i < edges.length; i += 3) {
+      for (let a = 0; a < 3; a++) local[i + a] = (edges[i + a] - m[12 + a]) / scale;
+    }
+    mesh.addPrimitive(doc.createPrimitive().setMode(Primitive.Mode.LINES).setAttribute(
+      "POSITION", doc.createAccessor().setType("VEC3").setArray(local).setBuffer(buffer)));
+  }
 
   for (const { mesh, surface, pairs, vertexCount } of shared) {
     // quantize() replaced the surface's accessors; the vertex order and count did not change.

@@ -155,6 +155,9 @@ test("a pure probe raises no build findings", () => {
 test("a throw after a stubbed data query is a note, not an error — and the part really builds", async () => {
   const { default: part } = await import("./fixtures/stub-query-truss-part.js");
   const r = lintPart(part);
+  // partforge-cloud's loadPart refuses a part exactly when `ok` is false (with any
+  // non-source error); the CLI's `lint --strict` gate is pinned in lint-cli.test.js.
+  expect(r.ok).toBe(true);
   expect(ids(r.errors)).toEqual([]);
   expect(ids(r.warnings)).toEqual([]);
   const n = r.notes.find((f) => f.rule === "build-throws");
@@ -197,11 +200,13 @@ test("query tracking is per build: one sub-part's query does not excuse another'
   expect(find(r, "build-throws").path).toBe("parts.lid.build");
 });
 
-test("a probe that throws after a stubbed query is a note; one that throws outright is an error", () => {
+test("a probe that throws stays an error, even after a stubbed query", () => {
+  // At runtime a throwing probe degrades quietly to { error } — this error is what
+  // makes it loud, and probes exist to read queries, so the note is builds-only.
   const r = lintPart(partWith((k) => k.box({ size: [1, 1, 1] }), { probes: {
     gap: (k) => { if (k.box({ size: [2, 2, 2] }).volume() < 5) throw new Error("too small"); return 1; },
     slab: () => { throw new Error("bad slab maths"); },
   } }));
-  expect(r.errors.filter((f) => f.rule === "probe-throws").map((f) => f.path)).toEqual(["probes.slab"]);
-  expect(r.notes.filter((f) => f.rule === "probe-throws").map((f) => f.path)).toEqual(["probes.gap"]);
+  expect(r.errors.filter((f) => f.rule === "probe-throws").map((f) => f.path)).toEqual(["probes.gap", "probes.slab"]);
+  expect(r.notes.map((f) => f.rule)).not.toContain("probe-throws");
 });
