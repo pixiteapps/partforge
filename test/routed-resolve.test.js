@@ -81,3 +81,28 @@ describe("resolveRouted refuses", () => {
     refuses({ drills: () => ({}) }, 'routed part "Plinth": drills(p, d) must return an array of { at, d, depth }');
   });
 });
+
+describe("face", () => {
+  test("defaults to near on every op kind, and far is kept", () => {
+    const s = resolve(part({
+      pockets: () => [{ region: RECT, depth: 3 }, { region: RECT, depth: 4, face: "far" }],
+      drills: () => [{ at: [50, 30], d: 4, depth: 5 }, { at: [40, 30], d: 4, depth: 18, face: "far" }],
+      extra: (kk) => [{ solid: kk.box({ size: [10, 10, 5] }), footprint: RECT, label: "scoop", method: "core box", face: "far" }],
+    }));
+    expect(s.routed.pockets.map((x) => x.face)).toEqual(["near", "far"]);
+    expect(s.routed.drills.map((x) => x.face)).toEqual(["near", "far"]);
+    expect(s.routed.drills[1]).toMatchObject({ through: true, depth: 18, face: "far" });
+    expect(s.routed.extra[0].face).toBe("far");
+  });
+  test("any other value is refused, naming the op", () => {
+    expect(() => resolve(part({ pockets: () => [{ region: RECT, depth: 3, label: "lip", face: "bottom" }] })))
+      .toThrow('routed part "Plinth": pocket "lip" face must be "near" or "far", got "bottom"');
+    expect(() => resolve(part({ drills: () => [{ at: [1, 1], d: 2, depth: 2, face: 1 }] })))
+      .toThrow('drill 1 face must be "near" or "far", got 1');
+    expect(() => resolve(part({ extra: (kk) => [{ solid: kk.box({ size: [10, 10, 5] }), footprint: RECT, label: "scoop", method: "core box", face: "top" }] })))
+      .toThrow('extra op "scoop" face must be "near" or "far", got "top"');
+  });
+  test("a far pocket deeper than the stock is still refused", () => {
+    expect(() => resolve(part({ pockets: () => [{ region: RECT, depth: 19, face: "far" }] }))).toThrow("a pocket may be at most the thickness");
+  });
+});

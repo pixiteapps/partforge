@@ -2259,9 +2259,11 @@ Lint: `routed-drill-depth` (error) — a drill deeper than the stock at the defa
 Every sheet rule applies too (`sheet-thickness-literal`, `sheet-custom-build`, …); the
 laser's thickness range does not. A pocket deeper than the stock is a build error.
 
-Verify volunteers three warnings on every routed part, none counting toward
+Verify volunteers four warnings on every routed part, none counting toward
 `declared`/`evaluated`: `routedOutside` (pocket, drill or footprint regions outside the
-profile, `0`), `routedEmpty` (pockets that resolved empty, `0`), `routedPieces` (`1`).
+profile, `0`), `routedEmpty` (pockets that resolved empty, `0`), `routedPieces` (`1`),
+`routedBreakthrough` (a near-face and a far-face pocket that overlap and together go
+deeper than the stock, `0`).
 Each measured row carries `sheet.routed` — the operations table — beside the stock facts.
 
 ### Limits

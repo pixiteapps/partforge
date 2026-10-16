@@ -64,7 +64,7 @@ const declared = (checks, metric) => checks.find((c) => c.metric === metric && !
 
 test("the sheet metrics join the sub-part vocabulary without replacing a print metric", () => {
   expect(Object.keys(SHEET_METRICS).sort()).toEqual([
-    "routedEmpty", "routedOutside", "routedPieces", "sheetBridge", "sheetGap", "sheetMarks", "sheetPieces", "sheetSolidMatch"]);
+    "routedBreakthrough", "routedEmpty", "routedOutside", "routedPieces", "sheetBridge", "sheetGap", "sheetMarks", "sheetPieces", "sheetSolidMatch"]);
   for (const name of Object.keys(SHEET_METRICS)) {
     expect(PRINT_METRICS, `${name} collides with a print metric`).not.toContain(name);
     expect(SUBPART_METRICS[name]).toBe(SHEET_METRICS[name]);

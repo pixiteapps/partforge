@@ -50,3 +50,20 @@ test("a through pocket (depth = thickness) removes region × thickness and leave
   expect(s.volume()).toBeCloseTo(100 * 60 * 18 - 30 * 20 * 18, 2);
   expect(s.boundingBox().min[2]).toBeCloseTo(0, 6);
 });
+
+test("a far pocket removes region × depth from the BOTTOM face (z = 0)", () => {
+  const s = build({ pockets: () => [{ region: [[10, 10], [40, 10], [40, 30], [10, 30]], depth: 5, face: "far" }] });
+  expect(s.volume()).toBeCloseTo(100 * 60 * 18 - 30 * 20 * 5, 2);
+  expect(s.boundingBox().min[2]).toBeCloseTo(0, 6);
+  // nothing removed above z = 5 inside the pocket: a probe box there is fully solid
+  // (k.box is centred in x/y and sits on z = 0, so the pocket's centre is [25, 20])
+  expect(s.intersect(k.box({ size: [30, 20, 13] }).translate([25, 20, 5])).volume()).toBeCloseTo(30 * 20 * 13, 2);
+});
+
+test("a far blind drill cuts up from z = 0; a far through drill clears both faces", () => {
+  const blind = build({ drills: () => [{ at: [50, 30], d: 10, depth: 9, face: "far" }] });
+  expect(Math.abs(blind.volume() - (100 * 60 * 18 - Math.PI * 25 * 9))).toBeLessThan(2);
+  expect(blind.intersect(k.cylinder({ d: 10, h: 9 }).translate([50, 30, 9])).volume()).toBeGreaterThan(600); // the top 9 mm are solid
+  const thru = build({ drills: () => [{ at: [50, 30], d: 10, depth: 18, face: "far" }] });
+  expect(Math.abs(thru.volume() - (100 * 60 * 18 - Math.PI * 25 * 18))).toBeLessThan(2);
+});

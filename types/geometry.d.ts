@@ -338,12 +338,14 @@ export function sheetPart<P = ResolvedParams, D = Derived>(spec: SheetPartSpec<P
 
 // --- routed parts (docs/AUTHORING-PARTS.md "Routed parts") --------------------
 
-/** A flat-floored pocket machined `depth` mm down from the machined face. */
-export interface RoutedPocket { region: Shape2D | ProfileInput; depth: number; label?: string }
+/** Which face of the stock an op is machined from: `"near"` (z = thickness, the default) or `"far"` (z = 0). */
+export type RoutedFace = "near" | "far";
+/** A flat-floored pocket machined `depth` mm into the stock from its face. */
+export interface RoutedPocket { region: Shape2D | ProfileInput; depth: number; label?: string; face?: RoutedFace }
 /** A drilled hole; `depth` equal to the stock thickness drills through — deeper is a `routed-drill-depth` lint error. */
-export interface RoutedDrill { at: Point2; d: number; depth: number; label?: string }
+export interface RoutedDrill { at: Point2; d: number; depth: number; label?: string; face?: RoutedFace }
 /** An operation done with another tool after the flat milling: the solid is cut in the preview and the STEP, the footprint is drawn, label and method go in the README. */
-export interface RoutedExtra { solid: Solid; footprint: Shape2D | ProfileInput; label: string; method: string }
+export interface RoutedExtra { solid: Solid; footprint: Shape2D | ProfileInput; label: string; method: string; face?: RoutedFace }
 
 /**
  * What `routedPart` accepts: `sheetPart`'s stock, profile and pose, plus pockets,

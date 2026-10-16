@@ -562,6 +562,8 @@ export interface SubPartExpectations {
   routedEmpty?: Expectation;
   /** Routed parts only: separate regions in the cut profile (volunteered check: `1`). */
   routedPieces?: Expectation;
+  /** Routed parts only: overlapping near- and far-face pocket pairs whose depths together exceed the stock (volunteered check: `0`). */
+  routedBreakthrough?: Expectation;
 }
 
 /**
