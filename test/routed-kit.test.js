@@ -234,5 +234,10 @@ describe("two-sided pieces", () => {
     const own = await kit(lid, { destination: "own-laser", twoSided: "two-files" }, ["lid"]);
     expect(own.names).toEqual(expect.arrayContaining(["parts/lid.svg", "parts/lid-far.svg"]));
     expect(own.text("parts/lid-far.svg")).toContain('id="far-pocket-6"');
+    const service = await kit(lid, { destination: "service", twoSided: "two-files" }, ["lid"]);
+    expect(service.error).toBeNull();
+    expect(service.names).toEqual(expect.arrayContaining(["parts/lid.dxf", "parts/lid-far.dxf"]));
+    expect(parseDxf(service.text("parts/lid-far.dxf")).layers.map((l) => l.name)).toEqual(["REFERENCE", "FAR_DRILL_D5_8MM", "FAR_POCKET_6MM"]);
+    expect(service.names).not.toContain("parts/lid-marks.dxf");
   });
 });

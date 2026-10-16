@@ -4,7 +4,7 @@ import router from "../src/framework/process/cnc-router/export.js";
 import { routedPart } from "../src/framework/sheet/routed.js";
 import { resolveSheet } from "../src/framework/sheet/resolve.js";
 import { validateKitOptions } from "../src/framework/export/formats.js";
-import { routedLayerName } from "../src/framework/export/drawing.js";
+import { routedLayerName, splitFaces } from "../src/framework/export/drawing.js";
 import { renderDxf } from "../src/framework/export/dxf.js";
 import { renderSvg } from "../src/framework/export/svg.js";
 import { parseDxf } from "./helpers/dxf-subset.js";
@@ -104,6 +104,18 @@ describe("far face", () => {
     expect([Math.min(...xs), Math.max(...xs)]).toEqual([10, 40]);  // 100 − 90 … 100 − 60
     expect(d.farOutline).toHaveLength(1);
     expect(d.layers.find((l) => l.id === "pocket-3").face).toBeUndefined();
+  });
+  test("the far outline of an asymmetric profile is the profile mirrored about the nominal centre, and lands on REFERENCE", () => {
+    const L = [[0, 0], [100, 0], [100, 30], [60, 30], [60, 60], [0, 60]];
+    const d = draw({ profile: (kk) => kk.shape2d(L), pockets: () => [{ region: [[10, 10], [30, 10], [30, 20], [10, 20]], depth: 4, face: "far" }] }, { destination: "cnc-router" });
+    const key = ([x, y]) => `${Math.round(x * 1000) / 1000},${Math.round(y * 1000) / 1000}`;
+    const expected = L.map(([x, y]) => key([100 - x, y])).sort();
+    const ring = d.farOutline[0];
+    expect([...new Set([ring.start, ...ring.segments.map((sg) => sg.to)].map(key))].sort()).toEqual(expected);
+    const far = splitFaces(d).far;
+    const ref = parseDxf(renderDxf(piece(far))).entities.filter((e) => e.layer === "REFERENCE");
+    expect(ref).toHaveLength(1);
+    expect([...new Set(ref[0].vertices.map((v) => key(v.at)))].sort()).toEqual(expected);
   });
   test("end-over-end mirrors y instead", () => {
     const dxf = parseDxf(renderDxf(piece(draw(FAR, { destination: "cnc-router", flip: "end-over-end" }))));

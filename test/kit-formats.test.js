@@ -59,7 +59,7 @@ describe("validateKitOptions", () => {
     refuses(null, "cut kit options: options must be an object");
     refuses([], "cut kit options: options must be an object");
     refuses("svg", "cut kit options: options must be an object");
-    refuses({ foo: 1 }, 'cut kit options: unknown option "foo" — the options are destination, cutFormat, kerf, colors, stock, margin, spacing, printFormat, sets');
+    refuses({ foo: 1 }, 'cut kit options: unknown option "foo" — the options are destination, cutFormat, kerf, colors, stock, margin, spacing, printFormat, sets, flip, twoSided');
     refuses({ destination: "laser" }, 'cut kit options: destination must be "own-laser", "service" or "cnc-router", got "laser"');
     refuses({ destination: "toString" }, 'cut kit options: destination must be "own-laser", "service" or "cnc-router", got "toString"');
     refuses({ cutFormat: "dxf" }, 'cut kit options: cutFormat "dxf" does not match destination "own-laser" (which writes svg)');

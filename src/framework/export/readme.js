@@ -22,7 +22,7 @@ const FLIP_NOTE = {
   "left-right": "Far-side layers (FAR_*) are drawn as seen after flipping the board left-right, matching a VCarve two-sided job with Flip Direction = Horizontal.",
   "end-over-end": "Far-side layers (FAR_*) are drawn as seen after flipping the board end over end, matching a VCarve two-sided job with Flip Direction = Vertical.",
 };
-const ALIGN_NOTE = "On the bottom side, move the imported far-side vectors so their outline sits on the piece's outline as the CAM shows it from that side. Shortcut: make the job's material the piece's size with the datum at its centre on both sides, and the far layers land exactly.";
+const ALIGN_NOTE = "On the bottom side, move the imported far-side vectors so their outline sits on the piece's outline as the CAM shows it from that side. Shortcut: make the job's material the piece's size, then centre the imported vectors on the material (VCarve: Align Selected Objects → Centre); because the far layers are mirrored about the piece's own centre, they then land exactly.";
 const ONE_FILE_NOTE = "On the bottom side the CUT outline is for alignment only — cut the piece out from the near side.";
 const TWO_SIDED_ORDER = "Two-sided pieces: machine the far side first, flip, then the near side and the through cut last, so the board holds the piece until the end. Sheet layouts in sheets/ carry near-side work only; far-side work is in the per-piece files.";
 const LIMITS_LINE = "Layout packs bounding boxes only: no nesting into holes, and grain direction is ignored.";

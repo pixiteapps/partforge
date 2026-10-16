@@ -230,7 +230,7 @@ describe("renderReadme — CNC router", () => {
       "drill | near | — | Ø3.4 mm × 2 | 10.00 mm | drill",
       "extra | near | notch | 10.00 × 10.00 mm | to 5.00 mm | chisel, 10 mm",
       "Far-side layers (FAR_*) are drawn as seen after flipping the board left-right, matching a VCarve two-sided job with Flip Direction = Horizontal.",
-      "On the bottom side, move the imported far-side vectors so their outline sits on the piece's outline as the CAM shows it from that side. Shortcut: make the job's material the piece's size with the datum at its centre on both sides, and the far layers land exactly.",
+      "On the bottom side, move the imported far-side vectors so their outline sits on the piece's outline as the CAM shows it from that side. Shortcut: make the job's material the piece's size, then centre the imported vectors on the material (VCarve: Align Selected Objects → Centre); because the far layers are mirrored about the piece's own centre, they then land exactly.",
       "On the bottom side the CUT outline is for alignment only — cut the piece out from the near side.",
       "LAYERS (one colour per layer across the kit):",
     ].join("\n"));
