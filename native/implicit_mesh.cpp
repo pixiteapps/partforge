@@ -32,6 +32,7 @@
 //     JS's topological test with the same sums, divisions and cross product.
 #include "implicit_mesh.h"
 
+#include <cmath>
 #include <vector>
 
 #include "flat_map.h"
@@ -57,6 +58,7 @@ int sample(ipe::Session& s, const int32_t* leaves, int count, const double* orig
   std::vector<double>().swap(s.positions);
   std::vector<uint32_t>().swap(s.indices);
   std::vector<int32_t>().swap(s.vertLeaf);
+  std::vector<double>().swap(s.normals);
   s.leaves.assign(leaves, leaves + (size_t)count * 4);
   const size_t need = (size_t)count * S3;
   if (need > s.valsCap) {
@@ -159,7 +161,7 @@ int mesh(ipe::Session& s) {
   std::vector<double>& positions = s.positions;
   std::vector<uint32_t>& indices = s.indices;
   std::vector<int32_t>& vertLeaf = s.vertLeaf;
-  positions.clear(); indices.clear(); vertLeaf.clear();
+  positions.clear(); indices.clear(); vertLeaf.clear(); s.normals.clear();
   const int count = (int)(s.leaves.size() / 4);
   const double edge = s.edge, o0 = s.origin[0], o1 = s.origin[1], o2 = s.origin[2];
   const int64_t n0 = s.n[0], n1 = s.n[1], n2 = s.n[2];
@@ -289,6 +291,254 @@ int mesh(ipe::Session& s) {
   return 0;
 }
 
+
+// ---------------------------------------------------------------------------
+// project.js (projectVertices) and cleanup.js (cleanupMesh).
+//
+// What bit-exact parity needs here:
+//   - projection: the 7-point stencil in the JS's order (centre, +x, -x, +y, -y,
+//     +z, -z), e = 0.1 * edge, the central differences divided by (2 * e), the
+//     `!(g2 > 1e-12)` early return (NaN included), the normal as g / |g|, and the
+//     step d / |g| clamped to +-maxStep, subtracted as (g / |g|) * t.
+//     The JS batches vertices per leaf in first-appearance order; here they are
+//     batched per PROGRAM (counting sort, vertex order within a program). That
+//     decides no value: a vertex's move reads only its own position and its own
+//     leaf's program, writes only its own position and normal, and the
+//     interpreter is lane-local, so neither the batch a vertex rides in nor the
+//     order the batches run in can change a bit. (A vertex listed twice would
+//     read its own move in the JS only across a group boundary, never inside
+//     one; `which` is refused if it names a vertex twice, so that cannot arise.)
+//   - collapse: triangles in order, corners c = 0, 1, 2 and the edge (c, c+1);
+//     the `locked` test, the squared length `>= min2`, the common-neighbour count
+//     of the two rings (sets, so the count is order-free), the no-flip test with
+//     the midpoint substituted for a and b (the same values the JS's write/
+//     restore of P produces, read in the same arithmetic), the kill/rename walk
+//     over b's incident triangles in incidence order, break after a collapse, and
+//     first-use compaction. The incident lists are CSR (filled in triangle order,
+//     corner order, as the JS pushes them). The JS also appends b's renamed
+//     triangles to vt[a]; that list is never read again — a and b are locked by
+//     the same collapse, and only an unlocked vertex's list is read (ring and the
+//     flip test of an edge whose ends are both unlocked) — so the CSR omits the
+//     append. test/core-structures.test.js holds the lists to the JS.
+//   - relax: the per-triangle edge accumulation a += P[b], b += P[a] in the JS
+//     order, the zero-normal skip, and the same divisions and clamp.
+namespace {
+
+// cleanup.js's triNormal, reading coordinates through `at`.
+template <class At>
+inline void triNormal(At at, uint32_t a, uint32_t b, uint32_t c, double* out) {
+  const double* A = at(a);
+  const double* B = at(b);
+  const double* C = at(c);
+  const double ux = B[0] - A[0], uy = B[1] - A[1], uz = B[2] - A[2];
+  const double vx = C[0] - A[0], vy = C[1] - A[1], vz = C[2] - A[2];
+  out[0] = uy * vz - uz * vy; out[1] = uz * vx - ux * vz; out[2] = ux * vy - uy * vx;
+}
+
+void collapse(ipe::Session& s, double minLen) {
+  std::vector<double>& P = s.positions;
+  std::vector<uint32_t>& T = s.indices;
+  std::vector<int32_t>& VL = s.vertLeaf;
+  const size_t nv = P.size() / 3, nt = T.size() / 3;
+  // Incident triangles per vertex, CSR, in triangle order.
+  std::vector<uint32_t> off(nv + 1, 0), inc(nt * 3);
+  for (size_t q = 0; q < nt * 3; q++) off[T[q] + 1]++;
+  for (size_t v = 0; v < nv; v++) off[v + 1] += off[v];
+  {
+    std::vector<uint32_t> fill(off.begin(), off.end() - 1);
+    for (size_t t = 0; t < nt; t++) for (int c = 0; c < 3; c++) inc[fill[T[3 * t + c]]++] = (uint32_t)t;
+  }
+  std::vector<uint8_t> alive(nt, 1), locked(nv, 0);
+  std::vector<uint32_t> markA(nv, 0), markB(nv, 0);   // ring membership, stamped per test
+  uint32_t stamp = 0;
+  const double min2 = minLen * minLen;
+  double n0[3], n1[3], mid[3];
+
+  for (size_t t = 0; t < nt; t++) {
+    if (!alive[t]) continue;
+    for (int c = 0; c < 3; c++) {
+      const uint32_t a = T[3 * t + c], b = T[3 * t + (c + 1) % 3];
+      if (locked[a] || locked[b]) continue;
+      const double dx = P[3 * a] - P[3 * b], dy = P[3 * a + 1] - P[3 * b + 1], dz = P[3 * a + 2] - P[3 * b + 2];
+      if (dx * dx + dy * dy + dz * dz >= min2) continue;
+      // |ring(a) ∩ ring(b)|: mark ring(a), then count ring(b)'s distinct members marked.
+      stamp++;
+      for (uint32_t q = off[a]; q < off[a + 1]; q++) {
+        const uint32_t tt = inc[q];
+        if (!alive[tt]) continue;
+        for (int k = 0; k < 3; k++) { const uint32_t w = T[3 * tt + k]; if (w != a) markA[w] = stamp; }
+      }
+      int common = 0;
+      for (uint32_t q = off[b]; q < off[b + 1]; q++) {
+        const uint32_t tt = inc[q];
+        if (!alive[tt]) continue;
+        for (int k = 0; k < 3; k++) {
+          const uint32_t w = T[3 * tt + k];
+          if (w == b || markB[w] == stamp) continue;
+          markB[w] = stamp;
+          if (markA[w] == stamp) common++;
+        }
+      }
+      if (common != 2) continue;
+      mid[0] = (P[3 * a] + P[3 * b]) / 2; mid[1] = (P[3 * a + 1] + P[3 * b + 1]) / 2; mid[2] = (P[3 * a + 2] + P[3 * b + 2]) / 2;
+      // No flips: every surviving triangle around a or b keeps its orientation.
+      auto before = [&](uint32_t v) -> const double* { return &P[3 * (size_t)v]; };
+      auto after = [&](uint32_t v) -> const double* { return v == a || v == b ? mid : &P[3 * (size_t)v]; };
+      bool ok = true;
+      for (int side = 0; side < 2 && ok; side++) {
+        const uint32_t v = side == 0 ? a : b;
+        for (uint32_t q = off[v]; q < off[v + 1] && ok; q++) {
+          const uint32_t tt = inc[q];
+          if (!alive[tt]) continue;
+          const uint32_t i = T[3 * tt], j = T[3 * tt + 1], k = T[3 * tt + 2];
+          if ((i == a || j == a || k == a) && (i == b || j == b || k == b)) continue;
+          triNormal(before, i, j, k, n0);
+          triNormal(after, i, j, k, n1);
+          if (n0[0] * n1[0] + n0[1] * n1[1] + n0[2] * n1[2] <= 0) ok = false;
+        }
+      }
+      if (!ok) continue;
+      P[3 * a] = mid[0]; P[3 * a + 1] = mid[1]; P[3 * a + 2] = mid[2];
+      for (uint32_t q = off[b]; q < off[b + 1]; q++) {
+        const uint32_t tt = inc[q];
+        if (!alive[tt]) continue;
+        uint32_t* tri = &T[3 * (size_t)tt];
+        if (tri[0] == a || tri[1] == a || tri[2] == a) { alive[tt] = 0; continue; }
+        for (int k = 0; k < 3; k++) if (tri[k] == b) tri[k] = a;
+        // (the JS appends tt to vt[a] here; never read again, see above)
+      }
+      locked[a] = locked[b] = 1;
+      break;   // triangle t is gone; move on
+    }
+  }
+  // Compact: vertices renumbered in order of first use by a surviving triangle.
+  std::vector<int32_t> map(nv, -1);
+  std::vector<double> outP;
+  std::vector<uint32_t> outT;
+  std::vector<int32_t> outL;
+  outP.reserve(P.size()); outT.reserve(T.size()); outL.reserve(nv);
+  for (size_t t = 0; t < nt; t++) {
+    if (!alive[t]) continue;
+    for (int c = 0; c < 3; c++) {
+      const uint32_t v = T[3 * t + c];
+      if (map[v] < 0) {
+        map[v] = (int32_t)(outP.size() / 3);
+        outP.push_back(P[3 * (size_t)v]); outP.push_back(P[3 * (size_t)v + 1]); outP.push_back(P[3 * (size_t)v + 2]);
+        outL.push_back(VL[v]);
+      }
+      outT.push_back((uint32_t)map[v]);
+    }
+  }
+  P.swap(outP); T.swap(outT); VL.swap(outL);
+}
+
+// cleanup.js's relax: tangential Laplacian smoothing.
+void relax(std::vector<double>& P, const std::vector<uint32_t>& T, const std::vector<double>& N, double weight, double maxMove) {
+  const size_t nv = P.size() / 3;
+  std::vector<double> sum(3 * nv, 0.0);
+  std::vector<uint32_t> cnt(nv, 0);
+  for (size_t t = 0; t < T.size(); t += 3) for (int c = 0; c < 3; c++) {
+    const uint32_t a = T[t + c], b = T[t + (c + 1) % 3];
+    sum[3 * a] += P[3 * b]; sum[3 * a + 1] += P[3 * b + 1]; sum[3 * a + 2] += P[3 * b + 2]; cnt[a]++;
+    sum[3 * b] += P[3 * a]; sum[3 * b + 1] += P[3 * a + 1]; sum[3 * b + 2] += P[3 * a + 2]; cnt[b]++;
+  }
+  for (size_t v = 0; v < nv; v++) {
+    if (!cnt[v]) continue;
+    if (N[3 * v] == 0 && N[3 * v + 1] == 0 && N[3 * v + 2] == 0) continue;
+    const double cn = (double)cnt[v];
+    double dx = sum[3 * v] / cn - P[3 * v], dy = sum[3 * v + 1] / cn - P[3 * v + 1], dz = sum[3 * v + 2] / cn - P[3 * v + 2];
+    const double nx = N[3 * v], ny = N[3 * v + 1], nz = N[3 * v + 2], dn = dx * nx + dy * ny + dz * nz;
+    dx = (dx - dn * nx) * weight; dy = (dy - dn * ny) * weight; dz = (dz - dn * nz) * weight;
+    const double l = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (l > maxMove) { const double sc = maxMove / l; dx *= sc; dy *= sc; dz *= sc; }
+    P[3 * v] += dx; P[3 * v + 1] += dy; P[3 * v + 2] += dz;
+  }
+}
+
+constexpr int PROJ_CHUNK = 512;   // vertices per interpreter call (7 lanes each)
+}  // namespace
+
+int project(ipe::Session& s, const int32_t* which, int whichCount, double maxStep, bool wantNormals) {
+  if (!s.meshed) return 1;
+  std::vector<double>& P = s.positions;
+  const size_t nv = P.size() / 3;
+  const size_t count = which ? (size_t)(whichCount < 0 ? 0 : whichCount) : nv;
+  if (which) {
+    if (whichCount < 0) return 2;
+    std::vector<uint8_t> seen(nv, 0);
+    for (size_t q = 0; q < count; q++) {
+      const int32_t v = which[q];
+      if (v < 0 || (size_t)v >= nv || seen[v]) return 2;
+      seen[v] = 1;
+    }
+  }
+  if (wantNormals && s.normals.size() != 3 * nv) s.normals.assign(3 * nv, 0.0);
+  // Bucket the vertices by their leaf's program, vertex order within a bucket.
+  const size_t nProg = s.programs.size();
+  std::vector<uint32_t> start(nProg + 1, 0), order(count);
+  auto progOf = [&](size_t q) -> uint32_t {
+    const size_t v = which ? (size_t)which[q] : q;
+    return (uint32_t)s.leaves[4 * (size_t)s.vertLeaf[v] + 3];
+  };
+  for (size_t q = 0; q < count; q++) start[progOf(q) + 1]++;
+  for (size_t p = 0; p < nProg; p++) start[p + 1] += start[p];
+  {
+    std::vector<uint32_t> fill(start.begin(), start.end() - 1);
+    for (size_t q = 0; q < count; q++) order[fill[progOf(q)]++] = which ? (uint32_t)which[q] : (uint32_t)q;
+  }
+  const double e = 0.1 * s.edge;
+  std::vector<double> buf((size_t)PROJ_CHUNK * 7 * 4);
+  double *X = buf.data(), *Y = X + PROJ_CHUNK * 7, *Z = Y + PROJ_CHUNK * 7, *out = Z + PROJ_CHUNK * 7;
+  double* N = wantNormals ? s.normals.data() : nullptr;
+  for (size_t p = 0; p < nProg; p++) {
+    const ipe::Program& prog = s.programs[p];
+    for (uint32_t q0 = start[p]; q0 < start[p + 1]; q0 += PROJ_CHUNK) {
+      const int m = (int)(start[p + 1] - q0 < (uint32_t)PROJ_CHUNK ? start[p + 1] - q0 : PROJ_CHUNK);
+      for (int k = 0; k < m; k++) {
+        const size_t v = order[q0 + k];
+        const double x = P[3 * v], y = P[3 * v + 1], z = P[3 * v + 2];
+        const int o = 7 * k;
+        X[o] = x; Y[o] = y; Z[o] = z;
+        X[o + 1] = x + e; Y[o + 1] = y; Z[o + 1] = z;
+        X[o + 2] = x - e; Y[o + 2] = y; Z[o + 2] = z;
+        X[o + 3] = x; Y[o + 3] = y + e; Z[o + 3] = z;
+        X[o + 4] = x; Y[o + 4] = y - e; Z[o + 4] = z;
+        X[o + 5] = x; Y[o + 5] = y; Z[o + 5] = z + e;
+        X[o + 6] = x; Y[o + 6] = y; Z[o + 6] = z - e;
+      }
+      ipe::eval(s, prog, X, Y, Z, 7 * m, out);   // the program passed sample()'s check
+      for (int k = 0; k < m; k++) {
+        const size_t v = order[q0 + k];
+        const int o = 7 * k;
+        const double d = out[o];
+        const double gx = (out[o + 1] - out[o + 2]) / (2 * e), gy = (out[o + 3] - out[o + 4]) / (2 * e), gz = (out[o + 5] - out[o + 6]) / (2 * e);
+        const double g2 = gx * gx + gy * gy + gz * gz;
+        if (!(g2 > 1e-12)) continue;
+        const double gl = std::sqrt(g2);
+        if (N) { N[3 * v] = gx / gl; N[3 * v + 1] = gy / gl; N[3 * v + 2] = gz / gl; }
+        double t = d / gl;   // signed distance estimate along the gradient
+        if (t > maxStep) t = maxStep; else if (t < -maxStep) t = -maxStep;
+        P[3 * v] -= (gx / gl) * t; P[3 * v + 1] -= (gy / gl) * t; P[3 * v + 2] -= (gz / gl) * t;
+      }
+    }
+  }
+  return 0;
+}
+
+int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxWeight, double maxMoveCells) {
+  if (!s.meshed) return 1;
+  const double edge = s.edge;
+  collapse(s, collapseFrac * edge);
+  s.normals.assign(s.positions.size(), 0.0);
+  const double maxStep = maxMoveCells * edge;
+  project(s, nullptr, 0, maxStep, true);
+  for (int pass = 0; pass < relaxPasses; pass++) {
+    relax(s.positions, s.indices, s.normals, relaxWeight, maxStep);
+    project(s, nullptr, 0, maxStep, true);
+  }
+  return 0;
+}
+
 }  // namespace ipm_mesh
 
 extern "C" {
@@ -344,6 +594,45 @@ const uint32_t* ip_indices(int id) {
 const int32_t* ip_vert_leaf(int id) {
   ipe::Session* s = ipe::session(id);
   return s && s->meshed ? s->vertLeaf.data() : nullptr;
+}
+
+// Replaces the session mesh with the given one (a test seam: the stages after
+// meshing on a mesh the mesher does not make). Needs a sampled store; every
+// index must name a vertex and every vertLeaf a leaf of the store. 0 ok.
+int ip_mesh_load(int id, const double* positions, int nv, const uint32_t* indices, int ni, const int32_t* vertLeaf) {
+  ipe::Session* s = ipe::session(id);
+  if (!s) return 2;
+  if (!s->sampled || nv < 0 || ni < 0 || ni % 3) return 1;
+  const int leaves = (int)(s->leaves.size() / 4);
+  for (int q = 0; q < ni; q++) if (indices[q] >= (uint32_t)nv) return 1;
+  for (int v = 0; v < nv; v++) if (vertLeaf[v] < 0 || vertLeaf[v] >= leaves) return 1;
+  s->positions.assign(positions, positions + (size_t)nv * 3);
+  s->indices.assign(indices, indices + ni);
+  s->vertLeaf.assign(vertLeaf, vertLeaf + nv);
+  s->normals.clear();
+  s->meshed = true;
+  return 0;
+}
+
+// projectVertices over the session mesh (`which` null: every vertex): 0 ok;
+// nonzero for an unknown session, no mesh, or a `which` out of range / repeated.
+int ip_project(int id, const int32_t* which, int whichCount, double maxStep, int wantNormals) {
+  ipe::Session* s = ipe::session(id);
+  if (!s) return 3;
+  return ipm_mesh::project(*s, which, whichCount, maxStep, wantNormals != 0);
+}
+
+// cleanupMesh over the session mesh, in place; fills the normals. 0 ok.
+int ip_cleanup(int id, double collapseFrac, int relaxPasses, double relaxWeight, double maxMoveCells) {
+  ipe::Session* s = ipe::session(id);
+  if (!s) return 2;
+  return ipm_mesh::cleanup(*s, collapseFrac, relaxPasses, relaxWeight, maxMoveCells);
+}
+
+// The normals (double x3 per vertex), or null when none have been written.
+const double* ip_normals(int id) {
+  ipe::Session* s = ipe::session(id);
+  return s && s->meshed && !s->normals.empty() ? s->normals.data() : nullptr;
 }
 
 }

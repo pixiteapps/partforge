@@ -59,6 +59,9 @@ struct Session {
   std::vector<double> positions;
   std::vector<uint32_t> indices;
   std::vector<int32_t> vertLeaf;
+  // Per-vertex field normals (project.js's `normals`, double x3), written by
+  // ip_project with normals on and by ip_cleanup; empty after a new mesh.
+  std::vector<double> normals;
 };
 
 // Checks a program's structure once (op codes, operand counts, register and fn

@@ -9,6 +9,7 @@
 // is not a fault: it throws a plain Error and the instance stays usable. Memory views are re-read after every call into the module, since
 // any call may grow (and so detach) its memory.
 import { OUT_OF_MEMORY, poisonCore, releaseIfIdle } from "./core.js";
+import { CLEANUP } from "../geometry/implicit/cleanup.js";
 
 const isFault = (err) => (typeof WebAssembly === "object" && err instanceof WebAssembly.RuntimeError) || err?.message === OUT_OF_MEMORY;
 const isNumbers = (a) => ArrayBuffer.isView(a) || Array.isArray(a);
@@ -163,16 +164,113 @@ export class NativeSession {
     let rc = 0;
     const out = this.#call(() => {
       rc = c.x.ip_mesh(this.id);
-      if (rc !== 0) return null;
-      const nv = c.x.ip_vertex_count(this.id), ni = c.x.ip_index_count(this.id);
-      return {
-        positions: c.copyOut(Float64Array, c.x.ip_positions(this.id), nv * 3),
-        indices: c.copyOut(Uint32Array, c.x.ip_indices(this.id), ni),
-        vertLeaf: c.copyOut(Int32Array, c.x.ip_vert_leaf(this.id), nv),
-      };
+      return rc === 0 ? this.#readMesh() : null;
     });
     if (rc !== 0) throw new Error("implicit: the core refused to mesh (nothing sampled yet)");
     return out;
+  }
+
+  // The session mesh as { positions, indices, vertLeaf } copies (inside #call).
+  #readMesh() {
+    const { c } = this;
+    const nv = c.x.ip_vertex_count(this.id), ni = c.x.ip_index_count(this.id);
+    return {
+      positions: c.copyOut(Float64Array, c.x.ip_positions(this.id), nv * 3),
+      indices: c.copyOut(Uint32Array, c.x.ip_indices(this.id), ni),
+      vertLeaf: c.copyOut(Int32Array, c.x.ip_vert_leaf(this.id), nv),
+    };
+  }
+
+  /**
+   * Replaces the session mesh with `{ positions, indices, vertLeaf }` (after a
+   * sample(); each vertLeaf names a leaf of that store) — so the later stages can
+   * run on a mesh the mesher did not make.
+   */
+  loadMesh({ positions, indices, vertLeaf } = {}) {
+    const { c } = this;
+    if (!isNumbers(positions) || !isNumbers(indices) || !isNumbers(vertLeaf) || positions.length !== vertLeaf.length * 3 || indices.length % 3) {
+      throw new Error("implicit: loadMesh takes positions (xyz), indices (triangles) and a vertLeaf per vertex");
+    }
+    let rc = 0;
+    this.#call(() => {
+      let pp = 0, pi = 0, pl = 0;
+      try {
+        pp = c.copyIn(Float64Array.from(positions));
+        pi = c.copyIn(Uint32Array.from(indices));
+        pl = c.copyIn(Int32Array.from(vertLeaf));
+        rc = c.x.ip_mesh_load(this.id, pp, vertLeaf.length, pi, indices.length, pl);
+      } finally {
+        if (pp) c.x.free(pp);
+        if (pi) c.x.free(pi);
+        if (pl) c.x.free(pl);
+      }
+    });
+    if (rc !== 0) throw new Error("implicit: the core refused the mesh (nothing sampled, or an index or leaf out of range)");
+  }
+
+  /**
+   * projectVertices on the session mesh, in place: `which` (default every vertex)
+   * moved by one clamped Newton step; with `normals: true` the session's normals
+   * (zeros where none was found) are written too. Returns { positions, normals }
+   * (normals null when not asked for).
+   */
+  project({ maxStep, which = null, normals = false } = {}) {
+    const { c } = this;
+    if (!(typeof maxStep === "number") || Number.isNaN(maxStep) || (which !== null && !isNumbers(which))) {
+      throw new Error("implicit: project takes a maxStep and an optional which (vertex indices)");
+    }
+    let rc = 0;
+    const out = this.#call(() => {
+      let pw = 0;
+      try {
+        // A null pointer means every vertex, so an empty `which` still passes a real one.
+        if (which) pw = which.length ? c.copyIn(Int32Array.from(which)) : c.alloc(4);
+        rc = c.x.ip_project(this.id, pw, which ? which.length : 0, maxStep, normals ? 1 : 0);
+      } finally {
+        if (pw) c.x.free(pw);
+      }
+      if (rc !== 0) return null;
+      const nv = c.x.ip_vertex_count(this.id);
+      return {
+        positions: c.copyOut(Float64Array, c.x.ip_positions(this.id), nv * 3),
+        normals: normals ? this.#normalsOut(nv) : null,
+      };
+    });
+    if (rc !== 0) throw new Error("implicit: the core refused to project (no mesh, or a vertex index out of range or repeated)");
+    return out;
+  }
+
+  #normalsOut(nv) {
+    const { c } = this;
+    const ptr = c.x.ip_normals(this.id);
+    return ptr ? c.copyOut(Float64Array, ptr, nv * 3) : new Float64Array(nv * 3);
+  }
+
+  /**
+   * cleanupMesh on the session mesh, in place: { positions, indices, vertLeaf,
+   * normals }, or null with `readBack: false` (the result stays in the session).
+   */
+  cleanup(opts = CLEANUP, { readBack = true } = {}) {
+    const { c } = this;
+    const { collapseFrac, relaxPasses, relaxWeight, maxMoveCells } = opts ?? {};
+    if (![collapseFrac, relaxWeight, maxMoveCells].every((v) => typeof v === "number") || !isInt32(relaxPasses)) {
+      throw new Error("implicit: cleanup takes collapseFrac, relaxPasses (an integer), relaxWeight and maxMoveCells");
+    }
+    let rc = 0;
+    const out = this.#call(() => {
+      rc = c.x.ip_cleanup(this.id, collapseFrac, relaxPasses, relaxWeight, maxMoveCells);
+      if (rc !== 0 || !readBack) return null;
+      const m = this.#readMesh();
+      return { ...m, normals: this.#normalsOut(m.vertLeaf.length) };
+    });
+    if (rc !== 0) throw new Error("implicit: the core refused to clean up (nothing meshed yet)");
+    return out;
+  }
+
+  /** The session's normals (double ×3 per vertex; zeros if none were written). */
+  normals() {
+    const { c } = this;
+    return this.#call(() => this.#normalsOut(c.x.ip_vertex_count(this.id)));
   }
 
   /** Frees the session. Safe to call twice, and on a poisoned instance (nothing is touched then). */

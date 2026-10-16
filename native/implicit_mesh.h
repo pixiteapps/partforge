@@ -1,6 +1,7 @@
 // The implicit engine's meshing stages on a session — the C++ twin of
 // src/framework/geometry/implicit/sparse.js (evaluateLeaves, the evaluation
-// half) and mesher.js (meshStore). Bit-identical to the JS (native/README.md):
+// half), mesher.js (meshStore), project.js (projectVertices) and cleanup.js
+// (cleanupMesh). Bit-identical to the JS (native/README.md):
 // the same coordinate arithmetic, sample/leaf/cell/tet order, float32 stores
 // and vertex creation order. The stages read and write the Session
 // (implicit_eval.h).
@@ -22,5 +23,17 @@ int sample(ipe::Session& s, const int32_t* leaves, int count, const double* orig
 // meshStore over the session's leaf store: fills positions, indices, vertLeaf.
 // Returns 0, or nonzero when nothing has been sampled.
 int mesh(ipe::Session& s);
+
+// projectVertices over the session mesh: `which` (null: every vertex) moved onto
+// d = 0 by one clamped Newton step each; with `wantNormals`, each vertex with a
+// gradient gets its unit normal in s.normals (sized to 3 x vertices, zeroed, when
+// it is not already). Returns 0, or nonzero (nothing moved) when there is no mesh
+// or `which` names a vertex out of range or twice.
+int project(ipe::Session& s, const int32_t* which, int whichCount, double maxStep, bool wantNormals);
+
+// cleanupMesh over the session mesh: short-edge collapse, then projection and
+// relaxation passes. Replaces the mesh with the cleaned one and fills s.normals.
+// Returns 0, or nonzero when there is no mesh.
+int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxWeight, double maxMoveCells);
 
 }  // namespace ipm_mesh

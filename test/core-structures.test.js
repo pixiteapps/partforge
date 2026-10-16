@@ -12,6 +12,10 @@ import { buildCoreBVH } from "../src/framework/core/bvh-core.js";
 import { buildBVH, triangleVertices } from "../src/framework/oracle/bvh.js";
 import { minWall } from "../src/framework/oracle/min-wall.js";
 import { core, setCoreForTesting } from "../src/framework/core/core.js";
+import { NativeSession } from "../src/framework/core/implicit-core.js";
+import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
+import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
+import { cleanupMesh, CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
 
 afterEach(() => setCoreForTesting(undefined));
 
@@ -207,3 +211,52 @@ test("BVH build: every reference part's tree is the JS's, node for node", async 
   }
   kernel.cleanup?.();
 }, 120_000);
+
+// A UV sphere of radius 3 whose vertices are jittered ALONG the surface (an LCG, so
+// fixed): two poles of valence `seg`, far past what the mesher makes, and thin,
+// skewed triangles all round, so the collapse's flip test has triangles to refuse.
+function jitteredSphere(seg, rings, noise, seed) {
+  let x = seed;
+  const rnd = () => ((x = (x * 1103515245 + 12345) % 2147483648) / 2147483648) - 0.5;
+  const verts = [[0, 0, 3], [0, 0, -3]], tris = [];
+  for (let r = 1; r < rings; r++) for (let i = 0; i < seg; i++) {
+    const th = (Math.PI * (r + 0.9 * noise * rnd())) / rings, ph = (2 * Math.PI * (i + 1.8 * noise * rnd())) / seg;
+    verts.push([3 * Math.sin(th) * Math.cos(ph), 3 * Math.sin(th) * Math.sin(ph), 3 * Math.cos(th)]);
+  }
+  const id = (r, i) => 2 + (r - 1) * seg + (i % seg);
+  for (let i = 0; i < seg; i++) tris.push([0, id(1, i), id(1, i + 1)], [1, id(rings - 1, i + 1), id(rings - 1, i)]);
+  for (let r = 1; r < rings - 1; r++) for (let i = 0; i < seg; i++) {
+    tris.push([id(r, i), id(r + 1, i), id(r + 1, i + 1)], [id(r, i), id(r + 1, i + 1), id(r, i + 1)]);
+  }
+  return { positions: Float64Array.from(verts.flat()), indices: Uint32Array.from(tris.flat()), vertLeaf: new Int32Array(verts.length) };
+}
+
+test("implicit cleanup: the collapse's CSR incident lists see every triangle the JS's vt lists do", () => {
+  // The ring test counts common neighbours through the incident lists, and the flip
+  // test walks every surviving triangle around both ends of an edge: a list that
+  // loses, repeats or misplaces a triangle lets through (or refuses) a collapse the
+  // JS does not, and the bytes differ. Checked by breaking the lists: dropping each
+  // list's last triangle breaks the first four meshes; dropping its first (usually
+  // the triangle being walked, which the flip test skips anyway) breaks the fifth.
+  const plan = planLeaves(lowerSpec({ root: { kind: "sphere", r: 3 } }, { images: new Map() }), 1);
+  const store = evaluateLeaves(plan);
+  const s = new NativeSession(core());
+  try {
+    for (const t of plan.textures) s.addTexture(t);
+    for (const p of plan.programs) s.addProgram(p);
+    s.sample(plan, { readBack: false });
+    for (const [noise, collapseFrac, seed] of [[0.6, 0.5, 1], [0.6, 0.5, 3], [0.6, 0.6, 2], [0.7, 0.6, 1], [0.8, 0.5, 4]]) {
+      const mesh = jitteredSphere(40, 8, noise, seed);
+      for (const relaxPasses of [0, 2]) {
+        const opts = { ...CLEANUP, collapseFrac, relaxPasses };
+        const js = cleanupMesh(store, mesh, opts);
+        expect(js.indices.length).toBeLessThan(mesh.indices.length);   // collapses happened
+        s.loadMesh(mesh);
+        const nat = s.cleanup(opts);
+        for (const k of ["positions", "indices", "vertLeaf", "normals"]) expect(bytes(nat[k]), `${k} (seed ${seed}, ${collapseFrac})`).toBe(bytes(js[k]));
+      }
+    }
+  } finally {
+    s.destroy();
+  }
+});
