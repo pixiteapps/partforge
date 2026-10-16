@@ -49,6 +49,14 @@ struct Session {
   bool clipped = false;
   std::vector<int32_t> leaves;
   std::vector<float> vals;
+
+  // The mesh (mesher.js's meshStore output): xyz per vertex, three indices per
+  // triangle, and the leaf each vertex was created in. `meshed` is false until
+  // ip_mesh succeeds on the current store.
+  bool meshed = false;
+  std::vector<double> positions;
+  std::vector<uint32_t> indices;
+  std::vector<int32_t> vertLeaf;
 };
 
 // Checks a program's structure once (op codes, operand counts, register and fn

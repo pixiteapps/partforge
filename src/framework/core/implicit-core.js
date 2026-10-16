@@ -147,6 +147,28 @@ export class NativeSession {
     return { vals, clipped: out.clipped };
   }
 
+  /**
+   * meshStore on the core, over the samples of the last sample(): { positions:
+   * Float64Array, indices: Uint32Array, vertLeaf: Int32Array }. The mesh stays in
+   * the session for the later stages.
+   */
+  mesh() {
+    const { c } = this;
+    let rc = 0;
+    const out = this.#call(() => {
+      rc = c.x.ip_mesh(this.id);
+      if (rc !== 0) return null;
+      const nv = c.x.ip_vertex_count(this.id), ni = c.x.ip_index_count(this.id);
+      return {
+        positions: c.copyOut(Float64Array, c.x.ip_positions(this.id), nv * 3),
+        indices: c.copyOut(Uint32Array, c.x.ip_indices(this.id), ni),
+        vertLeaf: c.copyOut(Int32Array, c.x.ip_vert_leaf(this.id), nv),
+      };
+    });
+    if (rc !== 0) throw new Error("implicit: the core refused to mesh (nothing sampled yet)");
+    return out;
+  }
+
   /** Frees the session. Safe to call twice, and on a poisoned instance (nothing is touched then). */
   destroy() {
     const { c } = this;
