@@ -589,6 +589,11 @@ parameters in both directions. Override with `meta.backend: "occt" |
 "manifold"`. The two WASM kernels run in **separate Web Workers** (`name` =
 `"manifold"` / `"occt"`). See `docs/geometry-backend-strategy.md` for the why
 (OCCT booleans are about 75-1400x slower).
+The same proxy is lint's geometry-free build (`runValidatingProbe`): every query
+(`boundingBox`, `area`, `volume`, `contains`, `corners`, `toRegions`, …) returns a
+placeholder, so a build/probe that throws AFTER reading one is a `build-throws` /
+`probe-throws` NOTE, not an error (0.155.0) — the probe records the queries read
+per call, never across sub-parts. A throw with no query read stays an error.
 
 ### Non-obvious invariants
 

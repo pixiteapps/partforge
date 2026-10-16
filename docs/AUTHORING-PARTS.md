@@ -3937,7 +3937,17 @@ shares build's `(k, p, d)` contract — against a geometry-free probe —
 `unknown-kernel-op`, `unknown-solid-op`, `invalid-op-options`, `build-throws`,
 `probe-throws`, `derive-throws`, `manifold-backend-uses-occt-op`,
 `build-runaway` (errors); `nondeterministic-build` (warning, from diffing two
-probe runs).
+probe runs). The probe has no geometry, so every **query** answers with a
+placeholder — `boundingBox()` a unit box, `area()` and `volume()` 1,
+`Shape2D.contains()` always `false`, `corners()`/`toRegions()` a unit square,
+`isEmpty()` `false`. A `build()` (or probe) that throws *after* reading one of
+those may only have believed the placeholder — a helper that scans `contains()`
+to place ribs finds none and throws its own guard — so that throw is reported as a
+`build-throws` / `probe-throws` **note** naming the queries it read ("could not be
+evaluated geometry-free"), never an error: it does not block loading, `measure`,
+or `--strict`. A throw with no query read before it is the build's own logic and
+stays an error. Lint cannot tell which throws depended on the placeholder, so any
+throw after a query is a note; a real fault still surfaces when the real build runs.
 
 **Verify block** — `verify-unknown-metric`, `verify-unknown-subpart`,
 `verify-bad-expr`, `verify-bad-pair-check`, `verify-unknown-process`,
