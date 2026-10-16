@@ -94,14 +94,16 @@ is a **mesh-time** value, passed to both engines with the edge, not a compiled c
   as a clean gap of at least `cl`, never a neck.
 - **`gap > 0`:** value `= min_i c_i`. Pieces never fuse; contact shows as two flat pads
   `cl` apart.
-- **`gap = 0`:** value `= min(min_i c_i, f)` with the pad fill `f = s₂ + (1 − g(x))·cl`.
-  `s₂ < 0` exactly where two or more pieces overlap. `g` is 1 within a contact region
-  (found by the compiler, below) plus a margin of `cl + band` around it, falling smoothly to
-  0 beyond. Near a real contact the fill is `s₂`: the overlap ("the pad") is filled and
-  fused, and the wedge around its rim fuses into a natural crease. Away from every contact
-  `f ≥ s₂ + cl ≥ cl`, so it never undercuts the clearance cut and a near miss keeps its
-  clean gap. (Amended 2026-10-16: an ungated `s₂` fill was small and positive inside a
-  near-miss gap and re-closed it — the reported necks again. Caught in Task 1.)
+- **`gap = 0`:** value `= min(min_i c_i, f)`, with a pad fill per contact region `r`
+  (between pieces `a_r`, `b_r`): `f = min_r (max(d_{a_r}, d_{b_r}) + (1 − g_r(x))·cl)`.
+  `max(d_a, d_b) < 0` exactly where that pair overlaps. `g_r` is 1 within the region (found
+  by the compiler, below) plus a margin of `cl + band` around it, falling smoothly to 0
+  beyond. Near a real contact the fill is the pair's overlap: the pad is filled and fused,
+  and the wedge around its rim fuses into a natural crease. Away from it the term is at
+  least `cl` above the pair's own field, so it never undercuts the clearance cut; and since
+  each term names its own pair, a third piece passing near the contact keeps its clean gap.
+  (Amended 2026-10-16: an ungated fill re-closed near-miss gaps — the reported necks —
+  and a gate shared by all pairs fused a third piece near someone else's contact.)
 
 The cut forms are built from min, max and `(d_i − m_i)/2`, so they are exactly L-Lipschitz
 when every child is (the fill gate adds `cl·|∇g|`): the upper Lipschitz bound `L` (which drives interval pruning) and the
