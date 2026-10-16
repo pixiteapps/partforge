@@ -75,7 +75,7 @@ function laserSwatch(s, unburnt) {
 // The "Plywood edges" view: the ply pass (materials/patterns.js applyPlies) on every kind of
 // plywood wall — CNC-routed panels at 6, 12 and 18 mm (a rounded profile, a pocket and a
 // through drill, so straight, curved and inner walls all show), one standing on edge, a
-// routed disc that names no material (drawn as its stock; a wall that turns through every grain direction), a 6 mm laser panel (plies
+// routed disc that names no material (drawn as its stock; a wall that turns through every grain direction), an 18 mm pine-plywood panel, a 6 mm laser panel (plies
 // under the char), and two plain solids in plywood that are not sheet parts at all (their
 // plies stack along the thinnest axis).
 const PW = 50;
@@ -98,6 +98,11 @@ const plywoodParts = {
     // names no material: drawn as its stock (sheet-look.js realisticDisplay)
     label: "Routed plywood disc, 18 mm (no material)", views: ["plywood"], material: "birch plywood", thickness: 18,
     profile: (k) => k.shape2d(Array.from({ length: 96 }, (_, i) => [90 + 22 * Math.cos((i / 96) * 2 * Math.PI), -45 + 22 * Math.sin((i / 96) * 2 * Math.PI)])),
+  }),
+  ply_routed_pine: routedPart({
+    label: "Routed pine plywood, 18 mm", views: ["plywood"], material: "pine plywood", thickness: 18, display: { material: "pine-plywood" },
+    profile: (k) => roundedRect(k, 130, -100, PW, 30, 6),
+    drills: () => [{ at: [165, -85], d: 10, depth: 18 }],
   }),
   ply_laser_6: sheetPart({
     label: "Laser-cut plywood, 6 mm", views: ["plywood"], material: "birch plywood", thickness: 6, display: { material: "plywood" },
