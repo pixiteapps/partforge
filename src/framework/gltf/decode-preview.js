@@ -11,8 +11,11 @@
 // rotation; parenting the glTF root under the pivot would turn the part twice.
 // Undoing the root here hands the viewer geometry in the frame it already owns.
 //
-// Feature edges (encoder version 2): a sub-part's mesh may carry a second
-// primitive, mode LINES, holding the kernel's edge segments. GLTFLoader then
+// Feature edges (encoder version 2+): a sub-part's mesh may carry a second
+// primitive, mode LINES, holding the kernel's edge segments — with its own
+// vertices in version 2, as indices into the surface's vertex array in version 3
+// (which may also carry, past the surface's own vertices, endpoints that lie on
+// none of them: the payload's positions stop before those). GLTFLoader then
 // makes the node a Group of a Mesh and a LineSegments (the node's extras and
 // name on the Group, not the Mesh), so each surface and its lines are matched
 // through the glTF NODE they belong to. Lines go back to model frame through
@@ -36,11 +39,12 @@ function toArrayBuffer(bytes) {
   throw new TypeError("decodePreviewGlb: the preview must be a Uint8Array or an ArrayBuffer");
 }
 
-// Read a (possibly quantized, normalized) vec3 attribute out as Float32, transformed.
-function readVec3(attr, matrix, isNormal) {
-  const out = new Float32Array(attr.count * 3);
+// Read a (possibly quantized, normalized) vec3 attribute out as Float32,
+// transformed — its first `count` elements (all of them by default).
+function readVec3(attr, matrix, isNormal, count = attr.count) {
+  const out = new Float32Array(count * 3);
   const v = new Vector3();
-  for (let i = 0; i < attr.count; i++) {
+  for (let i = 0; i < count; i++) {
     v.fromBufferAttribute(attr, i); // denormalizes a KHR_mesh_quantization attribute
     if (isNormal) v.applyMatrix3(matrix).normalize();
     else v.applyMatrix4(matrix);
@@ -70,17 +74,36 @@ function nodeObjectOf(obj) {
   return parent?.isGroup && parent.userData && ("partforgeSubPart" in parent.userData || "name" in parent.userData) ? parent : obj;
 }
 
-// Line segments as endpoint pairs in model frame (an indexed LINES primitive —
-// weld() indexes it — expanded back to pairs).
+// Line segments as endpoint pairs in model frame: an indexed LINES primitive
+// expanded back to pairs. Version 3's position attribute is the SURFACE's
+// (GLTFLoader hands both objects the same BufferAttribute), so only the
+// vertices the line indices name are read — never the whole array.
 function readSegments(geometry, matrix) {
   const position = geometry.getAttribute("position");
   if (!position || position.count === 0) return null;
-  const points = readVec3(position, matrix, false);
-  if (!geometry.index) return points;
+  if (!geometry.index) return readVec3(position, matrix, false);
   const index = geometry.index.array;
   const out = new Float32Array(index.length * 3);
-  for (let i = 0; i < index.length; i++) out.set(points.subarray(index[i] * 3, index[i] * 3 + 3), i * 3);
+  const v = new Vector3();
+  for (let i = 0; i < index.length; i++) {
+    v.fromBufferAttribute(position, index[i]).applyMatrix4(matrix);
+    out[i * 3] = v.x;
+    out[i * 3 + 1] = v.y;
+    out[i * 3 + 2] = v.z;
+  }
   return out;
+}
+
+// How many leading vertices the surface's triangles use. Version 3 appends edge
+// endpoints that lie on no surface vertex AFTER the surface's own (which weld +
+// reorder leave all referenced, in first-use order); they belong to the lines,
+// so the payload stops before them. For versions 1–2 this is every vertex.
+function surfaceVertexCount(position, index) {
+  if (!index) return position.count;
+  let max = -1;
+  const a = index.array;
+  for (let i = 0; i < a.length; i++) if (a[i] > max) max = a[i];
+  return max + 1;
 }
 
 export async function decodePreviewGlb(bytes) {
@@ -112,15 +135,16 @@ export async function decodePreviewGlb(bytes) {
     normalMatrix.getNormalMatrix(toModel);
     const normal = geometry.getAttribute("normal");
     const indices = geometry.index ? Uint32Array.from(geometry.index.array) : null;
+    const count = surfaceVertexCount(position, geometry.index);
     const node = nodeObjectOf(obj);
     const { partforgeSubPart, partforgeDisplay, name: originalName } = node.userData;
     const payload = {
       // The writer's own record of the key, then the unsanitized glTF node name.
       name: typeof partforgeSubPart === "string" ? partforgeSubPart : (originalName ?? node.name),
-      positions: readVec3(position, toModel, false),
-      normals: normal ? readVec3(normal, normalMatrix, true) : null,
+      positions: readVec3(position, toModel, false, count),
+      normals: normal ? readVec3(normal, normalMatrix, true, count) : null,
       indices,
-      triangles: (indices ? indices.length : position.count) / 3,
+      triangles: (indices ? indices.length : count) / 3,
       edges: new Float32Array(0), // filled below from the node's LINES primitive, if any
       display: partforgeDisplay && typeof partforgeDisplay === "object" ? partforgeDisplay : null,
     };

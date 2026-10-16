@@ -144,3 +144,33 @@ export function poseArray(arr, deg, [tx, ty, tz] = [0, 0, 0], isNormal = false) 
   }
   return out;
 }
+
+// An edge-dense sub-part: an n×n grid of quads on a gently waved sheet (so no two
+// rows share a plane), indexed, with EVERY grid line a feature edge — the shape of
+// a part riddled with small holes, where edges cost as much as the surface does.
+export function denseGrid(name, n = 60, size = 60) {
+  const v = (i, j) => i * (n + 1) + j;
+  const positions = new Float32Array((n + 1) * (n + 1) * 3);
+  const normals = new Float32Array(positions.length);
+  for (let i = 0; i <= n; i++) {
+    for (let j = 0; j <= n; j++) {
+      const x = (i / n) * size;
+      const y = (j / n) * size;
+      positions.set([x, y, Math.sin(x / 7) * Math.cos(y / 5) * 2], v(i, j) * 3);
+      normals.set([0, 0, 1], v(i, j) * 3);
+    }
+  }
+  const indices = [];
+  const edges = [];
+  const at = (k) => [...positions.subarray(k * 3, k * 3 + 3)];
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      indices.push(v(i, j), v(i + 1, j), v(i + 1, j + 1), v(i, j), v(i + 1, j + 1), v(i, j + 1));
+      edges.push(...at(v(i, j)), ...at(v(i + 1, j)), ...at(v(i, j)), ...at(v(i, j + 1)));
+    }
+  }
+  for (let k = 0; k < n; k++) {
+    edges.push(...at(v(n, k)), ...at(v(n, k + 1)), ...at(v(k, n)), ...at(v(k + 1, n)));
+  }
+  return { name, positions, normals, indices: new Uint32Array(indices), triangles: indices.length / 3, edges: new Float32Array(edges) };
+}

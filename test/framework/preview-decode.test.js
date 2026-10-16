@@ -7,7 +7,7 @@ import { fileURLToPath, URL as NodeURL } from "node:url";
 import { expect, test } from "vitest";
 import { encodePreviewGlb } from "../../src/gltf.js";
 import { decodePreviewGlb } from "../../src/framework/gltf/decode-preview.js";
-import { boxEdges, boxSoup, indexedBox, boundsOf, poseArray, segmentMismatch } from "../helpers/preview-glb.js";
+import { boxEdges, boxSoup, denseGrid, glbJson, indexedBox, boundsOf, poseArray, segmentMismatch } from "../helpers/preview-glb.js";
 
 const expectNear = (got, want, digits = 2) => got.forEach((g, i) => expect(g).toBeCloseTo(want[i], digits));
 const part = { meta: { environment: "workshop" }, parts: { base: { display: { color: 0xff0000 } }, lid: {} } };
@@ -133,4 +133,66 @@ test("a version-1 file (no line primitives) still decodes, with empty edges", as
   const b = boundsOf(out.meshes[0].positions);
   expectNear(b.min, [0, 0, 0]);
   expectNear(b.max, [4, 2, 6]);
+});
+
+test("a version-2 file (separate line vertices) still decodes, with its edges", async () => {
+  // Written by the 0.154.0 encoder: base (soup) and lid (indexed) each with their
+  // box edges, plain with none.
+  const v2 = new Uint8Array(readFileSync(fileURLToPath(new NodeURL("../fixtures/preview-v2.glb", import.meta.url))));
+  const out = await decodePreviewGlb(v2);
+  expect(out.view).toBe("main");
+  expect(out.meshes.map((m) => m.name)).toEqual(["base", "lid", "plain"]);
+  expect(out.meshes[0].display).toEqual({ color: 0xff0000 });
+  for (const m of out.meshes) expect(m.triangles).toBe(12);
+  expect(segmentMismatch(out.meshes[0].edges, boxEdges([0, 0, 0], [4, 2, 6]))).toBeNull();
+  expect(segmentMismatch(out.meshes[1].edges, boxEdges([0, 0, 6], [4, 2, 7]))).toBeNull();
+  expect(out.meshes[2].edges).toEqual(new Float32Array(0));
+});
+
+// --- edges as indices into the surface's vertices (encoder v3) ---------------------
+test("an edge endpoint on no triangle vertex still round-trips, and the surface is unchanged", async () => {
+  const box = boxSoup("base", [0, 0, 0], [4, 2, 6]);
+  // the top face's centre to the midpoint of one of its edges: neither is a vertex
+  const extra = new Float32Array([2, 1, 6, 4, 1, 6]);
+  const edges = new Float32Array([...boxEdges([0, 0, 0], [4, 2, 6]), ...extra]);
+  const out = await decodePreviewGlb(await encodePreviewGlb({ meshes: [{ ...box, edges }], view: "v" }));
+  const [m] = out.meshes;
+  expect(segmentMismatch(m.edges, edges)).toBeNull();
+  expect(m.triangles).toBe(12);
+  // the triangles reference only the surface's own corners, and the payload
+  // carries exactly the vertices they reference (the appended ones stay in the file)
+  const used = new Set(m.indices);
+  expect(used.size).toBe(m.positions.length / 3);
+  expect(m.normals.length).toBe(m.positions.length);
+  const b = boundsOf(Float32Array.from([...used].flatMap((i) => [...m.positions.subarray(i * 3, i * 3 + 3)])));
+  expectNear(b.min, [0, 0, 0]);
+  expectNear(b.max, [4, 2, 6]);
+  for (const i of used) {
+    const [x, y, z] = m.positions.subarray(i * 3, i * 3 + 3);
+    const onCorner = [x, y, z].every((c, a) => Math.abs(c) < 1e-2 || Math.abs(c - [4, 2, 6][a]) < 1e-2);
+    expect(onCorner).toBe(true);
+  }
+});
+
+test("a dense edge set decodes to exactly its segments, not every shared vertex", async () => {
+  const grid = denseGrid("grid", 12, 12);
+  const out = await decodePreviewGlb(await encodePreviewGlb({ meshes: [grid], view: "v" }));
+  expect(out.meshes[0].edges.length).toBe(grid.edges.length);
+  expect(segmentMismatch(out.meshes[0].edges, grid.edges)).toBeNull();
+  expect(out.meshes[0].triangles).toBe(grid.triangles);
+});
+
+test("lines whose off-surface endpoints would outnumber the surface keep vertices of their own, and round-trip", async () => {
+  // 30 segments floating above a 12-triangle box: 60 endpoints on no vertex.
+  // Appending them would make quantize() compact the surface and drop them.
+  const box = boxSoup("base", [0, 0, 0], [4, 2, 6]);
+  const floating = [];
+  for (let i = 0; i < 30; i++) floating.push(i * 0.1, 0.5, 7 + i * 0.01, i * 0.1 + 0.05, 1.5, 7.5);
+  const edges = new Float32Array([...boxEdges([0, 0, 0], [4, 2, 6]), ...floating]);
+  const glb = await encodePreviewGlb({ meshes: [{ ...box, edges }], view: "v" });
+  const [tris, lines] = glbJson(glb).meshes[0].primitives;
+  expect(lines.attributes.POSITION).not.toBe(tris.attributes.POSITION);
+  const out = await decodePreviewGlb(glb);
+  expect(segmentMismatch(out.meshes[0].edges, edges)).toBeNull();
+  expect(out.meshes[0].triangles).toBe(12);
 });
