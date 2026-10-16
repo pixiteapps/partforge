@@ -11,10 +11,15 @@
 //     component), so a value that is not 1 or 2 is the taper, not 0 or 1 is z
 //     — kept as double comparisons;
 //   - texels are float32, read and promoted to double, all arithmetic double;
-//   - UNION/INTER gather a lane's operands in program order, so arg-min/arg-max
-//     ties go to the first operand, as in unionN/intersectN.
-// Layout differs from the JS only in that register files are flat vectors of
-// BATCH-lane blocks and a UNION's operand registers are resolved once per op.
+//   - UNION/INTER visit a lane's operands in program order, so arg-min/arg-max
+//     ties go to the first operand, as in unionN/intersectN, and the smooth sum
+//     accumulates from +0 in that order.
+// Structure differs from the JS, never a lane's arithmetic: register files are
+// flat vectors of BATCH-lane blocks; a validated program is decoded once into
+// Insts (integer registers and sub-codes); each op dispatches its primitive or
+// fn once and loops over the lanes inside; UNION/INTER run operand-major with
+// per-lane running extremes (blend_lanes); and the ellipsoid's lane-invariant
+// min(P0, P1, P2) is computed once per op.
 #include "implicit_eval.h"
 
 #include <cmath>
