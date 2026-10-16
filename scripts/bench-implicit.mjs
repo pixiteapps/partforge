@@ -32,7 +32,8 @@ console.log(`k.implicit(hand) end to end, cold (fresh process): ${cold} CPU ms`)
 const cpuMs = (u) => (u.user + u.system) / 1000;
 const time = (f) => { const t = process.cpuUsage(); const r = f(); return [r, cpuMs(process.cpuUsage(t))]; };
 const { spec: vase, images } = vaseSpec();
-const cases = [["hand preview", handSpec(), 1.5, new Map()], ["hand print", handSpec(), 0.8, new Map()], ["vase preview", vase, 1.2, images]];
+// The hand at 0.5 mm is the spec's print-tier target (docs/research/organic-shapes.md §9).
+const cases = [["hand preview", handSpec(), 1.5, new Map()], ["hand print", handSpec(), 0.8, new Map()], ["hand 0.5 mm", handSpec(), 0.5, new Map()], ["vase preview", vase, 1.2, images]];
 
 for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
   console.log(`\ncore ${on ? "on" : "off"}`);

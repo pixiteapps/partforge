@@ -464,3 +464,60 @@ two cells already triggers the thin-feature warning. The remedy is a finer grid,
 or meshing the feature as its own `k.implicit` on a finer grid and unioning it
 on, as the hand does with its nails. A 1.6 mm plate at the same grid (under two
 cells, so it is warned) still meshes closed.
+
+## 9. Native engine (feat/implicit PR 2)
+
+Everything after `planLeaves` — sampling, meshing, cleanup and surface detail —
+now runs in the native core (`native/implicit_*.cpp`, one WebAssembly session
+per mesh; `src/framework/core/implicit-core.js`). It is a speed switch only:
+the output is byte-identical to the JS engine of §8
+(`test/implicit-native-*.test.js`, `test/core-parity.test.js`), and the JS
+stays as the fallback when the core is off, refuses or faults.
+
+Measured on an Apple M1 Max, Node 24 (`npm run bench:implicit -- --core both`,
+warm run, CPU milliseconds, machine under load ~7). "sample" includes
+`planLeaves`, which is still JavaScript in both columns (about 25 ms of the
+hand preview's 45 ms native sample, 210 ms of the 0.5 mm one):
+
+| case | engine | compile | sample | mesh | cleanup | detail | **total** | triangles |
+|---|---|---|---|---|---|---|---|---|
+| hand preview (1.5 mm) | JS | 1 | 167 | 76 | 401 | 377 | 1,021 | 177,102 |
+| | native | 1 | 45 | 10 | 59 | 20 | **134** | |
+| hand print (0.8 mm) | JS | 1 | 388 | 182 | 1,020 | 1,689 | 3,279 | 553,652 |
+| | native | 0 | 155 | 38 | 161 | 68 | **422** | |
+| hand 0.5 mm | JS | 1 | 1,012 | 500 | 2,154 | 4,203 | 7,870 | 1,361,338 |
+| | native | 0 | 370 | 111 | 369 | 142 | **992** | |
+| vase preview (1.2 mm) | JS | 1 | 272 | 47 | 503 | 263 | 1,086 | 144,592 |
+| | native | 0 | 53 | 6 | 69 | 28 | **156** | |
+
+Against the design spec's performance targets (Node, M-series desktop):
+
+| target | spec | measured (native) | CI gate (`test/implicit-speed.test.js`) |
+|---|---|---|---|
+| hand, full detail, preview tier | ≤ 150 ms | 134 ms (126 ms paced median) | < 450 ms paced |
+| hand, 0.5 mm print tier | ≤ 2 s | 0.99 s (1.05 s paced median) | < 6 s paced |
+
+The gate times compile + `planLeaves` + the native session (what `k.implicit`
+runs before Manifold), on `test/helpers/cpu-pace.js`'s `cpuMs` (CPU time in the
+calibration desktop's milliseconds), as a median of five (1.5 mm) and three
+(0.5 mm) runs, at 3× the spec target. The hand here has its dorsal knuckle
+creases (nine crease entries) and no nails.
+
+The gated targets are the engine's (as `bench:implicit` reports it). `k.implicit(hand)` end to end at 1.5 mm
+is about 380 ms native (1,430 ms JS): Manifold's `ofMesh` of the 177k-triangle
+result costs about 230 ms of it, more than the whole native engine — the next
+place to look for a live-posing rebuild, together with region reuse (PR 3).
+Cold, in a fresh process with the Manifold import, it is about 0.6 s.
+
+How the native engine got from about 3× to 6–8× faster than the JS without
+changing a bit: the interpreter decodes each program once (integer registers,
+inline-constant offsets) and dispatches the primitive or function once per op
+with a tight lane loop inside, unions/intersections run operand-major with
+per-lane running minima (the same per-lane order and first-wins ties), and the
+module is built with `-msimd128` so those loops run two lanes per `f64x2` op
+(IEEE-exact per lane; nothing is reassociated or fused). Surface detail keeps
+the targets of vertices a refinement round did not add, answers refused edges
+without touching the midpoint map, and holds the map as per-vertex chains,
+which keeps lookups near the triangles making them. Before those changes (same
+machine, same load) the native hand took 222 ms at 1.5 mm, 660 ms at 0.8 mm and
+1.68 s at 0.5 mm, and the vase 260 ms.

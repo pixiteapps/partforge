@@ -12,6 +12,11 @@ binds the same C calls into its own JS engine.
 | `bvh.{h,cpp}` | `src/framework/oracle/bvh.js` + `min-wall.js` — the oracle's triangle BVH (raycast, closestPoint, distanceTo) and the min-wall pass |
 | `js_math.h` | `src/framework/geometry/js-math.js` — partforge's own `hypot3` |
 | `flat_map.h` | (no JS twin) the open-addressing hash map the ports use in place of `std::unordered_map` |
+| `implicit_eval.{h,cpp}` | `src/framework/geometry/implicit/` `program.js` (runProgram/evalBatch), `primitives.js`, `frames.js` (xformPoint/xformDir), `expr-lower.js` (the UN/BIN/TER tables), `textures.js` (sampleTexture) — the implicit engine's field interpreter, and the session that holds a meshing run |
+| `implicit_mesh.{h,cpp}` | `implicit/sparse.js` (evaluateLeaves), `mesher.js` (meshStore), `project.js` (projectVertices), `cleanup.js` (cleanupMesh) — sample, mesh and clean on the session |
+| `implicit_detail.cpp` | `implicit/detail.js` (applySurfaceDetail) — refine, project and displace for surface detail |
+| `implicit_math.h` | `js-math.js`'s `pfSin`/`pfCos`/`pfAtan2` and `implicit/noise.js` (latticeHash/valueNoise) |
+| `implicit_probe.cpp` | (test only) `ip_math_probe`, which `test/implicit-native-math.test.js` calls to compare `implicit_math.h` with its JS |
 
 ## The contract: bit-identical, not close
 
@@ -32,11 +37,19 @@ What keeping it exact takes, wherever you edit:
   `sqrt(x*x + y*y + z*z)`, rounded per operation.
 - **`Math.max`/`Math.min` are `jsmath::jsmax`/`jsmin`**, never `std::fmax`/
   `fmin`: JS propagates NaN (and ranks +0 above -0); `fmax` drops NaN.
-- **No other transcendental computed here**: cosines etc. are computed once in
-  JS and passed in, so a second libm never decides anything.
+- **No libm transcendental**: the creased-normals pass gets its cosines
+  computed once in JS and passed in, and the implicit engine's sin/cos/atan2/
+  noise are partforge's own (`js-math.js`'s `pfSin` & co., fdlibm kernels
+  built from + − × and floor only), ported to `implicit_math.h` — never
+  `std::sin`, whose libm differs from every JS engine's.
 - **No fused multiply-add**: the build passes `-ffp-contract=off` (clang on
   arm64 fuses `a*b + c` by default and the output drifts; measured, it buys no
   speed here — this code is bound by memory and branches).
+- **SIMD only where it rounds per lane**: the build passes `-msimd128`, so
+  independent lane loops (the implicit interpreter's) run two lanes per
+  `f64x2` op. Its add/sub/mul/div/sqrt round each lane exactly as the scalar
+  op, and without `-ffast-math` the compiler reassociates nothing, so the bits
+  do not change. Never `-mrelaxed-simd` (its `madd` fuses) or `-ffast-math`.
 - **The JS's order wherever it picks a winner**: Map insertion order, stable
   sorts (JS `TypedArray#sort` is stable — use `std::stable_sort`), first-wins
   ties, the same traversal stack order.
@@ -73,10 +86,47 @@ Two rules come with that freedom:
   stack is 64 KB, so recursion keeps per-level state small (the build's bin
   scratch lives on the builder, not the stack).
 
+### The implicit engine: a session, and the orders it keeps
+
+The implicit engine is not one call but a run of stages over shared state, so
+its ABI is a **session**: `ip_session_create` returns an id (≥ 1; sessions
+are independent and several may be live), `ip_tex_add` / `ip_prog_add` copy in
+the part's textures and programs (their indices are the add order, which must
+be the plan's), then `ip_sample` → `ip_mesh` → `ip_cleanup` → `ip_detail` each
+read and write the session's leaf store and mesh in place, and only the final
+mesh is copied out (`ip_positions`, `ip_indices`, `ip_normals`, …).
+`ip_session_destroy` frees it. `src/framework/core/implicit-core.js`
+(`NativeSession`, `meshImplicitCore`) is the one JS caller: it validates
+inputs before any call, treats a refusal (a nonzero code) as "let the JS
+answer", and poisons the instance only on a trap or failed allocation.
+
+The orders that decide a result, and so must stay the JS's however the data is
+held (each `.cpp`'s top comment has the full list):
+
+- **Edge-key creation order in the mesher**: a crossing vertex is numbered when
+  its edge is first met — leaves in store order, cells (l, j, i), the Kuhn tets
+  in order, a triangle's corners left to right. The weld tables (a per-leaf
+  local table, and a `flat_map.h` map for edges on leaf faces) are only found
+  and inserted, so they decide nothing; the creation order decides everything.
+- **Leaf-group order in projection**: the JS batches vertices by leaf, the core
+  by program. That is free only because a vertex's move reads only itself and
+  the interpreter is lane-local; anything that lets one vertex's move see
+  another's would make the grouping an order that decides.
+- **Collapse incidence order**: triangles in order, edges (c, c+1), and b's
+  incident triangles walked in the order the JS pushed them (CSR filled in
+  triangle, corner order); a collapse's kill/rename follows it, so it decides
+  which triangles survive and how they are renumbered.
+
+Likewise detail's midpoints are numbered in creation order (triangles in
+order, edges v0v1, v1v2, v2v0); its midpoint map is per-vertex chains, only
+found and inserted.
+
 Measure a change with `npm run bench:core` (`BENCH_BASELINE=<an older
 core-wasm.js>` runs both builds side by side, alternating, so machine load
 hits both alike — absolute timings on a shared machine are not comparable
-run to run). It also checks every result against the JS.
+run to run). It also checks every result against the JS. The implicit engine
+has its own: `npm run bench:implicit -- --core both` (JS and native per
+stage, CPU time), with CI's gates in `test/implicit-speed.test.js`.
 
 ## Building
 
