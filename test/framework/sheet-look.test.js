@@ -9,10 +9,11 @@ import laserBox from "../../src/parts/laser-box.js";
 import { bootManifoldKernel } from "../../src/testing.js";
 import { buildPosed, resolveParams } from "../../src/framework/part-model.js";
 import { sheetPart } from "../../src/framework/sheet/part.js";
+import { routedPart } from "../../src/framework/sheet/routed.js";
 import { MARK_DEPTH } from "../../src/framework/sheet/constants.js";
 import { poseSteps } from "../../src/framework/sheet/pose.js";
 import { composePose, invertRigid, transformPositions } from "../../src/framework/geometry/pose.js";
-import { BURN, DEFAULT_STOCK_LOOK, STOCK_LOOKS, burnAlbedo, burnTexel, burnsFor, classifySheetSurface, plyCount, realisticDisplay, sheetFrameFor, sheetStockLook, srgbToLinear, stockLook } from "../../src/framework/materials/sheet-look.js";
+import { BURN, DEFAULT_STOCK_LOOK, STOCK_LOOKS, boxPlyFrame, burnAlbedo, burnTexel, burnsFor, classifySheetSurface, laminatedFor, plyCount, realisticDisplay, sheetFrameFor, sheetStockLook, srgbToLinear, stockLook, wantsSheetFrame } from "../../src/framework/materials/sheet-look.js";
 import { PRESETS } from "../../src/framework/materials/presets.js";
 
 let k;
@@ -155,8 +156,75 @@ describe("who burns: a laser sheet in a wood, on its own build and pose", () => 
   });
 });
 
-test("plies: 3 mm → 3, 6 → 5, 9 → 7, 12 → 9", () => {
+test("plies: 3 mm → 3, 6 → 5, 9 → 7, 12 → 9, then one per ~1.4 mm, always odd", () => {
   expect([0.5, 3, 4.4, 4.5, 6, 7.5, 9, 10.5, 12].map(plyCount)).toEqual([3, 3, 3, 5, 5, 7, 7, 9, 9]);
+  expect([13.3, 15, 18, 24, 50].map(plyCount)).toEqual([9, 11, 13, 17, 35]);
+  for (let t = 0.5; t < 80; t += 0.37) expect(plyCount(t) % 2, `${t} mm`).toBe(1);
+});
+
+test("boxPlyFrame stacks the plies along the thinnest axis, the low corner at z = 0, right-handed", () => {
+  const apply = (f, [x, y, z]) => [0, 1, 2].map((r) => f[r] * x + f[4 + r] * y + f[8 + r] * z + f[12 + r]);
+  const det3 = (f) => f[0] * (f[5] * f[10] - f[9] * f[6]) - f[4] * (f[1] * f[10] - f[9] * f[2]) + f[8] * (f[1] * f[6] - f[5] * f[2]);
+  for (const [min, max, thin] of [[[0, 0, 0], [40, 30, 18], 2], [[5, -2, 1], [9, 40, 30], 0], [[0, 10, 0], [50, 22, 36], 1]]) {
+    const f = boxPlyFrame(min, max);
+    expect(det3(f.frame), `thin ${thin}`).toBeCloseTo(1);
+    expect(apply(f.frame, min).map((c) => c + 0)).toEqual([0, 0, 0]);
+    expect(apply(f.frame, max)[2]).toBeCloseTo(max[thin] - min[thin]);
+    expect(f.t).toBeCloseTo(max[thin] - min[thin]);
+    expect(f.plies).toBe(plyCount(f.t));
+  }
+  expect(boxPlyFrame([0, 0, 0], [0, 0, 0])).toBeNull();
+});
+
+test("boxPlyFrame carries the face grain into the laminate frame; a grain on the thin axis reads as x", () => {
+  // thin z: x → x, y → y
+  expect(boxPlyFrame([0, 0, 0], [40, 30, 6], 0).grain).toEqual([1, 0]);
+  expect(boxPlyFrame([0, 0, 0], [30, 40, 6], 1).grain).toEqual([0, 1]);
+  // thin x: (y, z) → (x, y)
+  expect(boxPlyFrame([0, 0, 0], [6, 40, 30], 1).grain).toEqual([1, 0]);
+  expect(boxPlyFrame([0, 0, 0], [6, 30, 40], 2).grain).toEqual([0, 1]);
+  expect(boxPlyFrame([0, 0, 0], [6, 6, 6], 2).grain).toEqual([1, 0]);
+});
+
+test("laminatedFor: plywood looks, on any sub-part; nothing else", () => {
+  expect(laminatedFor({ display: { material: "plywood" } })).toBe(true);
+  expect(laminatedFor({ display: { material: "plywood", color: 0x2e8b3d } })).toBe(true);
+  expect(laminatedFor({ display: { material: "oak" } })).toBe(false);
+  expect(laminatedFor({})).toBe(false);
+  expect(laminatedFor(panel())).toBe(false);
+  expect(laminatedFor(panel({ display: undefined }))).toBe(true); // a bare laser sheet draws as its stock
+});
+
+describe("routed plywood stacks its plies on its sheet frame", () => {
+  const routed = (over = {}) => routedPart({ views: ["main"], label: "Board", material: "birch plywood", thickness: 18, profile: (kk) => kk.shape2d(rect(0, 0, 50, 30)), ...over });
+  test("a routed part with no usable material draws as its stock, like a laser sheet", () => {
+    expect(sheetStockLook(routed())).toBe("plywood");
+    expect(realisticDisplay(routed())).toEqual({ material: "plywood" });
+    expect(realisticDisplay(routed({ display: { material: "nope", color: 0x2e8b3d } }))).toEqual({ material: "plywood", color: 0x2e8b3d });
+    expect(realisticDisplay(routed({ material: "cast acrylic" }))).toEqual({ material: "clear-acrylic" });
+    expect(realisticDisplay(routed({ display: { material: "walnut" } }))).toEqual({ material: "walnut" });
+    // and so it stacks plies on its frame, with no material named
+    expect(sheetFrameFor(routed(), P)).toEqual({ frame: IDENTITY, t: 18, plies: 13 });
+  });
+  test("a routed part in plywood wants a sheet frame and gets one, with its plies; it never burns", () => {
+    const sp = routed({ display: { material: "plywood" } });
+    expect(burnsFor(sp)).toBe(false);
+    expect(wantsSheetFrame(sp)).toBe(true);
+    expect(sheetFrameFor(sp, P)).toEqual({ frame: IDENTITY, t: 18, plies: 13 });
+  });
+  test("a routed part in a solid wood, or acrylic stock, gets no sheet frame", () => {
+    expect(wantsSheetFrame(routed({ display: { material: "walnut" } }))).toBe(false);
+    expect(sheetFrameFor(routed({ material: "cast acrylic" }), P)).toBeNull();
+  });
+  test("a posed routed part's frame is its pose inverted", () => {
+    const pose = { face: "-Y", up: "+Z", at: [0, -30, 0] };
+    const f = sheetFrameFor(routed({ display: { material: "plywood" }, pose }), P);
+    expect(f.frame).toEqual(invertRigid(composePose(poseSteps(pose, 18))));
+  });
+  test("a custom build is not trusted with a frame (the viewer falls back to its box)", () => {
+    const sp = { ...routed({ display: { material: "plywood" } }), build: (kk) => kk.box({ size: [1, 1, 1] }) };
+    expect(wantsSheetFrame(sp)).toBe(false);
+  });
 });
 
 test("classifySheetSurface: walls by the normal, floors by depth under the laser face", () => {
@@ -304,6 +372,16 @@ test("a plywood sheet shows its plies: 3 mm → 3, 6 → 5, 9 → 7; other woods
 });
 
 describe("a laser sheet with no usable material takes its stock's look", () => {
+  test("a stock named by a species the library has draws in it", () => {
+    for (const [stock, look] of [["walnut", "walnut"], ["Black Walnut 3/4\"", "walnut"], ["white oak", "oak"], ["Oak veneer", "oak"],
+      ["pine plywood", "pine-plywood"], ["Sanded Pine Ply", "pine-plywood"], ["douglas fir plywood", "pine-plywood"], ["Douglas-fir", "pine-plywood"],
+      ["walnut plywood", "walnut"], ["cloak", "plywood"], ["soak board", "plywood"], ["spine", "plywood"]]) {
+      expect(stockLook(stock), stock).toBe(look);
+    }
+    // acrylic still wins over a wood word, being first
+    expect(stockLook("walnut-tinted acrylic")).toBe("clear-acrylic");
+  });
+
   test("one keyword table: acrylic-like stock is clear acrylic, everything else plywood", () => {
     for (const stock of ["clear acrylic", "3 mm Perspex", "Plexiglas", "plexiglass", "PMMA", "3mm PMMA", "polycarbonate sheet",
       "Cast ACRYLIC", "clear-acrylic", "Acrylite FF", "Acrylglas 3mm", "acrylique", "polymethyl methacrylate", "Lexan",

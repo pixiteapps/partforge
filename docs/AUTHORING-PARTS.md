@@ -403,7 +403,7 @@ meta: { title: "…", units: "mm", environment: "studio" },
 - **One material per sub-part.** Something that needs two finishes (a knurled
   grip in rubber on an aluminium body) is two sub-parts.
 
-**Sheet parts default to their stock.** A laser `sheetPart` that names no material (or
+**Sheet parts default to their stock.** A laser `sheetPart` or a `routedPart` that names no material (or
 one the library does not know) is not drawn as a PLA print: realistic mode shows it as the
 sheet its stock label names — the first row with a stem that starts a word of the label,
 ignoring case (so `Plexiglas`, `Acrylite` and `poly-carbonate` match; `perplexing` does not):
@@ -411,10 +411,14 @@ ignoring case (so `Plexiglas`, `Acrylite` and `poly-carbonate` match; `perplexin
 | A word of the stock label starts with | Realistic look |
 | --- | --- |
 | `acryl`, `perspex`, `plexi`, `pmma`, `methacryl`, `polycarb`, `lexan`, `makrolon`, `lucite` | `clear-acrylic` |
+| `pine`, `douglas` | `pine-plywood` |
+| `walnut` | `walnut` |
+| `oak` | `oak` |
 | anything else — plywood, birch, basswood, poplar, MDF, hardboard — or no readable label | `plywood` |
 
 Stock that is neither wood nor acrylic — felt, leather, card, cork — takes the `plywood`
-look too, charred edges and all. A `color` tints the look, as it tints any preset (a
+look too (charred edges and all, on a laser sheet), and a species-faced ply — `walnut
+plywood`, `oak ply` — takes that species' solid look, without plies. A `color` tints the look, as it tints any preset (a
 stained plywood, a coloured acrylic); the CAD view still shows the `color` itself. Only a
 string label is read: a stock written as a `(p, d)` function counts as unreadable. Name
 `display.material` to choose the look yourself — for such stock, or any other. Like the
@@ -445,6 +449,16 @@ from the sheet and the wood it is drawn in. It needs the sheet's own frame, so a
 with a custom `build` or a `views` pose of its own shows plain wood. The CAD view and every export are
 unchanged.
 
+**Plywood edges.** Anything drawn in `plywood` shows its plies wherever a surface runs across
+them: alternating face-grain and cross plies (side grain on one, darker end grain on the
+other, swapping as the edge turns), each veneer its own tone, with a thin glue line between
+plies. The ply count follows the thickness (3 mm → 3, 6 → 5, 9 → 7, 12 → 9, then one per
+~1.4 mm: 18 mm → 13). A `sheetPart` or `routedPart` stacks them along its own thickness, so a
+CNC-routed plywood board shows clean plies on its profile, pockets and drills, and a laser
+sheet shows them through its char; any other sub-part in plywood stacks them along its
+thinnest bounding-box axis — right for a slab, a guess for a chunky block. Realistic mode
+only, like the burn.
+
 **`textureScale` is millimetres, and what it measures depends on the preset's
 pattern** — so a value copied from one preset family is wrong on another (0.2
 on oak shrinks the grain to a 0.2 mm tile, i.e. invisible noise):
@@ -453,7 +467,7 @@ on oak shrinks the grain to a 0.2 mm tile, i.e. invisible noise):
 | --- | --- | --- | --- |
 | layer lines | `pla-print`, `petg-print` | layer height | 0.2 |
 | SLS grain | `nylon-sls` | grain size | 0.15 |
-| wood | `oak`, `walnut`, `plywood`, `pine-plywood` | size of one texture tile (the grain repeats every this many mm) | 250 (`oak`), 400 (`walnut`), 150 (`plywood`), 1000 (`pine-plywood`, sized for whole 4 × 8 sheets) |
+| wood | `oak`, `walnut`, `plywood`, `pine-plywood` | size of one texture tile (the grain repeats every this many mm) | 250 (`oak`), 400 (`walnut`), 150 (`plywood`), 400 (`pine-plywood`; raise it toward 1000 for a whole 4 × 8 sheet with no visible repeat, at the cost of a softer grain) |
 | carbon weave | `carbon-fiber` | size of one texture tile | 48 |
 
 Presets without a pattern ignore it.
@@ -489,8 +503,8 @@ the viewer's blue-grey.
 | `rubber` | Rubber | yes | Matte elastomer: gaskets, feet, grips; tint with `color`. |
 | `oak` | Oak | — | Light oak with open grain. |
 | `walnut` | Walnut | — | Dark oiled walnut. |
-| `plywood` | Birch plywood | — | Birch plywood sheet: a pale, fine-grained face; its plies show on laser-cut edges. |
-| `pine-plywood` | Sanded pine plywood | — | Hardware-store 4 × 8 sheet plywood (sanded pine/fir face): warm, bold grain; plies show on laser-cut edges. |
+| `plywood` | Birch plywood | — | Birch plywood sheet: a pale, fine-grained face; its plies show on cut edges. |
+| `pine-plywood` | Sanded pine plywood | — | Hardware-store 4 × 8 sheet plywood (sanded pine/fir face): warm, bold grain; plies show on cut edges. |
 | `carbon-fiber` | Carbon fibre | — | 2x2 twill carbon fibre under clear coat. |
 
 **Environments** (`meta.environment`, default `studio`; viewers can switch):
@@ -3963,7 +3977,7 @@ rigid motion — translate/rotate — never a reshape; an error). A pose the pro
 
 **Appearance** (all warnings) — `unknown-material` (a `display.material` the
 library does not know; the viewer draws it as if it named none — a PLA print
-in realistic mode, or for a laser sheet part its stock's look, per "Sheet parts
+in realistic mode, or for a laser or routed sheet part its stock's look, per "Sheet parts
 default to their stock"), `unknown-environment`
 (`meta.environment` not known; realistic mode uses `studio`),
 `material-key-unknown` (a `display` key that is not colour, opacity, material

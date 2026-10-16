@@ -5,6 +5,7 @@
 import { PRESETS } from "../framework/materials/presets.js";
 import { sheetPart } from "../framework/sheet/part.js";
 import { sheetHole } from "../framework/sheet/joinery.js";
+import { routedPart } from "../framework/sheet/routed.js";
 
 const ids = Object.keys(PRESETS);
 const COLS = 6, PITCH = 40;
@@ -71,10 +72,56 @@ function laserSwatch(s, unburnt) {
   });
 }
 
+// The "Plywood edges" view: the ply pass (materials/patterns.js applyPlies) on every kind of
+// plywood wall — CNC-routed panels at 6, 12 and 18 mm (a rounded profile, a pocket and a
+// through drill, so straight, curved and inner walls all show), one standing on edge, a
+// routed disc that names no material (drawn as its stock; a wall that turns through every grain direction), an 18 mm pine-plywood panel, a 6 mm laser panel (plies
+// under the char), and two plain solids in plywood that are not sheet parts at all (their
+// plies stack along the thinnest axis).
+const PW = 50;
+const roundedRect = (k, x, y, w, h, r) => k.shape2d([[x, y], [x + w, y], [x + w, y + h], [x, y + h]]).fillet(r);
+const ROUTED = [[6, 0], [12, 1], [18, 2]];
+const plywoodParts = {
+  ...Object.fromEntries(ROUTED.map(([t, col]) => [`ply_routed_${t}`, routedPart({
+    label: `Routed plywood, ${t} mm`, views: ["plywood"], material: "birch plywood", thickness: t, display: { material: "plywood" },
+    profile: (k) => roundedRect(k, col * (PW + 15), 0, PW, 36, 6),
+    pockets: (k) => [{ region: roundedRect(k, col * (PW + 15) + 6, 6, 18, 24, 3), depth: t / 2 }],
+    drills: () => [{ at: [col * (PW + 15) + 37, 18], d: 10, depth: t }],
+  })])),
+  ply_routed_standing: routedPart({
+    label: "Routed plywood, 12 mm, standing", views: ["plywood"], material: "birch plywood", thickness: 12, display: { material: "plywood" },
+    profile: (k) => roundedRect(k, 0, 0, PW, 36, 6),
+    drills: () => [{ at: [25, 18], d: 10, depth: 12 }],
+    pose: { face: "-Y", up: "+Z", at: [0, -30, 0] },
+  }),
+  ply_routed_disc: routedPart({
+    // names no material: drawn as its stock (sheet-look.js realisticDisplay)
+    label: "Routed plywood disc, 18 mm (no material)", views: ["plywood"], material: "birch plywood", thickness: 18,
+    profile: (k) => k.shape2d(Array.from({ length: 96 }, (_, i) => [90 + 22 * Math.cos((i / 96) * 2 * Math.PI), -45 + 22 * Math.sin((i / 96) * 2 * Math.PI)])),
+  }),
+  ply_routed_pine: routedPart({
+    label: "Routed pine plywood, 18 mm", views: ["plywood"], material: "pine plywood", thickness: 18, display: { material: "pine-plywood" },
+    profile: (k) => roundedRect(k, 130, -100, PW, 30, 6),
+    drills: () => [{ at: [165, -85], d: 10, depth: 18 }],
+  }),
+  ply_laser_6: sheetPart({
+    label: "Laser-cut plywood, 6 mm", views: ["plywood"], material: "birch plywood", thickness: 6, display: { material: "plywood" },
+    profile: (k) => k.shape2d([[130, -60], [130 + SW, -60], [130 + SW, -60 + SW], [130, -60 + SW]]).cut(sheetHole({ d: 8, at: [151, -39] })),
+  }),
+  ply_block: {
+    label: "Plywood block (not a sheet part)", views: ["plywood"], display: { material: "plywood" },
+    build: (k) => k.box({ min: [0, -100, 0], max: [40, -70, 18] }).cut(k.cylinder({ d: 10, h: 30 }).translate([28, -85, -5])),
+  },
+  ply_filleted: {
+    label: "Filleted plywood block (not a sheet part)", views: ["plywood"], display: { material: "plywood" },
+    build: (k) => k.box({ min: [60, -100, 0], max: [100, -70, 18] }).fillet({ r: 4 }),
+  },
+};
+
 export default {
   meta: { title: "Material swatches", units: "mm", environment: "studio" },
   defaults: {},
-  views: { all: { label: "All presets", default: true }, colours: { label: "PLA colours" }, petg: { label: "PETG colours" }, print: { label: "Layer lines" }, laser: { label: "Laser-cut" }, unburnt: { label: "Laser-cut, unburnt" } },
+  views: { all: { label: "All presets", default: true }, colours: { label: "PLA colours" }, petg: { label: "PETG colours" }, print: { label: "Layer lines" }, laser: { label: "Laser-cut" }, unburnt: { label: "Laser-cut, unburnt" }, plywood: { label: "Plywood edges" } },
   parts: {
     ...Object.fromEntries(ids.map((id, i) => [id.replaceAll("-", "_"), {
       label: PRESETS[id].label,
@@ -121,5 +168,6 @@ export default {
       [`laser_${s.key}`, laserSwatch(s, false)],
       [`unburnt_${s.key}`, laserSwatch(s, true)],
     ])),
+    ...plywoodParts,
   },
 };

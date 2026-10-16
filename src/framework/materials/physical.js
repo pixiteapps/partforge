@@ -5,7 +5,7 @@
 // disagree about which preset a sub-part is.
 import * as THREE from "three";
 import { cadAppearance, resolveMaterial, hasAppearance } from "./resolve.js";
-import { applyBrushFrame, applyBurn, applyPattern } from "./patterns.js";
+import { applyBrushFrame, applyBurn, applyPattern, applyPlies } from "./patterns.js";
 import { PATTERN_TEXTURES } from "./assets.js";
 
 export function buildCadMaterial(display, base) {
@@ -22,10 +22,13 @@ export function buildCadMaterial(display, base) {
 // Realistic-mode material. `loadTexture(fileName)` is injected (the viewer owns
 // a caching TextureLoader), so this stays unit-testable without a network.
 // `burn` is the viewer's per-sub-part decision (sheet-look.js burnsFor): it adds the laser
-// burn pass to a wood and changes no other program.
+// burn pass to a wood and changes no other program. A laminated wood (plywood) adds the ply
+// pass first, so the burn chars the plies it draws.
 export function buildPhysicalMaterial(display, opts = {}) {
   let m = buildPhysical(display, opts);
-  if (opts.burn) m = applyBurn(m, { faceAvg: resolveMaterial(display).preset.color });
+  const { preset } = resolveMaterial(display);
+  if (preset.laminated) m = applyPlies(m, { faceAvg: preset.color });
+  if (opts.burn) m = applyBurn(m, { faceAvg: preset.color });
   // brushed metal picks its brush direction per pixel (patterns.js applyBrushFrame)
   return m.userData.pfAnisotropic ? applyBrushFrame(m) : m;
 }

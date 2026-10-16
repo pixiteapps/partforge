@@ -19,7 +19,7 @@ export const MATERIAL_RULES = [
     id: "unknown-material",
     run: ({ part }) => issuesOf(part, "unknown-material").map(({ name, value }) => {
       const near = typeof value === "string" ? suggest(value, listedPresets()) : null;
-      // A laser sheet falls back to its stock's look, not to PLA (materials/sheet-look.js) —
+      // A laser or routed sheet falls back to its stock's look, not to PLA (materials/sheet-look.js) —
       // read from a string label only: a label written as a function takes the default look.
       const sp = part.parts[name];
       const stock = sheetStockLook(sp);

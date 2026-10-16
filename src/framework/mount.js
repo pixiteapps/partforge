@@ -14,7 +14,7 @@ import { attachSelectionPopover } from "./selection-popover.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
 import { declaresMaterials, resolveMaterial } from "./materials/resolve.js";
 import { printFrameMatrix } from "./materials/print-frame.js";
-import { burnsFor, realisticDisplay, sheetFrameFor } from "./materials/sheet-look.js";
+import { realisticDisplay, sheetFrameFor, wantsSheetFrame } from "./materials/sheet-look.js";
 import { pruneOverrides } from "./materials/overrides.js";
 import { subPartRows } from "./sub-part-list.js";
 import { buildControls } from "./controls.js";
@@ -1171,7 +1171,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     const isLayerLined = (n) => {
       try { return resolveMaterial(realisticDisplay(effectiveSubPart(n))).params.pattern === "layer-lines"; } catch { return false; }
     };
-    const isBurning = (n) => burnsFor(effectiveSubPart(n));
+    // A burning laser sheet, or a canonical sheet part (laser or routed) in plywood.
+    const isBurning = (n) => wantsSheetFrame(effectiveSubPart(n));
     // LAZY: a delivery only records the view and params its job was DISPATCHED with
     // (`dispatched`, set where the loop sends) — not the live ones, which a delivery shown
     // during playback was never built at; the viewer pulls the frames (computeFrames)
