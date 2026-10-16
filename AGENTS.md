@@ -264,9 +264,14 @@ the installed package, so let the publish finish before bumping the dep there.
   diffs them) - to check by eye after any preset or shader change.
 - **`src/framework/gltf/`** + **`src/framework/mount-preview.js`** - the cached
   preview (0.147.0). `gltf/encode-preview.js` is `partforge/gltf`'s writer: one
-  view's POSED meshes as a GLB (one node/mesh/primitive per sub-part under a
-  single −90°-about-X root, materials from `cadAppearance`, the sub-part's
-  `display` block in node extras, then weld → quantize → meshopt "medium"). It is
+  view's POSED meshes as a GLB (one node/mesh per sub-part under a single
+  −90°-about-X root: a TRIANGLES primitive plus, since encoder version 2 / 0.154.0,
+  a POSITION-only LINES primitive carrying the kernel's feature edges — on the SAME
+  mesh, so quantize() gives both one quantization volume and the lines stay on the
+  faces; empty or absent `edges` writes none and decodes to an EMPTY array, never
+  undefined, which would make the viewer derive lines by angle. Materials from
+  `cadAppearance`, the sub-part's `display` block in node extras, then weld →
+  quantize → meshopt "medium"). It is
   worker-safe — no three.js, no DOM, no Blob (`test/gltf-layering.test.js`) — and
   deterministic; bump `PREVIEW_ENCODER_VERSION` whenever its bytes change, since
   downstream caches key on it. `gltf/decode-preview.js` reads one back with
@@ -275,8 +280,11 @@ the installed package, so let the publish finish before bumping the dep there.
   the part twice — so `mount({ preview })` draws it through `setSubGeometry` and
   the first whole live delivery replaces it in place (`preview-gate.js` holds
   picking/hover/measure/sketch/cutaway off meanwhile, and a carried cutaway waits
-  for the live build). `runtime.exportPreview()` encodes the view on screen via
-  `viewer.getSubMeshPayload` (fast-path poses baked in) and loads the encoder
+  for the live build). GLTFLoader turns a two-primitive mesh into a Group (the
+  node's extras and name) of a Mesh and a LineSegments, so the decoder pairs them
+  through the node. `runtime.exportPreview()` encodes the view on screen via
+  `viewer.getSubMeshPayload` (fast-path poses baked in, edges included — read from
+  the geometry's `userData.edgePositions`) and loads the encoder
   lazily, so the app bundle does not carry `@gltf-transform`. `mountPreview` is
   the same viewer with a synthetic part built from the GLB's own node names — no
   worker, no rail.

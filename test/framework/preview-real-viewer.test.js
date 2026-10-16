@@ -62,7 +62,7 @@ vi.mock("../../src/framework/viewer.js", async (importOriginal) => {
 import { mount } from "../../src/framework/mount.js";
 import { mountPreview } from "../../src/framework/mount-preview.js";
 import { decodePreviewGlb } from "../../src/framework/gltf/decode-preview.js";
-import { boxSoup, boundsOf, previewGlbFor } from "../helpers/preview-glb.js";
+import { boxEdges, boxSoup, boundsOf, previewGlbFor, segmentMismatch } from "../helpers/preview-glb.js";
 
 const OriginalResizeObserver = globalThis.ResizeObserver;
 
@@ -169,6 +169,39 @@ test("exportPreview bakes a canonical sub-part's place() pose into the file", as
   const { min, max } = boundsOf(out.meshes[0].positions);
   expectNear(min, [10, 0, 0]);
   expectNear(max, [11, 1, 1]);
+  runtime.dispose();
+});
+
+test("exportPreview carries the sub-part's feature edges, posed like its positions", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(placedPart(), { createWorker, elements: makeElements() });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", ms: 1, meshes: [
+    { ...boxSoup("body", [0, 0, 0], [1, 1, 1]), edges: boxEdges([0, 0, 0], [1, 1, 1]), reads: ["h"], frame: "canonical" },
+  ] } });
+  await runtime.ready;
+  const out = await decodePreviewGlb(await runtime.exportPreview());
+  expect(segmentMismatch(out.meshes[0].edges, boxEdges([10, 0, 0], [11, 1, 1]))).toBeNull();
+  runtime.dispose();
+});
+
+test("a live sub-part with no feature edges exports none", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", ms: 1, meshes: [boxSoup("body", [0, 0, 0], [4, 4, 4])] } });
+  await runtime.ready;
+  const out = await decodePreviewGlb(await runtime.exportPreview());
+  expect(out.meshes[0].edges).toEqual(new Float32Array(0));
+  runtime.dispose();
+});
+
+test("a preview's decoded edges reach the viewer's edge lines", async () => {
+  const preview = await previewGlbFor([{ ...boxSoup("body", [0, 0, 0], [4, 4, 4]), edges: boxEdges([0, 0, 0], [4, 4, 4]) }], makePart(), "main");
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), preview });
+  await vi.waitFor(() => expect(runtime.previewActive).toBe(true));
+  expect(viewers[0].getSubMeshPayload("body").edges.length).toBe(72);
   runtime.dispose();
 });
 

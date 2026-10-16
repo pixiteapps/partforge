@@ -11,6 +11,16 @@
 // rotation; parenting the glTF root under the pivot would turn the part twice.
 // Undoing the root here hands the viewer geometry in the frame it already owns.
 //
+// Feature edges (encoder version 2): a sub-part's mesh may carry a second
+// primitive, mode LINES, holding the kernel's edge segments. GLTFLoader then
+// makes the node a Group of a Mesh and a LineSegments (the node's extras and
+// name on the Group, not the Mesh), so each surface and its lines are matched
+// through the glTF NODE they belong to. Lines go back to model frame through
+// the same matrix as the positions; a node with no line primitive — version 1,
+// or a sub-part whose edges were empty — decodes to an EMPTY Float32Array,
+// which the viewer reads as "no feature edges" (never undefined, which would
+// make it derive lines by angle).
+//
 // Rejects on anything that is not a decodable GLB; the callers (mount's
 // `preview`, mountPreview) decide what a failure means for them.
 import { Matrix3, Matrix4, Vector3 } from "three";
@@ -50,15 +60,50 @@ function metaOf(extras) {
   return Object.keys(out).length ? out : null;
 }
 
+// The object standing for a glTF node: the object itself when its node had one
+// primitive, else the Group GLTFLoader made for a multi-primitive mesh — the
+// one carrying the node's extras / name (a primitive's own Mesh has neither).
+function nodeObjectOf(obj) {
+  const own = obj.userData ?? {};
+  if ("partforgeSubPart" in own || "name" in own) return obj;
+  const parent = obj.parent;
+  return parent?.isGroup && parent.userData && ("partforgeSubPart" in parent.userData || "name" in parent.userData) ? parent : obj;
+}
+
+// Line segments as endpoint pairs in model frame (an indexed LINES primitive —
+// weld() indexes it — expanded back to pairs).
+function readSegments(geometry, matrix) {
+  const position = geometry.getAttribute("position");
+  if (!position || position.count === 0) return null;
+  const points = readVec3(position, matrix, false);
+  if (!geometry.index) return points;
+  const index = geometry.index.array;
+  const out = new Float32Array(index.length * 3);
+  for (let i = 0; i < index.length; i++) out.set(points.subarray(index[i] * 3, index[i] * 3 + 3), i * 3);
+  return out;
+}
+
 export async function decodePreviewGlb(bytes) {
   const data = toArrayBuffer(bytes);
   const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   const gltf = await loader.parseAsync(data, "");
   gltf.scene.updateMatrixWorld(true);
   const meshes = [];
+  const edgesByNode = new Map(); // node object → model-frame segment arrays
+  const meshByNode = new Map(); // node object → its surface payload
   const toModel = new Matrix4();
   const normalMatrix = new Matrix3();
   gltf.scene.traverse((obj) => {
+    if (obj.isLineSegments) {
+      toModel.multiplyMatrices(Y_UP_TO_Z_UP, obj.matrixWorld);
+      const segments = readSegments(obj.geometry, toModel);
+      if (segments) {
+        const node = nodeObjectOf(obj);
+        edgesByNode.set(node, [...(edgesByNode.get(node) ?? []), segments]);
+      }
+      obj.geometry.dispose();
+      return;
+    }
     if (!obj.isMesh) return;
     const geometry = obj.geometry;
     const position = geometry.getAttribute("position");
@@ -67,19 +112,31 @@ export async function decodePreviewGlb(bytes) {
     normalMatrix.getNormalMatrix(toModel);
     const normal = geometry.getAttribute("normal");
     const indices = geometry.index ? Uint32Array.from(geometry.index.array) : null;
-    const { partforgeSubPart, partforgeDisplay, name: originalName } = obj.userData;
-    meshes.push({
+    const node = nodeObjectOf(obj);
+    const { partforgeSubPart, partforgeDisplay, name: originalName } = node.userData;
+    const payload = {
       // The writer's own record of the key, then the unsanitized glTF node name.
-      name: typeof partforgeSubPart === "string" ? partforgeSubPart : (originalName ?? obj.name),
+      name: typeof partforgeSubPart === "string" ? partforgeSubPart : (originalName ?? node.name),
       positions: readVec3(position, toModel, false),
       normals: normal ? readVec3(normal, normalMatrix, true) : null,
       indices,
       triangles: (indices ? indices.length : position.count) / 3,
-      edges: new Float32Array(0), // previews carry no feature edges (v1)
+      edges: new Float32Array(0), // filled below from the node's LINES primitive, if any
       display: partforgeDisplay && typeof partforgeDisplay === "object" ? partforgeDisplay : null,
-    });
+    };
+    meshes.push(payload);
+    if (!meshByNode.has(node)) meshByNode.set(node, payload);
     geometry.dispose();
   });
+  for (const [node, parts] of edgesByNode) {
+    const payload = meshByNode.get(node);
+    if (!payload) continue; // lines with no surface: nothing to draw them on
+    const total = parts.reduce((n, p) => n + p.length, 0);
+    const edges = new Float32Array(total);
+    let at = 0;
+    for (const p of parts) { edges.set(p, at); at += p.length; }
+    payload.edges = edges;
+  }
   const extras = gltf.userData ?? {};
   return {
     view: typeof extras.partforgeView === "string" ? extras.partforgeView : null,

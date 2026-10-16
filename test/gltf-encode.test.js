@@ -5,7 +5,7 @@
 import { expect, test } from "vitest";
 import { encodePreviewGlb, PREVIEW_ENCODER_VERSION } from "../src/gltf.js";
 import { cadAppearance } from "../src/framework/materials/resolve.js";
-import { boxSoup, indexedBox, readGlb, worldBounds, glbJson } from "./helpers/preview-glb.js";
+import { boxEdges, boxSoup, indexedBox, readGlb, worldBounds, glbJson } from "./helpers/preview-glb.js";
 
 const srgbToLinear = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
 const factorOf = (hex, alpha = 1) =>
@@ -32,8 +32,8 @@ const meshes = () => [
 const nodeNamed = (doc, name) => doc.getRoot().listNodes().find((n) => n.getName() === name);
 const materialOf = (doc, name) => nodeNamed(doc, name).getMesh().listPrimitives()[0].getMaterial();
 
-test("PREVIEW_ENCODER_VERSION starts at 1", () => {
-  expect(PREVIEW_ENCODER_VERSION).toBe(1);
+test("PREVIEW_ENCODER_VERSION is 2 (feature edges)", () => {
+  expect(PREVIEW_ENCODER_VERSION).toBe(2);
 });
 
 test("one node, mesh and primitive per sub-part, named by key, under one Y-up root", async () => {
@@ -135,4 +135,29 @@ test("an index past the last vertex is refused up front, naming the mesh", async
   indices[0] = bad.positions.length / 3;
   await expect(encodePreviewGlb({ meshes: [{ ...bad, indices }] })).rejects.toThrow(
     'encodePreviewGlb: "lid" indices reference a vertex that does not exist');
+});
+
+test("a sub-part's feature edges ride as a second, POSITION-only LINES primitive on its mesh", async () => {
+  const edges = boxEdges([0, 0, 0], [4, 2, 6]);
+  const before = edges.slice();
+  const input = [{ ...boxSoup("base", [0, 0, 0], [4, 2, 6]), edges }, indexedBox("lid", [0, 0, 6], [4, 2, 7])];
+  const doc = await readGlb(await encodePreviewGlb({ meshes: input, part, view: "assembly" }));
+  const prims = nodeNamed(doc, "base").getMesh().listPrimitives();
+  expect(prims.map((p) => p.getMode())).toEqual([4, 1]); // TRIANGLES, then LINES
+  const lines = prims[1];
+  expect(lines.listSemantics()).toEqual(["POSITION"]);
+  const count = lines.getIndices() ? lines.getIndices().getCount() : lines.getAttribute("POSITION").getCount();
+  expect(count).toBe(24); // 12 segments survive weld/quantize/meshopt
+  expect(nodeNamed(doc, "lid").getMesh().listPrimitives()).toHaveLength(1); // empty edges write nothing
+  expect(edges).toEqual(before); // the input is not rewritten
+  const b = worldBounds(doc);
+  expectNear(b.min, [0, 0, -2], 2);
+  expectNear(b.max, [4, 7, 0], 2);
+});
+
+test("malformed edges are refused, naming the mesh", async () => {
+  await expect(encodePreviewGlb({ meshes: [{ ...boxSoup("a"), edges: [0, 0, 0, 1, 1, 1] }] })).rejects.toThrow(
+    'encodePreviewGlb: "a" edges must be a typed array');
+  await expect(encodePreviewGlb({ meshes: [{ ...boxSoup("a"), edges: new Float32Array(9) }] })).rejects.toThrow(
+    'encodePreviewGlb: "a" edges are not whole segments');
 });

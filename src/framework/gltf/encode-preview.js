@@ -3,8 +3,15 @@
 // buildView all hold) as a small GLB a viewer can show before the kernel boots.
 //
 // The file, which a reader may rely on:
-//  - one node + mesh + primitive per sub-part, all three named by the sub-part
-//    key; POSITION + NORMAL (+ indices when the kernel sent them)
+//  - one node + mesh per sub-part, both named by the sub-part key; the mesh's
+//    FIRST primitive is the surface (TRIANGLES: POSITION + NORMAL, + indices
+//    when the kernel sent them); a sub-part with feature edges adds a SECOND
+//    primitive, mode LINES, POSITION only and no material — the kernel's edge
+//    segments in the same posed frame. A sub-part whose `edges` is empty or
+//    absent has no line primitive; a reader takes that as "no feature edges"
+//    (never "derive them"). Version-1 files have no line primitives at all.
+//    Both primitives share the mesh, so quantize() gives them ONE quantization
+//    volume and one node transform: the lines dequantize onto the faces.
 //  - every sub-part node under ONE root node, "partforge", rotated −90° about X:
 //    partforge models Z-up in millimetres and glTF is Y-up. Units stay mm — the
 //    file is for partforge's own viewer; metres would only matter for AR.
@@ -14,20 +21,20 @@
 //  - top-level extras { partforgeView, partforgeEncoder, partforgeMeta? }
 //  - weld() → quantize() → meshopt({ level: "medium" }): 5–8 bytes a triangle,
 //    the recipe measured in partforge-cloud's local_glb_benchmark.md
-// Not encoded (v1): feature edges, textures, patterns.
+// Not encoded: textures, patterns. (Feature edges since version 2.)
 //
 // Runs in Node, a page and a Web Worker: no three.js, no DOM, no Blob
 // (test/gltf-layering.test.js). Deterministic: the same input writes the same
 // bytes, and nothing here mutates the input (exportPreview passes the viewer's
 // live buffers). Bump PREVIEW_ENCODER_VERSION whenever the bytes for the same
 // input change — downstream caches key on it.
-import { Document, Logger, WebIO } from "@gltf-transform/core";
+import { Document, Logger, Primitive, WebIO } from "@gltf-transform/core";
 import { EXTMeshoptCompression, KHRMeshQuantization } from "@gltf-transform/extensions";
 import { meshopt, quantize, weld } from "@gltf-transform/functions";
 import { MeshoptEncoder } from "meshoptimizer/encoder";
 import { cadAppearance, DISPLAY_KEYS } from "../materials/resolve.js";
 
-export const PREVIEW_ENCODER_VERSION = 1;
+export const PREVIEW_ENCODER_VERSION = 2; // 2: feature edges as a LINES primitive
 
 // −90° about X as [x, y, z, w]: model (x, y, z) → glTF (x, z, −y), the viewer's pivot.
 const Z_UP_TO_Y_UP = [-Math.SQRT1_2, 0, 0, Math.SQRT1_2];
@@ -71,6 +78,10 @@ function checkMesh(m, seen) {
   if (indexed && m.indices.length % 3 !== 0) throw new Error(`encodePreviewGlb: "${m.name}" indices are not whole triangles`);
   if (m.normals != null && m.normals.length > 0 && m.normals.length !== m.positions.length) {
     throw new Error(`encodePreviewGlb: "${m.name}" normals do not match its positions`);
+  }
+  if (m.edges != null) {
+    if (!ArrayBuffer.isView(m.edges)) throw new TypeError(`encodePreviewGlb: "${m.name}" edges must be a typed array`);
+    if (m.edges.length % 6 !== 0) throw new Error(`encodePreviewGlb: "${m.name}" edges are not whole segments`);
   }
   if (indexed) {
     const vertexCount = m.positions.length / 3;
@@ -126,9 +137,14 @@ export async function encodePreviewGlb({ meshes, part = null, view = null } = {}
       .setMetallicFactor(look.metalness)
       .setRoughnessFactor(look.roughness)
       .setAlphaMode(look.opacity < 1 ? "BLEND" : "OPAQUE"));
+    const mesh = doc.createMesh(m.name).addPrimitive(prim);
+    if (m.edges?.length) {
+      mesh.addPrimitive(doc.createPrimitive().setMode(Primitive.Mode.LINES).setAttribute(
+        "POSITION", doc.createAccessor().setType("VEC3").setArray(new Float32Array(m.edges)).setBuffer(buffer)));
+    }
     const extras = displayExtras(display);
     root.addChild(doc.createNode(m.name)
-      .setMesh(doc.createMesh(m.name).addPrimitive(prim))
+      .setMesh(mesh)
       .setExtras(extras ? { partforgeSubPart: m.name, partforgeDisplay: extras } : { partforgeSubPart: m.name }));
   }
   if (root.listChildren().length === 0) throw new Error("encodePreviewGlb: every mesh was empty");
