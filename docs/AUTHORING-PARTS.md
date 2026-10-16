@@ -393,7 +393,9 @@ meta: { title: "…", units: "mm", environment: "studio" },
   marked tintable are normally coloured this way (anodizing, plastic, paint);
   the others have an intrinsic colour (brass) but still accept one. (A viewer
   user PICKING an untintable preset drops an authored tint for that pick — see
-  the runtime section below.)
+  the runtime section below.) On a TEXTURED preset (`oak`, `walnut`, `plywood`,
+  `pine-plywood`) `color` multiplies the scanned wood and dulls its grain — leave
+  it unset unless you mean a stain (lint warns: `material-tint-textured`).
 - Overrides — each clamped to its range: `roughness` (0–1), `metalness` (0–1),
   `clearcoat` (0–1), `clearcoatRoughness` (0–1), `anisotropy` (0–1), `textureScale` (0.01–1000).
   Transmission, index of refraction, sheen and iridescence come only from a preset.
@@ -434,10 +436,10 @@ modelled in its print orientation, not the material. Wood, carbon fibre and SLS 
 fixed to the sub-part, so they never slide when the camera or an animation
 moves.
 
-**Laser-cut wood.** In realistic mode a laser `sheetPart` in a wood — `plywood`, `oak` or
+**Laser-cut wood.** In realistic mode a laser `sheetPart` in a wood — `plywood`, `pine-plywood`, `oak` or
 `walnut`, named or its stock's default (so a plywood sheet that names no material burns too)
 — shows what the laser did: its cut edges are charred, darker on thicker stock (on
-`plywood` the plies show through), and its engraving and score lines are scorched, while its
+`plywood` and `pine-plywood` the plies show through), and its engraving and score lines are scorched, while its
 faces stay wood. There is nothing to set, and it is still one material: the char follows
 from the sheet and the wood it is drawn in. It needs the sheet's own frame, so a sheet part
 with a custom `build` or a `views` pose of its own shows plain wood. The CAD view and every export are
@@ -461,7 +463,7 @@ on oak shrinks the grain to a 0.2 mm tile, i.e. invisible noise):
 | --- | --- | --- | --- |
 | layer lines | `pla-print`, `petg-print` | layer height | 0.2 |
 | SLS grain | `nylon-sls` | grain size | 0.15 |
-| wood | `oak`, `walnut`, `plywood` | size of one texture tile (the grain repeats every this many mm) | 250 (`oak`), 400 (`walnut`), 150 (`plywood`) |
+| wood | `oak`, `walnut`, `plywood`, `pine-plywood` | size of one texture tile (the grain repeats every this many mm) | 250 (`oak`), 400 (`walnut`), 150 (`plywood`), 1000 (`pine-plywood`, sized for whole 4 × 8 sheets) |
 | carbon weave | `carbon-fiber` | size of one texture tile | 48 |
 
 Presets without a pattern ignore it.
@@ -498,6 +500,7 @@ the viewer's blue-grey.
 | `oak` | Oak | — | Light oak with open grain. |
 | `walnut` | Walnut | — | Dark oiled walnut. |
 | `plywood` | Birch plywood | — | Birch plywood sheet: a pale, fine-grained face; its plies show on cut edges. |
+| `pine-plywood` | Sanded pine plywood | — | Hardware-store 4 × 8 sheet plywood (sanded pine/fir face): warm, bold grain; plies show on cut edges. |
 | `carbon-fiber` | Carbon fibre | — | 2x2 twill carbon fibre under clear coat. |
 
 **Environments** (`meta.environment`, default `studio`; viewers can switch):
@@ -2183,8 +2186,8 @@ plate is `sheetPart`.
 import { routedPart, roundedRectProfile } from "partforge/geometry";
 
 plinth: routedPart({
-  label: "Hardwood base", views: { assembly: true, base: true }, display: { color: 0x6e3d23 },
-  material: "walnut",                           // stock label: groups pieces in the kit
+  label: "Plywood base", views: { assembly: true, base: true }, display: { material: "pine-plywood" },
+  material: "pine plywood",                     // stock label: groups pieces in the kit
   thickness: (p) => p.baseThickness,            // the MEASURED board, from a control
   profile: (k, p) => k.shape2d(roundedRectProfile(p.baseLength, p.baseWidth, 10)),   // the THROUGH cut
   pockets: (k, p, d) => [
@@ -3975,7 +3978,10 @@ default to their stock"), `unknown-environment`
 (`meta.environment` not known; realistic mode uses `studio`),
 `material-key-unknown` (a `display` key that is not colour, opacity, material
 or one of the six overrides; ignored), `material-override-clamped` (an override
-outside its range, or not a number; clamped).
+outside its range, or not a number; clamped), `material-tint-textured` (a
+`display.color` on a textured preset that is not tintable — `oak`, `walnut`,
+`plywood`, `pine-plywood`: the colour multiplies the scanned wood and dulls its
+grain; drop it unless a stain is intended).
 
 **Geometry imports** — `import-unknown-name` (a build calls `k.import` with a
 name the part's `imports` field doesn't declare — this throws at build time;

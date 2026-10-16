@@ -103,3 +103,25 @@ test("every unknown-material hint fits in 500 characters, longest suggestion inc
     expect(f.hint.length, f.hint).toBeLessThanOrEqual(500);
   }
 });
+
+test("a colour on a textured, untintable preset warns; the preset alone or a tintable preset does not", () => {
+  const part = goodPart();
+  part.parts.body.display = { material: "plywood", color: 0x6e3d23 };
+  const f = lintPart(part).warnings.find((w) => w.rule === "material-tint-textured");
+  expect(f.path).toBe("parts.body.display.color");
+  expect(f.message).toContain('"body"');
+  expect(f.message).toContain('"plywood"');
+  expect(f.hint).toContain("Drop display.color");
+  expect(f.hint).toContain("stain");
+  expect(f.hint.length).toBeLessThanOrEqual(500);
+  expect(lintPart(part).ok).toBe(true); // a warning, never an error
+
+  part.parts.body.display = { material: "plywood" };
+  expect(warnIds(part)).not.toContain("material-tint-textured");
+  part.parts.body.display = { material: "pla-print", color: 0x2d6cdf };
+  expect(warnIds(part)).not.toContain("material-tint-textured");
+  part.parts.body.display = { material: "brass", color: 0x808080 }; // untintable but untextured
+  expect(warnIds(part)).not.toContain("material-tint-textured");
+  part.parts.body.display = { material: "pine-plywood", color: 0x808080 };
+  expect(warnIds(part)).toContain("material-tint-textured");
+});

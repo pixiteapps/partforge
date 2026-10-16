@@ -250,7 +250,7 @@ function lab(rgb) {
   return [116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))];
 }
 const dE = (a, b) => { const p = lab(a), q = lab(b); return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]); };
-const WOODS = ["oak", "walnut", "plywood"];
+const WOODS = ["oak", "walnut", "plywood", "pine-plywood"];
 
 describe("the burn is clearly visible: the same pixel, burn on vs off", () => {
   test.each(WOODS)("%s at 3 mm", (id) => {

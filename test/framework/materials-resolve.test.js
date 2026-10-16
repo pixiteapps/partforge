@@ -11,12 +11,12 @@ const LISTED = [
   "brushed-stainless", "polished-chrome", "black-oxide-steel", "cast-iron", "titanium",
   "brass", "copper", "bronze", "powder-coat", "painted-metal",
   "pla-print", "petg-print", "resin-print", "nylon-sls",
-  "abs-plastic", "clear-acrylic", "rubber", "oak", "walnut", "plywood", "carbon-fiber",
+  "abs-plastic", "clear-acrylic", "rubber", "oak", "walnut", "plywood", "pine-plywood", "carbon-fiber",
 ];
 
 // The hidden "default" preset is retired: a sub-part with no material renders
 // as a PLA print (below), and its CAD look lives in resolve.js.
-test("the library lists exactly the 25 presets, no hidden default", () => {
+test("the library lists exactly the 26 presets, no hidden default", () => {
   expect(Object.keys(PRESETS).sort()).toEqual([...LISTED].sort());
 });
 
@@ -205,7 +205,8 @@ test("resolveMaterial reports whether the author named a colour", () => {
   expect(resolveMaterial({ material: "oak", color: 0x123456 }).tinted).toBe(true);
 });
 
-test("plywood is a laminated wood; nothing else is laminated", () => {
+test("the two plywoods are laminated woods; nothing else is laminated", () => {
   expect(PRESETS.plywood).toMatchObject({ label: "Birch plywood", category: "natural", pattern: "wood", laminated: true, tintable: false });
-  expect(Object.values(PRESETS).filter((p) => p.laminated).map((p) => p.id)).toEqual(["plywood"]);
+  expect(PRESETS["pine-plywood"]).toMatchObject({ label: "Sanded pine plywood", category: "natural", pattern: "wood", laminated: true, tintable: false });
+  expect(Object.values(PRESETS).filter((p) => p.laminated).map((p) => p.id)).toEqual(["plywood", "pine-plywood"]);
 });
