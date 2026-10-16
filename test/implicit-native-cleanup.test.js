@@ -3,7 +3,6 @@
 // cleanup.js's cleanupMesh: positions, indices, vertLeaf and normals.
 import { afterEach, describe, expect, test } from "vitest";
 import { core, setCoreForTesting } from "../src/framework/core/core.js";
-import { NativeSession } from "../src/framework/core/implicit-core.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
 import { meshStore } from "../src/framework/geometry/implicit/mesher.js";

@@ -39,7 +39,7 @@ function check(fn, name, js, arity) {
     const want = js(...args.slice(0, arity));
     const got = x.ip_math_probe(fn, args[0], args[1], args[2]);
     n++;
-    if (!(Object.is(got, want) || (got !== got && want !== want))) { bad++; first ??= [args, got, want]; }
+    if (!(Object.is(got, want) || (Number.isNaN(got) && Number.isNaN(want)))) { bad++; first ??= [args, got, want]; }
   }
   expect(n).toBe(20000);
   expect(bad, `${name}: first mismatch ${JSON.stringify(first)}`).toBe(0);

@@ -61,10 +61,10 @@ function pfAtan(x) { // fdlibm s_atan.c
   const r = id < 0 ? ax - ax * (s1 + s2) : ATANHI[id] - ((ax * (s1 + s2) - ATANLO[id]) - ax);
   return neg ? -r : r;
 }
-const PI = 3.1415926535897931160e+00, PI_LO = 1.2246467991473531772e-16, PIO2 = 1.5707963267948965580e+00;
+const PI = 3.141592653589793, PI_LO = 1.2246467991473532e-16, PIO2 = 1.5707963267948966; // fdlibm pi, pi_lo, pi/2 (same doubles, shortest form)
 /** atan2 for the implicit engine. Both zeros give 0 (signed zeros are not distinguished). */
 export function pfAtan2(y, x) {
-  if (x !== x || y !== y) return NaN;
+  if (Number.isNaN(x) || Number.isNaN(y)) return NaN;
   if (x === 0) return y > 0 ? PIO2 : y < 0 ? -PIO2 : 0;
   const a = pfAtan(Math.abs(y / x));
   if (x > 0) return y < 0 ? -a : a;

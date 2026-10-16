@@ -108,7 +108,7 @@ function entryHeight(F, o, programs, textures, x, y, z, nx, ny, nz) {
       LX[0] = p[0]; LY[0] = p[1]; LZ[0] = p[2];
       runProgram(programs[F[o + DF.PROG]], textures, LX, LY, LZ, 1, LO);
       const v = LO[0];
-      return (v === v ? v : 0) * w;
+      return (Number.isNaN(v) ? 0 : v) * w;
     }
     default: return 0;
   }
