@@ -17,7 +17,7 @@ import { finishKernel } from "./kernel-front.js";
 import { makeProfileWarner } from "./profile-warnings.js";
 import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
-import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
+import { loftShadingPolicy, SMOOTH, BLEND, ORGANIC } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
 import { affineAt, IDENTITY, invertAffine, mapSurface } from "./blend-surfaces.js";
 import { flatFacePlanes, meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
@@ -925,7 +925,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     },
     // Signed-distance tree → solid (implicit/index.js). The engine meshes at the
     // tier's grid (`preview` for preview, `resolution` for print) and hands
-    // Manifold one welded mesh; the result shades SMOOTH (one surface, no creases).
+    // Manifold one welded mesh; the result shades ORGANIC (one smooth skin: no
+    // same-surface feature lines, normals smoothed through detail grooves).
     // Cached on the spec plus every bound image's digest, per quality tier; the key
     // holds only this tier's grid (defaulted), so editing the other tier's grid is
     // a hit. The engine's warnings (thin feature, clipped) live beside the cached
@@ -945,7 +946,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         }
         const m = T(T(manifoldFromWeldedMesh(wasm, out.positions, out.indices)).asOriginal());
         const id = m.originalID();
-        oidPolicies.set(id, SMOOTH);
+        oidPolicies.set(id, ORGANIC);
         const value = wrap(m, key);
         implicitWarnings.set(value, out.warnings);
         return { value, pin: m, dispose: () => { oidPolicies.delete(id); m.delete?.(); } };
