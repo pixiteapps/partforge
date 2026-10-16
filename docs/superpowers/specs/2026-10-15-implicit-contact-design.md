@@ -65,72 +65,102 @@ stay cleanly apart.
 | `children` | two or more nodes; each is one separate body | required |
 | `gap` | clearance kept between pieces at contact, mm, ≥ 0 | `0` |
 | `bulge` | how far skin swells around a contact, mm, ≥ 0 | tuned on the hand (see below) |
+| `attach` | pairs that are joined, not just touching, near an anchor (below) | `[]` |
 
 It takes `frame`, `at` and `label` like every node. It sits where a hard `union` of
 pieces sits today; blends outside it (e.g. the fingers-to-palm blend) are unchanged.
 Validation errors follow the existing path style
 (`root.children[2].gap: must be >= 0`).
 
-### Field, before bulge (decided)
+### Field (decided)
 
-For children with fields `d_1 … d_n`, let `m_i` be the minimum of the *other* children
-(computed in O(n) from the smallest and second-smallest values).
+Contact is decided **locally, point by point, from the children's own values** — there is
+no per-pair "in contact" switch. (An earlier draft classified whole pairs; that fails on
+the hand, where adjacent fingers touch at the knuckles while their tips are a near miss.)
 
-- **`gap > 0`:** each piece is cut back to the halfway surface, offset by half the gap:
-  `c_i = max(d_i, (d_i − m_i + gap) / 2)`, and the node's value is `min_i c_i`. Where two
-  pieces overlap or come within `gap`, each stops `gap/2` short of the bisector, so they
-  meet as two flat pads separated by `gap`.
-- **`gap = 0`:** the node's value is plain `min_i d_i`. Cutting back to the bisector with
-  no clearance gives the same solid (the overlap is interior either way), but its field
-  is exactly zero along the interior bisector — a crease of zeros the mesher must not be
-  shown. So `gap = 0` uses the hard union and gets its "pressing" look from the bulge.
+For children with fields `d_1 … d_n` (after bulge, below), let `m_i` be the minimum of the
+*other* children and `s₂` the second-smallest value overall (both O(n) from the smallest
+and second-smallest values). Let `cl` be the clearance:
 
-Both forms are exactly L-Lipschitz when every child is (max, min and
-`(d_i − m_i)/2` all preserve the bound), so the growth bound `G` and the bounds padding
-of the parent spec carry over unchanged.
+- `gap > 0`: `cl = max(gap, c_min)`.
+- `gap = 0`: `cl = c_min`.
 
-### Near-miss clearance (decided)
+`c_min` is the near-miss clearance: the smallest separation the mesher reliably resolves
+at the grid edge being meshed (about one cell; the builder fixes the factor by test). It
+is a **mesh-time** value, passed to both engines with the edge, not a compiled constant.
 
-Pairs that are **not in contact** are kept apart by at least one grid cell of the tier
-being meshed, even when `gap = 0`: their cut uses a clearance of `max(gap, cell)`.
-This is what removes the reported necks — a near miss narrower than the grid now shows
-as a clean one-cell gap instead of a fused rod. It only changes geometry within half a
-cell of the bisector of a pair that is already within a cell of touching, so it is
-invisible everywhere else. The cost is that near-miss geometry depends on the grid
-(preview and print differ there by a fraction of a millimetre), and that a pair goes
-from "one cell apart" to "touching" in one step as it crosses contact — an accepted
-version of the unavoidable first-contact moment.
+- **Cut pieces:** `c_i = max(d_i, (d_i − m_i + cl) / 2)`. Each piece stops `cl/2` short of
+  the halfway surface wherever another piece is within `cl` — so a near miss always shows
+  as a clean gap of at least `cl`, never a neck.
+- **`gap > 0`:** value `= min_i c_i`. Pieces never fuse; contact shows as two flat pads
+  `cl` apart.
+- **`gap = 0`:** value `= min(min_i c_i, s₂)`. `s₂ < 0` exactly where two or more pieces
+  overlap, so the overlap ("the pad") is filled and fused, while everywhere the pieces
+  merely come close the clearance cut applies. Around the rim of a pad this leaves a
+  clean crease about `cl` wide where the two skins meet. No region has an exact-zero
+  plateau (the earlier hard-union concern goes away).
 
-### Contact detection (decided approach)
+Both forms are built from min, max and `(d_i − m_i)/2`, so they are exactly L-Lipschitz
+when every child is: the upper Lipschitz bound `L` (which drives interval pruning) and the
+growth bound `G` (which pads bounds) carry over unchanged.
 
-Whether a pair is in contact, and how deep, is a property of the pose — and the pose is
-fixed for a given build. So the **compiler** decides it, once per build, in pure JS:
+Cost of the clearance: geometry within `cl/2` of the bisector of two close pieces depends
+on the grid, so preview and print differ there by a fraction of a millimetre (the hand's
+adjacent fingers, ~1.6 mm apart along their length, get slightly flattened inner sides in
+preview). Accepted: that is exactly where today's mesh is wrong.
 
-- For each pair of children `(i, j)`, find the penetration depth
-  `δ_ij = −min_x max(d_i(x), d_j(x))` (positive when they overlap). Use the existing
-  interval evaluator as a branch-and-bound search over the pair's overlapping bounds,
-  to a fixed tolerance, so the result is deterministic.
-- `δ_ij > 0` → the pair is in contact; otherwise it gets the near-miss clearance.
-- The per-pair results become constants in the compiled program, so both engines read
-  the same numbers and parity holds trivially. They are part of the program's content
-  hash (and so of PR 3's cache key).
+### Bulge (decided approach; profile left to the builder)
 
-Pairs whose bounds (padded by the clearance) don't overlap are skipped without a search.
+The bulge needs to know how hard a contact presses, which a single point cannot see. So:
 
-### Bulge (requirements; shape left to the builder)
+- **Contact regions, found by the compiler.** For each pair of children whose padded
+  bounds overlap, a deterministic branch-and-bound over the interval evaluator finds every
+  separate region where `max(d_i, d_j) < 0` (the pair actually overlaps). Each region
+  becomes a constant record: centre, depth `δ` (how far the pieces interpenetrate there),
+  and a radius. These are pose facts, fixed per build, so both engines read the same
+  numbers and parity holds; they are part of the program's content hash (and PR 3's
+  cache key). Bulge regions use the fields before bulge.
+- **Per-piece offset.** Each of the pair's pieces gets
+  `d_i' = d_i − bulge_i(x)`, a smooth bump confined to a band around the region's rim and
+  to within a falloff radius of the region's centre. Its amplitude grows continuously from
+  0 at `δ = 0` up to `bulge` mm; its spread grows with `δ`. A pair with no overlap region has
+  no bulge, exactly — proximity alone never produces one.
+- **Order.** Bulge is applied to each piece first; the clearance cut and pad fill use the
+  bulged fields. So a piece bulging toward a third piece is still held apart from it.
+- **Bounds.** The bump has a stated Lipschitz bound `L_b`: the bulged piece is
+  `(1 + L_b)`-Lipschitz, which raises `L` for pruning; its bounds grow by `bulge / G`.
+- **Default `bulge`:** tuned on the hand so a firm finger press reads as squish, then
+  written into this spec.
 
-For each pair in contact, the skin of both pieces swells outward in a band around the
-rim of the contact pad. Requirements:
+### Attachments: joined at one end, pressing elsewhere (decided)
 
-- Zero for pairs not in contact, exactly — never a function of mere proximity.
-- Scales continuously with `δ_ij`, reaching 0 as `δ_ij → 0`, so dragging into contact
-  grows the bulge smoothly from nothing.
-- Maximum outward offset is `bulge` mm; the band's width follows the contact depth (a
-  firm press spreads further than a light touch). The exact profile is the builder's
-  call, tuned by eye on the hand.
-- Has a stated Lipschitz bound that feeds `G`, so culling stays exact.
-- Default `bulge` value: tuned on the hand so a firm finger press reads as squish, then
-  fixed in the spec addendum.
+A finger is joined to the palm at its base, by the existing blend that forms the webbing,
+yet its tip must press into the palm in a fist rather than smear into it. So a pair can be
+**attached near an anchor**:
+
+```js
+attach: [{ a: "index", b: "palm", near: "index_mcp", radius: 14, k: 8 }]
+```
+
+- `a`, `b`: labels of two children of this `contact` node.
+- `near`: a frame name; its world origin is the anchor (it moves with the pose).
+- `radius`: within this distance of the anchor (mm), the pair is joined.
+- `k`: the blend width there, in mm, the same meaning as `union`'s `k`.
+
+Within `radius` of the anchor the pair behaves as today's smooth union with width `k`:
+no clearance cut and no bulge between those two. Beyond it they follow the contact rules.
+Between the two zones the pair's value moves from one to the other over a falloff band
+(the builder picks the band and the blend of the two values). The band must be smooth
+enough that no crease shows, with a stated Lipschitz bound feeding `L`.
+
+Only the attached pair is exempt. The same finger still keeps clear of its neighbours at
+its base, and other pairs are unaffected. Attachments are validated: unknown labels or
+frames, `a == b`, and duplicate pairs are compile errors with paths.
+
+The hand fixture puts the palm, the thumb and the four fingers into one `contact` node,
+each digit attached to the palm at its base frame with `k = palmBlend`. That replaces
+today's outer finger-to-palm blend, which would otherwise refill a near-miss gap
+anywhere within 8 mm of the palm.
 
 ### Pruning
 
@@ -161,8 +191,13 @@ bulge band. The exact rule is the builder's, held by the existing culling-exactn
 - Topology: the hand over a pose sweep that brings fingertips through near-miss into
   contact — watertight at every step, no bridge components between non-contacting
   fingers (check that each fingertip pair not in contact is separated in the mesh).
-- Contact detection: δ sign and value on analytic cases (two spheres at known
-  overlap and separation).
+- Contact regions: count, depth and centre on analytic cases (two spheres at known
+  overlap and separation; a pair touching in two places).
+- Attachments: a finger curled into a fist presses a pad into the palm (no fillet or
+  bridge at the tip) while its base keeps the same webbing as today's blend. Test it in
+  both a fist pose and an open pose, and check the falloff band shows no crease.
+- Mixed contact: two capsules touching at one end and a near miss at the other —
+  fused pad at one end, clean gap at the other.
 - Bulge: zero for a non-contacting pair (meshes byte-identical with `bulge` on and off);
   grows monotonically with press depth.
 - Lint: one firing and one quiet case.
@@ -171,11 +206,16 @@ bulge band. The exact rule is the builder's, held by the existing culling-exactn
 
 A new PR, `feat/implicit-2b-contact`, stacked on #280 (base `feat/implicit-2-native`),
 merging into `feat/implicit` before the block sample cache (PR 3). No version bump.
-The parent spec's grammar table gains the `contact` row in this PR.
+The parent spec's grammar table gains the `contact` row in this PR. Because the
+near-miss clearance depends on the grid edge, PR 3's block-cache key must include the edge
+(it already differs per tier).
 
 ## Left to the builder
 
 - The bulge profile and its default value.
 - The pruning rule's exact form.
-- The δ search tolerance (small next to the preview cell; deterministic).
+- The contact-region search tolerance and how regions are clustered (deterministic).
+- The near-miss clearance factor `c_min / edge`.
+- The attachment falloff band and how the joined and contact values are blended across it.
+- The hand's attachment radii.
 - The nail-outline root cause.
