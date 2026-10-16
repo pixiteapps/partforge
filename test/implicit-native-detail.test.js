@@ -40,10 +40,10 @@ const handNoise = () => {
 const vase = vaseSpec();
 
 const CASES = [
-  // The hand's creases sit at the joint centres with a radius under the finger's, so
-  // they never reach its surface: nothing refines, and only the displacement loop runs.
-  { name: "hand with creases", spec: handSpec(), images: new Map(), edges: [1.5, 0.8], refines: false },
-  { name: "hand with creases and noise", spec: handNoise(), images: new Map(), edges: [1.5, 0.8] },
+  // The hand's creases reach the skin (radius = the joint's finger radius + 6·s): they
+  // refine the dorsal band of each PIP/DIP joint and move its vertices.
+  { name: "hand with creases", spec: handSpec(), images: new Map(), edges: [1.5, 0.8] },
+  { name: "hand with creases and noise", spec: handNoise(), images: new Map(), edges: [0.8] },   // ~10 s CPU per edge
   { name: "vase (cylindrical texture)", spec: vase.spec, images: vase.images, edges: [1.0, 0.5] },
   { name: "box with creases", images: new Map(), edges: [1.0],
     spec: { root: { kind: "box", size: [20, 20, 6], round: 2 },
@@ -73,6 +73,8 @@ describe("native surface detail", () => {
         const cleaned = cleanupMesh(store, meshStore(store));
         const js = applySurfaceDetail(store, cleaned, compiled);
         expect(js.indices.length > cleaned.indices.length).toBe(refines);
+        // ...and displaces: some original vertex (they keep their indices) moved.
+        expect(cleaned.positions.some((v, i) => v !== js.positions[i])).toBe(true);
         const s = sessionFor(plan);
         try {
           s.sample(plan, { readBack: false });
@@ -116,6 +118,25 @@ describe("native surface detail", () => {
       same("indices", nat.indices, js.indices);
       same("vertLeaf", nat.vertLeaf, js.vertLeaf);
       same("normals", nat.normals, js.normals);
+    } finally { s.destroy(); }
+  });
+
+  test("a flat's expr programs join the session once, however often it is applied", () => {
+    const compiled = lowerSpec({ root: { kind: "sphere", r: 5 }, detail: [
+      { kind: "expr", height: "return 0.1 * sin(p.x * 3.0);" }, { kind: "expr", height: "return 0.05 * cos(p.y * 2.0);" },
+    ] }, { images: new Map() });
+    const plan = planLeaves(compiled, 1);
+    const flat = flattenDetail(compiled);
+    expect(flat.programs).toHaveLength(2);
+    const s = sessionFor(plan);
+    try {
+      s.sample(plan, { readBack: false });
+      s.mesh({ readBack: false });
+      s.cleanup(CLEANUP, { readBack: false });
+      s.detail(flat, { readBack: false });
+      s.detail(flat, { readBack: false });
+      // The next program index: the plan's, then the flat's two — added once.
+      expect(s.addProgram(plan.programs[0])).toBe(plan.programs.length + 2);
     } finally { s.destroy(); }
   });
 

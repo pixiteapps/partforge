@@ -9,7 +9,9 @@
 // (and rebuild: node scripts/build-core-wasm.mjs); never loosen this to a tolerance.
 import { afterAll, expect, test } from "vitest";
 import { bootManifoldKernel, buildView, measure, setCoreEnabled } from "../src/testing.js";
-import { core } from "../src/framework/core/core.js";
+import { core, coreStatus } from "../src/framework/core/core.js";
+import { handSpec, nailSpecs, vaseSpec, ADVERSARIAL } from "./fixtures/implicit-trees.js";
+import { TREES } from "./fixtures/implicit-small-trees.js";
 
 afterAll(() => setCoreEnabled(true));
 
@@ -30,6 +32,23 @@ const INLINE = {
   "round-all step [planes]": one((k) => k.box({ min: [0, 0, 0], max: [30, 20, 12] })
     .union(k.box({ min: [6, 4, 12], max: [20, 16, 20] })).roundAll(2)),
 };
+// k.implicit runs its whole engine on the core (core/implicit-core.js); each image
+// a spec reads is registered on the kernel before the build.
+const implicitPart = (specs, images = new Map()) => ({
+  ...one((k) => (specs.length === 1 ? k.implicit(specs[0]) : k.union(specs.map((sp) => k.implicit(sp))))),
+  testImages: images,
+});
+const vase = vaseSpec();
+const IMPLICIT = {
+  "implicit hand with nails": implicitPart([handSpec(), ...nailSpecs()]),
+  "implicit vase": implicitPart([vase.spec], vase.images),
+  "implicit bendCut": implicitPart([{ ...TREES.bendCut, preview: 0.8 }]),
+  "implicit formula": implicitPart([{ ...TREES.formula, preview: 0.8 }]),
+  "implicit coincident faces": implicitPart([ADVERSARIAL.coincidentFaces]),
+  "implicit mirrored half box": implicitPart([{ root: { kind: "mirror", plane: "yz", child: { kind: "box", size: [10, 10, 10], at: [5, 0, 0] } }, preview: 0.5 }]),
+  "implicit touching repeat": implicitPart([{ root: { kind: "repeat", linear: { count: 3, step: [4, 0, 0] }, child: { kind: "box", size: [4, 4, 4] } }, preview: 0.5 }]),
+  "implicit flush pocket": implicitPart([{ root: { kind: "subtract", children: [{ kind: "box", size: [10, 10, 10] }, { kind: "box", size: [4, 4, 10], at: [0, 0, 5] }] }, preview: 0.5 }]),
+};
 const REFERENCE = ["bracket", "demo", "faceted-vase", "filleted-box", "gasket", "hinged-box", "hull-sweep",
   "laser-box", "lattice-box", "lofted-bottle", "planter", "propeller", "screw"];
 
@@ -39,6 +58,7 @@ async function run(part, on) {
   setCoreEnabled(on);
   const view = Object.keys(part.views)[0];
   const kernel = await bootManifoldKernel();
+  for (const [name, im] of part.testImages ?? []) await kernel._registerImage({ name, ...im });
   const built = buildView(kernel, part, view);
   const meshes = built.map(({ name, mesh }) => ({
     name, triangles: mesh.triangles, features: mesh.features ?? null,
@@ -57,12 +77,16 @@ test("the core is available in this environment", () => {
 const cases = [
   ...REFERENCE.map((name) => [name, () => import(`../src/parts/${name}.js`).then((m) => m.default)]),
   ...Object.entries(INLINE).map(([name, part]) => [name, () => part]),
+  ...Object.entries(IMPLICIT).map(([name, part]) => [name, () => part]),
 ];
 for (const [name, load] of cases) {
   test(`core on == core off: ${name}`, async () => {
     const part = await load();
     const off = await run(part, false);
+    const refusedBefore = coreStatus().refusedMeshes;
     const on = await run(part, true);
+    // The implicit cases must really have run on the core: nothing refused or faulted.
+    if (part.testImages) expect(coreStatus()).toEqual({ state: "on", reason: null, refusedMeshes: refusedBefore });
     expect(on.meshes.length).toBe(off.meshes.length);
     on.meshes.forEach((m, i) => {
       const o = off.meshes[i];

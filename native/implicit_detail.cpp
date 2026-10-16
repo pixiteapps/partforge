@@ -236,7 +236,9 @@ int detail(ipe::Session& s, const double* F, int count, const int32_t* progIndex
     }
     if (added.empty()) break;
     s.indices.swap(out);
-    ipm_mesh::project(s, added.data(), (int)added.size(), edge, true);
+    // Cannot fail here (a meshed session, fresh distinct indices); if it ever did,
+    // the mesh is half refined, so say so and let the caller run the JS instead.
+    if (ipm_mesh::project(s, added.data(), (int)added.size(), edge, true) != 0) return 5;
     for (size_t q = 0; q < added.size(); q++) midpointNormal(N, ends[2 * q], ends[2 * q + 1], (size_t)added[q]);
   }
   const size_t nv = P.size() / 3;
@@ -258,8 +260,9 @@ extern "C" {
 // applySurfaceDetail over the session mesh, in place (positions, indices,
 // vertLeaf, normals): `entries` is detail.js's flattened layout, `progIndex` the
 // session program index of each expr-height program (in flattenDetail order).
-// 0 ok; nonzero (the mesh untouched) for an unknown session, no cleaned mesh
-// (no normals), a texture slot or expr program the session cannot run.
+// 0 ok; 1-4 (the mesh untouched) for an unknown session, no cleaned mesh
+// (no normals), a texture slot or expr program the session cannot run; 5 if
+// projecting the new vertices failed (the mesh is then partly refined).
 int ip_detail(int id, const double* entries, int entryCount, const int32_t* progIndex, int progCount) {
   ipe::Session* s = ipe::session(id);
   if (!s) return 4;
