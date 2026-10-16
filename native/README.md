@@ -12,7 +12,7 @@ binds the same C calls into its own JS engine.
 | `bvh.{h,cpp}` | `src/framework/oracle/bvh.js` + `min-wall.js` — the oracle's triangle BVH (raycast, closestPoint, distanceTo) and the min-wall pass |
 | `js_math.h` | `src/framework/geometry/js-math.js` — partforge's own `hypot3` |
 | `flat_map.h` | (no JS twin) the open-addressing hash map the ports use in place of `std::unordered_map` |
-| `implicit_eval.{h,cpp}` | `src/framework/geometry/implicit/` `program.js` (runProgram/evalBatch), `primitives.js`, `frames.js` (xformPoint/xformDir), `expr-lower.js` (the UN/BIN/TER tables), `textures.js` (sampleTexture) — the implicit engine's field interpreter, and the session that holds a meshing run |
+| `implicit_eval.{h,cpp}` | `src/framework/geometry/implicit/` `program.js` (runProgram/evalBatch), `primitives.js`, `frames.js` (xformPoint/xformDir), `expr-lower.js` (the UN/BIN/TER tables), `textures.js` (sampleTexture), `contact.js` (contactValue/bulgeOffset: the CONTACT and BULGE ops) — the implicit engine's field interpreter, and the session that holds a meshing run |
 | `implicit_mesh.{h,cpp}` | `implicit/sparse.js` (evaluateLeaves), `mesher.js` (meshStore), `project.js` (projectVertices), `cleanup.js` (cleanupMesh) — sample, mesh and clean on the session |
 | `implicit_detail.cpp` | `implicit/detail.js` (applySurfaceDetail) — refine, project and displace for surface detail |
 | `implicit_math.h` | `js-math.js`'s `pfSin`/`pfCos`/`pfAtan2` and `implicit/noise.js` (latticeHash/valueNoise) |
@@ -123,6 +123,26 @@ held (each `.cpp`'s top comment has the full list):
   triangle, corner order); a collapse's kill/rename follows it, so it decides
   which triangles survive and how they are renumbered. The preview tier's
   decimation passes are the same walk again over each pass's compacted mesh.
+
+The `contact` node's two ops keep `contact.js`'s order per lane (planning stays
+in JS; a program carries its clearance `cl` baked in):
+
+- **CONTACT** (`[14, dst, p, cl, fuse, nK, nA, kid × nK, (ia, ib, ax, ay, az,
+  r0, band, k) × nA, nF, (ia, ib, cx, cy, cz, rho) × nF]`): the attachment
+  weights in attachment order; then for each slot i in order, c_i = v_i maxed
+  with every other slot j's `cut + w·(v_i − cut)` (`cut = (v_i − v_j + cl) ·
+  0.5`; w is the pair's FIRST attachment's weight, either order, else the bare
+  cut), and value = min over the c_i in slot order; then, if `fuse` is truthy
+  (JS truthiness: not 0, −0 or NaN), the pad fill per region in region order,
+  `min(value, max(v_a, v_b) + (1 − g)·cl)`; then each attachment with `k·w > 0`,
+  in order, `min(value, unionN([c_a, c_b], 2, k·w))`. Distances are
+  `sqrt(dx·dx + dy·dy + dz·dz)`. The pair → first attachment lookup reads only
+  the program, so the core tables it once per op; it decides nothing the JS's
+  per-lane search does not. The decoder refuses a slot index (ia, ib) that does
+  not name an operand.
+- **BULGE** (`[15, dst, src, p, nR, (cx, cy, cz, A, rho) × nR]`): `src −` the
+  regions' `A·(1 − t²)²` (t = distance / rho, 0 for t ≥ 1) summed in order from
+  +0.
 
 Likewise detail's midpoints are numbered in creation order (triangles in
 order, edges v0v1, v1v2, v2v0); its midpoint map is per-vertex chains, only

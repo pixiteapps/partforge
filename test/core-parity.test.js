@@ -51,6 +51,9 @@ const IMPLICIT = {
   "implicit hand, print tier": implicitPart([{ ...handSpec(), resolution: 1.2 }], new Map(), "print"),
   "implicit vase, print tier": implicitPart([{ ...vase.spec, resolution: 1.2 }], vase.images, "print"),
   "implicit flush pocket": implicitPart([{ root: { kind: "subtract", children: [{ kind: "box", size: [10, 10, 10] }, { kind: "box", size: [4, 4, 10], at: [0, 0, 5] }] }, preview: 0.5 }]),
+  // The contact node's CONTACT and BULGE ops: every contact tree.
+  ...Object.fromEntries(Object.keys(TREES).filter((k) => k.startsWith("contact"))
+    .map((k) => [`implicit ${k}`, implicitPart([{ ...TREES[k], preview: 0.8 }])])),
 };
 const REFERENCE = ["bracket", "demo", "faceted-vase", "filleted-box", "gasket", "hinged-box", "hull-sweep",
   "laser-box", "lattice-box", "lofted-bottle", "planter", "propeller", "screw"];

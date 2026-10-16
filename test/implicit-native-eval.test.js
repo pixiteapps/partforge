@@ -9,7 +9,7 @@ import { NativeSession, CORE_FAULT } from "../src/framework/core/implicit-core.j
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { blockDecision, fullDecision } from "../src/framework/geometry/implicit/interval.js";
 import { emitProgram, evalBatch, runProgram } from "../src/framework/geometry/implicit/program.js";
-import { TREES, NATIVE_PENDING } from "./fixtures/implicit-small-trees.js";
+import { TREES } from "./fixtures/implicit-small-trees.js";
 import { vaseSpec, ADVERSARIAL } from "./fixtures/implicit-trees.js";
 
 afterEach(() => setCoreForTesting(undefined));
@@ -33,7 +33,7 @@ float d = clamp(a, -2.0, 2.0) + mix(a, b, 0.3) + smoothstep(-1.0, 1.0, p.z) + sm
 return ((p.x < p.y && p.y > 0.0) || !(p.z <= 1.0) || (p.x >= 2.0 && p.x == p.y) || p.z != 0.25 ? d : -d) + texture(t, p.xy * 0.1 + 0.5) - 5.0;`;
 
 const CASES = {
-  ...Object.fromEntries(Object.entries(TREES).filter(([k]) => !NATIVE_PENDING(k)).map(([k, spec]) => [k, { spec }])),
+  ...Object.fromEntries(Object.entries(TREES).map(([k, spec]) => [k, { spec }])),
   vase: vaseSpec(),
   ...Object.fromEntries(Object.entries(ADVERSARIAL).map(([k, spec]) => [`adversarial ${k}`, { spec }])),
   allFunctions: {
@@ -179,6 +179,75 @@ describe("native program interpreter", () => {
         expect(Object.is(nat[0], a)).toBe(true);
       }
     }
+  });
+
+  // Lanes for the hand-built contact programs: a random cloud, the regions' centres and
+  // the special values.
+  const contactLanes = () => {
+    const X = [], Y = [], Z = [];
+    for (let i = 0; i < 600; i++) { X.push(rnd() * 4); Y.push(rnd() * 4); Z.push(rnd() * 4); }
+    for (const c of [[0, 0, 0], [1, 0, 0], [1, 1, 1], [0.5, 0, 0], [2, 0, 0]]) { X.push(c[0]); Y.push(c[1]); Z.push(c[2]); }
+    const SPECIAL = [0, -0, Infinity, -Infinity, NaN, 1e300, 0.3];
+    for (const a of SPECIAL) for (const b of SPECIAL) for (const d of SPECIAL) { X.push(a); Y.push(b); Z.push(d); }
+    return [X, Y, Z];
+  };
+  const sameBits = (label, X, Y, Z, { js, nat }) => {
+    for (let i = 0; i < X.length; i++) {
+      if (!Object.is(nat[i], js[i])) throw new Error(`${label} at (${X[i]}, ${Y[i]}, ${Z[i]}): native ${nat[i]} vs JS ${js[i]}`);
+    }
+  };
+
+  test("CONTACT: attachments (first per pair wins, either order), the pad fill and fuse's truthiness", () => {
+    // V0..V2 = x, y, z − 0.25; V3 = CONTACT(cl 0.3; V0, V1, V2) with three attachments (the
+    // second repeats the first's pair reversed: never read) and two fill regions; END V3.
+    for (const fuse of [1, 0, -0, NaN, 0.5]) {
+      const prog = Float64Array.of(1, 5, 20, 0, 0, 0, 20, 1, 0, 1, 20, 4, 0, 2, 9, 2, 4, -0.25,
+        14, 3, 0, 0.3, fuse, 3, 3, 0, 1, 2,
+        1, 0, 0, 0, 0, 1, 2, 1.5,
+        0, 1, 1, 1, 1, 0.5, 1, 3,
+        2, 1, 0.5, 0, 0, 2, 1, 0.7,
+        2, 0, 1, 0, 0, 0, 0.5, 2, 0, 1, 0, 0, 1,
+        0, 3);
+      const [X, Y, Z] = contactLanes();
+      sameBits(`contact fuse ${fuse}`, X, Y, Z, runBoth(prog, X, Y, Z));
+    }
+  });
+
+  test("BULGE: regions summed in order, at the centre, the rim and a zero radius", () => {
+    // V0 = x; V1 = V0 − bulgeOffset over three regions (the last with rho = 0); END V1.
+    const prog = Float64Array.of(1, 2, 20, 0, 0, 0, 15, 1, 0, 0, 3,
+      0, 0, 0, 0.6, 2, 1, 0, 0, -0.3, 0.5, 2, 0, 0, 1, 0, 0, 1);
+    const [X, Y, Z] = contactLanes();
+    X.push(2, 1.5, 0); Y.push(0, 0, 2); Z.push(0, 0, 0);   // on the rims (t = 1)
+    sameBits("bulge", X, Y, Z, runBoth(prog, X, Y, Z));
+  });
+
+  test("a malformed CONTACT or BULGE is refused, not run", () => {
+    const s = new NativeSession(core());
+    const at = Float64Array.of(0);
+    // V0 = x, V1 = y; V2 = CONTACT(cl 0.3, fuse 1; V0, V1; one attachment, one fill region).
+    const contact = (kids, att, fill, nK = kids.length) =>
+      Float64Array.of(1, 3, 20, 0, 0, 0, 20, 1, 0, 1, 14, 2, 0, 0.3, 1, nK, att.length / 8, ...kids, ...att, fill.length / 6, ...fill, 0, 2);
+    const att = [0, 1, 0, 0, 0, 1, 1, 1], fill = [0, 1, 0, 0, 0, 1];
+    try {
+      expect([...s.eval(s.addProgram(contact([0, 1], att, fill)), at, at, at)]).toHaveLength(1);   // well-formed: runs
+      for (const bad of [
+        contact([0, 1], [0, 2, 0, 0, 0, 1, 1, 1], fill),   // attachment slot past nK
+        contact([0, 1], [0.5, 1, 0, 0, 0, 1, 1, 1], fill), // non-integer slot
+        contact([0, 1], att, [0, 2, 0, 0, 0, 1]),          // fill slot past nK
+        contact([0, 1], att, [-1, 1, 0, 0, 0, 1]),         // negative fill slot
+        contact([0, 7], att, fill),                        // kid register past nV
+        contact([], [], [], 0),                            // no operands
+        contact([0, 1], att, fill).subarray(0, 25),        // truncated in the fill list
+        Float64Array.of(1, 2, 14, 1, 0, 0.3, 1, 2, 1e8, 0, 0, 0, 1),   // attachment count past the end
+        Float64Array.of(1, 2, 20, 0, 0, 0, 15, 1, 5, 0, 1, 0, 0, 0, 1, 1, 0, 1),   // BULGE source past nV
+        Float64Array.of(1, 2, 20, 0, 0, 0, 15, 1, 0, 3, 1, 0, 0, 0, 1, 1, 0, 1),   // BULGE point register past nP
+        Float64Array.of(1, 2, 20, 0, 0, 0, 15, 1, 0, 0, 2, 0, 0, 0, 1, 1, 0, 1),   // BULGE region list runs off the end
+      ]) {
+        expect(() => s.eval(s.addProgram(bad), at, at, at)).toThrow(/refused/);
+      }
+      expect(core()).not.toBeNull();   // refusing a program is not a fault
+    } finally { s.destroy(); }
   });
 
   test("a refused texture is not a fault: the instance stays usable", () => {

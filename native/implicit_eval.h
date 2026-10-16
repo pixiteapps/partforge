@@ -1,7 +1,7 @@
 // The implicit engine's field evaluator — the C++ twin of
 // src/framework/geometry/implicit/{primitives.js, frames.js (xformPoint/xformDir),
 // expr-lower.js (the UN/BIN/TER tables), textures.js (sampleTexture),
-// program.js (runProgram/evalBatch)}. Bit-identical to the JS: the same
+// contact.js (contactValue/bulgeOffset), program.js (runProgram/evalBatch)}. Bit-identical to the JS: the same
 // operation order, Math.min/max as jsmath::jsmin/jsmax, the ported pf_* trig,
 // float32 texels promoted to double, first-wins ties (native/README.md).
 //
@@ -34,8 +34,8 @@ struct Texture {
 struct Inst {
   int32_t op, sub;      // opcode; PRIM code, UN/BIN/TER fn, WARP kind (0 taper), MIRROR axis / GET comp (-1: none)
   int32_t d, a, b, c;   // destination and source registers, by op
-  int32_t at, cnt;      // inline doubles' offset; UNION/INTER operand count
-};
+  int32_t at, cnt;      // inline doubles' offset; UNION/INTER/CONTACT operand count, BULGE region count
+};                      // (CONTACT: b = attachment count, c = fill-region count, a = point register)
 
 struct Program {
   std::vector<double> code;     // program.js's Float64Array format, verbatim
@@ -54,6 +54,8 @@ struct Session {
   std::vector<const double*> gsrc; // a UNION/INTER's operand registers, resolved once per op
   std::vector<double> um, us;   // UNION/INTER per-lane running extreme and sum (BATCH each)
   std::vector<int32_t> uam;     // UNION/INTER per-lane arg-extreme (BATCH)
+  std::vector<double> cg, cc, cw;  // CONTACT's per-lane operands, c_i and attachment weights
+  std::vector<int32_t> cpair;   // CONTACT's slot pair -> first attachment (-1: none), per op
 
   // The leaf store (implicit_mesh.cpp, sparse.js's Store): the sampled plan's grid,
   // its leaves (i0, j0, l0, program per leaf) and their (LEAF+1)^3 float32 samples

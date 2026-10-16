@@ -1,6 +1,7 @@
 // C++ port of the implicit engine's evaluator: primitives.js, frames.js's
 // xformPoint/xformDir, expr-lower.js's UN/BIN/TER tables, textures.js's
-// sampleTexture and program.js's runProgram/evalBatch. See implicit_eval.h.
+// sampleTexture, contact.js's contactValue/bulgeOffset (the CONTACT and BULGE
+// ops) and program.js's runProgram/evalBatch. See implicit_eval.h.
 //
 // What bit-exact parity needs, beyond native/README.md's rules:
 //   - every expression keeps the JS's association: `a - b + c` is (a - b) + c,
@@ -13,13 +14,19 @@
 //   - texels are float32, read and promoted to double, all arithmetic double;
 //   - UNION/INTER visit a lane's operands in program order, so arg-min/arg-max
 //     ties go to the first operand, as in unionN/intersectN, and the smooth sum
-//     accumulates from +0 in that order.
+//     accumulates from +0 in that order;
+//   - CONTACT runs contactValue per lane in its order: the attachment weights,
+//     then each slot's c_i over the other slots in slot order (the pair's
+//     weight is its FIRST attachment's, either order), the pad fill per region
+//     in region order, then the attachments' 2-operand unionN in attachment
+//     order; BULGE sums its regions in order from +0.
 // Structure differs from the JS, never a lane's arithmetic: register files are
 // flat vectors of BATCH-lane blocks; a validated program is decoded once into
 // Insts (integer registers and sub-codes); each op dispatches its primitive or
 // fn once and loops over the lanes inside; UNION/INTER run operand-major with
-// per-lane running extremes (blend_lanes); and the ellipsoid's lane-invariant
-// min(P0, P1, P2) is computed once per op.
+// per-lane running extremes (blend_lanes); the ellipsoid's lane-invariant
+// min(P0, P1, P2) is computed once per op; and CONTACT's pair -> attachment
+// lookup (lane-invariant: it reads only the program) is tabled once per op.
 #include "implicit_eval.h"
 
 #include <cmath>
@@ -37,7 +44,7 @@ using jsmath::jsmin;
 namespace {
 
 enum Op { END = 0, XFORM = 1, XDIR = 2, PRIM = 3, UNION = 4, INTER = 5, NEG = 6, MIN2 = 7, MIRRORP = 8, ADDC = 9,
-          ONION = 10, WARP = 11, DISP = 12, SANITIZE = 13, GET = 20, CONST = 21, UN = 22, BIN = 23, TER = 24, TEX = 25 };
+          ONION = 10, WARP = 11, DISP = 12, SANITIZE = 13, CONTACT = 14, BULGE = 15, GET = 20, CONST = 21, UN = 22, BIN = 23, TER = 24, TEX = 25 };
 
 // FN_CODES (program.js), pinned by test/implicit-program.test.js.
 enum Un { U_NEG, U_ABS, U_FLOOR, U_FRACT, U_SQRT, U_SIN, U_COS, U_NOT, U_COUNT };
@@ -134,6 +141,53 @@ int prim_params(double code) {
 }
 
 inline bool is_index(double v, double limit) { return v >= 0 && v < limit && v == std::floor(v); }
+
+// contact.js's packed layouts and gate band.
+constexpr int ATTACH_STRIDE = 8;   // [ia, ib, ax, ay, az, r0, band, k]
+constexpr int FILL_STRIDE = 6;     // [ia, ib, cx, cy, cz, rho]
+constexpr int BULGE_STRIDE = 5;    // [cx, cy, cz, A, rho]
+constexpr double FILL_BAND = 2;
+
+// contact.js's attachWeight (A: one attachment's 8 doubles).
+inline double attach_weight(const double* A, double x, double y, double z) {
+  const double dx = x - A[2], dy = y - A[3], dz = z - A[4];
+  const double d = std::sqrt(dx * dx + dy * dy + dz * dz);
+  double t = (d - A[5]) / A[6];
+  t = jsmax(0, jsmin(1, t));
+  return 1 - t * t * (3 - 2 * t);
+}
+
+// contact.js's gateWeight (G: one fill region's 6 doubles).
+inline double gate_weight(const double* G, double cl, double x, double y, double z) {
+  const double dx = x - G[2], dy = y - G[3], dz = z - G[4];
+  const double d = std::sqrt(dx * dx + dy * dy + dz * dz);
+  double t = (d - (G[5] + cl + FILL_BAND)) / FILL_BAND;
+  t = jsmax(0, jsmin(1, t));
+  return 1 - t * t * (3 - 2 * t);
+}
+
+// primitives.js's unionN(v, 2, k) on [a, b], k > 0 (the caller's kk > 0 test).
+inline double union2(double a, double b, double k) {
+  double m = a;
+  int am = 0;
+  if (b < m) { m = b; am = 1; }
+  if (!(k > 0)) return m;
+  double s = 0;
+  if (am != 0) { const double g = k - (a - m); if (g > 0) { const double h = g / k; s += h * h; } }
+  if (am != 1) { const double g = k - (b - m); if (g > 0) { const double h = g / k; s += h * h; } }
+  return m - s * k * 0.25;
+}
+
+// contact.js's bulgeOffset (R: nR regions of 5 doubles).
+inline double bulge_offset(const double* R, int nR, double x, double y, double z) {
+  double s = 0;
+  for (int k = 0; k < nR; k++, R += BULGE_STRIDE) {
+    const double dx = x - R[0], dy = y - R[1], dz = z - R[2];
+    const double t = std::sqrt(dx * dx + dy * dy + dz * dz) / R[4];
+    s += t < 1 ? R[3] * ((1 - t * t) * (1 - t * t)) : 0;
+  }
+  return s;
+}
 
 std::vector<Session*> g_sessions;   // id = index + 1; null once destroyed
 
@@ -243,6 +297,31 @@ void validate(Program& p) {
         for (size_t j = 0; j < cnt; j++) if (!isV(pc + 4 + j)) return;
         pc += 4 + cnt; break;
       }
+      case CONTACT: {
+        // [CONTACT, dst, p, cl, fuse, nK, nA, kid x nK, att x nA, nF, fill x nF]; every
+        // slot index (ia, ib) must name an operand, as the JS would read undefined.
+        if (!has(7) || !isV(pc + 1) || !isP(pc + 2) || !is_index(c[pc + 5], 1e9) || c[pc + 5] < 1 || !is_index(c[pc + 6], 1e9)) return;
+        const size_t nK = (size_t)c[pc + 5], nA = (size_t)c[pc + 6];
+        if (nK > len || nA > len / ATTACH_STRIDE || !has(7 + nK + nA * ATTACH_STRIDE + 1)) return;
+        for (size_t j = 0; j < nK; j++) if (!isV(pc + 7 + j)) return;
+        const size_t ao = pc + 7 + nK, fo = ao + nA * ATTACH_STRIDE;
+        for (size_t a = 0; a < nA; a++) {
+          if (!is_index(c[ao + a * ATTACH_STRIDE], (double)nK) || !is_index(c[ao + a * ATTACH_STRIDE + 1], (double)nK)) return;
+        }
+        if (!is_index(c[fo], 1e9)) return;
+        const size_t nF = (size_t)c[fo];
+        if (nF > len / FILL_STRIDE || fo + 1 + nF * FILL_STRIDE > len) return;
+        for (size_t k = 0; k < nF; k++) {
+          if (!is_index(c[fo + 1 + k * FILL_STRIDE], (double)nK) || !is_index(c[fo + 2 + k * FILL_STRIDE], (double)nK)) return;
+        }
+        pc = fo + 1 + nF * FILL_STRIDE; break;
+      }
+      case BULGE: {
+        if (!has(5) || !isV(pc + 1) || !isV(pc + 2) || !isP(pc + 3) || !is_index(c[pc + 4], 1e9)) return;
+        const size_t nR = (size_t)c[pc + 4];
+        if (nR > len / BULGE_STRIDE || !has(5 + nR * BULGE_STRIDE)) return;
+        pc += 5 + nR * BULGE_STRIDE; break;
+      }
       case NEG: case SANITIZE:
         if (!has(3) || !isV(pc + 1) || !isV(pc + 2)) return;
         pc += 3; break;
@@ -307,6 +386,16 @@ void decode(Program& p) {
         pc += 5 + (size_t)c[pc + 4]; break;
       case UNION: case INTER:
         I.d = (int32_t)c[pc + 1]; I.at = (int32_t)(pc + 2); I.cnt = (int32_t)c[pc + 3]; pc += 4 + (size_t)I.cnt; break;
+      case CONTACT: {
+        I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 2]; I.at = (int32_t)(pc + 3);
+        I.cnt = (int32_t)c[pc + 5]; I.b = (int32_t)c[pc + 6];
+        const size_t fo = pc + 7 + (size_t)I.cnt + (size_t)I.b * ATTACH_STRIDE;
+        I.c = (int32_t)c[fo];
+        pc = fo + 1 + (size_t)I.c * FILL_STRIDE; break;
+      }
+      case BULGE:
+        I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 2]; I.b = (int32_t)c[pc + 3]; I.cnt = (int32_t)c[pc + 4];
+        I.at = (int32_t)(pc + 5); pc += 5 + (size_t)I.cnt * BULGE_STRIDE; break;
       case NEG: case SANITIZE: I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 2]; pc += 3; break;
       case MIN2: I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 2]; I.b = (int32_t)c[pc + 3]; pc += 4; break;
       case MIRRORP: {
@@ -459,6 +548,78 @@ void run(Session& s, const Program& p, const double* X, const double* Y, const d
         for (int j = 0; j < I.cnt; j++) src[j] = vr((int32_t)c[I.at + 2 + j]);
         if (I.op == UNION) blend_lanes<true>(s, src, I.cnt, k, n, vr(I.d));
         else blend_lanes<false>(s, src, I.cnt, k, n, vr(I.d));
+        break;
+      }
+      case CONTACT: {
+        // contactValue per lane (contact.js), lane-major.
+        const int nK = I.cnt, nA = I.b, nF = I.c;
+        const double cl = c[I.at], fuse = c[I.at + 1];
+        const bool fz = fuse != 0 && fuse == fuse;   // JS truthiness: not 0, -0 or NaN
+        const double* att = c + I.at + 4 + nK;
+        const double* F = att + (size_t)nA * ATTACH_STRIDE + 1;
+        if ((int)s.gsrc.size() < nK) s.gsrc.resize(nK);
+        if ((int)s.cg.size() < nK) { s.cg.resize(nK); s.cc.resize(nK); }
+        if ((int)s.cw.size() < nA) s.cw.resize(nA);
+        if (s.cpair.size() < (size_t)nK * nK) s.cpair.resize((size_t)nK * nK);
+        const double** src = s.gsrc.data();
+        for (int j = 0; j < nK; j++) src[j] = vr((int32_t)c[I.at + 4 + j]);
+        // The pair's first attachment, either order (contactValue's search, which
+        // reads only the program).
+        int32_t* pairA = s.cpair.data();
+        for (int i = 0; i < nK; i++) {
+          for (int j = 0; j < nK; j++) {
+            int32_t hit = -1;
+            for (int a = 0; a < nA; a++) {
+              const int ia = (int)att[a * ATTACH_STRIDE], ib = (int)att[a * ATTACH_STRIDE + 1];
+              if ((ia == i && ib == j) || (ia == j && ib == i)) { hit = a; break; }
+            }
+            pairA[i * nK + j] = hit;
+          }
+        }
+        double *g = s.cg.data(), *ci_ = s.cc.data(), *w = s.cw.data();
+        const double *sx = px(I.a), *sy = py(I.a), *sz = pz(I.a);
+        double* dv = vr(I.d);
+        for (int l = 0; l < n; l++) {
+          const double x = sx[l], y = sy[l], z = sz[l];
+          for (int a = 0; a < nA; a++) w[a] = attach_weight(att + (size_t)a * ATTACH_STRIDE, x, y, z);
+          for (int j = 0; j < nK; j++) g[j] = src[j][l];
+          double value = INFINITY;
+          for (int i = 0; i < nK; i++) {
+            double ci = g[i];
+            for (int j = 0; j < nK; j++) {
+              if (j == i) continue;
+              const double cut = (g[i] - g[j] + cl) * 0.5;
+              const int32_t a = pairA[i * nK + j];
+              const double wij = a >= 0 ? w[a] : 0;
+              const double u = wij > 0 ? cut + wij * (g[i] - cut) : cut;
+              ci = jsmax(ci, u);
+            }
+            ci_[i] = ci;
+            value = jsmin(value, ci);
+          }
+          if (fz) {
+            for (int k = 0; k < nF; k++) {
+              const double* G = F + (size_t)k * FILL_STRIDE;
+              const double gw = gate_weight(G, cl, x, y, z);
+              value = jsmin(value, jsmax(g[(int)G[0]], g[(int)G[1]]) + (1 - gw) * cl);
+            }
+          }
+          for (int a = 0; a < nA; a++) {
+            const double* A = att + (size_t)a * ATTACH_STRIDE;
+            const double kk = A[7] * w[a];
+            if (kk > 0) value = jsmin(value, union2(ci_[(int)A[0]], ci_[(int)A[1]], kk));
+          }
+          dv[l] = value;
+        }
+        break;
+      }
+      case BULGE: {
+        double* d = vr(I.d);
+        const double* a = vr(I.a);
+        const double *sx = px(I.b), *sy = py(I.b), *sz = pz(I.b);
+        const double* R = c + I.at;
+        const int nR = I.cnt;
+        for (int i = 0; i < n; i++) d[i] = a[i] - bulge_offset(R, nR, sx[i], sy[i], sz[i]);
         break;
       }
       case NEG: {

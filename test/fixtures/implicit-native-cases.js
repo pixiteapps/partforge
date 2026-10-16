@@ -4,7 +4,7 @@
 // exactly-touching-faces cases, each at the grid edges it is held at.
 import { core } from "../../src/framework/core/core.js";
 import { NativeSession } from "../../src/framework/core/implicit-core.js";
-import { TREES, NATIVE_PENDING } from "./implicit-small-trees.js";
+import { TREES } from "./implicit-small-trees.js";
 import { vaseSpec, handSpec, ADVERSARIAL } from "./implicit-trees.js";
 
 const EDGES = [0.5, 1.0];
@@ -16,14 +16,11 @@ const TOUCHING = {
   flushPocket: { root: { kind: "subtract", children: [{ kind: "box", size: [10, 10, 10] }, { kind: "box", size: [4, 4, 10], at: [0, 0, 5] }] } },
 };
 
-/**
- * [{ name, spec, images, edges }]. The trees the native core cannot run yet (NATIVE_PENDING)
- * are left out unless `pending` — the JS-only suites (plan inheritance) take them.
- */
-export function nativeCases({ pending = false } = {}) {
+/** [{ name, spec, images, edges }]. */
+export function nativeCases() {
   const vase = vaseSpec();
   return [
-    ...Object.entries(TREES).filter(([k]) => pending || !NATIVE_PENDING(k)).map(([k, spec]) => ({ name: k, spec, images: new Map(), edges: EDGES })),
+    ...Object.entries(TREES).map(([k, spec]) => ({ name: k, spec, images: new Map(), edges: EDGES })),
     { name: "vase", spec: vase.spec, images: vase.images, edges: EDGES },
     { name: "hand", spec: handSpec(), images: new Map(), edges: [1.5, 0.8] },
     ...Object.entries(ADVERSARIAL).map(([k, spec]) => ({ name: `adversarial ${k}`, spec, images: new Map(), edges: EDGES })),

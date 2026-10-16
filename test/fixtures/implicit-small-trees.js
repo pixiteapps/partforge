@@ -1,9 +1,8 @@
 // test/fixtures/implicit-small-trees.js
 // Small IR-coverage trees: every node kind, nested placements, blends of 3+
 // children, shared children (repeat, mirror). Kept small so per-point tests are fast.
-// The contact* trees are new in the contact work: the native core learns the CONTACT op in a
-// later task, so the native suites skip them until then (NATIVE_PENDING).
-export const NATIVE_PENDING = (name) => name.startsWith("contact");
+// The contact* trees reach the CONTACT and BULGE ops (with and without attachments,
+// fuse, regions) — the native suites run them like every other tree.
 export const TREES = {
   blobs: { root: { kind: "union", k: 3, children: [
     { kind: "sphere", r: 4 }, { kind: "sphere", r: 3, at: [5, 1, 0] }, { kind: "ellipsoid", r: [5, 2, 2], at: [-3, 3, 1] },
