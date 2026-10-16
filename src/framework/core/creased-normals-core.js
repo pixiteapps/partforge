@@ -74,7 +74,7 @@ export function creasedNormalsCore(c, g, { policies = null, featureLabels = null
   const labelOf = new Map(), labels = [];
   const row = (i, pol, label) => {
     creaseCos[i] = cosDeg(pol.creaseAngle);
-    flags[i] = (pol.boundaryLines ? 1 : 0) | (pol.sameSurfaceLines ? 2 : 0);
+    flags[i] = (pol.boundaryLines ? 1 : 0) | (pol.sameSurfaceLines ? 2 : 0) | (pol.organic ? 4 : 0);
     if (label === undefined) { labelIds[i] = -1; return; }
     let id = labelOf.get(label);
     if (id === undefined) { id = labels.length; labels.push(label); labelOf.set(label, id); }

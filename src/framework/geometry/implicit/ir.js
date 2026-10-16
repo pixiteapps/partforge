@@ -71,7 +71,7 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
   };
 
   const add = (n) => { nodes.push(n); return nodes.length - 1; };
-  let hasExpr = false, hasContact = false;
+  let hasExpr = false, hasContact = false, minGap = Infinity;
   const warnings = [];
   const placeOf = (node, Wparent) => {
     const base = node.frame != null ? frames.get(node.frame).world : Wparent;
@@ -162,6 +162,7 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
         n.regions = found.regions; n.fillRegions = found.fillRegions; n.L = Lk + found.Lb;
         warnings.push(...found.warnings);
         hasContact = true;
+        if (gap > 0) minGap = Math.min(minGap, gap);   // result.js warns when the grid cannot show it
         // A bulged piece's surface moves out by at most its Σ A (found.pad) over its growth G.
         // The attachments' unions dip k/4 below their pieces, a pad fill's blend PAD_BLEND/4.
         const dip = Math.max(maxK, found.fillRegions.length > 0 ? PAD_BLEND : 0) / 4;
@@ -249,7 +250,7 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
   checkTextureBudget(textures);
   const digests = textures.map((t) => t.digest);
   if (hasContact) digests.push(regionDigest(nodes));   // regions are part of the content hash
-  return { ir: { nodes, root }, textures, bounds: rb, thin: nodes[root].thin, hasExpr, detail, digests, warnings };
+  return { ir: { nodes, root }, textures, bounds: rb, thin: nodes[root].thin, minGap, hasExpr, detail, digests, warnings };
 }
 
 const AXIS_OF = { x: 0, y: 1, z: 2 };

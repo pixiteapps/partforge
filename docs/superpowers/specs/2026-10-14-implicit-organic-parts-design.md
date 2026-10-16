@@ -80,6 +80,7 @@ name used by lint messages, errors, `measure` reports and `probes`).
 | | `halfspace` | `normal`, `offset` |
 | Combine | `union`, `intersect` | `children`, `k` (blend width, mm) |
 | | `subtract` | `children` (first minus the rest), `k` |
+| | `contact` | `children` (each may carry a `label`), `gap` (clearance kept at contact, mm; `0` fuses into a pad), `bulge` (skin swell around a contact, mm), `attach` (`[{ a, b, near, radius, k, band? }]`: pairs blended, not pressed, near a frame) |
 | Modify | `mirror` | `plane: "yz"|"xz"|"xy"`, `child` |
 | | `round` | `r`, `child` |
 | | `onion` | `t`, `child` |

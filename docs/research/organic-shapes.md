@@ -615,3 +615,19 @@ preview against 130 ms undecimated (speed gate: 188 paced ms, limit 450), and 15
 probe costs the vase about 1 ms. The core skips, exactly, edges a previous pass
 refused whose neighbourhood nothing has touched since, and runs the spread
 guard before the flip test.
+
+## 10. Contact vs blends (feat/implicit PR 2b)
+
+A `union` with `k` blends its children before they touch: the surfaces reach toward
+each other and fuse, which is right where two pieces grow out of one another (a finger
+from the palm, a handle from a mug) and wrong where they only press together. There, at
+a coarse grid, a blend bridges a near miss into a blobby neck. A `contact` node is for
+pieces that press: it holds a clearance between them until they actually overlap, then
+shows the overlap as a flat pad. `gap` is the clearance in mm — `0` fuses touching pieces
+into one solid at the pad, above `0` keeps them apart so they print separately (a gap
+under two grid cells warns, since the grid cannot show it). `bulge` swells the skin
+around a contact, scaled by how deep the pieces press, and never reaches across a gap;
+`0` turns it off. `attach` names pairs that are joined, not just touching, near a frame
+(a finger at its knuckle): within `radius` of it they blend with width `k` like a
+`union`, beyond it they follow the contact rules. The hand fixture uses all three — its
+digits are `contact` children attached to the palm at their bases.

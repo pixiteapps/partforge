@@ -517,3 +517,15 @@ describe("contact regions and bulge", () => {
     expect(med).toBeLessThanOrEqual(20);
   });
 });
+
+describe("contact gap warning", () => {
+  const spec = (gap) => ({ root: { kind: "contact", gap, children: [sph(-5.25), sph(5.25)] } });
+  const gapWarnings = (gap, edge) => meshImplicit(compileImplicit(spec(gap)), edge).warnings.filter((w) => w.includes("contact gap"));
+  test("a gap under 2 grid cells warns", () => {
+    expect(gapWarnings(0.4, 0.6)).toEqual(["implicit: contact gap (0.40 mm) is under 2 grid cells at 0.6 mm — the grid cannot show it; raise the gap or mesh finer"]);
+  });
+  test("a fine enough grid, or gap 0, does not", () => {
+    expect(gapWarnings(0.4, 0.1)).toEqual([]);
+    expect(gapWarnings(0, 0.6)).toEqual([]);
+  });
+});

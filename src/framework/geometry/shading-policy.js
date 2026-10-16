@@ -10,9 +10,12 @@ export const SMOOTH = Object.freeze({ creaseAngle: 35, sameSurfaceLines: true })
 export const FACETED = Object.freeze({ creaseAngle: 10, sameSurfaceLines: false });
 // An organic (k.implicit) surface: one continuous skin whose grooves — creases,
 // pores, texture relief — are surface detail, not edges. Shade smoothly through
-// anything short of a near-fold and draw no same-surface lines; boolean seams
-// against other surfaces (a nail, a mechanical base) keep the ordinary seam rule.
-export const ORGANIC = Object.freeze({ creaseAngle: 80, sameSurfaceLines: false });
+// anything short of a near-fold and draw no same-surface lines. `organic` widens
+// that to CROSS-surface seams between two organic surfaces (a fingernail's own
+// k.implicit unioned onto the hand): skin meeting skin draws no line either. A
+// seam against a non-organic surface (a mechanical base) keeps the ordinary
+// seam rule. Seams still shade hard either way.
+export const ORGANIC = Object.freeze({ creaseAngle: 80, sameSurfaceLines: false, organic: true });
 // A blend surface (fillet/chamfer band). `boundaryLines` widens the CROSS-surface
 // rule for it: a seam between a blend and a NON-blend surface draws regardless of
 // bend — the band's start/end are tangent (~0°) and would otherwise be invisible,
