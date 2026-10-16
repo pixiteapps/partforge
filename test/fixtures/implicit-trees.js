@@ -8,6 +8,8 @@
 // thumb toward −X — a right hand seen from above. Every bone is a capsule along
 // its frame's +Y; flexion is a negative rotation about the frame's X.
 
+import { BULGE_DEFAULT } from "../../src/framework/geometry/implicit/contact.js";
+
 // Segment lengths (mm) and radii at a 190 mm hand. r = radius at MCP, PIP, DIP, tip.
 const FINGERS = {
   index:  { mcp: [-30, 96, 2],  len: [42, 25, 22], r: [9.5, 8.5, 7.4, 6.4] },
@@ -21,7 +23,16 @@ const FAN = { index: 1, middle: 0.33, ring: -0.33, pinky: -1 };
 const HAND_DEFAULTS = {
   curl: 30, spread: 8, flex: { index: 60, middle: 60, ring: 60, pinky: 60, thumb: 50 }, oppose: 20,
   handLength: 190, slender: 1, knuckles: 0.5, fingerBlend: 3, palmBlend: 8, creases: true, creaseDepth: 0.5,
+  contactGap: 0, bulge: BULGE_DEFAULT,
 };
+// Attachments (mm at a 190 mm hand) around each digit's base frame: within `radius` the
+// digit blends into the palm (the webbing); beyond radius + band it presses. A finger's
+// radius is a third of its proximal phalanx: in a fist (HAND_POSES.fist) its base overlaps
+// the palm out to 12–15 mm from the knuckle and its tip pad starts 15–24 mm out (the
+// pinky's 12.3 and 15.3), so radius + band must fall between the two — hence the short
+// band (radius/2 would reach the pinky's pad and blend it in). The thumb's metacarpal lies
+// in the thenar out to 47 mm from its root frame.
+const ATTACH = { fingerFrac: 1 / 3, fingerBand: 3, thumb: 40, thumbBand: 10 };
 
 /** Frames + flesh for one three-jointed digit. `flex` is [mcp, pip, dip] in degrees. */
 function finger(name, spec, s, { flex, abduct, slender, knuckles, blend }) {
@@ -105,15 +116,30 @@ function buildHand(pose = {}) {
       { kind: "box", frame: "palm", at: [0, -4 * s, 0], size: [62 * s, 44 * s, 21 * s], round: 9 * s, label: "wrist" },
     ],
   };
-  const body = {
-    kind: "union", k: p.palmBlend * s, children: [
-      palm,
-      { kind: "union", k: 0, children: fingers },   // fingers never blend into each other
-      thumb,
-    ],
-  };
+  // The palm, thumb and fingers press against each other (contact) instead of bridging:
+  // each digit is joined to the palm near its base (the webbing, a palmBlend blend) and
+  // pressed elsewhere — a fist's fingertips pad against the palm, neighbours keep clear.
+  const attach = [
+    { a: "thumb", b: "palm", near: "thumb.cmc", radius: ATTACH.thumb * s, band: ATTACH.thumbBand * s, k: p.palmBlend * s },
+    ...Object.entries(FINGERS).map(([name, spec]) => ({
+      a: name, b: "palm", near: `${name}.mcp`, radius: spec.len[0] * ATTACH.fingerFrac * s, band: ATTACH.fingerBand * s, k: p.palmBlend * s,
+    })),
+  ];
+  const body = { kind: "contact", gap: p.contactGap, bulge: p.bulge, attach, children: [palm, thumb, ...fingers] };
   return { frames, body, detail, nails };
 }
+
+/**
+ * Contact poses. `fist`: every finger curled until its tip pads against the palm (all four
+ * press 2.4–5.7 mm deep). `nearMiss`: the index and middle fingers 0.75 mm apart at their
+ * closest — the spread found by bisecting min max(d_index, d_middle) (half their gap) over
+ * their middle and distal phalanges. A spread sweep brings these two closest at their PIP
+ * knuckles, the fattest part, not at their tips (test/implicit-topology.test.js).
+ */
+export const HAND_POSES = {
+  fist: { curl: 100, flex: { index: 105, middle: 105, ring: 105, pinky: 105, thumb: 50 } },
+  nearMiss: { spread: -0.1086 },
+};
 
 /** The spike's hand as one k.implicit spec (no nails; see nailSpecs). */
 export function handSpec(pose = {}) {

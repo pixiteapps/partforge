@@ -13,7 +13,7 @@ export const IMPLICIT_DEFAULTS = Object.freeze({ resolution: 0.6, preview: 1.5 }
 
 export function compileImplicit(spec, { images = new Map() } = {}) {
   validateSpec(spec, { imageNames: new Set(images.keys()) });
-  return lowerSpec(spec, { images });
+  return lowerSpec(spec, { images });   // contact regions are found while lowering (regions.js)
 }
 
 // planLeaves, then the rest on the native core when it is on (core/implicit-core.js —

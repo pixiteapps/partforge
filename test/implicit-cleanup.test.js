@@ -41,10 +41,10 @@ describe("cleanup", () => {
       // A bend's branch cut makes the field discontinuous; "distance to the surface" means nothing
       // within a cell of the jump (the bendCut tree puts it inside the rounded surface on purpose).
       const nearJump = (x, y, z, d) => [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
-        .some(([a, b, e]) => Math.abs(evalReference(c, x + a * edge, y + b * edge, z + e * edge) - d) > 4 * edge);
+        .some(([a, b, e]) => Math.abs(evalReference(c, x + a * edge, y + b * edge, z + e * edge, edge) - d) > 4 * edge);
       let worst = 0, skipped = 0;
       for (let v = 0; v < out.positions.length / 3; v++) {
-        const x = out.positions[3 * v], y = out.positions[3 * v + 1], z = out.positions[3 * v + 2], d = evalReference(c, x, y, z);
+        const x = out.positions[3 * v], y = out.positions[3 * v + 1], z = out.positions[3 * v + 2], d = evalReference(c, x, y, z, edge);   // the field at the grid edge it was meshed at (a contact's clearance)
         if (nearJump(x, y, z, d)) { skipped++; continue; }
         worst = Math.max(worst, Math.abs(d));
       }
@@ -59,6 +59,22 @@ describe("cleanup", () => {
       expect(out.normals.length).toBe(out.positions.length);
     });
   }
+  // contactThree, its first capsule's tip swept through 12 press depths, at bulge 0 and the
+  // default bulge: the Task 3 failure (0.056·edge at the default bulge, the bulge's swell
+  // putting the clearance cut's crease on the second capsule's far side) is gone.
+  test("contactThree over a sweep of press depths, bulge 0 and default, CLEANUP: vertices on the surface", () => {
+    const edge = 0.8;
+    for (const bulge of [0, undefined]) for (let s = 0; s < 12; s++) {
+      const spec = structuredClone(TREES.contactThree);
+      if (bulge === undefined) delete spec.root.bulge; else spec.root.bulge = bulge;
+      spec.root.children[0].b = [-1 + (s - 6) * 0.07, 0, 0];
+      const c = lowerSpec(spec, { images: new Map() });
+      const store = sampleField(c, edge), out = cleanupMesh(store, meshStore(store), CLEANUP);
+      let worst = 0;
+      for (let v = 0; v < out.positions.length / 3; v++) worst = Math.max(worst, Math.abs(evalReference(c, out.positions[3 * v], out.positions[3 * v + 1], out.positions[3 * v + 2], edge)));
+      expect(worst, `bulge ${bulge ?? "default"}, tip at x = ${spec.root.children[0].b[0].toFixed(2)}`).toBeLessThan(0.05 * edge);
+    }
+  });
   test("deterministic: two runs are byte-identical", () => {
     const c = lowerSpec(TREES.blobs, { images: new Map() });
     const run = () => { const s = sampleField(c, 0.8); return cleanupMesh(s, meshStore(s)); };
@@ -101,7 +117,7 @@ describe("tiers", () => {
   const vase = vaseSpec();
   // [name, compile, grid, pinned digest, preview triangles at most this share of print's;
   // null: the probe skips decimation, so preview IS the print-tier mesh]
-  const CASES = [["hand", () => compileImplicit(handSpec()), 1.5, "b1b8a6271c85428d", 0.5], ["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "bd023b59990de4ed", null]];
+  const CASES = [["hand", () => compileImplicit(handSpec()), 1.5, "3fb192ea59869410", 0.5], ["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "bd023b59990de4ed", null]];
   for (const [name, compile, edge, pinned, maxPreview] of CASES) {
     test(`${name}: print tier is the JS stages run with decimateFrac 0, byte for byte`, () => {
       const compiled = compile(), plan = planLeaves(compiled, edge), store = evaluateLeaves(plan);

@@ -15,6 +15,8 @@ import { resolveFrames, compose, invert, translation, rotation, axisVector, xfor
 import { compileExprSource } from "./expr-lower.js";
 import { makeTexture, checkTextureBudget } from "./textures.js";
 import { PRIM, WARP, roundConeParams, primLipschitz } from "./primitives.js";
+import { BULGE_DEFAULT, ATTACH_STRIDE, PAD_BLEND } from "./contact.js";
+import { contactRegions, regionDigest } from "./regions.js";
 import { ImplicitSpecError } from "./errors.js";
 
 const INF = Infinity;
@@ -69,7 +71,8 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
   };
 
   const add = (n) => { nodes.push(n); return nodes.length - 1; };
-  let hasExpr = false;
+  let hasExpr = false, hasContact = false, minGap = Infinity;
+  const warnings = [];
   const placeOf = (node, Wparent) => {
     const base = node.frame != null ? frames.get(node.frame).world : Wparent;
     return node.at ? compose(base, translation(node.at)) : base;
@@ -137,6 +140,34 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
         // straight-line growth is up to sqrt(3) slower. Union's box is the union itself.
         const G = node.kind === "union" ? G0 : G0 / Math.sqrt(3);
         return finish({ kind: node.kind, k, children: ids, L: Math.max(...ids.map((i) => nodes[i].L)) }, lb, Math.min(...ids.map((i) => nodes[i].thin)), G);
+      }
+      case "contact": {
+        const ids = kids(node.children);
+        const gap = node.gap ?? 0, bulge = node.bulge ?? BULGE_DEFAULT;
+        const labelSlot = (l) => node.children.findIndex((c) => c.label === l);
+        const att = new Float64Array((node.attach?.length ?? 0) * ATTACH_STRIDE);
+        let maxK = 0;
+        (node.attach ?? []).forEach((e, i) => {
+          const wp = [0, 0, 0], an = [0, 0, 0];
+          xformPoint(wp, frames.get(e.near).world, 0, 0, 0);
+          xformPoint(an, invert(W), wp[0], wp[1], wp[2]);
+          att.set([labelSlot(e.a), labelSlot(e.b), an[0], an[1], an[2], e.radius, e.band ?? e.radius / 2, e.k], i * ATTACH_STRIDE);
+          maxK = Math.max(maxK, e.k);
+        });
+        const G0 = minG(ids), Lk = Math.max(...ids.map((i) => nodes[i].L));
+        const n = { kind: "contact", children: ids, gap, bulge, fuse: gap === 0 ? 1 : 0, att };
+        // The contact regions (regions.js), from the lowered children: per slot, the bulge
+        // regions (BULGE_STRIDE each); per node, the pad fill's gate regions (FILL_STRIDE each).
+        const found = contactRegions({ ir: { nodes }, textures }, n, path);
+        n.regions = found.regions; n.fillRegions = found.fillRegions; n.L = Lk + found.Lb;
+        warnings.push(...found.warnings);
+        hasContact = true;
+        if (gap > 0) minGap = Math.min(minGap, gap);   // result.js warns when the grid cannot show it
+        // A bulged piece's surface moves out by at most its Σ A (found.pad) over its growth G.
+        // The attachments' unions dip k/4 below their pieces, a pad fill's blend PAD_BLEND/4.
+        const dip = Math.max(maxK, found.fillRegions.length > 0 ? PAD_BLEND : 0) / 4;
+        const lb = boxPad(ids.map((i) => nodes[i].box).reduce(boxUnion), (found.pad + dip) / G0);
+        return finish(n, lb, Math.min(...ids.map((i) => nodes[i].thin)), G0);
       }
       case "mirror": {
         const id = child(node.child), axis = AXIS_INDEX[node.plane ?? "yz"], cb = nodes[id].box;
@@ -217,7 +248,9 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
     e.target = Math.max(e.size[0] / t.width, e.size[1] / t.height);
   }
   checkTextureBudget(textures);
-  return { ir: { nodes, root }, textures, bounds: rb, thin: nodes[root].thin, hasExpr, detail, digests: textures.map((t) => t.digest) };
+  const digests = textures.map((t) => t.digest);
+  if (hasContact) digests.push(regionDigest(nodes));   // regions are part of the content hash
+  return { ir: { nodes, root }, textures, bounds: rb, thin: nodes[root].thin, minGap, hasExpr, detail, digests, warnings };
 }
 
 const AXIS_OF = { x: 0, y: 1, z: 2 };

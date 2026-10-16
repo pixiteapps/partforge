@@ -29,7 +29,7 @@ CNState* cn_create(const float* vertProperties, uint32_t numProp, uint32_t numVe
 
 // Policy table: one row per original surface id seen in the mesh. Every
 // cosine is computed by the CALLER (JS Math.cos), so the C++ never has to
-// agree with another libm. flags: bit 0 boundaryLines, bit 1 sameSurfaceLines.
+// agree with another libm. flags: bit 0 boundaryLines, bit 1 sameSurfaceLines, bit 2 organic.
 // labelIds: interned feature label per row, -1 for none. The LAST row is the
 // SMOOTH default for any surface not in the table (its oid is ignored).
 // Fillet surfaces: runDesc (numRun entries) names each run's descriptor, -1

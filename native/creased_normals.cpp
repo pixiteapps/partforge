@@ -55,7 +55,7 @@ inline int32_t toInt32(double d) {
   return (int32_t)(uint32_t)m;
 }
 
-struct Policy { double creaseCos; bool boundaryLines; bool sameSurfaceLines; int32_t labelId; };
+struct Policy { double creaseCos; bool boundaryLines; bool sameSurfaceLines; bool organic; int32_t labelId; };
 
 }  // namespace
 
@@ -185,7 +185,7 @@ extern "C" void cn_finish(CNState* s, const uint32_t* oids, const double* crease
   for (uint32_t i = 0; i + 1 < numOids; i++) rowOf.insert(oids[i], i);
   std::vector<Policy> pol(numOids);
   for (uint32_t i = 0; i < numOids; i++)
-    pol[i] = {creaseCos[i], (flags[i] & 1) != 0, (flags[i] & 2) != 0, labelIds[i]};
+    pol[i] = {creaseCos[i], (flags[i] & 1) != 0, (flags[i] & 2) != 0, (flags[i] & 4) != 0, labelIds[i]};
 
   // What a pass reads about a triangle, together (the facet normal and
   // thinness exactly as the float32 arrays held them).
@@ -368,7 +368,9 @@ extern "C" void cn_finish(CNState* s, const uint32_t* oids, const double* crease
       const double dot = (double)Tp.fn[0] * Tt.fn[0] + (double)Tp.fn[1] * Tt.fn[1] + (double)Tp.fn[2] * Tt.fn[2];
       const bool bends = std::fabs(dot) < coplanarCos;
       const bool bothBlend = !sameOID && Pp.boundaryLines && Pt.boundaryLines;
-      const bool hard = boundary || (bends && ((sameOID || bothBlend) ? (Pt.sameSurfaceLines && dot < Pt.creaseCos) : true));
+      // Two organic surfaces meet skin to skin: no seam line (creased-normals.js).
+      const bool bothOrganic = !sameOID && Pp.organic && Pt.organic;
+      const bool hard = boundary || (bends && !bothOrganic && ((sameOID || bothBlend) ? (Pt.sameSurfaceLines && dot < Pt.creaseCos) : true));
       if (!hard) continue;
       const size_t ai = (size_t)i * np, bj = (size_t)j * np;
       const double dx = (double)vp[ai] - vp[bj], dy = (double)vp[ai + 1] - vp[bj + 1], dz = (double)vp[ai + 2] - vp[bj + 2];

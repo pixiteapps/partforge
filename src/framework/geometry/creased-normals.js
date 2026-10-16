@@ -330,7 +330,11 @@ export function creasedNormalsJS(g, { policies = null, featureLabels = null, sur
       // surfaces whose overshoot crossings bend a few degrees by construction.
       const bothBlend = !sameOID &&
         !!polFor(triOID[prev]).boundaryLines && !!polFor(triOID[t]).boundaryLines;
-      const hard = boundary || (bends && (sameOID || bothBlend
+      // Two organic surfaces (shading-policy.js's ORGANIC: a nail unioned onto a
+      // hand) meet skin to skin: their seam draws no line at all.
+      const bothOrganic = !sameOID &&
+        !!polFor(triOID[prev]).organic && !!polFor(triOID[t]).organic;
+      const hard = boundary || (bends && !bothOrganic && (sameOID || bothBlend
         ? polFor(triOID[t]).sameSurfaceLines && dot < cosFor(triOID[t])
         : true));
       if (hard) {
