@@ -31,9 +31,12 @@ int mesh(ipe::Session& s);
 // or `which` names a vertex out of range or twice.
 int project(ipe::Session& s, const int32_t* which, int whichCount, double maxStep, bool wantNormals);
 
-// cleanupMesh over the session mesh: short-edge collapse, then projection and
-// relaxation passes. Replaces the mesh with the cleaned one and fills s.normals.
-// Returns 0, or nonzero when there is no mesh.
-int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxWeight, double maxMoveCells);
+// cleanupMesh over the session mesh: short-edge collapse, then (decimateFrac > 0,
+// the preview tier) up to decimatePasses angle-guarded collapse passes at
+// decimateFrac x edge (guardCos2 <= 0: no guard), then projection and relaxation
+// passes. Replaces the mesh with the cleaned one and fills s.normals. Returns 0,
+// or nonzero when there is no mesh.
+int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxWeight, double maxMoveCells,
+            double decimateFrac, int decimatePasses, double guardCos2);
 
 }  // namespace ipm_mesh

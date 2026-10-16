@@ -13,7 +13,7 @@
 // meshImplicitCore runs a whole meshImplicit on one session; implicit/index.js
 // dispatches to it when the core is on.
 import { core, countRefusedMesh, OUT_OF_MEMORY, poisonCore, releaseIfIdle } from "./core.js";
-import { CLEANUP } from "../geometry/implicit/cleanup.js";
+import { CLEANUP, guardCos2 } from "../geometry/implicit/cleanup.js";
 import { DETAIL_STRIDE, flattenDetail } from "../geometry/implicit/detail.js";
 import { implicitResult } from "../geometry/implicit/result.js";
 
@@ -270,13 +270,16 @@ export class NativeSession {
    */
   cleanup(opts = CLEANUP, { readBack = true } = {}) {
     const { c } = this;
-    const { collapseFrac, relaxPasses, relaxWeight, maxMoveCells } = opts ?? {};
-    if (![collapseFrac, relaxWeight, maxMoveCells].every((v) => typeof v === "number") || !isInt32(relaxPasses)) {
-      throw refusal("implicit: cleanup takes collapseFrac, relaxPasses (an integer), relaxWeight and maxMoveCells");
+    const { collapseFrac, relaxPasses, relaxWeight, maxMoveCells, decimateFrac = 0, decimatePasses = 0, decimateMinAngle = 0 } = opts ?? {};
+    if (![collapseFrac, relaxWeight, maxMoveCells, decimateFrac, decimateMinAngle].every((v) => typeof v === "number") || !isInt32(relaxPasses) || !isInt32(decimatePasses)) {
+      throw refusal("implicit: cleanup takes collapseFrac, relaxPasses (an integer), relaxWeight, maxMoveCells and optional decimateFrac, decimatePasses (an integer), decimateMinAngle");
     }
+    // cleanupMesh decimates only when decimateFrac > 0 (NaN included: no); the guard's
+    // cos² is computed here, in JS, so both sides compare against the same double.
+    const passes = decimateFrac > 0 ? decimatePasses : 0;
     let rc = 0;
     const out = this.#call(() => {
-      rc = c.x.ip_cleanup(this.id, collapseFrac, relaxPasses, relaxWeight, maxMoveCells);
+      rc = c.x.ip_cleanup(this.id, collapseFrac, relaxPasses, relaxWeight, maxMoveCells, decimateFrac, passes, guardCos2(decimateMinAngle));
       if (rc !== 0 || !readBack) return null;
       const m = this.#readMesh();
       return { ...m, normals: this.#normalsOut(m.vertLeaf.length) };
@@ -363,13 +366,14 @@ function acceptsPlan(plan) {
 
 /**
  * meshImplicit(compiled, edge) on the core, from planLeaves' `plan`: the same
- * object, bit for bit — sample, mesh, cleanup (CLEANUP) and, when the part has
+ * object, bit for bit — sample, mesh, cleanup (`opts`, CLEANUP or the preview
+ * tier's PREVIEW_CLEANUP) and, when the part has
  * any, the surface detail, all on one session, with the warnings worded by
  * implicitResult as the JS's are. Returns null when the JS must answer instead:
  * the core is off or unavailable, it refused the plan (counted, not reported),
  * or it faulted (the instance is poisoned and the fallback reported).
  */
-export function meshImplicitCore(compiled, edge, plan) {
+export function meshImplicitCore(compiled, edge, plan, opts = CLEANUP) {
   const c = core();
   if (!c) return null;
   if (!acceptsPlan(plan)) { countRefusedMesh(); return null; }
@@ -383,7 +387,7 @@ export function meshImplicitCore(compiled, edge, plan) {
     plan.programs.forEach((p, i) => { if (s.addProgram(p) !== i) throw refusal("implicit: the core numbered a program out of plan order"); });
     ({ clipped } = s.sample(plan, { readBack: false }));
     s.mesh({ readBack: false });
-    mesh = flat ? (s.cleanup(CLEANUP, { readBack: false }), s.detail(flat)) : s.cleanup(CLEANUP);
+    mesh = flat ? (s.cleanup(opts, { readBack: false }), s.detail(flat)) : s.cleanup(opts);
   } catch (err) {
     if (err === CORE_FAULT) return null;   // poisoned and reported already
     if (err?.code === CORE_REFUSED) { countRefusedMesh(); return null; }

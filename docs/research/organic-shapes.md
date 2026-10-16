@@ -494,7 +494,7 @@ Against the design spec's performance targets (Node, M-series desktop):
 
 | target | spec | measured (native) | CI gate (`test/implicit-speed.test.js`) |
 |---|---|---|---|
-| hand, full detail, preview tier | ≤ 150 ms | 134 ms (126 ms paced median) | < 450 ms paced |
+| hand, full detail, preview tier | ≤ 150 ms | 134 ms (126 ms paced median); 162 ms (157 paced) with §9a's decimation | < 450 ms paced |
 | hand, 0.5 mm print tier | ≤ 2 s | 0.99 s (1.05 s paced median) | < 6 s paced |
 
 The gate times compile + `planLeaves` + the native session (what `k.implicit`
@@ -524,3 +524,55 @@ without touching the midpoint map, and holds the map as per-vertex chains,
 which keeps lookups near the triangles making them. Before those changes (same
 machine, same load) the native hand took 222 ms at 1.5 mm, 660 ms at 0.8 mm and
 1.68 s at 0.5 mm, and the vase 260 ms.
+
+### 9a. Preview-tier decimation (PR 2 speed follow-up)
+
+At the 1.5 mm preview grid marching tetrahedra leave the hand at about 177k
+triangles, three times what its ~48,600 mm² of skin needs at 1.5 mm, and
+everything after the engine — Manifold's import, display, every later boolean —
+scales with that count. The preview tier now decimates in cleanup
+(`cleanup.js`'s `PREVIEW_CLEANUP`, and its twin in `native/implicit_mesh.cpp`):
+after the usual 0.2 · edge collapse, up to four more passes of the same
+deterministic triangle-order collapse take edges shorter than 0.7 · edge, with
+one more guard — a collapse may not leave a corner sharper than 15° unless the
+corners around that edge already had one at least as sharp (so collapses that
+remove slivers still go ahead). Relaxation and projection follow as before.
+`meshImplicit(compiled, edge, { tier })` decimates only for `tier: "preview"`;
+the Manifold backend passes its quality, so print and export meshes are
+byte-for-byte what they were (`test/implicit-cleanup.test.js` pins their
+digests from before the change).
+
+The guard is relative on purpose. The brief's first form (no new corner under
+θ at all) stalled: the hand kept 64–96k triangles and its 5th-percentile corner
+stayed at 22°, because marching tetrahedra's own slivers blocked every collapse
+near them. The relative form reaches 49k after cleanup with better triangles.
+
+Cleanup alone (JS, CPU ms median of 5; max |d| is the largest field value at a
+vertex, in grid edges):
+
+| case | cleanup | triangles | 5th-pct corner | min corner | max \|d\| | closed, Euler |
+|---|---|---|---|---|---|---|
+| hand 1.5 mm | CLEANUP | 157,004 | 23.1° | 0.46° | 0.0061 | yes, same |
+| | 0.6 · edge, absolute 12° guard, 3 passes (rejected) | 90,798 | 22.5° | 2.0° | 0.0028 | yes, same |
+| | 0.6 · edge, relative 15° | 62,830 | 27.7° | 3.3° | 0.0038 | yes, same |
+| | **0.7 · edge, relative 15°, 4 passes** | **49,246** | **29.2°** | **7.7°** | **0.0004** | yes, same |
+| | 0.7 · edge, relative 12° | 46,956 | 29.4° | 5.6° | 0.0003 | yes, same |
+| | 0.8 · edge, relative 15° | 38,836 | 30.9° | 2.0° | 0.0014 | yes, same |
+| vase 1.2 mm | CLEANUP | 86,626 | 19.5° | 0.13° | 0.33 | yes, same |
+| | **0.7 · edge, relative 15°, 4 passes** | **27,320** | **22.5°** | 0.18° | 0.25 | yes, same |
+
+(The vase's field is not a distance — taper, twist and an `expr` gyroid — so
+its |d| is not one either; it does not grow.) Surface detail runs after
+cleanup and refines back toward its own target, so the meshes `k.implicit`
+hands Manifold shrink less than cleanup's: the hand 177,102 → 70,204 triangles
+(2.5×; 5th-percentile corner 22.8° → 27.0°), the vase 144,592 → 105,164
+(its texture covers the whole wall). Rendered side by side the hand is
+indistinguishable from before.
+
+Speed (CPU ms, median of 7, machine under load): `k.implicit(hand)` end to end
+at 1.5 mm 322 → 239 ms, the vase 329 → 289 ms — Manifold's import shrinks with
+the triangle count. The engine alone gets slower at preview (bench:implicit,
+native: hand 134 → 162 ms, cleanup 59 → 101 ms, detail 20 → 9 ms; the guard
+is most of the extra, about 40 ms, from re-testing the collapses it refuses in
+every pass); the speed gate's paced median is 157 ms against its 450 ms limit.
+

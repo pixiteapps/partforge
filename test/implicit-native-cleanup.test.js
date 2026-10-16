@@ -1,13 +1,14 @@
 // The native projection and cleanup (native/implicit_mesh.cpp, ip_project and
 // ip_cleanup) must produce the SAME BYTES as project.js's projectVertices and
-// cleanup.js's cleanupMesh: positions, indices, vertLeaf and normals.
+// cleanup.js's cleanupMesh: positions, indices, vertLeaf and normals — at both
+// tiers (CLEANUP, and the preview tier's decimating PREVIEW_CLEANUP).
 import { afterEach, describe, expect, test } from "vitest";
 import { core, setCoreForTesting } from "../src/framework/core/core.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
 import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
 import { projectVertices } from "../src/framework/geometry/implicit/project.js";
-import { cleanupMesh, CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
+import { cleanupMesh, CLEANUP, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
 import { nativeCases, sessionFor } from "./fixtures/implicit-native-cases.js";
 
 afterEach(() => setCoreForTesting(undefined));
@@ -24,17 +25,17 @@ function same(name, nat, js) {
 
 describe("native cleanup", () => {
   for (const { name, spec, images, edges } of nativeCases()) {
-    for (const edge of edges) {
-      test(`${name} at ${edge} mm: cleanupMesh's positions, indices, vertLeaf and normals`, () => {
+    for (const edge of edges) for (const [tier, opts] of [["CLEANUP", CLEANUP], ["PREVIEW_CLEANUP", PREVIEW_CLEANUP]]) {
+      test(`${name} at ${edge} mm, ${tier}: cleanupMesh's positions, indices, vertLeaf and normals`, () => {
         const plan = planLeaves(lowerSpec(spec, { images }), edge);
         const store = evaluateLeaves(plan);
-        const js = cleanupMesh(store, meshStore(store));
+        const js = cleanupMesh(store, meshStore(store), opts);
         expect(js.indices.length).toBeGreaterThan(0);
         const s = sessionFor(plan);
         try {
           s.sample(plan, { readBack: false });
           s.mesh();
-          const nat = s.cleanup(CLEANUP);
+          const nat = s.cleanup(opts);
           same("positions", nat.positions, js.positions);
           same("indices", nat.indices, js.indices);
           same("vertLeaf", nat.vertLeaf, js.vertLeaf);

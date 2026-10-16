@@ -924,7 +924,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       });
     },
     // Signed-distance tree → solid (implicit/index.js). The engine meshes at the
-    // tier's grid (`preview` for preview, `resolution` for print) and hands
+    // tier's grid (`preview` for preview, `resolution` for print) — the preview
+    // tier also decimates in cleanup (PREVIEW_CLEANUP), print does not — and hands
     // Manifold one welded mesh; the result shades ORGANIC (one smooth skin: no
     // same-surface feature lines, normals smoothed through detail grooves).
     // Cached on the spec plus every bound image's digest, per quality tier; the key
@@ -939,7 +940,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       const keySpec = quality === "print" ? { ...rest, resolution: edge } : { ...rest, preview: edge };
       const key = h("implicit", implicitHashable(keySpec, compiled), quality);
       const solid = cache.lookup(key, () => {
-        const out = meshImplicit(compiled, edge);
+        const out = meshImplicit(compiled, edge, { tier: quality });
         if (out.indices.length === 0) {
           for (const w of out.warnings) recordWarning(w);
           throw new Error(`implicit: the shape is empty at a ${edge} mm grid — nothing is inside it (check subtract order and sizes), or it is thinner than the grid`);

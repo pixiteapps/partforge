@@ -10,6 +10,9 @@ import { sampleField } from "../src/framework/geometry/implicit/sparse.js";
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
 const CLOSED = { boundary: 0, nonManifold: 0, misoriented: 0 };
+// meshImplicit's tiers: "preview" decimates in cleanup, "print" does not (k above is a
+// preview kernel, so every k.implicit here is decimated).
+const TIERS = ["preview", "print"];
 
 describe("topology", () => {
   for (const curl of [0, 50, 100]) {
@@ -29,9 +32,8 @@ describe("topology", () => {
     expect(v.volume()).toBeGreaterThan(0);
   }, 60_000);
   for (const [name, spec] of Object.entries(ADVERSARIAL)) {
-    test(`adversarial ${name}: closed and accepted by Manifold (Review Focus 3)`, () => {
-      const out = meshImplicit(compileImplicit(spec), spec.preview);
-      expect(edgeCheck(out.indices)).toEqual(CLOSED);
+    test(`adversarial ${name}: closed at both tiers and accepted by Manifold (Review Focus 3)`, () => {
+      for (const tier of TIERS) expect(edgeCheck(meshImplicit(compileImplicit(spec), spec.preview, { tier }).indices), tier).toEqual(CLOSED);
       expect(k.implicit(spec).volume()).toBeGreaterThan(0);
     });
   }
@@ -39,7 +41,10 @@ describe("topology", () => {
     const spec = SUB_CELL_PLATE;
     const out = meshImplicit(compileImplicit(spec), spec.preview);
     expect(out.warnings.some((w) => /thinnest feature/.test(w))).toBe(true);
-    if (out.indices.length) expect(edgeCheck(out.indices)).toEqual(CLOSED);
+    for (const tier of TIERS) {
+      const t = meshImplicit(compileImplicit(spec), spec.preview, { tier });
+      if (t.indices.length) expect(edgeCheck(t.indices), tier).toEqual(CLOSED);
+    }
     let solid = null;
     try { solid = k.implicit(spec); } catch (e) { expect(e.message).toMatch(/implicit: the shape is empty/); }
     if (solid) expect(solid.volume()).toBeGreaterThan(0);
@@ -49,18 +54,20 @@ describe("topology", () => {
     const a = k.implicit({ ...spec, preview: 1.5 }).volume(), b = k.implicit({ ...spec, preview: 1.0 }).volume();
     expect(Math.abs(a - b) / b).toBeLessThan(0.03);
   }, 60_000);
-  test("seeded fuzz: 40 random trees mesh closed", () => {
-    let meshed = 0;
-    for (let seed = 1; seed <= 40; seed++) {
-      const spec = randomSpec(seed);
-      let out;
-      try { out = meshImplicit(compileImplicit(spec), spec.preview); } catch (e) { if (e.code === "IMPLICIT_SPEC") continue; throw e; }
-      if (out.indices.length === 0) continue;
-      expect(edgeCheck(out.indices), `seed ${seed}`).toEqual(CLOSED);
-      meshed++;
-    }
-    expect(meshed).toBeGreaterThanOrEqual(30);   // 40 of 40 mesh today; a skip-everything fuzz must fail
-  }, 120_000);
+  for (const tier of TIERS) {
+    test(`seeded fuzz, ${tier} tier: 40 random trees mesh closed`, () => {
+      let meshed = 0;
+      for (let seed = 1; seed <= 40; seed++) {
+        const spec = randomSpec(seed);
+        let out;
+        try { out = meshImplicit(compileImplicit(spec), spec.preview, { tier }); } catch (e) { if (e.code === "IMPLICIT_SPEC") continue; throw e; }
+        if (out.indices.length === 0) continue;
+        expect(edgeCheck(out.indices), `seed ${seed}`).toEqual(CLOSED);
+        meshed++;
+      }
+      expect(meshed).toBeGreaterThanOrEqual(30);   // 40 of 40 mesh today; a skip-everything fuzz must fail
+    }, 120_000);
+  }
 });
 
 // Exactly-touching faces: a hard union, mirror or repeat whose pieces share a face
@@ -80,10 +87,12 @@ const FLUSH = {
 describe("exactly-touching faces", () => {
   for (const [name, spec] of Object.entries({ ...TOUCHING, ...FLUSH })) {
     for (const edge of [0.5, 0.6, 1.0, 1.5]) {
-      test(`${name} at ${edge} mm: one closed shell`, () => {
-        const out = meshImplicit(compileImplicit(spec), edge);
-        expect(edgeCheck(out.indices)).toEqual(CLOSED);
-        expect(componentCount(out.indices)).toBe(1);
+      test(`${name} at ${edge} mm: one closed shell at both tiers`, () => {
+        for (const tier of TIERS) {
+          const out = meshImplicit(compileImplicit(spec), edge, { tier });
+          expect(edgeCheck(out.indices), tier).toEqual(CLOSED);
+          expect(componentCount(out.indices), tier).toBe(1);
+        }
       });
     }
   }

@@ -121,7 +121,8 @@ held (each `.cpp`'s top comment has the full list):
 - **Collapse incidence order**: triangles in order, edges (c, c+1), and b's
   incident triangles walked in the order the JS pushed them (CSR filled in
   triangle, corner order); a collapse's kill/rename follows it, so it decides
-  which triangles survive and how they are renumbered.
+  which triangles survive and how they are renumbered. The preview tier's
+  decimation passes are the same walk again over each pass's compacted mesh.
 
 Likewise detail's midpoints are numbered in creation order (triangles in
 order, edges v0v1, v1v2, v2v0); its midpoint map is per-vertex chains, only

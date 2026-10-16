@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "flat_map.h"
+#include "js_math.h"
 
 namespace ipm_mesh {
 
@@ -325,6 +326,16 @@ int mesh(ipe::Session& s) {
 //     the same collapse, and only an unlocked vertex's list is read (ring and the
 //     flip test of an edge whose ends are both unlocked) — so the CSR omits the
 //     append. test/core-structures.test.js holds the lists to the JS.
+//   - decimation (the preview tier): further whole passes of the same collapse,
+//     each over the previous pass's compacted mesh (so each rebuilds its incident
+//     lists and clears `locked`, as the JS's fresh call does), stopping after a
+//     pass that collapses nothing. The angle guard reads each corner's sharpness
+//     as the JS writes it — dot > 0 ? (dot * dot) / (|u|^2 * |v|^2) : 0, each sum
+//     left to right — takes the triangle's max as jsmax(jsmax(s_i, s_j), s_k) and
+//     the running max with jsmax, all on the substituted midpoint (`after`) like
+//     the flip test; only when that passes cos2 does it read the current corners
+//     around a then b (dead triangles skipped, the edge's own two included). cos2
+//     comes from JS (guardCos2), never a libm cos here.
 //   - relax: the per-triangle edge accumulation a += P[b], b += P[a] in the JS
 //     order, the zero-normal skip, and the same divisions and clamp.
 namespace {
@@ -340,7 +351,28 @@ inline void triNormal(At at, uint32_t a, uint32_t b, uint32_t c, double* out) {
   out[0] = uy * vz - uz * vy; out[1] = uz * vx - ux * vz; out[2] = ux * vy - uy * vx;
 }
 
-void collapse(ipe::Session& s, double minLen) {
+// cleanup.js's sharpness: cos^2 of the corner angle at a when acute, else 0.
+template <class At>
+inline double sharpness(At at, uint32_t a, uint32_t b, uint32_t c) {
+  const double* A = at(a);
+  const double* B = at(b);
+  const double* C = at(c);
+  const double ux = B[0] - A[0], uy = B[1] - A[1], uz = B[2] - A[2];
+  const double vx = C[0] - A[0], vy = C[1] - A[1], vz = C[2] - A[2];
+  const double dot = ux * vx + uy * vy + uz * vz;
+  return dot > 0 ? (dot * dot) / ((ux * ux + uy * uy + uz * uz) * (vx * vx + vy * vy + vz * vz)) : 0;
+}
+
+template <class At>
+inline double triSharpness(At at, uint32_t i, uint32_t j, uint32_t k) {
+  const double si = sharpness(at, i, j, k);
+  const double sj = sharpness(at, j, k, i);
+  const double sk = sharpness(at, k, i, j);
+  return jsmath::jsmax(jsmath::jsmax(si, sj), sk);
+}
+
+// One collapse pass; cos2 > 0 turns on the angle guard. Returns the collapses made.
+size_t collapse(ipe::Session& s, double minLen, double cos2) {
   std::vector<double>& P = s.positions;
   std::vector<uint32_t>& T = s.indices;
   std::vector<int32_t>& VL = s.vertLeaf;
@@ -358,6 +390,7 @@ void collapse(ipe::Session& s, double minLen) {
   uint32_t stamp = 0;
   const double min2 = minLen * minLen;
   double n0[3], n1[3], mid[3];
+  size_t collapsed = 0;
 
   for (size_t t = 0; t < nt; t++) {
     if (!alive[t]) continue;
@@ -390,6 +423,7 @@ void collapse(ipe::Session& s, double minLen) {
       auto before = [&](uint32_t v) -> const double* { return &P[3 * (size_t)v]; };
       auto after = [&](uint32_t v) -> const double* { return v == a || v == b ? mid : &P[3 * (size_t)v]; };
       bool ok = true;
+      double sharpAfter = 0;   // the sharpest corner the collapse would leave (guard on)
       for (int side = 0; side < 2 && ok; side++) {
         const uint32_t v = side == 0 ? a : b;
         for (uint32_t q = off[v]; q < off[v + 1] && ok; q++) {
@@ -399,8 +433,21 @@ void collapse(ipe::Session& s, double minLen) {
           if ((i == a || j == a || k == a) && (i == b || j == b || k == b)) continue;
           triNormal(before, i, j, k, n0);
           triNormal(after, i, j, k, n1);
+          if (cos2 > 0) sharpAfter = jsmath::jsmax(sharpAfter, triSharpness(after, i, j, k));
           if (n0[0] * n1[0] + n0[1] * n1[1] + n0[2] * n1[2] <= 0) ok = false;
         }
+      }
+      if (ok && cos2 > 0 && sharpAfter > cos2) {
+        double sharpBefore = 0;
+        for (int side = 0; side < 2; side++) {
+          const uint32_t v = side == 0 ? a : b;
+          for (uint32_t q = off[v]; q < off[v + 1]; q++) {
+            const uint32_t tt = inc[q];
+            if (!alive[tt]) continue;
+            sharpBefore = jsmath::jsmax(sharpBefore, triSharpness(before, T[3 * tt], T[3 * tt + 1], T[3 * tt + 2]));
+          }
+        }
+        if (sharpAfter > sharpBefore) ok = false;
       }
       if (!ok) continue;
       P[3 * a] = mid[0]; P[3 * a + 1] = mid[1]; P[3 * a + 2] = mid[2];
@@ -413,6 +460,7 @@ void collapse(ipe::Session& s, double minLen) {
         // (the JS appends tt to vt[a] here; never read again, see above)
       }
       locked[a] = locked[b] = 1;
+      collapsed++;
       break;   // triangle t is gone; move on
     }
   }
@@ -435,6 +483,7 @@ void collapse(ipe::Session& s, double minLen) {
     }
   }
   P.swap(outP); T.swap(outT); VL.swap(outL);
+  return collapsed;
 }
 
 // cleanup.js's relax: tangential Laplacian smoothing.
@@ -530,10 +579,16 @@ int project(ipe::Session& s, const int32_t* which, int whichCount, double maxSte
   return 0;
 }
 
-int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxWeight, double maxMoveCells) {
+int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxWeight, double maxMoveCells,
+            double decimateFrac, int decimatePasses, double guardCos2) {
   if (!s.meshed) return 1;
   const double edge = s.edge;
-  collapse(s, collapseFrac * edge);
+  collapse(s, collapseFrac * edge, -1);
+  if (decimateFrac > 0) {
+    for (int pass = 0; pass < decimatePasses; pass++) {
+      if (collapse(s, decimateFrac * edge, guardCos2) == 0) break;
+    }
+  }
   s.normals.assign(s.positions.size(), 0.0);
   const double maxStep = maxMoveCells * edge;
   project(s, nullptr, 0, maxStep, true);
@@ -629,11 +684,14 @@ int ip_project(int id, const int32_t* which, int whichCount, double maxStep, int
   return ipm_mesh::project(*s, which, whichCount, maxStep, wantNormals != 0);
 }
 
-// cleanupMesh over the session mesh, in place; fills the normals. 0 ok.
-int ip_cleanup(int id, double collapseFrac, int relaxPasses, double relaxWeight, double maxMoveCells) {
+// cleanupMesh over the session mesh, in place; fills the normals. 0 ok. With
+// decimateFrac > 0, up to decimatePasses decimation passes follow the first
+// collapse, guarded by guardCos2 (cleanup.js's guardCos2; <= 0: no guard).
+int ip_cleanup(int id, double collapseFrac, int relaxPasses, double relaxWeight, double maxMoveCells,
+               double decimateFrac, int decimatePasses, double guardCos2) {
   ipe::Session* s = ipe::session(id);
   if (!s) return 2;
-  return ipm_mesh::cleanup(*s, collapseFrac, relaxPasses, relaxWeight, maxMoveCells);
+  return ipm_mesh::cleanup(*s, collapseFrac, relaxPasses, relaxWeight, maxMoveCells, decimateFrac, decimatePasses, guardCos2);
 }
 
 // The normals (double x3 per vertex), or null when none have been written.

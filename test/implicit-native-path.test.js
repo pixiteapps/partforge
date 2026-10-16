@@ -130,6 +130,16 @@ describe.each([["SIMD", true], ["scalar", false]])("meshImplicit on the native c
     expect(coreStatus().refusedMeshes).toBe(1);
   });
 
+  test("the preview tier (decimating cleanup) builds identically, hand and vase", () => {
+    const vase = vaseSpec();
+    for (const [compiled, edge] of [[compileImplicit(handSpec()), 1.5], [compileImplicit(vase.spec, { images: vase.images }), 1.2]]) {
+      const nat = meshImplicit(compiled, edge, { tier: "preview" });
+      sameResult(nat, withCore(false, () => meshImplicit(compiled, edge, { tier: "preview" })));
+      expect(nat.indices.length).toBeLessThan(meshImplicit(compiled, edge, { tier: "print" }).indices.length);
+    }
+    expect(coreStatus()).toMatchObject({ state: "on", reason: null, refusedMeshes: 0 });
+  }, 120_000);
+
   test("globalThis.PARTFORGE_CORE = false runs the JS path, with identical bytes", () => {
     const compiled = compileImplicit(handSpec());
     const nat = meshImplicit(compiled, 1.5);

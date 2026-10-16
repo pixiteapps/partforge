@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { compileImplicit } from "../src/framework/geometry/implicit/index.js";
 import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
 import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
-import { cleanupMesh, CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
+import { cleanupMesh, CLEANUP, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
 import { applySurfaceDetail, flattenDetail } from "../src/framework/geometry/implicit/detail.js";
 import { core, setCoreEnabled } from "../src/framework/core/core.js";
 import { NativeSession } from "../src/framework/core/implicit-core.js";
@@ -33,14 +33,16 @@ const cpuMs = (u) => (u.user + u.system) / 1000;
 const time = (f) => { const t = process.cpuUsage(); const r = f(); return [r, cpuMs(process.cpuUsage(t))]; };
 const { spec: vase, images } = vaseSpec();
 // The hand at 0.5 mm is the spec's print-tier target (docs/research/organic-shapes.md §9).
-const cases = [["hand preview", handSpec(), 1.5, new Map()], ["hand print", handSpec(), 0.8, new Map()], ["hand 0.5 mm", handSpec(), 0.5, new Map()], ["vase preview", vase, 1.2, images]];
+// Each case cleans up as its tier does: the preview grids decimate (PREVIEW_CLEANUP).
+const cases = [["hand preview", handSpec(), 1.5, new Map(), PREVIEW_CLEANUP], ["hand print", handSpec(), 0.8, new Map(), CLEANUP],
+  ["hand 0.5 mm", handSpec(), 0.5, new Map(), CLEANUP], ["vase preview", vase, 1.2, images, PREVIEW_CLEANUP]];
 
 for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
   console.log(`\ncore ${on ? "on" : "off"}`);
   setCoreEnabled(on);
   if (on && !core()) { console.log("core unavailable"); continue; }
   console.log("case            compile  sample  mesh  cleanup  detail  total   tris     samples  programs");
-  for (const [name, spec, edge, imgs] of cases) {
+  for (const [name, spec, edge, imgs, cleanupOpts] of cases) {
     for (let warm = 0; warm < 2; warm++) {
       const [c, tc] = time(() => compileImplicit(spec, { images: imgs }));
       // sample = planLeaves + evaluation; with the core on, every later stage runs on one
@@ -53,14 +55,14 @@ for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
           sess = new NativeSession(core());
           [, ts] = time(() => { plan.textures.forEach((t) => sess.addTexture(t)); plan.programs.forEach((p) => sess.addProgram(p)); sess.sample(plan, { readBack: false }); });
           [, tm] = time(() => sess.mesh({ readBack: false }));
-          [d, tcl] = time(() => sess.cleanup(CLEANUP, { readBack: !c.detail.length }));
+          [d, tcl] = time(() => sess.cleanup(cleanupOpts, { readBack: !c.detail.length }));
           if (c.detail.length) [d, td] = time(() => sess.detail(flattenDetail(c)));
           else td = 0;
         } else {
           let s, m, cl;
           [s, ts] = time(() => evaluateLeaves(plan));
           [m, tm] = time(() => meshStore(s));
-          [cl, tcl] = time(() => cleanupMesh(s, m));
+          [cl, tcl] = time(() => cleanupMesh(s, m, cleanupOpts));
           [d, td] = time(() => (c.detail.length ? applySurfaceDetail(s, cl, c) : cl));
         }
         st = [tp + ts, tm, tcl, td, d];

@@ -9,7 +9,8 @@
 // docs/research/organic-shapes.md §9.
 //
 // The timed path is what k.implicit runs before Manifold: compile, planLeaves, then
-// sample / mesh / cleanup / detail on one native session. It must be the native path —
+// sample / mesh / cleanup / detail on one native session, each grid with its tier's
+// cleanup (the preview grid decimates, PREVIEW_CLEANUP). It must be the native path —
 // a refusal would time the JS fallback instead, so a null answer fails the test.
 import { expect, test } from "vitest";
 import { PACE, cpuMs } from "./helpers/cpu-pace.js";
@@ -17,25 +18,26 @@ import { core, setCoreEnabled } from "../src/framework/core/core.js";
 import { meshImplicitCore } from "../src/framework/core/implicit-core.js";
 import { compileImplicit } from "../src/framework/geometry/implicit/index.js";
 import { planLeaves } from "../src/framework/geometry/implicit/sparse.js";
+import { CLEANUP, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
 import { handSpec } from "./fixtures/implicit-trees.js";
 
 const SPEC_PREVIEW_MS = 150;
 const SPEC_PRINT_MS = 2000;
 
-function nativeHand(edge) {
+function nativeHand(edge, opts) {
   const compiled = compileImplicit(handSpec());
-  const out = meshImplicitCore(compiled, edge, planLeaves(compiled, edge));
+  const out = meshImplicitCore(compiled, edge, planLeaves(compiled, edge), opts);
   expect(out, `the native path answered at ${edge} mm`).not.toBeNull();
   return out;
 }
 
 // The median of `runs` timings, so one descheduled run under vitest's parallel files
 // cannot fail the gate on its own.
-function medianMs(edge, runs) {
+function medianMs(edge, opts, runs) {
   const ms = [];
   for (let i = 0; i < runs; i++) {
     const t0 = cpuMs();
-    const out = nativeHand(edge);
+    const out = nativeHand(edge, opts);
     ms.push(cpuMs() - t0);
     expect(out.indices.length).toBeGreaterThan(0);
   }
@@ -45,9 +47,9 @@ function medianMs(edge, runs) {
 test("the hand at full detail meshes natively within 3× the spec's targets (preview 1.5 mm, print 0.5 mm)", () => {
   setCoreEnabled(true);
   expect(core(), "the native core is available").toBeTruthy();
-  nativeHand(1.4);   // warm-up on another grid: the JS front end tiers up, the core boots
-  const preview = medianMs(1.5, 5);
-  const print = medianMs(0.5, 5);
+  nativeHand(1.4, PREVIEW_CLEANUP);   // warm-up on another grid: the JS front end tiers up, the core boots
+  const preview = medianMs(1.5, PREVIEW_CLEANUP, 5);
+  const print = medianMs(0.5, CLEANUP, 5);
   const line = (name, ms, limit) => `${name}: ${ms.toFixed(0)} paced ms, limit ${limit} (pace ${PACE.toFixed(2)}, ${core().simd ? "SIMD" : "scalar"} core)`;
   console.log(`${line("hand 1.5 mm", preview, 3 * SPEC_PREVIEW_MS)}\n${line("hand 0.5 mm", print, 3 * SPEC_PRINT_MS)}`);
   expect(preview, line("hand 1.5 mm", preview, 3 * SPEC_PREVIEW_MS)).toBeLessThan(3 * SPEC_PREVIEW_MS);

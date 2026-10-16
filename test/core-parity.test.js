@@ -33,10 +33,11 @@ const INLINE = {
     .union(k.box({ min: [6, 4, 12], max: [20, 16, 20] })).roundAll(2)),
 };
 // k.implicit runs its whole engine on the core (core/implicit-core.js); each image
-// a spec reads is registered on the kernel before the build.
-const implicitPart = (specs, images = new Map()) => ({
+// a spec reads is registered on the kernel before the build. The kernel is a preview
+// one (cleanup decimates) unless `quality` says "print" (it does not).
+const implicitPart = (specs, images = new Map(), quality = "preview") => ({
   ...one((k) => (specs.length === 1 ? k.implicit(specs[0]) : k.union(specs.map((sp) => k.implicit(sp))))),
-  testImages: images,
+  testImages: images, testQuality: quality,
 });
 const vase = vaseSpec();
 const IMPLICIT = {
@@ -47,6 +48,8 @@ const IMPLICIT = {
   "implicit coincident faces": implicitPart([ADVERSARIAL.coincidentFaces]),
   "implicit mirrored half box": implicitPart([{ root: { kind: "mirror", plane: "yz", child: { kind: "box", size: [10, 10, 10], at: [5, 0, 0] } }, preview: 0.5 }]),
   "implicit touching repeat": implicitPart([{ root: { kind: "repeat", linear: { count: 3, step: [4, 0, 0] }, child: { kind: "box", size: [4, 4, 4] } }, preview: 0.5 }]),
+  "implicit hand, print tier": implicitPart([{ ...handSpec(), resolution: 1.2 }], new Map(), "print"),
+  "implicit vase, print tier": implicitPart([{ ...vase.spec, resolution: 1.2 }], vase.images, "print"),
   "implicit flush pocket": implicitPart([{ root: { kind: "subtract", children: [{ kind: "box", size: [10, 10, 10] }, { kind: "box", size: [4, 4, 10], at: [0, 0, 5] }] }, preview: 0.5 }]),
 };
 const REFERENCE = ["bracket", "demo", "faceted-vase", "filleted-box", "gasket", "hinged-box", "hull-sweep",
@@ -57,7 +60,7 @@ const bytes = (a) => (a ? Buffer.from(a.buffer, a.byteOffset, a.byteLength) : nu
 async function run(part, on) {
   setCoreEnabled(on);
   const view = Object.keys(part.views)[0];
-  const kernel = await bootManifoldKernel();
+  const kernel = await bootManifoldKernel({ quality: part.testQuality ?? "preview" });
   for (const [name, im] of part.testImages ?? []) await kernel._registerImage({ name, ...im });
   const built = buildView(kernel, part, view);
   const meshes = built.map(({ name, mesh }) => ({

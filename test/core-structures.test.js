@@ -15,7 +15,7 @@ import { core, setCoreForTesting } from "../src/framework/core/core.js";
 import { NativeSession } from "../src/framework/core/implicit-core.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
-import { cleanupMesh, CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
+import { cleanupMesh, CLEANUP, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
 
 afterEach(() => setCoreForTesting(undefined));
 
@@ -260,3 +260,33 @@ test("implicit cleanup: the collapse's CSR incident lists see every triangle the
     s.destroy();
   }
 });
+test("implicit cleanup: decimation's repeated passes and angle guard decide what the JS's do", () => {
+  // The preview tier's passes rebuild the incident lists from each compacted mesh, and
+  // the guard reads every corner around an edge twice (after the move, then — only
+  // when that is too sharp — as it stands). A jittered sphere makes collapses the
+  // guard refuses, ones it lets through because a sliver was already there, and
+  // passes that stop early; each guard angle and pass count must match byte for byte.
+  const plan = planLeaves(lowerSpec({ root: { kind: "sphere", r: 3 } }, { images: new Map() }), 1);
+  const store = evaluateLeaves(plan);
+  const s = new NativeSession(core());
+  try {
+    for (const t of plan.textures) s.addTexture(t);
+    for (const p of plan.programs) s.addProgram(p);
+    s.sample(plan, { readBack: false });
+    for (const [noise, seed] of [[0.6, 1], [0.7, 2], [0.8, 4]]) {
+      const mesh = jitteredSphere(40, 8, noise, seed);
+      const plain = cleanupMesh(store, mesh, CLEANUP);
+      for (const [decimateMinAngle, decimatePasses, decimateFrac] of [[15, 4, 1.5], [30, 4, 1.5], [0, 2, 2], [15, 1, 3]]) {
+        const opts = { ...PREVIEW_CLEANUP, decimateMinAngle, decimatePasses, decimateFrac };
+        const js = cleanupMesh(store, mesh, opts);
+        expect(js.indices.length).toBeLessThan(plain.indices.length);   // decimation happened
+        s.loadMesh(mesh);
+        const nat = s.cleanup(opts);
+        for (const k of ["positions", "indices", "vertLeaf", "normals"]) expect(bytes(nat[k]), `${k} (seed ${seed}, ${decimateMinAngle}°, ${decimatePasses} passes)`).toBe(bytes(js[k]));
+      }
+    }
+  } finally {
+    s.destroy();
+  }
+});
+
