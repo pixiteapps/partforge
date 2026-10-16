@@ -114,5 +114,5 @@ export function mirrorPoint(out, axis, x, y, z) {
   out[0] = axis === 0 ? -x : x; out[1] = axis === 1 ? -y : y; out[2] = axis === 2 ? -z : z;
 }
 
-export const sanitize = (v) => (v === v ? (v > BIG ? BIG : v < -BIG ? -BIG : v) : BIG);
-export const clampUnit = (v) => (v > -1 ? (v < 1 ? v : 1) : v === v ? -1 : 0);
+export const sanitize = (v) => (!Number.isNaN(v) ? (v > BIG ? BIG : v < -BIG ? -BIG : v) : BIG);
+export const clampUnit = (v) => (v > -1 ? (v < 1 ? v : 1) : Number.isNaN(v) ? 0 : -1);

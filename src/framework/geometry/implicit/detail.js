@@ -56,7 +56,7 @@ export function detailHeight(e, textures, x, y, z, nx, ny, nz) {
     }
     case "expr": {
       const v = evalExprScalar(e.height, p[0], p[1], p[2], textures, sampleTexture);
-      return (v === v ? v : 0) * w;
+      return (Number.isNaN(v) ? 0 : v) * w;
     }
     default: return 0;
   }
