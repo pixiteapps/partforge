@@ -262,10 +262,14 @@ test("implicit cleanup: the collapse's CSR incident lists see every triangle the
 });
 test("implicit cleanup: decimation's repeated passes and angle guard decide what the JS's do", () => {
   // The preview tier's passes rebuild the incident lists from each compacted mesh, and
-  // the guard reads every corner around an edge twice (after the move, then — only
-  // when that is too sharp — as it stands). A jittered sphere makes collapses the
-  // guard refuses, ones it lets through because a sliver was already there, and
-  // passes that stop early; each guard angle and pass count must match byte for byte.
+  // the corner guard reads every corner around an edge twice (after the move, then —
+  // only when that is too sharp — as it stands); the core also runs the spread guard
+  // first and skips edges a previous pass refused whose neighbourhood nothing touched
+  // since (in that pass or this one). A jittered sphere makes collapses each guard
+  // refuses, ones the corner guard lets through because a sliver was already there,
+  // and passes that stop early; each setting must match byte for byte. (Checked by
+  // breaking the core: the corner guard always refusing, or reading pre-move
+  // positions, and the skip ignoring this pass's collapses, each fail here.)
   const plan = planLeaves(lowerSpec({ root: { kind: "sphere", r: 3 } }, { images: new Map() }), 1);
   const store = evaluateLeaves(plan);
   const s = new NativeSession(core());
@@ -273,18 +277,22 @@ test("implicit cleanup: decimation's repeated passes and angle guard decide what
     for (const t of plan.textures) s.addTexture(t);
     for (const p of plan.programs) s.addProgram(p);
     s.sample(plan, { readBack: false });
+    let decimated = 0, runs = 0;
     for (const [noise, seed] of [[0.6, 1], [0.7, 2], [0.8, 4]]) {
       const mesh = jitteredSphere(40, 8, noise, seed);
       const plain = cleanupMesh(store, mesh, CLEANUP);
-      for (const [decimateMinAngle, decimatePasses, decimateFrac] of [[15, 4, 1.5], [30, 4, 1.5], [0, 2, 2], [15, 1, 3]]) {
-        const opts = { ...PREVIEW_CLEANUP, decimateMinAngle, decimatePasses, decimateFrac };
+      for (const [decimateMinAngle, decimatePasses, decimateFrac, decimateMaxTurn, decimateMaxSpread] of [
+        [15, 4, 1.5, 0, 0], [30, 4, 1.5, 0, 0], [0, 2, 2, 0, 0], [15, 1, 3, 0, 0], [15, 4, 1.5, 20, 0], [0, 4, 2, 0, 25], [15, 4, 1.5, 20, 12]]) {
+        const opts = { ...PREVIEW_CLEANUP, decimateMinAngle, decimatePasses, decimateFrac, decimateMaxTurn, decimateMaxSpread };
         const js = cleanupMesh(store, mesh, opts);
-        expect(js.indices.length).toBeLessThan(plain.indices.length);   // decimation happened
+        runs++;
+        if (js.indices.length < plain.indices.length) decimated++;
         s.loadMesh(mesh);
         const nat = s.cleanup(opts);
-        for (const k of ["positions", "indices", "vertLeaf", "normals"]) expect(bytes(nat[k]), `${k} (seed ${seed}, ${decimateMinAngle}°, ${decimatePasses} passes)`).toBe(bytes(js[k]));
+        for (const k of ["positions", "indices", "vertLeaf", "normals"]) expect(bytes(nat[k]), `${k} (seed ${seed}, ${decimateMinAngle}°, ${decimatePasses} passes, turn ${decimateMaxTurn}°, spread ${decimateMaxSpread}°)`).toBe(bytes(js[k]));
       }
     }
+    expect(decimated, "settings that decimated").toBeGreaterThanOrEqual(runs - 3);   // only a tight spread guard may refuse all
   } finally {
     s.destroy();
   }

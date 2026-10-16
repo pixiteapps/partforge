@@ -3,7 +3,7 @@ import { describe, test, expect, beforeAll } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { handSpec, nailSpecs, vaseSpec, ADVERSARIAL, SUB_CELL_PLATE, randomSpec } from "./fixtures/implicit-trees.js";
-import { edgeCheck, componentCount } from "./helpers/mesh-topology.js";
+import { edgeCheck, componentCount, volume } from "./helpers/mesh-topology.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { sampleField } from "../src/framework/geometry/implicit/sparse.js";
 
@@ -13,6 +13,51 @@ const CLOSED = { boundary: 0, nonManifold: 0, misoriented: 0 };
 // meshImplicit's tiers: "preview" decimates in cleanup, "print" does not (k above is a
 // preview kernel, so every k.implicit here is decimated).
 const TIERS = ["preview", "print"];
+
+// Two triangles over the same three vertices (a "pillow": a closed piece folded flat).
+const duplicateTriangles = (T) => {
+  const seen = new Set();
+  let dup = 0;
+  for (let t = 0; t < T.length; t += 3) {
+    const key = [T[t], T[t + 1], T[t + 2]].sort((a, b) => a - b).join();
+    if (seen.has(key)) dup++;
+    seen.add(key);
+  }
+  return dup;
+};
+
+describe("preview decimation", () => {
+  // Tiny spheres mesh as a handful of triangles; the preview tier's decimation used to
+  // collapse a tetrahedral piece into two triangles over the same vertices (zero volume,
+  // closed and Euler-correct, so edgeCheck alone missed it). The step-3.3 rows at 1.5 mm
+  // each made pillows before the tetrahedron guard.
+  const rows = [];
+  for (const [r, edge] of [[0.75, 1.5], [0.9, 1.5], [1.1, 1.5], [0.45, 1.0], [0.6, 1.0]]) for (const step of [2.5, 3.3, 6]) rows.push([r, edge, step]);
+  for (const tier of TIERS) {
+    test(`tiny spheres in a repeat, ${tier} tier: no duplicate triangles, closed`, () => {
+      let meshed = 0;
+      for (const [r, edge, step] of rows) {
+        const spec = { root: { kind: "repeat", linear: { count: 6, step: [step, 0, 0] }, child: { kind: "sphere", r } } };
+        const out = meshImplicit(compileImplicit(spec), edge, { tier });
+        if (out.indices.length) meshed++;
+        expect(duplicateTriangles(out.indices), `r ${r} at ${edge} mm, step ${step}`).toBe(0);
+        expect(edgeCheck(out.indices), `r ${r} at ${edge} mm, step ${step}`).toEqual(CLOSED);
+      }
+      expect(meshed).toBeGreaterThanOrEqual(6);
+    });
+  }
+  test("spheres keep their volume: decimation adds < 2% loss, and r >= 2 cells stays within 5% of print", () => {
+    // Measured: the 1.5 mm grid itself loses 26/11/9/3.6/2.0/0.9% at r = 1.5/1.8/2.2/3/4.5/6
+    // against the print tier's 0.6 mm; decimation adds 0/0.5/0/0.1/0.3/1.3%.
+    for (const r of [1.5, 1.8, 2.2, 3, 4.5, 6]) {
+      const c = compileImplicit({ root: { kind: "sphere", r } });
+      const vol = (edge, tier) => { const o = meshImplicit(c, edge, { tier }); return volume(o.positions, o.indices); };
+      const preview = vol(1.5, "preview"), plain = vol(1.5, "print"), print = vol(0.6, "print");
+      expect(preview / plain, `r ${r}: decimated vs not`).toBeGreaterThan(0.98);
+      if (r >= 3) expect(preview / print, `r ${r}: preview vs print`).toBeGreaterThan(0.95);
+    }
+  });
+});
 
 describe("topology", () => {
   for (const curl of [0, 50, 100]) {

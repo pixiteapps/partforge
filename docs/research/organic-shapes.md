@@ -494,7 +494,7 @@ Against the design spec's performance targets (Node, M-series desktop):
 
 | target | spec | measured (native) | CI gate (`test/implicit-speed.test.js`) |
 |---|---|---|---|
-| hand, full detail, preview tier | ≤ 150 ms | 134 ms (126 ms paced median); 162 ms (157 paced) with §9a's decimation | < 450 ms paced |
+| hand, full detail, preview tier | ≤ 150 ms | 134 ms (126 ms paced median); about 200 ms (187 paced) with §9a's decimation | < 450 ms paced |
 | hand, 0.5 mm print tier | ≤ 2 s | 0.99 s (1.05 s paced median) | < 6 s paced |
 
 The gate times compile + `planLeaves` + the native session (what `k.implicit`
@@ -533,46 +533,69 @@ everything after the engine — Manifold's import, display, every later boolean 
 scales with that count. The preview tier now decimates in cleanup
 (`cleanup.js`'s `PREVIEW_CLEANUP`, and its twin in `native/implicit_mesh.cpp`):
 after the usual 0.2 · edge collapse, up to four more passes of the same
-deterministic triangle-order collapse take edges shorter than 0.7 · edge, with
-one more guard — a collapse may not leave a corner sharper than 15° unless the
-corners around that edge already had one at least as sharp (so collapses that
-remove slivers still go ahead). Relaxation and projection follow as before.
-`meshImplicit(compiled, edge, { tier })` decimates only for `tier: "preview"`;
-the Manifold backend passes its quality, so print and export meshes are
-byte-for-byte what they were (`test/implicit-cleanup.test.js` pins their
-digests from before the change).
+deterministic triangle-order collapse take edges shorter than 0.7 · edge, under
+four guards beyond the link condition and the no-flip test:
 
-The guard is relative on purpose. The brief's first form (no new corner under
-θ at all) stalled: the hand kept 64–96k triangles and its 5th-percentile corner
-stayed at 22°, because marching tetrahedra's own slivers blocked every collapse
-near them. The relative form reaches 49k after cleanup with better triangles.
+- **no tetrahedron** — both endpoints of ring size 3 is, under the link
+  condition, exactly a four-vertex closed piece, which a collapse folds into a
+  zero-volume "pillow" of two triangles over the same vertices (closed and
+  Euler-correct, so only a duplicate-triangle check sees it; tiny spheres in a
+  `repeat` made them). Refusing every ring-size-3 endpoint also works but costs
+  the hand's triangles their quality (5th-percentile corner 29° → 26°);
+- **corners** — no new corner both sharper than 15° and sharper than the
+  corners around the edge already were (an absolute 15° floor stalled at 64–96k
+  triangles, because marching tetrahedra's own slivers blocked every collapse
+  near them);
+- **normal turn** — no surviving triangle's normal turns by more than 20°;
+- **spread (fidelity)** — every surviving triangle's new normal within 12° of
+  their sum. A fan's spread is roughly its size over the surface's radius, so
+  this keeps triangles small where the surface is curved and lets them grow
+  where it is flat. The turn guard alone could not hold volume at any angle
+  from 15° to 30° (a 3 mm sphere lost a further 6–8%, compounding over passes).
 
-Cleanup alone (JS, CPU ms median of 5; max |d| is the largest field value at a
-vertex, in grid edges):
+Relaxation and projection follow as before. `meshImplicit(compiled, edge,
+{ tier })` decimates only for `tier: "preview"`; the Manifold backend passes its
+quality, so print and export meshes are byte-for-byte what they were
+(`test/implicit-cleanup.test.js` pins their digests from before the change).
 
-| case | cleanup | triangles | 5th-pct corner | min corner | max \|d\| | closed, Euler |
+Spheres, volume against the print tier (0.6 mm grid), 1.5 mm preview grid:
+
+| r (mm) | 1.5 | 1.8 | 2.2 | 3.0 | 4.5 | 6.0 |
 |---|---|---|---|---|---|---|
-| hand 1.5 mm | CLEANUP | 157,004 | 23.1° | 0.46° | 0.0061 | yes, same |
-| | 0.6 · edge, absolute 12° guard, 3 passes (rejected) | 90,798 | 22.5° | 2.0° | 0.0028 | yes, same |
-| | 0.6 · edge, relative 15° | 62,830 | 27.7° | 3.3° | 0.0038 | yes, same |
-| | **0.7 · edge, relative 15°, 4 passes** | **49,246** | **29.2°** | **7.7°** | **0.0004** | yes, same |
-| | 0.7 · edge, relative 12° | 46,956 | 29.4° | 5.6° | 0.0003 | yes, same |
-| | 0.8 · edge, relative 15° | 38,836 | 30.9° | 2.0° | 0.0014 | yes, same |
-| vase 1.2 mm | CLEANUP | 86,626 | 19.5° | 0.13° | 0.33 | yes, same |
-| | **0.7 · edge, relative 15°, 4 passes** | **27,320** | **22.5°** | 0.18° | 0.25 | yes, same |
+| preview, not decimated | −26.0% | −11.4% | −9.3% | −3.6% | −2.0% | −0.9% |
+| decimated, spread 12° (chosen) | −26.0% | −11.9% | −9.3% | −3.7% | −2.3% | −2.2% |
+| decimated, turn 20° only | −30.6% | −16.9% | −20.4% | −10.1% | −4.2% | −2.9% |
+| first version (corner guard only) | −40% | −36% | −22% | −10.6% | −4.7% | −2.9% |
+
+The small spheres' loss is the grid's own; decimation adds at most 0.5% up to
+r = 4.5 mm and 1.3% at 6 mm.
+
+Cleanup alone (JS, max |d| in grid edges; closed, oriented, Euler unchanged
+and no duplicate triangles in every row):
+
+| case | cleanup | triangles | 5th-pct corner | min corner | max \|d\| |
+|---|---|---|---|---|---|
+| hand 1.5 mm | CLEANUP | 157,004 | 23.1° | 0.46° | 0.0061 |
+| | spread 15° | 51,010 | 28.7° | 1.2° | 0.0006 |
+| | **spread 12° (chosen)** | **53,294** | **28.0°** | **1.2°** | **0.0060** |
+| | spread 12°, 0.8 · edge | 42,584 | 29.4° | 0.17° | 0.0048 |
+| vase 1.2 mm | CLEANUP | 86,626 | 19.5° | 0.13° | 0.33 |
+| | **spread 12° (chosen)** | **57,750** | 18.3° | 0.13° | 0.36 |
 
 (The vase's field is not a distance — taper, twist and an `expr` gyroid — so
-its |d| is not one either; it does not grow.) Surface detail runs after
-cleanup and refines back toward its own target, so the meshes `k.implicit`
-hands Manifold shrink less than cleanup's: the hand 177,102 → 70,204 triangles
-(2.5×; 5th-percentile corner 22.8° → 27.0°), the vase 144,592 → 105,164
-(its texture covers the whole wall). Rendered side by side the hand is
-indistinguishable from before.
+its |d| is not one either.) Surface detail runs after cleanup and refines back
+toward its own target, so the meshes `k.implicit` hands Manifold shrink less:
+the hand 177,102 → 74,264 triangles (2.4×; 5th-percentile corner 22.8° →
+26.3°), the vase 144,592 → 130,322 (its texture covers the whole wall, and its
+ridges and gyroid are curved enough that the spread guard keeps most
+triangles). Rendered side by side the hand is indistinguishable from before.
 
-Speed (CPU ms, median of 7, machine under load): `k.implicit(hand)` end to end
-at 1.5 mm 322 → 239 ms, the vase 329 → 289 ms — Manifold's import shrinks with
-the triangle count. The engine alone gets slower at preview (bench:implicit,
-native: hand 134 → 162 ms, cleanup 59 → 101 ms, detail 20 → 9 ms; the guard
-is most of the extra, about 40 ms, from re-testing the collapses it refuses in
-every pass); the speed gate's paced median is 157 ms against its 450 ms limit.
-
+Speed (CPU ms, medians of 7, base and decimated runs alternated on a loaded
+machine): `k.implicit(hand)` end to end at 1.5 mm 325 → 262 ms. The vase gets
+SLOWER, 328 → 424 ms: its guards refuse most collapses, and each pass re-tests
+them, for little reduction. The engine alone (bench:implicit, native) is about
+200 ms for the hand preview (cleanup 60 → ~125 ms, detail 20 → 10 ms) and 250 ms
+for the vase (cleanup 70 → ~140 ms); the speed gate's paced median is 187 ms
+against its 450 ms limit. The core skips, exactly, edges a previous pass
+refused whose neighbourhood nothing has touched since, and runs the spread
+guard before the flip test; together about 15% off the vase's cleanup.

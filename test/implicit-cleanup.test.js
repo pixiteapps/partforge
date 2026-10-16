@@ -6,7 +6,9 @@ import { sampleField } from "../src/framework/geometry/implicit/sparse.js";
 import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
 import { cleanupMesh, CLEANUP, DECIMATE, PREVIEW_CLEANUP, relax } from "../src/framework/geometry/implicit/cleanup.js";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
-import { setCoreEnabled } from "../src/framework/core/core.js";
+import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
+import { applySurfaceDetail } from "../src/framework/geometry/implicit/detail.js";
+import { core, coreStatus, setCoreEnabled } from "../src/framework/core/core.js";
 import { handSpec, vaseSpec } from "./fixtures/implicit-trees.js";
 import { evalReference } from "../src/framework/geometry/implicit/reference.js";
 import { edgeCheck, eulerChar } from "./helpers/mesh-topology.js";
@@ -34,9 +36,6 @@ describe("cleanup", () => {
       const c = lowerSpec(spec, { images: new Map() });
       const edge = 0.8, store = sampleField(c, edge), raw = meshStore(store);
       const out = cleanupMesh(store, raw, opts);
-      // The skip bound below counts vertices near the jump against the undecimated
-      // mesh's: decimation thins the smooth skin, not the band beside the cut.
-      const counted = opts === CLEANUP ? out : cleanupMesh(store, raw);
       expect(edgeCheck(out.indices)).toEqual({ boundary: 0, nonManifold: 0, misoriented: 0 });
       expect(eulerChar(out.positions, out.indices)).toBe(eulerChar(raw.positions, raw.indices));
       // A bend's branch cut makes the field discontinuous; "distance to the surface" means nothing
@@ -51,7 +50,9 @@ describe("cleanup", () => {
       }
       // The skipped share moves with the grid's phase against the cut, not with cleanup: bendCut
       // measured 0.075–0.109 over edges 0.6–1.0 (0.103 at 0.8 once round pads by r / G). Bound 0.12.
-      expect(skipped).toBeLessThan(0.12 * (counted.positions.length / 3));
+      // Decimated, the smooth skin thins while the band beside the cut keeps its triangles (the
+      // spread guard), so the share is larger: 0.137–0.174 over edges 0.6–1.0 (0.174 at 0.8). Bound 0.2.
+      expect(skipped).toBeLessThan((opts === CLEANUP ? 0.12 : 0.2) * (out.positions.length / 3));
       expect(worst).toBeLessThan(0.05 * edge);
       const before = minAngles(raw.positions, raw.indices), after = minAngles(out.positions, out.indices);
       expect(after[Math.floor(after.length * 0.05)]).toBeGreaterThan(before[Math.floor(before.length * 0.05)]);
@@ -67,7 +68,7 @@ describe("cleanup", () => {
   });
   test("defaults are the documented ones", () => {
     expect(CLEANUP).toEqual({ collapseFrac: 0.2, relaxPasses: 2, relaxWeight: 0.5, maxMoveCells: 0.5 });
-    expect(DECIMATE).toEqual({ decimateFrac: 0.7, decimatePasses: 4, decimateMinAngle: 15 });
+    expect(DECIMATE).toEqual({ decimateFrac: 0.7, decimatePasses: 4, decimateMinAngle: 15, decimateMaxTurn: 20, decimateMaxSpread: 12 });
     expect(PREVIEW_CLEANUP).toEqual({ ...CLEANUP, ...DECIMATE });
   });
   for (const [name, spec] of Object.entries(TREES)) {
@@ -80,27 +81,44 @@ describe("cleanup", () => {
 });
 
 // The preview tier decimates; every other tier must clean up exactly as before
-// decimation existed. The digests are of the bytes the parent commit (1882699c)
-// produced for these meshes (positions, indices, normals), JS and core alike.
+// decimation existed. Each digest is the first 16 hex digits of a sha256 over the
+// meshImplicit result's positions (Float64Array), indices (Uint32Array) and normals
+// (Float64Array) bytes, in that order, for the case's spec and grid; they were
+// recorded from commit 1882699c, the last before decimation, JS and core alike. A
+// deliberate change to print-tier meshing changes them: re-record by printing
+// digest(meshImplicit(compiled, edge, { tier: "print" })) for each case.
 describe("tiers", () => {
+  const withCoreOff = (fn) => { setCoreEnabled(false); try { return fn(); } finally { setCoreEnabled(true); } };
   const digest = (o) => {
     const h = createHash("sha256");
     for (const k of ["positions", "indices", "normals"]) h.update(Buffer.from(o[k].buffer, o[k].byteOffset, o[k].byteLength));
     return h.digest("hex").slice(0, 16);
   };
   const vase = vaseSpec();
-  const CASES = [["hand", () => compileImplicit(handSpec()), 1.5, "b1b8a6271c85428d"], ["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "bd023b59990de4ed"]];
-  for (const [name, compile, edge, pinned] of CASES) {
+  // [name, compile, grid, pinned digest, preview triangles at most this share of print's]
+  // (the vase's texture detail refines most of what decimation removes)
+  const CASES = [["hand", () => compileImplicit(handSpec()), 1.5, "b1b8a6271c85428d", 0.5], ["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "bd023b59990de4ed", 0.95]];
+  for (const [name, compile, edge, pinned, maxPreview] of CASES) {
+    test(`${name}: print tier is the JS stages run with decimateFrac 0, byte for byte`, () => {
+      const compiled = compile(), plan = planLeaves(compiled, edge), store = evaluateLeaves(plan);
+      let mesh = cleanupMesh(store, meshStore(store), { ...PREVIEW_CLEANUP, decimateFrac: 0 });
+      if (compiled.detail.length) mesh = applySurfaceDetail(store, mesh, compiled);
+      expect(digest(mesh)).toBe(pinned);
+      expect(digest(withCoreOff(() => meshImplicit(compiled, edge, { tier: "print" })))).toBe(pinned);
+    }, 120_000);
     test(`${name}: print tier (and no tier) is byte-for-byte the pre-decimation mesh, core on and off; preview is smaller`, () => {
       const compiled = compile();
       try {
         for (const on of [true, false]) {
           setCoreEnabled(on);
+          const refused = coreStatus().refusedMeshes;
+          if (on) expect(core(), "the core is on").not.toBeNull();
           const print = meshImplicit(compiled, edge, { tier: "print" });
           expect(digest(print), `core ${on ? "on" : "off"}`).toBe(pinned);
           expect(digest(meshImplicit(compiled, edge))).toBe(pinned);
           const preview = meshImplicit(compiled, edge, { tier: "preview" });
-          expect(preview.indices.length).toBeLessThan(0.8 * print.indices.length);
+          if (on) expect(coreStatus(), "the core answered every mesh").toMatchObject({ state: "on", reason: null, refusedMeshes: refused });
+          expect(preview.indices.length).toBeLessThan(maxPreview * print.indices.length);
           expect(edgeCheck(preview.indices)).toEqual({ boundary: 0, nonManifold: 0, misoriented: 0 });
           expect(eulerChar(preview.positions, preview.indices)).toBe(eulerChar(print.positions, print.indices));
         }

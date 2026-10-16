@@ -270,16 +270,16 @@ export class NativeSession {
    */
   cleanup(opts = CLEANUP, { readBack = true } = {}) {
     const { c } = this;
-    const { collapseFrac, relaxPasses, relaxWeight, maxMoveCells, decimateFrac = 0, decimatePasses = 0, decimateMinAngle = 0 } = opts ?? {};
-    if (![collapseFrac, relaxWeight, maxMoveCells, decimateFrac, decimateMinAngle].every((v) => typeof v === "number") || !isInt32(relaxPasses) || !isInt32(decimatePasses)) {
-      throw refusal("implicit: cleanup takes collapseFrac, relaxPasses (an integer), relaxWeight, maxMoveCells and optional decimateFrac, decimatePasses (an integer), decimateMinAngle");
+    const { collapseFrac, relaxPasses, relaxWeight, maxMoveCells, decimateFrac = 0, decimatePasses = 0, decimateMinAngle = 0, decimateMaxTurn = 0, decimateMaxSpread = 0 } = opts ?? {};
+    if (![collapseFrac, relaxWeight, maxMoveCells, decimateFrac, decimateMinAngle, decimateMaxTurn, decimateMaxSpread].every((v) => typeof v === "number") || !isInt32(relaxPasses) || !isInt32(decimatePasses)) {
+      throw refusal("implicit: cleanup takes collapseFrac, relaxPasses (an integer), relaxWeight, maxMoveCells and optional decimateFrac, decimatePasses (an integer), decimateMinAngle, decimateMaxTurn, decimateMaxSpread");
     }
-    // cleanupMesh decimates only when decimateFrac > 0 (NaN included: no); the guard's
-    // cos² is computed here, in JS, so both sides compare against the same double.
+    // cleanupMesh decimates only when decimateFrac > 0 (NaN included: no); the
+    // guards' cos² are computed here, in JS, so both sides compare against the same doubles.
     const passes = decimateFrac > 0 ? decimatePasses : 0;
     let rc = 0;
     const out = this.#call(() => {
-      rc = c.x.ip_cleanup(this.id, collapseFrac, relaxPasses, relaxWeight, maxMoveCells, decimateFrac, passes, guardCos2(decimateMinAngle));
+      rc = c.x.ip_cleanup(this.id, collapseFrac, relaxPasses, relaxWeight, maxMoveCells, decimateFrac, passes, guardCos2(decimateMinAngle), guardCos2(decimateMaxTurn), guardCos2(decimateMaxSpread));
       if (rc !== 0 || !readBack) return null;
       const m = this.#readMesh();
       return { ...m, normals: this.#normalsOut(m.vertLeaf.length) };
