@@ -76,9 +76,14 @@ function posedBox(name) {
 test("feature edges round-trip in the model frame, for a posed sub-part and two at once", async () => {
   const lid = withEdges(indexedBox("lid", [0, 0, 6], [4, 2, 7]), [0, 0, 6], [4, 2, 7]);
   const body = posedBox("body");
-  const out = await decodePreviewGlb(await encodePreviewGlb({ meshes: [body, lid], view: "v" }));
+  // body's display rides the node extras, which GLTFLoader puts on the Group of a
+  // two-primitive mesh (the nodeObjectOf path)
+  const out = await decodePreviewGlb(await encodePreviewGlb({
+    meshes: [body, lid], view: "v", part: { parts: { body: { display: { color: 0x00ff00 } } } } }));
   expect(out.meshes.map((m) => m.name)).toEqual(["body", "lid"]);
   const [b, l] = out.meshes;
+  expect(b.display).toEqual({ color: 0x00ff00 });
+  expect(l.display).toBeNull();
   expect(b.edges).toBeInstanceOf(Float32Array);
   expect(segmentMismatch(b.edges, body.edges)).toBeNull();
   expect(segmentMismatch(l.edges, lid.edges)).toBeNull();

@@ -79,8 +79,11 @@ function checkMesh(m, seen) {
   if (m.normals != null && m.normals.length > 0 && m.normals.length !== m.positions.length) {
     throw new Error(`encodePreviewGlb: "${m.name}" normals do not match its positions`);
   }
-  if (m.edges != null) {
-    if (!ArrayBuffer.isView(m.edges)) throw new TypeError(`encodePreviewGlb: "${m.name}" edges must be a typed array`);
+  // Any zero-length edges (typed or plain) mean "no feature edges": nothing to check.
+  if (m.edges != null && m.edges.length !== 0) {
+    if (!ArrayBuffer.isView(m.edges) && !Array.isArray(m.edges)) {
+      throw new TypeError(`encodePreviewGlb: "${m.name}" edges must be a typed array or an array of numbers`);
+    }
     if (m.edges.length % 6 !== 0) throw new Error(`encodePreviewGlb: "${m.name}" edges are not whole segments`);
   }
   if (indexed) {
@@ -140,7 +143,7 @@ export async function encodePreviewGlb({ meshes, part = null, view = null } = {}
     const mesh = doc.createMesh(m.name).addPrimitive(prim);
     if (m.edges?.length) {
       mesh.addPrimitive(doc.createPrimitive().setMode(Primitive.Mode.LINES).setAttribute(
-        "POSITION", doc.createAccessor().setType("VEC3").setArray(new Float32Array(m.edges)).setBuffer(buffer)));
+        "POSITION", doc.createAccessor().setType("VEC3").setArray(Float32Array.from(m.edges)).setBuffer(buffer)));
     }
     const extras = displayExtras(display);
     root.addChild(doc.createNode(m.name)

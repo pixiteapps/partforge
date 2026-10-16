@@ -196,6 +196,18 @@ test("a live sub-part with no feature edges exports none", async () => {
   runtime.dispose();
 });
 
+test("delivered with no edge data, exportPreview carries the angle-derived lines the viewer draws", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  const { edges: _none, ...bare } = boxSoup("body", [0, 0, 0], [4, 4, 4]);
+  workers.manifold.onmessage({ data: { type: "meshes", ms: 1, meshes: [bare] } });
+  await runtime.ready;
+  const out = await decodePreviewGlb(await runtime.exportPreview());
+  expect(segmentMismatch(out.meshes[0].edges, boxEdges([0, 0, 0], [4, 4, 4]))).toBeNull();
+  runtime.dispose();
+});
+
 test("a preview's decoded edges reach the viewer's edge lines", async () => {
   const preview = await previewGlbFor([{ ...boxSoup("body", [0, 0, 0], [4, 4, 4]), edges: boxEdges([0, 0, 0], [4, 4, 4]) }], makePart(), "main");
   const { createWorker } = makeWorkers();

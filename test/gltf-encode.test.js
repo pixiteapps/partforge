@@ -156,8 +156,19 @@ test("a sub-part's feature edges ride as a second, POSITION-only LINES primitive
 });
 
 test("malformed edges are refused, naming the mesh", async () => {
-  await expect(encodePreviewGlb({ meshes: [{ ...boxSoup("a"), edges: [0, 0, 0, 1, 1, 1] }] })).rejects.toThrow(
-    'encodePreviewGlb: "a" edges must be a typed array');
+  await expect(encodePreviewGlb({ meshes: [{ ...boxSoup("a"), edges: "000111" }] })).rejects.toThrow(
+    'encodePreviewGlb: "a" edges must be a typed array or an array of numbers');
+  await expect(encodePreviewGlb({ meshes: [{ ...boxSoup("a"), edges: [0, 0, 0, 1, 1, 1, 2] }] })).rejects.toThrow(
+    'encodePreviewGlb: "a" edges are not whole segments');
   await expect(encodePreviewGlb({ meshes: [{ ...boxSoup("a"), edges: new Float32Array(9) }] })).rejects.toThrow(
     'encodePreviewGlb: "a" edges are not whole segments');
+});
+
+test("plain-array edges: empty writes nothing, non-empty encodes like a Float32Array", async () => {
+  const doc = await readGlb(await encodePreviewGlb({ meshes: [
+    { ...boxSoup("none", [0, 0, 0], [1, 1, 1]), edges: [] },
+    { ...boxSoup("plain", [2, 0, 0], [3, 1, 1]), edges: [...boxEdges([2, 0, 0], [3, 1, 1])] },
+  ], view: "v" }));
+  expect(nodeNamed(doc, "none").getMesh().listPrimitives()).toHaveLength(1);
+  expect(nodeNamed(doc, "plain").getMesh().listPrimitives().map((p) => p.getMode())).toEqual([4, 1]);
 });

@@ -1793,7 +1793,9 @@ export function createViewer(container, part) {
   // The geometry drawn for one sub-part, as a fresh worker-style payload with its
   // fast-path pose (setSubPose) baked in — the posed mesh a headless buildView
   // would return. Copies: the caller (exportPreview → partforge/gltf) may keep or
-  // transfer them. null when nothing has been delivered under that name.
+  // transfer them. null when nothing has been delivered under that name. Its
+  // `edges` are the lines shown on screen: the kernel's segments, or — when the
+  // delivery carried no edge data at all — the angle-derived fallback lines.
   const _payloadV = new THREE.Vector3();
   const _payloadNormal = new THREE.Matrix3();
   function getSubMeshPayload(name) {
