@@ -10,6 +10,7 @@
 // any call may grow (and so detach) its memory.
 import { OUT_OF_MEMORY, poisonCore, releaseIfIdle } from "./core.js";
 import { CLEANUP } from "../geometry/implicit/cleanup.js";
+import { DETAIL_STRIDE } from "../geometry/implicit/detail.js";
 
 const isFault = (err) => (typeof WebAssembly === "object" && err instanceof WebAssembly.RuntimeError) || err?.message === OUT_OF_MEMORY;
 const isNumbers = (a) => ArrayBuffer.isView(a) || Array.isArray(a);
@@ -183,26 +184,30 @@ export class NativeSession {
 
   /**
    * Replaces the session mesh with `{ positions, indices, vertLeaf }` (after a
-   * sample(); each vertLeaf names a leaf of that store) — so the later stages can
-   * run on a mesh the mesher did not make.
+   * sample(); each vertLeaf names a leaf of that store), and its `normals` (xyz per
+   * vertex) when given — so the later stages can run on a mesh the mesher did not make.
    */
-  loadMesh({ positions, indices, vertLeaf } = {}) {
+  loadMesh({ positions, indices, vertLeaf, normals = null } = {}) {
     const { c } = this;
-    if (!isNumbers(positions) || !isNumbers(indices) || !isNumbers(vertLeaf) || positions.length !== vertLeaf.length * 3 || indices.length % 3) {
-      throw new Error("implicit: loadMesh takes positions (xyz), indices (triangles) and a vertLeaf per vertex");
+    if (!isNumbers(positions) || !isNumbers(indices) || !isNumbers(vertLeaf) || positions.length !== vertLeaf.length * 3 || indices.length % 3
+      || (normals !== null && (!isNumbers(normals) || normals.length !== positions.length))) {
+      throw new Error("implicit: loadMesh takes positions (xyz), indices (triangles), a vertLeaf per vertex and optional normals (xyz)");
     }
     let rc = 0;
     this.#call(() => {
-      let pp = 0, pi = 0, pl = 0;
+      let pp = 0, pi = 0, pl = 0, pn = 0;
       try {
         pp = c.copyIn(Float64Array.from(positions));
         pi = c.copyIn(Uint32Array.from(indices));
         pl = c.copyIn(Int32Array.from(vertLeaf));
-        rc = c.x.ip_mesh_load(this.id, pp, vertLeaf.length, pi, indices.length, pl);
+        // An empty mesh's normals still pass a real pointer (null means "none").
+        if (normals) pn = normals.length ? c.copyIn(Float64Array.from(normals)) : c.alloc(8);
+        rc = c.x.ip_mesh_load(this.id, pp, vertLeaf.length, pi, indices.length, pl, pn);
       } finally {
         if (pp) c.x.free(pp);
         if (pi) c.x.free(pi);
         if (pl) c.x.free(pl);
+        if (pn) c.x.free(pn);
       }
     });
     if (rc !== 0) throw new Error("implicit: the core refused the mesh (nothing sampled, or an index or leaf out of range)");
@@ -264,6 +269,38 @@ export class NativeSession {
       return { ...m, normals: this.#normalsOut(m.vertLeaf.length) };
     });
     if (rc !== 0) throw new Error("implicit: the core refused to clean up (nothing meshed yet)");
+    return out;
+  }
+
+  /**
+   * applySurfaceDetail on the session mesh, in place, after cleanup(): `flat` is
+   * flattenDetail(compiled) ({ entries: 28 doubles per entry, programs: the expr
+   * heights }), whose programs are added to the session first. Returns { positions,
+   * indices, vertLeaf, normals }, or null with `readBack: false`.
+   */
+  detail(flat, { readBack = true } = {}) {
+    const { c } = this;
+    const { entries, programs } = flat ?? {};
+    if (!(entries instanceof Float64Array) || entries.length % DETAIL_STRIDE || !Array.isArray(programs)) {
+      throw new Error(`implicit: detail takes flattenDetail's { entries (${DETAIL_STRIDE} doubles per entry), programs }`);
+    }
+    const index = Int32Array.from(programs, (p) => this.addProgram(p));
+    let rc = 0;
+    const out = this.#call(() => {
+      let pe = 0, pp = 0;
+      try {
+        pe = c.copyIn(entries);
+        pp = c.copyIn(index);
+        rc = c.x.ip_detail(this.id, pe, entries.length / DETAIL_STRIDE, pp, index.length);
+      } finally {
+        if (pe) c.x.free(pe);
+        if (pp) c.x.free(pp);
+      }
+      if (rc !== 0 || !readBack) return null;
+      const m = this.#readMesh();
+      return { ...m, normals: this.#normalsOut(m.vertLeaf.length) };
+    });
+    if (rc !== 0) throw new Error("implicit: the core refused the detail (no cleaned-up mesh, or a texture slot or expr program it cannot run)");
     return out;
   }
 

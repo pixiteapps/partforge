@@ -597,9 +597,10 @@ const int32_t* ip_vert_leaf(int id) {
 }
 
 // Replaces the session mesh with the given one (a test seam: the stages after
-// meshing on a mesh the mesher does not make). Needs a sampled store; every
-// index must name a vertex and every vertLeaf a leaf of the store. 0 ok.
-int ip_mesh_load(int id, const double* positions, int nv, const uint32_t* indices, int ni, const int32_t* vertLeaf) {
+// meshing on a mesh the mesher does not make), with its normals (double x3 per
+// vertex) when `normals` is not null. Needs a sampled store; every index must
+// name a vertex and every vertLeaf a leaf of the store. 0 ok.
+int ip_mesh_load(int id, const double* positions, int nv, const uint32_t* indices, int ni, const int32_t* vertLeaf, const double* normals) {
   ipe::Session* s = ipe::session(id);
   if (!s) return 2;
   if (!s->sampled || nv < 0 || ni < 0 || ni % 3) return 1;
@@ -609,7 +610,8 @@ int ip_mesh_load(int id, const double* positions, int nv, const uint32_t* indice
   s->positions.assign(positions, positions + (size_t)nv * 3);
   s->indices.assign(indices, indices + ni);
   s->vertLeaf.assign(vertLeaf, vertLeaf + nv);
-  s->normals.clear();
+  if (normals) s->normals.assign(normals, normals + (size_t)nv * 3);
+  else s->normals.clear();
   s->meshed = true;
   return 0;
 }
