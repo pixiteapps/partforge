@@ -24,8 +24,12 @@ export function sampleField(compiled, edge, opts) {
  * one runs. Plan = { origin, edge, n, snap, leaves: [{ i0, j0, l0, progIndex }],
  * programs: Float64Array[] (index order = first emission), textures, samples, clipped: false }.
  * It is plain data — the native core samples the same plan.
+ * Each child block starts from its parent block's decision (`inherit`, interval.js:
+ * a slot the parent pruned firmly is not walked again), which yields exactly the plan a
+ * full walk from the IR root per block gives; `inherit: false` is that full walk, kept for
+ * test/implicit-plan-inherit.test.js to hold the two equal.
  */
-export function planLeaves(compiled, edge, { cull = true } = {}) {
+export function planLeaves(compiled, edge, { cull = true, inherit = true } = {}) {
   const { bounds } = compiled;
   const pad = 2 * edge;
   const origin = bounds.min.map((v) => v - pad);
@@ -41,12 +45,12 @@ export function planLeaves(compiled, edge, { cull = true } = {}) {
   // `samples` counts shared-face samples once per leaf (a conservative cap, not unique grid points).
   let samples = 0;
 
-  const visit = (i0, j0, l0, B) => {
+  const visit = (i0, j0, l0, B, parentDec) => {
     let dec;
     if (cull) {
       const r = (B * edge * SQRT3) / 2 + PAD_CELLS * edge;
       const cx = origin[0] + (i0 + B / 2) * edge, cy = origin[1] + (j0 + B / 2) * edge, cz = origin[2] + (l0 + B / 2) * edge;
-      const a = blockDecision(compiled, cx, cy, cz, r);
+      const a = blockDecision(compiled, cx, cy, cz, r, inherit ? parentDec : undefined);
       // No vertex snapping (snap = 0): a block whose interval excludes 0 holds no surface.
       // The inside cull (hi < 0) is only taken for blocks touching no outer-layer
       // sample: those must be raised to 0.5·edge and flag `clipped`, so they are sampled.
@@ -58,7 +62,7 @@ export function planLeaves(compiled, edge, { cull = true } = {}) {
       const h = B / 2;
       for (let dl = 0; dl < 2; dl++) for (let dj = 0; dj < 2; dj++) for (let di = 0; di < 2; di++) {
         const i = i0 + di * h, j = j0 + dj * h, l = l0 + dl * h;
-        if (i < n[0] - 1 && j < n[1] - 1 && l < n[2] - 1) visit(i, j, l, h);
+        if (i < n[0] - 1 && j < n[1] - 1 && l < n[2] - 1) visit(i, j, l, h, dec);
       }
       return;
     }
@@ -70,7 +74,7 @@ export function planLeaves(compiled, edge, { cull = true } = {}) {
     leaves.push({ i0, j0, l0, progIndex: pi });
   };
 
-  for (let l = 0; l < n[2] - 1; l += TOP) for (let j = 0; j < n[1] - 1; j += TOP) for (let i = 0; i < n[0] - 1; i += TOP) visit(i, j, l, TOP);
+  for (let l = 0; l < n[2] - 1; l += TOP) for (let j = 0; j < n[1] - 1; j += TOP) for (let i = 0; i < n[0] - 1; i += TOP) visit(i, j, l, TOP, undefined);
   return { origin, edge, n, snap, leaves, programs, textures: compiled.textures, samples, clipped: false };
 }
 
