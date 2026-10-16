@@ -182,18 +182,20 @@ test("a dense edge set decodes to exactly its segments, not every shared vertex"
   expect(out.meshes[0].triangles).toBe(grid.triangles);
 });
 
-test("lines whose off-surface endpoints would outnumber the surface keep vertices of their own, and round-trip", async () => {
-  // 30 segments floating above a 12-triangle box: 60 endpoints on no vertex.
-  // Appending them would make quantize() compact the surface and drop them.
-  const box = boxSoup("base", [0, 0, 0], [4, 2, 6]);
-  const floating = [];
-  for (let i = 0; i < 30; i++) floating.push(i * 0.1, 0.5, 7 + i * 0.01, i * 0.1 + 0.05, 1.5, 7.5);
-  const edges = new Float32Array([...boxEdges([0, 0, 0], [4, 2, 6]), ...floating]);
-  const glb = await encodePreviewGlb({ meshes: [{ ...box, edges }], view: "v" });
+test("lines whose off-vertex endpoints would trip quantize()'s compaction keep vertices of their own, and round-trip posed", async () => {
+  // 30 segments INSIDE a 12-triangle box (in its bounds, so this is the compaction
+  // path, not the out-of-bounds one): 60 endpoints on no vertex. Appending them
+  // would leave 36 indices over 84 vertices, and quantize() would compact the
+  // surface and drop them. Posed, so the lines go through the node's offset and scale.
+  const body = posedBox("body");
+  const inner = [];
+  for (let i = 0; i < 30; i++) inner.push(0.5 + i * 0.07, 0.6, 0.5 + i * 0.13, 0.55 + i * 0.07, 1.4, 1 + i * 0.13);
+  const edges = new Float32Array([...body.edges, ...poseArray(new Float32Array(inner), 30, [12, -7, 4])]);
+  const glb = await encodePreviewGlb({ meshes: [{ ...body, edges }], view: "v" });
   const [tris, lines] = glbJson(glb).meshes[0].primitives;
   expect(lines.attributes.POSITION).not.toBe(tris.attributes.POSITION);
   const out = await decodePreviewGlb(glb);
-  expect(segmentMismatch(out.meshes[0].edges, edges)).toBeNull();
+  expect(segmentMismatch(out.meshes[0].edges, edges, 1e-3)).toBeNull();
   expect(out.meshes[0].triangles).toBe(12);
 });
 

@@ -50,7 +50,7 @@
 // bytes, and nothing here mutates the input (exportPreview passes the viewer's
 // live buffers). Bump PREVIEW_ENCODER_VERSION whenever the bytes for the same
 // input change — downstream caches key on it.
-import { Document, Logger, Primitive, WebIO } from "@gltf-transform/core";
+import { Document, Logger, Node, Primitive, WebIO } from "@gltf-transform/core";
 import { EXTMeshoptCompression, KHRMeshQuantization } from "@gltf-transform/extensions";
 import { quantize, reorder, weld } from "@gltf-transform/functions";
 import { MeshoptEncoder } from "meshoptimizer/encoder";
@@ -206,6 +206,41 @@ function boundsOf(positions) {
   }
   return { min, max };
 }
+// Column-major 4×4 helpers (glTF's layout) for the fallback's frame change. A
+// node matrix is affine, so the inverse is the 3×3 block's inverse plus the
+// translation carried through it.
+function multiply(a, b) {
+  const out = new Array(16);
+  for (let c = 0; c < 4; c++) {
+    for (let r = 0; r < 4; r++) {
+      let v = 0;
+      for (let k = 0; k < 4; k++) v += a[k * 4 + r] * b[c * 4 + k];
+      out[c * 4 + r] = v;
+    }
+  }
+  return out;
+}
+function invertAffine(m) {
+  const [a, b, c, d, e, f, g, h, i] = [m[0], m[4], m[8], m[1], m[5], m[9], m[2], m[6], m[10]]; // rows
+  const A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g;
+  const det = a * A + b * B + c * C;
+  if (!det) throw new Error("encodePreviewGlb: a mesh node's transform is not invertible");
+  const inv = [ // rows of the 3×3 inverse
+    A / det, -(b * i - c * h) / det, (b * f - c * e) / det,
+    B / det, (a * i - c * g) / det, -(a * f - c * d) / det,
+    C / det, -(a * h - b * g) / det, (a * e - b * d) / det,
+  ];
+  const t = [m[12], m[13], m[14]];
+  const out = new Array(16).fill(0);
+  for (let r = 0; r < 3; r++) {
+    for (let col = 0; col < 3; col++) out[col * 4 + r] = inv[r * 3 + col];
+    out[12 + r] = -(inv[r * 3] * t[0] + inv[r * 3 + 1] * t[1] + inv[r * 3 + 2] * t[2]);
+  }
+  out[15] = 1;
+  return out;
+}
+const meshNode = (mesh) => mesh.listParents().find((p) => p instanceof Node);
+
 const outside = (points, { min, max }) => {
   for (let i = 0; i < points.length; i += 3) {
     for (let a = 0; a < 3; a++) if (points[i + a] < min[a] || points[i + a] > max[a]) return true;
@@ -303,7 +338,7 @@ export async function encodePreviewGlb({ meshes, part = null, view = null } = {}
   // Map each endpoint onto those vertices; append the ones on none. Then quantize
   // with the appended vertices in place, and only then add the line primitives.
   const shared = [];
-  const ownVertices = []; // { mesh, edges } — the fallback, added after quantize()
+  const ownVertices = []; // { mesh, edges, before } — the fallback, added after quantize()
   for (const { mesh, surface, edges } of pending) {
     const position = surface.getAttribute("POSITION");
     const positions = position.getArray();
@@ -315,7 +350,7 @@ export async function encodePreviewGlb({ meshes, part = null, view = null } = {}
       // Appending would change the surface's quantization volume, or quantize()
       // would compact the surface and drop the appended endpoints: these lines
       // keep vertices of their own instead (see the file header).
-      ownVertices.push({ mesh, edges });
+      ownVertices.push({ mesh, edges, before: meshNode(mesh).getWorldMatrix() });
       continue;
     }
     if (appended.length) {
@@ -336,15 +371,16 @@ export async function encodePreviewGlb({ meshes, part = null, view = null } = {}
 
   await doc.transform(quantize());
 
-  // The fallback lines: float positions mapped into the node's quantized frame
-  // (quantize() moved the mesh's offset and scale onto its node — a sub-part node
-  // has no children or animation, so its matrix is exactly that translate+scale).
-  for (const { mesh, edges } of ownVertices) {
-    const m = mesh.listParents().find((p) => typeof p.getMatrix === "function").getMatrix();
-    const scale = m[0];
+  // The fallback lines: float positions mapped into the frame quantize() left the
+  // mesh in. quantize() folds the mesh's offset and scale into the node holding it
+  // (or a new child node), so a vertex q now draws at after·q where it drew p at
+  // before·p: q = after⁻¹ · before · p, whatever transform the node carried.
+  for (const { mesh, edges, before } of ownVertices) {
+    const m = multiply(invertAffine(meshNode(mesh).getWorldMatrix()), before);
     const local = new Float32Array(edges.length);
     for (let i = 0; i < edges.length; i += 3) {
-      for (let a = 0; a < 3; a++) local[i + a] = (edges[i + a] - m[12 + a]) / scale;
+      const [x, y, z] = [edges[i], edges[i + 1], edges[i + 2]];
+      for (let a = 0; a < 3; a++) local[i + a] = m[a] * x + m[4 + a] * y + m[8 + a] * z + m[12 + a];
     }
     mesh.addPrimitive(doc.createPrimitive().setMode(Primitive.Mode.LINES).setAttribute(
       "POSITION", doc.createAccessor().setType("VEC3").setArray(local).setBuffer(buffer)));
