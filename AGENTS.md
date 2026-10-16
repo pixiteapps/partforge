@@ -236,9 +236,10 @@ the installed package, so let the publish finish before bumping the dep there.
   (the print-bed environment's cut-out build plate and its canvas-drawn
   markings), and `contact-shadow.js` - is a separate set of modules the viewer alone
   imports, not the worker. `patterns.js` is the **only** shader-injection
-  site (`onBeforeCompile`) for layer lines, wood, carbon weave, SLS grain and
-  the laser burn (compiled only into the sub-parts `sheet-look.js`'s
-  `burnsFor` picks) - a future TSL/WebGPU port only has to rewrite this one
+  site (`onBeforeCompile`) for layer lines, wood, carbon weave, SLS grain, plywood's
+  plies (any `laminated` preset, stacked by a sheet part's frame or else
+  `sheet-look.js`'s `boxPlyFrame`) and the laser burn (compiled only into
+  the sub-parts `sheet-look.js`'s `burnsFor` picks) - a future TSL/WebGPU port only has to rewrite this one
   file. `assets.js`
   is the **only** module allowed a literal `new URL("./assets/x",
   import.meta.url)` (the same rule `docs/AUTHORING-PARTS.md` states for

@@ -13,7 +13,7 @@
 // author place, a replaced place or a custom build is not trusted with a frame — it draws
 // plain wood, never a frame that could char a face.
 //
-// It also says what a laser sheet part with no usable material looks like: not a PLA print
+// It also says what a sheet part (laser or routed) with no usable material looks like: not a PLA print
 // (resolve.js's default for every other sub-part) but the sheet its stock label names —
 // realisticDisplay, from the ONE keyword table STOCK_LOOKS. Realistic-only, like the PLA
 // default: the CAD view, 3MF colours and declaresMaterials read sp.display itself.
@@ -42,8 +42,9 @@ const IDENTITY = Object.freeze([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
 // takes a channel over wherever face_i < charcoal_i / charOfDark — walnut's green and blue —
 // so a dark or strongly tinted face still chars darker in every channel. Mixing toward
 // `charcoal` alone would RAISE walnut's near-black blue, since charcoal's is lighter. Char and
-// scorched floors take `roughness`, a matte finish, and shed any clearcoat; on plywood's cut
-// walls a cross ply is `crossPly` of a face-grain ply.
+// scorched floors take `roughness`, a matte finish, and shed any clearcoat. Plywood's plies
+// are not the burn's: the ply pass (PLY below) draws them first, and the char keeps each
+// texel's ratio to the face (`grain`), so they show through it.
 //   grain       how much of the wood's grain shows through the char: each texel's ratio to
 //               the face average, blended in by `grain`, multiplies the average char (1, a
 //               pure multiply: every texel darkens by the same per-channel factor, so the
@@ -70,7 +71,6 @@ export const BURN = Object.freeze({
   engraveLess: 0.1,
   charOfDark: 0.37,
   roughness: 0.68,
-  crossPly: 0.78,
   grain: 1,
   relief: 0.35,
 });
@@ -83,18 +83,82 @@ export function srgbToLinear(hex) {
   });
 }
 
-// Plies in a birch-plywood sheet t mm thick: 3 mm → 3, 6 → 5, 9 → 7, 12 → 9. Always odd, so
-// both outer plies run with the face grain.
-const PLY_STEPS = Object.freeze([[4.5, 3], [7.5, 5], [10.5, 7]]);
+// Plies in a birch-plywood sheet t mm thick: 3 mm → 3, 6 → 5, 9 → 7, 12 → 9, then one ply
+// per ~1.4 mm (15 → 11, 18 → 13, 24 → 17). Always odd, so both outer plies run with the face
+// grain.
+const PLY_STEPS = Object.freeze([[4.5, 3], [7.5, 5], [10.5, 7], [13.3, 9]]);
 export function plyCount(t) {
   for (const [below, plies] of PLY_STEPS) if (t < below) return plies;
-  return 9;
+  return 2 * Math.round((t / PLY.thickPly - 1) / 2) + 1;
+}
+
+// How a laminated wood's cut wall looks (patterns.js applyPlies): what any `laminated`
+// preset shows wherever a surface runs across its plies — a laser cut, a router pass, or
+// the side of a plain solid in plywood. In a LAMINATE frame like the sheet's canonical one
+// (plies stacked along z over [0, t]), each ply's grain alternates: the outer plies run
+// with the face grain, every other one across it. On a wall, a ply whose grain runs along
+// the wall shows SIDE grain — the face texture's long streaks, laid along the wall — and one
+// whose grain runs into it shows END grain: darker and rougher, the pores open.
+//   wallNz    the same wall band as the burn's (BURN.wallNz): below it a surface is a wall.
+//   endTone   end grain's albedo, a multiple of the face average (birch end grain drinks
+//             light); `endWarm` tints it toward amber, per channel.
+//   endMottle how much of the texture's own variation end grain keeps (a fine mottle, not
+//             streaks: its sample runs across the grain, `endScale` times finer).
+//   endRough  added to roughness on end grain.
+//   jitter    each ply's own tone, ± this fraction (a hash of its index): veneers differ.
+//   glueMm    the glue line between two plies, mm wide (none on the outer faces), drawn
+//             at `glue` of the ply colour, tinted toward `glueTint`.
+//   relief    the share of the face's normal map a wall keeps: the face scan's relief laid
+//             across plies reads as noise, so walls are mostly geometric.
+//   thickPly  above 13.3 mm, ply thickness in mm (plyCount).
+// Like BURN, judged by eye on the contact sheet (materials.html, "Plywood edges").
+export const PLY = Object.freeze({
+  wallNz: BURN.wallNz,
+  endTone: 0.74,
+  endWarm: Object.freeze([1.0, 0.93, 0.82]),
+  endMottle: 0.35,
+  endScale: 4,
+  endRough: 0.12,
+  jitter: 0.06,
+  glueMm: 0.12,
+  glue: 0.42,
+  glueTint: Object.freeze([1.0, 0.82, 0.62]),
+  relief: 0.25,
+  thickPly: 1.4,
+});
+
+// Is this sub-part's realistic look a laminated wood (its walls draw plies)? Static — it
+// reads no params — so it decides a PROGRAM, like burnsFor.
+export function laminatedFor(sp) {
+  try {
+    const look = lookOf(sp);
+    return look.params.pattern === "wood" && look.preset.laminated === true;
+  } catch { return false; }
+}
+
+// The laminate frame of a sub-part with no sheet frame: its delivered mesh's thinnest
+// object-space bounding-box axis is the stack, the box's low corner z = 0. `min`/`max` are
+// the box corners ([x, y, z]); `grainAxis` is the wood pass's grain axis (patterns.js
+// grainAxisFor). Returns { frame, t, plies, grain }: a column-major 4×4 that permutes the
+// thin axis onto z (keeping the frame right-handed) and the face grain in that frame, a
+// unit [x, y] (x when the grain axis IS the thin one, a cube's tie). null for an empty box.
+export function boxPlyFrame(min, max, grainAxis = 0) {
+  const s = [0, 1, 2].map((i) => max[i] - min[i]);
+  if (!s.every((v) => Number.isFinite(v)) || Math.max(...s) <= 0) return null;
+  let thin = 2;
+  for (const i of [1, 0]) if (s[i] < s[thin] - Math.max(...s) * 1e-6) thin = i;
+  const a = (thin + 1) % 3, b = (thin + 2) % 3; // cyclic, so (a, b, thin) → (x, y, z) is a rotation
+  const frame = Array(16).fill(0);
+  frame[a * 4 + 0] = 1; frame[b * 4 + 1] = 1; frame[thin * 4 + 2] = 1; frame[15] = 1;
+  frame[12] = -min[a]; frame[13] = -min[b]; frame[14] = -min[thin];
+  const t = s[thin];
+  return { frame, t, plies: plyCount(t), grain: grainAxis === b ? [0, 1] : [1, 0] };
 }
 
 // The material realistic mode draws this sub-part in.
 const lookOf = (sp) => resolveMaterial(realisticDisplay(sp));
 
-// A laser sheet with no usable material takes its look from its stock label: the first row
+// A sheet part (laser or CNC-routed) with no usable material takes its look from its stock label: the first row
 // with a stem that STARTS a word of the label (ignoring case; a hyphenated word is also read
 // joined, so "poly-carbonate" is one word and "clear-acrylic" still has "acrylic"), else
 // DEFAULT_STOCK_LOOK — plywood for birch, basswood, poplar, MDF, hardboard or anything
@@ -121,12 +185,15 @@ export function stockLook(stock) {
   return STOCK_LOOKS.find((row) => row.words.some((stem) => words.some((w) => w.startsWith(stem))))?.look ?? DEFAULT_STOCK_LOOK;
 }
 
-// The stock's look for a laser sheet part, else null (lint names it in its fallback hint).
+// The processes whose parts are drawn as their stock: flat stock, cut by a laser or a router.
+const STOCK_LOOK_PROCESSES = new Set(["laser", "cnc-router"]);
+
+// The stock's look for a sheet part, else null (lint names it in its fallback hint).
 export function sheetStockLook(sp) {
-  return isSheetPart(sp) && sp.sheet.process === "laser" ? stockLook(sp.sheet.material) : null;
+  return isSheetPart(sp) && STOCK_LOOK_PROCESSES.has(sp.sheet.process) ? stockLook(sp.sheet.material) : null;
 }
 
-// The display realistic mode draws: sp.display itself, except that a laser sheet part
+// The display realistic mode draws: sp.display itself, except that a sheet part
 // naming no KNOWN material — none, or one the library does not know, the same "no usable
 // material" resolve.js treats as one case — gets its stock's look. A `color` rides along,
 // so a bare colour tints that look (stained plywood, coloured acrylic).
@@ -138,26 +205,43 @@ export function realisticDisplay(sp) {
   return { ...(display && typeof display === "object" ? display : {}), material: look };
 }
 
+// Is this a sheet part (any process) the viewer can trust with a canonical frame: one whose
+// delivered mesh is its canonical solid moved by poseSteps alone? A custom build, an author
+// place, a replaced place or a pose entry in a views map all move it off that pose.
+function canonicalSheet(sp) {
+  if (!isSheetPart(sp)) return false;
+  if (sp.build !== sp.sheet.generatedBuild) return false;                   // a custom build is not the canonical sheet
+  if (sp.sheet.place != null) return false;                                 // an author place moves it off its pose
+  if ((sp.place ?? null) !== (sp.sheet.generatedPlace ?? null)) return false; // place replaced after sheetPart
+  if (isViewsMap(sp.views) && Object.values(sp.views).some((v) => typeof v === "function")) return false; // a pose entry moves it off its pose
+  return true;
+}
+
 // Does this sub-part carry the burn pass at all? Static — it reads no params — so the
 // viewer decides a sub-part's PROGRAM once, and every sub-part that answers false keeps
 // exactly the program it had before the burn existed.
 export function burnsFor(sp) {
   if (!isSheetPart(sp) || sp.sheet.process !== "laser") return false;
-  if (sp.build !== sp.sheet.generatedBuild) return false;                   // a custom build is not the canonical sheet
-  if (sp.sheet.place != null) return false;                                 // an author place moves it off its pose
-  if ((sp.place ?? null) !== (sp.sheet.generatedPlace ?? null)) return false; // place replaced after sheetPart
-  if (isViewsMap(sp.views) && Object.values(sp.views).some((v) => typeof v === "function")) return false; // a pose entry moves it off its pose
+  if (!canonicalSheet(sp)) return false;
   try { return lookOf(sp).params.pattern === "wood"; } catch { return false; }
+}
+
+// Does this sub-part want a canonical sheet frame from mount? A burning laser sheet does
+// (its burn needs one), and so does any canonical sheet part — laser or routed — in a
+// laminated wood, whose plies then stack exactly along its thickness. Everything else that
+// is laminated stacks its plies by its bounding box (boxPlyFrame), in the viewer.
+export function wantsSheetFrame(sp) {
+  return burnsFor(sp) || (canonicalSheet(sp) && laminatedFor(sp));
 }
 
 // At (p, d) — a delivery's params — the frame that maps the delivered display mesh's
 // object space into the canonical sheet frame, the sheet's thickness, and how many plies
-// its cut walls show (0 unless its preset is `laminated`). null when burnsFor says no or
+// its cut walls show (0 unless its look is laminated). null when wantsSheetFrame says no or
 // the pose or thickness cannot be read (the build reports those).
 // `frame` "canonical": the delivered mesh is the sheet's own canonical solid (place() not
 // applied), so no frame maps it — identity, same t and plies.
 export function sheetFrameFor(sp, { p, d, frame: delivered = "posed" } = {}) {
-  if (!burnsFor(sp)) return null;
+  if (!wantsSheetFrame(sp)) return null;
   const meta = sheetMeta(sp, p, d);
   if (!meta) return null;
   const t = meta.thickness;
@@ -165,7 +249,7 @@ export function sheetFrameFor(sp, { p, d, frame: delivered = "posed" } = {}) {
   try { pose = typeof sp.sheet.pose === "function" ? sp.sheet.pose(p, d) : sp.sheet.pose; } catch { return null; }
   if (pose != null && validatePose(pose)) return null;
   const frame = delivered === "canonical" || pose == null ? [...IDENTITY] : invertRigid(composePose(poseSteps(pose, t)));
-  return { frame, t, plies: lookOf(sp).preset.laminated ? plyCount(t) : 0 };
+  return { frame, t, plies: laminatedFor(sp) ? plyCount(t) : 0 };
 }
 
 // The shader's surface classification, in JS: the frame tests hold real geometry to it.

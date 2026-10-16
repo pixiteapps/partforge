@@ -12,7 +12,7 @@ import { ensureBoxUVs } from "./materials/uv.js";
 import { loadEnvironmentRig } from "./materials/environment.js";
 import { assetUrl } from "./materials/assets.js";
 import { resolveEnvironmentId } from "./materials/resolve.js";
-import { burnsFor, realisticDisplay } from "./materials/sheet-look.js";
+import { boxPlyFrame, burnsFor, realisticDisplay } from "./materials/sheet-look.js";
 import { effectiveDisplay, mergeOverride, sanitizeDisplayPatch, subPartVisibility, APPEARANCE_OVERRIDE_KEYS, VIEWING_KEYS } from "./materials/overrides.js";
 import { neutralToneMapToSrgb8 } from "./materials/tonemap-readback.js";
 import { createMaterialThumbCache, thumbDisplay } from "./materials/thumb-cache.js";
@@ -844,14 +844,13 @@ export function createViewer(container, part) {
       const sp = part.parts[name];
       // `burn` is decided per sub-part material (sheet-look.js burnsFor): only a laser sheet in
       // a wood compiles the burn pass, so every other program is exactly what it was.
-      // realisticDisplay: a laser sheet with no material draws as its stock (sheet-look.js).
+      // realisticDisplay: a sheet part with no material draws as its stock (sheet-look.js).
       // Both read sp.display, so hand them a sub-part whose display is the EFFECTIVE one
       // (authored + the user's appearance override).
       const eff = { ...sp, display: effectiveDisplayOf(name) };
       m = cloneKeepsPattern(buildPhysicalMaterial(realisticDisplay(eff), { printFrame: printFrames[name], burn: burnsFor(eff), loadTexture }));
       physicalMats.set(name, m);
       syncGrain(name);
-      applySheetFrame(m, sheetFrames[name]);
     }
     return m;
   }
@@ -863,6 +862,7 @@ export function createViewer(container, part) {
     const m = physicalMats.get(name);
     const geo = subCache[name];
     if (m && geo) setGrainAxis(m, grainAxisFor(geo.boundingBox));
+    if (m) applySheetFrame(m, sheetFrames[name], name);
   }
 
   function publishMode(extra = {}) {
@@ -1159,16 +1159,34 @@ export function createViewer(container, part) {
 
   // A burning sheet's canonical frame (sheet-look.js sheetFrameFor). No frame — not yet
   // delivered, or not computable at these params — is pfSheetT = 0: plain wood.
-  function applySheetFrame(m, f) {
+  // The same frame stacks a laminated sheet's plies (patterns.js applyPlies); a laminated
+  // sub-part with no sheet frame stacks them by its own bounding box (boxPlyFrame).
+  function applySheetFrame(m, f, name) {
     const u = m.userData.patternUniforms;
-    if (!u?.pfSheetFrame) return;
-    u.pfSheetFrame.value.fromArray(f?.frame ?? IDENTITY_MAT4);
-    u.pfSheetT.value = f?.t ?? 0;
-    u.pfPlies.value = f?.plies ?? 0;
+    if (u?.pfSheetFrame) {
+      u.pfSheetFrame.value.fromArray(f?.frame ?? IDENTITY_MAT4);
+      u.pfSheetT.value = f?.t ?? 0;
+    }
+    if (u?.pfPlyFrame) applyPlyFrame(u, m, f, name);
+  }
+  function applyPlyFrame(u, m, f, name) {
+    const box = subCache[name]?.boundingBox;
+    const axis = m.userData.pfGrainAxis ?? 0;
+    let ply = f?.plies > 0 ? { frame: f.frame, t: f.t, plies: f.plies, grain: null } : null;
+    if (!ply && box && !box.isEmpty()) ply = boxPlyFrame(box.min.toArray(), box.max.toArray(), axis);
+    if (!ply) { u.pfPlyT.value = 0; return; }
+    u.pfPlyFrame.value.fromArray(ply.frame);
+    u.pfPlyT.value = ply.t;
+    u.pfPlyCount.value = ply.plies;
+    if (ply.grain) { u.pfPlyGrain.value.fromArray(ply.grain); return; }
+    // A sheet frame: the face grain is the wood pass's grain axis carried into it.
+    const g = new THREE.Vector3().setComponent(axis, 1).transformDirection(u.pfPlyFrame.value);
+    if (Math.hypot(g.x, g.y) < 1e-6) u.pfPlyGrain.value.set(1, 0);
+    else u.pfPlyGrain.value.set(g.x, g.y).normalize();
   }
   function setSheetFrames(frames) {
     sheetFrames = frames ?? {};
-    for (const [n, m] of physicalMats) applySheetFrame(m, sheetFrames[n]);
+    for (const [n, m] of physicalMats) applySheetFrame(m, sheetFrames[n], n);
   }
 
   // The lazy form mount uses. Frames are PULLED only when something is about to draw the
