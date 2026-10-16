@@ -98,3 +98,49 @@ export function glbJson(bytes) {
   const length = view.getUint32(12, true);
   return JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + length)));
 }
+
+// The box [min, max]'s 12 feature edges as line-segment endpoint pairs (72 floats).
+export function boxEdges(min = [0, 0, 0], max = [1, 1, 1]) {
+  const c = (i) => [0, 1, 2].map((a) => ((i >> a) & 1 ? max[a] : min[a]));
+  const out = [];
+  for (let i = 0; i < 8; i++) {
+    for (let a = 0; a < 3; a++) {
+      if ((i >> a) & 1) continue;
+      out.push(...c(i), ...c(i | (1 << a)));
+    }
+  }
+  return new Float32Array(out);
+}
+
+// Whether two edge arrays hold the same segments (either endpoint order, any
+// segment order — weld/reorder may permute them) within `tol` millimetres.
+// Returns null when they match, else a description of the first mismatch.
+export function segmentMismatch(got, want, tol = 1e-2) {
+  if (got.length !== want.length) return `segment count ${got.length / 6} != ${want.length / 6}`;
+  const near = (a, i, b, j) => Math.abs(a[i] - b[j]) <= tol && Math.abs(a[i + 1] - b[j + 1]) <= tol && Math.abs(a[i + 2] - b[j + 2]) <= tol;
+  const used = new Uint8Array(got.length / 6);
+  for (let w = 0; w < want.length; w += 6) {
+    let hit = -1;
+    for (let g = 0; g < got.length && hit < 0; g += 6) {
+      if (used[g / 6]) continue;
+      if ((near(got, g, want, w) && near(got, g + 3, want, w + 3)) || (near(got, g, want, w + 3) && near(got, g + 3, want, w))) hit = g;
+    }
+    if (hit < 0) return `no decoded segment matches [${[...want.subarray(w, w + 6)].map((v) => v.toFixed(3))}]`;
+    used[hit / 6] = 1;
+  }
+  return null;
+}
+
+// A rigid pose for fixtures: rotate `deg` about Z, then translate.
+export function poseArray(arr, deg, [tx, ty, tz] = [0, 0, 0], isNormal = false) {
+  const r = (deg * Math.PI) / 180;
+  const c = Math.cos(r);
+  const s = Math.sin(r);
+  const out = new Float32Array(arr.length);
+  for (let i = 0; i < arr.length; i += 3) {
+    out[i] = c * arr[i] - s * arr[i + 1] + (isNormal ? 0 : tx);
+    out[i + 1] = s * arr[i] + c * arr[i + 1] + (isNormal ? 0 : ty);
+    out[i + 2] = arr[i + 2] + (isNormal ? 0 : tz);
+  }
+  return out;
+}

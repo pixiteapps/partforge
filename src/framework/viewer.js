@@ -1741,9 +1741,12 @@ export function createViewer(container, part) {
     // draw none rather than falling back. Only a payload with NO edge data at
     // all (edges === undefined; no current backend does this) derives by angle.
     const lg = new LineSegmentsGeometry();
-    if (edges) lg.setPositions(edges); // edges is already a well-formed (possibly zero-length) Float32Array
-    else lg.fromEdgesGeometry(new THREE.EdgesGeometry(out, EDGE_ANGLE));
+    // The raw segment pairs drawn, kept for getSubMeshPayload (reading them back
+    // out of LineSegmentsGeometry's interleaved instance buffer is awkward).
+    const segments = edges ?? new THREE.EdgesGeometry(out, EDGE_ANGLE).getAttribute("position").array;
+    lg.setPositions(segments); // a well-formed (possibly zero-length) Float32Array
     out.userData.edges = lg;
+    out.userData.edgePositions = segments;
     return out;
   }
 
@@ -1790,7 +1793,9 @@ export function createViewer(container, part) {
   // The geometry drawn for one sub-part, as a fresh worker-style payload with its
   // fast-path pose (setSubPose) baked in — the posed mesh a headless buildView
   // would return. Copies: the caller (exportPreview → partforge/gltf) may keep or
-  // transfer them. null when nothing has been delivered under that name.
+  // transfer them. null when nothing has been delivered under that name. Its
+  // `edges` are the lines shown on screen: the kernel's segments, or — when the
+  // delivery carried no edge data at all — the angle-derived fallback lines.
   const _payloadV = new THREE.Vector3();
   const _payloadNormal = new THREE.Matrix3();
   function getSubMeshPayload(name) {
@@ -1811,10 +1816,17 @@ export function createViewer(container, part) {
         _payloadV.fromBufferAttribute(nor, i).applyMatrix3(_payloadNormal).normalize().toArray(normals, i * 3);
       }
     }
+    // Feature edges, posed by the same matrix (an empty array stays empty: "none").
+    const rawEdges = geo.userData.edgePositions ?? new Float32Array(0);
+    const edges = new Float32Array(rawEdges.length);
+    for (let i = 0; i < rawEdges.length; i += 3) {
+      _payloadV.fromArray(rawEdges, i).applyMatrix4(pose).toArray(edges, i);
+    }
     return {
       name,
       positions,
       normals,
+      edges,
       indices: geo.index ? Uint32Array.from(geo.index.array) : null,
       triangles: geo.userData.triangles ?? (geo.index ? geo.index.count : pos.count) / 3,
     };
