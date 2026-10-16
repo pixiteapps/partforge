@@ -12,8 +12,8 @@ import { unionN } from "./primitives.js";
  * smallest that keeps the hand's 0.75 mm near miss bridge-free at 1.5 and 0.6 mm (1.25 bridged).
  */
 export const C_MIN_CELLS = 1.5;
-/** Default bulge (mm): how far the skin swells at a full press, measured at the pad's rim. */
-export const BULGE_DEFAULT = 0.6;
+/** Default bulge (mm): the most the skin swells at a full press (the bump's peak; about 0.6 mm shows at a fingertip pad's rim). */
+export const BULGE_DEFAULT = 1;
 /** Packed attachment layout: [ia, ib, ax, ay, az, r0, band, k]; ia/ib index value slots. */
 export const ATTACH_STRIDE = 8;
 /**
@@ -108,7 +108,7 @@ export function contactValue(v, nK, cl, fuse, att, nA, F, nF, x, y, z, w = nA > 
   }
   if (fuse) {
     // The pad fill, one term per contact region r (pair a_r, b_r), in region order, where
-    // its gate is open (g_r > 0): value = min(value, f + (1 − g_r)·cl), f = U(c'_a, c'_b)
+    // its gate is open (g_r > 0): value = min(value, f + (1 − g_r)·(cl + PAD_BLEND/4)), f = U(c'_a, c'_b)
     // maxed with (min(v_a, v_b) − v_j + cl)/2 for every third slot j in slot order; c'_a is
     // a_r cut against every piece but b_r (and c'_b likewise), U the smooth union of width
     // PAD_BLEND. Near its region (g_r = 1) the term is the pair's union, each still
@@ -117,7 +117,9 @@ export function contactValue(v, nK, cl, fuse, att, nA, F, nF, x, y, z, w = nA > 
     // of the bisector (the pair's overlap alone, the earlier form, left a moat cl/2 deep
     // around a pad shallower than cl, and a floating lens in it), and a neighbour beside
     // the pad keeps its gap (the raw v_a would bring a's surface back against it). Easing
-    // out, it rises toward cl above that union, where the clearance cut takes over; with
+    // out, it rises toward cl + PAD_BLEND/4 above that union (the blend's dip plus the
+    // clearance: by the gate's edge the clearance cut is below it at any grid edge, so the
+    // term vanishes without a jump), where the clearance cut takes over; with
     // the gate shut it is no term at all (so a pruned slot's terms are exactly absent,
     // interval.js rule (d)). No regions: no fill.
     for (let k = 0; k < nF; k++) {
@@ -131,7 +133,7 @@ export function contactValue(v, nK, cl, fuse, att, nA, F, nF, x, y, z, w = nA > 
         // closes a third piece's gap: at their bisector this is cl/2, as the cut pieces are.
         const m = Math.min(v[ia], v[ib]);
         for (let j = 0; j < nK; j++) if (j !== ia && j !== ib) f = Math.max(f, (m - v[j] + cl) * 0.5);
-        value = Math.min(value, f + (1 - g) * cl);
+        value = Math.min(value, f + (1 - g) * (cl + PAD_BLEND / 4));
       }
     }
   }
@@ -252,7 +254,7 @@ function cutPieceRange(out, lo, hi, keep, N, i, skip, cl, att, nA, wr) {
  * interval arithmetic: c_i ∈ [max(lo_i, cut_lo…), max(hi_i, cut_hi…)] with a pair's cut
  * widened to v_i's side when its attachment weight can be above 0; with fuse, a pad-fill term
  * per fill region with both sides kept and its gate open somewhere in the ball (gh > 0),
- * [min(c'lo_a, c'lo_b) − PAD_BLEND/4 + (1 − gh)·cl, f_hi + (1 − gl)·cl] over the pair's
+ * [min(c'lo_a, c'lo_b) − PAD_BLEND/4 + (1 − gh)·lift, f_hi + (1 − gl)·lift] (lift = cl + PAD_BLEND/4) over the pair's
  * cut pieces less each other, f_hi raised by the kept third slots' clearances (hi only when gl > 0: a shut gate is no term); each live attachment lowers lo by k·wh/4. `wr[a]` holds attachment a's
  * [wl, wh] (attachWeightRange), `gr[k]` fill region k's [gl, gh] (gateWeightRange; read only
  * when `fuse`). `lo`/`hi` are the bulged children's. Returns [lo, hi] in `out`.
@@ -275,13 +277,13 @@ export function contactInterval(out, lo, hi, keep, N, cl, fuse, att, nA, wr, F, 
       cutPieceRange(cr2, lo, hi, keep, N, ib, ia, cl, att, nA, wr);
       // unionN(·, 2, k) lies in [min − k/4, min]; the third-piece clearances only raise f
       // (a pruned j's never reaches the union: interval.js rule (b)'s PAD_BLEND/2).
-      vlo = Math.min(vlo, Math.min(cr[0], cr2[0]) - PAD_BLEND / 4 + (1 - gr[k][1]) * cl);
+      vlo = Math.min(vlo, Math.min(cr[0], cr2[0]) - PAD_BLEND / 4 + (1 - gr[k][1]) * (cl + PAD_BLEND / 4));
       // Shut somewhere in the ball, the term is absent there: it bounds hi only when open throughout.
       if (gr[k][0] > 0) {
         let fhi = Math.min(cr[1], cr2[1]);
         const mhi = Math.min(hi[ia], hi[ib]);
         for (let j = 0; j < N; j++) if (j !== ia && j !== ib && keep[j]) fhi = Math.max(fhi, (mhi - lo[j] + cl) * 0.5);
-        vhi = Math.min(vhi, fhi + (1 - gr[k][0]) * cl);
+        vhi = Math.min(vhi, fhi + (1 - gr[k][0]) * (cl + PAD_BLEND / 4));
       }
     }
   }

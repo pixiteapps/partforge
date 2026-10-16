@@ -4,7 +4,7 @@ import { validateSpec } from "../src/framework/geometry/implicit/grammar.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { evalReference, evalNodeAt } from "../src/framework/geometry/implicit/reference.js";
 import { unionN } from "../src/framework/geometry/implicit/primitives.js";
-import { clearance, C_MIN_CELLS, ATTACH_STRIDE, bulgeOffset, REGION_CELL, BULGE_STRIDE, FILL_STRIDE, PAD_BLEND, BULGE_FULL_DEPTH } from "../src/framework/geometry/implicit/contact.js";
+import { clearance, C_MIN_CELLS, ATTACH_STRIDE, bulgeOffset, REGION_CELL, BULGE_STRIDE, FILL_STRIDE, PAD_BLEND, BULGE_FULL_DEPTH, BULGE_DEFAULT, FILL_BAND, contactValue } from "../src/framework/geometry/implicit/contact.js";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { setCoreEnabled } from "../src/framework/core/core.js";
 import { cpuMs } from "./helpers/cpu-pace.js";
@@ -90,6 +90,60 @@ describe("contact reference field", () => {
     const p = at(lo), edge = 1, cl = clearance(0, edge);
     expect((0 - 0.4 + cl) / 2).toBeGreaterThan(0.5);
     expect(evalReference(c, ...p, edge)).toBeLessThanOrEqual(0);
+  });
+
+  test("the pad fill vanishes at its gate's edge without a jump, at every grid edge", () => {
+    // Two pieces equally near, at the gate's outer radius (rho + cl + 2·FILL_BAND): just
+    // inside, the term eases out; just outside, it is absent. A lift of cl alone left the
+    // term winning there once cl/2 < PAD_BLEND/4 (0.10 mm jump at edge 0.3, 0.175 at 0.2).
+    const F = Float64Array.of(0, 1, 0, 0, 0, 2);
+    for (const edge of [0.2, 0.3, 0.6, 1.5]) for (const v of [0, 0.05, 0.2, 1]) {
+      const cl = clearance(0, edge), R = 2 + cl + 2 * FILL_BAND, at = (r) => contactValue(Float64Array.of(v, v), 2, cl, 1, new Float64Array(0), 0, F, 1, r, 0, 0);
+      expect(Math.abs(at(R - 1e-7) - at(R + 1e-7)), `edge ${edge}, v ${v}`).toBeLessThan(1e-6);
+    }
+  });
+
+  test("a flush pad keeps its blend inside the bounds: no clipping", () => {
+    // Two 20 mm boxes overlapping 1 mm with flush tops: the pad's blend lifts the seam
+    // PAD_BLEND/4 above the tops (y = 10), so the box must reach past them.
+    const box = (x) => ({ kind: "box", size: [20, 20, 20], at: [x, 0, 0] });
+    const spec = { root: { kind: "contact", bulge: 0, children: [box(-9.5), box(9.5)] } };
+    const c = compileImplicit(spec);
+    expect(evalReference(c, 0, 10.2, 0, 1)).toBeLessThan(0);
+    expect(c.bounds.max[1]).toBeGreaterThanOrEqual(10 + PAD_BLEND / 4);
+    const out = meshImplicit(c, 1);
+    expect(out.warnings.filter((w) => /clipped/.test(w))).toEqual([]);
+    let top = -Infinity;
+    for (let i = 1; i < out.positions.length; i += 3) top = Math.max(top, out.positions[i]);
+    expect(top).toBeGreaterThan(10.2);
+  });
+
+  test("a flat contact's bulge swells at most `bulge`, growing from 0 with the press", () => {
+    // Two 20 mm boxes face to face: their contact is as wide as the faces, so the faces
+    // beside the seam lie well inside the region's radius. The swell above the top faces
+    // with the default bulge, less the bulge-0 shape (the pad's own blend), never passes
+    // the bulge, and grows from about nothing at first detection. (Overlaps under about
+    // 0.35 mm find no region on the 0.75 mm search lattice.)
+    const box = (x) => ({ kind: "box", size: [20, 20, 20], at: [x, 0, 0] });
+    const swell = (o, bulge) => {
+      const c = lower({ root: { kind: "contact", ...(bulge === undefined ? {} : { bulge }), children: [box(-10 + o / 2), box(10 - o / 2)] } });
+      let worst = 0;
+      for (let x = -12; x <= 12; x += 0.5) for (const z of [-6, 0, 6]) {
+        if (evalReference(c, x, 10, z, 1.5) > 0) continue;
+        let lo = 10, hi = 14;
+        for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (evalReference(c, x, m, z, 1.5) <= 0) lo = m; else hi = m; }
+        worst = Math.max(worst, lo - 10);
+      }
+      return worst;
+    };
+    let prev = 0;
+    for (const o of [0.4, 0.5, 0.7, 1, 1.5, 2, 3, 5]) {
+      const b = swell(o) - swell(o, 0);
+      expect(b, `overlap ${o}`).toBeLessThanOrEqual(BULGE_DEFAULT + 0.02);
+      expect(b, `overlap ${o}`).toBeGreaterThanOrEqual(prev - 0.02);
+      if (o === 0.4) expect(b).toBeLessThan(0.1 * BULGE_DEFAULT);
+      prev = b;
+    }
   });
 
   test("gap keeps pads apart", () => {

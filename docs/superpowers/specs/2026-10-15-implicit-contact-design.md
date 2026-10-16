@@ -96,15 +96,17 @@ is a **mesh-time** value, passed to both engines with the edge, not a compiled c
   `cl` apart.
 - **`gap = 0`:** value `= min(min_i c_i, f_r …)`, with a pad fill per contact region `r`
   (between pieces `a_r`, `b_r`), present only where its gate is open (`g_r > 0`):
-  `f_r = max(U(c'_a, c'_b), max_{j ≠ a,b} (min(d_a, d_b) − d_j + cl)/2) + (1 − g_r)·cl`.
+  `f_r = max(U(c'_a, c'_b), max_{j ≠ a,b} (min(d_a, d_b) − d_j + cl)/2) + (1 − g_r)·(cl + PAD_BLEND/4)`.
   `c'_a` is `a`'s cut piece taken against every piece but `b` (and `c'_b` likewise), `U` the
   smooth union of width `PAD_BLEND`. `g_r` is 1 within the region (found by the compiler,
   below) plus a margin of `cl + band` around it, falling smoothly to 0 beyond. Near a real
   contact the fill is the pair's union: the pieces fuse with a soft crease at the rim, while
   each stays clear of third pieces (through `c'`, and through the fused pair's own clearance
-  term, so the blend's dip never closes a third piece's gap). Away from it the term is at
-  least `cl` above that, so it never undercuts the clearance cut; with the gate shut it is no
-  term at all.
+  term, so the blend's dip never closes a third piece's gap). Easing out it rises by
+  `cl + PAD_BLEND/4` — the blend's dip plus the clearance — so as the gate closes it is
+  already above the clearance cut and vanishing changes nothing (at every grid edge: a lift
+  of `cl` alone left the term winning, and jumping, once `cl/2 < PAD_BLEND/4`); with the gate
+  shut it is no term at all.
   (Amended 2026-10-16: an ungated fill re-closed near-miss gaps — the reported necks —
   and a gate shared by all pairs fused a third piece near someone else's contact.
   Amended again in Task 5: the fill was the pair's overlap, `max(d_a, d_b)`, which leaves
@@ -235,16 +237,21 @@ Decided while building; the constants live in `src/framework/geometry/implicit/c
 - **The bulge profile.** Per region, a bump centred on the region,
   `A·φ(|p − c|/rb)`, `φ(t) = (1 − t²)²`, on both pieces. Falloff radius
   `rb = rho + BULGE_SPREAD·δ + 2·bulge` (`BULGE_SPREAD = 2`): it grows with the press. Its
-  height is set at the rim, where the skin is seen: `A = bulge·min(1, δ/BULGE_FULL_DEPTH) /
-  φ(rho/rb)` (`BULGE_FULL_DEPTH = 1.5` mm), so `bulge` is the visible swell in mm, not a
-  buried peak (with the peak at `bulge` the fist's rims swelled only 0.38 mm of 0.6). The
-  centre-peaked bump was kept rather than a rim band: the band needs a program-format
-  change, and the bulge was not what broke `contactThree` (below).
-- **Default bulge** `BULGE_DEFAULT = 0.6` mm: on the fist the rim swells 0.64 mm and fades
-  by 7 mm beyond it — subtle on a 13 mm finger, visible as squish in a section; the dev
-  viewer's slider tries more.
+  peak `A = bulge·min(1, δ/BULGE_FULL_DEPTH)` (`BULGE_FULL_DEPTH = 1.5` mm), so `bulge` is the
+  most any skin swells. (A height set at the rim instead, `A/φ(rho/rb)`, blew up on flat
+  contacts, whose sides lie well inside rho: 0.7 mm of swell at first detection between two
+  boxes.) The centre-peaked bump was kept rather than a rim band: the band needs a
+  program-format change.
+- **Default bulge** `BULGE_DEFAULT = 1` mm: on the fist the rim of each pad swells about
+  0.6 mm and fades by 7 mm beyond it — subtle on a 13 mm finger, visible as squish in a
+  section. Two flat faces pressed together swell 0.05 mm beside the seam at first contact,
+  growing to 0.55 mm at a 5 mm press.
 - **The pad's crease** `PAD_BLEND = 1.5` mm: the fused pair is a smooth union of this width;
   a hard union's crease sampled jagged at the print grid, and 3 mm read as a fillet.
+  Where the two surfaces meet flush (coplanar, as two boxes' tops) the blend raises a
+  ridge `PAD_BLEND/4` = 0.375 mm along the seam; the contact's box is padded for it. As the
+  gate eases out the term rises by `cl + PAD_BLEND/4`, so it is clear of the clearance cut
+  before it vanishes at any grid edge.
 - **The fill gate** `FILL_BAND = 2` mm (Task 3), unchanged.
 - **The pruning rule.** Tasks 2–3's rules (a)–(d); rule (b)'s threshold becomes
   `cl + PAD_BLEND/2` on a node with pad fills, so a pruned third slot's clearance term never
@@ -258,6 +265,9 @@ Decided while building; the constants live in `src/framework/geometry/implicit/c
   lattice order; δ refined by a pattern search. 0.75 mm, not 0.5, holds the fist's compile
   at 7–10 ms CPU against the 20 ms gate (0.5 mm: 11–21 ms); 1 mm split a thin contact in two and missed a 0.5 mm press.
   `MAX_REGION_CELLS = 20000`.
+  Detection threshold: overlaps up to about 0.35 mm (two spheres, or two flat faces) find
+  no region on the 0.75 mm lattice, so at gap 0 they still mesh with the clearance gap;
+  at 0.4 mm they fuse — the moment two surfaces first meet, about 0.4 mm late.
 - **Attachment band** default `radius/2` (Task 1); the blend across it is Task 1's: the
   pair's cut eased toward the piece by the weight, and the union's width `k·w`.
 - **The hand's attachments**: each finger's radius is a third of its proximal phalanx

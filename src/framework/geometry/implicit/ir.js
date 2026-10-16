@@ -15,7 +15,7 @@ import { resolveFrames, compose, invert, translation, rotation, axisVector, xfor
 import { compileExprSource } from "./expr-lower.js";
 import { makeTexture, checkTextureBudget } from "./textures.js";
 import { PRIM, WARP, roundConeParams, primLipschitz } from "./primitives.js";
-import { BULGE_DEFAULT, ATTACH_STRIDE } from "./contact.js";
+import { BULGE_DEFAULT, ATTACH_STRIDE, PAD_BLEND } from "./contact.js";
 import { contactRegions, regionDigest } from "./regions.js";
 import { ImplicitSpecError } from "./errors.js";
 
@@ -163,7 +163,9 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
         warnings.push(...found.warnings);
         hasContact = true;
         // A bulged piece's surface moves out by at most its Σ A (found.pad) over its growth G.
-        const lb = boxPad(ids.map((i) => nodes[i].box).reduce(boxUnion), (found.pad + maxK / 4) / G0);
+        // The attachments' unions dip k/4 below their pieces, a pad fill's blend PAD_BLEND/4.
+        const dip = Math.max(maxK, found.fillRegions.length > 0 ? PAD_BLEND : 0) / 4;
+        const lb = boxPad(ids.map((i) => nodes[i].box).reduce(boxUnion), (found.pad + dip) / G0);
         return finish(n, lb, Math.min(...ids.map((i) => nodes[i].thin)), G0);
       }
       case "mirror": {

@@ -135,7 +135,7 @@ in JS; a program carries its clearance `cl` baked in):
   cut; a bare cut with `v_i + v_j > cl + 1e-9·(|v_i| + |v_j| + cl)` lies below
   v_i and is skipped, on both sides, changing no bit), and value = min over the c_i in slot order; then, if `fuse` is truthy
   (JS truthiness: not 0, −0 or NaN), the pad fill per region in region order,
-  `min(value, f + (1 − g)·cl)` with f = `unionN([c'_a, c'_b], 2, PAD_BLEND)` (PAD_BLEND
+  `min(value, f + (1 − g)·(cl + PAD_BLEND / 4))` with f = `unionN([c'_a, c'_b], 2, PAD_BLEND)` (PAD_BLEND
   = 1.5) maxed, in slot order, with `(min(v_a, v_b) − v_j + cl) · 0.5` for every slot j
   other than a and b where its gate weight g > 0 (no term
   where g is 0 or NaN), c'_a being c_a's max over every slot but b (and c'_b

@@ -43,11 +43,11 @@ export function contactRegions(view, n, path) {
     }
     for (const { c, delta, rho } of clusters) {
       if (n.fuse) fill.push(a, b, c[0], c[1], c[2], rho);   // the pair's pad fill (gap 0 only)
-      // The bump's falloff radius grows with the press depth; its height at the rim (rho, where
-      // the skin is seen) is the node's bulge scaled by depth — the centre's amplitude A is
-      // raised by 1/φ(rho/rb) so the visible swell, not the buried peak, is `bulge` mm.
-      const rb = rho + BULGE_SPREAD * delta + 2 * n.bulge, t = rho / rb;
-      const A = (n.bulge * Math.min(1, delta / BULGE_FULL_DEPTH)) / ((1 - t * t) * (1 - t * t));
+      // The bump's falloff radius grows with the press depth; its peak is the node's bulge
+      // scaled by depth, so no skin anywhere swells more than `bulge` mm (a flat contact's
+      // sides lie well inside rho: a height set at the rim would blow up there).
+      const rb = rho + BULGE_SPREAD * delta + 2 * n.bulge;
+      const A = n.bulge * Math.min(1, delta / BULGE_FULL_DEPTH);
       if (!(A > 0)) continue;   // bulge 0: an all-zero offset; leave the slot unbulged
       per[a].push(c[0], c[1], c[2], A, rb);
       per[b].push(c[0], c[1], c[2], A, rb);

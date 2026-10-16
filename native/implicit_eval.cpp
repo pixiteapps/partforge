@@ -616,7 +616,7 @@ void run(Session& s, const Program& p, const double* X, const double* Y, const d
                 double f = union2(cut_piece(g, nK, ia, ib, cl, pairA, w), cut_piece(g, nK, ib, ia, cl, pairA, w), PAD_BLEND);
                 const double m = jsmin(g[ia], g[ib]);
                 for (int j = 0; j < nK; j++) if (j != ia && j != ib) f = jsmax(f, (m - g[j] + cl) * 0.5);
-                value = jsmin(value, f + (1 - gw) * cl);
+                value = jsmin(value, f + (1 - gw) * (cl + PAD_BLEND / 4));
               }
             }
           }
