@@ -19,15 +19,47 @@ const reScalar = new RegExp(`^(>=|<=|>|<)?\\s*(${NUM})\\s*${U}$`);
 const reRange = new RegExp(`^(${NUM})\\s*\\.\\.\\s*(${NUM})\\s*${U}$`);
 const reVec = /^(>=|<=)\s*\[\s*(.+?)\s*\]$/;
 
+// A vector with no comparison — `[40,40,10]` or `"[40,40,10]"` (or `"=[…]"`) — is the
+// commonest slip: the writer means "exactly this size". A vector is only ever
+// one-sided, so the error hands back both legal spellings built from the writer's
+// own numbers, which is a one-step fix. Returns that hint, or null when `expr` is
+// not a bare vector. An exact vector is deliberately not offered: a mesh's box is
+// tessellation-dependent (a curved face chords inside its true extent), so no
+// tolerance would be honest for every part.
+const reBareVec = /^(?:==?)?\s*\[(.*)\]$/;
+const VEC_TAIL = "(componentwise; * skips an axis)";
+
+export function bareVectorHint(expr) {
+  let comps;
+  if (Array.isArray(expr)) comps = expr.map((c) => String(c).trim());
+  else if (typeof expr === "string") {
+    const m = expr.trim().match(reBareVec);
+    if (!m) return null;
+    comps = m[1].split(",").map((t) => t.trim());
+  } else return null;
+  comps = comps.map((c) => c.replace(/\s*mm$/, ""));
+  const ok = comps.length === 3 && comps.every((c) => c === "*" || (c !== "" && Number.isFinite(Number(c))));
+  if (!ok) return `use "<=[x,y,z]" or ">=[x,y,z]" (exactly 3 plain numbers in mm; componentwise; * skips an axis)`;
+  const v = `[${comps.join(",")}]`;
+  return `use "<=${v}" or ">=${v}" ${VEC_TAIL}`;
+}
+
+const show = (expr) => (typeof expr === "string" ? `"${expr}"` : JSON.stringify(expr));
+
 export function parseAssertion(expr) {
   if (typeof expr === "number" || typeof expr === "boolean") return { op: "eq", value: expr };
+  const bare = bareVectorHint(expr);
+  if (bare) throw new Error(`assertion: a vector needs a comparison, got ${show(expr)} — ${bare}`);
   if (typeof expr !== "string") throw new Error(`assertion: unsupported value ${JSON.stringify(expr)}`);
   const s = expr.trim();
 
   const vec = s.match(reVec);
   if (vec) {
     const parts = vec[2].split(",").map((t) => t.trim());
-    if (parts.length !== 3) throw new Error(`assertion: vector needs 3 components: "${expr}"`);
+    const plain = (t) => t === "*" || (t !== "" && Number.isFinite(Number(t)));
+    if (parts.length !== 3 || !parts.every(plain)) {
+      throw new Error(`assertion: a vector takes exactly 3 components, each a plain number in mm or *: "${expr}"`);
+    }
     return { op: vec[1] === "<=" ? "vle" : "vge", vec: parts.map((t) => (t === "*" ? null : toBase(t, undefined))) };
   }
   const range = s.match(reRange);
