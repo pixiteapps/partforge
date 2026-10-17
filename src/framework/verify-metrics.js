@@ -15,6 +15,54 @@
 // sheet/constants.js, lint/finding.js) — so the linter's stays kernel-free.
 import { SHEET_METRICS } from "./process/registry.js";
 
+// `bounds` is written the way measure() reports it — `bounds: { min: [x,y,z], max:
+// [x,y,z] }` — so a reader who copies the shape of a measurement gets a legal
+// expectation: `bounds: { min: ">=[0,0,0]", max: "<=[220,220,250]" }`. It is the one
+// COMPOUND metric: its value is an object of `sides`, each an ordinary vector
+// expectation checked on its own and reported as `bounds.min` / `bounds.max`. Either
+// side may be left out; nothing else may sit under it (boundsSpecError).
+export const BOUNDS_FORM = 'bounds: { min: ">=[x,y,z]", max: "<=[x,y,z]" }';
+const BOUNDS_HINT = `write ${BOUNDS_FORM} — either side may be left out, and * skips an axis`;
+
+function boundsMetric(bounds, minHint, maxHint) {
+  return { kind: "gate", hint: BOUNDS_HINT, sides: {
+    min: { kind: "gate", form: "vector", extract: (f) => bounds(f)?.min, hint: minHint },
+    max: { kind: "gate", form: "vector", extract: (f) => bounds(f)?.max, hint: maxHint },
+  } };
+}
+
+// The flat spellings `bounds` replaced. Still evaluated, so a part written against
+// them keeps verifying, but `legacy` keeps them out of everything that TEACHES the
+// vocabulary: lint's list of valid metrics and its did-you-mean (teachableMetrics).
+function legacyBounds(bounds, minHint, maxHint) {
+  return {
+    boundsMin: { kind: "gate", form: "vector", legacy: "bounds", extract: (f) => bounds(f)?.min, hint: minHint },
+    boundsMax: { kind: "gate", form: "vector", legacy: "bounds", extract: (f) => bounds(f)?.max, hint: maxHint },
+  };
+}
+
+// The metric names a reader should be shown: every registry key but the legacy ones.
+export const teachableMetrics = (registry) => Object.keys(registry).filter((k) => !registry[k].legacy);
+
+// Why a compound metric's value is malformed, or null when it is well formed. verify
+// throws with it and lint reports it, so both say the same thing.
+export function sidesSpecError(metric, reg, spec) {
+  const sides = Object.keys(reg.sides);
+  const form = metric === "bounds" ? BOUNDS_FORM : `${metric}: { ${sides.join(", ")} }`;
+  if (spec === null || typeof spec !== "object" || Array.isArray(spec)) {
+    let shown;
+    try { shown = JSON.stringify(spec); } catch { shown = String(spec); }
+    return `${metric} takes an object { ${sides.join(", ")} }, got ${shown} — write ${form}`;
+  }
+  const keys = Object.keys(spec);
+  const unknown = keys.filter((k) => !sides.includes(k));
+  if (unknown.length) {
+    return `${metric} accepts only ${sides.map((k) => `"${k}"`).join(" and ")}, got ${unknown.map((k) => `"${k}"`).join(", ")} — write ${form}`;
+  }
+  if (!keys.length) return `${metric} needs at least one of ${sides.join(" or ")} — write ${form}`;
+  return null;
+}
+
 export const SUBPART_METRICS = {
   holes: { kind: "gate", manifoldOnly: true, extract: (s) => s.holes,
     hint: "genus is wrong — an unintended tunnel exists or an intended bore is blocked; make cut tools pierce fully (overcut past the faces)" },
@@ -27,14 +75,16 @@ export const SUBPART_METRICS = {
     hint: "surface area is out of range — detail features (facets, ribs, textures) are missing or doubled" },
   triangleCount: { kind: "gate", extract: (s) => s.triangleCount,
     hint: "triangle count is out of range — tessellation quality or feature count changed unexpectedly" },
-  bbox: { kind: "gate", extract: (s) => s.bbox,
+  bbox: { kind: "gate", form: "vector", extract: (s) => s.bbox,
     hint: "bounding box is out of range — check the governing dimensions and the part's orientation" },
-  centerOfMass: { kind: "gate", extract: (s) => s.centerOfMass,
+  centerOfMass: { kind: "gate", form: "vector", extract: (s) => s.centerOfMass,
     hint: "center of mass is outside the expected region — mass is distributed differently than intended; check feature placement or a mis-scaled sub-part" },
-  boundsMin: { kind: "gate", extract: (s) => s.bounds?.min,
-    hint: "the low corner is out of range — the part is positioned or oriented differently than expected" },
-  boundsMax: { kind: "gate", extract: (s) => s.bounds?.max,
-    hint: "the high corner is out of range — the part is positioned or oriented differently than expected" },
+  bounds: boundsMetric((s) => s.bounds,
+    "the low corner is out of range — the part is positioned or oriented differently than expected",
+    "the high corner is out of range — the part is positioned or oriented differently than expected"),
+  ...legacyBounds((s) => s.bounds,
+    "the low corner is out of range — the part is positioned or oriented differently than expected",
+    "the high corner is out of range — the part is positioned or oriented differently than expected"),
   minWall: { kind: "warn", extract: (s) => s.minWall,
     hint: "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
     pattern: "minwall-sliver-triangles",
@@ -87,17 +137,19 @@ export const SUBPART_METRICS = {
   ...SHEET_METRICS,
 };
 export const VIEW_METRICS = {
-  bbox: { kind: "gate", extract: (r) => r.aggregate.bbox,
+  bbox: { kind: "gate", form: "vector", extract: (r) => r.aggregate.bbox,
     hint: "the assembled view exceeds its size limit — shrink the assembly or pick a process with a larger bed" },
   volume: { kind: "gate", extract: (r) => r.aggregate.volume,
     hint: "total assembly volume is out of range — a sub-part is missing, doubled, or mis-scaled" },
   overlaps: { kind: "gate", extract: (r) => r.overlaps.length,
     hint: "sub-parts interpenetrate near the reported location — adjust placement or add clearance in derive()",
     locate: (r) => r.overlaps[0]?.location ?? null },
-  centerOfMass: { kind: "gate", extract: (r) => r.aggregate.centerOfMass,
+  centerOfMass: { kind: "gate", form: "vector", extract: (r) => r.aggregate.centerOfMass,
     hint: "the assembly's center of mass is outside the expected region — a sub-part is mis-placed or mis-scaled" },
-  boundsMin: { kind: "gate", extract: (r) => r.aggregate.bounds?.min,
-    hint: "the assembly's low corner is out of range — check placement or orientation" },
-  boundsMax: { kind: "gate", extract: (r) => r.aggregate.bounds?.max,
-    hint: "the assembly's high corner is out of range — check placement or orientation" },
+  bounds: boundsMetric((r) => r.aggregate.bounds,
+    "the assembly's low corner is out of range — check placement or orientation",
+    "the assembly's high corner is out of range — check placement or orientation"),
+  ...legacyBounds((r) => r.aggregate.bounds,
+    "the assembly's low corner is out of range — check placement or orientation",
+    "the assembly's high corner is out of range — check placement or orientation"),
 };
