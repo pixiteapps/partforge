@@ -147,3 +147,66 @@ test("a pure probe raises no build findings", () => {
   expect(ids(r.errors)).toEqual([]);
   expect(ids(r.warnings)).toEqual([]);
 });
+
+// A throw after the build consulted a stubbed DATA query (contains, boundingBox,
+// area, …: answers the geometry-free probe fabricates) proves nothing about the
+// part — the build may simply have believed the fabricated answer. It is a note,
+// never an error, so a part that builds fine is not blocked from loading.
+test("a throw after a stubbed data query is a note, not an error — and the part really builds", async () => {
+  const { default: part } = await import("./fixtures/stub-query-truss-part.js");
+  const r = lintPart(part);
+  // partforge-cloud's loadPart refuses a part exactly when `ok` is false (with any
+  // non-source error); the CLI's `lint --strict` gate is pinned in lint-cli.test.js.
+  expect(r.ok).toBe(true);
+  expect(ids(r.errors)).toEqual([]);
+  expect(ids(r.warnings)).toEqual([]);
+  const n = r.notes.find((f) => f.rule === "build-throws");
+  expect(n.severity).toBe("note");
+  expect(n.message).toContain("Truss pitch is too large");
+  expect(n.message).toMatch(/could not be evaluated geometry-free/);
+  expect(n.message).toContain("contains");
+  expect(n.path).toBe("parts.truss.build");
+  const { bootManifoldKernel } = await import("../src/testing.js");
+  const k = await bootManifoldKernel();
+  try {
+    const mesh = part.parts.truss.build(k, part.defaults, {}).toMesh();
+    expect(mesh.triangles).toBeGreaterThan(0);
+  } finally { k.cleanup?.(); }
+});
+
+test("a build that throws with no stubbed query consulted is still an error", () => {
+  const r = lintPart(partWith((k) => { k.cylinder({ r: 5, h: 10 }).translate([1, 0, 0]); throw new Error("always"); }));
+  expect(ids(r.errors)).toContain("build-throws");
+  expect(r.notes.map((f) => f.rule)).not.toContain("build-throws");
+});
+
+test("a throw after a stubbed query is a note even when the throw looks unrelated", () => {
+  // Lint cannot tell what a throw depended on once a fabricated answer is in play,
+  // so it does not guess; the real build reports the real error at runtime.
+  const r = lintPart(partWith((k) => {
+    const s = k.shape2d([[0, 0], [1, 0], [1, 1]]);
+    s.contains([0.5, 0.2]);
+    return null.extrude({ h: 1 });
+  }));
+  expect(ids(r.errors)).not.toContain("build-throws");
+  expect(r.notes.map((f) => f.rule)).toContain("build-throws");
+});
+
+test("query tracking is per build: one sub-part's query does not excuse another's throw", () => {
+  const part = partWith((k) => k.box({ size: [1, 1, 1] }).boundingBox() && k.box({ size: [1, 1, 1] }));
+  part.parts.lid = { views: ["main"], build: () => { throw new Error("lid maths"); } };
+  const r = lintPart(part);
+  expect(ids(r.errors)).toContain("build-throws");
+  expect(find(r, "build-throws").path).toBe("parts.lid.build");
+});
+
+test("a probe that throws stays an error, even after a stubbed query", () => {
+  // At runtime a throwing probe degrades quietly to { error } — this error is what
+  // makes it loud, and probes exist to read queries, so the note is builds-only.
+  const r = lintPart(partWith((k) => k.box({ size: [1, 1, 1] }), { probes: {
+    gap: (k) => { if (k.box({ size: [2, 2, 2] }).volume() < 5) throw new Error("too small"); return 1; },
+    slab: () => { throw new Error("bad slab maths"); },
+  } }));
+  expect(r.errors.filter((f) => f.rule === "probe-throws").map((f) => f.path)).toEqual(["probes.gap", "probes.slab"]);
+  expect(r.notes.map((f) => f.rule)).not.toContain("probe-throws");
+});

@@ -1,7 +1,7 @@
 // Group 3 — how the build uses the kernel, discovered by executing build() against
 // the validating probe with no geometry kernel. Every error in this group already
 // throws at runtime; the value is reaching it in microseconds, before a WASM boot.
-import { err, warn } from "./finding.js";
+import { err, note, warn } from "./finding.js";
 import { ROUTED_CAD_OPS } from "../geometry/kernel.js";
 import { MAX_PROBE_OPS } from "../geometry/probe.js";
 
@@ -9,6 +9,19 @@ import { MAX_PROBE_OPS } from "../geometry/probe.js";
 // pinned-Manifold part may use them; only the still-unimplemented ops error here.
 const OCCT_ONLY = new Set(ROUTED_CAD_OPS);
 const unique = (xs) => [...new Set(xs)];
+
+// A throw after the call read a query the probe answers with a placeholder
+// (contains() always false, boundingBox() a unit box, area()/volume() 1, …) proves
+// nothing: the build may only have believed the placeholder — a part that scans
+// contains() to place ribs finds none and throws its own guard, then builds fine on
+// a real kernel. That is a NOTE (seen, never gating load, measure or --strict), the
+// way rules that cannot evaluate something stand down rather than guess. A throw
+// with no such read is the build's own logic and stays an error.
+const STUB_HINT = (queried) =>
+  `Nothing to fix if the part builds on a real kernel. Before throwing, this call read ${queried.join(", ")}, and with no kernel attached those answers are placeholders (Shape2D.contains() is always false, boundingBox() a unit box, area() and volume() 1), so a guard that depends on them can fire here and nowhere else. A genuine fault still surfaces when the real build runs.`;
+const stubbedThrow = (rule, what, message, queried, path) =>
+  note(rule, `${what} threw after reading ${queried.join(", ")}, so it could not be evaluated geometry-free: ${message}`,
+    STUB_HINT(queried), path);
 
 export const BUILD_RULES = [
   {
@@ -45,10 +58,11 @@ export const BUILD_RULES = [
   },
   {
     id: "build-throws",
-    run: ({ probe }) => probe().throws.map(({ subpart, message }) =>
-      err("build-throws", `sub-part "${subpart}" threw during a geometry-free build: ${message}`,
+    run: ({ probe }) => probe().throws.map(({ subpart, message, queried }) => (queried.length
+      ? stubbedThrow("build-throws", `sub-part "${subpart}"`, message, queried, `parts.${subpart}.build`)
+      : err("build-throws", `sub-part "${subpart}" threw during a geometry-free build: ${message}`,
         "Fix the error in build(). This was raised with no kernel attached, so it is a fault in the build's own logic (bad arithmetic, a missing param, a null dereference) rather than a geometry failure.",
-        `parts.${subpart}.build`)),
+        `parts.${subpart}.build`))),
   },
   {
     // Same class of fault as build-throws, located at the probe. A throwing
