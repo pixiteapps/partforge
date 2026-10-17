@@ -507,6 +507,16 @@ export type AssertionExpr = number | string | boolean;
 export type Expectation = AssertionExpr | { expr: AssertionExpr; hint?: string };
 
 /**
+ * `bounds`: where the geometry sits, written in the same `{ min, max }` shape
+ * `measure` reports — `{ min: ">=[0,0,0]", max: "<=[220,220,250]" }`. Each side is
+ * a componentwise vector expectation (`*` skips an axis); either may be left out.
+ */
+export interface BoundsExpectation {
+  min?: Expectation;
+  max?: Expectation;
+}
+
+/**
  * Per-sub-part expectations. The keys are exactly `SUBPART_METRICS` in
  * src/framework/verify-metrics.js. `holes`/`watertight` are Manifold-only and
  * SKIP on an OCCT part; `minWall` is a warning, never a gate.
@@ -519,7 +529,11 @@ export interface SubPartExpectations {
   triangleCount?: Expectation;
   bbox?: Expectation;
   centerOfMass?: Expectation;
+  /** The axis-aligned corners: `{ min: ">=[x,y,z]", max: "<=[x,y,z]" }`, as `measure` reports `bounds`. */
+  bounds?: BoundsExpectation;
+  /** @deprecated Write `bounds: { min }` — still evaluated, no longer taught. */
   boundsMin?: Expectation;
+  /** @deprecated Write `bounds: { max }` — still evaluated, no longer taught. */
   boundsMax?: Expectation;
   minWall?: Expectation;
   /**
@@ -574,7 +588,11 @@ export interface ViewExpectations {
   volume?: Expectation;
   overlaps?: Expectation;
   centerOfMass?: Expectation;
+  /** The axis-aligned corners: `{ min: ">=[x,y,z]", max: "<=[x,y,z]" }`, as `measure` reports `bounds`. */
+  bounds?: BoundsExpectation;
+  /** @deprecated Write `bounds: { min }` — still evaluated, no longer taught. */
   boundsMin?: Expectation;
+  /** @deprecated Write `bounds: { max }` — still evaluated, no longer taught. */
   boundsMax?: Expectation;
   /** Pairs that must touch, as `[["a", "b"], …]`. */
   contacts?: Array<[string, string]>;

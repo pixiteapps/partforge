@@ -4,7 +4,7 @@ import { pairKey, CONTACT_EPS } from "./gaps.js";
 import { resolveProfile, overhangAngleFor } from "./dfm-profiles.js";
 import { expandExpectations, partGatesMinWall } from "./gates.js";
 import { relevanceHash } from "../param-deps.js";
-import { SUBPART_METRICS, VIEW_METRICS } from "../verify-metrics.js";
+import { SUBPART_METRICS, VIEW_METRICS, sidesSpecError } from "../verify-metrics.js";
 import { processById } from "../process/registry.js";
 import { SHEET_DOC_ID, SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../sheet/constants.js";
 // Re-exported for the callers that read them from here; their one home is sheet/constants.js.
@@ -173,6 +173,21 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
   return out;
 }
 
+// Every check one declared metric yields: one, or one per side of a compound metric
+// (`bounds: { min, max }` → `bounds.min`, `bounds.max`), each judged by `check()` against
+// its side's own registry entry. A malformed compound value throws, as a malformed
+// expression does.
+function checksFor(scope, subpart, metric, spec, registry, factsObj) {
+  const reg = registry[metric];
+  if (!reg?.sides) return [check(scope, subpart, metric, spec, registry, factsObj)];
+  const bad = sidesSpecError(metric, reg, spec);
+  if (bad) throw new Error(`${scope === "view" ? "_view" : subpart}: ${bad}`);
+  return Object.entries(spec).map(([side, sideSpec]) => {
+    const name = `${metric}.${side}`;
+    return check(scope, subpart, name, sideSpec, { [name]: reg.sides[side] }, factsObj);
+  });
+}
+
 // ── sheet parts ──────────────────────────────────────────────────────────────
 // A view holding a sheet part (sheetPart(), partforge/geometry — measure() stamps
 // its row with `sheet`) is judged per part: the process profile's bed fits each
@@ -220,8 +235,7 @@ function sheetRowChecks(s, declaredExp) {
   const budgeted = (metric) => SUBPART_METRICS[metric]?.budgeted === true;
   const unread = (c, metric) => (c.actual == null ? SUBPART_METRICS[metric]?.readError?.(s) ?? null : null);
   const readFailure = (c, why) => ({ ...c, message: `not measured — ${why}`, hint: SHEET_READ_ERROR_HINT, pattern: SHEET_DOC_ID });
-  for (const [metric, expr] of Object.entries(declaredExp)) {
-    const c = check("subpart", s.name, metric, expr, SUBPART_METRICS, s);
+  for (const [metric, expr] of Object.entries(declaredExp)) for (const c of checksFor("subpart", s.name, metric, expr, SUBPART_METRICS, s)) {
     if (PRINT_ONLY.has(metric)) {
       out.push({ scope: c.scope, subpart: c.subpart, metric, kind: c.kind, expr: c.expr, actual: null, status: "skip", pass: null,
         message: "not measured on a sheet part", hint: PRINT_ONLY_HINT, pattern: SHEET_DOC_ID });
@@ -269,7 +283,7 @@ export function evaluateCase(facts, { profile, expect, subPartNames, overhang = 
     ...(profile?.bed && !anySheet ? { bbox: `<=[${profile.bed.join(",")}]` } : {}),
     ...viewScalarExp,
   };
-  for (const [metric, expr] of Object.entries(viewExp)) checks.push(check("view", null, metric, expr, VIEW_METRICS, facts));
+  for (const [metric, expr] of Object.entries(viewExp)) checks.push(...checksFor("view", null, metric, expr, VIEW_METRICS, facts));
   checks.push(...pairGapChecks(facts, { contacts, clearance }, subPartNames));
 
   // Same rule as gapsSkipped above, one metric over: a min-wall gate with no reading
@@ -297,8 +311,7 @@ export function evaluateCase(facts, { profile, expect, subPartNames, overhang = 
       ...(overhang != null ? { overhangArea: "<=1" } : {}),
       ...(expect?.[s.name] ?? {}),
     };
-    for (const [metric, expr] of Object.entries(merged)) {
-      const c = check("subpart", s.name, metric, expr, SUBPART_METRICS, s);
+    for (const [metric, expr] of Object.entries(merged)) for (const c of checksFor("subpart", s.name, metric, expr, SUBPART_METRICS, s)) {
       if (minWallSkipped && (metric === "minWall" || metric === "wall") && c.actual == null) {
         checks.push({ ...c, unevaluated: true, message: "not measured (quick check)",
           hint: `re-run this check without \`quick\` to measure ${metric === "wall" ? "the wall band" : "min wall"}` });
