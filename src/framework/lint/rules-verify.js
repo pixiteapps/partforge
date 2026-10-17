@@ -3,9 +3,9 @@
 // which is also the documented reason CLI stdout isn't pure JSON in that case.
 // Catching them statically removes both the wasted boot and the stdout caveat.
 import { err } from "./finding.js";
-import { SUBPART_METRICS, VIEW_METRICS } from "../verify-metrics.js";
+import { SUBPART_METRICS, VIEW_METRICS, BOUNDS_FORM, teachableMetrics, sidesSpecError } from "../verify-metrics.js";
 import { PROFILES, ORIENTATIONS } from "../oracle/dfm-profiles.js";
-import { parseAssertion } from "../oracle/assert-dsl.js";
+import { parseAssertion, bareVectorHint } from "../oracle/assert-dsl.js";
 import { suggest } from "../geometry/op-options.js";
 import { PROCESS_IDS } from "../process/registry.js";
 import { SHEET_DOC_ID } from "../sheet/constants.js";
@@ -187,6 +187,46 @@ function checkProcessSpec(spec, path, valid, seen, depth = 0) {
     path)];
 }
 
+// One expectation's well-formedness against its registry entry: it parses, and it has the form the
+// metric reads — a range for `wall`, a componentwise vector for bbox/centerOfMass/the
+// sides of bounds. A bare vector gets the two legal spellings back, in its own numbers.
+const DSL_HINT = "Use the assertion DSL: a bare value for equality, a comparison like `>=3`, a range like `2..5`, or a componentwise vector like `<=[60,60,60]` (with `*` to skip an axis).";
+const capitalize = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+
+function checkExpr(target, metric, spec, reg) {
+  const path = `verify.expect.${target}.${metric}`;
+  const expr = exprOf(spec);
+  let parsed;
+  try { parsed = parseAssertion(expr); }
+  catch (e) {
+    const bare = bareVectorHint(expr);
+    return [err("verify-bad-expr",
+      `the expectation for ${target}.${metric} is not a valid assertion: ${e?.message || String(e)}`,
+      bare ? `${capitalize(bare)}. A vector expectation is one-sided: "<=" for a limit, ">=" for a floor.` : DSL_HINT,
+      path)];
+  }
+  const form = reg?.form;
+  if (form === "range" && parsed.op !== "range") {
+    return [err("verify-bad-expr",
+      `the expectation for ${target}.${metric} must be a range like "1.8..2.2" — the ${metric} metric needs both ends of its band`,
+      `Write ${metric} as \`"<min>..<max>"\` in mm.`,
+      path)];
+  }
+  if (form === "range" && parsed.min > parsed.max) {
+    return [err("verify-bad-expr",
+      `the expectation for ${target}.${metric} must be a range with min <= max, got "${expr}"`,
+      `Write ${metric} as \`"<min>..<max>"\` with min <= max, in mm.`,
+      path)];
+  }
+  if (form === "vector" && parsed.op !== "vle" && parsed.op !== "vge") {
+    return [err("verify-bad-expr",
+      `the expectation for ${target}.${metric} must be a componentwise vector, got ${describe(expr)} — ${metric} is an [x,y,z] reading`,
+      `Write ${metric} as \`"<=[x,y,z]"\` or \`">=[x,y,z]"\` (componentwise; * skips an axis).`,
+      path)];
+  }
+  return [];
+}
+
 export const VERIFY_RULES = [
   {
     id: "verify-expect-throws",
@@ -229,9 +269,12 @@ export const VERIFY_RULES = [
         // separately by verify-bad-pair-check, and excluded here.
         const metrics = target === "_view" ? peelPairKeys(metricsRaw) : metricsRaw;
         const registry = target === "_view" ? VIEW_METRICS : SUBPART_METRICS;
-        const valid = Object.keys(registry);
+        // Legacy spellings (boundsMin/boundsMax) still pass this rule, since verify
+        // still evaluates them, but are never listed or suggested: the vocabulary a
+        // reader is shown is the one the docs teach.
+        const valid = teachableMetrics(registry);
         for (const metric of Object.keys(metrics)) {
-          if (valid.includes(metric)) continue;
+          if (Object.hasOwn(registry, metric)) continue;
           const hint = suggest(metric, valid);
           out.push(err("verify-unknown-metric",
             `"${metric}" is not a ${target === "_view" ? "view" : "sub-part"} metric`,
@@ -256,28 +299,28 @@ export const VERIFY_RULES = [
         // though, so they get their own pass (with a pair-shaped path) below.
         const metrics = target === "_view" ? peelPairKeys(metricsRaw) : metricsRaw;
         const registry = target === "_view" ? VIEW_METRICS : SUBPART_METRICS;
-        for (const [metric, spec] of Object.entries(metrics)) {
-          let parsed;
-          try { parsed = parseAssertion(exprOf(spec)); }
-          catch (e) {
-            out.push(err("verify-bad-expr",
-              `the expectation for ${target}.${metric} is not a valid assertion: ${e?.message || String(e)}`,
-              "Use the assertion DSL: a bare value for equality, a comparison like `>=3`, a range like `2..5`, or a componentwise vector like `<=[60,60,60]` (with `*` to skip an axis).",
-              `verify.expect.${target}.${metric}`));
+        for (const [metric, specRaw] of Object.entries(metrics)) {
+          // A compound metric (`bounds: { min, max }`) is checked side by side, each
+          // side an ordinary expectation against its own registry entry.
+          // An unknown metric is verify-unknown-metric's finding; parsing its value
+          // too would only add a second, vaguer error for the same key.
+          if (!Object.hasOwn(registry, metric)) continue;
+          const reg = registry[metric];
+          if (reg.sides) {
+            const bad = sidesSpecError(metric, reg, specRaw);
+            if (bad) {
+              out.push(err("verify-bad-expr",
+                `the expectation for ${target}.${metric} is malformed: ${bad}`,
+                `Write \`${BOUNDS_FORM}\` — the same { min, max } shape measure reports. Either side may be left out, and \`*\` skips an axis.`,
+                `verify.expect.${target}.${metric}`));
+              continue;
+            }
+            for (const [side, sideSpec] of Object.entries(specRaw)) {
+              out.push(...checkExpr(target, `${metric}.${side}`, sideSpec, reg.sides[side]));
+            }
             continue;
           }
-          const form = registry[metric]?.form;
-          if (form === "range" && parsed.op !== "range") {
-            out.push(err("verify-bad-expr",
-              `the expectation for ${target}.${metric} must be a range like "1.8..2.2" — the ${metric} metric needs both ends of its band`,
-              `Write ${metric} as \`"<min>..<max>"\` in mm.`,
-              `verify.expect.${target}.${metric}`));
-          } else if (form === "range" && parsed.op === "range" && parsed.min > parsed.max) {
-            out.push(err("verify-bad-expr",
-              `the expectation for ${target}.${metric} must be a range with min <= max, got "${exprOf(spec)}"`,
-              `Write ${metric} as \`"<min>..<max>"\` with min <= max, in mm.`,
-              `verify.expect.${target}.${metric}`));
-          }
+          out.push(...checkExpr(target, metric, specRaw, reg));
         }
       }
       out.push(...checkClearanceExprs(expect?._view?.clearance, "verify.expect._view.clearance"));
