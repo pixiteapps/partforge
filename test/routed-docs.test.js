@@ -24,7 +24,7 @@ test("Routed parts follows Sheet parts and precedes Convex hull", () => {
 test("the section is self-contained and under 12,000 characters", () => {
   const s = sectionOf("Routed parts");
   expect(s.length).toBeLessThanOrEqual(12000);
-  for (const must of ["routedPart(", "pockets", "drills", "extra", "footprint", "method", "reference", "POCKET_", "DRILL_D", "SECONDARY", "cnc-router", "routed-drill-depth", "routedOutside"]) {
+  for (const must of ["routedPart(", "pockets", "drills", "extra", "footprint", "method", "reference", "POCKET_", "DRILL_D", "SECONDARY", "cnc-router", "routed-drill-depth", "routedOutside", "face", "FAR_", "flip", "twoSided", "routedBreakthrough"]) {
     expect(s, must).toContain(must);
   }
   expect(s).not.toMatch(/\bsee ["“]?Sheet parts["”]? (above|below)/i);

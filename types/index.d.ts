@@ -67,6 +67,10 @@ export interface KitOptions {
   printFormat?: "stl" | "3mf";
   /** Whole number, 1–20. Default 1. */
   sets?: number;
+  /** Which way a two-sided board is turned over between sides — the axis far-side layers are mirrored about. Default `"left-right"`. */
+  flip?: "left-right" | "end-over-end";
+  /** Two-sided pieces: one layered file per piece (`"one-file"`, default), or a near file plus a `-far` file (`"two-files"`). */
+  twoSided?: "one-file" | "two-files";
 }
 
 /**
@@ -830,6 +834,8 @@ export const KIT_DEFAULTS: Readonly<{
   spacing: number;
   printFormat: "stl";
   sets: number;
+  flip: "left-right";
+  twoSided: "one-file";
 }>;
 
 /** Normalise kit options — defaults filled, `cutFormat` derived — or throw a `"cut kit options: …"` error. */

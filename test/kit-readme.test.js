@@ -162,6 +162,91 @@ describe("renderReadme", () => {
   });
 });
 
+const routerKit = {
+  title: "Board",
+  destination: "cnc-router", cutFormat: "dxf", kerf: 0, flip: "left-right", twoSided: "one-file", anyTwoSided: false,
+  stockNotes: [{ material: "walnut", thickness: 18, control: "Board thickness" }],
+  scale: [{ label: "Plinth", nominal: [100, 60], drawn: [100, 60] }],
+  sheets: [],
+  pieces: [{ file: "parts/plinth.dxf", marksFile: null, farFile: null, labels: ["Plinth"], material: "walnut", thickness: 18, size: [100, 60], quantity: 1 }],
+  router: [{ labels: ["Plinth"], material: "walnut", thickness: 18, twoSided: false, farFile: null,
+    pockets: [{ w: 30, h: 20, depth: 11.43, label: "vault", face: "near" }],
+    drills: [{ d: 3.4, count: 2, depth: 10, through: false, label: null, face: "near" }],
+    extra: [{ w: 10, h: 10, maxDepth: 5, label: "notch", method: "chisel, 10 mm", face: "near" }] }],
+  layers: [
+    { name: "SECONDARY", face: "near", colour: "6", depth: "—" },
+    { name: "POCKET_11.43MM", face: "near", colour: "30", depth: "11.43 mm" },
+  ],
+  printed: [], clearances: [], settings: [], checks: [], oversized: [], renamed: [],
+};
+
+describe("renderReadme — CNC router", () => {
+  test("a one-sided routed kit: face columns in the operations and legend tables", () => {
+    expect(renderReadme(routerKit)).toBe([
+      "Board — cut & print kit",
+      "",
+      "BEFORE YOU CUT",
+      'This kit assumes 18.00 mm walnut — if yours differs, change "Board thickness" and re-download.',
+      "Kerf: none — a CNC router's CAM applies the tool offset.",
+      "Scale check — measure one cut piece against its line:",
+      "Plinth: nominal 100.00 × 60.00 mm; this file draws the same (no kerf applied)",
+      "DXF layers: CUT (colour 1) is the through cut; POCKET_<depth>MM and DRILL_D<dia>_<depth>MM / _THRU carry one depth each; SECONDARY outlines operations done with another tool (see ROUTER OPERATIONS); REFERENCE is layout only. FAR_* layers are the same operations on the far face, drawn mirrored (see the flip note under each two-sided piece). Laser pieces keep CUT/SCORE/ENGRAVE.",
+      "Test-cut one joint first.",
+      "",
+      "PIECES",
+      "file | labels | material | thickness | size | quantity",
+      "parts/plinth.dxf | Plinth | walnut | 18.00 mm | 100.00 × 60.00 mm | 1",
+      "",
+      "ROUTER OPERATIONS",
+      "Plinth (walnut 18.00 mm) — depths from each op's own face:",
+      "op | face | label | size | depth | method",
+      "pocket | near | vault | 30.00 × 20.00 mm | 11.43 mm | mill",
+      "drill | near | — | Ø3.4 mm × 2 | 10.00 mm | drill",
+      "extra | near | notch | 10.00 × 10.00 mm | to 5.00 mm | chisel, 10 mm",
+      "LAYERS (one colour per layer across the kit):",
+      "layer | face | colour | depth",
+      "SECONDARY | near | 6 | —",
+      "POCKET_11.43MM | near | 30 | 11.43 mm",
+      "",
+      "CHECKS",
+      "none",
+      "",
+      "LIMITS",
+      "Layout packs bounding boxes only: no nesting into holes, and grain direction is ignored.",
+      "",
+    ].join("\n"));
+  });
+
+  test("a two-sided piece: the far rows, the flip and alignment notes, and the order of work", () => {
+    const twoSided = {
+      ...routerKit, anyTwoSided: true,
+      router: [{ ...routerKit.router[0], twoSided: true, farFile: null,
+        pockets: [...routerKit.router[0].pockets, { w: 30, h: 10, depth: 6, label: "recess", face: "far" }] }],
+      layers: [...routerKit.layers, { name: "FAR_POCKET_6MM", face: "far", colour: "20", depth: "6.00 mm" }],
+    };
+    const text = renderReadme(twoSided);
+    expect(text).toContain([
+      "pocket | far | recess | 30.00 × 10.00 mm | 6.00 mm | mill",
+      "drill | near | — | Ø3.4 mm × 2 | 10.00 mm | drill",
+      "extra | near | notch | 10.00 × 10.00 mm | to 5.00 mm | chisel, 10 mm",
+      "Far-side layers (FAR_*) are drawn as seen after flipping the board left-right, matching a VCarve two-sided job with Flip Direction = Horizontal.",
+      "On the bottom side, move the imported far-side vectors so their outline sits on the piece's outline as the CAM shows it from that side. Shortcut: make the job's material the piece's size, then centre the imported vectors on the material (VCarve: Align Selected Objects → Centre); because the far layers are mirrored about the piece's own centre, they then land exactly.",
+      "On the bottom side the CUT outline is for alignment only — cut the piece out from the near side.",
+      "LAYERS (one colour per layer across the kit):",
+    ].join("\n"));
+    expect(text).toContain("\nFAR_POCKET_6MM | far | 20 | 6.00 mm\n");
+    expect(text).toContain("\nTwo-sided pieces: machine the far side first, flip, then the near side and the through cut last, so the board holds the piece until the end. Sheet layouts in sheets/ carry near-side work only; far-side work is in the per-piece files.\nTest-cut one joint first.\n");
+
+    const twoFiles = renderReadme({ ...twoSided, flip: "end-over-end", twoSided: "two-files",
+      router: [{ ...twoSided.router[0], farFile: "parts/plinth-far.dxf" }] });
+    expect(twoFiles).toContain("Far-side layers (FAR_*) are drawn as seen after flipping the board end over end, matching a VCarve two-sided job with Flip Direction = Vertical.");
+    expect(twoFiles).toContain("\nFar-side work is in parts/plinth-far.dxf; its REFERENCE outline is for alignment, not cutting.\n");
+    expect(twoFiles).not.toContain("the CUT outline is for alignment only");
+    expect(renderReadme(routerKit)).not.toContain("Two-sided pieces");
+    expect(renderReadme(routerKit)).not.toContain("Far-side layers (FAR_*) are drawn");
+  });
+});
+
 describe("parts.csv", () => {
   test("CRLF, RFC 4180 quoting, and a quote mark ahead of anything a spreadsheet would run", () => {
     expect(renderPartsCsv([

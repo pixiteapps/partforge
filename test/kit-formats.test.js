@@ -28,7 +28,7 @@ describe("tables", () => {
   test("the prefix, defaults and limits", () => {
     expect(KIT_OPTIONS_ERROR).toBe("cut kit options:");
     expect(DEFAULT_STOCK_SIZE).toEqual([300, 300]);
-    expect(KIT_DEFAULTS).toEqual({ destination: "own-laser", kerf: 0, colors: "lightburn", stock: null, margin: 5, spacing: 3, printFormat: "stl", sets: 1 });
+    expect(KIT_DEFAULTS).toEqual({ destination: "own-laser", kerf: 0, colors: "lightburn", stock: null, margin: 5, spacing: 3, printFormat: "stl", sets: 1, flip: "left-right", twoSided: "one-file" });
     expect(KIT_LIMITS).toEqual({ kerf: [0, 0.5], margin: [0, 50], spacing: [1, 50], sets: [1, 20], stockEntries: 20, stockSide: [10, 3000], sheetsPerGroup: 50, pieces: 200 });
   });
 });
@@ -37,7 +37,7 @@ describe("validateKitOptions", () => {
   test("no options at all means every default, cutFormat derived", () => {
     expect(validateKitOptions(undefined)).toEqual({
       destination: "own-laser", cutFormat: "svg", kerf: 0, colors: "lightburn", stock: null,
-      margin: 5, spacing: 3, printFormat: "stl", sets: 1,
+      margin: 5, spacing: 3, printFormat: "stl", sets: 1, flip: "left-right", twoSided: "one-file",
     });
     expect(validateKitOptions({})).toEqual(validateKitOptions(undefined));
   });
@@ -50,7 +50,7 @@ describe("validateKitOptions", () => {
   test("a full, valid option set comes back normalized and copied", () => {
     const stock = [{ group: "birch plywood|3.00", size: [400, 300] }, { group: "*", size: [300, 200] }];
     const out = validateKitOptions({ destination: "own-laser", kerf: 0.2, colors: "lightburn", stock, margin: 0, spacing: 1, printFormat: "3mf", sets: 20 });
-    expect(out).toEqual({ destination: "own-laser", cutFormat: "svg", kerf: 0.2, colors: "lightburn", stock, margin: 0, spacing: 1, printFormat: "3mf", sets: 20 });
+    expect(out).toEqual({ destination: "own-laser", cutFormat: "svg", kerf: 0.2, colors: "lightburn", stock, margin: 0, spacing: 1, printFormat: "3mf", sets: 20, flip: "left-right", twoSided: "one-file" });
     expect(out.stock).not.toBe(stock);
     expect(out.stock[0].size).not.toBe(stock[0].size);
   });
@@ -59,7 +59,7 @@ describe("validateKitOptions", () => {
     refuses(null, "cut kit options: options must be an object");
     refuses([], "cut kit options: options must be an object");
     refuses("svg", "cut kit options: options must be an object");
-    refuses({ foo: 1 }, 'cut kit options: unknown option "foo" — the options are destination, cutFormat, kerf, colors, stock, margin, spacing, printFormat, sets');
+    refuses({ foo: 1 }, 'cut kit options: unknown option "foo" — the options are destination, cutFormat, kerf, colors, stock, margin, spacing, printFormat, sets, flip, twoSided');
     refuses({ destination: "laser" }, 'cut kit options: destination must be "own-laser", "service" or "cnc-router", got "laser"');
     refuses({ destination: "toString" }, 'cut kit options: destination must be "own-laser", "service" or "cnc-router", got "toString"');
     refuses({ cutFormat: "dxf" }, 'cut kit options: cutFormat "dxf" does not match destination "own-laser" (which writes svg)');
@@ -107,5 +107,20 @@ describe("resolveStock", () => {
       .toThrow('cut kit options: no stock size for "acrylic|2.00" (acrylic 2 mm) — add a stock entry for it or a "*" default');
     expect(() => resolveStock([], groups))
       .toThrow('cut kit options: no stock size for "birch plywood|3.00" (birch plywood 3 mm) — add a stock entry for it or a "*" default');
+  });
+});
+
+describe("two-sided options", () => {
+  test("defaults: left-right flip, one file", () => {
+    expect(KIT_DEFAULTS).toMatchObject({ flip: "left-right", twoSided: "one-file" });
+    expect(validateKitOptions({})).toMatchObject({ flip: "left-right", twoSided: "one-file" });
+  });
+  test("accepted on every destination", () => {
+    for (const destination of ["own-laser", "service", "cnc-router"])
+      expect(validateKitOptions({ destination, flip: "end-over-end", twoSided: "two-files" })).toMatchObject({ flip: "end-over-end", twoSided: "two-files" });
+  });
+  test("refused with the options prefix", () => {
+    expect(() => validateKitOptions({ flip: "vertical" })).toThrow('cut kit options: flip must be "left-right" or "end-over-end", got "vertical"');
+    expect(() => validateKitOptions({ twoSided: true })).toThrow('cut kit options: twoSided must be "one-file" or "two-files", got true');
   });
 });

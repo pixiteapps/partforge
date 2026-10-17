@@ -2037,7 +2037,7 @@ the assembled view, and `minWall` and the overhang check skip sheet parts.
 
 ### The kit
 
-A host downloads sheet parts as one ZIP, the **cut & print kit** (`format: "bundle"`): `README.txt`, `parts.csv`, laid-out `sheets/`, one `parts/` file per distinct piece (plus a `-marks.dxf` for a cutting service) and `print/` for printed parts. Identical pieces merge into one `-xN` file named from `export: { name }`, else the key. Destination (`"own-laser"`, `"service"` or `"cnc-router"`), kerf and stock size are chosen at download, so draw nominal and bind `thickness` to the measured control. A choice the kit cannot honour fails with `cut kit options:`.
+Sheet parts download as one ZIP, the **cut & print kit** (`format: "bundle"`): `README.txt`, `parts.csv`, laid-out `sheets/`, a `parts/` file per distinct piece (plus `-marks.dxf` for a cutting service), `print/` for printed parts. Identical pieces share one `-xN` file named from `export: { name }`, else the key. Destination (`"own-laser"`, `"service"`, `"cnc-router"`), kerf, stock size and a two-sided routed piece's flip and file count are chosen at download: draw nominal, bind `thickness` to the measured control. A choice it cannot honour fails with `cut kit options:`.
 
 ### Limits
 
@@ -2179,8 +2179,8 @@ renders and STEP all come from the one declaration — so model it once.
 
 ### When a sub-part is a routed part
 
-When it is machined from one face of a flat board: an outline, pockets with flat floors,
-holes, all straight down. A sculpted surface, a part machined from both faces, or
+When it is machined from one or both faces of a flat board: an outline, pockets with
+flat floors, holes, all straight down from whichever face. A sculpted surface or
 anything that is not flat stock is an ordinary `build` (export it as STEP). A laser-cut
 plate is `sheetPart`.
 
@@ -2197,8 +2197,12 @@ plinth: routedPart({
   pockets: (k, p, d) => [
     { region: k.shape2d(roundedRectProfile(d.vaultW, d.vaultL, 2)).translate([0, -9]), depth: 11.43, label: "peg vault" },
     { region: k.shape2d(roundedRectProfile(d.pocketW, d.pocketL, 4)).translate([-58, -10]), depth: p.inlayThickness, label: "inlay pocket" },
+    { region: k.shape2d(roundedRectProfile(40, 20, 3)).translate([60, 0]), depth: 4, face: "far", label: "felt recess" },
   ],
-  drills: (p, d) => d.pegHoles.map(([x, y]) => ({ at: [x, y], d: p.pegHoleDia, depth: 10 })),
+  drills: (p, d) => [
+    ...d.pegHoles.map(([x, y]) => ({ at: [x, y], d: p.pegHoleDia, depth: 10 })),
+    { at: [-60, 30], d: 8, depth: 6, face: "far", label: "foot socket" },   // from the underside
+  ],
   extra: (k, p, d) => [{
     solid: k.box({ size: [d.rackL, 12, 14] }).rotateX(-p.rackTilt).at([0, d.rackY, p.baseThickness - 9.5]),
     footprint: k.shape2d(roundedRectProfile(d.rackL, 12, 2)).translate([0, d.rackY]),
@@ -2213,21 +2217,22 @@ plinth: routedPart({
 `exportable` pass through. A field needing the kernel is `(k, p, d) => …`; `drills` is
 `(p, d) => …`. `build` is supplied — passing one throws, as do `kerf`, `score`,
 `engrave` and `process`; each error names the fix. The drawing is in XY with the
-machined face at z = `thickness`; `pose` places it exactly as a sheet part's does.
+near face at z = `thickness` and the far face at z = 0; `pose` places it exactly as a
+sheet part's does.
 
 ### Pockets, drills, extra ops and reference lines
 
-- **`pockets`** — `[{ region, depth, label? }]`: a Shape2D or profile machined `depth`
-  mm down from the machined face, flat-floored. `depth` may equal `thickness` (a
+- **`pockets`** — `[{ region, depth, label?, face? }]`: a Shape2D or profile machined
+  `depth` mm into the stock from its face, flat-floored. `depth` may equal `thickness` (a
   through pocket); deeper is a build error naming the pocket. Pockets whose depths agree to
   two decimals share a DXF layer.
-- **`drills`** — `[{ at: [x, y], d, depth, label? }]`: a round hole of diameter `d`.
+- **`drills`** — `[{ at: [x, y], d, depth, label?, face? }]`: a round hole of diameter `d`.
   Set `depth` to the thickness to drill through — deeper is a `routed-drill-depth`
   lint error. Written as a DXF `CIRCLE`, which is what lets
   the CAM offer a drilling toolpath instead of a profile cut.
-- **`extra`** — `[{ solid, footprint, label, method }]`: an operation the router cannot
-  do straight down — a tilted slot, a scooped thumb hold, an undercut. `solid` is cut in
-  the preview and the STEP; `footprint` (its outline on the machined face) is drawn on
+- **`extra`** — `[{ solid, footprint, label, method, face? }]`: an operation the router
+  cannot do straight down — a tilted slot, a scooped thumb hold, an undercut. `solid` is
+  cut in the preview and the STEP; `footprint` (its outline on its face) is drawn on
   the `SECONDARY` layer; `label` and `method` are REQUIRED and go in the README's
   operations table so the operator knows what to make and how ("core box bit, 20 mm
   radius"). Do not put a flat-floored pocket here to avoid stating its depth.
@@ -2248,10 +2253,27 @@ and depth (colours 3, 4, 2, 140, 170); `SECONDARY` (6) the extra ops' footprints
 `REFERENCE` (8) layout lines. Depth rides both the layer name and the colour, and colours
 are assigned per kit — pockets shallowest depth first, drills in the order they appear —
 so one layer name has one colour in every file. A palette cycles past five depths; the
-README's LAYERS legend (layer, colour, depth) is the authority. Kerf
+README's LAYERS legend (layer, face, colour, depth) is the authority. Kerf
 never applies — the CAM applies the tool offset, and the kit refuses a kerf for this
 destination. The README's ROUTER OPERATIONS table lists every pocket, drill group and
-extra op with its depth and method.
+extra op with its face, depth and method.
+
+### Both faces
+
+Every pocket, drill and extra op takes `face`: `"near"` (the default, machined down
+from z = `thickness`) or `"far"` (machined up from z = 0 — the board turned over); any
+other value is a build error. `depth` is measured from the op's own face. Model the part
+in place, as assembled; the kit does the flipping. Far ops go on their own layers —
+`FAR_POCKET_<depth>MM`, `FAR_DRILL_D<dia>_…`, `FAR_SECONDARY` — mirrored about the
+piece's centre so they read as the router sees the far face. Two kit options apply to a
+piece with far work: `flip` — `"left-right"` (the default, VCarve's Flip Direction =
+Horizontal) or `"end-over-end"` (Vertical) — sets the mirror axis; `twoSided` —
+`"one-file"` (the default: both faces' layers in the piece's one DXF) or `"two-files"`
+(the far layers in `parts/<name>-far.dxf`, behind the mirrored outline on `REFERENCE`
+for alignment). In the CAM, line the far vectors' outline up on the piece's outline as
+seen from the bottom; the README says so and orders the work far side first, through
+cut last. `routedBreakthrough` counts a near and a far pocket that overlap and together
+go deeper than the stock.
 
 ### What lint and verify check
 
@@ -2259,14 +2281,17 @@ Lint: `routed-drill-depth` (error) — a drill deeper than the stock at the defa
 Every sheet rule applies too (`sheet-thickness-literal`, `sheet-custom-build`, …); the
 laser's thickness range does not. A pocket deeper than the stock is a build error.
 
-Verify volunteers three warnings on every routed part, none counting toward
+Verify volunteers four warnings on every routed part, none counting toward
 `declared`/`evaluated`: `routedOutside` (pocket, drill or footprint regions outside the
-profile, `0`), `routedEmpty` (pockets that resolved empty, `0`), `routedPieces` (`1`).
+profile, `0`), `routedEmpty` (pockets that resolved empty, `0`), `routedPieces` (`1`),
+`routedBreakthrough` (a near-face and a far-face pocket that overlap and together go
+deeper than the stock, `0`).
 Each measured row carries `sheet.routed` — the operations table — beside the stock facts.
 
 ### Limits
 
-- One machined face. A part worked from both faces is two routed parts or a `build`.
+- Far-side `reference` lines and far-side work in the sheets/ layouts are not drawn;
+  two-sided jobs are per-piece files.
 - No tool-radius, dogbone or inside-corner checks: the CAM owns those.
 - No depth per extra op beyond its footprint and the solid's deepest point; the
   `method` text is where the operator's instructions go.

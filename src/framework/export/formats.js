@@ -44,9 +44,10 @@ export const KIT_LIMITS = Object.freeze({
 export const KIT_DEFAULTS = Object.freeze({
   destination: "own-laser", kerf: 0, colors: "lightburn", stock: null,
   margin: 5, spacing: 3, printFormat: "stl", sets: 1,
+  flip: "left-right", twoSided: "one-file",
 });
 
-const OPTION_KEYS = ["destination", "cutFormat", "kerf", "colors", "stock", "margin", "spacing", "printFormat", "sets"];
+const OPTION_KEYS = ["destination", "cutFormat", "kerf", "colors", "stock", "margin", "spacing", "printFormat", "sets", "flip", "twoSided"];
 
 const fail = (message) => new Error(`${KIT_OPTIONS_ERROR} ${message}`);
 const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v)
@@ -91,7 +92,14 @@ export function validateKitOptions(o) {
   if (!Number.isInteger(sets) || sets < KIT_LIMITS.sets[0] || sets > KIT_LIMITS.sets[1])
     throw fail(`sets must be a whole number from ${KIT_LIMITS.sets[0]} to ${KIT_LIMITS.sets[1]}, got ${JSON.stringify(sets)}`);
 
-  return { destination, cutFormat, kerf, colors, stock, margin, spacing, printFormat, sets };
+  const flip = pick("flip");
+  if (flip !== "left-right" && flip !== "end-over-end")
+    throw fail(`flip must be "left-right" or "end-over-end", got ${JSON.stringify(flip)}`);
+  const twoSided = pick("twoSided");
+  if (twoSided !== "one-file" && twoSided !== "two-files")
+    throw fail(`twoSided must be "one-file" or "two-files", got ${JSON.stringify(twoSided)}`);
+
+  return { destination, cutFormat, kerf, colors, stock, margin, spacing, printFormat, sets, flip, twoSided };
 }
 
 // null/undefined → null ("every group gets DEFAULT_STOCK_SIZE"); otherwise fresh

@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import {
   refitLineRuns, refitRing, ringsOf, applyKerf, drawingBounds, canonicalDrawingKey, LAYER_ORDER, LAYER_KIND,
+  routedLayerName, mirrorRing, mirrorRings, splitFaces, FLIP_AXIS,
 } from "../src/framework/export/drawing.js";
 import { arcCenterAndSweep } from "../src/framework/geometry/arc-math.js";
 import { pointsToContour, reverseContour } from "../src/framework/geometry/profile.js";
@@ -330,5 +331,58 @@ describe("applyKerf", () => {
     expect(two).toHaveLength(2);
     expect(() => applyKerf(two, 0.2, { label: "Feet" }))
       .toThrow('cut kit options: kerf 0.20 mm joins separate pieces of "Feet" — space them apart or lower kerf');
+  });
+});
+
+// Shoelace over a ring's vertices (start, then each segment's end) — the winding check.
+function signedArea(ring) {
+  const pts = [ring.start, ...ring.segments.map((s) => s.to)];
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x0, y0] = pts[i], [x1, y1] = pts[(i + 1) % pts.length];
+    a += x0 * y1 - x1 * y0;
+  }
+  return a / 2;
+}
+
+describe("far-side helpers", () => {
+  const sq = { start: [10, 0], segments: [{ to: [20, 0] }, { to: [20, 5], via: [21, 2.5] }, { to: [10, 5] }, { to: [10, 0] }] };
+  test("routedLayerName prefixes FAR_ for a far op", () => {
+    expect(routedLayerName("pocket", { depth: 6, face: "far" })).toBe("FAR_POCKET_6MM");
+    expect(routedLayerName("drill", { d: 5, depth: 8, through: false, face: "far" })).toBe("FAR_DRILL_D5_8MM");
+    expect(routedLayerName("drill", { d: 5, depth: 18, through: true, face: "far" })).toBe("FAR_DRILL_D5_THRU");
+    expect(routedLayerName("pocket", { depth: 6, face: "near" })).toBe("POCKET_6MM");
+  });
+  test("mirrorRing maps every point about the centre and keeps the winding", () => {
+    const m = mirrorRing(sq, "x", 50);
+    const pts = [m.start, ...m.segments.map((s) => s.to)];
+    expect(pts).toEqual([[90, 0], [90, 5], [80, 5], [80, 0], [90, 0]]);  // reversed walk of the mirrored square
+    expect(m.segments.find((s) => s.via).via).toEqual([79, 2.5]);
+    expect(signedArea(sq)).toBeCloseTo(signedArea(m), 9);
+    expect(mirrorRing(sq, "y", 10).start).toEqual([10, 20]);
+  });
+  test("mirrorRing swaps a cubic's mirrored controls, keeps closed; mirrorRings maps each; FLIP_AXIS", () => {
+    const c = { start: [0, 0], segments: [{ to: [10, 0], c1: [3, 1], c2: [7, 2] }, { to: [0, 0] }], closed: true };
+    const m = mirrorRing(c, "x", 5);
+    expect(m.closed).toBe(true);
+    expect(m.start).toEqual([10, 0]);
+    expect(m.segments).toEqual([{ to: [0, 0] }, { to: [10, 0], c1: [3, 2], c2: [7, 1] }]);
+    expect(c.segments[0].c1).toEqual([3, 1]);   // input untouched
+    expect(mirrorRings([sq, c], "x", 50)).toEqual([mirrorRing(sq, "x", 50), mirrorRing(c, "x", 50)]);
+    expect(FLIP_AXIS).toEqual({ "left-right": "x", "end-over-end": "y" });
+    expect(Object.isFrozen(FLIP_AXIS)).toBe(true);
+  });
+  test("splitFaces: near keeps unfaced layers; far is null without far layers, else REFERENCE outline first", () => {
+    const near = { id: "pocket-3", name: "POCKET_3MM", color: 30, paths: [sq] };
+    const far = { id: "far-pocket-4", name: "FAR_POCKET_4MM", color: 40, face: "far", paths: [sq] };
+    const d = { layers: [near, { id: "cut-outer", paths: [sq] }], bounds: { min: [0, 0], max: [1, 1] }, nominal: [1, 1], kerf: 0 };
+    expect(splitFaces(d)).toEqual({ near: d, far: null });
+    const two = { ...d, layers: [near, far, { id: "cut-outer", paths: [sq] }], farOutline: [sq] };
+    const r = splitFaces(two);
+    expect(r.near.layers.map((l) => l.id)).toEqual(["pocket-3", "cut-outer"]);
+    expect(r.far.layers.map((l) => l.id)).toEqual(["far-outline", "far-pocket-4"]);
+    expect(r.far.layers[0]).toMatchObject({ name: "REFERENCE", color: 8, face: "far", paths: [sq] });
+    expect(r.far).toMatchObject({ bounds: d.bounds, nominal: d.nominal, kerf: 0 });
+    expect(r.near).toMatchObject({ bounds: d.bounds, nominal: d.nominal, kerf: 0 });
   });
 });
