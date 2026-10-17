@@ -268,7 +268,7 @@ the installed package, so let the publish finish before bumping the dep there.
   −90°-about-X root: a TRIANGLES primitive plus, since encoder version 2 / 0.154.0,
   a LINES primitive carrying the kernel's feature edges — on the SAME mesh, so
   quantize() gives both one quantization volume and the lines stay on the faces.
-  Since version 3 / 0.155.0 the LINES primitive shares the surface's POSITION
+  Since version 3 / 0.156.0 the LINES primitive shares the surface's POSITION
   accessor and stores only endpoint indices (each endpoint snapped to the surface
   vertex at its position, bit-exact else within one 14-bit quantization step, or
   appended past the surface's vertices — the decoder stops the payload before
@@ -593,7 +593,7 @@ parameters in both directions. Override with `meta.backend: "occt" |
 The same proxy is lint's geometry-free build (`runValidatingProbe`): every query
 (`boundingBox`, `area`, `volume`, `contains`, `corners`, `toRegions`, …) returns a
 placeholder, so a build that throws AFTER reading one is a `build-throws` NOTE,
-not an error (0.155.0) — the probe records the queries read per call, never
+not an error (0.156.0) — the probe records the queries read per call, never
 across sub-parts. A throw with no query read stays an error, and `probe-throws`
 (declared probes) stays an error regardless.
 
