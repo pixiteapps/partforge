@@ -10,7 +10,8 @@
 // background/environment meta. The CAD look is exact; realistic mode uses each
 // sub-part's display only — no sheet stock, no layer-line print frames (a
 // residual of the format). CAD feature edges come from the file (encoder
-// version 2); a version-1 file decodes with none. The decoder loads on demand (it carries the
+// version 2, sharing the surface's vertices since version 3); a version-1 file
+// decodes with none. The decoder loads on demand (it carries the
 // GLTFLoader and meshopt), so a bundle that never mounts a preview never ships it.
 // Hence `ready`. Every handle method is safe before it resolves.
 import "./app.css";

@@ -266,12 +266,21 @@ the installed package, so let the publish finish before bumping the dep there.
   preview (0.147.0). `gltf/encode-preview.js` is `partforge/gltf`'s writer: one
   view's POSED meshes as a GLB (one node/mesh per sub-part under a single
   −90°-about-X root: a TRIANGLES primitive plus, since encoder version 2 / 0.154.0,
-  a POSITION-only LINES primitive carrying the kernel's feature edges — on the SAME
-  mesh, so quantize() gives both one quantization volume and the lines stay on the
-  faces; empty or absent `edges` writes none and decodes to an EMPTY array, never
-  undefined, which would make the viewer derive lines by angle. Materials from
-  `cadAppearance`, the sub-part's `display` block in node extras, then weld →
-  quantize → meshopt "medium"). It is
+  a LINES primitive carrying the kernel's feature edges — on the SAME mesh, so
+  quantize() gives both one quantization volume and the lines stay on the faces.
+  Since version 3 / 0.156.0 the LINES primitive shares the surface's POSITION
+  accessor and stores only endpoint indices (each endpoint snapped to the surface
+  vertex at its position, bit-exact else within one 14-bit quantization step, or
+  appended past the surface's vertices — the decoder stops the payload before
+  those; a sub-part whose appended endpoints would leave the surface's bounds or
+  trip quantize()'s compaction keeps float line vertices of its own instead). The pipeline is weld → reorder (surfaces only) → map + append →
+  quantize → add the line primitives → meshopt "medium" compression: weld,
+  reorder and quantize each clone a primitive's accessors, so lines added before
+  them would get their own vertex array back. Empty or absent `edges` writes none
+  and decodes to an EMPTY array, never undefined, which would make the viewer
+  derive lines by angle. Materials from `cadAppearance`, the sub-part's `display`
+  block in node extras). Versions 1 and 2 still decode (`test/fixtures/preview-v1.glb`,
+  `preview-v2.glb`). It is
   worker-safe — no three.js, no DOM, no Blob (`test/gltf-layering.test.js`) — and
   deterministic; bump `PREVIEW_ENCODER_VERSION` whenever its bytes change, since
   downstream caches key on it. `gltf/decode-preview.js` reads one back with
@@ -581,6 +590,12 @@ parameters in both directions. Override with `meta.backend: "occt" |
 "manifold"`. The two WASM kernels run in **separate Web Workers** (`name` =
 `"manifold"` / `"occt"`). See `docs/geometry-backend-strategy.md` for the why
 (OCCT booleans are about 75-1400x slower).
+The same proxy is lint's geometry-free build (`runValidatingProbe`): every query
+(`boundingBox`, `area`, `volume`, `contains`, `corners`, `toRegions`, …) returns a
+placeholder, so a build that throws AFTER reading one is a `build-throws` NOTE,
+not an error (0.156.0) — the probe records the queries read per call, never
+across sub-parts. A throw with no query read stays an error, and `probe-throws`
+(declared probes) stays an error regardless.
 
 ### Non-obvious invariants
 

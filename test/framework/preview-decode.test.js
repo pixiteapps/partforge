@@ -7,7 +7,7 @@ import { fileURLToPath, URL as NodeURL } from "node:url";
 import { expect, test } from "vitest";
 import { encodePreviewGlb } from "../../src/gltf.js";
 import { decodePreviewGlb } from "../../src/framework/gltf/decode-preview.js";
-import { boxEdges, boxSoup, indexedBox, boundsOf, poseArray, segmentMismatch } from "../helpers/preview-glb.js";
+import { boxEdges, boxSoup, denseGrid, glbJson, indexedBox, boundsOf, poseArray, segmentMismatch } from "../helpers/preview-glb.js";
 
 const expectNear = (got, want, digits = 2) => got.forEach((g, i) => expect(g).toBeCloseTo(want[i], digits));
 const part = { meta: { environment: "workshop" }, parts: { base: { display: { color: 0xff0000 } }, lid: {} } };
@@ -133,4 +133,77 @@ test("a version-1 file (no line primitives) still decodes, with empty edges", as
   const b = boundsOf(out.meshes[0].positions);
   expectNear(b.min, [0, 0, 0]);
   expectNear(b.max, [4, 2, 6]);
+});
+
+test("a version-2 file (separate line vertices) still decodes, with its edges", async () => {
+  // Written by the 0.154.0 encoder: base (soup) and lid (indexed) each with their
+  // box edges, plain with none.
+  const v2 = new Uint8Array(readFileSync(fileURLToPath(new NodeURL("../fixtures/preview-v2.glb", import.meta.url))));
+  const out = await decodePreviewGlb(v2);
+  expect(out.view).toBe("main");
+  expect(out.meshes.map((m) => m.name)).toEqual(["base", "lid", "plain"]);
+  expect(out.meshes[0].display).toEqual({ color: 0xff0000 });
+  for (const m of out.meshes) expect(m.triangles).toBe(12);
+  expect(segmentMismatch(out.meshes[0].edges, boxEdges([0, 0, 0], [4, 2, 6]))).toBeNull();
+  expect(segmentMismatch(out.meshes[1].edges, boxEdges([0, 0, 6], [4, 2, 7]))).toBeNull();
+  expect(out.meshes[2].edges).toEqual(new Float32Array(0));
+});
+
+// --- edges as indices into the surface's vertices (encoder v3) ---------------------
+test("an edge endpoint on no triangle vertex still round-trips, and the surface is unchanged", async () => {
+  const box = boxSoup("base", [0, 0, 0], [4, 2, 6]);
+  // the top face's centre to the midpoint of one of its edges: neither is a vertex
+  const extra = new Float32Array([2, 1, 6, 4, 1, 6]);
+  const edges = new Float32Array([...boxEdges([0, 0, 0], [4, 2, 6]), ...extra]);
+  const out = await decodePreviewGlb(await encodePreviewGlb({ meshes: [{ ...box, edges }], view: "v" }));
+  const [m] = out.meshes;
+  expect(segmentMismatch(m.edges, edges)).toBeNull();
+  expect(m.triangles).toBe(12);
+  // the triangles reference only the surface's own corners, and the payload
+  // carries exactly the vertices they reference (the appended ones stay in the file)
+  const used = new Set(m.indices);
+  expect(used.size).toBe(m.positions.length / 3);
+  expect(m.normals.length).toBe(m.positions.length);
+  const b = boundsOf(Float32Array.from([...used].flatMap((i) => [...m.positions.subarray(i * 3, i * 3 + 3)])));
+  expectNear(b.min, [0, 0, 0]);
+  expectNear(b.max, [4, 2, 6]);
+  for (const i of used) {
+    const [x, y, z] = m.positions.subarray(i * 3, i * 3 + 3);
+    const onCorner = [x, y, z].every((c, a) => Math.abs(c) < 1e-2 || Math.abs(c - [4, 2, 6][a]) < 1e-2);
+    expect(onCorner).toBe(true);
+  }
+});
+
+test("a dense edge set decodes to exactly its segments, not every shared vertex", async () => {
+  const grid = denseGrid("grid", 12, 12);
+  const out = await decodePreviewGlb(await encodePreviewGlb({ meshes: [grid], view: "v" }));
+  expect(out.meshes[0].edges.length).toBe(grid.edges.length);
+  expect(segmentMismatch(out.meshes[0].edges, grid.edges)).toBeNull();
+  expect(out.meshes[0].triangles).toBe(grid.triangles);
+});
+
+test("lines whose off-vertex endpoints would trip quantize()'s compaction keep vertices of their own, and round-trip posed", async () => {
+  // 30 segments INSIDE a 12-triangle box (in its bounds, so this is the compaction
+  // path, not the out-of-bounds one): 60 endpoints on no vertex. Appending them
+  // would leave 36 indices over 84 vertices, and quantize() would compact the
+  // surface and drop them. Posed, so the lines go through the node's offset and scale.
+  const body = posedBox("body");
+  const inner = [];
+  for (let i = 0; i < 30; i++) inner.push(0.5 + i * 0.07, 0.6, 0.5 + i * 0.13, 0.55 + i * 0.07, 1.4, 1 + i * 0.13);
+  const edges = new Float32Array([...body.edges, ...poseArray(new Float32Array(inner), 30, [12, -7, 4])]);
+  const glb = await encodePreviewGlb({ meshes: [{ ...body, edges }], view: "v" });
+  const [tris, lines] = glbJson(glb).meshes[0].primitives;
+  expect(lines.attributes.POSITION).not.toBe(tris.attributes.POSITION);
+  const out = await decodePreviewGlb(glb);
+  expect(segmentMismatch(out.meshes[0].edges, edges, 1e-3)).toBeNull();
+  expect(out.meshes[0].triangles).toBe(12);
+});
+
+test("lines with an endpoint outside the surface's bounds round-trip in the model frame", async () => {
+  const body = posedBox("body");
+  const extra = poseArray(new Float32Array([1.5, 1, 5, 1.5, 1, 9]), 30, [12, -7, 4]); // a mast off the top
+  const edges = new Float32Array([...body.edges, ...extra]);
+  const out = await decodePreviewGlb(await encodePreviewGlb({ meshes: [{ ...body, edges }], view: "v" }));
+  expect(segmentMismatch(out.meshes[0].edges, edges, 1e-3)).toBeNull();
+  expect(out.meshes[0].triangles).toBe(12);
 });

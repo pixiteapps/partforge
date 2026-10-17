@@ -23,7 +23,10 @@ export interface PreviewMesh {
   /**
    * Feature-edge segments, endpoint pairs `[x0,y0,z0, x1,y1,z1, …]` in the same posed
    * frame as `positions` (encoder version 2+). Written as a LINES primitive on the
-   * sub-part's mesh. Empty or absent writes none, and decodes as "no feature edges".
+   * sub-part's mesh — since version 3, indices into the surface's own POSITION
+   * accessor (each endpoint snapped to the surface vertex at its position, or
+   * appended past the surface's vertices when it lies on none). Empty or absent
+   * writes none, and decodes as "no feature edges".
    */
   edges?: Float32Array | null;
 }
@@ -37,7 +40,7 @@ export interface EncodePreviewInput {
   view?: string | null;
 }
 
-/** Bumped whenever the encoder writes different bytes for the same input (2: feature edges). */
+/** Bumped whenever the encoder writes different bytes for the same input (2: feature edges; 3: edges as indices into the surface's vertices). */
 export const PREVIEW_ENCODER_VERSION: number;
 
 /** Encode one view's posed meshes as a welded, quantized, meshopt-compressed GLB (Y-up, millimetres). Deterministic. */
