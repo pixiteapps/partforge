@@ -4292,11 +4292,11 @@ are skipped. Switch it off under an FDM profile with an inline
 `{ base: "fdm-pla", overhang: null }`. **What `expect` gives you:** per-sub-part
 assertions on the facts `measure` already reports — `holes` (through-bores / genus),
 `volume`, `surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`,
-`overhangArea`, `wall` (a range — see below), `boundsMin` / `boundsMax`
-(the axis-aligned `{min,max}` corner positions — where the geometry sits, vs
-`bbox` which is only its size) and `centerOfMass` (`[x,y,z]`, the volume-weighted
+`overhangArea`, `wall` (a range — see below), `bounds` (the axis-aligned corner
+positions, written in the same `{ min, max }` shape `measure` reports them — where
+the geometry sits, vs `bbox` which is only its size) and `centerOfMass` (`[x,y,z]`, the volume-weighted
 centroid; `null` for a degenerate/zero-volume sub-part); and `_view` assertions `bbox`,
-`volume`, `overlaps`, `centerOfMass`, `boundsMin`, `boundsMax`, plus the pair-wise
+`volume`, `overlaps`, `centerOfMass`, `bounds`, plus the pair-wise
 `contacts` / `clearance` below.
 
 Passing these checks does **not** prove structural strength, fatigue life, stability,
@@ -4308,9 +4308,13 @@ unverified.
 
 **Assertion DSL:** a bare number means equality (`holes: 1`); `">=n"`, `"<=n"`, `">n"`,
 `"<n"`, or a range `"a..b"`; an optional unit suffix `mm`/`cm`/`mm3`/`cm3`; and for
-`bbox`, `centerOfMass`, `boundsMin`, `boundsMax`, a componentwise vector `"<=[x,y,z]"` /
-`">=[x,y,z]"` where `*` skips an axis. The parser is strict — a malformed assertion
-fails loudly.
+`bbox`, `centerOfMass` and each side of `bounds`, a componentwise vector `"<=[x,y,z]"` /
+`">=[x,y,z]"` — exactly 3 components, each a plain number in mm or `*` to skip an axis.
+A vector is always one-sided: a bare `[40,40,10]` (meaning "exactly this size") is
+rejected, since a mesh's box shifts with tessellation and no tolerance would be honest
+for every part — pick `<=` for a limit or `>=` for a floor. `bounds` takes an object
+with `min` and/or `max`, each such a vector: `bounds: { min: ">=[0,0,0]", max:
+"<=[220,220,250]" }`. The parser is strict — a malformed assertion fails loudly.
 
 **A part whose typeface is a parameter needs band assertions, not points.** Glyph
 advance widths differ by family, so a `text2d` sub-part's `bbox`/`volume` shifts with
@@ -4322,8 +4326,8 @@ need this, but a part whose default already names a specific face does.
 
 ```js
 verify: { expect: {
-  stand: { boundsMin: ">=[0,0,0]", centerOfMass: "<=[*,*,25]" },   // sits in +octant, mass kept low
-  _view: { boundsMax: "<=[220,220,250]" },                          // whole assembly fits the bed
+  stand: { bounds: { min: ">=[0,0,0]" }, centerOfMass: "<=[*,*,25]" },   // sits in +octant, mass kept low
+  _view: { bounds: { max: "<=[220,220,250]" } },                          // whole assembly fits the bed
 } }
 ```
 
