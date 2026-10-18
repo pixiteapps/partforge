@@ -409,3 +409,44 @@ test("dispose stops the player", async () => {
   for (let i = 0; i < 10; i++) loop((clockMs += 100));
   expect(animation.state().t).toBe(t);
 });
+
+// The hinged box's `cycle` is the box view's autoplay animation and drives only
+// lidAngle, which build() never reads: the export bakes it as the lid's channels.
+const hingedDelivery = () => [
+  { ...boxSoup("base", [0, 0, 0], [60, 40, 24]), reads: ["width", "depth", "height", "wall"] },
+  { ...boxSoup("lid", [0, 0, 0], [60, 40, 2]), reads: ["width", "depth", "wall"], frame: "canonical" },
+];
+
+async function mountHingedBox(part) {
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(part, { createWorker, elements: makeElements() });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", ms: 1, meshes: hingedDelivery() } });
+  await runtime.ready;
+  return runtime;
+}
+
+test("exportPreview carries the hinged box's autoplay cycle as channels", async () => {
+  const { default: hingedBox } = await import("../../src/parts/hinged-box.js");
+  const runtime = await mountHingedBox(hingedBox);
+  const out = await decodePreviewGlb(await runtime.exportPreview());
+  expect(out.view).toBe("box");
+  expect(out.animation?.animated).toEqual(["lid"]);
+  runtime.dispose();
+});
+
+test("exportPreview carries no animation when a tracked param is read by build()", async () => {
+  const { default: hingedBox } = await import("../../src/parts/hinged-box.js");
+  const animations = hingedBox.views.box.animations;
+  const part = {
+    ...hingedBox,
+    views: { box: { ...hingedBox.views.box, animations: {
+      ...animations, cycle: { ...animations.cycle, tracks: { width: [[0, 60], [1, 80]] } },
+    } } },
+  };
+  const runtime = await mountHingedBox(part);
+  const out = await decodePreviewGlb(await runtime.exportPreview());
+  expect(out.view).toBe("box");
+  expect(out.animation).toBeNull();
+  runtime.dispose();
+});

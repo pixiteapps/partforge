@@ -43,6 +43,7 @@ import { attachAnnotateControls } from "./annotate/annotate-controls.js";
 import { attachSketchToolbar } from "./annotate/sketch-toolbar.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
 import { createPreviewGate } from "./preview-gate.js";
+import { samplePreviewAnimation } from "./preview-animation.js";
 import { observeViewbarClear } from "./viewbar-clear.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
@@ -404,7 +405,9 @@ function createCleanupStack() {
 //                          // measure, sketch and cutaway wait; orbit, the view cube,
 //                          // the view style and the rail work
 //   await runtime.exportPreview();  // the view on screen as a preview GLB (Uint8Array,
-//                          // partforge/gltf), fast-path poses baked in. Rejects while
+//                          // partforge/gltf), fast-path poses baked in, plus the
+//                          // view's autoplay animation when every track is
+//                          // place-only. Rejects while
 //                          // previewActive, before the view is fully built (a pending
 //                          // rebuild counts), for a view other than the one on screen,
 //                          // and after dispose
@@ -1718,7 +1721,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // buildView returns. Only the view on screen (no other view's meshes are held),
     // only when it is fully built at the live params (missingParts covers both a
     // first build and an edit still rebuilding), never a cached preview. The
-    // encoder loads on first use: a host that never exports never pays for it.
+    // view's autoplay animation rides along as channels when every track is
+    // place-only (samplePreviewAnimation decides; otherwise the file is still).
+    // The encoder loads on first use: a host that never exports never pays for it.
     async function exportPreview({ view: wanted } = {}) {
       if (disposed) throw new Error("exportPreview: this mount is disposed");
       if (previewGate.isActive()) throw new Error("exportPreview: a cached preview is showing — wait for the first build");
@@ -1731,8 +1736,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         throw new Error("exportPreview: the view on screen is not fully built");
       }
       const meshes = needed.map((name) => viewer.getSubMeshPayload(name)).filter(Boolean);
+      // The view's autoplay animation, sampled at the params the meshes above were
+      // built at. Build reads come from the cache's stamps; null (no stamp, or an
+      // every-param stamp) is unknown, so the animation is left out.
+      const animation = samplePreviewAnimation(part, current, params, {
+        buildReads: (name) => (cache.hasStamp(name) ? cache.readsOf(name) : null),
+      });
       const { encodePreviewGlb } = await import("./gltf/encode-preview.js");
-      return encodePreviewGlb({ meshes, part, view: current });
+      return encodePreviewGlb({ meshes, part, view: current, ...(animation ? { animation } : {}) });
     }
 
     return makeHandle({
