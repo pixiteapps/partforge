@@ -3,9 +3,9 @@
 // zero set, the mesh stays closed, and nothing is cut where no crease exists.
 import { describe, test, expect } from "vitest";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
-import { ATTACH_STRIDE } from "../src/framework/geometry/implicit/contact.js";
+import { attachWeight, ATTACH_STRIDE } from "../src/framework/geometry/implicit/contact.js";
 import { edgeCheck } from "./helpers/mesh-topology.js";
-import { sharesAt, childIndex } from "./helpers/seam-quality.js";
+import { sharesAt, childIndex, flippedTriangles } from "./helpers/seam-quality.js";
 import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 import { capsulePress, threePress, PRESS_OVERLAP, SEAM_CASES } from "./fixtures/implicit-seam-cases.js";
 
@@ -27,13 +27,15 @@ describe("crease cut", () => {
         expect(Math.abs(out[i])).toBeLessThanOrEqual(0.02 * edge);
         expect(Math.abs(shares[i * K + a] - shares[i * K + b])).toBeLessThanOrEqual(0.02 * edge);
       });
-      for (const f of ["vertOwner", "ownerHeld", "pinned", "crease", "vertLeaf"]) expect(mesh[f] ?? { length: mesh.positions.length / 3 }).toHaveProperty("length", mesh.positions.length / 3);
+      for (const f of ["vertOwner", "ownerHeld", "pinned", "crease"]) {
+        expect(mesh[f], f).toBeDefined();
+        expect(mesh[f].length, f).toBe(mesh.positions.length / 3);
+      }
       expect(mesh.normals.length).toBe(mesh.positions.length);
     }, 60_000);
 
     test(`closed after the cut (${tier} ${edge})`, () => {
       for (const c of SEAM_CASES) {
-        if (/gap 0\.2|0\.05/.test(c.name) && c.name.startsWith("press")) continue;
         const { mesh } = run(c.spec, edge, tier);
         expect(edgeCheck(mesh.indices), c.name).toEqual(CLOSED);
       }
@@ -41,11 +43,7 @@ describe("crease cut", () => {
 
     test(`three owners at gap 0 are closed with a crease on all three pairs (${tier} ${edge})`, () => {
       const { compiled, mesh } = run(threePress({ gap: 0 }), edge, tier);
-      // The 1.5 mm owner mesher leaves 8 open edges at the triple line before the cut (a Task 2
-      // mesher finding); the cut must not add to them and must keep the mesh manifold and oriented.
-      const open = edgeCheck(mesh.indices);
-      expect(open.nonManifold + open.misoriented).toBe(0);
-      expect(open.boundary).toBeLessThanOrEqual(edge === 1.5 ? 8 : 0);
+      expect(edgeCheck(mesh.indices)).toEqual(CLOSED);
       const cv = creaseVerts(mesh), { X, Y, Z } = at(mesh, cv), { shares, K } = sharesAt(compiled, X, Y, Z);
       const pairs = new Set();
       cv.forEach((v, i) => {
@@ -55,27 +53,43 @@ describe("crease cut", () => {
       expect(pairs.size).toBe(3);
     }, 60_000);
 
+    for (const [name, spec] of [["press gap 0", capsulePress({ overlap: PRESS_OVERLAP, gap: 0 })], ["three owners gap 0", threePress({ gap: 0 })]]) {
+      // Task 5 seam gate: the flips are cleanup's, not the cut's. Measured (raw / after cleanup / after cut):
+      // press 205/31/33 and three 59/38/41 at 1.5; press 389/63/67 and three 181/120/125 at 0.6. Reverting
+      // crease points that turn a triangle over made it worse (116, 47, 280, 212: a vertex left off the crease
+      // sits on the wrong piece's skin), so the move stays.
+      test.fails(`no flipped triangles after the cut: ${name} (${tier} ${edge})`, () => {
+        const { compiled, mesh } = run(spec, edge, tier);
+        expect(flippedTriangles(compiled, mesh, edge)).toBe(0);
+      }, 60_000);
+    }
+
     test(`no crease across a near miss (${tier} ${edge})`, () => {
       const { mesh } = run(capsulePress({ overlap: -0.3, gap: 0 }), edge, tier);
       expect(creaseVerts(mesh).length).toBe(0);
     }, 60_000);
   }
 
-  // The default hand's pieces only meet inside their attachment zones; the fist's fingertips press
-  // the palm, so it has creases and none may fall inside a zone.
-  const FIST_0 = handSpec({ ...HAND_POSES.fist, contactGap: 0 });
-  for (const [name, spec, wantCrease] of [["hand default gap 0", SEAM_CASES.find((c) => c.name === "hand default gap 0").spec, false], ["hand fist gap 0", FIST_0, true]]) {
-    test(`no crease inside an attachment zone: ${name}`, () => {
-      const { compiled, mesh } = run(spec, 1.5, "preview");
-      const { att } = compiled.ir.nodes[compiled.ownerRoot], P = mesh.positions, cv = creaseVerts(mesh);
-      if (wantCrease) expect(cv.length).toBeGreaterThan(0);
-      for (const v of cv) {
-        for (let o = 0; o < att.length; o += ATTACH_STRIDE) {
-          const d = Math.hypot(P[3 * v] - att[o + 2], P[3 * v + 1] - att[o + 3], P[3 * v + 2] - att[o + 4]);
-          expect(d, `crease vertex ${v} inside attachment radius`).toBeGreaterThan(att[o + 5]);
-        }
+  // Wherever a pair's own attachment weight is above 0 its two pieces are one owner: no crease may
+  // lie there. The fist's fingertips press the palm, so it has creases to check.
+  test("no crease where the crossing pair's attachment weight is > 0: hand fist gap 0", () => {
+    const { compiled, mesh } = run(handSpec({ ...HAND_POSES.fist, contactGap: 0 }), 1.5, "preview");
+    const { att } = compiled.ir.nodes[compiled.ownerRoot], P = mesh.positions, cv = creaseVerts(mesh);
+    expect(cv.length).toBeGreaterThan(0);
+    const { shares, K } = sharesAt(compiled, ...["X", "Y", "Z"].map((_, k) => Float64Array.from(cv, (v) => P[3 * v + k])));
+    let pairs = 0;
+    cv.forEach((v, i) => {
+      // The crease's two pieces: the owner and the piece whose share is next least there.
+      const X = mesh.vertOwner[v];
+      let Y = -1;
+      for (let j = 0; j < K; j++) if (j !== X && Number.isFinite(shares[i * K + j]) && (Y < 0 || shares[i * K + j] < shares[i * K + Y])) Y = j;
+      for (let o = 0; o < att.length; o += ATTACH_STRIDE) {
+        if (!((att[o] === X && att[o + 1] === Y) || (att[o] === Y && att[o + 1] === X))) continue;
+        pairs++;
+        expect(attachWeight(att, o, P[3 * v], P[3 * v + 1], P[3 * v + 2]), `crease vertex ${v}`).toBe(0);
       }
-      expect(edgeCheck(mesh.indices)).toEqual(CLOSED);
-    }, 180_000);
-  }
+    });
+    expect(pairs).toBeGreaterThan(0);
+    expect(edgeCheck(mesh.indices)).toEqual(CLOSED);
+  }, 180_000);
 });

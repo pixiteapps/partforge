@@ -16,7 +16,7 @@
 //      where it was and loses its flag.
 // Crease vertices are neither held nor pinned. Exact trees never reach the native core.
 import { evalBatchContact } from "./program.js";
-import { CREASE_SNAP, CREASE_TOL } from "./contact.js";
+import { CREASE_SNAP, CREASE_TOL, ATTACH_STRIDE, attachWeight } from "./contact.js";
 
 const BISECT_STEPS = 20, NEWTON_STEPS = 6, MAX_MOVE_CELLS = 0.25;
 
@@ -41,11 +41,21 @@ function evalPoints(store, K, pts, leafOf) {
   return { d, owner, cuts };
 }
 
+// The largest attachment weight, at (x, y, z), of an attachment joining pieces X and Y (0 if none).
+function pairWeight(att, X, Y, x, y, z) {
+  let w = 0;
+  for (let o = 0; o < att.length; o += ATTACH_STRIDE) {
+    if ((att[o] === X && att[o + 1] === Y) || (att[o] === Y && att[o + 1] === X)) w = Math.max(w, attachWeight(att, o, x, y, z));
+  }
+  return w;
+}
+
 /**
  * Cut the creases into an owner mesh (`vertOwner`, `ownerHeld`, `pinned`, `vertLeaf`, `normals`).
- * Returns the mesh with every per-vertex array grown to the new vertices and `crease` set.
+ * `att` is the contact node's attachment table: no crease is cut (or kept) where the crossing
+ * pair's own attachment weight is above 0, since the pair is one owner there. Returns the mesh with every per-vertex array grown to the new vertices and `crease` set.
  */
-export function cutCreases(store, mesh) {
+export function cutCreases(store, mesh, att = new Float64Array(0)) {
   const K = Math.max(1, store.ownerK ?? 0), edge = store.edge;
   const P = Array.from(mesh.positions), N = Array.from(mesh.normals), T = Array.from(mesh.indices);
   const VL = Array.from(mesh.vertLeaf), VO = Array.from(mesh.vertOwner), VH = Array.from(mesh.ownerHeld), VP = Array.from(mesh.pinned);
@@ -85,7 +95,10 @@ export function cutCreases(store, mesh) {
   const startOf = new Map();  // crease vertex -> where it was
   const snapped = new Set();
   const params = list.map((e, q) => (lo[q] + hi[q]) / 2);
+  // An edge whose crossing lies where its pair's attachment weight is above 0 is not cut.
+  const inZone = list.map((e, q) => { const p = along(e, params[q]); return pairWeight(att, e.X, e.Y, p[0], p[1], p[2]) > 0; });
   list.forEach((e, q) => {
+    if (inZone[q]) return;
     const s = params[q], v = s < CREASE_SNAP ? e.a : s > 1 - CREASE_SNAP ? e.b : -1;
     if (v < 0 || pairOf.has(v)) return;
     snapped.add(v); pairOf.set(v, [e.X, e.Y]); startOf.set(v, P.slice(3 * v, 3 * v + 3));
@@ -93,7 +106,7 @@ export function cutCreases(store, mesh) {
   const splitOf = new Map();
   list.forEach((e, q) => {
     const s = params[q];
-    if (s < CREASE_SNAP || s > 1 - CREASE_SNAP || snapped.has(e.a) || snapped.has(e.b)) return;
+    if (inZone[q] || s < CREASE_SNAP || s > 1 - CREASE_SNAP || snapped.has(e.a) || snapped.has(e.b)) return;
     const v = P.length / 3, p = along(e, s);
     P.push(...p); VL.push(VL[e.a]); VO.push(e.X); VH.push(0); VP.push(0);
     const nx = N[3 * e.a] + N[3 * e.b], ny = N[3 * e.a + 1] + N[3 * e.b + 1], nz = N[3 * e.a + 2] + N[3 * e.b + 2], nl = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
@@ -147,6 +160,7 @@ export function cutCreases(store, mesh) {
   }
 
   // 5. Revert what did not reach a crease.
+  // 5. Revert what did not reach a crease (or landed in an attachment zone).
   const crease = new Uint8Array(P.length / 3);
   if (cv.length) {
     const pts = new Float64Array(3 * cv.length);
@@ -155,7 +169,7 @@ export function cutCreases(store, mesh) {
     const tol = CREASE_TOL * edge;
     cv.forEach((v, q) => {
       const [X, Y] = pairOf.get(v);
-      if (Math.abs(d[q]) <= tol && Math.abs(cuts[q * K + X] - cuts[q * K + Y]) <= tol) { crease[v] = 1; return; }
+      if (Math.abs(d[q]) <= tol && Math.abs(cuts[q * K + X] - cuts[q * K + Y]) <= tol && !(pairWeight(att, X, Y, pts[3 * q], pts[3 * q + 1], pts[3 * q + 2]) > 0)) { crease[v] = 1; return; }
       const p0 = startOf.get(v);
       P[3 * v] = p0[0]; P[3 * v + 1] = p0[1]; P[3 * v + 2] = p0[2];
     });
