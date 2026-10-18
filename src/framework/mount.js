@@ -282,8 +282,11 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.147.0: a cached `preview` GLB is drawn before the kernel
-// boots and swapped in place by the first build; 0.141.0: a place()-able sub-part
+// Embedding contract (0.158.0: a preview GLB may carry its view's autoplay
+// animation — mount({ preview }) draws its opening pose and does not play it,
+// mountPreview plays it unless `animate: false`, and exportPreview bakes it only
+// when every track is place-only; 0.147.0: a cached `preview` GLB is drawn before
+// the kernel boots and swapped in place by the first build; 0.141.0: a place()-able sub-part
 // is delivered in its canonical frame and posed by the viewer; pose-only edits
 // never rebuild):
 //   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload, onViewChange });
@@ -446,7 +449,10 @@ function createCleanupStack() {
 //                                         // the first live build, camera kept. Only a file for the view
 //                                         // on screen is drawn, and only its sub-parts of that view; a
 //                                         // file for another view, or one that will not decode, is
-//                                         // logged once and ignored.
+//                                         // logged once and ignored. A file that carries the view's
+//                                         // baked autoplay animation (encoder version 4) is drawn
+//                                         // in its opening pose and never played here (playing it is
+//                                         // mountPreview's); the first live build replaces it.
 // panelState: PanelState                 // a previous mount's runtime.getPanelState(): the transient
 //                                         // state of the part's custom controls (a selected tile), keyed
 //                                         // by param. Same remount story as viewerState; omit on a first
