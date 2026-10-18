@@ -6,7 +6,7 @@
 // Two halves: planLeaves (traversal, programs) and evaluateLeaves (samples) — the
 // native core plugs in at the seam and evaluates the same plan.
 import { blockDecision, fullDecision, decisionKey } from "./interval.js";
-import { emitProgram, evalBatch } from "./program.js";
+import { emitProgram, evalBatch, evalBatchContact } from "./program.js";
 import { ImplicitSizeError } from "./errors.js";
 
 export const LEAF = 4, TOP = 32, SNAP_CELLS = 0, PAD_CELLS = 1;
@@ -22,7 +22,9 @@ export function sampleField(compiled, edge, opts) {
 /**
  * The traversal half: which leaves survive the interval cull, and the program each
  * one runs. Plan = { origin, edge, n, snap, leaves: [{ i0, j0, l0, progIndex }],
- * programs: Float64Array[] (index order = first emission), textures, samples, clipped: false }.
+ * programs: Float64Array[] (index order = first emission), textures, samples, clipped: false,
+ * ownerRoot, ownerK } — ownerRoot/ownerK copied from the compiled tree (−1/0 unless its root is
+ * an exact contact node, whose children then own the samples: evaluateLeaves).
  * It is plain data — the native core samples the same plan.
  * Each child block starts from its parent block's decision (`inherit`, interval.js:
  * a slot the parent pruned firmly is not walked again), which yields exactly the plan a
@@ -75,16 +77,25 @@ export function planLeaves(compiled, edge, { cull = true, inherit = true } = {})
   };
 
   for (let l = 0; l < n[2] - 1; l += TOP) for (let j = 0; j < n[1] - 1; j += TOP) for (let i = 0; i < n[0] - 1; i += TOP) visit(i, j, l, TOP, undefined);
-  return { origin, edge, n, snap, leaves, programs, textures: compiled.textures, samples, clipped: false };
+  return { origin, edge, n, snap, leaves, programs, textures: compiled.textures, samples, clipped: false, ownerRoot: compiled.ownerRoot ?? -1, ownerK: compiled.ownerK ?? 0 };
 }
+
+/** A sample's owner where the stored value is ≥ 0 (outside every piece). */
+export const OWNER_AIR = -1;
 
 /**
  * The evaluation half: each planned leaf's (LEAF+1)³ samples, stored as float32. Returns
  * the Store — the plan's fields with `clipped` set and every leaf as { i0, j0, l0,
  * progIndex, prog, vals }. The plan itself is not modified.
+ * When the plan has an owner root (`ownerRoot ≥ 0`), each leaf also gets `owner`, an
+ * Int8Array of its samples' owning children (OWNER_AIR where the stored value is ≥ 0),
+ * captured by the same evaluation: one evalBatchContact replaces the evalBatch, and the
+ * zero nudge captures its own. `hooks` swaps the two evaluators (a test counts calls).
  */
-export function evaluateLeaves(plan) {
+export function evaluateLeaves(plan, hooks = {}) {
   const { origin, edge, n, programs, textures } = plan;
+  const run = hooks.evalBatch ?? evalBatch, runContact = hooks.evalBatchContact ?? evalBatchContact;
+  const owned = plan.ownerRoot >= 0, K = plan.ownerK;
   const S = LEAF + 1, S3 = S * S * S;
   const X = new Float64Array(S3), Y = new Float64Array(S3), Z = new Float64Array(S3), out = new Float64Array(S3);
   const ZI = new Int32Array(S3);
@@ -98,7 +109,8 @@ export function evaluateLeaves(plan) {
     for (let l = 0; l < S; l++) for (let j = 0; j < S; j++) for (let i = 0; i < S; i++, q++) {
       X[q] = origin[0] + (i0 + i) * edge; Y[q] = origin[1] + (j0 + j) * edge; Z[q] = origin[2] + (l0 + l) * edge;
     }
-    evalBatch(prog, textures, X, Y, Z, out);
+    const owner = owned ? new Int8Array(S3) : null;
+    if (owned) runContact(prog, textures, X, Y, Z, out, { K, owner }); else run(prog, textures, X, Y, Z, out);
     const vals = new Float32Array(S3);
     let zeros = 0;
     q = 0;
@@ -122,13 +134,16 @@ export function evaluateLeaves(plan) {
     if (zeros > 0) {
       const ZX = new Float64Array(zeros), ZY = new Float64Array(zeros), ZZ = new Float64Array(zeros), Zout = new Float64Array(zeros);
       for (let z = 0; z < zeros; z++) { const s = ZI[z]; ZX[z] = X[s] + nudge[0]; ZY[z] = Y[s] + nudge[1]; ZZ[z] = Z[s] + nudge[2]; }
-      evalBatch(prog, textures, ZX, ZY, ZZ, Zout);
+      const Zown = owned ? new Int8Array(zeros) : null;
+      if (owned) runContact(prog, textures, ZX, ZY, ZZ, Zout, { K, owner: Zown }); else run(prog, textures, ZX, ZY, ZZ, Zout);
       for (let z = 0; z < zeros; z++) {
         const s = ZI[z], f = Math.fround(Zout[z]);
         vals[s] = f === 0 ? (Zout[z] < 0 ? -1e-30 : 1e-30) : f;
+        if (owned) owner[s] = Zown[z];
       }
     }
-    leaves.push({ i0, j0, l0, progIndex, prog, vals });
+    if (owned) for (let s = 0; s < S3; s++) if (vals[s] >= 0) owner[s] = OWNER_AIR;
+    leaves.push(owned ? { i0, j0, l0, progIndex, prog, vals, owner } : { i0, j0, l0, progIndex, prog, vals });
   }
   return { ...plan, leaves, clipped };
 }
