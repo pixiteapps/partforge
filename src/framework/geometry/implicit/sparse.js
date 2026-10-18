@@ -88,7 +88,8 @@ export const OWNER_AIR = -1;
  * the Store — the plan's fields with `clipped` set and every leaf as { i0, j0, l0,
  * progIndex, prog, vals }. The plan itself is not modified.
  * When the plan has an owner root (`ownerRoot ≥ 0`), each leaf also gets `owner`, an
- * Int8Array of its samples' owning children (OWNER_AIR where the stored value is ≥ 0),
+ * Int8Array of its samples' owning children (evalBatchContact's `piece`; OWNER_AIR where the
+ * stored value is ≥ 0),
  * captured by the same evaluation: one evalBatchContact replaces the evalBatch, and the
  * zero nudge captures its own. `hooks` swaps the two evaluators (a test counts calls).
  */
@@ -110,7 +111,7 @@ export function evaluateLeaves(plan, hooks = {}) {
       X[q] = origin[0] + (i0 + i) * edge; Y[q] = origin[1] + (j0 + j) * edge; Z[q] = origin[2] + (l0 + l) * edge;
     }
     const owner = owned ? new Int8Array(S3) : null;
-    if (owned) runContact(prog, textures, X, Y, Z, out, { K, owner }); else run(prog, textures, X, Y, Z, out);
+    if (owned) runContact(prog, textures, X, Y, Z, out, { K, piece: owner }); else run(prog, textures, X, Y, Z, out);
     const vals = new Float32Array(S3);
     let zeros = 0;
     q = 0;
@@ -135,7 +136,7 @@ export function evaluateLeaves(plan, hooks = {}) {
       const ZX = new Float64Array(zeros), ZY = new Float64Array(zeros), ZZ = new Float64Array(zeros), Zout = new Float64Array(zeros);
       for (let z = 0; z < zeros; z++) { const s = ZI[z]; ZX[z] = X[s] + nudge[0]; ZY[z] = Y[s] + nudge[1]; ZZ[z] = Z[s] + nudge[2]; }
       const Zown = owned ? new Int8Array(zeros) : null;
-      if (owned) runContact(prog, textures, ZX, ZY, ZZ, Zout, { K, owner: Zown }); else run(prog, textures, ZX, ZY, ZZ, Zout);
+      if (owned) runContact(prog, textures, ZX, ZY, ZZ, Zout, { K, piece: Zown }); else run(prog, textures, ZX, ZY, ZZ, Zout);
       for (let z = 0; z < zeros; z++) {
         const s = ZI[z], f = Math.fround(Zout[z]);
         vals[s] = f === 0 ? (Zout[z] < 0 ? -1e-30 : 1e-30) : f;

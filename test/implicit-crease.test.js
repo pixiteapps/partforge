@@ -57,11 +57,7 @@ describe("crease cut", () => {
     }, 60_000);
 
     for (const [name, spec] of [["press gap 0", capsulePress({ overlap: PRESS_OVERLAP, gap: 0 })], ["three owners gap 0", threePress({ gap: 0 })]]) {
-      // Task 5 seam gate: the flips are cleanup's, not the cut's. Measured (raw / after cleanup / after cut):
-      // press 205/31/33 and three 59/38/41 at 1.5; press 389/63/67 and three 181/120/125 at 0.6. Reverting
-      // crease points that turn a triangle over made it worse (116, 47, 280, 212: a vertex left off the crease
-      // sits on the wrong piece's skin), so the move stays.
-      (name === "press gap 0" && edge === 1.5 ? test : test.fails)(`no flipped triangles after the cut: ${name} (${tier} ${edge})`, () => {
+      test(`no flipped triangles after the cut: ${name} (${tier} ${edge})`, () => {
         const { compiled, mesh } = run(spec, edge, tier);
         expect(flippedTriangles(compiled, mesh, edge)).toBe(0);
       }, 60_000);
@@ -97,25 +93,34 @@ describe("crease cut", () => {
   }
 
   // Wherever a pair's own attachment weight is above 0 its two pieces are one owner: no crease may
-  // lie there. The fist's fingertips press the palm, so it has creases to check.
+  // lie there. A crease vertex must lie where two pieces whose shares make the field (to within
+  // the crease tolerance) are NOT attached there. (Inside two digits' webs the palm's share ties
+  // with both, so "the owner and the next least share" is no way to name the crease's pair.) The
+  // fist's fingertips press the palm, so it has creases to check.
   test("no crease where the crossing pair's attachment weight is > 0: hand fist gap 0", () => {
     const { compiled, mesh } = run(handSpec({ ...HAND_POSES.fist, contactGap: 0 }), 1.5, "preview");
     const { att } = compiled.ir.nodes[compiled.ownerRoot], P = mesh.positions, cv = creaseVerts(mesh);
     expect(cv.length).toBeGreaterThan(0);
-    const { shares, K } = sharesAt(compiled, ...["X", "Y", "Z"].map((_, k) => Float64Array.from(cv, (v) => P[3 * v + k])));
-    let pairs = 0;
-    cv.forEach((v, i) => {
-      // The crease's two pieces: the owner and the piece whose share is next least there.
-      const X = mesh.vertOwner[v];
-      let Y = -1;
-      for (let j = 0; j < K; j++) if (j !== X && Number.isFinite(shares[i * K + j]) && (Y < 0 || shares[i * K + j] < shares[i * K + Y])) Y = j;
+    const { out, shares, K } = sharesAt(compiled, ...["X", "Y", "Z"].map((_, k) => Float64Array.from(cv, (v) => P[3 * v + k])));
+    const weight = (X, Y, v) => {
+      let w = 0;
       for (let o = 0; o < att.length; o += ATTACH_STRIDE) {
-        if (!((att[o] === X && att[o + 1] === Y) || (att[o] === Y && att[o + 1] === X))) continue;
-        pairs++;
-        expect(attachWeight(att, o, P[3 * v], P[3 * v + 1], P[3 * v + 2]), `crease vertex ${v}`).toBe(0);
+        if ((att[o] === X && att[o + 1] === Y) || (att[o] === Y && att[o + 1] === X)) w = Math.max(w, attachWeight(att, o, P[3 * v], P[3 * v + 1], P[3 * v + 2]));
       }
+      return w;
+    };
+    let attachedPairsSeen = 0;
+    cv.forEach((v, i) => {
+      const making = [];   // the pieces whose shares make the field at the crease vertex
+      for (let j = 0; j < K; j++) if (Math.abs(shares[i * K + j] - out[i]) <= 0.005 * 1.5) making.push(j);
+      expect(making.length, `crease vertex ${v}`).toBeGreaterThanOrEqual(2);
+      let unattached = false;
+      for (let a = 0; a < making.length; a++) for (let b = a + 1; b < making.length; b++) {
+        if (weight(making[a], making[b], v) === 0) unattached = true; else attachedPairsSeen++;
+      }
+      expect(unattached, `crease vertex ${v}`).toBe(true);
     });
-    expect(pairs).toBeGreaterThan(0);
+    expect(attachedPairsSeen).toBeGreaterThan(0);   // the check meets attached pairs, so it is not vacuous
     expect(edgeCheck(mesh.indices)).toEqual(CLOSED);
   }, 180_000);
 });

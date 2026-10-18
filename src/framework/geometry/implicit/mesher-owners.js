@@ -82,10 +82,17 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
   });
   const { positions, indices, vertLeaf, CP, gIndex } = m;
 
-  // --- Pass 1: every owner–owner edge of a tet holding two or more solid owners. ---
+  const keyPoint = (key, end, out, o) => {   // the grid edge's low (end 0) or high (end 1) point
+    const dir = key % 8;
+    let gi = (key - dir) / 8;
+    if (end) gi += (dir & 1) + ((dir >> 1) & 1) * n[0] + ((dir >> 2) & 1) * n[0] * n[1];
+    const i = gi % n[0], rest = (gi - i) / n[0], j = rest % n[1], l = (rest - j) / n[1];
+    out[o] = origin[0] + i * edge; out[o + 1] = origin[1] + j * edge; out[o + 2] = origin[2] + l * edge;
+  };  // --- Pass 1: every owner–owner edge of a tet holding two or more solid owners. ---
   const lab = new Int32Array(8);
   const edgeRec = new Map();   // grid edge key → record index
-  const recKey = [], recX = [], recY = [], recOpen = [], recBis = [], recAir = [];   // X/Y: the low/high end's owner
+  // Per record: X/Y the low/high end's owner; the bisector point and the field there.
+  const recKey = [], recX = [], recY = [], recOpen = [], recBis = [], recVal = [];
   const recLeaf = [];   // the leaf that first saw each record
   const perProg = new Map();   // program index → record indices first seen on a leaf running it
   const solidKinds = (cs, count) => {   // distinct solid labels among lab[cs[0..count)]
@@ -124,7 +131,7 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
           const r = recKey.length, lo = ca & cb;
           edgeRec.set(key, r);
           recKey.push(key); recX.push(lab[lo]); recY.push(lab[lo | (ca ^ cb)]); recOpen.push(0); recLeaf.push(L);
-          recBis.push(null); recAir.push(0);
+          recBis.push(null); recVal.push(0);
           pushTo(perProg, leaves[L].progIndex, r);
         }
       }
@@ -132,13 +139,7 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
   }
 
   // --- Resolve each edge on the leaf that first saw it: bisector, open or fused. ---
-  const keyPoint = (key, end, out, o) => {   // the grid edge's low (end 0) or high (end 1) point
-    const dir = key % 8;
-    let gi = (key - dir) / 8;
-    if (end) gi += (dir & 1) + ((dir >> 1) & 1) * n[0] + ((dir >> 2) & 1) * n[0] * n[1];
-    const i = gi % n[0], rest = (gi - i) / n[0], j = rest % n[1], l = (rest - j) / n[1];
-    out[o] = origin[0] + i * edge; out[o + 1] = origin[1] + j * edge; out[o + 2] = origin[2] + l * edge;
-  };
+
   // Records are batched by program (leaves with equal decisions share one; the first leaf to
   // see an edge decides it, and any leaf with its program evaluates it identically).
   for (const list of perProg.values()) {
@@ -148,34 +149,24 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
     const ev = evaluator(prog, textures, K, 2 * cnt);
     const lerpInto = (q, t, slot) => { for (let k = 0; k < 3; k++) ev.P[k][slot] = A[3 * q + k] + (B[3 * q + k] - A[3 * q + k]) * t; };
     const at = (q, t) => [0, 1, 2].map((k) => A[3 * q + k] + (B[3 * q + k] - A[3 * q + k]) * t);
-    // The bisector of c_X − c_Y (negative at X's end, the low one).
+    // The bisector of the two pieces' shares, s_X − s_Y (negative at X's end, the low one).
     const lo = new Float64Array(cnt), hi = new Float64Array(cnt).fill(1);
     for (let it = 0; it < BISECT_STEPS; it++) {
       for (let q = 0; q < cnt; q++) lerpInto(q, (lo[q] + hi[q]) / 2, q);
       ev.run(cnt);
       for (let q = 0; q < cnt; q++) {
         const r = list[q], mid = (lo[q] + hi[q]) / 2;
-        if (ev.cuts[q * K + recX[r]] - ev.cuts[q * K + recY[r]] < 0) lo[q] = mid; else hi[q] = mid;
+        if (ev.shares[q * K + recX[r]] - ev.shares[q * K + recY[r]] < 0) lo[q] = mid; else hi[q] = mid;
       }
     }
     const tb = new Float64Array(cnt);
     for (let q = 0; q < cnt; q++) { tb[q] = (lo[q] + hi[q]) / 2; lerpInto(q, tb[q], q); }
     ev.run(cnt);
-    const maybe = [];   // edges whose bisector reads as a gap; the rest are fused
     for (let q = 0; q < cnt; q++) {
       const r = list[q];
       recBis[r] = at(q, tb[q]);
-      recAir[r] = ev.out[q];
-      if (ev.out[q] > 0 && ev.cuts[q * K + recX[r]] > 0 && ev.cuts[q * K + recY[r]] > 0) maybe.push(q);
-    }
-    const nm = maybe.length;
-    if (!nm) continue;
-    // Open when each owner's cut is also negative at its own end.
-    for (let k = 0; k < nm; k++) { lerpInto(maybe[k], 0, 2 * k); lerpInto(maybe[k], 1, 2 * k + 1); }
-    ev.run(2 * nm);
-    for (let k = 0; k < nm; k++) {
-      const r = list[maybe[k]];
-      recOpen[r] = ev.cuts[2 * k * K + recX[r]] < 0 && ev.cuts[(2 * k + 1) * K + recY[r]] < 0 ? 1 : 0;
+      recVal[r] = ev.out[q];
+      recOpen[r] = ev.out[q] > 0 ? 1 : 0;
     }
   }
   openCells = new Set();
@@ -187,27 +178,27 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
   // --- Pass 2: emission, cell by cell in meshStore's order. ---
   const recOf = (i, j, l, ca, cb) => edgeRec.get(edgeKeyOf(i, j, l, ca, cb));
   const loadLabels = (L, i, j, l) => { const own = leaves[L].owner; for (let c = 0; c < 8; c++) lab[c] = own[sampleOf(i, j, l, c)]; };
-  // Crossings toward an air node, keyed by record and the grid corner's index; each is bisected
-  // onto the field's zero afterwards: [v, L, corner x, y, z, air x, y, z] (airCrossings).
-  const airVerts = new Map(), airCand = [];
-  // A sub-tet node: a cell corner (c = 0..7, its sample's value) or an open edge's air node
-  // (c = −1, r = its record; the field at the bisector, positive).
-  const cornerNode = (L, i, j, l, c) => ({ c, r: -1, val: leaves[L].vals[sampleOf(i, j, l, c)], x: CP[3 * c], y: CP[3 * c + 1], z: CP[3 * c + 2] });
-  const airNode = (r) => ({ c: -1, r, val: recAir[r], x: recBis[r][0], y: recBis[r][1], z: recBis[r][2] });
+  // Crossings on sub-tet edges that touch a split node, keyed by their two nodes; each is bisected
+  // onto the field's zero afterwards: [v, L, inside x, y, z, outside x, y, z] (nodeCrossings).
+  const nodeVerts = new Map(), nodeCand = [];
+  // A sub-tet node: a cell corner (c = 0..7: its sample's value and owner) or an open edge's air
+  // node (c = −1, r = its record: the field at the bisector, positive).
+  const cornerNode = (L, i, j, l, c) => ({ c, r: -1, val: leaves[L].vals[sampleOf(i, j, l, c)], own: lab[c], x: CP[3 * c], y: CP[3 * c + 1], z: CP[3 * c + 2],
+    id: `g${gIndex(m.i0 + i + (c & 1), m.j0 + j + ((c >> 1) & 1), m.l0 + l + ((c >> 2) & 1))}` });
+  const airNode = (r) => ({ c: -1, r, val: recVal[r], own: OWNER_AIR, x: recBis[r][0], y: recBis[r][1], z: recBis[r][2], id: `r${r}` });
   // The vertex where sub-tet edge (a, b) crosses the field's zero (one end negative).
   const crossing = (L, i, j, l, a, b) => {
     if (a.c >= 0 && b.c >= 0) return m.vertexOn(i, j, l, a.c, b.c);   // an unsplit grid edge: the plain vertex
-    const g = a.c >= 0 ? a : b, air = a.c >= 0 ? b : a;   // a crossing needs a negative end: a grid corner
-    const gi = gIndex(m.i0 + i + (g.c & 1), m.j0 + j + ((g.c >> 1) & 1), m.l0 + l + ((g.c >> 2) & 1));
-    const key = `${air.r}:${gi}`;
-    let v = airVerts.get(key);
+    const inn = a.val < 0 ? a : b, out = a.val < 0 ? b : a;
+    const key = inn.id < out.id ? `${inn.id}:${out.id}` : `${out.id}:${inn.id}`;
+    let v = nodeVerts.get(key);
     if (v !== undefined) return v;
-    const t = g.val / (g.val - air.val);   // a first guess; airCrossings bisects it
+    const t = inn.val / (inn.val - out.val);   // a first guess; nodeCrossings bisects it
     v = positions.length / 3;
-    positions.push(g.x + (air.x - g.x) * t, g.y + (air.y - g.y) * t, g.z + (air.z - g.z) * t);
-    vertLeaf.push(L); vertOwner.push(lab[g.c]); ownerHeld.push(1); pinned.push(0);
-    airVerts.set(key, v);
-    airCand.push(v, L, g.x, g.y, g.z, air.x, air.y, air.z);
+    positions.push(inn.x + (out.x - inn.x) * t, inn.y + (out.y - inn.y) * t, inn.z + (out.z - inn.z) * t);
+    vertLeaf.push(L); vertOwner.push(inn.own); ownerHeld.push(1); pinned.push(0);
+    nodeVerts.set(key, v);
+    nodeCand.push(v, L, inn.x, inn.y, inn.z, out.x, out.y, out.z);
     return v;
   };
   // Plain marching tetrahedra on one sub-tet (four nodes), oriented as mesher.js orients: the
@@ -238,22 +229,23 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
       tri(mid(n0, q0), mid(n1, q1), mid(n1, q0), v00, v11, v10);
     }
   };
-  // Path 3: one tet of cell (i, j, l) in leaf L, labels in lab, corners in CP. Its open edges
-  // are split in grid-edge-key order; each split halves every sub-tet holding both ends.
+  // Path 3: one tet of cell (i, j, l) in leaf L, labels in lab, corners in CP. Each of its
+  // owner–owner edges is split at the bisector, in grid-edge-key order; a split halves every
+  // sub-tet holding both of the edge's ends.
   const refineTet = (L, i, j, l, tet) => {
-    const open = [];
+    const edges = [];
     for (let a = 0; a < 4; a++) for (let b = a + 1; b < 4; b++) {
       const A = lab[tet[a]], B = lab[tet[b]];
       if (A === OWNER_AIR || B === OWNER_AIR || A === B) continue;
       const r = recOf(i, j, l, tet[a], tet[b]);
-      if (recOpen[r]) open.push(r, tet[a], tet[b]);
+      if (recOpen[r]) edges.push(r, tet[a], tet[b]);
     }
     let subs = [tet.map((c) => cornerNode(L, i, j, l, c))];
     const order = [];
-    for (let q = 0; q < open.length; q += 3) order.push(q);
-    order.sort((p, q) => recKey[open[p]] - recKey[open[q]]);
+    for (let q = 0; q < edges.length; q += 3) order.push(q);
+    order.sort((p, q) => recKey[edges[p]] - recKey[edges[q]]);
     for (const q of order) {
-      const M = airNode(open[q]), ca = open[q + 1], cb = open[q + 2], next = [];
+      const M = airNode(edges[q]), ca = edges[q + 1], cb = edges[q + 2], next = [];
       for (const s of subs) {
         const ia = s.findIndex((p) => p.c === ca), ib = s.findIndex((p) => p.c === cb);
         if (ia < 0 || ib < 0) { next.push(s); continue; }
@@ -266,14 +258,14 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
     for (const s of subs) subTet(L, i, j, l, s);
   };
 
-  const tetOpen = (i, j, l, tet) => {
+  const tetHasSplit = (i, j, l, tet) => {
     for (let a = 0; a < 4; a++) for (let b = a + 1; b < 4; b++) {
       const A = lab[tet[a]], B = lab[tet[b]];
       if (A !== OWNER_AIR && B !== OWNER_AIR && A !== B && recOpen[recOf(i, j, l, tet[a], tet[b])]) return true;
     }
     return false;
   };
-  const anyOpen = openCells.size > 0;
+  const anyOpen = recKey.length > 0;
   for (let L = 0; L < leaves.length; L++) {
     m.setLeaf(L);
     curLeaf = L;
@@ -292,14 +284,14 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
       m.corners(i, j, l);
       for (let t = 0; t < 6; t++) {
         const tet = KUHN[t];
-        if (solidKinds(tet, 4) >= 2 && tetOpen(i, j, l, tet)) refineTet(L, i, j, l, tet);
+        if (solidKinds(tet, 4) >= 2 && tetHasSplit(i, j, l, tet)) refineTet(L, i, j, l, tet);
         else m.tet(i, j, l, tet);
       }
     }
   }
 
   placeHeldPlain(store, positions, vertOwner, plainCandidates, K, keyPoint);
-  airCrossings(store, positions, vertOwner, pinned, airCand, K, cl, pinTol);
+  nodeCrossings(store, positions, vertOwner, pinned, nodeCand, K, cl, pinTol);
   return {
     positions: Float64Array.from(positions), indices: Uint32Array.from(indices), vertLeaf: Int32Array.from(vertLeaf),
     vertOwner: Int32Array.from(vertOwner), ownerHeld: Uint8Array.from(ownerHeld), pinned: Uint8Array.from(pinned),
@@ -326,7 +318,7 @@ function evaluator(prog, textures, K, cap) {
  * face: another piece's cut is the clearance there (its own cut, not its raw shape, made the
  * surface). An edge whose ends do not straddle the zero keeps the linear guess.
  */
-function airCrossings(store, positions, vertOwner, pinned, cand, K, cl, tol) {
+function nodeCrossings(store, positions, vertOwner, pinned, cand, K, cl, tol) {
   const STRIDE = 8, byProg = new Map();
   for (let q = 0; q < cand.length; q += STRIDE) pushTo(byProg, store.leaves[cand[q + 1]].progIndex, q);
   for (const all of byProg.values()) {

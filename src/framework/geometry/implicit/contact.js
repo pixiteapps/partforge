@@ -48,7 +48,7 @@ export const CONTACT_OVERLAP = 0.02;
 /** A crease split within this fraction of an edge from an end moves that end instead of adding a vertex (crease.js). */
 export const CREASE_SNAP = 0.15;
 /** A crease point whose field or cut difference is still off by more than this (× edge) goes back where it was (crease.js). */
-export const CREASE_TOL = 0.02;
+export const CREASE_TOL = 0.005;
 /** The exact clearance: the declared gap itself; at gap 0 a small negative (the pieces overlap by CONTACT_OVERLAP). */
 export const clearanceExact = (gap) => (gap > 0 ? gap : -CONTACT_OVERLAP);
 /** A contact node's clearance at grid edge `edge`: exact nodes ignore the grid. */

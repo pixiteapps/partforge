@@ -268,6 +268,27 @@ function captureOwner(cap, lane, kid, cnt, att, nA, g) {
     const u = unionN(g, 2, kk);
     if (cap.shares) for (const j of [att[o], att[o + 1]]) { const s = q + kid[j]; if (u < cap.shares[s]) cap.shares[s] = u; }
   }
+  if (cap.piece) {
+    // The piece: the least share. A blend lowers both of its pieces' shares alike, so they tie
+    // inside it; a tie goes to the later child (a part declares its palm before the digits that
+    // blend into it), so a digit's web is the digit's and two digits' webs stay two pieces. The
+    // rule reads no pruned slot, so every leaf labels a shared sample alike.
+    let bp = -1, bs = Infinity;
+    for (let j = 0; j < cnt; j++) {
+      let sj = cScratch[j];
+      for (let a = 0; a < nA; a++) {
+        const o = a * ATTACH_STRIDE;
+        if (att[o] !== j && att[o + 1] !== j) continue;
+        const kk = att[o + 7] * wScratch[a];
+        if (!(wScratch[a] > 0) || !(kk > 0)) continue;
+        g[0] = cScratch[att[o]]; g[1] = cScratch[att[o + 1]];
+        const u = unionN(g, 2, kk);
+        if (u < sj) sj = u;
+      }
+      if (bp < 0 || sj < bs || (sj === bs && kid[j] > kid[bp])) { bp = j; bs = sj; }
+    }
+    cap.piece[lane] = kid[bp];
+  }
   if (cap.owner) {
     // Overlapping attachment zones merge to the lesser child of the pair holding the owner, until stable.
     for (let moved = true; moved;) {
@@ -287,12 +308,15 @@ function captureOwner(cap, lane, kid, cnt, att, nA, g) {
  * whichever arrays are present; K the child count): `owner[i]` (the argmin child of the cuts,
  * merged to the lesser child across attachment zones — never AIR, the caller applies the
  * sign), `cuts[i·K + child]` (each child's cut value, +Infinity for a pruned child) and
- * `shares` (the cut lowered by any attachment blend the child takes part in). `out` is
- * bit-identical to evalBatch's.
+ * `shares` (the cut lowered by any attachment blend the child takes part in) and `piece[i]` (the
+ * child of the least share, a tie going to the later child: the owner the meshing stages use,
+ * where attached pieces tie inside their blend but two digits both blended into the palm stay two
+ * pieces). `out` is bit-identical to evalBatch's.
  */
 export function evalBatchContact(prog, textures, X, Y, Z, out, cap) {
   const N = X.length;
   if (cap.owner) cap.owner.fill(-1);
+  if (cap.piece) cap.piece.fill(-1);
   if (cap.cuts) cap.cuts.fill(Infinity);
   if (cap.shares) cap.shares.fill(Infinity);
   for (let s = 0; s < N; s += BATCH) {

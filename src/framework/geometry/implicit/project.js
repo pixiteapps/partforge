@@ -28,6 +28,8 @@ const HELD_FIELD_TOL = 1e-3;
  * the step predicted by more than HELD_CONTINUITY × the step length was not continuous along it.
  */
 const HELD_GRAD_MAX = 3, HELD_CONTINUITY = 0.5;
+/** An owner-mesh step moves at most this many times the field's value (the fields are distance-like). */
+const DIST_RATIO = 2;
 
 export function projectVertices(store, positions, vertLeaf, { maxStep, which = null, normals = null, owner = null, held = null }) {
   const e = 0.1 * store.edge;
@@ -80,6 +82,10 @@ function newtonStep(f, e, maxStep) {
   if (!(g2 > 1e-12)) return null;
   const gl = Math.sqrt(g2);
   let t = d / gl;
+  // A stencil straddling a crease (where two pieces meet) averages their gradients toward zero,
+  // and d / |g| then throws the vertex far: never step more than DIST_RATIO × |d|.
+  const far = DIST_RATIO * Math.abs(d);
+  if (t > far) t = far; else if (t < -far) t = -far;
   if (t > maxStep) t = maxStep; else if (t < -maxStep) t = -maxStep;
   return { d, gx, gy, gz, gl, t };
 }
@@ -96,7 +102,7 @@ function projectOwnedGroup(store, prog, positions, verts, owner, held, { X, Y, Z
     fieldSteps[k] = newtonStep((q) => out[o + q], e, maxStep);
     const w = owner[v];
     // Not held, and its owner makes the field here: the field step is its own skin's.
-    if (!held[v] && !(shares[o * K + w] - out[o] > tol)) return;
+    if (!held[v] && !(shares[o * K + w] - out[o] > tol && out[o] >= -tol)) return;
     let finite = true;
     for (let q = 0; q < 7 && finite; q++) if (!Number.isFinite(shares[(o + q) * K + w])) finite = false;
     if (!finite) return;
@@ -122,6 +128,7 @@ function projectOwnedGroup(store, prog, positions, verts, owner, held, { X, Y, Z
   }
   verts.forEach((v, k) => {
     const s = accepted[k] ? shareSteps[k] : fieldSteps[k];
+    if (globalThis.__dbg && Math.hypot(positions[3 * v] - globalThis.__dbg[0], positions[3 * v + 1] - globalThis.__dbg[1], positions[3 * v + 2] - globalThis.__dbg[2]) < 1.0) console.log("DBG", v, [positions[3*v],positions[3*v+1],positions[3*v+2]].map(x=>x.toFixed(3)).join(","), "own", owner[v], "held", held[v], "acc", accepted[k], "field", out[7*k].toFixed(4), "share", shares[7*k*K+owner[v]].toFixed(4), "fs", fieldSteps[k] && fieldSteps[k].t.toFixed(4), "ss", shareSteps[k] && shareSteps[k].t.toFixed(4));
     if (s === null) return;
     if (normals) { normals[3 * v] = s.gx / s.gl; normals[3 * v + 1] = s.gy / s.gl; normals[3 * v + 2] = s.gz / s.gl; }
     positions[3 * v] -= (s.gx / s.gl) * s.t; positions[3 * v + 1] -= (s.gy / s.gl) * s.t; positions[3 * v + 2] -= (s.gz / s.gl) * s.t;
