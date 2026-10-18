@@ -1,28 +1,30 @@
 // src/framework/geometry/implicit/crease.js
-// The crease cut (seam spec §5): after cleanup, each mesh edge whose ends belong to different
-// pieces is split where the two pieces' cut values are equal, and that point is moved onto the
-// crease (field = 0 and the two cuts equal). Pure edge splits on a closed manifold keep it closed
-// and oriented; placing crease points directly instead is what shed stray shards in the spike.
+// The crease cut (seam spec §5), then untangling. After cleanup, each mesh edge whose ends belong
+// to different pieces is cut where the two pieces' shares are equal, at a point moved onto the
+// crease (field = 0 and the two shares equal). Pure edge splits on a closed manifold keep it
+// closed and oriented; placing crease points directly instead is what shed stray shards in the
+// spike.
 //
-//   1. Re-own: a free vertex (not held, not pinned) takes the argmin owner of the cuts at its
-//      final position (evalBatchContact's merged owner, so an attachment zone is one owner and
-//      is never cut). Held and pinned vertices keep the owner the mesher gave them.
-//   2. Each edge with differing owners, both ends free, is bisected on c_X − c_Y (20 steps). A
-//      split within CREASE_SNAP of an end moves that end instead of adding a vertex.
-//   3. Triangles with one, two or three split edges become 2, 3 or 4 triangles.
-//   4. Crease points move onto d = 0 and c_X = c_Y (Newton, minimal norm, 6 steps, each move
-//      capped at 0.25 edge).
-//   5. A point still off by more than CREASE_TOL·edge (a near miss has no crease) goes back
-//      where it was and loses its flag.
-// Crease vertices are neither held nor pinned. Exact trees never reach the native core.
+//   1. Re-own: a free vertex (not held, not pinned) takes the piece at its final position
+//      (evalBatchContact's `piece`). Held and pinned vertices keep the owner the mesher gave them.
+//   2. Each edge with differing owners and neither end pinned is bisected on s_X − s_Y (20 steps).
+//   3. That point is taken onto the crease — s_X = 0 and s_X = s_Y, within the plane holding the
+//      edge and its normal (Newton, NEWTON_STEPS, each move capped at MAX_MOVE_CELLS·edge) — and
+//      kept only if it reaches it: on the surface, the two shares equal and making the field (no
+//      third piece nearer), all within CREASE_TOL·edge, outside the pair's attachment. A near
+//      miss has no crease, so its edges stay as they were.
+//   4. A kept point within CREASE_SNAP of an edge end moves that end (once); else it splits the edge.
+//   5. Triangles with one, two or three split edges become 2, 3 or 4 triangles.
+// Crease vertices are neither held nor pinned. untangle (below) then repairs triangles that face
+// into the material. Exact trees never reach the native core.
 import { evalBatchContact } from "./program.js";
 import { CREASE_SNAP, CREASE_TOL, ATTACH_STRIDE, attachWeight } from "./contact.js";
 
 const BISECT_STEPS = 20, NEWTON_STEPS = 10, MAX_MOVE_CELLS = 0.25;
 
-// The field, piece and every child's share (`cuts`: a share is its cut, lowered inside its blends) at the points, each evaluated with its leaf's program.
+// The field, piece and every child's share at the points, each evaluated with its leaf's program.
 function evalPoints(store, K, pts, leafOf) {
-  const n = pts.length / 3, d = new Float64Array(n), owner = new Int32Array(n).fill(-1), cuts = new Float64Array(n * K).fill(Infinity);
+  const n = pts.length / 3, d = new Float64Array(n), owner = new Int32Array(n).fill(-1), shares = new Float64Array(n * K).fill(Infinity);
   const groups = new Map();
   for (let q = 0; q < n; q++) {
     const g = groups.get(leafOf[q]);
@@ -35,10 +37,10 @@ function evalPoints(store, K, pts, leafOf) {
     evalBatchContact(store.leaves[L].prog, store.textures, X, Y, Z, out, { K, piece: o, shares: c });
     qs.forEach((q, i) => {
       d[q] = out[i]; owner[q] = o[i];
-      for (let j = 0; j < K; j++) cuts[q * K + j] = c[i * K + j];
+      for (let j = 0; j < K; j++) shares[q * K + j] = c[i * K + j];
     });
   }
-  return { d, owner, cuts };
+  return { d, owner, shares };
 }
 
 // The largest attachment weight, at (x, y, z), of an attachment joining pieces X and Y (0 if none).
@@ -52,10 +54,9 @@ function pairWeight(att, X, Y, x, y, z) {
 
 /**
  * Cut the creases into an owner mesh (`vertOwner`, `ownerHeld`, `pinned`, `vertLeaf`, `normals`).
- * `att` is the contact node's attachment table: crease edges are found between the field's terms
- * (fieldTerms), so no crease is cut (or kept) where the crossing pair's own attachment weight is
- * above 0, and digits webbed into one piece still crease against each other. Returns the mesh
- * with every per-vertex array grown to the new vertices and `crease` set.
+ * `att` is the contact node's attachment table: no crease is cut where the crossing pair's own
+ * attachment weight is above 0. Returns the mesh with every per-vertex array grown to the new
+ * vertices and `crease` set.
  */
 export function cutCreases(store, mesh, att = new Float64Array(0)) {
   const K = Math.max(1, store.ownerK ?? 0), edge = store.edge;
@@ -84,14 +85,20 @@ export function cutCreases(store, mesh, att = new Float64Array(0)) {
   // 2. Where on each edge the two shares are equal.
   const lo = new Float64Array(list.length), hi = new Float64Array(list.length).fill(1);
   const along = (e, s) => [0, 1, 2].map((k) => P[3 * e.a + k] + (P[3 * e.b + k] - P[3 * e.a + k]) * s);
+  // Each edge is evaluated with one leaf's program: its first end's, unless that program pruned
+  // either piece at the edge's middle (an edge can span two leaves), then its other end's.
   const leafOfEdge = list.map((e) => VL[e.a]);
+  if (list.length) {
+    const { shares } = evalPoints(store, K, Float64Array.from(list.flatMap((e) => along(e, 0.5))), leafOfEdge);
+    list.forEach((e, q) => { if (!Number.isFinite(shares[q * K + e.X]) || !Number.isFinite(shares[q * K + e.Y])) leafOfEdge[q] = VL[e.b]; });
+  }
   for (let it = 0; it < BISECT_STEPS && list.length; it++) {
     const pts = new Float64Array(3 * list.length);
     list.forEach((e, q) => pts.set(along(e, (lo[q] + hi[q]) / 2), 3 * q));
-    const { cuts } = evalPoints(store, K, pts, leafOfEdge);
+    const { shares } = evalPoints(store, K, pts, leafOfEdge);
     list.forEach((e, q) => {
       const mid = (lo[q] + hi[q]) / 2;
-      if (cuts[q * K + e.X] - cuts[q * K + e.Y] < 0) lo[q] = mid; else hi[q] = mid;   // NaN (a pruned share) goes to the high side
+      if (shares[q * K + e.X] - shares[q * K + e.Y] < 0) lo[q] = mid; else hi[q] = mid;   // NaN (a pruned share) goes to the high side
     });
   }
   // A crease point moves within the plane holding its edge and the edge's surface normal: the
@@ -104,7 +111,7 @@ export function cutCreases(store, mesh, att = new Float64Array(0)) {
   };
   const params = list.map((e, q) => (lo[q] + hi[q]) / 2);
   // 3. Each crossing (not where its pair is attached) is taken onto the crease before anything is
-  //    cut: d = 0 and s_X = s_Y, within its plane (Newton, NEWTON_STEPS, each move capped at
+  //    cut: s_X = 0 and s_X = s_Y, within its plane (Newton, NEWTON_STEPS, each move capped at
   //    MAX_MOVE_CELLS·edge). Only crossings that reach a real crease are cut, so a near miss
   //    (no crease) leaves its edges as they were.
   const cand = [];
@@ -121,15 +128,15 @@ export function cutCreases(store, mesh, att = new Float64Array(0)) {
       pts.set([x, y, z, x + h, y, z, x - h, y, z, x, y + h, z, x, y - h, z, x, y, z + h, x, y, z - h], 21 * q);
       for (let k = 0; k < 7; k++) lf.push(c.leaf);
     });
-    const { cuts } = evalPoints(store, K, pts, lf);
+    const { shares } = evalPoints(store, K, pts, lf);
     cand.forEach((c, q) => {
       const { X, Y } = c.e;
       // s_X = 0 and s_X = s_Y: both rows smooth (the field, their minimum, kinks at the crease itself).
-      const F = (k) => { const o = 7 * q + k; return [cuts[o * K + X], cuts[o * K + X] - cuts[o * K + Y]]; };
+      const F = (k) => { const o = 7 * q + k; return [shares[o * K + X], shares[o * K + X] - shares[o * K + Y]]; };
       const F0 = F(0), Fp = [F(1), F(3), F(5)], Fm = [F(2), F(4), F(6)];
       const [ja, jb] = [0, 1].map((r) => [0, 1, 2].map((ax) => (Fp[ax][r] - Fm[ax][r]) / (2 * h)));
       let dx = null;
-      if (c.pn) {   // d = 0, s_X = s_Y and the plane: a 3×3 solve (Cramer's rule)
+      if (c.pn) {   // s_X = 0, s_X = s_Y and the plane: a 3×3 solve (Cramer's rule)
         const pn = c.pn, r2 = -((c.p[0] - c.p0[0]) * pn[0] + (c.p[1] - c.p0[1]) * pn[1] + (c.p[2] - c.p0[2]) * pn[2]);
         const D = det3(ja, jb, pn), scale = Math.sqrt((ja[0] * ja[0] + ja[1] * ja[1] + ja[2] * ja[2]) * (jb[0] * jb[0] + jb[1] * jb[1] + jb[2] * jb[2]));
         if (Math.abs(D) > 1e-6 * scale) {
@@ -154,11 +161,11 @@ export function cutCreases(store, mesh, att = new Float64Array(0)) {
   // third piece nearer), all to within CREASE_TOL·edge, and outside the pair's attachment.
   const reached = new Uint8Array(cand.length);
   if (cand.length) {
-    const { d, cuts } = evalPoints(store, K, Float64Array.from(cand.flatMap((c) => c.p)), cand.map((c) => c.leaf));
+    const { d, shares } = evalPoints(store, K, Float64Array.from(cand.flatMap((c) => c.p)), cand.map((c) => c.leaf));
     const tol = CREASE_TOL * edge;
     cand.forEach((c, q) => {
       const { X, Y } = c.e;
-      reached[q] = Math.abs(d[q]) <= tol && Math.abs(cuts[q * K + X] - cuts[q * K + Y]) <= tol && Math.abs(cuts[q * K + X] - d[q]) <= tol
+      reached[q] = Math.abs(d[q]) <= tol && Math.abs(shares[q * K + X] - shares[q * K + Y]) <= tol && Math.abs(shares[q * K + X] - d[q]) <= tol
         && !(pairWeight(att, X, Y, c.p[0], c.p[1], c.p[2]) > 0) ? 1 : 0;
     });
   }
@@ -170,7 +177,7 @@ export function cutCreases(store, mesh, att = new Float64Array(0)) {
     if (!reached[q]) return;
     const s = params[c.q], v = s < CREASE_SNAP ? c.e.a : s > 1 - CREASE_SNAP ? c.e.b : -1;
     if (v < 0 || snapped.has(v)) return;
-    snapped.add(v); crease[v] = 1;
+    snapped.add(v); crease[v] = 1; VH[v] = 0;
     P[3 * v] = c.p[0]; P[3 * v + 1] = c.p[1]; P[3 * v + 2] = c.p[2];
   });
   const splitOf = new Map();
@@ -213,19 +220,27 @@ const FLIP_PROBE = 0.03;
 /** Adjacent triangles whose normals turn by more than this (cos) fold. */
 const FOLD_COS = -0.866;
 const UNTANGLE_ROUNDS = 8;
+/** A triangle within this (cos) of all its corners' normals is not probed for a flip. */
+const SUSPECT_COS = 0.866;
+/** Untangling works within this many vertex rings of the flipped triangles it starts from. */
+const REGION_RINGS = 12;
 
 /**
  * Untangle a cut owner mesh. A triangle FLIPS when the field steps the wrong way across it (at its
  * centroid, ± FLIP_PROBE·edge along its normal, the outer side reads lower) — its owner's share
  * when its non-crease corners share one owner, else the field: the seam spec's measure. Where the
- * surface turns sharply inward (a crease, or a valley between two webs), a triangle spanning the
- * turn can face into the material. Each round, every flipped triangle's edges are tried
- *   1. for a swap (the quad's other diagonal) — no vertex moves;
- *   2. then for a collapse onto one end (the other end's triangles taken over by it) — never a
- *      pinned or crease vertex removed, never two owners merged, the link condition kept;
- * and a change is taken only when every triangle it makes faces out and folds against none of its
- * neighbours. Crease edges (both ends on the crease) are never swapped. The mesh stays closed,
- * manifold and oriented, and no vertex leaves where cleanup and the cut put it.
+ * surface turns sharply inward (a crease, a valley between two digits' webs, a gap closing into an
+ * attachment) a triangle spanning the turn can face into the material. Each round, the flipped
+ * triangles are tried for
+ *   1. a swap of one of their edges (the quad's other diagonal; never a crease edge);
+ *   2. a collapse of one of their edges onto one end (the other end's triangles taken over by it;
+ *      never a pinned vertex removed, never two vertices of different owners merged unless one is
+ *      a crease point, the link condition kept);
+ *   3. a move of one of their corners (not pinned, not on the crease) to the middle of its ring,
+ *      taken back onto its owner's share;
+ * and a change is taken only when the triangles it makes hold no more flips and no more folds
+ * than the ones it replaces, and fewer of one. The mesh stays closed, manifold and oriented.
+ * Only triangles near a flipped one are touched (REGION_RINGS); a mesh with none is returned as is.
  */
 export function untangle(store, mesh) {
   const K = Math.max(1, store.ownerK ?? 0), edge = store.edge, eps = FLIP_PROBE * edge;
@@ -256,20 +271,34 @@ export function untangle(store, mesh) {
       }
       lf.push(VL[a], VL[a]);
     });
-    const { d, cuts } = evalShares(store, K, pts, lf);
+    const { d, shares } = evalPoints(store, K, pts, lf);
+    // A share pruned from the first corner's leaf program (a triangle can span two leaves): the
+    // probe is read again with the next corner's.
+    for (let k = 1; k < 3; k++) {
+      const redo = [];
+      tris.forEach((x, q) => { const o = ownerOf(...x); if (o >= 0 && !(Number.isFinite(shares[2 * q * K + o]) && Number.isFinite(shares[(2 * q + 1) * K + o]))) redo.push(q); });
+      if (!redo.length) break;
+      const rp = new Float64Array(6 * redo.length), rl = [];
+      redo.forEach((q, i) => { rp.set(pts.subarray(6 * q, 6 * q + 6), 6 * i); rl.push(VL[tris[q][k]], VL[tris[q][k]]); });
+      const again = evalPoints(store, K, rp, rl);
+      redo.forEach((q, i) => { for (let s2 = 0; s2 < 2; s2++) { d[2 * q + s2] = again.d[2 * i + s2]; for (let j = 0; j < K; j++) shares[(2 * q + s2) * K + j] = again.shares[(2 * i + s2) * K + j]; } });
+    }
     return tris.map(([a, b, c], q) => {
-      const o = ownerOf(a, b, c), f = (p) => (o >= 0 ? cuts[p * K + o] : d[p]);
+      const o = ownerOf(a, b, c), f = (p) => (o >= 0 ? shares[p * K + o] : d[p]);
       return f(2 * q) < f(2 * q + 1);
     });
   };
   const KEYM = 2 ** 26;   // vertex counts stay far below it
   const edgeKey = (a, b) => (a < b ? a * KEYM + b : b * KEYM + a);
-  const byEdge = new Map(), vt = Array.from({ length: P.length / 3 }, () => new Set());
+  // Adjacency is kept only for the triangles near flipped ones (built below): edge → triangles,
+  // vertex → triangles.
+  const byEdge = new Map(), fans = new Map();
+  const fan = (v) => { let f = fans.get(v); if (!f) fans.set(v, (f = new Set())); return f; };
   const link = (t) => {
     for (let k = 0; k < 3; k++) {
       const key = edgeKey(T[3 * t + k], T[3 * t + (k + 1) % 3]), l = byEdge.get(key);
       if (l) l.push(t); else byEdge.set(key, [t]);
-      vt[T[3 * t + k]].add(t);
+      fan(T[3 * t + k]).add(t);
     }
   };
   const unlink = (t) => {
@@ -277,13 +306,12 @@ export function untangle(store, mesh) {
       const key = edgeKey(T[3 * t + k], T[3 * t + (k + 1) % 3]), l = byEdge.get(key);
       l.splice(l.indexOf(t), 1);
       if (!l.length) byEdge.delete(key);
-      vt[T[3 * t + k]].delete(t);
+      fan(T[3 * t + k]).delete(t);
     }
   };
-  for (let t = 0; t < nt0; t++) link(t);
   const triOf = (t) => [T[3 * t], T[3 * t + 1], T[3 * t + 2]];
   const setTri = (t, x) => { T[3 * t] = x[0]; T[3 * t + 1] = x[1]; T[3 * t + 2] = x[2]; };
-  const ring = (v) => { const r = new Set(); for (const t of vt[v]) for (const w of triOf(t)) if (w !== v) r.add(w); return r; };
+  const ring = (v) => { const r = new Set(); for (const t of fan(v)) for (const w of triOf(t)) if (w !== v) r.add(w); return r; };
   // How many of the triangles' edges fold: against another of them, or against a live triangle
   // across the edge that is not among `gone` (the triangles they replace).
   const foldCount = (tris, gone) => {
@@ -304,7 +332,42 @@ export function untangle(store, mesh) {
     return flipsAfter <= fB && foldA <= foldB && (flipsAfter < fB || foldA < foldB);
   };
   const isBad = (ts) => { const live = ts.filter((t) => alive[t]), f = flipped(live.map(triOf)); return live.filter((_, q) => f[q]); };
-  let bad = isBad(Array.from({ length: nt0 }, (_, t) => t));
+  // Probed: every triangle at a seam (a crease, held or mixed-owner corner), and elsewhere a
+  // triangle turned away from one of its corners' normals (the field's gradient there, from
+  // cleanup's last projection) by more than SUSPECT_COS; only those can face into the material.
+  const suspects = [];
+  for (let t = 0; t < nt0; t++) {
+    const x = triOf(t), n = normalOf(...x);
+    if (CR[x[0]] || CR[x[1]] || CR[x[2]] || HELD[x[0]] || HELD[x[1]] || HELD[x[2]] || VO[x[0]] !== VO[x[1]] || VO[x[1]] !== VO[x[2]]) { suspects.push(t); continue; }
+    for (const v of x) {
+      const nv = [N[3 * v], N[3 * v + 1], N[3 * v + 2]];
+      if (dot(n, nv) < SUSPECT_COS * Math.hypot(...nv)) { suspects.push(t); break; }
+    }
+  }
+  let bad = isBad(suspects);
+  if (!bad.length) return mesh;
+  // The region: every triangle within REGION_RINGS vertex rings of a flipped one.
+  {
+    const nv0 = P.length / 3, start = new Int32Array(nv0 + 1);
+    for (let i = 0; i < T.length; i++) start[T[i] + 1]++;
+    for (let v = 0; v < nv0; v++) start[v + 1] += start[v];
+    const fill = start.slice(0, nv0), tris = new Int32Array(T.length);
+    for (let t = 0; t < nt0; t++) for (let k = 0; k < 3; k++) tris[fill[T[3 * t + k]]++] = t;
+    const inRegion = new Uint8Array(nt0), seen = new Uint8Array(nv0);
+    let front = [];
+    for (const t of bad) for (const v of triOf(t)) if (!seen[v]) { seen[v] = 1; front.push(v); }
+    for (let ring = 0; ring <= REGION_RINGS && front.length; ring++) {
+      const next = [];
+      for (const v of front) for (let q = start[v]; q < start[v + 1]; q++) {
+        const t = tris[q];
+        if (inRegion[t]) continue;
+        inRegion[t] = 1;
+        for (const w of triOf(t)) if (!seen[w]) { seen[w] = 1; next.push(w); }
+      }
+      front = next;
+    }
+    for (let t = 0; t < nt0; t++) if (inRegion[t]) link(t);
+  }
   for (let round = 0; round < UNTANGLE_ROUNDS && bad.length; round++) {
     const touched = new Set();
     let changed = false;
@@ -328,7 +391,7 @@ export function untangle(store, mesh) {
       unlink(s.t); unlink(s.u);
       setTri(s.t, s.tris[0]); setTri(s.u, s.tris[1]);
       link(s.t); link(s.u);
-      for (const v of [...s.tris[0], ...s.tris[1]]) for (const w of vt[v]) touched.add(w);
+      for (const v of [...s.tris[0], ...s.tris[1]]) for (const w of fan(v)) touched.add(w);
       changed = true;
     });
     // 2. Collapses: vertex `gone` merged into vertex `keep`, an end of an edge of a flipped triangle.
@@ -340,7 +403,7 @@ export function untangle(store, mesh) {
       let common = 0;
       for (const v of rk) if (rg.has(v)) common++;
       if (common !== 2) continue;
-      const goneTris = [...vt[gone]], dying = new Set(goneTris.filter((u) => vt[keep].has(u)));
+      const goneTris = [...fan(gone)], dying = new Set(goneTris.filter((u) => fan(keep).has(u)));
       const tris = goneTris.filter((u) => !dying.has(u)).map((u) => triOf(u).map((v) => (v === gone ? keep : v)));
       cols.push({ keep, gone, goneTris, dying, tris });
     }
@@ -350,14 +413,51 @@ export function untangle(store, mesh) {
       let fa = 0;
       for (let i = 0; i < c.tris.length; i++) fa += fc[o + i];
       o += c.tris.length;
-      if (c.goneTris.some((u) => touched.has(u)) || [...vt[c.keep]].some((u) => touched.has(u))) continue;
+      if (c.goneTris.some((u) => touched.has(u)) || [...fan(c.keep)].some((u) => touched.has(u))) continue;
       if (!better(c.goneTris, c.tris, fa, stillSet)) continue;
       for (const u of c.goneTris) unlink(u);
       for (const u of c.dying) alive[u] = 0;
       for (const u of c.goneTris) if (!c.dying.has(u)) { setTri(u, triOf(u).map((v) => (v === c.gone ? c.keep : v))); link(u); }
-      for (const w of vt[c.keep]) { touched.add(w); for (const x of triOf(w)) for (const y of vt[x]) touched.add(y); }
+      for (const w of fan(c.keep)) { touched.add(w); for (const x of triOf(w)) for (const y of fan(x)) touched.add(y); }
       for (const u of c.goneTris) touched.add(u);
       changed = true;
+    }
+    // 3. Moves: a vertex of a flipped triangle (not pinned, not on the crease) goes to the middle
+    //    of its ring, taken back onto its owner's share. Each triangle's three corners are tried
+    //    in turn; vertices whose triangles share nothing are tried together.
+    for (let k = 0; k < 3; k++) {
+      const left = isBad(still.filter((t) => alive[t] && !touched.has(t)));
+      if (!left.length) break;
+      const leftSet = new Set(left), movers = [], claimed = new Set();
+      for (const t of left) {
+        const v = T[3 * t + k];
+        if (PIN[v] || CR[v] || claimed.has(v)) continue;
+        const vf = [...fan(v)];
+        if (vf.some((u) => touched.has(u) || claimed.has(`t${u}`))) continue;
+        const r = ring(v);
+        let x = 0, y = 0, z = 0;
+        for (const w of r) { x += P[3 * w] / r.size; y += P[3 * w + 1] / r.size; z += P[3 * w + 2] / r.size; }
+        movers.push({ v, fan: vf, from: [P[3 * v], P[3 * v + 1], P[3 * v + 2]], to: [x, y, z] });
+        claimed.add(v);
+        for (const u of vf) { claimed.add(`t${u}`); for (const w of triOf(u)) claimed.add(w); }
+      }
+      if (!movers.length) continue;
+      projectOnShare(store, K, movers.map((mv) => mv.to), movers.map((mv) => VL[mv.v]), movers.map((mv) => VO[mv.v]), edge);
+      const before = movers.map((mv) => mv.fan.filter((u) => leftSet.has(u)).length);
+      const foldsBefore = movers.map((mv) => foldCount(mv.fan.map(triOf), new Set(mv.fan)));
+      for (const mv of movers) for (let c = 0; c < 3; c++) P[3 * mv.v + c] = mv.to[c];
+      const fm = flipped(movers.flatMap((mv) => mv.fan.map(triOf)));
+      let o2 = 0;
+      movers.forEach((mv, q) => {
+        let fa = 0;
+        for (let i = 0; i < mv.fan.length; i++) fa += fm[o2 + i];
+        o2 += mv.fan.length;
+        const foldA = foldCount(mv.fan.map(triOf), new Set(mv.fan));
+        if (fa <= before[q] && foldA <= foldsBefore[q] && (fa < before[q] || foldA < foldsBefore[q])) {
+          for (const u of mv.fan) touched.add(u);
+          changed = true;
+        } else for (let c = 0; c < 3; c++) P[3 * mv.v + c] = mv.from[c];
+      });
     }
     if (!changed) break;
     bad = isBad([...new Set(bad.concat([...touched]))]);
@@ -376,16 +476,25 @@ export function untangle(store, mesh) {
   };
 }
 
-// The field and every child's share at the points, each evaluated with its leaf's program.
-function evalShares(store, K, pts, leafOf) {
-  const n = pts.length / 3, d = new Float64Array(n), cuts = new Float64Array(n * K).fill(Infinity);
-  const groups = new Map();
-  for (let q = 0; q < n; q++) { const g = groups.get(leafOf[q]); if (g) g.push(q); else groups.set(leafOf[q], [q]); }
-  for (const [L, qs] of groups) {
-    const m = qs.length, X = new Float64Array(m), Y = new Float64Array(m), Z = new Float64Array(m), out = new Float64Array(m), s = new Float64Array(m * K);
-    qs.forEach((q, i) => { X[i] = pts[3 * q]; Y[i] = pts[3 * q + 1]; Z[i] = pts[3 * q + 2]; });
-    evalBatchContact(store.leaves[L].prog, store.textures, X, Y, Z, out, { K, shares: s });
-    qs.forEach((q, i) => { d[q] = out[i]; for (let j = 0; j < K; j++) cuts[q * K + j] = s[i * K + j]; });
+/** Newton steps (4) taking each point onto its owner's share zero; each step at most 2·|share| and 0.25·edge. */
+function projectOnShare(store, K, pts, leaves, owners, edge) {
+  const h = 0.05 * edge, cap = 0.25 * edge;
+  for (let it = 0; it < 4; it++) {
+    const q = new Float64Array(21 * pts.length), lf = [];
+    pts.forEach((p, i) => {
+      const [x, y, z] = p;
+      q.set([x, y, z, x + h, y, z, x - h, y, z, x, y + h, z, x, y - h, z, x, y, z + h, x, y, z - h], 21 * i);
+      for (let k = 0; k < 7; k++) lf.push(leaves[i]);
+    });
+    const { shares } = evalPoints(store, K, q, lf);
+    pts.forEach((p, i) => {
+      const f = (k) => shares[(7 * i + k) * K + owners[i]], d = f(0);
+      const g = [(f(1) - f(2)) / (2 * h), (f(3) - f(4)) / (2 * h), (f(5) - f(6)) / (2 * h)], gl = Math.hypot(...g);
+      if (!(gl > 1e-9) || !Number.isFinite(d)) return;
+      let t = d / gl;
+      const lim = Math.min(cap, 2 * Math.abs(d));
+      if (t > lim) t = lim; else if (t < -lim) t = -lim;
+      for (let k = 0; k < 3; k++) p[k] -= (g[k] / gl) * t;
+    });
   }
-  return { d, cuts };
 }

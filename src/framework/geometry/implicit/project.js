@@ -14,10 +14,13 @@
 // skin rather than the nearer piece's. A merged owner's share is discontinuous at an
 // attachment zone's rim (a blend lowers it inside, the raw cut returns outside), so a share
 // step is tried only when the share's stencil gradient is distance-like (≤ HELD_GRAD_MAX), and
-// kept only when it lands on the surface (|field| ≤ HELD_FIELD_TOL·edge), or when the share
-// behaved continuously along it and still makes the field at the landing (no other piece is
-// nearer there); otherwise, or when the owner's share is pruned at the vertex's leaf, the
-// vertex takes the ordinary field step. A mesh without owners projects exactly as before.
+// kept only when the share still makes the field at the landing (no other piece is nearer
+// there) and either the landing is on the surface (|field| ≤ HELD_FIELD_TOL·edge) or the share
+// behaved continuously along the step; otherwise, or when the owner's share is pruned at the
+// vertex's leaf, the vertex takes the ordinary field step. Every owner-mesh step is also capped at
+// DIST_RATIO × |value|: beside a crease the stencil straddles two pieces' gradients, which average
+// toward zero, and value / |gradient| would throw the vertex far across the crease. A mesh without
+// owners projects exactly as before.
 import { evalBatch, evalBatchContact } from "./program.js";
 
 /** A held step that lands within this (× edge) of the field's zero is kept. */
@@ -102,7 +105,7 @@ function projectOwnedGroup(store, prog, positions, verts, owner, held, { X, Y, Z
     fieldSteps[k] = newtonStep((q) => out[o + q], e, maxStep);
     const w = owner[v];
     // Not held, and its owner makes the field here: the field step is its own skin's.
-    if (!held[v] && !(shares[o * K + w] - out[o] > tol && out[o] >= -tol)) return;
+    if (!held[v] && !(shares[o * K + w] - out[o] > tol)) return;
     let finite = true;
     for (let q = 0; q < 7 && finite; q++) if (!Number.isFinite(shares[(o + q) * K + w])) finite = false;
     if (!finite) return;
@@ -123,12 +126,11 @@ function projectOwnedGroup(store, prog, positions, verts, owner, held, { X, Y, Z
     tries.forEach((k, q) => {
       const s = shareSteps[k], predicted = s.d - s.gl * s.t, landed = cShares[q * K + owner[verts[k]]];
       const continuous = Math.abs(landed - predicted) <= HELD_CONTINUITY * Math.abs(s.t) + tol, mine = landed - cOut[q] <= tol;
-      if (Math.abs(cOut[q]) <= tol || (continuous && mine)) accepted[k] = 1;
+      if (mine && (Math.abs(cOut[q]) <= tol || continuous)) accepted[k] = 1;
     });
   }
   verts.forEach((v, k) => {
     const s = accepted[k] ? shareSteps[k] : fieldSteps[k];
-    if (globalThis.__dbg && Math.hypot(positions[3 * v] - globalThis.__dbg[0], positions[3 * v + 1] - globalThis.__dbg[1], positions[3 * v + 2] - globalThis.__dbg[2]) < 1.0) console.log("DBG", v, [positions[3*v],positions[3*v+1],positions[3*v+2]].map(x=>x.toFixed(3)).join(","), "own", owner[v], "held", held[v], "acc", accepted[k], "field", out[7*k].toFixed(4), "share", shares[7*k*K+owner[v]].toFixed(4), "fs", fieldSteps[k] && fieldSteps[k].t.toFixed(4), "ss", shareSteps[k] && shareSteps[k].t.toFixed(4));
     if (s === null) return;
     if (normals) { normals[3 * v] = s.gx / s.gl; normals[3 * v + 1] = s.gy / s.gl; normals[3 * v + 2] = s.gz / s.gl; }
     positions[3 * v] -= (s.gx / s.gl) * s.t; positions[3 * v + 1] -= (s.gy / s.gl) * s.t; positions[3 * v + 2] -= (s.gz / s.gl) * s.t;

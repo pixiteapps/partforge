@@ -13,13 +13,16 @@
 //      refinement is conforming. Marching tetrahedra on a conforming tet mesh is closed and
 //      manifold by construction — a line contact thinner than the grid, three pieces meeting
 //      at a gap's end, a slit ending inside a fused contact all come out as closed sheets.
-// An owner–owner grid edge is OPEN when the field is positive at the pieces' bisector along
-// it (c_X − c_Y = 0, bisected) and each owner's cut is negative at its own end and positive
-// at the bisector; else FUSED. It is decided once per grid edge, so every tet sharing it
-// agrees, and an open edge is never closed: the air node keeps every near miss apart (the
-// seam spec's "near-miss safety wins"), and a slit thinner than the grid inside a gap-0
-// contact stays a closed slit. A crossing on a sub-tet edge from a grid corner to an air node
-// is bisected onto the field's zero, so a gap face's vertices sit exactly on their piece's
+// The owners are the samples' pieces (evalBatchContact's `piece`: two attached pieces tie inside
+// their blend, and a digit's web is the digit's). An owner–owner grid edge is OPEN when the
+// field is positive at the pieces' bisector along it (s_X − s_Y = 0 on their shares, bisected),
+// else FUSED: the air node is just a truer sample of the field, so attached pieces get one too
+// wherever air parts them. It is decided once per grid edge, so every tet sharing it agrees,
+// and an open edge is never closed: the air node keeps every near miss apart (the seam spec's
+// "near-miss safety wins"; this replaces the spike's line-contact conflict rule, which closed
+// openings at gap 0 and could bridge a near miss), and a slit thinner than the grid inside a
+// gap-0 contact stays a closed slit. A crossing on a sub-tet edge from a grid corner to an air
+// node is bisected onto the field's zero, so a gap face's vertices sit exactly on their piece's
 // cut; crossings between two grid corners are mesher.js's own (welded with plain neighbours).
 // Raw output: cleanup (owner-aware) runs afterwards.
 import { LEAF, OWNER_AIR } from "./sparse.js";
@@ -182,10 +185,9 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
   // onto the field's zero afterwards: [v, L, inside x, y, z, outside x, y, z] (nodeCrossings).
   const nodeVerts = new Map(), nodeCand = [];
   // A sub-tet node: a cell corner (c = 0..7: its sample's value and owner) or an open edge's air
-  // node (c = −1, r = its record: the field at the bisector, positive).
-  const cornerNode = (L, i, j, l, c) => ({ c, r: -1, val: leaves[L].vals[sampleOf(i, j, l, c)], own: lab[c], x: CP[3 * c], y: CP[3 * c + 1], z: CP[3 * c + 2],
+  // node (c = −1: the field at the bisector, positive; splitAt below). `id` keys crossings.
+  const cornerNode = (L, i, j, l, c) => ({ c, val: leaves[L].vals[sampleOf(i, j, l, c)], own: lab[c], x: CP[3 * c], y: CP[3 * c + 1], z: CP[3 * c + 2],
     id: `g${gIndex(m.i0 + i + (c & 1), m.j0 + j + ((c >> 1) & 1), m.l0 + l + ((c >> 2) & 1))}` });
-  const airNode = (r) => ({ c: -1, r, val: recVal[r], own: OWNER_AIR, x: recBis[r][0], y: recBis[r][1], z: recBis[r][2], id: `r${r}` });
   // The vertex where sub-tet edge (a, b) crosses the field's zero (one end negative).
   const crossing = (L, i, j, l, a, b) => {
     if (a.c >= 0 && b.c >= 0) return m.vertexOn(i, j, l, a.c, b.c);   // an unsplit grid edge: the plain vertex
@@ -229,23 +231,28 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
       tri(mid(n0, q0), mid(n1, q1), mid(n1, q0), v00, v11, v10);
     }
   };
-  // Path 3: one tet of cell (i, j, l) in leaf L, labels in lab, corners in CP. Each of its
-  // owner–owner edges is split at the bisector, in grid-edge-key order; a split halves every
-  // sub-tet holding both of the edge's ends.
+  // The split nodes, by grid edge key: each open owner–owner edge's air node at the bisector.
+  const splitAt = new Map();
+  for (let r = 0; r < recKey.length; r++) if (recOpen[r]) splitAt.set(recKey[r], { c: -1, val: recVal[r], own: OWNER_AIR, x: recBis[r][0], y: recBis[r][1], z: recBis[r][2], id: `e${recKey[r]}` });
+  const splitCells = new Set();
+  for (const key of splitAt.keys()) { const dir = key % 8; cellsOfEdge((key - dir) / 8, dir, (cell) => splitCells.add(cell)); }
+
+  // Path 3: one tet of cell (i, j, l) in leaf L, labels in lab, corners in CP. Its split edges are
+  // split in grid-edge-key order; a split halves every sub-tet holding both of the edge's ends.
+  // Returns false (nothing emitted) when the tet has no split edge.
   const refineTet = (L, i, j, l, tet) => {
     const edges = [];
     for (let a = 0; a < 4; a++) for (let b = a + 1; b < 4; b++) {
-      const A = lab[tet[a]], B = lab[tet[b]];
-      if (A === OWNER_AIR || B === OWNER_AIR || A === B) continue;
-      const r = recOf(i, j, l, tet[a], tet[b]);
-      if (recOpen[r]) edges.push(r, tet[a], tet[b]);
+      const key = edgeKeyOf(i, j, l, tet[a], tet[b]);
+      if (splitAt.has(key)) edges.push(key, tet[a], tet[b]);
     }
+    if (!edges.length) return false;
     let subs = [tet.map((c) => cornerNode(L, i, j, l, c))];
     const order = [];
     for (let q = 0; q < edges.length; q += 3) order.push(q);
-    order.sort((p, q) => recKey[edges[p]] - recKey[edges[q]]);
+    order.sort((p, q) => edges[p] - edges[q]);
     for (const q of order) {
-      const M = airNode(edges[q]), ca = edges[q + 1], cb = edges[q + 2], next = [];
+      const M = splitAt.get(edges[q]), ca = edges[q + 1], cb = edges[q + 2], next = [];
       for (const s of subs) {
         const ia = s.findIndex((p) => p.c === ca), ib = s.findIndex((p) => p.c === cb);
         if (ia < 0 || ib < 0) { next.push(s); continue; }
@@ -256,16 +263,9 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
       subs = next;
     }
     for (const s of subs) subTet(L, i, j, l, s);
+    return true;
   };
 
-  const tetHasSplit = (i, j, l, tet) => {
-    for (let a = 0; a < 4; a++) for (let b = a + 1; b < 4; b++) {
-      const A = lab[tet[a]], B = lab[tet[b]];
-      if (A !== OWNER_AIR && B !== OWNER_AIR && A !== B && recOpen[recOf(i, j, l, tet[a], tet[b])]) return true;
-    }
-    return false;
-  };
-  const anyOpen = recKey.length > 0;
   for (let L = 0; L < leaves.length; L++) {
     m.setLeaf(L);
     curLeaf = L;
@@ -273,20 +273,15 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
     const [iEnd, jEnd, lEnd] = m.ends();
     for (let l = 0; l < lEnd; l++) for (let j = 0; j < jEnd; j++) for (let i = 0; i < iEnd; i++) {
       const neg = m.cellNeg(i, j, l);
-      let multi = false;
-      if (anyOpen && leafMulti[L]) { loadLabels(L, i, j, l); multi = solidKinds(ALL8, 8) >= 2; }
-      if (!multi) {   // paths 1 and 2 throughout
+      if (!splitCells.size || !splitCells.has(gIndex(m.i0 + i, m.j0 + j, m.l0 + l))) {   // paths 1 and 2 throughout
         if (neg === 0 || neg === 8) continue;
         m.corners(i, j, l);
         for (const tet of KUHN) m.tet(i, j, l, tet);
         continue;
       }
+      loadLabels(L, i, j, l);
       m.corners(i, j, l);
-      for (let t = 0; t < 6; t++) {
-        const tet = KUHN[t];
-        if (solidKinds(tet, 4) >= 2 && tetHasSplit(i, j, l, tet)) refineTet(L, i, j, l, tet);
-        else m.tet(i, j, l, tet);
-      }
+      for (const tet of KUHN) if (!refineTet(L, i, j, l, tet)) m.tet(i, j, l, tet);
     }
   }
 
