@@ -13,7 +13,7 @@ import { blockDecision, fullDecision, decisionKey } from "../src/framework/geome
 import { emitProgram, evalBatch, evalBatchContact, runProgram, OP } from "../src/framework/geometry/implicit/program.js";
 import { planLeaves } from "../src/framework/geometry/implicit/sparse.js";
 import { TREES } from "./fixtures/implicit-small-trees.js";
-import { handSpec } from "./fixtures/implicit-trees.js";
+import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 
 const issues = (spec) => { try { validateSpec(spec); return []; } catch (e) { expect(e.code).toBe("IMPLICIT_SPEC"); return e.issues; } };
 const lower = (spec) => lowerSpec(spec, { images: new Map() });
@@ -715,6 +715,38 @@ describe("exact contact", () => {
     const one = { K, owner: new Int32Array(1) }, v = new Float64Array(1);
     evalBatchContact(prog, c.textures, px, py, pz, v, one);
     expect(one.owner[0]).toBe(0);
+  });
+
+  test("evalBatchContact: piece is the least share, a tie going to the later child", () => {
+    const c = exact(handSpec(HAND_POSES.nearMiss)), K = c.ownerK, N = 400;
+    const prog = emitProgram(c, fullDecision(c), 1.5);
+    let seed = 11; const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const X = new Float64Array(N), Y = new Float64Array(N), Z = new Float64Array(N);
+    for (let i = 0; i < N; i++) {
+      X[i] = c.bounds.min[0] + rnd() * (c.bounds.max[0] - c.bounds.min[0]);
+      Y[i] = c.bounds.min[1] + rnd() * (c.bounds.max[1] - c.bounds.min[1]);
+      Z[i] = c.bounds.min[2] + rnd() * (c.bounds.max[2] - c.bounds.min[2]);
+    }
+    const cap = { K, piece: new Int32Array(N), shares: new Float64Array(N * K) }, out = new Float64Array(N);
+    evalBatchContact(prog, c.textures, X, Y, Z, out, cap);
+    let ties = 0;
+    for (let i = 0; i < N; i++) {
+      const p = cap.piece[i], least = Math.min(...cap.shares.subarray(i * K, i * K + K));
+      expect(cap.shares[i * K + p]).toBe(least);
+      for (let j = p + 1; j < K; j++) expect(cap.shares[i * K + j]).toBeGreaterThan(least);
+      for (let j = 0; j < p; j++) if (cap.shares[i * K + j] === least) ties++;
+    }
+    expect(ties).toBeGreaterThan(0);   // blends make ties, and the later child took them
+    // Between the index and middle knuckles (inside both of their attachment zones, and so one
+    // owner under the merged rule) a real 1 mm gap parts the two webs: each side is its digit's.
+    const index = c.ir.nodes[c.ownerRoot].children.findIndex((id) => c.ir.nodes[id].label === "index");
+    const middle = c.ir.nodes[c.ownerRoot].children.findIndex((id) => c.ir.nodes[id].label === "middle");
+    const two = { K, piece: new Int32Array(2), owner: new Int32Array(2) }, v = new Float64Array(2);
+    evalBatchContact(prog, c.textures, Float64Array.of(-21.3, -19.5), Float64Array.of(104.4, 104.4), Float64Array.of(2.9, 2.9), v, two);
+    expect(v[0]).toBeLessThan(0);
+    expect(v[1]).toBeLessThan(0);
+    expect(Array.from(two.piece)).toEqual([index, middle]);
+    expect(two.owner[0]).toBe(two.owner[1]);   // the merged owner cannot tell them apart
   });
 
   test("evalBatchContact: a pruned child reads +Infinity", () => {

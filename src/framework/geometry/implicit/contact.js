@@ -47,7 +47,7 @@ export const clearance = (gap, edge) => Math.max(gap, C_MIN_CELLS * edge);
 export const CONTACT_OVERLAP = 0.02;
 /** A crease split within this fraction of an edge from an end moves that end instead of adding a vertex (crease.js). */
 export const CREASE_SNAP = 0.15;
-/** A crease point whose field or cut difference is still off by more than this (× edge) goes back where it was (crease.js). */
+/** A crossing is cut into the crease only when its field, its two shares' difference and their gap to the field are all within this (× edge) after Newton (crease.js); 0.02 left crease points further off the field than plain cleanup leaves any vertex. */
 export const CREASE_TOL = 0.005;
 /** The exact clearance: the declared gap itself; at gap 0 a small negative (the pieces overlap by CONTACT_OVERLAP). */
 export const clearanceExact = (gap) => (gap > 0 ? gap : -CONTACT_OVERLAP);
