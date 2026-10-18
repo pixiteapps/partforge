@@ -64,3 +64,18 @@ export const SEAM_CASES = [
     spec: handSpec({ ...(pose === "default" ? {} : HAND_POSES[pose]), contactGap }),
   }))),
 ];
+
+/** The spec with its root contact's children listed in reverse (the hand: palm last). */
+export function reversedChildren(spec) {
+  const out = structuredClone(spec);
+  out.root.children.reverse();
+  return out;
+}
+
+/** Gate-only fixtures beyond SEAM_CASES: child order, and two fingers on a palm. */
+export const GATE_EXTRA_CASES = [
+  { name: "hand nearMiss gap 0 (palm last)", spec: reversedChildren(SEAM_CASES.find((c) => c.name === "hand nearMiss gap 0").spec) },
+  { name: "hand fist gap 0.2 (palm last)", spec: reversedChildren(SEAM_CASES.find((c) => c.name === "hand fist gap 0.2").spec) },
+  { name: "fingers on palm 0.3", spec: fingersOnPalm({ gap: 0, fingerGap: 0.3 }) },
+  { name: "fingers on palm 0.3 offset 0.37", spec: fingersOnPalm({ gap: 0, fingerGap: 0.3, offset: 0.37 }) },
+];

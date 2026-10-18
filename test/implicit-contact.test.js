@@ -717,35 +717,49 @@ describe("exact contact", () => {
     expect(one.owner[0]).toBe(0);
   });
 
-  test("evalBatchContact: piece is the least share, a tie going to the later child", () => {
-    const c = exact(handSpec(HAND_POSES.nearMiss)), K = c.ownerK, N = 400;
-    const prog = emitProgram(c, fullDecision(c), 1.5);
+  test("evalBatchContact: piece is the least share; a tie goes to a child whose own cut is it, then to fewer attachments, whatever the child order", () => {
+    const N = 400;
     let seed = 11; const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const spec = handSpec(HAND_POSES.nearMiss), c = exact(spec), K = c.ownerK;
     const X = new Float64Array(N), Y = new Float64Array(N), Z = new Float64Array(N);
     for (let i = 0; i < N; i++) {
       X[i] = c.bounds.min[0] + rnd() * (c.bounds.max[0] - c.bounds.min[0]);
       Y[i] = c.bounds.min[1] + rnd() * (c.bounds.max[1] - c.bounds.min[1]);
       Z[i] = c.bounds.min[2] + rnd() * (c.bounds.max[2] - c.bounds.min[2]);
     }
-    const cap = { K, piece: new Int32Array(N), shares: new Float64Array(N * K) }, out = new Float64Array(N);
-    evalBatchContact(prog, c.textures, X, Y, Z, out, cap);
+    const labelsOf = (cc) => cc.ir.nodes[cc.ownerRoot].children.map((id) => cc.ir.nodes[id].label);
+    const pieces = (cc, px, py, pz) => {
+      const n = px.length, cap = { K, piece: new Int32Array(n), shares: new Float64Array(n * K), cuts: new Float64Array(n * K) }, out = new Float64Array(n);
+      evalBatchContact(emitProgram(cc, fullDecision(cc), 1.5), cc.textures, px, py, pz, out, cap);
+      return { cap, out, names: Array.from(cap.piece, (p) => labelsOf(cc)[p]) };
+    };
+    const { att } = c.ir.nodes[c.ownerRoot], rank = new Array(K).fill(0);
+    for (let o = 0; o < att.length; o += ATTACH_STRIDE) { rank[att[o]]++; rank[att[o + 1]]++; }
+    const { cap, names } = pieces(c, X, Y, Z);
     let ties = 0;
     for (let i = 0; i < N; i++) {
       const p = cap.piece[i], least = Math.min(...cap.shares.subarray(i * K, i * K + K));
       expect(cap.shares[i * K + p]).toBe(least);
-      for (let j = p + 1; j < K; j++) expect(cap.shares[i * K + j]).toBeGreaterThan(least);
-      for (let j = 0; j < p; j++) if (cap.shares[i * K + j] === least) ties++;
+      const key = (j) => [cap.cuts[i * K + j] === least ? 0 : 1, rank[j], j];
+      for (let j = 0; j < K; j++) {
+        if (j === p || cap.shares[i * K + j] !== least) continue;
+        ties++;
+        const [a, b] = [key(p), key(j)];
+        expect(a[0] < b[0] || (a[0] === b[0] && (a[1] < b[1] || (a[1] === b[1] && a[2] < b[2])))).toBe(true);
+      }
     }
-    expect(ties).toBeGreaterThan(0);   // blends make ties, and the later child took them
+    expect(ties).toBeGreaterThan(0);   // blends make ties
+    // The same points with the palm listed last name the same pieces.
+    const rev = structuredClone(spec);
+    rev.root.children.reverse();
+    expect(pieces(exact(rev), X, Y, Z).names).toEqual(names);
     // Between the index and middle knuckles (inside both of their attachment zones, and so one
     // owner under the merged rule) a real 1 mm gap parts the two webs: each side is its digit's.
-    const index = c.ir.nodes[c.ownerRoot].children.findIndex((id) => c.ir.nodes[id].label === "index");
-    const middle = c.ir.nodes[c.ownerRoot].children.findIndex((id) => c.ir.nodes[id].label === "middle");
     const two = { K, piece: new Int32Array(2), owner: new Int32Array(2) }, v = new Float64Array(2);
-    evalBatchContact(prog, c.textures, Float64Array.of(-21.3, -19.5), Float64Array.of(104.4, 104.4), Float64Array.of(2.9, 2.9), v, two);
+    evalBatchContact(emitProgram(c, fullDecision(c), 1.5), c.textures, Float64Array.of(-21.3, -19.5), Float64Array.of(104.4, 104.4), Float64Array.of(2.9, 2.9), v, two);
     expect(v[0]).toBeLessThan(0);
     expect(v[1]).toBeLessThan(0);
-    expect(Array.from(two.piece)).toEqual([index, middle]);
+    expect(Array.from(two.piece, (p) => labelsOf(c)[p])).toEqual(["index", "middle"]);
     expect(two.owner[0]).toBe(two.owner[1]);   // the merged owner cannot tell them apart
   });
 

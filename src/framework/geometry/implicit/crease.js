@@ -18,6 +18,7 @@
 // Crease vertices are neither held nor pinned. untangle (below) then repairs triangles that face
 // into the material. Exact trees never reach the native core.
 import { evalBatchContact } from "./program.js";
+import { hypot3 } from "../js-math.js";
 import { CREASE_SNAP, CREASE_TOL, ATTACH_STRIDE, attachWeight } from "./contact.js";
 
 const BISECT_STEPS = 20, NEWTON_STEPS = 10, MAX_MOVE_CELLS = 0.25;
@@ -121,6 +122,7 @@ export function cutCreases(store, mesh, att = new Float64Array(0)) {
   });
   const h = 0.02 * edge, cap = MAX_MOVE_CELLS * edge;
   const det3 = (a, b, c) => a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0]);
+  const solve = (cand) => {
   for (let it = 0; it < NEWTON_STEPS && cand.length; it++) {
     const pts = new Float64Array(21 * cand.length), lf = [];
     cand.forEach((c, q) => {
@@ -157,17 +159,32 @@ export function cutCreases(store, mesh, att = new Float64Array(0)) {
       for (let k = 0; k < 3; k++) c.p[k] += dx[k] * sc;
     });
   }
+  };
   // A crease point is on the surface, with the two shares equal and making the field there (no
   // third piece nearer), all to within CREASE_TOL·edge, and outside the pair's attachment.
-  const reached = new Uint8Array(cand.length);
-  if (cand.length) {
+  const judge = (cand) => {
+    const ok = new Uint8Array(cand.length);
+    if (!cand.length) return ok;
     const { d, shares } = evalPoints(store, K, Float64Array.from(cand.flatMap((c) => c.p)), cand.map((c) => c.leaf));
     const tol = CREASE_TOL * edge;
     cand.forEach((c, q) => {
       const { X, Y } = c.e;
-      reached[q] = Math.abs(d[q]) <= tol && Math.abs(shares[q * K + X] - shares[q * K + Y]) <= tol && Math.abs(shares[q * K + X] - d[q]) <= tol
+      ok[q] = Math.abs(d[q]) <= tol && Math.abs(shares[q * K + X] - shares[q * K + Y]) <= tol && Math.abs(shares[q * K + X] - d[q]) <= tol
         && !(pairWeight(att, X, Y, c.p[0], c.p[1], c.p[2]) > 0) ? 1 : 0;
     });
+    return ok;
+  };
+  solve(cand);
+  const reached = judge(cand);
+  // A crossing the planar solve could not bring onto the crease (the crease nearly within its
+  // plane, at a piece's silhouette) is tried again from its start without the plane.
+  const retry = [];
+  cand.forEach((c, q) => { if (!reached[q] && c.pn) { c.p = c.p0.slice(); c.pn = null; retry.push(q); } });
+  if (retry.length) {
+    const sub = retry.map((q) => cand[q]);
+    solve(sub);
+    const ok = judge(sub);
+    retry.forEach((q, i) => { reached[q] = ok[i]; });
   }
   // 4. Cut: a crease point within CREASE_SNAP of an edge end moves that end (once), else it
   //    splits the edge (not beside a moved end).
@@ -219,11 +236,11 @@ export function cutCreases(store, mesh, att = new Float64Array(0)) {
 const FLIP_PROBE = 0.03;
 /** Adjacent triangles whose normals turn by more than this (cos) fold. */
 const FOLD_COS = -0.866;
-const UNTANGLE_ROUNDS = 8;
+const UNTANGLE_ROUNDS = 24;
 /** A triangle within this (cos) of all its corners' normals is not probed for a flip. */
 const SUSPECT_COS = 0.866;
 /** Untangling works within this many vertex rings of the flipped triangles it starts from. */
-const REGION_RINGS = 12;
+const REGION_RINGS = 12, REGROW_RINGS = 3;
 
 /**
  * Untangle a cut owner mesh. A triangle FLIPS when the field steps the wrong way across it (at its
@@ -235,11 +252,11 @@ const REGION_RINGS = 12;
  *   1. a swap of one of their edges (the quad's other diagonal; never a crease edge);
  *   2. a collapse of one of their edges onto one end (the other end's triangles taken over by it;
  *      never a pinned vertex removed, never two vertices of different owners merged unless one is
- *      a crease point, the link condition kept);
+ *      a crease point or the removed one has only three triangles, the link condition kept);
  *   3. a move of one of their corners (not pinned, not on the crease) to the middle of its ring,
- *      taken back onto its owner's share;
- * and a change is taken only when the triangles it makes hold no more flips and no more folds
- * than the ones it replaces, and fewer of one. The mesh stays closed, manifold and oriented.
+ *      taken back onto its owner's share (onto the field beside the crease);
+ * and a change is taken when the triangles it makes hold fewer flips than the ones it replaces,
+ * or as many and fewer folds. The mesh stays closed, manifold and oriented.
  * Only triangles near a flipped one are touched (REGION_RINGS); a mesh with none is returned as is.
  */
 export function untangle(store, mesh) {
@@ -311,6 +328,8 @@ export function untangle(store, mesh) {
   };
   const triOf = (t) => [T[3 * t], T[3 * t + 1], T[3 * t + 2]];
   const setTri = (t, x) => { T[3 * t] = x[0]; T[3 * t + 1] = x[1]; T[3 * t + 2] = x[2]; };
+  // A vertex beside the crease: a crease point is in its ring.
+  const nearCrease = (v) => { for (const w of ring(v)) if (CR[w]) return true; return false; };
   const ring = (v) => { const r = new Set(); for (const t of fan(v)) for (const w of triOf(t)) if (w !== v) r.add(w); return r; };
   // How many of the triangles' edges fold: against another of them, or against a live triangle
   // across the edge that is not among `gone` (the triangles they replace).
@@ -326,10 +345,14 @@ export function untangle(store, mesh) {
   };
   // A change is taken when it leaves no more flipped triangles and no more folds than the ones
   // it replaces, and fewer of one.
+  // Flips come first: a change that leaves fewer of them is taken even if it folds more (the
+  // gate holds folds to the plain mesher's count, flips to zero); one that leaves as many is
+  // taken when it folds less.
+  const accept = (fB, fA, oB, oA) => fA < fB || (fA === fB && oA < oB);
   const better = (oldIds, tris, flipsAfter, badSet) => {
     const gone = new Set(oldIds), fB = oldIds.filter((t) => badSet.has(t)).length;
     const foldB = foldCount(oldIds.map(triOf), gone), foldA = foldCount(tris, gone);
-    return flipsAfter <= fB && foldA <= foldB && (flipsAfter < fB || foldA < foldB);
+    return accept(fB, flipsAfter, foldB, foldA);
   };
   const isBad = (ts) => { const live = ts.filter((t) => alive[t]), f = flipped(live.map(triOf)); return live.filter((_, q) => f[q]); };
   // Probed: every triangle at a seam (a crease, held or mixed-owner corner), and elsewhere a
@@ -341,34 +364,43 @@ export function untangle(store, mesh) {
     if (CR[x[0]] || CR[x[1]] || CR[x[2]] || HELD[x[0]] || HELD[x[1]] || HELD[x[2]] || VO[x[0]] !== VO[x[1]] || VO[x[1]] !== VO[x[2]]) { suspects.push(t); continue; }
     for (const v of x) {
       const nv = [N[3 * v], N[3 * v + 1], N[3 * v + 2]];
-      if (dot(n, nv) < SUSPECT_COS * Math.hypot(...nv)) { suspects.push(t); break; }
+      if (dot(n, nv) < SUSPECT_COS * hypot3(nv[0], nv[1], nv[2])) { suspects.push(t); break; }
     }
   }
   let bad = isBad(suspects);
   if (!bad.length) return mesh;
-  // The region: every triangle within REGION_RINGS vertex rings of a flipped one.
-  {
-    const nv0 = P.length / 3, start = new Int32Array(nv0 + 1);
-    for (let i = 0; i < T.length; i++) start[T[i] + 1]++;
-    for (let v = 0; v < nv0; v++) start[v + 1] += start[v];
-    const fill = start.slice(0, nv0), tris = new Int32Array(T.length);
-    for (let t = 0; t < nt0; t++) for (let k = 0; k < 3; k++) tris[fill[T[3 * t + k]]++] = t;
-    const inRegion = new Uint8Array(nt0), seen = new Uint8Array(nv0);
+  // The region: every triangle within REGION_RINGS vertex rings of a flipped one is linked into
+  // the adjacency; each round links the triangles within REGROW_RINGS of the flipped ones it
+  // starts from, so every edge and fan a repair reads (and an edge a swap would add) is complete.
+  // An unlinked triangle is one no repair has touched, so the original vertex → triangle table
+  // still holds for it.
+  const nvAll = P.length / 3, vStart = new Int32Array(nvAll + 1);
+  for (let i = 0; i < T.length; i++) vStart[T[i] + 1]++;
+  for (let v = 0; v < nvAll; v++) vStart[v + 1] += vStart[v];
+  const vTris = new Int32Array(T.length), fillAt = vStart.slice(0, nvAll);
+  for (let t = 0; t < nt0; t++) for (let k = 0; k < 3; k++) vTris[fillAt[T[3 * t + k]]++] = t;
+  const linked = new Uint8Array(nt0);
+  const grow = (seeds, rings) => {
+    const seen = new Set();
     let front = [];
-    for (const t of bad) for (const v of triOf(t)) if (!seen[v]) { seen[v] = 1; front.push(v); }
-    for (let ring = 0; ring <= REGION_RINGS && front.length; ring++) {
+    for (const t of seeds) for (const v of triOf(t)) if (!seen.has(v)) { seen.add(v); front.push(v); }
+    for (let r = 0; r <= rings && front.length; r++) {
       const next = [];
-      for (const v of front) for (let q = start[v]; q < start[v + 1]; q++) {
-        const t = tris[q];
-        if (inRegion[t]) continue;
-        inRegion[t] = 1;
-        for (const w of triOf(t)) if (!seen[w]) { seen[w] = 1; next.push(w); }
+      for (const v of front) {
+        const around = [...fan(v)];
+        if (v < nvAll) for (let q = vStart[v]; q < vStart[v + 1]; q++) {
+          const t = vTris[q];
+          if (!linked[t] && alive[t]) { linked[t] = 1; link(t); }
+          around.push(t);
+        }
+        for (const t of around) if (alive[t]) for (const w of triOf(t)) if (!seen.has(w)) { seen.add(w); next.push(w); }
       }
       front = next;
     }
-    for (let t = 0; t < nt0; t++) if (inRegion[t]) link(t);
-  }
+  };
+  grow(bad, REGION_RINGS);
   for (let round = 0; round < UNTANGLE_ROUNDS && bad.length; round++) {
+    grow(bad, REGROW_RINGS);
     const touched = new Set();
     let changed = false;
     // 1. Swaps.
@@ -398,7 +430,9 @@ export function untangle(store, mesh) {
     const still = isBad(bad.filter((t) => !touched.has(t)));
     const cols = [];
     for (const t of still) for (let k = 0; k < 3; k++) for (const [keep, gone] of [[T[3 * t + k], T[3 * t + (k + 1) % 3]], [T[3 * t + (k + 1) % 3], T[3 * t + k]]]) {
-      if (PIN[gone] || (!CR[gone] && !CR[keep] && VO[keep] !== VO[gone])) continue;
+      // (A vertex of three triangles may go whatever its owner: they become the one triangle
+      // over its ring, whose edges are all in the mesh already.)
+      if (PIN[gone] || (!CR[gone] && !CR[keep] && VO[keep] !== VO[gone] && fan(gone).size !== 3)) continue;
       const rk = ring(keep), rg = ring(gone);
       let common = 0;
       for (const v of rk) if (rg.has(v)) common++;
@@ -442,7 +476,9 @@ export function untangle(store, mesh) {
         for (const u of vf) { claimed.add(`t${u}`); for (const w of triOf(u)) claimed.add(w); }
       }
       if (!movers.length) continue;
-      projectOnShare(store, K, movers.map((mv) => mv.to), movers.map((mv) => VL[mv.v]), movers.map((mv) => VO[mv.v]), edge);
+      // Beside the crease the vertex goes onto the field (its own piece's share runs on inside the
+      // other piece there); elsewhere onto its owner's share, so it never lands on a near miss's far skin.
+      projectOnShare(store, K, movers.map((mv) => mv.to), movers.map((mv) => VL[mv.v]), movers.map((mv) => (nearCrease(mv.v) ? -1 : VO[mv.v])), edge);
       const before = movers.map((mv) => mv.fan.filter((u) => leftSet.has(u)).length);
       const foldsBefore = movers.map((mv) => foldCount(mv.fan.map(triOf), new Set(mv.fan)));
       for (const mv of movers) for (let c = 0; c < 3; c++) P[3 * mv.v + c] = mv.to[c];
@@ -453,7 +489,7 @@ export function untangle(store, mesh) {
         for (let i = 0; i < mv.fan.length; i++) fa += fm[o2 + i];
         o2 += mv.fan.length;
         const foldA = foldCount(mv.fan.map(triOf), new Set(mv.fan));
-        if (fa <= before[q] && foldA <= foldsBefore[q] && (fa < before[q] || foldA < foldsBefore[q])) {
+        if (accept(before[q], fa, foldsBefore[q], foldA)) {
           for (const u of mv.fan) touched.add(u);
           changed = true;
         } else for (let c = 0; c < 3; c++) P[3 * mv.v + c] = mv.from[c];
@@ -476,7 +512,7 @@ export function untangle(store, mesh) {
   };
 }
 
-/** Newton steps (4) taking each point onto its owner's share zero; each step at most 2·|share| and 0.25·edge. */
+/** Newton steps (4) taking each point onto its owner's share zero (the field's, for owner −1); each step at most 2·|value| and 0.25·edge. */
 function projectOnShare(store, K, pts, leaves, owners, edge) {
   const h = 0.05 * edge, cap = 0.25 * edge;
   for (let it = 0; it < 4; it++) {
@@ -486,10 +522,10 @@ function projectOnShare(store, K, pts, leaves, owners, edge) {
       q.set([x, y, z, x + h, y, z, x - h, y, z, x, y + h, z, x, y - h, z, x, y, z + h, x, y, z - h], 21 * i);
       for (let k = 0; k < 7; k++) lf.push(leaves[i]);
     });
-    const { shares } = evalPoints(store, K, q, lf);
+    const got = evalPoints(store, K, q, lf), { shares } = got;
     pts.forEach((p, i) => {
-      const f = (k) => shares[(7 * i + k) * K + owners[i]], d = f(0);
-      const g = [(f(1) - f(2)) / (2 * h), (f(3) - f(4)) / (2 * h), (f(5) - f(6)) / (2 * h)], gl = Math.hypot(...g);
+      const { d: fd } = got, f = (k) => (owners[i] < 0 ? fd[7 * i + k] : shares[(7 * i + k) * K + owners[i]]), d = f(0);
+      const g = [(f(1) - f(2)) / (2 * h), (f(3) - f(4)) / (2 * h), (f(5) - f(6)) / (2 * h)], gl = hypot3(g[0], g[1], g[2]);
       if (!(gl > 1e-9) || !Number.isFinite(d)) return;
       let t = d / gl;
       const lim = Math.min(cap, 2 * Math.abs(d));

@@ -51,8 +51,9 @@ export function emitExprProgram(L) {
 //     a pruned side is dropped (its weight is 0 over the block — interval.js rule (c)), and
 //     so is a pad-fill region (its gate is 0 there — rule (d)). nF is 0 unless the node fuses.
 //     An EXACT node (the root contact under `exactContact`) has fuse = 2 and nF = 0, and
-//     appends one original child index per emitted slot after the fills (nK more values):
-//     evalBatchContact reads them to name each slot's owner. The native core knows nothing of fuse = 2.
+//     appends one original child index per emitted slot after the fills, then each slot's tie
+//     rank (its child's attachment count in the full table): 2·nK more values, which
+//     evalBatchContact reads to name each slot's owner and piece. The native core knows nothing of fuse = 2.
 //   [BULGE, dst, src, p, nR, (cx, cy, cz, A, rho) × nR]   → src − bulgeOffset(...)
 //     emitted on a kept slot's register when that slot has regions, before CONTACT reads it.
 // `edge` is the grid edge the program is planned at (0, the default, is the bare gap).
@@ -113,7 +114,13 @@ export function emitProgram(compiled, dec, edge = 0) {
           fills.push(ia, ib, ...F.subarray(o + 2, o + FILL_STRIDE));
         }
         code.push(OP.CONTACT, out, p, nodeClearance(n, edge), n.exact ? 2 : n.fuse, vs.length, atts.length / ATTACH_STRIDE, ...vs, ...atts, fills.length / FILL_STRIDE, ...fills);
-        if (n.exact) code.push(...kid);
+        if (n.exact) {
+          // Each slot's tie rank for `piece`: its child's attachment count in the node's FULL table
+          // (not the pruned list above), so every leaf ranks a child alike, whatever the order.
+          const rank = new Array(d.kids.length).fill(0);
+          for (let o = 0; o < n.att.length; o += ATTACH_STRIDE) { rank[n.att[o]]++; rank[n.att[o + 1]]++; }
+          code.push(...kid, ...kid.map((i) => rank[i]));
+        }
         return out;
       }
       case "mirror": {
@@ -204,9 +211,12 @@ export function runProgram(prog, textures, X, Y, Z, n, out, cap = null, off = 0)
         for (let i = 0; i < n; i++) {
           for (let j = 0; j < cnt; j++) g[j] = V[prog[pc + 7 + j]][i];
           dv[i] = contactValue(g, cnt, cl, fuse, att, nA, F, nF, sx[i], sy[i], sz[i], wScratch, cScratch);
-          if (cap !== null && fuse === 2) captureOwner(cap, off + i, prog.subarray(fo + 1 + nF * FILL_STRIDE, fo + 1 + nF * FILL_STRIDE + cnt), cnt, att, nA, g);
+          if (cap !== null && fuse === 2) {
+            const ko = fo + 1 + nF * FILL_STRIDE;
+            captureOwner(cap, off + i, prog.subarray(ko, ko + cnt), cnt, att, nA, g, prog.subarray(ko + cnt, ko + 2 * cnt));
+          }
         }
-        pc = fo + 1 + nF * FILL_STRIDE + (fuse === 2 ? cnt : 0); break;
+        pc = fo + 1 + nF * FILL_STRIDE + (fuse === 2 ? 2 * cnt : 0); break;
       }
       case OP.BULGE: {
         const dv = V[prog[pc + 1]], src = V[prog[pc + 2]], s = prog[pc + 3], nR = prog[pc + 4];
@@ -252,7 +262,7 @@ export function runProgram(prog, textures, X, Y, Z, n, out, cap = null, off = 0)
 // One lane of the exact contact op's capture, from the scratch contactValue just filled:
 // cScratch[j] the emitted slot j's cut value, wScratch[a] the attachment weights; `kid[j]`
 // is slot j's original child index, `g` scratch for the blend operands.
-function captureOwner(cap, lane, kid, cnt, att, nA, g) {
+function captureOwner(cap, lane, kid, cnt, att, nA, g, rank) {
   const K = cap.K, q = lane * K;
   let best = 0;
   for (let j = 0; j < cnt; j++) {
@@ -270,10 +280,14 @@ function captureOwner(cap, lane, kid, cnt, att, nA, g) {
   }
   if (cap.piece) {
     // The piece: the least share. A blend lowers both of its pieces' shares alike, so they tie
-    // inside it; a tie goes to the later child (a part declares its palm before the digits that
-    // blend into it), so a digit's web is the digit's and two digits' webs stay two pieces. The
-    // rule reads no pruned slot, so every leaf labels a shared sample alike.
-    let bp = -1, bs = Infinity;
+    // inside it. A tie goes first to a child whose own cut is the share (inside a digit's zone,
+    // deep in the palm, the blend is just the palm's cut and the point is the palm's), then to
+    // the child in fewer attachments (`rank`, counted over the node's full table at compile — a
+    // palm holds every digit's, a digit its own), so a digit's web is the digit's and two
+    // digits' webs stay two pieces whatever order the children are listed in; equal ranks go to
+    // the lesser child. Nothing here reads the pruned attachment list, so every leaf labels a
+    // shared sample alike.
+    let bp = -1, bs = Infinity, bo = 1;
     for (let j = 0; j < cnt; j++) {
       let sj = cScratch[j];
       for (let a = 0; a < nA; a++) {
@@ -285,7 +299,8 @@ function captureOwner(cap, lane, kid, cnt, att, nA, g) {
         const u = unionN(g, 2, kk);
         if (u < sj) sj = u;
       }
-      if (bp < 0 || sj < bs || (sj === bs && kid[j] > kid[bp])) { bp = j; bs = sj; }
+      const own = sj === cScratch[j] ? 0 : 1;   // 0: its own cut makes the share, not a blend
+      if (bp < 0 || sj < bs || (sj === bs && (own < bo || (own === bo && (rank[j] < rank[bp] || (rank[j] === rank[bp] && kid[j] < kid[bp])))))) { bp = j; bs = sj; bo = own; }
     }
     cap.piece[lane] = kid[bp];
   }
@@ -309,7 +324,7 @@ function captureOwner(cap, lane, kid, cnt, att, nA, g) {
  * merged to the lesser child across attachment zones — never AIR, the caller applies the
  * sign), `cuts[i·K + child]` (each child's cut value, +Infinity for a pruned child) and
  * `shares` (the cut lowered by any attachment blend the child takes part in) and `piece[i]` (the
- * child of the least share, a tie going to the later child: the owner the meshing stages use,
+ * child of the least share, a tie going to the child in fewer attachments, then the lesser: the owner the meshing stages use,
  * where attached pieces tie inside their blend but two digits both blended into the palm stay two
  * pieces). `out` is bit-identical to evalBatch's.
  */

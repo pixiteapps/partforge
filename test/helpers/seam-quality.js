@@ -5,6 +5,7 @@
 // program of the compiled tree, through evalBatchContact's shares.
 import { fullDecision } from "../../src/framework/geometry/implicit/interval.js";
 import { emitProgram, evalBatchContact } from "../../src/framework/geometry/implicit/program.js";
+import { attachWeight, ATTACH_STRIDE } from "../../src/framework/geometry/implicit/contact.js";
 
 const fullProgram = (compiled) => emitProgram(compiled, fullDecision(compiled), 0);
 
@@ -125,4 +126,57 @@ export function pieceGapError(compiled, mesh, a, b, gap) {
     if (pinned[v]) maxFaceError = Math.max(maxFaceError, Math.abs(s - gap));
   });
   return { min, maxFaceError: maxFaceError === -Infinity ? NaN : maxFaceError };
+}
+
+/** The weight, at (x, y, z), of the attachment between children X and Y (the largest, 0 if none). */
+function pairWeightAt(att, X, Y, x, y, z) {
+  let w = 0;
+  for (let o = 0; o < att.length; o += ATTACH_STRIDE) {
+    if ((att[o] === X && att[o + 1] === Y) || (att[o] === Y && att[o + 1] === X)) w = Math.max(w, attachWeight(att, o, x, y, z));
+  }
+  return w;
+}
+
+/**
+ * Where a gap > 0 is held: each vertex's pieces are the children whose shares are within 1e-6 mm
+ * of its least share (a blend ties its two pieces). `spans` counts triangles with corners of two
+ * pieces that share none and are not attached at the centroid (weight 0): a triangle across a
+ * gap outside the attachment zones. `shortfall` is the most any vertex of a single piece X comes
+ * nearer than `gap` to another piece Y not attached to X at that vertex (max of gap − share_Y,
+ * 0 when every gap holds).
+ */
+export function gapHolds(compiled, mesh, gap) {
+  const P = mesh.positions, I = mesh.indices, nv = P.length / 3;
+  const att = compiled.ir.nodes[compiled.ownerRoot].att;
+  const X = new Float64Array(nv), Y = new Float64Array(nv), Z = new Float64Array(nv);
+  for (let v = 0; v < nv; v++) { X[v] = P[3 * v]; Y[v] = P[3 * v + 1]; Z[v] = P[3 * v + 2]; }
+  const { shares, K } = sharesAt(compiled, X, Y, Z);
+  const pieces = [];
+  for (let v = 0; v < nv; v++) {
+    let m = Infinity;
+    for (let k = 0; k < K; k++) m = Math.min(m, shares[v * K + k]);
+    const s = [];
+    for (let k = 0; k < K; k++) if (shares[v * K + k] - m <= 1e-6) s.push(k);
+    pieces.push(s);
+  }
+  let spans = 0, shortfall = 0;
+  for (let t = 0; t < I.length; t += 3) {
+    const c = [0, 1, 2].map((k) => (P[3 * I[t] + k] + P[3 * I[t + 1] + k] + P[3 * I[t + 2] + k]) / 3);
+    let bad = false;
+    for (let a = 0; a < 3 && !bad; a++) for (let b = a + 1; b < 3 && !bad; b++) {
+      const pa = pieces[I[t + a]], pb = pieces[I[t + b]];
+      if (pa.some((x) => pb.includes(x))) continue;
+      if (pa.some((x) => pb.some((y) => pairWeightAt(att, x, y, ...c) === 0))) bad = true;
+    }
+    if (bad) spans++;
+  }
+  for (let v = 0; v < nv; v++) {
+    if (pieces[v].length !== 1) continue;
+    const x = pieces[v][0];
+    for (let y = 0; y < K; y++) {
+      if (y === x || pairWeightAt(att, x, y, X[v], Y[v], Z[v]) > 0) continue;
+      shortfall = Math.max(shortfall, gap - shares[v * K + y]);
+    }
+  }
+  return { spans, shortfall };
 }

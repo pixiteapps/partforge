@@ -7,9 +7,10 @@ import { describe, test, expect } from "vitest";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { ATTACH_STRIDE } from "../src/framework/geometry/implicit/contact.js";
 import { edgeCheck, componentCount } from "./helpers/mesh-topology.js";
-import { flippedTriangles, seamFolds, childIndex, sharesAt } from "./helpers/seam-quality.js";
+import { flippedTriangles, seamFolds, childIndex, sharesAt, gapHolds } from "./helpers/seam-quality.js";
 import { evalNodeAt } from "../src/framework/geometry/implicit/reference.js";
-import { capsulePress, threePress, PRESS_OVERLAP, SEAM_CASES } from "./fixtures/implicit-seam-cases.js";
+import { hypot3 } from "../src/framework/geometry/js-math.js";
+import { capsulePress, threePress, PRESS_OVERLAP, SEAM_CASES, GATE_EXTRA_CASES } from "./fixtures/implicit-seam-cases.js";
 
 const CLOSED = { boundary: 0, nonManifold: 0, misoriented: 0 };
 const GRIDS = [[1.5, "preview"], [0.6, "print"]];
@@ -65,7 +66,7 @@ function bisectorCrossings(compiled, mesh, a, b) {
     for (let k = 0; k < ids.length; k++) if (k !== ia && k !== ib && raw[k][v] < Math.min(da, db)) nearest = false;
     side[v] = nearest ? Math.sign(da - db) : 0;
   }
-  const inZone = (o, q) => Math.hypot(q[0] - att[o + 2], q[1] - att[o + 3], q[2] - att[o + 4]) < att[o + 5] + att[o + 6];
+  const inZone = (o, q) => hypot3(q[0] - att[o + 2], q[1] - att[o + 3], q[2] - att[o + 4]) < att[o + 5] + att[o + 6];
   const zoneOf = (k, q) => { for (let o = 0; o < att.length; o += ATTACH_STRIDE) if ((att[o] === k || att[o + 1] === k) && inZone(o, q)) return true; return false; };
   const webbed = [];
   let n = 0;
@@ -89,11 +90,17 @@ function rawAt(compiled, id, X, Y, Z) {
 
 /** A webbed triangle's centroid is on the surface within this (mm); a bridge across the 0.75 mm near miss sits far above it. */
 const WEB_TOL = 0.1;
-const NEAR_MISS = { "near miss 0.3 gap 0": ["a", "b"], "hand nearMiss gap 0": ["index", "middle"], "hand nearMiss gap 0.2": ["index", "middle"] };
+const NEAR_MISS = {
+  "near miss 0.3 gap 0": ["a", "b"], "hand nearMiss gap 0": ["index", "middle"], "hand nearMiss gap 0.2": ["index", "middle"],
+  "hand nearMiss gap 0 (palm last)": ["index", "middle"], "fingers on palm 0.3": ["a", "b"], "fingers on palm 0.3 offset 0.37": ["a", "b"],
+};
+// The seam fixtures, the hand with its palm listed last (a part may list its hub after its
+// digits), and two fingers 0.3 mm apart pressing a palm.
+const GATE_CASES = [...SEAM_CASES, ...GATE_EXTRA_CASES];
 
 describe("seam gate", () => {
   for (const [edge, tier] of GRIDS) {
-    for (const c of SEAM_CASES) {
+    for (const c of GATE_CASES) {
       describe(`${c.name} (${tier} ${edge})`, () => {
         test("no flipped triangles", () => {
           const { compiled, mesh } = meshed(c, edge, tier);
@@ -110,6 +117,14 @@ describe("seam gate", () => {
           const { mesh } = meshed(c, edge, tier);
           const tiny = componentVolumes(mesh.positions, mesh.indices).filter((v) => Math.abs(v) < 1e-6);
           expect(tiny).toEqual([]);
+        }, 600_000);
+        if ((c.spec.root.gap ?? 0) > 0) test("every gap holds outside the attachment zones", () => {
+          // No triangle joins two pieces that are not attached at its centroid, and no vertex of
+          // one piece comes nearer another (not attached there) than the gap, to 0.01 mm.
+          const { compiled, mesh } = meshed(c, edge, tier);
+          const { spans, shortfall } = gapHolds(compiled, mesh, c.spec.root.gap);
+          expect(spans).toBe(0);
+          expect(shortfall).toBeLessThanOrEqual(0.01);
         }, 600_000);
         if (NEAR_MISS[c.name]) test("no triangle crosses the near miss's bisector", () => {
           const { compiled, mesh } = meshed(c, edge, tier);
