@@ -6,8 +6,9 @@ import { pfCos, pfAtan2 } from "../js-math.js";
 import { xformPoint, xformDir } from "./frames.js";
 import { valueNoise } from "./noise.js";
 import { sampleTexture } from "./textures.js";
-import { emitExprProgram, runProgram } from "./program.js";
+import { emitExprProgram, runProgram, evalBatchContact } from "./program.js";
 import { projectVertices } from "./project.js";
+import { DETAIL_SEAM_FADE, ATTACH_STRIDE, attachWeight } from "./contact.js";
 
 export const MAX_REFINE_ROUNDS = 3;
 const TWO_PI = 2 * Math.PI;
@@ -149,8 +150,51 @@ export function midpointNormal(N, a, b, m) {
 }
 
 /**
+ * Each vertex's detail weight on an owner mesh: smoothstep(0, DETAIL_SEAM_FADE, s), where s is the
+ * least cut value, over the contact children that are not its own piece or attached to it there
+ * (attachment weight > 0, so the webbing keeps its detail), less the declared gap. A gap face
+ * therefore has s = 0 (the other piece's cut there is exactly the gap) and detail can never close
+ * it, and a crease has s = 0 too. Crease and pinned vertices are 0 outright: they sit on those
+ * seams within the mesher's tolerance, and must not move at all.
+ */
+function seamFade(store, compiled, P, VL, VO, VP, VC) {
+  const node = compiled.ir.nodes[compiled.ownerRoot], K = Math.max(1, store.ownerK ?? 0), att = node.att ?? new Float64Array(0);
+  const gap = Math.max(node.gap ?? 0, 0), n = P.length / 3, fade = new Float64Array(n), groups = new Map();
+  for (let v = 0; v < n; v++) {
+    if (VO[v] < 0 || VP[v] || VC[v]) continue;
+    const g = groups.get(VL[v]);
+    if (g) g.push(v); else groups.set(VL[v], [v]);
+  }
+  for (const [L, vs] of groups) {
+    const m = vs.length, X = new Float64Array(m), Y = new Float64Array(m), Z = new Float64Array(m);
+    const out = new Float64Array(m), cuts = new Float64Array(m * K);
+    vs.forEach((v, i) => { X[i] = P[3 * v]; Y[i] = P[3 * v + 1]; Z[i] = P[3 * v + 2]; });
+    evalBatchContact(store.leaves[L].prog, store.textures, X, Y, Z, out, { K, cuts });
+    vs.forEach((v, i) => {
+      const own = VO[v];
+      let s = Infinity;
+      for (let j = 0; j < K; j++) {
+        if (j === own || !(cuts[i * K + j] < s) || attached(att, own, j, X[i], Y[i], Z[i])) continue;
+        s = cuts[i * K + j];
+      }
+      const t = Math.min(1, Math.max(0, (s - gap) / DETAIL_SEAM_FADE));
+      fade[v] = t * t * (3 - 2 * t);
+    });
+  }
+  return fade;
+}
+
+// Whether children a and b are attached at the point (some attachment of the pair has weight > 0 there).
+function attached(att, a, b, x, y, z) {
+  for (let o = 0; o < att.length; o += ATTACH_STRIDE) {
+    if (((att[o] === a && att[o + 1] === b) || (att[o] === b && att[o + 1] === a)) && attachWeight(att, o, x, y, z) > 0) return true;
+  }
+  return false;
+}
+
+/**
  * An owner mesh (`vertOwner`, `ownerHeld`, `pinned`, `crease`: cleanup.js) keeps those fields
- * through refinement: a midpoint takes its ends' owner (the lesser where they differ), is held
+ * through refinement, and its detail fades at seams (seamFade). A midpoint takes its ends' owner (the lesser where they differ), is held
  * when both ends are held by the same owner, and is neither pinned nor a crease vertex; held
  * midpoints project onto their owner's share (project.js).
  */
@@ -207,10 +251,12 @@ export function applySurfaceDetail(store, mesh, compiled) {
     for (let q = 0; q < added.length; q++) midpointNormal(N, ends[2 * q], ends[2 * q + 1], added[q]);
   }
   const positions = Float64Array.from(P), normals = Float64Array.from(N);
+  const fade = owned ? seamFade(store, compiled, positions, VL, VO, VP, VC) : null;   // before any vertex moves
   for (let v = 0; v < positions.length / 3; v++) {
     if (normals[3 * v] === 0 && normals[3 * v + 1] === 0 && normals[3 * v + 2] === 0) continue;   // no direction to move along
     let h = 0;
     for (let k = 0; k < count; k++) h += entryHeight(F, DETAIL_STRIDE * k, programs, tex, positions[3 * v], positions[3 * v + 1], positions[3 * v + 2], normals[3 * v], normals[3 * v + 1], normals[3 * v + 2]);
+    if (fade) h *= fade[v];
     if (h === 0) continue;
     positions[3 * v] += normals[3 * v] * h; positions[3 * v + 1] += normals[3 * v + 1] * h; positions[3 * v + 2] += normals[3 * v + 2] * h;
   }

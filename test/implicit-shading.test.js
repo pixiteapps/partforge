@@ -59,3 +59,58 @@ test("seams between an organic surface and a mechanical one still draw", async (
   expect(seam).toBeGreaterThanOrEqual(20);
   expect(seamLength).toBeGreaterThan(0.75 * seamTotal);
 });
+
+// A contact hand is one ID per piece (seam spec §6): the crease between a finger and the palm
+// shades hard at any bend, the smooth attachment-zone seam between sibling IDs stays smooth
+// (bent under SIBLING_SEAM_ANGLE), and neither draws a line.
+test("crease shades hard, zone seam smooth", async () => {
+  const { handSpec, HAND_POSES } = await import("./fixtures/implicit-trees.js");
+  const { creasedNormals } = await import("../src/framework/geometry/creased-normals.js");
+  const { SIBLING_SEAM_ANGLE } = await import("../src/framework/geometry/shading-policy.js");
+  const k = await bootManifoldKernel({ exactContact: true });
+  const g = k.implicit(handSpec({ ...HAND_POSES.fist, contactGap: 0 }))._m.getMesh();
+  const policies = new Map([...new Set(g.runOriginalID)].map((id) => [id, k._shadingPolicy(id)]));
+  const r = creasedNormals(g, { policies });
+  expect(r.edges.length).toBe(0);   // no line at a crease or a zone seam
+
+  // Triangles, their run IDs and facet normals; welded neighbours through shared vertex index.
+  const nTri = g.triVerts.length / 3, oid = new Uint32Array(nTri);
+  for (let q = 0; q < g.runOriginalID.length; q++) for (let t = g.runIndex[q] / 3; t < g.runIndex[q + 1] / 3; t++) oid[t] = g.runOriginalID[q];
+  const P = g.vertProperties, np = g.numProp, V = g.triVerts;
+  const fn = new Float64Array(nTri * 3);
+  for (let t = 0; t < nTri; t++) {
+    const [a, b, c] = [0, 1, 2].map((i) => V[3 * t + i] * np);
+    const u = [0, 1, 2].map((i) => P[b + i] - P[a + i]), w = [0, 1, 2].map((i) => P[c + i] - P[a + i]);
+    const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]], l = Math.hypot(...n) || 1;
+    for (let i = 0; i < 3; i++) fn[3 * t + i] = n[i] / l;
+  }
+  const dot = (s, t) => fn[3 * s] * fn[3 * t] + fn[3 * s + 1] * fn[3 * t + 1] + fn[3 * s + 2] * fn[3 * t + 2];
+  const incident = new Map();
+  for (let t = 0; t < nTri; t++) for (let i = 0; i < 3; i++) { const v = V[3 * t + i]; (incident.get(v) ?? incident.set(v, []).get(v)).push(t); }
+  const corner = (t, v) => { const i = [0, 1, 2].find((c) => V[3 * t + c] === v); return [0, 1, 2].map((c) => r.normals[(3 * t + i) * 3 + c]); };
+  const ndot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cosSib = Math.cos((SIBLING_SEAM_ANGLE * Math.PI) / 180);
+  const edgeTris = new Map();   // seam edges (different IDs): [t1, t2, v] with v an end of the edge
+  for (let t = 0; t < nTri; t++) for (let i = 0; i < 3; i++) {
+    const a = V[3 * t + i], b = V[3 * t + (i + 1) % 3];
+    const key = Math.min(a, b) * 4294967296 + Math.max(a, b);
+    (edgeTris.get(key) ?? edgeTris.set(key, []).get(key)).push([t, a, b]);
+  }
+  let hard = 0, smooth = 0;
+  for (const list of edgeTris.values()) {
+    if (list.length !== 2 || oid[list[0][0]] === oid[list[1][0]]) continue;
+    const [t1, t2] = [list[0][0], list[1][0]], v = list[0][1], bend = dot(t1, t2);
+    if (bend < cosSib) {
+      // A crease: each side keeps its own normal at the shared vertex (they split).
+      if (ndot(corner(t1, v), corner(t2, v)) < dot(t1, t2) + 1e-6) hard++;
+      expect(ndot(corner(t1, v), corner(t2, v))).toBeLessThan(1 - 1e-4);
+    } else if ([t1, t2].every((t) => [list[0][1], list[0][2]].every((w) => incident.get(w).every((u) => dot(t, u) >= cosSib)))) {
+      // A zone seam whose whole neighbourhood is flatter than the sibling angle: one shared normal.
+      expect(ndot(corner(t1, v), corner(t2, v))).toBeGreaterThan(1 - 1e-5);
+      smooth++;
+    }
+  }
+  g.delete?.();
+  expect(hard).toBeGreaterThan(20);
+  expect(smooth).toBeGreaterThan(20);
+}, 120_000);

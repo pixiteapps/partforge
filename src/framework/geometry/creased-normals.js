@@ -16,13 +16,14 @@
 // normals alone: at a band's tangent boundary that is the neighbouring face's own
 // normal (the surfaces meet with zero angle), so the face side of the seam, the band
 // side, and any band vertex riding a face edge as a T-junction all agree.
-import { SMOOTH, COPLANAR_ANGLE, MIN_EDGE, MIN_FACE, cosDeg } from "./shading-policy.js";
+import { SMOOTH, COPLANAR_ANGLE, SIBLING_SEAM_ANGLE, MIN_EDGE, MIN_FACE, cosDeg } from "./shading-policy.js";
 import { affineAt, IDENTITY, runEvaluator } from "./blend-surfaces.js";
 import { hypot3 } from "./js-math.js";
 import { core, countRefusedMesh, poisonCore } from "../core/core.js";
 import { coreAccepts, creasedNormalsCore } from "../core/creased-normals-core.js";
 
 const COPLANAR_COS = cosDeg(COPLANAR_ANGLE);
+const SIBLING_COS = cosDeg(SIBLING_SEAM_ANGLE);
 const MIN_EDGE2 = MIN_EDGE * MIN_EDGE;
 // A descriptor's normal is trusted on a triangle only while it stays within this of
 // the facet: a blend facet spans at most 30° of arc (blendSegs' floor of 12), so its
@@ -262,9 +263,18 @@ export function creasedNormalsJS(g, { policies = null, featureLabels = null, sur
         // along every fillet boundary ring. Both cases still fall to the crease
         // check below, so a genuinely sharp crossing (a chamfer's 45° shoulder, a
         // band end-cap against a wall) stays hard.
+        //
+        // Sibling surfaces (one `group`: a k.implicit contact's pieces) are the
+        // exception: across their seam the neighbour counts while the seam bends no
+        // more than SIBLING_SEAM_ANGLE — the attachment-zone webbing stays smooth —
+        // and the crease past it shades hard.
+        const d2 = fn[t2 * 3] * fx + fn[t2 * 3 + 1] * fy + fn[t2 * 3 + 2] * fz;
         if (triOID[t2] !== oid &&
-          !(polFor(triOID[t2]).boundaryLines || polFor(oid).boundaryLines)) continue;
-        if (fn[t2 * 3] * fx + fn[t2 * 3 + 1] * fy + fn[t2 * 3 + 2] * fz < sharpCos) continue; // sharp same-surface edge → hard
+          !(polFor(triOID[t2]).boundaryLines || polFor(oid).boundaryLines)) {
+          const g = polFor(oid).group;
+          if (!(g != null && g === polFor(triOID[t2]).group && d2 >= SIBLING_COS)) continue;
+        }
+        if (d2 < sharpCos) continue; // sharp same-surface edge → hard
         if (thin[t2] < SHADE_SLIVER) { sx += fn[t2 * 3]; sy += fn[t2 * 3 + 1]; sz += fn[t2 * 3 + 2]; }
         else { nx += fn[t2 * 3]; ny += fn[t2 * 3 + 1]; nz += fn[t2 * 3 + 2]; solid = true; }
         if (runEval) {

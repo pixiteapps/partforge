@@ -109,3 +109,34 @@ describe("surface detail", () => {
     }
   });
 });
+
+// Detail at contact seams (seam spec §6): it fades out toward a crease or a gap face, so
+// displacement never closes a gap or roughens the crease.
+describe("detail at contact seams", async () => {
+  const { compileImplicit, meshImplicit } = await import("../src/framework/geometry/implicit/index.js");
+  const { capsulePress } = await import("./fixtures/implicit-seam-cases.js");
+  const { pieceGapError } = await import("./helpers/seam-quality.js");
+  const noise = [{ kind: "noise", amplitude: 0.08, wavelength: 1.1 }];
+
+  test.each([[1.5, "preview"], [0.6, "print"]])("detail never closes a gap (%s mm)", (edge, tier) => {
+    const spec = { ...capsulePress({ overlap: 1.2, gap: 0.2 }), detail: noise };
+    const compiled = compileImplicit(spec, { exactContact: true });
+    const mesh = meshImplicit(compiled, edge, { tier });
+    expect(pieceGapError(compiled, mesh, "a", "b", 0.2).min).toBeGreaterThanOrEqual(0.198);
+    expect(pieceGapError(compiled, mesh, "b", "a", 0.2).min).toBeGreaterThanOrEqual(0.198);
+  });
+
+  test("detail fades at a crease", () => {
+    const base = capsulePress({ overlap: 1.2, gap: 0 });
+    const plain = meshImplicit(compileImplicit(base, { exactContact: true }), 0.6, { tier: "print" });
+    const withDetail = meshImplicit(compileImplicit({ ...base, detail: noise }, { exactContact: true }), 0.6, { tier: "print" });
+    let creaseVerts = 0, maxMove = 0, otherMove = 0;
+    for (let v = 0; v < plain.crease.length; v++) {
+      const d = Math.hypot(...[0, 1, 2].map((k) => withDetail.positions[3 * v + k] - plain.positions[3 * v + k]));
+      if (plain.crease[v]) { creaseVerts++; maxMove = Math.max(maxMove, d); } else otherMove = Math.max(otherMove, d);
+    }
+    expect(creaseVerts).toBeGreaterThan(10);
+    expect(maxMove).toBeLessThan(1e-9);
+    expect(otherMove).toBeGreaterThan(0.01);   // not vacuous: detail still roughens the skin away from the seam
+  });
+});

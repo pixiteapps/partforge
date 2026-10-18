@@ -11,10 +11,10 @@ import { ensureVectors } from "../framework/vectors.js";
 import { nodeAssetSources } from "./assets.js";
 import { tessellateStepAssets } from "./step-mesh.js";
 
-export async function bootManifoldKernel({ quality = "preview", fonts, imports, importMeshes, images, vectors } = {}) {
+export async function bootManifoldKernel({ quality = "preview", fonts, imports, importMeshes, images, vectors, exactContact = false } = {}) {
   const wasm = await Module();
   wasm.setup();
-  const kernel = createManifoldKernel(wasm, { quality });
+  const kernel = createManifoldKernel(wasm, { quality, exactContact });
   if (fonts) { const opentype = normalizeOpentype(await import("opentype.js"));
     for (const [name, buf] of await resolveFonts(nodeAssetSources(fonts))) kernel._fonts.set(name, parseFont(opentype, buf, name)); }
   if (imports) {

@@ -16,6 +16,12 @@ export const FACETED = Object.freeze({ creaseAngle: 10, sameSurfaceLines: false 
 // seam against a non-organic surface (a mechanical base) keeps the ordinary
 // seam rule. Seams still shade hard either way.
 export const ORGANIC = Object.freeze({ creaseAngle: 80, sameSurfaceLines: false, organic: true });
+// Sibling surfaces: policies carrying the same non-null `group` are pieces of one skin
+// (k.implicit gives each contact piece its own original ID, all in one group). A seam
+// between two siblings shades smooth when it bends no more than SIBLING_SEAM_ANGLE (the
+// smooth attachment-zone webbing between a finger and the palm) and hard above it (the
+// crease), and never draws a line (`organic`). Every other cross-surface seam is unchanged.
+export const SIBLING_SEAM_ANGLE = 5;  // deg
 // A blend surface (fillet/chamfer band). `boundaryLines` widens the CROSS-surface
 // rule for it: a seam between a blend and a NON-blend surface draws regardless of
 // bend — the band's start/end are tangent (~0°) and would otherwise be invisible,

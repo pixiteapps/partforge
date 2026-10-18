@@ -49,6 +49,8 @@ export const CONTACT_OVERLAP = 0.02;
 export const CREASE_SNAP = 0.15;
 /** A crossing is cut into the crease only when its field, its two shares' difference and their gap to the field are all within this (× edge) after Newton (crease.js); 0.02 left crease points further off the field than plain cleanup leaves any vertex. */
 export const CREASE_TOL = 0.005;
+/** Skin detail fades to nothing over this distance (mm) from another piece's cut, so it never roughens a crease or closes a gap (detail.js). */
+export const DETAIL_SEAM_FADE = 1;
 /** The exact clearance: the declared gap itself; at gap 0 a small negative (the pieces overlap by CONTACT_OVERLAP). */
 export const clearanceExact = (gap) => (gap > 0 ? gap : -CONTACT_OVERLAP);
 /** A contact node's clearance at grid edge `edge`: exact nodes ignore the grid. */

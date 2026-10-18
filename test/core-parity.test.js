@@ -12,6 +12,8 @@ import { bootManifoldKernel, buildView, measure, setCoreEnabled } from "../src/t
 import { core, coreStatus, setCoreForTesting } from "../src/framework/core/core.js";
 import { handSpec, nailSpecs, vaseSpec, ADVERSARIAL } from "./fixtures/implicit-trees.js";
 import { TREES } from "./fixtures/implicit-small-trees.js";
+import { creasedNormals } from "../src/framework/geometry/creased-normals.js";
+import { ORGANIC } from "../src/framework/geometry/shading-policy.js";
 
 afterAll(() => { setCoreEnabled(true); delete globalThis.PARTFORGE_CORE_SIMD; setCoreForTesting(undefined); });
 
@@ -117,4 +119,47 @@ describe.each([["SIMD", true], ["scalar", false]])("%s build", (_, simd) => {
       expect(on.measured).toEqual(off.measured);
     }, 120_000);
   }
+});
+
+// Sibling seams (`group` in shading-policy.js): a strip of ID-run triangles bent by 2°, 4°, 8°
+// and 40° at successive seams, with grouped, ungrouped and mixed-group policies, shades alike
+// on the core and in JS.
+describe("creased normals: sibling groups", () => {
+  const strip = (bends) => {
+    const V = [], T = [], ri = [0], roid = [];
+    let a = [0, 0, 0], b = [0, 1, 0], ang = 0, x = 0;
+    V.push(...a, ...b);
+    bends.forEach((bend, i) => {
+      ang += (bend * Math.PI) / 180; x += Math.cos(ang);
+      const z0 = V[V.length - 4] ?? 0;
+      V.push(x, 0, z0 + Math.sin(ang), x, 1, z0 + Math.sin(ang));
+      const n = V.length / 3;
+      T.push(n - 4, n - 2, n - 3, n - 3, n - 2, n - 1);
+      ri.push(T.length); roid.push(10 + i);
+    });
+    return { numProp: 3, vertProperties: Float32Array.from(V), triVerts: Uint32Array.from(T), mergeFromVert: new Uint32Array(0), mergeToVert: new Uint32Array(0), runIndex: Uint32Array.from(ri), runOriginalID: Uint32Array.from(roid) };
+  };
+  const ids = [10, 11, 12, 13, 14];
+  const POLICIES = {
+    grouped: new Map(ids.map((id) => [id, { ...ORGANIC, group: 10 }])),
+    mixed: new Map(ids.map((id) => [id, { ...ORGANIC, group: id < 12 ? 10 : 20 }])),
+    ungrouped: new Map(ids.map((id) => [id, ORGANIC])),
+  };
+  for (const [name, policies] of Object.entries(POLICIES)) {
+    test(`core on == core off: ${name}`, () => {
+      const g = strip([0, 2, 4, 8, 40]);
+      const out = [];
+      for (const on of [false, true]) { setCoreEnabled(on); out.push(creasedNormals(g, { policies })); }
+      setCoreEnabled(true);
+      expect(Buffer.compare(bytes(out[0].normals), bytes(out[1].normals))).toBe(0);
+      expect(Buffer.compare(bytes(out[0].edges), bytes(out[1].edges))).toBe(0);
+      expect(out[0].edges.length).toBe(0);
+    });
+  }
+  test("the strip really shades differently by group", () => {
+    setCoreEnabled(true);
+    const g = strip([0, 2, 4, 8, 40]);
+    const a = creasedNormals(g, { policies: POLICIES.grouped }), b = creasedNormals(g, { policies: POLICIES.ungrouped });
+    expect(Buffer.compare(bytes(a.normals), bytes(b.normals))).not.toBe(0);
+  });
 });

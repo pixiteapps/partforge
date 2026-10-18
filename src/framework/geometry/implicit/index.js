@@ -8,7 +8,7 @@ import { meshStoreOwners } from "./mesher-owners.js";
 import { cleanupMesh, CLEANUP, PREVIEW_CLEANUP } from "./cleanup.js";
 import { cutCreases, untangle } from "./crease.js";
 import { applySurfaceDetail } from "./detail.js";
-import { implicitResult } from "./result.js";
+import { implicitResult, triangleOwners } from "./result.js";
 import { meshImplicitCore } from "../../core/implicit-core.js";
 
 export const IMPLICIT_DEFAULTS = Object.freeze({ resolution: 0.6, preview: 1.5 });
@@ -25,7 +25,7 @@ export function compileImplicit(spec, { images = new Map(), exactContact = false
 //
 // A root exact contact (`compiled.ownerRoot ≥ 0`) meshes through the owner mesher
 // (mesher-owners.js) and owner-aware cleanup, and its result gains `vertOwner`,
-// `ownerHeld`, `pinned` and `crease` (the crease cut, crease.js, after cleanup and before detail). `owners: false`
+// `ownerHeld`, `pinned`, `crease` and `triOwner` (the crease cut, crease.js, after cleanup and before detail). `owners: false`
 // meshes the same field with the plain mesher instead: the seam baseline.
 export function meshImplicit(compiled, edge, { tier, owners = true } = {}) {
   const opts = tier === "preview" ? PREVIEW_CLEANUP : CLEANUP;
@@ -41,7 +41,7 @@ export function meshImplicit(compiled, edge, { tier, owners = true } = {}) {
   if (ownerPath) mesh = untangle(store, cutCreases(store, mesh, node.att));
   if (compiled.detail.length) mesh = applySurfaceDetail(store, mesh, compiled);
   const result = implicitResult(compiled, edge, plan, mesh, store.clipped);
-  if (ownerPath) Object.assign(result, { vertOwner: mesh.vertOwner, ownerHeld: mesh.ownerHeld, pinned: mesh.pinned, crease: mesh.crease });
+  if (ownerPath) Object.assign(result, { vertOwner: mesh.vertOwner, ownerHeld: mesh.ownerHeld, pinned: mesh.pinned, crease: mesh.crease, triOwner: triangleOwners(mesh) });
   return result;
 }
 

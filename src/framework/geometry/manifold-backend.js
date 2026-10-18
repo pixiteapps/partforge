@@ -62,7 +62,9 @@ function axisAngleMat4(axis, deg) {
   return [R00, R10, R20, 0,  R01, R11, R21, 0,  R02, R12, R22, 0,  0, 0, 0, 1];
 }
 
-export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
+// `exactContact` is INTERNAL (tests, until the seam work makes it the default): compile every
+// k.implicit with exact contact seams (implicit/index.js), each contact piece its own ID.
+export function createManifoldKernel(wasm, { quality = "preview", exactContact = false } = {}) {
   const { Manifold, CrossSection } = wasm;
   const segs = SEGS[quality], tube = TUBE[quality];
   // Per-radius count for every site that facets a circle it knows the radius of; the
@@ -934,23 +936,29 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // value and are recorded again on every hit, so each build that uses the solid
     // reports them.
     implicit: (spec) => {
-      const compiled = compileImplicit(spec, { images });
+      const compiled = compileImplicit(spec, { images, exactContact });
       const { preview, resolution, ...rest } = spec;
       const edge = quality === "print" ? (resolution ?? IMPLICIT_DEFAULTS.resolution) : (preview ?? IMPLICIT_DEFAULTS.preview);
       const keySpec = quality === "print" ? { ...rest, resolution: edge } : { ...rest, preview: edge };
-      const key = h("implicit", implicitHashable(keySpec, compiled), quality);
+      const key = exactContact ? h("implicit", implicitHashable(keySpec, compiled), quality, "exact") : h("implicit", implicitHashable(keySpec, compiled), quality);
       const solid = cache.lookup(key, () => {
         const out = meshImplicit(compiled, edge, { tier: quality });
         if (out.indices.length === 0) {
           for (const w of out.warnings) recordWarning(w);
           throw new Error(`implicit: the shape is empty at a ${edge} mm grid — nothing is inside it (check subtract order and sizes), or it is thinner than the grid`);
         }
-        const id = wasm.Manifold.reserveIDs(1);
-        const m = T(manifoldFromWeldedMesh(wasm, out.positions, out.indices, id));
-        oidPolicies.set(id, ORGANIC);
+        // An exact contact (a triOwner) is one original ID per piece, all one shading group
+        // (shading-policy.js SIBLING_SEAM_ANGLE): the crease shades hard, the attachment-zone
+        // seams between siblings stay smooth. Anything else is one ORGANIC skin.
+        const pieces = out.triOwner ? compiled.ownerK : 1;
+        const first = wasm.Manifold.reserveIDs(pieces), ids = Array.from({ length: pieces }, (_, i) => first + i);
+        const m = T(out.triOwner ? manifoldFromWeldedMesh(wasm, out.positions, out.indices, undefined, out.triOwner, ids)
+          : manifoldFromWeldedMesh(wasm, out.positions, out.indices, first));
+        const policy = out.triOwner ? Object.freeze({ ...ORGANIC, group: first }) : ORGANIC;
+        for (const id of ids) oidPolicies.set(id, policy);
         const value = wrap(m, key);
         implicitWarnings.set(value, out.warnings);
-        return { value, pin: m, dispose: () => { oidPolicies.delete(id); m.delete?.(); } };
+        return { value, pin: m, dispose: () => { for (const id of ids) oidPolicies.delete(id); m.delete?.(); } };
       });
       for (const w of implicitWarnings.get(solid) ?? []) recordWarning(w);
       return solid;
@@ -1061,6 +1069,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       images.set(name, { digest, width, height, data });
     },
     _imageDigest: (name) => images.get(name)?.digest,
+    _shadingPolicy: (oid) => oidPolicies.get(oid),   // tests: the policy an original ID shades with
     // Drop every registered name NOT in `keep` (a Set) — the images-map twin of
     // fonts' kernel._fonts prune in jobs.js. `images` is keyed on the part's
     // declared name (e.g. "relief"), not on content, so without this a name

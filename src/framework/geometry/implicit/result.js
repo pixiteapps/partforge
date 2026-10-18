@@ -18,3 +18,21 @@ export function implicitResult(compiled, edge, plan, mesh, clipped) {
   return { positions: mesh.positions, indices: mesh.indices, normals: mesh.normals, warnings,
     stats: { samples: plan.samples, leaves: plan.leaves.length, programs: plan.programs.length } };
 }
+
+/**
+ * Each triangle's owner on an owner mesh: the owner its non-crease vertices share, else its first
+ * vertex's (a triangle with only crease corners, or with non-crease corners of two owners).
+ */
+export function triangleOwners(mesh) {
+  const { indices: I, vertOwner: VO, crease: VC } = mesh, out = new Int32Array(I.length / 3);
+  for (let t = 0; t < out.length; t++) {
+    let shared = -1, agree = true;
+    for (let k = 0; k < 3; k++) {
+      const v = I[3 * t + k];
+      if (VC && VC[v]) continue;
+      if (shared < 0) shared = VO[v]; else if (VO[v] !== shared) agree = false;
+    }
+    out[t] = agree && shared >= 0 ? shared : VO[I[3 * t]];
+  }
+  return out;
+}
