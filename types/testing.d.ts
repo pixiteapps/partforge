@@ -11,6 +11,12 @@ import type { Derived, FontSource, PartDefinition, ResolvedParams } from "./part
 import type { KitOptions } from "./index.js";
 
 export type { Derived, GeometryKernel, Mesh, PartDefinition, ResolvedParams, Solid };
+// Declared in oracle.d.ts (its own surface); testing.js re-exports all of oracle.js.
+export {
+  samplePreviewAnimation, PREVIEW_SAMPLE_HZ, PREVIEW_SAMPLE_CAP,
+  type PreviewAnimationInput, type PreviewAnimationSample, type NormalizedAnimation,
+  type NormalizedAnimationStep, type NormalizedAnimationCue,
+} from "./oracle.js";
 
 // --- kernels ----------------------------------------------------------------
 
