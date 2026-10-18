@@ -35,6 +35,24 @@ export function threePress({ gap }) {
   };
 }
 
+/**
+ * Two finger capsules (r 4, along z 0-20, labelled a and b) with a true gap `fingerGap` between
+ * them (their axes at x = ±(4 + fingerGap/2) + offset), both overlapping a palm capsule below.
+ * A mesh that bridges the finger gap has triangles crossing x = offset above the palm (z >= 9).
+ */
+export function fingersOnPalm({ gap = 0, fingerGap, offset = 0 }) {
+  const r = 4, x = r + fingerGap / 2;
+  return {
+    root: {
+      kind: "contact", gap, bulge: 0, children: [
+        { kind: "capsule", a: [-x + offset, 0, 0], b: [-x + offset, 0, 20], r, label: "a" },
+        { kind: "capsule", a: [x + offset, 0, 0], b: [x + offset, 0, 20], r, label: "b" },
+        { kind: "capsule", a: [-14, 0, -1], b: [14, 0, -1], r: 5, label: "palm" },
+      ],
+    },
+  };
+}
+
 /** The press overlap the seam fixtures use (the spike's default press). */
 export const PRESS_OVERLAP = 1.2;
 

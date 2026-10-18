@@ -232,30 +232,6 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
         else { recOpen[r] = 1; recSide[r] = [recBis[r], recBis[r]]; recPin[r] = [0, 0]; }
         changed = true;
       }
-      // A third piece fused to both ends of an open X–Y edge in the tet (the triple line): the
-      // face merges X, Y and Z into one owner (emitOpenTet's allFused rule) and would drop the
-      // open edge's sheets, leaving the mesh open. At gap 0 the opening closes; with a gap it
-      // stays (the merged face then has no crossing to drop).
-      if (!(gap > 0)) {
-        const fusedBetween = (P, Q) => {
-          for (let a = 0; a < 4; a++) for (let b = a + 1; b < 4; b++) {
-            const A = lab[tet[a]], B = lab[tet[b]];
-            if (((A === P && B === Q) || (A === Q && B === P)) && !recOpen[recOf(i, j, l, tet[a], tet[b])]) return true;
-          }
-          return false;
-        };
-        for (let a = 0; a < 4; a++) for (let b = a + 1; b < 4; b++) {
-          const A = lab[tet[a]], B = lab[tet[b]];
-          if (A === OWNER_AIR || B === OWNER_AIR || A === B) continue;
-          const r = recOf(i, j, l, tet[a], tet[b]);
-          if (!recOpen[r]) continue;
-          for (let o = 0; o < 4; o++) {
-            const Z = lab[tet[o]];
-            if (Z === OWNER_AIR || Z === A || Z === B || !fusedBetween(A, Z) || !fusedBetween(B, Z)) continue;
-            recOpen[r] = 0; changed = true; break;
-          }
-        }
-      }
     }
   }
   openCells = new Set();

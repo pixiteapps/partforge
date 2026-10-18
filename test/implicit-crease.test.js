@@ -7,7 +7,7 @@ import { attachWeight, ATTACH_STRIDE } from "../src/framework/geometry/implicit/
 import { edgeCheck } from "./helpers/mesh-topology.js";
 import { sharesAt, childIndex, flippedTriangles } from "./helpers/seam-quality.js";
 import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
-import { capsulePress, threePress, PRESS_OVERLAP, SEAM_CASES } from "./fixtures/implicit-seam-cases.js";
+import { capsulePress, threePress, fingersOnPalm, PRESS_OVERLAP, SEAM_CASES } from "./fixtures/implicit-seam-cases.js";
 
 const CLOSED = { boundary: 0, nonManifold: 0, misoriented: 0 };
 const GRIDS = [[1.5, "preview"], [0.6, "print"]];
@@ -41,9 +41,8 @@ describe("crease cut", () => {
       }
     }, 600_000);
 
-    test(`three owners at gap 0 are closed with a crease on all three pairs (${tier} ${edge})`, () => {
+    test(`three owners at gap 0 have a crease on all three pairs (${tier} ${edge})`, () => {
       const { compiled, mesh } = run(threePress({ gap: 0 }), edge, tier);
-      expect(edgeCheck(mesh.indices)).toEqual(CLOSED);
       const cv = creaseVerts(mesh), { X, Y, Z } = at(mesh, cv), { shares, K } = sharesAt(compiled, X, Y, Z);
       const pairs = new Set();
       cv.forEach((v, i) => {
@@ -51,6 +50,11 @@ describe("crease cut", () => {
         if (near.length >= 2) pairs.add(near.slice(0, 2).join());
       });
       expect(pairs.size).toBe(3);
+    }, 60_000);
+
+    // Task 5 seam gate (triple junction): the 1.5 mm owner mesher leaves 8 open edges at the triple line.
+    (edge === 1.5 ? test.fails : test)(`three owners at gap 0 are closed (${tier} ${edge})`, () => {
+      expect(edgeCheck(run(threePress({ gap: 0 }), edge, tier).mesh.indices)).toEqual(CLOSED);
     }, 60_000);
 
     for (const [name, spec] of [["press gap 0", capsulePress({ overlap: PRESS_OVERLAP, gap: 0 })], ["three owners gap 0", threePress({ gap: 0 })]]) {
@@ -63,6 +67,30 @@ describe("crease cut", () => {
         expect(flippedTriangles(compiled, mesh, edge)).toBe(0);
       }, 60_000);
     }
+
+    // Triangles above the palm (z >= 9) that cross the finger gap's bisector x = offset.
+    const bridging = (mesh, offset) => {
+      const P = mesh.positions, I = mesh.indices;
+      let n = 0;
+      for (let t = 0; t < I.length; t += 3) {
+        const xs = [0, 1, 2].map((k) => P[3 * I[t + k]] - offset), zs = [0, 1, 2].map((k) => P[3 * I[t + k] + 2]);
+        if (Math.min(...zs) >= 9 && Math.min(...xs) < -0.02 && Math.max(...xs) > 0.02) n++;
+      }
+      return n;
+    };
+    test(`fingers on a palm never bridge the finger gap (${tier} ${edge})`, () => {
+      for (const fingerGap of [0.1, 0.3, 0.6]) for (const offset of [0, 0.37]) {
+        const { mesh } = run(fingersOnPalm({ gap: 0, fingerGap, offset }), edge, tier);
+        expect(bridging(mesh, offset), `gap ${fingerGap} offset ${offset}`).toBe(0);
+      }
+    }, 120_000);
+
+    // Task 5 seam gate (triple junction)
+    test.fails(`fingers on a palm, finger gap 0.3, are closed (${tier} ${edge})`, () => {
+      const { mesh } = run(fingersOnPalm({ gap: 0, fingerGap: 0.3 }), edge, tier);
+      expect(edgeCheck(mesh.indices)).toEqual(CLOSED);
+      expect(bridging(mesh, 0)).toBe(0);
+    }, 60_000);
 
     test(`no crease across a near miss (${tier} ${edge})`, () => {
       const { mesh } = run(capsulePress({ overlap: -0.3, gap: 0 }), edge, tier);

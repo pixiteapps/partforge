@@ -159,7 +159,6 @@ export function cutCreases(store, mesh, att = new Float64Array(0)) {
     });
   }
 
-  // 5. Revert what did not reach a crease.
   // 5. Revert what did not reach a crease (or landed in an attachment zone).
   const crease = new Uint8Array(P.length / 3);
   if (cv.length) {
