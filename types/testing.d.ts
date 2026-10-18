@@ -190,12 +190,17 @@ export function meshGaps(built: BuiltSubPart[], opts?: { bvhCache?: Map<Mesh, BV
 /**
  * Build every sub-part of a view in its display pose. Keeps solids LIVE (does
  * NOT call `kernel.cleanup()`) so callers can read exact solid facts first.
+ *
+ * `readsBySubPart`, when given, is filled with each sub-part's name → the params
+ * its `build()` read (expanded through derived values). `place()` reads are
+ * excluded, so a pose-only param never reads as a rebuild.
  */
 export function buildView(
   kernel: GeometryKernel,
   part: PartDefinition,
   view: string,
   params?: ResolvedParams,
+  opts?: { readsBySubPart?: Map<string, string[]> },
 ): BuiltSubPart[];
 
 // --- mesh math --------------------------------------------------------------
