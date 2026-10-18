@@ -148,10 +148,19 @@ export function midpointNormal(N, a, b, m) {
   N[3 * m] = x / l; N[3 * m + 1] = y / l; N[3 * m + 2] = z / l;
 }
 
+/**
+ * An owner mesh (`vertOwner`, `ownerHeld`, `pinned`, `crease`: cleanup.js) keeps those fields
+ * through refinement: a midpoint takes its ends' owner (the lesser where they differ), is held
+ * when both ends are held by the same owner, and is neither pinned nor a crease vertex; held
+ * midpoints project onto their owner's share (project.js).
+ */
 export function applySurfaceDetail(store, mesh, compiled) {
   const { entries: F, programs } = flattenDetail(compiled), count = compiled.detail.length;
   const tex = compiled.textures, edge = store.edge;
   let P = Array.from(mesh.positions), N = Array.from(mesh.normals), T = Array.from(mesh.indices), VL = Array.from(mesh.vertLeaf);
+  const owned = mesh.vertOwner != null;
+  const VO = owned ? Array.from(mesh.vertOwner) : null, VH = owned ? Array.from(mesh.ownerHeld) : null;
+  const VP = owned ? Array.from(mesh.pinned) : null, VC = owned ? Array.from(mesh.crease ?? new Uint8Array(VO.length)) : null;
   // The refinement mask is exactly "some entry's weight is non-zero here".
   const lp = [0, 0, 0], ln = [0, 0, 0];
   const targetAt = (v) => {
@@ -177,6 +186,10 @@ export function applySurfaceDetail(store, mesh, compiled) {
       m = P.length / 3;
       P.push((P[3 * a] + P[3 * b]) / 2, (P[3 * a + 1] + P[3 * b + 1]) / 2, (P[3 * a + 2] + P[3 * b + 2]) / 2);
       N.push(0, 0, 0); VL.push(VL[a]); added.push(m); ends.push(a, b);
+      if (owned) {
+        const same = VO[a] === VO[b];
+        VO.push(same ? VO[a] : Math.min(VO[a], VO[b])); VH.push(same && VH[a] && VH[b] ? 1 : 0); VP.push(0); VC.push(0);
+      }
       mid.set(key, m);
       return m;
     };
@@ -188,7 +201,8 @@ export function applySurfaceDetail(store, mesh, compiled) {
     if (!added.length) break;
     T = out;
     const Pf = Float64Array.from(P), Nf = Float64Array.from(N);
-    projectVertices(store, Pf, Int32Array.from(VL), { maxStep: edge, which: Int32Array.from(added), normals: Nf });
+    const held = owned ? { owner: Int32Array.from(VO), held: Uint8Array.from(VH) } : {};
+    projectVertices(store, Pf, Int32Array.from(VL), { maxStep: edge, which: Int32Array.from(added), normals: Nf, ...held });
     P = Array.from(Pf); N = Array.from(Nf);
     for (let q = 0; q < added.length; q++) midpointNormal(N, ends[2 * q], ends[2 * q + 1], added[q]);
   }
@@ -200,5 +214,7 @@ export function applySurfaceDetail(store, mesh, compiled) {
     if (h === 0) continue;
     positions[3 * v] += normals[3 * v] * h; positions[3 * v + 1] += normals[3 * v + 1] * h; positions[3 * v + 2] += normals[3 * v + 2] * h;
   }
-  return { positions, indices: Uint32Array.from(T), vertLeaf: Int32Array.from(VL), normals };
+  const out = { positions, indices: Uint32Array.from(T), vertLeaf: Int32Array.from(VL), normals };
+  if (owned) Object.assign(out, { vertOwner: Int32Array.from(VO), ownerHeld: Uint8Array.from(VH), pinned: Uint8Array.from(VP), crease: Uint8Array.from(VC) });
+  return out;
 }

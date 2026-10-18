@@ -4,9 +4,32 @@
 // of the leaf (sparse.js). Each move is clamped per step (`maxStep`); nothing bounds
 // the cumulative drift by construction, but on the fixtures it measured at most
 // 0.69 cell, inside the 1-cell pad.
-import { evalBatch } from "./program.js";
+//
+// Owner meshes (a root exact contact, `owner` and `held` given): a vertex takes its step on
+// its owner's SHARE of the field (evalBatchContact) instead of the field when it is held
+// (held[v], the mesher's mark beside an open gap) or when another piece makes the field at
+// it (its owner's share is above the field there: a linear crossing that landed past a near
+// miss's bisector, or a fingertip pad's vertex on the palm's skin). Otherwise the field step
+// is its own skin's, and it takes that. So a vertex beside a thin gap lands on its own piece's
+// skin rather than the nearer piece's. A merged owner's share is discontinuous at an
+// attachment zone's rim (a blend lowers it inside, the raw cut returns outside), so a share
+// step is tried only when the share's stencil gradient is distance-like (≤ HELD_GRAD_MAX), and
+// kept only when it lands on the surface (|field| ≤ HELD_FIELD_TOL·edge), or when the share
+// behaved continuously along it and still makes the field at the landing (no other piece is
+// nearer there); otherwise, or when the owner's share is pruned at the vertex's leaf, the
+// vertex takes the ordinary field step. A mesh without owners projects exactly as before.
+import { evalBatch, evalBatchContact } from "./program.js";
 
-export function projectVertices(store, positions, vertLeaf, { maxStep, which = null, normals = null }) {
+/** A held step that lands within this (× edge) of the field's zero is kept. */
+const HELD_FIELD_TOL = 1e-3;
+/**
+ * A share whose stencil gradient is steeper than this has a jump inside the stencil (a
+ * distance-like share's is about 1): no share step. A share that, at the landing, is off what
+ * the step predicted by more than HELD_CONTINUITY × the step length was not continuous along it.
+ */
+const HELD_GRAD_MAX = 3, HELD_CONTINUITY = 0.5;
+
+export function projectVertices(store, positions, vertLeaf, { maxStep, which = null, normals = null, owner = null, held = null }) {
   const e = 0.1 * store.edge;
   const groups = new Map();   // leaf index -> vertex list (insertion order = vertex order)
   const count = which ? which.length : positions.length / 3;
@@ -16,6 +39,7 @@ export function projectVertices(store, positions, vertLeaf, { maxStep, which = n
     if (!g) { g = []; groups.set(L, g); }
     g.push(v);
   }
+  const owned = owner !== null && held !== null && store.ownerRoot >= 0, K = Math.max(1, store.ownerK ?? 0);
   for (const [L, verts] of groups) {
     const prog = store.leaves[L].prog, m = verts.length;
     const X = new Float64Array(7 * m), Y = new Float64Array(7 * m), Z = new Float64Array(7 * m), out = new Float64Array(7 * m);
@@ -29,6 +53,10 @@ export function projectVertices(store, positions, vertLeaf, { maxStep, which = n
       X[o + 5] = x; Y[o + 5] = y; Z[o + 5] = z + e;
       X[o + 6] = x; Y[o + 6] = y; Z[o + 6] = z - e;
     });
+    if (owned) {
+      projectOwnedGroup(store, prog, positions, verts, owner, held, { X, Y, Z, out, e, K, maxStep, normals });
+      continue;
+    }
     evalBatch(prog, store.textures, X, Y, Z, out);
     verts.forEach((v, k) => {
       const o = 7 * k, d = out[o];
@@ -42,4 +70,60 @@ export function projectVertices(store, positions, vertLeaf, { maxStep, which = n
       positions[3 * v] -= (gx / gl) * t; positions[3 * v + 1] -= (gy / gl) * t; positions[3 * v + 2] -= (gz / gl) * t;
     });
   }
+}
+
+// One Newton step from the 7-point stencil values f(q), q = 0..6: { d, gx, gy, gz, gl, t } or
+// null where there is no gradient. t is the clamped signed distance along the unit gradient.
+function newtonStep(f, e, maxStep) {
+  const d = f(0), gx = (f(1) - f(2)) / (2 * e), gy = (f(3) - f(4)) / (2 * e), gz = (f(5) - f(6)) / (2 * e);
+  const g2 = gx * gx + gy * gy + gz * gz;
+  if (!(g2 > 1e-12)) return null;
+  const gl = Math.sqrt(g2);
+  let t = d / gl;
+  if (t > maxStep) t = maxStep; else if (t < -maxStep) t = -maxStep;
+  return { d, gx, gy, gz, gl, t };
+}
+
+// A leaf's vertices on an owner mesh: one capturing batch gives the field and every share at
+// the stencil; vertices that try a share step are checked by a second capturing batch at the
+// landing points.
+function projectOwnedGroup(store, prog, positions, verts, owner, held, { X, Y, Z, out, e, K, maxStep, normals }) {
+  const m = verts.length, shares = new Float64Array(7 * m * K), tol = HELD_FIELD_TOL * store.edge;
+  evalBatchContact(prog, store.textures, X, Y, Z, out, { K, shares });
+  const fieldSteps = new Array(m), shareSteps = new Array(m).fill(null), tries = [];
+  verts.forEach((v, k) => {
+    const o = 7 * k;
+    fieldSteps[k] = newtonStep((q) => out[o + q], e, maxStep);
+    const w = owner[v];
+    // Not held, and its owner makes the field here: the field step is its own skin's.
+    if (!held[v] && !(shares[o * K + w] - out[o] > tol)) return;
+    let finite = true;
+    for (let q = 0; q < 7 && finite; q++) if (!Number.isFinite(shares[(o + q) * K + w])) finite = false;
+    if (!finite) return;
+    const s = newtonStep((q) => shares[(o + q) * K + w], e, maxStep);
+    if (s === null || s.gl > HELD_GRAD_MAX) return;   // the stencil straddles a jump in the share
+    shareSteps[k] = s;
+    tries.push(k);
+  });
+  // Where each share step lands: the field and the vertex's owner's share there.
+  const accepted = new Uint8Array(m);
+  if (tries.length) {
+    const n = tries.length, CX = new Float64Array(n), CY = new Float64Array(n), CZ = new Float64Array(n), cOut = new Float64Array(n), cShares = new Float64Array(n * K);
+    tries.forEach((k, q) => {
+      const v = verts[k], s = shareSteps[k];
+      CX[q] = positions[3 * v] - (s.gx / s.gl) * s.t; CY[q] = positions[3 * v + 1] - (s.gy / s.gl) * s.t; CZ[q] = positions[3 * v + 2] - (s.gz / s.gl) * s.t;
+    });
+    evalBatchContact(prog, store.textures, CX, CY, CZ, cOut, { K, shares: cShares });
+    tries.forEach((k, q) => {
+      const s = shareSteps[k], predicted = s.d - s.gl * s.t, landed = cShares[q * K + owner[verts[k]]];
+      const continuous = Math.abs(landed - predicted) <= HELD_CONTINUITY * Math.abs(s.t) + tol, mine = landed - cOut[q] <= tol;
+      if (Math.abs(cOut[q]) <= tol || (continuous && mine)) accepted[k] = 1;
+    });
+  }
+  verts.forEach((v, k) => {
+    const s = accepted[k] ? shareSteps[k] : fieldSteps[k];
+    if (s === null) return;
+    if (normals) { normals[3 * v] = s.gx / s.gl; normals[3 * v + 1] = s.gy / s.gl; normals[3 * v + 2] = s.gz / s.gl; }
+    positions[3 * v] -= (s.gx / s.gl) * s.t; positions[3 * v + 1] -= (s.gy / s.gl) * s.t; positions[3 * v + 2] -= (s.gz / s.gl) * s.t;
+  });
 }

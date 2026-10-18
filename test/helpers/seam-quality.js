@@ -9,7 +9,7 @@ import { emitProgram, evalBatchContact } from "../../src/framework/geometry/impl
 const fullProgram = (compiled) => emitProgram(compiled, fullDecision(compiled), 0);
 
 /** The field (`out`) and every child's share (`shares`, K per point) at the points. */
-function sharesAt(compiled, X, Y, Z) {
+export function sharesAt(compiled, X, Y, Z) {
   const N = X.length, K = Math.max(1, compiled.ownerK), out = new Float64Array(N), shares = new Float64Array(N * K);
   if (compiled.ownerRoot >= 0) evalBatchContact(fullProgram(compiled), compiled.textures, X, Y, Z, out, { K, shares });
   else evalBatchContact(fullProgram(compiled), compiled.textures, X, Y, Z, out, { K });

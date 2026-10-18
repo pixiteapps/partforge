@@ -4,6 +4,7 @@ import { validateSpec } from "./grammar.js";
 import { lowerSpec } from "./ir.js";
 import { planLeaves, evaluateLeaves } from "./sparse.js";
 import { meshStore } from "./mesher.js";
+import { meshStoreOwners } from "./mesher-owners.js";
 import { cleanupMesh, CLEANUP, PREVIEW_CLEANUP } from "./cleanup.js";
 import { applySurfaceDetail } from "./detail.js";
 import { implicitResult } from "./result.js";
@@ -20,16 +21,26 @@ export function compileImplicit(spec, { images = new Map(), exactContact = false
 // the same bytes, test/core-parity.test.js); else, or when the core refuses or
 // faults, the JS stages below. `tier: "preview"` decimates in cleanup
 // (PREVIEW_CLEANUP); any other tier (print, export) cleans up exactly as CLEANUP.
-export function meshImplicit(compiled, edge, { tier } = {}) {
+//
+// A root exact contact (`compiled.ownerRoot ≥ 0`) meshes through the owner mesher
+// (mesher-owners.js) and owner-aware cleanup, and its result gains `vertOwner`,
+// `ownerHeld`, `pinned` and `crease` (all zero until the crease cut). `owners: false`
+// meshes the same field with the plain mesher instead: the seam baseline.
+export function meshImplicit(compiled, edge, { tier, owners = true } = {}) {
   const opts = tier === "preview" ? PREVIEW_CLEANUP : CLEANUP;
   const plan = planLeaves(compiled, edge);
   // An exact-contact tree carries ops the native decoder does not know yet: JS answers.
   const native = compiled.ownerRoot >= 0 ? null : meshImplicitCore(compiled, edge, plan, opts);
   if (native) return native;
   const store = evaluateLeaves(plan);
-  let mesh = cleanupMesh(store, meshStore(store), opts);
+  const ownerPath = owners && compiled.ownerRoot >= 0;
+  const raw = ownerPath ? meshStoreOwners(store, { gap: compiled.ir.nodes[compiled.ownerRoot].gap }) : meshStore(store);
+  let mesh = cleanupMesh(store, raw, opts);
+  if (ownerPath) mesh.crease = new Uint8Array(mesh.vertOwner.length);
   if (compiled.detail.length) mesh = applySurfaceDetail(store, mesh, compiled);
-  return implicitResult(compiled, edge, plan, mesh, store.clipped);
+  const result = implicitResult(compiled, edge, plan, mesh, store.clipped);
+  if (ownerPath) Object.assign(result, { vertOwner: mesh.vertOwner, ownerHeld: mesh.ownerHeld, pinned: mesh.pinned, crease: mesh.crease });
+  return result;
 }
 
 export const implicitHashable = (spec, compiled) => ({ spec, digests: compiled.digests });

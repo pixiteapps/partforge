@@ -22,6 +22,15 @@
 // the single pass's. Angles are compared
 // through cos² (products, sums and one division; no acos), so the core reproduces
 // them bit for bit.
+//
+// An owner mesh (meshStoreOwners: `vertOwner`, `ownerHeld`, `pinned`) is cleaned with three
+// more rules, the seam spec's §4: collapse and decimation never merge vertices of different
+// owners or a pinned one (a merged vertex is held when either end was); held vertices, and any
+// vertex another piece makes the field at, project onto their owner's share (project.js, which
+// guards the share's jumps), with one more projection after the last relaxation; pinned
+// vertices (exactly on a gap face) are neither projected nor relaxed, and take their normals
+// from a zero-step projection at the end. The three fields are carried through every
+// compaction and returned. A mesh without them is cleaned exactly as before.
 import { projectVertices } from "./project.js";
 
 export const CLEANUP = Object.freeze({ collapseFrac: 0.2, relaxPasses: 2, relaxWeight: 0.5, maxMoveCells: 0.5 });
@@ -76,13 +85,15 @@ const triSharpness = (P, i, j, k) => Math.max(Math.max(sharpness(P, i, j, k), sh
 // pillow of duplicate triangles), the corner guard (`dec.cos2`, cos² of
 // decimateMinAngle), the normal-turn guard (`dec.ncos2`, cos² of decimateMaxTurn:
 // no surviving triangle's normal turns by more) and the spread guard (`dec.scos2`,
-// cos² of decimateMaxSpread). A cos² <= 0 turns its guard off.
-function collapse(P, T, vertLeaf, minLen, dec = null) {
+// cos² of decimateMaxSpread). A cos² <= 0 turns its guard off. `own` (an owner mesh:
+// { vertOwner, ownerHeld, pinned }) keeps different owners and pinned vertices apart.
+function collapse(P, T, vertLeaf, minLen, dec = null, own = null) {
   const cos2 = dec ? dec.cos2 : -1, ncos2 = dec ? dec.ncos2 : -1, scos2 = dec ? dec.scos2 : -1, fan = [];
   const nv = P.length / 3, nt = T.length / 3;
   const vt = Array.from({ length: nv }, () => []);
   for (let t = 0; t < nt; t++) for (let c = 0; c < 3; c++) vt[T[3 * t + c]].push(t);
   const alive = new Uint8Array(nt).fill(1), locked = new Uint8Array(nv);
+  const apart = own === null ? null : (a, b) => own.pinned[a] || own.pinned[b] || own.vertOwner[a] !== own.vertOwner[b];
   let collapsed = 0;
   const min2 = minLen * minLen, n0 = [0, 0, 0], n1 = [0, 0, 0];
   const ring = (v) => {
@@ -150,19 +161,20 @@ function collapse(P, T, vertLeaf, minLen, dec = null) {
     let tried = 0, ok = 0;
     for (let t = 0; t < nt; t += PROBE_STRIDE) for (let c = 0; c < 3; c++) {
       const a = T[3 * t + c], b = T[3 * t + ((c + 1) % 3)];
-      if (!short(a, b)) continue;
+      if (!short(a, b) || (apart !== null && apart(a, b))) continue;
       tried++;
       if (allowed(a, b)) ok++;
     }
-    if (ok < dec.minAccept * tried) return { positions: P, indices: T, vertLeaf, collapsed: 0 };
+    if (ok < dec.minAccept * tried) return { positions: P, indices: T, vertLeaf, own, collapsed: 0 };
   }
   for (let t = 0; t < nt; t++) {
     if (!alive[t]) continue;
     for (let c = 0; c < 3; c++) {
       const a = T[3 * t + c], b = T[3 * t + ((c + 1) % 3)];
-      if (locked[a] || locked[b]) continue;
+      if (locked[a] || locked[b] || (apart !== null && apart(a, b))) continue;
       if (!short(a, b) || !allowed(a, b)) continue;
       P[3 * a] = mx; P[3 * a + 1] = my; P[3 * a + 2] = mz;
+      if (own !== null && own.ownerHeld[b]) own.ownerHeld[a] = 1;
       for (const tt of vt[b]) {
         if (!alive[tt]) continue;
         let hasA = false;
@@ -177,16 +189,20 @@ function collapse(P, T, vertLeaf, minLen, dec = null) {
     }
   }
   // Compact: vertices renumbered in order of first use by a surviving triangle.
-  const map = new Int32Array(nv).fill(-1), outT = [], outP = [], outL = [];
+  const map = new Int32Array(nv).fill(-1), outT = [], outP = [], outL = [], outO = [], outH = [], outPin = [];
   for (let t = 0; t < nt; t++) {
     if (!alive[t]) continue;
     for (let c = 0; c < 3; c++) {
       const v = T[3 * t + c];
-      if (map[v] < 0) { map[v] = outP.length / 3; outP.push(P[3 * v], P[3 * v + 1], P[3 * v + 2]); outL.push(vertLeaf[v]); }
+      if (map[v] < 0) {
+        map[v] = outP.length / 3; outP.push(P[3 * v], P[3 * v + 1], P[3 * v + 2]); outL.push(vertLeaf[v]);
+        if (own !== null) { outO.push(own.vertOwner[v]); outH.push(own.ownerHeld[v]); outPin.push(own.pinned[v]); }
+      }
       outT.push(map[v]);
     }
   }
-  return { positions: Float64Array.from(outP), indices: Uint32Array.from(outT), vertLeaf: Int32Array.from(outL), collapsed };
+  const kept = own === null ? null : { vertOwner: Int32Array.from(outO), ownerHeld: Uint8Array.from(outH), pinned: Uint8Array.from(outPin) };
+  return { positions: Float64Array.from(outP), indices: Uint32Array.from(outT), vertLeaf: Int32Array.from(outL), own: kept, collapsed };
 }
 
 // Tangential Laplacian smoothing. A vertex whose projection found no gradient has a
@@ -212,25 +228,43 @@ export function relax(P, T, N, weight, maxMove) {
 
 export function cleanupMesh(store, mesh, opts = CLEANUP) {
   const edge = store.edge;
-  let m = collapse(Float64Array.from(mesh.positions), Uint32Array.from(mesh.indices), mesh.vertLeaf, opts.collapseFrac * edge);
+  const own0 = mesh.vertOwner ? { vertOwner: Int32Array.from(mesh.vertOwner), ownerHeld: Uint8Array.from(mesh.ownerHeld), pinned: Uint8Array.from(mesh.pinned) } : null;
+  let m = collapse(Float64Array.from(mesh.positions), Uint32Array.from(mesh.indices), mesh.vertLeaf, opts.collapseFrac * edge, null, own0);
   if ((opts.decimateFrac ?? 0) > 0) {
     const dec = { cos2: guardCos2(opts.decimateMinAngle ?? 0), ncos2: guardCos2(opts.decimateMaxTurn ?? 0), scos2: guardCos2(opts.decimateMaxSpread ?? 0), minAccept: opts.decimateMinAccept ?? 0 };
     const passes = opts.decimatePasses ?? 0, minGain = opts.decimateMinGain ?? 0;
     for (let pass = 0; pass < passes; pass++) {
       const before = m.indices.length / 3;
-      m = collapse(m.positions, m.indices, m.vertLeaf, opts.decimateFrac * edge, pass === 0 ? dec : { ...dec, minAccept: 0 });
+      m = collapse(m.positions, m.indices, m.vertLeaf, opts.decimateFrac * edge, pass === 0 ? dec : { ...dec, minAccept: 0 }, m.own);
       // Stop once a pass removes too little to pay for the next (none removed: nothing will be).
       if (m.collapsed === 0 || before - m.indices.length / 3 < minGain * before) break;
     }
   }
-  const { collapsed: _collapsed, ...cleaned } = m;
+  const { collapsed: _collapsed, own, ...cleaned } = m;
   m = cleaned;
   const normals = new Float64Array(m.positions.length);
   const maxStep = opts.maxMoveCells * edge;
-  projectVertices(store, m.positions, m.vertLeaf, { maxStep, normals });
+  if (own === null) {
+    projectVertices(store, m.positions, m.vertLeaf, { maxStep, normals });
+    for (let pass = 0; pass < opts.relaxPasses; pass++) {
+      relax(m.positions, m.indices, normals, opts.relaxWeight, maxStep);
+      projectVertices(store, m.positions, m.vertLeaf, { maxStep, normals });
+    }
+    return { ...m, normals };
+  }
+  // Pinned vertices keep a zero normal until the end, so relax leaves them where they are.
+  const free = [], pins = [];
+  for (let v = 0; v < own.pinned.length; v++) (own.pinned[v] ? pins : free).push(v);
+  const held = { owner: own.vertOwner, held: own.ownerHeld };
+  const which = Int32Array.from(free);
+  projectVertices(store, m.positions, m.vertLeaf, { maxStep, normals, which, ...held });
   for (let pass = 0; pass < opts.relaxPasses; pass++) {
     relax(m.positions, m.indices, normals, opts.relaxWeight, maxStep);
-    projectVertices(store, m.positions, m.vertLeaf, { maxStep, normals });
+    projectVertices(store, m.positions, m.vertLeaf, { maxStep, normals, which, ...held });
   }
-  return { ...m, normals };
+  // One more step after the last relaxation: a gap's tolerance (1% of it) is below one step's
+  // residual on curved skin at the preview grid.
+  projectVertices(store, m.positions, m.vertLeaf, { maxStep, normals, which, ...held });
+  if (pins.length) projectVertices(store, m.positions, m.vertLeaf, { maxStep: 0, normals, which: Int32Array.from(pins), ...held });
+  return { ...m, normals, ...own };
 }
