@@ -30,7 +30,7 @@ export function compileImplicit(spec, { images = new Map(), exactContact = false
 export function meshImplicit(compiled, edge, { tier, owners = true } = {}) {
   const opts = tier === "preview" ? PREVIEW_CLEANUP : CLEANUP;
   const plan = planLeaves(compiled, edge);
-  // An exact-contact tree carries ops the native decoder does not know yet: JS answers.
+  // An exact-contact tree: the core evaluates and samples its owners, but has no owner mesher yet — JS answers.
   const native = compiled.ownerRoot >= 0 ? null : meshImplicitCore(compiled, edge, plan, opts);
   if (native) return native;
   const store = evaluateLeaves(plan);

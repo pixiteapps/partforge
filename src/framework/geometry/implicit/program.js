@@ -53,7 +53,7 @@ export function emitExprProgram(L) {
 //     An EXACT node (the root contact under `exactContact`) has fuse = 2 and nF = 0, and
 //     appends one original child index per emitted slot after the fills, then each slot's tie
 //     rank (its child's attachment count in the full table): 2·nK more values, which
-//     evalBatchContact reads to name each slot's owner and piece. The native core knows nothing of fuse = 2.
+//     evalBatchContact reads to name each slot's owner and piece (as does the core's ip_eval_contact).
 //   [BULGE, dst, src, p, nR, (cx, cy, cz, A, rho) × nR]   → src − bulgeOffset(...)
 //     emitted on a kept slot's register when that slot has regions, before CONTACT reads it.
 // `edge` is the grid edge the program is planned at (0, the default, is the bare gap).

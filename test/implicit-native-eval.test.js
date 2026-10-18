@@ -3,14 +3,16 @@
 // full decision and pruned block decisions of every small tree, the vase, the
 // adversarial specs, a formula reaching every expr function and a texture, and
 // the NaN/∞ union case.
-import { afterEach, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { core, setCoreForTesting } from "../src/framework/core/core.js";
 import { NativeSession, CORE_FAULT } from "../src/framework/core/implicit-core.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { blockDecision, fullDecision } from "../src/framework/geometry/implicit/interval.js";
-import { emitProgram, evalBatch, runProgram } from "../src/framework/geometry/implicit/program.js";
+import { emitProgram, evalBatch, evalBatchContact, runProgram } from "../src/framework/geometry/implicit/program.js";
+import { compileImplicit } from "../src/framework/geometry/implicit/index.js";
 import { TREES } from "./fixtures/implicit-small-trees.js";
-import { vaseSpec, ADVERSARIAL } from "./fixtures/implicit-trees.js";
+import { vaseSpec, handSpec, HAND_POSES, ADVERSARIAL } from "./fixtures/implicit-trees.js";
+import { threePress } from "./fixtures/implicit-seam-cases.js";
 
 afterEach(() => setCoreForTesting(undefined));
 
@@ -283,5 +285,121 @@ describe("native program interpreter", () => {
       c.x = real;
       s.destroy();
     }
+  });
+});
+
+// The exact contact op (fuse = 2, the root contact under `exactContact`): evalContact must
+// capture what program.js's evalBatchContact captures, field for field — the value, the
+// merged owner, the piece (Task 5's order-free tie rank), every child's cut and share — in
+// both builds of the core (afterEach re-boots; PARTFORGE_CORE_SIMD is read at each boot).
+describe.each([["SIMD", true], ["scalar", false]])("native exact-contact capture (%s build)", (_, simd) => {
+  beforeAll(() => { if (!simd) globalThis.PARTFORGE_CORE_SIMD = false; setCoreForTesting(undefined); });
+  afterAll(() => { delete globalThis.PARTFORGE_CORE_SIMD; setCoreForTesting(undefined); });
+
+  const exact = (spec) => compileImplicit(spec, { exactContact: true });
+  const EXACT = {
+    hand: () => exact(handSpec()),
+    "hand nearMiss": () => exact(handSpec(HAND_POSES.nearMiss)),
+    "threePress gap 0": () => exact(threePress({ gap: 0 })),
+    "threePress gap 0.2": () => exact(threePress({ gap: 0.2 })),
+  };
+  const inBounds = (c, N) => {
+    const X = new Float64Array(N), Y = new Float64Array(N), Z = new Float64Array(N);
+    for (let i = 0; i < N; i++) {
+      X[i] = c.bounds.min[0] + (rnd() * 0.5 + 0.5) * (c.bounds.max[0] - c.bounds.min[0]);
+      Y[i] = c.bounds.min[1] + (rnd() * 0.5 + 0.5) * (c.bounds.max[1] - c.bounds.min[1]);
+      Z[i] = c.bounds.min[2] + (rnd() * 0.5 + 0.5) * (c.bounds.max[2] - c.bounds.min[2]);
+    }
+    return [X, Y, Z];
+  };
+  const fullCap = (K, N) => ({ K, owner: new Int32Array(N), piece: new Int32Array(N), cuts: new Float64Array(N * K), shares: new Float64Array(N * K) });
+  const sameCap = (label, a, b) => {
+    for (const k of ["owner", "piece", "cuts", "shares"]) {
+      if (!a[k]) { expect(b[k], `${label} ${k}`).toBeUndefined(); continue; }
+      if (Buffer.compare(bytes(a[k]), bytes(b[k])) !== 0) {
+        const q = a[k].findIndex((v, i) => !Object.is(v, b[k][i]));
+        throw new Error(`${label}: ${k}[${q}] native ${b[k][q]} vs JS ${a[k][q]}`);
+      }
+    }
+  };
+
+  test("this build is the one booted", () => {
+    expect(core().simd).toBe(simd);
+  });
+
+  for (const [name, make] of Object.entries(EXACT)) {
+    test(`${name}: evalContact equals evalBatchContact bit for bit (out, owner, piece, cuts, shares)`, () => {
+      const c = make(), K = c.ownerK;
+      expect(c.ownerRoot).toBeGreaterThanOrEqual(0);
+      const b = c.bounds, ext = Math.max(...b.max.map(Math.abs), ...b.min.map(Math.abs));
+      const progs = [emitProgram(c, fullDecision(c), 1.5)];
+      for (let k = 0; k < 12; k++) {   // pruned leaves: a pruned child reads +Infinity
+        const [cx, cy, cz] = inBounds(c, 1);
+        progs.push(emitProgram(c, blockDecision(c, cx[0], cy[0], cz[0], 1 + Math.abs(rnd()) * ext * 0.1, undefined, 1.5).dec, 1.5));
+      }
+      const s = new NativeSession(core());
+      let pruned = 0, inside = 0;
+      try {
+        for (const t of c.textures) s.addTexture(t);
+        for (const prog of progs) {
+          const idx = s.addProgram(prog);
+          const N = 2000, [X, Y, Z] = inBounds(c, N);
+          const js = new Float64Array(N), jcap = fullCap(K, N);
+          evalBatchContact(prog, c.textures, X, Y, Z, js, jcap);
+          const ncap = fullCap(K, N);
+          const nat = s.evalContact(idx, X, Y, Z, ncap);
+          expect(Buffer.compare(bytes(nat), bytes(js))).toBe(0);
+          sameCap(name, jcap, ncap);
+          pruned += jcap.cuts.filter((v) => v === Infinity).length;
+          inside += js.filter((v) => v < 0).length;
+          // The plain eval of the same program is the same field.
+          expect(Buffer.compare(bytes(s.eval(idx, X, Y, Z)), bytes(js))).toBe(0);
+        }
+      } finally { s.destroy(); }
+      expect(pruned).toBeGreaterThan(0);   // the pruned programs reach a +Infinity cut
+      expect(inside).toBeGreaterThan(0);   // and the points reach inside the pieces
+    });
+  }
+
+  test("only the arrays present are written; a longer array is filled past N as evalBatchContact fills it", () => {
+    const c = EXACT["threePress gap 0"](), K = c.ownerK, prog = emitProgram(c, fullDecision(c), 1.5);
+    const [X, Y, Z] = inBounds(c, 300);
+    const s = new NativeSession(core());
+    try {
+      const idx = s.addProgram(prog);
+      for (const keys of [["piece"], ["owner"], ["cuts", "shares"], ["owner", "piece", "cuts", "shares"]]) {
+        const mk = () => Object.fromEntries([["K", K], ...keys.map((k) => [k, k === "cuts" || k === "shares" ? new Float64Array(310 * K).fill(7) : new Int8Array(310).fill(7)])]);
+        const jcap = mk(), ncap = mk(), js = new Float64Array(300);
+        evalBatchContact(prog, c.textures, X, Y, Z, js, jcap);
+        const nat = s.evalContact(idx, X, Y, Z, ncap);
+        expect(Buffer.compare(bytes(nat), bytes(js))).toBe(0);
+        sameCap(keys.join("+"), jcap, ncap);
+      }
+    } finally { s.destroy(); }
+  });
+
+  test("a malformed exact CONTACT, or a child index past K, is refused, not run", () => {
+    const s = new NativeSession(core());
+    const at = Float64Array.of(0);
+    // V0 = x, V1 = y; V2 = CONTACT(cl −0.02, fuse 2; V0, V1; no attachments, no fills), child map, ranks.
+    const exactOp = (tail, fuse = 2) => Float64Array.of(1, 3, 20, 0, 0, 0, 20, 1, 0, 1, 14, 2, 0, -0.02, fuse, 2, 0, 0, 1, 0, ...tail, 0, 2);
+    try {
+      expect([...s.eval(s.addProgram(exactOp([0, 1, 0, 0])), at, at, at)]).toHaveLength(1);   // well-formed: runs
+      const cap = { K: 2, piece: new Int32Array(1) };
+      s.evalContact(s.addProgram(exactOp([1, 0, 0, 0])), at, at, at, cap);
+      expect(cap.piece[0]).toBe(0);   // x = y = 0: a tie, to the lesser child (child 0, slot 1)
+      for (const bad of [
+        exactOp([0, 127, 0, 0]),   // child index past MAX_OWNER_K
+        exactOp([0, -1, 0, 0]),    // negative child index
+        exactOp([0, 0.5, 0, 0]),   // non-integer child index
+        exactOp([0, 1, 0]).subarray(0, 23),   // the tail runs off the end
+      ]) {
+        expect(() => s.eval(s.addProgram(bad), at, at, at)).toThrow(/refused/);
+      }
+      const wide = s.addProgram(exactOp([0, 5, 0, 0]));
+      expect(() => s.evalContact(wide, at, at, at, { K: 2, piece: new Int32Array(1) })).toThrow(/refused/);   // child 5 ≥ K
+      expect(() => s.evalContact(wide, at, at, at, { K: 0, piece: new Int32Array(1) })).toThrow(/K/);
+      expect(core()).not.toBeNull();   // refusing a program is not a fault
+    } finally { s.destroy(); }
   });
 });

@@ -7,6 +7,8 @@ import { NativeSession } from "../src/framework/core/implicit-core.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
 import { nativeCases, sessionFor } from "./fixtures/implicit-native-cases.js";
+import { compileImplicit } from "../src/framework/geometry/implicit/index.js";
+import { SEAM_CASES } from "./fixtures/implicit-seam-cases.js";
 
 afterEach(() => setCoreForTesting(undefined));
 
@@ -135,6 +137,55 @@ describe("native leaf sampling", () => {
     try {
       expect(() => s.sample(plan)).toThrow(/refused/);
       expect(() => s.sample({ ...plan, edge: NaN })).toThrow(/plan/);
+    } finally { s.destroy(); }
+    expect(core().poisoned).toBe(false);
+  });
+
+  // An exact-contact plan (the root contact's children own the samples): every leaf's owners
+  // are evaluateLeaves' — the piece captured by the same evaluation, the zero nudge's own
+  // capture, AIR where the stored value is ≥ 0 (the outer-layer raise included).
+  for (const { name, spec } of SEAM_CASES) {
+    test(`${name} at 1.5 mm: every leaf's owners match evaluateLeaves`, () => {
+      const plan = planLeaves(compileImplicit(spec, { exactContact: true }), 1.5);
+      expect(plan.ownerRoot).toBeGreaterThanOrEqual(0);
+      const js = evaluateLeaves(plan);
+      const s = sessionFor(plan);
+      try {
+        const nat = s.sample(plan);
+        expect(nat.clipped).toBe(js.clipped);
+        const owners = s.leafOwners();
+        expect(owners.length).toBe(js.leaves.length);
+        let owned = 0;
+        for (let L = 0; L < js.leaves.length; L++) {
+          expect(Buffer.compare(bytes(nat.vals[L]), bytes(js.leaves[L].vals))).toBe(0);
+          expect(owners[L]).toBeInstanceOf(Int8Array);
+          if (Buffer.compare(bytes(owners[L]), bytes(js.leaves[L].owner)) !== 0) {
+            const a = js.leaves[L].owner, b = owners[L], q = a.findIndex((v, k) => v !== b[k]);
+            throw new Error(`leaf ${L} sample ${q}: native owner ${b[q]} vs JS ${a[q]}`);
+          }
+          owned += js.leaves[L].owner.filter((o) => o >= 0).length;
+        }
+        expect(owned).toBeGreaterThan(0);
+      } finally { s.destroy(); }
+    }, 120_000);
+  }
+
+  test("a plan without an owner root has no owners", () => {
+    const plan = planLeaves(lowerSpec({ root: { kind: "sphere", r: 3 } }, { images: new Map() }), 1);
+    const s = sessionFor(plan);
+    try {
+      s.sample(plan, { readBack: false });
+      expect(s.leafOwners()).toBeNull();
+    } finally { s.destroy(); }
+  });
+
+  test("an owner plan whose programs name a child past ownerK is refused, not run", () => {
+    const plan = planLeaves(compileImplicit(SEAM_CASES[0].spec, { exactContact: true }), 1.5);
+    const s = sessionFor(plan);
+    try {
+      expect(() => s.sample({ ...plan, ownerK: 1 })).toThrow(/refused/);
+      expect(() => s.sample({ ...plan, ownerK: 128 })).toThrow(/ownerK/);
+      expect(s.leafOwners()).toBeNull();
     } finally { s.destroy(); }
     expect(core().poisoned).toBe(false);
   });

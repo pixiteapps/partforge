@@ -1,7 +1,7 @@
 // The implicit engine's field evaluator — the C++ twin of
 // src/framework/geometry/implicit/{primitives.js, frames.js (xformPoint/xformDir),
 // expr-lower.js (the UN/BIN/TER tables), textures.js (sampleTexture),
-// contact.js (contactValue/bulgeOffset), program.js (runProgram/evalBatch)}. Bit-identical to the JS: the same
+// contact.js (contactValue/bulgeOffset), program.js (runProgram/evalBatch/evalBatchContact)}. Bit-identical to the JS: the same
 // operation order, Math.min/max as jsmath::jsmin/jsmax, the ported pf_* trig,
 // float32 texels promoted to double, first-wins ties (native/README.md).
 //
@@ -19,6 +19,7 @@ namespace ipe {
 
 constexpr int BATCH = 256;      // program.js's BATCH
 constexpr double BIG = 1e6;     // primitives.js's BIG
+constexpr int MAX_OWNER_K = 127; // contact.js's MAX_OWNER_K: an exact contact's child indices are below it
 
 struct Texture {
   int width = 0, height = 0;
@@ -32,7 +33,8 @@ struct Texture {
 // (parameters, matrix, operand list). Arithmetic still reads every constant
 // from `code`, as the JS reads it from the Float64Array.
 struct Inst {
-  int32_t op, sub;      // opcode; PRIM code, UN/BIN/TER fn, WARP kind (0 taper), MIRROR axis / GET comp (-1: none)
+  int32_t op, sub;      // opcode; PRIM code, UN/BIN/TER fn, WARP kind (0 taper), MIRROR axis / GET comp,
+                        // CONTACT 1 when exact (fuse == 2: a child map and tie ranks follow the fills) (-1: none)
   int32_t d, a, b, c;   // destination and source registers, by op
   int32_t at, cnt;      // inline doubles' offset; UNION/INTER/CONTACT operand count, BULGE region count
 };                      // (CONTACT: b = attachment count, c = fill-region count, a = point register)
@@ -42,6 +44,7 @@ struct Program {
   bool ok = false;              // passed validate(): every op well-formed
   int nP = 0, nV = 0;
   int maxSlot = -1;             // highest texture slot a TEX op reads
+  int maxKid = -1;              // highest child index an exact CONTACT's child map names
   std::vector<Inst> insts;      // the decoded ops, END last (only when ok)
 };
 
@@ -56,6 +59,7 @@ struct Session {
   std::vector<int32_t> uam;     // UNION/INTER per-lane arg-extreme (BATCH)
   std::vector<double> cg, cc, cw;  // CONTACT's per-lane operands, c_i and attachment weights
   std::vector<int32_t> cpair;   // CONTACT's slot pair -> first attachment (-1: none), per op
+  std::vector<int32_t> cap32;   // ip_sample's per-lane piece capture (owner plans)
 
   // The leaf store (implicit_mesh.cpp, sparse.js's Store): the sampled plan's grid,
   // its leaves (i0, j0, l0, program per leaf) and their (LEAF+1)^3 float32 samples
@@ -67,6 +71,10 @@ struct Session {
   std::vector<int32_t> leaves;
   std::unique_ptr<float[]> vals;   // uninitialized: every sample is written before it is read
   size_t valsCap = 0;
+  // With an owner plan (ownerK > 0: the root is an exact contact), each sample's owning
+  // child, or -1 (AIR) where the stored value is >= 0 — sparse.js's leaf `owner`.
+  int ownerK = 0;
+  std::vector<int8_t> owners;
 
   // The mesh (mesher.js's meshStore output): xyz per vertex, three indices per
   // triangle, and the leaf each vertex was created in. `meshed` is false until
@@ -85,13 +93,32 @@ struct Session {
 // program the JS would throw on is not ok.
 void validate(Program& p);
 
+// evalBatchContact's capture (program.js): per lane, the exact contact op's merged
+// owner and piece (child indices), and per lane x K each child's cut and share. A null
+// array is not captured. Lane i of a run writes at lane `off + i`.
+struct Capture {
+  int K = 0;
+  int32_t* owner = nullptr;
+  int32_t* piece = nullptr;
+  double* cuts = nullptr;
+  double* shares = nullptr;
+};
+
 // runProgram over n <= BATCH lanes. The program must be ok and its texture
-// slots present (eval checks both).
-void run(Session& s, const Program& p, const double* X, const double* Y, const double* Z, int n, double* out);
+// slots present (eval checks both). `cap` (null on the hot path) captures the
+// exact contact op's lanes at offset `off`.
+void run(Session& s, const Program& p, const double* X, const double* Y, const double* Z, int n, double* out,
+         const Capture* cap = nullptr, int off = 0);
 
 // evalBatch: any n, in chunks of BATCH. Returns 0, or nonzero for a malformed
 // program / missing texture slot (nothing written then).
 int eval(Session& s, const Program& p, const double* X, const double* Y, const double* Z, int n, double* out);
+
+// evalBatchContact: eval, also capturing into `cap` after filling its arrays' first
+// n lanes (n x K for cuts/shares) with -1 / +Infinity. Nonzero (nothing written) as
+// eval, or when K is outside 1..MAX_OWNER_K or below a child index the program names.
+int eval_contact(Session& s, const Program& p, const double* X, const double* Y, const double* Z, int n, double* out,
+                 const Capture& cap);
 
 // The scalar building blocks, exposed for the later stages (detail heights).
 double eval_prim(int code, const double* P, double x, double y, double z);

@@ -16,9 +16,11 @@ constexpr int LEAF = 4;                         // sparse.js's LEAF
 constexpr int S = LEAF + 1, S3 = S * S * S;     // samples per leaf side / per leaf
 
 // evaluateLeaves: samples `count` leaves (i0, j0, l0, program index each) into the
-// session's leaf store. Returns 0, or nonzero (nothing kept) for a program index
-// the session lacks or a program it refuses to run.
-int sample(ipe::Session& s, const int32_t* leaves, int count, const double* origin, double edge, const int32_t* n);
+// session's leaf store. With ownerK > 0 (an owner plan: the root is an exact contact
+// of ownerK children) each sample's owner is captured too (s.owners). Returns 0, or
+// nonzero (nothing kept) for a program index the session lacks, a program it refuses
+// to run, or an ownerK outside 0..MAX_OWNER_K or below a child index a program names.
+int sample(ipe::Session& s, const int32_t* leaves, int count, const double* origin, double edge, const int32_t* n, int ownerK);
 
 // meshStore over the session's leaf store: fills positions, indices, vertLeaf.
 // Returns 0, or nonzero when nothing has been sampled.

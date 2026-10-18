@@ -47,14 +47,16 @@ constexpr int RUN = 32;   // leaves per interpreter call (4000 lanes) when conse
 
 // Precondition: every leaf satisfies 0 <= i0,j0,l0 < n-1 (enforced by implicit-core.js;
 // the weld keys rely on it).
-int sample(ipe::Session& s, const int32_t* leaves, int count, const double* origin, double edge, const int32_t* n) {
+int sample(ipe::Session& s, const int32_t* leaves, int count, const double* origin, double edge, const int32_t* n, int ownerK) {
   if (count < 0) return 1;
+  if (ownerK < 0 || ownerK > ipe::MAX_OWNER_K) return 5;
   // Refuse before touching the store: every leaf's program must be one eval would run.
   for (int L = 0; L < count; L++) {
     const int32_t pi = leaves[4 * L + 3];
     if (pi < 0 || (size_t)pi >= s.programs.size()) return 2;
     const ipe::Program& p = s.programs[(size_t)pi];
     if (!p.ok || p.maxSlot >= (int)s.textures.size()) return 3;
+    if (ownerK > 0 && p.maxKid >= ownerK) return 5;   // a child the owner store cannot name
   }
   s.sampled = false;
   s.meshed = false;   // a new store invalidates the mesh built from the last one
@@ -72,6 +74,9 @@ int sample(ipe::Session& s, const int32_t* leaves, int count, const double* orig
   }
   for (int a = 0; a < 3; a++) { s.origin[a] = origin[a]; s.n[a] = n[a]; }
   s.edge = edge;
+  const bool owned = ownerK > 0;
+  s.ownerK = ownerK;
+  if (owned) s.owners.resize(need); else std::vector<int8_t>().swap(s.owners);
   bool clipped = false;
 
   // Consecutive leaves running the same program are evaluated in one interpreter
@@ -82,6 +87,15 @@ int sample(ipe::Session& s, const int32_t* leaves, int count, const double* orig
   double *X = buf.data(), *Y = X + RUN * S3, *Z = Y + RUN * S3, *out = Z + RUN * S3;
   double *ZX = out + RUN * S3, *ZY = ZX + S3, *ZZ = ZY + S3, *Zout = ZZ + S3;
   int ZI[S3];
+  // An owner plan captures each lane's piece (evalBatchContact's `piece`) alongside its
+  // value: RUN leaves' worth, then the nudge batch's own.
+  if (owned && s.cap32.size() < (size_t)S3 * (RUN + 1)) s.cap32.resize((size_t)S3 * (RUN + 1));
+  int32_t* piece = owned ? s.cap32.data() : nullptr;
+  int32_t* Zpiece = owned ? piece + RUN * S3 : nullptr;
+  ipe::Capture cap, zcap;
+  cap.K = zcap.K = ownerK;
+  cap.piece = piece;
+  zcap.piece = Zpiece;
   const double nudge0 = 1e-6 * edge, nudge1 = 1e-6 * edge * ZERO_DIR1, nudge2 = 1e-6 * edge * ZERO_DIR2;
   const int n0 = n[0], n1 = n[1], n2 = n[2];
 
@@ -99,7 +113,7 @@ int sample(ipe::Session& s, const int32_t* leaves, int count, const double* orig
         x[q] = origin[0] + (double)(i0 + i) * edge; y[q] = origin[1] + (double)(j0 + j) * edge; zc[q] = origin[2] + (double)(l0 + l) * edge;
       }
     }
-    ipe::eval(s, prog, X, Y, Z, R * S3, out);
+    if (owned) ipe::eval_contact(s, prog, X, Y, Z, R * S3, out, cap); else ipe::eval(s, prog, X, Y, Z, R * S3, out);
     for (int r = 0; r < R; r++) {
       const int L = L0 + r;
       const int32_t i0 = leaves[4 * L], j0 = leaves[4 * L + 1], l0 = leaves[4 * L + 2];
@@ -120,11 +134,17 @@ int sample(ipe::Session& s, const int32_t* leaves, int count, const double* orig
       }
       if (zeros > 0) {   // per leaf, in sample order, as the JS batches it
         for (int z = 0; z < zeros; z++) { const int k = ZI[z]; ZX[z] = x[k] + nudge0; ZY[z] = y[k] + nudge1; ZZ[z] = zc[k] + nudge2; }
-        ipe::eval(s, prog, ZX, ZY, ZZ, zeros, Zout);
+        if (owned) ipe::eval_contact(s, prog, ZX, ZY, ZZ, zeros, Zout, zcap); else ipe::eval(s, prog, ZX, ZY, ZZ, zeros, Zout);
         for (int z = 0; z < zeros; z++) {
           const float f = (float)Zout[z];
           vals[ZI[z]] = f == 0 ? (Zout[z] < 0 ? -1e-30f : 1e-30f) : f;
+          if (owned) piece[r * S3 + ZI[z]] = Zpiece[z];
         }
+      }
+      if (owned) {   // AIR where the stored value is >= 0, as evaluateLeaves marks it
+        int8_t* own = s.owners.data() + (size_t)L * S3;
+        const int32_t* pc = piece + r * S3;
+        for (int k = 0; k < S3; k++) own[k] = vals[k] >= 0 ? (int8_t)-1 : (int8_t)pc[k];
       }
     }
     L0 += R;
@@ -723,10 +743,16 @@ extern "C" {
 // evaluateLeaves over `count` leaves (i0, j0, l0, program index each; programs
 // already added in plan order): 0 ok; nonzero for an unknown session, a program
 // index it lacks or a program it refuses (the store is left as it was).
-int ip_sample(int id, const int32_t* leaves, int count, const double* origin3, double edge, const int32_t* n3) {
+int ip_sample(int id, const int32_t* leaves, int count, const double* origin3, double edge, const int32_t* n3, int ownerK) {
   ipe::Session* s = ipe::session(id);
   if (!s) return 4;
-  return ipm_mesh::sample(*s, leaves, count, origin3, edge, n3);
+  return ipm_mesh::sample(*s, leaves, count, origin3, edge, n3, ownerK);
+}
+
+// The leaf store's owners (owner plans only): (LEAF+1)^3 int8 per leaf, in plan order.
+const int8_t* ip_leaf_owners(int id) {
+  ipe::Session* s = ipe::session(id);
+  return s && s->sampled && s->ownerK > 0 ? s->owners.data() : nullptr;
 }
 
 // The leaf store: (LEAF+1)^3 float32 samples per leaf, in plan order.

@@ -145,6 +145,24 @@ in JS; a program carries its clearance `cl` baked in):
   the program, so the core tables it once per op; it decides nothing the JS's
   per-lane search does not. The decoder refuses a slot index (ia, ib) that does
   not name an operand.
+  An EXACT node (the root contact under `exactContact`) has `fuse = 2`: after
+  the fills come `child × nK` (each slot's original child index, below
+  `MAX_OWNER_K` = 127, which the decoder checks) and `rank × nK` (each slot's
+  tie rank), read only when `fuse == 2`, as program.js reads them. `fuse` is
+  otherwise read by truthiness, as above. The value is the same op; what
+  `fuse = 2` adds is the CAPTURE (`ip_eval_contact`, `NativeSession.evalContact`
+  — program.js's `evalBatchContact`/`captureOwner`), per lane after its value,
+  from the lane's own c_i and attachment weights: cuts and shares (each slot's
+  c_i at its child's column; then each attachment with `w > 0` and `k·w > 0`, in
+  order, lowers both of its children's shares to `unionN([c_a, c_b], 2, k·w)`
+  when below), the piece (slots in order, each slot's least share over the
+  attachments touching it; strictly less wins, a tie to a slot whose own c_i is
+  its share, then the lesser rank, then the lesser child) and the owner (the
+  first least c_i in slot order, merged to the lesser child of any attachment
+  with `w > 0` holding it, until stable). `ip_sample` with `ownerK > 0` (an
+  owner plan) captures the piece alongside each sample's value, the zero
+  nudge's own for a nudged sample, and stores −1 (AIR) where the stored float32
+  is ≥ 0 (`ip_leaf_owners`, int8 per sample) — sparse.js's leaf `owner`.
 - **BULGE** (`[15, dst, src, p, nR, (cx, cy, cz, A, rho) × nR]`): `src −` the
   regions' `A·(1 − t²)²` (t = distance / rho, 0 for t ≥ 1) summed in order from
   +0.

@@ -21,6 +21,7 @@ const isFault = (err) => (typeof WebAssembly === "object" && err instanceof WebA
 const isNumbers = (a) => ArrayBuffer.isView(a) || Array.isArray(a);
 const isInt32 = (v) => Number.isInteger(v) && v >= -0x80000000 && v <= 0x7fffffff;
 const LEAF_SAMPLES = 125;   // (LEAF + 1)³, sparse.js's LEAF = 4
+const MAX_OWNER_K = 127;    // contact.js's MAX_OWNER_K (the C++'s too)
 
 /** Thrown when the core faulted (or is already poisoned): run the JS path instead. */
 export const CORE_FAULT = Object.freeze(new Error("partforge core: the implicit session faulted"));
@@ -31,6 +32,7 @@ const refusal = (message) => Object.assign(new Error(message), { code: CORE_REFU
 
 export class NativeSession {
   #detailIndex = new WeakMap();   // flattenDetail programs array → their session program indices
+  #leafCount = 0;                 // leaves in the last owner sample (leafOwners)
 
   constructor(c) {
     this.c = c;
@@ -119,10 +121,61 @@ export class NativeSession {
   }
 
   /**
+   * evalBatchContact(prog, textures, X, Y, Z, out, cap) on the core: a fresh Float64Array of
+   * field values (evalBatch's), and the exact contact op's capture written into `cap` with
+   * evalBatchContact's contract — K the child count; whichever of `owner`, `piece` (per point)
+   * and `cuts`, `shares` (per point × K) are present are filled (−1 / +Infinity, the whole
+   * array, as evalBatchContact fills it) and then written for the first N points.
+   */
+  evalContact(progIndex, X, Y, Z, cap) {
+    const { c } = this;
+    if (!Number.isInteger(progIndex) || !isNumbers(X) || !isNumbers(Y) || !isNumbers(Z)) throw refusal("implicit: evalContact takes a program index and X, Y, Z number arrays");
+    const n = X.length, K = cap?.K;
+    if (Y.length !== n || Z.length !== n) throw refusal("implicit: X, Y and Z must be the same length");
+    if (!Number.isInteger(K) || K < 1 || K > MAX_OWNER_K) throw refusal(`implicit: evalContact's cap.K must be an integer 1..${MAX_OWNER_K}`);
+    const want = ["owner", "piece", "cuts", "shares"].filter((k) => cap[k]);
+    for (const k of want) {
+      if (!ArrayBuffer.isView(cap[k]) || cap[k].length < (k === "owner" || k === "piece" ? n : n * K)) throw refusal(`implicit: evalContact's cap.${k} is too short`);
+    }
+    let rc = 0;
+    const out = this.#call(() => {
+      // One block: X, Y, Z, out (n doubles each), cuts, shares (n·K doubles each), owner, piece (n int32 each).
+      const nk = n * K, base = c.alloc(Math.max(8, n * 32 + (cap.cuts ? nk * 8 : 0) + (cap.shares ? nk * 8 : 0) + (cap.owner ? n * 4 : 0) + (cap.piece ? n * 4 : 0)));
+      try {
+        let at = base + n * 32;
+        const pCuts = cap.cuts ? at : 0; at += cap.cuts ? nk * 8 : 0;
+        const pShares = cap.shares ? at : 0; at += cap.shares ? nk * 8 : 0;
+        const pOwner = cap.owner ? at : 0; at += cap.owner ? n * 4 : 0;
+        const pPiece = cap.piece ? at : 0;
+        const f64 = new Float64Array(c.x.memory.buffer, base, n * 3);
+        f64.set(X, 0); f64.set(Y, n); f64.set(Z, 2 * n);
+        rc = c.x.ip_eval_contact(this.id, progIndex, base, base + n * 8, base + n * 16, n, base + n * 24, K, pOwner, pPiece, pCuts, pShares);
+        if (rc !== 0) return null;
+        if (cap.owner) cap.owner.fill(-1);
+        if (cap.piece) cap.piece.fill(-1);
+        if (cap.cuts) cap.cuts.fill(Infinity);
+        if (cap.shares) cap.shares.fill(Infinity);
+        const mem = c.x.memory.buffer;
+        if (cap.cuts) cap.cuts.set(new Float64Array(mem, pCuts, nk));
+        if (cap.shares) cap.shares.set(new Float64Array(mem, pShares, nk));
+        if (cap.owner) cap.owner.set(new Int32Array(mem, pOwner, n));
+        if (cap.piece) cap.piece.set(new Int32Array(mem, pPiece, n));
+        return c.copyOut(Float64Array, base + n * 24, n);
+      } finally {
+        c.x.free(base);
+      }
+    });
+    if (rc !== 0) throw refusal(`implicit: the core refused program ${progIndex} (malformed, a texture slot it lacks, or a child index past cap.K)`);
+    return out;
+  }
+
+  /**
    * evaluateLeaves(plan) on the core: { vals: a Float32Array per leaf, clipped }. The
    * plan's textures and programs must already be in the session, added in plan order
    * (a leaf's progIndex is the session's program index). The samples stay in the
    * session for mesh(); with `readBack: false` they are not copied out (`vals` is null).
+   * An owner plan (`ownerRoot ≥ 0`) also captures each sample's owner, as evaluateLeaves
+   * does: read them with leafOwners().
    */
   sample(plan, { readBack = true } = {}) {
     const { c } = this;
@@ -131,6 +184,8 @@ export class NativeSession {
       || !isNumbers(n) || n.length !== 3 || !n.every((v) => isInt32(v) && v >= 2) || !Array.isArray(leaves)) {
       throw refusal("implicit: sample takes a plan with origin, edge, n and leaves");
     }
+    const ownerK = plan.ownerRoot >= 0 ? plan.ownerK : 0;
+    if (!Number.isInteger(ownerK) || ownerK < 0 || ownerK > MAX_OWNER_K) throw refusal(`implicit: a plan's ownerK must be an integer 0..${MAX_OWNER_K}`);
     const count = leaves.length;
     const L = new Int32Array(count * 4);
     for (let k = 0; k < count; k++) {
@@ -151,7 +206,7 @@ export class NativeSession {
         pl = c.copyIn(L);
         po = c.copyIn(Float64Array.from(origin));
         pn = c.copyIn(Int32Array.from(n));
-        rc = c.x.ip_sample(this.id, pl, count, po, edge, pn);
+        rc = c.x.ip_sample(this.id, pl, count, po, edge, pn, ownerK);
       } finally {
         if (pl) c.x.free(pl);
         if (po) c.x.free(po);
@@ -161,11 +216,28 @@ export class NativeSession {
       const clipped = c.x.ip_clipped(this.id) === 1;
       return { all: readBack ? c.copyOut(Float32Array, c.x.ip_leaf_vals(this.id), count * LEAF_SAMPLES) : null, clipped };
     });
-    if (rc !== 0) throw refusal("implicit: the core refused the plan (a program index the session lacks, or a program it will not run)");
+    if (rc !== 0) throw refusal("implicit: the core refused the plan (a program index the session lacks, a program it will not run, or a child index past ownerK)");
+    this.#leafCount = count;
     if (!readBack) return { vals: null, clipped: out.clipped };
     const vals = new Array(count);
     for (let k = 0; k < count; k++) vals[k] = out.all.subarray(k * LEAF_SAMPLES, (k + 1) * LEAF_SAMPLES);
     return { vals, clipped: out.clipped };
+  }
+
+  /**
+   * The last sample()'s owners — sparse.js's leaf `owner`: an Int8Array per leaf, in plan
+   * order (the owning child, or −1 where the stored value is ≥ 0) — or null when that plan had
+   * no owner root (or nothing has been sampled).
+   */
+  leafOwners() {
+    const { c } = this;
+    return this.#call(() => {
+      const ptr = c.x.ip_leaf_owners(this.id);
+      if (!ptr) return null;
+      const count = this.#leafCount, all = c.copyOut(Int8Array, ptr, count * LEAF_SAMPLES), out = new Array(count);
+      for (let k = 0; k < count; k++) out[k] = all.subarray(k * LEAF_SAMPLES, (k + 1) * LEAF_SAMPLES);
+      return out;
+    });
   }
 
   /**

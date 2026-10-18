@@ -1,7 +1,7 @@
 // C++ port of the implicit engine's evaluator: primitives.js, frames.js's
 // xformPoint/xformDir, expr-lower.js's UN/BIN/TER tables, textures.js's
 // sampleTexture, contact.js's contactValue/bulgeOffset (the CONTACT and BULGE
-// ops) and program.js's runProgram/evalBatch. See implicit_eval.h.
+// ops) and program.js's runProgram/evalBatch/evalBatchContact. See implicit_eval.h.
 //
 // What bit-exact parity needs, beyond native/README.md's rules:
 //   - every expression keeps the JS's association: `a - b + c` is (a - b) + c,
@@ -19,7 +19,9 @@
 //     then each slot's c_i over the other slots in slot order (the pair's
 //     weight is its FIRST attachment's, either order), the pad fill per region
 //     in region order, then the attachments' 2-operand unionN in attachment
-//     order; BULGE sums its regions in order from +0.
+//     order; BULGE sums its regions in order from +0;
+//   - an exact CONTACT (fuse == 2) captures per lane after its value, from that
+//     lane's own c_i and weights, in captureOwner's loop order (capture_owner).
 // Structure differs from the JS, never a lane's arithmetic: register files are
 // flat vectors of BATCH-lane blocks; a validated program is decoded once into
 // Insts (integer registers and sub-codes); each op dispatches its primitive or
@@ -196,6 +198,72 @@ inline double union2(double a, double b, double k) {
   return m - s * k * 0.25;
 }
 
+// program.js's captureOwner: one lane of the exact contact op's capture, from what the
+// lane's contactValue just computed — cs[j] slot j's cut value, w[a] the attachment
+// weights. kid[j] is slot j's child index, rank[j] its tie rank (doubles, read from the
+// program and compared as the JS compares them). Same loops, same order, same tests.
+void capture_owner(const Capture& cap, int lane, const double* kid, const double* rank, int nK, const double* att, int nA,
+                   const double* cs, const double* w) {
+  const size_t q = (size_t)lane * (size_t)cap.K;
+  int best = 0;
+  for (int j = 0; j < nK; j++) {
+    if (cap.cuts) cap.cuts[q + (size_t)kid[j]] = cs[j];
+    if (cap.shares) cap.shares[q + (size_t)kid[j]] = cs[j];
+    if (cs[j] < cs[best]) best = j;
+  }
+  int owner = (int)kid[best];
+  if (cap.shares) {   // a blend lowers both of its pieces' shares
+    for (int a = 0; a < nA; a++) {
+      const double* A = att + (size_t)a * ATTACH_STRIDE;
+      const double kk = A[7] * w[a];
+      if (!(w[a] > 0) || !(kk > 0)) continue;
+      const int ia = (int)A[0], ib = (int)A[1];
+      const double u = union2(cs[ia], cs[ib], kk);
+      for (const int j : {ia, ib}) {
+        const size_t sx = q + (size_t)kid[j];
+        if (u < cap.shares[sx]) cap.shares[sx] = u;
+      }
+    }
+  }
+  if (cap.piece) {
+    // The least share; a tie to a child whose own cut is the share, then the lesser rank,
+    // then the lesser child (program.js's comment has the why).
+    int bp = -1, bo = 1;
+    double bs = INFINITY;
+    for (int j = 0; j < nK; j++) {
+      double sj = cs[j];
+      for (int a = 0; a < nA; a++) {
+        const double* A = att + (size_t)a * ATTACH_STRIDE;
+        const int ia = (int)A[0], ib = (int)A[1];
+        if (ia != j && ib != j) continue;
+        const double kk = A[7] * w[a];
+        if (!(w[a] > 0) || !(kk > 0)) continue;
+        const double u = union2(cs[ia], cs[ib], kk);
+        if (u < sj) sj = u;
+      }
+      const int own = sj == cs[j] ? 0 : 1;
+      if (bp < 0 || sj < bs || (sj == bs && (own < bo || (own == bo && (rank[j] < rank[bp] || (rank[j] == rank[bp] && kid[j] < kid[bp])))))) {
+        bp = j; bs = sj; bo = own;
+      }
+    }
+    cap.piece[lane] = (int32_t)kid[bp];
+  }
+  if (cap.owner) {
+    // Overlapping attachment zones merge to the lesser child of the pair holding the owner, until stable.
+    for (bool moved = true; moved;) {
+      moved = false;
+      for (int a = 0; a < nA; a++) {
+        if (!(w[a] > 0)) continue;
+        const double* A = att + (size_t)a * ATTACH_STRIDE;
+        const int ka = (int)kid[(int)A[0]], kb = (int)kid[(int)A[1]];
+        const int lo = ka < kb ? ka : kb;
+        if ((ka == owner || kb == owner) && lo < owner) { owner = lo; moved = true; }
+      }
+    }
+    cap.owner[lane] = owner;
+  }
+}
+
 // contact.js's bulgeOffset (R: nR regions of 5 doubles).
 inline double bulge_offset(const double* R, int nR, double x, double y, double z) {
   double s = 0;
@@ -277,6 +345,7 @@ double sample_texture(const Texture& t, double u, double v) {
 void validate(Program& p) {
   p.ok = false;
   p.maxSlot = -1;
+  p.maxKid = -1;
   const std::vector<double>& c = p.code;
   const size_t len = c.size();
   if (len < 2) return;
@@ -316,8 +385,10 @@ void validate(Program& p) {
         pc += 4 + cnt; break;
       }
       case CONTACT: {
-        // [CONTACT, dst, p, cl, fuse, nK, nA, kid x nK, att x nA, nF, fill x nF]; every
-        // slot index (ia, ib) must name an operand, as the JS would read undefined.
+        // [CONTACT, dst, p, cl, fuse, nK, nA, kid x nK, att x nA, nF, fill x nF], and for an
+        // exact node (fuse == 2) a child index and a tie rank per slot after the fills; every
+        // slot index (ia, ib) must name an operand, as the JS would read undefined, and every
+        // child index must be one an owner array holds (below MAX_OWNER_K).
         if (!has(7) || !isV(pc + 1) || !isP(pc + 2) || !is_index(c[pc + 5], 1e9) || c[pc + 5] < 1 || !is_index(c[pc + 6], 1e9)) return;
         const size_t nK = (size_t)c[pc + 5], nA = (size_t)c[pc + 6];
         if (nK > len || nA > len / ATTACH_STRIDE || !has(7 + nK + nA * ATTACH_STRIDE + 1)) return;
@@ -332,7 +403,18 @@ void validate(Program& p) {
         for (size_t k = 0; k < nF; k++) {
           if (!is_index(c[fo + 1 + k * FILL_STRIDE], (double)nK) || !is_index(c[fo + 2 + k * FILL_STRIDE], (double)nK)) return;
         }
-        pc = fo + 1 + nF * FILL_STRIDE; break;
+        const size_t ko = fo + 1 + nF * FILL_STRIDE;   // the exact node's child map, if any
+        if (c[pc + 4] == 2) {   // program.js reads the tail only when fuse === 2
+          if (ko + 2 * nK > len) return;
+          for (size_t j = 0; j < nK; j++) {
+            if (!is_index(c[ko + j], MAX_OWNER_K)) return;
+            if ((int)c[ko + j] > p.maxKid) p.maxKid = (int)c[ko + j];
+          }
+          pc = ko + 2 * nK;
+        } else {
+          pc = ko;
+        }
+        break;
       }
       case BULGE: {
         if (!has(5) || !isV(pc + 1) || !isV(pc + 2) || !isP(pc + 3) || !is_index(c[pc + 4], 1e9)) return;
@@ -409,7 +491,9 @@ void decode(Program& p) {
         I.cnt = (int32_t)c[pc + 5]; I.b = (int32_t)c[pc + 6];
         const size_t fo = pc + 7 + (size_t)I.cnt + (size_t)I.b * ATTACH_STRIDE;
         I.c = (int32_t)c[fo];
-        pc = fo + 1 + (size_t)I.c * FILL_STRIDE; break;
+        pc = fo + 1 + (size_t)I.c * FILL_STRIDE;
+        if (c[I.at + 1] == 2) { I.sub = 1; pc += 2 * (size_t)I.cnt; }   // exact: the child map and tie ranks
+        break;
       }
       case BULGE:
         I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 2]; I.b = (int32_t)c[pc + 3]; I.cnt = (int32_t)c[pc + 4];
@@ -496,7 +580,8 @@ void blend_lanes(Session& s, const double* const* src, int cnt, double k, int n,
 
 }  // namespace
 
-void run(Session& s, const Program& p, const double* X, const double* Y, const double* Z, int n, double* out) {
+void run(Session& s, const Program& p, const double* X, const double* Y, const double* Z, int n, double* out,
+         const Capture* cap, int off) {
   const size_t needP = (size_t)p.nP * BATCH, needV = (size_t)(p.nV > 0 ? p.nV : 1) * BATCH;
   if (s.PX.size() < needP) { s.PX.resize(needP); s.PY.resize(needP); s.PZ.resize(needP); }
   if (s.V.size() < needV) s.V.resize(needV);
@@ -597,6 +682,9 @@ void run(Session& s, const Program& p, const double* X, const double* Y, const d
         double *g = s.cg.data(), *ci_ = s.cc.data(), *w = s.cw.data();
         const double *sx = px(I.a), *sy = py(I.a), *sz = pz(I.a);
         double* dv = vr(I.d);
+        // An exact node's child map and tie ranks (after the fills), read by the capture.
+        const double* kid = I.sub == 1 ? F + (size_t)nF * FILL_STRIDE : nullptr;
+        const Capture* lc = kid ? cap : nullptr;
         for (int l = 0; l < n; l++) {
           const double x = sx[l], y = sy[l], z = sz[l];
           for (int a = 0; a < nA; a++) w[a] = attach_weight(att + (size_t)a * ATTACH_STRIDE, x, y, z);
@@ -626,6 +714,7 @@ void run(Session& s, const Program& p, const double* X, const double* Y, const d
             if (kk > 0) value = jsmin(value, union2(ci_[(int)A[0]], ci_[(int)A[1]], kk));
           }
           dv[l] = value;
+          if (lc) capture_owner(*lc, off + l, kid, kid + nK, nK, att, nA, ci_, w);
         }
         break;
       }
@@ -785,6 +874,26 @@ int eval(Session& s, const Program& p, const double* X, const double* Y, const d
   return 0;
 }
 
+int eval_contact(Session& s, const Program& p, const double* X, const double* Y, const double* Z, int n, double* out,
+                 const Capture& cap) {
+  if (!p.ok || p.maxSlot >= (int)s.textures.size() || n < 0) return 1;
+  if (cap.K < 1 || cap.K > MAX_OWNER_K || p.maxKid >= cap.K) return 3;
+  const size_t nk = (size_t)n * (size_t)cap.K;
+  for (int i = 0; i < n; i++) {
+    if (cap.owner) cap.owner[i] = -1;
+    if (cap.piece) cap.piece[i] = -1;
+  }
+  for (size_t i = 0; i < nk; i++) {
+    if (cap.cuts) cap.cuts[i] = INFINITY;
+    if (cap.shares) cap.shares[i] = INFINITY;
+  }
+  for (int at = 0; at < n; at += BATCH) {
+    const int m = n - at < BATCH ? n - at : BATCH;
+    run(s, p, X + at, Y + at, Z + at, m, out + at, &cap, at);
+  }
+  return 0;
+}
+
 Session* session(int id) {
   if (id < 1 || (size_t)id > g_sessions.size()) return nullptr;
   return g_sessions[id - 1];
@@ -833,6 +942,19 @@ int ip_prog_add(int id, const double* prog, int len) {
   ipe::validate(p);
   s->programs.push_back(std::move(p));
   return (int)s->programs.size() - 1;
+}
+
+// evalBatchContact: as ip_eval, also capturing the exact contact op into whichever of
+// owner / piece (n int32 each) and cuts / shares (n x K doubles each) is not null.
+// Nonzero (nothing written) as ip_eval, or for K outside 1..127 or below a child
+// index the program names.
+int ip_eval_contact(int id, int prog, const double* X, const double* Y, const double* Z, int n, double* out, int K,
+                    int32_t* owner, int32_t* piece, double* cuts, double* shares) {
+  ipe::Session* s = ipe::session(id);
+  if (!s || prog < 0 || (size_t)prog >= s->programs.size()) return 2;
+  ipe::Capture cap;
+  cap.K = K; cap.owner = owner; cap.piece = piece; cap.cuts = cuts; cap.shares = shares;
+  return ipe::eval_contact(*s, s->programs[prog], X, Y, Z, n, out, cap);
 }
 
 // evalBatch: 0 ok; nonzero for an unknown session/program, a malformed program
