@@ -9,7 +9,9 @@ import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
 import { meshStoreOwners, OWNER_AIR } from "../src/framework/geometry/implicit/mesher-owners.js";
 import { edgeCheck, componentCount } from "./helpers/mesh-topology.js";
 import { pieceGapError, childIndex } from "./helpers/seam-quality.js";
-import { capsulePress, PRESS_OVERLAP } from "./fixtures/implicit-seam-cases.js";
+import { fullDecision } from "../src/framework/geometry/implicit/interval.js";
+import { emitProgram } from "../src/framework/geometry/implicit/program.js";
+import { capsulePress, PRESS_OVERLAP, SEAM_CASES } from "./fixtures/implicit-seam-cases.js";
 
 const EDGE = 1.5;
 const CLOSED = { boundary: 0, nonManifold: 0, misoriented: 0 };
@@ -18,6 +20,16 @@ const ownerMesh = (spec, gap) => {
   const compiled = exact(spec), store = sampleField(compiled, EDGE);
   return { compiled, store, mesh: meshStoreOwners(store, { gap }) };
 };
+
+/** The largest |field| at any vertex of the mesh (one full-decision program). */
+function worstField(compiled, positions) {
+  const nv = positions.length / 3, X = new Float64Array(nv), Y = new Float64Array(nv), Z = new Float64Array(nv), out = new Float64Array(nv);
+  for (let v = 0; v < nv; v++) { X[v] = positions[3 * v]; Y[v] = positions[3 * v + 1]; Z[v] = positions[3 * v + 2]; }
+  evalBatch(emitProgram(compiled, fullDecision(compiled), 0), compiled.textures, X, Y, Z, out);
+  let worst = 0;
+  for (const f of out) worst = Math.max(worst, Math.abs(f));
+  return worst;
+}
 
 /** Each vertex's component root (triangles joined through shared vertices). */
 function components(mesh) {
@@ -50,11 +62,24 @@ describe("owner mesher (raw mesh)", () => {
     });
   }
 
-  test("press gap 0 is one closed solid", () => {
-    const { mesh } = ownerMesh(capsulePress({ overlap: PRESS_OVERLAP, gap: 0 }), 0);
+  test("press gap 0 is one closed solid, no vertex further off the field than the plain mesher's", () => {
+    const { compiled, store, mesh } = ownerMesh(capsulePress({ overlap: PRESS_OVERLAP, gap: 0 }), 0);
     expect(edgeCheck(mesh.indices)).toEqual(CLOSED);
     expect(componentCount(mesh.indices)).toBe(1);
+    expect(worstField(compiled, mesh.positions)).toBeLessThanOrEqual(worstField(compiled, meshStore(store).positions));
   });
+
+  // Attachment blends: a merged owner's share jumps at a zone's rim, so nothing may be placed
+  // on it there. Every vertex stays as near the field as the plain mesher's worst.
+  for (const name of ["hand default gap 0", "hand fist gap 0.2"]) for (const edge of [1.5, 0.6]) {
+    test(`${name} at ${edge}: closed, no vertex further off the field than the plain mesher's`, () => {
+      const compiled = exact(SEAM_CASES.find((c) => c.name === name).spec), store = sampleField(compiled, edge);
+      const mesh = meshStoreOwners(store, { gap: compiled.ir.nodes[compiled.ownerRoot].gap });
+      expect(edgeCheck(mesh.indices)).toEqual(CLOSED);
+      expect(componentCount(mesh.indices)).toBe(1);
+      expect(worstField(compiled, mesh.positions)).toBeLessThanOrEqual(worstField(compiled, meshStore(store).positions));
+    }, 120_000);
+  }
 
   test("near miss 0.3 at gap 0 stays apart", () => {
     const { compiled, mesh } = ownerMesh(capsulePress({ overlap: -0.3, gap: 0 }), 0);
@@ -89,10 +114,11 @@ describe("owner mesher (raw mesh)", () => {
     expect(plain).toBe(0);
     expect(leafCalls).toBe(plan.leaves.length);
     expect(nudgeCalls).toBeLessThanOrEqual(plan.leaves.length);
-    // The same values as an uncapturing run; owners are AIR exactly where the stored value is ≥ 0.
-    const ref = evaluateLeaves(planLeaves(compileImplicit(capsulePress({ overlap: PRESS_OVERLAP, gap: 0 })), EDGE));
+    // The same values as an uncapturing run of the same plan; owners are AIR exactly where the stored value is ≥ 0.
+    const ref = evaluateLeaves({ ...plan, ownerRoot: -1 });
     expect(ref.leaves[0].owner).toBeUndefined();
     let solid = 0;
+    store.leaves.forEach((leaf, L) => expect(Buffer.from(leaf.vals.buffer).equals(Buffer.from(ref.leaves[L].vals.buffer))).toBe(true));
     for (const leaf of store.leaves) {
       expect(leaf.owner).toBeInstanceOf(Int8Array);
       expect(leaf.owner.length).toBe(S3);

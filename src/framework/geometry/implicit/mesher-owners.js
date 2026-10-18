@@ -37,8 +37,8 @@ const sampleOf = (i, j, l, c) => ((l + ((c >> 2) & 1)) * S + (j + ((c >> 1) & 1)
  * vertOwner is always a child index (the solid end's owner for an edge vertex; the side or
  * merged representative for a fused edge, face or cell vertex); ownerHeld = 1 marks vertices
  * cleanup projects onto their owner's share instead of the field (every side, face and cell
- * vertex of an open tet, and a plain vertex on a grid edge touching an open edge's end or
- * whose outside end's field belongs to another piece — placeHeldPlain); pinned = 1 marks
+ * vertex of an open tet, and a fused or plain vertex whose grid edge shares a cell with an
+ * open edge — placeHeldPlain); pinned = 1 marks
  * gap-face vertices, placed exactly: an open-edge side or a solved face or cell vertex with no
  * air corner whose opposing piece's cut is the clearance there (its own cut made the surface,
  * not its raw shape). `gap` is the contact node's: it sets that clearance and resolves sub-grid
@@ -51,19 +51,32 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
   const K = Math.max(1, store.ownerK ?? 0), owned = store.ownerRoot >= 0;
   const cl = clearanceExact(gap), pinTol = PIN_TOL * edge;
   const vertOwner = [], ownerHeld = [], pinned = [];
-  let openPts = null;   // grid points at either end of an open edge (Set), once edges are resolved
-  const nearOpen = (gLo, dir) => openPts !== null && (openPts.has(gLo) || openPts.has(gLo + (dir & 1) + ((dir >> 1) & 1) * n[0] + ((dir >> 2) & 1) * n[0] * n[1]));
+  // The cells holding both ends of grid edge (gLo, dir): a cell's low corner is the edge's low
+  // point along each axis the edge runs, or that point or the one below along the others.
+  const cellsOfEdge = (gLo, dir, fn) => {
+    const i = gLo % n[0], rest = (gLo - i) / n[0], j = rest % n[1], l = (rest - j) / n[1];
+    for (let dl = (dir & 4 ? 0 : -1); dl <= 0; dl++) for (let dj = (dir & 2 ? 0 : -1); dj <= 0; dj++) for (let di = (dir & 1 ? 0 : -1); di <= 0; di++) {
+      if (i + di >= 0 && j + dj >= 0 && l + dl >= 0) fn((l + dl) * n[1] * n[0] + (j + dj) * n[0] + i + di);
+    }
+  };
+  let openCells = null;   // cells holding an open edge (Set of low-corner indices), once edges are resolved
+  // A grid edge borders a gap when it shares a cell with an open edge.
+  const bordersOpen = (gLo, dir) => {
+    if (openCells === null || openCells.size === 0) return false;
+    let hit = false;
+    cellsOfEdge(gLo, dir, (cell) => { if (openCells.has(cell)) hit = true; });
+    return hit;
+  };
   const leafMulti = new Uint8Array(leaves.length);   // a leaf whose samples hold two or more solid owners
   let lbl = null, curLeaf = -1;   // the current leaf's owners and index
-  // Plain vertices that may need their owner's skin: [v, L, gLo, dir, loInside] each — those
-  // beside an open edge, and every one in a leaf holding two solid owners (placeHeldPlain).
+  // Plain vertices bordering a gap, held to their owner's skin: [v, L, gLo, dir, loInside] each (placeHeldPlain).
   const plainCandidates = [];
   const m = tetMesher(store, (v, sLo, sHi, gLo, dir, loInside) => {
     vertOwner.push(lbl === null ? 0 : loInside ? lbl[sLo] : lbl[sHi]);
-    const held = nearOpen(gLo, dir);
+    const held = bordersOpen(gLo, dir);
     ownerHeld.push(held ? 1 : 0);
     pinned.push(0);
-    if (held || leafMulti[curLeaf]) plainCandidates.push(v, curLeaf, gLo, dir, loInside ? 1 : 0);
+    if (held) plainCandidates.push(v, curLeaf, gLo, dir, loInside ? 1 : 0);
   });
   const { positions, indices, vertLeaf, CP, gIndex } = m;
 
@@ -221,10 +234,10 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
       }
     }
   }
-  openPts = new Set();
+  openCells = new Set();
   for (let r = 0; r < recKey.length; r++) if (recOpen[r]) {
-    const key = recKey[r], dir = key % 8, gLo = (key - dir) / 8;
-    openPts.add(gLo); openPts.add(gLo + (dir & 1) + ((dir >> 1) & 1) * n[0] + ((dir >> 2) & 1) * n[0] * n[1]);
+    const key = recKey[r], dir = key % 8;
+    cellsOfEdge((key - dir) / 8, dir, (cell) => openCells.add(cell));
   }
 
   // --- Pass 2: emission, cell by cell in meshStore's order. ---
@@ -294,7 +307,7 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
       let v = fusedVerts.get(key);
       if (v === undefined) {
         const dir = key % 8;
-        fusedVerts.set(key, (v = addVertex(L, recBis[r], Math.min(recX[r], recY[r]), nearOpen((key - dir) / 8, dir) ? 1 : 0, 0)));
+        fusedVerts.set(key, (v = addVertex(L, recBis[r], Math.min(recX[r], recY[r]), bordersOpen((key - dir) / 8, dir) ? 1 : 0, 0)));
       }
       return v;
     };
@@ -362,7 +375,7 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
     }
     return false;
   };
-  const anyOpen = openPts.size > 0;
+  const anyOpen = openCells.size > 0;
   for (let L = 0; L < leaves.length; L++) {
     m.setLeaf(L);
     curLeaf = L;
@@ -387,7 +400,7 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
     }
   }
 
-  placeHeldPlain(store, positions, vertOwner, ownerHeld, plainCandidates, K, keyPoint);
+  placeHeldPlain(store, positions, vertOwner, plainCandidates, K, keyPoint);
   solveLocations(store, positions, indices, pending, K);
   pinSolved(store, positions, pinned, pending, K, cl, pinTol);
   return {
@@ -414,9 +427,10 @@ function evaluator(prog, textures, K, cap) {
  * Places the face and cell vertices: each starts at the mean of its edge-vertex neighbours
  * (else its location's centre), then Newton steps (minimal norm, capped at NEWTON_CAP·edge,
  * at most NEWTON_ITERS of them, forward differences of FD_STEP·edge) take it onto its constraint:
- * one owner's side onto c_X = 0; owners merged beside air (the crease) onto the field and
- * c_X = c_Y together; owners merged away from air (a merged side facing a gap) onto
- * min over the members of c = 0.
+ * one owner's side onto c_X = 0; merged owners with no third owner at the location (the
+ * crease, or where a gap closes inside a fused contact) onto the field and c_X = c_Y together;
+ * merged owners facing a third piece across a gap onto min over the members of c = 0. Each
+ * keeps its least-residual iterate.
  */
 function solveLocations(store, positions, indices, pending, K) {
   if (!pending.length) return;
@@ -438,8 +452,32 @@ function solveLocations(store, positions, indices, pending, K) {
   for (const p of pending) pushTo(byProg, leaves[p.L].progIndex, p);
   const h = FD_STEP * edge, cap = NEWTON_CAP * edge, done = NEWTON_DONE * edge;
   const F = [0, 0], J = [[0, 0, 0], [0, 0, 0]];
-  for (let list of byProg.values()) {
-    const ev = evaluator(leaves[list[0].L].prog, textures, K, 4 * list.length);
+  // The constraint's rows at evaluation slot o: the crease (field and c_X − c_Y), one side
+  // (c_X), or a merged side facing a third piece (min over the members of c).
+  const rowsOf = (p) => (p.members.length >= 2 && (p.air || !p.others.length) ? 2 : 1);
+  const rowAt = (ev, p, o, row) => {
+    const c = ev.cuts, M = p.members;
+    if (M.length === 1) return c[o * K + M[0]];
+    if (p.air || !p.others.length) return row === 0 ? ev.out[o] : c[o * K + M[0]] - c[o * K + M[1]];
+    let v = Infinity;
+    for (const X of M) v = Math.min(v, c[o * K + X]);
+    return v;
+  };
+  const residual = (ev, p, o) => {
+    let r2 = 0;
+    for (let r = 0; r < rowsOf(p); r++) { const f = rowAt(ev, p, o, r); r2 += f * f; }
+    return Number.isFinite(r2) ? r2 : Infinity;
+  };
+  for (const group of byProg.values()) {
+    const ev = evaluator(leaves[group[0].L].prog, textures, K, 4 * group.length);
+    // Each vertex keeps its best iterate (least residual, the seed included): a solve that
+    // wanders — no solution near, a kink — never ends worse than it started.
+    const best = new Map();
+    const keep = (p, r2) => {
+      const b = best.get(p);
+      if (!b || r2 < b.r2) best.set(p, { r2, x: positions[3 * p.v], y: positions[3 * p.v + 1], z: positions[3 * p.v + 2] });
+    };
+    let list = group;
     for (let it = 0; it < NEWTON_ITERS && list.length; it++) {
       // The point and a forward step along each axis.
       list.forEach((p, q) => {
@@ -452,18 +490,11 @@ function solveLocations(store, positions, indices, pending, K) {
       ev.run(4 * list.length);
       const next = [];
       list.forEach((p, q) => {
-        const rows = p.members.length >= 2 && p.air ? 2 : 1;
-        const fn = (s, row) => {
-          const o = 4 * q + s, c = ev.cuts, M = p.members;
-          if (M.length === 1) return c[o * K + M[0]];
-          if (p.air) return row === 0 ? ev.out[o] : c[o * K + M[0]] - c[o * K + M[1]];
-          let v = Infinity;
-          for (const X of M) v = Math.min(v, c[o * K + X]);
-          return v;
-        };
+        keep(p, residual(ev, p, 4 * q));
+        const rows = rowsOf(p);
         for (let r = 0; r < rows; r++) {
-          F[r] = fn(0, r);
-          for (let a = 0; a < 3; a++) J[r][a] = (fn(1 + a, r) - F[r]) / h;
+          F[r] = rowAt(ev, p, 4 * q, r);
+          for (let a = 0; a < 3; a++) J[r][a] = (rowAt(ev, p, 4 * q + 1 + a, r) - F[r]) / h;
         }
         let dx, dy, dz;
         if (rows === 1) {
@@ -486,18 +517,27 @@ function solveLocations(store, positions, indices, pending, K) {
       });
       list = next;
     }
+    // The last step's landing is judged too; then each vertex takes its best iterate.
+    group.forEach((p, q) => { for (let k = 0; k < 3; k++) ev.P[k][q] = positions[3 * p.v + k]; });
+    ev.run(group.length);
+    group.forEach((p, q) => {
+      keep(p, residual(ev, p, q));
+      const b = best.get(p);
+      positions[3 * p.v] = b.x; positions[3 * p.v + 1] = b.y; positions[3 * p.v + 2] = b.z;
+    });
   }
 }
 
 /**
- * A plain vertex is held to its owner (ownerHeld = 1) when it lies beside an open edge or when
- * the field at its edge's outside end belongs to another piece (the owner's share there is
- * above the field): across a gap the field rises to a ridge between the pieces, so its linear
- * crossing can land by the other piece, and projecting onto the field would finish the bridge.
- * A held vertex goes onto its owner's share zero along its grid edge (bisected, as the side
- * vertices are), where that share changes sign along the edge; else it keeps the crossing.
+ * A plain vertex bordering a gap (its grid edge shares a cell with an open edge) is held to its
+ * owner: across a gap the field rises to a ridge between the pieces, so the field's linear
+ * crossing can land by the other piece. It goes onto its owner's share zero along its grid edge
+ * (bisected, as the side vertices are) when that share changes sign along the edge AND the field
+ * there is zero too (to within PIN_TOL·edge) — so a share that jumps (a merged owner's at an
+ * attachment zone's rim) or a point the share puts inside another piece keeps the crossing.
  */
-function placeHeldPlain(store, positions, vertOwner, ownerHeld, cand, K, keyPoint) {
+function placeHeldPlain(store, positions, vertOwner, cand, K, keyPoint) {
+  const tol = PIN_TOL * store.edge;
   const byProg = new Map();
   for (let q = 0; q < cand.length; q += 5) pushTo(byProg, store.leaves[cand[q + 1]].progIndex, q);
   for (const all of byProg.values()) {
@@ -511,12 +551,10 @@ function placeHeldPlain(store, positions, vertOwner, ownerHeld, cand, K, keyPoin
     const lerpInto = (e, t, slot) => { for (let k = 0; k < 3; k++) ev.P[k][slot] = A[3 * e + k] + (B[3 * e + k] - A[3 * e + k]) * t; };
     for (let e = 0; e < cnt0; e++) { lerpInto(e, 0, 2 * e); lerpInto(e, 1, 2 * e + 1); }
     ev.run(2 * cnt0);
-    const list = [];   // [candidate index, edge index] of the held ones whose share changes sign
+    const list = [];   // edge indices whose owner's share changes sign along the edge
     all.forEach((q, e) => {
-      const v = cand[q], o = vertOwner[v], inShare = ev.shares[2 * e * K + o], outShare = ev.shares[(2 * e + 1) * K + o];
-      if (!ownerHeld[v] && !(outShare > ev.out[2 * e + 1])) return;
-      ownerHeld[v] = 1;
-      if (inShare < 0 && outShare > 0) list.push(e);
+      const o = vertOwner[cand[q]];
+      if (ev.shares[2 * e * K + o] < 0 && ev.shares[(2 * e + 1) * K + o] > 0) list.push(e);
     });
     const cnt = list.length, lo = new Float64Array(cnt), hi = new Float64Array(cnt).fill(1);
     for (let it = 0; it < BISECT_STEPS && cnt; it++) {
@@ -527,7 +565,10 @@ function placeHeldPlain(store, positions, vertOwner, ownerHeld, cand, K, keyPoin
         if (ev.shares[k * K + vertOwner[cand[all[list[k]]]]] < 0) lo[k] = mid; else hi[k] = mid;
       }
     }
+    for (let k = 0; k < cnt; k++) lerpInto(list[k], (lo[k] + hi[k]) / 2, k);
+    if (cnt) ev.run(cnt);
     for (let k = 0; k < cnt; k++) {
+      if (!(Math.abs(ev.out[k]) <= tol)) continue;
       const e = list[k], v = cand[all[e]], t = (lo[k] + hi[k]) / 2;
       for (let c = 0; c < 3; c++) positions[3 * v + c] = A[3 * e + c] + (B[3 * e + c] - A[3 * e + c]) * t;
     }
