@@ -52,8 +52,7 @@ describe("crease cut", () => {
       expect(pairs.size).toBe(3);
     }, 60_000);
 
-    // Task 5 seam gate (triple junction): the 1.5 mm owner mesher leaves 8 open edges at the triple line.
-    (edge === 1.5 ? test.fails : test)(`three owners at gap 0 are closed (${tier} ${edge})`, () => {
+    test(`three owners at gap 0 are closed (${tier} ${edge})`, () => {
       expect(edgeCheck(run(threePress({ gap: 0 }), edge, tier).mesh.indices)).toEqual(CLOSED);
     }, 60_000);
 
@@ -62,7 +61,7 @@ describe("crease cut", () => {
       // press 205/31/33 and three 59/38/41 at 1.5; press 389/63/67 and three 181/120/125 at 0.6. Reverting
       // crease points that turn a triangle over made it worse (116, 47, 280, 212: a vertex left off the crease
       // sits on the wrong piece's skin), so the move stays.
-      test.fails(`no flipped triangles after the cut: ${name} (${tier} ${edge})`, () => {
+      (name === "press gap 0" && edge === 1.5 ? test : test.fails)(`no flipped triangles after the cut: ${name} (${tier} ${edge})`, () => {
         const { compiled, mesh } = run(spec, edge, tier);
         expect(flippedTriangles(compiled, mesh, edge)).toBe(0);
       }, 60_000);
@@ -85,8 +84,7 @@ describe("crease cut", () => {
       }
     }, 120_000);
 
-    // Task 5 seam gate (triple junction)
-    test.fails(`fingers on a palm, finger gap 0.3, are closed (${tier} ${edge})`, () => {
+    test(`fingers on a palm, finger gap 0.3, are closed (${tier} ${edge})`, () => {
       const { mesh } = run(fingersOnPalm({ gap: 0, fingerGap: 0.3 }), edge, tier);
       expect(edgeCheck(mesh.indices)).toEqual(CLOSED);
       expect(bridging(mesh, 0)).toBe(0);

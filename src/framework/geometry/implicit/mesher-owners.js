@@ -4,16 +4,24 @@
 //   1. one owner (or all labels equal): mesher.js's plain emission, the same code;
 //   2. several solid owners but no OPEN owner–owner edge: the same plain emission on the
 //      field (an all-solid tet emits nothing) — touching pieces fuse;
-//   3. an open owner–owner edge (a gap thinner than the grid): the barycentric
-//      multi-material layout, per tet face (E1, E2, C) on a two-label face and (E, F, C) per
-//      crossing edge on a three-label face, each solid side's sheet emitted on its own
-//      vertices so the gap is exact.
+//   3. an open owner–owner edge (a gap thinner than the grid): the tet is refined. Each open
+//      edge is split at the pieces' bisector by an AIR NODE (the field there is positive: the
+//      gap's air, which the grid missed), and plain marching tetrahedra runs on the sub-tets.
+//      Every tet around an open edge holds two solid owners, so every one of them is refined,
+//      and each splits its open edges in one global order (by grid edge key): a face is split
+//      only by its own edges, in that order, so the two tets sharing it split it alike and the
+//      refinement is conforming. Marching tetrahedra on a conforming tet mesh is closed and
+//      manifold by construction — a line contact thinner than the grid, three pieces meeting
+//      at a gap's end, a slit ending inside a fused contact all come out as closed sheets.
 // An owner–owner grid edge is OPEN when the field is positive at the pieces' bisector along
 // it (c_X − c_Y = 0, bisected) and each owner's cut is negative at its own end and positive
 // at the bisector; else FUSED. It is decided once per grid edge, so every tet sharing it
-// agrees. An open edge's side vertices sit on each owner's cut zero (bisected on its half);
-// face and cell vertices are seeded from their edge-vertex neighbours and Newton-projected.
-// Raw output: cleanup (owner-aware from Task 3) runs afterwards.
+// agrees, and an open edge is never closed: the air node keeps every near miss apart (the
+// seam spec's "near-miss safety wins"), and a slit thinner than the grid inside a gap-0
+// contact stays a closed slit. A crossing on a sub-tet edge from a grid corner to an air node
+// is bisected onto the field's zero, so a gap face's vertices sit exactly on their piece's
+// cut; crossings between two grid corners are mesher.js's own (welded with plain neighbours).
+// Raw output: cleanup (owner-aware) runs afterwards.
 import { LEAF, OWNER_AIR } from "./sparse.js";
 import { evalBatchContact } from "./program.js";
 import { tetMesher, KUHN } from "./mesher.js";
@@ -22,29 +30,23 @@ import { clearanceExact } from "./contact.js";
 export { OWNER_AIR };
 
 const S = LEAF + 1;
-const FACES = [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]];   // tet-local corner triples
-// Newton: at most NEWTON_ITERS steps, each capped at NEWTON_CAP·edge, forward differences of
-// FD_STEP·edge; a vertex whose step falls to NEWTON_DONE·edge has converged.
-const BISECT_STEPS = 24, NEWTON_ITERS = 8, NEWTON_CAP = 0.5, FD_STEP = 0.05, NEWTON_DONE = 1e-7;
+const BISECT_STEPS = 24;
 /** A vertex is on a gap face when its opposing piece's cut is the clearance to within this (× edge). */
 const PIN_TOL = 1e-4;
-const OWNER_SLOTS = 128;   // owner-qualified vertex keys: key · OWNER_SLOTS + owner (MAX_OWNER_K = 127)
 const pushTo = (map, key, item) => { const list = map.get(key); if (list) list.push(item); else map.set(key, [item]); };
 const sampleOf = (i, j, l, c) => ((l + ((c >> 2) & 1)) * S + (j + ((c >> 1) & 1))) * S + (i + (c & 1));
 
 /**
  * meshStore with owners: { positions, indices, vertLeaf, vertOwner, ownerHeld, pinned }.
- * vertOwner is always a child index (the solid end's owner for an edge vertex; the side or
- * merged representative for a fused edge, face or cell vertex); ownerHeld = 1 marks vertices
- * cleanup projects onto their owner's share instead of the field (every side, face and cell
- * vertex of an open tet, and a fused or plain vertex whose grid edge shares a cell with an
- * open edge — placeHeldPlain); pinned = 1 marks
- * gap-face vertices, placed exactly: an open-edge side or a solved face or cell vertex with no
- * air corner whose opposing piece's cut is the clearance there (its own cut made the surface,
- * not its raw shape). `gap` is the contact node's: it sets that clearance and resolves sub-grid
- * line contacts (closed at gap 0, opened with a gap). Triangles are emitted in meshStore's
- * order and, outside open tets, by its code; a store whose pieces never share a leaf (or
- * without owners, every vertex then owned by child 0) meshes byte-identically to meshStore.
+ * vertOwner is always a child index (the solid end's owner of the edge a vertex lies on);
+ * ownerHeld = 1 marks vertices cleanup projects onto their owner's share instead of the field
+ * (every crossing toward an air node, and a plain vertex whose grid edge shares a cell with an
+ * open edge — placeHeldPlain); pinned = 1 marks gap-face vertices, placed exactly: a crossing
+ * toward an air node where another piece's cut is the clearance (its own cut made the surface,
+ * not its raw shape). `gap` is the contact node's: it sets that clearance. Triangles are
+ * emitted in meshStore's order and, outside refined tets, by its code; a store whose pieces
+ * never share a leaf (or without owners, every vertex then owned by child 0) meshes
+ * byte-identically to meshStore.
  */
 export function meshStoreOwners(store, { gap = 0 } = {}) {
   const { origin, edge, n, leaves, textures } = store;
@@ -82,9 +84,8 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
 
   // --- Pass 1: every owner–owner edge of a tet holding two or more solid owners. ---
   const lab = new Int32Array(8);
-  const multiTets = [];   // [L, i, j, l, t] per tet
   const edgeRec = new Map();   // grid edge key → record index
-  const recKey = [], recX = [], recY = [], recOpen = [], recBis = [], recSide = [], recPin = [];   // X/Y: the low/high end's owner
+  const recKey = [], recX = [], recY = [], recOpen = [], recBis = [], recAir = [];   // X/Y: the low/high end's owner
   const recLeaf = [];   // the leaf that first saw each record
   const perProg = new Map();   // program index → record indices first seen on a leaf running it
   const solidKinds = (cs, count) => {   // distinct solid labels among lab[cs[0..count)]
@@ -115,7 +116,6 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
       for (let t = 0; t < 6; t++) {
         const tet = KUHN[t];
         if (solidKinds(tet, 4) < 2) continue;
-        multiTets.push(L, i, j, l, t);
         for (let a = 0; a < 4; a++) for (let b = a + 1; b < 4; b++) {
           const ca = tet[a], cb = tet[b], A = lab[ca], B = lab[cb];
           if (A === OWNER_AIR || B === OWNER_AIR || A === B) continue;
@@ -124,14 +124,14 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
           const r = recKey.length, lo = ca & cb;
           edgeRec.set(key, r);
           recKey.push(key); recX.push(lab[lo]); recY.push(lab[lo | (ca ^ cb)]); recOpen.push(0); recLeaf.push(L);
-          recSide.push(null); recPin.push(null); recBis.push(null);
+          recBis.push(null); recAir.push(0);
           pushTo(perProg, leaves[L].progIndex, r);
         }
       }
     }
   }
 
-  // --- Resolve each edge on the leaf that first saw it: bisector, open or fused, sides. ---
+  // --- Resolve each edge on the leaf that first saw it: bisector, open or fused. ---
   const keyPoint = (key, end, out, o) => {   // the grid edge's low (end 0) or high (end 1) point
     const dir = key % 8;
     let gi = (key - dir) / 8;
@@ -165,73 +165,17 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
     for (let q = 0; q < cnt; q++) {
       const r = list[q];
       recBis[r] = at(q, tb[q]);
+      recAir[r] = ev.out[q];
       if (ev.out[q] > 0 && ev.cuts[q * K + recX[r]] > 0 && ev.cuts[q * K + recY[r]] > 0) maybe.push(q);
     }
     const nm = maybe.length;
     if (!nm) continue;
-    // Open when each owner's cut is also negative at its own end; sides: X's cut zero on
-    // [0, tb], Y's on [tb, 1].
+    // Open when each owner's cut is also negative at its own end.
     for (let k = 0; k < nm; k++) { lerpInto(maybe[k], 0, 2 * k); lerpInto(maybe[k], 1, 2 * k + 1); }
     ev.run(2 * nm);
-    const ok = new Uint8Array(nm);
-    for (let k = 0; k < nm; k++) { const r = list[maybe[k]]; ok[k] = ev.cuts[2 * k * K + recX[r]] < 0 && ev.cuts[(2 * k + 1) * K + recY[r]] < 0 ? 1 : 0; }
-    const xl = new Float64Array(nm), xh = Float64Array.from(maybe, (q) => tb[q]), yl = Float64Array.from(xh), yh = new Float64Array(nm).fill(1);
-    for (let it = 0; it < BISECT_STEPS; it++) {
-      for (let k = 0; k < nm; k++) { lerpInto(maybe[k], (xl[k] + xh[k]) / 2, 2 * k); lerpInto(maybe[k], (yl[k] + yh[k]) / 2, 2 * k + 1); }
-      ev.run(2 * nm);
-      for (let k = 0; k < nm; k++) {
-        const r = list[maybe[k]], mx = (xl[k] + xh[k]) / 2, my = (yl[k] + yh[k]) / 2;
-        if (ev.cuts[2 * k * K + recX[r]] < 0) xl[k] = mx; else xh[k] = mx;
-        if (ev.cuts[(2 * k + 1) * K + recY[r]] > 0) yl[k] = my; else yh[k] = my;
-      }
-    }
-    // Each side is on a gap face when the other piece's cut there is the clearance (its own
-    // cut, not its raw surface, made the zero).
-    for (let k = 0; k < nm; k++) { lerpInto(maybe[k], (xl[k] + xh[k]) / 2, 2 * k); lerpInto(maybe[k], (yl[k] + yh[k]) / 2, 2 * k + 1); }
-    ev.run(2 * nm);
     for (let k = 0; k < nm; k++) {
-      const q = maybe[k], r = list[q];
-      recOpen[r] = ok[k];
-      recSide[r] = [at(q, (xl[k] + xh[k]) / 2), at(q, (yl[k] + yh[k]) / 2)];
-      recPin[r] = [Math.abs(ev.cuts[2 * k * K + recY[r]] - cl) <= pinTol ? 1 : 0, Math.abs(ev.cuts[(2 * k + 1) * K + recX[r]] - cl) <= pinTol ? 1 : 0];
-    }
-  }
-
-  // Tet edge (ca, cb)'s record in the current leaf's cell (i, j, l); lab holds the tet's cell labels.
-  const recOf = (i, j, l, ca, cb) => edgeRec.get(edgeKeyOf(i, j, l, ca, cb));
-  const loadLabels = (L, i, j, l) => { const own = leaves[L].owner; for (let c = 0; c < 8; c++) lab[c] = own[sampleOf(i, j, l, c)]; };
-
-  // A fused X–Y edge whose two faces in some tet both hold an open X–Y edge is a line contact
-  // thinner than the grid: the two sheets would share it (non-manifold). At gap 0 the openings
-  // close; with a gap the fused edge opens (both sides at its bisector). Repeat until stable.
-  // (The spike's rule, kept as it was: it can bridge a near miss at gap 0 — Task 5 replaces it.)
-  if (recKey.length) for (let changed = true; changed;) {
-    changed = false;
-    for (let q = 0; q < multiTets.length; q += 5) {
-      const L = multiTets[q], i = multiTets[q + 1], j = multiTets[q + 2], l = multiTets[q + 3], tet = KUHN[multiTets[q + 4]];
-      m.setLeaf(L); loadLabels(L, i, j, l);
-      for (let a = 0; a < 4; a++) for (let b = a + 1; b < 4; b++) {
-        const A = lab[tet[a]], B = lab[tet[b]];
-        if (A === OWNER_AIR || B === OWNER_AIR || A === B) continue;
-        const r = recOf(i, j, l, tet[a], tet[b]);
-        if (recOpen[r]) continue;
-        const openOn = (o) => {   // open edges with the same owner pair from a or b to corner o
-          const found = [];
-          for (const e of [a, b]) {
-            const E = lab[tet[e]], O = lab[tet[o]];
-            if (!((E === A && O === B) || (E === B && O === A))) continue;
-            const r2 = recOf(i, j, l, tet[e], tet[o]);
-            if (recOpen[r2]) found.push(r2);
-          }
-          return found;
-        };
-        const others = [0, 1, 2, 3].filter((x) => x !== a && x !== b);
-        const P = openOn(others[0]), Q = openOn(others[1]);
-        if (!P.length || !Q.length) continue;
-        if (!(gap > 0)) for (const r2 of [...P, ...Q]) recOpen[r2] = 0;
-        else { recOpen[r] = 1; recSide[r] = [recBis[r], recBis[r]]; recPin[r] = [0, 0]; }
-        changed = true;
-      }
+      const r = list[maybe[k]];
+      recOpen[r] = ev.cuts[2 * k * K + recX[r]] < 0 && ev.cuts[(2 * k + 1) * K + recY[r]] < 0 ? 1 : 0;
     }
   }
   openCells = new Set();
@@ -241,131 +185,85 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
   }
 
   // --- Pass 2: emission, cell by cell in meshStore's order. ---
-  const sideVerts = new Map(), fusedVerts = new Map(), faceVerts = new Map(), cellVerts = new Map();
-  const pending = [];   // face and cell vertices solved after emission: { v, L, air, members, others }
-  const addVertex = (L, p, owner, held, pin) => {
-    const v = positions.length / 3;
-    positions.push(p[0], p[1], p[2]); vertLeaf.push(L); vertOwner.push(owner); ownerHeld.push(held); pinned.push(pin);
+  const recOf = (i, j, l, ca, cb) => edgeRec.get(edgeKeyOf(i, j, l, ca, cb));
+  const loadLabels = (L, i, j, l) => { const own = leaves[L].owner; for (let c = 0; c < 8; c++) lab[c] = own[sampleOf(i, j, l, c)]; };
+  // Crossings toward an air node, keyed by record and the grid corner's index; each is bisected
+  // onto the field's zero afterwards: [v, L, corner x, y, z, air x, y, z] (airCrossings).
+  const airVerts = new Map(), airCand = [];
+  // A sub-tet node: a cell corner (c = 0..7, its sample's value) or an open edge's air node
+  // (c = −1, r = its record; the field at the bisector, positive).
+  const cornerNode = (L, i, j, l, c) => ({ c, r: -1, val: leaves[L].vals[sampleOf(i, j, l, c)], x: CP[3 * c], y: CP[3 * c + 1], z: CP[3 * c + 2] });
+  const airNode = (r) => ({ c: -1, r, val: recAir[r], x: recBis[r][0], y: recBis[r][1], z: recBis[r][2] });
+  // The vertex where sub-tet edge (a, b) crosses the field's zero (one end negative).
+  const crossing = (L, i, j, l, a, b) => {
+    if (a.c >= 0 && b.c >= 0) return m.vertexOn(i, j, l, a.c, b.c);   // an unsplit grid edge: the plain vertex
+    const g = a.c >= 0 ? a : b, air = a.c >= 0 ? b : a;   // a crossing needs a negative end: a grid corner
+    const gi = gIndex(m.i0 + i + (g.c & 1), m.j0 + j + ((g.c >> 1) & 1), m.l0 + l + ((g.c >> 2) & 1));
+    const key = `${air.r}:${gi}`;
+    let v = airVerts.get(key);
+    if (v !== undefined) return v;
+    const t = g.val / (g.val - air.val);   // a first guess; airCrossings bisects it
+    v = positions.length / 3;
+    positions.push(g.x + (air.x - g.x) * t, g.y + (air.y - g.y) * t, g.z + (air.z - g.z) * t);
+    vertLeaf.push(L); vertOwner.push(lab[g.c]); ownerHeld.push(1); pinned.push(0);
+    airVerts.set(key, v);
+    airCand.push(v, L, g.x, g.y, g.z, air.x, air.y, air.z);
     return v;
   };
-  const corner = (c) => [CP[3 * c], CP[3 * c + 1], CP[3 * c + 2]];
-  const mean = (cs) => {
-    const p = [0, 0, 0];
-    for (const c of cs) { p[0] += CP[3 * c]; p[1] += CP[3 * c + 1]; p[2] += CP[3 * c + 2]; }
-    return [p[0] / cs.length, p[1] / cs.length, p[2] / cs.length];
-  };
-  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-  // Orientation from the proxies (edge midpoints, face and cell centres) against g, as mesher.js does.
-  const orient = (A, B, C, g, a, b, c) => {
+  // Plain marching tetrahedra on one sub-tet (four nodes), oriented as mesher.js orients: the
+  // triangle's edge midpoints against the inside → outside direction of the node positions.
+  const negN = [], posN = [], gv = [0, 0, 0];
+  const mid = (a, b) => [(a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2];
+  const tri = (A, B, C, a, b, c) => {
     const ux = B[0] - A[0], uy = B[1] - A[1], uz = B[2] - A[2], vx = C[0] - A[0], vy = C[1] - A[1], vz = C[2] - A[2];
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-    if (nx * g[0] + ny * g[1] + nz * g[2] < 0) indices.push(a, c, b); else indices.push(a, b, c);
+    if (nx * gv[0] + ny * gv[1] + nz * gv[2] < 0) indices.push(a, c, b); else indices.push(a, b, c);
   };
-
-  // Path 3: one tet of cell (i, j, l) in leaf L, labels in lab, corners in CP.
-  const emitOpenTet = (L, i, j, l, t) => {
-    const tet = KUHN[t];
-    const fusedPair = (X, Y, cs) => {   // any fused X–Y edge among corners cs
-      for (let a = 0; a < cs.length; a++) for (let b = a + 1; b < cs.length; b++) {
-        const A = lab[cs[a]], B = lab[cs[b]];
-        if (!((A === X && B === Y) || (A === Y && B === X))) continue;
-        if (!recOpen[recOf(i, j, l, cs[a], cs[b])]) return true;
-      }
-      return false;
-    };
-    const rep = (X, cs) => {   // X's side at a location: the least owner it is fused with there (one hop)
-      let r = X;
-      for (const c of cs) { const Y = lab[c]; if (Y !== OWNER_AIR && Y !== X && Y < r && fusedPair(X, Y, cs)) r = Y; }
-      return r;
-    };
-    const locVert = (map, key, X, cs) => {
-      const r = rep(X, cs), k = key * OWNER_SLOTS + r;
-      let v = map.get(k);
-      if (v !== undefined) return v;
-      let air = false;
-      const members = [], others = [];
-      for (const c of cs) {
-        const Y = lab[c];
-        if (Y === OWNER_AIR) air = true;
-        else if (members.includes(Y) || others.includes(Y)) continue;
-        else if (rep(Y, cs) === r) members.push(Y); else others.push(Y);
-      }
-      v = addVertex(L, mean(cs), r, 1, 0);   // pinned once solved, if it lands on a gap face
-      map.set(k, v);
-      pending.push({ v, L, air, members, others });
-      return v;
-    };
-    const edgeVert = (ca, cb, Xo) => {   // the vertex on tet edge (ca, cb) on owner Xo's side
-      if (lab[ca] === OWNER_AIR || lab[cb] === OWNER_AIR) return m.vertexOn(i, j, l, ca, cb);
-      const key = edgeKeyOf(i, j, l, ca, cb), r = edgeRec.get(key);
-      if (recOpen[r]) {
-        const k = key * OWNER_SLOTS + Xo, side = Xo === recX[r] ? 0 : 1;
-        let v = sideVerts.get(k);
-        if (v === undefined) sideVerts.set(k, (v = addVertex(L, recSide[r][side], Xo, 1, recPin[r][side])));
-        return v;
-      }
-      let v = fusedVerts.get(key);
-      if (v === undefined) {
-        const dir = key % 8;
-        fusedVerts.set(key, (v = addVertex(L, recBis[r], Math.min(recX[r], recY[r]), bordersOpen((key - dir) / 8, dir) ? 1 : 0, 0)));
-      }
-      return v;
-    };
-    const cellKey = gIndex(m.i0 + i, m.j0 + j, m.l0 + l) * 6 + t;
-    const C = mean(tet), flab = new Int32Array(8);
-    for (const f of FACES) {
-      const fc = [tet[f[0]], tet[f[1]], tet[f[2]]];
-      for (const c of fc) flab[c] = lab[c];
-      // A face whose owner pair is fused on every one of its edges here is one owner.
-      const solids = [];
-      for (const c of fc) if (lab[c] !== OWNER_AIR && !solids.includes(lab[c])) solids.push(lab[c]);
-      for (const X of solids) for (const Y of solids) {
-        if (!(X < Y)) continue;
-        let any = false, allFused = true;
-        for (let a = 0; a < 3; a++) for (let b = a + 1; b < 3; b++) {
-          const A = lab[fc[a]], B = lab[fc[b]];
-          if (!((A === X && B === Y) || (A === Y && B === X))) continue;
-          any = true;
-          if (recOpen[recOf(i, j, l, fc[a], fc[b])]) allFused = false;
-        }
-        if (any && allFused) for (const c of fc) if (flab[c] === Y) flab[c] = X;
-      }
-      const crossing = [];
-      for (let a = 0; a < 3; a++) for (let b = a + 1; b < 3; b++) if (flab[fc[a]] !== flab[fc[b]]) crossing.push([fc[a], fc[b]]);
-      if (!crossing.length) continue;
-      // Face vertex keys: the face's least corner (a Kuhn face is a chain c0 ⊂ c1 ⊂ c2) and its two offsets.
-      const sorted = fc.slice().sort((p, q) => p - q);   // bit-subset chains sort by value
-      const faceKey = () => (gIndex(m.i0 + i + (sorted[0] & 1), m.j0 + j + ((sorted[0] >> 1) & 1), m.l0 + l + ((sorted[0] >> 2) & 1)) * 8 + (sorted[1] ^ sorted[0])) * 8 + (sorted[2] ^ sorted[0]);
-      const tris = [];   // { Pl, Ql, roles: [edge | "F" | "C"] ×3, prox, g }
-      if (crossing.length === 2) {
-        const [a1, b1] = crossing[0], Pl = flab[a1], Ql = flab[b1];
-        const e2 = flab[crossing[1][0]] === Pl ? crossing[1] : [crossing[1][1], crossing[1][0]];
-        tris.push({ Pl, Ql, roles: [[a1, b1], e2, "C"], prox: [mean([a1, b1]), mean(e2), C],
-          g: sub(mean(fc.filter((c) => flab[c] === Ql)), mean(fc.filter((c) => flab[c] === Pl))) });
-      } else {
-        const Fm = mean(fc);
-        for (const [a, b] of crossing) tris.push({ Pl: flab[a], Ql: flab[b], roles: [[a, b], "F", "C"], prox: [mean([a, b]), Fm, C], g: sub(corner(b), corner(a)) });
-      }
-      for (const T of tris) {
-        const resolve = (X) => T.roles.map((role) => {
-          if (role === "F") return locVert(faceVerts, faceKey(), X, fc);
-          if (role === "C") return locVert(cellVerts, cellKey, X, tet);
-          return edgeVert(role[0], role[1], flab[role[0]] === X ? lab[role[0]] : lab[role[1]]);
-        });
-        if (T.Pl === OWNER_AIR || T.Ql === OWNER_AIR) {   // one sheet, facing the air
-          const solid = T.Pl === OWNER_AIR ? T.Ql : T.Pl, g = T.Pl === OWNER_AIR ? T.g.map((x) => -x) : T.g;
-          const [a, b, c] = resolve(solid);
-          orient(T.prox[0], T.prox[1], T.prox[2], g, a, b, c);
-          continue;
-        }
-        // Two solid owners: one sheet per side, unless every owner–owner edge here is fused.
-        let anyOpen = false;
-        for (const role of T.roles) if (typeof role !== "string" && recOpen[recOf(i, j, l, role[0], role[1])]) anyOpen = true;
-        if (!anyOpen) continue;
-        { const [a, b, c] = resolve(T.Pl); orient(T.prox[0], T.prox[1], T.prox[2], T.g, a, b, c); }
-        { const [a, b, c] = resolve(T.Ql); orient(T.prox[0], T.prox[1], T.prox[2], T.g.map((x) => -x), a, b, c); }
-      }
+  const subTet = (L, i, j, l, nodes) => {
+    negN.length = 0; posN.length = 0;
+    for (const p of nodes) (p.val < 0 ? negN : posN).push(p);
+    const nn = negN.length, np = posN.length;
+    if (nn === 0 || np === 0) return;
+    gv[0] = gv[1] = gv[2] = 0;
+    for (const p of posN) { gv[0] += p.x / np; gv[1] += p.y / np; gv[2] += p.z / np; }
+    for (const p of negN) { gv[0] -= p.x / nn; gv[1] -= p.y / nn; gv[2] -= p.z / nn; }
+    if (nn === 1 || nn === 3) {
+      const lone = nn === 1 ? negN[0] : posN[0], o = nn === 1 ? posN.slice() : negN.slice();
+      tri(mid(lone, o[0]), mid(lone, o[1]), mid(lone, o[2]),
+        crossing(L, i, j, l, lone, o[0]), crossing(L, i, j, l, lone, o[1]), crossing(L, i, j, l, lone, o[2]));
+    } else {
+      const [n0, n1] = negN, [q0, q1] = posN;
+      const v00 = crossing(L, i, j, l, n0, q0), v01 = crossing(L, i, j, l, n0, q1), v10 = crossing(L, i, j, l, n1, q0), v11 = crossing(L, i, j, l, n1, q1);
+      tri(mid(n0, q0), mid(n0, q1), mid(n1, q1), v00, v01, v11);
+      tri(mid(n0, q0), mid(n1, q1), mid(n1, q0), v00, v11, v10);
     }
+  };
+  // Path 3: one tet of cell (i, j, l) in leaf L, labels in lab, corners in CP. Its open edges
+  // are split in grid-edge-key order; each split halves every sub-tet holding both ends.
+  const refineTet = (L, i, j, l, tet) => {
+    const open = [];
+    for (let a = 0; a < 4; a++) for (let b = a + 1; b < 4; b++) {
+      const A = lab[tet[a]], B = lab[tet[b]];
+      if (A === OWNER_AIR || B === OWNER_AIR || A === B) continue;
+      const r = recOf(i, j, l, tet[a], tet[b]);
+      if (recOpen[r]) open.push(r, tet[a], tet[b]);
+    }
+    let subs = [tet.map((c) => cornerNode(L, i, j, l, c))];
+    const order = [];
+    for (let q = 0; q < open.length; q += 3) order.push(q);
+    order.sort((p, q) => recKey[open[p]] - recKey[open[q]]);
+    for (const q of order) {
+      const M = airNode(open[q]), ca = open[q + 1], cb = open[q + 2], next = [];
+      for (const s of subs) {
+        const ia = s.findIndex((p) => p.c === ca), ib = s.findIndex((p) => p.c === cb);
+        if (ia < 0 || ib < 0) { next.push(s); continue; }
+        const s1 = s.slice(), s2 = s.slice();
+        s1[ia] = M; s2[ib] = M;
+        next.push(s1, s2);
+      }
+      subs = next;
+    }
+    for (const s of subs) subTet(L, i, j, l, s);
   };
 
   const tetOpen = (i, j, l, tet) => {
@@ -394,15 +292,14 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
       m.corners(i, j, l);
       for (let t = 0; t < 6; t++) {
         const tet = KUHN[t];
-        if (solidKinds(tet, 4) >= 2 && tetOpen(i, j, l, tet)) emitOpenTet(L, i, j, l, t);
+        if (solidKinds(tet, 4) >= 2 && tetOpen(i, j, l, tet)) refineTet(L, i, j, l, tet);
         else m.tet(i, j, l, tet);
       }
     }
   }
 
   placeHeldPlain(store, positions, vertOwner, plainCandidates, K, keyPoint);
-  solveLocations(store, positions, indices, pending, K);
-  pinSolved(store, positions, pinned, pending, K, cl, pinTol);
+  airCrossings(store, positions, vertOwner, pinned, airCand, K, cl, pinTol);
   return {
     positions: Float64Array.from(positions), indices: Uint32Array.from(indices), vertLeaf: Int32Array.from(vertLeaf),
     vertOwner: Int32Array.from(vertOwner), ownerHeld: Uint8Array.from(ownerHeld), pinned: Uint8Array.from(pinned),
@@ -424,107 +321,36 @@ function evaluator(prog, textures, K, cap) {
 }
 
 /**
- * Places the face and cell vertices: each starts at the mean of its edge-vertex neighbours
- * (else its location's centre), then Newton steps (minimal norm, capped at NEWTON_CAP·edge,
- * at most NEWTON_ITERS of them, forward differences of FD_STEP·edge) take it onto its constraint:
- * one owner's side onto c_X = 0; merged owners with no third owner at the location (the
- * crease, or where a gap closes inside a fused contact) onto the field and c_X = c_Y together;
- * merged owners facing a third piece across a gap onto min over the members of c = 0. Each
- * keeps its least-residual iterate.
+ * Each crossing toward an air node goes onto the field's zero along its sub-tet edge (bisected
+ * from the grid corner, inside, to the air node, outside), and is pinned when it lands on a gap
+ * face: another piece's cut is the clearance there (its own cut, not its raw shape, made the
+ * surface). An edge whose ends do not straddle the zero keeps the linear guess.
  */
-function solveLocations(store, positions, indices, pending, K) {
-  if (!pending.length) return;
-  const { edge, leaves, textures } = store;
-  const nv = positions.length / 3, isPending = new Uint8Array(nv);
-  for (const p of pending) isPending[p.v] = 1;
-  const acc = new Float64Array(3 * nv), cnt = new Uint32Array(nv);
-  for (let t = 0; t < indices.length; t += 3) for (let k = 0; k < 3; k++) {
-    const a = indices[t + k];
-    if (!isPending[a]) continue;
-    for (const b of [indices[t + ((k + 1) % 3)], indices[t + ((k + 2) % 3)]]) {
-      if (isPending[b]) continue;
-      acc[3 * a] += positions[3 * b]; acc[3 * a + 1] += positions[3 * b + 1]; acc[3 * a + 2] += positions[3 * b + 2]; cnt[a]++;
+function airCrossings(store, positions, vertOwner, pinned, cand, K, cl, tol) {
+  const STRIDE = 8, byProg = new Map();
+  for (let q = 0; q < cand.length; q += STRIDE) pushTo(byProg, store.leaves[cand[q + 1]].progIndex, q);
+  for (const all of byProg.values()) {
+    const cnt0 = all.length, ev = evaluator(store.leaves[cand[all[0] + 1]].prog, store.textures, K, 2 * cnt0);
+    const lerpInto = (e, t, slot) => { const q = all[e]; for (let k = 0; k < 3; k++) ev.P[k][slot] = cand[q + 2 + k] + (cand[q + 5 + k] - cand[q + 2 + k]) * t; };
+    for (let e = 0; e < cnt0; e++) { lerpInto(e, 0, 2 * e); lerpInto(e, 1, 2 * e + 1); }
+    ev.run(2 * cnt0);
+    const list = [];
+    for (let e = 0; e < cnt0; e++) if (ev.out[2 * e] < 0 && ev.out[2 * e + 1] > 0) list.push(e);
+    const cnt = list.length, lo = new Float64Array(cnt), hi = new Float64Array(cnt).fill(1);
+    for (let it = 0; it < BISECT_STEPS && cnt; it++) {
+      for (let k = 0; k < cnt; k++) lerpInto(list[k], (lo[k] + hi[k]) / 2, k);
+      ev.run(cnt);
+      for (let k = 0; k < cnt; k++) { const mid = (lo[k] + hi[k]) / 2; if (ev.out[k] < 0) lo[k] = mid; else hi[k] = mid; }
     }
-  }
-  for (const p of pending) if (cnt[p.v]) for (let k = 0; k < 3; k++) positions[3 * p.v + k] = acc[3 * p.v + k] / cnt[p.v];
-
-  const byProg = new Map();
-  for (const p of pending) pushTo(byProg, leaves[p.L].progIndex, p);
-  const h = FD_STEP * edge, cap = NEWTON_CAP * edge, done = NEWTON_DONE * edge;
-  const F = [0, 0], J = [[0, 0, 0], [0, 0, 0]];
-  // The constraint's rows at evaluation slot o: the crease (field and c_X − c_Y), one side
-  // (c_X), or a merged side facing a third piece (min over the members of c).
-  const rowsOf = (p) => (p.members.length >= 2 && (p.air || !p.others.length) ? 2 : 1);
-  const rowAt = (ev, p, o, row) => {
-    const c = ev.cuts, M = p.members;
-    if (M.length === 1) return c[o * K + M[0]];
-    if (p.air || !p.others.length) return row === 0 ? ev.out[o] : c[o * K + M[0]] - c[o * K + M[1]];
-    let v = Infinity;
-    for (const X of M) v = Math.min(v, c[o * K + X]);
-    return v;
-  };
-  const residual = (ev, p, o) => {
-    let r2 = 0;
-    for (let r = 0; r < rowsOf(p); r++) { const f = rowAt(ev, p, o, r); r2 += f * f; }
-    return Number.isFinite(r2) ? r2 : Infinity;
-  };
-  for (const group of byProg.values()) {
-    const ev = evaluator(leaves[group[0].L].prog, textures, K, 4 * group.length);
-    // Each vertex keeps its best iterate (least residual, the seed included): a solve that
-    // wanders — no solution near, a kink — never ends worse than it started.
-    const best = new Map();
-    const keep = (p, r2) => {
-      const b = best.get(p);
-      if (!b || r2 < b.r2) best.set(p, { r2, x: positions[3 * p.v], y: positions[3 * p.v + 1], z: positions[3 * p.v + 2] });
-    };
-    let list = group;
-    for (let it = 0; it < NEWTON_ITERS && list.length; it++) {
-      // The point and a forward step along each axis.
-      list.forEach((p, q) => {
-        const x = positions[3 * p.v], y = positions[3 * p.v + 1], z = positions[3 * p.v + 2];
-        for (let s = 0; s < 4; s++) {
-          const o = 4 * q + s;
-          ev.P[0][o] = s === 1 ? x + h : x; ev.P[1][o] = s === 2 ? y + h : y; ev.P[2][o] = s === 3 ? z + h : z;
-        }
-      });
-      ev.run(4 * list.length);
-      const next = [];
-      list.forEach((p, q) => {
-        keep(p, residual(ev, p, 4 * q));
-        const rows = rowsOf(p);
-        for (let r = 0; r < rows; r++) {
-          F[r] = rowAt(ev, p, 4 * q, r);
-          for (let a = 0; a < 3; a++) J[r][a] = (rowAt(ev, p, 4 * q + 1 + a, r) - F[r]) / h;
-        }
-        let dx, dy, dz;
-        if (rows === 1) {
-          const g = J[0], g2 = g[0] * g[0] + g[1] * g[1] + g[2] * g[2];
-          if (!(g2 > 1e-12) || !Number.isFinite(F[0])) return;
-          const s = -F[0] / g2;
-          dx = g[0] * s; dy = g[1] * s; dz = g[2] * s;
-        } else {
-          const [a, b] = J, aa = a[0] * a[0] + a[1] * a[1] + a[2] * a[2], bb = b[0] * b[0] + b[1] * b[1] + b[2] * b[2], ab = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-          const det = aa * bb - ab * ab;
-          if (!(det > 1e-12) || !Number.isFinite(F[0]) || !Number.isFinite(F[1])) return;
-          const l0 = (-F[0] * bb + F[1] * ab) / det, l1 = (-F[1] * aa + F[0] * ab) / det;
-          dx = a[0] * l0 + b[0] * l1; dy = a[1] * l0 + b[1] * l1; dz = a[2] * l0 + b[2] * l1;
-        }
-        const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        if (!Number.isFinite(len)) return;
-        const s = len > cap ? cap / len : 1;
-        positions[3 * p.v] += dx * s; positions[3 * p.v + 1] += dy * s; positions[3 * p.v + 2] += dz * s;
-        if (len > done) next.push(p);   // converged vertices drop out of later iterations
-      });
-      list = next;
+    if (!cnt) continue;
+    for (let k = 0; k < cnt; k++) lerpInto(list[k], (lo[k] + hi[k]) / 2, k);
+    ev.run(cnt);
+    for (let k = 0; k < cnt; k++) {
+      const v = cand[all[list[k]]];
+      for (let c = 0; c < 3; c++) positions[3 * v + c] = ev.P[c][k];
+      const X = vertOwner[v];
+      for (let W = 0; W < K; W++) if (W !== X && Math.abs(ev.cuts[k * K + W] - cl) <= tol) pinned[v] = 1;
     }
-    // The last step's landing is judged too; then each vertex takes its best iterate.
-    group.forEach((p, q) => { for (let k = 0; k < 3; k++) ev.P[k][q] = positions[3 * p.v + k]; });
-    ev.run(group.length);
-    group.forEach((p, q) => {
-      keep(p, residual(ev, p, q));
-      const b = best.get(p);
-      positions[3 * p.v] = b.x; positions[3 * p.v + 1] = b.y; positions[3 * p.v + 2] = b.z;
-    });
   }
 }
 
@@ -575,23 +401,3 @@ function placeHeldPlain(store, positions, vertOwner, cand, K, keyPoint) {
   }
 }
 
-/**
- * Pins each solved face or cell vertex that landed on a gap face: no air at its location, on
- * its own side's surface (min over its members' cuts = 0) and with another piece's cut at the
- * clearance, all to within `tol`. An unconverged one stays free for cleanup to project.
- */
-function pinSolved(store, positions, pinned, pending, K, cl, tol) {
-  const byProg = new Map();
-  for (const p of pending) if (!p.air && p.others.length) pushTo(byProg, store.leaves[p.L].progIndex, p);
-  for (const list of byProg.values()) {
-    const ev = evaluator(store.leaves[list[0].L].prog, store.textures, K, list.length);
-    list.forEach((p, q) => { for (let k = 0; k < 3; k++) ev.P[k][q] = positions[3 * p.v + k]; });
-    ev.run(list.length);
-    list.forEach((p, q) => {
-      let own = Infinity, gapFace = false;
-      for (const X of p.members) own = Math.min(own, ev.cuts[q * K + X]);
-      for (const Y of p.others) if (Math.abs(ev.cuts[q * K + Y] - cl) <= tol) gapFace = true;
-      if (gapFace && Math.abs(own) <= tol) pinned[p.v] = 1;
-    });
-  }
-}

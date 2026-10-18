@@ -61,6 +61,7 @@ export function cutCreases(store, mesh, att = new Float64Array(0)) {
   const VL = Array.from(mesh.vertLeaf), VO = Array.from(mesh.vertOwner), VH = Array.from(mesh.ownerHeld), VP = Array.from(mesh.pinned);
   const nv0 = P.length / 3;
   const isFree = (v) => !VH[v] && !VP[v];
+  const cuttable = (v) => !VP[v];   // a pinned vertex sits on a gap face and never moves
 
   // 1. Re-own the free vertices.
   const at0 = evalPoints(store, K, Float64Array.from(P), VL);
@@ -71,7 +72,7 @@ export function cutCreases(store, mesh, att = new Float64Array(0)) {
   for (let t = 0; t < T.length; t += 3) {
     for (let k = 0; k < 3; k++) {
       const a = T[t + k], b = T[t + (k + 1) % 3];
-      if (VO[a] === VO[b] || !isFree(a) || !isFree(b)) continue;
+      if (VO[a] === VO[b] || !cuttable(a) || !cuttable(b)) continue;
       const lo = Math.min(a, b), hi = Math.max(a, b), key = lo * nv0 + hi;
       if (!cross.has(key)) cross.set(key, { a: lo, b: hi, X: VO[lo], Y: VO[hi] });
     }
