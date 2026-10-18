@@ -42,6 +42,16 @@ export const MAX_REGION_CELLS = 20000;
 /** The clearance a pair is cut with: the declared gap, floored at C_MIN_CELLS grid cells. */
 export const clearance = (gap, edge) => Math.max(gap, C_MIN_CELLS * edge);
 
+// Exact contact (a root contact node compiled with `exactContact`): no floor, no pad fill.
+/** At gap 0 the cut sits this far (mm) past the bisector, so the two pieces overlap by a hair and fuse into one shell with a crisp crease. */
+export const CONTACT_OVERLAP = 0.02;
+/** The exact clearance: the declared gap itself; at gap 0 a small negative (the pieces overlap by CONTACT_OVERLAP). */
+export const clearanceExact = (gap) => (gap > 0 ? gap : -CONTACT_OVERLAP);
+/** A contact node's clearance at grid edge `edge`: exact nodes ignore the grid. */
+export const nodeClearance = (n, edge) => (n.exact ? clearanceExact(n.gap) : clearance(n.gap, edge));
+/** The most children an exact (owner-labelled) contact node may have. */
+export const MAX_OWNER_K = 127;
+
 /** Attachment weight at p: 1 inside the radius, easing to 0 across `band`. */
 export function attachWeight(att, o, x, y, z) {
   const dx = x - att[o + 2], dy = y - att[o + 3], dz = z - att[o + 4];

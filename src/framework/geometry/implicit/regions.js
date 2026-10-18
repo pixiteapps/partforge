@@ -42,10 +42,10 @@ export function contactRegions(view, n, path) {
       // Too much overlap to resolve: one conservative region over the pair's whole box
       // intersection, so a gap-0 pair still fuses rather than being cut through.
       warnings.push(`implicit: ${path}: the contact search between children ${a} and ${b} found too much overlap to resolve (over ${MAX_REGION_CELLS} cells) — they get one region over their whole overlap (one bulge and fused pad); separate them, or make them one child`);
-      clusters = clusters.region ? [clusters.region] : [];
+      clusters = clusters.region && !n.exact ? [clusters.region] : [];   // an exact node has no pad to fuse: no fallback region
     }
     for (const { c, delta, rho } of clusters) {
-      if (n.fuse) fill.push(a, b, c[0], c[1], c[2], rho);   // the pair's pad fill (gap 0 only)
+      if (n.fuse && !n.exact) fill.push(a, b, c[0], c[1], c[2], rho);   // the pair's pad fill (gap 0 only)
       // The bump's falloff radius grows with the press depth; its peak is the node's bulge
       // scaled by depth, so no one region swells a skin more than `bulge` mm — a piece's
       // regions add where they overlap (a flat contact's sides lie well inside rho: a height

@@ -4,15 +4,16 @@ import { validateSpec } from "../src/framework/geometry/implicit/grammar.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { evalReference, evalNodeAt } from "../src/framework/geometry/implicit/reference.js";
 import { unionN } from "../src/framework/geometry/implicit/primitives.js";
-import { clearance, C_MIN_CELLS, ATTACH_STRIDE, bulgeOffset, REGION_CELL, BULGE_STRIDE, FILL_STRIDE, PAD_BLEND, BULGE_FULL_DEPTH, BULGE_DEFAULT, FILL_BAND, contactValue } from "../src/framework/geometry/implicit/contact.js";
+import { clearance, C_MIN_CELLS, ATTACH_STRIDE, bulgeOffset, REGION_CELL, BULGE_STRIDE, FILL_STRIDE, PAD_BLEND, BULGE_FULL_DEPTH, BULGE_DEFAULT, FILL_BAND, contactValue, CONTACT_OVERLAP, clearanceExact } from "../src/framework/geometry/implicit/contact.js";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { setCoreEnabled } from "../src/framework/core/core.js";
 import { cpuMs } from "./helpers/cpu-pace.js";
 import { edgeCheck, componentCount } from "./helpers/mesh-topology.js";
 import { blockDecision, fullDecision, decisionKey } from "../src/framework/geometry/implicit/interval.js";
-import { emitProgram, evalBatch, runProgram, OP } from "../src/framework/geometry/implicit/program.js";
+import { emitProgram, evalBatch, evalBatchContact, runProgram, OP } from "../src/framework/geometry/implicit/program.js";
 import { planLeaves } from "../src/framework/geometry/implicit/sparse.js";
 import { TREES } from "./fixtures/implicit-small-trees.js";
+import { handSpec } from "./fixtures/implicit-trees.js";
 
 const issues = (spec) => { try { validateSpec(spec); return []; } catch (e) { expect(e.code).toBe("IMPLICIT_SPEC"); return e.issues; } };
 const lower = (spec) => lowerSpec(spec, { images: new Map() });
@@ -636,5 +637,92 @@ describe("contact gap warning", () => {
   test("a fine enough grid, or gap 0, does not", () => {
     expect(gapWarnings(0.4, 0.1)).toEqual([]);
     expect(gapWarnings(0, 0.6)).toEqual([]);
+  });
+});
+
+describe("exact contact", () => {
+  const exact = (spec) => compileImplicit(spec, { exactContact: true });
+  const press = (x, gap, extra = {}) => ({ root: { kind: "contact", gap, bulge: 0, ...extra, children: [sph(-x), sph(x)] } });
+
+  test("exact field: gap is the clearance, no floor", () => {
+    const spec = press(5.25, 0.01);
+    near(evalReference(exact(spec), 0, 0, 0, 1), 0.25);   // the raw distance: no cut reaches the bisector
+    near(evalReference(compileImplicit(spec), 0, 0, 0, 1), clearance(0.01, 1) / 2);   // the floor's cut, 0.75
+    near(clearanceExact(0.3), 0.3);
+    near(clearanceExact(0), -CONTACT_OVERLAP);
+  });
+
+  test("exact field: gap 0 is the hard union cut a hair past the bisector", () => {
+    const c = exact(press(4.5, 0));
+    near(evalReference(c, 0, 0, 0, 1), -CONTACT_OVERLAP / 2);
+    near(evalReference(c, -8, 0, 0, 1), Math.abs(-8 + 4.5) - 5);   // inside a only: a's own distance
+    expect(c.ir.nodes[c.ownerRoot].fillRegions.length).toBe(0);
+  });
+
+  test("exact field: no fallback region", () => {
+    const spec = { root: { kind: "contact", children: [sph(-20, undefined, 30), sph(20, undefined, 30)] } };
+    const c = exact(spec), node = c.ir.nodes[c.ir.root];
+    expect(node.fillRegions.length).toBe(0);
+    expect(node.regions.every((R) => R.length === 0)).toBe(true);
+    expect(c.warnings.filter((w) => w.includes("too much overlap"))).toHaveLength(1);
+  });
+
+  test("ownerRoot: the root contact, not a nested one", () => {
+    const h = exact(handSpec());
+    expect(h.ownerRoot).toBeGreaterThanOrEqual(0);
+    expect(h.ownerK).toBe(6);
+    expect(h.ir.nodes[h.ownerRoot].exact).toBe(1);
+    expect(compileImplicit(handSpec()).ownerRoot).toBe(-1);
+    const nested = exact({ root: { kind: "union", children: [{ kind: "contact", children: [sph(-5), sph(5)] }, sph(0, undefined, 2)] } });
+    expect(nested.ownerRoot).toBe(-1);
+    expect(nested.warnings).toContain("implicit: a contact group nested inside other operations keeps approximate seams (a minimum gap and a soft pad); make it the top of the k.implicit for exact seams");
+    expect(nested.ir.nodes.find((n) => n.kind === "contact").exact).toBe(0);
+  });
+
+  test("evalBatchContact: same values as evalBatch, owner and cuts as defined", () => {
+    const c = exact(handSpec()), node = c.ir.nodes[c.ownerRoot], K = c.ownerK, N = 200;
+    const d = fullDecision(c), prog = emitProgram(c, d, 1.5);
+    let seed = 7; const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const X = new Float64Array(N), Y = new Float64Array(N), Z = new Float64Array(N);
+    for (let i = 0; i < N; i++) {
+      X[i] = c.bounds.min[0] + rnd() * (c.bounds.max[0] - c.bounds.min[0]);
+      Y[i] = c.bounds.min[1] + rnd() * (c.bounds.max[1] - c.bounds.min[1]);
+      Z[i] = c.bounds.min[2] + rnd() * (c.bounds.max[2] - c.bounds.min[2]);
+    }
+    const plain = new Float64Array(N), out = new Float64Array(N);
+    const cap = { K, owner: new Int32Array(N), cuts: new Float64Array(N * K), shares: new Float64Array(N * K) };
+    evalBatch(prog, c.textures, X, Y, Z, plain);
+    evalBatchContact(prog, c.textures, X, Y, Z, out, cap);
+    expect(Array.from(out)).toEqual(Array.from(plain));
+    const att = node.att, nA = att.length / ATTACH_STRIDE;
+    for (let i = 0; i < N; i++) {
+      let best = 0;
+      for (let k = 0; k < K; k++) {
+        expect(cap.shares[i * K + k]).toBeLessThanOrEqual(cap.cuts[i * K + k]);
+        if (cap.cuts[i * K + k] < cap.cuts[i * K + best]) best = k;
+      }
+      let inZone = false;
+      for (let a = 0; a < nA; a++) {
+        const o = a * ATTACH_STRIDE;
+        if (Math.hypot(X[i] - att[o + 2], Y[i] - att[o + 3], Z[i] - att[o + 4]) < att[o + 5] + att[o + 6]) inZone = true;
+      }
+      if (!inZone) expect(cap.owner[i]).toBe(best);
+      expect(cap.owner[i]).toBeGreaterThanOrEqual(0);
+    }
+    // At a finger's mcp anchor (attach weight 1) the palm (child 0) owns the point.
+    const o = ATTACH_STRIDE;   // attachment 1: the index finger's
+    const px = Float64Array.of(att[o + 2]), py = Float64Array.of(att[o + 3]), pz = Float64Array.of(att[o + 4]);
+    const one = { K, owner: new Int32Array(1) }, v = new Float64Array(1);
+    evalBatchContact(prog, c.textures, px, py, pz, v, one);
+    expect(one.owner[0]).toBe(0);
+  });
+
+  test("evalBatchContact: a pruned child reads +Infinity", () => {
+    const c = exact({ root: { kind: "contact", gap: 0.2, bulge: 0, children: [sph(-5.25), sph(5.25), { kind: "sphere", r: 2, at: [0, 0, 60] }] } });
+    const dec = blockDecision(c, -5.25, 0, 0, 0.5, undefined, 1).dec, prog = emitProgram(c, dec, 1);
+    const cap = { K: 3, cuts: new Float64Array(3), owner: new Int32Array(1) }, v = new Float64Array(1);
+    evalBatchContact(prog, c.textures, Float64Array.of(-5.25), Float64Array.of(0), Float64Array.of(0), v, cap);
+    expect(cap.cuts[2]).toBe(Infinity);
+    expect(cap.owner[0]).toBe(0);
   });
 });

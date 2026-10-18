@@ -15,7 +15,7 @@ import { resolveFrames, compose, invert, translation, rotation, axisVector, xfor
 import { compileExprSource } from "./expr-lower.js";
 import { makeTexture, checkTextureBudget } from "./textures.js";
 import { PRIM, WARP, roundConeParams, primLipschitz } from "./primitives.js";
-import { BULGE_DEFAULT, ATTACH_STRIDE, PAD_BLEND } from "./contact.js";
+import { BULGE_DEFAULT, ATTACH_STRIDE, PAD_BLEND, MAX_OWNER_K } from "./contact.js";
 import { contactRegions, regionDigest } from "./regions.js";
 import { ImplicitSpecError } from "./errors.js";
 
@@ -51,7 +51,9 @@ function warpBasis(axis = "z", toward) {
   return isIdentity(B) ? null : B;
 }
 
-export function lowerSpec(spec, { images = new Map() } = {}) {
+const NESTED_CONTACT_WARNING = "implicit: a contact group nested inside other operations keeps approximate seams (a minimum gap and a soft pad); make it the top of the k.implicit for exact seams";
+
+export function lowerSpec(spec, { images = new Map(), exactContact = false } = {}) {
   const frames = resolveFrames(spec.frames ?? {});
   const nodes = [];
   const textures = [], slotOf = new Map();
@@ -155,14 +157,19 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
           maxK = Math.max(maxK, e.k);
         });
         const G0 = minG(ids), Lk = Math.max(...ids.map((i) => nodes[i].L));
-        const n = { kind: "contact", children: ids, gap, bulge, fuse: gap === 0 ? 1 : 0, att };
+        // Exact seams belong to the contact node at the top of the spec (reached from the root
+        // through refs alone); a nested one keeps the approximate floor and pad fill.
+        const exact = exactContact && path === "root";
+        if (exactContact && !exact) warnings.push(NESTED_CONTACT_WARNING);
+        if (exact && ids.length > MAX_OWNER_K) throw new ImplicitSpecError(`${path}: an exact contact group takes at most ${MAX_OWNER_K} children (got ${ids.length})`);
+        const n = { kind: "contact", children: ids, gap, bulge, fuse: gap === 0 ? 1 : 0, att, exact: exact ? 1 : 0 };
         // The contact regions (regions.js), from the lowered children: per slot, the bulge
         // regions (BULGE_STRIDE each); per node, the pad fill's gate regions (FILL_STRIDE each).
         const found = contactRegions({ ir: { nodes }, textures }, n, path);
         n.regions = found.regions; n.fillRegions = found.fillRegions; n.L = Lk + found.Lb;
         warnings.push(...found.warnings);
         hasContact = true;
-        if (gap > 0) minGap = Math.min(minGap, gap);   // result.js warns when the grid cannot show it
+        if (gap > 0 && !exact) minGap = Math.min(minGap, gap);   // result.js warns when the grid cannot show it
         // A bulged piece's surface moves out by at most its Σ A (found.pad) over its growth G.
         // The attachments' unions dip k/4 below their pieces, a pad fill's blend PAD_BLEND/4.
         const dip = Math.max(maxK, found.fillRegions.length > 0 ? PAD_BLEND : 0) / 4;
@@ -250,7 +257,13 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
   checkTextureBudget(textures);
   const digests = textures.map((t) => t.digest);
   if (hasContact) digests.push(regionDigest(nodes));   // regions are part of the content hash
-  return { ir: { nodes, root }, textures, bounds: rb, thin: nodes[root].thin, minGap, hasExpr, detail, digests, warnings };
+  // The root-reachable contact node (through refs alone), whose children own the surface in exact mode.
+  let ownerRoot = root;
+  while (nodes[ownerRoot].kind === "ref") ownerRoot = nodes[ownerRoot].children[0];
+  if (nodes[ownerRoot].kind !== "contact" || !nodes[ownerRoot].exact) ownerRoot = -1;
+  else digests.push("exact-contact");   // the exact field is a different geometry
+  const ownerK = ownerRoot >= 0 ? nodes[ownerRoot].children.length : 0;
+  return { ir: { nodes, root }, ownerRoot, ownerK, textures, bounds: rb, thin: nodes[root].thin, minGap, hasExpr, detail, digests, warnings };
 }
 
 const AXIS_OF = { x: 0, y: 1, z: 2 };

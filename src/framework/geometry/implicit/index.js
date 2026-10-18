@@ -11,9 +11,9 @@ import { meshImplicitCore } from "../../core/implicit-core.js";
 
 export const IMPLICIT_DEFAULTS = Object.freeze({ resolution: 0.6, preview: 1.5 });
 
-export function compileImplicit(spec, { images = new Map() } = {}) {
+export function compileImplicit(spec, { images = new Map(), exactContact = false } = {}) {
   validateSpec(spec, { imageNames: new Set(images.keys()) });
-  return lowerSpec(spec, { images });   // contact regions are found while lowering (regions.js)
+  return lowerSpec(spec, { images, exactContact });   // contact regions are found while lowering (regions.js)
 }
 
 // planLeaves, then the rest on the native core when it is on (core/implicit-core.js —
@@ -23,7 +23,8 @@ export function compileImplicit(spec, { images = new Map() } = {}) {
 export function meshImplicit(compiled, edge, { tier } = {}) {
   const opts = tier === "preview" ? PREVIEW_CLEANUP : CLEANUP;
   const plan = planLeaves(compiled, edge);
-  const native = meshImplicitCore(compiled, edge, plan, opts);
+  // An exact-contact tree carries ops the native decoder does not know yet: JS answers.
+  const native = compiled.ownerRoot >= 0 ? null : meshImplicitCore(compiled, edge, plan, opts);
   if (native) return native;
   const store = evaluateLeaves(plan);
   let mesh = cleanupMesh(store, meshStore(store), opts);

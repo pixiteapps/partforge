@@ -3,7 +3,7 @@
 // bytecode interpreter must agree with it EXACTLY (tests hold them to it).
 import { xformPoint, xformDir } from "./frames.js";
 import { evalPrim, unionN, intersectN, warpPoint, mirrorPoint, sanitize, clampUnit } from "./primitives.js";
-import { contactValue, clearance, bulgeOffset, ATTACH_STRIDE, BULGE_STRIDE, FILL_STRIDE } from "./contact.js";
+import { contactValue, nodeClearance, bulgeOffset, ATTACH_STRIDE, BULGE_STRIDE, FILL_STRIDE } from "./contact.js";
 import { evalExprScalar } from "./expr-lower.js";
 import { sampleTexture } from "./textures.js";
 
@@ -38,7 +38,7 @@ function evalNode(c, id, x, y, z, edge, dep) {
         const d = evalNode(c, ch, x, y, z, edge, dep + 1), R = n.regions[i];
         v[i] = R.length ? d - bulgeOffset(R, 0, R.length / BULGE_STRIDE, x, y, z) : d;
       });
-      return contactValue(v, v.length, clearance(n.gap, edge), n.fuse, n.att, n.att.length / ATTACH_STRIDE, n.fillRegions, n.fillRegions.length / FILL_STRIDE, x, y, z);
+      return contactValue(v, v.length, nodeClearance(n, edge), n.fuse, n.att, n.att.length / ATTACH_STRIDE, n.fillRegions, n.fillRegions.length / FILL_STRIDE, x, y, z);
     }
     case "mirror": {
       const a = evalNode(c, n.children[0], x, y, z, edge, dep + 1), m = [0, 0, 0];

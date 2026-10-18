@@ -6,7 +6,7 @@ import { xformPoint, xformDir } from "./frames.js";
 import { evalPrim, warpPoint, mirrorPoint, sanitize } from "./primitives.js";
 import { evalExprScalar } from "./expr-lower.js";
 import { sampleTexture } from "./textures.js";
-import { clearance, contactInterval, attachWeightRange, bulgeRange, gateWeightRange, ATTACH_STRIDE, BULGE_STRIDE, FILL_STRIDE, FILL_BAND, PAD_BLEND } from "./contact.js";
+import { nodeClearance, contactInterval, attachWeightRange, bulgeRange, gateWeightRange, ATTACH_STRIDE, BULGE_STRIDE, FILL_STRIDE, FILL_BAND, PAD_BLEND } from "./contact.js";
 
 // Inheriting a parent's decision (planLeaves' child blocks). `parentDec` is the decision of
 // a ball that CONTAINS this one; a slot it pruned FIRMLY (`dec.firm[i]`) is not walked
@@ -120,7 +120,7 @@ function visit(c, id, x, y, z, r, pd, e) {
       // the ball, which nest as the ball shrinks), as the field bulges before it cuts. (d) With
       // fuse, every pad-fill region involving j has gate weight 0 over the ball (padded near
       // distance, as (c)); the emitter then drops those regions, as it drops attachments.
-      const N = n.children.length, cl = clearance(n.gap, e), att = n.att, nA = att.length / ATTACH_STRIDE;
+      const N = n.children.length, cl = nodeClearance(n, e), att = n.att, nA = att.length / ATTACH_STRIDE;
       const rs = new Array(N), lo = new Float64Array(N), hi = new Float64Array(N), off = [0, 0];
       for (let i = 0; i < N; i++) {
         if (skip(pd, i)) { rs[i] = null; continue; }

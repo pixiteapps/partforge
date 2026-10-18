@@ -7,7 +7,7 @@ import { xformPoint, xformDir } from "./frames.js";
 import { evalPrim, unionN, intersectN, warpPoint, mirrorPoint, sanitize, clampUnit } from "./primitives.js";
 import { UN, BIN, TER } from "./expr-lower.js";
 import { sampleTexture } from "./textures.js";
-import { contactValue, clearance, bulgeOffset, ATTACH_STRIDE, BULGE_STRIDE, FILL_STRIDE } from "./contact.js";
+import { contactValue, nodeClearance, bulgeOffset, ATTACH_STRIDE, BULGE_STRIDE, FILL_STRIDE } from "./contact.js";
 
 export const OP = Object.freeze({ END: 0, XFORM: 1, XDIR: 2, PRIM: 3, UNION: 4, INTER: 5, NEG: 6, MIN2: 7, MIRRORP: 8, ADDC: 9, ONION: 10, WARP: 11, DISP: 12, SANITIZE: 13, CONTACT: 14, BULGE: 15, GET: 20, CONST: 21, UN: 22, BIN: 23, TER: 24, TEX: 25 });
 export const UN_NAMES = Object.keys(UN), BIN_NAMES = Object.keys(BIN), TER_NAMES = Object.keys(TER);
@@ -50,6 +50,9 @@ export function emitExprProgram(L) {
 //     cl is clearance(gap, edge) baked in; ia/ib index the EMITTED slots; an attachment with
 //     a pruned side is dropped (its weight is 0 over the block — interval.js rule (c)), and
 //     so is a pad-fill region (its gate is 0 there — rule (d)). nF is 0 unless the node fuses.
+//     An EXACT node (the root contact under `exactContact`) has fuse = 2 and nF = 0, and
+//     appends one original child index per emitted slot after the fills (nK more values):
+//     evalBatchContact reads them to name each slot's owner. The native core knows nothing of fuse = 2.
 //   [BULGE, dst, src, p, nR, (cx, cy, cz, A, rho) × nR]   → src − bulgeOffset(...)
 //     emitted on a kept slot's register when that slot has regions, before CONTACT reads it.
 // `edge` is the grid edge the program is planned at (0, the default, is the bare gap).
@@ -85,16 +88,17 @@ export function emitProgram(compiled, dec, edge = 0) {
         return out;
       }
       case "contact": {
-        const vs = [], slot = new Array(d.kids.length).fill(-1);
+        const vs = [], kid = [], slot = new Array(d.kids.length).fill(-1);
         d.kids.forEach((kd, i) => {
           if (!kd) return;
           slot[i] = vs.length;
+          kid.push(i);
           let v = emit(kd, p);
           const R = n.regions[i];
           if (R.length) { const b = newV(); code.push(OP.BULGE, b, v, p, R.length / BULGE_STRIDE, ...R); v = b; }
           vs.push(v);
         });
-        if (vs.length === 1) return vs[0];
+        if (vs.length === 1 && !n.exact) return vs[0];   // an exact node still emits, so the lone owner is named
         const atts = [];
         for (let o = 0; o < n.att.length; o += ATTACH_STRIDE) {
           const ia = slot[n.att[o]], ib = slot[n.att[o + 1]];
@@ -108,7 +112,8 @@ export function emitProgram(compiled, dec, edge = 0) {
           if (ia < 0 || ib < 0) continue;
           fills.push(ia, ib, ...F.subarray(o + 2, o + FILL_STRIDE));
         }
-        code.push(OP.CONTACT, out, p, clearance(n.gap, edge), n.fuse, vs.length, atts.length / ATTACH_STRIDE, ...vs, ...atts, fills.length / FILL_STRIDE, ...fills);
+        code.push(OP.CONTACT, out, p, nodeClearance(n, edge), n.exact ? 2 : n.fuse, vs.length, atts.length / ATTACH_STRIDE, ...vs, ...atts, fills.length / FILL_STRIDE, ...fills);
+        if (n.exact) code.push(...kid);
         return out;
       }
       case "mirror": {
@@ -151,7 +156,9 @@ const tmp = [0, 0, 0];
 let gather = new Float64Array(64);   // UNION/INTER/CONTACT operand gather, grown on demand
 let cScratch = new Float64Array(64), wScratch = new Float64Array(64);   // CONTACT's per-slot and per-attachment scratch
 
-export function runProgram(prog, textures, X, Y, Z, n, out) {
+// `cap` (evalBatchContact's capture; null on the hot path) receives the exact contact op's
+// per-child cut values and owner for these lanes, written at lane offset `off`.
+export function runProgram(prog, textures, X, Y, Z, n, out, cap = null, off = 0) {
   if (n > BATCH) throw new Error(`implicit: runProgram takes at most ${BATCH} lanes (got ${n})`);
   const nP = prog[0], nV = prog[1];
   ensure(PX, nP); ensure(PY, nP); ensure(PZ, nP); ensure(V, nV);
@@ -197,8 +204,9 @@ export function runProgram(prog, textures, X, Y, Z, n, out) {
         for (let i = 0; i < n; i++) {
           for (let j = 0; j < cnt; j++) g[j] = V[prog[pc + 7 + j]][i];
           dv[i] = contactValue(g, cnt, cl, fuse, att, nA, F, nF, sx[i], sy[i], sz[i], wScratch, cScratch);
+          if (cap !== null && fuse === 2) captureOwner(cap, off + i, prog.subarray(fo + 1 + nF * FILL_STRIDE, fo + 1 + nF * FILL_STRIDE + cnt), cnt, att, nA, g);
         }
-        pc = fo + 1 + nF * FILL_STRIDE; break;
+        pc = fo + 1 + nF * FILL_STRIDE + (fuse === 2 ? cnt : 0); break;
       }
       case OP.BULGE: {
         const dv = V[prog[pc + 1]], src = V[prog[pc + 2]], s = prog[pc + 3], nR = prog[pc + 4];
@@ -238,6 +246,58 @@ export function runProgram(prog, textures, X, Y, Z, n, out) {
       }
       default: throw new Error(`implicit: bad opcode ${op} at ${pc}`);
     }
+  }
+}
+
+// One lane of the exact contact op's capture, from the scratch contactValue just filled:
+// cScratch[j] the emitted slot j's cut value, wScratch[a] the attachment weights; `kid[j]`
+// is slot j's original child index, `g` scratch for the blend operands.
+function captureOwner(cap, lane, kid, cnt, att, nA, g) {
+  const K = cap.K, q = lane * K;
+  let best = 0;
+  for (let j = 0; j < cnt; j++) {
+    if (cap.cuts) cap.cuts[q + kid[j]] = cScratch[j];
+    if (cap.shares) cap.shares[q + kid[j]] = cScratch[j];
+    if (cScratch[j] < cScratch[best]) best = j;
+  }
+  let owner = kid[best];
+  for (let a = 0; a < nA; a++) {   // a blend lowers both of its pieces' shares
+    const o = a * ATTACH_STRIDE, kk = att[o + 7] * wScratch[a];
+    if (!(wScratch[a] > 0) || !(kk > 0)) continue;
+    g[0] = cScratch[att[o]]; g[1] = cScratch[att[o + 1]];
+    const u = unionN(g, 2, kk);
+    if (cap.shares) for (const j of [att[o], att[o + 1]]) { const s = q + kid[j]; if (u < cap.shares[s]) cap.shares[s] = u; }
+  }
+  if (cap.owner) {
+    // Overlapping attachment zones merge to the lesser child of the pair holding the owner, until stable.
+    for (let moved = true; moved;) {
+      moved = false;
+      for (let a = 0; a < nA; a++) {
+        if (!(wScratch[a] > 0)) continue;
+        const o = a * ATTACH_STRIDE, ka = kid[att[o]], kb = kid[att[o + 1]];
+        if ((ka === owner || kb === owner) && Math.min(ka, kb) < owner) { owner = Math.min(ka, kb); moved = true; }
+      }
+    }
+    cap.owner[lane] = owner;
+  }
+}
+
+/**
+ * evalBatch for a program holding an exact contact op, also capturing per point (into `cap`,
+ * whichever arrays are present; K the child count): `owner[i]` (the argmin child of the cuts,
+ * merged to the lesser child across attachment zones — never AIR, the caller applies the
+ * sign), `cuts[i·K + child]` (each child's cut value, +Infinity for a pruned child) and
+ * `shares` (the cut lowered by any attachment blend the child takes part in). `out` is
+ * bit-identical to evalBatch's.
+ */
+export function evalBatchContact(prog, textures, X, Y, Z, out, cap) {
+  const N = X.length;
+  if (cap.owner) cap.owner.fill(-1);
+  if (cap.cuts) cap.cuts.fill(Infinity);
+  if (cap.shares) cap.shares.fill(Infinity);
+  for (let s = 0; s < N; s += BATCH) {
+    const n = Math.min(BATCH, N - s);
+    runProgram(prog, textures, X.subarray(s, s + n), Y.subarray(s, s + n), Z.subarray(s, s + n), n, out.subarray(s, s + n), cap, s);
   }
 }
 
