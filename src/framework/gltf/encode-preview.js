@@ -33,7 +33,30 @@
 //  - each material from cadAppearance — the CAD look the viewer itself draws —
 //    and each node's extras carrying the sub-part's own `display` block, so a
 //    part-less viewer (mountPreview) can rebuild the exact look, realistic too
-//  - top-level extras { partforgeView, partforgeEncoder, partforgeMeta? }
+//  - top-level extras { partforgeView, partforgeEncoder, partforgeMeta?,
+//    partforgeAnimation? }
+//  - an `animation` (samplePreviewAnimation's output, version 4) adds:
+//      * every sampled sub-part node's rest TRS = rel(0), where
+//        rel(t) = M(t) · base⁻¹ carries the mesh from the pose baked into its
+//        positions to the pose at normalized time t. TRS is in the root's local
+//        frame, which is the part's Z-up model frame, so no frame change.
+//      * one glTF animation named anim.name, holding a LINEAR `translation` and
+//        `rotation` channel (input in SECONDS, t · totalDuration) for each
+//        sub-part whose rel(t) differs from rel(0) beyond 1e-6 — none at all
+//        when nothing moves (a camera-only animation). Consecutive quaternions
+//        share a hemisphere, so LINEAR blending never takes the long way round.
+//        An animated node's mesh sits on an unnamed child node (quantize()
+//        moves it there to keep the dequantization off the animated TRS).
+//      * partforgeAnimation = { name, label, loop, duration (seconds), cues
+//        (verbatim), steps: [{ label, start (normalized), duration (seconds) }],
+//        animated (names with channels, mesh order), opacity: { <sub>: [[t, v],
+//        …] } } — t normalized, one pair per sample that names the sub-part (a
+//        sample that omits it contributes no pair; a reader interpolates).
+//    The samples are refused unless every pose is rigid (RᵀR = I, det = +1,
+//    within 1e-6), they run from t = 0 to t = 1, every sample poses the same
+//    sub-parts, and each of those (and each `base` entry) has a non-empty mesh.
+//    Meshopt filters the channels (translation EXPONENTIAL 12 bits, rotation
+//    QUATERNION 16 bits): lossy at about 1/4096 relative.
 //  - weld() → reorder() → quantize() → EXT_meshopt_compression ("medium",
 //    i.e. what meshopt({ level: "medium" }) does), 5–8 bytes a triangle, the
 //    recipe measured in partforge-cloud's local_glb_benchmark.md. The line
@@ -55,8 +78,11 @@ import { EXTMeshoptCompression, KHRMeshQuantization } from "@gltf-transform/exte
 import { quantize, reorder, weld } from "@gltf-transform/functions";
 import { MeshoptEncoder } from "meshoptimizer/encoder";
 import { cadAppearance, DISPLAY_KEYS } from "../materials/resolve.js";
+import { invertRigid, mulMat4 } from "../geometry/pose.js";
 
-export const PREVIEW_ENCODER_VERSION = 3; // 2: feature edges as a LINES primitive; 3: sharing the surface's vertices
+// 2: feature edges as a LINES primitive; 3: sharing the surface's vertices;
+// 4: animation channels + partforgeAnimation extras
+export const PREVIEW_ENCODER_VERSION = 4;
 
 // −90° about X as [x, y, z, w]: model (x, y, z) → glTF (x, z, −y), the viewer's pivot.
 const Z_UP_TO_Y_UP = [-Math.SQRT1_2, 0, 0, Math.SQRT1_2];
@@ -278,10 +304,152 @@ function checkMesh(m, seen) {
   }
 }
 
-export async function encodePreviewGlb({ meshes, part = null, view = null } = {}) {
+// ── The baked animation (version 4) ─────────────────────────────────────────
+
+const RIGID_TOL = 1e-6;
+const MOVES_TOL = 1e-6;
+
+function isRigid(m) {
+  if (!Array.isArray(m) && !ArrayBuffer.isView(m)) return false;
+  if (m.length !== 16 || !Array.prototype.every.call(m, Number.isFinite)) return false;
+  if (Math.abs(m[3]) > RIGID_TOL || Math.abs(m[7]) > RIGID_TOL || Math.abs(m[11]) > RIGID_TOL || Math.abs(m[15] - 1) > RIGID_TOL) return false;
+  const col = (c) => [m[c * 4], m[c * 4 + 1], m[c * 4 + 2]];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cols = [col(0), col(1), col(2)];
+  for (let i = 0; i < 3; i++) {
+    for (let j = 0; j < 3; j++) if (Math.abs(dot(cols[i], cols[j]) - (i === j ? 1 : 0)) > RIGID_TOL) return false;
+  }
+  const [a, b, c] = cols;
+  const det = a[0] * (b[1] * c[2] - b[2] * c[1]) - b[0] * (a[1] * c[2] - a[2] * c[1]) + c[0] * (a[1] * b[2] - a[2] * b[1]);
+  return Math.abs(det - 1) <= RIGID_TOL;
+}
+
+// Refuse what the file could not carry faithfully; returns the sampled names
+// in mesh order. `drawn` is the set of names with a non-empty mesh.
+function checkAnimation(animation, meshes, drawn) {
+  const { anim, samples, base } = animation;
+  if (!anim || typeof anim !== "object" || typeof anim.name !== "string") throw new TypeError("encodePreviewGlb: animation.anim must be a normalized animation");
+  if (!(Number.isFinite(anim.totalDuration) && anim.totalDuration > 0)) throw new Error("encodePreviewGlb: animation duration must be a positive number");
+  if (!base || typeof base !== "object") throw new TypeError("encodePreviewGlb: animation.base must map sub-parts to matrices");
+  if (!Array.isArray(samples) || samples.length < 2) throw new Error("encodePreviewGlb: animation samples must run from t = 0 to t = 1");
+  if (samples[0].t !== 0) throw new Error("encodePreviewGlb: animation samples must start at t = 0");
+  if (samples.at(-1).t !== 1) throw new Error("encodePreviewGlb: animation samples must end at t = 1");
+  for (let i = 1; i < samples.length; i++) {
+    if (!(samples[i].t > samples[i - 1].t)) throw new Error("encodePreviewGlb: animation sample times must increase");
+  }
+  const names = new Set();
+  for (const s of samples) for (const name of Object.keys(s.poses ?? {})) names.add(name);
+  for (const name of [...names, ...Object.keys(base)]) {
+    if (!drawn.has(name)) throw new Error(`encodePreviewGlb: animation names "${name}", which has no mesh`);
+  }
+  for (const name of names) {
+    if (!isRigid(base[name])) {
+      if (base[name] == null) throw new Error(`encodePreviewGlb: animation has no base pose for "${name}"`);
+      throw new Error(`encodePreviewGlb: "${name}" base pose is not a rigid motion`);
+    }
+    for (const s of samples) {
+      const m = s.poses?.[name];
+      if (m == null) throw new Error(`encodePreviewGlb: animation sample at t=${s.t} has no pose for "${name}"`);
+      if (!isRigid(m)) throw new Error(`encodePreviewGlb: "${name}" pose at t=${s.t} is not a rigid motion`);
+    }
+  }
+  return meshes.map((m) => m.name).filter((name) => names.has(name)); // names are unique (checkMesh)
+}
+
+// rel = M · base⁻¹: the motion from the baked pose to M.
+const relativePose = (m, base) => mulMat4(Array.from(m), invertRigid(Array.from(base)));
+
+// Unit quaternion [x, y, z, w] of a rigid matrix's rotation block (Shepperd).
+function quaternionOf(m) {
+  const at = (r, c) => m[c * 4 + r];
+  const trace = at(0, 0) + at(1, 1) + at(2, 2);
+  let q;
+  if (trace > 0) {
+    const s = Math.sqrt(trace + 1) * 2;
+    q = [(at(2, 1) - at(1, 2)) / s, (at(0, 2) - at(2, 0)) / s, (at(1, 0) - at(0, 1)) / s, s / 4];
+  } else if (at(0, 0) > at(1, 1) && at(0, 0) > at(2, 2)) {
+    const s = Math.sqrt(1 + at(0, 0) - at(1, 1) - at(2, 2)) * 2;
+    q = [s / 4, (at(0, 1) + at(1, 0)) / s, (at(0, 2) + at(2, 0)) / s, (at(2, 1) - at(1, 2)) / s];
+  } else if (at(1, 1) > at(2, 2)) {
+    const s = Math.sqrt(1 + at(1, 1) - at(0, 0) - at(2, 2)) * 2;
+    q = [(at(0, 1) + at(1, 0)) / s, s / 4, (at(1, 2) + at(2, 1)) / s, (at(0, 2) - at(2, 0)) / s];
+  } else {
+    const s = Math.sqrt(1 + at(2, 2) - at(0, 0) - at(1, 1)) * 2;
+    q = [(at(0, 2) + at(2, 0)) / s, (at(1, 2) + at(2, 1)) / s, s / 4, (at(1, 0) - at(0, 1)) / s];
+  }
+  const len = Math.hypot(...q);
+  return q.map((v) => v / len);
+}
+
+// Per sampled sub-part: the rest TRS (rel(0)) and, when it moves, the keyframes.
+function animationTracks(animation, names) {
+  const { samples, base } = animation;
+  const tracks = new Map();
+  for (const name of names) {
+    const rels = samples.map((s) => relativePose(s.poses[name], base[name]));
+    const moves = rels.some((r) => r.some((v, i) => Math.abs(v - rels[0][i]) > MOVES_TOL));
+    const rotations = [];
+    for (const r of rels) {
+      const q = quaternionOf(r);
+      const prev = rotations.at(-1);
+      if (prev && q[0] * prev[0] + q[1] * prev[1] + q[2] * prev[2] + q[3] * prev[3] < 0) for (let k = 0; k < 4; k++) q[k] = -q[k];
+      rotations.push(q);
+    }
+    tracks.set(name, {
+      rest: { translation: [rels[0][12], rels[0][13], rels[0][14]], rotation: rotations[0] },
+      keys: moves ? { translations: rels.map((r) => [r[12], r[13], r[14]]), rotations } : null,
+    });
+  }
+  return tracks;
+}
+
+// The glTF animation: one sampler pair per moving sub-part, sharing one input.
+// Returns the names that got channels.
+function writeAnimation(doc, buffer, nodesByName, animation, tracks) {
+  const moving = [...tracks].filter(([, track]) => track.keys);
+  if (!moving.length) return [];
+  const { anim, samples } = animation;
+  const times = doc.createAccessor().setType("SCALAR")
+    .setArray(Float32Array.from(samples, (s) => s.t * anim.totalDuration)).setBuffer(buffer);
+  const gltfAnimation = doc.createAnimation(anim.name);
+  for (const [name, { keys }] of moving) {
+    for (const [path, type, values] of [["translation", "VEC3", keys.translations], ["rotation", "VEC4", keys.rotations]]) {
+      const sampler = doc.createAnimationSampler().setInput(times).setInterpolation("LINEAR")
+        .setOutput(doc.createAccessor().setType(type).setArray(Float32Array.from(values.flat())).setBuffer(buffer));
+      gltfAnimation.addSampler(sampler).addChannel(doc.createAnimationChannel()
+        .setTargetNode(nodesByName.get(name)).setTargetPath(path).setSampler(sampler));
+    }
+  }
+  return moving.map(([name]) => name);
+}
+
+// The partforgeAnimation extra: everything a viewer needs beyond the channels.
+function animationExtras(animation, animated) {
+  const { anim, samples } = animation;
+  const opacity = {};
+  for (const s of samples) {
+    for (const [name, v] of Object.entries(s.opacity ?? {})) {
+      if (Number.isFinite(v)) (opacity[name] ??= []).push([s.t, v]);
+    }
+  }
+  return {
+    name: anim.name,
+    label: anim.label ?? null,
+    loop: !!anim.loop,
+    duration: anim.totalDuration,
+    cues: anim.cues ?? [],
+    opacity,
+    steps: (anim.steps ?? []).map((step, i) => ({ label: step.label ?? null, start: anim.stepStarts[i], duration: step.duration })),
+    animated,
+  };
+}
+
+export async function encodePreviewGlb({ meshes, part = null, view = null, animation = null } = {}) {
   if (!Array.isArray(meshes) || meshes.length === 0) throw new TypeError("encodePreviewGlb: meshes must be a non-empty array");
   const seen = new Set();
   for (const m of meshes) checkMesh(m, seen);
+  const drawn = new Set(meshes.filter((m) => m.positions.length > 0).map((m) => m.name));
+  const tracks = animation ? animationTracks(animation, checkAnimation(animation, meshes, drawn)) : null;
   try {
     await (encoderReady ??= MeshoptEncoder.ready);
   } catch (error) {
@@ -297,13 +465,9 @@ export async function encodePreviewGlb({ meshes, part = null, view = null } = {}
   const root = doc.createNode("partforge").setRotation(Z_UP_TO_Y_UP);
   scene.addChild(root);
   const meta = metaExtras(part?.meta);
-  doc.getRoot().setExtras({
-    partforgeView: viewName,
-    partforgeEncoder: PREVIEW_ENCODER_VERSION,
-    ...(meta ? { partforgeMeta: meta } : {}),
-  });
 
   const pending = []; // { mesh, surface, edges } — line primitives to add after quantize()
+  const nodesByName = new Map();
   for (const m of meshes) {
     if (m.positions.length === 0) continue; // glTF forbids a zero-count accessor
     // Copies throughout: setArray keeps the array it is handed, and the
@@ -326,11 +490,23 @@ export async function encodePreviewGlb({ meshes, part = null, view = null } = {}
     const mesh = doc.createMesh(m.name).addPrimitive(prim);
     if (m.edges?.length) pending.push({ mesh, surface: prim, edges: Float32Array.from(m.edges) });
     const extras = displayExtras(display);
-    root.addChild(doc.createNode(m.name)
+    const node = doc.createNode(m.name)
       .setMesh(mesh)
-      .setExtras(extras ? { partforgeSubPart: m.name, partforgeDisplay: extras } : { partforgeSubPart: m.name }));
+      .setExtras(extras ? { partforgeSubPart: m.name, partforgeDisplay: extras } : { partforgeSubPart: m.name });
+    const rest = tracks?.get(m.name)?.rest;
+    if (rest) node.setTranslation(rest.translation).setRotation(rest.rotation); // before the fallback's `before` snapshot
+    nodesByName.set(m.name, node);
+    root.addChild(node);
   }
   if (root.listChildren().length === 0) throw new Error("encodePreviewGlb: every mesh was empty");
+  // Channels before quantize(), which then keeps the dequantization off the animated nodes.
+  const animated = tracks ? writeAnimation(doc, buffer, nodesByName, animation, tracks) : null;
+  doc.getRoot().setExtras({
+    partforgeView: viewName,
+    partforgeEncoder: PREVIEW_ENCODER_VERSION,
+    ...(meta ? { partforgeMeta: meta } : {}),
+    ...(tracks ? { partforgeAnimation: animationExtras(animation, animated) } : {}),
+  });
 
   // The surfaces alone through weld + reorder: their vertex arrays are final after this.
   await doc.transform(weld(), reorder({ encoder: MeshoptEncoder, target: "size" }));
