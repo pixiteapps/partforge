@@ -45,6 +45,10 @@ export const clearance = (gap, edge) => Math.max(gap, C_MIN_CELLS * edge);
 // Exact contact (a root contact node compiled with `exactContact`): no floor, no pad fill.
 /** At gap 0 the cut sits this far (mm) past the bisector, so the two pieces overlap by a hair and fuse into one shell with a crisp crease. */
 export const CONTACT_OVERLAP = 0.02;
+/** A crease split within this fraction of an edge from an end moves that end instead of adding a vertex (crease.js). */
+export const CREASE_SNAP = 0.15;
+/** A crease point whose field or cut difference is still off by more than this (× edge) goes back where it was (crease.js). */
+export const CREASE_TOL = 0.02;
 /** The exact clearance: the declared gap itself; at gap 0 a small negative (the pieces overlap by CONTACT_OVERLAP). */
 export const clearanceExact = (gap) => (gap > 0 ? gap : -CONTACT_OVERLAP);
 /** A contact node's clearance at grid edge `edge`: exact nodes ignore the grid. */
