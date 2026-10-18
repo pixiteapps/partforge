@@ -56,7 +56,14 @@ vi.mock("../../src/framework/pick-request/index.js", async () => ({
 const viewers = vi.hoisted(() => []);
 vi.mock("../../src/framework/viewer.js", async (importOriginal) => {
   const real = await importOriginal();
-  return { ...real, createViewer: (...args) => { const v = real.createViewer(...args); viewers.push(v); return v; } };
+  // setSubPose is wrapped in a spy before anyone holds the viewer, so a test can
+  // tell "no pose was ever set" from "the identity pose was set".
+  return { ...real, createViewer: (...args) => {
+    const v = real.createViewer(...args);
+    v.setSubPose = vi.fn(v.setSubPose);
+    viewers.push(v);
+    return v;
+  } };
 });
 
 import { mount } from "../../src/framework/mount.js";
@@ -65,7 +72,7 @@ import { decodePreviewGlb } from "../../src/framework/gltf/decode-preview.js";
 import { cameraPoseForView } from "../../src/framework/view-angles.js";
 import { encodePreviewGlb } from "../../src/framework/gltf/encode-preview.js";
 import { boxEdges, boxSoup, boundsOf, previewGlbFor, segmentMismatch } from "../helpers/preview-glb.js";
-import { box, input } from "../helpers/preview-animation-fixture.js";
+import { box, input, T } from "../helpers/preview-animation-fixture.js";
 
 const OriginalResizeObserver = globalThis.ResizeObserver;
 
@@ -385,16 +392,25 @@ test("a still file has no animation handle", async () => {
   handle.dispose();
 });
 
-test("under prefers-reduced-motion the player never starts", async () => {
+test("under prefers-reduced-motion the player never starts: no pose, and a faded-in sub-part stays drawn", async () => {
   const matchMedia = vi.fn((query) => ({ matches: query === "(prefers-reduced-motion: reduce)", media: query }));
   vi.stubGlobal("matchMedia", matchMedia);
-  const handle = mountPreview(makeStage(), { glb: await animatedGlb() });
+  // An assemble-style file: the lid fades in from nothing.
+  const a = input();
+  a.samples[0].opacity = { lid: 0 };
+  a.samples[1].opacity = { lid: 0.5 };
+  a.samples[2].opacity = { lid: 1 };
+  const handle = mountPreview(makeStage(), { glb: await encodePreviewGlb({ meshes: [box("base"), box("lid", 24)], view: "box", animation: a }) });
   await handle.ready;
   expect(matchMedia).toHaveBeenCalledWith("(prefers-reduced-motion: reduce)");
   expect(handle.animation.state().status).toBe("idle");
   runFrames(1.5);
   expect(handle.animation.state()).toEqual({ status: "idle", t: 0 });
-  expect([...viewers.at(-1).__subMesh("lid").matrix.elements]).toEqual(IDENTITY);
+  const lid = viewers.at(-1).__subMesh("lid");
+  expect(lid.visible).toBe(true);              // never faded to 0
+  expect(lid.material.opacity ?? 1).toBe(1);
+  expect(viewers.at(-1).setSubPose).not.toHaveBeenCalled();
+  expect([...lid.matrix.elements]).toEqual(IDENTITY);
   handle.dispose();
 });
 
@@ -406,8 +422,51 @@ test("dispose stops the player", async () => {
   const animation = handle.animation;
   const { t } = animation.state();
   handle.dispose();
+  expect(handle.animation).toBeNull(); // the disposed player's controls are not handed out
   for (let i = 0; i < 10; i++) loop((clockMs += 100));
   expect(animation.state().t).toBe(t);
+});
+
+test("parking (setActive(false)) pauses the player; unparking resumes it", async () => {
+  const handle = mountPreview(makeStage(), { glb: await animatedGlb() });
+  await handle.ready;
+  runFrames(0.8); // past the intro
+  runFrames(0.3);
+  const t1 = handle.animation.state().t;
+  expect(t1).toBeGreaterThan(0);
+  handle.setActive(false);
+  expect(state.renderer.animationLoop).toBeNull(); // the viewer's frame loop, and the player's clock, stop
+  clockMs += 5000;                                  // time passes while parked
+  expect(handle.animation.state().t).toBe(t1);
+  handle.setActive(true);
+  expect(handle.animation.state().t).toBe(t1);
+  runFrames(0.3);
+  const t2 = handle.animation.state().t;
+  expect(t2).toBeGreaterThan(t1);
+  expect(t2 - t1).toBeLessThan(0.3); // resumed where it was, not jumped by the parked seconds
+  handle.dispose();
+});
+
+test("a cue-only animation moves the camera over a still model", async () => {
+  const a = input();
+  for (const s of a.samples) s.poses.lid = T(24); // nothing moves
+  a.anim = { ...a.anim, cues: [{ t: 0, view: "front", sweep: null }, { t: 0.5, view: "top", sweep: 0.3 }] };
+  const handle = mountPreview(makeStage(), { glb: await encodePreviewGlb({ meshes: [box("base"), box("lid", 24)], view: "box", animation: a }) });
+  await handle.ready;
+  const v = viewers.at(-1);
+  v.setSubPose.mockClear();
+  const dir = () => { const c = handle.getViewerState().camera; const d = c.pos.map((x, i) => x - c.target[i]); const n = Math.hypot(...d); return d.map((x) => x / n); };
+  runFrames(0.8); // the intro tween to "front" lands
+  const atFront = dir();
+  runFrames(1.5); // crosses t = 0.5: a 0.3s sweep to "top"
+  const atTop = dir();
+  expect(Math.hypot(...atTop.map((x, i) => x - atFront[i]))).toBeGreaterThan(0.5);
+  const top = cameraPoseForView("top", { center: [0, 0, 0], radius: 1 });
+  const unit = (d) => { const n = Math.hypot(...d); return d.map((x) => x / n); };
+  expectNear(atTop, unit(top.position.map((c, i) => c - top.target[i])), 3);
+  expect(v.setSubPose).not.toHaveBeenCalled();
+  for (const name of ["base", "lid"]) expect([...v.__subMesh(name).matrix.elements]).toEqual(IDENTITY);
+  handle.dispose();
 });
 
 // The hinged box's `cycle` is the box view's autoplay animation and drives only
@@ -449,4 +508,54 @@ test("exportPreview carries no animation when a tracked param is read by build()
   expect(out.view).toBe("box");
   expect(out.animation).toBeNull();
   runtime.dispose();
+});
+
+test("an export taken mid-autoplay (lidAngle 50, a non-identity rest) plays back where place(t) puts the lid", async () => {
+  const { default: hingedBox } = await import("../../src/parts/hinged-box.js");
+  const { viewAnimations, evaluate } = await import("../../src/framework/animation.js");
+  const { probePoses } = await import("../../src/framework/pose-probe.js");
+  const { composePose, invertRigid } = await import("../../src/framework/geometry/pose.js");
+  const { createPreviewPlayer } = await import("../../src/framework/preview-player.js");
+  const runtime = await mountHingedBox(hingedBox);
+  runtime.setParams({ lidAngle: 50 }); // place-only: posed by matrix, no rebuild
+  const d = await decodePreviewGlb(await runtime.exportPreview());
+  runtime.dispose();
+  expect(d.animation?.animated).toEqual(["lid"]);
+  // The file was baked at 50° but opens at the cycle's t = 0 (closed): rest ≠ I.
+  expect(Math.max(...d.animation.rest.lid.map((v, i) => Math.abs(v - IDENTITY[i])))).toBeGreaterThan(0.1);
+
+  const anim = viewAnimations(hingedBox).get("box").find((a) => a.autoplay);
+  const placeAt = (t) => composePose(probePoses(hingedBox, "box",
+    { ...hingedBox.defaults, lidAngle: 50, ...evaluate(anim, t).values }, { scope: "place" }).get("lid").pose);
+  const xf = (m, p) => [0, 1, 2].map((r) => m[r] * p[0] + m[4 + r] * p[1] + m[8 + r] * p[2] + m[12 + r]);
+  const lid = d.meshes.find((m) => m.name === "lid").positions;
+  const verts = [];
+  for (let i = 0; i < lid.length; i += 3) verts.push([lid[i], lid[i + 1], lid[i + 2]]);
+  // The meshes decode at the opening pose: every vertex is place(0) · a corner of the canonical 60×40×2 plate.
+  const open = invertRigid(placeAt(0));
+  for (const q of verts) {
+    const c = xf(open, q);
+    [[0, 60], [0, 40], [0, 2]].forEach((ends, a) => expect(Math.min(...ends.map((e) => Math.abs(c[a] - e))), `corner axis ${a}`).toBeLessThan(0.05));
+  }
+  // Played with a fake viewer: pose(t) · opening position = place(t) · canonical, within 0.05 mm.
+  const poses = {};
+  let frame = null;
+  const fake = { setSubPose: (n, m) => { poses[n] = m; }, setSubPartOpacity() {}, tweenCameraTo() {}, holdGround() {},
+    onFrame: (cb) => { frame = cb; return () => {}; }, onCameraStart: () => () => {} };
+  const player = createPreviewPlayer(fake, { ...d.animation, cues: [] });
+  player.start();
+  let maxErr = 0, sawMid = false;
+  for (let k = 0; k < 16; k++) {
+    if (k) frame(0.1);
+    const { t } = player.state();
+    if (Math.abs(t - 0.5) < 0.05) sawMid = true;
+    const M = placeAt(t);
+    for (const q of verts) {
+      const got = xf(poses.lid, q);
+      const want = xf(M, xf(open, q));
+      maxErr = Math.max(maxErr, Math.hypot(got[0] - want[0], got[1] - want[1], got[2] - want[2]));
+    }
+  }
+  expect(sawMid).toBe(true);
+  expect(maxErr).toBeLessThan(0.05);
 });

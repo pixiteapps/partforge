@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import hingedBox from "../src/parts/hinged-box.js";
 import { samplePreviewAnimation, PREVIEW_SAMPLE_CAP } from "../src/framework/preview-animation.js";
-import { composePose } from "../src/framework/geometry/pose.js";
+import { composePose, isRigid } from "../src/framework/geometry/pose.js";
 
 const allReads = (part) => () => new Set(["width", "depth", "height", "wall"]); // the hinged box's build reads
 // structuredClone refuses functions, so clone the two levels the tests patch by hand.
@@ -76,4 +76,37 @@ test("a long animation is capped at PREVIEW_SAMPLE_CAP samples", () => {
   const out = samplePreviewAnimation(part, "box", {}, { buildReads: allReads(part) });
   expect(out.samples.length).toBeLessThanOrEqual(PREVIEW_SAMPLE_CAP);
   expect(out.samples.at(-1).t).toBe(1);
+});
+
+test("base is place() alone: a build() ending in its own translate() leaves it out", () => {
+  // The sampler reads the PLACE-scope probe. The full scope would fold the
+  // build's trailing translate into the pose, and the file (positions = base ·
+  // build) would then apply it twice. The round trip is pinned in
+  // test/framework/gltf-decode-animation.test.js.
+  const part = withLid({ build: (k, p) => k.box({ min: [0, 0, 0], max: [p.width, p.depth, p.wall] }).translate([5, 3, 0]) });
+  const out = samplePreviewAnimation(part, "box", {}, { buildReads: allReads(part) });
+  const round = (m) => m.map((v) => +v.toFixed(6) + 0);
+  expect(round(out.base.lid)).toEqual(round(composePose([{ t: "translate", v: [0, 0, 24] }])));
+  const mid = out.samples.find((s) => Math.abs(s.t - 0.5) < 1e-9);
+  expect(round(mid.poses.lid)).toEqual(round(composePose([
+    { t: "translate", v: [0, 0, 24] }, { t: "rotate", deg: -110, center: [0, 40, 24], axis: [1, 0, 0] }, { t: "translate", v: [0, 0, 0] },
+  ])));
+});
+
+// The sampler's output must always pass the encoder's refusals: an encoder throw
+// costs the forge its whole preview, a null only its motion.
+test.each([["a string", "slow"], ["NaN", NaN]])("a step whose duration is %s is not bakeable", (_, duration) => {
+  const part = withAnimations({ spin: { autoplay: true, steps: [{ label: "a", duration, tracks: { lidAngle: [[0, 0], [1, 30]] } }] } });
+  expect(samplePreviewAnimation(part, "box", {}, { buildReads: allReads(part) })).toBeNull();
+});
+
+test("a place() rotating about a zero-length axis is not bakeable", () => {
+  const part = withLid({ views: { box: (s, p) => s.translate([0, 0, p.height]).rotate(-p.lidAngle, [0, p.depth, p.height], [0, 0, 0]) } });
+  expect(samplePreviewAnimation(part, "box", {}, { buildReads: allReads(part) })).toBeNull();
+});
+
+test("every pose the sampler returns passes the encoder's rigidity test", () => {
+  const out = samplePreviewAnimation(hingedBox, "box", {}, { buildReads: allReads(hingedBox) });
+  for (const s of out.samples) for (const m of Object.values(s.poses)) expect(isRigid(m)).toBe(true);
+  for (const m of Object.values(out.base)) expect(isRigid(m)).toBe(true);
 });

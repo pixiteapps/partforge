@@ -3,10 +3,17 @@
 // back as model-frame keyframes, the rest pose baked into the positions, and the
 // sub-part's name / display found above the child node quantize() puts the mesh on.
 import { Matrix4, Quaternion } from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { expect, test } from "vitest";
 import { encodePreviewGlb } from "../../src/framework/gltf/encode-preview.js";
 import { decodePreviewGlb } from "../../src/framework/gltf/decode-preview.js";
-import { invertRigid, mulMat4 } from "../../src/framework/geometry/pose.js";
+import { composePose, invertRigid, mulMat4 } from "../../src/framework/geometry/pose.js";
+import { samplePreviewAnimation } from "../../src/framework/preview-animation.js";
+import { createPreviewPlayer } from "../../src/framework/preview-player.js";
+import { evaluate } from "../../src/framework/animation.js";
+import { probePoses } from "../../src/framework/pose-probe.js";
+import hingedBox from "../../src/parts/hinged-box.js";
 import { box, input, R, T } from "../helpers/preview-animation-fixture.js";
 
 const meshes = () => [box("base"), box("lid", 24)];
@@ -94,4 +101,104 @@ test("feature edges of an ANIMATED sub-part that take the own-vertices fallback 
   const want = Array.from(edges).map((v, i) => (i % 3 === 2 ? v + 16 : v));
   expect(out.edges).toHaveLength(want.length);
   for (let i = 0; i < want.length; i++) expect(Math.abs(out.edges[i] - want[i]), `edges[${i}]`).toBeLessThan(0.01);
+});
+
+// --- Older readers --------------------------------------------------------------
+// partforge 0.157's decoder walked ONE level up from a mesh to find its node
+// (verbatim from `git show 1d00202b:src/framework/gltf/decode-preview.js`). The
+// cloud serves the newest preview row whatever partforge version wrote it, so a
+// 0.157 page can meet a version-4 file: the lid must keep its name, its look and
+// its edges, drawn at the opening pose.
+function nodeObjectOf157(obj) {
+  const own = obj.userData ?? {};
+  if ("partforgeSubPart" in own || "name" in own) return obj;
+  const parent = obj.parent;
+  return parent?.isGroup && parent.userData && ("partforgeSubPart" in parent.userData || "name" in parent.userData) ? parent : obj;
+}
+const Y_UP_TO_Z_UP = new Matrix4().makeRotationX(Math.PI / 2);
+async function decodeLike157(bytes) {
+  const gltf = await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).parseAsync(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), "");
+  gltf.scene.updateMatrixWorld(true);
+  const out = new Map(); // node object → { name, display, zs, edges }
+  const at = (node) => {
+    if (!out.has(node)) {
+      const { partforgeSubPart, partforgeDisplay, name } = node.userData;
+      out.set(node, { name: typeof partforgeSubPart === "string" ? partforgeSubPart : (name ?? node.name), display: partforgeDisplay ?? null, zs: [], edges: 0 });
+    }
+    return out.get(node);
+  };
+  const m = new Matrix4();
+  gltf.scene.traverse((obj) => {
+    if (obj.isLineSegments) { at(nodeObjectOf157(obj)).edges += obj.geometry.index?.count ?? obj.geometry.getAttribute("position").count; return; }
+    if (!obj.isMesh) return;
+    m.multiplyMatrices(Y_UP_TO_Z_UP, obj.matrixWorld);
+    const entry = at(nodeObjectOf157(obj));
+    const p = obj.geometry.getAttribute("position");
+    for (let i = 0; i < p.count; i++) entry.zs.push(p.getX(i) * m.elements[2] + p.getY(i) * m.elements[6] + p.getZ(i) * m.elements[10] + m.elements[14]);
+  });
+  return [...out.values()];
+}
+
+test("a 0.157 reader (one-level node walk) still names, styles and edges an animated sub-part, at the opening pose", async () => {
+  const part = { parts: { lid: { display: { material: "walnut" } } } };
+  const lid = { ...box("lid", 24), edges: new Float32Array([0, 0, 24, 10, 0, 24]) };
+  const a = input();
+  a.samples[0].poses.lid = T(40); // the opening pose: 16 mm above the baked one
+  a.samples[2].poses.lid = T(40);
+  const bytes = await encodePreviewGlb({ meshes: [box("base"), lid], part, view: "box", animation: a });
+  const nodes = await decodeLike157(bytes);
+  expect(nodes.map((n) => n.name).sort()).toEqual(["base", "lid"]);
+  const got = nodes.find((n) => n.name === "lid");
+  expect(got.display).toEqual({ material: "walnut" });
+  expect(got.edges).toBe(2); // one segment, two endpoints
+  expect(Math.min(...got.zs)).toBeCloseTo(40, 1);
+  // The current decoder agrees, and its channels still resolve to "lid".
+  const d = await decodePreviewGlb(bytes);
+  expect(Object.keys(d.animation.tracks)).toEqual(["lid"]);
+  expect(d.meshes.filter((m) => m.name === "lid")).toHaveLength(1);
+});
+
+// --- The `base` contract, round trip -----------------------------------------------
+// The file's positions are base · (what build() returned). A build() that ends in
+// its own translate() must not leak that translate into `base` (the sampler reads
+// the PLACE-scope probe, never the full scope): after encode → decode → play,
+// every vertex lands where place(t) · build puts it.
+const xf = (m, p) => [0, 1, 2].map((r) => m[r] * p[0] + m[4 + r] * p[1] + m[8 + r] * p[2] + m[12 + r]);
+const placeOf = (part, p, name) => composePose(probePoses(part, "box", p, { scope: "place" }).get(name).pose);
+
+test("a build() ending in translate() round-trips: opening pose and mid keyframe land at place(t) · build", async () => {
+  const OFFSET = [5, 3, 0];
+  const part = { ...hingedBox, parts: { ...hingedBox.parts, lid: { ...hingedBox.parts.lid,
+    build: (k, p) => k.box({ min: [0, 0, 0], max: [p.width, p.depth, p.wall] }).translate(OFFSET) } } };
+  const out = samplePreviewAnimation(part, "box", {}, { buildReads: () => new Set(["width", "depth", "height", "wall"]) });
+  expect(out).not.toBeNull();
+  // base is place() alone: the build's own translate is not in it.
+  const want = composePose([{ t: "translate", v: [0, 0, 24] }]);
+  out.base.lid.forEach((v, i) => expect(v).toBeCloseTo(want[i], 9));
+  // What build() returned, a few distinct points of the 60×40×2 plate, offset.
+  const built = [[0, 0, 0], [60, 0, 0], [0, 40, 0], [60, 40, 2], [0, 0, 2], [60, 40, 0]].map((c) => c.map((v, i) => v + OFFSET[i]));
+  const soup = (pts) => Float32Array.from([0, 1, 2, 3, 4, 5].flatMap((i) => pts[i]));
+  const meshes = ["base", "lid"].map((n) => ({ name: n, positions: soup(built.map((c) => xf(out.base[n], c))) }));
+  const d = await decodePreviewGlb(await encodePreviewGlb({ meshes, part, view: "box", animation: out }));
+  const decoded = d.meshes.find((m) => m.name === "lid").positions;
+  const poses = {};
+  let frame = null;
+  const viewer = { setSubPose: (n, m) => { poses[n] = m; }, setSubPartOpacity() {}, tweenCameraTo() {}, holdGround() {},
+    onFrame: (cb) => { frame = cb; return () => {}; }, onCameraStart: () => () => {} };
+  const player = createPreviewPlayer(viewer, { ...d.animation, cues: [] });
+  player.start();
+  let checkedMid = false;
+  for (let k = 0; k <= 12; k++) {
+    if (k) frame(0.1);
+    const { t } = player.state();
+    const M = placeOf(part, { ...part.defaults, ...evaluate(out.anim, t).values }, "lid");
+    const expected = built.map((c) => xf(M, c));
+    for (let i = 0; i < decoded.length; i += 3) {
+      const g = xf(poses.lid, [decoded[i], decoded[i + 1], decoded[i + 2]]);
+      const err = Math.min(...expected.map((e) => Math.hypot(g[0] - e[0], g[1] - e[1], g[2] - e[2])));
+      expect(err, `t=${t} vertex ${i / 3}`).toBeLessThan(0.05);
+    }
+    if (Math.abs(t - 0.5) < 0.05) checkedMid = true;
+  }
+  expect(checkedMid).toBe(true); // the 110° keyframe region was checked, not only the ends
 });

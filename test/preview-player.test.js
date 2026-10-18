@@ -115,14 +115,20 @@ test("rotation slerps between keyframes", () => {
   expect(v.poses.lid[9]).toBeCloseTo(-1);
 });
 
-test("reduced motion applies the opening pose and never plays", () => {
+test("reduced motion writes nothing: no pose, no opacity, no ground hold, never plays", () => {
+  // An assemble-style fade (lid from opacity 0): writing t = 0 would leave the
+  // lid invisible for good. The visitor sees what the file draws without a player.
   const v = fakeViewer();
-  const p = createPreviewPlayer(v, lidUp, { reducedMotion: true });
+  const p = createPreviewPlayer(v, { ...lidUp, opacity: { lid: [[0, 0], [1, 1]] } }, { reducedMotion: true });
   p.start();
   v.frame(1);
   expect(p.state().status).toBe("idle");
   expect(v.tweens).toEqual([]);
-  expect(v.poses.lid[14]).toBeCloseTo(0);
+  expect(v.opacity).toEqual({});
+  expect(v.poses).toEqual({});
+  expect(v.ground).toBeNull();
+  p.dispose();
+  expect(v.ground).toBeNull();
 });
 
 test("pause/resume and dispose", () => {

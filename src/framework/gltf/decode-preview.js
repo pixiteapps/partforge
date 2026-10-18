@@ -105,7 +105,8 @@ function subPartNameOf(node) {
 }
 
 // An accessor's elements as a Float32Array of `size` components each, through
-// getX/getY/getZ/getW so a normalized (meshopt-filtered) output is denormalized.
+// getX/getY/getZ/getW so a normalized output would be denormalized (this writer
+// stores the channels as plain float32; the guard is for any other writer).
 function readComponents(attr, size) {
   const out = new Float32Array(attr.count * size);
   const get = [attr.getX, attr.getY, attr.getZ, attr.getW].slice(0, size);

@@ -45,18 +45,25 @@
 //        sub-part whose rel(t) differs from rel(0) beyond 1e-6 — none at all
 //        when nothing moves (a camera-only animation). Consecutive quaternions
 //        share a hemisphere, so LINEAR blending never takes the long way round.
-//        An animated node's mesh sits on an unnamed child node (quantize()
-//        moves it there to keep the dequantization off the animated TRS).
+//        An animated node's mesh sits on a child node (quantize() moves it
+//        there to keep the dequantization off the animated TRS); the writer
+//        gives that child the sub-part's name and the SAME extras as the
+//        animated node, so a reader that looks only one level up from a mesh
+//        (≤ 0.157) still names, styles and edges it, at the opening pose.
 //      * partforgeAnimation = { name, label, loop, duration (seconds), cues
 //        (verbatim), steps: [{ label, start (normalized), duration (seconds) }],
 //        animated (names with channels, mesh order), opacity: { <sub>: [[t, v],
 //        …] } } — t normalized, one pair per sample that names the sub-part (a
 //        sample that omits it contributes no pair; a reader interpolates).
 //    The samples are refused unless every pose is rigid (RᵀR = I, det = +1,
-//    within 1e-6), they run from t = 0 to t = 1, every sample poses the same
-//    sub-parts, and each of those (and each `base` entry) has a non-empty mesh.
-//    Meshopt filters the channels (translation EXPONENTIAL 12 bits, rotation
-//    QUATERNION 16 bits): lossy at about 1/4096 relative.
+//    within 1e-6 — geometry/pose.js's isRigid, which the sampler applies too),
+//    they run from t = 0 to t = 1, every sample poses the same sub-parts, and
+//    each of those (and each `base` entry) is one of `meshes`. A sampled
+//    sub-part whose mesh is present but EMPTY (its build() returned nothing) is
+//    dropped from the animation — it has no node — and the rest still plays.
+//    The channels are stored LOSSLESSLY: EXT_meshopt_compression's QUANTIZE
+//    method applies no meshopt filter (gltf-transform filters only under its
+//    FILTER method), so the float32 keyframes are byte-compressed, not rounded.
 //  - weld() → reorder() → quantize() → EXT_meshopt_compression ("medium",
 //    i.e. what meshopt({ level: "medium" }) does), 5–8 bytes a triangle, the
 //    recipe measured in partforge-cloud's local_glb_benchmark.md. The line
@@ -78,7 +85,7 @@ import { EXTMeshoptCompression, KHRMeshQuantization } from "@gltf-transform/exte
 import { quantize, reorder, weld } from "@gltf-transform/functions";
 import { MeshoptEncoder } from "meshoptimizer/encoder";
 import { cadAppearance, DISPLAY_KEYS } from "../materials/resolve.js";
-import { invertRigid, mulMat4 } from "../geometry/pose.js";
+import { invertRigid, isRigid, mulMat4 } from "../geometry/pose.js";
 
 // 2: feature edges as a LINES primitive; 3: sharing the surface's vertices;
 // 4: animation channels + partforgeAnimation extras
@@ -306,26 +313,14 @@ function checkMesh(m, seen) {
 
 // ── The baked animation (version 4) ─────────────────────────────────────────
 
-const RIGID_TOL = 1e-6;
 const MOVES_TOL = 1e-6;
 
-function isRigid(m) {
-  if (!Array.isArray(m) && !ArrayBuffer.isView(m)) return false;
-  if (m.length !== 16 || !Array.prototype.every.call(m, Number.isFinite)) return false;
-  if (Math.abs(m[3]) > RIGID_TOL || Math.abs(m[7]) > RIGID_TOL || Math.abs(m[11]) > RIGID_TOL || Math.abs(m[15] - 1) > RIGID_TOL) return false;
-  const col = (c) => [m[c * 4], m[c * 4 + 1], m[c * 4 + 2]];
-  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-  const cols = [col(0), col(1), col(2)];
-  for (let i = 0; i < 3; i++) {
-    for (let j = 0; j < 3; j++) if (Math.abs(dot(cols[i], cols[j]) - (i === j ? 1 : 0)) > RIGID_TOL) return false;
-  }
-  const [a, b, c] = cols;
-  const det = a[0] * (b[1] * c[2] - b[2] * c[1]) - b[0] * (a[1] * c[2] - a[2] * c[1]) + c[0] * (a[1] * b[2] - a[2] * b[1]);
-  return Math.abs(det - 1) <= RIGID_TOL;
-}
-
 // Refuse what the file could not carry faithfully; returns the sampled names
-// in mesh order. `drawn` is the set of names with a non-empty mesh.
+// that are drawn, in mesh order. `drawn` is the set of names with a non-empty
+// mesh. A name with NO mesh entry is refused (fail closed: the sampler and the
+// meshes disagree about the view); a name whose mesh is present but EMPTY (a
+// sub-part whose build() returned nothing) is dropped — it has no node to
+// animate, and the rest of the file still plays.
 function checkAnimation(animation, meshes, drawn) {
   const { anim, samples, base } = animation;
   if (!anim || typeof anim !== "object" || typeof anim.name !== "string") throw new TypeError("encodePreviewGlb: animation.anim must be a normalized animation");
@@ -337,11 +332,13 @@ function checkAnimation(animation, meshes, drawn) {
   for (let i = 1; i < samples.length; i++) {
     if (!(samples[i].t > samples[i - 1].t)) throw new Error("encodePreviewGlb: animation sample times must increase");
   }
-  const names = new Set();
-  for (const s of samples) for (const name of Object.keys(s.poses ?? {})) names.add(name);
-  for (const name of [...names, ...Object.keys(base)]) {
-    if (!drawn.has(name)) throw new Error(`encodePreviewGlb: animation names "${name}", which has no mesh`);
+  const present = new Set(meshes.map((m) => m.name));
+  const sampled = new Set();
+  for (const s of samples) for (const name of Object.keys(s.poses ?? {})) sampled.add(name);
+  for (const name of [...sampled, ...Object.keys(base)]) {
+    if (!present.has(name)) throw new Error(`encodePreviewGlb: animation names "${name}", which has no mesh`);
   }
+  const names = [...sampled].filter((name) => drawn.has(name));
   for (const name of names) {
     if (!isRigid(base[name])) {
       if (base[name] == null) throw new Error(`encodePreviewGlb: animation has no base pose for "${name}"`);
@@ -353,7 +350,7 @@ function checkAnimation(animation, meshes, drawn) {
       if (!isRigid(m)) throw new Error(`encodePreviewGlb: "${name}" pose at t=${s.t} is not a rigid motion`);
     }
   }
-  return meshes.map((m) => m.name).filter((name) => names.has(name)); // names are unique (checkMesh)
+  return meshes.map((m) => m.name).filter((name) => names.includes(name)); // names are unique (checkMesh)
 }
 
 // rel = M · base⁻¹: the motion from the baked pose to M.
@@ -424,12 +421,12 @@ function writeAnimation(doc, buffer, nodesByName, animation, tracks) {
 }
 
 // The partforgeAnimation extra: everything a viewer needs beyond the channels.
-function animationExtras(animation, animated) {
+function animationExtras(animation, animated, drawn) {
   const { anim, samples } = animation;
   const opacity = {};
   for (const s of samples) {
     for (const [name, v] of Object.entries(s.opacity ?? {})) {
-      if (Number.isFinite(v)) (opacity[name] ??= []).push([s.t, v]);
+      if (drawn.has(name) && Number.isFinite(v)) (opacity[name] ??= []).push([s.t, v]);
     }
   }
   return {
@@ -505,7 +502,7 @@ export async function encodePreviewGlb({ meshes, part = null, view = null, anima
     partforgeView: viewName,
     partforgeEncoder: PREVIEW_ENCODER_VERSION,
     ...(meta ? { partforgeMeta: meta } : {}),
-    ...(tracks ? { partforgeAnimation: animationExtras(animation, animated) } : {}),
+    ...(tracks ? { partforgeAnimation: animationExtras(animation, animated, drawn) } : {}),
   });
 
   // The surfaces alone through weld + reorder: their vertex arrays are final after this.
@@ -546,6 +543,19 @@ export async function encodePreviewGlb({ meshes, part = null, view = null, anima
   }
 
   await doc.transform(quantize());
+
+  // quantize() moves an animated node's mesh onto a new, unnamed child (the
+  // dequantization must not ride the animated TRS). Name that child and give it
+  // the SAME extras as the sub-part node: a reader that looks only at the
+  // mesh's own node or its immediate parent (partforge ≤ 0.157's decoder) then
+  // still finds the sub-part's name, look and edges; the current decoder's
+  // ancestor walk finds identical values one level sooner.
+  for (const [name, node] of nodesByName) {
+    if (node.getMesh()) continue;
+    for (const child of node.listChildren()) {
+      if (child.getMesh()) child.setName(name).setExtras({ ...node.getExtras() });
+    }
+  }
 
   // The fallback lines: float positions mapped into the frame quantize() left the
   // mesh in. quantize() folds the mesh's offset and scale into the node holding it

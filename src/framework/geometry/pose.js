@@ -91,3 +91,23 @@ export function rotateNormals(normals, m) {
     normals[i + 2] = m[2] * x + m[6] * y + m[10] * z;
   }
 }
+
+// Whether a column-major mat4 is a rigid motion within `tol`: finite, affine
+// (last row 0 0 0 1), an orthonormal 3x3 block (RᵀR = I) with det = +1 — no
+// scale, shear or mirror. The preview GLB's encoder refuses any other pose, and
+// the sampler (preview-animation.js) applies the same test so its output never
+// trips that refusal.
+export function isRigid(m, tol = 1e-6) {
+  if (!Array.isArray(m) && !ArrayBuffer.isView(m)) return false;
+  if (m.length !== 16 || !Array.prototype.every.call(m, Number.isFinite)) return false;
+  if (Math.abs(m[3]) > tol || Math.abs(m[7]) > tol || Math.abs(m[11]) > tol || Math.abs(m[15] - 1) > tol) return false;
+  const col = (c) => [m[c * 4], m[c * 4 + 1], m[c * 4 + 2]];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cols = [col(0), col(1), col(2)];
+  for (let i = 0; i < 3; i++) {
+    for (let j = 0; j < 3; j++) if (Math.abs(dot(cols[i], cols[j]) - (i === j ? 1 : 0)) > tol) return false;
+  }
+  const [a, b, c] = cols;
+  const det = a[0] * (b[1] * c[2] - b[2] * c[1]) - b[0] * (a[1] * c[2] - a[2] * c[1]) + c[0] * (a[1] * b[2] - a[2] * b[1]);
+  return Math.abs(det - 1) <= tol;
+}

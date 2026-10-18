@@ -16,6 +16,12 @@
 //     Opacity fades are display-only and ride the samples beside the poses.
 //   - Fail CLOSED: unknown build reads (null), any failed check and any throw
 //     return null — the preview then simply has no animation. Never throws.
+//   - The output always passes the encoder's own refusals (checkAnimation in
+//     gltf/encode-preview.js): a finite, positive duration (and finite step
+//     durations and starts), finite sample times, and every pose rigid by the
+//     same isRigid test. Anything else is
+//     null here, so an odd animation costs the preview its motion, never the
+//     whole file (an encoder throw would leave the forge with no preview).
 //   - Sample times are normalized t in [0, 1]: both ends, every step boundary,
 //     every track and opacity keyframe mapped to global t, plus a
 //     PREVIEW_SAMPLE_HZ grid over the real duration. Over PREVIEW_SAMPLE_CAP the
@@ -28,7 +34,7 @@ import { viewAnimations, evaluate } from "./animation.js";
 import { probePoses } from "./pose-probe.js";
 import { CANONICAL } from "./pose-probe-core.js";
 import { viewSubParts } from "./part-model.js";
-import { composePose } from "./geometry/pose.js";
+import { composePose, isRigid } from "./geometry/pose.js";
 
 export const PREVIEW_SAMPLE_HZ = 30;
 export const PREVIEW_SAMPLE_CAP = 600;
@@ -75,7 +81,9 @@ function placePoses(part, view, p, shown) {
   for (const name of shown) {
     const entry = probes.get(name);
     if (!entry?.trusted || entry.baseHash !== CANONICAL) return null;
-    poses[name] = Array.from(composePose(entry.pose));
+    const m = Array.from(composePose(entry.pose));
+    if (!isRigid(m)) return null; // e.g. a rotate about a zero-length axis
+    poses[name] = m;
   }
   return poses;
 }
@@ -86,6 +94,11 @@ export function samplePreviewAnimation(part, view, params = {}, { buildReads } =
   try {
     const anim = viewAnimations(part).get(view)?.find((a) => a.autoplay) ?? null;
     if (!anim || typeof buildReads !== "function") return null;
+    if (!(Number.isFinite(anim.totalDuration) && anim.totalDuration > 0)) return null;
+    // A NaN step duration normalizes to a total of 1 (animation.js's `|| 1`),
+    // so the steps are checked too: the file's step list must be real numbers.
+    if (!anim.steps.every((s) => Number.isFinite(s.duration) && s.duration >= 0)) return null;
+    if (!anim.stepStarts.every(Number.isFinite)) return null;
     // Layered over the defaults here (not only inside the probe) so `enabled`
     // sees the same params the build and place() do.
     const p0 = { ...part.defaults, ...params };
@@ -98,7 +111,9 @@ export function samplePreviewAnimation(part, view, params = {}, { buildReads } =
       if (anim.trackedKeys.some((key) => reads.has(key))) return null;
     }
     const samples = [];
-    for (const t of sampleTimes(anim)) {
+    const times = sampleTimes(anim);
+    if (!times.every(Number.isFinite)) return null;
+    for (const t of times) {
       const { values, opacity } = evaluate(anim, t);
       const p = { ...p0, ...values };
       if (!sameSet(viewSubParts(part, view, p), shown)) return null;

@@ -14,8 +14,10 @@
 //    the player does nothing further each frame.
 //  - A user orbit disarms the remaining camera cues and never pauses the
 //    motion (mid-intro it releases the intro gate, so playback still starts).
-//  - Reduced motion means no player: start() shows the opening pose and
-//    opacities and nothing else ever moves.
+//  - Reduced motion means no player: start() writes nothing — no pose, no
+//    opacity, no ground hold, no cue — so the visitor sees exactly what the
+//    file draws without a player (the opening pose, every sub-part opaque; an
+//    opacity fade-in must not leave a sub-part hidden for good).
 import { createPlayback } from "./animation.js";
 import { invertRigid, mulMat4 } from "./geometry/pose.js";
 
@@ -129,8 +131,8 @@ export function createPreviewPlayer(viewer, animation, { reducedMotion = false }
     start() {
       if (started || disposed) return;
       started = true;
-      apply(0);
       if (reducedMotion) return;
+      apply(0);
       viewer.holdGround(true);
       offFrame = viewer.onFrame(onFrame);
       offOrbit = viewer.onCameraStart(onOrbit);

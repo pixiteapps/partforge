@@ -17,9 +17,11 @@
 // once drawn, through preview-player.js — poses, opacities and camera cues off
 // the viewer's own frame loop, still with no part code. `animate: false` shows
 // the opening pose and no player (the editor's own boot preview goes through
-// mount(), not here). Under prefers-reduced-motion the player shows the opening
-// pose and never moves. Parking (setActive(false)) stops the viewer's frame loop,
-// and the player's clock with it, so a parked preview is a paused one.
+// mount(), not here). Under prefers-reduced-motion the player never starts: the
+// file's opening pose, every sub-part opaque, nothing moves. Parking
+// (setActive(false)) stops the viewer's frame loop, and the player's clock with
+// it, so a parked preview is a paused one. `handle.animation` is null once
+// disposed.
 //
 // The decoder loads on demand (it carries the
 // GLTFLoader and meshopt), so a bundle that never mounts a preview never ships it.
@@ -107,7 +109,8 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
     if (decoded.animation && animate !== false) {
       const reducedMotion = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
       player = createPreviewPlayer(viewer, decoded.animation, { reducedMotion });
-      cleanups.push(() => player.dispose());
+      const own = player;
+      cleanups.push(() => own.dispose());
       player.start();
     }
   });
@@ -137,6 +140,7 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
       if (disposed) return;
       disposed = true;
       live = null;
+      player = null; // `animation` answers null once disposed (the cleanup below disposes it)
       const errors = [];
       while (cleanups.length) {
         try { cleanups.pop()(); } catch (error) { errors.push(error); }
@@ -145,7 +149,7 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
       if (errors.length > 1) throw new AggregateError(errors, "partforge mountPreview cleanup failed");
     },
     getView: () => live?.view ?? null,
-    // null before ready, for a still file, and with animate: false.
+    // null before ready, for a still file, with animate: false, and once disposed.
     get animation() {
       return player ? { state: player.state, pause: player.pause, resume: player.resume } : null;
     },

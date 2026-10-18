@@ -153,3 +153,32 @@ test("without an animation the file carries no animations and no partforgeAnimat
   expect(json.extras.partforgeAnimation).toBeUndefined();
   expect(json.extras.partforgeEncoder).toBe(4);
 });
+
+test("an animated view with an EMPTY sub-part encodes: the empty one gets no node, the others animate", async () => {
+  // A sub-part whose build() returned nothing: present in `meshes` (and in the
+  // sampler's poses/base/opacity) but with no positions. 0.157 wrote a still for
+  // such a forge; the animation must not cost it the whole preview.
+  const a = input();
+  a.base.ghost = T(0);
+  for (const s of a.samples) { s.poses.ghost = T(0); s.opacity = { ghost: 0.5 }; }
+  a.samples[1].poses.ghost = T(7); // it even "moves"
+  const ghost = { name: "ghost", positions: new Float32Array(0) };
+  const json = readJson(await encodePreviewGlb({ meshes: [box("base"), ghost, box("lid", 24)], view: "box", animation: a }));
+  expect(json.nodes.some((n) => n.name === "ghost")).toBe(false);
+  const targets = json.animations[0].channels.map((c) => [json.nodes[c.target.node].name, c.target.path].join(":")).sort();
+  expect(targets).toEqual(["lid:rotation", "lid:translation"]);
+  expect(json.extras.partforgeAnimation.animated).toEqual(["lid"]);
+  expect(json.extras.partforgeAnimation.opacity).toEqual({}); // no node to fade
+});
+
+test("an animated node's mesh child carries the sub-part's name and the node's extras", async () => {
+  const part = { parts: { lid: { display: { material: "walnut" } } } };
+  const json = readJson(await encodePreviewGlb({ meshes: meshes(), part, view: "box", animation: input() }));
+  const target = json.nodes[json.animations[0].channels[0].target.node];
+  expect(target.mesh).toBeUndefined(); // quantize() moved it onto a child
+  const child = json.nodes[target.children[0]];
+  expect(child.mesh).toBeDefined();
+  expect(child.name).toBe("lid");
+  expect(child.extras).toEqual(target.extras);
+  expect(child.extras).toEqual({ partforgeSubPart: "lid", partforgeDisplay: { material: "walnut" } });
+});
