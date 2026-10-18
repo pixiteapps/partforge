@@ -36,6 +36,8 @@ export const EXPORTS = [
   "ip_sample", "ip_leaf_vals", "ip_leaf_owners", "ip_clipped",
   "ip_mesh", "ip_vertex_count", "ip_positions", "ip_index_count", "ip_indices", "ip_vert_leaf",
   "ip_mesh_load", "ip_project", "ip_cleanup", "ip_normals", "ip_detail",
+  "ip_set_contact", "ip_mesh_owners", "ip_crease", "ip_untangle",
+  "ip_vert_owner", "ip_owner_held", "ip_pinned", "ip_crease_marks", "ip_tri_owners",
 ];
 // -ffp-contract=off: the core must round every operation exactly as the JS does
 // (see native/js_math.h). WebAssembly has no FMA to fuse into, but say so anyway.

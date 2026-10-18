@@ -28,6 +28,16 @@
 //     its endpoints' normalized sum (midpointNormal), in creation order;
 //   - the final loop skips a zero normal, sums the entries' heights from +0 in
 //     entry order, skips h === 0 and moves p += n * h.
+//   - an owner mesh (the owner path) carries its fields through refinement as the
+//     JS does (a midpoint takes its ends' owner, the lesser where they differ; held
+//     only when both ends are held by the same owner; never pinned or crease),
+//     projects the midpoints with project_owned, and scales each height by its
+//     vertex's seam fade (seamFade, computed before any vertex moves): the least
+//     cut over the children that are neither the vertex's own piece nor attached to
+//     it there (the attachment test only for a cut below the running least, in
+//     child order), less max(gap, 0), through smoothstep(0, DETAIL_SEAM_FADE);
+//     crease and pinned vertices fade to 0, and h * fade is tested for zero as the
+//     JS tests it.
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -187,6 +197,55 @@ inline void splitTri(std::vector<uint32_t>& out, const int64_t* v, const int64_t
   }
 }
 
+// contact.js's attachWeight (A: one attachment's 8 doubles).
+inline double attachWeight(const double* A, double x, double y, double z) {
+  const double dx = x - A[2], dy = y - A[3], dz = z - A[4];
+  const double d = std::sqrt(dx * dx + dy * dy + dz * dz);
+  double t = (d - A[5]) / A[6];
+  t = jsmath::jsmax(0, jsmath::jsmin(1, t));
+  return 1 - t * t * (3 - 2 * t);
+}
+
+// detail.js's attached: some attachment of children a and b has weight > 0 at p.
+inline bool attached(const std::vector<double>& att, int a, int b, double x, double y, double z) {
+  const double da = a, db = b;
+  for (size_t o = 0; o + 8 <= att.size(); o += 8) {
+    if (((att[o] == da && att[o + 1] == db) || (att[o] == db && att[o + 1] == da)) && attachWeight(&att[o], x, y, z) > 0) return true;
+  }
+  return false;
+}
+
+// detail.js's seamFade: each vertex's detail weight on an owner mesh (see the top comment).
+int seamFade(ipe::Session& s, std::vector<double>& fade) {
+  const std::vector<double>& P = s.positions;
+  const size_t n = P.size() / 3;
+  const int K = s.ownerK;
+  const double gap = jsmath::jsmax(s.gap, 0);
+  fade.assign(n, 0.0);
+  ipm_mesh::Points pts;
+  std::vector<uint32_t> idx;
+  for (size_t v = 0; v < n; v++) {
+    if (s.vertOwner[v] < 0 || s.pinned[v] || s.creaseMark[v]) continue;
+    pts.add(P[3 * v], P[3 * v + 1], P[3 * v + 2], ipm_mesh::leaf_prog(s, s.vertLeaf[v]));
+    idx.push_back((uint32_t)v);
+  }
+  std::vector<double> out(idx.size()), cuts(idx.size() * (size_t)K);
+  if (ipm_mesh::eval_points(s, pts, out.data(), nullptr, cuts.data(), nullptr) != 0) return 1;
+  for (size_t i = 0; i < idx.size(); i++) {
+    const size_t v = idx[i];
+    const int own = s.vertOwner[v];
+    double sm = INFINITY;
+    for (int j = 0; j < K; j++) {
+      const double c = cuts[i * K + j];
+      if (j == own || !(c < sm) || attached(s.att, own, j, pts.X[i], pts.Y[i], pts.Z[i])) continue;
+      sm = c;
+    }
+    const double t = jsmath::jsmin(1, jsmath::jsmax(0, (sm - gap) / s.seamFade));
+    fade[v] = t * t * (3 - 2 * t);
+  }
+  return 0;
+}
+
 // detail.js's midpointNormal.
 inline void midpointNormal(std::vector<double>& N, size_t a, size_t b, size_t m) {
   if (N[3 * m] != 0 || N[3 * m + 1] != 0 || N[3 * m + 2] != 0) return;
@@ -200,6 +259,9 @@ inline void midpointNormal(std::vector<double>& N, size_t a, size_t b, size_t m)
 
 int detail(ipe::Session& s, const double* F, int count, const int32_t* progIndex, int progCount) {
   if (!s.meshed || s.normals.size() != s.positions.size() || count < 0 || progCount < 0) return 1;
+  const bool owned = s.ownerMesh;
+  if (owned && !s.contactSet) return 1;
+  if (owned && !s.hasCrease) { s.creaseMark.assign(s.vertOwner.size(), 0); s.hasCrease = true; }   // `mesh.crease ?? zeros`
   Ctx c{s, F, count, std::vector<const ipe::Program*>((size_t)count, nullptr)};
   // Refuse before touching the mesh: every texture an entry reads and every expr
   // program must be one the session can run.
@@ -263,6 +325,14 @@ int detail(ipe::Session& s, const double* F, int count, const int32_t* progIndex
       P.push_back(mx); P.push_back(my); P.push_back(mz);
       N.push_back(0); N.push_back(0); N.push_back(0);
       VL.push_back(VL[(size_t)a]);
+      if (owned) {
+        const int32_t oa = s.vertOwner[(size_t)a], ob = s.vertOwner[(size_t)b];
+        const bool same = oa == ob;
+        s.vertOwner.push_back(same ? oa : (oa < ob ? oa : ob));
+        s.ownerHeld.push_back(same && s.ownerHeld[(size_t)a] && s.ownerHeld[(size_t)b] ? 1 : 0);
+        s.pinned.push_back(0);
+        s.creaseMark.push_back(0);
+      }
       added.push_back((int32_t)m);
       ends.push_back((uint32_t)a); ends.push_back((uint32_t)b);
       return m;
@@ -282,15 +352,19 @@ int detail(ipe::Session& s, const double* F, int count, const int32_t* progIndex
     s.indices.swap(out);
     // Cannot fail here (a meshed session, fresh distinct indices); if it ever did,
     // the mesh is half refined, so say so and let the caller run the JS instead.
-    if (ipm_mesh::project(s, added.data(), (int)added.size(), edge, true) != 0) return 5;
+    if ((owned ? ipm_mesh::project_owned(s, added.data(), (int)added.size(), edge, true)
+               : ipm_mesh::project(s, added.data(), (int)added.size(), edge, true)) != 0) return 5;
     for (size_t q = 0; q < added.size(); q++) midpointNormal(N, ends[2 * q], ends[2 * q + 1], (size_t)added[q]);
   }
   const size_t nv = P.size() / 3;
+  std::vector<double> fade;
+  if (owned && seamFade(s, fade) != 0) return 5;   // before any vertex moves
   for (size_t v = 0; v < nv; v++) {
     const double nx = N[3 * v], ny = N[3 * v + 1], nz = N[3 * v + 2];
     if (nx == 0 && ny == 0 && nz == 0) continue;   // no direction to move along
     double h = 0;
     for (int k = 0; k < count; k++) h += entryHeight(c, k, P[3 * v], P[3 * v + 1], P[3 * v + 2], nx, ny, nz);
+    if (owned) h *= fade[v];
     if (h == 0) continue;
     P[3 * v] += nx * h; P[3 * v + 1] += ny * h; P[3 * v + 2] += nz * h;
   }

@@ -40,6 +40,17 @@
 
 namespace ipm_mesh {
 
+// A plain mesh (or none) carries no owner fields.
+void clear_owner_mesh(ipe::Session& s) {
+  s.ownerMesh = false;
+  s.hasCrease = false;
+  std::vector<int32_t>().swap(s.vertOwner);
+  std::vector<uint8_t>().swap(s.ownerHeld);
+  std::vector<uint8_t>().swap(s.pinned);
+  std::vector<uint8_t>().swap(s.creaseMark);
+  std::vector<int32_t>().swap(s.triOwner);
+}
+
 namespace {
 constexpr double ZERO_DIR1 = 0.7071067811865476, ZERO_DIR2 = 0.5773502691896258;   // sparse.js's ZERO_DIR
 constexpr int RUN = 32;   // leaves per interpreter call (4000 lanes) when consecutive leaves share a program
@@ -64,6 +75,7 @@ int sample(ipe::Session& s, const int32_t* leaves, int count, const double* orig
   std::vector<uint32_t>().swap(s.indices);
   std::vector<int32_t>().swap(s.vertLeaf);
   std::vector<double>().swap(s.normals);
+  clear_owner_mesh(s);
   s.leaves.assign(leaves, leaves + (size_t)count * 4);
   const size_t need = (size_t)count * S3;
   if (need > s.valsCap) {
@@ -185,6 +197,7 @@ int mesh(ipe::Session& s) {
   std::vector<uint32_t>& indices = s.indices;
   std::vector<int32_t>& vertLeaf = s.vertLeaf;
   positions.clear(); indices.clear(); vertLeaf.clear(); s.normals.clear();
+  clear_owner_mesh(s);
   const int count = (int)(s.leaves.size() / 4);
   const double edge = s.edge, o0 = s.origin[0], o1 = s.origin[1], o2 = s.origin[2];
   const int64_t n0 = s.n[0], n1 = s.n[1], n2 = s.n[2];
@@ -430,6 +443,13 @@ size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double nc
   std::vector<double>& P = s.positions;
   std::vector<uint32_t>& T = s.indices;
   std::vector<int32_t>& VL = s.vertLeaf;
+  // An owner mesh (cleanup.js's `own`): never merge different owners or a pinned vertex, a
+  // merged vertex is held when either end was, and the owner fields follow the compaction.
+  const bool own = s.ownerMesh;
+  std::vector<int32_t>& VO = s.vertOwner;
+  std::vector<uint8_t>& VH = s.ownerHeld;
+  std::vector<uint8_t>& VP = s.pinned;
+  auto apart = [&](uint32_t a, uint32_t b) { return own && (VP[a] || VP[b] || VO[a] != VO[b]); };
   const size_t nv = P.size() / 3, nt = T.size() / 3;
   // Incident triangles per vertex, CSR, in triangle order.
   std::vector<uint32_t> off(nv + 1, 0), inc(nt * 3);
@@ -554,7 +574,7 @@ size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double nc
     double tried = 0, accepted = 0;
     for (size_t t = 0; t < nt; t += PROBE_STRIDE) for (int c = 0; c < 3; c++) {
       const uint32_t a = T[3 * t + c], b = T[3 * t + (c + 1) % 3];
-      if (!isShort(a, b)) continue;
+      if (!isShort(a, b) || apart(a, b)) continue;
       tried++;
       if (allowed(a, b)) accepted++;
     }
@@ -568,7 +588,7 @@ size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double nc
     if (!alive[t]) continue;
     for (int c = 0; c < 3; c++) {
       const uint32_t a = T[3 * t + c], b = T[3 * t + (c + 1) % 3];
-      if (locked[a] || locked[b]) continue;
+      if (locked[a] || locked[b] || apart(a, b)) continue;
       if (!isShort(a, b)) continue;
       if (prevDirty && ringClean(a) && ringClean(b)) continue;   // refused last pass, nothing changed
       if (!allowed(a, b)) continue;
@@ -580,6 +600,7 @@ size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double nc
         }
       }
       P[3 * a] = mid[0]; P[3 * a + 1] = mid[1]; P[3 * a + 2] = mid[2];
+      if (own && VH[b]) VH[a] = 1;
       for (uint32_t q = off[b]; q < off[b + 1]; q++) {
         const uint32_t tt = inc[q];
         if (!alive[tt]) continue;
@@ -597,8 +618,10 @@ size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double nc
   std::vector<int32_t> map(nv, -1);
   std::vector<double> outP;
   std::vector<uint32_t> outT;
-  std::vector<int32_t> outL;
+  std::vector<int32_t> outL, outO;
+  std::vector<uint8_t> outH, outPin;
   outP.reserve(P.size()); outT.reserve(T.size()); outL.reserve(nv);
+  if (own) { outO.reserve(nv); outH.reserve(nv); outPin.reserve(nv); }
   if (dirtyOut) { dirtyOut->clear(); dirtyOut->reserve(nv); }
   for (size_t t = 0; t < nt; t++) {
     if (!alive[t]) continue;
@@ -608,12 +631,14 @@ size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double nc
         map[v] = (int32_t)(outP.size() / 3);
         outP.push_back(P[3 * (size_t)v]); outP.push_back(P[3 * (size_t)v + 1]); outP.push_back(P[3 * (size_t)v + 2]);
         outL.push_back(VL[v]);
+        if (own) { outO.push_back(VO[v]); outH.push_back(VH[v]); outPin.push_back(VP[v]); }
         if (dirtyOut) dirtyOut->push_back(dirty[v]);
       }
       outT.push_back((uint32_t)map[v]);
     }
   }
   P.swap(outP); T.swap(outT); VL.swap(outL);
+  if (own) { VO.swap(outO); VH.swap(outH); VP.swap(outPin); }
   return collapsed;
 }
 
@@ -710,6 +735,225 @@ int project(ipe::Session& s, const int32_t* which, int whichCount, double maxSte
   return 0;
 }
 
+// ---------------------------------------------------------------------------
+// The owner path's evaluation and projection.
+//
+// eval_points: points bucketed by program (a counting sort, point order within a
+// program) and evaluated in chunks, each point's results scattered back to its own
+// slot. A point's value and capture read only its own coordinates and its own program
+// (the interpreter is lane-local), so neither the bucket nor the chunk it rides in can
+// change a bit — the same argument as projection's per-program batching above.
+namespace {
+constexpr int EVAL_CHUNK = 1024;
+}
+
+int eval_points(ipe::Session& s, const Points& pts, double* out, int32_t* piece, double* cuts, double* shares) {
+  const size_t n = pts.size();
+  const bool capture = piece || cuts || shares;
+  const int K = s.ownerK;
+  if (capture && K < 1) return 1;
+  if (n == 0) return 0;
+  const size_t nProg = s.programs.size();
+  for (size_t q = 0; q < n; q++) if (pts.prog[q] < 0 || (size_t)pts.prog[q] >= nProg) return 1;
+  std::vector<uint32_t> start(nProg + 1, 0), order(n);
+  for (size_t q = 0; q < n; q++) start[(size_t)pts.prog[q] + 1]++;
+  for (size_t p = 0; p < nProg; p++) start[p + 1] += start[p];
+  {
+    std::vector<uint32_t> fill(start.begin(), start.end() - 1);
+    for (size_t q = 0; q < n; q++) order[fill[(size_t)pts.prog[q]]++] = (uint32_t)q;
+  }
+  std::vector<double> buf((size_t)EVAL_CHUNK * 4);
+  double *X = buf.data(), *Y = X + EVAL_CHUNK, *Z = Y + EVAL_CHUNK, *o = Z + EVAL_CHUNK;
+  std::vector<int32_t> cp(piece ? EVAL_CHUNK : 0);
+  std::vector<double> cc(cuts ? (size_t)EVAL_CHUNK * K : 0), cs(shares ? (size_t)EVAL_CHUNK * K : 0);
+  ipe::Capture cap;
+  cap.K = K;
+  cap.piece = piece ? cp.data() : nullptr;
+  cap.cuts = cuts ? cc.data() : nullptr;
+  cap.shares = shares ? cs.data() : nullptr;
+  for (size_t p = 0; p < nProg; p++) {
+    const ipe::Program& prog = s.programs[p];
+    for (uint32_t q0 = start[p]; q0 < start[p + 1]; q0 += EVAL_CHUNK) {
+      const int m = (int)(start[p + 1] - q0 < (uint32_t)EVAL_CHUNK ? start[p + 1] - q0 : EVAL_CHUNK);
+      for (int k = 0; k < m; k++) { const uint32_t q = order[q0 + k]; X[k] = pts.X[q]; Y[k] = pts.Y[q]; Z[k] = pts.Z[q]; }
+      const int rc = capture ? ipe::eval_contact(s, prog, X, Y, Z, m, o, cap) : ipe::eval(s, prog, X, Y, Z, m, o);
+      if (rc != 0) return 2;
+      for (int k = 0; k < m; k++) {
+        const size_t q = order[q0 + k];
+        out[q] = o[k];
+        if (piece) piece[q] = cp[k];
+        if (cuts) for (int j = 0; j < K; j++) cuts[q * K + j] = cc[(size_t)k * K + j];
+        if (shares) for (int j = 0; j < K; j++) shares[q * K + j] = cs[(size_t)k * K + j];
+      }
+    }
+  }
+  return 0;
+}
+
+// project.js's owner mode (projectOwnedGroup): every vertex takes newtonStep (DIST_RATIO cap,
+// then maxStep) on the field, or — when held, or when its owner's share is above the field at
+// it by more than tol — on its owner's share, if that share is finite over the stencil, its
+// stencil gradient is distance-like (<= HELD_GRAD_MAX) and the landing passes the jump guard.
+//
+// What bit-exact parity needs beyond project()'s: the same newtonStep (d, the central
+// differences over 2e, the `!(g2 > 1e-12)` return, t = d / gl clamped to DIST_RATIO * |d| and
+// then to maxStep); the share step's guards in the JS's order (the try test on the centre
+// share, the finite test over the 7 stencil shares, the gradient cap); the landing at
+// p - (g / gl) * t, judged on predicted = d - gl * t with the continuity bound
+// HELD_CONTINUITY * |t| + tol and mine = landed - field <= tol; and the step applied as
+// project() applies it. Lanes are laid out differently here — the centres of a chunk first
+// (evaluated with share capture), then their six stencil points (no capture: the field is
+// evalBatch's either way), and only a candidate's stencil shares evaluated again with
+// capture — which changes no value: every number a vertex reads is its own lane's.
+namespace {
+constexpr double HELD_FIELD_TOL = 1e-3, HELD_GRAD_MAX = 3, HELD_CONTINUITY = 0.5, DIST_RATIO = 2;
+
+struct Step { double d, gx, gy, gz, gl, t; bool ok; };
+
+// project.js's newtonStep on stencil values f[0..6].
+inline Step newtonStep(const double* f, double e, double maxStep) {
+  Step st{0, 0, 0, 0, 0, 0, false};
+  const double d = f[0], gx = (f[1] - f[2]) / (2 * e), gy = (f[3] - f[4]) / (2 * e), gz = (f[5] - f[6]) / (2 * e);
+  const double g2 = gx * gx + gy * gy + gz * gz;
+  if (!(g2 > 1e-12)) return st;
+  const double gl = std::sqrt(g2);
+  double t = d / gl;
+  const double far = DIST_RATIO * std::fabs(d);
+  if (t > far) t = far; else if (t < -far) t = -far;
+  if (t > maxStep) t = maxStep; else if (t < -maxStep) t = -maxStep;
+  st = Step{d, gx, gy, gz, gl, t, true};
+  return st;
+}
+}  // namespace
+
+int project_owned(ipe::Session& s, const int32_t* which, int whichCount, double maxStep, bool wantNormals) {
+  if (!s.meshed || !s.ownerMesh || s.ownerK < 1) return 1;
+  std::vector<double>& P = s.positions;
+  const size_t nv = P.size() / 3;
+  const size_t count = which ? (size_t)(whichCount < 0 ? 0 : whichCount) : nv;
+  const int K = s.ownerK;
+  if (which) {
+    if (whichCount < 0) return 2;
+    std::vector<uint8_t> seen(nv, 0);
+    for (size_t q = 0; q < count; q++) {
+      const int32_t v = which[q];
+      if (v < 0 || (size_t)v >= nv || seen[v]) return 2;
+      seen[v] = 1;
+    }
+  }
+  for (size_t q = 0; q < count; q++) {   // the JS indexes the shares by the owner
+    const size_t v = which ? (size_t)which[q] : q;
+    if (s.vertOwner[v] < 0 || s.vertOwner[v] >= K) return 3;
+  }
+  if (wantNormals && s.normals.size() != 3 * nv) s.normals.assign(3 * nv, 0.0);
+  const size_t nProg = s.programs.size();
+  std::vector<uint32_t> start(nProg + 1, 0), order(count);
+  auto progOf = [&](size_t q) -> uint32_t {
+    const size_t v = which ? (size_t)which[q] : q;
+    return (uint32_t)leaf_prog(s, s.vertLeaf[v]);
+  };
+  for (size_t q = 0; q < count; q++) start[progOf(q) + 1]++;
+  for (size_t p = 0; p < nProg; p++) start[p + 1] += start[p];
+  {
+    std::vector<uint32_t> fill(start.begin(), start.end() - 1);
+    for (size_t q = 0; q < count; q++) order[fill[progOf(q)]++] = which ? (uint32_t)which[q] : (uint32_t)q;
+  }
+  const double e = 0.1 * s.edge, tol = HELD_FIELD_TOL * s.edge;
+  constexpr int M = PROJ_CHUNK;
+  // Centres (M lanes), their stencils (6M), a candidate's stencil again (6M) and landings (M).
+  std::vector<double> X(14 * M), Y(14 * M), Z(14 * M), out(14 * M);
+  std::vector<double> shC((size_t)M * K), shS((size_t)6 * M * K), shL((size_t)M * K);
+  std::vector<Step> field(M), share(M);
+  std::vector<int> cand, tries;
+  std::vector<uint8_t> accepted(M);
+  double* N = wantNormals ? s.normals.data() : nullptr;
+  ipe::Capture capC, capS, capL;
+  capC.K = capS.K = capL.K = K;
+  capC.shares = shC.data(); capS.shares = shS.data(); capL.shares = shL.data();
+  double *cX = X.data(), *cY = Y.data(), *cZ = Z.data(), *cO = out.data();
+  double *sX = cX + M, *sY = cY + M, *sZ = cZ + M, *sO = cO + M;
+  double *tX = cX + 7 * M, *tY = cY + 7 * M, *tZ = cZ + 7 * M, *tO = cO + 7 * M;
+  double *lX = cX + 13 * M, *lY = cY + 13 * M, *lZ = cZ + 13 * M, *lO = cO + 13 * M;
+  for (size_t p = 0; p < nProg; p++) {
+    const ipe::Program& prog = s.programs[p];
+    for (uint32_t q0 = start[p]; q0 < start[p + 1]; q0 += M) {
+      const int m = (int)(start[p + 1] - q0 < (uint32_t)M ? start[p + 1] - q0 : M);
+      for (int k = 0; k < m; k++) {
+        const size_t v = order[q0 + k];
+        const double x = P[3 * v], y = P[3 * v + 1], z = P[3 * v + 2];
+        cX[k] = x; cY[k] = y; cZ[k] = z;
+        double* ax = sX + 6 * k; double* ay = sY + 6 * k; double* az = sZ + 6 * k;
+        ax[0] = x + e; ay[0] = y; az[0] = z;
+        ax[1] = x - e; ay[1] = y; az[1] = z;
+        ax[2] = x; ay[2] = y + e; az[2] = z;
+        ax[3] = x; ay[3] = y - e; az[3] = z;
+        ax[4] = x; ay[4] = y; az[4] = z + e;
+        ax[5] = x; ay[5] = y; az[5] = z - e;
+      }
+      if (ipe::eval_contact(s, prog, cX, cY, cZ, m, cO, capC) != 0) return 4;
+      if (ipe::eval(s, prog, sX, sY, sZ, 6 * m, sO) != 0) return 4;
+      cand.clear();
+      for (int k = 0; k < m; k++) {
+        const size_t v = order[q0 + k];
+        double f[7] = {cO[k], sO[6 * k], sO[6 * k + 1], sO[6 * k + 2], sO[6 * k + 3], sO[6 * k + 4], sO[6 * k + 5]};
+        field[k] = newtonStep(f, e, maxStep);
+        share[k].ok = false;
+        accepted[k] = 0;
+        const int w = s.vertOwner[v];
+        // Not held, and its owner makes the field here: the field step is its own skin's.
+        if (!s.ownerHeld[v] && !(shC[(size_t)k * K + w] - cO[k] > tol)) continue;
+        cand.push_back(k);
+      }
+      // The candidates' stencil shares (their field values are the stencil's above).
+      const int nc = (int)cand.size();
+      for (int c = 0; c < nc; c++) {
+        const int k = cand[c];
+        for (int q = 0; q < 6; q++) { tX[6 * c + q] = sX[6 * k + q]; tY[6 * c + q] = sY[6 * k + q]; tZ[6 * c + q] = sZ[6 * k + q]; }
+      }
+      if (nc && ipe::eval_contact(s, prog, tX, tY, tZ, 6 * nc, tO, capS) != 0) return 4;
+      tries.clear();
+      for (int c = 0; c < nc; c++) {
+        const int k = cand[c];
+        const int w = s.vertOwner[order[q0 + k]];
+        double f[7];
+        f[0] = shC[(size_t)k * K + w];
+        for (int q = 0; q < 6; q++) f[q + 1] = shS[((size_t)6 * c + q) * K + w];
+        bool finite = true;
+        for (int q = 0; q < 7 && finite; q++) if (!std::isfinite(f[q])) finite = false;
+        if (!finite) continue;
+        const Step st = newtonStep(f, e, maxStep);
+        if (!st.ok || st.gl > HELD_GRAD_MAX) continue;   // the stencil straddles a jump in the share
+        share[k] = st;
+        tries.push_back(k);
+      }
+      // Where each share step lands: the field and the vertex's owner's share there.
+      const int nt = (int)tries.size();
+      for (int c = 0; c < nt; c++) {
+        const int k = tries[c];
+        const size_t v = order[q0 + k];
+        const Step& st = share[k];
+        lX[c] = P[3 * v] - (st.gx / st.gl) * st.t; lY[c] = P[3 * v + 1] - (st.gy / st.gl) * st.t; lZ[c] = P[3 * v + 2] - (st.gz / st.gl) * st.t;
+      }
+      if (nt && ipe::eval_contact(s, prog, lX, lY, lZ, nt, lO, capL) != 0) return 4;
+      for (int c = 0; c < nt; c++) {
+        const int k = tries[c];
+        const Step& st = share[k];
+        const double predicted = st.d - st.gl * st.t, landed = shL[(size_t)c * K + s.vertOwner[order[q0 + k]]];
+        const bool continuous = std::fabs(landed - predicted) <= HELD_CONTINUITY * std::fabs(st.t) + tol, mine = landed - lO[c] <= tol;
+        if (mine && (std::fabs(lO[c]) <= tol || continuous)) accepted[k] = 1;
+      }
+      for (int k = 0; k < m; k++) {
+        const size_t v = order[q0 + k];
+        const Step& st = accepted[k] ? share[k] : field[k];
+        if (!st.ok) continue;
+        if (N) { N[3 * v] = st.gx / st.gl; N[3 * v + 1] = st.gy / st.gl; N[3 * v + 2] = st.gz / st.gl; }
+        P[3 * v] -= (st.gx / st.gl) * st.t; P[3 * v + 1] -= (st.gy / st.gl) * st.t; P[3 * v + 2] -= (st.gz / st.gl) * st.t;
+      }
+    }
+  }
+  return 0;
+}
+
 int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxWeight, double maxMoveCells,
             double decimateFrac, int decimatePasses, double guardCos2, double normalCos2, double spreadCos2,
             double minAccept, double minGain) {
@@ -728,11 +972,29 @@ int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxW
   }
   s.normals.assign(s.positions.size(), 0.0);
   const double maxStep = maxMoveCells * edge;
-  project(s, nullptr, 0, maxStep, true);
+  if (!s.ownerMesh) {
+    project(s, nullptr, 0, maxStep, true);
+    for (int pass = 0; pass < relaxPasses; pass++) {
+      relax(s.positions, s.indices, s.normals, relaxWeight, maxStep);
+      project(s, nullptr, 0, maxStep, true);
+    }
+    return 0;
+  }
+  // An owner mesh (cleanup.js): pinned vertices keep a zero normal until the end, so relax
+  // leaves them where they are; one more projection after the last relaxation; then the
+  // pinned vertices take their normals from a zero-step projection.
+  std::vector<int32_t> freeV, pins;
+  for (size_t v = 0; v < s.pinned.size(); v++) (s.pinned[v] ? pins : freeV).push_back((int32_t)v);
+  const int nf = (int)freeV.size();
+  static const int32_t none = 0;
+  const int32_t* fw = nf ? freeV.data() : &none;   // a real pointer: null means every vertex
+  if (project_owned(s, fw, nf, maxStep, true) != 0) return 3;
   for (int pass = 0; pass < relaxPasses; pass++) {
     relax(s.positions, s.indices, s.normals, relaxWeight, maxStep);
-    project(s, nullptr, 0, maxStep, true);
+    if (project_owned(s, fw, nf, maxStep, true) != 0) return 3;
   }
+  if (project_owned(s, fw, nf, maxStep, true) != 0) return 3;
+  if (!pins.empty() && project_owned(s, pins.data(), (int)pins.size(), 0, true) != 0) return 3;
   return 0;
 }
 
@@ -810,6 +1072,7 @@ int ip_mesh_load(int id, const double* positions, int nv, const uint32_t* indice
   const int leaves = (int)(s->leaves.size() / 4);
   for (int q = 0; q < ni; q++) if (indices[q] >= (uint32_t)nv) return 1;
   for (int v = 0; v < nv; v++) if (vertLeaf[v] < 0 || vertLeaf[v] >= leaves) return 1;
+  ipm_mesh::clear_owner_mesh(*s);
   s->positions.assign(positions, positions + (size_t)nv * 3);
   s->indices.assign(indices, indices + ni);
   s->vertLeaf.assign(vertLeaf, vertLeaf + nv);

@@ -8,10 +8,15 @@ import { core, setCoreForTesting } from "../src/framework/core/core.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
 import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
-import { cleanupMesh, CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
+import { cleanupMesh, CLEANUP, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
 import { applySurfaceDetail, flattenDetail } from "../src/framework/geometry/implicit/detail.js";
 import { handSpec, vaseSpec } from "./fixtures/implicit-trees.js";
 import { sessionFor } from "./fixtures/implicit-native-cases.js";
+import { compileImplicit } from "../src/framework/geometry/implicit/index.js";
+import { meshStoreOwners } from "../src/framework/geometry/implicit/mesher-owners.js";
+import { cutCreases, untangle } from "../src/framework/geometry/implicit/crease.js";
+import { triangleOwners } from "../src/framework/geometry/implicit/result.js";
+import { SEAM_CASES, capsulePress } from "./fixtures/implicit-seam-cases.js";
 
 afterEach(() => setCoreForTesting(undefined));
 
@@ -161,4 +166,44 @@ describe("native surface detail", () => {
     } finally { s.destroy(); }
     expect(core().poisoned).toBe(false);
   });
+});
+
+// An owner mesh's detail (detail.js on the owner path): owner/held/pinned/crease carried through
+// refinement, held midpoints projected onto their share, and the seam fade (seamFade) before the
+// displacement — then each triangle's owner (result.js's triangleOwners). The same bytes.
+const pressNoise = (gap) => ({ ...capsulePress({ overlap: 1.2, gap }), detail: [{ kind: "noise", amplitude: 0.08, wavelength: 1.1 }] });
+const OWNER_DETAIL_CASES = [
+  { name: "press gap 0 with noise", spec: pressNoise(0) },
+  { name: "press gap 0.2 with noise", spec: pressNoise(0.2) },
+  ...SEAM_CASES.filter((c) => /^hand fist/.test(c.name)),
+];
+
+describe("native owner detail and triangle owners", () => {
+  for (const { name, spec } of OWNER_DETAIL_CASES) {
+    for (const edge of [1.5, 0.6]) {
+      test(`${name} at ${edge} mm: applySurfaceDetail's bytes, owner fields and triangle owners`, () => {
+        const compiled = compileImplicit(spec, { exactContact: true });
+        expect(compiled.detail.length).toBeGreaterThan(0);
+        const node = compiled.ir.nodes[compiled.ownerRoot];
+        const plan = planLeaves(compiled, edge);
+        const store = evaluateLeaves(plan);
+        const opts = edge === 1.5 ? PREVIEW_CLEANUP : CLEANUP;
+        const done = untangle(store, cutCreases(store, cleanupMesh(store, meshStoreOwners(store, { gap: node.gap }), opts), node.att));
+        const js = applySurfaceDetail(store, done, compiled);
+        expect(js.indices.length).toBeGreaterThan(done.indices.length);
+        const s = sessionFor(plan);
+        try {
+          s.setContact(node);
+          s.sample(plan, { readBack: false });
+          s.meshOwners({ readBack: false });
+          s.cleanup(opts, { readBack: false });
+          s.crease({ readBack: false });
+          s.untangle({ readBack: false });
+          const nat = s.detail(flattenDetail(compiled));
+          for (const k of ["positions", "indices", "vertLeaf", "normals", "vertOwner", "ownerHeld", "pinned", "crease"]) same(k, nat[k], js[k]);
+          same("triOwner", s.triOwners(), triangleOwners(js));
+        } finally { s.destroy(); }
+      }, 300_000);
+    }
+  }
 });

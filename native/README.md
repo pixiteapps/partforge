@@ -14,7 +14,8 @@ binds the same C calls into its own JS engine.
 | `flat_map.h` | (no JS twin) the open-addressing hash map the ports use in place of `std::unordered_map` |
 | `implicit_eval.{h,cpp}` | `src/framework/geometry/implicit/` `program.js` (runProgram/evalBatch), `primitives.js`, `frames.js` (xformPoint/xformDir), `expr-lower.js` (the UN/BIN/TER tables), `textures.js` (sampleTexture), `contact.js` (contactValue/bulgeOffset: the CONTACT and BULGE ops) — the implicit engine's field interpreter, and the session that holds a meshing run |
 | `implicit_mesh.{h,cpp}` | `implicit/sparse.js` (evaluateLeaves), `mesher.js` (meshStore), `project.js` (projectVertices), `cleanup.js` (cleanupMesh) — sample, mesh and clean on the session |
-| `implicit_detail.cpp` | `implicit/detail.js` (applySurfaceDetail) — refine, project and displace for surface detail |
+| `implicit_detail.cpp` | `implicit/detail.js` (applySurfaceDetail, with the owner path's seamFade) — refine, project and displace for surface detail |
+| `implicit_owner.cpp` | `implicit/mesher-owners.js` (meshStoreOwners), `crease.js` (cutCreases, untangle), `result.js` (triangleOwners) — the owner path of a root exact contact; its cleanup modes (owner guards in collapse, `project_owned`) are in `implicit_mesh.cpp` |
 | `implicit_math.h` | `js-math.js`'s `pfSin`/`pfCos`/`pfAtan2` and `implicit/noise.js` (latticeHash/valueNoise) |
 | `implicit_probe.cpp` | (test only) `ip_math_probe`, which `test/implicit-native-math.test.js` calls to compare `implicit_math.h` with its JS |
 
@@ -170,6 +171,38 @@ in JS; a program carries its clearance `cl` baked in):
 Likewise detail's midpoints are numbered in creation order (triangles in
 order, edges v0v1, v1v2, v2v0); its midpoint map is per-vertex chains, only
 found and inserted.
+
+**The owner path** (a root exact contact; `meshImplicitCore` runs it whenever
+`compiled.ownerRoot ≥ 0`): `ip_set_contact` hands in the contact's attachment
+table, exact clearance and gap with `contact.js`'s CREASE_SNAP, CREASE_TOL and
+DETAIL_SEAM_FADE (one home for the constants), then `ip_mesh_owners` →
+`ip_cleanup` → `ip_crease` → `ip_untangle` → `ip_detail`, and `ip_tri_owners`.
+An owner mesh carries `vertOwner`, `ownerHeld`, `pinned` and (once cut)
+`crease` per vertex through every stage (`ip_vert_owner`, …); a plain mesh
+clears them, and the existing stages switch to their owner modes on an owner
+mesh. Every evaluation is of mesh or grid points with a leaf's program
+(`eval_points`: bucketed by program, which decides nothing since the
+interpreter is lane-local). The orders that decide a result:
+
+- **The mesher**: owner-owner edge records numbered when first met (leaves,
+  cells, Kuhn tets, corner pairs a < b); emission is meshStore's order with
+  each refined tet's split edges taken in ascending key order and its
+  sub-tets in (s1, s2) order; a crossing toward an air node is numbered when
+  its unordered node pair is first met.
+- **The crease cut**: the crossing edges in triangle, corner order (first
+  seen wins), snaps and then splits in that order.
+- **untangle**: JS Sets keep insertion order and here it decides results — a
+  ring's centroid is summed in ring order, a fan's order is the order a
+  collapse rewrites and relinks its triangles, and the round's `touched` set
+  orders the next flipped list (which orders the swaps). So fans are vectors
+  with Set semantics (append when absent, erase in place), rings are read off
+  them in order, and `touched` is an insertion-ordered list. The edge →
+  triangle lists are only counted or read at length two, so only their
+  contents must be the JS's.
+
+A vertex owner that is not a child index below ownerK (the JS would index
+its shares past the point's own) makes `ip_mesh_owners` refuse, and the JS
+answers.
 
 Measure a change with `npm run bench:core` (`BENCH_BASELINE=<an older
 core-wasm.js>` runs both builds side by side, alternating, so machine load

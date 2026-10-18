@@ -14,6 +14,8 @@ import { handSpec, nailSpecs, vaseSpec, ADVERSARIAL } from "./fixtures/implicit-
 import { TREES } from "./fixtures/implicit-small-trees.js";
 import { creasedNormals } from "../src/framework/geometry/creased-normals.js";
 import { ORGANIC } from "../src/framework/geometry/shading-policy.js";
+import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
+import { SEAM_CASES } from "./fixtures/implicit-seam-cases.js";
 
 afterAll(() => { setCoreEnabled(true); delete globalThis.PARTFORGE_CORE_SIMD; setCoreForTesting(undefined); });
 
@@ -162,4 +164,47 @@ describe("creased normals: sibling groups", () => {
     const a = creasedNormals(g, { policies: POLICIES.grouped }), b = creasedNormals(g, { policies: POLICIES.ungrouped });
     expect(Buffer.compare(bytes(a.normals), bytes(b.normals))).not.toBe(0);
   });
+});
+
+// The owner path (a root exact contact: core/implicit-core.js's owner mesher, owner cleanup,
+// crease cut, untangle and the detail's seam fade): every seam fixture at the preview grid and
+// the print grid, core on (both builds) against core off — positions, indices, normals and
+// every owner field byte for byte, and the core must really have answered (nothing refused).
+describe("owner path: every seam fixture", () => {
+  const OWNER_FIELDS = ["positions", "indices", "normals", "vertOwner", "ownerHeld", "pinned", "crease", "triOwner"];
+  for (const { name, spec } of SEAM_CASES) {
+    for (const [edge, tier] of [[1.5, "preview"], [0.6, "print"]]) {
+      test(`core on == core off: ${name} at ${edge} mm`, () => {
+        const compiled = compileImplicit(spec, { exactContact: true });
+        setCoreEnabled(false);
+        const off = meshImplicit(compiled, edge, { tier });
+        expect(off.indices.length).toBeGreaterThan(0);
+        for (const simd of [true, false]) {
+          if (simd) delete globalThis.PARTFORGE_CORE_SIMD; else globalThis.PARTFORGE_CORE_SIMD = false;
+          setCoreForTesting(undefined);
+          setCoreEnabled(true);
+          // A stand-in that counts the owner path's last native stage: meshImplicit really ran it.
+          const real = core();
+          let untangled = 0;
+          const standIn = { ...real, x: { ...real.x, ip_untangle: (...a) => { untangled++; return real.x.ip_untangle(...a); } } };
+          setCoreForTesting(standIn);
+          const on = meshImplicit(compiled, edge, { tier });
+          expect(real.simd, "the build under test ran").toBe(simd);
+          // (A print-grid hand grows the instance past RECYCLE_BYTES, so it is dropped once idle: "idle", not "on".)
+          expect(standIn.poisoned, "the core did not fault").toBeFalsy();
+          expect(coreStatus(), "the core answered").toMatchObject({ reason: null, refusedMeshes: 0 });
+          expect(untangled, "the owner path ran on the core").toBe(1);
+          for (const k of OWNER_FIELDS) {
+            expect(on[k]?.constructor, `${k} (${simd ? "SIMD" : "scalar"})`).toBe(off[k].constructor);
+            expect(Buffer.compare(bytes(on[k]), bytes(off[k])), `${k} (${simd ? "SIMD" : "scalar"})`).toBe(0);
+          }
+          expect(on.warnings).toEqual(off.warnings);
+          expect(on.stats).toEqual(off.stats);
+        }
+        delete globalThis.PARTFORGE_CORE_SIMD;
+        setCoreForTesting(undefined);
+        setCoreEnabled(true);
+      }, 240_000);
+    }
+  }
 });

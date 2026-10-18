@@ -86,6 +86,21 @@ struct Session {
   // Per-vertex field normals (project.js's `normals`, double x3), written by
   // ip_project with normals on and by ip_cleanup; empty after a new mesh.
   std::vector<double> normals;
+
+  // The owner path (implicit_owner.cpp; a root exact contact). The contact's context, set once
+  // by ip_set_contact: its attachment table (contact.js's ATTACH_STRIDE layout, child indices),
+  // its exact clearance (clearanceExact(gap)), its gap, and contact.js's CREASE_SNAP, CREASE_TOL
+  // and DETAIL_SEAM_FADE — handed in from JS, so the constants have one home.
+  bool contactSet = false;
+  std::vector<double> att;
+  double cl = 0, gap = 0, creaseSnap = 0, creaseTol = 0, seamFade = 0;
+  // An OWNER MESH (ip_mesh_owners, and every stage after it) carries per vertex its owner (a
+  // child index), held / pinned marks and, once the crease is cut (hasCrease), crease marks.
+  // A plain mesh (ip_mesh, ip_mesh_load) clears them.
+  bool ownerMesh = false, hasCrease = false;
+  std::vector<int32_t> vertOwner;
+  std::vector<uint8_t> ownerHeld, pinned, creaseMark;
+  std::vector<int32_t> triOwner;   // ip_tri_owners' answer (result.js's triangleOwners)
 };
 
 // Checks a program's structure once (op codes, operand counts, register and fn

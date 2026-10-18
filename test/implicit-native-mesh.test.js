@@ -8,6 +8,9 @@ import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
 import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
 import { nativeCases, sessionFor } from "./fixtures/implicit-native-cases.js";
+import { compileImplicit } from "../src/framework/geometry/implicit/index.js";
+import { meshStoreOwners } from "../src/framework/geometry/implicit/mesher-owners.js";
+import { SEAM_CASES, capsulePress, threePress, fingersOnPalm } from "./fixtures/implicit-seam-cases.js";
 
 afterEach(() => setCoreForTesting(undefined));
 
@@ -83,6 +86,61 @@ describe("native marching tetrahedra", () => {
       const nat = s.mesh();
       expect([nat.positions.length, nat.indices.length, nat.vertLeaf.length]).toEqual([0, 0, 0]);
     } finally { s.destroy(); }
+    expect(core().poisoned).toBe(false);
+  });
+});
+
+// The owner mesher (mesher-owners.js's meshStoreOwners, ip_mesh_owners): a root exact contact's
+// store meshed with its owners — air-node refinement of open owner edges, held plain vertices,
+// pinned gap-face vertices — the same bytes, owner fields included.
+const OWNER_STAGE_CASES = [
+  ...SEAM_CASES.filter((c) => /^press|^near miss|^hand fist/.test(c.name)),
+  { name: "three pressed spheres gap 0", spec: threePress({ gap: 0 }) },
+  { name: "three pressed spheres gap 0.2", spec: threePress({ gap: 0.2 }) },
+  { name: "fingers on palm 0.3", spec: fingersOnPalm({ fingerGap: 0.3 }) },
+];
+
+describe("native owner mesher", () => {
+  let held = 0, pinned = 0;
+  for (const { name, spec } of OWNER_STAGE_CASES) {
+    for (const edge of [1.5, 0.6]) {
+      test(`${name} at ${edge} mm: meshStoreOwners' positions, indices, vertLeaf, vertOwner, ownerHeld and pinned`, () => {
+        const compiled = compileImplicit(spec, { exactContact: true });
+        const node = compiled.ir.nodes[compiled.ownerRoot];
+        const plan = planLeaves(compiled, edge);
+        const js = meshStoreOwners(evaluateLeaves(plan), { gap: node.gap });
+        expect(js.indices.length).toBeGreaterThan(0);
+        held += js.ownerHeld.reduce((a, b) => a + b, 0);
+        pinned += js.pinned.reduce((a, b) => a + b, 0);
+        const s = sessionFor(plan);
+        try {
+          s.setContact(node);
+          s.sample(plan, { readBack: false });
+          const nat = s.meshOwners();
+          for (const k of ["positions", "indices", "vertLeaf", "vertOwner", "ownerHeld", "pinned"]) same(k, nat[k], js[k]);
+        } finally { s.destroy(); }
+      }, 120_000);
+    }
+  }
+  test("the cases reach the refinement: held and pinned vertices were compared", () => {
+    expect(held).toBeGreaterThan(0);
+    expect(pinned).toBeGreaterThan(0);
+  });
+
+  test("meshOwners needs an owner plan and a contact; refused, not run, and the instance is not poisoned", () => {
+    const sphere = planLeaves(lowerSpec({ root: { kind: "sphere", r: 3 } }, { images: new Map() }), 1);
+    const s = sessionFor(sphere);
+    try {
+      s.sample(sphere, { readBack: false });
+      expect(() => s.meshOwners()).toThrow(/refused/);   // no owner plan, no contact
+    } finally { s.destroy(); }
+    const compiled = compileImplicit(capsulePress({ overlap: 1.2, gap: 0.2 }), { exactContact: true });
+    const plan = planLeaves(compiled, 1.5);
+    const t = sessionFor(plan);
+    try {
+      t.sample(plan, { readBack: false });
+      expect(() => t.meshOwners()).toThrow(/refused/);   // an owner plan, but no contact set
+    } finally { t.destroy(); }
     expect(core().poisoned).toBe(false);
   });
 });

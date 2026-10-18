@@ -25,13 +25,12 @@ export function compileImplicit(spec, { images = new Map(), exactContact = false
 //
 // A root exact contact (`compiled.ownerRoot ≥ 0`) meshes through the owner mesher
 // (mesher-owners.js) and owner-aware cleanup, and its result gains `vertOwner`,
-// `ownerHeld`, `pinned`, `crease` and `triOwner` (the crease cut, crease.js, after cleanup and before detail). `owners: false`
-// meshes the same field with the plain mesher instead: the seam baseline.
+// `ownerHeld`, `pinned`, `crease` and `triOwner` (the crease cut, crease.js, after cleanup and before detail),
+// on the core as in JS. `owners: false` meshes the same field with the plain mesher instead: the seam baseline.
 export function meshImplicit(compiled, edge, { tier, owners = true } = {}) {
   const opts = tier === "preview" ? PREVIEW_CLEANUP : CLEANUP;
   const plan = planLeaves(compiled, edge);
-  // An exact-contact tree: the core evaluates and samples its owners, but has no owner mesher yet — JS answers.
-  const native = compiled.ownerRoot >= 0 ? null : meshImplicitCore(compiled, edge, plan, opts);
+  const native = meshImplicitCore(compiled, edge, plan, opts, { owners });
   if (native) return native;
   const store = evaluateLeaves(plan);
   const ownerPath = owners && compiled.ownerRoot >= 0;

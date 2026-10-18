@@ -16,6 +16,7 @@ import { core, countRefusedMesh, OUT_OF_MEMORY, poisonCore, releaseIfIdle } from
 import { CLEANUP, guardCos2 } from "../geometry/implicit/cleanup.js";
 import { DETAIL_STRIDE, flattenDetail } from "../geometry/implicit/detail.js";
 import { implicitResult } from "../geometry/implicit/result.js";
+import { clearanceExact, CREASE_SNAP, CREASE_TOL, DETAIL_SEAM_FADE } from "../geometry/implicit/contact.js";
 
 const isFault = (err) => (typeof WebAssembly === "object" && err instanceof WebAssembly.RuntimeError) || err?.message === OUT_OF_MEMORY;
 const isNumbers = (a) => ArrayBuffer.isView(a) || Array.isArray(a);
@@ -256,15 +257,91 @@ export class NativeSession {
     return out;
   }
 
-  // The session mesh as { positions, indices, vertLeaf } copies (inside #call).
+  // The session mesh as { positions, indices, vertLeaf } copies (inside #call), plus an owner
+  // mesh's vertOwner, ownerHeld, pinned and (once cut) crease.
   #readMesh() {
     const { c } = this;
     const nv = c.x.ip_vertex_count(this.id), ni = c.x.ip_index_count(this.id);
-    return {
+    const mesh = {
       positions: c.copyOut(Float64Array, c.x.ip_positions(this.id), nv * 3),
       indices: c.copyOut(Uint32Array, c.x.ip_indices(this.id), ni),
       vertLeaf: c.copyOut(Int32Array, c.x.ip_vert_leaf(this.id), nv),
     };
+    const owner = c.x.ip_vert_owner(this.id);
+    if (owner) {
+      mesh.vertOwner = c.copyOut(Int32Array, owner, nv);
+      mesh.ownerHeld = c.copyOut(Uint8Array, c.x.ip_owner_held(this.id), nv);
+      mesh.pinned = c.copyOut(Uint8Array, c.x.ip_pinned(this.id), nv);
+      const crease = c.x.ip_crease_marks(this.id);
+      if (crease) mesh.crease = c.copyOut(Uint8Array, crease, nv);
+    }
+    return mesh;
+  }
+
+  /**
+   * The root exact contact the owner stages read: `node` is its IR node ({ att, gap }) — the
+   * attachment table, and the gap that sets its exact clearance (contact.js's clearanceExact) —
+   * handed in with contact.js's CREASE_SNAP, CREASE_TOL and DETAIL_SEAM_FADE.
+   */
+  setContact(node) {
+    const { c } = this;
+    const att = node?.att ?? new Float64Array(0), gap = node?.gap ?? 0;
+    if (!isNumbers(att) || att.length % 8 || typeof gap !== "number") throw refusal("implicit: setContact takes a contact node's att (8 doubles per attachment) and gap");
+    let rc = 0;
+    this.#call(() => {
+      const pa = att.length ? c.copyIn(Float64Array.from(att)) : c.alloc(8);
+      try {
+        rc = c.x.ip_set_contact(this.id, pa, att.length, clearanceExact(gap), gap, CREASE_SNAP, CREASE_TOL, DETAIL_SEAM_FADE);
+      } finally {
+        c.x.free(pa);
+      }
+    });
+    if (rc !== 0) throw refusal("implicit: the core refused the contact");
+  }
+
+  // An owner stage (`fn` the export) on the session mesh: its mesh and owner fields, or null with `readBack: false`.
+  #ownerStage(fn, what, readBack) {
+    const { c } = this;
+    let rc = 0;
+    const out = this.#call(() => {
+      rc = c.x[fn](this.id);
+      if (rc !== 0 || !readBack) return null;
+      const m = this.#readMesh();
+      const nr = c.x.ip_normals(this.id);
+      return nr ? { ...m, normals: c.copyOut(Float64Array, nr, m.vertLeaf.length * 3) } : m;
+    });
+    if (rc !== 0) throw refusal(`implicit: the core refused ${what}`);
+    return out;
+  }
+
+  /**
+   * meshStoreOwners on the core, over the last sample() (an owner plan) with the contact set
+   * (setContact): { positions, indices, vertLeaf, vertOwner, ownerHeld, pinned }, or null with
+   * `readBack: false`. Later stages (cleanup, crease, untangle, detail) carry the owner fields.
+   */
+  meshOwners({ readBack = true } = {}) {
+    return this.#ownerStage("ip_mesh_owners", "to mesh owners (no owner plan sampled, no contact set, or a sample without a piece)", readBack);
+  }
+
+  /** cutCreases on the session's cleaned owner mesh: the mesh with its owner fields and `crease`. */
+  crease({ readBack = true } = {}) {
+    return this.#ownerStage("ip_crease", "the crease cut (no cleaned owner mesh, or no contact set)", readBack);
+  }
+
+  /** untangle on the session's cut owner mesh: the mesh with its owner fields and `crease`. */
+  untangle({ readBack = true } = {}) {
+    return this.#ownerStage("ip_untangle", "to untangle (no cut owner mesh)", readBack);
+  }
+
+  /** triangleOwners of the session's owner mesh: an Int32Array, one owner per triangle. */
+  triOwners() {
+    const { c } = this;
+    const out = this.#call(() => {
+      const ptr = c.x.ip_tri_owners(this.id);
+      return ptr ? c.copyOut(Int32Array, ptr, c.x.ip_index_count(this.id) / 3) : null;
+    });
+    if (!out) throw refusal("implicit: the core refused triangle owners (no owner mesh)");
+    return out;
   }
 
   /**
@@ -443,25 +520,38 @@ function acceptsPlan(plan) {
  * object, bit for bit — sample, mesh, cleanup (`opts`, CLEANUP or the preview
  * tier's PREVIEW_CLEANUP) and, when the part has
  * any, the surface detail, all on one session, with the warnings worded by
- * implicitResult as the JS's are. Returns null when the JS must answer instead:
- * the core is off or unavailable, it refused the plan (counted, not reported),
+ * implicitResult as the JS's are. A root exact contact (`compiled.ownerRoot ≥ 0`, with
+ * `owners`, the default) takes the owner path as meshImplicit does — owner mesher, owner
+ * cleanup, crease cut, untangle and the detail's seam fade — and its result gains
+ * `vertOwner`, `ownerHeld`, `pinned`, `crease` and `triOwner`. Returns null when the JS must
+ * answer instead: the core is off or unavailable, it refused the plan (counted, not reported),
  * or it faulted (the instance is poisoned and the fallback reported).
  */
-export function meshImplicitCore(compiled, edge, plan, opts = CLEANUP) {
+export function meshImplicitCore(compiled, edge, plan, opts = CLEANUP, { owners = true } = {}) {
   const c = core();
   if (!c) return null;
   if (!acceptsPlan(plan)) { countRefusedMesh(); return null; }
   const flat = compiled.detail.length ? flattenDetail(compiled) : null;
-  let s = null, mesh, clipped;
+  const ownerPath = owners && compiled.ownerRoot >= 0;
+  let s = null, mesh, clipped, triOwner = null;
   try {
     s = new NativeSession(c);
     // Plan order: a leaf's progIndex and a program's texture slots are session indices
     // (plan.textures IS compiled.textures, so the detail's slots name the same ones).
     plan.textures.forEach((t, i) => { if (s.addTexture(t) !== i) throw refusal("implicit: the core numbered a texture out of plan order"); });
     plan.programs.forEach((p, i) => { if (s.addProgram(p) !== i) throw refusal("implicit: the core numbered a program out of plan order"); });
+    if (ownerPath) s.setContact(compiled.ir.nodes[compiled.ownerRoot]);
     ({ clipped } = s.sample(plan, { readBack: false }));
-    s.mesh({ readBack: false });
-    mesh = flat ? (s.cleanup(opts, { readBack: false }), s.detail(flat)) : s.cleanup(opts);
+    if (ownerPath) {
+      s.meshOwners({ readBack: false });
+      s.cleanup(opts, { readBack: false });
+      s.crease({ readBack: false });
+      mesh = flat ? (s.untangle({ readBack: false }), s.detail(flat)) : s.untangle();
+      triOwner = s.triOwners();
+    } else {
+      s.mesh({ readBack: false });
+      mesh = flat ? (s.cleanup(opts, { readBack: false }), s.detail(flat)) : s.cleanup(opts);
+    }
   } catch (err) {
     if (err === CORE_FAULT) return null;   // poisoned and reported already
     if (err?.code === CORE_REFUSED) { countRefusedMesh(); return null; }
@@ -471,5 +561,7 @@ export function meshImplicitCore(compiled, edge, plan, opts = CLEANUP) {
     s?.destroy();
   }
   // Outside the try: pure JS, so a throw here can never poison the core.
-  return implicitResult(compiled, edge, plan, mesh, clipped);
+  const result = implicitResult(compiled, edge, plan, mesh, clipped);
+  if (ownerPath) Object.assign(result, { vertOwner: mesh.vertOwner, ownerHeld: mesh.ownerHeld, pinned: mesh.pinned, crease: mesh.crease, triOwner });
+  return result;
 }

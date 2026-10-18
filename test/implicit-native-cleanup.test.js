@@ -10,6 +10,10 @@ import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
 import { projectVertices } from "../src/framework/geometry/implicit/project.js";
 import { cleanupMesh, CLEANUP, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
 import { nativeCases, sessionFor } from "./fixtures/implicit-native-cases.js";
+import { compileImplicit } from "../src/framework/geometry/implicit/index.js";
+import { meshStoreOwners } from "../src/framework/geometry/implicit/mesher-owners.js";
+import { cutCreases, untangle } from "../src/framework/geometry/implicit/crease.js";
+import { SEAM_CASES, threePress, fingersOnPalm } from "./fixtures/implicit-seam-cases.js";
 
 afterEach(() => setCoreForTesting(undefined));
 
@@ -88,6 +92,65 @@ describe("native cleanup", () => {
       same("empty which moves nothing", s.project({ maxStep: 1, which: [] }).positions, raw.positions);
       expect(() => s.loadMesh({ positions: [0, 0, 0], indices: [0, 0, 1], vertLeaf: [0] })).toThrow(/refused/);
       expect(() => s.loadMesh({ positions: [0, 0, 0], indices: [], vertLeaf: [plan.leaves.length] })).toThrow(/refused/);
+    } finally { s.destroy(); }
+    expect(core().poisoned).toBe(false);
+  });
+});
+
+// The owner path's later stages, each from the stage before it on one session: owner-aware
+// cleanup (cleanupMesh on meshStoreOwners' mesh: owner/held/pinned carried, collapse guards,
+// share projection, the extra pass, pinned normals), the crease cut (crease.js's cutCreases)
+// and untangle — the same bytes as the JS at every stage, owner fields included.
+const OWNER_CASES = [
+  ...SEAM_CASES.filter((c) => /^press|^near miss|^hand fist/.test(c.name)),
+  { name: "three pressed spheres gap 0", spec: threePress({ gap: 0 }) },
+  { name: "fingers on palm 0.3", spec: fingersOnPalm({ fingerGap: 0.3 }) },
+];
+const OWNED = ["positions", "indices", "vertLeaf", "normals", "vertOwner", "ownerHeld", "pinned"];
+
+describe("native owner cleanup, crease cut and untangle", () => {
+  let creases = 0, untangled = 0;
+  for (const { name, spec } of OWNER_CASES) {
+    for (const [edge, tier, opts] of [[1.5, "PREVIEW_CLEANUP", PREVIEW_CLEANUP], [1.5, "CLEANUP", CLEANUP], [0.6, "CLEANUP", CLEANUP]]) {
+      test(`${name} at ${edge} mm, ${tier}: each stage's bytes`, () => {
+        const compiled = compileImplicit(spec, { exactContact: true });
+        const node = compiled.ir.nodes[compiled.ownerRoot];
+        const plan = planLeaves(compiled, edge);
+        const store = evaluateLeaves(plan);
+        const cleaned = cleanupMesh(store, meshStoreOwners(store, { gap: node.gap }), opts);
+        const cut = cutCreases(store, cleaned, node.att);
+        const done = untangle(store, cut);
+        creases += cut.crease.reduce((a, b) => a + b, 0);
+        if (done !== cut) untangled++;
+        const s = sessionFor(plan);
+        try {
+          s.setContact(node);
+          s.sample(plan, { readBack: false });
+          s.meshOwners({ readBack: false });
+          const natCleaned = s.cleanup(opts);
+          for (const k of OWNED) same(`cleanup ${k}`, natCleaned[k], cleaned[k]);
+          const natCut = s.crease();
+          for (const k of [...OWNED, "crease"]) same(`crease ${k}`, natCut[k], cut[k]);
+          const natDone = s.untangle();
+          for (const k of [...OWNED, "crease"]) same(`untangle ${k}`, natDone[k], done[k]);
+        } finally { s.destroy(); }
+      }, 300_000);
+    }
+  }
+  test("the cases reach the cut and the repair", () => {
+    expect(creases).toBeGreaterThan(0);
+    expect(untangled).toBeGreaterThan(0);
+  });
+
+  test("crease and untangle need an owner mesh: refused, not run", () => {
+    const plan = planLeaves(lowerSpec({ root: { kind: "sphere", r: 3 } }, { images: new Map() }), 1);
+    const s = sessionFor(plan);
+    try {
+      s.sample(plan, { readBack: false });
+      s.mesh({ readBack: false });
+      s.cleanup(CLEANUP, { readBack: false });
+      expect(() => s.crease()).toThrow(/refused/);
+      expect(() => s.untangle()).toThrow(/refused/);
     } finally { s.destroy(); }
     expect(core().poisoned).toBe(false);
   });
