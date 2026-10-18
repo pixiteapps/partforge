@@ -62,7 +62,10 @@ vi.mock("../../src/framework/viewer.js", async (importOriginal) => {
 import { mount } from "../../src/framework/mount.js";
 import { mountPreview } from "../../src/framework/mount-preview.js";
 import { decodePreviewGlb } from "../../src/framework/gltf/decode-preview.js";
+import { cameraPoseForView } from "../../src/framework/view-angles.js";
+import { encodePreviewGlb } from "../../src/framework/gltf/encode-preview.js";
 import { boxEdges, boxSoup, boundsOf, previewGlbFor, segmentMismatch } from "../helpers/preview-glb.js";
+import { box, input } from "../helpers/preview-animation-fixture.js";
 
 const OriginalResizeObserver = globalThis.ResizeObserver;
 
@@ -308,4 +311,101 @@ test("the sticky hooks a host relays are safe, before and after the decode", asy
 
 test("mountPreview requires a container", () => {
   expect(() => mountPreview(null, { glb: new Uint8Array(0) })).toThrow(TypeError);
+});
+
+// --- mountPreview: the baked autoplay animation ---------------------------------
+// The lid moves; one intro cue to "front".
+const animatedGlb = () => encodePreviewGlb({ meshes: [box("base"), box("lid", 24)], view: "box", animation: input() });
+const stillGlb = () => encodePreviewGlb({ meshes: [box("base"), box("lid", 24)], view: "box" });
+const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+// Drive the fake renderer's animation loop: `seconds` of 0.1s frames (the
+// viewer clamps a frame's dt to 0.1s), continuing from wherever the clock is.
+let clockMs = 0;
+function runFrames(seconds) {
+  const loop = state.renderer.animationLoop;
+  for (let i = 0; i <= Math.round(seconds * 10); i++) loop((clockMs += 100));
+}
+beforeEach(() => { clockMs = 0; });
+
+test("mountPreview plays the file's animation once drawn", async () => {
+  const handle = mountPreview(makeStage(), { glb: await animatedGlb() });
+  await handle.ready;
+  const v = viewers.at(-1);
+  const orbit = vi.fn();
+  v.onCameraStart(orbit);
+  expect(handle.animation.state().status).toBe("intro"); // gated on the intro cue's tween
+  const before = handle.getViewerState().camera;
+  expect([...v.__subMesh("lid").matrix.elements]).toEqual(IDENTITY); // the opening pose
+
+  runFrames(0.8); // the 0.6s intro tween lands on the same loop
+  expect(orbit).not.toHaveBeenCalled(); // the viewer's own tween is not a user grab
+  expect(handle.animation.state().status).toBe("playing");
+  const cam = handle.getViewerState().camera;
+  expect(cam.pos).not.toEqual(before.pos);
+  // The camera now looks from where the "front" view puts it.
+  const unit = (v) => { const n = Math.hypot(...v); return v.map((c) => c / n); };
+  const front = cameraPoseForView("front", { center: [0, 0, 0], radius: 1 });
+  expectNear(unit(cam.pos.map((c, i) => c - cam.target[i])), unit(front.position.map((c, i) => c - front.target[i])), 3);
+
+  runFrames(0.5);
+  expect(handle.animation.state().t).toBeGreaterThan(0);
+  expect([...v.__subMesh("lid").matrix.elements]).not.toEqual(IDENTITY); // the lid swung
+  expect([...v.__subMesh("base").matrix.elements]).toEqual(IDENTITY);    // the base has no track
+  handle.animation.pause();
+  expect(handle.animation.state().status).toBe("paused");
+  handle.animation.resume();
+  expect(handle.animation.state().status).toMatch(/intro|playing/);
+  handle.dispose();
+});
+
+test("a host tween started mid-intro replaces the intro's, so its onComplete never fires", async () => {
+  const handle = mountPreview(makeStage(), { glb: await animatedGlb() });
+  await handle.ready;
+  viewers.at(-1).tweenCameraTo("top", { duration: 5 });
+  runFrames(1.5); // well past the intro's 0.6s
+  expect(handle.animation.state().status).toBe("intro");
+  handle.dispose();
+});
+
+test("animate: false mounts the opening pose and no player", async () => {
+  const handle = mountPreview(makeStage(), { glb: await animatedGlb(), animate: false });
+  expect(handle.animation).toBeNull();
+  await handle.ready;
+  expect(handle.animation).toBeNull();
+  runFrames(1);
+  expect([...viewers.at(-1).__subMesh("lid").matrix.elements]).toEqual(IDENTITY);
+  handle.dispose();
+});
+
+test("a still file has no animation handle", async () => {
+  const handle = mountPreview(makeStage(), { glb: await stillGlb() });
+  await handle.ready;
+  expect(handle.animation).toBeNull();
+  handle.dispose();
+});
+
+test("under prefers-reduced-motion the player never starts", async () => {
+  const matchMedia = vi.fn((query) => ({ matches: query === "(prefers-reduced-motion: reduce)", media: query }));
+  vi.stubGlobal("matchMedia", matchMedia);
+  const handle = mountPreview(makeStage(), { glb: await animatedGlb() });
+  await handle.ready;
+  expect(matchMedia).toHaveBeenCalledWith("(prefers-reduced-motion: reduce)");
+  expect(handle.animation.state().status).toBe("idle");
+  runFrames(1.5);
+  expect(handle.animation.state()).toEqual({ status: "idle", t: 0 });
+  expect([...viewers.at(-1).__subMesh("lid").matrix.elements]).toEqual(IDENTITY);
+  handle.dispose();
+});
+
+test("dispose stops the player", async () => {
+  const handle = mountPreview(makeStage(), { glb: await animatedGlb() });
+  await handle.ready;
+  const loop = state.renderer.animationLoop;
+  runFrames(1);
+  const animation = handle.animation;
+  const { t } = animation.state();
+  handle.dispose();
+  for (let i = 0; i < 10; i++) loop((clockMs += 100));
+  expect(animation.state().t).toBe(t);
 });
