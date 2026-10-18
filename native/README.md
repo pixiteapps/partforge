@@ -180,9 +180,11 @@ DETAIL_SEAM_FADE (one home for the constants), then `ip_mesh_owners` →
 An owner mesh carries `vertOwner`, `ownerHeld`, `pinned` and (once cut)
 `crease` per vertex through every stage (`ip_vert_owner`, …); a plain mesh
 clears them, and the existing stages switch to their owner modes on an owner
-mesh. Every evaluation is of mesh or grid points with a leaf's program
-(`eval_points`: bucketed by program, which decides nothing since the
-interpreter is lane-local). The orders that decide a result:
+mesh. Evaluations of mesh or grid points with a leaf's program go through
+`eval_points` (bucketed by program, which decides nothing since the
+interpreter is lane-local); the exceptions are `project_owned`, which calls
+`ipe::eval` / `eval_contact` directly (a vertex's share and cuts, point by
+point). The orders that decide a result:
 
 - **The mesher**: owner-owner edge records numbered when first met (leaves,
   cells, Kuhn tets, corner pairs a < b); emission is meshStore's order with

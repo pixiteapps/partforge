@@ -16,7 +16,11 @@ import { TREES } from "./fixtures/implicit-small-trees.js";
 import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 
 const issues = (spec) => { try { validateSpec(spec); return []; } catch (e) { expect(e.code).toBe("IMPLICIT_SPEC"); return e.issues; } };
-const lower = (spec) => lowerSpec(spec, { images: new Map() });
+// The approximate contact: a minimum gap (the floor) and a soft pad fill. Since exact seams became the
+// default only the top contact of a k.implicit is exact; a NESTED contact (and `exactContact: false`)
+// keeps this behaviour, which is what the tests below that use `lower` / `compileApprox` pin.
+const lower = (spec) => lowerSpec(spec, { images: new Map(), exactContact: false });
+const compileApprox = (spec) => compileImplicit(spec, { exactContact: false });
 const sph = (x, label, r = 5) => ({ kind: "sphere", r, at: [x, 0, 0], ...(label ? { label } : {}) });
 const near = (a, b, tol = 1e-12) => expect(Math.abs(a - b)).toBeLessThanOrEqual(tol);
 
@@ -113,7 +117,7 @@ describe("contact reference field", () => {
     // PAD_BLEND/4 above the tops (y = 10), so the box must reach past them.
     const box = (x) => ({ kind: "box", size: [20, 20, 20], at: [x, 0, 0] });
     const spec = { root: { kind: "contact", bulge: 0, children: [box(-9.5), box(9.5)] } };
-    const c = compileImplicit(spec);
+    const c = compileApprox(spec);
     expect(evalReference(c, 0, 10.2, 0, 1)).toBeLessThan(0);
     expect(c.bounds.max[1]).toBeGreaterThanOrEqual(10 + PAD_BLEND / 4);
     const out = meshImplicit(c, 1);
@@ -245,7 +249,7 @@ describe("contact reference field", () => {
       cap([0, 0, 0], [40, 0, 0], 3),
       { kind: "tube", points: [[0, 5, 0], [20, 14, 0], [40, 6.3, 0]], r: 3 },
     ] } };
-    const c = compileImplicit(spec), node = c.ir.nodes[c.ir.root];
+    const c = compileApprox(spec), node = c.ir.nodes[c.ir.root];
     expect(node.fillRegions.length).toBe(FILL_STRIDE);   // one region: the touching end
     const rc = Array.from(node.fillRegions.subarray(2, 5)), rho = node.fillRegions[5];
     expect(Math.hypot(rc[0], rc[1] - 2.5, rc[2])).toBeLessThan(REGION_CELL);
@@ -522,7 +526,7 @@ describe("contact regions and bulge", () => {
   });
 
   test("regions change the content digests", () => {
-    const d = (o) => compileImplicit({ root: { kind: "contact", children: [sph(-5 + o / 2), sph(5 - o / 2)] } }).digests;
+    const d = (o) => compileApprox({ root: { kind: "contact", children: [sph(-5 + o / 2), sph(5 - o / 2)] } }).digests;
     expect(d(1).length).toBe(1);
     expect(d(1)).not.toEqual(d(2));
     expect(compileImplicit({ root: { kind: "sphere", r: 2 } }).digests).toEqual([]);
@@ -605,7 +609,7 @@ describe("contact regions and bulge", () => {
     const edge = 1.5;
     for (const [r, x, warned] of [[20, 10, false], [30, 20, true]]) {
       const spec = { root: { kind: "contact", children: [sph(-x, undefined, r), sph(x, undefined, r)] } };
-      const c = compileImplicit(spec), node = c.ir.nodes[c.ir.root];
+      const c = compileApprox(spec), node = c.ir.nodes[c.ir.root];
       expect(node.fillRegions.length, `r ${r}`).toBe(FILL_STRIDE);
       expect(evalReference(c, 0, 0, 0, edge), `r ${r}`).toBeLessThan(0);
       const out = meshImplicit(c, edge, { tier: "preview" });
@@ -629,14 +633,21 @@ describe("contact regions and bulge", () => {
 });
 
 describe("contact gap warning", () => {
+  // The grid-cell warning belongs to the approximate contact (a nested one): an exact gap is
+  // exact at any grid, so the default root contact never warns.
   const spec = (gap) => ({ root: { kind: "contact", gap, children: [sph(-5.25), sph(5.25)] } });
-  const gapWarnings = (gap, edge) => meshImplicit(compileImplicit(spec(gap)), edge).warnings.filter((w) => w.includes("contact gap"));
-  test("a gap under 2 grid cells warns", () => {
-    expect(gapWarnings(0.4, 0.6)).toEqual(["implicit: contact gap (0.40 mm) is under 2 grid cells at 0.6 mm — the grid cannot show it; raise the gap or mesh finer"]);
+  const nestedSpec = (gap) => ({ root: { kind: "union", children: [spec(gap).root, sph(0, undefined, 1)] } });
+  const gapWarnings = (s, edge) => meshImplicit(compileImplicit(s), edge).warnings.filter((w) => w.includes("contact gap"));
+  test("a nested contact's gap under 2 grid cells warns", () => {
+    expect(gapWarnings(nestedSpec(0.4), 0.6)).toEqual(["implicit: contact gap (0.40 mm) is under 2 grid cells at 0.6 mm — the grid cannot show it; raise the gap or mesh finer"]);
   });
-  test("a fine enough grid, or gap 0, does not", () => {
-    expect(gapWarnings(0.4, 0.1)).toEqual([]);
-    expect(gapWarnings(0, 0.6)).toEqual([]);
+  test("a fine enough grid, or gap 0, does not warn for a nested contact", () => {
+    expect(gapWarnings(nestedSpec(0.4), 0.1)).toEqual([]);
+    expect(gapWarnings(nestedSpec(0), 0.6)).toEqual([]);
+  });
+  test("a root contact's gap never warns: it is exact at any grid", () => {
+    expect(gapWarnings(spec(0.4), 0.6)).toEqual([]);
+    expect(gapWarnings(spec(0.05), 1.5)).toEqual([]);
   });
 });
 
@@ -647,7 +658,7 @@ describe("exact contact", () => {
   test("exact field: gap is the clearance, no floor", () => {
     const spec = press(5.25, 0.01);
     near(evalReference(exact(spec), 0, 0, 0, 1), 0.25);   // the raw distance: no cut reaches the bisector
-    near(evalReference(compileImplicit(spec), 0, 0, 0, 1), clearance(0.01, 1) / 2);   // the floor's cut, 0.75
+    near(evalReference(compileApprox(spec), 0, 0, 0, 1), clearance(0.01, 1) / 2);   // the floor's cut, 0.75
     near(clearanceExact(0.3), 0.3);
     near(clearanceExact(0), -CONTACT_OVERLAP);
   });
@@ -667,12 +678,41 @@ describe("exact contact", () => {
     expect(c.warnings.filter((w) => w.includes("too much overlap"))).toHaveLength(1);
   });
 
+  test("default compile is exact: the hand compiles with ownerRoot >= 0", () => {
+    const h = compileImplicit(handSpec());
+    expect(h.ownerRoot).toBeGreaterThanOrEqual(0);
+    expect(h.ir.nodes[h.ownerRoot].exact).toBe(1);
+    expect(compileImplicit(handSpec(), { exactContact: false }).ownerRoot).toBe(-1);
+    // and the field is the exact one: gap is the clearance, with no floor.
+    near(evalReference(compileImplicit(press(5.25, 0.01)), 0, 0, 0, 1), 0.25);
+  });
+
+  test("nested contact keeps the old look: a warning, the floor, and a near-miss gap of at least clearance(gap, edge)", () => {
+    const spec = { root: { kind: "union", children: [{ kind: "contact", gap: 0.01, bulge: 0, children: [sph(-5.25), sph(5.25)] }, { kind: "sphere", r: 1, at: [0, 0, 40] }] } };
+    const nested = compileImplicit(spec);
+    expect(nested.ownerRoot).toBe(-1);
+    expect(nested.warnings.filter((w) => w.includes("nested inside other operations"))).toEqual(["implicit: a contact group nested inside other operations keeps approximate seams (a minimum gap and a soft pad); make it the top of the k.implicit for exact seams"]);
+    expect(nested.ir.nodes.find((n) => n.kind === "contact").exact).toBe(0);
+    // the same contact as a bare approximate compile reads the same field (the floor's cut, not the raw 0.25)
+    const approx = compileApprox({ root: spec.root.children[0] });
+    for (const x of [0, 0.25, -0.25]) near(evalReference(nested, x, 0, 0, 1), evalReference(approx, x, 0, 0, 1));
+    expect(evalReference(approx, 0, 0, 0, 1)).toBeGreaterThanOrEqual(clearance(0.01, 1) / 2 - 1e-12);
+    // meshed, the two spheres stay at least the floor's clearance apart at the near miss
+    const m = meshImplicit(nested, 0.5);
+    let aMax = -Infinity, bMin = Infinity;
+    for (let i = 0; i < m.positions.length; i += 3) {
+      const x = m.positions[i], r = Math.hypot(m.positions[i + 1], m.positions[i + 2]);
+      if (r < 1) { if (x < 0) aMax = Math.max(aMax, x); else bMin = Math.min(bMin, x); }
+    }
+    expect(bMin - aMax).toBeGreaterThanOrEqual(0.6);   // the floor is clearance(0.01, 0.5) = 0.75; the raw gap is 0.5
+  });
+
   test("ownerRoot: the root contact, not a nested one", () => {
     const h = exact(handSpec());
     expect(h.ownerRoot).toBeGreaterThanOrEqual(0);
     expect(h.ownerK).toBe(6);
     expect(h.ir.nodes[h.ownerRoot].exact).toBe(1);
-    expect(compileImplicit(handSpec()).ownerRoot).toBe(-1);
+    expect(compileApprox(handSpec()).ownerRoot).toBe(-1);
     const nested = exact({ root: { kind: "union", children: [{ kind: "contact", children: [sph(-5), sph(5)] }, sph(0, undefined, 2)] } });
     expect(nested.ownerRoot).toBe(-1);
     expect(nested.warnings).toContain("implicit: a contact group nested inside other operations keeps approximate seams (a minimum gap and a soft pad); make it the top of the k.implicit for exact seams");

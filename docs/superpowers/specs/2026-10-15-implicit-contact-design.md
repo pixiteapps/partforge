@@ -26,7 +26,7 @@ stay cleanly apart.
   hand-specific helper.
 - Pieces in contact meet in a flat pad along the halfway surface between them instead of
   interpenetrating.
-- A configurable clearance: `gap: 0` fuses touching pieces into one solid at the pad
+- A configurable clearance (amended 2026-10-18 by the contact-seams spec: a contact at the top of a `k.implicit` now keeps exactly the set `gap` with no `c_min` floor, no pad fill, and a crisp crease at gap 0; the floor, the fill and the grid-cell gap warning below describe only a NESTED contact, which still warns): `gap: 0` fuses touching pieces into one solid at the pad
   (what the hand wants); `gap > 0` keeps that much clearance so pieces print as separate
   surfaces (what some other models will want).
 - A configurable bulge: skin around a contact swells outward, scaled by how hard the

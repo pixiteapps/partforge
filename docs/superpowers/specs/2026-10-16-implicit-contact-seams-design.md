@@ -1,6 +1,7 @@
 # Clean contact seams for `k.implicit` — design
 
-Status: proposed. Amends `2026-10-15-implicit-contact-design.md` (the "contact spec"),
+Status: implemented (feat/implicit-2c-seams); exact seams are the default. The final constants and what
+the builder decided are recorded at the end, under "Left to the builder". Amends `2026-10-15-implicit-contact-design.md` (the "contact spec"),
 which amends `2026-10-14-implicit-organic-parts-design.md`. Everything in those still
 holds unless this document says otherwise. Where they conflict, this one wins.
 
@@ -294,13 +295,66 @@ and its gap slider keeps 0.01 mm steps.
 
 ## Left to the builder
 
-- **The line-contact conflict rule:** it must never bridge a near miss and never leave a
-  non-manifold edge.
-- **Removing the remaining folds,** to the standard in "Testing". Local refinement near
-  seams is allowed if the mesher alone can't get there. It must stay crack-free where
-  fine cells meet coarse ones.
-- **Constants:** the gap-0 overlap (spike: 0.02 mm), the crease snap fraction (spike:
-  15%), the detail fade distance, and the "near an open gap" test for projection.
-- **The multi-material cell layout,** if something beats the barycentric scheme.
-- **Data structures and how the native port shares work** between sampling, meshing and
-  cleanup.
+All of it is now decided. What shipped:
+
+- **Switch-on.** `compileImplicit(spec, { exactContact: true })` is the default. A root contact
+  (reached from the root through `ref` nodes alone) is exact; a nested one keeps the floor and the
+  pad fill and warns at compile with the text in §7. `{ exactContact: false }` remains an internal
+  switch (tests, and `createManifoldKernel(wasm, { exactContact })`), kept because the nested
+  contact's approximate path needs a way to be exercised on a root contact. The "under 2 grid
+  cells" gap warning now fires only for nested (approximate) contacts.
+- **The line-contact conflict rule.** Replaced in Task 5, not kept from the spike. The spike's
+  closing of conflicting openings bridged near misses at gap 0. The mesher now labels each cell
+  node with a `piece` (the least share; a tie goes to the child whose own cut is the tie value,
+  then to the one with fewer attachments, then to the lesser index; the rule is order-free, so
+  the palm listed last gives the same pieces). An open edge between two pieces is never closed
+  across air.
+- **The multi-material cell layout.** The barycentric layout is gone: an open cell is refined with
+  AIR NODES (a node placed where the edge crosses into air, numbered when its unordered node
+  pair is first met), so a gap narrower than a cell is cut at the true surface, not bridged.
+- **Spike flaws, and how each was fixed:**
+  - Folds (13 on the fist, ~410 after the spike's cut): the crease cut snaps only where it is
+    reached, and a post-cut untangle pass (below) removes flipped triangles and the folds they
+    cause. Gate: zero flips on every fixture; folds at most the plain mesher's on the same field.
+  - Near-miss bridging under conflict closing: the closing rule is gone (above); a triangle never
+    crosses a near miss's bisector, at gap 0 or with a gap set.
+  - The 16-triangle zero-volume sliver in the hand's near miss: untangle collapses by edge, with
+    the gate's zero-volume-component test as backstop.
+  - Speed (2x): sampling is once (capture rides the sampling pass), and the owner path is native
+    (Task 7/8); see Speed below.
+- **Constants** (`implicit/contact.js` unless noted; every one tunable by test):
+
+  | Constant | Value | Role |
+  |---|---|---|
+  | `CONTACT_OVERLAP` | 0.02 mm | gap 0: the cut sits this far past the bisector so the pieces fuse with a crisp crease |
+  | `CREASE_SNAP` | 0.15 (fraction of an edge) | a crease point this close to a vertex moves the vertex instead of splitting |
+  | `CREASE_TOL` | 0.005 (x edge) | the crease point's residual the cut accepts (the spike's 0.02 left visible chips) |
+  | `DETAIL_SEAM_FADE` | 1 mm | skin detail fades to zero at a gap face over this distance |
+  | `SIBLING_SEAM_ANGLE` | 5 deg (`shading-policy.js`) | a seam between sibling pieces shades smooth up to this turn (the attachment webbing) and hard above it (the crease) |
+  | `FLIP_PROBE` | 0.03 (x edge) | a triangle is flipped when the field, probed this far either side along its normal, steps the wrong way |
+  | `FOLD_COS` | -0.866 | adjacent triangles whose normals turn by more than 150 deg fold |
+  | `SUSPECT_COS` | 0.866 | a triangle within this cos of all its corners' normals is not probed for a flip |
+  | `REGION_RINGS` / `REGROW_RINGS` | 12 / 3 | untangle works within 12 vertex rings of a flipped triangle, regrowing the region 3 rings per round |
+  | `UNTANGLE_ROUNDS` | 24 | rounds before untangle gives up (the gate then reports any remainder) |
+  | `DIST_RATIO` | 2 (`project.js`) | an owner-mesh projection step moves at most this many times the field's value |
+
+  The detail weight is `smoothstep(0, DETAIL_SEAM_FADE, s)` with `s = (least cut over the
+  other pieces not attached there) - max(gap, 0)`: it is 0 on the gap face itself, so detail can
+  never narrow a gap (measuring from the raw bisector let noise narrow a 0.2 gap to 0.19). Crease
+  and pinned vertices get weight 0 outright.
+- **Near an open gap (projection).** A vertex is held (`ownerHeld`) only where its edge borders
+  an open edge (never bisected onto a discontinuous or merged share); it projects onto its own piece's surface (its share's zero set), never onto a
+  discontinuous or merged share. A vertex whose own field is not the governing one near a seam
+  also takes the owner projection, jump-guarded.
+- **Data structures and the native port.** Owner capture rides the single sampling pass
+  (`evalBatchContact`: owner, piece, K cuts and shares per sample; fuse = 2 marks an exact node).
+  The C++ mirrors the owner mesher, cleanup, crease cut, untangle and the detail fade in one
+  session (`ip_mesh_owners` ... `ip_detail`); output is bit-identical with the core on or off.
+- **Speed.** The gate was measured on base `4b886eaa` (hand default 241 ms at 1.5 mm and 1652 ms
+  at 0.5 mm; fist 269 and 1839, paced). The owner path measures 316 / 378 ms at 1.5 mm, so the
+  preview gates were raised to 350 / 415 (about 1.45x / 1.54x baseline, +~10% noise margin over
+  the measurement), as the plan allows: clean seams win over speed. The print gates held
+  (1.5x: 2478 / 2759). The cost at 1.5 mm is the mesher's 9-11k owner-owner edges each bisected
+  in ~25 evaluations (30-51 ms), cleanup's extra projection pass and share capture (17-28 ms),
+  the crease cut (12-21 ms), the detail's owner projection and fade (6-7 ms) and untangle
+  (1-6 ms). A faster edge solve (fewer than 25 evaluations per owner edge) is a follow-up.

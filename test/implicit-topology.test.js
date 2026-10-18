@@ -5,7 +5,7 @@ import { compileImplicit, meshImplicit } from "../src/framework/geometry/implici
 import { handSpec, nailSpecs, vaseSpec, ADVERSARIAL, SUB_CELL_PLATE, randomSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 import { evalNodeAt, evalReference } from "../src/framework/geometry/implicit/reference.js";
 import { resolveFrames, xformPoint } from "../src/framework/geometry/implicit/frames.js";
-import { clearance, attachWeight, gateWeight, ATTACH_STRIDE, FILL_STRIDE, FILL_BAND, BULGE_DEFAULT } from "../src/framework/geometry/implicit/contact.js";
+import { clearance, attachWeight, ATTACH_STRIDE, BULGE_DEFAULT } from "../src/framework/geometry/implicit/contact.js";
 import { edgeCheck, componentCount, volume } from "./helpers/mesh-topology.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { sampleField, planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
@@ -201,15 +201,9 @@ describe("hand contact", () => {
     }
     return { p, v };
   };
-  const fillPairs = (node) => {
-    const out = [];
-    for (let o = 0; o < node.fillRegions.length; o += FILL_STRIDE) out.push({ o, a: node.fillRegions[o], b: node.fillRegions[o + 1], c: Array.from(node.fillRegions.subarray(o + 2, o + 5)), rho: node.fillRegions[o + 5] });
-    return out;
-  };
 
-  // Whether an edge joining pieces a and b at q (node-local) is a legitimate join: a and b
-  // are in contact there (a fill region's gate is open at q), attached to each other at q,
-  // or both attached to one third piece with q inside BOTH of those attachment zones
+  // Whether an edge joining pieces a and b at q (node-local) is a legitimate join by attachment:
+  // a and b are attached to each other at q, or both attached to one third piece with q inside BOTH of those attachment zones
   // (within radius + band of each anchor) — neighbouring digits web together inside their
   // zones at the palm and must keep clear of each other everywhere outside them.
   const inZone = (node, o, q) => dist(q, [node.att[o + 2], node.att[o + 3], node.att[o + 4]]) < node.att[o + 5] + node.att[o + 6];
@@ -225,11 +219,11 @@ describe("hand contact", () => {
   const bridgeAllowed = (node, cl, a, b, q) => {
     const ja = zonesOf(node, a, q), jb = zonesOf(node, b, q);
     if (ja.includes(b) || ja.some((x) => jb.includes(x))) return true;
-    return fillPairs(node).some((r) => ((r.a === a && r.b === b) || (r.a === b && r.b === a)) && gateWeight(node.fillRegions, r.o, cl, ...q) > 0);
+    return false;
   };
 
   test("the bridge rule exempts finger webbing only inside the attachment zones", () => {
-    const spec = handSpec(HAND_POSES.nearMiss), c = compileImplicit(spec), node = c.ir.nodes[c.ir.root], cl = clearance(0, 1.5);
+    const spec = handSpec(HAND_POSES.nearMiss), c = compileImplicit(spec), node = c.ir.nodes[c.ownerRoot], cl = clearance(0, 1.5);
     const index = slotOf(spec, "index"), middle = slotOf(spec, "middle");
     const [im, mm, ip, mp] = ["index.mcp", "middle.mcp", "index.pip", "middle.pip"].map((f) => origin(spec, f));
     // Between the two knuckles, inside both zones: the webbing is a legitimate join.
@@ -249,7 +243,7 @@ describe("hand contact", () => {
   test("near-miss fingers stay apart: index and middle 0.75 mm apart at their closest, a clean gap at preview and print", () => {
     // The brief's fingertips: a spread sweep brings these fingers closest at their PIP
     // knuckles (the fattest part), so the near miss is there.
-    const spec = handSpec(HAND_POSES.nearMiss), c = compileImplicit(spec), node = c.ir.nodes[c.ir.root];
+    const spec = handSpec(HAND_POSES.nearMiss), c = compileImplicit(spec), node = c.ir.nodes[c.ownerRoot];
     const ia = node.children[slotOf(spec, "index")], im = node.children[slotOf(spec, "middle")];
     const da = (x, y, z) => evalNodeAt(c, ia, x, y, z), dm = (x, y, z) => evalNodeAt(c, im, x, y, z);
     // The gap's midpoint: the minimum of max(d_index, d_middle) (half the gap), searched from
@@ -266,11 +260,11 @@ describe("hand contact", () => {
     expect(dist(p, ip)).toBeLessThan(12);   // beside the index PIP knuckle
     expect(node.fillRegions.length).toBe(0);   // nothing touches: no pad anywhere
     for (const edge of [1.5, 0.6]) {
-      const out = meshAt(c, edge), P = out.positions, T = out.indices, cl = clearance(0, edge);
+      const out = meshAt(c, edge), P = out.positions, T = out.indices;
       expect(edgeCheck(T), `${edge} mm`).toEqual(CLOSED);
       // Within 6 mm of the gap, no triangle has corners on both sides of the bisector
       // d_index = d_middle (the brief's cut plane, taken as the exact bisector surface — the
-      // two knuckles are round), and every vertex keeps half the clearance from it.
+      // two knuckles are round), and every vertex keeps about half the real gap from it.
       const side = new Map();
       const sideOf = (v) => {
         if (!side.has(v)) {
@@ -288,36 +282,33 @@ describe("hand contact", () => {
       for (const d of side.values()) if (d !== null) { inBall++; nearest = Math.min(nearest, Math.abs(d)); }
       expect(inBall, `${edge} mm`).toBeGreaterThan(20);
       expect(crossing, `${edge} mm`).toBe(0);
-      expect(nearest, `${edge} mm`).toBeGreaterThanOrEqual(cl / 2);
+      // The gap is the geometry's own: every vertex keeps (about) half the 0.75 mm from the bisector
+      // (no floor raises it to cl/2 = 1.125 at 1.5 mm, none lets the grid narrow it).
+      expect(nearest, `${edge} mm`).toBeGreaterThanOrEqual(0.65);
+      expect(nearest, `${edge} mm`).toBeLessThan(0.9);
     }
   }, 60_000);
 
-  test("fist: each fingertip has a contact region with the palm and pads against it with no fillet beyond the bulge", () => {
-    const spec = handSpec(HAND_POSES.fist), c = compileImplicit(spec), node = c.ir.nodes[c.ir.root];
-    const regions = [];
-    for (const finger of ["index", "middle", "ring", "pinky"]) {
-      const f = slotOf(spec, finger), tip = origin(spec, `${finger}.tip`);
-      const r = fillPairs(node).find((q) => q.a === 0 && q.b === f);
-      expect(r, finger).toBeDefined();
-      expect(dist(r.c, tip), finger).toBeLessThan(10);   // the pad is at the fingertip
-      regions.push(r);
-    }
-    // The surface may stand off the plain union of the raw pieces by the bulge, the pad's
-    // crease blend (PAD_BLEND/4 = 0.375 mm) and the grid; the old finger-to-palm blend
-    // (k = 8) stood 2 mm off it in the crease around each fingertip.
+  test("fist: each fingertip presses the palm and pads against it with no fillet beyond the bulge", () => {
+    // Exact seams have no pad-fill regions: the fingertip fuses with the palm at a crease.
+    const spec = handSpec(HAND_POSES.fist), c = compileImplicit(spec), node = c.ir.nodes[c.ownerRoot];
+    expect(node.fillRegions.length).toBe(0);
+    // The surface may stand off the plain union of the raw pieces by the bulge and the grid;
+    // the old finger-to-palm blend (k = 8) stood 2 mm off it in the crease around each fingertip.
     const raw = (x, y, z) => Math.min(...node.children.map((id) => evalNodeAt(c, id, x, y, z)));
     for (const edge of [1.5, 0.6]) {
       const out = meshAt(c, edge), P = out.positions;
       expect(edgeCheck(out.indices), `${edge} mm`).toEqual(CLOSED);
-      for (const r of regions) {
+      for (const finger of ["index", "middle", "ring", "pinky"]) {
+        const tip = origin(spec, `${finger}.tip`);
         let worst = -Infinity, n = 0;
         for (let v = 0; v < P.length / 3; v++) {
           const q = [P[3 * v], P[3 * v + 1], P[3 * v + 2]];
-          if (dist(q, r.c) > r.rho + 2 * FILL_BAND) continue;
+          if (dist(q, tip) > 10) continue;   // the pad is at the fingertip
           worst = Math.max(worst, raw(...q)); n++;
         }
-        expect(n).toBeGreaterThan(20);
-        expect(worst, `${edge} mm, region of slot ${r.b}`).toBeLessThanOrEqual(BULGE_DEFAULT + edge);
+        expect(n, finger).toBeGreaterThan(20);
+        expect(worst, `${edge} mm, ${finger}`).toBeLessThanOrEqual(BULGE_DEFAULT + edge);
       }
     }
   }, 60_000);
@@ -354,14 +345,15 @@ describe("hand contact", () => {
     expect(compared).toBeGreaterThanOrEqual(60);
   });
 
-  test("pose sweep from near miss into contact: watertight, and no triangle joins two pieces that neither touch nor are joined there", () => {
+  test("pose sweep from near miss into contact: watertight, and no triangle joins two pieces across air that neither touch nor are joined there", () => {
     // Every fingertip passes from a near miss of the palm (flex 96: 2–7 mm short) through
     // first contact into a firm press. An edge whose ends lie nearest different pieces must
-    // lie where those two are in contact (a region's gate is open) or joined (both attached
-    // to one piece there: the webbing at the finger bases).
+    // lie on the skin (the pieces fuse there: a crease; the midpoint is within PROBE of the
+    // zero set) or inside an attachment zone shared by both (the webbing at the finger bases).
+    // A bridge over a real gap has its midpoint in air, half the gap above the skin.
     const poses = [96, 99, 101, 103, 106, 110].map((f) => ({ curl: 100, flex: { index: f, middle: f, ring: f, pinky: f, thumb: 50 } }));
     for (const pose of [...poses, HAND_POSES.nearMiss]) {
-      const c = compileImplicit(handSpec(pose)), node = c.ir.nodes[c.ir.root], edge = 1.5, cl = clearance(0, edge);
+      const c = compileImplicit(handSpec(pose)), node = c.ir.nodes[c.ownerRoot], edge = 1.5;
       const out = meshAt(c, edge), P = out.positions, T = out.indices;
       expect(edgeCheck(T), JSON.stringify(pose)).toEqual(CLOSED);
       const own = new Int8Array(P.length / 3);
@@ -369,13 +361,14 @@ describe("hand contact", () => {
         let best = Infinity;
         node.children.forEach((id, i) => { const d = evalNodeAt(c, id, P[3 * v], P[3 * v + 1], P[3 * v + 2]); if (d < best) { best = d; own[v] = i; } });
       }
-      const allowed = (a, b, q) => bridgeAllowed(node, cl, a, b, q);
+      const PROBE = 0.2 * edge;
       let bridges = 0;
       for (let t = 0; t < T.length; t += 3) for (let e = 0; e < 3; e++) {
         const u = T[t + e], w = T[t + (e + 1) % 3];
         if (own[u] === own[w]) continue;
         const q = [0, 1, 2].map((i) => (P[3 * u + i] + P[3 * w + i]) / 2);
-        if (!allowed(own[u], own[w], q)) bridges++;
+        if (bridgeAllowed(node, 0, own[u], own[w], q)) continue;
+        if (Math.abs(evalReference(c, ...q, edge)) > PROBE) bridges++;
       }
       expect(bridges, JSON.stringify(pose)).toBe(0);
     }

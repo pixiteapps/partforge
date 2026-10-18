@@ -62,9 +62,10 @@ function axisAngleMat4(axis, deg) {
   return [R00, R10, R20, 0,  R01, R11, R21, 0,  R02, R12, R22, 0,  0, 0, 0, 1];
 }
 
-// `exactContact` is INTERNAL (tests, until the seam work makes it the default): compile every
-// k.implicit with exact contact seams (implicit/index.js), each contact piece its own ID.
-export function createManifoldKernel(wasm, { quality = "preview", exactContact = false } = {}) {
+// `exactContact` is INTERNAL (tests): true by default, every root contact of a k.implicit compiles
+// with exact seams (implicit/index.js), each contact piece its own ID. Tests pass `false` to get
+// the approximate contact (one ID, a minimum gap, a soft pad) a nested contact keeps.
+export function createManifoldKernel(wasm, { quality = "preview", exactContact = true } = {}) {
   const { Manifold, CrossSection } = wasm;
   const segs = SEGS[quality], tube = TUBE[quality];
   // Per-radius count for every site that facets a circle it knows the radius of; the

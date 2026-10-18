@@ -11,7 +11,7 @@ import { ensureVectors } from "../framework/vectors.js";
 import { nodeAssetSources } from "./assets.js";
 import { tessellateStepAssets } from "./step-mesh.js";
 
-export async function bootManifoldKernel({ quality = "preview", fonts, imports, importMeshes, images, vectors, exactContact = false } = {}) {
+export async function bootManifoldKernel({ quality = "preview", fonts, imports, importMeshes, images, vectors, exactContact = true } = {}) {
   const wasm = await Module();
   wasm.setup();
   const kernel = createManifoldKernel(wasm, { quality, exactContact });

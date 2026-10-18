@@ -33,7 +33,8 @@ const minAngles = (P, T) => {
 describe("cleanup", () => {
   for (const [name, spec] of Object.entries(TREES)) for (const [tier, opts] of [["CLEANUP", CLEANUP], ["PREVIEW_CLEANUP", PREVIEW_CLEANUP]]) {
     test(`${name}, ${tier}: topology kept, slivers gone, vertices on the surface, triangles better`, () => {
-      const c = lowerSpec(spec, { images: new Map() });
+      // The plain (non-owner) pipeline, which a nested contact still takes: the approximate field.
+      const c = lowerSpec(spec, { images: new Map(), exactContact: false });
       const edge = 0.8, store = sampleField(c, edge), raw = meshStore(store);
       const out = cleanupMesh(store, raw, opts);
       expect(edgeCheck(out.indices)).toEqual({ boundary: 0, nonManifold: 0, misoriented: 0 });
@@ -104,8 +105,10 @@ describe("cleanup", () => {
 // decimation existed. Each digest is the first 16 hex digits of a sha256 over the
 // meshImplicit result's positions (Float64Array), indices (Uint32Array) and normals
 // (Float64Array) bytes, in that order, for the case's spec and grid; they were
-// recorded from commit 1882699c, the last before decimation, JS and core alike. A
-// deliberate change to print-tier meshing changes them: re-record by printing
+// recorded from commit 1882699c, the last before decimation, JS and core alike. The hand is pinned compiled with
+// `exactContact: false`: a default (exact) hand meshes through the owner path, whose own tier
+// behaviour test/core-parity.test.js and test/implicit-seam-quality.test.js hold; this pin is the
+// plain pipeline a nested contact takes. A deliberate change to print-tier meshing changes the digests: re-record by printing
 // digest(meshImplicit(compiled, edge, { tier: "print" })) for each case.
 describe("tiers", () => {
   const withCoreOff = (fn) => { setCoreEnabled(false); try { return fn(); } finally { setCoreEnabled(true); } };
@@ -117,7 +120,7 @@ describe("tiers", () => {
   const vase = vaseSpec();
   // [name, compile, grid, pinned digest, preview triangles at most this share of print's;
   // null: the probe skips decimation, so preview IS the print-tier mesh]
-  const CASES = [["hand", () => compileImplicit(handSpec()), 1.5, "3fb192ea59869410", 0.5], ["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "bd023b59990de4ed", null]];
+  const CASES = [["hand (approximate contact)", () => compileImplicit(handSpec(), { exactContact: false }), 1.5, "3fb192ea59869410", 0.5], ["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "bd023b59990de4ed", null]];
   for (const [name, compile, edge, pinned, maxPreview] of CASES) {
     test(`${name}: print tier is the JS stages run with decimateFrac 0, byte for byte`, () => {
       const compiled = compile(), plan = planLeaves(compiled, edge), store = evaluateLeaves(plan);

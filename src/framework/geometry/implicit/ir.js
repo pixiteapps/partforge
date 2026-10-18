@@ -53,7 +53,7 @@ function warpBasis(axis = "z", toward) {
 
 const NESTED_CONTACT_WARNING = "implicit: a contact group nested inside other operations keeps approximate seams (a minimum gap and a soft pad); make it the top of the k.implicit for exact seams";
 
-export function lowerSpec(spec, { images = new Map(), exactContact = false } = {}) {
+export function lowerSpec(spec, { images = new Map(), exactContact = true } = {}) {
   const frames = resolveFrames(spec.frames ?? {});
   const nodes = [];
   const textures = [], slotOf = new Map();

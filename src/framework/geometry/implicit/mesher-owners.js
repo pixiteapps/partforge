@@ -179,7 +179,6 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
   }
 
   // --- Pass 2: emission, cell by cell in meshStore's order. ---
-  const recOf = (i, j, l, ca, cb) => edgeRec.get(edgeKeyOf(i, j, l, ca, cb));
   const loadLabels = (L, i, j, l) => { const own = leaves[L].owner; for (let c = 0; c < 8; c++) lab[c] = own[sampleOf(i, j, l, c)]; };
   // Crossings on sub-tet edges that touch a split node, keyed by their two nodes; each is bisected
   // onto the field's zero afterwards: [v, L, inside x, y, z, outside x, y, z] (nodeCrossings).

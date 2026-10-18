@@ -66,7 +66,7 @@ describe("k.implicit contact pieces on Manifold", () => {
   test("one ID per piece", async () => {
     const { handSpec, HAND_POSES } = await import("./fixtures/implicit-trees.js");
     const { bootManifoldKernel: boot } = await import("../src/testing/manifold.js");
-    const ke = await boot({ exactContact: true });
+    const ke = await boot();
     const spec = handSpec({ ...HAND_POSES.fist, contactGap: 0 });
     const g = ke.implicit(spec)._m.getMesh();
     const ids = [...new Set(g.runOriginalID)];
@@ -76,12 +76,21 @@ describe("k.implicit contact pieces on Manifold", () => {
     const first = Math.min(...ids);
     for (const id of ids) expect(ke._shadingPolicy(id)).toMatchObject({ organic: true, group: first });
   }, 60_000);
-  test("without exactContact a contact skin is one ID with no group", async () => {
+  test("by default a root contact's pieces are separate IDs in one group; `exactContact: false` keeps one ID", async () => {
     const { capsulePress } = await import("./fixtures/implicit-seam-cases.js");
-    const g = k.implicit({ ...capsulePress({ overlap: 1.2 }), preview: 1.5 })._m.getMesh();
-    const ids = [...new Set(g.runOriginalID)];
-    g.delete?.();
+    const { bootManifoldKernel: boot } = await import("../src/testing/manifold.js");
+    const idsOf = (kernel) => {
+      const g = kernel.implicit({ ...capsulePress({ overlap: 1.2 }), preview: 1.5 })._m.getMesh();
+      const ids = [...new Set(g.runOriginalID)];
+      g.delete?.();
+      return ids;
+    };
+    const exactIds = idsOf(k);
+    expect(exactIds.length).toBe(2);
+    expect(k._shadingPolicy(exactIds[0]).group).toBeDefined();
+    const old = await boot({ exactContact: false });
+    const ids = idsOf(old);
     expect(ids.length).toBe(1);
-    expect(k._shadingPolicy(ids[0]).group).toBeUndefined();
-  });
+    expect(old._shadingPolicy(ids[0]).group).toBeUndefined();
+  }, 60_000);
 });

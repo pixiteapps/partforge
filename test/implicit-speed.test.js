@@ -24,8 +24,10 @@ import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 const SPEC_PREVIEW_MS = 150;
 const SPEC_PRINT_MS = 2000;
 
+// The plain native mesher (the approximate contact a nested contact takes): the spec's 3x targets
+// are its. The default (exact) hand is the owner path, gated separately below.
 function nativeHand(edge, opts) {
-  const compiled = compileImplicit(handSpec());
+  const compiled = compileImplicit(handSpec(), { exactContact: false });
   const out = meshImplicitCore(compiled, edge, planLeaves(compiled, edge), opts);
   expect(out, `the native path answered at ${edge} mm`).not.toBeNull();
   return out;
@@ -104,7 +106,7 @@ test("owner meshing stays within the speed gate", () => {
   const line = (name, ms, limit) => `${name}: ${ms.toFixed(0)} paced ms, limit ${limit} (pace ${PACE.toFixed(2)}, ${core().simd ? "SIMD" : "scalar"} core)`;
   const results = [];
   for (const [name, pose, previewGate, printGate] of OWNER_GATES) {
-    const compiled = compileImplicit(handSpec(pose), { exactContact: true });
+    const compiled = compileImplicit(handSpec(pose));
     meshImplicitCore(compiled, 1.4, planLeaves(compiled, 1.4), PREVIEW_CLEANUP);   // warm-up on another grid
     results.push([`${name} owners 1.5 mm`, ownerMedianMs(compiled, 1.5, PREVIEW_CLEANUP, 5), previewGate]);
     results.push([`${name} owners 0.5 mm`, ownerMedianMs(compiled, 0.5, CLEANUP, 3), printGate]);
