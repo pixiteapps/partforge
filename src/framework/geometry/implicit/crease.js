@@ -16,7 +16,8 @@
 //   4. A kept point within CREASE_SNAP of an edge end moves that end (once); else it splits the edge.
 //   5. Triangles with one, two or three split edges become 2, 3 or 4 triangles.
 // Crease vertices are neither held nor pinned. untangle (below) then repairs triangles that face
-// into the material. Exact trees never reach the native core.
+// into the material. The native core runs the same cut (native/implicit_owner.cpp's crease
+// stage, bit-identical: test/core-parity.test.js).
 import { evalBatchContact } from "./program.js";
 import { hypot3 } from "../js-math.js";
 import { CREASE_SNAP, CREASE_TOL, ATTACH_STRIDE, attachWeight } from "./contact.js";
@@ -55,8 +56,9 @@ function pairWeight(att, X, Y, x, y, z) {
 
 /**
  * Cut the creases into an owner mesh (`vertOwner`, `ownerHeld`, `pinned`, `vertLeaf`, `normals`).
- * `att` is the contact node's attachment table: no crease is cut where the crossing pair's own
- * attachment weight is above 0. Returns the mesh with every per-vertex array grown to the new
+ * `att` is the contact node's WORLD-space attachment table (`attWorld`: the mesh is in world space,
+ * while `att` holds the anchors in the node's frame): no crease is cut where the crossing pair's
+ * own attachment weight is above 0. Returns the mesh with every per-vertex array grown to the new
  * vertices and `crease` set.
  */
 export function cutCreases(store, mesh, att = new Float64Array(0)) {

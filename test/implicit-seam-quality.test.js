@@ -7,10 +7,11 @@ import { describe, test, expect } from "vitest";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { ATTACH_STRIDE } from "../src/framework/geometry/implicit/contact.js";
 import { edgeCheck, componentCount } from "./helpers/mesh-topology.js";
-import { flippedTriangles, seamFolds, childIndex, sharesAt, gapHolds } from "./helpers/seam-quality.js";
+import { flippedTriangles, seamFolds, childIndex, sharesAt, gapHolds, worldAttachments, ownerFrame, creaseInAttachment } from "./helpers/seam-quality.js";
+import { xformPoint } from "../src/framework/geometry/implicit/frames.js";
 import { evalNodeAt } from "../src/framework/geometry/implicit/reference.js";
 import { hypot3 } from "../src/framework/geometry/js-math.js";
-import { capsulePress, threePress, PRESS_OVERLAP, SEAM_CASES, GATE_EXTRA_CASES } from "./fixtures/implicit-seam-cases.js";
+import { capsulePress, threePress, PRESS_OVERLAP, SEAM_CASES, GATE_EXTRA_CASES, MOVED_CASES, fingerAttached } from "./fixtures/implicit-seam-cases.js";
 
 const CLOSED = { boundary: 0, nonManifold: 0, misoriented: 0 };
 const GRIDS = [[1.5, "preview"], [0.6, "print"]];
@@ -54,7 +55,7 @@ function componentVolumes(P, I) {
 function bisectorCrossings(compiled, mesh, a, b) {
   const P = mesh.positions, I = mesh.indices, nv = P.length / 3;
   const ia = childIndex(compiled, a), ib = childIndex(compiled, b);
-  const node = compiled.ir.nodes[compiled.ownerRoot], att = node.att, ids = node.children;
+  const node = compiled.ir.nodes[compiled.ownerRoot], att = worldAttachments(compiled), ids = node.children;   // P is world
   // Raw child distances, so the classification never depends on the mesher's own labels.
   const X = new Float64Array(nv), Y = new Float64Array(nv), Z = new Float64Array(nv);
   for (let v = 0; v < nv; v++) { X[v] = P[3 * v]; Y[v] = P[3 * v + 1]; Z[v] = P[3 * v + 2]; }
@@ -83,9 +84,11 @@ function bisectorCrossings(compiled, mesh, a, b) {
   return n;
 }
 
-// A child node's raw value at the points.
+// A child node's raw value at the (world) points: evalNodeAt reads a child in its parent's frame,
+// so each point is first carried into the owner root's frame (identity unless the root is moved).
 function rawAt(compiled, id, X, Y, Z) {
-  return Float64Array.from(X, (x, v) => evalNodeAt(compiled, id, x, Y[v], Z[v]));
+  const M = ownerFrame(compiled), q = [0, 0, 0];
+  return Float64Array.from(X, (x, v) => { xformPoint(q, M, x, Y[v], Z[v]); return evalNodeAt(compiled, id, q[0], q[1], q[2]); });
 }
 
 /** A webbed triangle's centroid is on the surface within this (mm); a bridge across the 0.75 mm near miss sits far above it. */
@@ -93,10 +96,12 @@ const WEB_TOL = 0.1;
 const NEAR_MISS = {
   "near miss 0.3 gap 0": ["a", "b"], "hand nearMiss gap 0": ["index", "middle"], "hand nearMiss gap 0.2": ["index", "middle"],
   "hand nearMiss gap 0 (palm last)": ["index", "middle"], "fingers on palm 0.3": ["a", "b"], "fingers on palm 0.3 offset 0.37": ["a", "b"],
+  "hand nearMiss gap 0.2 (moved root)": ["index", "middle"],
 };
 // The seam fixtures, the hand with its palm listed last (a part may list its hub after its
-// digits), and two fingers 0.3 mm apart pressing a palm.
-const GATE_CASES = [...SEAM_CASES, ...GATE_EXTRA_CASES];
+// digits), two fingers 0.3 mm apart pressing a palm, and parts moved off the origin through
+// their root (an `at` over a rotated frame), whose attachment anchors live in a non-world frame.
+const GATE_CASES = [...SEAM_CASES, ...GATE_EXTRA_CASES, ...MOVED_CASES];
 
 describe("seam gate", () => {
   for (const [edge, tier] of GRIDS) {
@@ -109,6 +114,13 @@ describe("seam gate", () => {
         test("folds no more than the plain mesher's", () => {
           const { mesh, baseline } = meshed(c, edge, tier);
           expect(seamFolds(mesh)).toBeLessThanOrEqual(seamFolds(baseline));
+        }, 600_000);
+        test("no crease inside an attachment", () => {
+          // Every crease vertex has two pieces making the field there that are NOT attached at it.
+          const { compiled, mesh } = meshed(c, edge, tier);
+          const { attachedOnly, unmade } = creaseInAttachment(compiled, mesh, edge);
+          expect(attachedOnly).toBe(0);
+          expect(unmade).toBe(0);
         }, 600_000);
         test("closed, manifold, oriented", () => {
           expect(edgeCheck(meshed(c, edge, tier).mesh.indices)).toEqual(CLOSED);
@@ -132,6 +144,19 @@ describe("seam gate", () => {
         }, 600_000);
       });
     }
+
+    test(`a moved root cuts the attached finger as the unmoved one does (${tier} ${edge})`, () => {
+      // fingerAttached's every crossing is inside its attachment: no crease, wherever the part sits.
+      const at = MOVED_CASES.find((m) => m.name === "finger attached (moved root)");
+      const moved = meshed(at, edge, tier), still = meshImplicit(compileImplicit(fingerAttached(), { exactContact: true }), edge, { tier });
+      expect(still.crease.reduce((s, x) => s + x, 0)).toBe(0);
+      expect(moved.mesh.crease.reduce((s, x) => s + x, 0)).toBe(0);
+      // The engine's world-space table is the node table carried through the root's transforms.
+      const node = moved.compiled.ir.nodes[moved.compiled.ownerRoot], W = worldAttachments(moved.compiled);
+      expect(node.attWorld.length).toBe(W.length);
+      node.attWorld.forEach((v, i) => expect(Math.abs(v - W[i]), `attWorld[${i}]`).toBeLessThan(1e-9));
+      expect(Math.abs(node.att[2] - W[2]) + Math.abs(node.att[3] - W[3]) + Math.abs(node.att[4] - W[4])).toBeGreaterThan(1);   // really moved
+    }, 600_000);
 
     test(`gap-0 contacts stay one piece (${tier} ${edge})`, () => {
       for (const spec of [capsulePress({ overlap: PRESS_OVERLAP, gap: 0 }), threePress({ gap: 0 })]) {

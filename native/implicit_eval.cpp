@@ -249,6 +249,7 @@ void capture_owner(const Capture& cap, int lane, const double* kid, const double
     cap.piece[lane] = (int32_t)kid[bp];
   }
   if (cap.owner) {
+    // TEST-ONLY, as in program.js: no production stage captures `owner` (meshing reads `piece`).
     // Overlapping attachment zones merge to the lesser child of the pair holding the owner, until stable.
     for (bool moved = true; moved;) {
       moved = false;

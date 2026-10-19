@@ -3,11 +3,10 @@
 // zero set, the mesh stays closed, and nothing is cut where no crease exists.
 import { describe, test, expect } from "vitest";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
-import { attachWeight, ATTACH_STRIDE } from "../src/framework/geometry/implicit/contact.js";
 import { edgeCheck } from "./helpers/mesh-topology.js";
-import { sharesAt, childIndex, flippedTriangles } from "./helpers/seam-quality.js";
+import { sharesAt, childIndex, flippedTriangles, creaseInAttachment } from "./helpers/seam-quality.js";
 import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
-import { capsulePress, threePress, fingersOnPalm, PRESS_OVERLAP, SEAM_CASES } from "./fixtures/implicit-seam-cases.js";
+import { capsulePress, threePress, fingersOnPalm, PRESS_OVERLAP, SEAM_CASES, movedRoot, fingerAttached } from "./fixtures/implicit-seam-cases.js";
 
 const CLOSED = { boundary: 0, nonManifold: 0, misoriented: 0 };
 const GRIDS = [[1.5, "preview"], [0.6, "print"]];
@@ -97,30 +96,26 @@ describe("crease cut", () => {
   // the crease tolerance) are NOT attached there. (Inside two digits' webs the palm's share ties
   // with both, so "the owner and the next least share" is no way to name the crease's pair.) The
   // fist's fingertips press the palm, so it has creases to check.
-  test("no crease where the crossing pair's attachment weight is > 0: hand fist gap 0", () => {
-    const { compiled, mesh } = run(handSpec({ ...HAND_POSES.fist, contactGap: 0 }), 1.5, "preview");
-    const { att } = compiled.ir.nodes[compiled.ownerRoot], P = mesh.positions, cv = creaseVerts(mesh);
-    expect(cv.length).toBeGreaterThan(0);
-    const { out, shares, K } = sharesAt(compiled, ...["X", "Y", "Z"].map((_, k) => Float64Array.from(cv, (v) => P[3 * v + k])));
-    const weight = (X, Y, v) => {
-      let w = 0;
-      for (let o = 0; o < att.length; o += ATTACH_STRIDE) {
-        if ((att[o] === X && att[o + 1] === Y) || (att[o] === Y && att[o + 1] === X)) w = Math.max(w, attachWeight(att, o, P[3 * v], P[3 * v + 1], P[3 * v + 2]));
-      }
-      return w;
-    };
-    let attachedPairsSeen = 0;
-    cv.forEach((v, i) => {
-      const making = [];   // the pieces whose shares make the field at the crease vertex
-      for (let j = 0; j < K; j++) if (Math.abs(shares[i * K + j] - out[i]) <= 0.005 * 1.5) making.push(j);
-      expect(making.length, `crease vertex ${v}`).toBeGreaterThanOrEqual(2);
-      let unattached = false;
-      for (let a = 0; a < making.length; a++) for (let b = a + 1; b < making.length; b++) {
-        if (weight(making[a], making[b], v) === 0) unattached = true; else attachedPairsSeen++;
-      }
-      expect(unattached, `crease vertex ${v}`).toBe(true);
-    });
-    expect(attachedPairsSeen).toBeGreaterThan(0);   // the check meets attached pairs, so it is not vacuous
-    expect(edgeCheck(mesh.indices)).toEqual(CLOSED);
-  }, 180_000);
+  // At every crease vertex some pair of the pieces making the field is unattached there (world
+  // anchors, derived independently of the engine's table). The moved-root twins sit the part off
+  // the origin through its root, where the node keeps its anchors in a non-world frame: an owner
+  // stage that tested world positions against that table cut creases through the webbing.
+  const ATTACH_CASES = [
+    ["hand fist gap 0", handSpec({ ...HAND_POSES.fist, contactGap: 0 }), true],
+    ["hand fist gap 0 (moved root)", movedRoot(handSpec({ ...HAND_POSES.fist, contactGap: 0 })), true],
+    ["finger attached (moved root)", movedRoot(fingerAttached()), false],
+  ];
+  for (const [name, spec, creased] of ATTACH_CASES) {
+    test(`no crease where the crossing pair's attachment weight is > 0: ${name}`, () => {
+      const { compiled, mesh } = run(spec, 1.5, "preview");
+      const r = creaseInAttachment(compiled, mesh, 1.5);
+      if (creased) {
+        expect(r.creaseVerts).toBeGreaterThan(0);
+        expect(r.attachedPairsSeen).toBeGreaterThan(0);   // the check meets attached pairs, so it is not vacuous
+      } else expect(r.creaseVerts).toBe(0);   // every crossing is inside the attachment
+      expect(r.unmade).toBe(0);
+      expect(r.attachedOnly).toBe(0);
+      expect(edgeCheck(mesh.indices)).toEqual(CLOSED);
+    }, 180_000);
+  }
 });

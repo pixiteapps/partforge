@@ -37,7 +37,7 @@ export function meshImplicit(compiled, edge, { tier, owners = true } = {}) {
   const node = ownerPath ? compiled.ir.nodes[compiled.ownerRoot] : null;
   const raw = ownerPath ? meshStoreOwners(store, { gap: node.gap }) : meshStore(store);
   let mesh = cleanupMesh(store, raw, opts);
-  if (ownerPath) mesh = untangle(store, cutCreases(store, mesh, node.att));
+  if (ownerPath) mesh = untangle(store, cutCreases(store, mesh, node.attWorld));
   if (compiled.detail.length) mesh = applySurfaceDetail(store, mesh, compiled);
   const result = implicitResult(compiled, edge, plan, mesh, store.clipped);
   if (ownerPath) Object.assign(result, { vertOwner: mesh.vertOwner, ownerHeld: mesh.ownerHeld, pinned: mesh.pinned, crease: mesh.crease, triOwner: triangleOwners(mesh) });

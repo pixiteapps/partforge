@@ -88,7 +88,9 @@ struct Session {
   std::vector<double> normals;
 
   // The owner path (implicit_owner.cpp; a root exact contact). The contact's context, set once
-  // by ip_set_contact: its attachment table (contact.js's ATTACH_STRIDE layout, child indices),
+  // by ip_set_contact: its attachment table (contact.js's ATTACH_STRIDE layout, child indices,
+  // anchors in WORLD space — the IR node's attWorld, since the owner stages test world mesh
+  // positions; the field's own table, in the node's frame, lives in the program),
   // its exact clearance (clearanceExact(gap)), its gap, and contact.js's CREASE_SNAP, CREASE_TOL
   // and DETAIL_SEAM_FADE — handed in from JS, so the constants have one home.
   bool contactSet = false;
@@ -110,7 +112,8 @@ void validate(Program& p);
 
 // evalBatchContact's capture (program.js): per lane, the exact contact op's merged
 // owner and piece (child indices), and per lane x K each child's cut and share. A null
-// array is not captured. Lane i of a run writes at lane `off + i`.
+// array is not captured. `owner` is TEST-ONLY (no production stage sets it; the meshing
+// stages read the order-free `piece`). Lane i of a run writes at lane `off + i`.
 struct Capture {
   int K = 0;
   int32_t* owner = nullptr;

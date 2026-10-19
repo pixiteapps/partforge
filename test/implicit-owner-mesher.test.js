@@ -219,7 +219,7 @@ describe("through meshImplicit", () => {
       expect(componentVolumes(mesh).filter((v) => v > 0).length).toBe(1);   // sealed pockets (negative volume) aside
       // Every finger vertex outside its attachment zone (the webbing blend) keeps the gap from
       // the palm; the one nearest it is a fingertip pad in the fist.
-      const palm = childIndex(compiled, "palm"), { att } = compiled.ir.nodes[compiled.ownerRoot], P = mesh.positions;
+      const palm = childIndex(compiled, "palm"), att = compiled.ir.nodes[compiled.ownerRoot].attWorld, P = mesh.positions;   // world anchors: P is world
       for (const finger of ["index", "middle", "ring", "pinky"]) {
         const f = childIndex(compiled, finger), verts = [];
         let o = 0;

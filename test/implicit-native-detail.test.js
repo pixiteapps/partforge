@@ -188,7 +188,7 @@ describe("native owner detail and triangle owners", () => {
         const plan = planLeaves(compiled, edge);
         const store = evaluateLeaves(plan);
         const opts = edge === 1.5 ? PREVIEW_CLEANUP : CLEANUP;
-        const done = untangle(store, cutCreases(store, cleanupMesh(store, meshStoreOwners(store, { gap: node.gap }), opts), node.att));
+        const done = untangle(store, cutCreases(store, cleanupMesh(store, meshStoreOwners(store, { gap: node.gap }), opts), node.attWorld));
         const js = applySurfaceDetail(store, done, compiled);
         expect(js.indices.length).toBeGreaterThan(done.indices.length);
         const s = sessionFor(plan);

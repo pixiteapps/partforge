@@ -305,6 +305,8 @@ function captureOwner(cap, lane, kid, cnt, att, nA, g, rank) {
     cap.piece[lane] = kid[bp];
   }
   if (cap.owner) {
+    // TEST-ONLY: no production stage passes `owner` — meshing reads the order-free `piece` above.
+    // The merged owner is kept for the tests that pin it (and its native twin, capture_owner).
     // Overlapping attachment zones merge to the lesser child of the pair holding the owner, until stable.
     for (let moved = true; moved;) {
       moved = false;
@@ -320,9 +322,9 @@ function captureOwner(cap, lane, kid, cnt, att, nA, g, rank) {
 
 /**
  * evalBatch for a program holding an exact contact op, also capturing per point (into `cap`,
- * whichever arrays are present; K the child count): `owner[i]` (the argmin child of the cuts,
- * merged to the lesser child across attachment zones — never AIR, the caller applies the
- * sign), `cuts[i·K + child]` (each child's cut value, +Infinity for a pruned child) and
+ * whichever arrays are present; K the child count): `owner[i]` (TEST-ONLY — no production stage
+ * reads it: the argmin child of the cuts, merged to the lesser child across attachment zones —
+ * never AIR, the caller applies the sign), `cuts[i·K + child]` (each child's cut value, +Infinity for a pruned child) and
  * `shares` (the cut lowered by any attachment blend the child takes part in) and `piece[i]` (the
  * child of the least share, a tie going to the child in fewer attachments, then the lesser: the owner the meshing stages use,
  * where attached pieces tie inside their blend but two digits both blended into the palm stay two

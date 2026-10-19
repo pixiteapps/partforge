@@ -147,13 +147,18 @@ export function lowerSpec(spec, { images = new Map(), exactContact = true } = {}
         const ids = kids(node.children);
         const gap = node.gap ?? 0, bulge = node.bulge ?? BULGE_DEFAULT;
         const labelSlot = (l) => node.children.findIndex((c) => c.label === l);
-        const att = new Float64Array((node.attach?.length ?? 0) * ATTACH_STRIDE);
+        // `att` holds each anchor in the node's own frame, where the field (CONTACT) reads it;
+        // `attWorld` the same table with the anchor in world space, where the owner stages
+        // (crease cut, seam fade — both engines) test mesh positions. Frames are rigid, so the
+        // two give the same weights; a moved root is what tells them apart.
+        const att = new Float64Array((node.attach?.length ?? 0) * ATTACH_STRIDE), attWorld = new Float64Array(att.length);
         let maxK = 0;
         (node.attach ?? []).forEach((e, i) => {
           const wp = [0, 0, 0], an = [0, 0, 0];
           xformPoint(wp, frames.get(e.near).world, 0, 0, 0);
           xformPoint(an, invert(W), wp[0], wp[1], wp[2]);
           att.set([labelSlot(e.a), labelSlot(e.b), an[0], an[1], an[2], e.radius, e.band ?? e.radius / 2, e.k], i * ATTACH_STRIDE);
+          attWorld.set([labelSlot(e.a), labelSlot(e.b), wp[0], wp[1], wp[2], e.radius, e.band ?? e.radius / 2, e.k], i * ATTACH_STRIDE);
           maxK = Math.max(maxK, e.k);
         });
         const G0 = minG(ids), Lk = Math.max(...ids.map((i) => nodes[i].L));
@@ -162,7 +167,7 @@ export function lowerSpec(spec, { images = new Map(), exactContact = true } = {}
         const exact = exactContact && path === "root";
         if (exactContact && !exact) warnings.push(NESTED_CONTACT_WARNING);
         if (exact && ids.length > MAX_OWNER_K) throw new ImplicitSpecError(`${path}: an exact contact group takes at most ${MAX_OWNER_K} children (got ${ids.length})`);
-        const n = { kind: "contact", children: ids, gap, bulge, fuse: gap === 0 ? 1 : 0, att, exact: exact ? 1 : 0 };
+        const n = { kind: "contact", children: ids, gap, bulge, fuse: gap === 0 ? 1 : 0, att, attWorld, exact: exact ? 1 : 0 };
         // The contact regions (regions.js), from the lowered children: per slot, the bulge
         // regions (BULGE_STRIDE each); per node, the pad fill's gate regions (FILL_STRIDE each).
         const found = contactRegions({ ir: { nodes }, textures }, n, path);

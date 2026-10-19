@@ -188,7 +188,7 @@ describe("tiers", () => {
     expect(compiled.ownerRoot).toBeGreaterThanOrEqual(0);
     const store = evaluateLeaves(planLeaves(compiled, edge));
     let ref = cleanupMesh(store, meshStoreOwners(store, { gap: node.gap }), { ...PREVIEW_CLEANUP, decimateFrac: 0 });
-    ref = untangle(store, cutCreases(store, ref, node.att));
+    ref = untangle(store, cutCreases(store, ref, node.attWorld));
     if (compiled.detail.length) ref = applySurfaceDetail(store, ref, compiled);
     const want = digest(ref);
     try {

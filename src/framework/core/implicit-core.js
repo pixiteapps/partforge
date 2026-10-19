@@ -124,7 +124,8 @@ export class NativeSession {
   /**
    * evalBatchContact(prog, textures, X, Y, Z, out, cap) on the core: a fresh Float64Array of
    * field values (evalBatch's), and the exact contact op's capture written into `cap` with
-   * evalBatchContact's contract — K the child count; whichever of `owner`, `piece` (per point)
+   * evalBatchContact's contract — K the child count; whichever of `owner` (TEST-ONLY: no
+   * production stage asks for it, the meshing stages read `piece`), `piece` (per point)
    * and `cuts`, `shares` (per point × K) are present are filled (−1 / +Infinity, the whole
    * array, as evalBatchContact fills it) and then written for the first N points.
    */
@@ -279,14 +280,16 @@ export class NativeSession {
   }
 
   /**
-   * The root exact contact the owner stages read: `node` is its IR node ({ att, gap }) — the
-   * attachment table, and the gap that sets its exact clearance (contact.js's clearanceExact) —
+   * The root exact contact the owner stages read: `node` is its IR node ({ attWorld, gap }) — the
+   * attachment table with its anchors in world space (the owner stages test world mesh positions;
+   * `att`, the node-frame table, is the field's), and the gap that sets its exact clearance
+   * (contact.js's clearanceExact) —
    * handed in with contact.js's CREASE_SNAP, CREASE_TOL and DETAIL_SEAM_FADE.
    */
   setContact(node) {
     const { c } = this;
-    const att = node?.att ?? new Float64Array(0), gap = node?.gap ?? 0;
-    if (!isNumbers(att) || att.length % 8 || typeof gap !== "number") throw refusal("implicit: setContact takes a contact node's att (8 doubles per attachment) and gap");
+    const att = node?.attWorld ?? new Float64Array(0), gap = node?.gap ?? 0;
+    if (!isNumbers(att) || att.length % 8 || typeof gap !== "number") throw refusal("implicit: setContact takes a contact node's attWorld (8 doubles per attachment) and gap");
     let rc = 0;
     this.#call(() => {
       const pa = att.length ? c.copyIn(Float64Array.from(att)) : c.alloc(8);

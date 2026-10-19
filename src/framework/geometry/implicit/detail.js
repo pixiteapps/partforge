@@ -152,13 +152,14 @@ export function midpointNormal(N, a, b, m) {
 /**
  * Each vertex's detail weight on an owner mesh: smoothstep(0, DETAIL_SEAM_FADE, s), where s is the
  * least cut value, over the contact children that are not its own piece or attached to it there
- * (attachment weight > 0, so the webbing keeps its detail), less the declared gap. A gap face
+ * (attachment weight > 0, so the webbing keeps its detail — tested against the world-space table
+ * `attWorld`, since the mesh is in world space), less the declared gap. A gap face
  * therefore has s = 0 (the other piece's cut there is exactly the gap) and detail can never close
  * it, and a crease has s = 0 too. Crease and pinned vertices are 0 outright: they sit on those
  * seams within the mesher's tolerance, and must not move at all.
  */
 function seamFade(store, compiled, P, VL, VO, VP, VC) {
-  const node = compiled.ir.nodes[compiled.ownerRoot], K = Math.max(1, store.ownerK ?? 0), att = node.att ?? new Float64Array(0);
+  const node = compiled.ir.nodes[compiled.ownerRoot], K = Math.max(1, store.ownerK ?? 0), att = node.attWorld ?? new Float64Array(0);   // world anchors: P is world
   const gap = Math.max(node.gap ?? 0, 0), n = P.length / 3, fade = new Float64Array(n), groups = new Map();
   for (let v = 0; v < n; v++) {
     if (VO[v] < 0 || VP[v] || VC[v]) continue;

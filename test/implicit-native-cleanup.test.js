@@ -118,7 +118,7 @@ describe("native owner cleanup, crease cut and untangle", () => {
         const plan = planLeaves(compiled, edge);
         const store = evaluateLeaves(plan);
         const cleaned = cleanupMesh(store, meshStoreOwners(store, { gap: node.gap }), opts);
-        const cut = cutCreases(store, cleaned, node.att);
+        const cut = cutCreases(store, cleaned, node.attWorld);
         const done = untangle(store, cut);
         creases += cut.crease.reduce((a, b) => a + b, 0);
         if (done !== cut) untangled++;
@@ -142,6 +142,10 @@ describe("native owner cleanup, crease cut and untangle", () => {
     expect(untangled).toBeGreaterThan(0);
   });
 
+  // untangle also refuses (rc 3) when a triangle's edge has no list in its edge table, or an
+  // empty one (native/implicit_owner.cpp's Untangle::unlink) — a guard against undefined
+  // behaviour that no session mesh reaches (the table is built from the mesh's own triangles), so
+  // it has no test here; like every refusal it lands in meshImplicit's JS fallback.
   test("crease and untangle need an owner mesh: refused, not run", () => {
     const plan = planLeaves(lowerSpec({ root: { kind: "sphere", r: 3 } }, { images: new Map() }), 1);
     const s = sessionFor(plan);

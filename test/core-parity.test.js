@@ -15,7 +15,8 @@ import { TREES } from "./fixtures/implicit-small-trees.js";
 import { creasedNormals } from "../src/framework/geometry/creased-normals.js";
 import { ORGANIC } from "../src/framework/geometry/shading-policy.js";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
-import { SEAM_CASES } from "./fixtures/implicit-seam-cases.js";
+import { SEAM_CASES, GATE_EXTRA_CASES, MOVED_CASES } from "./fixtures/implicit-seam-cases.js";
+import { creaseInAttachment } from "./helpers/seam-quality.js";
 
 afterAll(() => { setCoreEnabled(true); delete globalThis.PARTFORGE_CORE_SIMD; setCoreForTesting(undefined); });
 
@@ -167,18 +168,23 @@ describe("creased normals: sibling groups", () => {
 });
 
 // The owner path (a root exact contact: core/implicit-core.js's owner mesher, owner cleanup,
-// crease cut, untangle and the detail's seam fade): every seam fixture at the preview grid and
-// the print grid, core on (both builds) against core off — positions, indices, normals and
-// every owner field byte for byte, and the core must really have answered (nothing refused).
+// crease cut, untangle and the detail's seam fade): every seam fixture, the gate's extra cases
+// (palm-last hands, fingers on a palm) and the moved-root cases, at the preview grid and the
+// print grid, core on (both builds) against core off — positions, indices, normals and every
+// owner field byte for byte, and the core must really have answered (nothing refused). A
+// moved-root case also cuts no crease inside an attachment (its anchors live in a non-world
+// frame, and both engines must test the world positions against world anchors).
 describe("owner path: every seam fixture", () => {
   const OWNER_FIELDS = ["positions", "indices", "normals", "vertOwner", "ownerHeld", "pinned", "crease", "triOwner"];
-  for (const { name, spec } of SEAM_CASES) {
+  const moved = new Set(MOVED_CASES.map((c) => c.name));
+  for (const { name, spec } of [...SEAM_CASES, ...GATE_EXTRA_CASES, ...MOVED_CASES]) {
     for (const [edge, tier] of [[1.5, "preview"], [0.6, "print"]]) {
       test(`core on == core off: ${name} at ${edge} mm`, () => {
         const compiled = compileImplicit(spec, { exactContact: true });
         setCoreEnabled(false);
         const off = meshImplicit(compiled, edge, { tier });
         expect(off.indices.length).toBeGreaterThan(0);
+        if (moved.has(name)) expect(creaseInAttachment(compiled, off, edge)).toMatchObject({ attachedOnly: 0, unmade: 0 });
         for (const simd of [true, false]) {
           if (simd) delete globalThis.PARTFORGE_CORE_SIMD; else globalThis.PARTFORGE_CORE_SIMD = false;
           setCoreForTesting(undefined);

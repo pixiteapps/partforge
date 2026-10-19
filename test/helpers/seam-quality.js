@@ -6,6 +6,7 @@
 import { fullDecision } from "../../src/framework/geometry/implicit/interval.js";
 import { emitProgram, evalBatchContact } from "../../src/framework/geometry/implicit/program.js";
 import { attachWeight, ATTACH_STRIDE } from "../../src/framework/geometry/implicit/contact.js";
+import { IDENTITY, compose, invert, xformPoint } from "../../src/framework/geometry/implicit/frames.js";
 
 const fullProgram = (compiled) => emitProgram(compiled, fullDecision(compiled), 0);
 
@@ -128,6 +129,61 @@ export function pieceGapError(compiled, mesh, a, b, gap) {
   return { min, maxFaceError: maxFaceError === -Infinity ? NaN : maxFaceError };
 }
 
+/**
+ * The owner root's attachment table with its anchors carried into WORLD space, for testing world
+ * mesh positions. Derived here from the IR's own transforms (the root chain's `inv`s), not read
+ * from the node's `attWorld`, so a wrong world table in the engine cannot pass its own test.
+ */
+/**
+ * World -> the owner root's own frame (the frame its children's `inv`s and its node-frame `att`
+ * read): the root chain's `inv`s composed, root first.
+ */
+export function ownerFrame(compiled) {
+  const { nodes, root } = compiled.ir;
+  let M = IDENTITY;
+  for (let id = root; ; id = nodes[id].children[0]) {
+    if (nodes[id].inv) M = compose(nodes[id].inv, M);
+    if (id === compiled.ownerRoot) break;
+  }
+  return M;
+}
+
+export function worldAttachments(compiled) {
+  const { nodes } = compiled.ir;
+  const W = invert(ownerFrame(compiled)), att = Float64Array.from(nodes[compiled.ownerRoot].att), p = [0, 0, 0];
+  for (let o = 0; o < att.length; o += ATTACH_STRIDE) {
+    xformPoint(p, W, att[o + 2], att[o + 3], att[o + 4]);
+    att[o + 2] = p[0]; att[o + 3] = p[1]; att[o + 4] = p[2];
+  }
+  return att;
+}
+
+/**
+ * Crease vertices inside an attachment: at each crease vertex, the pieces making the field are
+ * those whose shares lie within 0.005·edge of it. `attachedOnly` counts crease vertices where
+ * every pair of them is attached there (weight > 0, world anchors): no unattached pair's crease
+ * can pass through it, so the cut crossed an attachment zone. `unmade` counts crease vertices
+ * with fewer than two making pieces; `attachedPairsSeen` the attached pairs met (so a check can
+ * show it is not vacuous).
+ */
+export function creaseInAttachment(compiled, mesh, edge) {
+  const P = mesh.positions, att = worldAttachments(compiled), cv = [];
+  for (let v = 0; v < mesh.crease.length; v++) if (mesh.crease[v]) cv.push(v);
+  const { out, shares, K } = sharesAt(compiled, ...[0, 1, 2].map((k) => Float64Array.from(cv, (v) => P[3 * v + k])));
+  let attachedOnly = 0, unmade = 0, attachedPairsSeen = 0;
+  cv.forEach((v, i) => {
+    const making = [];
+    for (let j = 0; j < K; j++) if (Math.abs(shares[i * K + j] - out[i]) <= 0.005 * edge) making.push(j);
+    if (making.length < 2) { unmade++; return; }
+    let unattached = false;
+    for (let a = 0; a < making.length; a++) for (let b = a + 1; b < making.length; b++) {
+      if (pairWeightAt(att, making[a], making[b], P[3 * v], P[3 * v + 1], P[3 * v + 2]) === 0) unattached = true; else attachedPairsSeen++;
+    }
+    if (!unattached) attachedOnly++;
+  });
+  return { creaseVerts: cv.length, attachedOnly, unmade, attachedPairsSeen };
+}
+
 /** The weight, at (x, y, z), of the attachment between children X and Y (the largest, 0 if none). */
 function pairWeightAt(att, X, Y, x, y, z) {
   let w = 0;
@@ -147,7 +203,7 @@ function pairWeightAt(att, X, Y, x, y, z) {
  */
 export function gapHolds(compiled, mesh, gap) {
   const P = mesh.positions, I = mesh.indices, nv = P.length / 3;
-  const att = compiled.ir.nodes[compiled.ownerRoot].att;
+  const att = worldAttachments(compiled);   // P is world
   const X = new Float64Array(nv), Y = new Float64Array(nv), Z = new Float64Array(nv);
   for (let v = 0; v < nv; v++) { X[v] = P[3 * v]; Y[v] = P[3 * v + 1]; Z[v] = P[3 * v + 2]; }
   const { shares, K } = sharesAt(compiled, X, Y, Z);

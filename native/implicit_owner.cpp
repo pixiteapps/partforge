@@ -898,9 +898,16 @@ struct Untangle {
       setAdd(fans[T[3 * (size_t)t + k]], t);
     }
   }
+  // A triangle edge with no list, or an empty one (the JS deletes an emptied list, so its
+  // byEdge.get would be undefined and its splice throw), means the edge table no longer matches
+  // the triangles: refuse (rc 3) rather than dereference null or erase end() − 1 of an empty
+  // list, so ip_untangle answers nonzero and meshImplicit re-runs the mesh in JS. Callers check
+  // rc right after their unlinks, before mutating anything else.
   void unlink(uint32_t t) {
     for (int k = 0; k < 3; k++) {
-      std::vector<uint32_t>& l = *edgeList(edgeKey(T[3 * (size_t)t + k], T[3 * (size_t)t + (k + 1) % 3]));
+      std::vector<uint32_t>* lp = edgeList(edgeKey(T[3 * (size_t)t + k], T[3 * (size_t)t + (k + 1) % 3]));
+      if (!lp || lp->empty()) { rc = 3; return; }
+      std::vector<uint32_t>& l = *lp;
       auto it = std::find(l.begin(), l.end(), t);
       if (it == l.end()) it = l.end() - 1;   // splice(indexOf(t) = -1, 1) drops the last
       l.erase(it);
@@ -1143,7 +1150,9 @@ int Untangle::run() {
       const Swap& sw = swaps[q];
       if (isTouched(sw.t) || isTouched(sw.u)) continue;
       if (!better({sw.t, sw.u}, {sw.tris[0], sw.tris[1]}, f[2 * q] + f[2 * q + 1], inSet)) continue;
-      unlink(sw.t); unlink(sw.u);
+      unlink(sw.t);
+      if (!rc) unlink(sw.u);
+      if (rc) return rc;
       setTri(sw.t, sw.tris[0]); setTri(sw.u, sw.tris[1]);
       link(sw.t); link(sw.u);
       for (int h = 0; h < 2; h++) for (const uint32_t v : sw.tris[h]) for (const uint32_t w : fans[v]) touch(w);
@@ -1192,7 +1201,7 @@ int Untangle::run() {
       for (const uint32_t u : fans[c.keep]) if (isTouched(u)) busy = true;
       if (busy) continue;
       if (!better(c.goneTris, c.tris, fa, inSet)) continue;
-      for (const uint32_t u : c.goneTris) unlink(u);
+      for (const uint32_t u : c.goneTris) { unlink(u); if (rc) return rc; }
       for (size_t i = 0; i < c.goneTris.size(); i++) if (c.dying[i]) alive[c.goneTris[i]] = 0;
       for (size_t i = 0; i < c.goneTris.size(); i++) {
         if (c.dying[i]) continue;
@@ -1336,7 +1345,8 @@ int tri_owners(ipe::Session& s) {
 
 extern "C" {
 
-// The contact the owner stages read (see Session): `att` (attLen doubles, ATTACH_STRIDE each),
+// The contact the owner stages read (see Session): `att` (attLen doubles, ATTACH_STRIDE each; the
+// IR node's attWorld, anchors in world space like the mesh positions the stages test),
 // the exact clearance, the gap and contact.js's CREASE_SNAP, CREASE_TOL and DETAIL_SEAM_FADE.
 // 0 ok; nonzero for an unknown session or a malformed table.
 int ip_set_contact(int id, const double* att, int attLen, double cl, double gap, double creaseSnap, double creaseTol, double seamFade) {
