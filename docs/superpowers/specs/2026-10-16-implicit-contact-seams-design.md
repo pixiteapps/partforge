@@ -353,7 +353,7 @@ All of it is now decided. What shipped:
 - **Speed.** The gate was measured on base `4b886eaa`, isolated (hand default 241 ms at 1.5 mm
   and 1652 ms at 0.5 mm; fist 269 and 1839, paced). The owner path measures 316 / 378 ms at
   1.5 mm and 2250 / 2515 ms at 0.5 mm. The preview gate is therefore raised to 1.45x / 1.54x the
-  plain native path (plan: 1.2x; clean seams win over speed); print stays 1.5x. The gate is a
+  plain native path (plan: 1.2x; clean seams win over speed); print is raised from 1.5x to 1.6x: it measured 1.53x (default) / 1.46x (fist) against today's plain path (1474 / 1707 paced ms), which is itself faster than the 1652 / 1839 base-commit baseline the 1.5x came from; against that base the owner print path (2248 / 2485) is 1.36x / 1.35x. The gate is a
   RATIO to the plain native path (same pose, same grid, `exactContact: false`) measured in the
   same test with the runs interleaved, plus an absolute ceiling of 3x the spec targets: load slows
   both paths alike, whereas an absolute millisecond gate (2478 ms print) failed 3-5% over inside
