@@ -4,9 +4,11 @@ import { describe, test, expect } from "vitest";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { sampleField } from "../src/framework/geometry/implicit/sparse.js";
 import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
+import { meshStoreOwners } from "../src/framework/geometry/implicit/mesher-owners.js";
 import { cleanupMesh, CLEANUP, DECIMATE, PREVIEW_CLEANUP, relax } from "../src/framework/geometry/implicit/cleanup.js";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
+import { cutCreases, untangle } from "../src/framework/geometry/implicit/crease.js";
 import { applySurfaceDetail } from "../src/framework/geometry/implicit/detail.js";
 import { core, coreStatus, setCoreEnabled } from "../src/framework/core/core.js";
 import { handSpec, vaseSpec } from "./fixtures/implicit-trees.js";
@@ -58,6 +60,35 @@ describe("cleanup", () => {
       const before = minAngles(raw.positions, raw.indices), after = minAngles(out.positions, out.indices);
       expect(after[Math.floor(after.length * 0.05)]).toBeGreaterThan(before[Math.floor(before.length * 0.05)]);
       expect(out.normals.length).toBe(out.positions.length);
+    });
+  }
+  // The exact (default) path for the contact* trees: the owner mesher's raw mesh, cleaned up by the
+  // owner-aware cleanup. Same invariants as above, in their exact-path form: pinned vertices (exactly
+  // on a gap face) are not on the contact field's zero set, so they are exempt from the surface
+  // test; every other vertex must sit on a piece's surface. Compared on the JS stages (the native
+  // port is held bit-identical by test/core-parity.test.js).
+  for (const [name, spec] of Object.entries(TREES).filter(([n]) => n.startsWith("contact"))) for (const [tier, opts] of [["CLEANUP", CLEANUP], ["PREVIEW_CLEANUP", PREVIEW_CLEANUP]]) {
+    test(`${name}, exact owner path, ${tier}: topology kept, slivers gone, vertices on the surface, triangles better`, () => {
+      const c = compileImplicit(spec), edge = 0.8;
+      expect(c.ownerRoot, "a root contact takes the owner path").toBeGreaterThanOrEqual(0);
+      const store = evaluateLeaves(planLeaves(c, edge)), raw = meshStoreOwners(store, { gap: c.ir.nodes[c.ownerRoot].gap });
+      const out = cleanupMesh(store, raw, opts);
+      expect(edgeCheck(out.indices)).toEqual({ boundary: 0, nonManifold: 0, misoriented: 0 });
+      expect(eulerChar(out.positions, out.indices)).toBe(eulerChar(raw.positions, raw.indices));
+      expect(out.vertOwner.length).toBe(out.positions.length / 3);
+      let worst = 0, checked = 0;
+      for (let v = 0; v < out.vertOwner.length; v++) {
+        if (out.pinned[v]) continue;
+        const d = evalReference(c, out.positions[3 * v], out.positions[3 * v + 1], out.positions[3 * v + 2], edge);
+        checked++;
+        worst = Math.max(worst, Math.abs(d));
+      }
+      expect(checked).toBeGreaterThan(0);
+      expect(worst).toBeLessThan(0.05 * edge);
+      const before = minAngles(raw.positions, raw.indices), after = minAngles(out.positions, out.indices);
+      expect(after[Math.floor(after.length * 0.05)]).toBeGreaterThan(before[Math.floor(before.length * 0.05)]);
+      expect(out.normals.length).toBe(out.positions.length);
+      if (opts === PREVIEW_CLEANUP) expect(out.indices.length).toBeLessThanOrEqual(cleanupMesh(store, raw, CLEANUP).indices.length);
     });
   }
   // contactThree, its first capsule's tip swept through 12 press depths, at bulge 0 and the
@@ -149,6 +180,30 @@ describe("tiers", () => {
       } finally { setCoreEnabled(true); }
     }, 120_000);
   }
+  // The exact (default) hand takes the owner path. Its tier guarantees, held without a golden digest:
+  // print is the JS owner stages run with decimateFrac 0 (core on and off alike), and preview is
+  // closed, Euler-equal and at most half print's triangles.
+  test("exact hand: print tier is the JS owner stages with decimateFrac 0, core on and off; preview is smaller", () => {
+    const compiled = compileImplicit(handSpec()), edge = 1.5, node = compiled.ir.nodes[compiled.ownerRoot];
+    expect(compiled.ownerRoot).toBeGreaterThanOrEqual(0);
+    const store = evaluateLeaves(planLeaves(compiled, edge));
+    let ref = cleanupMesh(store, meshStoreOwners(store, { gap: node.gap }), { ...PREVIEW_CLEANUP, decimateFrac: 0 });
+    ref = untangle(store, cutCreases(store, ref, node.att));
+    if (compiled.detail.length) ref = applySurfaceDetail(store, ref, compiled);
+    const want = digest(ref);
+    try {
+      for (const on of [true, false]) {
+        setCoreEnabled(on);
+        const print = meshImplicit(compiled, edge, { tier: "print" });
+        expect(digest(print), `core ${on ? "on" : "off"}`).toBe(want);
+        expect(digest(meshImplicit(compiled, edge)), `no tier, core ${on ? "on" : "off"}`).toBe(want);
+        const preview = meshImplicit(compiled, edge, { tier: "preview" });
+        expect(preview.indices.length).toBeLessThanOrEqual(0.5 * print.indices.length);
+        expect(edgeCheck(preview.indices)).toEqual({ boundary: 0, nonManifold: 0, misoriented: 0 });
+        expect(eulerChar(preview.positions, preview.indices)).toBe(eulerChar(print.positions, print.indices));
+      }
+    } finally { setCoreEnabled(true); }
+  }, 120_000);
   test("relax leaves a vertex with a zero normal where it is", () => {
     // A tetrahedron; vertex 0's projection found no gradient, so it has no normal.
     const P = Float64Array.of(0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1);

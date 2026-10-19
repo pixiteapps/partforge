@@ -216,28 +216,28 @@ describe("hand contact", () => {
     }
     return out;
   };
-  const bridgeAllowed = (node, cl, a, b, q) => {
+  const bridgeAllowed = (node, a, b, q) => {
     const ja = zonesOf(node, a, q), jb = zonesOf(node, b, q);
     if (ja.includes(b) || ja.some((x) => jb.includes(x))) return true;
     return false;
   };
 
   test("the bridge rule exempts finger webbing only inside the attachment zones", () => {
-    const spec = handSpec(HAND_POSES.nearMiss), c = compileImplicit(spec), node = c.ir.nodes[c.ownerRoot], cl = clearance(0, 1.5);
+    const spec = handSpec(HAND_POSES.nearMiss), c = compileImplicit(spec), node = c.ir.nodes[c.ownerRoot];
     const index = slotOf(spec, "index"), middle = slotOf(spec, "middle");
     const [im, mm, ip, mp] = ["index.mcp", "middle.mcp", "index.pip", "middle.pip"].map((f) => origin(spec, f));
     // Between the two knuckles, inside both zones: the webbing is a legitimate join.
     const web = im.map((x, i) => (x + mm[i]) / 2);
-    expect(bridgeAllowed(node, cl, index, middle, web)).toBe(true);
+    expect(bridgeAllowed(node, index, middle, web)).toBe(true);
     // Between the two PIP knuckles (the near miss), outside both zones: a bridge there fails.
     const gap = ip.map((x, i) => (x + mp[i]) / 2);
     const o = node.att.findIndex((_, i) => i % ATTACH_STRIDE === 0 && node.att[i] === index);
     expect(inZone(node, o, gap)).toBe(false);
-    expect(bridgeAllowed(node, cl, index, middle, gap)).toBe(false);
+    expect(bridgeAllowed(node, index, middle, gap)).toBe(false);
     // At the index knuckle: inside the index's zone but not the middle's — not webbing.
     const om = node.att.findIndex((_, i) => i % ATTACH_STRIDE === 0 && node.att[i] === middle);
     expect([inZone(node, o, im), inZone(node, om, im)]).toEqual([true, false]);
-    expect(bridgeAllowed(node, cl, index, middle, im)).toBe(false);
+    expect(bridgeAllowed(node, index, middle, im)).toBe(false);
   });
 
   test("near-miss fingers stay apart: index and middle 0.75 mm apart at their closest, a clean gap at preview and print", () => {
@@ -345,32 +345,45 @@ describe("hand contact", () => {
     expect(compared).toBeGreaterThanOrEqual(60);
   });
 
-  test("pose sweep from near miss into contact: watertight, and no triangle joins two pieces across air that neither touch nor are joined there", () => {
-    // Every fingertip passes from a near miss of the palm (flex 96: 2–7 mm short) through
-    // first contact into a firm press. An edge whose ends lie nearest different pieces must
-    // lie on the skin (the pieces fuse there: a crease; the midpoint is within PROBE of the
-    // zero set) or inside an attachment zone shared by both (the webbing at the finger bases).
-    // A bridge over a real gap has its midpoint in air, half the gap above the skin.
-    const poses = [96, 99, 101, 103, 106, 110].map((f) => ({ curl: 100, flex: { index: f, middle: f, ring: f, pinky: f, thumb: 50 } }));
-    for (const pose of [...poses, HAND_POSES.nearMiss]) {
-      const c = compileImplicit(handSpec(pose)), node = c.ir.nodes[c.ownerRoot], edge = 1.5;
-      const out = meshAt(c, edge), P = out.positions, T = out.indices;
-      expect(edgeCheck(T), JSON.stringify(pose)).toEqual(CLOSED);
-      const own = new Int8Array(P.length / 3);
-      for (let v = 0; v < own.length; v++) {
-        let best = Infinity;
-        node.children.forEach((id, i) => { const d = evalNodeAt(c, id, P[3 * v], P[3 * v + 1], P[3 * v + 2]); if (d < best) { best = d; own[v] = i; } });
+  // Bridges over air: a triangle whose three vertices all lie on the skin of one pair of pieces
+  // (nearest-surface distance <= ON), with vertices on both sides of that pair's bisector
+  // (d_i - d_j of opposite sign) and none within TOUCH of both pieces at once (no vertex at a
+  // crease), outside the pair's attachment zones. A real crease has creased vertices on both
+  // pieces; a bridge over a gap g has vertices only on one piece's surface or the other's.
+  const bridgesOf = (c, node, mesh, edge) => {
+    const P = mesh.positions, T = mesh.indices, n = P.length / 3, ids = node.children, ON = 0.1 * edge, TOUCH = 0.1 * edge;
+    const d = ids.map((id) => { const a = new Float64Array(n); for (let v = 0; v < n; v++) a[v] = evalNodeAt(c, id, P[3 * v], P[3 * v + 1], P[3 * v + 2]); return a; });
+    let bridges = 0;
+    for (let t = 0; t < T.length; t += 3) {
+      const tri = [T[t], T[t + 1], T[t + 2]];
+      const q = [0, 1, 2].map((i) => (P[3 * tri[0] + i] + P[3 * tri[1] + i] + P[3 * tri[2] + i]) / 3);
+      for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+        if (!tri.every((v) => Math.min(d[i][v], d[j][v]) <= ON)) continue;
+        const sg = tri.map((v) => Math.sign(d[i][v] - d[j][v]));
+        if (!(sg.includes(1) && sg.includes(-1))) continue;
+        if (tri.some((v) => Math.max(d[i][v], d[j][v]) <= TOUCH)) continue;
+        if (bridgeAllowed(node, i, j, q)) continue;
+        bridges++;
       }
-      const PROBE = 0.2 * edge;
-      let bridges = 0;
-      for (let t = 0; t < T.length; t += 3) for (let e = 0; e < 3; e++) {
-        const u = T[t + e], w = T[t + (e + 1) % 3];
-        if (own[u] === own[w]) continue;
-        const q = [0, 1, 2].map((i) => (P[3 * u + i] + P[3 * w + i]) / 2);
-        if (bridgeAllowed(node, 0, own[u], own[w], q)) continue;
-        if (Math.abs(evalReference(c, ...q, edge)) > PROBE) bridges++;
-      }
-      expect(bridges, JSON.stringify(pose)).toBe(0);
     }
+    return bridges;
+  };
+  const SWEEP = [96, 99, 101, 103, 106, 110].map((f) => ({ curl: 100, flex: { index: f, middle: f, ring: f, pinky: f, thumb: 50 } }));
+
+  test("pose sweep from near miss into contact: watertight, and no triangle bridges two pieces across a gap that neither touch nor are joined there", () => {
+    // Every fingertip passes from a near miss of the palm (flex 96: 2–7 mm short) through
+    // first contact into a firm press (and the index/middle PIP near miss at 0.75 mm).
+    for (const pose of [...SWEEP, HAND_POSES.nearMiss]) {
+      const c = compileImplicit(handSpec(pose)), node = c.ir.nodes[c.ownerRoot], edge = 1.5;
+      const out = meshAt(c, edge);
+      expect(edgeCheck(out.indices), JSON.stringify(pose)).toEqual(CLOSED);
+      expect(bridgesOf(c, node, out, edge), JSON.stringify(pose)).toBe(0);
+    }
+  }, 120_000);
+
+  test("the bridge check has teeth: the plain mesher on the same exact field bridges the near miss", () => {
+    const c = compileImplicit(handSpec(HAND_POSES.nearMiss)), node = c.ir.nodes[c.ownerRoot], edge = 1.5;
+    const plain = meshImplicit(c, edge, { tier: "preview", owners: false });
+    expect(bridgesOf(c, node, plain, edge)).toBeGreaterThan(0);
   }, 120_000);
 });
