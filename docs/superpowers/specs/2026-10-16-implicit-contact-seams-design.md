@@ -109,6 +109,20 @@ webbing and the gap's taper stay a smooth blend as today. The crease therefore s
 the zone's outer edge. No fade is needed there: the attachment's blend width falls to
 zero at that edge, so the field is already a hard crease where the crease cut begins.
 
+*As built:* meshing does not use a merged "one owner per attachment zone" label. Every
+owner stage reads the sample's **piece** (`evalBatchContact`'s `piece`): the child of the
+least share, a tie going to the child whose own cut is the share, then to the child in fewer
+attachments, then the lesser index. It is order-free — the same whatever order the children
+are listed in, and the same from every leaf program — whereas a merged owner depends on
+child order (a palm listed last would take its digits' webbing). Two attached pieces tie
+inside their blend, so the webbing is a digit's piece, and two digits both blended into the
+palm stay two pieces. Smoothness in the attachment zone comes from two rules instead of a
+shared label: the crease cut (§5) never cuts where the crossing pair's own attachment weight
+is above 0 (tested against the anchors in world space, like the mesh), and the seam between
+sibling pieces shades smooth when it bends less than `SIBLING_SEAM_ANGLE` (§6). The merged
+owner capture (`cap.owner`, and its native twin) is still computed on request but is
+test-only; no production stage reads it.
+
 ### 2. The field drops its grid-dependent parts
 
 - **Clearance is exactly the gap:** `cl = gap`. The `C_MIN_CELLS` floor is removed. At
@@ -180,8 +194,14 @@ the stray shards in the first spike.
 
 ### 6. Shading and detail
 
-- **The crease shades as a crease:** normals split along it at any angle, so a shallow
-  press still reads as two pieces. It draws no outline line, matching the organic policy
+- **The crease shades as a crease:** normals split along it once it bends more than
+  `SIBLING_SEAM_ANGLE` = 5° (shading-policy.js), so a shallow press still reads as two
+  pieces. Below 5° a seam between sibling pieces shades smooth: the seam between two
+  piece IDs also runs through the attachment-zone webbing (§1, as built), where the surface
+  is a smooth blend and the seam is near-flat, and that stretch must not shade as hard. A
+  crease bends far more (about 44° across the fixtures' 1.2 mm press of two r 8 capsules);
+  only a press shallower than a few hundredths of a millimetre on such pieces bends under 5°
+  and shades smooth, which is the price of keeping the webbing smooth. It draws no outline line, matching the organic policy
   for seams. Today the backend discards the implicit's own normals and Manifold shades
   under `ORGANIC`, which splits only above 80°. So **each owner becomes its own Manifold
   original ID** (my call). That reuses the organic-to-organic seam handling PR #283 added

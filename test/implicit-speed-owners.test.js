@@ -19,7 +19,9 @@ import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 // because load slows both paths alike while an absolute number belongs to a quiet machine
 // (the absolute 2478 ms print gate failed 3–5% over inside the full suite, passing alone). The
 // plain path is the same hand on the same grid compiled with `exactContact: false`; runs are
-// interleaved so both see the same load. An absolute ceiling of 3× the spec targets backstops.
+// interleaved so both see the same load, and each ratio is of medians over 5 runs per grid (the
+// print grid took 3 once; 5 keeps one loaded run from deciding it). An absolute ceiling of 3× the
+// spec targets backstops.
 // The print ratio is raised from 1.5 to 1.6 to the measured cost (the plan's rule): 1.53x (default) /
 // 1.46x (fist) against today's plain native path (1474 / 1707 paced ms), which is itself faster than
 // the 1652 / 1839 base-commit baseline the 1.5x came from; in absolute terms the owner print path
@@ -61,7 +63,7 @@ test("owner meshing stays within the speed gate (ratio to the plain native path)
   for (const [name, pose, previewRatio, printRatio] of OWNER_GATES) {
     const owner = compileImplicit(handSpec(pose)), plain = compileImplicit(handSpec(pose), { exactContact: false });
     for (const c of [owner, plain]) meshImplicitCore(c, 1.4, planLeaves(c, 1.4), PREVIEW_CLEANUP);   // warm-up on another grid
-    for (const [edge, opts, runs, ratio, ceiling] of [[1.5, PREVIEW_CLEANUP, 5, previewRatio, 3 * SPEC_PREVIEW_MS], [0.5, CLEANUP, 3, printRatio, 3 * SPEC_PRINT_MS]]) {
+    for (const [edge, opts, runs, ratio, ceiling] of [[1.5, PREVIEW_CLEANUP, 5, previewRatio, 3 * SPEC_PREVIEW_MS], [0.5, CLEANUP, 5, printRatio, 3 * SPEC_PRINT_MS]]) {
       const [o, p] = pairedMedianMs(owner, plain, edge, opts, runs);
       results.push([`${name} ${edge} mm`, o, p, ratio, ceiling]);
     }
