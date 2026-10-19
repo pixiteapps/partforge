@@ -11,45 +11,62 @@ import { CLEANUP, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cle
 import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 
 // The owner path (a root exact contact: owner mesher, owner cleanup, crease cut, untangle and
-// the detail's seam fade, all native) against the seam spec's speed gate: at most 1.2× the plain
-// native mesher's baseline at preview 1.5 mm and 1.5× at print 0.5 mm, measured 2026-10-17 on
-// base 4b886eaa (hand default 241 / 1652 ms, fist 269 / 1839 ms) — print 2478 / 2759 ms.
-// The preview gate is raised to the owner path's measured cost (seams win over speed): on the
-// calibration desktop (pace 1.00, SIMD core) it measured 316 / 378 ms against the plain path's
-// 245 / 260 on the same exact field. What the seams cost at 1.5 mm, all of it work the JS owner
-// path does too: the mesher's 9–11k owner-owner edges each bisected in 25 evaluations
-// (30 / 51 ms), cleanup's extra projection pass and share capture (~17 / 28 ms), the crease cut
-// (~12 / 21 ms), the detail's owner projection and seam fade (~6 / 7 ms) and untangle (1 / 6 ms).
-// The gates below are that cost plus ~10% for noise.
+// the detail's seam fade, all native) against the seam spec's speed gate, as a RATIO to the plain
+// native mesher measured in the same test: at most 1.2× the plain baseline at preview 1.5 mm and
+// 1.5× at print 0.5 mm (2026-10-17, isolated, base 4b886eaa: hand default 241 / 1652 ms, fist
+// 269 / 1839 ms), the preview ratios raised to the owner path's measured cost (seams win over
+// speed): the owner path measured 316 / 378 ms at 1.5 mm and 2250 / 2515 ms at 0.5 mm. Ratios
+// because load slows both paths alike while an absolute number belongs to a quiet machine
+// (the absolute 2478 ms print gate failed 3–5% over inside the full suite, passing alone). The
+// plain path is the same hand on the same grid compiled with `exactContact: false`; runs are
+// interleaved so both see the same load. An absolute ceiling of 3× the spec targets backstops.
+// What the seams cost at 1.5 mm, all of it work the JS owner path does too: the mesher's
+// 9–11k owner-owner edges each bisected in 25 evaluations (30 / 51 ms), cleanup's extra
+// projection pass and share capture (~17 / 28 ms), the crease cut (~12 / 21 ms), the detail's
+// owner projection and seam fade (~6 / 7 ms) and untangle (1 / 6 ms).
+const SPEC_PREVIEW_MS = 150;
+const SPEC_PRINT_MS = 2000;
 const OWNER_GATES = [
-  ["hand default", {}, 350, 2478],
-  ["hand fist", HAND_POSES.fist, 415, 2759],
+  ["hand default", {}, 1.45, 1.5],
+  ["hand fist", HAND_POSES.fist, 1.54, 1.5],
 ];
 
-function ownerMedianMs(compiled, edge, opts, runs) {
-  const ms = [];
+// Median owner and plain times, runs interleaved (owner, plain, owner, plain, ...).
+function pairedMedianMs(owner, plain, edge, opts, runs) {
+  const o = [], p = [];
   for (let i = 0; i < runs; i++) {
-    const t0 = cpuMs();
-    const out = meshImplicitCore(compiled, edge, planLeaves(compiled, edge), opts);
-    ms.push(cpuMs() - t0);
+    let t0 = cpuMs();
+    const out = meshImplicitCore(owner, edge, planLeaves(owner, edge), opts);
+    o.push(cpuMs() - t0);
     expect(out?.vertOwner, `the native owner path answered at ${edge} mm`).toBeTruthy();
+    t0 = cpuMs();
+    const base = meshImplicitCore(plain, edge, planLeaves(plain, edge), opts);
+    p.push(cpuMs() - t0);
+    expect(base, `the native plain path answered at ${edge} mm`).not.toBeNull();
+    expect(base.vertOwner).toBeFalsy();
   }
-  return ms.sort((a, b) => a - b)[runs >> 1];
+  const med = (a) => a.sort((x, y) => x - y)[runs >> 1];
+  return [med(o), med(p)];
 }
 
-test("owner meshing stays within the speed gate", () => {
+test("owner meshing stays within the speed gate (ratio to the plain native path)", () => {
   setCoreEnabled(true);
   expect(core(), "the native core is available").toBeTruthy();
-  const line = (name, ms, limit) => `${name}: ${ms.toFixed(0)} paced ms, limit ${limit} (pace ${PACE.toFixed(2)}, ${core().simd ? "SIMD" : "scalar"} core)`;
+  const line = (name, owner, plain, limit, ceiling) => `${name}: owners ${owner.toFixed(0)} / plain ${plain.toFixed(0)} paced ms = ${(owner / plain).toFixed(2)}x, limit ${limit}x, ceiling ${ceiling} ms (pace ${PACE.toFixed(2)}, ${core().simd ? "SIMD" : "scalar"} core)`;
   const results = [];
-  for (const [name, pose, previewGate, printGate] of OWNER_GATES) {
-    const compiled = compileImplicit(handSpec(pose));
-    meshImplicitCore(compiled, 1.4, planLeaves(compiled, 1.4), PREVIEW_CLEANUP);   // warm-up on another grid
-    results.push([`${name} owners 1.5 mm`, ownerMedianMs(compiled, 1.5, PREVIEW_CLEANUP, 5), previewGate]);
-    results.push([`${name} owners 0.5 mm`, ownerMedianMs(compiled, 0.5, CLEANUP, 3), printGate]);
+  for (const [name, pose, previewRatio, printRatio] of OWNER_GATES) {
+    const owner = compileImplicit(handSpec(pose)), plain = compileImplicit(handSpec(pose), { exactContact: false });
+    for (const c of [owner, plain]) meshImplicitCore(c, 1.4, planLeaves(c, 1.4), PREVIEW_CLEANUP);   // warm-up on another grid
+    for (const [edge, opts, runs, ratio, ceiling] of [[1.5, PREVIEW_CLEANUP, 5, previewRatio, 3 * SPEC_PREVIEW_MS], [0.5, CLEANUP, 3, printRatio, 3 * SPEC_PRINT_MS]]) {
+      const [o, p] = pairedMedianMs(owner, plain, edge, opts, runs);
+      results.push([`${name} ${edge} mm`, o, p, ratio, ceiling]);
+    }
   }
-  console.log(results.map(([n, ms, lim]) => line(n, ms, lim)).join("\n"));
-  for (const [n, ms, lim] of results) expect(ms, line(n, ms, lim)).toBeLessThan(lim);
+  console.log(results.map((r) => line(...r)).join("\n"));
+  for (const [n, o, p, ratio, ceiling] of results) {
+    expect(o / p, line(n, o, p, ratio, ceiling)).toBeLessThan(ratio);
+    expect(o, line(n, o, p, ratio, ceiling)).toBeLessThan(ceiling);
+  }
 }, 300_000);
 
 // Reported only (no gate): the public meshImplicit wrapper on the default hand, i.e. the core stages
