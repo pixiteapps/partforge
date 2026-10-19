@@ -296,7 +296,12 @@ the installed package, so let the publish finish before bumping the dep there.
   the geometry's `userData.edgePositions`) and loads the encoder
   lazily, so the app bundle does not carry `@gltf-transform`. `mountPreview` is
   the same viewer with a synthetic part built from the GLB's own node names — no
-  worker, no rail.
+  worker, no rail. Since encoder version 4 / 0.158.0 the file may carry the view's
+  autoplay animation (`samplePreviewAnimation`, sampled as place-only poses) as
+  glTF channels plus a `partforgeAnimation` extra: `mountPreview` plays it through
+  `preview-player.js` unless `animate: false`, `mount({ preview })` draws its
+  opening pose and never plays it, and `exportPreview` bakes it only when every
+  track is place-only.
 - **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
   (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
   nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,

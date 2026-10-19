@@ -780,6 +780,8 @@ export interface MountPreviewOptions {
   elements?: { chrome?: { reframe?: HTMLElement | null; theme?: HTMLElement | null } };
   /** A previous runtime's `getViewerState()`; `cutaway` is ignored (a preview has no live solid). */
   viewerState?: ViewerState | null;
+  /** Play the file's baked animation once drawn (default true). The editor's own boot preview goes through mount(), not here. */
+  animate?: boolean;
 }
 
 /** The handle `mountPreview()` returns. Every method is safe before `ready` settles. */
@@ -802,6 +804,12 @@ export interface PreviewRuntime {
   setHostPane(pane: HostPane): void;
   /** Accepted and ignored — there is no rail. */
   setRailLayout(layout: HostRailLayout): void;
+  /** The baked animation's controls: `null` before `ready`, for a still file, or with `animate: false`. */
+  readonly animation: {
+    state(): { status: "idle" | "intro" | "playing" | "paused" | "done"; t: number };
+    pause(): void;
+    resume(): void;
+  } | null;
   renderMode: {
     get(): RenderMode;
     set(mode: RenderMode): Promise<RenderMode>;

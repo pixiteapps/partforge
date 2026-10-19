@@ -1,6 +1,9 @@
 // partforge/gltf — the cached-preview writer. Worker-safe: no three.js, no DOM.
 
 import type { SubPartDefinition } from "./part.js";
+import type { PreviewAnimationInput } from "./oracle.js";
+
+export type { PreviewAnimationInput };
 
 /** The slice of a part `encodePreviewGlb` reads; any `PartDefinition` satisfies it, so does a plain object. */
 export interface PreviewPart {
@@ -38,9 +41,19 @@ export interface EncodePreviewInput {
   part?: PreviewPart | null;
   /** The view these meshes show; names the scene and lands in the file's extras as `partforgeView`. */
   view?: string | null;
+  /**
+   * The view's autoplay animation as `samplePreviewAnimation` returns it (encoder
+   * version 4). Each sampled sub-part's node gets a rest transform `rel(0)` and,
+   * when it moves, LINEAR `translation` + `rotation` channels in seconds, where
+   * `rel(t) = M(t) · base⁻¹`; the top-level extras gain `partforgeAnimation`
+   * `{ name, label, loop, duration, cues, opacity, steps, animated }`. Refused
+   * (throws) for a non-rigid pose, samples not running from t = 0 to t = 1, a
+   * sample missing a sub-part another has, or a sub-part with no mesh.
+   */
+  animation?: PreviewAnimationInput | null;
 }
 
-/** Bumped whenever the encoder writes different bytes for the same input (2: feature edges; 3: edges as indices into the surface's vertices). */
+/** Bumped whenever the encoder writes different bytes for the same input (2: feature edges; 3: edges as indices into the surface's vertices; 4: animation channels + partforgeAnimation extras). */
 export const PREVIEW_ENCODER_VERSION: number;
 
 /** Encode one view's posed meshes as a welded, quantized, meshopt-compressed GLB (Y-up, millimetres). Deterministic. */

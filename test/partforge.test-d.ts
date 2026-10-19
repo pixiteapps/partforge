@@ -289,6 +289,12 @@ const previewRuntime: PreviewRuntime = mountPreview(document.body, { glb: new Ui
 expectType<Promise<void>>(previewRuntime.ready);
 expectType<string | null>(previewRuntime.getView());
 expectType<void>(previewRuntime.setHostPane("rail"));
+expectType<PreviewRuntime>(mountPreview(document.body, { glb: new Uint8Array(0), animate: false }));
+const previewStatus: "idle" | "intro" | "playing" | "paused" | "done" | undefined = previewRuntime.animation?.state().status;
+expectType<number | undefined>(previewRuntime.animation?.state().t);
+previewRuntime.animation?.pause();
+// @ts-expect-error - the animation handle is read-only
+previewRuntime.animation = null;
 expectType<string | null>(resolveDefaultView(spacer));
 expectType<number>(PREVIEW_ENCODER_VERSION);
 expectType<Promise<Uint8Array>>(encodePreviewGlb({ meshes: [{ name: "a", positions: new Float32Array(9) }], part: spacer, view: "main" }));
