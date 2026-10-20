@@ -13,7 +13,9 @@ function fakeViewer() {
     setSubPose(n, m) { this.poses[n] = m; },
     setSubPartOpacity(n, v) { this.opacity[n] = v; },
     clearSubPartOpacities() { this.opacity = {}; },
+    cancels: 0,
     tweenCameraTo(view, o) { this.tweens.push({ view, ...o }); },
+    cancelCameraTween() { this.cancels++; },
     holdGround(on) { this.ground = on; },
     frame(dt) { for (const cb of [...frame]) cb(dt); },
     orbit() { for (const cb of [...cam]) cb(); },
@@ -142,4 +144,114 @@ test("pause/resume and dispose", () => {
   expect(v.ground).toBe(false);
   run(v, 0.5);
   expect(p.state().t).toBeCloseTo(0.5);
+});
+
+test("replay from done restarts at t=0 and re-fires the intro cue", () => {
+  const v = fakeViewer();
+  const p = createPreviewPlayer(v, lidUp);
+  p.start();
+  v.tweens[0].onComplete();
+  run(v, 2.5);
+  expect(p.state()).toEqual({ status: "done", t: 1 });
+  expect(v.poses.lid[14]).toBeCloseTo(20);
+  p.replay();
+  expect(p.state()).toEqual({ status: "intro", t: 0 });
+  expect(v.poses.lid[14]).toBeCloseTo(0);       // the opening pose, before the intro lands
+  expect(v.tweens).toHaveLength(2);
+  expect(v.tweens[1]).toEqual(expect.objectContaining({ view: "front", duration: 0.6 }));
+  v.tweens[1].onComplete();
+  run(v, 0.5);
+  expect(p.state().status).toBe("playing");
+  expect(p.state().t).toBeCloseTo(0.25);
+});
+
+test("replay does nothing unless the animation is done", () => {
+  const v = fakeViewer();
+  const p = createPreviewPlayer(v, { ...lidUp, cues: [] });
+  p.replay();                       // before start
+  expect(p.state().status).toBe("idle");
+  p.start(); run(v, 0.5);
+  p.replay();                       // mid-play
+  expect(p.state().t).toBeCloseTo(0.25);
+  p.pause(); p.replay();            // paused
+  expect(p.state().status).toBe("paused");
+});
+
+test("onChange fires on every status transition and stops after off() or dispose", () => {
+  const v = fakeViewer();
+  const p = createPreviewPlayer(v, lidUp);
+  const seen = [];
+  const off = p.onChange((s) => seen.push(s.status));
+  const other = [];
+  p.onChange((s) => other.push(s.status));
+  p.start();
+  v.tweens[0].onComplete();
+  run(v, 0.5);
+  p.pause();
+  p.pause();                         // no change, no event
+  p.resume();
+  run(v, 2);
+  p.replay();
+  v.tweens.at(-1).onComplete();
+  expect(seen).toEqual(["intro", "playing", "paused", "playing", "done", "intro", "playing"]);
+  off();
+  p.pause();
+  expect(seen).toHaveLength(7);
+  expect(other.at(-1)).toBe("paused");
+  p.dispose();
+  p.resume();
+  expect(other.at(-1)).toBe("paused");
+});
+
+test("an orbit mid-intro reports intro → playing", () => {
+  const v = fakeViewer();
+  const p = createPreviewPlayer(v, lidUp);
+  const seen = [];
+  p.onChange((s) => seen.push(s.status));
+  p.start();
+  v.orbit();
+  expect(seen).toEqual(["intro", "playing"]);
+});
+
+test("pause during the intro stops the camera where it is and is not stuck", () => {
+  const v = fakeViewer();
+  const p = createPreviewPlayer(v, lidUp);
+  p.start();
+  expect(p.state().status).toBe("intro");
+  p.pause();
+  expect(v.cancels).toBe(1);                   // the intro tween is stopped in place
+  expect(p.state().status).toBe("paused");
+  v.tweens[0].onComplete();                    // a stale completion cannot start playback
+  run(v, 0.5);
+  expect(p.state()).toEqual({ status: "paused", t: 0 });
+  p.resume();                                  // re-honors the intro
+  expect(p.state().status).toBe("intro");
+  expect(v.tweens).toHaveLength(2);
+  v.tweens[1].onComplete();
+  run(v, 0.5);
+  expect(p.state().status).toBe("playing");
+  expect(p.state().t).toBeCloseTo(0.25);
+});
+
+test("pause mid-sweep stops the camera move too", () => {
+  const v = fakeViewer();
+  const p = createPreviewPlayer(v, { ...lidUp, cues: [{ t: 0.5, view: "iso", sweep: 1 }] });
+  p.start();
+  run(v, 1.2);
+  expect(v.tweens).toHaveLength(1);
+  p.pause();
+  expect(v.cancels).toBe(1);
+});
+
+test("an orbit while paused stays paused; resume then plays with the user's camera", () => {
+  const v = fakeViewer();
+  const p = createPreviewPlayer(v, lidUp);
+  p.start();
+  p.pause();
+  v.orbit();
+  run(v, 0.5);
+  expect(p.state()).toEqual({ status: "paused", t: 0 });
+  p.resume();
+  expect(p.state().status).toBe("playing"); // the orbit disarmed the cues: no intro
+  expect(v.tweens).toHaveLength(1);
 });

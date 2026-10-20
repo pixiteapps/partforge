@@ -809,6 +809,8 @@ export interface PreviewRuntime {
     state(): { status: "idle" | "intro" | "playing" | "paused" | "done"; t: number };
     pause(): void;
     resume(): void;
+    /** Play a finished one-time animation again from the start (its camera cues included); a no-op unless `state().status` is `"done"`. */
+    replay(): void;
   } | null;
   renderMode: {
     get(): RenderMode;

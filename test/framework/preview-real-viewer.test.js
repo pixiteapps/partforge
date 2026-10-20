@@ -559,3 +559,154 @@ test("an export taken mid-autoplay (lidAngle 50, a non-identity rest) plays back
   expect(sawMid).toBe(true);
   expect(maxErr).toBeLessThan(0.05);
 });
+
+// --- mountPreview: the play/pause/replay button -----------------------------------
+// A stage carrying the toolbar the cloud's sandbox scaffold supplies: #viewbar
+// with #theme, which the view style button is inserted before.
+function makeToolbarStage() {
+  const stage = makeStage();
+  const bar = document.createElement("div");
+  bar.id = "viewbar";
+  const theme = document.createElement("button");
+  theme.id = "theme";
+  bar.append(theme);
+  stage.append(bar);
+  return stage;
+}
+const playButton = (stage) => stage.querySelector("#pf-preview-play");
+const oneTimeGlb = () => {
+  const a = input();
+  a.anim = { ...a.anim, loop: false };
+  return encodePreviewGlb({ meshes: [box("base"), box("lid", 24)], view: "box", animation: a });
+};
+
+test("an animated preview gets a pause button directly beside the view style button", async () => {
+  const stage = makeToolbarStage();
+  const handle = mountPreview(stage, { glb: await animatedGlb() });
+  await handle.ready;
+  const button = playButton(stage);
+  expect(button).not.toBeNull();
+  expect(button.parentElement.id).toBe("viewbar");
+  expect(button.nextElementSibling.id).toBe("view-style");
+  expect(button.getAttribute("type")).toBe("button");
+  expect(button.getAttribute("aria-label")).toBe("Pause animation"); // during the intro tween
+  expect(button.hasAttribute("aria-pressed")).toBe(false); // the label carries the state
+  expect(button.querySelector("svg")).not.toBeNull();
+  handle.dispose();
+});
+
+test("no play button for a still file, with animate: false, or under reduced motion", async () => {
+  const still = makeToolbarStage();
+  const h1 = mountPreview(still, { glb: await stillGlb() });
+  await h1.ready;
+  expect(playButton(still)).toBeNull();
+  h1.dispose();
+
+  const off = makeToolbarStage();
+  const h2 = mountPreview(off, { glb: await animatedGlb(), animate: false });
+  await h2.ready;
+  expect(playButton(off)).toBeNull();
+  h2.dispose();
+
+  vi.stubGlobal("matchMedia", (query) => ({ matches: query === "(prefers-reduced-motion: reduce)", media: query }));
+  const reduced = makeToolbarStage();
+  const h3 = mountPreview(reduced, { glb: await animatedGlb() });
+  await h3.ready;
+  expect(h3.animation).not.toBeNull();
+  expect(playButton(reduced)).toBeNull();
+  h3.dispose();
+});
+
+test("the button pauses and resumes, and t holds while paused", async () => {
+  const stage = makeToolbarStage();
+  const handle = mountPreview(stage, { glb: await animatedGlb() });
+  await handle.ready;
+  runFrames(0.8); // past the intro
+  runFrames(0.3);
+  const button = playButton(stage);
+  button.click();
+  expect(handle.animation.state().status).toBe("paused");
+  expect(button.getAttribute("aria-label")).toBe("Play animation");
+  const t = handle.animation.state().t;
+  runFrames(1);
+  expect(handle.animation.state().t).toBe(t);
+  button.click();
+  expect(button.getAttribute("aria-label")).toBe("Pause animation");
+  runFrames(0.5);
+  expect(handle.animation.state().t).toBeGreaterThan(t);
+  // A host pause through the handle updates the button too.
+  handle.animation.pause();
+  expect(button.getAttribute("aria-label")).toBe("Play animation");
+  handle.dispose();
+});
+
+test("pausing during the intro stops the camera where it is", async () => {
+  const stage = makeToolbarStage();
+  const handle = mountPreview(stage, { glb: await animatedGlb() });
+  await handle.ready;
+  runFrames(0.2); // partway through the 0.6s intro tween
+  playButton(stage).click();
+  const cam = handle.getViewerState().camera;
+  runFrames(1);
+  expectNear(handle.getViewerState().camera.pos, cam.pos, 6);
+  expect(handle.animation.state()).toEqual({ status: "paused", t: 0 });
+  handle.dispose();
+});
+
+test("a one-time animation ends on Replay, which plays it again from the start", async () => {
+  const stage = makeToolbarStage();
+  const handle = mountPreview(stage, { glb: await oneTimeGlb() });
+  await handle.ready;
+  runFrames(0.8);
+  runFrames(2.5);
+  expect(handle.animation.state()).toEqual({ status: "done", t: 1 });
+  const button = playButton(stage);
+  expect(button.getAttribute("aria-label")).toBe("Replay animation");
+  button.click();
+  expect(handle.animation.state()).toEqual({ status: "intro", t: 0 });
+  expect(button.getAttribute("aria-label")).toBe("Pause animation");
+  runFrames(0.8);
+  runFrames(0.2);
+  const { status, t } = handle.animation.state();
+  expect(status).toBe("playing");
+  expect(t).toBeGreaterThan(0);
+  expect(t).toBeLessThan(0.5); // ~0.6s of play after the intro: restarted, not resumed from the end
+  handle.dispose();
+});
+
+test("handle.animation.replay restarts a finished one-time animation", async () => {
+  const handle = mountPreview(makeStage(), { glb: await oneTimeGlb() });
+  await handle.ready;
+  runFrames(3.5);
+  expect(handle.animation.state().status).toBe("done");
+  handle.animation.replay();
+  expect(handle.animation.state()).toEqual({ status: "intro", t: 0 });
+  handle.dispose();
+});
+
+test("dispose removes the play button", async () => {
+  const stage = makeToolbarStage();
+  const handle = mountPreview(stage, { glb: await animatedGlb() });
+  await handle.ready;
+  expect(playButton(stage)).not.toBeNull();
+  handle.dispose();
+  expect(playButton(stage)).toBeNull();
+});
+
+test("a tooltip showing when the label changes no longer names the old action", async () => {
+  const stage = makeToolbarStage();
+  const handle = mountPreview(stage, { glb: await oneTimeGlb() });
+  await handle.ready;
+  runFrames(0.8);
+  const button = playButton(stage);
+  button.dispatchEvent(new Event("pointerenter"));
+  const tip = document.querySelector(".pf-hover-tip");
+  expect(tip.classList.contains("show")).toBe(true);
+  expect(tip.textContent).toBe("Pause animation");
+  runFrames(2.5); // the one-time animation reaches done: the button now says Replay
+  expect(handle.animation.state().status).toBe("done");
+  expect(button.getAttribute("aria-label")).toBe("Replay animation");
+  const shown = tip.classList.contains("show") ? tip.textContent : null;
+  expect(shown).not.toBe("Pause animation");
+  handle.dispose();
+});

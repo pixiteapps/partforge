@@ -18,6 +18,14 @@
 //    opacity, no ground hold, no cue — so the visitor sees exactly what the
 //    file draws without a player (the opening pose, every sub-part opaque; an
 //    opacity fade-in must not leave a sub-part hidden for good).
+//
+// A host can pause, resume and — once a one-time animation has finished —
+// replay it (the preview's play/pause button, preview-play-button.js). Pause
+// stops any camera move where it is (viewer.cancelCameraTween, as the live
+// driver does): a cancelled tween never fires its onComplete, and createPlayback
+// re-honors an abandoned intro or sweep on the next play(). An orbit while
+// paused stays paused. onChange(cb) reports every status change, so a control
+// never polls.
 import { createPlayback } from "./animation.js";
 import { invertRigid, mulMat4 } from "./geometry/pose.js";
 
@@ -99,6 +107,21 @@ export function createPreviewPlayer(viewer, animation, { reducedMotion = false }
   const restInverse = Object.fromEntries(Object.keys(tracks).map((name) => [name, invertRigid(rest[name])]));
 
   let offFrame = null, offOrbit = null, started = false, disposed = false;
+  const listeners = new Set();
+  let lastStatus = playback.state().status;
+
+  function snapshotState() {
+    const { status, t } = playback.state();
+    return { status, t };
+  }
+  function notify() {
+    const now = snapshotState();
+    if (now.status === lastStatus) return;
+    lastStatus = now.status;
+    for (const cb of [...listeners]) {
+      try { cb(now); } catch (error) { console.warn("partforge: preview animation listener failed", error); }
+    }
+  }
 
   function apply(t) {
     const seconds = t * duration;
@@ -111,7 +134,7 @@ export function createPreviewPlayer(viewer, animation, { reducedMotion = false }
     if (snap.status !== "intro" || !snap.cue) return;
     viewer.tweenCameraTo(snap.cue.view, {
       duration: INTRO_TWEEN_SECONDS,
-      onComplete: () => { if (!disposed) playback.introDone(); },
+      onComplete: () => { if (!disposed) { playback.introDone(); notify(); } },
     });
   }
 
@@ -120,11 +143,12 @@ export function createPreviewPlayer(viewer, animation, { reducedMotion = false }
     if (!snap) return; // not playing: intro, paused, or done — the last poses stand
     apply(snap.t);
     if (snap.cue) viewer.tweenCameraTo(snap.cue.view, { duration: snap.cue.sweep ?? INTRO_TWEEN_SECONDS });
+    notify();
   }
 
   function onOrbit() {
     playback.disarmCues();
-    if (playback.state().status === "intro") playback.introDone();
+    if (playback.state().status === "intro") { playback.introDone(); notify(); }
   }
 
   return {
@@ -137,25 +161,44 @@ export function createPreviewPlayer(viewer, animation, { reducedMotion = false }
       offFrame = viewer.onFrame(onFrame);
       offOrbit = viewer.onCameraStart(onOrbit);
       honorIntro(playback.play());
+      notify();
     },
     pause() {
-      if (!disposed) playback.pause();
+      if (disposed || !offFrame) return;
+      const { status } = playback.state();
+      if (status !== "playing" && status !== "intro") return;
+      viewer.cancelCameraTween(); // an intro tween or a cue's sweep stops where it is
+      playback.pause();
+      notify();
     },
     resume() {
       if (disposed || playback.state().status !== "paused") return;
       honorIntro(playback.play());
+      notify();
+    },
+    // From `done` only (a one-time animation resting at its end pose): play it
+    // again exactly as on arrival — t = 0 pose and opacity first, then the
+    // re-armed intro cue (createPlayback's play() from done resets t and cues).
+    replay() {
+      if (disposed || playback.state().status !== "done") return;
+      apply(0);
+      honorIntro(playback.play());
+      notify();
+    },
+    onChange(cb) {
+      if (disposed) return () => {};
+      listeners.add(cb);
+      return () => listeners.delete(cb);
     },
     dispose() {
       if (disposed) return;
       disposed = true;
+      listeners.clear();
       if (!offFrame) return; // never played (not started, or reduced motion): nothing to undo
       offFrame(); offOrbit();
       offFrame = offOrbit = null;
       viewer.holdGround(false);
     },
-    state() {
-      const { status, t } = playback.state();
-      return { status, t };
-    },
+    state: snapshotState,
   };
 }

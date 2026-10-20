@@ -293,6 +293,7 @@ expectType<PreviewRuntime>(mountPreview(document.body, { glb: new Uint8Array(0),
 const previewStatus: "idle" | "intro" | "playing" | "paused" | "done" | undefined = previewRuntime.animation?.state().status;
 expectType<number | undefined>(previewRuntime.animation?.state().t);
 previewRuntime.animation?.pause();
+expectType<void | undefined>(previewRuntime.animation?.replay());
 // @ts-expect-error - the animation handle is read-only
 previewRuntime.animation = null;
 expectType<string | null>(resolveDefaultView(spacer));
