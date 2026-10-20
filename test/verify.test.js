@@ -752,3 +752,68 @@ test("evaluateCase hands exportableNames to the held check", () => {
 test("held is not a scalar view metric", () => {
   expect(VIEW_METRICS.held).toBeUndefined();
 });
+
+// ── end-to-end held on the real kernel ─────────────────────────────────────────────────────
+
+test("end-to-end: held fails on the real 0.2mm gap part and passes once the gap closes", () => {
+  const floating = verify(k, { ...gapPart, verify: { expect: { _view: { held: true } } } });
+  expect(floating.ok).toBe(false);
+  const h = floating.failures.find((f) => f.metric === "held");
+  expect(h.message).toBe("right not connected to left");
+  expect(h.pattern).toBe("floating-subpart");
+  expect(h.location[0]).toBeCloseTo(15.2, 3); // right's centre of mass, x = 10 + 0.2 + 5
+
+  const seated = verify(k, { ...gapPart, defaults: { gap: 0 }, verify: { expect: { _view: { held: true } } } });
+  expect(seated.ok).toBe(true);
+  const defaults = seated.cases.find((c) => c.name === "defaults");
+  expect(defaults.checks.find((c) => c.metric === "held").status).toBe("pass");
+});
+
+test("end-to-end: a sub-part held only by an exportable:false ghost is floating", () => {
+  const part = {
+    meta: { title: "GhostHold", units: "mm" },
+    defaults: {},
+    parts: {
+      base:  { views: ["v"], build: (kk) => kk.box({ min: [0, 0, 0], max: [10, 10, 10] }) },
+      ghost: { views: ["v"], exportable: false, build: (kk) => kk.box({ min: [10, 0, 0], max: [20, 10, 10] }) },
+      // x from 12, not 10: at 10 top's bottom edge would touch base's top edge, and an
+      // edge (or point) contact counts as held — held is topological by design.
+      top:   { views: ["v"], build: (kk) => kk.box({ min: [12, 0, 10], max: [20, 10, 20] }) },
+    },
+    views: { v: { label: "V" } },
+    verify: { expect: { _view: { held: true } } },
+  };
+  const v = verify(k, part);
+  expect(v.ok).toBe(false);
+  expect(v.failures.find((f) => f.metric === "held").message).toBe("top not connected to base");
+});
+
+test("end-to-end: held on an enabled()-gated base skips the case where it is off", () => {
+  const part = {
+    meta: { title: "LidBoxHeld", units: "mm" },
+    defaults: { with_lid: 1 },
+    parameters: [{ id: "b", presets: { Bare: { with_lid: 0 } } }],
+    parts: {
+      base: { views: ["v"], build: (kk) => kk.box({ min: [0, 0, 0], max: [10, 10, 5] }) },
+      lid:  { views: ["v"], enabled: (p) => p.with_lid > 0, build: (kk) => kk.box({ min: [0, 0, 5], max: [10, 10, 7] }) },
+    },
+    views: { v: { label: "V" } },
+    verify: { expect: { _view: { held: "lid" } } },
+  };
+  const v = verify(k, part);
+  const byCase = Object.fromEntries(v.cases.map((c) => [c.name, c]));
+  expect(byCase.defaults.checks.find((c) => c.metric === "held").status).toBe("pass");
+  expect(byCase.Bare.checks.find((c) => c.metric === "held").status).toBe("skip");
+});
+
+test("end-to-end: a quick lap answers held as unevaluated, so ok is null", () => {
+  // A quick lap with no seed measures no case at all (a whole-case `measured` skip), so
+  // seed it the way the inspect job's quick lap does: the defaults case, pair distances off.
+  const part = { ...gapPart, verify: { expect: { _view: { held: true } } } };
+  const seed = { params: { gap: 0.2 }, result: measureReal(k, part, "v", { gap: 0.2 }, { gaps: false }) };
+  const v = verify(k, part, { quick: true, seed });
+  const h = v.cases.find((c) => c.name === "defaults").checks.find((c) => c.metric === "held");
+  expect(h.status).toBe("skip");
+  expect(h.unevaluated).toBe(true);
+  expect(v.ok).toBeNull();
+});
