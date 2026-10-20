@@ -3982,7 +3982,7 @@ runtime a throwing probe only degrades quietly to `{ error }`.
 `verify-bad-expr`, `verify-bad-pair-check`, `verify-unknown-process`,
 `verify-unknown-orientation`,
 `verify-expect-throws` (all errors). Note `_view` also accepts the pair-wise
-`contacts` / `clearance` keys, which are not scalar view metrics; they are
+`contacts` / `clearance` / `held` keys, which are not scalar view metrics; they are
 validated by `verify-bad-pair-check`, matching `verify.js`'s own handling.
 
 **Animations block** — static validation of each view's `animations` block,
@@ -4150,7 +4150,8 @@ carries:
   *bounding box* — a nearby indicator, not an exact point: when a pair overlaps in
   more than one place the bbox center can fall in the empty space between regions)
   and the pair checks `contact` / `clearance` / `nearMiss` (the midpoint between
-  the pair's closest surface points). Whole-solid metrics (bbox, volume, …) have
+  the pair's closest surface points) and `held` (the first floating sub-part's
+  centre of mass). Whole-solid metrics (bbox, volume, …) have
   none.
 
 Subpart facts include `minWall` (number or `null` — null exactly when no reading
@@ -4268,7 +4269,7 @@ A part can declare how it should be checked, co-located with its schema, so
 ```js
 verify: {
   process: "fdm-pla",            // a DFM profile: fdm-pla | fdm-petg | resin, or an
-                                  // inline { bed:[x,y,z], minWall, clearance, overhang } object
+                                  // inline { base, bed:[x,y,z], minWall, overhang, fits, holeUndersize, bridge } object
   orientation: "print",          // optional; ONLY with this is overhang checked — it says the
                                   // part is laid out for its bed (Z up, bed at the lowest Z)
   cases: ["defaults", "M3"],     // optional; default = defaults + every preset
@@ -4276,7 +4277,8 @@ verify: {
     spacer: { holes: 1, bbox: "<=[60,60,60]", volume: "0.4..0.6cm3" },
     _view:  { overlaps: 0,
               contacts:  [["drum", "flange"]],       // these pairs must touch
-              clearance: { "lid×body": ">=0.3" } },  // intended free fits
+              clearance: { "lid×body": ">=0.3" },    // intended free fits
+              held: true },                          // every printed piece reaches the base
   },
 }
 ```
@@ -4303,7 +4305,28 @@ is why this is a warning and never a gate. Two more limits, stated: it is judged
 the DISPLAY pose, so a sub-part whose `assembly` pose stands it differently from how it prints (a lid that prints
 flat beside its base) is measured as displayed, and `exportable: false` sub-parts
 are skipped. Switch it off under an FDM profile with an inline
-`{ base: "fdm-pla", overhang: null }`. **What `expect` gives you:** per-sub-part
+`{ base: "fdm-pla", overhang: null }`.
+
+**What the profile tells you.** Three more fields carry the numbers a mating
+feature needs. Nothing checks them; they are the one place the value is spelled,
+so `derive()` copies it with a comment naming the fit (`// slip fit: fdm-pla 0.25`).
+`fits` are diametral offsets in mm, negative is interference; `holeUndersize` is
+added to a horizontal bore's diameter because a printed arch sags inward; `bridge`
+is the longest flat span the process prints unsupported (none on resin, which
+prints on supports). They are guide defaults, not measurements of your printer:
+an inline `{ base: "fdm-pla", fits: { … } }` replaces the whole table.
+
+| field | fdm-pla | fdm-petg | resin |
+| --- | --- | --- | --- |
+| `fits.press` — a pin that never comes out | -0.10 | -0.10 | -0.05 |
+| `fits.push` — pressed on by hand | 0.05 | 0.05 | 0.05 |
+| `fits.slip` — a lid that lifts off | 0.25 | 0.30 | 0.10 |
+| `fits.moving` — a hinge pin or axle | 0.35 | 0.40 | 0.15 |
+| `fits.printInPlace` — printed already assembled | 0.45 | 0.50 | 0.20 |
+| `holeUndersize` | 0.25 | 0.30 | 0.05 |
+| `bridge` (mm) | 10 | 10 | — |
+
+**What `expect` gives you:** per-sub-part
 assertions on the facts `measure` already reports — `holes` (through-bores / genus),
 `volume`, `surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`,
 `overhangArea`, `wall` (a range — see below), `bounds` (the axis-aligned corner
@@ -4311,7 +4334,7 @@ positions, written in the same `{ min, max }` shape `measure` reports them — w
 the geometry sits, vs `bbox` which is only its size) and `centerOfMass` (`[x,y,z]`, the volume-weighted
 centroid; `null` for a degenerate/zero-volume sub-part); and `_view` assertions `bbox`,
 `volume`, `overlaps`, `centerOfMass`, `bounds`, plus the pair-wise
-`contacts` / `clearance` below.
+`contacts` / `clearance` and the graph check `held` below.
 
 Passing these checks does **not** prove structural strength, fatigue life, stability,
 manufacturing tolerance stack-up, regulatory compliance, or safe real-world use.
@@ -4443,6 +4466,22 @@ different facet counts) may read a few hundredths of a millimetre — prefer a t
 no overlap detection there (`Solid.intersect` is Manifold-only), a sub-part
 *fully contained* inside another reads as its surface-to-surface distance, so it
 can surface as a near miss — check containment cases on Manifold.
+
+**Held (the contact graph).** `contacts` asserts a pair you named; it cannot say a
+sub-part touches nothing at all — a lid placed a hair above its box, a bracket
+beside the wall it should bolt to. `held: true` builds a graph over every
+exportable sub-part in the view, joining two whenever they overlap or their gap
+is within the same ~1 µm `contacts` tolerates, and fails naming each sub-part not
+connected to the base — the lowest sub-part by its bounds, or the one you name
+with `held: "body"`. The location is the first floating sub-part's centre of
+mass. A reference ghost (`exportable: false`) is left out entirely: it neither
+counts nor holds, since it is never printed (lint refuses one named as the base).
+A named base that is `enabled()`-off
+in a case skips that case; a name that exists nowhere throws, like a `contacts`
+pair. It is an expectation, never a default, for the overhang reason: a part
+still being shaped should not be nagged. Topological only — a part balanced on a
+point passes — and the same OCCT caveat applies: a sub-part fully inside another
+reads as not touching there. A quick lap answers it `unevaluated`.
 
 **Running it:**
 
