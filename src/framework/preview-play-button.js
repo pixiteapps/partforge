@@ -9,8 +9,11 @@
 //   - Replay once a one-time animation has finished at its end pose — plays it
 //            again from the start, camera cues included. A looping animation
 //            never gets here.
-// aria-pressed is "true" while paused and "false" otherwise. The label (and the
-// tooltip, which reads aria-label each time it shows) names what a click does.
+// The label (aria-label, and the tooltip, which reads it each time it shows)
+// names what a click does and so carries the state; there is deliberately no
+// aria-pressed (WAI-ARIA: a toggle whose label changes must not also report a
+// pressed state). A label change hides a tooltip that is showing, so it never
+// reads the old action; it comes back with the new text on the next hover.
 //
 // Made only for a player that plays: mount-preview never creates it under
 // reduced motion (the player never starts), for a still file, with
@@ -35,6 +38,7 @@ export function attachPreviewPlayButton(player, { toolbar, before = null }, { to
   button.id = "pf-preview-play";
   button.className = "pf-preview-play-button";
   let action = null;
+  let tooltipBinding = null;
 
   function render(status) {
     const next = actionFor(status);
@@ -43,14 +47,14 @@ export function attachPreviewPlayButton(player, { toolbar, before = null }, { to
     const { label, icon } = STATES[next];
     button.innerHTML = icon;
     button.setAttribute("aria-label", label);
-    button.setAttribute("aria-pressed", String(status === "paused"));
     if (!tooltip) button.title = label;
+    tooltipBinding?.hide(); // a showing tooltip still names the old action
   }
   render(player.state().status);
 
   const anchor = before && before.parentElement === toolbar ? before : [...toolbar.children].find((c) => c.id === "theme") ?? null;
   toolbar.insertBefore(button, anchor);
-  const tooltipBinding = tooltip ? attachButtonTooltips(tooltip, [{ element: button }]) : null;
+  tooltipBinding = tooltip ? attachButtonTooltips(tooltip, [{ element: button }]) : null;
 
   const onClick = () => {
     if (action === "pause") player.pause();
