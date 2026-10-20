@@ -4326,6 +4326,8 @@ an inline `{ base: "fdm-pla", fits: { … } }` replaces the whole table.
 | `holeUndersize` | 0.25 | 0.30 | 0.05 |
 | `bridge` (mm) | 10 | 10 | — |
 
+`fits` are diametral; the `clearance` expectation below reads a pair's minimum surface distance, so a pin in a bore is declared at half the fit (`fits.slip` 0.25 → `clearance: { "pin×body": "0.08..0.18" }`).
+
 **What `expect` gives you:** per-sub-part
 assertions on the facts `measure` already reports — `holes` (through-bores / genus),
 `volume`, `surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`,
@@ -4481,7 +4483,7 @@ in a case skips that case; a name that exists nowhere throws, like a `contacts`
 pair. It is an expectation, never a default, for the overhang reason: a part
 still being shaped should not be nagged. Topological only — a part balanced on a
 point passes — and the same OCCT caveat applies: a sub-part fully inside another
-reads as not touching there. A quick lap answers it `unevaluated`.
+reads as not touching there. A view with fewer than two printed sub-parts passes with nothing to hold. A pin or axle running in a clearance bore, or a print-in-place piece, touches nothing in the model and reads as floating: `held` is for assemblies whose pieces seat on each other, so leave it off when a piece is captured with running clearance (`fits.moving`, `fits.printInPlace`) and declare that pair's `clearance` instead. A quick lap answers it `unevaluated`.
 
 **Running it:**
 

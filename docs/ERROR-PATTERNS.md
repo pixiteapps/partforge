@@ -202,7 +202,7 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 
 - **Symptom:** A `✗ … held` failure from `verify` reporting `<name> not connected to <base>`: a sub-part that looks assembled in the preview touches nothing that reaches the base.
 - **Cause:** The piece is placed by eye rather than against a mating datum — a lid a hair above its box, a bracket beside the wall it should bolt to, a pin whose bore it was never moved into — or it is held only by a reference ghost (`exportable: false`), which is never printed. On OCCT a sub-part fully inside another reads as not touching, since overlap detection is Manifold-only.
-- **Fix:** Seat the part on a mating face by deriving its position from the face it sits on in `derive()`, or add the fastener, boss or tab that holds it, then keep `verify.expect._view.held` so the next edit re-checks it. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Self-verification (the `verify` block)".
+- **Fix:** Seat the part on a mating face by deriving its position from the face it sits on in `derive()`, or add the fastener, boss or tab that holds it, then keep `verify.expect._view.held` so the next edit re-checks it. If the piece is meant to run free in a clearance bore (a hinge pin, a print-in-place link), the clearance is correct and `held` is the wrong check for that assembly — remove `held` and declare the pair under `clearance`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Self-verification (the `verify` block)".
 
 ## expect-static-across-presets
 
