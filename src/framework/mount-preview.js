@@ -23,6 +23,13 @@
 // it, so a parked preview is a paused one. `handle.animation` is null once
 // disposed.
 //
+// A playing animation also gets a play/pause/replay button in #viewbar,
+// directly before the view style button (preview-play-button.js): Pause while
+// it plays (or tweens to its intro view), Play while paused, Replay once a
+// one-time animation has finished. No button under reduced motion, for a still
+// file, with `animate: false`, or for a host with no #viewbar; the host can
+// still drive `handle.animation` (state / pause / resume / replay) itself.
+//
 // The decoder loads on demand (it carries the
 // GLTFLoader and meshopt), so a bundle that never mounts a preview never ships it.
 // Hence `ready`. Every handle method is safe before it resolves.
@@ -36,6 +43,7 @@ import { createTooltipPresenter } from "./tooltip.js";
 import { isFaceAlignedState } from "./projection.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
 import { createPreviewPlayer } from "./preview-player.js";
+import { attachPreviewPlayButton } from "./preview-play-button.js";
 
 function previewPart({ meshes, view, meta }) {
   return {
@@ -112,6 +120,10 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
       const own = player;
       cleanups.push(() => own.dispose());
       player.start();
+      if (!reducedMotion && toolbar) {
+        const playButton = attachPreviewPlayButton(own, { toolbar, before: viewStyle.element }, { tooltip });
+        cleanups.push(() => playButton.detach());
+      }
     }
   });
   ready.catch(() => {}); // the host awaits it; never an unhandled rejection
@@ -151,7 +163,7 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
     getView: () => live?.view ?? null,
     // null before ready, for a still file, with animate: false, and once disposed.
     get animation() {
-      return player ? { state: player.state, pause: player.pause, resume: player.resume } : null;
+      return player ? { state: player.state, pause: player.pause, resume: player.resume, replay: player.replay } : null;
     },
     getViewerState,
     setViewerState(next) {
