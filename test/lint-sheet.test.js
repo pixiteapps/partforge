@@ -11,7 +11,7 @@ import { sheetPart } from "../src/framework/geometry/polygon.js";
 import laserBox from "../src/parts/laser-box.js";
 
 const SHEET_IDS = ["sheet-invalid", "sheet-thickness-invalid", "sheet-pose-invalid", "sheet-thickness-literal",
-  "sheet-kerf-control", "sheet-custom-build", "verify-process-sheets-only", "laser-thickness-range"];
+  "sheet-kerf-control", "sheet-custom-build", "verify-process-sheets-only", "laser-thickness-range", "routed-drill-depth"];
 const rect = (w, h) => [[0, 0], [w, 0], [w, h], [0, h]];
 const panel = (extra = {}) => sheetPart({
   views: ["main"], label: "Panel", material: "birch plywood", thickness: (p) => p.t,
@@ -49,7 +49,7 @@ const FIRING = {
   "laser-thickness-range": () => ({ ...partWith({ panel: panel() }), defaults: { t: 0.3, w: 100, h: 60 } }),
 };
 
-test("SHEET_RULES registers the seven sheet rules and the laser rule, in the lint registry", () => {
+test("SHEET_RULES registers the seven sheet rules, the laser rule and the router rule, in the lint registry", () => {
   expect(SHEET_RULES.map((r) => r.id)).toEqual(SHEET_IDS);
   for (const id of SHEET_IDS) expect(RULES.map((r) => r.id)).toContain(id);
 });
@@ -66,8 +66,8 @@ test("sheet-invalid: a malformed hand-edited declaration is one error, and the v
   expect(one(r, "sheet-invalid")).toMatchObject({ severity: "error", path: "parts.panel.sheet",
     message: 'sub-part "panel" has a malformed `sheet` declaration: material must be a non-empty string or a (p, d) => string function' });
   expect(sheetFindings(r).map((f) => f.rule)).toEqual(["sheet-invalid"]);
-  expect(one(lintPart(partWith({ panel: edited({ process: "cnc" }) })), "sheet-invalid").message)
-    .toBe('sub-part "panel" has a malformed `sheet` declaration: process must be one of: laser');
+  expect(one(lintPart(partWith({ panel: edited({ process: "waterjet" }) })), "sheet-invalid").message)
+    .toBe('sub-part "panel" has a malformed `sheet` declaration: process must be one of: laser, cnc-router');
 });
 
 test("sheet-invalid skips a sub-part with no build: no-buildable-parts owns it, with the sheet hint", () => {

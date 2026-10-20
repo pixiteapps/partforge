@@ -391,7 +391,11 @@ meta: { title: "…", units: "mm", environment: "studio" },
   treated as declaring one.
 - `color` — the base colour (`0xRRGGBB`). With a preset it is the TINT. Presets
   marked tintable are normally coloured this way (anodizing, plastic, paint);
-  the others have an intrinsic colour (brass) but still accept one.
+  the others have an intrinsic colour (brass) but still accept one. (A viewer
+  user PICKING an untintable preset drops an authored tint for that pick — see
+  the runtime section below.) On a TEXTURED preset (`oak`, `walnut`, `plywood`,
+  `pine-plywood`) `color` multiplies the scanned wood and dulls its grain — leave
+  it unset unless you mean a stain (lint warns: `material-tint-textured`).
 - Overrides — each clamped to its range: `roughness` (0–1), `metalness` (0–1),
   `clearcoat` (0–1), `clearcoatRoughness` (0–1), `anisotropy` (0–1), `textureScale` (0.01–1000).
   Transmission, index of refraction, sheen and iridescence come only from a preset.
@@ -399,7 +403,7 @@ meta: { title: "…", units: "mm", environment: "studio" },
 - **One material per sub-part.** Something that needs two finishes (a knurled
   grip in rubber on an aluminium body) is two sub-parts.
 
-**Sheet parts default to their stock.** A laser `sheetPart` that names no material (or
+**Sheet parts default to their stock.** A laser `sheetPart` or a `routedPart` that names no material (or
 one the library does not know) is not drawn as a PLA print: realistic mode shows it as the
 sheet its stock label names — the first row with a stem that starts a word of the label,
 ignoring case (so `Plexiglas`, `Acrylite` and `poly-carbonate` match; `perplexing` does not):
@@ -407,10 +411,14 @@ ignoring case (so `Plexiglas`, `Acrylite` and `poly-carbonate` match; `perplexin
 | A word of the stock label starts with | Realistic look |
 | --- | --- |
 | `acryl`, `perspex`, `plexi`, `pmma`, `methacryl`, `polycarb`, `lexan`, `makrolon`, `lucite` | `clear-acrylic` |
+| `pine`, `douglas` | `pine-plywood` |
+| `walnut` | `walnut` |
+| `oak` | `oak` |
 | anything else — plywood, birch, basswood, poplar, MDF, hardboard — or no readable label | `plywood` |
 
 Stock that is neither wood nor acrylic — felt, leather, card, cork — takes the `plywood`
-look too, charred edges and all. A `color` tints the look, as it tints any preset (a
+look too (charred edges and all, on a laser sheet), and a species-faced ply — `walnut
+plywood`, `oak ply` — takes that species' solid look, without plies. A `color` tints the look, as it tints any preset (a
 stained plywood, a coloured acrylic); the CAD view still shows the `color` itself. Only a
 string label is read: a stock written as a `(p, d)` function counts as unreadable. Name
 `display.material` to choose the look yourself — for such stock, or any other. Like the
@@ -432,14 +440,24 @@ modelled in its print orientation, not the material. Wood, carbon fibre and SLS 
 fixed to the sub-part, so they never slide when the camera or an animation
 moves.
 
-**Laser-cut wood.** In realistic mode a laser `sheetPart` in a wood — `plywood`, `oak` or
+**Laser-cut wood.** In realistic mode a laser `sheetPart` in a wood — `plywood`, `pine-plywood`, `oak` or
 `walnut`, named or its stock's default (so a plywood sheet that names no material burns too)
 — shows what the laser did: its cut edges are charred, darker on thicker stock (on
-`plywood` the plies show through), and its engraving and score lines are scorched, while its
+`plywood` and `pine-plywood` the plies show through), and its engraving and score lines are scorched, while its
 faces stay wood. There is nothing to set, and it is still one material: the char follows
 from the sheet and the wood it is drawn in. It needs the sheet's own frame, so a sheet part
 with a custom `build` or a `views` pose of its own shows plain wood. The CAD view and every export are
 unchanged.
+
+**Plywood edges.** Anything drawn in `plywood` shows its plies wherever a surface runs across
+them: alternating face-grain and cross plies (side grain on one, darker end grain on the
+other, swapping as the edge turns), each veneer its own tone, with a thin glue line between
+plies. The ply count follows the thickness (3 mm → 3, 6 → 5, 9 → 7, 12 → 9, then one per
+~1.4 mm: 18 mm → 13). A `sheetPart` or `routedPart` stacks them along its own thickness, so a
+CNC-routed plywood board shows clean plies on its profile, pockets and drills, and a laser
+sheet shows them through its char; any other sub-part in plywood stacks them along its
+thinnest bounding-box axis — right for a slab, a guess for a chunky block. Realistic mode
+only, like the burn.
 
 **`textureScale` is millimetres, and what it measures depends on the preset's
 pattern** — so a value copied from one preset family is wrong on another (0.2
@@ -449,7 +467,7 @@ on oak shrinks the grain to a 0.2 mm tile, i.e. invisible noise):
 | --- | --- | --- | --- |
 | layer lines | `pla-print`, `petg-print` | layer height | 0.2 |
 | SLS grain | `nylon-sls` | grain size | 0.15 |
-| wood | `oak`, `walnut`, `plywood` | size of one texture tile (the grain repeats every this many mm) | 250 (`oak`), 400 (`walnut`), 150 (`plywood`) |
+| wood | `oak`, `walnut`, `plywood`, `pine-plywood` | size of one texture tile (the grain repeats every this many mm) | 250 (`oak`), 400 (`walnut`), 150 (`plywood`), 400 (`pine-plywood`; raise it toward 1000 for a whole 4 × 8 sheet with no visible repeat, at the cost of a softer grain) |
 | carbon weave | `carbon-fiber` | size of one texture tile | 48 |
 
 Presets without a pattern ignore it.
@@ -485,13 +503,21 @@ the viewer's blue-grey.
 | `rubber` | Rubber | yes | Matte elastomer: gaskets, feet, grips; tint with `color`. |
 | `oak` | Oak | — | Light oak with open grain. |
 | `walnut` | Walnut | — | Dark oiled walnut. |
-| `plywood` | Birch plywood | — | Birch plywood sheet: a pale, fine-grained face; its plies show on laser-cut edges. |
+| `plywood` | Birch plywood | — | Birch plywood sheet: a pale, fine-grained face; its plies show on cut edges. |
+| `pine-plywood` | Sanded pine plywood | — | Hardware-store 4 × 8 sheet plywood (sanded pine/fir face): warm, bold grain; plies show on cut edges. |
 | `carbon-fiber` | Carbon fibre | — | 2x2 twill carbon fibre under clear coat. |
 
 **Environments** (`meta.environment`, default `studio`; viewers can switch):
 `studio` (neutral soft boxes, paper sweep), `workshop` (warm interior, unfinished
 maple table), `print-bed` (a dim, hard-lit enclosure over a standard-size PEI build plate (180, 220, 256 or 350 mm) marked with its size), `outdoor` (overcast sky,
 concrete).
+
+**Viewers can change a sub-part's look.** The View style popover's Parts
+section lets a user pick a material and colour per sub-part, fade it, or hide
+it, live and without a rebuild (`runtime.setSubPartDisplay` below). Material
+and colour draw exactly as if authored, and a host may write them back into
+`display`; hiding and see-through are only ever how the screen looks — exports,
+`captureViews` and `renderViews` never see them.
 
 ---
 
@@ -1897,7 +1923,7 @@ plate: sheetPart({
 It returns an ordinary sub-part: `build`, the pose's placement and a plain-data `sheet`. A field
 needing the kernel is `(k, p, d) => …`; a plain value is a literal or `(p, d) => …`.
 `material`, `thickness` and `profile` are required; `score`, `engrave`, `pose`,
-`process` (default `"laser"`) are optional; `label`, `views`, `display`, `export`,
+`process` (default `"laser"`; `"cnc-router"` is `routedPart`, below) are optional; `label`, `views`, `display`, `export`,
 `enabled`, `exportable`, `reference` pass through; your `views` poses apply after the `pose`, in the viewer only. `build` is supplied — passing one throws, as do `kerf`, `outline`/`cut` and
 `quantity`; each error names the fix.
 
@@ -2011,7 +2037,7 @@ the assembled view, and `minWall` and the overhang check skip sheet parts.
 
 ### The kit
 
-A host downloads sheet parts as one ZIP, the **cut & print kit** (`format: "bundle"`): `README.txt`, `parts.csv`, laid-out `sheets/`, one `parts/` file per distinct piece (plus a `-marks.dxf` for a cutting service) and `print/` for printed parts. Identical pieces merge into one `-xN` file named from `export: { name }`, else the key. Destination (`"own-laser"` or `"service"`), kerf and stock size are chosen at download, so draw nominal and bind `thickness` to the measured control. A choice the kit cannot honour fails with `cut kit options:`.
+Sheet parts download as one ZIP, the **cut & print kit** (`format: "bundle"`): `README.txt`, `parts.csv`, laid-out `sheets/`, a `parts/` file per distinct piece (plus `-marks.dxf` for a cutting service), `print/` for printed parts. Identical pieces share one `-xN` file named from `export: { name }`, else the key. Destination (`"own-laser"`, `"service"`, `"cnc-router"`), kerf, stock size and a two-sided routed piece's flip and file count are chosen at download: draw nominal, bind `thickness` to the measured control. A choice it cannot honour fails with `cut kit options:`.
 
 ### Limits
 
@@ -2140,6 +2166,137 @@ export default {
   verify: { process: "fdm-pla", expect: { _view: { overlaps: 0 } } },
 };
 ```
+
+## Routed parts
+
+CNC-routed parts from flat stock — hardwood, plywood, MDF, acrylic — for a 2.5D router
+CAM (Vectric VCarve, Carbide Create, Easel, Carveco): a through cut, flat-floored
+pockets at a depth, drilled holes at a depth, and operations done with another tool
+afterwards. Build each piece with `routedPart()` from `partforge/geometry`; the cut &
+print kit's **CNC router** destination writes one DXF per piece with one layer per depth,
+and a README table of every operation. A routed part is also the 3D sub-part — assembly,
+renders and STEP all come from the one declaration — so model it once.
+
+### When a sub-part is a routed part
+
+When it is machined from one or both faces of a flat board: an outline, pockets with
+flat floors, holes, all straight down from whichever face. A sculpted surface or
+anything that is not flat stock is an ordinary `build` (export it as STEP). A laser-cut
+plate is `sheetPart`.
+
+### routedPart
+
+```js
+import { routedPart, roundedRectProfile } from "partforge/geometry";
+
+plinth: routedPart({
+  label: "Plywood base", views: { assembly: true, base: true }, display: { material: "pine-plywood" },
+  material: "pine plywood",                     // stock label: groups pieces in the kit
+  thickness: (p) => p.baseThickness,            // the MEASURED board, from a control
+  profile: (k, p) => k.shape2d(roundedRectProfile(p.baseLength, p.baseWidth, 10)),   // the THROUGH cut
+  pockets: (k, p, d) => [
+    { region: k.shape2d(roundedRectProfile(d.vaultW, d.vaultL, 2)).translate([0, -9]), depth: 11.43, label: "peg vault" },
+    { region: k.shape2d(roundedRectProfile(d.pocketW, d.pocketL, 4)).translate([-58, -10]), depth: p.inlayThickness, label: "inlay pocket" },
+    { region: k.shape2d(roundedRectProfile(40, 20, 3)).translate([60, 0]), depth: 4, face: "far", label: "felt recess" },
+  ],
+  drills: (p, d) => [
+    ...d.pegHoles.map(([x, y]) => ({ at: [x, y], d: p.pegHoleDia, depth: 10 })),
+    { at: [-60, 30], d: 8, depth: 6, face: "far", label: "foot socket" },   // from the underside
+  ],
+  extra: (k, p, d) => [{
+    solid: k.box({ size: [d.rackL, 12, 14] }).rotateX(-p.rackTilt).at([0, d.rackY, p.baseThickness - 9.5]),
+    footprint: k.shape2d(roundedRectProfile(d.rackL, 12, 2)).translate([0, d.rackY]),
+    label: "domino rack slot", method: `table saw, blade tilted ${p.rackTilt}°, 9.5 mm deep`,
+  }],
+  reference: (k, p) => [[[-p.baseLength / 2 + 10, 0], [p.baseLength / 2 - 10, 0]]],   // a centerline
+}),
+```
+
+`material`, `thickness` and `profile` are required; `pockets`, `drills`, `extra`,
+`reference` and `pose` are optional; `label`, `views`, `display`, `export`, `enabled`,
+`exportable` pass through. A field needing the kernel is `(k, p, d) => …`; `drills` is
+`(p, d) => …`. `build` is supplied — passing one throws, as do `kerf`, `score`,
+`engrave` and `process`; each error names the fix. The drawing is in XY with the
+near face at z = `thickness` and the far face at z = 0; `pose` places it exactly as a
+sheet part's does.
+
+### Pockets, drills, extra ops and reference lines
+
+- **`pockets`** — `[{ region, depth, label?, face? }]`: a Shape2D or profile machined
+  `depth` mm into the stock from its face, flat-floored. `depth` may equal `thickness` (a
+  through pocket); deeper is a build error naming the pocket. Pockets whose depths agree to
+  two decimals share a DXF layer.
+- **`drills`** — `[{ at: [x, y], d, depth, label?, face? }]`: a round hole of diameter `d`.
+  Set `depth` to the thickness to drill through — deeper is a `routed-drill-depth`
+  lint error. Written as a DXF `CIRCLE`, which is what lets
+  the CAM offer a drilling toolpath instead of a profile cut.
+- **`extra`** — `[{ solid, footprint, label, method, face? }]`: an operation the router
+  cannot do straight down — a tilted slot, a scooped thumb hold, an undercut. `solid` is
+  cut in the preview and the STEP; `footprint` (its outline on its face) is drawn on
+  the `SECONDARY` layer; `label` and `method` are REQUIRED and go in the README's
+  operations table so the operator knows what to make and how ("core box bit, 20 mm
+  radius"). Do not put a flat-floored pocket here to avoid stating its depth.
+- **`reference`** — the same entries as a sheet part's `score`: two points is a line,
+  anything else a shape whose boundaries are drawn. Centerlines and layout marks, on
+  the `REFERENCE` layer; they cut nothing (the preview grooves them 0.2 mm so they show).
+
+Keep these functions chainable — no branching on `isEmpty()`/`area()` — so pose-only
+sliders stay fast. `null` entries are skipped; an empty pocket region draws nothing and
+is counted by `routedEmpty`, as is an extra op whose footprint is empty.
+
+### The drawing
+
+One DXF per piece, R12, millimetres: `CUT` (colour 1) is the through cut — the outline and
+the profile's own holes; `POCKET_<depth>MM` one layer per distinct depth (colours 30, 40, 50, 20,
+10); `DRILL_D<dia>_<depth>MM` or `DRILL_D<dia>_THRU` per diameter
+and depth (colours 3, 4, 2, 140, 170); `SECONDARY` (6) the extra ops' footprints;
+`REFERENCE` (8) layout lines. Depth rides both the layer name and the colour, and colours
+are assigned per kit — pockets shallowest depth first, drills in the order they appear —
+so one layer name has one colour in every file. A palette cycles past five depths; the
+README's LAYERS legend (layer, face, colour, depth) is the authority. Kerf
+never applies — the CAM applies the tool offset, and the kit refuses a kerf for this
+destination. The README's ROUTER OPERATIONS table lists every pocket, drill group and
+extra op with its face, depth and method.
+
+### Both faces
+
+Every pocket, drill and extra op takes `face`: `"near"` (the default, machined down
+from z = `thickness`) or `"far"` (machined up from z = 0 — the board turned over); any
+other value is a build error. `depth` is measured from the op's own face. Model the part
+in place, as assembled; the kit does the flipping. Far ops go on their own layers —
+`FAR_POCKET_<depth>MM`, `FAR_DRILL_D<dia>_…`, `FAR_SECONDARY` — mirrored about the
+piece's centre so they read as the router sees the far face. Two kit options apply to a
+piece with far work: `flip` — `"left-right"` (the default, VCarve's Flip Direction =
+Horizontal) or `"end-over-end"` (Vertical) — sets the mirror axis; `twoSided` —
+`"one-file"` (the default: both faces' layers in the piece's one DXF) or `"two-files"`
+(the far layers in `parts/<name>-far.dxf`, behind the mirrored outline on `REFERENCE`
+for alignment). In the CAM, line the far vectors' outline up on the piece's outline as
+seen from the bottom; the README says so and orders the work far side first, through
+cut last. `routedBreakthrough` counts a near and a far pocket that overlap and together
+go deeper than the stock.
+
+### What lint and verify check
+
+Lint: `routed-drill-depth` (error) — a drill deeper than the stock at the defaults.
+Every sheet rule applies too (`sheet-thickness-literal`, `sheet-custom-build`, …); the
+laser's thickness range does not. A pocket deeper than the stock is a build error.
+
+Verify volunteers four warnings on every routed part, none counting toward
+`declared`/`evaluated`: `routedOutside` (pocket, drill or footprint regions outside the
+profile, `0`), `routedEmpty` (pockets that resolved empty, `0`), `routedPieces` (`1`),
+`routedBreakthrough` (a near-face and a far-face pocket that overlap and together go
+deeper than the stock, `0`).
+Each measured row carries `sheet.routed` — the operations table — beside the stock facts.
+
+### Limits
+
+- Far-side `reference` lines and far-side work in the sheets/ layouts are not drawn;
+  two-sided jobs are per-piece files.
+- No tool-radius, dogbone or inside-corner checks: the CAM owns those.
+- No depth per extra op beyond its footprint and the solid's deepest point; the
+  `method` text is where the operator's instructions go.
+- A routed part is a sheet part of process `cnc-router` everywhere else: the sheet
+  checks' budget, stock grouping and the kit's layout apply unchanged.
 
 ## Convex hull
 
@@ -3083,6 +3240,28 @@ instead of (or in addition to) the built-in `#part` bar:
 - `runtime.controlsFor(selection) → string[]` — the param keys relevant to a pick
   (`selection.subPart`): today the picked sub-part's recorded reads plus its show/hide gate
   (`enabled()`) params.
+- **The selection popover.** Pass `selectionPopover: { slot: true | false }` (with `onPick`)
+  and a pick opens a popover at the picked spot: the sub-part's swatch, label and material as
+  one button that opens its appearance card as the popover's second page, an eye that hides
+  it, and ✕. With `slot: true` the popover also holds an empty region the host fills with its
+  own UI (a chat box, say) floated over the frame: tell partforge how tall it must be with
+  `runtime.selection.setSlotHeight(px)` and hear where it is with
+  `runtime.selection.onSlotChange(({ state, rect }) => …)` — `state` is `"open"` (with a
+  rect), `"collapsed"` (the card page is showing) or `"closed"`. The rect is in CSS px from
+  the top-left of the border box of the stage element (`elements.viewer`), not the canvas.
+  When the stage is too short for the height you asked for, the slot is given less and the
+  rect says so — scroll inside your own content; a later `setSlotHeight` or a roomier stage
+  goes back to what you asked for. `runtime.selection.onClose(({ reason }) => …)` says why
+  partforge closed it (`"dismiss"`, `"hide"`, `"gone"`); `"gone"` also fires when anything
+  releases the pick marker, `runtime.pickMarker.release()` included. Closing the popover, for
+  any reason, releases every held marker — including one the host held itself.
+  `runtime.selection.close()` closes it from the host. An open popover rides
+  `getViewerState().selection`, so a remount reopens it, on the page it was showing; whether
+  it did is settled by the time `runtime.ready` resolves, so check
+  `runtime.selection.isOpen()` after `ready`, not straight after `mount()` (a first build
+  that fails tries again on the first one that succeeds). `runtime.selection` is `null`
+  without the option. `runtime.controlsFor(selection)` is the intended source for a future
+  page of the controls that shape the picked spot.
 
 Pass `onViewChange(name)` to `mount()` to be told the active view: it fires once
 synchronously during mount with the initial resolved view (before `runtime.ready` settles),
@@ -3116,8 +3295,9 @@ returns instead:
   stock), `parts/<name>[-xN].svg` (one per distinct piece; identical pieces merge) and
   `print/<name>[-xN].stl` or `.3mf` (the printed parts, in their export pose). With
   `destination: "service"` each piece is a cut-only `.dxf` plus a `-marks.dxf` for its
-  score and engrave lines, and the DXF sheets are for reference. Every `options` key is
-  optional: `destination` (`"own-laser"`, the default, or `"service"`), `kerf` (0–0.5 mm,
+  score and engrave lines, and the DXF sheets are for reference. With `destination: "cnc-router"` every routed piece is one DXF carrying all its layers
+  (depth per layer), laser pieces are written as for a service, and kerf must be 0. Every `options` key is
+  optional: `destination` (`"own-laser"`, the default, `"service"` or `"cnc-router"`), `kerf` (0–0.5 mm,
   applied to the cut lines only), `stock: [{ group, size: [w, h] }]` (a row's
   `sheet.group`; a `"*"` entry sizes every group that has no entry of its own; 300 × 300
   mm when `stock` is omitted), `margin` (5 mm),
@@ -3298,6 +3478,52 @@ load that ultimately fails still settles back to `"cad"`. Pass `viewerState`
 back into the next `mount()` call to resume both where the previous mount
 left them; omit it on a first mount and the viewer restores its own persisted
 choice instead, the same way it does for the camera.
+
+### `runtime.setSubPartDisplay`, `runtime.listSubParts`, `runtime.openAppearance`
+
+A viewer user can change how one sub-part looks, or hide it, without a rebuild.
+The View style popover (the eye) has a **Parts** section — the sub-parts in the
+active view, an eye and a swatch each — and the swatch opens an appearance card
+(material presets, colour for tintable presets, finish, See-through). A host can
+drive the same state:
+
+- `runtime.setSubPartDisplay(name, patch)` — merges `patch` over the sub-part's
+  override and returns the override now held (`null` when nothing is left, or
+  for an unknown `name`). An override `material` that names an untintable
+  preset (brass, oak, …) with no override `color` beside it drops the authored
+  `color` from the effective look — picking brass means brass, not red brass —
+  while a tintable pick keeps the authored colour; a host saving the pick into
+  source should remove `color` alongside writing `material`. Appearance keys (`material`, `color`, `roughness`,
+  `metalness`, `clearcoat`, `clearcoatRoughness`, `anisotropy`, `textureScale`)
+  merge over the authored `display` for every render — CAD, realistic and the
+  `captureView` thumbnail — so a tile picked here is drawn exactly as if it had
+  been authored. Two **viewing** keys are different: `hidden` (boolean) and
+  `opacity` (0.05–1, a multiplier on an authored `display.opacity`). They are
+  how the user is looking: never part of a material read, an export, lint or
+  `declaresMaterials`, and `captureViews` / `renderViews` (the agent's renders)
+  draw every sub-part as if they were unset. `captureCurrent` follows them,
+  like the screen, unless called with `{ includeHidden: true }`. A `null` value
+  clears a key; `hidden: false` and `opacity: 1` clear theirs.
+- `runtime.getSubPartDisplay(name)` → `{ authored, override, effective, hidden,
+  opacity }`, or `null`.
+- `runtime.clearSubPartDisplay({ viewing?, appearance?, name? })` — Show all is
+  `{ viewing: true }`; the card's Reset is `{ appearance: true, name }`.
+- `runtime.onSubPartDisplayChange(cb)` — `cb({ name, override })` after a
+  change, `cb(null)` after a clear; returns the unsubscribe. A host that
+  persists overrides into source (partforge-cloud writes the sub-part's
+  `display` literal) listens here.
+- `runtime.listSubParts({ view? })` — every sub-part as `{ name, label, inView,
+  hidden, opacity, effective, color, materialLabel, tintable, overridden }`, in
+  definition order, for the active view unless `view` names another.
+- `runtime.openAppearance(name)` — opens the popover on the card for `name`;
+  `runtime.setDisplaySaveState("saved" | "screen-only" | "blocked")` sets the
+  card's footer line ("screen-only" is the default; a host that saves says so).
+
+The override map rides `viewerState.display` and comes back through
+`mount({ viewerState })`, pruned for the new part: an entry for a sub-part the
+part no longer declares is dropped, and an appearance key that now equals the
+authored value is dropped (a host that saved the change into source sees its
+override vanish on the next mount, which is the intended self-clean).
 
 ### The annotation payload's camera block
 
@@ -3736,7 +3962,21 @@ shares build's `(k, p, d)` contract — against a geometry-free probe —
 `unknown-kernel-op`, `unknown-solid-op`, `invalid-op-options`, `build-throws`,
 `probe-throws`, `derive-throws`, `manifold-backend-uses-occt-op`,
 `build-runaway` (errors); `nondeterministic-build` (warning, from diffing two
-probe runs).
+probe runs). The probe has no geometry, so every **query** answers with a
+placeholder — `boundingBox()` a unit box, `area()` and `volume()` 1,
+`Shape2D.contains()` always `false`, `corners()`/`toRegions()` a unit square,
+`isEmpty()` `false`. A `build()` that throws *after* reading one of those may
+only have believed the placeholder — a helper that scans `contains()` to place
+ribs finds none and throws its own guard — so that throw is reported as a
+`build-throws` **note** naming the queries it read ("could not be evaluated
+geometry-free"), never an error: it does not block loading, `measure`, or
+`--strict`. A throw with no query read before it is the build's own logic and
+stays an error. Lint cannot tell which throws depended on the placeholder, so any
+throw after a query is a note; a real fault still surfaces when the real build
+runs. The ops the build would have called after the throw were never run, so lint
+did not check them (unknown ops, option keys, the Manifold pin, determinism). A
+declared probe that throws stays a `probe-throws` error whatever it read — at
+runtime a throwing probe only degrades quietly to `{ error }`.
 
 **Verify block** — `verify-unknown-metric`, `verify-unknown-subpart`,
 `verify-bad-expr`, `verify-bad-pair-check`, `verify-unknown-process`,
@@ -3776,12 +4016,15 @@ rigid motion — translate/rotate — never a reshape; an error). A pose the pro
 
 **Appearance** (all warnings) — `unknown-material` (a `display.material` the
 library does not know; the viewer draws it as if it named none — a PLA print
-in realistic mode, or for a laser sheet part its stock's look, per "Sheet parts
+in realistic mode, or for a laser or routed sheet part its stock's look, per "Sheet parts
 default to their stock"), `unknown-environment`
 (`meta.environment` not known; realistic mode uses `studio`),
 `material-key-unknown` (a `display` key that is not colour, opacity, material
 or one of the six overrides; ignored), `material-override-clamped` (an override
-outside its range, or not a number; clamped).
+outside its range, or not a number; clamped), `material-tint-textured` (a
+`display.color` on a textured preset that is not tintable — `oak`, `walnut`,
+`plywood`, `pine-plywood`: the colour multiplies the scanned wood and dulls its
+grain; drop it unless a stain is intended).
 
 **Geometry imports** — `import-unknown-name` (a build calls `k.import` with a
 name the part's `imports` field doesn't declare — this throws at build time;
@@ -3880,6 +4123,9 @@ non-default params still fails correctly at build time.
 verify check". `no-buildable-parts` points a sub-part with a `sheet` but no `build`
 at `sheetPart()`, and `verify-unknown-process` answers `process: "laser"` the same
 way.
+
+**Routed parts** — `routed-drill-depth` (error): a `routedPart` drill deeper than
+the stock at the defaults. It carries `pattern: "routed-parts"`.
 
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.
@@ -4060,11 +4306,11 @@ are skipped. Switch it off under an FDM profile with an inline
 `{ base: "fdm-pla", overhang: null }`. **What `expect` gives you:** per-sub-part
 assertions on the facts `measure` already reports — `holes` (through-bores / genus),
 `volume`, `surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`,
-`overhangArea`, `wall` (a range — see below), `boundsMin` / `boundsMax`
-(the axis-aligned `{min,max}` corner positions — where the geometry sits, vs
-`bbox` which is only its size) and `centerOfMass` (`[x,y,z]`, the volume-weighted
+`overhangArea`, `wall` (a range — see below), `bounds` (the axis-aligned corner
+positions, written in the same `{ min, max }` shape `measure` reports them — where
+the geometry sits, vs `bbox` which is only its size) and `centerOfMass` (`[x,y,z]`, the volume-weighted
 centroid; `null` for a degenerate/zero-volume sub-part); and `_view` assertions `bbox`,
-`volume`, `overlaps`, `centerOfMass`, `boundsMin`, `boundsMax`, plus the pair-wise
+`volume`, `overlaps`, `centerOfMass`, `bounds`, plus the pair-wise
 `contacts` / `clearance` below.
 
 Passing these checks does **not** prove structural strength, fatigue life, stability,
@@ -4076,9 +4322,13 @@ unverified.
 
 **Assertion DSL:** a bare number means equality (`holes: 1`); `">=n"`, `"<=n"`, `">n"`,
 `"<n"`, or a range `"a..b"`; an optional unit suffix `mm`/`cm`/`mm3`/`cm3`; and for
-`bbox`, `centerOfMass`, `boundsMin`, `boundsMax`, a componentwise vector `"<=[x,y,z]"` /
-`">=[x,y,z]"` where `*` skips an axis. The parser is strict — a malformed assertion
-fails loudly.
+`bbox`, `centerOfMass` and each side of `bounds`, a componentwise vector `"<=[x,y,z]"` /
+`">=[x,y,z]"` — exactly 3 components, each a plain number in mm or `*` to skip an axis.
+A vector is always one-sided: a bare `[40,40,10]` (meaning "exactly this size") is
+rejected, since a mesh's box shifts with tessellation and no tolerance would be honest
+for every part — pick `<=` for a limit or `>=` for a floor. `bounds` takes an object
+with `min` and/or `max`, each such a vector: `bounds: { min: ">=[0,0,0]", max:
+"<=[220,220,250]" }`. The parser is strict — a malformed assertion fails loudly.
 
 **A part whose typeface is a parameter needs band assertions, not points.** Glyph
 advance widths differ by family, so a `text2d` sub-part's `bbox`/`volume` shifts with
@@ -4090,8 +4340,8 @@ need this, but a part whose default already names a specific face does.
 
 ```js
 verify: { expect: {
-  stand: { boundsMin: ">=[0,0,0]", centerOfMass: "<=[*,*,25]" },   // sits in +octant, mass kept low
-  _view: { boundsMax: "<=[220,220,250]" },                          // whole assembly fits the bed
+  stand: { bounds: { min: ">=[0,0,0]" }, centerOfMass: "<=[*,*,25]" },   // sits in +octant, mass kept low
+  _view: { bounds: { max: "<=[220,220,250]" } },                          // whole assembly fits the bed
 } }
 ```
 

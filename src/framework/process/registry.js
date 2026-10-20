@@ -6,8 +6,9 @@
 // the descriptors are: lint and the oracle read this file.
 import { isSheetPart } from "../sheet/constants.js";
 import { LASER } from "./laser/descriptor.js";
+import { ROUTER } from "./cnc-router/descriptor.js";
 
-export const PROCESSES = [LASER];
+export const PROCESSES = [LASER, ROUTER];
 export const PROCESS_IDS = PROCESSES.map((d) => d.id);
 
 export const processById = (id) => PROCESSES.find((d) => d.id === id) ?? null;

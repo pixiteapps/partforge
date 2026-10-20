@@ -42,8 +42,11 @@ export class ProbeRunawayError extends Error {
 }
 
 // Shared proxy construction. `onCall(scope, op, args)` observes every op; queries
-// return realistic dummy values the build may read.
-function makeProbe(onCall) {
+// return realistic dummy values the build may read, and `onQuery(scope, op)` hears
+// each one — every answer in the three query tables below is FABRICATED (a unit
+// box, area 1, contains() always false, …), so a build that read one and then threw
+// may only have believed the placeholder (lint's build-throws reads this).
+function makeProbe(onCall, onQuery = () => {}) {
   const solidQueries = {
     boundingBox: () => ({ min: [0, 0, 0], max: [1, 1, 1], center: [0.5, 0.5, 0.5], size: [1, 1, 1] }),
     volume: () => 1,
@@ -78,6 +81,7 @@ function makeProbe(onCall) {
     toSTEP: () => Promise.resolve(new ArrayBuffer(0)),
     cleanup: () => {},
   };
+  const NOT_DATA = new Set(["cleanup"]); // answers nothing a build could act on
 
   // `ignore` keeps the proxy from masquerading as a thenable/internal/serializable
   // handle: symbols, `then` (so it's never await-unwrapped), `_`-prefixed internals,
@@ -100,7 +104,13 @@ function makeProbe(onCall) {
   const opProxy = (queries, scope, routeFor) => new Proxy({}, {
     get(_t, key) {
       if (ignore(key)) return undefined;
-      if (key in queries) return (...args) => { onCall(scope, key, args); return queries[key](...args); };
+      if (key in queries) {
+        return (...args) => {
+          onCall(scope, key, args);
+          if (!NOT_DATA.has(key)) onQuery(scope, key);
+          return queries[key](...args);
+        };
+      }
       return (...args) => { onCall(scope, key, args); return routeFor(key); };
     },
   });
@@ -135,6 +145,8 @@ export function createValidatingProbe({ maxOps = MAX_PROBE_OPS } = {}) {
   const issues = [];
   const used = new Set();
   const solidUsed = new Set();  // same split as createProbeKernel: non-Shape2D-handle ops
+  const queried = [];           // fabricated data queries read, as "scope.op", first-read order;
+                                // runValidatingProbe empties it before each build/probe call
   let count = 0;
   let solidProxy = null;
   let shape2dProxy = null;
@@ -169,17 +181,23 @@ export function createValidatingProbe({ maxOps = MAX_PROBE_OPS } = {}) {
     calls.push({ scope, op, args: args.map(describe) });
   };
 
-  const { kernel, proxy, shape2d } = makeProbe(onCall);
+  const onQuery = (scope, op) => {
+    const name = `${scope === "shape2d" ? "Shape2D" : scope === "kernel" ? "k" : "Solid"}.${op}()`;
+    if (!queried.includes(name)) queried.push(name);
+  };
+  const { kernel, proxy, shape2d } = makeProbe(onCall, onQuery);
   solidProxy = proxy;
   shape2dProxy = shape2d;
-  return { kernel, calls, issues, used, solidUsed };
+  return { kernel, calls, issues, used, solidUsed, queried };
 }
 
 /**
  * Execute every sub-part's build() — and every declared probe (`part.probes`,
  * same (k, p, d) contract, see oracle/measure.js) — against a validating probe.
  * Never throws: a build error becomes an entry in `throws` (probe entries land
- * in `probeThrows`), a runaway sets `runaway`.
+ * in `probeThrows`), a runaway sets `runaway`. Each entry carries `queried`: the
+ * fabricated data queries THAT call read before it threw (tracked per call, so one
+ * sub-part's reads never excuse another's throw).
  */
 export function runValidatingProbe(part, p, d, { maxOps = MAX_PROBE_OPS } = {}) {
   const probe = createValidatingProbe({ maxOps });
@@ -187,22 +205,23 @@ export function runValidatingProbe(part, p, d, { maxOps = MAX_PROBE_OPS } = {}) 
   const probeThrows = [];
   let runaway = false;
   const run = (fn, onThrow) => {
+    probe.queried.length = 0;
     try {
       fn(probe.kernel, p, d);
     } catch (e) {
       if (e instanceof ProbeRunawayError) { runaway = true; return false; }
-      onThrow(e?.message || String(e));
+      onThrow(e?.message || String(e), [...probe.queried]);
     }
     return true;
   };
   for (const [name, sp] of Object.entries(part?.parts ?? {})) {
     if (typeof sp?.build !== "function") continue; // no-buildable-parts already reports this
-    if (!run(sp.build, (m) => throws.push({ subpart: name, message: m }))) break;
+    if (!run(sp.build, (m, queried) => throws.push({ subpart: name, message: m, queried }))) break;
   }
   if (!runaway) {
     for (const [name, fn] of Object.entries(part?.probes ?? {})) {
       if (typeof fn !== "function") continue; // invalid-probes already reports this
-      if (!run(fn, (m) => probeThrows.push({ probe: name, message: m }))) break;
+      if (!run(fn, (m, queried) => probeThrows.push({ probe: name, message: m, queried }))) break;
     }
   }
   return { calls: probe.calls, issues: probe.issues, used: probe.used, solidUsed: probe.solidUsed, throws, probeThrows, runaway };

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { parseAssertion, evaluateAssertion } from "../src/framework/oracle/assert-dsl.js";
+import { parseAssertion, evaluateAssertion, bareVectorHint } from "../src/framework/oracle/assert-dsl.js";
 
 test("parses numbers and booleans as equality", () => {
   expect(parseAssertion(1)).toEqual({ op: "eq", value: 1 });
@@ -57,4 +57,36 @@ test("evaluates vector bounds componentwise, * skips", () => {
   expect(ev("<=[12,12,16]", [13, 8, 10])).toBe(false);
   expect(ev(">=[10,*,14]", [12, 5, 20])).toBe(true);   // axis 1 skipped
   expect(ev(">=[10,*,14]", [9, 5, 20])).toBe(false);
+});
+
+// A bare vector is the commonest slip (the writer means "exactly this size"). The
+// error hands back both legal spellings in the writer's own numbers.
+test.each([
+  [[40, 40, 10]],
+  ["[40,40,10]"],
+  ["[40, 40, 10]"],
+  ["=[40,40,10]"],
+  [["40mm", "40mm", "10mm"]],
+])("a bare vector %j names both legal spellings in its own numbers", (expr) => {
+  expect(() => parseAssertion(expr)).toThrow(
+    'use "<=[40,40,10]" or ">=[40,40,10]" (componentwise; * skips an axis)');
+});
+
+test("a bare vector keeps * axes in the suggestion", () => {
+  expect(bareVectorHint("[*,*,25]")).toBe('use "<=[*,*,25]" or ">=[*,*,25]" (componentwise; * skips an axis)');
+});
+
+test("a bare vector it cannot rewrite falls back to placeholders", () => {
+  expect(bareVectorHint([40, 40])).toMatch(/^use "<=\[x,y,z\]" or ">=\[x,y,z\]" \(exactly 3 plain numbers/);
+  expect(() => parseAssertion("[1..2,3,4]")).toThrow(/exactly 3 plain numbers/);
+});
+
+test("bareVectorHint is null for anything that is not a bare vector", () => {
+  for (const e of ["<=[1,2,3]", ">=5", "1..2", 3, true, null, { a: 1 }]) expect(bareVectorHint(e)).toBe(null);
+});
+
+test("vector components must be plain numbers or *", () => {
+  expect(() => parseAssertion("<=[40mm,40,10]")).toThrow(/each a plain number in mm or \*/);
+  expect(() => parseAssertion("<=[,1,2]")).toThrow(/each a plain number/);
+  expect(() => parseAssertion("<=[1..2,1,2]")).toThrow(/each a plain number/);
 });

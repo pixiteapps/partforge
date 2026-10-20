@@ -5,6 +5,7 @@
 // viewer on a fake renderer.
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as THREE from "three";
+import { plyCount } from "../../src/framework/materials/sheet-look.js";
 
 const state = vi.hoisted(() => ({ renderer: null, hdrReadable: true, holdTextures: false, textureLoads: [] }));
 
@@ -1433,9 +1434,38 @@ test("sheet frames reach the burning material and its cutaway clone; a missing f
   expect(u).toBe(base.userData.patternUniforms);
   expect(u.pfSheetFrame.value.toArray()).toEqual(frame);
   expect(u.pfSheetT.value).toBe(3);
-  expect(u.pfPlies.value).toBe(3);
+  expect(u.pfPlyT, "oak has no plies").toBeUndefined();
   v.setSheetFrames({});
   expect(u.pfSheetT.value).toBe(0);
+  v.dispose();
+});
+
+// --- plies: a laminated wood stacks them by its sheet frame, else by its own box ---------
+test("a plywood sheet's frame stacks its plies; a plywood solid stacks them along its thinnest axis", async () => {
+  const v = createViewer(createContainer(), {
+    meta: { title: "t" },
+    parts: {
+      panel: sheetPart({ views: ["main"], display: { material: "plywood" }, material: "birch plywood", thickness: 6, profile: square }),
+      block: { build: () => null, display: { material: "plywood" } },
+    },
+  });
+  // payload(): the shared test mesh — its box decides the block's laminate frame
+  for (const n of ["panel", "block"]) v.setSubGeometry(n, payload());
+  v.showAssembly(["panel", "block"], { frame: true });
+  await v.setRenderMode("realistic");
+  const panel = v.__subMesh("panel").material.userData.patternUniforms;
+  const block = v.__subMesh("block").material.userData.patternUniforms;
+  expect(v.__subMesh("block").material.customProgramCacheKey()).toBe("pf-pattern:wood|pf-ply");
+  // Before the sheet frame lands, the panel stacks by its box like the block.
+  const box = v.__subMesh("block").geometry.boundingBox;
+  const ext = [box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z];
+  expect(block.pfPlyT.value).toBeCloseTo(Math.min(...ext));
+  expect(block.pfPlyCount.value).toBe(plyCount(Math.min(...ext)));
+  const frame = new THREE.Matrix4().makeTranslation(1, 2, 3).toArray();
+  v.setSheetFrames({ panel: { frame, t: 6, plies: 5 } });
+  expect(panel.pfPlyFrame.value.toArray()).toEqual(frame);
+  expect([panel.pfPlyT.value, panel.pfPlyCount.value]).toEqual([6, 5]);
+  expect(panel.pfSheetT.value).toBe(6); // and burns by it
   v.dispose();
 });
 
@@ -1468,7 +1498,7 @@ test("a laser sheet with no material draws its stock's look in realistic; CAD is
   const cad = v.__subMesh("ply").material;
   expect(cad.color.getHex()).toBe(0x9fb4cc);
   await v.setRenderMode("realistic");
-  expect(v.__subMesh("ply").material.customProgramCacheKey()).toBe("pf-pattern:wood|pf-burn");
+  expect(v.__subMesh("ply").material.customProgramCacheKey()).toBe("pf-pattern:wood|pf-ply|pf-burn");
   expect(v.__subMesh("ply").material.color.getHex()).toBe(0xffffff);       // the map carries plywood's colour
   expect(v.__subMesh("acrylic").material.transmission).toBe(1);
   expect(v.__subMesh("stained").material.color.getHex()).toBe(0x2e8b3d);   // a bare colour tints the plywood

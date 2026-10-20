@@ -19,15 +19,17 @@ import { resolveSheet } from "../sheet/resolve.js";
 import { processById, SHEET_METRICS } from "../process/registry.js";
 import { loadExporter } from "../process/exporters.js";
 import { validateKitOptions, resolveStock, KIT_OPTIONS_ERROR, KIT_LIMITS } from "./formats.js";
-import { canonicalDrawingKey } from "./drawing.js";
+import { canonicalDrawingKey, routedPalette, splitFaces } from "./drawing.js";
 import { renderSvg } from "./svg.js";
 import { renderDxf } from "./dxf.js";
 import { layoutGroup, marginFitsStock } from "./layout.js";
 import { renderReadme, renderPartsCsv, cleanLabel } from "./readme.js";
 
 // Every entry name the kit may write (spec D.10). test/kit-bundle.test.js pins every
-// kit it builds against it, and buildBundle asserts it again before zipping.
-export const KIT_ENTRY_RE = /^(README\.txt|parts\.csv|sheets\/[a-z0-9][a-z0-9._-]*\/sheet-\d+-of-\d+\.(svg|dxf)|parts\/[a-z0-9][a-z0-9._-]*(-x\d+)?(-marks)?\.(svg|dxf)|print\/[a-z0-9][a-z0-9._-]*(-x\d+)?\.(stl|3mf))$/;
+// kit it builds against it, and buildBundle asserts it again before zipping. A piece's
+// files are `<name>[-x<n>]` plus `-far` (a two-sided routed piece's far-face file, in
+// the two-files mode) or `-marks` (a laser piece's score and engrave lines).
+export const KIT_ENTRY_RE = /^(README\.txt|parts\.csv|sheets\/[a-z0-9][a-z0-9._-]*\/sheet-\d+-of-\d+\.(svg|dxf)|parts\/[a-z0-9][a-z0-9._-]*(-x\d+)?(-far)?(-marks)?\.(svg|dxf)|print\/[a-z0-9][a-z0-9._-]*(-x\d+)?\.(stl|3mf))$/;
 
 // A path segment from an author string. safeName already lowercases, collapses runs and
 // refuses a leading dot or dash; folding every run of dots on top means no entry name
@@ -140,7 +142,6 @@ const wordsOf = (s) => String(s ?? "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").re
 // are listed, and "display", "outfit" and "profit" are not.
 const CLEARANCE_WORDS = new Set(["clearance", "clearances", "fit", "play"]);
 const isClearance = (c) => [...wordsOf(c.key), ...wordsOf(c.label)].some((w) => CLEARANCE_WORDS.has(w));
-const ALL_LAYERS = ["cut", "score", "engrave"];
 
 // Every control that owns a parameter key, whatever the section shape: authored
 // `controls` (groups nest), and the legacy `advanced`, `toggles`, `features` and a
@@ -193,6 +194,34 @@ function sheetMetaOrThrow(kernel, sp, p, d, name) {
   throw new Error(`sheet part "${name}": its material or thickness could not be evaluated`);
 }
 
+// The README's layer legend: every routed layer name in the kit, once, with its face,
+// colour (ACI in a DXF kit, hex in an SVG one) and depth — REFERENCE, SECONDARY, then
+// drills in palette order, then pockets shallowest first; the far face's layers follow
+// in the same order. The palette is kit-wide, so a name has one colour; the legend is
+// the authority when a palette cycles. It reads each piece's whole drawing, so the
+// far file's alignment outline (splitFaces' `far-outline`) is never listed.
+const LEGEND_RANK = { reference: 0, secondary: 1, drill: 2, pocket: 3, "far-secondary": 4, "far-drill": 5, "far-pocket": 6 };
+const legendKind = (l) => {
+  const m = /^(far-)?(drill|pocket)-/.exec(l.id);
+  return m ? `${m[1] ?? ""}${m[2]}` : l.id;
+};
+function routedLegend(pieces, cutExt) {
+  const rows = new Map();
+  for (const pc of pieces) {
+    for (const l of pc.drawing.layers) {
+      if (l.name === undefined || rows.has(l.name)) continue;
+      const kind = legendKind(l);
+      rows.set(l.name, { name: l.name, kind, face: l.face === "far" ? "far" : "near", order: rows.size,
+        colour: cutExt === "svg" ? l.svgColor : String(l.color),
+        depth: l.through ? "through" : typeof l.depth === "number" ? `${l.depth.toFixed(2)} mm` : "—", mm: l.depth ?? 0 });
+    }
+  }
+  return [...rows.values()]
+    .sort((a, b) => (LEGEND_RANK[a.kind] ?? 9) - (LEGEND_RANK[b.kind] ?? 9)
+      || (a.kind.endsWith("pocket") ? a.mm - b.mm : 0) || a.order - b.order)
+    .map(({ name, face, colour, depth }) => ({ name, face, colour, depth }));
+}
+
 // One export-bundle job's kit. `names` is the job's selected() — exportable, enabled, in
 // definition order — and `posed`/`label`/`exportName` are jobs.js's own, so a kit's
 // printed parts are built exactly the way the STL and 3MF exports build them.
@@ -201,7 +230,8 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
   // not wait behind a build (spec D.3). An absent options object means every default.
   const o = validateKitOptions(msg.options ?? {});
   const service = o.destination === "service";
-  const cutExt = service ? "dxf" : "svg";
+  const router = o.destination === "cnc-router";
+  const cutExt = o.cutFormat;                       // svg for own-laser, dxf otherwise
   const say = (phase) => onProgress(clipPhase(phase));
   const nameOf = (name) => cleanLabel(label(name));
   if (names.length === 0) throw new Error("no exportable parts selected");
@@ -240,27 +270,43 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
 
   // Draw every sheet part flat, from its 2-D declaration, with its 2-D facts under ONE
   // budget for the whole kit.
+  // Resolved first, drawn second: a routed layer's colour comes from a palette over
+  // EVERY routed piece's depths (drawing.js routedPalette), so one depth is one colour
+  // in every file of the kit and on every sheet.
   const deadline = Date.now() + SHEET_CHECK_BUDGET_MS;
-  const drawn = [];
+  const resolved = [];
   for (const name of sheetNames) {
     say(`building ${nameOf(name)}`);
     const s = resolveSheet(kernel, part.parts[name], p, d);
     const desc = processById(s.process);
     if (!desc) throw new Error(`sheet part "${nameOf(name)}": unknown process "${s.process}"`);
-    const facts = desc.facts(s, { deadline });
+    resolved.push({ name, s, facts: desc.facts(s, { deadline }) });
+  }
+  const palette = routedPalette(resolved.filter((x) => x.s.process === "cnc-router").map((x) => x.s));
+  const drawn = [];
+  for (const { name, s, facts } of resolved) {
     const exporter = await loadExporter(s.process);
-    const drawing = exporter.drawing(s, o, kernel, { label: nameOf(name), facts });
+    const drawing = exporter.drawing(s, o, kernel, { label: nameOf(name), facts, palette });
+    // A routed piece is known by its process, never guessed from its layers: one with
+    // only a profile draws no named layer and is still routed.
     drawn.push({ name, label: nameOf(name), fileKey: exportName(name), group: groupOf.get(name),
-      drawing, facts, key: canonicalDrawingKey(drawing) });
+      drawing, facts, key: canonicalDrawingKey(drawing), routed: s.process === "cnc-router" });
   }
 
   // Identical pieces become one file ×N (spec D.4): the hash nominates; the canonical
   // drawing and the stock group confirm.
-  const pieces = dedupe(drawn, (x) => h(x.key), (a, b) => a.key === b.key && a.group === b.group)
-    .map(({ item, members }) => ({
-      ...item, labels: members.map((m) => m.label), qty: members.length * o.sets,
-      hasMarks: item.drawing.layers.some((l) => l.id === "score" || l.id === "engrave"),
-    }));
+  // A routed piece's operations table is confirmed too: an extra op's depth and method,
+  // and the op labels, are not in its drawing — only the README carries them, so two
+  // pieces that draw alike but machine differently must stay two files.
+  const sameOps = (a, b) => JSON.stringify(a.facts?.routed ?? null) === JSON.stringify(b.facts?.routed ?? null);
+  // A routed piece with far-face work is two-sided: its sheets carry the near face only
+  // (`faces.near`), and the two-files mode writes its far face to a file of its own.
+  const pieces = dedupe(drawn, (x) => h(x.key), (a, b) => a.key === b.key && a.group === b.group && sameOps(a, b))
+    .map(({ item, members }) => {
+      const faces = splitFaces(item.drawing);
+      return { ...item, labels: members.map((m) => m.label), qty: members.length * o.sets, faces, twoSided: faces.far !== null,
+        hasMarks: item.drawing.layers.some((l) => l.id === "score" || l.id === "engrave") };
+    });
 
   // Names, in definition order. A name that was taken moves to name-2; the README's
   // RENAMED FILES says which file it was and who held the name (spec D.10). A piece
@@ -283,11 +329,14 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
   };
   for (const pc of pieces) {
     const sx = pc.qty > 1 ? `-x${pc.qty}` : "";
-    const marks = service && pc.hasMarks;
-    const name = claim(kitName(pc.fileKey),
-      (n) => [`parts/${n}${sx}.${cutExt}`, ...(marks ? [`parts/${n}${sx}-marks.dxf`] : []), `parts/${n}/`], pc.labels);
+    // A routed piece is never split: its depths are one layered file for the CAM.
+    const marks = (service || router) && pc.hasMarks && !pc.routed;
+    const far = pc.twoSided && o.twoSided === "two-files";
+    const name = claim(kitName(pc.fileKey), (n) => [`parts/${n}${sx}.${cutExt}`, ...(marks ? [`parts/${n}${sx}-marks.dxf`] : []),
+      ...(far ? [`parts/${n}${sx}-far.${cutExt}`] : []), `parts/${n}/`], pc.labels);
     pc.file = `parts/${name}${sx}.${cutExt}`;
     pc.marksFile = marks ? `parts/${name}${sx}-marks.dxf` : null;
+    pc.farFile = far ? `parts/${name}${sx}-far.${cutExt}` : null;
   }
 
   // Lay out each stock group. An own laser needs every piece to fit (layoutGroup
@@ -301,8 +350,8 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
     say(`laying out ${g.material} ${fmtMm(g.thickness)} mm (${count} pieces)`);
     const stock = stockFor.get(g.group);
     const laid = layoutGroup({
-      group: g.group, label: g.label, stock, margin: o.margin, spacing: o.spacing, strict: !service,
-      pieces: inGroup.map((pc) => ({ key: pc.file, label: pc.labels[0], drawing: pc.drawing, qty: pc.qty })),
+      group: g.group, label: g.label, stock, margin: o.margin, spacing: o.spacing, strict: !(service || router),
+      pieces: inGroup.map((pc) => ({ key: pc.file, label: pc.labels[0], drawing: pc.faces.near, qty: pc.qty })),
     });
     if (laid.sheets.length > KIT_LIMITS.sheetsPerGroup) {
       throw new Error(`${KIT_OPTIONS_ERROR} ${g.material} ${fmtMm(g.thickness)} mm needs ${laid.sheets.length} sheets — at most ${KIT_LIMITS.sheetsPerGroup} per material; use larger stock or fewer sets`);
@@ -354,20 +403,27 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
     if (!pp.bytes) pp.bytes = new Uint8Array(meshTo3MF([{ name: pp.fileKey, ...pp.mesh, color: pp.color }]));
   }
 
-  // The files (spec D.8): own laser — an SVG per sheet and per piece; service — a
-  // cut-only DXF per piece, a -marks.dxf where it has marks, and reference DXF sheets.
+  // The files (spec D.8): own laser — an SVG per sheet and per piece; service and CNC
+  // router — a cut-only DXF per laser piece, a -marks.dxf where it has marks, and
+  // reference DXF sheets. A routed piece is one file with every layer, whatever the
+  // destination — or, two-sided in the two-files mode, its near face and its far face
+  // (behind a REFERENCE outline) as two.
   say("writing cut files");
   const title = cleanLabel(part.meta?.title ?? fileBase);
   const files = [];
   const put = (file, text) => files.push({ file, data: strToU8(text) });
   for (const sh of sheets) {
     const doc = { title: `${title} — ${sh.group.label} — sheet ${sh.index} of ${sh.count}`, size: sh.stock, placements: sh.placements };
-    put(sh.file, service ? renderDxf(doc, { include: ALL_LAYERS }) : renderSvg(doc));
+    put(sh.file, cutExt === "dxf" ? renderDxf(doc) : renderSvg(doc));
   }
   for (const pc of pieces) {
-    const doc = { title: pc.labels.join(", "), size: sizeOf(pc.drawing.bounds),
-      placements: [{ drawing: pc.drawing, at: [0, 0], rotated: false }] };
-    if (!service) { put(pc.file, renderSvg(doc)); continue; }
+    const docOf = (drawing) => ({ title: pc.labels.join(", "), size: sizeOf(drawing.bounds),
+      placements: [{ drawing, at: [0, 0], rotated: false }] });
+    const render = cutExt === "svg" ? renderSvg : renderDxf;
+    if (pc.farFile) { put(pc.file, render(docOf(pc.faces.near))); put(pc.farFile, render(docOf(pc.faces.far))); continue; }
+    const doc = docOf(pc.drawing);
+    if (cutExt === "svg") { put(pc.file, renderSvg(doc)); continue; }
+    if (pc.routed) { put(pc.file, renderDxf(doc)); continue; }       // every layer, one file
     put(pc.file, renderDxf(doc, { include: ["cut"] }));
     if (pc.marksFile) put(pc.marksFile, renderDxf(doc, { include: ["score", "engrave"] }));
   }
@@ -376,13 +432,18 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
   const controls = collectControls(part.parameters);
   const readme = renderReadme({
     title, destination: o.destination, cutFormat: o.cutFormat, kerf: o.kerf,
+    flip: o.flip, twoSided: o.twoSided, anyTwoSided: pieces.some((pc) => pc.twoSided),
     stockNotes: [...groups.values()].map((g) => ({ material: g.material, thickness: g.thickness,
       control: thicknessControlLabel(controls, part.parts[g.first], p, d) })),
     scale: pieces.map((pc) => ({ label: pc.labels.join(", "), nominal: pc.drawing.nominal, drawn: sizeOf(pc.drawing.bounds) })),
     sheets: sheets.map((sh) => ({ file: sh.file, material: sh.group.material, thickness: sh.group.thickness,
       size: sh.stock, pieces: sh.placements.length, used: sh.used })),
-    pieces: pieces.map((pc) => ({ file: pc.file, marksFile: pc.marksFile, labels: pc.labels, material: groups.get(pc.group).material,
+    pieces: pieces.map((pc) => ({ file: pc.file, marksFile: pc.marksFile, farFile: pc.farFile, labels: pc.labels, material: groups.get(pc.group).material,
       thickness: groups.get(pc.group).thickness, size: pc.drawing.nominal, quantity: pc.qty })),
+    router: pieces.filter((pc) => pc.routed && pc.facts?.routed).map((pc) => ({
+      labels: pc.labels, material: groups.get(pc.group).material, thickness: groups.get(pc.group).thickness, ...pc.facts.routed,
+      twoSided: pc.twoSided, farFile: pc.farFile })),
+    layers: routedLegend(pieces.filter((pc) => pc.routed), cutExt),
     printed: prints.map((pp) => ({ file: pp.file, labels: pp.labels, quantity: pp.qty })),
     clearances: controls.filter(isClearance)
       .map((c) => ({ label: c.label ?? c.key, value: p[c.key], unit: c.unit ?? "" })),
@@ -391,8 +452,11 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
     oversized, renamed,
   });
   const csv = renderPartsCsv([
-    ...pieces.map((pc) => ({ file: pc.file, kind: "sheet", labels: pc.labels, material: groups.get(pc.group).material,
-      thickness: groups.get(pc.group).thickness, width: pc.drawing.nominal[0], height: pc.drawing.nominal[1], quantity: pc.qty })),
+    ...pieces.flatMap((pc) => {
+      const row = { file: pc.file, kind: "sheet", labels: pc.labels, material: groups.get(pc.group).material,
+        thickness: groups.get(pc.group).thickness, width: pc.drawing.nominal[0], height: pc.drawing.nominal[1], quantity: pc.qty };
+      return pc.farFile ? [row, { ...row, file: pc.farFile, kind: "far" }] : [row];
+    }),
     ...prints.map((pp) => ({ file: pp.file, kind: "print", labels: pp.labels, material: pp.material, thickness: null,
       width: pp.size[0], height: pp.size[1], quantity: pp.qty })),
   ]);

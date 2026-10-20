@@ -17,6 +17,9 @@
 export { assemblyGaps, meshGaps } from "./framework/oracle/gaps.js";
 export { meshVolume, bboxSize, bounds, meshArea } from "./framework/oracle/mesh.js";
 export { buildView } from "./framework/oracle/build.js";
+// Preview animation — whether a view's autoplay animation is place-only, and its
+// sampled place() matrices, for the cached preview GLB (partforge/gltf) to bake.
+export { samplePreviewAnimation, PREVIEW_SAMPLE_HZ, PREVIEW_SAMPLE_CAP } from "./framework/preview-animation.js";
 export { measure } from "./framework/oracle/measure.js";
 export { verify } from "./framework/oracle/verify.js";
 // Change tracking — the `inspect` job's opt-in "what changed since my last

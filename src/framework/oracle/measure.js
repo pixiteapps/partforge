@@ -166,7 +166,7 @@ function sheetRowFacts(kernel, part, name, view, { p, d }, budget, volume) {
   const expected = f.area * f.thickness - MARK_DEPTH * (f.marksArea ?? 0);
   return {
     ...f,
-    at: { bridge: lift(f.at2d.bridge), gap: lift(f.at2d.gap), marks: lift(f.at2d.marks) },
+    at: { bridge: lift(f.at2d.bridge), gap: lift(f.at2d.gap), marks: lift(f.at2d.marks), outside: lift(f.at2d.outside ?? null) },
     solidMatchPct: f.customBuild && f.marksArea != null && expected > 1e-9
       ? (100 * Math.abs(volume - expected)) / expected
       : null,
@@ -192,7 +192,7 @@ function unknownProcessFacts(kernel, sp, p, d) {
     process: sp.sheet.process, material: meta?.material ?? null, thickness: meta?.thickness ?? null, group: meta?.group ?? null,
     flat, area, pieces, customBuild: sp.build !== sp.sheet.generatedBuild,
     marksArea: null, bridge: null, bridgeCapped: false, gap: null, gapCapped: false, marksOutside: null, solidMatchPct: null,
-    at2d: { bridge: null, gap: null, marks: null }, at: { bridge: null, gap: null, marks: null },
+    at2d: { bridge: null, gap: null, marks: null, outside: null }, at: { bridge: null, gap: null, marks: null, outside: null },
     readErrors: { bridge: null, gap: null, marks: null, marksArea: null },
     evaluated: false,
   };

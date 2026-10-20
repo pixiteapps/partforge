@@ -5,7 +5,9 @@ import { resolveDerivedAttributed } from "./derive.js";
 import { createProbeKernel } from "./geometry/probe.js";
 import { inView, placeOf } from "./sub-part-views.js";
 import { byteAwareReplacer } from "./geometry/solid-hash.js";
-import { viewSubParts } from "./part-model.js";
+import { viewSubParts, resolveParamsAttributed, recordedParams } from "./part-model.js";
+import { newReadSink, expandReads } from "./read-recorder.js";
+import { probeSubPartPose } from "./pose-probe-core.js";
 
 export const RELEVANT_ALL = Symbol("relevant-all");
 
@@ -77,10 +79,12 @@ export function subPartParamKeys(part, view, params, readsOf, name) {
   const rec = readsOf?.(name);
   if (rec) {
     // The worker records the BUILD's reads; the sub-part's own show/hide gate
-    // is added here, as the prediction rung does (subPartReadKeys runs enabled()).
+    // and its place() reads in this view are added here, as the prediction rung
+    // does (subPartReadKeys runs enabled() and place()).
     const out = new Set(rec);
     const sp = part.parts[name];
     if (sp?.enabled) sp.enabled(recorder(params, out));
+    for (const k of placeReadKeys(part, view, params, name)) out.add(k);
     return [...out].sort();
   }
   const reads = subPartReadKeys(part, view, params);
@@ -88,16 +92,53 @@ export function subPartParamKeys(part, view, params, readsOf, name) {
   return keys.sort();
 }
 
-// Panel relevance from RECORDED reads: the union over on-screen sub-parts (a
-// not-yet-built one contributes its prediction — display only, so a wrong guess
-// costs one build's dimming), plus the gate params of every in-view sub-part.
+// The params one sub-part's place() reads in THIS view, derive attribution
+// included. A canonical delivery (jobs.js displayWithReads) is stamped with its
+// BUILD reads alone — the pose is applied as a matrix, and the pose fast path
+// needs a build-only stamp — so a param read only in place() (an explode slider
+// feeding views.cutaway) never reaches the recorded rung. The display side adds
+// it back here, per view: a view whose place() never reads the param leaves it
+// irrelevant. Runs place() on the geometry-free canonical token (no build); the
+// reads count whether or not the probe trusts the pose — they were read either
+// way. Never throws; an unreadable place() contributes nothing (a posed delivery
+// already recorded its place reads in the stamp). `resolved` lets a caller
+// walking many sub-parts run derive() once (a resolveParamsAttributed result).
+export function placeReadKeys(part, view, params, name, resolved) {
+  const sp = part.parts[name];
+  if (!sp || !placeOf(sp)) return [];
+  try {
+    resolved ??= resolveParamsAttributed(part, params);
+    const sink = newReadSink();
+    sink.attribution = resolved.attribution;
+    const rec = recordedParams(resolved, sink);
+    probeSubPartPose(sp, { view, purpose: "display", p: rec.p, d: rec.d }, { scope: "place" });
+    return expandReads(sink);
+  } catch {
+    return [];
+  }
+}
+
+// Panel relevance from RECORDED reads: the union over on-screen sub-parts, each
+// with its place() reads in this view (a not-yet-built one contributes its
+// prediction — display only, so a wrong guess costs one build's dimming), plus
+// the gate params of every in-view sub-part.
 export function recordedRelevantKeys(part, view, params, readsOf) {
   try {
     const relevant = new Set();
     let predicted = null;
+    let resolved = null;
     for (const name of viewSubParts(part, view, params)) {
       const rec = readsOf(name);
-      if (rec) { for (const k of rec) relevant.add(k); continue; }
+      if (rec) {
+        for (const k of rec) relevant.add(k);
+        // derive() once per call, and only if some sub-part has a pose to read.
+        // A throwing derive() costs only the place reads, never the recorded ones.
+        if (resolved === null && placeOf(part.parts[name])) {
+          try { resolved = resolveParamsAttributed(part, params); } catch { resolved = false; }
+        }
+        if (resolved) for (const k of placeReadKeys(part, view, params, name, resolved)) relevant.add(k);
+        continue;
+      }
       predicted ??= subPartReadKeys(part, view, params);
       if (predicted === RELEVANT_ALL) return RELEVANT_ALL;
       for (const k of predicted.get(name) ?? []) relevant.add(k);

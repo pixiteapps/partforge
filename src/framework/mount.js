@@ -10,10 +10,13 @@ import { createTooltipPresenter, attachButtonTooltips } from "./tooltip.js";
 import { loadCamera, loadRenderMode, loadEnvironment } from "./view-state.js";
 import { isFaceAlignedState } from "./projection.js";
 import { attachViewStyleControls } from "./view-style-controls.js";
+import { attachSelectionPopover } from "./selection-popover.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
 import { declaresMaterials, resolveMaterial } from "./materials/resolve.js";
 import { printFrameMatrix } from "./materials/print-frame.js";
-import { burnsFor, realisticDisplay, sheetFrameFor } from "./materials/sheet-look.js";
+import { realisticDisplay, sheetFrameFor, wantsSheetFrame } from "./materials/sheet-look.js";
+import { pruneOverrides } from "./materials/overrides.js";
+import { subPartRows } from "./sub-part-list.js";
 import { buildControls } from "./controls.js";
 import { recordedRelevantKeys, subPartParamKeys } from "./param-deps.js";
 import { createMeshCache } from "./mesh-cache.js";
@@ -40,6 +43,7 @@ import { attachAnnotateControls } from "./annotate/annotate-controls.js";
 import { attachSketchToolbar } from "./annotate/sketch-toolbar.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
 import { createPreviewGate } from "./preview-gate.js";
+import { samplePreviewAnimation } from "./preview-animation.js";
 import { observeViewbarClear } from "./viewbar-clear.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
@@ -70,7 +74,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState }) {
   return {
     ready, dispose, setParams,
     // Whether the `preview` GLB handed to mount() is on screen (see mount's
@@ -132,7 +136,34 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
       // from meta.environment (or the default) would outrank the part's own
       // meta.environment on the next mount, masking an edit to it.
       ...(viewer.isEnvironmentChosen?.() ? { environment: viewer.getEnvironment() } : {}),
+      // Only while something is overridden: an empty map would be noise in a
+      // token hosts compare and store.
+      ...(() => { const d = viewer.getDisplayOverrides?.(); return d && Object.keys(d).length ? { display: d } : {}; })(),
+      // The open selection popover, so a remount reopens it where it was.
+      ...(() => { const s = selectionState?.(); return s ? { selection: s } : {}; })(),
     }),
+    // The selection popover (mount's `selectionPopover` option), or null:
+    // { setSlotHeight(px), onSlotChange(cb) → off, onClose(cb) → off, close(), isOpen() }.
+    selection: selection ?? null,
+    // --- per-sub-part display overrides (spec 2026-10-13 part appearance controls) ---
+    // Live, no rebuild: appearance keys (material, colour, finish) merge over
+    // the authored `display` for every render; `hidden` and `opacity` are how
+    // the user is looking and never reach a material read, an export or a
+    // host's save. All of it rides getViewerState().display above.
+    setSubPartDisplay: (name, patch) => viewer.setSubPartDisplay?.(name, patch) ?? null,
+    getSubPartDisplay: (name) => viewer.getSubPartDisplayState?.(name) ?? null,
+    clearSubPartDisplay: (opts) => viewer.clearSubPartDisplay?.(opts),
+    onSubPartDisplayChange: (cb) => viewer.onDisplayChange?.(cb) ?? (() => {}),
+    // Every sub-part as a row (sub-part-list.js), for a host's own list; the
+    // active view unless `view` names another.
+    listSubParts: listSubParts ?? (() => []),
+    // Open the popover on the appearance card for `name`; false when there is
+    // no popover (a host with neither #viewbar nor a view cube stack).
+    openAppearance: openAppearance ?? (() => false),
+    // "saved" | "screen-only" | "blocked": the card's footer copy. A host that
+    // persists overrides into source says "saved"; one that cannot, for this
+    // sub-part, says "blocked"; the default is "screen-only".
+    setDisplaySaveState: setDisplaySaveState ?? (() => {}),
     // Every custom control's transient state (selection, a scroll position),
     // keyed by param, as plain JSON — the panel's twin of getViewerState. Hand
     // it back as mount()'s `panelState` and a remount comes up with the same
@@ -251,8 +282,11 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.147.0: a cached `preview` GLB is drawn before the kernel
-// boots and swapped in place by the first build; 0.141.0: a place()-able sub-part
+// Embedding contract (0.158.0: a preview GLB may carry its view's autoplay
+// animation — mount({ preview }) draws its opening pose and does not play it,
+// mountPreview plays it unless `animate: false`, and exportPreview bakes it only
+// when every track is place-only; 0.147.0: a cached `preview` GLB is drawn before
+// the kernel boots and swapped in place by the first build; 0.141.0: a place()-able sub-part
 // is delivered in its canonical frame and posed by the viewer; pose-only edits
 // never rebuild):
 //   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload, onViewChange });
@@ -374,7 +408,9 @@ function createCleanupStack() {
 //                          // measure, sketch and cutaway wait; orbit, the view cube,
 //                          // the view style and the rail work
 //   await runtime.exportPreview();  // the view on screen as a preview GLB (Uint8Array,
-//                          // partforge/gltf), fast-path poses baked in. Rejects while
+//                          // partforge/gltf), fast-path poses baked in, plus the
+//                          // view's autoplay animation when every track is
+//                          // place-only. Rejects while
 //                          // previewActive, before the view is fully built (a pending
 //                          // rebuild counts), for a view other than the one on screen,
 //                          // and after dispose
@@ -400,8 +436,9 @@ function createCleanupStack() {
 //                                         // payload is small, only that it is bounded.
 // viewerState: ViewerState               // a previous mount's runtime.getViewerState(), handed back to
 //                                         // resume the camera, projection, cutaway, render mode,
-//                                         // environment and per-style feature-line preferences
-//                                         // where that mount
+//                                         // environment, per-style feature-line preferences and
+//                                         // per-sub-part display overrides (`display`, pruned for
+//                                         // this part) where that mount
 //                                         // left them. For a host that applies edits by REMOUNTING: the
 //                                         // part changed, the user's view of it should not. Omit on a
 //                                         // first mount — the viewer then restores its own persisted
@@ -412,7 +449,10 @@ function createCleanupStack() {
 //                                         // the first live build, camera kept. Only a file for the view
 //                                         // on screen is drawn, and only its sub-parts of that view; a
 //                                         // file for another view, or one that will not decode, is
-//                                         // logged once and ignored.
+//                                         // logged once and ignored. A file that carries the view's
+//                                         // baked autoplay animation (encoder version 4) is drawn
+//                                         // in its opening pose and never played here (playing it is
+//                                         // mountPreview's); the first live build replaces it.
 // panelState: PanelState                 // a previous mount's runtime.getPanelState(): the transient
 //                                         // state of the part's custom controls (a selected tile), keyed
 //                                         // by param. Same remount story as viewerState; omit on a first
@@ -427,6 +467,14 @@ function createCleanupStack() {
 //                                         // message — and calls runtime.annotate.send() itself.
 //                                         // Ignored without onAnnotationSend (there is no toolbar
 //                                         // to place it in).
+// selectionPopover: { slot: boolean }    // opt in to the selection popover: a pick
+//                                         // (onPick required) opens a popover at the
+//                                         // spot — the sub-part's swatch/label/material
+//                                         // (opens its appearance card), an eye, ✕ —
+//                                         // and, with slot: true, an empty slot the
+//                                         // host floats its own UI over (see
+//                                         // runtime.selection). Absent or not an
+//                                         // object: no popover, exactly as before.
 // onAssetUpload(blob, { kind, filename }) // the drop widget's (widgets/file-drop.js) upload hook:
 //                                         // async, resolves to a source string (an https: URL or a
 //                                         // host token) that gets written into the param. `blob` is
@@ -462,6 +510,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
                               viewerState, preview,
                               files, panelState,
                               annotateSend = "viewbar",
+                              selectionPopover,
                               container: legacyContainer, controls: legacyControls } = {}) {
   // --- element resolution (the only getElementById calls in the framework, save the ?pickserver client's optional #viewbar lookup) ----
   const byId = (id) => document.getElementById(id);
@@ -604,6 +653,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
 
     // View tabs (generated from part.views) + live params. A tab switch shows the
     // cached assembly instantly if it's current, else auto-builds what's missing.
+    // The popover's Parts section (attachViewStyleControls' `parts` seam) follows
+    // the active view; declared here because tabsCtl's onChange reads it.
+    const viewChangeListeners = new Set();
     const tabsCtl = createViewTabs(els.tabs, part, {
       onChange: (name) => {
         // FIRST: the outgoing animation restores its param snapshot, so the
@@ -616,6 +668,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // (and clear the posed ones' matrices) before anything else reads them.
         fastPath.apply(viewSubParts(part, view(), params));
         updateRelevance(); loop.kick(); animCtl?.autoplayKick();
+        for (const cb of [...viewChangeListeners]) { try { cb(name); } catch { /* listener's problem */ } }
         onViewChange?.(name);
       },
     });
@@ -740,6 +793,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // right rig first time rather than the default and then this one.
     const initialEnv = viewerState?.environment ?? loadEnvironment();
     if (initialEnv) viewer.setEnvironment(initialEnv);
+    // Carried display overrides, pruned for THIS part (materials/overrides.js):
+    // a renamed sub-part's entry goes, and an appearance key that now equals the
+    // authored value goes — which is how an owner's saved change self-cleans
+    // after the remount that applied it. Restored before the first showView so
+    // the first frame already draws the override, hidden pieces included.
+    for (const [name, override] of Object.entries(pruneOverrides(viewerState?.display, part))) {
+      viewer.setSubPartDisplay(name, override);
+    }
     // Realistic mode by the same precedence, requested HERE rather than on the
     // first accepted build: every mount has a fresh renderer, so the
     // environment loads again, and starting now runs that alongside the build
@@ -760,12 +821,71 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // cube's bottom-right corner, in the stack, hiding with the cube. It is
     // a #viewbar child, so --pf-viewbar-clear below measures it for free (the
     // bar grows wider, not taller).
+    // The Parts seam (view-style-controls.js), shared with the selection
+    // popover below; an older popover ignores it.
+    const partsSeam = {
+      list: () => subPartRows(part, { view: view(), params, overrides: viewer.getDisplayOverrides?.() ?? {} }),
+      setDisplay: (name, patch) => viewer.setSubPartDisplay(name, patch),
+      clear: (opts) => viewer.clearSubPartDisplay(opts),
+      onChange: (cb) => viewer.onDisplayChange?.(cb) ?? (() => {}),
+      onViewChange: (cb) => { viewChangeListeners.add(cb); return () => viewChangeListeners.delete(cb); },
+      getState: (name) => viewer.getSubPartDisplayState(name),
+    };
     const viewStyle = attachViewStyleControls(viewer, {
       stage: els.viewer,
       toolbar: els.viewer.querySelector("#viewbar"),
       anchor: viewcube.element,
+      parts: partsSeam,
     }, { tooltip });
     cleanup.defer(() => viewStyle.detach());
+    // The selection popover (spec 2026-10-14): opened by the picker below,
+    // following the held pick marker. Only with onPick, and only for a host
+    // that passed the option as an object.
+    const selectionOpt = onPick && selectionPopover && typeof selectionPopover === "object"
+      ? { slot: selectionPopover.slot === true } : null;
+    let selPopover = null;
+    let pendingSelection = null; // a carried selection waiting for its marker's first anchor
+    // The marker's anchor is in canvas px; the popover lives in the stage.
+    const toStage = (a) => {
+      if (!a) return null;
+      const s = els.viewer.getBoundingClientRect();
+      const c = viewer.domElement.getBoundingClientRect();
+      return { x: a.x + c.left - s.left, y: a.y + c.top - s.top, visible: a.visible !== false };
+    };
+    if (selectionOpt) {
+      selPopover = attachSelectionPopover({
+        stage: els.viewer, canvas: viewer.domElement, slot: selectionOpt.slot, parts: partsSeam,
+        renderThumb: viewer.renderMaterialThumbnail ? (id, display) => viewer.renderMaterialThumbnail(display, { size: 96 }) : null,
+        getSaveState: () => viewStyle.getSaveState?.() ?? "screen-only",
+        // Every close lets the marker go. Its null anchor arrives with the
+        // popover already closed, so the listener below ignores it.
+        onClosed: () => viewer.releaseFlashPoints?.(),
+        // Converted at every placement, not once per anchor: the canvas can
+        // move within the stage (a dock inset) with no new anchor arriving.
+        toStage,
+      });
+      cleanup.defer(() => selPopover.detach());
+      cleanup.defer(viewer.onFlashAnchorChange?.((a) => {
+        if (pendingSelection && a) {
+          const carried = pendingSelection;
+          pendingSelection = null;
+          // Straight onto the carried page: one slot report, not open-then-collapsed.
+          // A refusal lets go of the marker restoreCarriedSelection lit and held.
+          if (!selPopover.open({ subPart: carried.subPart, anchor: a, page: carried.page })) viewer.releaseFlashPoints?.();
+          return;
+        }
+        if (!selPopover.isOpen()) return;
+        if (!a) { selPopover.close("gone"); return; }
+        selPopover.setAnchor(a);
+      }) ?? (() => {}));
+      const closeGone = () => selPopover.close("gone");
+      viewChangeListeners.add(closeGone);
+      cleanup.defer(() => viewChangeListeners.delete(closeGone));
+      // A mode that claims the canvas closes it (measureMode and annotateMode
+      // are both created above).
+      cleanup.defer(measureMode.onModeChange(() => { if (measureMode.isEnabled()) selPopover.close("gone"); }));
+      if (annotateMode) cleanup.defer(annotateMode.onModeChange(() => { if (annotateMode.isEnabled()) selPopover.close("gone"); }));
+    }
     // setHidden takes one boolean, and there are two independent reasons to hide
     // the cube: Sketch mode (below) and a crowded transport bar (wired into the
     // animation controls further down). Applied straight, whichever fires last
@@ -842,16 +962,26 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // deliberately not guarded — one is armed by an explicit dev toggle,
         // the other per agent request.
         suppressed: () => previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false),
-        onPick: (selection, anchor) => onPick({
-          selection,
-          label: selection.feature?.label ?? part.parts[selection.subPart]?.label ?? selection.subPart,
-          prompt: formatSelection(selection, { style: "prompt" }),
-          token: formatSelection(selection, { style: "token" }),
-          // Where the marker is on the canvas, in CSS px from its top-left, so
-          // a host can put its own UI beside the dot on the first frame rather
-          // than a round trip later.
-          anchor,
-        }),
+        onPick: (selection, anchor) => {
+          onPick({
+            selection,
+            label: selection.feature?.label ?? part.parts[selection.subPart]?.label ?? selection.subPart,
+            prompt: formatSelection(selection, { style: "prompt" }),
+            token: formatSelection(selection, { style: "token" }),
+            // Where the marker is on the canvas, in CSS px from its top-left, so
+            // a host can put its own UI beside the dot on the first frame rather
+            // than a round trip later.
+            anchor,
+          });
+          // After the host has its chip: open at the spot, and keep the marker.
+          if (selPopover && selPopover.open({ subPart: selection.subPart ?? null, anchor })) {
+            viewer.holdFlashPoint?.();
+          } else if (selPopover?.isOpen()) {
+            // A pick it cannot show (slot-less, no listed sub-part) moves on from
+            // the open one rather than leaving it, and its held dot, behind.
+            selPopover.close("dismiss");
+          }
+        },
       });
       cleanup.defer(() => picker.detach());
       picker.setActive(true);
@@ -877,6 +1007,18 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     let framedView = null; // the view the camera was last framed to (null until first show)
     let cameraRestored = false; // saved camera applied once, on the first frame after load
     let cutawayRestored = false; // a carried cutaway, applied once — after any preview, never on one
+    let selectionRestored = false; // a carried selection, tried once, after the camera
+    function restoreCarriedSelection() {
+      selectionRestored = true;
+      const c = viewerState?.selection;
+      if (!selPopover || !c || !Array.isArray(c.point) || c.point.length !== 3 || !c.point.every(Number.isFinite)) return;
+      const subPart = typeof c.subPart === "string" ? c.subPart : null;
+      if (subPart !== null && !partsSeam.list().some((r) => r.name === subPart && r.inView)) return;
+      pendingSelection = { subPart, page: c.page === "appearance" ? "appearance" : "spot" };
+      viewer.flashPoint(c.point);
+      // hold() publishes the marker's anchor synchronously; the listener opens us.
+      if (!viewer.holdFlashPoint?.()) pendingSelection = null;
+    }
 
     // Per-sub-part cache-validity tracker (Layer 1): view/version/caching change over
     // time, so they're passed as getters; params is a stable in-place-mutated object.
@@ -1014,6 +1156,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // — not the carried one.
         restoreCarriedCutaway(viewer.getCameraState());
       }
+      if (cameraRestored && !selectionRestored && !previewGate.isActive()) restoreCarriedSelection();
     }
 
     // Frames the realistic look reads, for the geometry just delivered:
@@ -1027,10 +1170,18 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     //  - sheet frames for the burn pass (materials/sheet-look.js): a laser sheet in a wood,
     //    mapped back into its canonical frame — from data, no probe.
     // Each describes the delivered mesh (which a later pose-only repair only moves).
-    const layerLined = new Set(Object.keys(part.parts).filter((n) => {
-      try { return resolveMaterial(realisticDisplay(part.parts[n])).params.pattern === "layer-lines"; } catch { return false; }
-    }));
-    const burning = new Set(Object.keys(part.parts).filter((n) => burnsFor(part.parts[n])));
+    // Which sub-parts need frames is read off the EFFECTIVE display at the time
+    // the frames are computed, not fixed at mount: a live material change (the
+    // Parts section) can turn a plain piece into a layer-lined print, and it
+    // must get its print frame without a rebuild. So every delivery's
+    // dispatch record is kept (one small object per sub-part), and computeFrames
+    // decides per name.
+    const effectiveSubPart = (n) => ({ ...part.parts[n], display: viewer.effectiveDisplayOf?.(n) ?? part.parts[n].display });
+    const isLayerLined = (n) => {
+      try { return resolveMaterial(realisticDisplay(effectiveSubPart(n))).params.pattern === "layer-lines"; } catch { return false; }
+    };
+    // A burning laser sheet, or a canonical sheet part (laser or routed) in plywood.
+    const isBurning = (n) => wantsSheetFrame(effectiveSubPart(n));
     // LAZY: a delivery only records the view and params its job was DISPATCHED with
     // (`dispatched`, set where the loop sends) — not the live ones, which a delivery shown
     // during playback was never built at; the viewer pulls the frames (computeFrames)
@@ -1039,20 +1190,32 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // snapshot keeps a late computation describing the mesh actually delivered.
     const printFrames = {};
     const sheetFrames = {};
-    const undrawnFrames = new Map(); // sub-part -> { at: { view, params } its delivered mesh was built at, frame }
+    const deliveredAt = new Map(); // sub-part -> { at: { view, params }, frame } of its delivered mesh (kept, not consumed)
+    const undrawnFrames = new Set(); // sub-part names whose frames are stale
+    // The (print, burn) pair each name's frames were last computed for. A display
+    // change re-stales a name only when its pair flips — hide, show, opacity and a
+    // swap between two layer-lined (or two burning) materials leave the frames
+    // valid, so a see-through drag in realistic mode never re-probes a placed piece.
+    const frameNeeds = new Map();
+    const needsKey = (n) => `${isLayerLined(n) ? 1 : 0}${isBurning(n) ? 1 : 0}`;
     // `meshes` are the reply's deliveries: each one's `frame` ("canonical" | "posed"; an older
     // worker sends none, so posed) rides beside the view/params so the frames describe it.
     function recordFrames(meshes) {
-      const wanted = meshes.filter((m) => layerLined.has(m.name) || burning.has(m.name));
-      if (!wanted.length) return;
-      for (const m of wanted) {
-        undrawnFrames.set(m.name, { at: dispatched.get(m.name) ?? null, frame: m.frame ?? "posed" }); // at null: built at params nobody recorded
+      for (const m of meshes) {
+        deliveredAt.set(m.name, { at: dispatched.get(m.name) ?? null, frame: m.frame ?? "posed" }); // at null: built at params nobody recorded
+        undrawnFrames.add(m.name);
       }
       viewer.invalidateFrames?.();
     }
     function computeFrames() {
       const resolvedFor = new Map(); // one resolveParams per delivery, not per sub-part
-      for (const [n, { at, frame }] of undrawnFrames) {
+      for (const n of undrawnFrames) {
+        const rec = deliveredAt.get(n);
+        if (!rec) continue;
+        const { at, frame } = rec;
+        const needPrint = isLayerLined(n), needBurn = isBurning(n);
+        frameNeeds.set(n, `${needPrint ? 1 : 0}${needBurn ? 1 : 0}`);
+        if (!needPrint && !needBurn) { delete sheetFrames[n]; continue; }
         if (at && !resolvedFor.has(at)) {
           try { resolvedFor.set(at, resolveParams(part, at.params)); } catch { resolvedFor.set(at, null); } // diagnosed by the build
         }
@@ -1064,8 +1227,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         if (!resolved) { delete sheetFrames[n]; continue; }
         // For a views-map sub-part the export pose is the build itself (plus a sheet pose), so a canonical
         // delivery's print frame is identity — no special case, the probe reads the compiled placement.
-        if (layerLined.has(n)) printFrames[n] = printFrameMatrix(part.parts[n], { view: at.view, ...resolved, frame });
-        if (burning.has(n)) {
+        if (needPrint) printFrames[n] = printFrameMatrix(part.parts[n], { view: at.view, ...resolved, frame });
+        if (needBurn) {
           const f = sheetFrameFor(part.parts[n], { ...resolved, frame });
           if (f) sheetFrames[n] = f; else delete sheetFrames[n];
         }
@@ -1073,6 +1236,20 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       undrawnFrames.clear();
       return { print: { ...printFrames }, sheet: { ...sheetFrames } };
     }
+    // A display change re-stales a delivered sub-part's frames when it changes
+    // WHICH frames that piece needs (frameNeeds above); a `null` event (a clear)
+    // re-checks every delivered name. computeFrames stays lazy (viewer.js
+    // syncFrames), so a CAD-only session still computes nothing.
+    cleanup.defer(viewer.onDisplayChange?.((evt) => {
+      let stale = false;
+      for (const n of evt?.name ? [evt.name] : deliveredAt.keys()) {
+        if (!deliveredAt.has(n) || undrawnFrames.has(n)) continue; // nothing drawn yet, or already stale
+        if (frameNeeds.get(n) === needsKey(n)) continue;
+        undrawnFrames.add(n);
+        stale = true;
+      }
+      if (stale) viewer.invalidateFrames?.();
+    }) ?? (() => {}));
     viewer.setFrameSource?.(computeFrames);
 
     // Sub-parts whose latest fresh delivery had zero triangles (see the `meshes` case).
@@ -1550,7 +1727,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // buildView returns. Only the view on screen (no other view's meshes are held),
     // only when it is fully built at the live params (missingParts covers both a
     // first build and an edit still rebuilding), never a cached preview. The
-    // encoder loads on first use: a host that never exports never pays for it.
+    // view's autoplay animation rides along as channels when every track is
+    // place-only (samplePreviewAnimation decides; otherwise the file is still).
+    // The encoder loads on first use: a host that never exports never pays for it.
     async function exportPreview({ view: wanted } = {}) {
       if (disposed) throw new Error("exportPreview: this mount is disposed");
       if (previewGate.isActive()) throw new Error("exportPreview: a cached preview is showing — wait for the first build");
@@ -1563,8 +1742,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         throw new Error("exportPreview: the view on screen is not fully built");
       }
       const meshes = needed.map((name) => viewer.getSubMeshPayload(name)).filter(Boolean);
+      // The view's autoplay animation, sampled at the params the meshes above were
+      // built at. Build reads come from the cache's stamps; null (no stamp, or an
+      // every-param stamp) is unknown, so the animation is left out.
+      const animation = samplePreviewAnimation(part, current, params, {
+        buildReads: (name) => (cache.hasStamp(name) ? cache.readsOf(name) : null),
+      });
       const { encodePreviewGlb } = await import("./gltf/encode-preview.js");
-      return encodePreviewGlb({ meshes, part, view: current });
+      return encodePreviewGlb({ meshes, part, view: current, ...(animation ? { animation } : {}) });
     }
 
     return makeHandle({
@@ -1576,6 +1761,22 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       setHostPane: paneTabs.setHostPane,
       setRailLayout: paneTabs.setRailLayout,
       getView: view,                         // () => tabsCtl.current()
+      // `opts` may be null from a host (a destructuring default covers only undefined).
+      listSubParts: (opts) => subPartRows(part, { view: opts?.view ?? view(), params, overrides: viewer.getDisplayOverrides?.() ?? {} }),
+      openAppearance: (name) => viewStyle.openCard?.(name) ?? false,
+      setDisplaySaveState: (state) => { viewStyle.setSaveState?.(state); selPopover?.refreshSaveState(); },
+      selection: selPopover ? {
+        setSlotHeight: (px) => selPopover.setSlotHeight(px),
+        onSlotChange: (cb) => selPopover.onSlotChange(cb),
+        onClose: (cb) => selPopover.onClose(cb),
+        close: () => selPopover.close(),
+        isOpen: () => selPopover.isOpen(),
+      } : null,
+      selectionState: () => {
+        const st = selPopover?.getState();
+        const point = st ? viewer.getHeldAnchorPoint?.() : null;
+        return st && point ? { subPart: st.subPart, point, page: st.page } : null;
+      },
       setView: (name) => tabsCtl.select(name),
       captureView,
       getPanelState: () => panelRef?.getState() ?? {},

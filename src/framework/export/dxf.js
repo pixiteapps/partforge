@@ -111,13 +111,50 @@ function writeEntity(g, layer, path, place) {
 }
 
 // `include` picks the layers: a cutting service gets one cut-only file per piece and a
-// separate marks file (["score", "engrave"]). Only the included layers are declared.
-export function renderDxf(doc, { include = INCLUDES } = {}) {
-  for (const inc of include)
+// separate marks file (["score", "engrave"]). Only the written layers are declared.
+// A layer carrying its own `name` (a routed layer) is written under that name and
+// colour; one without is a laser layer under LAYER_FOR/DXF_LAYERS. `include`
+// undefined writes every layer; a list writes only the named laser classes, so a
+// cutting service's cut-only and marks files never carry a routed layer by accident.
+const NAME_RE = /^[A-Z0-9_.]{1,31}$/;
+function layerNameOf(layer) {
+  if (layer.name === undefined) return LAYER_FOR[layer.id];
+  if (!NAME_RE.test(layer.name) || !Number.isInteger(layer.color)) throw new Error(`renderDxf: layer ${JSON.stringify(layer.id)} needs a DXF name (A-Z, 0-9, _ .) and an integer colour`);
+  return layer.name;
+}
+
+export function renderDxf(doc, { include } = {}) {
+  const all = include === undefined;
+  for (const inc of include ?? [])
     if (!INCLUDES.includes(inc)) throw new Error(`renderDxf: include lists "cut", "score" and "engrave" only, got ${JSON.stringify(inc)}`);
-  const want = new Set(include);
-  const ids = ORDER.filter((id) => want.has(INCLUDE_FOR[id]));
-  const names = [...new Set(ids.map((id) => LAYER_FOR[id]))];
+  const want = new Set(include ?? INCLUDES);
+  const selected = (layer) => (layer.name !== undefined ? all : want.has(INCLUDE_FOR[layer.id]));
+  // Entity order: engrave, score, every custom layer in first-seen order across the
+  // placements, then cut-inner and cut-outer — a routed piece's holes and pockets are
+  // milled while the sheet still holds it, and the outline frees it last.
+  const custom = [];
+  for (const placement of doc.placements) for (const layer of placement.drawing.layers)
+    if (layer.name !== undefined && selected(layer) && !custom.includes(layer.id)) custom.push(layer.id);
+  const ids = [...ORDER.filter((id) => !id.startsWith("cut") && want.has(INCLUDE_FOR[id])), ...custom, ...ORDER.filter((id) => id.startsWith("cut") && want.has(INCLUDE_FOR[id]))];
+  // The LAYER table, in the entity order. A laser-only document (no named layer written)
+  // declares every INCLUDED laser class whether or not a placement draws on it — the
+  // laser writer's bytes, unchanged. A document with a named (routed) layer declares
+  // only the layers actually present, laser classes included, so a router file carries
+  // no empty ENGRAVE/SCORE rows.
+  const present = (id) => doc.placements.some((pl) => pl.drawing.layers.some((l) => l.id === id));
+  const onlyPresent = custom.length > 0;
+  const names = [], colors = new Map();
+  const declare = (name, color) => { if (!names.includes(name)) { names.push(name); colors.set(name, color); } };
+  for (const id of ids) {
+    if (LAYER_FOR[id] !== undefined) {
+      if (!onlyPresent || present(id)) declare(LAYER_FOR[id], DXF_LAYERS[LAYER_FOR[id]]);
+      continue;
+    }
+    for (const placement of doc.placements) {
+      const layer = placement.drawing.layers.find((l) => l.id === id);
+      if (layer) declare(layerNameOf(layer), layer.color);
+    }
+  }
   const out = [];
   const g = (code, value) => { out.push(String(code).padStart(3), String(value)); };
 
@@ -131,7 +168,7 @@ export function renderDxf(doc, { include = INCLUDES } = {}) {
   g(0, "LTYPE"); g(2, "CONTINUOUS"); g(70, 0); g(3, "Solid line"); g(72, 65); g(73, 0); g(40, "0.0");
   g(0, "ENDTAB");
   g(0, "TABLE"); g(2, "LAYER"); g(70, names.length);
-  for (const name of names) { g(0, "LAYER"); g(2, name); g(70, 0); g(62, DXF_LAYERS[name]); g(6, "CONTINUOUS"); }
+  for (const name of names) { g(0, "LAYER"); g(2, name); g(70, 0); g(62, colors.get(name)); g(6, "CONTINUOUS"); }
   g(0, "ENDTAB");
   g(0, "ENDSEC");
 
@@ -141,7 +178,7 @@ export function renderDxf(doc, { include = INCLUDES } = {}) {
       const layer = placement.drawing.layers.find((l) => l.id === id);
       if (!layer) continue;
       const place = placer(placement);
-      for (const path of layer.paths) writeEntity(g, LAYER_FOR[id], path, place);
+      for (const path of layer.paths) writeEntity(g, layerNameOf(layer), path, place);
     }
   }
   g(0, "ENDSEC");

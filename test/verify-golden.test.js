@@ -26,10 +26,10 @@ const FIXTURE = fileURLToPath(new URL("./fixtures/verify-golden.json", import.me
 const RECORD = process.env.PARTFORGE_RECORD_VERIFY_GOLDEN === "1";
 // laser-box.js is the sheet-part reference: it never had a pre-sheet verdict.
 const EXCLUDED = new Set(["laser-box.js"]);
-// The contact sheet's laser-cut views hold sheet parts too, and a sheet's laser checks run
+// The contact sheet's laser-cut and plywood views hold sheet parts too, and a sheet's laser checks run
 // on a real clock (SHEET_CHECK_BUDGET_MS) — so their verdict depends on the machine. They
 // are a dev page for judging the burn by eye, with no verdict to guard.
-const EXCLUDED_VIEWS = new Set(["material-swatches.js#laser", "material-swatches.js#unburnt"]);
+const EXCLUDED_VIEWS = new Set(["material-swatches.js#laser", "material-swatches.js#unburnt", "material-swatches.js#plywood"]);
 const TMP = mkdtempSync(join(tmpdir(), "pf-verify-golden-"));
 afterAll(() => rmSync(TMP, { recursive: true, force: true }));
 

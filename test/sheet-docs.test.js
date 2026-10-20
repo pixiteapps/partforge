@@ -4,7 +4,8 @@
 //   - its first paragraph carries the words people type when they want a laser part,
 //   - its subsections come in the promised order ("The kit" arrives with the kit),
 //   - its worked example IS src/parts/laser-box.js, byte for byte,
-//   - "What lint and verify check" names every sheet rule and metric,
+//   - "What lint and verify check" names every sheet rule and metric (the laser's and
+//     the shared ones; another process's live in that process's own section),
 //   - every sheet verify hint stands alone in at most 500 characters (cloud's
 //     sanitizers cut message and hint there; the section id rides `pattern`).
 // The lint hints' lengths are test/lint-sheet.test.js's.
@@ -12,7 +13,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { SHEET_RULES } from "../src/framework/lint/rules-sheet.js";
-import { SHEET_METRICS } from "../src/framework/process/registry.js";
+import { PROCESSES, SHEET_METRICS } from "../src/framework/process/registry.js";
 import { SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../src/framework/oracle/verify.js";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
@@ -27,10 +28,10 @@ const subsection = (title) => {
   return section.slice(i, j < 0 ? undefined : j);
 };
 
-test("one Sheet parts section, after Editing profiles and before Convex hull", () => {
+test("one Sheet parts section, after Editing profiles and before Routed parts", () => {
   expect(start).toBeGreaterThan(guide.indexOf("\n## Editing profiles\n"));
   expect(guide.indexOf("\n## Sheet parts\n", start + 1)).toBe(-1);
-  expect(guide.slice(end + 1).startsWith("## Convex hull\n")).toBe(true);
+  expect(guide.slice(end + 1).startsWith("## Routed parts\n")).toBe(true);
 });
 
 test("the section fits the 16,000-character topic cap, leaving 650 for the kit", () => {
@@ -64,9 +65,14 @@ test("the worked example is src/parts/laser-box.js, byte for byte", () => {
   expect(blocks[0][1]).toBe(read("../src/parts/laser-box.js").trimEnd());
 });
 
+// Rules and metrics a process documents in its own guide section (routed-parts), not here.
+const elsewhere = new Set(PROCESSES.filter((d) => d.docId !== "sheet-parts")
+  .flatMap((d) => [...d.lintRules.map((r) => r.id), ...Object.keys(d.metrics)]));
+
 test("What lint and verify check names every sheet rule and metric, and the budget notice", () => {
   const text = subsection("What lint and verify check");
-  for (const id of [...SHEET_RULES.map((r) => r.id), ...Object.keys(SHEET_METRICS), SHEET_CHECKS_NOTICE.metric]) {
+  const ids = [...SHEET_RULES.map((r) => r.id), ...Object.keys(SHEET_METRICS)].filter((id) => !elsewhere.has(id));
+  for (const id of [...ids, SHEET_CHECKS_NOTICE.metric]) {
     expect(text, id).toContain(`\`${id}\``);
   }
 });

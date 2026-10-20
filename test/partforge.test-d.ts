@@ -26,6 +26,7 @@ import type {
   Shape2D,
   Solid,
   SubPartDefinition,
+  SelectionRuntime,
 } from "partforge";
 import { circleProfile, circlePolygon, ringSectorProfile, offsetPolygon, pathProfile, roundedProfile, roundedRectPolygon, circularPattern, fingerBox, sheetHole, sheetPart, worldToSheet } from "partforge/geometry";
 import type { ArcContour, Region2D, SheetPose } from "partforge/geometry";
@@ -50,7 +51,7 @@ import {
   RELEVANT_ALL,
   verify,
 } from "partforge/testing";
-import type { SilhouetteMask } from "partforge/testing";
+import type { SilhouetteMask, SheetFacts, RoutedFacts } from "partforge/testing";
 
 // A tiny assertion helper: `expectType<T>(value)` fails to compile unless
 // `value` is assignable to `T`.
@@ -288,6 +289,12 @@ const previewRuntime: PreviewRuntime = mountPreview(document.body, { glb: new Ui
 expectType<Promise<void>>(previewRuntime.ready);
 expectType<string | null>(previewRuntime.getView());
 expectType<void>(previewRuntime.setHostPane("rail"));
+expectType<PreviewRuntime>(mountPreview(document.body, { glb: new Uint8Array(0), animate: false }));
+const previewStatus: "idle" | "intro" | "playing" | "paused" | "done" | undefined = previewRuntime.animation?.state().status;
+expectType<number | undefined>(previewRuntime.animation?.state().t);
+previewRuntime.animation?.pause();
+// @ts-expect-error - the animation handle is read-only
+previewRuntime.animation = null;
 expectType<string | null>(resolveDefaultView(spacer));
 expectType<number>(PREVIEW_ENCODER_VERSION);
 expectType<Promise<Uint8Array>>(encodePreviewGlb({ meshes: [{ name: "a", positions: new Float32Array(9) }], part: spacer, view: "main" }));
@@ -309,6 +316,19 @@ expectType<Promise<void>>(runtime.exportParts({
 const kitOptions: KitOptions = { printFormat: "3mf", stock: null };
 expectType<Required<KitOptions>>(validateKitOptions(kitOptions));
 expectType<"cut kit options:">(KIT_OPTIONS_ERROR);
+const routerOptions: KitOptions = { destination: "cnc-router", kerf: 0 };
+void routerOptions;
+// A sheet part declared with process "cnc-router" admits the routed keys.
+const routedSheet = sheetPart({ views: ["main"], material: "walnut", thickness: 18, process: "cnc-router",
+  profile: (k) => k.shape2d([[0, 0], [10, 0], [10, 10], [0, 10]]),
+  pockets: () => [{ region: [[1, 1], [4, 1], [4, 4], [1, 4]], depth: 3 }],
+  drills: () => [{ at: [5, 5], d: 3, depth: 18 }],
+  extra: () => [] });
+void routedSheet;
+declare const sheetFacts: SheetFacts;
+expectType<RoutedFacts | undefined>(sheetFacts.routed);
+expectType<number[] | null>(sheetFacts.at.outside);
+expectType<number | undefined>(sheetFacts.routed?.empty);
 expectType<ReadonlyArray<ExportFormatInfo>>(EXPORT_FORMATS);
 expectType<number>(KIT_DEFAULTS.margin);
 expectType<void>(runtime.setHostPane("rail"));
@@ -326,6 +346,8 @@ expectType<Array<{ id: string; label: string }>>(runtime.environment.list());
 expectType<boolean>(runtime.declaresMaterials);
 expectType<Promise<Array<{ view: string; dataUrl: string }>>>(runtime.renderViews(["iso"], { renderMode: "realistic" }));
 expectType<"cad" | "realistic" | undefined>(runtime.getViewerState().renderMode);
+expectType<SelectionRuntime | null>(runtime.selection);
+expectType<{ subPart: string | null; point: [number, number, number]; page: "spot" | "appearance" } | undefined>(runtime.getViewerState().selection);
 
 // @ts-expect-error - "photo" is not a render mode
 runtime.renderMode.set("photo");

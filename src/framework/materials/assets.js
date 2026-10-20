@@ -28,6 +28,9 @@ const URLS = {
   "pattern-plywood-color.jpg": new URL("./assets/pattern-plywood-color.jpg", import.meta.url).href,
   "pattern-plywood-normal.jpg": new URL("./assets/pattern-plywood-normal.jpg", import.meta.url).href,
   "pattern-plywood-rough.jpg": new URL("./assets/pattern-plywood-rough.jpg", import.meta.url).href,
+  "pattern-pine-plywood-color.jpg": new URL("./assets/pattern-pine-plywood-color.jpg", import.meta.url).href,
+  "pattern-pine-plywood-normal.jpg": new URL("./assets/pattern-pine-plywood-normal.jpg", import.meta.url).href,
+  "pattern-pine-plywood-rough.jpg": new URL("./assets/pattern-pine-plywood-rough.jpg", import.meta.url).href,
   "pattern-carbon.jpg": new URL("./assets/pattern-carbon.jpg", import.meta.url).href,
 };
 

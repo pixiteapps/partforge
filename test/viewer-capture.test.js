@@ -278,6 +278,22 @@ describe("captureViewsFromScene hidden objects", () => {
     });
     expect(dim.visible).toBe(false);
   });
+
+  it("captureViewsFromScene shows `reveal` objects for the pass and puts them back", () => {
+    const grid = { visible: true };
+    const hiddenMesh = { visible: false };
+    const fadedMesh = { visible: true, material: { opacity: 0.4 } };
+    const calls = [];
+    const renderer = { renderOffscreen: () => { calls.push([hiddenMesh.visible, fadedMesh.visible]); return "d"; } };
+    const liveCamera = new THREE.PerspectiveCamera();
+    captureViewsFromScene(["iso"], {
+      renderer, liveCamera, grid, bounds: { center: [0, 0, 0], radius: 1 },
+      reveal: [{ object: hiddenMesh, restore: () => { hiddenMesh.visible = false; }, show: () => { hiddenMesh.visible = true; } }],
+    });
+    expect(calls).toEqual([[true, true]]);
+    expect(hiddenMesh.visible).toBe(false);
+    expect(grid.visible).toBe(true);
+  });
 });
 
 // `recenter: true` asks captureCurrentFromScene to render the largest centred

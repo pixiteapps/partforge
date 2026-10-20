@@ -51,8 +51,8 @@ export interface ExportableSheetInfo {
  * starting `"cut kit options:"` for anything it cannot honour.
  */
 export interface KitOptions {
-  /** `"own-laser"` (default): SVG, laid out on sheets. `"service"`: DXF, one cut-only file per piece. */
-  destination?: "own-laser" | "service";
+  /** `"own-laser"` (default): SVG, laid out on sheets. `"service"`: DXF, one cut-only file per piece. `"cnc-router"`: DXF, one layered file per routed piece; kerf must be 0. */
+  destination?: "own-laser" | "service" | "cnc-router";
   /** Derived from `destination`; when given it must match. */
   cutFormat?: "svg" | "dxf";
   /** mm, 0–0.5: the cut lines move out by half of it. Default 0 (nominal geometry). */
@@ -67,6 +67,10 @@ export interface KitOptions {
   printFormat?: "stl" | "3mf";
   /** Whole number, 1–20. Default 1. */
   sets?: number;
+  /** Which way a two-sided board is turned over between sides — the axis far-side layers are mirrored about. Default `"left-right"`. */
+  flip?: "left-right" | "end-over-end";
+  /** Two-sided pieces: one layered file per piece (`"one-file"`, default), or a near file plus a `-far` file (`"two-files"`). */
+  twoSided?: "one-file" | "two-files";
 }
 
 /**
@@ -212,6 +216,8 @@ export interface MountOptions {
    * and takes precedence over the `?pick` and `?pickserver` URL modes.
    */
   onPick?: (event: PickEvent) => void;
+  /** Opt in to the selection popover (requires `onPick`): a pick opens a popover at the spot with the sub-part's appearance controls, and with `slot: true` an empty region the host floats its own UI over (`runtime.selection`). */
+  selectionPopover?: { slot: boolean };
   /** Receive exported bytes instead of partforge's own DOM download. */
   onDownload?: (file: DownloadPayload) => void;
   /** The active view (tab) name — emitted once on mount, then on every change. */
@@ -316,6 +322,8 @@ export interface CutawayState {
  * `MountOptions.viewerState`.
  */
 export interface ViewerState {
+  /** The open selection popover, reopened by the next mount if the sub-part is still in the view. */
+  selection?: { subPart: string | null; point: [number, number, number]; page: "spot" | "appearance" };
   /** The live camera pose, or `null` when the viewer could not report one. */
   camera: { pos: [number, number, number]; target: [number, number, number] } | null;
   /**
@@ -515,6 +523,43 @@ export interface AnnotateRuntime {
 }
 
 /**
+ * Where the selection popover's host slot is, or why it has none. `rect` is in
+ * CSS px from the top-left of the border box of the stage element
+ * (`elements.viewer`), not the canvas. On a stage too short for the requested
+ * height the slot is given less, and `rect.height` is what it was given.
+ */
+export type SelectionSlotReport =
+  | { state: "open"; rect: { x: number; y: number; width: number; height: number } }
+  | { state: "collapsed" }
+  | { state: "closed" };
+
+/**
+ * The selection popover's host-facing controls (`runtime.selection`). A carried
+ * selection (`viewerState.selection`) has reopened, or not, by the time
+ * `runtime.ready` resolves — check `isOpen()` after `ready`, not right after
+ * `mount()`. (A failed first build tries again on the first successful one.)
+ */
+export interface SelectionRuntime {
+  /**
+   * The height (CSS px, integer, 44–2000) the host's slot content needs. A stage
+   * too short for it applies less (never below 44); the request is kept, so a
+   * roomier stage restores it.
+   */
+  setSlotHeight(px: number): void;
+  /** Where the slot is, relative to the stage element's border box; fires on every change. Never fires for `slot: false`. */
+  onSlotChange(cb: (report: SelectionSlotReport) => void): () => void;
+  /**
+   * Why partforge closed it. A host's own `close()` does not fire this.
+   * `"gone"` also fires when anything releases the pick marker
+   * (`runtime.pickMarker.release()` included). Any close releases every held
+   * marker, including one the host held itself.
+   */
+  onClose(cb: (event: { reason: "dismiss" | "hide" | "gone" }) => void): () => void;
+  close(): void;
+  isOpen(): boolean;
+}
+
+/**
  * The yellow marker a pick flashes, as a thing with a lifetime — for a host
  * that hangs its own UI (a chat bubble, a callout) off the dot. A marker fades
  * on its own about a second after the pick, so `hold()` belongs in the `onPick`
@@ -703,6 +748,8 @@ export interface PartRuntime {
   annotate: AnnotateRuntime;
   /** The pick marker's lifetime — hold it on screen and follow it across the canvas. Always present (a no-op stand-in outside `makeHandle` tests). */
   pickMarker: PickMarkerRuntime;
+  /** The selection popover, or `null` without the `selectionPopover` option. */
+  selection: SelectionRuntime | null;
   /** Realistic render mode (docs "Materials and appearance"). set() resolves to the mode actually in effect — "cad" if assets failed to load. */
   renderMode: {
     get(): RenderMode;
@@ -733,6 +780,8 @@ export interface MountPreviewOptions {
   elements?: { chrome?: { reframe?: HTMLElement | null; theme?: HTMLElement | null } };
   /** A previous runtime's `getViewerState()`; `cutaway` is ignored (a preview has no live solid). */
   viewerState?: ViewerState | null;
+  /** Play the file's baked animation once drawn (default true). The editor's own boot preview goes through mount(), not here. */
+  animate?: boolean;
 }
 
 /** The handle `mountPreview()` returns. Every method is safe before `ready` settles. */
@@ -755,6 +804,12 @@ export interface PreviewRuntime {
   setHostPane(pane: HostPane): void;
   /** Accepted and ignored — there is no rail. */
   setRailLayout(layout: HostRailLayout): void;
+  /** The baked animation's controls: `null` before `ready`, for a still file, or with `animate: false`. */
+  readonly animation: {
+    state(): { status: "idle" | "intro" | "playing" | "paused" | "done"; t: number };
+    pause(): void;
+    resume(): void;
+  } | null;
   renderMode: {
     get(): RenderMode;
     set(mode: RenderMode): Promise<RenderMode>;
@@ -787,6 +842,8 @@ export const KIT_DEFAULTS: Readonly<{
   spacing: number;
   printFormat: "stl";
   sets: number;
+  flip: "left-right";
+  twoSided: "one-file";
 }>;
 
 /** Normalise kit options — defaults filled, `cutFormat` derived — or throw a `"cut kit options: …"` error. */

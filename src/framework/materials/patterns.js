@@ -5,10 +5,11 @@
 // they move with the sub-part under animation and never slide when the camera
 // moves. Layer lines additionally map object space through `pfPrintFrame`
 // (print-frame.js: display→export), so they run the way the part will print.
-// A laser-cut wood sheet's burn (applyBurn) composes over the wood pass in the sheet's
-// canonical frame (sheet-look.js).
+// A laminated wood's plies (applyPlies) compose over the wood pass on its cut walls, and a
+// laser-cut wood sheet's burn (applyBurn) over both, in the sheet's canonical frame
+// (sheet-look.js).
 import * as THREE from "three";
-import { BURN, srgbToLinear } from "./sheet-look.js";
+import { BURN, PLY, srgbToLinear } from "./sheet-look.js";
 
 const VERT_DECL = "varying vec3 vPfObjPos;\nvarying vec3 vPfObjNormal;\nvarying vec3 vPfPrintUpView;\nuniform mat4 pfPrintFrame;\n";
 // Wood's triplanar normal map builds its normal in OBJECT space; the fragment
@@ -358,6 +359,121 @@ export function applyBrushFrame(material) {
   return material;
 }
 
+// --- plies ------------------------------------------------------------------------
+// A laminated wood (presets.js `laminated`: plywood) shows its plies wherever a surface runs
+// across them — laser cut, router pass, or the side of a plain solid. The viewer hands each
+// such sub-part a LAMINATE frame (sheet-look.js: a canonical sheet's own frame, else
+// boxPlyFrame's), with the plies stacked along its z over [0, pfPlyT] and the face grain
+// along pfPlyGrain. On a wall each ply is drawn from scratch — side grain (the colour map
+// laid along the wall, each ply its own stretch of it) or end grain (darker, rougher, a fine
+// mottle), whichever its grain shows that wall — with its own tone, and a glue line at
+// every inner boundary. Injected where the burn's colour body goes, before
+// <normal_fragment_begin>; applyPlies runs first, so the burn (placed after this) chars the
+// plies it finds and keeps them through its grain ratio. Every snippet sits between
+// `// pf-ply {` and `// } pf-ply`. pfPlyT = 0 (no frame yet) draws the plain wood pass.
+//
+// Box-filtered like layer lines must be: the odd/even ply split and the glue lines are each
+// their wave's integral differenced across fwidth, so plies too thin to draw average out
+// instead of shimmering, and the per-ply tone fades out as the plies do. The texture reads
+// use textureGrad on the CONTINUOUS coordinates, so a ply's jump to its own stretch of the
+// map does not drop a seam of the coarsest mip at each boundary.
+// A JS number as a GLSL float literal.
+const glf = (x) => (Number.isInteger(x) ? x.toFixed(1) : String(x));
+const vec3f = (a) => `vec3(${a.map(glf).join(", ")})`;
+const plyBlock = (glsl) => `// pf-ply {\n${glsl}\n// } pf-ply`;
+
+const PLY_FRAG_DECL = plyBlock(`uniform mat4 pfPlyFrame;
+uniform float pfPlyT;
+uniform float pfPlyCount;
+uniform vec2 pfPlyGrain;
+uniform vec3 pfPlyAvg;
+// The fraction of the pixel on odd (cross) plies.
+float pfPlyOddI(float x) { return floor(x * 0.5) + max(0.0, fract(x * 0.5) * 2.0 - 1.0); }
+float pfPlyOdd(float x) {
+  float w = max(fwidth(x), 1e-4);
+  return clamp((pfPlyOddI(x + 0.5 * w) - pfPlyOddI(x - 0.5 * w)) / w, 0.0, 1.0);
+}
+// The fraction of the pixel on a glue line: pulses of half-width h (in plies) on integers.
+float pfGlueI(float x, float h) { float y = x + h; return floor(y) * 2.0 * h + min(fract(y), 2.0 * h); }
+float pfGlue(float x, float h) {
+  float w = max(fwidth(x), 1e-4);
+  return clamp((pfGlueI(x + 0.5 * w, h) - pfGlueI(x - 0.5 * w, h)) / w, 0.0, 1.0);
+}`);
+
+// `uv` is "xy" when the colour map's figure runs along u (presets.js grain "u"), else "yx".
+const plyFragBody = (uv) => plyBlock(`float pfPlyWall = 0.0;
+if (pfPlyT > 0.0 && pfPlyCount > 0.0) {
+  vec3 pfQ = (pfPlyFrame * vec4(vPfObjPos, 1.0)).xyz;
+  vec3 pfQn = normalize(mat3(pfPlyFrame) * vPfObjNormal);
+  pfPlyWall = 1.0 - smoothstep(${glf(PLY.wallNz[0])}, ${glf(PLY.wallNz[1])}, abs(pfQn.z));
+  if (pfPlyWall > 0.0) {
+    float pfX = clamp(pfQ.z / pfPlyT, 0.0, 1.0) * pfPlyCount;  // in plies
+    float pfPly = floor(min(pfX, pfPlyCount - 0.5));
+    vec2 pfWn = normalize(pfQn.xy);
+    // How squarely each ply's grain runs into this wall: 1 is end grain.
+    float pfAlong = abs(dot(pfPlyGrain, pfWn));
+    float pfEndFace = smoothstep(0.25, 0.9, pfAlong);
+    float pfEndCross = smoothstep(0.25, 0.9, sqrt(max(0.0, 1.0 - pfAlong * pfAlong)));
+    // Two wall projections, by which in-plane axis the wall faces (the triplanar rule).
+    vec2 pfW = pow(abs(pfWn), vec2(4.0)); pfW /= (pfW.x + pfW.y);
+    float pfOff = pfPly * 37.0;  // each ply its own stretch of the map
+    vec2 pfSa = vec2(pfQ.y, pfQ.z) / pfPatternScale, pfSb = vec2(pfQ.x, pfQ.z) / pfPatternScale;
+    vec2 pfDx = vec2(dFdx(pfQ.y), dFdx(pfQ.z)) / pfPatternScale, pfDy = vec2(dFdy(pfQ.y), dFdy(pfQ.z)) / pfPatternScale;
+    vec2 pfDxb = vec2(dFdx(pfQ.x), dFdx(pfQ.z)) / pfPatternScale, pfDyb = vec2(dFdy(pfQ.x), dFdy(pfQ.z)) / pfPatternScale;
+    vec2 pfO = vec2(0.0, pfOff / pfPatternScale);
+    vec3 pfSide = textureGrad(pfPatternMap, (pfSa + pfO).${uv}, pfDx.${uv}, pfDy.${uv}).rgb * pfW.x
+                + textureGrad(pfPatternMap, (pfSb + pfO).${uv}, pfDxb.${uv}, pfDyb.${uv}).rgb * pfW.y;
+    // End grain: the same map read ACROSS its figure and finer, kept only as a mottle.
+    float pfE = ${glf(PLY.endScale)};
+    vec3 pfEndT = textureGrad(pfPatternMap, ((pfSa + pfO) * pfE).${uv === "xy" ? "yx" : "xy"}, (pfDx * pfE).${uv === "xy" ? "yx" : "xy"}, (pfDy * pfE).${uv === "xy" ? "yx" : "xy"}).rgb * pfW.x
+                + textureGrad(pfPatternMap, ((pfSb + pfO) * pfE).${uv === "xy" ? "yx" : "xy"}, (pfDxb * pfE).${uv === "xy" ? "yx" : "xy"}, (pfDyb * pfE).${uv === "xy" ? "yx" : "xy"}).rgb * pfW.y;
+    float pfAvgL = max(dot(pfPlyAvg, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
+    float pfMott = mix(1.0, dot(pfEndT, vec3(0.2126, 0.7152, 0.0722)) / pfAvgL, ${glf(PLY.endMottle)});
+    vec3 pfEnd = pfPlyAvg * ${glf(PLY.endTone)} * ${vec3f(PLY.endWarm)} * pfMott;
+    float pfOdd = pfPlyOdd(pfX);
+    float pfEndness = mix(pfEndFace, pfEndCross, pfOdd);
+    vec3 pfCol = diffuse * mix(pfSide, pfEnd, pfEndness);
+    // Each veneer its own tone, fading out as the plies get too thin to tell apart.
+    float pfJ = (pfHash(vec3(pfPly, 7.13, 3.71)) * 2.0 - 1.0) * ${glf(PLY.jitter)};
+    pfCol *= 1.0 + pfJ * (1.0 - smoothstep(0.3, 0.8, fwidth(pfX)));
+    float pfH = 0.5 * ${glf(PLY.glueMm)} * pfPlyCount / pfPlyT;
+    float pfG = pfGlue(pfX, pfH) * step(0.5, pfX) * step(pfX, pfPlyCount - 0.5);
+    pfCol = mix(pfCol, pfCol * ${glf(PLY.glue)} * ${vec3f(PLY.glueTint)}, pfG);
+    diffuseColor.rgb = mix(diffuseColor.rgb, pfCol, pfPlyWall);
+    roughnessFactor = mix(roughnessFactor, clamp(roughnessFactor + ${glf(PLY.endRough)} * pfEndness, 0.0, 1.0), pfPlyWall);
+  }
+}`);
+
+const PLY_FRAG_NORMAL = plyBlock(`normal = normalize(mix(normal, nonPerturbedNormal, pfPlyWall * ${glf(1 - PLY.relief)}));`);
+
+// `faceAvg` is the preset's own colour (0xRRGGBB) — its texture's average, never the tint.
+// Wood only, like the burn; the viewer sets the frame uniforms (viewer.js applyPlyFrame).
+export function applyPlies(material, { faceAvg }) {
+  const uniforms = material.userData.patternUniforms;
+  if (!uniforms?.pfGrainSwap) return material;
+  Object.assign(uniforms, {
+    pfPlyFrame: { value: new THREE.Matrix4() },
+    pfPlyT: { value: 0 },
+    pfPlyCount: { value: 0 },
+    pfPlyGrain: { value: new THREE.Vector2(1, 0) },
+    pfPlyAvg: { value: new THREE.Color(faceAvg) },
+  });
+  const uv = material.userData.pfGrain === "v" ? "yx" : "xy";
+  const prev = material.onBeforeCompile;
+  const prevKey = material.customProgramCacheKey;
+  material.onBeforeCompile = (shader, renderer) => {
+    prev?.call(material, shader, renderer); // applyPattern's hook copies `uniforms` — ply uniforms included
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", `#include <common>\n${PLY_FRAG_DECL}`)
+      .replace("#include <normal_fragment_begin>", `${plyFragBody(uv)}\n#include <normal_fragment_begin>`)
+      .replace("#include <emissivemap_fragment>", `${PLY_FRAG_NORMAL}\n#include <emissivemap_fragment>`);
+  };
+  const base = prevKey && prevKey !== THREE.Material.prototype.customProgramCacheKey ? prevKey.call(material) : "";
+  material.customProgramCacheKey = () => `${base}|pf-ply`;
+  material.needsUpdate = true;
+  return material;
+}
+
 // --- laser burns ------------------------------------------------------------------
 // A laser-cut sheet in a wood shows what the laser did to it (sheet-look.js decides which
 // sub-parts, and mount hands the viewer each one's canonical frame): cut walls charred,
@@ -378,22 +494,12 @@ export function applyBrushFrame(material) {
 // vertex stage is untouched — the pass reads the varyings every pattern already has. With
 // pfSheetT = 0 (no frame delivered yet) it draws plain wood. No noise term: an unfiltered
 // striation would shimmer at part scale (the layer-lines lesson above).
-const glf = (x) => (Number.isInteger(x) ? x.toFixed(1) : String(x));
 const CHARCOAL = srgbToLinear(BURN.charcoal);
 const burnBlock = (glsl) => `// pf-burn {\n${glsl}\n// } pf-burn`;
 
 const BURN_FRAG_DECL = burnBlock(`uniform mat4 pfSheetFrame;
 uniform float pfSheetT;
-uniform float pfPlies;
-uniform vec3 pfFaceAvg;
-// 1 on a cross ply (an odd one), 0 on a face-grain ply: the square wave box-filtered over
-// the pixel (its integral, differenced across fwidth), so plies too thin to draw average
-// out instead of shimmering.
-float pfCrossPlyI(float x) { return floor(x * 0.5) + max(0.0, fract(x * 0.5) * 2.0 - 1.0); }
-float pfCrossPly(float x) {
-  float w = max(fwidth(x), 1e-4);
-  return (pfCrossPlyI(x + 0.5 * w) - pfCrossPlyI(x - 0.5 * w)) / w;
-}`);
+uniform vec3 pfFaceAvg;`);
 
 const BURN_FRAG_BODY = burnBlock(`float pfBurnWall = 0.0;
 float pfBurnFloor = 0.0;
@@ -411,11 +517,10 @@ if (pfSheetT > 0.0) {
   // went in.
   vec3 pfChar = min(vec3(${CHARCOAL.map((c) => c.toFixed(6)).join(", ")}), ${glf(BURN.charOfDark)} * pfFace);
   vec3 pfEdge = mix(pfFace, pfChar, min(1.0, pfK + ${glf(BURN.exit)} * (1.0 - pfZ)));
-  if (pfPlies > 0.0) pfEdge *= mix(1.0, ${glf(BURN.crossPly)}, pfCrossPly(pfZ * pfPlies));
   vec3 pfMark = mix(pfFace, pfChar, pfK - ${glf(BURN.engraveLess)});
   // The grain survives the char (sheet-look.js's burnTexel is the twin): pfEdge and pfMark
   // are what the face AVERAGE chars to, and each texel keeps its ratio to that average,
-  // blended in by BURN.grain. At 1, a pure multiply, the average chars exactly as above and
+  // blended in by BURN.grain — the plies too, which applyPlies has already drawn. At 1, a pure multiply, the average chars exactly as above and
   // no texel comes out lighter than it went in.
   vec3 pfGrain = mix(vec3(1.0), diffuseColor.rgb / max(pfFace, vec3(1e-4)), ${glf(BURN.grain)});
   pfEdge *= pfGrain;
@@ -439,7 +544,6 @@ export function applyBurn(material, { faceAvg }) {
   Object.assign(uniforms, {
     pfSheetFrame: { value: new THREE.Matrix4() },
     pfSheetT: { value: 0 },
-    pfPlies: { value: 0 },
     pfFaceAvg: { value: new THREE.Color(faceAvg) },
   });
   const prev = material.onBeforeCompile;
