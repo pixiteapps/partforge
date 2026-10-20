@@ -310,10 +310,38 @@ Rules (all lint-enforced):
   left right`) or any view-cube orientation — an edge or corner named
   vertical, then depth, then side (`top-front-left`, `top-back-right`,
   `front-left`, `bottom-back-right`, …; `top-front-right` is `iso`). One
-  mechanism per animation: an animation-level name (an intro cue at t=0), an
-  animation-level `[[t, angle], …]` list, or per-step names.
+  mechanism per animation: an animation-level angle (an intro cue at t=0), an
+  animation-level `[[t, angle], …]` list, or per-step angles.
   Cues fire during play only — scrubbing never moves the camera — and a user
   orbit disarms the remaining cues for that run.
+- **Any angle in between is an orbit**: wherever a cue takes a name it also
+  takes `{ azimuth, elevation, distance }`, in degrees and in the part's own
+  frame. `azimuth` 0 looks from the front (−Y) and turns toward the right (+X)
+  at 90, the back at 180 and the left at −90; `elevation` is degrees above the
+  horizontal, −90..90. `iso` is `{ azimuth: 45, elevation: 35.26 }` and
+  `front-right` is `{ azimuth: 45, elevation: 0 }`, so "about half as far down
+  as level from iso" is `{ azimuth: 45, elevation: 17 }`. `distance` is
+  optional: a multiple of the distance a named angle frames the part from (1,
+  the default, is the same framing; 1.5 pulls back; 0.6 moves in), 0.1..10, so
+  it keeps meaning the same thing when params change the part's size. The
+  camera always aims at the part's centre — a cue orbits and zooms, it never
+  pans. Lint (`animation-camera-invalid`) names what is wrong with a malformed
+  orbit: a missing or non-numeric angle, an elevation past ±90, a distance out
+  of range, or an unknown key.
+
+  ```js
+  steps: [
+    { label: "Assembled", camera: "iso", duration: 0.8 },
+    { label: "Expand", camera: { azimuth: 45, elevation: 17, distance: 1.3 }, duration: 2.5,
+      tracks: { explode: [[0, 0], [1, 1]] } },
+  ]
+  ```
+
+  A host can turn the view the user has on screen into one of these with
+  `runtime.getCameraCue()` — `{ cue, panned }`, where `cue` is the orbit that
+  reproduces the current angle and distance and `panned` is how far the user's
+  orbit target sits from the part's centre (a fraction of the framing radius;
+  a pan is the one thing a cue cannot carry).
 - **A camera move takes as long as its cue asks**: a per-step `camera` sweeps
   across that step's whole `duration`, and a listed cue sweeps until the next
   cue (or the end). The move that settles the camera BEFORE playback starts —

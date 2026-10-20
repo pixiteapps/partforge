@@ -5,7 +5,7 @@
 // their geometry helpers from "partforge/geometry".
 
 import type { BackendName } from "./kernel.js";
-import type { CanonicalView, ParamValue, PartDefinition } from "./part.js";
+import type { CameraOrbit, CanonicalView, ParamValue, PartDefinition } from "./part.js";
 
 export * from "./kernel.js";
 export * from "./part.js";
@@ -669,6 +669,15 @@ export interface PartRuntime {
    * view-cube click, Reframe, or an animation cue).
    */
   getViewerState(): ViewerState;
+  /**
+   * The user's current view as an animation camera cue, for "keep the view I
+   * have now": write `cue` as a `camera` value and playing it lands on this
+   * angle and distance. Cues always aim at the part's centre, so a pan cannot
+   * be carried — `panned` says how far the user's orbit target sits from that
+   * centre, as a fraction of the framing radius (0 when they never panned).
+   * Null with nothing on screen. Safe after `dispose()`.
+   */
+  getCameraCue(): { cue: CameraOrbit; panned: number } | null;
   /**
    * True while the `preview` GLB is on screen: from the moment it decodes until a
    * build delivers the whole view (a build error leaves it on). Picking, hover

@@ -117,7 +117,19 @@ export function fitPoseToPoints(view, points, { fov, aspect = 1, fill }) {
 
 // `points` (flat world xyz, optional) lets a "fit" style frame the geometry
 // itself (fitPoseToPoints); without them it fits the box's eight corners.
-export function stylePose(style, view, box, { aspect = 1, points } = {}) {
+export function stylePose(style, view, box, opts = {}) {
+  const out = framedPose(style, view, box, opts);
+  // An orbit cue's `distance` multiplies whatever framing the style chose — the
+  // canonical distance already carries it (cameraPoseForView), a fit does not.
+  const k = typeof view === "object" && view !== null ? view.distance ?? 1 : 1;
+  if (k === 1 || out.fitted === false) return strip(out);
+  const { position, target } = out.pose;
+  out.pose = { ...out.pose, position: [0, 1, 2].map((i) => target[i] + (position[i] - target[i]) * k) };
+  return strip(out);
+}
+const strip = ({ pose, fov, sceneBounds }) => ({ pose, fov, sceneBounds });
+
+function framedPose(style, view, box, { aspect = 1, points } = {}) {
   const fov = style.camera.fov;
   const min = box?.min ?? [0, 0, 0], max = box?.max ?? [0, 0, 0];
   const center = [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2];
@@ -130,7 +142,7 @@ export function stylePose(style, view, box, { aspect = 1, points } = {}) {
 
   if (style.camera.framing === "canonical" || diag === 0) {
     const radius = Math.max(size[0], size[1], size[2]) / 2 || DEFAULT_RADIUS;
-    return { pose: cameraPoseForView(view, { center, radius }), fov, sceneBounds };
+    return { pose: cameraPoseForView(view, { center, radius }), fov, sceneBounds, fitted: false };
   }
 
   const fitted = points?.length >= 3 && fitPoseToPoints(view, points, { fov, aspect, fill: style.camera.fill });

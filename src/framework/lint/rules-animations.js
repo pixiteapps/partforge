@@ -12,7 +12,7 @@
 // letting the author wonder why nothing plays.
 import { err, note } from "./finding.js";
 import { EASINGS } from "../animation.js";
-import { CANONICAL_VIEWS, CAMERA_CUE_VIEWS } from "../view-angles.js";
+import { CANONICAL_VIEWS, cameraOrbitProblem, isCameraCue } from "../view-angles.js";
 import { inView } from "../sub-part-views.js";
 import { probeSubPartPose } from "../pose-probe-core.js";
 import { resolveDerivedAttributed } from "../derive.js";
@@ -374,9 +374,14 @@ export const ANIMATION_RULES = [
     id: "animation-camera-invalid",
     run: ({ part }) => {
       const out = [];
-      const badName = (v) => typeof v !== "string" || !CAMERA_CUE_VIEWS.includes(v);
-      // The seven canonical names plus the view cube's corners and edges.
-      const angles = `${CANONICAL_VIEWS.join(", ")}, or a view-cube orientation such as top-front-left or top-back-right`;
+      const badCue = (v) => !isCameraCue(v);
+      // The seven canonical names plus the view cube's corners and edges, or a free-form orbit.
+      const angles = `${CANONICAL_VIEWS.join(", ")}, a view-cube orientation such as top-front-left or top-back-right, or an orbit { azimuth, elevation, distance? } in degrees`;
+      // What to say about one bad cue: an orbit-shaped value gets its own
+      // problem named; anything else is an unknown angle.
+      const describe = (v) => (v !== null && typeof v === "object" && !Array.isArray(v)
+        ? `camera orbit ${cameraOrbitProblem(v)}`
+        : `camera ${JSON.stringify(v)} is not a camera angle`);
       for (const { name, a, base } of animEntries(part)) {
         const stepCameras = Array.isArray(a.steps)
           ? a.steps.map((s, i) => [s?.camera, i]).filter(([c]) => c !== undefined && c !== null)
@@ -384,13 +389,13 @@ export const ANIMATION_RULES = [
         if (a.camera != null && stepCameras.length) {
           out.push(err("animation-camera-invalid",
             `animation "${name}" mixes an animation-level \`camera\` with per-step cameras`,
-            "One camera mechanism per animation: either the animation-level name/cue-list, or per-step names — not both.",
+            "One camera mechanism per animation: either the animation-level angle/cue-list, or per-step angles — not both.",
             `${base}.camera`));
         }
         for (const [cam, i] of stepCameras) {
-          if (badName(cam)) {
+          if (badCue(cam)) {
             out.push(err("animation-camera-invalid",
-              `animation "${name}" step ${i} camera "${cam}" is not a camera angle`,
+              `animation "${name}" step ${i} ${describe(cam)}`,
               `Camera cues use ${angles}.`,
               `${base}.steps[${i}].camera`));
           }
@@ -398,17 +403,10 @@ export const ANIMATION_RULES = [
         // An explicit `camera: null` is "no camera", which is how
         // normalizeAnimation reads it — not a malformed value to report.
         if (a.camera == null) continue;
-        if (typeof a.camera === "string") {
-          if (badName(a.camera)) {
-            out.push(err("animation-camera-invalid",
-              `animation "${name}" camera "${a.camera}" is not a camera angle`,
-              `Camera cues use ${angles}.`,
-              `${base}.camera`));
-          }
-        } else if (Array.isArray(a.camera)) {
+        if (Array.isArray(a.camera)) {
           const cues = a.camera;
           const wellFormed = cues.length > 0 && cues.every((c) =>
-            Array.isArray(c) && c.length === 2 && Number.isFinite(c[0]) && c[0] >= 0 && c[0] <= 1 && !badName(c[1]));
+            Array.isArray(c) && c.length === 2 && Number.isFinite(c[0]) && c[0] >= 0 && c[0] <= 1 && !badCue(c[1]));
           const sorted = cues.every((c, i) => i === 0 || (Array.isArray(c) && Array.isArray(cues[i - 1]) && c[0] > cues[i - 1][0]));
           if (!wellFormed || !sorted) {
             out.push(err("animation-camera-invalid",
@@ -416,10 +414,17 @@ export const ANIMATION_RULES = [
               `Cues are \`[[t, angle], …]\` with t strictly ascending in 0..1 and angles from: ${angles}.`,
               `${base}.camera`));
           }
+        } else if (typeof a.camera === "string" || typeof a.camera === "object") {
+          if (badCue(a.camera)) {
+            out.push(err("animation-camera-invalid",
+              `animation "${name}" ${describe(a.camera)}`,
+              `Camera cues use ${angles}.`,
+              `${base}.camera`));
+          }
         } else {
           out.push(err("animation-camera-invalid",
-            `animation "${name}" \`camera\` is neither an angle name nor a cue list`,
-            "Use a canonical angle string, or `[[t, angle], …]` cues.",
+            `animation "${name}" \`camera\` is neither an angle nor a cue list`,
+            "Use an angle name, an { azimuth, elevation, distance? } orbit, or `[[t, angle], …]` cues.",
             `${base}.camera`));
         }
       }

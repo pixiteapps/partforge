@@ -676,11 +676,27 @@ export type ViewCubeOrientation =
   | "bottom-front-left" | "bottom-front-right" | "bottom-back-left" | "bottom-back-right";
 
 /**
- * A camera cue angle: one of the canonical seven or a view-cube orientation.
- * `partforge lint` rejects anything else (`animation-camera-invalid`). Cues fire
- * during play only; scrubbing never moves the camera.
+ * A free-form camera angle, for the ones no name reaches. Degrees, in the
+ * part's own frame: `azimuth` 0 looks from the front (-Y) and turns toward the
+ * right (+X) at 90, back at 180, left at -90; `elevation` is above the
+ * horizontal, -90..90. `iso` is `{ azimuth: 45, elevation: 35.26 }` and
+ * `front-right` is `{ azimuth: 45, elevation: 0 }`. `distance` multiplies the
+ * framing distance a named angle uses (default 1; 0.1..10). The camera always
+ * aims at the part's centre.
  */
-export type CameraCue = CanonicalView | ViewCubeOrientation;
+export interface CameraOrbit {
+  azimuth: number;
+  elevation: number;
+  distance?: number;
+}
+
+/**
+ * A camera cue: one of the canonical seven, a view-cube orientation, or a
+ * free-form `CameraOrbit`. `partforge lint` rejects anything else
+ * (`animation-camera-invalid`). Cues fire during play only; scrubbing never
+ * moves the camera.
+ */
+export type CameraCue = CanonicalView | ViewCubeOrientation | CameraOrbit;
 
 /** One step of a multi-step animation. Steps play in order; prev/next navigate them. */
 export interface AnimationStep {

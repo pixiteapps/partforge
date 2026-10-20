@@ -34,7 +34,7 @@ import {
 import { SUBPART_METRICS, VIEW_METRICS } from "../src/framework/verify-metrics.js";
 import { VECTOR_UNITS } from "../src/framework/geometry/vector-format.js";
 import { PROFILES } from "../src/framework/oracle/dfm-profiles.js";
-import { CANONICAL_VIEWS, CAMERA_CUE_VIEWS } from "../src/framework/view-angles.js";
+import { CANONICAL_VIEWS, CAMERA_CUE_VIEWS, CAMERA_ORBIT_KEYS } from "../src/framework/view-angles.js";
 
 // Vitest runs from the project root.
 //
@@ -257,9 +257,16 @@ describe("the verify declarations mirror the metric registries", () => {
     // alias text rather than via unionMembers, which reads literal members only.
     const rhs = /^export type CameraCue\s*=([^;]+);/m.exec(stripComments(read("types/part.d.ts")));
     expect(rhs, "types/part.d.ts declares no type CameraCue").not.toBeNull();
-    expect(rhs[1].trim()).toBe("CanonicalView | ViewCubeOrientation");
+    expect(rhs[1].trim()).toBe("CanonicalView | ViewCubeOrientation | CameraOrbit");
     expect(sorted([...unionMembers("types/part.d.ts", "CanonicalView"), ...unionMembers("types/part.d.ts", "ViewCubeOrientation")]))
       .toEqual(sorted(CAMERA_CUE_VIEWS));
+  });
+
+  test("CameraOrbit declares exactly the keys lint accepts on an orbit cue", () => {
+    const body = /^export interface CameraOrbit\s*\{([^}]*)\}/m.exec(stripComments(read("types/part.d.ts")));
+    expect(body, "types/part.d.ts declares no interface CameraOrbit").not.toBeNull();
+    const keys = [...body[1].matchAll(/^\s*(\w+)\??\s*:/gm)].map((m) => m[1]);
+    expect(sorted(keys)).toEqual(sorted(CAMERA_ORBIT_KEYS));
   });
 });
 
