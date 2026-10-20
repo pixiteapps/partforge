@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { evaluateCase } from "../src/framework/oracle/verify.js";
+import { evaluateCase, VIEW_METRICS } from "../src/framework/oracle/verify.js";
 import { resolveProfile } from "../src/framework/oracle/dfm-profiles.js";
 import { measure as measureReal } from "../src/framework/oracle/measure.js";
 import { verify as verifyFromEntry } from "../src/testing.js";
@@ -731,4 +731,24 @@ test("wall on a quick lap is unevaluated, like minWall", () => {
   const w = byKey(evaluateCase(facts, { profile: null, expect: { wall: { wall: "1.8..2.2" } } }), "subpart", "wall");
   expect(w.unevaluated).toBe(true);
   expect(w.message).toBe("not measured (quick check)");
+});
+
+test("evaluateCase peels _view.held and answers one held check", () => {
+  const facts = twoBoxFacts(); // left and right 0.2 apart, no overlap
+  const checks = evaluateCase(facts, { profile: null, expect: { _view: { held: true } } });
+  const held = pairCheck(checks, "held");
+  expect(held.scope).toBe("view");
+  expect(held.status).toBe("fail");
+  expect(held.message).toBe("right not connected to left");
+  expect(checks.filter((c) => c.metric === "held")).toHaveLength(1);
+});
+
+test("evaluateCase hands exportableNames to the held check", () => {
+  const facts = twoBoxFacts();
+  const checks = evaluateCase(facts, { profile: null, expect: { _view: { held: true } }, exportableNames: ["left"] });
+  expect(pairCheck(checks, "held").status).toBe("pass");
+});
+
+test("held is not a scalar view metric", () => {
+  expect(VIEW_METRICS.held).toBeUndefined();
 });
