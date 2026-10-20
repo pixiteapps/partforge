@@ -104,3 +104,53 @@ test("subPartParamKeys' recorded rung adds the sub-part's enabled() gate params"
   expect(predicted).toEqual(["a", "showLid"]);
   expect(recorded).toEqual(["a", "showLid"]);
 });
+
+// Regression (partforge-cloud feedback #199): a param read ONLY inside a view's
+// place() pose. Since the place-only pose change (0.141) a canonical delivery is
+// stamped with its BUILD reads alone, so the recorded rung never saw `explode`:
+// its control dimmed and its "Exploded View" section hid. The display side adds
+// each on-screen sub-part's place() reads for the CURRENT view back in — and only
+// that view's, so the slider stays hidden where nothing reads it.
+test("a param read only in a view's place() pose is relevant in that view, and only there", () => {
+  const exploded = {
+    defaults: { size: 10, explode: 1, angle: 0 },
+    views: { cutaway: { label: "Cutaway" }, assembly: { label: "Assembly" } },
+    derive: (p) => ({ lift: 14.7 * p.explode }),
+    parts: {
+      // the forge's shape: rigid poses only, so every delivery is canonical
+      knob: {
+        views: {
+          assembly: true,
+          cutaway: (s, p) => s.rotateX(180).rotateZ(p.angle).translate([0, 0, 11.3 + 14.7 * p.explode]),
+        },
+        build: (k, p) => k.cylinder({ r: p.size, h: p.size }),
+      },
+      // a derived pose input — attributed back to its raw param
+      cap: {
+        views: { assembly: true, cutaway: (s, p, d) => s.translate([0, 0, d.lift]) },
+        build: (k, p) => k.box({ min: [0, 0, 0], max: [p.size, p.size, p.size] }),
+      },
+    },
+  };
+  const buildOnly = () => new Set(["size"]); // what a canonical stamp records
+  const cut = recordedRelevantKeys(exploded, "cutaway", exploded.defaults, buildOnly);
+  expect([...cut].sort()).toEqual(["angle", "explode", "size"]);
+  const asm = recordedRelevantKeys(exploded, "assembly", exploded.defaults, buildOnly);
+  expect([...asm].sort()).toEqual(["size"]);
+
+  // runtime.controlsFor / pick scoping / measure flash share the ladder
+  expect(subPartParamKeys(exploded, "cutaway", exploded.defaults, buildOnly, "knob")).toEqual(["angle", "explode", "size"]);
+  expect(subPartParamKeys(exploded, "cutaway", exploded.defaults, buildOnly, "cap")).toEqual(["explode", "size"]);
+  expect(subPartParamKeys(exploded, "assembly", exploded.defaults, buildOnly, "knob")).toEqual(["size"]);
+});
+
+test("a throwing derive() drops only the place reads, never the recorded ones", () => {
+  const broken = {
+    defaults: { size: 10, explode: 1 }, views: { v: { label: "V" } },
+    derive: () => { throw new Error("derive broke"); },
+    parts: { a: { views: { v: (s, p) => s.translate([0, 0, p.explode]) }, build: (k, p) => k.cylinder({ r: p.size, h: p.size }) } },
+  };
+  const r = recordedRelevantKeys(broken, "v", broken.defaults, () => new Set(["size"]));
+  expect(r).not.toBe(RELEVANT_ALL);
+  expect([...r]).toEqual(["size"]);
+});
