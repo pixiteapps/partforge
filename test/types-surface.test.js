@@ -234,11 +234,11 @@ describe("the verify declarations mirror the metric registries", () => {
     expect(sorted(all)).toEqual(sorted(Object.keys(SUBPART_METRICS)));
   });
 
-  test("ViewExpectations declares VIEW_METRICS plus the two pair-wise keys", () => {
+  test("ViewExpectations declares VIEW_METRICS plus the three pair-derived keys", () => {
     const { all } = interfaceMembers("types/part.d.ts", "ViewExpectations");
-    // contacts/clearance are per-pair, so verify.js peels them off before the
-    // scalar registry loop — they are real `_view` keys with no registry entry.
-    expect(sorted(all)).toEqual(sorted([...Object.keys(VIEW_METRICS), "contacts", "clearance"]));
+    // contacts/clearance/held are pair-derived, so verify.js peels them off before
+    // the scalar registry loop — they are real `_view` keys with no registry entry.
+    expect(sorted(all)).toEqual(sorted([...Object.keys(VIEW_METRICS), "contacts", "clearance", "held"]));
   });
 
   test("DfmProfileName declares exactly the built-in process profiles", () => {

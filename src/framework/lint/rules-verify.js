@@ -28,12 +28,13 @@ export function resolveExpect(verify, p, d) {
 const isExpectation = (v) => v !== null && typeof v === "object" && !Array.isArray(v) && "expr" in v;
 const exprOf = (v) => (isExpectation(v) ? v.expr : v);
 
-// `contacts` (must-touch pairs) and `clearance` (free-fit gaps) live under
-// `verify.expect._view` but are pair-wise checks, not scalar VIEW_METRICS — mirror
-// verify.js's own peel (verify.js:143) so they never hit the scalar-metric /
-// assertion-expression checks below. Validated for real by `verify-bad-pair-check`.
+// `contacts` (must-touch pairs), `clearance` (free-fit gaps) and `held` (the
+// contact graph) live under `verify.expect._view` but are pair-derived checks,
+// not scalar VIEW_METRICS — mirror verify.js's own peel (evaluateCase) so they
+// never hit the scalar-metric / assertion-expression checks below. Validated for
+// real by `verify-bad-pair-check`.
 const peelPairKeys = (metrics) => {
-  const { contacts, clearance, ...rest } = metrics;
+  const { contacts, clearance, held, ...rest } = metrics;
   return rest;
 };
 
@@ -122,6 +123,33 @@ function checkClearance(clearance, names, path) {
     if (pair[0] !== pair[1]) out.push(...checkPairNames(pair[0], pair[1], names, pairPath));
   }
   return out;
+}
+
+// Static analogue of held.js: `true`, or the name of the sub-part the graph is
+// rooted at. Anything else throws at runtime, so it is an error here. A ghost
+// (`exportable: false`) is never printed, so it cannot be the base either — the
+// runtime would accept it and report a misleading skip.
+function checkHeld(held, parts, path) {
+  if (held === undefined || held === null || held === true) return [];
+  const names = Object.keys(parts);
+  if (typeof held === "string") {
+    if (names.includes(held)) {
+      if (parts[held]?.exportable !== false) return [];
+      return [err("verify-bad-pair-check",
+        `\`${path}\` names "${held}", which is exportable: false and never printed, so it cannot be the base`,
+        "Root the contact graph at a printed sub-part, or `held: true` for the lowest one.",
+        path)];
+    }
+    const hint = safeSuggest(held, names);
+    return [err("verify-unknown-subpart",
+      `\`${path}\` references "${held}", which is not a sub-part`,
+      `Use \`true\` (the lowest sub-part is the base) or one of the sub-part names (${names.join(", ")})${hint ? ` — did you mean "${hint}"?` : "."}`,
+      path)];
+  }
+  return [err("verify-bad-pair-check",
+    `\`${path}\` must be true or a sub-part name, got ${describe(held)}`,
+    "Set `held: true` to root the contact graph at the lowest sub-part, or `held: \"<name>\"` to root it at that sub-part.",
+    path)];
 }
 
 // `clearance`'s values genuinely are assertion expressions run through the DSL
@@ -337,6 +365,7 @@ export const VERIFY_RULES = [
       return [
         ...checkContacts(view.contacts, names, "verify.expect._view.contacts"),
         ...checkClearance(view.clearance, names, "verify.expect._view.clearance"),
+        ...checkHeld(view.held, part?.parts ?? {}, "verify.expect._view.held"),
       ];
     },
   },

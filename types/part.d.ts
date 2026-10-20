@@ -611,6 +611,11 @@ export interface ViewExpectations {
   contacts?: Array<[string, string]>;
   /** Intended free fits, keyed `"a×b"` (order-insensitive). */
   clearance?: Record<string, Expectation>;
+  /**
+   * Every exportable sub-part must be connected, through contact or overlap, to
+   * the base: the lowest sub-part (`true`) or the named one. Topological only.
+   */
+  held?: true | string;
 }
 
 /** `verify.expect`: sub-part names plus the reserved `_view` key. */
