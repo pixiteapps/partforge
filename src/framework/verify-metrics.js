@@ -130,7 +130,7 @@ export const SUBPART_METRICS = {
     hint: "the rebuild's symmetric difference vs its reference import is too large — compare the ghost overlay, then adjust the governing dimensions toward the measured reference" },
   refVolumeDeltaPct: { kind: "gate", extract: (s) => s.deviation?.volumeDeltaPct ?? null,
     hint: "rebuild volume differs from the reference import by more than the allowed percentage — a feature is missing, doubled, or mis-scaled vs the reference" },
-  refBboxDelta: { kind: "gate", extract: (s) => s.deviation?.bboxDelta ?? null,
+  refBboxDelta: { kind: "gate", form: "vector", extract: (s) => s.deviation?.bboxDelta ?? null,
     hint: "the rebuild's bounding-box corners drift from the reference import — check overall dimensions and that the rebuild is aligned to the reference's coordinates" },
   // Sheet parts (sheetPart(), partforge/geometry): each process's own checks. verify
   // volunteers them on every sheet sub-part; an author may declare them like any other.

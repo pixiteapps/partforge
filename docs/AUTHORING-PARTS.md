@@ -4375,12 +4375,16 @@ unverified.
 
 **Assertion DSL:** a bare number means equality (`holes: 1`); `">=n"`, `"<=n"`, `">n"`,
 `"<n"`, or a range `"a..b"`; an optional unit suffix `mm`/`cm`/`mm3`/`cm3`; and for
-`bbox`, `centerOfMass` and each side of `bounds`, a componentwise vector `"<=[x,y,z]"` /
-`">=[x,y,z]"` — exactly 3 components, each a plain number in mm or `*` to skip an axis.
-A vector is always one-sided: a bare `[40,40,10]` (meaning "exactly this size") is
-rejected, since a mesh's box shifts with tessellation and no tolerance would be honest
-for every part — pick `<=` for a limit or `>=` for a floor. `bounds` takes an object
-with `min` and/or `max`, each such a vector: `bounds: { min: ">=[0,0,0]", max:
+`bbox`, `centerOfMass` and each side of `bounds`, a componentwise vector — one-sided,
+`"<=[x,y,z]"` / `">=[x,y,z]"`, or two-sided with a range per axis,
+`"[28..32, 18..22, 9..11]"` (the bare comma form `"28..32,18..22,9..11"` is accepted
+too) — exactly 3 components, each a plain number in mm (or a range of them) or `*` to
+skip an axis. A bare `[40,40,10]` (meaning "exactly this size") is rejected, since a
+mesh's box shifts with tessellation and no tolerance would be honest for every part —
+pick `<=` for a limit, `>=` for a floor, or say what tolerance you mean with a range
+per axis (`"[39.5..40.5, 39.5..40.5, 9.8..10.2]"`; a zero-width `40..40` is an exact
+check with the parser's 1e-6 slack, and will fail on a chorded curve). `bounds` takes an
+object with `min` and/or `max`, each such a vector: `bounds: { min: ">=[0,0,0]", max:
 "<=[220,220,250]" }`. The parser is strict — a malformed assertion fails loudly.
 
 **A part whose typeface is a parameter needs band assertions, not points.** Glyph
