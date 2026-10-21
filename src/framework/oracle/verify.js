@@ -1,6 +1,7 @@
 import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
 import { measure as defaultMeasure } from "./measure.js";
 import { pairKey, CONTACT_EPS } from "./gaps.js";
+import { heldCheck } from "./held.js";
 import { resolveProfile, overhangAngleFor } from "./dfm-profiles.js";
 import { expandExpectations, partGatesMinWall } from "./gates.js";
 import { relevanceHash } from "../param-deps.js";
@@ -270,11 +271,11 @@ function sheetRowChecks(s, declaredExp) {
 // `overhang` is the angle the part opted into (dfm-profiles.js overhangAngleFor),
 // or null/undefined: only then does the profile's overhang rule apply, as a
 // 1 mm² warning floor — a chamfer sitting exactly on the angle sheds slivers.
-export function evaluateCase(facts, { profile, expect, subPartNames, overhang = null }) {
+export function evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang = null }) {
   const checks = [];
-  // contacts/clearance are per-pair, not scalar view metrics — peel them off
-  // before the registry loop and hand them to pairGapChecks.
-  const { contacts, clearance, ...viewScalarExp } = expect?._view ?? {};
+  // contacts/clearance/held are pair-derived, not scalar view metrics — peel
+  // them off before the registry loop. held.js explains the exportable bound.
+  const { contacts, clearance, held, ...viewScalarExp } = expect?._view ?? {};
   // No sheet part in the view: every line below runs exactly as it did before sheet
   // parts existed (test/verify-golden.test.js). With one, the bed moves from the view
   // to each printed sub-part — see the sheet-parts block above.
@@ -285,6 +286,8 @@ export function evaluateCase(facts, { profile, expect, subPartNames, overhang = 
   };
   for (const [metric, expr] of Object.entries(viewExp)) checks.push(...checksFor("view", null, metric, expr, VIEW_METRICS, facts));
   checks.push(...pairGapChecks(facts, { contacts, clearance }, subPartNames));
+  const heldResult = heldCheck(facts, held, { subPartNames, exportableNames });
+  if (heldResult) checks.push(heldResult);
 
   // Same rule as gapsSkipped above, one metric over: a min-wall gate with no reading
   // is a warn ("min wall unavailable"), which does not move `ok` — right when the
@@ -437,6 +440,9 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   };
 
   const subPartNames = Object.keys(part.parts);
+  // A reference ghost (`exportable: false`) is never printed, so it neither counts
+  // as held nor holds anything — the same exclusion measure applies to overhang.
+  const exportableNames = subPartNames.filter((n) => part.parts[n]?.exportable !== false);
   // An unmeasured case gets ONE check standing for the whole case rather than a
   // silent absence: "this preset was not checked" has to be visible in the same
   // list every other verdict lives in, or a reader counting passes sees a shorter
@@ -449,7 +455,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   }];
   const caseResults = expanded.map(({ name, params, expect }) => {
     const facts = measureCase(params);
-    return { name, params, checks: facts ? evaluateCase(facts, { profile, expect, subPartNames, overhang: overhangAngle }) : notMeasured(name) };
+    return { name, params, checks: facts ? evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang: overhangAngle }) : notMeasured(name) };
   });
   // VACUOUS VERIFY. A part that declares nothing — no profile, an empty or absent
   // `expect` — used to come back `ok: true` with zero checks, and every reader

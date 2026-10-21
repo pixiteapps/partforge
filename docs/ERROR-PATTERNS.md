@@ -198,6 +198,12 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 - **Cause:** Two sub-parts that should meet don't quite — a boss shorter than the gap it must bridge, a mis-placed mating datum in `derive()`, or a union that silently missed. Renders and volume/bbox checks cannot see sub-mm joint gaps; this check exists precisely for them.
 - **Fix:** If the pair should touch, grow the joining feature or fix the datum math so the faces meet, then declare the pair in `verify.expect._view.contacts`; if a free fit is intended, declare it under `clearance`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Self-verification (the `verify` block)".
 
+## floating-subpart
+
+- **Symptom:** A `✗ … held` failure from `verify` reporting `<name> not connected to <base>`: a sub-part that looks assembled in the preview touches nothing that reaches the base.
+- **Cause:** The piece is placed by eye rather than against a mating datum — a lid a hair above its box, a bracket beside the wall it should bolt to, a pin whose bore it was never moved into — or it is held only by a reference ghost (`exportable: false`), which is never printed. On OCCT a sub-part fully inside another reads as not touching, since overlap detection is Manifold-only.
+- **Fix:** Seat the part on a mating face by deriving its position from the face it sits on in `derive()`, or add the fastener, boss or tab that holds it, then keep `verify.expect._view.held` so the next edit re-checks it. If the piece is meant to run free in a clearance bore (a hinge pin, a print-in-place link), the clearance is correct and `held` is the wrong check for that assembly — remove `held` and declare the pair under `clearance`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Self-verification (the `verify` block)".
+
 ## expect-static-across-presets
 
 - **Symptom:** A `verify` exact gate (`holes`, `volume`, …) fails on SOME presets only — e.g. `✗ planter holes 1  (0 != 1)` on two cases while defaults pass — and the preview looks right for every preset.

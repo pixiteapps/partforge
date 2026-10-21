@@ -352,3 +352,46 @@ test("an unknown metric is reported once, not again as a bad expression", () => 
   const r = lintPart(partWith({ expect: { body: { bound: { min: ">=[0,0,0]" } } } }));
   expect(ids(r.errors)).toEqual(["verify-unknown-metric"]);
 });
+
+// --- _view.held --------------------------------------------------------------
+
+test("held: true and held: <sub-part> are accepted and not unknown metrics or bad expressions", () => {
+  for (const held of [true, "body"]) {
+    const r = lintPart(partWithTwoSubparts({ expect: { _view: { held } } }));
+    expect(ids(r.errors)).toEqual([]);
+  }
+});
+
+test("held naming no sub-part is verify-unknown-subpart with a suggestion", () => {
+  const r = lintPart(partWithTwoSubparts({ expect: { _view: { held: "bodyy" } } }));
+  expect(ids(r.errors)).toContain("verify-unknown-subpart");
+  const f = find(r, "verify-unknown-subpart");
+  expect(f.path).toBe("verify.expect._view.held");
+  expect(f.hint).toMatch(/did you mean "body"/);
+});
+
+test("held that is neither true nor a name is verify-bad-pair-check", () => {
+  for (const held of [false, 1, ["body"], { base: "body" }]) {
+    const r = lintPart(partWithTwoSubparts({ expect: { _view: { held } } }));
+    expect(ids(r.errors), JSON.stringify(held)).toContain("verify-bad-pair-check");
+    expect(find(r, "verify-bad-pair-check").path).toBe("verify.expect._view.held");
+  }
+});
+
+test("held naming an exportable: false sub-part is verify-bad-pair-check", () => {
+  const r = lintPart({
+    meta: { title: "T" },
+    defaults: { h: 10 },
+    parts: {
+      lid: { views: ["main"], exportable: false, build: (k, p) => k.box({ size: [p.h, p.h, p.h] }) },
+      body: { views: ["main"], build: (k, p) => k.box({ size: [p.h, p.h, p.h] }) },
+    },
+    views: { main: { label: "Main" } },
+    verify: { expect: { _view: { held: "lid" } } },
+  });
+  expect(ids(r.errors)).toContain("verify-bad-pair-check");
+  const f = find(r, "verify-bad-pair-check");
+  expect(f.path).toBe("verify.expect._view.held");
+  expect(f.message).toMatch(/exportable: false/);
+  expect(f.hint).toMatch(/printed sub-part/);
+});

@@ -5,10 +5,34 @@
 // (a warn, armed only by the part — see overhangAngleFor; resin prints on
 // supports, so it carries none); `clearance` mm is carried for a future gap check
 // (not enforced yet).
+//
+// `fits`, `holeUndersize` and `bridge` are the numbers an author (or the cloud
+// agent) copies into derive() for a mating feature; nothing in this repo reads
+// them yet. They are guide defaults from the FDM design guides, not measurements:
+// a calibrated printer overrides them through an inline `{ base, fits: {...} }`
+// profile, which REPLACES the fits table whole. `fits` are diametral offsets in
+// mm (negative = interference): press (a pin that never comes out), push (a cap
+// pressed on by hand), slip (a lid that lifts off), moving (a hinge pin or axle),
+// printInPlace (parts printed already assembled). `holeUndersize` is added to a
+// horizontal bore's diameter, since the top of a printed arch sags inward.
+// `bridge` is the longest flat span the process prints unsupported; resin prints
+// on supports, so it carries none.
 export const PROFILES = {
-  "fdm-pla": { bed: [220, 220, 250], minWall: 1.2, clearance: 0.2, overhang: 45 },
-  "fdm-petg": { bed: [220, 220, 250], minWall: 1.5, clearance: 0.3, overhang: 45 },
-  "resin": { bed: [120, 68, 160], minWall: 0.6, clearance: 0.1 },
+  "fdm-pla": {
+    bed: [220, 220, 250], minWall: 1.2, clearance: 0.2, overhang: 45,
+    fits: { press: -0.1, push: 0.05, slip: 0.25, moving: 0.35, printInPlace: 0.45 },
+    holeUndersize: 0.25, bridge: 10,
+  },
+  "fdm-petg": {
+    bed: [220, 220, 250], minWall: 1.5, clearance: 0.3, overhang: 45,
+    fits: { press: -0.1, push: 0.05, slip: 0.3, moving: 0.4, printInPlace: 0.5 },
+    holeUndersize: 0.3, bridge: 10,
+  },
+  "resin": {
+    bed: [120, 68, 160], minWall: 0.6, clearance: 0.1,
+    fits: { press: -0.05, push: 0.05, slip: 0.1, moving: 0.15, printInPlace: 0.2 },
+    holeUndersize: 0.05,
+  },
 };
 
 export function resolveProfile(spec) {

@@ -491,6 +491,17 @@ export interface DfmProfile {
   overhang?: number | null;
   /** Carried for a future gap check; not enforced yet. */
   clearance?: number;
+  /**
+   * Diametral fit offsets in mm, negative = interference: `press` (never comes
+   * out), `push` (pressed on by hand), `slip` (lifts off), `moving` (a pin or
+   * axle), `printInPlace` (printed assembled). Guide defaults; an inline profile
+   * replaces the whole table.
+   */
+  fits?: { press: number; push: number; slip: number; moving: number; printInPlace: number };
+  /** Added to a horizontal bore's diameter — a printed arch sags inward. */
+  holeUndersize?: number;
+  /** Longest flat span printed unsupported, mm. Absent on a process that prints on supports. */
+  bridge?: number;
   /** Inherit from a named profile and override the rest. */
   base?: DfmProfileName | DfmProfile;
 }
@@ -600,6 +611,11 @@ export interface ViewExpectations {
   contacts?: Array<[string, string]>;
   /** Intended free fits, keyed `"a×b"` (order-insensitive). */
   clearance?: Record<string, Expectation>;
+  /**
+   * Every exportable sub-part must be connected, through contact or overlap, to
+   * the base: the lowest sub-part (`true`) or the named one. Topological only.
+   */
+  held?: true | string;
 }
 
 /** `verify.expect`: sub-part names plus the reserved `_view` key. */
