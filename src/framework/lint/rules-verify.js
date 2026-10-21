@@ -160,6 +160,8 @@ function checkHeld(held, parts, path) {
 // `verify-bad-expr`, not `verify-bad-pair-check`: a malformed key is a pair-naming
 // problem, but a malformed value is an assertion-DSL problem, same as any other
 // metric's expectation.
+const DSL_HINT = "Use the assertion DSL: a bare value for equality, a comparison like `>=3`, a range like `2..5`, or a componentwise vector like `<=[60,60,60]` or `[28..32,18..22,9..11]` (with `*` to skip an axis).";
+
 function checkClearanceExprs(clearance, path) {
   if (clearance === undefined || clearance === null || typeof clearance !== "object") return [];
   const out = [];
@@ -168,7 +170,7 @@ function checkClearanceExprs(clearance, path) {
     catch (e) {
       out.push(err("verify-bad-expr",
         `the expectation for _view.clearance["${key}"] is not a valid assertion: ${e?.message || String(e)}`,
-        "Use the assertion DSL: a bare value for equality, a comparison like `>=3`, a range like `2..5`, or a componentwise vector like `<=[60,60,60]` (with `*` to skip an axis).",
+        DSL_HINT,
         `${path}[${JSON.stringify(key)}]`));
     }
   }
@@ -218,7 +220,7 @@ function checkProcessSpec(spec, path, valid, seen, depth = 0) {
 // One expectation's well-formedness against its registry entry: it parses, and it has the form the
 // metric reads — a range for `wall`, a componentwise vector for bbox/centerOfMass/the
 // sides of bounds. A bare vector gets the two legal spellings back, in its own numbers.
-const DSL_HINT = "Use the assertion DSL: a bare value for equality, a comparison like `>=3`, a range like `2..5`, or a componentwise vector like `<=[60,60,60]` (with `*` to skip an axis).";
+const VECTOR_OPS = new Set(["vle", "vge", "vrange"]);
 const capitalize = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 
 function checkExpr(target, metric, spec, reg) {
@@ -246,10 +248,24 @@ function checkExpr(target, metric, spec, reg) {
       `Write ${metric} as \`"<min>..<max>"\` with min <= max, in mm.`,
       path)];
   }
-  if (form === "vector" && parsed.op !== "vle" && parsed.op !== "vge") {
+  if (form === "vector" && parsed.op !== "vle" && parsed.op !== "vge" && parsed.op !== "vrange") {
     return [err("verify-bad-expr",
       `the expectation for ${target}.${metric} must be a componentwise vector, got ${describe(expr)} — ${metric} is an [x,y,z] reading`,
-      `Write ${metric} as \`"<=[x,y,z]"\` or \`">=[x,y,z]"\` (componentwise; * skips an axis).`,
+      `Write ${metric} as \`"<=[x,y,z]"\`, \`">=[x,y,z]"\` or \`"[a..b,c..d,e..f]"\` (componentwise; * skips an axis).`,
+      path)];
+  }
+  // A vector on a scalar metric (`volume: "<=[1,2,3]"`) is not a parse error, and
+  // the evaluator would index a number and pass it vacuously — so it is caught here.
+  if (form !== "vector" && VECTOR_OPS.has(parsed.op)) {
+    return [err("verify-bad-expr",
+      `the expectation for ${target}.${metric} must be a single value, got ${describe(expr)} — ${metric} is one number, not an [x,y,z] reading`,
+      DSL_HINT,
+      path)];
+  }
+  if (parsed.op === "vrange" && parsed.vec.some((c) => c !== null && c[0] > c[1])) {
+    return [err("verify-bad-expr",
+      `the expectation for ${target}.${metric} must be a range vector with min <= max on every axis, got "${expr}"`,
+      `Write each axis of ${metric} as \`<min>..<max>\` with min <= max, in mm (or \`*\` to skip it).`,
       path)];
   }
   return [];

@@ -61,6 +61,33 @@ test("an unparseable assertion is an error", () => {
   expect(ids(r.errors)).toContain("verify-bad-expr");
 });
 
+test("a per-axis range vector is a valid vector expectation", () => {
+  const r = lintPart(partWith({ expect: {
+    body: { bbox: "[28..32, 18..22, 9..11]", centerOfMass: "[*, -1..1, *]", bounds: { min: "[-1..0, *, *]", max: "<=[60,60,60]" } },
+    _view: { bbox: "28..32,18..22,9..11" },
+  } }));
+  expect(ids(r.errors)).toEqual([]);
+});
+
+test("a range vector with min > max on an axis is an error", () => {
+  const r = lintPart(partWith({ expect: { body: { bbox: "[32..28, 18..22, 9..11]" } } }));
+  expect(ids(r.errors)).toContain("verify-bad-expr");
+  expect(find(r, "verify-bad-expr").message).toMatch(/min <= max/);
+});
+
+test("refBboxDelta is a per-axis reading and takes a vector", () => {
+  const r = lintPart(partWith({ expect: { body: { refBboxDelta: "<=[0.2,0.2,0.2]" } } }));
+  expect(ids(r.errors).filter((id) => id === "verify-bad-expr")).toEqual([]);
+});
+
+test("a vector of either form on a scalar metric is an error", () => {
+  for (const expr of ["[1..2, 3..4, 5..6]", "<=[1,2,3]"]) {
+    const r = lintPart(partWith({ expect: { body: { volume: expr } } }));
+    expect(ids(r.errors)).toContain("verify-bad-expr");
+    expect(find(r, "verify-bad-expr").message).toMatch(/single value/);
+  }
+});
+
 test("an unknown process profile is an error", () => {
   const r = lintPart(partWith({ process: "fdm-unobtanium", expect: {} }));
   expect(ids(r.errors)).toContain("verify-unknown-process");
