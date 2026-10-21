@@ -121,6 +121,10 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // Read at teardown time, so it is the LIVE pose — unlike the camera the
     // viewer persists for a page reload, which only records the end of a drag
     // and so misses a view-cube click, Reframe, or an animation cue.
+    // The user's current view as an animation camera cue — `{ cue, panned }`,
+    // or null with nothing on screen — so a host can turn "the way I'm looking
+    // now" into a `camera` value an author (or an agent) writes into a part.
+    getCameraCue: () => viewer.getCameraCue?.() ?? null,
     getViewerState: () => ({
       camera: viewer.getCameraState(),
       projection: viewer.getProjection?.() ?? "perspective",

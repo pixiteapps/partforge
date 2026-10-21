@@ -1,7 +1,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { safeName } from "../framework/safe-name.js";
-import { ORIENTATIONS } from "../framework/view-angles.js";
+import { ORIENTATIONS, cameraOrbitProblem, cameraPoseForView, cameraCueLabel } from "../framework/view-angles.js";
 import { buildView } from "../framework/oracle/build.js";
 import { renderStyled } from "../framework/softrender/index.js";
 import { getRenderStyle } from "../framework/renderStyles.js";
@@ -28,7 +28,16 @@ export const RENDER_VIEWS = Object.keys(RENDER_ANGLES);
 // The view cube's other orientations (animation camera cues may name them, and
 // a still defaults to its cue's angle), mapped from the viewer's Y-up world
 // back into model space: world (x, y, z) -> model (x, -z, y).
+// An { azimuth, elevation, distance? } orbit cue resolves too, through the
+// viewer's own cameraPoseForView so the two cannot disagree about an angle.
 export function renderAngle(name) {
+  if (typeof name === "object" && name !== null) {
+    if (cameraOrbitProblem(name)) return null;
+    const pose = cameraPoseForView(name, { center: [0, 0, 0], radius: 1 });
+    const toModelDir = ([x, y, z]) => [x, -z, y];
+    return { dir: toModelDir(pose.position), up: toModelDir(pose.up) };
+  }
+  if (typeof name !== "string") return null;
   if (Object.hasOwn(RENDER_ANGLES, name)) return RENDER_ANGLES[name];
   const o = Object.hasOwn(ORIENTATIONS, name) ? ORIENTATIONS[name] : null;
   if (!o) return null;
@@ -60,7 +69,7 @@ export async function renderViewImages(kernel, part, view = Object.keys(part.vie
   // An explicit size is the caller's choice and is honoured as given.
   if (!size) size = resolved.camera.aspect ? [640, Math.round(640 / resolved.camera.aspect)] : [800, 600];
   for (const angle of views) {
-    if (!renderAngle(angle)) throw new Error(`unknown angle "${angle}" (use: ${RENDER_VIEWS.join(", ")}, or a view-cube orientation such as top-front-left)`);
+    if (!renderAngle(angle)) throw new Error(`unknown angle ${JSON.stringify(angle)} (use: ${RENDER_VIEWS.join(", ")}, a view-cube orientation such as top-front-left, or an { azimuth, elevation, distance? } orbit)`);
   }
   // Own-key lookups only — a part named "constructor" must not inherit a value
   // off Object.prototype and vanish from the render.
@@ -76,7 +85,9 @@ export async function renderViewImages(kernel, part, view = Object.keys(part.vie
     const img = renderStyled(subparts, { view: angle, style, size, supersample, edges });
     const png = new PNG({ width: img.width, height: img.height });
     png.data.set(img.rgba);
-    return { angle, png: PNG.sync.write(png) };
+    // `angle` is always a string: an orbit cue comes back as its label (az30-el20),
+    // which is also what names its file.
+    return { angle: cameraCueLabel(angle), png: PNG.sync.write(png) };
   });
 }
 

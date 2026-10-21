@@ -25,7 +25,7 @@ import { orthoFrustum, perspectiveDistance, isFaceAligned, FACE_ALIGN_COS } from
 import { depthRangeFor } from "./depth-range.js";
 import { addViewerLights, captureLightPoses, createCaptureLights, createHemisphereLight } from "./viewer-lighting.js";
 import { makeCaptureCamera, recenteredView, captureDepthRange } from "./capture-frame.js";
-import { CANONICAL_VIEWS, cameraPoseForView } from "./view-angles.js";
+import { CANONICAL_VIEWS, cameraPoseForView, cameraCueForPose } from "./view-angles.js";
 
 import { srgbEncodeInPlace, RENDER_STYLES, getRenderStyle, CAD_LIGHT_THEME, CAD_DARK_THEME } from "./renderStyles.js";
 import { stylePose, modelToWorld } from "./style-camera.js";
@@ -1360,6 +1360,21 @@ export function createViewer(container, part) {
       { position: pose.position, target: pose.target },
       { duration, onComplete: finish },
     );
+  }
+  // The user's current view as an animation camera cue (view-angles.js
+  // cameraCueForPose): `{ cue: { azimuth, elevation, distance? }, panned }`,
+  // measured against the same bounds and radius tweenCameraTo frames a cue
+  // with, so playing the returned cue lands where the user is looking now
+  // (bar any pan, which `panned` reports). getCameraState supplies the pose,
+  // so an orthographic view reads at its perspective-equivalent distance.
+  // Null with nothing on screen.
+  function getCameraCue() {
+    const box = getVisibleWorldBounds();
+    if (!box || box.isEmpty()) return null;
+    const center = box.getCenter(new THREE.Vector3()).toArray();
+    const size = box.getSize(new THREE.Vector3());
+    const { pos, target } = getCameraState();
+    return cameraCueForPose({ position: pos, target }, { center, radius: Math.max(size.x, size.y, size.z) || 12 });
   }
   // Cancelling has to put damping back: the tween's own completion path is the
   // only other place that does, and it never runs for a cancelled tween.
@@ -3100,6 +3115,7 @@ export function createViewer(container, part) {
     onFrame,
     onAssemblyChange: (cb) => { assemblyListeners.add(cb); return () => assemblyListeners.delete(cb); },
     tweenCameraTo,
+    getCameraCue,
     holdGround,
     cancelCameraTween,
     orbitBy,
