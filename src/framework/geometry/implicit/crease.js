@@ -7,7 +7,8 @@
 //
 //   1. Re-own: a free vertex (not held, not pinned) takes the piece at its final position
 //      (evalBatchContact's `piece`). Held and pinned vertices keep the owner the mesher gave them.
-//   2. Each edge with differing owners and neither end pinned is bisected on s_X − s_Y (20 steps).
+//   2. Each edge with differing owners and neither end pinned is solved for s_X − s_Y = 0
+//      (bracket.js: the Illinois method, the bracket kept, BRACKET_TOL of the edge).
 //   3. That point is taken onto the crease — s_X = 0 and s_X = s_Y, within the plane holding the
 //      edge and its normal (Newton, NEWTON_STEPS, each move capped at MAX_MOVE_CELLS·edge) — and
 //      kept only if it reaches it: on the surface, the two shares equal and making the field (no
@@ -21,8 +22,9 @@
 import { evalBatchContact } from "./program.js";
 import { hypot3 } from "../js-math.js";
 import { CREASE_SNAP, CREASE_TOL, ATTACH_STRIDE, attachWeight } from "./contact.js";
+import { solveBrackets } from "./bracket.js";
 
-const BISECT_STEPS = 20, NEWTON_STEPS = 10, MAX_MOVE_CELLS = 0.25;
+const SOLVE_STEPS = 40, NEWTON_STEPS = 10, MAX_MOVE_CELLS = 0.25;
 
 // The field, piece and every child's share at the points, each evaluated with its leaf's program.
 function evalPoints(store, K, pts, leafOf) {
@@ -86,7 +88,6 @@ export function cutCreases(store, mesh, att = new Float64Array(0)) {
   const list = [...cross.values()];
 
   // 2. Where on each edge the two shares are equal.
-  const lo = new Float64Array(list.length), hi = new Float64Array(list.length).fill(1);
   const along = (e, s) => [0, 1, 2].map((k) => P[3 * e.a + k] + (P[3 * e.b + k] - P[3 * e.a + k]) * s);
   // Each edge is evaluated with one leaf's program: its first end's, unless that program pruned
   // either piece at the edge's middle (an edge can span two leaves), then its other end's.
@@ -95,15 +96,13 @@ export function cutCreases(store, mesh, att = new Float64Array(0)) {
     const { shares } = evalPoints(store, K, Float64Array.from(list.flatMap((e) => along(e, 0.5))), leafOfEdge);
     list.forEach((e, q) => { if (!Number.isFinite(shares[q * K + e.X]) || !Number.isFinite(shares[q * K + e.Y])) leafOfEdge[q] = VL[e.b]; });
   }
-  for (let it = 0; it < BISECT_STEPS && list.length; it++) {
-    const pts = new Float64Array(3 * list.length);
-    list.forEach((e, q) => pts.set(along(e, (lo[q] + hi[q]) / 2), 3 * q));
-    const { shares } = evalPoints(store, K, pts, leafOfEdge);
-    list.forEach((e, q) => {
-      const mid = (lo[q] + hi[q]) / 2;
-      if (shares[q * K + e.X] - shares[q * K + e.Y] < 0) lo[q] = mid; else hi[q] = mid;   // NaN (a pruned share) goes to the high side
-    });
-  }
+  // s_X − s_Y along each edge (NaN, a pruned share, reads as the high side).
+  const params = solveBrackets(list.length, SOLVE_STEPS, (lanes, ts, c, g) => {
+    const pts = new Float64Array(3 * c), lf = new Array(c);
+    for (let k = 0; k < c; k++) { pts.set(along(list[lanes[k]], ts[k]), 3 * k); lf[k] = leafOfEdge[lanes[k]]; }
+    const { shares } = evalPoints(store, K, pts, lf);
+    for (let k = 0; k < c; k++) { const e = list[lanes[k]]; g[k] = shares[k * K + e.X] - shares[k * K + e.Y]; }
+  });
   // A crease point moves within the plane holding its edge and the edge's surface normal: the
   // crease crosses that plane once, so neighbouring points keep their order along the crease.
   const planeFor = (e) => {
@@ -112,7 +111,6 @@ export function cutCreases(store, mesh, att = new Float64Array(0)) {
     const px = uy * nz - uz * ny, py = uz * nx - ux * nz, pz = ux * ny - uy * nx, pl = Math.sqrt(px * px + py * py + pz * pz);
     return pl > 1e-9 * (ux * ux + uy * uy + uz * uz + 1) ? [px / pl, py / pl, pz / pl] : null;
   };
-  const params = list.map((e, q) => (lo[q] + hi[q]) / 2);
   // 3. Each crossing (not where its pair is attached) is taken onto the crease before anything is
   //    cut: s_X = 0 and s_X = s_Y, within its plane (Newton, NEWTON_STEPS, each move capped at
   //    MAX_MOVE_CELLS·edge). Only crossings that reach a real crease are cut, so a near miss

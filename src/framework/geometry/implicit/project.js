@@ -19,8 +19,12 @@
 // behaved continuously along the step; otherwise, or when the owner's share is pruned at the
 // vertex's leaf, the vertex takes the ordinary field step. Every owner-mesh step is also capped at
 // DIST_RATIO × |value|: beside a crease the stencil straddles two pieces' gradients, which average
-// toward zero, and value / |gradient| would throw the vertex far across the crease. A mesh without
-// owners projects exactly as before.
+// toward zero, and value / |gradient| would throw the vertex far across the crease. `unsettled`
+// (a per-vertex Uint8Array, owner meshes only) records, for each vertex projected, whether it
+// may need another step: it was selected for a share step (held, or another piece makes the
+// field at it), or its step moved it more than HELD_FIELD_TOL·edge (it may not be on its
+// surface yet). Cleanup's final pass projects only those. A mesh without owners projects
+// exactly as before.
 import { evalBatch, evalBatchContact } from "./program.js";
 
 /** A held step that lands within this (× edge) of the field's zero is kept. */
@@ -34,7 +38,7 @@ const HELD_GRAD_MAX = 3, HELD_CONTINUITY = 0.5;
 /** An owner-mesh step moves at most this many times the field's value (the fields are distance-like). */
 const DIST_RATIO = 2;
 
-export function projectVertices(store, positions, vertLeaf, { maxStep, which = null, normals = null, owner = null, held = null }) {
+export function projectVertices(store, positions, vertLeaf, { maxStep, which = null, normals = null, owner = null, held = null, unsettled = null }) {
   const e = 0.1 * store.edge;
   const groups = new Map();   // leaf index -> vertex list (insertion order = vertex order)
   const count = which ? which.length : positions.length / 3;
@@ -59,7 +63,7 @@ export function projectVertices(store, positions, vertLeaf, { maxStep, which = n
       X[o + 6] = x; Y[o + 6] = y; Z[o + 6] = z - e;
     });
     if (owned) {
-      projectOwnedGroup(store, prog, positions, verts, owner, held, { X, Y, Z, out, e, K, maxStep, normals });
+      projectOwnedGroup(store, prog, positions, verts, owner, held, { X, Y, Z, out, e, K, maxStep, normals, unsettled });
       continue;
     }
     evalBatch(prog, store.textures, X, Y, Z, out);
@@ -96,16 +100,17 @@ function newtonStep(f, e, maxStep) {
 // A leaf's vertices on an owner mesh: one capturing batch gives the field and every share at
 // the stencil; vertices that try a share step are checked by a second capturing batch at the
 // landing points.
-function projectOwnedGroup(store, prog, positions, verts, owner, held, { X, Y, Z, out, e, K, maxStep, normals }) {
+function projectOwnedGroup(store, prog, positions, verts, owner, held, { X, Y, Z, out, e, K, maxStep, normals, unsettled }) {
   const m = verts.length, shares = new Float64Array(7 * m * K), tol = HELD_FIELD_TOL * store.edge;
   evalBatchContact(prog, store.textures, X, Y, Z, out, { K, shares });
-  const fieldSteps = new Array(m), shareSteps = new Array(m).fill(null), tries = [];
+  const fieldSteps = new Array(m), shareSteps = new Array(m).fill(null), tries = [], selected = new Uint8Array(m);
   verts.forEach((v, k) => {
     const o = 7 * k;
     fieldSteps[k] = newtonStep((q) => out[o + q], e, maxStep);
     const w = owner[v];
     // Not held, and its owner makes the field here: the field step is its own skin's.
     if (!held[v] && !(shares[o * K + w] - out[o] > tol)) return;
+    selected[k] = 1;
     let finite = true;
     for (let q = 0; q < 7 && finite; q++) if (!Number.isFinite(shares[(o + q) * K + w])) finite = false;
     if (!finite) return;
@@ -131,6 +136,7 @@ function projectOwnedGroup(store, prog, positions, verts, owner, held, { X, Y, Z
   }
   verts.forEach((v, k) => {
     const s = accepted[k] ? shareSteps[k] : fieldSteps[k];
+    if (unsettled) unsettled[v] = selected[k] || (s !== null && Math.abs(s.t) > tol) ? 1 : 0;
     if (s === null) return;
     if (normals) { normals[3 * v] = s.gx / s.gl; normals[3 * v + 1] = s.gy / s.gl; normals[3 * v + 2] = s.gz / s.gl; }
     positions[3 * v] -= (s.gx / s.gl) * s.t; positions[3 * v + 1] -= (s.gy / s.gl) * s.t; positions[3 * v + 2] -= (s.gz / s.gl) * s.t;

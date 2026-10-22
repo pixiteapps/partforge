@@ -203,44 +203,28 @@ inline double union2(double a, double b, double k) {
 // weights. kid[j] is slot j's child index, rank[j] its tie rank (doubles, read from the
 // program and compared as the JS compares them). Same loops, same order, same tests.
 void capture_owner(const Capture& cap, int lane, const double* kid, const double* rank, int nK, const double* att, int nA,
-                   const double* cs, const double* w) {
+                   const double* cs, const double* w, double* sh) {
   const size_t q = (size_t)lane * (size_t)cap.K;
-  int best = 0;
-  for (int j = 0; j < nK; j++) {
-    if (cap.cuts) cap.cuts[q + (size_t)kid[j]] = cs[j];
-    if (cap.shares) cap.shares[q + (size_t)kid[j]] = cs[j];
-    if (cs[j] < cs[best]) best = j;
+  // Each slot's share: its cut, lowered by every attachment blend it takes part in, in order.
+  for (int j = 0; j < nK; j++) sh[j] = cs[j];
+  for (int a = 0; a < nA; a++) {   // a blend lowers both of its pieces' shares
+    const double* A = att + (size_t)a * ATTACH_STRIDE;
+    const double kk = A[7] * w[a];
+    if (!(w[a] > 0) || !(kk > 0)) continue;
+    const int ia = (int)A[0], ib = (int)A[1];
+    const double u = union2(cs[ia], cs[ib], kk);
+    if (u < sh[ia]) sh[ia] = u;
+    if (u < sh[ib]) sh[ib] = u;
   }
-  int owner = (int)kid[best];
-  if (cap.shares) {   // a blend lowers both of its pieces' shares
-    for (int a = 0; a < nA; a++) {
-      const double* A = att + (size_t)a * ATTACH_STRIDE;
-      const double kk = A[7] * w[a];
-      if (!(w[a] > 0) || !(kk > 0)) continue;
-      const int ia = (int)A[0], ib = (int)A[1];
-      const double u = union2(cs[ia], cs[ib], kk);
-      for (const int j : {ia, ib}) {
-        const size_t sx = q + (size_t)kid[j];
-        if (u < cap.shares[sx]) cap.shares[sx] = u;
-      }
-    }
-  }
+  if (cap.cuts) for (int j = 0; j < nK; j++) cap.cuts[q + (size_t)kid[j]] = cs[j];
+  if (cap.shares) for (int j = 0; j < nK; j++) cap.shares[q + (size_t)kid[j]] = sh[j];
   if (cap.piece) {
     // The least share; a tie to a child whose own cut is the share, then the lesser rank,
     // then the lesser child (program.js's comment has the why).
     int bp = -1, bo = 1;
     double bs = INFINITY;
     for (int j = 0; j < nK; j++) {
-      double sj = cs[j];
-      for (int a = 0; a < nA; a++) {
-        const double* A = att + (size_t)a * ATTACH_STRIDE;
-        const int ia = (int)A[0], ib = (int)A[1];
-        if (ia != j && ib != j) continue;
-        const double kk = A[7] * w[a];
-        if (!(w[a] > 0) || !(kk > 0)) continue;
-        const double u = union2(cs[ia], cs[ib], kk);
-        if (u < sj) sj = u;
-      }
+      const double sj = sh[j];
       const int own = sj == cs[j] ? 0 : 1;
       if (bp < 0 || sj < bs || (sj == bs && (own < bo || (own == bo && (rank[j] < rank[bp] || (rank[j] == rank[bp] && kid[j] < kid[bp])))))) {
         bp = j; bs = sj; bo = own;
@@ -250,7 +234,11 @@ void capture_owner(const Capture& cap, int lane, const double* kid, const double
   }
   if (cap.owner) {
     // TEST-ONLY, as in program.js: no production stage captures `owner` (meshing reads `piece`).
-    // Overlapping attachment zones merge to the lesser child of the pair holding the owner, until stable.
+    // The least cut (the first, on a tie); overlapping attachment zones merge to the lesser child
+    // of the pair holding it, until stable.
+    int best = 0;
+    for (int j = 1; j < nK; j++) if (cs[j] < cs[best]) best = j;
+    int owner = (int)kid[best];
     for (bool moved = true; moved;) {
       moved = false;
       for (int a = 0; a < nA; a++) {
@@ -662,7 +650,7 @@ void run(Session& s, const Program& p, const double* X, const double* Y, const d
         const double* att = c + I.at + 4 + nK;
         const double* F = att + (size_t)nA * ATTACH_STRIDE + 1;
         if ((int)s.gsrc.size() < nK) s.gsrc.resize(nK);
-        if ((int)s.cg.size() < nK) { s.cg.resize(nK); s.cc.resize(nK); }
+        if ((int)s.cg.size() < nK) { s.cg.resize(nK); s.cc.resize(nK); s.csh.resize(nK); }
         if ((int)s.cw.size() < nA) s.cw.resize(nA);
         if (s.cpair.size() < (size_t)nK * nK) s.cpair.resize((size_t)nK * nK);
         const double** src = s.gsrc.data();
@@ -680,7 +668,7 @@ void run(Session& s, const Program& p, const double* X, const double* Y, const d
             pairA[i * nK + j] = hit;
           }
         }
-        double *g = s.cg.data(), *ci_ = s.cc.data(), *w = s.cw.data();
+        double *g = s.cg.data(), *ci_ = s.cc.data(), *w = s.cw.data(), *sh = s.csh.data();
         const double *sx = px(I.a), *sy = py(I.a), *sz = pz(I.a);
         double* dv = vr(I.d);
         // An exact node's child map and tie ranks (after the fills), read by the capture.
@@ -715,7 +703,7 @@ void run(Session& s, const Program& p, const double* X, const double* Y, const d
             if (kk > 0) value = jsmin(value, union2(ci_[(int)A[0]], ci_[(int)A[1]], kk));
           }
           dv[l] = value;
-          if (lc) capture_owner(*lc, off + l, kid, kid + nK, nK, att, nA, ci_, w);
+          if (lc) capture_owner(*lc, off + l, kid, kid + nK, nK, att, nA, ci_, w, sh);
         }
         break;
       }

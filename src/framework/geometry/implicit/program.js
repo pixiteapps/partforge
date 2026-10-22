@@ -162,6 +162,7 @@ const ensure = (arr, count) => { while (arr.length < count) arr.push(new Float64
 const tmp = [0, 0, 0];
 let gather = new Float64Array(64);   // UNION/INTER/CONTACT operand gather, grown on demand
 let cScratch = new Float64Array(64), wScratch = new Float64Array(64);   // CONTACT's per-slot and per-attachment scratch
+let shScratch = new Float64Array(64);   // the capture's per-slot shares
 
 // `cap` (evalBatchContact's capture; null on the hot path) receives the exact contact op's
 // per-child cut values and owner for these lanes, written at lane offset `off`.
@@ -208,13 +209,13 @@ export function runProgram(prog, textures, X, Y, Z, n, out, cap = null, off = 0)
         if (cnt > cScratch.length) cScratch = new Float64Array(cnt);
         if (nA > wScratch.length) wScratch = new Float64Array(nA);
         const g = gather, sx = PX[s], sy = PY[s], sz = PZ[s];
+        // An exact node's child map and tie ranks (after the fills), read by the capture.
+        const ko = fo + 1 + nF * FILL_STRIDE, capture = cap !== null && fuse === 2;
+        const kid = capture ? prog.subarray(ko, ko + cnt) : null, rank = capture ? prog.subarray(ko + cnt, ko + 2 * cnt) : null;
         for (let i = 0; i < n; i++) {
           for (let j = 0; j < cnt; j++) g[j] = V[prog[pc + 7 + j]][i];
           dv[i] = contactValue(g, cnt, cl, fuse, att, nA, F, nF, sx[i], sy[i], sz[i], wScratch, cScratch);
-          if (cap !== null && fuse === 2) {
-            const ko = fo + 1 + nF * FILL_STRIDE;
-            captureOwner(cap, off + i, prog.subarray(ko, ko + cnt), cnt, att, nA, g, prog.subarray(ko + cnt, ko + 2 * cnt));
-          }
+          if (capture) captureOwner(cap, off + i, kid, cnt, att, nA, g, rank);
         }
         pc = fo + 1 + nF * FILL_STRIDE + (fuse === 2 ? 2 * cnt : 0); break;
       }
@@ -264,20 +265,20 @@ export function runProgram(prog, textures, X, Y, Z, n, out, cap = null, off = 0)
 // is slot j's original child index, `g` scratch for the blend operands.
 function captureOwner(cap, lane, kid, cnt, att, nA, g, rank) {
   const K = cap.K, q = lane * K;
-  let best = 0;
-  for (let j = 0; j < cnt; j++) {
-    if (cap.cuts) cap.cuts[q + kid[j]] = cScratch[j];
-    if (cap.shares) cap.shares[q + kid[j]] = cScratch[j];
-    if (cScratch[j] < cScratch[best]) best = j;
-  }
-  let owner = kid[best];
+  if (cnt > shScratch.length) shScratch = new Float64Array(cnt);
+  // Each slot's share: its cut, lowered by every attachment blend it takes part in, in order.
+  const sh = shScratch;
+  for (let j = 0; j < cnt; j++) sh[j] = cScratch[j];
   for (let a = 0; a < nA; a++) {   // a blend lowers both of its pieces' shares
     const o = a * ATTACH_STRIDE, kk = att[o + 7] * wScratch[a];
     if (!(wScratch[a] > 0) || !(kk > 0)) continue;
     g[0] = cScratch[att[o]]; g[1] = cScratch[att[o + 1]];
     const u = unionN(g, 2, kk);
-    if (cap.shares) for (const j of [att[o], att[o + 1]]) { const s = q + kid[j]; if (u < cap.shares[s]) cap.shares[s] = u; }
+    if (u < sh[att[o]]) sh[att[o]] = u;
+    if (u < sh[att[o + 1]]) sh[att[o + 1]] = u;
   }
+  if (cap.cuts) for (let j = 0; j < cnt; j++) cap.cuts[q + kid[j]] = cScratch[j];
+  if (cap.shares) for (let j = 0; j < cnt; j++) cap.shares[q + kid[j]] = sh[j];
   if (cap.piece) {
     // The piece: the least share. A blend lowers both of its pieces' shares alike, so they tie
     // inside it. A tie goes first to a child whose own cut is the share (inside a digit's zone,
@@ -289,16 +290,7 @@ function captureOwner(cap, lane, kid, cnt, att, nA, g, rank) {
     // shared sample alike.
     let bp = -1, bs = Infinity, bo = 1;
     for (let j = 0; j < cnt; j++) {
-      let sj = cScratch[j];
-      for (let a = 0; a < nA; a++) {
-        const o = a * ATTACH_STRIDE;
-        if (att[o] !== j && att[o + 1] !== j) continue;
-        const kk = att[o + 7] * wScratch[a];
-        if (!(wScratch[a] > 0) || !(kk > 0)) continue;
-        g[0] = cScratch[att[o]]; g[1] = cScratch[att[o + 1]];
-        const u = unionN(g, 2, kk);
-        if (u < sj) sj = u;
-      }
+      const sj = sh[j];
       const own = sj === cScratch[j] ? 0 : 1;   // 0: its own cut makes the share, not a blend
       if (bp < 0 || sj < bs || (sj === bs && (own < bo || (own === bo && (rank[j] < rank[bp] || (rank[j] === rank[bp] && kid[j] < kid[bp])))))) { bp = j; bs = sj; bo = own; }
     }
@@ -307,7 +299,11 @@ function captureOwner(cap, lane, kid, cnt, att, nA, g, rank) {
   if (cap.owner) {
     // TEST-ONLY: no production stage passes `owner` — meshing reads the order-free `piece` above.
     // The merged owner is kept for the tests that pin it (and its native twin, capture_owner).
-    // Overlapping attachment zones merge to the lesser child of the pair holding the owner, until stable.
+    // The least cut (the first, on a tie); overlapping attachment zones merge to the lesser child of
+    // the pair holding it, until stable.
+    let best = 0;
+    for (let j = 1; j < cnt; j++) if (cScratch[j] < cScratch[best]) best = j;
+    let owner = kid[best];
     for (let moved = true; moved;) {
       moved = false;
       for (let a = 0; a < nA; a++) {

@@ -73,8 +73,10 @@ void clear_owner_mesh(ipe::Session& s);
 inline int32_t leaf_prog(const ipe::Session& s, int32_t L) { return s.leaves[4 * (size_t)L + 3]; }
 
 // project.js's projectVertices on an owner mesh (`owner` and `held` given): see project.js.
-// As project(), plus nonzero when the mesh is not an owner mesh.
-int project_owned(ipe::Session& s, const int32_t* which, int whichCount, double maxStep, bool wantNormals);
+// As project(), plus nonzero when the mesh is not an owner mesh. `unsettled` (per vertex, may be
+// null) gets, for each vertex projected, 1 when it was selected for a share step or its step
+// moved it more than HELD_FIELD_TOL * edge (project.js's `unsettled`), else 0.
+int project_owned(ipe::Session& s, const int32_t* which, int whichCount, double maxStep, bool wantNormals, uint8_t* unsettled = nullptr);
 
 // mesher-owners.js's meshStoreOwners over the session's (owner) store, with the contact set:
 // fills the mesh and its owner fields. Returns 0, or nonzero when nothing (or no owner plan) is

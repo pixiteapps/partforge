@@ -11,9 +11,9 @@
 //   - pass 1 walks the leaves holding two solid owners in store order, cells (l, j, i), the Kuhn
 //     tets in order and each tet's corner pairs (a < b), and numbers each owner-owner grid edge
 //     when first met (X its low end's owner, Y its high end's, the leaf that met it);
-//   - each edge's bisector is bisected 24 times on s_X - s_Y < 0 (NaN to the high side) along
-//     low -> high as A + (B - A) * t, t = (lo + hi) / 2, the grid points as origin + i * edge;
-//     the edge is open when the field at the final midpoint is > 0;
+//   - each edge's bisector is solved (solve_brackets, both ends evaluated first) on
+//     s_X - s_Y < 0 (NaN to the high side) along low -> high as A + (B - A) * t, the grid points
+//     as origin + i * edge; the edge is open when the field at the solved point is > 0;
 //   - emission is meshStore's (implicit_mesh.cpp's mesh(), the same weld tables, masks and tet
 //     code) with three additions in the JS's order: each new plain vertex's owner (its inside
 //     end's), held mark (its grid edge shares a cell with an open edge) and pinned 0; a cell
@@ -23,11 +23,11 @@
 //     inside -> outside direction summed as gv += p / np then gv -= p / nn, midpoints (a + b) / 2,
 //     crossings created left to right; a crossing between a corner and an air node is keyed by
 //     the unordered node pair and starts at the linear guess from the inside node;
-//   - then placeHeldPlain and nodeCrossings, each a 24-step bisection from t = 0 (inside) to 1
-//     with the JS's straddle tests, landing tests and lerps.
+//   - then placeHeldPlain and nodeCrossings, each solve_brackets from t = 0 (inside) to 1 with
+//     the straddle test's end values, and the JS's straddle tests, landing tests and lerps.
 // crease (cutCreases): the crossing edges in triangle, corner order (first seen wins); the
 //   edge's leaf (its first end's, its other end's when that pruned either piece at the
-//   middle); 20 bisections; the planar Newton (Cramer's rule with det3's expansion, the
+//   middle); solve_brackets on s_X - s_Y; the planar Newton (Cramer's rule with det3's expansion, the
 //   minimal-norm fallback, the move cap); the judge; the retry without the plane; snaps then
 //   splits in candidate order; the 1-to-2/3/4 patterns.
 // untangle: JS Sets keep insertion order, and here that order decides results (a ring's
@@ -61,11 +61,13 @@ constexpr int CELLS = LEAF * LEAF * LEAF;
 constexpr int LOCAL_EDGES = S3 * 8;
 constexpr int OWNER_AIR = -1;            // sparse.js's OWNER_AIR
 constexpr int ATTACH_STRIDE = 8;         // contact.js's ATTACH_STRIDE
+// bracket.js
+constexpr double BRACKET_TOL = 1e-7;
 // mesher-owners.js
-constexpr int BISECT_STEPS = 24;
+constexpr int SOLVE_STEPS = 40;
 constexpr double PIN_TOL = 1e-4;
 // crease.js
-constexpr int CREASE_BISECT = 20, NEWTON_STEPS = 10;
+constexpr int CREASE_SOLVE_STEPS = 40, NEWTON_STEPS = 10;
 constexpr double MAX_MOVE_CELLS = 0.25;
 constexpr double FLIP_PROBE = 0.03, FOLD_COS = -0.866, SUSPECT_COS = 0.866;
 constexpr int UNTANGLE_ROUNDS = 24, REGION_RINGS = 12, REGROW_RINGS = 3;
@@ -90,6 +92,63 @@ inline double pairWeight(const std::vector<double>& att, int X, int Y, double x,
 }
 
 inline double lerp(double a, double b, double t) { return a + (b - a) * t; }
+
+// bracket.js's solveBrackets: the sign change of g on [0, 1] in each of n lanes (g < 0 the low
+// side, anything else - NaN too - the high side), by the Illinois method with the bracket kept:
+// the secant of the bracket's ends when both are on their side of zero and it lands strictly
+// inside, else the midpoint; the retained end's value halved when the same end is kept twice
+// running; a lane stops once hi - lo <= BRACKET_TOL or g is exactly 0, all after maxSteps.
+// evalAt(lanes, ts, count, g) writes g at ts[k] of lane lanes[k] (nonzero: abort). Without
+// f0/f1 both ends are evaluated first, lane k's at slots 2k and 2k + 1. `t` gets the final
+// brackets' midpoints. The same arithmetic in the same order as the JS.
+template <class EvalAt>
+int solve_brackets(size_t n, int maxSteps, EvalAt&& evalAt, const double* f0, const double* f1, std::vector<double>& t) {
+  std::vector<double> lo(n, 0.0), hi(n, 1.0), flo(n), fhi(n);
+  std::vector<int8_t> side(n, 0);
+  const size_t cap = n ? 2 * n : 1;
+  std::vector<uint32_t> lanes(cap);
+  std::vector<double> ts(cap), g(cap);
+  if (!f0 || !f1) {
+    for (size_t k = 0; k < n; k++) { lanes[2 * k] = (uint32_t)k; ts[2 * k] = 0; lanes[2 * k + 1] = (uint32_t)k; ts[2 * k + 1] = 1; }
+    if (n && evalAt(lanes.data(), ts.data(), 2 * n, g.data()) != 0) return 2;
+    for (size_t k = 0; k < n; k++) { flo[k] = g[2 * k]; fhi[k] = g[2 * k + 1]; }
+  } else {
+    for (size_t k = 0; k < n; k++) { flo[k] = f0[k]; fhi[k] = f1[k]; }
+  }
+  size_t na = 0;
+  for (size_t k = 0; k < n; k++) lanes[na++] = (uint32_t)k;
+  for (int it = 0; it < maxSteps && na > 0; it++) {
+    for (size_t q = 0; q < na; q++) {
+      const uint32_t k = lanes[q];
+      double x = (lo[k] + hi[k]) / 2;
+      if (flo[k] < 0 && fhi[k] > 0) {
+        const double sec = lo[k] + (hi[k] - lo[k]) * (flo[k] / (flo[k] - fhi[k]));
+        if (sec > lo[k] && sec < hi[k]) x = sec;
+      }
+      ts[q] = x;
+    }
+    if (evalAt(lanes.data(), ts.data(), na, g.data()) != 0) return 2;
+    size_t keep = 0;
+    for (size_t q = 0; q < na; q++) {
+      const uint32_t k = lanes[q];
+      const double x = ts[q], v = g[q];
+      if (v < 0) {
+        if (side[k] == -1) fhi[k] *= 0.5;
+        lo[k] = x; flo[k] = v; side[k] = -1;
+      } else if (v == 0) {
+        lo[k] = x; hi[k] = x;
+      } else {
+        if (side[k] == 1) flo[k] *= 0.5;
+        hi[k] = x; fhi[k] = v; side[k] = 1;
+      }
+      if (hi[k] - lo[k] > BRACKET_TOL) lanes[keep++] = k;
+    }
+    na = keep;
+  }
+  t.resize(n);
+  for (size_t k = 0; k < n; k++) t[k] = (lo[k] + hi[k]) / 2;
+  return 0;
+}
 
 }  // namespace
 
@@ -183,24 +242,24 @@ int mesh_owners(ipe::Session& s) {
   std::vector<double> out, cuts, shares;
   std::vector<int32_t> pc;
   if (nr) {
-    std::vector<double> A(3 * nr), B(3 * nr), lo(nr, 0.0), hi(nr, 1.0);
+    std::vector<double> A(3 * nr), B(3 * nr);
     for (size_t r = 0; r < nr; r++) { keyPoint(recs[r].key, 0, &A[3 * r]); keyPoint(recs[r].key, 1, &B[3 * r]); }
-    out.resize(nr); shares.resize(nr * K);
-    auto fill = [&](const std::vector<double>& t) {
-      pts.clear();
-      for (size_t r = 0; r < nr; r++) pts.add(lerp(A[3 * r], B[3 * r], t[r]), lerp(A[3 * r + 1], B[3 * r + 1], t[r]), lerp(A[3 * r + 2], B[3 * r + 2], t[r]), leaf_prog(s, recs[r].leaf));
+    out.resize(2 * nr); shares.resize(2 * nr * K);
+    auto addAt = [&](size_t r, double t) {
+      pts.add(lerp(A[3 * r], B[3 * r], t), lerp(A[3 * r + 1], B[3 * r + 1], t), lerp(A[3 * r + 2], B[3 * r + 2], t), leaf_prog(s, recs[r].leaf));
     };
-    std::vector<double> t(nr);
-    for (int it = 0; it < BISECT_STEPS; it++) {
-      for (size_t r = 0; r < nr; r++) t[r] = (lo[r] + hi[r]) / 2;
-      fill(t);
+    // The bisector of the two pieces' shares, s_X - s_Y (negative at X's end, the low one).
+    std::vector<double> t;
+    const int rc = solve_brackets(nr, SOLVE_STEPS, [&](const uint32_t* lanes, const double* ts, size_t c, double* g) -> int {
+      pts.clear();
+      for (size_t k = 0; k < c; k++) addAt(lanes[k], ts[k]);
       if (eval_points(s, pts, out.data(), nullptr, nullptr, shares.data()) != 0) return 2;
-      for (size_t r = 0; r < nr; r++) {
-        if (shares[r * K + recs[r].X] - shares[r * K + recs[r].Y] < 0) lo[r] = t[r]; else hi[r] = t[r];
-      }
-    }
-    for (size_t r = 0; r < nr; r++) t[r] = (lo[r] + hi[r]) / 2;
-    fill(t);
+      for (size_t k = 0; k < c; k++) { const Rec& rr = recs[lanes[k]]; g[k] = shares[k * K + rr.X] - shares[k * K + rr.Y]; }
+      return 0;
+    }, nullptr, nullptr, t);
+    if (rc != 0) return 2;
+    pts.clear();
+    for (size_t r = 0; r < nr; r++) addAt(r, t[r]);
     if (eval_points(s, pts, out.data(), nullptr, nullptr, nullptr) != 0) return 2;
     for (size_t r = 0; r < nr; r++) {
       recs[r].bis[0] = pts.X[r]; recs[r].bis[1] = pts.Y[r]; recs[r].bis[2] = pts.Z[r];
@@ -285,7 +344,7 @@ int mesh_owners(ipe::Session& s) {
   // Plain vertices bordering a gap, held to their owner's skin: (v, L, gLo, dir, loInside) each.
   struct Plain { uint32_t v; int32_t L; int64_t gLo; int dir; bool loInside; };
   std::vector<Plain> plainCand;
-  // Crossings toward an air node, bisected afterwards: v, L, inside xyz, outside xyz.
+  // Crossings toward an air node, solved afterwards: v, L, inside xyz, outside xyz.
   struct NodeCand { uint32_t v; int32_t L; double in[3], out[3]; };
   std::vector<NodeCand> nodeCand;
   std::map<std::pair<int64_t, int64_t>, uint32_t> nodeVerts;
@@ -384,7 +443,7 @@ int mesh_owners(ipe::Session& s) {
       const std::pair<int64_t, int64_t> key = inn.id < outn.id ? std::make_pair(inn.id, outn.id) : std::make_pair(outn.id, inn.id);
       auto found = nodeVerts.find(key);
       if (found != nodeVerts.end()) return found->second;
-      const double t = inn.val / (inn.val - outn.val);   // a first guess; nodeCrossings bisects it
+      const double t = inn.val / (inn.val - outn.val);   // a first guess; nodeCrossings solves it
       const uint32_t v = (uint32_t)(positions.size() / 3);
       positions.push_back(inn.x + (outn.x - inn.x) * t);
       positions.push_back(inn.y + (outn.y - inn.y) * t);
@@ -507,32 +566,32 @@ int mesh_owners(ipe::Session& s) {
     out.resize(2 * nc); shares.resize(2 * nc * K);
     if (eval_points(s, pts, out.data(), nullptr, nullptr, shares.data()) != 0) return 2;
     std::vector<size_t> list;
+    std::vector<double> f0, f1;
     for (size_t e = 0; e < nc; e++) {
       const int o = vertOwner[plainCand[e].v];
       if (o < 0 || o >= K) return 6;
-      if (shares[2 * e * K + o] < 0 && shares[(2 * e + 1) * K + o] > 0) list.push_back(e);
+      if (shares[2 * e * K + o] < 0 && shares[(2 * e + 1) * K + o] > 0) { list.push_back(e); f0.push_back(shares[2 * e * K + o]); f1.push_back(shares[(2 * e + 1) * K + o]); }
     }
     const size_t cnt = list.size();
-    std::vector<double> lo(cnt, 0.0), hi(cnt, 1.0);
-    for (int it = 0; it < BISECT_STEPS && cnt; it++) {
-      pts.clear();
-      for (size_t k = 0; k < cnt; k++) addAt(list[k], (lo[k] + hi[k]) / 2);
-      if (eval_points(s, pts, out.data(), nullptr, nullptr, shares.data()) != 0) return 2;
-      for (size_t k = 0; k < cnt; k++) {
-        const double mid = (lo[k] + hi[k]) / 2;
-        if (shares[k * K + vertOwner[plainCand[list[k]].v]] < 0) lo[k] = mid; else hi[k] = mid;
-      }
-    }
+    std::vector<double> ts;
     if (cnt) {
+      const int rc = solve_brackets(cnt, SOLVE_STEPS, [&](const uint32_t* lanes, const double* tq, size_t c, double* g) -> int {
+        pts.clear();
+        for (size_t k = 0; k < c; k++) addAt(list[lanes[k]], tq[k]);
+        if (eval_points(s, pts, out.data(), nullptr, nullptr, shares.data()) != 0) return 2;
+        for (size_t k = 0; k < c; k++) g[k] = shares[k * K + vertOwner[plainCand[list[lanes[k]]].v]];
+        return 0;
+      }, f0.data(), f1.data(), ts);
+      if (rc != 0) return 2;
       pts.clear();
-      for (size_t k = 0; k < cnt; k++) addAt(list[k], (lo[k] + hi[k]) / 2);
+      for (size_t k = 0; k < cnt; k++) addAt(list[k], ts[k]);
       if (eval_points(s, pts, out.data(), nullptr, nullptr, nullptr) != 0) return 2;
     }
     for (size_t k = 0; k < cnt; k++) {
       if (!(std::fabs(out[k]) <= pinTol)) continue;
       const size_t e = list[k];
       const uint32_t v = plainCand[e].v;
-      const double t = (lo[k] + hi[k]) / 2;
+      const double t = ts[k];
       for (int c = 0; c < 3; c++) positions[3 * (size_t)v + c] = A[3 * e + c] + (B[3 * e + c] - A[3 * e + c]) * t;
     }
   }
@@ -550,18 +609,21 @@ int mesh_owners(ipe::Session& s) {
     out.resize(2 * nc); cuts.resize(2 * nc * K);
     if (eval_points(s, pts, out.data(), nullptr, nullptr, nullptr) != 0) return 2;
     std::vector<size_t> list;
-    for (size_t e = 0; e < nc; e++) if (out[2 * e] < 0 && out[2 * e + 1] > 0) list.push_back(e);
+    std::vector<double> f0, f1;
+    for (size_t e = 0; e < nc; e++) if (out[2 * e] < 0 && out[2 * e + 1] > 0) { list.push_back(e); f0.push_back(out[2 * e]); f1.push_back(out[2 * e + 1]); }
     const size_t cnt = list.size();
-    std::vector<double> lo(cnt, 0.0), hi(cnt, 1.0);
-    for (int it = 0; it < BISECT_STEPS && cnt; it++) {
-      pts.clear();
-      for (size_t k = 0; k < cnt; k++) addAt(list[k], (lo[k] + hi[k]) / 2);
-      if (eval_points(s, pts, out.data(), nullptr, nullptr, nullptr) != 0) return 2;
-      for (size_t k = 0; k < cnt; k++) { const double mid = (lo[k] + hi[k]) / 2; if (out[k] < 0) lo[k] = mid; else hi[k] = mid; }
-    }
     if (cnt) {
+      std::vector<double> ts;
+      const int rc = solve_brackets(cnt, SOLVE_STEPS, [&](const uint32_t* lanes, const double* tq, size_t c, double* g) -> int {
+        pts.clear();
+        for (size_t k = 0; k < c; k++) addAt(list[lanes[k]], tq[k]);
+        if (eval_points(s, pts, out.data(), nullptr, nullptr, nullptr) != 0) return 2;
+        for (size_t k = 0; k < c; k++) g[k] = out[k];
+        return 0;
+      }, f0.data(), f1.data(), ts);
+      if (rc != 0) return 2;
       pts.clear();
-      for (size_t k = 0; k < cnt; k++) addAt(list[k], (lo[k] + hi[k]) / 2);
+      for (size_t k = 0; k < cnt; k++) addAt(list[k], ts[k]);
       if (eval_points(s, pts, out.data(), nullptr, cuts.data(), nullptr) != 0) return 2;
       for (size_t k = 0; k < cnt; k++) {
         const uint32_t v = nodeCand[list[k]].v;
@@ -628,7 +690,7 @@ int crease(ipe::Session& s) {
   // 2. Where on each edge the two shares are equal.
   std::vector<int32_t> leafOfEdge(ne);
   for (size_t q = 0; q < ne; q++) leafOfEdge[q] = VL[list[q].a];
-  std::vector<double> lo(ne, 0.0), hi(ne, 1.0);
+  std::vector<double> params;
   if (ne) {
     pts.clear();
     double p[3];
@@ -638,18 +700,17 @@ int crease(ipe::Session& s) {
     for (size_t q = 0; q < ne; q++) {
       if (!std::isfinite(shares[q * K + list[q].X]) || !std::isfinite(shares[q * K + list[q].Y])) leafOfEdge[q] = VL[list[q].b];
     }
-    for (int it = 0; it < CREASE_BISECT; it++) {
+    // s_X - s_Y along each edge (NaN, a pruned share, to the high side).
+    out.resize(2 * ne); shares.resize(2 * ne * K);
+    const int rc = solve_brackets(ne, CREASE_SOLVE_STEPS, [&](const uint32_t* lanes, const double* ts, size_t c, double* g) -> int {
       pts.clear();
-      for (size_t q = 0; q < ne; q++) { along(list[q], (lo[q] + hi[q]) / 2, p); pts.add(p[0], p[1], p[2], leaf_prog(s, leafOfEdge[q])); }
+      for (size_t k = 0; k < c; k++) { along(list[lanes[k]], ts[k], p); pts.add(p[0], p[1], p[2], leaf_prog(s, leafOfEdge[lanes[k]])); }
       if (eval_points(s, pts, out.data(), nullptr, nullptr, shares.data()) != 0) return 2;
-      for (size_t q = 0; q < ne; q++) {
-        const double mid = (lo[q] + hi[q]) / 2;
-        if (shares[q * K + list[q].X] - shares[q * K + list[q].Y] < 0) lo[q] = mid; else hi[q] = mid;   // NaN to the high side
-      }
-    }
+      for (size_t k = 0; k < c; k++) { const Edge& e = list[lanes[k]]; g[k] = shares[k * K + e.X] - shares[k * K + e.Y]; }
+      return 0;
+    }, nullptr, nullptr, params);
+    if (rc != 0) return 2;
   }
-  std::vector<double> params(ne);
-  for (size_t q = 0; q < ne; q++) params[q] = (lo[q] + hi[q]) / 2;
 
   // 3. Each crossing (not where its pair is attached) is taken onto the crease before anything is cut.
   struct Cand { size_t q; double p0[3], p[3], pn[3]; bool hasPn; int32_t leaf; };

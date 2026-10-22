@@ -380,4 +380,16 @@ All of it is now decided. What shipped:
   the full suite while passing alone. The cost at 1.5 mm is the mesher's 9-11k owner-owner edges
   each bisected in ~25 evaluations (30-51 ms), cleanup's extra projection pass and share capture
   (17-28 ms), the crease cut (12-21 ms), the detail's owner projection and fade (6-7 ms) and
-  untangle (1-6 ms). A faster edge solve (fewer than 25 evaluations per owner edge) is a follow-up.
+  untangle (1-6 ms). That follow-up is done (2026-10-22): every owner edge solve (the mesher's
+  bisector and side zeros, the crease cut's equal-shares point) is a bracketed Illinois solve
+  (`bracket.js`, `solve_brackets` in the core: the secant of the kept bracket, the retained end's
+  value halved when an end is kept twice, a halving step whenever the secant is unusable or
+  leaves the bracket, stopping at a bracket 1e-7 of the edge or after 40 steps), about 3-4
+  evaluations per edge instead of 25; cleanup's final owner projection runs only on vertices
+  the previous pass left unsettled (selected for their share, or moved more than 1e-3 of a cell
+  (the share-selected ones alone left a fist vertex 3e-3 off the field at 0.6 mm, past the
+  plain path's worst)); and the piece capture computes each slot's share once per lane. The owner
+  path now measures 275 / 325 ms at 1.5 mm and 1915 / 2305 ms at 0.5 mm (plain 239 / 271 and
+  1485 / 1745): 1.15x / 1.20x preview and 1.29x / 1.32x print, so the gate is 1.27x / 1.32x
+  preview and 1.42x / 1.45x print (default / fist; measured plus ~10%). Output stays
+  bit-identical with the core on or off.

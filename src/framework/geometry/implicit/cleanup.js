@@ -27,9 +27,9 @@
 // more rules, the seam spec's §4: collapse and decimation never merge vertices of different
 // owners or a pinned one (a merged vertex is held when either end was); held vertices, and any
 // vertex another piece makes the field at, project onto their owner's share (project.js, which
-// guards the share's jumps), with one more projection after the last relaxation; pinned
-// vertices (exactly on a gap face) are neither projected nor relaxed, and take their normals
-// from a zero-step projection at the end. The three fields are carried through every
+// guards the share's jumps), and those (and any vertex still moving) take one more projection
+// after the last relaxation; pinned vertices (exactly on a gap face) are neither projected nor
+// relaxed, and take their normals from a zero-step projection at the end. The three fields are carried through every
 // compaction and returned. A mesh without them is cleaned exactly as before.
 import { projectVertices } from "./project.js";
 
@@ -256,15 +256,19 @@ export function cleanupMesh(store, mesh, opts = CLEANUP) {
   const free = [], pins = [];
   for (let v = 0; v < own.pinned.length; v++) (own.pinned[v] ? pins : free).push(v);
   const held = { owner: own.vertOwner, held: own.ownerHeld };
-  const which = Int32Array.from(free);
-  projectVertices(store, m.positions, m.vertLeaf, { maxStep, normals, which, ...held });
+  const which = Int32Array.from(free), unsettled = new Uint8Array(own.pinned.length);
+  projectVertices(store, m.positions, m.vertLeaf, { maxStep, normals, which, ...held, unsettled });
   for (let pass = 0; pass < opts.relaxPasses; pass++) {
     relax(m.positions, m.indices, normals, opts.relaxWeight, maxStep);
-    projectVertices(store, m.positions, m.vertLeaf, { maxStep, normals, which, ...held });
+    projectVertices(store, m.positions, m.vertLeaf, { maxStep, normals, which, ...held, unsettled });
   }
   // One more step after the last relaxation: a gap's tolerance (1% of it) is below one step's
-  // residual on curved skin at the preview grid.
-  projectVertices(store, m.positions, m.vertLeaf, { maxStep, normals, which, ...held });
+  // residual on curved skin at the preview grid. Only the vertices that last projection left
+  // unsettled need it (selected for their own piece's share, or moved more than project.js's
+  // HELD_FIELD_TOL·edge); a store without an owner root projects on the field alone and marks
+  // none, so every free vertex takes it.
+  const again = store.ownerRoot >= 0 ? free.filter((v) => unsettled[v]) : free;
+  if (again.length) projectVertices(store, m.positions, m.vertLeaf, { maxStep, normals, which: Int32Array.from(again), ...held });
   if (pins.length) projectVertices(store, m.positions, m.vertLeaf, { maxStep: 0, normals, which: Int32Array.from(pins), ...held });
   return { ...m, normals, ...own };
 }

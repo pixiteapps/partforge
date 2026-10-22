@@ -15,25 +15,28 @@
 //      at a gap's end, a slit ending inside a fused contact all come out as closed sheets.
 // The owners are the samples' pieces (evalBatchContact's `piece`: two attached pieces tie inside
 // their blend, and a digit's web is the digit's). An owner–owner grid edge is OPEN when the
-// field is positive at the pieces' bisector along it (s_X − s_Y = 0 on their shares, bisected),
+// field is positive at the pieces' bisector along it (s_X − s_Y = 0 on their shares, solved),
 // else FUSED: the air node is just a truer sample of the field, so attached pieces get one too
 // wherever air parts them. It is decided once per grid edge, so every tet sharing it agrees,
 // and an open edge is never closed: the air node keeps every near miss apart (the seam spec's
 // "near-miss safety wins"; this replaces the spike's line-contact conflict rule, which closed
 // openings at gap 0 and could bridge a near miss), and a slit thinner than the grid inside a
 // gap-0 contact stays a closed slit. A crossing on a sub-tet edge from a grid corner to an air
-// node is bisected onto the field's zero, so a gap face's vertices sit exactly on their piece's
+// node is solved onto the field's zero, so a gap face's vertices sit exactly on their piece's
 // cut; crossings between two grid corners are mesher.js's own (welded with plain neighbours).
+// Every edge solve is bracket.js's solveBrackets (bracketed Illinois, BRACKET_TOL of the edge).
 // Raw output: cleanup (owner-aware) runs afterwards.
 import { LEAF, OWNER_AIR } from "./sparse.js";
 import { evalBatchContact } from "./program.js";
 import { tetMesher, KUHN } from "./mesher.js";
 import { clearanceExact } from "./contact.js";
+import { solveBrackets } from "./bracket.js";
 
 export { OWNER_AIR };
 
 const S = LEAF + 1;
-const BISECT_STEPS = 24;
+/** The edge solves' step cap (solveBrackets): a lane that only ever halves reaches BRACKET_TOL in 24. */
+const SOLVE_STEPS = 40;
 /** A vertex is on a gap face when its opposing piece's cut is the clearance to within this (× edge). */
 const PIN_TOL = 1e-4;
 const pushTo = (map, key, item) => { const list = map.get(key); if (list) list.push(item); else map.set(key, [item]); };
@@ -153,17 +156,12 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
     const lerpInto = (q, t, slot) => { for (let k = 0; k < 3; k++) ev.P[k][slot] = A[3 * q + k] + (B[3 * q + k] - A[3 * q + k]) * t; };
     const at = (q, t) => [0, 1, 2].map((k) => A[3 * q + k] + (B[3 * q + k] - A[3 * q + k]) * t);
     // The bisector of the two pieces' shares, s_X − s_Y (negative at X's end, the low one).
-    const lo = new Float64Array(cnt), hi = new Float64Array(cnt).fill(1);
-    for (let it = 0; it < BISECT_STEPS; it++) {
-      for (let q = 0; q < cnt; q++) lerpInto(q, (lo[q] + hi[q]) / 2, q);
-      ev.run(cnt);
-      for (let q = 0; q < cnt; q++) {
-        const r = list[q], mid = (lo[q] + hi[q]) / 2;
-        if (ev.shares[q * K + recX[r]] - ev.shares[q * K + recY[r]] < 0) lo[q] = mid; else hi[q] = mid;
-      }
-    }
-    const tb = new Float64Array(cnt);
-    for (let q = 0; q < cnt; q++) { tb[q] = (lo[q] + hi[q]) / 2; lerpInto(q, tb[q], q); }
+    const tb = solveBrackets(cnt, SOLVE_STEPS, (lanes, ts, c, g) => {
+      for (let k = 0; k < c; k++) lerpInto(lanes[k], ts[k], k);
+      ev.run(c);
+      for (let k = 0; k < c; k++) { const r = list[lanes[k]]; g[k] = ev.shares[k * K + recX[r]] - ev.shares[k * K + recY[r]]; }
+    });
+    for (let q = 0; q < cnt; q++) lerpInto(q, tb[q], q);
     ev.run(cnt);
     for (let q = 0; q < cnt; q++) {
       const r = list[q];
@@ -180,7 +178,7 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
 
   // --- Pass 2: emission, cell by cell in meshStore's order. ---
   const loadLabels = (L, i, j, l) => { const own = leaves[L].owner; for (let c = 0; c < 8; c++) lab[c] = own[sampleOf(i, j, l, c)]; };
-  // Crossings on sub-tet edges that touch a split node, keyed by their two nodes; each is bisected
+  // Crossings on sub-tet edges that touch a split node, keyed by their two nodes; each is solved
   // onto the field's zero afterwards: [v, L, inside x, y, z, outside x, y, z] (nodeCrossings).
   const nodeVerts = new Map(), nodeCand = [];
   // A sub-tet node: a cell corner (c = 0..7: its sample's value and owner) or an open edge's air
@@ -194,7 +192,7 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
     const key = inn.id < out.id ? `${inn.id}:${out.id}` : `${out.id}:${inn.id}`;
     let v = nodeVerts.get(key);
     if (v !== undefined) return v;
-    const t = inn.val / (inn.val - out.val);   // a first guess; nodeCrossings bisects it
+    const t = inn.val / (inn.val - out.val);   // a first guess; nodeCrossings solves it
     v = positions.length / 3;
     positions.push(inn.x + (out.x - inn.x) * t, inn.y + (out.y - inn.y) * t, inn.z + (out.z - inn.z) * t);
     vertLeaf.push(L); vertOwner.push(inn.own); ownerHeld.push(1); pinned.push(0);
@@ -307,7 +305,7 @@ function evaluator(prog, textures, K, cap) {
 }
 
 /**
- * Each crossing toward an air node goes onto the field's zero along its sub-tet edge (bisected
+ * Each crossing toward an air node goes onto the field's zero along its sub-tet edge (solved
  * from the grid corner, inside, to the air node, outside), and is pinned when it lands on a gap
  * face: another piece's cut is the clearance there (its own cut, not its raw shape, made the
  * surface). An edge whose ends do not straddle the zero keeps the linear guess.
@@ -320,16 +318,16 @@ function nodeCrossings(store, positions, vertOwner, pinned, cand, K, cl, tol) {
     const lerpInto = (e, t, slot) => { const q = all[e]; for (let k = 0; k < 3; k++) ev.P[k][slot] = cand[q + 2 + k] + (cand[q + 5 + k] - cand[q + 2 + k]) * t; };
     for (let e = 0; e < cnt0; e++) { lerpInto(e, 0, 2 * e); lerpInto(e, 1, 2 * e + 1); }
     ev.run(2 * cnt0);
-    const list = [];
-    for (let e = 0; e < cnt0; e++) if (ev.out[2 * e] < 0 && ev.out[2 * e + 1] > 0) list.push(e);
-    const cnt = list.length, lo = new Float64Array(cnt), hi = new Float64Array(cnt).fill(1);
-    for (let it = 0; it < BISECT_STEPS && cnt; it++) {
-      for (let k = 0; k < cnt; k++) lerpInto(list[k], (lo[k] + hi[k]) / 2, k);
-      ev.run(cnt);
-      for (let k = 0; k < cnt; k++) { const mid = (lo[k] + hi[k]) / 2; if (ev.out[k] < 0) lo[k] = mid; else hi[k] = mid; }
-    }
+    const list = [], f0 = [], f1 = [];
+    for (let e = 0; e < cnt0; e++) if (ev.out[2 * e] < 0 && ev.out[2 * e + 1] > 0) { list.push(e); f0.push(ev.out[2 * e]); f1.push(ev.out[2 * e + 1]); }
+    const cnt = list.length;
     if (!cnt) continue;
-    for (let k = 0; k < cnt; k++) lerpInto(list[k], (lo[k] + hi[k]) / 2, k);
+    const ts = solveBrackets(cnt, SOLVE_STEPS, (lanes, tq, c, g) => {
+      for (let k = 0; k < c; k++) lerpInto(list[lanes[k]], tq[k], k);
+      ev.run(c);
+      for (let k = 0; k < c; k++) g[k] = ev.out[k];
+    }, f0, f1);
+    for (let k = 0; k < cnt; k++) lerpInto(list[k], ts[k], k);
     ev.run(cnt);
     for (let k = 0; k < cnt; k++) {
       const v = cand[all[list[k]]];
@@ -344,7 +342,7 @@ function nodeCrossings(store, positions, vertOwner, pinned, cand, K, cl, tol) {
  * A plain vertex bordering a gap (its grid edge shares a cell with an open edge) is held to its
  * owner: across a gap the field rises to a ridge between the pieces, so the field's linear
  * crossing can land by the other piece. It goes onto its owner's share zero along its grid edge
- * (bisected, as the side vertices are) when that share changes sign along the edge AND the field
+ * (solved, as the side vertices are) when that share changes sign along the edge AND the field
  * there is zero too (to within PIN_TOL·edge) — so a share that jumps (a merged owner's at an
  * attachment zone's rim) or a point the share puts inside another piece keeps the crossing.
  */
@@ -363,25 +361,23 @@ function placeHeldPlain(store, positions, vertOwner, cand, K, keyPoint) {
     const lerpInto = (e, t, slot) => { for (let k = 0; k < 3; k++) ev.P[k][slot] = A[3 * e + k] + (B[3 * e + k] - A[3 * e + k]) * t; };
     for (let e = 0; e < cnt0; e++) { lerpInto(e, 0, 2 * e); lerpInto(e, 1, 2 * e + 1); }
     ev.run(2 * cnt0);
-    const list = [];   // edge indices whose owner's share changes sign along the edge
+    const list = [], f0 = [], f1 = [];   // edge indices whose owner's share changes sign along the edge
     all.forEach((q, e) => {
       const o = vertOwner[cand[q]];
-      if (ev.shares[2 * e * K + o] < 0 && ev.shares[(2 * e + 1) * K + o] > 0) list.push(e);
+      if (ev.shares[2 * e * K + o] < 0 && ev.shares[(2 * e + 1) * K + o] > 0) { list.push(e); f0.push(ev.shares[2 * e * K + o]); f1.push(ev.shares[(2 * e + 1) * K + o]); }
     });
-    const cnt = list.length, lo = new Float64Array(cnt), hi = new Float64Array(cnt).fill(1);
-    for (let it = 0; it < BISECT_STEPS && cnt; it++) {
-      for (let k = 0; k < cnt; k++) lerpInto(list[k], (lo[k] + hi[k]) / 2, k);
-      ev.run(cnt);
-      for (let k = 0; k < cnt; k++) {
-        const mid = (lo[k] + hi[k]) / 2;
-        if (ev.shares[k * K + vertOwner[cand[all[list[k]]]]] < 0) lo[k] = mid; else hi[k] = mid;
-      }
-    }
-    for (let k = 0; k < cnt; k++) lerpInto(list[k], (lo[k] + hi[k]) / 2, k);
-    if (cnt) ev.run(cnt);
+    const cnt = list.length;
+    if (!cnt) continue;
+    const ts = solveBrackets(cnt, SOLVE_STEPS, (lanes, tq, c, g) => {
+      for (let k = 0; k < c; k++) lerpInto(list[lanes[k]], tq[k], k);
+      ev.run(c);
+      for (let k = 0; k < c; k++) g[k] = ev.shares[k * K + vertOwner[cand[all[list[lanes[k]]]]]];
+    }, f0, f1);
+    for (let k = 0; k < cnt; k++) lerpInto(list[k], ts[k], k);
+    ev.run(cnt);
     for (let k = 0; k < cnt; k++) {
       if (!(Math.abs(ev.out[k]) <= tol)) continue;
-      const e = list[k], v = cand[all[e]], t = (lo[k] + hi[k]) / 2;
+      const e = list[k], v = cand[all[e]], t = ts[k];
       for (let c = 0; c < 3; c++) positions[3 * v + c] = A[3 * e + c] + (B[3 * e + c] - A[3 * e + c]) * t;
     }
   }

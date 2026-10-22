@@ -58,6 +58,7 @@ struct Session {
   std::vector<double> um, us;   // UNION/INTER per-lane running extreme and sum (BATCH each)
   std::vector<int32_t> uam;     // UNION/INTER per-lane arg-extreme (BATCH)
   std::vector<double> cg, cc, cw;  // CONTACT's per-lane operands, c_i and attachment weights
+  std::vector<double> csh;         // the exact CONTACT capture's per-slot shares
   std::vector<int32_t> cpair;   // CONTACT's slot pair -> first attachment (-1: none), per op
   std::vector<int32_t> cap32;   // ip_sample's per-lane piece capture (owner plans)
 

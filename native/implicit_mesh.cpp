@@ -826,7 +826,7 @@ inline Step newtonStep(const double* f, double e, double maxStep) {
 }
 }  // namespace
 
-int project_owned(ipe::Session& s, const int32_t* which, int whichCount, double maxStep, bool wantNormals) {
+int project_owned(ipe::Session& s, const int32_t* which, int whichCount, double maxStep, bool wantNormals, uint8_t* unsettled) {
   if (!s.meshed || !s.ownerMesh || s.ownerK < 1) return 1;
   std::vector<double>& P = s.positions;
   const size_t nv = P.size() / 3;
@@ -865,7 +865,7 @@ int project_owned(ipe::Session& s, const int32_t* which, int whichCount, double 
   std::vector<double> shC((size_t)M * K), shS((size_t)6 * M * K), shL((size_t)M * K);
   std::vector<Step> field(M), share(M);
   std::vector<int> cand, tries;
-  std::vector<uint8_t> accepted(M);
+  std::vector<uint8_t> accepted(M), selected(M);
   double* N = wantNormals ? s.normals.data() : nullptr;
   ipe::Capture capC, capS, capL;
   capC.K = capS.K = capL.K = K;
@@ -899,9 +899,11 @@ int project_owned(ipe::Session& s, const int32_t* which, int whichCount, double 
         field[k] = newtonStep(f, e, maxStep);
         share[k].ok = false;
         accepted[k] = 0;
+        selected[k] = 0;
         const int w = s.vertOwner[v];
         // Not held, and its owner makes the field here: the field step is its own skin's.
         if (!s.ownerHeld[v] && !(shC[(size_t)k * K + w] - cO[k] > tol)) continue;
+        selected[k] = 1;
         cand.push_back(k);
       }
       // The candidates' stencil shares (their field values are the stencil's above).
@@ -945,6 +947,7 @@ int project_owned(ipe::Session& s, const int32_t* which, int whichCount, double 
       for (int k = 0; k < m; k++) {
         const size_t v = order[q0 + k];
         const Step& st = accepted[k] ? share[k] : field[k];
+        if (unsettled) unsettled[v] = selected[k] || (st.ok && std::fabs(st.t) > tol) ? 1 : 0;
         if (!st.ok) continue;
         if (N) { N[3 * v] = st.gx / st.gl; N[3 * v + 1] = st.gy / st.gl; N[3 * v + 2] = st.gz / st.gl; }
         P[3 * v] -= (st.gx / st.gl) * st.t; P[3 * v + 1] -= (st.gy / st.gl) * st.t; P[3 * v + 2] -= (st.gz / st.gl) * st.t;
@@ -981,19 +984,23 @@ int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxW
     return 0;
   }
   // An owner mesh (cleanup.js): pinned vertices keep a zero normal until the end, so relax
-  // leaves them where they are; one more projection after the last relaxation; then the
-  // pinned vertices take their normals from a zero-step projection.
+  // leaves them where they are; one more projection after the last relaxation, for the free
+  // vertices that projection left unsettled (in vertex order); then the pinned vertices take
+  // their normals from a zero-step projection.
   std::vector<int32_t> freeV, pins;
   for (size_t v = 0; v < s.pinned.size(); v++) (s.pinned[v] ? pins : freeV).push_back((int32_t)v);
   const int nf = (int)freeV.size();
   static const int32_t none = 0;
   const int32_t* fw = nf ? freeV.data() : &none;   // a real pointer: null means every vertex
-  if (project_owned(s, fw, nf, maxStep, true) != 0) return 3;
+  std::vector<uint8_t> unsettled(s.pinned.size(), 0);
+  if (project_owned(s, fw, nf, maxStep, true, unsettled.data()) != 0) return 3;
   for (int pass = 0; pass < relaxPasses; pass++) {
     relax(s.positions, s.indices, s.normals, relaxWeight, maxStep);
-    if (project_owned(s, fw, nf, maxStep, true) != 0) return 3;
+    if (project_owned(s, fw, nf, maxStep, true, unsettled.data()) != 0) return 3;
   }
-  if (project_owned(s, fw, nf, maxStep, true) != 0) return 3;
+  std::vector<int32_t> again;
+  for (const int32_t v : freeV) if (unsettled[(size_t)v]) again.push_back(v);
+  if (!again.empty() && project_owned(s, again.data(), (int)again.size(), maxStep, true) != 0) return 3;
   if (!pins.empty() && project_owned(s, pins.data(), (int)pins.size(), 0, true) != 0) return 3;
   return 0;
 }
