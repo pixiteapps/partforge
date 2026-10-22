@@ -26,20 +26,20 @@ import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 // 1.46x (fist) against today's plain native path (1474 / 1707 paced ms), which is itself faster than
 // the 1652 / 1839 base-commit baseline the 1.5x came from; in absolute terms the owner print path
 // (2248 / 2485) is 1.36x / 1.35x that base.
-// 2026-10-22: the edge solves moved from fixed-step bisection to a bracketed Illinois solve
-// (bracket.js: ~25 evaluations per owner edge down to ~3-4), cleanup's final owner projection
-// runs only on the vertices still unsettled (share-selected, or moved more than 1e-3 cell), and
-// the piece capture computes each slot's share once. Measured (median of three gate runs, each a
-// median of 5 interleaved runs): 1.15x / 1.29x (default, preview / print) and 1.20x / 1.32x
-// (fist); the limits are those plus ~10%. What the seams still cost at 1.5 mm: the mesher's
-// edge walk and solves (~12 / 18 ms over plain), cleanup's share capture and final pass
-// (~5 / 7 ms), the crease cut (~10 / 17 ms), the detail's owner projection and seam fade
-// (~6 / 7 ms) and untangle (1 / 5 ms).
+// 2026-10-22: the edge solves moved from fixed-step bisection to a safeguarded, bracketed
+// Illinois solve (bracket.js: ~25 evaluations per owner edge down to ~4-7, worst case 48 steps),
+// cleanup's final owner projection runs only on the vertices still unsettled (share-selected, or
+// moved more than 1e-3 cell), and the piece capture computes each slot's share once. Measured
+// (median of three gate runs, each a median of 5 interleaved runs): 1.17x / 1.30x (default,
+// preview / print) and 1.24x / 1.33x (fist); the limits are those plus ~10%. What the seams
+// still cost at 1.5 mm: the mesher's edge walk and solves (~13 / 25 ms over plain), cleanup's
+// share capture and final pass (~7 / 8 ms), the crease cut (~11 / 19 ms), the detail's owner
+// projection and seam fade (~6 / 7 ms) and untangle (1 / 5 ms).
 const SPEC_PREVIEW_MS = 150;
 const SPEC_PRINT_MS = 2000;
 const OWNER_GATES = [
-  ["hand default", {}, 1.27, 1.42],
-  ["hand fist", HAND_POSES.fist, 1.32, 1.45],
+  ["hand default", {}, 1.29, 1.43],
+  ["hand fist", HAND_POSES.fist, 1.36, 1.46],
 ];
 
 // Median owner and plain times, runs interleaved (owner, plain, owner, plain, ...).

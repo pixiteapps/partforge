@@ -383,13 +383,19 @@ All of it is now decided. What shipped:
   untangle (1-6 ms). That follow-up is done (2026-10-22): every owner edge solve (the mesher's
   bisector and side zeros, the crease cut's equal-shares point) is a bracketed Illinois solve
   (`bracket.js`, `solve_brackets` in the core: the secant of the kept bracket, the retained end's
-  value halved when an end is kept twice, a halving step whenever the secant is unusable or
-  leaves the bracket, stopping at a bracket 1e-7 of the edge or after 40 steps), about 3-4
-  evaluations per edge instead of 25; cleanup's final owner projection runs only on vertices
+  value halved when an end is kept twice, a midpoint step whenever the secant is unusable, leaves
+  the bracket, or the step before was a secant that did not halve it; stopping at a bracket 1e-7
+  of the edge, within 2^-24 of the sign change). Every two steps at least halve the bracket, so
+  the worst case is 48 steps (twice bisection's 24) on a kink, jump or flat crossing, and a
+  smooth one takes two or three; a lane a cap stops early answers its end with the smaller
+  |g|, never the middle of a wide bracket (`test/implicit-bracket.test.js`). Measured on the hand
+  at 1.5 mm, the mesher's solves take 2.5 (default) / 5.3 (fist) steps per edge, plus the two end
+  evaluations where the edge's ends were not already evaluated (about 1.9 / 1.7 per edge on
+  average), instead of 25; cleanup's final owner projection runs only on vertices
   the previous pass left unsettled (selected for their share, or moved more than 1e-3 of a cell
   (the share-selected ones alone left a fist vertex 3e-3 off the field at 0.6 mm, past the
   plain path's worst)); and the piece capture computes each slot's share once per lane. The owner
-  path now measures 275 / 325 ms at 1.5 mm and 1915 / 2305 ms at 0.5 mm (plain 239 / 271 and
-  1485 / 1745): 1.15x / 1.20x preview and 1.29x / 1.32x print, so the gate is 1.27x / 1.32x
-  preview and 1.42x / 1.45x print (default / fist; measured plus ~10%). Output stays
+  path now measures 284 / 343 ms at 1.5 mm and 1965 / 2395 ms at 0.5 mm (plain 245 / 276 and
+  1520 / 1795): 1.17x / 1.24x preview and 1.30x / 1.33x print, so the gate is 1.29x / 1.36x
+  preview and 1.43x / 1.46x print (default / fist; measured plus ~10%). Output stays
   bit-identical with the core on or off.

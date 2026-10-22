@@ -1000,6 +1000,7 @@ int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxW
   }
   std::vector<int32_t> again;
   for (const int32_t v : freeV) if (unsettled[(size_t)v]) again.push_back(v);
+  // A vertex skipped here keeps the position and normal its last projection gave it.
   if (!again.empty() && project_owned(s, again.data(), (int)again.size(), maxStep, true) != 0) return 3;
   if (!pins.empty() && project_owned(s, pins.data(), (int)pins.size(), 0, true) != 0) return 3;
   return 0;

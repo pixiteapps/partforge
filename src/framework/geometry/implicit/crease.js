@@ -22,9 +22,9 @@
 import { evalBatchContact } from "./program.js";
 import { hypot3 } from "../js-math.js";
 import { CREASE_SNAP, CREASE_TOL, ATTACH_STRIDE, attachWeight } from "./contact.js";
-import { solveBrackets } from "./bracket.js";
+import { solveBrackets, MAX_BRACKET_STEPS } from "./bracket.js";
 
-const SOLVE_STEPS = 40, NEWTON_STEPS = 10, MAX_MOVE_CELLS = 0.25;
+const NEWTON_STEPS = 10, MAX_MOVE_CELLS = 0.25;
 
 // The field, piece and every child's share at the points, each evaluated with its leaf's program.
 function evalPoints(store, K, pts, leafOf) {
@@ -97,7 +97,7 @@ export function cutCreases(store, mesh, att = new Float64Array(0)) {
     list.forEach((e, q) => { if (!Number.isFinite(shares[q * K + e.X]) || !Number.isFinite(shares[q * K + e.Y])) leafOfEdge[q] = VL[e.b]; });
   }
   // s_X − s_Y along each edge (NaN, a pruned share, reads as the high side).
-  const params = solveBrackets(list.length, SOLVE_STEPS, (lanes, ts, c, g) => {
+  const params = solveBrackets(list.length, MAX_BRACKET_STEPS, (lanes, ts, c, g) => {
     const pts = new Float64Array(3 * c), lf = new Array(c);
     for (let k = 0; k < c; k++) { pts.set(along(list[lanes[k]], ts[k]), 3 * k); lf[k] = leafOfEdge[lanes[k]]; }
     const { shares } = evalPoints(store, K, pts, lf);

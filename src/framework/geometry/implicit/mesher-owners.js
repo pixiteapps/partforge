@@ -30,13 +30,11 @@ import { LEAF, OWNER_AIR } from "./sparse.js";
 import { evalBatchContact } from "./program.js";
 import { tetMesher, KUHN } from "./mesher.js";
 import { clearanceExact } from "./contact.js";
-import { solveBrackets } from "./bracket.js";
+import { solveBrackets, MAX_BRACKET_STEPS } from "./bracket.js";
 
 export { OWNER_AIR };
 
 const S = LEAF + 1;
-/** The edge solves' step cap (solveBrackets): a lane that only ever halves reaches BRACKET_TOL in 24. */
-const SOLVE_STEPS = 40;
 /** A vertex is on a gap face when its opposing piece's cut is the clearance to within this (× edge). */
 const PIN_TOL = 1e-4;
 const pushTo = (map, key, item) => { const list = map.get(key); if (list) list.push(item); else map.set(key, [item]); };
@@ -156,7 +154,7 @@ export function meshStoreOwners(store, { gap = 0 } = {}) {
     const lerpInto = (q, t, slot) => { for (let k = 0; k < 3; k++) ev.P[k][slot] = A[3 * q + k] + (B[3 * q + k] - A[3 * q + k]) * t; };
     const at = (q, t) => [0, 1, 2].map((k) => A[3 * q + k] + (B[3 * q + k] - A[3 * q + k]) * t);
     // The bisector of the two pieces' shares, s_X − s_Y (negative at X's end, the low one).
-    const tb = solveBrackets(cnt, SOLVE_STEPS, (lanes, ts, c, g) => {
+    const tb = solveBrackets(cnt, MAX_BRACKET_STEPS, (lanes, ts, c, g) => {
       for (let k = 0; k < c; k++) lerpInto(lanes[k], ts[k], k);
       ev.run(c);
       for (let k = 0; k < c; k++) { const r = list[lanes[k]]; g[k] = ev.shares[k * K + recX[r]] - ev.shares[k * K + recY[r]]; }
@@ -322,7 +320,7 @@ function nodeCrossings(store, positions, vertOwner, pinned, cand, K, cl, tol) {
     for (let e = 0; e < cnt0; e++) if (ev.out[2 * e] < 0 && ev.out[2 * e + 1] > 0) { list.push(e); f0.push(ev.out[2 * e]); f1.push(ev.out[2 * e + 1]); }
     const cnt = list.length;
     if (!cnt) continue;
-    const ts = solveBrackets(cnt, SOLVE_STEPS, (lanes, tq, c, g) => {
+    const ts = solveBrackets(cnt, MAX_BRACKET_STEPS, (lanes, tq, c, g) => {
       for (let k = 0; k < c; k++) lerpInto(list[lanes[k]], tq[k], k);
       ev.run(c);
       for (let k = 0; k < c; k++) g[k] = ev.out[k];
@@ -368,7 +366,7 @@ function placeHeldPlain(store, positions, vertOwner, cand, K, keyPoint) {
     });
     const cnt = list.length;
     if (!cnt) continue;
-    const ts = solveBrackets(cnt, SOLVE_STEPS, (lanes, tq, c, g) => {
+    const ts = solveBrackets(cnt, MAX_BRACKET_STEPS, (lanes, tq, c, g) => {
       for (let k = 0; k < c; k++) lerpInto(list[lanes[k]], tq[k], k);
       ev.run(c);
       for (let k = 0; k < c; k++) g[k] = ev.shares[k * K + vertOwner[cand[all[list[lanes[k]]]]]];

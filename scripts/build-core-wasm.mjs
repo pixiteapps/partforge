@@ -31,7 +31,7 @@ export const EXPORTS = [
   "cn_feature_ids", "cn_feature_count", "cn_feature_labels", "cn_destroy",
   "bvh_build", "bvh_triangle_count", "bvh_root_bounds", "bvh_raycast", "bvh_closest_point",
   "bvh_distance_to", "bvh_min_wall", "bvh_fingerprint", "bvh_destroy",
-  "ip_math_probe",
+  "ip_math_probe", "ip_bracket_probe",
   "ip_session_create", "ip_session_destroy", "ip_tex_add", "ip_prog_add", "ip_eval", "ip_eval_contact",
   "ip_sample", "ip_leaf_vals", "ip_leaf_owners", "ip_clipped",
   "ip_mesh", "ip_vertex_count", "ip_positions", "ip_index_count", "ip_indices", "ip_vert_leaf",

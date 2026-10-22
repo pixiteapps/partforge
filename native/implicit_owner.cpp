@@ -45,6 +45,7 @@
 #include <vector>
 
 #include "flat_map.h"
+#include "implicit_bracket.h"
 #include "implicit_mesh.h"
 #include "js_math.h"
 
@@ -61,13 +62,12 @@ constexpr int CELLS = LEAF * LEAF * LEAF;
 constexpr int LOCAL_EDGES = S3 * 8;
 constexpr int OWNER_AIR = -1;            // sparse.js's OWNER_AIR
 constexpr int ATTACH_STRIDE = 8;         // contact.js's ATTACH_STRIDE
-// bracket.js
-constexpr double BRACKET_TOL = 1e-7;
+// bracket.js (implicit_bracket.h)
+using ipm_bracket::MAX_BRACKET_STEPS;
 // mesher-owners.js
-constexpr int SOLVE_STEPS = 40;
 constexpr double PIN_TOL = 1e-4;
 // crease.js
-constexpr int CREASE_SOLVE_STEPS = 40, NEWTON_STEPS = 10;
+constexpr int NEWTON_STEPS = 10;
 constexpr double MAX_MOVE_CELLS = 0.25;
 constexpr double FLIP_PROBE = 0.03, FOLD_COS = -0.866, SUSPECT_COS = 0.866;
 constexpr int UNTANGLE_ROUNDS = 24, REGION_RINGS = 12, REGROW_RINGS = 3;
@@ -93,62 +93,7 @@ inline double pairWeight(const std::vector<double>& att, int X, int Y, double x,
 
 inline double lerp(double a, double b, double t) { return a + (b - a) * t; }
 
-// bracket.js's solveBrackets: the sign change of g on [0, 1] in each of n lanes (g < 0 the low
-// side, anything else - NaN too - the high side), by the Illinois method with the bracket kept:
-// the secant of the bracket's ends when both are on their side of zero and it lands strictly
-// inside, else the midpoint; the retained end's value halved when the same end is kept twice
-// running; a lane stops once hi - lo <= BRACKET_TOL or g is exactly 0, all after maxSteps.
-// evalAt(lanes, ts, count, g) writes g at ts[k] of lane lanes[k] (nonzero: abort). Without
-// f0/f1 both ends are evaluated first, lane k's at slots 2k and 2k + 1. `t` gets the final
-// brackets' midpoints. The same arithmetic in the same order as the JS.
-template <class EvalAt>
-int solve_brackets(size_t n, int maxSteps, EvalAt&& evalAt, const double* f0, const double* f1, std::vector<double>& t) {
-  std::vector<double> lo(n, 0.0), hi(n, 1.0), flo(n), fhi(n);
-  std::vector<int8_t> side(n, 0);
-  const size_t cap = n ? 2 * n : 1;
-  std::vector<uint32_t> lanes(cap);
-  std::vector<double> ts(cap), g(cap);
-  if (!f0 || !f1) {
-    for (size_t k = 0; k < n; k++) { lanes[2 * k] = (uint32_t)k; ts[2 * k] = 0; lanes[2 * k + 1] = (uint32_t)k; ts[2 * k + 1] = 1; }
-    if (n && evalAt(lanes.data(), ts.data(), 2 * n, g.data()) != 0) return 2;
-    for (size_t k = 0; k < n; k++) { flo[k] = g[2 * k]; fhi[k] = g[2 * k + 1]; }
-  } else {
-    for (size_t k = 0; k < n; k++) { flo[k] = f0[k]; fhi[k] = f1[k]; }
-  }
-  size_t na = 0;
-  for (size_t k = 0; k < n; k++) lanes[na++] = (uint32_t)k;
-  for (int it = 0; it < maxSteps && na > 0; it++) {
-    for (size_t q = 0; q < na; q++) {
-      const uint32_t k = lanes[q];
-      double x = (lo[k] + hi[k]) / 2;
-      if (flo[k] < 0 && fhi[k] > 0) {
-        const double sec = lo[k] + (hi[k] - lo[k]) * (flo[k] / (flo[k] - fhi[k]));
-        if (sec > lo[k] && sec < hi[k]) x = sec;
-      }
-      ts[q] = x;
-    }
-    if (evalAt(lanes.data(), ts.data(), na, g.data()) != 0) return 2;
-    size_t keep = 0;
-    for (size_t q = 0; q < na; q++) {
-      const uint32_t k = lanes[q];
-      const double x = ts[q], v = g[q];
-      if (v < 0) {
-        if (side[k] == -1) fhi[k] *= 0.5;
-        lo[k] = x; flo[k] = v; side[k] = -1;
-      } else if (v == 0) {
-        lo[k] = x; hi[k] = x;
-      } else {
-        if (side[k] == 1) flo[k] *= 0.5;
-        hi[k] = x; fhi[k] = v; side[k] = 1;
-      }
-      if (hi[k] - lo[k] > BRACKET_TOL) lanes[keep++] = k;
-    }
-    na = keep;
-  }
-  t.resize(n);
-  for (size_t k = 0; k < n; k++) t[k] = (lo[k] + hi[k]) / 2;
-  return 0;
-}
+using ipm_bracket::solve_brackets;
 
 }  // namespace
 
@@ -250,7 +195,7 @@ int mesh_owners(ipe::Session& s) {
     };
     // The bisector of the two pieces' shares, s_X - s_Y (negative at X's end, the low one).
     std::vector<double> t;
-    const int rc = solve_brackets(nr, SOLVE_STEPS, [&](const uint32_t* lanes, const double* ts, size_t c, double* g) -> int {
+    const int rc = solve_brackets(nr, MAX_BRACKET_STEPS, [&](const uint32_t* lanes, const double* ts, size_t c, double* g) -> int {
       pts.clear();
       for (size_t k = 0; k < c; k++) addAt(lanes[k], ts[k]);
       if (eval_points(s, pts, out.data(), nullptr, nullptr, shares.data()) != 0) return 2;
@@ -575,7 +520,7 @@ int mesh_owners(ipe::Session& s) {
     const size_t cnt = list.size();
     std::vector<double> ts;
     if (cnt) {
-      const int rc = solve_brackets(cnt, SOLVE_STEPS, [&](const uint32_t* lanes, const double* tq, size_t c, double* g) -> int {
+      const int rc = solve_brackets(cnt, MAX_BRACKET_STEPS, [&](const uint32_t* lanes, const double* tq, size_t c, double* g) -> int {
         pts.clear();
         for (size_t k = 0; k < c; k++) addAt(list[lanes[k]], tq[k]);
         if (eval_points(s, pts, out.data(), nullptr, nullptr, shares.data()) != 0) return 2;
@@ -614,7 +559,7 @@ int mesh_owners(ipe::Session& s) {
     const size_t cnt = list.size();
     if (cnt) {
       std::vector<double> ts;
-      const int rc = solve_brackets(cnt, SOLVE_STEPS, [&](const uint32_t* lanes, const double* tq, size_t c, double* g) -> int {
+      const int rc = solve_brackets(cnt, MAX_BRACKET_STEPS, [&](const uint32_t* lanes, const double* tq, size_t c, double* g) -> int {
         pts.clear();
         for (size_t k = 0; k < c; k++) addAt(list[lanes[k]], tq[k]);
         if (eval_points(s, pts, out.data(), nullptr, nullptr, nullptr) != 0) return 2;
@@ -702,7 +647,7 @@ int crease(ipe::Session& s) {
     }
     // s_X - s_Y along each edge (NaN, a pruned share, to the high side).
     out.resize(2 * ne); shares.resize(2 * ne * K);
-    const int rc = solve_brackets(ne, CREASE_SOLVE_STEPS, [&](const uint32_t* lanes, const double* ts, size_t c, double* g) -> int {
+    const int rc = solve_brackets(ne, MAX_BRACKET_STEPS, [&](const uint32_t* lanes, const double* ts, size_t c, double* g) -> int {
       pts.clear();
       for (size_t k = 0; k < c; k++) { along(list[lanes[k]], ts[k], p); pts.add(p[0], p[1], p[2], leaf_prog(s, leafOfEdge[lanes[k]])); }
       if (eval_points(s, pts, out.data(), nullptr, nullptr, shares.data()) != 0) return 2;

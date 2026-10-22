@@ -268,6 +268,7 @@ export function cleanupMesh(store, mesh, opts = CLEANUP) {
   // HELD_FIELD_TOL·edge); a store without an owner root projects on the field alone and marks
   // none, so every free vertex takes it.
   const again = store.ownerRoot >= 0 ? free.filter((v) => unsettled[v]) : free;
+  // A vertex skipped here keeps the position and normal its last projection gave it.
   if (again.length) projectVertices(store, m.positions, m.vertLeaf, { maxStep, normals, which: Int32Array.from(again), ...held });
   if (pins.length) projectVertices(store, m.positions, m.vertLeaf, { maxStep: 0, normals, which: Int32Array.from(pins), ...held });
   return { ...m, normals, ...own };

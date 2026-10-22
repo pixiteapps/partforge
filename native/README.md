@@ -15,9 +15,10 @@ binds the same C calls into its own JS engine.
 | `implicit_eval.{h,cpp}` | `src/framework/geometry/implicit/` `program.js` (runProgram/evalBatch), `primitives.js`, `frames.js` (xformPoint/xformDir), `expr-lower.js` (the UN/BIN/TER tables), `textures.js` (sampleTexture), `contact.js` (contactValue/bulgeOffset: the CONTACT and BULGE ops) — the implicit engine's field interpreter, and the session that holds a meshing run |
 | `implicit_mesh.{h,cpp}` | `implicit/sparse.js` (evaluateLeaves), `mesher.js` (meshStore), `project.js` (projectVertices), `cleanup.js` (cleanupMesh) — sample, mesh and clean on the session |
 | `implicit_detail.cpp` | `implicit/detail.js` (applySurfaceDetail, with the owner path's seamFade) — refine, project and displace for surface detail |
-| `implicit_owner.cpp` | `implicit/mesher-owners.js` (meshStoreOwners), `crease.js` (cutCreases, untangle), `bracket.js` (solveBrackets, their edge solves), `result.js` (triangleOwners) — the owner path of a root exact contact; its cleanup modes (owner guards in collapse, `project_owned`) are in `implicit_mesh.cpp` |
+| `implicit_owner.cpp` | `implicit/mesher-owners.js` (meshStoreOwners), `crease.js` (cutCreases, untangle), `result.js` (triangleOwners) — the owner path of a root exact contact; its cleanup modes (owner guards in collapse, `project_owned`) are in `implicit_mesh.cpp` |
+| `implicit_bracket.h` | `implicit/bracket.js` (solveBrackets) — the owner path's safeguarded Illinois edge solve, shared by the mesher and the crease cut |
 | `implicit_math.h` | `js-math.js`'s `pfSin`/`pfCos`/`pfAtan2` and `implicit/noise.js` (latticeHash/valueNoise) |
-| `implicit_probe.cpp` | (test only) `ip_math_probe`, which `test/implicit-native-math.test.js` calls to compare `implicit_math.h` with its JS |
+| `implicit_probe.cpp` | (test only) `ip_math_probe`, which `test/implicit-native-math.test.js` calls to compare `implicit_math.h` with its JS, and `ip_bracket_probe`, which `test/implicit-bracket.test.js` calls to compare `solve_brackets` with `solveBrackets` |
 
 ## The contract: bit-identical, not close
 
