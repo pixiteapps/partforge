@@ -17,6 +17,13 @@ test("a too-thin wall prints a ⚠ warning but still exits 0", () => {
   expect(out).toMatch(/warning/);
 });
 
+test("a cost check prints $ with its hint, marked (accepted) when accepted, and exits 0", () => {
+  const out = run(["measure", "test/fixtures/accepted-overhang-part.js", "--no-lint"]);
+  expect(out).toMatch(/\$ tee overhangArea .*\(accepted\)/);
+  expect(out).toMatch(/hint: .*accept supports/);
+  expect(out).toMatch(/1 cost\(s\)/);
+});
+
 test("measure exits 1 when a verify gate fails", () => {
   try {
     run(["measure", "test/fixtures/bad-verify-part.js"]);
