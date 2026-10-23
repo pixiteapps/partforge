@@ -15,6 +15,7 @@ test("verify-metrics exposes the subpart metric vocabulary", () => {
   }
   expect(SUBPART_METRICS.minWall.kind).toBe("warn");
   expect(SUBPART_METRICS.holes.kind).toBe("gate");
+  expect(SUBPART_METRICS.overhangArea).toMatchObject({ kind: "cost", costId: "supports" });
 });
 
 test("verify-metrics exposes the view metric vocabulary", () => {

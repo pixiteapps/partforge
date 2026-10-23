@@ -28,11 +28,11 @@ export const ORIENTATIONS = ["print"];
 export const DEFAULT_OVERHANG_ANGLE = 45;
 
 // Which overhang angle a part is checked against, or null when it is not checked.
-// Two ways in, both explicit — a profile alone never arms it, because the cloud
-// agent writes `process: "fdm-pla"` by habit and a part still being shaped should
-// not be nagged about its underside:
-//   - `verify.orientation: "print"` (the part is laid out for its bed) under a
-//     profile carrying `overhang`; a profile without one (resin) checks nothing;
+// Two ways in:
+//   - the print process alone: a profile carrying `overhang` arms it (a profile
+//     without one, resin, checks nothing). The reading is a COST, not a warning, so a
+//     part still being shaped is told what supports would cost, never nagged;
+//     `verify.orientation` no longer takes part in the decision;
 //   - an `overhangArea` expectation the author wrote themselves, in any case's
 //     `expect` (`expanded`, from gates.js's expandExpectations) — measured against
 //     the profile's angle, or DEFAULT_OVERHANG_ANGLE when the profile has none,
@@ -48,10 +48,10 @@ export function overhangAngleFor(part, process, { expanded = [] } = {}) {
   const spec = process ?? part?.verify?.process;
   const fromProfile = spec ? resolveProfile(spec).overhang : undefined;
   const angle = typeof fromProfile === "number" && Number.isFinite(fromProfile) ? fromProfile : null;
-  if (orientation === "print" && angle != null) return angle;
+  if (angle != null) return angle;
   const asserted = expanded.some(({ expect }) =>
     Object.entries(expect ?? {}).some(([name, o]) => name !== "_view" && o && typeof o === "object" && "overhangArea" in o));
-  return asserted ? (angle ?? DEFAULT_OVERHANG_ANGLE) : null;
+  return asserted ? DEFAULT_OVERHANG_ANGLE : null;
 }
 
 // The `bedContactPct` floor an author's own expectation or `orientation: "print"` arms

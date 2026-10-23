@@ -26,9 +26,9 @@ test("every profile carries the five fit classes, an undersize and a positive mi
   }
 });
 
-test("overhangAngleFor: opt-in needs BOTH the orientation key and a profile that carries an angle", () => {
+test("overhangAngleFor: the process alone arms it, when its profile carries an angle", () => {
   const fdm = { verify: { process: "fdm-pla" } };
-  expect(overhangAngleFor(fdm)).toBeNull();                                                     // no orientation → not checked
+  expect(overhangAngleFor(fdm)).toBe(45);                                                       // the process alone arms it
   expect(overhangAngleFor({ verify: { process: "fdm-pla", orientation: "print" } })).toBe(45);
   expect(overhangAngleFor({ verify: { process: "resin", orientation: "print" } })).toBeNull();  // no angle to check against
   expect(overhangAngleFor({ verify: { orientation: "print" } })).toBeNull();                    // no profile at all
