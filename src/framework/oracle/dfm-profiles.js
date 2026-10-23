@@ -59,12 +59,11 @@ export function overhangAngleFor(part, process, { expanded = [] } = {}) {
 export const DEFAULT_BED_CONTACT = 50;
 
 // The least share of a printed piece's near-bed flat underside that must touch the bed
-// (oracle/bed-contact.js), or null when it is not checked. Unlike overhangAngleFor, the
-// PROFILE ALONE arms it: an overhang is a design choice a part still being shaped may
-// not have made yet, but a flat underside hovering a fraction of a millimetre above the
-// piece's lowest point is a defect in whatever orientation the piece is exported —
-// every exporter and slicer lays it on that lowest point — so a part carrying an FDM
-// profile is checked from its first build. Three ways in:
+// (oracle/bed-contact.js), or null when it is not checked. Like overhangAngleFor the
+// PROFILE ALONE arms it, but as a GATE, not a cost: a flat underside hovering a fraction
+// of a millimetre above the piece's lowest point is a defect in whatever orientation the
+// piece is exported — every exporter and slicer lays it on that lowest point — so a part
+// carrying an FDM profile is checked from its first build. Three ways in:
 //   - a profile carrying `bedContact` (the FDM profiles; resin carries none);
 //   - `verify.orientation: "print"` with NO profile. A named profile decides alone:
 //     resin prints on supports, so orientation must not arm it there (overhangAngleFor's
@@ -83,4 +82,30 @@ export function bedContactFor(part, process, { expanded = [] } = {}) {
   const asserted = expanded.some(({ expect }) =>
     Object.entries(expect ?? {}).some(([name, o]) => name !== "_view" && o && typeof o === "object" && "bedContactPct" in o));
   return asserted ? DEFAULT_BED_CONTACT : null;
+}
+
+// The `footprintPct` floor an author's own expectation arms the measurement against
+// when the profile names none (a resin part, or no profile at all).
+export const DEFAULT_FOOTPRINT = 5;
+
+// The least share of a printed piece's posed base area that must touch the bed (the
+// footprint, read by bed contact's pass — measure.js `footprintPct`), or null when it
+// is not checked. A COST, like overhang: a piece standing on a point, a line or a curl
+// prints with a brim or a raft, which the user may well choose. Two ways in:
+//   - a profile carrying `footprint` (the FDM profiles; resin carries none, since it
+//     prints on supports), and `{ base: "fdm-pla", footprint: null }` stays off;
+//   - a `footprintPct` expectation the author wrote themselves, in any case's `expect`.
+// `verify.orientation` takes no part (overhangAngleFor's rule), but an invalid value
+// still throws, as it does there.
+export function footprintFor(part, process, { expanded = [] } = {}) {
+  const orientation = part?.verify?.orientation;
+  if (orientation != null && !ORIENTATIONS.includes(orientation)) {
+    throw new Error(`unknown verify.orientation: ${JSON.stringify(orientation)} (known: ${ORIENTATIONS.join(", ")})`);
+  }
+  const spec = process ?? part?.verify?.process;
+  const fromProfile = spec ? resolveProfile(spec).footprint : undefined;
+  if (typeof fromProfile === "number" && Number.isFinite(fromProfile)) return fromProfile;
+  const asserted = expanded.some(({ expect }) =>
+    Object.entries(expect ?? {}).some(([name, o]) => name !== "_view" && o && typeof o === "object" && "footprintPct" in o));
+  return asserted ? DEFAULT_FOOTPRINT : null;
 }

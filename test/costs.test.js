@@ -67,8 +67,6 @@ test("descriptor costs and metric costIds agree", () => {
   }
   for (const d of PRINT_PROCESSES) {
     for (const [id, metric] of Object.entries(d.costs ?? {})) {
-      // footprintPct does not exist until Task 3; Task 3 removes this tolerance.
-      if (!SUBPART_METRICS[metric]) continue;
       expect(SUBPART_METRICS[metric], `${d.id}.costs.${id}`).toMatchObject({ kind: "cost", costId: id });
     }
   }

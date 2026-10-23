@@ -73,24 +73,35 @@ export const MAX_BED_EPS = 0.05;
  *   scanned); `bedEps` the footprint slack (default 0.1% of the mesh height, floored at
  *   0.01 mm and capped at MAX_BED_EPS); `bedBand` the height above the bed within which a flat face hovers
  *   (default 1 mm)
- * @returns {{ pct: number, contactArea: number, hoverArea: number, gap: number|null, at: number[]|null }|null}
+ * @returns {{ pct: number, contactArea: number, hoverArea: number, gap: number|null, at: number[]|null, base: number[], lowestAt: number[] }|null}
  *   `pct` 0..100, the share of the near-bed flat underside on the bed; the two areas in
  *   mm²; `gap` how far above the bed the largest hovering face sits, and `at` its
- *   centroid (null when nothing hovers past the floor); null for an empty mesh.
+ *   centroid (null when nothing hovers past the floor); `base` the mesh's [dx, dy]
+ *   extent and `lowestAt` its lowest vertex — measure.js's footprint cost, the contact
+ *   area over that base, catches what `pct` cannot: a piece with almost no flat
+ *   underside at all (a sphere-tipped rod on its end) hovers nothing and reads 100;
+ *   null for an empty mesh.
  */
 export function bedContact(mesh, { bedZ, bedEps, bedBand = 1 } = {}) {
   const { positions, indices } = mesh;
   const n = indices ? indices.length : positions.length / 3;
   if (n < 3) return null;
 
-  let minZ = Infinity, maxZ = -Infinity;
-  if (bedZ === undefined || bedEps === undefined) {
-    for (let i = 2; i < positions.length; i += 3) {
-      const z = positions[i];
-      if (z < minZ) minZ = z;
-      if (z > maxZ) maxZ = z;
-    }
+  // One scan for the extents: the bed (lowest Z) and the slack's height when the caller
+  // did not hand them in, and always the posed base (the xy extent the footprint cost
+  // divides by) and the lowest vertex (where that cost is located).
+  let minZ = Infinity, maxZ = -Infinity, minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, low = 0;
+  for (let i = 0; i + 2 < positions.length; i += 3) {
+    const x = positions[i], y = positions[i + 1], z = positions[i + 2];
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+    if (z < minZ) { minZ = z; low = i; }
+    if (z > maxZ) maxZ = z;
   }
+  const base = [maxX - minX, maxY - minY];
+  const lowestAt = [positions[low], positions[low + 1], positions[low + 2]];
   const bed = bedZ ?? minZ;
   const eps = bedEps ?? Math.min(MAX_BED_EPS, Math.max(0.01, 1e-3 * (maxZ - minZ)));
   const bandTop = bed + bedBand;
@@ -122,6 +133,6 @@ export function bedContact(mesh, { bedZ, bedEps, bedBand = 1 } = {}) {
             cenZ];
     }
   }
-  if (hoverArea < HOVER_FLOOR) return { pct: 100, contactArea, hoverArea, gap: null, at: null };
-  return { pct: (100 * contactArea) / (contactArea + hoverArea), contactArea, hoverArea, gap, at };
+  if (hoverArea < HOVER_FLOOR) return { pct: 100, contactArea, hoverArea, gap: null, at: null, base, lowestAt };
+  return { pct: (100 * contactArea) / (contactArea + hoverArea), contactArea, hoverArea, gap, at, base, lowestAt };
 }

@@ -123,6 +123,15 @@ export const SUBPART_METRICS = {
     note: (s) => (s.bedHoverGap != null
       ? `${s.bedHoverArea.toFixed(1)} mm² of flat underside sits ${s.bedHoverGap.toFixed(2)} mm above the bed; ${s.bedContactArea.toFixed(1)} mm² touches it`
       : null) },
+  // The footprint (measure.js, from bed contact's pass): the flat contact area over the
+  // posed base's xy extent, in percent. Measured where bed contact is, plus where the
+  // profile carries `footprint` or the author declares it. A COST, like overhangArea: a
+  // piece on a point or a line prints with a brim or a raft, which the user may choose
+  // (`accept: ["footprint"]`); bedContactPct passes such a piece, since nothing hovers.
+  footprintPct: { kind: "cost", costId: "footprint", extract: (s) => s.footprintPct,
+    hint: "the share of this piece's base area (its footprint in the print pose) that touches the bed is small — it stands on a point, a line or a curve, which reads near zero, so the first layer has almost nothing to hold on to and the piece can tip or pull loose. Lay it on its flat face, add a flat foot or pad at its lowest point, or print it with a brim (accept: [\"footprint\"] records that choice)",
+    pattern: "piece-stands-on-nothing",
+    locate: (s) => s.footprintAt },
   // `s.deviation` (measure.js) exists only for a sub-part declaring `reference:
   // "<import name>"`; on every other sub-part `extract` returns null, which
   // `check()` already reports as status "skip" rather than a fail — the
