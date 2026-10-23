@@ -4362,8 +4362,10 @@ is the lowest; size a print-in-place knuckle so its cylinder is tangent to the b
 (diameter = 2 × its centre height) and give it a support block down to z = 0. Unlike
 overhang, no orientation key is needed: an overhang is a design choice a part still
 being shaped may not have made, but a hovering underside is a defect in whatever
-orientation the piece exports. `orientation: "print"` or your own `bedContactPct`
-expectation arms it without an FDM profile (against 50%). A recess meant to clear the
+orientation the piece exports. Resin prints on supports, so `resin` never checks it
+unless you ask: your own `bedContactPct` expectation arms it under any profile, and
+`orientation: "print"` arms it on a part with no profile at all (both against 50%). A
+named profile otherwise decides alone. A recess meant to clear the
 bed — a shallow pocket inside a foot ring — hovers by design and is reported; such a
 pocket is a long bridge laid in the first layers and rarely prints well, so the
 default stands, and a part that means it declares a lower `bedContactPct` (or

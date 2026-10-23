@@ -110,7 +110,7 @@ export const SUBPART_METRICS = {
     note: (s) => (s.overhangAngle != null ? `steepest unsupported face ${s.overhangAngle.toFixed(1)}° from vertical` : null) },
   // How much of a printed piece's near-bed flat underside rests on the bed
   // (oracle/bed-contact.js), in percent. Measured for a part whose FDM profile carries
-  // `bedContact` (or that declares `orientation: "print"` or this expectation itself);
+  // `bedContact` (or, with no profile, `orientation: "print"`; or this expectation itself);
   // elsewhere `extract` returns null and check() skips it. A GATE, unlike overhangArea:
   // a flat bottom hovering above a lower knuckle or emboss is a failed print in any
   // orientation, and a flat face cannot be mistaken for anything else.

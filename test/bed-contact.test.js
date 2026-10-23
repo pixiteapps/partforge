@@ -98,8 +98,13 @@ describe("bedContactFor (what arms it)", () => {
     expect(bedContactFor({})).toBeNull();
   });
 
-  it("orientation: print or an author's own expectation arms it without a floor in the profile", () => {
-    expect(bedContactFor({ verify: { process: "resin", orientation: "print" } })).toBe(DEFAULT_BED_CONTACT);
+  it("orientation: print arms it only with no profile; an author's own expectation arms it anywhere", () => {
+    expect(bedContactFor({ verify: { orientation: "print" } })).toBe(DEFAULT_BED_CONTACT);
+    // A named profile decides alone: resin prints on supports, and an FDM switch-off stays off.
+    expect(bedContactFor({ verify: { process: "resin", orientation: "print" } })).toBeNull();
+    expect(bedContactFor({ verify: { process: { base: "fdm-pla", bedContact: null }, orientation: "print" } })).toBeNull();
+    expect(bedContactFor({ verify: { process: "resin" } }, undefined,
+      { expanded: [{ expect: { a: { bedContactPct: ">=10" } } }] })).toBe(DEFAULT_BED_CONTACT);
     expect(bedContactFor({}, undefined, { expanded: [{ expect: { a: { bedContactPct: ">=10" } } }] })).toBe(DEFAULT_BED_CONTACT);
     expect(() => bedContactFor({ verify: { orientation: "sideways" } })).toThrow(/unknown verify.orientation/);
   });

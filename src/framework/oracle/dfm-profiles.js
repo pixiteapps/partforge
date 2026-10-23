@@ -100,9 +100,9 @@ export const DEFAULT_BED_CONTACT = 50;
 // every exporter and slicer lays it on that lowest point — so a part carrying an FDM
 // profile is checked from its first build. Three ways in:
 //   - a profile carrying `bedContact` (the FDM profiles; resin carries none);
-//   - `verify.orientation: "print"` under a profile without one, or with no profile —
-//     but never over an explicit `bedContact: null`, the documented opt-out, so a part
-//     keeping `orientation` for its overhang warning can still switch this off;
+//   - `verify.orientation: "print"` with NO profile. A named profile decides alone:
+//     resin prints on supports, so orientation must not arm it there (overhangAngleFor's
+//     rule), and `{ base: "fdm-pla", bedContact: null }` must stay off;
 //   - a `bedContactPct` expectation the author wrote themselves, in any case's `expect`.
 // Throws on an orientation value outside ORIENTATIONS, as overhangAngleFor does.
 export function bedContactFor(part, process, { expanded = [] } = {}) {
@@ -113,7 +113,7 @@ export function bedContactFor(part, process, { expanded = [] } = {}) {
   const spec = process ?? part?.verify?.process;
   const fromProfile = spec ? resolveProfile(spec).bedContact : undefined;
   if (typeof fromProfile === "number" && Number.isFinite(fromProfile)) return fromProfile;
-  if (orientation === "print" && fromProfile !== null) return DEFAULT_BED_CONTACT;
+  if (orientation === "print" && !spec) return DEFAULT_BED_CONTACT;
   const asserted = expanded.some(({ expect }) =>
     Object.entries(expect ?? {}).some(([name, o]) => name !== "_view" && o && typeof o === "object" && "bedContactPct" in o));
   return asserted ? DEFAULT_BED_CONTACT : null;
