@@ -24,7 +24,7 @@ export function sampleField(compiled, edge, opts) {
  * one runs. Plan = { origin, edge, n, snap, leaves: [{ i0, j0, l0, progIndex }],
  * programs: Float64Array[] (index order = first emission), textures, samples, clipped: false,
  * ownerRoot, ownerK } — ownerRoot/ownerK copied from the compiled tree (−1/0 unless its root is
- * an exact contact node, whose children then own the samples: evaluateLeaves).
+ * a contact node, whose children then own the samples: evaluateLeaves).
  * It is plain data — the native core samples the same plan.
  * Each child block starts from its parent block's decision (`inherit`, interval.js:
  * a slot the parent pruned firmly is not walked again), which yields exactly the plan a
@@ -43,7 +43,7 @@ export function planLeaves(compiled, edge, { cull = true, inherit = true } = {})
   const snap = SNAP_CELLS * edge;
   const S = LEAF + 1, S3 = S * S * S;
   const progIndex = new Map(), programs = [], leaves = [];
-  const fullDec = cull ? null : fullDecision(compiled, edge);
+  const fullDec = cull ? null : fullDecision(compiled);
   // `samples` counts shared-face samples once per leaf (a conservative cap, not unique grid points).
   let samples = 0;
 
@@ -52,7 +52,7 @@ export function planLeaves(compiled, edge, { cull = true, inherit = true } = {})
     if (cull) {
       const r = (B * edge * SQRT3) / 2 + PAD_CELLS * edge;
       const cx = origin[0] + (i0 + B / 2) * edge, cy = origin[1] + (j0 + B / 2) * edge, cz = origin[2] + (l0 + B / 2) * edge;
-      const a = blockDecision(compiled, cx, cy, cz, r, inherit ? parentDec : undefined, edge);
+      const a = blockDecision(compiled, cx, cy, cz, r, inherit ? parentDec : undefined);
       // No vertex snapping (snap = 0): a block whose interval excludes 0 holds no surface.
       // The inside cull (hi < 0) is only taken for blocks touching no outer-layer
       // sample: those must be raised to 0.5·edge and flag `clipped`, so they are sampled.
@@ -70,7 +70,7 @@ export function planLeaves(compiled, edge, { cull = true, inherit = true } = {})
     }
     const key = decisionKey(dec);
     let pi = progIndex.get(key);
-    if (pi === undefined) { pi = programs.length; programs.push(emitProgram(compiled, dec, edge)); progIndex.set(key, pi); }
+    if (pi === undefined) { pi = programs.length; programs.push(emitProgram(compiled, dec)); progIndex.set(key, pi); }
     samples += S3;
     if (samples > MAX_SAMPLES) throw new ImplicitSizeError(`the surface needs more than ${MAX_SAMPLES} samples at a ${edge} mm grid — raise \`resolution\`/\`preview\` or split the part`);
     leaves.push({ i0, j0, l0, progIndex: pi });

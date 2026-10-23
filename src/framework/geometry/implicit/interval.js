@@ -6,7 +6,7 @@ import { xformPoint, xformDir } from "./frames.js";
 import { evalPrim, warpPoint, mirrorPoint, sanitize } from "./primitives.js";
 import { evalExprScalar } from "./expr-lower.js";
 import { sampleTexture } from "./textures.js";
-import { nodeClearance, contactInterval, attachWeightRange, bulgeRange, gateWeightRange, ATTACH_STRIDE, BULGE_STRIDE, FILL_STRIDE, FILL_BAND, PAD_BLEND } from "./contact.js";
+import { clearance, contactInterval, attachWeightRange, bulgeRange, ATTACH_STRIDE, BULGE_STRIDE } from "./contact.js";
 
 // Inheriting a parent's decision (planLeaves' child blocks). `parentDec` is the decision of
 // a ball that CONTAINS this one; a slot it pruned FIRMLY (`dec.firm[i]`) is not walked
@@ -42,9 +42,7 @@ import { nodeClearance, contactInterval, attachWeightRange, bulgeRange, gateWeig
 // cull's own exactness already makes.
 const FIRM_REL = 1e-9;
 
-// `edge`: the grid edge the block is planned at (a contact node's clearance depends on it);
-// 0 — the default — is the bare declared gap, as evalReference's default.
-export const blockDecision = (c, cx, cy, cz, r, parentDec, edge = 0) => visit(c, c.ir.root, cx, cy, cz, r, parentDec, edge);
+export const blockDecision = (c, cx, cy, cz, r, parentDec) => visit(c, c.ir.root, cx, cy, cz, r, parentDec);
 
 function full(c, id) {
   const n = c.ir.nodes[id];
@@ -52,9 +50,7 @@ function full(c, id) {
   if (n.kind === "mirror") return { id, kids: [full(c, n.children[0]), full(c, n.children[0])] };
   return { id, kids: n.children.map((ch) => full(c, ch)) };
 }
-// The full decision does not depend on the edge (it prunes nothing); `edge` is taken for
-// symmetry with blockDecision/emitProgram.
-export const fullDecision = (c, edge = 0) => full(c, c.ir.root);
+export const fullDecision = (c) => full(c, c.ir.root);
 
 export function decisionKey(dec) {
   if (!dec.kids) return String(dec.id);
@@ -68,7 +64,7 @@ const skip = (pd, i) => pd !== undefined && pd.kids[i] === null && pd.firm != nu
 const sub = (pd, i) => (pd === undefined || pd.kids[i] === null ? undefined : pd.kids[i]);
 const firmTol = (r, x, y, z, a, b) => FIRM_REL * (Math.abs(a) + Math.abs(b) + r + Math.abs(x) + Math.abs(y) + Math.abs(z));
 
-function visit(c, id, x, y, z, r, pd, e) {
+function visit(c, id, x, y, z, r, pd) {
   const n = c.ir.nodes[id];
   if (n.inv) { const q = [0, 0, 0]; xformPoint(q, n.inv, x, y, z); x = q[0]; y = q[1]; z = q[2]; }
   switch (n.kind) {
@@ -82,7 +78,7 @@ function visit(c, id, x, y, z, r, pd, e) {
       let E = isU ? Infinity : -Infinity;   // H for a union, Lmax otherwise
       for (let i = 0; i < N; i++) {
         if (skip(pd, i)) { rs[i] = null; continue; }
-        let a = visit(c, n.children[i], x, y, z, r, sub(pd, i), e);
+        let a = visit(c, n.children[i], x, y, z, r, sub(pd, i));
         if (neg && i > 0) a = { lo: -a.hi, hi: -a.lo, dec: a.dec };
         rs[i] = a;
         if (isU) { if (a.hi < E) E = a.hi; } else if (a.lo > E) E = a.lo;
@@ -106,35 +102,28 @@ function visit(c, id, x, y, z, r, pd, e) {
     }
     case "contact": {
       // Slot j is pruned when (a) lo_j > H2 (second-smallest hi over the other slots: j is
-      // never among the two smallest values, so the min of the c_i does not move), (b) lo_i + lo_j > cl for every other slot i (the pair's cut
-      // never rises above v_i, so no other c_i moves; with pad fills, > cl + PAD_BLEND/2, so
-      // no pad's clearance from j rises above its blend either) and (c) every attachment involving j
-      // has weight 0 over the ball (its kk is 0: no blend term), each with the union's
-      // 1e-12 margin. Every condition only gets truer as the ball shrinks (lo rises, hi
-      // falls, the near distance rises), so a firm prune holds in every child ball.
+      // never among the two smallest values, so the min of the c_i does not move), (b)
+      // lo_i + lo_j > cl for every other slot i (the pair's cut never rises above v_i, so no
+      // other c_i moves) and (c) every attachment involving j has weight 0 over the ball (its
+      // kk is 0: no blend term), each with the union's 1e-12 margin. Every condition only gets
+      // truer as the ball shrinks (lo rises, hi falls, the near distance rises), so a firm
+      // prune holds in every child ball.
       // A skipped (firmly pruned in the parent) slot never decides another slot: its lo
       // exceeds two other slots' hi, so its hi is never another slot's H2 when that slot
       // could be pruned, and (b) for the pair already held when it was pruned. The interval
       // is taken over the kept slots alone, which is exact (a pruned slot changes no value).
       // Every rule reads the BULGED children's intervals (bulgeRange: the offset's bounds over
-      // the ball, which nest as the ball shrinks), as the field bulges before it cuts. (d) With
-      // fuse, every pad-fill region involving j has gate weight 0 over the ball (padded near
-      // distance, as (c)); the emitter then drops those regions, as it drops attachments.
-      const N = n.children.length, cl = nodeClearance(n, e), att = n.att, nA = att.length / ATTACH_STRIDE;
+      // the ball, which nest as the ball shrinks), as the field bulges before it cuts.
+      const N = n.children.length, cl = clearance(n.gap), att = n.att, nA = att.length / ATTACH_STRIDE;
       const rs = new Array(N), lo = new Float64Array(N), hi = new Float64Array(N), off = [0, 0];
       for (let i = 0; i < N; i++) {
         if (skip(pd, i)) { rs[i] = null; continue; }
-        const a = visit(c, n.children[i], x, y, z, r, sub(pd, i), e), R = n.regions[i];
+        const a = visit(c, n.children[i], x, y, z, r, sub(pd, i)), R = n.regions[i];
         rs[i] = a; lo[i] = a.lo; hi[i] = a.hi;
         if (R.length) { bulgeRange(off, R, 0, R.length / BULGE_STRIDE, x, y, z, r); lo[i] = a.lo - off[1]; hi[i] = a.hi - off[0]; }
       }
       const wr = new Array(nA);
       for (let a = 0; a < nA; a++) wr[a] = attachWeightRange(new Float64Array(3), att, a * ATTACH_STRIDE, x, y, z, r);
-      const F = n.fillRegions, nF = n.fuse ? F.length / FILL_STRIDE : 0, gr = new Array(nF);
-      for (let k = 0; k < nF; k++) gr[k] = gateWeightRange(new Float64Array(3), F, k * FILL_STRIDE, cl, x, y, z, r);
-      // (b)'s threshold: with pad fills, also PAD_BLEND/2 — a pad's third-piece clearance
-      // (min(v_a, v_b) − v_j + cl)/2 then stays below the pad's blend, min(v_a, v_b) − PAD_BLEND/4.
-      const clb = nF > 0 ? cl + PAD_BLEND / 2 : cl;
       const kids = new Array(N), keep = new Array(N);
       let firm = null;
       for (let j = 0; j < N; j++) {
@@ -150,7 +139,7 @@ function visit(c, id, x, y, z, r, pd, e) {
         // (b): every other walked slot.
         for (let i = 0; prune && i < N; i++) {
           if (i === j || rs[i] === null) continue;
-          const Tb = clb + 1e-12 * (Math.abs(lo[i]) + Math.abs(lo[j]) + clb);
+          const Tb = cl + 1e-12 * (Math.abs(lo[i]) + Math.abs(lo[j]) + cl);
           const s = lo[i] + lo[j];
           if (!(s > Tb)) prune = false;
           else if (!(s - Tb > firmTol(r, x, y, z, Math.abs(lo[i]) + Math.abs(lo[j]), Tb))) isFirm = false;
@@ -165,22 +154,12 @@ function visit(c, id, x, y, z, r, pd, e) {
             if (!(wr[a][2] - T > firmTol(r, x, y, z, wr[a][2], T))) isFirm = false;
           }
         }
-        // (d): every pad-fill region involving j has gate weight 0 over the ball.
-        for (let k = 0; prune && k < nF; k++) {
-          const o = k * FILL_STRIDE;
-          if (F[o] !== j && F[o + 1] !== j) continue;
-          if (gr[k][1] > 0) prune = false;
-          else {
-            const T = F[o + 5] + cl + FILL_BAND + FILL_BAND;
-            if (!(gr[k][2] - T > firmTol(r, x, y, z, gr[k][2], T))) isFirm = false;
-          }
-        }
         if (!prune) { kids[j] = rs[j].dec; keep[j] = true; continue; }
         kids[j] = null; keep[j] = false;
         if (firm === null) firm = new Array(N).fill(false);
         firm[j] = isFirm;
       }
-      const iv = contactInterval([0, 0], lo, hi, keep, N, cl, n.fuse, att, nA, wr, F, nF, gr);
+      const iv = contactInterval([0, 0], lo, hi, keep, N, cl, att, nA, wr);
       return { lo: iv[0], hi: iv[1], dec: { id, kids, firm } };
     }
     case "mirror": {
@@ -189,12 +168,12 @@ function visit(c, id, x, y, z, r, pd, e) {
       if (skip(pd, 0) || skip(pd, 1)) {
         const s = skip(pd, 0) ? 1 : 0, m = [x, y, z];
         if (s === 1) mirrorPoint(m, n.axis, x, y, z);
-        const K = visit(c, n.children[0], m[0], m[1], m[2], r, sub(pd, s), e);
+        const K = visit(c, n.children[0], m[0], m[1], m[2], r, sub(pd, s));
         return { lo: K.lo, hi: K.hi, dec: { id, kids: s === 0 ? [K.dec, null] : [null, K.dec], firm: [s === 1, s === 0] } };
       }
-      const A = visit(c, n.children[0], x, y, z, r, sub(pd, 0), e), m = [0, 0, 0];
+      const A = visit(c, n.children[0], x, y, z, r, sub(pd, 0)), m = [0, 0, 0];
       mirrorPoint(m, n.axis, x, y, z);
-      const B = visit(c, n.children[0], m[0], m[1], m[2], r, sub(pd, 1), e);
+      const B = visit(c, n.children[0], m[0], m[1], m[2], r, sub(pd, 1));
       const mA = 1e-12 * (Math.abs(A.lo) + Math.abs(B.hi)), mB = 1e-12 * (Math.abs(B.lo) + Math.abs(A.hi));
       const keepA = !(A.lo > B.hi + mA), keepB = !(B.lo > A.hi + mB);
       const lo = Math.min(keepA ? A.lo : Infinity, keepB ? B.lo : Infinity), hi = Math.min(keepA ? A.hi : Infinity, keepB ? B.hi : Infinity);
@@ -203,13 +182,13 @@ function visit(c, id, x, y, z, r, pd, e) {
       const firm = [!keepA && A.lo - (B.hi + mA) > firmTol(r, x, y, z, A.lo, B.hi + mA), !keepB && B.lo - (A.hi + mB) > firmTol(r, x, y, z, B.lo, A.hi + mB)];
       return { lo, hi, dec: { id, kids, firm } };
     }
-    case "round": { const a = visit(c, n.children[0], x, y, z, r, sub(pd, 0), e); return { lo: a.lo - n.r, hi: a.hi - n.r, dec: { id, kids: [a.dec] } }; }
+    case "round": { const a = visit(c, n.children[0], x, y, z, r, sub(pd, 0)); return { lo: a.lo - n.r, hi: a.hi - n.r, dec: { id, kids: [a.dec] } }; }
     case "onion": {
-      const a = visit(c, n.children[0], x, y, z, r, sub(pd, 0), e);
+      const a = visit(c, n.children[0], x, y, z, r, sub(pd, 0));
       const lo = a.lo >= 0 ? a.lo : a.hi <= 0 ? -a.hi : 0, hi = Math.max(Math.abs(a.lo), Math.abs(a.hi));
       return { lo: lo - n.t, hi: hi - n.t, dec: { id, kids: [a.dec] } };
     }
-    case "displace": { const a = visit(c, n.children[0], x, y, z, r, sub(pd, 0), e); return { lo: a.lo - Math.abs(n.amount), hi: a.hi + Math.abs(n.amount), dec: { id, kids: [a.dec] } }; }
+    case "displace": { const a = visit(c, n.children[0], x, y, z, r, sub(pd, 0)); return { lo: a.lo - Math.abs(n.amount), hi: a.hi + Math.abs(n.amount), dec: { id, kids: [a.dec] } }; }
     case "warp": {
       const q = [x, y, z], w = [0, 0, 0], { kind, W, B, Bt } = n.warp;
       if (B) xformDir(q, B, x, y, z);
@@ -227,10 +206,10 @@ function visit(c, id, x, y, z, r, pd, e) {
       }
       warpPoint(w, kind, W, q[0], q[1], q[2]);
       if (Bt) xformDir(w, Bt, w[0], w[1], w[2]);
-      const a = visit(c, n.children[0], w[0], w[1], w[2], r * S, sub(pd, 0), e);
+      const a = visit(c, n.children[0], w[0], w[1], w[2], r * S, sub(pd, 0));
       return { lo: a.lo, hi: a.hi, dec: { id, kids: [a.dec] } };
     }
-    case "ref": { const a = visit(c, n.children[0], x, y, z, r, sub(pd, 0), e); return { lo: a.lo, hi: a.hi, dec: { id, kids: [a.dec] } }; }
+    case "ref": { const a = visit(c, n.children[0], x, y, z, r, sub(pd, 0)); return { lo: a.lo, hi: a.hi, dec: { id, kids: [a.dec] } }; }
     default: throw new Error(`implicit: unknown IR node kind ${n.kind}`);
   }
 }

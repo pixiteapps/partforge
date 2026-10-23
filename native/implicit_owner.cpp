@@ -1,4 +1,4 @@
-// C++ port of the implicit engine's owner path (a root exact contact): mesher-owners.js's
+// C++ port of the implicit engine's owner path (a contact root): mesher-owners.js's
 // meshStoreOwners, crease.js's cutCreases and untangle, and result.js's triangleOwners. The
 // owner modes of cleanup (collapse guards, project_owned) are in implicit_mesh.cpp and the
 // detail's seam fade in implicit_detail.cpp. See implicit_mesh.h.
@@ -1353,7 +1353,7 @@ extern "C" {
 
 // The contact the owner stages read (see Session): `att` (attLen doubles, ATTACH_STRIDE each; the
 // IR node's attWorld, anchors in world space like the mesh positions the stages test),
-// the exact clearance, the gap and contact.js's CREASE_SNAP, CREASE_TOL and DETAIL_SEAM_FADE.
+// the clearance, the gap and contact.js's CREASE_SNAP, CREASE_TOL and DETAIL_SEAM_FADE.
 // 0 ok; nonzero for an unknown session or a malformed table.
 int ip_set_contact(int id, const double* att, int attLen, double cl, double gap, double creaseSnap, double creaseTol, double seamFade) {
   ipe::Session* s = ipe::session(id);

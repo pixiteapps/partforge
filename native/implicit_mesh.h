@@ -17,7 +17,7 @@ constexpr int LEAF = 4;                         // sparse.js's LEAF
 constexpr int S = LEAF + 1, S3 = S * S * S;     // samples per leaf side / per leaf
 
 // evaluateLeaves: samples `count` leaves (i0, j0, l0, program index each) into the
-// session's leaf store. With ownerK > 0 (an owner plan: the root is an exact contact
+// session's leaf store. With ownerK > 0 (an owner plan: the root is a contact
 // of ownerK children) each sample's owner is captured too (s.owners). Returns 0, or
 // nonzero (nothing kept) for a program index the session lacks, a program it refuses
 // to run, or an ownerK outside 0..MAX_OWNER_K or below a child index a program names.
@@ -47,7 +47,7 @@ int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxW
             double minAccept, double minGain);
 
 // ---------------------------------------------------------------------------
-// The owner path (a root exact contact): implicit_owner.cpp, plus the owner modes of
+// The owner path (a contact root): implicit_owner.cpp, plus the owner modes of
 // cleanup (above, on an owner mesh) and project_owned.
 
 // Points to evaluate, each with one session program (a mesh point is evaluated with its

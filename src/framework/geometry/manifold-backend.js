@@ -62,10 +62,7 @@ function axisAngleMat4(axis, deg) {
   return [R00, R10, R20, 0,  R01, R11, R21, 0,  R02, R12, R22, 0,  0, 0, 0, 1];
 }
 
-// `exactContact` is INTERNAL (tests): true by default, every root contact of a k.implicit compiles
-// with exact seams (implicit/index.js), each contact piece its own ID. Tests pass `false` to get
-// the approximate contact (one ID, a minimum gap, a soft pad) a nested contact keeps.
-export function createManifoldKernel(wasm, { quality = "preview", exactContact = true } = {}) {
+export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const { Manifold, CrossSection } = wasm;
   const segs = SEGS[quality], tube = TUBE[quality];
   // Per-radius count for every site that facets a circle it knows the radius of; the
@@ -937,18 +934,18 @@ export function createManifoldKernel(wasm, { quality = "preview", exactContact =
     // value and are recorded again on every hit, so each build that uses the solid
     // reports them.
     implicit: (spec) => {
-      const compiled = compileImplicit(spec, { images, exactContact });
+      const compiled = compileImplicit(spec, { images });
       const { preview, resolution, ...rest } = spec;
       const edge = quality === "print" ? (resolution ?? IMPLICIT_DEFAULTS.resolution) : (preview ?? IMPLICIT_DEFAULTS.preview);
       const keySpec = quality === "print" ? { ...rest, resolution: edge } : { ...rest, preview: edge };
-      const key = exactContact ? h("implicit", implicitHashable(keySpec, compiled), quality, "exact") : h("implicit", implicitHashable(keySpec, compiled), quality);
+      const key = h("implicit", implicitHashable(keySpec, compiled), quality);
       const solid = cache.lookup(key, () => {
         const out = meshImplicit(compiled, edge, { tier: quality });
         if (out.indices.length === 0) {
           for (const w of out.warnings) recordWarning(w);
           throw new Error(`implicit: the shape is empty at a ${edge} mm grid — nothing is inside it (check subtract order and sizes), or it is thinner than the grid`);
         }
-        // An exact contact (a triOwner) is one original ID per piece, all one shading group
+        // A contact root (a triOwner) is one original ID per piece, all one shading group
         // (shading-policy.js SIBLING_SEAM_ANGLE): the crease shades hard, the attachment-zone
         // seams between siblings stay smooth. Anything else is one ORGANIC skin.
         const pieces = out.triOwner ? compiled.ownerK : 1;
