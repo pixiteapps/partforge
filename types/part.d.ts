@@ -495,6 +495,8 @@ export interface DfmProfile {
    * profile alone; `null` switches it off under a named base.
    */
   bedContact?: number | null;
+  /** Percent of a printed piece's posed base area resting on the bed below which the footprint cost fires. */
+  footprint?: number | null;
   /** Carried for a future gap check; not enforced yet. */
   clearance?: number;
   /**

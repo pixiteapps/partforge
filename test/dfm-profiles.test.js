@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { resolveProfile, overhangAngleFor, PROFILES } from "../src/framework/oracle/dfm-profiles.js";
 
 const FDM_PLA = {
-  bed: [220, 220, 250], minWall: 1.2, clearance: 0.2, overhang: 45, bedContact: 50,
+  bed: [220, 220, 250], minWall: 1.2, clearance: 0.2, overhang: 45, bedContact: 50, footprint: 5,
   fits: { press: -0.1, push: 0.05, slip: 0.25, moving: 0.35, printInPlace: 0.45 },
   holeUndersize: 0.25, bridge: 10,
 };
