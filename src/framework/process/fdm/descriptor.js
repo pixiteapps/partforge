@@ -2,8 +2,8 @@
 // as DATA: which checks apply and at what thresholds. `bed` is the build volume
 // [x,y,z] in mm (a hard bbox-fit gate); `minWall` mm (a warn); `overhang` is the
 // steepest unsupported face the process prints cleanly, in degrees from vertical
-// (a warn, armed only by the part — see overhangAngleFor; resin prints on
-// supports, so it carries none); `bedContact` is the least share (%) of a printed
+// (a cost — supports — armed by the profile alone, see overhangAngleFor; resin
+// prints on supports, so it carries none); `bedContact` is the least share (%) of a printed
 // piece's near-bed flat underside that must rest on the bed (a GATE, armed by the
 // profile alone — see bedContactFor; resin prints on supports, so it carries none);
 // `clearance` mm is carried for a future gap check (not enforced yet).

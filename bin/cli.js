@@ -559,12 +559,14 @@ function printVerify(v) {
   for (const c of v.cases) {
     console.log(`  ${c.name}`);
     for (const ch of c.checks) {
-      const icon = ch.status === "pass" ? "✓" : ch.status === "fail" ? "✗" : ch.status === "warn" ? "⚠" : "·";
-      console.log(`    ${icon} ${ch.subpart ?? "_view"} ${ch.metric} ${ch.expr}  (${ch.message})`);
+      // A cost has a price (supports, a brim), so it gets `$`, not a warning sign.
+      const icon = ch.status === "pass" ? "✓" : ch.status === "fail" ? "✗" : ch.status === "warn" ? "⚠"
+        : ch.status === "cost" ? "$" : "·";
+      console.log(`    ${icon} ${ch.subpart ?? "_view"} ${ch.metric} ${ch.expr}  (${ch.message})${ch.accepted ? " (accepted)" : ""}`);
       // A measurement caveat prints whatever the verdict — "passed, but sampled"
       // is precisely the line a reader must not miss.
       if (ch.note) console.log(`        note: ${ch.note}`);
-      if (ch.status === "fail" || ch.status === "warn") {
+      if (ch.status === "fail" || ch.status === "warn" || ch.status === "cost") {
         if (ch.location) console.log(`        at [${ch.location.map((n) => n.toFixed(1)).join(", ")}]`);
         if (ch.hint) console.log(`        hint: ${ch.hint}${ch.pattern ? ` (${patternRef(ch.pattern)})` : ""}`);
       }
@@ -584,7 +586,8 @@ function printVerify(v) {
     : v.unevaluated?.length ? `verdict withheld (${v.unevaluated.length} check(s) not evaluated)`
     : v.declared ? "nothing verified (every declared check skipped)"
     : "nothing verified (no expectations declared)";
-  console.log(`  result: ${verdict}${w ? `, ${w} warning(s)` : ""}`);
+  const c = v.costs?.length ?? 0;
+  console.log(`  result: ${verdict}${w ? `, ${w} warning(s)` : ""}${c ? `, ${c} cost(s)` : ""}`);
 }
 
 function printLint(r) {
