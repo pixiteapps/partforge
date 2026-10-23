@@ -38,13 +38,13 @@ import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 // 2026-10-22, later: exact speed-ups to the native edge collapse took ~45-50 ms off cleanup at
 // 1.5 mm on BOTH paths (plain 201 / 238 paced ms, owner 240 / 297), which raises the preview
 // ratios: measured 1.19x / 1.25x preview and 1.29x / 1.33x print (default / fist, three quiet gate
-// runs; one full-suite run read the fist preview at 1.36x). The preview limits are raised to
-// 1.34x / 1.38x (measured plus ~10%); the print limits stand.
+// runs). Under the full suite's load the preview ratios read higher (~1.22x / 1.36x), so the
+// preview limits are the LOADED ratio plus ~10%: 1.34x / 1.50x. The print limits stand.
 const SPEC_PREVIEW_MS = 150;
 const SPEC_PRINT_MS = 2000;
 const OWNER_GATES = [
   ["hand default", {}, 1.34, 1.43],
-  ["hand fist", HAND_POSES.fist, 1.38, 1.46],
+  ["hand fist", HAND_POSES.fist, 1.50, 1.46],
 ];
 
 // Median owner and plain times, runs interleaved (owner, plain, owner, plain, ...).

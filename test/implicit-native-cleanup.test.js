@@ -78,6 +78,33 @@ describe("native cleanup", () => {
     }
   });
 
+  // The native decimation refuses a too-sharp collapse early, inside its fan walk, only in a pass
+  // whose coordinates all lie in [1e-50, 1e75) or at 0 (where no corner sharpness can be NaN);
+  // otherwise it runs the corner guard after the walk. A coordinate of 1e-60 turns the early
+  // refusal off for every pass, so this holds that fallback to the JS.
+  test("PREVIEW_CLEANUP with a coordinate below 1e-50 (no early corner refusal): cleanupMesh's bytes", () => {
+    const { spec, images } = nativeCases().find((k) => k.name === "hand fist");
+    const plan = planLeaves(lowerSpec(spec, { images }), 1.5);
+    const store = evaluateLeaves(plan);
+    const raw = meshStore(store);
+    // Every coordinate within 0.3 mm of 0 becomes +-1e-60, so some survive every pass (a collapse
+    // replaces its vertex by a midpoint, back in range).
+    const positions = Float64Array.from(raw.positions, (x) => (Math.abs(x) < 0.3 ? (x < 0 ? -1e-60 : 1e-60) : x));
+    const mesh = { positions, indices: raw.indices, vertLeaf: raw.vertLeaf };
+    const js = cleanupMesh(store, mesh, PREVIEW_CLEANUP);
+    expect(js.indices.length).toBeLessThan(raw.indices.length / 2);   // decimation ran
+    const s = sessionFor(plan);
+    try {
+      s.sample(plan, { readBack: false });
+      s.loadMesh(mesh);
+      const nat = s.cleanup(PREVIEW_CLEANUP);
+      same("positions", nat.positions, js.positions);
+      same("indices", nat.indices, js.indices);
+      same("vertLeaf", nat.vertLeaf, js.vertLeaf);
+      same("normals", nat.normals, js.normals);
+    } finally { s.destroy(); }
+  }, 120_000);
+
   test("refusals: no mesh, a repeated or out-of-range vertex; the instance is not poisoned", () => {
     const plan = planLeaves(lowerSpec({ root: { kind: "sphere", r: 3 } }, { images: new Map() }), 1);
     const s = sessionFor(plan);

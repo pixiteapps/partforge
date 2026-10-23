@@ -407,5 +407,6 @@ All of it is now decided. What shipped:
   paths lose the same ~45-50 ms at 1.5 mm, so the preview ratios rise: plain now measures
   201 / 238 ms at 1.5 mm (against the 241 / 269 base) and 1446 / 1716 ms at 0.5 mm, the owner
   path 240 / 297 and 1869 / 2280 ms; 1.19x / 1.25x preview and 1.29x / 1.33x print (default /
-  fist, three quiet gate runs; one full-suite run read the fist preview at 1.36x). The preview
-  gate is raised to 1.34x / 1.38x (measured plus ~10%); print keeps 1.43x / 1.46x.
+  fist, three quiet gate runs). Under the full suite's load the preview ratios read higher
+  (~1.22x / 1.36x), so the preview gate is the loaded ratio plus ~10%: 1.34x / 1.50x; print
+  keeps 1.43x / 1.46x.

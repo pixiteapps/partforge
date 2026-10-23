@@ -515,9 +515,11 @@ size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double nc
   size_t collapsed = 0;
   std::vector<double> fan;      // the new normals of the surviving triangles, in walk order
   std::vector<uint32_t> fanT;   // and those triangles
-  // Decimation only (and wherever the corner guard reads them): each triangle's current
-  // normal (bit 1) and sharpness (bit 2), cached until a collapse touches it (see the
-  // top comment).
+  // Each triangle's current normal (bit 1) and sharpness (bit 2), cached until a collapse
+  // touches it (see the top comment): in a decimation pass (`dec`), and wherever the corner
+  // guard is on (`cos2 > 0`), since it reads the cached sharpness. On every real call the
+  // two agree — cleanup() passes cos2 = -1 to the plain first pass — so the first pass
+  // never caches; the second half only keeps a guard-on call without `dec` safe.
   const bool cache = dec || cos2 > 0;
   std::vector<uint8_t> have(cache ? nt : 0, 0);
   std::vector<double> curN(cache ? 3 * nt : 0), curS(cache ? nt : 0);
