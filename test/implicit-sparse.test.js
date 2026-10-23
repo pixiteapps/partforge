@@ -39,7 +39,7 @@ describe("sparse sampler", () => {
   for (const gap of [0, 0.2]) {
     test(`exact capsule press (gap ${gap}): culled leaves hold exactly the dense run's values`, () => {
       const cap = (b) => ({ kind: "capsule", a: [0, 0, 2], b, r: 3 });
-      const c = lowerSpec({ root: { kind: "contact", gap, children: [cap([0, 0, 30]), cap([14, 0, 26])] } }, { images: new Map(), exactContact: true });
+      const c = lowerSpec({ root: { kind: "contact", gap, children: [cap([0, 0, 30]), cap([14, 0, 26])] } }, { images: new Map() });
       expect(c.ownerRoot).toBeGreaterThanOrEqual(0);
       for (const edge of [1, 0.6]) {
         const sparse = sampleField(c, edge), dense = sampleField(c, edge, { cull: false });

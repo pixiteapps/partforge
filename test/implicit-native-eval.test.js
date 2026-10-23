@@ -199,19 +199,19 @@ describe("native program interpreter", () => {
     }
   };
 
-  test("CONTACT: attachments (first per pair wins, either order), the pad fill and fuse's truthiness", () => {
-    // V0..V2 = x, y, z − 0.25; V3 = CONTACT(cl 0.3; V0, V1, V2) with three attachments (the
-    // second repeats the first's pair reversed: never read) and two fill regions; END V3.
-    for (const fuse of [1, 0, -0, NaN, 0.5]) {
+  test("CONTACT: attachments (first per pair wins, either order), at a gap and at gap 0's overlap", () => {
+    // V0..V2 = x, y, z − 0.25; V3 = CONTACT(cl; V0, V1, V2) with three attachments (the second
+    // repeats the first's pair reversed: never read), then the child map and tie ranks; END V3.
+    for (const cl of [0.3, -0.02]) {
       const prog = Float64Array.of(1, 5, 20, 0, 0, 0, 20, 1, 0, 1, 20, 4, 0, 2, 9, 2, 4, -0.25,
-        14, 3, 0, 0.3, fuse, 3, 3, 0, 1, 2,
+        14, 3, 0, cl, 3, 3, 0, 1, 2,
         1, 0, 0, 0, 0, 1, 2, 1.5,
         0, 1, 1, 1, 1, 0.5, 1, 3,
         2, 1, 0.5, 0, 0, 2, 1, 0.7,
-        2, 0, 1, 0, 0, 0, 0.5, 2, 0, 1, 0, 0, 1,
+        0, 1, 2, 2, 3, 1,
         0, 3);
       const [X, Y, Z] = contactLanes();
-      sameBits(`contact fuse ${fuse}`, X, Y, Z, runBoth(prog, X, Y, Z));
+      sameBits(`contact cl ${cl}`, X, Y, Z, runBoth(prog, X, Y, Z));
     }
   });
 
@@ -227,21 +227,19 @@ describe("native program interpreter", () => {
   test("a malformed CONTACT or BULGE is refused, not run", () => {
     const s = new NativeSession(core());
     const at = Float64Array.of(0);
-    // V0 = x, V1 = y; V2 = CONTACT(cl 0.3, fuse 1; V0, V1; one attachment, one fill region).
-    const contact = (kids, att, fill, nK = kids.length) =>
-      Float64Array.of(1, 3, 20, 0, 0, 0, 20, 1, 0, 1, 14, 2, 0, 0.3, 1, nK, att.length / 8, ...kids, ...att, fill.length / 6, ...fill, 0, 2);
-    const att = [0, 1, 0, 0, 0, 1, 1, 1], fill = [0, 1, 0, 0, 0, 1];
+    // V0 = x, V1 = y; V2 = CONTACT(cl 0.3; V0, V1; one attachment), child map and tie ranks.
+    const contact = (kids, att, nK = kids.length, tail = [...kids.map((_, i) => i), ...kids.map(() => 1)]) =>
+      Float64Array.of(1, 3, 20, 0, 0, 0, 20, 1, 0, 1, 14, 2, 0, 0.3, nK, att.length / 8, ...kids, ...att, ...tail, 0, 2);
+    const att = [0, 1, 0, 0, 0, 1, 1, 1];
     try {
-      expect([...s.eval(s.addProgram(contact([0, 1], att, fill)), at, at, at)]).toHaveLength(1);   // well-formed: runs
+      expect([...s.eval(s.addProgram(contact([0, 1], att)), at, at, at)]).toHaveLength(1);   // well-formed: runs
       for (const bad of [
-        contact([0, 1], [0, 2, 0, 0, 0, 1, 1, 1], fill),   // attachment slot past nK
-        contact([0, 1], [0.5, 1, 0, 0, 0, 1, 1, 1], fill), // non-integer slot
-        contact([0, 1], att, [0, 2, 0, 0, 0, 1]),          // fill slot past nK
-        contact([0, 1], att, [-1, 1, 0, 0, 0, 1]),         // negative fill slot
-        contact([0, 7], att, fill),                        // kid register past nV
-        contact([], [], [], 0),                            // no operands
-        contact([0, 1], att, fill).subarray(0, 25),        // truncated in the fill list
-        Float64Array.of(1, 2, 14, 1, 0, 0.3, 1, 2, 1e8, 0, 0, 0, 1),   // attachment count past the end
+        contact([0, 1], [0, 2, 0, 0, 0, 1, 1, 1]),   // attachment slot past nK
+        contact([0, 1], [0.5, 1, 0, 0, 0, 1, 1, 1]), // non-integer slot
+        contact([0, 7], att),                        // kid register past nV
+        contact([], [], 0),                          // no operands
+        contact([0, 1], att).subarray(0, 24),        // truncated in the attachment list
+        Float64Array.of(1, 2, 14, 1, 0, 0.3, 2, 1e8, 0, 0, 0, 1),   // attachment count past the end
         Float64Array.of(1, 2, 20, 0, 0, 0, 15, 1, 5, 0, 1, 0, 0, 0, 1, 1, 0, 1),   // BULGE source past nV
         Float64Array.of(1, 2, 20, 0, 0, 0, 15, 1, 0, 3, 1, 0, 0, 0, 1, 1, 0, 1),   // BULGE point register past nP
         Float64Array.of(1, 2, 20, 0, 0, 0, 15, 1, 0, 0, 2, 0, 0, 0, 1, 1, 0, 1),   // BULGE region list runs off the end
@@ -288,15 +286,15 @@ describe("native program interpreter", () => {
   });
 });
 
-// The exact contact op (fuse = 2, the root contact under `exactContact`): evalContact must
+// The contact op (the spec's root): evalContact must
 // capture what program.js's evalBatchContact captures, field for field — the value, the
 // merged owner, the piece (Task 5's order-free tie rank), every child's cut and share — in
 // both builds of the core (afterEach re-boots; PARTFORGE_CORE_SIMD is read at each boot).
-describe.each([["SIMD", true], ["scalar", false]])("native exact-contact capture (%s build)", (_, simd) => {
+describe.each([["SIMD", true], ["scalar", false]])("native contact capture (%s build)", (_, simd) => {
   beforeAll(() => { if (!simd) globalThis.PARTFORGE_CORE_SIMD = false; setCoreForTesting(undefined); });
   afterAll(() => { delete globalThis.PARTFORGE_CORE_SIMD; setCoreForTesting(undefined); });
 
-  const exact = (spec) => compileImplicit(spec, { exactContact: true });
+  const exact = (spec) => compileImplicit(spec);
   const EXACT = {
     hand: () => exact(handSpec()),
     "hand nearMiss": () => exact(handSpec(HAND_POSES.nearMiss)),
@@ -335,7 +333,7 @@ describe.each([["SIMD", true], ["scalar", false]])("native exact-contact capture
       const progs = [emitProgram(c, fullDecision(c), 1.5)];
       for (let k = 0; k < 12; k++) {   // pruned leaves: a pruned child reads +Infinity
         const [cx, cy, cz] = inBounds(c, 1);
-        progs.push(emitProgram(c, blockDecision(c, cx[0], cy[0], cz[0], 1 + Math.abs(rnd()) * ext * 0.1, undefined, 1.5).dec, 1.5));
+        progs.push(emitProgram(c, blockDecision(c, cx[0], cy[0], cz[0], 1 + Math.abs(rnd()) * ext * 0.1).dec));
       }
       const s = new NativeSession(core());
       let pruned = 0, inside = 0;
@@ -378,11 +376,11 @@ describe.each([["SIMD", true], ["scalar", false]])("native exact-contact capture
     } finally { s.destroy(); }
   });
 
-  test("a malformed exact CONTACT, or a child index past K, is refused, not run", () => {
+  test("a malformed CONTACT child map, or a child index past K, is refused, not run", () => {
     const s = new NativeSession(core());
     const at = Float64Array.of(0);
-    // V0 = x, V1 = y; V2 = CONTACT(cl −0.02, fuse 2; V0, V1; no attachments, no fills), child map, ranks.
-    const exactOp = (tail, fuse = 2) => Float64Array.of(1, 3, 20, 0, 0, 0, 20, 1, 0, 1, 14, 2, 0, -0.02, fuse, 2, 0, 0, 1, 0, ...tail, 0, 2);
+    // V0 = x, V1 = y; V2 = CONTACT(cl −0.02; V0, V1; no attachments), child map, ranks.
+    const exactOp = (tail) => Float64Array.of(1, 3, 20, 0, 0, 0, 20, 1, 0, 1, 14, 2, 0, -0.02, 2, 0, 0, 1, ...tail, 0, 2);
     try {
       expect([...s.eval(s.addProgram(exactOp([0, 1, 0, 0])), at, at, at)]).toHaveLength(1);   // well-formed: runs
       const cap = { K: 2, piece: new Int32Array(1) };
@@ -392,7 +390,7 @@ describe.each([["SIMD", true], ["scalar", false]])("native exact-contact capture
         exactOp([0, 127, 0, 0]),   // child index past MAX_OWNER_K
         exactOp([0, -1, 0, 0]),    // negative child index
         exactOp([0, 0.5, 0, 0]),   // non-integer child index
-        exactOp([0, 1, 0]).subarray(0, 23),   // the tail runs off the end
+        exactOp([0, 1, 0]).subarray(0, 21),   // the tail runs off the end
       ]) {
         expect(() => s.eval(s.addProgram(bad), at, at, at)).toThrow(/refused/);
       }

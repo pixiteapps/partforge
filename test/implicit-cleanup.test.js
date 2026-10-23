@@ -33,10 +33,11 @@ const minAngles = (P, T) => {
 };
 
 describe("cleanup", () => {
-  for (const [name, spec] of Object.entries(TREES)) for (const [tier, opts] of [["CLEANUP", CLEANUP], ["PREVIEW_CLEANUP", PREVIEW_CLEANUP]]) {
+  // The plain (non-owner) pipeline, on every tree but the contact* ones (a contact root takes the
+  // owner path, below).
+  for (const [name, spec] of Object.entries(TREES).filter(([n]) => !n.startsWith("contact"))) for (const [tier, opts] of [["CLEANUP", CLEANUP], ["PREVIEW_CLEANUP", PREVIEW_CLEANUP]]) {
     test(`${name}, ${tier}: topology kept, slivers gone, vertices on the surface, triangles better`, () => {
-      // The plain (non-owner) pipeline, which a nested contact still takes: the approximate field.
-      const c = lowerSpec(spec, { images: new Map(), exactContact: false });
+      const c = lowerSpec(spec, { images: new Map() });
       const edge = 0.8, store = sampleField(c, edge), raw = meshStore(store);
       const out = cleanupMesh(store, raw, opts);
       expect(edgeCheck(out.indices)).toEqual({ boundary: 0, nonManifold: 0, misoriented: 0 });
@@ -44,10 +45,10 @@ describe("cleanup", () => {
       // A bend's branch cut makes the field discontinuous; "distance to the surface" means nothing
       // within a cell of the jump (the bendCut tree puts it inside the rounded surface on purpose).
       const nearJump = (x, y, z, d) => [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
-        .some(([a, b, e]) => Math.abs(evalReference(c, x + a * edge, y + b * edge, z + e * edge, edge) - d) > 4 * edge);
+        .some(([a, b, e]) => Math.abs(evalReference(c, x + a * edge, y + b * edge, z + e * edge) - d) > 4 * edge);
       let worst = 0, skipped = 0;
       for (let v = 0; v < out.positions.length / 3; v++) {
-        const x = out.positions[3 * v], y = out.positions[3 * v + 1], z = out.positions[3 * v + 2], d = evalReference(c, x, y, z, edge);   // the field at the grid edge it was meshed at (a contact's clearance)
+        const x = out.positions[3 * v], y = out.positions[3 * v + 1], z = out.positions[3 * v + 2], d = evalReference(c, x, y, z);
         if (nearJump(x, y, z, d)) { skipped++; continue; }
         worst = Math.max(worst, Math.abs(d));
       }
@@ -62,13 +63,13 @@ describe("cleanup", () => {
       expect(out.normals.length).toBe(out.positions.length);
     });
   }
-  // The exact (default) path for the contact* trees: the owner mesher's raw mesh, cleaned up by the
-  // owner-aware cleanup. Same invariants as above, in their exact-path form: pinned vertices (exactly
+  // The owner path for the contact* trees: the owner mesher's raw mesh, cleaned up by the
+  // owner-aware cleanup. Same invariants as above, in their owner-path form: pinned vertices (exactly
   // on a gap face) are not on the contact field's zero set, so they are exempt from the surface
   // test; every other vertex must sit on a piece's surface. Compared on the JS stages (the native
   // port is held bit-identical by test/core-parity.test.js).
   for (const [name, spec] of Object.entries(TREES).filter(([n]) => n.startsWith("contact"))) for (const [tier, opts] of [["CLEANUP", CLEANUP], ["PREVIEW_CLEANUP", PREVIEW_CLEANUP]]) {
-    test(`${name}, exact owner path, ${tier}: topology kept, slivers gone, vertices on the surface, triangles better`, () => {
+    test(`${name}, owner path, ${tier}: topology kept, slivers gone, vertices on the surface, triangles better`, () => {
       const c = compileImplicit(spec), edge = 0.8;
       expect(c.ownerRoot, "a root contact takes the owner path").toBeGreaterThanOrEqual(0);
       const store = evaluateLeaves(planLeaves(c, edge)), raw = meshStoreOwners(store, { gap: c.ir.nodes[c.ownerRoot].gap });
@@ -79,7 +80,7 @@ describe("cleanup", () => {
       let worst = 0, checked = 0;
       for (let v = 0; v < out.vertOwner.length; v++) {
         if (out.pinned[v]) continue;
-        const d = evalReference(c, out.positions[3 * v], out.positions[3 * v + 1], out.positions[3 * v + 2], edge);
+        const d = evalReference(c, out.positions[3 * v], out.positions[3 * v + 1], out.positions[3 * v + 2]);
         checked++;
         worst = Math.max(worst, Math.abs(d));
       }
@@ -103,7 +104,7 @@ describe("cleanup", () => {
       const c = lowerSpec(spec, { images: new Map() });
       const store = sampleField(c, edge), out = cleanupMesh(store, meshStore(store), CLEANUP);
       let worst = 0;
-      for (let v = 0; v < out.positions.length / 3; v++) worst = Math.max(worst, Math.abs(evalReference(c, out.positions[3 * v], out.positions[3 * v + 1], out.positions[3 * v + 2], edge)));
+      for (let v = 0; v < out.positions.length / 3; v++) worst = Math.max(worst, Math.abs(evalReference(c, out.positions[3 * v], out.positions[3 * v + 1], out.positions[3 * v + 2])));
       expect(worst, `bulge ${bulge ?? "default"}, tip at x = ${spec.root.children[0].b[0].toFixed(2)}`).toBeLessThan(0.05 * edge);
     }
   });
@@ -136,10 +137,9 @@ describe("cleanup", () => {
 // decimation existed. Each digest is the first 16 hex digits of a sha256 over the
 // meshImplicit result's positions (Float64Array), indices (Uint32Array) and normals
 // (Float64Array) bytes, in that order, for the case's spec and grid; they were
-// recorded from commit 1882699c, the last before decimation, JS and core alike. The hand is pinned compiled with
-// `exactContact: false`: a default (exact) hand meshes through the owner path, whose own tier
-// behaviour test/core-parity.test.js and test/implicit-seam-quality.test.js hold; this pin is the
-// plain pipeline a nested contact takes. A deliberate change to print-tier meshing changes the digests: re-record by printing
+// recorded from commit 1882699c, the last before decimation, JS and core alike. The hand (a contact
+// root) meshes through the owner path, whose tier behaviour the "hand" test below holds without a
+// golden digest. A deliberate change to print-tier meshing changes the digests: re-record by printing
 // digest(meshImplicit(compiled, edge, { tier: "print" })) for each case.
 describe("tiers", () => {
   const withCoreOff = (fn) => { setCoreEnabled(false); try { return fn(); } finally { setCoreEnabled(true); } };
@@ -151,7 +151,7 @@ describe("tiers", () => {
   const vase = vaseSpec();
   // [name, compile, grid, pinned digest, preview triangles at most this share of print's;
   // null: the probe skips decimation, so preview IS the print-tier mesh]
-  const CASES = [["hand (approximate contact)", () => compileImplicit(handSpec(), { exactContact: false }), 1.5, "3fb192ea59869410", 0.5], ["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "bd023b59990de4ed", null]];
+  const CASES = [["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "bd023b59990de4ed", null]];
   for (const [name, compile, edge, pinned, maxPreview] of CASES) {
     test(`${name}: print tier is the JS stages run with decimateFrac 0, byte for byte`, () => {
       const compiled = compile(), plan = planLeaves(compiled, edge), store = evaluateLeaves(plan);
@@ -180,10 +180,10 @@ describe("tiers", () => {
       } finally { setCoreEnabled(true); }
     }, 120_000);
   }
-  // The exact (default) hand takes the owner path. Its tier guarantees, held without a golden digest:
+  // The hand, a contact root, takes the owner path. Its tier guarantees, held without a golden digest:
   // print is the JS owner stages run with decimateFrac 0 (core on and off alike), and preview is
   // closed, Euler-equal and at most half print's triangles.
-  test("exact hand: print tier is the JS owner stages with decimateFrac 0, core on and off; preview is smaller", () => {
+  test("hand: print tier is the JS owner stages with decimateFrac 0, core on and off; preview is smaller", () => {
     const compiled = compileImplicit(handSpec()), edge = 1.5, node = compiled.ir.nodes[compiled.ownerRoot];
     expect(compiled.ownerRoot).toBeGreaterThanOrEqual(0);
     const store = evaluateLeaves(planLeaves(compiled, edge));

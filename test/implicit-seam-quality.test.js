@@ -21,7 +21,7 @@ const cache = new Map();
 function meshed(c, edge, tier) {
   const key = `${c.name}@${edge}`;
   if (!cache.has(key)) {
-    const compiled = compileImplicit(c.spec, { exactContact: true });
+    const compiled = compileImplicit(c.spec);
     cache.set(key, { compiled, mesh: meshImplicit(compiled, edge, { tier }), baseline: meshImplicit(compiled, edge, { tier, owners: false }) });
   }
   return cache.get(key);
@@ -148,7 +148,7 @@ describe("seam gate", () => {
     test(`a moved root cuts the attached finger as the unmoved one does (${tier} ${edge})`, () => {
       // fingerAttached's every crossing is inside its attachment: no crease, wherever the part sits.
       const at = MOVED_CASES.find((m) => m.name === "finger attached (moved root)");
-      const moved = meshed(at, edge, tier), still = meshImplicit(compileImplicit(fingerAttached(), { exactContact: true }), edge, { tier });
+      const moved = meshed(at, edge, tier), still = meshImplicit(compileImplicit(fingerAttached()), edge, { tier });
       expect(still.crease.reduce((s, x) => s + x, 0)).toBe(0);
       expect(moved.mesh.crease.reduce((s, x) => s + x, 0)).toBe(0);
       // The engine's world-space table is the node table carried through the root's transforms.
@@ -160,7 +160,7 @@ describe("seam gate", () => {
 
     test(`gap-0 contacts stay one piece (${tier} ${edge})`, () => {
       for (const spec of [capsulePress({ overlap: PRESS_OVERLAP, gap: 0 }), threePress({ gap: 0 })]) {
-        const mesh = meshImplicit(compileImplicit(spec, { exactContact: true }), edge, { tier });
+        const mesh = meshImplicit(compileImplicit(spec), edge, { tier });
         expect(componentCount(mesh.indices)).toBe(1);
       }
     }, 600_000);

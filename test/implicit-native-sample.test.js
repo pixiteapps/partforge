@@ -146,7 +146,7 @@ describe("native leaf sampling", () => {
   // capture, AIR where the stored value is ≥ 0 (the outer-layer raise included).
   for (const { name, spec } of SEAM_CASES) {
     test(`${name} at 1.5 mm: every leaf's owners match evaluateLeaves`, () => {
-      const plan = planLeaves(compileImplicit(spec, { exactContact: true }), 1.5);
+      const plan = planLeaves(compileImplicit(spec), 1.5);
       expect(plan.ownerRoot).toBeGreaterThanOrEqual(0);
       const js = evaluateLeaves(plan);
       const s = sessionFor(plan);
@@ -180,7 +180,7 @@ describe("native leaf sampling", () => {
   });
 
   test("an owner plan whose programs name a child past ownerK is refused, not run", () => {
-    const plan = planLeaves(compileImplicit(SEAM_CASES[0].spec, { exactContact: true }), 1.5);
+    const plan = planLeaves(compileImplicit(SEAM_CASES[0].spec), 1.5);
     const s = sessionFor(plan);
     try {
       expect(() => s.sample({ ...plan, ownerK: 1 })).toThrow(/refused/);

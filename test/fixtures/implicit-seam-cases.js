@@ -1,7 +1,7 @@
 // test/fixtures/implicit-seam-cases.js
 // The seam fixtures of docs/superpowers/specs/2026-10-16-implicit-contact-seams-design.md
 // ("Testing"): two pressed capsules, a capsule near miss, three pressed spheres and the
-// hand, each a root `contact` node (compile with `exactContact: true` for clean seams).
+// hand, each a root `contact` node.
 import { handSpec, HAND_POSES } from "./implicit-trees.js";
 
 /**
