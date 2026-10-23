@@ -434,6 +434,14 @@ export interface SubPartFacts {
   /** Centroid of the largest hovering face; `null` when nothing hovers. */
   bedHoverAt: number[] | null;
   /**
+   * Share (0–100) of the posed base area (xy extent in the print pose) that rests on
+   * the bed — the footprint cost's reading, from the bed-contact pass; `null` when
+   * that pass did not run or the base has no area.
+   */
+  footprintPct: number | null;
+  /** The piece's lowest point, in display coordinates; `null` when not checked. */
+  footprintAt: number[] | null;
+  /**
    * Present only when bed contact had to be read off the piece's export build (its
    * print pose could not be read from place() alone) and that build failed.
    */
@@ -521,6 +529,8 @@ export interface MeasureReport {
   measuredOverhang: number | null;
   /** Whether the bed-contact pass ran (the part is checked for it). */
   measuredBedContact: boolean;
+  /** Whether the footprint was read — the same pass, so always `measuredBedContact`. */
+  measuredFootprint: boolean;
   /**
    * Present only in a view holding a sheet part: whether the printed sub-parts' print
    * (export) poses were built for `printBbox`.

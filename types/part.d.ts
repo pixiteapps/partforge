@@ -574,6 +574,13 @@ export interface SubPartExpectations {
    * Under an FDM profile every printed sub-part gets `>=50` by default; a gate.
    */
   bedContactPct?: Expectation;
+  /**
+   * Share (0–100) of the sub-part's posed base area (its xy extent in the print pose)
+   * whose flat underside touches the bed — near 0 for a piece standing on a point, a
+   * line or a curl. Under an FDM profile every printed sub-part gets `>=5`; reported as
+   * a cost (`verify.costs`), never a failure; `accept: ["footprint"]` records a brim.
+   */
+  footprintPct?: Expectation;
   /** Symmetric-difference volume vs. the sub-part's declared `reference` import. */
   refXorVolume?: Expectation;
   /** Percent volume delta vs. the sub-part's declared `reference` import. */
