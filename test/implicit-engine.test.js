@@ -24,7 +24,7 @@ describe("engine entry", () => {
     const spec = { root: { kind: "expr", box: [[-1, -1, -1], [1, 1, 1]], sdf: "return length(p) - 0.5 - texture(t, p.xy);", textures: { t: { image: "m" } } } };
     expect(implicitHashable(spec, compileImplicit(spec, { images })).digests).toEqual(["abc"]);
   });
-  test("defaults", () => expect(IMPLICIT_DEFAULTS).toEqual({ resolution: 0.6, preview: 1.5 }));
+  test("defaults", () => expect(IMPLICIT_DEFAULTS).toEqual({ resolution: 0.6 }));
 });
 
 // Pads (blend, round, onion, displace) assume the child's field grows at rate 1

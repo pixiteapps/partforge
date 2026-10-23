@@ -11,7 +11,11 @@ import { applySurfaceDetail } from "./detail.js";
 import { implicitResult, triangleOwners } from "./result.js";
 import { meshImplicitCore } from "../../core/implicit-core.js";
 
-export const IMPLICIT_DEFAULTS = Object.freeze({ resolution: 0.6, preview: 1.5 });
+export { choosePreviewEdge } from "./preview-edge.js";
+
+// The print grid when a spec omits `resolution`. A spec without `preview` gets an automatic
+// preview grid instead (choosePreviewEdge, preview-edge.js).
+export const IMPLICIT_DEFAULTS = Object.freeze({ resolution: 0.6 });
 
 export function compileImplicit(spec, { images = new Map() } = {}) {
   validateSpec(spec, { imageNames: new Set(images.keys()) });
