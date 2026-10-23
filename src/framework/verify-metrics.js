@@ -115,7 +115,7 @@ export const SUBPART_METRICS = {
   // a flat bottom hovering above a lower knuckle or emboss is a failed print in any
   // orientation, and a flat face cannot be mistaken for anything else.
   bedContactPct: { kind: "gate", extract: (s) => s.bedContactPct,
-    hint: "this piece's flat underside sits just above the bed, because something lower (a knuckle, a pin, a boss, lettering on the bottom, or a slight tilt) touches first — exporters and slicers rest the piece on that lowest point, so the flat face prints in mid-air. Trim the piece flat at the bed plane (cut everything below z = 0 in its print pose), or raise or shorten the lower feature so the flat face is the lowest; a recess meant to clear the bed can declare a lower bedContactPct",
+    hint: "this piece's flat underside sits just above the bed, because something lower (a knuckle, a pin, a boss, or lettering on the bottom) touches first — exporters and slicers rest the piece on that lowest point, so the flat face prints in mid-air. Trim the piece flat at the bed plane (cut everything below z = 0 in its print pose), or raise or shorten the lower feature so the flat face is the lowest; a recess meant to clear the bed can declare a lower bedContactPct",
     pattern: "piece-hovers-above-bed",
     locate: (s) => s.bedHoverAt,
     note: (s) => (s.bedHoverGap != null

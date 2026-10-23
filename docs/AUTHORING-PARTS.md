@@ -4344,17 +4344,20 @@ are skipped. Switch it off under an FDM profile with an inline
 **Bed contact — a GATE, armed by the FDM profile alone.** Every exporter and slicer
 lays a printed piece on its lowest point. When that point is something small — a
 horizontal knuckle or pin whose cylinder dips under the plate, lettering embossed on
-the underside, a boss, a bottom tilted a hair — the piece rests on it and its big
+the underside, a boss — the piece rests on it and its big
 flat underside prints a fraction of a millimetre in mid-air: the first layer goes
 down onto nothing, strings, and the print fails or leaves a ruined bottom. So every
 printed sub-part of a part under `fdm-pla` or `fdm-petg` is checked in its print
 (export) pose: `bedContactPct` is the share of its near-bed FLAT underside (faces
-within 2° of level whose centroid sits within 1 mm of its lowest point — the band the
-overhang check leaves alone) that actually touches the bed, and it must be at least
+within 2° of level, within 1 mm of its lowest point — the band the overhang check
+leaves alone) that actually touches the bed; a face hovers only when every one of its
+corners is clear of the bed, so a cylinder or dome lying tangent to the bed is never
+read as hovering, and it must be at least
 the profile's `bedContact` (50%). A plate flat on the bed reads 100; a lever resting
 on a knuckle 0.25 mm lower reads about 1. Slanted faces — the curl of a bottom fillet
 or chamfer, the sides of a cylinder — never count, and hovering area under 1 mm² is
-read as tessellation noise. The failure is located on the largest hovering face and
+read as noise. A flat bottom tilted off level is not caught (each face touches the
+bed at an edge, the same signature as a curved surface's lowest facets). The failure is located on the largest hovering face and
 its note says how far up it sits and how much area hovers versus touches. The fix is
 almost always to trim the piece flat at the bed plane — cut away everything below
 z = 0 in its print pose — or to raise or shorten the lower feature so the flat face

@@ -24,6 +24,20 @@ function boxSoup([x0, y0, z0], [x1, y1, z1]) {
   quad(v(x1, y0, z0), v(x1, y1, z0), v(x1, y1, z1), v(x1, y0, z1)); // +X
   return P;
 }
+// A closed horizontal cylinder along Y as a soup: radius r, length len, n segments,
+// axis at height cz. `phase` 0 puts a vertex at the very bottom (its two neighbouring
+// facets 180/n° off level); 0.5 puts a facet there, flat.
+function cylinderSoup(r, len, n, cz, phase = 0) {
+  const P = [];
+  const pt = (i, y) => { const t = (2 * Math.PI * (i + phase)) / n; return [r * Math.sin(t), y, cz - r * Math.cos(t)]; };
+  for (let i = 0; i < n; i++) {
+    const a0 = pt(i, 0), a1 = pt(i + 1, 0), b0 = pt(i, len), b1 = pt(i + 1, len);
+    P.push(...a0, ...b0, ...b1, ...a0, ...b1, ...a1);                 // side (outward)
+    P.push(0, 0, cz, ...a1, ...a0);                                     // cap y = 0
+    P.push(0, len, cz, ...b0, ...b1);                                   // cap y = len
+  }
+  return P;
+}
 const soup = (...boxes) => {
   const P = boxes.flat();
   return { positions: Float32Array.from(P), triangles: P.length / 9 };
@@ -77,6 +91,32 @@ describe("bedContact (the reading)", () => {
     expect(tall.pct).toBeCloseTo(short.pct, 6);
     expect(tall.gap).toBeCloseTo(0.15, 4);
     expect(MAX_BED_EPS).toBeLessThan(0.15);
+  });
+
+  it("a knuckle's slanted lowest facets are never contact, however tall the piece", () => {
+    // Review case: a 48-segment Ø7.2 × 24 knuckle tangent to the bed beside 10 mm² of flat
+    // underside 0.25 mm up, at 10 mm and 50 mm overall. At 50 mm the footprint slack
+    // admits the facets 3.75° off level beside the knuckle's lowest line; they must not
+    // be counted as contact (they read 69% before).
+    const piece = (top) => soup(cylinderSoup(3.6, 24, 48, 3.6), boxSoup([10, 0, 0.25], [12, 5, 3]), boxSoup([10, 0, 3], [12, 5, top]));
+    for (const top of [10, 50]) {
+      const r = bedContact(piece(top));
+      expect(r.contactArea, `${top} mm`).toBe(0);
+      expect(r.hoverArea, `${top} mm`).toBeCloseTo(10, 3);
+      expect(r.pct, `${top} mm`).toBe(0);
+    }
+  });
+
+  it("a large cylinder tangent to the bed has no hovering underside, at the preview tessellation", () => {
+    // Review case: Ø120 × 24 and Ø200 × 20 at 116 segments (geometry/circle-segs.js SEGS.preview).
+    // Their facets beside the lowest line are 1.55° off level; they touch the bed there.
+    for (const [d, len] of [[120, 24], [200, 20]]) {
+      for (const phase of [0, 0.5]) {
+        const r = bedContact(soup(cylinderSoup(d / 2, len, 116, d / 2, phase)));
+        expect(r.hoverArea, `Ø${d} phase ${phase}`).toBe(0);
+        expect(r.pct, `Ø${d} phase ${phase}`).toBe(100);
+      }
+    }
   });
 
   it("an empty mesh has no reading", () => {
@@ -250,4 +290,16 @@ test("verify: when that export build fails, the gate is unevaluated, never judge
   expect(bc.unevaluated).toBe(true);
   expect(bc.message).toMatch(/pose did not build — export pose unavailable/);
   expect(v.ok).toBeNull();
+});
+
+test("verify: a large horizontal cylinder lying on the bed passes, through the real kernel", () => {
+  const roller = {
+    meta: { title: "Roller", units: "mm" }, defaults: {},
+    parts: { roller: { views: ["v"], build: (kk) => kk.cylinder({ d: 120, h: 24 }).along("+Y").at([0, 0, 60]) } },
+    views: { v: { label: "V" } },
+  };
+  const v = verify(k, { ...roller, verify: { process: "fdm-pla", expect: { roller: { holes: 0 } } } });
+  const bc = v.cases[0].checks.find((c) => c.metric === "bedContactPct");
+  expect(bc.status).toBe("pass");
+  expect(bc.actual).toBe(100);
 });

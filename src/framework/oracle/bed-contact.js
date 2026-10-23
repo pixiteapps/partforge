@@ -4,7 +4,7 @@
 // The failure this exists for: a piece whose big flat bottom sits a fraction of a
 // millimetre ABOVE its lowest point, because something smaller pokes lower — a
 // horizontal knuckle or pin whose cylinder dips under the plate, lettering embossed
-// on the underside, a boss, a bottom that is tilted a hair. Every exporter and slicer
+// on the underside, a boss. Every exporter and slicer
 // lays a piece on its lowest point, so that small feature becomes the only thing on
 // the bed and the flat face prints in mid-air: the first layer is laid onto nothing,
 // strings and spaghettis, and what does print has a ruined bottom surface. Seen on a
@@ -14,35 +14,41 @@
 // the bed (the near-bed band), so a hovering face is exactly what it cannot see.
 //
 // One pass over the triangles, pure, no BVH — the same cost class as overhang.js and
-// run beside it. Two areas, both of downward-facing faces:
-//   - contact: the footprint, faces with every vertex within `bedEps` of the bed. The
+// run beside it. Two areas, both of downward-facing FLAT faces (normal within FLAT_TOL
+// of straight down — so the lower curl of a bottom fillet or chamfer, and a cylinder's
+// side, count as neither):
+//   - contact: the footprint, flat faces with every vertex within `bedEps` of the bed. The
 //     slack starts as overhang.js's (0.1% of the mesh height, floored at 10 µm — boolean
 //     noise a few microns low must not lift a whole face off the bed) but is CAPPED at
 //     MAX_BED_EPS: overhang can let it grow with the part because it only excludes the
 //     footprint, whereas here it decides what counts as touching, and a 200 mm tall piece
 //     would otherwise call a face 0.15 mm up "on the bed" — the very gap this exists for;
-//   - hover: FLAT faces (within FLAT_TOL of horizontal) whose centroid sits above the
-//     footprint slack but within `bedBand` (1 mm, overhang.js's near-bed band) of the
-//     bed. Flat only, so the lower curl of a bottom fillet or chamfer — slanted, and
-//     fine to print — never counts. Above the band a face is a ceiling, which is
-//     overhang.js's to judge.
+//   - hover: flat faces with EVERY vertex above the footprint slack and the centroid
+//     within `bedBand` (1 mm, overhang.js's near-bed band) of the bed — a face floating
+//     clear of the bed, as a plate over a lower knuckle or emboss is. Above the band a
+//     face is a ceiling, which is overhang.js's to judge. Every vertex, not the
+//     centroid, because a curved surface tangent to the bed is near level at its lowest
+//     facets too: a Ø120 cylinder at 116 segments has facets 1.55° off level beside its
+//     lowest line. Those touch the bed along that line; the next ring out is already
+//     tilted past FLAT_TOL (4.65°), for any diameter that fits a print bed at either
+//     tessellation tier (geometry/circle-segs.js).
 // `pct` is the share of that near-bed flat underside which touches: 100 when nothing
 // hovers, near 0 for a plate resting on a knuckle. A hover total under HOVER_FLOOR is
-// tessellation noise (the flat facet at the bottom of a cylinder tangent to the bed
-// sits r·(1 − cos(π/n)) up) and reads as 100.
+// noise and reads as 100.
 //
 // Known limit, stated rather than hidden: a recess meant to clear the bed (a foot ring
 // with a shallow pocket inside it) hovers by design, and is reported. A pocket that
 // shallow is a long bridge laid in the first layers and rarely prints well, so the
-// default threshold stands; a part that means it lowers its own `bedContactPct`.
+// default threshold stands; a part that means it lowers its own `bedContactPct`. And
+// a flat bottom TILTED off level (one edge on the bed, the rest rising) is not caught:
+// each of its faces touches the bed at a vertex, which is exactly the signature of
+// curvature above, and telling the two apart would need the mesh's connectivity.
 //
 // Works on both mesh forms the oracle sees (Manifold's soup, OCCT's indexed vertices).
 
-// A face counts as flat when its normal is within this many degrees of straight down.
-// A slicer starts printing a hovering face as soon as it is near level, so the window is
-// generous enough to catch a bottom tilted a few tenths of a degree (one edge on the bed,
-// the other a fraction of a millimetre up) and tight enough to exclude a cylinder's lowest
-// facets, which sit 360/n degrees off level (7.5° at 48 segments).
+// A face counts as flat when its normal is within this many degrees of straight down:
+// loose enough for a boolean's float noise, tight enough that only the facets right at a
+// curved surface's lowest line pass (see the hover rule above).
 const FLAT_TOL = 2;
 const FLAT_COS = Math.cos((FLAT_TOL * Math.PI) / 180);
 // Hovering area below this, in mm², is noise and never reported.
@@ -93,9 +99,10 @@ export function bedContact(mesh, { bedZ, bedEps, bedBand = 1 } = {}) {
     const len = Math.hypot(nx, ny, nz);
     if (len < 1e-9) continue;                                                 // degenerate: no normal
     const triArea = len / 2;
-    if (az - bed <= eps && bz - bed <= eps && cz - bed <= eps) { contactArea += triArea; continue; }  // the footprint
     if (-nz / len < FLAT_COS) continue;                                       // slanted: a fillet curl, a cylinder's side
-    if (cenZ - bed <= eps) continue;                                          // touching along an edge: neither
+    const lowest = Math.min(az, bz, cz) - bed, highest = Math.max(az, bz, cz) - bed;
+    if (highest <= eps) { contactArea += triArea; continue; }                 // the footprint
+    if (lowest <= eps) continue;                                              // touching at an edge or vertex: neither
     hoverArea += triArea;
     if (triArea > largest) {
       largest = triArea;

@@ -207,7 +207,7 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 ## piece-hovers-above-bed
 
 - **Symptom:** A `✗ … bedContactPct` failure from `verify` (e.g. `1.28 not >= 50`) with the note `… mm² of flat underside sits 0.25 mm above the bed`; or, in a slicer, a piece whose flat bottom is not on the bed and whose first layers string or spaghetti.
-- **Cause:** Something smaller than the piece's flat underside sits lower than it in the print pose — a horizontal knuckle or pin whose cylinder dips below the plate, a boss, lettering embossed on the bottom, or a slight tilt — so exporters and slicers rest the piece on that feature and the flat face prints in mid-air.
+- **Cause:** Something smaller than the piece's flat underside sits lower than it in the print pose — a horizontal knuckle or pin whose cylinder dips below the plate, a boss, or lettering embossed on the bottom — so exporters and slicers rest the piece on that feature and the flat face prints in mid-air.
 - **Fix:** Trim the piece flat at the bed plane (cut everything below z = 0 in its print pose), or raise or shorten the lower feature so the flat face is the lowest; size a print-in-place knuckle so its cylinder is tangent to the bed and give it a support block down to z = 0. A recess meant to clear the bed declares a lower `bedContactPct`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Self-verification (the `verify` block)".
 
 ## expect-static-across-presets
