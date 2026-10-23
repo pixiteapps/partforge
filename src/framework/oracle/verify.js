@@ -332,6 +332,12 @@ export function evaluateCase(facts, { profile, expect, subPartNames, exportableN
           hint: "re-run this check without `quick` to measure overhang" });
         continue;
       }
+      if (metric === "bedContactPct" && c.actual == null && s.bedContactError) {
+        checks.push({ ...c, status: "skip", pass: null, unevaluated: true,
+          message: `not measured: its print (export) pose did not build — ${s.bedContactError}`,
+          hint: "bed contact is read in the print pose, and this piece's could not be posed by its place() alone, so its export build was read instead — and that build failed. Fix the export pose; the check then runs." });
+        continue;
+      }
       if (bedContactSkipped && metric === "bedContactPct" && c.actual == null) {
         checks.push({ ...c, unevaluated: true, message: "not measured (quick check)",
           hint: "re-run this check without `quick` to measure bed contact" });

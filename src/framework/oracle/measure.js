@@ -5,7 +5,7 @@ import { resolveParams, buildPosed } from "../part-model.js";
 import { newReadSink, expandReads } from "../read-recorder.js";
 import { probeSubPartPose } from "../pose-probe-core.js";
 import { composePose, invertRigid, transformPositions } from "../geometry/pose.js";
-import { displayToPrintMatrix } from "../materials/print-frame.js";
+import { displayToPrintPose } from "../materials/print-frame.js";
 import { isSheetPart, sheetMeta, SHEET_CHECK_BUDGET_MS, MARK_DEPTH } from "../sheet/constants.js";
 import { resolveSheet } from "../sheet/resolve.js";
 import { processFor } from "../process/registry.js";
@@ -129,6 +129,23 @@ const transformPoint = (m, [x, y, z]) => [
   m[1] * x + m[5] * y + m[9] * z + m[13],
   m[2] * x + m[6] * y + m[10] * z + m[14],
 ];
+
+// Bed contact read off the piece's real EXPORT build, for a sub-part whose print pose
+// the probes could not read (a place() that queries its solid): judging the display
+// mesh there would pass a bad print orientation or fail a good one. One extra build,
+// in its own cache round like printPoseBboxes, only for such a piece. `at` is withheld:
+// with the pose unreadable there is no honest way back to display coordinates. An
+// export pose that does not build answers `{ error }`, which verify reports as
+// unevaluated rather than guessing.
+function exportPoseBedContact(kernel, part, name, view, { p, d }) {
+  kernel.beginSubPart?.(`oracle:print:${view}`);
+  try {
+    const out = bedContact(buildPosed(kernel, part, name, { purpose: "export", view, p, d }).toMesh());
+    return out ? { ...out, at: null } : out;
+  } catch (e) {
+    return { error: String(e?.message || e).slice(0, 200) };
+  } finally { kernel.endSubPart?.(); }
+}
 
 // The underside readings of one printed sub-part in its PRINT pose — overhang
 // (overhang.js) when `maxAngle` is set, bed contact (bed-contact.js) when `bed` is.
@@ -318,9 +335,14 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // (printPoseOverhang) is read off place() with the resolved params — geometry-free,
     // so it is resolved here, ahead of the memo, which must key on it.
     const printed = part.parts[name]?.exportable !== false && !sheet;
-    const printMatrix = underside && printed && poseParams?.p
-      ? displayToPrintMatrix(part.parts[name], { view, p: poseParams.p, d: poseParams.d })
+    const printPose = underside && printed && poseParams?.p
+      ? displayToPrintPose(part.parts[name], { view, p: poseParams.p, d: poseParams.d })
       : null;
+    const printMatrix = printPose?.matrix ?? null;
+    // A pose the probes could not read is not the identity: bed contact then reads the
+    // export build itself (exportPoseBedContact). Overhang keeps its display-pose
+    // fallback — a warning, and unchanged here.
+    const exportBed = bedArmed && printPose && !printPose.trusted;
     // Memo key = the inputs this sub-part's facts actually depend on, besides its
     // own geometry hash: whether min-wall ran, at what sample budget and against
     // which declared band, the overhang angle, and whether the sub-part is
@@ -334,7 +356,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // holds a sheet part (the budgeted 2-D pass and print-pose sizes are
     // call-scoped, not per-sub-part cacheable), and a solid with no `_hash`
     // (nothing to key reuse on).
-    const memoKey = opts.memo && !sheetView && !sheet && !part.parts[name]?.reference && solid?._hash
+    const memoKey = opts.memo && !sheetView && !sheet && !part.parts[name]?.reference && solid?._hash && !exportBed
       ? JSON.stringify({
         mw: !!opts.minWall, s: minWallSamples ?? null, band: wallBands[name] ?? null,
         oh: overhangAngle ?? null, bc: bedArmed, ex: printed,
@@ -359,9 +381,11 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // One pass over the triangles each, no index — cheap enough for every lap. The bed
     // is this sub-part's own lowest Z in its PRINT pose (printPoseUnderside); `printed`
     // (above) says whether it is judged at all.
-    const { oh, bc } = underside && printed
-      ? printPoseUnderside(mesh, printMatrix, { maxAngle: overhangAngle, bed: bedArmed, displayBedZ: b.min[2] })
+    const { oh, bc: posedBc } = underside && printed
+      ? printPoseUnderside(mesh, printMatrix, { maxAngle: overhangAngle, bed: bedArmed && !exportBed, displayBedZ: b.min[2] })
       : { oh: null, bc: null };
+    const exportBc = exportBed ? exportPoseBedContact(kernel, part, name, view, poseParams) : null;
+    const bc = exportBc?.error ? null : (exportBc ?? posedBc);
     const vol = solid.volume();
     // Deviation-from-reference: only for a sub-part that declares `reference:
     // "<import name>"` (Task 12 — the gate that holds a parametric rebuild to
@@ -423,6 +447,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       bedHoverArea: bc ? bc.hoverArea : null,
       bedHoverGap: bc?.gap ?? null,
       bedHoverAt: bc?.at ?? null,
+      ...(exportBc?.error ? { bedContactError: exportBc.error } : {}),
       // The process's 2-D facts on a sheet part (sheetRowFacts), null on every other.
       sheet: sheet
         ? sheetRowFacts(kernel, part, name, view, sheetParams, sheetBudget, vol)

@@ -433,6 +433,11 @@ export interface SubPartFacts {
   bedHoverGap: number | null;
   /** Centroid of the largest hovering face; `null` when nothing hovers. */
   bedHoverAt: number[] | null;
+  /**
+   * Present only when bed contact had to be read off the piece's export build (its
+   * print pose could not be read from place() alone) and that build failed.
+   */
+  bedContactError?: string;
   /** A sheet sub-part's 2-D facts, or `null` on every other sub-part. */
   sheet: SheetFacts | null;
   /**

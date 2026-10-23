@@ -15,9 +15,12 @@
 //
 // One pass over the triangles, pure, no BVH — the same cost class as overhang.js and
 // run beside it. Two areas, both of downward-facing faces:
-//   - contact: the footprint, faces with every vertex within `bedEps` of the bed (the
-//     same slack overhang.js uses, for the same reason: boolean noise a few microns low
-//     must not lift a whole face off the bed);
+//   - contact: the footprint, faces with every vertex within `bedEps` of the bed. The
+//     slack starts as overhang.js's (0.1% of the mesh height, floored at 10 µm — boolean
+//     noise a few microns low must not lift a whole face off the bed) but is CAPPED at
+//     MAX_BED_EPS: overhang can let it grow with the part because it only excludes the
+//     footprint, whereas here it decides what counts as touching, and a 200 mm tall piece
+//     would otherwise call a face 0.15 mm up "on the bed" — the very gap this exists for;
 //   - hover: FLAT faces (within FLAT_TOL of horizontal) whose centroid sits above the
 //     footprint slack but within `bedBand` (1 mm, overhang.js's near-bed band) of the
 //     bed. Flat only, so the lower curl of a bottom fillet or chamfer — slanted, and
@@ -44,13 +47,16 @@ const FLAT_TOL = 2;
 const FLAT_COS = Math.cos((FLAT_TOL * Math.PI) / 180);
 // Hovering area below this, in mm², is noise and never reported.
 export const HOVER_FLOOR = 1;
+// The footprint slack never exceeds this (mm): well under a first layer, and under the
+// smallest hover worth reporting, so a tall piece is judged the way a short one is.
+export const MAX_BED_EPS = 0.05;
 
 /**
  * @param {{ positions: ArrayLike<number>, indices?: ArrayLike<number>, triangles: number }} mesh
  * @param {{ bedZ?: number, bedEps?: number, bedBand?: number }} [opts]
  *   `bedZ` the bed height if the caller already knows the mesh's lowest Z (else
  *   scanned); `bedEps` the footprint slack (default 0.1% of the mesh height, floored at
- *   0.01 mm); `bedBand` the height above the bed within which a flat face hovers
+ *   0.01 mm and capped at MAX_BED_EPS); `bedBand` the height above the bed within which a flat face hovers
  *   (default 1 mm)
  * @returns {{ pct: number, contactArea: number, hoverArea: number, gap: number|null, at: number[]|null }|null}
  *   `pct` 0..100, the share of the near-bed flat underside on the bed; the two areas in
@@ -71,7 +77,7 @@ export function bedContact(mesh, { bedZ, bedEps, bedBand = 1 } = {}) {
     }
   }
   const bed = bedZ ?? minZ;
-  const eps = bedEps ?? Math.max(0.01, 1e-3 * (maxZ - minZ));
+  const eps = bedEps ?? Math.min(MAX_BED_EPS, Math.max(0.01, 1e-3 * (maxZ - minZ)));
   const bandTop = bed + bedBand;
 
   let contactArea = 0, hoverArea = 0, largest = 0, gap = null, at = null;

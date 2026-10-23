@@ -5,7 +5,7 @@
 // the exporter rests it on that and the flat face prints in mid-air. Hand-built meshes
 // first, so every number is known; then the measure/verify integration on real builds.
 import { beforeAll, describe, expect, it, test } from "vitest";
-import { bedContact, HOVER_FLOOR } from "../src/framework/oracle/bed-contact.js";
+import { bedContact, HOVER_FLOOR, MAX_BED_EPS } from "../src/framework/oracle/bed-contact.js";
 import { bedContactFor, DEFAULT_BED_CONTACT, PROFILES } from "../src/framework/oracle/dfm-profiles.js";
 import { bootManifoldKernel } from "../src/testing.js";
 import { verify } from "../src/framework/oracle/verify.js";
@@ -67,6 +67,18 @@ describe("bedContact (the reading)", () => {
     expect(r.pct).toBeLessThan(10);
   });
 
+  it("the footprint slack is capped, so a taller piece does not turn a hover into contact", () => {
+    // A 30×20 underside with a 2×20 foot on the bed and the rest 0.15 mm up: the same
+    // verdict whether the piece is 10 mm or 200 mm tall (uncapped, 0.1% of 200 mm would
+    // be 0.2 mm of slack and call the hovering faces contact).
+    const stepped = (top) => bedContact(soup(boxSoup([0, 0, 0.15], [30, 20, top]), boxSoup([0, 0, 0], [2, 20, 0.15])));
+    const short = stepped(10), tall = stepped(200);
+    expect(short.pct).toBeCloseTo((100 * 40) / 640, 3);
+    expect(tall.pct).toBeCloseTo(short.pct, 6);
+    expect(tall.gap).toBeCloseTo(0.15, 4);
+    expect(MAX_BED_EPS).toBeLessThan(0.15);
+  });
+
   it("an empty mesh has no reading", () => {
     expect(bedContact({ positions: new Float32Array(0), triangles: 0 })).toBeNull();
   });
@@ -90,6 +102,13 @@ describe("bedContactFor (what arms it)", () => {
     expect(bedContactFor({ verify: { process: "resin", orientation: "print" } })).toBe(DEFAULT_BED_CONTACT);
     expect(bedContactFor({}, undefined, { expanded: [{ expect: { a: { bedContactPct: ">=10" } } }] })).toBe(DEFAULT_BED_CONTACT);
     expect(() => bedContactFor({ verify: { orientation: "sideways" } })).toThrow(/unknown verify.orientation/);
+  });
+
+  it("an explicit bedContact: null opts out even beside orientation: print", () => {
+    expect(bedContactFor({ verify: { process: { base: "fdm-pla", bedContact: null }, orientation: "print" } })).toBeNull();
+    // …while the author's own expectation can still ask for the measurement.
+    expect(bedContactFor({ verify: { process: { base: "fdm-pla", bedContact: null }, orientation: "print" } }, undefined,
+      { expanded: [{ expect: { a: { bedContactPct: ">=10" } } }] })).toBe(DEFAULT_BED_CONTACT);
   });
 });
 
@@ -192,4 +211,38 @@ test("measure: stamps whether the pass ran, and a quick lap on a seed without it
   // Not quick: the seed that skipped the pass is refused and the case re-measured.
   const full = verify(k, part, { seed: { params: {}, result: bare } });
   expect(full.cases[0].checks.find((c) => c.metric === "bedContactPct").status).toBe("fail");
+});
+
+// A place() that queries its solid cannot be read by the pose probes, so the display
+// mesh cannot be carried into the print pose. Judged as displayed, the defective lever
+// below — flipped for display — would show its flat TOP down, 4 mm under a knuckle that
+// is now a hump, and pass. Bed contact reads the export build instead.
+const queryingFlip = (part, { throwOnExport = false } = {}) => {
+  part.parts.lever.place = (s, { purpose }) => {
+    const { max } = s.boundingBox();
+    if (purpose === "export") {
+      if (throwOnExport) throw new Error("export pose unavailable");
+      return s;
+    }
+    return s.rotate(180, [15, 0, max[2] / 2], [1, 0, 0]);
+  };
+  return part;
+};
+
+test("verify: a print pose place() cannot reveal is read off the export build, not the display mesh", () => {
+  const bad = verify(k, { ...queryingFlip(lever(0.25)), verify: { process: "fdm-pla", expect: { lever: { holes: 0 } } } });
+  const bc = bad.cases[0].checks.find((c) => c.metric === "bedContactPct");
+  expect(bc.status).toBe("fail");
+  expect(bc.actual).toBeLessThan(10);
+  expect(bc.location ?? null).toBeNull();          // no honest way back to display coordinates
+  const good = verify(k, { ...queryingFlip(lever(0)), verify: { process: "fdm-pla", expect: { lever: { holes: 0 } } } });
+  expect(good.cases[0].checks.find((c) => c.metric === "bedContactPct").status).toBe("pass");
+});
+
+test("verify: when that export build fails, the gate is unevaluated, never judged on the display mesh", () => {
+  const v = verify(k, { ...queryingFlip(lever(0), { throwOnExport: true }), verify: { process: "fdm-pla", expect: { lever: { holes: 0 } } } });
+  const bc = v.cases[0].checks.find((c) => c.metric === "bedContactPct");
+  expect(bc.unevaluated).toBe(true);
+  expect(bc.message).toMatch(/pose did not build — export pose unavailable/);
+  expect(v.ok).toBeNull();
 });

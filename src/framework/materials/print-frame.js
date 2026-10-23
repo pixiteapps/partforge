@@ -34,12 +34,26 @@ const isIdentity = (m) => m.every((v, i) => Math.abs(v - IDENTITY[i]) < 1e-12);
 // probes first: both poses are place(build), so E · D⁻¹ needs only place() to be
 // readable, and a build that queries its solid cannot make it untrusted. A place()
 // that only the full-scope probe reads falls back to printFrameMatrix's posed branch.
-export function displayToPrintMatrix(subPart, { view, p, d }) {
-  if (!placeOf(subPart)) return null;
+export function displayToPrintMatrix(subPart, opts) {
+  return displayToPrintPose(subPart, opts).matrix;
+}
+
+// displayToPrintMatrix with the one thing its null cannot say: whether the poses were
+// READ. `{ matrix, trusted }` — `matrix` as above, `trusted` false when neither probe
+// scope could read them (a place() that queries its solid), in which case `matrix` is
+// null for want of an answer, not because the piece prints as shown. The bed-contact
+// gate reads the difference: it must not judge a display mesh it could not pose.
+export function displayToPrintPose(subPart, { view, p, d }) {
+  if (!placeOf(subPart)) return { matrix: null, trusted: true };
   const disp = probeSubPartPose(subPart, { view, purpose: "display", p, d }, { scope: "place" });
   const exp = probeSubPartPose(subPart, { view, purpose: "export", p, d }, { scope: "place" });
-  const m = disp.trusted && exp.trusted
-    ? poseDelta(exp.pose, disp.pose)
-    : printFrameMatrix(subPart, { view, p, d, frame: "posed" });
-  return isIdentity(m) ? null : m;
+  if (disp.trusted && exp.trusted) {
+    const m = poseDelta(exp.pose, disp.pose);
+    return { matrix: isIdentity(m) ? null : m, trusted: true };
+  }
+  const fd = probeSubPartPose(subPart, { view, purpose: "display", p, d });
+  const fe = probeSubPartPose(subPart, { view, purpose: "export", p, d });
+  if (!fd.trusted || !fe.trusted || fd.baseHash !== fe.baseHash) return { matrix: null, trusted: false };
+  const m = poseDelta(fe.pose, fd.pose);
+  return { matrix: isIdentity(m) ? null : m, trusted: true };
 }
