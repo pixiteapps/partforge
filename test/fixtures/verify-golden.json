@@ -119,12 +119,12 @@
             "subpart": "spacer",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 62.6048795,
+            "actual": 98.9311676,
             "status": "pass",
             "pass": true,
-            "message": "62.60487950320498 >= 5"
+            "message": "98.93116761000293 >= 10"
           },
           {
             "scope": "subpart",
@@ -229,12 +229,12 @@
             "subpart": "spacer",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 62.6048795,
+            "actual": 98.9311676,
             "status": "pass",
             "pass": true,
-            "message": "62.60487950320498 >= 5"
+            "message": "98.93116761000293 >= 10"
           },
           {
             "scope": "subpart",
@@ -339,12 +339,12 @@
             "subpart": "spacer",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 61.4055523,
+            "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "61.405552332491055 >= 5"
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -537,7 +537,7 @@
             "pass": false,
             "message": "68242.50639263303 not <= 1",
             "note": "steepest unsupported face 75.5° from vertical",
-            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature, or accept supports",
+            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
             "location": [
               -11.0587858,
               -25.1956075,
@@ -560,12 +560,12 @@
             "subpart": "vase",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 48.3009707,
+            "actual": 63.497072,
             "status": "pass",
             "pass": true,
-            "message": "48.30097074812724 >= 5"
+            "message": "63.497072039043175 >= 10"
           },
           {
             "scope": "subpart",
@@ -664,7 +664,7 @@
             "pass": false,
             "message": "68242.50639263303 not <= 1",
             "note": "steepest unsupported face 75.5° from vertical",
-            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature, or accept supports",
+            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
             "location": [
               -11.0587858,
               -25.1956075,
@@ -687,12 +687,12 @@
             "subpart": "vase",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 48.3009707,
+            "actual": 63.497072,
             "status": "pass",
             "pass": true,
-            "message": "48.30097074812724 >= 5"
+            "message": "63.497072039043175 >= 10"
           },
           {
             "scope": "subpart",
@@ -791,7 +791,7 @@
             "pass": false,
             "message": "32190.024253179814 not <= 1",
             "note": "steepest unsupported face 70.5° from vertical",
-            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature, or accept supports",
+            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
             "location": [
               31.9139156,
               18.0907866,
@@ -814,12 +814,12 @@
             "subpart": "vase",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 65.4016675,
+            "actual": 85.4318145,
             "status": "pass",
             "pass": true,
-            "message": "65.40166747481346 >= 5"
+            "message": "85.43181449472007 >= 10"
           },
           {
             "scope": "subpart",
@@ -918,7 +918,7 @@
             "pass": false,
             "message": "33223.464269737415 not <= 1",
             "note": "steepest unsupported face 63.6° from vertical",
-            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature, or accept supports",
+            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
             "location": [
               -23.4235535,
               -1.2801884,
@@ -941,12 +941,12 @@
             "subpart": "vase",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 65.1340322,
+            "actual": 83.9480725,
             "status": "pass",
             "pass": true,
-            "message": "65.13403223276755 >= 5"
+            "message": "83.94807246248892 >= 10"
           },
           {
             "scope": "subpart",
@@ -1070,7 +1070,7 @@
         "pass": false,
         "message": "68242.50639263303 not <= 1",
         "note": "steepest unsupported face 75.5° from vertical",
-        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature, or accept supports",
+        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
         "location": [
           -11.0587858,
           -25.1956075,
@@ -1090,7 +1090,7 @@
         "pass": false,
         "message": "68242.50639263303 not <= 1",
         "note": "steepest unsupported face 75.5° from vertical",
-        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature, or accept supports",
+        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
         "location": [
           -11.0587858,
           -25.1956075,
@@ -1110,7 +1110,7 @@
         "pass": false,
         "message": "32190.024253179814 not <= 1",
         "note": "steepest unsupported face 70.5° from vertical",
-        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature, or accept supports",
+        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
         "location": [
           31.9139156,
           18.0907866,
@@ -1130,7 +1130,7 @@
         "pass": false,
         "message": "33223.464269737415 not <= 1",
         "note": "steepest unsupported face 63.6° from vertical",
-        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature, or accept supports",
+        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
         "location": [
           -23.4235535,
           -1.2801884,
@@ -1260,12 +1260,12 @@
             "subpart": "gasket",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 87.0806082,
+            "actual": 99.8508495,
             "status": "pass",
             "pass": true,
-            "message": "87.08060820039337 >= 5"
+            "message": "99.8508494765338 >= 10"
           },
           {
             "scope": "subpart",
@@ -1383,12 +1383,12 @@
             "subpart": "base",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
             "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "100 >= 5"
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -1444,12 +1444,12 @@
             "subpart": "lid",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
             "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "100 >= 5"
+            "message": "100 >= 10"
           }
         ]
       }
@@ -1582,12 +1582,12 @@
             "subpart": "body",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
             "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "100 >= 5"
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -1702,12 +1702,12 @@
             "subpart": "mount",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 44.7665084,
+            "actual": 99.8802493,
             "status": "pass",
             "pass": true,
-            "message": "44.76650838847393 >= 5"
+            "message": "99.88024934323248 >= 10"
           },
           {
             "scope": "subpart",
@@ -1866,12 +1866,12 @@
             "subpart": "body",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
             "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "100 >= 5"
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -2128,12 +2128,12 @@
             "subpart": "body",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
             "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "100 >= 5"
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -2174,12 +2174,12 @@
             "subpart": "lid",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 58,
+            "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "58 >= 5"
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -2220,12 +2220,12 @@
             "subpart": "mesh",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 69.2872981,
+            "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "69.2872980609235 >= 5"
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -2266,12 +2266,12 @@
             "subpart": "plate",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
             "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "100 >= 5"
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -2463,12 +2463,12 @@
             "subpart": "body",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
             "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "100 >= 5"
+            "message": "100 >= 10"
           }
         ]
       }
@@ -2560,12 +2560,12 @@
             "subpart": "lid",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 58,
+            "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "58 >= 5"
+            "message": "100 >= 10"
           }
         ]
       }
@@ -2657,12 +2657,12 @@
             "subpart": "mesh",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 69.2872958,
+            "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "69.28729580854852 >= 5"
+            "message": "100 >= 10"
           }
         ]
       }
@@ -2754,12 +2754,12 @@
             "subpart": "plate",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
             "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "100 >= 5"
+            "message": "100 >= 10"
           }
         ]
       }
@@ -2851,12 +2851,12 @@
             "subpart": "body",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
             "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "100 >= 5"
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -2897,12 +2897,12 @@
             "subpart": "lid",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 58,
+            "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "58 >= 5"
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -2943,12 +2943,12 @@
             "subpart": "mesh",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 69.287297,
+            "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "69.28729703534296 >= 5"
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -2989,12 +2989,12 @@
             "subpart": "plate",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
             "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "100 >= 5"
+            "message": "100 >= 10"
           }
         ]
       }
@@ -3499,12 +3499,12 @@
             "subpart": "planter",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 49.9904574,
+            "actual": 67.741282,
             "status": "pass",
             "pass": true,
-            "message": "49.99045735425463 >= 5"
+            "message": "67.74128196735367 >= 10"
           },
           {
             "scope": "subpart",
@@ -3612,12 +3612,12 @@
             "subpart": "planter",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 75,
+            "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "75 >= 5"
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -3725,12 +3725,12 @@
             "subpart": "planter",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 82.079248,
+            "actual": 99.8509692,
             "status": "pass",
             "pass": true,
-            "message": "82.07924798298805 >= 5"
+            "message": "99.85096921819517 >= 10"
           },
           {
             "scope": "subpart",
@@ -3838,12 +3838,12 @@
             "subpart": "planter",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 51.7741259,
+            "actual": 70.864285,
             "status": "pass",
             "pass": true,
-            "message": "51.774125902668985 >= 5"
+            "message": "70.86428501398159 >= 10"
           },
           {
             "scope": "subpart",
@@ -4035,12 +4035,12 @@
             "subpart": "plate",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
             "actual": 100,
             "status": "pass",
             "pass": true,
-            "message": "100 >= 5"
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -4191,12 +4191,12 @@
             "subpart": "backing",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 79.7282245,
+            "actual": 96.4284042,
             "status": "pass",
             "pass": true,
-            "message": "79.72822449285934 >= 5"
+            "message": "96.42840417580358 >= 10"
           },
           {
             "scope": "subpart",
@@ -4356,12 +4356,12 @@
             "subpart": "lettering",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 31.4108817,
+            "actual": 96.0783395,
             "status": "pass",
             "pass": true,
-            "message": "31.410881691308585 >= 5"
+            "message": "96.0783394910309 >= 10"
           },
           {
             "scope": "subpart",
@@ -4521,12 +4521,12 @@
             "subpart": "backing",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 79.7282245,
+            "actual": 96.4284042,
             "status": "pass",
             "pass": true,
-            "message": "79.72822449285934 >= 5"
+            "message": "96.42840417580358 >= 10"
           },
           {
             "scope": "subpart",
@@ -4600,12 +4600,12 @@
             "subpart": "lettering",
             "metric": "footprintPct",
             "kind": "cost",
-            "expr": ">=5",
+            "expr": ">=10",
             "accepted": false,
-            "actual": 31.4108817,
+            "actual": 96.0783395,
             "status": "pass",
             "pass": true,
-            "message": "31.410881691308585 >= 5"
+            "message": "96.0783394910309 >= 10"
           },
           {
             "scope": "subpart",

@@ -107,7 +107,7 @@ export const SUBPART_METRICS = {
   // price (a bridge reads as a ceiling and cannot be told apart), so it is listed
   // under `costs` and the user may accept it (`verify.accept: ["supports"]`).
   overhangArea: { kind: "cost", costId: "supports", extract: (s) => s.overhangArea,
-    hint: "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature, or accept supports",
+    hint: "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
     locate: (s) => s.overhangAt,
     note: (s) => (s.overhangAngle != null ? `steepest unsupported face ${s.overhangAngle.toFixed(1)}° from vertical` : null) },
   // How much of a printed piece's near-bed flat underside rests on the bed
@@ -124,12 +124,12 @@ export const SUBPART_METRICS = {
       ? `${s.bedHoverArea.toFixed(1)} mm² of flat underside sits ${s.bedHoverGap.toFixed(2)} mm above the bed; ${s.bedContactArea.toFixed(1)} mm² touches it`
       : null) },
   // The footprint (measure.js, from bed contact's pass): the flat contact area over the
-  // posed base's xy extent, in percent. Measured where bed contact is, plus where the
+  // piece's silhouette on the bed, in percent. Measured where bed contact is, plus where the
   // profile carries `footprint` or the author declares it. A COST, like overhangArea: a
   // piece on a point or a line prints with a brim or a raft, which the user may choose
   // (`accept: ["footprint"]`); bedContactPct passes such a piece, since nothing hovers.
   footprintPct: { kind: "cost", costId: "footprint", extract: (s) => s.footprintPct,
-    hint: "the share of this piece's base area (its footprint in the print pose) that touches the bed is small — it stands on a point, a line or a curve, which reads near zero, so the first layer has almost nothing to hold on to and the piece can tip or pull loose. Lay it on its flat face, add a flat foot or pad at its lowest point, or print it with a brim (accept: [\"footprint\"] records that choice)",
+    hint: "the share of this piece's silhouette on the bed (its outline in the print pose) that actually touches it is small — it stands on a point, a line or a curve, which reads near zero, so the first layer has almost nothing to hold on to and the piece can tip or pull loose. Lay it on its flat face, add a flat foot or pad at its lowest point, or print it with a brim (accept: [\"footprint\"] records that choice)",
     pattern: "piece-stands-on-nothing",
     locate: (s) => s.footprintAt },
   // `s.deviation` (measure.js) exists only for a sub-part declaring `reference:

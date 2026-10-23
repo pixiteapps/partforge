@@ -159,11 +159,13 @@ describe("bedContact (the reading)", () => {
     expect(out.pct).toBeLessThan(1);
   });
 
-  it("returns the posed base and the lowest vertex: a box flat on the bed covers its whole base", () => {
+  it("returns the posed base, the silhouette and the lowest vertex: a box flat on the bed covers it all", () => {
     const r = bedContact(soup(boxSoup([0, 0, 0], [20, 20, 5])));
     expect(r.base[0]).toBeCloseTo(20, 4);
     expect(r.base[1]).toBeCloseTo(20, 4);
-    expect((100 * r.contactArea) / (r.base[0] * r.base[1])).toBeCloseTo(100, 3);
+    // The silhouette raster (0.25 mm cells) over-covers along its edges by up to a cell.
+    expect(r.downArea).toBeGreaterThanOrEqual(400);
+    expect(r.downArea).toBeLessThan(400 + 4 * 20 * 0.25 + 1);
     expect(r.lowestAt[2]).toBe(0);
   });
 
@@ -171,6 +173,8 @@ describe("bedContact (the reading)", () => {
     const r = bedContact(soup(sphereSoup(5, 29)));
     expect(r.pct).toBe(100);
     expect(r.contactArea).toBeLessThan(1);
+    expect(r.downArea).toBeGreaterThan(70);                      // ≈ π·5², the silhouette (raster over-covers)
+    expect(r.downArea).toBeLessThan(Math.PI * 25 + 10);
     expect(r.base[0]).toBeCloseTo(10, 3);
     expect(r.base[1]).toBeCloseTo(10, 3);
     expect(r.lowestAt).toEqual([0, 0, 0]);

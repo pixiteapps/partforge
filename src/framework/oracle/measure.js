@@ -460,11 +460,15 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       bedHoverArea: bc ? bc.hoverArea : null,
       bedHoverGap: bc?.gap ?? null,
       bedHoverAt: bc?.at ?? null,
-      // The footprint (same pass): the contact area over the posed base's xy extent, in
-      // percent — near 0 for a piece standing on a point, a line or a curl, which
-      // bedContactPct passes since nothing flat hovers. Null when not measured or the
-      // base has no area. Located at the piece's lowest point, in display coordinates.
-      footprintPct: bc && bc.base[0] * bc.base[1] > 0 ? (100 * bc.contactArea) / (bc.base[0] * bc.base[1]) : null,
+      // The footprint (same pass): the share of the piece's silhouette on the bed that
+      // actually touches it, in percent (clamped at 100: the silhouette is a
+      // raster, a cell or so off along its edges) — near 0 for a
+      // piece standing on a point, a line or a curl, which bedContactPct passes since
+      // nothing flat hovers, and near 100 for anything that stands on its whole
+      // underside, however little of its bounding box that fills (a tube on its rim, a
+      // frame, a diagonal bar). Null when not measured or the silhouette is empty. Located at
+      // the piece's lowest point, in display coordinates.
+      footprintPct: bc && bc.downArea > 0 ? Math.min(100, (100 * bc.contactArea) / bc.downArea) : null,
       footprintAt: bc?.lowestAt ?? null,
       ...(exportBc?.error ? { bedContactError: exportBc.error } : {}),
       // The process's 2-D facts on a sheet part (sheetRowFacts), null on every other.
