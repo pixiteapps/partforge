@@ -1071,10 +1071,12 @@ describe("measure() on sheet parts", () => {
     const r = measure(k, forge({ plate: plate(), block: counting }), "v", {}, STOPPED);
     expect(exports).toBe(0);
     expect("printBbox" in row(r, "block")).toBe(false);
+    // fdm-pla also arms bed contact, whose pose probe calls place() for "export" too;
+    // `bedContact: null` keeps this count to the print-size builds alone.
     const bed = forge({ plate: plate(), block: counting }, { verify: { process: "fdm-pla" } });
-    expect(row(measure(k, bed, "v", {}, STOPPED), "block").printBbox).toEqual([10, 10, 10]);
+    expect(row(measure(k, bed, "v", {}, { ...STOPPED, bedContact: null }), "block").printBbox).toEqual([10, 10, 10]);
     expect(exports).toBe(1);
-    expect(row(measure(k, bed, "v", {}, { ...STOPPED, printBboxes: false }), "block")).not.toHaveProperty("printBbox");
+    expect(row(measure(k, bed, "v", {}, { ...STOPPED, bedContact: null, printBboxes: false }), "block")).not.toHaveProperty("printBbox");
     expect(exports).toBe(1);
   });
 

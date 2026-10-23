@@ -204,6 +204,12 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 - **Cause:** The piece is placed by eye rather than against a mating datum — a lid a hair above its box, a bracket beside the wall it should bolt to, a pin whose bore it was never moved into — or it is held only by a reference ghost (`exportable: false`), which is never printed. On OCCT a sub-part fully inside another reads as not touching, since overlap detection is Manifold-only.
 - **Fix:** Seat the part on a mating face by deriving its position from the face it sits on in `derive()`, or add the fastener, boss or tab that holds it, then keep `verify.expect._view.held` so the next edit re-checks it. If the piece is meant to run free in a clearance bore (a hinge pin, a print-in-place link), the clearance is correct and `held` is the wrong check for that assembly — remove `held` and declare the pair under `clearance`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Self-verification (the `verify` block)".
 
+## piece-hovers-above-bed
+
+- **Symptom:** A `✗ … bedContactPct` failure from `verify` (e.g. `1.28 not >= 50`) with the note `… mm² of flat underside sits 0.25 mm above the bed`; or, in a slicer, a piece whose flat bottom is not on the bed and whose first layers string or spaghetti.
+- **Cause:** Something smaller than the piece's flat underside sits lower than it in the print pose — a horizontal knuckle or pin whose cylinder dips below the plate, a boss, or lettering embossed on the bottom — so exporters and slicers rest the piece on that feature and the flat face prints in mid-air.
+- **Fix:** Trim the piece flat at the bed plane (cut everything below z = 0 in its print pose), or raise or shorten the lower feature so the flat face is the lowest; size a print-in-place knuckle so its cylinder is tangent to the bed and give it a support block down to z = 0. A recess meant to clear the bed declares a lower `bedContactPct`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Self-verification (the `verify` block)".
+
 ## expect-static-across-presets
 
 - **Symptom:** A `verify` exact gate (`holes`, `volume`, …) fails on SOME presets only — e.g. `✗ planter holes 1  (0 != 1)` on two cases while defaults pass — and the preview looks right for every preset.

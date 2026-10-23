@@ -3,8 +3,10 @@
 // [x,y,z] in mm (a hard bbox-fit gate); `minWall` mm (a warn); `overhang` is the
 // steepest unsupported face the process prints cleanly, in degrees from vertical
 // (a warn, armed only by the part — see overhangAngleFor; resin prints on
-// supports, so it carries none); `clearance` mm is carried for a future gap check
-// (not enforced yet).
+// supports, so it carries none); `bedContact` is the least share (%) of a printed
+// piece's near-bed flat underside that must rest on the bed (a GATE, armed by the
+// profile alone — see bedContactFor; resin prints on supports, so it carries none);
+// `clearance` mm is carried for a future gap check (not enforced yet).
 //
 // `fits`, `holeUndersize` and `bridge` are the numbers an author (or the cloud
 // agent) copies into derive() for a mating feature; nothing in this repo reads
@@ -19,12 +21,12 @@
 // on supports, so it carries none.
 export const PROFILES = {
   "fdm-pla": {
-    bed: [220, 220, 250], minWall: 1.2, clearance: 0.2, overhang: 45,
+    bed: [220, 220, 250], minWall: 1.2, clearance: 0.2, overhang: 45, bedContact: 50,
     fits: { press: -0.1, push: 0.05, slip: 0.25, moving: 0.35, printInPlace: 0.45 },
     holeUndersize: 0.25, bridge: 10,
   },
   "fdm-petg": {
-    bed: [220, 220, 250], minWall: 1.5, clearance: 0.3, overhang: 45,
+    bed: [220, 220, 250], minWall: 1.5, clearance: 0.3, overhang: 45, bedContact: 50,
     fits: { press: -0.1, push: 0.05, slip: 0.3, moving: 0.4, printInPlace: 0.5 },
     holeUndersize: 0.3, bridge: 10,
   },
@@ -84,4 +86,35 @@ export function overhangAngleFor(part, process, { expanded = [] } = {}) {
   const asserted = expanded.some(({ expect }) =>
     Object.entries(expect ?? {}).some(([name, o]) => name !== "_view" && o && typeof o === "object" && "overhangArea" in o));
   return asserted ? (angle ?? DEFAULT_OVERHANG_ANGLE) : null;
+}
+
+// The `bedContactPct` floor an author's own expectation or `orientation: "print"` arms
+// the measurement against when the profile names none.
+export const DEFAULT_BED_CONTACT = 50;
+
+// The least share of a printed piece's near-bed flat underside that must touch the bed
+// (oracle/bed-contact.js), or null when it is not checked. Unlike overhangAngleFor, the
+// PROFILE ALONE arms it: an overhang is a design choice a part still being shaped may
+// not have made yet, but a flat underside hovering a fraction of a millimetre above the
+// piece's lowest point is a defect in whatever orientation the piece is exported —
+// every exporter and slicer lays it on that lowest point — so a part carrying an FDM
+// profile is checked from its first build. Three ways in:
+//   - a profile carrying `bedContact` (the FDM profiles; resin carries none);
+//   - `verify.orientation: "print"` with NO profile. A named profile decides alone:
+//     resin prints on supports, so orientation must not arm it there (overhangAngleFor's
+//     rule), and `{ base: "fdm-pla", bedContact: null }` must stay off;
+//   - a `bedContactPct` expectation the author wrote themselves, in any case's `expect`.
+// Throws on an orientation value outside ORIENTATIONS, as overhangAngleFor does.
+export function bedContactFor(part, process, { expanded = [] } = {}) {
+  const orientation = part?.verify?.orientation;
+  if (orientation != null && !ORIENTATIONS.includes(orientation)) {
+    throw new Error(`unknown verify.orientation: ${JSON.stringify(orientation)} (known: ${ORIENTATIONS.join(", ")})`);
+  }
+  const spec = process ?? part?.verify?.process;
+  const fromProfile = spec ? resolveProfile(spec).bedContact : undefined;
+  if (typeof fromProfile === "number" && Number.isFinite(fromProfile)) return fromProfile;
+  if (orientation === "print" && !spec) return DEFAULT_BED_CONTACT;
+  const asserted = expanded.some(({ expect }) =>
+    Object.entries(expect ?? {}).some(([name, o]) => name !== "_view" && o && typeof o === "object" && "bedContactPct" in o));
+  return asserted ? DEFAULT_BED_CONTACT : null;
 }

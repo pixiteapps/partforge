@@ -4193,6 +4193,12 @@ A part that opted into the overhang check (see the `verify` block) also carries
 checked or on an `exportable: false` sub-part), `overhangAngle` (the steepest such
 face, degrees from vertical) and `overhangAt` (that face's centroid); the report's
 `measuredOverhang` stamps the angle the pass ran against, or `null`.
+A part checked for bed contact (an FDM profile, see the `verify` block) carries
+`bedContactPct` (0–100, the share of the near-bed flat underside on the bed; `null`
+when not checked or on an `exportable: false` sub-part), `bedContactArea` and
+`bedHoverArea` (mm² touching and hovering), `bedHoverGap` (how far above the bed the
+largest hovering face sits, `null` when nothing hovers) and `bedHoverAt` (its
+centroid); the report's `measuredBedContact` says whether the pass ran.
 A sub-part that declares `wall` (see the `verify` section below) also carries
 `wall` — `{ value, location, band, members }` or `null`: the declared band's
 worst member, located, with the band it was measured against and how many rays
@@ -4297,7 +4303,7 @@ A part can declare how it should be checked, co-located with its schema, so
 ```js
 verify: {
   process: "fdm-pla",            // a DFM profile: fdm-pla | fdm-petg | resin, or an
-                                  // inline { base, bed:[x,y,z], minWall, overhang, fits, holeUndersize, bridge } object
+                                  // inline { base, bed:[x,y,z], minWall, overhang, bedContact, fits, holeUndersize, bridge } object
   orientation: "print",          // optional; ONLY with this is overhang checked — it says the
                                   // part is laid out for its bed (Z up, bed at the lowest Z)
   cases: ["defaults", "M3"],     // optional; default = defaults + every preset
@@ -4335,6 +4341,40 @@ flat beside its base) is measured as displayed, and `exportable: false` sub-part
 are skipped. Switch it off under an FDM profile with an inline
 `{ base: "fdm-pla", overhang: null }`.
 
+**Bed contact — a GATE, armed by the FDM profile alone.** Every exporter and slicer
+lays a printed piece on its lowest point. When that point is something small — a
+horizontal knuckle or pin whose cylinder dips under the plate, lettering embossed on
+the underside, a boss — the piece rests on it and its big
+flat underside prints a fraction of a millimetre in mid-air: the first layer goes
+down onto nothing, strings, and the print fails or leaves a ruined bottom. So every
+printed sub-part of a part under `fdm-pla` or `fdm-petg` is checked in its print
+(export) pose: `bedContactPct` is the share of its near-bed FLAT underside (faces
+within 2° of level, within 1 mm of its lowest point — the band the overhang check
+leaves alone) that actually touches the bed; a face hovers only when it is level (within
+0.1°, as a plane you made horizontal is) and every one of its corners is clear of the
+bed, so a cylinder, sphere or dome resting on the bed is never read as hovering, and it must be at least
+the profile's `bedContact` (50%). A plate flat on the bed reads 100; a lever resting
+on a knuckle 0.25 mm lower reads about 1. Slanted faces — the curl of a bottom fillet
+or chamfer, the sides of a cylinder — never count, and hovering area under 1 mm² is
+read as noise. A flat bottom tilted off level is not caught (it is not level, the same
+signature as a curved surface's lowest facets). The failure is located on the largest hovering face and
+its note says how far up it sits and how much area hovers versus touches. The fix is
+almost always to trim the piece flat at the bed plane — cut away everything below
+z = 0 in its print pose — or to raise or shorten the lower feature so the flat face
+is the lowest; size a print-in-place knuckle so its cylinder is tangent to the bed
+(diameter = 2 × its centre height) and give it a support block down to z = 0. Unlike
+overhang, no orientation key is needed: an overhang is a design choice a part still
+being shaped may not have made, but a hovering underside is a defect in whatever
+orientation the piece exports. Resin prints on supports, so `resin` never checks it
+unless you ask: your own `bedContactPct` expectation arms it under any profile, and
+`orientation: "print"` arms it on a part with no profile at all (both against 50%). A
+named profile otherwise decides alone. A recess meant to clear the
+bed — a shallow pocket inside a foot ring — hovers by design and is reported; such a
+pocket is a long bridge laid in the first layers and rarely prints well, so the
+default stands, and a part that means it declares a lower `bedContactPct` (or
+`{ base: "fdm-pla", bedContact: null }` to switch it off). `exportable: false`
+sub-parts are not judged.
+
 **What the profile tells you.** Three more fields carry the numbers a mating
 feature needs. Nothing checks them; they are the one place the value is spelled,
 so `derive()` copies it with a comment naming the fit (`// slip fit: fdm-pla 0.25`).
@@ -4359,7 +4399,7 @@ an inline `{ base: "fdm-pla", fits: { … } }` replaces the whole table.
 **What `expect` gives you:** per-sub-part
 assertions on the facts `measure` already reports — `holes` (through-bores / genus),
 `volume`, `surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`,
-`overhangArea`, `wall` (a range — see below), `bounds` (the axis-aligned corner
+`overhangArea`, `bedContactPct`, `wall` (a range — see below), `bounds` (the axis-aligned corner
 positions, written in the same `{ min, max }` shape `measure` reports them — where
 the geometry sits, vs `bbox` which is only its size) and `centerOfMass` (`[x,y,z]`, the volume-weighted
 centroid; `null` for a degenerate/zero-volume sub-part); and `_view` assertions `bbox`,
@@ -4405,7 +4445,8 @@ verify: { expect: {
 **Gates vs. warnings:** exact facts are **gates** (a failure sets a non-zero exit code);
 `minWall` is computed (a ray/shot wall-thickness measurement) and reported as a
 **warning** — it flags walls below the profile's minimum but never fails the build —
-and so is `overhangArea` (see above). `holes`/`watertight` are Manifold-only, so those
+and so is `overhangArea` (see above). `bedContactPct` is a **gate** even though the
+profile arms it (see above). `holes`/`watertight` are Manifold-only, so those
 assertions **skip** on OCCT parts rather than fail.
 
 **A wall that must stay one thickness: `wall`.** `minWall` answers "is anything too

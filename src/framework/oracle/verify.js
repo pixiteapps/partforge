@@ -2,7 +2,7 @@ import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
 import { measure as defaultMeasure } from "./measure.js";
 import { pairKey, CONTACT_EPS } from "./gaps.js";
 import { heldCheck } from "./held.js";
-import { resolveProfile, overhangAngleFor } from "./dfm-profiles.js";
+import { resolveProfile, overhangAngleFor, bedContactFor } from "./dfm-profiles.js";
 import { expandExpectations, partGatesMinWall } from "./gates.js";
 import { relevanceHash } from "../param-deps.js";
 import { SUBPART_METRICS, VIEW_METRICS, sidesSpecError } from "../verify-metrics.js";
@@ -214,8 +214,8 @@ const SHEET_BUDGET_HINT = "The 2-D sheet checks did not fit their time budget �
 // The print checks: measure() casts no rays and runs no overhang pass on a sheet part.
 // Declared on one, each is a skip — declared, never evaluated, so a sheet-only forge
 // that declares only these has no verdict rather than a vacuous pass.
-const PRINT_ONLY = new Set(["minWall", "wall", "overhangArea"]);
-const PRINT_ONLY_HINT = "minWall, wall and overhangArea are print checks, and a sheet part is cut, not printed: nothing measures them here. For a laser part declare sheetBridge (the narrowest web or finger) or sheetGap (the narrowest hole or slot) instead.";
+const PRINT_ONLY = new Set(["minWall", "wall", "overhangArea", "bedContactPct"]);
+const PRINT_ONLY_HINT = "minWall, wall, overhangArea and bedContactPct are print checks, and a sheet part is cut, not printed: nothing measures them here. For a laser part declare sheetBridge (the narrowest web or finger) or sheetGap (the narrowest hole or slot) instead.";
 
 // A sheet reading the geometry engine could not take (SheetFacts.readErrors): a
 // volunteered check warns with the reason; a declared one warns with it too, and is
@@ -271,7 +271,9 @@ function sheetRowChecks(s, declaredExp) {
 // `overhang` is the angle the part opted into (dfm-profiles.js overhangAngleFor),
 // or null/undefined: only then does the profile's overhang rule apply, as a
 // 1 mm² warning floor — a chamfer sitting exactly on the angle sheds slivers.
-export function evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang = null }) {
+// `bedContact` is the floor the part is checked against (dfm-profiles.js bedContactFor),
+// or null/undefined: only then does every PRINTED sub-part get `bedContactPct >= floor`.
+export function evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang = null, bedContact = null }) {
   const checks = [];
   // contacts/clearance/held are pair-derived, not scalar view metrics — peel
   // them off before the registry loop. held.js explains the exportable bound.
@@ -298,6 +300,10 @@ export function evaluateCase(facts, { profile, expect, subPartNames, exportableN
   // without the pass (a quick lap reusing a seed that had no angle), so the check
   // is withheld rather than read as "unavailable" — which would count as answered.
   const overhangSkipped = overhang != null && (facts.measuredOverhang ?? null) === null;
+  const bedContactSkipped = bedContact != null && facts.measuredBedContact !== true;
+  // A piece that is never printed (`exportable: false`) is not judged for bed contact;
+  // the floor is applied to the rest. Without the vocabulary, every row is printed.
+  const printedNames = exportableNames ? new Set(exportableNames) : null;
   for (const s of facts.subparts) {
     if (s.sheet) { checks.push(...sheetRowChecks(s, expect?.[s.name] ?? {})); continue; }
     if (anySheet && profile?.bed && s.printBbox) {
@@ -312,6 +318,7 @@ export function evaluateCase(facts, { profile, expect, subPartNames, exportableN
     const merged = {
       ...(profile?.minWall != null ? { minWall: `>=${profile.minWall}` } : {}),
       ...(overhang != null ? { overhangArea: "<=1" } : {}),
+      ...(bedContact != null && (!printedNames || printedNames.has(s.name)) ? { bedContactPct: `>=${bedContact}` } : {}),
       ...(expect?.[s.name] ?? {}),
     };
     for (const [metric, expr] of Object.entries(merged)) for (const c of checksFor("subpart", s.name, metric, expr, SUBPART_METRICS, s)) {
@@ -323,6 +330,17 @@ export function evaluateCase(facts, { profile, expect, subPartNames, exportableN
       if (overhangSkipped && metric === "overhangArea" && c.actual == null) {
         checks.push({ ...c, unevaluated: true, message: "not measured (quick check)",
           hint: "re-run this check without `quick` to measure overhang" });
+        continue;
+      }
+      if (metric === "bedContactPct" && c.actual == null && s.bedContactError) {
+        checks.push({ ...c, status: "skip", pass: null, unevaluated: true,
+          message: `not measured: its print (export) pose did not build — ${s.bedContactError}`,
+          hint: "bed contact is read in the print pose, and this piece's could not be posed by its place() alone, so its export build was read instead — and that build failed. Fix the export pose; the check then runs." });
+        continue;
+      }
+      if (bedContactSkipped && metric === "bedContactPct" && c.actual == null) {
+        checks.push({ ...c, unevaluated: true, message: "not measured (quick check)",
+          hint: "re-run this check without `quick` to measure bed contact" });
         continue;
       }
       checks.push(c);
@@ -353,6 +371,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   const needMinWall = partGatesMinWall(part, { process, expanded });
   // Throws on a bad `verify.orientation`, the same loudness as a bad profile name.
   const overhangAngle = overhangAngleFor(part, process, { expanded });
+  const bedContactFloor = bedContactFor(part, process, { expanded });
   // Reuse rule (spec §4): case B may reuse a measurement taken at params A when
   // B agrees with A on every param that measurement READ (recorded by measure()
   // itself). Sound for the same reason the mesh cache is: a deterministic build
@@ -416,11 +435,14 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // changes the angle therefore re-measures rather than reusing the inspect
   // job's seed, which was taken against the part's own profile.
   const overhangMatches = (seed?.result?.measuredOverhang ?? null) === (overhangAngle ?? null);
+  // Bed contact's half: a seed that skipped the pass cannot answer an armed gate. The
+  // reverse (a seed that ran it, for a run that does not need it) is a free superset.
+  const bedContactMatches = bedContactFloor == null || seed?.result?.measuredBedContact === true;
   // The print-pose half (views holding a sheet part): a seed measured without the print
   // sizes cannot answer a bed, so it is admitted only when this run needs no bed.
   const needPrintBboxes = profile?.bed != null;
   const printBboxesMatch = !needPrintBboxes || seed?.result?.measuredPrintBboxes !== false;
-  if (seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && (quick || overhangMatches) && printBboxesMatch
+  if (seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && (quick || overhangMatches) && (quick || bedContactMatches) && printBboxesMatch
     && seed.result.view === view) {
     entries.push({ params: full(seed.params), result: seed.result });
   }
@@ -434,7 +456,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     // for every case buys nothing. (A seed measured WITH probes is a superset in
     // the same way a min-wall seed is: the extra key is simply never read here.)
     const result = measureFn(kernel, part, view, params,
-      { minWall: needMinWall, probes: false, overhang: overhangAngle, printBboxes: needPrintBboxes });
+      { minWall: needMinWall, probes: false, overhang: overhangAngle, bedContact: bedContactFloor, printBboxes: needPrintBboxes });
     entries.push({ params: fp, result });
     return result;
   };
@@ -455,7 +477,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   }];
   const caseResults = expanded.map(({ name, params, expect }) => {
     const facts = measureCase(params);
-    return { name, params, checks: facts ? evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang: overhangAngle }) : notMeasured(name) };
+    return { name, params, checks: facts ? evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang: overhangAngle, bedContact: bedContactFloor }) : notMeasured(name) };
   });
   // VACUOUS VERIFY. A part that declares nothing — no profile, an empty or absent
   // `expect` — used to come back `ok: true` with zero checks, and every reader
@@ -490,7 +512,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     declared++;
     if (c.status !== "skip" && !c.unevaluated) evaluated++;
   }
-  const declaresAnything = profile != null || overhangAngle != null
+  const declaresAnything = profile != null || overhangAngle != null || bedContactFloor != null
     || expanded.some(({ expect }) => Object.values(expect ?? {}).some((o) => o && typeof o === "object" && Object.keys(o).length > 0));
   const failures = all.filter((c) => c.status === "fail");
   const unevaluated = all.filter((c) => c.unevaluated);
