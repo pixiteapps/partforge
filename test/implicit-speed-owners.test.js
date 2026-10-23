@@ -35,11 +35,16 @@ import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 // still cost at 1.5 mm: the mesher's edge walk and solves (~13 / 25 ms over plain), cleanup's
 // share capture and final pass (~7 / 8 ms), the crease cut (~11 / 19 ms), the detail's owner
 // projection and seam fade (~6 / 7 ms) and untangle (1 / 5 ms).
+// 2026-10-22, later: exact speed-ups to the native edge collapse took ~45-50 ms off cleanup at
+// 1.5 mm on BOTH paths (plain 201 / 238 paced ms, owner 240 / 297), which raises the preview
+// ratios: measured 1.19x / 1.25x preview and 1.29x / 1.33x print (default / fist, three quiet gate
+// runs; one full-suite run read the fist preview at 1.36x). The preview limits are raised to
+// 1.34x / 1.38x (measured plus ~10%); the print limits stand.
 const SPEC_PREVIEW_MS = 150;
 const SPEC_PRINT_MS = 2000;
 const OWNER_GATES = [
-  ["hand default", {}, 1.29, 1.43],
-  ["hand fist", HAND_POSES.fist, 1.36, 1.46],
+  ["hand default", {}, 1.34, 1.43],
+  ["hand fist", HAND_POSES.fist, 1.38, 1.46],
 ];
 
 // Median owner and plain times, runs interleaved (owner, plain, owner, plain, ...).

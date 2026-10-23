@@ -399,3 +399,13 @@ All of it is now decided. What shipped:
   1520 / 1795): 1.17x / 1.24x preview and 1.30x / 1.33x print, so the gate is 1.29x / 1.36x
   preview and 1.43x / 1.46x print (default / fist; measured plus ~10%). Output stays
   bit-identical with the core on or off.
+  Then (2026-10-22) the native edge collapse got exact speed-ups that serve both paths alike
+  (one walk per test with the cheap guards first, shared edge vectors for a triangle's
+  corners, a per-triangle cache of the current normal and sharpness in decimation passes, an
+  early corner refusal where no sharpness can be NaN; `implicit_mesh.cpp`'s top comment says
+  why each is exact): collapse and decimation on the fist went from ~115 to ~79 ms. Both
+  paths lose the same ~45-50 ms at 1.5 mm, so the preview ratios rise: plain now measures
+  201 / 238 ms at 1.5 mm (against the 241 / 269 base) and 1446 / 1716 ms at 0.5 mm, the owner
+  path 240 / 297 and 1869 / 2280 ms; 1.19x / 1.25x preview and 1.29x / 1.33x print (default /
+  fist, three quiet gate runs; one full-suite run read the fist preview at 1.36x). The preview
+  gate is raised to 1.34x / 1.38x (measured plus ~10%); print keeps 1.43x / 1.46x.
