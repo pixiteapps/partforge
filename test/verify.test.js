@@ -655,7 +655,7 @@ test("vacuous verify: one answerable expectation — or a profile — is enough 
 test("overhang: an author's own overhangArea expectation arms the measurement without the orientation key", () => {
   const v = verify(k, { ...tee(), verify: { process: "fdm-pla", expect: { tee: { overhangArea: "<=0.5" } } } });
   const oh = v.cases[0].checks.find((c) => c.metric === "overhangArea");
-  expect(oh.status).toBe("cost");            // declared by the author as a warn-class metric: 160 > 0.5
+  expect(oh.status).toBe("cost");            // declared by the author as a cost-class metric: 160 > 0.5
   expect(oh.actual).toBeCloseTo(160, 3);
   // and on resin (no angle) it measures against the 45° default rather than answering "unavailable"
   const resin = verify(k, { ...tee(), verify: { process: "resin", expect: { tee: { overhangArea: "<=0.5" } } } });

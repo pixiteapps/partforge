@@ -7,7 +7,7 @@ import { SUBPART_METRICS, VIEW_METRICS, BOUNDS_FORM, teachableMetrics, sidesSpec
 import { PROFILES, ORIENTATIONS } from "../oracle/dfm-profiles.js";
 import { parseAssertion, bareVectorHint } from "../oracle/assert-dsl.js";
 import { suggest } from "../geometry/op-options.js";
-import { PROCESS_IDS, printProcessFor } from "../process/registry.js";
+import { PRINT_PROCESSES, PROCESS_IDS, printProcessFor } from "../process/registry.js";
 import { SHEET_DOC_ID } from "../sheet/constants.js";
 
 // Resolve `expect` to a plain object. The function form (p, d) => ({…}) is invoked
@@ -428,17 +428,20 @@ export const VERIFY_RULES = [
           "Write `accept` as an array of cost ids, e.g. `accept: [\"supports\"]`, or omit the key.",
           "verify.accept")];
       }
+      // With no print process resolved, a cost can still fire (an authored expectation,
+      // an inline profile with no base), so check against every print process's ids.
       const proc = printProcessFor(verify.process);
-      if (!proc) return [];
-      const known = Object.keys(proc.costs);
+      const known = proc ? Object.keys(proc.costs) : [...new Set(PRINT_PROCESSES.flatMap((d) => Object.keys(d.costs)))];
       const out = [];
       verify.accept.forEach((id, i) => {
         if (typeof id === "string" && known.includes(id)) return;
         out.push(err("verify-unknown-accept",
-          `\`verify.accept[${i}]\` is ${describe(id)}, which is not a cost this process defines`,
-          known.length
-            ? `Known cost ids for this process: ${known.join(", ")}.`
-            : "This process defines no acceptable costs; remove the entry.",
+          `\`verify.accept[${i}]\` is ${describe(id)}, which is not a cost ${proc ? "this process" : "any print process"} defines`,
+          !proc
+            ? `No print process is declared; the cost ids any print process knows are: ${known.join(", ")}.`
+            : known.length
+              ? `Known cost ids for this process: ${known.join(", ")}.`
+              : "This process defines no acceptable costs; remove the entry.",
           `verify.accept[${i}]`));
       });
       return out;

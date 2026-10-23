@@ -44,5 +44,5 @@ export function printProcessFor(spec) {
   let id = spec;
   while (id && typeof id === "object") id = id.base;
   if (typeof id !== "string") return null;
-  return PRINT_PROCESSES.find((d) => id in d.profiles) ?? null;
+  return PRINT_PROCESSES.find((d) => Object.hasOwn(d.profiles, id)) ?? null;
 }

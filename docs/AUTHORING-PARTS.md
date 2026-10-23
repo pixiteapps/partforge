@@ -1921,7 +1921,7 @@ regions left — see the vanishing-features rule above).
 
 ## Printed parts
 
-3D-printed parts: FDM (filament) and resin. Everything that is not a sheet or a routed
+3D-printed parts: FDM (filament) and resin. Everything that is not a sheet
 part is printed, but a part says so on purpose by declaring its print process in
 `verify.process`; that one key arms the process's print checks below from the first
 build (all of them under FDM; bed fit and min wall under `resin`). Name
@@ -1952,13 +1952,13 @@ Every print check is in exactly one tier, decided by what the reading means:
 | tier | checks | effect on `verify.ok` |
 | --- | --- | --- |
 | **gate** — a defect in any orientation | bed fit (`bbox` within `bed`), bed contact (`bedContactPct` ≥ 50) | fails it |
-| **cost** — a design choice with a price | overhang (`overhangArea`, id `supports`), footprint (`footprintPct` ≥ 5, id `footprint`) | never |
+| **cost** — a design choice with a price | overhang (`overhangArea`, id `supports`), footprint (`footprintPct` ≥ 10, id `footprint`) | never |
 | **advisory** — a reading that may not matter | min wall (`minWall`), `wall` | never; a warning |
 
 A **gate** is fixed before the work is done: the piece cannot be printed this way
 whatever the user wants. A **cost** is a fact with a number and a location — mm² of
-overhang on a named piece and where it sits, or the share of a piece's footprint on
-the bed — listed in `verify().costs` (never in `warnings`) with `status: "cost"`. It
+overhang on a named piece and where it sits, or the share of a piece's silhouette on
+the bed that actually touches it — listed in `verify().costs` (never in `warnings`) with `status: "cost"`. It
 does not block a part still being shaped; it informs. Say each cost to the user once,
 in one sentence naming the piece, the number and the alternative ("the arm overhangs
 by 840 mm² and prints on supports; splitting it at the elbow avoids them"), and record
@@ -1971,8 +1971,9 @@ simply no longer something to raise. Switching a measurement off is the inline
 profile form, `{ base: "fdm-pla", overhang: null }` (or `footprint: null`,
 `bedContact: null`), and is for a part where the reading is meaningless, not unwelcome.
 A threshold the user named ("under 500 mm² of supports") is an `expect`:
-`overhangArea: "<=500"` — still a cost, reported in `costs` and never failing `ok`,
-and `accept: ["supports"]` stamps it accepted too. Lint refuses an `accept` entry the process does not define
+`overhangArea: "<=500"` — still a cost, reported in `costs` and never failing `ok`;
+the user's own limit keeps its meaning, so it is never marked accepted, whatever
+`accept` says (`accept` covers only the process's default check). Lint refuses an `accept` entry the process does not define
 (`verify-unknown-accept`): `fdm` defines `supports` and `footprint`; `resin` prints on
 supports and defines none.
 
@@ -2035,7 +2036,7 @@ must mate or measure true a small 45° chamfer (about 0.4 mm). Keep the undersid
 and lowest: a knuckle, pin or boss that dips below it lifts the flat face off the bed
 and fails bed contact ([piece-hovers-above-bed](ERROR-PATTERNS.md#piece-hovers-above-bed))
 — size a print-in-place knuckle tangent to the bed and give it a block down to
-z = 0. A piece resting on a point, a line or a curve fails the footprint cost
+z = 0. A piece resting on a point, a line or a curve is reported as a footprint cost
 ([piece-stands-on-nothing](ERROR-PATTERNS.md#piece-stands-on-nothing)): lay it on a
 flat face, add a pad, or record the user's brim with `accept: ["footprint"]`. Never
 emboss text on the underside; deboss it, or put it on a side or the top.
@@ -4322,8 +4323,9 @@ when not checked or on an `exportable: false` sub-part), `bedContactArea` and
 `bedHoverArea` (mm² touching and hovering), `bedHoverGap` (how far above the bed the
 largest hovering face sits, `null` when nothing hovers) and `bedHoverAt` (its
 centroid); the report's `measuredBedContact` says whether the pass ran. The same
-pass reads `footprintPct` (the flat area on the bed over the piece's xy bounding-box
-area, in percent; `null` when not measured or the box has no area) and `footprintAt`
+pass reads `footprintPct` (the share of the piece's silhouette on the bed that actually
+touches it, in percent; `null` when not measured or the silhouette is empty) and
+`footprintAt`
 (the piece's lowest point; `null` when its export-pose reading failed), stamped by
 `measuredFootprint`; a profile carrying
 `footprint`, or a `footprintPct` expectation, arms the pass too.
@@ -4467,7 +4469,10 @@ counted: the footprint itself, and faces whose centroid sits within 1 mm of the 
 (the lower curl of a bottom-edge fillet or chamfer, which prints fine). A bridge (a
 flat underside spanning two supports) and the ceiling of a horizontal bore are
 reported as overhangs — the mesh alone cannot tell a bridge from a ceiling — so read
-the location before proposing a redesign. `exportable: false` sub-parts are skipped.
+the location before proposing a redesign. When a sub-part's `place()` cannot be
+trusted as a rigid pose (it queries its solid), the reading falls back to the DISPLAY
+pose, so such a piece is measured as the view shows it. `exportable: false` sub-parts
+are skipped.
 
 **`accept` records the user's choice.** `accept: ["supports"]` says the user chose to
 print with supports: the overhang is still measured and still listed in `costs`, with
@@ -4513,10 +4518,13 @@ sub-parts are not judged.
 **Footprint — a COST, armed by the FDM profile.** Bed contact passes a piece that
 stands on a point, a line or a curve, since nothing flat hovers; the first layer still
 has almost nothing to grip, and the piece tips or pulls loose unless it prints with a
-brim or a raft. `footprintPct` is the flat area touching the bed (read by bed contact's
-pass, in the same print pose) over the area of the posed piece's xy bounding box, in
-percent: a plate reads 100, a cylinder on its side or a rod on a rounded tip about 0,
-and a wide piece balanced on a narrow foot reads low too. It is a cost below the profile's `footprint` (5%), with cost id
+brim or a raft. `footprintPct` is the share of the piece's silhouette on the bed (its
+outline seen from below, in the same print pose) that actually touches it, read by bed
+contact's pass, in percent: a plate reads 100, and so do a tube on its rim, a frame of
+thin bars, spread pins and a bar laid diagonally, since each stands on all of its
+outline; a rod on a rounded tip reads about 0, a cylinder on its side a few percent
+(the facets along its lowest line), under the floor, and a wide piece balanced on a
+narrow foot reads low too. It is a cost below the profile's `footprint` (10%), with cost id
 `footprint`, located at the piece's lowest point
 ([piece-stands-on-nothing](ERROR-PATTERNS.md#piece-stands-on-nothing)). Lay the piece on
 a flat face or add a pad; when the user chooses the brim, `accept: ["footprint"]`

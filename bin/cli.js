@@ -568,7 +568,8 @@ function printVerify(v) {
       if (ch.note) console.log(`        note: ${ch.note}`);
       if (ch.status === "fail" || ch.status === "warn" || ch.status === "cost") {
         if (ch.location) console.log(`        at [${ch.location.map((n) => n.toFixed(1)).join(", ")}]`);
-        if (ch.hint) console.log(`        hint: ${ch.hint}${ch.pattern ? ` (${patternRef(ch.pattern)})` : ""}`);
+        // An accepted cost's remedy is moot: the user already chose to pay it.
+        if (ch.hint && !ch.accepted) console.log(`        hint: ${ch.hint}${ch.pattern ? ` (${patternRef(ch.pattern)})` : ""}`);
       }
     }
   }
