@@ -108,6 +108,19 @@ export const SUBPART_METRICS = {
     hint: "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature, or accept supports",
     locate: (s) => s.overhangAt,
     note: (s) => (s.overhangAngle != null ? `steepest unsupported face ${s.overhangAngle.toFixed(1)}° from vertical` : null) },
+  // How much of a printed piece's near-bed flat underside rests on the bed
+  // (oracle/bed-contact.js), in percent. Measured for a part whose FDM profile carries
+  // `bedContact` (or that declares `orientation: "print"` or this expectation itself);
+  // elsewhere `extract` returns null and check() skips it. A GATE, unlike overhangArea:
+  // a flat bottom hovering above a lower knuckle or emboss is a failed print in any
+  // orientation, and a flat face cannot be mistaken for anything else.
+  bedContactPct: { kind: "gate", extract: (s) => s.bedContactPct,
+    hint: "this piece's flat underside sits just above the bed, because something lower (a knuckle, a pin, a boss, lettering on the bottom, or a slight tilt) touches first — exporters and slicers rest the piece on that lowest point, so the flat face prints in mid-air. Trim the piece flat at the bed plane (cut everything below z = 0 in its print pose), or raise or shorten the lower feature so the flat face is the lowest; a recess meant to clear the bed can declare a lower bedContactPct",
+    pattern: "piece-hovers-above-bed",
+    locate: (s) => s.bedHoverAt,
+    note: (s) => (s.bedHoverGap != null
+      ? `${s.bedHoverArea.toFixed(1)} mm² of flat underside sits ${s.bedHoverGap.toFixed(2)} mm above the bed; ${s.bedContactArea.toFixed(1)} mm² touches it`
+      : null) },
   // `s.deviation` (measure.js) exists only for a sub-part declaring `reference:
   // "<import name>"`; on every other sub-part `extract` returns null, which
   // `check()` already reports as status "skip" rather than a fail — the

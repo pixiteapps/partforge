@@ -419,6 +419,20 @@ export interface SubPartFacts {
   overhangAngle: number | null;
   /** Centroid of the largest offending face; `null` when none. */
   overhangAt: number[] | null;
+  /**
+   * Share (0–100) of the near-bed flat underside, in the print pose, that rests on
+   * the bed (oracle/bed-contact.js); `null` when the part is not checked for bed
+   * contact (no FDM profile) or the sub-part is `exportable: false`.
+   */
+  bedContactPct: number | null;
+  /** Flat underside on the bed, mm²; `null` when not checked. */
+  bedContactArea: number | null;
+  /** Flat underside hovering within 1 mm above the bed, mm²; `null` when not checked. */
+  bedHoverArea: number | null;
+  /** How far above the bed the largest hovering face sits, mm; `null` when nothing hovers. */
+  bedHoverGap: number | null;
+  /** Centroid of the largest hovering face; `null` when nothing hovers. */
+  bedHoverAt: number[] | null;
   /** A sheet sub-part's 2-D facts, or `null` on every other sub-part. */
   sheet: SheetFacts | null;
   /**
@@ -500,6 +514,8 @@ export interface MeasureReport {
   measuredMinWall: boolean;
   /** The overhang angle every sub-part's `overhangArea` was measured against, `null` when the pass did not run. */
   measuredOverhang: number | null;
+  /** Whether the bed-contact pass ran (the part is checked for it). */
+  measuredBedContact: boolean;
   /**
    * Present only in a view holding a sheet part: whether the printed sub-parts' print
    * (export) poses were built for `printBbox`.
@@ -536,6 +552,11 @@ export function measure(
      * `verify` block the way verify does.
      */
     overhang?: number | null;
+    /**
+     * The bed-contact floor (percent) the run is checked against, or `null` for "not
+     * checked". Omitted, measure derives it from the part's own `verify` block.
+     */
+    bedContact?: number | null;
     gapThreshold?: number;
     /**
      * Milliseconds the 2-D sheet checks may spend across every sheet sub-part in

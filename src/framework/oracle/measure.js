@@ -13,7 +13,8 @@ import { meshGaps, pairKey, CONTACT_EPS, GAP_THRESHOLD } from "./gaps.js";
 import { bounds, meshArea, meshCentroid } from "./mesh.js";
 import { minWall, DIAGNOSTIC_SAMPLES } from "./min-wall.js";
 import { overhang } from "./overhang.js";
-import { partGatesMinWall, partHasBed, partOverhangAngle, partWallBands } from "./gates.js";
+import { bedContact } from "./bed-contact.js";
+import { partBedContact, partGatesMinWall, partHasBed, partOverhangAngle, partWallBands } from "./gates.js";
 import { summarizeContours } from "./shape-probe.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
@@ -129,20 +130,27 @@ const transformPoint = (m, [x, y, z]) => [
   m[2] * x + m[6] * y + m[10] * z + m[14],
 ];
 
-// Overhang of one printed sub-part in its PRINT pose. measure builds the display pose,
-// and a piece shown assembled (a lid closed over its box) is not how it prints: judging
-// its underside there flagged the wrong faces and missed the real ones. The display mesh
-// is carried into the export pose by a rigid matrix — no second build — and the bed is
-// that pose's own lowest Z; `at` comes back in display coordinates, where every other
+// The underside readings of one printed sub-part in its PRINT pose — overhang
+// (overhang.js) when `maxAngle` is set, bed contact (bed-contact.js) when `bed` is.
+// measure builds the display pose, and a piece shown assembled (a lid closed over its
+// box) is not how it prints: judging its underside there flagged the wrong faces and
+// missed the real ones. The display mesh is carried into the export pose by a rigid
+// matrix — no second build, and one copy shared by both readings — and the bed is that
+// pose's own lowest Z; each `at` comes back in display coordinates, where every other
 // finding of this view sits. An unreadable or identical pose measures as shown.
 // `m` is displayToPrintMatrix's answer, resolved by the caller: the measure memo
 // keys on it, since the pose comes from place() and is not part of the solid's hash.
-function printPoseOverhang(mesh, m, { maxAngle, displayBedZ }) {
-  if (!m) return overhang(mesh, { maxAngle, bedZ: displayBedZ });
-  const positions = Float32Array.from(mesh.positions);
-  transformPositions(positions, m);
-  const out = overhang({ positions, indices: mesh.indices }, { maxAngle });
-  return out?.at ? { ...out, at: transformPoint(invertRigid(m), out.at) } : out;
+function printPoseUnderside(mesh, m, { maxAngle, bed, displayBedZ }) {
+  let posed = null;
+  if (m) {
+    posed = { positions: Float32Array.from(mesh.positions), indices: mesh.indices };
+    transformPositions(posed.positions, m);
+  }
+  const back = (out) => (m && out?.at ? { ...out, at: transformPoint(invertRigid(m), out.at) } : out);
+  return {
+    oh: maxAngle != null ? back(posed ? overhang(posed, { maxAngle }) : overhang(mesh, { maxAngle, bedZ: displayBedZ })) : null,
+    bc: bed ? back(posed ? bedContact(posed) : bedContact(mesh, { bedZ: displayBedZ })) : null,
+  };
 }
 
 // One sheet row's facts, within `budget.left` ms of 2-D work, which it spends (see
@@ -276,6 +284,12 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // angle it needs — the min-wall superset rule's counterpart, since a reading
   // taken against the wrong threshold is worse than none.
   const overhangAngle = opts.overhang !== undefined ? opts.overhang : partOverhangAngle(part);
+  // Bed contact is measured for a part whose profile (or orientation, or its own
+  // expectation) arms it — dfm-profiles.js bedContactFor. Unlike overhang the reading
+  // does not depend on the threshold, so the stamp is a boolean: `measuredBedContact`.
+  // verify passes its own answer (a `process` override can arm or disarm it).
+  const bedArmed = (opts.bedContact !== undefined ? opts.bedContact : partBedContact(part)) != null;
+  const underside = overhangAngle != null || bedArmed;
   const subBounds = [];
   // Sheet parts: a view holding one sizes each printed sub-part in its print pose
   // (verify fits the bed per part there), and every sheet row gets its 2-D facts under
@@ -288,7 +302,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // The overhang reading poses each piece for print (printPoseOverhang), which reads the
   // resolved params through place() — recorded into the same sink, since the reading
   // depends on them.
-  const poseParams = overhangAngle != null ? (sheetParams ?? resolveParams(part, params, undefined, reads)) : null;
+  const poseParams = underside ? (sheetParams ?? resolveParams(part, params, undefined, reads)) : null;
   // The print-pose sizes are read by one check, the process bed (verify passes whether
   // its profile has one; alone, measure asks the part's own profile), and each costs a
   // second build of the part — so they are built only for a bed.
@@ -304,7 +318,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // (printPoseOverhang) is read off place() with the resolved params — geometry-free,
     // so it is resolved here, ahead of the memo, which must key on it.
     const printed = part.parts[name]?.exportable !== false && !sheet;
-    const printMatrix = overhangAngle != null && printed && poseParams?.p
+    const printMatrix = underside && printed && poseParams?.p
       ? displayToPrintMatrix(part.parts[name], { view, p: poseParams.p, d: poseParams.d })
       : null;
     // Memo key = the inputs this sub-part's facts actually depend on, besides its
@@ -323,7 +337,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     const memoKey = opts.memo && !sheetView && !sheet && !part.parts[name]?.reference && solid?._hash
       ? JSON.stringify({
         mw: !!opts.minWall, s: minWallSamples ?? null, band: wallBands[name] ?? null,
-        oh: overhangAngle ?? null, ex: printed,
+        oh: overhangAngle ?? null, bc: bedArmed, ex: printed,
         pm: printMatrix ? Array.from(printMatrix) : null,
       })
       : null;
@@ -342,12 +356,12 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     const mw = opts.minWall && !sheet
       ? minWall(mesh, { bvh: cachedBVH(mesh, bvhCache), maxSamples: minWallSamples, band: wallBands[name] ?? null })
       : null;
-    // One pass over the triangles, no index — cheap enough for every lap. The bed
-    // is this sub-part's own lowest Z in its PRINT pose (printPoseOverhang); `printed`
+    // One pass over the triangles each, no index — cheap enough for every lap. The bed
+    // is this sub-part's own lowest Z in its PRINT pose (printPoseUnderside); `printed`
     // (above) says whether it is judged at all.
-    const oh = overhangAngle != null && printed
-      ? printPoseOverhang(mesh, printMatrix, { maxAngle: overhangAngle, displayBedZ: b.min[2] })
-      : null;
+    const { oh, bc } = underside && printed
+      ? printPoseUnderside(mesh, printMatrix, { maxAngle: overhangAngle, bed: bedArmed, displayBedZ: b.min[2] })
+      : { oh: null, bc: null };
     const vol = solid.volume();
     // Deviation-from-reference: only for a sub-part that declares `reference:
     // "<import name>"` (Task 12 — the gate that holds a parametric rebuild to
@@ -400,6 +414,15 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       overhangArea: oh ? oh.area : null,
       overhangAngle: oh?.worstAngle ?? null,
       overhangAt: oh?.at ?? null,
+      // How much of the near-bed flat underside rests on the bed (bed-contact.js), in
+      // percent, null when the part does not check it: a piece whose flat bottom
+      // hovers above a lower knuckle, pin or emboss reads near 0. The two areas (mm²),
+      // and how far up the largest hovering face sits and where (display coordinates).
+      bedContactPct: bc ? bc.pct : null,
+      bedContactArea: bc ? bc.contactArea : null,
+      bedHoverArea: bc ? bc.hoverArea : null,
+      bedHoverGap: bc?.gap ?? null,
+      bedHoverAt: bc?.at ?? null,
       // The process's 2-D facts on a sheet part (sheetRowFacts), null on every other.
       sheet: sheet
         ? sheetRowFacts(kernel, part, name, view, sheetParams, sheetBudget, vol)
@@ -487,6 +510,8 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // or null when the pass did not run — read by verify's seed gate, never a
     // caller's claim.
     measuredOverhang: overhangAngle ?? null,
+    // Whether the bed-contact pass ran — the same kind of stamp, read by the same gate.
+    measuredBedContact: bedArmed,
     // Companion stamp to measuredMinWall, and read the same way: whether the pass
     // ran, said by the pass itself rather than claimed by whoever holds the result.
     measuredGaps,

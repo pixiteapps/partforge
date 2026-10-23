@@ -489,6 +489,12 @@ export interface DfmProfile {
    * under a named base. A warning, never a gate.
    */
   overhang?: number | null;
+  /**
+   * The least share (%) of a printed piece's near-bed flat underside that must rest
+   * on the bed (50 on the FDM profiles; absent on resin). A GATE, armed by the
+   * profile alone; `null` switches it off under a named base.
+   */
+  bedContact?: number | null;
   /** Carried for a future gap check; not enforced yet. */
   clearance?: number;
   /**
@@ -560,6 +566,12 @@ export interface SubPartExpectations {
    * `verify.orientation: "print"`; a warning, never a gate.
    */
   overhangArea?: Expectation;
+  /**
+   * Share (0–100) of the sub-part's near-bed flat underside — faces within 2° of
+   * level, within 1 mm of its lowest point in the print pose — that touches the bed.
+   * Under an FDM profile every printed sub-part gets `>=50` by default; a gate.
+   */
+  bedContactPct?: Expectation;
   /** Symmetric-difference volume vs. the sub-part's declared `reference` import. */
   refXorVolume?: Expectation;
   /** Percent volume delta vs. the sub-part's declared `reference` import. */

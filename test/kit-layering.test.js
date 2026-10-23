@@ -27,6 +27,7 @@ const { loaded, refuse } = vi.hoisted(() => {
 });
 vi.mock("../src/framework/oracle/annotation-ray.js", () => refuse("annotation-ray.js"));
 vi.mock("../src/framework/oracle/assert-dsl.js", () => refuse("assert-dsl.js"));
+vi.mock("../src/framework/oracle/bed-contact.js", () => refuse("bed-contact.js"));
 vi.mock("../src/framework/oracle/build.js", () => refuse("build.js"));
 vi.mock("../src/framework/oracle/bvh.js", () => refuse("bvh.js"));
 vi.mock("../src/framework/oracle/cases.js", () => refuse("cases.js"));
@@ -55,7 +56,7 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 // vi.mock specifiers must be literals, so the list above is written out; this keeps it
 // honest — a new oracle module fails here until it is mocked too.
 const MOCKED = [
-  "annotation-ray.js", "assert-dsl.js", "build.js", "bvh.js", "cases.js", "changes.js", "dfm-profiles.js", "gaps.js",
+  "annotation-ray.js", "assert-dsl.js", "bed-contact.js", "build.js", "bvh.js", "cases.js", "changes.js", "dfm-profiles.js", "gaps.js",
   "gates.js", "held.js", "match.js", "measure.js", "mesh.js", "min-wall.js", "op-graph.js", "overhang.js",
   "shape-probe.js", "silhouette.js", "verify.js",
 ];

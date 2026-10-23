@@ -93,6 +93,17 @@
           {
             "scope": "subpart",
             "subpart": "spacer",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
             "metric": "holes",
             "kind": "gate",
             "expr": "1",
@@ -164,6 +175,17 @@
             "status": "pass",
             "pass": true,
             "message": "2.199093128739919 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
           },
           {
             "scope": "subpart",
@@ -243,6 +265,17 @@
           {
             "scope": "subpart",
             "subpart": "spacer",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
             "metric": "holes",
             "kind": "gate",
             "expr": "1",
@@ -272,8 +305,8 @@
     "failures": [],
     "warnings": [],
     "unevaluated": [],
-    "declared": 15,
-    "evaluated": 15
+    "declared": 18,
+    "evaluated": 18
   },
   "emblem.js#plate": {
     "ok": true,
@@ -420,6 +453,17 @@
           {
             "scope": "subpart",
             "subpart": "vase",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
             "metric": "holes",
             "kind": "gate",
             "expr": "0",
@@ -501,6 +545,17 @@
               -1.25677403,
               3.78571431
             ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
           },
           {
             "scope": "subpart",
@@ -590,6 +645,17 @@
           {
             "scope": "subpart",
             "subpart": "vase",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
             "metric": "holes",
             "kind": "gate",
             "expr": "0",
@@ -671,6 +737,17 @@
               -16.0778373,
               4.14285707
             ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
           },
           {
             "scope": "subpart",
@@ -781,8 +858,8 @@
       }
     ],
     "unevaluated": [],
-    "declared": 20,
-    "evaluated": 20
+    "declared": 24,
+    "evaluated": 24
   },
   "filleted-box.js#box": {
     "ok": null,
@@ -876,6 +953,17 @@
           {
             "scope": "subpart",
             "subpart": "gasket",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "gasket",
             "metric": "bbox",
             "kind": "gate",
             "expr": "<=[60,50,6]",
@@ -905,8 +993,8 @@
     "failures": [],
     "warnings": [],
     "unevaluated": [],
-    "declared": 5,
-    "evaluated": 5
+    "declared": 6,
+    "evaluated": 6
   },
   "hinged-box.js#box": {
     "ok": true,
@@ -963,6 +1051,17 @@
           {
             "scope": "subpart",
             "subpart": "base",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "base",
             "metric": "bbox",
             "kind": "gate",
             "expr": "<=[200,200,200]",
@@ -985,6 +1084,17 @@
             "status": "pass",
             "pass": true,
             "message": "1.9999000000000002 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lid",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
           }
         ]
       }
@@ -992,8 +1102,8 @@
     "failures": [],
     "warnings": [],
     "unevaluated": [],
-    "declared": 5,
-    "evaluated": 5
+    "declared": 7,
+    "evaluated": 7
   },
   "hull-sweep.js#sweep": {
     "ok": null,
@@ -1090,6 +1200,17 @@
           {
             "scope": "subpart",
             "subpart": "body",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
             "metric": "holes",
             "kind": "gate",
             "expr": "0",
@@ -1175,6 +1296,17 @@
           {
             "scope": "subpart",
             "subpart": "mount",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mount",
             "metric": "holes",
             "kind": "gate",
             "expr": "1",
@@ -1215,8 +1347,8 @@
     "failures": [],
     "warnings": [],
     "unevaluated": [],
-    "declared": 13,
-    "evaluated": 13
+    "declared": 15,
+    "evaluated": 15
   },
   "import-demo.js#reference": {
     "ok": false,
@@ -1287,6 +1419,17 @@
             "status": "pass",
             "pass": true,
             "message": "7.9998999999999985 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
           },
           {
             "scope": "subpart",
@@ -1387,8 +1530,8 @@
     ],
     "warnings": [],
     "unevaluated": [],
-    "declared": 10,
-    "evaluated": 10
+    "declared": 11,
+    "evaluated": 11
   },
   "lattice-box.js#assembly": {
     "ok": true,
@@ -1516,6 +1659,17 @@
           },
           {
             "scope": "subpart",
+            "subpart": "body",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
             "subpart": "lid",
             "metric": "minWall",
             "kind": "warn",
@@ -1524,6 +1678,17 @@
             "status": "pass",
             "pass": true,
             "message": "2.399901525878903 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lid",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
           },
           {
             "scope": "subpart",
@@ -1538,6 +1703,17 @@
           },
           {
             "scope": "subpart",
+            "subpart": "mesh",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
             "subpart": "plate",
             "metric": "minWall",
             "kind": "warn",
@@ -1546,6 +1722,17 @@
             "status": "pass",
             "pass": true,
             "message": "1.599899949336052 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
           },
           {
             "scope": "subpart",
@@ -1641,8 +1828,8 @@
       }
     ],
     "unevaluated": [],
-    "declared": 7,
-    "evaluated": 7
+    "declared": 11,
+    "evaluated": 11
   },
   "lattice-box.js#body": {
     "ok": true,
@@ -1695,6 +1882,17 @@
             "status": "pass",
             "pass": true,
             "message": "1.9998999999999967 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
           }
         ]
       }
@@ -1702,8 +1900,8 @@
     "failures": [],
     "warnings": [],
     "unevaluated": [],
-    "declared": 3,
-    "evaluated": 3
+    "declared": 4,
+    "evaluated": 4
   },
   "lattice-box.js#lid": {
     "ok": true,
@@ -1756,6 +1954,17 @@
             "status": "pass",
             "pass": true,
             "message": "2.399900095367431 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lid",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
           }
         ]
       }
@@ -1763,8 +1972,8 @@
     "failures": [],
     "warnings": [],
     "unevaluated": [],
-    "declared": 3,
-    "evaluated": 3
+    "declared": 4,
+    "evaluated": 4
   },
   "lattice-box.js#mesh": {
     "ok": true,
@@ -1817,6 +2026,17 @@
             "status": "pass",
             "pass": true,
             "message": "1.6038154469310686 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mesh",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
           }
         ]
       }
@@ -1824,8 +2044,8 @@
     "failures": [],
     "warnings": [],
     "unevaluated": [],
-    "declared": 3,
-    "evaluated": 3
+    "declared": 4,
+    "evaluated": 4
   },
   "lattice-box.js#plate": {
     "ok": true,
@@ -1878,6 +2098,17 @@
             "status": "pass",
             "pass": true,
             "message": "1.599900023841858 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
           }
         ]
       }
@@ -1885,8 +2116,8 @@
     "failures": [],
     "warnings": [],
     "unevaluated": [],
-    "declared": 3,
-    "evaluated": 3
+    "declared": 4,
+    "evaluated": 4
   },
   "lattice-box.js#print": {
     "ok": true,
@@ -1942,6 +2173,17 @@
           },
           {
             "scope": "subpart",
+            "subpart": "body",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
             "subpart": "lid",
             "metric": "minWall",
             "kind": "warn",
@@ -1950,6 +2192,17 @@
             "status": "pass",
             "pass": true,
             "message": "2.399900095367431 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lid",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
           },
           {
             "scope": "subpart",
@@ -1964,6 +2217,17 @@
           },
           {
             "scope": "subpart",
+            "subpart": "mesh",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
             "subpart": "plate",
             "metric": "minWall",
             "kind": "warn",
@@ -1972,6 +2236,17 @@
             "status": "pass",
             "pass": true,
             "message": "1.599900023841858 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
           }
         ]
       }
@@ -1979,8 +2254,8 @@
     "failures": [],
     "warnings": [],
     "unevaluated": [],
-    "declared": 6,
-    "evaluated": 6
+    "declared": 10,
+    "evaluated": 10
   },
   "lofted-bottle.js#bottle": {
     "ok": true,
@@ -2443,6 +2718,17 @@
           {
             "scope": "subpart",
             "subpart": "planter",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
             "metric": "holes",
             "kind": "gate",
             "expr": "1",
@@ -2517,6 +2803,17 @@
             "status": "pass",
             "pass": true,
             "message": "1.5999017384747458 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
           },
           {
             "scope": "subpart",
@@ -2599,6 +2896,17 @@
           {
             "scope": "subpart",
             "subpart": "planter",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
             "metric": "holes",
             "kind": "gate",
             "expr": "1",
@@ -2677,6 +2985,17 @@
           {
             "scope": "subpart",
             "subpart": "planter",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
             "metric": "holes",
             "kind": "gate",
             "expr": "0",
@@ -2706,8 +3025,8 @@
     "failures": [],
     "warnings": [],
     "unevaluated": [],
-    "declared": 20,
-    "evaluated": 20
+    "declared": 24,
+    "evaluated": 24
   },
   "propeller.js#propeller": {
     "ok": true,
@@ -2837,6 +3156,17 @@
           {
             "scope": "subpart",
             "subpart": "plate",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
             "metric": "watertight",
             "kind": "gate",
             "expr": "true",
@@ -2877,8 +3207,8 @@
     "failures": [],
     "warnings": [],
     "unevaluated": [],
-    "declared": 6,
-    "evaluated": 6
+    "declared": 7,
+    "evaluated": 7
   },
   "scott-label.js#backing": {
     "ok": true,
@@ -2957,6 +3287,17 @@
           {
             "scope": "subpart",
             "subpart": "backing",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "backing",
             "metric": "watertight",
             "kind": "gate",
             "expr": "true",
@@ -3007,8 +3348,8 @@
       }
     ],
     "unevaluated": [],
-    "declared": 6,
-    "evaluated": 5
+    "declared": 7,
+    "evaluated": 6
   },
   "scott-label.js#lettering": {
     "ok": true,
@@ -3086,6 +3427,17 @@
           {
             "scope": "subpart",
             "subpart": "lettering",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lettering",
             "metric": "watertight",
             "kind": "gate",
             "expr": "true",
@@ -3135,8 +3487,8 @@
       }
     ],
     "unevaluated": [],
-    "declared": 6,
-    "evaluated": 5
+    "declared": 7,
+    "evaluated": 6
   },
   "scott-label.js#assembly": {
     "ok": true,
@@ -3215,6 +3567,17 @@
           {
             "scope": "subpart",
             "subpart": "backing",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "backing",
             "metric": "watertight",
             "kind": "gate",
             "expr": "true",
@@ -3255,6 +3618,17 @@
               -1.09290953,
               4.20000664
             ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lettering",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
           },
           {
             "scope": "subpart",
@@ -3328,8 +3702,8 @@
       }
     ],
     "unevaluated": [],
-    "declared": 9,
-    "evaluated": 9
+    "declared": 11,
+    "evaluated": 11
   },
   "screw.js#screw": {
     "ok": null,
