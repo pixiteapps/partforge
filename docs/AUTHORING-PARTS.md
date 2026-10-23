@@ -4008,7 +4008,7 @@ runtime a throwing probe only degrades quietly to `{ error }`.
 
 **Verify block** — `verify-unknown-metric`, `verify-unknown-subpart`,
 `verify-bad-expr`, `verify-bad-pair-check`, `verify-unknown-process`,
-`verify-unknown-orientation`,
+`verify-unknown-orientation`, `verify-unknown-accept`,
 `verify-expect-throws` (all errors). Note `_view` also accepts the pair-wise
 `contacts` / `clearance` / `held` keys, which are not scalar view metrics; they are
 validated by `verify-bad-pair-check`, matching `verify.js`'s own handling.
