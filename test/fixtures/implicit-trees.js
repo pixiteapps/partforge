@@ -176,6 +176,15 @@ export function vaseSpec() {
   return { spec, images };
 }
 
+/**
+ * A ball (r 20) pressed 4 mm by a rounded board (80×80×6, round 1) from above, as one contact
+ * root, with no grid set: a simple shape whose 1 mm rounds a 1.5 mm grid cannot resolve.
+ */
+export const BALL_BOARD = { root: { kind: "contact", gap: 0, bulge: 1, children: [
+  { kind: "sphere", r: 20, label: "ball" },
+  { kind: "box", size: [80, 80, 6], round: 1, at: [0, 0, 19], label: "board" },
+] } };
+
 export const ADVERSARIAL = {
   tangentSpheres: { root: { kind: "union", children: [{ kind: "sphere", r: 5 }, { kind: "sphere", r: 5, at: [10, 0, 0] }] }, preview: 1 },
   coincidentFaces: { root: { kind: "union", children: [{ kind: "box", size: [10, 10, 10] }, { kind: "box", size: [10, 10, 10], at: [10, 0, 0] }] }, preview: 1 },
