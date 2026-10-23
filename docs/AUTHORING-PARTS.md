@@ -1923,7 +1923,8 @@ regions left — see the vanishing-features rule above).
 
 3D-printed parts: FDM (filament) and resin. Everything that is not a sheet or a routed
 part is printed, but a part says so on purpose by declaring its print process in
-`verify.process`; that one key arms every print check below from the first build. Name
+`verify.process`; that one key arms the process's print checks below from the first
+build (all of them under FDM; bed fit and min wall under `resin`). Name
 the process the user will print with, never one written by habit: it is the declaration
 the checks, the fits and the advice all read.
 
@@ -1970,12 +1971,13 @@ simply no longer something to raise. Switching a measurement off is the inline
 profile form, `{ base: "fdm-pla", overhang: null }` (or `footprint: null`,
 `bedContact: null`), and is for a part where the reading is meaningless, not unwelcome.
 A threshold the user named ("under 500 mm² of supports") is an `expect`:
-`overhangArea: "<=500"`. Lint refuses an `accept` entry the process does not define
+`overhangArea: "<=500"` — still a cost, reported in `costs` and never failing `ok`,
+and `accept: ["supports"]` stamps it accepted too. Lint refuses an `accept` entry the process does not define
 (`verify-unknown-accept`): `fdm` defines `supports` and `footprint`; `resin` prints on
 supports and defines none.
 
 **What arms what.** Under `fdm-pla`/`fdm-petg` the profile alone arms every check in
-the table, and overhang fires past 1 mm². `resin` arms bed fit and min wall only. `orientation: "print"` declares that `build()`
+the table except `wall`, which runs only where a sub-part declares a band; overhang fires past 1 mm². `resin` arms bed fit and min wall only. `orientation: "print"` declares that `build()`
 is the print pose (Z up, bed at the lowest Z); it arms nothing under a named profile,
 and with no profile at all it arms bed contact alone. An expectation you write yourself
 (`overhangArea`, `bedContactPct`, `footprintPct`) arms its own measurement under any
@@ -2002,7 +2004,7 @@ from a ceiling: a bridge within `bridge` prints without support, so tell the use
 rather than redesign it. Faces within 45° of
 vertical do not cost supports: a chamfer under a ledge instead of a square step, a
 teardrop bore (a round hole with a 45° peak on top) instead of a round one. Faces on
-the bed or within 1 mm of it are never counted, so a bottom-edge chamfer or fillet is
+the bed or within 1 mm of it are never counted, so a bottom-edge chamfer, or a small fillet, is
 free.
 
 **Ball joints on FDM** are a split socket (two halves that clamp the ball and screw or
@@ -4293,7 +4295,7 @@ carries:
   naming the steepest unsupported face's angle,
 - `location` — `[x, y, z]` in mm where the metric has one: `minWall` (thinnest
   sample point), `overhangArea` (the largest unsupported face's centroid),
-  `footprintPct` (the piece's lowest point) and
+  `footprintPct` (the piece's lowest point; absent when its export-pose reading failed) and
   `overlaps` (the center of the first offending intersection's
   *bounding box* — a nearby indicator, not an exact point: when a pair overlaps in
   more than one place the bbox center can fall in the empty space between regions)
@@ -4322,7 +4324,8 @@ largest hovering face sits, `null` when nothing hovers) and `bedHoverAt` (its
 centroid); the report's `measuredBedContact` says whether the pass ran. The same
 pass reads `footprintPct` (the flat area on the bed over the piece's xy bounding-box
 area, in percent; `null` when not measured or the box has no area) and `footprintAt`
-(the piece's lowest point), stamped by `measuredFootprint`; a profile carrying
+(the piece's lowest point; `null` when its export-pose reading failed), stamped by
+`measuredFootprint`; a profile carrying
 `footprint`, or a `footprintPct` expectation, arms the pass too.
 A sub-part that declares `wall` (see the `verify` section below) also carries
 `wall` — `{ value, location, band, members }` or `null`: the declared band's
