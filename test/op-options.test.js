@@ -92,7 +92,7 @@ test("KERNEL_OP_SPECS carries the semantic checks (both calling forms)", () => {
     // loftSmooth: the spline-interpolated loft compound op (see KERNEL-CONTRACT.md).
     // heightfield: depth-map relief solid (see KERNEL-CONTRACT.md).
     // tappedBore: a tapped hole as one cut tool (see KERNEL-CONTRACT.md).
-    ["boredCylinder", "box", "cylinder", "extrude", "heightfield", "helixSweptTube", "loft", "loftSmooth", "prism", "revolve", "roundedBox", "roundedCylinder", "screwSweep", "sphere", "sweep", "tappedBore", "torus"]);
+    ["boredCylinder", "box", "cylinder", "extrude", "heightfield", "helixSweptTube", "implicit", "loft", "loftSmooth", "prism", "revolve", "roundedBox", "roundedCylinder", "screwSweep", "sphere", "sweep", "tappedBore", "torus"]);
   expect(() => KERNEL_OP_SPECS.prism.check(TRI, 5, { scaleTop: -1 })).toThrow("prism: scaleTop must be ≥ 0");
   expect(() => KERNEL_OP_SPECS.extrude.check(TRI, 5, { scaleTop: -1 })).toThrow("extrude: scaleTop must be ≥ 0");
   expect(() => KERNEL_OP_SPECS.revolve.check([[-1, 0]])).toThrow("revolve: profile radius must be ≥ 0");

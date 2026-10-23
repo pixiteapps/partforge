@@ -6,7 +6,8 @@ import { roundedBoxRings, roundedBoxArcSamples } from "./rounded-solids.js";
 import { tessellateContour, tessellateProfile } from "./profile.js";
 import { h } from "./solid-hash.js";
 import { ensureOutward, openEdgeCount } from "./mesh-repair.js";
-import { manifoldFromMesh, ringStackManifold } from "./mesh-build.js";
+import { manifoldFromMesh, manifoldFromWeldedMesh, ringStackManifold } from "./mesh-build.js";
+import { compileImplicit, meshImplicit, implicitHashable, IMPLICIT_DEFAULTS } from "./implicit/index.js";
 import { createSolidCache } from "./solid-cache.js";
 import { hoistCommonSuffix } from "./transform-hoist.js";
 import { addSugar } from "./solid-sugar.js";
@@ -16,7 +17,7 @@ import { finishKernel } from "./kernel-front.js";
 import { makeProfileWarner } from "./profile-warnings.js";
 import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
-import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
+import { loftShadingPolicy, SMOOTH, BLEND, ORGANIC } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
 import { affineAt, IDENTITY, invertAffine, mapSurface } from "./blend-surfaces.js";
 import { flatFacePlanes, meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
@@ -61,7 +62,10 @@ function axisAngleMat4(axis, deg) {
   return [R00, R10, R20, 0,  R01, R11, R21, 0,  R02, R12, R22, 0,  0, 0, 0, 1];
 }
 
-export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
+// `exactContact` is INTERNAL (tests): true by default, every root contact of a k.implicit compiles
+// with exact seams (implicit/index.js), each contact piece its own ID. Tests pass `false` to get
+// the approximate contact (one ID, a minimum gap, a soft pad) a nested contact keeps.
+export function createManifoldKernel(wasm, { quality = "preview", exactContact = true } = {}) {
   const { Manifold, CrossSection } = wasm;
   const segs = SEGS[quality], tube = TUBE[quality];
   // Per-radius count for every site that facets a circle it knows the radius of; the
@@ -151,6 +155,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // every degrade in the build lands in one drainable list rather than only in
   // the console.
   const recordWarning = (msg) => { buildWarnings.push(msg); console.warn(`partforge: ${msg}`); };
+  // k.implicit's engine warnings, keyed by the cached solid they belong to (re-recorded on a hit).
+  const implicitWarnings = new WeakMap();
   // Profile-validity warnings (profile-warnings.js): one warner per kernel so a
   // self-crossing profile built six times records ONE line; reset per drain.
   const profileWarner = makeProfileWarner(recordWarning);
@@ -920,6 +926,44 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         return { value: wrap(m, key), pin: m, dispose: () => { oidPolicies.delete(id); m.delete?.(); } };
       });
     },
+    // Signed-distance tree → solid (implicit/index.js). The engine meshes at the
+    // tier's grid (`preview` for preview, `resolution` for print) — the preview
+    // tier also decimates in cleanup (PREVIEW_CLEANUP), print does not — and hands
+    // Manifold one welded mesh; the result shades ORGANIC (one smooth skin: no
+    // same-surface feature lines, normals smoothed through detail grooves).
+    // Cached on the spec plus every bound image's digest, per quality tier; the key
+    // holds only this tier's grid (defaulted), so editing the other tier's grid is
+    // a hit. The engine's warnings (thin feature, clipped) live beside the cached
+    // value and are recorded again on every hit, so each build that uses the solid
+    // reports them.
+    implicit: (spec) => {
+      const compiled = compileImplicit(spec, { images, exactContact });
+      const { preview, resolution, ...rest } = spec;
+      const edge = quality === "print" ? (resolution ?? IMPLICIT_DEFAULTS.resolution) : (preview ?? IMPLICIT_DEFAULTS.preview);
+      const keySpec = quality === "print" ? { ...rest, resolution: edge } : { ...rest, preview: edge };
+      const key = exactContact ? h("implicit", implicitHashable(keySpec, compiled), quality, "exact") : h("implicit", implicitHashable(keySpec, compiled), quality);
+      const solid = cache.lookup(key, () => {
+        const out = meshImplicit(compiled, edge, { tier: quality });
+        if (out.indices.length === 0) {
+          for (const w of out.warnings) recordWarning(w);
+          throw new Error(`implicit: the shape is empty at a ${edge} mm grid — nothing is inside it (check subtract order and sizes), or it is thinner than the grid`);
+        }
+        // An exact contact (a triOwner) is one original ID per piece, all one shading group
+        // (shading-policy.js SIBLING_SEAM_ANGLE): the crease shades hard, the attachment-zone
+        // seams between siblings stay smooth. Anything else is one ORGANIC skin.
+        const pieces = out.triOwner ? compiled.ownerK : 1;
+        const first = wasm.Manifold.reserveIDs(pieces), ids = Array.from({ length: pieces }, (_, i) => first + i);
+        const m = T(out.triOwner ? manifoldFromWeldedMesh(wasm, out.positions, out.indices, undefined, out.triOwner, ids)
+          : manifoldFromWeldedMesh(wasm, out.positions, out.indices, first));
+        const policy = out.triOwner ? Object.freeze({ ...ORGANIC, group: first }) : ORGANIC;
+        for (const id of ids) oidPolicies.set(id, policy);
+        const value = wrap(m, key);
+        implicitWarnings.set(value, out.warnings);
+        return { value, pin: m, dispose: () => { for (const id of ids) oidPolicies.delete(id); m.delete?.(); } };
+      });
+      for (const w of implicitWarnings.get(solid) ?? []) recordWarning(w);
+      return solid;
+    },
     // Sweep a fixed 2-D profile along a 3-D polyline: hand-meshed from the shared station
     // list (sweep.js), so it agrees with OCCT's ruled loft of the same stations by
     // construction. Cached atomically; the hash folds profile pts, path pts, and opts
@@ -1026,6 +1070,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       images.set(name, { digest, width, height, data });
     },
     _imageDigest: (name) => images.get(name)?.digest,
+    _shadingPolicy: (oid) => oidPolicies.get(oid),   // tests: the policy an original ID shades with
     // Drop every registered name NOT in `keep` (a Set) — the images-map twin of
     // fonts' kernel._fonts prune in jobs.js. `images` is keyed on the part's
     // declared name (e.g. "relief"), not on content, so without this a name

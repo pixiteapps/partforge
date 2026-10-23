@@ -6,10 +6,11 @@
 // Math.cos, so no second libm decides a cosine), the feature label strings, and
 // flattening each fillet descriptor (blend-surfaces.js) into numbers once.
 // Everything per vertex or per triangle runs in C++.
-import { SMOOTH, COPLANAR_ANGLE, cosDeg } from "../geometry/shading-policy.js";
+import { SMOOTH, COPLANAR_ANGLE, SIBLING_SEAM_ANGLE, cosDeg } from "../geometry/shading-policy.js";
 import { releaseIfIdle } from "./core.js";
 
 const COPLANAR_COS = cosDeg(COPLANAR_ANGLE);
+const SIBLING_COS = cosDeg(SIBLING_SEAM_ANGLE);
 const ANALYTIC_COS = cosDeg(25); // creased-normals.js's ANALYTIC_COS
 const EMPTY = new Uint32Array(0);
 const KIND = { line: 1, point: 2, circle: 3, path: 4, spine: 5, planes: 6 };
@@ -70,11 +71,12 @@ export function creasedNormalsCore(c, g, { policies = null, featureLabels = null
   // Policy table: every surface id in this mesh, then the SMOOTH default row.
   const oidList = [...new Set(roid)];
   const n = oidList.length + 1;
-  const oids = new Uint32Array(n), creaseCos = new Float64Array(n), flags = new Uint8Array(n), labelIds = new Int32Array(n);
+  const oids = new Uint32Array(n), creaseCos = new Float64Array(n), flags = new Uint8Array(n), labelIds = new Int32Array(n), groups = new Int32Array(n);
   const labelOf = new Map(), labels = [];
   const row = (i, pol, label) => {
     creaseCos[i] = cosDeg(pol.creaseAngle);
-    flags[i] = (pol.boundaryLines ? 1 : 0) | (pol.sameSurfaceLines ? 2 : 0);
+    groups[i] = pol.group != null ? pol.group : -1;   // sibling group (shading-policy.js); -1 none
+    flags[i] = (pol.boundaryLines ? 1 : 0) | (pol.sameSurfaceLines ? 2 : 0) | (pol.organic ? 4 : 0);
     if (label === undefined) { labelIds[i] = -1; return; }
     let id = labelOf.get(label);
     if (id === undefined) { id = labels.length; labels.push(label); labelOf.set(label, id); }
@@ -119,10 +121,10 @@ export function creasedNormalsCore(c, g, { policies = null, featureLabels = null
     return null;
   }
   const args = [c.copyIn(oids), c.copyIn(creaseCos), c.copyIn(flags), c.copyIn(labelIds),
-    c.copyIn(runDesc), c.copyIn(runXf), c.copyIn(descData), c.copyIn(descOffsets)];
+    c.copyIn(runDesc), c.copyIn(runXf), c.copyIn(descData), c.copyIn(descOffsets), c.copyIn(groups)];
   try {
     x.cn_finish(state, args[0], args[1], args[2], args[3], n, COPLANAR_COS, ANALYTIC_COS,
-      args[4], args[5], args[6], args[7], descOffsets ? descOffsets.length - 1 : 0);
+      args[4], args[5], args[6], args[7], descOffsets ? descOffsets.length - 1 : 0, args[8], SIBLING_COS);
     const nf = x.cn_feature_count(state);
     const out = {
       positions: c.copyOut(Float32Array, x.cn_positions(state), nTri * 9),

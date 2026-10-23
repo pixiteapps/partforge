@@ -29,6 +29,9 @@ export const KERNEL_OPS = [
   "heightfield",
   // Additive (same precedent): a compound default, so neither backend implements it.
   "tappedBore",
+  // Signed-distance tree → solid (implicit/). Mesh-native: Manifold builds it;
+  // OCCT throws until tessellated STEP lands (feat/implicit PR 4).
+  "implicit",
 ];
 
 // Backend-optional kernel ops: the sub-part cache brackets + WASM lifetime hooks.

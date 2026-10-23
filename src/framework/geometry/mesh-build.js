@@ -73,6 +73,41 @@ export function ringStackManifold(wasm, rings, { closed = false } = {}) {
   return manifoldFromMesh(wasm, V, Tr);
 }
 
+// Same import for a mesh whose vertices are ALREADY shared by index (welded) —
+// skips `merge()`, which re-derives vertex identity from positions and costs
+// about a third of the import on a 200k-triangle mesh. Only for meshes a
+// partforge mesher produced with index sharing (implicit/mesher.js); an
+// arbitrary soup still goes through manifoldFromMesh.
+// `originalID` (optional, from Manifold.reserveIDs) stamps the whole mesh as ONE
+// run carrying that id, so the import is already an "original" and needs no
+// separate asOriginal() pass.
+// `triOwner` (optional, one owner per triangle) with `ids` (owner -> reserved original ID)
+// instead partitions the mesh into one run per owner present, the triangles stably sorted
+// into owner order — a contact's pieces, each its own surface (implicit/index.js).
+export function manifoldFromWeldedMesh(wasm, V, Tr, originalID, triOwner = null, ids = null) {
+  const opts = { numProp: 3, vertProperties: Float32Array.from(V), triVerts: Uint32Array.from(Tr) };
+  if (triOwner) {
+    const nTri = Tr.length / 3, order = Uint32Array.from({ length: nTri }, (_, t) => t);
+    order.sort((a, b) => triOwner[a] - triOwner[b] || a - b);   // stable: ties keep triangle order
+    const sorted = new Uint32Array(Tr.length), runIndex = [0], runIds = [];
+    order.forEach((t, i) => {
+      sorted.set(opts.triVerts.subarray(3 * t, 3 * t + 3), 3 * i);
+      if (i === 0 || triOwner[t] !== triOwner[order[i - 1]]) { if (i) runIndex.push(3 * i); runIds.push(ids[triOwner[t]]); }
+    });
+    runIndex.push(Tr.length);
+    opts.triVerts = sorted;
+    opts.runIndex = Uint32Array.from(runIndex);
+    opts.runOriginalID = Uint32Array.from(runIds);
+  } else if (originalID !== undefined) {
+    opts.runIndex = Uint32Array.of(0, Tr.length);
+    opts.runOriginalID = Uint32Array.of(originalID);
+  }
+  const mesh = new wasm.Mesh(opts);
+  const out = wasm.Manifold.ofMesh(mesh);
+  mesh.delete?.();
+  return out;
+}
+
 // Import a flat vertex array + triangle indices as a watertight Manifold. merge() welds
 // coincident vertices so ofMesh sees a closed manifold; ofMesh consumes the mesh handle,
 // so free it here and let the caller track the returned Manifold.

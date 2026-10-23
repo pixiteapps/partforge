@@ -12,6 +12,10 @@ import { buildCoreBVH } from "../src/framework/core/bvh-core.js";
 import { buildBVH, triangleVertices } from "../src/framework/oracle/bvh.js";
 import { minWall } from "../src/framework/oracle/min-wall.js";
 import { core, setCoreForTesting } from "../src/framework/core/core.js";
+import { NativeSession } from "../src/framework/core/implicit-core.js";
+import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
+import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
+import { cleanupMesh, CLEANUP, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
 
 afterEach(() => setCoreForTesting(undefined));
 
@@ -207,3 +211,109 @@ test("BVH build: every reference part's tree is the JS's, node for node", async 
   }
   kernel.cleanup?.();
 }, 120_000);
+
+// A UV sphere of radius 3 whose vertices are jittered ALONG the surface (an LCG, so
+// fixed): two poles of valence `seg`, far past what the mesher makes, and thin,
+// skewed triangles all round, so the collapse's flip test has triangles to refuse.
+function jitteredSphere(seg, rings, noise, seed) {
+  let x = seed;
+  const rnd = () => ((x = (x * 1103515245 + 12345) % 2147483648) / 2147483648) - 0.5;
+  const verts = [[0, 0, 3], [0, 0, -3]], tris = [];
+  for (let r = 1; r < rings; r++) for (let i = 0; i < seg; i++) {
+    const th = (Math.PI * (r + 0.9 * noise * rnd())) / rings, ph = (2 * Math.PI * (i + 1.8 * noise * rnd())) / seg;
+    verts.push([3 * Math.sin(th) * Math.cos(ph), 3 * Math.sin(th) * Math.sin(ph), 3 * Math.cos(th)]);
+  }
+  const id = (r, i) => 2 + (r - 1) * seg + (i % seg);
+  for (let i = 0; i < seg; i++) tris.push([0, id(1, i), id(1, i + 1)], [1, id(rings - 1, i + 1), id(rings - 1, i)]);
+  for (let r = 1; r < rings - 1; r++) for (let i = 0; i < seg; i++) {
+    tris.push([id(r, i), id(r + 1, i), id(r + 1, i + 1)], [id(r, i), id(r + 1, i + 1), id(r, i + 1)]);
+  }
+  return { positions: Float64Array.from(verts.flat()), indices: Uint32Array.from(tris.flat()), vertLeaf: new Int32Array(verts.length) };
+}
+
+test("implicit cleanup: the collapse's CSR incident lists see every triangle the JS's vt lists do", () => {
+  // The ring test counts common neighbours through the incident lists, and the flip
+  // test walks every surviving triangle around both ends of an edge: a list that
+  // loses, repeats or misplaces a triangle lets through (or refuses) a collapse the
+  // JS does not, and the bytes differ. Checked by breaking the lists: dropping each
+  // list's last triangle breaks the first four meshes; dropping its first (usually
+  // the triangle being walked, which the flip test skips anyway) breaks the fifth.
+  const plan = planLeaves(lowerSpec({ root: { kind: "sphere", r: 3 } }, { images: new Map() }), 1);
+  const store = evaluateLeaves(plan);
+  const s = new NativeSession(core());
+  try {
+    for (const t of plan.textures) s.addTexture(t);
+    for (const p of plan.programs) s.addProgram(p);
+    s.sample(plan, { readBack: false });
+    for (const [noise, collapseFrac, seed] of [[0.6, 0.5, 1], [0.6, 0.5, 3], [0.6, 0.6, 2], [0.7, 0.6, 1], [0.8, 0.5, 4]]) {
+      const mesh = jitteredSphere(40, 8, noise, seed);
+      for (const relaxPasses of [0, 2]) {
+        const opts = { ...CLEANUP, collapseFrac, relaxPasses };
+        const js = cleanupMesh(store, mesh, opts);
+        expect(js.indices.length).toBeLessThan(mesh.indices.length);   // collapses happened
+        s.loadMesh(mesh);
+        const nat = s.cleanup(opts);
+        for (const k of ["positions", "indices", "vertLeaf", "normals"]) expect(bytes(nat[k]), `${k} (seed ${seed}, ${collapseFrac})`).toBe(bytes(js[k]));
+      }
+    }
+  } finally {
+    s.destroy();
+  }
+});
+test("implicit cleanup: decimation's repeated passes and angle guard decide what the JS's do", () => {
+  // The preview tier's passes rebuild the incident lists from each compacted mesh, and
+  // the corner guard reads every corner around an edge twice (after the move, then —
+  // only when that is too sharp — as it stands); the core also runs the spread guard
+  // first and skips edges a previous pass refused whose neighbourhood nothing touched
+  // since (in that pass or this one). A jittered sphere makes collapses each guard
+  // refuses, ones the corner guard lets through because a sliver was already there,
+  // and passes that stop early; each setting must match byte for byte. (Checked by
+  // breaking the core: the corner guard always refusing, or reading pre-move
+  // positions, and the skip ignoring this pass's collapses, each fail here.)
+  const plan = planLeaves(lowerSpec({ root: { kind: "sphere", r: 3 } }, { images: new Map() }), 1);
+  const store = evaluateLeaves(plan);
+  const s = new NativeSession(core());
+  try {
+    for (const t of plan.textures) s.addTexture(t);
+    for (const p of plan.programs) s.addProgram(p);
+    s.sample(plan, { readBack: false });
+    let decimated = 0, runs = 0;
+    for (const [noise, seed] of [[0.6, 1], [0.7, 2], [0.8, 4]]) {
+      const mesh = jitteredSphere(40, 8, noise, seed);
+      const plain = cleanupMesh(store, mesh, CLEANUP);
+      // The last two rows run the first pass's probe (a threshold either side of what the
+      // spheres allow) and the early stop.
+      for (const [decimateMinAngle, decimatePasses, decimateFrac, decimateMaxTurn, decimateMaxSpread, decimateMinAccept = 0, decimateMinGain = 0] of [
+        [15, 4, 1.5, 0, 0], [30, 4, 1.5, 0, 0], [0, 2, 2, 0, 0], [15, 1, 3, 0, 0], [15, 4, 1.5, 20, 0], [0, 4, 2, 0, 25], [15, 4, 1.5, 20, 12],
+        [0, 6, 2, 0, 0, 0.05, 0.15], [0, 6, 2, 0, 0, 0.9, 0.05]]) {
+        const opts = { ...PREVIEW_CLEANUP, decimateMinAngle, decimatePasses, decimateFrac, decimateMaxTurn, decimateMaxSpread, decimateMinAccept, decimateMinGain };
+        const js = cleanupMesh(store, mesh, opts);
+        runs++;
+        if (js.indices.length < plain.indices.length) decimated++;
+        s.loadMesh(mesh);
+        const nat = s.cleanup(opts);
+        for (const k of ["positions", "indices", "vertLeaf", "normals"]) expect(bytes(nat[k]), `${k} (seed ${seed}, ${decimateMinAngle}°, ${decimatePasses} passes, turn ${decimateMaxTurn}°, spread ${decimateMaxSpread}°, probe ${decimateMinAccept}, stop ${decimateMinGain})`).toBe(bytes(js[k]));
+      }
+    }
+    // The probe's verdict at its own edge: bisect (in JS) the threshold where the first
+    // pass stops being skipped, then hold the core to the JS just below and just above
+    // it — a probe that tries other edges, or counts them differently, lands elsewhere.
+    const mesh = jitteredSphere(40, 8, 0.6, 1), base = { ...PREVIEW_CLEANUP, decimateFrac: 2, decimateMaxTurn: 0, decimateMaxSpread: 0, decimateMinGain: 0 };
+    const skipped = (x) => cleanupMesh(store, mesh, { ...base, decimateMinAccept: x }).indices.length === cleanupMesh(store, mesh, CLEANUP).indices.length;
+    let lo = 0, hi = 1;
+    expect(skipped(lo)).toBe(false);
+    expect(skipped(hi)).toBe(true);
+    for (let i = 0; i < 30; i++) { const mid = (lo + hi) / 2; if (skipped(mid)) hi = mid; else lo = mid; }
+    for (const x of [lo, hi]) {
+      const opts = { ...base, decimateMinAccept: x };
+      const js = cleanupMesh(store, mesh, opts);
+      s.loadMesh(mesh);
+      const nat = s.cleanup(opts);
+      for (const k of ["positions", "indices"]) expect(bytes(nat[k]), `${k} at probe threshold ${x}`).toBe(bytes(js[k]));
+    }
+    expect(decimated, "settings that decimated").toBeGreaterThanOrEqual(runs - 6);   // a tight spread guard, or the 0.9 probe, may refuse all
+  } finally {
+    s.destroy();
+  }
+});
+

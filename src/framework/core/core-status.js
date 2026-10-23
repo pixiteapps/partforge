@@ -33,7 +33,8 @@ export function countRefusedMesh() { refused++; }
 //   state: "idle" (not needed yet) | "on" | "off" (switched off) |
 //          "unavailable" (could not start) | "faulted" (stopped after a fault)
 //   reason: one of CORE_FALLBACK_REASONS for unavailable/faulted, else null
-//   refusedMeshes: how many meshes went to the JS because the core declined them
+//   refusedMeshes: how many meshes (and implicit-session plans/meshes) went to the JS
+//     because the core declined them
 export function coreStatus() {
   return { state: fallback?.state ?? probe(), reason: fallback?.reason ?? null, refusedMeshes: refused };
 }
