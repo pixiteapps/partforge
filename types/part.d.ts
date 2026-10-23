@@ -484,9 +484,9 @@ export interface DfmProfile {
   minWall?: number;
   /**
    * Steepest unsupported face the process prints cleanly, in degrees from
-   * vertical (45 on the FDM profiles; absent on resin). Checked only for a part
-   * that also declares `verify.orientation: "print"`; `null` switches it off
-   * under a named base. A warning, never a gate.
+   * vertical (45 on the FDM profiles; absent on resin). The print process alone
+   * arms the check; `null` switches it off under a named base. Reported as a
+   * cost (needing supports), never a failure.
    */
   overhang?: number | null;
   /**
@@ -564,8 +564,8 @@ export interface SubPartExpectations {
   wall?: Expectation;
   /**
    * Unsupported downward-facing surface in mm² (faces steeper than the profile's
-   * `overhang` angle, bed at the sub-part's own lowest Z). Measured only under
-   * `verify.orientation: "print"`; a warning, never a gate.
+   * `overhang` angle, bed at the sub-part's own lowest Z). Armed by the print
+   * process alone; reported as a cost (`verify.costs`), never a failure.
    */
   overhangArea?: Expectation;
   /**
@@ -642,12 +642,15 @@ export interface VerifyBlock<P = ResolvedParams, D = Derived> {
   /** A named DFM profile or an inline one. */
   process?: DfmProfileName | DfmProfile;
   /**
-   * `"print"` declares the part is laid out for its bed — Z up, each sub-part's
-   * bed at its own lowest Z — which is the only way the profile's `overhang`
-   * check is armed. Omit it while a part is still being shaped or is bound for
-   * another process.
+   * `"print"` declares that `build()` is the print pose — Z up, each sub-part's
+   * bed at its own lowest Z. It does not arm any check; the print process does.
    */
   orientation?: "print";
+  /**
+   * Costs the user accepted, by id. An accepted cost is still measured and
+   * reported (`accepted: true`), but no longer raised as something to fix.
+   */
+  accept?: ("supports" | "footprint")[];
   /** Which cases to check; default is `"defaults"` plus every preset name. */
   cases?: string[];
   /**

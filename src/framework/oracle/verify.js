@@ -121,12 +121,13 @@ function pairGapChecks(facts, { contacts, clearance }, subPartNames) {
   return checks;
 }
 
-function check(scope, subpart, metric, spec, registry, factsObj) {
+function check(scope, subpart, metric, spec, registry, factsObj, accept = []) {
   const reg = registry[metric];
   if (!reg) throw new Error(`unknown ${scope} metric "${metric}"${subpart ? ` on sub-part "${subpart}"` : ""}`);
   const { expr, hint: partHint } = normalizeExpectation(spec);
   const actual = reg.extract(factsObj);
-  const base = { scope, subpart, metric, kind: reg.kind, expr: String(expr) };
+  const base = { scope, subpart, metric, kind: reg.kind, expr: String(expr),
+    ...(reg.kind === "cost" ? { accepted: accept.includes(reg.costId) } : {}) };
   if (actual === null || actual === undefined) {
     if (reg.manifoldOnly) return { ...base, actual, status: "skip", pass: null, message: "n/a (OCCT backend)" };
     if (metric === "minWall") {
@@ -156,8 +157,9 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
     return { ...base, actual, status: "skip", pass: null, message: "unavailable" };
   }
   const { pass, message } = evaluateAssertion(parseAssertion(expr), actual);
-  const status = pass ? "pass" : reg.kind === "warn" ? "warn" : "fail";
+  const status = pass ? "pass" : reg.kind === "warn" ? "warn" : reg.kind === "cost" ? "cost" : "fail";
   const out = { ...base, actual, status, pass, message };
+  if (reg.kind === "cost") out.accepted = accept.includes(reg.costId);
   // A measurement caveat rides along whatever the verdict — a min-wall reading
   // taken from a sample still passed, but the reader should know it was a sample.
   const note = reg.note?.(factsObj);
@@ -178,9 +180,9 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
 // (`bounds: { min, max }` → `bounds.min`, `bounds.max`), each judged by `check()` against
 // its side's own registry entry. A malformed compound value throws, as a malformed
 // expression does.
-function checksFor(scope, subpart, metric, spec, registry, factsObj) {
+function checksFor(scope, subpart, metric, spec, registry, factsObj, accept = []) {
   const reg = registry[metric];
-  if (!reg?.sides) return [check(scope, subpart, metric, spec, registry, factsObj)];
+  if (!reg?.sides) return [check(scope, subpart, metric, spec, registry, factsObj, accept)];
   const bad = sidesSpecError(metric, reg, spec);
   if (bad) throw new Error(`${scope === "view" ? "_view" : subpart}: ${bad}`);
   return Object.entries(spec).map(([side, sideSpec]) => {
@@ -273,7 +275,7 @@ function sheetRowChecks(s, declaredExp) {
 // 1 mm² warning floor — a chamfer sitting exactly on the angle sheds slivers.
 // `bedContact` is the floor the part is checked against (dfm-profiles.js bedContactFor),
 // or null/undefined: only then does every PRINTED sub-part get `bedContactPct >= floor`.
-export function evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang = null, bedContact = null }) {
+export function evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang = null, bedContact = null, accept = [] }) {
   const checks = [];
   // contacts/clearance/held are pair-derived, not scalar view metrics — peel
   // them off before the registry loop. held.js explains the exportable bound.
@@ -321,7 +323,7 @@ export function evaluateCase(facts, { profile, expect, subPartNames, exportableN
       ...(bedContact != null && (!printedNames || printedNames.has(s.name)) ? { bedContactPct: `>=${bedContact}` } : {}),
       ...(expect?.[s.name] ?? {}),
     };
-    for (const [metric, expr] of Object.entries(merged)) for (const c of checksFor("subpart", s.name, metric, expr, SUBPART_METRICS, s)) {
+    for (const [metric, expr] of Object.entries(merged)) for (const c of checksFor("subpart", s.name, metric, expr, SUBPART_METRICS, s, accept)) {
       if (minWallSkipped && (metric === "minWall" || metric === "wall") && c.actual == null) {
         checks.push({ ...c, unevaluated: true, message: "not measured (quick check)",
           hint: `re-run this check without \`quick\` to measure ${metric === "wall" ? "the wall band" : "min wall"}` });
@@ -372,6 +374,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // Throws on a bad `verify.orientation`, the same loudness as a bad profile name.
   const overhangAngle = overhangAngleFor(part, process, { expanded });
   const bedContactFloor = bedContactFor(part, process, { expanded });
+  const accept = Array.isArray(part?.verify?.accept) ? part.verify.accept : [];
   // Reuse rule (spec §4): case B may reuse a measurement taken at params A when
   // B agrees with A on every param that measurement READ (recorded by measure()
   // itself). Sound for the same reason the mesh cache is: a deterministic build
@@ -477,7 +480,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   }];
   const caseResults = expanded.map(({ name, params, expect }) => {
     const facts = measureCase(params);
-    return { name, params, checks: facts ? evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang: overhangAngle, bedContact: bedContactFloor }) : notMeasured(name) };
+    return { name, params, checks: facts ? evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang: overhangAngle, bedContact: bedContactFloor, accept }) : notMeasured(name) };
   });
   // VACUOUS VERIFY. A part that declares nothing — no profile, an empty or absent
   // `expect` — used to come back `ok: true` with zero checks, and every reader
@@ -517,6 +520,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   const failures = all.filter((c) => c.status === "fail");
   const unevaluated = all.filter((c) => c.unevaluated);
   const warnings = all.filter((c) => c.status === "warn");
+  const costs = all.filter((c) => c.status === "cost");
   if (evaluated === 0 && unevaluated.length === 0) {
     warnings.push({ case: null, scope: "part", subpart: null, metric: "expectations", kind: "warn", expr: "evaluated",
       actual: 0, status: "warn", pass: null,
@@ -534,6 +538,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     cases: caseResults,
     failures,
     warnings,
+    costs,
     unevaluated,
     declared,
     evaluated,
