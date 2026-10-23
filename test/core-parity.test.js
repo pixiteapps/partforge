@@ -180,7 +180,7 @@ describe("owner path: every seam fixture", () => {
   for (const { name, spec } of [...SEAM_CASES, ...GATE_EXTRA_CASES, ...MOVED_CASES]) {
     for (const [edge, tier] of [[1.5, "preview"], [0.6, "print"]]) {
       test(`core on == core off: ${name} at ${edge} mm`, () => {
-        const compiled = compileImplicit(spec, { exactContact: true });
+        const compiled = compileImplicit(spec);
         setCoreEnabled(false);
         const off = meshImplicit(compiled, edge, { tier });
         expect(off.indices.length).toBeGreaterThan(0);

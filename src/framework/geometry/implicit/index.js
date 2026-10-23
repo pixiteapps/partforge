@@ -13,9 +13,9 @@ import { meshImplicitCore } from "../../core/implicit-core.js";
 
 export const IMPLICIT_DEFAULTS = Object.freeze({ resolution: 0.6, preview: 1.5 });
 
-export function compileImplicit(spec, { images = new Map(), exactContact = true } = {}) {
+export function compileImplicit(spec, { images = new Map() } = {}) {
   validateSpec(spec, { imageNames: new Set(images.keys()) });
-  return lowerSpec(spec, { images, exactContact });   // contact regions are found while lowering (regions.js)
+  return lowerSpec(spec, { images });   // contact regions are found while lowering (regions.js)
 }
 
 // planLeaves, then the rest on the native core when it is on (core/implicit-core.js —
@@ -23,7 +23,7 @@ export function compileImplicit(spec, { images = new Map(), exactContact = true 
 // faults, the JS stages below. `tier: "preview"` decimates in cleanup
 // (PREVIEW_CLEANUP); any other tier (print, export) cleans up exactly as CLEANUP.
 //
-// A root exact contact (`compiled.ownerRoot ≥ 0`) meshes through the owner mesher
+// A contact root (`compiled.ownerRoot ≥ 0`) meshes through the owner mesher
 // (mesher-owners.js) and owner-aware cleanup, and its result gains `vertOwner`,
 // `ownerHeld`, `pinned`, `crease` and `triOwner` (the crease cut, crease.js, after cleanup and before detail),
 // on the core as in JS. `owners: false` meshes the same field with the plain mesher instead: the seam baseline.

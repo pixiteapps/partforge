@@ -140,7 +140,7 @@ describe("native owner cleanup, crease cut and untangle", () => {
   for (const { name, spec } of OWNER_CASES) {
     for (const [edge, tier, opts] of [[1.5, "PREVIEW_CLEANUP", PREVIEW_CLEANUP], [1.5, "CLEANUP", CLEANUP], [0.6, "CLEANUP", CLEANUP]]) {
       test(`${name} at ${edge} mm, ${tier}: each stage's bytes`, () => {
-        const compiled = compileImplicit(spec, { exactContact: true });
+        const compiled = compileImplicit(spec);
         const node = compiled.ir.nodes[compiled.ownerRoot];
         const plan = planLeaves(compiled, edge);
         const store = evaluateLeaves(plan);

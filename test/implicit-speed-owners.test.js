@@ -10,7 +10,7 @@ import { planLeaves } from "../src/framework/geometry/implicit/sparse.js";
 import { CLEANUP, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
 import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 
-// The owner path (a root exact contact: owner mesher, owner cleanup, crease cut, untangle and
+// The owner path (a contact root: owner mesher, owner cleanup, crease cut, untangle and
 // the detail's seam fade, all native) against the seam spec's speed gate, as a RATIO to the plain
 // native mesher measured in the same test: at most 1.2× the plain baseline at preview 1.5 mm and
 // 1.5× (now 1.6×, below) at print 0.5 mm (2026-10-17, isolated, base 4b886eaa: hand default 241 / 1652 ms, fist
@@ -18,7 +18,8 @@ import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 // speed): the owner path measured 316 / 378 ms at 1.5 mm and 2250 / 2515 ms at 0.5 mm. Ratios
 // because load slows both paths alike while an absolute number belongs to a quiet machine
 // (the absolute 2478 ms print gate failed 3–5% over inside the full suite, passing alone). The
-// plain path is the same hand on the same grid compiled with `exactContact: false`; runs are
+// plain path is the same compiled hand on the same grid with no owner root in its plan (no piece
+// capture while sampling) meshed with `owners: false` (the plain mesher and cleanup); runs are
 // interleaved so both see the same load, and each ratio is of medians over 5 runs per grid (the
 // print grid took 3 once; 5 keeps one loaded run from deciding it). An absolute ceiling of 3× the
 // spec targets backstops.
@@ -40,6 +41,9 @@ import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 // ratios: measured 1.19x / 1.25x preview and 1.29x / 1.33x print (default / fist, three quiet gate
 // runs). Under the full suite's load the preview ratios read higher (~1.22x / 1.36x), so the
 // preview limits are the LOADED ratio plus ~10%: 1.34x / 1.50x. The print limits stand.
+// 2026-10-23: contact groups are root-only, so the plain baseline is the SAME compiled field (the
+// owner path's, sampled without the piece capture and meshed with `owners: false`). Measured (three quiet runs, medians of 5): 1.19-1.21x / 1.29-1.32x
+// preview and 1.26-1.30x / 1.30x print (default / fist); every limit stands.
 const SPEC_PREVIEW_MS = 150;
 const SPEC_PRINT_MS = 2000;
 const OWNER_GATES = [
@@ -47,16 +51,20 @@ const OWNER_GATES = [
   ["hand fist", HAND_POSES.fist, 1.50, 1.46],
 ];
 
-// Median owner and plain times, runs interleaved (owner, plain, owner, plain, ...).
-function pairedMedianMs(owner, plain, edge, opts, runs) {
+// The plain path's plan: the same leaves and programs, no owner root (so no piece capture).
+const plainPlan = (compiled, edge) => ({ ...planLeaves(compiled, edge), ownerRoot: -1, ownerK: 0 });
+
+// Median owner and plain times, runs interleaved (owner, plain, owner, plain, ...): the same
+// compiled tree, the plain run with its plan's owner root cleared and `owners: false`.
+function pairedMedianMs(compiled, edge, opts, runs) {
   const o = [], p = [];
   for (let i = 0; i < runs; i++) {
     let t0 = cpuMs();
-    const out = meshImplicitCore(owner, edge, planLeaves(owner, edge), opts);
+    const out = meshImplicitCore(compiled, edge, planLeaves(compiled, edge), opts);
     o.push(cpuMs() - t0);
     expect(out?.vertOwner, `the native owner path answered at ${edge} mm`).toBeTruthy();
     t0 = cpuMs();
-    const base = meshImplicitCore(plain, edge, planLeaves(plain, edge), opts);
+    const base = meshImplicitCore(compiled, edge, plainPlan(compiled, edge), opts, { owners: false });
     p.push(cpuMs() - t0);
     expect(base, `the native plain path answered at ${edge} mm`).not.toBeNull();
     expect(base.vertOwner).toBeFalsy();
@@ -71,10 +79,11 @@ test("owner meshing stays within the speed gate (ratio to the plain native path)
   const line = (name, owner, plain, limit, ceiling) => `${name}: owners ${owner.toFixed(0)} / plain ${plain.toFixed(0)} paced ms = ${(owner / plain).toFixed(2)}x, limit ${limit}x, ceiling ${ceiling} ms (pace ${PACE.toFixed(2)}, ${core().simd ? "SIMD" : "scalar"} core)`;
   const results = [];
   for (const [name, pose, previewRatio, printRatio] of OWNER_GATES) {
-    const owner = compileImplicit(handSpec(pose)), plain = compileImplicit(handSpec(pose), { exactContact: false });
-    for (const c of [owner, plain]) meshImplicitCore(c, 1.4, planLeaves(c, 1.4), PREVIEW_CLEANUP);   // warm-up on another grid
+    const compiled = compileImplicit(handSpec(pose));
+    meshImplicitCore(compiled, 1.4, planLeaves(compiled, 1.4), PREVIEW_CLEANUP);   // warm-up on another grid
+    meshImplicitCore(compiled, 1.4, plainPlan(compiled, 1.4), PREVIEW_CLEANUP, { owners: false });
     for (const [edge, opts, runs, ratio, ceiling] of [[1.5, PREVIEW_CLEANUP, 5, previewRatio, 3 * SPEC_PREVIEW_MS], [0.5, CLEANUP, 5, printRatio, 3 * SPEC_PRINT_MS]]) {
-      const [o, p] = pairedMedianMs(owner, plain, edge, opts, runs);
+      const [o, p] = pairedMedianMs(compiled, edge, opts, runs);
       results.push([`${name} ${edge} mm`, o, p, ratio, ceiling]);
     }
   }

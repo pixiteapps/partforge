@@ -7,9 +7,6 @@ export function implicitResult(compiled, edge, plan, mesh, clipped) {
   if (compiled.thin < 2 * edge) {
     warnings.push(`implicit: thinnest feature (${compiled.thin.toFixed(2)} mm) is under 2 grid cells at ${edge} mm — it may break up or grow handles; mesh it as its own k.implicit with a finer grid, or thicken it`);
   }
-  if (compiled.minGap < 2 * edge) {   // the smallest non-zero contact gap (Infinity when none)
-    warnings.push(`implicit: contact gap (${compiled.minGap.toFixed(2)} mm) is under 2 grid cells at ${edge} mm — the grid cannot show it; raise the gap or mesh finer`);
-  }
   if (clipped) {
     warnings.push(compiled.hasExpr
       ? "implicit: the shape reached the edge of its sampling box and was clipped flat there — enlarge the `box` of the `expr` node(s) it reaches past, or reduce blend widths and displacement"

@@ -410,3 +410,13 @@ All of it is now decided. What shipped:
   fist, three quiet gate runs). Under the full suite's load the preview ratios read higher
   (~1.22x / 1.36x), so the preview gate is the loaded ratio plus ~10%: 1.34x / 1.50x; print
   keeps 1.43x / 1.46x.
+
+## As built (2026-10-23)
+
+The nested (approximate) contact path is gone, in JS and in the native core. A `contact`
+node anywhere but the top of its spec is now a compile error (`ImplicitSpecError`, thrown
+while lowering, ir.js), so every contact is the exact root contact this spec describes: there
+is no `exactContact` option, no grid-cell clearance floor, no gap-0 pad fill, no fallback
+region for a pair whose search overflows (it gets no region), and no small-gap warning. The
+CONTACT op lost its `fuse` and fill-region fields and always carries the child map and tie
+ranks. The exact path's output did not change by a bit.

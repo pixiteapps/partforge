@@ -2,7 +2,7 @@
 // Small IR-coverage trees: every node kind, nested placements, blends of 3+
 // children, shared children (repeat, mirror). Kept small so per-point tests are fast.
 // The contact* trees reach the CONTACT and BULGE ops (with and without attachments,
-// fuse, regions) — the native suites run them like every other tree.
+// gap 0, regions) — the native suites run them like every other tree.
 export const TREES = {
   blobs: { root: { kind: "union", k: 3, children: [
     { kind: "sphere", r: 4 }, { kind: "sphere", r: 3, at: [5, 1, 0] }, { kind: "ellipsoid", r: [5, 2, 2], at: [-3, 3, 1] },
@@ -40,7 +40,7 @@ export const TREES = {
     { kind: "capsule", a: [0, 0, 1], b: [0, 0, 12], r: 2, label: "finger" },
     { kind: "box", size: [14, 10, 4], label: "palm" },
   ] } },
-  // bulge 0: the first capsule's tip reaches through the second to within the coarse grid's
+  // bulge 0: the first capsule's tip reaches through the second to within the gap's
   // clearance of its far side, and a bulge there puts the clearance cut's crease on that far
   // surface (cleanup's vertex bound fails at 0.8 mm). Bulge is covered by the gap-0 trees and
   // contactGap; the profile is tuned on the hand (Task 5).

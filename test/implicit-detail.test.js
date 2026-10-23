@@ -120,7 +120,7 @@ describe("detail at contact seams", async () => {
 
   test.each([[1.5, "preview"], [0.6, "print"]])("detail never closes a gap (%s mm)", (edge, tier) => {
     const spec = { ...capsulePress({ overlap: 1.2, gap: 0.2 }), detail: noise };
-    const compiled = compileImplicit(spec, { exactContact: true });
+    const compiled = compileImplicit(spec);
     const mesh = meshImplicit(compiled, edge, { tier });
     expect(pieceGapError(compiled, mesh, "a", "b", 0.2).min).toBeGreaterThanOrEqual(0.198);
     expect(pieceGapError(compiled, mesh, "b", "a", 0.2).min).toBeGreaterThanOrEqual(0.198);
@@ -128,8 +128,8 @@ describe("detail at contact seams", async () => {
 
   test("detail fades at a crease", () => {
     const base = capsulePress({ overlap: 1.2, gap: 0 });
-    const plain = meshImplicit(compileImplicit(base, { exactContact: true }), 0.6, { tier: "print" });
-    const withDetail = meshImplicit(compileImplicit({ ...base, detail: noise }, { exactContact: true }), 0.6, { tier: "print" });
+    const plain = meshImplicit(compileImplicit(base), 0.6, { tier: "print" });
+    const withDetail = meshImplicit(compileImplicit({ ...base, detail: noise }), 0.6, { tier: "print" });
     let creaseVerts = 0, maxMove = 0, otherMove = 0;
     for (let v = 0; v < plain.crease.length; v++) {
       const d = Math.hypot(...[0, 1, 2].map((k) => withDetail.positions[3 * v + k] - plain.positions[3 * v + k]));

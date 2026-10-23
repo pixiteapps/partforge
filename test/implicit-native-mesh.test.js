@@ -105,7 +105,7 @@ describe("native owner mesher", () => {
   for (const { name, spec } of OWNER_STAGE_CASES) {
     for (const edge of [1.5, 0.6]) {
       test(`${name} at ${edge} mm: meshStoreOwners' positions, indices, vertLeaf, vertOwner, ownerHeld and pinned`, () => {
-        const compiled = compileImplicit(spec, { exactContact: true });
+        const compiled = compileImplicit(spec);
         const node = compiled.ir.nodes[compiled.ownerRoot];
         const plan = planLeaves(compiled, edge);
         const js = meshStoreOwners(evaluateLeaves(plan), { gap: node.gap });
@@ -134,7 +134,7 @@ describe("native owner mesher", () => {
       s.sample(sphere, { readBack: false });
       expect(() => s.meshOwners()).toThrow(/refused/);   // no owner plan, no contact
     } finally { s.destroy(); }
-    const compiled = compileImplicit(capsulePress({ overlap: 1.2, gap: 0.2 }), { exactContact: true });
+    const compiled = compileImplicit(capsulePress({ overlap: 1.2, gap: 0.2 }));
     const plan = planLeaves(compiled, 1.5);
     const t = sessionFor(plan);
     try {

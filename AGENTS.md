@@ -490,12 +490,11 @@ the installed package, so let the publish finish before bumping the dep there.
   (well-formed MeshGL only), `implicit/index.js`'s `meshImplicit` runs everything
   after `planLeaves` on one native session (`core/implicit-core.js`'s
   `meshImplicitCore`; a refusal or fault falls back to the JS engine, and
-  `test/implicit-speed.test.js` gates its speed on `cpuMs`; a contact at the top of
-  the spec - the default, `exactContact` - takes the OWNER path: `ip_mesh_owners` →
+  `test/implicit-speed.test.js` gates its speed on `cpuMs`; a contact node - only ever
+  the top of the spec (nested, it is a compile error) - takes the OWNER path: `ip_mesh_owners` →
   `ip_cleanup` → `ip_crease` → `ip_untangle` → `ip_detail`, each vertex carrying its
   owner piece, `ownerHeld`, `pinned` and `crease` through every stage, so exact gaps and
-  crisp creases are cut natively; a nested contact keeps the plain approximate path;
-  `native/README.md` "The owner path"), and `cachedBVH` hands out core-backed indexes ONLY
+  crisp creases are cut natively; `native/README.md` "The owner path"), and `cachedBVH` hands out core-backed indexes ONLY
   on paths partforge owns — no Map (meshGaps frees them) or a `coreBVHCache()`
   Map (measure's, freed by measure) — since they live in WebAssembly memory and
   must be freed with `disposeBVHs`; the public `buildBVH` and a caller's own

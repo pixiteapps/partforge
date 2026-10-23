@@ -1,5 +1,5 @@
 // src/framework/geometry/implicit/mesher-owners.js
-// Owner-aware marching tetrahedra for a store whose leaves carry `owner` (a root exact
+// Owner-aware marching tetrahedra for a store whose leaves carry `owner` (a root
 // contact node: sparse.js). Each Kuhn tet takes one of three paths (the seam spec's §3):
 //   1. one owner (or all labels equal): mesher.js's plain emission, the same code;
 //   2. several solid owners but no OPEN owner–owner edge: the same plain emission on the
@@ -29,7 +29,7 @@
 import { LEAF, OWNER_AIR } from "./sparse.js";
 import { evalBatchContact } from "./program.js";
 import { tetMesher, KUHN } from "./mesher.js";
-import { clearanceExact } from "./contact.js";
+import { clearance } from "./contact.js";
 import { solveBrackets, MAX_BRACKET_STEPS } from "./bracket.js";
 
 export { OWNER_AIR };
@@ -55,7 +55,7 @@ const sampleOf = (i, j, l, c) => ((l + ((c >> 2) & 1)) * S + (j + ((c >> 1) & 1)
 export function meshStoreOwners(store, { gap = 0 } = {}) {
   const { origin, edge, n, leaves, textures } = store;
   const K = Math.max(1, store.ownerK ?? 0), owned = store.ownerRoot >= 0;
-  const cl = clearanceExact(gap), pinTol = PIN_TOL * edge;
+  const cl = clearance(gap), pinTol = PIN_TOL * edge;
   const vertOwner = [], ownerHeld = [], pinned = [];
   // The cells holding both ends of grid edge (gLo, dir): a cell's low corner is the edge's low
   // point along each axis the edge runs, or that point or the one below along the others.
