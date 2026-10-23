@@ -98,3 +98,79 @@ export function glbJson(bytes) {
   const length = view.getUint32(12, true);
   return JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + length)));
 }
+
+// The box [min, max]'s 12 feature edges as line-segment endpoint pairs (72 floats).
+export function boxEdges(min = [0, 0, 0], max = [1, 1, 1]) {
+  const c = (i) => [0, 1, 2].map((a) => ((i >> a) & 1 ? max[a] : min[a]));
+  const out = [];
+  for (let i = 0; i < 8; i++) {
+    for (let a = 0; a < 3; a++) {
+      if ((i >> a) & 1) continue;
+      out.push(...c(i), ...c(i | (1 << a)));
+    }
+  }
+  return new Float32Array(out);
+}
+
+// Whether two edge arrays hold the same segments (either endpoint order, any
+// segment order — weld/reorder may permute them) within `tol` millimetres.
+// Returns null when they match, else a description of the first mismatch.
+export function segmentMismatch(got, want, tol = 1e-2) {
+  if (got.length !== want.length) return `segment count ${got.length / 6} != ${want.length / 6}`;
+  const near = (a, i, b, j) => Math.abs(a[i] - b[j]) <= tol && Math.abs(a[i + 1] - b[j + 1]) <= tol && Math.abs(a[i + 2] - b[j + 2]) <= tol;
+  const used = new Uint8Array(got.length / 6);
+  for (let w = 0; w < want.length; w += 6) {
+    let hit = -1;
+    for (let g = 0; g < got.length && hit < 0; g += 6) {
+      if (used[g / 6]) continue;
+      if ((near(got, g, want, w) && near(got, g + 3, want, w + 3)) || (near(got, g, want, w + 3) && near(got, g + 3, want, w))) hit = g;
+    }
+    if (hit < 0) return `no decoded segment matches [${[...want.subarray(w, w + 6)].map((v) => v.toFixed(3))}]`;
+    used[hit / 6] = 1;
+  }
+  return null;
+}
+
+// A rigid pose for fixtures: rotate `deg` about Z, then translate.
+export function poseArray(arr, deg, [tx, ty, tz] = [0, 0, 0], isNormal = false) {
+  const r = (deg * Math.PI) / 180;
+  const c = Math.cos(r);
+  const s = Math.sin(r);
+  const out = new Float32Array(arr.length);
+  for (let i = 0; i < arr.length; i += 3) {
+    out[i] = c * arr[i] - s * arr[i + 1] + (isNormal ? 0 : tx);
+    out[i + 1] = s * arr[i] + c * arr[i + 1] + (isNormal ? 0 : ty);
+    out[i + 2] = arr[i + 2] + (isNormal ? 0 : tz);
+  }
+  return out;
+}
+
+// An edge-dense sub-part: an n×n grid of quads on a gently waved sheet (so no two
+// rows share a plane), indexed, with EVERY grid line a feature edge — the shape of
+// a part riddled with small holes, where edges cost as much as the surface does.
+export function denseGrid(name, n = 60, size = 60) {
+  const v = (i, j) => i * (n + 1) + j;
+  const positions = new Float32Array((n + 1) * (n + 1) * 3);
+  const normals = new Float32Array(positions.length);
+  for (let i = 0; i <= n; i++) {
+    for (let j = 0; j <= n; j++) {
+      const x = (i / n) * size;
+      const y = (j / n) * size;
+      positions.set([x, y, Math.sin(x / 7) * Math.cos(y / 5) * 2], v(i, j) * 3);
+      normals.set([0, 0, 1], v(i, j) * 3);
+    }
+  }
+  const indices = [];
+  const edges = [];
+  const at = (k) => [...positions.subarray(k * 3, k * 3 + 3)];
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      indices.push(v(i, j), v(i + 1, j), v(i + 1, j + 1), v(i, j), v(i + 1, j + 1), v(i, j + 1));
+      edges.push(...at(v(i, j)), ...at(v(i + 1, j)), ...at(v(i, j)), ...at(v(i, j + 1)));
+    }
+  }
+  for (let k = 0; k < n; k++) {
+    edges.push(...at(v(n, k)), ...at(v(n, k + 1)), ...at(v(k, n)), ...at(v(k + 1, n)));
+  }
+  return { name, positions, normals, indices: new Uint32Array(indices), triangles: indices.length / 3, edges: new Float32Array(edges) };
+}

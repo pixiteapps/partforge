@@ -69,12 +69,14 @@ export function normalizeAnimation(name, spec) {
   // params move — ignores it and uses the driver's short fixed tween, since it
   // gates playback and a long one would read as a stall.
   let cues;
-  // A lone angle name is only ever an intro, so it has no sweep of its own.
-  if (typeof spec.camera === "string") cues = [{ t: 0, view: spec.camera, sweep: null }];
-  else if (Array.isArray(spec.camera)) {
+  // A lone angle (a name, or an { azimuth, elevation } orbit) is only ever an
+  // intro, so it has no sweep of its own.
+  if (Array.isArray(spec.camera)) {
     cues = spec.camera.map(([t, view], i, all) => ({
       t, view, sweep: ((all[i + 1]?.[0] ?? 1) - t) * totalDuration,
     }));
+  } else if (spec.camera != null) {
+    cues = [{ t: 0, view: spec.camera, sweep: null }];
   } else {
     cues = steps.flatMap((s, i) => (s.camera ? [{ t: stepStarts[i], view: s.camera, sweep: s.duration }] : []));
   }

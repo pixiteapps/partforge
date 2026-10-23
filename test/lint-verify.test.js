@@ -61,6 +61,33 @@ test("an unparseable assertion is an error", () => {
   expect(ids(r.errors)).toContain("verify-bad-expr");
 });
 
+test("a per-axis range vector is a valid vector expectation", () => {
+  const r = lintPart(partWith({ expect: {
+    body: { bbox: "[28..32, 18..22, 9..11]", centerOfMass: "[*, -1..1, *]", bounds: { min: "[-1..0, *, *]", max: "<=[60,60,60]" } },
+    _view: { bbox: "28..32,18..22,9..11" },
+  } }));
+  expect(ids(r.errors)).toEqual([]);
+});
+
+test("a range vector with min > max on an axis is an error", () => {
+  const r = lintPart(partWith({ expect: { body: { bbox: "[32..28, 18..22, 9..11]" } } }));
+  expect(ids(r.errors)).toContain("verify-bad-expr");
+  expect(find(r, "verify-bad-expr").message).toMatch(/min <= max/);
+});
+
+test("refBboxDelta is a per-axis reading and takes a vector", () => {
+  const r = lintPart(partWith({ expect: { body: { refBboxDelta: "<=[0.2,0.2,0.2]" } } }));
+  expect(ids(r.errors).filter((id) => id === "verify-bad-expr")).toEqual([]);
+});
+
+test("a vector of either form on a scalar metric is an error", () => {
+  for (const expr of ["[1..2, 3..4, 5..6]", "<=[1,2,3]"]) {
+    const r = lintPart(partWith({ expect: { body: { volume: expr } } }));
+    expect(ids(r.errors)).toContain("verify-bad-expr");
+    expect(find(r, "verify-bad-expr").message).toMatch(/single value/);
+  }
+});
+
 test("an unknown process profile is an error", () => {
   const r = lintPart(partWith({ process: "fdm-unobtanium", expect: {} }));
   expect(ids(r.errors)).toContain("verify-unknown-process");
@@ -278,4 +305,120 @@ test("the sheet metrics are sub-part metrics lint accepts", () => {
   const r = lintPart(partWith({ expect: { body: { sheetBridge: ">=1.5", sheetGap: ">=1.5", sheetMarks: 0, sheetPieces: 1, sheetSolidMatch: "<=2" } } }));
   expect(ids(r.errors)).not.toContain("verify-unknown-metric");
   expect(ids(r.errors)).not.toContain("verify-bad-expr");
+});
+
+// --- bounds: { min, max } ----------------------------------------------------
+
+test("bounds: { min, max } is a sub-part and a view metric", () => {
+  const r = lintPart(partWith({ expect: {
+    body: { bounds: { min: ">=[0,0,0]", max: "<=[60,*,60]" } },
+    _view: { bounds: { max: { expr: "<=[220,220,250]", hint: "fits the bed" } } },
+  } }));
+  expect(ids(r.errors)).toEqual([]);
+});
+
+test.each([
+  ["a bare string", "<=[60,60,60]", /bounds takes an object \{ min, max \}, got "<=\[60,60,60\]"/],
+  ["an unknown key", { min: ">=[0,0,0]", size: "<=[1,1,1]" }, /bounds accepts only "min" and "max", got "size"/],
+  ["an empty object", {}, /bounds needs at least one of min or max/],
+  ["an array", [0, 0, 0], /bounds takes an object/],
+])("bounds as %s is a bad expression whose hint shows the accepted form", (_label, spec, msg) => {
+  const r = lintPart(partWith({ expect: { body: { bounds: spec } } }));
+  const f = find(r, "verify-bad-expr");
+  expect(f.message).toMatch(msg);
+  expect(f.hint).toContain('bounds: { min: ">=[x,y,z]", max: "<=[x,y,z]" }');
+  expect(f.path).toBe("verify.expect.body.bounds");
+});
+
+test("each side of bounds is parsed as a vector, with a side-shaped path", () => {
+  const r = lintPart(partWith({ expect: { body: { bounds: { min: ">=[0,0]" } } } }));
+  expect(find(r, "verify-bad-expr").path).toBe("verify.expect.body.bounds.min");
+  const s = lintPart(partWith({ expect: { body: { bounds: { max: "<=60" } } } }));
+  expect(find(s, "verify-bad-expr").message).toMatch(/bounds\.max must be a componentwise vector/);
+});
+
+test("a misspelled bounds is pointed at bounds, never at the retired flat spellings", () => {
+  for (const typo of ["bound", "bonds", "boundsMn"]) {
+    const f = find(lintPart(partWith({ expect: { body: { [typo]: { min: ">=[0,0,0]" } } } })), "verify-unknown-metric");
+    expect(f.hint, typo).toMatch(/did you mean "bounds"\?/);
+    expect(f.hint, typo).not.toMatch(/boundsMin|boundsMax/);
+  }
+});
+
+test("the legacy boundsMin / boundsMax still lint clean but are never listed", () => {
+  const r = lintPart(partWith({ expect: { body: { boundsMin: ">=[0,0,0]", boundsMax: "<=[60,60,60]" } } }));
+  expect(ids(r.errors)).toEqual([]);
+  const f = find(lintPart(partWith({ expect: { body: { wallThickness: 2 } } })), "verify-unknown-metric");
+  expect(f.hint).toContain("bounds");
+  expect(f.hint).not.toMatch(/boundsMin|boundsMax/);
+});
+
+// --- bare vectors ------------------------------------------------------------
+
+test.each([
+  ["bbox", [40, 40, 10]],
+  ["bbox", "[40,40,10]"],
+  ["centerOfMass", [40, 40, 10]],
+])("a bare vector for %s gets both legal spellings back in its own numbers", (metric, spec) => {
+  const f = find(lintPart(partWith({ expect: { body: { [metric]: spec } } })), "verify-bad-expr");
+  expect(f.hint).toMatch(/^Use "<=\[40,40,10\]" or ">=\[40,40,10\]" \(componentwise; \* skips an axis\)\./);
+});
+
+test("a bare vector on a side of bounds gets the same hint", () => {
+  const f = find(lintPart(partWith({ expect: { body: { bounds: { max: [40, 40, 10] } } } })), "verify-bad-expr");
+  expect(f.path).toBe("verify.expect.body.bounds.max");
+  expect(f.hint).toMatch(/^Use "<=\[40,40,10\]" or ">=\[40,40,10\]"/);
+});
+
+test("a scalar for a vector metric is a bad expression, not a check that always fails", () => {
+  const f = find(lintPart(partWith({ expect: { body: { bbox: 40 } } })), "verify-bad-expr");
+  expect(f.message).toMatch(/bbox must be a componentwise vector, got 40/);
+});
+
+test("an unknown metric is reported once, not again as a bad expression", () => {
+  const r = lintPart(partWith({ expect: { body: { bound: { min: ">=[0,0,0]" } } } }));
+  expect(ids(r.errors)).toEqual(["verify-unknown-metric"]);
+});
+
+// --- _view.held --------------------------------------------------------------
+
+test("held: true and held: <sub-part> are accepted and not unknown metrics or bad expressions", () => {
+  for (const held of [true, "body"]) {
+    const r = lintPart(partWithTwoSubparts({ expect: { _view: { held } } }));
+    expect(ids(r.errors)).toEqual([]);
+  }
+});
+
+test("held naming no sub-part is verify-unknown-subpart with a suggestion", () => {
+  const r = lintPart(partWithTwoSubparts({ expect: { _view: { held: "bodyy" } } }));
+  expect(ids(r.errors)).toContain("verify-unknown-subpart");
+  const f = find(r, "verify-unknown-subpart");
+  expect(f.path).toBe("verify.expect._view.held");
+  expect(f.hint).toMatch(/did you mean "body"/);
+});
+
+test("held that is neither true nor a name is verify-bad-pair-check", () => {
+  for (const held of [false, 1, ["body"], { base: "body" }]) {
+    const r = lintPart(partWithTwoSubparts({ expect: { _view: { held } } }));
+    expect(ids(r.errors), JSON.stringify(held)).toContain("verify-bad-pair-check");
+    expect(find(r, "verify-bad-pair-check").path).toBe("verify.expect._view.held");
+  }
+});
+
+test("held naming an exportable: false sub-part is verify-bad-pair-check", () => {
+  const r = lintPart({
+    meta: { title: "T" },
+    defaults: { h: 10 },
+    parts: {
+      lid: { views: ["main"], exportable: false, build: (k, p) => k.box({ size: [p.h, p.h, p.h] }) },
+      body: { views: ["main"], build: (k, p) => k.box({ size: [p.h, p.h, p.h] }) },
+    },
+    views: { main: { label: "Main" } },
+    verify: { expect: { _view: { held: "lid" } } },
+  });
+  expect(ids(r.errors)).toContain("verify-bad-pair-check");
+  const f = find(r, "verify-bad-pair-check");
+  expect(f.path).toBe("verify.expect._view.held");
+  expect(f.message).toMatch(/exportable: false/);
+  expect(f.hint).toMatch(/printed sub-part/);
 });

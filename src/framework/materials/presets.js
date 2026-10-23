@@ -79,17 +79,26 @@ export const PRESETS = {
   // times that, a sanded face's relief, so it keeps its own. `grain` is the
   // texture axis the scan's figure runs along — oak's runs up the image ("v"),
   // walnut's and plywood's across it ("u") — so patterns.js can lay it along each sub-part's
-  // long axis. `laminated` (plywood) asks the burn pass (patterns.js applyBurn) for ply
-  // bands on laser-cut walls, at sheet-look.js's plyCount(t).
+  // long axis. `laminated` (plywood) adds the ply pass (patterns.js applyPlies): plies on
+  // every cut wall, at sheet-look.js's plyCount(t).
   oak: P("oak", "Oak", "natural", "Light oak with open grain.",
     { color: 0xa17e57, metalness: 0, roughness: 0.65, pattern: "wood", textureScale: 250,
       textures: { color: "pattern-oak-color.jpg", normal: "pattern-oak-normal.jpg", roughness: "pattern-oak-rough.jpg", roughnessMean: 0.53, normalScale: 2.5, grain: "v" } }),
   walnut: P("walnut", "Walnut", "natural", "Dark oiled walnut.",
     { color: 0x5d2a18, metalness: 0, roughness: 0.5, clearcoat: 0.3, clearcoatRoughness: 0.4, pattern: "wood", textureScale: 400,
       textures: { color: "pattern-walnut-color.jpg", normal: "pattern-walnut-normal.jpg", roughness: "pattern-walnut-rough.jpg", roughnessMean: 0.628, normalScale: 3, grain: "u" } }),
-  plywood: P("plywood", "Birch plywood", "natural", "Birch plywood sheet: a pale, fine-grained face; its plies show on laser-cut edges.",
+  plywood: P("plywood", "Birch plywood", "natural", "Birch plywood sheet: a pale, fine-grained face; its plies show on cut edges.",
     { color: 0xe1c1a1, metalness: 0, roughness: 0.6, pattern: "wood", textureScale: 150, laminated: true,
       textures: { color: "pattern-plywood-color.jpg", normal: "pattern-plywood-normal.jpg", roughness: "pattern-plywood-rough.jpg", roughnessMean: 0.749, normalScale: 1, grain: "u" } }),
+  // Hardware-store 4 x 8 sheet plywood, sanded pine/fir face (ambientCG Wood048). One tile
+  // per 400 mm, half the scan's own 800 mm: at the full scan size (1000 here, once) a 1K map
+  // is ~1 mm a texel and a hand-sized part showed a smear, not grain. 400 keeps the bold
+  // cathedral figure reading as a sheet face; the cost is a figure that repeats about three
+  // times across a full 1220 mm sheet. Like plywood it is
+  // `laminated`: the ply pass draws its plies on every cut wall.
+  "pine-plywood": P("pine-plywood", "Sanded pine plywood", "natural", "Hardware-store 4 × 8 sheet plywood (sanded pine/fir face): warm, bold grain; plies show on cut edges.",
+    { color: 0xe0b77d, metalness: 0, roughness: 0.6, pattern: "wood", textureScale: 400, laminated: true,
+      textures: { color: "pattern-pine-plywood-color.jpg", normal: "pattern-pine-plywood-normal.jpg", roughness: "pattern-pine-plywood-rough.jpg", roughnessMean: 0.552, normalScale: 1, grain: "u" } }),
   "carbon-fiber": P("carbon-fiber", "Carbon fibre", "natural", "2x2 twill carbon fibre under clear coat.",
     { color: 0x1b1c1e, metalness: 0.2, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.05, pattern: "carbon", textureScale: 48 }),
 };

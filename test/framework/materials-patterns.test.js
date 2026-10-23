@@ -5,6 +5,7 @@ import { ensureBoxUVs } from "../../src/framework/materials/uv.js";
 import { applyBrushFrame, applyBurn, grainAxisFor, grainSwaps, setGrainAxis } from "../../src/framework/materials/patterns.js";
 import { buildPhysicalMaterial } from "../../src/framework/materials/physical.js";
 import { BURN } from "../../src/framework/materials/sheet-look.js";
+import { PRESETS } from "../../src/framework/materials/presets.js";
 
 const fakeShader = () => ({
   uniforms: {},
@@ -357,15 +358,47 @@ test("a burning program is the plain wood program plus its pf-burn blocks and no
   }
 });
 
+const outside = (tag) => (src) => {
+  const out = [];
+  let inside = false;
+  for (const line of src.split("\n").map((l) => l.trim())) {
+    if (line === `// ${tag} {`) inside = true;
+    else if (line === `// } ${tag}`) inside = false;
+    else if (!inside) out.push(line);
+  }
+  return out;
+};
+
+test("a laminated program is the plain wood program plus its pf-ply blocks, and burns on top of them", () => {
+  const ply = compiled(buildPhysicalMaterial({ material: "plywood" }, { loadTexture: woodTextures }));
+  const burned = compiled(buildPhysicalMaterial({ material: "plywood" }, { loadTexture: woodTextures, burn: true }));
+  const oak = compiled(buildPhysicalMaterial({ material: "oak" }, { loadTexture: woodTextures }));
+  expect(oak.fragmentShader).not.toContain("pfPly");
+  // Stripped of its ply blocks, a plywood program is the oak program's shape: plain wood.
+  expect(outside("pf-ply")(ply.fragmentShader)).toEqual(outside("pf-ply")(oak.fragmentShader));
+  expect(outside("pf-burn")(burned.fragmentShader)).toEqual(ply.fragmentShader.split("\n").map((l) => l.trim()));
+  // The plies draw first: the burn chars what they drew.
+  expect(burned.fragmentShader.indexOf("pfPlyWall")).toBeLessThan(burned.fragmentShader.indexOf("pfBurnWall"));
+});
+
+test("the ply uniforms ride the shared pattern uniforms, off until a frame arrives", () => {
+  const m = buildPhysicalMaterial({ material: "plywood" }, { loadTexture: woodTextures });
+  const u = m.userData.patternUniforms;
+  expect(u.pfPlyT.value).toBe(0);
+  expect(u.pfPlyAvg.value.getHex()).toBe(new THREE.Color(PRESETS.plywood.color).getHex());
+  const s = compiled(m);
+  for (const name of ["pfPlyFrame", "pfPlyT", "pfPlyCount", "pfPlyGrain", "pfPlyAvg"]) expect(s.uniforms[name], name).toBe(u[name]);
+});
+
 test("the burn uniforms ride the shared pattern uniforms, off until a frame arrives", () => {
   const m = buildPhysicalMaterial({ material: "oak" }, { loadTexture: woodTextures, burn: true });
   const u = m.userData.patternUniforms;
   expect(u.pfSheetFrame.value).toBeInstanceOf(THREE.Matrix4);
   expect(u.pfSheetFrame.value.equals(new THREE.Matrix4())).toBe(true);
   expect(u.pfSheetT.value).toBe(0);
-  expect(u.pfPlies.value).toBe(0);
+  expect(u.pfPlyT, "oak is not laminated").toBeUndefined();
   const s = compiled(m);
-  for (const name of ["pfSheetFrame", "pfSheetT", "pfPlies", "pfFaceAvg"]) expect(s.uniforms[name], name).toBe(u[name]);
+  for (const name of ["pfSheetFrame", "pfSheetT", "pfFaceAvg"]) expect(s.uniforms[name], name).toBe(u[name]);
 });
 
 test("the burn is a no-op on anything but wood", () => {

@@ -236,9 +236,10 @@ the installed package, so let the publish finish before bumping the dep there.
   (the print-bed environment's cut-out build plate and its canvas-drawn
   markings), and `contact-shadow.js` - is a separate set of modules the viewer alone
   imports, not the worker. `patterns.js` is the **only** shader-injection
-  site (`onBeforeCompile`) for layer lines, wood, carbon weave, SLS grain and
-  the laser burn (compiled only into the sub-parts `sheet-look.js`'s
-  `burnsFor` picks) - a future TSL/WebGPU port only has to rewrite this one
+  site (`onBeforeCompile`) for layer lines, wood, carbon weave, SLS grain, plywood's
+  plies (any `laminated` preset, stacked by a sheet part's frame or else
+  `sheet-look.js`'s `boxPlyFrame`) and the laser burn (compiled only into
+  the sub-parts `sheet-look.js`'s `burnsFor` picks) - a future TSL/WebGPU port only has to rewrite this one
   file. `assets.js`
   is the **only** module allowed a literal `new URL("./assets/x",
   import.meta.url)` (the same rule `docs/AUTHORING-PARTS.md` states for
@@ -263,9 +264,23 @@ the installed package, so let the publish finish before bumping the dep there.
   diffs them) - to check by eye after any preset or shader change.
 - **`src/framework/gltf/`** + **`src/framework/mount-preview.js`** - the cached
   preview (0.147.0). `gltf/encode-preview.js` is `partforge/gltf`'s writer: one
-  view's POSED meshes as a GLB (one node/mesh/primitive per sub-part under a
-  single −90°-about-X root, materials from `cadAppearance`, the sub-part's
-  `display` block in node extras, then weld → quantize → meshopt "medium"). It is
+  view's POSED meshes as a GLB (one node/mesh per sub-part under a single
+  −90°-about-X root: a TRIANGLES primitive plus, since encoder version 2 / 0.154.0,
+  a LINES primitive carrying the kernel's feature edges — on the SAME mesh, so
+  quantize() gives both one quantization volume and the lines stay on the faces.
+  Since version 3 / 0.156.0 the LINES primitive shares the surface's POSITION
+  accessor and stores only endpoint indices (each endpoint snapped to the surface
+  vertex at its position, bit-exact else within one 14-bit quantization step, or
+  appended past the surface's vertices — the decoder stops the payload before
+  those; a sub-part whose appended endpoints would leave the surface's bounds or
+  trip quantize()'s compaction keeps float line vertices of its own instead). The pipeline is weld → reorder (surfaces only) → map + append →
+  quantize → add the line primitives → meshopt "medium" compression: weld,
+  reorder and quantize each clone a primitive's accessors, so lines added before
+  them would get their own vertex array back. Empty or absent `edges` writes none
+  and decodes to an EMPTY array, never undefined, which would make the viewer
+  derive lines by angle. Materials from `cadAppearance`, the sub-part's `display`
+  block in node extras). Versions 1 and 2 still decode (`test/fixtures/preview-v1.glb`,
+  `preview-v2.glb`). It is
   worker-safe — no three.js, no DOM, no Blob (`test/gltf-layering.test.js`) — and
   deterministic; bump `PREVIEW_ENCODER_VERSION` whenever its bytes change, since
   downstream caches key on it. `gltf/decode-preview.js` reads one back with
@@ -274,11 +289,22 @@ the installed package, so let the publish finish before bumping the dep there.
   the part twice — so `mount({ preview })` draws it through `setSubGeometry` and
   the first whole live delivery replaces it in place (`preview-gate.js` holds
   picking/hover/measure/sketch/cutaway off meanwhile, and a carried cutaway waits
-  for the live build). `runtime.exportPreview()` encodes the view on screen via
-  `viewer.getSubMeshPayload` (fast-path poses baked in) and loads the encoder
+  for the live build). GLTFLoader turns a two-primitive mesh into a Group (the
+  node's extras and name) of a Mesh and a LineSegments, so the decoder pairs them
+  through the node. `runtime.exportPreview()` encodes the view on screen via
+  `viewer.getSubMeshPayload` (fast-path poses baked in, edges included — read from
+  the geometry's `userData.edgePositions`) and loads the encoder
   lazily, so the app bundle does not carry `@gltf-transform`. `mountPreview` is
   the same viewer with a synthetic part built from the GLB's own node names — no
-  worker, no rail.
+  worker, no rail. Since encoder version 4 / 0.158.0 the file may carry the view's
+  autoplay animation (`samplePreviewAnimation`, sampled as place-only poses) as
+  glTF channels plus a `partforgeAnimation` extra: `mountPreview` plays it through
+  `preview-player.js` unless `animate: false`, `mount({ preview })` draws its
+  opening pose and never plays it, and `exportPreview` bakes it only when every
+  track is place-only. Since 0.159.0 a playing preview gets a play/pause/replay
+  button in `#viewbar` beside `#view-style` (`preview-play-button.js`, driven by
+  the player's `onChange`; none under reduced motion or without a `#viewbar`),
+  and `handle.animation` gains `replay()`.
 - **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
   (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
   nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,
@@ -299,6 +325,13 @@ the installed package, so let the publish finish before bumping the dep there.
   `resolve.js`/`pose.js`/`constants.js`/the registry stay paper-free, since the
   oracle imports them (`oracle/measure.js`, `oracle/verify.js`). Spec: partforge-cloud
   `docs/superpowers/specs/2026-09-28-sheet-parts-laser-kit-design.md`.
+
+  Routed parts (`routedPart`, process `cnc-router`, 0.150.0): a second process module
+  under `src/framework/process/cnc-router/`; its resolver is `sheet/routed-resolve.js`
+  (the descriptor may import nothing but constants and finding.js); a Drawing layer may
+  carry its own DXF `name`/`color`/`svgColor`, which `dxf.js`/`svg.js` honour and
+  `include` lists never select; the kit never splits a routed piece's marks. Tests:
+  `test/routed-*.test.js`.
 - **`src/parts/`** - one file per part, default-exporting a `PartDefinition`.
 - **`src/framework/ingest/`** - the asset-ingest machinery behind both the panel's
   drop targets and the `partforge ingest` CLI verb. `sniff.js` classifies bytes by
@@ -576,6 +609,12 @@ parameters in both directions. Override with `meta.backend: "occt" |
 "manifold"`. The two WASM kernels run in **separate Web Workers** (`name` =
 `"manifold"` / `"occt"`). See `docs/geometry-backend-strategy.md` for the why
 (OCCT booleans are about 75-1400x slower).
+The same proxy is lint's geometry-free build (`runValidatingProbe`): every query
+(`boundingBox`, `area`, `volume`, `contains`, `corners`, `toRegions`, …) returns a
+placeholder, so a build that throws AFTER reading one is a `build-throws` NOTE,
+not an error (0.156.0) — the probe records the queries read per call, never
+across sub-parts. A throw with no query read stays an error, and `probe-throws`
+(declared probes) stays an error regardless.
 
 ### Non-obvious invariants
 

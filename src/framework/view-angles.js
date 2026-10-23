@@ -93,16 +93,123 @@ const norm = (v) => {
   return [v[0] / l, v[1] / l, v[2] / l];
 };
 
+// A free-form camera cue: `{ azimuth, elevation, distance? }`, for the angles no
+// name reaches ("halfway between iso and level"). Degrees, in the MODEL frame
+// the face names already use: azimuth 0 looks from the front (model -Y) and
+// turns toward the right (model +X) at 90, back at 180, left at -90 (or 270);
+// elevation is above the horizontal, 90 straight down from the top. So iso is
+// { azimuth: 45, elevation: 35.26 } and front-right is { azimuth: 45,
+// elevation: 0 }. `distance` multiplies the framing distance a named angle
+// would use (1, the default, frames the part exactly as a name does; 2 is
+// twice as far out), so a cue keeps meaning the same thing as the part's
+// params change its size. The camera always aims at the part's centre: a cue
+// orbits, it never pans.
+export const CAMERA_ORBIT_KEYS = ["azimuth", "elevation", "distance"];
+export const CAMERA_ORBIT_DISTANCE = { min: 0.1, max: 10 };
+
+const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v)
+  && (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null);
+
+// Why `v` is not a valid orbit cue, as a short phrase; null when it is.
+export function cameraOrbitProblem(v) {
+  if (!isPlainObject(v)) return "is not an { azimuth, elevation } object";
+  const extra = Object.keys(v).filter((k) => !CAMERA_ORBIT_KEYS.includes(k));
+  if (extra.length) return `has unknown key${extra.length > 1 ? "s" : ""} ${extra.map((k) => `\`${k}\``).join(", ")}`;
+  if (!Number.isFinite(v.azimuth)) return "needs a finite numeric `azimuth` (degrees)";
+  if (!Number.isFinite(v.elevation)) return "needs a finite numeric `elevation` (degrees)";
+  if (v.elevation < -90 || v.elevation > 90) return "has an `elevation` outside -90..90";
+  if (v.distance !== undefined) {
+    const { min, max } = CAMERA_ORBIT_DISTANCE;
+    if (!Number.isFinite(v.distance) || v.distance < min || v.distance > max) {
+      return `has a \`distance\` outside ${min}..${max} (a multiple of the default framing distance)`;
+    }
+  }
+  return null;
+}
+
+// Every value a camera cue may be: an angle name from CAMERA_CUE_VIEWS, or an orbit.
+export function isCameraCue(v) {
+  if (typeof v === "string") return CAMERA_CUE_VIEWS.includes(v);
+  return cameraOrbitProblem(v) === null;
+}
+
+// A filename- and log-safe label for a cue: the name itself, or e.g.
+// "az30-el20" / "az30-el20-d1.5" for an orbit.
+export function cameraCueLabel(cue) {
+  if (typeof cue === "string") return cue;
+  const n = (x) => String(Math.round(x * 100) / 100).replace("-", "m");
+  return `az${n(cue.azimuth)}-el${n(cue.elevation)}${cue.distance !== undefined && cue.distance !== 1 ? `-d${n(cue.distance)}` : ""}`;
+}
+
+const RAD = Math.PI / 180;
+
+// World (Y-up) direction and up for an orbit. Model (x, y, z) -> world (x, z, -y)
+// as everywhere else in this file, so model (sin az·cos el, -cos az·cos el, sin el)
+// lands at world (sin az·cos el, sin el, cos az·cos el).
+function orbitAngle({ azimuth, elevation }) {
+  const az = azimuth * RAD, el = elevation * RAD;
+  const h = Math.cos(el);
+  const dir = [Math.sin(az) * h, Math.sin(el), Math.cos(az) * h];
+  // Straight down (or up) a +Y up is degenerate; use the screen-up a camera
+  // approaching that pole from this azimuth would have, which at azimuth 0 is
+  // exactly the `up` the top/bottom names use.
+  let up = [0, 1, 0];
+  if (Math.abs(h) < 1e-9) {
+    const s = elevation > 0 ? -1 : 1;
+    up = [s * Math.sin(az), 0, s * Math.cos(az)];
+  }
+  return { dir, up };
+}
+
+const framingDistance = (radius) => radius * 2.6 + 6; // matches viewer.frameTo's framing distance
+
 export function cameraPoseForView(view, { center, radius }) {
   // DIRS first so the seven canonical names keep their exact existing poses;
-  // ORIENTATIONS covers the other nineteen the cube can reach.
-  const a = DIRS[view] ?? ORIENTATIONS[view];
-  if (!a) throw new Error(`unknown canonical view "${view}"`);
+  // ORIENTATIONS covers the other nineteen the cube can reach; an object is an orbit.
+  let a, scale = 1;
+  if (typeof view === "string") {
+    a = DIRS[view] ?? ORIENTATIONS[view];
+    if (!a) throw new Error(`unknown canonical view "${view}"`);
+  } else {
+    const problem = cameraOrbitProblem(view);
+    if (problem) throw new Error(`camera cue ${problem}`);
+    a = orbitAngle(view);
+    scale = view.distance ?? 1;
+  }
   const d = norm(a.dir);
-  const dist = radius * 2.6 + 6; // matches viewer.frameTo's framing distance
+  const dist = framingDistance(radius) * scale;
   return {
     position: [center[0] + d[0] * dist, center[1] + d[1] * dist, center[2] + d[2] * dist],
     up: a.up,
     target: [...center],
+  };
+}
+
+// The inverse of an orbit cue: the cue that reproduces a live camera's angle and
+// distance, so a host (or the agent behind it) can say "keep the view the user
+// has now". `position`/`target` are the viewer's world (Y-up) camera state, and
+// `radius` the same framing radius cameraPoseForView takes for this scene.
+// Rounded to 0.1° and 0.01× — finer than the eye can tell — so the result reads
+// like something an author would write. A pan is not representable (cues always
+// aim at the centre), so it is reported rather than silently dropped. Null for a
+// camera sitting on its target.
+export function cameraCueForPose({ position, target }, { center, radius }) {
+  const off = [position[0] - target[0], position[1] - target[1], position[2] - target[2]];
+  const len = Math.hypot(off[0], off[1], off[2]);
+  if (!(len > 1e-9)) return null;
+  const [x, y, z] = [off[0] / len, off[1] / len, off[2] / len];
+  const round = (v, step) => Math.round(v / step) * step;
+  const fix = (v, places) => Number(v.toFixed(places)) || 0; // || 0 folds -0
+  const elevation = fix(round(Math.asin(Math.max(-1, Math.min(1, y))) / RAD, 0.1), 1);
+  // Azimuth is meaningless at a pole; 0 matches the top/bottom names' roll.
+  const azimuth = Math.abs(elevation) >= 90 ? 0 : fix(round(Math.atan2(x, z) / RAD, 0.1), 1);
+  const { min, max } = CAMERA_ORBIT_DISTANCE;
+  const distance = fix(Math.min(max, Math.max(min, round(len / framingDistance(radius), 0.01))), 2);
+  const panned = Math.hypot(target[0] - center[0], target[1] - center[1], target[2] - center[2]);
+  return {
+    cue: distance === 1 ? { azimuth, elevation } : { azimuth, elevation, distance },
+    // How far the user's orbit target sits from the part centre the cue aims at,
+    // as a fraction of the framing radius. 0 when they never panned.
+    panned: radius > 0 ? fix(panned / radius, 2) : 0,
   };
 }

@@ -11,6 +11,12 @@ import type { Derived, FontSource, PartDefinition, ResolvedParams } from "./part
 import type { KitOptions } from "./index.js";
 
 export type { Derived, GeometryKernel, Mesh, PartDefinition, ResolvedParams, Solid };
+// Declared in oracle.d.ts (its own surface); testing.js re-exports all of oracle.js.
+export {
+  samplePreviewAnimation, PREVIEW_SAMPLE_HZ, PREVIEW_SAMPLE_CAP,
+  type PreviewAnimationInput, type PreviewAnimationSample, type NormalizedAnimation,
+  type NormalizedAnimationStep, type NormalizedAnimationCue,
+} from "./oracle.js";
 
 // --- kernels ----------------------------------------------------------------
 
@@ -184,12 +190,17 @@ export function meshGaps(built: BuiltSubPart[], opts?: { bvhCache?: Map<Mesh, BV
 /**
  * Build every sub-part of a view in its display pose. Keeps solids LIVE (does
  * NOT call `kernel.cleanup()`) so callers can read exact solid facts first.
+ *
+ * `readsBySubPart`, when given, is filled with each sub-part's name → the params
+ * its `build()` read (expanded through derived values). `place()` reads are
+ * excluded, so a pose-only param never reads as a rebuild.
  */
 export function buildView(
   kernel: GeometryKernel,
   part: PartDefinition,
   view: string,
   params?: ResolvedParams,
+  opts?: { readsBySubPart?: Map<string, string[]> },
 ): BuiltSubPart[];
 
 // --- mesh math --------------------------------------------------------------
@@ -340,14 +351,33 @@ export interface SheetFacts {
   marksOutside: number | null;
   /** Custom builds only: `100·|volume − (area·thickness − 0.2·marksArea)| / (area·thickness − 0.2·marksArea)`. */
   solidMatchPct: number | null;
-  at2d: { bridge: [number, number] | null; gap: [number, number] | null; marks: [number, number] | null };
-  at: { bridge: number[] | null; gap: number[] | null; marks: number[] | null };
+  /** `outside` is a routed part's (the 2-D spot of the first op found outside the profile); a laser part's facts leave it out. */
+  at2d: { bridge: [number, number] | null; gap: [number, number] | null; marks: [number, number] | null; outside?: [number, number] | null };
+  /** `outside`: the 3-D place of `at2d.outside` when the part's pose is trusted, else `null`. */
+  at: { bridge: number[] | null; gap: number[] | null; marks: number[] | null; outside: [number, number, number] | null };
   /**
    * Why a reading is `null` although `evaluated` is true — the geometry engine refused
    * the profile, or the reading threw — or `null` for each one that was taken.
    */
   readErrors: { bridge: string | null; gap: string | null; marks: string | null; marksArea: string | null };
   evaluated: boolean;
+  /** A routed part's (`process: "cnc-router"`) operations table; absent on a laser part. */
+  routed?: RoutedFacts;
+}
+
+/** A routed part's operations table, as the README's ROUTER OPERATIONS block prints it. Sizes in mm to two decimals. */
+export interface RoutedFacts {
+  profile: { w: number; h: number };
+  /** One row per non-empty pocket. */
+  pockets: Array<{ label: string | null; depth: number; w: number; h: number; area: number }>;
+  /** One row per tool setting (d, depth, through), labels joined with ", ". */
+  drills: Array<{ label: string | null; d: number; depth: number; through: boolean; count: number }>;
+  /** One row per extra op with a non-empty footprint; `maxDepth` is how far its solid reaches below the machined face, within the stock. */
+  extra: Array<{ label: string; method: string; w: number; h: number; maxDepth: number }>;
+  /** How many pockets, drills and extra footprints leave the profile. */
+  outside: number;
+  /** How many pockets and extra footprints resolved to an empty region. */
+  empty: number;
 }
 
 export interface SubPartFacts {

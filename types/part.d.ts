@@ -491,6 +491,17 @@ export interface DfmProfile {
   overhang?: number | null;
   /** Carried for a future gap check; not enforced yet. */
   clearance?: number;
+  /**
+   * Diametral fit offsets in mm, negative = interference: `press` (never comes
+   * out), `push` (pressed on by hand), `slip` (lifts off), `moving` (a pin or
+   * axle), `printInPlace` (printed assembled). Guide defaults; an inline profile
+   * replaces the whole table.
+   */
+  fits?: { press: number; push: number; slip: number; moving: number; printInPlace: number };
+  /** Added to a horizontal bore's diameter — a printed arch sags inward. */
+  holeUndersize?: number;
+  /** Longest flat span printed unsupported, mm. Absent on a process that prints on supports. */
+  bridge?: number;
   /** Inherit from a named profile and override the rest. */
   base?: DfmProfileName | DfmProfile;
 }
@@ -507,6 +518,16 @@ export type AssertionExpr = number | string | boolean;
 export type Expectation = AssertionExpr | { expr: AssertionExpr; hint?: string };
 
 /**
+ * `bounds`: where the geometry sits, written in the same `{ min, max }` shape
+ * `measure` reports — `{ min: ">=[0,0,0]", max: "<=[220,220,250]" }`. Each side is
+ * a componentwise vector expectation (`*` skips an axis); either may be left out.
+ */
+export interface BoundsExpectation {
+  min?: Expectation;
+  max?: Expectation;
+}
+
+/**
  * Per-sub-part expectations. The keys are exactly `SUBPART_METRICS` in
  * src/framework/verify-metrics.js. `holes`/`watertight` are Manifold-only and
  * SKIP on an OCCT part; `minWall` is a warning, never a gate.
@@ -519,7 +540,11 @@ export interface SubPartExpectations {
   triangleCount?: Expectation;
   bbox?: Expectation;
   centerOfMass?: Expectation;
+  /** The axis-aligned corners: `{ min: ">=[x,y,z]", max: "<=[x,y,z]" }`, as `measure` reports `bounds`. */
+  bounds?: BoundsExpectation;
+  /** @deprecated Write `bounds: { min }` — still evaluated, no longer taught. */
   boundsMin?: Expectation;
+  /** @deprecated Write `bounds: { max }` — still evaluated, no longer taught. */
   boundsMax?: Expectation;
   minWall?: Expectation;
   /**
@@ -556,6 +581,14 @@ export interface SubPartExpectations {
   sheetPieces?: Expectation;
   /** Sheet parts with a custom `build` only: % volume drift from profile area × thickness minus the marks (volunteered check: `<=2`). */
   sheetSolidMatch?: Expectation;
+  /** Routed parts only: pocket, drill or extra-op footprint regions outside the profile (volunteered check: `0`). */
+  routedOutside?: Expectation;
+  /** Routed parts only: pockets whose region resolved empty (volunteered check: `0`). */
+  routedEmpty?: Expectation;
+  /** Routed parts only: separate regions in the cut profile (volunteered check: `1`). */
+  routedPieces?: Expectation;
+  /** Routed parts only: overlapping near- and far-face pocket pairs whose depths together exceed the stock (volunteered check: `0`). */
+  routedBreakthrough?: Expectation;
 }
 
 /**
@@ -568,12 +601,21 @@ export interface ViewExpectations {
   volume?: Expectation;
   overlaps?: Expectation;
   centerOfMass?: Expectation;
+  /** The axis-aligned corners: `{ min: ">=[x,y,z]", max: "<=[x,y,z]" }`, as `measure` reports `bounds`. */
+  bounds?: BoundsExpectation;
+  /** @deprecated Write `bounds: { min }` — still evaluated, no longer taught. */
   boundsMin?: Expectation;
+  /** @deprecated Write `bounds: { max }` — still evaluated, no longer taught. */
   boundsMax?: Expectation;
   /** Pairs that must touch, as `[["a", "b"], …]`. */
   contacts?: Array<[string, string]>;
   /** Intended free fits, keyed `"a×b"` (order-insensitive). */
   clearance?: Record<string, Expectation>;
+  /**
+   * Every exportable sub-part must be connected, through contact or overlap, to
+   * the base: the lowest sub-part (`true`) or the named one. Topological only.
+   */
+  held?: true | string;
 }
 
 /** `verify.expect`: sub-part names plus the reserved `_view` key. */
@@ -634,11 +676,27 @@ export type ViewCubeOrientation =
   | "bottom-front-left" | "bottom-front-right" | "bottom-back-left" | "bottom-back-right";
 
 /**
- * A camera cue angle: one of the canonical seven or a view-cube orientation.
- * `partforge lint` rejects anything else (`animation-camera-invalid`). Cues fire
- * during play only; scrubbing never moves the camera.
+ * A free-form camera angle, for the ones no name reaches. Degrees, in the
+ * part's own frame: `azimuth` 0 looks from the front (-Y) and turns toward the
+ * right (+X) at 90, back at 180, left at -90; `elevation` is above the
+ * horizontal, -90..90. `iso` is `{ azimuth: 45, elevation: 35.26 }` and
+ * `front-right` is `{ azimuth: 45, elevation: 0 }`. `distance` multiplies the
+ * framing distance a named angle uses (default 1; 0.1..10). The camera always
+ * aims at the part's centre.
  */
-export type CameraCue = CanonicalView | ViewCubeOrientation;
+export interface CameraOrbit {
+  azimuth: number;
+  elevation: number;
+  distance?: number;
+}
+
+/**
+ * A camera cue: one of the canonical seven, a view-cube orientation, or a
+ * free-form `CameraOrbit`. `partforge lint` rejects anything else
+ * (`animation-camera-invalid`). Cues fire during play only; scrubbing never
+ * moves the camera.
+ */
+export type CameraCue = CanonicalView | ViewCubeOrientation | CameraOrbit;
 
 /** One step of a multi-step animation. Steps play in order; prev/next navigate them. */
 export interface AnimationStep {

@@ -2,7 +2,7 @@
 // pulling in a geometry kernel — src/framework/oracle/verify.js imports measure.js and the part model,
 // which reach manifold-3d/replicad. This test pins both the move and the re-export.
 import { expect, test } from "vitest";
-import { SUBPART_METRICS, VIEW_METRICS } from "../src/framework/verify-metrics.js";
+import { SUBPART_METRICS, VIEW_METRICS, teachableMetrics } from "../src/framework/verify-metrics.js";
 import { SUBPART_METRICS as reSub, VIEW_METRICS as reView } from "../src/framework/oracle/verify.js";
 import { suggest } from "../src/framework/geometry/op-options.js";
 import { SHEET_METRICS } from "../src/framework/process/registry.js";
@@ -10,7 +10,7 @@ import { evaluateCase } from "../src/framework/oracle/verify.js";
 
 test("verify-metrics exposes the subpart metric vocabulary", () => {
   for (const name of ["holes", "watertight", "volume", "surfaceArea", "triangleCount",
-    "bbox", "centerOfMass", "boundsMin", "boundsMax", "minWall"]) {
+    "bbox", "centerOfMass", "bounds", "boundsMin", "boundsMax", "minWall"]) {
     expect(Object.keys(SUBPART_METRICS), `missing ${name}`).toContain(name);
   }
   expect(SUBPART_METRICS.minWall.kind).toBe("warn");
@@ -18,7 +18,7 @@ test("verify-metrics exposes the subpart metric vocabulary", () => {
 });
 
 test("verify-metrics exposes the view metric vocabulary", () => {
-  for (const name of ["bbox", "volume", "overlaps", "centerOfMass", "boundsMin", "boundsMax"]) {
+  for (const name of ["bbox", "volume", "overlaps", "centerOfMass", "bounds", "boundsMin", "boundsMax"]) {
     expect(Object.keys(VIEW_METRICS), `missing ${name}`).toContain(name);
   }
 });
@@ -27,6 +27,18 @@ test("every metric carries a hint, as the diagnostics contract promises", () => 
   for (const [name, m] of [...Object.entries(SUBPART_METRICS), ...Object.entries(VIEW_METRICS)]) {
     expect(typeof m.hint, `${name} has no hint`).toBe("string");
     expect(m.hint.length, `${name} hint is empty`).toBeGreaterThan(0);
+  }
+});
+
+test("bounds is compound and the flat spellings are legacy, never taught", () => {
+  for (const reg of [SUBPART_METRICS, VIEW_METRICS]) {
+    expect(Object.keys(reg.bounds.sides)).toEqual(["min", "max"]);
+    for (const side of Object.values(reg.bounds.sides)) expect(typeof side.hint).toBe("string");
+    expect(reg.boundsMin.legacy).toBe("bounds");
+    expect(reg.boundsMax.legacy).toBe("bounds");
+    expect(teachableMetrics(reg)).toContain("bounds");
+    expect(teachableMetrics(reg)).not.toContain("boundsMin");
+    expect(teachableMetrics(reg)).not.toContain("boundsMax");
   }
 });
 
@@ -48,7 +60,7 @@ test("suggest is exported for reuse by the linter", () => {
 // The sub-part metrics that existed before sheet parts. A process metric must never
 // take one of these names: the spread into SUBPART_METRICS would silently replace it.
 const PRINT_METRICS = ["holes", "watertight", "volume", "surfaceArea", "triangleCount", "bbox", "centerOfMass",
-  "boundsMin", "boundsMax", "minWall", "overhangArea", "wall", "refXorVolume", "refVolumeDeltaPct", "refBboxDelta"];
+  "bounds", "boundsMin", "boundsMax", "minWall", "overhangArea", "wall", "refXorVolume", "refVolumeDeltaPct", "refBboxDelta"];
 
 // A sheet sub-part's facts row, as measure() stamps it (Task 4), for evaluateCase.
 const sheetRow = (sheet) => ({ name: "plate", volume: 7200, bbox: [60, 40, 3], sheet: {
@@ -63,7 +75,8 @@ const caseOf = (row, expect) => evaluateCase(
 const declared = (checks, metric) => checks.find((c) => c.metric === metric && !c.volunteered);
 
 test("the sheet metrics join the sub-part vocabulary without replacing a print metric", () => {
-  expect(Object.keys(SHEET_METRICS).sort()).toEqual(["sheetBridge", "sheetGap", "sheetMarks", "sheetPieces", "sheetSolidMatch"]);
+  expect(Object.keys(SHEET_METRICS).sort()).toEqual([
+    "routedBreakthrough", "routedEmpty", "routedOutside", "routedPieces", "sheetBridge", "sheetGap", "sheetMarks", "sheetPieces", "sheetSolidMatch"]);
   for (const name of Object.keys(SHEET_METRICS)) {
     expect(PRINT_METRICS, `${name} collides with a print metric`).not.toContain(name);
     expect(SUBPART_METRICS[name]).toBe(SHEET_METRICS[name]);
@@ -71,10 +84,10 @@ test("the sheet metrics join the sub-part vocabulary without replacing a print m
   for (const name of PRINT_METRICS) expect(Object.keys(SUBPART_METRICS)).toContain(name);
 });
 
-test("every sheet metric is a warning that names the guide section, not an ERROR-PATTERNS entry", () => {
+test("every sheet metric is a warning that names its process's guide section, not an ERROR-PATTERNS entry", () => {
   for (const [name, m] of Object.entries(SHEET_METRICS)) {
     expect(m.kind, name).toBe("warn");
-    expect(m.doc, name).toBe("sheet-parts");
+    expect(m.doc, name).toBe(name.startsWith("routed") ? "routed-parts" : "sheet-parts");
     expect(m.pattern, name).toBeUndefined();
     expect(m.hint.length, `${name} hint`).toBeLessThanOrEqual(500);
   }
@@ -94,4 +107,23 @@ test("a capped width passes with a note saying the value is the search ceiling",
   const c = declared(caseOf(sheetRow({}), { plate: { sheetBridge: ">=1.5" } }), "sheetBridge");
   expect(c).toMatchObject({ status: "pass", note: "nothing narrower than 3 mm found — the value is the search ceiling" });
   expect(c.pattern).toBeUndefined();
+});
+
+// One spelling taught: the agent-facing docs and skills name `bounds`, never the flat
+// spellings it replaced (which verify still evaluates, untaught). Design records under
+// docs/superpowers/ are history and keep the names they were written with.
+test("no doc or skill teaches the retired boundsMin / boundsMax", async () => {
+  const { readFileSync, readdirSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const root = new URL("..", import.meta.url).pathname;
+  const walk = (dir) => readdirSync(join(root, dir), { withFileTypes: true }).flatMap((e) => {
+    const rel = join(dir, e.name);
+    if (e.isDirectory()) return rel === join("docs", "superpowers") ? [] : walk(rel);
+    return e.name.endsWith(".md") ? [rel] : [];
+  });
+  const files = [...walk("docs"), ...walk("skills"), "README.md", "AGENTS.md"];
+  for (const rel of files) {
+    expect(readFileSync(join(root, rel), "utf8"), rel).not.toMatch(/boundsM(in|ax)/);
+  }
+  expect(readFileSync(join(root, "docs/AUTHORING-PARTS.md"), "utf8")).toContain('bounds: { min: ">=[0,0,0]"');
 });

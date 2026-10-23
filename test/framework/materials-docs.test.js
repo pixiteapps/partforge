@@ -65,5 +65,5 @@ test("the unknown-material catalog entry says what the lint hint says, both ways
   const entry = items.find((item) => item.includes("`unknown-material` ("));
   expect(entry).toBeDefined();
   expect(entry).toContain("a PLA print in realistic mode"); // the hint on an ordinary sub-part
-  expect(entry).toMatch(/laser sheet part its stock's look/); // the hint on a laser sheet
+  expect(entry).toMatch(/laser or routed sheet part its stock's look/); // the hint on a laser sheet
 });

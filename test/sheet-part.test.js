@@ -56,7 +56,7 @@ describe("load-time errors name the fix", () => {
     [{ ...base, folds: [] }, 'sheetPart: "folds" is reserved for a future process and not supported yet'],
     [{ ...base, grain: "x" }, 'sheetPart: "grain" is reserved for a future process and not supported yet'],
     [{ ...base, colour: "red" }, 'sheetPart: unknown key "colour" — the keys are material, thickness, profile, score, engrave, pose, process, plus the sub-part keys label, views, display, export, enabled, exportable, reference, place'],
-    [{ ...base, process: "cnc" }, 'sheetPart: unknown process "cnc" — valid: laser'],
+    [{ ...base, process: "cnc" }, 'sheetPart: unknown process "cnc" — valid: laser, cnc-router; for CNC-routed stock with pockets and drills at depth use routedPart()'],
     [{ ...base, material: "" }, 'sheetPart: material must be a non-empty string or a (p, d) => string function — a stock label like "birch plywood"'],
     [{ ...base, thickness: 0 }, "sheetPart: thickness must be a number > 0 or a (p, d) => number function — the MEASURED sheet thickness in mm"],
     [{ ...base, profile: rect(0, 0, 1, 1) }, "sheetPart: profile must be a function (k, p, d) => Shape2D or profile"],

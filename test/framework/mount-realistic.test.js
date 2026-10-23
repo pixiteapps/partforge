@@ -789,7 +789,7 @@ test("a laser sheet with no material gets a sheet frame, not a print frame", asy
   await runtime.renderMode.set("realistic");
   expect(printFrameCalls.count).toBe(0);                      // no layer lines: it is no longer PLA
   expect(sheetFrameCalls.count).toBe(1);
-  expect(viewers[0].__subMesh("panel").material.userData.patternUniforms.pfPlies.value).toBe(3);
+  expect(viewers[0].__subMesh("panel").material.userData.patternUniforms.pfPlyCount.value).toBe(3);
   runtime.dispose();
 });
 
@@ -811,7 +811,7 @@ test("sheets that name no material draw as their stock but never make the part d
   expect(runtime.declaresMaterials).toBe(false);
   await runtime.renderMode.set("realistic");
   const u = viewers[0].__subMesh("panel").material.userData.patternUniforms;
-  expect(u.pfPlies.value).toBe(3);                            // drawn as plywood, burning
+  expect(u.pfPlyCount.value).toBe(3);                         // drawn as plywood, burning
   expect(u.pfSheetT.value).toBe(3);
   runtime.dispose();
 });

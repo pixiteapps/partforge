@@ -3,9 +3,9 @@
 // which is also the documented reason CLI stdout isn't pure JSON in that case.
 // Catching them statically removes both the wasted boot and the stdout caveat.
 import { err } from "./finding.js";
-import { SUBPART_METRICS, VIEW_METRICS } from "../verify-metrics.js";
+import { SUBPART_METRICS, VIEW_METRICS, BOUNDS_FORM, teachableMetrics, sidesSpecError } from "../verify-metrics.js";
 import { PROFILES, ORIENTATIONS } from "../oracle/dfm-profiles.js";
-import { parseAssertion } from "../oracle/assert-dsl.js";
+import { parseAssertion, bareVectorHint } from "../oracle/assert-dsl.js";
 import { suggest } from "../geometry/op-options.js";
 import { PROCESS_IDS } from "../process/registry.js";
 import { SHEET_DOC_ID } from "../sheet/constants.js";
@@ -28,12 +28,13 @@ export function resolveExpect(verify, p, d) {
 const isExpectation = (v) => v !== null && typeof v === "object" && !Array.isArray(v) && "expr" in v;
 const exprOf = (v) => (isExpectation(v) ? v.expr : v);
 
-// `contacts` (must-touch pairs) and `clearance` (free-fit gaps) live under
-// `verify.expect._view` but are pair-wise checks, not scalar VIEW_METRICS — mirror
-// verify.js's own peel (verify.js:143) so they never hit the scalar-metric /
-// assertion-expression checks below. Validated for real by `verify-bad-pair-check`.
+// `contacts` (must-touch pairs), `clearance` (free-fit gaps) and `held` (the
+// contact graph) live under `verify.expect._view` but are pair-derived checks,
+// not scalar VIEW_METRICS — mirror verify.js's own peel (evaluateCase) so they
+// never hit the scalar-metric / assertion-expression checks below. Validated for
+// real by `verify-bad-pair-check`.
 const peelPairKeys = (metrics) => {
-  const { contacts, clearance, ...rest } = metrics;
+  const { contacts, clearance, held, ...rest } = metrics;
   return rest;
 };
 
@@ -124,6 +125,33 @@ function checkClearance(clearance, names, path) {
   return out;
 }
 
+// Static analogue of held.js: `true`, or the name of the sub-part the graph is
+// rooted at. Anything else throws at runtime, so it is an error here. A ghost
+// (`exportable: false`) is never printed, so it cannot be the base either — the
+// runtime would accept it and report a misleading skip.
+function checkHeld(held, parts, path) {
+  if (held === undefined || held === null || held === true) return [];
+  const names = Object.keys(parts);
+  if (typeof held === "string") {
+    if (names.includes(held)) {
+      if (parts[held]?.exportable !== false) return [];
+      return [err("verify-bad-pair-check",
+        `\`${path}\` names "${held}", which is exportable: false and never printed, so it cannot be the base`,
+        "Root the contact graph at a printed sub-part, or `held: true` for the lowest one.",
+        path)];
+    }
+    const hint = safeSuggest(held, names);
+    return [err("verify-unknown-subpart",
+      `\`${path}\` references "${held}", which is not a sub-part`,
+      `Use \`true\` (the lowest sub-part is the base) or one of the sub-part names (${names.join(", ")})${hint ? ` — did you mean "${hint}"?` : "."}`,
+      path)];
+  }
+  return [err("verify-bad-pair-check",
+    `\`${path}\` must be true or a sub-part name, got ${describe(held)}`,
+    "Set `held: true` to root the contact graph at the lowest sub-part, or `held: \"<name>\"` to root it at that sub-part.",
+    path)];
+}
+
 // `clearance`'s values genuinely are assertion expressions run through the DSL
 // (verify.js:96), unlike `contacts` (pair arrays with nothing to parse). Mirror
 // verify.js's own normalization — a bare value or an `{ expr, hint }` wrapper,
@@ -132,6 +160,8 @@ function checkClearance(clearance, names, path) {
 // `verify-bad-expr`, not `verify-bad-pair-check`: a malformed key is a pair-naming
 // problem, but a malformed value is an assertion-DSL problem, same as any other
 // metric's expectation.
+const DSL_HINT = "Use the assertion DSL: a bare value for equality, a comparison like `>=3`, a range like `2..5`, or a componentwise vector like `<=[60,60,60]` or `[28..32,18..22,9..11]` (with `*` to skip an axis).";
+
 function checkClearanceExprs(clearance, path) {
   if (clearance === undefined || clearance === null || typeof clearance !== "object") return [];
   const out = [];
@@ -140,7 +170,7 @@ function checkClearanceExprs(clearance, path) {
     catch (e) {
       out.push(err("verify-bad-expr",
         `the expectation for _view.clearance["${key}"] is not a valid assertion: ${e?.message || String(e)}`,
-        "Use the assertion DSL: a bare value for equality, a comparison like `>=3`, a range like `2..5`, or a componentwise vector like `<=[60,60,60]` (with `*` to skip an axis).",
+        DSL_HINT,
         `${path}[${JSON.stringify(key)}]`));
     }
   }
@@ -187,6 +217,60 @@ function checkProcessSpec(spec, path, valid, seen, depth = 0) {
     path)];
 }
 
+// One expectation's well-formedness against its registry entry: it parses, and it has the form the
+// metric reads — a range for `wall`, a componentwise vector for bbox/centerOfMass/the
+// sides of bounds. A bare vector gets the two legal spellings back, in its own numbers.
+const VECTOR_OPS = new Set(["vle", "vge", "vrange"]);
+const capitalize = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+
+function checkExpr(target, metric, spec, reg) {
+  const path = `verify.expect.${target}.${metric}`;
+  const expr = exprOf(spec);
+  let parsed;
+  try { parsed = parseAssertion(expr); }
+  catch (e) {
+    const bare = bareVectorHint(expr);
+    return [err("verify-bad-expr",
+      `the expectation for ${target}.${metric} is not a valid assertion: ${e?.message || String(e)}`,
+      bare ? `${capitalize(bare)}. A vector expectation is one-sided: "<=" for a limit, ">=" for a floor.` : DSL_HINT,
+      path)];
+  }
+  const form = reg?.form;
+  if (form === "range" && parsed.op !== "range") {
+    return [err("verify-bad-expr",
+      `the expectation for ${target}.${metric} must be a range like "1.8..2.2" — the ${metric} metric needs both ends of its band`,
+      `Write ${metric} as \`"<min>..<max>"\` in mm.`,
+      path)];
+  }
+  if (form === "range" && parsed.min > parsed.max) {
+    return [err("verify-bad-expr",
+      `the expectation for ${target}.${metric} must be a range with min <= max, got "${expr}"`,
+      `Write ${metric} as \`"<min>..<max>"\` with min <= max, in mm.`,
+      path)];
+  }
+  if (form === "vector" && parsed.op !== "vle" && parsed.op !== "vge" && parsed.op !== "vrange") {
+    return [err("verify-bad-expr",
+      `the expectation for ${target}.${metric} must be a componentwise vector, got ${describe(expr)} — ${metric} is an [x,y,z] reading`,
+      `Write ${metric} as \`"<=[x,y,z]"\`, \`">=[x,y,z]"\` or \`"[a..b,c..d,e..f]"\` (componentwise; * skips an axis).`,
+      path)];
+  }
+  // A vector on a scalar metric (`volume: "<=[1,2,3]"`) is not a parse error, and
+  // the evaluator would index a number and pass it vacuously — so it is caught here.
+  if (form !== "vector" && VECTOR_OPS.has(parsed.op)) {
+    return [err("verify-bad-expr",
+      `the expectation for ${target}.${metric} must be a single value, got ${describe(expr)} — ${metric} is one number, not an [x,y,z] reading`,
+      DSL_HINT,
+      path)];
+  }
+  if (parsed.op === "vrange" && parsed.vec.some((c) => c !== null && c[0] > c[1])) {
+    return [err("verify-bad-expr",
+      `the expectation for ${target}.${metric} must be a range vector with min <= max on every axis, got "${expr}"`,
+      `Write each axis of ${metric} as \`<min>..<max>\` with min <= max, in mm (or \`*\` to skip it).`,
+      path)];
+  }
+  return [];
+}
+
 export const VERIFY_RULES = [
   {
     id: "verify-expect-throws",
@@ -229,9 +313,12 @@ export const VERIFY_RULES = [
         // separately by verify-bad-pair-check, and excluded here.
         const metrics = target === "_view" ? peelPairKeys(metricsRaw) : metricsRaw;
         const registry = target === "_view" ? VIEW_METRICS : SUBPART_METRICS;
-        const valid = Object.keys(registry);
+        // Legacy spellings (boundsMin/boundsMax) still pass this rule, since verify
+        // still evaluates them, but are never listed or suggested: the vocabulary a
+        // reader is shown is the one the docs teach.
+        const valid = teachableMetrics(registry);
         for (const metric of Object.keys(metrics)) {
-          if (valid.includes(metric)) continue;
+          if (Object.hasOwn(registry, metric)) continue;
           const hint = suggest(metric, valid);
           out.push(err("verify-unknown-metric",
             `"${metric}" is not a ${target === "_view" ? "view" : "sub-part"} metric`,
@@ -256,28 +343,28 @@ export const VERIFY_RULES = [
         // though, so they get their own pass (with a pair-shaped path) below.
         const metrics = target === "_view" ? peelPairKeys(metricsRaw) : metricsRaw;
         const registry = target === "_view" ? VIEW_METRICS : SUBPART_METRICS;
-        for (const [metric, spec] of Object.entries(metrics)) {
-          let parsed;
-          try { parsed = parseAssertion(exprOf(spec)); }
-          catch (e) {
-            out.push(err("verify-bad-expr",
-              `the expectation for ${target}.${metric} is not a valid assertion: ${e?.message || String(e)}`,
-              "Use the assertion DSL: a bare value for equality, a comparison like `>=3`, a range like `2..5`, or a componentwise vector like `<=[60,60,60]` (with `*` to skip an axis).",
-              `verify.expect.${target}.${metric}`));
+        for (const [metric, specRaw] of Object.entries(metrics)) {
+          // A compound metric (`bounds: { min, max }`) is checked side by side, each
+          // side an ordinary expectation against its own registry entry.
+          // An unknown metric is verify-unknown-metric's finding; parsing its value
+          // too would only add a second, vaguer error for the same key.
+          if (!Object.hasOwn(registry, metric)) continue;
+          const reg = registry[metric];
+          if (reg.sides) {
+            const bad = sidesSpecError(metric, reg, specRaw);
+            if (bad) {
+              out.push(err("verify-bad-expr",
+                `the expectation for ${target}.${metric} is malformed: ${bad}`,
+                `Write \`${BOUNDS_FORM}\` — the same { min, max } shape measure reports. Either side may be left out, and \`*\` skips an axis.`,
+                `verify.expect.${target}.${metric}`));
+              continue;
+            }
+            for (const [side, sideSpec] of Object.entries(specRaw)) {
+              out.push(...checkExpr(target, `${metric}.${side}`, sideSpec, reg.sides[side]));
+            }
             continue;
           }
-          const form = registry[metric]?.form;
-          if (form === "range" && parsed.op !== "range") {
-            out.push(err("verify-bad-expr",
-              `the expectation for ${target}.${metric} must be a range like "1.8..2.2" — the ${metric} metric needs both ends of its band`,
-              `Write ${metric} as \`"<min>..<max>"\` in mm.`,
-              `verify.expect.${target}.${metric}`));
-          } else if (form === "range" && parsed.op === "range" && parsed.min > parsed.max) {
-            out.push(err("verify-bad-expr",
-              `the expectation for ${target}.${metric} must be a range with min <= max, got "${exprOf(spec)}"`,
-              `Write ${metric} as \`"<min>..<max>"\` with min <= max, in mm.`,
-              `verify.expect.${target}.${metric}`));
-          }
+          out.push(...checkExpr(target, metric, specRaw, reg));
         }
       }
       out.push(...checkClearanceExprs(expect?._view?.clearance, "verify.expect._view.clearance"));
@@ -294,6 +381,7 @@ export const VERIFY_RULES = [
       return [
         ...checkContacts(view.contacts, names, "verify.expect._view.contacts"),
         ...checkClearance(view.clearance, names, "verify.expect._view.clearance"),
+        ...checkHeld(view.held, part?.parts ?? {}, "verify.expect._view.held"),
       ];
     },
   },

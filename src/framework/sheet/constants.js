@@ -17,6 +17,13 @@
 // lint finding and DFM check carries it as `pattern`, which survives the host's
 // truncation of message/hint.
 export const SHEET_DOC_ID = "sheet-parts";
+// The routed-parts guide section id ("## Routed parts" in docs/AUTHORING-PARTS.md):
+// every cnc-router lint finding and check carries it as `pattern`.
+export const ROUTED_DOC_ID = "routed-parts";
+// The keys only routedPart() admits, on top of SHEET_KEYS. `reference` is stored on
+// the sheet record as `score` (same array shape, same preview groove) and drawn on
+// the REFERENCE layer; the other three are resolved by sheet/routed.js.
+export const ROUTED_KEYS = Object.freeze(["pockets", "drills", "extra", "reference"]);
 
 // The six axis words a SheetPose names its face and up with.
 export const AXIS_WORDS = Object.freeze(["+X", "-X", "+Y", "-Y", "+Z", "-Z"]);

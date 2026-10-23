@@ -102,3 +102,9 @@ test("usage lists the lint command", () => {
   const r = run(["nonsense"]);
   expect(r.stderr).toMatch(/lint/);
 });
+
+test("a build that throws only after a stubbed query loads: lint --strict exits 0", () => {
+  const truss = fileURLToPath(new URL("./fixtures/stub-query-truss-part.js", import.meta.url));
+  const r = run(["lint", truss, "--strict"]);
+  expect(r.status).toBe(0);
+});

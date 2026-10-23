@@ -136,6 +136,7 @@ describe("own laser (the defaults)", () => {
     ]) expect(lines).toContain(line);
     expect(readme).toContain("\nCHECKS\nnone\n");
     expect(readme).not.toContain("OVERSIZED PIECES");
+    expect(readme).not.toContain("ROUTER OPERATIONS");
     expect(readme).not.toContain("\u0007");
   });
 

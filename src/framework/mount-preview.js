@@ -8,8 +8,29 @@
 // built once the GLB has decoded, from a synthetic part: one sub-part per glTF
 // mesh, carrying the `display` block the writer stored beside it, and the file's
 // background/environment meta. The CAD look is exact; realistic mode uses each
-// sub-part's display only — no sheet stock, no layer-line print frames (a v1
-// residual alongside "no edges"). The decoder loads on demand (it carries the
+// sub-part's display only — no sheet stock, no layer-line print frames (a
+// residual of the format). CAD feature edges come from the file (encoder
+// version 2, sharing the surface's vertices since version 3); a version-1 file
+// decodes with none.
+//
+// A file that carries a baked autoplay animation (encoder version 4) plays it
+// once drawn, through preview-player.js — poses, opacities and camera cues off
+// the viewer's own frame loop, still with no part code. `animate: false` shows
+// the opening pose and no player (the editor's own boot preview goes through
+// mount(), not here). Under prefers-reduced-motion the player never starts: the
+// file's opening pose, every sub-part opaque, nothing moves. Parking
+// (setActive(false)) stops the viewer's frame loop, and the player's clock with
+// it, so a parked preview is a paused one. `handle.animation` is null once
+// disposed.
+//
+// A playing animation also gets a play/pause/replay button in #viewbar,
+// directly before the view style button (preview-play-button.js): Pause while
+// it plays (or tweens to its intro view), Play while paused, Replay once a
+// one-time animation has finished. No button under reduced motion, for a still
+// file, with `animate: false`, or for a host with no #viewbar; the host can
+// still drive `handle.animation` (state / pause / resume / replay) itself.
+//
+// The decoder loads on demand (it carries the
 // GLTFLoader and meshopt), so a bundle that never mounts a preview never ships it.
 // Hence `ready`. Every handle method is safe before it resolves.
 import "./app.css";
@@ -21,6 +42,8 @@ import { observeViewbarClear } from "./viewbar-clear.js";
 import { createTooltipPresenter } from "./tooltip.js";
 import { isFaceAlignedState } from "./projection.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
+import { createPreviewPlayer } from "./preview-player.js";
+import { attachPreviewPlayButton } from "./preview-play-button.js";
 
 function previewPart({ meshes, view, meta }) {
   return {
@@ -42,12 +65,13 @@ const relay = (listeners) => (event) => {
   }
 };
 
-export function mountPreview(container, { glb, elements = {}, viewerState = null } = {}) {
+export function mountPreview(container, { glb, elements = {}, viewerState = null, animate = true } = {}) {
   if (!container) throw new TypeError("mountPreview: a container element is required");
   let disposed = false;
   let active = true;
   let carried = viewerState ?? null; // applied once the viewer exists, and on every setViewerState
   let live = null;                   // { viewer, view } once the GLB has decoded
+  let player = null;                 // the baked animation's player, once drawn
   const cleanups = [];
   const modeListeners = new Set();
   const envListeners = new Set();
@@ -90,6 +114,17 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
     live = { viewer, view };
     applyState(carried);
     if (!active) viewer.setActive(false);
+    if (decoded.animation && animate !== false) {
+      const reducedMotion = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+      player = createPreviewPlayer(viewer, decoded.animation, { reducedMotion });
+      const own = player;
+      cleanups.push(() => own.dispose());
+      player.start();
+      if (!reducedMotion && toolbar) {
+        const playButton = attachPreviewPlayButton(own, { toolbar, before: viewStyle.element }, { tooltip });
+        cleanups.push(() => playButton.detach());
+      }
+    }
   });
   ready.catch(() => {}); // the host awaits it; never an unhandled rejection
 
@@ -117,6 +152,7 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
       if (disposed) return;
       disposed = true;
       live = null;
+      player = null; // `animation` answers null once disposed (the cleanup below disposes it)
       const errors = [];
       while (cleanups.length) {
         try { cleanups.pop()(); } catch (error) { errors.push(error); }
@@ -125,6 +161,10 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
       if (errors.length > 1) throw new AggregateError(errors, "partforge mountPreview cleanup failed");
     },
     getView: () => live?.view ?? null,
+    // null before ready, for a still file, with animate: false, and once disposed.
+    get animation() {
+      return player ? { state: player.state, pause: player.pause, resume: player.resume, replay: player.replay } : null;
+    },
     getViewerState,
     setViewerState(next) {
       carried = next ?? null;

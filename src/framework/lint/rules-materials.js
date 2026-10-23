@@ -19,7 +19,7 @@ export const MATERIAL_RULES = [
     id: "unknown-material",
     run: ({ part }) => issuesOf(part, "unknown-material").map(({ name, value }) => {
       const near = typeof value === "string" ? suggest(value, listedPresets()) : null;
-      // A laser sheet falls back to its stock's look, not to PLA (materials/sheet-look.js) —
+      // A laser or routed sheet falls back to its stock's look, not to PLA (materials/sheet-look.js) —
       // read from a string label only: a label written as a function takes the default look.
       const sp = part.parts[name];
       const stock = sheetStockLook(sp);
@@ -27,8 +27,25 @@ export const MATERIAL_RULES = [
       const fallback = stock ? `in realistic mode \`${stock}\`${why}` : "a PLA print in realistic mode";
       return warn("unknown-material",
         `sub-part "${name}" names material ${JSON.stringify(value)}, which is not in the library`,
-        `${near ? `Did you mean "${near}"? ` : ""}The viewer draws it as if it named no material instead (${fallback}). Known materials: ${listedPresets().join(", ")}.`,
+        `${near ? `Did you mean "${near}"? ` : ""}It is drawn as if it named none (${fallback}). Known materials: ${listedPresets().join(", ")}.`,
         `parts.${name}.display.material`);
+    }),
+  },
+  {
+    // A `color` on a scanned-texture preset that is not tintable MULTIPLIES the scan
+    // (physical.js), so the grain goes muddy — usually an agent "helping" a wood look
+    // with a brown. A warning, not an error: a deliberate stain is legitimate.
+    id: "material-tint-textured",
+    run: ({ part }) => subParts(part).flatMap(([name, sp]) => {
+      const d = sp.display;
+      if (!d || typeof d !== "object" || d.color == null || typeof d.material !== "string") return [];
+      if (!Object.hasOwn(PRESETS, d.material)) return [];
+      const preset = PRESETS[d.material];
+      if (!preset.textures || preset.tintable) return [];
+      return [warn("material-tint-textured",
+        `sub-part "${name}" sets display.color on "${d.material}", a textured material: the colour multiplies the scanned ${preset.label.toLowerCase()} and dulls its grain`,
+        `Drop display.color to show ${d.material}'s own colour and grain — the preset already carries it, in the CAD view too. Keep color only for a deliberate stain.`,
+        `parts.${name}.display.color`)];
     }),
   },
   {

@@ -22,6 +22,7 @@ export const SVG_STROKE_MM = 0.025;   // a hairline: laser software cuts it as a
 // The group order is the cut order — the same list as drawing.js's LAYER_ORDER, which
 // this leaf cannot import (drawing.js reaches paper); test/kit-svg.test.js pins them equal.
 const ORDER = Object.keys(SVG_COLORS);
+const SVG_HEX = /^#[0-9A-F]{6}$/i;
 
 const num = (x) => { const v = Number(x.toFixed(4)); return String(v === 0 ? 0 : v); };   // -0 → "0"
 const escapeXml = (s) => String(s)
@@ -74,13 +75,24 @@ export function renderSvg(doc) {
     `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="${num(W)}mm" height="${num(H)}mm" viewBox="0 0 ${num(W)} ${num(H)}">`,
     `<title>${escapeXml(doc.title)}</title>`,
   ];
-  for (const id of ORDER) {
+  // Group order mirrors dxf.js: engrave, score, every custom (named) layer in first-seen
+  // order across the placements, then cut-inner and cut-outer.
+  const custom = [];
+  for (const placement of doc.placements) for (const layer of placement.drawing.layers)
+    if (layer.name !== undefined && !custom.includes(layer.id)) custom.push(layer.id);
+  const ids = [...ORDER.filter((id) => !id.startsWith("cut")), ...custom, ...ORDER.filter((id) => id.startsWith("cut"))];
+  for (const id of ids) {
     const paths = [];
     for (const placement of doc.placements) {
       const layer = placement.drawing.layers.find((l) => l.id === id);
       if (!layer || layer.paths.length === 0) continue;
       const place = placer(placement);
-      if (id === "engrave") {
+      if (layer.name !== undefined) {
+        // a routed layer: stroked in its own colour, never filled
+        if (!SVG_HEX.test(layer.svgColor ?? "")) throw new Error(`renderSvg: layer ${JSON.stringify(layer.id)} needs an svgColor`);
+        for (const p of layer.paths)
+          paths.push(`<path d="${pathData(p, place, H)}" fill="none" stroke="${layer.svgColor}" stroke-width="${SVG_STROKE_MM}"/>`);
+      } else if (id === "engrave") {
         // one filled path per piece: all its engrave rings, even-odd, so a glyph's
         // counter stays open whatever the rings' winding
         const d = layer.paths.map((p) => pathData(p, place, H)).join(" ");

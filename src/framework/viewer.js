@@ -12,7 +12,7 @@ import { ensureBoxUVs } from "./materials/uv.js";
 import { loadEnvironmentRig } from "./materials/environment.js";
 import { assetUrl } from "./materials/assets.js";
 import { resolveEnvironmentId } from "./materials/resolve.js";
-import { burnsFor, realisticDisplay } from "./materials/sheet-look.js";
+import { boxPlyFrame, burnsFor, realisticDisplay } from "./materials/sheet-look.js";
 import { effectiveDisplay, mergeOverride, sanitizeDisplayPatch, subPartVisibility, APPEARANCE_OVERRIDE_KEYS, VIEWING_KEYS } from "./materials/overrides.js";
 import { neutralToneMapToSrgb8 } from "./materials/tonemap-readback.js";
 import { createMaterialThumbCache, thumbDisplay } from "./materials/thumb-cache.js";
@@ -25,7 +25,7 @@ import { orthoFrustum, perspectiveDistance, isFaceAligned, FACE_ALIGN_COS } from
 import { depthRangeFor } from "./depth-range.js";
 import { addViewerLights, captureLightPoses, createCaptureLights, createHemisphereLight } from "./viewer-lighting.js";
 import { makeCaptureCamera, recenteredView, captureDepthRange } from "./capture-frame.js";
-import { CANONICAL_VIEWS, cameraPoseForView } from "./view-angles.js";
+import { CANONICAL_VIEWS, cameraPoseForView, cameraCueForPose } from "./view-angles.js";
 
 import { srgbEncodeInPlace, RENDER_STYLES, getRenderStyle, CAD_LIGHT_THEME, CAD_DARK_THEME } from "./renderStyles.js";
 import { stylePose, modelToWorld } from "./style-camera.js";
@@ -844,14 +844,13 @@ export function createViewer(container, part) {
       const sp = part.parts[name];
       // `burn` is decided per sub-part material (sheet-look.js burnsFor): only a laser sheet in
       // a wood compiles the burn pass, so every other program is exactly what it was.
-      // realisticDisplay: a laser sheet with no material draws as its stock (sheet-look.js).
+      // realisticDisplay: a sheet part with no material draws as its stock (sheet-look.js).
       // Both read sp.display, so hand them a sub-part whose display is the EFFECTIVE one
       // (authored + the user's appearance override).
       const eff = { ...sp, display: effectiveDisplayOf(name) };
       m = cloneKeepsPattern(buildPhysicalMaterial(realisticDisplay(eff), { printFrame: printFrames[name], burn: burnsFor(eff), loadTexture }));
       physicalMats.set(name, m);
       syncGrain(name);
-      applySheetFrame(m, sheetFrames[name]);
     }
     return m;
   }
@@ -863,6 +862,7 @@ export function createViewer(container, part) {
     const m = physicalMats.get(name);
     const geo = subCache[name];
     if (m && geo) setGrainAxis(m, grainAxisFor(geo.boundingBox));
+    if (m) applySheetFrame(m, sheetFrames[name], name);
   }
 
   function publishMode(extra = {}) {
@@ -1159,16 +1159,34 @@ export function createViewer(container, part) {
 
   // A burning sheet's canonical frame (sheet-look.js sheetFrameFor). No frame — not yet
   // delivered, or not computable at these params — is pfSheetT = 0: plain wood.
-  function applySheetFrame(m, f) {
+  // The same frame stacks a laminated sheet's plies (patterns.js applyPlies); a laminated
+  // sub-part with no sheet frame stacks them by its own bounding box (boxPlyFrame).
+  function applySheetFrame(m, f, name) {
     const u = m.userData.patternUniforms;
-    if (!u?.pfSheetFrame) return;
-    u.pfSheetFrame.value.fromArray(f?.frame ?? IDENTITY_MAT4);
-    u.pfSheetT.value = f?.t ?? 0;
-    u.pfPlies.value = f?.plies ?? 0;
+    if (u?.pfSheetFrame) {
+      u.pfSheetFrame.value.fromArray(f?.frame ?? IDENTITY_MAT4);
+      u.pfSheetT.value = f?.t ?? 0;
+    }
+    if (u?.pfPlyFrame) applyPlyFrame(u, m, f, name);
+  }
+  function applyPlyFrame(u, m, f, name) {
+    const box = subCache[name]?.boundingBox;
+    const axis = m.userData.pfGrainAxis ?? 0;
+    let ply = f?.plies > 0 ? { frame: f.frame, t: f.t, plies: f.plies, grain: null } : null;
+    if (!ply && box && !box.isEmpty()) ply = boxPlyFrame(box.min.toArray(), box.max.toArray(), axis);
+    if (!ply) { u.pfPlyT.value = 0; return; }
+    u.pfPlyFrame.value.fromArray(ply.frame);
+    u.pfPlyT.value = ply.t;
+    u.pfPlyCount.value = ply.plies;
+    if (ply.grain) { u.pfPlyGrain.value.fromArray(ply.grain); return; }
+    // A sheet frame: the face grain is the wood pass's grain axis carried into it.
+    const g = new THREE.Vector3().setComponent(axis, 1).transformDirection(u.pfPlyFrame.value);
+    if (Math.hypot(g.x, g.y) < 1e-6) u.pfPlyGrain.value.set(1, 0);
+    else u.pfPlyGrain.value.set(g.x, g.y).normalize();
   }
   function setSheetFrames(frames) {
     sheetFrames = frames ?? {};
-    for (const [n, m] of physicalMats) applySheetFrame(m, sheetFrames[n]);
+    for (const [n, m] of physicalMats) applySheetFrame(m, sheetFrames[n], n);
   }
 
   // The lazy form mount uses. Frames are PULLED only when something is about to draw the
@@ -1342,6 +1360,21 @@ export function createViewer(container, part) {
       { position: pose.position, target: pose.target },
       { duration, onComplete: finish },
     );
+  }
+  // The user's current view as an animation camera cue (view-angles.js
+  // cameraCueForPose): `{ cue: { azimuth, elevation, distance? }, panned }`,
+  // measured against the same bounds and radius tweenCameraTo frames a cue
+  // with, so playing the returned cue lands where the user is looking now
+  // (bar any pan, which `panned` reports). getCameraState supplies the pose,
+  // so an orthographic view reads at its perspective-equivalent distance.
+  // Null with nothing on screen.
+  function getCameraCue() {
+    const box = getVisibleWorldBounds();
+    if (!box || box.isEmpty()) return null;
+    const center = box.getCenter(new THREE.Vector3()).toArray();
+    const size = box.getSize(new THREE.Vector3());
+    const { pos, target } = getCameraState();
+    return cameraCueForPose({ position: pos, target }, { center, radius: Math.max(size.x, size.y, size.z) || 12 });
   }
   // Cancelling has to put damping back: the tween's own completion path is the
   // only other place that does, and it never runs for a cancelled tween.
@@ -1723,9 +1756,12 @@ export function createViewer(container, part) {
     // draw none rather than falling back. Only a payload with NO edge data at
     // all (edges === undefined; no current backend does this) derives by angle.
     const lg = new LineSegmentsGeometry();
-    if (edges) lg.setPositions(edges); // edges is already a well-formed (possibly zero-length) Float32Array
-    else lg.fromEdgesGeometry(new THREE.EdgesGeometry(out, EDGE_ANGLE));
+    // The raw segment pairs drawn, kept for getSubMeshPayload (reading them back
+    // out of LineSegmentsGeometry's interleaved instance buffer is awkward).
+    const segments = edges ?? new THREE.EdgesGeometry(out, EDGE_ANGLE).getAttribute("position").array;
+    lg.setPositions(segments); // a well-formed (possibly zero-length) Float32Array
     out.userData.edges = lg;
+    out.userData.edgePositions = segments;
     return out;
   }
 
@@ -1772,7 +1808,9 @@ export function createViewer(container, part) {
   // The geometry drawn for one sub-part, as a fresh worker-style payload with its
   // fast-path pose (setSubPose) baked in — the posed mesh a headless buildView
   // would return. Copies: the caller (exportPreview → partforge/gltf) may keep or
-  // transfer them. null when nothing has been delivered under that name.
+  // transfer them. null when nothing has been delivered under that name. Its
+  // `edges` are the lines shown on screen: the kernel's segments, or — when the
+  // delivery carried no edge data at all — the angle-derived fallback lines.
   const _payloadV = new THREE.Vector3();
   const _payloadNormal = new THREE.Matrix3();
   function getSubMeshPayload(name) {
@@ -1793,10 +1831,17 @@ export function createViewer(container, part) {
         _payloadV.fromBufferAttribute(nor, i).applyMatrix3(_payloadNormal).normalize().toArray(normals, i * 3);
       }
     }
+    // Feature edges, posed by the same matrix (an empty array stays empty: "none").
+    const rawEdges = geo.userData.edgePositions ?? new Float32Array(0);
+    const edges = new Float32Array(rawEdges.length);
+    for (let i = 0; i < rawEdges.length; i += 3) {
+      _payloadV.fromArray(rawEdges, i).applyMatrix4(pose).toArray(edges, i);
+    }
     return {
       name,
       positions,
       normals,
+      edges,
       indices: geo.index ? Uint32Array.from(geo.index.array) : null,
       triangles: geo.userData.triangles ?? (geo.index ? geo.index.count : pos.count) / 3,
     };
@@ -2947,6 +2992,12 @@ export function createViewer(container, part) {
     publishAnchor(null);
   }
 
+  // The world position of the held marker the anchor stream follows, so a host
+  // (mount's selection carry) can put the same marker back after a remount.
+  function getHeldAnchorPoint() {
+    return anchorDot ? [anchorDot.position.x, anchorDot.position.y, anchorDot.position.z] : null;
+  }
+
   function onFlashAnchorChange(cb) {
     // The `disposed` half is the same guard cutaway's onHandleHoverChange takes,
     // and for the same two reasons: a subscribe racing teardown (effect-cleanup
@@ -3064,6 +3115,7 @@ export function createViewer(container, part) {
     onFrame,
     onAssemblyChange: (cb) => { assemblyListeners.add(cb); return () => assemblyListeners.delete(cb); },
     tweenCameraTo,
+    getCameraCue,
     holdGround,
     cancelCameraTween,
     orbitBy,
@@ -3092,6 +3144,7 @@ export function createViewer(container, part) {
     projectPoint,
     holdFlashPoint,
     releaseFlashPoints,
+    getHeldAnchorPoint,
     onFlashAnchorChange,
     cutawaySupported: () => cutaway.isSupported,
     cutawayEnabled: () => cutaway.isEnabled,

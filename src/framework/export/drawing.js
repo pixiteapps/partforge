@@ -354,3 +354,74 @@ export function applyKerf(regions, kerf, { label = "sheet part", gap = null } = 
   if (arcCount(out) < arcCount(regions)) throw new Error(intact);
   return out;
 }
+
+// ── routed layers (process/cnc-router) ────────────────────────────────────────
+// Depth in millimetres as a layer-name token: up to two decimals, trailing zeros
+// dropped (11.43 → "11.43", 3 → "3"). Two depths that round alike share a layer.
+export const depthToken = (mm) => String(Number(mm.toFixed(2)));
+// A far-face op's layer carries a FAR_ prefix; near names are unchanged.
+export function routedLayerName(kind, op) {
+  const far = op.face === "far" ? "FAR_" : "";
+  if (kind === "pocket") return `${far}POCKET_${depthToken(op.depth)}MM`;
+  if (kind === "drill") return far + (op.through ? `DRILL_D${depthToken(op.d)}_THRU` : `DRILL_D${depthToken(op.d)}_${depthToken(op.depth)}MM`);
+  throw new Error(`routedLayerName: unknown kind ${JSON.stringify(kind)}`);
+}
+// How a piece is turned over to cut its far face, as the mirror axis of its drawing.
+export const FLIP_AXIS = Object.freeze({ "left-right": "x", "end-over-end": "y" });
+// A ring mirrored about the line `axis = c` ("x": x -> 2c - x; "y": y -> 2c - y), every
+// point mapped (start, to, via, c1, c2), then walked backwards so a CCW ring stays CCW:
+// an arc keeps its mirrored via, a cubic swaps its mirrored c1/c2. Other fields (closed)
+// carry over. Returns a new ring; the input is not touched.
+export function mirrorRing(ring, axis, c) {
+  const m = axis === "x" ? ([x, y]) => [2 * c - x, y] : ([x, y]) => [x, 2 * c - y];
+  const pts = [ring.start, ...ring.segments.map((s) => s.to)].map(m);
+  const segments = [];
+  for (let i = ring.segments.length - 1; i >= 0; i--) {
+    const s = ring.segments[i], to = pts[i];
+    if (s.via) segments.push({ to, via: m(s.via) });
+    else if (s.c1) segments.push({ to, c1: m(s.c2), c2: m(s.c1) });
+    else segments.push({ to });
+  }
+  return { ...ring, start: pts[pts.length - 1], segments };
+}
+export const mirrorRings = (rings, axis, c) => rings.map((r) => mirrorRing(r, axis, c));
+// A two-sided piece's drawing split by face. `near` keeps every layer not marked
+// face "far" (the input itself for a one-sided piece); `far` is null for a one-sided
+// piece, else the far layers behind a REFERENCE layer of `drawing.farOutline` (the
+// mirrored outer rings the exporter sets), both with the input's bounds/nominal/kerf.
+export function splitFaces(drawing) {
+  const farLayers = drawing.layers.filter((l) => l.face === "far");
+  if (farLayers.length === 0) return { near: drawing, far: null };
+  const { bounds, nominal, kerf } = drawing;
+  const near = { layers: drawing.layers.filter((l) => l.face !== "far"), bounds, nominal, kerf };
+  const outline = { id: "far-outline", name: "REFERENCE", ...ROUTED_COLORS.reference, face: "far", paths: drawing.farOutline };
+  return { near, far: { layers: [outline, ...farLayers], bounds, nominal, kerf } };
+}
+// A drill's tool setting as a key: diameter and depth (or THRU), two-decimal tokens —
+// one layer per key, and the kit-wide palette's drill key.
+export const drillKey = (dr) => `D${depthToken(dr.d)}-${dr.through ? "THRU" : depthToken(dr.depth)}`;
+// Palettes: ACI colours for DXF, hex for SVG. Drills cycle; pockets are assigned by
+// ascending depth (shallowest first). In a kit the assignment is kit-wide
+// (routedPalette), so one depth is one colour in every file.
+export const ROUTED_COLORS = Object.freeze({
+  reference: { color: 8, svgColor: "#808080" },
+  secondary: { color: 6, svgColor: "#FF00FF" },
+  drill: Object.freeze([{ color: 3, svgColor: "#00AA00" }, { color: 4, svgColor: "#00AAAA" }, { color: 2, svgColor: "#AAAA00" }, { color: 140, svgColor: "#0055AA" }, { color: 170, svgColor: "#5500AA" }]),
+  pocket: Object.freeze([{ color: 30, svgColor: "#E07000" }, { color: 40, svgColor: "#E0A000" }, { color: 50, svgColor: "#C0C000" }, { color: 20, svgColor: "#A06000" }, { color: 10, svgColor: "#804000" }]),
+});
+
+// The kit-wide palette over every routed piece's resolved operations, so a layer name
+// carries one colour in every file of the kit: pocket depth tokens ranked ascending
+// (shallowest first), drill keys in first-seen order, each cycling its palette.
+// `sheets` are resolved routed sheets, in definition order.
+export function routedPalette(sheets) {
+  const pocketTokens = new Set(), drillKeys = new Set();
+  for (const s of sheets) {
+    for (const pk of s.routed.pockets) if (!pk.region.isEmpty()) pocketTokens.add(depthToken(pk.depth));
+    for (const dr of s.routed.drills) drillKeys.add(drillKey(dr));
+  }
+  const pocket = new Map([...pocketTokens].sort((a, b) => Number(a) - Number(b))
+    .map((tok, i) => [tok, ROUTED_COLORS.pocket[i % ROUTED_COLORS.pocket.length]]));
+  const drill = new Map([...drillKeys].map((key, i) => [key, ROUTED_COLORS.drill[i % ROUTED_COLORS.drill.length]]));
+  return { pocket, drill };
+}

@@ -766,13 +766,15 @@ the helpers come along unmodified. (`test/kernel-contract.test.js` asserts every
   `arcTo` / `cubicTo` / `close`); cubic segments become exact B-rep on OCCT and
   facet at mesh LOD on Manifold.
 - **Sheet parts** — `sheetPart` wraps a laser-cut piece into an ordinary sub-part
-  (a generated `build` and `place` plus a plain-data `sheet` declaration); the
+  (a generated `build` and `place` plus a plain-data `sheet` declaration), and
+  `routedPart` is the same wrapper for a CNC-routed piece (process `cnc-router`); the
   joinery helpers `fingers`, `tabs`, `tSlots`, `sheetPanel`, `matchingSlots`,
   `fingerBox`, `printedTab`, `sheetHole` and the `JOINERY_SCREWS` table are pure
   functions returning plain data in this contract's input format; `sheetToWorld` /
   `worldToSheet` convert between a posed sheet's drawing and world coordinates. The
   generated build calls only ops from the tables above (`shape2d`, `extrude`,
-  `offset`, `cut`, `cutAll`, `translate`, `rotate`), so a sheet part is portable by
+  `offset`, `cut`, `cutAll`, `translate`, `rotate`, plus `cylinder` for a routed part's
+  drills), so a sheet part is portable by
   construction too. None of these is a kernel op.
 
 **Profile validation on the way in** (0.112). `prism`, `extrude`, `revolve`, `sweep`,
