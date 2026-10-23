@@ -291,8 +291,12 @@ test("resin defines no costs, so any accept is unknown", () => {
 test("a non-array accept is one error at verify.accept", () => {
   expect(find(lintPart(partWith({ process: "fdm-pla", accept: "supports", expect: {} })), "verify-unknown-accept").path).toBe("verify.accept");
 });
-test("accept with no process is left to verify-unknown-process", () => {
+test("with no process, accept is checked against every print process's cost ids", () => {
   expect(ids(lintPart(partWith({ accept: ["supports"], expect: {} })).errors)).not.toContain("verify-unknown-accept");
+  const r = lintPart(partWith({ accept: ["support"], expect: {} }));
+  expect(ids(r.errors)).toEqual(["verify-unknown-accept"]);
+  expect(find(r, "verify-unknown-accept").path).toBe("verify.accept[0]");
+  expect(find(r, "verify-unknown-accept").hint).toMatch(/any print process knows are: supports, footprint/);
 });
 test("the orientation hint no longer claims to arm overhang", () => {
   const h = find(lintPart(partWith({ orientation: "sideways", expect: {} })), "verify-unknown-orientation").hint;
