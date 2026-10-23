@@ -23,15 +23,21 @@
 //     MAX_BED_EPS: overhang can let it grow with the part because it only excludes the
 //     footprint, whereas here it decides what counts as touching, and a 200 mm tall piece
 //     would otherwise call a face 0.15 mm up "on the bed" — the very gap this exists for;
-//   - hover: flat faces with EVERY vertex above the footprint slack and the centroid
-//     within `bedBand` (1 mm, overhang.js's near-bed band) of the bed — a face floating
-//     clear of the bed, as a plate over a lower knuckle or emboss is. Above the band a
-//     face is a ceiling, which is overhang.js's to judge. Every vertex, not the
-//     centroid, because a curved surface tangent to the bed is near level at its lowest
-//     facets too: a Ø120 cylinder at 116 segments has facets 1.55° off level beside its
-//     lowest line. Those touch the bed along that line; the next ring out is already
-//     tilted past FLAT_TOL (4.65°), for any diameter that fits a print bed at either
-//     tessellation tier (geometry/circle-segs.js).
+//   - hover: LEVEL faces (within LEVEL_TOL, a tenth of a degree) with EVERY vertex
+//     above the footprint slack and the centroid within `bedBand` (1 mm, overhang.js's
+//     near-bed band) of the bed — a face floating clear of the bed, as a plate over a
+//     lower knuckle or emboss is. Above the band a face is a ceiling, which is
+//     overhang.js's to judge. The two extra conditions are what keep a curved surface
+//     resting on the bed (a cylinder on its side, a sphere, a dome) from reading as
+//     hovering, since its lowest facets are near level too. A face that hovers because
+//     of a lower feature is a plane the author made horizontal, level to float
+//     precision; a curved surface's facet is level only where it contains the lowest
+//     point — where it touches the bed — and every facet clear of the bed is tilted by
+//     about one tessellation step or more (3.1° at the preview's 116 segments, 0.75° at
+//     the print tier's 480, geometry/circle-segs.js): a Ø120 cylinder's facets beside
+//     its lowest line are 1.55° off and touch the bed there, and a sphere's second ring
+//     around its pole is clear of the bed but just as tilted. Every vertex, besides,
+//     so a facet that does reach the bed is never hover, however it is tilted.
 // `pct` is the share of that near-bed flat underside which touches: 100 when nothing
 // hovers, near 0 for a plate resting on a knuckle. A hover total under HOVER_FLOOR is
 // noise and reads as 100.
@@ -41,16 +47,19 @@
 // shallow is a long bridge laid in the first layers and rarely prints well, so the
 // default threshold stands; a part that means it lowers its own `bedContactPct`. And
 // a flat bottom TILTED off level (one edge on the bed, the rest rising) is not caught:
-// each of its faces touches the bed at a vertex, which is exactly the signature of
-// curvature above, and telling the two apart would need the mesh's connectivity.
+// it is not level, which is exactly the signature of curvature above, and telling the
+// two apart would need the mesh's connectivity.
 //
 // Works on both mesh forms the oracle sees (Manifold's soup, OCCT's indexed vertices).
 
-// A face counts as flat when its normal is within this many degrees of straight down:
-// loose enough for a boolean's float noise, tight enough that only the facets right at a
-// curved surface's lowest line pass (see the hover rule above).
+// A face counts as flat (contact) when its normal is within FLAT_TOL degrees of straight
+// down, and as level (hover) within LEVEL_TOL. LEVEL_TOL is far above float32 normal
+// noise (~1e-4°) and far below any tessellation step a curved surface is made of (see
+// the hover rule above).
 const FLAT_TOL = 2;
 const FLAT_COS = Math.cos((FLAT_TOL * Math.PI) / 180);
+const LEVEL_TOL = 0.1;
+const LEVEL_COS = Math.cos((LEVEL_TOL * Math.PI) / 180);
 // Hovering area below this, in mm², is noise and never reported.
 export const HOVER_FLOOR = 1;
 // The footprint slack never exceeds this (mm): well under a first layer, and under the
@@ -103,6 +112,7 @@ export function bedContact(mesh, { bedZ, bedEps, bedBand = 1 } = {}) {
     const lowest = Math.min(az, bz, cz) - bed, highest = Math.max(az, bz, cz) - bed;
     if (highest <= eps) { contactArea += triArea; continue; }                 // the footprint
     if (lowest <= eps) continue;                                              // touching at an edge or vertex: neither
+    if (-nz / len < LEVEL_COS) continue;                                      // near level but tilted: a curved surface's facet
     hoverArea += triArea;
     if (triArea > largest) {
       largest = triArea;

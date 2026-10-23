@@ -38,6 +38,25 @@ function cylinderSoup(r, len, n, cz, phase = 0) {
   }
   return P;
 }
+// A closed sphere resting on z = 0, radius r: each octahedron face subdivided into k²
+// triangles, vertices projected onto the sphere (outward-wound). The bottom pole is a
+// vertex, so the facets around it are near level, and the ring beyond them is clear of
+// the bed.
+function sphereSoup(r, k) {
+  const P = [];
+  const proj = ([x, y, z]) => { const l = Math.hypot(x, y, z); return [(r * x) / l, (r * y) / l, (r * z) / l + r]; };
+  const oct = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [-1, 0, 0], [0, -1, 0], [0, 0, -1]];
+  const faces = [[0, 1, 2], [1, 3, 2], [3, 4, 2], [4, 0, 2], [1, 0, 5], [3, 1, 5], [4, 3, 5], [0, 4, 5]];
+  for (const [ia, ib, ic] of faces) {
+    const A = oct[ia], B = oct[ib], C = oct[ic];
+    const at = (i, j) => { const u = i / k, v = j / k, w = 1 - u - v; return proj([0, 1, 2].map((d) => w * A[d] + u * B[d] + v * C[d])); };
+    for (let i = 0; i < k; i++) for (let j = 0; j < k - i; j++) {
+      P.push(...at(i, j), ...at(i + 1, j), ...at(i, j + 1));
+      if (i + j < k - 1) P.push(...at(i + 1, j), ...at(i + 1, j + 1), ...at(i, j + 1));
+    }
+  }
+  return P;
+}
 const soup = (...boxes) => {
   const P = boxes.flat();
   return { positions: Float32Array.from(P), triangles: P.length / 9 };
@@ -117,6 +136,27 @@ describe("bedContact (the reading)", () => {
         expect(r.pct, `Ø${d} phase ${phase}`).toBe(100);
       }
     }
+  });
+
+  it("a sphere resting on the bed has no hovering underside", () => {
+    // Review case: Ø200, each octahedron face split into 29² triangles (6,728 in all).
+    // The ring of facets beyond the pole's is clear of the bed and only ~3° off level;
+    // it read 27 mm² hovering (0% contact) before hover required a LEVEL face.
+    const ref = soup(sphereSoup(100, 29));
+    expect(ref.triangles).toBe(6728);
+    for (const [r, k] of [[100, 29], [100, 8], [100, 120], [20, 29]]) {
+      const out = bedContact(soup(sphereSoup(r, k)));
+      expect(out.hoverArea, `r ${r} k ${k}`).toBe(0);
+      expect(out.pct, `r ${r} k ${k}`).toBe(100);
+    }
+  });
+
+  it("a level underside still hovers beside a sphere resting below it", () => {
+    // The level rule must not cost the detection it exists for: a 20×20 plate 0.3 mm
+    // up, its only bed contact a sphere's pole.
+    const out = bedContact(soup(sphereSoup(5, 29), boxSoup([20, 0, 0.3], [40, 20, 3])));
+    expect(out.hoverArea).toBeCloseTo(400, 3);
+    expect(out.pct).toBeLessThan(1);
   });
 
   it("an empty mesh has no reading", () => {
@@ -299,6 +339,18 @@ test("verify: a large horizontal cylinder lying on the bed passes, through the r
     views: { v: { label: "V" } },
   };
   const v = verify(k, { ...roller, verify: { process: "fdm-pla", expect: { roller: { holes: 0 } } } });
+  const bc = v.cases[0].checks.find((c) => c.metric === "bedContactPct");
+  expect(bc.status).toBe("pass");
+  expect(bc.actual).toBe(100);
+});
+
+test("verify: a ball resting on the bed passes, through the real kernel", () => {
+  const ball = {
+    meta: { title: "Ball", units: "mm" }, defaults: {},
+    parts: { ball: { views: ["v"], build: (kk) => kk.sphere({ d: 200 }).at([0, 0, 100]) } },
+    views: { v: { label: "V" } },
+  };
+  const v = verify(k, { ...ball, verify: { process: "fdm-pla", expect: { ball: { holes: 0 } } } });
   const bc = v.cases[0].checks.find((c) => c.metric === "bedContactPct");
   expect(bc.status).toBe("pass");
   expect(bc.actual).toBe(100);
