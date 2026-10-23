@@ -14,7 +14,7 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, vi } from "vitest";
 import { walk, importsOf } from "./helpers/import-graph.js";
-import { PROCESSES, PROCESS_IDS } from "../src/framework/process/registry.js";
+import { ALL_PROCESSES } from "../src/framework/process/registry.js";
 
 // paper-core builds a PaperScope and probes a canvas the moment it is imported
 // (test/oracle-no-paper.test.js); here it throws instead, so anything in this file
@@ -52,7 +52,7 @@ test("only the registry and the exporter table import a process folder", () => {
 });
 
 test("a process descriptor imports only sheet/constants.js and lint/finding.js", () => {
-  for (const id of PROCESS_IDS) {
+  for (const { id } of ALL_PROCESSES) {
     const file = `${PROCESS_DIR}/${id}/descriptor.js`;
     for (const spec of importsOf(readFileSync(file, "utf8"))) {
       expect(["src/framework/sheet/constants.js", "src/framework/lint/finding.js"], `${rel(file)} imports ${spec}`)
@@ -63,13 +63,13 @@ test("a process descriptor imports only sheet/constants.js and lint/finding.js",
 
 test("every process folder is a registered process, and each descriptor's id is its folder", async () => {
   const folders = readdirSync(PROCESS_DIR).filter((n) => statSync(join(PROCESS_DIR, n)).isDirectory()).sort();
-  expect(folders).toEqual([...PROCESS_IDS].sort());
+  expect(folders).toEqual(ALL_PROCESSES.map((d) => d.id).sort());
   for (const folder of folders) {
     const mod = await import(`../src/framework/process/${folder}/descriptor.js`);
     const descriptor = Object.values(mod).find((v) => v && typeof v === "object" && typeof v.id === "string");
     expect(descriptor?.id, folder).toBe(folder);
-    expect(PROCESSES).toContain(descriptor);
-    expect(["sheet-parts", "routed-parts"]).toContain(descriptor.docId);
+    expect(ALL_PROCESSES).toContain(descriptor);
+    expect(["sheet-parts", "routed-parts", "printed-parts"]).toContain(descriptor.docId);
   }
 });
 

@@ -434,6 +434,14 @@ export interface SubPartFacts {
   /** Centroid of the largest hovering face; `null` when nothing hovers. */
   bedHoverAt: number[] | null;
   /**
+   * Share (0–100) of the piece's silhouette on the bed (its outline seen from below, in
+   * the print pose) that actually touches it — the footprint cost's reading, from the
+   * bed-contact pass; `null` when that pass did not run or the silhouette is empty.
+   */
+  footprintPct: number | null;
+  /** The piece's lowest point, in display coordinates; `null` when not checked. */
+  footprintAt: number[] | null;
+  /**
    * Present only when bed contact had to be read off the piece's export build (its
    * print pose could not be read from place() alone) and that build failed.
    */
@@ -521,6 +529,8 @@ export interface MeasureReport {
   measuredOverhang: number | null;
   /** Whether the bed-contact pass ran (the part is checked for it). */
   measuredBedContact: boolean;
+  /** Whether the footprint was read — the same pass, so always `measuredBedContact`. */
+  measuredFootprint: boolean;
   /**
    * Present only in a view holding a sheet part: whether the printed sub-parts' print
    * (export) poses were built for `printBbox`.
@@ -595,7 +605,7 @@ export function measure(
 
 // --- verify -----------------------------------------------------------------
 
-export type CheckStatus = "pass" | "fail" | "warn" | "skip";
+export type CheckStatus = "pass" | "fail" | "warn" | "cost" | "skip";
 
 export interface VerifyCheck {
   /** `"part"` is the vacuous-verify notice; `"case"` the quick-lap "not measured" marker. */
@@ -603,8 +613,10 @@ export interface VerifyCheck {
   /** The sub-part name, `"a×b"` for a pair check, or `null` for a scalar view metric. */
   subpart: string | null;
   metric: string;
-  /** `gate` failures set a non-zero exit code; `warn` never blocks. */
-  kind: "gate" | "warn";
+  /** `gate` failures set a non-zero exit code; `warn` never blocks; `cost` is a design choice with a price. */
+  kind: "gate" | "warn" | "cost";
+  /** On a `cost` check: whether the user listed its id in `verify.accept`. */
+  accepted?: boolean;
   /** The asserted expression, stringified. */
   expr: string;
   actual: unknown;
@@ -651,6 +663,8 @@ export interface VerifyReport {
   /** Every failing check, flattened, each tagged with its `case`. */
   failures: Array<VerifyCheck & { case: string }>;
   warnings: Array<VerifyCheck & { case: string }>;
+  /** Design choices with a price (supports, footprint); never failures. Accepted ones are flagged. */
+  costs: Array<VerifyCheck & { case: string }>;
   /** Checks a quick lap could not evaluate. */
   unevaluated: Array<VerifyCheck & { case: string }>;
   /** Check instances the part or its profile declared, across cases (near-miss notices excluded). */

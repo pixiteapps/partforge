@@ -314,7 +314,15 @@ the installed package, so let the publish finish before bumping the dep there.
   `sheet/resolve.js` resolves a declaration into shapes and builds the preview;
   `sheet/part.js` is `sheetPart()`; `process/registry.js` lists the
   manufacturing processes (laser is #1, `process/laser/descriptor.js`, plain
-  data). All public names are re-exported from `partforge/geometry`; none is a
+  data). Printing is registered there too, as its OWN list: `PROCESSES` stays the
+  sheet list (exporters, kit destinations, `SHEET_METRICS` and `sheetPart()`'s process
+  check all read it), and `PRINT_PROCESSES` holds `process/fdm/descriptor.js` (profiles
+  `fdm-pla`, `fdm-petg`) and `process/resin/descriptor.js` (`resin`) — import-free data
+  carrying the DFM profiles `oracle/dfm-profiles.js` re-exports as `PROFILES`, the
+  `costs` table (cost id → metric: fdm's `supports` → `overhangArea`, `footprint` →
+  `footprintPct`; resin none) and `docId: "printed-parts"`. `printProcessFor(spec)`
+  resolves a profile id or an inline `{ base }` to its process. Never add `fdm` or
+  `resin` to `PROCESSES`: a sheet part would then accept a print process. All public names are re-exported from `partforge/geometry`; none is a
   kernel op. Three rules hold it together. A sheet sub-part is recognized ONLY
   by its plain-data `sp.sheet` (`isSheetPart`) — never `instanceof`, a
   module-scoped `Symbol()` or a `WeakMap`, because partforge-cloud's part worker
@@ -355,7 +363,8 @@ the installed package, so let the publish finish before bumping the dep there.
   option — is documented in `docs/AUTHORING-PARTS.md`'s "Getting files into a
   part".
 - **`src/framework/oracle/`** - the geometric oracle: `measure.js`, `verify.js`,
-  `build.js`, `gaps.js`, `min-wall.js`, `overhang.js`, `bed-contact.js`, `bvh.js`, `mesh.js`, `assert-dsl.js`,
+  `build.js`, `gaps.js`, `min-wall.js`, `overhang.js`, `bed-contact.js` (bed contact, and
+  the posed `base` extent and `lowestAt` that `measure.js` turns into `footprintPct`), `bvh.js`, `mesh.js`, `assert-dsl.js`,
   `dfm-profiles.js`, `cases.js`. Despite reading like test code this is shared
   runtime: the browser worker runs it for the `inspect` job, and `lint` reads its
   DFM profiles and assertion grammar. It is therefore DOM-free, `three`-free and
@@ -413,6 +422,24 @@ the installed package, so let the publish finish before bumping the dep there.
   part verifies byte-identically — `test/verify-golden.test.js` pins it; re-record only
   for a deliberate verdict change (`PARTFORGE_RECORD_VERIFY_GOLDEN=1 npx vitest run
   test/verify-golden.test.js`). Timings: `docs/research/sheet-inspect-timing.md`.
+- **Printed parts in the oracle.** A print check is in one of three tiers, set by its
+  registry entry's `kind` in `verify-metrics.js`, never by the oracle's confidence: a
+  GATE (`kind: "gate"` — bed fit, `bedContactPct`) fails `ok`; a COST (`kind: "cost"`
+  plus a `costId` — `overhangArea` → `supports`, `footprintPct` → `footprint`) gets
+  status `"cost"`, lands in `verify().costs` (never `warnings`), counts toward
+  `declared`/`evaluated` and never moves `ok`; an advisory (`kind: "warn"` — `minWall`,
+  `wall`) is a warning as before. The process arms its checks by itself
+  (`dfm-profiles.js`): `overhangAngleFor` reads the profile's `overhang` alone,
+  `bedContactFor` the profile's `bedContact` (or `orientation: "print"` with NO profile),
+  `footprintFor` the profile's `footprint`; an authored expectation of the metric arms
+  each under any profile. `orientation: "print"` arms neither cost. `verify.accept`
+  (cost ids, validated by lint's `verify-unknown-accept` against the process's `costs`)
+  stamps `accepted: true` on each matching cost and changes nothing else — the reading
+  stays in `costs`; `{ base, overhang: null }` is the off switch. `PRINT_ONLY` keeps all
+  five print metrics off sheet parts. A change to a tier or to what arms a check moves
+  verdicts, so re-record `test/verify-golden.test.js` in the same commit
+  (`PARTFORGE_RECORD_VERIFY_GOLDEN=1`) and read the diff. Docs: `docs/AUTHORING-PARTS.md`
+  "Printed parts", the twin of "Sheet parts" and "Routed parts".
 - **Change tracking in the oracle** (`src/framework/oracle/changes.js`,
   `createChangeTracker`). An `inspect` job that passes a non-empty `changesKey`
   gets back `report.changes` (and/or `report.changesSkipped`) describing what

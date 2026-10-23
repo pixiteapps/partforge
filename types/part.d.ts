@@ -484,9 +484,9 @@ export interface DfmProfile {
   minWall?: number;
   /**
    * Steepest unsupported face the process prints cleanly, in degrees from
-   * vertical (45 on the FDM profiles; absent on resin). Checked only for a part
-   * that also declares `verify.orientation: "print"`; `null` switches it off
-   * under a named base. A warning, never a gate.
+   * vertical (45 on the FDM profiles; absent on resin). The print process alone
+   * arms the check; `null` switches it off under a named base. Reported as a
+   * cost (needing supports), never a failure.
    */
   overhang?: number | null;
   /**
@@ -495,6 +495,8 @@ export interface DfmProfile {
    * profile alone; `null` switches it off under a named base.
    */
   bedContact?: number | null;
+  /** Percent of a printed piece's posed base area resting on the bed below which the footprint cost fires. */
+  footprint?: number | null;
   /** Carried for a future gap check; not enforced yet. */
   clearance?: number;
   /**
@@ -562,8 +564,8 @@ export interface SubPartExpectations {
   wall?: Expectation;
   /**
    * Unsupported downward-facing surface in mm² (faces steeper than the profile's
-   * `overhang` angle, bed at the sub-part's own lowest Z). Measured only under
-   * `verify.orientation: "print"`; a warning, never a gate.
+   * `overhang` angle, bed at the sub-part's own lowest Z). Armed by the print
+   * process alone; reported as a cost (`verify.costs`), never a failure.
    */
   overhangArea?: Expectation;
   /**
@@ -572,6 +574,13 @@ export interface SubPartExpectations {
    * Under an FDM profile every printed sub-part gets `>=50` by default; a gate.
    */
   bedContactPct?: Expectation;
+  /**
+   * Share (0–100) of the sub-part's posed base area (its xy extent in the print pose)
+   * whose flat underside touches the bed — near 0 for a piece standing on a point, a
+   * line or a curl. Under an FDM profile every printed sub-part gets `>=5`; reported as
+   * a cost (`verify.costs`), never a failure; `accept: ["footprint"]` records a brim.
+   */
+  footprintPct?: Expectation;
   /** Symmetric-difference volume vs. the sub-part's declared `reference` import. */
   refXorVolume?: Expectation;
   /** Percent volume delta vs. the sub-part's declared `reference` import. */
@@ -640,12 +649,17 @@ export interface VerifyBlock<P = ResolvedParams, D = Derived> {
   /** A named DFM profile or an inline one. */
   process?: DfmProfileName | DfmProfile;
   /**
-   * `"print"` declares the part is laid out for its bed — Z up, each sub-part's
-   * bed at its own lowest Z — which is the only way the profile's `overhang`
-   * check is armed. Omit it while a part is still being shaped or is bound for
-   * another process.
+   * `"print"` declares that `build()` is the print pose — Z up, each sub-part's
+   * bed at its own lowest Z. It does not arm any check; the print process does.
    */
   orientation?: "print";
+  /**
+   * Costs the user accepted, by id. An accepted cost is still measured and
+   * reported (`accepted: true`), but no longer raised as something to fix. Only the
+   * process's own default check is marked accepted: a limit you wrote in `expect`
+   * (`overhangArea: "<=500"`) keeps its meaning and is never marked accepted.
+   */
+  accept?: ("supports" | "footprint")[];
   /** Which cases to check; default is `"defaults"` plus every preset name. */
   cases?: string[];
   /**
