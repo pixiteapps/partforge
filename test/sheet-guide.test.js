@@ -15,10 +15,11 @@ const start = guide.indexOf("\n## Sheet parts\n");
 const end = guide.indexOf("\n## ", start + 1);
 const section = guide.slice(start + 1, end);
 
-test("## Sheet parts sits once, right after Editing profiles and before Routed parts", () => {
+test("## Sheet parts sits once, after Editing profiles and Printed parts, before Routed parts", () => {
   expect(h2.filter((h) => h === "Sheet parts")).toHaveLength(1);
   const i = h2.indexOf("Sheet parts");
-  expect(h2[i - 1]).toBe("Editing profiles");
+  expect(h2[i - 2]).toBe("Editing profiles");
+  expect(h2[i - 1]).toBe("Printed parts");
   expect(h2[i + 1]).toBe("Routed parts");
 });
 
