@@ -31,6 +31,18 @@ test("accept marks the cost accepted and changes nothing else", () => {
   expect(v.costs[0]).toMatchObject({ metric: "overhangArea", accepted: true });
   expect(v.ok).toBe(true);
 });
+// `accept` covers the process's own default check only: an author's limit keeps its
+// meaning and is never marked accepted.
+test("an authored overhang limit is never marked accepted; the default check is", () => {
+  const wide = { ...overhungPart, defaults: { w: 210 } };   // ~2,060 mm² of overhang
+  const authored = verify(k, { ...wide, verify: { process: "fdm-pla", accept: ["supports"],
+    expect: { tee: { overhangArea: "<=500" } } } });
+  const a = authored.costs.find((c) => c.metric === "overhangArea");
+  expect(a.actual).toBeGreaterThan(2000);
+  expect(a).toMatchObject({ status: "cost", expr: "<=500", accepted: false });
+  const byDefault = verify(k, { ...wide, verify: { process: "fdm-pla", accept: ["supports"] } });
+  expect(byDefault.costs.find((c) => c.metric === "overhangArea")).toMatchObject({ status: "cost", accepted: true });
+});
 test("an inline base arms it; overhang: null switches it off", () => {
   expect(verify(k, { ...overhungPart, verify: { process: { base: "fdm-pla" } } }).costs).toHaveLength(1);
   expect(verify(k, { ...overhungPart, verify: { process: { base: "fdm-pla", overhang: null } } }).costs).toEqual([]);

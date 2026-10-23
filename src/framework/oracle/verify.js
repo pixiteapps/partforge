@@ -276,7 +276,8 @@ function sheetRowChecks(s, declaredExp) {
 // or null/undefined: only then does every PRINTED sub-part get `bedContactPct >= floor`.
 // `footprint` the same for the footprint cost (dfm-profiles.js footprintFor):
 // `footprintPct >= floor` on every printed sub-part.
-// `accept` the cost ids the user accepted (`verify.accept`), stamped on each cost.
+// `accept` the cost ids the user accepted (`verify.accept`), stamped on each cost the
+// process volunteered (never on one the author wrote in `expect`).
 export function evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang = null, bedContact = null, footprint = null, accept = [] }) {
   const checks = [];
   // contacts/clearance/held are pair-derived, not scalar view metrics — peel
@@ -327,7 +328,11 @@ export function evaluateCase(facts, { profile, expect, subPartNames, exportableN
       ...(footprint != null && (!printedNames || printedNames.has(s.name)) ? { footprintPct: `>=${footprint}` } : {}),
       ...(expect?.[s.name] ?? {}),
     };
-    for (const [metric, expr] of Object.entries(merged)) for (const c of checksFor("subpart", s.name, metric, expr, SUBPART_METRICS, s, accept)) {
+    // `accept` covers only the process's own default check: a cost metric the author
+    // wrote in `expect` is the user's own limit and keeps its meaning, never accepted.
+    const authored = expect?.[s.name] ?? {};
+    const acceptFor = (metric) => (Object.hasOwn(authored, metric) ? [] : accept);
+    for (const [metric, expr] of Object.entries(merged)) for (const c of checksFor("subpart", s.name, metric, expr, SUBPART_METRICS, s, acceptFor(metric))) {
       if (minWallSkipped && (metric === "minWall" || metric === "wall") && c.actual == null) {
         checks.push({ ...c, unevaluated: true, message: "not measured (quick check)",
           hint: `re-run this check without \`quick\` to measure ${metric === "wall" ? "the wall band" : "min wall"}` });

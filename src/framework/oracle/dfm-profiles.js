@@ -86,10 +86,10 @@ export function bedContactFor(part, process, { expanded = [] } = {}) {
 
 // The `footprintPct` floor an author's own expectation arms the measurement against
 // when the profile names none (a resin part, or no profile at all).
-export const DEFAULT_FOOTPRINT = 5;
+export const DEFAULT_FOOTPRINT = 10;
 
-// The least share of a printed piece's posed base area that must touch the bed (the
-// footprint, read by bed contact's pass — measure.js `footprintPct`), or null when it
+// The least share of a printed piece's silhouette on the bed that must actually touch
+// it (the footprint, read by bed contact's pass — measure.js `footprintPct`), or null when it
 // is not checked. A COST, like overhang: a piece standing on a point, a line or a curl
 // prints with a brim or a raft, which the user may well choose. Two ways in:
 //   - a profile carrying `footprint` (the FDM profiles; resin carries none, since it

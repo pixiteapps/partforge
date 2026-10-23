@@ -1,5 +1,5 @@
-// The footprint cost (oracle/bed-contact.js `base`, measure.js `footprintPct`): how much
-// of a printed piece's posed base area actually touches the bed. bedContactPct judges
+// The footprint cost (oracle/bed-contact.js `downArea`, measure.js `footprintPct`): the
+// share of a printed piece's silhouette on the bed that actually touches it. bedContactPct judges
 // only the FLAT underside that exists, so a piece with almost none — a sphere-tipped
 // rod standing on its end — passes it at 100; this reading is what catches that. A
 // COST, like overhangArea: it reports what a brim or a new orientation would buy, and
@@ -102,10 +102,56 @@ test("a quick lap on a seed without the pass withholds the cost", () => {
   expect(footprintChecks(quick)[0].unevaluated).toBe(true);
 });
 
+// The denominator is the silhouette (the union of the downward triangles' shadows), not
+// the xy bounding box nor their summed shadows: a piece that stands on all of its
+// outline reads near 100 however little of its box that fills, and one balanced on a
+// point, a line or a curl reads low.
+describe("the reading over the silhouette", () => {
+  const read = (build) => measure(kernel, forge({ p: { views: ["v"], build } }, { process: "fdm-pla" }), "v").subparts[0].footprintPct;
+
+  it("near 0: a sphere-tipped rod on its end, a cylinder on its side, a wide piece on a narrow foot", () => {
+    expect(read((kk) => kk.sphere({ r: 2 }).at([0, 0, 2]).union(kk.cylinder({ r: 2, h: 30 }).at([0, 0, 2])))).toBeLessThan(5);
+    // A cylinder on its side: its two facets along the lowest line lie within the flat
+    // tolerance and the footprint slack, so at the preview tessellation (116 segments)
+    // it reads about 5 % (finer tessellation reads less) — under the 10 % floor.
+    for (const r of [2, 10, 30]) expect(read((kk) => kk.cylinder({ r, h: 60 }).rotateX(90).translate([0, 0, r]))).toBeLessThan(10);
+    // A 60×60 plate 10 mm up on a 4×4 post: 16 mm² of a 3,600 mm² underside.
+    expect(read((kk) => kk.box({ min: [-30, -30, 10], max: [30, 30, 14] }).union(kk.box({ min: [-2, -2, 0], max: [2, 2, 10] })))).toBeLessThan(5);
+  });
+
+  it("near 100: a tube on its rim, a frame of thin bars, spread pins, a diagonal bar", () => {
+    const tube = (kk) => kk.cylinder({ r: 20, h: 30 }).cut(kk.cylinder({ r: 19, h: 40 }).at([0, 0, -5]));
+    const frame = (kk) => kk.box({ min: [0, 0, 0], max: [80, 60, 6] }).cut(kk.box({ min: [2, 2, -1], max: [78, 58, 7] }));
+    const pins = (kk) => [[0, 0], [40, 0], [0, 40], [40, 40]].map(([x, y]) => kk.cylinder({ r: 2.5, h: 10 }).at([x, y, 0]))
+      .reduce((a, b) => a.union(b));
+    const diagonal = (kk) => kk.box({ min: [0, 0, 0], max: [200, 5, 5] }).rotateZ(45);
+    for (const build of [tube, frame, pins, diagonal]) expect(read(build)).toBeGreaterThan(95);
+  });
+
+  it("a flaring, faceted body counts its outline once, not every zig-zag facet", () => {
+    // A 10-mm-tall stack of ever-wider plates: the wide top overhangs the base many
+    // times over in summed shadow, but its silhouette is the top plate's outline.
+    const stair = (kk) => [0, 1, 2, 3, 4].map((i) => kk.box({ min: [-10 - 2 * i, -10 - 2 * i, 2 * i], max: [10 + 2 * i, 10 + 2 * i, 2 * i + 2] }))
+      .reduce((a, b) => a.union(b));
+    expect(read(stair)).toBeCloseTo((100 * 400) / (36 * 36), 0);
+  });
+});
+
+// Arming by the footprint alone: with bed contact switched off the profile's footprint
+// floor still arms the bed-contact pass (verify's `armsBedPass`, measure's default).
+test("a profile with bedContact: null still measures the footprint cost", () => {
+  const v = verify(kernel, { ...rodPart, verify: { process: { base: "fdm-pla", bedContact: null } } });
+  const c = v.costs.find((c) => c.metric === "footprintPct");
+  expect(c).toMatchObject({ status: "cost", accepted: false });
+  expect(c.actual).toBeLessThan(5);
+  expect(c.unevaluated).toBeUndefined();
+  expect(v.cases.flatMap((cs) => cs.checks).filter((c) => c.metric === "bedContactPct")).toEqual([]);
+});
+
 describe("footprintFor (what arms it)", () => {
   it("the FDM profiles carry a floor; resin and no profile do not", () => {
-    expect(PROFILES["fdm-pla"].footprint).toBe(5);
-    expect(footprintFor({ verify: { process: "fdm-pla" } })).toBe(5);
+    expect(PROFILES["fdm-pla"].footprint).toBe(10);
+    expect(footprintFor({ verify: { process: "fdm-pla" } })).toBe(10);
     expect(footprintFor({ verify: { process: { base: "fdm-pla", footprint: 12 } } })).toBe(12);
     expect(footprintFor({ verify: { process: "resin" } })).toBeNull();
     expect(footprintFor({})).toBeNull();
@@ -116,7 +162,7 @@ describe("footprintFor (what arms it)", () => {
     expect(footprintFor({ verify: { process: "resin" } }, undefined,
       { expanded: [{ expect: { a: { footprintPct: ">=10" } } }] })).toBe(DEFAULT_FOOTPRINT);
     expect(footprintFor({}, undefined, { expanded: [{ expect: { a: { footprintPct: ">=10" } } }] })).toBe(DEFAULT_FOOTPRINT);
-    expect(DEFAULT_FOOTPRINT).toBe(5);
+    expect(DEFAULT_FOOTPRINT).toBe(10);
     expect(() => footprintFor({ verify: { orientation: "sideways" } })).toThrow(/unknown verify.orientation/);
   });
 });

@@ -655,7 +655,9 @@ export interface VerifyBlock<P = ResolvedParams, D = Derived> {
   orientation?: "print";
   /**
    * Costs the user accepted, by id. An accepted cost is still measured and
-   * reported (`accepted: true`), but no longer raised as something to fix.
+   * reported (`accepted: true`), but no longer raised as something to fix. Only the
+   * process's own default check is marked accepted: a limit you wrote in `expect`
+   * (`overhangArea: "<=500"`) keeps its meaning and is never marked accepted.
    */
   accept?: ("supports" | "footprint")[];
   /** Which cases to check; default is `"defaults"` plus every preset name. */

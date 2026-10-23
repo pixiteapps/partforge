@@ -12,7 +12,7 @@ test("print processes are their own list and never join the sheet list", () => {
 test("the DFM profiles are the descriptors' profiles", () => {
   expect(PROFILES).toBe(PRINT_PROFILES);
   expect(Object.keys(PROFILES)).toEqual(["fdm-pla", "fdm-petg", "resin"]);
-  expect(PROFILES["fdm-pla"].footprint).toBe(5);
+  expect(PROFILES["fdm-pla"].footprint).toBe(10);
   expect(PROFILES.resin.footprint).toBeUndefined();
 });
 test("printProcessFor resolves a string, an inline base, and nothing else", () => {

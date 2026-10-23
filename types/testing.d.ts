@@ -434,9 +434,9 @@ export interface SubPartFacts {
   /** Centroid of the largest hovering face; `null` when nothing hovers. */
   bedHoverAt: number[] | null;
   /**
-   * Share (0–100) of the posed base area (xy extent in the print pose) that rests on
-   * the bed — the footprint cost's reading, from the bed-contact pass; `null` when
-   * that pass did not run or the base has no area.
+   * Share (0–100) of the piece's silhouette on the bed (its outline seen from below, in
+   * the print pose) that actually touches it — the footprint cost's reading, from the
+   * bed-contact pass; `null` when that pass did not run or the silhouette is empty.
    */
   footprintPct: number | null;
   /** The piece's lowest point, in display coordinates; `null` when not checked. */
