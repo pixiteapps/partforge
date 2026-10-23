@@ -214,7 +214,7 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 
 - **Symptom:** A `footprintPct` cost from `verify` (in `verify.costs`, e.g. `0.42 not >= 5`) on a piece whose print pose rests on a point, a line or a curl — a sphere-tipped rod standing on its end, a cylinder lying on its side — while `bedContactPct` passes.
 - **Cause:** The lowest point of the piece is not a flat face, so almost none of its base area touches the bed: the first layer has almost nothing to bond to, and the piece tips or pulls loose unless it prints with a brim, a raft, or in a different orientation.
-- **Fix:** Lay the piece on its flat face in its print pose, add a flat foot or pad at its lowest point, or print it with a brim. When the user chose the brim, `verify.accept: ["footprint"]` records it and the cost reads accepted. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Self-verification (the `verify` block)".
+- **Fix:** Lay the piece on its flat face in its print pose, add a flat foot or pad at its lowest point, or print it with a brim. When the user chose the brim, `verify.accept: ["footprint"]` records it and the cost reads accepted. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Printed parts".
 
 ## expect-static-across-presets
 

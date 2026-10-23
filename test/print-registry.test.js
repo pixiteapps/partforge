@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 import { PRINT_PROCESSES, PRINT_PROCESS_IDS, ALL_PROCESSES, PROCESSES, PRINT_PROFILES, printProcessFor } from "../src/framework/process/registry.js";
 import { PROFILES } from "../src/framework/oracle/dfm-profiles.js";
@@ -29,4 +30,13 @@ test("a print descriptor carries no sheet-only fields and no exporter", () => {
     expect(d.destinations).toBeUndefined();
   }
   expect(FDM.costs).toEqual({ supports: "overhangArea", footprint: "footprintPct" });
+});
+
+test("AUTHORING-PARTS carries the printed-parts section and the accept key", () => {
+  const md = readFileSync("docs/AUTHORING-PARTS.md", "utf8");
+  expect(md).toMatch(/^## Printed parts$/m);
+  expect(md).toMatch(/verify-unknown-accept/);
+  expect(md).toMatch(/accept: \["supports"\]/);
+  expect(md).not.toMatch(/ONLY with this is overhang checked/);
+  expect(md).not.toMatch(/a warning, never a gate/);
 });
