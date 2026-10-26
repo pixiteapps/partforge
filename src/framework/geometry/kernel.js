@@ -51,6 +51,9 @@ export const SOLID_OPS = [
   "translate", "rotate", "rotateX", "rotateY", "rotateZ", "rotateAbout", "along", "at",
   "mirror", "scale", "toMesh", "toSTL", "toIndexedMesh",
   "fillet", "chamfer", "shell", "roundAll",
+  // Additive in 0.164 (no CONTRACT_VERSION bump — the loftSmooth/heightfield
+  // precedent): both in-repo backends implement it.
+  "offset",
 ];
 
 // Backend-optional Solid queries: Manifold mesh-topology numbers (measure.js
@@ -109,6 +112,8 @@ export const ROUTED_CAD_OPS = ["shell"];
  * @property {(r:number|{r:number,edges?:object}) => Solid} fillet    round edges; mesh-native incl. curved-face edges, OCCT fallback otherwise; fillet(3) or fillet({r,edges}); legacy (r,selector) accepted for now (see file header)
  * @property {(d:number|{d:number,edges?:object}) => Solid} chamfer  bevel edges; mesh-native incl. curved-face edges, OCCT fallback otherwise; chamfer(1) or chamfer({d,edges}); legacy (d,selector) accepted for now (see file header)
  * @property {(o:{t:number,open:object}) => Solid} shell   hollow inward (OCCT only); legacy (thickness,openFaces) accepted for now (see file header)
+ * @property {(r:number|{r:number}) => Solid} roundAll   morphological close-then-open with a ball of radius r: rounds every edge (both backends)
+ * @property {(d:number|{d:number}) => Solid} offset   3-D ball offset: grow (+d) / shrink (−d) the solid by |d| everywhere — convex edges round on a grow, concave on a shrink; both backends; the 2-D twin is Shape2D.offset
  * @property {() => number} [genus]     through-hole count (Manifold only)
  * @property {() => boolean} [isEmpty]  no geometry at all (Manifold only)
  *

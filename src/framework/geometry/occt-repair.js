@@ -15,7 +15,11 @@
 // Is a shape a closed solid? A broken chamfer (one that over-ran and consumed a face)
 // meshes to an OPEN surface; a valid one is closed. OCCT meshes each face separately,
 // so weld vertices by position, then a closed solid has every edge shared by exactly
-// two triangles. (A coarse mesh is enough — this is a topology check.)
+// two triangles. (A coarse mesh is enough — this is a topology check.) A triangle
+// the weld collapses (two corners in one 1/32 mm cell — a sphere's pole fan, a
+// sliver) has no area and bounds nothing, so it is left out of the count: kept,
+// its self-edge counts once and its doubled edge three times, and every sphere
+// read as open.
 export const isClosedSolid = (shape) => {
   const m = shape.mesh({ tolerance: 0.3, angularTolerance: 1.0 });
   const P = m.vertices, T = m.triangles;
@@ -27,6 +31,7 @@ export const isClosedSolid = (shape) => {
   const edges = new Map();
   for (let t = 0; t < T.length / 3; t++) {
     const a = vid(T[t * 3]), b = vid(T[t * 3 + 1]), c = vid(T[t * 3 + 2]);
+    if (a === b || b === c || c === a) continue;
     for (const [x, y] of [[a, b], [b, c], [c, a]]) { const e = x < y ? x * 1e7 + y : y * 1e7 + x; edges.set(e, (edges.get(e) || 0) + 1); }
   }
   for (const n of edges.values()) if (n !== 2) return false;

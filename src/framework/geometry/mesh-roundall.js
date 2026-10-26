@@ -85,6 +85,60 @@ export function meshRoundAll(wasm, m, r, quality) {
 }
 
 // ---------------------------------------------------------------------------
+// Solid.offset on the mesh backend: ONE step of the chain above — a dilate
+// (d > 0, Minkowski sum) or an erode (d < 0, Minkowski difference) with a ball of
+// radius |d|. A true ball offset, so every point of the result's surface sits |d|
+// from the input's (within the ball's facet sagitta): convex edges and corners
+// round at radius d on a dilate, concave ones round at |d| on an erode, and the
+// other kind stays sharp. Same asOriginal-then-simplify cleanup as each roundAll
+// step, for the same sliver reason; the tolerance is roundAll's too, so the rim
+// ring that holds an offset face on its plane survives the simplify.
+//
+// Cost is the Minkowski's: on a non-convex input every triangle is hulled with
+// the ball, so time grows with the input's triangle count — measured ~3 ms per
+// input triangle on a dome (576 tris ≈ 2 s, 8,448 ≈ 23 s). The ball count is
+// sized from |d| alone, the one ball the op uses.
+export function meshOffset(wasm, m, d, quality) {
+  if (!Number.isFinite(d) || d === 0) throw new Error("offset: d must be a finite non-zero number (d = 0 is handled as the identity by the caller)");
+  const r = Math.abs(d);
+  const segs = roundAllSegs(r, quality);
+  const tol = Math.min(Math.max(r / 100, 0.01), 0.5 * r * (1 - Math.cos((2 * Math.PI) / segs)));
+  const ball = wasm.Manifold.sphere(r, segs);
+  try {
+    const raw = d > 0 ? m.minkowskiSum(ball) : m.minkowskiDifference(ball);
+    let orig;
+    try {
+      orig = raw.asOriginal();
+    } finally {
+      raw.delete?.();
+    }
+    try {
+      return { out: orig.simplify(tol), support: ballSupport(ball), segs };
+    } finally {
+      orig.delete?.();
+    }
+  } finally {
+    ball.delete?.();
+  }
+}
+
+// The faceted ball's support function h(n) = max over its vertices of n·v: how
+// far the offset actually moves a planar face with outward normal n (a dilate
+// puts it at n·x = d + h(n), an erode at d − h(n)). Equal to |d| where a ball
+// vertex lines up with n (the axes), a sagitta short of it elsewhere — the flat-
+// face shading below must place each plane where the face really landed.
+function ballSupport(ball) {
+  const g = ball.getMesh();
+  const np = g.numProp, vp = Float64Array.from(g.vertProperties);
+  g.delete?.();
+  return (n) => {
+    let best = -Infinity;
+    for (let i = 0; i < vp.length; i += np) best = Math.max(best, n[0] * vp[i] + n[1] * vp[i + 1] + n[2] * vp[i + 2]);
+    return best;
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Flat-face shading. The reference path's result is one fresh surface, shaded
 // SMOOTH (35° crease), and the rounding ball's facets bend far less than that, so
 // a flat face used to share its corner normals with the band facets around it.

@@ -1774,7 +1774,7 @@ const wall  = k.shape2d(outer).offset(-2, { corners: "sharp" });  // inset, mite
 
 (This achieves the same geometry as building the profiles separately and using `k.extrude({ profile: { outer, holes }, h })`, but the Shape2D path is more idiomatic for complex 2-D operations.)
 
-`Shape2D.offset(delta, { corners: "round" | "chamfer" | "sharp" })` grows (`delta>0`) or insets (`delta<0`) a shape. It runs backend-independently on the shared contour engine — lines and arcs offset exactly (arcs stay arcs), so results are backend-identical by construction, like every other `Shape2D` op; it throws if the offset collapses the shape. A region with holes offsets material-wise: the outer grows/shrinks by `delta`, holes by `-delta`, so a positive `delta` always adds material. (For `derive()`/main-thread clearance math on plain point lists, use the pure `offsetPolygon` helper instead.)
+`Shape2D.offset(delta, { corners: "round" | "chamfer" | "sharp" })` grows (`delta>0`) or insets (`delta<0`) a shape. It runs backend-independently on the shared contour engine — lines and arcs offset exactly (arcs stay arcs), so results are backend-identical by construction, like every other `Shape2D` op; it throws if the offset collapses the shape. A region with holes offsets material-wise: the outer grows/shrinks by `delta`, holes by `-delta`, so a positive `delta` always adds material. (For `derive()`/main-thread clearance math on plain point lists, use the pure `offsetPolygon` helper instead.) The 3-D counterpart is `Solid.offset(d)` — a ball offset of a whole solid (see [`offset(d)`](#offsetd--grow-or-shrink-a-solid)).
 
 ## Editing profiles
 
@@ -4607,6 +4607,7 @@ at runtime — no declaration needed either way:
 | `s.fillet(radius)` · `s.fillet({ r, edges? })` | round edges (curve-following, exact); the bare-number scalar shorthand fillets **all** edges, the options form adds a selector |
 | `s.chamfer(distance)` · `s.chamfer({ d, edges? })` | bevel edges; same scalar-shorthand-or-options-with-selector shape as `fillet` |
 | `s.shell({ t, open })` | hollow inward, wall = `t`; `open` selector (`{inPlane,at}`/`{dir}`/`{near}`) chooses which face(s) to open. Closed (no-open-face) hollows are not supported. |
+| `s.offset(d)` · `s.offset({ d })` | grow (`d > 0`) or shrink (`d < 0`) the whole solid by `d` — a 3-D ball offset on both backends, imported meshes included; no OCCT routing. A closed constant-thickness skin is `body.cut(body.offset(-t))`. See [`offset(d)`](#offsetd--grow-or-shrink-a-solid) below. |
 
 `edges` (fillet/chamfer) / `open` (shell) chooses which edges/faces (omit `edges` for **all** edges — `shell` always requires `open`):
 
@@ -4725,6 +4726,50 @@ Rules of thumb:
   the radius (or a backend skip) fails loudly.
 - A small ridge remaining where a thin rib was consumed is correct morphology
   (the rib's dilation fillet survives the opening), not a bug.
+
+### `offset(d)` — grow or shrink a solid
+
+`s.offset(2)` (or `s.offset({ d: 2 })`) grows the solid by 2 mm in every
+direction; `s.offset(-2)` shrinks it by 2 mm. Every point of the new surface is
+`|d|` from the old one — it is a true ball offset, the 3-D counterpart of
+`Shape2D.offset` — so it works on any solid, including an imported STL/3MF mesh,
+and it runs on both backends without routing. `offset(0)` is the identity.
+
+Its main use is a skin of constant thickness `t`, which `shell` cannot make for
+a closed body or an imported mesh:
+
+```js
+const helmet = k.import("helmet");
+const skin = helmet.cut(helmet.offset(-2));         // 2 mm thick everywhere, inside the helmet
+const cage = helmet.offset(1.5).cut(helmet);        // 1.5 mm thick everywhere, outside it
+```
+
+Do not build a skin from axis-shifted copies (`translate` by `±t` and union):
+that is six booleans, and the wall comes out only `t/√2` to `t/√3` thick on
+diagonal surfaces. `offset` is one op and holds `t` in every direction.
+
+**Corners.** A ball offset rounds what it moves away from: on a grow, convex
+edges and corners become arcs of radius `d` (a box grows into a rounded box);
+on a shrink, concave edges become arcs of radius `|d|` and convex corners stay
+sharp (a box shrinks into a smaller sharp box). Flat faces stay flat and move
+`|d|` along their normal. For sharp grown corners, offset the 2-D profile
+(`Shape2D.offset(d, { corners: "sharp" })`) and extrude it instead.
+
+**Thin features.** A shrink deeper than half a wall removes that wall, and a
+shrink past half the solid's thickness leaves nothing (an empty solid on
+Manifold). On OCCT (STEP export, or a sub-part that a `shell` routes there) a
+B-rep offset cannot change topology, so an offset it cannot build **throws**
+`offset-failed` — it never returns the un-offset solid, because a skin cut from
+that would be empty. See `docs/ERROR-PATTERNS.md`.
+
+**Cost note.** The mesh backend computes the offset as a Minkowski sum (grow)
+or difference (shrink) with a ball. On a non-convex solid each input triangle
+is hulled with the ball, so time grows with the triangle count — about 3 ms per
+triangle on a desktop (a 576-triangle dome ≈ 2 s, 8,448 triangles ≈ 23 s). An
+imported scan of 100k triangles is minutes. Decimate a dense import before you
+offset it, and offset once and reuse the result rather than offsetting inside a
+loop. The ball's own tessellation follows the quality tier (preview is coarser,
+so the wall can run up to ~0.1 mm under `t` on a diagonal; print is tighter).
 
 ### Cost on the OCCT path: fillet/chamfer scale with edge count — and order matters
 

@@ -25,7 +25,7 @@ import { groupInteractingRegions } from "./region-interaction.js";
 import { finishKernel } from "./kernel-front.js";
 import { makeProfileWarner } from "./profile-warnings.js";
 import { createOcctRepair } from "./occt-repair.js";
-import { occtRoundAll } from "./occt-roundall.js";
+import { occtOffset, occtRoundAll } from "./occt-roundall.js";
 import { classifyFaceGroups } from "./feature-attribution.js";
 import { resolveLoftRings, loftRingsKey } from "./loft-rings.js";
 import { resolveSweepStations } from "./sweep.js";
@@ -408,6 +408,16 @@ export function createOcctKernel(replicad) {
           const a = mat();
           if (r === 0) return wrap(a._s.clone(), cloneLabels(a._labels), key);
           return wrap(occtRoundAll(replicad, a._s, r, recordWarning), cloneLabels(a._labels), key);
+        });
+      },
+      // Never skips: a failed offset throws `offset-failed` (occt-roundall.js says why).
+      offset: (d) => {
+        if (!Number.isFinite(d)) throw new Error(`offset: d must be a finite number (got ${d})`);
+        const key = h("offset", hash, d);
+        return cached(key, () => {
+          const a = mat();
+          if (d === 0) return wrap(a._s.clone(), cloneLabels(a._labels), key);
+          return wrap(occtOffset(replicad, a._s, d), cloneLabels(a._labels), key);
         });
       },
       shell: (thickness, openFaces) => {
