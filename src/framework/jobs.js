@@ -10,6 +10,7 @@ import { fontsFor, resolveFonts, forgetFontSource } from "./fonts.js";
 import { normalizeOpentype, parseFont } from "./geometry/opentype-interop.js";
 import { imageControlAllows, imageSourceAllowed, isNoImageSource } from "./image-source.js";
 import { imagesFor, ensureImages } from "./images.js";
+import { describeKernelThrow } from "./kernel-error.js";
 import { ensureImports, resolveImports } from "./imports.js";
 import { safeName } from "./safe-name.js";
 import { vectorControlAllows, vectorSourceAllowed, isNoVectorSource } from "./vector-source.js";
@@ -651,7 +652,12 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     } else if (opts.jobs && Object.hasOwn(opts.jobs, msg.type)) {
       await opts.jobs[msg.type](kernel, part, msg, post, { isStale: opts.isStale });
     }
-  } catch (err) {
+  } catch (thrown) {
+    // A kernel compiled without exception catching throws a bare NUMBER for an
+    // uncaught C++ exception; describeKernelThrow turns that into a readable
+    // Error (with the C++ type when the kernel's heap can say) and returns a
+    // real Error untouched, `code` included.
+    const err = describeKernelThrow(thrown, { evidence: kernel._throwEvidence?.(thrown) });
     // `subparts` (generate jobs only) tells the reroute policy which sub-parts the
     // failed job covered, so only those latch to OCCT — not the whole part.
     if (err?.code === "NEEDS_IMPORT_MESH") post({ type: "needs-import-mesh", jobId: msg.jobId, subparts: msg.subparts });
