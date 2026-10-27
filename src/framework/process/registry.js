@@ -42,7 +42,14 @@ export const PRINT_PROFILES = Object.freeze(Object.assign({}, ...PRINT_PROCESSES
 // `base` (recursively) names one. Anything else is null.
 export function printProcessFor(spec) {
   let id = spec;
-  while (id && typeof id === "object") id = id.base;
+  // A cyclic inline profile (`p.base = p`) is malformed, not a loop to follow: lint calls
+  // this on user-authored parts, and a hang there takes the editor with it.
+  const seen = new Set();
+  while (id && typeof id === "object") {
+    if (seen.has(id)) return null;
+    seen.add(id);
+    id = id.base;
+  }
   if (typeof id !== "string") return null;
   return PRINT_PROCESSES.find((d) => Object.hasOwn(d.profiles, id)) ?? null;
 }

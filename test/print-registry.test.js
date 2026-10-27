@@ -40,3 +40,12 @@ test("AUTHORING-PARTS carries the printed-parts section and the accept key", () 
   expect(md).not.toMatch(/ONLY with this is overhang checked/);
   expect(md).not.toMatch(/a warning, never a gate/);
 });
+
+test("printProcessFor returns null for a cyclic inline profile instead of looping", () => {
+  const p = { minWall: 1 };
+  p.base = p;
+  expect(printProcessFor(p)).toBeNull();
+  const q = { base: { base: null } };
+  q.base.base = q;
+  expect(printProcessFor(q)).toBeNull();
+});

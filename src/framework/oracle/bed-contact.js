@@ -71,29 +71,39 @@ const SILHOUETTE_MIN_PITCH = 0.25;
 const SILHOUETTE_CELLS = 512;
 
 // Mark one downward triangle's xy shadow on the silhouette grid: every cell whose centre
-// lies inside it. A triangle too thin to contain any centre (a wall thinner than a cell)
-// marks the cells along its outline instead (sampled at half a pitch), so it is never
-// dropped between centres. Marking edge cells for EVERY triangle was tried and
-// over-covered a 1 mm tube wall by a third; centre sampling is unbiased along an edge.
+// lies inside it. Each grid row is filled as one span — the x-range where the row's
+// centre line crosses the triangle — so the work is the cells the triangle covers plus
+// one intersection per row, never its whole bounding rectangle (a fine fan of slivers
+// over the same floor used to rescan that rectangle once per sliver). A triangle too
+// thin to contain any centre (a wall thinner than a cell) marks the cells along its
+// outline instead (sampled at half a pitch), so it is never dropped between centres.
+// Marking edge cells for EVERY triangle was tried and over-covered a 1 mm tube wall by
+// a third; centre sampling is unbiased along an edge.
 function shadow(P, a, b, c, minX, minY, pitch, gx, gy, grid, mark) {
   const ax = P[a], ay = P[a + 1], bx = P[b], by = P[b + 1], cx = P[c], cy = P[c + 1];
   const area2 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
   let hit = false;
   if (area2 !== 0) {
-    const i0 = Math.max(0, Math.floor((Math.min(ax, bx, cx) - minX) / pitch));
-    const i1 = Math.min(gx - 1, Math.floor((Math.max(ax, bx, cx) - minX) / pitch));
     const j0 = Math.max(0, Math.floor((Math.min(ay, by, cy) - minY) / pitch));
     const j1 = Math.min(gy - 1, Math.floor((Math.max(ay, by, cy) - minY) / pitch));
-    const sgn = area2 > 0 ? 1 : -1;
     for (let j = j0; j <= j1; j++) {
       const y = minY + (j + 0.5) * pitch;
-      for (let i = i0; i <= i1; i++) {
-        const x = minX + (i + 0.5) * pitch;
-        const w0 = ((bx - ax) * (y - ay) - (by - ay) * (x - ax)) * sgn;
-        const w1 = ((cx - bx) * (y - by) - (cy - by) * (x - bx)) * sgn;
-        const w2 = ((ax - cx) * (y - cy) - (ay - cy) * (x - cx)) * sgn;
-        if (w0 >= 0 && w1 >= 0 && w2 >= 0) { grid[j * gx + i] = 1; hit = true; }
-      }
+      // Where this row's centre line enters and leaves the triangle: the extreme x of its
+      // crossings with the three edges (an edge lying on the line contributes both ends).
+      let lo = Infinity, hi = -Infinity;
+      const cross = (x0, y0, x1, y1) => {
+        if (!((y0 <= y && y <= y1) || (y1 <= y && y <= y0))) return;
+        if (y0 === y1) { lo = Math.min(lo, x0, x1); hi = Math.max(hi, x0, x1); return; }
+        const x = x0 + ((y - y0) * (x1 - x0)) / (y1 - y0);
+        if (x < lo) lo = x;
+        if (x > hi) hi = x;
+      };
+      cross(ax, ay, bx, by); cross(bx, by, cx, cy); cross(cx, cy, ax, ay);
+      if (lo > hi) continue;
+      const i0 = Math.max(0, Math.ceil((lo - minX) / pitch - 0.5));
+      const i1 = Math.min(gx - 1, Math.floor((hi - minX) / pitch - 0.5));
+      for (let i = i0; i <= i1; i++) grid[j * gx + i] = 1;
+      if (i1 >= i0) hit = true;
     }
   }
   if (hit) return;
