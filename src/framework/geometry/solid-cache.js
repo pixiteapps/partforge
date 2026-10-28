@@ -7,7 +7,21 @@
 // entry is retained by BOTH partitions, so disposal is refcounted — see release().
 // WASM-agnostic — it stores opaque {value, pin, dispose} triples supplied by the
 // caller (the Manifold backend), so it is unit-testable with plain objects.
-export function createSolidCache() {
+//
+// MEMORY BUDGET (feedback #212). Retaining a whole view's build graph is what makes an
+// edit rebuild in seconds, and it is also most of the heap a big view holds: opening a
+// 105-plate forge peaked at 3.3 GB with the cache and 0.95 GB without, which a phone's
+// browser tab cannot hold. `setBudget(bytes)` bounds it; `trim()` then disposes whole
+// partitions, least recently built first, until the retained solids fit. A sub-part
+// trimmed away simply rebuilds cold next time. `sizeOf(pin)` is the caller's estimate
+// of one retained object's bytes (the Manifold backend reads its triangle and vertex
+// counts); it is asked once per entry, at the first trim() after the entry was made.
+//
+// trim() is NOT done inside end(): a caller may still be using a round's solids after
+// closing it (buildView hands its built view to measure), and a trim there would free
+// them under it. jobs.js trims where nothing is held — after each display sub-part has
+// been meshed and cleaned up, and when a job ends.
+export function createSolidCache({ sizeOf = () => 0 } = {}) {
   const caches = new Map(); // name -> Map(hash -> { value, pin, dispose, refs })
   const pinned = new Set();  // every live `pin` across all sub-parts
   const index = new Map();   // hash -> entry, ACROSS partitions: identical geometry built
@@ -17,6 +31,11 @@ export function createSolidCache() {
   let name = null, active = null, prev = null;
   let depth = 0;               // bracket nesting; only the OUTERMOST one is real (see begin)
   let hits = 0, misses = 0;
+  let budget = Infinity;       // bytes the retained solids may hold (setBudget)
+  let bytes = 0;               // the retained solids' estimated size, each entry once
+  let tick = 0;                // begin() order, for least-recently-built eviction
+  const lastUsed = new Map();  // name -> tick of the partition's last begin()
+  const unsized = new Set();   // entries made since the last trim(), size not yet read
 
   // One partition stops retaining `entry`. Disposal waits for the LAST holder:
   // a solid shared across sub-parts is one WASM object, so disposing it when the
@@ -27,7 +46,15 @@ export function createSolidCache() {
     if (--entry.refs > 0) return;
     if (index.get(hash) === entry) index.delete(hash);
     pinned.delete(entry.pin);
+    unsized.delete(entry);
+    bytes -= entry.size ?? 0;
     entry.dispose();
+  };
+  const dropPartition = (n) => {
+    for (const [hash, entry] of caches.get(n) ?? []) release(hash, entry); // refcounted: a shared solid survives
+    caches.delete(n);
+    lastBuilt.delete(n);
+    lastUsed.delete(n);
   };
 
   return {
@@ -39,7 +66,7 @@ export function createSolidCache() {
     // contain one, and the inner pair becomes a no-op.
     begin(n) {
       if (depth++ > 0) return;
-      name = n; lastBuilt.set(n, generation); prev = caches.get(n) ?? new Map(); active = new Map();
+      name = n; lastBuilt.set(n, generation); lastUsed.set(n, ++tick); prev = caches.get(n) ?? new Map(); active = new Map();
     },
 
     end() {
@@ -58,11 +85,9 @@ export function createSolidCache() {
     // the eviction line, so recently-viewed views stay warm across edits.
     sweep() {
       generation++;
-      for (const [n, entries] of caches) {
+      for (const n of [...caches.keys()]) {
         if (generation - (lastBuilt.get(n) ?? 0) < 3) continue;
-        for (const [hash, entry] of entries) release(hash, entry); // refcounted: a shared solid survives
-        caches.delete(n);
-        lastBuilt.delete(n);
+        dropPartition(n);
       }
     },
 
@@ -78,6 +103,34 @@ export function createSolidCache() {
       }
       caches.clear();
       lastBuilt.clear();
+      lastUsed.clear();
+    },
+
+    // Bytes the retained solids may hold; Infinity (the default) never trims.
+    setBudget(b) {
+      budget = typeof b === "number" && b >= 0 ? b : Infinity;
+    },
+
+    // Dispose whole partitions, least recently built first, until the retained solids
+    // fit the budget. Never mid-bracket, and only where no caller holds a cached solid
+    // (see the header). Returns how many partitions it dropped.
+    trim() {
+      if (name != null) return 0;
+      for (const entry of unsized) {
+        let s = 0;
+        try { s = Math.max(0, Number(sizeOf(entry.pin)) || 0); } catch { s = 0; }
+        entry.size = s;
+        bytes += s;
+      }
+      unsized.clear();
+      let dropped = 0;
+      while (bytes > budget && lastUsed.size > 0) {
+        let oldest = null, at = Infinity;
+        for (const [n, t] of lastUsed) if (t < at) { at = t; oldest = n; }
+        dropPartition(oldest);
+        dropped++;
+      }
+      return dropped;
     },
 
     lookup(hash, make) {
@@ -90,6 +143,7 @@ export function createSolidCache() {
       misses++;
       const entry = make();
       entry.refs = 1;
+      unsized.add(entry);
       active.set(hash, entry);
       index.set(hash, entry);
       pinned.add(entry.pin);
@@ -98,6 +152,7 @@ export function createSolidCache() {
 
     isPinned: (pin) => pinned.has(pin),
     stats: () => ({ hits, misses }),
+    retainedBytes: () => bytes,
     resetStats: () => { hits = 0; misses = 0; },
   };
 }

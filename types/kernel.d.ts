@@ -644,6 +644,12 @@ export interface GeometryKernel {
   sweepCache?(): void;
   /** Drop every cache partition — the worker calls this before an export job. Never call mid-bracket. */
   dropCache?(): void;
+  /** Bound the solid cache's retained bytes (`Infinity` = unbounded, the default). */
+  setCacheBudget?(bytes: number): void;
+  /** Drop the least recently built partitions until the cache fits its budget. Only where no cached solid is held. */
+  trimCache?(): number;
+  /** The cache's estimated retained bytes. */
+  cacheBytes?(): number;
   cacheStats?(): { hits: number; misses: number };
   resetCacheStats?(): void;
   /** Free per-job WASM objects (Manifold backend); call after each job. */
