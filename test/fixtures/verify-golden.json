@@ -35,6 +35,7 @@
         "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
       }
     ],
+    "costs": [],
     "unevaluated": [],
     "declared": 0,
     "evaluated": 0
@@ -93,6 +94,18 @@
           {
             "scope": "subpart",
             "subpart": "spacer",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -100,6 +113,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 98.9311676,
+            "status": "pass",
+            "pass": true,
+            "message": "98.93116761000293 >= 10"
           },
           {
             "scope": "subpart",
@@ -179,6 +204,18 @@
           {
             "scope": "subpart",
             "subpart": "spacer",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -186,6 +223,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 98.9311676,
+            "status": "pass",
+            "pass": true,
+            "message": "98.93116761000293 >= 10"
           },
           {
             "scope": "subpart",
@@ -265,6 +314,18 @@
           {
             "scope": "subpart",
             "subpart": "spacer",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -272,6 +333,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "spacer",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -304,9 +377,10 @@
     ],
     "failures": [],
     "warnings": [],
+    "costs": [],
     "unevaluated": [],
-    "declared": 18,
-    "evaluated": 18
+    "declared": 24,
+    "evaluated": 24
   },
   "emblem.js#plate": {
     "ok": true,
@@ -385,6 +459,7 @@
     ],
     "failures": [],
     "warnings": [],
+    "costs": [],
     "unevaluated": [],
     "declared": 5,
     "evaluated": 5
@@ -453,6 +528,25 @@
           {
             "scope": "subpart",
             "subpart": "vase",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 68242.5064,
+            "status": "cost",
+            "pass": false,
+            "message": "68242.50639263303 not <= 1",
+            "note": "steepest unsupported face 75.5° from vertical",
+            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+            "location": [
+              -11.0587858,
+              -25.1956075,
+              142.857142
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -460,6 +554,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 63.497072,
+            "status": "pass",
+            "pass": true,
+            "message": "63.497072039043175 >= 10"
           },
           {
             "scope": "subpart",
@@ -549,6 +655,25 @@
           {
             "scope": "subpart",
             "subpart": "vase",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 68242.5064,
+            "status": "cost",
+            "pass": false,
+            "message": "68242.50639263303 not <= 1",
+            "note": "steepest unsupported face 75.5° from vertical",
+            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+            "location": [
+              -11.0587858,
+              -25.1956075,
+              142.857142
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -556,6 +681,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 63.497072,
+            "status": "pass",
+            "pass": true,
+            "message": "63.497072039043175 >= 10"
           },
           {
             "scope": "subpart",
@@ -645,6 +782,25 @@
           {
             "scope": "subpart",
             "subpart": "vase",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 32190.0243,
+            "status": "cost",
+            "pass": false,
+            "message": "32190.024253179814 not <= 1",
+            "note": "steepest unsupported face 70.5° from vertical",
+            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+            "location": [
+              31.9139156,
+              18.0907866,
+              27.8571428
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -652,6 +808,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 85.4318145,
+            "status": "pass",
+            "pass": true,
+            "message": "85.43181449472007 >= 10"
           },
           {
             "scope": "subpart",
@@ -741,6 +909,25 @@
           {
             "scope": "subpart",
             "subpart": "vase",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 33223.4643,
+            "status": "cost",
+            "pass": false,
+            "message": "33223.464269737415 not <= 1",
+            "note": "steepest unsupported face 63.6° from vertical",
+            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+            "location": [
+              -23.4235535,
+              -1.2801884,
+              171.428569
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -748,6 +935,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "vase",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 83.9480725,
+            "status": "pass",
+            "pass": true,
+            "message": "83.94807246248892 >= 10"
           },
           {
             "scope": "subpart",
@@ -857,9 +1056,91 @@
         ]
       }
     ],
+    "costs": [
+      {
+        "case": "defaults",
+        "scope": "subpart",
+        "subpart": "vase",
+        "metric": "overhangArea",
+        "kind": "cost",
+        "expr": "<=1",
+        "accepted": false,
+        "actual": 68242.5064,
+        "status": "cost",
+        "pass": false,
+        "message": "68242.50639263303 not <= 1",
+        "note": "steepest unsupported face 75.5° from vertical",
+        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+        "location": [
+          -11.0587858,
+          -25.1956075,
+          142.857142
+        ]
+      },
+      {
+        "case": "Tulip vase",
+        "scope": "subpart",
+        "subpart": "vase",
+        "metric": "overhangArea",
+        "kind": "cost",
+        "expr": "<=1",
+        "accepted": false,
+        "actual": 68242.5064,
+        "status": "cost",
+        "pass": false,
+        "message": "68242.50639263303 not <= 1",
+        "note": "steepest unsupported face 75.5° from vertical",
+        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+        "location": [
+          -11.0587858,
+          -25.1956075,
+          142.857142
+        ]
+      },
+      {
+        "case": "Barrel pot",
+        "scope": "subpart",
+        "subpart": "vase",
+        "metric": "overhangArea",
+        "kind": "cost",
+        "expr": "<=1",
+        "accepted": false,
+        "actual": 32190.0243,
+        "status": "cost",
+        "pass": false,
+        "message": "32190.024253179814 not <= 1",
+        "note": "steepest unsupported face 70.5° from vertical",
+        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+        "location": [
+          31.9139156,
+          18.0907866,
+          27.8571428
+        ]
+      },
+      {
+        "case": "Twist column",
+        "scope": "subpart",
+        "subpart": "vase",
+        "metric": "overhangArea",
+        "kind": "cost",
+        "expr": "<=1",
+        "accepted": false,
+        "actual": 33223.4643,
+        "status": "cost",
+        "pass": false,
+        "message": "33223.464269737415 not <= 1",
+        "note": "steepest unsupported face 63.6° from vertical",
+        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+        "location": [
+          -23.4235535,
+          -1.2801884,
+          171.428569
+        ]
+      }
+    ],
     "unevaluated": [],
-    "declared": 24,
-    "evaluated": 24
+    "declared": 32,
+    "evaluated": 32
   },
   "filleted-box.js#box": {
     "ok": null,
@@ -895,6 +1176,7 @@
         "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
       }
     ],
+    "costs": [],
     "unevaluated": [],
     "declared": 0,
     "evaluated": 0
@@ -953,6 +1235,18 @@
           {
             "scope": "subpart",
             "subpart": "gasket",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "gasket",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -960,6 +1254,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "gasket",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 99.8508495,
+            "status": "pass",
+            "pass": true,
+            "message": "99.8508494765338 >= 10"
           },
           {
             "scope": "subpart",
@@ -992,9 +1298,10 @@
     ],
     "failures": [],
     "warnings": [],
+    "costs": [],
     "unevaluated": [],
-    "declared": 6,
-    "evaluated": 6
+    "declared": 8,
+    "evaluated": 8
   },
   "hinged-box.js#box": {
     "ok": true,
@@ -1051,6 +1358,18 @@
           {
             "scope": "subpart",
             "subpart": "base",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "base",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -1058,6 +1377,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "base",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -1088,6 +1419,18 @@
           {
             "scope": "subpart",
             "subpart": "lid",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lid",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -1095,15 +1438,28 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lid",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           }
         ]
       }
     ],
     "failures": [],
     "warnings": [],
+    "costs": [],
     "unevaluated": [],
-    "declared": 7,
-    "evaluated": 7
+    "declared": 11,
+    "evaluated": 11
   },
   "hull-sweep.js#sweep": {
     "ok": null,
@@ -1140,6 +1496,7 @@
         "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
       }
     ],
+    "costs": [],
     "unevaluated": [],
     "declared": 0,
     "evaluated": 0
@@ -1200,6 +1557,18 @@
           {
             "scope": "subpart",
             "subpart": "body",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -1207,6 +1576,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -1296,6 +1677,18 @@
           {
             "scope": "subpart",
             "subpart": "mount",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mount",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -1303,6 +1696,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mount",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 99.8802493,
+            "status": "pass",
+            "pass": true,
+            "message": "99.88024934323248 >= 10"
           },
           {
             "scope": "subpart",
@@ -1346,9 +1751,10 @@
     ],
     "failures": [],
     "warnings": [],
+    "costs": [],
     "unevaluated": [],
-    "declared": 15,
-    "evaluated": 15
+    "declared": 19,
+    "evaluated": 19
   },
   "import-demo.js#reference": {
     "ok": false,
@@ -1411,6 +1817,18 @@
           },
           {
             "scope": "subpart",
+            "subpart": "ref",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "message": "unavailable"
+          },
+          {
+            "scope": "subpart",
             "subpart": "body",
             "metric": "minWall",
             "kind": "warn",
@@ -1423,6 +1841,18 @@
           {
             "scope": "subpart",
             "subpart": "body",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -1430,6 +1860,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -1529,9 +1971,10 @@
       }
     ],
     "warnings": [],
+    "costs": [],
     "unevaluated": [],
-    "declared": 11,
-    "evaluated": 11
+    "declared": 14,
+    "evaluated": 13
   },
   "lattice-box.js#assembly": {
     "ok": true,
@@ -1660,6 +2103,18 @@
           {
             "scope": "subpart",
             "subpart": "body",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -1667,6 +2122,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -1682,6 +2149,18 @@
           {
             "scope": "subpart",
             "subpart": "lid",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lid",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -1689,6 +2168,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lid",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -1704,6 +2195,18 @@
           {
             "scope": "subpart",
             "subpart": "mesh",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mesh",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -1711,6 +2214,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mesh",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -1726,6 +2241,18 @@
           {
             "scope": "subpart",
             "subpart": "plate",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -1733,6 +2260,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -1744,6 +2283,18 @@
             "status": "pass",
             "pass": true,
             "message": "1.7492556680713962 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "pin",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "message": "unavailable"
           }
         ]
       }
@@ -1827,9 +2378,10 @@
         ]
       }
     ],
+    "costs": [],
     "unevaluated": [],
-    "declared": 11,
-    "evaluated": 11
+    "declared": 20,
+    "evaluated": 19
   },
   "lattice-box.js#body": {
     "ok": true,
@@ -1886,6 +2438,18 @@
           {
             "scope": "subpart",
             "subpart": "body",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -1893,15 +2457,28 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           }
         ]
       }
     ],
     "failures": [],
     "warnings": [],
+    "costs": [],
     "unevaluated": [],
-    "declared": 4,
-    "evaluated": 4
+    "declared": 6,
+    "evaluated": 6
   },
   "lattice-box.js#lid": {
     "ok": true,
@@ -1958,6 +2535,18 @@
           {
             "scope": "subpart",
             "subpart": "lid",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lid",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -1965,15 +2554,28 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lid",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           }
         ]
       }
     ],
     "failures": [],
     "warnings": [],
+    "costs": [],
     "unevaluated": [],
-    "declared": 4,
-    "evaluated": 4
+    "declared": 6,
+    "evaluated": 6
   },
   "lattice-box.js#mesh": {
     "ok": true,
@@ -2030,6 +2632,18 @@
           {
             "scope": "subpart",
             "subpart": "mesh",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mesh",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -2037,15 +2651,28 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mesh",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           }
         ]
       }
     ],
     "failures": [],
     "warnings": [],
+    "costs": [],
     "unevaluated": [],
-    "declared": 4,
-    "evaluated": 4
+    "declared": 6,
+    "evaluated": 6
   },
   "lattice-box.js#plate": {
     "ok": true,
@@ -2102,6 +2729,18 @@
           {
             "scope": "subpart",
             "subpart": "plate",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -2109,15 +2748,28 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           }
         ]
       }
     ],
     "failures": [],
     "warnings": [],
+    "costs": [],
     "unevaluated": [],
-    "declared": 4,
-    "evaluated": 4
+    "declared": 6,
+    "evaluated": 6
   },
   "lattice-box.js#print": {
     "ok": true,
@@ -2174,6 +2826,18 @@
           {
             "scope": "subpart",
             "subpart": "body",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -2181,6 +2845,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "body",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -2196,6 +2872,18 @@
           {
             "scope": "subpart",
             "subpart": "lid",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lid",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -2203,6 +2891,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lid",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -2218,6 +2918,18 @@
           {
             "scope": "subpart",
             "subpart": "mesh",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mesh",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -2225,6 +2937,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "mesh",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -2240,6 +2964,18 @@
           {
             "scope": "subpart",
             "subpart": "plate",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -2247,15 +2983,28 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           }
         ]
       }
     ],
     "failures": [],
     "warnings": [],
+    "costs": [],
     "unevaluated": [],
-    "declared": 10,
-    "evaluated": 10
+    "declared": 18,
+    "evaluated": 18
   },
   "lofted-bottle.js#bottle": {
     "ok": true,
@@ -2464,6 +3213,7 @@
     ],
     "failures": [],
     "warnings": [],
+    "costs": [],
     "unevaluated": [],
     "declared": 12,
     "evaluated": 12
@@ -2494,6 +3244,7 @@
         "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
       }
     ],
+    "costs": [],
     "unevaluated": [],
     "declared": 0,
     "evaluated": 0
@@ -2524,6 +3275,7 @@
         "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
       }
     ],
+    "costs": [],
     "unevaluated": [],
     "declared": 0,
     "evaluated": 0
@@ -2554,6 +3306,7 @@
         "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
       }
     ],
+    "costs": [],
     "unevaluated": [],
     "declared": 0,
     "evaluated": 0
@@ -2584,6 +3337,7 @@
         "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
       }
     ],
+    "costs": [],
     "unevaluated": [],
     "declared": 0,
     "evaluated": 0
@@ -2617,6 +3371,7 @@
         "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
       }
     ],
+    "costs": [],
     "unevaluated": [],
     "declared": 0,
     "evaluated": 0
@@ -2657,6 +3412,7 @@
         "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
       }
     ],
+    "costs": [],
     "unevaluated": [],
     "declared": 0,
     "evaluated": 0
@@ -2718,6 +3474,18 @@
           {
             "scope": "subpart",
             "subpart": "planter",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -2725,6 +3493,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 67.741282,
+            "status": "pass",
+            "pass": true,
+            "message": "67.74128196735367 >= 10"
           },
           {
             "scope": "subpart",
@@ -2807,6 +3587,18 @@
           {
             "scope": "subpart",
             "subpart": "planter",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -2814,6 +3606,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -2896,6 +3700,18 @@
           {
             "scope": "subpart",
             "subpart": "planter",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -2903,6 +3719,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 99.8509692,
+            "status": "pass",
+            "pass": true,
+            "message": "99.85096921819517 >= 10"
           },
           {
             "scope": "subpart",
@@ -2985,6 +3813,18 @@
           {
             "scope": "subpart",
             "subpart": "planter",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -2992,6 +3832,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "planter",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 70.864285,
+            "status": "pass",
+            "pass": true,
+            "message": "70.86428501398159 >= 10"
           },
           {
             "scope": "subpart",
@@ -3024,9 +3876,10 @@
     ],
     "failures": [],
     "warnings": [],
+    "costs": [],
     "unevaluated": [],
-    "declared": 24,
-    "evaluated": 24
+    "declared": 32,
+    "evaluated": 32
   },
   "propeller.js#propeller": {
     "ok": true,
@@ -3096,6 +3949,7 @@
     ],
     "failures": [],
     "warnings": [],
+    "costs": [],
     "unevaluated": [],
     "declared": 3,
     "evaluated": 3
@@ -3156,6 +4010,18 @@
           {
             "scope": "subpart",
             "subpart": "plate",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -3163,6 +4029,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "plate",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 10"
           },
           {
             "scope": "subpart",
@@ -3206,9 +4084,10 @@
     ],
     "failures": [],
     "warnings": [],
+    "costs": [],
     "unevaluated": [],
-    "declared": 7,
-    "evaluated": 7
+    "declared": 9,
+    "evaluated": 9
   },
   "scott-label.js#backing": {
     "ok": true,
@@ -3287,6 +4166,18 @@
           {
             "scope": "subpart",
             "subpart": "backing",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 5.73562461e-7,
+            "status": "pass",
+            "pass": true,
+            "message": "5.735624607029033e-7 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "backing",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -3294,6 +4185,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "backing",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 96.4284042,
+            "status": "pass",
+            "pass": true,
+            "message": "96.42840417580358 >= 10"
           },
           {
             "scope": "subpart",
@@ -3347,9 +4250,10 @@
         ]
       }
     ],
+    "costs": [],
     "unevaluated": [],
-    "declared": 7,
-    "evaluated": 6
+    "declared": 9,
+    "evaluated": 8
   },
   "scott-label.js#lettering": {
     "ok": true,
@@ -3427,6 +4331,18 @@
           {
             "scope": "subpart",
             "subpart": "lettering",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lettering",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -3434,6 +4350,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lettering",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 96.0783395,
+            "status": "pass",
+            "pass": true,
+            "message": "96.0783394910309 >= 10"
           },
           {
             "scope": "subpart",
@@ -3486,9 +4414,10 @@
         ]
       }
     ],
+    "costs": [],
     "unevaluated": [],
-    "declared": 7,
-    "evaluated": 6
+    "declared": 9,
+    "evaluated": 8
   },
   "scott-label.js#assembly": {
     "ok": true,
@@ -3567,6 +4496,18 @@
           {
             "scope": "subpart",
             "subpart": "backing",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 5.73562461e-7,
+            "status": "pass",
+            "pass": true,
+            "message": "5.735624607029033e-7 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "backing",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -3574,6 +4515,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "backing",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 96.4284042,
+            "status": "pass",
+            "pass": true,
+            "message": "96.42840417580358 >= 10"
           },
           {
             "scope": "subpart",
@@ -3622,6 +4575,18 @@
           {
             "scope": "subpart",
             "subpart": "lettering",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 <= 1"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lettering",
             "metric": "bedContactPct",
             "kind": "gate",
             "expr": ">=50",
@@ -3629,6 +4594,18 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "lettering",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 96.0783395,
+            "status": "pass",
+            "pass": true,
+            "message": "96.0783394910309 >= 10"
           },
           {
             "scope": "subpart",
@@ -3701,9 +4678,10 @@
         ]
       }
     ],
+    "costs": [],
     "unevaluated": [],
-    "declared": 11,
-    "evaluated": 11
+    "declared": 15,
+    "evaluated": 15
   },
   "screw.js#screw": {
     "ok": null,
@@ -3762,6 +4740,7 @@
         "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
       }
     ],
+    "costs": [],
     "unevaluated": [],
     "declared": 0,
     "evaluated": 0
@@ -3792,6 +4771,7 @@
         "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
       }
     ],
+    "costs": [],
     "unevaluated": [],
     "declared": 0,
     "evaluated": 0

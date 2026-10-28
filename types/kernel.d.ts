@@ -290,6 +290,16 @@ export interface Solid {
    * never throws `KernelCapabilityError`. `roundAll(0)` is the identity.
    */
   roundAll(r: number | { r: number }): Solid;
+  /**
+   * 3-D ball offset — the solid counterpart of `Shape2D.offset`. `d > 0` grows
+   * the solid by `d` everywhere (convex edges round at radius `d`); `d < 0`
+   * shrinks it by `|d|` (concave edges round, convex corners stay sharp). Works
+   * on both backends and on imported meshes; never routes. A constant-thickness
+   * skin is `body.cut(body.offset(-t))`. `offset(0)` is the identity. The mesh
+   * backend's cost grows with triangle count (~3 ms per triangle); on OCCT an
+   * offset that cannot be built throws `offset-failed`.
+   */
+  offset(d: number | { d: number }): Solid;
   /** Through-hole count (Manifold only). */
   genus?(): number;
   /** No geometry at all (Manifold only). */

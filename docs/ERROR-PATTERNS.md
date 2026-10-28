@@ -132,6 +132,24 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 - **Cause:** the B-rep backend implements `roundAll` as a triple OCCT offset, which cannot change topology: a radius at or above the smallest local feature (thin wall < 2r, hole < 2r) has no valid B-rep offset result, so the op skips whole rather than emit garbage (KERNEL-CONTRACT.md, `roundAll` row). The mesh backend meanwhile performs true consumption — so preview and STEP legitimately differ in this regime.
 - **Fix:** reduce `r` below half the smallest wall/hole radius if STEP fidelity matters; or accept the divergence (preview/STL are correct) and gate the part with a `verify` volume assertion so the behavior is intentional.
 
+## offset-failed
+
+- **Symptom:** the build throws `offset-failed: offset(<d>) produced no valid solid on the OCCT backend — …` (STEP export, or a sub-part a `shell` routes to OCCT).
+- **Cause:** the B-rep backend implements `Solid.offset` as one OCCT offset, which cannot change topology: a shrink at or past half the thinnest wall (or a grow that would close a gap or hole narrower than `2d`) has no valid B-rep result. Unlike `roundAll`, `offset` never skips — returning the un-offset solid would make `body.cut(body.offset(-t))` empty without any sign of a problem — so it throws.
+- **Fix:** keep `|d|` below half the smallest wall/gap; or run the sub-part on Manifold (`meta.backend: "manifold"`, or drop the `shell` that routes it), whose Minkowski offset consumes thin features correctly. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "`offset(d)` — grow or shrink a solid".
+
+## offset-slow
+
+- **Symptom:** a build that calls `Solid.offset` takes many seconds or minutes, most often on an imported STL/3MF.
+- **Cause:** the Manifold backend's offset is a Minkowski sum/difference with a ball; on a non-convex solid every input triangle is hulled with the ball, about 3 ms per triangle (8,448 triangles ≈ 23 s; a 100k-triangle scan is minutes).
+- **Fix:** decimate the mesh before you import it, offset once and reuse the result, and do not offset inside a loop. Where the solid is an extrusion, offset the 2-D profile (`Shape2D.offset`) and extrude it instead — that is near-instant.
+
+## solid-offset-not-a-function
+
+- **Symptom:** `TypeError: <name>.offset is not a function` on a Solid (an extruded, imported or boolean result).
+- **Cause:** partforge before 0.165 had `offset` only on `Shape2D`; `Solid.offset` was added in 0.165.0.
+- **Fix:** update partforge to 0.165.0 or later. Do not fall back to unioning axis-shifted copies of the solid — that makes a wall only `t/√3` thick on diagonal surfaces.
+
 ## boolean-not-watertight
 
 - **Symptom:** `NOT watertight ✗` from `partforge measure` (non-zero exit) after adding a boolean cut or union.
@@ -209,6 +227,12 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 - **Symptom:** A `✗ … bedContactPct` failure from `verify` (e.g. `1.28 not >= 50`) with the note `… mm² of flat underside sits 0.25 mm above the bed`; or, in a slicer, a piece whose flat bottom is not on the bed and whose first layers string or spaghetti.
 - **Cause:** Something smaller than the piece's flat underside sits lower than it in the print pose — a horizontal knuckle or pin whose cylinder dips below the plate, a boss, or lettering embossed on the bottom — so exporters and slicers rest the piece on that feature and the flat face prints in mid-air.
 - **Fix:** Trim the piece flat at the bed plane (cut everything below z = 0 in its print pose), or raise or shorten the lower feature so the flat face is the lowest; size a print-in-place knuckle so its cylinder is tangent to the bed and give it a support block down to z = 0. A recess meant to clear the bed declares a lower `bedContactPct`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Self-verification (the `verify` block)".
+
+## piece-stands-on-nothing
+
+- **Symptom:** A `footprintPct` cost from `verify` (in `verify.costs`, e.g. `0.42 not >= 10`) on a piece whose print pose rests on a point, a line or a curl — a sphere-tipped rod standing on its end, a cylinder lying on its side — while `bedContactPct` passes.
+- **Cause:** The lowest point of the piece is not a flat face, so almost none of its silhouette on the bed actually touches it (a cylinder on its side reads a few percent, under the floor): the first layer has almost nothing to bond to, and the piece tips or pulls loose unless it prints with a brim, a raft, or in a different orientation.
+- **Fix:** Lay the piece on its flat face in its print pose, add a flat foot or pad at its lowest point, or print it with a brim. When the user chose the brim, `verify.accept: ["footprint"]` records it and the cost reads accepted. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Printed parts".
 
 ## expect-static-across-presets
 

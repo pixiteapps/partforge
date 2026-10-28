@@ -12,7 +12,7 @@
 // conservative direction, since that is the full-resolution behaviour every part
 // had before budgets existed. The real error surfaces from verify, which is where
 // a reader can act on it.
-import { resolveProfile, overhangAngleFor, bedContactFor } from "./dfm-profiles.js";
+import { resolveProfile, overhangAngleFor, bedContactFor, footprintFor } from "./dfm-profiles.js";
 import { expandCases } from "./cases.js";
 import { resolveParams } from "../part-model.js";
 import { parseAssertion } from "./assert-dsl.js";
@@ -54,6 +54,12 @@ export function partOverhangAngle(part, { process, expanded } = {}) {
 // (dfm-profiles.js bedContactFor holds the rule). Total, like partOverhangAngle.
 export function partBedContact(part, { process, expanded } = {}) {
   try { return bedContactFor(part, process, { expanded: expanded ?? expandExpectations(part) }); } catch { return null; }
+}
+
+// The footprint floor a part is checked against, or null when not checked
+// (dfm-profiles.js footprintFor holds the rule). Total, like partBedContact.
+export function partFootprint(part, { process, expanded } = {}) {
+  try { return footprintFor(part, process, { expanded: expanded ?? expandExpectations(part) }); } catch { return null; }
 }
 
 export function partGatesMinWall(part, { process, expanded } = {}) {
