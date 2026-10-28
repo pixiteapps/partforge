@@ -197,8 +197,8 @@ and `pan: false` (a wheel then scrolls the page), `turntable: <degrees per
 second>` (a model with no playing animation turns until the first camera grab,
 never under `prefers-reduced-motion`), `fill: 0.8` (frame the model so its
 bounding box, as seen from the opening view, spans that fraction of the preview
-along its tighter axis — larger in a small card; with a turntable the box swept
-a full turn is framed, so it never clips as it turns), `camera: "default"` (drop the carried camera
+along its tighter axis — larger in a small card; with a turntable the model swept
+a full turn is framed, so it never clips as it turns and a round part still fills), `camera: "default"` (drop the carried camera
 and projection and keep the file's own framing; a carried render mode and
 environment still apply) and `renderMode: "cad" | "realistic"` (the opening
 mode, over any carried one; it can change afterwards). An unknown option key

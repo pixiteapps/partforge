@@ -1949,7 +1949,7 @@ export function createViewer(container, part, {
     floorY = -size.z / 2;
     grid.position.y = floorY;
     const r = Math.max(size.x, size.y, size.z) || 12;
-    const fill = fillFraming(size);
+    const fill = fillFraming(size, visibleNames, center);
     // Keep the VIEW DIRECTION (target -> camera), not the camera's direction
     // from the origin: after a pan the target is off the origin, and scaling
     // the position about the origin would turn the view — which, in an ortho
@@ -1980,10 +1980,12 @@ export function createViewer(container, part, {
 
   // The `frameFill` framing. `size` is the posed box in the model frame; the
   // assembly is centred on the pivot, so its world corners are the half-extents
-  // stood up by the pivot's rotation. With `frameSwept` the points are the box
-  // swept about the vertical through its centre — two circles (radius: the
-  // farthest corner from that axis, nudged out so the polygon contains the
-  // circle) at the box's top and bottom. Returns a function of the unit view
+  // stood up by the pivot's rotation. With `frameSwept` the points are the
+  // model swept about the vertical through the box centre — two circles at the
+  // box's top and bottom whose radius is the farthest posed VERTEX from that
+  // axis (nudged out so the polygon contains the circle). Not the box's
+  // corners: those sit ~√2 farther out than a round part's rim, which framed a
+  // turning gear at little more than half the asked-for width. Returns a function of the unit view
   // direction (target → camera) giving `{ distance, orthoHalfH, aspect }`:
   //  - perspective: the distance, along that direction to the origin target,
   //    at which the points' projected extent — the larger of (projected width /
@@ -1994,7 +1996,26 @@ export function createViewer(container, part, {
   // unlaid-out stage): frameTo then falls back to the fixed distance, and the
   // next reframe fills.
   const SWEEP_SEGMENTS = 48;
-  function fillFraming(size) {
+  const _sweepV = new THREE.Vector3();
+  // The farthest horizontal distance of any posed vertex of `names` from the
+  // vertical through `center` (model frame), in world units. Reads positions
+  // through BufferAttribute accessors, so normalized/quantized data is
+  // dequantized.
+  function sweepRadius(names, center) {
+    let max = 0;
+    for (const name of names) {
+      const pos = subCache[name]?.getAttribute("position");
+      if (!pos) continue;
+      const pose = subMesh[name].matrix;
+      for (let i = 0; i < pos.count; i++) {
+        _sweepV.fromBufferAttribute(pos, i).applyMatrix4(pose).sub(center).applyQuaternion(pivot.quaternion);
+        const d = Math.hypot(_sweepV.x, _sweepV.z);
+        if (d > max) max = d;
+      }
+    }
+    return max;
+  }
+  function fillFraming(size, names, center) {
     if (!frameFill) return null;
     const w = container.clientWidth, h = container.clientHeight;
     if (!(w > 0 && h > 0)) return null;
@@ -2006,7 +2027,7 @@ export function createViewer(container, part, {
       points.push(new THREE.Vector3(sx * half.x, sy * half.y, sz * half.z).applyQuaternion(pivot.quaternion));
     }
     if (frameSwept) {
-      const radius = Math.max(...points.map((p) => Math.hypot(p.x, p.z))) / Math.cos(Math.PI / SWEEP_SEGMENTS);
+      const radius = sweepRadius(names, center) / Math.cos(Math.PI / SWEEP_SEGMENTS);
       const ys = [Math.min(...points.map((p) => p.y)), Math.max(...points.map((p) => p.y))];
       points = [];
       for (let k = 0; k < SWEEP_SEGMENTS; k++) {

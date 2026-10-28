@@ -319,8 +319,10 @@ the installed package, so let the publish finish before bumping the dep there.
   frameTo bisects the camera distance along the kept view direction — or sizes
   the ortho frustum — so the posed box's 8 corners, projected, span that
   fraction of the viewport along its limiting axis; with `frameSwept` (a
-  turntable that will run) it frames the box swept about the vertical, two
-  48-gon circles, so no angle clips; a container with no size falls back to the
+  turntable that will run) it frames the model swept about the vertical — two
+  48-gon circles over the box's height, radius the farthest posed VERTEX from
+  the axis (box corners sit ~√2 out on a round part and framed a turning gear
+  at ~55% width) — so no angle clips; a container with no size falls back to the
   fixed r·2.6 + 6 distance. A sphere fit was tried first and left flat parts
   small), `camera:
   "default"` (the carried camera and projection are dropped; render mode and

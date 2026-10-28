@@ -542,6 +542,48 @@ test("with a turntable, a long thin part is framed by its swept extent and never
   handle.dispose();
 });
 
+// A flat round disc (a gear blank): radius r, t thick, as a soup of top and
+// bottom fans plus the rim — its box corners sit ~√2 r from the axis, its rim r.
+function disc(name, r, t, n = 96) {
+  const at = (k, z) => [r * Math.cos((2 * Math.PI * k) / n), r * Math.sin((2 * Math.PI * k) / n), z];
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    out.push(0, 0, 0, ...at(k + 1, 0), ...at(k, 0));
+    out.push(0, 0, t, ...at(k, t), ...at(k + 1, t));
+    out.push(...at(k, 0), ...at(k + 1, 0), ...at(k + 1, t), ...at(k, 0), ...at(k + 1, t), ...at(k, t));
+  }
+  return { name, positions: new Float32Array(out) };
+}
+
+test("a round part on a turntable is framed by its rim: it spans fill, not fill/√2", async () => {
+  const glb = await encodePreviewGlb({ meshes: [disc("gear", 40, 4)], view: "main" });
+  const handle = mountPreview(makeStage(400, 300), { glb, fill: 0.8, turntable: 90 });
+  await handle.ready;
+  // projectedExtent measures the BOX, which overstates a disc; measure the rim itself.
+  const rimExtent = () => {
+    const v = viewers.at(-1), cam = v.camera, mesh = v.__subMesh("gear");
+    cam.updateMatrixWorld();
+    mesh.updateWorldMatrix(true, false);
+    const pos = mesh.geometry.getAttribute("position");
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    const p = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      p.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld).project(cam);
+      x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+    }
+    return Math.max((x1 - x0) / 2, (y1 - y0) / 2);
+  };
+  let widest = 0;
+  for (let i = 0; i < 40; i++) { // a full turn at 90°/s
+    runFrames(0.1);
+    const e = rimExtent();
+    expect(e).toBeGreaterThan(0.8 * 0.98);
+    widest = Math.max(widest, e);
+  }
+  expect(widest).toBeLessThanOrEqual(0.8 * 1.02);
+  handle.dispose();
+});
+
 test("fill keeps the view direction and the origin target, and the viewer's reframe uses it too", async () => {
   const plain = mountPreview(makeStage(), { glb: await stillGlb() });
   await plain.ready;

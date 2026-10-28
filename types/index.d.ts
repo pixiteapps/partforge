@@ -811,8 +811,9 @@ export interface MountPreviewOptions {
    * 0 < fill <= 1 (0.166.0+): the opening framing (and the viewer's reframe) puts the
    * camera, along the opening view direction, so the model's bounding box as projected
    * on screen spans this fraction of the viewport along its limiting axis. With a
-   * `turntable` (and no baked animation) the box swept a full turn is framed, so the turn
-   * never clips; a baked animation that moves parts outside the box may. Unset, the
+   * `turntable` (and no baked animation) the model swept a full turn is framed — its
+   * farthest vertex from the vertical axis, over the box's height — so the turn never
+   * clips and a round part still fills; a baked animation that moves parts outside the box may. Unset, the
    * fixed framing distance.
    */
   fill?: number;

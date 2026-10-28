@@ -54,8 +54,9 @@
 //  - `fill: <0 < f <= 1>` — the opening framing (and the viewer's reframe)
 //    places the camera, along the kept view direction, so the model's posed
 //    bounding box as projected on screen spans that fraction of the viewport
-//    along its limiting axis. A turning model is framed by its box swept a
-//    full turn about the vertical, so the turntable never clips; a baked
+//    along its limiting axis. A turning model is framed swept a full turn
+//    about the vertical (its farthest vertex from the axis), so the turntable
+//    never clips and a round part still fills; a baked
 //    animation that moves parts outside the rest box can. Unset, the viewer's
 //    fixed framing distance, as before.
 //  - `camera: "default"` — the camera and projection of `viewerState` and of
