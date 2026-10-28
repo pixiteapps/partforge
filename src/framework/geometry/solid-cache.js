@@ -66,6 +66,20 @@ export function createSolidCache() {
       }
     },
 
+    // Drop EVERY partition, whatever its age — the next build of each sub-part is
+    // cold. The worker calls this before an export (feedback #212): the display
+    // build's retained solids and the export's own print-quality build share one
+    // WASM heap, and on a 105-plate forge the display cache alone held ~1.75 GB,
+    // so the export ran out of heap after a few plates on a phone. Like sweep(),
+    // never mid-bracket — the worker's job queue is serial.
+    clear() {
+      for (const entries of caches.values()) {
+        for (const [hash, entry] of entries) release(hash, entry); // refcounted: each partition lets go once
+      }
+      caches.clear();
+      lastBuilt.clear();
+    },
+
     lookup(hash, make) {
       if (name == null) return make().value; // not bracketed → no caching
       if (active.has(hash)) { hits++; return active.get(hash).value; }

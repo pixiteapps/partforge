@@ -163,6 +163,22 @@ async function scoreMatchTargets(built, targets, onProgress) {
   }
 }
 
+// The WASM traps that mean the kernel ran out of heap (or was corrupted by doing so).
+const HEAP_TRAP_RE = /out of bounds memory access|memory access out of bounds|Cannot enlarge memory|out of memory/i;
+
+// A piece of a many-piece export failed: say WHICH piece, how far the export got, and
+// — when it is the heap that ran out — the one remedy the user can apply. The raw
+// message stays LAST, after a colon, so a host's own trap classifier still matches it.
+function exportPieceError(thrown, { kernel, piece, index, count }) {
+  const err = describeKernelThrow(thrown, { evidence: kernel._throwEvidence?.(thrown) });
+  if (count < 2 || err?.code) return err; // one piece: the error already names it; coded errors are routed, not shown
+  const raw = String(err?.message || err);
+  const advice = HEAP_TRAP_RE.test(raw)
+    ? " ran out of memory — export fewer parts at a time (each export needs room for the parts it builds)"
+    : " failed";
+  return new Error(`exporting "${piece}" (part ${index + 1} of ${count})${advice}: ${raw}`, { cause: thrown });
+}
+
 export async function handle(kernel, part, msg, post, opts = {}) {
   const isStale = opts.isStale ?? (() => false);
   const onProgress = (phase) => post({ type: "progress", phase, jobId: msg.jobId });
@@ -500,9 +516,18 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
       const out = [];
-      for (const name of names) {
+      for (const [i, name] of names.entries()) {
         onProgress(`building ${label(name)}`);
-        out.push({ name: exportName(name), data: await posed(name, "export", onProgress).toSTL({ quality: msg.quality ?? "print" }) });
+        try {
+          out.push({ name: exportName(name), data: await posed(name, "export", onProgress).toSTL({ quality: msg.quality ?? "print" }) });
+        } catch (thrown) {
+          throw exportPieceError(thrown, { kernel, piece: label(name), index: i, count: names.length });
+        }
+        // Each file is JS-owned once toSTL returns, so this piece's solids can go now.
+        // Without it a many-piece export held every piece's print-quality build until
+        // the job ended — the 105-plate forge of feedback #212 ran out of heap at
+        // about the 100th plate.
+        kernel.cleanup?.();
       }
       post({ type: "download-parts", ext: "stl", mime: "model/stl", parts: out, jobId: msg.jobId },
            out.map((pp) => bufferOf(pp.data)));
@@ -523,12 +548,27 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     } else if (msg.type === "export-3mf") {
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
-      const { layoutExportPieces } = await loadBedLayout();
-      const meshes = layoutExportPieces(part, names.map((name) => {
+      // One piece in the kernel at a time, as export-stl: build, read the bounds the bed
+      // layout needs, mesh into JS-owned arrays, free — then lay out from the bounds and
+      // shift the meshes (translation only, so this is the layout layoutExportPieces makes).
+      const { laidOutOnBed, exportLayoutOffsets } = await loadBedLayout();
+      const built = [];
+      for (const [i, name] of names.entries()) {
         onProgress(`building ${label(name)}`);
-        return { name, solid: posed(name, "export", onProgress) };
-      })).map(({ name, solid }) => {
-        const { positions, indices } = solid.toIndexedMesh({ quality: msg.quality ?? "print" });
+        try {
+          const solid = posed(name, "export", onProgress);
+          const box = laidOutOnBed(part, name) ? solid.boundingBox() : null;
+          const { positions, indices } = solid.toIndexedMesh({ quality: msg.quality ?? "print" });
+          built.push({ name, box, positions, indices });
+        } catch (thrown) {
+          throw exportPieceError(thrown, { kernel, piece: label(name), index: i, count: names.length });
+        }
+        kernel.cleanup?.();
+      }
+      const offsets = exportLayoutOffsets(part, built.filter((b) => b.box));
+      const meshes = built.map(({ name, positions, indices }) => {
+        const o = offsets.get(name);
+        if (o) for (let j = 0; j < positions.length; j += 3) { positions[j] += o[0]; positions[j + 1] += o[1]; positions[j + 2] += o[2]; }
         return { name: exportName(name), positions, indices, color: printColor(part.parts[name]?.display) };
       });
       onProgress("writing 3MF file");

@@ -642,6 +642,8 @@ export interface GeometryKernel {
   endSubPart?(): void;
   /** Drop cache partitions idle for 3 rebinds. Never call mid-bracket. */
   sweepCache?(): void;
+  /** Drop every cache partition — the worker calls this before an export job. Never call mid-bracket. */
+  dropCache?(): void;
   cacheStats?(): { hits: number; misses: number };
   resetCacheStats?(): void;
   /** Free per-job WASM objects (Manifold backend); call after each job. */
