@@ -36,11 +36,11 @@
 //    tooltips, no play button and no `elements.chrome` wiring. A one-time
 //    animation still holds its end pose; there is just no replay button.
 //  - `background: "transparent"` — the canvas clears to alpha 0 with no theme
-//    background and no grid, so the host page shows through. CAD mode only:
-//    realistic mode keeps its environment backdrop (pair it with
-//    `renderMode: "cad"` to stay transparent).
+//    background and no grid, so the host page shows through. CAD mode ONLY:
+//    realistic mode draws its own environment backdrop (pair it with
+//    `renderMode: "cad"` to open transparent).
 //  - `contactShadow: true` — the product shot's soft contact shadow under the
-//    part in CAD mode (realistic brings its own ground and shadow).
+//    part. CAD mode ONLY: realistic mode draws its own ground and shadow.
 //  - `zoom: false`, `pan: false` — those orbit gestures are off (a wheel then
 //    scrolls the page); orbiting stays on.
 //  - `turntable: <degrees per second>` (default 0, off) — a file with no
@@ -48,11 +48,14 @@
 //    vertical off the viewer's frame loop. Never under reduced motion; the
 //    first camera grab — a canvas drag or the view cube — stops it for good.
 //    Dragging an animated model orbits the camera and the animation plays on.
-//  - `camera: "default"` — `viewerState` and `setViewerState` are ignored:
-//    the mount opens, and stays, at the file's own default framing.
-//  - `renderMode: "cad" | "realistic"` — the mount opens in that mode and a
-//    carried state cannot override it (the host's own renderMode.set and the
-//    view style control still can). Unset, the carried state decides.
+//  - `camera: "default"` — the camera and projection of `viewerState` and of
+//    every setViewerState are dropped: the mount opens, and stays, at the
+//    file's own default framing. Their render mode and environment still apply.
+//  - `renderMode: "cad" | "realistic"` — the OPENING mode: applied at mount,
+//    over any carried render mode. After that it is an ordinary mode —
+//    setViewerState, renderMode.set and the view style control change it.
+//    Unset, the carried state decides, as before.
+//  Any other key throws (an option this version does not know is a host bug).
 //
 // `handle.drawn` resolves after the first frame that includes the meshes has
 // rendered (so a host can cross-fade from a still image without a flash). It
@@ -87,6 +90,11 @@ function flag(name, value, fallback) {
   if (typeof value !== "boolean") throw new TypeError(`mountPreview: ${name} must be a boolean`);
   return value;
 }
+const KNOWN_OPTIONS = new Set([
+  "glb", "elements", "viewerState", "animate",
+  "chrome", "background", "contactShadow", "zoom", "pan", "turntable", "camera", "renderMode",
+]);
+
 function presentation({ chrome, background, contactShadow, zoom, pan, turntable, camera, renderMode }) {
   if (turntable !== undefined && !(typeof turntable === "number" && Number.isFinite(turntable) && turntable >= 0)) {
     throw new TypeError("mountPreview: turntable must be degrees per second, 0 or more");
@@ -146,18 +154,26 @@ const relay = (listeners) => (event) => {
   }
 };
 
-export function mountPreview(container, { glb, elements = {}, viewerState = null, animate = true, ...options } = {}) {
+export function mountPreview(container, options = {}) {
   if (!container) throw new TypeError("mountPreview: a container element is required");
-  const opts = presentation(options);
-  // The state a host carries in, as this mount will apply it: none at all
-  // under camera: "default", and never another render mode than a fixed one.
-  const own = (state) => {
-    const s = opts.defaultCamera ? null : state ?? null;
-    return opts.renderMode ? { ...(s ?? {}), renderMode: opts.renderMode } : s;
+  for (const key of Object.keys(options ?? {})) {
+    if (!KNOWN_OPTIONS.has(key)) throw new TypeError(`mountPreview: unknown option "${key}"`);
+  }
+  const { glb, elements = {}, viewerState = null, animate = true } = options ?? {};
+  const opts = presentation(options ?? {});
+  // A carried state as this mount applies it: under camera: "default" without
+  // its camera and projection (render mode and environment still carry).
+  const carry = (state) => {
+    if (!state || !opts.defaultCamera) return state ?? null;
+    const { camera: _camera, projection: _projection, ...rest } = state;
+    return rest;
   };
   let disposed = false;
   let active = true;
-  let carried = own(viewerState); // applied once the viewer exists, and on every setViewerState
+  // Applied once the viewer exists, and on every setViewerState. The opening
+  // render mode, when one is named, wins over the carried one at mount only.
+  let carried = carry(viewerState);
+  if (opts.renderMode) carried = { ...(carried ?? {}), renderMode: opts.renderMode };
   let live = null;                   // { viewer, view } once the GLB has decoded
   let player = null;                 // the baked animation's player, once drawn
   const cleanups = [];
@@ -173,7 +189,8 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
   function applyState(s) {
     if (!s || !live) return;
     const { viewer } = live;
-    viewer.setProjection(s.projection === "orthographic" && isFaceAlignedState(s.camera) ? "orthographic" : "perspective");
+    // Under camera: "default" the framing is the file's own: no projection either.
+    if (!opts.defaultCamera) viewer.setProjection(s.projection === "orthographic" && isFaceAlignedState(s.camera) ? "orthographic" : "perspective");
     if (s.camera) viewer.setCameraState(s.camera);
     if (typeof s.environment === "string") viewer.setEnvironment(s.environment);
     if ((s.renderMode === "cad" || s.renderMode === "realistic") && s.renderMode !== viewer.getRenderMode()) {
@@ -269,8 +286,7 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
     },
     getViewerState,
     setViewerState(next) {
-      if (opts.defaultCamera) return; // this mount keeps the file's own framing
-      carried = own(next);
+      carried = carry(next);
       applyState(carried);
     },
     setActive(next) {

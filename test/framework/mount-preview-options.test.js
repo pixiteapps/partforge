@@ -180,6 +180,15 @@ test("an unknown option value throws rather than showing the default", () => {
   expect(() => mountPreview(makeStage(), { glb, chrome: "no" })).toThrow(TypeError);
 });
 
+test("an unknown option key throws — a stale showcase included", () => {
+  const glb = new Uint8Array(0);
+  expect(() => mountPreview(makeStage(), { glb, showcase: {} })).toThrow(/unknown option "showcase"/);
+  expect(() => mountPreview(makeStage(), { glb, turnTable: 14 })).toThrow(TypeError);
+  // The non-presentation keys stay valid.
+  const handle = mountPreview(makeStage(), { glb, elements: {}, viewerState: null, animate: false });
+  handle.dispose();
+});
+
 // --- each option alone ----------------------------------------------------------
 
 test("chrome: false mounts no view cube, view-style control or play button, on the theme background", async () => {
@@ -367,14 +376,28 @@ test("a play-once animation holds its final pose; with chrome: false there is no
   handle.dispose();
 });
 
-test("camera: \"default\" ignores viewerState and setViewerState, opening at the file's own framing", async () => {
+test("camera: \"default\" drops the carried camera and projection, opening at the file's own framing", async () => {
   const framing = await defaultFraming();
   const handle = mountPreview(makeStage(), { glb: await stillGlb(), camera: "default", viewerState: CARRIED });
   await handle.ready;
   expectCamera(handle.getViewerState().camera, framing);
-  expect(handle.renderMode.get()).toBe("cad"); // the carried realistic state was ignored too
-  handle.setViewerState({ camera: { pos: [0, 50, 0], target: [1, 1, 1] }, projection: "perspective", cutaway: null });
+  // The carried render mode still applies: only the framing is the file's own.
+  expect(viewers.at(-1).setRenderMode).toHaveBeenCalledWith("realistic");
+  handle.setViewerState({ camera: { pos: [0, 50, 0], target: [1, 1, 1] }, projection: "orthographic", cutaway: null });
   expectCamera(handle.getViewerState().camera, framing);
+  expect(handle.getViewerState().projection).toBe("perspective");
+  handle.dispose();
+});
+
+test("camera: \"default\" still carries the environment, at mount and through setViewerState", async () => {
+  const handle = mountPreview(makeStage(), {
+    glb: await stillGlb(), camera: "default", viewerState: { ...CARRIED, renderMode: "cad", environment: "outdoor" },
+  });
+  await handle.ready;
+  expect(handle.environment.get()).toBe("outdoor");
+  const other = handle.environment.list().map((e) => e.id).find((id) => id !== "outdoor");
+  handle.setViewerState({ camera: { pos: [0, 50, 0], target: [0, 0, 0] }, projection: "perspective", environment: other, cutaway: null });
+  expect(handle.environment.get()).toBe(other);
   handle.dispose();
 });
 
@@ -385,16 +408,30 @@ test("camera defaults to carrying the state in", async () => {
   handle.dispose();
 });
 
-test("renderMode: \"cad\" wins over a carried realistic state, but keeps the carried camera", async () => {
+test("renderMode: \"cad\" is the opening mode: it wins over a carried realistic state, and keeps the carried camera", async () => {
   const handle = mountPreview(makeStage(), { glb: await stillGlb(), renderMode: "cad", viewerState: CARRIED });
   expect(handle.renderMode.get()).toBe("cad"); // before the decode too
   expect(handle.getViewerState().renderMode).toBe("cad");
   await handle.ready;
   expect(handle.renderMode.get()).toBe("cad");
-  expect(handle.getViewerState().camera.pos[0]).toBeCloseTo(40, 4);
-  handle.setViewerState(CARRIED);
-  expect(handle.renderMode.get()).toBe("cad");
   expect(viewers.at(-1).setRenderMode).not.toHaveBeenCalledWith("realistic");
+  expect(handle.getViewerState().camera.pos[0]).toBeCloseTo(40, 4);
+  handle.dispose();
+});
+
+test("renderMode only opens the mount: a later setViewerState can go realistic, with no snap-back", async () => {
+  const handle = mountPreview(makeStage(), { glb: await stillGlb(), renderMode: "cad" });
+  await handle.ready;
+  const v = viewers.at(-1);
+  // The stubbed realistic switch answers without loading; record the mode it lands on.
+  let mode = v.getRenderMode();
+  v.setRenderMode.mockImplementation(async (next) => (mode = next));
+  v.getRenderMode = () => mode;
+  handle.setViewerState({ ...CARRIED, renderMode: "realistic" });
+  expect(v.setRenderMode).toHaveBeenLastCalledWith("realistic");
+  expect(handle.renderMode.get()).toBe("realistic");
+  runFrames(0.5);
+  expect(v.setRenderMode).toHaveBeenLastCalledWith("realistic"); // nothing put it back to CAD
   handle.dispose();
 });
 

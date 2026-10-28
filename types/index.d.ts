@@ -781,7 +781,7 @@ export interface PartRuntime {
 /** Mount a full parametric-part app from a `PartDefinition`. */
 export function mount(part: PartDefinition, options: MountOptions): PartRuntime;
 
-/** Options for `mountPreview`. */
+/** Options for `mountPreview`. Any other key throws a `TypeError`. */
 export interface MountPreviewOptions {
   /** A GLB from `partforge/gltf`'s `encodePreviewGlb`, or a runtime's `exportPreview()`. */
   glb: Uint8Array | ArrayBuffer;
@@ -793,9 +793,9 @@ export interface MountPreviewOptions {
   animate?: boolean;
   /** `false` (0.166.0+): no view cube, `#viewbar` controls, view style, tooltips, play button or `elements.chrome` wiring. Default true. */
   chrome?: boolean;
-  /** `"transparent"` (0.166.0+): alpha-0 clear, no theme background, no grid — CAD mode only; realistic keeps its environment backdrop. Default `"theme"`. */
+  /** `"transparent"` (0.166.0+): alpha-0 clear, no theme background, no grid. CAD mode only — realistic mode draws its own environment backdrop. Default `"theme"`. */
   background?: "theme" | "transparent";
-  /** `true` (0.166.0+): a soft contact shadow under the part in CAD mode. Default false. */
+  /** `true` (0.166.0+): a soft contact shadow under the part. CAD mode only — realistic mode draws its own ground and shadow. Default false. */
   contactShadow?: boolean;
   /** `false` (0.166.0+): no wheel/pinch zoom (a wheel scrolls the page). Default true. */
   zoom?: boolean;
@@ -807,9 +807,9 @@ export interface MountPreviewOptions {
    * (a canvas drag or the view cube) stops it for good.
    */
   turntable?: number;
-  /** `"default"` (0.166.0+): ignore `viewerState` and `setViewerState`; open at the file's own framing. Default `"carry"`. */
+  /** `"default"` (0.166.0+): drop the camera and projection of `viewerState` and `setViewerState`, so the mount keeps the file's own framing; their render mode and environment still apply. Default `"carry"`. */
   camera?: "carry" | "default";
-  /** Open in this mode (0.166.0+); a carried state cannot override it. Unset, the carried state decides. */
+  /** The opening render mode (0.166.0+): applied at mount, over any carried render mode; afterwards `setViewerState`, `renderMode.set` and the view style control change it as usual. Unset, the carried state decides. */
   renderMode?: RenderMode;
 }
 

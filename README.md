@@ -190,13 +190,16 @@ stock, no layer-line frames). Previews carry no edge lines, textures or patterns
 `mountPreview` takes presentation options (0.166.0+), each usable alone and
 each defaulting to the viewer above: `chrome: false` (no view cube, viewbar
 controls, view style, tooltips or play button), `background: "transparent"`
-(alpha-0 canvas, no grid — CAD mode only; realistic keeps its environment),
-`contactShadow: true` (a soft shadow under the part in CAD mode), `zoom: false`
+(alpha-0 canvas, no grid) and `contactShadow: true` (a soft shadow under the
+part) — both CAD mode only, since realistic mode draws its own environment and
+ground — `zoom: false`
 and `pan: false` (a wheel then scrolls the page), `turntable: <degrees per
 second>` (a model with no playing animation turns until the first camera grab,
-never under `prefers-reduced-motion`), `camera: "default"` (ignore `viewerState`;
-open at the file's own framing) and `renderMode: "cad" | "realistic"` (a carried
-state cannot override it). A baked animation always plays as authored — it
+never under `prefers-reduced-motion`), `camera: "default"` (drop the carried camera
+and projection and keep the file's own framing; a carried render mode and
+environment still apply) and `renderMode: "cad" | "realistic"` (the opening
+mode, over any carried one; it can change afterwards). An unknown option key
+throws. A baked animation always plays as authored — it
 loops, or plays once and holds its end pose. Every handle carries `drawn`, which
 resolves after the first frame showing the meshes, so a host can cross-fade from
 a still image.

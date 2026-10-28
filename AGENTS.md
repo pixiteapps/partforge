@@ -310,12 +310,14 @@ the installed package, so let the publish finish before bumping the dep there.
   independent presentation options that map onto `createViewer`'s: `chrome`
   (false: no view cube, viewbar, view style, tooltips, play button or chrome),
   `background: "transparent"` (`transparent`: alpha-0 clear, no CAD background,
-  no grid; realistic keeps its environment), `contactShadow` (the thumbnail
-  style's CPU contact-shadow mask as a live plane in CAD mode, rebuilt at most
-  every 250 ms while poses move; the held floor resets per showAssembly),
-  `zoom`/`pan`, `turntable` (deg/s), `camera: "default"` (viewerState and
-  setViewerState ignored) and `renderMode` (a carried state cannot override it).
-  An unknown value throws. The turntable turns through `viewer.orbitBy` off
+  no grid) and `contactShadow` (the thumbnail style's CPU contact-shadow mask as
+  a live plane, rebuilt at most every 250 ms while poses move; the held floor
+  resets per showAssembly) — both CAD mode only, realistic draws its own
+  environment and ground — `zoom`/`pan`, `turntable` (deg/s), `camera:
+  "default"` (the carried camera and projection are dropped; render mode and
+  environment still carry) and `renderMode` (the OPENING mode only — it wins
+  over a carried one at mount, then changes freely). An unknown key or value
+  throws. The turntable turns through `viewer.orbitBy` off
   `onFrame` — orbitBy announces a camera grab itself, so the turntable tells its
   own steps from the user's by a flag held across the call, and the first real
   grab stops it for good; none under reduced motion. Every handle gains `drawn`,
