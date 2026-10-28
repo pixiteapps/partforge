@@ -1,5 +1,5 @@
 // Memory check for feedback #212: a forge of many heavy plates, displayed whole, then
-// exported a few plates at a time and all at once — run the way the worker runs them
+// exported a few plates at a time, all at once as STL, and all as one 3MF — run the way the worker runs them
 // (one Manifold WASM heap shared by the preview and print kernels).
 //
 //   node scripts/export-memory-check.mjs [plates] [--old]
@@ -74,5 +74,8 @@ console.log(`export 3 plates: ${fewDl ? `${fewDl.parts.length} files` : few.post
 const all = await run(print, { type: "export-stl", view: "assembly", params: {}, quality: "print", jobId: 2 });
 const allDl = all.posts.find((m) => m.type === "download-parts");
 console.log(`export all ${plates}: ${allDl ? `${allDl.parts.length} files` : all.posts.find((m) => m.type === "error")?.message}, peak ${all.peak} MB, ${all.s}s`);
+const mf = await run(print, { type: "export-3mf", view: "assembly", params: {}, quality: "print", jobId: 3 });
+const mfDl = mf.posts.find((m) => m.type === "download");
+console.log(`export all ${plates} as one 3MF: ${mfDl ? `${mb(mfDl.data.byteLength)} MB` : mf.posts.find((m) => m.type === "error")?.message}, peak ${mf.peak} MB, ${mf.s}s`);
 clearInterval(timer);
 process.exit(0);

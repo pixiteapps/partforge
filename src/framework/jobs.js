@@ -548,12 +548,27 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     } else if (msg.type === "export-3mf") {
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
-      const { layoutExportPieces } = await loadBedLayout();
-      const meshes = layoutExportPieces(part, names.map((name) => {
+      // One piece in the kernel at a time, as export-stl: build, read the bounds the bed
+      // layout needs, mesh into JS-owned arrays, free — then lay out from the bounds and
+      // shift the meshes (translation only, so this is the layout layoutExportPieces makes).
+      const { laidOutOnBed, exportLayoutOffsets } = await loadBedLayout();
+      const built = [];
+      for (const [i, name] of names.entries()) {
         onProgress(`building ${label(name)}`);
-        return { name, solid: posed(name, "export", onProgress) };
-      })).map(({ name, solid }) => {
-        const { positions, indices } = solid.toIndexedMesh({ quality: msg.quality ?? "print" });
+        try {
+          const solid = posed(name, "export", onProgress);
+          const box = laidOutOnBed(part, name) ? solid.boundingBox() : null;
+          const { positions, indices } = solid.toIndexedMesh({ quality: msg.quality ?? "print" });
+          built.push({ name, box, positions, indices });
+        } catch (thrown) {
+          throw exportPieceError(thrown, { kernel, piece: label(name), index: i, count: names.length });
+        }
+        kernel.cleanup?.();
+      }
+      const offsets = exportLayoutOffsets(part, built.filter((b) => b.box));
+      const meshes = built.map(({ name, positions, indices }) => {
+        const o = offsets.get(name);
+        if (o) for (let j = 0; j < positions.length; j += 3) { positions[j] += o[0]; positions[j + 1] += o[1]; positions[j + 2] += o[2]; }
         return { name: exportName(name), positions, indices, color: printColor(part.parts[name]?.display) };
       });
       onProgress("writing 3MF file");
