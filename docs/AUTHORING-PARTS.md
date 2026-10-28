@@ -1761,8 +1761,10 @@ const plate = k.shape2d(roundedRectProfile(40, 24, 4))
   .extrude({ h: 3 });   // sugar for k.extrude({ profile: …, h: 3 }); .revolve({ degrees }) too
 ```
 
-A `Shape2D` also carries `.extrude({ h, twist?, scaleTop? })` and `.revolve({ degrees? })`
-sugar (equivalent to the `k.extrude`/`k.revolve` forms), and `.regions()` — scission, which
+A `Shape2D` also carries `.extrude({ h, twist?, scaleTop?, bevel? })` and `.revolve({ degrees? })`
+sugar (equivalent to the `k.extrude`/`k.revolve` forms — every option is passed through, so
+`shape.extrude({ h, bevel: 1 })` bevels the rims exactly as `k.extrude` does; before partforge
+0.163.2 the sugar dropped `bevel` and any unknown key without a word), and `.regions()` — scission, which
 returns each disjoint region as its own live `Shape2D` (vs `.toRegions()`, which returns raw
 `{outer, holes}` data).
 

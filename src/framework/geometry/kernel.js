@@ -135,7 +135,7 @@ export const ROUTED_CAD_OPS = ["shell"];
  * @property {(tolerance:number) => Shape2D} simplify   corner-preserving decimation/refit within tolerance
  * @property {() => {index:number,point:number[],interiorAngleDeg:number,convex:boolean,segTypes:string[]}[]} corners   corner list (the positional order fillet/chamfer `{indices}` index into)
  * @property {(p:number[]) => boolean} contains   is point [x,y] inside the shape (holes excluded)
- * @property {(o?:{h:number,twist?:number,scaleTop?:number}) => Solid} extrude   sugar for k.extrude({profile:this,…})
+ * @property {(o?:{h:number,twist?:number,scaleTop?:number,bevel?:number|{bottom?:number,top?:number}}) => Solid} extrude   sugar for k.extrude({profile:this,…}); every option is forwarded
  * @property {(o?:{degrees?:number}) => Solid} revolve   sugar for k.revolve({profile:this,…})
  *
  * @typedef {Object} GeometryKernel

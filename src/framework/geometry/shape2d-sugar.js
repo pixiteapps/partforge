@@ -14,12 +14,17 @@ export function addShape2dSugar(s, { shape2d, extrude, revolve }) {
   // lifted and resolved by every boolean since — re-lifting them untrusted would
   // re-run profile validation on machine-produced geometry on every call.
   s.regions = () => s.toRegions().map((r) => shape2d.trusted(r));
-  // .extrude({ h, twist?, scaleTop? }) / .revolve({ degrees? }) → Solid. Sugar for
-  // k.extrude({ profile: shape, … }) / k.revolve({ profile: shape, … }). Passed as an
-  // options object (not positional) so the kernel op's key/required-arg validation still
-  // fires — e.g. a missing `h` throws "extrude: h is required" rather than silently
-  // producing empty geometry.
-  s.extrude = ({ h, twist, scaleTop } = {}) => extrude({ profile: s, h, twist, scaleTop });
-  s.revolve = ({ degrees } = {}) => revolve({ profile: s, degrees });
+  // .extrude({ h, twist?, scaleTop?, bevel? }) / .revolve({ degrees? }) → Solid. Sugar for
+  // k.extrude({ profile: shape, … }) / k.revolve({ profile: shape, … }). Every option is
+  // forwarded as-is, so the kernel op's own key/required-arg validation fires: a missing
+  // `h` throws "extrude: h is required", an unknown key throws, and an option the kernel
+  // grows later (as `bevel` was) works here with no change. Never list the keys: a list
+  // silently drops whatever it leaves out. `profile` is refused — this shape is the profile.
+  const sugar = (op, fn) => (o = {}) => {
+    if (o.profile !== undefined) throw new Error(`Shape2D.${op}: don't pass profile — the shape you call .${op}() on is the profile`);
+    return fn({ ...o, profile: s });
+  };
+  s.extrude = sugar("extrude", extrude);
+  s.revolve = sugar("revolve", revolve);
   return s;
 }

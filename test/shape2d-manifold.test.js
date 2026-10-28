@@ -193,6 +193,28 @@ test("Shape2D.extrude with no h throws the kernel's required-arg error (not sile
   expect(() => k.shape2d(SQ(0, 0, 10)).extrude({})).toThrow(/h is required/);
 });
 
+// The sugar forwards EVERY option to k.extrude/k.revolve. It used to pick out the
+// keys it knew (h, twist, scaleTop / degrees), so `bevel` was dropped and the build
+// came back square with no error or warning, and a misspelled key vanished the same way.
+test("Shape2D.extrude({h, bevel}) bevels, exactly like k.extrude({profile, h, bevel})", () => {
+  const plain = k.shape2d(SQ(0, 0, 10)).extrude({ h: 4 }).volume();
+  const viaSugar = k.shape2d(SQ(0, 0, 10)).extrude({ h: 4, bevel: 1 }).volume();
+  const viaKernel = k.extrude({ profile: k.shape2d(SQ(0, 0, 10)), h: 4, bevel: 1 }).volume();
+  expect(viaSugar).toBeLessThan(plain - 1);
+  expect(viaSugar).toBeCloseTo(viaKernel, 3);
+});
+
+test("Shape2D.extrude/revolve refuse an unknown option instead of dropping it", () => {
+  expect(() => k.shape2d(SQ(0, 0, 10)).extrude({ h: 4, bevl: 1 })).toThrow(/unknown option "bevl"/);
+  expect(() => k.shape2d(SQ(5, 0, 4)).revolve({ degres: 90 })).toThrow(/unknown option "degres"/);
+});
+
+test("Shape2D.extrude/revolve refuse a profile option (the shape is the profile)", () => {
+  const other = SQ(0, 0, 5);
+  expect(() => k.shape2d(SQ(0, 0, 10)).extrude({ profile: other, h: 4 })).toThrow(/Shape2D\.extrude: .*profile/);
+  expect(() => k.shape2d(SQ(5, 0, 4)).revolve({ profile: other })).toThrow(/Shape2D\.revolve: .*profile/);
+});
+
 // Empty-shape semantics, aligned across backends (see the twin test in
 // shape2d-occt.test.js): empty is a legal 2-D value — booleans/offset stay total
 // on it — but 3-D materialization fails loudly instead of silently building an
