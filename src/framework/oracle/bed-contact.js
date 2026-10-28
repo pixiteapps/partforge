@@ -65,6 +65,59 @@ export const HOVER_FLOOR = 1;
 // The footprint slack never exceeds this (mm): well under a first layer, and under the
 // smallest hover worth reporting, so a tall piece is judged the way a short one is.
 export const MAX_BED_EPS = 0.05;
+// The silhouette raster (the footprint's denominator): the finest cell pitch (mm), and
+// the most cells along the longer side — so a large piece costs a 512×512 bitmap at most.
+const SILHOUETTE_MIN_PITCH = 0.25;
+const SILHOUETTE_CELLS = 512;
+
+// Mark one downward triangle's xy shadow on the silhouette grid: every cell whose centre
+// lies inside it. Each grid row is filled as one span — the x-range where the row's
+// centre line crosses the triangle — so the work is the cells the triangle covers plus
+// one intersection per row, never its whole bounding rectangle (a fine fan of slivers
+// over the same floor used to rescan that rectangle once per sliver). A triangle too
+// thin to contain any centre (a wall thinner than a cell) marks the cells along its
+// outline instead (sampled at half a pitch), so it is never dropped between centres.
+// Marking edge cells for EVERY triangle was tried and over-covered a 1 mm tube wall by
+// a third; centre sampling is unbiased along an edge.
+function shadow(P, a, b, c, minX, minY, pitch, gx, gy, grid, mark) {
+  const ax = P[a], ay = P[a + 1], bx = P[b], by = P[b + 1], cx = P[c], cy = P[c + 1];
+  const area2 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  let hit = false;
+  if (area2 !== 0) {
+    const j0 = Math.max(0, Math.floor((Math.min(ay, by, cy) - minY) / pitch));
+    const j1 = Math.min(gy - 1, Math.floor((Math.max(ay, by, cy) - minY) / pitch));
+    for (let j = j0; j <= j1; j++) {
+      const y = minY + (j + 0.5) * pitch;
+      // Where this row's centre line enters and leaves the triangle: the extreme x of its
+      // crossings with the three edges (an edge lying on the line contributes both ends).
+      let lo = Infinity, hi = -Infinity;
+      const cross = (x0, y0, x1, y1) => {
+        if (!((y0 <= y && y <= y1) || (y1 <= y && y <= y0))) return;
+        if (y0 === y1) { lo = Math.min(lo, x0, x1); hi = Math.max(hi, x0, x1); return; }
+        const x = x0 + ((y - y0) * (x1 - x0)) / (y1 - y0);
+        if (x < lo) lo = x;
+        if (x > hi) hi = x;
+      };
+      cross(ax, ay, bx, by); cross(bx, by, cx, cy); cross(cx, cy, ax, ay);
+      if (lo > hi) continue;
+      const i0 = Math.max(0, Math.ceil((lo - minX) / pitch - 0.5));
+      const i1 = Math.min(gx - 1, Math.floor((hi - minX) / pitch - 0.5));
+      for (let i = i0; i <= i1; i++) grid[j * gx + i] = 1;
+      if (i1 >= i0) hit = true;
+    }
+  }
+  if (hit) return;
+  // The fallback samples the triangle shrunk by half toward its centroid, not its own
+  // edges: a fan sliver of a disc's bottom then marks cells inside the disc, never the
+  // cells its rim crosses (which over-covered a Ø5 pin by a tenth).
+  const gxc = (ax + bx + cx) / 3, gyc = (ay + by + cy) / 3;
+  const h = ([x, y]) => [(x + gxc) / 2, (y + gyc) / 2];
+  const [pa, pb, pc] = [h([ax, ay]), h([bx, by]), h([cx, cy])];
+  for (const [x0, y0, x1, y1] of [[...pa, ...pb], [...pb, ...pc], [...pc, ...pa]]) {
+    const steps = Math.ceil(Math.hypot(x1 - x0, y1 - y0) / (pitch / 2)) + 1;
+    for (let t = 0; t <= steps; t++) mark(x0 + ((x1 - x0) * t) / steps, y0 + ((y1 - y0) * t) / steps);
+  }
+}
 
 /**
  * @param {{ positions: ArrayLike<number>, indices?: ArrayLike<number>, triangles: number }} mesh
@@ -73,38 +126,64 @@ export const MAX_BED_EPS = 0.05;
  *   scanned); `bedEps` the footprint slack (default 0.1% of the mesh height, floored at
  *   0.01 mm and capped at MAX_BED_EPS); `bedBand` the height above the bed within which a flat face hovers
  *   (default 1 mm)
- * @returns {{ pct: number, contactArea: number, hoverArea: number, gap: number|null, at: number[]|null }|null}
+ * @returns {{ pct: number, contactArea: number, hoverArea: number, downArea: number, gap: number|null, at: number[]|null, base: number[], lowestAt: number[] }|null}
  *   `pct` 0..100, the share of the near-bed flat underside on the bed; the two areas in
  *   mm²; `gap` how far above the bed the largest hovering face sits, and `at` its
- *   centroid (null when nothing hovers past the floor); null for an empty mesh.
+ *   centroid (null when nothing hovers past the floor); `downArea` the piece's
+ *   silhouette on the bed (mm²): the UNION of every downward-facing triangle's shadow,
+ *   rasterized (a closed mesh's silhouette is exactly that union, since every point of
+ *   it has a bottom-most face, which faces down), and
+ *   `lowestAt` the mesh's lowest vertex — measure.js's footprint cost, the contact area
+ *   over `downArea`, catches what `pct` cannot: a piece with almost no flat underside
+ *   at all (a sphere-tipped rod on its end) hovers nothing and reads 100. `base`, the
+ *   mesh's [dx, dy] extent, is reported but no longer divided by: a tube on its rim, a
+ *   frame or a diagonal bar fills little of its bounding box yet stands on all of its
+ *   underside. Null for an empty mesh.
  */
 export function bedContact(mesh, { bedZ, bedEps, bedBand = 1 } = {}) {
   const { positions, indices } = mesh;
   const n = indices ? indices.length : positions.length / 3;
   if (n < 3) return null;
 
-  let minZ = Infinity, maxZ = -Infinity;
-  if (bedZ === undefined || bedEps === undefined) {
-    for (let i = 2; i < positions.length; i += 3) {
-      const z = positions[i];
-      if (z < minZ) minZ = z;
-      if (z > maxZ) maxZ = z;
-    }
+  // One scan for the extents: the bed (lowest Z) and the slack's height when the caller
+  // did not hand them in, and always the posed base (its xy extent, reported) and the
+  // lowest vertex (where the footprint cost is located).
+  let minZ = Infinity, maxZ = -Infinity, minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, low = 0;
+  for (let i = 0; i + 2 < positions.length; i += 3) {
+    const x = positions[i], y = positions[i + 1], z = positions[i + 2];
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+    if (z < minZ) { minZ = z; low = i; }
+    if (z > maxZ) maxZ = z;
   }
+  const base = [maxX - minX, maxY - minY];
+  const lowestAt = [positions[low], positions[low + 1], positions[low + 2]];
   const bed = bedZ ?? minZ;
   const eps = bedEps ?? Math.min(MAX_BED_EPS, Math.max(0.01, 1e-3 * (maxZ - minZ)));
   const bandTop = bed + bedBand;
+  // The silhouette raster: an xy grid over the base, at most ~512 cells a side.
+  const pitch = Math.max(SILHOUETTE_MIN_PITCH, Math.max(base[0], base[1]) / SILHOUETTE_CELLS);
+  const gx = Math.max(1, Math.ceil(base[0] / pitch) + 1), gy = Math.max(1, Math.ceil(base[1] / pitch) + 1);
+  const grid = new Uint8Array(gx * gy);
+  const mark = (x, y) => {
+    const i = Math.min(gx - 1, Math.max(0, Math.floor((x - minX) / pitch)));
+    const j = Math.min(gy - 1, Math.max(0, Math.floor((y - minY) / pitch)));
+    grid[j * gx + i] = 1;
+  };
 
   let contactArea = 0, hoverArea = 0, largest = 0, gap = null, at = null;
   for (let i = 0; i < n; i += 3) {
     const a = (indices ? indices[i] : i) * 3, b = (indices ? indices[i + 1] : i + 1) * 3, c = (indices ? indices[i + 2] : i + 2) * 3;
     const az = positions[a + 2], bz = positions[b + 2], cz = positions[c + 2];
     const cenZ = (az + bz + cz) / 3;
-    if (cenZ > bandTop) continue;                                             // above the band: not the underside
     const ux = positions[b] - positions[a], uy = positions[b + 1] - positions[a + 1], uz = bz - az;
     const vx = positions[c] - positions[a], vy = positions[c + 1] - positions[a + 1], vz = cz - az;
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
     if (nz >= 0) continue;                                                    // not facing down
+    shadow(positions, a, b, c, minX, minY, pitch, gx, gy, grid, mark);        // its shadow joins the silhouette
+    if (cenZ > bandTop) continue;                                             // above the band: not the underside
     const len = Math.hypot(nx, ny, nz);
     if (len < 1e-9) continue;                                                 // degenerate: no normal
     const triArea = len / 2;
@@ -122,6 +201,9 @@ export function bedContact(mesh, { bedZ, bedEps, bedBand = 1 } = {}) {
             cenZ];
     }
   }
-  if (hoverArea < HOVER_FLOOR) return { pct: 100, contactArea, hoverArea, gap: null, at: null };
-  return { pct: (100 * contactArea) / (contactArea + hoverArea), contactArea, hoverArea, gap, at };
+  let cells = 0;
+  for (let i = 0; i < grid.length; i++) cells += grid[i];
+  const downArea = cells * pitch * pitch;
+  if (hoverArea < HOVER_FLOOR) return { pct: 100, contactArea, hoverArea, downArea, gap: null, at: null, base, lowestAt };
+  return { pct: (100 * contactArea) / (contactArea + hoverArea), contactArea, hoverArea, downArea, gap, at, base, lowestAt };
 }

@@ -14,7 +14,7 @@ import { bounds, meshArea, meshCentroid } from "./mesh.js";
 import { minWall, DIAGNOSTIC_SAMPLES } from "./min-wall.js";
 import { overhang } from "./overhang.js";
 import { bedContact } from "./bed-contact.js";
-import { partBedContact, partGatesMinWall, partHasBed, partOverhangAngle, partWallBands } from "./gates.js";
+import { partBedContact, partFootprint, partGatesMinWall, partHasBed, partOverhangAngle, partWallBands } from "./gates.js";
 import { summarizeContours } from "./shape-probe.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
@@ -133,15 +133,15 @@ const transformPoint = (m, [x, y, z]) => [
 // Bed contact read off the piece's real EXPORT build, for a sub-part whose print pose
 // the probes could not read (a place() that queries its solid): judging the display
 // mesh there would pass a bad print orientation or fail a good one. One extra build,
-// in its own cache round like printPoseBboxes, only for such a piece. `at` is withheld:
-// with the pose unreadable there is no honest way back to display coordinates. An
-// export pose that does not build answers `{ error }`, which verify reports as
-// unevaluated rather than guessing.
+// in its own cache round like printPoseBboxes, only for such a piece. `at` and
+// `lowestAt` are withheld: with the pose unreadable there is no honest way back to
+// display coordinates. An export pose that does not build answers `{ error }`, which
+// verify reports as unevaluated rather than guessing.
 function exportPoseBedContact(kernel, part, name, view, { p, d }) {
   kernel.beginSubPart?.(`oracle:print:${view}`);
   try {
     const out = bedContact(buildPosed(kernel, part, name, { purpose: "export", view, p, d }).toMesh());
-    return out ? { ...out, at: null } : out;
+    return out ? { ...out, at: null, lowestAt: null } : out;
   } catch (e) {
     return { error: String(e?.message || e).slice(0, 200) };
   } finally { kernel.endSubPart?.(); }
@@ -153,8 +153,9 @@ function exportPoseBedContact(kernel, part, name, view, { p, d }) {
 // box) is not how it prints: judging its underside there flagged the wrong faces and
 // missed the real ones. The display mesh is carried into the export pose by a rigid
 // matrix — no second build, and one copy shared by both readings — and the bed is that
-// pose's own lowest Z; each `at` comes back in display coordinates, where every other
-// finding of this view sits. An unreadable or identical pose measures as shown.
+// pose's own lowest Z; each `at` (and bed contact's `lowestAt`) comes back in display
+// coordinates, where every other finding of this view sits. An unreadable or identical
+// pose measures as shown.
 // `m` is displayToPrintMatrix's answer, resolved by the caller: the measure memo
 // keys on it, since the pose comes from place() and is not part of the solid's hash.
 function printPoseUnderside(mesh, m, { maxAngle, bed, displayBedZ }) {
@@ -163,7 +164,15 @@ function printPoseUnderside(mesh, m, { maxAngle, bed, displayBedZ }) {
     posed = { positions: Float32Array.from(mesh.positions), indices: mesh.indices };
     transformPositions(posed.positions, m);
   }
-  const back = (out) => (m && out?.at ? { ...out, at: transformPoint(invertRigid(m), out.at) } : out);
+  const back = (out) => {
+    if (!m || !out) return out;
+    const inv = invertRigid(m);
+    return {
+      ...out,
+      ...(out.at ? { at: transformPoint(inv, out.at) } : {}),
+      ...(out.lowestAt ? { lowestAt: transformPoint(inv, out.lowestAt) } : {}),
+    };
+  };
   return {
     oh: maxAngle != null ? back(posed ? overhang(posed, { maxAngle }) : overhang(mesh, { maxAngle, bedZ: displayBedZ })) : null,
     bc: bed ? back(posed ? bedContact(posed) : bedContact(mesh, { bedZ: displayBedZ })) : null,
@@ -293,9 +302,10 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // Declared wall bands, per sub-part, for exactly these params (Task 5). Resolved
   // once per measure; a bad declaration throws here, which is a measure error.
   const wallBands = opts.minWall ? partWallBands(part, params, reads) : {};
-  // Overhang is measured only for a part that opted in (dfm-profiles.js
-  // overhangAngleFor) — everything else reads null. verify hands the angle it
-  // resolved in (a `process` override changes it); `null` there is an explicit
+  // Overhang is measured for a part whose print process arms it (dfm-profiles.js
+  // overhangAngleFor: a profile carrying `overhang`, or the author's own
+  // `overhangArea` expectation) — everything else reads null. verify hands the angle
+  // it resolved in (a `process` override changes it); `null` there is an explicit
   // "not checked", not a fallback. The angle used is stamped on the result as
   // `measuredOverhang`, and verify refuses a seed whose stamp disagrees with the
   // angle it needs — the min-wall superset rule's counterpart, since a reading
@@ -304,8 +314,11 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // Bed contact is measured for a part whose profile (or orientation, or its own
   // expectation) arms it — dfm-profiles.js bedContactFor. Unlike overhang the reading
   // does not depend on the threshold, so the stamp is a boolean: `measuredBedContact`.
-  // verify passes its own answer (a `process` override can arm or disarm it).
-  const bedArmed = (opts.bedContact !== undefined ? opts.bedContact : partBedContact(part)) != null;
+  // verify passes its own answer (a `process` override can arm or disarm it). The same
+  // pass reads the footprint cost (dfm-profiles.js footprintFor), so a part whose
+  // footprint alone is checked arms it too — here and in verify — and one stamp, and
+  // one memo-key bit, covers both readings.
+  const bedArmed = (opts.bedContact !== undefined ? opts.bedContact : (partBedContact(part) ?? partFootprint(part))) != null;
   const underside = overhangAngle != null || bedArmed;
   const subBounds = [];
   // Sheet parts: a view holding one sizes each printed sub-part in its print pose
@@ -341,7 +354,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     const printMatrix = printPose?.matrix ?? null;
     // A pose the probes could not read is not the identity: bed contact then reads the
     // export build itself (exportPoseBedContact). Overhang keeps its display-pose
-    // fallback — a warning, and unchanged here.
+    // fallback — a cost, and unchanged here.
     const exportBed = bedArmed && printPose && !printPose.trusted;
     // Memo key = the inputs this sub-part's facts actually depend on, besides its
     // own geometry hash: whether min-wall ran, at what sample budget and against
@@ -447,6 +460,16 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       bedHoverArea: bc ? bc.hoverArea : null,
       bedHoverGap: bc?.gap ?? null,
       bedHoverAt: bc?.at ?? null,
+      // The footprint (same pass): the share of the piece's silhouette on the bed that
+      // actually touches it, in percent (clamped at 100: the silhouette is a
+      // raster, a cell or so off along its edges) — near 0 for a
+      // piece standing on a point, a line or a curl, which bedContactPct passes since
+      // nothing flat hovers, and near 100 for anything that stands on its whole
+      // underside, however little of its bounding box that fills (a tube on its rim, a
+      // frame, a diagonal bar). Null when not measured or the silhouette is empty. Located at
+      // the piece's lowest point, in display coordinates.
+      footprintPct: bc && bc.downArea > 0 ? Math.min(100, (100 * bc.contactArea) / bc.downArea) : null,
+      footprintAt: bc?.lowestAt ?? null,
       ...(exportBc?.error ? { bedContactError: exportBc.error } : {}),
       // The process's 2-D facts on a sheet part (sheetRowFacts), null on every other.
       sheet: sheet
@@ -537,6 +560,8 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     measuredOverhang: overhangAngle ?? null,
     // Whether the bed-contact pass ran — the same kind of stamp, read by the same gate.
     measuredBedContact: bedArmed,
+    // The footprint is read by the same pass, so the same stamp.
+    measuredFootprint: bedArmed,
     // Companion stamp to measuredMinWall, and read the same way: whether the pass
     // ran, said by the pass itself rather than claimed by whoever holds the result.
     measuredGaps,
