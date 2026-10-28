@@ -180,3 +180,18 @@ describe("nested brackets", () => {
     expect(dispose).not.toHaveBeenCalled();
   });
 });
+
+test("clear() disposes every entry exactly once — a shared one too — and leaves the cache cold", () => {
+  const c = createSolidCache();
+  const own = vi.fn(), shared = vi.fn();
+  c.begin("a"); c.lookup("own", () => ({ value: {}, pin: "own", dispose: own })); c.lookup("shared", () => ({ value: {}, pin: "shared", dispose: shared })); c.end();
+  c.begin("b"); c.lookup("shared", make({})); c.end(); // adopted by a second partition
+  c.clear();
+  expect(own).toHaveBeenCalledTimes(1);
+  expect(shared).toHaveBeenCalledTimes(1);
+  expect(c.isPinned("own")).toBe(false);
+  expect(c.isPinned("shared")).toBe(false);
+  c.resetStats();
+  c.begin("a"); c.lookup("own", make({})); c.end();
+  expect(c.stats()).toEqual({ hits: 0, misses: 1 }); // nothing survived to be adopted
+});
