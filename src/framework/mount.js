@@ -286,7 +286,8 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.158.0: a preview GLB may carry its view's autoplay
+// Embedding contract (0.166.0: `cacheBudgetMB` bounds the worker's solid cache —
+// pass a small one on phones; 0.158.0: a preview GLB may carry its view's autoplay
 // animation — mount({ preview }) draws its opening pose and does not play it,
 // mountPreview plays it unless `animate: false`, and exportPreview bakes it only
 // when every track is place-only; 0.147.0: a cached `preview` GLB is drawn before
@@ -515,6 +516,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
                               files, panelState,
                               annotateSend = "viewbar",
                               selectionPopover,
+                              cacheBudgetMB,
                               container: legacyContainer, controls: legacyControls } = {}) {
   // --- element resolution (the only getElementById calls in the framework, save the ?pickserver client's optional #viewbar lookup) ----
   const byId = (id) => document.getElementById(id);
@@ -641,6 +643,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     const qs = new URLSearchParams(location.search);
     const debug = qs.has("debug");
     let cachingOn = !(debug && qs.has("nocache"));
+    // The host's bound on the worker's solid cache, sent with every generate (null =
+    // unbounded). A phone host passes a small one: the cache of a very large view is
+    // most of its heap (feedback #212). Anything but a positive finite number is ignored.
+    const cacheBudgetBytes = Number.isFinite(cacheBudgetMB) && cacheBudgetMB > 0 ? Math.round(cacheBudgetMB * 2 ** 20) : null;
     let lastGen = { skipped: 0, rebuilt: 0, posed: 0 }; // Layer-0/1 counts for the most recent generate
     // Sub-parts the pose fast path has repaired since the last build was dispatched.
     // A SET of names, not a running total: a slider drag re-repairs the same
@@ -1069,7 +1075,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         for (const backend of ["manifold", "occt"]) {
           const subparts = missing.filter((n) => (backends[n] ?? "manifold") === backend);
           if (subparts.length === 0) continue;
-          service.send({ type: "generate", subparts, view: view(), params, cache: cachingOn }, backend);
+          service.send({ type: "generate", subparts, view: view(), params, cache: cachingOn, cacheBudget: cacheBudgetBytes }, backend);
           jobs++;
         }
         return jobs;

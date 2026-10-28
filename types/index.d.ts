@@ -218,6 +218,14 @@ export interface MountOptions {
   onPick?: (event: PickEvent) => void;
   /** Opt in to the selection popover (requires `onPick`): a pick opens a popover at the spot with the sub-part's appearance controls, and with `slot: true` an empty region the host floats its own UI over (`runtime.selection`). */
   selectionPopover?: { slot: boolean };
+  /**
+   * Bound, in MB, on the geometry worker's solid cache — the built solids it keeps so
+   * an edit rebuilds only what changed. Unbounded by default. Past the bound the least
+   * recently built sub-parts' solids are freed and those sub-parts rebuild cold on the
+   * next edit. Pass a small bound on phones: a very large view's cache can hold
+   * gigabytes, more than a mobile browser tab is allowed.
+   */
+  cacheBudgetMB?: number;
   /** Receive exported bytes instead of partforge's own DOM download. */
   onDownload?: (file: DownloadPayload) => void;
   /** The active view (tab) name — emitted once on mount, then on every change. */

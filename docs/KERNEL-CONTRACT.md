@@ -107,7 +107,7 @@ relying on consumption should gate it with a `verify` volume assertion.
 OCCT/replicad backend is the reference.
 
 **Optional ops.** `KERNEL_OPTIONAL_OPS` (`beginSubPart`/`endSubPart`/`sweepCache`/`dropCache`/
-`cacheStats`/`resetCacheStats`/`cleanup`) and `SOLID_OPTIONAL_OPS` (`genus`/`isEmpty`) may
+`setCacheBudget`/`trimCache`/`cacheBytes`/`cacheStats`/`resetCacheStats`/`cleanup`) and `SOLID_OPTIONAL_OPS` (`genus`/`isEmpty`) may
 be omitted entirely; callers in the framework guard with `?.`/`typeof`. A host that omits
 them loses sub-part caching and mesh-topology gates (`holes`, emptiness), nothing else.
 `sweepCache()` is the cache's rebind hygiene hook: called once when a worker is rebound to
@@ -117,6 +117,13 @@ once, under the same never-mid-bracket rule: the worker calls it on each booted 
 before an export job, because a display build's retained solids and the export's own
 build share one WASM heap, and on a very large part the cache alone can leave too little
 heap for the export. The next display build after an export is cold.
+`setCacheBudget(bytes)` bounds the bytes the cache's retained solids may hold (the
+Manifold backend estimates each from its triangle and vertex counts); `trimCache()`
+then drops whole partitions, least recently built first, until they fit. A trim frees
+solids, so it runs only where no caller holds one — never inside a bracket and never
+right after one whose solids are still in use; jobs.js trims after each display
+sub-part is meshed and when a job returns. The budget arrives on `generate` messages
+as `cacheBudget` (bytes, `null` = unbounded), from mount's `cacheBudgetMB` option.
 
 `beginSubPart`/`endSubPart` brackets MAY nest: only the outermost pair opens and
 commits a round, and an inner pair is a balanced no-op. Nesting is real rather than

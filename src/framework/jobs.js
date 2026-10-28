@@ -65,7 +65,7 @@ const loadBedLayout = () => import("./export/bed-layout.js");
 
 // Handle one geometry job, posting results/progress via `post(msg, transfer?)`.
 // Backend-agnostic and part-agnostic: every part specific comes through `part`.
-//   { type:"generate", subparts, view, params } → { type:"meshes", meshes, ms }
+//   { type:"generate", subparts, view, params, cacheBudget? } → { type:"meshes", meshes, ms }
 //   { type:"export-stl", view, params }         → { type:"download-parts", ext, mime, parts }
 //   { type:"export-step", view, params }        → { type:"download", data, filename, mime }
 //   { type:"export-bundle", view, params, parts, options }
@@ -462,6 +462,9 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       kernel.takeBuildWarnings?.();
       const warnings = [...jobWarnings];   // job-level notices ride along with the per-sub-part ones
       kernel.resetCacheStats?.(); // count hits/misses for just this job
+      // The host's bound on the solid cache (mount's cacheBudgetMB), in bytes; null
+      // means unbounded. Kept by the kernel, so the oracle's builds share it.
+      if (Object.hasOwn(msg, "cacheBudget")) kernel.setCacheBudget?.(msg.cacheBudget ?? Infinity);
       for (const [i, name] of msg.subparts.entries()) {
         if (useCache) kernel.beginSubPart?.(name); // open the per-sub-part cache round
         try {
@@ -472,6 +475,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
           for (const message of kernel.takeBuildWarnings?.() ?? []) warnings.push({ part: name, message });
           if (useCache) kernel.endSubPart?.(); // always close the bracket — a throw mid-build must not strand pinned solids
           kernel.cleanup?.();                  // free this round's transients (cached/pinned solids survive)
+          kernel.trimCache?.();                // over the host's budget: drop the least recently built sub-parts' solids
         }
         // Cooperative cancel: yield one macrotask so queued messages (a newer
         // generate, a part rebind) can be seen, then stop at this boundary if
@@ -705,5 +709,6 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     else post({ type: "error", message: String(err?.message || err), jobId: msg.jobId });
   } finally {
     kernel.cleanup?.();
+    kernel.trimCache?.(); // a job holds no cached solid once it has returned (solid-cache.js MEMORY BUDGET)
   }
 }
