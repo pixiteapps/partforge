@@ -52,9 +52,12 @@
 //    first camera grab — a canvas drag or the view cube — stops it for good.
 //    Dragging an animated model orbits the camera and the animation plays on.
 //  - `fill: <0 < f <= 1>` — the opening framing (and the viewer's reframe)
-//    places the camera so the model's bounding SPHERE spans that fraction of
-//    the viewport's smaller side, so a turntable or an animation never clips.
-//    Unset, the viewer's fixed framing distance, as before.
+//    places the camera, along the kept view direction, so the model's posed
+//    bounding box as projected on screen spans that fraction of the viewport
+//    along its limiting axis. A turning model is framed by its box swept a
+//    full turn about the vertical, so the turntable never clips; a baked
+//    animation that moves parts outside the rest box can. Unset, the viewer's
+//    fixed framing distance, as before.
 //  - `camera: "default"` — the camera and projection of `viewerState` and of
 //    every setViewerState are dropped: the mount opens, and stays, at the
 //    file's own default framing. Their render mode and environment still apply.
@@ -213,8 +216,14 @@ export function mountPreview(container, options = {}) {
     if (disposed) return;
     if (decoded.meshes.length === 0) throw new Error("mountPreview: the preview holds no meshes");
     const view = decoded.view ?? "preview";
-    const viewer = createViewer(container, previewPart({ ...decoded, view }),
-      { transparent: opts.transparent, contactShadow: opts.contactShadow, zoom: opts.zoom, pan: opts.pan, frameFill: opts.fill });
+    const reducedMotion = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const plays = !!decoded.animation && animate !== false;
+    const turns = !plays && opts.turntable > 0 && !reducedMotion;
+    const viewer = createViewer(container, previewPart({ ...decoded, view }), {
+      transparent: opts.transparent, contactShadow: opts.contactShadow, zoom: opts.zoom, pan: opts.pan,
+      // A turning model is framed swept a full turn, so no angle of it clips.
+      frameFill: opts.fill, frameSwept: turns,
+    });
     cleanups.push(() => viewer.dispose());
     let tooltip = null, toolbar = null, viewStyle = null;
     if (opts.chrome) {
@@ -240,8 +249,7 @@ export function mountPreview(container, options = {}) {
     if (!active) viewer.setActive(false);
     const offRendered = viewer.onRendered(() => { offRendered(); resolveDrawn(); });
     cleanups.push(offRendered);
-    const reducedMotion = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (decoded.animation && animate !== false) {
+    if (plays) {
       player = createPreviewPlayer(viewer, decoded.animation, { reducedMotion });
       const own = player;
       cleanups.push(() => own.dispose());
@@ -250,7 +258,7 @@ export function mountPreview(container, options = {}) {
         const playButton = attachPreviewPlayButton(own, { toolbar, before: viewStyle.element }, { tooltip });
         cleanups.push(() => playButton.detach());
       }
-    } else if (opts.turntable > 0 && !reducedMotion) {
+    } else if (turns) {
       cleanups.push(startTurntable(viewer, container, opts.turntable));
     }
   });

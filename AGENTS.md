@@ -316,10 +316,13 @@ the installed package, so let the publish finish before bumping the dep there.
   for animation frames — rebuilding it while a preview played stalled the host
   page's main thread) — both CAD mode only, realistic draws its own
   environment and ground — `zoom`/`pan`, `turntable` (deg/s), `fill` (createViewer's `frameFill`:
-  frameTo sizes the camera distance — or the ortho frustum — so the posed
-  box's bounding sphere spans that fraction of the viewport's smaller side,
-  through the vertical or horizontal fov, whichever is narrower; a container
-  with no size falls back to the fixed r·2.6 + 6 distance), `camera:
+  frameTo bisects the camera distance along the kept view direction — or sizes
+  the ortho frustum — so the posed box's 8 corners, projected, span that
+  fraction of the viewport along its limiting axis; with `frameSwept` (a
+  turntable that will run) it frames the box swept about the vertical, two
+  48-gon circles, so no angle clips; a container with no size falls back to the
+  fixed r·2.6 + 6 distance. A sphere fit was tried first and left flat parts
+  small), `camera:
   "default"` (the carried camera and projection are dropped; render mode and
   environment still carry) and `renderMode` (the OPENING mode only — it wins
   over a carried one at mount, then changes freely). An unknown key or value

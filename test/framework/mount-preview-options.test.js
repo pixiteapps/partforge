@@ -460,33 +460,38 @@ test("renderMode: \"realistic\" opens realistic over a carried CAD state", async
 });
 
 // --- fill ------------------------------------------------------------------------
-// The still fixture's posed box is 10 x 10 x 24 mm: largest side 24, bounding
-// sphere radius half its diagonal.
-const BOX_R = Math.hypot(10, 10, 24) / 2;
+// `fill` frames the posed box's PROJECTION: the larger of (projected width /
+// viewport width, projected height / viewport height) equals fill.
+
+// A w x d plate, t thick, as a triangle soup (top and bottom faces are enough
+// for the box and the projection).
+function plate(name, w, d, t) {
+  const quad = (z) => [0, 0, z, w, 0, z, 0, d, z, w, 0, z, w, d, z, 0, d, z];
+  return { name, positions: new Float32Array([...quad(0), ...quad(t)]) };
+}
+const plateGlb = (w, d, t) => encodePreviewGlb({ meshes: [plate("plate", w, d, t)], view: "main" });
 const camDistance = (handle) => {
   const { pos, target } = handle.getViewerState().camera;
   return Math.hypot(...pos.map((c, i) => c - target[i]));
 };
-// The sphere's silhouette radius on screen, as a fraction of the stage's smaller
-// side: project the point where a ray from the camera grazes the sphere, along
-// the screen's narrower axis (vertical on a wide canvas, horizontal on a tall one).
-function silhouetteFraction(viewer, width, height) {
+// The live camera's NDC extent of every visible mesh's posed bounding box.
+function projectedExtent(viewer, names) {
   const cam = viewer.camera;
   cam.updateMatrixWorld();
-  const center = new THREE.Vector3(0, 0, 0);
-  const toCenter = center.clone().sub(cam.position);
-  const d = toCenter.length();
-  const u = toCenter.normalize();
-  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
-  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
-  const e = width >= height ? up : right;
-  const alpha = Math.asin(BOX_R / d);
-  const graze = cam.position.clone()
-    .add(u.clone().multiplyScalar(Math.cos(alpha)).add(e.clone().multiplyScalar(Math.sin(alpha))).multiplyScalar(Math.sqrt(d * d - BOX_R * BOX_R)));
-  const toPx = (p) => { const n = p.clone().project(cam); return [(n.x * width) / 2, (n.y * height) / 2]; };
-  const [cx, cy] = toPx(center), [gx, gy] = toPx(graze);
-  return Math.hypot(gx - cx, gy - cy) / Math.min(width, height);
+  const box = new THREE.Box3();
+  for (const n of names) {
+    const mesh = viewer.__subMesh(n);
+    mesh.updateWorldMatrix(true, false);
+    box.union(mesh.geometry.boundingBox.clone().applyMatrix4(mesh.matrixWorld));
+  }
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) {
+    const n = new THREE.Vector3(x, y, z).project(cam);
+    x0 = Math.min(x0, n.x); x1 = Math.max(x1, n.x); y0 = Math.min(y0, n.y); y1 = Math.max(y1, n.y);
+  }
+  return { x: (x1 - x0) / 2, y: (y1 - y0) / 2 };
 }
+const filledBy = (e) => Math.max(e.x, e.y);
 
 test("fill unset keeps today's framing distance exactly", async () => {
   const handle = mountPreview(makeStage(), { glb: await stillGlb() });
@@ -495,25 +500,45 @@ test("fill unset keeps today's framing distance exactly", async () => {
   handle.dispose();
 });
 
-test("fill: 0.8 frames the bounding sphere across 0.8 of a wide stage's height", async () => {
+test("fill: 0.8 makes the projected box span 0.8 of the limiting axis — a tall part is height-limited", async () => {
   const handle = mountPreview(makeStage(400, 300), { glb: await stillGlb(), fill: 0.8 });
   await handle.ready;
+  const e = projectedExtent(viewers.at(-1), ["base", "lid"]);
+  expect(e.y).toBeGreaterThan(0.8 * 0.98);
+  expect(e.y).toBeLessThan(0.8 * 1.02);
+  expect(e.x).toBeLessThan(e.y);
   expect(camDistance(handle)).toBeLessThan((24 * 2.6 + 6) * 0.8); // much closer than today
-  expect(silhouetteFraction(viewers.at(-1), 400, 300)).toBeCloseTo(0.4, 2); // radius = 0.4 of the smaller side
   handle.dispose();
 });
 
-test("fill on a tall stage frames by the horizontal fov", async () => {
-  const wide = mountPreview(makeStage(400, 300), { glb: await stillGlb(), fill: 0.8 });
-  await wide.ready;
-  const wideDistance = camDistance(wide);
-  wide.dispose();
+test("a flat, wide part fills by width", async () => {
+  const handle = mountPreview(makeStage(300, 400), { glb: await plateGlb(100, 30, 3), fill: 0.8 });
+  await handle.ready;
+  const e = projectedExtent(viewers.at(-1), ["plate"]);
+  expect(e.x).toBeGreaterThan(0.8 * 0.98);
+  expect(e.x).toBeLessThan(0.8 * 1.02);
+  expect(e.y).toBeLessThan(e.x);
+  expect(camDistance(handle)).toBeLessThan((100 * 2.6 + 6) * 0.8); // closer than today
+  handle.dispose();
+});
+
+test("with a turntable, a long thin part is framed by its swept extent and never clips as it turns", async () => {
+  const still = mountPreview(makeStage(), { glb: await plateGlb(100, 6, 3), fill: 0.8 });
+  await still.ready;
+  const staticDistance = camDistance(still);
+  still.dispose();
   state.renderer = null;
 
-  const handle = mountPreview(makeStage(300, 400), { glb: await stillGlb(), fill: 0.8 });
+  const handle = mountPreview(makeStage(), { glb: await plateGlb(100, 6, 3), fill: 0.8, turntable: 90 });
   await handle.ready;
-  expect(silhouetteFraction(viewers.at(-1), 300, 400)).toBeCloseTo(0.4, 2);
-  expect(camDistance(handle)).toBeGreaterThan(wideDistance * 1.2); // the narrower axis needs more room
+  expect(camDistance(handle)).toBeGreaterThan(staticDistance * 1.05);
+  let widest = 0;
+  for (let i = 0; i < 40; i++) { // a full turn at 90°/s, sampled every 0.1 s
+    runFrames(0.1);
+    widest = Math.max(widest, filledBy(projectedExtent(viewers.at(-1), ["plate"])));
+  }
+  expect(widest).toBeLessThanOrEqual(0.8 * 1.02);
+  expect(widest).toBeGreaterThan(0.8 * 0.9); // and it still fills the card at its widest
   handle.dispose();
 });
 
@@ -532,6 +557,7 @@ test("fill keeps the view direction and the origin target, and the viewer's refr
   c.target.forEach((x) => expect(x).toBeCloseTo(0, 6));
   const filled = camDistance(handle);
   viewers.at(-1).setCameraState({ pos: [200, 10, 0], target: [0, 0, 0] });
+  viewers.at(-1).setCameraState({ pos: c.pos, target: [0, 0, 0] });
   viewers.at(-1).frame(); // the reframe button's call
   expect(camDistance(handle)).toBeCloseTo(filled, 6);
   handle.dispose();
@@ -544,25 +570,23 @@ test("fill on a stage with no size yet falls back to today's distance", async ()
   handle.dispose();
 });
 
-test("fill under orthographic sizes the frustum to the sphere", () => {
+test("fill under orthographic sizes the frustum to the projected box", () => {
   const part = { ...viewerPart(), parts: { base: { label: "base", views: ["main"] }, lid: { label: "lid", views: ["main"] } } };
   const v = createViewer(makeStage(400, 300), part, { frameFill: 0.5 });
   for (const m of [box("base"), box("lid", 24)]) v.setSubGeometry(m.name, m);
   v.showAssembly(["base", "lid"], { frame: true });
   v.setProjection("orthographic");
   v.frame();
-  const cam = v.camera;
-  expect(cam.isOrthographicCamera).toBe(true);
-  const halfH = (cam.top - cam.bottom) / 2 / cam.zoom;
-  // The radius spans fill * min(w, h) / 2 pixels of the 300 px height.
-  expect((BOX_R / halfH) * (300 / 2)).toBeCloseTo((0.5 * 300) / 2, 4);
+  expect(v.camera.isOrthographicCamera).toBe(true);
+  const e = projectedExtent(v, ["base", "lid"]);
+  expect(filledBy(e)).toBeCloseTo(0.5, 3);
   v.dispose();
 });
 
 // --- the landing card: every option at once ----------------------------------------
 
 test("the landing card: chrome-less, transparent, shadowed, orbit-only, turning, default framing, CAD", async () => {
-  const framing = await defaultFraming({ fill: LANDING_CARD.fill }); // the file's own framing, filled
+  const framing = await defaultFraming({ fill: LANDING_CARD.fill, turntable: LANDING_CARD.turntable }); // the file's own framing, filled and swept (no frames run, so it has not turned)
   const stage = makeStage();
   const handle = mountPreview(stage, { glb: await stillGlb(), ...LANDING_CARD, viewerState: CARRIED });
   await handle.ready;

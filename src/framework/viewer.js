@@ -170,10 +170,14 @@ export function captureCurrentFromScene(
 // captures use) under the part in CAD mode, on the live scene; `zoom` / `pan`
 // false turn those OrbitControls gestures off (a wheel then scrolls the page).
 // `frameFill` (0 < f <= 1) changes how frameTo frames: the framed assembly's
-// bounding SPHERE spans that fraction of the viewport's smaller side; unset
-// keeps the fixed r·2.6 + 6 distance. mountPreview's presentation options are
-// the caller.
-export function createViewer(container, part, { transparent = false, contactShadow = false, zoom = true, pan = true, frameFill = null } = {}) {
+// posed bounding box, PROJECTED from the kept view direction, spans that
+// fraction of the viewport along its limiting axis; `frameSwept` frames the box
+// swept a full turn about the vertical instead (a turntable never clips).
+// Unset keeps the fixed r·2.6 + 6 distance. mountPreview's presentation
+// options are the caller.
+export function createViewer(container, part, {
+  transparent = false, contactShadow = false, zoom = true, pan = true, frameFill = null, frameSwept = false,
+} = {}) {
   const names = Object.keys(part.parts);
   // Membership for host-supplied names. subMesh, cadMats and part.parts are
   // plain objects, so "toString" or "constructor" would read as present on
@@ -1945,7 +1949,7 @@ export function createViewer(container, part, { transparent = false, contactShad
     floorY = -size.z / 2;
     grid.position.y = floorY;
     const r = Math.max(size.x, size.y, size.z) || 12;
-    const fill = fillFraming(size.length() / 2);
+    const fill = fillFraming(size);
     // Keep the VIEW DIRECTION (target -> camera), not the camera's direction
     // from the origin: after a pan the target is off the origin, and scaling
     // the position about the origin would turn the view — which, in an ortho
@@ -1955,15 +1959,17 @@ export function createViewer(container, part, { transparent = false, contactShad
     _frameDir.copy(activeCamera.position).sub(controls.target);
     if (_frameDir.lengthSq() === 0) _frameDir.copy(activeCamera.position);
     if (_frameDir.lengthSq() === 0) _frameDir.set(1, 1, 1);
-    activeCamera.position.copy(_frameDir.normalize().multiplyScalar(fill ? fill.distance : r * 2.6 + 6));
+    _frameDir.normalize();
+    const filled = fill?.(_frameDir);
+    activeCamera.position.copy(_frameDir).multiplyScalar(filled ? filled.distance : r * 2.6 + 6);
     controls.target.set(0, 0, 0);
     // Framing under ortho is a frustum, not a distance — without this the
     // reframe button moves the camera and nothing visibly changes. A fill
-    // framing sizes the frustum to the sphere directly (the sync matches size
-    // at the surface under the screen centre, which is not the sphere).
+    // framing sizes the frustum to the projected box directly (the sync
+    // matches size at the surface under the screen centre, not the extent).
     if (projectionMode === "orthographic") {
-      if (fill) {
-        applyOrthoFrustum({ halfH: fill.orthoHalfH, halfW: fill.orthoHalfH * fill.aspect });
+      if (filled) {
+        applyOrthoFrustum({ halfH: filled.orthoHalfH, halfW: filled.orthoHalfH * filled.aspect });
         orthoCamera.zoom = 1;
         orthoCamera.updateProjectionMatrix();
       } else {
@@ -1972,21 +1978,73 @@ export function createViewer(container, part, { transparent = false, contactShad
     }
   }
 
-  // The `frameFill` framing for a bounding sphere of radius R: the camera
-  // distance at which the sphere's silhouette (half-angle asin(R/d)) spans
-  // `frameFill` of the viewport's smaller side — the vertical fov when the
-  // canvas is wider than tall, the horizontal one when it is taller — and the
-  // orthographic half-height that draws the same radius. Null when unset, or
-  // when the container has no size yet (a hidden or unlaid-out stage): frameTo
-  // then falls back to the fixed distance, and the next reframe fills.
-  function fillFraming(R) {
-    if (!frameFill || !(R > 0)) return null;
+  // The `frameFill` framing. `size` is the posed box in the model frame; the
+  // assembly is centred on the pivot, so its world corners are the half-extents
+  // stood up by the pivot's rotation. With `frameSwept` the points are the box
+  // swept about the vertical through its centre — two circles (radius: the
+  // farthest corner from that axis, nudged out so the polygon contains the
+  // circle) at the box's top and bottom. Returns a function of the unit view
+  // direction (target → camera) giving `{ distance, orthoHalfH, aspect }`:
+  //  - perspective: the distance, along that direction to the origin target,
+  //    at which the points' projected extent — the larger of (projected width /
+  //    viewport width, projected height / viewport height) — equals frameFill.
+  //    The extent only shrinks as the camera backs off, so it is bisected.
+  //  - orthographic: the half-height that gives the same extent.
+  // Null when unset, or when the container has no size yet (a hidden or
+  // unlaid-out stage): frameTo then falls back to the fixed distance, and the
+  // next reframe fills.
+  const SWEEP_SEGMENTS = 48;
+  function fillFraming(size) {
+    if (!frameFill) return null;
     const w = container.clientWidth, h = container.clientHeight;
     if (!(w > 0 && h > 0)) return null;
     const aspect = w / h;
-    const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * Math.min(1, aspect);
-    const distance = R / Math.sin(Math.atan(frameFill * tanHalf));
-    return { distance, orthoHalfH: (R * h) / (frameFill * Math.min(w, h)), aspect };
+    pivot.updateMatrix();
+    const half = new THREE.Vector3(size.x / 2, size.y / 2, size.z / 2);
+    let points = [];
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+      points.push(new THREE.Vector3(sx * half.x, sy * half.y, sz * half.z).applyQuaternion(pivot.quaternion));
+    }
+    if (frameSwept) {
+      const radius = Math.max(...points.map((p) => Math.hypot(p.x, p.z))) / Math.cos(Math.PI / SWEEP_SEGMENTS);
+      const ys = [Math.min(...points.map((p) => p.y)), Math.max(...points.map((p) => p.y))];
+      points = [];
+      for (let k = 0; k < SWEEP_SEGMENTS; k++) {
+        const a = (2 * Math.PI * k) / SWEEP_SEGMENTS;
+        for (const y of ys) points.push(new THREE.Vector3(radius * Math.cos(a), y, radius * Math.sin(a)));
+      }
+    }
+    if (points.every((p) => p.lengthSq() === 0)) return null;
+    const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+    const tanH = tanV * aspect;
+    return (dir) => {
+      // The camera's basis for this view direction, `up` as the controls keep it.
+      const forward = dir.clone().negate();
+      const right = new THREE.Vector3().crossVectors(forward, activeCamera.up);
+      if (right.lengthSq() < 1e-12) right.set(1, 0, 0); // looking straight along up
+      right.normalize();
+      const upAxis = new THREE.Vector3().crossVectors(right, forward);
+      const xs = points.map((p) => p.dot(right)), ys = points.map((p) => p.dot(upAxis)), along = points.map((p) => p.dot(dir));
+      const span = (v) => Math.max(...v) - Math.min(...v);
+      const orthoHalfH = Math.max(span(xs) / aspect, span(ys)) / (2 * frameFill);
+      const extent = (d) => {
+        let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+        for (let i = 0; i < points.length; i++) {
+          const z = d - along[i]; // depth in front of the camera
+          const nx = xs[i] / (z * tanH), ny = ys[i] / (z * tanV);
+          x0 = Math.min(x0, nx); x1 = Math.max(x1, nx); y0 = Math.min(y0, ny); y1 = Math.max(y1, ny);
+        }
+        return Math.max((x1 - x0) / 2, (y1 - y0) / 2); // NDC spans 2 per axis
+      };
+      const nearest = Math.max(...along);
+      let lo = nearest + 1e-6 * (1 + Math.abs(nearest)), hi = Math.max(lo * 2, 1);
+      while (extent(hi) > frameFill && hi < 1e9) hi *= 2;
+      for (let i = 0; i < 60; i++) {
+        const mid = (lo + hi) / 2;
+        if (extent(mid) > frameFill) lo = mid; else hi = mid;
+      }
+      return { distance: hi, orthoHalfH, aspect };
+    };
   }
 
   // Show exactly the named sub-parts (from the cache). When `frame` is set, also

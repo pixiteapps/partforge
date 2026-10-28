@@ -809,8 +809,11 @@ export interface MountPreviewOptions {
   turntable?: number;
   /**
    * 0 < fill <= 1 (0.166.0+): the opening framing (and the viewer's reframe) puts the
-   * camera so the model's bounding sphere spans this fraction of the viewport's smaller
-   * side — a turntable or animation never clips. Unset, the fixed framing distance.
+   * camera, along the opening view direction, so the model's bounding box as projected
+   * on screen spans this fraction of the viewport along its limiting axis. With a
+   * `turntable` (and no baked animation) the box swept a full turn is framed, so the turn
+   * never clips; a baked animation that moves parts outside the box may. Unset, the
+   * fixed framing distance.
    */
   fill?: number;
   /** `"default"` (0.166.0+): drop the camera and projection of `viewerState` and `setViewerState`, so the mount keeps the file's own framing; their render mode and environment still apply. Default `"carry"`. */
