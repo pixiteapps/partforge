@@ -19,7 +19,8 @@
 // the weld collapses (two corners in one 1/32 mm cell — a sphere's pole fan, a
 // sliver) has no area and bounds nothing, so it is left out of the count: kept,
 // its self-edge counts once and its doubled edge three times, and every sphere
-// read as open.
+// read as open. A mesh the weld collapses ENTIRELY bounds nothing either, so it
+// needs at least one surviving edge to count as closed.
 export const isClosedSolid = (shape) => {
   const m = shape.mesh({ tolerance: 0.3, angularTolerance: 1.0 });
   const P = m.vertices, T = m.triangles;
@@ -34,6 +35,7 @@ export const isClosedSolid = (shape) => {
     if (a === b || b === c || c === a) continue;
     for (const [x, y] of [[a, b], [b, c], [c, a]]) { const e = x < y ? x * 1e7 + y : y * 1e7 + x; edges.set(e, (edges.get(e) || 0) + 1); }
   }
+  if (edges.size === 0) return false;
   for (const n of edges.values()) if (n !== 2) return false;
   return true;
 };

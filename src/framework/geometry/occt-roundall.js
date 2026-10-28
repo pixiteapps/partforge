@@ -30,6 +30,9 @@ const VARIANTS = [
   { join: "int", inter: false },
   { join: "int", inter: true },
 ];
+// Solid.offset's cascade: the Arc joins alone. An Intersection join extends the
+// faces to sharp corners, which passes every gate yet is not a ball offset.
+const ARC_VARIANTS = VARIANTS.filter((v) => v.join === "arc");
 
 // One gated offset step: the variant cascade above, each candidate held to the
 // IsDone / closed / positive-volume / volume-monotonic gate. Returns
@@ -100,7 +103,7 @@ export function occtRoundAll(replicad, shape, r, warn = (msg) => console.warn(`p
   return cur;
 }
 
-// Solid.offset on the B-rep class: ONE gated offset step, Arc join first so the
+// Solid.offset on the B-rep class: ONE gated offset step, Arc joins only, so the
 // corners match the mesh class's ball offset (convex edges round on a grow,
 // concave on a shrink). Unlike roundAll this never skips: an un-offset solid
 // handed back as an offset is silently wrong geometry (a skin cut from it comes
@@ -116,7 +119,7 @@ export function occtOffset(replicad, shape, d) {
   } catch (e) {
     throw new Error(`offset-failed: offset(${d}) could not measure the input solid on the OCCT backend (${e?.message || e})`);
   }
-  const next = offsetStep(replicad, shape, d, vol);
+  const next = offsetStep(replicad, shape, d, vol, ARC_VARIANTS);
   if (!next) {
     throw new Error(`offset-failed: offset(${d}) produced no valid solid on the OCCT backend — |d| is likely at/above half the thinnest wall, or the shape has faces OCCT cannot offset; the Manifold backend's offset handles both (meta.backend: "manifold")`);
   }

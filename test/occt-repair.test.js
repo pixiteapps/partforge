@@ -34,6 +34,13 @@ test("a triangle the weld collapses (a sphere's pole fan) is left out of the cou
   expect(isClosedSolid(poled)).toBe(true);
 });
 
+test("a mesh the weld collapses entirely is not a closed solid", () => {
+  // one open triangle, every corner inside one 1/32 mm cell: no edge survives
+  const speck = shapeOf([0, 0, 1, 0.01, 0, 1, 0, 0.01, 1], [0, 1, 2]);
+  expect(isClosedSolid(speck)).toBe(false);
+  expect(isClosedSolid(shapeOf([], []))).toBe(false);
+});
+
 test("safeOp returns the op's result when it yields real volume", () => {
   const { safeOp } = createOcctRepair((s) => s.vol);
   const backup = { marker: "backup", delete: vi.fn() };
