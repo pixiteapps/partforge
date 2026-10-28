@@ -813,7 +813,9 @@ export interface MountPreviewOptions {
    * on screen spans this fraction of the viewport along its limiting axis. With a
    * `turntable` (and no baked animation) the model swept a full turn is framed — its
    * farthest vertex from the vertical axis, over the box's height — so the turn never
-   * clips and a round part still fills; a baked animation that moves parts outside the box may. Unset, the
+   * clips and a round part still fills. With `fill` the model is centred on its
+   * horizontal vertex centroid (a lopsided part turns about its hub), and nothing
+   * leaves the viewport; a baked animation that moves parts outside the box may. Unset, the
    * fixed framing distance.
    */
   fill?: number;

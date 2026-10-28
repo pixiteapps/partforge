@@ -171,8 +171,9 @@ export function captureCurrentFromScene(
 // false turn those OrbitControls gestures off (a wheel then scrolls the page).
 // `frameFill` (0 < f <= 1) changes how frameTo frames: the framed assembly's
 // posed bounding box, PROJECTED from the kept view direction, spans that
-// fraction of the viewport along its limiting axis; `frameSwept` frames the box
-// swept a full turn about the vertical instead (a turntable never clips).
+// fraction of the viewport along its limiting axis, centred on the horizontal
+// vertex centroid; `frameSwept` frames the model swept a full turn about the
+// vertical instead (a turntable never clips).
 // Unset keeps the fixed r·2.6 + 6 distance. mountPreview's presentation
 // options are the caller.
 export function createViewer(container, part, {
@@ -1942,6 +1943,11 @@ export function createViewer(container, part, {
     }
     if (_box.isEmpty()) return;
     const center = _box.getCenter(new THREE.Vector3());
+    // A fill framing centres on the geometry, not its box: the horizontal
+    // vertex centroid (model x/y — the pivot stands model Z up) with the box's
+    // vertical centre. A lopsided part (a three-blade propeller) then turns
+    // about its hub instead of orbiting the middle of its box.
+    if (frameFill) horizontalCentroid(visibleNames, center);
     partsGroup.position.copy(center).multiplyScalar(-1); // centre assembly on the pivot
     const size = _box.getSize(new THREE.Vector3());
     // Drop the grid to the bottom of the bounding box (model Z -> world Y), so it reads
@@ -1949,7 +1955,7 @@ export function createViewer(container, part, {
     floorY = -size.z / 2;
     grid.position.y = floorY;
     const r = Math.max(size.x, size.y, size.z) || 12;
-    const fill = fillFraming(size, visibleNames, center);
+    const fill = fillFraming(_box, visibleNames, center);
     // Keep the VIEW DIRECTION (target -> camera), not the camera's direction
     // from the origin: after a pan the target is off the origin, and scaling
     // the position about the origin would turn the view — which, in an ortho
@@ -2015,16 +2021,32 @@ export function createViewer(container, part, {
     }
     return max;
   }
-  function fillFraming(size, names, center) {
+  // Overwrite `center`'s model x/y with the mean posed vertex position of
+  // `names` (z untouched). A plain vertex mean: preview meshes are close enough
+  // to uniformly tessellated for it to land on the hub of a lopsided part.
+  function horizontalCentroid(names, center) {
+    let sx = 0, sy = 0, n = 0;
+    for (const name of names) {
+      const pos = subCache[name]?.getAttribute("position");
+      if (!pos) continue;
+      const pose = subMesh[name].matrix;
+      for (let i = 0; i < pos.count; i++) {
+        _sweepV.fromBufferAttribute(pos, i).applyMatrix4(pose);
+        sx += _sweepV.x; sy += _sweepV.y; n++;
+      }
+    }
+    if (n > 0) center.set(sx / n, sy / n, center.z);
+  }
+  function fillFraming(box, names, center) {
     if (!frameFill) return null;
     const w = container.clientWidth, h = container.clientHeight;
     if (!(w > 0 && h > 0)) return null;
     const aspect = w / h;
     pivot.updateMatrix();
-    const half = new THREE.Vector3(size.x / 2, size.y / 2, size.z / 2);
+    // The box corners about the framing centre (no longer the box's own centre).
     let points = [];
-    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
-      points.push(new THREE.Vector3(sx * half.x, sy * half.y, sz * half.z).applyQuaternion(pivot.quaternion));
+    for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) {
+      points.push(new THREE.Vector3(x, y, z).sub(center).applyQuaternion(pivot.quaternion));
     }
     if (frameSwept) {
       const radius = sweepRadius(names, center) / Math.cos(Math.PI / SWEEP_SEGMENTS);
@@ -2046,23 +2068,32 @@ export function createViewer(container, part, {
       right.normalize();
       const upAxis = new THREE.Vector3().crossVectors(right, forward);
       const xs = points.map((p) => p.dot(right)), ys = points.map((p) => p.dot(upAxis)), along = points.map((p) => p.dot(dir));
+      // `fill` is the projected SPAN: the larger of (projected width / viewport
+      // width, projected height / viewport height). The framing centre sits at
+      // the screen centre, though, and a lopsided part reaches farther one way
+      // than the other — so the camera also backs off until nothing leaves the
+      // viewport (|NDC| <= 1 on both axes). For a part about as symmetric as
+      // its centre, the span decides alone.
       const span = (v) => Math.max(...v) - Math.min(...v);
-      const orthoHalfH = Math.max(span(xs) / aspect, span(ys)) / (2 * frameFill);
-      const extent = (d) => {
-        let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      const reach = (v) => Math.max(...v.map(Math.abs));
+      const orthoHalfH = Math.max(span(xs) / (2 * frameFill * aspect), span(ys) / (2 * frameFill), reach(xs) / aspect, reach(ys));
+      // How far over budget the projection is at distance d (<= 1 fits).
+      const over = (d) => {
+        let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, r = 0;
         for (let i = 0; i < points.length; i++) {
           const z = d - along[i]; // depth in front of the camera
           const nx = xs[i] / (z * tanH), ny = ys[i] / (z * tanV);
           x0 = Math.min(x0, nx); x1 = Math.max(x1, nx); y0 = Math.min(y0, ny); y1 = Math.max(y1, ny);
+          r = Math.max(r, Math.abs(nx), Math.abs(ny));
         }
-        return Math.max((x1 - x0) / 2, (y1 - y0) / 2); // NDC spans 2 per axis
+        return Math.max(Math.max(x1 - x0, y1 - y0) / (2 * frameFill), r); // NDC spans 2 per axis
       };
       const nearest = Math.max(...along);
       let lo = nearest + 1e-6 * (1 + Math.abs(nearest)), hi = Math.max(lo * 2, 1);
-      while (extent(hi) > frameFill && hi < 1e9) hi *= 2;
+      while (over(hi) > 1 && hi < 1e9) hi *= 2;
       for (let i = 0; i < 60; i++) {
         const mid = (lo + hi) / 2;
-        if (extent(mid) > frameFill) lo = mid; else hi = mid;
+        if (over(mid) > 1) lo = mid; else hi = mid;
       }
       return { distance: hi, orthoHalfH, aspect };
     };

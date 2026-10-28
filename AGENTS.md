@@ -322,7 +322,12 @@ the installed package, so let the publish finish before bumping the dep there.
   turntable that will run) it frames the model swept about the vertical — two
   48-gon circles over the box's height, radius the farthest posed VERTEX from
   the axis (box corners sit ~√2 out on a round part and framed a turning gear
-  at ~55% width) — so no angle clips; a container with no size falls back to the
+  at ~55% width) — so no angle clips. With `frameFill` the framing centre
+  (the point recentred onto the pivot, so the turntable's axis) is the posed
+  vertices' horizontal centroid with the box's vertical centre — a lopsided
+  propeller orbited its box centre otherwise — and the box corners and sweep are
+  taken about it; the fit is the projected span, plus a guard that nothing
+  leaves the viewport (|NDC| <= 1); a container with no size falls back to the
   fixed r·2.6 + 6 distance. A sphere fit was tried first and left flat parts
   small), `camera:
   "default"` (the carried camera and projection are dropped; render mode and

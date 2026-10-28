@@ -56,7 +56,8 @@
 //    bounding box as projected on screen spans that fraction of the viewport
 //    along its limiting axis. A turning model is framed swept a full turn
 //    about the vertical (its farthest vertex from the axis), so the turntable
-//    never clips and a round part still fills; a baked
+//    never clips and a round part still fills. The model is centred on its
+//    horizontal vertex centroid (a lopsided part turns about its hub); a baked
 //    animation that moves parts outside the rest box can. Unset, the viewer's
 //    fixed framing distance, as before.
 //  - `camera: "default"` — the camera and projection of `viewerState` and of

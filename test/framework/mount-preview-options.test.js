@@ -584,6 +584,70 @@ test("a round part on a turntable is framed by its rim: it spans fill, not fill/
   handle.dispose();
 });
 
+// A lopsided part: a dense hub disc at the origin plus one long arm reaching
+// +x — its box centre sits far out along the arm, its vertex centroid on the hub.
+function armPlate(name, len, wid, t) {
+  const quad = (z) => [0, -wid / 2, z, len, -wid / 2, z, 0, wid / 2, z, len, -wid / 2, z, len, wid / 2, z, 0, wid / 2, z];
+  return { name, positions: new Float32Array([...quad(0), ...quad(t)]) };
+}
+// Every posed vertex of the named meshes, projected through the live camera.
+function projectedVertices(viewer, names) {
+  const cam = viewer.camera;
+  cam.updateMatrixWorld();
+  const out = [];
+  const p = new THREE.Vector3();
+  for (const n of names) {
+    const mesh = viewer.__subMesh(n);
+    mesh.updateWorldMatrix(true, false);
+    const pos = mesh.geometry.getAttribute("position");
+    for (let i = 0; i < pos.count; i++) {
+      p.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld).project(cam);
+      out.push([p.x, p.y]);
+    }
+  }
+  return out;
+}
+
+test("a lopsided part on a turntable turns about its hub, which stays at the screen centre, and never exceeds fill", async () => {
+  const glb = await encodePreviewGlb({ meshes: [disc("hub", 6, 4), armPlate("arm", 60, 6, 4)], view: "main" });
+  const handle = mountPreview(makeStage(400, 300), { glb, fill: 0.8, turntable: 90 });
+  await handle.ready;
+  const v = viewers.at(-1);
+  const hub = () => {
+    const mesh = v.__subMesh("hub");
+    mesh.updateWorldMatrix(true, false);
+    v.camera.updateMatrixWorld();
+    return new THREE.Vector3(0, 0, 2).applyMatrix4(mesh.matrixWorld).project(v.camera);
+  };
+  for (let i = 0; i < 40; i++) { // a full turn at 90°/s
+    runFrames(0.1);
+    const h = hub();
+    expect(Math.abs(h.x)).toBeLessThan(0.03);
+    expect(Math.abs(h.y)).toBeLessThan(0.03);
+    const pts = projectedVertices(v, ["hub", "arm"]);
+    const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+    const spanHalf = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2;
+    expect(spanHalf).toBeLessThanOrEqual(0.8 * 1.02);
+    for (const [x, y] of pts) { expect(Math.abs(x)).toBeLessThanOrEqual(1); expect(Math.abs(y)).toBeLessThanOrEqual(1); }
+  }
+  handle.dispose();
+});
+
+test("unset fill still centres a lopsided part on its box, as before", async () => {
+  const glb = await encodePreviewGlb({ meshes: [disc("hub", 6, 4), armPlate("arm", 60, 6, 4)], view: "main" });
+  const handle = mountPreview(makeStage(400, 300), { glb });
+  await handle.ready;
+  const v = viewers.at(-1);
+  const box = new THREE.Box3();
+  for (const n of ["hub", "arm"]) {
+    const mesh = v.__subMesh(n);
+    mesh.updateWorldMatrix(true, false);
+    box.union(mesh.geometry.boundingBox.clone().applyMatrix4(mesh.matrixWorld));
+  }
+  box.getCenter(new THREE.Vector3()).toArray().forEach((c) => expect(c).toBeCloseTo(0, 6));
+  handle.dispose();
+});
+
 test("fill keeps the view direction and the origin target, and the viewer's reframe uses it too", async () => {
   const plain = mountPreview(makeStage(), { glb: await stillGlb() });
   await plain.ready;
