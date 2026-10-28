@@ -100,12 +100,14 @@ export const SUBPART_METRICS = {
         ? `no reading from the ${sampled} of ${total} triangles sampled — not a clean bill of health; a thin spot may exist between samples`
         : `sampled ${sampled} of ${total} triangles — an upper bound; a thinner spot may exist between samples`;
     } },
-  // Unsupported downward-facing area (oracle/overhang.js), in mm². Measured only
-  // for a part that declares `verify.orientation: "print"` under a profile with
-  // an `overhang` angle; elsewhere `extract` returns null and check() skips it.
-  // A warning, never a gate: a bridge reads as a ceiling and cannot be told apart.
-  overhangArea: { kind: "warn", extract: (s) => s.overhangArea,
-    hint: "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature, or accept supports",
+  // Unsupported downward-facing area (oracle/overhang.js), in mm². Measured for a
+  // part whose print process carries an `overhang` angle (the process alone arms it)
+  // or that asserts it; elsewhere `extract` returns null and check() skips it.
+  // A cost, never a gate or a warning: needing supports is a design choice with a
+  // price (a bridge reads as a ceiling and cannot be told apart), so it is listed
+  // under `costs` and the user may accept it (`verify.accept: ["supports"]`).
+  overhangArea: { kind: "cost", costId: "supports", extract: (s) => s.overhangArea,
+    hint: "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
     locate: (s) => s.overhangAt,
     note: (s) => (s.overhangAngle != null ? `steepest unsupported face ${s.overhangAngle.toFixed(1)}° from vertical` : null) },
   // How much of a printed piece's near-bed flat underside rests on the bed
@@ -121,6 +123,15 @@ export const SUBPART_METRICS = {
     note: (s) => (s.bedHoverGap != null
       ? `${s.bedHoverArea.toFixed(1)} mm² of flat underside sits ${s.bedHoverGap.toFixed(2)} mm above the bed; ${s.bedContactArea.toFixed(1)} mm² touches it`
       : null) },
+  // The footprint (measure.js, from bed contact's pass): the flat contact area over the
+  // piece's silhouette on the bed, in percent. Measured where bed contact is, plus where the
+  // profile carries `footprint` or the author declares it. A COST, like overhangArea: a
+  // piece on a point or a line prints with a brim or a raft, which the user may choose
+  // (`accept: ["footprint"]`); bedContactPct passes such a piece, since nothing hovers.
+  footprintPct: { kind: "cost", costId: "footprint", extract: (s) => s.footprintPct,
+    hint: "the share of this piece's silhouette on the bed (its outline in the print pose) that actually touches it is small — it stands on a point, a line or a curve, which reads near zero, so the first layer has almost nothing to hold on to and the piece can tip or pull loose. Lay it on its flat face, add a flat foot or pad at its lowest point, or print it with a brim (accept: [\"footprint\"] records that choice)",
+    pattern: "piece-stands-on-nothing",
+    locate: (s) => s.footprintAt },
   // `s.deviation` (measure.js) exists only for a sub-part declaring `reference:
   // "<import name>"`; on every other sub-part `extract` returns null, which
   // `check()` already reports as status "skip" rather than a fail — the

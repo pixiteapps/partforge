@@ -94,6 +94,7 @@ const BASELINE_IDS = [
   "views-invalid",
   "boolean-invalid-operand",
   "kernel-internal-error",
+  "piece-stands-on-nothing",
 ];
 
 const entries = parsePatterns(doc);

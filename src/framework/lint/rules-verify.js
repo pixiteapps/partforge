@@ -7,7 +7,7 @@ import { SUBPART_METRICS, VIEW_METRICS, BOUNDS_FORM, teachableMetrics, sidesSpec
 import { PROFILES, ORIENTATIONS } from "../oracle/dfm-profiles.js";
 import { parseAssertion, bareVectorHint } from "../oracle/assert-dsl.js";
 import { suggest } from "../geometry/op-options.js";
-import { PROCESS_IDS } from "../process/registry.js";
+import { PRINT_PROCESSES, PROCESS_IDS, printProcessFor } from "../process/registry.js";
 import { SHEET_DOC_ID } from "../sheet/constants.js";
 
 // Resolve `expect` to a plain object. The function form (p, d) => ({…}) is invoked
@@ -410,8 +410,41 @@ export const VERIFY_RULES = [
       const hint = safeSuggest(orientation, ORIENTATIONS);
       return [err("verify-unknown-orientation",
         `\`verify.orientation\` is ${describe(orientation)}, which is not a known orientation`,
-        `Use ${ORIENTATIONS.map((o) => `"${o}"`).join(", ")}${hint ? ` — did you mean "${hint}"?` : ""} (declares the part is laid out for its print bed, arming the profile's overhang check), or omit the key.`,
+        `Use ${ORIENTATIONS.map((o) => `"${o}"`).join(", ")}${hint ? ` — did you mean "${hint}"?` : ""} (declares that \`build()\` is the print pose: Z up, bed at the lowest Z), or omit the key.`,
         "verify.orientation")];
+    },
+  },
+  {
+    // `verify.accept` lists cost ids the user accepted. verify() reads it but
+    // never validates it, so a typo would be silently ignored without this rule.
+    // A process that does not resolve is verify-unknown-process's finding, not ours.
+    id: "verify-unknown-accept",
+    run: ({ part }) => {
+      const verify = part?.verify;
+      if (verify?.accept == null) return [];
+      if (!Array.isArray(verify.accept)) {
+        return [err("verify-unknown-accept",
+          `\`verify.accept\` is ${describe(verify.accept)}, not a list of cost ids`,
+          "Write `accept` as an array of cost ids, e.g. `accept: [\"supports\"]`, or omit the key.",
+          "verify.accept")];
+      }
+      // With no print process resolved, a cost can still fire (an authored expectation,
+      // an inline profile with no base), so check against every print process's ids.
+      const proc = printProcessFor(verify.process);
+      const known = proc ? Object.keys(proc.costs) : [...new Set(PRINT_PROCESSES.flatMap((d) => Object.keys(d.costs)))];
+      const out = [];
+      verify.accept.forEach((id, i) => {
+        if (typeof id === "string" && known.includes(id)) return;
+        out.push(err("verify-unknown-accept",
+          `\`verify.accept[${i}]\` is ${describe(id)}, which is not a cost ${proc ? "this process" : "any print process"} defines`,
+          !proc
+            ? `No print process is declared; the cost ids any print process knows are: ${known.join(", ")}.`
+            : known.length
+              ? `Known cost ids for this process: ${known.join(", ")}.`
+              : "This process defines no acceptable costs; remove the entry.",
+          `verify.accept[${i}]`));
+      });
+      return out;
     },
   },
 ];
