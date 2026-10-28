@@ -1988,6 +1988,9 @@ export function createViewer(container, part, { transparent = false, contactShad
     if (frame) frameTo(visibleNames);
     cutaway.setVisible(effectiveVisible());
     placeGround(); // realistic only: the ground comes to the part, and the shadow re-renders
+    // A new assembly is a new floor: the held-ground rule only stops a playing
+    // animation from dragging the floor around WITHIN one assembly.
+    liveShadowFloor = null;
     if (contactShadow) rebuildLiveShadow(); // CAD only (a no-op in realistic)
     for (const cb of [...assemblyListeners]) {
       try { cb(); } catch (e) { console.warn("partforge: assembly listener failed", e); }

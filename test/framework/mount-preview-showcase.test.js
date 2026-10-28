@@ -277,6 +277,40 @@ test("showcase ignores viewerState: it opens at its own default framing", async 
   handle.dispose();
 });
 
+test("the first canvas drag (OrbitControls' start) stops the turntable for good", async () => {
+  const handle = mountPreview(makeStage(), { glb: await stillGlb(), showcase: {} });
+  await handle.ready;
+  const a0 = azimuth(handle);
+  runFrames(0.5);
+  expect(azimuth(handle)).not.toBeCloseTo(a0, 3); // turning
+  controls.at(-1).dispatchEvent({ type: "start" }); // a pointer went down on the canvas
+  controls.at(-1).dispatchEvent({ type: "end" });
+  const a1 = azimuth(handle);
+  runFrames(1);
+  expect(azimuth(handle)).toBeCloseTo(a1, 6);
+  runFrames(2);
+  expect(azimuth(handle)).toBeCloseTo(a1, 6);
+  handle.dispose();
+});
+
+test("dragging an animated showcase orbits the camera and the animation plays on", async () => {
+  const handle = mountPreview(makeStage(), { glb: await animatedGlb(), showcase: {} });
+  await handle.ready;
+  runFrames(0.8); // past the intro tween
+  expect(handle.animation.state().status).toBe("playing");
+  controls.at(-1).dispatchEvent({ type: "start" });
+  controls.at(-1).dispatchEvent({ type: "end" });
+  const lid = viewers.at(-1).__subMesh("lid");
+  const seen = [];
+  for (let i = 0; i < 4; i++) {
+    runFrames(0.2);
+    seen.push([...lid.matrix.elements].join());
+    expect(handle.animation.state().status).toBe("playing");
+  }
+  expect(new Set(seen).size).toBe(seen.length); // the lid keeps moving
+  handle.dispose();
+});
+
 // --- drawn --------------------------------------------------------------------
 
 test("drawn resolves after the first rendered frame", async () => {
@@ -357,4 +391,30 @@ test("zoom:false and pan:false disable those OrbitControls", () => {
   d.domElement.dispatchEvent(on);
   expect(on.defaultPrevented).toBe(true);
   d.dispose();
+});
+
+test("a new assembly resets the contact shadow's held floor", () => {
+  vi.spyOn(performance, "now").mockImplementation(() => clockMs);
+  const part = { ...viewerPart(), parts: {
+    base: { label: "base", views: ["main"] }, lid: { label: "lid", views: ["main"] },
+  } };
+  const v = createViewer(makeStage(), part, { contactShadow: true });
+  for (const m of [box("base"), box("lid", 24)]) v.setSubGeometry(m.name, m);
+  v.showAssembly(["base", "lid"], { frame: true });
+  const shadowY = () => state.renderer.lastScene.children.find((c) => c.isMesh && c.material?.alphaMap).position.y;
+  runFrames(0.1);
+  const floor = shadowY();
+
+  v.holdGround(true); // a playing animation
+  v.setSubPose("lid", T(-40)); // the lid dips below the base
+  runFrames(0.5);
+  expect(shadowY()).toBeLessThan(floor - 10);
+  v.setSubPose("lid", null);
+  runFrames(0.5);
+  expect(shadowY()).toBeLessThan(floor - 10); // held: the floor only lowers within one assembly
+
+  v.showAssembly(["base", "lid"]); // a new assembly: the floor comes back to the part
+  runFrames(0.1);
+  expect(shadowY()).toBeCloseTo(floor, 4);
+  v.dispose();
 });
