@@ -132,6 +132,24 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 - **Cause:** the B-rep backend implements `roundAll` as a triple OCCT offset, which cannot change topology: a radius at or above the smallest local feature (thin wall < 2r, hole < 2r) has no valid B-rep offset result, so the op skips whole rather than emit garbage (KERNEL-CONTRACT.md, `roundAll` row). The mesh backend meanwhile performs true consumption — so preview and STEP legitimately differ in this regime.
 - **Fix:** reduce `r` below half the smallest wall/hole radius if STEP fidelity matters; or accept the divergence (preview/STL are correct) and gate the part with a `verify` volume assertion so the behavior is intentional.
 
+## offset-failed
+
+- **Symptom:** the build throws `offset-failed: offset(<d>) produced no valid solid on the OCCT backend — …` (STEP export, or a sub-part a `shell` routes to OCCT).
+- **Cause:** the B-rep backend implements `Solid.offset` as one OCCT offset, which cannot change topology: a shrink at or past half the thinnest wall (or a grow that would close a gap or hole narrower than `2d`) has no valid B-rep result. Unlike `roundAll`, `offset` never skips — returning the un-offset solid would make `body.cut(body.offset(-t))` empty without any sign of a problem — so it throws.
+- **Fix:** keep `|d|` below half the smallest wall/gap; or run the sub-part on Manifold (`meta.backend: "manifold"`, or drop the `shell` that routes it), whose Minkowski offset consumes thin features correctly. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "`offset(d)` — grow or shrink a solid".
+
+## offset-slow
+
+- **Symptom:** a build that calls `Solid.offset` takes many seconds or minutes, most often on an imported STL/3MF.
+- **Cause:** the Manifold backend's offset is a Minkowski sum/difference with a ball; on a non-convex solid every input triangle is hulled with the ball, about 3 ms per triangle (8,448 triangles ≈ 23 s; a 100k-triangle scan is minutes).
+- **Fix:** decimate the mesh before you import it, offset once and reuse the result, and do not offset inside a loop. Where the solid is an extrusion, offset the 2-D profile (`Shape2D.offset`) and extrude it instead — that is near-instant.
+
+## solid-offset-not-a-function
+
+- **Symptom:** `TypeError: <name>.offset is not a function` on a Solid (an extruded, imported or boolean result).
+- **Cause:** partforge before 0.165 had `offset` only on `Shape2D`; `Solid.offset` was added in 0.165.0.
+- **Fix:** update partforge to 0.165.0 or later. Do not fall back to unioning axis-shifted copies of the solid — that makes a wall only `t/√3` thick on diagonal surfaces.
+
 ## boolean-not-watertight
 
 - **Symptom:** `NOT watertight ✗` from `partforge measure` (non-zero exit) after adding a boolean cut or union.

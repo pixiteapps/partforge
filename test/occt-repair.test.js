@@ -26,6 +26,21 @@ test("coincident vertices are welded before the edge count (OCCT meshes faces se
   expect(isClosedSolid(welded)).toBe(true);
 });
 
+test("a triangle the weld collapses (a sphere's pole fan) is left out of the count", () => {
+  // v4 sits within a 1/32 mm cell of v3, so triangle 3-4-1 welds to a sliver
+  // with a repeated corner; OCCT's sphere poles mesh exactly like this.
+  const verts = [...TETRA_VERTS, 0, 0, 1.001 /* v4 ≈ v3 */];
+  const poled = shapeOf(verts, [0, 1, 2, 0, 1, 3, 0, 2, 3, 1, 2, 3, 3, 4, 1]);
+  expect(isClosedSolid(poled)).toBe(true);
+});
+
+test("a mesh the weld collapses entirely is not a closed solid", () => {
+  // one open triangle, every corner inside one 1/32 mm cell: no edge survives
+  const speck = shapeOf([0, 0, 1, 0.01, 0, 1, 0, 0.01, 1], [0, 1, 2]);
+  expect(isClosedSolid(speck)).toBe(false);
+  expect(isClosedSolid(shapeOf([], []))).toBe(false);
+});
+
 test("safeOp returns the op's result when it yields real volume", () => {
   const { safeOp } = createOcctRepair((s) => s.vol);
   const backup = { marker: "backup", delete: vi.fn() };
