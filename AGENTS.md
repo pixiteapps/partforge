@@ -306,7 +306,17 @@ the installed package, so let the publish finish before bumping the dep there.
   track is place-only. Since 0.159.0 a playing preview gets a play/pause/replay
   button in `#viewbar` beside `#view-style` (`preview-play-button.js`, driven by
   the player's `onChange`; none under reduced motion or without a `#viewbar`),
-  and `handle.animation` gains `replay()`.
+  and `handle.animation` gains `replay()`. Since 0.166.0 `mountPreview({ showcase })`
+  is the marketing-card form: no view cube, viewbar, view style, tooltips, play
+  button or chrome; `createViewer`'s `transparent` (alpha-0 clear, no CAD
+  background, no grid), `contactShadow` (the thumbnail style's CPU contact-shadow
+  mask as a live plane in CAD mode, rebuilt at most every 250 ms while poses
+  move) and `zoom`/`pan: false`; always CAD, `viewerState` ignored. A still file
+  turns through `viewer.orbitBy` off `onFrame` — orbitBy announces a camera grab
+  itself, so the turntable tells its own steps from the user's by a flag held
+  across the call, and the first real grab stops it for good; none under reduced
+  motion. Every handle gains `drawn`, resolved off the viewer's `onRendered`
+  (after a frame actually draws — the loop renders on demand).
 - **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
   (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
   nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,

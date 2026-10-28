@@ -30,6 +30,26 @@
 // file, with `animate: false`, or for a host with no #viewbar; the host can
 // still drive `handle.animation` (state / pause / resume / replay) itself.
 //
+// `showcase` is the marketing card: a small model beside a page's own copy,
+// with nothing to operate. No view cube, no #viewbar controls, no view style,
+// no tooltips, no play button, no `elements.chrome` wiring; a transparent
+// canvas with no grid (the page shows through) and the product shot's contact
+// shadow under the part; orbit only — zoom and pan are off, so a wheel scrolls
+// the page. Always CAD (renderMode.set answers "cad"), and `viewerState` /
+// setViewerState are ignored: each showcase mount opens at its own default
+// framing. A baked animation plays as authored (a looping one loops, a
+// one-time one holds its end pose — there is no replay button); a still file
+// (or `animate: false`) turns about the vertical at `turntableDegPerSec`
+// (default 14) off the viewer's frame loop, never under reduced motion, and the
+// first camera grab stops the turn for good. Dragging an animated model orbits
+// the camera and the animation plays on.
+//
+// `handle.drawn` resolves after the first frame that includes the meshes has
+// rendered (so a host can cross-fade from a still image without a flash). It
+// rejects with `ready`'s error when the file will not decode, and rejects if
+// the handle is disposed before that frame. A parked preview draws nothing, so
+// `drawn` waits for setActive(true).
+//
 // The decoder loads on demand (it carries the
 // GLTFLoader and meshopt), so a bundle that never mounts a preview never ships it.
 // Hence `ready`. Every handle method is safe before it resolves.
@@ -44,6 +64,37 @@ import { isFaceAlignedState } from "./projection.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
 import { createPreviewPlayer } from "./preview-player.js";
 import { attachPreviewPlayButton } from "./preview-play-button.js";
+
+const SHOWCASE_TURNTABLE_DEG_PER_SEC = 14;
+
+function showcaseOptions(showcase) {
+  if (!showcase) return null;
+  const rate = showcase.turntableDegPerSec;
+  return { turntableDegPerSec: typeof rate === "number" && Number.isFinite(rate) && rate >= 0 ? rate : SHOWCASE_TURNTABLE_DEG_PER_SEC };
+}
+
+// Turn the camera about the vertical at `degPerSec` until the first camera grab.
+// It turns through viewer.orbitBy, which itself announces a camera grab — so the
+// turntable's own steps are told apart from the user's by a flag held across
+// the call. Returns stop().
+function startTurntable(viewer, container, degPerSec) {
+  let turning = false, stopped = false;
+  const offFrame = viewer.onFrame((dt) => {
+    // orbitBy's rate: a drag the full stage height is a full turn.
+    const dx = ((degPerSec * dt) / 360) * Math.max(1, container.clientHeight || 1);
+    if (!(dx > 0)) return;
+    turning = true;
+    try { viewer.orbitBy(dx, 0); } finally { turning = false; }
+  });
+  const offGrab = viewer.onCameraStart(() => { if (!turning) stop(); });
+  function stop() {
+    if (stopped) return;
+    stopped = true;
+    offFrame();
+    offGrab();
+  }
+  return stop;
+}
 
 function previewPart({ meshes, view, meta }) {
   return {
@@ -65,17 +116,22 @@ const relay = (listeners) => (event) => {
   }
 };
 
-export function mountPreview(container, { glb, elements = {}, viewerState = null, animate = true } = {}) {
+export function mountPreview(container, { glb, elements = {}, viewerState = null, animate = true, showcase = null } = {}) {
   if (!container) throw new TypeError("mountPreview: a container element is required");
+  const show = showcaseOptions(showcase);
   let disposed = false;
   let active = true;
-  let carried = viewerState ?? null; // applied once the viewer exists, and on every setViewerState
+  // Applied once the viewer exists, and on every setViewerState — never in showcase.
+  let carried = show ? null : viewerState ?? null;
   let live = null;                   // { viewer, view } once the GLB has decoded
   let player = null;                 // the baked animation's player, once drawn
   const cleanups = [];
   const modeListeners = new Set();
   const envListeners = new Set();
   const lostListeners = new Set();
+  let resolveDrawn, rejectDrawn;
+  const drawn = new Promise((resolve, reject) => { resolveDrawn = resolve; rejectDrawn = reject; });
+  drawn.catch(() => {}); // the host awaits it; never an unhandled rejection
 
   // Same precedence mount() uses: projection first (orthographic only for a
   // face-view camera), then the camera, then environment and render mode.
@@ -94,18 +150,23 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
     if (disposed) return;
     if (decoded.meshes.length === 0) throw new Error("mountPreview: the preview holds no meshes");
     const view = decoded.view ?? "preview";
-    const viewer = createViewer(container, previewPart({ ...decoded, view }));
+    const viewer = createViewer(container, previewPart({ ...decoded, view }),
+      show ? { transparent: true, contactShadow: true, zoom: false, pan: false } : undefined);
     cleanups.push(() => viewer.dispose());
-    const tooltip = createTooltipPresenter({ id: null });
-    cleanups.push(() => tooltip.dispose());
-    const viewcube = attachViewcubeControls(viewer, { stage: container });
-    cleanups.push(() => viewcube.detach());
-    const toolbar = container.querySelector("#viewbar");
-    const viewStyle = attachViewStyleControls(viewer, { stage: container, toolbar, anchor: viewcube.element }, { tooltip });
-    cleanups.push(() => viewStyle.detach());
-    cleanups.push(observeViewbarClear(container, toolbar));
-    const chrome = attachViewerControls(viewer, elements.chrome ?? {}, { tooltip });
-    cleanups.push(() => chrome.detach());
+    let tooltip = null, toolbar = null, viewStyle = null;
+    if (!show) {
+      tooltip = createTooltipPresenter({ id: null });
+      const tip = tooltip;
+      cleanups.push(() => tip.dispose());
+      const viewcube = attachViewcubeControls(viewer, { stage: container });
+      cleanups.push(() => viewcube.detach());
+      toolbar = container.querySelector("#viewbar");
+      const style = viewStyle = attachViewStyleControls(viewer, { stage: container, toolbar, anchor: viewcube.element }, { tooltip });
+      cleanups.push(() => style.detach());
+      cleanups.push(observeViewbarClear(container, toolbar));
+      const chrome = attachViewerControls(viewer, elements.chrome ?? {}, { tooltip });
+      cleanups.push(() => chrome.detach());
+    }
     cleanups.push(viewer.onRenderModeChange(relay(modeListeners)));
     cleanups.push(viewer.onEnvironmentChange(relay(envListeners)));
     cleanups.push(viewer.onContextLost(relay(lostListeners)));
@@ -114,8 +175,10 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
     live = { viewer, view };
     applyState(carried);
     if (!active) viewer.setActive(false);
+    const offRendered = viewer.onRendered(() => { offRendered(); resolveDrawn(); });
+    cleanups.push(offRendered);
+    const reducedMotion = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (decoded.animation && animate !== false) {
-      const reducedMotion = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
       player = createPreviewPlayer(viewer, decoded.animation, { reducedMotion });
       const own = player;
       cleanups.push(() => own.dispose());
@@ -124,9 +187,11 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
         const playButton = attachPreviewPlayButton(own, { toolbar, before: viewStyle.element }, { tooltip });
         cleanups.push(() => playButton.detach());
       }
+    } else if (show && !reducedMotion && show.turntableDegPerSec > 0) {
+      cleanups.push(startTurntable(viewer, container, show.turntableDegPerSec));
     }
   });
-  ready.catch(() => {}); // the host awaits it; never an unhandled rejection
+  ready.catch(rejectDrawn); // the host awaits it; never an unhandled rejection
 
   function getViewerState() {
     if (!live) return { camera: null, projection: "perspective", renderMode: "cad", ...carried, cutaway: null };
@@ -148,9 +213,11 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
 
   return {
     ready,
+    drawn,
     dispose() {
       if (disposed) return;
       disposed = true;
+      rejectDrawn(new Error("mountPreview: disposed before the preview was drawn")); // a no-op once drawn
       live = null;
       player = null; // `animation` answers null once disposed (the cleanup below disposes it)
       const errors = [];
@@ -167,6 +234,7 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
     },
     getViewerState,
     setViewerState(next) {
+      if (show) return; // a showcase keeps its own framing and the CAD look
       carried = next ?? null;
       applyState(carried);
     },
@@ -184,7 +252,7 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
     setRailLayout: () => {},
     renderMode: {
       get: () => live?.viewer.getRenderMode() ?? carried?.renderMode ?? "cad",
-      set: (mode) => whenLive((v) => v.setRenderMode(mode), "cad"),
+      set: (mode) => (show ? Promise.resolve("cad") : whenLive((v) => v.setRenderMode(mode), "cad")),
       onChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },
     },
     environment: {

@@ -187,11 +187,24 @@ stock, no layer-line frames). Previews carry no edge lines, textures or patterns
 `resolveDefaultView(part)` (main entry and `partforge/testing`) names the view
 `mount()` opens on, so a preview built headlessly matches it.
 
+`mountPreview(container, { glb, showcase: { turntableDegPerSec } })` (0.166.0+)
+is the same preview as a showcase for a small card on a marketing page: no view
+cube, viewbar controls, view style, tooltips or play button; a transparent canvas
+with no grid and a soft contact shadow under the part; orbit only (a wheel
+scrolls the page); always the CAD look, opening at its own default framing
+(`viewerState` is ignored). A baked animation plays as authored — it loops, or
+plays once and holds its end pose; a still model turns at `turntableDegPerSec`
+(default 14) until the first camera grab, and nothing moves under
+`prefers-reduced-motion`. Every handle carries `drawn`, which resolves after the
+first frame showing the meshes, so a host can cross-fade from a still image.
+
 ```js
 const glb = await runtime.exportPreview();               // Uint8Array: the view on screen
 mount(part, { createWorker, elements, preview: glb });   // drawn at once, replaced by the build
 const shown = mountPreview(stage, { glb });              // no kernel at all
 await shown.ready;
+const card = mountPreview(cardStage, { glb, showcase: {} }); // chrome-less, transparent, turning
+await card.drawn;                                        // the first frame is on the canvas
 ```
 
 Every `elements` entry defaults to the legacy global ID (`#app`, `#controls`,

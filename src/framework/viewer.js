@@ -163,7 +163,14 @@ export function captureCurrentFromScene(
   }
 }
 
-export function createViewer(container, part) {
+// Options (all default to today's viewer): `transparent` clears the canvas to
+// alpha 0 in CAD mode (no theme background, no grid) so the host page shows
+// through — realistic mode keeps its environment backdrop; `contactShadow`
+// draws the product shot's soft contact shadow (contact-shadow.js, the mask
+// captures use) under the part in CAD mode, on the live scene; `zoom` / `pan`
+// false turn those OrbitControls gestures off (a wheel then scrolls the page).
+// mountPreview's showcase mode is the caller.
+export function createViewer(container, part, { transparent = false, contactShadow = false, zoom = true, pan = true } = {}) {
   const names = Object.keys(part.parts);
   // Membership for host-supplied names. subMesh, cadMats and part.parts are
   // plain objects, so "toString" or "constructor" would read as present on
@@ -172,7 +179,10 @@ export function createViewer(container, part) {
   const has = (name) => nameSet.has(name);
 
   // --- renderer / scene / camera --------------------------------------------
-  const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true });
+  const renderer = new THREE.WebGLRenderer(transparent
+    ? { antialias: true, stencil: true, alpha: true }
+    : { antialias: true, stencil: true });
+  if (transparent) renderer.setClearColor(0x000000, 0);
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   container.appendChild(renderer.domElement);
 
@@ -188,7 +198,10 @@ export function createViewer(container, part) {
     dark:  { bg: part.meta?.background ?? CAD_DARK_THEME.bg, grid: [0x2c333d, 0x222831], line: CAD_DARK_THEME.line },
     light: { bg: CAD_LIGHT_THEME.bg, grid: [0xc4ccd6, 0xd6dce4], line: CAD_LIGHT_THEME.line },
   };
-  scene.background = new THREE.Color(THEME.dark.bg);
+  // CAD mode's backdrop and grid; a transparent viewer has neither.
+  const cadBackground = (mode) => (transparent ? null : new THREE.Color(THEME[mode].bg));
+  const cadGrid = !transparent;
+  scene.background = cadBackground("dark");
 
   let currentTheme = "dark";
   const themeListeners = new Set();
@@ -216,6 +229,8 @@ export function createViewer(container, part) {
 
   const controls = new OrbitControls(activeCamera, renderer.domElement);
   controls.enableDamping = true;
+  controls.enableZoom = zoom !== false;
+  controls.enablePan = pan !== false;
   // A finger a host gesture swallowed would otherwise stay "down" forever in
   // whatever it went down on — the controls (every later drag zooms), the view
   // cube, the cutaway handles, measure mode — so the guard watches the whole
@@ -253,6 +268,7 @@ export function createViewer(container, part) {
   const GRID_SIZE = 300, GRID_DIVS = 30;
   let floorY = 0; // world Y of the grid plane; set to the part's bbox bottom in frameTo
   let grid = new THREE.GridHelper(GRID_SIZE, GRID_DIVS, THEME.dark.grid[0], THEME.dark.grid[1]);
+  grid.visible = cadGrid;
   scene.add(grid);
 
   // --- material + part groups -----------------------------------------------
@@ -462,6 +478,7 @@ export function createViewer(container, part) {
       matchGeneration++;
       cutaway.setVisible(effectiveVisible());
       if (realisticRig) shadowMovedAt = performance.now(); // a caster came or went
+      markLiveShadowMoved();
     }
   }
 
@@ -626,6 +643,8 @@ export function createViewer(container, part) {
     // bigger half of the answer the way the grid is in CAD: without it the far
     // plane cuts the disc's back edge off.
     if (realisticRig) _depthBounds.union(_groundBounds.setFromObject(realisticRig.ground));
+    // The CAD contact shadow reaches past the part by its blur margin.
+    if (liveShadow) _depthBounds.union(_groundBounds.setFromObject(liveShadow));
     if (_depthBounds.isEmpty()) return null;
     return {
       center: _depthBounds.getCenter(_depthCenter).toArray(),
@@ -962,6 +981,62 @@ export function createViewer(container, part) {
   // contact shadow: low-res while the plane is dragged, full once it settles —
   // the same schedule as a moving sub-part.
   cutaway.onChange?.(() => { if (realisticRig) shadowMovedAt = performance.now(); });
+
+  // --- the CAD contact shadow (the `contactShadow` option) -------------------
+  // The product shot's shadow (renderStyles' thumbnail style), on the live
+  // scene: the same CPU mask the captures cast, as a black alpha-mapped plane a
+  // hair under the part. CAD mode only — realistic brings its own ground and
+  // shadow. Rebuilt on showAssembly, on entering CAD, and — while sub-parts move
+  // (a playing preview) — at most every LIVE_SHADOW_MS, with one last rebuild
+  // once they stop. While the animation holds the ground, the floor may only
+  // lower, never follow a part that lifts off it (the realistic ground's rule).
+  const LIVE_SHADOW = RENDER_STYLES.thumbnail.shadow;
+  const LIVE_SHADOW_MS = 250;
+  let liveShadow = null;
+  let liveShadowDirty = false;
+  let liveShadowBuiltAt = -Infinity;
+  let liveShadowFloor = null;
+  function disposeLiveShadow() {
+    if (!liveShadow) return;
+    scene.remove(liveShadow);
+    liveShadow.geometry.dispose();
+    liveShadow.material.alphaMap.dispose();
+    liveShadow.material.dispose();
+    liveShadow = null;
+  }
+  const _liveShadowV = new THREE.Vector3();
+  function rebuildLiveShadow() {
+    liveShadowDirty = false;
+    liveShadowBuiltAt = performance.now();
+    disposeLiveShadow();
+    if (!contactShadow || renderMode !== "cad") return;
+    try {
+      const bounds = getVisibleWorldBounds();
+      if (bounds.isEmpty()) return;
+      const box = { min: bounds.min.toArray(), max: bounds.max.toArray() };
+      if (groundHeld && liveShadowFloor != null) box.min[1] = Math.min(liveShadowFloor, box.min[1]);
+      liveShadowFloor = box.min[1];
+      const meshes = castersNow().filter((m) => m.geometry?.attributes?.position).map((mesh) => {
+        mesh.updateWorldMatrix(true, false);
+        const pos = mesh.geometry.attributes.position;
+        const positions = new Float32Array(pos.count * 3);
+        for (let i = 0; i < pos.count; i++) _liveShadowV.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld).toArray(positions, i * 3);
+        return { positions, indices: mesh.geometry.index?.array ?? null };
+      });
+      const mask = contactShadowMask(meshes, box, LIVE_SHADOW);
+      if (!mask) return;
+      liveShadow = buildContactShadowPlane(mask, LIVE_SHADOW);
+      scene.add(liveShadow);
+      requestRender();
+    } catch (e) {
+      console.warn("partforge: contact shadow failed", e);
+    }
+  }
+  function markLiveShadowMoved() { if (contactShadow) liveShadowDirty = true; }
+  // Once per animation frame, after the frame listeners have posed this frame.
+  function updateLiveShadow() {
+    if (liveShadowDirty && performance.now() - liveShadowBuiltAt >= LIVE_SHADOW_MS) rebuildLiveShadow();
+  }
   cutaway.onChange?.(() => requestRender());
 
   const livePixelRatio = (mode) =>
@@ -996,6 +1071,7 @@ export function createViewer(container, part) {
       scene.backgroundRotation.set(0, rig.rotationY ?? 0, 0);
       scene.environmentRotation.set(0, rig.rotationY ?? 0, 0);
       scene.add(rig.ground, rig.shadow.group, ...(rig.lights ?? []));
+      disposeLiveShadow();
       for (const l of Object.values(liveLights)) l.visible = false;
       grid.visible = false;
       renderer.toneMapping = THREE.NeutralToneMapping;
@@ -1030,16 +1106,17 @@ export function createViewer(container, part) {
     shadowMovedAt = null;
     attempt(() => {
       scene.environment = null;
-      scene.background = new THREE.Color(THEME[currentTheme].bg);
+      scene.background = cadBackground(currentTheme);
       scene.backgroundBlurriness = 0;
       scene.backgroundIntensity = 1;
       scene.backgroundRotation.set(0, 0, 0);
       scene.environmentRotation.set(0, 0, 0);
     });
     attempt(() => { for (const l of Object.values(liveLights)) l.visible = true; });
-    attempt(() => { grid.visible = true; });
+    attempt(() => { grid.visible = cadGrid; });
     for (const n of names) attempt(() => { if (baseMats[n] !== cadMats[n]) rebaseSubMaterial(n, cadMats[n]); else applySubOpacity(n); });
     if (live) attempt(() => applyPixelRatio("cad"));
+    if (contactShadow) attempt(rebuildLiveShadow);
     attempt(refreshFeatureLines);
     if (live) invalidateMaterialThumbnails();
     if (firstError) throw firstError;
@@ -1242,6 +1319,10 @@ export function createViewer(container, part) {
   // (setActive(false)) automatically halts playback too: no loop, no ticks.
   const frameListeners = new Set();
   function onFrame(cb) { frameListeners.add(cb); return () => frameListeners.delete(cb); }
+  // After a frame has actually DRAWN to the canvas (the loop renders on demand,
+  // so most frames draw nothing and call nobody). mountPreview's `drawn`.
+  const renderedListeners = new Set();
+  function onRendered(cb) { renderedListeners.add(cb); return () => renderedListeners.delete(cb); }
 
   // Fired at the end of every showAssembly, for hosts that need to react to
   // which sub-parts are visible (e.g. re-deriving a view style thumbnail).
@@ -1799,6 +1880,7 @@ export function createViewer(container, part) {
     // The contact shadow follows on the render loop's throttle (see
     // updateMovingShadow); the ground itself stays put until showAssembly.
     if (realisticRig) shadowMovedAt = performance.now();
+    markLiveShadowMoved();
   }
 
   // Cache queries for the app's regenerate loop (so it never reaches into subCache).
@@ -1906,6 +1988,7 @@ export function createViewer(container, part) {
     if (frame) frameTo(visibleNames);
     cutaway.setVisible(effectiveVisible());
     placeGround(); // realistic only: the ground comes to the part, and the shadow re-renders
+    if (contactShadow) rebuildLiveShadow(); // CAD only (a no-op in realistic)
     for (const cb of [...assemblyListeners]) {
       try { cb(); } catch (e) { console.warn("partforge: assembly listener failed", e); }
     }
@@ -1949,11 +2032,11 @@ export function createViewer(container, part) {
     const t = THEME[mode] ?? THEME.dark;
     // Realistic mode's backdrop belongs to the environment and its grid is off;
     // enterCad puts the theme's background back on the way out.
-    if (renderMode === "cad") scene.background = new THREE.Color(t.bg);
+    if (renderMode === "cad") scene.background = cadBackground(THEME[mode] ? mode : "dark");
     scene.remove(grid);
     grid = new THREE.GridHelper(GRID_SIZE, GRID_DIVS, t.grid[0], t.grid[1]);
     grid.position.y = floorY; // keep the floor at the bbox bottom across theme swaps
-    grid.visible = renderMode === "cad";
+    grid.visible = renderMode === "cad" && cadGrid;
     scene.add(grid);
     lineMaterial.color.set(t.line);
     for (const m of fadeLineMats.values()) m.color.set(t.line); // clones follow the theme
@@ -2736,6 +2819,7 @@ export function createViewer(container, part) {
       try { cb(dt); } catch (e) { console.warn("partforge: frame listener failed", e); }
     }
     updateMovingShadow(); // after the listeners, so it sees this frame's poses
+    updateLiveShadow();
     // Nothing asked for a frame: the canvas keeps showing the last one.
     if (!renderRequested && performance.now() >= renderUntil) return;
     renderRequested = false;
@@ -2756,6 +2840,9 @@ export function createViewer(container, part) {
     }
     renderWithBackdrop(scene, activeCamera);
     cutaway.renderOverlay(renderer, activeCamera);
+    for (const cb of [...renderedListeners]) {
+      try { cb(); } catch (e) { console.warn("partforge: rendered listener failed", e); }
+    }
   }
   renderer.setAnimationLoop(renderFrame);
 
@@ -3032,6 +3119,7 @@ export function createViewer(container, part) {
     controls.removeEventListener("start", onControlsStart);
     cameraStartListeners.clear();
     frameListeners.clear();
+    renderedListeners.clear();
     assemblyListeners.clear();
     themeListeners.clear();
     projectionListeners.clear();
@@ -3078,6 +3166,7 @@ export function createViewer(container, part) {
     fadeMats.clear();
     fadeLineMats.clear();
     disposeRealistic();
+    disposeLiveShadow();
     material.dispose();
     lineMaterial.dispose();
     grid.geometry.dispose();
@@ -3113,6 +3202,7 @@ export function createViewer(container, part) {
     renderMaterialThumbnail,
     invalidateMaterialThumbnails,
     onFrame,
+    onRendered,
     onAssemblyChange: (cb) => { assemblyListeners.add(cb); return () => assemblyListeners.delete(cb); },
     tweenCameraTo,
     getCameraCue,

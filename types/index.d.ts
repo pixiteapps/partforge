@@ -791,12 +791,28 @@ export interface MountPreviewOptions {
   viewerState?: ViewerState | null;
   /** Play the file's baked animation once drawn (default true). The editor's own boot preview goes through mount(), not here. */
   animate?: boolean;
+  /**
+   * Showcase mode (0.166.0+): a chrome-less, transparent, orbit-only viewer for a
+   * small card on a marketing page. No view cube, `#viewbar` controls, view style,
+   * tooltips, play button or `elements.chrome` wiring; no theme background and no
+   * grid, plus a soft contact shadow; zoom and pan off; always CAD; `viewerState`
+   * and `setViewerState` ignored. A baked animation plays as authored (loops, or
+   * plays once and holds its end pose); a still file turns at `turntableDegPerSec`
+   * (default 14) until the first camera grab, and never under reduced motion.
+   */
+  showcase?: { turntableDegPerSec?: number } | null;
 }
 
 /** The handle `mountPreview()` returns. Every method is safe before `ready` settles. */
 export interface PreviewRuntime {
   /** Resolves once the GLB is drawn; rejects when it will not decode or holds no meshes. */
   ready: Promise<void>;
+  /**
+   * Resolves after the first frame that includes the meshes has rendered (0.166.0+) —
+   * for cross-fading from a still image. Rejects with `ready`'s error when the file
+   * will not decode, or when the handle is disposed first. Waits while parked.
+   */
+  drawn: Promise<void>;
   /** Full teardown. Idempotent. */
   dispose(): void;
   /** The view the file was written for (`null` until drawn, or when the file names none). */
