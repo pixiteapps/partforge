@@ -311,8 +311,9 @@ the installed package, so let the publish finish before bumping the dep there.
   (false: no view cube, viewbar, view style, tooltips, play button or chrome),
   `background: "transparent"` (`transparent`: alpha-0 clear, no CAD background,
   no grid) and `contactShadow` (the thumbnail style's CPU contact-shadow mask as
-  a live plane, rebuilt at most every 250 ms while poses move; the held floor
-  resets per showAssembly) — both CAD mode only, realistic draws its own
+  a live plane, built ONCE per showAssembly from the pose on screen and never
+  for animation frames — rebuilding it while a preview played stalled the host
+  page's main thread) — both CAD mode only, realistic draws its own
   environment and ground — `zoom`/`pan`, `turntable` (deg/s), `camera:
   "default"` (the carried camera and projection are dropped; render mode and
   environment still carry) and `renderMode` (the OPENING mode only — it wins

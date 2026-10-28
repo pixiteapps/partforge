@@ -478,7 +478,6 @@ export function createViewer(container, part, { transparent = false, contactShad
       matchGeneration++;
       cutaway.setVisible(effectiveVisible());
       if (realisticRig) shadowMovedAt = performance.now(); // a caster came or went
-      markLiveShadowMoved();
     }
   }
 
@@ -986,16 +985,15 @@ export function createViewer(container, part, { transparent = false, contactShad
   // The product shot's shadow (renderStyles' thumbnail style), on the live
   // scene: the same CPU mask the captures cast, as a black alpha-mapped plane a
   // hair under the part. CAD mode only — realistic brings its own ground and
-  // shadow. Rebuilt on showAssembly, on entering CAD, and — while sub-parts move
-  // (a playing preview) — at most every LIVE_SHADOW_MS, with one last rebuild
-  // once they stop. While the animation holds the ground, the floor may only
-  // lower, never follow a part that lifts off it (the realistic ground's rule).
+  // shadow. Computed ONCE per assembly — on showAssembly, from the pose on
+  // screen then (a preview's opening pose) — and again on entering CAD. Never
+  // for animation frames: the mask is a CPU rasterization plus a new texture,
+  // and rebuilding it a few times a second while a preview played stalled the
+  // host page's main thread (a landing page's typing slowed ~25×). So a moving
+  // sub-part leaves its opening shadow behind — accepted. A turntable needs no
+  // rebuild: it moves the camera, never a caster or the ground.
   const LIVE_SHADOW = RENDER_STYLES.thumbnail.shadow;
-  const LIVE_SHADOW_MS = 250;
   let liveShadow = null;
-  let liveShadowDirty = false;
-  let liveShadowBuiltAt = -Infinity;
-  let liveShadowFloor = null;
   function disposeLiveShadow() {
     if (!liveShadow) return;
     scene.remove(liveShadow);
@@ -1006,16 +1004,12 @@ export function createViewer(container, part, { transparent = false, contactShad
   }
   const _liveShadowV = new THREE.Vector3();
   function rebuildLiveShadow() {
-    liveShadowDirty = false;
-    liveShadowBuiltAt = performance.now();
     disposeLiveShadow();
     if (!contactShadow || renderMode !== "cad") return;
     try {
       const bounds = getVisibleWorldBounds();
       if (bounds.isEmpty()) return;
       const box = { min: bounds.min.toArray(), max: bounds.max.toArray() };
-      if (groundHeld && liveShadowFloor != null) box.min[1] = Math.min(liveShadowFloor, box.min[1]);
-      liveShadowFloor = box.min[1];
       const meshes = castersNow().filter((m) => m.geometry?.attributes?.position).map((mesh) => {
         mesh.updateWorldMatrix(true, false);
         const pos = mesh.geometry.attributes.position;
@@ -1031,11 +1025,6 @@ export function createViewer(container, part, { transparent = false, contactShad
     } catch (e) {
       console.warn("partforge: contact shadow failed", e);
     }
-  }
-  function markLiveShadowMoved() { if (contactShadow) liveShadowDirty = true; }
-  // Once per animation frame, after the frame listeners have posed this frame.
-  function updateLiveShadow() {
-    if (liveShadowDirty && performance.now() - liveShadowBuiltAt >= LIVE_SHADOW_MS) rebuildLiveShadow();
   }
   cutaway.onChange?.(() => requestRender());
 
@@ -1880,7 +1869,6 @@ export function createViewer(container, part, { transparent = false, contactShad
     // The contact shadow follows on the render loop's throttle (see
     // updateMovingShadow); the ground itself stays put until showAssembly.
     if (realisticRig) shadowMovedAt = performance.now();
-    markLiveShadowMoved();
   }
 
   // Cache queries for the app's regenerate loop (so it never reaches into subCache).
@@ -1988,9 +1976,6 @@ export function createViewer(container, part, { transparent = false, contactShad
     if (frame) frameTo(visibleNames);
     cutaway.setVisible(effectiveVisible());
     placeGround(); // realistic only: the ground comes to the part, and the shadow re-renders
-    // A new assembly is a new floor: the held-ground rule only stops a playing
-    // animation from dragging the floor around WITHIN one assembly.
-    liveShadowFloor = null;
     if (contactShadow) rebuildLiveShadow(); // CAD only (a no-op in realistic)
     for (const cb of [...assemblyListeners]) {
       try { cb(); } catch (e) { console.warn("partforge: assembly listener failed", e); }
@@ -2822,7 +2807,6 @@ export function createViewer(container, part, { transparent = false, contactShad
       try { cb(dt); } catch (e) { console.warn("partforge: frame listener failed", e); }
     }
     updateMovingShadow(); // after the listeners, so it sees this frame's poses
-    updateLiveShadow();
     // Nothing asked for a frame: the canvas keeps showing the last one.
     if (!renderRequested && performance.now() >= renderUntil) return;
     renderRequested = false;

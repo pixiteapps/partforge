@@ -40,7 +40,8 @@
 //    realistic mode draws its own environment backdrop (pair it with
 //    `renderMode: "cad"` to open transparent).
 //  - `contactShadow: true` — the product shot's soft contact shadow under the
-//    part. CAD mode ONLY: realistic mode draws its own ground and shadow.
+//    part. CAD mode ONLY: realistic mode draws its own ground and shadow. Cast
+//    once, from the opening pose; a playing animation does not move it.
 //  - `zoom: false`, `pan: false` — those orbit gestures are off (a wheel then
 //    scrolls the page); orbiting stays on.
 //  - `turntable: <degrees per second>` (default 0, off) — a file with no

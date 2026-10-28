@@ -5,7 +5,7 @@
 // preview-real-viewer.test.js harness).
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
-const state = vi.hoisted(() => ({ renderer: null }));
+const state = vi.hoisted(() => ({ renderer: null, dataTextures: 0 }));
 
 vi.mock("three", async (importOriginal) => {
   const actual = await importOriginal();
@@ -39,7 +39,11 @@ vi.mock("three", async (importOriginal) => {
     readRenderTargetPixels() {}
     dispose() {}
   }
-  return { ...actual, WebGLRenderer: FakeRenderer };
+  // Counted: the live contact shadow makes one DataTexture per build.
+  class CountingDataTexture extends actual.DataTexture {
+    constructor(...args) { super(...args); state.dataTextures++; }
+  }
+  return { ...actual, WebGLRenderer: FakeRenderer, DataTexture: CountingDataTexture };
 });
 
 // Every OrbitControls a viewer makes, so a test can read its switches.
@@ -230,25 +234,34 @@ test("contactShadow: true draws the shadow plane over the theme background and g
   handle.dispose();
 });
 
-test("the contact shadow follows a playing animation, and stays put for a still model", async () => {
-  const still = mountPreview(makeStage(), { glb: await stillGlb(), contactShadow: true, turntable: 14 });
-  await still.ready;
+test("the contact shadow is built once per assembly: a playing animation never rebuilds it", async () => {
+  vi.spyOn(performance, "now").mockImplementation(() => clockMs); // no wall-clock throttle can hide a rebuild
+  const handle = mountPreview(makeStage(), { glb: await animatedGlb(), contactShadow: true });
+  await handle.ready;
   runFrames(0.1);
-  const first = shadowIn(state.renderer.lastScene);
-  runFrames(1);
-  expect(shadowIn(state.renderer.lastScene)).toBe(first); // a turning camera moves no caster
-  still.dispose();
+  const built = state.dataTextures;
+  const shadow = shadowIn(state.renderer.lastScene);
+  expect(shadow).toBeDefined();
+  runFrames(5); // the intro, two full loops of the lid swinging, and then some
+  expect(handle.animation.state().status).toBe("playing");
+  expect([...viewers.at(-1).__subMesh("lid").matrix.elements]).not.toEqual(IDENTITY);
+  expect(state.dataTextures).toBe(built);
+  expect(shadowIn(state.renderer.lastScene)).toBe(shadow);
+  handle.dispose();
+});
 
-  state.renderer = null;
-  vi.spyOn(performance, "now").mockImplementation(() => clockMs); // the rebuild throttle reads wall time
-  const moving = mountPreview(makeStage(), { glb: await animatedGlb(), contactShadow: true });
-  await moving.ready;
+test("a turntable never rebuilds the contact shadow", async () => {
+  const handle = mountPreview(makeStage(), { glb: await stillGlb(), contactShadow: true, turntable: 14 });
+  await handle.ready;
   runFrames(0.1);
-  const opening = shadowIn(state.renderer.lastScene);
-  runFrames(1.5);
-  expect(shadowIn(state.renderer.lastScene)).not.toBe(opening);
-  expect(opening.parent).toBeNull(); // the old plane left the scene
-  moving.dispose();
+  const built = state.dataTextures;
+  const shadow = shadowIn(state.renderer.lastScene);
+  const a0 = azimuth(handle);
+  runFrames(3);
+  expect(azimuth(handle)).not.toBeCloseTo(a0, 3); // it turned
+  expect(state.dataTextures).toBe(built);
+  expect(shadowIn(state.renderer.lastScene)).toBe(shadow);
+  handle.dispose();
 });
 
 test("zoom: false and pan: false reach OrbitControls, each on its own", async () => {
@@ -568,8 +581,7 @@ test("zoom:false and pan:false disable those OrbitControls", () => {
   d.dispose();
 });
 
-test("a new assembly resets the contact shadow's held floor", () => {
-  vi.spyOn(performance, "now").mockImplementation(() => clockMs);
+test("the live contact shadow ignores poses and follows a new assembly", () => {
   const part = { ...viewerPart(), parts: {
     base: { label: "base", views: ["main"] }, lid: { label: "lid", views: ["main"] },
   } };
@@ -579,17 +591,16 @@ test("a new assembly resets the contact shadow's held floor", () => {
   const shadowY = () => state.renderer.lastScene.children.find((c) => c.isMesh && c.material?.alphaMap).position.y;
   runFrames(0.1);
   const floor = shadowY();
+  const built = state.dataTextures;
 
-  v.holdGround(true); // a playing animation
   v.setSubPose("lid", T(-40)); // the lid dips below the base
-  runFrames(0.5);
-  expect(shadowY()).toBeLessThan(floor - 10);
-  v.setSubPose("lid", null);
-  runFrames(0.5);
-  expect(shadowY()).toBeLessThan(floor - 10); // held: the floor only lowers within one assembly
+  runFrames(1);
+  expect(state.dataTextures).toBe(built); // a pose is not a rebuild
+  expect(shadowY()).toBeCloseTo(floor, 6);
 
-  v.showAssembly(["base", "lid"]); // a new assembly: the floor comes back to the part
+  v.showAssembly(["base", "lid"]); // a new assembly is: the shadow comes from the pose on screen
   runFrames(0.1);
-  expect(shadowY()).toBeCloseTo(floor, 4);
+  expect(state.dataTextures).toBe(built + 1);
+  expect(shadowY()).toBeLessThan(floor - 10);
   v.dispose();
 });

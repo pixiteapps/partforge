@@ -795,7 +795,7 @@ export interface MountPreviewOptions {
   chrome?: boolean;
   /** `"transparent"` (0.166.0+): alpha-0 clear, no theme background, no grid. CAD mode only — realistic mode draws its own environment backdrop. Default `"theme"`. */
   background?: "theme" | "transparent";
-  /** `true` (0.166.0+): a soft contact shadow under the part. CAD mode only — realistic mode draws its own ground and shadow. Default false. */
+  /** `true` (0.166.0+): a soft contact shadow under the part, cast once from the opening pose (a playing animation does not move it). CAD mode only — realistic mode draws its own ground and shadow. Default false. */
   contactShadow?: boolean;
   /** `false` (0.166.0+): no wheel/pinch zoom (a wheel scrolls the page). Default true. */
   zoom?: boolean;
