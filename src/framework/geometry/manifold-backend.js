@@ -61,6 +61,8 @@ function axisAngleMat4(axis, deg) {
   return [R00, R10, R20, 0,  R01, R11, R21, 0,  R02, R12, R22, 0,  0, 0, 0, 1];
 }
 
+const BYTES_PER_TRI = 160, BYTES_PER_VERT = 24;
+
 export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const { Manifold, CrossSection } = wasm;
   const segs = SEGS[quality], tube = TUBE[quality];
@@ -128,7 +130,18 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   };
   const judgedUnion = (ms) => judged("union", ms, unionRaw(ms));
 
-  const cache = createSolidCache();
+  // A retained solid's heap, estimated from its counts (solid-cache.js MEMORY BUDGET):
+  // Manifold keeps per triangle three half-edges, a face normal, a triangle reference and
+  // its share of the collider, and per vertex a position and a normal.
+  // CrossSections (memoized 2-D profiles) are small: a few dozen bytes per vertex.
+  // Measured against the heap a 105-plate forge's cache held (feedback #212).
+  const cache = createSolidCache({
+    sizeOf: (pin) => {
+      if (typeof pin?.numTri === "function") return pin.numTri() * BYTES_PER_TRI + pin.numVert() * BYTES_PER_VERT;
+      if (typeof pin?.numVert === "function") return pin.numVert() * 32;
+      return 0;
+    },
+  });
   // Feature-skip warnings (the OCCT backend's safeOp policy, adopted here): a
   // fillet/chamfer whose mesh machinery is defeated by the geometry returns its
   // INPUT solid unchanged and records one message here instead of failing the
@@ -1064,6 +1077,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     endSubPart: () => cache.end(),
     sweepCache: () => cache.sweep(),
     dropCache: () => cache.clear(),
+    setCacheBudget: (bytes) => cache.setBudget(bytes),
+    trimCache: () => cache.trim(),
+    cacheBytes: () => cache.retainedBytes(),
     cacheStats: () => cache.stats(),
     resetCacheStats: () => cache.resetStats(),
     // Drain the feature-skip warnings recorded since the last drain (see
