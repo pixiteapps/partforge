@@ -91,3 +91,30 @@ test("STL is never laid out", async () => {
   expect(spy).not.toHaveBeenCalled();
   spy.mockRestore();
 });
+
+// Feedback #212: a many-piece STL export must free each piece's solids before the next,
+// and a piece that runs the heap out must say which piece and what to do about it.
+test("export-stl frees each piece's solids before building the next", async () => {
+  const kk = await bootManifoldKernel();
+  const cleanup = vi.spyOn(kk, "cleanup");
+  const posts = []; await handle(kk, part, { type: "export-stl", parts: ["a", "b"], params: {}, quality: "print" }, (m) => posts.push(m));
+  expect(posts.find((m) => m.type === "download-parts").parts).toHaveLength(2);
+  expect(cleanup.mock.calls.length).toBeGreaterThanOrEqual(3); // once per piece, plus the job's own
+});
+
+test("a piece that runs the kernel out of memory names itself, its place, and the remedy", async () => {
+  const trapping = { ...part, parts: { ...part.parts, b: { ...part.parts.b, build: () => { throw new RuntimeError("memory access out of bounds"); } } } };
+  const posts = []; await handle(k, trapping, { type: "export-stl", parts: ["a", "b"], params: {}, jobId: 3 }, (m) => posts.push(m));
+  const err = posts.find((m) => m.type === "error");
+  expect(err.jobId).toBe(3);
+  expect(err.message).toMatch(/^exporting "B" \(part 2 of 2\) ran out of memory — export fewer parts at a time/);
+  expect(err.message).toMatch(/: (RuntimeError: )?memory access out of bounds$/); // raw text last, for a host's trap classifier
+});
+
+test("an ordinary failure in a many-piece export names the piece without memory advice", async () => {
+  const broken = { ...part, parts: { ...part.parts, a: { ...part.parts.a, build: () => { throw new Error("bad wall"); } } } };
+  const posts = []; await handle(k, broken, { type: "export-stl", parts: ["a", "b"], params: {} }, (m) => posts.push(m));
+  expect(posts.find((m) => m.type === "error").message).toBe('exporting "A" (part 1 of 2) failed: bad wall');
+});
+
+class RuntimeError extends Error { constructor(m) { super(m); this.name = "RuntimeError"; } }

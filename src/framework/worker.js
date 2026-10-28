@@ -30,6 +30,15 @@ async function manifoldKernels() {
   };
 }
 
+// Jobs that build every selected sub-part again at export quality. Before one runs,
+// the worker drops its kernels' display caches (dropCache): the cache's retained
+// solids and the export's build share one WASM heap, and on a very large part the
+// display build alone held ~1.75 GB — on a phone, enough that exporting three of a
+// 105-plate forge's plates ran out of heap (feedback #212). The cost is one cold
+// display build after an export; exports are rare and deliberate, a failed one
+// costs the user the whole job.
+const EXPORT_JOBS = new Set(["export-stl", "export-step", "export-3mf", "export-bundle"]);
+
 async function occtKernel() {
   const [{ default: opencascade }, wasmUrlMod, replicad, { createOcctKernel }] = await Promise.all([
     import("replicad-opencascadejs/src/replicad_single.js"),
@@ -115,6 +124,11 @@ export function runWorker(part, opts = {}) {
           // A generate superseded while it sat in the queue never builds at all.
           if (job.epoch !== null && job.epoch !== epoch) continue;
           kernel = await kernelFor(job.data);
+          if (EXPORT_JOBS.has(job.data?.type)) {
+            manifold?.preview.dropCache?.();
+            manifold?.print.dropCache?.();
+            occt?.dropCache?.();
+          }
           // handle() declares each message's transferables (the big binary buffers).
           const post = (m, transfer = []) => postMessage(m, transfer);
           if (job.epoch === null) { await handle(kernel, job.part, job.data, post, { importMeshes, jobs: opts.jobs }); continue; }

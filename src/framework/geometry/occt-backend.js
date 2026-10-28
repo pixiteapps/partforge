@@ -859,6 +859,7 @@ export function createOcctKernel(replicad) {
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),
     sweepCache: () => cache.sweep(),
+    dropCache: () => cache.clear(),
     cacheStats: () => cache.stats(),
     resetCacheStats: () => cache.resetStats(),
     // Drain the feature-skip warnings recorded since the last drain — the
