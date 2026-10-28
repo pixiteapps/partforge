@@ -290,8 +290,14 @@ expectType<Promise<void>>(previewRuntime.ready);
 expectType<string | null>(previewRuntime.getView());
 expectType<void>(previewRuntime.setHostPane("rail"));
 expectType<PreviewRuntime>(mountPreview(document.body, { glb: new Uint8Array(0), animate: false }));
-expectType<PreviewRuntime>(mountPreview(document.body, { glb: new Uint8Array(0), showcase: {} }));
-expectType<PreviewRuntime>(mountPreview(document.body, { glb: new Uint8Array(0), showcase: { turntableDegPerSec: 20 } }));
+expectType<PreviewRuntime>(mountPreview(document.body, {
+  glb: new Uint8Array(0), chrome: false, background: "transparent", contactShadow: true,
+  zoom: false, pan: false, turntable: 14, camera: "default", renderMode: "cad",
+}));
+// @ts-expect-error - background is "theme" or "transparent"
+mountPreview(document.body, { glb: new Uint8Array(0), background: "clear" });
+// @ts-expect-error - showcase is not an option; name the options it was made of
+mountPreview(document.body, { glb: new Uint8Array(0), showcase: {} });
 expectType<Promise<void>>(previewRuntime.drawn);
 const previewStatus: "idle" | "intro" | "playing" | "paused" | "done" | undefined = previewRuntime.animation?.state().status;
 expectType<number | undefined>(previewRuntime.animation?.state().t);

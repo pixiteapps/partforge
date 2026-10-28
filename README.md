@@ -187,23 +187,29 @@ stock, no layer-line frames). Previews carry no edge lines, textures or patterns
 `resolveDefaultView(part)` (main entry and `partforge/testing`) names the view
 `mount()` opens on, so a preview built headlessly matches it.
 
-`mountPreview(container, { glb, showcase: { turntableDegPerSec } })` (0.166.0+)
-is the same preview as a showcase for a small card on a marketing page: no view
-cube, viewbar controls, view style, tooltips or play button; a transparent canvas
-with no grid and a soft contact shadow under the part; orbit only (a wheel
-scrolls the page); always the CAD look, opening at its own default framing
-(`viewerState` is ignored). A baked animation plays as authored — it loops, or
-plays once and holds its end pose; a still model turns at `turntableDegPerSec`
-(default 14) until the first camera grab, and nothing moves under
-`prefers-reduced-motion`. Every handle carries `drawn`, which resolves after the
-first frame showing the meshes, so a host can cross-fade from a still image.
+`mountPreview` takes presentation options (0.166.0+), each usable alone and
+each defaulting to the viewer above: `chrome: false` (no view cube, viewbar
+controls, view style, tooltips or play button), `background: "transparent"`
+(alpha-0 canvas, no grid — CAD mode only; realistic keeps its environment),
+`contactShadow: true` (a soft shadow under the part in CAD mode), `zoom: false`
+and `pan: false` (a wheel then scrolls the page), `turntable: <degrees per
+second>` (a model with no playing animation turns until the first camera grab,
+never under `prefers-reduced-motion`), `camera: "default"` (ignore `viewerState`;
+open at the file's own framing) and `renderMode: "cad" | "realistic"` (a carried
+state cannot override it). A baked animation always plays as authored — it
+loops, or plays once and holds its end pose. Every handle carries `drawn`, which
+resolves after the first frame showing the meshes, so a host can cross-fade from
+a still image.
 
 ```js
 const glb = await runtime.exportPreview();               // Uint8Array: the view on screen
 mount(part, { createWorker, elements, preview: glb });   // drawn at once, replaced by the build
 const shown = mountPreview(stage, { glb });              // no kernel at all
 await shown.ready;
-const card = mountPreview(cardStage, { glb, showcase: {} }); // chrome-less, transparent, turning
+const card = mountPreview(cardStage, {                   // a landing-page card
+  glb, chrome: false, background: "transparent", contactShadow: true,
+  zoom: false, pan: false, turntable: 14, camera: "default", renderMode: "cad",
+});
 await card.drawn;                                        // the first frame is on the canvas
 ```
 

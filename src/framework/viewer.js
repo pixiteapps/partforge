@@ -169,7 +169,7 @@ export function captureCurrentFromScene(
 // draws the product shot's soft contact shadow (contact-shadow.js, the mask
 // captures use) under the part in CAD mode, on the live scene; `zoom` / `pan`
 // false turn those OrbitControls gestures off (a wheel then scrolls the page).
-// mountPreview's showcase mode is the caller.
+// mountPreview's presentation options are the caller.
 export function createViewer(container, part, { transparent = false, contactShadow = false, zoom = true, pan = true } = {}) {
   const names = Object.keys(part.parts);
   // Membership for host-supplied names. subMesh, cadMats and part.parts are

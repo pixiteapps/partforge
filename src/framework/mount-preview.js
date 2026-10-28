@@ -30,19 +30,29 @@
 // file, with `animate: false`, or for a host with no #viewbar; the host can
 // still drive `handle.animation` (state / pause / resume / replay) itself.
 //
-// `showcase` is the marketing card: a small model beside a page's own copy,
-// with nothing to operate. No view cube, no #viewbar controls, no view style,
-// no tooltips, no play button, no `elements.chrome` wiring; a transparent
-// canvas with no grid (the page shows through) and the product shot's contact
-// shadow under the part; orbit only — zoom and pan are off, so a wheel scrolls
-// the page. Always CAD (renderMode.set answers "cad"), and `viewerState` /
-// setViewerState are ignored: each showcase mount opens at its own default
-// framing. A baked animation plays as authored (a looping one loops, a
-// one-time one holds its end pose — there is no replay button); a still file
-// (or `animate: false`) turns about the vertical at `turntableDegPerSec`
-// (default 14) off the viewer's frame loop, never under reduced motion, and the
-// first camera grab stops the turn for good. Dragging an animated model orbits
-// the camera and the animation plays on.
+// Presentation options (0.166.0), each usable alone; every default is the
+// viewer above, so a mount that names none is unchanged:
+//  - `chrome: false` — no view cube, no #viewbar controls, no view style, no
+//    tooltips, no play button and no `elements.chrome` wiring. A one-time
+//    animation still holds its end pose; there is just no replay button.
+//  - `background: "transparent"` — the canvas clears to alpha 0 with no theme
+//    background and no grid, so the host page shows through. CAD mode only:
+//    realistic mode keeps its environment backdrop (pair it with
+//    `renderMode: "cad"` to stay transparent).
+//  - `contactShadow: true` — the product shot's soft contact shadow under the
+//    part in CAD mode (realistic brings its own ground and shadow).
+//  - `zoom: false`, `pan: false` — those orbit gestures are off (a wheel then
+//    scrolls the page); orbiting stays on.
+//  - `turntable: <degrees per second>` (default 0, off) — a file with no
+//    playing animation (a still file, or `animate: false`) turns about the
+//    vertical off the viewer's frame loop. Never under reduced motion; the
+//    first camera grab — a canvas drag or the view cube — stops it for good.
+//    Dragging an animated model orbits the camera and the animation plays on.
+//  - `camera: "default"` — `viewerState` and `setViewerState` are ignored:
+//    the mount opens, and stays, at the file's own default framing.
+//  - `renderMode: "cad" | "realistic"` — the mount opens in that mode and a
+//    carried state cannot override it (the host's own renderMode.set and the
+//    view style control still can). Unset, the carried state decides.
 //
 // `handle.drawn` resolves after the first frame that includes the meshes has
 // rendered (so a host can cross-fade from a still image without a flash). It
@@ -65,12 +75,32 @@ import { ENVIRONMENTS } from "./materials/environments.js";
 import { createPreviewPlayer } from "./preview-player.js";
 import { attachPreviewPlayButton } from "./preview-play-button.js";
 
-const SHOWCASE_TURNTABLE_DEG_PER_SEC = 14;
-
-function showcaseOptions(showcase) {
-  if (!showcase) return null;
-  const rate = showcase.turntableDegPerSec;
-  return { turntableDegPerSec: typeof rate === "number" && Number.isFinite(rate) && rate >= 0 ? rate : SHOWCASE_TURNTABLE_DEG_PER_SEC };
+// A value the option does not know is a host bug: say so at the call rather
+// than quietly showing the default.
+function oneOf(name, value, allowed, fallback) {
+  if (value === undefined) return fallback;
+  if (!allowed.includes(value)) throw new TypeError(`mountPreview: ${name} must be ${allowed.map((a) => JSON.stringify(a)).join(" or ")}`);
+  return value;
+}
+function flag(name, value, fallback) {
+  if (value === undefined) return fallback;
+  if (typeof value !== "boolean") throw new TypeError(`mountPreview: ${name} must be a boolean`);
+  return value;
+}
+function presentation({ chrome, background, contactShadow, zoom, pan, turntable, camera, renderMode }) {
+  if (turntable !== undefined && !(typeof turntable === "number" && Number.isFinite(turntable) && turntable >= 0)) {
+    throw new TypeError("mountPreview: turntable must be degrees per second, 0 or more");
+  }
+  return {
+    chrome: flag("chrome", chrome, true),
+    transparent: oneOf("background", background, ["theme", "transparent"], "theme") === "transparent",
+    contactShadow: flag("contactShadow", contactShadow, false),
+    zoom: flag("zoom", zoom, true),
+    pan: flag("pan", pan, true),
+    turntable: turntable ?? 0,
+    defaultCamera: oneOf("camera", camera, ["carry", "default"], "carry") === "default",
+    renderMode: oneOf("renderMode", renderMode, ["cad", "realistic"], null),
+  };
 }
 
 // Turn the camera about the vertical at `degPerSec` until the first camera grab.
@@ -116,13 +146,18 @@ const relay = (listeners) => (event) => {
   }
 };
 
-export function mountPreview(container, { glb, elements = {}, viewerState = null, animate = true, showcase = null } = {}) {
+export function mountPreview(container, { glb, elements = {}, viewerState = null, animate = true, ...options } = {}) {
   if (!container) throw new TypeError("mountPreview: a container element is required");
-  const show = showcaseOptions(showcase);
+  const opts = presentation(options);
+  // The state a host carries in, as this mount will apply it: none at all
+  // under camera: "default", and never another render mode than a fixed one.
+  const own = (state) => {
+    const s = opts.defaultCamera ? null : state ?? null;
+    return opts.renderMode ? { ...(s ?? {}), renderMode: opts.renderMode } : s;
+  };
   let disposed = false;
   let active = true;
-  // Applied once the viewer exists, and on every setViewerState — never in showcase.
-  let carried = show ? null : viewerState ?? null;
+  let carried = own(viewerState); // applied once the viewer exists, and on every setViewerState
   let live = null;                   // { viewer, view } once the GLB has decoded
   let player = null;                 // the baked animation's player, once drawn
   const cleanups = [];
@@ -151,10 +186,10 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
     if (decoded.meshes.length === 0) throw new Error("mountPreview: the preview holds no meshes");
     const view = decoded.view ?? "preview";
     const viewer = createViewer(container, previewPart({ ...decoded, view }),
-      show ? { transparent: true, contactShadow: true, zoom: false, pan: false } : undefined);
+      { transparent: opts.transparent, contactShadow: opts.contactShadow, zoom: opts.zoom, pan: opts.pan });
     cleanups.push(() => viewer.dispose());
     let tooltip = null, toolbar = null, viewStyle = null;
-    if (!show) {
+    if (opts.chrome) {
       tooltip = createTooltipPresenter({ id: null });
       const tip = tooltip;
       cleanups.push(() => tip.dispose());
@@ -187,8 +222,8 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
         const playButton = attachPreviewPlayButton(own, { toolbar, before: viewStyle.element }, { tooltip });
         cleanups.push(() => playButton.detach());
       }
-    } else if (show && !reducedMotion && show.turntableDegPerSec > 0) {
-      cleanups.push(startTurntable(viewer, container, show.turntableDegPerSec));
+    } else if (opts.turntable > 0 && !reducedMotion) {
+      cleanups.push(startTurntable(viewer, container, opts.turntable));
     }
   });
   ready.catch(rejectDrawn); // the host awaits it; never an unhandled rejection
@@ -234,8 +269,8 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
     },
     getViewerState,
     setViewerState(next) {
-      if (show) return; // a showcase keeps its own framing and the CAD look
-      carried = next ?? null;
+      if (opts.defaultCamera) return; // this mount keeps the file's own framing
+      carried = own(next);
       applyState(carried);
     },
     setActive(next) {
@@ -252,7 +287,7 @@ export function mountPreview(container, { glb, elements = {}, viewerState = null
     setRailLayout: () => {},
     renderMode: {
       get: () => live?.viewer.getRenderMode() ?? carried?.renderMode ?? "cad",
-      set: (mode) => (show ? Promise.resolve("cad") : whenLive((v) => v.setRenderMode(mode), "cad")),
+      set: (mode) => whenLive((v) => v.setRenderMode(mode), "cad"),
       onChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },
     },
     environment: {

@@ -791,16 +791,26 @@ export interface MountPreviewOptions {
   viewerState?: ViewerState | null;
   /** Play the file's baked animation once drawn (default true). The editor's own boot preview goes through mount(), not here. */
   animate?: boolean;
+  /** `false` (0.166.0+): no view cube, `#viewbar` controls, view style, tooltips, play button or `elements.chrome` wiring. Default true. */
+  chrome?: boolean;
+  /** `"transparent"` (0.166.0+): alpha-0 clear, no theme background, no grid — CAD mode only; realistic keeps its environment backdrop. Default `"theme"`. */
+  background?: "theme" | "transparent";
+  /** `true` (0.166.0+): a soft contact shadow under the part in CAD mode. Default false. */
+  contactShadow?: boolean;
+  /** `false` (0.166.0+): no wheel/pinch zoom (a wheel scrolls the page). Default true. */
+  zoom?: boolean;
+  /** `false` (0.166.0+): no pan. Default true. */
+  pan?: boolean;
   /**
-   * Showcase mode (0.166.0+): a chrome-less, transparent, orbit-only viewer for a
-   * small card on a marketing page. No view cube, `#viewbar` controls, view style,
-   * tooltips, play button or `elements.chrome` wiring; no theme background and no
-   * grid, plus a soft contact shadow; zoom and pan off; always CAD; `viewerState`
-   * and `setViewerState` ignored. A baked animation plays as authored (loops, or
-   * plays once and holds its end pose); a still file turns at `turntableDegPerSec`
-   * (default 14) until the first camera grab, and never under reduced motion.
+   * Degrees per second (0.166.0+; default 0, off): a file with no playing animation
+   * turns about the vertical. Never under reduced motion; the first camera grab
+   * (a canvas drag or the view cube) stops it for good.
    */
-  showcase?: { turntableDegPerSec?: number } | null;
+  turntable?: number;
+  /** `"default"` (0.166.0+): ignore `viewerState` and `setViewerState`; open at the file's own framing. Default `"carry"`. */
+  camera?: "carry" | "default";
+  /** Open in this mode (0.166.0+); a carried state cannot override it. Unset, the carried state decides. */
+  renderMode?: RenderMode;
 }
 
 /** The handle `mountPreview()` returns. Every method is safe before `ready` settles. */
