@@ -292,7 +292,7 @@ expectType<void>(previewRuntime.setHostPane("rail"));
 expectType<PreviewRuntime>(mountPreview(document.body, { glb: new Uint8Array(0), animate: false }));
 expectType<PreviewRuntime>(mountPreview(document.body, {
   glb: new Uint8Array(0), chrome: false, background: "transparent", contactShadow: true,
-  zoom: false, pan: false, turntable: 14, camera: "default", renderMode: "cad",
+  zoom: false, pan: false, turntable: 14, fill: 0.8, camera: "default", renderMode: "cad",
 }));
 // @ts-expect-error - background is "theme" or "transparent"
 mountPreview(document.body, { glb: new Uint8Array(0), background: "clear" });

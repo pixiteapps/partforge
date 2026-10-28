@@ -41,7 +41,9 @@
 //    `renderMode: "cad"` to open transparent).
 //  - `contactShadow: true` — the product shot's soft contact shadow under the
 //    part. CAD mode ONLY: realistic mode draws its own ground and shadow. Cast
-//    once, from the opening pose; a playing animation does not move it.
+//    once, at showAssembly, from the meshes as the file stores them (the rest
+//    pose, before a player applies its first pose); a playing animation does
+//    not move it.
 //  - `zoom: false`, `pan: false` — those orbit gestures are off (a wheel then
 //    scrolls the page); orbiting stays on.
 //  - `turntable: <degrees per second>` (default 0, off) — a file with no
@@ -49,6 +51,10 @@
 //    vertical off the viewer's frame loop. Never under reduced motion; the
 //    first camera grab — a canvas drag or the view cube — stops it for good.
 //    Dragging an animated model orbits the camera and the animation plays on.
+//  - `fill: <0 < f <= 1>` — the opening framing (and the viewer's reframe)
+//    places the camera so the model's bounding SPHERE spans that fraction of
+//    the viewport's smaller side, so a turntable or an animation never clips.
+//    Unset, the viewer's fixed framing distance, as before.
 //  - `camera: "default"` — the camera and projection of `viewerState` and of
 //    every setViewerState are dropped: the mount opens, and stays, at the
 //    file's own default framing. Their render mode and environment still apply.
@@ -93,10 +99,13 @@ function flag(name, value, fallback) {
 }
 const KNOWN_OPTIONS = new Set([
   "glb", "elements", "viewerState", "animate",
-  "chrome", "background", "contactShadow", "zoom", "pan", "turntable", "camera", "renderMode",
+  "chrome", "background", "contactShadow", "zoom", "pan", "turntable", "fill", "camera", "renderMode",
 ]);
 
-function presentation({ chrome, background, contactShadow, zoom, pan, turntable, camera, renderMode }) {
+function presentation({ chrome, background, contactShadow, zoom, pan, turntable, fill, camera, renderMode }) {
+  if (fill !== undefined && !(typeof fill === "number" && fill > 0 && fill <= 1)) {
+    throw new TypeError("mountPreview: fill must be a number above 0 and at most 1");
+  }
   if (turntable !== undefined && !(typeof turntable === "number" && Number.isFinite(turntable) && turntable >= 0)) {
     throw new TypeError("mountPreview: turntable must be degrees per second, 0 or more");
   }
@@ -107,6 +116,7 @@ function presentation({ chrome, background, contactShadow, zoom, pan, turntable,
     zoom: flag("zoom", zoom, true),
     pan: flag("pan", pan, true),
     turntable: turntable ?? 0,
+    fill: fill ?? null,
     defaultCamera: oneOf("camera", camera, ["carry", "default"], "carry") === "default",
     renderMode: oneOf("renderMode", renderMode, ["cad", "realistic"], null),
   };
@@ -204,7 +214,7 @@ export function mountPreview(container, options = {}) {
     if (decoded.meshes.length === 0) throw new Error("mountPreview: the preview holds no meshes");
     const view = decoded.view ?? "preview";
     const viewer = createViewer(container, previewPart({ ...decoded, view }),
-      { transparent: opts.transparent, contactShadow: opts.contactShadow, zoom: opts.zoom, pan: opts.pan });
+      { transparent: opts.transparent, contactShadow: opts.contactShadow, zoom: opts.zoom, pan: opts.pan, frameFill: opts.fill });
     cleanups.push(() => viewer.dispose());
     let tooltip = null, toolbar = null, viewStyle = null;
     if (opts.chrome) {

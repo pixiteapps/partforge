@@ -169,8 +169,11 @@ export function captureCurrentFromScene(
 // draws the product shot's soft contact shadow (contact-shadow.js, the mask
 // captures use) under the part in CAD mode, on the live scene; `zoom` / `pan`
 // false turn those OrbitControls gestures off (a wheel then scrolls the page).
-// mountPreview's presentation options are the caller.
-export function createViewer(container, part, { transparent = false, contactShadow = false, zoom = true, pan = true } = {}) {
+// `frameFill` (0 < f <= 1) changes how frameTo frames: the framed assembly's
+// bounding SPHERE spans that fraction of the viewport's smaller side; unset
+// keeps the fixed r·2.6 + 6 distance. mountPreview's presentation options are
+// the caller.
+export function createViewer(container, part, { transparent = false, contactShadow = false, zoom = true, pan = true, frameFill = null } = {}) {
   const names = Object.keys(part.parts);
   // Membership for host-supplied names. subMesh, cadMats and part.parts are
   // plain objects, so "toString" or "constructor" would read as present on
@@ -986,11 +989,12 @@ export function createViewer(container, part, { transparent = false, contactShad
   // scene: the same CPU mask the captures cast, as a black alpha-mapped plane a
   // hair under the part. CAD mode only — realistic brings its own ground and
   // shadow. Computed ONCE per assembly — on showAssembly, from the pose on
-  // screen then (a preview's opening pose) — and again on entering CAD. Never
+  // screen then (a preview's meshes as the file stores them — the rest pose,
+  // before its player applies a first pose) — and again on entering CAD. Never
   // for animation frames: the mask is a CPU rasterization plus a new texture,
   // and rebuilding it a few times a second while a preview played stalled the
   // host page's main thread (a landing page's typing slowed ~25×). So a moving
-  // sub-part leaves its opening shadow behind — accepted. A turntable needs no
+  // sub-part leaves its rest-pose shadow behind — accepted. A turntable needs no
   // rebuild: it moves the camera, never a caster or the ground.
   const LIVE_SHADOW = RENDER_STYLES.thumbnail.shadow;
   let liveShadow = null;
@@ -1941,6 +1945,7 @@ export function createViewer(container, part, { transparent = false, contactShad
     floorY = -size.z / 2;
     grid.position.y = floorY;
     const r = Math.max(size.x, size.y, size.z) || 12;
+    const fill = fillFraming(size.length() / 2);
     // Keep the VIEW DIRECTION (target -> camera), not the camera's direction
     // from the origin: after a pan the target is off the origin, and scaling
     // the position about the origin would turn the view — which, in an ortho
@@ -1950,11 +1955,38 @@ export function createViewer(container, part, { transparent = false, contactShad
     _frameDir.copy(activeCamera.position).sub(controls.target);
     if (_frameDir.lengthSq() === 0) _frameDir.copy(activeCamera.position);
     if (_frameDir.lengthSq() === 0) _frameDir.set(1, 1, 1);
-    activeCamera.position.copy(_frameDir.normalize().multiplyScalar(r * 2.6 + 6));
+    activeCamera.position.copy(_frameDir.normalize().multiplyScalar(fill ? fill.distance : r * 2.6 + 6));
     controls.target.set(0, 0, 0);
     // Framing under ortho is a frustum, not a distance — without this the
-    // reframe button moves the camera and nothing visibly changes.
-    if (projectionMode === "orthographic") syncOrthoToPerspectiveFraming();
+    // reframe button moves the camera and nothing visibly changes. A fill
+    // framing sizes the frustum to the sphere directly (the sync matches size
+    // at the surface under the screen centre, which is not the sphere).
+    if (projectionMode === "orthographic") {
+      if (fill) {
+        applyOrthoFrustum({ halfH: fill.orthoHalfH, halfW: fill.orthoHalfH * fill.aspect });
+        orthoCamera.zoom = 1;
+        orthoCamera.updateProjectionMatrix();
+      } else {
+        syncOrthoToPerspectiveFraming();
+      }
+    }
+  }
+
+  // The `frameFill` framing for a bounding sphere of radius R: the camera
+  // distance at which the sphere's silhouette (half-angle asin(R/d)) spans
+  // `frameFill` of the viewport's smaller side — the vertical fov when the
+  // canvas is wider than tall, the horizontal one when it is taller — and the
+  // orthographic half-height that draws the same radius. Null when unset, or
+  // when the container has no size yet (a hidden or unlaid-out stage): frameTo
+  // then falls back to the fixed distance, and the next reframe fills.
+  function fillFraming(R) {
+    if (!frameFill || !(R > 0)) return null;
+    const w = container.clientWidth, h = container.clientHeight;
+    if (!(w > 0 && h > 0)) return null;
+    const aspect = w / h;
+    const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * Math.min(1, aspect);
+    const distance = R / Math.sin(Math.atan(frameFill * tanHalf));
+    return { distance, orthoHalfH: (R * h) / (frameFill * Math.min(w, h)), aspect };
   }
 
   // Show exactly the named sub-parts (from the cache). When `frame` is set, also

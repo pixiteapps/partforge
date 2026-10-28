@@ -795,7 +795,7 @@ export interface MountPreviewOptions {
   chrome?: boolean;
   /** `"transparent"` (0.166.0+): alpha-0 clear, no theme background, no grid. CAD mode only — realistic mode draws its own environment backdrop. Default `"theme"`. */
   background?: "theme" | "transparent";
-  /** `true` (0.166.0+): a soft contact shadow under the part, cast once from the opening pose (a playing animation does not move it). CAD mode only — realistic mode draws its own ground and shadow. Default false. */
+  /** `true` (0.166.0+): a soft contact shadow under the part, cast once at showAssembly from the meshes as the file stores them (the rest pose, before a player applies its first pose); a playing animation does not move it. CAD mode only — realistic mode draws its own ground and shadow. Default false. */
   contactShadow?: boolean;
   /** `false` (0.166.0+): no wheel/pinch zoom (a wheel scrolls the page). Default true. */
   zoom?: boolean;
@@ -807,6 +807,12 @@ export interface MountPreviewOptions {
    * (a canvas drag or the view cube) stops it for good.
    */
   turntable?: number;
+  /**
+   * 0 < fill <= 1 (0.166.0+): the opening framing (and the viewer's reframe) puts the
+   * camera so the model's bounding sphere spans this fraction of the viewport's smaller
+   * side — a turntable or animation never clips. Unset, the fixed framing distance.
+   */
+  fill?: number;
   /** `"default"` (0.166.0+): drop the camera and projection of `viewerState` and `setViewerState`, so the mount keeps the file's own framing; their render mode and environment still apply. Default `"carry"`. */
   camera?: "carry" | "default";
   /** The opening render mode (0.166.0+): applied at mount, over any carried render mode; afterwards `setViewerState`, `renderMode.set` and the view style control change it as usual. Unset, the carried state decides. */

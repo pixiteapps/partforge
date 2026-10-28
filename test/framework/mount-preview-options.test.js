@@ -79,9 +79,9 @@ import { box, input, R, T } from "../helpers/preview-animation-fixture.js";
 const OriginalResizeObserver = globalThis.ResizeObserver;
 
 // A stage with the host's #viewbar, so "no chrome" is a real absence.
-function makeStage() {
+function makeStage(width = 400, height = 300) {
   const stage = document.createElement("div");
-  Object.defineProperties(stage, { clientWidth: { value: 400 }, clientHeight: { value: 300 } });
+  Object.defineProperties(stage, { clientWidth: { value: width }, clientHeight: { value: height } });
   const viewbar = document.createElement("div");
   viewbar.id = "viewbar";
   stage.append(viewbar);
@@ -128,15 +128,15 @@ afterEach(() => {
 
 const LANDING_CARD = {
   chrome: false, background: "transparent", contactShadow: true, zoom: false, pan: false,
-  turntable: 14, camera: "default", renderMode: "cad",
+  turntable: 14, fill: 0.8, camera: "default", renderMode: "cad",
 };
 const shadowIn = (scene) => scene.children.find((c) => c.isMesh && c.material?.alphaMap);
 const gridIn = (scene) => scene.children.find((c) => c.type === "GridHelper");
 const CARRIED = { camera: { pos: [40, 0, 0], target: [0, 0, 0] }, projection: "perspective", renderMode: "realistic", cutaway: null };
 
 // The camera a plain mount of the still file opens at.
-async function defaultFraming() {
-  const plain = mountPreview(makeStage(), { glb: await stillGlb() });
+async function defaultFraming(extra = {}) {
+  const plain = mountPreview(makeStage(), { glb: await stillGlb(), ...extra });
   await plain.ready;
   const cam = plain.getViewerState().camera;
   plain.dispose();
@@ -182,6 +182,9 @@ test("an unknown option value throws rather than showing the default", () => {
   expect(() => mountPreview(makeStage(), { glb, renderMode: "photo" })).toThrow(TypeError);
   expect(() => mountPreview(makeStage(), { glb, turntable: -5 })).toThrow(TypeError);
   expect(() => mountPreview(makeStage(), { glb, chrome: "no" })).toThrow(TypeError);
+  for (const fill of [0, -0.5, 1.2, NaN, "0.8", null]) {
+    expect(() => mountPreview(makeStage(), { glb, fill })).toThrow(TypeError);
+  }
 });
 
 test("an unknown option key throws — a stale showcase included", () => {
@@ -456,10 +459,110 @@ test("renderMode: \"realistic\" opens realistic over a carried CAD state", async
   handle.dispose();
 });
 
+// --- fill ------------------------------------------------------------------------
+// The still fixture's posed box is 10 x 10 x 24 mm: largest side 24, bounding
+// sphere radius half its diagonal.
+const BOX_R = Math.hypot(10, 10, 24) / 2;
+const camDistance = (handle) => {
+  const { pos, target } = handle.getViewerState().camera;
+  return Math.hypot(...pos.map((c, i) => c - target[i]));
+};
+// The sphere's silhouette radius on screen, as a fraction of the stage's smaller
+// side: project the point where a ray from the camera grazes the sphere, along
+// the screen's narrower axis (vertical on a wide canvas, horizontal on a tall one).
+function silhouetteFraction(viewer, width, height) {
+  const cam = viewer.camera;
+  cam.updateMatrixWorld();
+  const center = new THREE.Vector3(0, 0, 0);
+  const toCenter = center.clone().sub(cam.position);
+  const d = toCenter.length();
+  const u = toCenter.normalize();
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
+  const e = width >= height ? up : right;
+  const alpha = Math.asin(BOX_R / d);
+  const graze = cam.position.clone()
+    .add(u.clone().multiplyScalar(Math.cos(alpha)).add(e.clone().multiplyScalar(Math.sin(alpha))).multiplyScalar(Math.sqrt(d * d - BOX_R * BOX_R)));
+  const toPx = (p) => { const n = p.clone().project(cam); return [(n.x * width) / 2, (n.y * height) / 2]; };
+  const [cx, cy] = toPx(center), [gx, gy] = toPx(graze);
+  return Math.hypot(gx - cx, gy - cy) / Math.min(width, height);
+}
+
+test("fill unset keeps today's framing distance exactly", async () => {
+  const handle = mountPreview(makeStage(), { glb: await stillGlb() });
+  await handle.ready;
+  expect(camDistance(handle)).toBeCloseTo(24 * 2.6 + 6, 6);
+  handle.dispose();
+});
+
+test("fill: 0.8 frames the bounding sphere across 0.8 of a wide stage's height", async () => {
+  const handle = mountPreview(makeStage(400, 300), { glb: await stillGlb(), fill: 0.8 });
+  await handle.ready;
+  expect(camDistance(handle)).toBeLessThan((24 * 2.6 + 6) * 0.8); // much closer than today
+  expect(silhouetteFraction(viewers.at(-1), 400, 300)).toBeCloseTo(0.4, 2); // radius = 0.4 of the smaller side
+  handle.dispose();
+});
+
+test("fill on a tall stage frames by the horizontal fov", async () => {
+  const wide = mountPreview(makeStage(400, 300), { glb: await stillGlb(), fill: 0.8 });
+  await wide.ready;
+  const wideDistance = camDistance(wide);
+  wide.dispose();
+  state.renderer = null;
+
+  const handle = mountPreview(makeStage(300, 400), { glb: await stillGlb(), fill: 0.8 });
+  await handle.ready;
+  expect(silhouetteFraction(viewers.at(-1), 300, 400)).toBeCloseTo(0.4, 2);
+  expect(camDistance(handle)).toBeGreaterThan(wideDistance * 1.2); // the narrower axis needs more room
+  handle.dispose();
+});
+
+test("fill keeps the view direction and the origin target, and the viewer's reframe uses it too", async () => {
+  const plain = mountPreview(makeStage(), { glb: await stillGlb() });
+  await plain.ready;
+  const p = plain.getViewerState().camera;
+  plain.dispose();
+  state.renderer = null;
+
+  const handle = mountPreview(makeStage(), { glb: await stillGlb(), fill: 0.8 });
+  await handle.ready;
+  const c = handle.getViewerState().camera;
+  const unit = (v) => { const n = Math.hypot(...v); return v.map((x) => x / n); };
+  unit(c.pos).forEach((x, i) => expect(x).toBeCloseTo(unit(p.pos)[i], 6));
+  c.target.forEach((x) => expect(x).toBeCloseTo(0, 6));
+  const filled = camDistance(handle);
+  viewers.at(-1).setCameraState({ pos: [200, 10, 0], target: [0, 0, 0] });
+  viewers.at(-1).frame(); // the reframe button's call
+  expect(camDistance(handle)).toBeCloseTo(filled, 6);
+  handle.dispose();
+});
+
+test("fill on a stage with no size yet falls back to today's distance", async () => {
+  const handle = mountPreview(makeStage(0, 0), { glb: await stillGlb(), fill: 0.8 });
+  await handle.ready;
+  expect(camDistance(handle)).toBeCloseTo(24 * 2.6 + 6, 6);
+  handle.dispose();
+});
+
+test("fill under orthographic sizes the frustum to the sphere", () => {
+  const part = { ...viewerPart(), parts: { base: { label: "base", views: ["main"] }, lid: { label: "lid", views: ["main"] } } };
+  const v = createViewer(makeStage(400, 300), part, { frameFill: 0.5 });
+  for (const m of [box("base"), box("lid", 24)]) v.setSubGeometry(m.name, m);
+  v.showAssembly(["base", "lid"], { frame: true });
+  v.setProjection("orthographic");
+  v.frame();
+  const cam = v.camera;
+  expect(cam.isOrthographicCamera).toBe(true);
+  const halfH = (cam.top - cam.bottom) / 2 / cam.zoom;
+  // The radius spans fill * min(w, h) / 2 pixels of the 300 px height.
+  expect((BOX_R / halfH) * (300 / 2)).toBeCloseTo((0.5 * 300) / 2, 4);
+  v.dispose();
+});
+
 // --- the landing card: every option at once ----------------------------------------
 
 test("the landing card: chrome-less, transparent, shadowed, orbit-only, turning, default framing, CAD", async () => {
-  const framing = await defaultFraming();
+  const framing = await defaultFraming({ fill: LANDING_CARD.fill }); // the file's own framing, filled
   const stage = makeStage();
   const handle = mountPreview(stage, { glb: await stillGlb(), ...LANDING_CARD, viewerState: CARRIED });
   await handle.ready;

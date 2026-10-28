@@ -195,7 +195,9 @@ part) — both CAD mode only, since realistic mode draws its own environment and
 ground — `zoom: false`
 and `pan: false` (a wheel then scrolls the page), `turntable: <degrees per
 second>` (a model with no playing animation turns until the first camera grab,
-never under `prefers-reduced-motion`), `camera: "default"` (drop the carried camera
+never under `prefers-reduced-motion`), `fill: 0.8` (frame the model so its
+bounding sphere spans that fraction of the preview's smaller side — larger in a
+small card, and never clipped as it turns or animates), `camera: "default"` (drop the carried camera
 and projection and keep the file's own framing; a carried render mode and
 environment still apply) and `renderMode: "cad" | "realistic"` (the opening
 mode, over any carried one; it can change afterwards). An unknown option key
@@ -211,7 +213,7 @@ const shown = mountPreview(stage, { glb });              // no kernel at all
 await shown.ready;
 const card = mountPreview(cardStage, {                   // a landing-page card
   glb, chrome: false, background: "transparent", contactShadow: true,
-  zoom: false, pan: false, turntable: 14, camera: "default", renderMode: "cad",
+  zoom: false, pan: false, turntable: 14, fill: 0.8, camera: "default", renderMode: "cad",
 });
 await card.drawn;                                        // the first frame is on the canvas
 ```
