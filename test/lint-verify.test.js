@@ -279,6 +279,34 @@ test("a non-string orientation is an error too", () => {
   expect(ids(lintPart(partWith({ orientation: true, expect: {} })).errors)).toContain("verify-unknown-orientation");
 });
 
+test("verify-unknown-accept refuses an id the process does not define", () => {
+  const r = lintPart(partWith({ process: "fdm-pla", accept: ["supports", "bridges"], expect: {} }));
+  expect(ids(r.errors)).toEqual(["verify-unknown-accept"]);
+  expect(find(r, "verify-unknown-accept").path).toBe("verify.accept[1]");
+  expect(find(r, "verify-unknown-accept").hint).toMatch(/supports, footprint/);
+});
+test("resin defines no costs, so any accept is unknown", () => {
+  expect(ids(lintPart(partWith({ process: "resin", accept: ["supports"], expect: {} })).errors)).toContain("verify-unknown-accept");
+});
+test("a non-array accept is one error at verify.accept", () => {
+  expect(find(lintPart(partWith({ process: "fdm-pla", accept: "supports", expect: {} })), "verify-unknown-accept").path).toBe("verify.accept");
+});
+test("with no process, accept is checked against every print process's cost ids", () => {
+  expect(ids(lintPart(partWith({ accept: ["supports"], expect: {} })).errors)).not.toContain("verify-unknown-accept");
+  const r = lintPart(partWith({ accept: ["support"], expect: {} }));
+  expect(ids(r.errors)).toEqual(["verify-unknown-accept"]);
+  expect(find(r, "verify-unknown-accept").path).toBe("verify.accept[0]");
+  expect(find(r, "verify-unknown-accept").hint).toMatch(/any print process knows are: supports, footprint/);
+});
+test("the orientation hint no longer claims to arm overhang", () => {
+  const h = find(lintPart(partWith({ orientation: "sideways", expect: {} })), "verify-unknown-orientation").hint;
+  expect(h).not.toMatch(/overhang/);
+  expect(h).toMatch(/"print"/);
+});
+test("fdm-pla is not treated as a sheet process id", () => {
+  expect(lintPart(partWith({ process: "fdm-pla", expect: {} })).errors).toEqual([]);
+});
+
 // --- verify-bad-expr: wall is range-only ------------------------------------
 
 test("wall is a known sub-part metric", () => {

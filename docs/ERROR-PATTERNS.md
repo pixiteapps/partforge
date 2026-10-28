@@ -147,8 +147,8 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 ## solid-offset-not-a-function
 
 - **Symptom:** `TypeError: <name>.offset is not a function` on a Solid (an extruded, imported or boolean result).
-- **Cause:** partforge before 0.164 had `offset` only on `Shape2D`; `Solid.offset` was added in 0.164.0.
-- **Fix:** update partforge to 0.164.0 or later. Do not fall back to unioning axis-shifted copies of the solid — that makes a wall only `t/√3` thick on diagonal surfaces.
+- **Cause:** partforge before 0.165 had `offset` only on `Shape2D`; `Solid.offset` was added in 0.165.0.
+- **Fix:** update partforge to 0.165.0 or later. Do not fall back to unioning axis-shifted copies of the solid — that makes a wall only `t/√3` thick on diagonal surfaces.
 
 ## boolean-not-watertight
 
@@ -227,6 +227,12 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 - **Symptom:** A `✗ … bedContactPct` failure from `verify` (e.g. `1.28 not >= 50`) with the note `… mm² of flat underside sits 0.25 mm above the bed`; or, in a slicer, a piece whose flat bottom is not on the bed and whose first layers string or spaghetti.
 - **Cause:** Something smaller than the piece's flat underside sits lower than it in the print pose — a horizontal knuckle or pin whose cylinder dips below the plate, a boss, or lettering embossed on the bottom — so exporters and slicers rest the piece on that feature and the flat face prints in mid-air.
 - **Fix:** Trim the piece flat at the bed plane (cut everything below z = 0 in its print pose), or raise or shorten the lower feature so the flat face is the lowest; size a print-in-place knuckle so its cylinder is tangent to the bed and give it a support block down to z = 0. A recess meant to clear the bed declares a lower `bedContactPct`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Self-verification (the `verify` block)".
+
+## piece-stands-on-nothing
+
+- **Symptom:** A `footprintPct` cost from `verify` (in `verify.costs`, e.g. `0.42 not >= 10`) on a piece whose print pose rests on a point, a line or a curl — a sphere-tipped rod standing on its end, a cylinder lying on its side — while `bedContactPct` passes.
+- **Cause:** The lowest point of the piece is not a flat face, so almost none of its silhouette on the bed actually touches it (a cylinder on its side reads a few percent, under the floor): the first layer has almost nothing to bond to, and the piece tips or pulls loose unless it prints with a brim, a raft, or in a different orientation.
+- **Fix:** Lay the piece on its flat face in its print pose, add a flat foot or pad at its lowest point, or print it with a brim. When the user chose the brim, `verify.accept: ["footprint"]` records it and the cost reads accepted. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Printed parts".
 
 ## expect-static-across-presets
 
@@ -894,6 +900,12 @@ between the Manifold preview and the OCCT STEP export.
 - **Symptom:** A part that previews on a desktop crashes, reloads, or shows a blank viewer on phones — iOS Safari's "This webpage was reloaded because a problem occurred", a viewer that never finishes its first build, or (in partforge-cloud) a `sandbox_timeout` from a phone user agent — with no error text at all, because the browser killed the page rather than the build throwing.
 - **Cause:** Peak WASM memory during the preview build exceeded what the phone allows a page (roughly 1–1.5 GB on iOS; a desktop tolerates several GB). The usual shape is hundreds of repeated small features unioned into one body: before partforge 0.116 every sphere was 6,728 triangles regardless of radius (the flat 116-segment preview count, squared), so a body with ~250 rivet spheres carried 1.7 M triangles of rivets into its booleans — measured 10 s and a 2.7 GB peak on a desktop for a 400k-triangle sub-part, against 4 s and 500 MB with the rivets as 12-triangle boxes. A boolean chain whose intermediates dwarf the result (a full-body skin intersected per groove) is the other shape.
 - **Fix:** Update partforge (0.116 sizes spheres by chord tolerance: that body builds in ~550 MB and 120k triangles unchanged; 0.117 extends the rule to lathe profile arcs — `torus`, `roundedCylinder`, revolved rounded profiles — and `roundedBox` corners, the other two shapes that spend the count squared). Then keep the preview build's peak down the same ways the export needs: build repeated detail as one union of instances rather than a chain of per-feature booleans, cut grooves from a thin local skin rather than the whole envelope, and drop feature counts the print cannot show ([Preview vs print quality](AUTHORING-PARTS.md#conventions--gotchas)). `partforge measure` reports triangle counts per sub-part; a single preview sub-part past ~200k triangles, or a whole view past ~400k, is the range where phones start to fail.
+
+## kernel-internal-error
+
+- **Symptom:** `the geometry kernel raised an internal error it could not describe` — from a build or a STEP import, naming the operation when known (`during STEP import of "frame" (17.1 MB)`) and, when the kernel's own heap could say, the C++ exception type (`C++ exception StdFail_NotDone`, `Standard_ConstructionError`, `std::bad_alloc`, …) and the heap size. Before partforge 0.163.1 the same failure was a bare number (`{"ok":false,"error":"154591824"}`), different on every attempt.
+- **Cause:** The OCCT kernel is a WASM build compiled without C++ exception catching, so an exception nothing inside it catches — the STEP reader's transfer refusing an entity, a construction with a zero-length direction, an allocation the heap could not grow for — reaches JavaScript as the exception's ADDRESS. The number is not a code and means nothing across runs. partforge now names the operation and reads the exception's type off the heap, but it cannot read OCCT's own message for it.
+- **Fix:** Act on the type. `std::bad_alloc` or `Standard_OutOfMemory` (the message then says "probably too large for the in-browser kernel") is memory: a STEP import needs roughly six times its file size of kernel heap (measured on OCCT-written files: 17 MB → 100 MiB, 42 MB → 248 MiB), so a file that exhausts the 2 GB wasm32 ceiling is hundreds of megabytes, or the browser refused to grow the heap — simplify the imported model or split it. Any other type on an import is the file itself: re-export it from the CAD tool as AP214/AP242 solids (no assembly-only or surface-only exports) and try the smaller file; the same type from a build is that operation refusing its input (a `Standard_ConstructionError` is usually a zero-length direction or a degenerate profile). Retrying the identical build fails the same way — it is not transient.
 
 # Hardware library
 

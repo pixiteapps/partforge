@@ -27,6 +27,7 @@ import { makeProfileWarner } from "./profile-warnings.js";
 import { createOcctRepair } from "./occt-repair.js";
 import { occtOffset, occtRoundAll } from "./occt-roundall.js";
 import { classifyFaceGroups } from "./feature-attribution.js";
+import { emscriptenThrowEvidence, labelImportFailure } from "../kernel-error.js";
 import { resolveLoftRings, loftRingsKey } from "./loft-rings.js";
 import { resolveSweepStations } from "./sweep.js";
 import { normalizeProfile } from "./profile.js";
@@ -199,6 +200,7 @@ export function createOcctKernel(replicad) {
   // registers pre-build via `_registerImport` (kernel-lifetime, untracked by the
   // solid cache: imports are the framework's own memo, keyed by name+digest).
   const imports = new Map();
+  const throwEvidence = (value) => emscriptenThrowEvidence(replicad.getOC?.(), value);
   // name -> { digest, width, height, data } — depth-map grids the framework
   // registers pre-build via `_registerImage` (ensureImages). Kernel-lifetime like
   // `imports` above, and plain data rather than OCCT objects, so there is nothing
@@ -825,11 +827,22 @@ export function createOcctKernel(replicad) {
       const prev = imports.get(name);
       if (!prev?.error && prev?.digest === digest) return; // error entries are always upgradable
       if (error) { imports.set(name, { error, digest }); return; }
-      imports.set(name, { shape: await importSTEP(new Blob([step])), digest });
+      // A STEP the reader refuses, or an OCCT exception out of its transfer,
+      // leaves here labelled with the import's name and size. The latter
+      // reaches JavaScript as a bare number from this exception-less build
+      // (kernel-error.js), and the heap is read for its C++ type BEFORE
+      // anything else runs on the kernel.
+      let shape;
+      try { shape = await importSTEP(new Blob([step])); }
+      catch (e) { throw labelImportFailure({ name, bytes: step?.byteLength, error: e, evidence: throwEvidence(e) }); }
+      imports.set(name, { shape, digest });
     },
     // Registration memo: undefined for an error entry, so a later registration with
     // the same digest can upgrade it rather than being treated as a no-op repeat.
     _importDigest: (name) => { const e = imports.get(name); return e?.error ? undefined : e?.digest; },
+    // What the kernel's heap can say about a value OCCT threw (kernel-error.js):
+    // the job loop asks this when a build throws something that is not an Error.
+    _throwEvidence: throwEvidence,
     // Depth-map grids, registered pre-build by the framework via `_registerImage`
     // (ensureImages). Unlike imports there is no per-format error entry: every
     // backend can consume a normalized grid, so registration never fails.

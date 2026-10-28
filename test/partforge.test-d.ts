@@ -516,8 +516,8 @@ expectType<boolean | null>(v.ok);   // tri-state: null = no verdict (quick lap, 
 expectType<number>(v.declared);
 expectType<number | null>(facts.subparts[0]!.overhangArea);
 expectType<string>(v.failures[0]!.case);
-expectType<"pass" | "fail" | "warn" | "skip">(v.cases[0]!.checks[0]!.status);
-expectType<"gate" | "warn">(v.cases[0]!.checks[0]!.kind);
+expectType<"pass" | "fail" | "warn" | "cost" | "skip">(v.cases[0]!.checks[0]!.status);
+expectType<"gate" | "warn" | "cost">(v.cases[0]!.checks[0]!.kind);
 
 expectType<number>(assemblyOverlaps(kernel, spacer, "spacer", {}, { tolerance: 0.5 }).length);
 
