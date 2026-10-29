@@ -147,8 +147,8 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 ## solid-offset-not-a-function
 
 - **Symptom:** `TypeError: <name>.offset is not a function` on a Solid (an extruded, imported or boolean result).
-- **Cause:** partforge before 0.165 had `offset` only on `Shape2D`; `Solid.offset` was added in 0.165.0.
-- **Fix:** update partforge to 0.165.0 or later. Do not fall back to unioning axis-shifted copies of the solid — that makes a wall only `t/√3` thick on diagonal surfaces.
+- **Cause:** partforge before 0.171 had `offset` only on `Shape2D`; `Solid.offset` was added in 0.171.0.
+- **Fix:** update partforge to 0.171.0 or later. Do not fall back to unioning axis-shifted copies of the solid — that makes a wall only `t/√3` thick on diagonal surfaces.
 
 ## boolean-not-watertight
 

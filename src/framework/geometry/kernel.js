@@ -51,7 +51,7 @@ export const SOLID_OPS = [
   "translate", "rotate", "rotateX", "rotateY", "rotateZ", "rotateAbout", "along", "at",
   "mirror", "scale", "toMesh", "toSTL", "toIndexedMesh",
   "fillet", "chamfer", "shell", "roundAll",
-  // Additive in 0.165 (no CONTRACT_VERSION bump — the loftSmooth/heightfield
+  // Additive in 0.171 (no CONTRACT_VERSION bump — the loftSmooth/heightfield
   // precedent): both in-repo backends implement it.
   "offset",
 ];
