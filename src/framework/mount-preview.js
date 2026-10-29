@@ -57,10 +57,14 @@
 //    bounding box as projected on screen spans that fraction of the viewport
 //    along its limiting axis. A turning model is framed swept a full turn
 //    about the vertical (its farthest vertex from the axis), so the turntable
-//    never clips and a round part still fills. The model is centred on its
-//    horizontal vertex centroid (a lopsided part turns about its hub); a baked
-//    animation that moves parts outside the rest box can. Unset, the viewer's
-//    fixed framing distance, as before.
+//    never clips and a round part still fills, centred on its horizontal
+//    vertex centroid (a lopsided part turns about its hub). A model that is
+//    not turning (a still, or a playing animation — framed on its first
+//    pose) is fitted by its posed VERTICES and its silhouette centred on
+//    screen (0.169.0): the target moves in the screen plane so the projected
+//    outline's bounding box is centred, spanning `fill`. A baked animation
+//    that moves parts outside its first pose's outline can leave the frame.
+//    Unset, the viewer's fixed framing distance, as before.
 //    The swept framing follows the configuration, not reduced motion (0.169.0):
 //    a turntable mount is framed swept even when reduced motion keeps it still.
 //  - `camera: "default"` — the camera and projection of `viewerState` and of

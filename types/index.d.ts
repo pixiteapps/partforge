@@ -836,9 +836,11 @@ export interface MountPreviewOptions {
    * on screen spans this fraction of the viewport along its limiting axis. With a
    * `turntable` (and no baked animation) the model swept a full turn is framed — its
    * farthest vertex from the vertical axis, over the box's height — so the turn never
-   * clips and a round part still fills. With `fill` the model is centred on its
-   * horizontal vertex centroid (a lopsided part turns about its hub), and nothing
-   * leaves the viewport; a baked animation that moves parts outside the box may. Unset, the
+   * clips and a round part still fills, centred on its horizontal vertex centroid (a
+   * lopsided part turns about its hub). Without a turntable (0.169.0+) the posed mesh
+   * vertices are fitted and their on-screen outline is centred (the target moves in the
+   * screen plane), spanning `fill`; a baked animation that moves parts outside its first
+   * pose's outline may leave the frame. Unset, the
    * fixed framing distance. Since 0.169.0 a turntable mount is framed swept under reduced
    * motion too, so every visitor sees the same framing.
    */

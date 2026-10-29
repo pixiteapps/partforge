@@ -648,7 +648,72 @@ test("unset fill still centres a lopsided part on its box, as before", async () 
   handle.dispose();
 });
 
-test("fill keeps the view direction and the origin target, and the viewer's reframe uses it too", async () => {
+// The NDC bounding box of every posed vertex of `names`.
+function silhouette(viewer, names) {
+  const pts = projectedVertices(viewer, names);
+  const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+  return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+}
+const expectCentredAtFill = (b, fill) => {
+  expect(Math.abs(b.x0 + b.x1)).toBeLessThan(0.01); // |left| ≈ |right|
+  expect(Math.abs(b.y0 + b.y1)).toBeLessThan(0.01); // |bottom| ≈ |top|
+  expect(Math.max(b.x1 - b.x0, b.y1 - b.y0) / 2).toBeCloseTo(fill, 2);
+};
+// A closed w × d × h box, as triangle soup.
+function solidBox(name, w, d, h) {
+  const c = (i) => [(i & 1) * w, ((i >> 1) & 1) * d, ((i >> 2) & 1) * h];
+  const faces = [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]];
+  const out = [];
+  for (const [a, b, e, f] of faces) out.push(...c(a), ...c(b), ...c(e), ...c(a), ...c(e), ...c(f));
+  return { name, positions: new Float32Array(out) };
+}
+
+test("fill centres the silhouette: a lopsided part whose box centre and centroid are off it", async () => {
+  const glb = await encodePreviewGlb({ meshes: [disc("hub", 6, 4), armPlate("arm", 60, 6, 4)], view: "main" });
+  const handle = mountPreview(makeStage(400, 300), { glb, fill: 0.8 });
+  await handle.ready;
+  expectCentredAtFill(silhouette(viewers.at(-1), ["hub", "arm"]), 0.8);
+  // restart() returns to exactly that framing.
+  const opening = handle.getViewerState().camera;
+  viewers.at(-1).orbitBy(60, 20);
+  handle.motion.restart();
+  expectCamera(handle.getViewerState().camera, opening);
+  handle.dispose();
+});
+
+test("a wide flat box seen obliquely is centred at fill 0.8 and touches no edge", async () => {
+  const glb = await encodePreviewGlb({ meshes: [solidBox("box", 101, 62, 46)], view: "main" });
+  for (const [w, h] of [[400, 300], [300, 400], [400, 400]]) {
+    const handle = mountPreview(makeStage(w, h), { glb, fill: 0.8 });
+    await handle.ready;
+    const b = silhouette(viewers.at(-1), ["box"]);
+    expectCentredAtFill(b, 0.8);
+    for (const v of [b.x0, b.x1, b.y0, b.y1]) expect(Math.abs(v)).toBeLessThan(0.81);
+    handle.dispose();
+    state.renderer = null;
+  }
+});
+
+test("an animated file is framed silhouette-centred at fill", async () => {
+  const handle = mountPreview(makeStage(400, 300), { glb: await animatedGlb((a) => { a.anim = { ...a.anim, cues: [] }; return a; }), fill: 0.8, autostart: false });
+  await handle.ready;
+  expectCentredAtFill(silhouette(viewers.at(-1), ["base", "lid"]), 0.8);
+  handle.dispose();
+});
+
+test("fill under orthographic centres the silhouette too", () => {
+  const part = { ...viewerPart(), parts: { hub: { label: "hub", views: ["main"] }, arm: { label: "arm", views: ["main"] } } };
+  const v = createViewer(makeStage(400, 300), part, { frameFill: 0.5 });
+  for (const m of [disc("hub", 6, 4), armPlate("arm", 60, 6, 4)]) v.setSubGeometry(m.name, m);
+  v.showAssembly(["hub", "arm"], { frame: true });
+  v.setProjection("orthographic");
+  v.frame();
+  expect(v.camera.isOrthographicCamera).toBe(true);
+  expectCentredAtFill(silhouette(v, ["hub", "arm"]), 0.5);
+  v.dispose();
+});
+
+test("fill keeps the view direction (the target moves only in the screen plane), and the viewer's reframe uses it too", async () => {
   const plain = mountPreview(makeStage(), { glb: await stillGlb() });
   await plain.ready;
   const p = plain.getViewerState().camera;
@@ -659,11 +724,12 @@ test("fill keeps the view direction and the origin target, and the viewer's refr
   await handle.ready;
   const c = handle.getViewerState().camera;
   const unit = (v) => { const n = Math.hypot(...v); return v.map((x) => x / n); };
-  unit(c.pos).forEach((x, i) => expect(x).toBeCloseTo(unit(p.pos)[i], 6));
-  c.target.forEach((x) => expect(x).toBeCloseTo(0, 6));
+  const dir = unit(c.pos.map((x, i) => x - c.target[i]));
+  dir.forEach((x, i) => expect(x).toBeCloseTo(unit(p.pos)[i], 6));
+  expect(c.target.reduce((sum, x, i) => sum + x * dir[i], 0)).toBeCloseTo(0, 6); // in the screen plane
   const filled = camDistance(handle);
   viewers.at(-1).setCameraState({ pos: [200, 10, 0], target: [0, 0, 0] });
-  viewers.at(-1).setCameraState({ pos: c.pos, target: [0, 0, 0] });
+  viewers.at(-1).setCameraState({ pos: c.pos, target: c.target });
   viewers.at(-1).frame(); // the reframe button's call
   expect(camDistance(handle)).toBeCloseTo(filled, 6);
   handle.dispose();

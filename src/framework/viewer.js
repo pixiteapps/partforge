@@ -1928,6 +1928,7 @@ export function createViewer(container, part, {
 
   // --- show / hide assembly -------------------------------------------------
   const _box = new THREE.Box3();
+  const _origin = new THREE.Vector3();
   const _posedBox = new THREE.Box3();
   const _frameDir = new THREE.Vector3();
 
@@ -1967,8 +1968,10 @@ export function createViewer(container, part, {
     if (_frameDir.lengthSq() === 0) _frameDir.set(1, 1, 1);
     _frameDir.normalize();
     const filled = fill?.(_frameDir);
-    activeCamera.position.copy(_frameDir).multiplyScalar(filled ? filled.distance : r * 2.6 + 6);
-    controls.target.set(0, 0, 0);
+    // A silhouette-centred fill framing aims off the pivot: the target moves in
+    // the screen plane (and the camera with it, keeping the view direction).
+    controls.target.copy(filled?.offset ?? _origin);
+    activeCamera.position.copy(_frameDir).multiplyScalar(filled ? filled.distance : r * 2.6 + 6).add(controls.target);
     // Framing under ortho is a frustum, not a distance — without this the
     // reframe button moves the camera and nothing visibly changes. A fill
     // framing sizes the frustum to the projected box directly (the sync
@@ -2001,6 +2004,16 @@ export function createViewer(container, part, {
   // Null when unset, or when the container has no size yet (a hidden or
   // unlaid-out stage): frameTo then falls back to the fixed distance, and the
   // next reframe fills.
+  //
+  // Without `frameSwept` (0.169.0) the points are the posed mesh VERTICES, not
+  // the box corners, and the framing is silhouette-centred: the result also
+  // carries `offset`, a world-space shift of the target (and the camera with
+  // it) in the screen plane that centres the vertices' projected bounding box,
+  // and the distance makes that box span frameFill along its limiting axis.
+  // Box-centred framing put an obliquely-viewed wide flat part low on screen —
+  // its near-bottom corner projects far past the far-top one — and fitted
+  // corners that no vertex reaches. The swept framing keeps the target on the
+  // pivot, so a turntable still turns about the hub.
   const SWEEP_SEGMENTS = 48;
   const _sweepV = new THREE.Vector3();
   // The farthest horizontal distance of any posed vertex of `names` from the
@@ -2037,12 +2050,101 @@ export function createViewer(container, part, {
     }
     if (n > 0) center.set(sx / n, sy / n, center.z);
   }
+  // Every posed vertex of `names` about `center`, stood up by the pivot, as
+  // flat x/y/z arrays (world units, pivot-relative).
+  function posedVertices(names, center) {
+    let n = 0;
+    for (const name of names) n += subCache[name]?.getAttribute("position")?.count ?? 0;
+    const px = new Float64Array(n), py = new Float64Array(n), pz = new Float64Array(n);
+    let k = 0;
+    for (const name of names) {
+      const pos = subCache[name]?.getAttribute("position");
+      if (!pos) continue;
+      const pose = subMesh[name].matrix;
+      for (let i = 0; i < pos.count; i++, k++) {
+        _sweepV.fromBufferAttribute(pos, i).applyMatrix4(pose).sub(center).applyQuaternion(pivot.quaternion);
+        px[k] = _sweepV.x; py[k] = _sweepV.y; pz[k] = _sweepV.z;
+      }
+    }
+    return { px, py, pz, n };
+  }
+
+  // The silhouette-centred fill framing of posed vertices (see above).
+  function centredFraming({ px, py, pz, n }, aspect) {
+    if (n === 0) return null;
+    let any = false;
+    for (let i = 0; i < n && !any; i++) any = px[i] !== 0 || py[i] !== 0 || pz[i] !== 0;
+    if (!any) return null;
+    const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+    const tanH = tanV * aspect;
+    const xs = new Float64Array(n), ys = new Float64Array(n), along = new Float64Array(n);
+    return (dir) => {
+      const forward = dir.clone().negate();
+      const right = new THREE.Vector3().crossVectors(forward, activeCamera.up);
+      if (right.lengthSq() < 1e-12) right.set(1, 0, 0);
+      right.normalize();
+      const upAxis = new THREE.Vector3().crossVectors(right, forward);
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, nearest = -Infinity;
+      for (let i = 0; i < n; i++) {
+        xs[i] = px[i] * right.x + py[i] * right.y + pz[i] * right.z;
+        ys[i] = px[i] * upAxis.x + py[i] * upAxis.y + pz[i] * upAxis.z;
+        along[i] = px[i] * dir.x + py[i] * dir.y + pz[i] * dir.z;
+        if (xs[i] < x0) x0 = xs[i]; if (xs[i] > x1) x1 = xs[i];
+        if (ys[i] < y0) y0 = ys[i]; if (ys[i] > y1) y1 = ys[i];
+        if (along[i] > nearest) nearest = along[i];
+      }
+      // Orthographic: centre the extent exactly; the half-height that fits it.
+      const orthoHalfH = Math.max((x1 - x0) / (2 * frameFill * aspect), (y1 - y0) / (2 * frameFill)) || 1;
+      const orthoOffset = right.clone().multiplyScalar((x0 + x1) / 2).addScaledVector(upAxis, (y0 + y1) / 2);
+      if (projectionMode === "orthographic") {
+        const d = Math.max(nearest, 0) + Math.max(x1 - x0, y1 - y0) * 2 + 6;
+        return { distance: d, orthoHalfH, aspect, offset: orthoOffset };
+      }
+      // Perspective: the projected box, the target shifted (tx, ty) in the
+      // screen plane, the camera at distance d along `dir`.
+      let tx = (x0 + x1) / 2, ty = (y0 + y1) / 2;
+      const ext = (d) => {
+        let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+        for (let i = 0; i < n; i++) {
+          const z = d - along[i];
+          const nx = (xs[i] - tx) / (z * tanH), ny = (ys[i] - ty) / (z * tanV);
+          if (nx < a0) a0 = nx; if (nx > a1) a1 = nx;
+          if (ny < b0) b0 = ny; if (ny > b1) b1 = ny;
+        }
+        return [a0, a1, b0, b1];
+      };
+      const over = (d) => { const [a0, a1, b0, b1] = ext(d); return Math.max(a1 - a0, b1 - b0) / (2 * frameFill); };
+      const fit = () => {
+        let lo = nearest + 1e-6 * (1 + Math.abs(nearest)), hi = Math.max(lo * 2, 1);
+        while (over(hi) > 1 && hi < 1e9) hi *= 2;
+        for (let i = 0; i < 48; i++) {
+          const mid = (lo + hi) / 2;
+          if (over(mid) > 1) lo = mid; else hi = mid;
+        }
+        return hi;
+      };
+      let d = fit();
+      // Recentre and refit: the shift moves each vertex's NDC by 1/depth, so a
+      // few rounds converge.
+      for (let round = 0; round < 8; round++) {
+        const [a0, a1, b0, b1] = ext(d);
+        const cx = (a0 + a1) / 2, cy = (b0 + b1) / 2;
+        if (Math.abs(cx) < 1e-5 && Math.abs(cy) < 1e-5) break;
+        tx += cx * d * tanH;
+        ty += cy * d * tanV;
+        d = fit();
+      }
+      return { distance: d, orthoHalfH, aspect, offset: right.multiplyScalar(tx).addScaledVector(upAxis, ty) };
+    };
+  }
+
   function fillFraming(box, names, center) {
     if (!frameFill) return null;
     const w = container.clientWidth, h = container.clientHeight;
     if (!(w > 0 && h > 0)) return null;
     const aspect = w / h;
     pivot.updateMatrix();
+    if (!frameSwept) return centredFraming(posedVertices(names, center), aspect);
     // The box corners about the framing centre (no longer the box's own centre).
     let points = [];
     for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) {

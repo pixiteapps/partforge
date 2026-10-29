@@ -330,7 +330,14 @@ the installed package, so let the publish finish before bumping the dep there.
   taken about it; the fit is the projected span, plus a guard that nothing
   leaves the viewport (|NDC| <= 1); a container with no size falls back to the
   fixed r·2.6 + 6 distance. A sphere fit was tried first and left flat parts
-  small), `camera:
+  small. Since 0.169.0 that box/centroid fit is the SWEPT framing only: a
+  non-swept fill (a still, or an animation, framed on its first pose) fits the
+  posed VERTICES and centres their projected outline — `centredFraming` moves
+  the target in the screen plane (camera with it, view direction kept) and
+  alternates recentring with the distance bisection; orthographic centres
+  exactly. Box-centred framing put the bubble lattice box low in its card: seen
+  obliquely in perspective, a wide flat box's near-bottom corner projects far
+  past the far-top one, so the |NDC| guard bound before the span), `camera:
   "default"` (the carried camera and projection are dropped; render mode and
   environment still carry) and `renderMode` (the OPENING mode only — it wins
   over a carried one at mount, then changes freely). An unknown key or value
