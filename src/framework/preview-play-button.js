@@ -5,7 +5,8 @@
 //
 // Three states, read off the player's onChange notifications (never polled):
 //   - Pause  while playing or during the intro camera tween;
-//   - Play   while paused — resumes from the pose it froze at;
+//   - Play   while paused — resumes from the pose it froze at — or while a
+//            mount with `autostart: false` waits at its first frame (starts it);
 //   - Replay once a one-time animation has finished at its end pose — plays it
 //            again from the start, camera cues included. A looping animation
 //            never gets here.
@@ -30,7 +31,7 @@ const STATES = {
 };
 
 // What a click does for a given player status.
-const actionFor = (status) => (status === "paused" ? "play" : status === "done" ? "replay" : "pause");
+const actionFor = (status) => (status === "paused" || status === "idle" ? "play" : status === "done" ? "replay" : "pause");
 
 export function attachPreviewPlayButton(player, { toolbar, before = null }, { tooltip = null } = {}) {
   const button = document.createElement("button");
@@ -58,7 +59,7 @@ export function attachPreviewPlayButton(player, { toolbar, before = null }, { to
 
   const onClick = () => {
     if (action === "pause") player.pause();
-    else if (action === "play") player.resume();
+    else if (action === "play") { if (player.state().status === "idle") player.start(); else player.resume(); }
     else player.replay();
   };
   button.addEventListener("click", onClick);

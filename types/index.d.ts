@@ -821,19 +821,28 @@ export interface MountPreviewOptions {
   /**
    * Degrees per second (0.168.0+; default 0, off): a file with no playing animation
    * turns about the vertical. Never under reduced motion; the first camera grab
-   * (a canvas drag or the view cube) stops it for good.
+   * (a canvas drag or the view cube) stops it until `motion.restart()`.
    */
   turntable?: number;
+  /**
+   * `false` (0.169.0+; default true): the motion — a playing animation or the
+   * turntable — waits at its first frame (the animation's t = 0 pose, turntable
+   * angle 0) until `motion.start()`. `drawn` resolves on a frame showing that pose.
+   */
+  autostart?: boolean;
   /**
    * 0 < fill <= 1 (0.168.0+): the opening framing (and the viewer's reframe) puts the
    * camera, along the opening view direction, so the model's bounding box as projected
    * on screen spans this fraction of the viewport along its limiting axis. With a
    * `turntable` (and no baked animation) the model swept a full turn is framed — its
    * farthest vertex from the vertical axis, over the box's height — so the turn never
-   * clips and a round part still fills. With `fill` the model is centred on its
-   * horizontal vertex centroid (a lopsided part turns about its hub), and nothing
-   * leaves the viewport; a baked animation that moves parts outside the box may. Unset, the
-   * fixed framing distance.
+   * clips and a round part still fills, centred on its horizontal vertex centroid (a
+   * lopsided part turns about its hub). Without a turntable (0.169.0+) the posed mesh
+   * vertices are fitted and their on-screen outline is centred (the target moves in the
+   * screen plane), spanning `fill`; a baked animation that moves parts outside its first
+   * pose's outline may leave the frame. Unset, the
+   * fixed framing distance. Since 0.169.0 a turntable mount is framed swept under reduced
+   * motion too, so every visitor sees the same framing.
    */
   fill?: number;
   /** `"default"` (0.168.0+): drop the camera and projection of `viewerState` and `setViewerState`, so the mount keeps the file's own framing; their render mode and environment still apply. Default `"carry"`. */
@@ -875,6 +884,25 @@ export interface PreviewRuntime {
     resume(): void;
     /** Play a finished one-time animation again from the start (its camera cues included); a no-op unless `state().status` is `"done"`. */
     replay(): void;
+  } | null;
+  /**
+   * The motion — baked animation or turntable — (0.169.0+): `null` before `ready` and
+   * once disposed; present for every decoded file.
+   */
+  readonly motion: {
+    /** Begin a waiting motion. Idempotent; a no-op once started, under reduced motion, or with nothing to move. */
+    start(): void;
+    /**
+     * Put the model back as it opened and start it: the opening camera framing (the
+     * file's default view direction, before any carried camera), the animation from
+     * t = 0 or the turntable turning again (re-armed). Under reduced motion it only
+     * resets the camera.
+     */
+    restart(): void;
+    /** `"stopped"`: a turntable stopped by a grab, a paused animation, reduced motion, or nothing to move. */
+    readonly state: "waiting" | "playing" | "stopped" | "finished";
+    /** Each state change. Returns an unsubscribe. */
+    onChange(cb: (state: "waiting" | "playing" | "stopped" | "finished") => void): () => void;
   } | null;
   renderMode: {
     get(): RenderMode;

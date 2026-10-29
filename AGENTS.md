@@ -319,7 +319,8 @@ the installed package, so let the publish finish before bumping the dep there.
   frameTo bisects the camera distance along the kept view direction — or sizes
   the ortho frustum — so the posed box's 8 corners, projected, span that
   fraction of the viewport along its limiting axis; with `frameSwept` (a
-  turntable that will run) it frames the model swept about the vertical — two
+  configured turntable — since 0.169.0 whether or not reduced motion lets it
+  run, so every visitor gets the same framing) it frames the model swept about the vertical — two
   48-gon circles over the box's height, radius the farthest posed VERTEX from
   the axis (box corners sit ~√2 out on a round part and framed a turning gear
   at ~55% width) — so no angle clips. With `frameFill` the framing centre
@@ -329,16 +330,34 @@ the installed package, so let the publish finish before bumping the dep there.
   taken about it; the fit is the projected span, plus a guard that nothing
   leaves the viewport (|NDC| <= 1); a container with no size falls back to the
   fixed r·2.6 + 6 distance. A sphere fit was tried first and left flat parts
-  small), `camera:
+  small. Since 0.169.0 that box/centroid fit is the SWEPT framing only: a
+  non-swept fill (a still, or an animation, framed on its first pose) fits the
+  posed VERTICES and centres their projected outline — `centredFraming` moves
+  the target in the screen plane (camera with it, view direction kept) and
+  alternates recentring with the distance bisection; orthographic centres
+  exactly. Box-centred framing put the bubble lattice box low in its card: seen
+  obliquely in perspective, a wide flat box's near-bottom corner projects far
+  past the far-top one, so the |NDC| guard bound before the span), `camera:
   "default"` (the carried camera and projection are dropped; render mode and
   environment still carry) and `renderMode` (the OPENING mode only — it wins
   over a carried one at mount, then changes freely). An unknown key or value
   throws. The turntable turns through `viewer.orbitBy` off
   `onFrame` — orbitBy announces a camera grab itself, so the turntable tells its
   own steps from the user's by a flag held across the call, and the first real
-  grab stops it for good; none under reduced motion. Every handle gains `drawn`,
+  grab stops it; none under reduced motion. Every handle gains `drawn`,
   resolved off the viewer's `onRendered` (after a frame actually draws — the
-  loop renders on demand).
+  loop renders on demand). Since 0.169.0 `autostart: false` sets the motion up
+  but holds it — the player's `prime()` draws the t = 0 pose (and holds the
+  ground) without advancing, the turntable sits at angle 0 — so `drawn` lands on
+  the same first frame a host's still shows; `handle.motion` then drives it:
+  `start()` (idempotent), `restart()` (`setCameraState` back to the camera
+  captured right after `showAssembly({ frame: true })` — before any carried
+  camera — then the player's `restart()`, which resets `createPlayback` and
+  re-arms the intro cue, or the turntable re-armed and turning; camera only under
+  reduced motion), `state` (`waiting | playing | stopped | finished`) and
+  `onChange`. A grab while the turntable waits stops it too (start() is then a
+  no-op; restart() re-arms). A waiting animation's play button reads Play and
+  starts it.
 - **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
   (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
   nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,

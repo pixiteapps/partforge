@@ -49,17 +49,24 @@
 //  - `turntable: <degrees per second>` (default 0, off) — a file with no
 //    playing animation (a still file, or `animate: false`) turns about the
 //    vertical off the viewer's frame loop. Never under reduced motion; the
-//    first camera grab — a canvas drag or the view cube — stops it for good.
-//    Dragging an animated model orbits the camera and the animation plays on.
+//    first camera grab — a canvas drag or the view cube — stops it (until
+//    `motion.restart()`). Dragging an animated model orbits the camera and the
+//    animation plays on.
 //  - `fill: <0 < f <= 1>` — the opening framing (and the viewer's reframe)
 //    places the camera, along the kept view direction, so the model's posed
 //    bounding box as projected on screen spans that fraction of the viewport
 //    along its limiting axis. A turning model is framed swept a full turn
 //    about the vertical (its farthest vertex from the axis), so the turntable
-//    never clips and a round part still fills. The model is centred on its
-//    horizontal vertex centroid (a lopsided part turns about its hub); a baked
-//    animation that moves parts outside the rest box can. Unset, the viewer's
-//    fixed framing distance, as before.
+//    never clips and a round part still fills, centred on its horizontal
+//    vertex centroid (a lopsided part turns about its hub). A model that is
+//    not turning (a still, or a playing animation — framed on its first
+//    pose) is fitted by its posed VERTICES and its silhouette centred on
+//    screen (0.169.0): the target moves in the screen plane so the projected
+//    outline's bounding box is centred, spanning `fill`. A baked animation
+//    that moves parts outside its first pose's outline can leave the frame.
+//    Unset, the viewer's fixed framing distance, as before.
+//    The swept framing follows the configuration, not reduced motion (0.169.0):
+//    a turntable mount is framed swept even when reduced motion keeps it still.
 //  - `camera: "default"` — the camera and projection of `viewerState` and of
 //    every setViewerState are dropped: the mount opens, and stays, at the
 //    file's own default framing. Their render mode and environment still apply.
@@ -67,7 +74,31 @@
 //    over any carried render mode. After that it is an ordinary mode —
 //    setViewerState, renderMode.set and the view style control change it.
 //    Unset, the carried state decides, as before.
+//  - `autostart: false` (0.169.0; default true) — the motion (a playing
+//    animation, or the turntable) is set up but WAITS: the model is drawn at
+//    the animation's first pose (the t = 0 pose a started player draws first)
+//    and at turntable angle 0, and nothing moves until `handle.motion.start()`.
+//    `drawn` resolves on a frame showing exactly that pose, so a host can
+//    cross-fade from a still of it and then say go. A waiting animation's play
+//    button reads Play.
 //  Any other key throws (an option this version does not know is a host bug).
+//
+// `handle.motion` (0.169.0; null before ready and once disposed, present for
+// every decoded file) drives the motion whatever `autostart` said:
+//  - `start()` begins a waiting motion. Idempotent; a no-op once started, under
+//    reduced motion, or with nothing to move.
+//  - `restart()` puts the model back as it opened and starts it: the camera
+//    returns to the opening framing (showAssembly's framing at mount — the
+//    file's default view direction at the fill distance, before any carried
+//    camera — so a visitor's orbit is undone), the animation replays from
+//    t = 0 (intro cue included) or the turntable turns again from there,
+//    re-armed so the next grab stops it again. Under reduced motion it only
+//    resets the camera (the pose already is t = 0).
+//  - `state` — "waiting" | "playing" | "stopped" (a turntable stopped by a
+//    grab, an animation paused from its button, reduced motion, or nothing to
+//    move) | "finished" (a play-once animation resting at its end pose).
+//  - `onChange(cb)` → unsubscribe: hears each state change.
+// `handle.animation` is unchanged.
 //
 // `handle.drawn` resolves after the first frame that includes the meshes has
 // rendered (so a host can cross-fade from a still image without a flash). It
@@ -105,9 +136,10 @@ function flag(name, value, fallback) {
 const KNOWN_OPTIONS = new Set([
   "glb", "elements", "viewerState", "animate",
   "chrome", "background", "contactShadow", "zoom", "pan", "turntable", "fill", "camera", "renderMode",
+  "autostart",
 ]);
 
-function presentation({ chrome, background, contactShadow, zoom, pan, turntable, fill, camera, renderMode }) {
+function presentation({ chrome, background, contactShadow, zoom, pan, turntable, fill, camera, renderMode, autostart }) {
   if (fill !== undefined && !(typeof fill === "number" && fill > 0 && fill <= 1)) {
     throw new TypeError("mountPreview: fill must be a number above 0 and at most 1");
   }
@@ -124,30 +156,47 @@ function presentation({ chrome, background, contactShadow, zoom, pan, turntable,
     fill: fill ?? null,
     defaultCamera: oneOf("camera", camera, ["carry", "default"], "carry") === "default",
     renderMode: oneOf("renderMode", renderMode, ["cad", "realistic"], null),
+    autostart: flag("autostart", autostart, true),
   };
 }
 
 // Turn the camera about the vertical at `degPerSec` until the first camera grab.
 // It turns through viewer.orbitBy, which itself announces a camera grab — so the
 // turntable's own steps are told apart from the user's by a flag held across
-// the call. Returns stop().
-function startTurntable(viewer, container, degPerSec) {
-  let turning = false, stopped = false;
-  const offFrame = viewer.onFrame((dt) => {
+// the call. It begins "waiting" (angle 0, nothing moves) until start(); the
+// first grab — while waiting or turning — stops it for good; restart() re-arms
+// it and turns again from wherever the camera is now (the host has just put it
+// back). `onChange` hears every phase change.
+function createTurntable(viewer, container, degPerSec, onChange) {
+  let turning = false, phase = "waiting", offFrame = null;
+  const set = (next) => { if (next !== phase) { phase = next; onChange(); } };
+  function step(dt) {
     // orbitBy's rate: a drag the full stage height is a full turn.
     const dx = ((degPerSec * dt) / 360) * Math.max(1, container.clientHeight || 1);
     if (!(dx > 0)) return;
     turning = true;
     try { viewer.orbitBy(dx, 0); } finally { turning = false; }
-  });
-  const offGrab = viewer.onCameraStart(() => { if (!turning) stop(); });
-  function stop() {
-    if (stopped) return;
-    stopped = true;
-    offFrame();
-    offGrab();
   }
-  return stop;
+  function halt() { offFrame?.(); offFrame = null; }
+  const offGrab = viewer.onCameraStart(() => {
+    if (turning || phase === "stopped") return;
+    halt();
+    set("stopped");
+  });
+  return {
+    phase: () => phase,
+    start() {
+      if (phase !== "waiting") return;
+      offFrame = viewer.onFrame(step);
+      set("playing");
+    },
+    restart() {
+      halt();
+      offFrame = viewer.onFrame(step);
+      set("playing");
+    },
+    dispose() { halt(); offGrab(); },
+  };
 }
 
 function previewPart({ meshes, view, meta }) {
@@ -192,6 +241,8 @@ export function mountPreview(container, options = {}) {
   if (opts.renderMode) carried = { ...(carried ?? {}), renderMode: opts.renderMode };
   let live = null;                   // { viewer, view } once the GLB has decoded
   let player = null;                 // the baked animation's player, once drawn
+  let motion = null;                 // handle.motion, once the GLB has decoded
+  const motionListeners = new Set();
   const cleanups = [];
   const modeListeners = new Set();
   const envListeners = new Set();
@@ -220,11 +271,15 @@ export function mountPreview(container, options = {}) {
     const view = decoded.view ?? "preview";
     const reducedMotion = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
     const plays = !!decoded.animation && animate !== false;
-    const turns = !plays && opts.turntable > 0 && !reducedMotion;
+    // Framing follows the configuration, not reduced motion: a turntable mount
+    // is framed swept whether or not it is allowed to turn, so every visitor
+    // sees the model at the same size and centre.
+    const sweeps = !plays && opts.turntable > 0;
+    const turns = sweeps && !reducedMotion;
     const viewer = createViewer(container, previewPart({ ...decoded, view }), {
       transparent: opts.transparent, contactShadow: opts.contactShadow, zoom: opts.zoom, pan: opts.pan,
       // A turning model is framed swept a full turn, so no angle of it clips.
-      frameFill: opts.fill, frameSwept: turns,
+      frameFill: opts.fill, frameSwept: sweeps,
     });
     cleanups.push(() => viewer.dispose());
     let tooltip = null, toolbar = null, viewStyle = null;
@@ -246,23 +301,70 @@ export function mountPreview(container, options = {}) {
     cleanups.push(viewer.onContextLost(relay(lostListeners)));
     for (const m of decoded.meshes) viewer.setSubGeometry(m.name, m);
     viewer.showAssembly(decoded.meshes.map((m) => m.name), { frame: true });
+    // The opening framing restart() returns to: the file's default view
+    // direction at the fill distance, before any carried camera.
+    const opening = viewer.getCameraState();
     live = { viewer, view };
     applyState(carried);
     if (!active) viewer.setActive(false);
     const offRendered = viewer.onRendered(() => { offRendered(); resolveDrawn(); });
     cleanups.push(offRendered);
+    let turntable = null;
+    let lastMotionState = null;
+    const motionState = () => {
+      if (player && !reducedMotion) {
+        if (!player.started()) return "waiting";
+        const { status } = player.state();
+        return status === "done" ? "finished" : status === "playing" || status === "intro" ? "playing" : "stopped";
+      }
+      return turntable ? turntable.phase() : "stopped";
+    };
+    const motionChanged = () => {
+      if (disposed) return;
+      const now = motionState();
+      if (now === lastMotionState) return;
+      lastMotionState = now;
+      relay(motionListeners)(now);
+    };
     if (plays) {
       player = createPreviewPlayer(viewer, decoded.animation, { reducedMotion });
       const own = player;
       cleanups.push(() => own.dispose());
-      player.start();
+      cleanups.push(own.onChange(motionChanged));
+      if (opts.autostart) player.start();
+      else player.prime(); // drawn at the first frame, waiting for motion.start()
       if (!reducedMotion && toolbar) {
         const playButton = attachPreviewPlayButton(own, { toolbar, before: viewStyle.element }, { tooltip });
         cleanups.push(() => playButton.detach());
       }
     } else if (turns) {
-      cleanups.push(startTurntable(viewer, container, opts.turntable));
+      const own = turntable = createTurntable(viewer, container, opts.turntable, motionChanged);
+      cleanups.push(() => own.dispose());
+      if (opts.autostart) turntable.start();
     }
+    lastMotionState = motionState();
+    motion = {
+      get state() { return motionState(); },
+      start() {
+        if (disposed) return;
+        if (player) player.start(); // a no-op once started or under reduced motion
+        else turntable?.start();
+        motionChanged();
+      },
+      restart() {
+        if (disposed) return;
+        viewer.cancelCameraTween();
+        viewer.setCameraState(opening);
+        if (player) player.restart(); // nothing under reduced motion: the pose is already t = 0
+        else turntable?.restart();
+        motionChanged();
+      },
+      onChange(cb) {
+        if (disposed) return () => {};
+        motionListeners.add(cb);
+        return () => motionListeners.delete(cb);
+      },
+    };
   });
   ready.catch(rejectDrawn); // the host awaits it; never an unhandled rejection
 
@@ -293,6 +395,8 @@ export function mountPreview(container, options = {}) {
       rejectDrawn(new Error("mountPreview: disposed before the preview was drawn")); // a no-op once drawn
       live = null;
       player = null; // `animation` answers null once disposed (the cleanup below disposes it)
+      motion = null;
+      motionListeners.clear();
       const errors = [];
       while (cleanups.length) {
         try { cleanups.pop()(); } catch (error) { errors.push(error); }
@@ -305,6 +409,8 @@ export function mountPreview(container, options = {}) {
     get animation() {
       return player ? { state: player.state, pause: player.pause, resume: player.resume, replay: player.replay } : null;
     },
+    // null before ready and once disposed; present for every decoded file.
+    get motion() { return motion; },
     getViewerState,
     setViewerState(next) {
       carried = carry(next);
