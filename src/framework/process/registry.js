@@ -2,15 +2,22 @@
 // process is one folder under process/, one line here and one line in
 // process/exporters.js.
 //
-// Import-free apart from the descriptors and sheet/constants.js, for the same reason
+// Import-free apart from the descriptors, sheet/constants.js and the domain registry
+// (itself import-free apart from its manifests), for the same reason
 // the descriptors are: lint and the oracle read this file.
 import { isSheetPart } from "../sheet/constants.js";
 import { LASER } from "./laser/descriptor.js";
 import { ROUTER } from "./cnc-router/descriptor.js";
 import { FDM } from "./fdm/descriptor.js";
 import { RESIN } from "./resin/descriptor.js";
+import { DOMAINS } from "../domains/registry.js";
 
-export const PROCESSES = [LASER, ROUTER];
+// A domain (src/framework/domains/registry.js) contributes process descriptors under
+// its manifest's `processes`, each stamped `kind: "sheet" | "print"` (validateDomains
+// refuses one without). In-repo descriptors come first, then domains in registry order.
+const domainProcesses = (kind) => DOMAINS.flatMap((d) => d.processes.filter((p) => p.kind === kind));
+
+export const PROCESSES = [LASER, ROUTER, ...domainProcesses("sheet")];
 export const PROCESS_IDS = PROCESSES.map((d) => d.id);
 
 export const processById = (id) => PROCESSES.find((d) => d.id === id) ?? null;
@@ -29,7 +36,7 @@ export const PROCESS_LINT_RULES = PROCESSES.flatMap((d) => d.lintRules);
 // Print processes are their own list: PROCESSES stays the SHEET list (exporters,
 // destinations, SHEET_METRICS and sheet/part.js's PROCESS_IDS check all read it), so
 // fdm and resin never pass as a sheet part's process.
-export const PRINT_PROCESSES = [FDM, RESIN];
+export const PRINT_PROCESSES = [FDM, RESIN, ...domainProcesses("print")];
 export const PRINT_PROCESS_IDS = PRINT_PROCESSES.map((d) => d.id);
 export const ALL_PROCESSES = [...PROCESSES, ...PRINT_PROCESSES];
 

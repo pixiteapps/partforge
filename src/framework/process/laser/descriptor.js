@@ -994,6 +994,7 @@ const LASER_RULES = [{
 
 export const LASER = {
   id: "laser",
+  kind: "sheet",
   label: "Laser cutting",
   stock: "sheet",
   docId: SHEET_DOC_ID,

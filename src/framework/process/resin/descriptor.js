@@ -3,6 +3,7 @@
 // or bridge, and no costs. Import-free, like every process descriptor.
 export const RESIN = {
   id: "resin",
+  kind: "print",
   label: "Resin 3D printing",
   stock: "resin",
   docId: "printed-parts",
