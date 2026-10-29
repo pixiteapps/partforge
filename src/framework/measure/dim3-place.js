@@ -128,14 +128,20 @@ function scoreCandidate(ext, n, toCam) {
 // two clicks squared to; an edge is drawn in the parts frame, which is the
 // frame placeDims works in). Each candidate is an ext direction ⊥ the measured
 // direction `d`, built from a frame axis k: ±normalize(k − d·(k·d)). The dim
-// plane then holds d and k; when d ⊥ k the ext IS the frame axis.
+// plane then holds d and k. When some frame axis is square to d (|k·d| below
+// SQUARE_SNAP) only those axes are offered, and ext is the axis itself, so
+// ext lies ON a frame axis; only in general position (no such axis) does the
+// weaker "the dim plane holds d and a frame axis" rule apply.
+const SQUARE_SNAP = 1e-3;
 const frameAxesOf = (spec) => (spec.anchors.axes ?? AXES.map((a) => a.toArray())).map((k) => v3(k).normalize());
 
 function squareCandidates(d, axes, keep) {
   const out = [];
   axes.forEach((k, i) => {
     if (!keep(Math.abs(k.dot(d)), i)) return;
-    const e = k.clone().addScaledVector(d, -k.dot(d)).normalize();
+    const e = Math.abs(k.dot(d)) < SQUARE_SNAP
+      ? k.clone()
+      : k.clone().addScaledVector(d, -k.dot(d)).normalize();
     out.push({ key: `k${i}s1`, ext: e });
     out.push({ key: `k${i}s-1`, ext: e.clone().negate() });
   });
@@ -161,29 +167,30 @@ function spanCandidates(spec) {
         cands: boxCandidates(i).map((x) => ({ key: x.key, ext: axes[x.extAxis].clone().multiplyScalar(x.sign) })),
       };
     }
-    return { d: axis, cands: squareCandidates(axis, axes, (k) => k < 0.99) };
+    return { d: axis, cands: squareCandidates(axis, axes, squareKeep(axis, axes)) };
   }
   const d = b.clone().sub(a).normalize();
-  return { d, cands: squareCandidates(d, axes, (k) => k < 0.99) };
+  return { d, cands: squareCandidates(d, axes, squareKeep(d, axes)) };
 }
 
-// edge: ± the in-plane perpendicular of its owning face (placePlane's rule)
-// when the spec names one, else built from the frame axis least aligned with
-// the edge (every axis tied for least, so an axis-aligned edge offers both
-// perpendicular axes and the camera picks).
+// Which frame axes a span offers: only the ones square to d when any exist.
+function squareKeep(d, axes) {
+  return axes.some((k) => Math.abs(k.dot(d)) < SQUARE_SNAP) ? (k) => k < SQUARE_SNAP : (k) => k < 0.99;
+}
+
+// edge: ext is the frame axis least aligned with the edge, made perpendicular
+// to it. Every axis square to the edge (|k·d| below SQUARE_SNAP) is offered,
+// as the axis itself, so an axis-aligned edge offers both perpendicular axes
+// and the camera picks; in general position, the least-aligned axis alone.
 function edgeCandidates(spec) {
   const a = v3(spec.anchors.a), b = v3(spec.anchors.b);
   const d = b.clone().sub(a).normalize();
-  if (spec.anchors.normal) {
-    const perp = new THREE.Vector3().crossVectors(v3(spec.anchors.normal).normalize(), d);
-    if (perp.lengthSq() > 1e-12) {
-      perp.normalize();
-      return { d, cands: [{ key: "p+", ext: perp }, { key: "p-", ext: perp.clone().negate() }] };
-    }
-  }
   const axes = frameAxesOf(spec);
+  if (axes.some((k) => Math.abs(k.dot(d)) < SQUARE_SNAP)) {
+    return { d, cands: squareCandidates(d, axes, (k) => k < SQUARE_SNAP) };
+  }
   const least = Math.min(...axes.map((k) => Math.abs(k.dot(d))));
-  return { d, cands: squareCandidates(d, axes, (k) => k <= least + 1e-6) };
+  return { d, cands: squareCandidates(d, axes, (k) => k <= least + 1e-9) };
 }
 
 const scoreSquare = (d, cands, toCam) => cands.map((c) => ({
