@@ -248,7 +248,7 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
       const key = matFor(d.tier);
       for (const dim of d.dims ?? []) {
         const dir = new THREE.Vector3(...dim.dir);
-        const ext = new THREE.Vector3(...dim.ext);
+        const ext = new THREE.Vector3(...dim.ext).normalize();
         dimRecs.push({
           pA: new THREE.Vector3(...dim.pA), pB: new THREE.Vector3(...dim.pB),
           baseA: new THREE.Vector3(...dim.baseA), baseB: new THREE.Vector3(...dim.baseB),
@@ -348,24 +348,30 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
         const off = (STANDOFF_SCREEN_PX * R.standoffScale + R.lane * STAGGER_SCREEN_PX) * wpp;
         _dA.copy(R.baseA).addScaledVector(R.ext, off);
         _dB.copy(R.baseB).addScaledVector(R.ext, off);
-        _uA.copy(_dA).sub(R.pA);
-        if (_uA.lengthSq() > 1e-12) _uA.normalize(); else _uA.copy(R.ext);
-        _uB.copy(_dB).sub(R.pB);
-        if (_uB.lengthSq() > 1e-12) _uB.normalize(); else _uB.copy(R.ext);
+        // Extension lines run along R.ext from pA/pB — a gap off the part,
+        // then out to the dim line's level — never toward dA: placeDims emits
+        // square records (pA − baseA along ext), and this keeps an old or
+        // hand-built record square on screen too. The tails overshoot along
+        // ext from the extension line's end.
+        const tA = _uA.copy(_dA).sub(R.pA).dot(R.ext);
+        const tB = _uB.copy(_dB).sub(R.pB).dot(R.ext);
+        const sA = tA < 0 ? -1 : 1, sB = tB < 0 ? -1 : 1;
+        _uA.copy(R.pA).addScaledVector(R.ext, tA); // ext A's end, level with the dim line
+        _uB.copy(R.pB).addScaledVector(R.ext, tB);
         let i = 0;
-        _p.copy(R.pA).addScaledVector(_uA, gap);
+        _p.copy(R.pA).addScaledVector(R.ext, sA * gap);
         _seg[i++] = _p.x; _seg[i++] = _p.y; _seg[i++] = _p.z;
-        _seg[i++] = _dA.x; _seg[i++] = _dA.y; _seg[i++] = _dA.z;
-        _p.copy(R.pB).addScaledVector(_uB, gap);
+        _seg[i++] = _uA.x; _seg[i++] = _uA.y; _seg[i++] = _uA.z;
+        _p.copy(R.pB).addScaledVector(R.ext, sB * gap);
         _seg[i++] = _p.x; _seg[i++] = _p.y; _seg[i++] = _p.z;
-        _seg[i++] = _dB.x; _seg[i++] = _dB.y; _seg[i++] = _dB.z;
+        _seg[i++] = _uB.x; _seg[i++] = _uB.y; _seg[i++] = _uB.z;
         _seg[i++] = _dA.x; _seg[i++] = _dA.y; _seg[i++] = _dA.z;
         _seg[i++] = _dB.x; _seg[i++] = _dB.y; _seg[i++] = _dB.z;
-        _p.copy(_dA).addScaledVector(_uA, tail);
-        _seg[i++] = _dA.x; _seg[i++] = _dA.y; _seg[i++] = _dA.z;
+        _p.copy(_uA).addScaledVector(R.ext, sA * tail);
+        _seg[i++] = _uA.x; _seg[i++] = _uA.y; _seg[i++] = _uA.z;
         _seg[i++] = _p.x; _seg[i++] = _p.y; _seg[i++] = _p.z;
-        _p.copy(_dB).addScaledVector(_uB, tail);
-        _seg[i++] = _dB.x; _seg[i++] = _dB.y; _seg[i++] = _dB.z;
+        _p.copy(_uB).addScaledVector(R.ext, sB * tail);
+        _seg[i++] = _uB.x; _seg[i++] = _uB.y; _seg[i++] = _uB.z;
         _seg[i++] = _p.x; _seg[i++] = _p.y; _seg[i++] = _p.z;
         writeSegments(R.line, _seg);
         R.arrowA.position.copy(_dA);

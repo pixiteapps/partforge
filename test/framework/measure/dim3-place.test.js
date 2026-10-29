@@ -5,6 +5,8 @@ import {
   HYSTERESIS, FLIP_DEADBAND_DEG, standoffNominal,
 } from "../../../src/framework/measure/dim3-place.js";
 import { bboxSpec } from "../../../src/framework/measure/feature-dims.js";
+import { spanSpec } from "../../../src/framework/measure/readings.js";
+import { expectSquareDim, cross, dot, norm } from "./drawing-rules.js";
 
 // a 10×20×30 box as a soup of its 8 corners (enough for extreme scans)
 function boxMeshData(min = [0, 0, 0], max = [10, 20, 30]) {
@@ -209,7 +211,7 @@ describe("placeDims — bbox", () => {
     expect(dim.dir[1]).toBeCloseTo(0, 6);
   });
 
-  it("anchors extension lines at the surfaceHit point, snapped onto the dim plane", () => {
+  it("anchors extension lines at the surfaceHit point's level along ext, square to the dim", () => {
     const items = [overallItem()];
     const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
     // deliberately off the X dim's plane (y=99, nowhere near the box)
@@ -220,9 +222,17 @@ describe("placeDims — bbox", () => {
       bounds: { min: [0, 0, 0], max: [10, 20, 30] },
     }, choices)[0];
     const dim = d.dims[0];
-    expect(dim.pA[0]).toBeCloseTo(2, 6); // the hit, not the bbox corner
-    expect(dim.pA[1]).toBeCloseTo(dim.baseA[1], 6); // snapped back onto the plane
+    // ext is +Z (e2s1), base A sits at the top face (z = 30). The anchor takes
+    // the hit's level along ext (z = 0), not the bbox corner's (z = 30), but
+    // stays on base A's ext line: x is the dim's own x (0, not the hit's 2)
+    // and y is the dim plane's (not the hit's 99) — the hit can only slide an
+    // anchor along its extension line, never tilt it.
+    expect(dim.ext).toEqual([0, 0, 1]);
+    expect(dim.pA[2]).toBeCloseTo(0, 6);
+    expect(dim.pA[0]).toBeCloseTo(dim.baseA[0], 6);
+    expect(dim.pA[1]).toBeCloseTo(dim.baseA[1], 6);
     expect(dim.pA[1]).not.toBeCloseTo(99, 3);
+    expectSquareDim(dim);
   });
 
   it("formats labels in inches on request; values stay mm for matching", () => {
@@ -348,5 +358,85 @@ describe("extremeVertex — scan reuse", () => {
     const md = boxMeshData(); // 8 corners: every extreme is a 4-way tie
     expect(extremeVertex(md, 0, +1, new THREE.Vector3(10, 0, 0)).toArray()).toEqual([10, 0, 0]);
     expect(extremeVertex(md, 0, +1, new THREE.Vector3(10, 20, 30)).toArray()).toEqual([10, 20, 30]);
+  });
+});
+
+describe("placeDims — edge and span", () => {
+  const BOUNDS = { min: [0, 0, 0], max: [40, 40, 40] };
+  const placeOne = (spec, camPos, center = [15, 2, 0.5]) => {
+    const item = { id: "r", tier: "pinned", pinned: true, spec };
+    const choices = evaluateChoices([item], { camPos, center, prev: {} });
+    return { drawings: placeDims([item], { bounds: BOUNDS }, choices), choices };
+  };
+
+  it("span: axis-aligned dim lies on a parts axis", () => {
+    const spec = spanSpec([0, 0, 0], [30, 4, 1]);
+    for (const cam of [[15, -100, 0], [15, 2, 100], [-80, 60, 40]]) {
+      const { drawings, choices } = placeOne(spec, cam);
+      expect(choices["r|span"]).toBeDefined();
+      const dims = drawings[0].dims;
+      expect(dims.length).toBe(1);
+      expectSquareDim(dims[0]);
+      expect(dims[0].label.value).toBe(30);
+      expect(dims[0].label.text).toBe("30.00 mm");
+      expect(Math.abs(dims[0].dir[0])).toBeCloseTo(1, 9); // measured along X
+      expect(dims[0].standoffScale).toBeCloseTo(0.55, 9);
+      // the dim line runs between the two points' X coordinates
+      expect(dims[0].baseA[0]).toBeCloseTo(0, 9);
+      expect(dims[0].baseB[0]).toBeCloseTo(30, 9);
+    }
+  });
+
+  it("span: the measured axis may point away from b (signed component)", () => {
+    // a parallel-face gap whose first normal faces away from the second point
+    const spec = spanSpec([0, 0, 10], [3, 2, 0], { faceNormals: [[0, 0, 1], [0, 0, -1]] });
+    expect(spec.anchors.axis).toEqual([0, 0, 1]);
+    const { drawings } = placeOne(spec, [100, -50, 5]);
+    const dim = drawings[0].dims[0];
+    expectSquareDim(dim);
+    expect(dim.label.value).toBe(10);
+    expect(dim.baseB[2] - dim.baseA[2]).toBeCloseTo(-10, 9);
+  });
+
+  it("span: straight dim reads the true distance and stays square to a frame axis", () => {
+    const spec = spanSpec([0, 0, 0], [30, 40, 0], { straight: true });
+    // a camera square to the line in XY: the dim plane holding Z faces it
+    const { drawings, choices } = placeOne(spec, [15 - 80, 20 + 60, 20], [15, 20, 0]);
+    expect(choices["r|span"].key).toMatch(/^k2/);
+    const dim = drawings[0].dims[0];
+    expect(dim.label.value).toBe(50);
+    expectSquareDim(dim);
+    // every candidate keeps a frame axis in the dim plane
+    const d = norm([30, 40, 0]);
+    for (const cam of [[15, 20, 100], [100, 20, 0], [15, -100, 0], [-60, 80, 30]]) {
+      const r = placeOne(spec, cam, [15, 20, 0]).drawings[0].dims[0];
+      expect(r.label.value).toBe(50);
+      const n = norm(cross(r.dir, r.ext));
+      expect(Math.abs(dot(norm(r.dir), d))).toBeCloseTo(1, 9);
+      expect(Math.abs(dot(norm(r.ext), d))).toBeLessThan(1e-9);
+      expect([[1, 0, 0], [0, 1, 0], [0, 0, 1]].some((k) => Math.abs(dot(k, n)) < 1e-9)).toBe(true);
+    }
+  });
+
+  it("edge: one dim, its length", () => {
+    const spec = { kind: "edge", values: { length: 25 }, anchors: { a: [5, 0, 2], b: [30, 0, 2] } };
+    for (const cam of [[15, -100, 2], [15, 0, 100]]) {
+      const { drawings } = placeOne(spec, cam, [17, 0, 2]);
+      expect(drawings.length).toBe(1);
+      const dims = drawings[0].dims;
+      expect(dims.length).toBe(1);
+      expect(dims[0].label.value).toBe(25);
+      expect(dims[0].pA).toEqual([5, 0, 2]);
+      expect(dims[0].pB).toEqual([30, 0, 2]);
+      expectSquareDim(dims[0]);
+    }
+  });
+
+  it("edge: a sloped edge in a coordinate plane hangs its dim along the square axis", () => {
+    const spec = { kind: "edge", values: { length: 50 }, anchors: { a: [0, 0, 0], b: [30, 0, 40] } };
+    const { drawings } = placeOne(spec, [15, -100, 20], [15, 0, 20]);
+    const dim = drawings[0].dims[0];
+    expectSquareDim(dim);
+    expect(Math.abs(dim.ext[1])).toBeCloseTo(1, 9);
   });
 });

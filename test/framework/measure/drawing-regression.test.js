@@ -4,8 +4,10 @@
 // geometry — classifyFeature → the orchestrator's transformSpec posing →
 // evaluateChoices → placeDims — and holds every linear dim to expectSquareDim.
 //
-// RESULTS (Task 1, before any fix). Cases marked `test.fails` reproduce the
-// bug today; Task 4 flips them to `test`.
+// RESULTS (Task 1, before any fix). Cases 1, 2a and 3 reproduced the bug
+// (they were `test.fails`); Task 4 fixed both causes — linearDim now projects
+// every anchor onto its base point's ext line, and planeSpec takes `u` from
+// the longest BOUNDARY edge — and flipped them to plain `test`.
 //
 //  1. bbox overall dim with a real surfaceHit — FAILS, extension lines not
 //     parallel. linearDim (dim3-place.js) nudges each raycast origin 0.05 mm
@@ -129,7 +131,7 @@ const CAM = [80, -120, 90];
 
 // ---- cases -------------------------------------------------------------------
 
-test.fails("1. bbox overall dim with a real surfaceHit draws parallel extension lines", () => {
+test("1. bbox overall dim with a real surfaceHit draws parallel extension lines", () => {
   const scene = sceneWith(featureBox(40, 20, 10));
   const bounds = posedBounds(scene.mesh);
   const item = { id: "overall", tier: "static", spec: bboxSpec(bounds.min, bounds.max), meshes: [0] };
@@ -139,7 +141,7 @@ test.fails("1. bbox overall dim with a real surfaceHit draws parallel extension 
   for (const dim of dims) expectSquareDim(dim);
 });
 
-test.fails("2a. sub-part posed 30° about Z: its bbox dims are square to the parts frame", () => {
+test("2a. sub-part posed 30° about Z: its bbox dims are square to the parts frame", () => {
   const pose = new THREE.Matrix4().makeRotationZ(Math.PI / 6).setPosition(5, -3, 2);
   const scene = sceneWith(featureBox(40, 20, 10), pose);
   scene.mesh.geometry.computeBoundingBox();
@@ -172,13 +174,16 @@ test("2b. sub-part posed 30° about Z: a plane feature is square to the posed su
   }
 });
 
-test.fails("3. a plane feature tilted 30° off the axes is drawn in the face's own frame", () => {
+test("3. a plane feature tilted 30° off the axes is drawn in the face's own frame", () => {
   const tilt = new THREE.Matrix4().makeRotationX(Math.PI / 6);
   const geo = featureBox(40, 20, 10).applyMatrix4(tilt);
   const scene = sceneWith(geo);
   const bounds = posedBounds(scene.mesh);
   const raw = specOf(geo, FACE.pz);
   expect(raw.kind).toBe("plane");
+  // the face reads its real size, not its diagonal
+  expect(raw.values.width).toBeCloseTo(40, 2);
+  expect(raw.values.height).toBeCloseTo(20, 2);
   // the face's own frame: its two edge directions and its normal
   const u = new THREE.Vector3(1, 0, 0).applyMatrix4(tilt).toArray();
   const v = new THREE.Vector3(0, 1, 0).applyMatrix4(tilt).toArray();

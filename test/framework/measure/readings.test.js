@@ -84,6 +84,18 @@ describe("spanSpec", () => {
   });
 });
 
+describe("spanSpec does not share mutable frame arrays", () => {
+  test("mutating one span's axis/axes leaves the next span intact", () => {
+    const first = spanSpec([0, 0, 0], [30, 4, 1]);
+    first.anchors.axis[0] = 99;
+    first.anchors.axes[1][1] = 99;
+    first.anchors.axes.push([7, 7, 7]);
+    const next = spanSpec([0, 0, 0], [30, 4, 1]);
+    expect(next.anchors.axis).toEqual([1, 0, 0]);
+    expect(next.anchors.axes).toEqual(PARTS);
+  });
+});
+
 describe("frameAxesFor", () => {
   test("different sub-parts use the parts frame even if one is rotated", () => {
     expect(frameAxesFor("a", "b", rotated30)).toEqual(PARTS);

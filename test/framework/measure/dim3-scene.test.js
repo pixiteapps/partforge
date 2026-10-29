@@ -128,6 +128,30 @@ describe("createDimScene", () => {
     expect(label.scale.x).toBeCloseTo(hStar / 2, 6);
   });
 
+  it("extension lines are drawn along ext", () => {
+    const viewer = fakeViewer();
+    const scene = createDimScene(viewer, { paintLabel: fakePaint });
+    // pA − baseA is NOT along ext: an old or hand-built skewed record
+    const skewed = {
+      ...DRAWING,
+      dims: [{ ...DRAWING.dims[0], pA: [0.3, 2, 0], pB: [9.6, 2, 0.4] }],
+    };
+    scene.update([skewed]);
+    viewer.__parts.updateMatrixWorld(true);
+    scene.tick();
+    const arr = scene.group.children.find((k) => k.isLineSegments2)
+      .geometry.attributes.instanceStart.data.array;
+    const ext = [0, -1, 0];
+    // segments 0 (ext A), 1 (ext B), 3 (tail A), 4 (tail B)
+    for (const s of [0, 1, 3, 4]) {
+      const o = s * 6;
+      const d = [arr[o + 3] - arr[o], arr[o + 4] - arr[o + 1], arr[o + 5] - arr[o + 2]];
+      const l = Math.hypot(...d);
+      expect(l).toBeGreaterThan(0);
+      for (let i = 0; i < 3; i++) expect(Math.abs(d[i] / l - ext[i])).toBeLessThan(1e-6);
+    }
+  });
+
   it("staggers lanes by STAGGER_SCREEN_PX and scales feature standoff", () => {
     const viewer = fakeViewer();
     const scene = createDimScene(viewer, { paintLabel: fakePaint });

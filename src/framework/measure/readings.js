@@ -63,7 +63,9 @@ export function spanSpec(a, b, { axes = PARTS_AXES, straight = false, faceNormal
   return {
     kind: "span",
     values: { distance: q2(distance) },
-    anchors: { a, b, axis, axes, straight: !!straight },
+    // copies: `axis` may be one of PARTS_AXES' inner arrays, and a caller
+    // mutating a spec must not corrupt every later span
+    anchors: { a, b, axis: [...axis], axes: axes.map((v) => [...v]), straight: !!straight },
   };
 }
 

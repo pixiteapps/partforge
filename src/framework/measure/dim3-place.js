@@ -123,6 +123,74 @@ function scoreCandidate(ext, n, toCam) {
   return Math.abs(n.dot(toCam)) + 0.15 * Math.max(0, ext.dot(toCam));
 }
 
+// --- candidate sides for a two-click span or a straight edge -----------------
+// Both are measured in a frame (a span carries its own `axes`, the frame its
+// two clicks squared to; an edge is drawn in the parts frame, which is the
+// frame placeDims works in). Each candidate is an ext direction ⊥ the measured
+// direction `d`, built from a frame axis k: ±normalize(k − d·(k·d)). The dim
+// plane then holds d and k; when d ⊥ k the ext IS the frame axis.
+const frameAxesOf = (spec) => (spec.anchors.axes ?? AXES.map((a) => a.toArray())).map((k) => v3(k).normalize());
+
+function squareCandidates(d, axes, keep) {
+  const out = [];
+  axes.forEach((k, i) => {
+    if (!keep(Math.abs(k.dot(d)), i)) return;
+    const e = k.clone().addScaledVector(d, -k.dot(d)).normalize();
+    out.push({ key: `k${i}s1`, ext: e });
+    out.push({ key: `k${i}s-1`, ext: e.clone().negate() });
+  });
+  return out;
+}
+
+// span: { d, cands }. Not straight, measured along a frame axis: the box
+// candidates in the span's own axes (± the other two). Not straight but along
+// a face normal off the frame (a gap between tilted parallel faces), or
+// straight: the square candidates. `d` keeps the axis' sign as given — a gap's
+// axis is the first face's normal, which can point away from b.
+function spanCandidates(spec) {
+  const axes = frameAxesOf(spec);
+  const a = v3(spec.anchors.a), b = v3(spec.anchors.b);
+  if (!spec.anchors.straight && spec.anchors.axis) {
+    const axis = v3(spec.anchors.axis).normalize();
+    let i = 0;
+    for (let j = 1; j < 3; j++) if (Math.abs(axes[j].dot(axis)) > Math.abs(axes[i].dot(axis))) i = j;
+    const c = axes[i].dot(axis);
+    if (Math.abs(c) > 1 - 1e-6) {
+      return {
+        d: axes[i].clone().multiplyScalar(Math.sign(c)),
+        cands: boxCandidates(i).map((x) => ({ key: x.key, ext: axes[x.extAxis].clone().multiplyScalar(x.sign) })),
+      };
+    }
+    return { d: axis, cands: squareCandidates(axis, axes, (k) => k < 0.99) };
+  }
+  const d = b.clone().sub(a).normalize();
+  return { d, cands: squareCandidates(d, axes, (k) => k < 0.99) };
+}
+
+// edge: ± the in-plane perpendicular of its owning face (placePlane's rule)
+// when the spec names one, else built from the frame axis least aligned with
+// the edge (every axis tied for least, so an axis-aligned edge offers both
+// perpendicular axes and the camera picks).
+function edgeCandidates(spec) {
+  const a = v3(spec.anchors.a), b = v3(spec.anchors.b);
+  const d = b.clone().sub(a).normalize();
+  if (spec.anchors.normal) {
+    const perp = new THREE.Vector3().crossVectors(v3(spec.anchors.normal).normalize(), d);
+    if (perp.lengthSq() > 1e-12) {
+      perp.normalize();
+      return { d, cands: [{ key: "p+", ext: perp }, { key: "p-", ext: perp.clone().negate() }] };
+    }
+  }
+  const axes = frameAxesOf(spec);
+  const least = Math.min(...axes.map((k) => Math.abs(k.dot(d))));
+  return { d, cands: squareCandidates(d, axes, (k) => k <= least + 1e-6) };
+}
+
+const scoreSquare = (d, cands, toCam) => cands.map((c) => ({
+  key: c.key,
+  score: scoreCandidate(c.ext, new THREE.Vector3().crossVectors(d, c.ext).normalize(), toCam),
+}));
+
 // Hold the previous choice unless a challenger beats it by HYSTERESIS — and
 // by an absolute margin too: near-degenerate views score every candidate close
 // to zero, where a multiplicative margin is meaningless and tiny camera moves
@@ -169,6 +237,11 @@ export function evaluateChoices(items, { camPos, center, prev = {} }) {
         ];
         choices[ck] = { key: chooseWithHysteresis(scored, prev[ck]?.key).key };
       }
+    } else if (spec.kind === "span" || spec.kind === "edge") {
+      const { d, cands } = spec.kind === "span" ? spanCandidates(spec) : edgeCandidates(spec);
+      if (!cands.length || !(d.lengthSq() > 0.5)) continue;
+      const ck = `${item.id}|${spec.kind}`;
+      choices[ck] = { key: chooseWithHysteresis(scoreSquare(d, cands, toCam), prev[ck]?.key).key };
     } else if (spec.kind === "cylinder") {
       // ⌀/R direction: radial component of the view direction, re-aimed only
       // past the deadband so the drawing doesn't chase every orbit degree.
@@ -321,7 +394,9 @@ export function extremeVertex(meshData, axis, sign, near) {
 // walking from the nominal endpoint back toward the part (ray nudged 0.05 mm
 // inside the extreme plane so a grazing ray on the extreme face registers);
 // otherwise (feature dims — anchors already ON the surface) it starts at the
-// anchor.
+// anchor. Either way the final anchor is projected onto its base point's ext
+// line, so every record is square: pA − baseA and pB − baseB lie along `ext`.
+// `ext` must be a unit vector perpendicular to baseB − baseA.
 function linearDim(out, {
   pA, pB, baseA, baseB, nomA, nomB, ext, lane, standoffScale = 1,
   text, value, surfaceHit, planeAxis, planeC,
@@ -338,6 +413,15 @@ function linearDim(out, {
       if (planeAxis != null) start.setComponent(planeAxis, planeC); // stay exactly coplanar
       anchors[i] = start;
     }
+  });
+  // Square drawing: each anchor slides onto the line through its base point
+  // along `ext`. A surface hit (or a tie-broken extreme vertex) can then only
+  // move an anchor ALONG its extension line, never tilt it — the 0.05 mm
+  // inward nudge above used to leave pA − baseA with a component along the
+  // dim line, and zoomed in the two extension lines leaned toward each other.
+  [baseA, baseB].forEach((base, i) => {
+    const p = anchors[i];
+    anchors[i] = base.clone().addScaledVector(ext, p.clone().sub(base).dot(ext));
   });
   out.dims.push({
     pA: anchors[0].toArray(), pB: anchors[1].toArray(),
@@ -477,6 +561,45 @@ function placeCylinder(out, item, spec, choices, { lanes, unit }) {
   }
 }
 
+// Two clicks: one dim along the span's measuring direction. Base points sit in
+// the first point's plane — b is projected along that plane's normal
+// n = d × ext, as placeBox's plane snap does — and the line is offset along
+// ext to clear the farther of the two points.
+function placeSpan(out, item, spec, choices, { lanes, unit }) {
+  const { d, cands } = spanCandidates(spec);
+  if (!cands.length || !(d.lengthSq() > 0.5)) return;
+  const c = cands.find((x) => x.key === choices[`${item.id}|span`]?.key) ?? cands[0];
+  const ext = c.ext.clone();
+  const a = v3(spec.anchors.a), b = v3(spec.anchors.b);
+  const n = new THREE.Vector3().crossVectors(d, ext).normalize();
+  const bp = b.clone().addScaledVector(n, -b.clone().sub(a).dot(n));
+  const t = bp.clone().sub(a).dot(d); // signed: the axis may point away from b
+  if (Math.abs(t) < 1e-9) return;
+  const o = Math.max(0, bp.clone().sub(a).dot(ext));
+  const baseA = a.clone().addScaledVector(ext, o);
+  const baseB = baseA.clone().addScaledVector(d, t);
+  linearDim(out, {
+    pA: a, pB: bp, baseA, baseB, nomA: a, nomB: bp, ext,
+    lane: laneFor(lanes, ext), standoffScale: 0.55,
+    text: `${unit.format(spec.values.distance)}${unit.suffix}`, value: spec.values.distance, surfaceHit: null,
+  });
+}
+
+// One click on a straight edge: one dim from end to end, hugging the edge.
+function placeEdge(out, item, spec, choices, { lanes, unit }) {
+  if (!(spec.values.length > 1e-6)) return;
+  const { d, cands } = edgeCandidates(spec);
+  if (!cands.length || !(d.lengthSq() > 0.5)) return;
+  const c = cands.find((x) => x.key === choices[`${item.id}|edge`]?.key) ?? cands[0];
+  const ext = c.ext.clone();
+  const a = v3(spec.anchors.a), b = v3(spec.anchors.b);
+  linearDim(out, {
+    pA: a, pB: b, baseA: a.clone(), baseB: b.clone(), nomA: a, nomB: b, ext,
+    lane: laneFor(lanes, ext), standoffScale: 0.55,
+    text: `${unit.format(spec.values.length)}${unit.suffix}`, value: spec.values.length, surfaceHit: null,
+  });
+}
+
 // --- entry point --------------------------------------------------------------
 export function placeDims(items, { meshData = [], surfaceHit = null, bounds, suppress = null, lanes: laneSeed = null, units = "mm" }, choices) {
   const size = bounds
@@ -517,6 +640,10 @@ export function placeDims(items, { meshData = [], surfaceHit = null, bounds, sup
       placePlane(out, item, spec, choices, { lanes, unit });
     } else if (spec.kind === "cylinder") {
       placeCylinder(out, item, spec, choices, { lanes, unit });
+    } else if (spec.kind === "span") {
+      placeSpan(out, item, spec, choices, { lanes, unit });
+    } else if (spec.kind === "edge") {
+      placeEdge(out, item, spec, choices, { lanes, unit });
     }
     if (out.dims.length || out.diams.length || out.leaders.length) drawings.push(out);
   });
