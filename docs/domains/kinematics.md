@@ -36,7 +36,8 @@ it actually did, which includes clamps and misses.
 2. **Pose.** `limb.pose(opts, frames?)` returns a posed limb. You can call it as many
    times as necessary.
 3. **Output.** The posed limb has `place(solid, joint)`, `world(joint)`, `frames`,
-   `values` and `report`.
+   `values` and `report`, and `flesh()` and `attach()` for a `k.implicit` body (see
+   "Organic bodies").
 
 ```js
 const index = limb("index", {
@@ -74,7 +75,7 @@ posed.world("pip");           // { origin: [-30, 122.997, -30.174], x: [1, 0, 0]
 | `bendToward` | The side a positive bend curls toward. Required unless you use `rotate`. |
 | `at` | The base joint's position, in the parent frame (or part coordinates). Default `[0, 0, 0]`. |
 | `parent` | The name of a frame the limb hangs from. Omit it for part coordinates. See "Limbs on a parent frame". |
-| `r` | Radii, one per joint and then the tip (`joints.length + 1` entries). Only `grip` uses them. |
+| `r` | Radii, one per joint and then the tip (`joints.length + 1` entries). Only `grip`, `flesh` and `attach` use them. |
 | `mirror` | `"XY"`, `"XZ"` or `"YZ"`: reflects the limb. See "Mirroring". |
 | `rotate` | The escape hatch: raw rotate steps for the base frame, in place of `toward`/`bendToward`. |
 
@@ -217,6 +218,8 @@ index.pose({ reach: [-30, 160, -20] }).report;
   - **A distance function** is `(x, y, z) => mm`: the signed distance to the surface,
     negative inside. It must be pure and return a finite number at every point. Use one
     for any shape beyond that list (a blended union, a warp, your own formula).
+    `implicitDistance(node)` from `partforge/geometry` makes one from any `k.implicit`
+    node (see "Organic bodies").
 - **`r`** is the limb's radius per joint and then the tip. The default is the limb's
   own `r`. Without either, `grip` throws.
 - **`clearance`** is the gap to leave between the limb and the surface, in mm. A
@@ -298,7 +301,8 @@ finger.pose({ curl: 0.5 }, { palm: { at: [0, 0, 10] } }).report.tip;  // [-30, 1
 
 `posed.frames` is one plain frame per joint (`index.mcp`, …) plus `index.tip`. Each
 frame is `{ parent?, at, rotate? }`. The base frame has a `parent` only when the limb
-has one. These are the same frames that `place` and `world` use.
+has one. These are the same frames that `place` and `world` use, and they go straight
+into a `k.implicit` spec (see "Organic bodies").
 
 ## Mirroring
 
@@ -355,6 +359,75 @@ parts: {
     views: { assembly: (s, p, d) => d.finger.place(s, "pip") },
   },
 },
+```
+
+## Organic bodies
+
+For a body built with `k.implicit` (a hand, a paw, a creature's leg), the limb writes the
+spec's frames, flesh and joins for you. It still builds no geometry: `frames`, `flesh()`
+and `attach()` are plain data that you put in the spec, and `k.implicit` validates and
+meshes it. See `docs/AUTHORING-PARTS.md` for the `k.implicit` grammar.
+
+- **`posed.frames`** are in `k.implicit`'s own frame shape. Put them in the spec's
+  `frames` with the parent frame they hang from: `{ ...palmFrames, ...posed.frames }`.
+  A node with `frame: "index.pip"` then sits in that joint's frame (its joint at the
+  origin, along +Y). `k.implicitFrames(spec).report()` reports each of these frames with
+  the same numbers that `posed.world(joint)` gives.
+- **`posed.flesh({ r?, blend?, label? })`** is a `union` with `k: blend` of one tapered
+  capsule per segment. Each capsule is in its joint's frame, runs from the joint to the
+  next joint (or the tip), tapers from that joint's radius to the next one, and is
+  labelled with the joint's frame name. A zero-length segment gets no capsule. `r`
+  defaults to the limb's own `r`, and `label` to the limb's name. Without an `r`, it
+  throws.
+- **`posed.attach(label, { k?, radius?, band?, r?, a? })`** is a contact `attach` entry
+  that joins the flesh (labelled `a`, default the limb's name) to the piece labelled
+  `label`, near the base joint. `radius` defaults to a third of the first segment that
+  is not zero-length. `band` defaults to 3 mm × `r[0]` / 9.5, from `r` or the limb's own
+  `r`. Without either `band` or an `r`, it throws.
+
+```js
+const palmFrames = { palm: { at: [0, 0, 0] } };
+const onPalm = limb("index", {
+  parent: "palm", at: [-30, 96, 2], toward: [0, 1, 0], bendToward: [0, 0, -1],
+  joints: ["mcp", "pip", "dip"], lengths: [42, 25, 22], r: [9.5, 8.5, 7.4, 6.4],
+});
+const curled = onPalm.pose({ curl: 0.4 }, palmFrames);
+curled.flesh({ blend: 3 });
+// { kind: "union", k: 3, label: "index", children: [
+//   { kind: "capsule", frame: "index.mcp", b: [0, 42, 0], r: [9.5, 8.5], label: "index.mcp" },
+//   { kind: "capsule", frame: "index.pip", b: [0, 25, 0], r: [8.5, 7.4], label: "index.pip" },
+//   { kind: "capsule", frame: "index.dip", b: [0, 22, 0], r: [7.4, 6.4], label: "index.dip" } ] }
+curled.attach("palm", { k: 8 });   // { a: "index", b: "palm", near: "index.mcp", radius: 14, band: 3, k: 8 }
+
+// In build, with the posed limb from derive: a palm and a finger, joined by a contact.
+const hand = k.implicit({
+  frames: { ...palmFrames, ...curled.frames },
+  root: {
+    kind: "contact", gap: 0, attach: [curled.attach("palm", { k: 8 })],
+    children: [
+      { kind: "box", frame: "palm", size: [80, 100, 26], round: 8, label: "palm" },
+      curled.flesh({ blend: 3 }),
+    ],
+  },
+});
+```
+
+Pose the limb in `derive`, as for solid links. But a `k.implicit` body is one solid, not
+a set of placed links, so a pose change rebuilds it: there is no fast path for its pose.
+
+**Gripping an organic shape.** `grip.around` takes the plain shapes listed under "grip".
+For any other `k.implicit` node (a blended union, a warp, a `round`), pass
+`implicitDistance(node)` from `partforge/geometry`. It is the implicit engine's own
+distance function for that node, in part coordinates, so the node must not name a
+`frame`:
+
+```js
+import { implicitDistance } from "partforge/geometry";
+
+const handle = { kind: "union", k: 4, children: [rod, { kind: "sphere", r: 12, at: [-30, 130, -22] }] };
+index.pose({ grip: { around: implicitDistance(handle) } }).report.grip;
+// { touching: true, gap: 0, joints: [{ joint: "mcp", bend: 5.506, touched: true },
+//                                    { joint: "pip", bend: 35.421, touched: true }] }
 ```
 
 ## The report
@@ -414,7 +487,7 @@ limb "x".bendToward: must not be parallel to toward
 limb "x".lengths: expected 2 entries, got 1
 limb "index": reach needs the frames declared so far — pass them as pose(…, frames)
 limb "index": place: unknown joint "pipp"
-limb "index".grip.around: node kind "twist" needs the implicit engine — pass a distance function (x, y, z) => mm instead
+limb "index".grip.around: node kind "twist" needs the implicit engine — pass a distance function (x, y, z) => mm instead — implicitDistance(node) from partforge/geometry makes one
 limb "index".grip.around: distance function returned a non-finite value at [-30, 96, 2]
 ```
 

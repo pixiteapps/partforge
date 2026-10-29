@@ -90,17 +90,36 @@ describe("implicitDistance on what only the engine knows", () => {
     expect(() => implicitDistance({ kind: "sphere", r: 5, frame: "nope" })).toThrow(ImplicitSpecError);
   });
 
-  it("grip closes on a blended shape through implicitDistance", () => {
-    const rod = { kind: "cylinder", r: 12, h: 120, at: [0, 60, -25], axis: "x" };
-    const around = implicitDistance({ kind: "union", k: 3, children: [rod, { kind: "sphere", r: 6, at: [40, 60, -25] }] });
+  it("grip closes on a blended shape through implicitDistance, touching the blend itself", () => {
+    // Two spheres either side of the finger's bend plane (x = -30): the finger sweeps between
+    // them clear of both, so the only thing it can touch is the bridge the blend builds.
+    const spheres = [{ kind: "sphere", r: 6, at: [-44, 125, -25] }, { kind: "sphere", r: 6, at: [-16, 125, -25] }];
+    const blended = implicitDistance({ kind: "union", k: 40, children: spheres });
+    const plain = distanceFor({ kind: "union", children: spheres });
+    const r = [3, 3, 3, 3];
     const L = limb("index", {
-      parent: "palm", at: [-30, 96, 2], rotate: [{ axis: "z", deg: 8 }],
-      joints: ["mcp", "pip", "dip"].map((n) => ({ name: n, range: [-180, 180] })),
+      parent: "palm", at: [-30, 96, 2], toward: [0, 1, 0], bendToward: [0, 0, -1],
+      joints: ["mcp", "pip", "dip"].map((n) => ({ name: n, range: [0, 120] })),
       lengths: [42, 25, 22],
     });
-    const posed = L.pose({ curl: 0, grip: { around, r: [9.5, 8.5, 7.4, 6.4] } }, { palm: {} });
-    for (const j of posed.report.grip.joints) expect(j.touched, j.joint).toBe(true);
+    const posed = L.pose({ grip: { around: blended, r } }, { palm: {} });
     expect(posed.report.grip.touching).toBe(true);
+    expect(posed.report.grip.joints[0].touched).toBe(true);
+    // Without the blend the same sweep never touches.
+    expect(L.pose({ grip: { around: plain, r } }, { palm: {} }).report.grip.touching).toBe(false);
+    // The contact is on the bridge: at the gripped pose the limb is ON the blended shape and
+    // well clear of both spheres.
+    const axis = ["mcp", "pip", "dip", "tip"].map((j) => posed.world(j).origin);
+    let onBlend = Infinity, onSpheres = Infinity;
+    for (let s = 0; s < 3; s++) {
+      for (let i = 0; i <= 50; i++) {
+        const p = axis[s].map((v, c) => v + (axis[s + 1][c] - v) * (i / 50));
+        onBlend = Math.min(onBlend, blended(...p) - 3);
+        onSpheres = Math.min(onSpheres, plain(...p) - 3);
+      }
+    }
+    expect(Math.abs(onBlend)).toBeLessThan(0.05);
+    expect(onSpheres).toBeGreaterThan(3);
   });
 });
 

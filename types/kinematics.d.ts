@@ -1,7 +1,9 @@
 // partforge/kinematics — jointed limbs: declare a chain once, pose it, place solids on it.
-// Worker-safe: plain JS over core's rigid-transform frames, no three.js, no DOM, no implicit engine.
+// Worker-safe: plain JS over core's rigid-transform frames, no three.js, no DOM, no implicit engine
+// (flesh and attach write plain k.implicit data; k.implicit itself validates and meshes it).
 
 import type { Point3, RotateStep } from "./geometry.js";
+import type { ImplicitNode } from "./kernel.js";
 
 /** A joint's rotation axis: a named hinge axis of the limb's frame, or an explicit direction. */
 export type LimbAxis = "bend" | "spread" | "twist" | Point3;
@@ -103,6 +105,31 @@ export interface LimbReport {
   grip?: { touching: boolean; gap: number; joints: Array<{ joint: string; bend: number; touched: boolean; skipped: boolean }> };
 }
 
+export interface LimbFleshOptions {
+  /** Radius per joint, then the tip, mm; defaults to the limb's `r`. */
+  r?: number[];
+  /** The union's blend radius `k`, mm. */
+  blend?: number;
+  /** The union's label; default the limb's name. */
+  label?: string;
+}
+
+export interface LimbAttachOptions {
+  /** The contact's blend radius, mm. */
+  k?: number;
+  /** Default a third of the first non-zero segment, mm. */
+  radius?: number;
+  /** Default 3 mm scaled by the base radius over 9.5 mm (needs `r` or the limb's `r`). */
+  band?: number;
+  /** Radius per joint, then the tip; only `r[0]` is read, for the default band. */
+  r?: number[];
+  /** The flesh's label; default the limb's name. */
+  a?: string;
+}
+
+/** A k.implicit contact `attach` entry. */
+export interface LimbAttachEntry { a: string; b: string; near: string; radius: number; band: number; k?: number }
+
 /** The rigid frame of a joint in part coordinates: its origin and unit axes. */
 export interface LimbWorldFrame { origin: Point3; x: Point3; y: Point3; z: Point3 }
 
@@ -116,6 +143,10 @@ export interface PosedLimb {
   /** The tip's frame name (`<limb>.tip`). */
   tip: string;
   report: LimbReport;
+  /** A k.implicit `union` (k = `blend`) of one tapered capsule per non-zero-length segment, each in its joint's frame and labelled with it. */
+  flesh(opts?: LimbFleshOptions): ImplicitNode;
+  /** A k.implicit contact `attach` entry joining the flesh to the labelled node `label`, near the base joint. */
+  attach(label: string, opts?: LimbAttachOptions): LimbAttachEntry;
   /** Move a solid (built at the origin, along +y) into a frame of the limb. `joint` is a joint name, a frame name, or "tip"; default the base joint. */
   place<T extends { rotate(deg: number, center: Point3, axis: Point3): T; translate(v: Point3): T }>(x: T, joint?: string): T;
   /** A frame of the limb in part coordinates. `joint` is a joint name, a frame name, or "tip"; default the base joint. */

@@ -11,16 +11,16 @@
 import { BULGE_DEFAULT } from "../../src/framework/geometry/implicit/contact.js";
 
 // Segment lengths (mm) and radii at a 190 mm hand. r = radius at MCP, PIP, DIP, tip.
-const FINGERS = {
+export const FINGERS = {
   index:  { mcp: [-30, 96, 2],  len: [42, 25, 22], r: [9.5, 8.5, 7.4, 6.4] },
   middle: { mcp: [-10, 101, 3], len: [46, 29, 23], r: [9.6, 8.6, 7.5, 6.5] },
   ring:   { mcp: [10, 97, 2],   len: [43, 27, 22], r: [9.0, 8.0, 7.0, 6.2] },
   pinky:  { mcp: [30, 88, 0],   len: [34, 20, 19], r: [7.8, 7.0, 6.2, 5.5] },
 };
-const THUMB = { cmc: [-24, 12, -5], len: [46, 32, 27], r: [13, 11, 9.5, 7.8] };
-const FAN = { index: 1, middle: 0.33, ring: -0.33, pinky: -1 };
+export const THUMB = { cmc: [-24, 12, -5], len: [46, 32, 27], r: [13, 11, 9.5, 7.8] };
+export const FAN = { index: 1, middle: 0.33, ring: -0.33, pinky: -1 };
 
-const HAND_DEFAULTS = {
+export const HAND_DEFAULTS = {
   curl: 30, spread: 8, flex: { index: 60, middle: 60, ring: 60, pinky: 60, thumb: 50 }, oppose: 20,
   handLength: 190, slender: 1, knuckles: 0.5, fingerBlend: 3, palmBlend: 8, creases: true, creaseDepth: 0.5,
   contactGap: 0, bulge: BULGE_DEFAULT,
