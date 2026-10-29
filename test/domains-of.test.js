@@ -44,3 +44,23 @@ test("DOMAINS carries names only", () => {
   expect(Object.isFrozen(DOMAINS)).toBe(true);
   expect(() => JSON.stringify(DOMAINS)).not.toThrow();
 });
+
+test("a template literal holding an import line does not count", () => {
+  expect(domainsOf(src("const doc = `import { x } from \"partforge/fixture\"`;"))).toEqual([]);
+});
+
+test("without semicolons, a later string does not count against an earlier import", () => {
+  expect(domainsOf(src("import { a } from './a'\nconst s = \"… from 'partforge/fixture'\"\nexport default {}"))).toEqual([]);
+});
+
+test("export default followed by a string naming the subpath does not count", () => {
+  expect(domainsOf(src("export default { title: \"x\" }\nconst s = \"from 'partforge/fixture'\""))).toEqual([]);
+});
+
+test("a real import between strings that look like comment delimiters still counts", () => {
+  expect(domainsOf(src("const a = \"src/*\";\nimport { x } from \"partforge/fixture\";\nconst b = \"*/\";"))).toEqual(["fixture"]);
+});
+
+test("a multi-line import counts", () => {
+  expect(domainsOf(src("import {\n  x,\n  y,\n} from \"partforge/fixture\";"))).toEqual(["fixture"]);
+});

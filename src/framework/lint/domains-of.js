@@ -20,23 +20,27 @@ export const DOMAINS = Object.freeze(REGISTRY.map((d) => Object.freeze({
   kernelOps: d.kernelOps.map((op) => op.name),
 })));
 
-// Comments only (strings stay, since the import specifier IS a string). The same
-// rule test/helpers/import-graph.js uses: the `[^:"'`\\]` guard keeps a `//` inside
-// a URL literal from eating the rest of the line.
-const stripComments = (src) =>
-  src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
-
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// `import … from "<subpath>"`, `export … from "<subpath>"`, `import "<subpath>"` —
-// static forms only, at a statement start.
-const importsSubpath = (code, subpath) => {
-  const q = `["']${escapeRe(subpath)}["']`;
-  return new RegExp(`^\\s*(?:import|export)\\b[^;]*?\\bfrom\\s*${q}`, "m").test(code)
-    || new RegExp(`^\\s*import\\s*${q}`, "m").test(code);
-};
+// The static import/export-from statements of a file, as specifier strings. Statement
+// starts are found on stripNonCode(text) — strings, template literals and comments
+// masked to spaces at the SAME offsets, so a `from "…"` inside a string or a template
+// can never start or end a match, and a quote always terminates the clause — then each
+// specifier is read out of the original text at the opening quote's offset.
+const STATIC_IMPORT = /^[ \t]*(?:import|export)\b[^;"'`]*?\bfrom[ \t]*(["'])|^[ \t]*import[ \t]*(["'])/gm;
+function staticSpecifiers(text, masked) {
+  const out = [];
+  for (const m of masked.matchAll(STATIC_IMPORT)) {
+    const quote = m[1] ?? m[2];
+    const open = m.index + m[0].length - 1;
+    const close = text.indexOf(quote, open + 1);
+    if (close === -1) continue;
+    out.push(text.slice(open + 1, close));
+  }
+  return out;
+}
 
-const callsOp = (code, name) => new RegExp(`\\.${escapeRe(name)}\\s*\\(`).test(code);
+const callsOp = (masked, name) => new RegExp(`\\.${escapeRe(name)}\\s*\\(`).test(masked);
 
 export function domainsOf(sources) {
   let files;
@@ -50,11 +54,11 @@ export function domainsOf(sources) {
   if (!files.length) return [];
   const found = new Set();
   for (const text of files) {
-    const noComments = stripComments(text);
-    const codeOnly = stripNonCode(text);
+    const masked = stripNonCode(text);
+    const specifiers = new Set(staticSpecifiers(text, masked));
     for (const d of REGISTRY) {
       if (found.has(d.id)) continue;
-      if (importsSubpath(noComments, d.subpath) || d.kernelOps.some((op) => callsOp(codeOnly, op.name))) found.add(d.id);
+      if (specifiers.has(d.subpath) || d.kernelOps.some((op) => callsOp(masked, op.name))) found.add(d.id);
     }
   }
   return [...found].sort();

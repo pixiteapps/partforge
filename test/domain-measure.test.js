@@ -22,7 +22,9 @@ test("every row carries each domain's facts under the domain id, a throw as { er
   const report = measure(k, demo, "all", {}, { now: () => 0 });
   expect(report.subparts.length).toBeGreaterThan(0);
   for (const row of report.subparts) {
-    expect(row.fixture).toEqual({ seen: row.name });
+    // demo-part defaults r: 10 — a plain part (no print profile, no sheet) still
+    // hands its resolved params to a domain's facts.
+    expect(row.fixture).toEqual({ seen: row.name, r: 10 });
     expect(row["fixture-throws"]).toEqual({ error: "boom" });
   }
 });

@@ -5,7 +5,12 @@
 //   2. every domain folder is registered under its own name,
 //   3. every registered domain ships its guide, types, package subpath and reference parts,
 //   4. a domain entry's import closure is worker-safe (no three, paper, node:, ingest, testing),
-//   5. a domain never imports another domain.
+//   5. a domain never imports another domain,
+//   6. a manifest's import closure never reaches a module that imports the registry
+//      (process/registry.js, verify-metrics.js, oracle/measure.js, lint/index.js,
+//      kernel-front.js, and anything above them such as geometry/polygon.js or
+//      geometry/probe.js) — that is an import cycle through domains/registry.js, a
+//      ReferenceError on DOMAINS that depends on which entry point loads first.
 // Rule 2 reads `[]` against `[]` until the first domain lands — the test must pass on
 // a tree with nothing under domains/ but registry.js.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -77,4 +82,30 @@ test("5. a domain never imports another domain", () => {
       }
     }
   }
+});
+
+// The modules that import the registry at load: a manifest reaching any of them
+// closes a cycle. Derived from the tree, so a new consumer is covered the day it is
+// written.
+const registryConsumers = () => jsFiles(`${ROOT}/src`).filter((file) =>
+  rel(file) !== "src/framework/domains/registry.js"
+  && importsOf(readFileSync(file, "utf8")).some((spec) => spec.startsWith(".") && target(file, spec) === "src/framework/domains/registry.js"));
+
+// The consumers a manifest's closure reaches, as repo paths (empty when clean).
+export const manifestCycleHits = (manifestPath) => {
+  const consumers = new Set(registryConsumers().map(rel));
+  const { files } = walk(manifestPath, "manifest walk");
+  return [...files].map(rel).filter((f) => consumers.has(f)).sort();
+};
+
+test("6. a manifest's closure never reaches a module that imports the registry", () => {
+  expect(registryConsumers().length, "the registry has consumers").toBeGreaterThan(0);
+  for (const d of DOMAINS) {
+    expect(manifestCycleHits(`${DOMAINS_DIR}/${d.id}/manifest.js`), `${d.id}'s manifest closes an import cycle`).toEqual([]);
+  }
+});
+
+test("6. the rule sees the fixture manifest as clean and a manifest importing a consumer as a cycle", () => {
+  expect(manifestCycleHits(`${ROOT}/test/fixtures/domain-fixture/manifest.js`)).toEqual([]);
+  expect(manifestCycleHits(`${ROOT}/test/fixtures/domain-fixture/cyclic-manifest.js`)).toEqual(["src/framework/process/registry.js"]);
 });

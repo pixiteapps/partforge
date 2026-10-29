@@ -47,3 +47,8 @@ test("domainOfOp names the domain that tagged an op, null for a core op", () => 
   expect(domainOfOp("cylinder", list)).toBeNull();
   expect(domainOfOp("tappedBore")).toBeNull(); // main's DOMAINS is empty
 });
+
+test("validateDomains refuses oracle.checks until verify runs them", () => {
+  const bad = { ...fixture, oracle: { ...fixture.oracle, checks: [{ id: "x" }] } };
+  expect(() => validateDomains([bad])).toThrow(/^domains: "fixture" declares oracle\.checks, which nothing runs yet/);
+});

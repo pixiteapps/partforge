@@ -39,6 +39,9 @@ export function validateDomains(list) {
     if (o.facts !== null && typeof o.facts !== "function") fail(`"${id}" oracle.facts must be null or a function`);
     if (!o.metrics || typeof o.metrics !== "object") fail(`"${id}" is missing "oracle.metrics"`);
     if (!Array.isArray(o.checks)) fail(`"${id}" is missing "oracle.checks"`);
+    // The spec reserves `checks` for volunteered verify checks; verify does not read
+    // them yet, so a declared one would silently never run. Refuse until it is wired.
+    if (o.checks.length) fail(`"${id}" declares oracle.checks, which nothing runs yet — leave it empty until verify consumes domain checks`);
     if (typeof m.workerSafe !== "boolean") fail(`"${id}" is missing "workerSafe"`);
     for (const op of m.kernelOps) {
       if (typeof op?.name !== "string" || typeof op?.attach !== "function") fail(`"${id}" kernelOps entries are { name, attach }`);

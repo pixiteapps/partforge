@@ -195,14 +195,16 @@ function printPoseUnderside(mesh, m, { maxAngle, bed, displayBedZ }) {
 // means the row is never memoized (measure's memo keys on the display geometry and
 // the inputs it names; a domain's reading may depend on anything).
 const HAS_DOMAIN_FACTS = DOMAINS.some((d) => d.oracle.facts);
-function domainFacts(sp, ctx) {
-  const out = {};
+function stampDomainFacts(row, sp, ctx) {
   for (const d of DOMAINS) {
     if (!d.oracle.facts) continue;
-    try { out[d.id] = d.oracle.facts(sp, ctx); }
-    catch (e) { out[d.id] = { error: String(e?.message || e).slice(0, 200) }; }
+    // The complete collision guard (validateDomains reserves only the common keys): a
+    // domain id naming a row fact — `holes` is a gate — would overwrite it.
+    if (Object.hasOwn(row, d.id)) throw new Error(`measure: domain "${d.id}" collides with a sub-part fact of that name`);
+    try { row[d.id] = d.oracle.facts(sp, ctx); }
+    catch (e) { row[d.id] = { error: String(e?.message || e).slice(0, 200) }; }
   }
-  return out;
+  return row;
 }
 
 function sheetRowFacts(kernel, part, name, view, { p, d }, budget, volume) {
@@ -352,6 +354,9 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // resolved params through place() — recorded into the same sink, since the reading
   // depends on them.
   const poseParams = underside ? (sheetParams ?? resolveParams(part, params, undefined, reads)) : null;
+  // A domain's facts get the resolved params on EVERY part, not only where a print
+  // pose or a sheet view already resolved them.
+  const domainParams = HAS_DOMAIN_FACTS ? (poseParams ?? sheetParams ?? resolveParams(part, params, undefined, reads)) : null;
   // The print-pose sizes are read by one check, the process bed (verify passes whether
   // its profile has one; alone, measure asks the part's own profile), and each costs a
   // second build of the part — so they are built only for a bed.
@@ -496,8 +501,8 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
         : null,
       ...(printBboxes?.[name]?.size ? { printBbox: printBboxes[name].size } : {}),
       ...(printBboxes?.[name]?.error ? { printBboxError: printBboxes[name].error } : {}),
-      ...domainFacts(part.parts[name], { name, view, p: poseParams?.p ?? null, d: poseParams?.d ?? null, volume: vol, bbox: size(b) }),
     };
+    if (HAS_DOMAIN_FACTS) stampDomainFacts(facts, part.parts[name], { name, view, p: domainParams.p, d: domainParams.d, volume: vol, bbox: size(b) });
     if (memoKey) opts.memo.set(name, solid._hash, memoKey, facts);
     return facts;
   });

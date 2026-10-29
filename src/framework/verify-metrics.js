@@ -13,7 +13,7 @@
 // measure.js, which pulls in the geometry kernels. Its one import is the process
 // registry, whose closure is import-free in turn (the process descriptors,
 // sheet/constants.js, lint/finding.js) — so the linter's stays kernel-free.
-import { SHEET_METRICS } from "./process/registry.js";
+import { PROCESSES } from "./process/registry.js";
 import { DOMAINS } from "./domains/registry.js";
 
 // `bounds` is written the way measure() reports it — `bounds: { min: [x,y,z], max:
@@ -67,16 +67,22 @@ export function sidesSpecError(metric, reg, spec) {
 // Every registered domain's oracle.metrics joined to the core and sheet vocabulary.
 // A name already present is a LOAD error naming both sides — a silent overwrite would
 // change what an authored expectation measures, and nothing downstream would notice.
+function mergeMetrics(out, metrics, owner) {
+  for (const [name, metric] of Object.entries(metrics)) {
+    if (Object.hasOwn(out, name)) {
+      throw new Error(`verify-metrics: ${owner} metric "${name}" collides with an existing sub-part metric of that name`);
+    }
+    out[name] = metric;
+  }
+  return out;
+}
 function withDomainMetrics(base) {
   const out = { ...base };
-  for (const d of DOMAINS) {
-    for (const [name, metric] of Object.entries(d.oracle.metrics)) {
-      if (Object.hasOwn(out, name)) {
-        throw new Error(`verify-metrics: domain "${d.id}" metric "${name}" collides with an existing sub-part metric of that name`);
-      }
-      out[name] = metric;
-    }
-  }
+  // Sheet parts (sheetPart(), partforge/geometry): each process's own checks. verify
+  // volunteers them on every sheet sub-part; an author may declare them like any other.
+  // The processes may come from a domain, so they go through the same guard.
+  for (const proc of PROCESSES) mergeMetrics(out, proc.metrics, `process "${proc.id}"`);
+  for (const d of DOMAINS) mergeMetrics(out, d.oracle.metrics, `domain "${d.id}"`);
   return out;
 }
 
@@ -173,9 +179,6 @@ export const SUBPART_METRICS = withDomainMetrics({
     hint: "rebuild volume differs from the reference import by more than the allowed percentage — a feature is missing, doubled, or mis-scaled vs the reference" },
   refBboxDelta: { kind: "gate", form: "vector", extract: (s) => s.deviation?.bboxDelta ?? null,
     hint: "the rebuild's bounding-box corners drift from the reference import — check overall dimensions and that the rebuild is aligned to the reference's coordinates" },
-  // Sheet parts (sheetPart(), partforge/geometry): each process's own checks. verify
-  // volunteers them on every sheet sub-part; an author may declare them like any other.
-  ...SHEET_METRICS,
 });
 export const VIEW_METRICS = {
   bbox: { kind: "gate", form: "vector", extract: (r) => r.aggregate.bbox,

@@ -16,7 +16,7 @@ export default {
   kernelOps: [{ name: "tappedBore", attach: (k) => { k.fixtureAttached = true; k.tappedBore = () => "fixture"; } }],
   lintRules: [{ id: "fixture-rule", run: (ctx) => (ctx.part?.fixtureFlag ? [warn("fixture-rule", "fixture flag set", "a fixture hint")] : []) }],
   oracle: {
-    facts: (sp, ctx) => ({ seen: ctx?.name ?? null }),
+    facts: (sp, ctx) => ({ seen: ctx?.name ?? null, r: ctx?.p?.r ?? null }),
     metrics: { fixtureSeen: { kind: "warn", extract: (s) => s.fixture?.seen, hint: "fixture metric", doc: "fixture" } },
     checks: [],
   },

@@ -17,7 +17,14 @@ import { DOMAINS } from "../domains/registry.js";
 // refuses one without). In-repo descriptors come first, then domains in registry order.
 const domainProcesses = (kind) => DOMAINS.flatMap((d) => d.processes.filter((p) => p.kind === kind));
 
-export const PROCESSES = [LASER, ROUTER, ...domainProcesses("sheet")];
+const dup = (what, id) => { throw new Error(`process registry: duplicate ${what} ${JSON.stringify(id)}`); };
+const uniqueIds = (list) => {
+  const seen = new Set();
+  for (const d of list) { if (seen.has(d.id)) dup("process id", d.id); seen.add(d.id); }
+  return list;
+};
+
+export const PROCESSES = uniqueIds([LASER, ROUTER, ...domainProcesses("sheet")]);
 export const PROCESS_IDS = PROCESSES.map((d) => d.id);
 
 export const processById = (id) => PROCESSES.find((d) => d.id === id) ?? null;
@@ -28,7 +35,20 @@ export const processFor = (sp) => (isSheetPart(sp) ? processById(sp.sheet.proces
 // Every process's verify metrics as one flat vocabulary; verify-metrics.js spreads it
 // into SUBPART_METRICS. Process metric names must not collide with each other or with
 // a print metric (test/verify-metrics.test.js).
-export const SHEET_METRICS = Object.assign({}, ...PROCESSES.map((d) => d.metrics));
+// A repeated metric name across processes is a load error: Object.assign would let
+// the later process silently win, and verify would measure the wrong thing.
+export const SHEET_METRICS = (() => {
+  const out = {};
+  const owner = {};
+  for (const d of PROCESSES) {
+    for (const [name, metric] of Object.entries(d.metrics)) {
+      if (Object.hasOwn(out, name)) throw new Error(`process registry: duplicate metric "${name}" (processes "${owner[name]}" and "${d.id}")`);
+      out[name] = metric;
+      owner[name] = d.id;
+    }
+  }
+  return out;
+})();
 
 // Every process's own lint rules; lint/rules-sheet.js appends them to SHEET_RULES.
 export const PROCESS_LINT_RULES = PROCESSES.flatMap((d) => d.lintRules);
@@ -36,14 +56,23 @@ export const PROCESS_LINT_RULES = PROCESSES.flatMap((d) => d.lintRules);
 // Print processes are their own list: PROCESSES stays the SHEET list (exporters,
 // destinations, SHEET_METRICS and sheet/part.js's PROCESS_IDS check all read it), so
 // fdm and resin never pass as a sheet part's process.
-export const PRINT_PROCESSES = [FDM, RESIN, ...domainProcesses("print")];
+export const PRINT_PROCESSES = uniqueIds([FDM, RESIN, ...domainProcesses("print")]);
 export const PRINT_PROCESS_IDS = PRINT_PROCESSES.map((d) => d.id);
 export const ALL_PROCESSES = [...PROCESSES, ...PRINT_PROCESSES];
 
 export const printProcessById = (id) => PRINT_PROCESSES.find((d) => d.id === id) ?? null;
 
 // The DFM profiles of every print process as one map, keyed by profile id.
-export const PRINT_PROFILES = Object.freeze(Object.assign({}, ...PRINT_PROCESSES.map((d) => d.profiles)));
+export const PRINT_PROFILES = Object.freeze((() => {
+  const out = {};
+  for (const d of PRINT_PROCESSES) {
+    for (const [id, profile] of Object.entries(d.profiles)) {
+      if (Object.hasOwn(out, id)) dup("profile id", id);
+      out[id] = profile;
+    }
+  }
+  return out;
+})());
 
 // The print process owning a profile spec: a profile id, or an inline object whose
 // `base` (recursively) names one. Anything else is null.
