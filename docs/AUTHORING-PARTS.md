@@ -1953,7 +1953,7 @@ Every print check is in exactly one tier, decided by what the reading means:
 
 | tier | checks | effect on `verify.ok` |
 | --- | --- | --- |
-| **gate** — a defect in any orientation | bed fit (`bbox` within `bed`), bed contact (`bedContactPct` ≥ 50) | fails it |
+| **gate** — a defect in any orientation | bed fit (`bbox` within `bed`), bed contact (`bedContactPct` ≥ 50), a declared flexing member's root (`flexRoot`) | fails it |
 | **cost** — a design choice with a price | overhang (`overhangArea`, id `supports`), footprint (`footprintPct` ≥ 10, id `footprint`) | never |
 | **advisory** — a reading that may not matter | min wall (`minWall`), `wall` | never; a warning |
 
@@ -2015,6 +2015,37 @@ pin together) or a pinned clevis, not a socket snapped over a sphere: the snap's
 is a downward cavity that prints on supports nobody can reach. Build the snap only when
 the user wants it and has accepted the supports.
 
+### Flexing members
+
+Anything meant to bend in use — a snap arm, a buckle prong, a clip, a latch hook, a
+cantilever tab, a living spring — must meet the body it grows from through a **fillet
+at its root of at least half its thickness**. Bending puts the highest stress at the
+root, a sharp inside corner multiplies it several times over, and an FDM print's layers
+are weakest across exactly that corner: an unrounded arm snaps off flush with the body,
+often on the first few flexes. Decide the root fillet with the arm, not after it, and
+keep it clear of whatever the arm slides into (chamfer that mouth so the fillet seats).
+
+Declare every such member in `verify.flex`, by its feature label, and label the member
+**apart from the body** it grows from:
+
+```js
+const arm = k.prism({ points: armPts, h: d.armH }).label("Right prong");
+let s = k.union([base, arm, otherArm])
+  .fillet({ r: 0.5 * p.armThick, edges: { inPlane: "XZ", at: 0 } }); // the arms' roots on the base face
+// …
+verify: { process: "fdm-pla", flex: ["Right prong", "Left prong"], expect: { … } },
+```
+
+verify then fails (`flexRoot`, a gate, under any process or none) wherever a triangle of
+the member meets a triangle of anything else at a sharp inside corner — a fillet's faces
+are new surfaces turning a few degrees per facet, so a rounded root reads clean, and a
+face that only continues flush into the body is not a corner. A rib or barb on the arm
+that carries its own label is part of the member: list them together,
+`flex: [["Right prong", "Right prong rib"]]`. Only what you declare is checked: the
+oracle cannot tell an arm that bends from a wall, a tooth or a pin of the same shape. A
+name no build labels is lint's `verify-flex-unknown-label` warning, and a member no
+sub-part of the verified view carries is reported as skipped.
+
 ### Small features and scale
 
 A feature thinner than the profile's `minWall` (1.2 mm PLA, 1.5 mm PETG, 0.6 mm
@@ -2028,7 +2059,8 @@ in the control's label ("below 150 mm the pins get thin").
 Size a mating feature from the profile's fit class — `press`, `push`, `slip`,
 `moving`, `printInPlace` — copied into `derive()` with a comment naming it
 (`// slip fit: fdm-pla 0.25`), and a horizontal bore enlarged by `holeUndersize`. A
-snap is a contact; its fit is `push` or `slip`. The numbers, and how a diametral fit
+snap is a contact; its fit is `push` or `slip`, and its arm gets a root fillet
+("Flexing members" above). The numbers, and how a diametral fit
 becomes a `clearance` expectation, are in the `verify` section below.
 
 ### First layer
@@ -4132,8 +4164,9 @@ runtime a throwing probe only degrades quietly to `{ error }`.
 
 **Verify block** — `verify-unknown-metric`, `verify-unknown-subpart`,
 `verify-bad-expr`, `verify-bad-pair-check`, `verify-unknown-process`,
-`verify-unknown-orientation`, `verify-unknown-accept`,
-`verify-expect-throws` (all errors). Note `_view` also accepts the pair-wise
+`verify-unknown-orientation`, `verify-unknown-accept`, `verify-bad-flex`,
+`verify-expect-throws` (all errors), and `verify-flex-unknown-label` (a warning: a
+`verify.flex` label no build writes at the default parameters). Note `_view` also accepts the pair-wise
 `contacts` / `clearance` / `held` keys, which are not scalar view metrics; they are
 validated by `verify-bad-pair-check`, matching `verify.js`'s own handling.
 
@@ -4533,6 +4566,18 @@ a flat face or add a pad; when the user chooses the brim, `accept: ["footprint"]
 records it. Your own `footprintPct` expectation arms it under any profile; `orientation`
 does not, and `{ base: "fdm-pla", footprint: null }` switches it off. `exportable: false`
 sub-parts are not judged.
+
+**Flexing members — a GATE, armed by `verify.flex` alone.** `flex` lists the part's
+flexing members by feature label (`flex: ["Right prong", "Left prong"]`; a list entry,
+`["Arm", "Arm rib"]`, is one member made of several labels). On every printed sub-part
+whose mesh carries a member's label, `flexRoot` measures the sharp inside corner where
+the member meets anything else — a concave edge turning more than 30° between one of
+its triangles and one that is not — and fails on any (`actual` is its length in mm,
+the location its longest stretch). A rounded root reads 0. It is independent of the
+process and of the print pose: the root is the same in any orientation. A member no
+sub-part of the verified view carries is reported as skipped (it may be switched off
+in that case); a seed that did not read a member answers unevaluated on a quick lap.
+See "Flexing members" under "Printed parts" for why, and how to round a root.
 
 **What the profile tells you.** Three more fields carry the numbers a mating
 feature needs. Nothing checks them; they are the one place the value is spelled,

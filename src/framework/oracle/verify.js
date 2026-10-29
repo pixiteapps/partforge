@@ -2,6 +2,7 @@ import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
 import { measure as defaultMeasure } from "./measure.js";
 import { pairKey, CONTACT_EPS } from "./gaps.js";
 import { heldCheck } from "./held.js";
+import { flexGroups, groupName } from "./flex-root.js";
 import { resolveProfile, overhangAngleFor, bedContactFor, footprintFor } from "./dfm-profiles.js";
 import { expandExpectations, partGatesMinWall } from "./gates.js";
 import { relevanceHash } from "../param-deps.js";
@@ -278,7 +279,7 @@ function sheetRowChecks(s, declaredExp) {
 // `footprintPct >= floor` on every printed sub-part.
 // `accept` the cost ids the user accepted (`verify.accept`), stamped on each cost the
 // process volunteered (never on one the author wrote in `expect`).
-export function evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang = null, bedContact = null, footprint = null, accept = [] }) {
+export function evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang = null, bedContact = null, footprint = null, accept = [], flex = [] }) {
   const checks = [];
   // contacts/clearance/held are pair-derived, not scalar view metrics — peel
   // them off before the registry loop. held.js explains the exportable bound.
@@ -363,7 +364,44 @@ export function evaluateCase(facts, { profile, expect, subPartNames, exportableN
       checks.push(c);
     }
   }
+  checks.push(...flexChecks(facts, flex));
   return checks;
+}
+
+// Flexing members (`verify.flex`, flex-root.js): one gate per declared member and per
+// sub-part carrying its label, failing on any sharp inside corner where the member meets
+// the rest of the part. A member no sub-part of this view carries is a skip, not a fail —
+// a sub-part an `enabled()` turned off, or one shown only in another view — and lint's
+// verify-flex-unknown-label is what catches a label no build ever writes. A seed that did
+// not read the member (measuredFlex) cannot answer it: a quick lap reports it unevaluated.
+export const FLEX_ROOT_HINT = "a part that flexes (a snap arm, buckle prong, clip or cantilever tab) meets the rest of the part at a sharp inside corner here — bending concentrates the stress at that corner and the member snaps off at its root. Round the root: a fillet of at least half the member's thickness where it joins the body (`s.fillet({ r, edges: { near: [x, y, z] } })` on the joined solid, or a filleted corner in the 2-D profile both share), and keep that fillet clear of whatever the member slides into. A grip rib or barb on the member is part of it: list its label with the member's, `flex: [[\"Arm\", \"Arm rib\"]]`";
+const sameGroup = (a, b) => a.length === b.length && a.every((l, i) => l === b[i]);
+function flexChecks(facts, flex) {
+  const out = [];
+  for (const g of flex) {
+    const feature = groupName(g);
+    const base = { scope: "subpart", metric: "flexRoot", kind: "gate", feature, expr: "rounded root" };
+    if (!(facts.measuredFlex ?? []).some((m) => sameGroup(m, g))) {
+      out.push({ ...base, subpart: null, actual: null, status: "skip", pass: null, unevaluated: true,
+        message: "not measured (quick check)", hint: "re-run this check without `quick` to read the flexing member's root" });
+      continue;
+    }
+    const rows = facts.subparts.flatMap((s) => (s.flexRoots ?? []).filter((r) => sameGroup(r.labels, g)).map((r) => [s.name, r]));
+    if (!rows.length) {
+      out.push({ ...base, subpart: null, actual: null, status: "skip", pass: null,
+        message: `no sub-part in this view carries the label ${g.map((l) => `"${l}"`).join(" or ")}`,
+        hint: "verify.flex names flexing members by their feature label — label the member (`.label(\"Arm\")`) apart from the body it grows from, and spell it the same in both places" });
+      continue;
+    }
+    for (const [name, r] of rows) {
+      out.push(r.sharpLength > 0
+        ? { ...base, subpart: name, actual: r.sharpLength, status: "fail", pass: false,
+            message: `${r.sharpLength.toFixed(1)} mm of sharp inside corner (${Math.round(r.maxTurn)}°) where "${feature}" joins the part`,
+            hint: FLEX_ROOT_HINT, pattern: "flex-root-sharp", location: r.at }
+        : { ...base, subpart: name, actual: 0, status: "pass", pass: true, message: "rounded root" });
+    }
+  }
+  return out;
 }
 
 // `seed` lets a caller that has ALREADY measured this part hand the result in so
@@ -391,6 +429,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   const bedContactFloor = bedContactFor(part, process, { expanded });
   const footprintFloor = footprintFor(part, process, { expanded });
   const accept = Array.isArray(part?.verify?.accept) ? part.verify.accept : [];
+  const flex = flexGroups(part?.verify?.flex);
   // Reuse rule (spec §4): case B may reuse a measurement taken at params A when
   // B agrees with A on every param that measurement READ (recorded by measure()
   // itself). Sound for the same reason the mesh cache is: a deterministic build
@@ -464,7 +503,9 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // sizes cannot answer a bed, so it is admitted only when this run needs no bed.
   const needPrintBboxes = profile?.bed != null;
   const printBboxesMatch = !needPrintBboxes || seed?.result?.measuredPrintBboxes !== false;
-  if (seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && (quick || overhangMatches) && (quick || bedContactMatches) && printBboxesMatch
+  // The flex half: a seed that read every declared member (a superset is free).
+  const flexMatches = flex.every((g) => (seed?.result?.measuredFlex ?? []).some((m) => sameGroup(m, g)));
+  if (seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && (quick || overhangMatches) && (quick || bedContactMatches) && (quick || flexMatches) && printBboxesMatch
     && seed.result.view === view) {
     entries.push({ params: full(seed.params), result: seed.result });
   }
@@ -478,7 +519,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     // for every case buys nothing. (A seed measured WITH probes is a superset in
     // the same way a min-wall seed is: the extra key is simply never read here.)
     const result = measureFn(kernel, part, view, params,
-      { minWall: needMinWall, probes: false, overhang: overhangAngle, bedContact: armsBedPass, printBboxes: needPrintBboxes });
+      { minWall: needMinWall, probes: false, overhang: overhangAngle, bedContact: armsBedPass, printBboxes: needPrintBboxes, flex });
     entries.push({ params: fp, result });
     return result;
   };
@@ -499,7 +540,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   }];
   const caseResults = expanded.map(({ name, params, expect }) => {
     const facts = measureCase(params);
-    return { name, params, checks: facts ? evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang: overhangAngle, bedContact: bedContactFloor, footprint: footprintFloor, accept }) : notMeasured(name) };
+    return { name, params, checks: facts ? evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang: overhangAngle, bedContact: bedContactFloor, footprint: footprintFloor, accept, flex }) : notMeasured(name) };
   });
   // VACUOUS VERIFY. A part that declares nothing — no profile, an empty or absent
   // `expect` — used to come back `ok: true` with zero checks, and every reader
@@ -534,7 +575,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     declared++;
     if (c.status !== "skip" && !c.unevaluated) evaluated++;
   }
-  const declaresAnything = profile != null || overhangAngle != null || bedContactFloor != null || footprintFloor != null
+  const declaresAnything = profile != null || overhangAngle != null || bedContactFloor != null || footprintFloor != null || flex.length > 0
     || expanded.some(({ expect }) => Object.values(expect ?? {}).some((o) => o && typeof o === "object" && Object.keys(o).length > 0));
   const failures = all.filter((c) => c.status === "fail");
   const unevaluated = all.filter((c) => c.unevaluated);

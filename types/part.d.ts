@@ -660,6 +660,15 @@ export interface VerifyBlock<P = ResolvedParams, D = Derived> {
    * (`overhangArea: "<=500"`) keeps its meaning and is never marked accepted.
    */
   accept?: ("supports" | "footprint")[];
+  /**
+   * The part's flexing members — snap arms, buckle prongs, clips, cantilever tabs —
+   * by feature label. Each must meet the rest of its part through a rounded root:
+   * verify fails on a sharp inside corner where a triangle of the member meets a
+   * triangle of anything else. An entry that is a list names one member made of
+   * several labels (an arm and the rib on it). Label the member apart from the body
+   * it grows from.
+   */
+  flex?: (string | string[])[];
   /** Which cases to check; default is `"defaults"` plus every preset name. */
   cases?: string[];
   /**
