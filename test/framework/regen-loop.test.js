@@ -176,3 +176,15 @@ test("a lone buildDone() outside any cycle does not corrupt the next one", () =>
   loop.kick();
   expect(send).toHaveBeenCalledTimes(1); // still just one — the stray reply didn't pre-close this cycle
 });
+
+// A progressive batch is shown only while its build is in flight and current.
+test("isFresh is true only while a build is in flight and no edit has overtaken it", () => {
+  const { loop } = makeLoop();
+  expect(loop.isFresh()).toBe(false); // nothing in flight
+  loop.ready();
+  expect(loop.isFresh()).toBe(true);
+  loop.markDirty();
+  expect(loop.isFresh()).toBe(false); // an edit overtook it
+  loop.buildDone();
+  expect(loop.isFresh()).toBe(false); // settled
+});

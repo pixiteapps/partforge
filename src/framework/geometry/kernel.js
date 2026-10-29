@@ -36,7 +36,7 @@ export const KERNEL_OPS = [
 // OCCT's replicad shapes need no dispose bookkeeping). jobs.js calls all of these via
 // `?.`, so a third-party backend may simply omit them.
 export const KERNEL_OPTIONAL_OPS = [
-  "beginSubPart", "endSubPart", "sweepCache", "cacheStats", "resetCacheStats", "cleanup",
+  "beginSubPart", "endSubPart", "sweepCache", "dropCache", "setCacheBudget", "trimCache", "cacheBytes", "cacheStats", "resetCacheStats", "cleanup",
   // Drains the feature-skip warnings recorded since the last drain — a fillet or
   // chamfer the geometry defeated and the backend skipped rather than failed the
   // build over. Both backends implement it; a host that never calls it sees the
@@ -170,6 +170,10 @@ export const ROUTED_CAD_OPS = ["shell"];
  * @property {(name:string) => void} [beginSubPart]   open a per-sub-part solid-cache round (both backends)
  * @property {() => void} [endSubPart]                close the cache round (always pair with beginSubPart)
  * @property {() => void} [sweepCache]   drop cache partitions idle for 3 rebinds; call once per setPart, never mid-bracket
+ * @property {() => void} [dropCache]    drop EVERY cache partition (the worker calls it before an export); never mid-bracket
+ * @property {(bytes:number) => void} [setCacheBudget]   bound the solid cache's retained bytes (Infinity = unbounded)
+ * @property {() => number} [trimCache]   drop least recently built partitions until the cache fits its budget; only where no cached solid is held
+ * @property {() => number} [cacheBytes]  the cache's estimated retained bytes
  * @property {() => {hits:number,misses:number}} [cacheStats]
  * @property {() => void} [resetCacheStats]
  * @property {() => void} [cleanup]   free per-job WASM objects (Manifold backend); call after each job

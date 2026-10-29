@@ -65,7 +65,9 @@ const loadBedLayout = () => import("./export/bed-layout.js");
 
 // Handle one geometry job, posting results/progress via `post(msg, transfer?)`.
 // Backend-agnostic and part-agnostic: every part specific comes through `part`.
-//   { type:"generate", subparts, view, params } → { type:"meshes", meshes, ms }
+//   { type:"generate", subparts, view, params, cacheBudget?, progressive? } → { type:"meshes", meshes, ms }
+//       progressive: true also posts { type:"meshes-partial", meshes } batches while it
+//       builds; the final `meshes` then carries only the sub-parts no batch did
 //   { type:"export-stl", view, params }         → { type:"download-parts", ext, mime, parts }
 //   { type:"export-step", view, params }        → { type:"download", data, filename, mime }
 //   { type:"export-bundle", view, params, parts, options }
@@ -161,6 +163,27 @@ async function scoreMatchTargets(built, targets, onProgress) {
     onProgress(`match scoring skipped: ${String(err?.message || err)}`);
     return null;
   }
+}
+
+// A progressive generate hands over its built sub-parts at most this often (ms).
+const PROGRESSIVE_BATCH_MS = 300;
+const transferOf = (meshes) => meshes.flatMap((m) =>
+  [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer].filter(Boolean));
+
+// The WASM traps that mean the kernel ran out of heap (or was corrupted by doing so).
+const HEAP_TRAP_RE = /out of bounds memory access|memory access out of bounds|Cannot enlarge memory|out of memory/i;
+
+// A piece of a many-piece export failed: say WHICH piece, how far the export got, and
+// — when it is the heap that ran out — the one remedy the user can apply. The raw
+// message stays LAST, after a colon, so a host's own trap classifier still matches it.
+function exportPieceError(thrown, { kernel, piece, index, count }) {
+  const err = describeKernelThrow(thrown, { evidence: kernel._throwEvidence?.(thrown) });
+  if (count < 2 || err?.code) return err; // one piece: the error already names it; coded errors are routed, not shown
+  const raw = String(err?.message || err);
+  const advice = HEAP_TRAP_RE.test(raw)
+    ? " ran out of memory — export fewer parts at a time (each export needs room for the parts it builds)"
+    : " failed";
+  return new Error(`exporting "${piece}" (part ${index + 1} of ${count})${advice}: ${raw}`, { cause: thrown });
 }
 
 export async function handle(kernel, part, msg, post, opts = {}) {
@@ -446,6 +469,10 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       kernel.takeBuildWarnings?.();
       const warnings = [...jobWarnings];   // job-level notices ride along with the per-sub-part ones
       kernel.resetCacheStats?.(); // count hits/misses for just this job
+      // The host's bound on the solid cache (mount's cacheBudgetMB), in bytes; null
+      // means unbounded. Kept by the kernel, so the oracle's builds share it.
+      if (Object.hasOwn(msg, "cacheBudget")) kernel.setCacheBudget?.(msg.cacheBudget ?? Infinity);
+      let lastBatchAt = t0; // progressive delivery's clock (below)
       for (const [i, name] of msg.subparts.entries()) {
         if (useCache) kernel.beginSubPart?.(name); // open the per-sub-part cache round
         try {
@@ -456,6 +483,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
           for (const message of kernel.takeBuildWarnings?.() ?? []) warnings.push({ part: name, message });
           if (useCache) kernel.endSubPart?.(); // always close the bracket — a throw mid-build must not strand pinned solids
           kernel.cleanup?.();                  // free this round's transients (cached/pinned solids survive)
+          kernel.trimCache?.();                // over the host's budget: drop the least recently built sub-parts' solids
         }
         // Cooperative cancel: yield one macrotask so queued messages (a newer
         // generate, a part rebind) can be seen, then stop at this boundary if
@@ -465,12 +493,22 @@ export async function handle(kernel, part, msg, post, opts = {}) {
         if (i < msg.subparts.length - 1) {
           await new Promise((r) => setTimeout(r, 0));
           if (isStale()) return void post({ type: "superseded" });
+          // Progressive delivery (msg.progressive): hand over what is built so far,
+          // so a host shows a many-sub-part view filling in instead of waiting for
+          // the last sub-part (feedback #212: a 105-plate park showed nothing for
+          // ~45 s). Batched by time, never per sub-part, so a view of many cheap
+          // pieces is not a flood of messages. Posted only after the stale check
+          // above, so a batch is current as of the moment it is posted; the final
+          // `meshes` carries whatever is left, and the job's warnings and timing.
+          if (msg.progressive && meshes.length > 0 && Date.now() - lastBatchAt >= PROGRESSIVE_BATCH_MS) {
+            const batch = meshes.splice(0);
+            post({ type: "meshes-partial", meshes: batch }, transferOf(batch));
+            lastBatchAt = Date.now();
+          }
         }
       }
-      const transfer = meshes.flatMap((m) =>
-        [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer].filter(Boolean));
       post({ type: "meshes", meshes, ms: Date.now() - t0, cache: kernel.cacheStats?.(),
-             ...(warnings.length ? { warnings } : {}) }, transfer);
+             ...(warnings.length ? { warnings } : {}) }, transferOf(meshes));
     } else if (msg.type === "capture-generate") {
       // A private, job-correlated one-shot channel for captureView — builds a
       // (possibly non-active) view's meshes off the regen loop, so it can never
@@ -500,9 +538,18 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
       const out = [];
-      for (const name of names) {
+      for (const [i, name] of names.entries()) {
         onProgress(`building ${label(name)}`);
-        out.push({ name: exportName(name), data: await posed(name, "export", onProgress).toSTL({ quality: msg.quality ?? "print" }) });
+        try {
+          out.push({ name: exportName(name), data: await posed(name, "export", onProgress).toSTL({ quality: msg.quality ?? "print" }) });
+        } catch (thrown) {
+          throw exportPieceError(thrown, { kernel, piece: label(name), index: i, count: names.length });
+        }
+        // Each file is JS-owned once toSTL returns, so this piece's solids can go now.
+        // Without it a many-piece export held every piece's print-quality build until
+        // the job ended — the 105-plate forge of feedback #212 ran out of heap at
+        // about the 100th plate.
+        kernel.cleanup?.();
       }
       post({ type: "download-parts", ext: "stl", mime: "model/stl", parts: out, jobId: msg.jobId },
            out.map((pp) => bufferOf(pp.data)));
@@ -523,12 +570,27 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     } else if (msg.type === "export-3mf") {
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
-      const { layoutExportPieces } = await loadBedLayout();
-      const meshes = layoutExportPieces(part, names.map((name) => {
+      // One piece in the kernel at a time, as export-stl: build, read the bounds the bed
+      // layout needs, mesh into JS-owned arrays, free — then lay out from the bounds and
+      // shift the meshes (translation only, so this is the layout layoutExportPieces makes).
+      const { laidOutOnBed, exportLayoutOffsets } = await loadBedLayout();
+      const built = [];
+      for (const [i, name] of names.entries()) {
         onProgress(`building ${label(name)}`);
-        return { name, solid: posed(name, "export", onProgress) };
-      })).map(({ name, solid }) => {
-        const { positions, indices } = solid.toIndexedMesh({ quality: msg.quality ?? "print" });
+        try {
+          const solid = posed(name, "export", onProgress);
+          const box = laidOutOnBed(part, name) ? solid.boundingBox() : null;
+          const { positions, indices } = solid.toIndexedMesh({ quality: msg.quality ?? "print" });
+          built.push({ name, box, positions, indices });
+        } catch (thrown) {
+          throw exportPieceError(thrown, { kernel, piece: label(name), index: i, count: names.length });
+        }
+        kernel.cleanup?.();
+      }
+      const offsets = exportLayoutOffsets(part, built.filter((b) => b.box));
+      const meshes = built.map(({ name, positions, indices }) => {
+        const o = offsets.get(name);
+        if (o) for (let j = 0; j < positions.length; j += 3) { positions[j] += o[0]; positions[j + 1] += o[1]; positions[j + 2] += o[2]; }
         return { name: exportName(name), positions, indices, color: printColor(part.parts[name]?.display) };
       });
       onProgress("writing 3MF file");
@@ -665,5 +727,6 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     else post({ type: "error", message: String(err?.message || err), jobId: msg.jobId });
   } finally {
     kernel.cleanup?.();
+    kernel.trimCache?.(); // a job holds no cached solid once it has returned (solid-cache.js MEMORY BUDGET)
   }
 }

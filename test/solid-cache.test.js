@@ -180,3 +180,64 @@ describe("nested brackets", () => {
     expect(dispose).not.toHaveBeenCalled();
   });
 });
+
+test("clear() disposes every entry exactly once — a shared one too — and leaves the cache cold", () => {
+  const c = createSolidCache();
+  const own = vi.fn(), shared = vi.fn();
+  c.begin("a"); c.lookup("own", () => ({ value: {}, pin: "own", dispose: own })); c.lookup("shared", () => ({ value: {}, pin: "shared", dispose: shared })); c.end();
+  c.begin("b"); c.lookup("shared", make({})); c.end(); // adopted by a second partition
+  c.clear();
+  expect(own).toHaveBeenCalledTimes(1);
+  expect(shared).toHaveBeenCalledTimes(1);
+  expect(c.isPinned("own")).toBe(false);
+  expect(c.isPinned("shared")).toBe(false);
+  c.resetStats();
+  c.begin("a"); c.lookup("own", make({})); c.end();
+  expect(c.stats()).toEqual({ hits: 0, misses: 1 }); // nothing survived to be adopted
+});
+
+describe("memory budget (feedback #212)", () => {
+  const sized = (size) => () => ({ value: {}, pin: { size }, dispose: vi.fn() });
+  const build = (c, n, hashes, size = 10) => { c.begin(n); for (const h of hashes) c.lookup(h, sized(size)); c.end(); };
+
+  test("unbounded by default: trim() keeps everything", () => {
+    const c = createSolidCache({ sizeOf: (pin) => pin.size });
+    build(c, "a", ["a1"]); build(c, "b", ["b1"]);
+    expect(c.trim()).toBe(0);
+    expect(c.retainedBytes()).toBe(20);
+  });
+
+  test("over budget, trim() drops the least recently built partitions first", () => {
+    const c = createSolidCache({ sizeOf: (pin) => pin.size });
+    c.setBudget(25);
+    build(c, "a", ["a1"]); build(c, "b", ["b1"]); build(c, "c", ["c1"]);
+    build(c, "a", ["a1"]); // a is now the most recently built
+    expect(c.trim()).toBe(1); // b goes; a and c (20 bytes) fit
+    expect(c.retainedBytes()).toBe(20);
+    c.resetStats();
+    build(c, "a", ["a1"]); build(c, "c", ["c1"]); build(c, "b", ["b1"]);
+    expect(c.stats()).toEqual({ hits: 2, misses: 1 }); // only b rebuilt
+  });
+
+  test("a solid shared by two partitions survives until both are dropped, and is counted once", () => {
+    const c = createSolidCache({ sizeOf: (pin) => pin.size });
+    const dispose = vi.fn();
+    c.begin("a"); c.lookup("shared", () => ({ value: {}, pin: { size: 10 }, dispose })); c.end();
+    build(c, "b", ["shared"]);
+    c.trim();
+    expect(c.retainedBytes()).toBe(10);
+    c.setBudget(5);
+    c.trim();
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(c.retainedBytes()).toBe(0);
+  });
+
+  test("trim() refuses mid-bracket and a throwing sizeOf counts as zero", () => {
+    const c = createSolidCache({ sizeOf: () => { throw new Error("gone"); } });
+    c.setBudget(0);
+    c.begin("a"); c.lookup("a1", sized(10));
+    expect(c.trim()).toBe(0); // the open round's solids are in use
+    c.end();
+    expect(c.trim()).toBe(0); // zero bytes fit a zero budget
+  });
+});
