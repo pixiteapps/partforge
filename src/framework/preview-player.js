@@ -95,6 +95,30 @@ export function sampleOpacity(keys, t) {
   return keys[keys.length - 1][1];
 }
 
+// The poses an animation passes through, for framing it whole: one
+// { name → pose } map per sampled time, each pose the matrix `apply` would hand
+// setSubPose (keyframed transform with the rest taken out). The times are every
+// keyframe of every track and the midpoint of each gap between them (a rotation
+// can bulge past both its keyframes on the way), thinned evenly to at most
+// `max`, with t = 0 and the end always kept. A baked file samples densely, so
+// that is close to every frame it draws. Untracked sub-parts are left out of
+// every map (they sit at rest).
+export function animationPoses(animation, { max = 128 } = {}) {
+  const { tracks = {}, rest = {} } = animation ?? {};
+  const names = Object.keys(tracks);
+  if (!names.length) return [];
+  const restInverse = Object.fromEntries(names.map((name) => [name, invertRigid(rest[name])]));
+  const all = new Set([0]);
+  for (const name of names) for (const t of tracks[name].times) if (Number.isFinite(t)) all.add(t);
+  const keys = [...all].sort((x, y) => x - y);
+  let times = keys.flatMap((t, i) => (i === 0 ? [t] : [(keys[i - 1] + t) / 2, t]));
+  if (times.length > max) {
+    const step = (times.length - 1) / (max - 1);
+    times = Array.from({ length: max }, (_, i) => times[Math.round(i * step)]);
+  }
+  return times.map((seconds) => Object.fromEntries(names.map((name) => [name, mulMat4(sampleTrack(tracks[name], seconds), restInverse[name])])));
+}
+
 export function createPreviewPlayer(viewer, animation, { reducedMotion = false } = {}) {
   const { duration, tracks, rest, opacity = {} } = animation;
   const steps = animation.steps ?? [];
