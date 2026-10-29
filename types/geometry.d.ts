@@ -9,6 +9,7 @@ import type {
   Corner2D,
   CornerSelector,
   GeometryKernel,
+  ImplicitNode,
   MirrorAxis2,
   Point2,
   Point3,
@@ -461,3 +462,15 @@ export function euler(opts: { order: EulerOrder; angles: [number, number, number
 export function toEuler(steps: RotateStep[], opts: { order: EulerOrder; frame: "intrinsic" | "extrinsic"; units?: "deg" | "rad" }): [number, number, number];
 /** Apply frame-style steps to anything with `rotate(deg, center, axis)` (a Solid), about `center` (default the origin). */
 export function applyRotation<T extends { rotate(deg: number, center?: Point3, axis?: Point3): T }>(x: T, steps: RotateStep[], center?: Point3): T;
+
+// --- Implicit fields -------------------------------------------------------------------
+
+/**
+ * A `k.implicit` node's field as a point function: the signed distance (mm, negative
+ * inside) at a part-coordinate point. **Unreleased (feat/implicit).** The node is a
+ * k.implicit root naming no frames, validated once (an `ImplicitSpecError` otherwise);
+ * `images` maps the names an expr's textures read to their decoded grids. Like the
+ * engine's field it is a bound for ellipsoids, blends and warps, not always the true
+ * distance. Made for the kinematics domain's `grip.around`.
+ */
+export function implicitDistance(node: ImplicitNode, opts?: { images?: Map<string, unknown> | Record<string, unknown> }): (x: number, y: number, z: number) => number;

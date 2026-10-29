@@ -805,6 +805,13 @@ the helpers come along unmodified. (`test/kernel-contract.test.js` asserts every
   JS, not kernel ops. (The `limb` helper that builds on them is a domain, exported from
   `partforge/kinematics`, not from `partforge/geometry`.)
 
+- **Implicit field** — **Unreleased (feat/implicit).** `implicitDistance` —
+  `implicitDistance(node, { images })` returns `(x, y, z) => mm`, a `k.implicit` node's field (negative inside) evaluated by
+  the engine's own program, in part coordinates; the node names no frames. On the plain
+  shapes it equals the kinematics domain's closed forms; for an ellipsoid, a blend or a
+  warp it is the engine's bound, not always the true distance. Pure JS (no mesher, no
+  native core), not a kernel op — made for `grip.around`.
+
 **Profile validation on the way in** (0.112). `prism`, `extrude`, `revolve`, `sweep`,
 `loft` (per ring) and `shape2d` (including boolean operands) run `validateProfile` on a
 hand-authored profile — a point list, a `{start, segments}` contour, a `{outer, holes}`

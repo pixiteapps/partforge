@@ -632,3 +632,8 @@ export { sheetToWorld, worldToSheet } from "../sheet/pose.js";
 // Rotation converters: degrees/radians, Euler angles <-> frame-style rotate steps, and
 // applying steps to a Solid. Plain JS (the Solid's `rotate` is the only op they call).
 export { deg, rad, euler, toEuler, applyRotation } from "./rotations.js";
+
+// A k.implicit node's field as a point function (x, y, z) => mm — what the kinematics
+// domain's grip closes on for a shape beyond its plain closed forms. Pure JS over the
+// implicit engine's evaluator (no mesher, no native core).
+export { implicitDistance } from "./implicit/distance.js";
