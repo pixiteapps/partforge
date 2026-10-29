@@ -8,6 +8,7 @@ import { h } from "./solid-hash.js";
 import { ensureOutward, openEdgeCount } from "./mesh-repair.js";
 import { manifoldFromMesh, manifoldFromWeldedMesh, ringStackManifold } from "./mesh-build.js";
 import { compileImplicit, meshImplicit, implicitHashable, choosePreviewEdge, IMPLICIT_DEFAULTS } from "./implicit/index.js";
+import { implicitFrames } from "./implicit/frame-report.js";
 import { createSolidCache } from "./solid-cache.js";
 import { hoistCommonSuffix } from "./transform-hoist.js";
 import { addSugar } from "./solid-sugar.js";
@@ -977,6 +978,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       for (const w of implicitWarnings.get(solid) ?? []) recordWarning(w);
       return solid;
     },
+    // Where a k.implicit spec's frames and labelled nodes end up (implicit/frame-report.js).
+    // Pure and mesh-free, so it is not cached.
+    implicitFrames: (spec) => implicitFrames(spec, { images }),
     // Sweep a fixed 2-D profile along a 3-D polyline: hand-meshed from the shared station
     // list (sweep.js), so it agrees with OCCT's ruled loft of the same stations by
     // construction. Cached atomically; the hash folds profile pts, path pts, and opts

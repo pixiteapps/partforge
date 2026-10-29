@@ -1,5 +1,7 @@
 import { describe, test, expect, beforeAll } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
+import { implicitFrames } from "../src/framework/geometry/implicit/frame-report.js";
+import { vaseSpec } from "./fixtures/implicit-trees.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -91,4 +93,27 @@ describe("k.implicit contact pieces on Manifold", () => {
     expect(ids.length).toBe(1);
     expect(k._shadingPolicy(ids[0]).group).toBeUndefined();
   }, 60_000);
+});
+
+describe("k.implicitFrames on Manifold", () => {
+  test("implicitFrames sees the kernel's registered images", async () => {
+    const { spec, images } = vaseSpec();
+    for (const [name, im] of images) await k._registerImage({ name, ...im });
+    expect(k.implicitFrames(spec).report()).toEqual(implicitFrames(spec, { images }).report());
+  });
+
+  test("label boxes contain the transformed pieces", () => {
+    const a = { kind: "sphere", r: 5, at: [10, 0, 0], label: "a" };
+    const b = { kind: "box", size: [4, 4, 4], at: [-10, 0, 0], label: "b" };
+    const T = (x) => x.rotate(30, [0, 0, 0], [1, 1, 0]).translate([3, -2, 5]).scale(1.5).mirror("XZ");
+    const labels = T(k.implicitFrames({ root: { kind: "union", children: [a, b] } })).report().labels;
+    for (const piece of [a, b]) {
+      const bb = T(k.implicit({ root: piece, preview: 0.5 })).boundingBox();
+      const box = labels[piece.label];
+      for (let i = 0; i < 3; i++) {
+        expect(bb.min[i]).toBeGreaterThanOrEqual(box.min[i] - 0.05);
+        expect(bb.max[i]).toBeLessThanOrEqual(box.max[i] + 0.05);
+      }
+    }
+  });
 });

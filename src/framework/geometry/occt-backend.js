@@ -39,6 +39,7 @@ import { filterBrepEdges } from "./brep-edges.js";
 import { meshToStl } from "./mesh-stl.js";
 import { heightfieldMesh, hashGridData } from "./heightfield.js";
 import { writeStep } from "./occt-step.js";
+import { implicitFrames } from "./implicit/frame-report.js";
 const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.25 }, print: { tolerance: 0.01, angularTolerance: 0.1 } };
 
 // Heightfield sew-time warning threshold, in triangles. Measured by the plan's
@@ -750,12 +751,14 @@ export function createOcctKernel(replicad) {
   const implicit = () => {
     throw new Error("implicit: builds on the Manifold backend only — set `meta.backend: \"manifold\"` for this part (STEP export of implicit sub-parts is not supported yet)");
   };
+  // Its frame report meshes nothing, so OCCT runs it like Manifold does.
+  const frameReport = (spec) => implicitFrames(spec, { images });
 
   const kernel = finishKernel({
     cylinder, // boredCylinder: the kernel front's default composition is exactly right here
     box: (min, max) => cached(h("box", min, max), () => wrap(makeBox(min, max), [], h("box", min, max))),
     roundedBox,
-    prism, extrude, revolve, loft: loftOp, sweep, helixSweptTube, heightfield, implicit,
+    prism, extrude, revolve, loft: loftOp, sweep, helixSweptTube, heightfield, implicit, implicitFrames: frameReport,
     sphere: (r) => cached(h("sphere", r), () => wrap(makeSphere(r), [], h("sphere", r))),
     union: (solids) => {
       const key = h("union", solids.map((s) => s._hash));

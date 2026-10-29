@@ -210,3 +210,10 @@ test("a probe that throws stays an error, even after a stubbed query", () => {
   expect(r.errors.filter((f) => f.rule === "probe-throws").map((f) => f.path)).toEqual(["probes.gap", "probes.slab"]);
   expect(r.notes.map((f) => f.rule)).not.toContain("probe-throws");
 });
+
+test("a frame-set probe raises no probe-throws or unknown-kernel-op", () => {
+  const r = lintPart(partWith((k) => k.box({ size: [1, 1, 1] }),
+    { probes: { f: (k) => k.implicitFrames({ root: { kind: "sphere", r: 1 } }).rotateY(180).translate([0, 0, 1]) } }));
+  expect(ids(r.errors)).not.toContain("probe-throws");
+  expect(ids(r.errors)).not.toContain("unknown-kernel-op");
+});

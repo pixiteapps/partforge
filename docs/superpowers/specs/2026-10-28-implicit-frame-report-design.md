@@ -57,7 +57,8 @@ A frame set is independent of geometry, so it survives booleans (the hand's nail
 joined on with `k.union`, which would lose anything carried on the solid itself).
 
 Available on both backends: it meshes nothing, so it needs no Manifold. It is pure
-and deterministic, so lint's geometry-free probe of builds and probes runs it as is.
+and deterministic. Lint's geometry-free probe treats it like any kernel op (its proxy
+chains the transforms), the same treatment `k.implicit` gets.
 
 ## What it reports
 
