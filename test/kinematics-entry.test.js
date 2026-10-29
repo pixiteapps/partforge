@@ -4,19 +4,17 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { walk, chainTo } from "./helpers/import-graph.js";
+import { expectWorkerSafe } from "./helpers/worker-safety.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const ENTRY = `${ROOT}/src/framework/domains/kinematics/index.js`;
 
-test("the entry's import closure reaches no implicit engine, three, paper or node: module", () => {
-  const { files, bare, importer } = walk(ENTRY, "kinematics entry walk");
-  for (const f of files) {
-    expect(f.includes("/geometry/implicit/"), `implicit engine reached:\n  ${chainTo(f, importer, ROOT)}`).toBe(false);
+test("the entry's import closure reaches no implicit engine and is worker-safe (no DOM, three, paper or Node builtin)", () => {
+  const graph = walk(ENTRY, "kinematics entry walk");
+  for (const f of graph.files) {
+    expect(f.includes("/geometry/implicit/"), `implicit engine reached:\n  ${chainTo(f, graph.importer, ROOT)}`).toBe(false);
   }
-  for (const spec of bare) {
-    const banned = spec.startsWith("node:") || ["three", "paper", "fs", "path", "url"].includes(spec.split("/")[0]);
-    expect(banned, `banned import "${spec}":\n  ${chainTo(spec, importer, ROOT)}`).toBe(false);
-  }
+  expectWorkerSafe(graph, ROOT, "the kinematics domain");
 });
 
 test("partforge/kinematics resolves through the package exports and yields limb", async () => {

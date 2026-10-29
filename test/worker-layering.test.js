@@ -18,20 +18,9 @@ import { walk, chainTo } from "./helpers/import-graph.js";
 const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const ENTRY = `${ROOT}/src/framework/worker.js`;
 
-// three.js is the viewer's dependency and drags in DOM assumptions; the rest are the
-// Node builtins that a headless-harness module would bring along. Bare builtin names
-// are listed alongside the `node:` prefix because both forms resolve in Node.
-const BANNED_PACKAGES = ["three"];
-const NODE_BUILTINS = ["fs", "path", "url", "module", "os", "crypto", "child_process", "worker_threads", "process", "util", "stream", "zlib"];
-
-// Main-thread-only globals. `self`, `globalThis`, and `fetch` all exist in a worker and
-// are deliberately absent from this list.
-const DOM_GLOBALS = ["document", "window", "localStorage", "sessionStorage", "HTMLElement", "customElements"];
-
-// Same comment-stripping rule the walker uses: this codebase explains WHY in prose, and
-// that prose mentions `document` when describing what a module must not do.
-const stripComments = (src) =>
-  src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+// The banned packages, Node builtins and main-thread globals live in helpers/worker-safety.js,
+// shared with kinematics-entry.test.js so the two guards cannot drift.
+import { BANNED_PACKAGES, NODE_BUILTINS, DOM_GLOBALS, stripComments } from "./helpers/worker-safety.js";
 
 const graph = () => walk(ENTRY, "worker-layering walk");
 
