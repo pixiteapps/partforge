@@ -141,7 +141,7 @@ A sign check, for a limb that points up and bends toward +X:
 ```js
 const stalk = limb("s", { toward: [0, 0, 1], bendToward: [1, 0, 0], joints: ["a"], lengths: [10] });
 stalk.pose({ bend: [30] }).report.tip;    // [5, 0, 8.66]       toward +X
-stalk.pose({ bend: [-10] }).report.tip;   // [-1.736, 0, 9.848] away from +X
+stalk.pose({ bend: [-10] }).report.tip;   // [-1.736, 0, 9.848]  away from +X
 stalk.pose({ spread: 30 }).report.tip;    // [0, 5, 8.66]       local Z is -X, so +spread swings toward +Y
 ```
 
@@ -160,8 +160,10 @@ the other: a pose cannot have both.
 `reach` puts the tip on a point in part coordinates.
 
 - The first driven bend joint (the pitch) and the pose `spread` aim the limb at the
-  point. If a driven `"spread"` joint comes before the pitch, that joint aims the
-  limb, and the pose `spread` is not used for the aim.
+  point. The solved spread REPLACES any `spread` you gave the pose. If a driven
+  `"spread"` joint comes before the pitch, that joint aims the limb instead, and the
+  pose `spread` is kept as given. A limb declared with `rotate` cannot spread, so it
+  cannot aim sideways: a target off its bend plane reports `out-of-range`.
 - The other driven bend joints bend together until the distance from the pitch joint
   to the tip is correct. Each goes the same fraction of the way from its straightest
   in-range value to its closing end. The solver uses a fixed 60-step bisection.
@@ -201,7 +203,8 @@ index.pose({ reach: [-30, 160, -20] }).report;
 - **`around`** is the shape in part coordinates. It can be a plain shape node or a
   distance function.
   - **A shape node** is plain data, `{ kind, …fields }`: `sphere { r }`,
-    `ellipsoid { r: [rx, ry, rz] }`, `capsule { a?, b, r }` (`a` defaults to the origin;
+    `ellipsoid { r: [rx, ry, rz] }` (a scaled field, not an exact distance, so a
+    `clearance` against an ellipsoid is approximate), `capsule { a?, b, r }` (`a` defaults to the origin;
     `r` is one radius or a taper `[r0, r1]`), `box { size, round? }`,
     `cylinder { r, h, round?, axis? }` (centred on `at`, along `axis`, default `"z"`),
     `torus { R, r, axis? }`, `tube { points, r }`, `halfspace { normal, offset? }`, and
@@ -375,8 +378,8 @@ Numbers are rounded to 0.001.
   `range[0]`.
 - **`touched` on a joint that grip skipped** describes the contact that stopped the
   closing, as given in "grip" above. It does not say that this joint closed. A `true`
-  with the joint at its start value means that an earlier joint had already put the
-  limb on the shape.
+  with the joint at its start value means that the limb was already on the shape at
+  the start pose, or that an earlier joint put it there.
 - **Grip closes base-first.** The base joint closes until the limb touches the shape,
   and then the next joint closes, and so on. A shape near the base can thus stop the
   base joint early, with the outer joints doing the rest of the wrap. A shape near the
@@ -459,7 +462,12 @@ parts: {
   // middle → place(s, "pip"), distal → place(s, "dip")
 },
 views: {
-  assembly: { label: "Assembly", animations: { close: { label: "Close", duration: 1.5, tracks: { curl: [[0, 0], [1, 1]] } } } },
+  assembly: {
+    label: "Assembly",
+    animations: {
+      close: { label: "Close", duration: 1.5, tracks: { curl: [[0, 0], [1, 1]] } },
+    },
+  },
   print: { label: "Print" },
 },
 verify: {
