@@ -187,6 +187,39 @@ test("an unknown option value throws rather than showing the default", () => {
   }
 });
 
+test("edgeWidth and edgeOpacity style the edge lines; out-of-range values throw", async () => {
+  const lineMats = (h) => {
+    const mats = new Set();
+    state.renderer.lastScene?.traverseVisible((o) => { if (o.material?.isLineMaterial) mats.add(o.material); });
+    return [...mats];
+  };
+  state.renderer = null; // each mount makes its own renderer; read the one it made
+  const plain = mountPreview(makeStage(), { glb: await stillGlb() });
+  await plain.ready;
+  runFrames(1);
+  let mats = lineMats(plain);
+  expect(mats.length).toBeGreaterThan(0);
+  for (const m of mats) { expect(m.linewidth).toBe(1); expect(m.opacity).toBe(1); expect(m.transparent).toBe(false); }
+  plain.dispose();
+
+  state.renderer = null;
+  const light = mountPreview(makeStage(), { glb: await stillGlb(), edgeWidth: 0.5, edgeOpacity: 0.6 });
+  await light.ready;
+  runFrames(1);
+  mats = lineMats(light);
+  expect(mats.length).toBeGreaterThan(0);
+  for (const m of mats) { expect(m.linewidth).toBe(0.5); expect(m.opacity).toBe(0.6); expect(m.transparent).toBe(true); }
+  light.dispose();
+
+  const glb = new Uint8Array(0);
+  for (const edgeWidth of [0, -1, 9, NaN, "0.5", null]) {
+    expect(() => mountPreview(makeStage(), { glb, edgeWidth })).toThrow(/edgeWidth/);
+  }
+  for (const edgeOpacity of [0, -0.1, 1.5, NaN, "1", null]) {
+    expect(() => mountPreview(makeStage(), { glb, edgeOpacity })).toThrow(/edgeOpacity/);
+  }
+});
+
 test("an unknown option key throws — a stale showcase included", () => {
   const glb = new Uint8Array(0);
   expect(() => mountPreview(makeStage(), { glb, showcase: {} })).toThrow(/unknown option "showcase"/);

@@ -81,6 +81,10 @@
 //    `drawn` resolves on a frame showing exactly that pose, so a host can
 //    cross-fade from a still of it and then say go. A waiting animation's play
 //    button reads Play.
+//  - `edgeWidth` (0.170.0; CSS px, 0 < w <= 8, default 1) and `edgeOpacity`
+//    (0.170.0; 0 < o <= 1, default 1) — the CAD feature edge lines' thickness
+//    and strength. A small preview card reads the default 1 px lines as heavy;
+//    0.5 px is one device pixel on a 2x screen. Fixed for the mount.
 //  Any other key throws (an option this version does not know is a host bug).
 //
 // `handle.motion` (0.169.0; null before ready and once disposed, present for
@@ -136,10 +140,16 @@ function flag(name, value, fallback) {
 const KNOWN_OPTIONS = new Set([
   "glb", "elements", "viewerState", "animate",
   "chrome", "background", "contactShadow", "zoom", "pan", "turntable", "fill", "camera", "renderMode",
-  "autostart",
+  "autostart", "edgeWidth", "edgeOpacity",
 ]);
 
-function presentation({ chrome, background, contactShadow, zoom, pan, turntable, fill, camera, renderMode, autostart }) {
+function presentation({ chrome, background, contactShadow, zoom, pan, turntable, fill, camera, renderMode, autostart, edgeWidth, edgeOpacity }) {
+  if (edgeWidth !== undefined && !(typeof edgeWidth === "number" && edgeWidth > 0 && edgeWidth <= 8)) {
+    throw new TypeError("mountPreview: edgeWidth must be a number of CSS pixels above 0 and at most 8");
+  }
+  if (edgeOpacity !== undefined && !(typeof edgeOpacity === "number" && edgeOpacity > 0 && edgeOpacity <= 1)) {
+    throw new TypeError("mountPreview: edgeOpacity must be a number above 0 and at most 1");
+  }
   if (fill !== undefined && !(typeof fill === "number" && fill > 0 && fill <= 1)) {
     throw new TypeError("mountPreview: fill must be a number above 0 and at most 1");
   }
@@ -157,6 +167,8 @@ function presentation({ chrome, background, contactShadow, zoom, pan, turntable,
     defaultCamera: oneOf("camera", camera, ["carry", "default"], "carry") === "default",
     renderMode: oneOf("renderMode", renderMode, ["cad", "realistic"], null),
     autostart: flag("autostart", autostart, true),
+    edgeWidth: edgeWidth ?? 1,
+    edgeOpacity: edgeOpacity ?? 1,
   };
 }
 
@@ -280,6 +292,7 @@ export function mountPreview(container, options = {}) {
       transparent: opts.transparent, contactShadow: opts.contactShadow, zoom: opts.zoom, pan: opts.pan,
       // A turning model is framed swept a full turn, so no angle of it clips.
       frameFill: opts.fill, frameSwept: sweeps,
+      edgeWidth: opts.edgeWidth, edgeOpacity: opts.edgeOpacity,
     });
     cleanups.push(() => viewer.dispose());
     let tooltip = null, toolbar = null, viewStyle = null;

@@ -176,8 +176,12 @@ export function captureCurrentFromScene(
 // vertical instead (a turntable never clips).
 // Unset keeps the fixed r·2.6 + 6 distance. mountPreview's presentation
 // options are the caller.
+// `edgeWidth` (CSS px, default 1) and `edgeOpacity` (0 < o <= 1, default 1)
+// style the CAD feature edge lines; a small preview reads them as heavy at the
+// default. Fades multiply into the opacity rather than replacing it.
 export function createViewer(container, part, {
   transparent = false, contactShadow = false, zoom = true, pan = true, frameFill = null, frameSwept = false,
+  edgeWidth = 1, edgeOpacity = 1,
 } = {}) {
   const names = Object.keys(part.parts);
   // Membership for host-supplied names. subMesh, cadMats and part.parts are
@@ -328,7 +332,9 @@ export function createViewer(container, part, {
 
   // CAD-style feature edge lines (anti-aliased "fat" lines), one per sub-part.
   const EDGE_ANGLE = 35; // deg — last-ditch threshold for payloads with no kernel edge data
-  const lineMaterial = new LineMaterial({ color: THEME.dark.line, linewidth: 1.0 }); // ~10% lighter, 1 px
+  const lineMaterial = new LineMaterial({ // ~10% lighter, 1 px by default
+    color: THEME.dark.line, linewidth: edgeWidth, transparent: edgeOpacity < 1, opacity: edgeOpacity,
+  });
   lineMaterial.resolution.set(1, 1); // real size set by resize() below
   const subLines = Object.fromEntries(
     names.map((n) => [n, new LineSegments2(new LineSegmentsGeometry(), lineMaterial)])
@@ -466,7 +472,7 @@ export function createViewer(container, part, {
       mesh.material = fm;
       const flm = fadeLineMatFor(name);
       const so = effectiveDisplayOf(name).opacity ?? 1;
-      flm.opacity = so > 0 ? fade / so : 0; // lines fade by the multiplier alone
+      flm.opacity = so > 0 ? (fade / so) * edgeOpacity : 0; // lines fade by the multiplier alone
       lines.material = flm;
     }
     mesh.visible = meshVisible;
@@ -2560,7 +2566,7 @@ export function createViewer(container, part, {
             if (lines.material === fadeLineMats.get(n)) lines.material = lineMaterial;
           } else {
             const f = fadeMatFor(n); f.opacity = fade; mesh.material = f;
-            const fl = fadeLineMatFor(n); fl.opacity = staticOpacity > 0 ? fade / staticOpacity : 0; lines.material = fl;
+            const fl = fadeLineMatFor(n); fl.opacity = staticOpacity > 0 ? (fade / staticOpacity) * edgeOpacity : 0; lines.material = fl;
           }
           mesh.visible = meshVisible; lines.visible = linesVisible && meshVisible;
         },

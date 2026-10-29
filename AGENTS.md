@@ -357,7 +357,11 @@ the installed package, so let the publish finish before bumping the dep there.
   reduced motion), `state` (`waiting | playing | stopped | finished`) and
   `onChange`. A grab while the turntable waits stops it too (start() is then a
   no-op; restart() re-arms). A waiting animation's play button reads Play and
-  starts it.
+  starts it. Since 0.170.0 `edgeWidth` (CSS px) and `edgeOpacity` style the
+  edge lines, passed straight to `createViewer`, whose one shared
+  `lineMaterial` takes them (the per-part fade clones copy them, and a fade's
+  line opacity is multiplied by `edgeOpacity`, never replaces it). The
+  cutaway outline and measure lines keep their own widths.
 - **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
   (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
   nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,
