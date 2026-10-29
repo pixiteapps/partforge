@@ -1,24 +1,24 @@
 // limb(name, def): forward kinematics for one jointed chain, emitting plain
 // core-shaped frames. Structure once, pose as often as needed.
 import { buildTree, jointSteps, failer, couple, farEnd, nearZero } from "./tree.js";
-import { buildFrames, buildReport, buildAdapters } from "./outputs.js";
-import { solveReach } from "./solve.js";
+import { buildFrames, buildReport, buildAdapters, r3 } from "./outputs.js";
+import { solveReach, solveGrip } from "./solve.js";
+import { distanceFor } from "./shapes.js";
 import { IDENTITY, resolveFrames } from "../../geometry/xform.js";
+import { SpecError } from "../../geometry/errors.js";
 
 const POSE_KEYS = new Set(["bend", "curl", "spread", "twist", "reach", "grip"]);
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const isVec3 = (v) => Array.isArray(v) && v.length === 3 && v.every(isNum);
 const GRIP_KEYS = new Set(["around", "clearance", "r"]);
 
-/** Throw when any node of `around` names a frame (Ruling 4: shapes are in part coordinates). */
-function noFrames(node, fail) {
-  if (Array.isArray(node)) { for (const c of node) noFrames(c, fail); return; }
-  if (node == null || typeof node !== "object") return;
-  if (Object.hasOwn(node, "frame")) fail("grip.around", 'shapes are in part coordinates; drop "frame"');
-  for (const v of Object.values(node)) noFrames(v, fail);
-}
-
-/** Validate a pose's grip options: `{ around, radii, clearance }`. The solve arrives with Task A3. */
+/**
+ * Validate a pose's grip options: `{ dist, radii, clearance }`. `dist(x, y, z)` is `around`
+ * itself when it is a distance function, else shapes.js's closed form for the node (validated
+ * here, once — a `frame` anywhere in it is refused: shapes are in part coordinates). Either
+ * way a throw becomes a SpecError naming grip.around (the original as `cause`), and a
+ * non-finite value fails with the point it came from (Ruling 4).
+ */
 function gripInputs(tree, grip, fail) {
   if (typeof grip !== "object" || Array.isArray(grip)) fail("grip", "must be { around, clearance?, r? }");
   for (const k of Object.keys(grip)) if (!GRIP_KEYS.has(k)) fail(`grip.${k}`, `unknown grip option "${k}"`);
@@ -30,8 +30,21 @@ function gripInputs(tree, grip, fail) {
   const n = tree.joints.length + 1;
   if (!Array.isArray(radii) || radii.length !== n) fail("grip.r", `expected ${n} entries (one per joint, then the tip), got ${Array.isArray(radii) ? radii.length : radii}`);
   radii.forEach((v, i) => { if (!isNum(v) || v < 0) fail(`grip.r[${i}]`, "must be a finite number ≥ 0"); });
-  if (typeof around !== "function") noFrames(around, fail);
-  return { around, radii, clearance };
+  const base = typeof around === "function" ? around : distanceFor(around, { fail });
+  const prefix = `limb "${tree.name}".grip.around`;
+  const dist = (x, y, z) => {
+    let v;
+    try { v = base(x, y, z); } catch (e) {
+      const err = new SpecError(`${prefix}: distance function threw — ${e?.message ?? String(e)}`, { field: "grip.around" });
+      err.cause = e;
+      throw err;
+    }
+    if (typeof v !== "number" || !Number.isFinite(v)) {
+      fail("grip.around", `distance function returned a non-finite value at [${r3(x)}, ${r3(y)}, ${r3(z)}]`);
+    }
+    return v;
+  };
+  return { dist, radii, clearance };
 }
 
 /** Raw driven-joint values for a pose's bend/curl (followers and clamping come later, in `couple`). */
@@ -99,7 +112,7 @@ export function limb(name, def) {
     if (tree.base.rotate && (spread !== 0 || twist !== 0)) fail("", "spread/twist need toward/bendToward, not rotate");
 
     const raw = rawValues(tree, opts, fail);
-    let values, clamped, reach = null;
+    let values, clamped, reach = null, grip = null;
     if (opts.reach != null) {
       if (!isVec3(opts.reach)) fail("reach", "must be [x, y, z]");
       if (tree.parent != null && frames == null) fail("", "reach needs the frames declared so far — pass them as pose(…, frames)");
@@ -107,11 +120,17 @@ export function limb(name, def) {
       ({ values, clamped, spread } = solved);
       reach = { target: opts.reach, residual: solved.residual, status: solved.status };
     } else if (opts.grip != null) {
-      gripInputs(tree, opts.grip, fail);
-      fail("grip", "not implemented");
+      const { dist, radii, clearance } = gripInputs(tree, opts.grip, fail);
+      if (tree.parent != null && frames == null) fail("", "grip needs the frames declared so far — pass them as pose(…, frames)");
+      const solved = solveGrip(tree, parentWorld(frames), raw, dist, radii, clearance, { spread, twist });
+      ({ values, clamped } = solved);
+      grip = {
+        joints: solved.joints.map(({ index, touched }) => ({ joint: tree.joints[index].name, value: values[index], touched })),
+        touching: solved.touching, gap: solved.gap,
+      };
     } else ({ values, clamped } = couple(tree, raw));
     const posedFrames = buildFrames(tree, jointSteps(tree, values, { spread, twist }));
-    const report = buildReport(tree, values, clamped, posedFrames, frames, fail, reach);
+    const report = buildReport(tree, values, clamped, posedFrames, frames, fail, reach, grip);
     const adapters = buildAdapters(tree, posedFrames, frames, fail);
     return { values, frames: posedFrames, joints: [...jointFrames], tip, report, ...adapters };
   }

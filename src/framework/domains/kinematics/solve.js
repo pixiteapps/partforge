@@ -1,6 +1,6 @@
 // Goal solvers for a limb: they find joint values, then hand them to the same forward
 // step `pose` uses (jointSteps → buildFrames → resolveFrames). Pure and deterministic:
-// fixed iteration counts, no clock.
+// fixed iteration counts, no clock (grip calls a caller's distance function, which must be pure too).
 import { compose, invert, rotation, resolveFrames, xformPoint, xformDir } from "../../geometry/xform.js";
 import { hypot3 } from "../../geometry/js-math.js";
 import { jointSteps, baseSteps, couple, farEnd, nearZero } from "./tree.js";
@@ -203,4 +203,111 @@ function result({ values, clamped, spread, outOfRange, residual, tip }, status) 
   // report a miss as "reached".
   status ??= outOfRange || !(residual <= REACHED_TOL) ? "out-of-range" : "reached";
   return { values, clamped, spread, status, residual, tip };
+}
+
+/**
+ * Samples per segment in the grip contact test, end points included. The plan's 12 left the
+ * true minimum (200 samples) up to 0.089 mm below the sampled one on the fixture fingers'
+ * rod grip; 24 holds it to 0.016 (the test's tolerance is 0.05) at ~1.7 ms a 3-joint grip.
+ */
+const GRIP_SAMPLES = 24;
+/** Even steps of grip's scan from a joint's start value to its closing end (Ruling 6). */
+const GRIP_SCAN = 48;
+/** Bisection steps between the last clear scan step and the first touching one. */
+const GRIP_BISECT = 40;
+/**
+ * Contact slack for the verdicts (mm). The solve treats f ≤ 0 as contact and keeps the
+ * bisection's clear side, so a closed joint ends with f a hair above 0 (~1e-10 mm after 40
+ * halvings of a 48th of its range); the final-pose verdict allows that hair.
+ */
+const TOUCH_TOL = 1e-6;
+
+/**
+ * Close the limb on a shape (spec "Posing by goal"). `parentWorld` is the parent frame's
+ * world transform; `startValues` the pose's raw driven values; `dist(x, y, z)` the shape's
+ * signed distance in part coordinates (never reflected — Ruling 4), called once per sample;
+ * `radii` one per joint, then the tip.
+ *
+ * The contact function for joint j at value θ is the minimum, over GRIP_SAMPLES on every
+ * segment from j to the tip (followers coupled), of dist(p) − r(p) − clearance, with r
+ * linear along each segment. Each driven bend joint, base first, closes from its start
+ * value toward its closing end (range[1], or range[0] for an all-negative range, as in
+ * reach): touched at its start if f ≤ 0 there; else a 48-step scan finds the first f ≤ 0
+ * and a 40-step bisection between the last clear step and it keeps the clear side; else
+ * it ends at that closing end. The iteration stops once the tip segment touches, or once a
+ * joint touches at its start: the shape already overlaps the limb beyond it, so closing on
+ * would only close past that contact (Review Focus 3). A joint skipped by the stop answers
+ * for the segments from the joint that stopped it.
+ *
+ * Verdicts are read from the FINAL pose, since a later joint can swing an earlier contact
+ * away: a joint is touched only if it made contact during its own close (or was skipped
+ * by a stop) AND the segments from it (or from its stopper) onward still come within
+ * TOUCH_TOL of contact. `gap` is the final pose's f over the whole limb; `touching` is
+ * gap ≤ TOUCH_TOL.
+ *
+ * `clamped` keeps a requested start value that was out of range on any joint grip does
+ * not drive. Returns `{ values, clamped, joints: [{ index, touched }], gap, touching }`.
+ */
+export function solveGrip(tree, parentWorld, startValues, dist, radii, clearance, { spread = 0, twist = 0 } = {}) {
+  const { joints } = tree;
+  const n = joints.length;
+  const names = [...joints.map((j) => j.frame), `${tree.name}.tip`];
+  const start = couple(tree, startValues);
+  const raw = start.values; // start from in-range values
+  const p = [0, 0, 0];
+
+  // f per segment, for the segments from `first` on (entries before `first` are Infinity).
+  const segMins = new Float64Array(n);
+  const contact = (first) => {
+    const F = forwardLocal(tree, couple(tree, raw).values, { spread, twist });
+    segMins.fill(Infinity);
+    let min = Infinity, seg = first;
+    for (let k = first; k < n; k++) {
+      const A = F(names[k]), B = F(names[k + 1]);
+      for (let s = 0; s < GRIP_SAMPLES; s++) {
+        const t = s / (GRIP_SAMPLES - 1);
+        xformPoint(p, parentWorld, A[9] + (B[9] - A[9]) * t, A[10] + (B[10] - A[10]) * t, A[11] + (B[11] - A[11]) * t);
+        const v = dist(p[0], p[1], p[2]) - (radii[k] + (radii[k + 1] - radii[k]) * t) - clearance;
+        if (v < segMins[k]) segMins[k] = v;
+        if (v < min) { min = v; seg = k; }
+      }
+    }
+    return { min, seg };
+  };
+
+  const driven = [];
+  joints.forEach((j, i) => { if (!j.follow && j.axisKind === "bend") driven.push(i); });
+  const closes = []; // { index, contacted, from }: `from` is the first segment its verdict reads
+  let stopper = -1;
+  for (const i of driven) {
+    if (stopper >= 0) { closes.push({ index: i, contacted: true, from: stopper }); continue; }
+    const begin = raw[i], end = farEnd(joints[i].range);
+    const at = (v) => { raw[i] = v; return contact(i); };
+    if (at(begin).min <= 0) { closes.push({ index: i, contacted: true, from: i }); stopper = i; continue; }
+    let clear = begin, hit = null, hitSeg = -1;
+    for (let k = 1; k <= GRIP_SCAN; k++) {
+      const v = begin + ((end - begin) * k) / GRIP_SCAN;
+      const c = at(v);
+      if (c.min <= 0) { hit = v; hitSeg = c.seg; break; }
+      clear = v;
+    }
+    if (hit == null) { raw[i] = end; closes.push({ index: i, contacted: false, from: i }); continue; }
+    for (let k = 0; k < GRIP_BISECT; k++) {
+      const mid = (clear + hit) / 2;
+      const c = at(mid);
+      if (c.min <= 0) { hit = mid; hitSeg = c.seg; } else clear = mid;
+    }
+    raw[i] = clear;
+    closes.push({ index: i, contacted: true, from: i });
+    if (hitSeg === n - 1) stopper = i;
+  }
+
+  // Verdicts on the final pose.
+  const gap = contact(0).min;
+  const fromMin = (from) => { let m = Infinity; for (let k = from; k < n; k++) m = Math.min(m, segMins[k]); return m; };
+  const result = closes.map(({ index, contacted, from }) => ({ index, touched: contacted && fromMin(from) <= TOUCH_TOL }));
+  const solved = new Set(driven);
+  const final = couple(tree, raw);
+  const clamped = final.clamped.map((c, i) => c || (!solved.has(i) && !joints[i].follow && start.clamped[i]));
+  return { values: final.values, clamped, joints: result, gap, touching: gap <= TOUCH_TOL };
 }
