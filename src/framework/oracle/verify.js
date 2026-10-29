@@ -6,7 +6,7 @@ import { flexGroups, groupName } from "./flex-root.js";
 import { resolveProfile, overhangAngleFor, bedContactFor, footprintFor } from "./dfm-profiles.js";
 import { expandExpectations, partGatesMinWall } from "./gates.js";
 import { relevanceHash } from "../param-deps.js";
-import { SUBPART_METRICS, VIEW_METRICS, sidesSpecError } from "../verify-metrics.js";
+import { SUBPART_METRICS, VIEW_METRICS, sidesSpecError, FLEX_ROOT_HINT } from "../verify-metrics.js";
 import { processById } from "../process/registry.js";
 import { SHEET_DOC_ID, SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../sheet/constants.js";
 // Re-exported for the callers that read them from here; their one home is sheet/constants.js.
@@ -150,7 +150,7 @@ function check(scope, subpart, metric, spec, registry, factsObj, accept = []) {
     // did before it had its own branch.
     if (reg.unavailable) {
       const out = { ...base, actual, status: "warn", pass: null, message: reg.unavailable,
-        hint: partHint ?? "no ray read as this wall — the declared band may not match the geometry (check minWall for the real thickness), or a sampled run missed it" };
+        hint: partHint ?? reg.unavailableHint ?? "no ray read as this wall — the declared band may not match the geometry (check minWall for the real thickness), or a sampled run missed it" };
       const note = reg.note?.(factsObj);
       if (note) out.note = note;
       return out;
@@ -160,6 +160,9 @@ function check(scope, subpart, metric, spec, registry, factsObj, accept = []) {
   const { pass, message } = evaluateAssertion(parseAssertion(expr), actual);
   const status = pass ? "pass" : reg.kind === "warn" ? "warn" : reg.kind === "cost" ? "cost" : "fail";
   const out = { ...base, actual, status, pass, message };
+  // The labelled feature a reading is about (flexRoot's worst member), whatever the verdict.
+  const feature = reg.feature?.(factsObj);
+  if (feature) out.feature = feature;
   // A measurement caveat rides along whatever the verdict — a min-wall reading
   // taken from a sample still passed, but the reader should know it was a sample.
   const note = reg.note?.(factsObj);
@@ -216,8 +219,8 @@ const SHEET_BUDGET_HINT = "The 2-D sheet checks did not fit their time budget �
 // The print checks: measure() casts no rays and runs no overhang pass on a sheet part.
 // Declared on one, each is a skip — declared, never evaluated, so a sheet-only forge
 // that declares only these has no verdict rather than a vacuous pass.
-const PRINT_ONLY = new Set(["minWall", "wall", "overhangArea", "bedContactPct", "footprintPct"]);
-const PRINT_ONLY_HINT = "minWall, wall, overhangArea, bedContactPct and footprintPct are print checks, and a sheet part is cut, not printed: nothing measures them here. For a laser part declare sheetBridge (the narrowest web or finger) or sheetGap (the narrowest hole or slot) instead.";
+const PRINT_ONLY = new Set(["minWall", "wall", "overhangArea", "bedContactPct", "footprintPct", "flexRoot"]);
+const PRINT_ONLY_HINT = "minWall, wall, overhangArea, bedContactPct, footprintPct and flexRoot are print checks, and a sheet part is cut, not printed: nothing measures them here. For a laser part declare sheetBridge (the narrowest web or finger) or sheetGap (the narrowest hole or slot) instead.";
 
 // A sheet reading the geometry engine could not take (SheetFacts.readErrors): a
 // volunteered check warns with the reason; a declared one warns with it too, and is
@@ -327,6 +330,9 @@ export function evaluateCase(facts, { profile, expect, subPartNames, exportableN
       ...(overhang != null ? { overhangArea: "<=1" } : {}),
       ...(bedContact != null && (!printedNames || printedNames.has(s.name)) ? { bedContactPct: `>=${bedContact}` } : {}),
       ...(footprint != null && (!printedNames || printedNames.has(s.name)) ? { footprintPct: `>=${footprint}` } : {}),
+      // A declared flexing member this sub-part carries AND meets (flex-root.js): its
+      // root must be rounded. A carried member that meets nothing is flexChecks' row.
+      ...(flex.length && s.flexRoots?.some((r) => r.attached) ? { flexRoot: "0" } : {}),
       ...(expect?.[s.name] ?? {}),
     };
     // `accept` covers only the process's own default check: a cost metric the author
@@ -368,37 +374,39 @@ export function evaluateCase(facts, { profile, expect, subPartNames, exportableN
   return checks;
 }
 
-// Flexing members (`verify.flex`, flex-root.js): one gate per declared member and per
-// sub-part carrying its label, failing on any sharp inside corner where the member meets
-// the rest of the part. A member no sub-part of this view carries is a skip, not a fail —
-// a sub-part an `enabled()` turned off, or one shown only in another view — and lint's
-// verify-flex-unknown-label is what catches a label no build ever writes. A seed that did
-// not read the member (measuredFlex) cannot answer it: a quick lap reports it unevaluated.
-export const FLEX_ROOT_HINT = "a part that flexes (a snap arm, buckle prong, clip or cantilever tab) meets the rest of the part at a sharp inside corner here — bending concentrates the stress at that corner and the member snaps off at its root. Round the root: a fillet of at least half the member's thickness where it joins the body (`s.fillet({ r, edges: { near: [x, y, z] } })` on the joined solid, or a filleted corner in the 2-D profile both share), and keep that fillet clear of whatever the member slides into. A grip rib or barb on the member is part of it: list its label with the member's, `flex: [[\"Arm\", \"Arm rib\"]]`";
+// Flexing members (`verify.flex`, flex-root.js). The reading itself is the registry's
+// `flexRoot` gate, one row per sub-part carrying a member that meets the rest of the
+// part (evaluateCase's `merged`). What is left here is per DECLARED member, the cases
+// where no sub-part row can answer for it: a seed that did not read the member
+// (measuredFlex) answers unevaluated on a quick lap; a member no sub-part of this view
+// carries is a skip, not a fail — a sub-part an `enabled()` turned off, or one shown
+// only in another view — and lint's verify-flex-unknown-label is what catches a label
+// no build ever writes; a member carried but attached nowhere (its label covers the
+// whole sub-part, or the member never touches the body) withholds the verdict: a clean
+// root and no root must never read alike.
+export { FLEX_ROOT_HINT };
 const sameGroup = (a, b) => a.length === b.length && a.every((l, i) => l === b[i]);
 function flexChecks(facts, flex) {
   const out = [];
   for (const g of flex) {
     const feature = groupName(g);
-    const base = { scope: "subpart", metric: "flexRoot", kind: "gate", feature, expr: "rounded root" };
+    const base = { scope: "subpart", metric: "flexRoot", kind: "gate", feature, expr: "0", subpart: null, actual: null, status: "skip", pass: null };
     if (!(facts.measuredFlex ?? []).some((m) => sameGroup(m, g))) {
-      out.push({ ...base, subpart: null, actual: null, status: "skip", pass: null, unevaluated: true,
+      out.push({ ...base, unevaluated: true,
         message: "not measured (quick check)", hint: "re-run this check without `quick` to read the flexing member's root" });
       continue;
     }
-    const rows = facts.subparts.flatMap((s) => (s.flexRoots ?? []).filter((r) => sameGroup(r.labels, g)).map((r) => [s.name, r]));
+    const rows = facts.subparts.flatMap((s) => (s.flexRoots ?? []).filter((r) => sameGroup(r.labels, g)));
     if (!rows.length) {
-      out.push({ ...base, subpart: null, actual: null, status: "skip", pass: null,
+      out.push({ ...base,
         message: `no sub-part in this view carries the label ${g.map((l) => `"${l}"`).join(" or ")}`,
         hint: "verify.flex names flexing members by their feature label — label the member (`.label(\"Arm\")`) apart from the body it grows from, and spell it the same in both places" });
       continue;
     }
-    for (const [name, r] of rows) {
-      out.push(r.sharpLength > 0
-        ? { ...base, subpart: name, actual: r.sharpLength, status: "fail", pass: false,
-            message: `${r.sharpLength.toFixed(1)} mm of sharp inside corner (${Math.round(r.maxTurn)}°) where "${feature}" joins the part`,
-            hint: FLEX_ROOT_HINT, pattern: "flex-root-sharp", location: r.at }
-        : { ...base, subpart: name, actual: 0, status: "pass", pass: true, message: "rounded root" });
+    if (!rows.some((r) => r.attached)) {
+      out.push({ ...base, unevaluated: true,
+        message: `"${feature}" never meets the rest of the part: its label covers every triangle it touches, so there is no root to read`,
+        hint: "label the flexing member apart from the body it grows from (`.label(\"Arm\")` on the arm before the union, not on the union), or, if the member really is a separate piece, it has no root and does not belong in verify.flex" });
     }
   }
   return out;

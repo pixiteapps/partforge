@@ -26,7 +26,10 @@
 //
 // Known limits, stated: an inside corner WITHIN one label (the member and its body
 // labelled alike, or a barb's own notch) is invisible — label the flexing member apart
-// from the body it grows from. And a feature touching the member (a grip rib on the arm)
+// from the body it grows from. A label that covers the whole sub-part, or a member that
+// never touches the rest of it, therefore has NO root to read: that is `attached` false,
+// which verify withholds a verdict on rather than passing (a clean root and no root
+// must never read alike). And a feature touching the member (a grip rib on the arm)
 // counts as "the rest of the part", so its corners read as roots unless it is listed
 // with the member: `flex: [["Arm", "Arm rib"]]` treats the group as one member.
 
@@ -50,8 +53,10 @@ export const groupName = (group) => group[0];
 /**
  * @param {{ positions: ArrayLike<number>, indices?: ArrayLike<number>, featureIds?: ArrayLike<number>, features?: string[] }} mesh
  * @param {string[]} group the labels making up one flexing member
- * @returns {{ found: boolean, sharpLength: number, maxTurn: number|null, at: number[]|null }}
+ * @returns {{ found: boolean, attached: boolean, sharpLength: number, maxTurn: number|null, at: number[]|null }}
  *   `found` false when no triangle carries any of the labels (the check cannot run);
+ *   `attached` false when the member shares no edge with the rest of the mesh (nothing
+ *   to read either — the label covers everything, or the member touches nothing);
  *   `sharpLength` the total length (mm) of sharp concave root edges, 0 under ROOT_FLOOR;
  *   `maxTurn` the sharpest such edge's turn in degrees and `at` the midpoint of the
  *   longest one (both null when the root is clean).
@@ -60,7 +65,7 @@ export function flexRoot(mesh, group) {
   const { positions: P, indices: I, featureIds, features } = mesh;
   const ids = new Set();
   if (featureIds && features) features.forEach((f, i) => { if (group.includes(f)) ids.add(i + 1); });
-  if (!ids.size) return { found: false, sharpLength: 0, maxTurn: null, at: null };
+  if (!ids.size) return { found: false, attached: false, sharpLength: 0, maxTurn: null, at: null };
   const nTri = I ? I.length / 3 : P.length / 9;
   const vi = (t, j) => (I ? I[t * 3 + j] : t * 3 + j);
   const key = (i) => `${Math.round(P[i * 3] * 1e4)},${Math.round(P[i * 3 + 1] * 1e4)},${Math.round(P[i * 3 + 2] * 1e4)}`;
@@ -100,11 +105,12 @@ export function flexRoot(mesh, group) {
     }
   }
 
-  let sharpLength = 0, maxTurn = null, longest = 0, at = null;
+  let sharpLength = 0, maxTurn = null, longest = 0, at = null, attached = false;
   for (const e of edges.values()) {
     if (e.tris.length !== 2) continue;
     const [t1, t2] = e.tris;
     if (inMember(t1) === inMember(t2)) continue;                  // inside the member, or not on it
+    attached = true;                                              // a boundary, at any turn
     const d = normal[t1 * 3] * normal[t2 * 3] + normal[t1 * 3 + 1] * normal[t2 * 3 + 1] + normal[t1 * 3 + 2] * normal[t2 * 3 + 2];
     if (d > SHARP_COS) continue;                                  // shallow: a fillet facet, a flush face
     const mx = (P[e.a * 3] + P[e.b * 3]) / 2, my = (P[e.a * 3 + 1] + P[e.b * 3 + 1]) / 2, mz = (P[e.a * 3 + 2] + P[e.b * 3 + 2]) / 2;
@@ -117,6 +123,6 @@ export function flexRoot(mesh, group) {
     if (maxTurn == null || turn > maxTurn) maxTurn = turn;
     if (len > longest) { longest = len; at = [mx, my, mz]; }
   }
-  if (sharpLength < ROOT_FLOOR) return { found: true, sharpLength: 0, maxTurn: null, at: null };
-  return { found: true, sharpLength, maxTurn, at };
+  if (!attached || sharpLength < ROOT_FLOOR) return { found: true, attached, sharpLength: 0, maxTurn: null, at: null };
+  return { found: true, attached, sharpLength, maxTurn, at };
 }

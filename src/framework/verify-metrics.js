@@ -4,7 +4,10 @@
 // `pattern` (optional stable ERROR-PATTERNS.md#<id>), `locate` (optional
 // [x,y,z] source), `note` (optional caveat about HOW the value was measured,
 // attached whatever the status — a passing-but-sampled reading is exactly the
-// case a reader needs told about). `manifoldOnly` facts are null on OCCT parts.
+// case a reader needs told about), `feature` (optional: the labelled feature the
+// reading is about, stamped whatever the status), `unavailable` (+ `unavailableHint`:
+// a null reading is a finding to warn about, not an inert skip). `manifoldOnly`
+// facts are null on OCCT parts.
 //
 // This lives one level above framework/oracle/ deliberately: the set of legal
 // `verify.expect` metrics is part of the PartDefinition CONTRACT, which both the
@@ -62,6 +65,13 @@ export function sidesSpecError(metric, reg, spec) {
   if (!keys.length) return `${metric} needs at least one of ${sides.join(" or ")} — write ${form}`;
   return null;
 }
+
+// The flexing-member root (oracle/flex-root.js): what the failure means and what fixes it.
+export const FLEX_ROOT_HINT = "a part that flexes (a snap arm, buckle prong, clip or cantilever tab) meets the rest of the part at a sharp inside corner here — bending concentrates the stress at that corner and the member snaps off at its root. Round the root: a fillet of at least half the member's thickness where it joins the body (`s.fillet({ r, edges: { near: [x, y, z] } })` on the joined solid, or a filleted corner in the 2-D profile both share), and keep that fillet clear of whatever the member slides into. A grip rib or barb on the member is part of it: list its label with the member's, `flex: [[\"Arm\", \"Arm rib\"]]`";
+// The member whose root is worst on a sub-part, among those that meet the rest of it;
+// null when none does (nothing declared, no label carried, or every member detached).
+const worstFlexRoot = (s) => (s.flexRoots ?? []).filter((r) => r.attached)
+  .reduce((w, r) => (w == null || r.sharpLength > w.sharpLength ? r : w), null);
 
 export const SUBPART_METRICS = {
   holes: { kind: "gate", manifoldOnly: true, extract: (s) => s.holes,
@@ -132,6 +142,27 @@ export const SUBPART_METRICS = {
     hint: "the share of this piece's silhouette on the bed (its outline in the print pose) that actually touches it is small — it stands on a point, a line or a curve, which reads near zero, so the first layer has almost nothing to hold on to and the piece can tip or pull loose. Lay it on its flat face, add a flat foot or pad at its lowest point, or print it with a brim (accept: [\"footprint\"] records that choice)",
     pattern: "piece-stands-on-nothing",
     locate: (s) => s.footprintAt },
+  // A declared flexing member's root (oracle/flex-root.js, `verify.flex`): the length in
+  // mm of sharp inside corner where the member meets the rest of the sub-part. One row
+  // per sub-part, like every print metric: `actual` is the WORST member's reading,
+  // `feature` names it, and `note` lists every member the sub-part carries. Measured on
+  // a sub-part carrying a declared label; elsewhere `extract` is null — "no root to
+  // read" rather than an inert skip, since an authored expectation with nothing
+  // declared, or on a member that never meets the body, is a mistake to point at. A
+  // GATE under any process or none: the root is the same in any orientation and the
+  // stress concentration is the same in any material.
+  flexRoot: { kind: "gate", extract: (s) => worstFlexRoot(s)?.sharpLength ?? null,
+    hint: FLEX_ROOT_HINT,
+    pattern: "flex-root-sharp",
+    locate: (s) => worstFlexRoot(s)?.at ?? null,
+    feature: (s) => worstFlexRoot(s)?.feature ?? null,
+    unavailable: "no root to read",
+    unavailableHint: "flexRoot reads the root of a member named in `verify.flex` — declare the flexing member there by its feature label, and label it (`.label(\"Arm\")`) apart from the body it grows from, so this sub-part carries a member that meets the rest of the part",
+    note: (s) => {
+      const rows = s.flexRoots ?? [];
+      if (!rows.length) return null;
+      return rows.map((r) => `"${r.feature}": ${!r.attached ? "never meets the rest of this sub-part" : r.sharpLength > 0 ? `${r.sharpLength.toFixed(1)} mm of sharp inside corner (${Math.round(r.maxTurn)}°)` : "rounded root"}`).join("; ");
+    } },
   // `s.deviation` (measure.js) exists only for a sub-part declaring `reference:
   // "<import name>"`; on every other sub-part `extract` returns null, which
   // `check()` already reports as status "skip" rather than a fail — the

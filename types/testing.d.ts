@@ -442,6 +442,13 @@ export interface SubPartFacts {
   /** The piece's lowest point, in display coordinates; `null` when not checked. */
   footprintAt: number[] | null;
   /**
+   * The root of each flexing member (`verify.flex`) this sub-part carries, one entry per
+   * declared member group whose label its mesh holds; `null` when none is declared, or on
+   * a sheet part. `attached` is false when the member shares no edge with the rest of the
+   * mesh (nothing to read); `sharpLength` the mm of sharp inside corner at its root.
+   */
+  flexRoots: { feature: string; labels: string[]; found: boolean; attached: boolean; sharpLength: number; maxTurn: number | null; at: number[] | null }[] | null;
+  /**
    * Present only when bed contact had to be read off the piece's export build (its
    * print pose could not be read from place() alone) and that build failed.
    */

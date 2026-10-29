@@ -236,7 +236,7 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 
 ## flex-root-sharp
 
-- **Symptom:** A `✗ … flexRoot` failure from `verify` (e.g. `12.2 mm of sharp inside corner (90°) where "Right prong" joins the part`); or, in use, a snap arm, buckle prong, clip or cantilever tab that breaks off flush with the body it grows from.
+- **Symptom:** A `✗ … flexRoot` failure from `verify` naming the member in `feature`, whose note reads e.g. `"Right prong": 12.2 mm of sharp inside corner (90°)`; or, in use, a snap arm, buckle prong, clip or cantilever tab that breaks off flush with the body it grows from.
 - **Cause:** The member declared in `verify.flex` meets the rest of the part at a sharp inside corner. Bending puts the highest stress at the root, a sharp corner multiplies it several times over, and in FDM the layer bonds are weakest right there — so the member snaps at its root, often on the first few flexes.
 - **Fix:** Round the root with a fillet of at least half the member's thickness: `s.fillet({ r, edges: { near: [x, y, z] } })` on the joined solid, one root edge at a time, or `edges: { inPlane, at }` when every root edge lies on the face the member grows from (fillet before anything else that touches that face joins, so only the roots are selected); or draw the fillet into the 2-D profile the member and body share. Keep the fillet clear of whatever the member slides into — chamfer that mouth to seat it. If a grip rib or barb on the member is labelled apart, list it with the member: `flex: [["Arm", "Arm rib"]]`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Printed parts".
 

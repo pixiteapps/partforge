@@ -581,6 +581,12 @@ export interface SubPartExpectations {
    * a cost (`verify.costs`), never a failure; `accept: ["footprint"]` records a brim.
    */
   footprintPct?: Expectation;
+  /**
+   * Length (mm) of sharp inside corner where a flexing member named in `verify.flex`
+   * meets the rest of this sub-part — `actual` is the worst member's, `feature` names
+   * it. Every sub-part carrying a declared member gets `"0"` by default; a gate.
+   */
+  flexRoot?: Expectation;
   /** Symmetric-difference volume vs. the sub-part's declared `reference` import. */
   refXorVolume?: Expectation;
   /** Percent volume delta vs. the sub-part's declared `reference` import. */

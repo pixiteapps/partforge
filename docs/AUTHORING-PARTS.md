@@ -4569,15 +4569,21 @@ sub-parts are not judged.
 
 **Flexing members — a GATE, armed by `verify.flex` alone.** `flex` lists the part's
 flexing members by feature label (`flex: ["Right prong", "Left prong"]`; a list entry,
-`["Arm", "Arm rib"]`, is one member made of several labels). On every printed sub-part
-whose mesh carries a member's label, `flexRoot` measures the sharp inside corner where
-the member meets anything else — a concave edge turning more than 30° between one of
-its triangles and one that is not — and fails on any (`actual` is its length in mm,
-the location its longest stretch). A rounded root reads 0. It is independent of the
-process and of the print pose: the root is the same in any orientation. A member no
-sub-part of the verified view carries is reported as skipped (it may be switched off
-in that case); a seed that did not read a member answers unevaluated on a quick lap.
-See "Flexing members" under "Printed parts" for why, and how to round a root.
+`["Arm", "Arm rib"]`, is one member made of several labels). Every printed sub-part
+whose mesh carries a member's label gets one `flexRoot` row (`"0"` by default; your own
+`flexRoot` expectation on that sub-part replaces it): the sharp inside corner where a
+member meets anything else — a concave edge turning more than 30° between one of its
+triangles and one that is not — fails on any. `actual` is the worst member's length in
+mm, `feature` names that member, `location` is its longest stretch, and `note` lists
+every member the sub-part carries. A rounded root reads 0. It is independent of the
+process and of the print pose: the root is the same in any orientation. Three
+declaration problems are reported per member rather than per sub-part: a member no
+sub-part of the verified view carries is skipped (it may be switched off in that case);
+a member carried but meeting nothing — its label put on the whole union, or a piece
+that never touches the body — withholds the verdict (`unevaluated`), since a clean root
+and no root must never read alike; and a seed that did not read a member answers
+unevaluated on a quick lap. See "Flexing members" under "Printed parts" for why, and
+how to round a root.
 
 **What the profile tells you.** Three more fields carry the numbers a mating
 feature needs. Nothing checks them; they are the one place the value is spelled,
@@ -4603,7 +4609,7 @@ an inline `{ base: "fdm-pla", fits: { … } }` replaces the whole table.
 **What `expect` gives you:** per-sub-part
 assertions on the facts `measure` already reports — `holes` (through-bores / genus),
 `volume`, `surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`,
-`overhangArea`, `bedContactPct`, `footprintPct`, `wall` (a range — see below), `bounds` (the axis-aligned corner
+`overhangArea`, `bedContactPct`, `footprintPct`, `flexRoot`, `wall` (a range — see below), `bounds` (the axis-aligned corner
 positions, written in the same `{ min, max }` shape `measure` reports them — where
 the geometry sits, vs `bbox` which is only its size) and `centerOfMass` (`[x,y,z]`, the volume-weighted
 centroid; `null` for a degenerate/zero-volume sub-part); and `_view` assertions `bbox`,
