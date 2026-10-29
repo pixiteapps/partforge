@@ -907,6 +907,12 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** The OCCT kernel is a WASM build compiled without C++ exception catching, so an exception nothing inside it catches — the STEP reader's transfer refusing an entity, a construction with a zero-length direction, an allocation the heap could not grow for — reaches JavaScript as the exception's ADDRESS. The number is not a code and means nothing across runs. partforge now names the operation and reads the exception's type off the heap, but it cannot read OCCT's own message for it.
 - **Fix:** Act on the type. `std::bad_alloc` or `Standard_OutOfMemory` (the message then says "probably too large for the in-browser kernel") is memory: a STEP import needs roughly six times its file size of kernel heap (measured on OCCT-written files: 17 MB → 100 MiB, 42 MB → 248 MiB), so a file that exhausts the 2 GB wasm32 ceiling is hundreds of megabytes, or the browser refused to grow the heap — simplify the imported model or split it. Any other type on an import is the file itself: re-export it from the CAD tool as AP214/AP242 solids (no assembly-only or surface-only exports) and try the smaller file; the same type from a build is that operation refusing its input (a `Standard_ConstructionError` is usually a zero-length direction or a degenerate profile). Retrying the identical build fails the same way — it is not transient.
 
+## limb-links-hand-chained
+
+- **Symptom:** A solid finger (or other jointed chain of separate solids) comes apart when a joint param moves: the links separate at the joints, or a link bends the wrong way, though each link looks right at rest.
+- **Cause:** The links are chained with hand-written `rotate` calls about hinge points that do not move with the parent joint, so a bend at the base turns the child links about a pivot left at its rest position.
+- **Fix:** Declare the chain once with `limb(...)` from `partforge/kinematics`, pose it in `derive`, and place each link with `d.<limb>.place(solid, joint)`. `place` carries the solid through every parent joint, so the hinges stay joined. Build each link at the origin along +y and let `place` do all the moving.
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.
