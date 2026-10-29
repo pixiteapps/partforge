@@ -45,7 +45,9 @@ relief plate, swappable source), and `laser-box.js` (the sheet-parts reference
 part - five `fingerBox` panels and a lid as `sheetPart` sub-parts, two printed
 hinges keyed into slots; a test fixture and the guide's worked example, with no
 demo page), and `material-swatches.js` (not a reference part: the dev-only
-contact sheet of material presets behind `materials.html`).
+contact sheet of material presets behind `materials.html`), and `offset-demo.js`
+(not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
+`offset-demo.html`).
 
 ## Node version
 
