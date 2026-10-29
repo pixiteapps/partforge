@@ -199,7 +199,7 @@ never under `prefers-reduced-motion`), `fill: 0.8` (frame the model so its
 bounding box, as seen from the opening view, spans that fraction of the preview
 along its tighter axis — larger in a small card; with a turntable the model swept
 a full turn is framed, so it never clips as it turns and a round part still fills, and it
-turns about its hub; a model that is not turning has its on-screen outline centred, since 0.169.0), `camera: "default"` (drop the carried camera
+turns about its hub; a model that is not turning has its on-screen outline centred, since 0.169.0, and a playing animation is framed over every pose it passes through, since 0.171.0, so a part that swings out never leaves the frame), `camera: "default"` (drop the carried camera
 and projection and keep the file's own framing; a carried render mode and
 environment still apply) and `renderMode: "cad" | "realistic"` (the opening
 mode, over any carried one; it can change afterwards), and `autostart: false`
