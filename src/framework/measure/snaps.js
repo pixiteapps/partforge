@@ -172,7 +172,11 @@ export function buildSnapIndex({ positions, indices, featureIds, edgePositions }
       straight,
       length: polylineLength(points),
       mid: straight ? scale(add(a, b), 0.5) : null,
-      centroid: scale(points.reduce(add, [0, 0, 0]), 1 / points.length),
+      // a closed chain repeats its first point at the end; count it once
+      centroid: (() => {
+        const pts = closed ? points.slice(0, -1) : points;
+        return scale(pts.reduce(add, [0, 0, 0]), 1 / pts.length);
+      })(),
       owners: own,
     };
   });

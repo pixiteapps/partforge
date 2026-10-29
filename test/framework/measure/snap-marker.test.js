@@ -131,6 +131,23 @@ test("same target twice does not rebuild", () => {
   s.marker.dispose();
 });
 
+test("an edge target moving along the same chain does not rebuild the line", () => {
+  const s = setup();
+  s.marker.show({ kind: "edge", point: [4, 0, 2], featureId: 1, chain }, s.mesh, "e");
+  const geo = s.line().geometry;
+  const setPositions = vi.spyOn(geo, "setPositions");
+  s.marker.show({ kind: "edge", point: [9, 0, 2], featureId: 1, chain }, s.mesh, "e");
+  expect(s.line().geometry).toBe(geo);
+  expect(setPositions).not.toHaveBeenCalled();
+  // a different chain swaps in a fresh geometry and disposes the old one
+  const dispose = vi.spyOn(geo, "dispose");
+  const other = { ...chain, points: [[0, 10, 2], [20, 10, 2]] };
+  s.marker.show({ kind: "edge", point: [9, 10, 2], featureId: 1, chain: other }, s.mesh, "e");
+  expect(s.line().geometry).not.toBe(geo);
+  expect(dispose).toHaveBeenCalled();
+  s.marker.dispose();
+});
+
 test("clear hides everything", () => {
   const s = setup();
   s.marker.show({ kind: "midpoint", point: [10, 0, 2], featureId: 1, chain }, s.mesh, "m");

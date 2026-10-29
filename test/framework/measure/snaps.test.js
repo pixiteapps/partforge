@@ -257,6 +257,12 @@ describe("circles", () => {
     for (const c of idx.chains) expect(c.centroid).toHaveLength(3);
   });
 
+  test("a closed rim's centroid counts its repeated end point once", () => {
+    const [rim] = idx.chainsByFeature.get(2);
+    expect(rim.centroid[0]).toBeCloseTo(HOLE.cx, 4);
+    expect(rim.centroid[1]).toBeCloseTo(HOLE.cy, 4);
+  });
+
   test("a non-cylinder spec offers no circle", () => {
     const t = findSnap(idx, q([130, 50], { featureId: 2, spec: { kind: "bbox" }, z: 1.9 }));
     expect(t.kind).toBe("edge");

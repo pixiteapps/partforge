@@ -50,12 +50,32 @@ function rimLoop({ centre, axis, radius }) {
   return out;
 }
 
+// What the line draws: the chain object itself, or the circle's values.
+function lineSource(target) {
+  const lineKind = target.kind === "edge" || target.kind === "midpoint" || target.kind === "circle";
+  if (lineKind && target.chain) return { chain: target.chain };
+  if (target.kind === "circle" && target.circle) return { circle: target.circle };
+  return null;
+}
+
+function sameLineSource(a, b) {
+  if (!a || !b) return false;
+  if (a.chain || b.chain) return a.chain === b.chain;
+  const x = a.circle, y = b.circle;
+  return x.radius === y.radius
+    && x.centre.every((v, i) => v === y.centre[i]) && x.axis.every((v, i) => v === y.axis[i]);
+}
+
 function chainSegments(points) {
   const out = [];
   for (let i = 1; i < points.length; i++) out.push(...points[i - 1], ...points[i]);
   return out;
 }
 
+// Chain identity is deliberately NOT compared: two targets at the same point
+// of the same kind on the same mesh grab the same thing. The line is guarded
+// separately (sameLineSource), because an edge target's point moves with the
+// pointer along an unchanged chain.
 function sameTarget(a, meshA, b, meshB) {
   if (!a || !b || meshA !== meshB || a.kind !== b.kind || a.featureId !== b.featureId) return false;
   for (let i = 0; i < 3; i++) if (Math.abs(a.point[i] - b.point[i]) > SAME_EPS) return false;
@@ -64,7 +84,8 @@ function sameTarget(a, meshA, b, meshB) {
 
 export function createSnapMarker(viewer, { stage = viewer.stageElement } = {}) {
   const redraw = () => viewer.requestRender?.();
-  let theme = viewer.getTheme?.() ?? "dark";
+  let theme = viewer.getTheme?.();
+  if (!DIM_THEME[theme]) theme = "dark";
   const highlight = createFeatureHighlight(viewer);
 
   // Overlay ink: drawn over the model, never depth-written, never cut away.
@@ -90,8 +111,8 @@ export function createSnapMarker(viewer, { stage = viewer.stageElement } = {}) {
   const marks = new THREE.Group();
   marks.name = "pf-measure-snap";
   marks.visible = false;
-  const lineGeo = new LineSegmentsGeometry();
-  const line = new LineSegments2(lineGeo, lineMat);
+  const line = new LineSegments2(new LineSegmentsGeometry(), lineMat);
+  let lineSrc = null; // what line.geometry currently holds
   line.renderOrder = RENDER_ORDER_DIMS;
   line.frustumCulled = false;
   line.visible = false;
@@ -182,18 +203,20 @@ export function createSnapMarker(viewer, { stage = viewer.stageElement } = {}) {
       highlight.clear();
     }
 
-    let segs = null;
-    if ((target.kind === "edge" || target.kind === "midpoint" || target.kind === "circle") && target.chain) {
-      segs = chainSegments(target.chain.points);
-    } else if (target.kind === "circle" && target.circle) {
-      segs = rimLoop(target.circle);
+    // LineSegmentsGeometry.setPositions allocates a new GPU buffer per call,
+    // so the line is rebuilt only when its source changes, into a fresh
+    // geometry that replaces (and disposes) the old one — cutaway-outline.js's
+    // pattern.
+    const src = lineSource(target);
+    if (src && !sameLineSource(src, lineSrc)) {
+      const next = new LineSegmentsGeometry();
+      next.setPositions(src.chain ? chainSegments(src.chain.points) : rimLoop(src.circle));
+      const previous = line.geometry;
+      line.geometry = next;
+      previous.dispose();
+      lineSrc = src;
     }
-    if (segs) {
-      lineGeo.setPositions(segs);
-      line.visible = true;
-    } else {
-      line.visible = false;
-    }
+    line.visible = !!src;
 
     dot.visible = DOT_KINDS.has(target.kind);
     if (dot.visible) dot.position.set(...target.point);
@@ -232,7 +255,7 @@ export function createSnapMarker(viewer, { stage = viewer.stageElement } = {}) {
       () => start.parent?.remove(start),
       ...unregisterCapture,
       () => label.remove(),
-      () => lineGeo.dispose(),
+      () => line.geometry.dispose(),
       () => unitSphere.dispose(),
       () => lineMat.dispose(),
       () => coreMat.dispose(),
