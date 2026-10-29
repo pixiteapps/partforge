@@ -158,7 +158,7 @@ test("the worked example is quoted from src/parts/robot-finger.js", () => {
 test("the guide is self-contained for main: the import line, no unshipped API", () => {
   expect(guide).toContain('import { limb } from "partforge/kinematics";');
   expect(guide).toContain("src/parts/robot-finger.js");
-  expect(guide).not.toMatch(/\bflesh\b|\battach\b|k\.implicit/);
+  expect(guide).not.toMatch(/\bflesh\b|\battach\b|k\.implicit|implicitDistance|feat\/implicit/);
   // The Domains index line in the core guide points here.
   expect(read("../docs/AUTHORING-PARTS.md")).toContain("[`docs/domains/kinematics.md`](domains/kinematics.md)");
 });

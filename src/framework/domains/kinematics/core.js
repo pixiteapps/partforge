@@ -17,7 +17,7 @@ const GRIP_KEYS = new Set(["around", "clearance", "r"]);
  * itself when it is a distance function, else shapes.js's closed form for the node (validated
  * here, once — a `frame` anywhere in it is refused: shapes are in part coordinates). Either
  * way a throw becomes a SpecError naming grip.around (the original as `cause`), and a
- * non-finite value fails with the point it came from (Ruling 4).
+ * non-finite value fails with the point it came from.
  */
 function gripInputs(tree, grip, fail) {
   if (typeof grip !== "object" || Array.isArray(grip)) fail("grip", "must be { around, clearance?, r? }");

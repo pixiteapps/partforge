@@ -126,7 +126,7 @@ describe("reach", () => {
     couplingHolds(posed.values);
   });
 
-  it("too close is measured with couplings held (Ruling 5)", () => {
+  it("too close is measured with couplings held", () => {
     const ratio = 0.3;
     const coupled = finger({}, ratio);
     const free = limb("free", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: [{ name: "a", range: [-10, 90] }, { name: "b", range: [0, 110] }, { name: "c", range: [0, 80] }], lengths: [42, 25, 22] });
@@ -168,7 +168,7 @@ describe("reach", () => {
     couplingHolds(posed.values);
   });
 
-  it("a mirrored limb reaches an unreflected part-coordinate target (Ruling 4)", () => {
+  it("a mirrored limb reaches an unreflected part-coordinate target", () => {
     const L = finger({ mirror: "YZ", at: [20, 0, 0] });
     for (let n = 0; n < 10; n++) {
       const target = tipOf(L.pose({ bend: [between(-10, 90), between(0, 110)], spread: between(-30, 30) }));

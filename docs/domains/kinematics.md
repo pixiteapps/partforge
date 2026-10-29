@@ -400,12 +400,9 @@ limb "x".bendToward: must not be parallel to toward
 limb "x".lengths: expected 2 entries, got 1
 limb "index": reach needs the frames declared so far — pass them as pose(…, frames)
 limb "index": place: unknown joint "pipp"
-limb "index".grip.around: node kind "twist" needs the implicit engine — pass a distance function (implicitDistance(node) on feat/implicit makes one)
+limb "index".grip.around: node kind "twist" needs the implicit engine — pass a distance function (x, y, z) => mm instead
 limb "index".grip.around: distance function returned a non-finite value at [-30, 96, 2]
 ```
-
-The `implicitDistance` that the shape-node message names is not in a released
-partforge. Write the distance function yourself.
 
 Other errors: `lengths`, `r` or a `bend` array of the wrong length, a `range` that is not
 `[min, max]` with `min ≤ max`, a zero-length `toward` or `bendToward`, a duplicate joint

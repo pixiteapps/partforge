@@ -137,8 +137,8 @@ export function buildTree(name, def) {
 }
 
 /**
- * One joint's rotate step for `value` (degrees), or null when the value is 0 (Ruling 1).
- * Mirrored (Ruling 3): a vector axis [ax, ay, az] by θ becomes [−ax, ay, az] by −θ, which
+ * One joint's rotate step for `value` (degrees), or null when the value is 0.
+ * Mirrored: a vector axis [ax, ay, az] by θ becomes [−ax, ay, az] by −θ, which
  * leaves "bend" unchanged and flips "spread" and "twist".
  */
 function jointStep(joint, value, mirrored) {
@@ -150,9 +150,9 @@ function jointStep(joint, value, mirrored) {
 }
 
 /**
- * The base frame's steps before its first joint's own (Ruling 2): the escape-hatch `rotate`,
- * or the aim, then the pose spread about z, then the pose twist about y (mirror-flipped,
- * Ruling 3), zero steps omitted. Shared by `jointSteps` and the reach solver's spread frame.
+ * The base frame's steps before its first joint's own: the escape-hatch `rotate`,
+ * or the aim, then the pose spread about z, then the pose twist about y (mirror-flipped),
+ * zero steps omitted. Shared by `jointSteps` and the reach solver's spread frame.
  */
 export function baseSteps(tree, { spread = 0, twist = 0 } = {}) {
   if (tree.base.rotate) return tree.base.rotate.map((s) => ({ ...s }));
@@ -166,7 +166,7 @@ export function baseSteps(tree, { spread = 0, twist = 0 } = {}) {
   return steps;
 }
 
-/** Every joint frame's rotate steps for these joint values (Ruling 2 for the base). */
+/** Every joint frame's rotate steps for these joint values (the base frame first). */
 export function jointSteps(tree, values, { spread = 0, twist = 0 } = {}) {
   const mirrored = tree.mirrorAxis != null;
   const out = {};

@@ -1,4 +1,4 @@
-// Closed-form signed distances for the plain shapes grip can close on (Ruling 3), so
+// Closed-form signed distances for the plain shapes grip can close on, so
 // `grip.around` needs no implicit engine. The vocabulary, field names and defaults are
 // k.implicit's grammar; the formulas are its primitives' closed forms with the same
 // parameter packing (axis basis, capsule `a` at the origin, `r` as one radius or a taper),
@@ -43,9 +43,9 @@ const SHAPE_KINDS = {
   halfspace: { req: { normal: "axis" }, opt: { offset: "num" } },
   union: { req: { children: "children" }, opt: { k: "nonneg" } },
 };
-/** k.implicit kinds with no closed form here (Ruling 3's "needs the implicit engine"). */
+/** k.implicit kinds with no closed form here (they need the implicit engine). */
 const ENGINE_KINDS = new Set(["intersect", "subtract", "contact", "mirror", "round", "onion", "displace", "twist", "bend", "taper", "repeat", "expr"]);
-const ENGINE_FIX = "needs the implicit engine — pass a distance function (implicitDistance(node) on feat/implicit makes one)";
+const ENGINE_FIX = "needs the implicit engine — pass a distance function (x, y, z) => mm instead";
 
 const defaultFail = (field, msg) => { throw new SpecError(`${field}: ${msg}`, { field }); };
 

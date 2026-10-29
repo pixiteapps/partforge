@@ -122,7 +122,7 @@ describe("limb structure and pose", () => {
     expect(p.report.bend).toEqual([90, 0, 0]);
   });
 
-  it("a zero joint emits no step (Ruling 1)", () => {
+  it("a zero joint emits no step", () => {
     const p = finger().pose({ bend: [0, 0, 0] });
     for (const f of ["index.pip", "index.dip", "index.tip"]) expect(p.frames[f].rotate ?? []).toEqual([]);
     expect(p.frames["index.mcp"].rotate ?? []).toEqual([]);

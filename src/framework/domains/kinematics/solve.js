@@ -37,7 +37,7 @@ const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const pointIn = (M, p) => { const o = [0, 0, 0]; xformPoint(o, invert(M), p[0], p[1], p[2]); return o; };
 
 /**
- * The aim joints (Ruling 10): the first driven bend joint (the pitch) and the first driven
+ * The aim joints: the first driven bend joint (the pitch) and the first driven
  * spread joint before it, if any. Every segment before the pitch must have length 0, and
  * no joint may follow an aim joint — its value would move with the aim.
  */
@@ -59,7 +59,7 @@ function aimJoints(tree, fail) {
 }
 
 /**
- * Place the limb's tip on `target` (part coordinates; never reflected — Ruling 4).
+ * Place the limb's tip on `target` (part coordinates; never reflected).
  * `parentWorld` is the parent frame's world transform; `raw` the pose's driven values
  * (the joints reach does not solve keep them); `spread`/`twist` the pose-level angles.
  *
@@ -68,8 +68,8 @@ function aimJoints(tree, fail) {
  * the tip's component along the spread axis equal to the target's, then the spread about
  * that axis swings it on. The spread axis is P's Z seen from the pitch frame (n), so pose
  * twist or zero-length joints between spread and pitch are solved through, not ignored;
- * with none, n = +Z and this is the brief's v_z = w_z construction exactly.
- * Statuses: too-far / too-close (Ruling 5) win over out-of-range.
+ * with none, n = +Z.
+ * Statuses: too-far / too-close win over out-of-range.
  */
 export function solveReach(tree, parentWorld, target, raw, { spread = 0, twist = 0 } = {}, fail) {
   const { joints } = tree;
@@ -147,7 +147,7 @@ export function solveReach(tree, parentWorld, target, raw, { spread = 0, twist =
   const scale = hypot3(t[0], t[1], t[2]) / dw;
   const ws = [w[0] * scale, w[1] * scale, w[2] * scale]; // the target pulled to the tip's distance
 
-  // Aim, for one branch of the pitch (sign +1 is the brief's v_y = +sqrt).
+  // Aim, for one branch of the pitch (sign +1 takes the positive root).
   const aim = (sign) => {
     const r = trialRaw(s);
     let outSpread = spread, outOfRange = false;
@@ -211,7 +211,7 @@ function result({ values, clamped, spread, outOfRange, residual, tip }, status) 
  * rod grip; 24 holds it to 0.016 (the test's tolerance is 0.05) at ~1.7 ms a 3-joint grip.
  */
 const GRIP_SAMPLES = 24;
-/** Even steps of grip's scan from a joint's start value to its closing end (Ruling 6). */
+/** Even steps of grip's scan from a joint's start value to its closing end. */
 const GRIP_SCAN = 48;
 /** Bisection steps between the last clear scan step and the first touching one. */
 const GRIP_BISECT = 40;
@@ -225,7 +225,7 @@ const TOUCH_TOL = 1e-6;
 /**
  * Close the limb on a shape (spec "Posing by goal"). `parentWorld` is the parent frame's
  * world transform; `startValues` the pose's raw driven values; `dist(x, y, z)` the shape's
- * signed distance in part coordinates (never reflected — Ruling 4), called once per sample;
+ * signed distance in part coordinates (never reflected), called once per sample;
  * `radii` one per joint, then the tip.
  *
  * The contact function for joint j at value θ is the minimum, over GRIP_SAMPLES on every
@@ -236,7 +236,7 @@ const TOUCH_TOL = 1e-6;
  * and a 40-step bisection between the last clear step and it keeps the clear side; else
  * it ends at that closing end. The iteration stops once the tip segment touches, or once a
  * joint touches at its start: the shape already overlaps the limb beyond it, so closing on
- * would only close past that contact (Review Focus 3). A joint skipped by the stop answers
+ * would only close past that contact. A joint skipped by the stop answers
  * for the segments from the joint that stopped it.
  *
  * Verdicts are read from the FINAL pose, since a later joint can swing an earlier contact

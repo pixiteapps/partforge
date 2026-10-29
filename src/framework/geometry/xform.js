@@ -1,7 +1,7 @@
 // Rigid 3×4 transforms and the named frame tree. Shared core: the kinematics domain and the implicit engine both build on it.
 // Layout: [r00 r01 r02 r10 r11 r12 r20 r21 r22 tx ty tz]; x' = r00·x + r01·y + r02·z + tx.
 // Math.cos/Math.sin appear ONLY in `rotation` — lowering-time constants that the
-// native port receives as data (see the plan's Global Constraints).
+// native port receives as data.
 import { hypot3 } from "./js-math.js";
 import { SpecError } from "./errors.js";
 

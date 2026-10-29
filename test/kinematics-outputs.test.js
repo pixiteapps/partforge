@@ -51,7 +51,7 @@ describe("world and place", () => {
       corners.forEach((c, i) => corners.forEach((c2, m) => expect(Math.abs(d(pts[i], pts[m]) - d(c, c2))).toBeLessThan(1e-9)));
     }
   });
-  it("errors: parent frames (Ruling 8) and unknown joint", () => {
+  it("errors: parent frames and unknown joint", () => {
     const posed = finger().pose({});
     expect(() => posed.place(box())).toThrow(/place needs the parent frames/);
     expect(() => posed.world()).toThrow(/world needs the parent frames/);

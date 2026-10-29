@@ -53,7 +53,7 @@ export function buildReport(tree, values, clamped, posedFrames, frames, fail, re
 }
 
 /**
- * The adapters of one posed limb: world and place for solids. `frames` are the parent frames passed to `pose` (Ruling 8).
+ * The adapters of one posed limb: world and place for solids. `frames` are the parent frames passed to `pose`.
  */
 export function buildAdapters(tree, posedFrames, frames, fail) {
   const { name, joints } = tree;

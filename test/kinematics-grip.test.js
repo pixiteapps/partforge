@@ -8,12 +8,12 @@ import { cpuMs } from "./helpers/cpu-pace.js";
 const ROD = { kind: "cylinder", r: 12, h: 120, at: [0, 60, -25], axis: "x" };
 const FRONT_ROD = { kind: "cylinder", r: 8, h: 40, at: [-30, 130, -22], axis: "x" };
 const PALM = { palm: {} };
-// Ruling 5: the fixture hand's index finger, as literals.
+// The fixture hand's index finger, as literals.
 const INDEX_AT = [-30, 96, 2];
 const INDEX_LEN = [42, 25, 22];
 const INDEX_R = [9.5, 8.5, 7.4, 6.4];
 
-/** `around` two ways (Ruling 4): the shape node itself, or a distance function made from it. */
+/** `around` two ways: the shape node itself, or a distance function made from it. */
 const MODES = {
   node: (node) => node,
   function: (node) => { const d = distanceFor(node); return (x, y, z) => d(x, y, z); },
@@ -81,7 +81,7 @@ for (const [mode, as] of Object.entries(MODES)) {
       expect(posed.values).toEqual([180, 180, 180]);
     });
 
-    it("a shape already overlapping the limb (Review Focus 3) touches at the start values", () => {
+    it("a shape already overlapping the limb touches at the start values", () => {
       const L = index();
       const start = L.pose({ bend: { mcp: 10, pip: 20 } }, PALM);
       const W = resolveFrames({ ...PALM, ...start.frames });
@@ -148,7 +148,7 @@ for (const [mode, as] of Object.entries(MODES)) {
       });
 
       for (const clearance of [0, 1.5]) {
-        it(`realistic ranges on the brief's rod give the honest partial report (clearance ${clearance})`, () => {
+        it(`realistic ranges on the rod give the honest partial report (clearance ${clearance})`, () => {
           // mcp alone (pip, dip straight) never reaches a rod 36 mm behind the knuckle; pip does.
           const F = limb("index", {
             parent: "palm", at: INDEX_AT, toward: [0, 1, 0], bendToward: [0, 0, -1],
@@ -259,9 +259,9 @@ describe("grip errors", () => {
     expect(() => index().pose({ grip: { around: { kind: "cylinder", r: -1, h: 4 } } }, PALM)).toThrow('limb "index".grip.around.r: must be a number > 0');
     expect(() => index().pose({ grip: { around: FRONT_ROD, extra: 1 } }, PALM)).toThrow('limb "index".grip.extra: unknown grip option "extra"');
   });
-  it("a shape the implicit engine owns is refused with Ruling 3's message", () => {
+  it("a shape the implicit engine owns is refused, naming the distance-function fix", () => {
     expect(() => index().pose({ grip: { around: { kind: "round", r: 1, child: FRONT_ROD } } }, PALM))
-      .toThrow('limb "index".grip.around: node kind "round" needs the implicit engine — pass a distance function (implicitDistance(node) on feat/implicit makes one)');
+      .toThrow('limb "index".grip.around: node kind "round" needs the implicit engine — pass a distance function (x, y, z) => mm instead');
   });
   it("accepts around as a function or an object, and refuses a string, an array or a number", () => {
     expect(index().pose({ grip: { around: FRONT_ROD } }, PALM).report.grip.touching).toBe(true);
@@ -271,7 +271,7 @@ describe("grip errors", () => {
     }
   });
 
-  describe("a distance function's failures (Review Focus 3)", () => {
+  describe("a distance function's failures", () => {
     it("a non-finite return near the finger throws, naming the point", () => {
       const d = distanceFor(FRONT_ROD);
       const around = (x, y, z) => (y > 120 ? NaN : d(x, y, z));

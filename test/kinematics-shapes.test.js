@@ -8,7 +8,7 @@ const near = (node, probes) => {
   const d = distanceFor(node);
   for (const [p, want] of probes) expect(Math.abs(d(...p) - want), `${JSON.stringify(node)} at ${p}: ${d(...p)} vs ${want}`).toBeLessThanOrEqual(TOL);
 };
-const IMPLICIT = "needs the implicit engine — pass a distance function (implicitDistance(node) on feat/implicit makes one)";
+const IMPLICIT = "needs the implicit engine — pass a distance function (x, y, z) => mm instead";
 
 describe("shapes.js closed-form distances", () => {
   it("sphere (with at)", () => {
@@ -88,7 +88,7 @@ describe("shapes.js closed-form distances", () => {
     near({ kind: "union", children: [{ kind: "sphere", r: 1 }, { kind: "sphere", r: 1, at: [5, 0, 0] }] }, [[[2, 0, 0], 1], [[5, 0, 0], -1]]);
   });
 
-  describe("Ruling 3 refusals", () => {
+  describe("refusals", () => {
     it("a blended union needs the implicit engine", () => {
       expect(() => distanceFor({ kind: "union", k: 2, children: [{ kind: "sphere", r: 1 }] })).toThrow(`grip.around: a blended union ${IMPLICIT}`);
     });

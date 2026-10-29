@@ -445,8 +445,8 @@ export function worldToSheet(pose: SheetPose | null, xyz: Point3): [number, numb
 
 // --- Rotation converters ---------------------------------------------------------------
 
-/** A frame-style rotation step: `deg` about `axis`, each step about the CURRENT axes. */
-export interface RotateStep { axis: "x" | "y" | "z" | Point3; deg: number }
+/** A frame-style rotation step: `deg` about `axis`, each step about the CURRENT axes. `axis` defaults to "z" and `deg` to 0. */
+export interface RotateStep { axis?: "x" | "y" | "z" | Point3; deg?: number }
 
 /** Radians → degrees. */
 export function deg(radians: number): number;
