@@ -10,13 +10,13 @@
 //   cylinder { kind, values: {diameter, depth, partial}, anchors: {center, axis, top, bottom, rimDir} }
 //   bbox     { kind, values: {w, d, h},                  anchors: {min, max} }
 
-const COS_3DEG = 0.99863;      // same axis-snap threshold as selection/resolve.js
+export const COS_3DEG = 0.99863;      // same axis-snap threshold as selection/resolve.js
 const PLANAR_COS = 0.999999;   // ~1.4e-3 rad: all normals agree -> planar
 const AXIS_DOT_MAX = 0.05;     // wall normals ⊥ axis within ~3°
 const RADIUS_TOL = 0.02;       // radial residual: 2% of radius
 const FULL_ARC_DEG = 300;      // coverage below this reads R, not ⌀
 
-const q2 = (x) => { const r = Math.round(x * 100) / 100; return r === 0 ? 0 : r; };
+export const q2 = (x) => { const r = Math.round(x * 100) / 100; return r === 0 ? 0 : r; };
 export const fmtMm = (v) => v.toFixed(2);
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
