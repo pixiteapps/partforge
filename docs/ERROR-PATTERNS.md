@@ -234,6 +234,12 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 - **Cause:** The lowest point of the piece is not a flat face, so almost none of its silhouette on the bed actually touches it (a cylinder on its side reads a few percent, under the floor): the first layer has almost nothing to bond to, and the piece tips or pulls loose unless it prints with a brim, a raft, or in a different orientation.
 - **Fix:** Lay the piece on its flat face in its print pose, add a flat foot or pad at its lowest point, or print it with a brim. When the user chose the brim, `verify.accept: ["footprint"]` records it and the cost reads accepted. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Printed parts".
 
+## flex-root-sharp
+
+- **Symptom:** A `✗ … flexRoot` failure from `verify` naming the member in `feature`, whose note reads e.g. `"Right prong": 12.2 mm of sharp inside corner (90°)`; or, in use, a snap arm, buckle prong, clip or cantilever tab that breaks off flush with the body it grows from.
+- **Cause:** The member declared in `verify.flex` meets the rest of the part at a sharp inside corner. Bending puts the highest stress at the root, a sharp corner multiplies it several times over, and in FDM the layer bonds are weakest right there — so the member snaps at its root, often on the first few flexes.
+- **Fix:** Round the root with a fillet of at least half the member's thickness: `s.fillet({ r, edges: { near: [x, y, z] } })` on the joined solid, one root edge at a time, or `edges: { inPlane, at }` when every root edge lies on the face the member grows from (fillet before anything else that touches that face joins, so only the roots are selected); or draw the fillet into the 2-D profile the member and body share. Keep the fillet clear of whatever the member slides into — chamfer that mouth to seat it. If a grip rib or barb on the member is labelled apart, list it with the member: `flex: [["Arm", "Arm rib"]]`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Printed parts".
+
 ## expect-static-across-presets
 
 - **Symptom:** A `verify` exact gate (`holes`, `volume`, …) fails on SOME presets only — e.g. `✗ planter holes 1  (0 != 1)` on two cases while defaults pass — and the preview looks right for every preset.

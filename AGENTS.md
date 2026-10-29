@@ -505,7 +505,8 @@ the installed package, so let the publish finish before bumping the dep there.
   (cost ids, validated by lint's `verify-unknown-accept` against the process's `costs`)
   stamps `accepted: true` on each matching cost and changes nothing else — the reading
   stays in `costs`; `{ base, overhang: null }` is the off switch. `PRINT_ONLY` keeps all
-  five print metrics off sheet parts. A change to a tier or to what arms a check moves
+  six print metrics off sheet parts (`flexRoot`, the declared flexing member's root, is
+  the sixth: a registry gate armed by `verify.flex`, read by `oracle/flex-root.js`). A change to a tier or to what arms a check moves
   verdicts, so re-record `test/verify-golden.test.js` in the same commit
   (`PARTFORGE_RECORD_VERIFY_GOLDEN=1`) and read the diff. Docs: `docs/AUTHORING-PARTS.md`
   "Printed parts", the twin of "Sheet parts" and "Routed parts".

@@ -2,7 +2,7 @@
 // throws from verify() mid-run, AFTER measure has printed and the kernel has booted,
 // which is also the documented reason CLI stdout isn't pure JSON in that case.
 // Catching them statically removes both the wasted boot and the stdout caveat.
-import { err } from "./finding.js";
+import { err, warn } from "./finding.js";
 import { SUBPART_METRICS, VIEW_METRICS, BOUNDS_FORM, teachableMetrics, sidesSpecError } from "../verify-metrics.js";
 import { PROFILES, ORIENTATIONS } from "../oracle/dfm-profiles.js";
 import { parseAssertion, bareVectorHint } from "../oracle/assert-dsl.js";
@@ -443,6 +443,56 @@ export const VERIFY_RULES = [
               ? `Known cost ids for this process: ${known.join(", ")}.`
               : "This process defines no acceptable costs; remove the entry.",
           `verify.accept[${i}]`));
+      });
+      return out;
+    },
+  },
+  {
+    // `verify.flex` names the part's flexing members by feature label (oracle/flex-root.js):
+    // a list whose entries are a label, or a list of labels read as one member. verify()
+    // drops a malformed entry silently, so the shape is checked here.
+    id: "verify-bad-flex",
+    run: ({ part }) => {
+      const flex = part?.verify?.flex;
+      if (flex == null) return [];
+      const form = "Write `flex` as a list of feature labels, e.g. `flex: [\"Left arm\", \"Right arm\"]`; an entry that is itself a list names one member made of several labels (`[\"Arm\", \"Arm rib\"]`).";
+      if (!Array.isArray(flex)) {
+        return [err("verify-bad-flex", `\`verify.flex\` is ${describe(flex)}, not a list of feature labels`, form, "verify.flex")];
+      }
+      const label = (l) => typeof l === "string" && l.length > 0;
+      const out = [];
+      flex.forEach((e, i) => {
+        if (label(e) || (Array.isArray(e) && e.length > 0 && e.every(label))) return;
+        out.push(err("verify-bad-flex", `\`verify.flex[${i}]\` is ${describe(e)}, not a feature label or a list of them`, form, `verify.flex[${i}]`));
+      });
+      return out;
+    },
+  },
+  {
+    // A flex label no build writes is a check that never runs: verify skips a member no
+    // sub-part carries (it may be switched off in that case), so a typo would pass
+    // silently. The geometry-free probe records every `.label()` call at the default
+    // params; a label set only under other params reads as missing, hence a warning.
+    id: "verify-flex-unknown-label",
+    run: ({ part, probe }) => {
+      const flex = part?.verify?.flex;
+      if (!Array.isArray(flex) || !flex.length) return [];
+      const run = probe();
+      if (run.runaway || run.throws.length) return [];   // an unfinished build saw only some labels
+      const seen = new Set(run.calls.filter((c) => c.op === "label")
+        .map((c) => { try { return JSON.parse(c.args[0]); } catch { return null; } })
+        .filter((l) => typeof l === "string"));
+      const known = [...seen];
+      const out = [];
+      flex.forEach((e, i) => {
+        for (const l of Array.isArray(e) ? e : [e]) {
+          if (typeof l !== "string" || !l || seen.has(l)) continue;   // a bad shape is verify-bad-flex's
+          const hint = safeSuggest(l, known);
+          out.push(warn("verify-flex-unknown-label",
+            `\`verify.flex\` names "${l}", but no build labels a feature "${l}" at the default parameters`,
+            `Label the flexing member itself — \`.label("${l}")\` on the arm, apart from the body it grows from — or correct the name${hint ? ` (did you mean "${hint}"?)` : known.length ? ` (labels the build writes: ${known.slice(0, 12).map((k) => `"${k}"`).join(", ")})` : ""}. Until it matches, the root check never runs.`,
+            `verify.flex[${i}]`));
+        }
       });
       return out;
     },

@@ -14,6 +14,7 @@ import { bounds, meshArea, meshCentroid } from "./mesh.js";
 import { minWall, DIAGNOSTIC_SAMPLES } from "./min-wall.js";
 import { overhang } from "./overhang.js";
 import { bedContact } from "./bed-contact.js";
+import { flexRoot, flexGroups, groupName } from "./flex-root.js";
 import { partBedContact, partFootprint, partGatesMinWall, partHasBed, partOverhangAngle, partWallBands } from "./gates.js";
 import { summarizeContours } from "./shape-probe.js";
 
@@ -320,6 +321,12 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // one memo-key bit, covers both readings.
   const bedArmed = (opts.bedContact !== undefined ? opts.bedContact : (partBedContact(part) ?? partFootprint(part))) != null;
   const underside = overhangAngle != null || bedArmed;
+  // The flexing members the part declares (`verify.flex`, by feature label — flex-root.js):
+  // each gets a root reading on every printed sub-part. One pass over the triangles per
+  // member, no index, so it runs on every lap. verify passes its own list; alone, measure
+  // reads the part's. The list measured is stamped as `measuredFlex`, which verify
+  // compares before reusing a seed.
+  const flex = flexGroups(opts.flex !== undefined ? opts.flex : part.verify?.flex);
   const subBounds = [];
   // Sheet parts: a view holding one sizes each printed sub-part in its print pose
   // (verify fits the bed per part there), and every sheet row gets its 2-D facts under
@@ -372,7 +379,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     const memoKey = opts.memo && !sheetView && !sheet && !part.parts[name]?.reference && solid?._hash && !exportBed
       ? JSON.stringify({
         mw: !!opts.minWall, s: minWallSamples ?? null, band: wallBands[name] ?? null,
-        oh: overhangAngle ?? null, bc: bedArmed, ex: printed,
+        oh: overhangAngle ?? null, bc: bedArmed, ex: printed, fx: flex,
         pm: printMatrix ? Array.from(printMatrix) : null,
       })
       : null;
@@ -471,6 +478,13 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       footprintPct: bc && bc.downArea > 0 ? Math.min(100, (100 * bc.contactArea) / bc.downArea) : null,
       footprintAt: bc?.lowestAt ?? null,
       ...(exportBc?.error ? { bedContactError: exportBc.error } : {}),
+      // Each declared flexing member's root (flex-root.js), one entry per member group
+      // whose label this sub-part's mesh carries: the length of sharp inside corner where
+      // the member meets the rest of the part, the sharpest turn, and where the longest
+      // stretch sits. Null when nothing is declared; a sheet part is not printed, so none.
+      flexRoots: flex.length && !sheet
+        ? flex.map((g) => ({ feature: groupName(g), labels: g, ...flexRoot(mesh, g) })).filter((r) => r.found)
+        : null,
       // The process's 2-D facts on a sheet part (sheetRowFacts), null on every other.
       sheet: sheet
         ? sheetRowFacts(kernel, part, name, view, sheetParams, sheetBudget, vol)
@@ -562,6 +576,9 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     measuredBedContact: bedArmed,
     // The footprint is read by the same pass, so the same stamp.
     measuredFootprint: bedArmed,
+    // The flexing-member groups whose roots were read (flex-root.js), as measured —
+    // verify reuses a seed only when it read every group this run declares.
+    measuredFlex: flex,
     // Companion stamp to measuredMinWall, and read the same way: whether the pass
     // ran, said by the pass itself rather than claimed by whoever holds the result.
     measuredGaps,
