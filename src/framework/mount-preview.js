@@ -59,11 +59,13 @@
 //    about the vertical (its farthest vertex from the axis), so the turntable
 //    never clips and a round part still fills, centred on its horizontal
 //    vertex centroid (a lopsided part turns about its hub). A model that is
-//    not turning (a still, or a playing animation — framed on its first
-//    pose) is fitted by its posed VERTICES and its silhouette centred on
-//    screen (0.169.0): the target moves in the screen plane so the projected
-//    outline's bounding box is centred, spanning `fill`. A baked animation
-//    that moves parts outside its first pose's outline can leave the frame.
+//    not turning (a still, or a playing animation) is fitted by its posed
+//    VERTICES and its silhouette centred on screen (0.169.0): the target moves
+//    in the screen plane so the projected outline's bounding box is centred,
+//    spanning `fill`. A playing animation is fitted over EVERY pose it passes
+//    through (0.171.0; each part's outermost points at each keyframe), so a
+//    part that swings out of its first pose's outline stays in frame — the
+//    outline of all its poses together spans `fill`.
 //    Unset, the viewer's fixed framing distance, as before.
 //    The swept framing follows the configuration, not reduced motion (0.169.0):
 //    a turntable mount is framed swept even when reduced motion keeps it still.
@@ -122,7 +124,7 @@ import { observeViewbarClear } from "./viewbar-clear.js";
 import { createTooltipPresenter } from "./tooltip.js";
 import { isFaceAlignedState } from "./projection.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
-import { createPreviewPlayer } from "./preview-player.js";
+import { createPreviewPlayer, animationPoses } from "./preview-player.js";
 import { attachPreviewPlayButton } from "./preview-play-button.js";
 
 // A value the option does not know is a host bug: say so at the call rather
@@ -292,6 +294,8 @@ export function mountPreview(container, options = {}) {
       transparent: opts.transparent, contactShadow: opts.contactShadow, zoom: opts.zoom, pan: opts.pan,
       // A turning model is framed swept a full turn, so no angle of it clips.
       frameFill: opts.fill, frameSwept: sweeps,
+      // An animation is framed over every pose it passes through (0.171.0).
+      framePoses: plays ? animationPoses(decoded.animation) : null,
       edgeWidth: opts.edgeWidth, edgeOpacity: opts.edgeOpacity,
     });
     cleanups.push(() => viewer.dispose());

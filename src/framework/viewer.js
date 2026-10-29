@@ -179,9 +179,14 @@ export function captureCurrentFromScene(
 // `edgeWidth` (CSS px, default 1) and `edgeOpacity` (0 < o <= 1, default 1)
 // style the CAD feature edge lines; a small preview reads them as heavy at the
 // default. Fades multiply into the opacity rather than replacing it.
+// `framePoses` (with `frameFill`, not `frameSwept`) is a list of
+// { sub-part name → pose matrix } maps — the poses an animation passes through
+// (preview-player's animationPoses) — and the fill framing then fits the model
+// in every one of them as well as as shown, so a part that swings out of its
+// first pose's outline stays in frame.
 export function createViewer(container, part, {
   transparent = false, contactShadow = false, zoom = true, pan = true, frameFill = null, frameSwept = false,
-  edgeWidth = 1, edgeOpacity = 1,
+  edgeWidth = 1, edgeOpacity = 1, framePoses = null,
 } = {}) {
   const names = Object.keys(part.parts);
   // Membership for host-supplied names. subMesh, cadMats and part.parts are
@@ -2056,11 +2061,54 @@ export function createViewer(container, part, {
     }
     if (n > 0) center.set(sx / n, sy / n, center.z);
   }
+  // A sub-part's outermost vertices along SUPPORT_DIRECTIONS (deduplicated, in
+  // its delivered frame): the points that decide its outline from any angle, to
+  // within a sliver. Framing the extra `framePoses` reads these, not every
+  // vertex, so a long animation of a dense model frames in a few milliseconds.
+  const SUPPORT_DIRECTIONS = (() => {
+    const out = [], n = 64, golden = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < n; i++) {
+      const y = 1 - (2 * (i + 0.5)) / n, r = Math.sqrt(1 - y * y), a = golden * i;
+      out.push([r * Math.cos(a), y, r * Math.sin(a)]);
+    }
+    return out;
+  })();
+  const supportCache = new WeakMap();
+  function supportPoints(geometry) {
+    let points = supportCache.get(geometry);
+    if (points) return points;
+    const pos = geometry.getAttribute("position");
+    const best = SUPPORT_DIRECTIONS.map(() => -Infinity), at = SUPPORT_DIRECTIONS.map(() => -1);
+    for (let i = 0; i < (pos?.count ?? 0); i++) {
+      _sweepV.fromBufferAttribute(pos, i);
+      for (let k = 0; k < SUPPORT_DIRECTIONS.length; k++) {
+        const [dx, dy, dz] = SUPPORT_DIRECTIONS[k];
+        const d = _sweepV.x * dx + _sweepV.y * dy + _sweepV.z * dz;
+        if (d > best[k]) { best[k] = d; at[k] = i; }
+      }
+    }
+    points = [...new Set(at.filter((i) => i >= 0))].map((i) => new THREE.Vector3().fromBufferAttribute(pos, i));
+    supportCache.set(geometry, points);
+    return points;
+  }
+  const _framePose = new THREE.Matrix4();
   // Every posed vertex of `names` about `center`, stood up by the pivot, as
-  // flat x/y/z arrays (world units, pivot-relative).
+  // flat x/y/z arrays (world units, pivot-relative) — plus, with `framePoses`,
+  // each sub-part's support points in every one of those poses.
   function posedVertices(names, center) {
     let n = 0;
     for (const name of names) n += subCache[name]?.getAttribute("position")?.count ?? 0;
+    const extra = [];
+    for (const poses of framePoses ?? []) {
+      for (const name of names) {
+        if (!subCache[name]) continue;
+        const pose = poses[name] ? _framePose.fromArray(poses[name]) : subMesh[name].matrix;
+        for (const p of supportPoints(subCache[name])) {
+          extra.push(p.clone().applyMatrix4(pose).sub(center).applyQuaternion(pivot.quaternion));
+        }
+      }
+    }
+    n += extra.length;
     const px = new Float64Array(n), py = new Float64Array(n), pz = new Float64Array(n);
     let k = 0;
     for (const name of names) {
@@ -2072,6 +2120,7 @@ export function createViewer(container, part, {
         px[k] = _sweepV.x; py[k] = _sweepV.y; pz[k] = _sweepV.z;
       }
     }
+    for (const p of extra) { px[k] = p.x; py[k] = p.y; pz[k] = p.z; k++; }
     return { px, py, pz, n };
   }
 
