@@ -14,6 +14,7 @@
 // registry, whose closure is import-free in turn (the process descriptors,
 // sheet/constants.js, lint/finding.js) — so the linter's stays kernel-free.
 import { SHEET_METRICS } from "./process/registry.js";
+import { DOMAINS } from "./domains/registry.js";
 
 // `bounds` is written the way measure() reports it — `bounds: { min: [x,y,z], max:
 // [x,y,z] }` — so a reader who copies the shape of a measurement gets a legal
@@ -63,7 +64,23 @@ export function sidesSpecError(metric, reg, spec) {
   return null;
 }
 
-export const SUBPART_METRICS = {
+// Every registered domain's oracle.metrics joined to the core and sheet vocabulary.
+// A name already present is a LOAD error naming both sides — a silent overwrite would
+// change what an authored expectation measures, and nothing downstream would notice.
+function withDomainMetrics(base) {
+  const out = { ...base };
+  for (const d of DOMAINS) {
+    for (const [name, metric] of Object.entries(d.oracle.metrics)) {
+      if (Object.hasOwn(out, name)) {
+        throw new Error(`verify-metrics: domain "${d.id}" metric "${name}" collides with an existing sub-part metric of that name`);
+      }
+      out[name] = metric;
+    }
+  }
+  return out;
+}
+
+export const SUBPART_METRICS = withDomainMetrics({
   holes: { kind: "gate", manifoldOnly: true, extract: (s) => s.holes,
     hint: "genus is wrong — an unintended tunnel exists or an intended bore is blocked; make cut tools pierce fully (overcut past the faces)" },
   watertight: { kind: "gate", manifoldOnly: true, extract: (s) => s.watertight,
@@ -159,7 +176,7 @@ export const SUBPART_METRICS = {
   // Sheet parts (sheetPart(), partforge/geometry): each process's own checks. verify
   // volunteers them on every sheet sub-part; an author may declare them like any other.
   ...SHEET_METRICS,
-};
+});
 export const VIEW_METRICS = {
   bbox: { kind: "gate", form: "vector", extract: (r) => r.aggregate.bbox,
     hint: "the assembled view exceeds its size limit — shrink the assembly or pick a process with a larger bed" },

@@ -6,6 +6,7 @@ import { SUBPART_METRICS, VIEW_METRICS, teachableMetrics } from "../src/framewor
 import { SUBPART_METRICS as reSub, VIEW_METRICS as reView } from "../src/framework/oracle/verify.js";
 import { suggest } from "../src/framework/geometry/op-options.js";
 import { SHEET_METRICS } from "../src/framework/process/registry.js";
+import { DOMAINS } from "../src/framework/domains/registry.js";
 import { evaluateCase } from "../src/framework/oracle/verify.js";
 
 test("verify-metrics exposes the subpart metric vocabulary", () => {
@@ -83,6 +84,12 @@ test("the sheet metrics join the sub-part vocabulary without replacing a print m
     expect(SUBPART_METRICS[name]).toBe(SHEET_METRICS[name]);
   }
   for (const name of PRINT_METRICS) expect(Object.keys(SUBPART_METRICS)).toContain(name);
+  // Vacuous while DOMAINS is empty; holds as domains land (verify-metrics.js refuses
+  // a collision at load, test/domain-metrics-collision.test.js).
+  for (const d of DOMAINS) for (const name of Object.keys(d.oracle.metrics)) {
+    expect(PRINT_METRICS, `${d.id}.${name} collides with a print metric`).not.toContain(name);
+    expect(Object.keys(SHEET_METRICS), `${d.id}.${name} collides with a sheet metric`).not.toContain(name);
+  }
 });
 
 test("every sheet metric is a warning that names its process's guide section, not an ERROR-PATTERNS entry", () => {
