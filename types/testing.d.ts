@@ -447,7 +447,16 @@ export interface SubPartFacts {
    * a sheet part. `attached` is false when the member shares no edge with the rest of the
    * mesh (nothing to read); `sharpLength` the mm of sharp inside corner at its root.
    */
-  flexRoots: { feature: string; labels: string[]; found: boolean; attached: boolean; sharpLength: number; maxTurn: number | null; at: number[] | null }[] | null;
+  flexRoots: {
+    feature: string; labels: string[]; found: boolean; attached: boolean;
+    sharpLength: number; maxTurn: number | null; at: number[] | null;
+    /** The root's fillet radius in mm: 0 where sharp, `null` where the member meets the body flush everywhere. */
+    rootRadius: number | null;
+    /** The member's own extents (mm) along its principal axes, and the unit direction of the longest. */
+    thickness: number; length: number; axis: number[] | null;
+    /** Degrees the long axis rises off the bed in the print pose; `null` when that pose could not be read. */
+    tilt: number | null;
+  }[] | null;
   /**
    * Present only when bed contact had to be read off the piece's export build (its
    * print pose could not be read from place() alone) and that build failed.

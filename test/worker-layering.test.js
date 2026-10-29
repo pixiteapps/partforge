@@ -108,9 +108,10 @@ test("the worker's EAGER import closure loads no oracle pipeline module", () => 
   // downloads or parses. This walk sees only STATIC imports (eager: true), so it
   // fails the moment someone hoists an oracle import back to the top of jobs.js.
   //
-  // Two allowed exceptions, both tiny pure leaves the linter shares (rules-verify.js
-  // reads the DFM profile table and the assertion grammar — data, not pipeline).
-  const ORACLE_EAGER_OK = new Set(["dfm-profiles.js", "assert-dsl.js"]);
+  // Three allowed exceptions, all tiny pure leaves the linter shares (rules-verify.js
+  // reads the DFM profile table, the assertion grammar and the shape of `verify.flex` —
+  // data, not pipeline; the flexing member's READING, flex-root.js, is pipeline).
+  const ORACLE_EAGER_OK = new Set(["dfm-profiles.js", "assert-dsl.js", "flex-members.js"]);
   const { files, importer } = walk(ENTRY, "eager worker walk", { eager: true });
   for (const file of files) {
     if (!file.includes("/src/framework/oracle/")) continue;

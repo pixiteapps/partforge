@@ -29,7 +29,7 @@ test("a print descriptor carries no sheet-only fields and no exporter", () => {
     expect(d.lintRules).toEqual([]);
     expect(d.destinations).toBeUndefined();
   }
-  expect(FDM.costs).toEqual({ supports: "overhangArea", footprint: "footprintPct" });
+  expect(FDM.costs).toEqual({ supports: "overhangArea", footprint: "footprintPct", standing: "flexTilt" });
 });
 
 test("AUTHORING-PARTS carries the printed-parts section and the accept key", () => {

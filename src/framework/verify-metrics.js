@@ -66,12 +66,29 @@ export function sidesSpecError(metric, reg, spec) {
   return null;
 }
 
-// The flexing-member root (oracle/flex-root.js): what the failure means and what fixes it.
-export const FLEX_ROOT_HINT = "a part that flexes (a snap arm, buckle prong, clip or cantilever tab) meets the rest of the part at a sharp inside corner here — bending concentrates the stress at that corner and the member snaps off at its root. Round the root: a fillet of at least half the member's thickness where it joins the body (`s.fillet({ r, edges: { near: [x, y, z] } })` on the joined solid, or a filleted corner in the 2-D profile both share), and keep that fillet clear of whatever the member slides into. A grip rib or barb on the member is part of it: list its label with the member's, `flex: [[\"Arm\", \"Arm rib\"]]`";
-// The member whose root is worst on a sub-part, among those that meet the rest of it;
-// null when none does (nothing declared, no label carried, or every member detached).
-const worstFlexRoot = (s) => (s.flexRoots ?? []).filter((r) => r.attached)
-  .reduce((w, r) => (w == null || r.sharpLength > w.sharpLength ? r : w), null);
+// The flexing-member readings (oracle/flex-root.js, `verify.flex`): what each failure
+// means and what fixes it.
+export const FLEX_ROOT_HINT = "a part that flexes (a snap arm, buckle prong, clip or cantilever tab) meets the rest of the part through too small a root fillet, or none — bending concentrates the stress at that corner and the member snaps off at its root. Round the root to at least the process's share of the member's thickness (half, on every built-in profile): `s.fillet({ r, edges: { near: [x, y, z] } })` on the joined solid, or a filleted corner in the 2-D profile both share, and keep that fillet clear of whatever the member slides into. A grip rib or barb on the member is part of it: list its label with the member's, `flex: [[\"Arm\", \"Arm rib\"]]`";
+export const FLEX_STRAIN_HINT = "at its declared deflection this member's root strain (1.5 × thickness × deflection / length², a straight cantilever) is over what the material takes for a one-time snap — it yields or cracks at the root. Lengthen the member, thin it, or reduce its travel (a shallower undercut, a lead-in that spreads the snap over more of the stroke); a member tapered to half its thickness at the tip bends ~60% further at the same root strain. If the mesh misreads its bending thickness, declare it: `flex: [{ feature, deflection, thickness }]`";
+export const FLEX_TILT_HINT = "this member's long axis stands up off the bed in the print pose, so its layers stack across its root — and a layer bond is a fraction of the in-plane strength, so it snaps along a layer line. Lay the member flat: pose the piece in `place(..., { purpose: \"export\" })` so the arm lies along the bed (its root corner then sits in one layer), or split the part so the arm prints flat; a standing arm the user keeps is a cost (`accept: [\"standing\"]`) — use PETG or anneal, and round the root generously";
+// The flexing member a sub-part's row answers for: the one whose root is worst (least
+// radius over what it needs — `required`, stamped by verify from the profile's share of
+// its thickness), among those that meet the rest of the sub-part and have a corner to
+// read; null when none does. Exported for verify, whose expr must name that member's need.
+export const worstFlexRoot = (s) => (s.flexRoots ?? []).filter((r) => r.attached && r.rootRadius != null)
+  .reduce((w, r) => (w == null || (r.required ?? 1) > 0 && r.rootRadius / (r.required ?? 1) < w.rootRadius / (w.required ?? 1) ? r : w), null);
+const worstFlexStrain = (s) => (s.flexRoots ?? []).filter((r) => r.strain != null)
+  .reduce((w, r) => (w == null || r.strain > w.strain ? r : w), null);
+const worstFlexTilt = (s) => (s.flexRoots ?? []).filter((r) => r.attached && r.tilt != null)
+  .reduce((w, r) => (w == null || r.tilt > w.tilt ? r : w), null);
+const mm = (v) => Math.round(v * 100) / 100;
+const memberLine = (r) => {
+  if (!r.attached) return "never meets the rest of this sub-part";
+  if (r.rootRadius === 0) return `sharp root (${Math.round(r.maxTurn)}°, ${r.sharpLength.toFixed(1)} mm of corner)`;
+  if (r.rootRadius == null) return "no inside corner at its root";
+  const need = r.required != null ? `, needs ≥ ${mm(r.required)} (${mm(r.thicknessUsed ?? r.thickness)} mm thick)` : "";
+  return `root radius ${mm(r.rootRadius)} mm${need}`;
+};
 
 export const SUBPART_METRICS = {
   holes: { kind: "gate", manifoldOnly: true, extract: (s) => s.holes,
@@ -142,16 +159,16 @@ export const SUBPART_METRICS = {
     hint: "the share of this piece's silhouette on the bed (its outline in the print pose) that actually touches it is small — it stands on a point, a line or a curve, which reads near zero, so the first layer has almost nothing to hold on to and the piece can tip or pull loose. Lay it on its flat face, add a flat foot or pad at its lowest point, or print it with a brim (accept: [\"footprint\"] records that choice)",
     pattern: "piece-stands-on-nothing",
     locate: (s) => s.footprintAt },
-  // A declared flexing member's root (oracle/flex-root.js, `verify.flex`): the length in
-  // mm of sharp inside corner where the member meets the rest of the sub-part. One row
-  // per sub-part, like every print metric: `actual` is the WORST member's reading,
-  // `feature` names it, and `note` lists every member the sub-part carries. Measured on
-  // a sub-part carrying a declared label; elsewhere `extract` is null — "no root to
-  // read" rather than an inert skip, since an authored expectation with nothing
-  // declared, or on a member that never meets the body, is a mistake to point at. A
-  // GATE under any process or none: the root is the same in any orientation and the
-  // stress concentration is the same in any material.
-  flexRoot: { kind: "gate", extract: (s) => worstFlexRoot(s)?.sharpLength ?? null,
+  // A declared flexing member's root (oracle/flex-root.js, `verify.flex`): its fillet
+  // radius in mm, 0 where it is sharp. One row per sub-part, like every print metric:
+  // `actual` is the WORST member's reading (least radius over what it needs), `feature`
+  // names it, and `note` lists every member the sub-part carries. Measured on a sub-part
+  // carrying a declared label; elsewhere `extract` is null — "no root to read" rather than
+  // an inert skip, since an authored expectation with nothing declared, or on a member
+  // that never meets the body, is a mistake to point at. A GATE under any process or
+  // none: the root is the same in any orientation and the stress concentration is the
+  // same in any material.
+  flexRoot: { kind: "gate", extract: (s) => { const w = worstFlexRoot(s); return w ? mm(w.rootRadius) : null; },
     hint: FLEX_ROOT_HINT,
     pattern: "flex-root-sharp",
     locate: (s) => worstFlexRoot(s)?.at ?? null,
@@ -160,8 +177,32 @@ export const SUBPART_METRICS = {
     unavailableHint: "flexRoot reads the root of a member named in `verify.flex` — declare the flexing member there by its feature label, and label it (`.label(\"Arm\")`) apart from the body it grows from, so this sub-part carries a member that meets the rest of the part",
     note: (s) => {
       const rows = s.flexRoots ?? [];
-      if (!rows.length) return null;
-      return rows.map((r) => `"${r.feature}": ${!r.attached ? "never meets the rest of this sub-part" : r.sharpLength > 0 ? `${r.sharpLength.toFixed(1)} mm of sharp inside corner (${Math.round(r.maxTurn)}°)` : "rounded root"}`).join("; ");
+      return rows.length ? rows.map((r) => `"${r.feature}": ${memberLine(r)}`).join("; ") : null;
+    } },
+  // A declared flexing member's root strain at its declared deflection, in percent
+  // (verify stamps `strain` from the member's measured length and thickness — 1.5·t·y/L²,
+  // a straight cantilever). The worst member per sub-part. An ADVISORY: the formula is a
+  // first approximation (a taper, a curve or a hook changes it), read against the
+  // process's `strain`.
+  flexStrain: { kind: "warn", extract: (s) => { const w = worstFlexStrain(s); return w ? Math.round(w.strain * 100) / 100 : null; },
+    hint: FLEX_STRAIN_HINT,
+    pattern: "flex-strain-over",
+    feature: (s) => worstFlexStrain(s)?.feature ?? null,
+    note: (s) => {
+      const rows = (s.flexRoots ?? []).filter((r) => r.strain != null);
+      return rows.length ? rows.map((r) => `"${r.feature}": ${(Math.round(r.strain * 100) / 100).toFixed(2)}% at ${r.deflection} mm (${mm(r.length)} mm long, ${mm(r.thicknessUsed ?? r.thickness)} mm thick)`).join("; ") : null;
+    } },
+  // How far a declared flexing member's long axis rises off the bed in the print pose,
+  // in degrees (0 lying flat, 90 standing) — the worst member per sub-part. A COST
+  // (`standing`), armed by an FDM profile's `flexTilt`: an arm the user prints standing is
+  // a choice with a price, not a defect, and resin (isotropic) never asks.
+  flexTilt: { kind: "cost", costId: "standing", extract: (s) => { const w = worstFlexTilt(s); return w ? Math.round(w.tilt * 10) / 10 : null; },
+    hint: FLEX_TILT_HINT,
+    pattern: "flex-member-standing",
+    feature: (s) => worstFlexTilt(s)?.feature ?? null,
+    note: (s) => {
+      const rows = (s.flexRoots ?? []).filter((r) => r.attached && r.tilt != null);
+      return rows.length ? rows.map((r) => `"${r.feature}": ${Math.round(r.tilt)}° off the bed`).join("; ") : null;
     } },
   // `s.deviation` (measure.js) exists only for a sub-part declaring `reference:
   // "<import name>"`; on every other sub-part `extract` returns null, which

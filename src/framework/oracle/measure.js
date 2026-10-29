@@ -14,7 +14,8 @@ import { bounds, meshArea, meshCentroid } from "./mesh.js";
 import { minWall, DIAGNOSTIC_SAMPLES } from "./min-wall.js";
 import { overhang } from "./overhang.js";
 import { bedContact } from "./bed-contact.js";
-import { flexRoot, flexGroups, groupName } from "./flex-root.js";
+import { flexRoot } from "./flex-root.js";
+import { flexMembers } from "./flex-members.js";
 import { partBedContact, partFootprint, partGatesMinWall, partHasBed, partOverhangAngle, partWallBands } from "./gates.js";
 import { summarizeContours } from "./shape-probe.js";
 
@@ -326,7 +327,11 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // member, no index, so it runs on every lap. verify passes its own list; alone, measure
   // reads the part's. The list measured is stamped as `measuredFlex`, which verify
   // compares before reusing a seed.
-  const flex = flexGroups(opts.flex !== undefined ? opts.flex : part.verify?.flex);
+  const members = flexMembers(opts.flex !== undefined ? opts.flex : part.verify?.flex);
+  const flex = members.map((m) => m.labels);
+  // A flexing member is read in its print pose too (its tilt off the bed), so the pose
+  // is resolved whenever one is declared, as it is for the underside readings.
+  const posed = underside || members.length > 0;
   const subBounds = [];
   // Sheet parts: a view holding one sizes each printed sub-part in its print pose
   // (verify fits the bed per part there), and every sheet row gets its 2-D facts under
@@ -339,7 +344,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // The overhang reading poses each piece for print (printPoseOverhang), which reads the
   // resolved params through place() — recorded into the same sink, since the reading
   // depends on them.
-  const poseParams = underside ? (sheetParams ?? resolveParams(part, params, undefined, reads)) : null;
+  const poseParams = posed ? (sheetParams ?? resolveParams(part, params, undefined, reads)) : null;
   // The print-pose sizes are read by one check, the process bed (verify passes whether
   // its profile has one; alone, measure asks the part's own profile), and each costs a
   // second build of the part — so they are built only for a bed.
@@ -355,7 +360,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // (printPoseOverhang) is read off place() with the resolved params — geometry-free,
     // so it is resolved here, ahead of the memo, which must key on it.
     const printed = part.parts[name]?.exportable !== false && !sheet;
-    const printPose = underside && printed && poseParams?.p
+    const printPose = posed && printed && poseParams?.p
       ? displayToPrintPose(part.parts[name], { view, p: poseParams.p, d: poseParams.d })
       : null;
     const printMatrix = printPose?.matrix ?? null;
@@ -482,8 +487,12 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       // whose label this sub-part's mesh carries: the length of sharp inside corner where
       // the member meets the rest of the part, the sharpest turn, and where the longest
       // stretch sits. Null when nothing is declared; a sheet part is not printed, so none.
-      flexRoots: flex.length && !sheet
-        ? flex.map((g) => ({ feature: groupName(g), labels: g, ...flexRoot(mesh, g) })).filter((r) => r.found)
+      flexRoots: members.length && !sheet
+        ? members.map((m) => {
+          const r = flexRoot(mesh, m.labels, { printMatrix });
+          // A pose the probes could not read is not the display pose: no tilt to report.
+          return { feature: m.feature, labels: m.labels, ...r, ...(printPose && !printPose.trusted ? { tilt: null } : {}) };
+        }).filter((r) => r.found)
         : null,
       // The process's 2-D facts on a sheet part (sheetRowFacts), null on every other.
       sheet: sheet
