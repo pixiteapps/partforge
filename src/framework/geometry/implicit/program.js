@@ -143,6 +143,32 @@ export function emitProgram(compiled, dec) {
   return Float64Array.from([nP, nV, ...code]);
 }
 
+/**
+ * A program's per-sample work, in instructions: one per instruction, plus one per operand of an
+ * n-ary op (UNION/INTER/CONTACT), per contact attachment and per bulge region. Walks the same
+ * layouts runProgram reads; the preview-grid chooser weighs leaves by it (preview-edge.js).
+ */
+export function programOps(prog) {
+  let pc = 2, ops = 0;
+  for (;;) {
+    const op = prog[pc];
+    ops++;
+    switch (op) {
+      case OP.END: return ops;
+      case OP.XFORM: case OP.XDIR: pc += 15; break;
+      case OP.PRIM: case OP.WARP: pc += 5 + prog[pc + 4]; break;
+      case OP.UNION: case OP.INTER: ops += prog[pc + 3]; pc += 4 + prog[pc + 3]; break;
+      case OP.CONTACT: { const cnt = prog[pc + 4], nA = prog[pc + 5]; ops += cnt + nA; pc += 6 + cnt + nA * ATTACH_STRIDE + 2 * cnt; break; }
+      case OP.BULGE: ops += prog[pc + 4]; pc += 5 + prog[pc + 4] * BULGE_STRIDE; break;
+      case OP.NEG: case OP.SANITIZE: case OP.CONST: pc += 3; break;
+      case OP.MIN2: case OP.MIRRORP: case OP.ADDC: case OP.ONION: case OP.GET: case OP.UN: pc += 4; break;
+      case OP.DISP: case OP.BIN: case OP.TEX: pc += 5; break;
+      case OP.TER: pc += 6; break;
+      default: throw new Error(`implicit: bad opcode ${op} at ${pc}`);
+    }
+  }
+}
+
 // Register files are reused across runs (allocation-free hot loop). Not shared
 // state in any observable sense: every run overwrites what it reads.
 let PX = [], PY = [], PZ = [], V = [];

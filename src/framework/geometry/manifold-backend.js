@@ -7,7 +7,7 @@ import { tessellateContour, tessellateProfile } from "./profile.js";
 import { h } from "./solid-hash.js";
 import { ensureOutward, openEdgeCount } from "./mesh-repair.js";
 import { manifoldFromMesh, manifoldFromWeldedMesh, ringStackManifold } from "./mesh-build.js";
-import { compileImplicit, meshImplicit, implicitHashable, IMPLICIT_DEFAULTS } from "./implicit/index.js";
+import { compileImplicit, meshImplicit, implicitHashable, choosePreviewEdge, IMPLICIT_DEFAULTS } from "./implicit/index.js";
 import { createSolidCache } from "./solid-cache.js";
 import { hoistCommonSuffix } from "./transform-hoist.js";
 import { addSugar } from "./solid-sugar.js";
@@ -42,6 +42,8 @@ const emptyProfile = (op) => new Error(
   "repeated, or cancel each other out). See ERROR-PATTERNS.md#boolean-invalid-operand.");
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
+// Trees whose automatic k.implicit preview edge a kernel remembers (each entry is a hash and a number).
+const AUTO_PREVIEW_MEMO = 256;
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
 // by the export path — Manifold meshing is cheap, so we tessellate generously).
 // Full-circle segment counts live in circle-segs.js: preview is a flat SEGS.preview,
@@ -154,6 +156,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const recordWarning = (msg) => { buildWarnings.push(msg); console.warn(`partforge: ${msg}`); };
   // k.implicit's engine warnings, keyed by the cached solid they belong to (re-recorded on a hit).
   const implicitWarnings = new WeakMap();
+  // k.implicit's automatic preview edge per tree hash (a pure function of the tree, so
+  // never stale); cleared whole when it reaches AUTO_PREVIEW_MEMO trees.
+  const autoPreviewEdges = new Map();
   // Profile-validity warnings (profile-warnings.js): one warner per kernel so a
   // self-crossing profile built six times records ONE line; reset per drain.
   const profileWarner = makeProfileWarner(recordWarning);
@@ -930,13 +935,24 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // same-surface feature lines, normals smoothed through detail grooves).
     // Cached on the spec plus every bound image's digest, per quality tier; the key
     // holds only this tier's grid (defaulted), so editing the other tier's grid is
-    // a hit. The engine's warnings (thin feature, clipped) live beside the cached
-    // value and are recorded again on every hit, so each build that uses the solid
-    // reports them.
+    // a hit. A spec without `preview` previews at the grid choosePreviewEdge picks from
+    // the compiled tree (implicit/preview-edge.js: pure, no clock), remembered per tree
+    // so a cache hit does not re-run its probe. The engine's warnings (thin feature,
+    // clipped) live beside the cached value and are recorded again on every hit, so
+    // each build that uses the solid reports them.
     implicit: (spec) => {
       const compiled = compileImplicit(spec, { images });
       const { preview, resolution, ...rest } = spec;
-      const edge = quality === "print" ? (resolution ?? IMPLICIT_DEFAULTS.resolution) : (preview ?? IMPLICIT_DEFAULTS.preview);
+      const autoPreview = () => {
+        const treeKey = h("implicitPreviewEdge", implicitHashable(rest, compiled));
+        let e = autoPreviewEdges.get(treeKey);
+        if (e === undefined) {
+          if (autoPreviewEdges.size >= AUTO_PREVIEW_MEMO) autoPreviewEdges.clear();
+          autoPreviewEdges.set(treeKey, (e = choosePreviewEdge(compiled)));
+        }
+        return e;
+      };
+      const edge = quality === "print" ? (resolution ?? IMPLICIT_DEFAULTS.resolution) : (preview ?? autoPreview());
       const keySpec = quality === "print" ? { ...rest, resolution: edge } : { ...rest, preview: edge };
       const key = h("implicit", implicitHashable(keySpec, compiled), quality);
       const solid = cache.lookup(key, () => {
