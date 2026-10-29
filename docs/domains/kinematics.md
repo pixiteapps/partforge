@@ -384,8 +384,8 @@ meshes it. See `docs/AUTHORING-PARTS.md` for the `k.implicit` grammar.
 - **`posed.attach(label, { k?, radius?, band?, r?, a? })`** is a contact `attach` entry
   that joins the flesh (labelled `a`, default the limb's name) to the piece labelled
   `label`, near the base joint. `k` is required: the blend width in mm where the limb
-  joins `label`, a finite number that is 0 or more. `radius` defaults to a third of the first segment that
-  is not zero-length. `band` defaults to 3 mm × `r[0]` / 9.5, from `r` or the limb's own
+  joins `label`, a finite number that is 0 or more. `radius` defaults to a third of the
+  first segment that is not zero-length. `band` defaults to 3 mm × `r[0]` / 9.5, from `r` or the limb's own
   `r`. Without either `band` or an `r`, or on a limb whose segments all have zero length,
   it throws.
 
