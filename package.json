@@ -22,6 +22,7 @@
     "docs/ERROR-PATTERNS.md",
     "docs/KERNEL-CONTRACT.md",
     "docs/VECTOR-FORMAT.md",
+    "docs/domains",
     "README.md"
   ],
   "types": "./types/index.d.ts",
@@ -113,6 +114,7 @@
     "lint": "eslint .",
     "lint:dead": "knip",
     "check": "node scripts/check-app.mjs",
+    "docs:domains": "node scripts/generate-domain-index.mjs",
     "offset-rates": "node scripts/offset-rates.mjs",
     "bench:softrender": "node scripts/bench-softrender.mjs",
     "check:softrender": "node scripts/check-softrender-parity.mjs",
