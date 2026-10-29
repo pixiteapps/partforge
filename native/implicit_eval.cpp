@@ -17,10 +17,10 @@
 //     accumulates from +0 in that order;
 //   - CONTACT runs contactValue per lane in its order: the attachment weights,
 //     then each slot's c_i over the other slots in slot order (the pair's
-//     weight is its FIRST attachment's, either order), the pad fill per region
-//     in region order, then the attachments' 2-operand unionN in attachment
-//     order; BULGE sums its regions in order from +0;
-//   - an exact CONTACT (fuse == 2) captures per lane after its value, from that
+//     weight is its FIRST attachment's, either order), then the attachments'
+//     2-operand unionN in attachment order; BULGE sums its regions in order
+//     from +0;
+//   - CONTACT, under eval_contact, captures per lane after its value, from that
 //     lane's own c_i and weights, in captureOwner's loop order (capture_owner).
 // Structure differs from the JS, never a lane's arithmetic: register files are
 // flat vectors of BATCH-lane blocks; a validated program is decoded once into
@@ -144,12 +144,9 @@ int prim_params(double code) {
 
 inline bool is_index(double v, double limit) { return v >= 0 && v < limit && v == std::floor(v); }
 
-// contact.js's packed layouts and gate band.
+// contact.js's packed layouts.
 constexpr int ATTACH_STRIDE = 8;   // [ia, ib, ax, ay, az, r0, band, k]
-constexpr int FILL_STRIDE = 6;     // [ia, ib, cx, cy, cz, rho]
 constexpr int BULGE_STRIDE = 5;    // [cx, cy, cz, A, rho]
-constexpr double FILL_BAND = 2;
-constexpr double PAD_BLEND = 1.5;   // contact.js PAD_BLEND
 
 // contact.js's attachWeight (A: one attachment's 8 doubles).
 inline double attach_weight(const double* A, double x, double y, double z) {
@@ -160,13 +157,12 @@ inline double attach_weight(const double* A, double x, double y, double z) {
   return 1 - t * t * (3 - 2 * t);
 }
 
-// contact.js's gateWeight (G: one fill region's 6 doubles).
 // contact.js cutPiece: slot i's value maxed, in slot order, with its cut against every
-// other slot but `skip`, eased by the pair's first attachment's weight when above 0.
-inline double cut_piece(const double* g, int nK, int i, int skip, double cl, const int32_t* pairA, const double* w) {
+// other slot, eased by the pair's first attachment's weight when above 0.
+inline double cut_piece(const double* g, int nK, int i, double cl, const int32_t* pairA, const double* w) {
   double ci = g[i];
   for (int j = 0; j < nK; j++) {
-    if (j == i || j == skip) continue;
+    if (j == i) continue;
     const int32_t a = pairA[i * nK + j];
     const double wij = a >= 0 ? w[a] : 0;
     // contact.js: a bare cut of two pieces more than cl apart changes no bit; skip it.
@@ -176,14 +172,6 @@ inline double cut_piece(const double* g, int nK, int i, int skip, double cl, con
     ci = jsmax(ci, u);
   }
   return ci;
-}
-
-inline double gate_weight(const double* G, double cl, double x, double y, double z) {
-  const double dx = x - G[2], dy = y - G[3], dz = z - G[4];
-  const double d = std::sqrt(dx * dx + dy * dy + dz * dz);
-  double t = (d - (G[5] + cl + FILL_BAND)) / FILL_BAND;
-  t = jsmax(0, jsmin(1, t));
-  return 1 - t * t * (3 - 2 * t);
 }
 
 // primitives.js's unionN(v, 2, k) on [a, b], k > 0 (the caller's kk > 0 test).
@@ -198,7 +186,7 @@ inline double union2(double a, double b, double k) {
   return m - s * k * 0.25;
 }
 
-// program.js's captureOwner: one lane of the exact contact op's capture, from what the
+// program.js's captureOwner: one lane of the contact op's capture, from what the
 // lane's contactValue just computed — cs[j] slot j's cut value, w[a] the attachment
 // weights. kid[j] is slot j's child index, rank[j] its tie rank (doubles, read from the
 // program and compared as the JS compares them). Same loops, same order, same tests.
@@ -374,35 +362,22 @@ void validate(Program& p) {
         pc += 4 + cnt; break;
       }
       case CONTACT: {
-        // [CONTACT, dst, p, cl, fuse, nK, nA, kid x nK, att x nA, nF, fill x nF], and for an
-        // exact node (fuse == 2) a child index and a tie rank per slot after the fills; every
-        // slot index (ia, ib) must name an operand, as the JS would read undefined, and every
-        // child index must be one an owner array holds (below MAX_OWNER_K).
-        if (!has(7) || !isV(pc + 1) || !isP(pc + 2) || !is_index(c[pc + 5], 1e9) || c[pc + 5] < 1 || !is_index(c[pc + 6], 1e9)) return;
-        const size_t nK = (size_t)c[pc + 5], nA = (size_t)c[pc + 6];
-        if (nK > len || nA > len / ATTACH_STRIDE || !has(7 + nK + nA * ATTACH_STRIDE + 1)) return;
-        for (size_t j = 0; j < nK; j++) if (!isV(pc + 7 + j)) return;
-        const size_t ao = pc + 7 + nK, fo = ao + nA * ATTACH_STRIDE;
+        // [CONTACT, dst, p, cl, nK, nA, kid x nK, att x nA, (child, rank) x nK]; every slot
+        // index (ia, ib) must name an operand, as the JS would read undefined, and every child
+        // index must be one an owner array holds (below MAX_OWNER_K).
+        if (!has(6) || !isV(pc + 1) || !isP(pc + 2) || !is_index(c[pc + 4], 1e9) || c[pc + 4] < 1 || !is_index(c[pc + 5], 1e9)) return;
+        const size_t nK = (size_t)c[pc + 4], nA = (size_t)c[pc + 5];
+        if (nK > len || nA > len / ATTACH_STRIDE || !has(6 + nK + nA * ATTACH_STRIDE + 2 * nK)) return;
+        for (size_t j = 0; j < nK; j++) if (!isV(pc + 6 + j)) return;
+        const size_t ao = pc + 6 + nK, ko = ao + nA * ATTACH_STRIDE;
         for (size_t a = 0; a < nA; a++) {
           if (!is_index(c[ao + a * ATTACH_STRIDE], (double)nK) || !is_index(c[ao + a * ATTACH_STRIDE + 1], (double)nK)) return;
         }
-        if (!is_index(c[fo], 1e9)) return;
-        const size_t nF = (size_t)c[fo];
-        if (nF > len / FILL_STRIDE || fo + 1 + nF * FILL_STRIDE > len) return;
-        for (size_t k = 0; k < nF; k++) {
-          if (!is_index(c[fo + 1 + k * FILL_STRIDE], (double)nK) || !is_index(c[fo + 2 + k * FILL_STRIDE], (double)nK)) return;
+        for (size_t j = 0; j < nK; j++) {
+          if (!is_index(c[ko + j], MAX_OWNER_K)) return;
+          if ((int)c[ko + j] > p.maxKid) p.maxKid = (int)c[ko + j];
         }
-        const size_t ko = fo + 1 + nF * FILL_STRIDE;   // the exact node's child map, if any
-        if (c[pc + 4] == 2) {   // program.js reads the tail only when fuse === 2
-          if (ko + 2 * nK > len) return;
-          for (size_t j = 0; j < nK; j++) {
-            if (!is_index(c[ko + j], MAX_OWNER_K)) return;
-            if ((int)c[ko + j] > p.maxKid) p.maxKid = (int)c[ko + j];
-          }
-          pc = ko + 2 * nK;
-        } else {
-          pc = ko;
-        }
+        pc = ko + 2 * nK;
         break;
       }
       case BULGE: {
@@ -475,15 +450,10 @@ void decode(Program& p) {
         pc += 5 + (size_t)c[pc + 4]; break;
       case UNION: case INTER:
         I.d = (int32_t)c[pc + 1]; I.at = (int32_t)(pc + 2); I.cnt = (int32_t)c[pc + 3]; pc += 4 + (size_t)I.cnt; break;
-      case CONTACT: {
+      case CONTACT:
         I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 2]; I.at = (int32_t)(pc + 3);
-        I.cnt = (int32_t)c[pc + 5]; I.b = (int32_t)c[pc + 6];
-        const size_t fo = pc + 7 + (size_t)I.cnt + (size_t)I.b * ATTACH_STRIDE;
-        I.c = (int32_t)c[fo];
-        pc = fo + 1 + (size_t)I.c * FILL_STRIDE;
-        if (c[I.at + 1] == 2) { I.sub = 1; pc += 2 * (size_t)I.cnt; }   // exact: the child map and tie ranks
-        break;
-      }
+        I.cnt = (int32_t)c[pc + 4]; I.b = (int32_t)c[pc + 5];
+        pc += 6 + 3 * (size_t)I.cnt + (size_t)I.b * ATTACH_STRIDE; break;
       case BULGE:
         I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 2]; I.b = (int32_t)c[pc + 3]; I.cnt = (int32_t)c[pc + 4];
         I.at = (int32_t)(pc + 5); pc += 5 + (size_t)I.cnt * BULGE_STRIDE; break;
@@ -644,17 +614,15 @@ void run(Session& s, const Program& p, const double* X, const double* Y, const d
       }
       case CONTACT: {
         // contactValue per lane (contact.js), lane-major.
-        const int nK = I.cnt, nA = I.b, nF = I.c;
-        const double cl = c[I.at], fuse = c[I.at + 1];
-        const bool fz = fuse != 0 && fuse == fuse;   // JS truthiness: not 0, -0 or NaN
-        const double* att = c + I.at + 4 + nK;
-        const double* F = att + (size_t)nA * ATTACH_STRIDE + 1;
+        const int nK = I.cnt, nA = I.b;
+        const double cl = c[I.at];
+        const double* att = c + I.at + 3 + nK;
         if ((int)s.gsrc.size() < nK) s.gsrc.resize(nK);
         if ((int)s.cg.size() < nK) { s.cg.resize(nK); s.cc.resize(nK); s.csh.resize(nK); }
         if ((int)s.cw.size() < nA) s.cw.resize(nA);
         if (s.cpair.size() < (size_t)nK * nK) s.cpair.resize((size_t)nK * nK);
         const double** src = s.gsrc.data();
-        for (int j = 0; j < nK; j++) src[j] = vr((int32_t)c[I.at + 4 + j]);
+        for (int j = 0; j < nK; j++) src[j] = vr((int32_t)c[I.at + 3 + j]);
         // The pair's first attachment, either order (contactValue's search, which
         // reads only the program).
         int32_t* pairA = s.cpair.data();
@@ -671,31 +639,17 @@ void run(Session& s, const Program& p, const double* X, const double* Y, const d
         double *g = s.cg.data(), *ci_ = s.cc.data(), *w = s.cw.data(), *sh = s.csh.data();
         const double *sx = px(I.a), *sy = py(I.a), *sz = pz(I.a);
         double* dv = vr(I.d);
-        // An exact node's child map and tie ranks (after the fills), read by the capture.
-        const double* kid = I.sub == 1 ? F + (size_t)nF * FILL_STRIDE : nullptr;
-        const Capture* lc = kid ? cap : nullptr;
+        // The child map and tie ranks (after the attachments), read by the capture.
+        const double* kid = att + (size_t)nA * ATTACH_STRIDE;
         for (int l = 0; l < n; l++) {
           const double x = sx[l], y = sy[l], z = sz[l];
           for (int a = 0; a < nA; a++) w[a] = attach_weight(att + (size_t)a * ATTACH_STRIDE, x, y, z);
           for (int j = 0; j < nK; j++) g[j] = src[j][l];
           double value = INFINITY;
           for (int i = 0; i < nK; i++) {
-            const double ci = cut_piece(g, nK, i, -1, cl, pairA, w);
+            const double ci = cut_piece(g, nK, i, cl, pairA, w);
             ci_[i] = ci;
             value = jsmin(value, ci);
-          }
-          if (fz) {
-            for (int k = 0; k < nF; k++) {
-              const double* G = F + (size_t)k * FILL_STRIDE;
-              const double gw = gate_weight(G, cl, x, y, z);
-              if (gw > 0) {
-                const int ia = (int)G[0], ib = (int)G[1];
-                double f = union2(cut_piece(g, nK, ia, ib, cl, pairA, w), cut_piece(g, nK, ib, ia, cl, pairA, w), PAD_BLEND);
-                const double m = jsmin(g[ia], g[ib]);
-                for (int j = 0; j < nK; j++) if (j != ia && j != ib) f = jsmax(f, (m - g[j] + cl) * 0.5);
-                value = jsmin(value, f + (1 - gw) * (cl + PAD_BLEND / 4));
-              }
-            }
           }
           for (int a = 0; a < nA; a++) {
             const double* A = att + (size_t)a * ATTACH_STRIDE;
@@ -703,7 +657,7 @@ void run(Session& s, const Program& p, const double* X, const double* Y, const d
             if (kk > 0) value = jsmin(value, union2(ci_[(int)A[0]], ci_[(int)A[1]], kk));
           }
           dv[l] = value;
-          if (lc) capture_owner(*lc, off + l, kid, kid + nK, nK, att, nA, ci_, w, sh);
+          if (cap) capture_owner(*cap, off + l, kid, kid + nK, nK, att, nA, ci_, w, sh);
         }
         break;
       }
@@ -933,7 +887,7 @@ int ip_prog_add(int id, const double* prog, int len) {
   return (int)s->programs.size() - 1;
 }
 
-// evalBatchContact: as ip_eval, also capturing the exact contact op into whichever of
+// evalBatchContact: as ip_eval, also capturing the contact op into whichever of
 // owner / piece (n int32 each) and cuts / shares (n x K doubles each) is not null.
 // Nonzero (nothing written) as ip_eval, or for K outside 1..127 or below a child
 // index the program names.

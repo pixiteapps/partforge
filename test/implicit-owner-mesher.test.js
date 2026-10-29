@@ -20,7 +20,7 @@ import { capsulePress, threePress, PRESS_OVERLAP, SEAM_CASES } from "./fixtures/
 
 const EDGE = 1.5;
 const CLOSED = { boundary: 0, nonManifold: 0, misoriented: 0 };
-const exact = (spec) => compileImplicit(spec, { exactContact: true });
+const exact = (spec) => compileImplicit(spec);
 const ownerMesh = (spec, gap) => {
   const compiled = exact(spec), store = sampleField(compiled, EDGE);
   return { compiled, store, mesh: meshStoreOwners(store, { gap }) };

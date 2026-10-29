@@ -10,7 +10,7 @@ import { capsulePress, threePress, fingersOnPalm, PRESS_OVERLAP, SEAM_CASES, mov
 
 const CLOSED = { boundary: 0, nonManifold: 0, misoriented: 0 };
 const GRIDS = [[1.5, "preview"], [0.6, "print"]];
-const exact = (spec) => compileImplicit(spec, { exactContact: true });
+const exact = (spec) => compileImplicit(spec);
 const run = (spec, edge, tier) => { const compiled = exact(spec); return { compiled, mesh: meshImplicit(compiled, edge, { tier }) }; };
 const creaseVerts = (mesh) => { const r = []; for (let v = 0; v < mesh.crease.length; v++) if (mesh.crease[v]) r.push(v); return r; };
 const at = (mesh, vs) => ({ X: Float64Array.from(vs, (v) => mesh.positions[3 * v]), Y: Float64Array.from(vs, (v) => mesh.positions[3 * v + 1]), Z: Float64Array.from(vs, (v) => mesh.positions[3 * v + 2]) });

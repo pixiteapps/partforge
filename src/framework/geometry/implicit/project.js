@@ -5,7 +5,7 @@
 // the cumulative drift by construction, but on the fixtures it measured at most
 // 0.69 cell, inside the 1-cell pad.
 //
-// Owner meshes (a root exact contact, `owner` and `held` given): a vertex takes its step on
+// Owner meshes (a contact root, `owner` and `held` given): a vertex takes its step on
 // its owner's SHARE of the field (evalBatchContact) instead of the field when it is held
 // (held[v], the mesher's mark beside an open gap) or when another piece makes the field at
 // it (its owner's share is above the field there: a linear crossing that landed past a near

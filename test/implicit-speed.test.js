@@ -24,11 +24,12 @@ import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 const SPEC_PREVIEW_MS = 150;
 const SPEC_PRINT_MS = 2000;
 
-// The plain native mesher (the approximate contact a nested contact takes): the spec's 3x targets
-// are its. The default (exact) hand is the owner path, gated separately below.
+// The plain native mesher: the spec's 3x targets are its. The hand is a contact root, so its plan
+// drops the owner root (no piece capture while sampling) and it meshes with `owners: false`; the
+// owner path is gated separately below.
 function nativeHand(edge, opts) {
-  const compiled = compileImplicit(handSpec(), { exactContact: false });
-  const out = meshImplicitCore(compiled, edge, planLeaves(compiled, edge), opts);
+  const compiled = compileImplicit(handSpec());
+  const out = meshImplicitCore(compiled, edge, { ...planLeaves(compiled, edge), ownerRoot: -1, ownerK: 0 }, opts, { owners: false });
   expect(out, `the native path answered at ${edge} mm`).not.toBeNull();
   return out;
 }

@@ -19,7 +19,7 @@ namespace ipe {
 
 constexpr int BATCH = 256;      // program.js's BATCH
 constexpr double BIG = 1e6;     // primitives.js's BIG
-constexpr int MAX_OWNER_K = 127; // contact.js's MAX_OWNER_K: an exact contact's child indices are below it
+constexpr int MAX_OWNER_K = 127; // contact.js's MAX_OWNER_K: a contact's child indices are below it
 
 struct Texture {
   int width = 0, height = 0;
@@ -33,18 +33,17 @@ struct Texture {
 // (parameters, matrix, operand list). Arithmetic still reads every constant
 // from `code`, as the JS reads it from the Float64Array.
 struct Inst {
-  int32_t op, sub;      // opcode; PRIM code, UN/BIN/TER fn, WARP kind (0 taper), MIRROR axis / GET comp,
-                        // CONTACT 1 when exact (fuse == 2: a child map and tie ranks follow the fills) (-1: none)
+  int32_t op, sub;      // opcode; PRIM code, UN/BIN/TER fn, WARP kind (0 taper), MIRROR axis / GET comp (-1: none)
   int32_t d, a, b, c;   // destination and source registers, by op
   int32_t at, cnt;      // inline doubles' offset; UNION/INTER/CONTACT operand count, BULGE region count
-};                      // (CONTACT: b = attachment count, c = fill-region count, a = point register)
+};                      // (CONTACT: b = attachment count, a = point register)
 
 struct Program {
   std::vector<double> code;     // program.js's Float64Array format, verbatim
   bool ok = false;              // passed validate(): every op well-formed
   int nP = 0, nV = 0;
   int maxSlot = -1;             // highest texture slot a TEX op reads
-  int maxKid = -1;              // highest child index an exact CONTACT's child map names
+  int maxKid = -1;              // highest child index a CONTACT's child map names
   std::vector<Inst> insts;      // the decoded ops, END last (only when ok)
 };
 
@@ -58,7 +57,7 @@ struct Session {
   std::vector<double> um, us;   // UNION/INTER per-lane running extreme and sum (BATCH each)
   std::vector<int32_t> uam;     // UNION/INTER per-lane arg-extreme (BATCH)
   std::vector<double> cg, cc, cw;  // CONTACT's per-lane operands, c_i and attachment weights
-  std::vector<double> csh;         // the exact CONTACT capture's per-slot shares
+  std::vector<double> csh;         // the CONTACT capture's per-slot shares
   std::vector<int32_t> cpair;   // CONTACT's slot pair -> first attachment (-1: none), per op
   std::vector<int32_t> cap32;   // ip_sample's per-lane piece capture (owner plans)
 
@@ -72,7 +71,7 @@ struct Session {
   std::vector<int32_t> leaves;
   std::unique_ptr<float[]> vals;   // uninitialized: every sample is written before it is read
   size_t valsCap = 0;
-  // With an owner plan (ownerK > 0: the root is an exact contact), each sample's owning
+  // With an owner plan (ownerK > 0: the root is a contact), each sample's owning
   // child, or -1 (AIR) where the stored value is >= 0 — sparse.js's leaf `owner`.
   int ownerK = 0;
   std::vector<int8_t> owners;
@@ -88,11 +87,11 @@ struct Session {
   // ip_project with normals on and by ip_cleanup; empty after a new mesh.
   std::vector<double> normals;
 
-  // The owner path (implicit_owner.cpp; a root exact contact). The contact's context, set once
+  // The owner path (implicit_owner.cpp; a contact root). The contact's context, set once
   // by ip_set_contact: its attachment table (contact.js's ATTACH_STRIDE layout, child indices,
   // anchors in WORLD space — the IR node's attWorld, since the owner stages test world mesh
   // positions; the field's own table, in the node's frame, lives in the program),
-  // its exact clearance (clearanceExact(gap)), its gap, and contact.js's CREASE_SNAP, CREASE_TOL
+  // its clearance (clearance(gap)), its gap, and contact.js's CREASE_SNAP, CREASE_TOL
   // and DETAIL_SEAM_FADE — handed in from JS, so the constants have one home.
   bool contactSet = false;
   std::vector<double> att;
@@ -111,7 +110,7 @@ struct Session {
 // program the JS would throw on is not ok.
 void validate(Program& p);
 
-// evalBatchContact's capture (program.js): per lane, the exact contact op's merged
+// evalBatchContact's capture (program.js): per lane, the contact op's merged
 // owner and piece (child indices), and per lane x K each child's cut and share. A null
 // array is not captured. `owner` is TEST-ONLY (no production stage sets it; the meshing
 // stages read the order-free `piece`). Lane i of a run writes at lane `off + i`.
@@ -125,7 +124,7 @@ struct Capture {
 
 // runProgram over n <= BATCH lanes. The program must be ok and its texture
 // slots present (eval checks both). `cap` (null on the hot path) captures the
-// exact contact op's lanes at offset `off`.
+// contact op's lanes at offset `off`.
 void run(Session& s, const Program& p, const double* X, const double* Y, const double* Z, int n, double* out,
          const Capture* cap = nullptr, int off = 0);
 

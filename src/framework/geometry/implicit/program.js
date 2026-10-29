@@ -7,7 +7,7 @@ import { xformPoint, xformDir } from "./frames.js";
 import { evalPrim, unionN, intersectN, warpPoint, mirrorPoint, sanitize, clampUnit } from "./primitives.js";
 import { UN, BIN, TER } from "./expr-lower.js";
 import { sampleTexture } from "./textures.js";
-import { contactValue, nodeClearance, bulgeOffset, ATTACH_STRIDE, BULGE_STRIDE, FILL_STRIDE } from "./contact.js";
+import { contactValue, clearance, bulgeOffset, ATTACH_STRIDE, BULGE_STRIDE } from "./contact.js";
 
 export const OP = Object.freeze({ END: 0, XFORM: 1, XDIR: 2, PRIM: 3, UNION: 4, INTER: 5, NEG: 6, MIN2: 7, MIRRORP: 8, ADDC: 9, ONION: 10, WARP: 11, DISP: 12, SANITIZE: 13, CONTACT: 14, BULGE: 15, GET: 20, CONST: 21, UN: 22, BIN: 23, TER: 24, TEX: 25 });
 export const UN_NAMES = Object.keys(UN), BIN_NAMES = Object.keys(BIN), TER_NAMES = Object.keys(TER);
@@ -45,19 +45,16 @@ export function emitExprProgram(L) {
 }
 
 // Layouts of the two contact ops (the rest are read off runProgram below):
-//   [CONTACT, dst, p, cl, fuse, nK, nA, kidReg × nK, (ia, ib, ax, ay, az, r0, band, k) × nA,
-//    nF, (ia, ib, cx, cy, cz, rho) × nF]
-//     cl is clearance(gap, edge) baked in; ia/ib index the EMITTED slots; an attachment with
-//     a pruned side is dropped (its weight is 0 over the block — interval.js rule (c)), and
-//     so is a pad-fill region (its gate is 0 there — rule (d)). nF is 0 unless the node fuses.
-//     An EXACT node (the root contact under `exactContact`) has fuse = 2 and nF = 0, and
-//     appends one original child index per emitted slot after the fills, then each slot's tie
-//     rank (its child's attachment count in the full table): 2·nK more values, which
-//     evalBatchContact reads to name each slot's owner and piece (as does the core's ip_eval_contact).
+//   [CONTACT, dst, p, cl, nK, nA, kidReg × nK, (ia, ib, ax, ay, az, r0, band, k) × nA,
+//    (child, rank) × nK]
+//     cl is clearance(gap) baked in; ia/ib index the EMITTED slots; an attachment with a
+//     pruned side is dropped (its weight is 0 over the block — interval.js rule (c)). The
+//     tail is one original child index per emitted slot, then each slot's tie rank (its
+//     child's attachment count in the full table), which evalBatchContact reads to name each
+//     slot's owner and piece (as does the core's ip_eval_contact).
 //   [BULGE, dst, src, p, nR, (cx, cy, cz, A, rho) × nR]   → src − bulgeOffset(...)
 //     emitted on a kept slot's register when that slot has regions, before CONTACT reads it.
-// `edge` is the grid edge the program is planned at (0, the default, is the bare gap).
-export function emitProgram(compiled, dec, edge = 0) {
+export function emitProgram(compiled, dec) {
   const code = [];
   let nP = 1, nV = 0;
   const newP = () => nP++, newV = () => nV++;
@@ -99,7 +96,7 @@ export function emitProgram(compiled, dec, edge = 0) {
           if (R.length) { const b = newV(); code.push(OP.BULGE, b, v, p, R.length / BULGE_STRIDE, ...R); v = b; }
           vs.push(v);
         });
-        if (vs.length === 1 && !n.exact) return vs[0];   // an exact node still emits, so the lone owner is named
+        // A lone kept slot still emits, so its owner is named.
         const atts = [];
         for (let o = 0; o < n.att.length; o += ATTACH_STRIDE) {
           const ia = slot[n.att[o]], ib = slot[n.att[o + 1]];
@@ -107,20 +104,11 @@ export function emitProgram(compiled, dec, edge = 0) {
           atts.push(ia, ib, ...n.att.subarray(o + 2, o + ATTACH_STRIDE));
         }
         const out = newV();
-        const fills = [], F = n.fillRegions;
-        for (let o = 0; n.fuse && o < F.length; o += FILL_STRIDE) {
-          const ia = slot[F[o]], ib = slot[F[o + 1]];
-          if (ia < 0 || ib < 0) continue;
-          fills.push(ia, ib, ...F.subarray(o + 2, o + FILL_STRIDE));
-        }
-        code.push(OP.CONTACT, out, p, nodeClearance(n, edge), n.exact ? 2 : n.fuse, vs.length, atts.length / ATTACH_STRIDE, ...vs, ...atts, fills.length / FILL_STRIDE, ...fills);
-        if (n.exact) {
-          // Each slot's tie rank for `piece`: its child's attachment count in the node's FULL table
-          // (not the pruned list above), so every leaf ranks a child alike, whatever the order.
-          const rank = new Array(d.kids.length).fill(0);
-          for (let o = 0; o < n.att.length; o += ATTACH_STRIDE) { rank[n.att[o]]++; rank[n.att[o + 1]]++; }
-          code.push(...kid, ...kid.map((i) => rank[i]));
-        }
+        // Each slot's tie rank for `piece`: its child's attachment count in the node's FULL table
+        // (not the pruned list above), so every leaf ranks a child alike, whatever the order.
+        const rank = new Array(d.kids.length).fill(0);
+        for (let o = 0; o < n.att.length; o += ATTACH_STRIDE) { rank[n.att[o]]++; rank[n.att[o + 1]]++; }
+        code.push(OP.CONTACT, out, p, clearance(n.gap), vs.length, atts.length / ATTACH_STRIDE, ...vs, ...atts, ...kid, ...kid.map((i) => rank[i]));
         return out;
       }
       case "mirror": {
@@ -164,7 +152,7 @@ let gather = new Float64Array(64);   // UNION/INTER/CONTACT operand gather, grow
 let cScratch = new Float64Array(64), wScratch = new Float64Array(64);   // CONTACT's per-slot and per-attachment scratch
 let shScratch = new Float64Array(64);   // the capture's per-slot shares
 
-// `cap` (evalBatchContact's capture; null on the hot path) receives the exact contact op's
+// `cap` (evalBatchContact's capture; null on the hot path) receives the contact op's
 // per-child cut values and owner for these lanes, written at lane offset `off`.
 export function runProgram(prog, textures, X, Y, Z, n, out, cap = null, off = 0) {
   if (n > BATCH) throw new Error(`implicit: runProgram takes at most ${BATCH} lanes (got ${n})`);
@@ -202,22 +190,21 @@ export function runProgram(prog, textures, X, Y, Z, n, out, cap = null, off = 0)
         pc += 4 + cnt; break;
       }
       case OP.CONTACT: {
-        const dv = V[prog[pc + 1]], s = prog[pc + 2], cl = prog[pc + 3], fuse = prog[pc + 4], cnt = prog[pc + 5], nA = prog[pc + 6];
-        const fo = pc + 7 + cnt + nA * ATTACH_STRIDE, nF = prog[fo];
-        const att = prog.subarray(pc + 7 + cnt, fo), F = prog.subarray(fo + 1, fo + 1 + nF * FILL_STRIDE);
+        const dv = V[prog[pc + 1]], s = prog[pc + 2], cl = prog[pc + 3], cnt = prog[pc + 4], nA = prog[pc + 5];
+        const ko = pc + 6 + cnt + nA * ATTACH_STRIDE, att = prog.subarray(pc + 6 + cnt, ko);
         if (cnt > gather.length) gather = new Float64Array(Math.max(64, cnt));
         if (cnt > cScratch.length) cScratch = new Float64Array(cnt);
         if (nA > wScratch.length) wScratch = new Float64Array(nA);
         const g = gather, sx = PX[s], sy = PY[s], sz = PZ[s];
-        // An exact node's child map and tie ranks (after the fills), read by the capture.
-        const ko = fo + 1 + nF * FILL_STRIDE, capture = cap !== null && fuse === 2;
+        // The child map and tie ranks (after the attachments), read by the capture.
+        const capture = cap !== null;
         const kid = capture ? prog.subarray(ko, ko + cnt) : null, rank = capture ? prog.subarray(ko + cnt, ko + 2 * cnt) : null;
         for (let i = 0; i < n; i++) {
-          for (let j = 0; j < cnt; j++) g[j] = V[prog[pc + 7 + j]][i];
-          dv[i] = contactValue(g, cnt, cl, fuse, att, nA, F, nF, sx[i], sy[i], sz[i], wScratch, cScratch);
+          for (let j = 0; j < cnt; j++) g[j] = V[prog[pc + 6 + j]][i];
+          dv[i] = contactValue(g, cnt, cl, att, nA, sx[i], sy[i], sz[i], wScratch, cScratch);
           if (capture) captureOwner(cap, off + i, kid, cnt, att, nA, g, rank);
         }
-        pc = fo + 1 + nF * FILL_STRIDE + (fuse === 2 ? 2 * cnt : 0); break;
+        pc = ko + 2 * cnt; break;
       }
       case OP.BULGE: {
         const dv = V[prog[pc + 1]], src = V[prog[pc + 2]], s = prog[pc + 3], nR = prog[pc + 4];
@@ -260,7 +247,7 @@ export function runProgram(prog, textures, X, Y, Z, n, out, cap = null, off = 0)
   }
 }
 
-// One lane of the exact contact op's capture, from the scratch contactValue just filled:
+// One lane of the contact op's capture, from the scratch contactValue just filled:
 // cScratch[j] the emitted slot j's cut value, wScratch[a] the attachment weights; `kid[j]`
 // is slot j's original child index, `g` scratch for the blend operands.
 function captureOwner(cap, lane, kid, cnt, att, nA, g, rank) {
@@ -317,7 +304,7 @@ function captureOwner(cap, lane, kid, cnt, att, nA, g, rank) {
 }
 
 /**
- * evalBatch for a program holding an exact contact op, also capturing per point (into `cap`,
+ * evalBatch for a program holding a contact op, also capturing per point (into `cap`,
  * whichever arrays are present; K the child count): `owner[i]` (TEST-ONLY — no production stage
  * reads it: the argmin child of the cuts, merged to the lesser child across attachment zones —
  * never AIR, the caller applies the sign), `cuts[i·K + child]` (each child's cut value, +Infinity for a pruned child) and

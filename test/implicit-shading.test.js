@@ -67,7 +67,7 @@ test("crease shades hard, zone seam smooth", async () => {
   const { handSpec, HAND_POSES } = await import("./fixtures/implicit-trees.js");
   const { creasedNormals } = await import("../src/framework/geometry/creased-normals.js");
   const { SIBLING_SEAM_ANGLE } = await import("../src/framework/geometry/shading-policy.js");
-  const k = await bootManifoldKernel({ exactContact: true });
+  const k = await bootManifoldKernel();
   const g = k.implicit(handSpec({ ...HAND_POSES.fist, contactGap: 0 }))._m.getMesh();
   const policies = new Map([...new Set(g.runOriginalID)].map((id) => [id, k._shadingPolicy(id)]));
   const r = creasedNormals(g, { policies });

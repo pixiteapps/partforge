@@ -16,7 +16,7 @@ import { core, countRefusedMesh, OUT_OF_MEMORY, poisonCore, releaseIfIdle } from
 import { CLEANUP, guardCos2 } from "../geometry/implicit/cleanup.js";
 import { DETAIL_STRIDE, flattenDetail } from "../geometry/implicit/detail.js";
 import { implicitResult } from "../geometry/implicit/result.js";
-import { clearanceExact, CREASE_SNAP, CREASE_TOL, DETAIL_SEAM_FADE } from "../geometry/implicit/contact.js";
+import { clearance, CREASE_SNAP, CREASE_TOL, DETAIL_SEAM_FADE } from "../geometry/implicit/contact.js";
 
 const isFault = (err) => (typeof WebAssembly === "object" && err instanceof WebAssembly.RuntimeError) || err?.message === OUT_OF_MEMORY;
 const isNumbers = (a) => ArrayBuffer.isView(a) || Array.isArray(a);
@@ -123,7 +123,7 @@ export class NativeSession {
 
   /**
    * evalBatchContact(prog, textures, X, Y, Z, out, cap) on the core: a fresh Float64Array of
-   * field values (evalBatch's), and the exact contact op's capture written into `cap` with
+   * field values (evalBatch's), and the contact op's capture written into `cap` with
    * evalBatchContact's contract — K the child count; whichever of `owner` (TEST-ONLY: no
    * production stage asks for it, the meshing stages read `piece`), `piece` (per point)
    * and `cuts`, `shares` (per point × K) are present are filled (−1 / +Infinity, the whole
@@ -280,10 +280,10 @@ export class NativeSession {
   }
 
   /**
-   * The root exact contact the owner stages read: `node` is its IR node ({ attWorld, gap }) — the
+   * The root contact the owner stages read: `node` is its IR node ({ attWorld, gap }) — the
    * attachment table with its anchors in world space (the owner stages test world mesh positions;
-   * `att`, the node-frame table, is the field's), and the gap that sets its exact clearance
-   * (contact.js's clearanceExact) —
+   * `att`, the node-frame table, is the field's), and the gap that sets its clearance
+   * (contact.js's clearance) —
    * handed in with contact.js's CREASE_SNAP, CREASE_TOL and DETAIL_SEAM_FADE.
    */
   setContact(node) {
@@ -294,7 +294,7 @@ export class NativeSession {
     this.#call(() => {
       const pa = att.length ? c.copyIn(Float64Array.from(att)) : c.alloc(8);
       try {
-        rc = c.x.ip_set_contact(this.id, pa, att.length, clearanceExact(gap), gap, CREASE_SNAP, CREASE_TOL, DETAIL_SEAM_FADE);
+        rc = c.x.ip_set_contact(this.id, pa, att.length, clearance(gap), gap, CREASE_SNAP, CREASE_TOL, DETAIL_SEAM_FADE);
       } finally {
         c.x.free(pa);
       }
@@ -523,7 +523,7 @@ function acceptsPlan(plan) {
  * object, bit for bit — sample, mesh, cleanup (`opts`, CLEANUP or the preview
  * tier's PREVIEW_CLEANUP) and, when the part has
  * any, the surface detail, all on one session, with the warnings worded by
- * implicitResult as the JS's are. A root exact contact (`compiled.ownerRoot ≥ 0`, with
+ * implicitResult as the JS's are. A contact root (`compiled.ownerRoot ≥ 0`, with
  * `owners`, the default) takes the owner path as meshImplicit does — owner mesher, owner
  * cleanup, crease cut, untangle and the detail's seam fade — and its result gains
  * `vertOwner`, `ownerHeld`, `pinned`, `crease` and `triOwner`. Returns null when the JS must

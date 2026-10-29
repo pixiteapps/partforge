@@ -182,7 +182,7 @@ describe("native owner detail and triangle owners", () => {
   for (const { name, spec } of OWNER_DETAIL_CASES) {
     for (const edge of [1.5, 0.6]) {
       test(`${name} at ${edge} mm: applySurfaceDetail's bytes, owner fields and triangle owners`, () => {
-        const compiled = compileImplicit(spec, { exactContact: true });
+        const compiled = compileImplicit(spec);
         expect(compiled.detail.length).toBeGreaterThan(0);
         const node = compiled.ir.nodes[compiled.ownerRoot];
         const plan = planLeaves(compiled, edge);

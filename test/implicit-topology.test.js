@@ -258,7 +258,7 @@ describe("hand contact", () => {
     const { p, v } = minimize((x, y, z) => Math.max(da(x, y, z), dm(x, y, z)), starts);
     expect(Math.abs(2 * v - 0.75)).toBeLessThan(1e-3);
     expect(dist(p, ip)).toBeLessThan(12);   // beside the index PIP knuckle
-    expect(node.fillRegions.length).toBe(0);   // nothing touches: no pad anywhere
+    expect(node.regions.every((R) => R.length === 0)).toBe(true);   // nothing touches: no region anywhere
     for (const edge of [1.5, 0.6]) {
       const out = meshAt(c, edge), P = out.positions, T = out.indices;
       expect(edgeCheck(T), `${edge} mm`).toEqual(CLOSED);
@@ -283,16 +283,15 @@ describe("hand contact", () => {
       expect(inBall, `${edge} mm`).toBeGreaterThan(20);
       expect(crossing, `${edge} mm`).toBe(0);
       // The gap is the geometry's own: every vertex keeps (about) half the 0.75 mm from the bisector
-      // (no floor raises it to cl/2 = 1.125 at 1.5 mm, none lets the grid narrow it).
+      // (the grid neither widens nor narrows it).
       expect(nearest, `${edge} mm`).toBeGreaterThanOrEqual(0.65);
       expect(nearest, `${edge} mm`).toBeLessThan(0.9);
     }
   }, 60_000);
 
   test("fist: each fingertip presses the palm and pads against it with no fillet beyond the bulge", () => {
-    // Exact seams have no pad-fill regions: the fingertip fuses with the palm at a crease.
+    // The fingertip fuses with the palm at a crease.
     const spec = handSpec(HAND_POSES.fist), c = compileImplicit(spec), node = c.ir.nodes[c.ownerRoot];
-    expect(node.fillRegions.length).toBe(0);
     // The surface may stand off the plain union of the raw pieces by the bulge and the grid;
     // the old finger-to-palm blend (k = 8) stood 2 mm off it in the crease around each fingertip.
     const raw = (x, y, z) => Math.min(...node.children.map((id) => evalNodeAt(c, id, x, y, z)));
@@ -315,10 +314,10 @@ describe("hand contact", () => {
 
   test("open hand unchanged at the base: within the attachment radius, the field is the finger-to-palm blend", () => {
     // Where no third piece is near (each beyond the clearance, and beyond the blend width of
-    // the palm), the contact hand equals unionN([palm, finger], palmBlend) at the preview edge.
+    // the palm), the contact hand equals unionN([palm, finger], palmBlend).
     const pose = { curl: 0, creases: false }, spec = handSpec(pose), c = compileImplicit(spec), node = c.ir.nodes[c.ir.root];
     expect(node.regions.every((R) => R.length === 0)).toBe(true);   // the open hand touches nowhere
-    const edge = 1.5, cl = clearance(0, edge), k = 8;   // palmBlend at a 190 mm hand
+    const cl = clearance(0), k = 8;   // palmBlend at a 190 mm hand
     const palm = spec.root.children[0];
     const dirs = [];
     for (const x of [-1, 0, 1]) for (const y of [-1, 0, 1]) for (const z of [-1, 0, 1]) if (x || y || z) dirs.push([x, y, z].map((u) => u / Math.hypot(x, y, z)));
@@ -338,7 +337,7 @@ describe("hand contact", () => {
           return vj + vf >= cl && vj + vp >= cl && vj - vp >= k;
         });
         if (!thirdsClear) continue;
-        expect(Math.abs(evalReference(c, ...q, edge) - evalReference(blend, ...q)), `${finger} at ${q.map((u) => u.toFixed(1))}`).toBeLessThan(1e-9);
+        expect(Math.abs(evalReference(c, ...q) - evalReference(blend, ...q)), `${finger} at ${q.map((u) => u.toFixed(1))}`).toBeLessThan(1e-9);
         compared++;
       }
     }

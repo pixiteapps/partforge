@@ -15,7 +15,7 @@ binds the same C calls into its own JS engine.
 | `implicit_eval.{h,cpp}` | `src/framework/geometry/implicit/` `program.js` (runProgram/evalBatch), `primitives.js`, `frames.js` (xformPoint/xformDir), `expr-lower.js` (the UN/BIN/TER tables), `textures.js` (sampleTexture), `contact.js` (contactValue/bulgeOffset: the CONTACT and BULGE ops) — the implicit engine's field interpreter, and the session that holds a meshing run |
 | `implicit_mesh.{h,cpp}` | `implicit/sparse.js` (evaluateLeaves), `mesher.js` (meshStore), `project.js` (projectVertices), `cleanup.js` (cleanupMesh) — sample, mesh and clean on the session |
 | `implicit_detail.cpp` | `implicit/detail.js` (applySurfaceDetail, with the owner path's seamFade) — refine, project and displace for surface detail |
-| `implicit_owner.cpp` | `implicit/mesher-owners.js` (meshStoreOwners), `crease.js` (cutCreases, untangle), `result.js` (triangleOwners) — the owner path of a root exact contact; its cleanup modes (owner guards in collapse, `project_owned`) are in `implicit_mesh.cpp` |
+| `implicit_owner.cpp` | `implicit/mesher-owners.js` (meshStoreOwners), `crease.js` (cutCreases, untangle), `result.js` (triangleOwners) — the owner path of a contact root; its cleanup modes (owner guards in collapse, `project_owned`) are in `implicit_mesh.cpp` |
 | `implicit_bracket.h` | `implicit/bracket.js` (solveBrackets) — the owner path's safeguarded Illinois edge solve, shared by the mesher and the crease cut |
 | `implicit_math.h` | `js-math.js`'s `pfSin`/`pfCos`/`pfAtan2` and `implicit/noise.js` (latticeHash/valueNoise) |
 | `implicit_probe.cpp` | (test only) `ip_math_probe`, which `test/implicit-native-math.test.js` calls to compare `implicit_math.h` with its JS, and `ip_bracket_probe`, which `test/implicit-bracket.test.js` calls to compare `solve_brackets` with `solveBrackets` |
@@ -129,39 +129,32 @@ held (each `.cpp`'s top comment has the full list):
 The `contact` node's two ops keep `contact.js`'s order per lane (planning stays
 in JS; a program carries its clearance `cl` baked in):
 
-- **CONTACT** (`[14, dst, p, cl, fuse, nK, nA, kid × nK, (ia, ib, ax, ay, az,
-  r0, band, k) × nA, nF, (ia, ib, cx, cy, cz, rho) × nF]`): the attachment
-  weights in attachment order; then for each slot i in order, c_i = v_i maxed
-  with every other slot j's `cut + w·(v_i − cut)` (`cut = (v_i − v_j + cl) ·
-  0.5`; w is the pair's FIRST attachment's weight, either order, else the bare
-  cut; a bare cut with `v_i + v_j > cl + 1e-9·(|v_i| + |v_j| + cl)` lies below
-  v_i and is skipped, on both sides, changing no bit), and value = min over the c_i in slot order; then, if `fuse` is truthy
-  (JS truthiness: not 0, −0 or NaN), the pad fill per region in region order,
-  `min(value, f + (1 − g)·(cl + PAD_BLEND / 4))` with f = `unionN([c'_a, c'_b], 2, PAD_BLEND)` (PAD_BLEND
-  = 1.5) maxed, in slot order, with `(min(v_a, v_b) − v_j + cl) · 0.5` for every slot j
-  other than a and b where its gate weight g > 0 (no term
-  where g is 0 or NaN), c'_a being c_a's max over every slot but b (and c'_b
-  likewise), in slot order; then each attachment with `k·w > 0`,
-  in order, `min(value, unionN([c_a, c_b], 2, k·w))`. Distances are
-  `sqrt(dx·dx + dy·dy + dz·dz)`. The pair → first attachment lookup reads only
-  the program, so the core tables it once per op; it decides nothing the JS's
-  per-lane search does not. The decoder refuses a slot index (ia, ib) that does
-  not name an operand.
-  An EXACT node (the root contact under `exactContact`) has `fuse = 2`: after
-  the fills come `child × nK` (each slot's original child index, below
-  `MAX_OWNER_K` = 127, which the decoder checks) and `rank × nK` (each slot's
-  tie rank), read only when `fuse == 2`, as program.js reads them. `fuse` is
-  otherwise read by truthiness, as above. The value is the same op; what
-  `fuse = 2` adds is the CAPTURE (`ip_eval_contact`, `NativeSession.evalContact`
-  — program.js's `evalBatchContact`/`captureOwner`), per lane after its value,
-  from the lane's own c_i and attachment weights: cuts and shares (each slot's
-  c_i at its child's column; then each attachment with `w > 0` and `k·w > 0`, in
-  order, lowers both of its children's shares to `unionN([c_a, c_b], 2, k·w)`
-  when below), the piece (slots in order, each slot's least share over the
-  attachments touching it; strictly less wins, a tie to a slot whose own c_i is
-  its share, then the lesser rank, then the lesser child) and the owner (the
-  first least c_i in slot order, merged to the lesser child of any attachment
-  with `w > 0` holding it, until stable). `ip_sample` with `ownerK > 0` (an
+- **CONTACT** (`[14, dst, p, cl, nK, nA, kid × nK, (ia, ib, ax, ay, az, r0,
+  band, k) × nA, (child, rank) × nK]`): the attachment weights in attachment
+  order; then for each slot i in order, c_i = v_i maxed with every other slot
+  j's `cut + w·(v_i − cut)` (`cut = (v_i − v_j + cl) · 0.5`; w is the pair's
+  FIRST attachment's weight, either order, else the bare cut; a bare cut with
+  `v_i + v_j > cl + 1e-9·(|v_i| + |v_j| + cl)` lies below v_i and is skipped,
+  on both sides, changing no bit), and value = min over the c_i in slot order;
+  then each attachment with `k·w > 0`, in order, `min(value, unionN([c_a, c_b],
+  2, k·w))`. Distances are `sqrt(dx·dx + dy·dy + dz·dz)`. The pair → first
+  attachment lookup reads only the program, so the core tables it once per op;
+  it decides nothing the JS's per-lane search does not. The decoder refuses a
+  slot index (ia, ib) that does not name an operand.
+  A contact node is always the spec's root (a nested one is a compile error,
+  ir.js), so every CONTACT op ends in `child × nK` (each slot's original child
+  index, below `MAX_OWNER_K` = 127, which the decoder checks) and `rank × nK`
+  (each slot's tie rank). They feed the CAPTURE (`ip_eval_contact`,
+  `NativeSession.evalContact` — program.js's `evalBatchContact`/`captureOwner`),
+  per lane after its value, from the lane's own c_i and attachment weights:
+  cuts and shares (each slot's c_i at its child's column; then each attachment
+  with `w > 0` and `k·w > 0`, in order, lowers both of its children's shares to
+  `unionN([c_a, c_b], 2, k·w)` when below), the piece (slots in order, each
+  slot's least share over the attachments touching it; strictly less wins, a
+  tie to a slot whose own c_i is its share, then the lesser rank, then the
+  lesser child) and the owner (the first least c_i in slot order, merged to the
+  lesser child of any attachment with `w > 0` holding it, until stable).
+  `ip_sample` with `ownerK > 0` (an
   owner plan) captures the piece alongside each sample's value, the zero
   nudge's own for a nudged sample, and stores −1 (AIR) where the stored float32
   is ≥ 0 (`ip_leaf_owners`, int8 per sample) — sparse.js's leaf `owner`.
@@ -173,9 +166,9 @@ Likewise detail's midpoints are numbered in creation order (triangles in
 order, edges v0v1, v1v2, v2v0); its midpoint map is per-vertex chains, only
 found and inserted.
 
-**The owner path** (a root exact contact; `meshImplicitCore` runs it whenever
+**The owner path** (a contact root; `meshImplicitCore` runs it whenever
 `compiled.ownerRoot ≥ 0`): `ip_set_contact` hands in the contact's attachment
-table, exact clearance and gap with `contact.js`'s CREASE_SNAP, CREASE_TOL and
+table, clearance and gap with `contact.js`'s CREASE_SNAP, CREASE_TOL and
 DETAIL_SEAM_FADE (one home for the constants), then `ip_mesh_owners` →
 `ip_cleanup` → `ip_crease` → `ip_untangle` → `ip_detail`, and `ip_tri_owners`.
 An owner mesh carries `vertOwner`, `ownerHeld`, `pinned` and (once cut)
