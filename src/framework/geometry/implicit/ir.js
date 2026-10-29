@@ -26,7 +26,7 @@ const boxUnion = (a, b) => box(a.min.map((v, i) => Math.min(v, b.min[i])), a.max
 const boxInter = (a, b) => box(a.min.map((v, i) => Math.max(v, b.min[i])), a.max.map((v, i) => Math.min(v, b.max[i])));
 const boxPad = (b, d) => box(b.min.map((v) => v - d), b.max.map((v) => v + d));
 const finite = (b) => b.min.every(Number.isFinite) && b.max.every(Number.isFinite);
-function boxXform(b, M) {
+export function boxXform(b, M) {
   if (!finite(b)) return box([-INF, -INF, -INF], [INF, INF, INF]);
   const out = box([INF, INF, INF], [-INF, -INF, -INF]), p = [0, 0, 0];
   for (let c = 0; c < 8; c++) {
