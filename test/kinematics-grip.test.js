@@ -290,7 +290,7 @@ describe("grip errors", () => {
   });
   it("a shape the implicit engine owns is refused, naming the distance-function fix", () => {
     expect(() => index().pose({ grip: { around: { kind: "round", r: 1, child: FRONT_ROD } } }, PALM))
-      .toThrow('limb "index".grip.around: node kind "round" needs the implicit engine — pass a distance function (x, y, z) => mm instead — implicitDistance(node) from partforge/geometry makes one');
+      .toThrow('limb "index".grip.around: node kind "round" needs the implicit engine — pass a distance function (x, y, z) => mm instead; implicitDistance(node) from partforge/geometry makes one');
   });
   it("accepts around as a function or an object, and refuses a string, an array or a number", () => {
     expect(index().pose({ grip: { around: FRONT_ROD } }, PALM).report.grip.touching).toBe(true);

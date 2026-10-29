@@ -115,8 +115,8 @@ export interface LimbFleshOptions {
 }
 
 export interface LimbAttachOptions {
-  /** The contact's blend radius, mm. */
-  k?: number;
+  /** The contact's blend radius, mm (required: a finite number >= 0). */
+  k: number;
   /** Default a third of the first non-zero segment, mm. */
   radius?: number;
   /** Default 3 mm scaled by the base radius over 9.5 mm (needs `r` or the limb's `r`). */
@@ -128,7 +128,7 @@ export interface LimbAttachOptions {
 }
 
 /** A k.implicit contact `attach` entry. */
-export interface LimbAttachEntry { a: string; b: string; near: string; radius: number; band: number; k?: number }
+export interface LimbAttachEntry { a: string; b: string; near: string; radius: number; band: number; k: number }
 
 /** The rigid frame of a joint in part coordinates: its origin and unit axes. */
 export interface LimbWorldFrame { origin: Point3; x: Point3; y: Point3; z: Point3 }
@@ -146,7 +146,7 @@ export interface PosedLimb {
   /** A k.implicit `union` (k = `blend`) of one tapered capsule per non-zero-length segment, each in its joint's frame and labelled with it. */
   flesh(opts?: LimbFleshOptions): ImplicitNode;
   /** A k.implicit contact `attach` entry joining the flesh to the labelled node `label`, near the base joint. */
-  attach(label: string, opts?: LimbAttachOptions): LimbAttachEntry;
+  attach(label: string, opts: LimbAttachOptions): LimbAttachEntry;
   /** Move a solid (built at the origin, along +y) into a frame of the limb. `joint` is a joint name, a frame name, or "tip"; default the base joint. */
   place<T extends { rotate(deg: number, center: Point3, axis: Point3): T; translate(v: Point3): T }>(x: T, joint?: string): T;
   /** A frame of the limb in part coordinates. `joint` is a joint name, a frame name, or "tip"; default the base joint. */

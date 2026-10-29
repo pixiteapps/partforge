@@ -44,9 +44,7 @@ test/vector2d.test.js rather than by the part),
 relief plate, swappable source), and `laser-box.js` (the sheet-parts reference
 part - five `fingerBox` panels and a lid as `sheetPart` sub-parts, two printed
 hinges keyed into slots; a test fixture and the guide's worked example, with no
-demo page), `lattice-box.js` (the views-map worked example - a hinged-lid
-storage box whose every piece is one sub-part built as it prints, moved only by
-its view entries, with a pose-only Open lid animation), `robot-finger.js` (the kinematics reference part - three printed
+demo page), `robot-finger.js` (the kinematics reference part - three printed
 links on pin joints, posed by one `limb` from `partforge/kinematics` in
 `derive` and placed with `d.finger.place`, a `curl` animation that never
 rebuilds; the worked example of `docs/domains/kinematics.md`, with no demo

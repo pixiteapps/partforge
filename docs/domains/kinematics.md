@@ -377,13 +377,17 @@ meshes it. See `docs/AUTHORING-PARTS.md` for the `k.implicit` grammar.
   capsule per segment. Each capsule is in its joint's frame, runs from the joint to the
   next joint (or the tip), tapers from that joint's radius to the next one, and is
   labelled with the joint's frame name. A zero-length segment gets no capsule. `r`
-  defaults to the limb's own `r`, and `label` to the limb's name. Without an `r`, it
-  throws.
+  defaults to the limb's own `r`, and `label` to the limb's name. Without an `r`, or on a
+  limb whose segments all have zero length, it throws. `blend` is the union's blend
+  width in mm; when you leave it out the union is sharp (a hard union, and no `k` key is
+  written).
 - **`posed.attach(label, { k?, radius?, band?, r?, a? })`** is a contact `attach` entry
   that joins the flesh (labelled `a`, default the limb's name) to the piece labelled
-  `label`, near the base joint. `radius` defaults to a third of the first segment that
+  `label`, near the base joint. `k` is required: the blend width in mm where the limb
+  joins `label`, a finite number that is 0 or more. `radius` defaults to a third of the first segment that
   is not zero-length. `band` defaults to 3 mm × `r[0]` / 9.5, from `r` or the limb's own
-  `r`. Without either `band` or an `r`, it throws.
+  `r`. Without either `band` or an `r`, or on a limb whose segments all have zero length,
+  it throws.
 
 ```js
 const palmFrames = { palm: { at: [0, 0, 0] } };
@@ -487,11 +491,12 @@ limb "x".bendToward: must not be parallel to toward
 limb "x".lengths: expected 2 entries, got 1
 limb "index": reach needs the frames declared so far — pass them as pose(…, frames)
 limb "index": place: unknown joint "pipp"
-limb "index".grip.around: node kind "twist" needs the implicit engine — pass a distance function (x, y, z) => mm instead — implicitDistance(node) from partforge/geometry makes one
+limb "index".grip.around: node kind "twist" needs the implicit engine — pass a distance function (x, y, z) => mm instead; implicitDistance(node) from partforge/geometry makes one
 limb "index".grip.around: distance function returned a non-finite value at [-30, 96, 2]
 ```
 
-Other errors: `lengths`, `r` or a `bend` array of the wrong length, a `range` that is not
+Other errors: `attach` without a `k`, `flesh` or `attach` on a limb with no segment
+longer than zero, `lengths`, `r` or a `bend` array of the wrong length, a `range` that is not
 `[min, max]` with `min ≤ max`, a zero-length `toward` or `bendToward`, a duplicate joint
 name, a `follow` that names an unknown or later joint, an `axis` that is not `"bend"`,
 `"spread"`, `"twist"` or a non-zero vector, an unknown `parent` when frames are passed,

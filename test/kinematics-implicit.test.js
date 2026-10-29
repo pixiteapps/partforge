@@ -55,17 +55,35 @@ describe("flesh and attach", () => {
   });
   it("attach's radius skips zero-length segments, and `a` names the flesh label", () => {
     const l = limb("s", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["a", "b"], lengths: [0, 12], r: [3, 3, 2] });
-    expect(l.pose({}).attach("palm", { a: "thumb" })).toMatchObject({ a: "thumb", near: "s.a", radius: 4 });
+    expect(l.pose({}).attach("palm", { k: 1, a: "thumb" })).toMatchObject({ a: "thumb", near: "s.a", radius: 4 });
   });
   it("attach with a non-array r throws", () => {
     const l = limb("s", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["a"], lengths: [10] });
-    expect(() => l.pose({}).attach("palm", { r: 5 })).toThrow(/limb "s": attach r must be an array/);
-    expect(l.pose({}).attach("palm", { r: [5, 4] }).band).toBeCloseTo(15 / 9.5);
+    expect(() => l.pose({}).attach("palm", { k: 1, r: 5 })).toThrow(/limb "s": attach r must be an array/);
+    expect(l.pose({}).attach("palm", { k: 1, r: [5, 4] }).band).toBeCloseTo(15 / 9.5);
   });
   it("attach without r or band throws", () => {
     const l = limb("s", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["a"], lengths: [9] });
     expect(() => l.pose({}).attach("palm", { k: 1 })).toThrow(/limb "s": attach needs r for its default band — pass band or r/);
     expect(l.pose({}).attach("palm", { k: 1, band: 2 }).band).toBe(2);
+  });
+});
+
+describe("flesh and attach refuse what the grammar would", () => {
+  const zero = () => limb("z", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["a", "b"], lengths: [0, 0], r: [3, 3, 2] });
+  const K = 'limb "s".attach: k is required (the blend width in mm where the limb joins palm)';
+  it("attach requires a finite k >= 0", () => {
+    const l = limb("s", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["a"], lengths: [10], r: [3, 2] });
+    expect(() => l.pose({}).attach("palm")).toThrow(K);
+    expect(() => l.pose({}).attach("palm", {})).toThrow(K);
+    expect(() => l.pose({}).attach("palm", { k: -1 })).toThrow(K);
+    expect(() => l.pose({}).attach("palm", { k: NaN })).toThrow(K);
+    expect(() => l.pose({}).attach("palm", { k: "8" })).toThrow(K);
+    expect(l.pose({}).attach("palm", { k: 0 }).k).toBe(0);
+  });
+  it("an all-zero-length limb has no flesh or attach", () => {
+    expect(() => zero().pose({}).flesh({ blend: 1 })).toThrow('limb "z".flesh: the limb has no segment with length > 0');
+    expect(() => zero().pose({}).attach("palm", { k: 1 })).toThrow('limb "z".attach: the limb has no segment with length > 0');
   });
 });
 
