@@ -895,6 +895,17 @@ built. So **a `meshes` post is current as of the moment it is posted**: it is ne
 previous part's geometry surfacing after a rebind, and a host may take it as the build
 outcome for the part it currently has mounted.
 
+**Progressive generates.** A generate carrying `progressive: true` (mount's
+`progressiveBuild` option) also posts `{type:"meshes-partial", meshes}` while it runs:
+the sub-parts built so far, batched at most every 300 ms, each posted right after a
+sub-part boundary's staleness check. A batch that is stale by the time it is posted is
+dropped by the worker, never downgraded to `superseded` — the job's own final post still
+settles it. The final `{type:"meshes"}` then carries only the sub-parts no batch did, so
+every sub-part arrives exactly once, its buffers transferred with it. A batch settles
+nothing: `ready`, `onBuild` and a host's own "build finished" wait for `meshes`. A host
+that reads worker replies itself and turns `progressive` on must add the batches up; one
+that never sends it sees the protocol exactly as before.
+
 **Host-side rule for `superseded`.** partforge's own `mount()` does not handle a
 `superseded` message, and does not need to: in its single-mount flow the regen loop
 serializes generates, so no generate is ever in flight when the next one is sent and the

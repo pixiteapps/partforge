@@ -1,4 +1,4 @@
-import { beforeAll, expect, test } from "vitest";
+import { beforeAll, expect, test, vi } from "vitest";
 import { unzipSync, strFromU8 } from "fflate";
 import { bootManifoldKernel } from "../../src/testing.js";
 import { handle } from "../../src/framework/jobs.js";
@@ -88,4 +88,34 @@ test("a throwing derive posts an error instead of hanging the job", async () => 
   await handle(k, bad, { type: "generate", subparts: ["base"], view: "all", params: {} }, (m) => posted.push(m));
   const err = posted.find((m) => m.type === "error");
   expect(err?.message).toMatch(/derive blew up/);
+});
+
+// Feedback #212: a progressive generate hands over what it has built in time-based
+// batches; the final `meshes` carries the rest, so every sub-part arrives exactly once.
+const plates = {
+  meta: { title: "Plates" }, defaults: {}, views: { all: { label: "All" } },
+  parts: Object.fromEntries(["a", "b", "c", "d"].map((n, i) => [n, { views: ["all"],
+    build: (kk) => kk.box({ size: [10, 10, 2] }).translate([i * 20, 0, 0]) }])),
+};
+
+test("a progressive generate posts batches and a final meshes that together hold every sub-part once", async () => {
+  let clock = 0;
+  const now = vi.spyOn(Date, "now").mockImplementation(() => (clock += 200)); // every check is past the batch interval
+  try {
+    const posted = [];
+    await handle(k, plates, { type: "generate", subparts: ["a", "b", "c", "d"], view: "all", params: {}, progressive: true }, (m) => posted.push(m));
+    const partial = posted.filter((m) => m.type === "meshes-partial");
+    const final = posted.find((m) => m.type === "meshes");
+    expect(partial.length).toBeGreaterThan(0);
+    const names = [...partial.flatMap((m) => m.meshes), ...final.meshes].map((m) => m.name);
+    expect(names).toEqual(["a", "b", "c", "d"]);
+    expect(final.meshes.length).toBeGreaterThan(0); // the last sub-part always rides the final reply
+  } finally { now.mockRestore(); }
+});
+
+test("a generate that does not ask for progressive delivery posts no batch", async () => {
+  const posted = [];
+  await handle(k, plates, { type: "generate", subparts: ["a", "b", "c", "d"], view: "all", params: {} }, (m) => posted.push(m));
+  expect(posted.some((m) => m.type === "meshes-partial")).toBe(false);
+  expect(posted.find((m) => m.type === "meshes").meshes).toHaveLength(4);
 });

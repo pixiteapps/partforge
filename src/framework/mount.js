@@ -286,7 +286,10 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.166.0: `cacheBudgetMB` bounds the worker's solid cache —
+// Embedding contract (0.167.0: `progressiveBuild: true` shows a many-sub-part view
+// filling in as its sub-parts finish — the worker then also posts `meshes-partial`
+// batches, and the final `meshes` carries only what no batch did, so a host reading
+// worker replies itself must add them up; 0.166.0: `cacheBudgetMB` bounds the worker's solid cache —
 // pass a small one on phones; 0.158.0: a preview GLB may carry its view's autoplay
 // animation — mount({ preview }) draws its opening pose and does not play it,
 // mountPreview plays it unless `animate: false`, and exportPreview bakes it only
@@ -517,6 +520,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
                               annotateSend = "viewbar",
                               selectionPopover,
                               cacheBudgetMB,
+                              progressiveBuild = false,
                               container: legacyContainer, controls: legacyControls } = {}) {
   // --- element resolution (the only getElementById calls in the framework, save the ?pickserver client's optional #viewbar lookup) ----
   const byId = (id) => document.getElementById(id);
@@ -1016,6 +1020,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
 
     let framedView = null; // the view the camera was last framed to (null until first show)
     let cameraRestored = false; // saved camera applied once, on the first frame after load
+    let partialView = null;        // the view whose first build is shown in batches (showPartial)
+    let partialCameraKept = false; // that build must not reframe on completion
     let cutawayRestored = false; // a carried cutaway, applied once — after any preview, never on one
     let selectionRestored = false; // a carried selection, tried once, after the camera
     function restoreCarriedSelection() {
@@ -1075,7 +1081,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         for (const backend of ["manifold", "occt"]) {
           const subparts = missing.filter((n) => (backends[n] ?? "manifold") === backend);
           if (subparts.length === 0) continue;
-          service.send({ type: "generate", subparts, view: view(), params, cache: cachingOn, cacheBudget: cacheBudgetBytes }, backend);
+          service.send({ type: "generate", subparts, view: view(), params, cache: cachingOn, cacheBudget: cacheBudgetBytes, ...(progressiveBuild ? { progressive: true } : {}) }, backend);
           jobs++;
         }
         return jobs;
@@ -1137,7 +1143,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     }
 
     function showView(needed) {
-      const frame = view() !== framedView;
+      let frame = view() !== framedView;
+      // A first build shown in batches (showPartial) completes: frame the whole view now,
+      // unless the user moved the camera meanwhile or a restored camera stands.
+      if (partialView === view()) {
+        partialView = null;
+        if (frame && partialCameraKept) { frame = false; framedView = view(); cameraRestored = true; }
+      }
       viewer.showAssembly(needed, { frame });
       if (frame) {
         framedView = view();
@@ -1289,6 +1301,63 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       }
     }
 
+    // Apply a delivery built at the LIVE params — a final `meshes` whose build is still
+    // fresh, or a progressive batch (meshes-partial) of a build that still is.
+    function applyFreshMeshes(meshes) {
+      liveDelivered = true; // only a delivery that is applied beats a preview still decoding
+      for (const m of meshes) {
+        viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
+        // The view its job was SENT for, and the frame the worker delivered
+        // in: "canonical" (place() not applied — mount poses it below) or
+        // "posed". An older worker sends no frame; its meshes are posed.
+        cache.record(m.name, m.reads, dispatched.get(m.name)?.view ?? view(), m.frame ?? "posed");
+        // A sub-part that built into NOTHING. Manifold booleans return an
+        // empty solid rather than throwing (a bore wider than its body),
+        // and typed values may sit outside the authored range, so a
+        // "successful" build can deliver zero triangles — recorded here,
+        // reported below once the view is whole. Undefined counts (a
+        // host's synthetic reply) are not empty.
+        if (m.triangles === 0) emptySubParts.add(m.name); else emptySubParts.delete(m.name);
+        // Stamp the fast path's pose baseline. Only here, inside the
+        // non-stale branch: the stamp must describe the geometry actually
+        // delivered, which buildDone() true guarantees is at the live params.
+        fastPath.recordDelivered(m.name);
+      }
+      // setSubGeometry reset every delivered mesh's matrix, so each one gets
+      // its display pose now, after its geometry landed: a canonical mesh
+      // place() at the live params, a posed one a cleared matrix. `fresh`:
+      // an untrusted live place() here clears the pose but keeps the stamp
+      // (host and worker probes agree by construction at these params;
+      // forgetting on a disagreement would rebuild at the same params forever).
+      fastPath.apply(meshes.map((m) => m.name), undefined, { fresh: true });
+      recordFrames(meshes);
+    }
+
+    // Progressive delivery (feedback #212). A view with many sub-parts posts what it has
+    // built in batches while the job runs, and the view fills in as they land. Framing is
+    // the one hazard: showView frames once per view, and framing to the first batch
+    // would leave a park's camera zoomed in on five plates. So a first build with nothing
+    // on screen frames to the first batch, and showView frames the whole view when the
+    // build completes — unless the user has moved the camera since, or a carried or
+    // persisted camera was restored, which win as they always have.
+    cleanup.defer(viewer.onCameraStart(() => { if (partialView === view()) partialCameraKept = true; }));
+    function showPartial() {
+      const needed = viewSubParts(part, view(), params);
+      // Everything already on screen (an edit), or a cached preview filling the
+      // gaps: the ordinary path shows it.
+      if (previewGate.isActive() || needed.every((n) => viewer.hasSubMesh(n))) return refreshView();
+      const present = needed.filter((n) => viewer.hasSubMesh(n));
+      let frame = false;
+      if (view() !== framedView && partialView !== view()) {
+        partialView = view();
+        partialCameraKept = false;
+        const cam = !cameraRestored ? viewerState?.camera ?? loadCamera() : null;
+        if (cam) { viewer.setCameraState(cam); cameraRestored = true; partialCameraKept = true; }
+        else frame = true;
+      }
+      viewer.showAssembly(present, { frame });
+    }
+
     ui.showBusy("booting kernel"); // visible from first paint until the kernel is ready
 
     // Bundle filename for a multi-part export (single parts download under their own name).
@@ -1311,36 +1380,18 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           ui.showBusy(data.phase);
           ui.setStatus(`${data.phase}…`);
           break;
+        case "meshes-partial":
+          // A batch of a progressive build: shown only while that build is still
+          // current. It settles nothing — the job's final `meshes` does.
+          if (!loop.isFresh()) break;
+          applyFreshMeshes(data.meshes);
+          showPartial();
+          updateRelevance();
+          break;
         case "meshes": {
           const fresh = loop.buildDone();
           if (fresh) { // stale results (params changed mid-build) are discarded
-            liveDelivered = true; // only a delivery that is applied beats a preview still decoding
-            for (const m of data.meshes) {
-              viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
-              // The view its job was SENT for, and the frame the worker delivered
-              // in: "canonical" (place() not applied — mount poses it below) or
-              // "posed". An older worker sends no frame; its meshes are posed.
-              cache.record(m.name, m.reads, dispatched.get(m.name)?.view ?? view(), m.frame ?? "posed");
-              // A sub-part that built into NOTHING. Manifold booleans return an
-              // empty solid rather than throwing (a bore wider than its body),
-              // and typed values may sit outside the authored range, so a
-              // "successful" build can deliver zero triangles — recorded here,
-              // reported below once the view is whole. Undefined counts (a
-              // host's synthetic reply) are not empty.
-              if (m.triangles === 0) emptySubParts.add(m.name); else emptySubParts.delete(m.name);
-              // Stamp the fast path's pose baseline. Only here, inside the
-              // non-stale branch: the stamp must describe the geometry actually
-              // delivered, which buildDone() true guarantees is at the live params.
-              fastPath.recordDelivered(m.name);
-            }
-            // setSubGeometry reset every delivered mesh's matrix, so each one gets
-            // its display pose now, after its geometry landed: a canonical mesh
-            // place() at the live params, a posed one a cleared matrix. `fresh`:
-            // an untrusted live place() here clears the pose but keeps the stamp
-            // (host and worker probes agree by construction at these params;
-            // forgetting on a disagreement would rebuild at the same params forever).
-            fastPath.apply(data.meshes.map((m) => m.name), undefined, { fresh: true });
-            recordFrames(data.meshes);
+            applyFreshMeshes(data.meshes);
             // The whole view is live: every sub-part the preview drew has just been
             // replaced in place, so the tools it held back come back. Before
             // refreshView, so showView restores a carried cutaway on this build.
