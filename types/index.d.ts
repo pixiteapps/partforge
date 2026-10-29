@@ -798,7 +798,7 @@ export interface PartRuntime {
 /** Mount a full parametric-part app from a `PartDefinition`. */
 export function mount(part: PartDefinition, options: MountOptions): PartRuntime;
 
-/** Options for `mountPreview`. */
+/** Options for `mountPreview`. Any other key throws a `TypeError`. */
 export interface MountPreviewOptions {
   /** A GLB from `partforge/gltf`'s `encodePreviewGlb`, or a runtime's `exportPreview()`. */
   glb: Uint8Array | ArrayBuffer;
@@ -808,12 +808,50 @@ export interface MountPreviewOptions {
   viewerState?: ViewerState | null;
   /** Play the file's baked animation once drawn (default true). The editor's own boot preview goes through mount(), not here. */
   animate?: boolean;
+  /** `false` (0.168.0+): no view cube, `#viewbar` controls, view style, tooltips, play button or `elements.chrome` wiring. Default true. */
+  chrome?: boolean;
+  /** `"transparent"` (0.168.0+): alpha-0 clear, no theme background, no grid. CAD mode only — realistic mode draws its own environment backdrop. Default `"theme"`. */
+  background?: "theme" | "transparent";
+  /** `true` (0.168.0+): a soft contact shadow under the part, cast once at showAssembly from the meshes as the file stores them (the rest pose, before a player applies its first pose); a playing animation does not move it. CAD mode only — realistic mode draws its own ground and shadow. Default false. */
+  contactShadow?: boolean;
+  /** `false` (0.168.0+): no wheel/pinch zoom (a wheel scrolls the page). Default true. */
+  zoom?: boolean;
+  /** `false` (0.168.0+): no pan. Default true. */
+  pan?: boolean;
+  /**
+   * Degrees per second (0.168.0+; default 0, off): a file with no playing animation
+   * turns about the vertical. Never under reduced motion; the first camera grab
+   * (a canvas drag or the view cube) stops it for good.
+   */
+  turntable?: number;
+  /**
+   * 0 < fill <= 1 (0.168.0+): the opening framing (and the viewer's reframe) puts the
+   * camera, along the opening view direction, so the model's bounding box as projected
+   * on screen spans this fraction of the viewport along its limiting axis. With a
+   * `turntable` (and no baked animation) the model swept a full turn is framed — its
+   * farthest vertex from the vertical axis, over the box's height — so the turn never
+   * clips and a round part still fills. With `fill` the model is centred on its
+   * horizontal vertex centroid (a lopsided part turns about its hub), and nothing
+   * leaves the viewport; a baked animation that moves parts outside the box may. Unset, the
+   * fixed framing distance.
+   */
+  fill?: number;
+  /** `"default"` (0.168.0+): drop the camera and projection of `viewerState` and `setViewerState`, so the mount keeps the file's own framing; their render mode and environment still apply. Default `"carry"`. */
+  camera?: "carry" | "default";
+  /** The opening render mode (0.168.0+): applied at mount, over any carried render mode; afterwards `setViewerState`, `renderMode.set` and the view style control change it as usual. Unset, the carried state decides. */
+  renderMode?: RenderMode;
 }
 
 /** The handle `mountPreview()` returns. Every method is safe before `ready` settles. */
 export interface PreviewRuntime {
   /** Resolves once the GLB is drawn; rejects when it will not decode or holds no meshes. */
   ready: Promise<void>;
+  /**
+   * Resolves after the first frame that includes the meshes has rendered (0.168.0+) —
+   * for cross-fading from a still image. Rejects with `ready`'s error when the file
+   * will not decode, or when the handle is disposed first. Waits while parked.
+   */
+  drawn: Promise<void>;
   /** Full teardown. Idempotent. */
   dispose(): void;
   /** The view the file was written for (`null` until drawn, or when the file names none). */

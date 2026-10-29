@@ -187,11 +187,37 @@ stock, no layer-line frames). Previews carry no edge lines, textures or patterns
 `resolveDefaultView(part)` (main entry and `partforge/testing`) names the view
 `mount()` opens on, so a preview built headlessly matches it.
 
+`mountPreview` takes presentation options (0.168.0+), each usable alone and
+each defaulting to the viewer above: `chrome: false` (no view cube, viewbar
+controls, view style, tooltips or play button), `background: "transparent"`
+(alpha-0 canvas, no grid) and `contactShadow: true` (a soft shadow under the
+part) — both CAD mode only, since realistic mode draws its own environment and
+ground — `zoom: false`
+and `pan: false` (a wheel then scrolls the page), `turntable: <degrees per
+second>` (a model with no playing animation turns until the first camera grab,
+never under `prefers-reduced-motion`), `fill: 0.8` (frame the model so its
+bounding box, as seen from the opening view, spans that fraction of the preview
+along its tighter axis — larger in a small card; with a turntable the model swept
+a full turn is framed, so it never clips as it turns and a round part still fills; the model is
+centred on its geometry, so a lopsided part turns about its hub), `camera: "default"` (drop the carried camera
+and projection and keep the file's own framing; a carried render mode and
+environment still apply) and `renderMode: "cad" | "realistic"` (the opening
+mode, over any carried one; it can change afterwards). An unknown option key
+throws. A baked animation always plays as authored — it
+loops, or plays once and holds its end pose. Every handle carries `drawn`, which
+resolves after the first frame showing the meshes, so a host can cross-fade from
+a still image.
+
 ```js
 const glb = await runtime.exportPreview();               // Uint8Array: the view on screen
 mount(part, { createWorker, elements, preview: glb });   // drawn at once, replaced by the build
 const shown = mountPreview(stage, { glb });              // no kernel at all
 await shown.ready;
+const card = mountPreview(cardStage, {                   // a landing-page card
+  glb, chrome: false, background: "transparent", contactShadow: true,
+  zoom: false, pan: false, turntable: 14, fill: 0.8, camera: "default", renderMode: "cad",
+});
+await card.drawn;                                        // the first frame is on the canvas
 ```
 
 Every `elements` entry defaults to the legacy global ID (`#app`, `#controls`,

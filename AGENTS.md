@@ -306,7 +306,39 @@ the installed package, so let the publish finish before bumping the dep there.
   track is place-only. Since 0.159.0 a playing preview gets a play/pause/replay
   button in `#viewbar` beside `#view-style` (`preview-play-button.js`, driven by
   the player's `onChange`; none under reduced motion or without a `#viewbar`),
-  and `handle.animation` gains `replay()`.
+  and `handle.animation` gains `replay()`. Since 0.168.0 `mountPreview` takes
+  independent presentation options that map onto `createViewer`'s: `chrome`
+  (false: no view cube, viewbar, view style, tooltips, play button or chrome),
+  `background: "transparent"` (`transparent`: alpha-0 clear, no CAD background,
+  no grid) and `contactShadow` (the thumbnail style's CPU contact-shadow mask as
+  a live plane, built ONCE per showAssembly from the pose on screen — a
+  preview's rest pose, before its player applies one — and never
+  for animation frames — rebuilding it while a preview played stalled the host
+  page's main thread) — both CAD mode only, realistic draws its own
+  environment and ground — `zoom`/`pan`, `turntable` (deg/s), `fill` (createViewer's `frameFill`:
+  frameTo bisects the camera distance along the kept view direction — or sizes
+  the ortho frustum — so the posed box's 8 corners, projected, span that
+  fraction of the viewport along its limiting axis; with `frameSwept` (a
+  turntable that will run) it frames the model swept about the vertical — two
+  48-gon circles over the box's height, radius the farthest posed VERTEX from
+  the axis (box corners sit ~√2 out on a round part and framed a turning gear
+  at ~55% width) — so no angle clips. With `frameFill` the framing centre
+  (the point recentred onto the pivot, so the turntable's axis) is the posed
+  vertices' horizontal centroid with the box's vertical centre — a lopsided
+  propeller orbited its box centre otherwise — and the box corners and sweep are
+  taken about it; the fit is the projected span, plus a guard that nothing
+  leaves the viewport (|NDC| <= 1); a container with no size falls back to the
+  fixed r·2.6 + 6 distance. A sphere fit was tried first and left flat parts
+  small), `camera:
+  "default"` (the carried camera and projection are dropped; render mode and
+  environment still carry) and `renderMode` (the OPENING mode only — it wins
+  over a carried one at mount, then changes freely). An unknown key or value
+  throws. The turntable turns through `viewer.orbitBy` off
+  `onFrame` — orbitBy announces a camera grab itself, so the turntable tells its
+  own steps from the user's by a flag held across the call, and the first real
+  grab stops it for good; none under reduced motion. Every handle gains `drawn`,
+  resolved off the viewer's `onRendered` (after a frame actually draws — the
+  loop renders on demand).
 - **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
   (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
   nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,
