@@ -846,8 +846,9 @@ export interface MountPreviewOptions {
    * clips and a round part still fills, centred on its horizontal vertex centroid (a
    * lopsided part turns about its hub). Without a turntable (0.169.0+) the posed mesh
    * vertices are fitted and their on-screen outline is centred (the target moves in the
-   * screen plane), spanning `fill`; a baked animation that moves parts outside its first
-   * pose's outline may leave the frame. Unset, the
+   * screen plane), spanning `fill`; a playing baked animation (0.171.0+) is fitted over
+   * every pose it passes through, so a part that swings out of its first pose's outline
+   * stays in frame and all its poses together span `fill`. Unset, the
    * fixed framing distance. Since 0.169.0 a turntable mount is framed swept under reduced
    * motion too, so every visitor sees the same framing.
    */
