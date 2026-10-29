@@ -204,7 +204,9 @@ and projection and keep the file's own framing; a carried render mode and
 environment still apply) and `renderMode: "cad" | "realistic"` (the opening
 mode, over any carried one; it can change afterwards), and `autostart: false`
 (0.169.0+: the animation or turntable waits at its first frame until
-`handle.motion.start()`). An unknown option key
+`handle.motion.start()`), and `edgeWidth` / `edgeOpacity` (0.170.0+: the CAD
+edge lines' width in CSS pixels, default 1, and opacity, default 1 — a small
+card reads the default lines as heavy). An unknown option key
 throws. A baked animation always plays as authored — it
 loops, or plays once and holds its end pose. Every handle carries `drawn`, which
 resolves after the first frame showing the meshes, so a host can cross-fade from

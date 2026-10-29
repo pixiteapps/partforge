@@ -831,6 +831,13 @@ export interface MountPreviewOptions {
    */
   autostart?: boolean;
   /**
+   * 0.170.0+: the CAD feature edge lines' width in CSS pixels, 0 < w <= 8 (default 1).
+   * A small preview card reads the default as heavy; 0.5 is one device pixel at 2x.
+   */
+  edgeWidth?: number;
+  /** 0.170.0+: the CAD feature edge lines' opacity, 0 < o <= 1 (default 1). */
+  edgeOpacity?: number;
+  /**
    * 0 < fill <= 1 (0.168.0+): the opening framing (and the viewer's reframe) puts the
    * camera, along the opening view direction, so the model's bounding box as projected
    * on screen spans this fraction of the viewport along its limiting axis. With a
