@@ -30,7 +30,7 @@
 // file, with `animate: false`, or for a host with no #viewbar; the host can
 // still drive `handle.animation` (state / pause / resume / replay) itself.
 //
-// Presentation options (0.166.0), each usable alone; every default is the
+// Presentation options (0.168.0), each usable alone; every default is the
 // viewer above, so a mount that names none is unchanged:
 //  - `chrome: false` — no view cube, no #viewbar controls, no view style, no
 //    tooltips, no play button and no `elements.chrome` wiring. A one-time

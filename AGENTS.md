@@ -306,7 +306,7 @@ the installed package, so let the publish finish before bumping the dep there.
   track is place-only. Since 0.159.0 a playing preview gets a play/pause/replay
   button in `#viewbar` beside `#view-style` (`preview-play-button.js`, driven by
   the player's `onChange`; none under reduced motion or without a `#viewbar`),
-  and `handle.animation` gains `replay()`. Since 0.166.0 `mountPreview` takes
+  and `handle.animation` gains `replay()`. Since 0.168.0 `mountPreview` takes
   independent presentation options that map onto `createViewer`'s: `chrome`
   (false: no view cube, viewbar, view style, tooltips, play button or chrome),
   `background: "transparent"` (`transparent`: alpha-0 clear, no CAD background,

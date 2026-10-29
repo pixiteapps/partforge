@@ -187,7 +187,7 @@ stock, no layer-line frames). Previews carry no edge lines, textures or patterns
 `resolveDefaultView(part)` (main entry and `partforge/testing`) names the view
 `mount()` opens on, so a preview built headlessly matches it.
 
-`mountPreview` takes presentation options (0.166.0+), each usable alone and
+`mountPreview` takes presentation options (0.168.0+), each usable alone and
 each defaulting to the viewer above: `chrome: false` (no view cube, viewbar
 controls, view style, tooltips or play button), `background: "transparent"`
 (alpha-0 canvas, no grid) and `contactShadow: true` (a soft shadow under the
