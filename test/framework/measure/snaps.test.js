@@ -236,6 +236,27 @@ describe("circles", () => {
     expect(t.point[2]).toBeCloseTo(0);
   });
 
+  test("an undrawn rim attaches no chain (never the other rim)", () => {
+    // only the top rim is a drawn edge in this fixture
+    const t = findSnap(idx, q([130, 50], { featureId: 2, spec: holeSpec, z: 0.1 }));
+    expect(t.kind).toBe("circle");
+    expect(t.chain).toBeUndefined();
+  });
+
+  test("a circle target carries its rim geometry for the marker", () => {
+    const t = findSnap(idx, q([130, 50], { featureId: 2, spec: holeSpec, z: 0.1 }));
+    expect(t.circle.centre).toEqual(t.point);
+    expect(t.circle.radius).toBeCloseTo(HOLE.r, 1);
+    expect(Math.abs(t.circle.axis[2])).toBeCloseTo(1);
+    expect(Math.hypot(...t.circle.axis)).toBeCloseTo(1);
+  });
+
+  test("chains are precomputed per feature with centroids", () => {
+    const owned = idx.chains.filter((c) => c.owners.includes(2));
+    expect(idx.chainsByFeature.get(2)).toEqual(owned);
+    for (const c of idx.chains) expect(c.centroid).toHaveLength(3);
+  });
+
   test("a non-cylinder spec offers no circle", () => {
     const t = findSnap(idx, q([130, 50], { featureId: 2, spec: { kind: "bbox" }, z: 1.9 }));
     expect(t.kind).toBe("edge");

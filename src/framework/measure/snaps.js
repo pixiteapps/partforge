@@ -7,17 +7,25 @@
 // the corner hash cells near the hit and the chains of the hit feature.
 //
 //   SnapIndex  { corners: Float32Array xyz…, cornerGrid: Map<"ix,iy,iz", number[]>,
-//                chains: Chain[], cellSize }
+//                chains: Chain[], chainsByFeature: Map<featureId, Chain[]>, cellSize }
 //   Chain      { points: number[3][], straight, length, mid: number[3]|null,
-//                owners: number[] (named feature ids) }
+//                centroid: number[3], owners: number[] (named feature ids) }
 //   SnapTarget { kind: "corner"|"midpoint"|"circle"|"edge"|"face"|"point",
-//                point: number[3], featureId (0 when unnamed), chain? }
+//                point: number[3], featureId (0 when unnamed), chain?, circle? }
+//
+// Chains (and their points arrays) are shared by every target that names
+// them: treat them as READ-ONLY. A `circle` target always carries
+// `circle: { centre, axis (unit), radius }` — the rim the snap marker draws as
+// a 48-point loop when no drawn chain matches it. `chain` rides a circle only
+// when an owned chain's centroid lies within RIM_MATCH × radius of the chosen
+// rim centre, so an undrawn rim never borrows the other rim's chain.
 
 export const SNAP_PX = 12;
 export const CURVE_TURN_DEG = 20;
 export const COLLINEAR_TURN_DEG = 0.5;
 
 const KEY_EPS = 1e-4;
+const RIM_MATCH = 0.25; // × cylinder radius: how near a chain's centroid must sit to the rim centre
 const CIRCLE_SAMPLES = 32;
 const KIND_RANK = { corner: 0, midpoint: 1, circle: 2, edge: 3 };
 
@@ -164,9 +172,18 @@ export function buildSnapIndex({ positions, indices, featureIds, edgePositions }
       straight,
       length: polylineLength(points),
       mid: straight ? scale(add(a, b), 0.5) : null,
+      centroid: scale(points.reduce(add, [0, 0, 0]), 1 / points.length),
       owners: own,
     };
   });
+  const chainsByFeature = new Map();
+  for (const c of chains) {
+    for (const id of c.owners) {
+      let list = chainsByFeature.get(id);
+      if (!list) chainsByFeature.set(id, (list = []));
+      list.push(c);
+    }
+  }
 
   // 4. Corner spatial hash.
   const cornerIds = [];
@@ -182,7 +199,7 @@ export function buildSnapIndex({ positions, indices, featureIds, edgePositions }
     list.push(i);
   });
 
-  return { corners, cornerGrid, chains, cellSize };
+  return { corners, cornerGrid, chains, chainsByFeature, cellSize };
 }
 
 // Corner indices within radiusWorld of p. Falls back to a linear scan when the
@@ -242,7 +259,7 @@ function circleCandidate(spec, query) {
     const s = add(centre, add(scale(u, r * Math.cos(a)), scale(v, r * Math.sin(a))));
     d = Math.min(d, pxDist(query.project(s), query.pointerPx));
   }
-  return { point: [...centre], px: d };
+  return { point: [...centre], px: d, circle: { centre: [...centre], axis: ax, radius: r } };
 }
 
 export function findSnap(index, query) {
@@ -251,11 +268,11 @@ export function findSnap(index, query) {
   const named = hitFeatureId > 0;
   const featureId = named ? hitFeatureId : 0;
   let best = null;
-  const consider = (kind, point, px, chain) => {
+  const consider = (kind, point, px, chain, circle) => {
     if (!(px <= snapPx)) return;
     if (best && (KIND_RANK[kind] > KIND_RANK[best.kind]
       || (KIND_RANK[kind] === KIND_RANK[best.kind] && px >= best.px))) return;
-    best = { kind, point, px, chain };
+    best = { kind, point, px, chain, circle };
   };
 
   const { corners } = index;
@@ -266,7 +283,7 @@ export function findSnap(index, query) {
 
   // Unnamed geometry offers corners only (then the bare point).
   if (named) {
-    const owned = index.chains.filter((c) => c.owners.includes(hitFeatureId));
+    const owned = index.chainsByFeature?.get(hitFeatureId) ?? [];
     for (const c of owned) {
       if (c.mid) consider("midpoint", [...c.mid], pxDist(project(c.mid), pointerPx), c);
       const e = nearestOnChain(c.points, hitPoint);
@@ -274,20 +291,21 @@ export function findSnap(index, query) {
     }
     if (featureSpec?.kind === "cylinder") {
       const circ = circleCandidate(featureSpec, query);
-      // The rim to highlight: the owned chain whose centroid is nearest the chosen rim centre.
-      let rim, rimD = Infinity;
+      // The rim to highlight: the owned chain whose centroid is nearest the
+      // chosen rim centre — and only if it is near enough to BE that rim.
+      let rim, rimD = RIM_MATCH * circ.circle.radius;
       for (const c of owned) {
-        const centroid = scale(c.points.reduce(add, [0, 0, 0]), 1 / c.points.length);
-        const d = len(sub(centroid, circ.point));
-        if (d < rimD) { rimD = d; rim = c; }
+        const d = len(sub(c.centroid, circ.point));
+        if (d <= rimD) { rimD = d; rim = c; }
       }
-      consider("circle", circ.point, circ.px, rim);
+      consider("circle", circ.point, circ.px, rim, circ.circle);
     }
   }
 
   if (best) {
     const out = { kind: best.kind, point: best.point, featureId };
     if (best.chain) out.chain = best.chain;
+    if (best.circle) out.circle = best.circle;
     return out;
   }
   return { kind: named ? "face" : "point", point: [...hitPoint], featureId };

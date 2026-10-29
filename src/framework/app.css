@@ -929,6 +929,16 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 }
 #viewbar .pf-measure-actions button.pf-measure-unit { min-width: auto; padding: 0 6px; }
 .pf-measure-unit:hover { color: var(--pf-text-2); }
+/* measure mode's snap label (snap-marker.js): left/top are the projected
+   snap point plus 12px up-right; the box hangs above that spot */
+.pf-measure-snap {
+  position: absolute; z-index: 30; pointer-events: none; transform: translateY(-100%);
+  padding: 2px 7px; border-radius: 6px; white-space: nowrap;
+  background: var(--pf-surface); border: 1px solid var(--pf-border);
+  color: var(--pf-text-strong); font-size: 11.5px; line-height: 1.35;
+  box-shadow: 0 2px 4px -2px rgb(0 0 0 / .15);
+}
+.pf-measure-snap[hidden] { display: none; }
 
 /* animation transport bar (placement: chrome.css's .pf-anim-bar). APPEARANCE
    is ungated for the same reason as #viewbar above. */
