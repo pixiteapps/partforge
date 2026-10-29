@@ -16,6 +16,7 @@ import { overhang } from "./overhang.js";
 import { bedContact } from "./bed-contact.js";
 import { partBedContact, partFootprint, partGatesMinWall, partHasBed, partOverhangAngle, partWallBands } from "./gates.js";
 import { summarizeContours } from "./shape-probe.js";
+import { DOMAINS } from "../domains/registry.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
 const unionBounds = (list) => list.reduce(
@@ -186,6 +187,24 @@ function printPoseUnderside(mesh, m, { maxAngle, bed, displayBedZ }) {
 // id no descriptor answers to (lint's sheet-invalid reports that) is still a sheet —
 // measure and verify ask the same question, isSheetPart — with nothing to check it by:
 // unknownProcessFacts.
+// ── domain facts ─────────────────────────────────────────────────────────────
+// Every registered domain (src/framework/domains/registry.js) with an oracle.facts
+// stamps its reading on each row under its id (validateDomains keeps ids off the core
+// row keys). A throw becomes { error } for that domain on that row, the shape
+// sheetRowFacts uses, and every other row still measures. Any domain with facts
+// means the row is never memoized (measure's memo keys on the display geometry and
+// the inputs it names; a domain's reading may depend on anything).
+const HAS_DOMAIN_FACTS = DOMAINS.some((d) => d.oracle.facts);
+function domainFacts(sp, ctx) {
+  const out = {};
+  for (const d of DOMAINS) {
+    if (!d.oracle.facts) continue;
+    try { out[d.id] = d.oracle.facts(sp, ctx); }
+    catch (e) { out[d.id] = { error: String(e?.message || e).slice(0, 200) }; }
+  }
+  return out;
+}
+
 function sheetRowFacts(kernel, part, name, view, { p, d }, budget, volume) {
   const sp = part.parts[name];
   const proc = processFor(sp);
@@ -369,7 +388,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // holds a sheet part (the budgeted 2-D pass and print-pose sizes are
     // call-scoped, not per-sub-part cacheable), and a solid with no `_hash`
     // (nothing to key reuse on).
-    const memoKey = opts.memo && !sheetView && !sheet && !part.parts[name]?.reference && solid?._hash && !exportBed
+    const memoKey = opts.memo && !sheetView && !sheet && !part.parts[name]?.reference && solid?._hash && !exportBed && !HAS_DOMAIN_FACTS
       ? JSON.stringify({
         mw: !!opts.minWall, s: minWallSamples ?? null, band: wallBands[name] ?? null,
         oh: overhangAngle ?? null, bc: bedArmed, ex: printed,
@@ -477,6 +496,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
         : null,
       ...(printBboxes?.[name]?.size ? { printBbox: printBboxes[name].size } : {}),
       ...(printBboxes?.[name]?.error ? { printBboxError: printBboxes[name].error } : {}),
+      ...domainFacts(part.parts[name], { name, view, p: poseParams?.p ?? null, d: poseParams?.d ?? null, volume: vol, bbox: size(b) }),
     };
     if (memoKey) opts.memo.set(name, solid._hash, memoKey, facts);
     return facts;
