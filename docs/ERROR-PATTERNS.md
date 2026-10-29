@@ -871,6 +871,13 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** Peak WASM memory during the preview build exceeded what the phone allows a page (roughly 1–1.5 GB on iOS; a desktop tolerates several GB). The usual shape is hundreds of repeated small features unioned into one body: before partforge 0.116 every sphere was 6,728 triangles regardless of radius (the flat 116-segment preview count, squared), so a body with ~250 rivet spheres carried 1.7 M triangles of rivets into its booleans — measured 10 s and a 2.7 GB peak on a desktop for a 400k-triangle sub-part, against 4 s and 500 MB with the rivets as 12-triangle boxes. A boolean chain whose intermediates dwarf the result (a full-body skin intersected per groove) is the other shape.
 - **Fix:** Update partforge (0.116 sizes spheres by chord tolerance: that body builds in ~550 MB and 120k triangles unchanged; 0.117 extends the rule to lathe profile arcs — `torus`, `roundedCylinder`, revolved rounded profiles — and `roundedBox` corners, the other two shapes that spend the count squared). Then keep the preview build's peak down the same ways the export needs: build repeated detail as one union of instances rather than a chain of per-feature booleans, cut grooves from a thin local skin rather than the whole envelope, and drop feature counts the print cannot show ([Preview vs print quality](AUTHORING-PARTS.md#conventions--gotchas)). `partforge measure` reports triangle counts per sub-part; a single preview sub-part past ~200k triangles, or a whole view past ~400k, is the range where phones start to fail.
 
+## implicit-limbs-miss-target
+
+- **Symptom:** An implicit part's limbs miss what they should touch or grip (a hand's fingers miss the rod they wrap), with no build error and nothing in the `measure` report pointing at it.
+- **Cause:** Frame placement worked out by hand through a chain of `{ parent, at, rotate }` frames — each rotation turns everything further down the chain, and the arithmetic is easy to get wrong.
+- **Fix:** Report the frames instead of guessing: return `place(k.implicitFrames(spec))` from a probe, using the same placement function the build applies to the solid, and compare each frame's reported `origin` and axes in `partforge measure` against the target (a rod's axis, a mating feature). Label boxes in the report are approximate — they always contain their piece but can be generous by up to a blend's reach — so read exact numbers off a slab probe instead.
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.
+

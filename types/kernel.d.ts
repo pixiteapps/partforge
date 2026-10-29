@@ -547,6 +547,33 @@ export interface ImplicitOptions {
   preview?: number;
 }
 
+/** One frame in a k.implicitFrames report: its origin and unit axes in part coordinates. */
+export interface ImplicitFrameReport { origin: Point3; x: Point3; y: Point3; z: Point3; }
+/** A labelled node's box: it always contains the piece, but can be generous by up to a blend's reach. */
+export interface ImplicitLabelBox { min: Point3; max: Point3; center: Point3; approximate: true; }
+/** What `measure` writes for a frame set (every number rounded to 0.001). */
+export interface ImplicitFramesReport {
+  frames: Record<string, ImplicitFrameReport>;
+  labels: Record<string, ImplicitLabelBox>;
+  /** True after an odd number of `mirror` calls; the axes are mirrored with the geometry. */
+  mirrored: boolean;
+}
+/** k.implicitFrames — a spec's frames and labels, moved by the same transforms as its solid. */
+export interface ImplicitFrameSet {
+  readonly _frameSet: 1;
+  translate(v: Point3): ImplicitFrameSet;
+  rotate(deg: number, center?: Point3, axis?: Point3): ImplicitFrameSet;
+  rotateX(deg: number): ImplicitFrameSet;
+  rotateY(deg: number): ImplicitFrameSet;
+  rotateZ(deg: number): ImplicitFrameSet;
+  rotateAbout(o: { axis: AxisName | Point3; deg: number; through?: Point3 }): ImplicitFrameSet;
+  along(dir: AxisDirection): ImplicitFrameSet;
+  at(v: Point3): ImplicitFrameSet;
+  mirror(plane: MirrorPlane): ImplicitFrameSet;
+  scale(factor: number, center?: Point3): ImplicitFrameSet;
+  report(): ImplicitFramesReport;
+}
+
 /** k.heightfield — a depth map as a relief solid. */
 export interface HeightfieldOptions {
   w: number;
@@ -635,6 +662,8 @@ export interface GeometryKernel {
    */
   heightfield(nameOrGrid: string | HeightfieldGrid, opts: HeightfieldOptions): Solid;
   implicit(o: ImplicitOptions): Solid;
+  /** Where a k.implicit spec's frames and labelled nodes end up. Meshes nothing; return it from a probe. */
+  implicitFrames(o: ImplicitOptions): ImplicitFrameSet;
 
   // Backend-optional: the sub-part cache brackets and WASM lifetime hooks. Every
   // framework caller reaches these through `?.`, so a third-party backend may

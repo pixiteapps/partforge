@@ -31,7 +31,8 @@ const unionBounds = (list) => list.reduce(
 // their facts out of the sub-part list (the "Probes" feedback report).
 // A Solid anywhere in the return value (duck-typed on volume+toMesh, the two
 // queries the facts need) is replaced by a fact object; a Shape2D by its arc/corner
-// summary (shape-probe.js); scalars/arrays/objects pass through; a throw becomes
+// summary (shape-probe.js); a k.implicitFrames frame set by its report();
+// scalars/arrays/objects pass through; a throw becomes
 // `{ error }` — probes are instrumentation, so they never crash the measurement and
 // never gate `ok`.
 
@@ -44,6 +45,12 @@ const isSolid = (v) => v !== null && typeof v === "object"
 // needs, so a foreign shape-like value (same two methods, no marker) is still summarised.
 const isShape2D = (v) => v !== null && typeof v === "object"
   && typeof v.toContours === "function" && typeof v.area === "function";
+
+// A k.implicitFrames frame set (implicit/frame-report.js) is recognised by its plain-data
+// `_frameSet` marker, never by identity: a host may hold two copies of this code. Walked as
+// JSON its transform methods would read as errors and its nesting would hit the depth cap.
+const isFrameSet = (v) => v !== null && typeof v === "object"
+  && v._frameSet === 1 && typeof v.report === "function";
 
 const shapeProbeFacts = (shape) => {
   const empty = typeof shape.isEmpty === "function" ? shape.isEmpty() : false;
@@ -84,6 +91,7 @@ function solidProbeFacts(solid) {
 // report; past the cap the value is summarized rather than walked.
 const MAX_PROBE_VALUE_DEPTH = 4;
 function resolveProbeValue(v, depth = 0) {
+  if (isFrameSet(v)) return v.report();
   if (isSolid(v)) return solidProbeFacts(v);
   if (isShape2D(v)) return shapeProbeFacts(v);
   if (v === null || typeof v !== "object") {
