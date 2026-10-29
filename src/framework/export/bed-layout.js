@@ -47,16 +47,26 @@ export function bedWidthFor(part) {
   }
 }
 
-// `pieces`: [{ name, solid, ...rest }] in export order. Map-form pieces are laid out
-// together; legacy ones keep their export pose, and so do sheet pieces — a sheet's pose IS
-// its placement, so sheet exports come out assembled. Returns a new array, same order.
+// Map-form pieces are laid out together; legacy ones keep their export pose, and so do
+// sheet pieces — a sheet's pose IS its placement, so sheet exports come out assembled.
+export function laidOutOnBed(part, name) {
+  const sp = part.parts[name];
+  return formOf(sp) === "map" && !isSheetPart(sp);
+}
+
+// `boxes`: [{ name, box }] for the laid-out pieces, in export order → Map(name → offset).
+// Bounds alone are enough, which is what lets the 3MF export free each piece as soon as
+// it is meshed and shift the mesh afterwards (feedback #212).
+export function exportLayoutOffsets(part, boxes) {
+  if (boxes.length === 0) return new Map();
+  return bedLayout(boxes.map(({ name, box }) => ({ key: name, ...box })), { width: bedWidthFor(part) });
+}
+
+// `pieces`: [{ name, solid, ...rest }] in export order. Returns a new array, same order,
+// laid-out pieces translated (see laidOutOnBed).
 export function layoutExportPieces(part, pieces) {
-  const laidOut = (sp) => formOf(sp) === "map" && !isSheetPart(sp);
-  const mapPieces = pieces.filter(({ name }) => laidOut(part.parts[name]));
+  const mapPieces = pieces.filter(({ name }) => laidOutOnBed(part, name));
   if (mapPieces.length === 0) return pieces;
-  const offsets = bedLayout(
-    mapPieces.map(({ name, solid }) => ({ key: name, ...solid.boundingBox() })),
-    { width: bedWidthFor(part) },
-  );
+  const offsets = exportLayoutOffsets(part, mapPieces.map(({ name, solid }) => ({ name, box: solid.boundingBox() })));
   return pieces.map((pc) => (offsets.has(pc.name) ? { ...pc, solid: pc.solid.translate(offsets.get(pc.name)) } : pc));
 }

@@ -53,6 +53,9 @@ export function createRegenLoop({ missingParts, send, debounceMs = 180 }) {
       return genVersion === paramsVersion;
     },
     version: () => paramsVersion,
+    // A build is in flight and nothing has edited the params since it was sent —
+    // the test a progressive batch (meshes-partial) must pass to be shown.
+    isFresh: () => pending > 0 && genVersion === paramsVersion,
     // Terminal: cancel the pending debounce and refuse all future sends.
     dispose() { disposed = true; clearTimeout(timer); },
   };

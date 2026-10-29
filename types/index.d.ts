@@ -218,6 +218,23 @@ export interface MountOptions {
   onPick?: (event: PickEvent) => void;
   /** Opt in to the selection popover (requires `onPick`): a pick opens a popover at the spot with the sub-part's appearance controls, and with `slot: true` an empty region the host floats its own UI over (`runtime.selection`). */
   selectionPopover?: { slot: boolean };
+  /**
+   * Bound, in MB, on the geometry worker's solid cache — the built solids it keeps so
+   * an edit rebuilds only what changed. Unbounded by default. Past the bound the least
+   * recently built sub-parts' solids are freed and those sub-parts rebuild cold on the
+   * next edit. Pass a small bound on phones: a very large view's cache can hold
+   * gigabytes, more than a mobile browser tab is allowed.
+   */
+  cacheBudgetMB?: number;
+  /**
+   * Show a view filling in as its sub-parts finish, instead of all at once when the
+   * last one does — the difference on a forge of dozens of heavy pieces is the whole
+   * build time. Off by default. When on, the geometry worker also posts
+   * `{ type: "meshes-partial", meshes }` batches during a build and the final
+   * `{ type: "meshes" }` carries only the sub-parts no batch did: a host that reads
+   * worker replies itself must add the batches up.
+   */
+  progressiveBuild?: boolean;
   /** Receive exported bytes instead of partforge's own DOM download. */
   onDownload?: (file: DownloadPayload) => void;
   /** The active view (tab) name — emitted once on mount, then on every change. */
@@ -781,7 +798,7 @@ export interface PartRuntime {
 /** Mount a full parametric-part app from a `PartDefinition`. */
 export function mount(part: PartDefinition, options: MountOptions): PartRuntime;
 
-/** Options for `mountPreview`. */
+/** Options for `mountPreview`. Any other key throws a `TypeError`. */
 export interface MountPreviewOptions {
   /** A GLB from `partforge/gltf`'s `encodePreviewGlb`, or a runtime's `exportPreview()`. */
   glb: Uint8Array | ArrayBuffer;
@@ -791,12 +808,59 @@ export interface MountPreviewOptions {
   viewerState?: ViewerState | null;
   /** Play the file's baked animation once drawn (default true). The editor's own boot preview goes through mount(), not here. */
   animate?: boolean;
+  /** `false` (0.168.0+): no view cube, `#viewbar` controls, view style, tooltips, play button or `elements.chrome` wiring. Default true. */
+  chrome?: boolean;
+  /** `"transparent"` (0.168.0+): alpha-0 clear, no theme background, no grid. CAD mode only — realistic mode draws its own environment backdrop. Default `"theme"`. */
+  background?: "theme" | "transparent";
+  /** `true` (0.168.0+): a soft contact shadow under the part, cast once at showAssembly from the meshes as the file stores them (the rest pose, before a player applies its first pose); a playing animation does not move it. CAD mode only — realistic mode draws its own ground and shadow. Default false. */
+  contactShadow?: boolean;
+  /** `false` (0.168.0+): no wheel/pinch zoom (a wheel scrolls the page). Default true. */
+  zoom?: boolean;
+  /** `false` (0.168.0+): no pan. Default true. */
+  pan?: boolean;
+  /**
+   * Degrees per second (0.168.0+; default 0, off): a file with no playing animation
+   * turns about the vertical. Never under reduced motion; the first camera grab
+   * (a canvas drag or the view cube) stops it until `motion.restart()`.
+   */
+  turntable?: number;
+  /**
+   * `false` (0.169.0+; default true): the motion — a playing animation or the
+   * turntable — waits at its first frame (the animation's t = 0 pose, turntable
+   * angle 0) until `motion.start()`. `drawn` resolves on a frame showing that pose.
+   */
+  autostart?: boolean;
+  /**
+   * 0 < fill <= 1 (0.168.0+): the opening framing (and the viewer's reframe) puts the
+   * camera, along the opening view direction, so the model's bounding box as projected
+   * on screen spans this fraction of the viewport along its limiting axis. With a
+   * `turntable` (and no baked animation) the model swept a full turn is framed — its
+   * farthest vertex from the vertical axis, over the box's height — so the turn never
+   * clips and a round part still fills, centred on its horizontal vertex centroid (a
+   * lopsided part turns about its hub). Without a turntable (0.169.0+) the posed mesh
+   * vertices are fitted and their on-screen outline is centred (the target moves in the
+   * screen plane), spanning `fill`; a baked animation that moves parts outside its first
+   * pose's outline may leave the frame. Unset, the
+   * fixed framing distance. Since 0.169.0 a turntable mount is framed swept under reduced
+   * motion too, so every visitor sees the same framing.
+   */
+  fill?: number;
+  /** `"default"` (0.168.0+): drop the camera and projection of `viewerState` and `setViewerState`, so the mount keeps the file's own framing; their render mode and environment still apply. Default `"carry"`. */
+  camera?: "carry" | "default";
+  /** The opening render mode (0.168.0+): applied at mount, over any carried render mode; afterwards `setViewerState`, `renderMode.set` and the view style control change it as usual. Unset, the carried state decides. */
+  renderMode?: RenderMode;
 }
 
 /** The handle `mountPreview()` returns. Every method is safe before `ready` settles. */
 export interface PreviewRuntime {
   /** Resolves once the GLB is drawn; rejects when it will not decode or holds no meshes. */
   ready: Promise<void>;
+  /**
+   * Resolves after the first frame that includes the meshes has rendered (0.168.0+) —
+   * for cross-fading from a still image. Rejects with `ready`'s error when the file
+   * will not decode, or when the handle is disposed first. Waits while parked.
+   */
+  drawn: Promise<void>;
   /** Full teardown. Idempotent. */
   dispose(): void;
   /** The view the file was written for (`null` until drawn, or when the file names none). */
@@ -820,6 +884,25 @@ export interface PreviewRuntime {
     resume(): void;
     /** Play a finished one-time animation again from the start (its camera cues included); a no-op unless `state().status` is `"done"`. */
     replay(): void;
+  } | null;
+  /**
+   * The motion — baked animation or turntable — (0.169.0+): `null` before `ready` and
+   * once disposed; present for every decoded file.
+   */
+  readonly motion: {
+    /** Begin a waiting motion. Idempotent; a no-op once started, under reduced motion, or with nothing to move. */
+    start(): void;
+    /**
+     * Put the model back as it opened and start it: the opening camera framing (the
+     * file's default view direction, before any carried camera), the animation from
+     * t = 0 or the turntable turning again (re-armed). Under reduced motion it only
+     * resets the camera.
+     */
+    restart(): void;
+    /** `"stopped"`: a turntable stopped by a grab, a paused animation, reduced motion, or nothing to move. */
+    readonly state: "waiting" | "playing" | "stopped" | "finished";
+    /** Each state change. Returns an unsubscribe. */
+    onChange(cb: (state: "waiting" | "playing" | "stopped" | "finished") => void): () => void;
   } | null;
   renderMode: {
     get(): RenderMode;

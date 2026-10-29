@@ -106,13 +106,24 @@ relying on consumption should gate it with a `verify` volume assertion.
 **B-rep class.** Core plus native `fillet`/`chamfer`/`shell` and `toSTEP`. The in-repo
 OCCT/replicad backend is the reference.
 
-**Optional ops.** `KERNEL_OPTIONAL_OPS` (`beginSubPart`/`endSubPart`/`sweepCache`/
-`cacheStats`/`resetCacheStats`/`cleanup`) and `SOLID_OPTIONAL_OPS` (`genus`/`isEmpty`) may
+**Optional ops.** `KERNEL_OPTIONAL_OPS` (`beginSubPart`/`endSubPart`/`sweepCache`/`dropCache`/
+`setCacheBudget`/`trimCache`/`cacheBytes`/`cacheStats`/`resetCacheStats`/`cleanup`) and `SOLID_OPTIONAL_OPS` (`genus`/`isEmpty`) may
 be omitted entirely; callers in the framework guard with `?.`/`typeof`. A host that omits
 them loses sub-part caching and mesh-topology gates (`holes`, emptiness), nothing else.
 `sweepCache()` is the cache's rebind hygiene hook: called once when a worker is rebound to
 a part (never inside a `beginSubPart`/`endSubPart` bracket), it drops cache partitions that
-have gone unbuilt for three consecutive rebinds.
+have gone unbuilt for three consecutive rebinds. `dropCache()` drops every partition at
+once, under the same never-mid-bracket rule: the worker calls it on each booted kernel
+before an export job, because a display build's retained solids and the export's own
+build share one WASM heap, and on a very large part the cache alone can leave too little
+heap for the export. The next display build after an export is cold.
+`setCacheBudget(bytes)` bounds the bytes the cache's retained solids may hold (the
+Manifold backend estimates each from its triangle and vertex counts); `trimCache()`
+then drops whole partitions, least recently built first, until they fit. A trim frees
+solids, so it runs only where no caller holds one — never inside a bracket and never
+right after one whose solids are still in use; jobs.js trims after each display
+sub-part is meshed and when a job returns. The budget arrives on `generate` messages
+as `cacheBudget` (bytes, `null` = unbounded), from mount's `cacheBudgetMB` option.
 
 `beginSubPart`/`endSubPart` brackets MAY nest: only the outermost pair opens and
 commits a round, and an inner pair is a balanced no-op. Nesting is real rather than
@@ -883,6 +894,17 @@ discards its result the same way, posting `{type:"superseded"}` in place of the 
 built. So **a `meshes` post is current as of the moment it is posted**: it is never a
 previous part's geometry surfacing after a rebind, and a host may take it as the build
 outcome for the part it currently has mounted.
+
+**Progressive generates.** A generate carrying `progressive: true` (mount's
+`progressiveBuild` option) also posts `{type:"meshes-partial", meshes}` while it runs:
+the sub-parts built so far, batched at most every 300 ms, each posted right after a
+sub-part boundary's staleness check. A batch that is stale by the time it is posted is
+dropped by the worker, never downgraded to `superseded` — the job's own final post still
+settles it. The final `{type:"meshes"}` then carries only the sub-parts no batch did, so
+every sub-part arrives exactly once, its buffers transferred with it. A batch settles
+nothing: `ready`, `onBuild` and a host's own "build finished" wait for `meshes`. A host
+that reads worker replies itself and turns `progressive` on must add the batches up; one
+that never sends it sees the protocol exactly as before.
 
 **Host-side rule for `superseded`.** partforge's own `mount()` does not handle a
 `superseded` message, and does not need to: in its single-mount flow the regen loop

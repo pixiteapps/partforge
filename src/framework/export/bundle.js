@@ -392,6 +392,7 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
       pp.triangles = indices.length / 3;
     }
     builtPrints.push(pp);
+    kernel.cleanup?.(); // pp keeps only JS-owned data; free this piece's solids before the next (feedback #212)
   }
   const prints = dedupe(builtPrints, (x) => x.hash, (a, b) => a.triangles === b.triangles && a.color === b.color
       && near(a.volume, b.volume) && a.size.every((x, i) => near(x, b.size[i])))
