@@ -29,12 +29,22 @@ import { convexHull, hullPoints } from "./hull.js";
 import { latheRoundedRect, torusContour } from "./rounded-solids.js";
 import { screwCrossSection } from "./screw-profile.js";
 import { smoothLoftRings } from "./loft-smooth.js";
+import { DOMAINS } from "../domains/registry.js";
 
 export function finishKernel(k) {
   // Runs a composition that tessellates curves itself without its facets being reported
   // as the author's sampled arcs (profile-warnings.js). The lint probe's kernel has no
   // warner, so there it just runs fn.
   const quietArcs = (fn) => (k._warnProfile?.quietArcs ? k._warnProfile.quietArcs(fn) : fn());
+
+  // Domain ops (src/framework/domains/registry.js) attach FIRST, so precedence is
+  // backend-native (already on k), then domain, then the compound defaults below —
+  // a domain's op is a real implementation, a compound default is a fallback. Running
+  // ahead of the KERNEL_OP_SPECS loop gives a domain op the same options validation
+  // as a backend-native one.
+  for (const d of DOMAINS) {
+    for (const op of d.kernelOps) if (k[op.name] === undefined) op.attach(k);
+  }
 
   // Compound default: bored-through cylinder (tool overshoots 2 mm each end for
   // a clean cut). Assigned BEFORE the wrap loop so the fallback composition gets

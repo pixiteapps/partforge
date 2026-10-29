@@ -13,7 +13,7 @@ export default {
   referenceParts: [],
   // tappedBore is a contract op with a compound default and no backend
   // implementation, so tagging it is legal and the attach observably wins.
-  kernelOps: [{ name: "tappedBore", attach: (k) => { k.fixtureAttached = true; k.tappedBore = "fixture"; } }],
+  kernelOps: [{ name: "tappedBore", attach: (k) => { k.fixtureAttached = true; k.tappedBore = () => "fixture"; } }],
   lintRules: [{ id: "fixture-rule", run: (ctx) => (ctx.part?.fixtureFlag ? [warn("fixture-rule", "fixture flag set", "a fixture hint")] : []) }],
   oracle: {
     facts: (sp, ctx) => ({ seen: ctx?.name ?? null }),

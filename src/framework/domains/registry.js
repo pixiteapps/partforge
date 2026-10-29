@@ -52,3 +52,8 @@ export function validateDomains(list) {
 
 // Empty on main: the kinematics domain (the limb helper's PR) adds the first line.
 export const DOMAINS = validateDomains([]);
+
+// The domain that tagged a kernel op, or null for a core op. The tag is what the op
+// index and a host's compact prompt group by; test/kernel-contract.test.js holds every
+// tagged op to the contract and to one domain.
+export const domainOfOp = (name, domains = DOMAINS) => domains.find((d) => d.kernelOps.some((op) => op.name === name))?.id ?? null;
