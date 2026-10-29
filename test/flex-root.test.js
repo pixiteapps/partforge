@@ -9,7 +9,8 @@ import { bootManifoldKernel } from "../src/testing.js";
 import { verify } from "../src/framework/oracle/verify.js";
 import { measure } from "../src/framework/oracle/measure.js";
 import { buildView } from "../src/framework/oracle/build.js";
-import { flexRoot, flexGroups, SHARP_DEG } from "../src/framework/oracle/flex-root.js";
+import { flexRoot, SHARP_DEG } from "../src/framework/oracle/flex-root.js";
+import { flexGroups } from "../src/framework/oracle/flex-members.js";
 import { lintPart } from "../src/framework/lint/index.js";
 import { SUBPART_METRICS, teachableMetrics } from "../src/framework/verify-metrics.js";
 import { segsForSagitta, SEGS } from "../src/framework/geometry/circle-segs.js";
@@ -57,7 +58,7 @@ describe("flexRoot: the reading", () => {
   });
 
   it("a filleted root reads clean", () => {
-    expect(flexRoot(mesh(filleted), ["Arm"])).toEqual({ found: true, attached: true, sharpLength: 0, maxTurn: null, at: null });
+    expect(flexRoot(mesh(filleted), ["Arm"])).toMatchObject({ found: true, attached: true, sharpLength: 0, maxTurn: null, at: null });
   });
 
   it("the coarsest fillet the mesh fillet draws reads clean too", () => {
@@ -65,7 +66,7 @@ describe("flexRoot: the reading", () => {
   });
 
   it("a label that meets nothing is found but not attached, never a clean root", () => {
-    expect(flexRoot(mesh(whole), ["Arm"])).toEqual({ found: true, attached: false, sharpLength: 0, maxTurn: null, at: null });
+    expect(flexRoot(mesh(whole), ["Arm"])).toMatchObject({ found: true, attached: false, sharpLength: 0, maxTurn: null, at: null, rootRadius: null });
   });
 
   it("a face that runs flush into the body is not a corner", () => {
@@ -107,10 +108,9 @@ describe("verify.flex: the gate", () => {
     for (const process of [undefined, "fdm-pla", "resin"]) {
       const v = verify(kernel, forge(sharp, { ...(process ? { process } : {}), flex: ["Arm"] }));
       const [c] = flexChecks(v);
-      expect(c).toMatchObject({ subpart: "clip", feature: "Arm", kind: "gate", status: "fail", pass: false, pattern: "flex-root-sharp", expr: "0" });
-      expect(c.actual).toBeCloseTo(10, 3);
-      expect(c.note).toMatch(/"Arm": 10\.0 mm of sharp inside corner \(90°\)/);
-      expect(c.hint).toMatch(/half the member's thickness/);
+      expect(c).toMatchObject({ subpart: "clip", feature: "Arm", kind: "gate", status: "fail", pass: false, pattern: "flex-root-sharp", expr: ">=1", actual: 0 });
+      expect(c.note).toMatch(/"Arm": sharp root \(90°, 10\.0 mm of corner\)/);
+      expect(c.hint).toMatch(/share of the member's thickness/);
       expect(c.location[1]).toBeCloseTo(0, 5);
       expect(v.ok).toBe(false);
     }
@@ -118,7 +118,7 @@ describe("verify.flex: the gate", () => {
 
   test("a rounded root passes, and is the part's only declared check", () => {
     const v = verify(kernel, forge(filleted, { flex: ["Arm"] }));
-    expect(flexChecks(v)).toEqual([expect.objectContaining({ status: "pass", actual: 0 })]);
+    expect(flexChecks(v)).toEqual([expect.objectContaining({ status: "pass", actual: 1, expr: ">=1" })]);
     expect(v.ok).toBe(true);
     expect(v.declared).toBe(1);
     expect(v.evaluated).toBe(1);
@@ -140,9 +140,9 @@ describe("verify.flex: the gate", () => {
     const v = verify(kernel, forge(twoArms, { flex: ["Arm", "Prong"] }));
     const rows = flexChecks(v);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ subpart: "clip", feature: "Prong", status: "fail" });
-    expect(rows[0].note).toMatch(/"Arm": rounded root/);
-    expect(rows[0].note).toMatch(/"Prong": 10\.0 mm/);
+    expect(rows[0]).toMatchObject({ subpart: "clip", feature: "Prong", status: "fail", actual: 0 });
+    expect(rows[0].note).toMatch(/"Arm": root radius 1 mm, needs ≥ 1 \(2 mm thick\)/);
+    expect(rows[0].note).toMatch(/"Prong": sharp root/);
   });
 
   test("a label that meets nothing withholds the verdict rather than passing it", () => {

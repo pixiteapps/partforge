@@ -510,6 +510,24 @@ export interface DfmProfile {
   holeUndersize?: number;
   /** Longest flat span printed unsupported, mm. Absent on a process that prints on supports. */
   bridge?: number;
+  /**
+   * The least root fillet a flexing member (`verify.flex`) must meet its body through,
+   * as a share of the member's thickness (0.5 on every built-in profile) — a GATE,
+   * armed by `verify.flex` alone; `null` switches it off under a named base.
+   */
+  rootFillet?: number | null;
+  /**
+   * The largest root strain, in percent, the material takes for a one-time snap (1.5 on
+   * PLA, 3 on PETG, 2 on resin) — an advisory, read for a flexing member that declares
+   * a `deflection`; `null` switches it off under a named base.
+   */
+  strain?: number | null;
+  /**
+   * The steepest a flexing member's long axis may rise off the bed in the print pose, in
+   * degrees (45 on the FDM profiles; absent on resin, which is isotropic), before its
+   * layers stack across the root. A cost (`standing`), armed by the profile alone.
+   */
+  flexTilt?: number | null;
   /** Inherit from a named profile and override the rest. */
   base?: DfmProfileName | DfmProfile;
 }
@@ -582,11 +600,24 @@ export interface SubPartExpectations {
    */
   footprintPct?: Expectation;
   /**
-   * Length (mm) of sharp inside corner where a flexing member named in `verify.flex`
-   * meets the rest of this sub-part — `actual` is the worst member's, `feature` names
-   * it. Every sub-part carrying a declared member gets `"0"` by default; a gate.
+   * The root fillet radius (mm, 0 where sharp) of the flexing member named in
+   * `verify.flex` whose root is worst on this sub-part — `feature` names it. Every
+   * sub-part carrying a declared member gets `>=` the profile's share of the member's
+   * thickness by default; a gate.
    */
   flexRoot?: Expectation;
+  /**
+   * Root strain (%) of the worst declared flexing member on this sub-part at its declared
+   * deflection — 1.5 × thickness × deflection / length², a straight cantilever. Under a
+   * profile every member with a `deflection` gets `<=` the profile's `strain`; a warning.
+   */
+  flexStrain?: Expectation;
+  /**
+   * Degrees the worst declared flexing member's long axis rises off the bed in the
+   * print pose (0 lying flat, 90 standing). Under an FDM profile every member gets
+   * `<=45`; reported as a cost (`standing`), never a failure.
+   */
+  flexTilt?: Expectation;
   /** Symmetric-difference volume vs. the sub-part's declared `reference` import. */
   refXorVolume?: Expectation;
   /** Percent volume delta vs. the sub-part's declared `reference` import. */
@@ -665,16 +696,19 @@ export interface VerifyBlock<P = ResolvedParams, D = Derived> {
    * process's own default check is marked accepted: a limit you wrote in `expect`
    * (`overhangArea: "<=500"`) keeps its meaning and is never marked accepted.
    */
-  accept?: ("supports" | "footprint")[];
+  accept?: ("supports" | "footprint" | "standing")[];
   /**
    * The part's flexing members — snap arms, buckle prongs, clips, cantilever tabs —
-   * by feature label. Each must meet the rest of its part through a rounded root:
-   * verify fails on a sharp inside corner where a triangle of the member meets a
-   * triangle of anything else. An entry that is a list names one member made of
-   * several labels (an arm and the rib on it). Label the member apart from the body
-   * it grows from.
+   * by feature label. Each must meet the rest of its part through a root fillet of at
+   * least the process's share of its thickness (`flexRoot`, a gate); one that declares
+   * its `deflection` (mm of travel) is also read for root strain (`flexStrain`, an
+   * advisory), and under an FDM profile every member is read for how far it stands up
+   * off the bed (`flexTilt`, the `standing` cost). An entry is a label, a list of labels
+   * that make one member (an arm and the rib on it), or a member object; `thickness`
+   * (mm) overrides the bending thickness the mesh reads. Label the member apart from
+   * the body it grows from.
    */
-  flex?: (string | string[])[];
+  flex?: (string | string[] | { feature: string; labels?: string[]; deflection?: number; thickness?: number })[];
   /** Which cases to check; default is `"defaults"` plus every preset name. */
   cases?: string[];
   /**
