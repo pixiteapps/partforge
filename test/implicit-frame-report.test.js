@@ -1,11 +1,11 @@
 import { describe, test, expect } from "vitest";
 import { implicitFrames } from "../src/framework/geometry/implicit/frame-report.js";
 import { resolveFrames } from "../src/framework/geometry/implicit/frames.js";
-import { compileImplicit } from "../src/framework/geometry/implicit/index.js";
+import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { ImplicitSpecError } from "../src/framework/geometry/implicit/errors.js";
 import { SUGAR } from "../src/framework/geometry/solid-sugar.js";
 import { setCoreEnabled } from "../src/framework/core/core.js";
-import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
+import { handSpec, HAND_POSES, BALL_BOARD } from "./fixtures/implicit-trees.js";
 
 const r3 = (v) => { const x = Math.round(v * 1000) / 1000; return x === 0 ? 0 : x; };
 const round = (a) => a.map(r3);
@@ -146,5 +146,32 @@ describe("implicitFrames: errors and purity", () => {
     setCoreEnabled(false);
     try { expect(JSON.stringify(implicitFrames(handSpec(HAND_POSES.fist)).report())).toBe(before); }
     finally { setCoreEnabled(true); }
+  });
+});
+
+describe("implicitFrames: labels contain bulged and detailed surfaces", () => {
+  const inside = (pts, box, tol = 0.01) => {
+    for (let v = 0; v < pts.length; v += 3) for (let i = 0; i < 3; i++) {
+      expect(pts[v + i]).toBeGreaterThanOrEqual(box.min[i] - tol);
+      expect(pts[v + i]).toBeLessThanOrEqual(box.max[i] + tol);
+    }
+  };
+
+  test("every vertex a contact piece owns lies in its label box", () => {
+    const spec = { ...BALL_BOARD, preview: 0.5 };
+    const labels = implicitFrames(spec).report().labels;
+    const out = meshImplicit(compileImplicit(spec), 0.5, { tier: "preview" });
+    spec.root.children.forEach((child, slot) => {
+      const own = [];
+      for (let v = 0; v < out.vertOwner.length; v++) if (out.vertOwner[v] === slot) own.push(out.positions[3 * v], out.positions[3 * v + 1], out.positions[3 * v + 2]);
+      expect(own.length).toBeGreaterThan(0);
+      inside(own, labels[child.label]);
+    });
+  });
+
+  test("a noise-detailed piece lies in its label box", () => {
+    const spec = { root: { kind: "sphere", r: 10, label: "s" }, detail: [{ kind: "noise", amplitude: 1.5, wavelength: 4 }], preview: 0.5 };
+    const out = meshImplicit(compileImplicit(spec), 0.5, { tier: "preview" });
+    inside(out.positions, implicitFrames(spec).report().labels.s);
   });
 });

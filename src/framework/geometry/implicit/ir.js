@@ -24,7 +24,7 @@ const AXIS_INDEX = { yz: 0, xz: 1, xy: 2 };
 const box = (min, max) => ({ min, max });
 const boxUnion = (a, b) => box(a.min.map((v, i) => Math.min(v, b.min[i])), a.max.map((v, i) => Math.max(v, b.max[i])));
 const boxInter = (a, b) => box(a.min.map((v, i) => Math.max(v, b.min[i])), a.max.map((v, i) => Math.min(v, b.max[i])));
-const boxPad = (b, d) => box(b.min.map((v) => v - d), b.max.map((v) => v + d));
+export const boxPad = (b, d) => box(b.min.map((v) => v - d), b.max.map((v) => v + d));
 const finite = (b) => b.min.every(Number.isFinite) && b.max.every(Number.isFinite);
 export function boxXform(b, M) {
   if (!finite(b)) return box([-INF, -INF, -INF], [INF, INF, INF]);
@@ -174,7 +174,8 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
         // A bulged piece's surface moves out by at most its Σ A (found.pad) over its growth G.
         // The attachments' unions dip k/4 below their pieces.
         const dip = maxK / 4;
-        const lb = boxPad(ids.map((i) => nodes[i].box).reduce(boxUnion), (found.pad + dip) / G0);
+        n.pad = (found.pad + dip) / G0;   // how far a piece's surface can leave its own box (frame-report.js)
+        const lb = boxPad(ids.map((i) => nodes[i].box).reduce(boxUnion), n.pad);
         return finish(n, lb, Math.min(...ids.map((i) => nodes[i].thin)), G0);
       }
       case "mirror": {

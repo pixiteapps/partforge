@@ -4,7 +4,7 @@
 // Pure: it validates and lowers the spec but never meshes. measure.js recognises a
 // frame set by its plain-data `_frameSet` marker and writes out report().
 import { validateSpec } from "./grammar.js";
-import { lowerSpec, boxXform } from "./ir.js";
+import { lowerSpec, boxXform, boxPad } from "./ir.js";
 import { IDENTITY, compose, invert, translation, rotation, resolveFrames, xformPoint, xformDir } from "./frames.js";
 import { SUGAR } from "../solid-sugar.js";
 import { hypot3 } from "../js-math.js";
@@ -22,28 +22,36 @@ const unit = (v) => { const l = hypot3(v[0], v[1], v[2]); return [r3(v[0] / l), 
 // Each labelled node's box in part coordinates. A node's `box` is in its parent's space
 // and its `inv` maps parent → local. Below a warp/round/onion/displace a node's own box no
 // longer bounds what it becomes, so it reports the outermost such ancestor's box instead.
-// A mirror visits its child twice and a repeat's refs carry each placement, so every copy
-// lands in the label's box; duplicate labels union.
-function labelBoxes({ nodes, root }) {
+// Below a contact every box grows by the contact's pad (its bulge and attachment reach),
+// and every box by `detailPad`, the most surface detail can push outward. A mirror visits
+// its child twice and a repeat's refs carry each placement, so every copy lands in the
+// label's box; duplicate labels union.
+function labelBoxes({ nodes, root }, detailPad) {
   const out = new Map();
   const add = (label, b) => {
     const prev = out.get(label);
     out.set(label, prev ? { min: prev.min.map((v, i) => Math.min(v, b.min[i])), max: prev.max.map((v, i) => Math.max(v, b.max[i])) } : b);
   };
-  const walk = (id, Wp, outer) => {
+  const walk = (id, Wp, outer, pad) => {
     const n = nodes[id];
-    const own = boxXform(n.box, Wp);
+    const own = boxXform(boxPad(n.box, pad), Wp);
     const o = outer ?? (DISTORTING.has(n.kind) ? own : null);
     if (n.label != null) add(n.label, o ?? own);
     const W = n.inv ? compose(Wp, invert(n.inv)) : Wp;
+    const p = n.kind === "contact" ? pad + n.pad : pad;
     for (const c of n.children) {
-      walk(c, W, o);
-      if (n.kind === "mirror") walk(c, compose(W, reflect(n.axis)), o);
+      walk(c, W, o, p);
+      if (n.kind === "mirror") walk(c, compose(W, reflect(n.axis)), o, p);
     }
   };
-  walk(root, IDENTITY, null);
+  walk(root, IDENTITY, null, detailPad);
   return out;
 }
+
+// Creases, noise (2·amplitude·[−0.5, 0.5)) and textures ([0, 1]) move the surface by at most
+// |amplitude| along the normal. An expr entry's height is the author's formula and has no
+// bound to read, so it adds nothing.
+const detailPad = (detail) => detail.reduce((sum, e) => sum + (e.kind === "expr" ? 0 : Math.abs(e.amplitude)), 0);
 
 function frameSet(base, A, mirrored) {
   const next = (T, flip = false) => frameSet(base, compose(T, A), mirrored !== flip);
@@ -82,8 +90,8 @@ function frameSet(base, A, mirrored) {
 /** The frame set of a k.implicit spec: its named frames and labelled nodes, untransformed. */
 export function implicitFrames(spec, { images = new Map() } = {}) {
   validateSpec(spec, { imageNames: new Set(images.keys()) });
-  const { ir } = lowerSpec(spec, { images });
+  const { ir, detail } = lowerSpec(spec, { images });
   const world = resolveFrames(spec.frames ?? {});
   const frames = new Map(Object.keys(spec.frames ?? {}).map((name) => [name, world.get(name).world]));
-  return frameSet({ frames, labels: labelBoxes(ir) }, IDENTITY, false);
+  return frameSet({ frames, labels: labelBoxes(ir, detailPad(detail)) }, IDENTITY, false);
 }
