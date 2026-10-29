@@ -1,7 +1,7 @@
 # k.implicit frame report — design
 
-Status: approved in conversation 2026-10-28; this document is for review before planning.
-Branch: `feat/implicit-frame-report` (stacked on `feat/implicit-auto-preview`, PR #302).
+Status: approved 2026-10-29.
+Branch: `feat/implicit-frame-report` (off `feat/implicit`, after #300 and #302 merged).
 
 ## Problem
 
