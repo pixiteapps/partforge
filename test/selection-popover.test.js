@@ -253,8 +253,13 @@ describe("selection popover: the appearance page", () => {
     const body = p.element.querySelector(".pf-selection-body");
     let top = 0;
     Object.defineProperty(body, "scrollTop", { configurable: true, get: () => top, set: (v) => { top = v; } });
-    let mh = "";
-    Object.defineProperty(p.element.style, "maxHeight", { configurable: true, get: () => mh, set: (v) => { mh = v; if (v === "") top = 0; } });
+    // happy-dom 21's style object is a Proxy that refuses defineProperty, so
+    // the element hands out a Proxy of its own that watches the write.
+    const style = new Proxy(p.element.style, {
+      get: (t, k) => { const v = Reflect.get(t, k, t); return typeof v === "function" ? v.bind(t) : v; },
+      set: (t, k, v) => { if (k === "maxHeight" && v === "") top = 0; return Reflect.set(t, k, v, t); },
+    });
+    Object.defineProperty(p.element, "style", { configurable: true, get: () => style });
     return body;
   }
   it("a change made from the card keeps the card scrolled where it was", () => {
