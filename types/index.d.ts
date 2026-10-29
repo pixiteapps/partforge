@@ -226,6 +226,15 @@ export interface MountOptions {
    * gigabytes, more than a mobile browser tab is allowed.
    */
   cacheBudgetMB?: number;
+  /**
+   * Show a view filling in as its sub-parts finish, instead of all at once when the
+   * last one does — the difference on a forge of dozens of heavy pieces is the whole
+   * build time. Off by default. When on, the geometry worker also posts
+   * `{ type: "meshes-partial", meshes }` batches during a build and the final
+   * `{ type: "meshes" }` carries only the sub-parts no batch did: a host that reads
+   * worker replies itself must add the batches up.
+   */
+  progressiveBuild?: boolean;
   /** Receive exported bytes instead of partforge's own DOM download. */
   onDownload?: (file: DownloadPayload) => void;
   /** The active view (tab) name — emitted once on mount, then on every change. */

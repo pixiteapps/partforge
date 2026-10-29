@@ -65,7 +65,9 @@ const loadBedLayout = () => import("./export/bed-layout.js");
 
 // Handle one geometry job, posting results/progress via `post(msg, transfer?)`.
 // Backend-agnostic and part-agnostic: every part specific comes through `part`.
-//   { type:"generate", subparts, view, params, cacheBudget? } → { type:"meshes", meshes, ms }
+//   { type:"generate", subparts, view, params, cacheBudget?, progressive? } → { type:"meshes", meshes, ms }
+//       progressive: true also posts { type:"meshes-partial", meshes } batches while it
+//       builds; the final `meshes` then carries only the sub-parts no batch did
 //   { type:"export-stl", view, params }         → { type:"download-parts", ext, mime, parts }
 //   { type:"export-step", view, params }        → { type:"download", data, filename, mime }
 //   { type:"export-bundle", view, params, parts, options }
@@ -162,6 +164,11 @@ async function scoreMatchTargets(built, targets, onProgress) {
     return null;
   }
 }
+
+// A progressive generate hands over its built sub-parts at most this often (ms).
+const PROGRESSIVE_BATCH_MS = 300;
+const transferOf = (meshes) => meshes.flatMap((m) =>
+  [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer].filter(Boolean));
 
 // The WASM traps that mean the kernel ran out of heap (or was corrupted by doing so).
 const HEAP_TRAP_RE = /out of bounds memory access|memory access out of bounds|Cannot enlarge memory|out of memory/i;
@@ -465,6 +472,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // The host's bound on the solid cache (mount's cacheBudgetMB), in bytes; null
       // means unbounded. Kept by the kernel, so the oracle's builds share it.
       if (Object.hasOwn(msg, "cacheBudget")) kernel.setCacheBudget?.(msg.cacheBudget ?? Infinity);
+      let lastBatchAt = t0; // progressive delivery's clock (below)
       for (const [i, name] of msg.subparts.entries()) {
         if (useCache) kernel.beginSubPart?.(name); // open the per-sub-part cache round
         try {
@@ -485,12 +493,22 @@ export async function handle(kernel, part, msg, post, opts = {}) {
         if (i < msg.subparts.length - 1) {
           await new Promise((r) => setTimeout(r, 0));
           if (isStale()) return void post({ type: "superseded" });
+          // Progressive delivery (msg.progressive): hand over what is built so far,
+          // so a host shows a many-sub-part view filling in instead of waiting for
+          // the last sub-part (feedback #212: a 105-plate park showed nothing for
+          // ~45 s). Batched by time, never per sub-part, so a view of many cheap
+          // pieces is not a flood of messages. Posted only after the stale check
+          // above, so a batch is current as of the moment it is posted; the final
+          // `meshes` carries whatever is left, and the job's warnings and timing.
+          if (msg.progressive && meshes.length > 0 && Date.now() - lastBatchAt >= PROGRESSIVE_BATCH_MS) {
+            const batch = meshes.splice(0);
+            post({ type: "meshes-partial", meshes: batch }, transferOf(batch));
+            lastBatchAt = Date.now();
+          }
         }
       }
-      const transfer = meshes.flatMap((m) =>
-        [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer].filter(Boolean));
       post({ type: "meshes", meshes, ms: Date.now() - t0, cache: kernel.cacheStats?.(),
-             ...(warnings.length ? { warnings } : {}) }, transfer);
+             ...(warnings.length ? { warnings } : {}) }, transferOf(meshes));
     } else if (msg.type === "capture-generate") {
       // A private, job-correlated one-shot channel for captureView — builds a
       // (possibly non-active) view's meshes off the regen loop, so it can never

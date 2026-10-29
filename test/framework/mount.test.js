@@ -26,6 +26,7 @@ vi.mock("../../src/framework/viewer.js", () => ({
       tweenCameraTo: vi.fn((view, { onComplete } = {}) => onComplete?.()), // settles instantly
       cancelCameraTween: vi.fn(),
       tickFrame: (dt) => { for (const cb of [...frameCbs]) cb(dt); },
+      emitCameraStart: () => { for (const cb of [...orbitCbs]) cb(); }, // the user grabbed the camera
       domElement: document.createElement("div"),
       showAssembly: vi.fn(),
       hideAssembly: vi.fn(),
@@ -2893,4 +2894,74 @@ test("the marker's canvas anchor is converted to stage px at each placement", ()
   runtime.selection.setSlotHeight(60); // a re-place
   expect(pop.style.left).toBe("500px");
   runtime.dispose();
+});
+
+// --- progressive delivery (feedback #212) -------------------------------------
+// A many-sub-part view arrives in batches (meshes-partial) while its job runs, so it
+// fills in instead of appearing all at once after the last sub-part. Batches settle
+// nothing: `ready` and onBuild wait for the job's final `meshes`.
+const makeManyPart = () => ({
+  meta: { title: "Plates", backend: "manifold" },
+  defaults: { h: 4 },
+  views: { main: { label: "Main" } },
+  parts: Object.fromEntries(["a", "b", "c"].map((n, i) => [n, { label: n.toUpperCase(), views: ["main"],
+    build: (k, p) => k.box({ min: [i * 10, 0, 0], max: [i * 10 + p.h, p.h, p.h] }) }])),
+  parameters: [{ id: "size", title: "Size", advanced: [{ key: "h", label: "Height", min: 1, max: 10, step: 1 }] }],
+});
+const send = (workers, data) => workers.manifold.onmessage({ data });
+
+test("generate asks for progressive delivery only when the host opted in", () => {
+  const jobFor = (opts) => {
+    const { workers, createWorker } = makeWorkers();
+    mount(makeManyPart(), { createWorker, elements: makeElements(), ...opts });
+    send(workers, { type: "ready" });
+    return workers.manifold.postMessage.mock.calls.map(([m]) => m).find((m) => m?.type === "generate");
+  };
+  expect("progressive" in jobFor({})).toBe(false);
+  expect(jobFor({ progressiveBuild: true }).progressive).toBe(true);
+});
+
+test("a first build shows each batch as it lands, frames to the first, and frames the whole view at the end", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const onBuild = vi.fn();
+  const runtime = mount(makeManyPart(), { createWorker, elements: makeElements(), onBuild, progressiveBuild: true });
+  const v = fakeViewers[0];
+  let ready = false;
+  runtime.ready.then(() => { ready = true; });
+  send(workers, { type: "ready" });
+  send(workers, { type: "meshes-partial", meshes: [{ name: "a" }] });
+  expect(v.showAssembly).toHaveBeenLastCalledWith(["a"], { frame: true });
+  send(workers, { type: "meshes-partial", meshes: [{ name: "b" }] });
+  expect(v.showAssembly).toHaveBeenLastCalledWith(["a", "b"], { frame: false });
+  await Promise.resolve();
+  expect(ready).toBe(false);
+  expect(onBuild).not.toHaveBeenCalled();
+  send(workers, { type: "meshes", meshes: [{ name: "c" }], ms: 5 });
+  expect(v.showAssembly).toHaveBeenLastCalledWith(["a", "b", "c"], { frame: true });
+  await runtime.ready;
+  expect(onBuild).toHaveBeenCalledTimes(1);
+});
+
+test("moving the camera during a progressive first build keeps the user's view at the end", () => {
+  const { workers, createWorker } = makeWorkers();
+  mount(makeManyPart(), { createWorker, elements: makeElements(), progressiveBuild: true });
+  const v = fakeViewers[0];
+  send(workers, { type: "ready" });
+  send(workers, { type: "meshes-partial", meshes: [{ name: "a" }, { name: "b" }] });
+  v.emitCameraStart();
+  send(workers, { type: "meshes", meshes: [{ name: "c" }], ms: 5 });
+  expect(v.showAssembly).toHaveBeenLastCalledWith(["a", "b", "c"], { frame: false });
+});
+
+test("a batch from a build an edit has overtaken is not shown", () => {
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makeManyPart(), { createWorker, elements: makeElements(), progressiveBuild: true });
+  const v = fakeViewers[0];
+  send(workers, { type: "ready" });
+  handle.setParams({ h: 6 }); // the in-flight build is now stale
+  send(workers, { type: "meshes-partial", meshes: [{ name: "a" }] });
+  expect(v.setSubGeometry).not.toHaveBeenCalled();
+  handle.dispose();
+  vi.useRealTimers();
 });
