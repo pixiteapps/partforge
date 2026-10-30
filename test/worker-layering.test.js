@@ -14,6 +14,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { walk, chainTo } from "./helpers/import-graph.js";
+import { DOMAINS } from "../src/framework/domains/registry.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const ENTRY = `${ROOT}/src/framework/worker.js`;
@@ -134,4 +135,26 @@ test("the kit is still in the worker's FULL closure — its lazy import resolves
   const { files } = graph();
   expect(files.has(`${ROOT}/src/framework/export/bundle.js`)).toBe(true);
   expect(files.has(`${ROOT}/src/framework/process/laser/export.js`)).toBe(true);
+});
+
+// A domain's entry (src/framework/domains/<id>/index.js, published as partforge/<id>)
+// is worker-safe by contract (the spec's manifest rule, test/domain-layering.test.js
+// rule 4): a part imports it, and a part loads in the worker. Vacuous while DOMAINS
+// is empty; holds the same three bans as worker.js on every domain that lands.
+test("every domain entry's closure obeys the worker's bans", () => {
+  for (const d of DOMAINS) {
+    const entry = `${ROOT}/src/framework/domains/${d.id}/index.js`;
+    const { bare, files, importer } = walk(entry, `${d.id} entry walk`);
+    for (const spec of bare) {
+      const name = spec.replace(/^node:/, "").split("/")[0];
+      expect(spec.startsWith("node:") || NODE_BUILTINS.includes(name),
+        `partforge/${d.id} must not import the Node builtin "${spec}":\n  ${chainTo(spec, importer, ROOT)}`).toBe(false);
+      expect(BANNED_PACKAGES.includes(spec), `partforge/${d.id} must not import "${spec}"`).toBe(false);
+    }
+    for (const file of files) {
+      const src = stripComments(readFileSync(file, "utf8"));
+      const hit = DOM_GLOBALS.find((g) => new RegExp(`\\b${g}\\b`).test(src));
+      expect(hit == null, hit ? `partforge/${d.id} reaches \`${hit}\`:\n  ${chainTo(file, importer, ROOT)}` : "").toBe(true);
+    }
+  }
 });
