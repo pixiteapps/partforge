@@ -5,10 +5,12 @@
 //
 // Imports: lint/finding.js and nothing else from lint (the registry rule), and only the
 // engine's pure modules — never implicit/index.js, which loads the mesher and native core.
-import { err } from "../../lint/finding.js";
+import { err, note, warn } from "../../lint/finding.js";
 import { ROUTED_CAD_OPS } from "../../geometry/kernel.js";
 import { validateSpec } from "../../geometry/implicit/grammar.js";
 import { lowerSpec } from "../../geometry/implicit/ir.js";
+import { IMPLICIT_DEFAULTS } from "../../geometry/implicit/compile.js";
+import { choosePreviewEdge } from "../../geometry/implicit/preview-edge.js";
 
 const SPEC_OPS = new Set(["implicit", "implicitFrames"]);
 const ROUTED = new Set(ROUTED_CAD_OPS);
@@ -62,6 +64,22 @@ export function implicitCalls({ part, probe }) {
   return out;
 }
 
+const compiledCalls = (ctx) => implicitCalls(ctx).filter((c) => c.compiled && c.op === "implicit");
+const mm = (v) => `${v.toFixed(2)} mm`;
+
+// Kinds a sharp-edged CAD model is made of; any other kind (a sphere, a warp, round,
+// onion, displace, expr, contact) is what k.implicit is for.
+const CAD_KINDS = new Set(["box", "cylinder", "halfspace", "union", "intersect", "subtract", "mirror", "repeat"]);
+/** Every node of a raw spec tree, through `root`, `children` and `child`. */
+function* specNodes(node) {
+  if (!node || typeof node !== "object") return;
+  yield node;
+  for (const c of node.children ?? []) yield* specNodes(c);
+  if (node.child) yield* specNodes(node.child);
+}
+const plainCsg = (spec) => !(spec.detail?.length) && [...specNodes(spec.root)].every((n) =>
+  CAD_KINDS.has(n.kind) && !n.round && !(n.k > 0));
+
 export const ORGANIC_LINT_RULES = [
   {
     id: "implicit-spec-invalid",
@@ -85,5 +103,53 @@ export const ORGANIC_LINT_RULES = [
           : "Build the OCCT-only feature in a separate part, or replace it with a mesh-friendly construction: the OCCT build throws on k.implicit.",
         "meta.backend")];
     },
+  },
+  {
+    id: "implicit-thin-feature",
+    run: (ctx) => compiledCalls(ctx).flatMap(({ spec, compiled }) => {
+      const tiers = [
+        ["preview", spec.preview ?? choosePreviewEdge(compiled)],
+        ["print", spec.resolution ?? IMPLICIT_DEFAULTS.resolution],
+      ].filter(([, edge]) => compiled.thin < 2 * edge);
+      if (tiers.length === 0) return [];
+      const grids = tiers.map(([tier, edge]) => `the ${tier} grid (${mm(edge)})`).join(" and ");
+      return [warn("implicit-thin-feature",
+        `k.implicit: the thinnest feature (${mm(compiled.thin)}) is under 2 cells of ${grids} at the default pose — it may break up or grow handles`,
+        "Give the thin feature its own k.implicit with a finer `preview` and `resolution`, unioned on (the guide's nail pattern), or thicken it. See ERROR-PATTERNS.md#implicit-thin-feature.",
+        "parts")];
+    }),
+  },
+  {
+    id: "implicit-blend-eats-child",
+    run: (ctx) => compiledCalls(ctx).flatMap(({ spec, compiled }) => {
+      const { nodes } = compiled.ir, out = [];
+      for (const n of nodes) {
+        if (!["union", "intersect", "subtract"].includes(n.kind) || !(n.k > 0) || !n.path) continue;
+        for (const c of n.children) if (nodes[c].thin < n.k) {
+          out.push(warn("implicit-blend-eats-child",
+            `k.implicit: ${n.path} blends with k = ${mm(n.k)}, wider than ${nodes[c].path} (${mm(nodes[c].thin)} thick) — the blend swallows it into a blob`,
+            "Make the blend narrower than the thinnest child it joins, or blend that child separately with its own smaller k. See ERROR-PATTERNS.md#implicit-blend-eats-child.",
+            "parts"));
+        }
+      }
+      if (compiled.ownerRoot >= 0) {
+        const thinOf = new Map(nodes[compiled.ownerRoot].children.map((c) => [nodes[c].label, nodes[c].thin]));
+        for (const [i, e] of (spec.root.attach ?? []).entries()) {
+          const piece = [e.a, e.b].find((l) => thinOf.get(l) < e.k);
+          if (piece != null) out.push(warn("implicit-blend-eats-child",
+            `k.implicit: root.attach[${i}] blends ${e.a} into ${e.b} with k = ${mm(e.k)}, wider than "${piece}" (${mm(thinOf.get(piece))} thick)`,
+            "Use an attach k narrower than both pieces it joins. See ERROR-PATTERNS.md#implicit-blend-eats-child.",
+            "parts"));
+        }
+      }
+      return out;
+    }),
+  },
+  {
+    id: "implicit-csg-in-disguise",
+    run: (ctx) => compiledCalls(ctx).filter(({ spec }) => plainCsg(spec)).map(() => note("implicit-csg-in-disguise",
+      "k.implicit builds only boxes, cylinders and halfspaces with sharp booleans — plain CAD, meshed approximately",
+      "Build it with the standard ops (k.box, k.cylinder, union/cut): they are exact, faster, and export a true STEP. Keep k.implicit for blended, organic forms.",
+      "parts")),
   },
 ];

@@ -67,6 +67,78 @@ test("implicit-spec-invalid: a spec driven by params lints clean at its defaults
   expect(of(lintPart(part), "implicit-spec-invalid")).toEqual([]);
 });
 
+// --- implicit-thin-feature --------------------------------------------------
+
+const ballAndPlate = (extra = {}) => ({ root: { kind: "union", children: [
+  { kind: "sphere", r: 10 }, { kind: "box", size: [20, 20, 0.5], at: [0, 0, 12] },
+] }, ...extra });
+
+test("implicit-thin-feature: a plate thinner than two cells warns, naming both tiers", () => {
+  const [f, ...rest] = of(lintPart(implicitPart(ballAndPlate())), "implicit-thin-feature");
+  expect(rest).toEqual([]);
+  expect(f.severity).toBe("warning");
+  expect(f.message).toMatch(/0\.50 mm/);
+  expect(f.message).toMatch(/preview/);
+  expect(f.message).toMatch(/print/);
+});
+
+test("implicit-thin-feature: quiet when both grids resolve the thinnest feature", () => {
+  expect(of(lintPart(implicitPart({ root: { kind: "sphere", r: 10 }, resolution: 0.6, preview: 1.5 })), "implicit-thin-feature")).toEqual([]);
+  expect(of(lintPart(implicitPart(ballAndPlate({ preview: 0.2, resolution: 0.2 }))), "implicit-thin-feature")).toEqual([]);
+});
+
+test("implicit-thin-feature: names only the tier that fails", () => {
+  const [f] = of(lintPart(implicitPart(ballAndPlate({ preview: 0.2 }))), "implicit-thin-feature");
+  expect(f.message).toMatch(/print/);
+  expect(f.message).not.toMatch(/preview/);
+});
+
+// --- implicit-blend-eats-child ----------------------------------------------
+
+const blended = (k) => ({ root: { kind: "union", k, children: [{ kind: "sphere", r: 10 }, { kind: "sphere", r: 1, at: [11, 0, 0] }] } });
+
+test("implicit-blend-eats-child: a blend wider than a child warns, naming the child", () => {
+  const [f, ...rest] = of(lintPart(implicitPart(blended(4))), "implicit-blend-eats-child");
+  expect(rest).toEqual([]);
+  expect(f.severity).toBe("warning");
+  expect(f.message).toContain("root.children[1]");
+});
+
+test("implicit-blend-eats-child: quiet when the blend is narrower than every child", () => {
+  expect(of(lintPart(implicitPart(blended(1))), "implicit-blend-eats-child")).toEqual([]);
+});
+
+test("implicit-blend-eats-child: a contact attach k wider than a piece warns", () => {
+  const spec = (k) => ({ frames: { j: { at: [6, 0, 0] } }, root: { kind: "contact", attach: [{ a: "big", b: "small", near: "j", radius: 2, k }], children: [
+    { kind: "sphere", r: 10, label: "big" }, { kind: "sphere", r: 1.5, at: [11, 0, 0], label: "small" },
+  ] } });
+  expect(of(lintPart(implicitPart(spec(5))), "implicit-blend-eats-child")).toHaveLength(1);
+  expect(of(lintPart(implicitPart(spec(1))), "implicit-blend-eats-child")).toEqual([]);
+});
+
+// --- implicit-csg-in-disguise -----------------------------------------------
+
+const drilled = (extra = {}) => ({ root: { kind: "subtract", children: [
+  { kind: "box", size: [20, 20, 20] }, { kind: "cylinder", r: 3, h: 30 },
+], ...extra } });
+
+test("implicit-csg-in-disguise: boxes and cylinders with sharp booleans are a note", () => {
+  const r = lintPart(implicitPart(drilled()));
+  expect(r.notes.filter((f) => f.rule === "implicit-csg-in-disguise")).toHaveLength(1);
+});
+
+test("implicit-csg-in-disguise: a blend, a round or a curved primitive makes it organic", () => {
+  expect(of(lintPart(implicitPart(drilled({ k: 1 }))), "implicit-csg-in-disguise")).toEqual([]);
+  expect(of(lintPart(implicitPart({ root: { kind: "round", r: 1, child: drilled().root } })), "implicit-csg-in-disguise")).toEqual([]);
+  const sphere = { root: { kind: "subtract", children: [{ kind: "sphere", r: 10 }, { kind: "cylinder", r: 3, h: 30 }] } };
+  expect(of(lintPart(implicitPart(sphere)), "implicit-csg-in-disguise")).toEqual([]);
+});
+
+test("an invalid spec gets only implicit-spec-invalid", () => {
+  const r = lintPart(implicitPart({ root: { kind: "union", k: 40, children: [{ kind: "box", size: [1, 1, 0.1] }, { kind: "spher" }] } }));
+  expect(all(r).filter((f) => f.rule.startsWith("implicit-")).map((f) => f.rule)).toEqual(["implicit-spec-invalid"]);
+});
+
 // --- implicit-needs-manifold ------------------------------------------------
 
 test("implicit-needs-manifold: k.implicit in a part pinned to OCCT is an error", () => {
