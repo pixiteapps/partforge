@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has twenty: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has twenty-two: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -44,7 +44,11 @@ test/vector2d.test.js rather than by the part),
 relief plate, swappable source), and `laser-box.js` (the sheet-parts reference
 part - five `fingerBox` panels and a lid as `sheetPart` sub-parts, two printed
 hinges keyed into slots; a test fixture and the guide's worked example, with no
-demo page), and `material-swatches.js` (not a reference part: the dev-only
+demo page), `robot-finger.js` (the kinematics reference part - three printed
+links on pin joints, posed by one `limb` from `partforge/kinematics` in
+`derive` and placed with `d.finger.place`, a `curl` animation that never
+rebuilds; the worked example of `docs/domains/kinematics.md`, with no demo
+page), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`).
 
 ## Node version
@@ -591,6 +595,39 @@ the installed package, so let the publish finish before bumping the dep there.
   (`test/kit-layering.test.js` walks it and runs a real kit with every oracle module
   mocked to throw), so the README's check lines are worded by `checkMessage`, a
   restatement of `assert-dsl.js` that a test holds equal to it.
+- **`src/framework/domains/`** - domain modules (spec
+  `docs/superpowers/specs/2026-10-29-domain-modules-design.md`). A **domain** is a
+  depth past the core - sheet parts, kinematics, organic parts - as one folder
+  `domains/<id>/` with a `manifest.js` (plain data plus functions: id, title, a
+  one-line `when` written as a request class, `subpath`, `guide`, `referenceParts`,
+  `kernelOps`, `lintRules`, `oracle: { facts, metrics, checks }`, `processes`,
+  `workerSafe`) and an `index.js` published as `partforge/<id>`, with
+  `types/<id>.d.ts` and `docs/domains/<id>.md`. `registry.js` is the ONE table core
+  reads (`DOMAINS`, `validateDomains`, `domainOfOp`): kernel-front attaches domain
+  ops before the compound defaults, lint appends domain rules after the core rules,
+  `measure()` stamps each domain's facts on every row under its id (and never
+  memoizes such a row), `verify-metrics.js` spreads domain metrics (a name collision
+  is a LOAD error), the process registry derives domain processes by each
+  descriptor's `kind: "sheet" | "print"`, and the authoring guide's `## Domains`
+  index is generated from it (`npm run docs:domains`, output committed,
+  `test/domain-index.test.js` holds it). Five rules, held by
+  `test/domain-layering.test.js`: core never imports a domain folder (only the
+  registry does); every folder is registered under its own name; every registered
+  domain ships guide, types, subpath and reference parts; a domain entry's closure is
+  worker-safe; a domain never imports another domain. A manifest's `lintRules` may
+  import `lint/finding.js` and nothing else from lint - `verify-metrics.js` reads the
+  registry at module top level, so a rule reaching `rules-verify.js` would hit the
+  registry before it exists. `DOMAINS` lists one domain, kinematics
+  (`domains/kinematics/`, `partforge/kinematics`), which tags no kernel op and
+  declares no facts, so the registry's other seams are exercised by the test-only
+  fixture at `test/fixtures/domain-fixture/`, which seam tests reach by
+  `vi.mock`-ing `registry.js` - never by a test-only parameter on a public API.
+  `partforge/lint` exports the registry as names only (`DOMAINS`) and
+  `domainsOf(sources)`, which tells a host which domain guides to load for an
+  existing part from its source alone (a static import of the subpath or a call of a
+  tagged op; prose, string literals and dynamic `import()` never count). Sheet, print,
+  text, vector, image, import and organic are NOT domains yet; they migrate one
+  design at a time.
 - **`src/framework/core/`** + **`native/`** - the native core: C++ ports of the
   hottest per-vertex JS (`creasedNormals` with the fillet-surface evaluators,
   and the oracle's BVH + min-wall), compiled to ONE WebAssembly module embedded

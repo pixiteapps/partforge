@@ -127,4 +127,30 @@ export const RULES: LintRule[];
  */
 export const SOURCE_RULE_IDS: ReadonlySet<string>;
 
+/**
+ * A registered domain (src/framework/domains/registry.js), projected to names only
+ * so a host can serialise it: no functions.
+ */
+export interface DomainInfo {
+  id: string;
+  title: string;
+  /** The request class the domain serves, as the authoring guide's index prints it. */
+  when: string;
+  /** The subpath a part imports the domain's helpers from, e.g. "partforge/kinematics". */
+  subpath: string;
+  /** Repo path of the domain's guide. */
+  guide: string;
+  /** The kernel ops (`k.<op>`) the domain tagged as its own. */
+  kernelOps: string[];
+}
+export const DOMAINS: readonly DomainInfo[];
+
+/**
+ * The ids of the domains a part's SOURCE uses: a static import of (or re-export
+ * from) a domain's subpath, or a call of one of its tagged kernel ops. Sorted,
+ * unique. Prose, string literals and dynamic import() never count. Malformed
+ * sources give [] — never a throw.
+ */
+export function domainsOf(sources: LintSources | null | undefined): string[];
+
 export type { PartDefinition };

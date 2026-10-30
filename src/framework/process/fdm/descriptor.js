@@ -37,6 +37,7 @@
 // process/registry.js.
 export const FDM = {
   id: "fdm",
+  kind: "print",
   label: "FDM 3D printing",
   stock: "filament",
   docId: "printed-parts",

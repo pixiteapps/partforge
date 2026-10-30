@@ -797,6 +797,12 @@ the helpers come along unmodified. (`test/kernel-contract.test.js` asserts every
   drills), so a sheet part is portable by
   construction too. None of these is a kernel op.
 
+- **Rotation converters** — `deg`, `rad`, `euler`, `toEuler` and `applyRotation` convert
+  rotations to and from frame-style `{axis, deg}` steps (each step about the current
+  axes, as a frame's `rotate`); `applyRotation` calls only the Solid's `rotate`. Plain
+  JS, not kernel ops. (The `limb` helper that builds on them is a domain, exported from
+  `partforge/kinematics`, not from `partforge/geometry`.)
+
 **Profile validation on the way in** (0.112). `prism`, `extrude`, `revolve`, `sweep`,
 `loft` (per ring) and `shape2d` (including boolean operands) run `validateProfile` on a
 hand-authored profile — a point list, a `{start, segments}` contour, a `{outer, holes}`

@@ -22,8 +22,14 @@ import { SOURCE_RULES } from "./rules-source.js";
 import { VECTOR_RULES } from "./rules-vector.js";
 import { MATERIAL_RULES } from "./rules-materials.js";
 import { SHEET_RULES } from "./rules-sheet.js";
+import { DOMAINS } from "../domains/registry.js";
 
-export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES, ...VERIFY_RULES, ...ANIMATION_RULES, ...PLACE_RULES, ...IMPORT_RULES, ...FONT_RULES, ...IMAGE_RULES, ...SOURCE_RULES, ...VECTOR_RULES, ...MATERIAL_RULES, ...SHEET_RULES];
+// Core rules first, then every registered domain's rules in registry order
+// (src/framework/domains/registry.js). A domain's rules may import lint/finding.js
+// and nothing else from lint: verify-metrics.js reads the registry at module top
+// level, so a rule reaching rules-verify.js would hit the registry before it exists.
+export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES, ...VERIFY_RULES, ...ANIMATION_RULES, ...PLACE_RULES, ...IMPORT_RULES, ...FONT_RULES, ...IMAGE_RULES, ...SOURCE_RULES, ...VECTOR_RULES, ...MATERIAL_RULES, ...SHEET_RULES,
+  ...DOMAINS.flatMap((d) => d.lintRules)];
 
 // A usable sources input, or null. Deliberately forgiving: lintPart's callers
 // include hosted paths handing over user/LLM-authored trees, so a malformed

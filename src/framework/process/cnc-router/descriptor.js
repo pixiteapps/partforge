@@ -179,6 +179,7 @@ const ROUTER_RULES = [{
 
 export const ROUTER = {
   id: "cnc-router",
+  kind: "sheet",
   label: "CNC routing",
   stock: "sheet",
   docId: ROUTED_DOC_ID,
