@@ -119,6 +119,9 @@ export const ORGANIC_LINT_RULES = [
     id: "implicit-needs-manifold",
     run: (ctx) => {
       if (!implicitCalls(ctx).some((c) => c.op === "implicit")) return [];
+      // A Manifold pin wins over a shell's routing (manifold-backend-uses-occt-op reports
+      // the shell), so only an OCCT pin or an unpinned shell lands k.implicit on OCCT.
+      if (ctx.part?.meta?.backend === "manifold") return [];
       const pinned = ctx.part?.meta?.backend === "occt";
       const routed = [...ctx.probe().solidUsed].filter((op) => ROUTED.has(op));
       if (!pinned && routed.length === 0) return [];

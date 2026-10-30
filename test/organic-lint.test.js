@@ -186,6 +186,16 @@ test("implicit-needs-manifold: k.implicit beside a shell (which routes the part 
   expect(of(lintPart(part), "implicit-needs-manifold")).toHaveLength(1);
 });
 
+test("implicit-needs-manifold: a Manifold pin beside a shell is not this rule's error", () => {
+  // The pin wins, so the part builds on Manifold and fails on the shell, which
+  // manifold-backend-uses-occt-op already reports.
+  const part = partWith((k) => k.union([k.implicit({ root: { kind: "sphere", r: 5 } }), k.box({ size: [4, 4, 4] }).shell({ thickness: 1 })]),
+    { meta: { title: "T", backend: "manifold" } });
+  const r = lintPart(part);
+  expect(of(r, "implicit-needs-manifold")).toEqual([]);
+  expect(of(r, "manifold-backend-uses-occt-op")).toHaveLength(1);
+});
+
 test("implicit-needs-manifold: quiet on Manifold and without k.implicit", () => {
   expect(of(lintPart(implicitPart({ root: { kind: "sphere", r: 5 } }, { meta: { title: "T", backend: "manifold" } })), "implicit-needs-manifold")).toEqual([]);
   expect(of(lintPart(partWith((k) => k.box({ size: [1, 1, 1] }), { meta: { title: "T", backend: "occt" } })), "implicit-needs-manifold")).toEqual([]);
