@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has twenty-two: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has twenty-four: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -48,7 +48,11 @@ demo page), `robot-finger.js` (the kinematics reference part - three printed
 links on pin joints, posed by one `limb` from `partforge/kinematics` in
 `derive` and placed with `d.finger.place`, a `curl` animation that never
 rebuilds; the worked example of `docs/domains/kinematics.md`, with no demo
-page), and `material-swatches.js` (not a reference part: the dev-only
+page), `hand.js` (the organic reference part - one contact `k.implicit` hand
+with crease detail and fine-grid nails unioned on, posed by sliders, its frames
+reported by a `k.implicitFrames` probe; its builders are also the implicit
+engine's test fixture, re-exported by `test/fixtures/implicit-trees.js`, so
+editing them moves pinned mesh hashes; no demo page), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`), and `offset-demo.js`
 (not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
 `offset-demo.html`).

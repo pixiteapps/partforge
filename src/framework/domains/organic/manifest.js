@@ -12,7 +12,7 @@ export default {
   when: "smooth organic bodies: hands, paws, creatures, blobby or sculpted forms; blended signed-distance shapes with surface detail",
   subpath: "partforge/organic",
   guide: "docs/domains/organic.md",
-  referenceParts: [],
+  referenceParts: ["src/parts/hand.js"],
   kernelOps: [
     {
       name: "implicit",
