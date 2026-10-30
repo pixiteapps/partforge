@@ -36,6 +36,11 @@ import { createSnapMarker } from "./snap-marker.js";
 // about retention hygiene on a memory-tight device, not about a runaway.
 const PLACEMENT_CACHE_LIMIT = 32;
 
+// A geometry gets a triangle BVH only from this many triangles up. Below it,
+// three's brute-force ray is a few ms on a desktop (2.9 ms at 53k) and building
+// the index is a main-thread task of its own (~85 ms at 53k) for little gain.
+const BVH_MIN_TRIANGLES = 100_000;
+
 // The word the snap label uses for each SnapTarget kind on a named feature.
 const KIND_WORD = { corner: "corner", midpoint: "midpoint", circle: "centre", edge: "edge", face: "face" };
 
@@ -146,9 +151,12 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // A triangle BVH per geometry (oracle/bvh.js, ~75 bytes a triangle) makes a
   // ray ~1000x cheaper on a big part, but building one is ~1.5 µs a triangle
   // (~300 ms on the 211k-triangle screw): only the idle pre-build below makes
-  // one. Rays read `builtBVH`, which never builds — until the index lands they
-  // take three's brute-force path, which is what they always did.
-  const bvhCache = new WeakMap(); // geometry -> BVH
+  // one, and only past BVH_MIN_TRIANGLES. Rays read `builtBVH`, which never
+  // builds — until the index lands they take three's brute-force path, which is
+  // what they always did. Turning the mode off releases every index (16 MB on
+  // the screw): measure mode is occasional, and re-entry rebuilds in idle time.
+  let bvhCache = new WeakMap(); // geometry -> BVH
+  const triangleCount = (geometry) => (geometry.getIndex()?.count ?? geometry.getAttribute("position").count) / 3;
   function bvhOf(geometry) {
     let bvh = bvhCache.get(geometry);
     if (!bvh) {
@@ -170,19 +178,21 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // geometry's entry; the check is what spares the work.
   let prebuildQueue = [];
   let cancelPrebuild = null;
+  let prebuilt = new WeakSet(); // geometries whose every step ran this session
 
   function queuePrebuild() {
     for (const [, mesh] of visibleMeshes()) {
       const geometry = mesh.geometry;
       // done (the BVH is the last step), or already waiting in the queue
-      if (bvhCache.has(geometry) || prebuildQueue.some((s) => s.geometry === geometry)) continue;
+      if (prebuilt.has(geometry) || prebuildQueue.some((s) => s.geometry === geometry)) continue;
       const step = (what, run) => prebuildQueue.push({ what, mesh, geometry, run });
       step("snap index", () => snapIndex(geometry));
       if (geometry.userData.featureIds) {
         const count = geometry.userData.features?.length ?? 0;
         for (let id = 1; id <= count; id++) step(`feature ${id}`, () => featureSpec(geometry, id));
       }
-      step("bvh", () => bvhOf(geometry));
+      if (triangleCount(geometry) >= BVH_MIN_TRIANGLES) step("bvh", () => bvhOf(geometry));
+      step("done", () => prebuilt.add(geometry));
     }
     if (prebuildQueue.length && !cancelPrebuild) cancelPrebuild = idle(pumpPrebuild);
   }
@@ -197,7 +207,10 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     do {
       const step = prebuildQueue.shift();
       if (!step) return;
-      if (isLive(step)) step.run();
+      if (!isLive(step)) continue;
+      // A failed step leaves its cache empty, so hover computes that piece
+      // itself (or takes three's ray) exactly as it did before the pre-build.
+      try { step.run(); } catch (err) { console.error("measure pre-build failed", step.what, err); }
     } while ((deadline?.timeRemaining?.() ?? 0) > 1);
     if (prebuildQueue.length) cancelPrebuild = idle(pumpPrebuild);
   }
@@ -206,6 +219,8 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     prebuildQueue = [];
     cancelPrebuild?.();
     cancelPrebuild = null;
+    prebuilt = new WeakSet();
+    bvhCache = new WeakMap(); // release the indexes with the mode
   }
 
   // ---- spec frames ---------------------------------------------------------

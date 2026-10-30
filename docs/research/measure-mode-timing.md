@@ -283,19 +283,33 @@ tasks (> 50 ms) in the 2.5 s after the Measure button is clicked.
 
 ### Results (ms)
 
-"Before" is the new mode at `b6b3c85c`, before Task 8's fix. "After" is with
-it. "Task 1" is the old mode, for comparison.
+"Before" is the new mode at `b6b3c85c`, before Task 8's fix. "After" is the
+shipped fix: idle pre-build, and a BVH only for a geometry of 100,000
+triangles or more (`BVH_MIN_TRIANGLES`), so the propeller (52.8k) keeps
+three's ray and the screw (210.6k) gets a BVH. "Task 1" is the old mode, for
+comparison. The first version of the fix also gave the propeller a BVH; its
+numbers are in "First version" below.
 
 | Part | Event | Task 1 (old mode) | Before fix | After fix |
 | --- | --- | --- | --- | --- |
-| propeller (52.8k) | cold hover (3 loads) | 97.1 | 44.5 / 48.1 / 44.8 (max over any first touch: 64.8) | **1.3 / 2.2 / 1.4** |
-| propeller (52.8k) | warm hover, median / p95 | 3.0 / 3.6 | 3.3 / 3.7 | **0.3 / 0.5** (max 3.5) |
-| propeller (52.8k) | cold click (3 loads) | 37.4 (placed) | 7.7 / 5.0 / 4.6 | **2.3 / 1.8 / 1.8** |
-| propeller (52.8k) | warm click, median / p95 | 3.2 / 20.5 | 3.5 / 3.8 | **0.6 / 0.9** |
+| propeller (52.8k) | cold hover (3 loads) | 97.1 | 44.5 / 48.1 / 44.8 (max over any first touch: 64.8) | **4.0 / 4.0 / 4.3** |
+| propeller (52.8k) | warm hover, median / p95 | 3.0 / 3.6 | 3.3 / 3.7 | **3.2 / 3.5** (max 6.1) |
+| propeller (52.8k) | cold click (3 loads) | 37.4 (placed) | 7.7 / 5.0 / 4.6 | **4.5 / 4.9 / 6.0** |
+| propeller (52.8k) | warm click, median / p95 | 3.2 / 20.5 | 3.5 / 3.8 | **3.4 / 3.8** |
 | screw (210.6k) | cold hover (3 loads) | — | 17.5 / 17.4 / 17.5 | **1.1 / 0.7 / 1.1** |
 | screw (210.6k) | warm hover, median / p95 | 10.5 / 11.1 | 10.5 / 11.0 | **0.2 / 0.3** |
 | screw (210.6k) | cold click (3 loads) | 75.8 (placed) | 10.4 / 10.7 / 10.7 | **0.2 / 0.3 / 0.3** |
 | screw (210.6k) | warm click, median / p95 | 10.8 / 11.2 | 10.8 / 11.4 | **0.4 / 0.7** |
+| screw (210.6k) | **worst case: a hover that lands while the BVH build runs** | — | — | **waits up to 308–328 ms**, once per geometry, ~0.1–0.5 s after entry |
+| both | a hover before the snap index step runs (first ~0.1 s) | — | — | the before-fix cold cost, once |
+
+The "after" cold rows are measured 1.5 s after the mode turns on, so the
+pre-build has finished. The two last rows are the honest worst first hover.
+
+**First version** (BVH for every geometry, `2549d948`), propeller: cold hover
+1.3 / 2.2 / 1.4, warm hover 0.3 / 0.5, cold click 2.3 / 1.8 / 1.8, warm click
+0.6 / 0.9, for an 84 ms BVH task after entry. The ~3 ms a move it saved did
+not justify that task below 100k triangles.
 
 Split of the slow samples, before the fix:
 
@@ -317,28 +331,32 @@ every hover and click cast a brute-force ray (10.3 ms on the screw, over the
 
 1. **Idle pre-build** (`measure-mode.js`). Entering the mode, and any geometry
    change while it is on, queues work for each visible geometry: its snap
-   index, the spec of each named feature, then a triangle BVH. The queue runs
+   index, the spec of each named feature, then, from 100,000 triangles up, a
+   triangle BVH. The queue runs
    in `requestIdleCallback` (timeout 1 s; a 16 ms timer where the browser has
    none, as Safari by default), at least one step per callback. Turning the
-   mode off empties the queue and cancels the callback; a step whose mesh is
-   gone, hidden or shows another geometry is dropped, not run. Every cache is
-   a WeakMap keyed by geometry, so a step can only fill its own geometry's
-   entry.
+   mode off empties the queue, cancels the callback and releases every BVH;
+   a step whose mesh is gone, hidden or shows another geometry is dropped, not
+   run. A step that throws is logged and skipped: its cache stays empty, so
+   hover computes that piece itself, as before. Every cache is a WeakMap keyed
+   by geometry, so a step can only fill its own geometry's entry.
 2. **BVH rays** (`selection/raycast.js` `firstSurfaceHit`, used by
    `raycastViewer` when given `bvhFor`, and by the placement's `surfaceHit`).
    The index is `oracle/bvh.js`'s JS `buildBVH`, cached per geometry. Hover
    and click NEVER build one: until the idle step lands, rays take three's
    path, as before. The answer is three's (same culling by material side, same
-   "nearest hit the cutaway keeps"); a test checks it against three over a
-   grid. The selection picker and hover labels do not pass `bvhFor`, so they
+   "nearest hit the cutaway keeps", a drawn face sharing its t with a culled
+   one at a silhouette edge, three's own ray after 256 skipped hits); tests
+   check it against three over a grid, including the viewer's `setSubPose`
+   pose (`matrixAutoUpdate` off). The selection picker and hover labels do not pass `bvhFor`, so they
    are unchanged.
 
 ### Pre-build cost (ms, per step, 3 loads)
 
 | Part | snap index | feature specs | BVH |
 | --- | ---: | ---: | ---: |
-| propeller | 29.1 / 29.7 / 29.2 | 53–55 (blade), 7 (hub), 1 | 86.5 / 89.0 / 81.2 |
-| screw | 4.8 / 4.7 / 4.7 | — (no labels) | 309.6 / 308.5 / 308.1 |
+| propeller | 30.0 / 29.9 / 30.6 | 53–55 (blade), 6–11 (hub), 1 | none (under the floor; 81–89 in the first version) |
+| screw | 4.8 / 4.7 / 4.7 | — (no labels) | 309.6 / 308.5 / 308.1 (328.5 in a later run) |
 
 ### Mode entry: what moved into it (ms)
 
@@ -347,40 +365,47 @@ clicked (appendix B; three runs on the propeller, one on the screw):
 
 | Part | Before fix | After fix |
 | --- | --- | --- |
-| propeller | 393 | 396–402, 53–56, 82–84 |
-| screw | 101, 387 | 102, 388, **312** |
+| propeller | 393 | 405, 56 (the blade's spec) |
+| screw | 101, 387 | 103, 405, **326** (the BVH) |
 
-`setEnabled(true)` itself: first entry 29–46 ms (propeller) and 84–101 ms
+`setEnabled(true)` itself: first entry 29–46 ms (propeller) and 84–103 ms
 (screw), unchanged; most of the screw's is the overall dims' `surfaceHit`
-rays (61 ms), which have no BVH yet on first entry. **Re-entry** (off, then on
-again) drops from 18 → 1.4 ms (propeller) and 66 → 1.0 ms (screw), because
-the BVH survives with its geometry.
+rays (61 ms), which have no BVH yet. Re-entry (off, then on again) is the
+same as before the fix, 18 ms (propeller) and 73 ms (screw), because turning
+the mode off releases the BVH; the screw's is rebuilt in idle time again.
+(The first version kept it, and re-entry was ~1 ms.)
 
 The ~400 ms task right after the click is there before and after the fix: it
 is not the mode's own code (enable is 30–100 ms of it); it was not chased
 further here.
 
-The new cost is the BVH step: one **312 ms** task on the screw (84 ms on the
-propeller), in idle time, about 0.1–0.5 s after the mode turns on. A pointer
-move that arrives while it runs waits for it, once per geometry. That is the
-trade: one wait of up to a third of a second at most once, in place of 10 ms
-on every move for as long as the mode is on. A part under ~50k triangles
-pays well under 100 ms. If this wait is felt on a phone, the next step is to
-build the BVH off the main thread (a worker returning the four typed arrays);
-`bvh.js` has no constructor from arrays today, so that is not done here.
+The new cost is the BVH step: one **308–328 ms** task on the screw, in idle
+time, about 0.1–0.5 s after the mode turns on (and again on each entry). A
+pointer move that arrives while it runs waits for it, once per geometry. That
+is the trade: one wait of up to a third of a second, in place of 10 ms on
+every move for as long as the mode is on. A part under 100k triangles builds
+no BVH and pays nothing of this. On a phone the wait could be about 1 s.
+
+**Follow-up: build the BVH in a worker** (or a build that yields), so it never
+holds the main thread. `bvh.js` has no constructor from its four typed arrays
+today, so that is not done here.
 
 ### Memory
 
-The BVH costs about 75 bytes a triangle (16 MB on the screw) and lives as long
-as its geometry does: it is not dropped when the mode turns off, which is what
-makes re-entry 1 ms. A regenerate frees it with the old geometry.
+The BVH costs about 75 bytes a triangle (16 MB on the screw). It is released
+when the mode turns off (the oracle's own rule in `bvh.js`: no index outlives
+the pass that needed it), and a regenerate drops the old geometry's. Only
+geometries of 100k triangles or more ever hold one. The snap index and
+feature specs are small and stay cached by geometry, as before.
 
 ### Verdict
 
-Hover and click p95 are under 1 ms on both parts after the pre-build, and the
-cold first hover is 0.7–2.2 ms: within one 16 ms frame with a wide margin.
-A hover in the first ~0.1 s after entry, before the snap index is built,
-still pays the old cold cost once.
+Once the pre-build has run, hover and click p95 are 3.5 / 3.8 ms on the
+propeller (three's ray) and 0.3 / 0.7 ms on the screw (BVH), and the first
+hover is 4.0–4.3 ms and 0.7–1.1 ms: within one 16 ms frame. The exceptions are
+the two worst-case rows above: a hover during the screw's BVH build waits up
+to ~330 ms once, and a hover in the first ~0.1 s after entry, before the snap
+index is built, still pays the old cold cost once.
 
 ## Appendix A: the Task 8 timing script
 
@@ -473,6 +498,7 @@ function instrument(src) {
     `function setEnabled(on) { return on && !enabled ? __rec("enable", () => __setEnabled(on)) : __setEnabled(on); }\n  function __setEnabled(on) {`);
   // Task 8's idle pre-build, when present
   rep(`if (isLive(step)) step.run();`, `if (isLive(step)) __rec("prebuild", () => { __pfT.cur.what = step.what + " " + step.mesh.name; step.run(); });`, true);
+  rep(`try { step.run(); }`, `try { __rec("prebuild", () => { __pfT.cur.what = step.what + " " + step.mesh.name; step.run(); }); }`, true);
   return src;
 }
 

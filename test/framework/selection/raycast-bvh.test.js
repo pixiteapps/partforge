@@ -121,3 +121,64 @@ test("a mesh with no index (bvhFor returns null) takes three's path", () => {
   expect(viaThree.tri).toBe(viaBvh.tri);
   expect(viaThree.distance).toBeCloseTo(viaBvh.distance, 4);
 });
+
+// A mesh from flat triangle soup (9 numbers each), identity pose, FrontSide.
+function soupMesh(name, tris) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(tris.flat()), 3));
+  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial());
+  mesh.name = name;
+  mesh.updateMatrixWorld(true);
+  return mesh;
+}
+const downRay = (x, y) => new THREE.Ray(new THREE.Vector3(x, y, 10), new THREE.Vector3(0, 0, -1));
+
+test("a drawn face sharing its t with a culled one is found (silhouette edge)", () => {
+  // Two halves of a square in z = 0 sharing the edge x = 0. The first triangle
+  // (the one the BVH reports on a tie) faces away from the camera and is
+  // culled; the second faces it. A farther drawn face at z = -5 is what a
+  // skip past t would wrongly find.
+  const mesh = soupMesh("edge", [
+    [0, -1, 0, 0, 1, 0, 1, 0, 0], // back face (normal -z)
+    [0, -1, 0, 0, 1, 0, -1, 0, 0], // front face (normal +z)
+    [-5, -5, -5, 5, -5, -5, 0, 5, -5], // far front face
+  ]);
+  const ray = downRay(0, 0.3); // exactly on the shared edge
+  const three = firstSurfaceHit(ray, [mesh], { bvhFor: () => null });
+  const fast = firstSurfaceHit(ray, [mesh], { bvhFor });
+  expect(three.tri).toBe(1);
+  expect(fast.tri).toBe(1);
+  expect(fast.distance).toBeCloseTo(10, 6);
+});
+
+test("past the skip cap, the BVH path asks three instead of reporting nothing", () => {
+  // 300 back faces stacked between the camera and one front face
+  const tris = [];
+  for (let k = 0; k < 300; k++) tris.push([-1, -1, -k * 0.01, 0, 1, -k * 0.01, 1, -1, -k * 0.01]); // normal -z
+  tris.push([-1, -1, -5, 1, -1, -5, 0, 1, -5]); // normal +z, drawn
+  const mesh = soupMesh("stack", tris);
+  const ray = downRay(0, 0);
+  const three = firstSurfaceHit(ray, [mesh], { bvhFor: () => null });
+  const fast = firstSurfaceHit(ray, [mesh], { bvhFor });
+  expect(three.tri).toBe(300);
+  expect(fast).not.toBeNull();
+  expect(fast.tri).toBe(300);
+});
+
+test("a sub-part posed the viewer's way (setSubPose: matrixAutoUpdate off) gives three's hit", () => {
+  const a = boxMesh("a");
+  const b = boxMesh("b", { indexed: false, size: [4, 8, 5] });
+  // viewer.setSubPose writes the rigid pose straight onto mesh.matrix
+  b.matrixAutoUpdate = false;
+  b.matrix.compose(
+    new THREE.Vector3(3, 2, 4),
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(0.4, 0.7, -0.2)),
+    new THREE.Vector3(1, 1, 1),
+  );
+  b.position.set(99, 99, 99); // ignored while matrixAutoUpdate is off
+  b.matrixWorldNeedsUpdate = true;
+  const viewer = viewerWith([a, b]);
+  a.parent.updateMatrixWorld(true);
+  const hits = grid((x, y) => expectSameHit(viewer, x, y));
+  expect(hits.filter((n) => n === "b").length).toBeGreaterThan(20);
+});
