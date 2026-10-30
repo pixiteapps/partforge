@@ -101,7 +101,7 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // capture (waiting on the environment's assets) without switching the live
     // view. Rejects if realistic's assets fail to load.
     renderViews: renderViews ?? (async (viewNames) => viewer.captureCanonicalViews(viewNames)),
-    // `recenter` reads the sub-part geometry only, so with measurement pins on
+    // `recenter` reads the sub-part geometry only, so with measurements on
     // screen the dimension labels — which sit beside the part, not on it —
     // could land outside the centred window. A dimensioned capture therefore
     // keeps the user's exact framing; a host wanting both re-frames first.
@@ -217,7 +217,8 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     attachTooltips: attachTooltips ?? (() => NOOP_TOOLTIP_BINDING),
     // Measurement-mode API (spec Goal 3): { isEnabled, setEnabled, clearPins,
     // pinCount } — an embedder drives the mode without the built-in ruler
-    // button. Dimensions render in the scene, so a dimensioned capture is just
+    // button. pinCount() is 0, 1 (a reading or a start point) or 2 (a
+    // distance); clearPins() is the Clear button. Dimensions render in the scene, so a dimensioned capture is just
     // captureCurrent() taken while the mode is on.
     measure: measure ?? NOOP_MEASURE,
     // Annotation-mode API (spec 2026-08-18): { isEnabled, setEnabled, clear,

@@ -467,7 +467,9 @@ export interface CaptureViewOptions {
 }
 
 /**
- * Measurement mode runtime controls. Dimensioned captures come straight from
+ * Measurement mode runtime controls. Hover shows a snap marker only; a first
+ * click reads one number off a labeled feature (or sets a start point), and a
+ * second click measures one distance from it. Dimensioned captures come straight from
  * `captureCurrent()` while the mode is enabled — in-scene dims render into
  * the frame natively (canonical-view captures and thumbnails never include
  * them).
@@ -475,7 +477,13 @@ export interface CaptureViewOptions {
 export interface MeasureRuntime {
   isEnabled(): boolean;
   setEnabled(on: boolean): void;
+  /** Removes every measurement on screen (the chrome's Clear button). */
   clearPins(): void;
+  /**
+   * The number of user measurements on screen: 0, 1 (a first click — a
+   * reading, or the start point of a distance) or 2 (a distance). Readings
+   * clear when the part rebuilds, the view changes or the mode is turned off.
+   */
   pinCount(): number;
 }
 

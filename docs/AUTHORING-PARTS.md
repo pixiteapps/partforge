@@ -862,10 +862,13 @@ if (p.drain > 0) s = s.cut(k.cylinder({ r: d.drainR, h: p.floor + 4 }).at([0, 0,
   unique per sub-part unless you specifically want the merge behavior.
 
 Labels do double duty in the viewer: the hover tooltip names the feature, and
-**measurement mode** (the ruler button in the viewbar) measures it — a labeled
-hole reads ⌀ + depth, a labeled face reads its extents, and a click pins that
-dimension so it tracks parameter changes live. Label the features a user would
-want to measure; unlabeled geometry still measures as its bounding box.
+**measurement mode** (the ruler button in the viewbar) measures it — a click
+on a labeled feature reads its one number (⌀ for a hole, R for an arc, the
+length of a straight edge, W × H for a flat face), and a second click measures
+the distance from there. Unlabeled geometry snaps only to corners and points,
+for distances, so label the features a user would want to measure. Distances
+run square to the part; the straight-line button beside Clear (or a Shift-click)
+measures straight across instead. Readings clear when the part rebuilds.
 
 ### Caching & determinism
 
