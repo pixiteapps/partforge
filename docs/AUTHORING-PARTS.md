@@ -4307,7 +4307,10 @@ OCCT — `meta.backend: "occt"`, or a `shell` that routes it there) (error);
 `implicit-thin-feature` (the thinnest feature is under 2 cells of the preview grid —
 the spec's `preview` or the automatic choice — or of the print grid) (warning);
 `implicit-blend-eats-child` (a blend's `k`, or a contact `attach` entry's `k`, is
-wider than a child it joins) (warning); `implicit-csg-in-disguise` (the tree is only
+wider than a child it joins) (warning); `implicit-lipschitz-low` (an `expr` node's
+formula, sampled on an 8 × 8 × 8 lattice across its `box`, changes faster per mm than
+its declared `lipschitz` — a spot check, not a bound; formulas that read a texture are
+skipped) (warning); `implicit-csg-in-disguise` (the tree is only
 boxes, cylinders and halfspaces under sharp booleans — plain CAD the standard ops
 build exactly) (note).
 

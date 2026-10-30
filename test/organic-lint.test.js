@@ -134,6 +134,40 @@ test("implicit-csg-in-disguise: a blend, a round or a curved primitive makes it 
   expect(of(lintPart(implicitPart(sphere)), "implicit-csg-in-disguise")).toEqual([]);
 });
 
+// --- implicit-lipschitz-low -------------------------------------------------
+
+const exprSpec = (sdf, extra = {}) => ({ root: { kind: "expr", sdf, box: [[-12, -12, -12], [12, 12, 12]], ...extra } });
+
+test("implicit-lipschitz-low: a formula steeper than its declared lipschitz warns", () => {
+  const [f, ...rest] = of(lintPart(implicitPart(exprSpec("return length(p) * 3.0 - 30.0;"))), "implicit-lipschitz-low");
+  expect(rest).toEqual([]);
+  expect(f.severity).toBe("warning");
+  expect(f.message).toContain("root");
+  expect(f.message).toMatch(/3\.0/);
+});
+
+test("implicit-lipschitz-low: quiet when lipschitz covers the slope, and on a true distance", () => {
+  expect(of(lintPart(implicitPart(exprSpec("return length(p) * 3.0 - 30.0;", { lipschitz: 3 }))), "implicit-lipschitz-low")).toEqual([]);
+  expect(of(lintPart(implicitPart(exprSpec("return length(p) - 10.0;"))), "implicit-lipschitz-low")).toEqual([]);
+});
+
+test("implicit-lipschitz-low: a box distance written with max and abs kinks is quiet", () => {
+  const box = "vec3 q = abs(p) - vec3(8.0, 6.0, 4.0); return length(max(q, vec3(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);";
+  expect(of(lintPart(implicitPart(exprSpec(box))), "implicit-lipschitz-low")).toEqual([]);
+});
+
+test("implicit-lipschitz-low: an expr reading a texture is skipped", () => {
+  const spec = exprSpec("return length(p) * 3.0 - 30.0 + texture(skin, p.xy);", { textures: { skin: { image: "skin" } } });
+  const r = lintPart(implicitPart(spec, { images: { skin: new URL("file:///skin.png") } }));
+  expect(of(r, "implicit-spec-invalid")).toEqual([]);
+  expect(of(r, "implicit-lipschitz-low")).toEqual([]);
+});
+
+test("implicit-lipschitz-low: deterministic across runs", () => {
+  const part = implicitPart(exprSpec("return length(p) * 3.0 - 30.0;"));
+  expect(lintPart(part).warnings).toEqual(lintPart(part).warnings);
+});
+
 test("an invalid spec gets only implicit-spec-invalid", () => {
   const r = lintPart(implicitPart({ root: { kind: "union", k: 40, children: [{ kind: "box", size: [1, 1, 0.1] }, { kind: "spher" }] } }));
   expect(all(r).filter((f) => f.rule.startsWith("implicit-")).map((f) => f.rule)).toEqual(["implicit-spec-invalid"]);

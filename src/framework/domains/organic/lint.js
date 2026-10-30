@@ -11,6 +11,7 @@ import { validateSpec } from "../../geometry/implicit/grammar.js";
 import { lowerSpec } from "../../geometry/implicit/ir.js";
 import { IMPLICIT_DEFAULTS } from "../../geometry/implicit/compile.js";
 import { choosePreviewEdge } from "../../geometry/implicit/preview-edge.js";
+import { compileExprSource, evalExprScalar } from "../../geometry/implicit/expr-lower.js";
 
 const SPEC_OPS = new Set(["implicit", "implicitFrames"]);
 const ROUTED = new Set(ROUTED_CAD_OPS);
@@ -77,6 +78,32 @@ function* specNodes(node) {
   for (const c of node.children ?? []) yield* specNodes(c);
   if (node.child) yield* specNodes(node.child);
 }
+/** `[node, path]` for every node of a raw spec tree, paths as the engine writes them. */
+function* specPaths(node, path = "root") {
+  if (!node || typeof node !== "object") return;
+  yield [node, path];
+  for (const [i, c] of (node.children ?? []).entries()) yield* specPaths(c, `${path}.children[${i}]`);
+  if (node.child) yield* specPaths(node.child, `${path}.child`);
+}
+
+// The lipschitz spot check: N³ lattice points across the expr's box, a central difference
+// at each, and the RANK-th largest gradient norm (a kink — abs, max — can spike a few
+// differences above the true bound). At most MAX_EXPRS formulas per lint run.
+const LATTICE = 8, RANK = 5, MAX_EXPRS = 8, SLACK = 1.1;
+function sampledSlope(L, [lo, hi]) {
+  const h = 1e-3 * Math.hypot(...hi.map((v, a) => v - lo[a]));
+  const f = (x, y, z) => evalExprScalar(L, x, y, z, [], null);
+  const norms = [];
+  for (let i = 0; i < LATTICE; i++) for (let j = 0; j < LATTICE; j++) for (let k = 0; k < LATTICE; k++) {
+    const [x, y, z] = [i, j, k].map((t, a) => lo[a] + ((t + 0.5) / LATTICE) * (hi[a] - lo[a]));
+    const g = [f(x + h, y, z) - f(x - h, y, z), f(x, y + h, z) - f(x, y - h, z), f(x, y, z + h) - f(x, y, z - h)];
+    const n = Math.hypot(...g) / (2 * h);
+    if (Number.isFinite(n)) norms.push(n);
+  }
+  norms.sort((a, b) => b - a);
+  return norms[Math.min(RANK, norms.length) - 1] ?? 0;
+}
+
 const plainCsg = (spec) => !(spec.detail?.length) && [...specNodes(spec.root)].every((n) =>
   CAD_KINDS.has(n.kind) && !n.round && !(n.k > 0));
 
@@ -151,5 +178,27 @@ export const ORGANIC_LINT_RULES = [
       "k.implicit builds only boxes, cylinders and halfspaces with sharp booleans — plain CAD, meshed approximately",
       "Build it with the standard ops (k.box, k.cylinder, union/cut): they are exact, faster, and export a true STEP. Keep k.implicit for blended, organic forms.",
       "parts")),
+  },
+  {
+    id: "implicit-lipschitz-low",
+    run: (ctx) => {
+      const out = [];
+      let budget = MAX_EXPRS;
+      for (const { spec } of compiledCalls(ctx)) {
+        for (const [n, path] of specPaths(spec.root)) {
+          // A formula that reads a texture would be sampled against lint's stub pixels.
+          if (n.kind !== "expr" || n.textures || budget === 0) continue;
+          budget--;
+          const slope = sampledSlope(compileExprSource(n.sdf, { uniforms: n.uniforms ?? {} }), n.box);
+          const declared = n.lipschitz ?? 1;
+          if (slope <= SLACK * declared) continue;
+          out.push(warn("implicit-lipschitz-low",
+            `k.implicit: ${path} changes by up to ${slope.toFixed(1)} per mm on a sample of its box, but declares lipschitz ${declared} — the mesher can step past its surface and open holes`,
+            `Set \`lipschitz: ${Math.ceil(slope * 10) / 10}\` (or more) on the node, or rescale the formula toward a true distance. This is a spot check on ${LATTICE ** 3} points, not a bound. See ERROR-PATTERNS.md#implicit-lipschitz-low.`,
+            "parts"));
+        }
+      }
+      return out;
+    },
   },
 ];
