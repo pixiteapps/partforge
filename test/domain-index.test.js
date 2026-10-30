@@ -29,7 +29,7 @@ test("## Domains sits once, right after Quickstart", () => {
 
 test("a domain renders as one row", () => {
   expect(renderDomainIndex([fixture])).toContain(
-    '| Fixture | a test-only domain; never in a real part | `import { … } from "partforge/fixture"` | `test/fixtures/domain-fixture/guide.md` |');
+    '| Fixture | a test-only domain; never in a real part | `import { … } from "partforge/fixture"` | [`test/fixtures/domain-fixture/guide.md`](../test/fixtures/domain-fixture/guide.md) |');
 });
 
 test("with no domains the table is its header alone", () => {

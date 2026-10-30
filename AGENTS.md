@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has twenty: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has twenty-two: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -44,7 +44,11 @@ test/vector2d.test.js rather than by the part),
 relief plate, swappable source), and `laser-box.js` (the sheet-parts reference
 part - five `fingerBox` panels and a lid as `sheetPart` sub-parts, two printed
 hinges keyed into slots; a test fixture and the guide's worked example, with no
-demo page), and `material-swatches.js` (not a reference part: the dev-only
+demo page), `robot-finger.js` (the kinematics reference part - three printed
+links on pin joints, posed by one `limb` from `partforge/kinematics` in
+`derive` and placed with `d.finger.place`, a `curl` animation that never
+rebuilds; the worked example of `docs/domains/kinematics.md`, with no demo
+page), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`).
 
 ## Node version
@@ -603,9 +607,10 @@ the installed package, so let the publish finish before bumping the dep there.
   worker-safe; a domain never imports another domain. A manifest's `lintRules` may
   import `lint/finding.js` and nothing else from lint - `verify-metrics.js` reads the
   registry at module top level, so a rule reaching `rules-verify.js` would hit the
-  registry before it exists. `DOMAINS` is EMPTY on main until the first domain
-  (kinematics, the limb helper's own PR) lands; the seams are exercised by the
-  test-only fixture at `test/fixtures/domain-fixture/`, which seam tests reach by
+  registry before it exists. `DOMAINS` lists one domain, kinematics
+  (`domains/kinematics/`, `partforge/kinematics`), which tags no kernel op and
+  declares no facts, so the registry's other seams are exercised by the test-only
+  fixture at `test/fixtures/domain-fixture/`, which seam tests reach by
   `vi.mock`-ing `registry.js` - never by a test-only parameter on a public API.
   `partforge/lint` exports the registry as names only (`DOMAINS`) and
   `domainsOf(sources)`, which tells a host which domain guides to load for an

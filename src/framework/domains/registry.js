@@ -7,6 +7,8 @@
 // Import-free apart from the manifests, because lint, the oracle, the worker and the
 // CLI all load it: a manifest that booted a kernel or touched the DOM on import would
 // break every one of them.
+import kinematics from "./kinematics/manifest.js";
+
 const ID_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 const STRING_FIELDS = ["title", "when", "subpath", "guide"];
 const ARRAY_FIELDS = ["referenceParts", "kernelOps", "lintRules", "processes"];
@@ -53,8 +55,8 @@ export function validateDomains(list) {
   return Object.freeze([...list]);
 }
 
-// Empty on main: the kinematics domain (the limb helper's PR) adds the first line.
-export const DOMAINS = validateDomains([]);
+// One line per domain, in the order the authoring guide's index lists them.
+export const DOMAINS = validateDomains([kinematics]);
 
 // The domain that tagged a kernel op, or null for a core op. The tag is what the op
 // index and a host's compact prompt group by; test/kernel-contract.test.js holds every
