@@ -18,8 +18,11 @@ jobs:
   # Only enforced when the PR changes something that actually SHIPS. package.json's
   # `files` field publishes src, bin and types; a PR touching only docs, tests or
   # workflows has nothing to release and is exempt — including this job's own PR.
+  # Only a PR into main is checked: publish.yml runs on main alone, so a PR into an
+  # integration branch (feat/implicit) releases nothing, and its version moves when
+  # that branch merges to main.
   version:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
