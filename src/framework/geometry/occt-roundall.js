@@ -30,9 +30,15 @@ const VARIANTS = [
   { join: "int", inter: false },
   { join: "int", inter: true },
 ];
+// Solid.offset's cascade: the Arc joins alone. An Intersection join extends the
+// faces to sharp corners, which passes every gate yet is not a ball offset.
+const ARC_VARIANTS = VARIANTS.filter((v) => v.join === "arc");
 
-export function occtRoundAll(replicad, shape, r, warn = (msg) => console.warn(`partforge: ${msg}`)) {
-  if (!Number.isFinite(r) || r <= 0) throw new Error("roundAll: r must be a finite number > 0 (r = 0 is handled as the identity by the caller)");
+// One gated offset step: the variant cascade above, each candidate held to the
+// IsDone / closed / positive-volume / volume-monotonic gate. Returns
+// { solid, vol } or null when no variant survives. `variants` is the cascade
+// order. Never frees `topoOwner` — the caller owns it.
+function offsetStep(replicad, topoOwner, off, vol, variants = VARIANTS) {
   const oc = replicad.getOC();
   const tryOffset = (topo, offset, v) => {
     const progress = new oc.Message_ProgressRange_1();
@@ -55,6 +61,26 @@ export function occtRoundAll(replicad, shape, r, warn = (msg) => console.warn(`p
       progress.delete?.();
     }
   };
+  for (const v of variants) {
+    const cand = tryOffset(topoOwner.wrapped, off, v);
+    if (!cand) continue;
+    let cvol;
+    try { cvol = replicad.measureVolume(cand); } catch { cand.delete?.(); continue; }
+    if (!Number.isFinite(cvol) || cvol <= 0) { cand.delete?.(); continue; }
+    if (off > 0 && cvol < vol * 0.999) { cand.delete?.(); continue; } // dilation shrank: garbage
+    if (off < 0 && cvol > vol * 1.001) { cand.delete?.(); continue; } // erosion grew: garbage
+    // isClosedSolid meshes the candidate, and meshing OCCT offset garbage can
+    // throw — that is just another rejected candidate, not an escape hatch out
+    // of "roundAll never throws for geometry".
+    try { if (!isClosedSolid(cand)) { cand.delete?.(); continue; } }
+    catch { cand.delete?.(); continue; }
+    return { solid: cand, vol: cvol };
+  }
+  return null;
+}
+
+export function occtRoundAll(replicad, shape, r, warn = (msg) => console.warn(`partforge: ${msg}`)) {
+  if (!Number.isFinite(r) || r <= 0) throw new Error("roundAll: r must be a finite number > 0 (r = 0 is handled as the identity by the caller)");
   let vol;
   try {
     vol = replicad.measureVolume(shape);
@@ -65,30 +91,37 @@ export function occtRoundAll(replicad, shape, r, warn = (msg) => console.warn(`p
   }
   let cur = shape;
   for (const off of [r, -2 * r, r]) {
-    let next = null;
-    for (const v of VARIANTS) {
-      const cand = tryOffset(cur.wrapped, off, v);
-      if (!cand) continue;
-      let cvol;
-      try { cvol = replicad.measureVolume(cand); } catch { cand.delete?.(); continue; }
-      if (!Number.isFinite(cvol) || cvol <= 0) { cand.delete?.(); continue; }
-      if (off > 0 && cvol < vol * 0.999) { cand.delete?.(); continue; } // dilation shrank: garbage
-      if (off < 0 && cvol > vol * 1.001) { cand.delete?.(); continue; } // erosion grew: garbage
-      // isClosedSolid meshes the candidate, and meshing OCCT offset garbage can
-      // throw — that is just another rejected candidate, not an escape hatch out
-      // of "roundAll never throws for geometry".
-      try { if (!isClosedSolid(cand)) { cand.delete?.(); continue; } }
-      catch { cand.delete?.(); continue; }
-      next = cand;
-      vol = cvol;
-      break;
-    }
+    const next = offsetStep(replicad, cur, off, vol);
     if (cur !== shape) cur.delete?.(); // superseded intermediate; never the caller's shape
     if (!next) {
       warn(`roundall-skipped: offset step ${off} produced no valid solid — r=${r} is likely at/above the smallest feature size; returning the un-rounded solid`);
       return shape.clone();
     }
-    cur = next;
+    cur = next.solid;
+    vol = next.vol;
   }
   return cur;
+}
+
+// Solid.offset on the B-rep class: ONE gated offset step, Arc joins only, so the
+// corners match the mesh class's ball offset (convex edges round on a grow,
+// concave on a shrink). Unlike roundAll this never skips: an un-offset solid
+// handed back as an offset is silently wrong geometry (a skin cut from it comes
+// out empty), so a step no variant survives THROWS, with a greppable message
+// (docs/ERROR-PATTERNS.md "offset-failed"). The usual trigger is an erode at or
+// past half the thinnest wall — the B-rep offset cannot change topology, which
+// the mesh class's Minkowski does.
+export function occtOffset(replicad, shape, d) {
+  if (!Number.isFinite(d) || d === 0) throw new Error("offset: d must be a finite non-zero number (d = 0 is handled as the identity by the caller)");
+  let vol;
+  try {
+    vol = replicad.measureVolume(shape);
+  } catch (e) {
+    throw new Error(`offset-failed: offset(${d}) could not measure the input solid on the OCCT backend (${e?.message || e})`);
+  }
+  const next = offsetStep(replicad, shape, d, vol, ARC_VARIANTS);
+  if (!next) {
+    throw new Error(`offset-failed: offset(${d}) produced no valid solid on the OCCT backend — |d| is likely at/above half the thinnest wall, or the shape has faces OCCT cannot offset; the Manifold backend's offset handles both (meta.backend: "manifold")`);
+  }
+  return next.solid;
 }

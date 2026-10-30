@@ -312,6 +312,24 @@ extern "C" void cn_finish(CNState* s, const uint32_t* oids, const double* crease
     }
   }
 
+  // trueThin: a thin triangle within coplanarCos of a full-size triangle of its
+  // own surface at one of its corners keeps its lines (the JS `trueThin`).
+  // Blend surfaces never do.
+  std::vector<uint8_t> trueThin(nTri, 0);
+  for (uint32_t t = 0; t < nTri; t++) {
+    const Tri& T = tri[t];
+    if (T.thin >= MIN_FACE || pol[T.pol].boundaryLines) continue;
+    const double fx = T.fn[0], fy = T.fn[1], fz = T.fn[2];
+    for (int k = 0; k < 3 && !trueThin[t]; k++) {
+      const uint32_t cv = weld[tris[t * 3 + k]];
+      for (uint32_t i = incStart[cv]; i < incStart[cv + 1]; i++) {
+        const Tri& T2 = tri[incList[i] / 3];
+        if (T2.thin < MIN_FACE || T2.oid != T.oid) continue;
+        if ((double)T2.fn[0] * fx + (double)T2.fn[1] * fy + (double)T2.fn[2] * fz >= coplanarCos) { trueThin[t] = 1; break; }
+      }
+    }
+  }
+
   // Feature edges. The JS walks each triangle's three edges (corner edges,
   // pos = t * 3 + e) keyed by their welded endpoints, and a Map pairs each
   // edge's sightings in order: the 2nd sighting meets the 1st, the 4th the 3rd
@@ -370,7 +388,7 @@ extern "C" void cn_finish(CNState* s, const uint32_t* oids, const double* crease
       const Policy& Pt = pol[Tt.pol];
       const bool sameOID = Tp.oid == Tt.oid;
       const bool boundary = !sameOID && Pp.boundaryLines != Pt.boundaryLines;
-      if (!boundary && (Tp.thin < MIN_FACE || Tt.thin < MIN_FACE)) continue;
+      if (!boundary && ((Tp.thin < MIN_FACE && !trueThin[prev]) || (Tt.thin < MIN_FACE && !trueThin[t]))) continue;
       const double dot = (double)Tp.fn[0] * Tt.fn[0] + (double)Tp.fn[1] * Tt.fn[1] + (double)Tp.fn[2] * Tt.fn[2];
       const bool bends = std::fabs(dot) < coplanarCos;
       const bool bothBlend = !sameOID && Pp.boundaryLines && Pt.boundaryLines;

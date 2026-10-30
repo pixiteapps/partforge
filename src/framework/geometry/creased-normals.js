@@ -291,6 +291,27 @@ export function creasedNormalsJS(g, { policies = null, featureLabels = null, sur
     }
   }
 
+  // A thin triangle is noise only when its facet disagrees with its surface. A
+  // flat cap's triangulation makes thin triangles of its own — three consecutive
+  // rim vertices (sagitta-tall), a long fan from the rim to a bore — and gating
+  // those dropped a rim segment or two from nearly every cylinder top. A thin
+  // triangle lying within COPLANAR_ANGLE of a full-size triangle of its own
+  // surface at one of its corners carries a true normal, so it keeps its lines;
+  // the boolean slivers the gate is for tilt 18-90° off their neighbours (or have
+  // no normal at all) and stay gated. Blend bands are left out: a band curves, so
+  // a sliver folded across it still lies along SOME band facet at a corner, and
+  // its fan slivers are what the gate was written for.
+  const trueThin = new Uint8Array(nTri);
+  for (let t = 0; t < nTri; t++) {
+    if (thin[t] >= MIN_FACE || polFor(triOID[t]).boundaryLines) continue;
+    const fx = fn[t * 3], fy = fn[t * 3 + 1], fz = fn[t * 3 + 2];
+    search: for (let k = 0; k < 3; k++)
+      for (const t2 of incident.get(weld[tris[t * 3 + k]])) {
+        if (thin[t2] < MIN_FACE || triOID[t2] !== triOID[t]) continue;
+        if (fn[t2 * 3] * fx + fn[t2 * 3 + 1] * fy + fn[t2 * 3 + 2] * fz >= COPLANAR_COS) { trueThin[t] = 1; break search; }
+      }
+  }
+
   // Feature edge segments for CAD-style edge lines: draw a line where the
   // surface actually BENDS. Same-surface edges draw per the surface's policy
   // (sharper than creaseAngle, and only if the policy wants same-surface lines
@@ -328,7 +349,7 @@ export function creasedNormalsJS(g, { policies = null, featureLabels = null, sur
       // filter still drops the short ones).
       const boundary = !sameOID &&
         !!polFor(triOID[prev]).boundaryLines !== !!polFor(triOID[t]).boundaryLines;
-      if (!boundary && (thin[prev] < MIN_FACE || thin[t] < MIN_FACE)) continue;
+      if (!boundary && ((thin[prev] < MIN_FACE && !trueThin[prev]) || (thin[t] < MIN_FACE && !trueThin[t]))) continue;
       const dot = fn[prev * 3] * fn[t * 3] + fn[prev * 3 + 1] * fn[t * 3 + 1] + fn[prev * 3 + 2] * fn[t * 3 + 2];
       // A multi-hole cap triangulation can contain an opposite-wound bridge:
       // its two normals disagree by 180 degrees even though both triangles lie

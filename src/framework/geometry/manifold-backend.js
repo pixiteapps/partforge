@@ -21,7 +21,7 @@ import { creasedNormals } from "./creased-normals.js";
 import { loftShadingPolicy, SMOOTH, BLEND, ORGANIC } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
 import { affineAt, IDENTITY, invertAffine, mapSurface } from "./blend-surfaces.js";
-import { flatFacePlanes, meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
+import { flatFacePlanes, meshOffset, meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
 import { SEGS, circleSegs, doubleCurvatureSegs } from "./circle-segs.js";
 import { checkBooleanResult } from "./boolean-gate.js";
 import { KernelCapabilityError } from "./errors.js";
@@ -64,6 +64,8 @@ function axisAngleMat4(axis, deg) {
   // column-major: columns are images of the basis vectors; 4th column = translation (0)
   return [R00, R10, R20, 0,  R01, R11, R21, 0,  R02, R12, R22, 0,  0, 0, 0, 1];
 }
+
+const BYTES_PER_TRI = 160, BYTES_PER_VERT = 24;
 
 export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const { Manifold, CrossSection } = wasm;
@@ -132,7 +134,18 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   };
   const judgedUnion = (ms) => judged("union", ms, unionRaw(ms));
 
-  const cache = createSolidCache();
+  // A retained solid's heap, estimated from its counts (solid-cache.js MEMORY BUDGET):
+  // Manifold keeps per triangle three half-edges, a face normal, a triangle reference and
+  // its share of the collider, and per vertex a position and a normal.
+  // CrossSections (memoized 2-D profiles) are small: a few dozen bytes per vertex.
+  // Measured against the heap a 105-plate forge's cache held (feedback #212).
+  const cache = createSolidCache({
+    sizeOf: (pin) => {
+      if (typeof pin?.numTri === "function") return pin.numTri() * BYTES_PER_TRI + pin.numVert() * BYTES_PER_VERT;
+      if (typeof pin?.numVert === "function") return pin.numVert() * 32;
+      return 0;
+    },
+  });
   // Feature-skip warnings (the OCCT backend's safeOp policy, adopted here): a
   // fillet/chamfer whose mesh machinery is defeated by the geometry returns its
   // INPUT solid unchanged and records one message here instead of failing the
@@ -471,7 +484,12 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // meshRoundAll's simplify tolerance protects), so only the face and its seam
   // vertices are on a plane. Keyed on geometry like every descriptor (see
   // blendSurfaces above), so it is never removed with the cache entry.
-  const markFlatFaces = (input, out, r) => {
+  //
+  // offset() reuses it with `moveTo`: a single dilate/erode step moves each flat
+  // face along its normal instead of returning it to its plane, so the planes are
+  // moved to where the step put them before they are registered. `r` and `segs`
+  // are the ball the step used (the tolerance rule is the same).
+  const markFlatFaces = (input, out, r, segs = roundAllSegs(2 * r, quality), moveTo = null) => {
     const gi = input.getMesh();
     let planes;
     try {
@@ -479,8 +497,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     } finally {
       gi.delete?.();
     }
+    if (moveTo) planes = planes.map(moveTo);
     if (!planes.length) return out;
-    const segs = roundAllSegs(2 * r, quality);
     const tol = Math.min(1e-3, 0.25 * r * (1 - Math.cos((2 * Math.PI) / segs)));
     const go = out.getMesh();
     try {
@@ -577,6 +595,18 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       // tessellation, and so the result, is tier-dependent.
       return cached(h("roundAll", hash, r, quality), () =>
         prismRoundAllFast(m, hash, r) ?? markFlatFaces(m, T(meshRoundAll(wasm, m, r, quality)), r));
+    },
+    // Ball offset (mesh-roundall.js meshOffset): one dilate or erode, never
+    // routed, never NEEDS_OCCT. An erode deeper than the solid's half-thickness
+    // consumes it — the empty result is the honest answer, not a failure.
+    offset: (d) => {
+      if (!Number.isFinite(d)) throw new Error(`offset: d must be a finite number (got ${d})`);
+      if (d === 0) return wrap(m, hash); // contract: zero magnitude is the identity
+      return cached(h("offset", hash, d, quality), () => {
+        const { out, support, segs: ballSegs } = meshOffset(wasm, m, d, quality);
+        const sign = Math.sign(d); // a dilate moves a face out by h(n), an erode in by h(n)
+        return markFlatFaces(m, T(out), Math.abs(d), ballSegs, (p) => ({ n: p.n, d: p.d + sign * support(p.n) }));
+      });
     },
     // batch difference: first minus the union of the rest, evaluated as one boolean
     // tree — no materialized intermediate union (the unionRaw memory note applies)
@@ -1108,6 +1138,10 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),
     sweepCache: () => cache.sweep(),
+    dropCache: () => cache.clear(),
+    setCacheBudget: (bytes) => cache.setBudget(bytes),
+    trimCache: () => cache.trim(),
+    cacheBytes: () => cache.retainedBytes(),
     cacheStats: () => cache.stats(),
     resetCacheStats: () => cache.resetStats(),
     // Drain the feature-skip warnings recorded since the last drain (see

@@ -442,3 +442,22 @@ export function sheetToWorld(pose: SheetPose | null, uv: Point2, depth?: number,
 
 /** A world point → where it lands on a posed sheet's drawing, [u, v]. `pose` null is the canonical frame. */
 export function worldToSheet(pose: SheetPose | null, xyz: Point3): [number, number];
+
+// --- Rotation converters ---------------------------------------------------------------
+
+/** A frame-style rotation step: `deg` about `axis`, each step about the CURRENT axes. `axis` defaults to "z" and `deg` to 0. */
+export interface RotateStep { axis?: "x" | "y" | "z" | Point3; deg?: number }
+
+/** Radians → degrees. */
+export function deg(radians: number): number;
+/** Degrees → radians. */
+export function rad(degrees: number): number;
+
+export type EulerOrder = "XYZ" | "XZY" | "YXZ" | "YZX" | "ZXY" | "ZYX";
+
+/** Euler angles as frame-style steps: `angles[i]` turns about `order[i]` (scipy convention). `order` and `frame` are required. */
+export function euler(opts: { order: EulerOrder; angles: [number, number, number]; frame: "intrinsic" | "extrinsic"; units?: "deg" | "rad" }): RotateStep[];
+/** Inverse of `euler`: the angles (about `order[i]`) that the rotation `steps` compose to. */
+export function toEuler(steps: RotateStep[], opts: { order: EulerOrder; frame: "intrinsic" | "extrinsic"; units?: "deg" | "rad" }): [number, number, number];
+/** Apply frame-style steps to anything with `rotate(deg, center, axis)` (a Solid), about `center` (default the origin). */
+export function applyRotation<T extends { rotate(deg: number, center?: Point3, axis?: Point3): T }>(x: T, steps: RotateStep[], center?: Point3): T;

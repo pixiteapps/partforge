@@ -15,6 +15,7 @@ import { handle } from "./jobs.js";
 export { coreStatus, onCoreFallback, CORE_FALLBACK_REASONS } from "./core/core-status.js";
 import { lintPart } from "../lint.js";
 import { cachedVectorDocs } from "./vectors.js";
+import { describeKernelThrow } from "./kernel-error.js";
 
 async function manifoldKernels() {
   const [{ default: Module }, { createManifoldKernel }] = await Promise.all([
@@ -28,6 +29,15 @@ async function manifoldKernels() {
     print: createManifoldKernel(wasm, { quality: "print" }),     // high-res STL export
   };
 }
+
+// Jobs that build every selected sub-part again at export quality. Before one runs,
+// the worker drops its kernels' display caches (dropCache): the cache's retained
+// solids and the export's build share one WASM heap, and on a very large part the
+// display build alone held ~1.75 GB — on a phone, enough that exporting three of a
+// 105-plate forge's plates ran out of heap (feedback #212). The cost is one cold
+// display build after an export; exports are rare and deliberate, a failed one
+// costs the user the whole job.
+const EXPORT_JOBS = new Set(["export-stl", "export-step", "export-3mf", "export-bundle"]);
 
 async function occtKernel() {
   const [{ default: opencascade }, wasmUrlMod, replicad, { createOcctKernel }] = await Promise.all([
@@ -109,10 +119,16 @@ export function runWorker(part, opts = {}) {
         // escaping rejection would kill the pump: this job AND everything queued behind
         // it would be dropped with no reply at all, leaving the host waiting on a message
         // that never comes until its own timeout fires.
+        let kernel = null;
         try {
           // A generate superseded while it sat in the queue never builds at all.
           if (job.epoch !== null && job.epoch !== epoch) continue;
-          const kernel = await kernelFor(job.data);
+          kernel = await kernelFor(job.data);
+          if (EXPORT_JOBS.has(job.data?.type)) {
+            manifold?.preview.dropCache?.();
+            manifold?.print.dropCache?.();
+            occt?.dropCache?.();
+          }
           // handle() declares each message's transferables (the big binary buffers).
           const post = (m, transfer = []) => postMessage(m, transfer);
           if (job.epoch === null) { await handle(kernel, job.part, job.data, post, { importMeshes, jobs: opts.jobs }); continue; }
@@ -122,14 +138,22 @@ export function runWorker(part, opts = {}) {
           // generate that goes stale once dequeued. Both would otherwise post the OLD
           // part's meshes after a rebind. Downgrading them to `superseded` keeps the
           // contract simple: a `meshes` post is current as of the moment it is posted.
-          const gated = (m, transfer = []) =>
-            (m.type === "meshes" && isStale() ? post({ type: "superseded" }) : post(m, transfer));
+          // A progressive batch that went stale is simply dropped: the job's own
+          // final reply (or its superseded) still settles the cycle.
+          const gated = (m, transfer = []) => {
+            if (m.type === "meshes-partial" && isStale()) return;
+            if (m.type === "meshes" && isStale()) return post({ type: "superseded" });
+            post(m, transfer);
+          };
           await handle(kernel, job.part, job.data, gated, { isStale, importMeshes, jobs: opts.jobs });
-        } catch (err) {
+        } catch (thrown) {
           // Same shape jobs.js posts for a failed build, so hosts need no new branch.
           // Carry the job's jobId when it has one (capture/export are correlated by it):
           // a boot failure hitting kernelFor here must reach the right controller, or a
           // correlated caller (captureView, exportParts) would hang instead of settling.
+          // A bare number (an uncaught C++ exception out of the kernel) is given
+          // words here too, exactly as jobs.js does for a build.
+          const err = describeKernelThrow(thrown, { evidence: kernel?._throwEvidence?.(thrown) });
           const jobId = job.data?.jobId;
           postMessage({ type: "error", message: String(err?.message || err), ...(jobId != null ? { jobId } : {}) });
         }

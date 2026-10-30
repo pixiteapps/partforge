@@ -19,6 +19,15 @@ portable Solid fillet/chamfer API and the OCCT-only shell op.
 
 ---
 
+## Domains
+
+A domain is a set of helpers for one kind of part, with its own import and its own
+self-contained guide. When a part matches a domain's description, read that guide first.
+
+- **Kinematics** — jointed limbs, fingers, arms, robot hands; posing links about joints; reach and grip. `import { limb } from "partforge/kinematics";` — guide: [`docs/domains/kinematics.md`](domains/kinematics.md).
+
+---
+
 ## Quickstart
 
 1. Copy `src/parts/demo.js` to `src/parts/<your-part>.js` and edit it.
@@ -1761,8 +1770,10 @@ const plate = k.shape2d(roundedRectProfile(40, 24, 4))
   .extrude({ h: 3 });   // sugar for k.extrude({ profile: …, h: 3 }); .revolve({ degrees }) too
 ```
 
-A `Shape2D` also carries `.extrude({ h, twist?, scaleTop? })` and `.revolve({ degrees? })`
-sugar (equivalent to the `k.extrude`/`k.revolve` forms), and `.regions()` — scission, which
+A `Shape2D` also carries `.extrude({ h, twist?, scaleTop?, bevel? })` and `.revolve({ degrees? })`
+sugar (equivalent to the `k.extrude`/`k.revolve` forms — every option is passed through, so
+`shape.extrude({ h, bevel: 1 })` bevels the rims exactly as `k.extrude` does; before partforge
+0.163.2 the sugar dropped `bevel` and any unknown key without a word), and `.regions()` — scission, which
 returns each disjoint region as its own live `Shape2D` (vs `.toRegions()`, which returns raw
 `{outer, holes}` data).
 
@@ -1774,7 +1785,7 @@ const wall  = k.shape2d(outer).offset(-2, { corners: "sharp" });  // inset, mite
 
 (This achieves the same geometry as building the profiles separately and using `k.extrude({ profile: { outer, holes }, h })`, but the Shape2D path is more idiomatic for complex 2-D operations.)
 
-`Shape2D.offset(delta, { corners: "round" | "chamfer" | "sharp" })` grows (`delta>0`) or insets (`delta<0`) a shape. It runs backend-independently on the shared contour engine — lines and arcs offset exactly (arcs stay arcs), so results are backend-identical by construction, like every other `Shape2D` op; it throws if the offset collapses the shape. A region with holes offsets material-wise: the outer grows/shrinks by `delta`, holes by `-delta`, so a positive `delta` always adds material. (For `derive()`/main-thread clearance math on plain point lists, use the pure `offsetPolygon` helper instead.)
+`Shape2D.offset(delta, { corners: "round" | "chamfer" | "sharp" })` grows (`delta>0`) or insets (`delta<0`) a shape. It runs backend-independently on the shared contour engine — lines and arcs offset exactly (arcs stay arcs), so results are backend-identical by construction, like every other `Shape2D` op; it throws if the offset collapses the shape. A region with holes offsets material-wise: the outer grows/shrinks by `delta`, holes by `-delta`, so a positive `delta` always adds material. (For `derive()`/main-thread clearance math on plain point lists, use the pure `offsetPolygon` helper instead.) The 3-D counterpart is `Solid.offset(d)` — a ball offset of a whole solid (see [`offset(d)`](#offsetd--grow-or-shrink-a-solid)).
 
 ## Editing profiles
 
@@ -1918,6 +1929,191 @@ New, all delegating to the pure functions above over the shape's stored contours
 that tessellates nothing, unlike `toRegions()`), `fillet(r, opts?)`, `chamfer(dist,
 opts?)`, `simplify(tolerance)`, `corners()`, `contains([x,y])`, `isEmpty()` (no
 regions left — see the vanishing-features rule above).
+
+## Printed parts
+
+3D-printed parts: FDM (filament) and resin. Everything that is not a sheet
+part is printed, but a part says so on purpose by declaring its print process in
+`verify.process`; that one key arms the process's print checks below from the first
+build (all of them under FDM; bed fit and min wall under `resin`). Name
+the process the user will print with, never one written by habit: it is the declaration
+the checks, the fits and the advice all read.
+
+### Declaring the process
+
+`process` is a profile id — `fdm-pla`, `fdm-petg` (the `fdm` process) or `resin` (the
+`resin` process) — or an inline object whose `base` names one and whose other keys
+override it: `{ base: "fdm-pla", bed: [256, 256, 256] }` for a bigger printer,
+`{ base: "fdm-pla", fits: { … } }` for a calibrated one (`fits` replaces the whole
+table). The profile numbers are in the `verify` section's table below. `accept` lists
+the costs the user has chosen to pay:
+
+```js
+verify: {
+  process: "fdm-pla",
+  accept: ["supports"],        // the user chose supports for the organic body
+  expect: { body: { holes: 1 }, _view: { overlaps: 0 } },
+}
+```
+
+### Gates, costs and advisories
+
+Every print check is in exactly one tier, decided by what the reading means:
+
+| tier | checks | effect on `verify.ok` |
+| --- | --- | --- |
+| **gate** — a defect in any orientation | bed fit (`bbox` within `bed`), bed contact (`bedContactPct` ≥ 50), a declared flexing member's root fillet (`flexRoot` ≥ half its thickness) | fails it |
+| **cost** — a design choice with a price | overhang (`overhangArea`, id `supports`), footprint (`footprintPct` ≥ 10, id `footprint`), a flexing member printed standing (`flexTilt` ≤ 45°, id `standing`) | never |
+| **advisory** — a reading that may not matter | min wall (`minWall`), `wall`, a flexing member's root strain at its declared deflection (`flexStrain`) | never; a warning |
+
+A **gate** is fixed before the work is done: the piece cannot be printed this way
+whatever the user wants. A **cost** is a fact with a number and a location — mm² of
+overhang on a named piece and where it sits, or the share of a piece's silhouette on
+the bed that actually touches it — listed in `verify().costs` (never in `warnings`) with `status: "cost"`. It
+does not block a part still being shaped; it informs. Say each cost to the user once,
+in one sentence naming the piece, the number and the alternative ("the arm overhangs
+by 840 mm² and prints on supports; splitting it at the elbow avoids them"), and record
+the answer in `accept`. An **advisory** is read, and acted on only when
+it is real (a thin wall the user will hold, not a sliver at a facet seam).
+
+**Accepting a cost is not switching it off.** An accepted cost is still measured and
+still listed in `costs`, with `accepted: true`, so the number stays visible; it is
+simply no longer something to raise. Switching a measurement off is the inline
+profile form, `{ base: "fdm-pla", overhang: null }` (or `footprint: null`,
+`bedContact: null`), and is for a part where the reading is meaningless, not unwelcome.
+A threshold the user named ("under 500 mm² of supports") is an `expect`:
+`overhangArea: "<=500"` — still a cost, reported in `costs` and never failing `ok`;
+the user's own limit keeps its meaning, so it is never marked accepted, whatever
+`accept` says (`accept` covers only the process's default check). Lint refuses an `accept` entry the process does not define
+(`verify-unknown-accept`): `fdm` defines `supports`, `footprint` and `standing`; `resin` prints on
+supports and defines none.
+
+**What arms what.** Under `fdm-pla`/`fdm-petg` the profile alone arms every check in
+the table except `wall`, which runs only where a sub-part declares a band; overhang fires past 1 mm². `resin` arms bed fit and min wall only. `orientation: "print"` declares that `build()`
+is the print pose (Z up, bed at the lowest Z); it arms nothing under a named profile,
+and with no profile at all it arms bed contact alone. An expectation you write yourself
+(`overhangArea`, `bedContactPct`, `footprintPct`) arms its own measurement under any
+profile or none; an `overhangArea` one is measured against 45° when the profile names no
+angle.
+
+### Orientation first
+
+Decide each piece's print pose before its geometry. Put its largest flat face on the
+bed; when a piece has none, split it at its widest flat section so each half has one,
+and join the halves with pins or a dovetail. `build()` IS that pose — every check and
+every export reads the piece as built — and `views.assembly` poses it into place; a
+`print` view lays the pieces out on the bed beside each other (see "The
+`PartDefinition` contract"). A piece that reads well in the assembly and prints on its
+side is the most common source of both costs.
+
+### What costs supports and what does not
+
+Overhangs past the profile's angle (45° from vertical on FDM) cost supports, and so
+do bridges longer than `bridge` (10 mm) and any cavity that opens downward — a socket
+under a ball, a pocket on the underside. The check counts every flat underside, a short
+bridge and the ceiling of a horizontal bore included, since a mesh cannot tell a bridge
+from a ceiling: a bridge within `bridge` prints without support, so tell the user that
+rather than redesign it. Faces within 45° of
+vertical do not cost supports: a chamfer under a ledge instead of a square step, a
+teardrop bore (a round hole with a 45° peak on top) instead of a round one. Faces on
+the bed or within 1 mm of it are never counted, so a bottom-edge chamfer, or a small fillet, is
+free.
+
+**Ball joints on FDM** are a split socket (two halves that clamp the ball and screw or
+pin together) or a pinned clevis, not a socket snapped over a sphere: the snap's inside
+is a downward cavity that prints on supports nobody can reach. Build the snap only when
+the user wants it and has accepted the supports.
+
+### Flexing members
+
+Anything meant to bend in use — a snap arm, a buckle prong, a clip, a latch hook, a
+cantilever tab, a living spring — fails in four ways, and the first three read off the
+same declaration. It must meet the body it grows from through a **fillet at its root of
+at least half its thickness**: bending puts the highest stress at the root, a sharp
+inside corner multiplies it several times over, and an FDM print's layers are weakest
+across exactly that corner, so an unrounded arm snaps off flush with the body, often on
+the first few flexes. Decide the root fillet with the arm, not after it, and keep it
+clear of whatever the arm slides into (chamfer that mouth so the fillet seats). Its
+**root strain** at the travel it is designed for must stay under what the material takes
+— for a straight cantilever that is 1.5 × thickness × deflection / length², so a short,
+thick arm with a deep undercut yields or cracks whatever its root looks like: lengthen
+it, thin it, shorten the travel, or taper it (half the thickness at the tip bends about
+60% further). It must **lie flat on the bed**: an arm standing up in the print pose has
+its layers stacked across its root, and a layer bond is a fraction of the in-plane
+strength. And it must not be thinner than the process prints (`minWall`, as for anything).
+
+Declare every such member in `verify.flex`, by its feature label, and label the member
+**apart from the body** it grows from:
+
+```js
+const arm = k.prism({ points: armPts, h: d.armH }).label("Right prong");
+let s = k.union([base, arm, otherArm])
+  .fillet({ r: 0.5 * p.armThick, edges: { inPlane: "XZ", at: 0 } }); // the arms' roots on the base face
+// …
+verify: {
+  process: "fdm-pla",
+  flex: [
+    { feature: "Right prong", deflection: p.undercut },   // the travel it snaps through
+    { feature: "Left prong", deflection: p.undercut },
+    ["Latch", "Latch barb"],                               // one member made of two labels
+  ],
+  expect: { … },
+},
+```
+
+An entry is a label, a list of labels that make one member (an arm and the rib or barb
+on it, which otherwise counts as "the rest of the part"), or an object with `feature`,
+optional `labels`, the `deflection` in mm that arms the strain reading, and a
+`thickness` in mm when the mesh would misread the bending thickness (the member's
+smallest extent, which a wide hook or a tapered arm can fool). verify then reports, per
+sub-part carrying a member:
+
+- `flexRoot` — the root's fillet radius in mm, 0 where any of it is sharp, against the
+  process's `rootFillet` share of the member's thickness (0.5 everywhere). A gate,
+  under any process or none: a fillet's faces are tangent where they meet the member
+  and the body, a face that only continues flush into the body is not a corner, and a
+  45° chamfer is still a corner.
+- `flexStrain` — the root strain in percent at the declared deflection, against the
+  process's `strain` (1.5 on PLA, 3 on PETG, 2 on resin). An advisory, since the
+  cantilever formula is a first approximation; a member with no `deflection` is not read.
+- `flexTilt` — the degrees the member's long axis rises off the bed in the print pose,
+  against the FDM profiles' `flexTilt` (45°). A cost, `standing`, that the user may
+  accept (`accept: ["standing"]`); resin is isotropic and never asks.
+
+Only what you declare is checked: the oracle cannot tell an arm that bends from a wall,
+a tooth or a pin of the same shape. A name no build labels is lint's
+`verify-flex-unknown-label` warning, a member no sub-part of the verified view carries is
+reported as skipped, and a member whose label meets nothing (the label put on the whole
+union) withholds the verdict.
+
+### Small features and scale
+
+A feature thinner than the profile's `minWall` (1.2 mm PLA, 1.5 mm PETG, 0.6 mm
+resin) prints as noise or not at all. A part with a scale parameter is checked at both
+ends of it: add a preset at the smallest and the largest scale and name them in
+`verify.cases`, so the small end's pins and walls are measured rather than described
+in the control's label ("below 150 mm the pins get thin").
+
+### Fits
+
+Size a mating feature from the profile's fit class — `press`, `push`, `slip`,
+`moving`, `printInPlace` — copied into `derive()` with a comment naming it
+(`// slip fit: fdm-pla 0.25`), and a horizontal bore enlarged by `holeUndersize`. A
+snap is a contact; its fit is `push` or `slip`, and its arm gets a root fillet
+("Flexing members" above). The numbers, and how a diametral fit
+becomes a `clearance` expectation, are in the `verify` section below.
+
+### First layer
+
+The first layer squashes wider than drawn (elephant's foot): give a bottom edge that
+must mate or measure true a small 45° chamfer (about 0.4 mm). Keep the underside flat
+and lowest: a knuckle, pin or boss that dips below it lifts the flat face off the bed
+and fails bed contact ([piece-hovers-above-bed](ERROR-PATTERNS.md#piece-hovers-above-bed))
+— size a print-in-place knuckle tangent to the bed and give it a block down to
+z = 0. A piece resting on a point, a line or a curve is reported as a footprint cost
+([piece-stands-on-nothing](ERROR-PATTERNS.md#piece-stands-on-nothing)): lay it on a
+flat face, add a pad, or record the user's brim with `accept: ["footprint"]`. Never
+emboss text on the underside; deboss it, or put it on a side or the top.
 
 ## Sheet parts
 
@@ -4008,8 +4204,9 @@ runtime a throwing probe only degrades quietly to `{ error }`.
 
 **Verify block** — `verify-unknown-metric`, `verify-unknown-subpart`,
 `verify-bad-expr`, `verify-bad-pair-check`, `verify-unknown-process`,
-`verify-unknown-orientation`,
-`verify-expect-throws` (all errors). Note `_view` also accepts the pair-wise
+`verify-unknown-orientation`, `verify-unknown-accept`, `verify-bad-flex`,
+`verify-expect-throws` (all errors), and `verify-flex-unknown-label` (a warning: a
+`verify.flex` label no build writes at the default parameters). Note `_view` also accepts the pair-wise
 `contacts` / `clearance` / `held` keys, which are not scalar view metrics; they are
 validated by `verify-bad-pair-check`, matching `verify.js`'s own handling.
 
@@ -4173,7 +4370,8 @@ carries:
   from a sample rather than every triangle (see below); `overhangArea` sets one
   naming the steepest unsupported face's angle,
 - `location` — `[x, y, z]` in mm where the metric has one: `minWall` (thinnest
-  sample point), `overhangArea` (the largest unsupported face's centroid) and
+  sample point), `overhangArea` (the largest unsupported face's centroid),
+  `footprintPct` (the piece's lowest point; absent when its export-pose reading failed) and
   `overlaps` (the center of the first offending intersection's
   *bounding box* — a nearby indicator, not an exact point: when a pair overlaps in
   more than one place the bbox center can fall in the empty space between regions)
@@ -4188,11 +4386,24 @@ exists, e.g. the OCCT backend or min-wall measurement turned off, matching
 per triangle, which is unbounded work on a dense mesh, so past a sample budget
 it casts from a spread, deterministic subset instead — `minWallSampled` (boolean)
 and `minWallSamples` (`{ sampled, total }` or `null`) say whether that happened.
-A part that opted into the overhang check (see the `verify` block) also carries
+A part checked for overhang (a profile carrying `overhang`, or an `overhangArea`
+expectation — see the `verify` block) also carries
 `overhangArea` (mm² of unsupported downward-facing surface, `null` when not
 checked or on an `exportable: false` sub-part), `overhangAngle` (the steepest such
 face, degrees from vertical) and `overhangAt` (that face's centroid); the report's
 `measuredOverhang` stamps the angle the pass ran against, or `null`.
+A part checked for bed contact (an FDM profile, see the `verify` block) carries
+`bedContactPct` (0–100, the share of the near-bed flat underside on the bed; `null`
+when not checked or on an `exportable: false` sub-part), `bedContactArea` and
+`bedHoverArea` (mm² touching and hovering), `bedHoverGap` (how far above the bed the
+largest hovering face sits, `null` when nothing hovers) and `bedHoverAt` (its
+centroid); the report's `measuredBedContact` says whether the pass ran. The same
+pass reads `footprintPct` (the share of the piece's silhouette on the bed that actually
+touches it, in percent; `null` when not measured or the silhouette is empty) and
+`footprintAt`
+(the piece's lowest point; `null` when its export-pose reading failed), stamped by
+`measuredFootprint`; a profile carrying
+`footprint`, or a `footprintPct` expectation, arms the pass too.
 A sub-part that declares `wall` (see the `verify` section below) also carries
 `wall` — `{ value, location, band, members }` or `null`: the declared band's
 worst member, located, with the band it was measured against and how many rays
@@ -4296,10 +4507,12 @@ A part can declare how it should be checked, co-located with its schema, so
 
 ```js
 verify: {
-  process: "fdm-pla",            // a DFM profile: fdm-pla | fdm-petg | resin, or an
-                                  // inline { base, bed:[x,y,z], minWall, overhang, fits, holeUndersize, bridge } object
-  orientation: "print",          // optional; ONLY with this is overhang checked — it says the
-                                  // part is laid out for its bed (Z up, bed at the lowest Z)
+  process: "fdm-pla",            // a DFM profile: fdm-pla | fdm-petg | resin, or an inline
+                                  // { base, bed:[x,y,z], minWall, overhang, bedContact, footprint, fits, holeUndersize, bridge,
+                                  //   rootFillet, strain, flexTilt } object
+  accept: ["supports"],          // optional; the costs the user chose to pay (fdm: supports, footprint, standing)
+  orientation: "print",          // optional; declares build() is the print pose (Z up, bed at
+                                  // the lowest Z) — with no profile it arms bed contact
   cases: ["defaults", "M3"],     // optional; default = defaults + every preset
   expect: {                      // design intent, by sub-part name (+ "_view")
     spacer: { holes: 1, bbox: "<=[60,60,60]", volume: "0.4..0.6cm3" },
@@ -4312,28 +4525,115 @@ verify: {
 ```
 
 **What the profile gives you:** a hard **bed-fit** gate (the view bbox must fit `bed`),
-a **min-wall** warning, and — only for a part that also declares
-`orientation: "print"` — an **overhang** warning: `overhangArea` is the mm² of
+a **min-wall** warning, and on the FDM profiles a **bed-contact** gate and two
+**costs** — overhang and footprint (below). A cost is never a failure: it is a design
+choice with a price, reported in `verify().costs` with its number, location and hint
+and `status: "cost"`, and `ok` ignores it. See "Printed parts" for the tiers and how
+to raise a cost with the user.
+
+**Overhang — a COST, armed by the process.** `overhangArea` is the mm² of
 downward-facing surface steeper than the profile's `overhang` angle (45° from vertical
 on the FDM profiles; resin carries none, since it prints on supports), measured per
 sub-part in its print (export) pose — not as the view shows it — with the bed at that
-pose's own lowest Z, and warned past 1 mm²; the reported location is where the face sits
-in the view. The
-opt-in is deliberate: a profile says what a process can print, the orientation key
-says this part is laid out for it, and a part still being shaped, or one bound for a
-different process, should not be nagged about its underside. Writing your own
+pose's own lowest Z; it is a cost past 1 mm², with cost id `supports`, and the
+reported location is where the face sits in the view. A profile carrying `overhang`
+arms it from the first build; `orientation` takes no part. Writing your own
 `overhangArea` expectation is the other way in — it arms the measurement by itself,
-against the profile's angle or 45° when the profile names none, so a declared
-expectation is never answered "unavailable". Two bands next to the bed are never
+against the profile's angle or 45° when the profile names none, and is also how a
+user's limit is spelled (`overhangArea: "<=500"`). Two bands next to the bed are never
 counted: the footprint itself, and faces whose centroid sits within 1 mm of the bed
 (the lower curl of a bottom-edge fillet or chamfer, which prints fine). A bridge (a
 flat underside spanning two supports) and the ceiling of a horizontal bore are
-reported as overhangs — the mesh alone cannot tell a bridge from a ceiling — which
-is why this is a warning and never a gate. Two more limits, stated: it is judged in
-the DISPLAY pose, so a sub-part whose `assembly` pose stands it differently from how it prints (a lid that prints
-flat beside its base) is measured as displayed, and `exportable: false` sub-parts
-are skipped. Switch it off under an FDM profile with an inline
-`{ base: "fdm-pla", overhang: null }`.
+reported as overhangs — the mesh alone cannot tell a bridge from a ceiling — so read
+the location before proposing a redesign. When a sub-part's `place()` cannot be
+trusted as a rigid pose (it queries its solid), the reading falls back to the DISPLAY
+pose, so such a piece is measured as the view shows it. `exportable: false` sub-parts
+are skipped.
+
+**`accept` records the user's choice.** `accept: ["supports"]` says the user chose to
+print with supports: the overhang is still measured and still listed in `costs`, with
+`accepted: true`, and is no longer something to raise. That is a different thing from
+switching the measurement off, which is the inline `{ base: "fdm-pla", overhang: null }`
+(and `footprint: null`) for a part where the reading means nothing. `accept` holds cost
+ids, not metric names — `fdm` defines `supports` and `footprint`, `resin` none — and
+lint refuses any other entry (`verify-unknown-accept`).
+
+**Bed contact — a GATE, armed by the FDM profile alone.** Every exporter and slicer
+lays a printed piece on its lowest point. When that point is something small — a
+horizontal knuckle or pin whose cylinder dips under the plate, lettering embossed on
+the underside, a boss — the piece rests on it and its big
+flat underside prints a fraction of a millimetre in mid-air: the first layer goes
+down onto nothing, strings, and the print fails or leaves a ruined bottom. So every
+printed sub-part of a part under `fdm-pla` or `fdm-petg` is checked in its print
+(export) pose: `bedContactPct` is the share of its near-bed FLAT underside (faces
+within 2° of level, within 1 mm of its lowest point — the band the overhang check
+leaves alone) that actually touches the bed; a face hovers only when it is level (within
+0.1°, as a plane you made horizontal is) and every one of its corners is clear of the
+bed, so a cylinder, sphere or dome resting on the bed is never read as hovering, and it must be at least
+the profile's `bedContact` (50%). A plate flat on the bed reads 100; a lever resting
+on a knuckle 0.25 mm lower reads about 1. Slanted faces — the curl of a bottom fillet
+or chamfer, the sides of a cylinder — never count, and hovering area under 1 mm² is
+read as noise. A flat bottom tilted off level is not caught (it is not level, the same
+signature as a curved surface's lowest facets). The failure is located on the largest hovering face and
+its note says how far up it sits and how much area hovers versus touches. The fix is
+almost always to trim the piece flat at the bed plane — cut away everything below
+z = 0 in its print pose — or to raise or shorten the lower feature so the flat face
+is the lowest; size a print-in-place knuckle so its cylinder is tangent to the bed
+(diameter = 2 × its centre height) and give it a support block down to z = 0. It is a
+gate where overhang is a cost: an overhang is a design choice that prints on supports,
+but a hovering underside is a defect in whatever orientation the piece exports. Resin prints on supports, so `resin` never checks it
+unless you ask: your own `bedContactPct` expectation arms it under any profile, and
+`orientation: "print"` arms it on a part with no profile at all (both against 50%). A
+named profile otherwise decides alone. A recess meant to clear the
+bed — a shallow pocket inside a foot ring — hovers by design and is reported; such a
+pocket is a long bridge laid in the first layers and rarely prints well, so the
+default stands, and a part that means it declares a lower `bedContactPct` (or
+`{ base: "fdm-pla", bedContact: null }` to switch it off). `exportable: false`
+sub-parts are not judged.
+
+**Footprint — a COST, armed by the FDM profile.** Bed contact passes a piece that
+stands on a point, a line or a curve, since nothing flat hovers; the first layer still
+has almost nothing to grip, and the piece tips or pulls loose unless it prints with a
+brim or a raft. `footprintPct` is the share of the piece's silhouette on the bed (its
+outline seen from below, in the same print pose) that actually touches it, read by bed
+contact's pass, in percent: a plate reads 100, and so do a tube on its rim, a frame of
+thin bars, spread pins and a bar laid diagonally, since each stands on all of its
+outline; a rod on a rounded tip reads about 0, a cylinder on its side a few percent
+(the facets along its lowest line), under the floor, and a wide piece balanced on a
+narrow foot reads low too. It is a cost below the profile's `footprint` (10%), with cost id
+`footprint`, located at the piece's lowest point
+([piece-stands-on-nothing](ERROR-PATTERNS.md#piece-stands-on-nothing)). Lay the piece on
+a flat face or add a pad; when the user chooses the brim, `accept: ["footprint"]`
+records it. Your own `footprintPct` expectation arms it under any profile; `orientation`
+does not, and `{ base: "fdm-pla", footprint: null }` switches it off. `exportable: false`
+sub-parts are not judged.
+
+**Flexing members — `flexRoot` a GATE armed by `verify.flex` alone, `flexStrain` an
+advisory from a declared deflection, `flexTilt` the `standing` cost under FDM.** `flex`
+lists the part's flexing members by feature label (`flex: ["Right prong", "Left prong"]`;
+a list entry, `["Arm", "Arm rib"]`, is one member made of several labels; an object,
+`{ feature: "Arm", deflection: 1.2, thickness: 2 }`, adds the travel in mm the member
+is designed to flex through and, when the mesh would misread it, its bending
+thickness). Every printed sub-part whose mesh carries a member's label gets one row per
+reading (your own expectation on that sub-part replaces the default): `flexRoot` is the
+root fillet radius in mm of the member whose root is worst (least radius over what it
+needs), 0 where any of it is sharp — a concave edge turning more than 30° between one of
+its triangles and one that is not — against `>=` the profile's `rootFillet` share of that
+member's thickness (`feature` names the member, `location` is the longest sharp stretch,
+`note` lists every member the sub-part carries with its radius and need); `flexStrain`
+is the worst member's root strain in percent at its declared deflection, 1.5 × thickness ×
+deflection / length² for a straight cantilever, against `<=` the profile's `strain`;
+`flexTilt` is the degrees the worst member's long axis rises off the bed in the print
+pose, against `<=` the profile's `flexTilt`, a cost (`standing`). The root and strain
+readings are independent of the process and of the print pose; the tilt is read in the
+print pose, like bed contact, and withheld when that pose cannot be read. Three
+declaration problems are reported per member rather than per sub-part: a member no
+sub-part of the verified view carries is skipped (it may be switched off in that case);
+a member carried but meeting nothing — its label put on the whole union, or a piece
+that never touches the body — withholds the verdict (`unevaluated`), since a clean root
+and no root must never read alike; and a seed that did not read a member answers
+unevaluated on a quick lap. See "Flexing members" under "Printed parts" for why, and
+how to round a root.
 
 **What the profile tells you.** Three more fields carry the numbers a mating
 feature needs. Nothing checks them; they are the one place the value is spelled,
@@ -4353,13 +4653,16 @@ an inline `{ base: "fdm-pla", fits: { … } }` replaces the whole table.
 | `fits.printInPlace` — printed already assembled | 0.45 | 0.50 | 0.20 |
 | `holeUndersize` | 0.25 | 0.30 | 0.05 |
 | `bridge` (mm) | 10 | 10 | — |
+| `rootFillet` — a flexing member's root fillet, as a share of its thickness (a gate) | 0.5 | 0.5 | 0.5 |
+| `strain` — the root strain (%) a one-time snap may reach (an advisory) | 1.5 | 3 | 2 |
+| `flexTilt` — the steepest a flexing member may stand off the bed, degrees (a cost, `standing`) | 45 | 45 | — |
 
 `fits` are diametral; the `clearance` expectation below reads a pair's minimum surface distance, so a pin in a bore is declared at half the fit (`fits.slip` 0.25 → `clearance: { "pin×body": "0.08..0.18" }`).
 
 **What `expect` gives you:** per-sub-part
 assertions on the facts `measure` already reports — `holes` (through-bores / genus),
 `volume`, `surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`,
-`overhangArea`, `wall` (a range — see below), `bounds` (the axis-aligned corner
+`overhangArea`, `bedContactPct`, `footprintPct`, `flexRoot`, `flexStrain`, `flexTilt`, `wall` (a range — see below), `bounds` (the axis-aligned corner
 positions, written in the same `{ min, max }` shape `measure` reports them — where
 the geometry sits, vs `bbox` which is only its size) and `centerOfMass` (`[x,y,z]`, the volume-weighted
 centroid; `null` for a degenerate/zero-volume sub-part); and `_view` assertions `bbox`,
@@ -4402,11 +4705,14 @@ verify: { expect: {
 } }
 ```
 
-**Gates vs. warnings:** exact facts are **gates** (a failure sets a non-zero exit code);
-`minWall` is computed (a ray/shot wall-thickness measurement) and reported as a
-**warning** — it flags walls below the profile's minimum but never fails the build —
-and so is `overhangArea` (see above). `holes`/`watertight` are Manifold-only, so those
-assertions **skip** on OCCT parts rather than fail.
+**Gates, costs and warnings:** exact facts are **gates** (a failure sets a non-zero
+exit code and `ok: false`), and so is `bedContactPct`, even though the profile arms it.
+`overhangArea` and `footprintPct` under a process are **costs**: listed in `costs`, never
+failing, `accepted` once `accept` names them — but an `overhangArea` or `footprintPct`
+you write in `expect` is still a cost, not a gate. `minWall` is computed (a ray/shot
+wall-thickness measurement) and reported as a **warning** — it flags walls below the
+profile's minimum but never fails the build. `holes`/`watertight` are Manifold-only, so
+those assertions **skip** on OCCT parts rather than fail.
 
 **A wall that must stay one thickness: `wall`.** `minWall` answers "is anything too
 thin"; `wall` answers "does this wall stay what I declared" — the question a bend, a
@@ -4512,8 +4818,8 @@ mass. A reference ghost (`exportable: false`) is left out entirely: it neither
 counts nor holds, since it is never printed (lint refuses one named as the base).
 A named base that is `enabled()`-off
 in a case skips that case; a name that exists nowhere throws, like a `contacts`
-pair. It is an expectation, never a default, for the overhang reason: a part
-still being shaped should not be nagged. Topological only — a part balanced on a
+pair. It is an expectation, never a default: a part still being shaped should not
+fail for pieces it has not joined yet. Topological only — a part balanced on a
 point passes — and the same OCCT caveat applies: a sub-part fully inside another
 reads as not touching there. A view with fewer than two printed sub-parts passes with nothing to hold. A pin or axle running in a clearance bore, or a print-in-place piece, touches nothing in the model and reads as floating: `held` is for assemblies whose pieces seat on each other, so leave it off when a piece is captured with running clearance (`fits.moving`, `fits.printInPlace`) and declare that pair's `clearance` instead. A quick lap answers it `unevaluated`.
 
@@ -4566,6 +4872,7 @@ at runtime — no declaration needed either way:
 | `s.fillet(radius)` · `s.fillet({ r, edges? })` | round edges (curve-following, exact); the bare-number scalar shorthand fillets **all** edges, the options form adds a selector |
 | `s.chamfer(distance)` · `s.chamfer({ d, edges? })` | bevel edges; same scalar-shorthand-or-options-with-selector shape as `fillet` |
 | `s.shell({ t, open })` | hollow inward, wall = `t`; `open` selector (`{inPlane,at}`/`{dir}`/`{near}`) chooses which face(s) to open. Closed (no-open-face) hollows are not supported. |
+| `s.offset(d)` · `s.offset({ d })` | grow (`d > 0`) or shrink (`d < 0`) the whole solid by `d` — a 3-D ball offset on both backends, imported meshes included; no OCCT routing. A closed constant-thickness skin is `body.cut(body.offset(-t))`. See [`offset(d)`](#offsetd--grow-or-shrink-a-solid) below. |
 
 `edges` (fillet/chamfer) / `open` (shell) chooses which edges/faces (omit `edges` for **all** edges — `shell` always requires `open`):
 
@@ -4684,6 +4991,50 @@ Rules of thumb:
   the radius (or a backend skip) fails loudly.
 - A small ridge remaining where a thin rib was consumed is correct morphology
   (the rib's dilation fillet survives the opening), not a bug.
+
+### `offset(d)` — grow or shrink a solid
+
+`s.offset(2)` (or `s.offset({ d: 2 })`) grows the solid by 2 mm in every
+direction; `s.offset(-2)` shrinks it by 2 mm. Every point of the new surface is
+`|d|` from the old one — it is a true ball offset, the 3-D counterpart of
+`Shape2D.offset` — so it works on any solid, including an imported STL/3MF mesh,
+and it runs on both backends without routing. `offset(0)` is the identity.
+
+Its main use is a skin of constant thickness `t`, which `shell` cannot make for
+a closed body or an imported mesh:
+
+```js
+const helmet = k.import("helmet");
+const skin = helmet.cut(helmet.offset(-2));         // 2 mm thick everywhere, inside the helmet
+const cage = helmet.offset(1.5).cut(helmet);        // 1.5 mm thick everywhere, outside it
+```
+
+Do not build a skin from axis-shifted copies (`translate` by `±t` and union):
+that is six booleans, and the wall comes out only `t/√2` to `t/√3` thick on
+diagonal surfaces. `offset` is one op and holds `t` in every direction.
+
+**Corners.** A ball offset rounds what it moves away from: on a grow, convex
+edges and corners become arcs of radius `d` (a box grows into a rounded box);
+on a shrink, concave edges become arcs of radius `|d|` and convex corners stay
+sharp (a box shrinks into a smaller sharp box). Flat faces stay flat and move
+`|d|` along their normal. For sharp grown corners, offset the 2-D profile
+(`Shape2D.offset(d, { corners: "sharp" })`) and extrude it instead.
+
+**Thin features.** A shrink deeper than half a wall removes that wall, and a
+shrink past half the solid's thickness leaves nothing (an empty solid on
+Manifold). On OCCT (STEP export, or a sub-part that a `shell` routes there) a
+B-rep offset cannot change topology, so an offset it cannot build **throws**
+`offset-failed` — it never returns the un-offset solid, because a skin cut from
+that would be empty. See `docs/ERROR-PATTERNS.md`.
+
+**Cost note.** The mesh backend computes the offset as a Minkowski sum (grow)
+or difference (shrink) with a ball. On a non-convex solid each input triangle
+is hulled with the ball, so time grows with the triangle count — about 3 ms per
+triangle on a desktop (a 576-triangle dome ≈ 2 s, 8,448 triangles ≈ 23 s). An
+imported scan of 100k triangles is minutes. Decimate a dense import before you
+offset it, and offset once and reuse the result rather than offsetting inside a
+loop. The ball's own tessellation follows the quality tier (preview is coarser,
+so the wall can run up to ~0.1 mm under `t` on a diagonal; print is tighter).
 
 ### Cost on the OCCT path: fillet/chamfer scale with edge count — and order matters
 

@@ -14,14 +14,14 @@ const part = {
 
 afterEach(() => { delete globalThis.self; delete globalThis.postMessage; });
 
-function bootFakeWorker(name) {
+function bootFakeWorker(name, workerPart = part) {
   const posts = [];
   // Real WorkerGlobalScope exposes `self.navigator`; paper.js (pulled into the worker
   // module graph by text2d → curve-fill) reads `self.navigator.userAgent` for its
   // browser/OS detection, so the fake worker must provide it too.
   globalThis.self = { name, navigator: { userAgent: "node" } };
   globalThis.postMessage = (m) => posts.push(m);
-  runWorker(part);
+  runWorker(workerPart);
   return posts;
 }
 
@@ -49,4 +49,25 @@ test("the occt worker announces ready at startup, before its kernel boots", () =
   // sends one, boot silently depends on both workers being spawned unconditionally.
   const posts = bootFakeWorker("occt");
   expect(posts).toContainEqual({ type: "ready" });
+});
+
+// Feedback #212: the display cache and an export's build share one WASM heap, so the
+// worker drops the display cache before an export — the next display build is cold.
+test("an export job drops the display cache first", async () => {
+  const cutPart = { defaults: {}, views: { v: { label: "V" } },
+    parts: { a: { views: ["v"], build: (k) => k.box({ size: [20, 20, 5] }).cut(k.cylinder({ r: 3, h: 10 })) } } };
+  const posts = bootFakeWorker("manifold", cutPart);
+  const generate = () => self.onmessage({ data: { type: "generate", view: "v", subparts: ["a"], params: {} } });
+  const meshesN = async (n) => vi.waitFor(() => {
+    const m = posts.filter((p) => p.type === "meshes");
+    expect(m).toHaveLength(n);
+    return m[n - 1];
+  }, { timeout: 30_000 });
+  generate();
+  expect((await meshesN(1)).cache.misses).toBeGreaterThan(0);
+  generate();
+  expect((await meshesN(2)).cache.misses).toBe(0); // warm
+  self.onmessage({ data: { type: "export-stl", view: "v", params: {}, quality: "print" } });
+  generate();
+  expect((await meshesN(3)).cache.misses).toBeGreaterThan(0); // cold again
 });

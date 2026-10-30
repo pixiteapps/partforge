@@ -27,11 +27,14 @@ const { loaded, refuse } = vi.hoisted(() => {
 });
 vi.mock("../src/framework/oracle/annotation-ray.js", () => refuse("annotation-ray.js"));
 vi.mock("../src/framework/oracle/assert-dsl.js", () => refuse("assert-dsl.js"));
+vi.mock("../src/framework/oracle/bed-contact.js", () => refuse("bed-contact.js"));
 vi.mock("../src/framework/oracle/build.js", () => refuse("build.js"));
 vi.mock("../src/framework/oracle/bvh.js", () => refuse("bvh.js"));
 vi.mock("../src/framework/oracle/cases.js", () => refuse("cases.js"));
 vi.mock("../src/framework/oracle/changes.js", () => refuse("changes.js"));
 vi.mock("../src/framework/oracle/dfm-profiles.js", () => refuse("dfm-profiles.js"));
+vi.mock("../src/framework/oracle/flex-members.js", () => refuse("flex-members.js"));
+vi.mock("../src/framework/oracle/flex-root.js", () => refuse("flex-root.js"));
 vi.mock("../src/framework/oracle/gaps.js", () => refuse("gaps.js"));
 vi.mock("../src/framework/oracle/gates.js", () => refuse("gates.js"));
 vi.mock("../src/framework/oracle/held.js", () => refuse("held.js"));
@@ -55,7 +58,7 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 // vi.mock specifiers must be literals, so the list above is written out; this keeps it
 // honest — a new oracle module fails here until it is mocked too.
 const MOCKED = [
-  "annotation-ray.js", "assert-dsl.js", "build.js", "bvh.js", "cases.js", "changes.js", "dfm-profiles.js", "gaps.js",
+  "annotation-ray.js", "assert-dsl.js", "bed-contact.js", "build.js", "bvh.js", "cases.js", "changes.js", "dfm-profiles.js", "flex-members.js", "flex-root.js", "gaps.js",
   "gates.js", "held.js", "match.js", "measure.js", "mesh.js", "min-wall.js", "op-graph.js", "overhang.js",
   "shape-probe.js", "silhouette.js", "verify.js",
 ];

@@ -290,6 +290,15 @@ expectType<Promise<void>>(previewRuntime.ready);
 expectType<string | null>(previewRuntime.getView());
 expectType<void>(previewRuntime.setHostPane("rail"));
 expectType<PreviewRuntime>(mountPreview(document.body, { glb: new Uint8Array(0), animate: false }));
+expectType<PreviewRuntime>(mountPreview(document.body, {
+  glb: new Uint8Array(0), chrome: false, background: "transparent", contactShadow: true,
+  zoom: false, pan: false, turntable: 14, fill: 0.8, camera: "default", renderMode: "cad",
+}));
+// @ts-expect-error - background is "theme" or "transparent"
+mountPreview(document.body, { glb: new Uint8Array(0), background: "clear" });
+// @ts-expect-error - showcase is not an option; name the options it was made of
+mountPreview(document.body, { glb: new Uint8Array(0), showcase: {} });
+expectType<Promise<void>>(previewRuntime.drawn);
 const previewStatus: "idle" | "intro" | "playing" | "paused" | "done" | undefined = previewRuntime.animation?.state().status;
 expectType<number | undefined>(previewRuntime.animation?.state().t);
 previewRuntime.animation?.pause();
@@ -516,8 +525,8 @@ expectType<boolean | null>(v.ok);   // tri-state: null = no verdict (quick lap, 
 expectType<number>(v.declared);
 expectType<number | null>(facts.subparts[0]!.overhangArea);
 expectType<string>(v.failures[0]!.case);
-expectType<"pass" | "fail" | "warn" | "skip">(v.cases[0]!.checks[0]!.status);
-expectType<"gate" | "warn">(v.cases[0]!.checks[0]!.kind);
+expectType<"pass" | "fail" | "warn" | "cost" | "skip">(v.cases[0]!.checks[0]!.status);
+expectType<"gate" | "warn" | "cost">(v.cases[0]!.checks[0]!.kind);
 
 expectType<number>(assemblyOverlaps(kernel, spacer, "spacer", {}, { tolerance: 0.5 }).length);
 

@@ -5,7 +5,7 @@ import { resolveParams, buildPosed } from "../part-model.js";
 import { newReadSink, expandReads } from "../read-recorder.js";
 import { probeSubPartPose } from "../pose-probe-core.js";
 import { composePose, invertRigid, transformPositions } from "../geometry/pose.js";
-import { displayToPrintMatrix } from "../materials/print-frame.js";
+import { displayToPrintPose } from "../materials/print-frame.js";
 import { isSheetPart, sheetMeta, SHEET_CHECK_BUDGET_MS, MARK_DEPTH } from "../sheet/constants.js";
 import { resolveSheet } from "../sheet/resolve.js";
 import { processFor } from "../process/registry.js";
@@ -13,7 +13,10 @@ import { meshGaps, pairKey, CONTACT_EPS, GAP_THRESHOLD } from "./gaps.js";
 import { bounds, meshArea, meshCentroid } from "./mesh.js";
 import { minWall, DIAGNOSTIC_SAMPLES } from "./min-wall.js";
 import { overhang } from "./overhang.js";
-import { partGatesMinWall, partHasBed, partOverhangAngle, partWallBands } from "./gates.js";
+import { bedContact } from "./bed-contact.js";
+import { flexRoot } from "./flex-root.js";
+import { flexMembers } from "./flex-members.js";
+import { partBedContact, partFootprint, partGatesMinWall, partHasBed, partOverhangAngle, partWallBands } from "./gates.js";
 import { summarizeContours } from "./shape-probe.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
@@ -137,20 +140,53 @@ const transformPoint = (m, [x, y, z]) => [
   m[2] * x + m[6] * y + m[10] * z + m[14],
 ];
 
-// Overhang of one printed sub-part in its PRINT pose. measure builds the display pose,
-// and a piece shown assembled (a lid closed over its box) is not how it prints: judging
-// its underside there flagged the wrong faces and missed the real ones. The display mesh
-// is carried into the export pose by a rigid matrix — no second build — and the bed is
-// that pose's own lowest Z; `at` comes back in display coordinates, where every other
-// finding of this view sits. An unreadable or identical pose measures as shown.
+// Bed contact read off the piece's real EXPORT build, for a sub-part whose print pose
+// the probes could not read (a place() that queries its solid): judging the display
+// mesh there would pass a bad print orientation or fail a good one. One extra build,
+// in its own cache round like printPoseBboxes, only for such a piece. `at` and
+// `lowestAt` are withheld: with the pose unreadable there is no honest way back to
+// display coordinates. An export pose that does not build answers `{ error }`, which
+// verify reports as unevaluated rather than guessing.
+function exportPoseBedContact(kernel, part, name, view, { p, d }) {
+  kernel.beginSubPart?.(`oracle:print:${view}`);
+  try {
+    const out = bedContact(buildPosed(kernel, part, name, { purpose: "export", view, p, d }).toMesh());
+    return out ? { ...out, at: null, lowestAt: null } : out;
+  } catch (e) {
+    return { error: String(e?.message || e).slice(0, 200) };
+  } finally { kernel.endSubPart?.(); }
+}
+
+// The underside readings of one printed sub-part in its PRINT pose — overhang
+// (overhang.js) when `maxAngle` is set, bed contact (bed-contact.js) when `bed` is.
+// measure builds the display pose, and a piece shown assembled (a lid closed over its
+// box) is not how it prints: judging its underside there flagged the wrong faces and
+// missed the real ones. The display mesh is carried into the export pose by a rigid
+// matrix — no second build, and one copy shared by both readings — and the bed is that
+// pose's own lowest Z; each `at` (and bed contact's `lowestAt`) comes back in display
+// coordinates, where every other finding of this view sits. An unreadable or identical
+// pose measures as shown.
 // `m` is displayToPrintMatrix's answer, resolved by the caller: the measure memo
 // keys on it, since the pose comes from place() and is not part of the solid's hash.
-function printPoseOverhang(mesh, m, { maxAngle, displayBedZ }) {
-  if (!m) return overhang(mesh, { maxAngle, bedZ: displayBedZ });
-  const positions = Float32Array.from(mesh.positions);
-  transformPositions(positions, m);
-  const out = overhang({ positions, indices: mesh.indices }, { maxAngle });
-  return out?.at ? { ...out, at: transformPoint(invertRigid(m), out.at) } : out;
+function printPoseUnderside(mesh, m, { maxAngle, bed, displayBedZ }) {
+  let posed = null;
+  if (m) {
+    posed = { positions: Float32Array.from(mesh.positions), indices: mesh.indices };
+    transformPositions(posed.positions, m);
+  }
+  const back = (out) => {
+    if (!m || !out) return out;
+    const inv = invertRigid(m);
+    return {
+      ...out,
+      ...(out.at ? { at: transformPoint(inv, out.at) } : {}),
+      ...(out.lowestAt ? { lowestAt: transformPoint(inv, out.lowestAt) } : {}),
+    };
+  };
+  return {
+    oh: maxAngle != null ? back(posed ? overhang(posed, { maxAngle }) : overhang(mesh, { maxAngle, bedZ: displayBedZ })) : null,
+    bc: bed ? back(posed ? bedContact(posed) : bedContact(mesh, { bedZ: displayBedZ })) : null,
+  };
 }
 
 // One sheet row's facts, within `budget.left` ms of 2-D work, which it spends (see
@@ -276,14 +312,34 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // Declared wall bands, per sub-part, for exactly these params (Task 5). Resolved
   // once per measure; a bad declaration throws here, which is a measure error.
   const wallBands = opts.minWall ? partWallBands(part, params, reads) : {};
-  // Overhang is measured only for a part that opted in (dfm-profiles.js
-  // overhangAngleFor) — everything else reads null. verify hands the angle it
-  // resolved in (a `process` override changes it); `null` there is an explicit
+  // Overhang is measured for a part whose print process arms it (dfm-profiles.js
+  // overhangAngleFor: a profile carrying `overhang`, or the author's own
+  // `overhangArea` expectation) — everything else reads null. verify hands the angle
+  // it resolved in (a `process` override changes it); `null` there is an explicit
   // "not checked", not a fallback. The angle used is stamped on the result as
   // `measuredOverhang`, and verify refuses a seed whose stamp disagrees with the
   // angle it needs — the min-wall superset rule's counterpart, since a reading
   // taken against the wrong threshold is worse than none.
   const overhangAngle = opts.overhang !== undefined ? opts.overhang : partOverhangAngle(part);
+  // Bed contact is measured for a part whose profile (or orientation, or its own
+  // expectation) arms it — dfm-profiles.js bedContactFor. Unlike overhang the reading
+  // does not depend on the threshold, so the stamp is a boolean: `measuredBedContact`.
+  // verify passes its own answer (a `process` override can arm or disarm it). The same
+  // pass reads the footprint cost (dfm-profiles.js footprintFor), so a part whose
+  // footprint alone is checked arms it too — here and in verify — and one stamp, and
+  // one memo-key bit, covers both readings.
+  const bedArmed = (opts.bedContact !== undefined ? opts.bedContact : (partBedContact(part) ?? partFootprint(part))) != null;
+  const underside = overhangAngle != null || bedArmed;
+  // The flexing members the part declares (`verify.flex`, by feature label — flex-root.js):
+  // each gets a root reading on every printed sub-part. One pass over the triangles per
+  // member, no index, so it runs on every lap. verify passes its own list; alone, measure
+  // reads the part's. The list measured is stamped as `measuredFlex`, which verify
+  // compares before reusing a seed.
+  const members = flexMembers(opts.flex !== undefined ? opts.flex : part.verify?.flex);
+  const flex = members.map((m) => m.labels);
+  // A flexing member is read in its print pose too (its tilt off the bed), so the pose
+  // is resolved whenever one is declared, as it is for the underside readings.
+  const posed = underside || members.length > 0;
   const subBounds = [];
   // Sheet parts: a view holding one sizes each printed sub-part in its print pose
   // (verify fits the bed per part there), and every sheet row gets its 2-D facts under
@@ -296,7 +352,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // The overhang reading poses each piece for print (printPoseOverhang), which reads the
   // resolved params through place() — recorded into the same sink, since the reading
   // depends on them.
-  const poseParams = overhangAngle != null ? (sheetParams ?? resolveParams(part, params, undefined, reads)) : null;
+  const poseParams = posed ? (sheetParams ?? resolveParams(part, params, undefined, reads)) : null;
   // The print-pose sizes are read by one check, the process bed (verify passes whether
   // its profile has one; alone, measure asks the part's own profile), and each costs a
   // second build of the part — so they are built only for a bed.
@@ -312,9 +368,14 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // (printPoseOverhang) is read off place() with the resolved params — geometry-free,
     // so it is resolved here, ahead of the memo, which must key on it.
     const printed = part.parts[name]?.exportable !== false && !sheet;
-    const printMatrix = overhangAngle != null && printed && poseParams?.p
-      ? displayToPrintMatrix(part.parts[name], { view, p: poseParams.p, d: poseParams.d })
+    const printPose = posed && printed && poseParams?.p
+      ? displayToPrintPose(part.parts[name], { view, p: poseParams.p, d: poseParams.d })
       : null;
+    const printMatrix = printPose?.matrix ?? null;
+    // A pose the probes could not read is not the identity: bed contact then reads the
+    // export build itself (exportPoseBedContact). Overhang keeps its display-pose
+    // fallback — a cost, and unchanged here.
+    const exportBed = bedArmed && printPose && !printPose.trusted;
     // Memo key = the inputs this sub-part's facts actually depend on, besides its
     // own geometry hash: whether min-wall ran, at what sample budget and against
     // which declared band, the overhang angle, and whether the sub-part is
@@ -328,10 +389,10 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // holds a sheet part (the budgeted 2-D pass and print-pose sizes are
     // call-scoped, not per-sub-part cacheable), and a solid with no `_hash`
     // (nothing to key reuse on).
-    const memoKey = opts.memo && !sheetView && !sheet && !part.parts[name]?.reference && solid?._hash
+    const memoKey = opts.memo && !sheetView && !sheet && !part.parts[name]?.reference && solid?._hash && !exportBed
       ? JSON.stringify({
         mw: !!opts.minWall, s: minWallSamples ?? null, band: wallBands[name] ?? null,
-        oh: overhangAngle ?? null, ex: printed,
+        oh: overhangAngle ?? null, bc: bedArmed, ex: printed, fx: flex,
         pm: printMatrix ? Array.from(printMatrix) : null,
       })
       : null;
@@ -350,12 +411,14 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     const mw = opts.minWall && !sheet
       ? minWall(mesh, { bvh: cachedBVH(mesh, bvhCache), maxSamples: minWallSamples, band: wallBands[name] ?? null })
       : null;
-    // One pass over the triangles, no index — cheap enough for every lap. The bed
-    // is this sub-part's own lowest Z in its PRINT pose (printPoseOverhang); `printed`
+    // One pass over the triangles each, no index — cheap enough for every lap. The bed
+    // is this sub-part's own lowest Z in its PRINT pose (printPoseUnderside); `printed`
     // (above) says whether it is judged at all.
-    const oh = overhangAngle != null && printed
-      ? printPoseOverhang(mesh, printMatrix, { maxAngle: overhangAngle, displayBedZ: b.min[2] })
-      : null;
+    const { oh, bc: posedBc } = underside && printed
+      ? printPoseUnderside(mesh, printMatrix, { maxAngle: overhangAngle, bed: bedArmed && !exportBed, displayBedZ: b.min[2] })
+      : { oh: null, bc: null };
+    const exportBc = exportBed ? exportPoseBedContact(kernel, part, name, view, poseParams) : null;
+    const bc = exportBc?.error ? null : (exportBc ?? posedBc);
     const vol = solid.volume();
     // Deviation-from-reference: only for a sub-part that declares `reference:
     // "<import name>"` (Task 12 — the gate that holds a parametric rebuild to
@@ -408,6 +471,37 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       overhangArea: oh ? oh.area : null,
       overhangAngle: oh?.worstAngle ?? null,
       overhangAt: oh?.at ?? null,
+      // How much of the near-bed flat underside rests on the bed (bed-contact.js), in
+      // percent, null when the part does not check it: a piece whose flat bottom
+      // hovers above a lower knuckle, pin or emboss reads near 0. The two areas (mm²),
+      // and how far up the largest hovering face sits and where (display coordinates).
+      bedContactPct: bc ? bc.pct : null,
+      bedContactArea: bc ? bc.contactArea : null,
+      bedHoverArea: bc ? bc.hoverArea : null,
+      bedHoverGap: bc?.gap ?? null,
+      bedHoverAt: bc?.at ?? null,
+      // The footprint (same pass): the share of the piece's silhouette on the bed that
+      // actually touches it, in percent (clamped at 100: the silhouette is a
+      // raster, a cell or so off along its edges) — near 0 for a
+      // piece standing on a point, a line or a curl, which bedContactPct passes since
+      // nothing flat hovers, and near 100 for anything that stands on its whole
+      // underside, however little of its bounding box that fills (a tube on its rim, a
+      // frame, a diagonal bar). Null when not measured or the silhouette is empty. Located at
+      // the piece's lowest point, in display coordinates.
+      footprintPct: bc && bc.downArea > 0 ? Math.min(100, (100 * bc.contactArea) / bc.downArea) : null,
+      footprintAt: bc?.lowestAt ?? null,
+      ...(exportBc?.error ? { bedContactError: exportBc.error } : {}),
+      // Each declared flexing member's root (flex-root.js), one entry per member group
+      // whose label this sub-part's mesh carries: the length of sharp inside corner where
+      // the member meets the rest of the part, the sharpest turn, and where the longest
+      // stretch sits. Null when nothing is declared; a sheet part is not printed, so none.
+      flexRoots: members.length && !sheet
+        ? members.map((m) => {
+          const r = flexRoot(mesh, m.labels, { printMatrix });
+          // A pose the probes could not read is not the display pose: no tilt to report.
+          return { feature: m.feature, labels: m.labels, ...r, ...(printPose && !printPose.trusted ? { tilt: null } : {}) };
+        }).filter((r) => r.found)
+        : null,
       // The process's 2-D facts on a sheet part (sheetRowFacts), null on every other.
       sheet: sheet
         ? sheetRowFacts(kernel, part, name, view, sheetParams, sheetBudget, vol)
@@ -495,6 +589,13 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // or null when the pass did not run — read by verify's seed gate, never a
     // caller's claim.
     measuredOverhang: overhangAngle ?? null,
+    // Whether the bed-contact pass ran — the same kind of stamp, read by the same gate.
+    measuredBedContact: bedArmed,
+    // The footprint is read by the same pass, so the same stamp.
+    measuredFootprint: bedArmed,
+    // The flexing-member groups whose roots were read (flex-root.js), as measured —
+    // verify reuses a seed only when it read every group this run declares.
+    measuredFlex: flex,
     // Companion stamp to measuredMinWall, and read the same way: whether the pass
     // ran, said by the pass itself rather than claimed by whoever holds the result.
     measuredGaps,

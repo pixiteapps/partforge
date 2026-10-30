@@ -80,6 +80,15 @@ Its coverage and tolerance band are part of the contract:
   labels upstream of the call do not survive through it (attribution uses the
   fallback path), and the result shades with the default SMOOTH policy.
 
+`offset` is required on every class too and is **parity-tolerant** while the
+offset does not change topology (a shrink less than half the thinnest wall, a
+grow that closes no gap): the mesh class computes it with one Minkowski pass
+(roundAll's sphere tessellation rule, sized from `|d|`) and a B-rep class with
+one native offset (`BRepOffsetAPI_MakeOffsetShape`, arc join). Past that, the
+mesh class changes topology correctly and a B-rep class throws `offset-failed`
+— unlike `roundAll`, skipping is NOT a permitted degrade, because the un-offset
+solid is a wrong answer rather than a missing feature.
+
 `roundAll` is required on **every** class (it is in `SOLID_OPS`, not
 `OCCT_ONLY_OPS`) and is **parity-tolerant with a regime split**: while `r` is
 strictly below the solid's smallest feature size (min wall, min hole
@@ -97,13 +106,24 @@ relying on consumption should gate it with a `verify` volume assertion.
 **B-rep class.** Core plus native `fillet`/`chamfer`/`shell` and `toSTEP`. The in-repo
 OCCT/replicad backend is the reference.
 
-**Optional ops.** `KERNEL_OPTIONAL_OPS` (`beginSubPart`/`endSubPart`/`sweepCache`/
-`cacheStats`/`resetCacheStats`/`cleanup`) and `SOLID_OPTIONAL_OPS` (`genus`/`isEmpty`) may
+**Optional ops.** `KERNEL_OPTIONAL_OPS` (`beginSubPart`/`endSubPart`/`sweepCache`/`dropCache`/
+`setCacheBudget`/`trimCache`/`cacheBytes`/`cacheStats`/`resetCacheStats`/`cleanup`) and `SOLID_OPTIONAL_OPS` (`genus`/`isEmpty`) may
 be omitted entirely; callers in the framework guard with `?.`/`typeof`. A host that omits
 them loses sub-part caching and mesh-topology gates (`holes`, emptiness), nothing else.
 `sweepCache()` is the cache's rebind hygiene hook: called once when a worker is rebound to
 a part (never inside a `beginSubPart`/`endSubPart` bracket), it drops cache partitions that
-have gone unbuilt for three consecutive rebinds.
+have gone unbuilt for three consecutive rebinds. `dropCache()` drops every partition at
+once, under the same never-mid-bracket rule: the worker calls it on each booted kernel
+before an export job, because a display build's retained solids and the export's own
+build share one WASM heap, and on a very large part the cache alone can leave too little
+heap for the export. The next display build after an export is cold.
+`setCacheBudget(bytes)` bounds the bytes the cache's retained solids may hold (the
+Manifold backend estimates each from its triangle and vertex counts); `trimCache()`
+then drops whole partitions, least recently built first, until they fit. A trim frees
+solids, so it runs only where no caller holds one — never inside a bracket and never
+right after one whose solids are still in use; jobs.js trims after each display
+sub-part is meshed and when a job returns. The budget arrives on `generate` messages
+as `cacheBudget` (bytes, `null` = unbounded), from mount's `cacheBudgetMB` option.
 
 `beginSubPart`/`endSubPart` brackets MAY nest: only the outermost pair opens and
 commits a round, and an inner pair is a balanced no-op. Nesting is real rather than
@@ -381,6 +401,7 @@ Normative signatures: `kernel.js`'s `@typedef Solid`.
 | `toIndexedMesh({quality?})` | `{positions, indices}` indexed mesh (3MF path); defaults to `"print"` like `toSTL`. Coincident vertices need NOT be welded — the 3MF writer welds, because that format reads topology from the indices rather than re-stitching soup by position the way an STL consumer does. |
 | `fillet(r)` · `fillet({r, edges?})` / `chamfer(d)` · `chamfer({d, edges?})` / `shell({t, open})` | `fillet`/`chamfer`: implemented on BOTH in-repo classes since v3 — exactly on B-rep, tolerance-band on the mesh class for straight, circular-arc, planar-rim and curved-face edge chains (see [Conformance classes](#conformance-classes)); an edge class the mesh kernel cannot blend throws `KernelCapabilityError` and reroutes. Zero magnitude — `fillet(0)` / `chamfer({d: 0})` — is the identity on every class (returns the solid unchanged, never throws; `shell` excluded, `t: 0` is degenerate). Scalar `fillet(3)`/`chamfer(1)` acts on all edges; the options form adds an `edges` selector. `shell` remains B-rep-only (core throws), hollows inward keeping outer dimensions; `open` (face selector) is required. |
 | `roundAll(r)` · `roundAll({r})` | Morphological close-then-open with a ball of radius `r`: rounds EVERY edge (convex and concave) at radius ≈ `r`; faces stay in place (within the class's tolerance band — the B-rep offset chain can drift ~0.1 mm); features smaller than the ball are consumed (walls < 2r melt, holes < 2r seal). Implemented natively on BOTH classes — never routes, never throws `KernelCapabilityError`. Parity-tolerant only while `r` is below the smallest feature size; at consuming radii the mesh class performs true consumption and a B-rep class MAY skip the whole op unchanged with a `roundall-skipped` warning (skip is the only permitted degrade). `roundAll(0)` is the identity on every class. |
+| `offset(d)` · `offset({d})` | 3-D ball offset — the solid counterpart of `Shape2D.offset`: `d > 0` grows the solid by `d` (Minkowski sum with a ball), `d < 0` shrinks it by `\|d\|` (Minkowski difference). Every point of the result's surface is `\|d\|` from the input's, within the class's tolerance band (the mesh class's faceted ball sits up to its sagitta inside the true ball, so diagonal faces land slightly short of `\|d\|`). Corners: a grow rounds convex edges/corners at radius `d` and keeps concave ones sharp; a shrink rounds concave edges at `\|d\|` and keeps convex ones sharp. Implemented natively on BOTH classes — never routes, never throws `KernelCapabilityError`; works on imported meshes on the mesh class. A shrink past the solid's half-thickness yields an empty solid on the mesh class. A B-rep class MUST NOT return the input unchanged on failure (a skin `body.cut(body.offset(-t))` would silently come out empty): it throws an error whose message starts `offset-failed:`. `offset(0)` is the identity on every class. Additive in 0.165 with no contract bump (the `loftSmooth` precedent). |
 
 `quality` (`"preview"` | `"print"`) is **advisory**: it trades tessellation density for
 speed and a backend may bake it at kernel creation (Manifold does). A part must never
@@ -778,6 +799,12 @@ the helpers come along unmodified. (`test/kernel-contract.test.js` asserts every
   drills), so a sheet part is portable by
   construction too. None of these is a kernel op.
 
+- **Rotation converters** — `deg`, `rad`, `euler`, `toEuler` and `applyRotation` convert
+  rotations to and from frame-style `{axis, deg}` steps (each step about the current
+  axes, as a frame's `rotate`); `applyRotation` calls only the Solid's `rotate`. Plain
+  JS, not kernel ops. (The `limb` helper that builds on them is a domain, exported from
+  `partforge/kinematics`, not from `partforge/geometry`.)
+
 **Profile validation on the way in** (0.112). `prism`, `extrude`, `revolve`, `sweep`,
 `loft` (per ring) and `shape2d` (including boolean operands) run `validateProfile` on a
 hand-authored profile — a point list, a `{start, segments}` contour, a `{outer, holes}`
@@ -876,6 +903,17 @@ built. So **a `meshes` post is current as of the moment it is posted**: it is ne
 previous part's geometry surfacing after a rebind, and a host may take it as the build
 outcome for the part it currently has mounted.
 
+**Progressive generates.** A generate carrying `progressive: true` (mount's
+`progressiveBuild` option) also posts `{type:"meshes-partial", meshes}` while it runs:
+the sub-parts built so far, batched at most every 300 ms, each posted right after a
+sub-part boundary's staleness check. A batch that is stale by the time it is posted is
+dropped by the worker, never downgraded to `superseded` — the job's own final post still
+settles it. The final `{type:"meshes"}` then carries only the sub-parts no batch did, so
+every sub-part arrives exactly once, its buffers transferred with it. A batch settles
+nothing: `ready`, `onBuild` and a host's own "build finished" wait for `meshes`. A host
+that reads worker replies itself and turns `progressive` on must add the batches up; one
+that never sends it sees the protocol exactly as before.
+
 **Host-side rule for `superseded`.** partforge's own `mount()` does not handle a
 `superseded` message, and does not need to: in its single-mount flow the regen loop
 serializes generates, so no generate is ever in flight when the next one is sent and the
@@ -943,6 +981,12 @@ in `kernel.js` define the current surface; only breaking changes bump the versio
   the OpenSCAD/Manifold/CadQuery consensus (`union`, `translate`, `rotate`, `mirror`;
   `cut` per CadQuery/replicad rather than OpenSCAD's `difference`), so LLM priors
   transfer. Renames are breaking changes with no offsetting benefit — don't.
+
+**Additive within v4** (partforge 0.165): `Solid.offset` joins `SOLID_OPS` — a 3-D
+ball offset (`d > 0` grows, `d < 0` shrinks), on both in-repo classes. No contract
+bump, following the `loftSmooth`/`heightfield` precedent for an op both in-repo
+backends implement; a third-party core kernel must add it to stay conforming
+(Manifold's `minkowskiSum`/`minkowskiDifference` with a sphere is the reference).
 
 **v3 → v4** (partforge 0.63): `Solid.roundAll` is added to `SOLID_OPS` (portable
 morphological rounding — rounds every edge with a ball of radius `r`;
@@ -1025,8 +1069,9 @@ The recurring constraint: every op here is implementable on **both** a mesh-CSG 
 and a B-rep kernel (see `docs/geometry-backend-strategy.md` for why that dual-backend
 property is worth protecting — OCCT booleans are ~75–1400× slower). Generation *safety*
 comes not from a restricted DSL but from the verify loop (`measure`/`verify` gates:
-`bbox`, `volume`, `holes`, `watertight`, overlaps — plus `minWall` and `overhangArea`
-*warnings*, which report but never fail) — a generator gets machine-checkable
+`bbox`, `volume`, `holes`, `watertight`, overlaps and, under an FDM profile,
+`bedContactPct` — plus `minWall` and `overhangArea` *warnings*, which report but never
+fail) — a generator gets machine-checkable
 pass/fail feedback per part, which a syntax could never provide.
 
 ## Conformance checklist for a new backend or host

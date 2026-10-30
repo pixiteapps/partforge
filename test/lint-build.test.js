@@ -217,3 +217,24 @@ test("a frame-set probe raises no probe-throws or unknown-kernel-op", () => {
   expect(ids(r.errors)).not.toContain("probe-throws");
   expect(ids(r.errors)).not.toContain("unknown-kernel-op");
 });
+
+test("a part posing a limb with grip in derive lints clean through partforge/kinematics", async () => {
+  const { limb } = await import("../src/framework/domains/kinematics/index.js");
+  expect(typeof limb).toBe("function");
+  const sub = (joint) => ({ build: (k) => k.box({ min: [0, 0, 0], max: [2, 8, 2] }), views: { assembly: (s, p, d) => d.f.place(s, joint) } });
+  const part = {
+    meta: { title: "Limb" },
+    defaults: { curl: 0.2, gripOn: true },
+    derive: (p) => {
+      const L = limb("f", { toward: [0, 1, 0], bendToward: [0, 0, -1], r: [3, 2.5, 2, 1.5],
+        joints: ["a", "b", "c"], lengths: [20, 15, 10] });
+      const rod = { kind: "cylinder", r: 4, h: 60, at: [0, 10, -12], axis: [1, 0, 0] };
+      return { f: p.gripOn ? L.pose({ grip: { around: rod } }) : L.pose({ curl: p.curl }) };
+    },
+    parts: { a: sub("a"), b: sub("b"), c: sub("c") },
+    views: { assembly: { label: "A", animations: { close: { duration: 1, tracks: { curl: [[0, 0], [1, 1]] } } } } },
+  };
+  const r = lintPart(part);
+  const rules = [...r.errors, ...r.warnings].map((f) => f.rule);
+  for (const bad of ["build-throws", "probe-throws", "derive-throws", "unknown-kernel-op", "animation-track-rebuilds"]) expect(rules).not.toContain(bad);
+});

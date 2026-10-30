@@ -132,6 +132,24 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 - **Cause:** the B-rep backend implements `roundAll` as a triple OCCT offset, which cannot change topology: a radius at or above the smallest local feature (thin wall < 2r, hole < 2r) has no valid B-rep offset result, so the op skips whole rather than emit garbage (KERNEL-CONTRACT.md, `roundAll` row). The mesh backend meanwhile performs true consumption — so preview and STEP legitimately differ in this regime.
 - **Fix:** reduce `r` below half the smallest wall/hole radius if STEP fidelity matters; or accept the divergence (preview/STL are correct) and gate the part with a `verify` volume assertion so the behavior is intentional.
 
+## offset-failed
+
+- **Symptom:** the build throws `offset-failed: offset(<d>) produced no valid solid on the OCCT backend — …` (STEP export, or a sub-part a `shell` routes to OCCT).
+- **Cause:** the B-rep backend implements `Solid.offset` as one OCCT offset, which cannot change topology: a shrink at or past half the thinnest wall (or a grow that would close a gap or hole narrower than `2d`) has no valid B-rep result. Unlike `roundAll`, `offset` never skips — returning the un-offset solid would make `body.cut(body.offset(-t))` empty without any sign of a problem — so it throws.
+- **Fix:** keep `|d|` below half the smallest wall/gap; or run the sub-part on Manifold (`meta.backend: "manifold"`, or drop the `shell` that routes it), whose Minkowski offset consumes thin features correctly. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "`offset(d)` — grow or shrink a solid".
+
+## offset-slow
+
+- **Symptom:** a build that calls `Solid.offset` takes many seconds or minutes, most often on an imported STL/3MF.
+- **Cause:** the Manifold backend's offset is a Minkowski sum/difference with a ball; on a non-convex solid every input triangle is hulled with the ball, about 3 ms per triangle (8,448 triangles ≈ 23 s; a 100k-triangle scan is minutes).
+- **Fix:** decimate the mesh before you import it, offset once and reuse the result, and do not offset inside a loop. Where the solid is an extrusion, offset the 2-D profile (`Shape2D.offset`) and extrude it instead — that is near-instant.
+
+## solid-offset-not-a-function
+
+- **Symptom:** `TypeError: <name>.offset is not a function` on a Solid (an extruded, imported or boolean result).
+- **Cause:** partforge before 0.165 had `offset` only on `Shape2D`; `Solid.offset` was added in 0.165.0.
+- **Fix:** update partforge to 0.165.0 or later. Do not fall back to unioning axis-shifted copies of the solid — that makes a wall only `t/√3` thick on diagonal surfaces.
+
 ## boolean-not-watertight
 
 - **Symptom:** `NOT watertight ✗` from `partforge measure` (non-zero exit) after adding a boolean cut or union.
@@ -203,6 +221,36 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 - **Symptom:** A `✗ … held` failure from `verify` reporting `<name> not connected to <base>`: a sub-part that looks assembled in the preview touches nothing that reaches the base.
 - **Cause:** The piece is placed by eye rather than against a mating datum — a lid a hair above its box, a bracket beside the wall it should bolt to, a pin whose bore it was never moved into — or it is held only by a reference ghost (`exportable: false`), which is never printed. On OCCT a sub-part fully inside another reads as not touching, since overlap detection is Manifold-only.
 - **Fix:** Seat the part on a mating face by deriving its position from the face it sits on in `derive()`, or add the fastener, boss or tab that holds it, then keep `verify.expect._view.held` so the next edit re-checks it. If the piece is meant to run free in a clearance bore (a hinge pin, a print-in-place link), the clearance is correct and `held` is the wrong check for that assembly — remove `held` and declare the pair under `clearance`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Self-verification (the `verify` block)".
+
+## piece-hovers-above-bed
+
+- **Symptom:** A `✗ … bedContactPct` failure from `verify` (e.g. `1.28 not >= 50`) with the note `… mm² of flat underside sits 0.25 mm above the bed`; or, in a slicer, a piece whose flat bottom is not on the bed and whose first layers string or spaghetti.
+- **Cause:** Something smaller than the piece's flat underside sits lower than it in the print pose — a horizontal knuckle or pin whose cylinder dips below the plate, a boss, or lettering embossed on the bottom — so exporters and slicers rest the piece on that feature and the flat face prints in mid-air.
+- **Fix:** Trim the piece flat at the bed plane (cut everything below z = 0 in its print pose), or raise or shorten the lower feature so the flat face is the lowest; size a print-in-place knuckle so its cylinder is tangent to the bed and give it a support block down to z = 0. A recess meant to clear the bed declares a lower `bedContactPct`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Self-verification (the `verify` block)".
+
+## piece-stands-on-nothing
+
+- **Symptom:** A `footprintPct` cost from `verify` (in `verify.costs`, e.g. `0.42 not >= 10`) on a piece whose print pose rests on a point, a line or a curl — a sphere-tipped rod standing on its end, a cylinder lying on its side — while `bedContactPct` passes.
+- **Cause:** The lowest point of the piece is not a flat face, so almost none of its silhouette on the bed actually touches it (a cylinder on its side reads a few percent, under the floor): the first layer has almost nothing to bond to, and the piece tips or pulls loose unless it prints with a brim, a raft, or in a different orientation.
+- **Fix:** Lay the piece on its flat face in its print pose, add a flat foot or pad at its lowest point, or print it with a brim. When the user chose the brim, `verify.accept: ["footprint"]` records it and the cost reads accepted. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Printed parts".
+
+## flex-root-sharp
+
+- **Symptom:** A `✗ … flexRoot` failure from `verify` naming the member in `feature`, whose note reads e.g. `"Right prong": sharp root (90°, 12.2 mm of corner)` or `"Right prong": root radius 0.4 mm, needs ≥ 1 (2 mm thick)`; or, in use, a snap arm, buckle prong, clip or cantilever tab that breaks off flush with the body it grows from.
+- **Cause:** The member declared in `verify.flex` meets the rest of the part at a sharp inside corner, or through a fillet smaller than the process's `rootFillet` share of its thickness (half, on every built-in profile). Bending puts the highest stress at the root, a sharp corner multiplies it several times over, and in FDM the layer bonds are weakest right there — so the member snaps at its root, often on the first few flexes.
+- **Fix:** Round the root with a fillet of at least half the member's thickness: `s.fillet({ r, edges: { near: [x, y, z] } })` on the joined solid, one root edge at a time, or `edges: { inPlane, at }` when every root edge lies on the face the member grows from (fillet before anything else that touches that face joins, so only the roots are selected); or draw the fillet into the 2-D profile the member and body share. Keep the fillet clear of whatever the member slides into — chamfer that mouth to seat it. If a grip rib or barb on the member is labelled apart, list it with the member: `flex: [["Arm", "Arm rib"]]`. If the mesh misreads the member's bending thickness (a wide hook reads its width), declare it: `flex: [{ feature: "Arm", thickness: 2 }]`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Printed parts".
+
+## flex-strain-over
+
+- **Symptom:** A `⚠ … flexStrain` warning from `verify`, e.g. `"Arm": 2.67% at 2 mm (15 mm long, 2 mm thick)` against `<=1.5`; or, in use, a snap arm that whitens, takes a set or cracks at its root the first time it is pressed home.
+- **Cause:** At the deflection declared for it (`flex: [{ feature, deflection }]`) the member's root strain — 1.5 × thickness × deflection / length² for a straight cantilever — is over what the process's material takes for a one-time snap (`strain`: 1.5% PLA, 3% PETG, 2% resin). A short, thick arm with a deep undercut is the usual shape.
+- **Fix:** Lengthen the arm, thin it, or reduce its travel (a shallower undercut; a lead-in chamfer so the snap spreads over more of the stroke). Tapering the arm to half its thickness at the tip lets it bend about 60% further at the same root strain. Switch to PETG where the design is fixed. The formula is a first approximation — a curved or hooked member bends differently — so declare the real bending `thickness` when the mesh misreads it. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Printed parts".
+
+## flex-member-standing
+
+- **Symptom:** A `flexTilt` cost from `verify` under an FDM profile, e.g. `"Arm": 90° off the bed` against `<=45`; or, in use, a snap arm that breaks cleanly along a layer line at its root.
+- **Cause:** In the print pose the member's long axis stands up off the bed, so its layers are stacked across its root; a layer bond is a fraction of the in-plane strength, and bending loads exactly that bond.
+- **Fix:** Pose the piece in `place(..., { purpose: "export" })` so the arm lies along the bed (its root corner then sits within one layer), or split the part so the arm prints flat and joins afterwards. A standing arm the user keeps is a cost they accept (`accept: ["standing"]`): use PETG or anneal, and round the root generously. Resin is isotropic and never reports this. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Printed parts".
 
 ## expect-static-across-presets
 
@@ -876,6 +924,18 @@ between the Manifold preview and the OCCT STEP export.
 - **Symptom:** An implicit part's limbs miss what they should touch or grip (a hand's fingers miss the rod they wrap), with no build error and nothing in the `measure` report pointing at it.
 - **Cause:** Frame placement worked out by hand through a chain of `{ parent, at, rotate }` frames — each rotation turns everything further down the chain, and the arithmetic is easy to get wrong.
 - **Fix:** Report the frames instead of guessing: return `place(k.implicitFrames(spec))` from a probe, using the same placement function the build applies to the solid, and compare each frame's reported `origin` and axes in `partforge measure` against the target (a rod's axis, a mating feature). Label boxes in the report are approximate — they always contain their piece but can be generous by up to a blend's reach — so read exact numbers off a slab probe instead.
+
+## kernel-internal-error
+
+- **Symptom:** `the geometry kernel raised an internal error it could not describe` — from a build or a STEP import, naming the operation when known (`during STEP import of "frame" (17.1 MB)`) and, when the kernel's own heap could say, the C++ exception type (`C++ exception StdFail_NotDone`, `Standard_ConstructionError`, `std::bad_alloc`, …) and the heap size. Before partforge 0.163.1 the same failure was a bare number (`{"ok":false,"error":"154591824"}`), different on every attempt.
+- **Cause:** The OCCT kernel is a WASM build compiled without C++ exception catching, so an exception nothing inside it catches — the STEP reader's transfer refusing an entity, a construction with a zero-length direction, an allocation the heap could not grow for — reaches JavaScript as the exception's ADDRESS. The number is not a code and means nothing across runs. partforge now names the operation and reads the exception's type off the heap, but it cannot read OCCT's own message for it.
+- **Fix:** Act on the type. `std::bad_alloc` or `Standard_OutOfMemory` (the message then says "probably too large for the in-browser kernel") is memory: a STEP import needs roughly six times its file size of kernel heap (measured on OCCT-written files: 17 MB → 100 MiB, 42 MB → 248 MiB), so a file that exhausts the 2 GB wasm32 ceiling is hundreds of megabytes, or the browser refused to grow the heap — simplify the imported model or split it. Any other type on an import is the file itself: re-export it from the CAD tool as AP214/AP242 solids (no assembly-only or surface-only exports) and try the smaller file; the same type from a build is that operation refusing its input (a `Standard_ConstructionError` is usually a zero-length direction or a degenerate profile). Retrying the identical build fails the same way — it is not transient.
+
+## limb-links-hand-chained
+
+- **Symptom:** A solid finger (or other jointed chain of separate solids) comes apart when a joint param moves: the links separate at the joints, or a link bends the wrong way, though each link looks right at rest.
+- **Cause:** The links are chained with hand-written `rotate` calls about hinge points that do not move with the parent joint, so a bend at the base turns the child links about a pivot left at its rest position.
+- **Fix:** Declare the chain once with `limb(...)` from `partforge/kinematics`, pose it in `derive`, and place each link with `d.<limb>.place(solid, joint)`. `place` carries the solid through every parent joint, so the hinges stay joined. Build each link at the origin along +y and let `place` do all the moving.
 
 # Hardware library
 

@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has twenty: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has twenty-two: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -44,7 +44,11 @@ test/vector2d.test.js rather than by the part),
 relief plate, swappable source), and `laser-box.js` (the sheet-parts reference
 part - five `fingerBox` panels and a lid as `sheetPart` sub-parts, two printed
 hinges keyed into slots; a test fixture and the guide's worked example, with no
-demo page), and `material-swatches.js` (not a reference part: the dev-only
+demo page), `robot-finger.js` (the kinematics reference part - three printed
+links on pin joints, posed by one `limb` from `partforge/kinematics` in
+`derive` and placed with `d.finger.place`, a `curl` animation that never
+rebuilds; the worked example of `docs/domains/kinematics.md`, with no demo
+page), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`).
 
 ## Node version
@@ -112,7 +116,9 @@ the installed package, so let the publish finish before bumping the dep there.
   is the pose ladder: rung 1 poses a canonical `place()`-able delivery by matrix,
   rung 2 keeps the trailing-transform build-delta path, posed deliveries keep the full-scope delta repair),
   `viewer.js` (three.js), `worker.js` / `jobs.js` / `geometry-service.js` (job
-  loop across workers), `part-model.js` (the pure part model - `viewSubParts` /
+  loop across workers; `kernel-error.js` is what a build's error post says when
+  the exception-less OCCT build throws a bare number — an uncaught C++ exception's
+  address — and the heap read that names its C++ type), `part-model.js` (the pure part model - `viewSubParts` /
   `resolveParams` / `buildPosed`; a deliberate leaf so the job loop, the
   collision check and the oracle can share it without a cycle), `assembly.js`
   (collision checking), `oracle/` (see below), `geometry/` (the
@@ -304,7 +310,70 @@ the installed package, so let the publish finish before bumping the dep there.
   track is place-only. Since 0.159.0 a playing preview gets a play/pause/replay
   button in `#viewbar` beside `#view-style` (`preview-play-button.js`, driven by
   the player's `onChange`; none under reduced motion or without a `#viewbar`),
-  and `handle.animation` gains `replay()`.
+  and `handle.animation` gains `replay()`. Since 0.168.0 `mountPreview` takes
+  independent presentation options that map onto `createViewer`'s: `chrome`
+  (false: no view cube, viewbar, view style, tooltips, play button or chrome),
+  `background: "transparent"` (`transparent`: alpha-0 clear, no CAD background,
+  no grid) and `contactShadow` (the thumbnail style's CPU contact-shadow mask as
+  a live plane, built ONCE per showAssembly from the pose on screen — a
+  preview's rest pose, before its player applies one — and never
+  for animation frames — rebuilding it while a preview played stalled the host
+  page's main thread) — both CAD mode only, realistic draws its own
+  environment and ground — `zoom`/`pan`, `turntable` (deg/s), `fill` (createViewer's `frameFill`:
+  frameTo bisects the camera distance along the kept view direction — or sizes
+  the ortho frustum — so the posed box's 8 corners, projected, span that
+  fraction of the viewport along its limiting axis; with `frameSwept` (a
+  configured turntable — since 0.169.0 whether or not reduced motion lets it
+  run, so every visitor gets the same framing) it frames the model swept about the vertical — two
+  48-gon circles over the box's height, radius the farthest posed VERTEX from
+  the axis (box corners sit ~√2 out on a round part and framed a turning gear
+  at ~55% width) — so no angle clips. With `frameFill` the framing centre
+  (the point recentred onto the pivot, so the turntable's axis) is the posed
+  vertices' horizontal centroid with the box's vertical centre — a lopsided
+  propeller orbited its box centre otherwise — and the box corners and sweep are
+  taken about it; the fit is the projected span, plus a guard that nothing
+  leaves the viewport (|NDC| <= 1); a container with no size falls back to the
+  fixed r·2.6 + 6 distance. A sphere fit was tried first and left flat parts
+  small. Since 0.169.0 that box/centroid fit is the SWEPT framing only: a
+  non-swept fill (a still, or an animation, framed on its first pose) fits the
+  posed VERTICES and centres their projected outline — `centredFraming` moves
+  the target in the screen plane (camera with it, view direction kept) and
+  alternates recentring with the distance bisection; orthographic centres
+  exactly. Box-centred framing put the bubble lattice box low in its card: seen
+  obliquely in perspective, a wide flat box's near-bottom corner projects far
+  past the far-top one, so the |NDC| guard bound before the span), `camera:
+  "default"` (the carried camera and projection are dropped; render mode and
+  environment still carry) and `renderMode` (the OPENING mode only — it wins
+  over a carried one at mount, then changes freely). An unknown key or value
+  throws. The turntable turns through `viewer.orbitBy` off
+  `onFrame` — orbitBy announces a camera grab itself, so the turntable tells its
+  own steps from the user's by a flag held across the call, and the first real
+  grab stops it; none under reduced motion. Every handle gains `drawn`,
+  resolved off the viewer's `onRendered` (after a frame actually draws — the
+  loop renders on demand). Since 0.169.0 `autostart: false` sets the motion up
+  but holds it — the player's `prime()` draws the t = 0 pose (and holds the
+  ground) without advancing, the turntable sits at angle 0 — so `drawn` lands on
+  the same first frame a host's still shows; `handle.motion` then drives it:
+  `start()` (idempotent), `restart()` (`setCameraState` back to the camera
+  captured right after `showAssembly({ frame: true })` — before any carried
+  camera — then the player's `restart()`, which resets `createPlayback` and
+  re-arms the intro cue, or the turntable re-armed and turning; camera only under
+  reduced motion), `state` (`waiting | playing | stopped | finished`) and
+  `onChange`. A grab while the turntable waits stops it too (start() is then a
+  no-op; restart() re-arms). A waiting animation's play button reads Play and
+  starts it. Since 0.170.0 `edgeWidth` (CSS px) and `edgeOpacity` style the
+  edge lines, passed straight to `createViewer`, whose one shared
+  `lineMaterial` takes them (the per-part fade clones copy them, and a fade's
+  line opacity is multiplied by `edgeOpacity`, never replaces it). The
+  cutaway outline and measure lines keep their own widths. Since 0.171.0 a
+  playing animation's fill framing covers every pose it passes through:
+  `animationPoses` (preview-player.js — every keyframe plus each gap's midpoint,
+  thinned to 128) goes to `createViewer` as `framePoses`, and `posedVertices`
+  adds each sub-part's SUPPORT points (its outermost vertex along 64 fixed
+  directions, cached per geometry) in every one of those poses to the exact
+  vertices of the pose shown — never every vertex at every pose, which a dense
+  model would make too slow. The first pose is then smaller than `fill`, by
+  design. A turntable mount ignores it (no animation plays there).
 - **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
   (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
   nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,
@@ -314,7 +383,15 @@ the installed package, so let the publish finish before bumping the dep there.
   `sheet/resolve.js` resolves a declaration into shapes and builds the preview;
   `sheet/part.js` is `sheetPart()`; `process/registry.js` lists the
   manufacturing processes (laser is #1, `process/laser/descriptor.js`, plain
-  data). All public names are re-exported from `partforge/geometry`; none is a
+  data). Printing is registered there too, as its OWN list: `PROCESSES` stays the
+  sheet list (exporters, kit destinations, `SHEET_METRICS` and `sheetPart()`'s process
+  check all read it), and `PRINT_PROCESSES` holds `process/fdm/descriptor.js` (profiles
+  `fdm-pla`, `fdm-petg`) and `process/resin/descriptor.js` (`resin`) — import-free data
+  carrying the DFM profiles `oracle/dfm-profiles.js` re-exports as `PROFILES`, the
+  `costs` table (cost id → metric: fdm's `supports` → `overhangArea`, `footprint` →
+  `footprintPct`; resin none) and `docId: "printed-parts"`. `printProcessFor(spec)`
+  resolves a profile id or an inline `{ base }` to its process. Never add `fdm` or
+  `resin` to `PROCESSES`: a sheet part would then accept a print process. All public names are re-exported from `partforge/geometry`; none is a
   kernel op. Three rules hold it together. A sheet sub-part is recognized ONLY
   by its plain-data `sp.sheet` (`isSheetPart`) — never `instanceof`, a
   module-scoped `Symbol()` or a `WeakMap`, because partforge-cloud's part worker
@@ -355,7 +432,8 @@ the installed package, so let the publish finish before bumping the dep there.
   option — is documented in `docs/AUTHORING-PARTS.md`'s "Getting files into a
   part".
 - **`src/framework/oracle/`** - the geometric oracle: `measure.js`, `verify.js`,
-  `build.js`, `gaps.js`, `min-wall.js`, `overhang.js`, `bvh.js`, `mesh.js`, `assert-dsl.js`,
+  `build.js`, `gaps.js`, `min-wall.js`, `overhang.js`, `bed-contact.js` (bed contact, and
+  the posed `base` extent and `lowestAt` that `measure.js` turns into `footprintPct`), `bvh.js`, `mesh.js`, `assert-dsl.js`,
   `dfm-profiles.js`, `cases.js`. Despite reading like test code this is shared
   runtime: the browser worker runs it for the `inspect` job, and `lint` reads its
   DFM profiles and assertion grammar. It is therefore DOM-free, `three`-free and
@@ -413,6 +491,34 @@ the installed package, so let the publish finish before bumping the dep there.
   part verifies byte-identically — `test/verify-golden.test.js` pins it; re-record only
   for a deliberate verdict change (`PARTFORGE_RECORD_VERIFY_GOLDEN=1 npx vitest run
   test/verify-golden.test.js`). Timings: `docs/research/sheet-inspect-timing.md`.
+- **Printed parts in the oracle.** A print check is in one of three tiers, set by its
+  registry entry's `kind` in `verify-metrics.js`, never by the oracle's confidence: a
+  GATE (`kind: "gate"` — bed fit, `bedContactPct`) fails `ok`; a COST (`kind: "cost"`
+  plus a `costId` — `overhangArea` → `supports`, `footprintPct` → `footprint`) gets
+  status `"cost"`, lands in `verify().costs` (never `warnings`), counts toward
+  `declared`/`evaluated` and never moves `ok`; an advisory (`kind: "warn"` — `minWall`,
+  `wall`) is a warning as before. The process arms its checks by itself
+  (`dfm-profiles.js`): `overhangAngleFor` reads the profile's `overhang` alone,
+  `bedContactFor` the profile's `bedContact` (or `orientation: "print"` with NO profile),
+  `footprintFor` the profile's `footprint`; an authored expectation of the metric arms
+  each under any profile. `orientation: "print"` arms neither cost. `verify.accept`
+  (cost ids, validated by lint's `verify-unknown-accept` against the process's `costs`)
+  stamps `accepted: true` on each matching cost and changes nothing else — the reading
+  stays in `costs`; `{ base, overhang: null }` is the off switch. `PRINT_ONLY` keeps every
+  print metric off sheet parts. A FLEXING MEMBER (`verify.flex`, read by
+  `oracle/flex-root.js` on the triangles carrying its feature label) adds three: `flexRoot`
+  (a gate armed by `verify.flex` alone — its root fillet radius, read by a ray lifted a
+  little off the member's face into the air, against the profile's `rootFillet` share of
+  its thickness), `flexStrain` (an advisory from a declared `deflection` — 1.5·t·y/L², a
+  straight cantilever, against the profile's `strain`) and `flexTilt` (the `standing`
+  cost, armed by an FDM profile's `flexTilt` alone — the member's long axis off the bed
+  in the print pose). measure() reads geometry only (`flexRoots` per printed sub-part,
+  stamped `measuredFlex` by label group, in the memo key); verify stamps each member's
+  `required`, `deflection` and `strain` before `check()`, and the registry's worst-member
+  pickers read those stamps. A change to a tier or to what arms a check moves
+  verdicts, so re-record `test/verify-golden.test.js` in the same commit
+  (`PARTFORGE_RECORD_VERIFY_GOLDEN=1`) and read the diff. Docs: `docs/AUTHORING-PARTS.md`
+  "Printed parts", the twin of "Sheet parts" and "Routed parts".
 - **Change tracking in the oracle** (`src/framework/oracle/changes.js`,
   `createChangeTracker`). An `inspect` job that passes a non-empty `changesKey`
   gets back `report.changes` (and/or `report.changesSkipped`) describing what

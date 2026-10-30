@@ -1,4 +1,5 @@
 import { beforeAll, expect, test, vi } from "vitest";
+import { strFromU8, unzipSync } from "fflate";
 import * as bedLayoutModule from "../src/framework/export/bed-layout.js";
 import { bootManifoldKernel } from "../src/testing.js";
 import { handle } from "../src/framework/jobs.js";
@@ -56,7 +57,7 @@ const mapPart = {
   views: { all: { label: "All" } },
 };
 
-test("3MF and STEP lay out map-form pieces apart and leave legacy pieces where they are", async () => {
+test("STEP lays out map-form pieces apart and leaves legacy pieces where they are", async () => {
   const real = bedLayoutModule.layoutExportPieces;
   let boxes, names;
   // Solids are disposed when the job ends, so read the laid-out boxes inside the call.
@@ -67,7 +68,7 @@ test("3MF and STEP lay out map-form pieces apart and leave legacy pieces where t
     return laid;
   });
   try {
-  for (const type of ["export-3mf", "export-step"]) {
+  for (const type of ["export-step"]) {
     spy.mockClear();
     const posts = [];
     // The Manifold test kernel has no STEP writer; the layout runs before it is called.
@@ -84,6 +85,30 @@ test("3MF and STEP lay out map-form pieces apart and leave legacy pieces where t
   } finally { spy.mockRestore(); }
 });
 
+// The 3MF export frees each piece once it is meshed and lays the meshes out from their
+// bounds (feedback #212), so its layout is checked in the file it writes.
+const objectBoxes = (data) => {
+  const xml = strFromU8(unzipSync(new Uint8Array(data))["3D/3dmodel.model"]);
+  return Object.fromEntries([...xml.matchAll(/<object [^>]*name="([^"]+)"[^>]*>(.*?)<\/object>/g)].map(([, name, body]) => {
+    const v = [...body.matchAll(/<vertex x="([^"]+)" y="([^"]+)" z="([^"]+)"/g)].map((m) => m.slice(1).map(Number));
+    return [name, { min: [0, 1, 2].map((i) => Math.min(...v.map((p) => p[i]))), max: [0, 1, 2].map((i) => Math.max(...v.map((p) => p[i]))) }];
+  }));
+};
+
+test("3MF lays out map-form pieces apart, leaves legacy pieces where they are, and frees each piece", async () => {
+  const kk = await bootManifoldKernel();
+  const cleanup = vi.spyOn(kk, "cleanup");
+  const posts = [];
+  await handle(kk, mapPart, { type: "export-3mf", parts: ["a", "b", "legacy"], params: {}, jobId: 1, view: "all" }, (m) => posts.push(m));
+  const boxes = objectBoxes(posts.find((m) => m.type === "download").data);
+  expect(Object.keys(boxes)).toEqual(["a", "b", "legacy"]);
+  const [ba, bb] = [boxes.a, boxes.b];
+  expect(ba.max[0] <= bb.min[0] || bb.max[0] <= ba.min[0] || ba.max[1] <= bb.min[1] || bb.max[1] <= ba.min[1]).toBe(true);
+  expect(ba.min[2]).toBeCloseTo(0, 5); // resting on the bed
+  expect(boxes.legacy.min[2]).toBeCloseTo(30, 5);
+  expect(cleanup.mock.calls.length).toBeGreaterThanOrEqual(4); // once per piece, plus the job's own
+});
+
 test("STL is never laid out", async () => {
   const spy = vi.spyOn(bedLayoutModule, "layoutExportPieces");
   const posts = [];
@@ -91,3 +116,30 @@ test("STL is never laid out", async () => {
   expect(spy).not.toHaveBeenCalled();
   spy.mockRestore();
 });
+
+// Feedback #212: a many-piece STL export must free each piece's solids before the next,
+// and a piece that runs the heap out must say which piece and what to do about it.
+test("export-stl frees each piece's solids before building the next", async () => {
+  const kk = await bootManifoldKernel();
+  const cleanup = vi.spyOn(kk, "cleanup");
+  const posts = []; await handle(kk, part, { type: "export-stl", parts: ["a", "b"], params: {}, quality: "print" }, (m) => posts.push(m));
+  expect(posts.find((m) => m.type === "download-parts").parts).toHaveLength(2);
+  expect(cleanup.mock.calls.length).toBeGreaterThanOrEqual(3); // once per piece, plus the job's own
+});
+
+test("a piece that runs the kernel out of memory names itself, its place, and the remedy", async () => {
+  const trapping = { ...part, parts: { ...part.parts, b: { ...part.parts.b, build: () => { throw new RuntimeError("memory access out of bounds"); } } } };
+  const posts = []; await handle(k, trapping, { type: "export-stl", parts: ["a", "b"], params: {}, jobId: 3 }, (m) => posts.push(m));
+  const err = posts.find((m) => m.type === "error");
+  expect(err.jobId).toBe(3);
+  expect(err.message).toMatch(/^exporting "B" \(part 2 of 2\) ran out of memory — export fewer parts at a time/);
+  expect(err.message).toMatch(/: (RuntimeError: )?memory access out of bounds$/); // raw text last, for a host's trap classifier
+});
+
+test("an ordinary failure in a many-piece export names the piece without memory advice", async () => {
+  const broken = { ...part, parts: { ...part.parts, a: { ...part.parts.a, build: () => { throw new Error("bad wall"); } } } };
+  const posts = []; await handle(k, broken, { type: "export-stl", parts: ["a", "b"], params: {} }, (m) => posts.push(m));
+  expect(posts.find((m) => m.type === "error").message).toBe('exporting "A" (part 1 of 2) failed: bad wall');
+});
+
+class RuntimeError extends Error { constructor(m) { super(m); this.name = "RuntimeError"; } }

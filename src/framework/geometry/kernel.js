@@ -41,7 +41,7 @@ export const KERNEL_OPS = [
 // OCCT's replicad shapes need no dispose bookkeeping). jobs.js calls all of these via
 // `?.`, so a third-party backend may simply omit them.
 export const KERNEL_OPTIONAL_OPS = [
-  "beginSubPart", "endSubPart", "sweepCache", "cacheStats", "resetCacheStats", "cleanup",
+  "beginSubPart", "endSubPart", "sweepCache", "dropCache", "setCacheBudget", "trimCache", "cacheBytes", "cacheStats", "resetCacheStats", "cleanup",
   // Drains the feature-skip warnings recorded since the last drain — a fillet or
   // chamfer the geometry defeated and the backend skipped rather than failed the
   // build over. Both backends implement it; a host that never calls it sees the
@@ -56,6 +56,9 @@ export const SOLID_OPS = [
   "translate", "rotate", "rotateX", "rotateY", "rotateZ", "rotateAbout", "along", "at",
   "mirror", "scale", "toMesh", "toSTL", "toIndexedMesh",
   "fillet", "chamfer", "shell", "roundAll",
+  // Additive in 0.165 (no CONTRACT_VERSION bump — the loftSmooth/heightfield
+  // precedent): both in-repo backends implement it.
+  "offset",
 ];
 
 // Backend-optional Solid queries: Manifold mesh-topology numbers (measure.js
@@ -114,6 +117,8 @@ export const ROUTED_CAD_OPS = ["shell"];
  * @property {(r:number|{r:number,edges?:object}) => Solid} fillet    round edges; mesh-native incl. curved-face edges, OCCT fallback otherwise; fillet(3) or fillet({r,edges}); legacy (r,selector) accepted for now (see file header)
  * @property {(d:number|{d:number,edges?:object}) => Solid} chamfer  bevel edges; mesh-native incl. curved-face edges, OCCT fallback otherwise; chamfer(1) or chamfer({d,edges}); legacy (d,selector) accepted for now (see file header)
  * @property {(o:{t:number,open:object}) => Solid} shell   hollow inward (OCCT only); legacy (thickness,openFaces) accepted for now (see file header)
+ * @property {(r:number|{r:number}) => Solid} roundAll   morphological close-then-open with a ball of radius r: rounds every edge (both backends)
+ * @property {(d:number|{d:number}) => Solid} offset   3-D ball offset: grow (+d) / shrink (−d) the solid by |d| everywhere — convex edges round on a grow, concave on a shrink; both backends; the 2-D twin is Shape2D.offset
  * @property {() => number} [genus]     through-hole count (Manifold only)
  * @property {() => boolean} [isEmpty]  no geometry at all (Manifold only)
  *
@@ -140,7 +145,7 @@ export const ROUTED_CAD_OPS = ["shell"];
  * @property {(tolerance:number) => Shape2D} simplify   corner-preserving decimation/refit within tolerance
  * @property {() => {index:number,point:number[],interiorAngleDeg:number,convex:boolean,segTypes:string[]}[]} corners   corner list (the positional order fillet/chamfer `{indices}` index into)
  * @property {(p:number[]) => boolean} contains   is point [x,y] inside the shape (holes excluded)
- * @property {(o?:{h:number,twist?:number,scaleTop?:number}) => Solid} extrude   sugar for k.extrude({profile:this,…})
+ * @property {(o?:{h:number,twist?:number,scaleTop?:number,bevel?:number|{bottom?:number,top?:number}}) => Solid} extrude   sugar for k.extrude({profile:this,…}); every option is forwarded
  * @property {(o?:{degrees?:number}) => Solid} revolve   sugar for k.revolve({profile:this,…})
  *
  * @typedef {Object} GeometryKernel
@@ -170,6 +175,10 @@ export const ROUTED_CAD_OPS = ["shell"];
  * @property {(name:string) => void} [beginSubPart]   open a per-sub-part solid-cache round (both backends)
  * @property {() => void} [endSubPart]                close the cache round (always pair with beginSubPart)
  * @property {() => void} [sweepCache]   drop cache partitions idle for 3 rebinds; call once per setPart, never mid-bracket
+ * @property {() => void} [dropCache]    drop EVERY cache partition (the worker calls it before an export); never mid-bracket
+ * @property {(bytes:number) => void} [setCacheBudget]   bound the solid cache's retained bytes (Infinity = unbounded)
+ * @property {() => number} [trimCache]   drop least recently built partitions until the cache fits its budget; only where no cached solid is held
+ * @property {() => number} [cacheBytes]  the cache's estimated retained bytes
  * @property {() => {hits:number,misses:number}} [cacheStats]
  * @property {() => void} [resetCacheStats]
  * @property {() => void} [cleanup]   free per-job WASM objects (Manifold backend); call after each job

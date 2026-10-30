@@ -15,6 +15,7 @@ test("verify-metrics exposes the subpart metric vocabulary", () => {
   }
   expect(SUBPART_METRICS.minWall.kind).toBe("warn");
   expect(SUBPART_METRICS.holes.kind).toBe("gate");
+  expect(SUBPART_METRICS.overhangArea).toMatchObject({ kind: "cost", costId: "supports" });
 });
 
 test("verify-metrics exposes the view metric vocabulary", () => {
@@ -60,7 +61,7 @@ test("suggest is exported for reuse by the linter", () => {
 // The sub-part metrics that existed before sheet parts. A process metric must never
 // take one of these names: the spread into SUBPART_METRICS would silently replace it.
 const PRINT_METRICS = ["holes", "watertight", "volume", "surfaceArea", "triangleCount", "bbox", "centerOfMass",
-  "bounds", "boundsMin", "boundsMax", "minWall", "overhangArea", "wall", "refXorVolume", "refVolumeDeltaPct", "refBboxDelta"];
+  "bounds", "boundsMin", "boundsMax", "minWall", "overhangArea", "footprintPct", "flexRoot", "flexStrain", "flexTilt", "wall", "refXorVolume", "refVolumeDeltaPct", "refBboxDelta"];
 
 // A sheet sub-part's facts row, as measure() stamps it (Task 4), for evaluateCase.
 const sheetRow = (sheet) => ({ name: "plate", volume: 7200, bbox: [60, 40, 3], sheet: {

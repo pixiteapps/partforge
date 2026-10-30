@@ -2,9 +2,10 @@ import { expect, test } from "vitest";
 import { resolveProfile, overhangAngleFor, PROFILES } from "../src/framework/oracle/dfm-profiles.js";
 
 const FDM_PLA = {
-  bed: [220, 220, 250], minWall: 1.2, clearance: 0.2, overhang: 45,
+  bed: [220, 220, 250], minWall: 1.2, clearance: 0.2, overhang: 45, bedContact: 50, footprint: 10,
   fits: { press: -0.1, push: 0.05, slip: 0.25, moving: 0.35, printInPlace: 0.45 },
   holeUndersize: 0.25, bridge: 10,
+  rootFillet: 0.5, strain: 1.5, flexTilt: 45,
 };
 
 test("resolves a built-in profile by name", () => {
@@ -26,9 +27,9 @@ test("every profile carries the five fit classes, an undersize and a positive mi
   }
 });
 
-test("overhangAngleFor: opt-in needs BOTH the orientation key and a profile that carries an angle", () => {
+test("overhangAngleFor: the process alone arms it, when its profile carries an angle", () => {
   const fdm = { verify: { process: "fdm-pla" } };
-  expect(overhangAngleFor(fdm)).toBeNull();                                                     // no orientation → not checked
+  expect(overhangAngleFor(fdm)).toBe(45);                                                       // the process alone arms it
   expect(overhangAngleFor({ verify: { process: "fdm-pla", orientation: "print" } })).toBe(45);
   expect(overhangAngleFor({ verify: { process: "resin", orientation: "print" } })).toBeNull();  // no angle to check against
   expect(overhangAngleFor({ verify: { orientation: "print" } })).toBeNull();                    // no profile at all

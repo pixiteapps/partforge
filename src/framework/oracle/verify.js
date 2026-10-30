@@ -2,10 +2,11 @@ import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
 import { measure as defaultMeasure } from "./measure.js";
 import { pairKey, CONTACT_EPS } from "./gaps.js";
 import { heldCheck } from "./held.js";
-import { resolveProfile, overhangAngleFor } from "./dfm-profiles.js";
+import { flexMembers } from "./flex-members.js";
+import { resolveProfile, overhangAngleFor, bedContactFor, footprintFor, rootFilletFor, strainFor, flexTiltFor } from "./dfm-profiles.js";
 import { expandExpectations, partGatesMinWall } from "./gates.js";
 import { relevanceHash } from "../param-deps.js";
-import { SUBPART_METRICS, VIEW_METRICS, sidesSpecError } from "../verify-metrics.js";
+import { SUBPART_METRICS, VIEW_METRICS, sidesSpecError, FLEX_ROOT_HINT, worstFlexRoot } from "../verify-metrics.js";
 import { processById } from "../process/registry.js";
 import { SHEET_DOC_ID, SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../sheet/constants.js";
 // Re-exported for the callers that read them from here; their one home is sheet/constants.js.
@@ -121,12 +122,13 @@ function pairGapChecks(facts, { contacts, clearance }, subPartNames) {
   return checks;
 }
 
-function check(scope, subpart, metric, spec, registry, factsObj) {
+function check(scope, subpart, metric, spec, registry, factsObj, accept = []) {
   const reg = registry[metric];
   if (!reg) throw new Error(`unknown ${scope} metric "${metric}"${subpart ? ` on sub-part "${subpart}"` : ""}`);
   const { expr, hint: partHint } = normalizeExpectation(spec);
   const actual = reg.extract(factsObj);
-  const base = { scope, subpart, metric, kind: reg.kind, expr: String(expr) };
+  const base = { scope, subpart, metric, kind: reg.kind, expr: String(expr),
+    ...(reg.kind === "cost" ? { accepted: accept.includes(reg.costId) } : {}) };
   if (actual === null || actual === undefined) {
     if (reg.manifoldOnly) return { ...base, actual, status: "skip", pass: null, message: "n/a (OCCT backend)" };
     if (metric === "minWall") {
@@ -148,7 +150,7 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
     // did before it had its own branch.
     if (reg.unavailable) {
       const out = { ...base, actual, status: "warn", pass: null, message: reg.unavailable,
-        hint: partHint ?? "no ray read as this wall — the declared band may not match the geometry (check minWall for the real thickness), or a sampled run missed it" };
+        hint: partHint ?? reg.unavailableHint ?? "no ray read as this wall — the declared band may not match the geometry (check minWall for the real thickness), or a sampled run missed it" };
       const note = reg.note?.(factsObj);
       if (note) out.note = note;
       return out;
@@ -156,8 +158,11 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
     return { ...base, actual, status: "skip", pass: null, message: "unavailable" };
   }
   const { pass, message } = evaluateAssertion(parseAssertion(expr), actual);
-  const status = pass ? "pass" : reg.kind === "warn" ? "warn" : "fail";
+  const status = pass ? "pass" : reg.kind === "warn" ? "warn" : reg.kind === "cost" ? "cost" : "fail";
   const out = { ...base, actual, status, pass, message };
+  // The labelled feature a reading is about (flexRoot's worst member), whatever the verdict.
+  const feature = reg.feature?.(factsObj);
+  if (feature) out.feature = feature;
   // A measurement caveat rides along whatever the verdict — a min-wall reading
   // taken from a sample still passed, but the reader should know it was a sample.
   const note = reg.note?.(factsObj);
@@ -178,14 +183,14 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
 // (`bounds: { min, max }` → `bounds.min`, `bounds.max`), each judged by `check()` against
 // its side's own registry entry. A malformed compound value throws, as a malformed
 // expression does.
-function checksFor(scope, subpart, metric, spec, registry, factsObj) {
+function checksFor(scope, subpart, metric, spec, registry, factsObj, accept = []) {
   const reg = registry[metric];
-  if (!reg?.sides) return [check(scope, subpart, metric, spec, registry, factsObj)];
+  if (!reg?.sides) return [check(scope, subpart, metric, spec, registry, factsObj, accept)];
   const bad = sidesSpecError(metric, reg, spec);
   if (bad) throw new Error(`${scope === "view" ? "_view" : subpart}: ${bad}`);
   return Object.entries(spec).map(([side, sideSpec]) => {
     const name = `${metric}.${side}`;
-    return check(scope, subpart, name, sideSpec, { [name]: reg.sides[side] }, factsObj);
+    return check(scope, subpart, name, sideSpec, { [name]: reg.sides[side] }, factsObj, accept);
   });
 }
 
@@ -214,8 +219,8 @@ const SHEET_BUDGET_HINT = "The 2-D sheet checks did not fit their time budget �
 // The print checks: measure() casts no rays and runs no overhang pass on a sheet part.
 // Declared on one, each is a skip — declared, never evaluated, so a sheet-only forge
 // that declares only these has no verdict rather than a vacuous pass.
-const PRINT_ONLY = new Set(["minWall", "wall", "overhangArea"]);
-const PRINT_ONLY_HINT = "minWall, wall and overhangArea are print checks, and a sheet part is cut, not printed: nothing measures them here. For a laser part declare sheetBridge (the narrowest web or finger) or sheetGap (the narrowest hole or slot) instead.";
+const PRINT_ONLY = new Set(["minWall", "wall", "overhangArea", "bedContactPct", "footprintPct", "flexRoot", "flexStrain", "flexTilt"]);
+const PRINT_ONLY_HINT = "minWall, wall, overhangArea, bedContactPct, footprintPct, flexRoot, flexStrain and flexTilt are print checks, and a sheet part is cut, not printed: nothing measures them here. For a laser part declare sheetBridge (the narrowest web or finger) or sheetGap (the narrowest hole or slot) instead.";
 
 // A sheet reading the geometry engine could not take (SheetFacts.readErrors): a
 // volunteered check warns with the reason; a declared one warns with it too, and is
@@ -268,10 +273,20 @@ function sheetRowChecks(s, declaredExp) {
 }
 
 // Pure policy: profile rules + per-part expect → checks for one case's facts.
-// `overhang` is the angle the part opted into (dfm-profiles.js overhangAngleFor),
-// or null/undefined: only then does the profile's overhang rule apply, as a
-// 1 mm² warning floor — a chamfer sitting exactly on the angle sheds slivers.
-export function evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang = null }) {
+// `overhang` is the angle the part's process arms (dfm-profiles.js overhangAngleFor),
+// or null/undefined: only then does the profile's overhang rule apply, as a 1 mm²
+// cost — a chamfer sitting exactly on the angle sheds slivers.
+// `bedContact` is the floor the part is checked against (dfm-profiles.js bedContactFor),
+// or null/undefined: only then does every PRINTED sub-part get `bedContactPct >= floor`.
+// `footprint` the same for the footprint cost (dfm-profiles.js footprintFor):
+// `footprintPct >= floor` on every printed sub-part.
+// `accept` the cost ids the user accepted (`verify.accept`), stamped on each cost the
+// process volunteered (never on one the author wrote in `expect`).
+// `flex` the declared flexing members (flex-root.js flexMembers), `rootFillet` the
+// share of a member's thickness its root fillet must reach (null: off), `strain` the
+// percent root strain allowed at a member's declared deflection (null: off), `flexTilt`
+// the degrees a member's axis may rise off the bed (null: not checked).
+export function evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang = null, bedContact = null, footprint = null, accept = [], flex = [], rootFillet = null, strain = null, flexTilt = null }) {
   const checks = [];
   // contacts/clearance/held are pair-derived, not scalar view metrics — peel
   // them off before the registry loop. held.js explains the exportable bound.
@@ -298,6 +313,11 @@ export function evaluateCase(facts, { profile, expect, subPartNames, exportableN
   // without the pass (a quick lap reusing a seed that had no angle), so the check
   // is withheld rather than read as "unavailable" — which would count as answered.
   const overhangSkipped = overhang != null && (facts.measuredOverhang ?? null) === null;
+  const bedContactSkipped = bedContact != null && facts.measuredBedContact !== true;
+  const footprintSkipped = footprint != null && facts.measuredFootprint !== true;
+  // A piece that is never printed (`exportable: false`) is not judged for bed contact;
+  // the floor is applied to the rest. Without the vocabulary, every row is printed.
+  const printedNames = exportableNames ? new Set(exportableNames) : null;
   for (const s of facts.subparts) {
     if (s.sheet) { checks.push(...sheetRowChecks(s, expect?.[s.name] ?? {})); continue; }
     if (anySheet && profile?.bed && s.printBbox) {
@@ -309,12 +329,37 @@ export function evaluateCase(facts, { profile, expect, subPartNames, exportableN
         message: `not measured: its print (export) pose did not build — ${s.printBboxError}`,
         hint: "build() should make each piece as it prints — a printed piece shown in an assembly gets its assembled pose from its `views` entry, never from build(). Its export pose failed to build, so its print size — and its STL/3MF export — is unavailable. Fix the pose; the bed check then runs." });
     }
+    // The flexing members this sub-part carries, each stamped with what verify asks of
+    // it: the root radius it needs (the process's share of its thickness — declared over
+    // measured) and, from a declared deflection, its root strain. The registry's worst-
+    // member pickers read these stamps, so the row's expr names that member's need.
+    const flexEval = (s.flexRoots ?? []).map((r) => {
+      const m = flex.find((x) => sameGroup(x.labels, r.labels));
+      const t = m?.thickness ?? r.thickness;
+      return { ...r, thicknessUsed: t,
+        required: rootFillet != null ? rootFillet * t : null,
+        deflection: m?.deflection ?? null,
+        strain: m?.deflection != null && r.length > 0 ? (100 * 1.5 * t * m.deflection) / (r.length * r.length) : null };
+    });
+    const sf = flexEval.length ? { ...s, flexRoots: flexEval } : s;
+    const worstRoot = rootFillet != null ? worstFlexRoot(sf) : null;
     const merged = {
       ...(profile?.minWall != null ? { minWall: `>=${profile.minWall}` } : {}),
+      ...(worstRoot ? { flexRoot: `>=${Math.round(worstRoot.required * 100) / 100}` } : {}),
+      ...(strain != null && flexEval.some((r) => r.strain != null) ? { flexStrain: `<=${strain}` } : {}),
+      // A member whose print pose could not be read has no tilt: the row then skips
+      // "unavailable" rather than vanishing, so the cost is seen to be unread.
+      ...(flexTilt != null && flexEval.some((r) => r.attached) ? { flexTilt: `<=${flexTilt}` } : {}),
       ...(overhang != null ? { overhangArea: "<=1" } : {}),
+      ...(bedContact != null && (!printedNames || printedNames.has(s.name)) ? { bedContactPct: `>=${bedContact}` } : {}),
+      ...(footprint != null && (!printedNames || printedNames.has(s.name)) ? { footprintPct: `>=${footprint}` } : {}),
       ...(expect?.[s.name] ?? {}),
     };
-    for (const [metric, expr] of Object.entries(merged)) for (const c of checksFor("subpart", s.name, metric, expr, SUBPART_METRICS, s)) {
+    // `accept` covers only the process's own default check: a cost metric the author
+    // wrote in `expect` is the user's own limit and keeps its meaning, never accepted.
+    const authored = expect?.[s.name] ?? {};
+    const acceptFor = (metric) => (Object.hasOwn(authored, metric) ? [] : accept);
+    for (const [metric, expr] of Object.entries(merged)) for (const c of checksFor("subpart", s.name, metric, expr, SUBPART_METRICS, sf, acceptFor(metric))) {
       if (minWallSkipped && (metric === "minWall" || metric === "wall") && c.actual == null) {
         checks.push({ ...c, unevaluated: true, message: "not measured (quick check)",
           hint: `re-run this check without \`quick\` to measure ${metric === "wall" ? "the wall band" : "min wall"}` });
@@ -325,10 +370,65 @@ export function evaluateCase(facts, { profile, expect, subPartNames, exportableN
           hint: "re-run this check without `quick` to measure overhang" });
         continue;
       }
+      // The footprint is read by bed contact's pass, so it is withheld the same ways.
+      if ((metric === "bedContactPct" || metric === "footprintPct") && c.actual == null && s.bedContactError) {
+        checks.push({ ...c, status: "skip", pass: null, unevaluated: true,
+          message: `not measured: its print (export) pose did not build — ${s.bedContactError}`,
+          hint: `${metric === "footprintPct" ? "the footprint" : "bed contact"} is read in the print pose, and this piece's could not be posed by its place() alone, so its export build was read instead — and that build failed. Fix the export pose; the check then runs.` });
+        continue;
+      }
+      if (bedContactSkipped && metric === "bedContactPct" && c.actual == null) {
+        checks.push({ ...c, unevaluated: true, message: "not measured (quick check)",
+          hint: "re-run this check without `quick` to measure bed contact" });
+        continue;
+      }
+      if (footprintSkipped && metric === "footprintPct" && c.actual == null) {
+        checks.push({ ...c, unevaluated: true, message: "not measured (quick check)",
+          hint: "re-run this check without `quick` to measure the footprint" });
+        continue;
+      }
       checks.push(c);
     }
   }
+  checks.push(...flexChecks(facts, flex));
   return checks;
+}
+
+// Flexing members (`verify.flex`, flex-root.js). The reading itself is the registry's
+// `flexRoot` gate, one row per sub-part carrying a member that meets the rest of the
+// part (evaluateCase's `merged`). What is left here is per DECLARED member, the cases
+// where no sub-part row can answer for it: a seed that did not read the member
+// (measuredFlex) answers unevaluated on a quick lap; a member no sub-part of this view
+// carries is a skip, not a fail — a sub-part an `enabled()` turned off, or one shown
+// only in another view — and lint's verify-flex-unknown-label is what catches a label
+// no build ever writes; a member carried but attached nowhere (its label covers the
+// whole sub-part, or the member never touches the body) withholds the verdict: a clean
+// root and no root must never read alike.
+export { FLEX_ROOT_HINT };
+const sameGroup = (a, b) => a.length === b.length && a.every((l, i) => l === b[i]);
+function flexChecks(facts, flex) {
+  const out = [];
+  for (const { feature, labels: g } of flex) {
+    const base = { scope: "subpart", metric: "flexRoot", kind: "gate", feature, expr: "rounded root", subpart: null, actual: null, status: "skip", pass: null };
+    if (!(facts.measuredFlex ?? []).some((m) => sameGroup(m, g))) {
+      out.push({ ...base, unevaluated: true,
+        message: "not measured (quick check)", hint: "re-run this check without `quick` to read the flexing member's root" });
+      continue;
+    }
+    const rows = facts.subparts.flatMap((s) => (s.flexRoots ?? []).filter((r) => sameGroup(r.labels, g)));
+    if (!rows.length) {
+      out.push({ ...base,
+        message: `no sub-part in this view carries the label ${g.map((l) => `"${l}"`).join(" or ")}`,
+        hint: "verify.flex names flexing members by their feature label — label the member (`.label(\"Arm\")`) apart from the body it grows from, and spell it the same in both places" });
+      continue;
+    }
+    if (!rows.some((r) => r.attached)) {
+      out.push({ ...base, unevaluated: true,
+        message: `"${feature}" never meets the rest of the part: its label covers every triangle it touches, so there is no root to read`,
+        hint: "label the flexing member apart from the body it grows from (`.label(\"Arm\")` on the arm before the union, not on the union), or, if the member really is a separate piece, it has no root and does not belong in verify.flex" });
+    }
+  }
+  return out;
 }
 
 // `seed` lets a caller that has ALREADY measured this part hand the result in so
@@ -353,6 +453,13 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   const needMinWall = partGatesMinWall(part, { process, expanded });
   // Throws on a bad `verify.orientation`, the same loudness as a bad profile name.
   const overhangAngle = overhangAngleFor(part, process, { expanded });
+  const bedContactFloor = bedContactFor(part, process, { expanded });
+  const footprintFloor = footprintFor(part, process, { expanded });
+  const accept = Array.isArray(part?.verify?.accept) ? part.verify.accept : [];
+  const flex = flexMembers(part?.verify?.flex);
+  const rootFillet = flex.length ? rootFilletFor(part, process) : null;
+  const strainLimit = flex.length ? strainFor(part, process) : null;
+  const flexTilt = flexTiltFor(part, process, { expanded });
   // Reuse rule (spec §4): case B may reuse a measurement taken at params A when
   // B agrees with A on every param that measurement READ (recorded by measure()
   // itself). Sound for the same reason the mesh cache is: a deterministic build
@@ -416,11 +523,19 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // changes the angle therefore re-measures rather than reusing the inspect
   // job's seed, which was taken against the part's own profile.
   const overhangMatches = (seed?.result?.measuredOverhang ?? null) === (overhangAngle ?? null);
+  // Bed contact's half: a seed that skipped the pass cannot answer an armed gate. The
+  // reverse (a seed that ran it, for a run that does not need it) is a free superset.
+  // The footprint cost rides the same pass, so either floor needs it.
+  // measure() reads `bedContact` only as "run the pass", so either floor arms it.
+  const armsBedPass = bedContactFloor ?? footprintFloor;
+  const bedContactMatches = armsBedPass == null || seed?.result?.measuredBedContact === true;
   // The print-pose half (views holding a sheet part): a seed measured without the print
   // sizes cannot answer a bed, so it is admitted only when this run needs no bed.
   const needPrintBboxes = profile?.bed != null;
   const printBboxesMatch = !needPrintBboxes || seed?.result?.measuredPrintBboxes !== false;
-  if (seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && (quick || overhangMatches) && printBboxesMatch
+  // The flex half: a seed that read every declared member (a superset is free).
+  const flexMatches = flex.every(({ labels }) => (seed?.result?.measuredFlex ?? []).some((m) => sameGroup(m, labels)));
+  if (seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && (quick || overhangMatches) && (quick || bedContactMatches) && (quick || flexMatches) && printBboxesMatch
     && seed.result.view === view) {
     entries.push({ params: full(seed.params), result: seed.result });
   }
@@ -434,7 +549,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     // for every case buys nothing. (A seed measured WITH probes is a superset in
     // the same way a min-wall seed is: the extra key is simply never read here.)
     const result = measureFn(kernel, part, view, params,
-      { minWall: needMinWall, probes: false, overhang: overhangAngle, printBboxes: needPrintBboxes });
+      { minWall: needMinWall, probes: false, overhang: overhangAngle, bedContact: armsBedPass, printBboxes: needPrintBboxes, flex });
     entries.push({ params: fp, result });
     return result;
   };
@@ -455,7 +570,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   }];
   const caseResults = expanded.map(({ name, params, expect }) => {
     const facts = measureCase(params);
-    return { name, params, checks: facts ? evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang: overhangAngle }) : notMeasured(name) };
+    return { name, params, checks: facts ? evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang: overhangAngle, bedContact: bedContactFloor, footprint: footprintFloor, accept, flex, rootFillet, strain: strainLimit, flexTilt }) : notMeasured(name) };
   });
   // VACUOUS VERIFY. A part that declares nothing — no profile, an empty or absent
   // `expect` — used to come back `ok: true` with zero checks, and every reader
@@ -490,11 +605,12 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     declared++;
     if (c.status !== "skip" && !c.unevaluated) evaluated++;
   }
-  const declaresAnything = profile != null || overhangAngle != null
+  const declaresAnything = profile != null || overhangAngle != null || bedContactFloor != null || footprintFloor != null || flex.length > 0
     || expanded.some(({ expect }) => Object.values(expect ?? {}).some((o) => o && typeof o === "object" && Object.keys(o).length > 0));
   const failures = all.filter((c) => c.status === "fail");
   const unevaluated = all.filter((c) => c.unevaluated);
   const warnings = all.filter((c) => c.status === "warn");
+  const costs = all.filter((c) => c.status === "cost");
   if (evaluated === 0 && unevaluated.length === 0) {
     warnings.push({ case: null, scope: "part", subpart: null, metric: "expectations", kind: "warn", expr: "evaluated",
       actual: 0, status: "warn", pass: null,
@@ -512,6 +628,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     cases: caseResults,
     failures,
     warnings,
+    costs,
     unevaluated,
     declared,
     evaluated,

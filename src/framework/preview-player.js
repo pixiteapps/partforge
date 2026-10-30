@@ -26,6 +26,12 @@
 // re-honors an abandoned intro or sweep on the next play(). An orbit while
 // paused stays paused. onChange(cb) reports every status change, so a control
 // never polls.
+//
+// A host that wants the model to WAIT at its first frame (mountPreview's
+// `autostart: false`, 0.169.0) calls prime() instead of start(): the t = 0 pose
+// and opacity are drawn — exactly what start() draws first — and nothing
+// advances until start(). restart() plays again from t = 0 from any state
+// (waiting, playing, paused, done), re-arming the cues and the intro.
 import { createPlayback } from "./animation.js";
 import { invertRigid, mulMat4 } from "./geometry/pose.js";
 
@@ -89,6 +95,30 @@ export function sampleOpacity(keys, t) {
   return keys[keys.length - 1][1];
 }
 
+// The poses an animation passes through, for framing it whole: one
+// { name → pose } map per sampled time, each pose the matrix `apply` would hand
+// setSubPose (keyframed transform with the rest taken out). The times are every
+// keyframe of every track and the midpoint of each gap between them (a rotation
+// can bulge past both its keyframes on the way), thinned evenly to at most
+// `max`, with t = 0 and the end always kept. A baked file samples densely, so
+// that is close to every frame it draws. Untracked sub-parts are left out of
+// every map (they sit at rest).
+export function animationPoses(animation, { max = 128 } = {}) {
+  const { tracks = {}, rest = {} } = animation ?? {};
+  const names = Object.keys(tracks);
+  if (!names.length) return [];
+  const restInverse = Object.fromEntries(names.map((name) => [name, invertRigid(rest[name])]));
+  const all = new Set([0]);
+  for (const name of names) for (const t of tracks[name].times) if (Number.isFinite(t)) all.add(t);
+  const keys = [...all].sort((x, y) => x - y);
+  let times = keys.flatMap((t, i) => (i === 0 ? [t] : [(keys[i - 1] + t) / 2, t]));
+  if (times.length > max) {
+    const step = (times.length - 1) / (max - 1);
+    times = Array.from({ length: max }, (_, i) => times[Math.round(i * step)]);
+  }
+  return times.map((seconds) => Object.fromEntries(names.map((name) => [name, mulMat4(sampleTrack(tracks[name], seconds), restInverse[name])])));
+}
+
 export function createPreviewPlayer(viewer, animation, { reducedMotion = false } = {}) {
   const { duration, tracks, rest, opacity = {} } = animation;
   const steps = animation.steps ?? [];
@@ -106,7 +136,7 @@ export function createPreviewPlayer(viewer, animation, { reducedMotion = false }
   // already sits at its t = 0 placement, so the identity pose is the rest pose.
   const restInverse = Object.fromEntries(Object.keys(tracks).map((name) => [name, invertRigid(rest[name])]));
 
-  let offFrame = null, offOrbit = null, started = false, disposed = false;
+  let offFrame = null, offOrbit = null, started = false, disposed = false, held = false;
   const listeners = new Set();
   let lastStatus = playback.state().status;
 
@@ -151,13 +181,24 @@ export function createPreviewPlayer(viewer, animation, { reducedMotion = false }
     if (playback.state().status === "intro") { playback.introDone(); notify(); }
   }
 
-  return {
+  // The t = 0 pose and opacity, with the ground held for what moves next.
+  function firstFrame() {
+    apply(0);
+    if (!held) { viewer.holdGround(true); held = true; }
+  }
+
+  const player = {
+    // Draw the first frame and wait there (no-op under reduced motion, once
+    // started, or once disposed).
+    prime() {
+      if (started || disposed || reducedMotion) return;
+      firstFrame();
+    },
     start() {
       if (started || disposed) return;
       started = true;
       if (reducedMotion) return;
-      apply(0);
-      viewer.holdGround(true);
+      firstFrame();
       offFrame = viewer.onFrame(onFrame);
       offOrbit = viewer.onCameraStart(onOrbit);
       honorIntro(playback.play());
@@ -185,6 +226,20 @@ export function createPreviewPlayer(viewer, animation, { reducedMotion = false }
       honorIntro(playback.play());
       notify();
     },
+    // From any state: back to t = 0 (pose, opacity, cues re-armed) and play,
+    // its intro cue included. Starts a player that was waiting. Nothing under
+    // reduced motion — the file's own opening pose is already the t = 0 pose.
+    restart() {
+      if (disposed || reducedMotion) return;
+      if (!started) { player.start(); return; }
+      viewer.cancelCameraTween();
+      playback.reset();
+      apply(0);
+      honorIntro(playback.play());
+      notify();
+    },
+    // True once start() has run (under reduced motion too).
+    started: () => started,
     onChange(cb) {
       if (disposed) return () => {};
       listeners.add(cb);
@@ -194,11 +249,10 @@ export function createPreviewPlayer(viewer, animation, { reducedMotion = false }
       if (disposed) return;
       disposed = true;
       listeners.clear();
-      if (!offFrame) return; // never played (not started, or reduced motion): nothing to undo
-      offFrame(); offOrbit();
-      offFrame = offOrbit = null;
-      viewer.holdGround(false);
+      if (offFrame) { offFrame(); offOrbit(); offFrame = offOrbit = null; }
+      if (held) { held = false; viewer.holdGround(false); } // primed or played
     },
     state: snapshotState,
   };
+  return player;
 }

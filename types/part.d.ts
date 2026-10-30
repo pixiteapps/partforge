@@ -484,11 +484,19 @@ export interface DfmProfile {
   minWall?: number;
   /**
    * Steepest unsupported face the process prints cleanly, in degrees from
-   * vertical (45 on the FDM profiles; absent on resin). Checked only for a part
-   * that also declares `verify.orientation: "print"`; `null` switches it off
-   * under a named base. A warning, never a gate.
+   * vertical (45 on the FDM profiles; absent on resin). The print process alone
+   * arms the check; `null` switches it off under a named base. Reported as a
+   * cost (needing supports), never a failure.
    */
   overhang?: number | null;
+  /**
+   * The least share (%) of a printed piece's near-bed flat underside that must rest
+   * on the bed (50 on the FDM profiles; absent on resin). A GATE, armed by the
+   * profile alone; `null` switches it off under a named base.
+   */
+  bedContact?: number | null;
+  /** Percent of a printed piece's posed base area resting on the bed below which the footprint cost fires. */
+  footprint?: number | null;
   /** Carried for a future gap check; not enforced yet. */
   clearance?: number;
   /**
@@ -502,6 +510,24 @@ export interface DfmProfile {
   holeUndersize?: number;
   /** Longest flat span printed unsupported, mm. Absent on a process that prints on supports. */
   bridge?: number;
+  /**
+   * The least root fillet a flexing member (`verify.flex`) must meet its body through,
+   * as a share of the member's thickness (0.5 on every built-in profile) — a GATE,
+   * armed by `verify.flex` alone; `null` switches it off under a named base.
+   */
+  rootFillet?: number | null;
+  /**
+   * The largest root strain, in percent, the material takes for a one-time snap (1.5 on
+   * PLA, 3 on PETG, 2 on resin) — an advisory, read for a flexing member that declares
+   * a `deflection`; `null` switches it off under a named base.
+   */
+  strain?: number | null;
+  /**
+   * The steepest a flexing member's long axis may rise off the bed in the print pose, in
+   * degrees (45 on the FDM profiles; absent on resin, which is isotropic), before its
+   * layers stack across the root. A cost (`standing`), armed by the profile alone.
+   */
+  flexTilt?: number | null;
   /** Inherit from a named profile and override the rest. */
   base?: DfmProfileName | DfmProfile;
 }
@@ -556,10 +582,42 @@ export interface SubPartExpectations {
   wall?: Expectation;
   /**
    * Unsupported downward-facing surface in mm² (faces steeper than the profile's
-   * `overhang` angle, bed at the sub-part's own lowest Z). Measured only under
-   * `verify.orientation: "print"`; a warning, never a gate.
+   * `overhang` angle, bed at the sub-part's own lowest Z). Armed by the print
+   * process alone; reported as a cost (`verify.costs`), never a failure.
    */
   overhangArea?: Expectation;
+  /**
+   * Share (0–100) of the sub-part's near-bed flat underside — faces within 2° of
+   * level, within 1 mm of its lowest point in the print pose — that touches the bed.
+   * Under an FDM profile every printed sub-part gets `>=50` by default; a gate.
+   */
+  bedContactPct?: Expectation;
+  /**
+   * Share (0–100) of the sub-part's posed base area (its xy extent in the print pose)
+   * whose flat underside touches the bed — near 0 for a piece standing on a point, a
+   * line or a curl. Under an FDM profile every printed sub-part gets `>=5`; reported as
+   * a cost (`verify.costs`), never a failure; `accept: ["footprint"]` records a brim.
+   */
+  footprintPct?: Expectation;
+  /**
+   * The root fillet radius (mm, 0 where sharp) of the flexing member named in
+   * `verify.flex` whose root is worst on this sub-part — `feature` names it. Every
+   * sub-part carrying a declared member gets `>=` the profile's share of the member's
+   * thickness by default; a gate.
+   */
+  flexRoot?: Expectation;
+  /**
+   * Root strain (%) of the worst declared flexing member on this sub-part at its declared
+   * deflection — 1.5 × thickness × deflection / length², a straight cantilever. Under a
+   * profile every member with a `deflection` gets `<=` the profile's `strain`; a warning.
+   */
+  flexStrain?: Expectation;
+  /**
+   * Degrees the worst declared flexing member's long axis rises off the bed in the
+   * print pose (0 lying flat, 90 standing). Under an FDM profile every member gets
+   * `<=45`; reported as a cost (`standing`), never a failure.
+   */
+  flexTilt?: Expectation;
   /** Symmetric-difference volume vs. the sub-part's declared `reference` import. */
   refXorVolume?: Expectation;
   /** Percent volume delta vs. the sub-part's declared `reference` import. */
@@ -628,12 +686,29 @@ export interface VerifyBlock<P = ResolvedParams, D = Derived> {
   /** A named DFM profile or an inline one. */
   process?: DfmProfileName | DfmProfile;
   /**
-   * `"print"` declares the part is laid out for its bed — Z up, each sub-part's
-   * bed at its own lowest Z — which is the only way the profile's `overhang`
-   * check is armed. Omit it while a part is still being shaped or is bound for
-   * another process.
+   * `"print"` declares that `build()` is the print pose — Z up, each sub-part's
+   * bed at its own lowest Z. It does not arm any check; the print process does.
    */
   orientation?: "print";
+  /**
+   * Costs the user accepted, by id. An accepted cost is still measured and
+   * reported (`accepted: true`), but no longer raised as something to fix. Only the
+   * process's own default check is marked accepted: a limit you wrote in `expect`
+   * (`overhangArea: "<=500"`) keeps its meaning and is never marked accepted.
+   */
+  accept?: ("supports" | "footprint" | "standing")[];
+  /**
+   * The part's flexing members — snap arms, buckle prongs, clips, cantilever tabs —
+   * by feature label. Each must meet the rest of its part through a root fillet of at
+   * least the process's share of its thickness (`flexRoot`, a gate); one that declares
+   * its `deflection` (mm of travel) is also read for root strain (`flexStrain`, an
+   * advisory), and under an FDM profile every member is read for how far it stands up
+   * off the bed (`flexTilt`, the `standing` cost). An entry is a label, a list of labels
+   * that make one member (an arm and the rib on it), or a member object; `thickness`
+   * (mm) overrides the bending thickness the mesh reads. Label the member apart from
+   * the body it grows from.
+   */
+  flex?: (string | string[] | { feature: string; labels?: string[]; deflection?: number; thickness?: number })[];
   /** Which cases to check; default is `"defaults"` plus every preset name. */
   cases?: string[];
   /**
