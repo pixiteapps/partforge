@@ -255,6 +255,7 @@ async function checkRailLayout(width) {
     await resetRail();
     return;
   }
+  await settleRail(); // the viewport change above may have re-clamped the width
   const box = await seam.boundingBox();
   const before = await page.evaluate(() => document.getElementById("panel").getBoundingClientRect().width);
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -465,6 +466,38 @@ async function checkTransportTargets(width) {
   for (const problem of result.problems) errors.push(`transport ${width}px: ${problem}`);
 }
 
+// The rail's width is a 150ms CSS transition (chrome.css .pf-rail), and a
+// transition starts at the first style recalc AFTER the token changes — not when
+// it changes. On the CI runner the viewer's software-GL renders can starve the
+// main thread of frames, so a reset's commit (--pf-rail-w back to 288px) can sit
+// un-rendered until the NEXT probe's own getBoundingClientRect forces the recalc:
+// that read then starts the transition and returns the OLD width. The seam has
+// no transition and already sits at the new edge, so the drag that follows lands
+// 80px out from the new edge — which was the old width to the pixel, and read as
+// "did not widen (374 -> 374)" on filleted-box.html. A wall-clock sleep cannot
+// close that gap; waiting in frames does: let the rail hold still at the width
+// its token says, with the same floor settleAnimBar uses so an untouched rect
+// cannot pass as a settled one. The token is 0 where the rail reserves no width
+// (narrow, overlay), so only a positive token is held to the drawn width.
+async function settleRail() {
+  await page.evaluate(() => new Promise((resolve) => {
+    const panel = document.getElementById("panel");
+    if (!panel) return resolve();
+    let last = -1, stable = 0, frames = 0;
+    const tick = () => {
+      const w = panel.getBoundingClientRect().width;
+      const token = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--pf-rail-w"));
+      const atToken = !(token > 0) || Math.abs(w - token) <= 1;
+      stable = atToken && Math.abs(w - last) <= 0.5 ? stable + 1 : 0;
+      last = w;
+      frames++;
+      if ((frames >= 6 && stable >= 3) || frames > 240) return resolve();
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }));
+}
+
 // Reset through the rail's own API — a dblclick on the seam routes through
 // rail.js's commit(), which resets to the 288px default — so the DOM and
 // rail.js's in-memory `state` agree. The old approach (clear localStorage,
@@ -484,7 +517,7 @@ async function resetRail() {
   const box = await seam.boundingBox();
   if (!box) return;
   await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
-  await sleep(50);
+  await settleRail();
 }
 
 // Narrow-layout pane tabs: below RAIL_NARROW_BREAKPOINT (720px) the shell shows
