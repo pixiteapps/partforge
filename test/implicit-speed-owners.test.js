@@ -44,13 +44,16 @@ import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 // 2026-10-23: contact groups are root-only, so the plain baseline is the SAME compiled field (the
 // owner path's, sampled without the piece capture and meshed with `owners: false`). Measured (three quiet runs, medians of 5): 1.19-1.21x / 1.29-1.32x
 // preview and 1.26-1.30x / 1.30x print (default / fist); every limit stands.
-// 2026-10-30: on a loaded CI runner (pace 2.49) the default hand's preview read 1.36x, over its
-// 1.34x limit, with every other reading inside (1.30x fist preview, 1.42x / 1.33x print). By the
-// same rule (the loaded ratio plus ~10%) the default preview limit is the fist's, 1.50x.
+// 2026-10-30: the limits above are a desktop's. A GitHub runner (pace 2.5-2.7, the suite's other
+// files sharing its cores) moves a ratio by more than their ~10% margin from run to run: the
+// default hand read 1.36x preview in one run (limit 1.34x) and 1.49x print in the next (limit
+// 1.43x), each with every other reading inside. So under CI each limit is widened by CI_SLACK:
+// CI still catches a gross regression, and the desktop run keeps the tight gate.
+const CI_SLACK = process.env.CI ? 1.15 : 1;
 const SPEC_PREVIEW_MS = 150;
 const SPEC_PRINT_MS = 2000;
 const OWNER_GATES = [
-  ["hand default", {}, 1.5, 1.43],
+  ["hand default", {}, 1.34, 1.43],
   ["hand fist", HAND_POSES.fist, 1.50, 1.46],
 ];
 
@@ -87,7 +90,7 @@ test("owner meshing stays within the speed gate (ratio to the plain native path)
     meshImplicitCore(compiled, 1.4, plainPlan(compiled, 1.4), PREVIEW_CLEANUP, { owners: false });
     for (const [edge, opts, runs, ratio, ceiling] of [[1.5, PREVIEW_CLEANUP, 5, previewRatio, 3 * SPEC_PREVIEW_MS], [0.5, CLEANUP, 5, printRatio, 3 * SPEC_PRINT_MS]]) {
       const [o, p] = pairedMedianMs(compiled, edge, opts, runs);
-      results.push([`${name} ${edge} mm`, o, p, ratio, ceiling]);
+      results.push([`${name} ${edge} mm`, o, p, +(ratio * CI_SLACK).toFixed(2), ceiling]);
     }
   }
   console.log(results.map((r) => line(...r)).join("\n"));
