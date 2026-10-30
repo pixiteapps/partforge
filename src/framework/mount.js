@@ -693,16 +693,19 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     onViewChange?.(tabsCtl.current());
     const params = { ...part.defaults };
 
-    // Measurement mode: in-scene dims + pins + dimension->controls reveal
-    // (clicking a measurement flashes every control that can drive it). The
-    // panel is built later in this function, so revealParams is a late-bound
-    // thunk. getReads reads the mesh cache (created further below) lazily.
+    // Measurement mode: in-scene dims, the two-click snapping model, and
+    // reading->controls reveal (a first-click reading flashes every control
+    // holding its value). The panel is built later in this function, so
+    // revealParams is a late-bound thunk. getReads reads the mesh cache
+    // (created further below) lazily. `stage` hosts the snap label: the
+    // viewer itself has no stage element to offer.
     let panelRef = null;
     const measureMode = createMeasureMode(viewer, {
       part,
       getContext: () => ({ view: view(), params }),
       revealParams: (keys, focusKey) => panelRef?.revealParams(keys, focusKey),
       getReads: (name) => displayReadsOf(name),
+      stage: els.viewer,
     });
     cleanup.defer(() => measureMode.detach());
     // Annotation mode (spec 2026-08-18): freehand ink over the frozen view,

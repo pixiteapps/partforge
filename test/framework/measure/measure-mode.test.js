@@ -1,19 +1,18 @@
 // @vitest-environment happy-dom
 // Orchestrator against a minimal real-three fake viewer: enable -> always-on
-// dims; hover -> feature dims; click -> pin + param reveal; regen re-anchor.
-// Dimensions are in-scene objects now, so the observation surface is the
+// overall dims; hover -> a snap marker and nothing else; first click -> one
+// reading (or a start point); second click -> one distance; third click starts
+// over. Dimensions are in-scene objects, so the observation surface is the
 // "pf-dims" group under the meshes' shared parent (each label mesh carries its
-// item id in userData.pfDimItemId) rather than an SVG overlay.
+// item id in userData.pfDimItemId).
 import { expect, test, vi, beforeEach } from "vitest";
 import * as THREE from "three";
 import { createMeasureMode } from "../../../src/framework/measure/measure-mode.js";
-import { raycastViewer } from "../../../src/framework/selection/raycast.js";
 import { placeDims } from "../../../src/framework/measure/dim3-place.js";
 import { classifyFeature } from "../../../src/framework/measure/feature-dims.js";
 
 // Pass-through spy on the placement entry point: behaviour is untouched, but
-// "which items were re-placed, and when" becomes observable — the base/hover
-// split is otherwise invisible from the scene (identical drawings either way).
+// "which items were re-placed, and when" becomes observable.
 vi.mock("../../../src/framework/measure/dim3-place.js", async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, placeDims: vi.fn(actual.placeDims) };
@@ -21,7 +20,7 @@ vi.mock("../../../src/framework/measure/dim3-place.js", async (importOriginal) =
 
 // dim3-scene's default label painter needs a real 2d context; happy-dom has
 // none. Stub the minimum it touches and record every painted string, which is
-// how the param-link assertions read label content.
+// how the assertions read label content.
 const paintLog = [];
 HTMLCanvasElement.prototype.getContext = function getContext() {
   return {
@@ -33,13 +32,12 @@ HTMLCanvasElement.prototype.getContext = function getContext() {
     beginPath() {}, roundRect() {}, fill() {}, stroke() {},
   };
 };
-beforeEach(() => { paintLog.length = 0; });
+beforeEach(() => { paintLog.length = 0; placeDims.mockClear(); });
 
 // A 20×10 plate: one sub-part, one labeled planar feature covering both
-// triangles of its top face at z=2. Non-indexed, feature ids per triangle.
-// `halfLabeled` leaves the upper-left triangle unlabeled (see the label-pick
-// test, which needs a spot where a raycast resolves to something OTHER than
-// the pinned feature).
+// triangles of its top face at z=2, with the face's four boundary edges drawn
+// (edgePositions, as the viewer stores them). Non-indexed, feature ids per
+// triangle. `halfLabeled` leaves the upper-left triangle unlabeled.
 function plateMesh({ halfLabeled = false } = {}) {
   const positions = new Float32Array([
     0, 0, 2, 20, 0, 2, 20, 10, 2,
@@ -51,6 +49,12 @@ function plateMesh({ halfLabeled = false } = {}) {
   geo.computeBoundingBox();
   geo.userData.featureIds = new Uint16Array([1, halfLabeled ? 0 : 1]);
   geo.userData.features = ["top face"];
+  geo.userData.edgePositions = new Float32Array([
+    0, 0, 2, 20, 0, 2,
+    20, 0, 2, 20, 10, 2,
+    20, 10, 2, 0, 10, 2,
+    0, 10, 2, 0, 0, 2,
+  ]);
   return new THREE.Mesh(geo);
 }
 
@@ -61,6 +65,11 @@ function fakeViewer(mesh, parts = new THREE.Group()) {
   const stage = document.createElement("div");
   stage.appendChild(dom);
   dom.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 100 });
+  stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 100 });
+  // happy-dom lays nothing out; give the canvas its 100 px so screen-constant
+  // label sizes (and so label picks) are realistic
+  Object.defineProperty(dom, "clientWidth", { value: 100 });
+  Object.defineProperty(dom, "clientHeight", { value: 100 });
   const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
   camera.position.set(10, 5, 40); // over the plate center, looking down -Z
   camera.lookAt(10, 5, 2);
@@ -73,7 +82,7 @@ function fakeViewer(mesh, parts = new THREE.Group()) {
   const themeCbs = new Set();
   return {
     domElement: dom,
-    stageElement: stage,
+    stage, // NOT stageElement: the real viewer has none, so mode must be handed one
     camera,
     _subMeshes: { plate: mesh },
     __parts: parts,
@@ -89,8 +98,6 @@ function fakeViewer(mesh, parts = new THREE.Group()) {
   };
 }
 
-// Two views over the SAME sub-part: switching between them changes nothing
-// about the meshes, only which pins apply.
 const part = {
   parts: { plate: { label: "Plate", build: () => {} } },
   views: { main: { parts: ["plate"] }, alt: { parts: ["plate"] } },
@@ -105,15 +112,20 @@ function setup({ parts, mesh = plateMesh() } = {}) {
     part,
     getContext: () => ctx,
     revealParams,
+    stage: viewer.stage,
     schedule: (cb) => cb(), // synchronous for tests
   });
-  // the dim group under the meshes' shared parent
   const dimGroup = () => viewer.__parts.children.find((c) => c.name === "pf-dims");
-  // one entry per rendered dimension label, tagged with the item it belongs to
   const itemIds = () => (dimGroup()?.children ?? [])
     .filter((c) => c.userData.pfDimItemId)
     .map((c) => c.userData.pfDimItemId);
-  const hasHover = () => itemIds().includes("hover");
+  const snapLabel = () => viewer.stage.querySelector(".pf-measure-snap");
+  const snapShown = () => !!snapLabel() && !snapLabel().hidden;
+  const startDot = () => {
+    let found = null;
+    viewer.__parts.traverse((o) => { if (o.name === "pf-measure-start") found = o; });
+    return found;
+  };
   // world positions of one item's dim labels, for "did the placement move?"
   const labelPositions = (prefix) => {
     viewer.__parts.updateMatrixWorld(true);
@@ -121,7 +133,14 @@ function setup({ parts, mesh = plateMesh() } = {}) {
       .filter((c) => c.userData.pfDimItemId?.startsWith(prefix))
       .map((c) => c.getWorldPosition(new THREE.Vector3()).toArray());
   };
-  return { mesh, viewer, mode, ctx, revealParams, dimGroup, itemIds, hasHover, labelPositions };
+  return { mesh, viewer, mode, ctx, revealParams, dimGroup, itemIds, snapLabel, snapShown, startDot, labelPositions };
+}
+
+// Client px of a parts-frame point (the fake's 100×100 canvas at the origin).
+function screenOf(viewer, p) {
+  viewer.__parts.updateMatrixWorld(true);
+  const v = new THREE.Vector3(...p).applyMatrix4(viewer.__parts.matrixWorld).project(viewer.camera);
+  return { x: ((v.x + 1) / 2) * 100, y: ((1 - v.y) / 2) * 100 };
 }
 
 // Mirror viewer.setSubPose: a rigid pose written straight onto mesh.matrix.
@@ -131,29 +150,49 @@ const poseSubMesh = (mesh, matrix) => {
   mesh.matrixWorldNeedsUpdate = true;
 };
 
-const clickAt = (dom, x = 50, y = 50) => {
-  const opts = { ...pointerOpts, clientX: x, clientY: y };
+const move = (dom, x = 50, y = 50) =>
+  dom.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: x, clientY: y }));
+
+const clickAt = (dom, x = 50, y = 50, extra = {}) => {
+  const opts = { ...pointerOpts, clientX: x, clientY: y, ...extra };
   dom.dispatchEvent(new PointerEvent("pointerdown", opts));
   dom.dispatchEvent(new PointerEvent("pointerup", opts));
   dom.dispatchEvent(new MouseEvent("click", opts));
 };
+const clickPoint = (viewer, p, extra) => {
+  const { x, y } = screenOf(viewer, p);
+  clickAt(viewer.domElement, x, y, extra);
+};
+// Two corners of the plate, and a point on its bottom edge away from both the
+// corners and the edge midpoint (so it snaps to the EDGE).
+const CORNER_A = [0, 0, 2];
+const CORNER_C = [20, 10, 2];
+const ON_EDGE = [5, 0, 2]; // 14 px from both the corner and the midpoint (snap radius 12)
 
-test("enable renders always-on overall dims; disable clears but keeps state", () => {
+function labelScreen(viewer, label) {
+  viewer.__parts.updateMatrixWorld(true);
+  const p = label.getWorldPosition(new THREE.Vector3()).project(viewer.camera);
+  return { x: ((p.x + 1) / 2) * 100, y: ((1 - p.y) / 2) * 100 };
+}
+
+// ---- entering the mode ------------------------------------------------------
+
+test("enable renders always-on overall dims; disable clears", () => {
   const { mode, dimGroup, itemIds } = setup();
   mode.setEnabled(true);
   expect(dimGroup()).toBeDefined();
   expect(itemIds()).toContain("overall");
   // the plate is flat, so only its W and D extents are dimensioned
   expect(itemIds().filter((id) => id === "overall").length).toBe(2);
-  expect(paintLog).toContain("20.00 mm"); // plate W
-  expect(paintLog).toContain("10.00 mm"); // plate D
+  expect(paintLog).toContain("20.00 mm");
+  expect(paintLog).toContain("10.00 mm");
   expect(mode.isEnabled()).toBe(true);
 
   mode.setEnabled(false);
   expect(mode.isEnabled()).toBe(false);
-  expect(dimGroup().children.length).toBe(0); // cleared, group kept for re-enable
+  expect(dimGroup().children.length).toBe(0);
   mode.setEnabled(true);
-  expect(itemIds()).toContain("overall"); // state survives the toggle
+  expect(itemIds()).toContain("overall");
   mode.detach();
 });
 
@@ -161,124 +200,138 @@ test("setUnits re-renders labels in inches; values stay mm", () => {
   const { mode, dimGroup } = setup();
   mode.setEnabled(true);
   expect(mode.getUnits()).toBe("mm");
-  expect(paintLog).toContain("20.00 mm");
-
   paintLog.length = 0;
   mode.setUnits("in");
   expect(mode.getUnits()).toBe("in");
-  expect(paintLog).toContain("0.787 in"); // 20 mm
+  expect(paintLog).toContain("0.787 in");
   expect(paintLog).not.toContain("20.00 mm");
-  // the label still carries its mm value for control matching
-  const w = dimGroup().children.find((c) => c.userData.pfDimValue === 20);
-  expect(w).toBeDefined();
-
-  mode.setUnits("furlongs"); // unknown unit: ignored
+  expect(dimGroup().children.find((c) => c.userData.pfDimValue === 20)).toBeDefined();
+  mode.setUnits("furlongs");
   expect(mode.getUnits()).toBe("in");
   mode.detach();
 });
 
 test("the dim group is parented under the meshes' shared group", () => {
-  // v2's answer to "dims follow the pivot rotation / per-view recentring":
-  // they are children of the same node the meshes hang off, so the parent
-  // transform applies to them for free.
   const parts = new THREE.Group();
   parts.position.set(5, 0, 0);
   const { viewer, mode, dimGroup } = setup({ parts });
   mode.setEnabled(true);
-  expect(dimGroup()).toBeDefined();
   expect(dimGroup().parent).toBe(viewer.__parts);
-  expect(viewer._subMeshes.plate.parent).toBe(viewer.__parts);
   mode.detach();
 });
 
-test("hover shows the feature's dims as plain value labels", () => {
-  const { viewer, mode, hasHover } = setup();
+// ---- hover ------------------------------------------------------------------
+
+test("hover draws no dimension", () => {
+  const { viewer, mode, snapLabel, snapShown, itemIds } = setup();
   mode.setEnabled(true);
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
-  expect(hasHover()).toBe(true);
-  expect(paintLog).toContain("20.00 mm"); // the plane feature's width
-  expect(paintLog).not.toContain("plate_w"); // no param pill on labels anymore
+  const calls = placeDims.mock.calls.length;
+  const ids = itemIds();
+  move(viewer.domElement);
+  expect(placeDims.mock.calls.length).toBe(calls);
+  expect(itemIds()).toEqual(ids);
+  expect(snapShown()).toBe(true);
+  expect(snapLabel().textContent).toBe("top face · face");
   mode.detach();
 });
 
-// Regression: stagger lanes are assigned per placeDims call, and hover is
-// placed in a separate call from the cached base — without seeding the hover
-// pass with the base pass's lane counts, a hovered dim started at lane 0 and
-// JUMPED outward on click when its pin joined the base pass. A hovered dim
-// must land exactly where its pin will.
-test("a hovered dim takes the lane it will keep when pinned (no jump on click)", () => {
-  const { viewer, mode, labelPositions } = setup();
+test("hover labels name the feature and the snap kind; unnamed geometry says point", () => {
+  const { viewer, mode, snapLabel } = setup();
   mode.setEnabled(true);
-  viewer.frame(); // settle screen-constant sizing
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
-  viewer.frame(); // position the hover labels
-  const hover = labelPositions("hover");
-  expect(hover.length).toBeGreaterThan(0);
+  const a = screenOf(viewer, CORNER_A);
+  move(viewer.domElement, a.x, a.y);
+  expect(snapLabel().textContent).toBe("top face · corner");
+  const e = screenOf(viewer, ON_EDGE);
+  move(viewer.domElement, e.x, e.y);
+  expect(snapLabel().textContent).toBe("top face · edge");
+  const m = screenOf(viewer, [10, 0, 2]);
+  move(viewer.domElement, m.x, m.y);
+  expect(snapLabel().textContent).toBe("top face · midpoint");
+  mode.detach();
 
-  clickAt(viewer.domElement); // pin the same feature (hover then dedupes away)
+  const un = setup({ mesh: plateMesh({ halfLabeled: true }) });
+  un.mode.setEnabled(true);
+  move(un.viewer.domElement, 35.9, 44.4); // inside the UNLABELED triangle
+  expect(un.snapLabel().textContent).toBe("point");
+  un.mode.detach();
+});
+
+test("pointerleave and an empty-space move hide the snap marker", () => {
+  const { viewer, mode, snapShown } = setup();
+  mode.setEnabled(true);
+  move(viewer.domElement);
+  expect(snapShown()).toBe(true);
+  move(viewer.domElement, 2, 2);
+  expect(snapShown()).toBe(false);
+  move(viewer.domElement);
+  viewer.domElement.dispatchEvent(new MouseEvent("pointerleave"));
+  expect(snapShown()).toBe(false);
+  mode.detach();
+});
+
+test("the snap marker drops when its mesh goes invisible", () => {
+  const { mesh, viewer, mode, snapShown } = setup();
+  mode.setEnabled(true);
+  move(viewer.domElement);
+  expect(snapShown()).toBe(true);
+  mesh.visible = false;
   viewer.frame();
-  const pinned = labelPositions("pin:");
-  expect(pinned.length).toBe(hover.length);
-  pinned.forEach((p, i) => {
-    expect(p[0]).toBeCloseTo(hover[i][0], 5);
-    expect(p[1]).toBeCloseTo(hover[i][1], 5);
-    expect(p[2]).toBeCloseTo(hover[i][2], 5);
-  });
+  expect(snapShown()).toBe(false);
   mode.detach();
 });
 
-test("click pins; pin survives a geometry swap; clearPins notifies", () => {
-  const { viewer, mode, itemIds } = setup();
+test("cutaway handle hover suppresses the snap marker; release resumes it", () => {
+  const { viewer, mode, snapShown } = setup();
+  mode.setEnabled(true);
+  move(viewer.domElement);
+  expect(snapShown()).toBe(true);
+  viewer.fireHandleHover("radius");
+  expect(snapShown()).toBe(false);
+  move(viewer.domElement, 51, 50);
+  expect(snapShown()).toBe(false);
+  viewer.fireHandleHover(null);
+  move(viewer.domElement);
+  expect(snapShown()).toBe(true);
+  mode.detach();
+});
+
+// ---- first click --------------------------------------------------------------
+
+test("first click on the labelled face reads W × H and flashes a matching param", () => {
+  const { viewer, mode, itemIds, revealParams } = setup();
   const onPins = vi.fn();
   mode.onPinsChange(onPins);
   mode.setEnabled(true);
   clickAt(viewer.domElement);
   expect(mode.pinCount()).toBe(1);
-  expect(onPins).toHaveBeenCalled();
-  expect(itemIds().some((id) => id.startsWith("pin:"))).toBe(true);
-
-  // simulate a regenerate: same labels, new geometry instance
-  const fresh = plateMesh();
-  viewer._subMeshes.plate.geometry = fresh.geometry;
-  viewer.frame(); // dirty check picks up the new geometry
-  expect(mode.pinCount()).toBe(1);
-  // pinned dim re-anchored against the new geometry and re-rendered
-  expect(itemIds().some((id) => id.startsWith("pin:"))).toBe(true);
-
-  mode.clearPins();
-  expect(mode.pinCount()).toBe(0);
-  expect(itemIds().some((id) => id.startsWith("pin:"))).toBe(false);
+  expect(onPins).toHaveBeenCalledTimes(1);
+  expect(itemIds().filter((id) => id === "first").length).toBe(2); // W and H
+  expect(revealParams).toHaveBeenCalledWith(["plate_w"], "plate_w");
   mode.detach();
 });
 
-test("a pin whose feature label disappears goes dormant without being dropped", () => {
-  const { viewer, mode, itemIds } = setup();
+test("first click on a straight edge reads its length", () => {
+  const { viewer, mode, dimGroup } = setup();
   mode.setEnabled(true);
-  clickAt(viewer.domElement);
+  clickPoint(viewer, ON_EDGE);
   expect(mode.pinCount()).toBe(1);
-
-  // regenerate into geometry that no longer carries the pinned label
-  const bare = plateMesh();
-  bare.geometry.userData.features = [];
-  bare.geometry.userData.featureIds = new Uint16Array([0, 0]);
-  viewer._subMeshes.plate.geometry = bare.geometry;
-  viewer.frame();
-  expect(mode.pinCount()).toBe(1); // still pinned, just unresolvable
-  expect(itemIds().some((id) => id.startsWith("pin:"))).toBe(false);
+  const first = dimGroup().children.filter((c) => c.userData.pfDimItemId === "first");
+  expect(first.map((c) => c.userData.pfDimValue)).toEqual([20]);
   mode.detach();
 });
 
-test("a geometry click pins quietly (no value, no flash)", () => {
-  const { viewer, mode, revealParams } = setup();
+test("first click on a corner reads nothing but counts 1", () => {
+  const { viewer, mode, itemIds, revealParams, startDot } = setup();
   mode.setEnabled(true);
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
-  clickAt(viewer.domElement);
+  clickPoint(viewer, CORNER_A);
   expect(mode.pinCount()).toBe(1);
+  expect(itemIds().every((id) => id === "overall")).toBe(true);
   expect(revealParams).not.toHaveBeenCalled();
+  expect(startDot()?.visible).toBe(true);
   mode.detach();
 });
 
-test("drag does not pin", () => {
+test("a drag does not click", () => {
   const { viewer, mode } = setup();
   mode.setEnabled(true);
   viewer.domElement.dispatchEvent(new PointerEvent("pointerdown", pointerOpts));
@@ -289,231 +342,305 @@ test("drag does not pin", () => {
   mode.detach();
 });
 
-// Screen coordinates of a pinned/hover label that floats over geometry with no
-// feature (or none at all) — the spot where only the label-pick path can
-// resolve the click; a raycast fallthrough would pin the sub-part bbox.
-function offFeatureLabelTarget(viewer, dimGroup, prefix) {
-  viewer.frame(); // labels are positioned by scene.tick(), not at build time
-  viewer.__parts.updateMatrixWorld(true);
-  const screenOf = (o) => {
-    const p = o.getWorldPosition(new THREE.Vector3()).project(viewer.camera);
-    return { x: ((p.x + 1) / 2) * 100, y: ((1 - p.y) / 2) * 100 };
-  };
-  return dimGroup().children
-    .filter((c) => c.userData.pfDimItemId?.startsWith(prefix))
-    .map(screenOf)
-    .find(({ x, y }) => raycastViewer(viewer, x, y)?.feature == null);
-}
+// ---- second and third clicks --------------------------------------------------
 
-// Regression (carried over from the chip-click case): a pinned dimension's
-// label resolves by the structured item id carried on the label mesh — never
-// by parsing the rendered dim text (which can itself contain colons when a
-// Solid.label() does) and never by falling through to the geometry raycast.
-// Every label is a button to the controls driving its measurement: reveal,
-// keep the pin. Unpinning stays on geometry re-click / Clear.
-test("clicking a pinned dim's label keeps the pin; only value matches flash", () => {
-  // Half-labeled plate: the pinned feature covers only one triangle, so one of
-  // its dim labels lands over UNLABELED geometry. A click there that fell
-  // through to the raycast would pin the sub-part bbox (pinCount 2) — which is
-  // what makes this test see the label-pick path.
-  const { viewer, mode, dimGroup, revealParams } = setup({ mesh: plateMesh({ halfLabeled: true }) });
+test("second click draws one span; pinCount is 2", () => {
+  const { viewer, mode, dimGroup, itemIds, revealParams, startDot } = setup();
+  const onPins = vi.fn();
+  mode.onPinsChange(onPins);
   mode.setEnabled(true);
-  clickAt(viewer.domElement, 64.1, 55.6); // inside the labeled triangle
-  expect(mode.pinCount()).toBe(1);
-  revealParams.mockClear();
-
-  const target = offFeatureLabelTarget(viewer, dimGroup, "pin:");
-  expect(target).toBeDefined();
-  clickAt(viewer.domElement, target.x, target.y);
-
-  // whichever label was clicked, the pin holds and any flash is value-matched:
-  // no control ever lights up for a value it doesn't hold
-  for (const [keys] of revealParams.mock.calls) {
-    for (const k of keys) expect(["plate_w"]).toContain(k); // wall=3 matches nothing here
-  }
-  expect(mode.pinCount()).toBe(1); // still pinned — no toggle, no bbox fallthrough
+  clickPoint(viewer, CORNER_A);
+  clickPoint(viewer, CORNER_C);
+  expect(mode.pinCount()).toBe(2);
+  expect(onPins).toHaveBeenCalledTimes(2);
+  const span = dimGroup().children.filter((c) => c.userData.pfDimItemId === "span");
+  // one dimension, along the dominant axis (X: 20 of the 20×10 diagonal)
+  expect(span.map((c) => c.userData.pfDimValue)).toEqual([20]);
+  expect(itemIds()).not.toContain("first");
+  expect(revealParams).not.toHaveBeenCalled(); // distances never flash
+  expect(startDot()?.visible).toBe(true); // a no-reading start point stays marked
   mode.detach();
 });
 
-test("a label click whose value matches a param focuses that control", () => {
-  const { viewer, mode, dimGroup, revealParams } = setup({ mesh: plateMesh({ halfLabeled: true }) });
+test("a distance replaces the first reading on screen", () => {
+  const { viewer, mode, itemIds, revealParams } = setup();
   mode.setEnabled(true);
-  clickAt(viewer.domElement, 64.1, 55.6);
-  expect(mode.pinCount()).toBe(1);
+  clickAt(viewer.domElement); // the face: W × H, with the clicked point as the start
   revealParams.mockClear();
-
-  // click the pinned label whose value is 20.00 — plate_w is 20, unique match
-  viewer.frame();
-  viewer.__parts.updateMatrixWorld(true);
-  const labels = dimGroup().children.filter((c) => c.userData.pfDimItemId?.startsWith("pin:"));
-  const wLabel = labels.find((c) => c.userData.pfDimValue === 20);
-  expect(wLabel).toBeDefined();
-  const proj = wLabel.getWorldPosition(new THREE.Vector3()).project(viewer.camera);
-  clickAt(viewer.domElement, ((proj.x + 1) / 2) * 100, ((1 - proj.y) / 2) * 100);
-
-  const [keys, focus] = revealParams.mock.calls.at(-1);
-  expect(keys).toEqual(["plate_w"]); // ONLY the matching control — nothing else flashes
-  expect(focus).toBe("plate_w");
-  expect(mode.pinCount()).toBe(1);
-  mode.detach();
-});
-
-test("a label click with no matching value flashes nothing", () => {
-  const { viewer, mode, dimGroup, revealParams } = setup({ mesh: plateMesh({ halfLabeled: true }) });
-  mode.setEnabled(true);
-  clickAt(viewer.domElement, 64.1, 55.6);
-  revealParams.mockClear();
-
-  viewer.frame();
-  viewer.__parts.updateMatrixWorld(true);
-  // the D label (10.00): params are plate_w=20 / wall=3 — no match
-  const dLabel = dimGroup().children.find((c) => c.userData.pfDimValue === 10);
-  expect(dLabel).toBeDefined();
-  const proj = dLabel.getWorldPosition(new THREE.Vector3()).project(viewer.camera);
-  clickAt(viewer.domElement, ((proj.x + 1) / 2) * 100, ((1 - proj.y) / 2) * 100);
-
+  clickPoint(viewer, CORNER_C);
+  expect(mode.pinCount()).toBe(2);
+  expect(itemIds()).not.toContain("first");
+  expect(itemIds().filter((id) => id === "span").length).toBe(1);
   expect(revealParams).not.toHaveBeenCalled();
   mode.detach();
 });
 
-test("several matching params all flash, none takes focus", () => {
-  const { viewer, mode, dimGroup, ctx, revealParams } = setup({ mesh: plateMesh({ halfLabeled: true }) });
-  ctx.params.wall = 20; // now BOTH plate_w and wall hold the clicked value
+test("Shift click gives the straight-line distance", () => {
+  const { viewer, mode, dimGroup } = setup();
   mode.setEnabled(true);
-  clickAt(viewer.domElement, 64.1, 55.6);
-  revealParams.mockClear();
+  clickPoint(viewer, CORNER_A);
+  clickPoint(viewer, CORNER_C, { shiftKey: true });
+  const span = dimGroup().children.filter((c) => c.userData.pfDimItemId === "span");
+  expect(span.map((c) => c.userData.pfDimValue)).toEqual([22.36]);
+  mode.detach();
+});
 
+test("setStraight makes a plain click straight-line", () => {
+  const { viewer, mode, dimGroup } = setup();
+  mode.setEnabled(true);
+  expect(mode.isStraight()).toBe(false);
+  mode.setStraight(true);
+  expect(mode.isStraight()).toBe(true);
+  clickPoint(viewer, CORNER_A);
+  clickPoint(viewer, CORNER_C);
+  const span = dimGroup().children.filter((c) => c.userData.pfDimItemId === "span");
+  expect(span.map((c) => c.userData.pfDimValue)).toEqual([22.36]);
+  mode.detach();
+});
+
+test("third click starts over", () => {
+  const { viewer, mode, itemIds, revealParams } = setup();
+  const onPins = vi.fn();
+  mode.onPinsChange(onPins);
+  mode.setEnabled(true);
+  clickPoint(viewer, CORNER_A);
+  clickPoint(viewer, CORNER_C);
+  expect(mode.pinCount()).toBe(2);
+  clickAt(viewer.domElement); // the face again
+  expect(mode.pinCount()).toBe(1);
+  expect(itemIds()).not.toContain("span");
+  expect(itemIds()).toContain("first");
+  expect(revealParams).toHaveBeenCalledWith(["plate_w"], "plate_w");
+  expect(onPins).toHaveBeenCalledTimes(3);
+  mode.detach();
+});
+
+test("second click on the first point does nothing", () => {
+  const { viewer, mode, itemIds } = setup();
+  const onPins = vi.fn();
+  mode.onPinsChange(onPins);
+  mode.setEnabled(true);
+  clickPoint(viewer, CORNER_A);
+  clickPoint(viewer, CORNER_A);
+  expect(mode.pinCount()).toBe(1);
+  expect(itemIds()).not.toContain("span");
+  expect(onPins).toHaveBeenCalledTimes(1);
+  mode.detach();
+});
+
+test("click on background keeps the reading", () => {
+  const { viewer, mode, itemIds } = setup();
+  const onPins = vi.fn();
+  mode.onPinsChange(onPins);
+  mode.setEnabled(true);
+  clickAt(viewer.domElement);
+  clickAt(viewer.domElement, 2, 2); // off the plate
+  expect(mode.pinCount()).toBe(1);
+  expect(itemIds()).toContain("first");
+  expect(onPins).toHaveBeenCalledTimes(1);
+  mode.detach();
+});
+
+// ---- clearing -----------------------------------------------------------------
+
+test("Clear keeps the overall dims", () => {
+  const { viewer, mode, itemIds, startDot } = setup();
+  const onPins = vi.fn();
+  mode.onPinsChange(onPins);
+  mode.setEnabled(true);
+  clickPoint(viewer, CORNER_A);
+  clickPoint(viewer, CORNER_C);
+  onPins.mockClear();
+  mode.clearPins();
+  expect(mode.pinCount()).toBe(0);
+  expect(onPins).toHaveBeenCalledTimes(1);
+  expect(itemIds()).toContain("overall");
+  expect(itemIds()).not.toContain("span");
+  expect(startDot()?.visible ?? false).toBe(false);
+  mode.detach();
+});
+
+test("leaving the mode clears; re-entering shows only the overall", () => {
+  const { viewer, mode, itemIds, snapShown } = setup();
+  const onPins = vi.fn();
+  mode.onPinsChange(onPins);
+  mode.setEnabled(true);
+  clickAt(viewer.domElement);
+  onPins.mockClear();
+  mode.setEnabled(false);
+  expect(mode.pinCount()).toBe(0);
+  expect(onPins).toHaveBeenCalledTimes(1);
+  expect(snapShown()).toBe(false);
+  mode.setEnabled(true);
+  expect(itemIds().every((id) => id === "overall")).toBe(true);
+  mode.detach();
+});
+
+test("a regenerate clears and fires onPinsChange", () => {
+  const { viewer, mode, itemIds, snapShown, startDot } = setup();
+  const onPins = vi.fn();
+  mode.onPinsChange(onPins);
+  mode.setEnabled(true);
+  clickPoint(viewer, CORNER_A);
+  move(viewer.domElement);
+  expect(snapShown()).toBe(true);
+  onPins.mockClear();
+
+  viewer._subMeshes.plate.geometry = plateMesh().geometry; // new geometry instance
   viewer.frame();
-  viewer.__parts.updateMatrixWorld(true);
-  const wLabel = dimGroup().children
-    .filter((c) => c.userData.pfDimItemId?.startsWith("pin:"))
-    .find((c) => c.userData.pfDimValue === 20);
-  const proj = wLabel.getWorldPosition(new THREE.Vector3()).project(viewer.camera);
-  clickAt(viewer.domElement, ((proj.x + 1) / 2) * 100, ((1 - proj.y) / 2) * 100);
+  expect(mode.pinCount()).toBe(0);
+  expect(onPins).toHaveBeenCalledTimes(1);
+  expect(itemIds().every((id) => id === "overall")).toBe(true);
+  expect(snapShown()).toBe(false); // the marker pointed into the old geometry
+  expect(startDot()?.visible ?? false).toBe(false);
+  mode.detach();
+});
 
+test("a hidden sub-part clears the reading", () => {
+  const { mesh, viewer, mode } = setup();
+  const onPins = vi.fn();
+  mode.onPinsChange(onPins);
+  mode.setEnabled(true);
+  clickAt(viewer.domElement);
+  onPins.mockClear();
+  mesh.visible = false;
+  viewer.frame();
+  expect(mode.pinCount()).toBe(0);
+  expect(onPins).toHaveBeenCalledTimes(1);
+  mode.detach();
+});
+
+test("a pose-only change keeps the reading and moves it", () => {
+  const { mesh, viewer, mode, labelPositions } = setup();
+  const onPins = vi.fn();
+  mode.onPinsChange(onPins);
+  mode.setEnabled(true);
+  clickAt(viewer.domElement);
+  viewer.frame();
+  const before = labelPositions("first");
+  expect(before.length).toBe(2);
+  onPins.mockClear();
+
+  poseSubMesh(mesh, new THREE.Matrix4().makeRotationZ(Math.PI / 6));
+  viewer.frame();
+  const after = labelPositions("first");
+  expect(mode.pinCount()).toBe(1);
+  expect(onPins).not.toHaveBeenCalled();
+  expect(after.length).toBe(2);
+  expect(after).not.toEqual(before);
+  mode.detach();
+});
+
+test("a pose-only change moves a distance with its sub-part", () => {
+  const { mesh, viewer, mode, labelPositions } = setup();
+  mode.setEnabled(true);
+  clickPoint(viewer, CORNER_A);
+  clickPoint(viewer, CORNER_C);
+  viewer.frame();
+  const before = labelPositions("span");
+  expect(before.length).toBe(1);
+  poseSubMesh(mesh, new THREE.Matrix4().makeTranslation(5, 0, 0));
+  viewer.frame();
+  const after = labelPositions("span");
+  expect(mode.pinCount()).toBe(2);
+  expect(after[0][0]).toBeCloseTo(before[0][0] + 5, 5);
+  expect(after[0][1]).toBeCloseTo(before[0][1], 5);
+  mode.detach();
+});
+
+test("a view change clears", () => {
+  const { viewer, mode, ctx, itemIds } = setup();
+  const onPins = vi.fn();
+  mode.onPinsChange(onPins);
+  mode.setEnabled(true);
+  clickAt(viewer.domElement);
+  onPins.mockClear();
+  ctx.view = "alt"; // same meshes, same poses, same geometry — only the view moved
+  viewer.frame();
+  expect(mode.pinCount()).toBe(0);
+  expect(onPins).toHaveBeenCalledTimes(1);
+  expect(itemIds()).not.toContain("first");
+  ctx.view = "main";
+  viewer.frame();
+  expect(mode.pinCount()).toBe(0); // nothing comes back
+  mode.detach();
+});
+
+// ---- label picks ----------------------------------------------------------------
+
+test("a reading's label click flashes the matching param and changes nothing", () => {
+  const { viewer, mode, dimGroup, revealParams } = setup();
+  mode.setEnabled(true);
+  clickAt(viewer.domElement);
+  revealParams.mockClear();
+  viewer.frame();
+  const w = dimGroup().children.find((c) => c.userData.pfDimItemId === "first" && c.userData.pfDimValue === 20);
+  expect(w).toBeDefined();
+  const { x, y } = labelScreen(viewer, w);
+  clickAt(viewer.domElement, x, y);
+  expect(revealParams).toHaveBeenCalledWith(["plate_w"], "plate_w");
+  expect(mode.pinCount()).toBe(1); // no fall-through into a second click
+  mode.detach();
+});
+
+test("a label click with no matching value flashes nothing", () => {
+  const { viewer, mode, dimGroup, revealParams } = setup();
+  mode.setEnabled(true);
+  clickAt(viewer.domElement);
+  revealParams.mockClear();
+  viewer.frame();
+  const h = dimGroup().children.find((c) => c.userData.pfDimItemId === "first" && c.userData.pfDimValue === 10);
+  const { x, y } = labelScreen(viewer, h);
+  clickAt(viewer.domElement, x, y);
+  expect(revealParams).not.toHaveBeenCalled();
+  expect(mode.pinCount()).toBe(1);
+  mode.detach();
+});
+
+test("several matching params all flash, none takes focus", () => {
+  const { viewer, mode, ctx, revealParams } = setup();
+  ctx.params.wall = 20;
+  mode.setEnabled(true);
+  clickAt(viewer.domElement);
   const [keys, focus] = revealParams.mock.calls.at(-1);
   expect(keys.sort()).toEqual(["plate_w", "wall"]);
   expect(focus).toBe(null);
   mode.detach();
 });
 
-test("re-clicking pinned geometry unpins it (labels never unpin)", () => {
-  const { viewer, mode } = setup();
+test("a distance's label click flashes nothing", () => {
+  const { viewer, mode, dimGroup, revealParams } = setup();
   mode.setEnabled(true);
-  clickAt(viewer.domElement);
-  expect(mode.pinCount()).toBe(1);
-  clickAt(viewer.domElement); // same feature again -> toggle off
-  expect(mode.pinCount()).toBe(0);
+  clickPoint(viewer, CORNER_A);
+  clickPoint(viewer, CORNER_C);
+  viewer.frame();
+  const s = dimGroup().children.find((c) => c.userData.pfDimItemId === "span");
+  const { x, y } = labelScreen(viewer, s);
+  clickAt(viewer.domElement, x, y); // value 20 matches plate_w, but distances never flash
+  expect(revealParams).not.toHaveBeenCalled();
+  expect(mode.pinCount()).toBe(2);
   mode.detach();
 });
 
-// The label must survive its own approach: labels usually float OFF the
-// geometry, so the pointer travelling from the feature to its label leaves
-// the mesh — without parking, the hover (and the label under the cursor)
-// would clear before it could ever be clicked.
-test("hover parks while the pointer is over a dim label (and shows a pointer cursor)", () => {
-  const { viewer, mode, dimGroup, hasHover } = setup({ mesh: plateMesh({ halfLabeled: true }) });
+test("a pointer over a dim label hides the snap marker and shows a pointer cursor", () => {
+  const { viewer, mode, dimGroup, snapShown } = setup();
   mode.setEnabled(true);
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: 64.1, clientY: 55.6 }));
-  expect(hasHover()).toBe(true);
-
-  const target = offFeatureLabelTarget(viewer, dimGroup, "hover");
-  expect(target).toBeDefined();
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: target.x, clientY: target.y }));
-  expect(hasHover()).toBe(true); // parked, not cleared
+  clickAt(viewer.domElement);
+  viewer.frame();
+  const w = dimGroup().children.find((c) => c.userData.pfDimItemId === "first");
+  const { x, y } = labelScreen(viewer, w);
+  move(viewer.domElement, x, y);
+  expect(snapShown()).toBe(false);
   expect(viewer.domElement.style.cursor).toBe("pointer");
-
-  // moving to empty space (no label, no geometry) clears hover and cursor
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: 2, clientY: 2 }));
-  expect(hasHover()).toBe(false);
+  move(viewer.domElement, 2, 2);
   expect(viewer.domElement.style.cursor).toBe("");
   mode.detach();
 });
 
-// Regression: pins are per view, but the frame dirty check only watches the
-// meshes — and two views can share an identical mesh set, so switching between
-// them changes nothing it hashes. v1 caught this incidentally through its
-// camera hash (a view switch reframes); v2 has no camera hash, so the active
-// view is seeded into the signature explicitly. Without that, view A's pinned
-// dims keep drawing over view B.
-test("switching views drops the other view's pinned dims", () => {
-  const { viewer, mode, ctx, itemIds } = setup();
-  mode.setEnabled(true);
-  clickAt(viewer.domElement); // pin in view "main"
-  expect(mode.pinCount()).toBe(1);
-  expect(itemIds().some((id) => id.startsWith("pin:"))).toBe(true);
+// ---- frames -----------------------------------------------------------------------
 
-  ctx.view = "alt"; // same meshes, same poses, same geometry — only the view moved
-  viewer.frame();
-  expect(mode.pinCount()).toBe(0); // "alt" has no pins of its own
-  expect(itemIds().some((id) => id.startsWith("pin:"))).toBe(false);
-
-  ctx.view = "main";
-  viewer.frame();
-  expect(mode.pinCount()).toBe(1);
-  expect(itemIds().some((id) => id.startsWith("pin:"))).toBe(true);
-});
-
-// transformSpec's job: carry a spec out of the mesh's own geometry frame into
-// the parts frame dim3-place works in. The overall dim gets there by a
-// different route (its bounds are composed with mesh.matrix directly), so
-// these two pin the pinned-item path — the only user of the plane and bbox
-// branches — against a real (translated) pose.
-test("a posed mesh moves its pinned PLANE dim by the pose", () => {
-  const { mesh, viewer, mode, labelPositions } = setup();
-  mode.setEnabled(true);
-  clickAt(viewer.domElement); // pin the "top face" feature -> plane spec
-  expect(mode.pinCount()).toBe(1);
-  viewer.frame(); // settle scene.tick()'s screen-constant label sizing before capturing
-  const before = labelPositions("pin:");
-  expect(before.length).toBeGreaterThan(0);
-
-  poseSubMesh(mesh, new THREE.Matrix4().makeTranslation(5, 0, 0));
-  viewer.frame(); // the pose is hashed, so this rebuilds
-  const after = labelPositions("pin:");
-
-  expect(after.length).toBe(before.length);
-  after.forEach((p, i) => {
-    expect(p[0]).toBeCloseTo(before[i][0] + 5, 5); // translated along X
-    expect(p[1]).toBeCloseTo(before[i][1], 5);
-    expect(p[2]).toBeCloseTo(before[i][2], 5);
-  });
-  mode.detach();
-});
-
-test("a posed mesh moves its pinned BBOX dim by the pose", () => {
-  // half-labeled plate: clicking the unlabeled triangle pins the sub-part
-  // bounding box, which is the spec kind that goes through transformSpec's
-  // Box3 branch.
-  const { mesh, viewer, mode, itemIds, labelPositions } = setup({ mesh: plateMesh({ halfLabeled: true }) });
-  mode.setEnabled(true);
-  clickAt(viewer.domElement, 50, 48); // over the UNLABELED triangle
-  expect(itemIds()).toContain("pin:plate:bbox:0");
-  viewer.frame(); // settle scene.tick()'s screen-constant label sizing before capturing
-  const before = labelPositions("pin:");
-  expect(before.length).toBeGreaterThan(0);
-
-  poseSubMesh(mesh, new THREE.Matrix4().makeTranslation(5, 0, 0));
-  viewer.frame();
-  const after = labelPositions("pin:");
-
-  expect(after.length).toBe(before.length);
-  after.forEach((p, i) => {
-    expect(p[0]).toBeCloseTo(before[i][0] + 5, 5);
-    expect(p[1]).toBeCloseTo(before[i][1], 5);
-    expect(p[2]).toBeCloseTo(before[i][2], 5);
-  });
-  // a pure translation must not change the measured extents
-  expect(paintLog.filter((t) => t === "20.00 mm").length).toBeGreaterThan(0);
-  expect(paintLog).not.toContain("25.00 mm");
-  mode.detach();
-});
-
-// Open tube (wall triangles only, one labeled feature), axis along Y — not Z
-// like feature-dims.test.js's tube() — so it sits crosswise to this file's
-// fixed camera ray (straight down -Z through x=10, y=5) and gets hit by a
-// click at the default (50, 50). Centered on (cx, length/2, cz) so classifyFeature's
-// fitted center lands there too.
+// Open tube (wall triangles only, one labeled feature), axis along Y, crosswise
+// to the fixed camera ray so a click at (50, 50) hits its wall.
 function cylinderMesh({ r = 3, length = 10, seg = 24, cx = 10, cz = 2, id = 1, label = "boss" } = {}) {
   const pos = [];
   for (let i = 0; i < seg; i++) {
@@ -532,50 +659,31 @@ function cylinderMesh({ r = 3, length = 10, seg = 24, cx = 10, cz = 2, id = 1, l
   return new THREE.Mesh(geo);
 }
 
-// transformSpec's cylinder branch (measure-mode.js's `dir()`/`pt()` mapping of
-// center/axis/top/bottom/rimDir) is otherwise uncovered: the two pose tests
-// above pin the plane and bbox branches, the only other users of the pinned-
-// item path, against a real (translated) pose, and this closes the parked gap
-// for the third kind under a real ROTATION.
-//
-// The pose rotates 90° about Z, pivoted on the feature's own classified
-// center (T·R·T⁻¹) rather than the parts origin. That keeps the pose a real
-// rotation (so transformSpec's `dir()` path — not just `pt()`'s translation
-// case — actually runs) while leaving the camera-relative-to-center geometry
-// that drives dim3-place's ⌀-direction (`du`) choice untouched by the pose:
-// with the center fixed, the expected rotated label position follows directly
-// from the pose matrix, rather than needing to re-derive evaluateChoices'
-// hysteresis/direction heuristics inside the test.
-test("a posed mesh rotates its pinned CYLINDER dim's ⌀ label through transformSpec", () => {
+// transformSpec's cylinder branch under a real ROTATION, pivoted on the
+// feature's own centre so the ⌀ direction choice is untouched by the pose.
+test("a posed mesh rotates a CYLINDER reading's ⌀ label through transformSpec", () => {
   const mesh = cylinderMesh();
   const { viewer, mode, itemIds, labelPositions } = setup({ mesh });
   mode.setEnabled(true);
-  clickAt(viewer.domElement); // pin the "boss" wall feature -> cylinder spec
+  clickAt(viewer.domElement);
   expect(mode.pinCount()).toBe(1);
-  expect(itemIds()).toContain("pin:plate:boss:0");
-  viewer.frame(); // settle scene.tick()'s screen-constant label sizing before capturing
-  const before = labelPositions("pin:"); // [⌀ label, depth label]
-  expect(before.length).toBeGreaterThan(0);
+  expect(itemIds()).toContain("first");
+  viewer.frame();
+  const before = labelPositions("first");
 
   const rawSpec = classifyFeature(
     { positions: mesh.geometry.getAttribute("position").array, featureIds: mesh.geometry.userData.featureIds },
     1,
   );
-  expect(rawSpec.kind).toBe("cylinder");
   const [cx, cy, cz] = rawSpec.anchors.center;
-
   const pose = new THREE.Matrix4()
     .makeTranslation(cx, cy, cz)
     .multiply(new THREE.Matrix4().makeRotationZ(Math.PI / 2))
     .multiply(new THREE.Matrix4().makeTranslation(-cx, -cy, -cz));
   poseSubMesh(mesh, pose);
-  viewer.frame(); // pose is hashed, so this rebuilds
-  const after = labelPositions("pin:");
-
+  viewer.frame();
+  const after = labelPositions("first");
   expect(after.length).toBe(before.length);
-  // The ⌀ label is always index 0 (placeCylinder pushes it before the depth
-  // dim's label). A 90° Z-rotation about (cx, cy, cz) maps a point offset
-  // (dx, dy, dz) from that center to (-dy, dx, dz).
   const [bx, by, bz] = before[0];
   const [ax, ay, az] = after[0];
   expect(ax - cx).toBeCloseTo(-(by - cy), 3);
@@ -584,59 +692,55 @@ test("a posed mesh rotates its pinned CYLINDER dim's ⌀ label through transform
   mode.detach();
 });
 
-// Regression: the pose hash used to carry only the matrix diagonal, so a
-// rotation and its mirror image (θ and −θ about X share cos θ on the diagonal)
-// with the same translation read as identical — and v2 has no camera hash left
-// to notice. The full rotation basis is hashed instead.
+test("an edge reading rides a translation through transformSpec", () => {
+  const { mesh, viewer, mode, labelPositions } = setup();
+  mode.setEnabled(true);
+  clickPoint(viewer, ON_EDGE);
+  viewer.frame();
+  const before = labelPositions("first");
+  expect(before.length).toBe(1);
+  poseSubMesh(mesh, new THREE.Matrix4().makeTranslation(0, 3, 0));
+  viewer.frame();
+  const after = labelPositions("first");
+  expect(after[0][0]).toBeCloseTo(before[0][0], 5);
+  expect(after[0][1]).toBeCloseTo(before[0][1] + 3, 5);
+  mode.detach();
+});
+
 test("an opposite-sign pose rotation is not mistaken for the same pose", () => {
   const { mesh, viewer, mode, labelPositions } = setup();
   mode.setEnabled(true);
   clickAt(viewer.domElement);
-  expect(mode.pinCount()).toBe(1);
-
   const posed = (t) => new THREE.Matrix4().makeRotationX(t).setPosition(1, 2, 3);
   poseSubMesh(mesh, posed(Math.PI / 6));
   viewer.frame();
-  const plus = labelPositions("pin:");
+  const plus = labelPositions("first");
   expect(plus.length).toBeGreaterThan(0);
-
-  poseSubMesh(mesh, posed(-Math.PI / 6)); // same diagonal, same translation
+  poseSubMesh(mesh, posed(-Math.PI / 6));
   viewer.frame();
-  const minus = labelPositions("pin:");
-
+  const minus = labelPositions("first");
   expect(minus.length).toBe(plus.length);
   expect(minus).not.toEqual(plus);
   mode.detach();
 });
 
-// The placement pipeline (vertex scans, raycasts) must run on CHANGE, not per
-// frame. scene.update() replaces every child object, so child identity across
-// frames is a direct read on "did we re-place?".
+// ---- placement caching ------------------------------------------------------------
+
 test("a steady frame does not re-place; only a side-choice flip does", () => {
   const { viewer, mode, dimGroup } = setup();
   mode.setEnabled(true);
   const kids = () => [...dimGroup().children];
-  // identity, not deep equality: scene.update() builds brand-new child objects,
-  // so "same objects" means update() was never called.
   const same = (a, b) => a.length === b.length && a.every((o, i) => o === b[i]);
   const first = kids();
   expect(first.length).toBeGreaterThan(0);
-
-  for (let i = 0; i < 5; i++) viewer.frame(); // nothing changed at all
+  for (let i = 0; i < 5; i++) viewer.frame();
   expect(same(kids(), first)).toBe(true);
-
-  // a nudge too small to flip which side any dim hangs off
   viewer.camera.position.set(10.5, 5.2, 40);
   viewer.frame();
   expect(same(kids(), first)).toBe(true);
-
-  // an opposite camera along the SAME axis keeps the same face-on plane —
-  // that's the readability rule working, not a missed flip
   viewer.camera.position.set(10, 5, -40);
   viewer.frame();
   expect(same(kids(), first)).toBe(true);
-
-  // a SIDE camera makes a different plane face-on: now a choice flips
   viewer.camera.position.set(150, 5, 2);
   viewer.frame();
   expect(same(kids(), first)).toBe(false);
@@ -644,118 +748,55 @@ test("a steady frame does not re-place; only a side-choice flip does", () => {
   mode.detach();
 });
 
-// Hover changes on every rAF while the pointer moves, and placeBox scans every
-// vertex of the meshes it covers — so a hover move must re-place the hover item
-// ALONE, reusing the cached always-on/pinned drawings. Read straight off
-// placeDims: which items each call was asked to place.
-test("hovering re-places only the hover dim, reusing the cached base drawings", () => {
-  const { viewer, mode, hasHover } = setup();
-  mode.setEnabled(true);
-  // enable places the base set once
-  expect(placeDims.mock.calls.at(-1)[0].map((i) => i.id)).toEqual(["overall"]);
-
-  placeDims.mockClear();
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
-  expect(hasHover()).toBe(true);
-  expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id))).toEqual([["hover"]]);
-
-  // (a further move that resolves to the SAME spec re-places nothing at all —
-  // see "a hover move that stays on the same feature re-places nothing")
-
-  // pinning changes the base set, so that one does re-place both
-  placeDims.mockClear();
-  clickAt(viewer.domElement);
-  expect(mode.pinCount()).toBe(1);
-  expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id)))
-    .toEqual([["overall", "pin:plate:top face:0"], ["hover"]]);
-  mode.detach();
-});
-
-// The hover dim is fully determined by its spec + the side choices + the lane
-// seed — and the spec is IDENTICAL for every pointer position over one feature.
-// Re-placing it per rAF therefore repeats an identical vertex scan and surface
-// raycast set for as long as the pointer sits on the same face, which is what
-// makes hovering a big part hitch. A move that resolves to the same spec must
-// re-place nothing and repaint nothing.
-test("a hover move that stays on the same feature re-places nothing", () => {
-  const { viewer, mode, hasHover, dimGroup } = setup();
-  mode.setEnabled(true);
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
-  expect(hasHover()).toBe(true);
-  const first = [...dimGroup().children];
-
-  placeDims.mockClear();
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: 52 }));
-  expect(placeDims.mock.calls).toEqual([]);
-  // identity, not deep equality: an unchanged drawing list must not be repainted
-  expect([...dimGroup().children]).toEqual(first);
-  expect(hasHover()).toBe(true);
-  mode.detach();
-});
-
-// The other half of the same rule: a move onto a DIFFERENT spec must still
-// re-place, or the cache would freeze the hover dim on the first thing touched.
-test("a hover move onto a different feature re-places the hover dim", () => {
-  const { viewer, mode } = setup({ mesh: plateMesh({ halfLabeled: true }) });
-  mode.setEnabled(true);
-  // inside the labeled triangle, then its mirror in the UNLABELED one, where
-  // the hover falls back to the sub-part bbox — a different spec
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: 64.1, clientY: 55.6 }));
-  placeDims.mockClear();
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: 35.9, clientY: 44.4 }));
-  expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id))).toEqual([["hover"]]);
-  mode.detach();
-});
-
-// Orbiting flips side choices repeatedly — measured at ~15 flips over a single
-// 360° turn — and each flip invalidated a one-slot cache, so every flip paid a
-// full re-place even when the choice it landed on had just been placed moments
-// earlier. The caches are keyed and bounded instead, so an orbit that sweeps
-// back over ground it has already covered places nothing new.
 test("an orbit that revisits angles it has already placed re-places nothing", () => {
   const { viewer, mode, labelPositions } = setup();
   mode.setEnabled(true);
+  clickAt(viewer.domElement); // with a reading on screen too
   const orbit = () => {
     for (const p of [[150, 5, 2], [10, 5, 40], [5, 150, 2], [10, 5, 40]]) {
       viewer.camera.position.set(...p);
       viewer.frame();
     }
   };
-  orbit(); // first pass places each distinct choice once
-  const home = labelPositions("overall");
+  orbit();
+  const home = labelPositions("");
   expect(home.length).toBeGreaterThan(0);
-
   placeDims.mockClear();
-  orbit(); // the identical sweep, second time round
+  orbit();
   expect(placeDims.mock.calls).toEqual([]);
-  expect(labelPositions("overall")).toEqual(home); // and it still draws the same
+  expect(labelPositions("")).toEqual(home);
   mode.detach();
 });
 
-// The same rule with a pointer held on a face, which is the case the report
-// describes: orbiting while hovering flips the HOVER dim's side too, so a
-// one-slot cache re-placed the hovered item on every flip.
-test("an orbit that revisits angles re-places nothing while hovering either", () => {
-  const { viewer, mode, hasHover, labelPositions } = setup();
+// placeBox scans every vertex of the meshes it covers, so a click must place
+// its one measurement and reuse the cached overall drawings.
+test("a click places only its measurement, reusing the overall drawings", () => {
+  const { viewer, mode } = setup();
   mode.setEnabled(true);
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
-  expect(hasHover()).toBe(true);
-  const orbit = () => {
-    for (const p of [[150, 5, 2], [10, 5, 40], [5, 150, 2], [10, 5, 40]]) {
-      viewer.camera.position.set(...p);
-      viewer.frame();
-    }
-  };
-  orbit();
-  const home = labelPositions("hover");
-  expect(home.length).toBeGreaterThan(0);
-
+  expect(placeDims.mock.calls.at(-1)[0].map((i) => i.id)).toEqual(["overall"]);
   placeDims.mockClear();
-  orbit();
+  clickAt(viewer.domElement);
+  expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id))).toEqual([["first"]]);
+  placeDims.mockClear();
+  clickPoint(viewer, CORNER_C);
+  expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id))).toEqual([["span"]]);
+  placeDims.mockClear();
+  mode.clearPins(); // back to the overall alone: already placed
   expect(placeDims.mock.calls).toEqual([]);
-  expect(labelPositions("hover")).toEqual(home);
   mode.detach();
 });
+
+test("hover moves never re-place, even with a reading on screen", () => {
+  const { viewer, mode } = setup();
+  mode.setEnabled(true);
+  clickAt(viewer.domElement);
+  placeDims.mockClear();
+  for (const [x, y] of [[50, 50], [30, 60], [70, 40], [2, 2]]) move(viewer.domElement, x, y);
+  expect(placeDims.mock.calls).toEqual([]);
+  mode.detach();
+});
+
+// ---- lifecycle ----------------------------------------------------------------------
 
 test("onModeChange fires on enable and disable", () => {
   const { mode } = setup();
@@ -767,67 +808,21 @@ test("onModeChange fires on enable and disable", () => {
   mode.detach();
 });
 
-test("pointerleave clears the hover dim", () => {
-  const { viewer, mode, hasHover } = setup();
+test("a theme change repaints the dims and detach removes the group and marker", () => {
+  const { viewer, mode, dimGroup, snapLabel } = setup();
   mode.setEnabled(true);
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
-  expect(hasHover()).toBe(true);
-  viewer.domElement.dispatchEvent(new MouseEvent("pointerleave"));
-  expect(hasHover()).toBe(false);
-  mode.detach();
-});
-
-// Regression: a visibility-only change (e.g. a cutaway/view toggle hiding the
-// hovered sub-part) trips the mesh signature, but the mesh's geometry identity
-// is untouched — the old check (geometry identity only) missed this and left a
-// stale hover dim/highlight pointing at a now-invisible mesh.
-test("stale hover is dropped when its mesh goes invisible, even with the same geometry", () => {
-  const { mesh, viewer, mode, hasHover } = setup();
-  mode.setEnabled(true);
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
-  expect(hasHover()).toBe(true);
-
-  mesh.visible = false;
-  viewer.frame(); // dirty check picks up the visibility flip
-
-  expect(hasHover()).toBe(false);
-  mode.detach();
-});
-
-// Regression: the cutaway gizmo and measure mode share the pointer over the
-// same canvas; a handle drag must steal it the same way hover.js already does.
-test("cutaway handle hover suppresses measure hover; releases resume it", () => {
-  const { viewer, mode, hasHover } = setup();
-  mode.setEnabled(true);
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
-  expect(hasHover()).toBe(true);
-
-  viewer.fireHandleHover("radius"); // gizmo drag starts
-  expect(hasHover()).toBe(false); // suppressed: hover dim + highlight dropped
-
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: 51 }));
-  expect(hasHover()).toBe(false); // moves ignored while suppressed
-
-  viewer.fireHandleHover(null); // gizmo released
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
-  expect(hasHover()).toBe(true); // hovering works again
-  mode.detach();
-});
-
-test("a theme change repaints the dims and detach removes the group", () => {
-  const { viewer, mode, dimGroup } = setup();
-  mode.setEnabled(true);
-  expect(dimGroup()).toBeDefined();
+  move(viewer.domElement);
   expect(() => viewer.fireTheme("light")).not.toThrow();
   expect(dimGroup().children.length).toBeGreaterThan(0);
   mode.detach();
-  expect(dimGroup()).toBeUndefined(); // group removed from the parts group
+  expect(dimGroup()).toBeUndefined();
+  expect(snapLabel()).toBeNull();
 });
 
 test("frame ticks are harmless before and after the mode is enabled", () => {
   const { viewer, mode } = setup();
-  expect(() => viewer.frame()).not.toThrow(); // never enabled: no scene yet
+  expect(() => viewer.frame()).not.toThrow();
   mode.setEnabled(true);
-  expect(() => viewer.frame()).not.toThrow(); // steady state: cheap re-score
+  expect(() => viewer.frame()).not.toThrow();
   mode.detach();
 });

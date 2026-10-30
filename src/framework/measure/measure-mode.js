@@ -1,30 +1,38 @@
 // Measurement-mode orchestrator: the one measure module that touches both
-// three.js and the DOM. Owns mode state and drives the pipeline
-//   raycast hit -> feature-dims spec -> param-link -> dim3-place -> dim3-scene
-// with a per-frame dirty check. Dimensions are real scene objects parented
-// under the meshes' shared group, so they ride the pivot rotation, the pose
-// fast path and animations for free; the frame loop only has to notice mesh
-// regenerates/visibility flips (rebuild) and camera moves that flip a side
-// choice (re-score, rebuild only if a choice actually changed). Pins live in
-// the pure pin store, per view, and survive mode toggles; `Clear` (chrome) is
-// the only thing that empties them.
+// three.js and the DOM. Owns mode state and the two-click model:
+//
+//   hover        raycast -> snaps.findSnap -> snap-marker (draws NO dimension)
+//   first click  the snap becomes the start point; a reading (readings.js
+//                firstReading) when the target has one, flashing matching params
+//   second click one distance (readings.spanSpec) from the start point
+//   third click  starts over
+//
+// Dimensions are real scene objects parented under the meshes' shared group,
+// so they ride the pivot rotation, the pose fast path and animations for free.
+// The clicked points and readings are stored in each sub-part's GEOMETRY frame
+// and posed by mesh.matrix whenever they are drawn, so a pose-only change moves
+// them; a geometry change, a hidden sub-part or a view change clears them.
+// `Clear` (chrome) and leaving the mode clear them too.
 import * as THREE from "three";
 import { raycastViewer } from "../selection/raycast.js";
-import { createFeatureHighlight } from "../selection/feature-highlight.js";
 import { createDragTracker } from "../selection/drag-tracker.js";
 import { subPartParamKeys } from "../param-deps.js";
 import { classifyFeature, bboxSpec, unionBounds } from "./feature-dims.js";
 import { paramMatches } from "./param-link.js";
-import { createPinStore, occurrenceOf } from "./pins.js";
 import { evaluateChoices, choicesEqual, placeDims, specSig, laneCounts } from "./dim3-place.js";
-import { createDimScene } from "./dim3-scene.js";
+import { createDimScene, worldPerPx, orthoWorldPerPx } from "./dim3-scene.js";
+import { buildSnapIndex, findSnap, SNAP_PX } from "./snaps.js";
+import { firstReading, spanSpec, frameAxesFor } from "./readings.js";
+import { createSnapMarker } from "./snap-marker.js";
 
-// How many distinct placements each cache holds. An orbit sweeps a bounded set
-// of side choices, and a session hovers a bounded set of features; anything
-// past that is ground the user has moved on from. Entries are plain drawing
-// records (numbers, no GL objects), so the ceiling is about retention hygiene
-// on a memory-tight device, not about a runaway.
+// How many distinct placements the cache holds. An orbit sweeps a bounded set
+// of side choices; anything past that is ground the user has moved on from.
+// Entries are plain drawing records (numbers, no GL objects), so the ceiling is
+// about retention hygiene on a memory-tight device, not about a runaway.
 const PLACEMENT_CACHE_LIMIT = 32;
+
+// The word the snap label uses for each SnapTarget kind on a named feature.
+const KIND_WORD = { corner: "corner", midpoint: "midpoint", circle: "centre", edge: "edge", face: "face" };
 
 // Bounded LRU. A Map iterates in insertion order, so re-inserting on a hit
 // moves the entry to the back and the oldest key is always the first one out.
@@ -48,8 +56,7 @@ function keyedCache(limit) {
   };
 }
 
-export function createMeasureMode(viewer, { part, getContext, revealParams, getReads, schedule = (cb) => requestAnimationFrame(cb) }) {
-  const pins = createPinStore();
+export function createMeasureMode(viewer, { part, getContext, revealParams, getReads, stage = viewer.stageElement, schedule = (cb) => requestAnimationFrame(cb) }) {
   const pinListeners = new Set();
   const notifyPins = () => { for (const cb of [...pinListeners]) cb(); };
   const modeListeners = new Set();
@@ -65,15 +72,28 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
 
   let enabled = false;
   let units = "mm";            // display only; values stay mm internally
+  let straight = false;        // the touch toggle (Task 7); Shift does the same per click
   let scene = null;            // created on first enable, kept across toggles
-  let highlight = null;
-  let hover = null;            // { item, key } for the currently hovered spec
+  let marker = null;           // the hover snap marker + the start-point dot
   let detached = false;
 
-  // ---- spec cache: (geometry instance, featureId) -> core spec -------------
-  // WeakMap: identity lookup only, and old geometries (with their typed
-  // arrays) drop out on their own once no mesh references them anymore —
-  // nothing here needs to clear it on detach.
+  // ---- the two clicks ------------------------------------------------------
+  // Each: { subPart, mesh, geometry, view, pointGeom, target, spec, normal }.
+  //   pointGeom  the snap point, geometry frame
+  //   spec       the first click's reading (geometry frame) or null
+  //   normal     a named plane face's normal (geometry frame) or null — the
+  //              parallel-faces gap rule in spanSpec
+  // `second` also carries `straight`, decided at its click.
+  let first = null;
+  let second = null;
+  let hoverMesh = null;        // the mesh the snap marker currently marks
+  let hoverGeometry = null;
+
+  const pinCount = () => (second ? 2 : first ? 1 : 0);
+
+  // ---- per-geometry caches -------------------------------------------------
+  // WeakMaps: identity lookup only, and old geometries (with their typed
+  // arrays) drop out on their own once no mesh references them anymore.
   const specCache = new WeakMap(); // geometry -> Map(featureId -> spec|null)
   function featureSpec(mesh, featureId) {
     let byId = specCache.get(mesh.geometry);
@@ -88,23 +108,40 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     }
     return byId.get(featureId);
   }
+  const snapCache = new WeakMap(); // geometry -> SnapIndex
+  function snapIndex(geometry) {
+    let index = snapCache.get(geometry);
+    if (!index) {
+      const { featureIds, edgePositions } = geometry.userData;
+      index = buildSnapIndex({
+        positions: geometry.getAttribute("position").array,
+        indices: geometry.getIndex()?.array,
+        featureIds,
+        edgePositions,
+      });
+      snapCache.set(geometry, index);
+    }
+    return index;
+  }
 
   // ---- spec frames ---------------------------------------------------------
-  // Feature/bbox specs come out of classifyFeature in the MESH's own geometry
-  // frame; dim3-place works entirely in the PARTS frame (the meshes' shared
-  // parent), so compose the mesh's local matrix — which carries the viewer's
-  // fast-path pose — into every anchor before handing a spec over.
+  // Readings come out of classifyFeature/firstReading in the MESH's own
+  // geometry frame; dim3-place works entirely in the PARTS frame (the meshes'
+  // shared parent), so compose the mesh's local matrix — which carries the
+  // viewer's fast-path pose — into every anchor before handing a spec over.
   const _m3 = new THREE.Matrix3();
   const _tv = new THREE.Vector3();
+  const isIdentity = (matrix) => matrix.determinant() === 1 && matrix.elements[12] === 0
+    && matrix.elements[13] === 0 && matrix.elements[14] === 0 && matrix.elements[0] === 1
+    && matrix.elements[5] === 1 && matrix.elements[10] === 1;
+  const posePoint = (p, matrix) => _tv.set(p[0], p[1], p[2]).applyMatrix4(matrix).toArray();
+  // directions take the matrix's linear part only — exact here because
+  // setSubPose poses are rigid (rotation + translation, no shear or scale).
+  const poseDir = (d, matrix) => _tv.set(d[0], d[1], d[2]).applyMatrix3(_m3.setFromMatrix4(matrix)).normalize().toArray();
   function transformSpec(spec, matrix) {
-    // identity fast path: poses are identity outside animations
-    if (matrix.determinant() === 1 && matrix.elements[12] === 0 && matrix.elements[13] === 0
-        && matrix.elements[14] === 0 && matrix.elements[0] === 1 && matrix.elements[5] === 1
-        && matrix.elements[10] === 1) return spec;
-    const pt = (p) => _tv.set(p[0], p[1], p[2]).applyMatrix4(matrix).toArray();
-    // directions take the matrix's linear part only — exact here because
-    // setSubPose poses are rigid (rotation + translation, no shear or scale).
-    const dir = (d) => _tv.set(d[0], d[1], d[2]).applyMatrix3(_m3.setFromMatrix4(matrix)).normalize().toArray();
+    if (isIdentity(matrix)) return spec; // poses are identity outside animations
+    const pt = (p) => posePoint(p, matrix);
+    const dir = (d) => poseDir(d, matrix);
     if (spec.kind === "plane") {
       return { ...spec, anchors: {
         width: { a: pt(spec.anchors.width.a), b: pt(spec.anchors.width.b) },
@@ -119,11 +156,8 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
         rimDir: spec.anchors.rimDir ? dir(spec.anchors.rimDir) : undefined,
       } };
     }
-    if (spec.kind === "bbox") {
-      const b = new THREE.Box3(
-        new THREE.Vector3(...spec.anchors.min), new THREE.Vector3(...spec.anchors.max),
-      ).applyMatrix4(matrix); // AABB of the posed box, same as viewer.frameTo
-      return bboxSpec(b.min.toArray(), b.max.toArray());
+    if (spec.kind === "edge") {
+      return { ...spec, anchors: { a: pt(spec.anchors.a), b: pt(spec.anchors.b) } };
     }
     return spec;
   }
@@ -136,53 +170,38 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     const { view, params } = getContext();
     return subPartParamKeys(part, view, params, getReads, subPart);
   }
-  // Clicking a measurement flashes the controls whose value ACTUALLY matches
-  // it (within the display quantum; radius-style params match a diameter at
-  // value*2), scoped to the spanned sub-parts' read keys so an unrelated
-  // part's coincidental value can't light up. One match also takes keyboard
-  // focus; several flash without a focus steal; none flashes nothing — a
-  // sub-part's whole read set proved far too coarse (a single build function
-  // reads every param, so even the drainage toggle lit up for a width click).
-  // Truthful derived-value attribution (which params MOVE this value) would
-  // need a per-param sensitivity probe in the worker — deliberately not done.
-  function revealRelevant(subParts, value) {
-    if (value == null) return;
+  // A reading flashes the controls whose value ACTUALLY matches one of its
+  // values (within the display quantum; radius-style params match a diameter
+  // at value*2), scoped to the sub-part's read keys so an unrelated part's
+  // coincidental value can't light up. One match also takes keyboard focus;
+  // several flash without a focus steal; none flashes nothing.
+  function revealRelevant(subParts, values) {
+    if (!values) return;
     const keySet = new Set();
     for (const sp of subParts ?? []) for (const k of readKeysFor(sp)) keySet.add(k);
     if (!keySet.size) return;
-    const matches = paramMatches([...keySet], getContext().params, { value });
+    const matches = paramMatches([...keySet], getContext().params, values);
     if (!matches.length) return;
     revealParams?.(matches, matches.length === 1 ? matches[0] : null);
   }
 
-  // ---- pin resolution: stable key -> a live spec + its mesh ----------------
-  function resolvePin(key) {
-    const mesh = viewer._subMeshes[key.subPart];
-    if (!mesh || !mesh.visible) return null;
-    if (key.featureLabel == null) {
-      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-      const { min, max } = mesh.geometry.boundingBox;
-      return { spec: bboxSpec([min.x, min.y, min.z], [max.x, max.y, max.z]), mesh };
-    }
-    const { features = [], featureIds } = mesh.geometry.userData;
-    if (!featureIds) return null;
-    // find the (occurrence+1)-th feature id carrying this label — dormant when gone
-    let seen = 0;
-    for (let i = 0; i < features.length; i++) {
-      if (features[i] !== key.featureLabel) continue;
-      if (seen === key.occurrence) {
-        const spec = featureSpec(mesh, i + 1);
-        return spec ? { spec, mesh } : null;
-      }
-      seen++;
-    }
-    return null;
+  // ---- what is drawn ---------------------------------------------------------
+  // The span between the two clicks, built from POSED points (and posed face
+  // normals), squared to the shared frame of both sub-parts. Not posed again.
+  function currentSpan() {
+    if (!first || !second) return null;
+    const pa = posePoint(first.pointGeom, first.mesh.matrix);
+    const pb = posePoint(second.pointGeom, second.mesh.matrix);
+    const axes = frameAxesFor(first.subPart, second.subPart, (name) => viewer._subMeshes[name]?.matrix);
+    const faceNormals = [
+      first.normal ? poseDir(first.normal, first.mesh.matrix) : null,
+      second.normal ? poseDir(second.normal, second.mesh.matrix) : null,
+    ];
+    return spanSpec(pa, pb, { axes, straight: second.straight, faceNormals });
   }
 
   // Items handed to dim3-place: every spec already in the parts frame, and
-  // `meshes` indexing into the meshData built alongside (so a feature dim
-  // scans only its own sub-part). `_key` rides along for un-pinning by label
-  // pick; dim3-place ignores unknown fields.
+  // `meshes` indexing into the meshData built alongside.
   function buildItems() {
     const items = [];
     const meshes = visibleMeshes();
@@ -199,25 +218,24 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       meshes: meshes.map((_, i) => i),
       subParts: meshes.map(([n]) => n),
     });
-    const { view } = getContext();
-    pins.list(view).forEach((key) => {
-      const live = resolvePin(key);
-      if (!live) return; // dormant
-      const meshIndex = meshes.findIndex(([n]) => n === key.subPart);
+    const indexOf = (name) => meshes.findIndex(([n]) => n === name);
+    if (second) {
+      // a distance replaces the reading on screen: one number at a time
+      const spec = currentSpan();
+      if (spec) {
+        items.push({
+          id: "span", tier: "pinned", pinned: true, spec,
+          meshes: [indexOf(first.subPart), indexOf(second.subPart)].filter((i) => i >= 0),
+          subParts: [first.subPart, second.subPart],
+        });
+      }
+    } else if (first?.spec) {
+      const i = indexOf(first.subPart);
       items.push({
-        id: `pin:${key.subPart}:${key.featureLabel ?? "bbox"}:${key.occurrence}`,
-        tier: "pinned", pinned: true,
-        spec: transformSpec(live.spec, live.mesh.matrix),
-        meshes: meshIndex >= 0 ? [meshIndex] : [],
-        subParts: [key.subPart], _key: key,
-      });
-    });
-    if (hover) {
-      const meshIndex = meshes.findIndex(([n]) => n === hover.subPart);
-      items.push({
-        ...hover.item,
-        spec: transformSpec(hover.item.spec, hover.mesh.matrix),
-        meshes: meshIndex >= 0 ? [meshIndex] : [],
+        id: "first", tier: "pinned", pinned: true,
+        spec: transformSpec(first.spec, first.mesh.matrix),
+        meshes: i >= 0 ? [i] : [],
+        subParts: [first.subPart],
       });
     }
     return { items, meshes, bounds: u };
@@ -228,23 +246,11 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   let lastItems = [];          // for label-pick resolution + cheap re-scoring
   let lastBounds = null;
   let themeEpoch = 0;
-  // The always-on + pinned dims, which change rarely, cached apart from the
-  // hover dim, which changes on every pointer move. placeBox scans every
-  // vertex of the meshes it covers (tens of ms on a big part), so re-placing
-  // the whole set per hover frame is the one path that must not exist.
-  //
-  // Both caches are KEYED and bounded rather than one slot each. A one-slot
-  // cache is right for a monotonic sequence and wrong for an orbit, which
-  // sweeps back and forth over the same handful of side choices — measured at
-  // ~15 flips per 360° turn, every one of them a full re-place of ground
-  // already covered. Keyed, an orbit places each distinct choice once.
-  const baseCache = keyedCache(PLACEMENT_CACHE_LIMIT);
-  // ...and the PAINTED list — base plus the hover dim — cached the same way, on
-  // the base key plus everything the hover pass alone depends on. The hover
-  // spec is identical for every pointer position over one feature, so without
-  // this a pointer resting on a face re-ran that item's vertex scan and its
-  // surface raycasts on every single rAF.
-  const paintCache = keyedCache(PLACEMENT_CACHE_LIMIT);
+  // placeBox scans every vertex of the meshes it covers (tens of ms on a big
+  // part), so placements are cached, KEYED and bounded: an orbit sweeps back
+  // and forth over the same handful of side choices (~15 flips per 360° turn),
+  // and keyed, it places each distinct choice once.
+  const placeCache = keyedCache(PLACEMENT_CACHE_LIMIT);
   // The drawing list currently on screen, held by IDENTITY: scene.update()
   // rebuilds every child object (and repaints every label texture), so a list
   // the cache just handed back unchanged must not reach it.
@@ -288,36 +294,27 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     (bounds.min[2] + bounds.max[2]) / 2,
   ];
 
-  // Everything the base drawings depend on, in one string: the mesh signature
-  // (geometry, poses, visibility, active view), the theme, which items are in
-  // the base set and what they link to, and the side choices scored for them.
-  // The hover item's own choice entries are skipped — they come and go with
-  // the pointer and must not evict the cache.
-  function baseCacheKey(sig, baseItems) {
-    let key = `${sig}|t${themeEpoch}`;
-    for (const item of baseItems) key += `|${item.id}`;
-    for (const ck of Object.keys(choices)) {
-      if (ck.startsWith("hover|")) continue;
-      const c = choices[ck];
-      key += `|${ck}=${c.key ?? ""}${c.du ? `,${c.du.map((n) => n.toFixed(4))}` : ""}`;
-    }
-    return key;
-  }
-
-  // The hover half of the choice table, which baseCacheKey deliberately omits
-  // (hover entries come and go with the pointer and must not evict the base).
-  // A camera move that flips which side the hovered dim hangs off has to
-  // re-place it, so the paint key carries them.
-  function hoverChoiceKey() {
+  // The side choices of one group of items (by id prefix), as a key fragment.
+  function choiceKey(isMine) {
     let key = "";
     for (const ck of Object.keys(choices)) {
-      if (!ck.startsWith("hover|")) continue;
+      if (!isMine(ck)) continue;
       const c = choices[ck];
       key += `|${ck}=${c.key ?? ""}${c.du ? `,${c.du.map((n) => n.toFixed(4))}` : ""}`;
     }
     return key;
   }
+  const isMeasureChoice = (ck) => ck.startsWith("first|") || ck.startsWith("span|");
 
+  // Two cached passes, like the old base/hover split: the overall dims, which
+  // only a mesh, unit, theme or camera-side change moves, and the one
+  // measurement on top. A click therefore places one item; the overall's
+  // vertex scan never re-runs for it.
+  //   base key:  mesh signature (geometry, poses, visibility, view), units,
+  //              theme, the overall's side choices
+  //   paint key: the base key + the measurement's spec (the ids "first" and
+  //              "span" are reused by every measurement, so the spec is its
+  //              identity) + its side choices
   function rebuild() {
     if (!enabled || !scene) return;
     const { items, meshes, bounds } = buildItems();
@@ -328,32 +325,57 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     choices = evaluateChoices(items, { camPos: env.camPos, center: centerOf(bounds), prev: choices });
     const place = (list, suppress, lanes) =>
       placeDims(list, { meshData: env.meshData, surfaceHit: env.surfaceHit, bounds, suppress, lanes, units }, choices);
-    const hoverItem = items.find((i) => i.id === "hover");
-    const baseItems = hoverItem ? items.filter((i) => i !== hoverItem) : items;
-    const key = baseCacheKey(`${units}|${meshSig()}`, baseItems);
-    let baseDrawings = baseCache.get(key);
-    if (!baseDrawings) baseDrawings = baseCache.set(key, place(baseItems));
-    // The hover pass can't see the base pass's items (they're cached), so it
-    // hands over (a) their sigs as `suppress` — a hover duplicating an
-    // already-drawn measurement (the sub-part bounds over the overall, a
-    // hovered pin) draws nothing instead of doubling it — and (b) their lane
-    // occupancy, so a hovered dim staggers into the SAME lane it will occupy
-    // once pinned (pins append after the base items in the same order) and
-    // clicking never moves it.
-    const paintKey = hoverItem
-      ? `h|${key}|${specSig(hoverItem.spec)}|${hoverChoiceKey()}`
-      : `b|${key}`;
-    let drawings = paintCache.get(paintKey);
-    if (!drawings) {
-      drawings = paintCache.set(paintKey, hoverItem
-        ? baseDrawings.concat(place(
-            [hoverItem],
-            new Set(baseItems.map((i) => specSig(i.spec))),
-            laneCounts(baseDrawings),
-          ))
-        : baseDrawings);
+    const base = items.filter((i) => i.id === "overall");
+    const extra = items.filter((i) => i.id !== "overall");
+    const baseKey = `${units}|${meshSig()}|t${themeEpoch}${choiceKey((ck) => !isMeasureChoice(ck))}`;
+    let baseDrawings = placeCache.get(baseKey);
+    if (!baseDrawings) baseDrawings = placeCache.set(baseKey, place(base));
+    let drawings = baseDrawings;
+    if (extra.length) {
+      const paintKey = `m|${baseKey}|${extra.map((i) => `${i.id}:${specSig(i.spec)}`).join("|")}${choiceKey(isMeasureChoice)}`;
+      drawings = placeCache.get(paintKey);
+      if (!drawings) {
+        // the measurement takes the lanes after the overall's, and a reading
+        // identical to an overall dim is not drawn twice
+        drawings = placeCache.set(paintKey, baseDrawings.concat(place(
+          extra, new Set(base.map((i) => specSig(i.spec))), laneCounts(baseDrawings),
+        )));
+      }
     }
     if (painted !== drawings) { painted = drawings; scene.update(drawings); }
+  }
+
+  // ---- state transitions -----------------------------------------------------
+  // Drop the side choices of the measurement that just went away, so the next
+  // one starts from a fresh camera-based choice rather than inheriting the old
+  // one's hysteresis under the reused item id.
+  function forgetChoices() {
+    for (const ck of Object.keys(choices)) {
+      if (ck.startsWith("first|") || ck.startsWith("span|")) delete choices[ck];
+    }
+  }
+
+  function syncStart() {
+    // The start point is marked whenever the first click gave no reading.
+    if (first && !first.spec) marker?.setStart(first.pointGeom, first.mesh);
+    else marker?.setStart(null);
+  }
+
+  // Back to idle. Every clear path tells pin listeners (the Clear button's
+  // visibility, the host's relay), even when nothing was showing.
+  function clearState({ redraw = true } = {}) {
+    first = null;
+    second = null;
+    forgetChoices();
+    marker?.setStart(null);
+    notifyPins();
+    if (redraw) rebuild();
+  }
+
+  function clearHover() {
+    hoverMesh = null;
+    hoverGeometry = null;
+    marker?.clear();
   }
 
   // ---- frame dirty check ---------------------------------------------------
@@ -362,13 +384,10 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // is WHICH side each dim is drawn on — cheap to re-score every frame
   // (dot products + hysteresis), and only a genuine flip costs a rebuild.
   let lastSig = "";
-  // Seeded with the ACTIVE VIEW: pins are per view, so switching views changes
-  // what must be drawn even when the visible mesh set is byte-identical (two
-  // views over the same sub-parts). v1 caught that incidentally through its
-  // camera hash; without the camera here it has to be explicit.
-  // The pose is hashed as its full rotation basis + translation, not just the
-  // two diagonal terms — θ and −θ about X share cos θ on the diagonal, and
-  // there is no camera hash left to notice the difference.
+  // Seeded with the ACTIVE VIEW: a view switch clears, even when the visible
+  // mesh set is byte-identical. The pose is hashed as its full rotation basis +
+  // translation, not just the two diagonal terms — θ and −θ about X share
+  // cos θ on the diagonal.
   function meshSig() {
     let sig = getContext().view;
     for (const [name, m] of Object.entries(viewer._subMeshes)) {
@@ -377,22 +396,23 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     }
     return sig;
   }
+  // A click no longer refers to live geometry: its mesh is gone, hidden or
+  // regenerated, or the view changed. A pose change alone keeps it.
+  function isStale(click, view) {
+    if (!click) return false;
+    const m = viewer._subMeshes[click.subPart];
+    return !m || m !== click.mesh || !m.visible || m.geometry !== click.geometry || click.view !== view;
+  }
   const offFrame = viewer.onFrame(() => {
     if (!enabled || !scene) return;
     const sig = meshSig();
     if (sig !== lastSig) {
       lastSig = sig;
-      // geometry identity is part of the signature, so a regenerate lands here;
-      // visibility (e.g. a cutaway/view toggle hiding the sub-part) is hashed
-      // too but changes NOTHING else about the mesh, so the signature alone
-      // can't tell "regenerated" from "still the same geometry, just hidden" —
-      // check both explicitly. Either way the hovered mesh is no longer a
-      // valid target: drop the stale hover (and its highlight) and re-render.
-      const m = viewer._subMeshes[hover?.subPart];
-      if (hover && (!m || !m.visible || hover.geometry !== m.geometry)) {
-        hover = null;
-        highlight?.clear();
-      }
+      // the snap marker points into a specific geometry: drop it with that geometry
+      if (hoverMesh && (viewer._subMeshes[hoverMesh.name] !== hoverMesh || !hoverMesh.visible
+          || hoverMesh.geometry !== hoverGeometry)) clearHover();
+      const view = getContext().view;
+      if (isStale(first, view) || isStale(second, view)) clearState({ redraw: false });
       rebuild();
     } else if (lastItems.length) {
       // cheap per-frame: has a side choice flipped?
@@ -409,6 +429,48 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     scene.tick();
   });
 
+  // ---- snapping ------------------------------------------------------------
+  const _sp = new THREE.Vector3();
+  const _ws = new THREE.Vector3();
+  // The snap a pointer at client (x, y) would grab, or null over empty space.
+  function snapAt(x, y) {
+    const hit = raycastViewer(viewer, x, y);
+    if (!hit) return null;
+    const { mesh } = hit;
+    const rect = viewer.domElement.getBoundingClientRect();
+    mesh.updateWorldMatrix(true, false);
+    const hitPoint = mesh.worldToLocal(hit.pointWorld.clone()).toArray();
+    // SNAP_PX pixels at the hit's depth, in world units, then in geometry units
+    const cam = viewer.camera;
+    const wpp = cam.isOrthographicCamera
+      ? orthoWorldPerPx(cam.top, cam.bottom, cam.zoom, rect.height || 1)
+      : worldPerPx(cam.position.distanceTo(hit.pointWorld), cam.fov ?? 45, rect.height || 1);
+    const scale = mesh.getWorldScale(_ws).x || 1;
+    const project = (p) => {
+      _sp.set(p[0], p[1], p[2]).applyMatrix4(mesh.matrixWorld).project(cam);
+      return [rect.left + ((_sp.x + 1) / 2) * rect.width, rect.top + ((1 - _sp.y) / 2) * rect.height];
+    };
+    const featureId = hit.feature?.id ?? 0;
+    const fSpec = featureId > 0 ? featureSpec(mesh, featureId) : null;
+    const target = findSnap(snapIndex(mesh.geometry), {
+      hitPoint,
+      hitFeatureId: featureId,
+      featureSpec: fSpec,
+      project,
+      pointerPx: [x, y],
+      radiusWorld: (SNAP_PX * wpp) / scale,
+      snapPx: SNAP_PX,
+    });
+    if (!target) return null;
+    return { target, mesh, subPart: hit.subPart, featureSpec: fSpec, featureLabel: hit.feature?.label ?? null };
+  }
+
+  function snapText(snap) {
+    const { target, featureLabel } = snap;
+    if (!(target.featureId > 0)) return target.kind === "corner" ? "corner" : "point";
+    return `${featureLabel} · ${KIND_WORD[target.kind] ?? target.kind}`;
+  }
+
   // ---- pointer handling (drag threshold: the click-picker idiom) -----------
   const drag = createDragTracker(); // same shared threshold as selection/pick.js
   let pendingMove = null;
@@ -421,35 +483,10 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     suppressed = handle != null;
     if (!suppressed) return;
     pendingMove = null;
-    hover = null;
-    highlight?.clear();
-    rebuild();
+    clearHover();
   }) ?? (() => {});
 
-  function hitToHover(hit) {
-    let spec, key;
-    if (hit.feature) {
-      spec = featureSpec(hit.mesh, hit.feature.id);
-      const { features } = hit.mesh.geometry.userData;
-      key = { subPart: hit.subPart, featureLabel: hit.feature.label,
-        occurrence: occurrenceOf(features, hit.feature.id) };
-    }
-    if (!spec) {
-      if (!hit.mesh.geometry.boundingBox) hit.mesh.geometry.computeBoundingBox();
-      const { min, max } = hit.mesh.geometry.boundingBox;
-      spec = bboxSpec([min.x, min.y, min.z], [max.x, max.y, max.z]);
-      key = { subPart: hit.subPart, featureLabel: null, occurrence: 0 };
-    }
-    return {
-      key,
-      geometry: hit.mesh.geometry,
-      subPart: hit.subPart,
-      mesh: hit.mesh,
-      // spec stays in the mesh's own frame here; buildItems poses it.
-      item: { id: "hover", tier: "hover", spec, subParts: [hit.subPart] },
-    };
-  }
-
+  // Hover never places a dimension: it moves the snap marker, nothing else.
   function onMove(ev) {
     if (!enabled || ev.pointerType === "touch" || suppressed) return;
     drag.onMove(ev);
@@ -461,62 +498,73 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       const p = pendingMove;
       pendingMove = null;
       if (!enabled || detached || !p || suppressed) return;
-      // A pointer over any dim label parks the hover state: labels usually
-      // float OFF the geometry, so re-raycasting here would clear the hover
-      // (and its label) out from under a cursor travelling toward it — the
-      // label must survive its own approach to be clickable. The pointer
-      // cursor is the click affordance a canvas can give.
+      // Over a dim label, a click flashes that label's controls rather than
+      // grabbing the geometry behind it — so the marker (which promises what a
+      // click grabs) steps aside. The pointer cursor is the label's affordance.
       if (scene?.pickLabel(p.x, p.y)) {
         dom.style.cursor = "pointer";
+        clearHover();
         return;
       }
       dom.style.cursor = "";
-      const hit = raycastViewer(viewer, p.x, p.y);
-      if (hit) {
-        hover = hitToHover(hit);
-        highlight.show(hit);
-      } else {
-        hover = null;
-        highlight.clear();
-      }
-      rebuild();
+      const snap = snapAt(p.x, p.y);
+      if (!snap) { clearHover(); return; }
+      hoverMesh = snap.mesh;
+      hoverGeometry = snap.mesh.geometry;
+      marker.show(snap.target, snap.mesh, snapText(snap));
     });
   }
-  const onLeave = () => { hover = null; highlight?.clear(); dom.style.cursor = ""; rebuild(); };
+  const onLeave = () => { clearHover(); dom.style.cursor = ""; };
 
-  function togglePin(key, subParts, value) {
-    const { view } = getContext();
-    const added = pins.toggle(view, key);
-    if (added) revealRelevant(subParts, value);
-    notifyPins();
-    rebuild();
+  function clickRecord(snap) {
+    const { target, mesh, subPart, featureSpec: fSpec } = snap;
+    return {
+      subPart,
+      mesh,
+      geometry: mesh.geometry,
+      view: getContext().view,
+      pointGeom: target.point,
+      target,
+      spec: firstReading(target, fSpec),
+      normal: target.kind === "face" && fSpec?.kind === "plane" ? fSpec.anchors.normal : null,
+    };
   }
 
   // Label pick first, then geometry: a dimension's text plane is a real object
-  // in the scene, so clicking it must un-pin (or pin the hovered dim) rather
-  // than fall through to whatever surface sits behind it.
+  // in the scene, so clicking it must not fall through to the surface behind.
   function onClick(ev) {
     const wasDragged = drag.consumeClick();
     if (!enabled || wasDragged) return;
     const picked = scene?.pickLabel(ev.clientX, ev.clientY);
     if (picked) {
-      // Every label is a button to the controls that drive its measurement:
-      // clicking flashes them (focusing an exact value match). A hover label
-      // also pins. Labels never unpin — that stays on re-clicking the
-      // geometry, or Clear — so the one visible affordance always means the
-      // same thing.
-      if (picked.itemId === "hover") {
-        if (hover) togglePin(hover.key, hover.item.subParts, picked.value);
-        return;
-      }
+      // A reading's label (and the overall's) flashes the controls that hold
+      // its value. Distances never flash. Nothing else changes.
+      if (picked.itemId === "span") return;
       const item = lastItems.find((i) => i.id === picked.itemId);
-      if (item) revealRelevant(item.subParts, picked.value);
+      if (item) revealRelevant(item.subParts, { value: picked.value });
       return;
     }
-    const hit = raycastViewer(viewer, ev.clientX, ev.clientY);
-    if (!hit) return;
-    const h = hitToHover(hit);
-    togglePin(h.key, h.item.subParts, null);
+    const snap = snapAt(ev.clientX, ev.clientY);
+    if (!snap) return; // background: the reading stays
+    const click = clickRecord(snap);
+    if (first && !second) {
+      const candidate = { ...click, straight: ev.shiftKey || straight };
+      second = candidate;
+      if (!currentSpan()) { second = null; return; } // the same point again: nothing
+      forgetChoices();
+      syncStart();
+      notifyPins();
+      rebuild();
+      return;
+    }
+    // idle, or a distance showing (the third click starts over)
+    first = click;
+    second = null;
+    forgetChoices();
+    syncStart();
+    if (click.spec) revealRelevant([click.subPart], click.spec.values);
+    notifyPins();
+    rebuild();
   }
 
   const dom = viewer.domElement;
@@ -528,7 +576,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   dom.addEventListener("click", onClick);
 
   const offTheme = viewer.onThemeChange?.((mode) => {
-    themeEpoch++; // drop the cached base drawings so the repaint is unconditional
+    themeEpoch++; // drop the cached drawings so the repaint is unconditional
     scene?.setTheme(mode);
     rebuild();
   }) ?? (() => {});
@@ -538,19 +586,18 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     enabled = !!on;
     if (enabled) {
       scene ??= createDimScene(viewer);
-      highlight ??= createFeatureHighlight(viewer);
+      marker ??= createSnapMarker(viewer, { stage });
       rebuild();
       // Adopt the signature this placement was built from, so the very next
       // frame doesn't read as "changed" and redo the whole vertex scan.
       lastSig = meshSig();
     } else {
-      hover = null;
-      highlight?.clear();
+      clearHover();
+      clearState({ redraw: false });
       scene?.clear();
       lastItems = [];
       lastBounds = null;
-      baseCache.clear();
-      paintCache.clear();
+      placeCache.clear();
       painted = null;
       dom.style.cursor = "";
     }
@@ -560,18 +607,18 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   return {
     setEnabled,
     isEnabled: () => enabled,
-    clearPins() {
-      pins.clear(getContext().view);
-      notifyPins();
-      rebuild();
-    },
-    pinCount: () => pins.count(getContext().view),
+    clearPins() { clearState(); },
+    pinCount,
     getUnits: () => units,
     setUnits(next) {
       if (next === units || !(next in { mm: 1, in: 1 })) return;
       units = next;
-      rebuild(); // labels re-render in the new unit; cache key carries it
+      rebuild(); // labels re-render in the new unit; the cache key carries it
     },
+    // Internal (Task 7's touch toggle); mount.js does not expose these to hosts.
+    // The next second click takes it; a distance already drawn keeps its kind.
+    setStraight(on) { straight = !!on; },
+    isStraight: () => straight,
     onPinsChange: (cb) => { pinListeners.add(cb); return () => pinListeners.delete(cb); },
     onModeChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },
     detach() {
@@ -587,7 +634,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       dom.removeEventListener("pointercancel", drag.onCancel);
       dom.removeEventListener("pointerleave", onLeave);
       dom.removeEventListener("click", onClick);
-      highlight?.dispose();
+      marker?.dispose();
       scene?.dispose();
       pinListeners.clear();
       modeListeners.clear();
