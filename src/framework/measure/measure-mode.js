@@ -7,6 +7,10 @@
 //   second click one distance (readings.spanSpec) from the start point
 //   third click  starts over
 //
+// Touch has no hover, so a tap stands in for it: a tap SHOWS the snap (marker
+// and label) and commits nothing; a second tap on that snap, or a drag that
+// starts on it and lifts, commits it. A drag that starts anywhere else orbits.
+//
 // Dimensions are real scene objects parented under the meshes' shared group,
 // so they ride the pivot rotation, the pose fast path and animations for free.
 // The clicked points and readings are stored in each sub-part's GEOMETRY frame
@@ -15,7 +19,7 @@
 // `Clear` (chrome) and leaving the mode clear them too.
 import * as THREE from "three";
 import { raycastViewer } from "../selection/raycast.js";
-import { createDragTracker } from "../selection/drag-tracker.js";
+import { createDragTracker, DRAG_THRESHOLD_SQUARED } from "../selection/drag-tracker.js";
 import { subPartParamKeys } from "../param-deps.js";
 import { classifyFeature, bboxSpec, unionBounds } from "./feature-dims.js";
 import { paramMatches } from "./param-link.js";
@@ -72,7 +76,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
 
   let enabled = false;
   let units = "mm";            // display only; values stay mm internally
-  let straight = false;        // the touch toggle (Task 7); Shift does the same per click
+  let straight = false;        // the chrome's toggle; Shift does the same per click
   let scene = null;            // created on first enable, kept across toggles
   let marker = null;           // the hover snap marker + the start-point dot
   let detached = false;
@@ -88,6 +92,9 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   let second = null;
   let hoverMesh = null;        // the mesh the snap marker currently marks
   let hoverGeometry = null;
+  // A touch tap's snap, shown by the marker and not yet committed. It shares
+  // the marker with mouse hover, so every path that drops the marker drops it.
+  let touchPreview = null;
 
   const pinCount = () => (second ? 2 : first ? 1 : 0);
 
@@ -378,6 +385,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   function clearHover() {
     hoverMesh = null;
     hoverGeometry = null;
+    touchPreview = null;
     marker?.clear();
   }
 
@@ -435,6 +443,11 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // ---- snapping ------------------------------------------------------------
   const _sp = new THREE.Vector3();
   const _ws = new THREE.Vector3();
+  // A geometry-frame point of `mesh` in client px.
+  function projectToClient(p, mesh, rect = viewer.domElement.getBoundingClientRect()) {
+    _sp.set(p[0], p[1], p[2]).applyMatrix4(mesh.matrixWorld).project(viewer.camera);
+    return [rect.left + ((_sp.x + 1) / 2) * rect.width, rect.top + ((1 - _sp.y) / 2) * rect.height];
+  }
   // The snap a pointer at client (x, y) would grab, or null over empty space.
   function snapAt(x, y) {
     const hit = raycastViewer(viewer, x, y);
@@ -449,10 +462,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       ? orthoWorldPerPx(cam.top, cam.bottom, cam.zoom, rect.height || 1)
       : worldPerPx(cam.position.distanceTo(hit.pointWorld), cam.fov ?? 45, rect.height || 1);
     const scale = mesh.getWorldScale(_ws).x || 1;
-    const project = (p) => {
-      _sp.set(p[0], p[1], p[2]).applyMatrix4(mesh.matrixWorld).project(cam);
-      return [rect.left + ((_sp.x + 1) / 2) * rect.width, rect.top + ((1 - _sp.y) / 2) * rect.height];
-    };
+    const project = (p) => projectToClient(p, mesh, rect);
     const featureId = hit.feature?.id ?? 0;
     const fSpec = featureId > 0 ? featureSpec(mesh, featureId) : null;
     const target = findSnap(snapIndex(mesh.geometry), {
@@ -489,10 +499,94 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     clearHover();
   }) ?? (() => {});
 
+  function showSnap(snap) {
+    hoverMesh = snap.mesh;
+    hoverGeometry = snap.mesh.geometry;
+    marker.show(snap.target, snap.mesh, snapText(snap));
+  }
+
+  // ---- touch ---------------------------------------------------------------
+  // A press that starts within SNAP_PX of the previewed snap belongs to that
+  // snap: it is taken from every later listener on the canvas (OrbitControls
+  // included, so the camera stays put), moves the preview while it drags past
+  // the shared drag threshold, and commits whatever is shown when it lifts. A
+  // lift that never moved is the "second tap" and commits the snap unchanged.
+  let adjust = null;         // { pointerId, x, y, moved } while a press owns the snap
+  let swallowClick = false;  // the click a committing lift trails is not a tap
+  let lastDownType = "";     // Safari's click after a tap carries no pointerType
+  let pendingAdjust = null;
+  let adjustScheduled = false;
+
+  function endAdjust() {
+    if (!adjust) return;
+    try { dom.releasePointerCapture?.(adjust.pointerId); } catch { /* already released */ }
+    adjust = null;
+    pendingAdjust = null;
+  }
+
+  // Capture phase, so it runs before OrbitControls' own pointerdown on the canvas.
+  function onDownCapture(ev) {
+    lastDownType = ev.pointerType ?? "";
+    swallowClick = false;
+    if (ev.pointerType !== "touch") return;
+    // a second finger while one owns the snap is a pinch: let it go, commit nothing
+    if (adjust) { endAdjust(); return; }
+    if (!enabled || suppressed || ev.defaultPrevented || ev.isPrimary === false || !touchPreview) return;
+    const { target, mesh } = touchPreview;
+    mesh.updateWorldMatrix(true, false);
+    const [px, py] = projectToClient(target.point, mesh); // fresh: the camera may have moved
+    if (Math.hypot(ev.clientX - px, ev.clientY - py) > SNAP_PX) return; // an orbit, as today
+    ev.stopImmediatePropagation();
+    ev.preventDefault();
+    adjust = { pointerId: ev.pointerId, x: ev.clientX, y: ev.clientY, moved: false };
+    try { dom.setPointerCapture?.(ev.pointerId); } catch { /* best effort */ }
+  }
+
+  function onAdjustMove(ev) {
+    if (!adjust.moved) {
+      const dx = ev.clientX - adjust.x, dy = ev.clientY - adjust.y;
+      if (dx * dx + dy * dy <= DRAG_THRESHOLD_SQUARED) return; // still a tap
+      adjust.moved = true;
+    }
+    pendingAdjust = { x: ev.clientX, y: ev.clientY };
+    if (adjustScheduled) return;
+    adjustScheduled = true;
+    schedule(() => {
+      adjustScheduled = false;
+      const p = pendingAdjust;
+      pendingAdjust = null;
+      if (!enabled || detached || !p || !adjust) return;
+      const snap = snapAt(p.x, p.y);
+      if (!snap) { clearHover(); return; } // off the part: a lift here commits nothing
+      showSnap(snap);
+      touchPreview = snap;
+    });
+  }
+
+  function onUpCapture(ev) {
+    if (!adjust || ev.pointerId !== adjust.pointerId) return;
+    // a move still waiting for its frame is where the finger lifted
+    if (pendingAdjust) {
+      const snap = snapAt(pendingAdjust.x, pendingAdjust.y);
+      if (snap) touchPreview = snap; else clearHover();
+    }
+    endAdjust();
+    const snap = touchPreview;
+    clearHover();
+    swallowClick = true;
+    if (snap && enabled) commit(snap, false);
+  }
+
+  function onCancelCapture(ev) {
+    if (adjust && ev.pointerId === adjust.pointerId) endAdjust();
+  }
+
   // Hover never places a dimension: it moves the snap marker, nothing else.
   function onMove(ev) {
-    if (!enabled || ev.pointerType === "touch" || suppressed) return;
-    drag.onMove(ev);
+    if (adjust && ev.pointerId === adjust.pointerId) { onAdjustMove(ev); return; }
+    if (!enabled || suppressed) return;
+    drag.onMove(ev); // touch too: an orbit drag must not read as a tap
+    if (ev.pointerType === "touch") return;
     pendingMove = { x: ev.clientX, y: ev.clientY };
     if (moveScheduled) return;
     moveScheduled = true;
@@ -501,6 +595,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       const p = pendingMove;
       pendingMove = null;
       if (!enabled || detached || !p || suppressed) return;
+      touchPreview = null; // the mouse took the marker over
       // Over a dim label, a click flashes that label's controls rather than
       // grabbing the geometry behind it — so the marker (which promises what a
       // click grabs) steps aside. The pointer cursor is the label's affordance.
@@ -512,12 +607,15 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       dom.style.cursor = "";
       const snap = snapAt(p.x, p.y);
       if (!snap) { clearHover(); return; }
-      hoverMesh = snap.mesh;
-      hoverGeometry = snap.mesh.geometry;
-      marker.show(snap.target, snap.mesh, snapText(snap));
+      showSnap(snap);
     });
   }
-  const onLeave = () => { clearHover(); dom.style.cursor = ""; };
+  // A touch pointer leaves after every lift; that must not drop a tap's preview.
+  const onLeave = (ev) => {
+    if (ev?.pointerType === "touch") return;
+    clearHover();
+    dom.style.cursor = "";
+  };
 
   function clickRecord(snap) {
     const { target, mesh, subPart, featureSpec: fSpec } = snap;
@@ -537,7 +635,9 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // in the scene, so clicking it must not fall through to the surface behind.
   function onClick(ev) {
     const wasDragged = drag.consumeClick();
+    if (swallowClick) { swallowClick = false; return; }
     if (!enabled || wasDragged) return;
+    const isTouch = (ev.pointerType || lastDownType) === "touch";
     const picked = scene?.pickLabel(ev.clientX, ev.clientY);
     if (picked) {
       // A reading's label (and the overall's) flashes the controls that hold
@@ -548,10 +648,23 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       return;
     }
     const snap = snapAt(ev.clientX, ev.clientY);
+    if (isTouch) {
+      // a tap shows what it would grab; a background tap drops the preview
+      if (!snap) { clearHover(); return; }
+      showSnap(snap);
+      touchPreview = snap;
+      return;
+    }
     if (!snap) return; // background: the reading stays
+    commit(snap, ev.shiftKey);
+  }
+
+  // One click's worth of state change: the first point, the distance, or a
+  // fresh start after a distance. `shiftKey` asks for straight-line.
+  function commit(snap, shiftKey) {
     const click = clickRecord(snap);
     if (first && !second) {
-      const candidate = { ...click, straight: ev.shiftKey || straight };
+      const candidate = { ...click, straight: shiftKey || straight };
       second = candidate;
       if (!currentSpan()) { second = null; return; } // the same point again: nothing
       forgetChoices();
@@ -571,6 +684,9 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   }
 
   const dom = viewer.domElement;
+  dom.addEventListener("pointerdown", onDownCapture, { capture: true });
+  dom.addEventListener("pointerup", onUpCapture, { capture: true });
+  dom.addEventListener("pointercancel", onCancelCapture, { capture: true });
   dom.addEventListener("pointermove", onMove);
   dom.addEventListener("pointerdown", drag.onDown);
   dom.addEventListener("pointerup", drag.onUp);
@@ -595,6 +711,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       // frame doesn't read as "changed" and redo the whole vertex scan.
       lastSig = meshSig();
     } else {
+      endAdjust();
       clearHover();
       clearState({ redraw: false });
       scene?.clear();
@@ -618,9 +735,18 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       units = next;
       rebuild(); // labels re-render in the new unit; the cache key carries it
     },
-    // Internal (Task 7's touch toggle); mount.js does not expose these to hosts.
-    // The next second click takes it; a distance already drawn keeps its kind.
-    setStraight(on) { straight = !!on; },
+    // Internal (the chrome's straight-line toggle); mount.js does not expose
+    // these to hosts. It sets the kind of the next distance AND of the one on
+    // screen, so the toggle's pressed state always describes what is drawn
+    // (a Shift-click straight line flips to an axis distance when it goes off).
+    setStraight(on) {
+      straight = !!on;
+      if (second && second.straight !== straight) {
+        second = { ...second, straight };
+        forgetChoices();
+        rebuild();
+      }
+    },
     isStraight: () => straight,
     onPinsChange: (cb) => { pinListeners.add(cb); return () => pinListeners.delete(cb); },
     onModeChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },
@@ -631,6 +757,10 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       offFrame();
       unsubscribeHandleHover();
       offTheme();
+      endAdjust();
+      dom.removeEventListener("pointerdown", onDownCapture, { capture: true });
+      dom.removeEventListener("pointerup", onUpCapture, { capture: true });
+      dom.removeEventListener("pointercancel", onCancelCapture, { capture: true });
       dom.removeEventListener("pointermove", onMove);
       dom.removeEventListener("pointerdown", drag.onDown);
       dom.removeEventListener("pointerup", drag.onUp);

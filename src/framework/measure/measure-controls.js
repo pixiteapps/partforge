@@ -1,5 +1,6 @@
 // Viewbar chrome for measurement mode: the ruler toggle + contextual actions
-// ("Clear" when pins exist, a unit toggle cycling the dimension display
+// (a straight-line toggle — the only way to ask for one on touch, which has no
+// Shift — "Clear" when pins exist, a unit toggle cycling the dimension display
 // between millimetres and inches — display only; the rail stays mm). A direct sibling of
 // cutaway-controls.js — same no-op-without-button contract, same attribute
 // restore discipline on detach. The mode object (measure-mode.js) owns all
@@ -9,6 +10,9 @@ import { runCleanupSteps, captureAttributes, restoreAttributes } from "../teardo
 
 const BUTTON_ATTRIBUTES = ["type", "aria-pressed", "aria-label", "title", "disabled"];
 const RULER_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.3 8.7 8.7 21.3c-.4.4-1 .4-1.4 0l-4.6-4.6c-.4-.4-.4-1 0-1.4L15.3 2.7c.4-.4 1-.4 1.4 0l4.6 4.6c.4.4.4 1 0 1.4Z"/><path d="m7.5 10.5 2 2"/><path d="m10.5 7.5 2 2"/><path d="m13.5 4.5 2 2"/><path d="m4.5 13.5 2 2"/></svg>`;
+
+// Two dots joined by a diagonal: a distance taken straight across.
+const STRAIGHT_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 17 17 7"/><circle cx="5.5" cy="18.5" r="2"/><circle cx="18.5" cy="5.5" r="2"/></svg>`;
 
 const noop = () => {};
 
@@ -40,11 +44,22 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
   const unitButton = document.createElement("button");
   unitButton.type = "button";
   unitButton.className = "pf-measure-unit";
+  // Only a mode that can draw straight-line distances gets the toggle. It sits
+  // first so Clear coming and going does not move it under a finger.
+  let straightButton = null;
+  if (typeof mode.setStraight === "function") {
+    straightButton = document.createElement("button");
+    straightButton.type = "button";
+    straightButton.className = "pf-measure-straight";
+    straightButton.innerHTML = STRAIGHT_ICON;
+    actions.append(straightButton);
+  }
   actions.append(clearButton, unitButton);
   button.after(actions);
 
   const tooltipBinding = tooltip
-    ? attachButtonTooltips(tooltip, [button, clearButton, unitButton].map((element) => ({ element })))
+    ? attachButtonTooltips(tooltip, [button, straightButton, clearButton, unitButton]
+      .filter(Boolean).map((element) => ({ element })))
     : null;
 
   function sync() {
@@ -54,6 +69,14 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
     button.classList.toggle("on", on);
     actions.hidden = !on;
     clearButton.hidden = mode.pinCount() === 0;
+    if (straightButton) {
+      const isStraight = !!mode.isStraight?.();
+      straightButton.setAttribute("aria-pressed", String(isStraight));
+      straightButton.classList.toggle("on", isStraight);
+      const straightLabel = isStraight ? "Straight-line distance" : "Distance along an axis";
+      straightButton.setAttribute("aria-label", straightLabel);
+      if (!tooltip) straightButton.title = straightLabel;
+    }
     const u = mode.getUnits?.() ?? "mm";
     unitButton.textContent = u;
     const unitLabel = u === "mm" ? "Show measurements in inches" : "Show measurements in millimetres";
@@ -64,6 +87,7 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
 
   const onToggle = () => { mode.setEnabled(!mode.isEnabled()); sync(); };
   const onClear = () => { mode.clearPins(); sync(); };
+  const onStraight = () => { mode.setStraight(!mode.isStraight?.()); sync(); };
   const onUnit = () => { mode.setUnits?.(mode.getUnits?.() === "mm" ? "in" : "mm"); sync(); };
   const onEscape = (event) => {
     if (event.key !== "Escape" || !mode.isEnabled()) return;
@@ -83,7 +107,9 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
   button.addEventListener("click", onToggle);
   clearButton.addEventListener("click", onClear);
   unitButton.addEventListener("click", onUnit);
-  const escapeTargets = [escapeScope ?? viewer.domElement, button, clearButton, unitButton];
+  straightButton?.addEventListener("click", onStraight);
+  const escapeTargets = [escapeScope ?? viewer.domElement, button, straightButton, clearButton, unitButton]
+    .filter(Boolean);
   for (const element of escapeTargets) element.addEventListener("keydown", onEscape);
   sync();
 
@@ -98,6 +124,7 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
         () => button.removeEventListener("click", onToggle),
         () => clearButton.removeEventListener("click", onClear),
         () => unitButton.removeEventListener("click", onUnit),
+        () => straightButton?.removeEventListener("click", onStraight),
         ...escapeTargets.map((element) => () => element.removeEventListener("keydown", onEscape)),
         () => tooltipBinding?.detach(),
         () => actions.remove(),

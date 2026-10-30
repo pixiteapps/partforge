@@ -342,6 +342,139 @@ test("a drag does not click", () => {
   mode.detach();
 });
 
+// ---- touch: preview, then commit ----------------------------------------------
+
+// A finger: pointer events say "touch"; the compatibility click after a tap is a
+// plain MouseEvent (no pointerType), as Safari sends it.
+const finger = (type, x, y, extra = {}) => new PointerEvent(type, {
+  bubbles: true, clientX: x, clientY: y, pointerId: 7, pointerType: "touch", isPrimary: true, ...extra,
+});
+const tapAt = (dom, x, y) => {
+  dom.dispatchEvent(finger("pointerdown", x, y));
+  dom.dispatchEvent(finger("pointerup", x, y));
+  dom.dispatchEvent(finger("pointerleave", x, y)); // touch leaves after every lift
+  dom.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: x, clientY: y }));
+};
+const tapPoint = (viewer, p, dx = 0, dy = 0) => {
+  const { x, y } = screenOf(viewer, p);
+  tapAt(viewer.domElement, x + dx, y + dy);
+};
+
+test("touch tap previews, second tap commits", () => {
+  const { viewer, mode, snapLabel, snapShown, startDot, itemIds, dimGroup } = setup();
+  const onPins = vi.fn();
+  mode.onPinsChange(onPins);
+  mode.setEnabled(true);
+  const placed = placeDims.mock.calls.length;
+
+  tapPoint(viewer, CORNER_A);
+  expect(mode.pinCount()).toBe(0); // a tap shows, it does not commit
+  expect(onPins).not.toHaveBeenCalled();
+  expect(placeDims.mock.calls.length).toBe(placed);
+  expect(snapShown()).toBe(true);
+  expect(snapLabel().textContent).toBe("top face · corner");
+
+  // a tap somewhere else moves the preview; a background tap drops it
+  tapPoint(viewer, CORNER_C);
+  expect(mode.pinCount()).toBe(0);
+  expect(snapShown()).toBe(true);
+  tapAt(viewer.domElement, 2, 2);
+  expect(mode.pinCount()).toBe(0);
+  expect(snapShown()).toBe(false);
+
+  // a second tap within SNAP_PX of the shown snap commits that snap
+  tapPoint(viewer, CORNER_A);
+  tapPoint(viewer, CORNER_A, 5, -4);
+  expect(mode.pinCount()).toBe(1);
+  expect(onPins).toHaveBeenCalledTimes(1);
+  expect(snapShown()).toBe(false);
+  expect(startDot()?.visible).toBe(true);
+  expect(itemIds().every((id) => id === "overall")).toBe(true);
+
+  // the second point the same way: one distance
+  tapPoint(viewer, CORNER_C);
+  expect(mode.pinCount()).toBe(1);
+  tapPoint(viewer, CORNER_C, -3, 3);
+  expect(mode.pinCount()).toBe(2);
+  const span = dimGroup().children.filter((c) => c.userData.pfDimItemId === "span");
+  expect(span.map((c) => c.userData.pfDimValue)).toEqual([20]);
+  mode.detach();
+});
+
+test("touch drag from the shown snap adjusts then commits on lift", () => {
+  const { viewer, mode, snapLabel, snapShown, dimGroup } = setup();
+  mode.setEnabled(true);
+  // stands in for OrbitControls: a bubble listener registered after the mode
+  const orbitDown = vi.fn();
+  viewer.domElement.addEventListener("pointerdown", orbitDown);
+  tapPoint(viewer, CORNER_A);
+  orbitDown.mockClear();
+
+  const a = screenOf(viewer, CORNER_A);
+  const e = screenOf(viewer, ON_EDGE);
+  const dom = viewer.domElement;
+  dom.dispatchEvent(finger("pointerdown", a.x, a.y));
+  expect(orbitDown).not.toHaveBeenCalled(); // the drag is the snap's, not the camera's
+  dom.dispatchEvent(finger("pointermove", (a.x + e.x) / 2, a.y));
+  dom.dispatchEvent(finger("pointermove", e.x, e.y));
+  expect(mode.pinCount()).toBe(0); // adjusting commits nothing yet
+  expect(snapShown()).toBe(true);
+  expect(snapLabel().textContent).toBe("top face · edge");
+  dom.dispatchEvent(finger("pointerup", e.x, e.y));
+  expect(mode.pinCount()).toBe(1);
+  expect(snapShown()).toBe(false);
+  const first = dimGroup().children.filter((c) => c.userData.pfDimItemId === "first");
+  expect(first.map((c) => c.userData.pfDimValue)).toEqual([20]); // the edge's length
+  // the click the lift may trail is the commit's, not a new tap
+  dom.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: e.x, clientY: e.y }));
+  expect(mode.pinCount()).toBe(1);
+  expect(snapShown()).toBe(false);
+  // and the next real tap is a tap again
+  tapPoint(viewer, CORNER_C);
+  expect(snapShown()).toBe(true);
+  expect(mode.pinCount()).toBe(1);
+  mode.detach();
+});
+
+test("touch drag elsewhere does not commit", () => {
+  const { viewer, mode, snapLabel, snapShown } = setup();
+  mode.setEnabled(true);
+  const orbitDown = vi.fn();
+  viewer.domElement.addEventListener("pointerdown", orbitDown);
+  const dom = viewer.domElement;
+  const c = screenOf(viewer, CORNER_C);
+
+  // no preview yet: an orbit drag neither commits nor previews
+  dom.dispatchEvent(finger("pointerdown", c.x, c.y));
+  dom.dispatchEvent(finger("pointermove", c.x - 30, c.y));
+  dom.dispatchEvent(finger("pointerup", c.x - 30, c.y));
+  dom.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: c.x - 30, clientY: c.y }));
+  expect(mode.pinCount()).toBe(0);
+  expect(snapShown()).toBe(false);
+
+  // with a preview at A, a drag that starts away from it orbits, keeps the preview
+  tapPoint(viewer, CORNER_A);
+  orbitDown.mockClear();
+  dom.dispatchEvent(finger("pointerdown", c.x, c.y));
+  expect(orbitDown).toHaveBeenCalledTimes(1);
+  dom.dispatchEvent(finger("pointermove", c.x - 30, c.y));
+  dom.dispatchEvent(finger("pointerup", c.x - 30, c.y));
+  dom.dispatchEvent(finger("pointerleave", c.x - 30, c.y));
+  dom.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: c.x - 30, clientY: c.y }));
+  expect(mode.pinCount()).toBe(0);
+  expect(snapShown()).toBe(true);
+  expect(snapLabel().textContent).toBe("top face · corner");
+
+  // a second finger mid-adjust is a pinch: nothing commits
+  const a = screenOf(viewer, CORNER_A);
+  dom.dispatchEvent(finger("pointerdown", a.x, a.y));
+  dom.dispatchEvent(finger("pointerdown", a.x + 40, a.y, { pointerId: 8, isPrimary: false }));
+  dom.dispatchEvent(finger("pointerup", a.x + 40, a.y, { pointerId: 8, isPrimary: false }));
+  dom.dispatchEvent(finger("pointerup", a.x, a.y));
+  expect(mode.pinCount()).toBe(0);
+  mode.detach();
+});
+
 // ---- second and third clicks --------------------------------------------------
 
 test("second click draws one span; pinCount is 2", () => {
@@ -395,6 +528,22 @@ test("setStraight makes a plain click straight-line", () => {
   clickPoint(viewer, CORNER_C);
   const span = dimGroup().children.filter((c) => c.userData.pfDimItemId === "span");
   expect(span.map((c) => c.userData.pfDimValue)).toEqual([22.36]);
+  mode.detach();
+});
+
+test("the straight toggle redraws a distance already on screen", () => {
+  const { viewer, mode, dimGroup } = setup();
+  mode.setEnabled(true);
+  clickPoint(viewer, CORNER_A);
+  clickPoint(viewer, CORNER_C);
+  const spanValues = () => dimGroup().children
+    .filter((c) => c.userData.pfDimItemId === "span").map((c) => c.userData.pfDimValue);
+  expect(spanValues()).toEqual([20]);
+  mode.setStraight(true);
+  expect(spanValues()).toEqual([22.36]);
+  expect(mode.pinCount()).toBe(2);
+  mode.setStraight(false);
+  expect(spanValues()).toEqual([20]);
   mode.detach();
 });
 

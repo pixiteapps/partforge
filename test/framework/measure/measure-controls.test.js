@@ -202,3 +202,41 @@ test("Clear is labelled for one measurement, not pins", () => {
   expect(clear.title).toBe("Clear the measurement");
   expect(clear.getAttribute("aria-label")).toBe("Clear the measurement");
 });
+
+test("straight toggle flips mode and aria-pressed; hidden when the mode is off", () => {
+  const { viewer, button } = fixture();
+  let straight = false;
+  const mode = fakeMode({
+    isStraight: () => straight,
+    setStraight: vi.fn((on) => { straight = on; }),
+  });
+  attachMeasureControls(viewer, mode, { measure: button });
+  const toggle = document.querySelector("button.pf-measure-straight");
+  expect(toggle).not.toBeNull();
+  expect(toggle.closest(".pf-measure-actions").hidden).toBe(true); // mode off
+  button.click(); // mode on
+  expect(toggle.closest(".pf-measure-actions").hidden).toBe(false);
+  expect(toggle.hidden).toBe(false);
+  expect(toggle.getAttribute("aria-pressed")).toBe("false");
+  expect(toggle.getAttribute("aria-label")).toBe("Distance along an axis");
+
+  toggle.click();
+  expect(mode.setStraight).toHaveBeenLastCalledWith(true);
+  expect(toggle.getAttribute("aria-pressed")).toBe("true");
+  expect(toggle.getAttribute("aria-label")).toBe("Straight-line distance");
+  expect(toggle.classList.contains("on")).toBe(true);
+
+  toggle.click();
+  expect(mode.setStraight).toHaveBeenLastCalledWith(false);
+  expect(toggle.getAttribute("aria-pressed")).toBe("false");
+  expect(toggle.classList.contains("on")).toBe(false);
+
+  button.click(); // mode off hides the row, toggle included
+  expect(toggle.closest(".pf-measure-actions").hidden).toBe(true);
+});
+
+test("no straight toggle for a mode without setStraight", () => {
+  const { viewer, button } = fixture();
+  attachMeasureControls(viewer, fakeMode(), { measure: button });
+  expect(document.querySelector("button.pf-measure-straight")).toBeNull();
+});
