@@ -20,6 +20,14 @@ test("the fixture hand is the part's own builders, at the engine's bulge default
   expect(HAND_DEFAULTS.bulge).toBe(BULGE_DEFAULT);
 });
 
+test("the part's defaults are HAND_DEFAULTS' pose", () => {
+  const D = HAND_DEFAULTS;
+  expect(part.defaults).toEqual({
+    curl: D.curl, spread: D.spread, oppose: D.oppose, handLength: D.handLength,
+    flexIndex: D.flex.index, flexMiddle: D.flex.middle, flexRing: D.flex.ring, flexPinky: D.flex.pinky, flexThumb: D.flex.thumb,
+  });
+});
+
 test("lints with no errors and no warnings", () => {
   const r = lintPart(part);
   expect([...r.errors, ...r.warnings].map((f) => `${f.rule}: ${f.message}`)).toEqual([]);

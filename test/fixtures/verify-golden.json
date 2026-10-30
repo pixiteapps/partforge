@@ -1303,6 +1303,45 @@
     "declared": 8,
     "evaluated": 8
   },
+  "hand.js#assembly": {
+    "ok": true,
+    "view": "assembly",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "curl": 30,
+          "spread": 8,
+          "oppose": 20,
+          "handLength": 190,
+          "flexIndex": 60,
+          "flexMiddle": 60,
+          "flexRing": 60,
+          "flexPinky": 60,
+          "flexThumb": 50
+        },
+        "checks": [
+          {
+            "scope": "subpart",
+            "subpart": "hand",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "costs": [],
+    "unevaluated": [],
+    "declared": 1,
+    "evaluated": 1
+  },
   "hinged-box.js#box": {
     "ok": true,
     "view": "box",

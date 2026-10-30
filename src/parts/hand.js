@@ -143,7 +143,6 @@ const pose = (p) => ({
   curl: p.curl, spread: p.spread, oppose: p.oppose, handLength: p.handLength,
   flex: { index: p.flexIndex, middle: p.flexMiddle, ring: p.flexRing, pinky: p.flexPinky, thumb: p.flexThumb },
 });
-const D = HAND_DEFAULTS;
 const flexControl = (key, label, max) => ({ key, label, unit: "%", min: 0, max, step: 1, description: `${label}'s bend, as a share of a full curl.` });
 
 export default {
@@ -163,9 +162,11 @@ export default {
       { key: "handLength", label: "Hand length", unit: "mm", min: 150, max: 230, step: 1, description: "Wrist to middle fingertip; everything scales with it." },
     ] },
   ],
+  // HAND_DEFAULTS' pose, written as literals so a host can save panel edits back into them
+  // (test/hand-part.test.js holds the two equal).
   defaults: {
-    curl: D.curl, spread: D.spread, oppose: D.oppose, handLength: D.handLength,
-    flexIndex: D.flex.index, flexMiddle: D.flex.middle, flexRing: D.flex.ring, flexPinky: D.flex.pinky, flexThumb: D.flex.thumb,
+    curl: 30, spread: 8, oppose: 20, handLength: 190,
+    flexIndex: 60, flexMiddle: 60, flexRing: 60, flexPinky: 60, flexThumb: 50,
   },
   parts: {
     hand: {
