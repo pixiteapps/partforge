@@ -380,14 +380,16 @@ meshes it. See `docs/AUTHORING-PARTS.md` for the `k.implicit` grammar.
   defaults to the limb's own `r`, and `label` to the limb's name. Without an `r`, or on a
   limb whose segments all have zero length, it throws. `blend` is the union's blend
   width in mm; when you leave it out the union is sharp (a hard union, and no `k` key is
-  written).
+  written). Each radius must be a number > 0, `blend` a number ≥ 0, and `label` a
+  non-empty string; anything else throws with the limb's name.
 - **`posed.attach(label, { k?, radius?, band?, r?, a? })`** is a contact `attach` entry
   that joins the flesh (labelled `a`, default the limb's name) to the piece labelled
   `label`, near the base joint. `k` is required: the blend width in mm where the limb
   joins `label`, a finite number that is 0 or more. `radius` defaults to a third of the
   first segment that is not zero-length. `band` defaults to 3 mm × `r[0]` / 9.5, from `r` or the limb's own
   `r`. Without either `band` or an `r`, or on a limb whose segments all have zero length,
-  it throws.
+  it throws. `radius` and `band` (given or defaulted) must be numbers > 0, and `label` and
+  `a` must be non-empty strings that differ, since an entry cannot join a piece to itself.
 
 ```js
 const palmFrames = { palm: { at: [0, 0, 0] } };
@@ -430,8 +432,8 @@ import { implicitDistance } from "partforge/geometry";
 
 const handle = { kind: "union", k: 4, children: [rod, { kind: "sphere", r: 12, at: [-30, 130, -22] }] };
 index.pose({ grip: { around: implicitDistance(handle) } }).report.grip;
-// { touching: true, gap: 0, joints: [{ joint: "mcp", bend: 5.506, touched: true },
-//                                    { joint: "pip", bend: 35.421, touched: true }] }
+// { touching: true, gap: 0, joints: [{ joint: "mcp", bend: 5.506, touched: true, skipped: false },
+//                                    { joint: "pip", bend: 35.421, touched: true, skipped: false }] }
 ```
 
 ## The report

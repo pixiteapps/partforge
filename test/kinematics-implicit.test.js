@@ -98,3 +98,32 @@ describe("the limb's frames are k.implicit's frames", () => {
     expect(posed.world()).toEqual(rep["index.mcp"]);
   });
 });
+
+describe("flesh and attach check every value they pass through", () => {
+  const l = () => limb("s", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["a", "b"], lengths: [5, 5], r: [3, 2, 1] });
+  it("flesh radii must be finite and > 0", () => {
+    expect(() => l().pose({}).flesh({ r: [3, 0, 1] })).toThrow('limb "s".r[1]: must be a number > 0, got 0');
+    expect(() => l().pose({}).flesh({ r: [3, 2, NaN] })).toThrow('limb "s".r[2]: must be a number > 0, got NaN');
+    expect(() => l().pose({}).flesh({ r: [3, "2", 1] })).toThrow('limb "s".r[1]: must be a number > 0, got "2"');
+  });
+  it("flesh blend must be finite and >= 0, and no k key is written without it", () => {
+    expect(() => l().pose({}).flesh({ blend: -1 })).toThrow('limb "s".blend: must be a number ≥ 0, got -1');
+    expect(() => l().pose({}).flesh({ blend: Infinity })).toThrow('limb "s".blend: must be a number ≥ 0, got Infinity');
+    expect("k" in l().pose({}).flesh()).toBe(false);
+    expect(l().pose({}).flesh({ blend: 0 }).k).toBe(0);
+  });
+  it("flesh label must be a non-empty string", () => {
+    expect(() => l().pose({}).flesh({ label: "" })).toThrow('limb "s".label: must be a non-empty string');
+    expect(() => l().pose({}).flesh({ label: 3 })).toThrow('limb "s".label: must be a non-empty string');
+  });
+  it("attach radius and band must be finite and > 0", () => {
+    expect(() => l().pose({}).attach("palm", { k: 1, radius: 0 })).toThrow('limb "s".radius: must be a number > 0, got 0');
+    expect(() => l().pose({}).attach("palm", { k: 1, band: -2 })).toThrow('limb "s".band: must be a number > 0, got -2');
+    expect(() => l().pose({}).attach("palm", { k: 1, r: [0, 1, 1] })).toThrow('limb "s".band: must be a number > 0, got 0');
+  });
+  it("attach labels must be non-empty and distinct", () => {
+    expect(() => l().pose({}).attach("", { k: 1 })).toThrow('limb "s".label: must be a non-empty string');
+    expect(() => l().pose({}).attach("palm", { k: 1, a: "" })).toThrow('limb "s".a: must be a non-empty string');
+    expect(() => l().pose({}).attach("s", { k: 1 })).toThrow('limb "s".attach: cannot join "s" to itself — pass the other piece\'s label');
+  });
+});
