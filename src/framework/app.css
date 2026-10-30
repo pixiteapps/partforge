@@ -598,7 +598,9 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    and the view cube rises above it rather than covering it. */
 #viewbar .pf-measure-parts {
   position: absolute; right: -1px; bottom: calc(100% + 6px);
-  display: flex; gap: 2px; padding: 3px;
+  /* the bar's own gap and padding, so the buttons' 7px corners sit as
+     evenly inside the 12px edge as the bar's do */
+  display: flex; gap: 4px; padding: 4px;
   background: var(--pf-surface); border: 1px solid var(--pf-border);
   border-radius: var(--pf-radius-pill); box-shadow: var(--pf-shadow-float);
 }
