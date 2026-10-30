@@ -1,7 +1,8 @@
 // The implicit adapter of one posed limb: flesh() and attach() write plain k.implicit data
 // (a capsule-chain node and a contact `attach` entry) over the limb's own frames. Plain data
 // only — this file imports nothing from the implicit engine. Every value they pass through is
-// checked here, so a bad one names the limb rather than a node deep in the spec.
+// checked here, so a bad one names the limb rather than a node deep in the spec. Fields are
+// named `flesh.<option>` / `attach.<option>`, apart from the limb definition's own.
 
 const show = (v) => (typeof v === "string" ? JSON.stringify(v) : String(v));
 
@@ -16,11 +17,11 @@ export function implicitAdapters(tree, fail) {
 
   /** A `union` (k = blend) of one tapered capsule per non-zero-length segment, in its joint's frame. */
   function flesh({ r = tree.r, blend, label = name } = {}) {
-    if (r == null) fail("", "flesh needs r — pass r, or set r on the limb");
-    if (!Array.isArray(r) || r.length !== joints.length + 1) fail("r", `expected ${joints.length + 1} radii, got ${Array.isArray(r) ? r.length : r}`);
-    r.forEach((v, i) => positive(`r[${i}]`, v));
-    if (blend !== undefined && !(Number.isFinite(blend) && blend >= 0)) fail("blend", `must be a number ≥ 0, got ${show(blend)}`);
-    nonEmpty("label", label);
+    if (r == null) fail("flesh.r", "is required — pass r, or set r on the limb");
+    if (!Array.isArray(r) || r.length !== joints.length + 1) fail("flesh.r", `expected ${joints.length + 1} radii, got ${Array.isArray(r) ? r.length : r}`);
+    r.forEach((v, i) => positive(`flesh.r[${i}]`, v));
+    if (blend !== undefined && !(Number.isFinite(blend) && blend >= 0)) fail("flesh.blend", `must be a number ≥ 0, got ${show(blend)}`);
+    nonEmpty("flesh.label", label);
     if (!hasLength) fail("flesh", NO_LENGTH);
     const children = [];
     joints.forEach((j, i) => {
@@ -36,18 +37,18 @@ export function implicitAdapters(tree, fail) {
    * the first non-zero segment, `band` 3 mm scaled by the base radius over 9.5 mm.
    */
   function attach(label, { k, radius, band, r, a = name } = {}) {
-    nonEmpty("label", label);
-    nonEmpty("a", a);
+    nonEmpty("attach.label", label);
+    nonEmpty("attach.a", a);
     if (label === a) fail("attach", `cannot join ${show(label)} to itself — pass the other piece's label`);
-    if (!(Number.isFinite(k) && k >= 0)) fail("attach", `k is required (the blend width in mm where the limb joins ${label})`);
+    if (!(Number.isFinite(k) && k >= 0)) fail("attach.k", `is required (the blend width in mm where the limb joins ${label})`);
     if (!hasLength) fail("attach", NO_LENGTH);
     const r0 = r ?? tree.r;
-    if (band == null && r0 == null) fail("", "attach needs r for its default band — pass band or r");
-    if (band == null && !(Array.isArray(r0) && Number.isFinite(r0[0]))) fail("", "attach r must be an array with a finite first radius — pass r: [r0, …] or band");
+    if (band == null && r0 == null) fail("attach.r", "is required for the default band — pass band or r");
+    if (band == null && !(Array.isArray(r0) && Number.isFinite(r0[0]))) fail("attach.r", "must be an array with a finite first radius — pass r: [r0, …] or band");
     radius ??= joints.find((j) => j.length > 0).length / 3;
     band ??= (3 * r0[0]) / 9.5;
-    positive("radius", radius);
-    positive("band", band);
+    positive("attach.radius", radius);
+    positive("attach.band", band);
     return { a, b: label, near: base, radius, band, k };
   }
 

@@ -1,12 +1,9 @@
 // The kinematics domain's implicit adapter: a posed limb's flesh() and attach() are plain
 // k.implicit data the grammar accepts, and the limb's frames are the ones k.implicit reports.
-import { describe, it, expect, beforeAll } from "vitest";
-import { bootManifoldKernel } from "../src/testing/manifold.js";
+import { describe, it, expect } from "vitest";
 import { validateSpec } from "../src/framework/geometry/implicit/grammar.js";
+import { implicitFrames } from "../src/framework/geometry/implicit/frame-report.js";
 import { limb } from "../src/framework/domains/kinematics/index.js";
-
-let k;
-beforeAll(async () => { k = await bootManifoldKernel(); });
 
 const finger = (extra = {}) => limb("index", {
   toward: [0, 1, 0], bendToward: [0, 0, -1],
@@ -34,8 +31,8 @@ describe("flesh and attach", () => {
   });
   it("flesh errors: no r, wrong count; a SpecError with code SPEC", () => {
     const l = limb("s", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["a", "b"], lengths: [5, 5] });
-    expect(() => l.pose({}).flesh({ blend: 1 })).toThrow('limb "s": flesh needs r — pass r, or set r on the limb');
-    expect(() => l.pose({}).flesh({ r: [3, 2] })).toThrow('limb "s".r: expected 3 radii, got 2');
+    expect(() => l.pose({}).flesh({ blend: 1 })).toThrow('limb "s".flesh.r: is required — pass r, or set r on the limb');
+    expect(() => l.pose({}).flesh({ r: [3, 2] })).toThrow('limb "s".flesh.r: expected 3 radii, got 2');
     let caught;
     try { l.pose({}).flesh(); } catch (e) { caught = e; }
     expect(caught.name).toBe("SpecError");
@@ -59,19 +56,19 @@ describe("flesh and attach", () => {
   });
   it("attach with a non-array r throws", () => {
     const l = limb("s", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["a"], lengths: [10] });
-    expect(() => l.pose({}).attach("palm", { k: 1, r: 5 })).toThrow(/limb "s": attach r must be an array/);
+    expect(() => l.pose({}).attach("palm", { k: 1, r: 5 })).toThrow(/limb "s".attach.r: must be an array/);
     expect(l.pose({}).attach("palm", { k: 1, r: [5, 4] }).band).toBeCloseTo(15 / 9.5);
   });
   it("attach without r or band throws", () => {
     const l = limb("s", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["a"], lengths: [9] });
-    expect(() => l.pose({}).attach("palm", { k: 1 })).toThrow(/limb "s": attach needs r for its default band — pass band or r/);
+    expect(() => l.pose({}).attach("palm", { k: 1 })).toThrow(/limb "s".attach.r: is required for the default band — pass band or r/);
     expect(l.pose({}).attach("palm", { k: 1, band: 2 }).band).toBe(2);
   });
 });
 
 describe("flesh and attach refuse what the grammar would", () => {
   const zero = () => limb("z", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["a", "b"], lengths: [0, 0], r: [3, 3, 2] });
-  const K = 'limb "s".attach: k is required (the blend width in mm where the limb joins palm)';
+  const K = 'limb "s".attach.k: is required (the blend width in mm where the limb joins palm)';
   it("attach requires a finite k >= 0", () => {
     const l = limb("s", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["a"], lengths: [10], r: [3, 2] });
     expect(() => l.pose({}).attach("palm")).toThrow(K);
@@ -91,7 +88,7 @@ describe("the limb's frames are k.implicit's frames", () => {
   it("world agrees with the frame report", () => {
     const posed = finger().pose({ bend: [30, 50, 20], spread: 7 }, palm);
     const spec = { frames: { ...palm, ...posed.frames }, root: { kind: "sphere", r: 1, frame: "palm" } };
-    const rep = k.implicitFrames(spec).report().frames;
+    const rep = implicitFrames(spec).report().frames;
     for (const j of [...posed.joints, posed.tip]) expect(posed.world(j)).toEqual(rep[j]);
     expect(posed.world("pip")).toEqual(rep["index.pip"]);
     expect(posed.world("tip")).toEqual(rep["index.tip"]);
@@ -102,28 +99,28 @@ describe("the limb's frames are k.implicit's frames", () => {
 describe("flesh and attach check every value they pass through", () => {
   const l = () => limb("s", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["a", "b"], lengths: [5, 5], r: [3, 2, 1] });
   it("flesh radii must be finite and > 0", () => {
-    expect(() => l().pose({}).flesh({ r: [3, 0, 1] })).toThrow('limb "s".r[1]: must be a number > 0, got 0');
-    expect(() => l().pose({}).flesh({ r: [3, 2, NaN] })).toThrow('limb "s".r[2]: must be a number > 0, got NaN');
-    expect(() => l().pose({}).flesh({ r: [3, "2", 1] })).toThrow('limb "s".r[1]: must be a number > 0, got "2"');
+    expect(() => l().pose({}).flesh({ r: [3, 0, 1] })).toThrow('limb "s".flesh.r[1]: must be a number > 0, got 0');
+    expect(() => l().pose({}).flesh({ r: [3, 2, NaN] })).toThrow('limb "s".flesh.r[2]: must be a number > 0, got NaN');
+    expect(() => l().pose({}).flesh({ r: [3, "2", 1] })).toThrow('limb "s".flesh.r[1]: must be a number > 0, got "2"');
   });
   it("flesh blend must be finite and >= 0, and no k key is written without it", () => {
-    expect(() => l().pose({}).flesh({ blend: -1 })).toThrow('limb "s".blend: must be a number ≥ 0, got -1');
-    expect(() => l().pose({}).flesh({ blend: Infinity })).toThrow('limb "s".blend: must be a number ≥ 0, got Infinity');
+    expect(() => l().pose({}).flesh({ blend: -1 })).toThrow('limb "s".flesh.blend: must be a number ≥ 0, got -1');
+    expect(() => l().pose({}).flesh({ blend: Infinity })).toThrow('limb "s".flesh.blend: must be a number ≥ 0, got Infinity');
     expect("k" in l().pose({}).flesh()).toBe(false);
     expect(l().pose({}).flesh({ blend: 0 }).k).toBe(0);
   });
   it("flesh label must be a non-empty string", () => {
-    expect(() => l().pose({}).flesh({ label: "" })).toThrow('limb "s".label: must be a non-empty string');
-    expect(() => l().pose({}).flesh({ label: 3 })).toThrow('limb "s".label: must be a non-empty string');
+    expect(() => l().pose({}).flesh({ label: "" })).toThrow('limb "s".flesh.label: must be a non-empty string');
+    expect(() => l().pose({}).flesh({ label: 3 })).toThrow('limb "s".flesh.label: must be a non-empty string');
   });
   it("attach radius and band must be finite and > 0", () => {
-    expect(() => l().pose({}).attach("palm", { k: 1, radius: 0 })).toThrow('limb "s".radius: must be a number > 0, got 0');
-    expect(() => l().pose({}).attach("palm", { k: 1, band: -2 })).toThrow('limb "s".band: must be a number > 0, got -2');
-    expect(() => l().pose({}).attach("palm", { k: 1, r: [0, 1, 1] })).toThrow('limb "s".band: must be a number > 0, got 0');
+    expect(() => l().pose({}).attach("palm", { k: 1, radius: 0 })).toThrow('limb "s".attach.radius: must be a number > 0, got 0');
+    expect(() => l().pose({}).attach("palm", { k: 1, band: -2 })).toThrow('limb "s".attach.band: must be a number > 0, got -2');
+    expect(() => l().pose({}).attach("palm", { k: 1, r: [0, 1, 1] })).toThrow('limb "s".attach.band: must be a number > 0, got 0');
   });
   it("attach labels must be non-empty and distinct", () => {
-    expect(() => l().pose({}).attach("", { k: 1 })).toThrow('limb "s".label: must be a non-empty string');
-    expect(() => l().pose({}).attach("palm", { k: 1, a: "" })).toThrow('limb "s".a: must be a non-empty string');
+    expect(() => l().pose({}).attach("", { k: 1 })).toThrow('limb "s".attach.label: must be a non-empty string');
+    expect(() => l().pose({}).attach("palm", { k: 1, a: "" })).toThrow('limb "s".attach.a: must be a non-empty string');
     expect(() => l().pose({}).attach("s", { k: 1 })).toThrow('limb "s".attach: cannot join "s" to itself — pass the other piece\'s label');
   });
 });

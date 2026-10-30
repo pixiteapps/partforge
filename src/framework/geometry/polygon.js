@@ -635,5 +635,8 @@ export { deg, rad, euler, toEuler, applyRotation } from "./rotations.js";
 
 // A k.implicit node's field as a point function (x, y, z) => mm — what the kinematics
 // domain's grip closes on for a shape beyond its plain closed forms. Pure JS over the
-// implicit engine's evaluator (no mesher, no native core).
+// implicit engine's evaluator (no mesher, no native core). This is deliberate, not a
+// layering slip: it puts ~128 KB of engine source (grammar, ir, contact, textures, the
+// expr parser, interval, program) in every part module's graph on both threads, because a
+// synchronous (x, y, z) => mm callable from `derive` cannot load it lazily.
 export { implicitDistance } from "./implicit/distance.js";

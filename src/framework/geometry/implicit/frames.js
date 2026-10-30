@@ -9,7 +9,11 @@ import { ImplicitSpecError } from "./errors.js";
 
 export { IDENTITY, compose, invert, translation, xformPoint, xformDir } from "../xform.js";
 
-/** `fn` with a core SpecError rethrown as an ImplicitSpecError carrying the same issues. */
+/**
+ * `fn` with a core SpecError rethrown as an ImplicitSpecError carrying the same issues. Only
+ * the issues carry over: the core error's `field` and its stack are dropped, since nothing
+ * reads `field` on an implicit error and the issues already name the frame.
+ */
 const implicitly = (fn) => (...args) => {
   try { return fn(...args); }
   catch (e) { if (e?.code === "SPEC") throw new ImplicitSpecError(e.issues); throw e; }

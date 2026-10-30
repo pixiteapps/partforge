@@ -19,6 +19,9 @@ export function implicitDistance(node, { images } = {}) {
   const map = images instanceof Map ? images : new Map(Object.entries(images ?? {}));
   const compiled = compileImplicit({ root: node }, { images: map });
   const prog = emitProgram(compiled, fullDecision(compiled));
+  // One set of 1-element buffers per returned function, reused by every call: the function is
+  // not reentrant (calling it from inside itself would clobber them) — fine for grip's
+  // sequential probes; a caller that nests calls should make a second function.
   const X = new Float64Array(1), Y = new Float64Array(1), Z = new Float64Array(1), out = new Float64Array(1);
   return (x, y, z) => {
     X[0] = x; Y[0] = y; Z[0] = z;
