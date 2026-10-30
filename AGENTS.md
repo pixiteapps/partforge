@@ -49,7 +49,9 @@ links on pin joints, posed by one `limb` from `partforge/kinematics` in
 `derive` and placed with `d.finger.place`, a `curl` animation that never
 rebuilds; the worked example of `docs/domains/kinematics.md`, with no demo
 page), and `material-swatches.js` (not a reference part: the dev-only
-contact sheet of material presets behind `materials.html`).
+contact sheet of material presets behind `materials.html`), and `offset-demo.js`
+(not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
+`offset-demo.html`).
 
 ## Node version
 
