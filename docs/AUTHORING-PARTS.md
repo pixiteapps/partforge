@@ -863,8 +863,8 @@ if (p.drain > 0) s = s.cut(k.cylinder({ r: d.drainR, h: p.floor + 4 }).at([0, 0,
 
 Labels do double duty in the viewer: the hover tooltip names the feature, and
 **measurement mode** (the ruler button in the viewbar) measures it — a click
-on a labeled feature reads its one number (⌀ for a hole, R for an arc, the
-length of a straight edge, W × H for a flat face), and a second click measures
+on a labeled feature reads it (⌀ for a hole's rim, ⌀ and depth for its wall,
+R for an arc, the length of a straight edge, W × H for a flat face), and a second click measures
 the distance from there. Unlabeled geometry snaps only to corners and points,
 for distances, so label the features a user would want to measure. Distances
 run square to the part; the straight-line button beside Clear (or a Shift-click)

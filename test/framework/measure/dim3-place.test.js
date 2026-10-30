@@ -329,7 +329,14 @@ describe("placeDims — plane and cylinder", () => {
     expect(diam.rimB.map((v) => +v.toFixed(5) + 0)).toEqual([0, 4, 7]);
     // the label runs off the clicked end, outward
     expect(diam.du.map((v) => +v.toFixed(5) + 0)).toEqual([0, -1, 0]);
-    expect(d.dims.length).toBe(0); // no depth on a first reading
+    expect(d.dims.length).toBe(0); // no depth value, no depth dim
+
+    // the wall's reading adds the depth, spanning the whole wall, not up to the click
+    const wall = { ...spec, values: { diameter: 8, depth: 10, partial: false } };
+    const dw = placeDims([{ id: "first", tier: "pinned", spec: wall }], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];
+    expect(dw.dims.length).toBe(1);
+    expect(dw.dims[0].label.text).toBe("10.00 mm");
+    expect([dw.dims[0].pA[2], dw.dims[0].pB[2]].sort((a, b) => a - b)).toEqual([0, 10]);
 
     const part = { ...spec, values: { ...spec.values, partial: true } };
     const d2 = placeDims([{ id: "first", tier: "pinned", spec: part }], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];

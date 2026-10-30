@@ -20,8 +20,8 @@ const len = (a) => Math.hypot(a[0], a[1], a[2]);
 const unit = (a) => { const l = len(a); return l > 0 ? [a[0] / l, a[1] / l, a[2] / l] : null; };
 
 // One click. Returns the existing spec for a plane reading, the cylinder spec
-// without its depth (⌀ or R only) and anchored at the click for a cylinder
-// reading,
+// anchored at the click for a cylinder reading (⌀ or R, plus the depth when
+// the wall face itself was clicked),
 // a new `edge` spec for a straight edge, or null when the target is only a
 // start point (corner, midpoint, point, curved edge, bbox or unnamed feature).
 // `hitPoint`, the raw surface point under the pointer, says which side of a
@@ -31,11 +31,15 @@ export function firstReading(target, spec, { hitPoint } = {}) {
   if (!target || !spec) return null;
   const { kind } = target;
   if (spec.kind === "cylinder" && (kind === "circle" || kind === "face" || kind === "edge")) {
-    // One number: ⌀ (R when partial), no depth dim — a second click reaches the
-    // depth. A copy, so the cached feature spec keeps its depth.
+    // The wall face is the whole feature: ⌀ (R when partial) and its depth. A
+    // rim or edge is just the circle: ⌀ alone. A copy either way, so the
+    // cached feature spec is never touched.
+    const values = kind === "face"
+      ? { diameter: spec.values.diameter, depth: spec.values.depth, partial: spec.values.partial }
+      : { diameter: spec.values.diameter, partial: spec.values.partial };
     return {
       ...spec,
-      values: { diameter: spec.values.diameter, partial: spec.values.partial },
+      values,
       anchors: { ...spec.anchors, ...clickAnchors(target.point, hitPoint, spec.anchors) },
     };
   }

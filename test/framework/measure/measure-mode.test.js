@@ -777,14 +777,14 @@ test("a clear also hides the hover snap, even when its mesh stays", () => {
   mode.detach();
 });
 
-test("a cylinder's first click reads ⌀ only and flashes on the diameter", () => {
+test("a cylinder's wall reads ⌀ and depth, and flashes both", () => {
   const { viewer, mode, dimGroup, ctx, revealParams } = setup({ mesh: cylinderMesh() });
   ctx.params = { boss_d: 6, boss_len: 10 };
   mode.setEnabled(true);
-  clickAt(viewer.domElement);
+  clickAt(viewer.domElement); // the wall face
   const first = dimGroup().children.filter((c) => c.userData.pfDimItemId === "first");
-  expect(first.map((c) => c.userData.pfDimValue)).toEqual([6]); // no depth dim
-  expect(revealParams).toHaveBeenCalledWith(["boss_d"], null);
+  expect(first.map((c) => c.userData.pfDimValue).sort((a, b) => a - b)).toEqual([6, 10]);
+  expect(revealParams).toHaveBeenCalledWith(["boss_d", "boss_len"], null);
   mode.detach();
 });
 

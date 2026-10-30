@@ -40,13 +40,17 @@ describe("firstReading", () => {
     expect("depth" in firstReading(circle, holeSpec).values).toBe(false);
     expect(holeSpec.values.depth).toBe(4); // the cached feature spec is not mutated
   });
-  test("face or edge on a cylinder reads the cylinder's diameter", () => {
-    expect(firstReading({ kind: "face", point: [0, 0, 4], featureId: 2 }, holeSpec)).toEqual(diameterOnly);
+  test("an edge on a cylinder reads the cylinder's diameter", () => {
     expect(firstReading(edgeT(5, false), holeSpec).values).toEqual(diameterOnly.values);
+  });
+  test("the wall face of a cylinder reads its diameter AND its depth", () => {
+    const s = firstReading({ kind: "face", point: [0, -3, 3], featureId: 2 }, holeSpec);
+    expect(s.values).toEqual({ diameter: 6, depth: 4, partial: false });
+    expect(s).not.toBe(holeSpec); // still a copy
   });
   test("a cylinder reading is anchored at the clicked depth and side", () => {
     // the wall, 1 mm down from the top, on the -Y side
-    const s = firstReading({ kind: "face", point: [0, -3, 3], featureId: 2 }, holeSpec);
+    const s = firstReading({ kind: "edge", point: [0, -3, 3], featureId: 2 }, holeSpec);
     expect(s.anchors.at).toEqual([0, 0, 3]);
     expect(s.anchors.clickDir).toEqual([0, -1, 0]);
     // a click past either end of the wall stays on the wall
