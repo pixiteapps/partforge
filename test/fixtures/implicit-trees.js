@@ -4,7 +4,19 @@
 // textured vase that touches every grammar feature at once, a few adversarial trees, and a
 // seeded random-tree generator for fuzzing.
 
-export { FINGERS, THUMB, FAN, HAND_DEFAULTS, HAND_POSES, handSpec, nailSpecs } from "../../src/parts/hand.js";
+export { FINGERS, THUMB, FAN, HAND_DEFAULTS, handSpec, nailSpecs } from "../../src/parts/hand.js";
+
+/**
+ * Contact poses. `fist`: every finger curled until its tip pads against the palm (all four
+ * press 2.4–5.7 mm deep). `nearMiss`: the index and middle fingers 0.75 mm apart at their
+ * closest — the spread found by bisecting min max(d_index, d_middle) (half their gap) over
+ * their middle and distal phalanges. A spread sweep brings these two closest at their PIP
+ * knuckles, the fattest part, not at their tips (test/implicit-topology.test.js).
+ */
+export const HAND_POSES = {
+  fist: { curl: 100, flex: { index: 105, middle: 105, ring: 105, pinky: 105, thumb: 50 } },
+  nearMiss: { spread: -0.1086 },
+};
 
 /** A textured vase: taper, twist, onion, polar repeat, an expr gyroid, a blend, and texture detail. */
 export function vaseSpec() {

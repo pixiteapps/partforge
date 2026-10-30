@@ -127,18 +127,6 @@ function buildHand(pose = {}) {
   return { frames, body, detail, nails };
 }
 
-/**
- * Contact poses. `fist`: every finger curled until its tip pads against the palm (all four
- * press 2.4–5.7 mm deep). `nearMiss`: the index and middle fingers 0.75 mm apart at their
- * closest — the spread found by bisecting min max(d_index, d_middle) (half their gap) over
- * their middle and distal phalanges. A spread sweep brings these two closest at their PIP
- * knuckles, the fattest part, not at their tips (test/implicit-topology.test.js).
- */
-export const HAND_POSES = {
-  fist: { curl: 100, flex: { index: 105, middle: 105, ring: 105, pinky: 105, thumb: 50 } },
-  nearMiss: { spread: -0.1086 },
-};
-
 /** The spike's hand as one k.implicit spec (no nails; see nailSpecs). */
 export function handSpec(pose = {}) {
   const { frames, body, detail } = buildHand(pose);
