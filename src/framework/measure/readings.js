@@ -18,13 +18,18 @@ const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const len = (a) => Math.hypot(a[0], a[1], a[2]);
 const unit = (a) => { const l = len(a); return l > 0 ? [a[0] / l, a[1] / l, a[2] / l] : null; };
 
-// One click. Returns the existing spec object for a cylinder or plane reading,
+// One click. Returns the existing spec for a plane reading, the cylinder spec
+// without its depth (⌀ or R only) for a cylinder reading,
 // a new `edge` spec for a straight edge, or null when the target is only a
 // start point (corner, midpoint, point, curved edge, bbox or unnamed feature).
 export function firstReading(target, spec) {
   if (!target || !spec) return null;
   const { kind } = target;
-  if (spec.kind === "cylinder" && (kind === "circle" || kind === "face" || kind === "edge")) return spec;
+  if (spec.kind === "cylinder" && (kind === "circle" || kind === "face" || kind === "edge")) {
+    // One number: ⌀ (R when partial), no depth dim — a second click reaches the
+    // depth. A copy, so the cached feature spec keeps its depth.
+    return { ...spec, values: { diameter: spec.values.diameter, partial: spec.values.partial } };
+  }
   if (spec.kind === "plane" && kind === "face") return spec;
   if (kind === "edge" && target.chain?.straight) {
     const pts = target.chain.points;

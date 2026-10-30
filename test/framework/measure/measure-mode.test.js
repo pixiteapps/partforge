@@ -496,6 +496,35 @@ test("a regenerate clears and fires onPinsChange", () => {
   mode.detach();
 });
 
+test("a clear also hides the hover snap, even when its mesh stays", () => {
+  const { viewer, mode, ctx, snapShown } = setup();
+  mode.setEnabled(true);
+  clickAt(viewer.domElement);
+  move(viewer.domElement);
+  expect(snapShown()).toBe(true);
+  ctx.view = "alt"; // same mesh, still visible: only the view moved
+  viewer.frame();
+  expect(mode.pinCount()).toBe(0);
+  expect(snapShown()).toBe(false);
+
+  move(viewer.domElement);
+  expect(snapShown()).toBe(true);
+  mode.clearPins();
+  expect(snapShown()).toBe(false);
+  mode.detach();
+});
+
+test("a cylinder's first click reads ⌀ only and flashes on the diameter", () => {
+  const { viewer, mode, dimGroup, ctx, revealParams } = setup({ mesh: cylinderMesh() });
+  ctx.params = { boss_d: 6, boss_len: 10 };
+  mode.setEnabled(true);
+  clickAt(viewer.domElement);
+  const first = dimGroup().children.filter((c) => c.userData.pfDimItemId === "first");
+  expect(first.map((c) => c.userData.pfDimValue)).toEqual([6]); // no depth dim
+  expect(revealParams).toHaveBeenCalledWith(["boss_d"], "boss_d");
+  mode.detach();
+});
+
 test("a hidden sub-part clears the reading", () => {
   const { mesh, viewer, mode } = setup();
   const onPins = vi.fn();

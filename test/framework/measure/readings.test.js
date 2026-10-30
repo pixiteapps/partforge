@@ -28,10 +28,21 @@ const c30 = Math.cos(Math.PI / 6), s30 = Math.sin(Math.PI / 6);
 const rotated30 = () => ({ elements: [c30, s30, 0, 0, -s30, c30, 0, 0, 0, 0, 1, 0, 5, 6, 7, 1] });
 
 describe("firstReading", () => {
-  test("circle target reads the cylinder's diameter", () => expect(firstReading(circle, holeSpec)).toBe(holeSpec));
-  test("face or edge on a cylinder reads the cylinder", () => {
-    expect(firstReading({ kind: "face", point: [0, 0, 4], featureId: 2 }, holeSpec)).toBe(holeSpec);
-    expect(firstReading(edgeT(5, false), holeSpec)).toBe(holeSpec);
+  // One number for a cylinder: ⌀ (or R when partial), never its depth — the
+  // depth is reachable through a second click.
+  const diameterOnly = { ...holeSpec, values: { diameter: 6, partial: false } };
+  test("circle target reads the cylinder's diameter only", () => {
+    expect(firstReading(circle, holeSpec)).toEqual(diameterOnly);
+    expect("depth" in firstReading(circle, holeSpec).values).toBe(false);
+    expect(holeSpec.values.depth).toBe(4); // the cached feature spec is not mutated
+  });
+  test("face or edge on a cylinder reads the cylinder's diameter", () => {
+    expect(firstReading({ kind: "face", point: [0, 0, 4], featureId: 2 }, holeSpec)).toEqual(diameterOnly);
+    expect(firstReading(edgeT(5, false), holeSpec)).toEqual(diameterOnly);
+  });
+  test("a partial cylinder keeps its partial flag (R)", () => {
+    const arc = { ...holeSpec, values: { diameter: 6, depth: 4, partial: true } };
+    expect(firstReading(circle, arc).values).toEqual({ diameter: 6, partial: true });
   });
   test("face on a plane reads the plane", () =>
     expect(firstReading({ kind: "face", point: [1, 1, 2], featureId: 1 }, planeSpec)).toBe(planeSpec));

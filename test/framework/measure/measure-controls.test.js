@@ -193,3 +193,12 @@ test("escapeScope: Escape from a canvas-sibling button still closes measure", ()
   expect(mode.setEnabled).toHaveBeenLastCalledWith(false);
   expect(mode.isEnabled()).toBe(false);
 });
+
+test("Clear is labelled for one measurement, not pins", () => {
+  const { viewer, button } = fixture();
+  attachMeasureControls(viewer, fakeMode(), { measure: button });
+  const clear = document.querySelector(".pf-measure-actions button");
+  expect(clear.textContent).toBe("Clear");
+  expect(clear.title).toBe("Clear the measurement");
+  expect(clear.getAttribute("aria-label")).toBe("Clear the measurement");
+});

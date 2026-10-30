@@ -204,3 +204,9 @@ test("frames keep the dot screen-constant and the label on the point", () => {
   expect(parseFloat(s.label().style.left)).toBeCloseTo((p.x + 1) * 50 + 12, 3);
   s.marker.dispose();
 });
+
+test("stage is required: no default to a viewer.stageElement the real viewer lacks", () => {
+  const viewer = fakeViewer(plateMesh());
+  expect(() => createSnapMarker(viewer)).toThrow(/stage/);
+  expect(() => createSnapMarker(viewer, {})).toThrow(/stage/);
+});

@@ -35,8 +35,8 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
   const clearButton = document.createElement("button");
   clearButton.type = "button";
   clearButton.textContent = "Clear";
-  clearButton.title = "Remove all pinned measurements";
-  clearButton.setAttribute("aria-label", "Remove all pinned measurements");
+  clearButton.title = "Clear the measurement";
+  clearButton.setAttribute("aria-label", "Clear the measurement");
   const unitButton = document.createElement("button");
   unitButton.type = "button";
   unitButton.className = "pf-measure-unit";

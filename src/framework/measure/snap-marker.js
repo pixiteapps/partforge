@@ -82,7 +82,10 @@ function sameTarget(a, meshA, b, meshB) {
   return true;
 }
 
-export function createSnapMarker(viewer, { stage = viewer.stageElement } = {}) {
+// `stage` is required: the viewer has no stage element of its own, so a caller
+// that forgets it must fail here rather than show a marker with no label.
+export function createSnapMarker(viewer, { stage } = {}) {
+  if (!stage) throw new TypeError("createSnapMarker: a stage element is required");
   const redraw = () => viewer.requestRender?.();
   let theme = viewer.getTheme?.();
   if (!DIM_THEME[theme]) theme = "dark";

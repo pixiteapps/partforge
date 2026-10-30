@@ -56,7 +56,7 @@ function keyedCache(limit) {
   };
 }
 
-export function createMeasureMode(viewer, { part, getContext, revealParams, getReads, stage = viewer.stageElement, schedule = (cb) => requestAnimationFrame(cb) }) {
+export function createMeasureMode(viewer, { part, getContext, revealParams, getReads, stage, schedule = (cb) => requestAnimationFrame(cb) }) {
   const pinListeners = new Set();
   const notifyPins = () => { for (const cb of [...pinListeners]) cb(); };
   const modeListeners = new Set();
@@ -362,8 +362,11 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   }
 
   // Back to idle. Every clear path tells pin listeners (the Clear button's
-  // visibility, the host's relay), even when nothing was showing.
+  // visibility, the host's relay), even when nothing was showing, and drops
+  // the hover snap too: a snap that outlives the clear (say a view change over
+  // the same mesh) would stay on screen until the next pointer move.
   function clearState({ redraw = true } = {}) {
+    clearHover();
     first = null;
     second = null;
     forgetChoices();
