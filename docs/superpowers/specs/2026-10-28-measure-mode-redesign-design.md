@@ -76,10 +76,31 @@ grabbed. A circle snaps to its centre. A face snaps to the point clicked on it.
   the faces. This is my guess at the right behaviour, not something Scott
   confirmed.
 
+**Revised 2026-10-30, after hands-on use** (research: how CAD, slicer and 2D
+tools show and clear measurements). Showing the straight line plus every axis
+part at once was too busy, so a distance draws **one line**:
+- the gap between two parallel surfaces, judged from the surface under each
+  click (not only labelled flat faces), so two clicks on parallel walls read
+  their gap however they snapped;
+- the one axis the points differ along, if only one;
+- otherwise the straight-line distance, with its X/Y/Z parts listed in a small
+  readout above the viewbar. Hovering a part draws it; clicking keeps it drawn.
+  This follows Onshape (axis lines drawn only from the panel) and PrusaSlicer
+  (one line on the model, X/Y/Z in a panel row).
+
 ### Clearing
 
-- A **third click** starts a new measurement. The old reading and distance go
-  away, and that click becomes a new first click.
+- **Revised 2026-10-30:** a third click no longer starts over (no tool we
+  looked at does that, and it felt awkward). Instead:
+  - a later click on the part **moves the distance's far end**, keeping the
+    start (PrusaSlicer's third pick replaces the second);
+  - a click on a **marked point removes it** (the far end becomes the start
+    when the start goes); hovering a marked point says "click to remove";
+  - a click on the **background clears** everything (most CAD tools);
+  - **Escape** clears the measurement first, and a second Escape leaves the
+    mode.
+- *Superseded:* a **third click** starts a new measurement. The old reading
+  and distance go away, and that click becomes a new first click.
 - The **Clear** button (already in the measure controls) clears every reading.
   The overall dims stay.
 - Leaving the mode clears readings too. *My call:* this differs from today,

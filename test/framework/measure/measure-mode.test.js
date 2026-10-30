@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 // Orchestrator against a minimal real-three fake viewer: enable -> always-on
 // overall dims; hover -> a snap marker and nothing else; first click -> one
-// reading (or a start point); second click -> one distance; third click starts
-// over. Dimensions are in-scene objects, so the observation surface is the
+// reading (or a start point); second click -> one distance line; later clicks
+// move its far end; a marked point's click removes it; background clears. Dimensions are in-scene objects, so the observation surface is the
 // "pf-dims" group under the meshes' shared parent (each label mesh carries its
 // item id in userData.pfDimItemId).
 import { expect, test, vi, beforeEach } from "vitest";
@@ -440,7 +440,7 @@ test("touch tap previews, second tap commits", () => {
   expect(mode.pinCount()).toBe(1);
   tapPoint(viewer, CORNER_C, -3, 3);
   expect(mode.pinCount()).toBe(2);
-  expect(spanValues()).toEqual([10, 20, 22.36]);
+  expect(spanValues()).toEqual([22.36]);
   mode.detach();
 });
 
@@ -554,7 +554,7 @@ test("touch drag elsewhere does not commit", () => {
 
 // ---- second and third clicks --------------------------------------------------
 
-test("second click draws the straight-line distance and its axis parts; pinCount is 2", () => {
+test("second click draws the straight-line distance alone; pinCount is 2", () => {
   const { viewer, mode, spanValues, itemIds, revealParams, startDot, endDot } = setup();
   const onPins = vi.fn();
   mode.onPinsChange(onPins);
@@ -564,9 +564,13 @@ test("second click draws the straight-line distance and its axis parts; pinCount
   clickPoint(viewer, CORNER_C);
   expect(mode.pinCount()).toBe(2);
   expect(onPins).toHaveBeenCalledTimes(2);
-  // X 20, Y 10 and the 22.36 diagonal; Z is flat, so it is left out
-  expect(spanValues()).toEqual([10, 20, 22.36]);
-  expect(itemIds()).toEqual(["span:0", "span:1", "span:2"]);
+  // one line on the model; X 20 and Y 10 are listed, Z is flat so left out
+  expect(spanValues()).toEqual([22.36]);
+  expect(itemIds()).toEqual(["span"]);
+  expect(mode.getParts()).toEqual([
+    { axis: "X", value: 20, shown: false },
+    { axis: "Y", value: 10, shown: false },
+  ]);
   expect(revealParams).not.toHaveBeenCalled(); // distances never flash
   expect(startDot()?.visible).toBe(true); // a no-reading start point stays marked
   // the second point stays marked where it was clicked, after the pointer leaves
@@ -600,7 +604,8 @@ test("clicks that differ along one axis read one number", () => {
   clickPoint(viewer, CORNER_A);
   clickPoint(viewer, [20, 0, 2]); // the far corner of the same edge
   expect(spanValues()).toEqual([20]);
-  expect(itemIds()).toEqual(["span:0"]);
+  expect(itemIds()).toEqual(["span"]);
+  expect(mode.getParts()).toEqual([]);
   mode.detach();
 });
 
@@ -619,47 +624,133 @@ test("the overall dims step aside while a click measures, and come back on Clear
   mode.detach();
 });
 
-test("third click starts over", () => {
-  const { viewer, mode, itemIds, revealParams, endDot } = setup();
+// Two unlabeled flat surfaces facing the camera, 4 mm apart in Z: a step.
+function stepMesh() {
+  const positions = new Float32Array([
+    0, 0, 2, 10, 0, 2, 10, 10, 2,
+    0, 0, 2, 10, 10, 2, 0, 10, 2,
+    10, 0, 6, 20, 0, 6, 20, 10, 6,
+    10, 0, 6, 20, 10, 6, 10, 10, 6,
+  ]);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geo.computeVertexNormals();
+  geo.computeBoundingBox();
+  geo.userData.featureIds = new Uint16Array(4);
+  geo.userData.features = [];
+  return new THREE.Mesh(geo);
+}
+
+test("clicks on two parallel unlabeled surfaces read the gap alone", () => {
+  const { viewer, mode, spanValues, itemIds } = setup({ mesh: stepMesh() });
+  mode.setEnabled(true);
+  clickPoint(viewer, [4, 4, 2]);
+  clickPoint(viewer, [16, 7, 6]);
+  expect(mode.pinCount()).toBe(2);
+  expect(spanValues()).toEqual([4]);
+  expect(itemIds()).toEqual(["span"]);
+  expect(mode.getParts()).toEqual([]);
+  mode.detach();
+});
+
+test("an X/Y/Z part draws while previewed and stays once toggled", () => {
+  const { viewer, mode, spanValues, itemIds } = setup();
+  mode.setEnabled(true);
+  clickPoint(viewer, CORNER_A);
+  clickPoint(viewer, CORNER_C);
+  mode.previewPart("X");
+  expect(spanValues()).toEqual([20, 22.36]);
+  expect(itemIds()).toEqual(["span", "span:X"]);
+  mode.previewPart(null);
+  expect(itemIds()).toEqual(["span"]);
+  mode.togglePart("Y");
+  expect(spanValues()).toEqual([10, 22.36]);
+  expect(mode.getParts().find((p) => p.axis === "Y").shown).toBe(true);
+  mode.togglePart("Z"); // flat: not a part, nothing happens
+  expect(itemIds()).toEqual(["span", "span:Y"]);
+  mode.togglePart("Y");
+  expect(itemIds()).toEqual(["span"]);
+  mode.detach();
+});
+
+test("a later click moves the far end and keeps the start", () => {
+  const { viewer, mode, spanValues, startDot, endDot } = setup();
   const onPins = vi.fn();
   mode.onPinsChange(onPins);
   mode.setEnabled(true);
   clickPoint(viewer, CORNER_A);
   clickPoint(viewer, CORNER_C);
+  mode.togglePart("X");
+  clickPoint(viewer, [20, 0, 2]); // the far corner of the start's own edge
   expect(mode.pinCount()).toBe(2);
-  clickAt(viewer.domElement); // the face again
-  expect(mode.pinCount()).toBe(1);
-  expect(itemIds()).not.toContain("span");
-  expect(itemIds()).toContain("first");
-  expect(endDot()?.visible ?? false).toBe(false);
-  expect(revealParams).toHaveBeenCalledWith(["plate_w"], null);
+  expect(spanValues()).toEqual([20]); // and the kept X part went with the old distance
+  expect(startDot().children[0].position.toArray()).toEqual(CORNER_A);
+  expect(endDot().children[0].position.toArray()).toEqual([20, 0, 2]);
   expect(onPins).toHaveBeenCalledTimes(3);
   mode.detach();
 });
 
-test("second click on the first point does nothing", () => {
+test("a click on the start point alone removes it", () => {
   const { viewer, mode, itemIds } = setup();
   const onPins = vi.fn();
   mode.onPinsChange(onPins);
   mode.setEnabled(true);
   clickPoint(viewer, CORNER_A);
   clickPoint(viewer, CORNER_A);
-  expect(mode.pinCount()).toBe(1);
-  expect(itemIds()).not.toContain("span");
-  expect(onPins).toHaveBeenCalledTimes(1);
+  expect(mode.pinCount()).toBe(0);
+  expect(itemIds().every((id) => id === "overall")).toBe(true);
+  expect(onPins).toHaveBeenCalledTimes(2);
   mode.detach();
 });
 
-test("click on background keeps the reading", () => {
+test("a click on the far end's dot goes back to the start", () => {
+  const { viewer, mode, itemIds, endDot } = setup();
+  mode.setEnabled(true);
+  clickAt(viewer.domElement); // the face: a reading
+  clickPoint(viewer, CORNER_C);
+  clickPoint(viewer, CORNER_C);
+  expect(mode.pinCount()).toBe(1);
+  expect(itemIds()).toContain("first"); // the start's reading comes back
+  expect(endDot()?.visible ?? false).toBe(false);
+  mode.detach();
+});
+
+test("a click on the start's dot makes the far end the start", () => {
+  const { viewer, mode, startDot, endDot, itemIds } = setup();
+  mode.setEnabled(true);
+  clickPoint(viewer, CORNER_A);
+  clickPoint(viewer, CORNER_C);
+  clickPoint(viewer, CORNER_A);
+  expect(mode.pinCount()).toBe(1);
+  expect(itemIds()).not.toContain("span");
+  expect(startDot().children[0].position.toArray()).toEqual(CORNER_C);
+  expect(endDot()?.visible ?? false).toBe(false);
+  mode.detach();
+});
+
+test("hovering a marked point says a click removes it", () => {
+  const { viewer, mode, snapLabel, snapShown } = setup();
+  mode.setEnabled(true);
+  clickPoint(viewer, CORNER_A);
+  const { x, y } = screenOf(viewer, CORNER_A);
+  move(viewer.domElement, x, y);
+  expect(snapShown()).toBe(true);
+  expect(snapLabel().textContent).toBe("click to remove");
+  mode.detach();
+});
+
+test("click on background clears the measurement", () => {
   const { viewer, mode, itemIds } = setup();
   const onPins = vi.fn();
   mode.onPinsChange(onPins);
   mode.setEnabled(true);
   clickAt(viewer.domElement);
   clickAt(viewer.domElement, 2, 2); // off the plate
-  expect(mode.pinCount()).toBe(1);
-  expect(itemIds()).toContain("first");
-  expect(onPins).toHaveBeenCalledTimes(1);
+  expect(mode.pinCount()).toBe(0);
+  expect(itemIds()).toContain("overall");
+  expect(onPins).toHaveBeenCalledTimes(2);
+  clickAt(viewer.domElement, 2, 2); // nothing to clear: no notice
+  expect(onPins).toHaveBeenCalledTimes(2);
   mode.detach();
 });
 
@@ -790,7 +881,7 @@ test("a pose-only change moves a distance with its sub-part", () => {
   clickPoint(viewer, CORNER_C);
   viewer.frame();
   const before = labelPositions("span");
-  expect(before.length).toBe(3);
+  expect(before.length).toBe(1);
   poseSubMesh(mesh, new THREE.Matrix4().makeTranslation(5, 0, 0));
   viewer.frame();
   const after = labelPositions("span");
@@ -886,6 +977,7 @@ test("a distance's label click flashes nothing", () => {
   mode.setEnabled(true);
   clickPoint(viewer, CORNER_A);
   clickPoint(viewer, CORNER_C);
+  mode.togglePart("X");
   viewer.frame();
   const s = dimGroup().children.find((c) => c.userData.pfDimValue === 20);
   const { x, y } = labelScreen(viewer, s);
@@ -1071,7 +1163,7 @@ test("a click places only its measurement, reusing the overall drawings", () => 
   expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id))).toEqual([["first"]]);
   placeDims.mockClear();
   clickPoint(viewer, CORNER_C);
-  expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id))).toEqual([["span:0", "span:1", "span:2"]]);
+  expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id))).toEqual([["span"]]);
   placeDims.mockClear();
   mode.clearPins(); // back to the overall alone: already placed
   expect(placeDims.mock.calls).toEqual([]);

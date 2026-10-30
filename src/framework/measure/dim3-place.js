@@ -75,8 +75,10 @@ export function specSig(spec) {
 // instead of overlapping. Lanes are per-placeDims-call and deterministic in
 // item order (overall, pins, hover). The lane's on-screen spacing lives in
 // dim3-scene.
-function laneFor(lanes, ext) {
-  const key = `${ext.x.toFixed(2)},${ext.y.toFixed(2)},${ext.z.toFixed(2)}`;
+// `group` replaces the direction key for dims that must stagger as one set
+// whichever way each one extends (a distance and its X/Y/Z parts).
+function laneFor(lanes, ext, group = null) {
+  const key = group ?? `${ext.x.toFixed(2)},${ext.y.toFixed(2)},${ext.z.toFixed(2)}`;
   const lane = lanes.get(key) ?? 0;
   lanes.set(key, lane + 1);
   return lane;
@@ -597,7 +599,10 @@ function placeSpan(out, item, spec, choices, { lanes, unit }) {
   const baseB = baseA.clone().addScaledVector(d, t);
   linearDim(out, {
     pA: a, pB: bp, baseA, baseB, nomA: a, nomB: bp, ext,
-    lane: laneFor(lanes, ext), standoffScale: 0.55,
+    // one distance's lines stack as a set: the main line first (lane 0),
+    // then each X/Y/Z part further out, so a part running nearly parallel
+    // to the straight line never lands its label on the main one
+    lane: laneFor(lanes, ext, "span"), standoffScale: 0.55,
     text: `${unit.format(spec.values.distance)}${unit.suffix}`, value: spec.values.distance, surfaceHit: null,
   });
 }

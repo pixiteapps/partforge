@@ -4,10 +4,15 @@
 //   hover        raycast -> snaps.findSnap -> snap-marker (draws NO dimension)
 //   first click  the snap becomes the start point; a reading (readings.js
 //                firstReading) when the target has one, flashing matching params
-//   second click the distance from the start point (readings.spanSpecs): the
-//                straight-line distance and its axis parts, or a face gap
+//   second click the distance from the start point (readings.spanReading):
+//                ONE line — the gap between parallel surfaces, the one axis
+//                the points differ along, or the straight-line distance. A
+//                straight line's X/Y/Z parts are listed by the chrome, which
+//                draws one on hover and keeps the ones clicked.
 //   (the overall dims show only while nothing is clicked)
-//   third click  starts over
+//   later clicks move the distance's far end; a click on a marked point
+//                removes it (the far end becomes the start when the start
+//                goes); a click on the background clears everything
 //
 // Touch has no hover, so a tap stands in for it: a tap SHOWS the snap (marker
 // and label) and commits nothing; a second tap on that snap, or a drag that
@@ -31,7 +36,7 @@ import { controlNodes } from "../panel/model.js";
 import { evaluateChoices, choicesEqual, placeDims, specSig, laneCounts } from "./dim3-place.js";
 import { createDimScene, worldPerPx, orthoWorldPerPx } from "./dim3-scene.js";
 import { buildSnapIndex, findSnap, SNAP_PX } from "./snaps.js";
-import { firstReading, spanSpecs, frameAxesFor } from "./readings.js";
+import { firstReading, spanReading, frameAxesFor } from "./readings.js";
 import { createSnapMarker } from "./snap-marker.js";
 
 // How many distinct placements the cache holds. An orbit sweeps a bounded set
@@ -108,8 +113,8 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // Each: { subPart, mesh, geometry, view, pointGeom, target, spec, normal }.
   //   pointGeom  the snap point, geometry frame
   //   spec       the first click's reading (geometry frame) or null
-  //   normal     a named plane face's normal (geometry frame) or null — the
-  //              parallel-faces gap rule in spanSpecs
+  //   normal     the clicked surface's normal (geometry frame) or null — the
+  //              parallel-surfaces gap rule in spanReading
   let first = null;
   let second = null;
   let hoverMesh = null;        // the mesh the snap marker currently marks
@@ -117,6 +122,11 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // A touch tap's snap, shown by the marker and not yet committed. It shares
   // the marker with mouse hover, so every path that drops the marker drops it.
   let touchPreview = null;
+  // A straight distance's X/Y/Z parts drawn beside it: the ones the chrome
+  // pinned, plus the one it is previewing (hover/focus). Both go with the
+  // distance they belong to.
+  const shownParts = new Set();
+  let previewPart = null;
 
   const pinCount = () => (second ? 2 : first ? 1 : 0);
 
@@ -309,10 +319,11 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   }
 
   // ---- what is drawn ---------------------------------------------------------
-  // The span between the two clicks, built from POSED points (and posed face
-  // normals), squared to the shared frame of both sub-parts. Not posed again.
-  function currentSpans() {
-    if (!first || !second) return [];
+  // The distance between the two clicks, built from POSED points (and posed
+  // surface normals), squared to the shared frame of both sub-parts. Not posed
+  // again. null when there is no distance.
+  function currentReading() {
+    if (!first || !second) return null;
     const pa = posePoint(first.pointGeom, first.mesh.matrix);
     const pb = posePoint(second.pointGeom, second.mesh.matrix);
     const axes = frameAxesFor(first.subPart, second.subPart, (name) => viewer._subMeshes[name]?.matrix);
@@ -320,7 +331,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       first.normal ? poseDir(first.normal, first.mesh.matrix) : null,
       second.normal ? poseDir(second.normal, second.mesh.matrix) : null,
     ];
-    return spanSpecs(pa, pb, { axes, faceNormals });
+    return spanReading(pa, pb, { axes, faceNormals });
   }
 
   // Items handed to dim3-place: every spec already in the parts frame, and
@@ -347,15 +358,20 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     }
     const indexOf = (name) => meshes.findIndex(([n]) => n === name);
     if (second) {
-      // a distance replaces the reading on screen: the straight-line distance
-      // and its axis components, ids "span:<n>" in spanSpecs' order
-      currentSpans().forEach((spec, n) => {
-        items.push({
-          id: `span:${n}`, tier: "pinned", pinned: true, spec,
-          meshes: [indexOf(first.subPart), indexOf(second.subPart)].filter((i) => i >= 0),
-          subParts: [first.subPart, second.subPart],
-        });
+      // a distance replaces the reading on screen: its one line ("span"),
+      // then any X/Y/Z part the chrome shows beside it ("span:X" …)
+      const reading = currentReading();
+      const span = (id, spec) => items.push({
+        id, tier: "pinned", pinned: true, spec,
+        meshes: [indexOf(first.subPart), indexOf(second.subPart)].filter((i) => i >= 0),
+        subParts: [first.subPart, second.subPart],
       });
+      if (reading) {
+        span("span", reading.main);
+        for (const p of reading.parts) {
+          if (shownParts.has(p.axis) || previewPart === p.axis) span(`span:${p.axis}`, p.spec);
+        }
+      }
     } else if (first?.spec) {
       const i = indexOf(first.subPart);
       items.push({
@@ -482,6 +498,9 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     for (const ck of Object.keys(choices)) {
       if (isMeasureChoice(ck)) delete choices[ck];
     }
+    // the X/Y/Z parts shown belong to the distance that just went away
+    shownParts.clear();
+    previewPart = null;
   }
 
   function syncPins() {
@@ -609,7 +628,13 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
         : null,
     });
     if (!target) return null;
-    return { target, mesh, subPart: hit.subPart, featureSpec: fSpec, featureLabel: hit.feature?.label ?? null, hitPoint };
+    // the raycast's normal is posed (shared frame); clicks keep geometry-frame
+    // directions and pose them when drawn, so take the rigid pose back out
+    const n = hit.normalLocal;
+    const hitNormal = n && (n[0] || n[1] || n[2])
+      ? _tv.set(n[0], n[1], n[2]).applyMatrix3(_m3.setFromMatrix4(mesh.matrix).transpose()).normalize().toArray()
+      : null;
+    return { target, mesh, subPart: hit.subPart, featureSpec: fSpec, featureLabel: hit.feature?.label ?? null, hitPoint, hitNormal };
   }
 
   function snapText(snap) {
@@ -739,6 +764,15 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
         return;
       }
       dom.style.cursor = "";
+      // over a marked point, the marker says what a click there does
+      const pin = pinAt(p.x, p.y);
+      if (pin) {
+        const click = pin === "first" ? first : second;
+        hoverMesh = click.mesh;
+        hoverGeometry = click.mesh.geometry;
+        marker.show({ kind: "point", point: click.pointGeom }, click.mesh, "click to remove");
+        return;
+      }
       const snap = snapAt(p.x, p.y);
       if (!snap) { clearHover(); return; }
       showSnap(snap);
@@ -751,8 +785,28 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     dom.style.cursor = "";
   };
 
+  // Which marked point a pointer at client (x, y) is on: "first", "second" or
+  // null. Only points drawn as dots count — a first click showing its reading
+  // has none.
+  function pinAt(x, y) {
+    const rect = viewer.domElement.getBoundingClientRect();
+    const near = (click) => {
+      click.mesh.updateWorldMatrix(true, false);
+      const [px, py] = projectToClient(click.pointGeom, click.mesh, rect);
+      return Math.hypot(x - px, y - py) <= SNAP_PX;
+    };
+    if (second && near(second)) return "second";
+    if (first && (!first.spec || second) && near(first)) return "first";
+    return null;
+  }
+
+  // Every snap but a hole's centre lands on the surface the pointer was over,
+  // so that surface says which way the click faces; a centre is a point on an
+  // axis, not a side of anything.
+  const facesSurface = (kind) => kind !== "circle";
+
   function clickRecord(snap) {
-    const { target, mesh, subPart, featureSpec: fSpec, hitPoint } = snap;
+    const { target, mesh, subPart, featureSpec: fSpec, hitPoint, hitNormal } = snap;
     return {
       subPart,
       mesh,
@@ -761,7 +815,11 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       pointGeom: target.point,
       target,
       spec: firstReading(target, fSpec, { hitPoint }),
-      normal: target.kind === "face" && fSpec?.kind === "plane" ? fSpec.anchors.normal : null,
+      // a named flat face's own normal, else the surface the click landed on,
+      // so two clicks on parallel walls read the gap however they snapped
+      normal: target.kind === "face" && fSpec?.kind === "plane"
+        ? fSpec.anchors.normal
+        : facesSurface(target.kind) ? hitNormal ?? null : null,
     };
   }
 
@@ -781,37 +839,56 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       if (item) revealRelevant(item.subParts, { value: picked.value });
       return;
     }
+    // a marked point takes the click (or tap) before the surface under it
+    const pin = pinAt(ev.clientX, ev.clientY);
+    if (pin) { clearHover(); removePin(pin); return; }
     const snap = snapAt(ev.clientX, ev.clientY);
     if (isTouch) {
-      // a tap shows what it would grab; a background tap drops the preview
-      if (!snap) { clearHover(); return; }
+      // a tap shows what it would grab; a background tap drops the preview,
+      // and with no preview up, clears like a click on the background
+      if (!snap) {
+        if (touchPreview) clearHover(); else if (pinCount()) clearState();
+        return;
+      }
       showSnap(snap);
       touchPreview = snap;
       return;
     }
-    if (!snap) return; // background: the reading stays
+    if (!snap) { if (pinCount()) clearState(); return; } // background: start over
     commit(snap);
   }
 
   // One click's worth of state change: the first point, the distance, or a
-  // fresh start after a distance.
+  // new far end for the distance showing.
   function commit(snap) {
     const click = clickRecord(snap);
-    if (first && !second) {
+    if (first) {
+      const before = second;
       second = click;
-      if (!currentSpans().length) { second = null; return; } // the same point again: nothing
+      if (!currentReading()) { second = before; return; } // the start point again: nothing
       forgetChoices();
       syncPins();
       notifyPins();
       rebuild();
       return;
     }
-    // idle, or a distance showing (the third click starts over)
     first = click;
-    second = null;
     forgetChoices();
     syncPins();
     if (click.spec) revealRelevant([click.subPart], click.spec.values);
+    notifyPins();
+    rebuild();
+  }
+
+  // A click on a marked point takes it away. Without its far end a distance
+  // goes back to its start (and that start's reading, if it had one); without
+  // its start, the far end becomes the start. A lone start point just goes.
+  function removePin(which) {
+    if (which === "second") second = null;
+    else if (second) { first = second; second = null; }
+    else { clearState(); return; }
+    forgetChoices();
+    syncPins();
     notifyPins();
     rebuild();
   }
@@ -864,6 +941,27 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     isEnabled: () => enabled,
     clearPins() { clearState(); },
     pinCount,
+    // A straight distance's X/Y/Z parts, for the chrome to list:
+    // [{ axis: "X"|"Y"|"Z", value (mm), shown }]. Empty without one.
+    getParts() {
+      const reading = currentReading();
+      return (reading?.parts ?? []).map((p) => ({
+        axis: p.axis, value: p.spec.values.distance, shown: shownParts.has(p.axis),
+      }));
+    },
+    // Draw one part while the chrome points at it (null to stop).
+    previewPart(axis) {
+      const next = axis ?? null;
+      if (next === previewPart) return;
+      previewPart = next;
+      rebuild();
+    },
+    // Keep a part drawn, or stop keeping it.
+    togglePart(axis) {
+      if (!currentReading()?.parts.some((p) => p.axis === axis)) return;
+      if (shownParts.has(axis)) shownParts.delete(axis); else shownParts.add(axis);
+      rebuild();
+    },
     getUnits: () => units,
     setUnits(next) {
       if (next === units || !(next in { mm: 1, in: 1 })) return;

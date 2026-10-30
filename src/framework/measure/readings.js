@@ -7,9 +7,10 @@
 //
 // `axis` on a span is the measuring direction: a frame axis (dominant
 // component), the shared face normal (a gap of at least MIN_SPAN_MM), or
-// unit(b − a) when straight. spanSpecs is what two clicks show: the gap alone
-// between parallel faces, else the straight-line distance plus each frame-axis
-// component (one number when the clicks differ along one axis only).
+// unit(b − a) when straight. spanReading is what two clicks show: ONE line on
+// the model — the gap between parallel surfaces, the one axis the clicks
+// differ along, or the straight-line distance — and, beside a straight line,
+// its frame-axis parts as extras the chrome lists and can draw one at a time.
 
 import { COS_3DEG, q2 } from "./feature-dims.js";
 
@@ -127,30 +128,36 @@ export function spanSpec(a, b, { axes = PARTS_AXES, straight = false, faceNormal
 
 // A component shorter than this share of the straight-line distance is snap
 // slop, not an offset anyone measured: 0.01 mm across a 20 mm diagonal would
-// otherwise draw a dimension of its own.
+// otherwise list a part of its own.
 const COMPONENT_MIN_SHARE = 0.002;
+export const AXIS_NAMES = Object.freeze(["X", "Y", "Z"]);
 
-// Everything two clicks show, in a fixed order: the axis components in frame
-// order, then the straight-line distance. Between two parallel named faces
-// with a gap, only the gap — that is a thickness, and its offsets along the
-// faces are noise. Empty when the points coincide.
-export function spanSpecs(a, b, { axes = PARTS_AXES, faceNormals = [null, null] } = {}) {
+// What two clicks show: `main`, the one span drawn on the model, and `parts`,
+// the frame-axis components of a straight `main` ({axis: "X"|"Y"|"Z", spec},
+// frame order) — empty when `main` is a gap or a single axis. Between two
+// parallel surfaces with a gap, `main` is that gap: a thickness, whose offsets
+// along the surfaces are noise. null when the points coincide.
+export function spanReading(a, b, { axes = PARTS_AXES, faceNormals = [null, null] } = {}) {
   const d = sub(b, a);
-  if (faceGap(d, faceNormals)) return [spanSpec(a, b, { axes, faceNormals })];
+  if (faceGap(d, faceNormals)) return { main: spanSpec(a, b, { axes, faceNormals }), parts: [] };
   const straight = spanSpec(a, b, { axes, straight: true });
-  if (!straight) return [];
+  if (!straight) return null;
   const floor = Math.max(MIN_SPAN_MM, COMPONENT_MIN_SHARE * len(d));
   const parts = [];
-  for (const ax of axes) {
+  axes.forEach((ax, i) => {
     const c = Math.abs(dot(d, ax));
-    if (c < floor) continue;
+    if (c < floor) return;
     parts.push({
-      kind: "span",
-      values: { distance: q2(c) },
-      anchors: { a, b, axis: [...ax], axes: axes.map((v) => [...v]), straight: false },
+      axis: AXIS_NAMES[i],
+      spec: {
+        kind: "span",
+        values: { distance: q2(c) },
+        anchors: { a, b, axis: [...ax], axes: axes.map((v) => [...v]), straight: false },
+      },
     });
-  }
-  return parts.length > 1 ? [...parts, straight] : parts.length ? parts : [straight];
+  });
+  if (parts.length === 1) return { main: parts[0].spec, parts: [] };
+  return { main: straight, parts };
 }
 
 // The frame a two-click span squares to. Same sub-part: that mesh's rotation

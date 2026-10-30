@@ -1,6 +1,6 @@
 // Pure readings: what one click reads, and what two clicks measure.
 import { describe, expect, test } from "vitest";
-import { firstReading, spanSpec, spanSpecs, frameAxesFor } from "../../../src/framework/measure/readings.js";
+import { firstReading, spanSpec, spanReading, frameAxesFor } from "../../../src/framework/measure/readings.js";
 
 const PARTS = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
 
@@ -159,35 +159,49 @@ describe("frameAxesFor", () => {
   });
 });
 
-describe("spanSpecs", () => {
-  const values = (specs) => specs.map((sp) => sp.values.distance);
-  test("a diagonal reads each axis part, then the straight-line distance", () => {
-    const specs = spanSpecs([0, 0, 0], [3, 4, 12]);
-    expect(values(specs)).toEqual([3, 4, 12, 13]);
-    expect(specs.map((sp) => sp.anchors.straight)).toEqual([false, false, false, true]);
-    expect(specs.slice(0, 3).map((sp) => sp.anchors.axis)).toEqual(PARTS);
+describe("spanReading", () => {
+  const main = (r) => r.main.values.distance;
+  const parts = (r) => r.parts.map((p) => [p.axis, p.spec.values.distance]);
+  test("a diagonal draws the straight-line distance; its axis parts are extras", () => {
+    const r = spanReading([0, 0, 0], [3, 4, 12]);
+    expect(main(r)).toBe(13);
+    expect(r.main.anchors.straight).toBe(true);
+    expect(parts(r)).toEqual([["X", 3], ["Y", 4], ["Z", 12]]);
+    expect(r.parts.map((p) => p.spec.anchors.axis)).toEqual(PARTS);
   });
-  test("a flat axis is left out", () => {
-    expect(values(spanSpecs([0, 0, 2], [20, 10, 2]))).toEqual([20, 10, 22.36]);
+  test("a flat axis is left out of the parts", () => {
+    expect(parts(spanReading([0, 0, 2], [20, 10, 2]))).toEqual([["X", 20], ["Y", 10]]);
   });
-  test("one axis is one number, no separate diagonal", () => {
-    const specs = spanSpecs([0, 0, 0], [0, 7, 0]);
-    expect(values(specs)).toEqual([7]);
-    expect(specs[0].anchors.straight).toBe(false);
+  test("one axis is one number, no straight line and no parts", () => {
+    const r = spanReading([0, 0, 0], [0, 7, 0]);
+    expect(main(r)).toBe(7);
+    expect(r.main.anchors.straight).toBe(false);
+    expect(r.parts).toEqual([]);
   });
-  test("snap slop along an axis draws no dimension of its own", () => {
+  test("snap slop along an axis is not a part of its own", () => {
     // 0.01 mm of Y across a 20 mm X run: one number
-    expect(values(spanSpecs([0, 0, 0], [20, 0.01, 0]))).toEqual([20]);
+    const r = spanReading([0, 0, 0], [20, 0.01, 0]);
+    expect(main(r)).toBe(20);
+    expect(r.parts).toEqual([]);
   });
-  test("two parallel faces with a gap read the gap alone", () => {
-    const specs = spanSpecs([0, 0, 0], [5, 3, 4], { faceNormals: [[0, 0, 1], [0, 0, -1]] });
-    expect(values(specs)).toEqual([4]);
+  test("two parallel surfaces with a gap read the gap alone", () => {
+    const r = spanReading([0, 0, 0], [5, 3, 4], { faceNormals: [[0, 0, 1], [0, 0, -1]] });
+    expect(main(r)).toBe(4);
+    expect(r.parts).toEqual([]);
   });
-  test("the same point reads nothing", () => expect(spanSpecs([1, 2, 3], [1, 2, 3])).toEqual([]));
+  test("coplanar surfaces read the points instead", () => {
+    const r = spanReading([0, 0, 2], [20, 10, 2], { faceNormals: [[0, 0, 1], [0, 0, 1]] });
+    expect(main(r)).toBe(22.36);
+  });
+  test("one surface alone is no gap", () => {
+    const r = spanReading([0, 0, 0], [5, 3, 4], { faceNormals: [[0, 0, 1], null] });
+    expect(r.main.anchors.straight).toBe(true);
+  });
+  test("the same point reads nothing", () => expect(spanReading([1, 2, 3], [1, 2, 3])).toBe(null));
   test("posed frames: parts along the frame's own axes", () => {
     const axes = frameAxesFor("a", "a", rotated30);
     const [ex] = axes;
     const b = ex.map((v) => v * 10);
-    expect(values(spanSpecs([0, 0, 0], b, { axes }))).toEqual([10]);
+    expect(main(spanReading([0, 0, 0], b, { axes }))).toBe(10);
   });
 });
