@@ -46,7 +46,7 @@ export const RENDER_ORDER_LABELS = CUTAWAY_OVERLAY_RENDER_ORDER + 3;
 // like the rest of the scene.
 export const LABEL_SCREEN_PX = 21;     // label text height
 export const ARROW_SCREEN_PX = 10;     // arrowhead length
-export const ARROW_HALF_W = 0.25;      // × arrow length — the narrow drafting ratio
+export const ARROW_HALF_W = 0.3;       // × arrow length — a narrow drafting ratio
 export const OVERSHOOT_SCREEN_PX = 7;  // extension line past the dim line
 export const GAP_SCREEN_PX = 4;        // extension line stands off the surface
 export const STANDOFF_SCREEN_PX = 40;  // dim line stands off the part (× dim's standoffScale)
@@ -381,7 +381,10 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
           .addScaledVector(R.ext, 0.85 * hStar);
       }
       for (const R of diamRecs) {
-        R.labelRec.mesh.position.copy(R.rimA).addScaledVector(R.du, 0.85 * hStar);
+        // past rimA's arrowhead (tip on the rim, body outward along du), then
+        // half the label's own width: the plane is centred on its position
+        const halfW = (R.labelRec.mesh.geometry.parameters.width * hStar) / 2;
+        R.labelRec.mesh.position.copy(R.rimA).addScaledVector(R.du, aw + gap + halfW);
       }
       for (const R of leaderRecs) {
         const len = LEADER_SCREEN_PX * wpp;

@@ -76,6 +76,35 @@ describe("createDimScene", () => {
     expect(label.userData.pfDimItemId).toBe("overall");
   });
 
+  it("a ⌀ label starts past the arrow at its end of the line", () => {
+    const viewer = fakeViewer();
+    const scene = createDimScene(viewer, { paintLabel: fakePaint });
+    scene.update([{
+      itemId: "first", tier: "pinned", pinned: true, dims: [], leaders: [],
+      diams: [{
+        rimA: [4, 0, 0], rimB: [-4, 0, 0], du: [1, 0, 0], dv: [0, 1, 0],
+        label: { text: "⌀8.00 mm", value: 8, x: [1, 0, 0], y: [0, -1, 0] },
+      }],
+    }]);
+    viewer.__parts.updateMatrixWorld(true);
+    scene.tick();
+    const wpp = wppOf(viewer);
+    const label = scene.group.children.find((k) => k.userData.pfDimItemId);
+    const halfWidth = (label.geometry.parameters.width * label.scale.x) / 2;
+    // the label's near edge clears rimA's arrowhead (tip on the rim, body outward)
+    expect(label.position.x - halfWidth).toBeGreaterThan(4 + ARROW_SCREEN_PX * wpp);
+    expect(label.position.y).toBeCloseTo(0, 6); // on the line's own axis
+  });
+
+  it("arrowheads are 0.6 × their length wide", () => {
+    const viewer = fakeViewer();
+    const scene = createDimScene(viewer, { paintLabel: fakePaint });
+    scene.update([DRAWING]);
+    const arrow = scene.group.children.find((k) => !k.isLineSegments2 && !k.userData.pfDimItemId);
+    const ys = Array.from(arrow.geometry.attributes.position.array).filter((_, i) => i % 3 === 1);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(0.6, 6);
+  });
+
   it("update replaces previous drawings; clear empties", () => {
     const viewer = fakeViewer();
     const scene = createDimScene(viewer, { paintLabel: fakePaint });
