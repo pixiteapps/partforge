@@ -5,6 +5,7 @@ const FDM_PLA = {
   bed: [220, 220, 250], minWall: 1.2, clearance: 0.2, overhang: 45, bedContact: 50, footprint: 10,
   fits: { press: -0.1, push: 0.05, slip: 0.25, moving: 0.35, printInPlace: 0.45 },
   holeUndersize: 0.25, bridge: 10,
+  rootFillet: 0.5, strain: 1.5, flexTilt: 45,
 };
 
 test("resolves a built-in profile by name", () => {

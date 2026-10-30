@@ -23,6 +23,16 @@
 // `footprint` is the percent of a printed piece's posed base area resting on the
 // bed below which the footprint cost fires.
 //
+// A flexing member (`verify.flex`, oracle/flex-root.js) reads three more: `rootFillet`
+// is the least root fillet radius as a share of the member's thickness (a GATE, 0.5
+// from every snap-fit guide; the stress riser is the same in any material, so resin
+// carries it too); `strain` the largest root strain, in percent, the material takes
+// for a one-time snap (an advisory, read from a declared deflection: PLA is brittle,
+// PETG forgiving); `flexTilt` the steepest the member's long axis may rise off the bed,
+// in degrees, before its layers stack across the root (a COST, `standing`: the layer
+// bond is a fraction of the in-plane strength, so a standing arm snaps along a layer;
+// resin is isotropic and carries none).
+//
 // Import-free, like every process descriptor: lint and the oracle read it through
 // process/registry.js.
 export const FDM = {
@@ -35,14 +45,16 @@ export const FDM = {
       bed: [220, 220, 250], minWall: 1.2, clearance: 0.2, overhang: 45, bedContact: 50, footprint: 10,
       fits: { press: -0.1, push: 0.05, slip: 0.25, moving: 0.35, printInPlace: 0.45 },
       holeUndersize: 0.25, bridge: 10,
+      rootFillet: 0.5, strain: 1.5, flexTilt: 45,
     },
     "fdm-petg": {
       bed: [220, 220, 250], minWall: 1.5, clearance: 0.3, overhang: 45, bedContact: 50, footprint: 10,
       fits: { press: -0.1, push: 0.05, slip: 0.3, moving: 0.4, printInPlace: 0.5 },
       holeUndersize: 0.3, bridge: 10,
+      rootFillet: 0.5, strain: 3, flexTilt: 45,
     },
   },
-  costs: { supports: "overhangArea", footprint: "footprintPct" },
+  costs: { supports: "overhangArea", footprint: "footprintPct", standing: "flexTilt" },
   metrics: {},
   lintRules: [],
 };

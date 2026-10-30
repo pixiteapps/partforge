@@ -1962,9 +1962,9 @@ Every print check is in exactly one tier, decided by what the reading means:
 
 | tier | checks | effect on `verify.ok` |
 | --- | --- | --- |
-| **gate** — a defect in any orientation | bed fit (`bbox` within `bed`), bed contact (`bedContactPct` ≥ 50), a declared flexing member's root (`flexRoot`) | fails it |
-| **cost** — a design choice with a price | overhang (`overhangArea`, id `supports`), footprint (`footprintPct` ≥ 10, id `footprint`) | never |
-| **advisory** — a reading that may not matter | min wall (`minWall`), `wall` | never; a warning |
+| **gate** — a defect in any orientation | bed fit (`bbox` within `bed`), bed contact (`bedContactPct` ≥ 50), a declared flexing member's root fillet (`flexRoot` ≥ half its thickness) | fails it |
+| **cost** — a design choice with a price | overhang (`overhangArea`, id `supports`), footprint (`footprintPct` ≥ 10, id `footprint`), a flexing member printed standing (`flexTilt` ≤ 45°, id `standing`) | never |
+| **advisory** — a reading that may not matter | min wall (`minWall`), `wall`, a flexing member's root strain at its declared deflection (`flexStrain`) | never; a warning |
 
 A **gate** is fixed before the work is done: the piece cannot be printed this way
 whatever the user wants. A **cost** is a fact with a number and a location — mm² of
@@ -1985,7 +1985,7 @@ A threshold the user named ("under 500 mm² of supports") is an `expect`:
 `overhangArea: "<=500"` — still a cost, reported in `costs` and never failing `ok`;
 the user's own limit keeps its meaning, so it is never marked accepted, whatever
 `accept` says (`accept` covers only the process's default check). Lint refuses an `accept` entry the process does not define
-(`verify-unknown-accept`): `fdm` defines `supports` and `footprint`; `resin` prints on
+(`verify-unknown-accept`): `fdm` defines `supports`, `footprint` and `standing`; `resin` prints on
 supports and defines none.
 
 **What arms what.** Under `fdm-pla`/`fdm-petg` the profile alone arms every check in
@@ -2027,12 +2027,20 @@ the user wants it and has accepted the supports.
 ### Flexing members
 
 Anything meant to bend in use — a snap arm, a buckle prong, a clip, a latch hook, a
-cantilever tab, a living spring — must meet the body it grows from through a **fillet
-at its root of at least half its thickness**. Bending puts the highest stress at the
-root, a sharp inside corner multiplies it several times over, and an FDM print's layers
-are weakest across exactly that corner: an unrounded arm snaps off flush with the body,
-often on the first few flexes. Decide the root fillet with the arm, not after it, and
-keep it clear of whatever the arm slides into (chamfer that mouth so the fillet seats).
+cantilever tab, a living spring — fails in four ways, and the first three read off the
+same declaration. It must meet the body it grows from through a **fillet at its root of
+at least half its thickness**: bending puts the highest stress at the root, a sharp
+inside corner multiplies it several times over, and an FDM print's layers are weakest
+across exactly that corner, so an unrounded arm snaps off flush with the body, often on
+the first few flexes. Decide the root fillet with the arm, not after it, and keep it
+clear of whatever the arm slides into (chamfer that mouth so the fillet seats). Its
+**root strain** at the travel it is designed for must stay under what the material takes
+— for a straight cantilever that is 1.5 × thickness × deflection / length², so a short,
+thick arm with a deep undercut yields or cracks whatever its root looks like: lengthen
+it, thin it, shorten the travel, or taper it (half the thickness at the tip bends about
+60% further). It must **lie flat on the bed**: an arm standing up in the print pose has
+its layers stacked across its root, and a layer bond is a fraction of the in-plane
+strength. And it must not be thinner than the process prints (`minWall`, as for anything).
 
 Declare every such member in `verify.flex`, by its feature label, and label the member
 **apart from the body** it grows from:
@@ -2042,18 +2050,41 @@ const arm = k.prism({ points: armPts, h: d.armH }).label("Right prong");
 let s = k.union([base, arm, otherArm])
   .fillet({ r: 0.5 * p.armThick, edges: { inPlane: "XZ", at: 0 } }); // the arms' roots on the base face
 // …
-verify: { process: "fdm-pla", flex: ["Right prong", "Left prong"], expect: { … } },
+verify: {
+  process: "fdm-pla",
+  flex: [
+    { feature: "Right prong", deflection: p.undercut },   // the travel it snaps through
+    { feature: "Left prong", deflection: p.undercut },
+    ["Latch", "Latch barb"],                               // one member made of two labels
+  ],
+  expect: { … },
+},
 ```
 
-verify then fails (`flexRoot`, a gate, under any process or none) wherever a triangle of
-the member meets a triangle of anything else at a sharp inside corner — a fillet's faces
-are new surfaces turning a few degrees per facet, so a rounded root reads clean, and a
-face that only continues flush into the body is not a corner. A rib or barb on the arm
-that carries its own label is part of the member: list them together,
-`flex: [["Right prong", "Right prong rib"]]`. Only what you declare is checked: the
-oracle cannot tell an arm that bends from a wall, a tooth or a pin of the same shape. A
-name no build labels is lint's `verify-flex-unknown-label` warning, and a member no
-sub-part of the verified view carries is reported as skipped.
+An entry is a label, a list of labels that make one member (an arm and the rib or barb
+on it, which otherwise counts as "the rest of the part"), or an object with `feature`,
+optional `labels`, the `deflection` in mm that arms the strain reading, and a
+`thickness` in mm when the mesh would misread the bending thickness (the member's
+smallest extent, which a wide hook or a tapered arm can fool). verify then reports, per
+sub-part carrying a member:
+
+- `flexRoot` — the root's fillet radius in mm, 0 where any of it is sharp, against the
+  process's `rootFillet` share of the member's thickness (0.5 everywhere). A gate,
+  under any process or none: a fillet's faces are tangent where they meet the member
+  and the body, a face that only continues flush into the body is not a corner, and a
+  45° chamfer is still a corner.
+- `flexStrain` — the root strain in percent at the declared deflection, against the
+  process's `strain` (1.5 on PLA, 3 on PETG, 2 on resin). An advisory, since the
+  cantilever formula is a first approximation; a member with no `deflection` is not read.
+- `flexTilt` — the degrees the member's long axis rises off the bed in the print pose,
+  against the FDM profiles' `flexTilt` (45°). A cost, `standing`, that the user may
+  accept (`accept: ["standing"]`); resin is isotropic and never asks.
+
+Only what you declare is checked: the oracle cannot tell an arm that bends from a wall,
+a tooth or a pin of the same shape. A name no build labels is lint's
+`verify-flex-unknown-label` warning, a member no sub-part of the verified view carries is
+reported as skipped, and a member whose label meets nothing (the label put on the whole
+union) withholds the verdict.
 
 ### Small features and scale
 
@@ -4477,8 +4508,9 @@ A part can declare how it should be checked, co-located with its schema, so
 ```js
 verify: {
   process: "fdm-pla",            // a DFM profile: fdm-pla | fdm-petg | resin, or an inline
-                                  // { base, bed:[x,y,z], minWall, overhang, bedContact, footprint, fits, holeUndersize, bridge } object
-  accept: ["supports"],          // optional; the costs the user chose to pay (fdm: supports, footprint)
+                                  // { base, bed:[x,y,z], minWall, overhang, bedContact, footprint, fits, holeUndersize, bridge,
+                                  //   rootFillet, strain, flexTilt } object
+  accept: ["supports"],          // optional; the costs the user chose to pay (fdm: supports, footprint, standing)
   orientation: "print",          // optional; declares build() is the print pose (Z up, bed at
                                   // the lowest Z) — with no profile it arms bed contact
   cases: ["defaults", "M3"],     // optional; default = defaults + every preset
@@ -4576,16 +4608,25 @@ records it. Your own `footprintPct` expectation arms it under any profile; `orie
 does not, and `{ base: "fdm-pla", footprint: null }` switches it off. `exportable: false`
 sub-parts are not judged.
 
-**Flexing members — a GATE, armed by `verify.flex` alone.** `flex` lists the part's
-flexing members by feature label (`flex: ["Right prong", "Left prong"]`; a list entry,
-`["Arm", "Arm rib"]`, is one member made of several labels). Every printed sub-part
-whose mesh carries a member's label gets one `flexRoot` row (`"0"` by default; your own
-`flexRoot` expectation on that sub-part replaces it): the sharp inside corner where a
-member meets anything else — a concave edge turning more than 30° between one of its
-triangles and one that is not — fails on any. `actual` is the worst member's length in
-mm, `feature` names that member, `location` is its longest stretch, and `note` lists
-every member the sub-part carries. A rounded root reads 0. It is independent of the
-process and of the print pose: the root is the same in any orientation. Three
+**Flexing members — `flexRoot` a GATE armed by `verify.flex` alone, `flexStrain` an
+advisory from a declared deflection, `flexTilt` the `standing` cost under FDM.** `flex`
+lists the part's flexing members by feature label (`flex: ["Right prong", "Left prong"]`;
+a list entry, `["Arm", "Arm rib"]`, is one member made of several labels; an object,
+`{ feature: "Arm", deflection: 1.2, thickness: 2 }`, adds the travel in mm the member
+is designed to flex through and, when the mesh would misread it, its bending
+thickness). Every printed sub-part whose mesh carries a member's label gets one row per
+reading (your own expectation on that sub-part replaces the default): `flexRoot` is the
+root fillet radius in mm of the member whose root is worst (least radius over what it
+needs), 0 where any of it is sharp — a concave edge turning more than 30° between one of
+its triangles and one that is not — against `>=` the profile's `rootFillet` share of that
+member's thickness (`feature` names the member, `location` is the longest sharp stretch,
+`note` lists every member the sub-part carries with its radius and need); `flexStrain`
+is the worst member's root strain in percent at its declared deflection, 1.5 × thickness ×
+deflection / length² for a straight cantilever, against `<=` the profile's `strain`;
+`flexTilt` is the degrees the worst member's long axis rises off the bed in the print
+pose, against `<=` the profile's `flexTilt`, a cost (`standing`). The root and strain
+readings are independent of the process and of the print pose; the tilt is read in the
+print pose, like bed contact, and withheld when that pose cannot be read. Three
 declaration problems are reported per member rather than per sub-part: a member no
 sub-part of the verified view carries is skipped (it may be switched off in that case);
 a member carried but meeting nothing — its label put on the whole union, or a piece
@@ -4612,13 +4653,16 @@ an inline `{ base: "fdm-pla", fits: { … } }` replaces the whole table.
 | `fits.printInPlace` — printed already assembled | 0.45 | 0.50 | 0.20 |
 | `holeUndersize` | 0.25 | 0.30 | 0.05 |
 | `bridge` (mm) | 10 | 10 | — |
+| `rootFillet` — a flexing member's root fillet, as a share of its thickness (a gate) | 0.5 | 0.5 | 0.5 |
+| `strain` — the root strain (%) a one-time snap may reach (an advisory) | 1.5 | 3 | 2 |
+| `flexTilt` — the steepest a flexing member may stand off the bed, degrees (a cost, `standing`) | 45 | 45 | — |
 
 `fits` are diametral; the `clearance` expectation below reads a pair's minimum surface distance, so a pin in a bore is declared at half the fit (`fits.slip` 0.25 → `clearance: { "pin×body": "0.08..0.18" }`).
 
 **What `expect` gives you:** per-sub-part
 assertions on the facts `measure` already reports — `holes` (through-bores / genus),
 `volume`, `surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`,
-`overhangArea`, `bedContactPct`, `footprintPct`, `flexRoot`, `wall` (a range — see below), `bounds` (the axis-aligned corner
+`overhangArea`, `bedContactPct`, `footprintPct`, `flexRoot`, `flexStrain`, `flexTilt`, `wall` (a range — see below), `bounds` (the axis-aligned corner
 positions, written in the same `{ min, max }` shape `measure` reports them — where
 the geometry sits, vs `bbox` which is only its size) and `centerOfMass` (`[x,y,z]`, the volume-weighted
 centroid; `null` for a degenerate/zero-volume sub-part); and `_view` assertions `bbox`,
