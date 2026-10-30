@@ -929,7 +929,7 @@ between the Manifold preview and the OCCT STEP export.
 
 - **Symptom:** A solid finger (or other jointed chain of separate solids) comes apart when a joint param moves: the links separate at the joints, or a link bends the wrong way, though each link looks right at rest.
 - **Cause:** The links are chained with hand-written `rotate` calls about hinge points that do not move with the parent joint, so a bend at the base turns the child links about a pivot left at its rest position.
-- **Fix:** Declare the chain once with `limb(...)` from `partforge/kinematics`, pose it in `derive`, and place each link with `d.<limb>.place(solid, joint)`. `place` carries the solid through every parent joint, so the hinges stay joined. Build each link at the origin along +y and let `place` do all the moving.
+- **Fix:** Declare the chain once with `limb(...)` from `partforge/kinematics`, pose it in `derive`, and place each link with `d.<limb>.place(solid, joint)`. `place` carries the solid through every parent joint, so the hinges stay joined. Build each link at the origin along +y and let `place` do all the moving — or, for a link built where it prints (the limb at rest), pass `{ from: "rest" }`. Hinges at different heights take a joint `offset`, a ball-and-socket is one `type: "ball"` joint, and a limb on another limb takes that posed limb as its frames — so one limb per chain, never a chain of one-joint limbs.
 
 # Hardware library
 

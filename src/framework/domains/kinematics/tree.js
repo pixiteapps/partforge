@@ -12,7 +12,9 @@ const AXIS_KINDS = { bend: [1, 0, 0], spread: [0, 0, 1], twist: [0, 1, 0] };
 const MIRRORS = { YZ: 0, XZ: 1, XY: 2 };
 const DEFAULT_RANGE = [-10, 100];
 const PARALLEL_EPS = 1e-6;
-const JOINT_KEYS = new Set(["name", "axis", "length", "range", "follow", "type"]);
+const JOINT_KEYS = new Set(["name", "axis", "length", "range", "follow", "type", "offset", "cone"]);
+const BALL_KEYS = new Set(["bend", "spread", "twist"]);
+const BALL_REST = Object.freeze({ bend: 0, spread: 0, twist: 0 });
 const DEF_KEYS = new Set(["parent", "at", "toward", "bendToward", "rotate", "joints", "lengths", "r", "mirror"]);
 
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
@@ -86,6 +88,7 @@ export function buildTree(name, def) {
   }
 
   const index = new Map();
+  const balls = new Set();
   const joints = def.joints.map((entry, i) => {
     const path = `joints[${i}]`;
     const j = typeof entry === "string" ? { name: entry } : entry;
@@ -95,17 +98,42 @@ export function buildTree(name, def) {
     if (j.name === "tip") fail(`${path}.name`, '"tip" is the limb\'s end frame; pick another name');
     if (index.has(j.name)) fail(`${path}.name`, `duplicate joint "${j.name}"`);
 
-    const a = j.axis ?? "bend";
-    let axis, axisKind;
-    if (typeof a === "string" && Object.hasOwn(AXIS_KINDS, a)) { axis = [...AXIS_KINDS[a]]; axisKind = a; }
-    else if (isVec3(a) && hypot3(a[0], a[1], a[2]) > 0) {
-      const l = hypot3(a[0], a[1], a[2]);
-      axis = [a[0] / l, a[1] / l, a[2] / l]; axisKind = "vector";
-    } else fail(`${path}.axis`, 'must be "bend", "spread", "twist" or a non-zero [x, y, z]');
+    const type = j.type ?? "hinge";
+    if (type !== "hinge" && type !== "ball") fail(`${path}.type`, 'must be "hinge" or "ball"');
 
-    const range = j.range ?? DEFAULT_RANGE;
-    if (!Array.isArray(range) || range.length !== 2 || !isNum(range[0]) || !isNum(range[1]) || range[0] > range[1]) {
-      fail(`${path}.range`, "must be [min, max] with min ≤ max");
+    let axis = null, axisKind, range = null, cone = null;
+    if (type === "ball") {
+      // A ball turns about any axis through its centre: no axis, and a cone, not a range.
+      if (j.axis != null) fail(`${path}.axis`, "a ball joint has no axis (it turns about any axis)");
+      if (j.range != null) fail(`${path}.range`, "a ball joint takes cone (its largest swing, in degrees), not range");
+      if (j.follow != null) fail(`${path}.follow`, "a ball joint cannot follow another joint");
+      cone = j.cone ?? 180;
+      if (!isNum(cone) || cone <= 0 || cone > 180) fail(`${path}.cone`, "must be a number of degrees > 0 and ≤ 180");
+      axisKind = "ball";
+    } else {
+      if (j.cone != null) fail(`${path}.cone`, 'only a ball joint takes cone — add type: "ball"');
+      const a = j.axis ?? "bend";
+      if (typeof a === "string" && Object.hasOwn(AXIS_KINDS, a)) { axis = [...AXIS_KINDS[a]]; axisKind = a; }
+      else if (isVec3(a) && hypot3(a[0], a[1], a[2]) > 0) {
+        const l = hypot3(a[0], a[1], a[2]);
+        axis = [a[0] / l, a[1] / l, a[2] / l]; axisKind = "vector";
+      } else fail(`${path}.axis`, 'must be "bend", "spread", "twist" or a non-zero [x, y, z]');
+
+      range = j.range ?? DEFAULT_RANGE;
+      if (!Array.isArray(range) || range.length !== 2 || !isNum(range[0]) || !isNum(range[1]) || range[0] > range[1]) {
+        fail(`${path}.range`, "must be [min, max] with min ≤ max");
+      }
+      range = [range[0], range[1]];
+    }
+
+    // offset: where this joint sits, in the previous joint's frame, relative to the end of the
+    // previous segment ([0, previous length, 0]). Mirrored, its local x flips (the frames are
+    // rebuilt right-handed, so local X is the reflection of −X).
+    let offset = null;
+    if (j.offset != null) {
+      if (i === 0) fail(`${path}.offset`, "the base joint has no previous joint — place it with the limb's at");
+      if (!isVec3(j.offset)) fail(`${path}.offset`, "must be [x, y, z]");
+      offset = mirrorAxis == null ? [...j.offset] : [-j.offset[0] + 0, j.offset[1], j.offset[2]];
     }
 
     let length = j.length;
@@ -120,17 +148,16 @@ export function buildTree(name, def) {
       const f = j.follow;
       if (typeof f !== "object") fail(`${path}.follow`, "must be { joint, ratio?, offset? }");
       if (!index.has(f.joint)) fail(`${path}.follow.joint`, `unknown or later joint ${JSON.stringify(f.joint)}`);
+      if (balls.has(f.joint)) fail(`${path}.follow.joint`, `${f.joint} is a ball joint; a joint can follow only a hinge`);
       const ratio = f.ratio ?? 1, offset = f.offset ?? 0;
       if (!isNum(ratio)) fail(`${path}.follow.ratio`, "must be a finite number");
       if (!isNum(offset)) fail(`${path}.follow.offset`, "must be a finite number");
       follow = { index: index.get(f.joint), ratio, offset };
     }
 
-    const type = j.type ?? "hinge";
-    if (type !== "hinge") fail(`${path}.type`, 'only "hinge" is supported');
-
     index.set(j.name, i);
-    return { name: j.name, frame: `${name}.${j.name}`, axis, axisKind, range: [range[0], range[1]], follow, length, type };
+    if (type === "ball") balls.add(j.name);
+    return { name: j.name, frame: `${name}.${j.name}`, axis, axisKind, range, cone, follow, length, offset, type };
   });
 
   return { name, parent: def.parent ?? null, at: reflect(at), base, mirrorAxis, joints, r: def.r ? [...def.r] : null };
@@ -142,11 +169,53 @@ export function buildTree(name, def) {
  * leaves "bend" unchanged and flips "spread" and "twist".
  */
 function jointStep(joint, value, mirrored) {
-  if (value === 0) return null;
-  const [ax, ay, az] = joint.axis;
-  const deg = joint.axisKind === "bend" ? -value : value;
+  if (joint.type === "ball") return ballSteps(value, mirrored);
+  if (value === 0) return [];
+  return [mirrorStep(joint.axis, joint.axisKind === "bend" ? -value : value, mirrored)];
+}
+
+function mirrorStep([ax, ay, az], deg, mirrored) {
   if (!mirrored) return { axis: [ax, ay, az], deg: deg + 0 };
   return { axis: [-ax + 0, ay, az], deg: -deg + 0 };
+}
+
+/**
+ * A ball's steps for `{ bend, spread, twist }`: ONE swing — the segment tilts by
+ * √(bend² + spread²) degrees about the axis (−bend, 0, spread) in the joint's frame, so a bend
+ * alone tilts exactly as a hinge bend does and a spread alone exactly as a spread joint —
+ * then the twist about the tilted segment. One swing has no order to get wrong, and its
+ * angle is what a cone limits.
+ */
+function ballSteps({ bend, spread, twist }, mirrored) {
+  const steps = [];
+  const swing = Math.hypot(bend, spread);
+  if (swing !== 0) steps.push(mirrorStep([-bend / swing + 0, 0, spread / swing + 0], swing, mirrored));
+  if (twist !== 0) steps.push(mirrorStep([0, 1, 0], twist, mirrored));
+  return steps;
+}
+
+/** A ball value clamped to its cone (bend and spread scaled down together). */
+function clampBall(v, cone) {
+  const swing = Math.hypot(v.bend, v.spread);
+  if (swing <= cone) return { value: { bend: v.bend + 0, spread: v.spread + 0, twist: v.twist + 0 }, clamped: false };
+  const k = cone / swing;
+  return { value: { bend: v.bend * k + 0, spread: v.spread * k + 0, twist: v.twist + 0 }, clamped: true };
+}
+
+/** A joint's rest value: 0 for a hinge, no swing and no twist for a ball. */
+export const restValue = (joint) => (joint.type === "ball" ? { ...BALL_REST } : 0);
+
+/** Validate one ball value given to pose: `{ bend?, spread?, twist? }`, absent keys 0. */
+export function ballValue(v, field, fail) {
+  if (v == null || typeof v !== "object" || Array.isArray(v)) fail(field, "a ball joint takes { bend?, spread?, twist? }");
+  for (const k of Object.keys(v)) if (!BALL_KEYS.has(k)) fail(`${field}.${k}`, `unknown ball option "${k}"`);
+  const out = { ...BALL_REST };
+  for (const k of BALL_KEYS) {
+    if (v[k] == null) continue;
+    if (!isNum(v[k])) fail(`${field}.${k}`, "must be a finite number");
+    out[k] = v[k];
+  }
+  return out;
 }
 
 /**
@@ -173,21 +242,25 @@ export function jointSteps(tree, values, { spread = 0, twist = 0 } = {}) {
   tree.joints.forEach((j, i) => {
     const steps = [];
     if (i === 0) steps.push(...baseSteps(tree, { spread, twist }));
-    const s = jointStep(j, values[i], mirrored);
-    if (s) steps.push(s);
+    steps.push(...jointStep(j, values[i], mirrored));
     out[j.frame] = steps;
   });
   return out;
 }
 
 /**
- * Apply couplings and ranges to raw joint values: a follower takes its leader's CLAMPED
- * value × ratio + offset, then every value is clamped to its own range.
+ * Apply couplings and limits to raw joint values: a follower takes its leader's CLAMPED
+ * value × ratio + offset, then every hinge value is clamped to its own range and every ball
+ * value to its cone.
  */
 export function couple(tree, raw) {
   const { joints } = tree;
   const values = new Array(joints.length), clamped = new Array(joints.length);
   joints.forEach((j, i) => {
+    if (j.type === "ball") {
+      ({ value: values[i], clamped: clamped[i] } = clampBall(raw[i], j.cone));
+      return;
+    }
     const want = j.follow ? j.follow.ratio * values[j.follow.index] + j.follow.offset : raw[i];
     const [lo, hi] = j.range;
     const v = want < lo ? lo : want > hi ? hi : want;
