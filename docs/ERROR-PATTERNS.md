@@ -919,11 +919,29 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** Peak WASM memory during the preview build exceeded what the phone allows a page (roughly 1–1.5 GB on iOS; a desktop tolerates several GB). The usual shape is hundreds of repeated small features unioned into one body: before partforge 0.116 every sphere was 6,728 triangles regardless of radius (the flat 116-segment preview count, squared), so a body with ~250 rivet spheres carried 1.7 M triangles of rivets into its booleans — measured 10 s and a 2.7 GB peak on a desktop for a 400k-triangle sub-part, against 4 s and 500 MB with the rivets as 12-triangle boxes. A boolean chain whose intermediates dwarf the result (a full-body skin intersected per groove) is the other shape.
 - **Fix:** Update partforge (0.116 sizes spheres by chord tolerance: that body builds in ~550 MB and 120k triangles unchanged; 0.117 extends the rule to lathe profile arcs — `torus`, `roundedCylinder`, revolved rounded profiles — and `roundedBox` corners, the other two shapes that spend the count squared). Then keep the preview build's peak down the same ways the export needs: build repeated detail as one union of instances rather than a chain of per-feature booleans, cut grooves from a thin local skin rather than the whole envelope, and drop feature counts the print cannot show ([Preview vs print quality](AUTHORING-PARTS.md#conventions--gotchas)). `partforge measure` reports triangle counts per sub-part; a single preview sub-part past ~200k triangles, or a whole view past ~400k, is the range where phones start to fail.
 
+## implicit-blend-eats-child
+
+- **Symptom:** A small feature of a `k.implicit` body (a knuckle, a bead, a nail) is gone or has melted into a shapeless lump where it meets its neighbour; lint warns `implicit-blend-eats-child`.
+- **Cause:** The blend width `k` of a `union`/`intersect`/`subtract` (or of a contact `attach` entry) is larger than the thickness of a child it joins. A smooth blend reaches about `k` past the seam, so a child thinner than that is absorbed whole.
+- **Fix:** Use a `k` smaller than the thinnest child the node joins — the lint message names the node and the child. If the large parts need a wide blend and the small one a narrow one, nest them: blend the small child onto its neighbour with its own small `k` first, then blend that group into the rest.
+
 ## implicit-limbs-miss-target
 
 - **Symptom:** An implicit part's limbs miss what they should touch or grip (a hand's fingers miss the rod they wrap), with no build error and nothing in the `measure` report pointing at it.
 - **Cause:** Frame placement worked out by hand through a chain of `{ parent, at, rotate }` frames — each rotation turns everything further down the chain, and the arithmetic is easy to get wrong.
 - **Fix:** Let `limb(...)` from `partforge/kinematics` do the placement: `limb(name, def).pose({ grip: { around: rod } })` closes each bend joint on the shape until contact, and `pose({ reach: [x, y, z] })` aims the tip at a point. Put the posed limb's `frames` in the spec and its `flesh()` (and `attach()` for a contact join) in the root ([docs/domains/kinematics.md](domains/kinematics.md), "Organic bodies"); for a shape beyond grip's plain list (a blended union, a warp), pass `implicitDistance(node)` from `partforge/geometry` as `around`. Then read the verdict instead of looking for a gap by eye: `report.grip.touching` and `report.grip.joints[].touched` (a joint that never touched is a miss), `report.reach.status` (`reached`, `too-far`, `too-close` or `out-of-range`) and `report.reach.residual`. If the pose is right but the frames still look wrong, report the frames: return `place(k.implicitFrames(spec))` from a probe, using the same placement function the build applies to the solid, and compare each frame's reported `origin` and axes in `partforge measure` against the target (a rod's axis, a mating feature). Label boxes in the report are approximate — they always contain their piece but can be generous by up to a blend's reach — so read exact numbers off a slab probe instead.
+
+## implicit-lipschitz-low
+
+- **Symptom:** A `k.implicit` body with an `expr` formula meshes with holes, missing patches or floating crumbs, though the formula looks right; lint warns `implicit-lipschitz-low`.
+- **Cause:** The mesher skips space using the field's value: it assumes the value changes by at most `lipschitz` (default 1) per mm. A formula that changes faster — a scaled distance, a gyroid, a warped field — lets it step past the surface.
+- **Fix:** Set `lipschitz` on the `expr` node to at least the slope lint measured (the hint gives a value), or divide the formula by its scale so it is close to a true distance. Lint samples 512 points, so a clean lint is not a proof: if holes remain, raise `lipschitz` further.
+
+## implicit-thin-feature
+
+- **Symptom:** A thin part of a `k.implicit` body (a plate, a fin, a nail) breaks into pieces, grows holes or handles, or vanishes; the build warns `implicit: thinnest feature (… mm) is under 2 grid cells`, and lint warns `implicit-thin-feature`.
+- **Cause:** The body is meshed on a grid (`preview` for the preview, `resolution` for print and export). A feature thinner than two grid cells falls between samples.
+- **Fix:** Give the thin feature its own `k.implicit` with a finer `preview` and `resolution`, and union it onto the body — a fine grid over a small feature is cheap, a fine grid over the whole body is not (`src/parts/hand.js` does this for its nails). Or thicken the feature. Lowering `preview`/`resolution` for the whole body also works when the body is small.
 
 ## kernel-internal-error
 

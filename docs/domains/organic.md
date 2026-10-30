@@ -347,19 +347,32 @@ The other warnings are a shape clipped flat at the edge of its sampling box (enl
 contact search between two children that found too much overlap to resolve (those two
 get no bulge).
 
-Relevant entries in `docs/ERROR-PATTERNS.md`: `implicit-limbs-miss-target`.
+Relevant entries in `docs/ERROR-PATTERNS.md`: `implicit-limbs-miss-target`, `implicit-thin-feature`, `implicit-blend-eats-child`, `implicit-lipschitz-low`.
 
 ## What lint and verify check
 
-The domain adds no lint rules and no verify metrics.
+The domain adds lint rules and no verify metrics. Lint runs every `k.implicit` and
+`k.implicitFrames` spec that the build makes at the lint params, so it judges the
+**default pose**. A pose a slider reaches but the defaults do not is not checked.
 
-- **Lint does not compile the tree.** It checks `k.implicit`'s option keys only
-  (`invalid-op-options`: an unknown option, or a missing `root`). A bad node, a bad
-  frame or a bad formula lints clean. Run `validateImplicit` in a test, or run
-  `partforge measure`, which builds the part and fails with the spec error.
+| Rule | Severity | Reports |
+|---|---|---|
+| `implicit-spec-invalid` | error | The engine's compiler rejects the spec: a bad node or field, a frame cycle, a formula error, a contact below the root, an attach naming a missing label, an undeclared image. The message is the build's own error. Image names are checked only against a static `images` object. |
+| `implicit-needs-manifold` | error | `k.implicit` in a part that builds on OCCT: `meta.backend: "occt"`, or a `shell` that routes the part there. |
+| `implicit-thin-feature` | warning | The thinnest feature is under 2 cells of the preview grid (the spec's `preview`, or the automatic choice) or the print grid. |
+| `implicit-blend-eats-child` | warning | A blend's `k`, or a contact `attach` entry's `k`, is wider than a child it joins: the child melts into a blob. |
+| `implicit-lipschitz-low` | warning | An `expr` formula, sampled on 512 points of its `box`, changes faster per mm than its `lipschitz`. A spot check, not a proof. Formulas that read a texture are skipped. |
+| `implicit-csg-in-disguise` | note | Only boxes, cylinders and halfspaces under sharp booleans: plain CAD that the standard ops build exactly. |
+
+- **Measure** shows the build's warnings (a thin feature, a clipped shape) under
+  `warnings`, the same text the app shows.
 - **Verify** reads the meshed solid like any other: `watertight`, `holes`, `bbox`,
   `volume`, the process's checks, `overlaps`. A rounded body on a flat bed has little
   bed contact and large overhangs; read the costs.
+
+The reference part, `src/parts/hand.js`, lints with no errors or warnings: a contact
+hand with crease detail, its nails each their own fine-grid `k.implicit` (the fix
+`implicit-thin-feature` suggests), and a probe that reports its frames.
 
 ## Gotchas
 

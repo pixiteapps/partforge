@@ -16,6 +16,7 @@ import { measure, verify } from "../src/oracle.js";
 import { lintPart } from "../src/lint.js";
 import { limb } from "../src/framework/domains/kinematics/index.js";
 import * as organic from "../src/framework/domains/organic/index.js";
+import organicManifest from "../src/framework/domains/organic/manifest.js";
 import { NODE_KINDS, DETAIL_KINDS } from "../src/framework/geometry/implicit/grammar.js";
 import { compileImplicit, choosePreviewEdge, IMPLICIT_DEFAULTS } from "../src/framework/geometry/implicit/index.js";
 import { PREVIEW_LADDER } from "../src/framework/geometry/implicit/preview-edge.js";
@@ -200,16 +201,20 @@ test("validateImplicit checks structure only; k.implicitFrames compiles", () => 
   expect(() => organic.validateImplicit(image, { imageNames: new Set(["bark"]) })).toThrow('unknown image "skin"');
 });
 
-test("lint checks k.implicit's option keys only", () => {
+test("lint compiles the tree, and the guide lists every organic rule", () => {
   const partWith = (spec) => ({
     meta: { title: "t", backend: "manifold" }, parameters: [], defaults: {},
     parts: { a: { label: "A", views: ["v"], build: (kk) => kk.implicit(spec) } }, views: { v: { label: "V" } },
   });
   const errs = (spec) => lintPart(partWith(spec)).errors.map((f) => f.rule);
-  expect(errs({ root: { kind: "sphere", r: -1, wobble: 1 } })).toEqual([]);
-  expect(errs({ root: { kind: "expr", box: [[-1, -1, -1], [1, 1, 1]], sdf: "return lenght(p);" } })).toEqual([]);
-  expect(errs({ root: { kind: "sphere", r: 1 }, quality: 1 })).toEqual(["invalid-op-options"]);
-  expect(errs({ frames: {} })).toEqual(["invalid-op-options"]);
+  expect(errs({ root: { kind: "sphere", r: -1, wobble: 1 } })).toEqual(["implicit-spec-invalid"]);
+  expect(errs({ root: { kind: "expr", box: [[-1, -1, -1], [1, 1, 1]], sdf: "return lenght(p);" } })).toEqual(["implicit-spec-invalid"]);
+  expect(errs({ root: { kind: "sphere", r: 1 } })).toEqual([]);
+  expect(errs({ frames: {} })).toContain("invalid-op-options");
+  const lintSection = section("What lint and verify check");
+  for (const { id } of organicManifest.lintRules) expect(lintSection, id).toContain(`\`${id}\``);
+  expect(lintSection).toContain("default pose");
+  expect(lintSection).toContain("src/parts/hand.js");
 });
 
 test("the worked example builds, measures and verifies as the guide says", () => {
