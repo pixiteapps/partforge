@@ -10,12 +10,29 @@ import * as THREE from "three";
 import { createMeasureMode } from "../../../src/framework/measure/measure-mode.js";
 import { placeDims } from "../../../src/framework/measure/dim3-place.js";
 import { classifyFeature } from "../../../src/framework/measure/feature-dims.js";
+import { buildSnapIndex } from "../../../src/framework/measure/snaps.js";
+import { buildBVH } from "../../../src/framework/oracle/bvh.js";
 
 // Pass-through spy on the placement entry point: behaviour is untouched, but
 // "which items were re-placed, and when" becomes observable.
 vi.mock("../../../src/framework/measure/dim3-place.js", async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, placeDims: vi.fn(actual.placeDims) };
+});
+
+// Pass-through spies on the per-geometry builders, so "built once, in idle
+// time, never on hover" is countable.
+vi.mock("../../../src/framework/measure/feature-dims.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, classifyFeature: vi.fn(actual.classifyFeature) };
+});
+vi.mock("../../../src/framework/measure/snaps.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, buildSnapIndex: vi.fn(actual.buildSnapIndex) };
+});
+vi.mock("../../../src/framework/oracle/bvh.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, buildBVH: vi.fn(actual.buildBVH) };
 });
 
 // Pass-through on spanSpec, overridable per test: a span that only exists in
@@ -40,7 +57,14 @@ HTMLCanvasElement.prototype.getContext = function getContext() {
     beginPath() {}, roundRect() {}, fill() {}, stroke() {},
   };
 };
-beforeEach(() => { paintLog.length = 0; placeDims.mockClear(); spanOverride = null; });
+beforeEach(() => {
+  paintLog.length = 0;
+  placeDims.mockClear();
+  classifyFeature.mockClear();
+  buildSnapIndex.mockClear();
+  buildBVH.mockClear();
+  spanOverride = null;
+});
 
 // A 20×10 plate: one sub-part, one labeled planar feature covering both
 // triangles of its top face at z=2, with the face's four boundary edges drawn
@@ -116,12 +140,20 @@ function setup({ parts, mesh = plateMesh() } = {}) {
   const viewer = fakeViewer(mesh, parts);
   const revealParams = vi.fn();
   const ctx = { view: "main", params: { plate_w: 20, wall: 3 } };
+  // The idle pre-build waits here until a test runs it (runIdle).
+  const idleQueue = [];
+  const idle = (cb) => {
+    idleQueue.push(cb);
+    return () => { const i = idleQueue.indexOf(cb); if (i >= 0) idleQueue.splice(i, 1); };
+  };
+  const runIdle = () => { while (idleQueue.length) idleQueue.shift()({ timeRemaining: () => 0 }); };
   const mode = createMeasureMode(viewer, {
     part,
     getContext: () => ctx,
     revealParams,
     stage: viewer.stage,
     schedule: (cb) => cb(), // synchronous for tests
+    idle,
   });
   const dimGroup = () => viewer.__parts.children.find((c) => c.name === "pf-dims");
   const itemIds = () => (dimGroup()?.children ?? [])
@@ -141,7 +173,7 @@ function setup({ parts, mesh = plateMesh() } = {}) {
       .filter((c) => c.userData.pfDimItemId?.startsWith(prefix))
       .map((c) => c.getWorldPosition(new THREE.Vector3()).toArray());
   };
-  return { mesh, viewer, mode, ctx, revealParams, dimGroup, itemIds, snapLabel, snapShown, startDot, labelPositions };
+  return { mesh, viewer, mode, ctx, revealParams, dimGroup, itemIds, snapLabel, snapShown, startDot, labelPositions, idleQueue, runIdle };
 }
 
 // Client px of a parts-frame point (the fake's 100×100 canvas at the origin).
@@ -997,6 +1029,116 @@ test("hover moves never re-place, even with a reading on screen", () => {
   placeDims.mockClear();
   for (const [x, y] of [[50, 50], [30, 60], [70, 40], [2, 2]]) move(viewer.domElement, x, y);
   expect(placeDims.mock.calls).toEqual([]);
+  mode.detach();
+});
+
+// ---- speed: per-geometry work happens once, in idle time ---------------------------
+
+// Every BVH buildBVH made for `geometry` (matched by its position array).
+const bvhBuildsFor = (geometry) =>
+  buildBVH.mock.calls.filter(([m]) => m.positions === geometry.getAttribute("position").array).length;
+
+test("the measure BVH is built once per geometry", () => {
+  const { viewer, mode, runIdle, snapLabel } = setup();
+  mode.setEnabled(true);
+  runIdle();
+  for (let i = 0; i < 5; i++) {
+    move(viewer.domElement, 40 + i, 50);
+    expect(snapLabel().textContent).toBe("top face · face");
+  }
+  expect(buildBVH).toHaveBeenCalledTimes(1);
+
+  const next = plateMesh().geometry;
+  viewer._subMeshes.plate.geometry = next; // a regenerate
+  viewer.frame();
+  runIdle();
+  for (let i = 0; i < 5; i++) move(viewer.domElement, 40 + i, 50);
+  expect(buildBVH).toHaveBeenCalledTimes(2);
+  expect(bvhBuildsFor(next)).toBe(1);
+  mode.detach();
+});
+
+test("after the idle pre-build, hover and click build nothing and cast no three ray", () => {
+  const { viewer, mode, runIdle, snapLabel } = setup();
+  mode.setEnabled(true);
+  expect(buildSnapIndex).not.toHaveBeenCalled(); // entering the mode builds nothing itself
+  runIdle();
+  expect(buildSnapIndex).toHaveBeenCalledTimes(1);
+  expect(classifyFeature).toHaveBeenCalledTimes(1); // the plate's one named feature
+  const raycast = vi.spyOn(THREE.Mesh.prototype, "raycast");
+  try {
+    const a = screenOf(viewer, CORNER_A);
+    move(viewer.domElement, a.x, a.y);
+    expect(snapLabel().textContent).toBe("top face · corner");
+    clickPoint(viewer, CORNER_A);
+    clickPoint(viewer, CORNER_C);
+    expect(mode.pinCount()).toBe(2);
+    expect(raycast.mock.contexts.filter((m) => m === viewer._subMeshes.plate)).toEqual([]);
+  } finally {
+    raycast.mockRestore();
+  }
+  expect(buildSnapIndex).toHaveBeenCalledTimes(1);
+  expect(classifyFeature).toHaveBeenCalledTimes(1);
+  expect(buildBVH).toHaveBeenCalledTimes(1);
+  mode.detach();
+});
+
+test("before the pre-build runs, hover still works on three's ray and builds no BVH", () => {
+  const { viewer, mode, snapLabel } = setup();
+  mode.setEnabled(true);
+  const a = screenOf(viewer, CORNER_A);
+  move(viewer.domElement, a.x, a.y);
+  expect(snapLabel().textContent).toBe("top face · corner");
+  expect(buildBVH).not.toHaveBeenCalled(); // only idle time builds one
+  mode.detach();
+});
+
+test("a pre-build is dropped when the mode turns off before its idle callback runs", () => {
+  const { viewer, mode, idleQueue, runIdle } = setup();
+  mode.setEnabled(true);
+  const pending = [...idleQueue];
+  expect(pending.length).toBe(1);
+  mode.setEnabled(false);
+  expect(idleQueue).toEqual([]); // cancelled
+  // a browser that fires the callback anyway (or late) must not do the work
+  for (const cb of pending) cb({ timeRemaining: () => 50 });
+  expect(buildBVH).not.toHaveBeenCalled();
+  expect(buildSnapIndex).not.toHaveBeenCalled();
+  expect(classifyFeature).not.toHaveBeenCalled();
+
+  mode.setEnabled(true); // a new session queues again
+  runIdle();
+  expect(bvhBuildsFor(viewer._subMeshes.plate.geometry)).toBe(1);
+  mode.detach();
+  expect(idleQueue).toEqual([]);
+});
+
+test("a regenerate before the idle callback runs: only the new geometry is built", () => {
+  const { viewer, mode, runIdle } = setup();
+  const old = viewer._subMeshes.plate.geometry;
+  mode.setEnabled(true);
+  const next = plateMesh().geometry;
+  viewer._subMeshes.plate.geometry = next;
+  viewer.frame(); // queues the new geometry
+  runIdle();
+  expect(bvhBuildsFor(old)).toBe(0);
+  expect(bvhBuildsFor(next)).toBe(1);
+  expect(buildSnapIndex.mock.calls.map(([g]) => g.positions)).toEqual([next.getAttribute("position").array]);
+  mode.detach();
+});
+
+test("a sub-part hidden before its pre-build runs is built once it shows again", () => {
+  const { viewer, mode, runIdle } = setup();
+  const mesh = viewer._subMeshes.plate;
+  mode.setEnabled(true);
+  mesh.visible = false;
+  viewer.frame();
+  runIdle();
+  expect(buildBVH).not.toHaveBeenCalled();
+  mesh.visible = true;
+  viewer.frame();
+  runIdle();
+  expect(bvhBuildsFor(mesh.geometry)).toBe(1);
   mode.detach();
 });
 

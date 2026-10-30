@@ -18,7 +18,8 @@
 // them; a geometry change, a hidden sub-part or a view change clears them.
 // `Clear` (chrome) and leaving the mode clear them too.
 import * as THREE from "three";
-import { raycastViewer } from "../selection/raycast.js";
+import { raycastViewer, firstSurfaceHit } from "../selection/raycast.js";
+import { buildBVH } from "../oracle/bvh.js";
 import { createDragTracker, DRAG_THRESHOLD_SQUARED } from "../selection/drag-tracker.js";
 import { subPartParamKeys } from "../param-deps.js";
 import { classifyFeature, bboxSpec, unionBounds } from "./feature-dims.js";
@@ -37,6 +38,18 @@ const PLACEMENT_CACHE_LIMIT = 32;
 
 // The word the snap label uses for each SnapTarget kind on a named feature.
 const KIND_WORD = { corner: "corner", midpoint: "midpoint", circle: "centre", edge: "edge", face: "face" };
+
+// requestIdleCallback where the browser has it (Safari does not, by default):
+// a timer otherwise. `timeout` keeps a busy page from starving the pre-build.
+// Returns a cancel function.
+function defaultIdle(cb) {
+  if (typeof requestIdleCallback === "function") {
+    const id = requestIdleCallback(cb, { timeout: 1000 });
+    return () => cancelIdleCallback(id);
+  }
+  const id = setTimeout(() => cb({ didTimeout: true, timeRemaining: () => 0 }), 16);
+  return () => clearTimeout(id);
+}
 
 // Bounded LRU. A Map iterates in insertion order, so re-inserting on a hit
 // moves the entry to the back and the oldest key is always the first one out.
@@ -60,7 +73,7 @@ function keyedCache(limit) {
   };
 }
 
-export function createMeasureMode(viewer, { part, getContext, revealParams, getReads, stage, schedule = (cb) => requestAnimationFrame(cb) }) {
+export function createMeasureMode(viewer, { part, getContext, revealParams, getReads, stage, schedule = (cb) => requestAnimationFrame(cb), idle = defaultIdle }) {
   const pinListeners = new Set();
   const notifyPins = () => { for (const cb of [...pinListeners]) cb(); };
   const modeListeners = new Set();
@@ -102,13 +115,13 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // WeakMaps: identity lookup only, and old geometries (with their typed
   // arrays) drop out on their own once no mesh references them anymore.
   const specCache = new WeakMap(); // geometry -> Map(featureId -> spec|null)
-  function featureSpec(mesh, featureId) {
-    let byId = specCache.get(mesh.geometry);
-    if (!byId) { byId = new Map(); specCache.set(mesh.geometry, byId); }
+  function featureSpec(geometry, featureId) {
+    let byId = specCache.get(geometry);
+    if (!byId) { byId = new Map(); specCache.set(geometry, byId); }
     if (!byId.has(featureId)) {
-      const { featureIds } = mesh.geometry.userData;
-      const positions = mesh.geometry.getAttribute("position").array;
-      const indices = mesh.geometry.getIndex()?.array;
+      const { featureIds } = geometry.userData;
+      const positions = geometry.getAttribute("position").array;
+      const indices = geometry.getIndex()?.array;
       byId.set(featureId, featureIds
         ? classifyFeature({ positions, indices, featureIds }, featureId)
         : null);
@@ -129,6 +142,70 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       snapCache.set(geometry, index);
     }
     return index;
+  }
+  // A triangle BVH per geometry (oracle/bvh.js, ~75 bytes a triangle) makes a
+  // ray ~1000x cheaper on a big part, but building one is ~1.5 µs a triangle
+  // (~300 ms on the 211k-triangle screw): only the idle pre-build below makes
+  // one. Rays read `builtBVH`, which never builds — until the index lands they
+  // take three's brute-force path, which is what they always did.
+  const bvhCache = new WeakMap(); // geometry -> BVH
+  function bvhOf(geometry) {
+    let bvh = bvhCache.get(geometry);
+    if (!bvh) {
+      bvh = buildBVH({ positions: geometry.getAttribute("position").array, indices: geometry.getIndex()?.array });
+      bvhCache.set(geometry, bvh);
+    }
+    return bvh;
+  }
+  const builtBVH = (mesh) => bvhCache.get(mesh.geometry) ?? null;
+
+  // ---- idle pre-build ------------------------------------------------------
+  // Without it, the first hover over a geometry paid for its snap index and the
+  // hovered feature's classification (45–65 ms on the 53k-triangle propeller).
+  // Entering the mode, and any geometry change while it is on, queues that
+  // work for each visible geometry, in idle time: the snap index, each named
+  // feature's spec, then the BVH. Turning the mode off empties the queue; a
+  // step is dropped, not run, unless its mesh still shows its geometry. The
+  // caches are keyed by geometry, so a step can only ever fill its own
+  // geometry's entry; the check is what spares the work.
+  let prebuildQueue = [];
+  let cancelPrebuild = null;
+
+  function queuePrebuild() {
+    for (const [, mesh] of visibleMeshes()) {
+      const geometry = mesh.geometry;
+      // done (the BVH is the last step), or already waiting in the queue
+      if (bvhCache.has(geometry) || prebuildQueue.some((s) => s.geometry === geometry)) continue;
+      const step = (what, run) => prebuildQueue.push({ what, mesh, geometry, run });
+      step("snap index", () => snapIndex(geometry));
+      if (geometry.userData.featureIds) {
+        const count = geometry.userData.features?.length ?? 0;
+        for (let id = 1; id <= count; id++) step(`feature ${id}`, () => featureSpec(geometry, id));
+      }
+      step("bvh", () => bvhOf(geometry));
+    }
+    if (prebuildQueue.length && !cancelPrebuild) cancelPrebuild = idle(pumpPrebuild);
+  }
+
+  const isLive = (step) => enabled && step.mesh.visible
+    && viewer._subMeshes[step.mesh.name] === step.mesh && step.mesh.geometry === step.geometry;
+
+  // One step per idle callback at least, more while the browser says it has
+  // time; a step itself is not divisible (the BVH build is the long one).
+  function pumpPrebuild(deadline) {
+    cancelPrebuild = null;
+    do {
+      const step = prebuildQueue.shift();
+      if (!step) return;
+      if (isLive(step)) step.run();
+    } while ((deadline?.timeRemaining?.() ?? 0) > 1);
+    if (prebuildQueue.length) cancelPrebuild = idle(pumpPrebuild);
+  }
+
+  function stopPrebuild() {
+    prebuildQueue = [];
+    cancelPrebuild?.();
+    cancelPrebuild = null;
   }
 
   // ---- spec frames ---------------------------------------------------------
@@ -286,7 +363,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       _origin.copy(origin).applyMatrix4(parent.matrixWorld);
       _dir.copy(dir).transformDirection(parent.matrixWorld);
       _rc.set(_origin, _dir);
-      const hit = _rc.intersectObjects(hittable, false)[0];
+      const hit = firstSurfaceHit(_rc.ray, hittable, { bvhFor: builtBVH });
       return hit ? parent.worldToLocal(hit.point.clone()) : null;
     };
     const camPos = parent
@@ -425,6 +502,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       const view = getContext().view;
       if (isStale(first, view) || isStale(second, view)) clearState({ redraw: false });
       rebuild();
+      queuePrebuild(); // a new geometry's snap index, specs and BVH, in idle time
     } else if (lastItems.length) {
       // cheap per-frame: has a side choice flipped?
       const meshes = visibleMeshes();
@@ -450,7 +528,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   }
   // The snap a pointer at client (x, y) would grab, or null over empty space.
   function snapAt(x, y) {
-    const hit = raycastViewer(viewer, x, y);
+    const hit = raycastViewer(viewer, x, y, { bvhFor: builtBVH });
     if (!hit) return null;
     const { mesh } = hit;
     const rect = viewer.domElement.getBoundingClientRect();
@@ -464,7 +542,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     const scale = mesh.getWorldScale(_ws).x || 1;
     const project = (p) => projectToClient(p, mesh, rect);
     const featureId = hit.feature?.id ?? 0;
-    const fSpec = featureId > 0 ? featureSpec(mesh, featureId) : null;
+    const fSpec = featureId > 0 ? featureSpec(mesh.geometry, featureId) : null;
     const target = findSnap(snapIndex(mesh.geometry), {
       hitPoint,
       hitFeatureId: featureId,
@@ -710,7 +788,9 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       // Adopt the signature this placement was built from, so the very next
       // frame doesn't read as "changed" and redo the whole vertex scan.
       lastSig = meshSig();
+      queuePrebuild();
     } else {
+      stopPrebuild();
       endAdjust();
       clearHover();
       clearState({ redraw: false });
@@ -758,6 +838,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       if (detached) return;
       detached = true;
       enabled = false;
+      stopPrebuild();
       offFrame();
       unsubscribeHandleHover();
       offTheme();

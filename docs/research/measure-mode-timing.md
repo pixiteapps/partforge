@@ -1,7 +1,10 @@
-# Measure mode timing (before the redesign)
+# Measure mode timing
 
-Task 1 of the measure mode redesign. These numbers are today's mode, measured
-before any measure code changed. They decide Task 8 (the speed fix).
+Task 1 of the measure mode redesign timed the OLD mode, before any measure
+code changed (the first half of this file). Task 8 timed the NEW two-click
+mode before and after its speed fix (the section "Task 8: the two-click
+mode" below). Old and new use the same machine, browser, dev server, pages
+and sampling.
 
 ## Method
 
@@ -109,7 +112,7 @@ on every pin), and (c) for parts past about 100k triangles, the unaccelerated
 - Enabling the mode (the first full placement inside `setEnabled`) was not
   timed.
 
-## Appendix: the timing script
+## Appendix: the Task 1 timing script
 
 Run with the dev server up:
 
@@ -258,4 +261,363 @@ function summarize(recs) {
   }, null, 1));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
+```
+
+## Task 8: the two-click mode
+
+### Method
+
+The same as Task 1 (M1 Max, headless Chromium with SwiftShader, 1400 × 900,
+`vite`, `measure-mode.js` rewritten in flight; nothing in `src/` changed for
+the timing). The script changed only where the mode did: hover is now
+`raycastViewer` → `snapIndex` → `findSnap` → the marker (no `placeDims`), and a
+click is a state change that places at most one item, so the click loop no
+longer pins and unpins. Each part is loaded **three times** in a fresh page:
+the first on-part hover and the first click of each load are the **cold**
+samples (the first hover goes to a labelled feature when the part has one);
+every later sample is **warm** (300 moves, 60 clicks per load). After the
+mode is turned on, the script waits 1.5 s before the first hover, the time a
+user takes to reach the part. `setEnabled(true)` and each idle pre-build step
+are timed too. A second script (appendix B) records the main thread's long
+tasks (> 50 ms) in the 2.5 s after the Measure button is clicked.
+
+### Results (ms)
+
+"Before" is the new mode at `b6b3c85c`, before Task 8's fix. "After" is with
+it. "Task 1" is the old mode, for comparison.
+
+| Part | Event | Task 1 (old mode) | Before fix | After fix |
+| --- | --- | --- | --- | --- |
+| propeller (52.8k) | cold hover (3 loads) | 97.1 | 44.5 / 48.1 / 44.8 (max over any first touch: 64.8) | **1.3 / 2.2 / 1.4** |
+| propeller (52.8k) | warm hover, median / p95 | 3.0 / 3.6 | 3.3 / 3.7 | **0.3 / 0.5** (max 3.5) |
+| propeller (52.8k) | cold click (3 loads) | 37.4 (placed) | 7.7 / 5.0 / 4.6 | **2.3 / 1.8 / 1.8** |
+| propeller (52.8k) | warm click, median / p95 | 3.2 / 20.5 | 3.5 / 3.8 | **0.6 / 0.9** |
+| screw (210.6k) | cold hover (3 loads) | — | 17.5 / 17.4 / 17.5 | **1.1 / 0.7 / 1.1** |
+| screw (210.6k) | warm hover, median / p95 | 10.5 / 11.1 | 10.5 / 11.0 | **0.2 / 0.3** |
+| screw (210.6k) | cold click (3 loads) | 75.8 (placed) | 10.4 / 10.7 / 10.7 | **0.2 / 0.3 / 0.3** |
+| screw (210.6k) | warm click, median / p95 | 10.8 / 11.2 | 10.8 / 11.4 | **0.4 / 0.7** |
+
+Split of the slow samples, before the fix:
+
+| Part | Event | total | raycast | snapIndex (build) | featureSpec (classify) | rest |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| propeller | first hover (hub) | 44.5 | 2.8 | 30.4 | 9.9 | 1.4 |
+| propeller | first hover on the blade | 64.8 | 3.1 | 0 | 61.4 | 0.3 |
+| screw | first hover | 17.5 | 11.9 | 5.0 | 0 | 0.6 |
+| screw | any warm hover or click | 10.5–11 | 10.3 | 0 | 0 | ~0.3 |
+
+What the two-click mode had already fixed: a click places one item, so the
+35–75 ms `placeDims` clicks of Task 1 were gone (a click placed in 0.1–0.2 ms).
+What it still had: the first hover on a geometry built its snap index and
+classified the feature (45–65 ms on the propeller, three or four frames), and
+every hover and click cast a brute-force ray (10.3 ms on the screw, over the
+8 ms line the plan set).
+
+### What changed
+
+1. **Idle pre-build** (`measure-mode.js`). Entering the mode, and any geometry
+   change while it is on, queues work for each visible geometry: its snap
+   index, the spec of each named feature, then a triangle BVH. The queue runs
+   in `requestIdleCallback` (timeout 1 s; a 16 ms timer where the browser has
+   none, as Safari by default), at least one step per callback. Turning the
+   mode off empties the queue and cancels the callback; a step whose mesh is
+   gone, hidden or shows another geometry is dropped, not run. Every cache is
+   a WeakMap keyed by geometry, so a step can only fill its own geometry's
+   entry.
+2. **BVH rays** (`selection/raycast.js` `firstSurfaceHit`, used by
+   `raycastViewer` when given `bvhFor`, and by the placement's `surfaceHit`).
+   The index is `oracle/bvh.js`'s JS `buildBVH`, cached per geometry. Hover
+   and click NEVER build one: until the idle step lands, rays take three's
+   path, as before. The answer is three's (same culling by material side, same
+   "nearest hit the cutaway keeps"); a test checks it against three over a
+   grid. The selection picker and hover labels do not pass `bvhFor`, so they
+   are unchanged.
+
+### Pre-build cost (ms, per step, 3 loads)
+
+| Part | snap index | feature specs | BVH |
+| --- | ---: | ---: | ---: |
+| propeller | 29.1 / 29.7 / 29.2 | 53–55 (blade), 7 (hub), 1 | 86.5 / 89.0 / 81.2 |
+| screw | 4.8 / 4.7 / 4.7 | — (no labels) | 309.6 / 308.5 / 308.1 |
+
+### Mode entry: what moved into it (ms)
+
+Long tasks on the main thread in the 2.5 s after the Measure button is
+clicked (appendix B; three runs on the propeller, one on the screw):
+
+| Part | Before fix | After fix |
+| --- | --- | --- |
+| propeller | 393 | 396–402, 53–56, 82–84 |
+| screw | 101, 387 | 102, 388, **312** |
+
+`setEnabled(true)` itself: first entry 29–46 ms (propeller) and 84–101 ms
+(screw), unchanged; most of the screw's is the overall dims' `surfaceHit`
+rays (61 ms), which have no BVH yet on first entry. **Re-entry** (off, then on
+again) drops from 18 → 1.4 ms (propeller) and 66 → 1.0 ms (screw), because
+the BVH survives with its geometry.
+
+The ~400 ms task right after the click is there before and after the fix: it
+is not the mode's own code (enable is 30–100 ms of it); it was not chased
+further here.
+
+The new cost is the BVH step: one **312 ms** task on the screw (84 ms on the
+propeller), in idle time, about 0.1–0.5 s after the mode turns on. A pointer
+move that arrives while it runs waits for it, once per geometry. That is the
+trade: one wait of up to a third of a second at most once, in place of 10 ms
+on every move for as long as the mode is on. A part under ~50k triangles
+pays well under 100 ms. If this wait is felt on a phone, the next step is to
+build the BVH off the main thread (a worker returning the four typed arrays);
+`bvh.js` has no constructor from arrays today, so that is not done here.
+
+### Memory
+
+The BVH costs about 75 bytes a triangle (16 MB on the screw) and lives as long
+as its geometry does: it is not dropped when the mode turns off, which is what
+makes re-entry 1 ms. A regenerate frees it with the old geometry.
+
+### Verdict
+
+Hover and click p95 are under 1 ms on both parts after the pre-build, and the
+cold first hover is 0.7–2.2 ms: within one 16 ms frame with a wide margin.
+A hover in the first ~0.1 s after entry, before the snap index is built,
+still pays the old cold cost once.
+
+## Appendix A: the Task 8 timing script
+
+```bash
+node measure-timing2.cjs <repo dir> http://localhost:<port> propeller.html 300 60 3
+```
+
+```js
+// Times the two-click measure mode (Task 8) in headless Chromium against the
+// dev server, the same way Task 1's script did: measure-mode.js is rewritten
+// in flight (page.route) to add performance.now() timers. Nothing in src/ changes.
+// usage: node measure-timing2.cjs <repoDir> <baseUrl> <page.html> [moves] [clicks] [loads]
+//
+// Records (one per hover callback, per onClick, per setEnabled(true), per idle pre-build):
+//   { total, raycast, featureSpec, snapIndex, findSnap, marker, placeDims,
+//     surfaceHit, sceneUpdate, hit, specMiss, indexMiss }
+// Each load is a fresh page: its FIRST on-part hover and FIRST click are the
+// cold samples. Warm samples are every later one.
+const { createRequire } = require("module");
+const [repo, base, pageName, movesArg, clicksArg, loadsArg] = process.argv.slice(2);
+const req = createRequire(repo + "/package.json");
+const { chromium } = req("playwright");
+const MOVES = Number(movesArg ?? 300), CLICKS = Number(clicksArg ?? 60), LOADS = Number(loadsArg ?? 3);
+
+const PRELUDE = `
+const __pfT = (globalThis.__pfT ??= { recs: { hover: [], click: [], enable: [], prebuild: [] }, cur: null });
+function __t(name, fn) {
+  const t0 = performance.now();
+  try { return fn(); } finally {
+    const c = __pfT.cur; if (c) c[name] = (c[name] ?? 0) + performance.now() - t0;
+  }
+}
+function __flag(name) { if (__pfT.cur) __pfT.cur[name] = 1; }
+function __rec(kind, fn) {
+  const outer = __pfT.cur;
+  const rec = { hit: null };
+  __pfT.cur = rec;
+  const t0 = performance.now();
+  try { return fn(); } finally {
+    rec.total = performance.now() - t0;
+    __pfT.cur = outer;
+    __pfT.recs[kind].push(rec);
+  }
+}
+`;
+
+function instrument(src) {
+  const rep = (a, b, optional = false) => {
+    if (!src.includes(a)) { if (optional) return; throw new Error("anchor missing: " + a.slice(0, 60)); }
+    src = src.replace(a, b);
+  };
+  const repAny = (...pairs) => {
+    const pair = pairs.find(([a]) => src.includes(a));
+    if (!pair) throw new Error("anchor missing: " + pairs[0][0].slice(0, 60));
+    src = src.replace(pair[0], pair[1]);
+  };
+  src = PRELUDE + src;
+  const bodyStart = src.indexOf(") {", src.indexOf("export function createMeasureMode")) + 3;
+  src = src.slice(0, bodyStart)
+    + `\n  globalThis.__pfViewer = viewer;\n  schedule = ((orig) => (cb) => orig(() => __rec("hover", cb)))(schedule);\n`
+    + src.slice(bodyStart);
+  // before Task 8 / after it (the spec cache is keyed by geometry since)
+  repAny([`function featureSpec(mesh, featureId) {`,
+    `function featureSpec(mesh, featureId) { return __t("featureSpec", () => __featureSpec(mesh, featureId)); }\n  function __featureSpec(mesh, featureId) {`],
+  [`function featureSpec(geometry, featureId) {`,
+    `function featureSpec(geometry, featureId) { return __t("featureSpec", () => __featureSpec(geometry, featureId)); }\n  function __featureSpec(geometry, featureId) {`]);
+  rep(`if (!byId.has(featureId)) {`, `if (!byId.has(featureId)) { __flag("specMiss");`);
+  rep(`function snapIndex(geometry) {`,
+    `function snapIndex(geometry) { return __t("snapIndex", () => __snapIndex(geometry)); }\n  function __snapIndex(geometry) {`);
+  rep(`if (!index) {`, `if (!index) { __flag("indexMiss");`);
+  repAny([`const hit = raycastViewer(viewer, x, y);`,
+    `const hit = __t("raycast", () => raycastViewer(viewer, x, y)); if (__pfT.cur) __pfT.cur.hit = !!hit;`],
+  [`const hit = raycastViewer(viewer, x, y, { bvhFor: builtBVH });`,
+    `const hit = __t("raycast", () => raycastViewer(viewer, x, y, { bvhFor: builtBVH })); if (__pfT.cur) __pfT.cur.hit = !!hit;`]);
+  rep(`const target = findSnap(snapIndex(mesh.geometry), {`,
+    `const __si = snapIndex(mesh.geometry); const target = __t("findSnap", () => findSnap(__si, {`);
+  rep(`snapPx: SNAP_PX,\n    });`, `snapPx: SNAP_PX,\n    }));`);
+  rep(`marker.show(snap.target, snap.mesh, snapText(snap));`,
+    `__t("marker", () => marker.show(snap.target, snap.mesh, snapText(snap)));`);
+  rep(`placeDims(list, { meshData: env.meshData, surfaceHit: env.surfaceHit, bounds, suppress, lanes, units }, choices);`,
+    `__t("placeDims", () => placeDims(list, { meshData: env.meshData, surfaceHit: env.surfaceHit, bounds, suppress, lanes, units }, choices));`);
+  repAny([`const hit = _rc.intersectObjects(hittable, false)[0];`,
+    `const hit = __t("surfaceHit", () => _rc.intersectObjects(hittable, false)[0]);`],
+  [`const hit = firstSurfaceHit(_rc.ray, hittable, { bvhFor: builtBVH });`,
+    `const hit = __t("surfaceHit", () => firstSurfaceHit(_rc.ray, hittable, { bvhFor: builtBVH }));`]);
+  rep(`if (painted !== drawings) { painted = drawings; scene.update(drawings); }`,
+    `if (painted !== drawings) { painted = drawings; __t("sceneUpdate", () => scene.update(drawings)); }`);
+  rep(`function onClick(ev) {`, `function onClick(ev) { return __rec("click", () => __onClick(ev)); }\n  function __onClick(ev) {`);
+  rep(`function setEnabled(on) {`,
+    `function setEnabled(on) { return on && !enabled ? __rec("enable", () => __setEnabled(on)) : __setEnabled(on); }\n  function __setEnabled(on) {`);
+  // Task 8's idle pre-build, when present
+  rep(`if (isLive(step)) step.run();`, `if (isLive(step)) __rec("prebuild", () => { __pfT.cur.what = step.what + " " + step.mesh.name; step.run(); });`, true);
+  return src;
+}
+
+const KEYS = ["total", "raycast", "featureSpec", "snapIndex", "findSnap", "marker", "placeDims", "surfaceHit", "sceneUpdate"];
+const q = (s, p) => s[Math.min(s.length - 1, Math.round(p * (s.length - 1)))];
+function summarize(recs) {
+  if (!recs.length) return { n: 0 };
+  const out = { n: recs.length };
+  for (const k of KEYS) {
+    const s = recs.map((r) => r[k] ?? 0).sort((a, b) => a - b);
+    if (s[s.length - 1] === 0) continue;
+    out[k] = { median: +q(s, 0.5).toFixed(2), p95: +q(s, 0.95).toFixed(2), max: +s[s.length - 1].toFixed(2) };
+  }
+  return out;
+}
+const round = (r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, typeof v === "number" ? +v.toFixed(2) : v]));
+
+async function oneLoad(browser) {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  page.on("pageerror", (e) => console.error("pageerror", e.message));
+  await page.route("**/src/framework/measure/measure-mode.js*", async (route) => {
+    const resp = await route.fetch();
+    await route.fulfill({ response: resp, body: instrument(await resp.text()) });
+  });
+  await page.goto(`${base}/${pageName}`);
+  await page.waitForFunction(() => {
+    const v = globalThis.__pfViewer;
+    if (!v) return false;
+    const ms = Object.values(v._subMeshes ?? {});
+    return ms.length && ms.every((m) => m.geometry.getAttribute("position")?.count);
+  }, null, { timeout: 180000 });
+  await page.waitForTimeout(3000);
+  const tri = await page.evaluate(() => {
+    let t = 0, labeled = 0;
+    for (const m of Object.values(globalThis.__pfViewer._subMeshes)) {
+      if (!m.visible) continue;
+      const idx = m.geometry.getIndex();
+      t += (idx ? idx.count : m.geometry.getAttribute("position").count) / 3;
+      labeled += (m.geometry.userData.features ?? []).length;
+    }
+    return { triangles: t, featureLabels: labeled };
+  });
+  // on-part points, probed BEFORE the mode is on (a direct raycastViewer call is not recorded)
+  const pts = await page.evaluate(async () => {
+    const { raycastViewer } = await import("/src/framework/selection/raycast.js");
+    const v = globalThis.__pfViewer;
+    const r = v.domElement.getBoundingClientRect();
+    const on = [];
+    for (let gy = 0.05; gy <= 0.95; gy += 0.03) for (let gx = 0.05; gx <= 0.95; gx += 0.03) {
+      const x = r.left + gx * r.width, y = r.top + gy * r.height;
+      const hit = raycastViewer(v, x, y);
+      // labelled-feature points first, so the first hover is a feature's cold path
+      if (hit) on.push([x, y, hit.feature?.id > 0 ? 1 : 0]);
+    }
+    return on.sort((a, b) => b[2] - a[2]);
+  });
+  if (!pts.length) throw new Error("no on-part points");
+  const raf = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await page.click("#measure");
+  // an idle pre-build (Task 8) runs here; give it the time a user takes to reach the part
+  await page.waitForTimeout(Number(process.env.WAIT_MS ?? 1500));
+  await page.mouse.move(5, 5); // off the canvas
+  await raf();
+  const enable = await page.evaluate(() => globalThis.__pfT.recs.enable);
+  const prebuild = await page.evaluate(() => globalThis.__pfT.recs.prebuild);
+  await page.evaluate(() => { globalThis.__pfT.recs.hover = []; globalThis.__pfT.recs.click = []; });
+  for (let i = 0; i < MOVES; i++) {
+    const [x, y] = i === 0 ? pts[0] : pts[(i * 7919) % pts.length];
+    await page.mouse.move(x, y);
+    await raf();
+  }
+  const hover = await page.evaluate(() => globalThis.__pfT.recs.hover);
+  await page.evaluate(() => { globalThis.__pfT.recs.click = []; globalThis.__pfT.recs.hover = []; });
+  for (let i = 0; i < CLICKS; i++) {
+    const [x, y] = pts[(i * 104729) % pts.length];
+    await page.mouse.move(x, y);
+    await raf();
+    await page.mouse.click(x, y);
+    await raf();
+  }
+  const click = await page.evaluate(() => globalThis.__pfT.recs.click);
+  await page.close();
+  return { tri, enable, prebuild, hover: hover.filter((r) => r.hit === true), click: click.filter((r) => r.hit === true) };
+}
+
+(async () => {
+  const browser = await chromium.launch({ args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
+  const loads = [];
+  for (let l = 0; l < LOADS; l++) loads.push(await oneLoad(browser));
+  const coldHover = loads.map((L) => L.hover[0]).filter(Boolean);
+  const coldClick = loads.map((L) => L.click[0]).filter(Boolean);
+  const warmHover = loads.flatMap((L) => L.hover.slice(1));
+  const warmClick = loads.flatMap((L) => L.click.slice(1));
+  const missHover = loads.flatMap((L) => L.hover.filter((r) => r.specMiss || r.indexMiss));
+  console.log(JSON.stringify({
+    page: pageName, ...loads[0].tri, loads: LOADS,
+    enable: loads.flatMap((L) => L.enable).map(round),
+    prebuild: loads.flatMap((L) => L.prebuild).map(round),
+    coldHover: coldHover.map(round),
+    coldClick: coldClick.map(round),
+    anyMissHover: summarize(missHover),
+    warmHover: summarize(warmHover),
+    warmClick: summarize(warmClick),
+    allClickPlaced: summarize(loads.flatMap((L) => L.click).filter((r) => r.placeDims > 0)),
+  }, null, 1));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+```
+
+## Appendix B: the mode-entry script
+
+```bash
+node entry.cjs <repo dir> http://localhost:<port> screw.html
+```
+
+```js
+// Mode entry: long tasks (>50 ms) on the main thread in the 2.5 s after the
+// measure button is clicked, and the enable time on first entry and re-entry.
+const { createRequire } = require("module");
+const [repo, base, pageName] = process.argv.slice(2);
+const { chromium } = createRequire(repo + "/package.json")("playwright");
+(async () => {
+  const browser = await chromium.launch({ args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  await page.route("**/src/framework/measure/measure-mode.js*", async (route) => {
+    const resp = await route.fetch(); let t = await resp.text();
+    const i = t.indexOf(") {", t.indexOf("export function createMeasureMode")) + 3;
+    t = t.slice(0, i) + "\n globalThis.__pfViewer = viewer;\n" + t.slice(i);
+    t = t.replace("function setEnabled(on) {", "function setEnabled(on) { const __t0 = performance.now(); try { return __setEnabled(on); } finally { if (on) (globalThis.__en ??= []).push(+(performance.now() - __t0).toFixed(1)); } }\n  function __setEnabled(on) {");
+    await route.fulfill({ response: resp, body: t });
+  });
+  await page.goto(`${base}/${pageName}`);
+  await page.waitForFunction(() => { const v = globalThis.__pfViewer; const ms = Object.values(v?._subMeshes ?? {}); return ms.length && ms.every((m) => m.geometry.getAttribute("position")?.count); }, null, { timeout: 180000 });
+  await page.waitForTimeout(3000);
+  await page.evaluate(() => {
+    globalThis.__lt = [];
+    new PerformanceObserver((l) => { for (const e of l.getEntries()) globalThis.__lt.push(+e.duration.toFixed(0)); }).observe({ type: "longtask" });
+  });
+  await page.click("#measure");
+  await page.waitForTimeout(2500);
+  const longtasks = await page.evaluate(() => globalThis.__lt);
+  await page.click("#measure"); await page.waitForTimeout(300);
+  await page.click("#measure"); await page.waitForTimeout(300);
+  const enables = await page.evaluate(() => globalThis.__en);
+  console.log(JSON.stringify({ page: pageName, longtasksAfterEntry: longtasks, enableFirstThenReentry: enables }));
+  await browser.close();
+})();
 ```
