@@ -235,6 +235,7 @@ test("a distance's X/Y/Z parts are listed; hover previews, click keeps", () => {
   attachMeasureControls(viewer, mode, { measure: button });
   button.click();
   const box = document.querySelector(".pf-measure-parts");
+  expect(box.hasAttribute("data-pf-viewbar-float")).toBe(true);
   expect(box.hidden).toBe(true);
   parts = [{ axis: "X", value: 20, shown: false }, { axis: "Y", value: 10, shown: false }];
   mode.__setPins(2);

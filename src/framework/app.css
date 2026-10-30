@@ -593,7 +593,9 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 #viewbar .pf-measure-actions button { width: auto; min-width: 56px; padding: 0 8px; }
 /* A distance's X/Y/Z parts: a readout pill of its own, floated just off the
    bar (above a bottom-anchored bar, below the legacy top-right one) so the
-   bar keeps its width on a phone. The bar is always positioned. */
+   bar keeps its width on a phone. The bar is always positioned. It carries
+   data-pf-viewbar-float, so viewbar-clear.js counts it in --pf-viewbar-clear
+   and the view cube rises above it rather than covering it. */
 #viewbar .pf-measure-parts {
   position: absolute; right: -1px; bottom: calc(100% + 6px);
   display: flex; gap: 2px; padding: 3px;
@@ -601,9 +603,6 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
   border-radius: var(--pf-radius-pill); box-shadow: var(--pf-shadow-float);
 }
 #viewbar:not(.pf-float-viewbar) .pf-measure-parts { bottom: auto; top: calc(100% + 6px); }
-/* The view cube floats over the bar at the same z-index and later in the
-   page, so it would cover the readout: lift the bar while the readout shows. */
-#viewbar:has(.pf-measure-parts:not([hidden])) { z-index: 16; }
 #viewbar .pf-measure-parts[hidden] { display: none; }
 #viewbar .pf-measure-actions .pf-measure-parts button {
   min-width: auto; height: 28px; padding: 0 8px; white-space: nowrap;

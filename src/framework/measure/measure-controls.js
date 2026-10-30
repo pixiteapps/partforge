@@ -9,6 +9,7 @@
 import { attachButtonTooltips } from "../tooltip.js";
 import { runCleanupSteps, captureAttributes, restoreAttributes } from "../teardown.js";
 import { UNITS } from "./dim3-place.js";
+import { VIEWBAR_FLOAT_ATTR } from "../viewbar-clear.js";
 
 const BUTTON_ATTRIBUTES = ["type", "aria-pressed", "aria-label", "title", "disabled"];
 const RULER_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.3 8.7 8.7 21.3c-.4.4-1 .4-1.4 0l-4.6-4.6c-.4-.4-.4-1 0-1.4L15.3 2.7c.4-.4 1-.4 1.4 0l4.6 4.6c.4.4.4 1 0 1.4Z"/><path d="m7.5 10.5 2 2"/><path d="m10.5 7.5 2 2"/><path d="m13.5 4.5 2 2"/><path d="m4.5 13.5 2 2"/></svg>`;
@@ -37,6 +38,8 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
   actions.className = "pf-measure-actions";
   const partsBox = document.createElement("span");
   partsBox.className = "pf-measure-parts";
+  // floated above the bar, so the view cube's clearance must count it
+  partsBox.setAttribute(VIEWBAR_FLOAT_ATTR, "");
   const clearButton = document.createElement("button");
   clearButton.type = "button";
   clearButton.textContent = "Clear";
