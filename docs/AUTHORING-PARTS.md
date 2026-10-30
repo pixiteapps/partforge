@@ -4298,6 +4298,13 @@ is a supported call shape, not a name) (error); `image-source-scheme`
 list would refuse — same shape as `font-source-scheme` above, including the
 empty-string and raw-bytes exemptions from `image-source.js`) (warning).
 
+**Organic bodies** (the organic domain's rules, `docs/domains/organic.md`), run on
+every `k.implicit` / `k.implicitFrames` spec the probe records, at the lint params:
+`implicit-spec-invalid` (the engine's compiler rejects the spec — the same error the
+build throws; image names are checked only against a static `images` object)
+(error); `implicit-needs-manifold` (a `k.implicit` call in a part that builds on
+OCCT — `meta.backend: "occt"`, or a `shell` that routes it there) (error).
+
 **Source rules** — the tenth group, which runs only when the caller hands over
 `sources` (above) — `control-default-not-literal` (a control's `defaults` entry is
 written as something other than a plain literal: an expression like `13 / 3`, an

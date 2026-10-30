@@ -11,11 +11,7 @@ import { meshImplicitCore } from "../../core/implicit-core.js";
 
 export { choosePreviewEdge } from "./preview-edge.js";
 
-// The print grid when a spec omits `resolution`. A spec without `preview` gets an automatic
-// preview grid instead (choosePreviewEdge, preview-edge.js).
-export const IMPLICIT_DEFAULTS = Object.freeze({ resolution: 0.6 });
-
-export { compileImplicit } from "./compile.js";
+export { compileImplicit, IMPLICIT_DEFAULTS } from "./compile.js";
 
 // planLeaves, then the rest on the native core when it is on (core/implicit-core.js —
 // the same bytes, test/core-parity.test.js); else, or when the core refuses or

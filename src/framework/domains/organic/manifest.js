@@ -4,6 +4,7 @@
 // two ops, which both in-repo backends implement natively; its attaches are the fallbacks a
 // kernel without them gets (kernel-front.js runs an attach only where the op is missing).
 import { implicitFrames } from "../../geometry/implicit/frame-report.js";
+import { ORGANIC_LINT_RULES } from "./lint.js";
 
 export default {
   id: "organic",
@@ -22,7 +23,7 @@ export default {
     // The frame report is pure (it validates and lowers, never meshes), so any kernel can run it.
     { name: "implicitFrames", attach: (k) => { k.implicitFrames = (spec) => implicitFrames(spec); } },
   ],
-  lintRules: [],
+  lintRules: ORGANIC_LINT_RULES,
   oracle: { facts: null, metrics: {}, checks: [] },
   processes: [],
   workerSafe: true,
