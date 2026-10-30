@@ -109,3 +109,58 @@ export function footprintFor(part, process, { expanded = [] } = {}) {
     Object.entries(expect ?? {}).some(([name, o]) => name !== "_view" && o && typeof o === "object" && "footprintPct" in o));
   return asserted ? DEFAULT_FOOTPRINT : null;
 }
+
+// ── flexing members (`verify.flex`, oracle/flex-root.js) ─────────────────────
+// The root fillet a flexing member needs, as a share of its thickness; the strain its
+// material takes at the root for a one-time snap, in percent; the steepest its long
+// axis may rise off the bed, in degrees. Guide defaults for a part that names no
+// profile — the root rule and the strain rule hold in any material.
+export const DEFAULT_ROOT_FILLET = 0.5;
+export const DEFAULT_STRAIN = 1.5;
+export const DEFAULT_FLEX_TILT = 45;
+
+const orientationOk = (part) => {
+  const orientation = part?.verify?.orientation;
+  if (orientation != null && !ORIENTATIONS.includes(orientation)) {
+    throw new Error(`unknown verify.orientation: ${JSON.stringify(orientation)} (known: ${ORIENTATIONS.join(", ")})`);
+  }
+};
+const asserts = (expanded, metric) => expanded.some(({ expect }) =>
+  Object.entries(expect ?? {}).some(([name, o]) => name !== "_view" && o && typeof o === "object" && metric in o));
+
+// The least root fillet, as a share of the member's thickness, a declared flexing
+// member is held to (a GATE), or null when switched off. Armed by `verify.flex` alone —
+// no profile needed, the rule holds in any material — so with no profile it is the
+// default; the profile's `rootFillet` sets it, `{ base, rootFillet: null }` switches it off.
+export function rootFilletFor(part, process) {
+  orientationOk(part);
+  const spec = process ?? part?.verify?.process;
+  const v = spec ? resolveProfile(spec).rootFillet : undefined;
+  if (v === null) return null;
+  return typeof v === "number" && Number.isFinite(v) ? v : DEFAULT_ROOT_FILLET;
+}
+
+// The largest root strain, in percent, a flexing member may see at its declared
+// deflection (an advisory), or null when switched off. Read for a member that declares
+// a `deflection`, or where the author asserts `flexStrain`; the profile's `strain` sets
+// the limit, the default stands in with no profile, `{ base, strain: null }` switches it off.
+export function strainFor(part, process) {
+  orientationOk(part);
+  const spec = process ?? part?.verify?.process;
+  const v = spec ? resolveProfile(spec).strain : undefined;
+  if (v === null) return null;
+  return typeof v === "number" && Number.isFinite(v) ? v : DEFAULT_STRAIN;
+}
+
+// The steepest a flexing member's long axis may rise off the bed, in degrees, before
+// its layers stack across the root (a COST, `standing`), or null when not checked. Like
+// overhangAngleFor: the PROFILE alone arms it (the FDM profiles carry `flexTilt`; resin
+// is isotropic and carries none), or an authored `flexTilt` expectation, read against
+// the default when the profile has none.
+export function flexTiltFor(part, process, { expanded = [] } = {}) {
+  orientationOk(part);
+  const spec = process ?? part?.verify?.process;
+  const v = spec ? resolveProfile(spec).flexTilt : undefined;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  return asserts(expanded, "flexTilt") ? DEFAULT_FLEX_TILT : null;
+}

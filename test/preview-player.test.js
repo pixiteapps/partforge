@@ -1,6 +1,6 @@
 // test/preview-player.test.js
 import { expect, test } from "vitest";
-import { createPreviewPlayer, MAX_FRAME_DT } from "../src/framework/preview-player.js";
+import { createPreviewPlayer, MAX_FRAME_DT, animationPoses } from "../src/framework/preview-player.js";
 import { composePose } from "../src/framework/geometry/pose.js";
 
 const T = (z) => composePose([{ t: "translate", v: [0, 0, z] }]);
@@ -254,4 +254,37 @@ test("an orbit while paused stays paused; resume then plays with the user's came
   p.resume();
   expect(p.state().status).toBe("playing"); // the orbit disarmed the cues: no intro
   expect(v.tweens).toHaveLength(1);
+});
+
+// --- animationPoses: the poses an animation is framed over ---------------------
+const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+const slide = (times, xs) => ({
+  times: Float32Array.from(times),
+  translations: Float32Array.from(xs.flatMap((x) => [x, 0, 0])),
+  rotations: Float32Array.from(xs.flatMap(() => [0, 0, 0, 1])),
+});
+
+test("animationPoses samples every keyframe and each gap's midpoint, as the player would pose them", () => {
+  const poses = animationPoses({ duration: 2, tracks: { lid: slide([0, 1, 2], [0, 10, 4]) }, rest: { lid: IDENTITY } });
+  expect(poses.map((p) => p.lid[12])).toEqual([0, 5, 10, 7, 4]);
+  // Untracked sub-parts are not in the maps: they sit at rest.
+  expect(Object.keys(poses[0])).toEqual(["lid"]);
+});
+
+test("animationPoses takes the rest pose out, so t = 0 is the identity on a mesh delivered at its rest", () => {
+  const rest = [...IDENTITY]; rest[13] = 24; // delivered 24 up
+  const track = { times: Float32Array.from([0, 1]), translations: Float32Array.from([0, 24, 0, 0, 30, 0]), rotations: Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1]) };
+  const [first, , last] = animationPoses({ duration: 1, tracks: { lid: track }, rest: { lid: rest } });
+  first.lid.forEach((v, i) => expect(v).toBeCloseTo(IDENTITY[i], 9));
+  expect(last.lid[13]).toBeCloseTo(6, 9);
+});
+
+test("animationPoses thins a dense bake evenly to max, keeping both ends; no tracks means no poses", () => {
+  const times = Array.from({ length: 300 }, (_, i) => i / 100);
+  const poses = animationPoses({ duration: 3, tracks: { a: slide(times, times) }, rest: { a: IDENTITY } }, { max: 20 });
+  expect(poses).toHaveLength(20);
+  expect(poses[0].a[12]).toBeCloseTo(0, 6);
+  expect(poses.at(-1).a[12]).toBeCloseTo(2.99, 5);
+  expect(animationPoses({ duration: 1, tracks: {}, rest: {} })).toEqual([]);
+  expect(animationPoses(null)).toEqual([]);
 });

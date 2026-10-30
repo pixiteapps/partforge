@@ -168,7 +168,7 @@ test("a DECLARED sheet check on a profile too complex to start says so", () => {
 // evaluated, so a sheet-only forge declaring only minWall came back verify.ok true with
 // nothing verified. Now they skip: declared, never evaluated, pointing at the sheet checks.
 test("a print metric declared on a sheet part is not measured, and says what to declare", () => {
-  for (const [metric, expr] of [["minWall", ">=1.2"], ["wall", "2.5..3.5"], ["overhangArea", "<=1"]]) {
+  for (const [metric, expr] of [["minWall", ">=1.2"], ["wall", "2.5..3.5"], ["overhangArea", "<=1"], ["flexRoot", ">=1"], ["flexStrain", "<=1"], ["flexTilt", "<=45"]]) {
     const v = verifyUnhurried(k, forge({ plate: plate(60, 40) }, { expect: { plate: { [metric]: expr } } }));
     expect(v, metric).toMatchObject({ ok: null, declared: 1, evaluated: 0 });
     const [c] = on(v, "plate", metric);

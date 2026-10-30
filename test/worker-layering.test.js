@@ -18,20 +18,9 @@ import { walk, chainTo } from "./helpers/import-graph.js";
 const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const ENTRY = `${ROOT}/src/framework/worker.js`;
 
-// three.js is the viewer's dependency and drags in DOM assumptions; the rest are the
-// Node builtins that a headless-harness module would bring along. Bare builtin names
-// are listed alongside the `node:` prefix because both forms resolve in Node.
-const BANNED_PACKAGES = ["three"];
-const NODE_BUILTINS = ["fs", "path", "url", "module", "os", "crypto", "child_process", "worker_threads", "process", "util", "stream", "zlib"];
-
-// Main-thread-only globals. `self`, `globalThis`, and `fetch` all exist in a worker and
-// are deliberately absent from this list.
-const DOM_GLOBALS = ["document", "window", "localStorage", "sessionStorage", "HTMLElement", "customElements"];
-
-// Same comment-stripping rule the walker uses: this codebase explains WHY in prose, and
-// that prose mentions `document` when describing what a module must not do.
-const stripComments = (src) =>
-  src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+// The banned packages, Node builtins and main-thread globals live in helpers/worker-safety.js,
+// shared with kinematics-entry.test.js so the two guards cannot drift.
+import { BANNED_PACKAGES, NODE_BUILTINS, DOM_GLOBALS, stripComments } from "./helpers/worker-safety.js";
 
 const graph = () => walk(ENTRY, "worker-layering walk");
 
@@ -108,9 +97,10 @@ test("the worker's EAGER import closure loads no oracle pipeline module", () => 
   // downloads or parses. This walk sees only STATIC imports (eager: true), so it
   // fails the moment someone hoists an oracle import back to the top of jobs.js.
   //
-  // Two allowed exceptions, both tiny pure leaves the linter shares (rules-verify.js
-  // reads the DFM profile table and the assertion grammar — data, not pipeline).
-  const ORACLE_EAGER_OK = new Set(["dfm-profiles.js", "assert-dsl.js"]);
+  // Three allowed exceptions, all tiny pure leaves the linter shares (rules-verify.js
+  // reads the DFM profile table, the assertion grammar and the shape of `verify.flex` —
+  // data, not pipeline; the flexing member's READING, flex-root.js, is pipeline).
+  const ORACLE_EAGER_OK = new Set(["dfm-profiles.js", "assert-dsl.js", "flex-members.js"]);
   const { files, importer } = walk(ENTRY, "eager worker walk", { eager: true });
   for (const file of files) {
     if (!file.includes("/src/framework/oracle/")) continue;

@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has twenty: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has twenty-two: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -44,7 +44,11 @@ test/vector2d.test.js rather than by the part),
 relief plate, swappable source), and `laser-box.js` (the sheet-parts reference
 part - five `fingerBox` panels and a lid as `sheetPart` sub-parts, two printed
 hinges keyed into slots; a test fixture and the guide's worked example, with no
-demo page), and `material-swatches.js` (not a reference part: the dev-only
+demo page), `robot-finger.js` (the kinematics reference part - three printed
+links on pin joints, posed by one `limb` from `partforge/kinematics` in
+`derive` and placed with `d.finger.place`, a `curl` animation that never
+rebuilds; the worked example of `docs/domains/kinematics.md`, with no demo
+page), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`), and `offset-demo.js`
 (not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
 `offset-demo.html`).
@@ -363,7 +367,15 @@ the installed package, so let the publish finish before bumping the dep there.
   edge lines, passed straight to `createViewer`, whose one shared
   `lineMaterial` takes them (the per-part fade clones copy them, and a fade's
   line opacity is multiplied by `edgeOpacity`, never replaces it). The
-  cutaway outline and measure lines keep their own widths.
+  cutaway outline and measure lines keep their own widths. Since 0.171.0 a
+  playing animation's fill framing covers every pose it passes through:
+  `animationPoses` (preview-player.js — every keyframe plus each gap's midpoint,
+  thinned to 128) goes to `createViewer` as `framePoses`, and `posedVertices`
+  adds each sub-part's SUPPORT points (its outermost vertex along 64 fixed
+  directions, cached per geometry) in every one of those poses to the exact
+  vertices of the pose shown — never every vertex at every pose, which a dense
+  model would make too slow. The first pose is then smaller than `fill`, by
+  design. A turntable mount ignores it (no animation plays there).
 - **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
   (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
   nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,
@@ -494,8 +506,18 @@ the installed package, so let the publish finish before bumping the dep there.
   each under any profile. `orientation: "print"` arms neither cost. `verify.accept`
   (cost ids, validated by lint's `verify-unknown-accept` against the process's `costs`)
   stamps `accepted: true` on each matching cost and changes nothing else — the reading
-  stays in `costs`; `{ base, overhang: null }` is the off switch. `PRINT_ONLY` keeps all
-  five print metrics off sheet parts. A change to a tier or to what arms a check moves
+  stays in `costs`; `{ base, overhang: null }` is the off switch. `PRINT_ONLY` keeps every
+  print metric off sheet parts. A FLEXING MEMBER (`verify.flex`, read by
+  `oracle/flex-root.js` on the triangles carrying its feature label) adds three: `flexRoot`
+  (a gate armed by `verify.flex` alone — its root fillet radius, read by a ray lifted a
+  little off the member's face into the air, against the profile's `rootFillet` share of
+  its thickness), `flexStrain` (an advisory from a declared `deflection` — 1.5·t·y/L², a
+  straight cantilever, against the profile's `strain`) and `flexTilt` (the `standing`
+  cost, armed by an FDM profile's `flexTilt` alone — the member's long axis off the bed
+  in the print pose). measure() reads geometry only (`flexRoots` per printed sub-part,
+  stamped `measuredFlex` by label group, in the memo key); verify stamps each member's
+  `required`, `deflection` and `strain` before `check()`, and the registry's worst-member
+  pickers read those stamps. A change to a tier or to what arms a check moves
   verdicts, so re-record `test/verify-golden.test.js` in the same commit
   (`PARTFORGE_RECORD_VERIFY_GOLDEN=1`) and read the diff. Docs: `docs/AUTHORING-PARTS.md`
   "Printed parts", the twin of "Sheet parts" and "Routed parts".

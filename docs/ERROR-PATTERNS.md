@@ -234,6 +234,24 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 - **Cause:** The lowest point of the piece is not a flat face, so almost none of its silhouette on the bed actually touches it (a cylinder on its side reads a few percent, under the floor): the first layer has almost nothing to bond to, and the piece tips or pulls loose unless it prints with a brim, a raft, or in a different orientation.
 - **Fix:** Lay the piece on its flat face in its print pose, add a flat foot or pad at its lowest point, or print it with a brim. When the user chose the brim, `verify.accept: ["footprint"]` records it and the cost reads accepted. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Printed parts".
 
+## flex-root-sharp
+
+- **Symptom:** A `✗ … flexRoot` failure from `verify` naming the member in `feature`, whose note reads e.g. `"Right prong": sharp root (90°, 12.2 mm of corner)` or `"Right prong": root radius 0.4 mm, needs ≥ 1 (2 mm thick)`; or, in use, a snap arm, buckle prong, clip or cantilever tab that breaks off flush with the body it grows from.
+- **Cause:** The member declared in `verify.flex` meets the rest of the part at a sharp inside corner, or through a fillet smaller than the process's `rootFillet` share of its thickness (half, on every built-in profile). Bending puts the highest stress at the root, a sharp corner multiplies it several times over, and in FDM the layer bonds are weakest right there — so the member snaps at its root, often on the first few flexes.
+- **Fix:** Round the root with a fillet of at least half the member's thickness: `s.fillet({ r, edges: { near: [x, y, z] } })` on the joined solid, one root edge at a time, or `edges: { inPlane, at }` when every root edge lies on the face the member grows from (fillet before anything else that touches that face joins, so only the roots are selected); or draw the fillet into the 2-D profile the member and body share. Keep the fillet clear of whatever the member slides into — chamfer that mouth to seat it. If a grip rib or barb on the member is labelled apart, list it with the member: `flex: [["Arm", "Arm rib"]]`. If the mesh misreads the member's bending thickness (a wide hook reads its width), declare it: `flex: [{ feature: "Arm", thickness: 2 }]`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Printed parts".
+
+## flex-strain-over
+
+- **Symptom:** A `⚠ … flexStrain` warning from `verify`, e.g. `"Arm": 2.67% at 2 mm (15 mm long, 2 mm thick)` against `<=1.5`; or, in use, a snap arm that whitens, takes a set or cracks at its root the first time it is pressed home.
+- **Cause:** At the deflection declared for it (`flex: [{ feature, deflection }]`) the member's root strain — 1.5 × thickness × deflection / length² for a straight cantilever — is over what the process's material takes for a one-time snap (`strain`: 1.5% PLA, 3% PETG, 2% resin). A short, thick arm with a deep undercut is the usual shape.
+- **Fix:** Lengthen the arm, thin it, or reduce its travel (a shallower undercut; a lead-in chamfer so the snap spreads over more of the stroke). Tapering the arm to half its thickness at the tip lets it bend about 60% further at the same root strain. Switch to PETG where the design is fixed. The formula is a first approximation — a curved or hooked member bends differently — so declare the real bending `thickness` when the mesh misreads it. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Printed parts".
+
+## flex-member-standing
+
+- **Symptom:** A `flexTilt` cost from `verify` under an FDM profile, e.g. `"Arm": 90° off the bed` against `<=45`; or, in use, a snap arm that breaks cleanly along a layer line at its root.
+- **Cause:** In the print pose the member's long axis stands up off the bed, so its layers are stacked across its root; a layer bond is a fraction of the in-plane strength, and bending loads exactly that bond.
+- **Fix:** Pose the piece in `place(..., { purpose: "export" })` so the arm lies along the bed (its root corner then sits within one layer), or split the part so the arm prints flat and joins afterwards. A standing arm the user keeps is a cost they accept (`accept: ["standing"]`): use PETG or anneal, and round the root generously. Resin is isotropic and never reports this. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Printed parts".
+
 ## expect-static-across-presets
 
 - **Symptom:** A `verify` exact gate (`holes`, `volume`, …) fails on SOME presets only — e.g. `✗ planter holes 1  (0 != 1)` on two cases while defaults pass — and the preview looks right for every preset.
@@ -906,6 +924,12 @@ between the Manifold preview and the OCCT STEP export.
 - **Symptom:** `the geometry kernel raised an internal error it could not describe` — from a build or a STEP import, naming the operation when known (`during STEP import of "frame" (17.1 MB)`) and, when the kernel's own heap could say, the C++ exception type (`C++ exception StdFail_NotDone`, `Standard_ConstructionError`, `std::bad_alloc`, …) and the heap size. Before partforge 0.163.1 the same failure was a bare number (`{"ok":false,"error":"154591824"}`), different on every attempt.
 - **Cause:** The OCCT kernel is a WASM build compiled without C++ exception catching, so an exception nothing inside it catches — the STEP reader's transfer refusing an entity, a construction with a zero-length direction, an allocation the heap could not grow for — reaches JavaScript as the exception's ADDRESS. The number is not a code and means nothing across runs. partforge now names the operation and reads the exception's type off the heap, but it cannot read OCCT's own message for it.
 - **Fix:** Act on the type. `std::bad_alloc` or `Standard_OutOfMemory` (the message then says "probably too large for the in-browser kernel") is memory: a STEP import needs roughly six times its file size of kernel heap (measured on OCCT-written files: 17 MB → 100 MiB, 42 MB → 248 MiB), so a file that exhausts the 2 GB wasm32 ceiling is hundreds of megabytes, or the browser refused to grow the heap — simplify the imported model or split it. Any other type on an import is the file itself: re-export it from the CAD tool as AP214/AP242 solids (no assembly-only or surface-only exports) and try the smaller file; the same type from a build is that operation refusing its input (a `Standard_ConstructionError` is usually a zero-length direction or a degenerate profile). Retrying the identical build fails the same way — it is not transient.
+
+## limb-links-hand-chained
+
+- **Symptom:** A solid finger (or other jointed chain of separate solids) comes apart when a joint param moves: the links separate at the joints, or a link bends the wrong way, though each link looks right at rest.
+- **Cause:** The links are chained with hand-written `rotate` calls about hinge points that do not move with the parent joint, so a bend at the base turns the child links about a pivot left at its rest position.
+- **Fix:** Declare the chain once with `limb(...)` from `partforge/kinematics`, pose it in `derive`, and place each link with `d.<limb>.place(solid, joint)`. `place` carries the solid through every parent joint, so the hinges stay joined. Build each link at the origin along +y and let `place` do all the moving.
 
 # Hardware library
 
