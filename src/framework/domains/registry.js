@@ -8,6 +8,7 @@
 // CLI all load it: a manifest that booted a kernel or touched the DOM on import would
 // break every one of them.
 import kinematics from "./kinematics/manifest.js";
+import organic from "./organic/manifest.js";
 
 const ID_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 const STRING_FIELDS = ["title", "when", "subpath", "guide"];
@@ -56,7 +57,7 @@ export function validateDomains(list) {
 }
 
 // One line per domain, in the order the authoring guide's index lists them.
-export const DOMAINS = validateDomains([kinematics]);
+export const DOMAINS = validateDomains([kinematics, organic]);
 
 // The domain that tagged a kernel op, or null for a core op. The tag is what the op
 // index and a host's compact prompt group by; test/kernel-contract.test.js holds every

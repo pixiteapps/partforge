@@ -71,6 +71,10 @@
       "types": "./types/kinematics.d.ts",
       "default": "./src/framework/domains/kinematics/index.js"
     },
+    "./organic": {
+      "types": "./types/organic.d.ts",
+      "default": "./src/framework/domains/organic/index.js"
+    },
     "./tokens.css": "./src/framework/tokens.css",
     "./chrome.css": "./src/framework/chrome.css"
   },
@@ -105,6 +109,9 @@
       ],
       "kinematics": [
         "./types/kinematics.d.ts"
+      ],
+      "organic": [
+        "./types/organic.d.ts"
       ]
     }
   },
