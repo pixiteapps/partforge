@@ -727,8 +727,28 @@ test("a wide flat box seen obliquely is centred at fill 0.8 and touches no edge"
   }
 });
 
-test("an animated file is framed silhouette-centred at fill", async () => {
+test("an animated file is framed over every pose it passes through: it never leaves the frame, and all its poses together span fill", async () => {
+  // The lid swings -110° about X mid-animation, far outside its first pose's outline.
   const handle = mountPreview(makeStage(400, 300), { glb: await animatedGlb((a) => { a.anim = { ...a.anim, cues: [] }; return a; }), fill: 0.8, autostart: false });
+  await handle.ready;
+  const frames = [silhouette(viewers.at(-1), ["base", "lid"])]; // held at t = 0
+  handle.motion.start();
+  // Every 50 ms for one 2 s pass (the extreme pose is at 1 s).
+  const loop = state.renderer.animationLoop;
+  for (let i = 0; i < 44; i++) { loop((clockMs += 50)); frames.push(silhouette(viewers.at(-1), ["base", "lid"])); }
+  for (const b of frames) for (const v of [b.x0, b.x1, b.y0, b.y1]) expect(Math.abs(v)).toBeLessThan(0.81);
+  const all = {
+    x0: Math.min(...frames.map((b) => b.x0)), x1: Math.max(...frames.map((b) => b.x1)),
+    y0: Math.min(...frames.map((b) => b.y0)), y1: Math.max(...frames.map((b) => b.y1)),
+  };
+  expect(Math.max(all.x1 - all.x0, all.y1 - all.y0) / 2).toBeGreaterThan(0.75);
+  // The first pose alone is smaller than fill: the framing made room for the swing.
+  expect(Math.max(frames[0].x1 - frames[0].x0, frames[0].y1 - frames[0].y0) / 2).toBeLessThan(0.75);
+  handle.dispose();
+});
+
+test("a still file is framed exactly as before: no animation, no extra poses", async () => {
+  const handle = mountPreview(makeStage(400, 300), { glb: await animatedGlb(), fill: 0.8, animate: false });
   await handle.ready;
   expectCentredAtFill(silhouette(viewers.at(-1), ["base", "lid"]), 0.8);
   handle.dispose();
