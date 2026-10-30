@@ -20,16 +20,24 @@ const len = (a) => Math.hypot(a[0], a[1], a[2]);
 const unit = (a) => { const l = len(a); return l > 0 ? [a[0] / l, a[1] / l, a[2] / l] : null; };
 
 // One click. Returns the existing spec for a plane reading, the cylinder spec
-// without its depth (⌀ or R only) for a cylinder reading,
+// without its depth (⌀ or R only) and anchored at the click for a cylinder
+// reading,
 // a new `edge` spec for a straight edge, or null when the target is only a
 // start point (corner, midpoint, point, curved edge, bbox or unnamed feature).
-export function firstReading(target, spec) {
+// `hitPoint`, the raw surface point under the pointer, says which side of a
+// cylinder was clicked when the snap itself sits on the axis (a rim snaps to
+// its centre).
+export function firstReading(target, spec, { hitPoint } = {}) {
   if (!target || !spec) return null;
   const { kind } = target;
   if (spec.kind === "cylinder" && (kind === "circle" || kind === "face" || kind === "edge")) {
     // One number: ⌀ (R when partial), no depth dim — a second click reaches the
     // depth. A copy, so the cached feature spec keeps its depth.
-    return { ...spec, values: { diameter: spec.values.diameter, partial: spec.values.partial } };
+    return {
+      ...spec,
+      values: { diameter: spec.values.diameter, partial: spec.values.partial },
+      anchors: { ...spec.anchors, ...clickAnchors(target.point, hitPoint, spec.anchors) },
+    };
   }
   if (spec.kind === "plane" && kind === "face") return spec;
   if (kind === "edge" && target.chain?.straight) {
@@ -41,6 +49,33 @@ export function firstReading(target, spec) {
     };
   }
   return null;
+}
+
+// Where a cylinder reading is drawn: `at`, the axis point level with the click
+// (held to the wall's own length), and `clickDir`, the unit radial direction
+// toward the click (the raw hit when given, else the snap) — absent when both
+// lie on the axis. The
+// placer draws there, so a reading appears at the spot that was clicked, not
+// at whichever end of the feature its axis happens to point to.
+const zero = (v) => v + 0; // no -0 in an anchor
+function clickAnchors(point, hitPoint, { center, axis, top, bottom }) {
+  const a = unit(axis);
+  if (!point || !center || !a) return {};
+  const along = (p) => dot(sub(p, center), a);
+  const ends = [top, bottom].filter(Boolean).map(along);
+  const t = along(point);
+  const h = ends.length ? Math.min(Math.max(t, Math.min(...ends)), Math.max(...ends)) : t;
+  const at = [center[0] + a[0] * h, center[1] + a[1] * h, center[2] + a[2] * h];
+  const out = { at: at.map((v) => zero(q2(v))) };
+  // square to the axis from each point's own level, before any clamp
+  for (const p of [hitPoint, point]) {
+    if (!p) continue;
+    const s = along(p);
+    const radial = sub(sub(p, center), [a[0] * s, a[1] * s, a[2] * s]);
+    const r = len(radial);
+    if (r > 1e-6) { out.clickDir = radial.map((v) => zero(v / r)); break; }
+  }
+  return out;
 }
 
 // Two clicks. a, b are parts-frame points; axes the three unit frame vectors;

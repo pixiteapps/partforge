@@ -255,6 +255,8 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
         center: pt(spec.anchors.center), axis: dir(spec.anchors.axis),
         top: pt(spec.anchors.top), bottom: pt(spec.anchors.bottom),
         rimDir: spec.anchors.rimDir ? dir(spec.anchors.rimDir) : undefined,
+        at: spec.anchors.at ? pt(spec.anchors.at) : undefined,
+        clickDir: spec.anchors.clickDir ? dir(spec.anchors.clickDir) : undefined,
       } };
     }
     if (spec.kind === "edge") {
@@ -599,7 +601,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
         : null,
     });
     if (!target) return null;
-    return { target, mesh, subPart: hit.subPart, featureSpec: fSpec, featureLabel: hit.feature?.label ?? null };
+    return { target, mesh, subPart: hit.subPart, featureSpec: fSpec, featureLabel: hit.feature?.label ?? null, hitPoint };
   }
 
   function snapText(snap) {
@@ -742,7 +744,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   };
 
   function clickRecord(snap) {
-    const { target, mesh, subPart, featureSpec: fSpec } = snap;
+    const { target, mesh, subPart, featureSpec: fSpec, hitPoint } = snap;
     return {
       subPart,
       mesh,
@@ -750,7 +752,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       view: getContext().view,
       pointGeom: target.point,
       target,
-      spec: firstReading(target, fSpec),
+      spec: firstReading(target, fSpec, { hitPoint }),
       normal: target.kind === "face" && fSpec?.kind === "plane" ? fSpec.anchors.normal : null,
     };
   }

@@ -30,7 +30,11 @@ const rotated30 = () => ({ elements: [c30, s30, 0, 0, -s30, c30, 0, 0, 0, 0, 1, 
 describe("firstReading", () => {
   // One number for a cylinder: ⌀ (or R when partial), never its depth — the
   // depth is reachable through a second click.
-  const diameterOnly = { ...holeSpec, values: { diameter: 6, partial: false } };
+  // `at` is the axis point level with the click; a centre click has no side
+  const diameterOnly = {
+    ...holeSpec, values: { diameter: 6, partial: false },
+    anchors: { ...holeSpec.anchors, at: [0, 0, 4] },
+  };
   test("circle target reads the cylinder's diameter only", () => {
     expect(firstReading(circle, holeSpec)).toEqual(diameterOnly);
     expect("depth" in firstReading(circle, holeSpec).values).toBe(false);
@@ -38,7 +42,28 @@ describe("firstReading", () => {
   });
   test("face or edge on a cylinder reads the cylinder's diameter", () => {
     expect(firstReading({ kind: "face", point: [0, 0, 4], featureId: 2 }, holeSpec)).toEqual(diameterOnly);
-    expect(firstReading(edgeT(5, false), holeSpec)).toEqual(diameterOnly);
+    expect(firstReading(edgeT(5, false), holeSpec).values).toEqual(diameterOnly.values);
+  });
+  test("a cylinder reading is anchored at the clicked depth and side", () => {
+    // the wall, 1 mm down from the top, on the -Y side
+    const s = firstReading({ kind: "face", point: [0, -3, 3], featureId: 2 }, holeSpec);
+    expect(s.anchors.at).toEqual([0, 0, 3]);
+    expect(s.anchors.clickDir).toEqual([0, -1, 0]);
+    // a click past either end of the wall stays on the wall
+    const above = firstReading({ kind: "circle", point: [3, 0, 9], featureId: 2 }, holeSpec);
+    expect(above.anchors.at).toEqual([0, 0, 4]);
+    expect(above.anchors.clickDir).toEqual([1, 0, 0]);
+  });
+  test("a rim snap on the centre takes its side from the raw hit point", () => {
+    // the snap is the rim's centre; the pointer was over the rim on the +Y side
+    const s = firstReading(circle, holeSpec, { hitPoint: [0.2, 3.1, 4] });
+    expect(s.anchors.at).toEqual([0, 0, 4]); // the rim's level, from the snap
+    expect(s.anchors.clickDir[1]).toBeCloseTo(0.998, 3);
+    expect(s.anchors.clickDir[2]).toBe(0);
+  });
+  test("a cylinder whose axis points down still anchors at the click", () => {
+    const flipped = { ...holeSpec, anchors: { ...holeSpec.anchors, axis: [0, 0, -1], top: [0, 0, 0], bottom: [0, 0, 4] } };
+    expect(firstReading({ kind: "circle", point: [0, 3, 4], featureId: 2 }, flipped).anchors.at).toEqual([0, 0, 4]);
   });
   test("a partial cylinder keeps its partial flag (R)", () => {
     const arc = { ...holeSpec, values: { diameter: 6, depth: 4, partial: true } };

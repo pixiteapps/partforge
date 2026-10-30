@@ -511,9 +511,15 @@ function placePlane(out, item, spec, choices, { lanes, unit }) {
   }
 }
 
+// A clicked reading (readings.js firstReading) carries `at` and `clickDir`: the
+// ⌀ line then crosses the hole at the clicked depth, starting from the clicked
+// side with its label off that end, and an R leader springs from the clicked
+// spot. Without them (or for a centre click, which has no side) the line sits
+// in the `top` plane along the camera's wide axis, as before.
 function placeCylinder(out, item, spec, choices, { lanes, unit }) {
   const axis = v3(spec.anchors.axis).normalize();
-  const top = v3(spec.anchors.top);
+  const top = v3(spec.anchors.at ?? spec.anchors.top);
+  const clickDir = spec.anchors.clickDir ? v3(spec.anchors.clickDir).normalize() : null;
   const bottom = v3(spec.anchors.bottom);
   const r = spec.values.diameter / 2;
   const du = v3(choices[`${item.id}|du`]?.du ?? spec.anchors.rimDir ?? [1, 0, 0]).normalize();
@@ -521,13 +527,13 @@ function placeCylinder(out, item, spec, choices, { lanes, unit }) {
 
   if (spec.values.partial) {
     // R leader from the covered-arc midpoint, radial, in the top plane
-    const rd = v3(spec.anchors.rimDir ?? du.toArray()).normalize();
+    const rd = clickDir ?? v3(spec.anchors.rimDir ?? du.toArray()).normalize();
     const rim = top.clone().addScaledVector(rd, r);
     out.leaders.push({
       rim: rim.toArray(), dir: rd.toArray(),
       perp: new THREE.Vector3().crossVectors(axis, rd).normalize().toArray(),
       label: {
-        text: `R${unit.format(r)}`, value: r,
+        text: `R${unit.format(r)}${unit.suffix}`, value: r,
         x: new THREE.Vector3().crossVectors(axis, rd).normalize().toArray(),
         y: rd.clone().negate().toArray(),
       },
@@ -537,16 +543,19 @@ function placeCylinder(out, item, spec, choices, { lanes, unit }) {
     // projected ellipse's WIDE axis (du, the camera radial, is its
     // foreshortened one) — arrows outward at both rim points, ⌀ text
     // continuing off the end of the line
-    const rimA = top.clone().addScaledVector(dv, r);
-    const rimB = top.clone().addScaledVector(dv, -r);
+    // A click picks the side instead: rimA is the clicked rim point.
+    const line = clickDir ?? dv;
+    const across = clickDir ? new THREE.Vector3().crossVectors(clickDir, axis).normalize() : du;
+    const rimA = top.clone().addScaledVector(line, r);
+    const rimB = top.clone().addScaledVector(line, -r);
     out.diams.push({
       // scene contract: `du` is the label-offset direction off rimA (here the
       // line's own direction, so the text runs off the end of the diameter);
       // `dv` is the arrows' in-plane spread direction
-      rimA: rimA.toArray(), rimB: rimB.toArray(), du: dv.toArray(), dv: du.toArray(),
+      rimA: rimA.toArray(), rimB: rimB.toArray(), du: line.toArray(), dv: across.toArray(),
       label: {
-        text: `⌀${unit.format(spec.values.diameter)}`, value: spec.values.diameter,
-        x: dv.toArray(), y: du.clone().negate().toArray(),
+        text: `⌀${unit.format(spec.values.diameter)}${unit.suffix}`, value: spec.values.diameter,
+        x: line.toArray(), y: across.clone().negate().toArray(),
       },
     });
   }

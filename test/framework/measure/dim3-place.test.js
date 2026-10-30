@@ -290,7 +290,7 @@ describe("placeDims — plane and cylinder", () => {
     const choices = evaluateChoices([item], { camPos: [100, 0, 5], center: [0, 0, 5], prev: {} });
     const d = placeDims([item], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];
     expect(d.diams.length).toBe(1);
-    expect(d.diams[0].label.text).toBe("⌀8.00");
+    expect(d.diams[0].label.text).toBe("⌀8.00 mm");
     // camera at +X → du = +X (the projected ellipse's foreshortened axis);
     // the diameter line runs along dv = +Y, the WIDE axis, at radius 4
     expect(d.diams[0].rimA[1]).toBeCloseTo(4, 5);
@@ -304,8 +304,36 @@ describe("placeDims — plane and cylinder", () => {
     const part = { ...full, values: { ...full.values, partial: true } };
     const d2 = placeDims([{ id: "h", tier: "hover", spec: part }], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];
     expect(d2.leaders.length).toBe(1);
-    expect(d2.leaders[0].label.text).toBe("R4.00");
+    expect(d2.leaders[0].label.text).toBe("R4.00 mm");
     expect(d2.leaders[0].rim[0]).toBeCloseTo(4, 5); // on the arc, along rimDir
+  });
+
+  it("a clicked cylinder draws its ⌀ across the hole from the clicked side, at the clicked depth", () => {
+    const spec = {
+      kind: "cylinder",
+      values: { diameter: 8, partial: false },
+      anchors: {
+        center: [0, 0, 5], axis: [0, 0, 1], top: [0, 0, 10], bottom: [0, 0, 0], rimDir: [1, 0, 0],
+        at: [0, 0, 7], clickDir: [0, -1, 0],
+      },
+    };
+    const item = { id: "first", tier: "pinned", spec };
+    // the camera sits on +X: without the click, the line would run along Y anyway,
+    // so put it on -Y to prove the click wins over the camera
+    const choices = evaluateChoices([item], { camPos: [0, -100, 30], center: [0, 0, 5], prev: {} });
+    const d = placeDims([item], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];
+    expect(d.diams.length).toBe(1);
+    const diam = d.diams[0];
+    // rimA is the clicked side, rimB straight across through the centre
+    expect(diam.rimA.map((v) => +v.toFixed(5) + 0)).toEqual([0, -4, 7]);
+    expect(diam.rimB.map((v) => +v.toFixed(5) + 0)).toEqual([0, 4, 7]);
+    // the label runs off the clicked end, outward
+    expect(diam.du.map((v) => +v.toFixed(5) + 0)).toEqual([0, -1, 0]);
+    expect(d.dims.length).toBe(0); // no depth on a first reading
+
+    const part = { ...spec, values: { ...spec.values, partial: true } };
+    const d2 = placeDims([{ id: "first", tier: "pinned", spec: part }], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];
+    expect(d2.leaders[0].rim.map((v) => +v.toFixed(5) + 0)).toEqual([0, -4, 7]);
   });
 });
 
