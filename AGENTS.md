@@ -607,17 +607,22 @@ the installed package, so let the publish finish before bumping the dep there.
   worker-safe; a domain never imports another domain. A manifest's `lintRules` may
   import `lint/finding.js` and nothing else from lint - `verify-metrics.js` reads the
   registry at module top level, so a rule reaching `rules-verify.js` would hit the
-  registry before it exists. `DOMAINS` lists one domain, kinematics
-  (`domains/kinematics/`, `partforge/kinematics`), which tags no kernel op and
-  declares no facts, so the registry's other seams are exercised by the test-only
+  registry before it exists. `DOMAINS` lists two domains. Kinematics
+  (`domains/kinematics/`, `partforge/kinematics`) tags no kernel op. Organic
+  (`domains/organic/`, `partforge/organic`) is registered IN PLACE: it tags
+  `implicit` and `implicitFrames`, but the engine stays in `geometry/implicit/`, since
+  both backends and the native core call it and core may not import a domain folder;
+  its attaches are only the fallbacks for a kernel without the ops, and its entry
+  reaches the grammar's leaf modules alone (no mesher, no native core —
+  `test/organic-domain.test.js`). Neither declares facts, so the registry's other seams are exercised by the test-only
   fixture at `test/fixtures/domain-fixture/`, which seam tests reach by
   `vi.mock`-ing `registry.js` - never by a test-only parameter on a public API.
   `partforge/lint` exports the registry as names only (`DOMAINS`) and
   `domainsOf(sources)`, which tells a host which domain guides to load for an
   existing part from its source alone (a static import of the subpath or a call of a
   tagged op; prose, string literals and dynamic `import()` never count). Sheet, print,
-  text, vector, image, import and organic are NOT domains yet; they migrate one
-  design at a time.
+  text, vector, image and import are NOT domains yet; they migrate one design at a
+  time.
 - **`src/framework/core/`** + **`native/`** - the native core: C++ ports of the
   hottest per-vertex JS (`creasedNormals` with the fillet-surface evaluators,
   the oracle's BVH + min-wall, and the implicit engine's sample/mesh/cleanup/detail

@@ -544,7 +544,7 @@ export interface HeightfieldGrid {
   data: Uint16Array;
 }
 
-/** k.implicit — a signed-distance element tree meshed into a solid (docs/superpowers/specs/2026-10-14-implicit-organic-parts-design.md). */
+/** k.implicit — a signed-distance element tree meshed into a solid (docs/domains/organic.md). */
 export interface ImplicitNode { kind: string; frame?: string; at?: [number, number, number]; label?: string; [field: string]: unknown; }
 export interface ImplicitFrame { parent?: string; at?: [number, number, number]; rotate?: { axis: "x" | "y" | "z" | [number, number, number]; deg: number } | Array<{ axis: "x" | "y" | "z" | [number, number, number]; deg: number }>; }
 export interface ImplicitOptions {
@@ -553,7 +553,7 @@ export interface ImplicitOptions {
   detail?: Array<{ kind: "creases" | "noise" | "texture" | "expr"; [field: string]: unknown }>;
   /** Print/export grid edge, mm. Default 0.6. */
   resolution?: number;
-  /** Preview grid edge, mm. Default 1.5. */
+  /** Preview grid edge, mm. Default: chosen per tree from 0.5–3 mm against a cost budget (docs/domains/organic.md). */
   preview?: number;
 }
 

@@ -47,6 +47,7 @@ description, read that guide first.
 | Domain | Use it for | Import | Guide |
 |---|---|---|---|
 | Kinematics | jointed limbs, fingers, arms, robot hands; posing links about joints; reach and grip | `import { … } from "partforge/kinematics"` | [`docs/domains/kinematics.md`](domains/kinematics.md) |
+| Organic | smooth organic bodies: hands, paws, creatures, blobby or sculpted forms; blended signed-distance shapes with surface detail | `import { … } from "partforge/organic"` | [`docs/domains/organic.md`](domains/organic.md) |
 <!-- end generated -->
 
 ---
