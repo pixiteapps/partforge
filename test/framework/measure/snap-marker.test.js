@@ -191,6 +191,24 @@ test("setStart draws a persistent dot independent of show/clear", () => {
   s.marker.dispose();
 });
 
+test("setEnd draws a second persistent dot, independent of the start and of show/clear", () => {
+  const s = setup();
+  const pin = (name) => s.mesh.children.find((c) => c.name === name);
+  s.marker.setStart([20, 0, 2], s.mesh);
+  s.marker.setEnd([0, 10, 2], s.mesh);
+  expect(s.visible(pin("pf-measure-end"))).toBe(true);
+  expect(pin("pf-measure-end").children[0].position.toArray()).toEqual([0, 10, 2]);
+  expect(s.viewer.captureHidden.has(pin("pf-measure-end"))).toBe(true);
+  s.marker.show({ kind: "corner", point: [0, 0, 2], featureId: 1 }, s.mesh, "c");
+  s.marker.clear();
+  expect(s.visible(pin("pf-measure-end"))).toBe(true);
+  s.marker.setEnd(null);
+  expect(pin("pf-measure-end")?.visible ?? false).toBe(false);
+  expect(s.visible(pin("pf-measure-start"))).toBe(true);
+  s.marker.dispose();
+  expect(s.mesh.children.filter((c) => c.name?.startsWith("pf-measure"))).toHaveLength(0);
+});
+
 test("frames keep the dot screen-constant and the label on the point", () => {
   const s = setup();
   s.marker.show({ kind: "corner", point: [20, 10, 2], featureId: 1 }, s.mesh, "c");

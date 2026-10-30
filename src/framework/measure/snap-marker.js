@@ -14,7 +14,9 @@
 // object is registered with registerCaptureHidden, like the highlight: pointer
 // feedback never appears in a capture. setStart(point|null, mesh) keeps a
 // second, persistent dot for a first click's start point, untouched by
-// show/clear. show() with the same target (kind, point within 1e-6, mesh)
+// show/clear, and setEnd(point|null, mesh) a third for a distance's second
+// point, so a finished distance stays tied to the two spots it measures.
+// show() with the same target (kind, point within 1e-6, mesh)
 // does nothing, so a resting pointer costs nothing. Chains are read-only.
 import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
@@ -123,15 +125,22 @@ export function createSnapMarker(viewer, { stage } = {}) {
   dot.visible = false;
   marks.add(line, dot);
 
-  const start = new THREE.Group();
-  start.name = "pf-measure-start";
-  start.visible = false;
-  const startDot = makeDot("pf-measure-start-dot");
-  start.add(startDot);
+  // The clicked points: persistent dots, each in its own group so it can sit
+  // under a different sub-part's mesh than the other.
+  function makePin(name) {
+    const group = new THREE.Group();
+    group.name = name;
+    group.visible = false;
+    const pinDot = makeDot(`${name}-dot`);
+    group.add(pinDot);
+    return { group, dot: pinDot };
+  }
+  const pins = [makePin("pf-measure-start"), makePin("pf-measure-end")];
+  const [startPin, endPin] = pins;
 
   const unregisterCapture = [
     viewer.registerCaptureHidden?.(marks) ?? (() => {}),
-    viewer.registerCaptureHidden?.(start) ?? (() => {}),
+    ...pins.map((p) => viewer.registerCaptureHidden?.(p.group) ?? (() => {})),
   ];
 
   const label = document.createElement("div");
@@ -177,7 +186,7 @@ export function createSnapMarker(viewer, { stage } = {}) {
     const el = viewer.domElement;
     lineMat.resolution.set(el?.clientWidth || 1, el?.clientHeight || 1);
     if (marks.visible && dot.visible) sizeDot(dot);
-    if (start.visible) sizeDot(startDot);
+    for (const p of pins) if (p.group.visible) sizeDot(p.dot);
     if (marks.visible || !label.hidden) placeLabel();
   }
   const offFrame = viewer.onFrame?.(tick) ?? (() => {});
@@ -240,14 +249,16 @@ export function createSnapMarker(viewer, { stage } = {}) {
     redraw();
   }
 
-  function setStart(point, mesh) {
+  function setPin(pin, point, mesh) {
     redraw();
-    if (!point || !mesh) { start.visible = false; return; }
-    startDot.position.set(...point);
-    reparent(start, mesh);
-    start.visible = true;
-    sizeDot(startDot);
+    if (!point || !mesh) { pin.group.visible = false; return; }
+    pin.dot.position.set(...point);
+    reparent(pin.group, mesh);
+    pin.group.visible = true;
+    sizeDot(pin.dot);
   }
+  const setStart = (point, mesh) => setPin(startPin, point, mesh);
+  const setEnd = (point, mesh) => setPin(endPin, point, mesh);
 
   function dispose() {
     runCleanupSteps([
@@ -255,7 +266,7 @@ export function createSnapMarker(viewer, { stage } = {}) {
       offTheme,
       () => highlight.dispose(),
       () => marks.parent?.remove(marks),
-      () => start.parent?.remove(start),
+      ...pins.map((p) => () => p.group.parent?.remove(p.group)),
       ...unregisterCapture,
       () => label.remove(),
       () => line.geometry.dispose(),
@@ -267,5 +278,5 @@ export function createSnapMarker(viewer, { stage } = {}) {
     ], "snap marker cleanup failed");
   }
 
-  return { show, clear, setStart, dispose };
+  return { show, clear, setStart, setEnd, dispose };
 }

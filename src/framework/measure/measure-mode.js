@@ -98,7 +98,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   let units = "mm";            // display only; values stay mm internally
   let straight = false;        // the chrome's toggle; Shift does the same per click
   let scene = null;            // created on first enable, kept across toggles
-  let marker = null;           // the hover snap marker + the start-point dot
+  let marker = null;           // the hover snap marker + the clicked-point dots
   let detached = false;
 
   // ---- the two clicks ------------------------------------------------------
@@ -474,10 +474,13 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     }
   }
 
-  function syncStart() {
-    // The start point is marked whenever the first click gave no reading.
-    if (first && !first.spec) marker?.setStart(first.pointGeom, first.mesh);
+  function syncPins() {
+    // The start point is marked whenever no reading shows the first click: it
+    // gave none, or a distance replaced it. A distance marks its second point.
+    if (first && (!first.spec || second)) marker?.setStart(first.pointGeom, first.mesh);
     else marker?.setStart(null);
+    if (second) marker?.setEnd(second.pointGeom, second.mesh);
+    else marker?.setEnd(null);
   }
 
   // Back to idle. Every clear path tells pin listeners (the Clear button's
@@ -492,6 +495,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     second = null;
     forgetChoices();
     marker?.setStart(null);
+    marker?.setEnd(null);
     notifyPins();
     if (redraw) rebuild();
   }
@@ -788,7 +792,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       second = candidate;
       if (!currentSpan()) { second = null; return; } // the same point again: nothing
       forgetChoices();
-      syncStart();
+      syncPins();
       notifyPins();
       rebuild();
       return;
@@ -797,7 +801,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     first = click;
     second = null;
     forgetChoices();
-    syncStart();
+    syncPins();
     if (click.spec) revealRelevant([click.subPart], click.spec.values);
     notifyPins();
     rebuild();

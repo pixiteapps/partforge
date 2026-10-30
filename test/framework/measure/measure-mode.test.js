@@ -168,11 +168,13 @@ function setup({ parts, mesh = plateMesh() } = {}) {
     .map((c) => c.userData.pfDimItemId);
   const snapLabel = () => viewer.stage.querySelector(".pf-measure-snap");
   const snapShown = () => !!snapLabel() && !snapLabel().hidden;
-  const startDot = () => {
+  const pinDot = (name) => {
     let found = null;
-    viewer.__parts.traverse((o) => { if (o.name === "pf-measure-start") found = o; });
+    viewer.__parts.traverse((o) => { if (o.name === name) found = o; });
     return found;
   };
+  const startDot = () => pinDot("pf-measure-start");
+  const endDot = () => pinDot("pf-measure-end");
   // world positions of one item's dim labels, for "did the placement move?"
   const labelPositions = (prefix) => {
     viewer.__parts.updateMatrixWorld(true);
@@ -180,7 +182,7 @@ function setup({ parts, mesh = plateMesh() } = {}) {
       .filter((c) => c.userData.pfDimItemId?.startsWith(prefix))
       .map((c) => c.getWorldPosition(new THREE.Vector3()).toArray());
   };
-  return { mesh, viewer, mode, ctx, revealParams, dimGroup, itemIds, snapLabel, snapShown, startDot, labelPositions, idleQueue, runIdle };
+  return { mesh, viewer, mode, ctx, revealParams, dimGroup, itemIds, snapLabel, snapShown, startDot, endDot, labelPositions, idleQueue, runIdle };
 }
 
 // Client px of a parts-frame point (the fake's 100×100 canvas at the origin).
@@ -559,11 +561,12 @@ test("touch drag elsewhere does not commit", () => {
 // ---- second and third clicks --------------------------------------------------
 
 test("second click draws one span; pinCount is 2", () => {
-  const { viewer, mode, dimGroup, itemIds, revealParams, startDot } = setup();
+  const { viewer, mode, dimGroup, itemIds, revealParams, startDot, endDot } = setup();
   const onPins = vi.fn();
   mode.onPinsChange(onPins);
   mode.setEnabled(true);
   clickPoint(viewer, CORNER_A);
+  expect(endDot()?.visible ?? false).toBe(false);
   clickPoint(viewer, CORNER_C);
   expect(mode.pinCount()).toBe(2);
   expect(onPins).toHaveBeenCalledTimes(2);
@@ -573,16 +576,25 @@ test("second click draws one span; pinCount is 2", () => {
   expect(itemIds()).not.toContain("first");
   expect(revealParams).not.toHaveBeenCalled(); // distances never flash
   expect(startDot()?.visible).toBe(true); // a no-reading start point stays marked
+  // the second point stays marked where it was clicked, after the pointer leaves
+  expect(endDot()?.visible).toBe(true);
+  expect(endDot().children[0].position.toArray()).toEqual(CORNER_C);
+  viewer.domElement.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
+  expect(endDot()?.visible).toBe(true);
   mode.detach();
 });
 
 test("a distance replaces the first reading on screen", () => {
-  const { viewer, mode, itemIds, revealParams } = setup();
+  const { viewer, mode, itemIds, revealParams, startDot, endDot } = setup();
   mode.setEnabled(true);
   clickAt(viewer.domElement); // the face: W × H, with the clicked point as the start
+  expect(startDot()?.visible ?? false).toBe(false); // the reading shows the face
   revealParams.mockClear();
   clickPoint(viewer, CORNER_C);
   expect(mode.pinCount()).toBe(2);
+  // the reading is gone, so both ends of the distance are marked
+  expect(startDot()?.visible).toBe(true);
+  expect(endDot()?.visible).toBe(true);
   expect(itemIds()).not.toContain("first");
   expect(itemIds().filter((id) => id === "span").length).toBe(1);
   expect(revealParams).not.toHaveBeenCalled();
@@ -629,7 +641,7 @@ test("the straight toggle redraws a distance already on screen", () => {
 });
 
 test("a toggle that turns the distance under MIN_SPAN_MM clears it and tells pin listeners", () => {
-  const { viewer, mode, itemIds, startDot } = setup();
+  const { viewer, mode, itemIds, startDot, endDot } = setup();
   mode.setEnabled(true);
   clickPoint(viewer, CORNER_A);
   clickPoint(viewer, CORNER_C, { shiftKey: true }); // straight
@@ -643,11 +655,12 @@ test("a toggle that turns the distance under MIN_SPAN_MM clears it and tells pin
   expect(onPins).toHaveBeenCalledTimes(1);
   expect(itemIds().every((id) => id === "overall")).toBe(true);
   expect(startDot()?.visible ?? false).toBe(false);
+  expect(endDot()?.visible ?? false).toBe(false);
   mode.detach();
 });
 
 test("third click starts over", () => {
-  const { viewer, mode, itemIds, revealParams } = setup();
+  const { viewer, mode, itemIds, revealParams, endDot } = setup();
   const onPins = vi.fn();
   mode.onPinsChange(onPins);
   mode.setEnabled(true);
@@ -658,6 +671,7 @@ test("third click starts over", () => {
   expect(mode.pinCount()).toBe(1);
   expect(itemIds()).not.toContain("span");
   expect(itemIds()).toContain("first");
+  expect(endDot()?.visible ?? false).toBe(false);
   expect(revealParams).toHaveBeenCalledWith(["plate_w"], null);
   expect(onPins).toHaveBeenCalledTimes(3);
   mode.detach();
@@ -692,7 +706,7 @@ test("click on background keeps the reading", () => {
 // ---- clearing -----------------------------------------------------------------
 
 test("Clear keeps the overall dims", () => {
-  const { viewer, mode, itemIds, startDot } = setup();
+  const { viewer, mode, itemIds, startDot, endDot } = setup();
   const onPins = vi.fn();
   mode.onPinsChange(onPins);
   mode.setEnabled(true);
@@ -705,6 +719,7 @@ test("Clear keeps the overall dims", () => {
   expect(itemIds()).toContain("overall");
   expect(itemIds()).not.toContain("span");
   expect(startDot()?.visible ?? false).toBe(false);
+  expect(endDot()?.visible ?? false).toBe(false);
   mode.detach();
 });
 
