@@ -35,9 +35,9 @@ it actually did, which includes clamps and misses.
 1. **Structure.** `limb(name, def)` validates the joints once and returns a limb.
 2. **Pose.** `limb.pose(opts, frames?)` returns a posed limb. You can call it as many
    times as necessary.
-3. **Output.** The posed limb has `place(solid, joint)`, `world(joint)`, `frames`,
-   `values` and `report`, and `flesh()` and `attach()` for a `k.implicit` body (see
-   "Organic bodies").
+3. **Output.** The posed limb has `place(solid, joint, { from? })`, `world(joint)`,
+   `frames`, `values` and `report`, and `flesh()` and `attach()` for a `k.implicit`
+   body (see "Organic bodies").
 
 ```js
 const index = limb("index", {
@@ -69,7 +69,7 @@ posed.world("pip");           // { origin: [-30, 122.997, -30.174], x: [1, 0, 0]
 
 | field | meaning |
 | --- | --- |
-| `joints` | Required. A non-empty array, base first. An entry is a joint name, or `{ name, axis?, length?, range?, follow?, type? }`. |
+| `joints` | Required. A non-empty array, base first. An entry is a joint name, or `{ name, type?, axis?, length?, offset?, range?, cone?, follow? }`. |
 | `lengths` | One length per joint, in mm: from that joint to the next joint, and from the last joint to the tip. Alternatively, give each joint its own `length`. If you give both, they must agree. |
 | `toward` | The direction the straight limb points. Required unless you use `rotate`. |
 | `bendToward` | The side a positive bend curls toward. Required unless you use `rotate`. |
@@ -95,7 +95,12 @@ An unknown field is an error. This prevents a typo from being ignored.
   leader's value has already been clamped. The follower then clamps to its own range.
   `joint` must name an EARLIER joint of the same limb. A follower takes no pose value
   of its own.
-- **`type`**: only `"hinge"`.
+- **`offset: [x, y, z]`**: moves this joint off the straight line, in mm. The joint
+  sits at the end of the previous segment (`[0, length, 0]` in the previous joint's
+  frame) plus `offset`, in that same frame, so the offset turns with the previous
+  joint. The base joint takes no offset: place it with the limb's `at`. See "Joints
+  off the line".
+- **`type`**: `"hinge"` (the default) or `"ball"`. See "Ball joints".
 - The joint name `"tip"` is reserved for the end frame.
 
 **A two-axis base** (a robot knuckle that swings sideways and also bends) is two joints
@@ -116,6 +121,60 @@ arm.pose({ bend: { yaw: 30, shoulder: 20, elbow: 40 } }).report.tip;   // [79.32
 arm.pose({ curl: 0.5, bend: { yaw: 30 } }).report.bend;                // [30, 45, 75]
 ```
 
+### Joints off the line: `offset`
+
+Use `offset` when the hinges of one limb are not on one straight line. A printed
+finger is the usual case: each pin sits at the height of its own link's radius, so each
+hinge is a little lower than the one before it. Give each joint after the base the step
+from where the previous segment ends:
+
+```js
+const knuckle = limb("knuckle", {
+  at: [0, 0, 4.6], toward: [0, 1, 0], bendToward: [0, 0, -1],
+  joints: ["mcp", { name: "pip", offset: [0, 0, -0.5] }, { name: "dip", offset: [0, 0, -0.5] }],
+  lengths: [40, 25, 20],
+});
+knuckle.pose({}).frames["knuckle.pip"];          // { parent: "knuckle.mcp", at: [0, 40, -0.5] }
+knuckle.pose({}).report.tip;                      // [0, 85, 3.6]
+knuckle.pose({ bend: [90, 0, 0] }).world("pip").origin;   // [0, -0.5, -35.4]  the step turned with mcp
+```
+
+`reach` and `grip` solve through offsets. `reach` still needs its aiming joint at the
+base, so the joints up to and including it take no offset.
+
+### Ball joints
+
+`type: "ball"` makes a joint that turns about any axis through its centre: a ball in a
+socket. It has no `axis` and no `range`. It takes **`cone`**, the largest swing from
+rest in degrees (`0 < cone ≤ 180`, default 180). It cannot follow a joint, and no joint
+can follow it.
+
+Pose a ball joint with an object in `bend`: `{ bend?, spread?, twist? }`, in degrees,
+with absent keys 0. The segment swings ONCE, by `√(bend² + spread²)` degrees: `bend`
+alone swings it as a hinge bend does (toward `bendToward`), and `spread` alone as a
+`"spread"` joint does. Then `twist` rolls it about its own swung length. Thus the
+order of the words cannot change the pose, and the swing is what the cone limits. A
+swing past the cone scales `bend` and `spread` down together, and `report.clamped` is
+true for the joint.
+
+```js
+const thumb = limb("thumb", {
+  toward: [0, 1, 0], bendToward: [0, 0, -1],
+  joints: [{ name: "ball", type: "ball", cone: 45 }, { name: "ip", range: [0, 90] }],
+  lengths: [30, 20],
+});
+thumb.pose({ bend: { ball: { bend: 30 } } }).report.tip;     // [0, 43.301, -25]
+thumb.pose({ bend: { ball: { spread: 30 } } }).report.tip;   // [-25, 43.301, 0]
+thumb.pose({ bend: { ball: { bend: 40, spread: 30 } } }).report;
+// { bend: [{ bend: 36, spread: 27, twist: 0 }, 0], clamped: [true, false], tip: [-21.213, 35.355, -28.284] }
+thumb.pose({ curl: 1 }).report.bend;                          // [{ bend: 0, spread: 0, twist: 0 }, 90]
+```
+
+`curl` leaves a ball at rest unless you name it in an object `bend`. In an array
+`bend`, a ball's entry is its object. `reach` and `grip` hold a ball at the value you
+give and solve the hinges. The cone is round: for a limit on one side only, use hinge
+joints.
+
 ## Words for orientation
 
 - **`toward`**: a direction vector. The straight limb points along it.
@@ -132,7 +191,7 @@ The pose words:
 
 | word | meaning and sign |
 | --- | --- |
-| `bend` | Degrees per driven joint (followers are skipped). Use an array in joint order, or an object keyed by joint name, such as `{ pip: 60 }`. A joint that the object leaves out stays at 0. A positive value bends toward `bendToward` and a negative value bends away (hyperextension), whichever way the limb points. For a joint whose `axis` is not `"bend"`, the value turns about that joint's axis. |
+| `bend` | Degrees per driven joint (followers are skipped). Use an array in joint order, or an object keyed by joint name, such as `{ pip: 60 }`. A ball joint's value is an object (see "Ball joints"). A joint that the object leaves out stays at 0. A positive value bends toward `bendToward` and a negative value bends away (hyperextension), whichever way the limb points. For a joint whose `axis` is not `"bend"`, the value turns about that joint's axis. |
 | `curl` | From 0 to 1. Each driven `"bend"`-axis joint moves from its straightest in-range value (the value nearest 0) toward its closing end (`range[1]`, or `range[0]` if the whole range is negative) by `curl`. For a range that contains 0, this is `curl × range[1]`. Followers follow. Joints on other axes stay at 0 unless you name them in an object `bend`. That is the only way to use `curl` and `bend` together. |
 | `spread` | Swings the whole limb sideways at its base, in degrees. It is a rotation about the base frame's local Z, positive by the right-hand rule. |
 | `twist` | Rolls the whole limb about its own length (local Y), in degrees, positive by the right-hand rule. |
@@ -299,6 +358,23 @@ finger.pose({ curl: 0.5 }).report;                                    // { bend:
 finger.pose({ curl: 0.5 }, { palm: { at: [0, 0, 10] } }).report.tip;  // [-30, 118.656, -44.794]
 ```
 
+**A posed limb can stand in for its frames.** Pass the parent's posed limb itself, not
+its `frames`: it brings every frame of its chain, its own parent's included. Pass an
+array to combine fixed frames and posed limbs (later entries win). A limb on a
+fingertip on a finger on a palm:
+
+```js
+const palmFrames = { palm: { at: [0, 0, 10] } };
+const pointer = limb("pointer", { parent: "palm", at: [-30, 96, 2], toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["mcp", "pip"], lengths: [42, 25] });
+const nail = limb("nail", { parent: "pointer.tip", at: [0, 0, -2], toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["tilt"], lengths: [6] });
+const pointerPosed = pointer.pose({ curl: 0.5 }, palmFrames);
+nail.pose({ bend: [20] }, pointerPosed).report.tip;                         // [-30, 113.686, -49.643]
+nail.pose({ bend: [20] }, { ...palmFrames, ...pointerPosed.frames }).report.tip;   // [-30, 113.686, -49.643]
+```
+
+Passing the posed limb also lets `place(…, { from: "rest" })` see the whole chain at
+rest. Merged `frames` objects are fixed frames, so they have no rest pose of their own.
+
 `posed.frames` is one plain frame per joint (`index.mcp`, …) plus `index.tip`. Each
 frame is `{ parent?, at, rotate? }`. The base frame has a `parent` only when the limb
 has one. These are the same frames that `place` and `world` use, and they go straight
@@ -341,6 +417,32 @@ coordinates, through every joint above it.
   (the unit axes), with values rounded to 0.001. Use it to anchor other features to a
   joint, or to check a placement in a probe or a test.
 
+**Links built where they print: `from: "rest"`.** A print-in-place part builds every
+link in part coordinates, where it prints, which is the limb at rest (every joint at
+0). Do not move such a link into its joint frame by hand. Pass `{ from: "rest" }`:
+`posed.place(solid, joint, { from: "rest" })` moves the link by that joint's motion
+from rest to the pose. The links then need no second statement of where each joint is,
+and the limb's `at`, `toward`, lengths and offsets must describe the joints where the
+links print. For a limb on a parent limb, pass the parent's posed limb to `pose` (not its
+`frames`), so that rest is the whole chain at rest. Rest is every joint at 0 even when a
+range excludes 0, and a parent given as plain frames is the same at rest as posed.
+
+```js
+derive: (p) => ({
+  finger: limb("finger", {
+    at: [x, y, r1], toward: heading, bendToward: [0, 0, -1],    // the base pin, where it prints
+    joints: ["mcp", { name: "pip", offset: [0, 0, r2 - r1] }, { name: "dip", offset: [0, 0, r3 - r2] }],
+    lengths: [l1, l2, l3],
+  }).pose({ curl: p.curl }),
+}),
+parts: {
+  middle: {
+    build: (k, p, d) => middleLink(k, d),                        // built in part coordinates, where it prints
+    views: { print: true, assembly: (s, p, d) => d.finger.place(s, "pip", { from: "rest" }) },
+  },
+},
+```
+
 **The fast-path rule.** Pose the limb in `derive`, and read the limb's pose params
 (`curl`, `bend` values, a grip toggle) ONLY in `derive` and in `views` poses. Never read
 them in `build`. The links then do not change shape when the pose changes. An animation
@@ -369,7 +471,7 @@ and `attach()` are plain data that you put in the spec, and `k.implicit` validat
 meshes it. See `docs/domains/organic.md` for the `k.implicit` grammar.
 
 - **`posed.frames`** are in `k.implicit`'s own frame shape. Put them in the spec's
-  `frames` with the parent frame they hang from: `{ ...palmFrames, ...posed.frames }`.
+  `frames` with the parent frame they hang from: `{ ...handFrames, ...posed.frames }`.
   A node with `frame: "index.pip"` then sits in that joint's frame (its joint at the
   origin, along +Y). `k.implicitFrames(spec).report()` reports each of these frames with
   the same numbers that `posed.world(joint)` gives.
@@ -392,12 +494,12 @@ meshes it. See `docs/domains/organic.md` for the `k.implicit` grammar.
   `a` must be non-empty strings that differ, since an entry cannot join a piece to itself.
 
 ```js
-const palmFrames = { palm: { at: [0, 0, 0] } };
+const handFrames = { palm: { at: [0, 0, 0] } };
 const onPalm = limb("index", {
   parent: "palm", at: [-30, 96, 2], toward: [0, 1, 0], bendToward: [0, 0, -1],
   joints: ["mcp", "pip", "dip"], lengths: [42, 25, 22], r: [9.5, 8.5, 7.4, 6.4],
 });
-const curled = onPalm.pose({ curl: 0.4 }, palmFrames);
+const curled = onPalm.pose({ curl: 0.4 }, handFrames);
 curled.flesh({ blend: 3 });
 // { kind: "union", k: 3, label: "index", children: [
 //   { kind: "capsule", frame: "index.mcp", b: [0, 42, 0], r: [9.5, 8.5], label: "index.mcp" },
@@ -407,7 +509,7 @@ curled.attach("palm", { k: 8 });   // { a: "index", b: "palm", near: "index.mcp"
 
 // In build, with the posed limb from derive: a palm and a finger, joined by a contact.
 const hand = k.implicit({
-  frames: { ...palmFrames, ...curled.frames },
+  frames: { ...handFrames, ...curled.frames },
   root: {
     kind: "contact", gap: 0, attach: [curled.attach("palm", { k: 8 })],
     children: [
@@ -441,9 +543,11 @@ index.pose({ grip: { around: implicitDistance(handle) } }).report.grip;
 `posed.report` is plain JSON, so a probe can return it unchanged:
 
 - `bend`: the final value of every joint (followers included), in degrees, rounded to
-  0.001. `posed.values` holds the same values without the rounding.
+  0.001. A ball joint's value is `{ bend, spread, twist }`. `posed.values` holds the
+  same values without the rounding.
 - `clamped`: one boolean per joint. It is true when the value requested for that joint
-  (directly, through `follow`, or by a solver) was outside its range and was clamped.
+  (directly, through `follow`, or by a solver) was outside its range and was clamped,
+  or, for a ball joint, when its swing was past the cone.
 - `tip`: the tip in part coordinates. It is absent for a parented limb posed without
   frames.
 - `reach` / `grip`: these are present only when the pose asked for them (see above).
@@ -495,6 +599,10 @@ limb "index": reach needs the frames declared so far — pass them as pose(…, 
 limb "index": place: unknown joint "pipp"
 limb "index".grip.around: node kind "twist" needs the implicit engine — pass a distance function (x, y, z) => mm instead; implicitDistance(node) from partforge/geometry makes one
 limb "index".grip.around: distance function returned a non-finite value at [-30, 96, 2]
+limb "x".joints[0].offset: the base joint has no previous joint — place it with the limb's at
+limb "thumb".bend.ball: a ball joint takes { bend?, spread?, twist? }
+limb "thumb".joints[0].range: a ball joint takes cone (its largest swing, in degrees), not range
+limb "index": place: from must be "joint" or "rest"
 ```
 
 Other errors: `attach` without a `k`, `flesh` or `attach` on a limb with no segment
@@ -502,7 +610,9 @@ longer than zero, `lengths`, `r` or a `bend` array of the wrong length, a `range
 `[min, max]` with `min ≤ max`, a zero-length `toward` or `bendToward`, a duplicate joint
 name, a `follow` that names an unknown or later joint, an `axis` that is not `"bend"`,
 `"spread"`, `"twist"` or a non-zero vector, an unknown `parent` when frames are passed,
-and an unknown field anywhere. `curl` must be from 0 to 1. A distance function that
+a `cone` on a hinge, a `follow` on or of a ball joint, an unknown key in a ball value,
+`pose` frames that are not an object, a posed limb or an array of them, and an unknown
+field anywhere. `curl` must be from 0 to 1. A distance function that
 throws is reported as a `SpecError` on `grip.around`, with the original error as its
 `cause`.
 

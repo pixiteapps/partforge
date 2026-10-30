@@ -20,16 +20,27 @@ export interface LimbFrame {
 /** One joint of a limb; a bare string is a joint with the default options. */
 export interface LimbJoint {
   name: string;
-  /** Default "bend". */
+  /** Default "bend". Not on a ball joint. */
   axis?: LimbAxis;
   /** Distance to the next joint (or the tip), mm; falls back to `lengths[i]`. */
   length?: number;
-  /** Allowed values, degrees. */
+  /** Allowed values, degrees. Not on a ball joint (it takes `cone`). */
   range?: [number, number];
-  /** Drive this joint from an earlier one: value = ratio * that joint + offset (degrees). */
+  /** Drive this joint from an earlier hinge: value = ratio * that joint + offset (degrees). Not on a ball joint. */
   follow?: { joint: string; ratio?: number; offset?: number };
-  type?: "hinge";
+  /** Default "hinge". A "ball" turns about any axis through its centre and is posed with a `LimbBallValue`. */
+  type?: "hinge" | "ball";
+  /** A ball joint's largest swing from rest, degrees (0 < cone ≤ 180, default 180). */
+  cone?: number;
+  /** Where this joint sits, mm, in the previous joint's frame, added to the end of the previous segment ([0, length, 0]). Not on the base joint. */
+  offset?: Point3;
 }
+
+/** A ball joint's pose: one swing of √(bend² + spread²) degrees, then a twist about the swung segment; absent keys 0. */
+export interface LimbBallValue { bend?: number; spread?: number; twist?: number }
+
+/** A ball joint's final value, every key present. */
+export interface LimbBallResult { bend: number; spread: number; twist: number }
 
 export interface LimbDefinition {
   /** Frame the limb hangs from; omit for part coordinates. */
@@ -74,8 +85,8 @@ export interface LimbGripOptions {
 }
 
 export interface LimbPoseOptions {
-  /** Driven-joint values in order, or by joint name; degrees. */
-  bend?: number[] | Record<string, number>;
+  /** Driven-joint values in order, or by joint name; degrees, or a `LimbBallValue` for a ball joint. */
+  bend?: Array<number | LimbBallValue> | Record<string, number | LimbBallValue>;
   /** 0..1 from each bend joint's straightest in-range value (nearest 0) to its closing end (range[1], or range[0] for an all-negative range); equals curl × range[1] for ranges containing 0. Not together with `bend`. */
   curl?: number;
   /** Sideways swing of the limb at its base, degrees. */
@@ -91,8 +102,8 @@ export interface LimbPoseOptions {
 export type LimbReachStatus = "reached" | "too-far" | "too-close" | "out-of-range";
 
 export interface LimbReport {
-  /** Final joint values, degrees. */
-  bend: number[];
+  /** Final joint values, degrees (a ball joint's as an object). */
+  bend: Array<number | LimbBallResult>;
   clamped: boolean[];
   /** Tip in part coordinates; absent for a parented limb posed without frames. */
   tip?: Point3;
@@ -134,8 +145,8 @@ export interface LimbAttachEntry { a: string; b: string; near: string; radius: n
 export interface LimbWorldFrame { origin: Point3; x: Point3; y: Point3; z: Point3 }
 
 export interface PosedLimb {
-  /** Final joint values, one per joint, degrees. */
-  values: number[];
+  /** Final joint values, one per joint, degrees (a ball joint's as an object). */
+  values: Array<number | LimbBallResult>;
   /** One frame per joint plus `<name>.tip`. */
   frames: Record<string, LimbFrame>;
   /** The joints' FRAME names (`<limb>.<joint>`), in order; `place` and `world` also take the bare joint name. */
@@ -147,11 +158,18 @@ export interface PosedLimb {
   flesh(opts?: LimbFleshOptions): ImplicitNode;
   /** A k.implicit contact `attach` entry joining the flesh to the labelled node `label`, near the base joint. */
   attach(label: string, opts: LimbAttachOptions): LimbAttachEntry;
-  /** Move a solid (built at the origin, along +y) into a frame of the limb. `joint` is a joint name, a frame name, or "tip"; default the base joint. */
-  place<T extends { rotate(deg: number, center: Point3, axis: Point3): T; translate(v: Point3): T }>(x: T, joint?: string): T;
+  /**
+   * Move a solid into a frame of the limb. `joint` is a joint name, a frame name, or "tip"; default the base joint.
+   * `from: "joint"` (default): the solid was built at the origin, along +y. `from: "rest"`: it was built in part
+   * coordinates with the whole chain at rest (every joint 0), and moves by that joint's rest-to-posed motion.
+   */
+  place<T extends { rotate(deg: number, center: Point3, axis: Point3): T; translate(v: Point3): T }>(x: T, joint?: string, opts?: { from?: "joint" | "rest" }): T;
   /** A frame of the limb in part coordinates. `joint` is a joint name, a frame name, or "tip"; default the base joint. */
   world(joint?: string): LimbWorldFrame;
 }
+
+/** What a limb hangs from: fixed frames, a posed limb, or a list of them. */
+export type LimbParents = Record<string, LimbFrame> | PosedLimb | Array<Record<string, LimbFrame> | PosedLimb>;
 
 export interface Limb {
   name: string;
@@ -159,8 +177,11 @@ export interface Limb {
   joints: string[];
   /** The tip's frame name (`<name>.tip`). */
   tip: string;
-  /** `frames` are the parent's frames, needed by reach, grip, place, world and tip when the limb has a `parent`. */
-  pose(opts?: LimbPoseOptions, frames?: Record<string, LimbFrame>): PosedLimb;
+  /**
+   * `frames` are the parent's frames, needed by reach, grip, place, world and tip when the limb has a `parent`:
+   * a `{ name: frame }` object, a posed limb (its whole chain), or an array of them, later entries winning.
+   */
+  pose(opts?: LimbPoseOptions, frames?: LimbParents): PosedLimb;
 }
 
 /** Declare a jointed chain once; pose it as often as needed. */
