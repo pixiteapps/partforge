@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import { CONTRACT_VERSION, KERNEL_OPS, KERNEL_OPTIONAL_OPS, OCCT_ONLY_OPS, SOLID_OPS, SOLID_OPTIONAL_OPS, SHAPE2D_OPS } from "../src/framework/geometry/kernel.js";
+import { DOMAINS } from "../src/framework/domains/registry.js";
 import * as polygon from "../src/framework/geometry/polygon.js";
 
 let k;
@@ -88,4 +89,17 @@ test("public docs describe mesh-native Solid fillet and chamfer routing", () => 
   const failures = publicSurfaceDocs.flatMap(([path, text]) =>
     staleClaims.filter((claim) => claim.test(text)).map((claim) => `${path}: ${claim}`));
   expect(failures).toEqual([]);
+});
+
+// A domain (src/framework/domains/registry.js) may TAG a contract op as its own —
+// the op index and the compact prompt group by that tag — but never invent one, and
+// no op belongs to two domains.
+test("every domain-tagged op is in the contract, tagged once", () => {
+  const legal = new Set([...KERNEL_OPS, ...KERNEL_OPTIONAL_OPS]);
+  const seen = new Map();
+  for (const d of DOMAINS) for (const op of d.kernelOps) {
+    expect(legal.has(op.name), `${d.id} tags "${op.name}", not a contract op`).toBe(true);
+    expect(seen.get(op.name), `"${op.name}" tagged by ${seen.get(op.name)} and ${d.id}`).toBeUndefined();
+    seen.set(op.name, d.id);
+  }
 });

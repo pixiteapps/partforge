@@ -18,6 +18,7 @@ import { flexRoot } from "./flex-root.js";
 import { flexMembers } from "./flex-members.js";
 import { partBedContact, partFootprint, partGatesMinWall, partHasBed, partOverhangAngle, partWallBands } from "./gates.js";
 import { summarizeContours } from "./shape-probe.js";
+import { DOMAINS } from "../domains/registry.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
 const unionBounds = (list) => list.reduce(
@@ -196,6 +197,26 @@ function printPoseUnderside(mesh, m, { maxAngle, bed, displayBedZ }) {
 // id no descriptor answers to (lint's sheet-invalid reports that) is still a sheet —
 // measure and verify ask the same question, isSheetPart — with nothing to check it by:
 // unknownProcessFacts.
+// ── domain facts ─────────────────────────────────────────────────────────────
+// Every registered domain (src/framework/domains/registry.js) with an oracle.facts
+// stamps its reading on each row under its id (validateDomains keeps ids off the core
+// row keys). A throw becomes { error } for that domain on that row, the shape
+// sheetRowFacts uses, and every other row still measures. Any domain with facts
+// means the row is never memoized (measure's memo keys on the display geometry and
+// the inputs it names; a domain's reading may depend on anything).
+const HAS_DOMAIN_FACTS = DOMAINS.some((d) => d.oracle.facts);
+function stampDomainFacts(row, sp, ctx) {
+  for (const d of DOMAINS) {
+    if (!d.oracle.facts) continue;
+    // The complete collision guard (validateDomains reserves only the common keys): a
+    // domain id naming a row fact — `holes` is a gate — would overwrite it.
+    if (Object.hasOwn(row, d.id)) throw new Error(`measure: domain "${d.id}" collides with a sub-part fact of that name`);
+    try { row[d.id] = d.oracle.facts(sp, ctx); }
+    catch (e) { row[d.id] = { error: String(e?.message || e).slice(0, 200) }; }
+  }
+  return row;
+}
+
 function sheetRowFacts(kernel, part, name, view, { p, d }, budget, volume) {
   const sp = part.parts[name];
   const proc = processFor(sp);
@@ -353,6 +374,9 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // resolved params through place() — recorded into the same sink, since the reading
   // depends on them.
   const poseParams = posed ? (sheetParams ?? resolveParams(part, params, undefined, reads)) : null;
+  // A domain's facts get the resolved params on EVERY part, not only where a print
+  // pose or a sheet view already resolved them.
+  const domainParams = HAS_DOMAIN_FACTS ? (poseParams ?? sheetParams ?? resolveParams(part, params, undefined, reads)) : null;
   // The print-pose sizes are read by one check, the process bed (verify passes whether
   // its profile has one; alone, measure asks the part's own profile), and each costs a
   // second build of the part — so they are built only for a bed.
@@ -389,7 +413,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // holds a sheet part (the budgeted 2-D pass and print-pose sizes are
     // call-scoped, not per-sub-part cacheable), and a solid with no `_hash`
     // (nothing to key reuse on).
-    const memoKey = opts.memo && !sheetView && !sheet && !part.parts[name]?.reference && solid?._hash && !exportBed
+    const memoKey = opts.memo && !sheetView && !sheet && !part.parts[name]?.reference && solid?._hash && !exportBed && !HAS_DOMAIN_FACTS
       ? JSON.stringify({
         mw: !!opts.minWall, s: minWallSamples ?? null, band: wallBands[name] ?? null,
         oh: overhangAngle ?? null, bc: bedArmed, ex: printed, fx: flex,
@@ -509,6 +533,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       ...(printBboxes?.[name]?.size ? { printBbox: printBboxes[name].size } : {}),
       ...(printBboxes?.[name]?.error ? { printBboxError: printBboxes[name].error } : {}),
     };
+    if (HAS_DOMAIN_FACTS) stampDomainFacts(facts, part.parts[name], { name, view, p: domainParams.p, d: domainParams.d, volume: vol, bbox: size(b) });
     if (memoKey) opts.memo.set(name, solid._hash, memoKey, facts);
     return facts;
   });
