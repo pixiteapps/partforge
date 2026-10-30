@@ -366,7 +366,7 @@ parts: {
 For a body built with `k.implicit` (a hand, a paw, a creature's leg), the limb writes the
 spec's frames, flesh and joins for you. It still builds no geometry: `frames`, `flesh()`
 and `attach()` are plain data that you put in the spec, and `k.implicit` validates and
-meshes it. See `docs/AUTHORING-PARTS.md` for the `k.implicit` grammar.
+meshes it. See `docs/domains/organic.md` for the `k.implicit` grammar.
 
 - **`posed.frames`** are in `k.implicit`'s own frame shape. Put them in the spec's
   `frames` with the parent frame they hang from: `{ ...palmFrames, ...posed.frames }`.
@@ -382,7 +382,7 @@ meshes it. See `docs/AUTHORING-PARTS.md` for the `k.implicit` grammar.
   width in mm; when you leave it out the union is sharp (a hard union, and no `k` key is
   written). Each radius must be a number > 0, `blend` a number ≥ 0, and `label` a
   non-empty string; anything else throws with the limb's name.
-- **`posed.attach(label, { k?, radius?, band?, r?, a? })`** is a contact `attach` entry
+- **`posed.attach(label, { k, radius?, band?, r?, a? })`** is a contact `attach` entry
   that joins the flesh (labelled `a`, default the limb's name) to the piece labelled
   `label`, near the base joint. `k` is required: the blend width in mm where the limb
   joins `label`, a finite number that is 0 or more. `radius` defaults to a third of the
