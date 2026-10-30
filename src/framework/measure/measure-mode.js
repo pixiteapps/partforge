@@ -736,13 +736,17 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       rebuild(); // labels re-render in the new unit; the cache key carries it
     },
     // Internal (the chrome's straight-line toggle); mount.js does not expose
-    // these to hosts. It sets the kind of the next distance AND of the one on
-    // screen, so the toggle's pressed state always describes what is drawn
-    // (a Shift-click straight line flips to an axis distance when it goes off).
+    // these to hosts. It sets the kind of the next distance and re-draws the
+    // one on screen in that kind, so after a switch the drawn distance matches
+    // the toggle. Shift is per click: a Shift-click draws a straight line while
+    // the toggle stays off, until the toggle is next switched.
     setStraight(on) {
       straight = !!on;
       if (second && second.straight !== straight) {
         second = { ...second, straight };
+        // the commit path's guard: a span under MIN_SPAN_MM in its new kind
+        // draws nothing, so it must not be counted either
+        if (!currentSpan()) { clearState(); return; }
         forgetChoices();
         rebuild();
       }

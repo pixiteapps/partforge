@@ -52,14 +52,20 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
     straightButton.type = "button";
     straightButton.className = "pf-measure-straight";
     straightButton.innerHTML = STRAIGHT_ICON;
+    // A toggle's accessible name stays put; aria-pressed carries the state.
+    straightButton.setAttribute("aria-label", "Straight-line distance");
     actions.append(straightButton);
   }
   actions.append(clearButton, unitButton);
   button.after(actions);
 
+  // The title / tooltip names the kind of distance in force.
+  const straightStateLabel = () => (mode.isStraight?.() ? "Straight-line distance" : "Distance along an axis");
   const tooltipBinding = tooltip
     ? attachButtonTooltips(tooltip, [button, straightButton, clearButton, unitButton]
-      .filter(Boolean).map((element) => ({ element })))
+      .filter(Boolean).map((element) => (element === straightButton
+        ? { element, getLabel: straightStateLabel }
+        : { element })))
     : null;
 
   function sync() {
@@ -73,9 +79,7 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
       const isStraight = !!mode.isStraight?.();
       straightButton.setAttribute("aria-pressed", String(isStraight));
       straightButton.classList.toggle("on", isStraight);
-      const straightLabel = isStraight ? "Straight-line distance" : "Distance along an axis";
-      straightButton.setAttribute("aria-label", straightLabel);
-      if (!tooltip) straightButton.title = straightLabel;
+      if (!tooltip) straightButton.title = straightStateLabel();
     }
     const u = mode.getUnits?.() ?? "mm";
     unitButton.textContent = u;

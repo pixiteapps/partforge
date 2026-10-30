@@ -18,6 +18,14 @@ vi.mock("../../../src/framework/measure/dim3-place.js", async (importOriginal) =
   return { ...actual, placeDims: vi.fn(actual.placeDims) };
 });
 
+// Pass-through on spanSpec, overridable per test: a span that only exists in
+// one kind is too fine to click into the fixture, so a test can stand it in.
+let spanOverride = null;
+vi.mock("../../../src/framework/measure/readings.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, spanSpec: (...args) => (spanOverride ? spanOverride(actual.spanSpec, ...args) : actual.spanSpec(...args)) };
+});
+
 // dim3-scene's default label painter needs a real 2d context; happy-dom has
 // none. Stub the minimum it touches and record every painted string, which is
 // how the assertions read label content.
@@ -32,7 +40,7 @@ HTMLCanvasElement.prototype.getContext = function getContext() {
     beginPath() {}, roundRect() {}, fill() {}, stroke() {},
   };
 };
-beforeEach(() => { paintLog.length = 0; placeDims.mockClear(); });
+beforeEach(() => { paintLog.length = 0; placeDims.mockClear(); spanOverride = null; });
 
 // A 20×10 plate: one sub-part, one labeled planar feature covering both
 // triangles of its top face at z=2, with the face's four boundary edges drawn
@@ -544,6 +552,24 @@ test("the straight toggle redraws a distance already on screen", () => {
   expect(mode.pinCount()).toBe(2);
   mode.setStraight(false);
   expect(spanValues()).toEqual([20]);
+  mode.detach();
+});
+
+test("a toggle that turns the distance under MIN_SPAN_MM clears it and tells pin listeners", () => {
+  const { viewer, mode, itemIds, startDot } = setup();
+  mode.setEnabled(true);
+  clickPoint(viewer, CORNER_A);
+  clickPoint(viewer, CORNER_C, { shiftKey: true }); // straight
+  expect(mode.pinCount()).toBe(2);
+  // as for a straight span of ~0.006 mm: its axis form falls under MIN_SPAN_MM
+  spanOverride = (real, a, b, opts) => (opts.straight ? real(a, b, opts) : null);
+  const onPins = vi.fn();
+  mode.onPinsChange(onPins);
+  mode.setStraight(false);
+  expect(mode.pinCount()).toBe(0);
+  expect(onPins).toHaveBeenCalledTimes(1);
+  expect(itemIds().every((id) => id === "overall")).toBe(true);
+  expect(startDot()?.visible ?? false).toBe(false);
   mode.detach();
 });
 
