@@ -4089,6 +4089,588 @@
     "declared": 9,
     "evaluated": 9
   },
+  "robot-finger.js#assembly": {
+    "ok": true,
+    "view": "assembly",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "proximal": 45,
+          "middle": 30,
+          "distal": 24,
+          "curl": 0.3
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              18,
+              74.0234313,
+              74.6139387
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[18,74.02343130111694,74.61393870221218] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": "proximal×middle",
+            "metric": "clearance",
+            "kind": "gate",
+            "expr": ">=0.3",
+            "actual": 0.400000095,
+            "status": "pass",
+            "pass": true,
+            "message": "0.40000009536743164 >= 0.3"
+          },
+          {
+            "scope": "view",
+            "subpart": "middle×distal",
+            "metric": "clearance",
+            "kind": "gate",
+            "expr": ">=0.3",
+            "actual": 0.400000095,
+            "status": "pass",
+            "pass": true,
+            "message": "0.40000009536743164 >= 0.3"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "proximal",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 4.39828441,
+            "status": "pass",
+            "pass": true,
+            "message": "4.398284414683889 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "proximal",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 58.5001466,
+            "status": "cost",
+            "pass": false,
+            "message": "58.500146580568575 not <= 1",
+            "note": "steepest unsupported face 88.4° from vertical",
+            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+            "location": [
+              1,
+              -2.7037285,
+              0.645899942
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "proximal",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "proximal",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 88.1761845,
+            "status": "pass",
+            "pass": true,
+            "message": "88.17618454333491 >= 10"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "middle",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 4.39828151,
+            "status": "pass",
+            "pass": true,
+            "message": "4.398281507024481 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "middle",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 58.5000951,
+            "status": "cost",
+            "pass": false,
+            "message": "58.500095073011494 not <= 1",
+            "note": "steepest unsupported face 88.4° from vertical",
+            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+            "location": [
+              1,
+              -20.4079011,
+              40.0972888
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "middle",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "middle",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 81.488702,
+            "status": "pass",
+            "pass": true,
+            "message": "81.48870202646951 >= 10"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "distal",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 4.39828365,
+            "status": "pass",
+            "pass": true,
+            "message": "4.398283649638985 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "distal",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 37.9544303,
+            "status": "cost",
+            "pass": false,
+            "message": "37.95443032488705 not <= 1",
+            "note": "steepest unsupported face 88.5° from vertical",
+            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+            "location": [
+              3,
+              -66.8783798,
+              65.0913975
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "distal",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "distal",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 65.0300046,
+            "status": "pass",
+            "pass": true,
+            "message": "65.03000460612817 >= 10"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "costs": [
+      {
+        "case": "defaults",
+        "scope": "subpart",
+        "subpart": "proximal",
+        "metric": "overhangArea",
+        "kind": "cost",
+        "expr": "<=1",
+        "accepted": false,
+        "actual": 58.5001466,
+        "status": "cost",
+        "pass": false,
+        "message": "58.500146580568575 not <= 1",
+        "note": "steepest unsupported face 88.4° from vertical",
+        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+        "location": [
+          1,
+          -2.7037285,
+          0.645899942
+        ]
+      },
+      {
+        "case": "defaults",
+        "scope": "subpart",
+        "subpart": "middle",
+        "metric": "overhangArea",
+        "kind": "cost",
+        "expr": "<=1",
+        "accepted": false,
+        "actual": 58.5000951,
+        "status": "cost",
+        "pass": false,
+        "message": "58.500095073011494 not <= 1",
+        "note": "steepest unsupported face 88.4° from vertical",
+        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+        "location": [
+          1,
+          -20.4079011,
+          40.0972888
+        ]
+      },
+      {
+        "case": "defaults",
+        "scope": "subpart",
+        "subpart": "distal",
+        "metric": "overhangArea",
+        "kind": "cost",
+        "expr": "<=1",
+        "accepted": false,
+        "actual": 37.9544303,
+        "status": "cost",
+        "pass": false,
+        "message": "37.95443032488705 not <= 1",
+        "note": "steepest unsupported face 88.5° from vertical",
+        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+        "location": [
+          3,
+          -66.8783798,
+          65.0913975
+        ]
+      }
+    ],
+    "unevaluated": [],
+    "declared": 16,
+    "evaluated": 16
+  },
+  "robot-finger.js#print": {
+    "ok": true,
+    "view": "print",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "proximal": 45,
+          "middle": 30,
+          "distal": 24,
+          "curl": 0.3
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "<=[220,220,250]",
+            "actual": [
+              74,
+              57,
+              12
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[74,57,12] <= [220,220,250]"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": "proximal×middle",
+            "metric": "clearance",
+            "kind": "gate",
+            "expr": ">=0.3",
+            "actual": 10,
+            "status": "pass",
+            "pass": true,
+            "message": "10 >= 0.3"
+          },
+          {
+            "scope": "view",
+            "subpart": "middle×distal",
+            "metric": "clearance",
+            "kind": "gate",
+            "expr": ">=0.3",
+            "actual": 10,
+            "status": "pass",
+            "pass": true,
+            "message": "10 >= 0.3"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "proximal",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 4.39828498,
+            "status": "pass",
+            "pass": true,
+            "message": "4.398284978239587 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "proximal",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 58.5001296,
+            "status": "cost",
+            "pass": false,
+            "message": "58.50012961951786 not <= 1",
+            "note": "steepest unsupported face 88.4° from vertical",
+            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+            "location": [
+              -1,
+              -3.54307103,
+              1.16024971
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "proximal",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "proximal",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 88.1761783,
+            "status": "pass",
+            "pass": true,
+            "message": "88.17617834183432 >= 10"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "middle",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 4.39828521,
+            "status": "pass",
+            "pass": true,
+            "message": "4.398285206426367 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "middle",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 58.5001355,
+            "status": "cost",
+            "pass": false,
+            "message": "58.5001355291972 not <= 1",
+            "note": "steepest unsupported face 88.4° from vertical",
+            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+            "location": [
+              27,
+              -3.54307103,
+              1.16024971
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "middle",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "middle",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 82.0191293,
+            "status": "pass",
+            "pass": true,
+            "message": "82.01912933630635 >= 10"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "distal",
+            "metric": "minWall",
+            "kind": "warn",
+            "expr": ">=1.2",
+            "actual": 4.39828614,
+            "status": "pass",
+            "pass": true,
+            "message": "4.398286141702865 >= 1.2"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "distal",
+            "metric": "overhangArea",
+            "kind": "cost",
+            "expr": "<=1",
+            "accepted": false,
+            "actual": 37.9544448,
+            "status": "cost",
+            "pass": false,
+            "message": "37.95444475182288 not <= 1",
+            "note": "steepest unsupported face 88.4° from vertical",
+            "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+            "location": [
+              53,
+              21.7154687,
+              1.29130363
+            ]
+          },
+          {
+            "scope": "subpart",
+            "subpart": "distal",
+            "metric": "bedContactPct",
+            "kind": "gate",
+            "expr": ">=50",
+            "actual": 100,
+            "status": "pass",
+            "pass": true,
+            "message": "100 >= 50"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "distal",
+            "metric": "footprintPct",
+            "kind": "cost",
+            "expr": ">=10",
+            "accepted": false,
+            "actual": 65.384321,
+            "status": "pass",
+            "pass": true,
+            "message": "65.38432103637065 >= 10"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "costs": [
+      {
+        "case": "defaults",
+        "scope": "subpart",
+        "subpart": "proximal",
+        "metric": "overhangArea",
+        "kind": "cost",
+        "expr": "<=1",
+        "accepted": false,
+        "actual": 58.5001296,
+        "status": "cost",
+        "pass": false,
+        "message": "58.50012961951786 not <= 1",
+        "note": "steepest unsupported face 88.4° from vertical",
+        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+        "location": [
+          -1,
+          -3.54307103,
+          1.16024971
+        ]
+      },
+      {
+        "case": "defaults",
+        "scope": "subpart",
+        "subpart": "middle",
+        "metric": "overhangArea",
+        "kind": "cost",
+        "expr": "<=1",
+        "accepted": false,
+        "actual": 58.5001355,
+        "status": "cost",
+        "pass": false,
+        "message": "58.5001355291972 not <= 1",
+        "note": "steepest unsupported face 88.4° from vertical",
+        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+        "location": [
+          27,
+          -3.54307103,
+          1.16024971
+        ]
+      },
+      {
+        "case": "defaults",
+        "scope": "subpart",
+        "subpart": "distal",
+        "metric": "overhangArea",
+        "kind": "cost",
+        "expr": "<=1",
+        "accepted": false,
+        "actual": 37.9544448,
+        "status": "cost",
+        "pass": false,
+        "message": "37.95444475182288 not <= 1",
+        "note": "steepest unsupported face 88.4° from vertical",
+        "hint": "unsupported downward-facing surface at the reported location — reorient the part so the face is vertical or on the bed, chamfer it to the process's overhang angle, split it into a bridged or supported feature; when the user chooses supports instead, record it with verify.accept: [\"supports\"]",
+        "location": [
+          53,
+          21.7154687,
+          1.29130363
+        ]
+      }
+    ],
+    "unevaluated": [],
+    "declared": 16,
+    "evaluated": 16
+  },
   "scott-label.js#backing": {
     "ok": true,
     "view": "backing",

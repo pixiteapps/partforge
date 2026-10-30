@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has twenty: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has twenty-two: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -44,7 +44,11 @@ test/vector2d.test.js rather than by the part),
 relief plate, swappable source), and `laser-box.js` (the sheet-parts reference
 part - five `fingerBox` panels and a lid as `sheetPart` sub-parts, two printed
 hinges keyed into slots; a test fixture and the guide's worked example, with no
-demo page), and `material-swatches.js` (not a reference part: the dev-only
+demo page), `robot-finger.js` (the kinematics reference part - three printed
+links on pin joints, posed by one `limb` from `partforge/kinematics` in
+`derive` and placed with `d.finger.place`, a `curl` animation that never
+rebuilds; the worked example of `docs/domains/kinematics.md`, with no demo
+page), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`).
 
 ## Node version

@@ -19,6 +19,15 @@ portable Solid fillet/chamfer API and the OCCT-only shell op.
 
 ---
 
+## Domains
+
+A domain is a set of helpers for one kind of part, with its own import and its own
+self-contained guide. When a part matches a domain's description, read that guide first.
+
+- **Kinematics** — jointed limbs, fingers, arms, robot hands; posing links about joints; reach and grip. `import { limb } from "partforge/kinematics";` — guide: [`docs/domains/kinematics.md`](domains/kinematics.md).
+
+---
+
 ## Quickstart
 
 1. Copy `src/parts/demo.js` to `src/parts/<your-part>.js` and edit it.

@@ -628,3 +628,7 @@ export { sheetPart } from "../sheet/part.js";
 export { routedPart } from "../sheet/routed.js";
 export { fingers, tabs, tSlots, sheetPanel, matchingSlots, fingerBox, printedTab, sheetHole, JOINERY_SCREWS } from "../sheet/joinery.js";
 export { sheetToWorld, worldToSheet } from "../sheet/pose.js";
+
+// Rotation converters: degrees/radians, Euler angles <-> frame-style rotate steps, and
+// applying steps to a Solid. Plain JS (the Solid's `rotate` is the only op they call).
+export { deg, rad, euler, toEuler, applyRotation } from "./rotations.js";
