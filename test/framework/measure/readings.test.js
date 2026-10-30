@@ -1,6 +1,6 @@
 // Pure readings: what one click reads, and what two clicks measure.
 import { describe, expect, test } from "vitest";
-import { firstReading, spanSpec, frameAxesFor } from "../../../src/framework/measure/readings.js";
+import { firstReading, spanSpec, spanSpecs, frameAxesFor } from "../../../src/framework/measure/readings.js";
 
 const PARTS = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
 
@@ -156,5 +156,38 @@ describe("frameAxesFor", () => {
   test("a plain 16-element array is read column-major and normalised", () => {
     const m = [2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0, 1];
     expect(frameAxesFor("a", "a", () => m)).toEqual(PARTS);
+  });
+});
+
+describe("spanSpecs", () => {
+  const values = (specs) => specs.map((sp) => sp.values.distance);
+  test("a diagonal reads each axis part, then the straight-line distance", () => {
+    const specs = spanSpecs([0, 0, 0], [3, 4, 12]);
+    expect(values(specs)).toEqual([3, 4, 12, 13]);
+    expect(specs.map((sp) => sp.anchors.straight)).toEqual([false, false, false, true]);
+    expect(specs.slice(0, 3).map((sp) => sp.anchors.axis)).toEqual(PARTS);
+  });
+  test("a flat axis is left out", () => {
+    expect(values(spanSpecs([0, 0, 2], [20, 10, 2]))).toEqual([20, 10, 22.36]);
+  });
+  test("one axis is one number, no separate diagonal", () => {
+    const specs = spanSpecs([0, 0, 0], [0, 7, 0]);
+    expect(values(specs)).toEqual([7]);
+    expect(specs[0].anchors.straight).toBe(false);
+  });
+  test("snap slop along an axis draws no dimension of its own", () => {
+    // 0.01 mm of Y across a 20 mm X run: one number
+    expect(values(spanSpecs([0, 0, 0], [20, 0.01, 0]))).toEqual([20]);
+  });
+  test("two parallel faces with a gap read the gap alone", () => {
+    const specs = spanSpecs([0, 0, 0], [5, 3, 4], { faceNormals: [[0, 0, 1], [0, 0, -1]] });
+    expect(values(specs)).toEqual([4]);
+  });
+  test("the same point reads nothing", () => expect(spanSpecs([1, 2, 3], [1, 2, 3])).toEqual([]));
+  test("posed frames: parts along the frame's own axes", () => {
+    const axes = frameAxesFor("a", "a", rotated30);
+    const [ex] = axes;
+    const b = ex.map((v) => v * 10);
+    expect(values(spanSpecs([0, 0, 0], b, { axes }))).toEqual([10]);
   });
 });

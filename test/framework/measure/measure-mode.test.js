@@ -35,14 +35,6 @@ vi.mock("../../../src/framework/oracle/bvh.js", async (importOriginal) => {
   return { ...actual, buildBVH: vi.fn(actual.buildBVH) };
 });
 
-// Pass-through on spanSpec, overridable per test: a span that only exists in
-// one kind is too fine to click into the fixture, so a test can stand it in.
-let spanOverride = null;
-vi.mock("../../../src/framework/measure/readings.js", async (importOriginal) => {
-  const actual = await importOriginal();
-  return { ...actual, spanSpec: (...args) => (spanOverride ? spanOverride(actual.spanSpec, ...args) : actual.spanSpec(...args)) };
-});
-
 // dim3-scene's default label painter needs a real 2d context; happy-dom has
 // none. Stub the minimum it touches and record every painted string, which is
 // how the assertions read label content.
@@ -63,7 +55,6 @@ beforeEach(() => {
   classifyFeature.mockClear();
   buildSnapIndex.mockClear();
   buildBVH.mockClear();
-  spanOverride = null;
 });
 
 // A 20×10 plate: one sub-part, one labeled planar feature covering both
@@ -173,6 +164,10 @@ function setup({ parts, mesh = plateMesh() } = {}) {
     viewer.__parts.traverse((o) => { if (o.name === name) found = o; });
     return found;
   };
+  // every distance label's value, smallest first
+  const spanValues = () => (dimGroup()?.children ?? [])
+    .filter((c) => c.userData.pfDimItemId?.startsWith("span"))
+    .map((c) => c.userData.pfDimValue).sort((a, b) => a - b);
   const startDot = () => pinDot("pf-measure-start");
   const endDot = () => pinDot("pf-measure-end");
   // world positions of one item's dim labels, for "did the placement move?"
@@ -182,7 +177,7 @@ function setup({ parts, mesh = plateMesh() } = {}) {
       .filter((c) => c.userData.pfDimItemId?.startsWith(prefix))
       .map((c) => c.getWorldPosition(new THREE.Vector3()).toArray());
   };
-  return { mesh, viewer, mode, ctx, revealParams, dimGroup, itemIds, snapLabel, snapShown, startDot, endDot, labelPositions, idleQueue, runIdle };
+  return { mesh, viewer, mode, ctx, revealParams, dimGroup, itemIds, snapLabel, snapShown, startDot, endDot, spanValues, labelPositions, idleQueue, runIdle };
 }
 
 // Client px of a parts-frame point (the fake's 100×100 canvas at the origin).
@@ -410,7 +405,7 @@ const tapPoint = (viewer, p, dx = 0, dy = 0) => {
 };
 
 test("touch tap previews, second tap commits", () => {
-  const { viewer, mode, snapLabel, snapShown, startDot, itemIds, dimGroup } = setup();
+  const { viewer, mode, snapLabel, snapShown, startDot, itemIds, spanValues } = setup();
   const onPins = vi.fn();
   mode.onPinsChange(onPins);
   mode.setEnabled(true);
@@ -445,8 +440,7 @@ test("touch tap previews, second tap commits", () => {
   expect(mode.pinCount()).toBe(1);
   tapPoint(viewer, CORNER_C, -3, 3);
   expect(mode.pinCount()).toBe(2);
-  const span = dimGroup().children.filter((c) => c.userData.pfDimItemId === "span");
-  expect(span.map((c) => c.userData.pfDimValue)).toEqual([20]);
+  expect(spanValues()).toEqual([10, 20, 22.36]);
   mode.detach();
 });
 
@@ -560,8 +554,8 @@ test("touch drag elsewhere does not commit", () => {
 
 // ---- second and third clicks --------------------------------------------------
 
-test("second click draws one span; pinCount is 2", () => {
-  const { viewer, mode, dimGroup, itemIds, revealParams, startDot, endDot } = setup();
+test("second click draws the straight-line distance and its axis parts; pinCount is 2", () => {
+  const { viewer, mode, spanValues, itemIds, revealParams, startDot, endDot } = setup();
   const onPins = vi.fn();
   mode.onPinsChange(onPins);
   mode.setEnabled(true);
@@ -570,10 +564,9 @@ test("second click draws one span; pinCount is 2", () => {
   clickPoint(viewer, CORNER_C);
   expect(mode.pinCount()).toBe(2);
   expect(onPins).toHaveBeenCalledTimes(2);
-  const span = dimGroup().children.filter((c) => c.userData.pfDimItemId === "span");
-  // one dimension, along the dominant axis (X: 20 of the 20×10 diagonal)
-  expect(span.map((c) => c.userData.pfDimValue)).toEqual([20]);
-  expect(itemIds()).not.toContain("first");
+  // X 20, Y 10 and the 22.36 diagonal; Z is flat, so it is left out
+  expect(spanValues()).toEqual([10, 20, 22.36]);
+  expect(itemIds()).toEqual(["span:0", "span:1", "span:2"]);
   expect(revealParams).not.toHaveBeenCalled(); // distances never flash
   expect(startDot()?.visible).toBe(true); // a no-reading start point stays marked
   // the second point stays marked where it was clicked, after the pointer leaves
@@ -596,66 +589,33 @@ test("a distance replaces the first reading on screen", () => {
   expect(startDot()?.visible).toBe(true);
   expect(endDot()?.visible).toBe(true);
   expect(itemIds()).not.toContain("first");
-  expect(itemIds().filter((id) => id === "span").length).toBe(1);
+  expect(itemIds().filter((id) => id.startsWith("span")).length).toBeGreaterThan(0);
   expect(revealParams).not.toHaveBeenCalled();
   mode.detach();
 });
 
-test("Shift click gives the straight-line distance", () => {
-  const { viewer, mode, dimGroup } = setup();
+test("clicks that differ along one axis read one number", () => {
+  const { viewer, mode, spanValues, itemIds } = setup();
   mode.setEnabled(true);
   clickPoint(viewer, CORNER_A);
-  clickPoint(viewer, CORNER_C, { shiftKey: true });
-  const span = dimGroup().children.filter((c) => c.userData.pfDimItemId === "span");
-  expect(span.map((c) => c.userData.pfDimValue)).toEqual([22.36]);
-  mode.detach();
-});
-
-test("setStraight makes a plain click straight-line", () => {
-  const { viewer, mode, dimGroup } = setup();
-  mode.setEnabled(true);
-  expect(mode.isStraight()).toBe(false);
-  mode.setStraight(true);
-  expect(mode.isStraight()).toBe(true);
-  clickPoint(viewer, CORNER_A);
-  clickPoint(viewer, CORNER_C);
-  const span = dimGroup().children.filter((c) => c.userData.pfDimItemId === "span");
-  expect(span.map((c) => c.userData.pfDimValue)).toEqual([22.36]);
-  mode.detach();
-});
-
-test("the straight toggle redraws a distance already on screen", () => {
-  const { viewer, mode, dimGroup } = setup();
-  mode.setEnabled(true);
-  clickPoint(viewer, CORNER_A);
-  clickPoint(viewer, CORNER_C);
-  const spanValues = () => dimGroup().children
-    .filter((c) => c.userData.pfDimItemId === "span").map((c) => c.userData.pfDimValue);
+  clickPoint(viewer, [20, 0, 2]); // the far corner of the same edge
   expect(spanValues()).toEqual([20]);
-  mode.setStraight(true);
-  expect(spanValues()).toEqual([22.36]);
-  expect(mode.pinCount()).toBe(2);
-  mode.setStraight(false);
-  expect(spanValues()).toEqual([20]);
+  expect(itemIds()).toEqual(["span:0"]);
   mode.detach();
 });
 
-test("a toggle that turns the distance under MIN_SPAN_MM clears it and tells pin listeners", () => {
-  const { viewer, mode, itemIds, startDot, endDot } = setup();
+test("the overall dims step aside while a click measures, and come back on Clear", () => {
+  const { viewer, mode, itemIds } = setup();
   mode.setEnabled(true);
-  clickPoint(viewer, CORNER_A);
-  clickPoint(viewer, CORNER_C, { shiftKey: true }); // straight
-  expect(mode.pinCount()).toBe(2);
-  // as for a straight span of ~0.006 mm: its axis form falls under MIN_SPAN_MM
-  spanOverride = (real, a, b, opts) => (opts.straight ? real(a, b, opts) : null);
-  const onPins = vi.fn();
-  mode.onPinsChange(onPins);
-  mode.setStraight(false);
-  expect(mode.pinCount()).toBe(0);
-  expect(onPins).toHaveBeenCalledTimes(1);
+  expect(itemIds()).toContain("overall");
+  clickAt(viewer.domElement); // a reading
+  expect(itemIds()).not.toContain("overall");
+  clickPoint(viewer, CORNER_C); // a distance
+  expect(itemIds()).not.toContain("overall");
+  mode.clearPins();
   expect(itemIds().every((id) => id === "overall")).toBe(true);
-  expect(startDot()?.visible ?? false).toBe(false);
-  expect(endDot()?.visible ?? false).toBe(false);
+  clickPoint(viewer, CORNER_A); // a start point with no reading hides them too
+  expect(itemIds()).toEqual([]);
   mode.detach();
 });
 
@@ -830,7 +790,7 @@ test("a pose-only change moves a distance with its sub-part", () => {
   clickPoint(viewer, CORNER_C);
   viewer.frame();
   const before = labelPositions("span");
-  expect(before.length).toBe(1);
+  expect(before.length).toBe(3);
   poseSubMesh(mesh, new THREE.Matrix4().makeTranslation(5, 0, 0));
   viewer.frame();
   const after = labelPositions("span");
@@ -927,7 +887,7 @@ test("a distance's label click flashes nothing", () => {
   clickPoint(viewer, CORNER_A);
   clickPoint(viewer, CORNER_C);
   viewer.frame();
-  const s = dimGroup().children.find((c) => c.userData.pfDimItemId === "span");
+  const s = dimGroup().children.find((c) => c.userData.pfDimValue === 20);
   const { x, y } = labelScreen(viewer, s);
   clickAt(viewer.domElement, x, y); // value 20 matches plate_w, but distances never flash
   expect(revealParams).not.toHaveBeenCalled();
@@ -1111,7 +1071,7 @@ test("a click places only its measurement, reusing the overall drawings", () => 
   expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id))).toEqual([["first"]]);
   placeDims.mockClear();
   clickPoint(viewer, CORNER_C);
-  expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id))).toEqual([["span"]]);
+  expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id))).toEqual([["span:0", "span:1", "span:2"]]);
   placeDims.mockClear();
   mode.clearPins(); // back to the overall alone: already placed
   expect(placeDims.mock.calls).toEqual([]);

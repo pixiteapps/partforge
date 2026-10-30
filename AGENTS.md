@@ -120,8 +120,9 @@ the installed package, so let the publish finish before bumping the dep there.
   (collision checking), `oracle/` (see below), `geometry/` (the
   kernel), `measure/` (the ruler-button measurement mode: hover shows a snap,
   a first click reads one number off a labeled feature or sets a start point, a
-  second click draws one distance, square to the part unless the straight-line
-  toggle or Shift asks otherwise; on touch a tap previews the snap, a second tap
+  second click draws the distance — its X/Y/Z parts in the part's frame plus the
+  straight-line distance, or the gap alone between two parallel faces — and the
+  overall dims step aside while a click measures; on touch a tap previews the snap, a second tap
   commits it, a drag from it adjusts and commits on lift. In-scene 3D dimension
   objects; `feature-dims.js`/`dim3-place.js`/`snaps.js`/`readings.js`/`param-link.js`
   are pure leaves, `dim3-scene.js` and `snap-marker.js` render into the viewer

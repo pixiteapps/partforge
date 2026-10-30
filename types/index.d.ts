@@ -469,8 +469,8 @@ export interface CaptureViewOptions {
 
 /**
  * Measurement mode runtime controls. Hover shows a snap marker only; a first
- * click reads one number off a labeled feature (or sets a start point), and a
- * second click measures one distance from it. Dimensioned captures come straight from
+ * click reads a labeled feature (or sets a start point), and a second click
+ * measures the distance from it: the straight-line distance and its axis parts. Dimensioned captures come straight from
  * `captureCurrent()` while the mode is enabled — in-scene dims render into
  * the frame natively (canonical-view captures and thumbnails never include
  * them).

@@ -928,8 +928,6 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
   align-self: center; user-select: none; cursor: pointer;
 }
 #viewbar .pf-measure-actions button.pf-measure-unit { min-width: auto; padding: 0 6px; }
-/* the straight-line toggle is an icon button, not a word: no 56px word width */
-#viewbar .pf-measure-actions button.pf-measure-straight { min-width: auto; padding: 0 6px; }
 .pf-measure-unit:hover { color: var(--pf-text-2); }
 /* measure mode's snap label (snap-marker.js): left/top are the projected
    snap point plus 12px up-right; the box hangs above that spot */

@@ -203,64 +203,9 @@ test("Clear is labelled for one measurement, not pins", () => {
   expect(clear.getAttribute("aria-label")).toBe("Clear the measurement");
 });
 
-test("straight toggle flips mode and aria-pressed; hidden when the mode is off", () => {
-  const { viewer, button } = fixture();
-  let straight = false;
-  const mode = fakeMode({
-    isStraight: () => straight,
-    setStraight: vi.fn((on) => { straight = on; }),
-  });
-  attachMeasureControls(viewer, mode, { measure: button });
-  const toggle = document.querySelector("button.pf-measure-straight");
-  expect(toggle).not.toBeNull();
-  expect(toggle.closest(".pf-measure-actions").hidden).toBe(true); // mode off
-  button.click(); // mode on
-  expect(toggle.closest(".pf-measure-actions").hidden).toBe(false);
-  expect(toggle.hidden).toBe(false);
-  // the name is constant; aria-pressed carries the state; the title names it
-  expect(toggle.getAttribute("aria-pressed")).toBe("false");
-  expect(toggle.getAttribute("aria-label")).toBe("Straight-line distance");
-  expect(toggle.title).toBe("Distance along an axis");
-
-  toggle.click();
-  expect(mode.setStraight).toHaveBeenLastCalledWith(true);
-  expect(toggle.getAttribute("aria-pressed")).toBe("true");
-  expect(toggle.getAttribute("aria-label")).toBe("Straight-line distance");
-  expect(toggle.title).toBe("Straight-line distance");
-  expect(toggle.classList.contains("on")).toBe(true);
-
-  toggle.click();
-  expect(mode.setStraight).toHaveBeenLastCalledWith(false);
-  expect(toggle.getAttribute("aria-pressed")).toBe("false");
-  expect(toggle.getAttribute("aria-label")).toBe("Straight-line distance");
-  expect(toggle.title).toBe("Distance along an axis");
-  expect(toggle.classList.contains("on")).toBe(false);
-
-  button.click(); // mode off hides the row, toggle included
-  expect(toggle.closest(".pf-measure-actions").hidden).toBe(true);
-});
-
-test("no straight toggle for a mode without setStraight", () => {
+test("the actions row is Clear and the unit tag: distances need no toggle", () => {
   const { viewer, button } = fixture();
   attachMeasureControls(viewer, fakeMode(), { measure: button });
-  expect(document.querySelector("button.pf-measure-straight")).toBeNull();
-});
-
-test("with a tooltip, the straight toggle's tooltip names the state and its name stays constant", () => {
-  const { viewer, button } = fixture();
-  let straight = false;
-  const mode = fakeMode({ isStraight: () => straight, setStraight: (on) => { straight = on; } });
-  const shown = [];
-  const tooltip = { showAnchor: ({ title }) => { shown.push(title); return shown.length; }, hide: () => {} };
-  attachMeasureControls(viewer, mode, { measure: button }, { tooltip });
-  button.click();
-  const toggle = document.querySelector("button.pf-measure-straight");
-  expect(toggle.hasAttribute("title")).toBe(false);
-  toggle.dispatchEvent(new Event("focus"));
-  expect(shown.at(-1)).toBe("Distance along an axis");
-  toggle.dispatchEvent(new Event("blur"));
-  straight = true;
-  toggle.dispatchEvent(new Event("focus"));
-  expect(shown.at(-1)).toBe("Straight-line distance");
-  expect(toggle.getAttribute("aria-label")).toBe("Straight-line distance");
+  const names = [...document.querySelectorAll(".pf-measure-actions button")].map((b) => b.textContent);
+  expect(names).toEqual(["Clear", "mm"]);
 });

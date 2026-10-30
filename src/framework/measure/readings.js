@@ -7,7 +7,9 @@
 //
 // `axis` on a span is the measuring direction: a frame axis (dominant
 // component), the shared face normal (a gap of at least MIN_SPAN_MM), or
-// unit(b − a) when straight.
+// unit(b − a) when straight. spanSpecs is what two clicks show: the gap alone
+// between parallel faces, else the straight-line distance plus each frame-axis
+// component (one number when the clicks differ along one axis only).
 
 import { COS_3DEG, q2 } from "./feature-dims.js";
 
@@ -82,20 +84,26 @@ function clickAnchors(point, hitPoint, { center, axis, top, bottom }) {
   return out;
 }
 
+// The gap between two parallel named faces, measured along the first one's
+// normal, or null. Only when there is a gap: two clicks on one face, or on
+// coplanar faces, read the distance between the points instead.
+function faceGap(d, faceNormals) {
+  const [nA, nB] = faceNormals ?? [null, null];
+  const n = nA && nB ? unit(nA) : null;
+  const m = nA && nB ? unit(nB) : null;
+  if (!n || !m || Math.abs(dot(n, m)) < COS_3DEG) return null;
+  const distance = Math.abs(dot(d, n));
+  return distance >= MIN_SPAN_MM ? { axis: n, distance } : null;
+}
+
 // Two clicks. a, b are parts-frame points; axes the three unit frame vectors;
 // faceNormals [nA|null, nB|null] the parts-frame normals of named plane faces.
 export function spanSpec(a, b, { axes = PARTS_AXES, straight = false, faceNormals = [null, null] } = {}) {
   const d = sub(b, a);
   let axis, distance;
-  const [nA, nB] = faceNormals ?? [null, null];
-  const n = nA && nB ? unit(nA) : null;
-  const m = nA && nB ? unit(nB) : null;
-  // The gap rule only when there is a gap: two clicks on one face, or on
-  // coplanar faces, read the distance between the points instead.
-  const gap = n && m && Math.abs(dot(n, m)) >= COS_3DEG ? Math.abs(dot(d, n)) : -1;
-  if (gap >= MIN_SPAN_MM) {
-    axis = n;
-    distance = gap;
+  const gap = faceGap(d, faceNormals);
+  if (gap) {
+    ({ axis, distance } = gap);
   } else if (straight) {
     distance = len(d);
     axis = unit(d);
@@ -115,6 +123,34 @@ export function spanSpec(a, b, { axes = PARTS_AXES, straight = false, faceNormal
     // mutating a spec must not corrupt every later span
     anchors: { a, b, axis: [...axis], axes: axes.map((v) => [...v]), straight: !!straight },
   };
+}
+
+// A component shorter than this share of the straight-line distance is snap
+// slop, not an offset anyone measured: 0.01 mm across a 20 mm diagonal would
+// otherwise draw a dimension of its own.
+const COMPONENT_MIN_SHARE = 0.002;
+
+// Everything two clicks show, in a fixed order: the axis components in frame
+// order, then the straight-line distance. Between two parallel named faces
+// with a gap, only the gap — that is a thickness, and its offsets along the
+// faces are noise. Empty when the points coincide.
+export function spanSpecs(a, b, { axes = PARTS_AXES, faceNormals = [null, null] } = {}) {
+  const d = sub(b, a);
+  if (faceGap(d, faceNormals)) return [spanSpec(a, b, { axes, faceNormals })];
+  const straight = spanSpec(a, b, { axes, straight: true });
+  if (!straight) return [];
+  const floor = Math.max(MIN_SPAN_MM, COMPONENT_MIN_SHARE * len(d));
+  const parts = [];
+  for (const ax of axes) {
+    const c = Math.abs(dot(d, ax));
+    if (c < floor) continue;
+    parts.push({
+      kind: "span",
+      values: { distance: q2(c) },
+      anchors: { a, b, axis: [...ax], axes: axes.map((v) => [...v]), straight: false },
+    });
+  }
+  return parts.length > 1 ? [...parts, straight] : parts.length ? parts : [straight];
 }
 
 // The frame a two-click span squares to. Same sub-part: that mesh's rotation

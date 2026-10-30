@@ -866,9 +866,10 @@ Labels do double duty in the viewer: the hover tooltip names the feature, and
 on a labeled feature reads it (⌀ for a hole's rim, ⌀ and depth for its wall,
 R for an arc, the length of a straight edge, W × H for a flat face), and a second click measures
 the distance from there. Unlabeled geometry snaps only to corners and points,
-for distances, so label the features a user would want to measure. Distances
-run square to the part; the straight-line button beside Clear (or a Shift-click)
-measures straight across instead. Readings clear when a clicked sub-part's
+for distances, so label the features a user would want to measure. A distance
+shows the straight-line length plus its parts along the part's own X, Y and Z
+(between two parallel faces, just the gap), and the overall size steps aside
+while a click is measuring. Readings clear when a clicked sub-part's
 geometry is regenerated or hidden, when the view changes, or when the mode turns
 off; a pose-only change (an animation, a place-only param) keeps them and moves
 them with the part.

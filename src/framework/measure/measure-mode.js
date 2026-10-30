@@ -4,7 +4,9 @@
 //   hover        raycast -> snaps.findSnap -> snap-marker (draws NO dimension)
 //   first click  the snap becomes the start point; a reading (readings.js
 //                firstReading) when the target has one, flashing matching params
-//   second click one distance (readings.spanSpec) from the start point
+//   second click the distance from the start point (readings.spanSpecs): the
+//                straight-line distance and its axis parts, or a face gap
+//   (the overall dims show only while nothing is clicked)
 //   third click  starts over
 //
 // Touch has no hover, so a tap stands in for it: a tap SHOWS the snap (marker
@@ -29,7 +31,7 @@ import { controlNodes } from "../panel/model.js";
 import { evaluateChoices, choicesEqual, placeDims, specSig, laneCounts } from "./dim3-place.js";
 import { createDimScene, worldPerPx, orthoWorldPerPx } from "./dim3-scene.js";
 import { buildSnapIndex, findSnap, SNAP_PX } from "./snaps.js";
-import { firstReading, spanSpec, frameAxesFor } from "./readings.js";
+import { firstReading, spanSpecs, frameAxesFor } from "./readings.js";
 import { createSnapMarker } from "./snap-marker.js";
 
 // How many distinct placements the cache holds. An orbit sweeps a bounded set
@@ -42,6 +44,8 @@ const PLACEMENT_CACHE_LIMIT = 32;
 // three's brute-force ray is a few ms on a desktop (2.9 ms at 53k) and building
 // the index is a main-thread task of its own (~85 ms at 53k) for little gain.
 const BVH_MIN_TRIANGLES = 100_000;
+
+const NO_DRAWINGS = Object.freeze([]);
 
 // The word the snap label uses for each SnapTarget kind on a named feature.
 const KIND_WORD = { corner: "corner", midpoint: "midpoint", circle: "centre", edge: "edge", face: "face" };
@@ -96,7 +100,6 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
 
   let enabled = false;
   let units = "mm";            // display only; values stay mm internally
-  let straight = false;        // the chrome's toggle; Shift does the same per click
   let scene = null;            // created on first enable, kept across toggles
   let marker = null;           // the hover snap marker + the clicked-point dots
   let detached = false;
@@ -106,8 +109,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   //   pointGeom  the snap point, geometry frame
   //   spec       the first click's reading (geometry frame) or null
   //   normal     a named plane face's normal (geometry frame) or null — the
-  //              parallel-faces gap rule in spanSpec
-  // `second` also carries `straight`, decided at its click.
+  //              parallel-faces gap rule in spanSpecs
   let first = null;
   let second = null;
   let hoverMesh = null;        // the mesh the snap marker currently marks
@@ -309,8 +311,8 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // ---- what is drawn ---------------------------------------------------------
   // The span between the two clicks, built from POSED points (and posed face
   // normals), squared to the shared frame of both sub-parts. Not posed again.
-  function currentSpan() {
-    if (!first || !second) return null;
+  function currentSpans() {
+    if (!first || !second) return [];
     const pa = posePoint(first.pointGeom, first.mesh.matrix);
     const pb = posePoint(second.pointGeom, second.mesh.matrix);
     const axes = frameAxesFor(first.subPart, second.subPart, (name) => viewer._subMeshes[name]?.matrix);
@@ -318,7 +320,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       first.normal ? poseDir(first.normal, first.mesh.matrix) : null,
       second.normal ? poseDir(second.normal, second.mesh.matrix) : null,
     ];
-    return spanSpec(pa, pb, { axes, straight: second.straight, faceNormals });
+    return spanSpecs(pa, pb, { axes, faceNormals });
   }
 
   // Items handed to dim3-place: every spec already in the parts frame, and
@@ -334,22 +336,26 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       return { min: [b.min.x, b.min.y, b.min.z], max: [b.max.x, b.max.y, b.max.z] };
     });
     const u = unionBounds(boundsList);
-    items.push({
-      id: "overall", tier: "static", spec: bboxSpec(u.min, u.max),
-      meshes: meshes.map((_, i) => i),
-      subParts: meshes.map(([n]) => n),
-    });
+    // The overall dims greet the mode; once a click is measuring something
+    // they step aside, and come back when it clears.
+    if (!first) {
+      items.push({
+        id: "overall", tier: "static", spec: bboxSpec(u.min, u.max),
+        meshes: meshes.map((_, i) => i),
+        subParts: meshes.map(([n]) => n),
+      });
+    }
     const indexOf = (name) => meshes.findIndex(([n]) => n === name);
     if (second) {
-      // a distance replaces the reading on screen: one number at a time
-      const spec = currentSpan();
-      if (spec) {
+      // a distance replaces the reading on screen: the straight-line distance
+      // and its axis components, ids "span:<n>" in spanSpecs' order
+      currentSpans().forEach((spec, n) => {
         items.push({
-          id: "span", tier: "pinned", pinned: true, spec,
+          id: `span:${n}`, tier: "pinned", pinned: true, spec,
           meshes: [indexOf(first.subPart), indexOf(second.subPart)].filter((i) => i >= 0),
           subParts: [first.subPart, second.subPart],
         });
-      }
+      });
     } else if (first?.spec) {
       const i = indexOf(first.subPart);
       items.push({
@@ -425,7 +431,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     }
     return key;
   }
-  const isMeasureChoice = (ck) => ck.startsWith("first|") || ck.startsWith("span|");
+  const isMeasureChoice = (ck) => ck.startsWith("first|") || ck.startsWith("span");
 
   // Two cached passes, like the old base/hover split: the overall dims, which
   // only a mesh, unit, theme or camera-side change moves, and the one
@@ -433,9 +439,9 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // vertex scan never re-runs for it.
   //   base key:  mesh signature (geometry, poses, visibility, view), units,
   //              theme, the overall's side choices
-  //   paint key: the base key + the measurement's spec (the ids "first" and
-  //              "span" are reused by every measurement, so the spec is its
-  //              identity) + its side choices
+  //   paint key: the base key + the measurement's specs (the ids "first" and
+  //              "span:<n>" are reused by every measurement, so the spec is
+  //              its identity) + its side choices
   function rebuild() {
     if (!enabled || !scene) return;
     const { items, meshes, bounds } = buildItems();
@@ -449,7 +455,9 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     const base = items.filter((i) => i.id === "overall");
     const extra = items.filter((i) => i.id !== "overall");
     const baseKey = `${units}|${meshSig()}|t${themeEpoch}${choiceKey((ck) => !isMeasureChoice(ck))}`;
-    let baseDrawings = placeCache.get(baseKey);
+    // No overall while a click measures: nothing to place or cache under the
+    // base key, which therefore only ever holds the overall's drawings.
+    let baseDrawings = base.length ? placeCache.get(baseKey) : NO_DRAWINGS;
     if (!baseDrawings) baseDrawings = placeCache.set(baseKey, place(base));
     let drawings = baseDrawings;
     if (extra.length) {
@@ -472,7 +480,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // one's hysteresis under the reused item id.
   function forgetChoices() {
     for (const ck of Object.keys(choices)) {
-      if (ck.startsWith("first|") || ck.startsWith("span|")) delete choices[ck];
+      if (isMeasureChoice(ck)) delete choices[ck];
     }
   }
 
@@ -700,7 +708,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     const snap = touchPreview;
     clearHover();
     swallowClick = true;
-    if (snap && enabled) commit(snap, false);
+    if (snap && enabled) commit(snap);
   }
 
   function onCancelCapture(ev) {
@@ -768,7 +776,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     if (picked) {
       // A reading's label (and the overall's) flashes the controls that hold
       // its value. Distances never flash. Nothing else changes.
-      if (picked.itemId === "span") return;
+      if (picked.itemId.startsWith("span")) return;
       const item = lastItems.find((i) => i.id === picked.itemId);
       if (item) revealRelevant(item.subParts, { value: picked.value });
       return;
@@ -782,17 +790,16 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       return;
     }
     if (!snap) return; // background: the reading stays
-    commit(snap, ev.shiftKey);
+    commit(snap);
   }
 
   // One click's worth of state change: the first point, the distance, or a
-  // fresh start after a distance. `shiftKey` asks for straight-line.
-  function commit(snap, shiftKey) {
+  // fresh start after a distance.
+  function commit(snap) {
     const click = clickRecord(snap);
     if (first && !second) {
-      const candidate = { ...click, straight: shiftKey || straight };
-      second = candidate;
-      if (!currentSpan()) { second = null; return; } // the same point again: nothing
+      second = click;
+      if (!currentSpans().length) { second = null; return; } // the same point again: nothing
       forgetChoices();
       syncPins();
       notifyPins();
@@ -863,23 +870,6 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       units = next;
       rebuild(); // labels re-render in the new unit; the cache key carries it
     },
-    // Internal (the chrome's straight-line toggle); mount.js does not expose
-    // these to hosts. It sets the kind of the next distance and re-draws the
-    // one on screen in that kind, so after a switch the drawn distance matches
-    // the toggle. Shift is per click: a Shift-click draws a straight line while
-    // the toggle stays off, until the toggle is next switched.
-    setStraight(on) {
-      straight = !!on;
-      if (second && second.straight !== straight) {
-        second = { ...second, straight };
-        // the commit path's guard: a span under MIN_SPAN_MM in its new kind
-        // draws nothing, so it must not be counted either
-        if (!currentSpan()) { clearState(); return; }
-        forgetChoices();
-        rebuild();
-      }
-    },
-    isStraight: () => straight,
     onPinsChange: (cb) => { pinListeners.add(cb); return () => pinListeners.delete(cb); },
     onModeChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },
     detach() {
