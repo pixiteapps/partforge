@@ -628,6 +628,9 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // reuses a seed for a bed only when they were). Absent everywhere else.
     ...(sheetView ? { measuredPrintBboxes } : {}),
     subparts,
+    // The kernel's build warnings, `{ part, message }` as the app's meshes message has them
+    // (a caller-supplied build that carries none counts as none).
+    warnings: built.flatMap(({ name, warnings }) => (warnings ?? []).map((message) => ({ part: name, message }))),
     aggregate,
     overlaps,
     gaps,
