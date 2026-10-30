@@ -1,6 +1,6 @@
 // Viewbar chrome for measurement mode: the ruler toggle + contextual actions
 // (a straight-line toggle — the only way to ask for one on touch, which has no
-// Shift — "Clear" when pins exist, a unit toggle cycling the dimension display
+// Shift — "Clear" while a measurement is on screen, a unit toggle cycling the dimension display
 // between millimetres and inches — display only; the rail stays mm). A direct sibling of
 // cutaway-controls.js — same no-op-without-button contract, same attribute
 // restore discipline on detach. The mode object (measure-mode.js) owns all

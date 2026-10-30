@@ -24,6 +24,8 @@ import { createDragTracker, DRAG_THRESHOLD_SQUARED } from "../selection/drag-tra
 import { subPartParamKeys } from "../param-deps.js";
 import { classifyFeature, bboxSpec, unionBounds } from "./feature-dims.js";
 import { paramMatches } from "./param-link.js";
+import { desugar } from "../panel/legacy.js";
+import { controlNodes } from "../panel/model.js";
 import { evaluateChoices, choicesEqual, placeDims, specSig, laneCounts } from "./dim3-place.js";
 import { createDimScene, worldPerPx, orthoWorldPerPx } from "./dim3-scene.js";
 import { buildSnapIndex, findSnap, SNAP_PX } from "./snaps.js";
@@ -237,7 +239,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // directions take the matrix's linear part only — exact here because
   // setSubPose poses are rigid (rotation + translation, no shear or scale).
   const poseDir = (d, matrix) => _tv.set(d[0], d[1], d[2]).applyMatrix3(_m3.setFromMatrix4(matrix)).normalize().toArray();
-  function transformSpec(spec, matrix) {
+  function transformSpec(spec, matrix, subPart) {
     if (isIdentity(matrix)) return spec; // poses are identity outside animations
     const pt = (p) => posePoint(p, matrix);
     const dir = (d) => poseDir(d, matrix);
@@ -256,7 +258,11 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       } };
     }
     if (spec.kind === "edge") {
-      return { ...spec, anchors: { a: pt(spec.anchors.a), b: pt(spec.anchors.b) } };
+      // squared to the posed sub-part's own axes, as a span on one sub-part is
+      return { ...spec, anchors: {
+        a: pt(spec.anchors.a), b: pt(spec.anchors.b),
+        axes: frameAxesFor(subPart, subPart, () => matrix),
+      } };
     }
     return spec;
   }
@@ -272,16 +278,30 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // A reading flashes the controls whose value ACTUALLY matches one of its
   // values (within the display quantum; radius-style params match a diameter
   // at value*2), scoped to the sub-part's read keys so an unrelated part's
-  // coincidental value can't light up. One match also takes keyboard focus;
-  // several flash without a focus steal; none flashes nothing.
+  // coincidental value can't light up. Controls in degrees, radians or
+  // percent never match (a reading is a length). A measurement never takes
+  // keyboard focus (no focus key): on a phone a focused field raises the soft
+  // keyboard and pulls focus out of the canvas, on every click.
+  let unitByKey = null;
+  function unitOf(key) {
+    if (!unitByKey) {
+      unitByKey = new Map();
+      try {
+        for (const c of controlNodes(desugar(part?.parameters ?? []))) {
+          if (c.key != null && !unitByKey.has(c.key)) unitByKey.set(c.key, c.unit);
+        }
+      } catch { /* a schema we cannot read: match by value alone */ }
+    }
+    return unitByKey.get(key);
+  }
   function revealRelevant(subParts, values) {
     if (!values) return;
     const keySet = new Set();
     for (const sp of subParts ?? []) for (const k of readKeysFor(sp)) keySet.add(k);
     if (!keySet.size) return;
-    const matches = paramMatches([...keySet], getContext().params, values);
+    const matches = paramMatches([...keySet], getContext().params, values, unitOf);
     if (!matches.length) return;
-    revealParams?.(matches, matches.length === 1 ? matches[0] : null);
+    revealParams?.(matches, null);
   }
 
   // ---- what is drawn ---------------------------------------------------------
@@ -332,7 +352,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       const i = indexOf(first.subPart);
       items.push({
         id: "first", tier: "pinned", pinned: true,
-        spec: transformSpec(first.spec, first.mesh.matrix),
+        spec: transformSpec(first.spec, first.mesh.matrix, first.subPart),
         meshes: i >= 0 ? [i] : [],
         subParts: [first.subPart],
       });
@@ -465,6 +485,8 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // the hover snap too: a snap that outlives the clear (say a view change over
   // the same mesh) would stay on screen until the next pointer move.
   function clearState({ redraw = true } = {}) {
+    // a finger dragging the snap loses it too, so its lift commits nothing
+    endAdjust();
     clearHover();
     first = null;
     second = null;
@@ -536,6 +558,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // ---- snapping ------------------------------------------------------------
   const _sp = new THREE.Vector3();
   const _ws = new THREE.Vector3();
+  const _vis = new THREE.Vector3();
   // A geometry-frame point of `mesh` in client px.
   function projectToClient(p, mesh, rect = viewer.domElement.getBoundingClientRect()) {
     _sp.set(p[0], p[1], p[2]).applyMatrix4(mesh.matrixWorld).project(viewer.camera);
@@ -566,6 +589,10 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       pointerPx: [x, y],
       radiusWorld: (SNAP_PX * wpp) / scale,
       snapPx: SNAP_PX,
+      // geometry-frame point -> world, through the cutaway check the raycast uses
+      visible: viewer.isWorldPointVisible
+        ? (p) => viewer.isWorldPointVisible(mesh.localToWorld(_vis.set(p[0], p[1], p[2])))
+        : null,
     });
     if (!target) return null;
     return { target, mesh, subPart: hit.subPart, featureSpec: fSpec, featureLabel: hit.feature?.label ?? null };

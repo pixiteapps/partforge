@@ -868,7 +868,10 @@ length of a straight edge, W × H for a flat face), and a second click measures
 the distance from there. Unlabeled geometry snaps only to corners and points,
 for distances, so label the features a user would want to measure. Distances
 run square to the part; the straight-line button beside Clear (or a Shift-click)
-measures straight across instead. Readings clear when the part rebuilds.
+measures straight across instead. Readings clear when a clicked sub-part's
+geometry is regenerated or hidden, when the view changes, or when the mode turns
+off; a pose-only change (an animation, a place-only param) keeps them and moves
+them with the part.
 
 ### Caching & determinism
 
@@ -3604,8 +3607,8 @@ pane's pixel size:
   vertices, not a bounding box, so it is exact at any angle. The framing is
   kept as-is when the geometry runs past any frame edge (a user who zoomed in
   past the part's silhouette cropped it on purpose), when it is already centred,
-  or when measurement dimensions are pinned (their labels sit beside the part and
-  could otherwise be cut off).
+  or while a measurement is on screen (its labels sit beside the part and could
+  otherwise be cut off).
 - `runtime.captureViews(viewNames) → [{ view, dataUrl }]` — the canonical-angle
   counterpart (fixed view directions, each fitted so the visible assembly's projected
   geometry fills 90% of the frame and sits centred in it; 1024², grid hidden). Sized

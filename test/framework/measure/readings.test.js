@@ -88,8 +88,16 @@ describe("spanSpec", () => {
     expect(s.values.distance).toBe(7);
   });
   test("same point is no span", () => expect(spanSpec([1, 1, 1], [1, 1, 1.004], { axes: PARTS, straight: false, faceNormals: [null, null] })).toBeNull());
-  test("a tiny gap between parallel faces is no span", () =>
-    expect(spanSpec([0, 0, 0], [9, 0, 0.003], { axes: PARTS, straight: false, faceNormals: [[0, 0, 1], [0, 0, 1]] })).toBeNull());
+  test("two points on one face (no gap) fall through to the dominant axis", () => {
+    const s = spanSpec([0, 0, 0], [9, 3, 0.003], { axes: PARTS, straight: false, faceNormals: [[0, 0, 1], [0, 0, 1]] });
+    expect(s.values.distance).toBe(9); expect(s.anchors.axis).toEqual([1, 0, 0]);
+  });
+  test("two coplanar faces, straight on, give the straight distance", () => {
+    const s = spanSpec([0, 0, 2], [3, 4, 2], { axes: PARTS, straight: true, faceNormals: [[0, 0, 1], [0, 0, -1]] });
+    expect(s.values.distance).toBe(5);
+  });
+  test("coplanar faces on the same point are still no span", () =>
+    expect(spanSpec([0, 0, 0], [0.001, 0, 0.003], { axes: PARTS, straight: false, faceNormals: [[0, 0, 1], [0, 0, 1]] })).toBeNull());
   test("values are q2-rounded", () => {
     expect(spanSpec([0, 0, 0], [12.3456, 0, 0], { axes: PARTS, straight: false, faceNormals: [null, null] }).values.distance).toBe(12.35);
   });

@@ -131,6 +131,13 @@ function fakeViewer(mesh, parts = new THREE.Group()) {
 }
 
 const part = {
+  parameters: [{ id: "s", title: "S", controls: [
+    { key: "plate_w", unit: "mm" },
+    { key: "wall", unit: "mm" },
+    { key: "tilt", unit: "°" },
+    { key: "rad_t", unit: "rad" },
+    { key: "fill", unit: "%" },
+  ] }],
   parts: { plate: { label: "Plate", build: () => {} } },
   views: { main: { parts: ["plate"] }, alt: { parts: ["plate"] } },
 };
@@ -346,7 +353,7 @@ test("first click on the labelled face reads W × H and flashes a matching param
   expect(mode.pinCount()).toBe(1);
   expect(onPins).toHaveBeenCalledTimes(1);
   expect(itemIds().filter((id) => id === "first").length).toBe(2); // W and H
-  expect(revealParams).toHaveBeenCalledWith(["plate_w"], "plate_w");
+  expect(revealParams).toHaveBeenCalledWith(["plate_w"], null);
   mode.detach();
 });
 
@@ -473,6 +480,40 @@ test("touch drag from the shown snap adjusts then commits on lift", () => {
   tapPoint(viewer, CORNER_C);
   expect(snapShown()).toBe(true);
   expect(mode.pinCount()).toBe(1);
+  mode.detach();
+});
+
+test("Clear during a touch drag ends it: the lift commits nothing", () => {
+  const { viewer, mode, snapShown } = setup();
+  mode.setEnabled(true);
+  tapPoint(viewer, CORNER_A);
+  const a = screenOf(viewer, CORNER_A);
+  const e = screenOf(viewer, ON_EDGE);
+  const dom = viewer.domElement;
+  dom.dispatchEvent(finger("pointerdown", a.x, a.y));
+  dom.dispatchEvent(finger("pointermove", (a.x + e.x) / 2, a.y));
+  mode.clearPins();
+  dom.dispatchEvent(finger("pointermove", e.x, e.y)); // the finger is still down
+  dom.dispatchEvent(finger("pointerup", e.x, e.y));
+  expect(mode.pinCount()).toBe(0);
+  expect(snapShown()).toBe(false);
+  mode.detach();
+});
+
+test("a corner hidden by the cutaway is not snapped", () => {
+  const { viewer, mode, snapLabel } = setup();
+  mode.setEnabled(true);
+  // a cut that keeps x > 1: the hit (on the face) is kept, CORNER_A is not
+  viewer.isWorldPointVisible = (p) => {
+    const local = viewer.__parts.worldToLocal(p.clone());
+    return local.x > 1;
+  };
+  const a = screenOf(viewer, [1.5, 0.5, 2]); // near CORNER_A on screen, on the kept side
+  move(viewer.domElement, a.x, a.y);
+  expect(snapLabel().textContent).not.toBe("top face · corner");
+  delete viewer.isWorldPointVisible;
+  move(viewer.domElement, a.x, a.y + 0.01);
+  expect(snapLabel().textContent).toBe("top face · corner");
   mode.detach();
 });
 
@@ -617,7 +658,7 @@ test("third click starts over", () => {
   expect(mode.pinCount()).toBe(1);
   expect(itemIds()).not.toContain("span");
   expect(itemIds()).toContain("first");
-  expect(revealParams).toHaveBeenCalledWith(["plate_w"], "plate_w");
+  expect(revealParams).toHaveBeenCalledWith(["plate_w"], null);
   expect(onPins).toHaveBeenCalledTimes(3);
   mode.detach();
 });
@@ -728,7 +769,7 @@ test("a cylinder's first click reads ⌀ only and flashes on the diameter", () =
   clickAt(viewer.domElement);
   const first = dimGroup().children.filter((c) => c.userData.pfDimItemId === "first");
   expect(first.map((c) => c.userData.pfDimValue)).toEqual([6]); // no depth dim
-  expect(revealParams).toHaveBeenCalledWith(["boss_d"], "boss_d");
+  expect(revealParams).toHaveBeenCalledWith(["boss_d"], null);
   mode.detach();
 });
 
@@ -814,7 +855,7 @@ test("a reading's label click flashes the matching param and changes nothing", (
   expect(w).toBeDefined();
   const { x, y } = labelScreen(viewer, w);
   clickAt(viewer.domElement, x, y);
-  expect(revealParams).toHaveBeenCalledWith(["plate_w"], "plate_w");
+  expect(revealParams).toHaveBeenCalledWith(["plate_w"], null);
   expect(mode.pinCount()).toBe(1); // no fall-through into a second click
   mode.detach();
 });
@@ -841,6 +882,27 @@ test("several matching params all flash, none takes focus", () => {
   const [keys, focus] = revealParams.mock.calls.at(-1);
   expect(keys.sort()).toEqual(["plate_w", "wall"]);
   expect(focus).toBe(null);
+  mode.detach();
+});
+
+test("an angle or percent param never flashes for a length, and nothing takes focus", () => {
+  const { viewer, mode, ctx, revealParams } = setup();
+  ctx.params = { plate_w: 20, tilt: 20, rad_t: 20, fill: 20 };
+  mode.setEnabled(true);
+  clickAt(viewer.domElement); // W 20 × H 10
+  const [keys, focus] = revealParams.mock.calls.at(-1);
+  expect(keys).toEqual(["plate_w"]);
+  expect(focus).toBe(null);
+  mode.detach();
+});
+
+test("a touch commit flashes without a focus key", () => {
+  const { viewer, mode, revealParams } = setup();
+  mode.setEnabled(true);
+  tapAt(viewer.domElement, 50, 50);
+  tapAt(viewer.domElement, 50, 50); // a second tap on the preview commits it
+  expect(mode.pinCount()).toBe(1);
+  expect(revealParams).toHaveBeenCalledWith(["plate_w"], null);
   mode.detach();
 });
 
@@ -940,6 +1002,25 @@ test("an edge reading rides a translation through transformSpec", () => {
   const after = labelPositions("first");
   expect(after[0][0]).toBeCloseTo(before[0][0], 5);
   expect(after[0][1]).toBeCloseTo(before[0][1] + 3, 5);
+  mode.detach();
+});
+
+test("an edge reading on a posed sub-part squares to that sub-part's axes", () => {
+  const { mesh, viewer, mode } = setup();
+  mode.setEnabled(true);
+  clickPoint(viewer, ON_EDGE);
+  const pose = new THREE.Matrix4().makeRotationZ(Math.PI / 6);
+  poseSubMesh(mesh, pose);
+  placeDims.mockClear();
+  viewer.frame();
+  const items = placeDims.mock.calls.flatMap(([list]) => list).filter((i) => i.id === "first");
+  expect(items.length).toBeGreaterThan(0);
+  const axes = items.at(-1).spec.anchors.axes;
+  const e = pose.elements;
+  expect(axes).toHaveLength(3);
+  [[e[0], e[1], e[2]], [e[4], e[5], e[6]], [e[8], e[9], e[10]]].forEach((col, i) => {
+    for (let k = 0; k < 3; k++) expect(axes[i][k]).toBeCloseTo(col[k], 6);
+  });
   mode.detach();
 });
 

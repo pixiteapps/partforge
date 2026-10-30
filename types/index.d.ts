@@ -441,7 +441,8 @@ export interface CaptureCurrentOptions {
    * Centre the visible geometry: render the largest centred sub-window of the
    * current framing that still holds every visible vertex (equal margins, full
    * `size` resolution). When the geometry runs past a frame edge — the user
-   * zoomed in on purpose — or dimensions are pinned, the framing is kept as-is.
+   * zoomed in on purpose — or while a measurement is on screen, the framing is
+   * kept as-is.
    * Default false.
    */
   recenter?: boolean;
@@ -482,7 +483,9 @@ export interface MeasureRuntime {
   /**
    * The number of user measurements on screen: 0, 1 (a first click — a
    * reading, or the start point of a distance) or 2 (a distance). Readings
-   * clear when the part rebuilds, the view changes or the mode is turned off.
+   * clear when a clicked sub-part's geometry is regenerated or hidden, when the
+   * view changes, or when the mode is turned off. A pose-only change (an
+   * animation, a place-only param) keeps them and moves them with the part.
    */
   pinCount(): number;
 }
@@ -776,7 +779,7 @@ export interface PartRuntime {
    * active view has none, where `state().animation` reads `null`.
    */
   animation: AnimationRuntime | null;
-  /** Measurement mode's runtime-controls API — mode on/off, unit, and pin state; dimensioned captures come from `captureCurrent()` while enabled. Always present (a no-op stand-in outside `makeHandle` tests). */
+  /** Measurement mode's runtime-controls API — mode on/off and the measurement count; dimensioned captures come from `captureCurrent()` while enabled. Always present (a no-op stand-in outside `makeHandle` tests). */
   measure: MeasureRuntime;
   /** Annotation mode's runtime-controls API — mode on/off, ink state, and send. Always present; a no-op stand-in when `onAnnotationSend` was not supplied. */
   annotate: AnnotateRuntime;

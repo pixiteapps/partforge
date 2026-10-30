@@ -203,6 +203,14 @@ describe("ranking", () => {
     expect(nearCorner.featureId).toBe(0);
   });
 
+  test("a corner the cutaway clips away is not snappable", () => {
+    const visible = (pt) => !(pt[0] === W && pt[1] === D && pt[2] === H);
+    const t = findSnap(idx, { ...q([196, 97]), visible });
+    expect(t.kind).not.toBe("corner");
+    // the other corners stay snappable
+    expect(findSnap(idx, { ...q([4, 94]), visible }).kind).toBe("corner");
+  });
+
   test("a corner outside radiusWorld is not a candidate", () => {
     const query = { ...q([196, 97]), radiusWorld: 0.1 };
     expect(findSnap(idx, query).kind).not.toBe("corner");

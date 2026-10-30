@@ -6,7 +6,8 @@
 //   span { kind, values: {distance}, anchors: {a, b, axis, axes, straight} }
 //
 // `axis` on a span is the measuring direction: a frame axis (dominant
-// component), the shared face normal (a gap), or unit(b − a) when straight.
+// component), the shared face normal (a gap of at least MIN_SPAN_MM), or
+// unit(b − a) when straight.
 
 import { COS_3DEG, q2 } from "./feature-dims.js";
 
@@ -50,9 +51,12 @@ export function spanSpec(a, b, { axes = PARTS_AXES, straight = false, faceNormal
   const [nA, nB] = faceNormals ?? [null, null];
   const n = nA && nB ? unit(nA) : null;
   const m = nA && nB ? unit(nB) : null;
-  if (n && m && Math.abs(dot(n, m)) >= COS_3DEG) {
+  // The gap rule only when there is a gap: two clicks on one face, or on
+  // coplanar faces, read the distance between the points instead.
+  const gap = n && m && Math.abs(dot(n, m)) >= COS_3DEG ? Math.abs(dot(d, n)) : -1;
+  if (gap >= MIN_SPAN_MM) {
     axis = n;
-    distance = Math.abs(dot(d, n));
+    distance = gap;
   } else if (straight) {
     distance = len(d);
     axis = unit(d);

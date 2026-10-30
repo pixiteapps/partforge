@@ -127,9 +127,10 @@ the installed package, so let the publish finish before bumping the dep there.
   are pure leaves, `dim3-scene.js` and `snap-marker.js` render into the viewer
   scene, `measure-mode.js` orchestrates, `measure-controls.js` is the viewbar
   chrome. Known residuals: a pinch that starts on the shown snap acts as a
-  one-finger rotate; the finger covers a snap being dragged; the first hover on a
-  part of 100k+ triangles waits once for its BVH, up to about 0.3 s on desktop —
-  building it in a worker is the follow-up), `annotate/` (the
+  one-finger rotate; the finger covers a snap being dragged; on a part of 100k+
+  triangles the BVH is built in idle time after the mode turns on, and a hover
+  that arrives while that build runs waits for it, up to about 0.3 s on desktop
+  (hover never builds it; building it in a worker is the follow-up), `annotate/` (the
   sketch mode: typed drawing elements - pen/line/rect/ellipse with three ink
   colors, a hand tool for move/resize/rotate, and an interval eraser that
   subtracts parameter spans so shapes stay parametric - sent to the host via

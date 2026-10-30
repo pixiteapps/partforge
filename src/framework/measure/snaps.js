@@ -266,9 +266,13 @@ function circleCandidate(spec, query) {
   return { point: [...centre], px: d, circle: { centre: [...centre], axis: ax, radius: r } };
 }
 
+// query: { hitPoint, hitFeatureId, featureSpec, project, pointerPx, radiusWorld,
+// snapPx, visible? }. `visible(p)` (geometry frame) is the cutaway: a corner it
+// rejects is not a candidate. The other kinds come from the hit feature, whose
+// hit point the raycast already accepted.
 export function findSnap(index, query) {
   if (!index || !query?.hitPoint) return null;
-  const { hitPoint, hitFeatureId, featureSpec, project, pointerPx, radiusWorld, snapPx } = query;
+  const { hitPoint, hitFeatureId, featureSpec, project, pointerPx, radiusWorld, snapPx, visible } = query;
   const named = hitFeatureId > 0;
   const featureId = named ? hitFeatureId : 0;
   let best = null;
@@ -282,6 +286,8 @@ export function findSnap(index, query) {
   const { corners } = index;
   for (const i of cornersNear(index, hitPoint, radiusWorld)) {
     const p = [corners[i * 3], corners[i * 3 + 1], corners[i * 3 + 2]];
+    // a corner the cutaway clips away is not snappable (the raycast's own rule)
+    if (visible && !visible(p)) continue;
     consider("corner", p, pxDist(project(p), pointerPx));
   }
 
