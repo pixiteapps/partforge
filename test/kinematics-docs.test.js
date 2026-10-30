@@ -62,7 +62,7 @@ test("every runnable example in the guide returns the value it shows", () => {
     checked.push(src);
   };
   new Function("limb", "check", blocks.map(toScript).join("\n"))(limb, check);
-  expect(checked.length).toBe(20);   // every shown value; a parse change that drops one fails here
+  expect(checked.length).toBe(29);   // every shown value; a parse change that drops one fails here
 });
 
 test("every error message in the guide is the code's own, a SpecError with code SPEC", () => {
@@ -73,6 +73,7 @@ test("every error message in the guide is the code's own, a SpecError with code 
   });
   const parented = limb("index", { parent: "palm", at: [-30, 96, 2], toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["mcp", "pip"], lengths: [42, 25] });
   const rod = { kind: "cylinder", r: 8, h: 40, axis: "x", at: [-30, 130, -22] };
+  const thumb = limb("thumb", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: [{ name: "ball", type: "ball" }, "ip"], lengths: [30, 20] });
   const triggers = [
     () => index.pose({ bend: [1, 2], curl: 0.5 }),
     () => index.pose({ reach: [0, 0, 0], grip: { around: rod } }),
@@ -83,6 +84,10 @@ test("every error message in the guide is the code's own, a SpecError with code 
     () => index.pose({}).place({ rotate() {}, translate() {} }, "pipp"),
     () => index.pose({ grip: { around: { kind: "twist", children: [rod] } } }),
     () => index.pose({ grip: { around: () => NaN } }),
+    () => limb("x", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: [{ name: "a", offset: [0, 0, 1] }], lengths: [1] }),
+    () => thumb.pose({ bend: { ball: 30 } }),
+    () => limb("thumb", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: [{ name: "ball", type: "ball", range: [0, 10] }], lengths: [1] }),
+    () => index.pose({}).place({ rotate() {}, translate() {} }, "pip", { from: "printed" }),
   ];
   const produced = triggers.map((f) => {
     try { f(); } catch (e) {

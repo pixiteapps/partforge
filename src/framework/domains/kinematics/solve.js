@@ -40,14 +40,15 @@ const pointIn = (M, p) => { const o = [0, 0, 0]; xformPoint(o, invert(M), p[0], 
 
 /**
  * The aim joints: the first driven bend joint (the pitch) and the first driven
- * spread joint before it, if any. Every segment before the pitch must have length 0, and
+ * spread joint before it, if any. Every segment before the pitch must have length 0 (and
+ * every joint up to it no offset), and
  * no joint may follow an aim joint — its value would move with the aim.
  */
 function aimJoints(tree, fail) {
   const { joints } = tree;
   const pitch = joints.findIndex((j) => !j.follow && j.axisKind === "bend");
   if (pitch < 0) fail("", "reach needs a driven bend joint to aim with");
-  for (let i = 0; i < pitch; i++) if (joints[i].length !== 0) fail("", "reach needs the limb's first bend joint at its base");
+  for (let i = 0; i < pitch; i++) if (joints[i].length !== 0 || joints[i + 1].offset?.some((c) => c !== 0)) fail("", "reach needs the limb's first bend joint at its base");
   const spreadJoint = joints.findIndex((j, i) => i < pitch && !j.follow && j.axisKind === "spread");
   const aims = new Set([pitch, spreadJoint]);
   joints.forEach((j, i) => {

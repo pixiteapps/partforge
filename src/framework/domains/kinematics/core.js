@@ -1,6 +1,6 @@
 // limb(name, def): forward kinematics for one jointed chain, emitting plain
 // core-shaped frames. Structure once, pose as often as needed.
-import { buildTree, jointSteps, failer, couple, farEnd, nearZero } from "./tree.js";
+import { buildTree, jointSteps, failer, couple, farEnd, nearZero, restValue, ballValue } from "./tree.js";
 import { buildFrames, buildReport, buildAdapters, r3 } from "./outputs.js";
 import { solveReach, solveGrip } from "./solve.js";
 import { distanceFor } from "./shapes.js";
@@ -47,10 +47,17 @@ function gripInputs(tree, grip, fail) {
   return { dist, radii, clearance };
 }
 
+/** One driven joint's pose value: a number for a hinge, `{ bend?, spread?, twist? }` for a ball. */
+function jointValue(joint, v, field, fail) {
+  if (joint.type === "ball") return ballValue(v, field, fail);
+  if (!isNum(v)) fail(field, "must be a finite number");
+  return v;
+}
+
 /** Raw driven-joint values for a pose's bend/curl (followers and clamping come later, in `couple`). */
 function rawValues(tree, opts, fail) {
   const { joints } = tree;
-  const raw = new Array(joints.length).fill(0);
+  const raw = joints.map(restValue);
   const driven = [];
   joints.forEach((j, i) => { if (!j.follow) driven.push(i); });
 
@@ -69,10 +76,7 @@ function rawValues(tree, opts, fail) {
   }
   if (Array.isArray(bend)) {
     if (bend.length !== driven.length) fail("bend", `expected ${driven.length} entries (driven joints), got ${bend.length}`);
-    bend.forEach((v, n) => {
-      if (!isNum(v)) fail(`bend[${n}]`, "must be a finite number");
-      raw[driven[n]] = v;
-    });
+    bend.forEach((v, n) => { raw[driven[n]] = jointValue(joints[driven[n]], v, `bend[${n}]`, fail); });
   } else if (bend != null) {
     if (typeof bend !== "object") fail("bend", "must be an array of driven-joint values or { joint: value }");
     for (const [k, v] of Object.entries(bend)) {
@@ -80,12 +84,36 @@ function rawValues(tree, opts, fail) {
       if (i < 0) fail(`bend.${k}`, `unknown joint "${k}"`);
       const f = joints[i].follow;
       if (f) fail(`bend.${k}`, `${k} follows ${joints[f.index].name} and takes no value`);
-      if (!isNum(v)) fail(`bend.${k}`, "must be a finite number");
-      raw[i] = v;
+      raw[i] = jointValue(joints[i], v, `bend.${k}`, fail);
     }
   }
 
   return raw;
+}
+
+/**
+ * Every posed limb's place among other frames: `all`, the frames it was posed among plus
+ * its own, and `rest`, the same frames with every limb in the chain at rest. A posed limb
+ * passed to another limb's `pose` stands in for its whole chain this way, and `rest` is
+ * what `place(…, { from: "rest" })` measures from.
+ */
+const CHAINS = new WeakMap();
+
+/**
+ * `pose`'s second argument as `{ frames, rest }`: a `{ name: frame }` object (fixed, so it is
+ * its own rest), a posed limb (its whole chain, posed and at rest), or an array of them,
+ * later entries winning. null when nothing was passed.
+ */
+function contextOf(arg, fail) {
+  if (arg == null) return null;
+  let frames = {}, rest = {};
+  for (const x of Array.isArray(arg) ? arg : [arg]) {
+    const chain = x != null && typeof x === "object" ? CHAINS.get(x) : undefined;
+    if (chain) { frames = { ...frames, ...chain.all }; rest = { ...rest, ...chain.rest }; }
+    else if (x != null && typeof x === "object" && !Array.isArray(x)) { frames = { ...frames, ...x }; rest = { ...rest, ...x }; }
+    else fail("", "pose frames must be a { name: frame } object, a posed limb, or an array of them");
+  }
+  return { frames, rest };
 }
 
 export function limb(name, def) {
@@ -101,10 +129,14 @@ export function limb(name, def) {
     return resolveFrames(frames).get(tree.parent).world;
   }
 
-  function pose(opts = {}, frames) {
+  // The limb with every joint at rest: what a link built in part coordinates was built at.
+  const restOwn = buildFrames(tree, jointSteps(tree, tree.joints.map(restValue)));
+
+  function pose(opts = {}, parents) {
     if (opts == null || typeof opts !== "object") fail("", "pose needs an options object");
     for (const k of Object.keys(opts)) if (!POSE_KEYS.has(k)) fail(k, `unknown pose option "${k}"`);
-    if (frames != null && typeof frames !== "object") fail("", "pose frames must be a { name: frame } object");
+    const context = contextOf(parents, fail);
+    const frames = context?.frames ?? null;
     if (opts.reach != null && opts.grip != null) fail("", "use reach or grip, not both");
     for (const k of ["spread", "twist"]) if (opts[k] != null && !isNum(opts[k])) fail(k, "must be a finite number");
     let spread = opts.spread ?? 0;
@@ -131,8 +163,11 @@ export function limb(name, def) {
     } else ({ values, clamped } = couple(tree, raw));
     const posedFrames = buildFrames(tree, jointSteps(tree, values, { spread, twist }));
     const report = buildReport(tree, values, clamped, posedFrames, frames, fail, reach, grip);
-    const adapters = buildAdapters(tree, posedFrames, frames, fail);
-    return { values, frames: posedFrames, joints: [...jointFrames], tip, report, ...adapters };
+    const restFrames = context == null ? restOwn : { ...context.rest, ...restOwn };
+    const adapters = buildAdapters(tree, posedFrames, frames, restFrames, fail);
+    const posed = { values, frames: posedFrames, joints: [...jointFrames], tip, report, ...adapters };
+    CHAINS.set(posed, { all: frames == null ? { ...posedFrames } : { ...frames, ...posedFrames }, rest: restFrames });
+    return posed;
   }
 
   return { name, joints: [...jointFrames], tip, pose };
