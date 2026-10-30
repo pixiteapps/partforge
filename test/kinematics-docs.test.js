@@ -127,7 +127,7 @@ test("the edge cases report what the guide says", () => {
   // An all-negative range closes toward range[0].
   expect(edge).toContain("`[-60, -5]`");
   expect(one([-60, -5]).pose({ curl: 1 }).report.bend).toEqual([-60]);
-  // A skipped joint: touched true at its start value; grip closes base-first.
+  // A skipped joint: skipped true, touched false, at its start value; grip closes base-first.
   const index = limb("index", {
     at: [-30, 96, 2], toward: [0, 1, 0], bendToward: [0, 0, -1],
     joints: [{ name: "mcp", range: [-10, 90] }, { name: "pip", range: [0, 110] }, { name: "dip", range: [0, 80], follow: { joint: "pip", ratio: 0.75 } }],
@@ -135,7 +135,7 @@ test("the edge cases report what the guide says", () => {
   });
   const g = index.pose({ grip: { around: { kind: "cylinder", r: 8, h: 40, axis: "x", at: [-30, 130, -80] } } }).report.grip;
   expect(g.joints[0].bend).toBeGreaterThan(0);
-  expect(g.joints[1]).toEqual({ joint: "pip", bend: 0, touched: true });
+  expect(g.joints[1]).toEqual({ joint: "pip", bend: 0, touched: false, skipped: true });
 });
 
 test("reach: the solved spread replaces the pose spread; a rotate-based limb cannot aim sideways", () => {

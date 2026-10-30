@@ -206,6 +206,33 @@ describe("reach", () => {
     expect(() => noBend.pose({ reach: [0, 5, 0] })).toThrow('limb "z": reach needs a driven bend joint to aim with');
   });
 
+  describe("a chain whose base-to-tip distance is not monotone in the bend (review #318 finding 2)", () => {
+    // d(s) = 115, 110, 97, 77, 53, 30, 18, 25, 33, 35, 30 for s = 0…1: it dips to ~18 near
+    // s = 0.6 and rises again, so d(1) is not the nearest the limb can curl.
+    const L = limb("w", {
+      toward: [0, 1, 0], bendToward: [0, 0, -1],
+      joints: [{ name: "a", range: [-10, 90] }, { name: "b", range: [0, 150] }, { name: "c", range: [0, 150] }, { name: "d", range: [0, 150] }],
+      lengths: [40, 30, 25, 20],
+    });
+
+    it("reaches a target the limb posed itself onto at the dip", () => {
+      const target = tipOf(L.pose({ bend: [20, 90, 90, 90] }));
+      const posed = L.pose({ reach: target });
+      expect(posed.report.reach.status).toBe("reached");
+      expect(posed.report.reach.residual).toBeLessThanOrEqual(0.01);
+      expect(norm(sub(tipOf(posed), target))).toBeLessThanOrEqual(0.01);
+    });
+
+    it("too close only below the dip, posed at the dip (the nearest pose)", () => {
+      // 10 mm out along the straight limb: nearer than the dip (~18 mm), farther than 0.
+      const posed = L.pose({ reach: [0, 10, 0] });
+      expect(posed.report.reach.status).toBe("too-close");
+      const dTip = norm(tipOf(posed));
+      expect(dTip).toBeLessThan(20);
+      expect(posed.report.reach.residual).toBeLessThan(10);
+    });
+  });
+
   it("asymmetric ranges: reach bends distal joints toward bendToward (positive)", () => {
     const L = limb("a", {
       toward: [0, 1, 0], bendToward: [0, 0, -1],

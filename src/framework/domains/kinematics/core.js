@@ -125,7 +125,7 @@ export function limb(name, def) {
       const solved = solveGrip(tree, parentWorld(frames), raw, dist, radii, clearance, { spread, twist });
       ({ values, clamped } = solved);
       grip = {
-        joints: solved.joints.map(({ index, touched }) => ({ joint: tree.joints[index].name, value: values[index], touched })),
+        joints: solved.joints.map(({ index, touched, skipped }) => ({ joint: tree.joints[index].name, value: values[index], touched, skipped })),
         touching: solved.touching, gap: solved.gap,
       };
     } else ({ values, clamped } = couple(tree, raw));

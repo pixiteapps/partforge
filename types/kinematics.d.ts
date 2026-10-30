@@ -95,7 +95,12 @@ export interface LimbReport {
   /** Tip in part coordinates; absent for a parented limb posed without frames. */
   tip?: Point3;
   reach?: { target: Point3; residual: number; status: LimbReachStatus };
-  grip?: { touching: boolean; gap: number; joints: Array<{ joint: string; bend: number; touched: boolean }> };
+  /**
+   * One entry per driven bend joint. `skipped`: grip did not close it (an earlier joint's contact
+   * already holds the limb), so `bend` is its start value and `touched` is false. Otherwise
+   * `touched`: its own close made contact that still holds in the final pose.
+   */
+  grip?: { touching: boolean; gap: number; joints: Array<{ joint: string; bend: number; touched: boolean; skipped: boolean }> };
 }
 
 /** The rigid frame of a joint in part coordinates: its origin and unit axes. */

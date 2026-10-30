@@ -74,9 +74,9 @@ for (const [mode, as] of Object.entries(MODES)) {
       const far = { ...ROD, at: [0, 300, -25] };
       const posed = wideIndex().pose({ curl: 0, grip: { around: as(far), r: INDEX_R } }, PALM);
       expect(posed.report.grip.joints).toEqual([
-        { joint: "mcp", bend: 180, touched: false },
-        { joint: "pip", bend: 180, touched: false },
-        { joint: "dip", bend: 180, touched: false },
+        { joint: "mcp", bend: 180, touched: false, skipped: false },
+        { joint: "pip", bend: 180, touched: false, skipped: false },
+        { joint: "dip", bend: 180, touched: false, skipped: false },
       ]);
       expect(posed.values).toEqual([180, 180, 180]);
     });
@@ -91,8 +91,8 @@ for (const [mode, as] of Object.entries(MODES)) {
       const posed = L.pose({ bend: { mcp: 10, pip: 20 }, grip: { around: as(rod) } }, PALM);
       expect(posed.values).toEqual(start.values);
       expect(posed.report.grip.joints).toEqual([
-        { joint: "mcp", bend: 10, touched: true },
-        { joint: "pip", bend: 20, touched: true },
+        { joint: "mcp", bend: 10, touched: true, skipped: false },
+        { joint: "pip", bend: 20, touched: false, skipped: true },
       ]);
       for (const { world } of resolveFrames({ ...PALM, ...posed.frames }).values()) for (const v of world) expect(Number.isFinite(v)).toBe(true);
     });
@@ -112,7 +112,13 @@ for (const [mode, as] of Object.entries(MODES)) {
       });
       const rod = { kind: "cylinder", r: 5, h: 20, at: [0, 80, -25], axis: "x" };
       const posed = L.pose({ bend: [0, 3, 4], grip: { around: as(rod) } });
-      expect(posed.report.grip.joints.map((j) => j.touched)).toEqual([true, true, true]);
+      // Only mcp closed and made contact; pip and dip were skipped, not touched (review #318 finding 4).
+      expect(posed.report.grip.joints.map(({ touched, skipped }) => ({ touched, skipped }))).toEqual([
+        { touched: true, skipped: false },
+        { touched: false, skipped: true },
+        { touched: false, skipped: true },
+      ]);
+      expect(posed.report.grip.touching).toBe(true);
       expect(posed.values[0]).toBeGreaterThan(0);
       expect(posed.values.slice(1)).toEqual([3, 4]);
     });
@@ -157,7 +163,7 @@ for (const [mode, as] of Object.entries(MODES)) {
           });
           const posed = F.pose({ grip: { around: as(ROD), clearance, r: INDEX_R } }, PALM);
           const [mcp, pip] = posed.report.grip.joints;
-          expect(mcp).toEqual({ joint: "mcp", bend: 90, touched: false });
+          expect(mcp).toEqual({ joint: "mcp", bend: 90, touched: false, skipped: false });
           expect(pip.joint).toBe("pip");
           expect(pip.touched).toBe(true);
           expect(posed.report.grip.touching).toBe(true);
@@ -177,6 +183,29 @@ for (const [mode, as] of Object.entries(MODES)) {
       const posed = L.pose({ bend: { spr: 30 }, grip: { around: as(FRONT_ROD) } });
       expect(posed.values[0]).toBe(20);
       expect(posed.report.clamped[0]).toBe(true);
+    });
+
+    it("keeps clamped for an out-of-range start value on a driven bend joint (review #318 finding 3)", () => {
+      const farRod = { ...FRONT_ROD, at: [-30, 400, -22] };
+      const plain = index().pose({ bend: { mcp: 150 } }, PALM);
+      expect(plain.report.clamped[0]).toBe(true);
+      const posed = index().pose({ bend: { mcp: 150 }, grip: { around: as(farRod) } }, PALM);
+      expect(posed.report.grip.touching).toBe(false);
+      expect(posed.report.clamped[0]).toBe(true);
+      expect(posed.report.clamped[1]).toBe(false); // pip started in range (dip may clamp following it)
+    });
+
+    it("a thin shape between two coarse scan steps is still found (review #318 finding 5)", () => {
+      // One 89 mm joint with zero radius: a 48-step scan of [0, 100]° moves the tip ~3.2 mm a
+      // step, over a 1.5 mm sphere at 51°. The scan count now follows the tip's travel.
+      const L = limb("thin", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: [{ name: "j", range: [0, 100] }], lengths: [89], r: [0, 0] });
+      const a = (51 * Math.PI) / 180;
+      const ball = { kind: "sphere", r: 1.5, at: [0, 89 * Math.cos(a), -89 * Math.sin(a)] };
+      const posed = L.pose({ grip: { around: as(ball) } });
+      expect(posed.report.grip.touching).toBe(true);
+      expect(posed.report.grip.joints).toEqual([{ joint: "j", bend: posed.report.grip.joints[0].bend, touched: true, skipped: false }]);
+      expect(posed.values[0]).toBeGreaterThan(48);
+      expect(posed.values[0]).toBeLessThan(51);
     });
 
     it("a mirrored finger on the mirrored rod touches at the mirrored tip", () => {

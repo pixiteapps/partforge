@@ -166,8 +166,11 @@ the other: a pose cannot have both.
   cannot aim sideways: a target off its bend plane reports `out-of-range`.
 - The other driven bend joints bend together until the distance from the pitch joint
   to the tip is correct. Each goes the same fraction of the way from its straightest
-  in-range value to its closing end. The solver uses a fixed 60-step bisection.
-  Couplings always hold.
+  in-range value to its closing end. The pitch-to-tip distance need not shrink steadily
+  as the joints bend: a long chain can curl past its nearest point and open out again.
+  So the solver first samples the distance at 48 even steps of that fraction. Then it
+  uses a fixed 60-step bisection in the first step, from straight toward curled, whose
+  ends bracket the target's distance. Couplings always hold.
 - Joints on other axes keep the values you give in `bend`.
 - Rules: the limb needs a driven bend joint, every segment before the pitch joint must
   have length 0, and no joint may follow the pitch joint or the aiming spread joint.
@@ -180,7 +183,7 @@ tip to the target, in mm. `status` is one of:
 | --- | --- |
 | `reached` | The tip is within 0.01 mm of the target. |
 | `too-far` | The target is beyond the straight limb. The limb is straight and aimed at the target. |
-| `too-close` | The target is nearer than the limb can curl, or it is at the pitch joint. |
+| `too-close` | The target is nearer to the pitch joint than any of the 48 sampled bends puts the tip, or it is at the pitch joint. The limb takes the sampled bend that comes nearest and aims at the target. |
 | `out-of-range` | The aim needs a joint outside its range (that joint is clamped: see `report.clamped`), or the tip is otherwise more than 0.01 mm off the target. |
 
 `too-far` and `too-close` take priority over `out-of-range`. Every status other than
@@ -223,13 +226,18 @@ index.pose({ reach: [-30, 160, -20] }).report;
   to joint), minus `clearance`, is ≤ 0.
 - **Closing.** Grip starts from the pose's own `bend`/`curl` values, clamped into range.
   Then each driven bend joint closes in turn, **base joint first**, toward its closing
-  end. Its followers move with it. A joint stops at the first contact (a 48-step scan,
-  then a 40-step bisection, so it stops on the clear side). A joint that reaches its
-  closing end with no contact stays there, with `touched: false`. Joints on other axes
-  are not moved, and keep their `bend` values.
+  end. Its followers move with it. A joint stops at the first contact (a scan, then a
+  40-step bisection, so it stops on the clear side). A joint that reaches its closing
+  end with no contact stays there, with `touched: false`. Joints on other axes are not
+  moved, and keep their `bend` values.
+- **Scan steps.** Each joint's scan has from 48 to 1024 even steps. The count is set so
+  that, from one step to the next, no point of the limb beyond the joint moves more than
+  the smallest radius beyond the joint plus `clearance`, and never less than 0.25 mm. A
+  shape thinner than about the limb's radius can be stepped over only when a joint hits
+  the 1024-step cap (a long limb, a wide range, or a thin limb).
 - **Stop.** The closing stops early when the first contact that a joint finds is on
   the tip segment, or when a joint is already in contact at its start value. Closing more would only push past that
-  contact. The joints after the stop keep their start values.
+  contact. The joints after the stop are skipped: they keep their start values.
 
 `report.grip` is `{ touching, gap, joints }`:
 
@@ -237,20 +245,22 @@ index.pose({ reach: [-30, 160, -20] }).report;
   mm. It is 0 at contact, positive when the limb is clear of the shape, and negative
   when the limb is in the shape.
 - `touching` is true when `gap` is 0 or less (to within 1e-6 mm).
-- `joints` has one entry `{ joint, bend, touched }` for each driven bend joint, in
-  order. `touched` is read from the final pose, because a later joint can swing an
-  earlier contact away. A joint is `touched` if it made contact while it closed, and
-  the limb from that joint to the tip is still in contact. For a joint that the stop
-  skipped, `touched` tells you about the limb from the joint that caused the stop to
-  the tip. It does not mean that this joint closed. Its `bend` is still its start
-  value.
+- `joints` has one entry `{ joint, bend, touched, skipped }` for each driven bend
+  joint, in order.
+  - `skipped` is true for a joint that the stop skipped. Grip did not close it, because
+    the contact of an earlier joint already holds the limb. Its `bend` is still its
+    start value, and its `touched` is always false.
+  - For a joint that closed (`skipped: false`), `touched` is read from the final pose,
+    because a later joint can swing an earlier contact away. The joint is `touched` if
+    it made contact while it closed, and the limb from that joint to the tip is still
+    in contact.
 
 ```js
 const rod = { kind: "cylinder", r: 8, h: 40, axis: "x", at: [-30, 130, -22] };
 index.pose({ grip: { around: rod, clearance: 0.5 } }).report;
 // { bend: [10.984, 30.317, 22.738], clamped: [false, false, false], tip: [-30, 165.643, -42.283],
-//   grip: { touching: true, gap: 0, joints: [{ joint: "mcp", bend: 10.984, touched: true },
-//                                            { joint: "pip", bend: 30.317, touched: true }] } }
+//   grip: { touching: true, gap: 0, joints: [{ joint: "mcp", bend: 10.984, touched: true, skipped: false },
+//                                            { joint: "pip", bend: 30.317, touched: true, skipped: false }] } }
 
 // The same rod as a distance function gives the same pose:
 const rodDistance = (x, y, z) => Math.sqrt((y - 130) ** 2 + (z + 22) ** 2) - 8;
@@ -258,8 +268,8 @@ index.pose({ grip: { around: rodDistance, clearance: 0.5 } }).report.grip.joints
 
 // A rod out of reach: every joint closes fully and nothing touches.
 index.pose({ grip: { around: { ...rod, at: [-30, 130, -200] } } }).report.grip;
-// { touching: false, gap: 147.073, joints: [{ joint: "mcp", bend: 90, touched: false },
-//                                          { joint: "pip", bend: 110, touched: false }] }
+// { touching: false, gap: 147.073, joints: [{ joint: "mcp", bend: 90, touched: false, skipped: false },
+//                                          { joint: "pip", bend: 110, touched: false, skipped: false }] }
 ```
 
 A `grip` in `derive` runs once each time a param changes, in a few milliseconds. A
@@ -376,10 +386,14 @@ Numbers are rounded to 0.001.
   `bendToward: [0, 0, 1]` with `range: [0, 60]`, not `bendToward: [0, 0, -1]` with
   `range: [-60, 0]`. An all-negative range, such as `[-60, -5]`, closes toward
   `range[0]`.
-- **`touched` on a joint that grip skipped** describes the contact that stopped the
-  closing, as given in "grip" above. It does not say that this joint closed. A `true`
-  with the joint at its start value means that the limb was already on the shape at
-  the start pose, or that an earlier joint put it there.
+- **A joint that grip skipped reports `skipped: true` and `touched: false`.** Its
+  `bend` is its start value, because an earlier joint's contact already holds the limb.
+  To find the contact, read `touching` and the closed joints (`skipped: false`). A
+  closed joint with `touched: true` at its start value means that the limb was already
+  on the shape at the start pose.
+- **A requested `bend` outside a joint's range stays `clamped` under grip.** Grip
+  starts from that value clamped into range, so `report.clamped` is true for that
+  joint whether or not grip then moves it.
 - **Grip closes base-first.** The base joint closes until the limb touches the shape,
   and then the next joint closes, and so on. A shape near the base can thus stop the
   base joint early, with the outer joints doing the rest of the wrap. A shape near the

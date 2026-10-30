@@ -31,7 +31,7 @@ export function buildFrames(tree, steps) {
  * `{ bend, clamped, tip?, reach?, grip? }`. `tip` is in part coordinates, so it needs the
  * parent's frames (`frames`) when the limb has a parent; it is omitted otherwise. `reach` is
  * `{ target, residual, status }` and `grip` is `{ touching, gap, joints: [{ joint, bend,
- * touched }] }` (the final pose's whole-limb verdict, read first, then one entry per driven
+ * touched, skipped }] }` (the final pose's whole-limb verdict, read first, then one entry per driven
  * bend joint), each present only when the pose asked for one.
  */
 export function buildReport(tree, values, clamped, posedFrames, frames, fail, reach = null, grip = null) {
@@ -46,7 +46,7 @@ export function buildReport(tree, values, clamped, posedFrames, frames, fail, re
   if (grip) {
     report.grip = {
       touching: grip.touching, gap: r3(grip.gap),
-      joints: grip.joints.map(({ joint, value, touched }) => ({ joint, bend: r3(value), touched })),
+      joints: grip.joints.map(({ joint, value, touched, skipped }) => ({ joint, bend: r3(value), touched, skipped })),
     };
   }
   return report;
