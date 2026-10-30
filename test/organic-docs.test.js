@@ -23,6 +23,7 @@ import { MAX_GRID_CELLS, MAX_SAMPLES } from "../src/framework/geometry/implicit/
 import { TEXTURE_LIMITS } from "../src/framework/geometry/implicit/textures.js";
 import { BULGE_DEFAULT, MAX_OWNER_K, DETAIL_SEAM_FADE } from "../src/framework/geometry/implicit/contact.js";
 import { finishKernel } from "../src/framework/geometry/kernel-front.js";
+import { implicitDistance } from "../src/framework/geometry/implicit/distance.js";
 import { handSpec } from "./fixtures/implicit-trees.js";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
@@ -75,13 +76,13 @@ beforeAll(async () => {
     checked.push(src);
   };
   const body = `${fences("js").map(toScript).join("\n")}\nreturn { part, pawSpec };`;
-  scope = new Function("k", "limb", "check", ...Object.keys(organic), body)(k, limb, check, ...Object.values(organic));
+  scope = new Function("k", "limb", "implicitDistance", "check", ...Object.keys(organic), body)(k, limb, implicitDistance, check, ...Object.values(organic));
   scope.checked = checked;
 });
 
 test("every runnable example in the guide returns the value it shows", () => {
   expect(fences("js").length).toBeGreaterThanOrEqual(7);
-  expect(scope.checked.length).toBe(10);   // every shown value; a parse change that drops one fails here
+  expect(scope.checked.length).toBe(14);   // every shown value; a parse change that drops one fails here
 });
 
 test("the import line names exactly the partforge/organic exports", () => {
@@ -229,8 +230,10 @@ test("the worked example builds, measures and verifies as the guide says", () =>
   expect(lintPart(part).errors).toEqual([]);
 });
 
-test("the guide is self-contained: the core guide indexes it, and it names no unshipped API", () => {
-  expect(guide).not.toMatch(/\bflesh\b|\battach\(|implicitDistance/);
+test("the guide is indexed by the core guide and points at its neighbours", () => {
+  // implicitDistance is shown imported from where it ships.
+  expect(section("Jointed bodies")).toContain('import { implicitDistance } from "partforge/geometry";');
+  expect(read("../src/framework/geometry/polygon.js")).toMatch(/export \{ implicitDistance \}/);
   expect(read("../docs/AUTHORING-PARTS.md")).toContain("[`docs/domains/organic.md`](domains/organic.md)");
   expect(guide).toContain("test/fixtures/implicit-trees.js");
   expect(guide).toContain("docs/domains/kinematics.md");

@@ -8,7 +8,7 @@ const near = (node, probes) => {
   const d = distanceFor(node);
   for (const [p, want] of probes) expect(Math.abs(d(...p) - want), `${JSON.stringify(node)} at ${p}: ${d(...p)} vs ${want}`).toBeLessThanOrEqual(TOL);
 };
-const IMPLICIT = "needs the implicit engine — pass a distance function (x, y, z) => mm instead";
+const IMPLICIT = "needs the implicit engine — pass a distance function (x, y, z) => mm instead; implicitDistance(node) from partforge/geometry makes one";
 
 describe("shapes.js closed-form distances", () => {
   it("sphere (with at)", () => {

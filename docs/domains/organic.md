@@ -457,8 +457,40 @@ For a body with jointed limbs, pose the joint chain with `limb` from
 ```js
 import { limb } from "partforge/kinematics";
 
-const toe = limb("toe", { at: [-7, 10, 8], toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["base", "mid"], lengths: [10, 8] });
+const toe = limb("toe", { at: [-7, 10, 8], toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["base", "mid"], lengths: [10, 8], r: [4.75, 4, 3] });
 const posed = toe.pose({ bend: [20, 30] });
 k.implicitFrames({ frames: posed.frames, root: { kind: "capsule", frame: "toe.base", b: [0, 10, 0], r: 4 } }).report().frames["toe.tip"].origin;   // [-7, 24.539, -1.549]
 posed.world("tip").origin;   // [-7, 24.539, -1.549]
 ```
+
+The posed limb also writes two pieces of the spec for you, as plain data:
+
+- **`posed.flesh({ r?, blend?, label? })`** is a `union` of one tapered `capsule` per
+  segment, each in its joint's frame and labelled with it. `blend` becomes the union's
+  `k`; leave it out for a sharp union.
+- **`posed.attach(label, { k, radius?, band?, r?, a? })`** is one entry for a `contact`
+  node's `attach` list. It joins the flesh (label `a`, default the limb's name) to the
+  piece labelled `label`, near the limb's base joint.
+
+```js
+posed.flesh({ blend: 1.5 });
+// { kind: "union", k: 1.5, label: "toe", children: [
+//   { kind: "capsule", frame: "toe.base", b: [0, 10, 0], r: [4.75, 4], label: "toe.base" },
+//   { kind: "capsule", frame: "toe.mid", b: [0, 8, 0], r: [4, 3], label: "toe.mid" } ] }
+posed.attach("pad", { k: 3, radius: 4 });   // { a: "toe", b: "pad", near: "toe.base", radius: 4, band: 1.5, k: 3 }
+```
+
+To pose a limb so that it grips a `k.implicit` shape, give `grip.around` the shape's
+distance function: `implicitDistance(node)` from `partforge/geometry`. It is the engine's
+own field for that node, in part coordinates, so the node must not name a `frame`. Like
+the field, it is negative inside and zero on the surface:
+
+```js
+import { implicitDistance } from "partforge/geometry";
+
+const pad = { kind: "union", k: 2, children: [{ kind: "sphere", r: 6 }, { kind: "sphere", r: 6, at: [10, 0, 0] }] };
+implicitDistance(pad)(0, 0, 10);   // 4
+implicitDistance(pad)(5, 0, 0);    // -1.5
+```
+
+The kinematics guide has the defaults, the errors, and a worked hand.
