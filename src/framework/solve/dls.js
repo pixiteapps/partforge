@@ -83,10 +83,13 @@ export function solveDLS({ x0, lo, hi, residuals, iterations, lambda = 1, h = 1e
       const rn = residuals(xn);
       const en = norm(rn);
       if (en <= err) {
+        // A kept step that barely helps is zig-zagging across a narrow valley
+        // (near a singularity): damp harder instead of relaxing.
+        const slow = err - en < 1e-2 * err;
         x = xn;
         r = rn;
         err = en;
-        lam = Math.max(0.01, lam / 2);
+        lam = slow ? lam * 2 : Math.max(0.01, lam / 2);
         break;
       }
       lam *= 2;

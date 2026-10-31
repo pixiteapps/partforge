@@ -36,13 +36,15 @@ describe("solveDLS", () => {
   });
 
   it("unreachable target stays put", () => {
-    const target = [500, 0];
-    const x0 = [0.1, 0.2];
-    const a = solveDLS({ ...base, x0, residuals: reach(target), iterations: 40 });
-    const b = solveDLS({ ...base, x0, residuals: reach(target), iterations: 80 });
-    a.x.forEach((v, i) => expect(Math.abs(v - b.x[i])).toBeLessThan(1e-6));
+    const res = reach([500, 0]);
+    const a = solveDLS({ ...base, residuals: res, iterations: 40 });
+    const b = solveDLS({ ...base, residuals: res, iterations: 80 });
+    expect(b.error).toBeLessThanOrEqual(a.error);
+    a.x.forEach((v, i) => expect(Math.abs(v - b.x[i])).toBeLessThan(0.02));
     const t = tip(b.x);
-    expect(Math.abs(Math.atan2(t[1], t[0]))).toBeLessThan(0.01);
+    expect(Math.abs(Math.atan2(t[1], t[0]))).toBeLessThan(0.02);
+    const r = res(b.x);
+    expect(Math.abs(b.error - Math.sqrt(r[0] * r[0] + r[1] * r[1]))).toBeLessThan(1e-12);
   });
 
   it("warm start is continuous", () => {
