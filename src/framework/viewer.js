@@ -484,6 +484,11 @@ export function createViewer(container, part, {
     lines.visible = linesVisible && meshVisible;
   }
 
+  /** The animation-channel opacity setSubPartOpacity last left on `name` (1 when none). */
+  function getSubPartOpacity(name) {
+    return animOpacity.get(name) ?? 1;
+  }
+
   function setSubPartOpacity(name, value) {
     if (!subMesh[name]) return;
     const wasZero = (animOpacity.get(name) ?? 1) <= 0;
@@ -3469,6 +3474,7 @@ export function createViewer(container, part, {
     setSubGeometry,
     setSubPose,
     setSubPartOpacity,
+    getSubPartOpacity,
     setSubPartDisplay,
     getSubPartDisplayState,
     getDisplayOverrides,

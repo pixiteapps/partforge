@@ -1626,6 +1626,31 @@ test("a playback-stale delivery lifts the pose ghost on the mesh it replaces", (
   handle.dispose();
 });
 
+test("unghost restores the opacity the ghost replaced, not full opacity", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+  const viewer = fakeViewers[0];
+  // The viewer's animation opacity layer, as a map: an animation track faded body to 0.6.
+  const layer = new Map([["body", 0.6]]);
+  viewer.getSubPartOpacity = (n) => layer.get(n) ?? 1;
+  viewer.setSubPartOpacity.mockImplementation((n, v) => { if (v == null || !(v < 1)) layer.delete(n); else layer.set(n, v); });
+  const pose = poseStubs.at(-1);
+  pose.opts.ghost(["body", "lid"]);
+  expect(layer.get("body")).toBe(0.35);
+  pose.opts.unghost(["body", "lid"]);
+  expect(layer.get("body")).toBe(0.6); // the track's fade survives the drag
+  expect(layer.has("lid")).toBe(false); // nothing faded it: back to full
+  // A track that wrote the layer while ghosted keeps its newer value.
+  pose.opts.ghost(["body"]);
+  layer.set("body", 0.2);
+  pose.opts.unghost(["body"]);
+  expect(layer.get("body")).toBe(0.2);
+  handle.dispose();
+});
+
 test("pose effects are no-ops once dispose starts", () => {
   const part = makeAnimatedPart();
   part.handles = { grow: { params: ["h"] } };

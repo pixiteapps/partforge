@@ -778,6 +778,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // poseHold is read by the loop's missingParts wrapper (createRegenLoop below) and
     // ONLY there: exportPreview, ready and the busy line keep the real missing set.
     const GHOST_OPACITY = 0.35;
+    // The animation-channel opacity each ghost replaced, restored when it lifts: the
+    // ghost shares that channel, and writing 1 back would erase a track's fade.
+    const ghostReplaced = new Map();
     let poseHold = false;
     let poseVisible = null; // handle ids shown in this view (null: all), set by updateRelevance
     let poseVisibleKey = null; // poseVisible joined, to tell a real change (syncPoseVisible)
@@ -797,8 +800,21 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         restore: live((snapshot) => writePoseValues(snapshot)),
         commit: live((changed) => onParamsCommit?.({ changed, params: { ...params } })),
         staleSubParts: () => viewSubParts(part, view(), params).filter((n) => !isCurrent(n)),
-        ghost: live((names) => { for (const n of names) viewer.setSubPartOpacity(n, GHOST_OPACITY); }),
-        unghost: live((names) => { for (const n of names) viewer.setSubPartOpacity(n, 1); }),
+        ghost: live((names) => {
+          for (const n of names) {
+            if (!ghostReplaced.has(n)) ghostReplaced.set(n, viewer.getSubPartOpacity?.(n) ?? 1);
+            viewer.setSubPartOpacity(n, GHOST_OPACITY);
+          }
+        }),
+        unghost: live((names) => {
+          for (const n of names) {
+            const was = ghostReplaced.get(n) ?? 1;
+            ghostReplaced.delete(n);
+            // An animation track that wrote the channel while ghosted owns it now.
+            const now = viewer.getSubPartOpacity?.(n);
+            if (now === undefined || now === GHOST_OPACITY) viewer.setSubPartOpacity(n, was);
+          }
+        }),
         hold: live((on) => {
           poseHold = !!on;
           // A drag is the user's own edit: it pauses playback the way a slider does,
