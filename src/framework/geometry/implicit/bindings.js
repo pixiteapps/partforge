@@ -4,8 +4,8 @@
 // docs/superpowers/specs/2026-10-31-implicit-pose-drag-design.md §1). Preview only, pure JS.
 //
 // A UNIT is an IR node a frame places rigidly (ir.js `unit`: its effective frame differs from
-// its parent's, and no warp, mirror or repeat lies above it). Each unit's whole subtree is
-// emitted as one program and evaluated at the vertices near it (inside its world box padded by
+// its parent's, and no warp, mirror or repeat lies above it). Each unit's subtree, less any
+// nested unit's (unitDecision), is emitted as one program and evaluated at the vertices near it (inside its world box padded by
 // band + 2·edge; a vertex near no unit tries every unit). A vertex binds to the frame of the
 // nearest unit (A) and, when the nearest unit of ANOTHER frame (B) is within `band` of it,
 // blends toward B: weight (A's share) = clamp(0.5 + (d_B − d_A) / (2·band), 0.5, 1). Frames are
@@ -18,11 +18,27 @@ export const BIND_BAND_CELLS = 3;
 /** The most frames a binding can name (a frame index is 1 + its place in frameNames; 0 is unbound). */
 export const MAX_BIND_FRAMES = 1023;
 
-function unitDecision(nodes, id) {
+// A unit's own geometry: its subtree LESS every descendant unit's subtree (a nested unit
+// binds its own vertices; left in, the outer unit's union would tie it everywhere — a hard
+// union gives d_outer = d_inner — and every inner vertex would blend 50/50). A dropped kid is
+// null, which emitProgram skips in a union / intersect / contact. A node left with no
+// geometry is null itself: a wrapper (round, onion, displace, …) whose kid was dropped, an
+// n-ary node whose kids all were, a subtract whose base was. A unit whose decision is null
+// has no geometry of its own and gets no program. (Mirror, warp and repeat subtrees hold no
+// units — ir.js clears `rigid` below them — so they are never cut.)
+function unitDecision(nodes, id, top = true) {
   const n = nodes[id];
+  if (!top && n.unit) return null;
   if (n.children.length === 0) return { id };
-  if (n.kind === "mirror") return { id, kids: [unitDecision(nodes, n.children[0]), unitDecision(nodes, n.children[0])] };
-  return { id, kids: n.children.map((c) => unitDecision(nodes, c)) };
+  if (n.kind === "mirror") {
+    const k = unitDecision(nodes, n.children[0], false);
+    return k ? { id, kids: [k, unitDecision(nodes, n.children[0], false)] } : null;
+  }
+  const kids = n.children.map((c) => unitDecision(nodes, c, false));
+  if (kids.every((k) => k === null)) return null;
+  if (n.kind === "subtract" && kids[0] === null) return null;
+  if (kids.length === 1 && kids[0] === null) return null;
+  return { id, kids };
 }
 
 /**
@@ -37,8 +53,12 @@ export function bindVertices(compiled, positions, edge, { band = BIND_BAND_CELLS
   const names = compiled.frameNames ?? [];
   if (nV === 0 || names.length === 0 || names.length > MAX_BIND_FRAMES) return { frameA, frameB, weight };
   const nodes = compiled.ir.nodes;
-  const units = [];
-  for (let id = 0; id < nodes.length; id++) if (nodes[id].unit) units.push(id);
+  const units = [], decisions = [];
+  for (let id = 0; id < nodes.length; id++) {
+    if (!nodes[id].unit) continue;
+    const dec = unitDecision(nodes, id);
+    if (dec) { units.push(id); decisions.push(dec); }   // a unit with no geometry of its own binds nothing
+  }
   if (units.length === 0) return { frameA, frameB, weight };
 
   // Candidates: per unit, the vertices inside its padded world box.
@@ -74,7 +94,7 @@ export function bindVertices(compiled, positions, edge, { band = BIND_BAND_CELLS
       xformPoint(p, toParent, positions[o], positions[o + 1], positions[o + 2]);
       X[i] = p[0]; Y[i] = p[1]; Z[i] = p[2];
     }
-    evalBatch(emitProgram(compiled, unitDecision(nodes, units[u])), compiled.textures, X, Y, Z, out);
+    evalBatch(emitProgram(compiled, decisions[u]), compiled.textures, X, Y, Z, out);
     for (let i = 0; i < m; i++) {
       const v = list[i], d = out[i];
       if (f1[v] === 0) { f1[v] = f; d1[v] = d; }

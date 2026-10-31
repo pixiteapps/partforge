@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { setCoreEnabled } from "../src/framework/core/core.js";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { bindVertices, BIND_BAND_CELLS, MAX_BIND_FRAMES } from "../src/framework/geometry/implicit/bindings.js";
-import { TWO_BONE, TWIST_FRAMES } from "./fixtures/skin-fixtures.js";
+import { TWO_BONE, TWIST_FRAMES, REPEAT_FRAMES, MIRROR_FRAMES, NESTED_FINGER } from "./fixtures/skin-fixtures.js";
 
 beforeAll(() => setCoreEnabled(false));
 afterAll(() => setCoreEnabled(true));
@@ -74,17 +74,62 @@ describe("bindVertices", () => {
     expect(buf(again.weight).equals(buf(b.weight))).toBe(true);
   });
 
-  test("a frame root below a warp or repeat does not start a unit: the subtree binds to the warp's frame", () => {
-    const s = build(TWIST_FRAMES);
-    const r = bind(s);
-    let bound = 0;
-    for (let v = 0; v < r.frameA.length; v++) {
-      if (r.frameA[v] === 0) continue;
-      bound++;
-      expect(r.frameA[v]).toBe(1);
-      expect(r.frameB[v]).toBe(0);
+  test.each([["twist", TWIST_FRAMES], ["repeat", REPEAT_FRAMES], ["mirror", MIRROR_FRAMES]])(
+    "a frame root below a %s does not start a unit: the subtree binds to the outer node's frame", (_, spec) => {
+      const s = build(spec);
+      const r = bind(s);
+      expect(r.frameA.length).toBeGreaterThan(0);
+      for (let v = 0; v < r.frameA.length; v++) {
+        expect(r.frameA[v]).toBe(1);
+        expect(r.frameB[v]).toBe(0);
+        expect(r.weight[v]).toBe(1);
+      }
+    });
+
+  test("the blend weight is 0.5 + (d_B − d_A) / (2·band), from the bones' own distances", () => {
+    // TWO_BONE(0): capsules (0,0,0)–(0,20,0) and (0,20,0)–(0,40,0), r 4. Band 3·edge = 3.
+    const capsule = (x, y, z, y0, y1) => Math.hypot(x, y - Math.min(y1, Math.max(y0, y)), z) - 4;
+    const band = BIND_BAND_CELLS * twoBone.edge;
+    let checked = 0, nearHalf = 0;
+    for (let v = 0; v < P.length / 3; v++) {
+      if (b.frameB[v] === 0) continue;
+      const x = P[v * 3], y = P[v * 3 + 1], z = P[v * 3 + 2];
+      const d = [capsule(x, y, z, 0, 20), capsule(x, y, z, 20, 40)];
+      const dA = d[b.frameA[v] - 1], dB = d[b.frameB[v] - 1];
+      expect(dA).toBeLessThanOrEqual(dB + 1e-9);
+      const want = Math.min(1, Math.max(0.5, 0.5 + (dB - dA) / (2 * band)));
+      expect(b.weight[v]).toBeCloseTo(want, 5);
+      if (Math.abs(y - 20) < 0.05) { nearHalf++; expect(b.weight[v]).toBeLessThan(0.51); }
+      checked++;
     }
-    expect(bound).toBe(r.frameA.length);
+    expect(checked).toBeGreaterThan(50);
+    expect(nearHalf).toBeGreaterThan(0);
+  });
+
+  test.each([0, 2])("a nested unit binds its own vertices, not 50/50 with the unit around it (blend k %s)", (k) => {
+    const s = build(NESTED_FINGER(k));
+    const r = bind(s);
+    expect(s.c.frameNames).toEqual(["finger", "tip"]);
+    const Q = s.mesh.positions;
+    let tip = 0, finger = 0;
+    for (let v = 0; v < r.frameA.length; v++) {
+      const y = Q[v * 3 + 1];
+      if (y >= 30) { tip++; expect([r.frameA[v], r.frameB[v], r.weight[v]]).toEqual([2, 0, 1]); }   // ≥ 10 mm into the tip
+      if (y <= 12) { finger++; expect(r.frameA[v]).toBe(1); }
+    }
+    expect(tip).toBeGreaterThan(20);
+    expect(finger).toBeGreaterThan(20);
+  });
+
+  test("a unit with no geometry of its own (its only kid is a unit) binds nothing itself", () => {
+    const s = build({
+      frames: { outer: { at: [0, 0, 0] }, inner: { parent: "outer", at: [0, 5, 0] } },
+      root: { kind: "round", r: 0.5, frame: "outer", child: { kind: "capsule", frame: "inner", b: [0, 10, 0], r: 3 } },
+      preview: 1,
+    });
+    const r = bind(s);
+    expect(r.frameA.length).toBeGreaterThan(0);
+    for (let v = 0; v < r.frameA.length; v++) expect([r.frameA[v], r.frameB[v], r.weight[v]]).toEqual([2, 0, 1]);
   });
 
   test("a spec with more frames than MAX_BIND_FRAMES binds nothing", () => {
