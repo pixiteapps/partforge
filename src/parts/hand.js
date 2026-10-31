@@ -64,6 +64,9 @@ const PALM = limb("palm", {
   lengths: [CARPAL, PALM_LEN],
 });
 const PALM_FRAME = "palm.wristYaw";
+// The wrist's rings in Pose mode: its joints on the palm limb (derive's `palm`) and the
+// parameters that drive them.
+const WRIST_JOINTS = { "palm.wristPitch": "wristPitch", "palm.wristYaw": "wristYaw" };
 
 const fingerLimb = (f) => limb(f.id, {
   parent: PALM_FRAME,
@@ -339,10 +342,19 @@ export default {
     assembly: { label: "Assembly" },
     print: { label: "Print" },
   },
+  // `joints` gives a joint a rotate ring in Pose mode (hover its dot): the parameter that
+  // turns it directly. The wrist (on the palm limb) is named by every digit's handle, so a
+  // locked digit hides the wrist rings, as it holds the wrist out of every drag. A ring and
+  // pinky spread is the negated parameter (`scale: -1`: positive fans away from the middle
+  // finger). The knuckles are curl-driven — one parameter for two joints — so they get no ring.
   handles: {
-    thumb: { limb: "thumb", mode: "angles", params: ["thumbCurl", "thumbOppose", "wristPitch", "wristYaw"], lock: "thumbLock" },
+    thumb: {
+      limb: "thumb", mode: "angles", params: ["thumbCurl", "thumbOppose", "wristPitch", "wristYaw"], lock: "thumbLock",
+      joints: { oppose: "thumbOppose", ...WRIST_JOINTS },
+    },
     ...Object.fromEntries(FINGERS.map((f) => [f.id, {
       limb: f.id, mode: "angles", params: [`${f.id}Curl`, `${f.id}Spread`, "wristPitch", "wristYaw"], lock: `${f.id}Lock`,
+      joints: { spread: f.sign === 1 ? `${f.id}Spread` : { param: `${f.id}Spread`, scale: f.sign }, ...WRIST_JOINTS },
     }])),
   },
   // No two pieces interpenetrate, and every pin joint keeps its running clearance (GAP)

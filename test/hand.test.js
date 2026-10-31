@@ -64,10 +64,19 @@ test("params: per finger curl, spread and lock; thumb oppose, curl and lock; wri
 
 test("handles: one angles-mode handle per digit — its curl and spread plus the wrist, locked by its own lock", () => {
   expect(Object.keys(part.handles).sort()).toEqual([...DIGITS].sort());
+  const wrist = { "palm.wristPitch": "wristPitch", "palm.wristYaw": "wristYaw" };
+  // ring and pinky spread fan the other way: the joint turns -1 x the parameter
+  const spread = { index: "indexSpread", middle: "middleSpread", ring: { param: "ringSpread", scale: -1 }, pinky: { param: "pinkySpread", scale: -1 } };
   for (const f of FINGERS) {
-    expect(part.handles[f]).toEqual({ limb: f, mode: "angles", params: [`${f}Curl`, `${f}Spread`, "wristPitch", "wristYaw"], lock: `${f}Lock` });
+    expect(part.handles[f]).toEqual({
+      limb: f, mode: "angles", params: [`${f}Curl`, `${f}Spread`, "wristPitch", "wristYaw"], lock: `${f}Lock`,
+      joints: { spread: spread[f], ...wrist },
+    });
   }
-  expect(part.handles.thumb).toEqual({ limb: "thumb", mode: "angles", params: ["thumbCurl", "thumbOppose", "wristPitch", "wristYaw"], lock: "thumbLock" });
+  expect(part.handles.thumb).toEqual({
+    limb: "thumb", mode: "angles", params: ["thumbCurl", "thumbOppose", "wristPitch", "wristYaw"], lock: "thumbLock",
+    joints: { oppose: "thumbOppose", ...wrist },
+  });
 });
 
 test("presets: open, relaxed, fist, point, peace and ok; none touches a lock", () => {
