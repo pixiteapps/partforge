@@ -1873,6 +1873,31 @@ export function createViewer(container, part, {
     if (prev) { prev.userData.edges?.dispose(); prev.dispose(); }
   }
 
+  // Rewrite the drawn vertices of one sub-part in place (the pose-drag skinning,
+  // skin/deform.js): same buffers, new positions and normals. false when nothing is
+  // drawn under `name`; RangeError on a length mismatch. Edge lines stay as delivered.
+  // Everything that read the old positions is invalidated here: the size-match
+  // surface memo (generation), the framing support points, the bounds, the cutaway's
+  // section helpers and — in realistic mode — the contact shadow (on its throttle).
+  function setSubVertices(name, { positions, normals }) {
+    const geo = subCache[name];
+    if (!geo) return false;
+    const pos = geo.getAttribute("position"), nor = geo.getAttribute("normal");
+    if (positions.length !== pos.array.length || (nor && normals.length !== nor.array.length)) {
+      throw new RangeError(`setSubVertices("${name}"): length mismatch`);
+    }
+    matchGeneration++;
+    pos.array.set(positions);
+    pos.needsUpdate = true;
+    if (nor) { nor.array.set(normals); nor.needsUpdate = true; }
+    geo.computeBoundingBox();
+    geo.computeBoundingSphere();
+    supportCache.delete(geo);
+    cutaway.updateGeometry(name, geo);
+    if (realisticRig) shadowMovedAt = performance.now();
+    return true;
+  }
+
   // Presentational rigid pose for one sub-part (the pose fast path): applied to
   // the mesh and its edge lines. `null` clears. Column-major mat16 (pose.js /
   // three.js Matrix4 convention). Never affects exports or geometry — the worker
@@ -3467,6 +3492,7 @@ export function createViewer(container, part, {
     showAssembly,
     hideAssembly,
     setSubGeometry,
+    setSubVertices,
     setSubPose,
     setSubPartOpacity,
     setSubPartDisplay,
