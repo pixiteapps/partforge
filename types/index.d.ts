@@ -154,6 +154,11 @@ export interface MountElements {
     cutaway?: HTMLElement | null;
     measure?: HTMLElement | null;
     annotate?: HTMLElement | null;
+    /**
+     * @deprecated Posing has no toggle: it is always on in the normal click mode. A
+     * `#pose` element passed here (or found by id) is hidden while mounted.
+     */
+    pose?: HTMLElement | null;
     railToggle?: HTMLElement | null;
   };
 }
@@ -341,6 +346,8 @@ export interface CutawayState {
 export interface ViewerState {
   /** The open selection popover, reopened by the next mount if the sub-part is still in the view. */
   selection?: { subPart: string | null; point: [number, number, number]; page: "spot" | "appearance" };
+  /** Pose mode's pins, as `"<handle>:<at>"` ids; present only while one is set. */
+  pose?: { pins: string[] };
   /** The live camera pose, or `null` when the viewer could not report one. */
   camera: { pos: [number, number, number]; target: [number, number, number] } | null;
   /**
@@ -479,6 +486,25 @@ export interface CaptureViewOptions {
  * the frame natively (canonical-view captures and thumbnails never include
  * them).
  */
+/**
+ * Posing's runtime-controls API: drag a part's declared `handles` on screen. Posing is
+ * always on in the normal click mode (hover near a limb to show its handles); it stands
+ * down while measure, sketch or cutaway is on.
+ */
+export interface PoseRuntime {
+  /** The host's switch — on by default. */
+  isEnabled(): boolean;
+  /** `false` switches posing off (handles hidden, presses orbit and pick as usual). */
+  setEnabled(on: boolean): void;
+  /** Handles can be hovered and dragged right now: enabled, and no measure, sketch, cutaway or cached preview on. */
+  isLive(): boolean;
+  /** Pinned points (a click on a handle's tip toggles one). */
+  pinCount(): number;
+  releasePins(): void;
+  /** Each shown handle's grab point on the canvas, CSS px from its top-left (drawn or not); empty while posing is not live. */
+  handlePoints(): { handleId: string; at: string; x: number; y: number }[];
+}
+
 export interface MeasureRuntime {
   isEnabled(): boolean;
   setEnabled(on: boolean): void;
@@ -787,6 +813,8 @@ export interface PartRuntime {
   measure: MeasureRuntime;
   /** Annotation mode's runtime-controls API — mode on/off, ink state, and send. Always present; a no-op stand-in when `onAnnotationSend` was not supplied. */
   annotate: AnnotateRuntime;
+  /** Pose mode's runtime-controls API. Always present; a no-op stand-in for a part with no `handles`. */
+  pose: PoseRuntime;
   /** The pick marker's lifetime — hold it on screen and follow it across the canvas. Always present (a no-op stand-in outside `makeHandle` tests). */
   pickMarker: PickMarkerRuntime;
   /** The selection popover, or `null` without the `selectionPopover` option. */

@@ -91,11 +91,41 @@ export interface LimbPoseOptions {
   spread?: number;
   /** Roll of the limb about its own length, degrees. */
   twist?: number;
-  /** Aim the tip at this point (part coordinates, mm). Not with `grip`. */
+  /** Aim the tip at this point (part coordinates, mm). Not with `grip` or `goals`. */
   reach?: Point3;
-  /** Close the bend joints on a shape until contact. Not with `reach`. */
+  /** Close the bend joints on a shape until contact. Not with `reach` or `goals`. */
   grip?: LimbGripOptions;
+  /**
+   * Pose joints or the tip toward positions and directions by damped least squares, warm-started
+   * from `bend`/`curl` (joints the solve does not move keep those values). Not with `reach` or `grip`.
+   */
+  goals?: LimbGoal[];
+  /** Joints `goals` may not move: held at their `bend` value; their followers still follow. Needs `goals`. */
+  pins?: string[];
 }
+
+/**
+ * One goal for `pose({ goals })`, in part coordinates (never reflected). At least one of
+ * `position`, `aim`, `up`. Direction misses count as (unit difference × 100) mm, so 1° ≈ 1.75 mm.
+ */
+export interface LimbGoal {
+  /** A joint name, its frame name, or "tip". A goal at a joint moves only the joints above it. */
+  at: string;
+  /** Where the frame's origin should be, mm. */
+  position?: Point3;
+  /** The direction the frame's +Y (its segment, `toward` at rest) should point. */
+  aim?: Point3;
+  /** The direction the frame's +Z (the back of the bend, opposite `bendToward`) should point; fixes the roll about `aim`. */
+  up?: Point3;
+  /** Default 1; scales this goal's residuals against the others. */
+  weight?: number;
+}
+
+/**
+ * `reached`: within 0.01 mm and 0.1°. `too-far`: the position lies beyond the segments from the first
+ * moving joint. `conflict`: with two or more goals, this one is better met alone. `out-of-range`: anything else.
+ */
+export type LimbGoalStatus = "reached" | "too-far" | "out-of-range" | "conflict";
 
 export type LimbReachStatus = "reached" | "too-far" | "too-close" | "out-of-range";
 
@@ -112,6 +142,8 @@ export interface LimbReport {
    * `touched`: its own close made contact that still holds in the final pose.
    */
   grip?: { touching: boolean; gap: number; joints: Array<{ joint: string; bend: number; touched: boolean; skipped: boolean }> };
+  /** One entry per goal: position miss in mm; `aimResidual` (degrees, the larger of the aim and up misses) only for a goal with `aim` or `up`. */
+  goals?: Array<{ at: string; residual: number; aimResidual?: number; status: LimbGoalStatus }>;
 }
 
 /** The rigid frame of a joint in part coordinates: its origin and unit axes. */
@@ -135,6 +167,38 @@ export interface PosedLimb {
   place<T extends { rotate(deg: number, center: Point3, axis: Point3): T; translate(v: Point3): T }>(x: T, joint?: string, opts?: { from?: "joint" | "rest" }): T;
   /** A frame of the limb in part coordinates. `joint` is a joint name, a frame name, or "tip"; default the base joint. */
   world(joint?: string): LimbWorldFrame;
+  /** Plain-JSON view for drag handles, skeletons and limit arcs; throws without the parent frames of a parented limb. */
+  ikInfo(): LimbIkInfo;
+  /**
+   * Forward kinematics from this pose for Pose mode's joint rings: this pose's joint values with
+   * `overrides` (`{ joint: value }`; a ball's partial `{ bend?, spread?, twist? }` merges over
+   * its value), coupled and clamped, posed with the same parent frames and no reach, grip or
+   * goal solve. Returns the coupled values and the `at` frame ("tip" by default), unrounded.
+   */
+  ikForward(overrides?: Record<string, number | Partial<LimbBallResult>>, at?: string): {
+    values: Array<number | LimbBallResult>; origin: Point3; x: Point3; y: Point3; z: Point3;
+  };
+}
+
+export interface LimbIkInfo {
+  kind: "partforge.limb";
+  name: string;
+  /** The tip's frame name. */
+  tip: string;
+  joints: Array<{ name: string; frame: string; type: "hinge" | "ball"; range?: [number, number]; cone?: number; axisKind?: "bend" | "spread" | "twist" | "vector"; follower: boolean }>;
+  /** Each joint's bare name and `tip` to its origin in part coordinates. */
+  points: Record<string, Point3>;
+  values: Array<number | LimbBallResult>;
+  /** A hinge's world rotation axis (the direction a positive value turns about); none for a ball. */
+  axes: Record<string, Point3>;
+  /**
+   * Each ball joint's rotation axes in part coordinates: the direction a positive bend,
+   * spread and twist turn about (bend and spread in the frame before the ball turns, twist
+   * about the swung segment). Absent when the limb has no ball joint.
+   */
+  ballAxes?: Record<string, { bend: Point3; spread: Point3; twist: Point3 }>;
+  /** The declared radii, one per joint then the tip, when the limb has them. */
+  r?: number[];
 }
 
 /** What a limb hangs from: fixed frames, a posed limb, or a list of them. */
@@ -147,7 +211,7 @@ export interface Limb {
   /** The tip's frame name (`<name>.tip`). */
   tip: string;
   /**
-   * `frames` are the parent's frames, needed by reach, grip, place, world and tip when the limb has a `parent`:
+   * `frames` are the parent's frames, needed by reach, grip, goals, place, world and tip when the limb has a `parent`:
    * a `{ name: frame }` object, a posed limb (its whole chain), or an array of them, later entries winning.
    */
   pose(opts?: LimbPoseOptions, frames?: LimbParents): PosedLimb;
@@ -155,3 +219,11 @@ export interface Limb {
 
 /** Declare a jointed chain once; pose it as often as needed. */
 export function limb(name: string, def: LimbDefinition): Limb;
+
+/**
+ * Pitch, yaw and roll (degrees) → unit `aim` and `up` for a goal. Zero is `toward`; yaw turns about part +Z,
+ * then pitch about the yawed horizontal axis at right angles to the aim (positive lifts it toward `up`).
+ * `up` starts as part +Z (or +Y when `toward` is vertical); `roll`, when given, turns it about the aim and
+ * `up` is returned.
+ */
+export function aimFromAngles(opts: { toward: Point3; pitch?: number; yaw?: number; roll?: number }): { aim: Point3; up?: Point3 };

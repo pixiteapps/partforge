@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has twenty-two: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has twenty-five: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -48,7 +48,18 @@ demo page), `robot-finger.js` (the kinematics reference part - three printed
 links on pin joints, posed by one `limb` from `partforge/kinematics` in
 `derive` and placed with `d.finger.place`, a `curl` animation that never
 rebuilds; the worked example of `docs/domains/kinematics.md`, with no demo
-page), and `material-swatches.js` (not a reference part: the dev-only
+page), `robot-arm.js` (the inverse-kinematics reference part - a 6-axis arm and
+gripper posed by a tool GOAL: `toolX/Y/Z` + pitch/yaw/roll solved in `derive` by
+`limb.pose({ goals })`, warm-started from six seed joint params; a goal-mode `tool`
+handle for Pose mode and a `tool` probe reporting reached / missed by how much;
+`robot-arm.html`, checked by `scripts/check-pose.mjs`), `hand.js` (the angles-mode
+IK reference part - a printable articulated hand: a palm limb (wrist pitch/yaw) with four
+fingers (spread, mcp, pip, dip following pip) and a thumb (oppose, mcp, ip) parented on
+it, posed by per-digit curl/spread params and six `{ type: "preset" }` shapes, one
+lockable angles-mode handle per digit; rigid pin-jointed pieces placed by matrix, the
+print view a flat kit the pose never reaches; `hand.html`, checked by
+`scripts/check-pose.mjs`; the dev-only `pose-smoke.html` page, with `test/fixtures/ik-hand-smoke.js`,
+is the fixture that script drags), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`), and `offset-demo.js`
 (not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
 `offset-demo.html`).
@@ -70,6 +81,7 @@ npx vitest run test/measure.test.js          # a single test file
 npx vitest run -t "assembly has no interpenetrating"   # a single test by name
 npm run check      # headless smoke test: boots an app in real Chromium (needs Playwright)
 node scripts/check-app.mjs demo.html         # smoke-test a specific app entry
+npm run bench:pose                           # posing frame times in real Chromium (robot-arm.html, hand.html; --preview for a production build)
 node scripts/time-sheet-inspect.mjs [--browser]    # inspect timing for the sheet-part stress cases (docs/research/sheet-inspect-timing.md)
 node scripts/capture-contact-sheet.mjs --out <dir> # realistic captures of materials.html in every environment + the laser-burn diffs
 ```
@@ -630,6 +642,41 @@ the installed package, so let the publish finish before bumping the dep there.
   tagged op; prose, string literals and dynamic `import()` never count). Sheet, print,
   text, vector, image, import and organic are NOT domains yet; they migrate one
   design at a time.
+- **`src/framework/solve/`** + **`src/framework/pose/`** - inverse kinematics
+  outside the domain (spec `docs/superpowers/specs/2026-10-30-inverse-kinematics-design.md`).
+  `solve/dls.js` is the pure damped-least-squares core, shared by the kinematics
+  goals solver (`domains/kinematics/goals.js`) and Pose mode (`pose/param-solve.js`).
+  `pose/` is Pose mode: drag handles declared in `part.handles` and the parameters
+  follow. `param-solve.js` (handle -> param values, reading a limb's plain-data
+  `ikInfo()` only - never `instanceof`, the cloud's worker holds two copies) and
+  `pose-session.js` (the drag state machine and pins, effects injected) are pure;
+  `pose-geom.js` is its pure geometry leaf, `pose-scene.js` the three.js overlay,
+  `pose-mode.js` the orchestrator, `pose-controls.js` the viewbar's Release pins
+  action, `aim-gizmo.js` the ball-and-rings widget on a goal handle with `aim` and the
+  joint rings (`createJointGizmo`: one ring per rotation of a hovered joint whose
+  parameter a goal handle's `seed` or an angles handle's `joints` names — a ring drag is
+  forward kinematics, `session.jointFrame`; in goal mode param-solve's `jointRingValues`
+  also moves the goal onto the turned pose, through the limb's `ikForward` and
+  `solve/aim.js`'s `anglesFromAim`, so the next solve keeps it). One gizmo shows at a
+  time (pose-mode's `focus`). That widget is built on **`src/framework/gizmo/`**, the cutaway control's handle code
+  shared: `gizmo-handles.js` (palette, materials, normal/hovered geometry pairs, the
+  hover rule), `gizmo-pick.js` (proxy-vs-centre picking) and `gizmo-rotate.js` (the
+  ring drag: plane route, edge-on screen fallback). Change a shared look there and both
+  widgets move. Posing has NO toggle: it is live in the normal click mode whenever measure,
+  sketch, cutaway and a cached preview are all off (mount's `setSuppressed`); handles
+  show on hover near a limb, a press on one claims its click (`takeClick`, the
+  picker's guard) and a hovered dot hides the hover tooltip (`claimsHover`). Mount
+  applies the session's effects: it holds regen jobs during a drag, ghosts the
+  sub-parts that must rebuild at 0.35 opacity, lifts each ghost in the delivery that
+  shows its new mesh (playback-stale deliveries included), commits once on release
+  (`onParamsCommit`), cancels the drag on a host write or a view switch, and makes
+  every effect a no-op once dispose starts (pose mode detaches late, LIFO).
+  **`src/framework/derive-memo.js`** (`withDeriveMemo`) memoizes `resolveDerived` by
+  params content inside a scope (a pose drag frame, a pose overlay refresh, mount's
+  `onParamChange`), so one frame derives each distinct params once. It relies on
+  `derive` being pure and on every reader treating `d` as read-only (readers in a scope
+  share one `d`); a derive that writes its params or throws is never stored. Internal:
+  not part of `partforge/derive`.
 - **`src/framework/core/`** + **`native/`** - the native core: C++ ports of the
   hottest per-vertex JS (`creasedNormals` with the fillet-surface evaluators,
   and the oracle's BVH + min-wall), compiled to ONE WebAssembly module embedded

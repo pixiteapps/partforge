@@ -484,6 +484,11 @@ export function createViewer(container, part, {
     lines.visible = linesVisible && meshVisible;
   }
 
+  /** The animation-channel opacity setSubPartOpacity last left on `name` (1 when none). */
+  function getSubPartOpacity(name) {
+    return animOpacity.get(name) ?? 1;
+  }
+
   function setSubPartOpacity(name, value) {
     if (!subMesh[name]) return;
     const wasZero = (animOpacity.get(name) ?? 1) <= 0;
@@ -3469,6 +3474,7 @@ export function createViewer(container, part, {
     setSubGeometry,
     setSubPose,
     setSubPartOpacity,
+    getSubPartOpacity,
     setSubPartDisplay,
     getSubPartDisplayState,
     getDisplayOverrides,
@@ -3513,6 +3519,10 @@ export function createViewer(container, part, {
     getProjection: () => projectionMode,
     onProjectionChange,
     domElement: renderer.domElement,
+    // The OrbitControls themselves, for a mode that must take a press away from
+    // orbit (pose mode; cutaway gets them at construction). One instance for the
+    // viewer's life: a projection swap re-targets it, never replaces it.
+    orbitControls: controls,
     _subMeshes: subMesh,
     __subMesh: (n) => subMesh[n],   // test hooks (cf. attachAnimationControls' __viewer)
     __subLines: (n) => subLines[n],

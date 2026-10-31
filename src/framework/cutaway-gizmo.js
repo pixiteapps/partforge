@@ -1,45 +1,39 @@
 import * as THREE from "three";
+import { snapQuaternionToAxis } from "./cutaway-math.js";
+import { buildGizmoScene } from "./cutaway-gizmo-scene.js";
+import { GIZMO_PALETTE, applyHandleAppearance } from "./gizmo/gizmo-handles.js";
+import { pickGizmoHandle, projectToRect } from "./gizmo/gizmo-pick.js";
 import {
   axisParameterFromRay,
-  signedAngleAroundAxis,
-  snapQuaternionToAxis,
-} from "./cutaway-math.js";
-import { buildGizmoScene } from "./cutaway-gizmo-scene.js";
+  beginRotateDrag as beginSharedRotateDrag,
+  rotateDragAngle,
+} from "./gizmo/gizmo-rotate.js";
 
 // The single source of truth for gizmo colors: the scene is constructed from
 // `dark` and `updateAppearance` re-derives from whichever mode is active, so a
 // palette edit here reaches the first frame as well as every later one.
+// The colours themselves come from the shared gizmo palette (gizmo/gizmo-handles.js):
+// the translate arrow is its green, the X ring its red, the Y ring its blue.
+const cutawayTheme = (p) => ({
+  fill: p.fill,
+  border: p.border,
+  translate: p.green,
+  rotateX: p.red,
+  rotateY: p.blue,
+});
 const THEMES = {
-  dark: {
-    fill: 0x65bff5,
-    border: 0xa8dcff,
-    translate: 0x36d399,
-    rotateX: 0xff6b7a,
-    rotateY: 0x5aa9ff,
-  },
-  light: {
-    fill: 0x1479b8,
-    border: 0x075985,
-    translate: 0x087f5b,
-    rotateX: 0xc92a3b,
-    rotateY: 0x1769aa,
-  },
+  dark: cutawayTheme(GIZMO_PALETTE.dark),
+  light: cutawayTheme(GIZMO_PALETTE.light),
 };
 
 export { THEMES as CUTAWAY_GIZMO_THEMES };
 
 const TRANSLATION_SCREEN_ALIGNMENT = 0.9;
-const ROTATION_SCREEN_ALIGNMENT = 0.15;
-// A 120 px perpendicular drag rotates the plane by 90 degrees.
-const SCREEN_ROTATION_RADIANS_PER_PIXEL = Math.PI / 240;
-const SCREEN_AXIS_EPSILON_SQ = 1e-8;
 // Reserve the visually shared center for the end-on translation handle.
 const TRANSLATE_CENTER_RADIUS_PX = 22;
 const GHOST_OFFSET_FACTOR = 0.001;
 const MIN_GHOST_OFFSET = 0.01;
 const MAX_GHOST_OFFSET = 0.25;
-const HANDLE_HOVER_WHITE_MIX = 0.28;
-const WHITE = new THREE.Color(0xffffff);
 
 export function createCutawayGizmo({
   scene,
@@ -108,20 +102,16 @@ export function createCutawayGizmo({
   function pick(event, ray) {
     if (pickHandle) return resolveHandle(pickHandle(event, handles, ray));
     handleRoot.updateWorldMatrix(true, true);
-    const intersection = raycaster.intersectObjects(hitProxies, false)[0];
-    const intersectedHandle = resolveHandle(intersection);
-    if (intersectedHandle) return intersectedHandle;
-
-    const center = projectToClient(group.position);
-    if (center) {
-      const dx = event.clientX - center.x;
-      const dy = event.clientY - center.y;
-      if (Number.isFinite(dx) && Number.isFinite(dy)
-        && Math.hypot(dx, dy) <= TRANSLATE_CENTER_RADIUS_PX) {
-        return "translate";
-      }
-    }
-    return null;
+    // Proxies first; the centre only when no proxy is under the pointer.
+    return pickGizmoHandle({
+      raycaster,
+      proxies: hitProxies,
+      handleOf: resolveHandle,
+      pointer: { x: event.clientX, y: event.clientY },
+      centerOf: () => projectToClient(group.position),
+      centerRadiusPx: TRANSLATE_CENTER_RADIUS_PX,
+      centerHandle: "translate",
+    });
   }
 
   function safeCapture(pointerId) {
@@ -156,21 +146,17 @@ export function createCutawayGizmo({
     border.material.color.set(theme.border);
     border.material.opacity = activeAppearance ? 1 : 0.72;
 
-    for (const [handle, { visual, material, geometryPairs }] of Object.entries(handleAppearance)) {
-      const hovered = handle === hoveredHandle;
+    for (const [handle, entry] of Object.entries(handleAppearance)) {
       const themeKey = handle === "rotate-x"
         ? "rotateX"
         : handle === "rotate-y"
           ? "rotateY"
           : "translate";
-      material.color.set(theme[themeKey]);
-      if (hovered) material.color.lerp(WHITE, HANDLE_HOVER_WHITE_MIX);
-      material.transparent = true;
-      material.opacity = hovered ? 1 : activeAppearance ? 1 : 0.48;
-      visual.scale.setScalar(1);
-      for (const pair of geometryPairs) {
-        pair.mesh.geometry = hovered ? pair.hovered : pair.normal;
-      }
+      applyHandleAppearance(entry, {
+        color: theme[themeKey],
+        hovered: handle === hoveredHandle,
+        idleOpacity: activeAppearance ? 1 : 0.48,
+      });
     }
   }
 
@@ -220,26 +206,7 @@ export function createCutawayGizmo({
   }
 
   function projectToClient(point) {
-    const rect = domElement.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return null;
-    const projected = point.clone().project(camera);
-    if (![projected.x, projected.y, projected.z].every(Number.isFinite)) return null;
-    if (projected.z < -1 || projected.z > 1) return null;
-    const client = new THREE.Vector2(
-      rect.left + (projected.x + 1) * 0.5 * rect.width,
-      rect.top + (1 - projected.y) * 0.5 * rect.height,
-    );
-    return Number.isFinite(client.x) && Number.isFinite(client.y) ? client : null;
-  }
-
-  function screenRotationDirection(center, axis) {
-    const centerClient = projectToClient(center);
-    const axisClient = projectToClient(center.clone().add(axis));
-    if (!centerClient || !axisClient) return null;
-    const screenAxis = axisClient.sub(centerClient);
-    if (screenAxis.lengthSq() < SCREEN_AXIS_EPSILON_SQ) return null;
-    screenAxis.normalize();
-    return new THREE.Vector2(-screenAxis.y, screenAxis.x);
+    return projectToRect(point, camera, domElement.getBoundingClientRect());
   }
 
   // The fields every drag carries, before the mode-specific ones are filled in
@@ -283,29 +250,19 @@ export function createCutawayGizmo({
     return record;
   }
 
-  // Spinning about a ring axis. Resolving the drag geometrically against the
-  // rotation plane only works when we are looking down that axis; edge-on, the
-  // plane is nearly parallel to the view and the intersection is useless, so
-  // the angle comes from pointer travel perpendicular to the on-screen axis.
-  // Returns null when neither route is usable, which aborts the press.
+  // Spinning about a ring axis: the shared rotate drag (gizmo/gizmo-rotate.js)
+  // resolves against the rotation plane when we look down the axis and falls back
+  // to pointer travel perpendicular to the on-screen axis when edge-on. Returns
+  // null when neither route is usable, which aborts the press.
   function beginRotateDrag(record, ray) {
-    const alignment = axisViewAlignment(record.startPosition, record.axis);
-    if (alignment >= ROTATION_SCREEN_ALIGNMENT) {
-      const plane = new THREE.Plane()
-        .setFromNormalAndCoplanarPoint(record.axis, record.startPosition);
-      const point = ray.intersectPlane(plane, new THREE.Vector3());
-      const radial = point?.sub(record.startPosition);
-      if (radial && radial.lengthSq() >= 1e-12) {
-        record.mode = "plane-rotate";
-        record.rotationPlane = plane;
-        record.startRadial = radial.normalize();
-        return record;
-      }
-    }
-    record.screenRotationDirection = screenRotationDirection(record.startPosition, record.axis);
-    if (!record.screenRotationDirection) return null;
-    record.mode = "screen-rotate";
-    return record;
+    const rotate = beginSharedRotateDrag({
+      ray,
+      center: record.startPosition,
+      axis: record.axis,
+      alignment: axisViewAlignment(record.startPosition, record.axis),
+      projectToClient,
+    });
+    return rotate ? Object.assign(record, rotate) : null;
   }
 
   function onPointerDown(event) {
@@ -360,29 +317,16 @@ export function createCutawayGizmo({
       return;
     }
 
-    if (drag.mode === "screen-rotate") {
-      const pointerDelta = new THREE.Vector2(
+    const angle = rotateDragAngle(drag, {
+      ray,
+      center: drag.startPosition,
+      axis: drag.axis,
+      pointerDelta: new THREE.Vector2(
         event.clientX - drag.startClientX,
         event.clientY - drag.startClientY,
-      );
-      const angle = pointerDelta.dot(drag.screenRotationDirection)
-        * SCREEN_ROTATION_RADIANS_PER_PIXEL;
-      if (!Number.isFinite(angle)) return;
-      const delta = new THREE.Quaternion().setFromAxisAngle(drag.axis, angle);
-      group.quaternion.copy(snapRotation(delta.multiply(drag.startQuaternion), event));
-      group.position.copy(drag.startPosition);
-      syncHandleTransform();
-      notifyPose();
-      return;
-    }
-
-    const point = ray.intersectPlane(drag.rotationPlane, new THREE.Vector3());
-    if (!point) return;
-    const radial = point.sub(drag.startPosition);
-    if (radial.lengthSq() < 1e-12) return;
-    radial.normalize();
-    const angle = signedAngleAroundAxis(drag.startRadial, radial, drag.axis);
-    if (!Number.isFinite(angle)) return;
+      ),
+    });
+    if (angle == null) return;
     const delta = new THREE.Quaternion().setFromAxisAngle(drag.axis, angle);
     group.quaternion.copy(snapRotation(delta.multiply(drag.startQuaternion), event));
     group.position.copy(drag.startPosition);

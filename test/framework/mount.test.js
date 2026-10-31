@@ -19,6 +19,7 @@ vi.mock("../../src/framework/viewer.js", () => ({
     const themeCbs = new Set();
     const projectionCbs = new Set();
     const flashAnchorCbs = new Set();
+    const cutawayCbs = new Set();
     let projection = "perspective";
     const v = {
       onFrame: (cb) => { frameCbs.add(cb); return () => frameCbs.delete(cb); },
@@ -83,8 +84,10 @@ vi.mock("../../src/framework/viewer.js", () => ({
       cutawayEnabled: vi.fn(() => cutawayOn),
       setCutawayEnabled: vi.fn((on) => {
         cutawayOn = on;
+        for (const cb of [...cutawayCbs]) cb();
         return true;
       }),
+      onCutawayChange: (cb) => { cutawayCbs.add(cb); return () => cutawayCbs.delete(cb); },
       // State carry-over across a remount. `cutawayOn` is shared with
       // cutawayEnabled above, so a restore here really does light the button
       // the way the real viewer would.
@@ -181,6 +184,36 @@ vi.mock("../../src/framework/animation-controls.js", async (importOriginal) => {
   };
 });
 
+// Pose mode, stubbed: mount's side of the contract (which effects it calls, and when)
+// is what these tests pin; the mode itself is covered by test/pose-*.test.js. Only a
+// part declaring `handles` creates one, so every other test is untouched.
+const poseStubs = vi.hoisted(() => []);
+vi.mock("../../src/framework/pose/pose-mode.js", () => ({
+  createPoseMode: vi.fn((viewer, opts) => {
+    const stub = {
+      opts,
+      delivered: vi.fn(), externalWrite: vi.fn(), refresh: vi.fn(), detach: vi.fn(),
+      setPins: vi.fn(), getPins: () => [], pinCount: () => 0, releasePins: vi.fn(),
+      handlePoints: () => [], isEnabled: () => true, setEnabled: vi.fn(),
+      onModeChange: () => () => {},
+      // always-on posing: mount pushes suppression, reads hover claims and the click claim
+      suppressedLog: [],
+      setSuppressed: vi.fn((on) => { stub.suppressedLog.push(!!on); }),
+      isLive: () => stub.suppressedLog.at(-1) === false,
+      claimsHover: vi.fn(() => false),
+      hoverCbs: new Set(),
+      onHoverChange: (cb) => { stub.hoverCbs.add(cb); return () => stub.hoverCbs.delete(cb); },
+      takeClick: vi.fn(() => false),
+      isDragging: vi.fn(() => false),
+    };
+    poseStubs.push(stub);
+    return stub;
+  }),
+}));
+vi.mock("../../src/framework/pose/pose-controls.js", () => ({
+  attachPoseControls: vi.fn(() => ({ detach: () => {} })),
+}));
+
 // The preview decoder, wrapped so a test can await exactly the decodes mount
 // started. mount's own .then is chained on the same promise first, so once a
 // test has awaited the promise, mount's handler has run.
@@ -246,6 +279,7 @@ function makeElements() {
       cutaway: mk("button"),
       measure: mk("button"),
       annotate: mk("button"),
+      pose: mk("button"),
       railToggle: mk("button"),
     },
   };
@@ -253,7 +287,7 @@ function makeElements() {
     els.status.status, els.status.busy, els.status.phase,
     els.exports.stl, els.exports.step, els.exports.threeMf,
     els.chrome.reframe, els.chrome.theme, els.chrome.cutaway, els.chrome.measure,
-    els.chrome.annotate, els.chrome.railToggle);
+    els.chrome.annotate, els.chrome.pose, els.chrome.railToggle);
   return els;
 }
 
@@ -1581,6 +1615,140 @@ test("a stale-shown playback mesh carries no stamp: returning to the stamped par
   expect(jobs.some((m) => m.type === "generate" && m.subparts?.includes("body"))).toBe(true);
   handle.dispose();
   vi.useRealTimers();
+});
+
+test("a playback-stale delivery lifts the pose ghost on the mesh it replaces", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: els });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  pose.delivered.mockClear();
+
+  handle.animation.play();
+  fakeViewers[0].tickFrame(0.5); // the in-flight build is now stale only by playback
+  fakeViewers[0].tickFrame(0.5);
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+
+  expect(fakeViewers[0].setSubGeometry).toHaveBeenCalledWith("body", expect.anything());
+  expect(els.exports.stl.disabled).toBe(true); // the stale branch: shown, not recorded
+  expect(pose.delivered).toHaveBeenCalledWith("body"); // a ghost left at 0.35 would stay faded through playback
+  handle.dispose();
+});
+
+test("unghost restores the opacity the ghost replaced, not full opacity", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+  const viewer = fakeViewers[0];
+  // The viewer's animation opacity layer, as a map: an animation track faded body to 0.6.
+  const layer = new Map([["body", 0.6]]);
+  viewer.getSubPartOpacity = (n) => layer.get(n) ?? 1;
+  viewer.setSubPartOpacity.mockImplementation((n, v) => { if (v == null || !(v < 1)) layer.delete(n); else layer.set(n, v); });
+  const pose = poseStubs.at(-1);
+  pose.opts.ghost(["body", "lid"]);
+  expect(layer.get("body")).toBe(0.35);
+  pose.opts.unghost(["body", "lid"]);
+  expect(layer.get("body")).toBe(0.6); // the track's fade survives the drag
+  expect(layer.has("lid")).toBe(false); // nothing faded it: back to full
+  // A track that wrote the layer while ghosted keeps its newer value.
+  pose.opts.ghost(["body"]);
+  layer.set("body", 0.2);
+  pose.opts.unghost(["body"]);
+  expect(layer.get("body")).toBe(0.2);
+  handle.dispose();
+});
+
+test("posing is always on, and stands down while measure, sketch or cutaway is on", () => {
+  const part = makePart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker, workers } = makeWorkers();
+  const els = makeElements();
+  const handle = mount(part, { createWorker, elements: els, onAnnotationSend: vi.fn() });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  expect(pose.suppressedLog.at(-1)).toBe(false); // live from the start: no toggle
+  expect(els.chrome.pose.hidden).toBe(true); // a leftover #pose toggle is hidden
+  handle.measure.setEnabled(true);
+  expect(pose.suppressedLog.at(-1)).toBe(true);
+  handle.measure.setEnabled(false);
+  expect(pose.suppressedLog.at(-1)).toBe(false);
+  handle.annotate.setEnabled(true);
+  expect(pose.suppressedLog.at(-1)).toBe(true);
+  handle.annotate.setEnabled(false);
+  expect(pose.suppressedLog.at(-1)).toBe(false);
+  fakeViewers[0].setCutawayEnabled(true);
+  expect(pose.suppressedLog.at(-1)).toBe(true);
+  fakeViewers[0].setCutawayEnabled(false);
+  expect(pose.suppressedLog.at(-1)).toBe(false);
+  // posing never turns the other modes off on its own account
+  expect(pose.setEnabled).not.toHaveBeenCalled();
+  handle.dispose();
+  expect(els.chrome.pose.hidden).toBe(false);
+});
+
+test("a click a pose press claimed never picks, and a hovered pose dot hides the hover tooltip", () => {
+  const part = makePart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements(), onPick: vi.fn() });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  const suppressed = attachPicker.mock.calls.at(-1)[1].suppressed;
+  expect(suppressed()).toBe(false);
+  pose.takeClick.mockReturnValueOnce(true); // a pin click, or the end of a drag
+  expect(suppressed()).toBe(true);
+  expect(suppressed()).toBe(false); // the claim is spent: the next plain click picks
+  const hover = attachHoverLabels.mock.results.at(-1).value;
+  pose.claimsHover.mockReturnValue(true);
+  for (const cb of pose.hoverCbs) cb();
+  expect(hover.setSuppressed).toHaveBeenLastCalledWith(true);
+  pose.claimsHover.mockReturnValue(false);
+  for (const cb of pose.hoverCbs) cb();
+  expect(hover.setSuppressed).toHaveBeenLastCalledWith(false);
+  handle.dispose();
+});
+
+test("pose effects are no-ops once dispose starts", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  const onParamsCommit = vi.fn();
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements(), onParamsCommit });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  // detach runs late in the LIFO teardown; whatever it fires must land nowhere.
+  pose.detach.mockImplementation(() => {
+    pose.opts.restore({ h: 9 });
+    pose.opts.hold(false);
+    pose.opts.commit(["h"]);
+    pose.opts.unghost(["body"]);
+  });
+  expect(() => handle.dispose()).not.toThrow();
+  expect(pose.detach).toHaveBeenCalledOnce();
+  expect(onParamsCommit).not.toHaveBeenCalled();
+});
+
+test("a view switch cancels a pose drag before the view changes", () => {
+  const part = makePart();
+  part.views = { main: { label: "Main" }, side: { label: "Side" } };
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  let viewAtCancel;
+  pose.externalWrite.mockImplementation(() => { viewAtCancel = handle.getView(); });
+  expect(handle.setView("side")).toBe(true);
+  expect(pose.externalWrite).toHaveBeenCalledOnce();
+  expect(pose.refresh).toHaveBeenCalled();
+  expect(pose.externalWrite.mock.invocationCallOrder[0]).toBeLessThan(pose.refresh.mock.invocationCallOrder.at(-1));
+  expect(viewAtCancel).toBeDefined();
+  handle.dispose();
 });
 
 test("a user edit mid-playback still discards the stale meshes", () => {
