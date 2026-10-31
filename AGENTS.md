@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has twenty-four: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has twenty-five: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -52,7 +52,13 @@ page), `robot-arm.js` (the inverse-kinematics reference part - a 6-axis arm and
 gripper posed by a tool GOAL: `toolX/Y/Z` + pitch/yaw/roll solved in `derive` by
 `limb.pose({ goals })`, warm-started from six seed joint params; a goal-mode `tool`
 handle for Pose mode and a `tool` probe reporting reached / missed by how much;
-`robot-arm.html`, checked by `scripts/check-pose.mjs`), and `material-swatches.js` (not a reference part: the dev-only
+`robot-arm.html`, checked by `scripts/check-pose.mjs`), `hand.js` (the angles-mode
+IK reference part - a printable articulated hand: a palm limb (wrist pitch/yaw) with four
+fingers (spread, mcp, pip, dip following pip) and a thumb (oppose, mcp, ip) parented on
+it, posed by per-digit curl/spread params and six `{ type: "preset" }` shapes, one
+lockable angles-mode handle per digit; rigid pin-jointed pieces placed by matrix, the
+print view a flat kit the pose never reaches; `hand.html`, checked by
+`scripts/check-pose.mjs`), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`), and `offset-demo.js`
 (not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
 `offset-demo.html`).

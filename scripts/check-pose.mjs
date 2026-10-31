@@ -12,7 +12,7 @@
 //     may be posted until release, exactly one is posted after it, and the new mesh
 //     and opacity 1 must reach the screen in the same frame (sampled every frame:
 //     never the new geometry still ghosted, never the old geometry back at full).
-//   robot-arm.html (required), hand.html — the reference parts. A 20-move drag of the first
+//   robot-arm.html, hand.html (both required) — the reference parts. A 20-move drag of the first
 //     handle posts no `generate` job, commits exactly once on release, the committed
 //     values differ from the part's defaults, and the console stays clean.
 //
@@ -264,7 +264,7 @@ async function checkReference(page, url, errors) {
 const PAGES = [
   { entry: "pose-smoke.html", run: checkSmoke, required: true },
   { entry: "robot-arm.html", run: checkReference, required: true },
-  { entry: "hand.html", run: checkReference },
+  { entry: "hand.html", run: checkReference, required: true },
 ];
 
 let failed = false;

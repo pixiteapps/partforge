@@ -30,6 +30,7 @@ export default defineConfig(({ command }) => ({
         emblem: "emblem.html",
         relief: "relief.html",
         robotArm: "robot-arm.html",
+        hand: "hand.html",
       },
     },
   },
