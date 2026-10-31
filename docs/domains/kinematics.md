@@ -686,6 +686,9 @@ At the default goal the same line reads `{"at":"tip","residual":0,"aimResidual":
 Read `status` first. If it is not `reached`, `residual` (mm) and `aimResidual` (degrees)
 say how far the arm is from the goal. Then change the parameters and measure again. Leave
 the seed parameters alone: the solve starts from them, and they are not an input.
+One exception: if the probe reads `out-of-range` for a target on the far side of the arm,
+also set the `base` seed to the target's heading, `atan2(y, x)` in degrees. The solve
+starts from the saved seed, and from the near side it can stop short of a far target.
 
 ## The report
 

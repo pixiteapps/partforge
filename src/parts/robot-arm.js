@@ -123,7 +123,7 @@ export default {
       { key: "foreLen", label: "Forearm", unit: "mm", min: 100, max: 200, step: 1, description: "Elbow axis to wrist centre." },
     ] },
     { id: "joints", title: "Joint angles (seed)", collapsed: true,
-      description: "Where the solve starts. Pose mode writes the solved angles back here as you drag, so the arm never flips to another solution. Leave them alone: set the tool goal instead.",
+      description: "Where the solve starts. Pose mode writes the solved angles back here as you drag, so the arm never flips to another solution. Leave them alone: set the tool goal instead. One exception: for a goal behind the arm, set Base to the goal's heading, atan2(y, x) in degrees.",
       controls: [
         seed("base", "Base"), seed("shoulder", "Shoulder"), seed("elbow", "Elbow"),
         seed("wristPitch", "Wrist pitch"), seed("wristYaw", "Wrist yaw"), seed("wristRoll", "Wrist roll"),

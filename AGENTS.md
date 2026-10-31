@@ -631,6 +631,21 @@ the installed package, so let the publish finish before bumping the dep there.
   tagged op; prose, string literals and dynamic `import()` never count). Sheet, print,
   text, vector, image, import and organic are NOT domains yet; they migrate one
   design at a time.
+- **`src/framework/solve/`** + **`src/framework/pose/`** - inverse kinematics
+  outside the domain (spec `docs/superpowers/specs/2026-10-30-inverse-kinematics-design.md`).
+  `solve/dls.js` is the pure damped-least-squares core, shared by the kinematics
+  goals solver (`domains/kinematics/goals.js`) and Pose mode (`pose/param-solve.js`).
+  `pose/` is Pose mode: drag handles declared in `part.handles` and the parameters
+  follow. `param-solve.js` (handle -> param values, reading a limb's plain-data
+  `ikInfo()` only - never `instanceof`, the cloud's worker holds two copies) and
+  `pose-session.js` (the drag state machine and pins, effects injected) are pure;
+  `pose-geom.js` is its pure geometry leaf, `pose-scene.js` the three.js overlay,
+  `pose-mode.js` the orchestrator, `pose-controls.js` the viewbar chrome. Mount
+  applies the session's effects: it holds regen jobs during a drag, ghosts the
+  sub-parts that must rebuild at 0.35 opacity, lifts each ghost in the delivery that
+  shows its new mesh (playback-stale deliveries included), commits once on release
+  (`onParamsCommit`), cancels the drag on a host write or a view switch, and makes
+  every effect a no-op once dispose starts (pose mode detaches late, LIFO).
 - **`src/framework/core/`** + **`native/`** - the native core: C++ ports of the
   hottest per-vertex JS (`creasedNormals` with the fillet-surface evaluators,
   and the oracle's BVH + min-wall), compiled to ONE WebAssembly module embedded
