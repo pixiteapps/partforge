@@ -13,7 +13,11 @@ export { leafKeys, programDigest } from "./sparse.js";
 /** The default byte bound: 64 MiB of samples (~130k plain leaves). */
 export const SAMPLE_CACHE_BYTES = 64 * 2 ** 20;
 
-/** What an entry is charged: 125 float32 samples, plus 125 owner bytes on an owner leaf. */
+/**
+ * What an entry is charged: 125 float32 samples, plus 125 owner bytes on an owner leaf. The
+ * bound counts this sample payload only, so it is approximate: typed-array headers, key
+ * strings and Map overhead are not counted.
+ */
 const entryBytes = (e) => 500 + (e.owner ? 125 : 0);
 
 /**

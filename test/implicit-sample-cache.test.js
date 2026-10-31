@@ -59,6 +59,22 @@ test("warm == cold: a frames-only pose change reuses samples and meshes the same
   expect(digest(again)).toBe(digest(cold));
 });
 
+test("warm == cold with the core on, and equal to the core-off bytes", () => {
+  const off = meshImplicit(compileImplicit(TWO_BONE(40)), 1, { tier: "preview", cache: createSampleCache() });
+  setCoreEnabled(true);
+  try {
+    const cold = meshImplicit(compileImplicit(TWO_BONE(40)), 1, { tier: "preview", cache: createSampleCache() });
+    const cache = createSampleCache();
+    meshImplicit(compileImplicit(TWO_BONE(0)), 1, { tier: "preview", cache });
+    const warm = meshImplicit(compileImplicit(TWO_BONE(40)), 1, { tier: "preview", cache });
+    expect(warm.stats.cacheHits).toBeGreaterThan(0);
+    expect(digest(warm)).toBe(digest(cold));
+    expect(digest(cold)).toBe(digest(off));
+  } finally {
+    setCoreEnabled(false);
+  }
+});
+
 test("the hand reuses samples across a one-finger flex, byte for byte", () => {
   const bent = handSpec({ flex: { index: 62 } });
   const cold = meshImplicit(compileImplicit(bent), 1.5, { tier: "preview", cache: createSampleCache() });

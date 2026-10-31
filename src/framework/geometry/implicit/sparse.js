@@ -184,7 +184,9 @@ export function evaluateLeaves(plan, hooks = {}) {
 }
 
 // A program's identity for leaf keys: its bytes and the textures it may read, by content
-// (byteAwareReplacer fingerprints the Float64Array). Memoized per program object.
+// (byteAwareReplacer fingerprints the Float64Array). Memoized per program OBJECT, not per
+// content: safe because each planLeaves call emits fresh program arrays (emitProgram) and
+// nothing writes one afterwards, so an object's digest can never go stale.
 const programDigests = new WeakMap(), programIds = new WeakMap();
 export function programDigest(plan, i) {
   const prog = plan.programs[i];
