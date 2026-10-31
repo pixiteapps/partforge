@@ -9,6 +9,9 @@ import * as THREE from "three";
  * @param o.handleOf (intersection) => the handle it names, or null.
  * @param o.pointer the pointer, `{ x, y }`, in the same screen space as `center`.
  * @param o.center the gizmo centre on screen `{ x, y }`, or null (behind the camera).
+ * @param o.centerOf instead of `center`: a function returning it, called only when the
+ *   centre is consulted (with `centerFirst: false`, only on a proxy miss), so a caller
+ *   whose centre costs a projection pays for it only then.
  * @param o.centerRadiusPx the centre's pick radius, px.
  * @param o.centerHandle the handle the centre picks.
  * @param o.centerFirst true: the centre wins over a proxy under it (a ring seen edge-on
@@ -20,15 +23,17 @@ export function pickGizmoHandle({
   proxies,
   handleOf,
   pointer,
-  center,
+  center = null,
+  centerOf = () => center,
   centerRadiusPx,
   centerHandle,
   centerFirst = false,
 }) {
   const atCenter = () => {
-    if (!center) return false;
-    const dx = pointer.x - center.x;
-    const dy = pointer.y - center.y;
+    const c = centerOf();
+    if (!c) return false;
+    const dx = pointer.x - c.x;
+    const dy = pointer.y - c.y;
     return Number.isFinite(dx) && Number.isFinite(dy) && Math.hypot(dx, dy) <= centerRadiusPx;
   };
   if (centerFirst && atCenter()) return centerHandle;

@@ -103,6 +103,23 @@ describe("pickGizmoHandle", () => {
     expect(pickAt({ x: 0.06, y: 0 }, false)).toBe("center"); // off the ring, inside the radius
   });
 
+  it("centerOf: the centre is projected only when it is consulted (a proxy miss)", () => {
+    let calls = 0;
+    const pick = (ndc) => {
+      raycaster.setFromCamera(ndc, camera);
+      return pickGizmoHandle({
+        raycaster, proxies: [ring], handleOf: (hit) => hit?.object?.userData.part ?? null,
+        pointer: { x: ndc.x * 100, y: ndc.y * 100 },
+        centerOf: () => { calls++; return { x: 0, y: 0 }; },
+        centerRadiusPx: 10, centerHandle: "center",
+      });
+    };
+    expect(pick(onRingNearCenter)).toBe("ring");
+    expect(calls).toBe(0);
+    expect(pick({ x: 0.06, y: 0 })).toBe("center");
+    expect(calls).toBe(1);
+  });
+
   it("misses: neither ring nor centre", () => {
     expect(pickAt({ x: 0.5, y: 0 }, true)).toBeNull();
     expect(pickAt({ x: 0.5, y: 0 }, false)).toBeNull();

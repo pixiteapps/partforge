@@ -108,7 +108,7 @@ export function createCutawayGizmo({
       proxies: hitProxies,
       handleOf: resolveHandle,
       pointer: { x: event.clientX, y: event.clientY },
-      get center() { return projectToClient(group.position); },
+      centerOf: () => projectToClient(group.position),
       centerRadiusPx: TRANSLATE_CENTER_RADIUS_PX,
       centerHandle: "translate",
     });
