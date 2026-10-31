@@ -2,6 +2,7 @@
 import { resolveFrames, compose, invert } from "../../geometry/xform.js";
 import { hypot3 } from "../../geometry/js-math.js";
 import { axisAngle } from "../../geometry/rotations.js";
+import { jointSteps, restValue } from "./tree.js";
 
 /** Round to 0.001 with −0 written as 0 (the frame report's convention). */
 export const r3 = (v) => { const x = Math.round(v * 1000) / 1000; return x === 0 ? 0 : x; };
@@ -66,7 +67,7 @@ const PLACE_FROM = new Set(["joint", "rest"]);
  * The adapters of one posed limb: world and place for solids. `frames` are the parent frames
  * passed to `pose`; `restFrames` every frame of the chain at rest (`place`'s `from: "rest"`).
  */
-export function buildAdapters(tree, posedFrames, frames, restFrames, fail) {
+export function buildAdapters(tree, posedFrames, frames, restFrames, fail, values) {
   const { name, joints } = tree;
   const base = joints[0].frame, tip = `${name}.tip`;
   const known = new Set([...joints.map((j) => j.frame), tip]);
@@ -103,5 +104,39 @@ export function buildAdapters(tree, posedFrames, frames, restFrames, fail) {
     return rotated.translate([M[9], M[10], M[11]]);
   }
 
-  return { world, place };
+  /**
+   * The posed limb as plain JSON for the viewer (handles, skeleton, limit arcs): joint records,
+   * every joint's and the tip's origin in part coordinates, and each hinge's world rotation axis
+   * (the direction a positive value turns about). Throws without the parent frames, like `world`.
+   */
+  function ikInfo() {
+    const points = {}, axes = {};
+    const origin = (joint) => world(joint).origin;
+    joints.forEach((j, i) => {
+      points[j.name] = origin(j.frame);
+      if (j.type === "ball") return;
+      // The hinge's own step is the last in its frame's list, so its axis is unchanged by it.
+      const unit = joints.map((_, k) => (k === i ? 1 : 0));
+      const step = jointSteps(tree, unit.map((v, k) => (joints[k].type === "ball" ? restValue(joints[k]) : v)))[j.frame].at(-1);
+      const sign = step.deg < 0 ? -1 : 1;
+      const W = world(j.frame);
+      const a = step.axis.map((c) => c * sign);
+      axes[j.name] = [0, 1, 2].map((k) => r3(a[0] * W.x[k] + a[1] * W.y[k] + a[2] * W.z[k]));
+    });
+    points.tip = origin(tip);
+    const info = {
+      kind: "partforge.limb", name, tip,
+      joints: joints.map((j) => {
+        const rec = { name: j.name, frame: j.frame, type: j.type };
+        if (j.type === "ball") rec.cone = j.cone; else rec.range = [...j.range];
+        rec.follower = j.follow != null;
+        return rec;
+      }),
+      points, values: values.map(roundValue), axes,
+    };
+    if (tree.r) info.r = [...tree.r];
+    return info;
+  }
+
+  return { world, place, ikInfo };
 }

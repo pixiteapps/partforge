@@ -171,7 +171,7 @@ export function limb(name, def) {
     const posedFrames = buildFrames(tree, jointSteps(tree, values, { spread, twist }));
     const report = buildReport(tree, values, clamped, posedFrames, frames, fail, reach, grip, goals);
     const restFrames = context == null ? restOwn : { ...context.rest, ...restOwn };
-    const adapters = buildAdapters(tree, posedFrames, frames, restFrames, fail);
+    const adapters = buildAdapters(tree, posedFrames, frames, restFrames, fail, values);
     const posed = { values, frames: posedFrames, joints: [...jointFrames], tip, report, ...adapters };
     CHAINS.set(posed, { all: frames == null ? { ...posedFrames } : { ...frames, ...posedFrames }, rest: restFrames });
     return posed;

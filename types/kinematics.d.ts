@@ -167,6 +167,23 @@ export interface PosedLimb {
   place<T extends { rotate(deg: number, center: Point3, axis: Point3): T; translate(v: Point3): T }>(x: T, joint?: string, opts?: { from?: "joint" | "rest" }): T;
   /** A frame of the limb in part coordinates. `joint` is a joint name, a frame name, or "tip"; default the base joint. */
   world(joint?: string): LimbWorldFrame;
+  /** Plain-JSON view for drag handles, skeletons and limit arcs; throws without the parent frames of a parented limb. */
+  ikInfo(): LimbIkInfo;
+}
+
+export interface LimbIkInfo {
+  kind: "partforge.limb";
+  name: string;
+  /** The tip's frame name. */
+  tip: string;
+  joints: Array<{ name: string; frame: string; type: "hinge" | "ball"; range?: [number, number]; cone?: number; follower: boolean }>;
+  /** Each joint's bare name and `tip` to its origin in part coordinates. */
+  points: Record<string, Point3>;
+  values: Array<number | LimbBallResult>;
+  /** A hinge's world rotation axis (the direction a positive value turns about); none for a ball. */
+  axes: Record<string, Point3>;
+  /** The declared radii, one per joint then the tip, when the limb has them. */
+  r?: number[];
 }
 
 /** What a limb hangs from: fixed frames, a posed limb, or a list of them. */
