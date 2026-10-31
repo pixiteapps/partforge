@@ -4457,6 +4457,10 @@ pair: `{ a, b, distance, at }`, distance 0 = touching or overlapping) and
 `measuredGaps` is the companion to `measuredMinWall` for that pass, and `gaps` is
 **absent** rather than empty when it did not run — an empty table means "measured,
 and these pairs have no distance", which a declared `clearance` gate fails on.
+`warnings` (0.177, always present, often empty) lists the build's own warnings as
+`{ part, message }`, the same text the app shows: a fillet or chamfer the geometry
+defeated and skipped, a `k.implicit` feature too thin for its grid, a shape clipped at
+the edge of its sampling box. `partforge measure` prints them. They never gate `ok`.
 
 A sheet sub-part (`sheetPart()`) also carries `sheet` — its 2-D facts:
 `material`, `thickness`, `flat` (the cut layer's size), `area`, `pieces`, the

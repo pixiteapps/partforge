@@ -467,7 +467,7 @@ export function applyRotation<T extends { rotate(deg: number, center?: Point3, a
 
 /**
  * A `k.implicit` node's field as a point function: the signed distance (mm, negative
- * inside) at a part-coordinate point. **Unreleased (feat/implicit).** The node is a
+ * inside) at a part-coordinate point. The node is a
  * k.implicit root naming no frames, validated once (an `ImplicitSpecError` otherwise);
  * `images` maps the names an expr's textures read to their decoded grids. Like the
  * engine's field it is a bound for ellipsoids, blends and warps, not always the true

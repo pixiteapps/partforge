@@ -544,7 +544,13 @@ export interface HeightfieldGrid {
   data: Uint16Array;
 }
 
-/** k.implicit — a signed-distance element tree meshed into a solid (docs/domains/organic.md). */
+/**
+ * k.implicit — a signed-distance element tree meshed into a solid (docs/domains/organic.md).
+ * Deliberately loose: one shape for every node kind, its other fields `unknown`. The engine
+ * validates a spec at runtime (`validateImplicit` from `partforge/organic`, and lint's
+ * `implicit-spec-invalid`) with messages naming the field, which a union of node types
+ * would only partly repeat. A per-kind union may come later as an additive narrowing.
+ */
 export interface ImplicitNode { kind: string; frame?: string; at?: [number, number, number]; label?: string; [field: string]: unknown; }
 export interface ImplicitFrame { parent?: string; at?: [number, number, number]; rotate?: { axis: "x" | "y" | "z" | [number, number, number]; deg: number } | Array<{ axis: "x" | "y" | "z" | [number, number, number]; deg: number }>; }
 export interface ImplicitOptions {

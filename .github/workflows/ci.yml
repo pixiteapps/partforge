@@ -19,8 +19,8 @@ jobs:
   # `files` field publishes src, bin and types; a PR touching only docs, tests or
   # workflows has nothing to release and is exempt — including this job's own PR.
   # Only a PR into main is checked: publish.yml runs on main alone, so a PR into an
-  # integration branch (feat/implicit) releases nothing, and its version moves when
-  # that branch merges to main.
+  # integration branch releases nothing, and its version moves when that branch
+  # merges to main.
   version:
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
@@ -58,10 +58,9 @@ jobs:
     # Chromium/apt download, a test that never settles — runs to GitHub's 6-hour
     # default and holds the PR's checks for that long; with one it fails in
     # minutes and a re-run usually clears it.
-    # Set at roughly 4x a healthy run (the job takes ~7 min, npm test ~3, the
-    # Playwright install ~20 s), so a slow day still passes. The implicit engine's
-    # suite (feat/implicit) takes npm test to 12-15 min on a runner, so its step and
-    # the job carry that branch's ceilings.
+    # Set at roughly 3x a healthy run: npm test takes 12-15 min on a runner since
+    # the implicit engine's suite (core-parity and the implicit speed gates are most
+    # of it), the Playwright install ~20 s, so a slow day still passes.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
