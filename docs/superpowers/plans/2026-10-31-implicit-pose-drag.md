@@ -57,6 +57,21 @@
 | `src/framework/geometry/mesh-concat.js` (new), `manifold-backend.js`, `jobs.js`, `worker.js`, `mount.js` | the two-stage union delivery (`meshes-provisional`) | 8 |
 | `scripts/bench-pose-drag.mjs` (new), `docs/domains/organic.md`, `AGENTS.md`, `docs/KERNEL-CONTRACT.md` | numbers and docs | 9 |
 
+## Measured
+
+2026-10-31, Apple M1 Max, Node 24, native core on, hand part at its 1.5 mm preview, CPU ms (`npm run bench:pose-drag`; core off is about 3x slower on rebuilds and equal on the deform).
+
+| Step | Time |
+|---|---|
+| (a) `skinVertices`, curl 30 to 31, 347,826 corners, 26 frames | 6.2 ms |
+| (b) `bindVertices`, body at 1.5 mm, 39,298 vertices | 10.6 ms |
+| (c) exact rebuild, one finger (`flexIndex` 60 to 62), cold / warm | 751 / 750 ms; sample-cache hits 0% / 74% |
+| (c) exact rebuild, every finger (`curl` 30 to 32), cold / warm | 764 / 793 ms; hits 0% / 19% |
+| (d) first mesh (build + pieces' `toMesh`), cold / warm | 584 / 511 ms |
+| (d) final (build + union `toMesh`), cold / warm | 779 / 738 ms |
+
+The deform is under the 16 ms target. The warm one-finger rebuild equals the cold one end to end: the cache saves sampling, but the nails, the union and the mesh import dominate (the body alone was 218 vs 244 ms in Task 2). The palm blocks' programs carry every finger's bulge regions, so a flex misses them; pruning far regions per block is a later engine change.
+
 Shared test fixture (Task 3 creates it): `test/fixtures/skin-fixtures.js` exporting `TWO_BONE(bend = 0)` — `{ frames: { root: { at: [0, 0, 0] }, child: { parent: "root", at: [0, 20, 0], rotate: { axis: "x", deg: bend } } }, root: { kind: "union", k: 2, children: [{ kind: "capsule", frame: "root", b: [0, 20, 0], r: 4 }, { kind: "capsule", frame: "child", b: [0, 20, 0], r: 4 }] }, preview: 1, resolution: 1 }` — and `BALL(frame = "child", at = [0, 24, 6])` — `{ frames: TWO_BONE(0).frames, root: { kind: "sphere", frame, at, r: 3 }, preview: 1 }`.
 
 ---
@@ -485,19 +500,19 @@ Expected: all PASS.
 
 **Interfaces:**
 - Consumes: `mergeBindings` (Task 4); `replay`, `wrap`, `_canon` (backend internals); `loop.isFresh()`, `showPartial()`, `fastPath.forget/apply`, `cache.forget` (mount); `skin` (Task 7).
-- Produces (backend): `kernel.setProvisionalUnions(on: boolean)`; `kernel.takeProvisionalPieces(solid)` → `Solid[] | null`. While armed and `quality === "preview"`, a `union` of ≥2 solids with at least one operand whose `_canon.m` is an implicit result (or an earlier deferred union) is built as the lazy `Manifold.union` node with its boolean-gate `judged(...)` DEFERRED: `pendingJudge.set(node, () => judged("union", ms, node))`, run by `settle(m)` at the top of `meshOut`, `indexedMeshOut`, `volumeOf` and the wrap's `boundingBox`/`volume`/`genus`/`isEmpty` (deleted from the map only after it returns without throwing). The last deferred union of the bracket is remembered as `{ m: node, pieces: operand solids }`; `takeProvisionalPieces(solid)` returns `pieces.map((p) => replay(p, solid._canon.chain))` when `solid._canon.m === node` (the union is the sub-part's final solid up to rigid steps), else `null`; it and `endSubPart` clear the memory. Unarmed, print, hoisted-or-not: every other path is unchanged.
+- Produces (backend): `kernel._setProvisionalUnions(on: boolean)`; `kernel._takeProvisionalPieces(solid)` → `Solid[] | null`. While armed and `quality === "preview"`, a `union` of ≥2 solids with at least one operand whose `_canon.m` is an implicit result (or an earlier deferred union) is built as the lazy `Manifold.union` node with its boolean-gate `judged(...)` DEFERRED: `pendingJudge.set(node, () => judged("union", ms, node))`, run by `settle(m)` at the top of `meshOut`, `indexedMeshOut`, `volumeOf` and the wrap's `boundingBox`/`volume`/`genus`/`isEmpty` (deleted from the map only after it returns without throwing). The last deferred union of the bracket is remembered as `{ m: node, pieces: operand solids }`; `takeProvisionalPieces(solid)` returns `pieces.map((p) => replay(p, solid._canon.chain))` when `solid._canon.m === node` (the union is the sub-part's final solid up to rigid steps), else `null`; it and `endSubPart` clear the memory. Unarmed, print, hoisted-or-not: every other path is unchanged.
 - Produces: `concatMeshPayloads(list)` → `{ positions, normals, triangles, edges, bindings? }` — concatenates non-indexed payloads (throws on an indexed one), drops `featureIds`/`features`, merges bindings with `mergeBindings`.
-- Produces (jobs/worker): the generate job arms `setProvisionalUnions(true)` for its duration (false in `finally`); after `displayWithReads(name)` and before `solid.toMesh`, `const pieces = kernel.takeProvisionalPieces?.(solid)`; when non-null and `!isStale()`, posts `{ type: "meshes-provisional", meshes: [{ name, ...concatMeshPayloads(pieces.map((p) => p.toMesh({ quality: "preview" }))), reads, frame, provisional: true }] }` with the buffers transferred. `worker.js`'s gate drops a `meshes-provisional` from a stale epoch exactly as `meshes-partial`. `capture-generate`, `inspect` and exports never arm it.
+- Produces (jobs/worker): the generate job arms `_setProvisionalUnions(true)` for its duration (false in `finally`); after `displayWithReads(name)` and before `solid.toMesh`, `const pieces = kernel._takeProvisionalPieces?.(solid)`; when non-null and `!isStale()`, posts `{ type: "meshes-provisional", meshes: [{ name, ...concatMeshPayloads(pieces.map((p) => p.toMesh({ quality: "preview" }))), reads, frame, provisional: true }] }` with the buffers transferred. `worker.js`'s gate drops a `meshes-provisional` from a stale epoch exactly as `meshes-partial`. `capture-generate`, `inspect` and exports never arm it.
 - Produces (mount): `case "meshes-provisional"`: ignored unless `loop.isFresh()` and `!viewer.cutawayEnabled?.()`; shown with `setSubGeometry`, `fastPath.forget`, `cache.forget` (the sub-part stays missing, so `exportPreview` keeps throwing "not fully built" and the loop keeps waiting), `fastPath.apply(names, framesFromReply)`, `showPartial()`, and `provisional.add(name)`; `applyFreshMeshes` and the stale branches `provisional.delete(name)`; `beforeCapture` throws `Error("captureViews: the view on screen is not fully built")` while `provisional.size > 0`. `skin.recordDelivered` is never called for a provisional stage.
 
 - [ ] **Step 1: Write the failing backend/jobs tests** (`test/implicit-two-stage.test.js`, Manifold preview kernel):
 
 ```js
 test("an armed preview union of implicit results hands out its pieces once, then the real union", () => {
-  k.setProvisionalUnions(true); k.beginSubPart("t");
+  k._setProvisionalUnions(true); k.beginSubPart("t");
   const s = k.union([k.implicit(TWO_BONE(0)), k.implicit(BALL("child"))]);
-  const pieces = k.takeProvisionalPieces(s);
-  expect(pieces).toHaveLength(2); expect(k.takeProvisionalPieces(s)).toBeNull();
+  const pieces = k._takeProvisionalPieces(s);
+  expect(pieces).toHaveLength(2); expect(k._takeProvisionalPieces(s)).toBeNull();
   const m = s.toMesh();                                   // forces the union and its judgment
   // m byte-equal (positions/normals/edges) to the same union built on a kernel with setProvisionalUnions(false)
 });
@@ -582,4 +597,4 @@ Expected: all PASS (`npm run docs:domains` output unchanged — the manifest did
 ## Self-review notes
 
 - Spec coverage: §1 bindings → Tasks 3–4; §2 detection → Task 5; §3 deforming → Task 6; §4 release/rebuild/stale-base/setParams → Task 7; §5 sample cache (JS + native + parity) → Tasks 1–2, two-stage → Task 8; Measuring → Task 9; every spec test has a named test above; anti-goals are Global Constraints with owning tests in Tasks 1, 2, 7, 8.
-- Names used across tasks: `plan.base`, `leafKeys`, `createSampleCache`, `ip_sample_cached`, `compiled.frameNames`, `bindVertices`, `implicitCallId`, `stripFrames`, `encodeBindingProps`/`decodeBindings`/`mergeBindings`, `bindings = { frameA, frameB, weight, frames }`, `implicitSpecs`/`skinnable`, `framesOnlyChange`, `frameMotions`/`skinVertices`, `setSubVertices`, `markDirty({ delayMs })`/`delayKick`/`flush`, `createSkinDrag`, `SKIN_PAUSE_MS`, `setProvisionalUnions`/`takeProvisionalPieces`, `concatMeshPayloads`, `meshes-provisional`, `beforeCapture`.
+- Names used across tasks: `plan.base`, `leafKeys`, `createSampleCache`, `ip_sample_cached`, `compiled.frameNames`, `bindVertices`, `implicitCallId`, `stripFrames`, `encodeBindingProps`/`decodeBindings`/`mergeBindings`, `bindings = { frameA, frameB, weight, frames }`, `implicitSpecs`/`skinnable`, `framesOnlyChange`, `frameMotions`/`skinVertices`, `setSubVertices`, `markDirty({ delayMs })`/`delayKick`/`flush`, `createSkinDrag`, `SKIN_PAUSE_MS`, `_setProvisionalUnions`/`_takeProvisionalPieces`, `concatMeshPayloads`, `meshes-provisional`, `beforeCapture`.

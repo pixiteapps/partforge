@@ -266,6 +266,51 @@ part.
 **Posing rebuilds.** Moving a frame changes the shape, so a pose param rebuilds the body.
 A whole body moved rigidly by a `views` placement does not.
 
+### Dragging a pose
+
+While you drag a slider, the app does not rebuild the body on every move. It bends the
+last exact mesh instead, at display rate, and rebuilds exactly when you let go or pause.
+
+**What bends.** A slider bends the mesh only when it changes nothing but `frames` of a
+`k.implicit`, or of a `k.union` of them, and the result is in its canonical place (not
+moved, rotated, mirrored or cut after the build). The build must also be one the
+framework can trust without running it: the same shapes, fonts, images and vector
+sources on both sides, and a plain operand (a `k.box` in the union) unchanged.
+
+**What does not.** A `setParams` call, an animation, a posed or moved result, and any
+change to a shape (a radius, a node, the detail, an image) rebuild as before.
+
+**How.** Each vertex of a preview mesh remembers which frame or frames it follows. A
+move blends the frames' rigid motions per vertex, so a finger follows its joints and the
+palm stays put. The bent mesh is approximate: the exact build lands 150 ms after the last
+move, or at once on release. While the mesh is bent its edge lines are hidden. They
+return with the exact mesh. A render or capture waits for the exact mesh first.
+
+**Two-stage union.** A union of `k.implicit` bodies (the hand and its nails) posts its
+pieces joined together as soon as they are built, then the real union. The first mesh has
+overlaps but looks right. It skips the stage during a drag or an animation, and a failed
+build puts the previous exact mesh back.
+
+The View style thumbnails, picking and sketch anchors, and the cutaway cap read the bent
+mesh during a drag. That is accepted: they are display only.
+
+Measured on an Apple M1 Max, native core on, the hand part at its 1.5 mm preview
+(`npm run bench:pose-drag`, CPU time):
+
+| Step | Time |
+| --- | --- |
+| Bend the mesh (347,826 corners), curl 30 to 31 | 6.2 ms |
+| Bind a build's vertices (the body, 39,298 vertices) | 10.6 ms |
+| Exact rebuild, one finger (`flexIndex` 60 to 62), cold / warm | 751 / 750 ms |
+| Exact rebuild, every finger (`curl` 30 to 32), cold / warm | 764 / 793 ms |
+| First mesh (the pieces), cold / warm | 584 / 511 ms |
+| Real union mesh, cold / warm | 779 / 738 ms |
+
+The warm rebuild reuses the preview sample cache: 74% of the one-finger samples hit and
+19% of the all-finger samples. A palm block's program includes the bulge regions of every
+finger, so a flex misses the palm's blocks and the saving is small once the nails, the
+union and the mesh import are added. Cold and warm meshes are identical.
+
 ## Reporting frames: `k.implicitFrames`
 
 `k.implicitFrames(spec)` returns a **frame set**: where the spec's named frames and

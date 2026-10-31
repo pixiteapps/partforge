@@ -675,6 +675,22 @@ the installed package, so let the publish finish before bumping the dep there.
   (partforge/oracle, and partforge/worker for a host's worker entry — from
   `core/core-status.js`, which carries no WebAssembly) report it once per realm with a fixed reason
   (`CORE_FALLBACK_REASONS`) — never an error message — for host telemetry.
+- **Pose drag** (spec `docs/superpowers/specs/2026-10-31-implicit-pose-drag-design.md`).
+  `src/framework/skin/` is MAIN-THREAD only: `deform.js` (`frameMotions`, `skinVertices`
+  - linear blend of the last exact mesh from a preview `k.implicit`'s per-corner
+  bindings), `frames-only.js` (`framesOnlyChange`) and `skin-drag.js` (the drag state,
+  the 150 ms pause, `hold()` for captures). `canSkin` needs a trusted probe, skinnable
+  on both sides, an equal `shapeHash` (the build hash without implicit frames, assets
+  included) and a frames-only change; anything else rebuilds. Bindings are made by
+  `geometry/implicit/bindings.js` per call slot and ride Manifold vertex properties
+  (`mesh-bindings.js`); the preview cache key carries the slot only for calls that bind.
+  The preview sample cache (`geometry/implicit/sample-cache.js`, native `ip_sample_cached`)
+  is preview-only and anchors the grid, so cold == warm bit for bit. The `generate` job
+  also posts `meshes-provisional` (the pieces of a union of `k.implicit` bodies, ahead of
+  the real union) through the off-contract `kernel._setProvisionalUnions` /
+  `_takeProvisionalPieces`; mount never caches it and drops the stage during a drag or
+  playback (`provisional: false`). While deformed, edge lines are hidden. `npm run
+  bench:pose-drag` times it.
 - **`src/testing/`** - the genuinely Node-only harness, and only that:
   `manifold.js` / `occt.js` (boot a WASM kernel from disk), `render.js` (write
   PNGs), `error-patterns.js` (read `docs/ERROR-PATTERNS.md`). Never import these
