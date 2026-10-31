@@ -1,0 +1,282 @@
+// Measure mode's hover marker: draws exactly what a click would grab, and
+// nothing more, for one SnapTarget (snaps.js):
+//   face             -> the feature highlight (selection/feature-highlight.js)
+//   edge / midpoint  -> the target's chain as a LineSegments2 in the strong dim ink
+//   circle           -> the target's chain when it has one, else a 48-point rim
+//                       loop built from target.circle { centre, axis, radius }
+//                       (findSnap always sets it on a circle target)
+//   corner / midpoint / circle / point -> a screen-constant dot at target.point
+// plus a DOM label (class pf-measure-snap) in the stage, 12 px up-right of the
+// projected point; its text is the caller's.
+//
+// Points are in the mesh's GEOMETRY frame and everything is parented under
+// that mesh, so the pose fast path and animations carry the marker. Every 3D
+// object is registered with registerCaptureHidden, like the highlight: pointer
+// feedback never appears in a capture. setStart(point|null, mesh) keeps a
+// second, persistent dot for a first click's start point, untouched by
+// show/clear, and setEnd(point|null, mesh) a third for a distance's second
+// point, so a finished distance stays tied to the two spots it measures.
+// show() with the same target (kind, point within 1e-6, mesh)
+// does nothing, so a resting pointer costs nothing. Chains are read-only.
+import * as THREE from "three";
+import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+import { createFeatureHighlight, HIGHLIGHT_COLOR } from "../selection/feature-highlight.js";
+import {
+  DIM_THEME, RENDER_ORDER_DIMS, RENDER_ORDER_LABELS, worldPerPx, orthoWorldPerPx,
+} from "./dim3-scene.js";
+import { runCleanupSteps } from "../teardown.js";
+
+export const RIM_SEGMENTS = 48;
+export const LABEL_OFFSET_PX = 12;
+const DOT_PX = 4;      // core radius, CSS px
+const HALO_PX = 6;     // halo radius, CSS px
+const SAME_EPS = 1e-6;
+const HALO = { dark: 0x080b10, light: 0xffffff };
+const DOT_KINDS = new Set(["corner", "midpoint", "circle", "point"]);
+
+function rimLoop({ centre, axis, radius }) {
+  const ax = new THREE.Vector3(...axis).normalize();
+  const helper = Math.abs(ax.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  const u = new THREE.Vector3().crossVectors(ax, helper).normalize();
+  const v = new THREE.Vector3().crossVectors(ax, u);
+  const out = [];
+  for (let i = 0; i < RIM_SEGMENTS; i++) {
+    for (const k of [i, i + 1]) {
+      const a = (2 * Math.PI * k) / RIM_SEGMENTS;
+      const c = Math.cos(a) * radius, s = Math.sin(a) * radius;
+      out.push(centre[0] + u.x * c + v.x * s, centre[1] + u.y * c + v.y * s, centre[2] + u.z * c + v.z * s);
+    }
+  }
+  return out;
+}
+
+// What the line draws: the chain object itself, or the circle's values.
+function lineSource(target) {
+  const lineKind = target.kind === "edge" || target.kind === "midpoint" || target.kind === "circle";
+  if (lineKind && target.chain) return { chain: target.chain };
+  if (target.kind === "circle" && target.circle) return { circle: target.circle };
+  return null;
+}
+
+function sameLineSource(a, b) {
+  if (!a || !b) return false;
+  if (a.chain || b.chain) return a.chain === b.chain;
+  const x = a.circle, y = b.circle;
+  return x.radius === y.radius
+    && x.centre.every((v, i) => v === y.centre[i]) && x.axis.every((v, i) => v === y.axis[i]);
+}
+
+function chainSegments(points) {
+  const out = [];
+  for (let i = 1; i < points.length; i++) out.push(...points[i - 1], ...points[i]);
+  return out;
+}
+
+// Chain identity is deliberately NOT compared: two targets at the same point
+// of the same kind on the same mesh grab the same thing. The line is guarded
+// separately (sameLineSource), because an edge target's point moves with the
+// pointer along an unchanged chain.
+function sameTarget(a, meshA, b, meshB) {
+  if (!a || !b || meshA !== meshB || a.kind !== b.kind || a.featureId !== b.featureId) return false;
+  for (let i = 0; i < 3; i++) if (Math.abs(a.point[i] - b.point[i]) > SAME_EPS) return false;
+  return true;
+}
+
+// `stage` is required: the viewer has no stage element of its own, so a caller
+// that forgets it must fail here rather than show a marker with no label.
+export function createSnapMarker(viewer, { stage } = {}) {
+  if (!stage) throw new TypeError("createSnapMarker: a stage element is required");
+  const redraw = () => viewer.requestRender?.();
+  let theme = viewer.getTheme?.();
+  if (!DIM_THEME[theme]) theme = "dark";
+  const highlight = createFeatureHighlight(viewer);
+
+  // Overlay ink: drawn over the model, never depth-written, never cut away.
+  const overlay = (m) => { m.depthTest = false; m.depthWrite = false; m.transparent = true; return m; };
+  const lineMat = overlay(new LineMaterial({ color: DIM_THEME[theme].strong, linewidth: 2.5 }));
+  const coreMat = overlay(new THREE.MeshBasicMaterial({ color: HIGHLIGHT_COLOR }));
+  const haloMat = overlay(new THREE.MeshBasicMaterial({ color: HALO[theme] ?? HALO.dark }));
+  const unitSphere = new THREE.SphereGeometry(1, 16, 8);
+
+  function makeDot(name) {
+    const dot = new THREE.Group();
+    dot.name = name;
+    const halo = new THREE.Mesh(unitSphere, haloMat);
+    halo.scale.setScalar(HALO_PX / DOT_PX);
+    halo.renderOrder = RENDER_ORDER_LABELS;
+    const core = new THREE.Mesh(unitSphere, coreMat);
+    core.renderOrder = RENDER_ORDER_LABELS + 1;
+    for (const m of [halo, core]) { m.frustumCulled = false; dot.add(m); }
+    return dot;
+  }
+
+  // One group per mark, each parented to whichever mesh it currently marks.
+  const marks = new THREE.Group();
+  marks.name = "pf-measure-snap";
+  marks.visible = false;
+  const line = new LineSegments2(new LineSegmentsGeometry(), lineMat);
+  let lineSrc = null; // what line.geometry currently holds
+  line.renderOrder = RENDER_ORDER_DIMS;
+  line.frustumCulled = false;
+  line.visible = false;
+  const dot = makeDot("pf-measure-snap-dot");
+  dot.visible = false;
+  marks.add(line, dot);
+
+  // The clicked points: persistent dots, each in its own group so it can sit
+  // under a different sub-part's mesh than the other.
+  function makePin(name) {
+    const group = new THREE.Group();
+    group.name = name;
+    group.visible = false;
+    const pinDot = makeDot(`${name}-dot`);
+    group.add(pinDot);
+    return { group, dot: pinDot };
+  }
+  const pins = [makePin("pf-measure-start"), makePin("pf-measure-end")];
+  const [startPin, endPin] = pins;
+
+  const unregisterCapture = [
+    viewer.registerCaptureHidden?.(marks) ?? (() => {}),
+    ...pins.map((p) => viewer.registerCaptureHidden?.(p.group) ?? (() => {})),
+  ];
+
+  const label = document.createElement("div");
+  label.className = "pf-measure-snap";
+  label.hidden = true;
+  stage?.appendChild(label);
+
+  const reparent = (obj, mesh) => { if (obj.parent !== mesh) mesh.add(obj); };
+
+  let last = null, lastMesh = null;
+
+  // Screen-constant dot radius at its own world position, in the mesh's local units.
+  const _wp = new THREE.Vector3();
+  const _ws = new THREE.Vector3();
+  function sizeDot(d) {
+    const cam = viewer.camera;
+    const h = viewer.domElement?.clientHeight || 1;
+    d.getWorldPosition(_wp);
+    const wpp = cam.isOrthographicCamera
+      ? orthoWorldPerPx(cam.top, cam.bottom, cam.zoom, h)
+      : worldPerPx(cam.position.distanceTo(_wp), cam.fov ?? 45, h);
+    d.parent?.getWorldScale(_ws);
+    const s = (_ws?.x || 1);
+    if (wpp > 0) d.scale.setScalar((DOT_PX * wpp) / s);
+  }
+
+  const _p = new THREE.Vector3();
+  function placeLabel() {
+    if (!last || !lastMesh || !stage) return;
+    const dom = viewer.domElement.getBoundingClientRect();
+    const st = stage.getBoundingClientRect();
+    lastMesh.updateWorldMatrix(true, false);
+    _p.set(...last.point).applyMatrix4(lastMesh.matrixWorld).project(viewer.camera);
+    if (_p.z > 1 || _p.z < -1) { label.hidden = true; return; }
+    const x = dom.left - st.left + ((_p.x + 1) / 2) * dom.width;
+    const y = dom.top - st.top + ((1 - _p.y) / 2) * dom.height;
+    label.style.left = `${x + LABEL_OFFSET_PX}px`;
+    label.style.top = `${y - LABEL_OFFSET_PX}px`;
+    label.hidden = false;
+  }
+
+  function tick() {
+    const el = viewer.domElement;
+    lineMat.resolution.set(el?.clientWidth || 1, el?.clientHeight || 1);
+    if (marks.visible && dot.visible) sizeDot(dot);
+    for (const p of pins) if (p.group.visible) sizeDot(p.dot);
+    if (marks.visible || !label.hidden) placeLabel();
+  }
+  const offFrame = viewer.onFrame?.(tick) ?? (() => {});
+
+  const offTheme = viewer.onThemeChange?.((mode) => {
+    if (!DIM_THEME[mode] || mode === theme) return;
+    theme = mode;
+    lineMat.color.set(DIM_THEME[theme].strong);
+    haloMat.color.set(HALO[theme] ?? HALO.dark);
+    redraw();
+  }) ?? (() => {});
+
+  function show(target, mesh, text) {
+    if (!target || !mesh) { clear(); return; }
+    if (sameTarget(target, mesh, last, lastMesh)) {
+      if (label.textContent !== text) label.textContent = text ?? "";
+      return;
+    }
+    last = target;
+    lastMesh = mesh;
+    redraw();
+
+    if (target.kind === "face" && target.featureId > 0) {
+      highlight.show({ mesh, subPart: mesh, feature: { id: target.featureId } });
+    } else {
+      highlight.clear();
+    }
+
+    // LineSegmentsGeometry.setPositions allocates a new GPU buffer per call,
+    // so the line is rebuilt only when its source changes, into a fresh
+    // geometry that replaces (and disposes) the old one — cutaway-outline.js's
+    // pattern.
+    const src = lineSource(target);
+    if (src && !sameLineSource(src, lineSrc)) {
+      const next = new LineSegmentsGeometry();
+      next.setPositions(src.chain ? chainSegments(src.chain.points) : rimLoop(src.circle));
+      const previous = line.geometry;
+      line.geometry = next;
+      previous.dispose();
+      lineSrc = src;
+    }
+    line.visible = !!src;
+
+    dot.visible = DOT_KINDS.has(target.kind);
+    if (dot.visible) dot.position.set(...target.point);
+
+    reparent(marks, mesh);
+    marks.visible = true;
+    label.textContent = text ?? "";
+    tick();
+  }
+
+  function clear() {
+    if (!last && !marks.visible && label.hidden) return;
+    last = null;
+    lastMesh = null;
+    marks.visible = false;
+    label.hidden = true;
+    highlight.clear();
+    redraw();
+  }
+
+  function setPin(pin, point, mesh) {
+    redraw();
+    if (!point || !mesh) { pin.group.visible = false; return; }
+    pin.dot.position.set(...point);
+    reparent(pin.group, mesh);
+    pin.group.visible = true;
+    sizeDot(pin.dot);
+  }
+  const setStart = (point, mesh) => setPin(startPin, point, mesh);
+  const setEnd = (point, mesh) => setPin(endPin, point, mesh);
+
+  function dispose() {
+    runCleanupSteps([
+      offFrame,
+      offTheme,
+      () => highlight.dispose(),
+      () => marks.parent?.remove(marks),
+      ...pins.map((p) => () => p.group.parent?.remove(p.group)),
+      ...unregisterCapture,
+      () => label.remove(),
+      () => line.geometry.dispose(),
+      () => unitSphere.dispose(),
+      () => lineMat.dispose(),
+      () => coreMat.dispose(),
+      () => haloMat.dispose(),
+      redraw,
+    ], "snap marker cleanup failed");
+  }
+
+  return { show, clear, setStart, setEnd, dispose };
+}

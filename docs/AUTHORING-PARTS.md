@@ -877,10 +877,17 @@ if (p.drain > 0) s = s.cut(k.cylinder({ r: d.drainR, h: p.floor + 4 }).at([0, 0,
   unique per sub-part unless you specifically want the merge behavior.
 
 Labels do double duty in the viewer: the hover tooltip names the feature, and
-**measurement mode** (the ruler button in the viewbar) measures it — a labeled
-hole reads ⌀ + depth, a labeled face reads its extents, and a click pins that
-dimension so it tracks parameter changes live. Label the features a user would
-want to measure; unlabeled geometry still measures as its bounding box.
+**measurement mode** (the ruler button in the viewbar) measures it — a click
+on a labeled feature reads it (⌀ for a hole's rim, ⌀ and depth for its wall,
+R for an arc, the length of a straight edge, W × H for a flat face), and a second click measures
+the distance from there. Unlabeled geometry snaps only to corners and points,
+for distances, so label the features a user would want to measure. A distance
+shows the straight-line length plus its parts along the part's own X, Y and Z
+(between two parallel faces, just the gap), and the overall size steps aside
+while a click is measuring. Readings clear when a clicked sub-part's
+geometry is regenerated or hidden, when the view changes, or when the mode turns
+off; a pose-only change (an animation, a place-only param) keeps them and moves
+them with the part.
 
 ### Caching & determinism
 
@@ -3616,8 +3623,8 @@ pane's pixel size:
   vertices, not a bounding box, so it is exact at any angle. The framing is
   kept as-is when the geometry runs past any frame edge (a user who zoomed in
   past the part's silhouette cropped it on purpose), when it is already centred,
-  or when measurement dimensions are pinned (their labels sit beside the part and
-  could otherwise be cut off).
+  or while a measurement is on screen (its labels sit beside the part and could
+  otherwise be cut off).
 - `runtime.captureViews(viewNames) → [{ view, dataUrl }]` — the canonical-angle
   counterpart (fixed view directions, each fitted so the visible assembly's projected
   geometry fills 90% of the frame and sits centred in it; 1024², grid hidden). Sized

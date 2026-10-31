@@ -300,7 +300,11 @@
    button) opt back in below. The
    declaration stays because the stack's own box is still an element over the
    viewer, and a stray hit on it (its padding-free edges, or a future child
-   before it opts in) should reach the model behind rather than be swallowed. */
+   before it opts in) should reach the model behind rather than be swallowed.
+
+   The clearance also counts a float the bar shows above itself (measure's
+   X/Y/Z readout, viewbar-clear.js), so the cube steps up while one is shown;
+   the short transition keeps that from reading as a jump. */
 .pf-viewcube-stack {
   position: absolute;
   right: 12px;
@@ -308,7 +312,9 @@
   z-index: 15;
   display: flex;
   pointer-events: none;
+  transition: bottom 140ms ease-out;
 }
+@media (prefers-reduced-motion: reduce) { .pf-viewcube-stack { transition: none; } }
 .pf-viewcube-stack[hidden] { display: none; }
 .pf-viewcube-canvas, .pf-viewcube-stack > .pf-view-style-button { pointer-events: auto; }
 /* The fallback only (no #viewbar): over the cube's bottom-right corner.
