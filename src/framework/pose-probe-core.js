@@ -28,7 +28,7 @@ export const CANONICAL = h("canonical");
 const NAN3 = () => [NaN, NaN, NaN];
 
 function makeProbeSession() {
-  const state = { count: 0, queried: false, unhashable: false };
+  const state = { count: 0, queried: false, unhashable: false, implicitSpecs: [] };
   const tick = () => { if (++state.count > MAX_PROBE_OPS) throw new ProbeRunawayError(`pose probe exceeded ${MAX_PROBE_OPS} ops`); };
 
   // Queries return dummies AND poison trust (see module comment).
@@ -63,26 +63,41 @@ function makeProbeSession() {
     return a;
   };
 
-  function token(hash, pose) {
+  // Skinning flags (tokens only; never hashed): `_implicit` — derived from any k.implicit
+  // result; `_specSpace` — the token is still exactly what k.implicit-spec space describes
+  // (an implicit result, or a union of such unposed results and plain solids).
+  const tokensIn = (args) => args.flat(1).filter((a) => a && a.__poseToken);
+  const flagsFor = (op, operands) => {
+    const _implicit = operands.some((o) => o._implicit);
+    const _specSpace = op === "union" && operands.every((o) => (o._specSpace && o._pose.length === 0) || !o._implicit);
+    return { _implicit, _specSpace };
+  };
+
+  function token(hash, pose, flags = {}) {
     const folded = () => (pose.length ? h("posed", hash, pose) : hash);
-    const foldOp = (op) => (...args) => { tick(); return token(h(op, folded(), ...args.map(argKey)), []); };
+    const foldOp = (op) => (...args) => {
+      tick();
+      return token(h(op, folded(), ...args.map(argKey)), [], flagsFor(op, [t, ...tokensIn(args)]));
+    };
     const t = {
       __poseToken: true,
       __folded: folded,
       _hash: hash,
       _pose: pose,
+      _implicit: !!flags._implicit,
+      _specSpace: !!flags._specSpace,
       // The rigid vocabulary stays out of the hash: recorded as pending steps,
       // exactly like the OCCT backend's pose-lazy wrap. All transform sugar
       // (rotateAbout/along/at/rotateX…) composes onto these via addSugar.
-      translate: (v) => { tick(); return token(hash, [...pose, { t: "translate", v }]); },
-      rotate: (deg, center, axis) => { tick(); return token(hash, [...pose, { t: "rotate", deg, center, axis }]); },
+      translate: (v) => { tick(); return token(hash, [...pose, { t: "translate", v }], flags); },
+      rotate: (deg, center, axis) => { tick(); return token(hash, [...pose, { t: "rotate", deg, center, axis }], flags); },
       clone: () => t, // tokens are immutable — sharing is safe
       // regions() is a data-returning query in disguise: on a real backend the
       // scission ARRAY LENGTH is param-dependent data, so a build branching on
       // `regions().length` could hold baseHash stable while geometry changed.
       // It therefore poisons trust like any other query; the single token is
       // still returned so op chains on regions()[0] don't crash mid-probe.
-      regions: () => { tick(); state.queried = true; return [token(h("regions", folded()), [])]; },
+      regions: () => { tick(); state.queried = true; return [token(h("regions", folded()), [], { _implicit: t._implicit })]; },
     };
     for (const [op, dummy] of Object.entries(QUERY_DUMMIES))
       t[op] = (...a) => { tick(); state.queried = true; return dummy(...a); };
@@ -104,7 +119,15 @@ function makeProbeSession() {
     get(_t, key) {
       if (ignore(key)) return undefined;
       if (key in kernelQueries) return kernelQueries[key];
-      return (...args) => { tick(); return token(h(key, ...args.map(argKey)), []); };
+      return (...args) => {
+        tick();
+        const hash = h(key, ...args.map(argKey));
+        if (key === "implicit") {
+          state.implicitSpecs.push(args[0]);
+          return token(hash, [], { _implicit: true, _specSpace: true });
+        }
+        return token(hash, [], flagsFor(key, tokensIn(args)));
+      };
     },
   });
 
@@ -137,10 +160,13 @@ export function probeSubPartPose(sp, { view, purpose = "display", p, d }, { scop
       return { trusted: s._hash === CANONICAL, baseHash: s._hash, pose: s._pose };
     }
     let s = sp.build(kernel, p, d);
+    // Skinnable is judged on the BUILD result, before place() moves it.
+    const skinnable = !!(s && s.__poseToken && s._specSpace && s._pose.length === 0);
+    const implicitSpecs = state.implicitSpecs;
     if (scope === "full" && place) s = place(s, { view, purpose, p, d });
     const ok = s && s.__poseToken && !state.queried && !state.unhashable && stepsFinite(s._pose);
-    return ok ? { trusted: true, baseHash: s._hash, pose: s._pose } : { trusted: false };
+    return ok ? { trusted: true, baseHash: s._hash, pose: s._pose, implicitSpecs, skinnable } : { trusted: false, implicitSpecs, skinnable };
   } catch {
-    return { trusted: false };
+    return { trusted: false, implicitSpecs: [], skinnable: false };
   }
 }
