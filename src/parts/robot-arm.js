@@ -101,16 +101,18 @@ function finger(k) {
 /** A finger's view: slid out along the hinge axis by half the opening, then posed. */
 const fingerAt = (side) => (s, p, d) => d.arm.place(s.translate([side * (p.gripper / 2 + FINGER.t / 2), 0, 0]), "wristRoll");
 
-const deg = (key, label, range, description) => ({ key, label, unit: "°", min: range[0], max: range[1], step: 1, description });
+// Fine steps: Pose mode snaps what a drag wrote to its step on release. At 1 mm / 1° the
+// tool point jumped up to 0.5 mm in that frame; at 0.1 the settle stays under 0.2 mm.
+const deg = (key, label, range, description) => ({ key, label, unit: "°", min: range[0], max: range[1], step: 0.1, description });
 const seed = (key, label) => ({ key, label, unit: "°", min: RANGE[key][0], max: RANGE[key][1], step: 0.01 });
 
 export default {
   meta: { title: "Robot arm", units: "mm" },
   parameters: [
     { id: "tool", title: "Tool goal", description: "Where the tool point (between the fingertips) goes, and which way it points. The arm solves its joints to get there. In Pose mode, drag the tool dot instead.", controls: [
-      { key: "toolX", label: "X", unit: "mm", min: -400, max: 400, step: 1 },
-      { key: "toolY", label: "Y", unit: "mm", min: -400, max: 400, step: 1 },
-      { key: "toolZ", label: "Z", unit: "mm", min: -50, max: 500, step: 1 },
+      { key: "toolX", label: "X", unit: "mm", min: -400, max: 400, step: 0.1 },
+      { key: "toolY", label: "Y", unit: "mm", min: -400, max: 400, step: 0.1 },
+      { key: "toolZ", label: "Z", unit: "mm", min: -50, max: 500, step: 0.1 },
       deg("toolPitch", "Pitch", [-90, 90], "0 points the tool along +X (after yaw); -90 points it straight down."),
       deg("toolYaw", "Yaw", [-180, 180], "Turns the tool's heading about the vertical."),
       deg("toolRoll", "Roll", [-180, 180], "Turns the gripper about its own axis; 0 opens the fingers sideways."),

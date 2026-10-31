@@ -278,8 +278,11 @@ const JOINT_PAIRS = [
   ...FINGERS.flatMap((f) => [`palm×${f.id}Knuckle`, ...SEGMENTS.slice(1).map(([name], i) => `${f.id}${SEGMENTS[i][0]}×${f.id}${name}`)]),
 ];
 
-const deg = (key, label, range, description) => ({ key, label, unit: "°", min: range[0], max: range[1], step: 1, description });
-const curl = (key, label) => ({ key, label, min: 0, max: 1, step: 0.01 });
+// Fine steps: Pose mode snaps every param a drag wrote to its step on release, and every
+// digit's handle writes the wrist. At 1° (or a 0.01 curl) that snap moved a fingertip
+// 0.5–0.85 mm in one frame; at 0.1° and 0.001 it stays under 0.2 mm, which reads as still.
+const deg = (key, label, range, description) => ({ key, label, unit: "°", min: range[0], max: range[1], step: 0.1, description });
+const curl = (key, label) => ({ key, label, min: 0, max: 1, step: 0.001 });
 
 // A preset is a hand shape: every digit's curl and spread, never the wrist or a lock.
 const shape = (curls, spreads, thumbOppose, thumbCurl) => ({

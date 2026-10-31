@@ -9,7 +9,10 @@ import { bootManifoldKernel, measure } from "../src/testing.js";
 import { lintPart } from "../src/lint.js";
 import { probePoses } from "../src/framework/pose-probe.js";
 import { resolveParams } from "../src/framework/part-model.js";
-import { solveAngles } from "../src/framework/pose/param-solve.js";
+import { solveAngles, limbInfo } from "../src/framework/pose/param-solve.js";
+import { createPoseSession } from "../src/framework/pose/pose-session.js";
+
+const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
 const FINGERS = ["index", "middle", "ring", "pinky"];
 const DIGITS = ["thumb", ...FINGERS];
@@ -127,4 +130,21 @@ test("a drag writes only the handle's params, and a locked digit's params stay p
   // A locked digit's own drag moves nothing.
   const self = solveAngles({ part, params: { ...params, middleLock: 1 }, handle: part.handles.middle, grab: "tip", target, allHandles });
   expect(self.values).toEqual({});
+});
+
+test("releasing a fingertip drag settles invisibly: the snap moves no tip 0.2 mm or more", () => {
+  const tips = (params) => Object.fromEntries(DIGITS.map((id) => [id, limbInfo(part, params, part.handles[id]).points.tip]));
+  for (const [id, step] of [["index", [-3, 4, -2]], ["thumb", [4, 3, 2]], ["pinky", [2, -3, 3]]]) {
+    const params = { ...part.defaults };
+    const session = createPoseSession({
+      part, getParams: () => params, write: (v) => Object.assign(params, v), commit() {}, restore: (v) => Object.assign(params, v),
+    });
+    expect(session.begin(id, "tip")).toBe(true);
+    const start = tips(params)[id];
+    for (let i = 1; i <= 6; i++) session.frame(start.map((c, j) => c + step[j] * i));
+    const before = tips(params);
+    session.end();
+    const after = tips(params);
+    for (const d of DIGITS) expect(dist(after[d], before[d]), `${id} drag: ${d} tip`).toBeLessThan(0.2);
+  }
 });

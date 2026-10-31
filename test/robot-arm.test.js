@@ -8,6 +8,7 @@ import { bootManifoldKernel, measure } from "../src/testing.js";
 import { lintPart } from "../src/lint.js";
 import { probePoses } from "../src/framework/pose-probe.js";
 import { resolveParams } from "../src/framework/part-model.js";
+import { createPoseSession } from "../src/framework/pose/pose-session.js";
 
 const JOINTS = ["base", "shoulder", "elbow", "wristPitch", "wristYaw", "wristRoll"];
 const solve = (over = {}) => resolveParams(part, over).d.arm;
@@ -101,3 +102,30 @@ test("npx partforge measure exits 0", () => {
   const out = execFileSync(process.execPath, ["bin/cli.js", "measure", "src/parts/robot-arm.js"], { encoding: "utf8" });
   expect(out).toMatch(/probes/);
 }, 120000);
+
+test("releasing a tool drag settles invisibly: the snap moves the tool point under 0.2 mm and its aim under 0.2 degrees", () => {
+  const tool = (params) => {
+    const info = resolveParams(part, params).d.arm.ikInfo();
+    const wrist = info.points[info.joints.at(-1).name];
+    const aim = info.points.tip.map((c, i) => c - wrist[i]);
+    return { tip: info.points.tip, aim: aim.map((c) => c / Math.hypot(...aim)) };
+  };
+  const angle = (a, b) => (Math.acos(Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2])) * 180) / Math.PI;
+  for (const kind of ["dot", "ring"]) {
+    const params = { ...part.defaults };
+    const session = createPoseSession({
+      part, getParams: () => params, write: (v) => Object.assign(params, v), commit() {}, restore: (v) => Object.assign(params, v),
+    });
+    expect(session.begin("tool", kind === "dot" ? "tip" : "ring")).toBe(true);
+    const start = tool(params).tip;
+    for (let i = 1; i <= 6; i++) {
+      if (kind === "dot") session.frame([start[0] - 3.37 * i, start[1] + 2.71 * i, start[2] + 1.93 * i]);
+      else session.ringFrame("pitch", -3.37 * i);
+    }
+    const before = tool(params);
+    session.end();
+    const after = tool(params);
+    expect(dist(after.tip, before.tip), `${kind}: tool point`).toBeLessThan(0.2);
+    expect(angle(after.aim, before.aim), `${kind}: tool aim`).toBeLessThan(0.2);
+  }
+});

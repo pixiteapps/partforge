@@ -650,6 +650,10 @@ sketch. Only one of the three can be on. Pose mode turns picking and measure off
   rebuild runs on release, and the new mesh and the full opacity appear in the same frame.
 - **One drag is one `onParamsCommit`.** It lists every parameter that changed. A drag that
   changed nothing commits nothing.
+- **Release snaps to the schema step.** Every parameter the drag wrote rounds to its
+  control's `step`. Give the parameters a handle writes a fine step (the reference parts
+  use 0.1° and 0.1 mm, and 0.001 for a 0..1 curl), or the release moves the limb visibly:
+  at 1° a wrist step moved the hand's fingertips up to 0.85 mm.
 - **Escape or a cancel** restores the values from before the drag. A `setParams` from
   the host in the middle of a drag cancels the drag.
 - **Out of reach.** The chain stops at the nearest pose it can make. A dashed line runs
