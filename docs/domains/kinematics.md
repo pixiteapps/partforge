@@ -169,6 +169,24 @@ thumb.pose({ bend: { ball: { bend: 40, spread: 30 } } }).report;
 thumb.pose({ curl: 1 }).report.bend;                          // [{ bend: 0, spread: 0, twist: 0 }, 90]
 ```
 
+**A ball posed by rotate steps.** When you already have the orientation as a sequence
+of turns (Euler angles, or rotations you chained by hand), give it as
+`{ rotate: [{ axis, deg }, …] }` in place of `bend`/`spread`/`twist`. The steps are in
+the joint's frame (+Y along the segment, −Z toward `bendToward`), each about the
+CURRENT axes, the same form as a frame's `rotate`, so `euler(…)` from
+`partforge/geometry` gives a valid list. The limb turns them into the one swing and
+twist that end in the same orientation, and applies the cone to that swing, as for any
+other ball value. The report shows the swing and twist:
+
+```js
+thumb.pose({ bend: { ball: { rotate: [{ axis: "x", deg: -30 }, { axis: "z", deg: 20 }, { axis: "y", deg: 15 }] } } }).report;
+// { bend: [{ bend: 28.726, spread: 20.911, twist: 20.41 }, 0], clamped: [false, false], tip: [-17.101, 40.69, -23.492] }
+```
+
+Thus four zero-length hinges chained to make a ball (swing, yaw, roll, twist) become
+one ball joint driven by the same angles. A swing of exactly 180° has no shortest turn,
+and is read as a bend.
+
 `curl` leaves a ball at rest unless you name it in an object `bend`. In an array
 `bend`, a ball's entry is its object. `reach` and `grip` hold a ball at the value you
 give and solve the hinges. The cone is round: for a limit on one side only, use hinge
@@ -399,29 +417,21 @@ links.
 
 ## Solid parts: placing links
 
-Build each link the way its joint frame expects it: **its own joint at the origin,
-running along +Y, with its bending side toward −Z**. Then
-`posed.place(solid, joint)` moves the link into that joint's place in part
-coordinates, through every joint above it.
+`posed.place(solid, joint, { from })` moves a link into its posed place in part
+coordinates, through every joint above it. First decide where you build the link,
+because `from` must say so:
 
-- `joint` is a joint name (`"pip"`), a frame name (`"finger.pip"`) or `"tip"`. The
-  default is the base joint.
-- `place` makes at most one `rotate(deg, [0, 0, 0], axis)` call (none when the frame
-  is not turned) and then one `translate` call. These are calls that a `views` pose may make, so the probe can read
-  the pose. `place` also works on any object with those two methods.
-- `world(joint)` gives that frame in part coordinates as `{ origin, x, y, z }`
-  (the unit axes), with values rounded to 0.001. Use it to anchor other features to a
-  joint, or to check a placement in a probe or a test.
+| You build the link… | Pass | `place` moves it by |
+| --- | --- | --- |
+| **where it prints**: in part coordinates, with the whole limb at rest. This is how a print-in-place part is built. | `{ from: "rest" }` | that joint's motion from rest to the pose |
+| at its joint: **its own joint at the origin, running along +Y, with its bending side toward −Z** | nothing (`from: "joint"` is the default) | that joint's whole frame |
 
-**Links built where they print: `from: "rest"`.** A print-in-place part builds every
-link in part coordinates, where it prints, which is the limb at rest (every joint at
-0). Do not move such a link into its joint frame by hand. Pass `{ from: "rest" }`:
-`posed.place(solid, joint, { from: "rest" })` moves the link by that joint's motion
-from rest to the pose. The links then need no second statement of where each joint is,
-and the limb's `at`, `toward`, lengths and offsets must describe the joints where the
-links print. For a limb on a parent limb, pass the parent's posed limb to `pose` (not its
-`frames`), so that rest is the whole chain at rest. Rest is every joint at 0 even when a
-range excludes 0, and a parent given as plain frames is the same at rest as posed.
+**Built where it prints: `from: "rest"`.** Rest is every joint at 0, even when a range
+excludes 0. Do not move such a link into its joint frame by hand: the links then need
+no second statement of where each joint is. The limb's `at`, `toward`, lengths and
+offsets must describe the joints where the links print. For a limb on a parent limb,
+pass the parent's posed limb to `pose` (not its `frames`), so that rest is the whole
+chain at rest. A parent given as plain frames is the same at rest as posed.
 
 ```js
 derive: (p) => ({
@@ -438,6 +448,22 @@ parts: {
   },
 },
 ```
+
+**Built at its joint.** The worked example, `robot-finger.js`, builds its links this
+way and lays them out for printing in its own `print` view.
+
+- `joint` is a joint name (`"pip"`), a frame name (`"finger.pip"`) or `"tip"`. The
+  default is the base joint.
+- `place` makes at most one `rotate(deg, [0, 0, 0], axis)` call (none when the frame
+  is not turned) and then one `translate` call. These are calls that a `views` pose may make, so the probe can read
+  the pose. `place` also works on any object with those two methods.
+- **Check the joints without renders.** `world(joint)` gives that frame in part
+  coordinates as `{ origin, x, y, z }` (the unit axes), with values rounded to 0.001.
+  A probe can return `posed.joints.map((j) => posed.world(j))` (the joint frames, from
+  the base) to show that every hinge is where the links' pins are, and that each `x`
+  axis (the bend axis) points the way you expect. A wrong sign then shows as a number,
+  not as a link that looks slightly off in a render. Use `world` also to anchor other
+  features to a joint.
 
 **The fast-path rule.** Pose the limb in `derive`, and read the limb's pose params
 (`curl`, `bend` values, a grip toggle) ONLY in `derive` and in `views` poses. Never read
@@ -521,7 +547,8 @@ limb "index": place: unknown joint "pipp"
 limb "index".grip.around: node kind "twist" needs the implicit engine — pass a distance function (x, y, z) => mm instead
 limb "index".grip.around: distance function returned a non-finite value at [-30, 96, 2]
 limb "x".joints[0].offset: the base joint has no previous joint — place it with the limb's at
-limb "thumb".bend.ball: a ball joint takes { bend?, spread?, twist? }
+limb "thumb".bend.ball: a ball joint takes { bend?, spread?, twist? } or { rotate }
+limb "thumb".bend.ball.bend: use rotate or bend/spread/twist, not both
 limb "thumb".joints[0].range: a ball joint takes cone (its largest swing, in degrees), not range
 limb "index": place: from must be "joint" or "rest"
 ```
