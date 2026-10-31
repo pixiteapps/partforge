@@ -105,6 +105,8 @@ export default {
   views: { <name>: { label, default?, animations? } },  // view tabs; a view may own animations (below)
   probes?,                                 // { name: (k, p, d) => Solid | Shape2D | plain JSON } — measurements reported by
                                            // measure/inspect, never rendered or exported (see "Probes" below)
+  handles?,                                // { name: { limb, mode: "goal" | "angles", params, seed?, lock?, at? } } — draggable
+                                           // posing points over a posed limb from derive (see "Pose mode" below)
 };
 ```
 
@@ -3254,6 +3256,31 @@ does exist is the oracle peer-depending on this package for `partforge/oracle`'s
 mesh/BVH helpers and file parsers (`bounds`, `meshArea`, `meshTriangles`, `parseStl`,
 `parse3MF`); those exports are part of its contract.
 
+
+## Pose mode
+
+A part with jointed limbs (see the Kinematics domain) can let people pose it with the
+mouse. It declares `handles`, a map of draggable points. Each one names a `limb`, a key of
+the object `derive` returns that holds a posed limb. A `mode: "goal"` handle drags a
+tool point and writes its goal parameters (use `seed` for the joint values the solve starts
+from). A `mode: "angles"` handle drags joint values and writes them (use `lock` to freeze
+one). Every parameter a handle names must be a numeric key of `defaults`.
+
+```js
+handles: {
+  tool: { limb: "arm", at: "tip", mode: "goal",
+          params: { position: ["toolX", "toolY", "toolZ"], aim: ["toolPitch", "toolYaw", "toolRoll"] },
+          seed: ["base", "shoulder", "elbow", "wristPitch", "wristYaw", "wristRoll"] },
+},
+```
+
+The app then shows a Pose button in the viewbar (give the stage a `#pose` button, as
+`robot-arm.html` does). One drag is one `onParamsCommit`. `runtime.pose` has
+`isEnabled()`, `setEnabled(on)`, `pinCount()`, `releasePins()` and `handlePoints()`. The
+full contract, with the rules for rebuilding parts, pins and out-of-reach goals, is in
+[`docs/domains/kinematics.md`](domains/kinematics.md), "Handles and Pose mode". Lint
+checks every name (`handle-*`, in the rule catalog). Reference parts:
+`src/parts/robot-arm.js` (goal mode) and `src/parts/hand.js` (angles mode).
 
 ## Probes: measuring geometry into the report
 

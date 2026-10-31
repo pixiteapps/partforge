@@ -58,7 +58,8 @@ fingers (spread, mcp, pip, dip following pip) and a thumb (oppose, mcp, ip) pare
 it, posed by per-digit curl/spread params and six `{ type: "preset" }` shapes, one
 lockable angles-mode handle per digit; rigid pin-jointed pieces placed by matrix, the
 print view a flat kit the pose never reaches; `hand.html`, checked by
-`scripts/check-pose.mjs`), and `material-swatches.js` (not a reference part: the dev-only
+`scripts/check-pose.mjs`; the dev-only `pose-smoke.html` page, with `test/fixtures/ik-hand-smoke.js`,
+is the fixture that script drags), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`), and `offset-demo.js`
 (not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
 `offset-demo.html`).

@@ -459,6 +459,236 @@ parts: {
 },
 ```
 
+## Posing by goals: `goals` and `pins`
+
+`reach` and `grip` fit a finger. For an arm, a leg or a hand with a held tool, use
+`goals`. A goal says where a point on the limb must be, and optionally which way it
+must point. The solver finds the joint values. It uses damped least squares on all the
+free joints at once, so it can move a whole chain, not only the pitch joint.
+
+`goals`, `reach` and `grip` are mutually exclusive: a pose takes only one of them.
+`bend`, `curl`, `spread` and `twist` still give the joint values the solver starts from.
+
+```js
+index.pose({ goals: [{ at: "tip", position: [-30, 137, -64] }] }).report.goals;
+// [{ at: "tip", residual: 0, status: "reached" }]
+```
+
+A goal is `{ at, position?, aim?, up?, weight? }`:
+
+| field | meaning |
+| --- | --- |
+| `at` | A joint name, the name of its frame, or `"tip"`. |
+| `position` | `[x, y, z]` in part coordinates, in mm. |
+| `aim` | A direction. The frame's +Y axis (the way the link points) must turn toward it. |
+| `up` | A second direction that fixes the roll about `aim`. With an `aim`, it is made square to `aim`, and it must not be parallel to it. It is matched to the frame's -Z side, the side a positive bend closes toward. |
+| `weight` | How much the goal counts against other goals. The default is 1. |
+
+- A goal needs at least one of `position`, `aim` and `up`.
+- A goal at a joint moves only the joints above that joint.
+- The solve starts from the joint values you give with `bend` or `curl`, so the same
+  parameters always give the same pose. It never starts from the last result.
+- Every joint stays inside its range. A ball joint stays inside its cone.
+- `couple`ings hold. A follower moves with its leader.
+- `goals: []` is legal and poses like `bend` does.
+- A limb with a `parent` needs the parent frames, as `reach` does.
+
+### Pins
+
+`pins` is a list of joint names. A pinned joint keeps the value the pose gives it
+(from `bend`) and the solver does not move it. Use it to hold the shoulder while the
+rest of the arm reaches. A pin on a follower does nothing. A pinned leader holds its
+followers.
+
+```js
+index.pose({ goals: [{ at: "tip", position: [-30, 137, -64] }], pins: ["mcp"], bend: { mcp: 20 } }).report.bend;
+// [20, 50.034, 37.526]
+```
+
+`pins` needs `goals`. In the example the pinned mcp stays at 20, and the other joints
+do what they can.
+
+### The status of each goal
+
+`report.goals` has one entry per goal: `{ at, residual, aimResidual?, status }`.
+`residual` is the position miss in mm. `aimResidual` is the larger of the aim miss and
+the up miss, in degrees. It is there only when the goal has an `aim` or an `up`. An
+aim-only goal has `residual: 0`. Numbers are rounded to 0.001.
+
+| status | meaning |
+| --- | --- |
+| `reached` | The position is within 0.01 mm, and the aim and the up are within 0.1 degrees. |
+| `too-far` | The position is farther from the first moving joint than the segments can reach. The limb stretches toward it. |
+| `conflict` | There are two or more goals, and this goal would be met better if it were the only one. |
+| `out-of-range` | None of the above. A joint limit or a cone stops the goal, or the aim cannot be met. |
+
+The order of the tests is `reached`, `too-far`, `conflict`, `out-of-range`.
+
+- **`conflict` is judged for each goal.** The solver solves the goal alone, from the
+  same start. If that gives a smaller error than the combined solve, by more than
+  0.01, this goal reads `conflict`. Two goals 400 mm apart on a 230 mm arm both read
+  `conflict`. One goal can read `conflict` while the other reads `reached`.
+- **A miss is never an error.** The limb takes the nearest pose it can reach, and the
+  residual says by how much it missed. Always read the status.
+- **`report.clamped` means something different under goals.** `reach` clamps a joint to
+  its range and says so. The goal solver keeps every joint inside its range by itself.
+  So a solved joint that rests on its limit reads `false`. `clamped` is `true` only for
+  a value the solver was not free to choose: a pinned value outside its range, a
+  follower pushed past its own range, or a ball joint whose swing is past its cone.
+  To see that a goal was limited by a joint, read `status`, not `clamped`.
+- **Re-targeting from read-back values.** `world()` and `tip` are rounded to 0.001. If
+  you feed a rounded pose back in as `position` and `aim` and `up` together, the goal
+  can read `out-of-range`. The aim error is weighted 100 times, against a position
+  tolerance of only 0.01 mm, so the rounding in the aim is enough to miss. Give `position`
+  only, or `aim` only, when you set a new goal from values you read back.
+
+## `aimFromAngles`
+
+A goal with an `aim` needs a direction vector. People think in pitch and yaw.
+`aimFromAngles` converts them, and a part and the viewer's rotate rings use the same
+function, so they always agree.
+
+```js
+import { aimFromAngles } from "partforge/kinematics";
+```
+
+`aimFromAngles({ toward, pitch = 0, yaw = 0, roll })` returns `{ aim }`, or `{ aim, up }`
+when you give `roll`.
+
+- **Zero is `toward`.** With `pitch` 0, `yaw` 0 and no roll, `aim` is `toward`.
+- **Yaw first, then pitch.** Yaw turns the aim about part +Z. Pitch then lifts it toward
+  the up side. A positive pitch raises the aim. Angles are in degrees.
+- **`roll` turns `up` about `aim`.** The `up` before the roll is part +Z, made square to
+  `aim`. When `toward` is vertical, it is +Y.
+- A vertical `toward` makes yaw and roll the same turn at zero pitch. Use a horizontal
+  `toward`, as the arm does.
+
+```js
+aimFromAngles({ toward: [0, 1, 0] }).aim;                              // [0, 1, 0]
+aimFromAngles({ toward: [0, 1, 0], yaw: 90 }).aim.map(Math.round);     // [-1, 0, 0]
+aimFromAngles({ toward: [0, 1, 0], pitch: 90, roll: 0 }).up.map(Math.round);   // [0, -1, 0]
+```
+
+Spread the result into a goal: `{ at: "tip", position, ...aimFromAngles({ … }) }`.
+
+**The arm adds 180 degrees to the roll.** The goal's `up` is matched to the tip
+frame's -Z side. On an arm that reaches forward, that side points down and back. It is
+opposite to the `up` that `aimFromAngles` gives, so a roll of 0 would ask the wrist to
+turn right over. `src/parts/robot-arm.js` therefore passes `roll: p.toolRoll + 180`.
+With the offset, a `toolRoll` of 0 is the natural gripper roll, and the wrist rests near
+0. Expect the same offset in any part with a tool that reaches forward.
+
+## Handles and Pose mode
+
+Handles let a person pose the part with the mouse. A handle is a draggable point on a
+posed limb. A part declares them in a top-level `handles` object. Lint checks every
+name (`handle-unknown-limb`, `handle-unknown-param`, `handle-param-count`,
+`handle-unknown-joint`, `handle-bad-mode`).
+
+```js
+handles: {
+  tool:  { limb: "arm", at: "tip", mode: "goal",
+           params: { position: ["toolX", "toolY", "toolZ"], aim: ["toolPitch", "toolYaw", "toolRoll"] },
+           seed: ["base", "shoulder", "elbow", "wristPitch", "wristYaw", "wristRoll"] },
+  index: { limb: "index", mode: "angles", params: ["indexCurl", "indexSpread", "wristPitch"],
+           lock: "indexLock" },
+},
+```
+
+`limb` is a key of the object `derive` returns, and its value is a posed limb. Every
+parameter a handle names must be a numeric key of `defaults`.
+
+### `mode: "goal"`
+
+Dragging the handle writes the goal parameters: `position` (three parameters) and,
+if declared, `aim` (two parameters for pitch and yaw, three for pitch, yaw and roll).
+The part solves in `derive` with `goals`. The goal holds when other parameters change,
+for example when the upper arm gets longer.
+
+- **`seed`** lists the joint-angle parameters that `derive` passes to `pose({ bend })`.
+  During a drag, the viewer writes the goal, reads the solved joint values, and writes
+  them into the seed parameters on the same frame. So `derive` stays a pure function of
+  the parameters, and each frame starts where the last frame ended. This is what stops
+  the arm from flipping between two solutions. An agent sets only the goal parameters.
+  The solve then starts from the saved seed, which gives the same pose every time.
+  Keep the seed parameters in a collapsed section. They are saved with the goal.
+- Only the `at` point can be grabbed. With `aim`, a set of rotate rings shows on the
+  grabbed handle, to tilt the aim.
+
+### `mode: "angles"`
+
+Dragging solves for the listed parameters directly and writes them. The parameters can
+be anything the pose reads: a joint angle, a `curl`, a `spread`, a parent limb's wrist
+angle. Use it for fingers and legs. Every joint of the limb, and its tip, can be
+grabbed, and the grabbed point follows the cursor. A joint below the grabbed point moves
+however the listed parameters move it: a `curl` curls the whole finger.
+
+- **`lock`** names a parameter. While it is true, the handle's parameters are frozen in a
+  drag of any handle. This includes a parameter that two handles share, such as the
+  wrist: a locked finger holds the wrist still.
+- Presets still write a locked value. Set presets in the panel. A lock only stops a drag.
+
+### Pose mode
+
+A part that declares `handles` gets a Pose button in the viewbar, beside measure and
+sketch. Only one of the three can be on. Pose mode turns picking and measure off.
+
+- **Drag a tip or a joint.** Orbit still works on empty space and gives way to a grab.
+- **Click a tip (no drag)** to pin it. A pin is view state, not a parameter. A "Release
+  pins" button shows while a pin is set.
+- **Rigid parts move live.** A sub-part that the pose only places by matrix moves on every
+  frame.
+- **A part that must rebuild** fades to a ghost (0.35 opacity) and stays still. A
+  skeleton (bones and joints) follows the drag. Nothing is built during the drag. One
+  rebuild runs on release, and the new mesh and the full opacity appear in the same frame.
+- **One drag is one `onParamsCommit`.** It lists every parameter that changed. A drag that
+  changed nothing commits nothing.
+- **Escape or a cancel** restores the values from before the drag. A `setParams` from
+  the host in the middle of a drag cancels the drag.
+- **Out of reach.** The chain stops at the nearest pose it can make. A dashed line runs
+  from the tip to the cursor's point and shows the miss in mm. The chain does not jump
+  to another solution to catch up.
+- **Straight limbs can jump.** A limb whose elbow can go fully straight has no bend to
+  push on there. When the goal comes back into reach, the solver may jump to the bent
+  pose in one step. `src/parts/robot-arm.js` stops its elbow 10 degrees short of
+  straight (`range: [10, 150]`). Do the same for a goal-mode arm.
+
+Pose mode is a pointer tool. The panel sliders drive the same parameters, so keyboard
+users lose nothing.
+
+`runtime.pose` is the host's view of the mode: `isEnabled()`, `setEnabled(on)`,
+`pinCount()`, `releasePins()` and `handlePoints()` (each shown handle's grab point on the
+canvas, in CSS px).
+
+## Posing a part as an agent
+
+Do not edit code to pose a part. Set parameters, and read the probe:
+
+- for an arm, the goal parameters (`toolX`, `toolY`, `toolZ`, `toolPitch`, `toolYaw`,
+  `toolRoll`);
+- for a hand, `curl` and `spread` per digit, or a preset.
+
+`partforge measure` has no `--params` flag, so it reads `defaults`. To check another pose,
+write a small module that changes the defaults:
+
+```text
+// far-tool.js
+import arm from "./src/parts/robot-arm.js";
+export default { ...arm, defaults: { ...arm.defaults, toolX: 380 } };
+```
+
+`npx partforge measure far-tool.js` then prints the probe line of the part. The
+robot-arm's `tool` probe returns the goal's report, so its one line is:
+
+```text
+tool  {"at":"tip","residual":39.916,"aimResidual":6.141,"status":"out-of-range"}
+```
+
+At the default goal the same line reads `{"at":"tip","residual":0,"aimResidual":0,"status":"reached"}`.
+Read `status` first. If it is not `reached`, `residual` (mm) and `aimResidual` (degrees)
+say how far the arm is from the goal. Then change the parameters and measure again. Leave
+the seed parameters alone: the solve starts from them, and they are not an input.
+
 ## The report
 
 `posed.report` is plain JSON, so a probe can return it unchanged:
@@ -471,7 +701,8 @@ parts: {
   or, for a ball joint, when its swing was past the cone.
 - `tip`: the tip in part coordinates. It is absent for a parented limb posed without
   frames.
-- `reach` / `grip`: these are present only when the pose asked for them (see above).
+- `reach` / `grip` / `goals`: these are present only when the pose asked for them (see
+  above). Under `goals`, `clamped` has a narrower meaning: see "The status of each goal".
 
 Numbers are rounded to 0.001.
 
@@ -541,7 +772,8 @@ the message above.
 
 ## What lint and verify check
 
-The domain adds no lint rules and no verify metrics. Use the ordinary ones:
+The domain adds no lint rules and no verify metrics. A part's `handles` are checked by
+the core `handle-*` lint rules (see "Handles and Pose mode"). Use the ordinary ones:
 
 - lint's view-pose rules and the `animation-track-rebuilds` note confirm that each
   `place` pose is rigid and that a pose param does not rebuild a link;
