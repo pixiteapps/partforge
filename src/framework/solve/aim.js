@@ -54,9 +54,10 @@ const wrap180 = (deg) => { const w = deg - 360 * Math.floor((deg + 180) / 360); 
  * Choices, where the angles are not unique:
  * - Pitch has two solutions (over the top, with the yaw turned 180). The one inside
  *   `pitchRange` wins, then the one nearer `near.pitch` (default 0).
- * - With the aim vertical (|aim · Z| > 1 - 1e-12 for a non-vertical `toward`) yaw and roll turn
- *   about the same axis — the gimbal lock aimTurn's axes describe: the yaw is kept at
- *   `near.yaw` (default 0) and the roll takes the rest.
+ * - With the aim vertical — the horizontal length of `aim`, or of the pitched rest aim
+ *   before yaw, at most 1e-9 — yaw and roll turn about the same axis (the gimbal lock
+ *   aimTurn's axes describe): the yaw is kept at `near.yaw` (default 0) and the roll takes
+ *   the rest.
  * - Yaw and roll are wrapped into (-180, 180].
  */
 export function anglesFromAim(toward, { aim, up = null }, { near = {}, pitchRange = null } = {}) {

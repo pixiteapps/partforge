@@ -380,4 +380,40 @@ describe("joint rings in Pose mode", () => {
     t.hover("spread");
     expect(t.mode.jointGizmoPoints().rings.spread).toBeTruthy(); // still a grabbable point on the ring
   });
+
+  it("a press near a neighbour's dot, off every ring, grabs that dot (the 8 px core is for hover only)", () => {
+    const t = setup(hand, {}, "index");
+    t.hover("spread");
+    const mcp = t.screenOf(t.info().points.mcp);
+    const c = t.screenOf(t.info().points.spread);
+    // 10 px off the mcp dot, inside the spread rings, with no ring under it
+    const p = Array.from({ length: 24 }, (_, k) => ({ x: mcp.x + 10 * Math.cos((k * Math.PI) / 12), y: mcp.y + 10 * Math.sin((k * Math.PI) / 12) }))
+      .find((q) => Math.hypot(q.x - c.x, q.y - c.y) < JOINT_RING_PX && !t.joint().pick({ x: q.x, y: q.y, w: W, h: H }));
+    expect(p).toBeTruthy();
+    t.fire("pointermove", p.x, p.y);
+    expect(t.joint().state.visible).toBe(true); // hover: off the core, the rings stay
+    t.fire("pointerdown", p.x, p.y);
+    expect(t.orbit.enabled).toBe(false); // the press grabbed the mcp dot
+    for (let i = 1; i <= 5; i++) t.fire("pointermove", p.x - i * 6, p.y + i * 6);
+    // an IK drag of the mcp dot (it carries a target), not a turn of the spread ring
+    expect(t.scene.calls.setActive.filter(Boolean).at(-1)).toMatchObject({ limb: "index", grab: "mcp", target: expect.any(Array) });
+    t.fire("pointerup", p.x - 30, p.y + 30);
+    expect(t.log.commit).toHaveLength(1);
+  });
+
+  it("touch on a ring-only dot puts its rings up and leaves the press to orbit; the tap picks nothing", () => {
+    const t = setup(goalPart());
+    const s = t.screenOf(t.info().points.elbow);
+    t.fire("pointerdown", s.x, s.y, { pointerType: "touch" });
+    expect(t.orbit.enabled).toBe(true);
+    expect(t.mode.isDragging()).toBe(false);
+    expect(t.joint().state.visible).toBe(true);
+    t.fire("pointerup", s.x, s.y, { pointerType: "touch" });
+    expect(t.mode.takeClick()).toBe(true);
+    // the next touch can take the ring
+    const r = t.mode.jointGizmoPoints().rings.bend;
+    t.fire("pointerdown", r.x, r.y, { pointerType: "touch" });
+    expect(t.orbit.enabled).toBe(false);
+    t.fire("pointerup", r.x, r.y, { pointerType: "touch" });
+  });
 });

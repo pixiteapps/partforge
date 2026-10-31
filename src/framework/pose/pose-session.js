@@ -158,9 +158,9 @@ export function createPoseSession({
     if (!isNum(drag.jointStart)) return null;
     const want = drag.jointStart + deltaDeg;
     const value = Math.min(s.range[1], Math.max(s.range[0], want));
-    const values = jointRingValues({ part, params: { ...getParams() }, ring, slot, value });
-    if (!values) return null;
-    return apply({ values, error: 0, clamped: value !== want });
+    const result = jointRingValues({ part, params: { ...getParams() }, ring, slot, value });
+    if (!result) return null;
+    return apply({ values: result.values, error: 0, clamped: value !== want || result.clamped });
   }
 
   function end() {

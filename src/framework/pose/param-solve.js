@@ -341,27 +341,15 @@ export function posedJointValue(part, params, limbKey, joint, component = null) 
   return isNum(out) ? out : null;
 }
 
-/**
- * What turning one joint to `value` (joint degrees, already in its range) writes.
- * Angles mode: the slot's parameter, value / scale, clamped to its schema range.
- * Goal mode (`handle` the goal handle): every seed parameter at the turned pose — forward
- * kinematics from the posed limb (its `ikForward`), the other joints as posed — and the goal
- * parameters at the posed `at` frame: position its origin, aim pitch/yaw/roll (anglesFromAim,
- * from the handle's `toward`, nearest the current aim parameters) its +Y and, with three aim
- * parameters, +Z. The next derive's goal solve then starts at its answer, so the limb stays
- * where the turn put it. Null when the limb cannot be read.
- */
-export function jointRingValues({ part, params, ring, slot, value }) {
-  const s = ring.slots[slot];
-  if (!s || !isNum(value)) return null;
-  const ranges = rangesOf(part);
-  if (ring.mode !== "goal") return { [s.param]: clamp(value / s.scale, ranges.get(s.param)) };
-  const handle = part.handles?.[ring.handleId];
-  const posed = posedLimb(part, params, handle?.limb);
-  if (!posed || typeof posed.ikForward !== "function") return null;
-  let info, F;
+/** The ball component (or hinge value) a coupled value array holds for joint `i`. */
+const valueAt = (values, i, component) => (component ? values?.[i]?.[component] : values?.[i]);
+/** Two joint values the same, to rounding (a cone clamp scales both swing components). */
+const same = (a, b) => isNum(a) && isNum(b) && Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a));
+
+/** One goal-mode turn: the values it writes, and whether a goal parameter's schema range clipped the turned pose. */
+function goalTurn({ part, params, handle, posed, info, ring, s, value, ranges }) {
+  let F;
   try {
-    info = posed.ikInfo();
     F = posed.ikForward({ [ring.joint]: s.component ? { [s.component]: value } : value }, typeof handle.at === "string" ? handle.at : "tip");
   } catch {
     return null;
@@ -386,7 +374,74 @@ export function jointRingValues({ part, params, ring, slot, value }) {
     });
     aimAngles = [a.pitch, a.yaw, a.roll];
   }
-  return { ...goalValues({ handle, point: F.origin, aimAngles, part }), ...seed };
+  // the goal as the turned pose has it, and as the schema lets it be written
+  const want = goalValues({ handle, point: F.origin, aimAngles });
+  const goal = goalValues({ handle, point: F.origin, aimAngles, part });
+  const goalClamped = Object.keys(want).some((k) => !same(want[k], goal[k]));
+  const i = info.joints.findIndex((j) => j.name === ring.joint);
+  const coupled = valueAt(F.values, i, s.component);
+  return { values: { ...goal, ...seed }, goalClamped, coupled };
+}
+
+/**
+ * What turning one joint to `value` (joint degrees, already in its range) writes:
+ * `{ values, clamped }`, or null when the limb cannot be read. `clamped` is true when the
+ * joint could not go all the way to `value`: a parameter's schema range, a ball's cone,
+ * or (goal mode) a goal parameter's range.
+ *
+ * Angles mode: the slot's parameter, value / scale, clamped to its schema range.
+ *
+ * Goal mode (`ring.handleId` the goal handle): every seed parameter at the turned pose —
+ * forward kinematics from the posed limb (its `ikForward`), the other joints as posed —
+ * and the goal parameters at the posed `at` frame: position its origin, aim pitch/yaw/roll
+ * (anglesFromAim, from the handle's `toward`, nearest the current aim parameters) its +Y
+ * and, with three aim parameters, +Z. The next derive's goal solve then starts at its
+ * answer, so the limb stays where the turn put it. A goal value the schema would clip
+ * (the tool below its lowest Z) cannot be written as the pose has it, and the solve would
+ * pull the limb away, spreading the turn over the other joints: the joint stops instead
+ * at the last value whose goal fits (bisected from the current pose), and reports clamped.
+ */
+export function jointRingValues({ part, params, ring, slot, value }) {
+  const s = ring.slots[slot];
+  if (!s || !isNum(value)) return null;
+  const ranges = rangesOf(part);
+  if (ring.mode !== "goal") {
+    const raw = value / s.scale;
+    const written = clamp(raw, ranges.get(s.param));
+    let clamped = !same(written, raw);
+    if (s.component) {
+      // a ball: bend and spread share one cone (couple scales the swing down)
+      const posed = posedLimb(part, params, ring.limb);
+      try {
+        const i = posed.ikInfo().joints.findIndex((j) => j.name === ring.joint);
+        const F = posed.ikForward({ [ring.joint]: { [s.component]: written * s.scale } });
+        if (!same(valueAt(F.values, i, s.component), written * s.scale)) clamped = true;
+      } catch { /* no posed limb: no cone to read */ }
+    }
+    return { values: { [s.param]: written }, clamped };
+  }
+  const handle = part.handles?.[ring.handleId];
+  const posed = posedLimb(part, params, handle?.limb);
+  if (!posed || typeof posed.ikForward !== "function") return null;
+  let info;
+  try { info = posed.ikInfo(); } catch { return null; }
+  const args = { part, params, handle, posed, info, ring, s, ranges };
+  const turn = goalTurn({ ...args, value });
+  if (!turn) return null;
+  if (!turn.goalClamped) return { values: turn.values, clamped: !same(turn.coupled, value) };
+  // Stop at the last value whose goal fits, between the current pose and `value`.
+  const i = info.joints.findIndex((j) => j.name === ring.joint);
+  let lo = valueAt(posed.values, i, s.component);
+  if (!isNum(lo)) return null;
+  const start = goalTurn({ ...args, value: lo });
+  if (!start || start.goalClamped) return { values: {}, clamped: true }; // already outside: hold still
+  let hi = value, best = start;
+  for (let k = 0; k < 24; k++) {
+    const mid = (lo + hi) / 2;
+    const t = goalTurn({ ...args, value: mid });
+    if (t && !t.goalClamped) { lo = mid; best = t; } else hi = mid;
+  }
+  return { values: best.values, clamped: true };
 }
 
 const decimals = (n) => {

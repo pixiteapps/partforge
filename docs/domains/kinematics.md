@@ -694,12 +694,18 @@ when they are all off.
   handle's `joints`) shows a rotate ring about its axis while you hover its dot: a hinge
   shows one ring, a ball joint three (bend, spread and twist). The ring colour follows the
   axis: bend red, spread blue, twist green. Joints at one point share one gizmo, each in
-  its own ring (the robot arm's wrist pitch, yaw and roll). Drag a ring to turn that one
+  its own ring (the robot arm's wrist pitch, yaw and roll). Each ring holds one joint: a
+  joint at that point whose axis kind matches a joint already in the gizmo gets no ring. Drag a ring to turn that one
   joint (forward kinematics): it writes that joint's parameter, clamped to the joint's
   range. The limit arc shows during the drag, and a joint at its stop shows the warning
   colour. Drag the dot itself for the inverse-kinematics drag, as before. A goal handle's
   joints, and a limb that only a `joints` entry names, have ring-only dots: hover one to
-  show its ring; a press on it orbits. A ring drag does not hold pins.
+  show its ring; a press on it orbits (a touch on one also puts its rings up, and its tap
+  picks nothing). A ring drag does not hold pins. A goal handle's joint stops where its
+  goal would leave a goal parameter's range (the tool below its lowest Z, say), with the
+  warning colour, rather than letting the solve spread the turn over the other joints.
+  Inside a shown gizmo, a press within 14 px of another dot, with no ring under it, still
+  grabs that dot.
 - **One gizmo at a time.** The aim gizmo shows once you hover its goal point; a joint's
   rings show once you hover its dot. A gizmo stays while the pointer is inside its rings.
   There, another joint's dot takes over only when the pointer is on its core (8 CSS px),

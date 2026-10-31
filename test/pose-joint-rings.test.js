@@ -158,9 +158,48 @@ describe("jointRingValues: what a turn writes", () => {
 
   it("angles: the parameter by value / scale, clamped to its schema range", () => {
     const params = { ...hand.defaults };
-    expect(jointRingValues({ part: hand, params, ring: ringOf(hand, params, "ring", "spread"), slot: "spread", value: 10 })).toEqual({ ringSpread: -10 });
-    expect(jointRingValues({ part: hand, params, ring: ringOf(hand, params, "palm", "wristPitch"), slot: "bend", value: 25 })).toEqual({ wristPitch: 25 });
-    expect(jointRingValues({ part: hand, params, ring: ringOf(hand, params, "index", "spread"), slot: "spread", value: 99 })).toEqual({ indexSpread: 15 });
+    expect(jointRingValues({ part: hand, params, ring: ringOf(hand, params, "ring", "spread"), slot: "spread", value: 10 })).toEqual({ values: { ringSpread: -10 }, clamped: false });
+    expect(jointRingValues({ part: hand, params, ring: ringOf(hand, params, "palm", "wristPitch"), slot: "bend", value: 25 })).toEqual({ values: { wristPitch: 25 }, clamped: false });
+    // past the parameter's schema range: written at the range end, and clamped
+    expect(jointRingValues({ part: hand, params, ring: ringOf(hand, params, "index", "spread"), slot: "spread", value: 99 })).toEqual({ values: { indexSpread: 15 }, clamped: true });
+  });
+
+  it("angles, a ball: a bend that pushes the swing past the cone reports clamped", () => {
+    const BALL = limb("arm", { toward: [0, 0, 1], bendToward: [1, 0, 0], joints: [{ name: "s", type: "ball", cone: 40 }, "e"], lengths: [40, 30] });
+    const range = (key) => ({ key, label: key, min: -90, max: 90, step: 0.1 });
+    const part = {
+      meta: { title: "ball" }, parameters: [{ id: "p", title: "P", controls: [range("b"), range("sp"), range("tw"), range("el")] }],
+      defaults: { b: 0, sp: 30, tw: 0, el: 0 },
+      derive: (p) => ({ arm: BALL.pose({ bend: { s: { bend: p.b, spread: p.sp, twist: p.tw }, e: p.el } }) }),
+      parts: {}, views: {},
+      handles: { arm: { limb: "arm", mode: "angles", params: ["b", "sp", "tw", "el"], joints: { s: { bend: "b", spread: "sp", twist: "tw" } } } },
+    };
+    const params = { ...part.defaults };
+    const ring = ringOf(part, params, "arm", "s");
+    expect(jointRingValues({ part, params, ring, slot: "bend", value: 20 }).clamped).toBe(false); // swing 36 < 40
+    expect(jointRingValues({ part, params, ring, slot: "bend", value: 35 }).clamped).toBe(true); // swing 46 > 40
+    expect(jointRingValues({ part, params, ring, slot: "twist", value: 80 }).clamped).toBe(false);
+  });
+
+  it("goal mode: a turn whose goal would leave its schema range stops the joint there, other joints still", () => {
+    // the shoulder leaning forward drives the tool below toolZ's -50 floor
+    const params = { ...arm.defaults };
+    const ring = ringOf(arm, params, "arm", "shoulder");
+    const start = posedJointValue(arm, params, "arm", "shoulder");
+    const posed = resolveParams(arm, params).d.arm;
+    const r = jointRingValues({ part: arm, params, ring, slot: "bend", value: start + 40 });
+    expect(r.clamped).toBe(true);
+    expect(r.values.toolZ).toBeGreaterThanOrEqual(-50);
+    expect(r.values.toolZ).toBeCloseTo(-50, 2);
+    expect(r.values.shoulder).toBeGreaterThan(start);
+    expect(r.values.shoulder).toBeLessThan(start + 40);
+    // and the solve keeps it: the shoulder where the ring stopped, every other joint as it was
+    const after = resolveParams(arm, { ...params, ...r.values }).d.arm;
+    expect(after.report.goals[0].status).toBe("reached");
+    after.values.forEach((v, i) => {
+      const name = after.ikInfo().joints[i].name;
+      expect(v, name).toBeCloseTo(name === "shoulder" ? r.values.shoulder : posed.values[i], 3);
+    });
   });
 
   // The round trip a goal handle's ring must survive: turn one joint (forward kinematics),
@@ -174,7 +213,8 @@ describe("jointRingValues: what a turn writes", () => {
       const start = posedJointValue(arm, params, "arm", joint);
       const posed = resolveParams(arm, params).d.arm;
       const fk = posed.ikForward({ [joint]: start + deg });
-      const values = jointRingValues({ part: arm, params, ring, slot, value: start + deg });
+      const { values, clamped } = jointRingValues({ part: arm, params, ring, slot, value: start + deg });
+      expect(clamped).toBe(false);
       expect(values[joint]).toBeCloseTo(start + deg, 9);
       for (const k of ["toolX", "toolY", "toolZ", "toolPitch", "toolYaw", "toolRoll"]) expect(values).toHaveProperty(k);
       const after = resolveParams(arm, { ...params, ...values }).d.arm;
@@ -205,7 +245,7 @@ describe("jointRingValues: what a turn writes", () => {
     expect(params.elbow).toBeCloseTo(start + 15, 9);
     // past the elbow's 150 stop: clamped, and the arm reports reached there
     expect(session.jointFrame(ring, "bend", 200).clamped).toBe(true);
-    expect(params.elbow).toBe(150);
+    expect(params.elbow).toBeLessThanOrEqual(150);
     expect(resolveParams(arm, params).d.arm.report.goals[0].status).toBe("reached");
     session.end();
     expect(commits).toHaveLength(1);

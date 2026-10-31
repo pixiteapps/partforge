@@ -557,7 +557,7 @@ export function createPoseMode(viewer, {
    * `{ kind: "ring", handleId, limb, axis, name, at, gizmo }` (an aim ring),
    * `{ kind: "jring", ... }` (a joint ring, jointRingHit) or null.
    */
-  function hoverAt(pt) {
+  function hoverAt(pt, { pressing = false } = {}) {
     const { x, y } = pt;
     const focus = hoverFocus ?? touchFocus;
     const aim = focus?.kind === "aim" ? gizmoTarget(focus.limb) : null;
@@ -566,13 +566,15 @@ export function createPoseMode(viewer, {
     const limb = nearestLimb(x, y);
     let dotHit = limb ? dotAt(x, y, limb, HANDLE_HIT_PX) : null;
     const jt = jointTarget(focus);
+    const onJoint = onAim ? null : jointRingHit(jt, pt);
+    const onRing = onAim ?? onJoint;
     // Inside a shown gizmo's rings another joint's dot takes over only on its core: on the
     // way from a joint out to its ring the pointer often passes near a neighbour's dot (a
     // finger's next knuckle, the thumb's tip), and handing it the focus there would flash
-    // the gizmo away. The gizmo's own dots keep their full target.
-    if (dotHit && focus && !ownDot(focus, dotHit) && insideFocus(focus, x, y) && dotDistance(dotHit, x, y) > DOT_CORE_PX) dotHit = null;
-    const onJoint = onAim ? null : jointRingHit(jt, pt);
-    const onRing = onAim ?? onJoint;
+    // the gizmo away. The gizmo's own dots keep their full target, and so does every dot
+    // at a PRESS with no ring under the pointer: a grab there is meant for the dot (an IK
+    // drag of a knuckle beside a spread ring), and a press cannot flash anything.
+    if (dotHit && focus && !(pressing && !onRing) && !ownDot(focus, dotHit) && insideFocus(focus, x, y) && dotDistance(dotHit, x, y) > DOT_CORE_PX) dotHit = null;
     // a dot and the shown ring both under the pointer (a ring crossing a neighbouring
     // joint's dot): the nearer wins, a tie to the ring that is up — so moving from a joint
     // out to its ring never hands the focus to a dot the ring runs over (that dot is
@@ -773,9 +775,19 @@ export function createPoseMode(viewer, {
         touchFocus = null;
         if (!hit) { setHover(null, null, null); return; }
       }
+      if (hit?.ringOnly) {
+        // A ring-only dot is not a grab: the press is left to orbit (a drag orbits), and
+        // the touch puts that joint's rings up for the next touch to grab. Its click is
+        // claimed, so a tap shows the rings without also picking the model.
+        touchFocus = focus;
+        clickClaimed = true;
+        setHover(null, null, null);
+        syncRings();
+        return;
+      }
     } else {
       // fresh from this press (a press need not follow a move)
-      const h = hoverAt(pt);
+      const h = hoverAt(pt, { pressing: true });
       setHover(h.limb, h.hit, h.focus);
       hit = h.hit;
       focus = h.focus;
