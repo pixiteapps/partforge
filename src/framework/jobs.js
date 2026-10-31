@@ -584,12 +584,18 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       if (names.length === 0) throw new Error("no exportable parts selected");
       const meshes = msg.meshes ?? {};
       const { layoutExportPieces, laidOutOnBed, exportLayoutOffsets } = await loadBedLayout();
+      // A failed build names its sub-part, as STL and 3MF do — above all a k.implicit
+      // call the probe did not see, which reaches OCCT and throws here.
+      const buildPiece = (name, i) => {
+        onProgress(`building ${label(name)}`);
+        try { return posed(name, "export", onProgress); }
+        catch (thrown) { throw exportPieceError(thrown, { kernel, piece: label(name), index: i, count: names.length }); }
+      };
       let bodies;
       if (names.some((name) => meshes[name])) {
-        const pieces = names.map((name) => {
+        const pieces = names.map((name, i) => {
           if (meshes[name]) return { name, mesh: meshes[name], box: meshBounds(meshes[name].positions) };
-          onProgress(`building ${label(name)}`);
-          const solid = posed(name, "export", onProgress);
+          const solid = buildPiece(name, i);
           return { name, solid, box: laidOutOnBed(part, name) ? solid.boundingBox() : null };
         });
         const offsets = exportLayoutOffsets(part, pieces.filter((pc) => laidOutOnBed(part, pc.name)));
@@ -600,10 +606,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
           return { name: exportName(name), solid: kernel.box({ size: [1, 1, 1] }), color, mesh: o ? shiftMesh(mesh, o) : mesh };
         });
       } else {
-        bodies = layoutExportPieces(part, names.map((name) => {
-          onProgress(`building ${label(name)}`);
-          return { name, solid: posed(name, "export", onProgress) };
-        })).map(({ name, solid }) => ({ name: exportName(name), solid, color: printColor(part.parts[name]?.display) }));
+        bodies = layoutExportPieces(part, names.map((name, i) => ({ name, solid: buildPiece(name, i) }))).map(({ name, solid }) => ({ name: exportName(name), solid, color: printColor(part.parts[name]?.display) }));
       }
       onProgress("writing STEP file");
       const data = await kernel.toSTEP(bodies);

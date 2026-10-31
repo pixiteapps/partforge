@@ -92,6 +92,17 @@ describe("spliceTessellated", () => {
     expect(coords.body.slice(coords.body.indexOf("((")).match(/[-\d.E]+/g).every((t) => t.includes("."))).toBe(true);
   });
 
+  it("splices a file with a large B-rep side (more entities than a spread can take)", () => {
+    // 200k extra unreferenced points before ENDSEC: an OCCT side of ~9 MB, as a big
+    // imported STEP beside an organic sub-part would make.
+    const end = FIXTURE.lastIndexOf("ENDSEC;");
+    const extra = Array.from({ length: 200_000 }, (_, i) => `#${1000 + i} = CARTESIAN_POINT('',(${i}.,0.,0.));\n`).join("");
+    const big = FIXTURE.slice(0, end) + extra + FIXTURE.slice(end);
+    const es = readStep(decode(spliceTessellated(big, [{ index: 1, ...TET }])));
+    expect([...es.values()].filter((e) => e.type === "TESSELLATED_SOLID")).toHaveLength(1);
+    expect(es.has(200_999)).toBe(true);
+  });
+
   it("splices a 200k-triangle mesh quickly, with every index in range", () => {
     const n = 100_000, positions = new Float32Array(3 * n), indices = new Uint32Array(3 * 200_000);
     for (let i = 0; i < positions.length; i++) positions[i] = (i * 7919) % 1000 / 10;

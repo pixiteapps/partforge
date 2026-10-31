@@ -56,6 +56,15 @@ describe("export-step with meshes", () => {
     expect(coordsOf(es)).toEqual([0, 0, 0, 10, 0, 0, 0, 10, 0, 0, 0, 10]);
   });
 
+  it("an organic sub-part that reaches OCCT fails the export naming it", async () => {
+    // No meshes: what a k.implicit call the probe could not see leads to.
+    const posts = [];
+    await handle(k, hybrid, { type: "export-step", view: "all", params: {}, jobId: 1 }, (m) => posts.push(m));
+    const err = posts.find((m) => m.type === "error");
+    expect(err?.message).toMatch(/grip/);
+    expect(err?.message).toMatch(/OCCT cannot build k\.implicit/);
+  });
+
   it("exports a view whose only sub-part is organic", async () => {
     const only = { ...hybrid, parts: { grip: organic({ views: ["all"] }) } };
     const es = readStep(await exportStep(only, { view: "all", meshes: { grip: tet() } }));

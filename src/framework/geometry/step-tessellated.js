@@ -74,7 +74,11 @@ export function spliceTessellated(text, bodies) {
   const replaced = new Map();   // id → new body
   const removable = new Set();  // the stand-ins' B-rep entities, before the sweep
   const appended = [];          // [id, body]
-  let nextId = Math.max(...entities.keys()) + 1;
+  // Plain loops, never a spread: a file with a large B-rep side has hundreds of thousands
+  // of entities, past what a call's argument list can hold.
+  let nextId = 0;
+  for (const id of entities.keys()) if (id >= nextId) nextId = id + 1;
+  const pushAll = (stack, ids) => { for (const id of ids) stack.push(id); };
 
   for (const { index, positions, indices } of bodies) {
     if (!(index >= 0 && index < sdrs.length)) fail(`body ${index} is not in the file (it has ${sdrs.length})`);
@@ -91,7 +95,7 @@ export function spliceTessellated(text, bodies) {
       const id = stack.pop();
       if (removable.has(id)) continue;
       removable.add(id);
-      stack.push(...refsOf(entities.get(id)?.body ?? ""));
+      pushAll(stack, refsOf(entities.get(id)?.body ?? ""));
     }
 
     const npoints = positions.length / 3;
@@ -115,12 +119,12 @@ export function spliceTessellated(text, bodies) {
   const bodyOf = (id) => replaced.get(id) ?? entities.get(id).body;
   const kept = new Set();
   const stack = [];
-  for (const id of entities.keys()) if (!removable.has(id)) stack.push(...refsOf(bodyOf(id)));
+  for (const id of entities.keys()) if (!removable.has(id)) pushAll(stack, refsOf(bodyOf(id)));
   while (stack.length) {
     const id = stack.pop();
     if (!removable.has(id) || kept.has(id)) continue;
     kept.add(id);
-    stack.push(...refsOf(bodyOf(id)));
+    pushAll(stack, refsOf(bodyOf(id)));
   }
 
   const chunks = [text.slice(0, dataStart)];
