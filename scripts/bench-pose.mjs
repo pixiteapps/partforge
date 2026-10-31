@@ -18,6 +18,7 @@
 //   dragPinned   hand only: the thumb tip pinned, then the index tip dragged (both
 //                handles list the wrist, so the solve holds the thumb through it)
 //   aimRing      arm only: round the aim gizmo's pitch ring
+//   jointRing    round a joint ring (arm: the elbow, goal mode; hand: the wrist pitch)
 //   idleOrbit    a tip pinned (its badge drawn), then an orbit drag on the background
 //
 // On macOS Chromium runs on the GPU (ANGLE Metal); --swiftshader keeps Playwright's
@@ -252,6 +253,25 @@ async function benchPage(browser, base, entry) {
         return { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t };
       });
       out.aimRing = { handle: "pitch ring", ...await dragMeasure(page, cdp, from, pts) };
+    }
+  }
+
+  // jointRing: hover a joint's dot, then round its ring (arm: the elbow; hand: the wrist pitch)
+  const [limb, joint] = entry === "hand.html" ? ["palm", "wristPitch"] : ["arm", "elbow"];
+  const dot = (await page.evaluate(() => window.__pfRuntime.pose.__jointRings())).find((p) => p.limb === limb && p.joint === joint);
+  if (dot) {
+    await hoverOnto(page, at(dot));
+    const g = await page.evaluate(() => window.__pfRuntime.pose.__jointGizmo());
+    const ring = g && Object.values(g.rings)[0];
+    if (ring?.ahead) {
+      const from = at(ring), to = at(ring.ahead);
+      await page.mouse.move(from.x, from.y, { steps: 4 });
+      await sleep(60);
+      const pts = Array.from({ length: FRAMES }, (_, i) => {
+        const t = 2 * Math.sin(((i + 1) / FRAMES) * Math.PI);
+        return { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t };
+      });
+      out.jointRing = { handle: `${limb}.${joint} ring`, ...await dragMeasure(page, cdp, from, pts) };
     }
   }
 

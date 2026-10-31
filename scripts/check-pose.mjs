@@ -24,7 +24,12 @@
 //     then drags its tool's aim gizmo: hovering the tool point shows it
 //     (runtime.pose.__aimGizmo(), a test hook), hovering a ring highlights that ring with a
 //     grab cursor, and a drag round the ring writes that aim angle — one commit, no
-//     `generate` job.
+//     `generate` job. Then a JOINT RING on each reference part (robot-arm: the elbow;
+//     hand: the wrist pitch, on the palm limb): hovering the joint's dot shows its ring
+//     (runtime.pose.__jointRings() / __jointGizmo(), test hooks), hovering the ring
+//     highlights it with a grab cursor, and a drag round it writes that joint's parameter —
+//     one commit, no `generate` job; on robot-arm the commit also moves the tool goal (the
+//     goal follows the turned joint).
 //
 // What it observes, and how:
 //   - worker traffic: an init script wraps window.Worker before the app loads, logging
@@ -386,13 +391,77 @@ async function checkRobotArm(page, url, errors) {
   const aimParam = await page.evaluate((i) => window.__pfPart?.handles?.tool?.params?.aim?.[i] ?? null, ["pitch", "yaw", "roll"].indexOf(name));
   if (added.length !== 1) errors.push(`${added.length} onParamsCommit calls after the ${name} ring drag, expected exactly 1`);
   else if (!aimParam || !added[0].changed?.includes(aimParam)) errors.push(`the ${name} ring drag committed ${JSON.stringify(added[0].changed)}, not ${aimParam}`);
-  return { ...summary, ring: name, ringCommit: added[0]?.changed ?? null, ringValue: aimParam ? added[0]?.params?.[aimParam] : null };
+  const joint = await checkJointRing(page, box, { limb: "arm", joint: "elbow", param: "elbow", alsoMoves: ["toolX", "toolY", "toolZ"] }, errors);
+  return { ...summary, ring: name, ringCommit: added[0]?.changed ?? null, ringValue: aimParam ? added[0]?.params?.[aimParam] : null, joint };
+}
+
+/**
+ * Hover a joint's dot, then drag its ring: the ring shows and highlights, one commit writes
+ * `param` (and moves each of `alsoMoves`), no generate job during the drag.
+ */
+async function checkJointRing(page, box, { limb, joint, param, alsoMoves = [] }, errors) {
+  const label = `${limb}.${joint}`;
+  const points = await page.evaluate(() => window.__pfRuntime.pose.__jointRings());
+  const dot = points.find((p) => p.limb === limb && p.joint === joint);
+  if (!dot) { errors.push(`no joint ring on ${label} (__jointRings: ${JSON.stringify(points)})`); return null; }
+  const at = (p) => ({ x: box.x + p.x, y: box.y + p.y });
+  const d = at(dot);
+  await page.mouse.move(d.x + 18, d.y, { steps: 3 });
+  await page.mouse.move(d.x, d.y, { steps: 3 });
+  await sleep(50);
+  const g = await page.evaluate(() => window.__pfRuntime.pose.__jointGizmo());
+  if (!g || g.limb !== limb || g.joint !== joint) { errors.push(`hovering ${label} shows ${g ? `${g.limb}.${g.joint}'s` : "no"} joint ring`); return null; }
+  if (await page.evaluate(() => window.__pfRuntime.pose.__aimGizmo())) errors.push(`hovering ${label} also shows the aim gizmo`);
+  const name = Object.keys(g.rings)[0];
+  const ring = g.rings[name];
+  if (!ring?.ahead) { errors.push(`no grabbable point on ${label}'s ring (${JSON.stringify(g.rings)})`); return null; }
+  const from = at(ring), to = at(ring.ahead);
+  await page.mouse.move(from.x, from.y, { steps: 4 });
+  await sleep(50);
+  const hov = await page.evaluate(() => window.__pfRuntime.pose.__jointGizmo()?.hovered ?? null);
+  if (hov !== name) errors.push(`hovering ${label}'s ${name} ring hovers "${hov}"`);
+  const cursor = await canvasCursor(page);
+  if (cursor !== "grab") errors.push(`hovering ${label}'s ring shows cursor "${cursor}", not "grab"`);
+  const commits0 = await page.evaluate(() => window.__pfCommits.length);
+  // the params now: the last commit's (every drag before this one committed), else the defaults
+  const before = await page.evaluate(() => ({ ...window.__pfPart?.defaults, ...window.__pfCommits.at(-1)?.params }));
+  const t0 = await page.evaluate(() => performance.now());
+  await page.mouse.down();
+  for (let i = 1; i <= 12; i++) {
+    await page.mouse.move(from.x + ((to.x - from.x) * i) / 12, from.y + ((to.y - from.y) * i) / 12);
+    await sleep(20);
+  }
+  const during = await page.evaluate(() => window.__pfRuntime.pose.__jointGizmo()?.hovered ?? null);
+  const grabbing = await canvasCursor(page);
+  await sleep(80);
+  const ringGenerates = generates(await page.evaluate(() => window.__pfWorkerLog), t0);
+  await page.mouse.up();
+  await sleep(600);
+  if (during !== name) errors.push(`dragging ${label}'s ring left "${during}" highlighted`);
+  if (grabbing !== "grabbing") errors.push(`dragging ${label}'s ring shows cursor "${grabbing}", not "grabbing"`);
+  if (ringGenerates.length) errors.push(`${ringGenerates.length} generate job(s) posted during ${label}'s ring drag`);
+  const added = (await page.evaluate(() => window.__pfCommits)).slice(commits0);
+  if (added.length !== 1) { errors.push(`${added.length} onParamsCommit calls after ${label}'s ring drag, expected exactly 1`); return null; }
+  const { changed, params } = added[0];
+  if (!changed?.includes(param)) errors.push(`${label}'s ring drag committed ${JSON.stringify(changed)}, not ${param}`);
+  if (Object.is(params[param], before[param])) errors.push(`${label}'s ring drag left ${param} at ${before[param]}`);
+  const moved = alsoMoves.filter((k) => Math.abs((params[k] ?? 0) - (before[k] ?? 0)) > 0.05);
+  if (alsoMoves.length && !moved.length) errors.push(`${label}'s ring drag moved none of ${alsoMoves.join(", ")}`);
+  return { ring: `${label}:${name}`, generatesDuringDrag: ringGenerates.length, commit: changed, [param]: [before[param], params[param]], moved };
+}
+
+/** The reference drag, then the wrist pitch ring (a joint on the palm limb, which no handle drags). */
+async function checkHand(page, url, errors) {
+  const summary = await checkReference(page, url, errors);
+  const box = await page.locator(VIEWER_CANVAS).boundingBox();
+  const joint = await checkJointRing(page, box, { limb: "palm", joint: "wristPitch", param: "wristPitch" }, errors);
+  return { ...summary, joint };
 }
 
 const PAGES = [
   { entry: "pose-smoke.html", run: checkSmoke, required: true },
   { entry: "robot-arm.html", run: checkRobotArm, required: true },
-  { entry: "hand.html", run: checkReference, required: true },
+  { entry: "hand.html", run: checkHand, required: true },
 ];
 
 let failed = false;
