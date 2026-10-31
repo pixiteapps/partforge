@@ -1,5 +1,6 @@
 // Goals for a limb: damped least squares in joint space, posing any joint or the tip toward a
-// position, an aim and an up. Pure and deterministic: fixed iteration count, no clock.
+// position, an aim and an up. Pure and deterministic: a fixed iteration cap and stopping
+// tolerance, no clock.
 import { compose } from "../../geometry/xform.js";
 import { hypot3 } from "../../geometry/js-math.js";
 import { SpecError } from "../../geometry/errors.js";
@@ -10,6 +11,13 @@ import { forwardLocal } from "./solve.js";
 
 /** DLS iterations per solve, warm-started from the pose's raw values. */
 const ITERATIONS = 64;
+/**
+ * The solve stops early once the weighted residual norm is at most this: the goals are met
+ * to rounding error, and the iterations left would move no value by anything a report (0.001)
+ * or a build could see. Warm-started from a nearby pose (a drag's previous frame) a solve
+ * gets here in a few iterations, not 64.
+ */
+const SOLVED = 1e-9;
 /** Direction residuals are unit-vector differences × this: 1° ≈ 1.75 mm of position error. */
 const AIM_SCALE = 100;
 /** A goal is reached within these: position residual (mm) and aim residual (degrees). */
@@ -125,7 +133,7 @@ function missOf(goal, W) {
  * the pose's driven values, the warm start and the value of every joint the solve does not
  * move; `pinned` the pinned joint indices; `spread`/`twist` the pose-level angles, kept as given.
  *
- * Damped least squares (`solveDLS`, ITERATIONS steps) over `dofsOf`. Residual rows per goal,
+ * Damped least squares (`solveDLS`, up to ITERATIONS steps, stopping once SOLVED) over `dofsOf`. Residual rows per goal,
  * each × its weight: a position adds 3 (tip − target, mm); an aim adds 3, (frame +Y − aim) ×
  * AIM_SCALE; an up adds 3 the same way on the frame's +Z (the back of the bend, opposite
  * the side `bendToward` names).
@@ -178,7 +186,7 @@ export function solveGoals(tree, parentWorld, goals, raw, pinned, { spread = 0, 
   };
   const solve = (set) => (dofs.length === 0 || set.length === 0
     ? Float64Array.from(x0)
-    : solveDLS({ x0, lo, hi, residuals: residualsFor(set), iterations: ITERATIONS }).x);
+    : solveDLS({ x0, lo, hi, residuals: residualsFor(set), iterations: ITERATIONS, tol: SOLVED }).x);
 
   const x = solve(goals);
   const W = worldAt(x);

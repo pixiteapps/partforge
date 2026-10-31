@@ -42,8 +42,10 @@ function gauss(A, b, m) {
 /**
  * Minimise ||residuals(x)|| over x in [lo, hi] by damped least squares with a
  * central-difference Jacobian. Returns the result and its residual norm.
+ * `tol` (default 0: off) stops before an iteration once the residual norm is at most
+ * tol — a solved point needs no more Jacobians (each costs 2n residual evaluations).
  */
-export function solveDLS({ x0, lo, hi, residuals, iterations, lambda = 1, h = 1e-4 }) {
+export function solveDLS({ x0, lo, hi, residuals, iterations, lambda = 1, h = 1e-4, tol = 0 }) {
   const n = x0.length;
   let x = clampTo(Float64Array.from(x0), lo, hi);
   let r = residuals(x);
@@ -51,6 +53,7 @@ export function solveDLS({ x0, lo, hi, residuals, iterations, lambda = 1, h = 1e
   const m = r.length;
   let lam = lambda;
   for (let it = 0; it < iterations; it++) {
+    if (tol > 0 && err <= tol) break;
     const J = Array.from({ length: m }, () => new Float64Array(n));
     for (let j = 0; j < n; j++) {
       const xp = Float64Array.from(x);

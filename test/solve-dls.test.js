@@ -57,4 +57,19 @@ describe("solveDLS", () => {
       x = Array.from(r.x);
     }
   });
+
+  it("tol stops once the residual is met, and changes nothing when off", () => {
+    let evals = 0;
+    const counted = (target) => { const f = reach(target); return (x) => { evals++; return f(x); }; };
+    const a = solveDLS({ ...base, residuals: counted([120, 60]), iterations: 40 });
+    const full = evals;
+    evals = 0;
+    const b = solveDLS({ ...base, residuals: counted([120, 60]), iterations: 40, tol: 1e-6 });
+    expect(evals).toBeLessThan(full);
+    expect(b.error).toBeLessThanOrEqual(1e-6);
+    b.x.forEach((v, i) => expect(Math.abs(v - a.x[i])).toBeLessThan(1e-6));
+    // tol: 0 is the default: bit for bit the same solve
+    const c = solveDLS({ ...base, residuals: reach([120, 60]), iterations: 40, tol: 0 });
+    a.x.forEach((v, i) => expect(Object.is(v, c.x[i])).toBe(true));
+  });
 });
