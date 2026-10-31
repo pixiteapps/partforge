@@ -73,11 +73,15 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // ---- spec cache: (geometry instance, featureId) -> core spec -------------
   // WeakMap: identity lookup only, and old geometries (with their typed
   // arrays) drop out on their own once no mesh references them anymore —
-  // nothing here needs to clear it on detach.
-  const specCache = new WeakMap(); // geometry -> Map(featureId -> spec|null)
+  // nothing here needs to clear it on detach. A pose-drag skin rewrites a
+  // geometry's positions IN PLACE (viewer.setSubVertices), keeping its identity,
+  // so each entry also holds the position attribute's version and a write drops it.
+  const specCache = new WeakMap(); // geometry -> { version, byId: Map(featureId -> spec|null) }
   function featureSpec(mesh, featureId) {
-    let byId = specCache.get(mesh.geometry);
-    if (!byId) { byId = new Map(); specCache.set(mesh.geometry, byId); }
+    const version = mesh.geometry.getAttribute("position")?.version ?? 0;
+    let entry = specCache.get(mesh.geometry);
+    if (!entry || entry.version !== version) { entry = { version, byId: new Map() }; specCache.set(mesh.geometry, entry); }
+    const byId = entry.byId;
     if (!byId.has(featureId)) {
       const { featureIds } = mesh.geometry.userData;
       const positions = mesh.geometry.getAttribute("position").array;
@@ -264,6 +268,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     parent?.updateWorldMatrix(true, false);
     const meshData = meshes.map(([, m]) => ({
       positions: m.geometry.getAttribute("position").array,
+      version: m.geometry.getAttribute("position").version, // a skin rewrites positions in place
       matrix: m.matrix,
     }));
     const hittable = meshes.map(([, m]) => m);
@@ -368,12 +373,14 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // camera hash; without the camera here it has to be explicit.
   // The pose is hashed as its full rotation basis + translation, not just the
   // two diagonal terms — θ and −θ about X share cos θ on the diagonal, and
-  // there is no camera hash left to notice the difference.
+  // there is no camera hash left to notice the difference. The position
+  // attribute's version is in it too: a pose-drag skin rewrites the vertices of
+  // the SAME geometry (viewer.setSubVertices), which its id alone would miss.
   function meshSig() {
     let sig = getContext().view;
     for (const [name, m] of Object.entries(viewer._subMeshes)) {
       const e = m.matrix.elements;
-      sig += `|${name}:${m.visible ? 1 : 0}:${m.geometry.id}:${e[0]},${e[1]},${e[2]},${e[4]},${e[5]},${e[6]},${e[12]},${e[13]},${e[14]}`;
+      sig += `|${name}:${m.visible ? 1 : 0}:${m.geometry.id}.${m.geometry.getAttribute("position")?.version ?? 0}:${e[0]},${e[1]},${e[2]},${e[4]},${e[5]},${e[6]},${e[12]},${e[13]},${e[14]}`;
     }
     return sig;
   }

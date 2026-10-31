@@ -248,8 +248,10 @@ const TIE_TOL = 1e-3;
 // The extremes and the tie sets are both POSED, so a record is only valid for
 // the pose it was built from. A mesh's `matrix` is mutated in place by the
 // viewer's pose fast path (setSubPose), so identity says nothing about it — the
-// sixteen elements do.
-const extremeCache = new WeakMap(); // positions -> { pose, lo, hi, cand: Uint32Array[6] }
+// sixteen elements do. Likewise the positions array: a pose-drag skin rewrites it in
+// place (viewer.setSubVertices), so a record also holds the attribute version the
+// caller passes (meshData's `version`, the three.js BufferAttribute counter).
+const extremeCache = new WeakMap(); // positions -> { pose, version, lo, hi, cand: Uint32Array[6] }
 const _sv = new THREE.Vector3();
 
 const dirIndex = (axis, sign) => axis * 2 + (sign > 0 ? 0 : 1);
@@ -259,9 +261,9 @@ const samePose = (a, b) => {
   return true;
 };
 
-function meshExtremes(positions, matrix) {
+function meshExtremes(positions, matrix, version) {
   const hit = extremeCache.get(positions);
-  if (hit && samePose(hit.pose, matrix.elements)) return hit;
+  if (hit && hit.version === version && samePose(hit.pose, matrix.elements)) return hit;
   const lo = [Infinity, Infinity, Infinity];
   const hi = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < positions.length; i += 3) {
@@ -283,7 +285,7 @@ function meshExtremes(positions, matrix) {
       }
     }
   }
-  const rec = { pose: matrix.elements.slice(), lo, hi, cand: cand.map((c) => Uint32Array.from(c)) };
+  const rec = { pose: matrix.elements.slice(), version, lo, hi, cand: cand.map((c) => Uint32Array.from(c)) };
   extremeCache.set(positions, rec);
   return rec;
 }
@@ -292,8 +294,8 @@ export function extremeVertex(meshData, axis, sign, near) {
   const dir = dirIndex(axis, sign);
   let bestVal = sign > 0 ? -Infinity : Infinity;
   const scan = [];
-  for (const { positions, matrix } of meshData) {
-    const rec = meshExtremes(positions, matrix);
+  for (const { positions, matrix, version } of meshData) {
+    const rec = meshExtremes(positions, matrix, version);
     const v = sign > 0 ? rec.hi[axis] : rec.lo[axis];
     if (!Number.isFinite(v)) continue; // empty mesh
     scan.push({ positions, matrix, cand: rec.cand[dir] });

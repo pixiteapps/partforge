@@ -364,6 +364,10 @@ export function createViewer(container, part, {
   const fadeLineMats = new Map();    // name -> lazily cloned LineMaterial
   const fadeUnregisters = new Map(); // fade material -> its cutaway unregister fn
   let lastShown = [];                // names last passed to showAssembly
+  // Sub-parts whose vertices a pose-drag skin has moved off the delivered mesh
+  // (setSubVertices { deformed: true }): their edge lines, which stay as delivered,
+  // would float off the surface, so they are hidden until a restore or a new delivery.
+  const deformedSubs = new Set();
   // The render mode's LOOK, read by applySubOpacity (feature lines are drawn
   // only in "cad") and the depth range (the realistic ground disc). Declared
   // here, ahead of everything that reads it; the mode itself lives in the
@@ -481,7 +485,7 @@ export function createViewer(container, part, {
       lines.material = flm;
     }
     mesh.visible = meshVisible;
-    lines.visible = linesVisible && meshVisible;
+    lines.visible = linesVisible && meshVisible && !deformedSubs.has(name);
   }
 
   function setSubPartOpacity(name, value) {
@@ -1866,6 +1870,7 @@ export function createViewer(container, part, {
     // Brushed metal needs UVs for its tangent frame; CAD meshes carry none.
     if (renderMode === "realistic" && physicalMats.get(name)?.userData.pfAnisotropic) ensureBoxUVs(next);
     subCache[name] = next;
+    if (deformedSubs.delete(name)) applySubOpacity(name); // a delivery: the edge lines match the surface again
     syncGrain(name);
     // Section helpers must stop referring to the old buffers before those
     // buffers are released.
@@ -1875,11 +1880,13 @@ export function createViewer(container, part, {
 
   // Rewrite the drawn vertices of one sub-part in place (the pose-drag skinning,
   // skin/deform.js): same buffers, new positions and normals. false when nothing is
-  // drawn under `name`; RangeError on a length mismatch. Edge lines stay as delivered.
+  // drawn under `name`; RangeError on a length mismatch. Edge lines stay as delivered, so
+  // `deformed: true` (vertices moved off the delivered mesh) hides them, and a write without
+  // it (the exact base put back) shows them again; setSubGeometry clears it too.
   // Everything that read the old positions is invalidated here: the size-match
   // surface memo (generation), the framing support points, the bounds, the cutaway's
   // section helpers and — in realistic mode — the contact shadow (on its throttle).
-  function setSubVertices(name, { positions, normals }) {
+  function setSubVertices(name, { positions, normals }, { deformed = false } = {}) {
     const geo = subCache[name];
     if (!geo) return false;
     const pos = geo.getAttribute("position"), nor = geo.getAttribute("normal");
@@ -1895,6 +1902,9 @@ export function createViewer(container, part, {
     supportCache.delete(geo);
     cutaway.updateGeometry(name, geo);
     if (realisticRig) shadowMovedAt = performance.now();
+    const wasDeformed = deformedSubs.has(name);
+    if (deformed) deformedSubs.add(name); else deformedSubs.delete(name);
+    if (wasDeformed !== deformed) applySubOpacity(name);
     return true;
   }
 
@@ -2642,7 +2652,7 @@ export function createViewer(container, part, {
             const f = fadeMatFor(n); f.opacity = fade; mesh.material = f;
             const fl = fadeLineMatFor(n); fl.opacity = staticOpacity > 0 ? (fade / staticOpacity) * edgeOpacity : 0; lines.material = fl;
           }
-          mesh.visible = meshVisible; lines.visible = linesVisible && meshVisible;
+          mesh.visible = meshVisible; lines.visible = linesVisible && meshVisible && !deformedSubs.has(n);
         },
         restore: () => {
           const f = fadeMats.get(n), fl = fadeLineMats.get(n);

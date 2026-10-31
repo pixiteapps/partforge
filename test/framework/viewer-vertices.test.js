@@ -94,3 +94,27 @@ test("setSubVertices requests a render", () => {
   expect(state.renderer.frames).toBeGreaterThan(before);
   viewer.dispose();
 });
+
+// A skinned surface leaves its delivered edge lines behind, so they hide while it is
+// deformed and come back when the exact base is written back or a new mesh lands.
+test("deformed vertices hide the edge lines; a restore or a new delivery shows them", () => {
+  const viewer = makeViewer();
+  viewer.setSubGeometry("body", triangle());
+  viewer.showAssembly(["body"]);
+  const lines = viewer.__subLines("body");
+  expect(lines.visible).toBe(true);
+  const moved = { positions: new Float32Array([0, 0, 1, 1, 0, 1, 0, 1, 1]), normals: triangle().normals };
+  viewer.setSubVertices("body", moved, { deformed: true });
+  expect(lines.visible).toBe(false);
+  expect(viewer._subMeshes.body.visible).toBe(true);
+  viewer.showAssembly(["body"]); // a refresh mid-drag keeps them hidden
+  expect(lines.visible).toBe(false);
+  viewer.setSubVertices("body", triangle()); // the base put back
+  expect(lines.visible).toBe(true);
+  viewer.setSubVertices("body", moved, { deformed: true });
+  expect(lines.visible).toBe(false);
+  viewer.setSubGeometry("body", triangle());
+  viewer.showAssembly(["body"]);
+  expect(lines.visible).toBe(true);
+  viewer.dispose();
+});

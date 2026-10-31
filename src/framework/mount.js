@@ -27,6 +27,7 @@ import { createBackendPolicy, organicExportParts } from "./backend-select.js";
 import { createDebugOverlay } from "./debug-overlay.js";
 import { createRegenLoop } from "./regen-loop.js";
 import { createPoseFastPath } from "./pose-fast-path.js";
+import { createSkinDrag, SKIN_PAUSE_MS } from "./skin/skin-drag.js";
 import { createStatusUi } from "./status-ui.js";
 import { createViewTabs } from "./view-tabs.js";
 import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } from "./selection/index.js";
@@ -74,7 +75,10 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState, beforeCapture }) {
+  // Run before every capture of the live scene: mount puts a pose drag's deformed
+  // meshes back to their exact bases (skin/skin-drag.js), so no capture reads them.
+  const prepare = () => { try { beforeCapture?.(); } catch { /* never fails a capture */ } };
   return {
     ready, dispose, setParams,
     // Whether the `preview` GLB handed to mount() is on screen (see mount's
@@ -95,23 +99,26 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // Offscreen render of a named view (default when omitted, or on an unknown name).
     captureView,
     // Always CAD, whatever the live render mode: these are the agent's renders.
-    captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames),
+    captureViews: (viewNames) => { prepare(); return viewer.captureCanonicalViews(viewNames); },
     // captureViews in a chosen appearance: renderMode "cad" (the default) is
     // exactly captureViews() in either live mode; "realistic" borrows the realistic look for the
     // capture (waiting on the environment's assets) without switching the live
     // view. Rejects if realistic's assets fail to load.
-    renderViews: renderViews ?? (async (viewNames) => viewer.captureCanonicalViews(viewNames)),
+    renderViews: async (viewNames, opts) => {
+      prepare();
+      return renderViews ? renderViews(viewNames, opts) : viewer.captureCanonicalViews(viewNames);
+    },
     // `recenter` reads the sub-part geometry only, so with measurement pins on
     // screen the dimension labels — which sit beside the part, not on it —
     // could land outside the centred window. A dimensioned capture therefore
     // keeps the user's exact framing; a host wanting both re-frames first.
     // Follows the live render mode unless opts.renderMode pins one ("realistic"
     // only once the environment has loaded — see viewer.captureCurrent).
-    captureCurrent: (opts) => viewer.captureCurrent(
+    captureCurrent: (opts) => (prepare(), viewer.captureCurrent(
       opts?.recenter && (measure ?? NOOP_MEASURE).isEnabled() && (measure ?? NOOP_MEASURE).pinCount() > 0
         ? { ...opts, recenter: false }
         : opts,
-    ),
+    )),
     // Everything about the CURRENT VIEW that a host would lose by remounting,
     // as one plain-JSON token: pass it back as mount()'s `viewerState` and the
     // remount comes up where the user left it. An embedder that applies edits
@@ -677,6 +684,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // that reads params (refreshView / updateRelevance / the loop kick) must
         // run after it. autoplayKick stays LAST — it starts the new view's own.
         animCtl?.viewChanged();
+        // A pose drag does not survive a tab switch: the outgoing view's deformed
+        // meshes go back to their exact bases (the cache may show them again later).
+        skin.restoreAll(); skin.endDrag();
         pendingPosed.clear(); cutawayChrome.reset(); refreshView();
         // place() may read `view`: re-pose the incoming view's canonical meshes
         // (and clear the posed ones' matrices) before anything else reads them.
@@ -1095,6 +1105,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       params, getView: view, getParamsVersion: () => loop.version(),
     });
 
+    // Pose drag (skin/skin-drag.js): a slider input that moves only the k.implicit
+    // frames deforms the last exact mesh in place (no job); the exact build goes out on
+    // release or after SKIN_PAUSE_MS without input. Every setSubGeometry below either
+    // records the delivery as a skin base or forgets the old one.
+    const skin = createSkinDrag(part, viewer, {
+      params, getView: view, getParamsVersion: () => loop.version(),
+    });
+
     // ?debug: how the in-view meshes were delivered, e.g. "3 canonical / 1 posed".
     const frameSummary = () => {
       const n = { canonical: 0, posed: 0 };
@@ -1322,6 +1340,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // non-stale branch: the stamp must describe the geometry actually
         // delivered, which buildDone() true guarantees is at the live params.
         fastPath.recordDelivered(m.name);
+        // The skin base: an exact canonical delivery with bindings (else forgotten).
+        skin.recordDelivered(m.name, m, dispatched.get(m.name));
       }
       // setSubGeometry reset every delivered mesh's matrix, so each one gets
       // its display pose now, after its geometry landed: a canonical mesh
@@ -1331,6 +1351,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       // forgetting on a disagreement would rebuild at the same params forever).
       fastPath.apply(meshes.map((m) => m.name), undefined, { fresh: true });
       recordFrames(meshes);
+      // The view is exact at the live params: the drag, if any, is over.
+      if (missingParts().length === 0) skin.endDrag();
     }
 
     // Progressive delivery (feedback #212). A view with many sub-parts posts what it has
@@ -1441,6 +1463,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             for (const m of data.meshes) {
               viewer.setSubGeometry(m.name, m);
               fastPath.forget(m.name);
+              skin.forget(m.name); // built at params playback has left: never a skin base
               cache.forget(m.name); // the stamp described the last FRESH delivery; this mesh was built at other params, so no stamp may describe it (spec §2)
             }
             // With the stamps gone the frame comes from the reply: a canonical
@@ -1451,8 +1474,32 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             recordFrames(data.meshes);
             ui.hideBusy();
             refreshView();
+          } else if (skin.isDragging()) {
+            // Stale because a pose drag moved on. A delivery that is still EXACT for the
+            // params it was dispatched with, carries bindings and differs from the live
+            // pose by frames alone becomes that sub-part's new skin base, deformed at once
+            // to the live pose — otherwise a long drag would skin one stale base and its
+            // contact errors would last until release (spec §4). It records nothing about
+            // the live params (cache and fast-path stamps forgotten, as above), so the
+            // exact build still follows. Every other stale mesh is discarded as before.
+            const rebased = data.meshes.filter((m) => m.bindings && m.frame === "canonical"
+              && skin.canRebase(m.name, dispatched.get(m.name)));
+            if (rebased.length) {
+              for (const m of rebased) {
+                viewer.setSubGeometry(m.name, m);
+                fastPath.forget(m.name);
+                cache.forget(m.name);
+                skin.recordDelivered(m.name, m, dispatched.get(m.name));
+              }
+              fastPath.apply(rebased.map((m) => m.name), Object.fromEntries(rebased.map((m) => [m.name, m.frame])));
+              recordFrames(rebased);
+              refreshView();
+              skin.deform();
+            }
           }
-          loop.kick(); // stale → rebuild; fresh → the view may still need parts (tab switched mid-build)
+          // stale → rebuild (after the pause while a drag goes on); fresh → the view may
+          // still need parts (tab switched mid-build)
+          if (skin.isDragging()) loop.delayKick(SKIN_PAUSE_MS); else loop.kick();
           break;
         }
         case "download-parts":
@@ -1565,10 +1612,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     let animCtl = null; // assigned below; panel edits must pause active playback
     const panel = buildControls(els.controls, part.parameters, params, () => {
       animCtl?.notifyUserEdit();
-      onParamChange();
-    }, onParamsCommit
-      ? (changed) => onParamsCommit({ changed, params: { ...params } })
-      : undefined,
+      onParamChange({ interactive: true });
+    }, (changed) => {
+      // A release ends a pose drag: the exact build goes out now, not after the pause.
+      if (skin.isDragging()) { skin.endDrag(); loop.flush(); }
+      onParamsCommit?.({ changed, params: { ...params } });
+    },
       // What the part is actually using for each asset key, so a control opens
       // showing the bundled default instead of an empty tile. Rebuilt per panel
       // build, because the declaration is a function of the current params.
@@ -1591,7 +1640,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // forceRegen path: forceRegen() forgets cache stamps WITHOUT bumping the params
     // version, so a repair there would re-stamp everything current off the memoized
     // probe and the forced rebuild would silently no-op.
-    function onParamChange({ debounce = true } = {}) {
+    // `interactive`: a panel edit (onDirty), the only source a pose drag deforms for; any
+    // other change (setParams, playback) puts deformed meshes back to their exact bases
+    // and takes the ordinary rebuild (spec §4).
+    function onParamChange({ debounce = true, interactive = false } = {}) {
       loop.markDirty({ debounce }); // bump the version first: refreshView below must see the parts as stale
       // Pose-only edits: re-posed + re-stamped current, no job. Skipped entirely
       // when caching is off — ?debug&nocache is there to measure true uncached
@@ -1603,6 +1655,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       }
       refreshView();    // keep showing the now-stale mesh (no flicker); disable export
       updateRelevance();
+      if (interactive) {
+        const skinned = skin.deform();
+        if (skinned.length) loop.delayKick(SKIN_PAUSE_MS);
+      } else {
+        if (skin.anyDeformed()) skin.restoreAll();
+        skin.endDrag();
+      }
     }
 
     // Programmatic param entry point — the animation-system hook. Same change
@@ -1788,7 +1847,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         measureMode.setEnabled(false);
         annotateMode?.setEnabled(false);
         previewGate.start();
-        for (const m of shown) viewer.setSubGeometry(m.name, m);
+        for (const m of shown) { viewer.setSubGeometry(m.name, m); skin.forget(m.name); }
         refreshView();
       }).catch((error) => {
         if (!disposed) console.warn(`partforge: preview ignored — ${error?.message ?? error}`);
@@ -1827,6 +1886,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
 
     return makeHandle({
       ready, dispose, viewer, setParams,
+      // No capture reads a pose drag's deformed mesh (Task 8 extends this hook).
+      beforeCapture: () => { skin.restoreAll(); },
       isPreviewActive: () => previewGate.isActive(),
       pendingCutaway: () => (!cutawayRestored ? viewerState?.cutaway ?? null : null),
       exportPreview,

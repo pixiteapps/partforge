@@ -188,3 +188,54 @@ test("isFresh is true only while a build is in flight and no edit has overtaken 
   loop.buildDone();
   expect(loop.isFresh()).toBe(false); // settled
 });
+
+// The pose-drag seams (docs/superpowers/specs/2026-10-31-implicit-pose-drag-design.md §4):
+// a skinned drag holds the exact build off for a pause, and a release sends it at once.
+test("markDirty({ delayMs }) arms the kick at that delay", () => {
+  const { loop, send, state } = makeLoop({ missing: [] });
+  loop.ready();
+  state.missing = ["a"];
+  loop.markDirty({ delayMs: 150 });
+  vi.advanceTimersByTime(149);
+  expect(send).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(1);
+  expect(send).toHaveBeenCalledTimes(1);
+});
+
+test("delayKick re-arms the kick without bumping the version", () => {
+  const { loop, send, state } = makeLoop({ missing: [] });
+  loop.ready();
+  state.missing = ["a"];
+  loop.markDirty(); // 180 ms armed
+  const v = loop.version();
+  vi.advanceTimersByTime(100);
+  loop.delayKick(150); // replaces the armed timer
+  expect(loop.version()).toBe(v);
+  vi.advanceTimersByTime(149);
+  expect(send).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(1);
+  expect(send).toHaveBeenCalledTimes(1);
+  vi.runAllTimers();
+  expect(send).toHaveBeenCalledTimes(1); // the 180 ms timer is gone
+});
+
+test("flush() sends now and cancels the armed timer", () => {
+  const { loop, send, state } = makeLoop({ missing: [] });
+  loop.ready();
+  state.missing = ["a"];
+  loop.markDirty();
+  loop.flush();
+  expect(send).toHaveBeenCalledTimes(1);
+  loop.buildDone();
+  vi.runAllTimers();
+  expect(send).toHaveBeenCalledTimes(1);
+});
+
+test("flush() with nothing missing sends nothing", () => {
+  const { loop, send } = makeLoop({ missing: [] });
+  loop.ready();
+  loop.markDirty();
+  loop.flush();
+  vi.runAllTimers();
+  expect(send).not.toHaveBeenCalled();
+});

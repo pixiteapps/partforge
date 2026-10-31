@@ -831,3 +831,31 @@ test("frame ticks are harmless before and after the mode is enabled", () => {
   expect(() => viewer.frame()).not.toThrow(); // steady state: cheap re-score
   mode.detach();
 });
+
+// A pose-drag skin rewrites a sub-part's vertices in place (viewer.setSubVertices):
+// same geometry, same positions array, a bumped attribute version. A pinned dim must
+// follow the new surface, not a spec cached for the old one.
+test("a pinned dim follows vertices rewritten in place", () => {
+  const { mesh, viewer, mode, labelPositions } = setup();
+  mode.setEnabled(true);
+  clickAt(viewer.domElement); // pin the top face at z=2
+  expect(mode.pinCount()).toBe(1);
+  viewer.frame();
+  const before = labelPositions("pin:");
+  expect(before.length).toBeGreaterThan(0);
+
+  const attr = mesh.geometry.getAttribute("position");
+  for (let i = 2; i < attr.array.length; i += 3) attr.array[i] += 5; // lift the plate 5mm
+  attr.needsUpdate = true;
+  mesh.geometry.computeBoundingBox();
+  viewer.frame();
+  const after = labelPositions("pin:");
+
+  expect(after.length).toBe(before.length);
+  after.forEach((p, i) => {
+    expect(p[0]).toBeCloseTo(before[i][0], 5);
+    expect(p[1]).toBeCloseTo(before[i][1], 5);
+    expect(p[2]).toBeCloseTo(before[i][2] + 5, 5);
+  });
+  mode.detach();
+});
