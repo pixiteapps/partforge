@@ -2,7 +2,6 @@ import * as THREE from "three";
 
 const PLANE_LOCAL_NORMAL = new THREE.Vector3(0, 0, 1);
 const POINT_EPSILON = 1e-6;
-const PARALLEL_EPSILON = 1e-6;
 
 // Nearest signed canonical axis (+/-X, +/-Y, +/-Z) to `direction`. Axes are
 // scanned X, Y, Z and replaced only on a strictly larger |component|, so a tie
@@ -87,23 +86,6 @@ export function pointSurvivesPlane(plane, point, epsilon = POINT_EPSILON) {
   return plane.distanceToPoint(point) >= -epsilon;
 }
 
-export function axisParameterFromRay(ray, axisOrigin, axisDirection) {
-  const axis = axisDirection.clone().normalize();
-  const w0 = ray.origin.clone().sub(axisOrigin);
-  const b = ray.direction.dot(axis);
-  const d = ray.direction.dot(w0);
-  const e = axis.dot(w0);
-  const denominator = 1 - b * b;
-
-  if (Math.abs(denominator) < PARALLEL_EPSILON) return null;
-  return (e - b * d) / denominator;
-}
-
-export function signedAngleAroundAxis(from, to, axis) {
-  const fromDirection = from.clone().normalize();
-  const toDirection = to.clone().normalize();
-  return Math.atan2(
-    axis.dot(fromDirection.clone().cross(toDirection)),
-    fromDirection.dot(toDirection),
-  );
-}
+// The ray-to-axis and signed-angle helpers moved to the shared gizmo module; they are
+// re-exported here for the cutaway's callers.
+export { axisParameterFromRay, signedAngleAroundAxis } from "./gizmo/gizmo-rotate.js";
