@@ -97,7 +97,11 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   // quieter lines: rings at the limb radii, and arcs that are not the active ones
   lineMats.faint = prep(new LineMaterial({ color: POSE_THEME[theme].bone, linewidth: 1, opacity: 0.55 }));
   lineMats.dashed = prep(new LineMaterial({ color: POSE_THEME[theme].warn, linewidth: 1.5, dashed: true, dashSize: 5, gapSize: 4 }));
-  const allMats = () => [...Object.values(fillMats), ...Object.values(lineMats)];
+  // The reach-miss label's material is shared too (its map swapped per text): a material
+  // made per rebuild and disposed by the next one released its shader program every drag
+  // frame, so three recompiled it every frame (~5 ms of getProgramInfoLog per frame).
+  const labelMat = prep(new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide }));
+  const allMats = () => [...Object.values(fillMats), ...Object.values(lineMats), labelMat];
   const paintMats = () => {
     const P = POSE_THEME[theme];
     for (const k of colorKeys) { fillMats[k].color.set(P[k]); lineMats[k].color.set(P[k]); }
@@ -266,10 +270,8 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
       dashRec = { line, a, b };
       const tex = labelTexture(`${active.residual.toFixed(1)} mm`);
       const img = tex.image;
-      const mesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(img && img.height ? img.width / img.height : 4, 1),
-        new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide }),
-      );
+      labelMat.map = tex;
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(img && img.height ? img.width / img.height : 4, 1), labelMat);
       mesh.renderOrder = RENDER_ORDER_POSE_LABEL;
       mesh.frustumCulled = false;
       group.add(mesh);
@@ -325,7 +327,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     group.getWorldQuaternion(_gq);
     // a billboard faces the camera: local = groupWorld^-1 * cameraWorld
     cam.getWorldQuaternion(_q);
-    _q.premultiply(_gq.clone().invert());
+    _q.premultiply(_gq.invert()); // _gq is re-read every tick: invert it in place
     for (const d of dots) d.mesh.scale.setScalar(Math.max(d.px * wppAt(d.pos), 1e-6));
     for (const b of billboards) {
       b.mesh.scale.setScalar(Math.max(b.px * wppAt(b.pos), 1e-6));
