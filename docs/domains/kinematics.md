@@ -481,7 +481,7 @@ A goal is `{ at, position?, aim?, up?, weight? }`:
 | `at` | A joint name, the name of its frame, or `"tip"`. |
 | `position` | `[x, y, z]` in part coordinates, in mm. |
 | `aim` | A direction. The frame's +Y axis (the way the link points) must turn toward it. |
-| `up` | A second direction that fixes the roll about `aim`. With an `aim`, it is made square to `aim`, and it must not be parallel to it. It is matched to the frame's -Z side, the side a positive bend closes toward. |
+| `up` | A second direction that fixes the roll about `aim`. With an `aim`, it is made square to `aim`, and it must not be parallel to it. It is matched to the frame's +Z side, the back of the bend (opposite the side a positive bend closes toward). |
 | `weight` | How much the goal counts against other goals. The default is 1. |
 
 - A goal needs at least one of `position`, `aim` and `up`.
@@ -571,12 +571,10 @@ aimFromAngles({ toward: [0, 1, 0], pitch: 90, roll: 0 }).up.map(Math.round);   /
 
 Spread the result into a goal: `{ at: "tip", position, ...aimFromAngles({ … }) }`.
 
-**The arm adds 180 degrees to the roll.** The goal's `up` is matched to the tip
-frame's -Z side. On an arm that reaches forward, that side points down and back. It is
-opposite to the `up` that `aimFromAngles` gives, so a roll of 0 would ask the wrist to
-turn right over. `src/parts/robot-arm.js` therefore passes `roll: p.toolRoll + 180`.
-With the offset, a `toolRoll` of 0 is the natural gripper roll, and the wrist rests near
-0. Expect the same offset in any part with a tool that reaches forward.
+**Roll 0 is the natural roll.** A goal's `up` is matched to the frame's +Z side, the
+back of the bend. That is the `up` that `aimFromAngles` gives at roll 0, so
+`src/parts/robot-arm.js` passes `roll: p.toolRoll` unchanged, and a `toolRoll` of 0 is
+the natural gripper roll with the wrist near 0.
 
 ## Handles and Pose mode
 

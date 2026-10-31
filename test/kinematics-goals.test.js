@@ -75,7 +75,7 @@ describe("goals", () => {
     const posed = arm().pose({ bend: SEED, goals: [{ at: "tip", position: [120, 40, 80], aim: [0, 0, -1], up: [1, 0, 0] }] });
     expect(posed.report.goals[0].status).toBe("reached");
     const M = worldOf(posed, posed.tip);
-    expect(angleDeg([-M[2], -M[5], -M[8]], [1, 0, 0])).toBeLessThanOrEqual(0.1);
+    expect(angleDeg([M[2], M[5], M[8]], [1, 0, 0])).toBeLessThanOrEqual(0.1);
   });
 
   it("a goal at a joint moves only the joints above it", () => {

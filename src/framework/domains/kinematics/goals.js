@@ -114,7 +114,7 @@ function missOf(goal, W) {
     sq += e * e;
   };
   if (goal.aim) dir([W[1], W[4], W[7]], goal.aim);
-  if (goal.up) dir([-W[2], -W[5], -W[8]], goal.up);
+  if (goal.up) dir([W[2], W[5], W[8]], goal.up);
   return { residual, aimDeg, err: Math.sqrt(sq) };
 }
 
@@ -126,7 +126,8 @@ function missOf(goal, W) {
  *
  * Damped least squares (`solveDLS`, ITERATIONS steps) over `dofsOf`. Residual rows per goal,
  * each × its weight: a position adds 3 (tip − target, mm); an aim adds 3, (frame +Y − aim) ×
- * AIM_SCALE; an up adds 3 the same way on the frame's −Z (the side `bendToward` names).
+ * AIM_SCALE; an up adds 3 the same way on the frame's +Z (the back of the bend, opposite
+ * the side `bendToward` names).
  *
  * Status, per goal: `reached` when its position residual is ≤ REACHED_MM and its aim residual
  * ≤ REACHED_DEG; else `too-far` when its position lies beyond the sum of segment lengths from
@@ -169,7 +170,7 @@ export function solveGoals(tree, parentWorld, goals, raw, pinned, { spread = 0, 
         const M = W(g.frame), w = g.weight;
         if (g.position) for (let c = 0; c < 3; c++) out[o++] = (M[9 + c] - g.position[c]) * w;
         if (g.aim) for (let c = 0; c < 3; c++) out[o++] = (M[1 + 3 * c] - g.aim[c]) * AIM_SCALE * w;
-        if (g.up) for (let c = 0; c < 3; c++) out[o++] = (-M[2 + 3 * c] - g.up[c]) * AIM_SCALE * w;
+        if (g.up) for (let c = 0; c < 3; c++) out[o++] = (M[2 + 3 * c] - g.up[c]) * AIM_SCALE * w;
       }
       return out;
     };

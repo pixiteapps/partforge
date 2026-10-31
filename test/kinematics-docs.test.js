@@ -187,10 +187,12 @@ test("goals: the prose claims about statuses, clamped and read-back values are t
   expect(pinned.report.clamped[2]).toBe(true);
   // pins need goals.
   expect(() => arm.pose({ pins: ["elbow"] })).toThrow();
-  // The robot-arm roll offset and elbow stop that the guide names are in the part.
+  // The robot-arm roll (no offset) and elbow stop that the guide names are in the part.
   const src = read("../src/parts/robot-arm.js");
-  expect(src).toContain("roll: p.toolRoll + 180");
-  expect(guide).toContain("roll: p.toolRoll + 180");
+  expect(src).toContain("roll: p.toolRoll }");
+  expect(src).not.toContain("toolRoll + 180");
+  expect(guide).toContain("roll: p.toolRoll");
+  expect(guide).not.toContain("toolRoll + 180");
   const part = (await import("../src/parts/robot-arm.js")).default;
   const elbow = part.derive(part.defaults).arm.ikInfo?.().joints?.find?.((j) => j.name === "elbow");
   if (elbow) expect(elbow.range).toEqual([10, 150]);

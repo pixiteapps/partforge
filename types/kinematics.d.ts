@@ -115,7 +115,7 @@ export interface LimbGoal {
   position?: Point3;
   /** The direction the frame's +Y (its segment, `toward` at rest) should point. */
   aim?: Point3;
-  /** The direction the frame's −Z (the side `bendToward` names) should point; fixes the roll about `aim`. */
+  /** The direction the frame's +Z (the back of the bend, opposite `bendToward`) should point; fixes the roll about `aim`. */
   up?: Point3;
   /** Default 1; scales this goal's residuals against the others. */
   weight?: number;

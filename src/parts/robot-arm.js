@@ -136,10 +136,7 @@ export default {
     base: 0, shoulder: 39.58, elbow: 104.03, wristPitch: 6.39, wristYaw: 0, wristRoll: 0,
   },
   derive: (p) => {
-    // Roll is offset by 180°: the goal's `up` is matched to the tool frame's bending
-    // side, which points down-and-back on an arm reaching forward. With the offset,
-    // roll 0 is the gripper's natural roll and the wrist rests near 0.
-    const aim = aimFromAngles({ toward: [1, 0, 0], pitch: p.toolPitch, yaw: p.toolYaw, roll: p.toolRoll + 180 });
+    const aim = aimFromAngles({ toward: [1, 0, 0], pitch: p.toolPitch, yaw: p.toolYaw, roll: p.toolRoll });
     const arm = ARM(p).pose({
       bend: Object.fromEntries(JOINTS.map((j) => [j, p[j]])),
       goals: [{ at: "tip", position: [p.toolX, p.toolY, p.toolZ], ...aim }],
