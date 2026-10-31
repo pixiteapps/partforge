@@ -524,6 +524,11 @@ aim-only goal has `residual: 0`. Numbers are rounded to 0.001.
 
 The order of the tests is `reached`, `too-far`, `conflict`, `out-of-range`.
 
+- **`too-far` is judged on the straight-line sum of the segment lengths.** It ignores
+  joint limits. A limb whose limit stops it short of full stretch (the arm's elbow stops
+  10 degrees short of straight) cannot reach the last few mm below that sum. A target in
+  that band reads `out-of-range`, not `too-far`.
+
 - **`conflict` is judged for each goal.** The solver solves the goal alone, from the
   same start. If that gives a smaller error than the combined solve, by more than
   0.01, this goal reads `conflict`. Two goals 400 mm apart on a 230 mm arm both read
