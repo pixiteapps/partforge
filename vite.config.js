@@ -29,6 +29,7 @@ export default defineConfig(({ command }) => ({
         screw: "screw.html",
         emblem: "emblem.html",
         relief: "relief.html",
+        robotArm: "robot-arm.html",
       },
     },
   },

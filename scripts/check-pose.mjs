@@ -5,13 +5,14 @@
 //
 //   node scripts/check-pose.mjs [--keep]
 //
-// Pages, each checked when its file exists and skipped with a message otherwise:
+// Pages. A `required` page must exist (a missing one fails the check); the others are
+// checked when their file exists and skipped with a message otherwise:
 //   pose-smoke.html — the ghost path. A sub-part built from the pose (a bead chain
 //     whose build reads p.aCurl) must fade to 0.35 during the drag, no `generate` job
 //     may be posted until release, exactly one is posted after it, and the new mesh
 //     and opacity 1 must reach the screen in the same frame (sampled every frame:
 //     never the new geometry still ghosted, never the old geometry back at full).
-//   robot-arm.html, hand.html — the reference parts. A 20-move drag of the first
+//   robot-arm.html (required), hand.html — the reference parts. A 20-move drag of the first
 //     handle posts no `generate` job, commits exactly once on release, the committed
 //     values differ from the part's defaults, and the console stays clean.
 //
@@ -261,8 +262,8 @@ async function checkReference(page, url, errors) {
 }
 
 const PAGES = [
-  { entry: "pose-smoke.html", run: checkSmoke },
-  { entry: "robot-arm.html", run: checkReference },
+  { entry: "pose-smoke.html", run: checkSmoke, required: true },
+  { entry: "robot-arm.html", run: checkReference, required: true },
   { entry: "hand.html", run: checkReference },
 ];
 
@@ -270,7 +271,11 @@ let failed = false;
 let browser;
 try {
   const present = PAGES.filter((p) => existsSync(join(root, p.entry)));
-  for (const p of PAGES) if (!present.includes(p)) console.log(`skip ${p.entry}: the page does not exist yet`);
+  for (const p of PAGES) {
+    if (present.includes(p)) continue;
+    if (p.required) { console.log(`check-pose: ${p.entry} is missing (required)`); failed = true; }
+    else console.log(`skip ${p.entry}: the page does not exist yet`);
+  }
   if (present.length) {
     startVite();
     await waitForVite(`http://localhost:${PORT}/${present[0].entry}`);

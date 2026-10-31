@@ -94,4 +94,5 @@ jobs:
       - run: CHECK_PORT=5188 node scripts/check-app.mjs lofted-bottle.html # Shape2D loft reference part (curve-mode body + resample-mode shoulder)
       - run: CHECK_PORT=5189 node scripts/check-app.mjs emblem.html # k.vector2d reference part (ingested vector art)
       - run: CHECK_PORT=5190 node scripts/check-app.mjs relief.html # k.heightfield reference part (images / type: "image" control, depth map to relief plate)
+      - run: CHECK_PORT=5192 node scripts/check-app.mjs robot-arm.html # goal-mode IK reference part (tool handle, seed, probe)
       - run: CHECK_PORT=5191 npm run check:pose # Pose mode: drag a handle in real Chromium (ghost path, regen hold, one commit)

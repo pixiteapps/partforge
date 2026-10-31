@@ -4125,6 +4125,84 @@
     "declared": 9,
     "evaluated": 9
   },
+  "robot-arm.js#assembly": {
+    "ok": true,
+    "view": "assembly",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "toolX": 220,
+          "toolY": 0,
+          "toolZ": 60,
+          "toolPitch": -60,
+          "toolYaw": 0,
+          "toolRoll": 0,
+          "gripper": 24,
+          "upperLen": 160,
+          "foreLen": 140,
+          "base": 0,
+          "shoulder": 39.58,
+          "elbow": 104.03,
+          "wristPitch": 6.39,
+          "wristYaw": 0,
+          "wristRoll": 0
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": "turret×upperArm",
+            "metric": "clearance",
+            "kind": "gate",
+            "expr": ">=0.3",
+            "actual": 0.399999619,
+            "status": "pass",
+            "pass": true,
+            "message": "0.39999961853027344 >= 0.3"
+          },
+          {
+            "scope": "view",
+            "subpart": "upperArm×forearm",
+            "metric": "clearance",
+            "kind": "gate",
+            "expr": ">=0.3",
+            "actual": 0.399999619,
+            "status": "pass",
+            "pass": true,
+            "message": "0.39999961853027344 >= 0.3"
+          },
+          {
+            "scope": "view",
+            "subpart": "forearm×hand",
+            "metric": "clearance",
+            "kind": "gate",
+            "expr": ">=0.3",
+            "actual": 0.399999619,
+            "status": "pass",
+            "pass": true,
+            "message": "0.39999961853027344 >= 0.3"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "costs": [],
+    "unevaluated": [],
+    "declared": 4,
+    "evaluated": 4
+  },
   "robot-finger.js#assembly": {
     "ok": true,
     "view": "assembly",
