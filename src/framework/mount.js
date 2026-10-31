@@ -113,7 +113,7 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // capture (waiting on the environment's assets) without switching the live
     // view. Rejects if realistic's assets fail to load.
     renderViews: renderViews ?? (async (viewNames) => viewer.captureCanonicalViews(viewNames)),
-    // `recenter` reads the sub-part geometry only, so with measurement pins on
+    // `recenter` reads the sub-part geometry only, so with measurements on
     // screen the dimension labels — which sit beside the part, not on it —
     // could land outside the centred window. A dimensioned capture therefore
     // keeps the user's exact framing; a host wanting both re-frames first.
@@ -232,7 +232,8 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     attachTooltips: attachTooltips ?? (() => NOOP_TOOLTIP_BINDING),
     // Measurement-mode API (spec Goal 3): { isEnabled, setEnabled, clearPins,
     // pinCount } — an embedder drives the mode without the built-in ruler
-    // button. Dimensions render in the scene, so a dimensioned capture is just
+    // button. pinCount() is 0, 1 (a reading or a start point) or 2 (a
+    // distance); clearPins() is the Clear button. Dimensions render in the scene, so a dimensioned capture is just
     // captureCurrent() taken while the mode is on.
     measure: measure ?? NOOP_MEASURE,
     // Annotation-mode API (spec 2026-08-18): { isEnabled, setEnabled, clear,
@@ -725,16 +726,19 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     onViewChange?.(tabsCtl.current());
     const params = { ...part.defaults };
 
-    // Measurement mode: in-scene dims + pins + dimension->controls reveal
-    // (clicking a measurement flashes every control that can drive it). The
-    // panel is built later in this function, so revealParams is a late-bound
-    // thunk. getReads reads the mesh cache (created further below) lazily.
+    // Measurement mode: in-scene dims, the two-click snapping model, and
+    // reading->controls reveal (a first-click reading flashes every control
+    // holding its value). The panel is built later in this function, so
+    // revealParams is a late-bound thunk. getReads reads the mesh cache
+    // (created further below) lazily. `stage` hosts the snap label: the
+    // viewer itself has no stage element to offer.
     let panelRef = null;
     const measureMode = createMeasureMode(viewer, {
       part,
       getContext: () => ({ view: view(), params }),
       revealParams: (keys, focusKey) => panelRef?.revealParams(keys, focusKey),
       getReads: (name) => displayReadsOf(name),
+      stage: els.viewer,
     });
     cleanup.defer(() => measureMode.detach());
     // Annotation mode (spec 2026-08-18): freehand ink over the frozen view,

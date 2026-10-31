@@ -10,13 +10,13 @@
 //   cylinder { kind, values: {diameter, depth, partial}, anchors: {center, axis, top, bottom, rimDir} }
 //   bbox     { kind, values: {w, d, h},                  anchors: {min, max} }
 
-const COS_3DEG = 0.99863;      // same axis-snap threshold as selection/resolve.js
+export const COS_3DEG = 0.99863;      // same axis-snap threshold as selection/resolve.js
 const PLANAR_COS = 0.999999;   // ~1.4e-3 rad: all normals agree -> planar
 const AXIS_DOT_MAX = 0.05;     // wall normals ⊥ axis within ~3°
 const RADIUS_TOL = 0.02;       // radial residual: 2% of radius
 const FULL_ARC_DEG = 300;      // coverage below this reads R, not ⌀
 
-const q2 = (x) => { const r = Math.round(x * 100) / 100; return r === 0 ? 0 : r; };
+export const q2 = (x) => { const r = Math.round(x * 100) / 100; return r === 0 ? 0 : r; };
 export const fmtMm = (v) => v.toFixed(2);
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -82,6 +82,42 @@ function snapAxis(n) {
   return axis;
 }
 
+// In-plane `u` for a tilted face: the direction of its longest BOUNDARY edge
+// (an edge used by exactly one of the feature's triangles), projected into the
+// plane. The longest edge of ANY triangle is wrong: a rectangle meshed as two
+// triangles has its diagonal as the longest edge, which drew a tilted 40×20
+// face as 44.72×35.78 along its diagonal. Vertex keys are matched at 1e-4 so a
+// soup (non-indexed) mesh still pairs its shared edges. No boundary edge (a
+// closed feature): the frame axis least aligned with the normal, projected.
+const EDGE_KEY_Q = 1e-4;
+function boundaryU(tris, n) {
+  const key = (p) => `${Math.round(p[0] / EDGE_KEY_Q)},${Math.round(p[1] / EDGE_KEY_Q)},${Math.round(p[2] / EDGE_KEY_Q)}`;
+  const edges = new Map(); // undirected key -> { count, e }
+  for (const tri of tris) {
+    const keys = tri.map(key);
+    for (let i = 0; i < 3; i++) {
+      const j = (i + 1) % 3;
+      if (keys[i] === keys[j]) continue; // degenerate edge
+      const k = keys[i] < keys[j] ? `${keys[i]}|${keys[j]}` : `${keys[j]}|${keys[i]}`;
+      const rec = edges.get(k);
+      if (rec) rec.count++;
+      else edges.set(k, { count: 1, e: sub(tri[j], tri[i]) });
+    }
+  }
+  let best = null, bestLen = -1;
+  for (const { count, e } of edges.values()) {
+    if (count !== 1) continue;
+    const inPlane = sub(e, scale(n, dot(e, n)));
+    const l = Math.hypot(inPlane[0], inPlane[1], inPlane[2]);
+    if (l > bestLen) { bestLen = l; best = inPlane; }
+  }
+  if (best && bestLen > 1e-9) return norm(best);
+  let ai = 0;
+  for (let i = 1; i < 3; i++) if (Math.abs(n[i]) < Math.abs(n[ai])) ai = i;
+  const k = [0, 0, 0]; k[ai] = 1;
+  return norm(sub(k, scale(n, dot(k, n))));
+}
+
 function planeSpec(tris, normals) {
   // area-weighted mean normal
   let acc = [0, 0, 0];
@@ -90,7 +126,7 @@ function planeSpec(tris, normals) {
   for (const { n } of normals) if (dot(n, mean) < PLANAR_COS) return null;
 
   // Basis: axis-snapped normal -> the other two GLOBAL axes (a box face reads
-  // W×H, not a PCA-tilted pair). Otherwise: dominant in-plane edge direction.
+  // W×H, not a PCA-tilted pair). Otherwise: the longest boundary edge (boundaryU).
   const snapped = snapAxis(mean);
   let u, v;
   if (snapped) {
@@ -98,14 +134,7 @@ function planeSpec(tris, normals) {
     u = [0, 0, 0]; u[(ai + 1) % 3] = 1;
     v = [0, 0, 0]; v[(ai + 2) % 3] = 1;
   } else {
-    let best = null, bestLen = -1;
-    for (const [a, b, c] of tris) {
-      for (const e of [sub(b, a), sub(c, b), sub(a, c)]) {
-        const l = Math.hypot(e[0], e[1], e[2]);
-        if (l > bestLen) { bestLen = l; best = e; }
-      }
-    }
-    u = norm(sub(best, scale(mean, dot(best, mean)))); // project into plane
+    u = boundaryU(tris, mean);
     v = norm(cross(mean, u));
   }
 

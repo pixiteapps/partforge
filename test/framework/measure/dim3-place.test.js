@@ -5,6 +5,8 @@ import {
   HYSTERESIS, FLIP_DEADBAND_DEG, standoffNominal,
 } from "../../../src/framework/measure/dim3-place.js";
 import { bboxSpec } from "../../../src/framework/measure/feature-dims.js";
+import { spanSpec } from "../../../src/framework/measure/readings.js";
+import { expectSquareDim, cross, dot, norm } from "./drawing-rules.js";
 
 // a 10×20×30 box as a soup of its 8 corners (enough for extreme scans)
 function boxMeshData(min = [0, 0, 0], max = [10, 20, 30]) {
@@ -209,7 +211,7 @@ describe("placeDims — bbox", () => {
     expect(dim.dir[1]).toBeCloseTo(0, 6);
   });
 
-  it("anchors extension lines at the surfaceHit point, snapped onto the dim plane", () => {
+  it("anchors extension lines at the surfaceHit point's level along ext, square to the dim", () => {
     const items = [overallItem()];
     const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
     // deliberately off the X dim's plane (y=99, nowhere near the box)
@@ -220,9 +222,17 @@ describe("placeDims — bbox", () => {
       bounds: { min: [0, 0, 0], max: [10, 20, 30] },
     }, choices)[0];
     const dim = d.dims[0];
-    expect(dim.pA[0]).toBeCloseTo(2, 6); // the hit, not the bbox corner
-    expect(dim.pA[1]).toBeCloseTo(dim.baseA[1], 6); // snapped back onto the plane
+    // ext is +Z (e2s1), base A sits at the top face (z = 30). The anchor takes
+    // the hit's level along ext (z = 0), not the bbox corner's (z = 30), but
+    // stays on base A's ext line: x is the dim's own x (0, not the hit's 2)
+    // and y is the dim plane's (not the hit's 99) — the hit can only slide an
+    // anchor along its extension line, never tilt it.
+    expect(dim.ext).toEqual([0, 0, 1]);
+    expect(dim.pA[2]).toBeCloseTo(0, 6);
+    expect(dim.pA[0]).toBeCloseTo(dim.baseA[0], 6);
+    expect(dim.pA[1]).toBeCloseTo(dim.baseA[1], 6);
     expect(dim.pA[1]).not.toBeCloseTo(99, 3);
+    expectSquareDim(dim);
   });
 
   it("formats labels in inches on request; values stay mm for matching", () => {
@@ -280,7 +290,7 @@ describe("placeDims — plane and cylinder", () => {
     const choices = evaluateChoices([item], { camPos: [100, 0, 5], center: [0, 0, 5], prev: {} });
     const d = placeDims([item], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];
     expect(d.diams.length).toBe(1);
-    expect(d.diams[0].label.text).toBe("⌀8.00");
+    expect(d.diams[0].label.text).toBe("⌀8.00 mm");
     // camera at +X → du = +X (the projected ellipse's foreshortened axis);
     // the diameter line runs along dv = +Y, the WIDE axis, at radius 4
     expect(d.diams[0].rimA[1]).toBeCloseTo(4, 5);
@@ -294,8 +304,43 @@ describe("placeDims — plane and cylinder", () => {
     const part = { ...full, values: { ...full.values, partial: true } };
     const d2 = placeDims([{ id: "h", tier: "hover", spec: part }], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];
     expect(d2.leaders.length).toBe(1);
-    expect(d2.leaders[0].label.text).toBe("R4.00");
+    expect(d2.leaders[0].label.text).toBe("R4.00 mm");
     expect(d2.leaders[0].rim[0]).toBeCloseTo(4, 5); // on the arc, along rimDir
+  });
+
+  it("a clicked cylinder draws its ⌀ across the hole from the clicked side, at the clicked depth", () => {
+    const spec = {
+      kind: "cylinder",
+      values: { diameter: 8, partial: false },
+      anchors: {
+        center: [0, 0, 5], axis: [0, 0, 1], top: [0, 0, 10], bottom: [0, 0, 0], rimDir: [1, 0, 0],
+        at: [0, 0, 7], clickDir: [0, -1, 0],
+      },
+    };
+    const item = { id: "first", tier: "pinned", spec };
+    // the camera sits on +X: without the click, the line would run along Y anyway,
+    // so put it on -Y to prove the click wins over the camera
+    const choices = evaluateChoices([item], { camPos: [0, -100, 30], center: [0, 0, 5], prev: {} });
+    const d = placeDims([item], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];
+    expect(d.diams.length).toBe(1);
+    const diam = d.diams[0];
+    // rimA is the clicked side, rimB straight across through the centre
+    expect(diam.rimA.map((v) => +v.toFixed(5) + 0)).toEqual([0, -4, 7]);
+    expect(diam.rimB.map((v) => +v.toFixed(5) + 0)).toEqual([0, 4, 7]);
+    // the label runs off the clicked end, outward
+    expect(diam.du.map((v) => +v.toFixed(5) + 0)).toEqual([0, -1, 0]);
+    expect(d.dims.length).toBe(0); // no depth value, no depth dim
+
+    // the wall's reading adds the depth, spanning the whole wall, not up to the click
+    const wall = { ...spec, values: { diameter: 8, depth: 10, partial: false } };
+    const dw = placeDims([{ id: "first", tier: "pinned", spec: wall }], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];
+    expect(dw.dims.length).toBe(1);
+    expect(dw.dims[0].label.text).toBe("10.00 mm");
+    expect([dw.dims[0].pA[2], dw.dims[0].pB[2]].sort((a, b) => a - b)).toEqual([0, 10]);
+
+    const part = { ...spec, values: { ...spec.values, partial: true } };
+    const d2 = placeDims([{ id: "first", tier: "pinned", spec: part }], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];
+    expect(d2.leaders[0].rim.map((v) => +v.toFixed(5) + 0)).toEqual([0, -4, 7]);
   });
 });
 
@@ -348,5 +393,128 @@ describe("extremeVertex — scan reuse", () => {
     const md = boxMeshData(); // 8 corners: every extreme is a 4-way tie
     expect(extremeVertex(md, 0, +1, new THREE.Vector3(10, 0, 0)).toArray()).toEqual([10, 0, 0]);
     expect(extremeVertex(md, 0, +1, new THREE.Vector3(10, 20, 30)).toArray()).toEqual([10, 20, 30]);
+  });
+});
+
+describe("placeDims — edge and span", () => {
+  const BOUNDS = { min: [0, 0, 0], max: [40, 40, 40] };
+  const placeOne = (spec, camPos, center = [15, 2, 0.5]) => {
+    const item = { id: "r", tier: "pinned", pinned: true, spec };
+    const choices = evaluateChoices([item], { camPos, center, prev: {} });
+    return { drawings: placeDims([item], { bounds: BOUNDS }, choices), choices };
+  };
+
+  it("span: axis-aligned dim lies on a parts axis", () => {
+    const spec = spanSpec([0, 0, 0], [30, 4, 1]);
+    for (const cam of [[15, -100, 0], [15, 2, 100], [-80, 60, 40]]) {
+      const { drawings, choices } = placeOne(spec, cam);
+      expect(choices["r|span"]).toBeDefined();
+      const dims = drawings[0].dims;
+      expect(dims.length).toBe(1);
+      expectSquareDim(dims[0]);
+      expect(dims[0].label.value).toBe(30);
+      expect(dims[0].label.text).toBe("30.00 mm");
+      expect(Math.abs(dims[0].dir[0])).toBeCloseTo(1, 9); // measured along X
+      expect(dims[0].standoffScale).toBeCloseTo(0.55, 9);
+      // the dim line runs between the two points' X coordinates
+      expect(dims[0].baseA[0]).toBeCloseTo(0, 9);
+      expect(dims[0].baseB[0]).toBeCloseTo(30, 9);
+    }
+  });
+
+  it("span: the measured axis may point away from b (signed component)", () => {
+    // a parallel-face gap whose first normal faces away from the second point
+    const spec = spanSpec([0, 0, 10], [3, 2, 0], { faceNormals: [[0, 0, 1], [0, 0, -1]] });
+    expect(spec.anchors.axis).toEqual([0, 0, 1]);
+    const { drawings } = placeOne(spec, [100, -50, 5]);
+    const dim = drawings[0].dims[0];
+    expectSquareDim(dim);
+    expect(dim.label.value).toBe(10);
+    expect(dim.baseB[2] - dim.baseA[2]).toBeCloseTo(-10, 9);
+  });
+
+  const PARTS = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  const CAMS = [[15, 20, 100], [100, 20, 0], [15, -100, 0], [-60, 80, 30], [-65, 80, 20]];
+  // the weaker rule for general position: the dim plane holds a frame axis
+  const expectPlaneHoldsAxis = (dim, d) => {
+    expect(Math.abs(dot(norm(dim.dir), d))).toBeCloseTo(1, 9);
+    expect(Math.abs(dot(norm(dim.ext), d))).toBeLessThan(1e-9);
+    const n = norm(cross(dim.dir, dim.ext));
+    expect(PARTS.some((k) => Math.abs(dot(k, n)) < 1e-9)).toBe(true);
+  };
+
+  it("span: straight dim reads the true distance and stays square to a frame axis", () => {
+    const spec = spanSpec([0, 0, 0], [30, 40, 0], { straight: true });
+    for (const cam of CAMS) {
+      const { drawings, choices } = placeOne(spec, cam, [15, 20, 0]);
+      expect(choices["r|span"].key).toMatch(/^k2/); // Z is the only axis ⊥ the line
+      const dim = drawings[0].dims[0];
+      expect(dim.label.value).toBe(50);
+      expectSquareDim(dim);
+    }
+  });
+
+  it("span: a straight dim in general position keeps a frame axis in its plane", () => {
+    const spec = spanSpec([0, 0, 0], [20, 30, 40], { straight: true });
+    const d = norm([20, 30, 40]);
+    for (const cam of CAMS) {
+      const dim = placeOne(spec, cam, [10, 15, 20]).drawings[0].dims[0];
+      expect(dim.label.value).toBeCloseTo(Math.hypot(20, 30, 40), 2);
+      expectPlaneHoldsAxis(dim, d);
+    }
+  });
+
+  it("span: a gap between tilted parallel faces", () => {
+    // normal tilted 30° about X: X is square to it, so ext is exactly ±X
+    const c = Math.cos(Math.PI / 6), s = Math.sin(Math.PI / 6);
+    const n = [0, -s, c];
+    const a = [0, 0, 0], b = [4, -s * 10 + 3 * c, c * 10 + 3 * s]; // 10 along n, 3 in-plane
+    const spec = spanSpec(a, b, { faceNormals: [n, n] });
+    expect(spec.values.distance).toBe(10);
+    for (const cam of CAMS) {
+      const dim = placeOne(spec, cam, [2, 0, 5]).drawings[0].dims[0];
+      expect(dim.label.value).toBe(10);
+      expectSquareDim(dim);
+      expect(Math.abs(dim.ext[0])).toBe(1);
+    }
+    // general position: a normal square to no frame axis
+    const g = norm([1, 2, 3]);
+    const gspec = spanSpec([0, 0, 0], g.map((v) => v * 10), { faceNormals: [g, g] });
+    for (const cam of CAMS) {
+      const dim = placeOne(gspec, cam, [2, 3, 5]).drawings[0].dims[0];
+      expect(dim.label.value).toBe(10);
+      expectPlaneHoldsAxis(dim, g);
+    }
+  });
+
+  it("edge: a nearly perpendicular axis gives ext exactly on that axis", () => {
+    const spec = { kind: "edge", values: { length: 30 }, anchors: { a: [0, 0, 0], b: [30, 0.01, 0.02] } };
+    for (const cam of [[15, -100, 0], [15, 0, 100]]) {
+      const dim = placeOne(spec, cam, [15, 0, 0]).drawings[0].dims[0];
+      expect(dim.ext.filter((v) => Math.abs(v) === 1).length).toBe(1);
+      expectSquareDim(dim);
+    }
+  });
+
+  it("edge: one dim, its length", () => {
+    const spec = { kind: "edge", values: { length: 25 }, anchors: { a: [5, 0, 2], b: [30, 0, 2] } };
+    for (const cam of [[15, -100, 2], [15, 0, 100]]) {
+      const { drawings } = placeOne(spec, cam, [17, 0, 2]);
+      expect(drawings.length).toBe(1);
+      const dims = drawings[0].dims;
+      expect(dims.length).toBe(1);
+      expect(dims[0].label.value).toBe(25);
+      expect(dims[0].pA).toEqual([5, 0, 2]);
+      expect(dims[0].pB).toEqual([30, 0, 2]);
+      expectSquareDim(dims[0]);
+    }
+  });
+
+  it("edge: a sloped edge in a coordinate plane hangs its dim along the square axis", () => {
+    const spec = { kind: "edge", values: { length: 50 }, anchors: { a: [0, 0, 0], b: [30, 0, 40] } };
+    const { drawings } = placeOne(spec, [15, -100, 20], [15, 0, 20]);
+    const dim = drawings[0].dims[0];
+    expectSquareDim(dim);
+    expect(Math.abs(dim.ext[1])).toBeCloseTo(1, 9);
   });
 });
