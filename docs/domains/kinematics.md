@@ -595,7 +595,8 @@ handles: {
            toward: [1, 0, 0],
            seed: ["base", "shoulder", "elbow", "wristPitch", "wristYaw", "wristRoll"] },
   index: { limb: "index", mode: "angles", params: ["indexCurl", "indexSpread", "wristPitch"],
-           lock: "indexLock" },
+           lock: "indexLock",
+           joints: { spread: "indexSpread", "palm.wristPitch": "wristPitch" } },
 },
 ```
 
@@ -628,6 +629,14 @@ for example when the upper arm gets longer.
   posed limb, so they stay right at pitch ±90 and on a goal at a joint.
 - At pitch ±90 the yaw and roll rings turn about the same axis. That is gimbal lock, and
   it is in the angles themselves, not the viewer.
+- **Joint rings.** Each joint `seed` names gets a rotate ring (see "Joint rings" under
+  "Pose mode"). Turning it turns that joint alone, and the viewer then writes the goal
+  where the turned pose puts the `at` point: its position, and with `aim` its pitch, yaw
+  and roll, read back through the `aimFromAngles` convention from the handle's `toward`.
+  The seed already holds the turned angles, so the next solve starts at its answer and
+  the limb stays put. Where the angles are not unique, the viewer picks the pitch inside
+  the pitch parameter's range nearest its current value, and with the aim straight up or
+  down it keeps the current yaw and puts the rest of the turn in the roll.
 
 ### `mode: "angles"`
 
@@ -641,6 +650,20 @@ however the listed parameters move it: a `curl` curls the whole finger.
   drag of any handle. This includes a parameter that two handles share, such as the
   wrist: a locked finger holds the wrist still.
 - Presets still write a locked value. Set presets in the panel. A lock only stops a drag.
+- **`joints`** gives joints a rotate ring (see "Joint rings" under "Pose mode"). Each key
+  is a joint of the handle's limb (`"spread"`) or `"<limb>.<joint>"` for a joint of
+  another posed limb, such as a parent palm (`"palm.wristPitch"`; `<limb>` is a key of
+  `derive`'s result). Each value names the parameter that drives that joint directly, in
+  degrees:
+  - a parameter name, when the joint's value is the parameter;
+  - `{ param, scale }`, when the joint turns `scale` × the parameter (the hand's ring and
+    pinky spreads are `scale: -1`);
+  - `{ bend?, spread?, twist? }` for a ball joint, one parameter for each ring.
+
+  Leave out a joint whose parameter drives more than one joint, such as a `curl`: a ring
+  would turn the whole finger. Lint checks every key (`handle-unknown-joint`) and every
+  parameter (`handle-unknown-param`). A parameter that a locked handle drives (one it
+  lists in `params` or `joints`) gets no ring.
 
 ### Pose mode
 
@@ -656,8 +679,8 @@ when they are all off.
   hover label does not show.
 - **Drag a dot, a joint or an aim ring** to pose the limb. Orbit gives way to the grab.
 - **The aim gizmo.** A goal handle with `aim` shows a ball and rotate rings at its `at`
-  point instead of a dot. They show when you hover near the limb, and they stay while
-  you drag any part of them. Hover a part to highlight it: it gets lighter and thicker,
+  point instead of a dot. They show when you hover the point, and they stay while the
+  pointer is inside the rings and while you drag any part of them. Hover a part to highlight it: it gets lighter and thicker,
   and the cursor changes to a grab hand. Drag the ball to move the point, as you drag a
   dot. Drag a ring to turn the aim parameter of that ring. Seen edge-on, a ring turns
   as you move the pointer across it. The ball's target is 28 CSS px wide and a ring's
@@ -667,8 +690,24 @@ when they are all off.
 - **Click a tip (no drag)** to pin it. This click does not pick. A drag does not pick
   when you release it. A pin is view state, not a parameter. A "Release pins" button
   shows in the viewbar while a pin is set and posing is on.
+- **Joint rings.** A joint with a parameter to turn (a goal handle's `seed`, an angles
+  handle's `joints`) shows a rotate ring about its axis while you hover its dot: a hinge
+  shows one ring, a ball joint three (bend, spread and twist). The ring colour follows the
+  axis: bend red, spread blue, twist green. Joints at one point share one gizmo, each in
+  its own ring (the robot arm's wrist pitch, yaw and roll). Drag a ring to turn that one
+  joint (forward kinematics): it writes that joint's parameter, clamped to the joint's
+  range. The limit arc shows during the drag, and a joint at its stop shows the warning
+  colour. Drag the dot itself for the inverse-kinematics drag, as before. A goal handle's
+  joints, and a limb that only a `joints` entry names, have ring-only dots: hover one to
+  show its ring; a press on it orbits. A ring drag does not hold pins.
+- **One gizmo at a time.** The aim gizmo shows once you hover its goal point; a joint's
+  rings show once you hover its dot. A gizmo stays while the pointer is inside its rings.
+  There, another joint's dot takes over only when the pointer is on its core (8 CSS px),
+  so moving from a joint out to its ring never flashes the gizmo away. Where a dot and the
+  shown ring are both under the pointer, the nearer one wins.
 - **Touch has no hover.** A touch press 24 px or less from a dot of any limb drags that
-  dot. A touch press anywhere else orbits or picks.
+  dot. A touch press anywhere else orbits or picks. A touch on a joint with rings leaves
+  its rings up until a touch lands somewhere else, as with the aim gizmo.
 - **Touch and the aim gizmo.** A tap on a goal point with `aim` shows its aim gizmo and
   does not pin it. The gizmo stays until a touch lands somewhere else, so you can then
   drag a ring with your finger. A drag from the point also leaves it shown. While the

@@ -81,6 +81,7 @@ npx vitest run test/measure.test.js          # a single test file
 npx vitest run -t "assembly has no interpenetrating"   # a single test by name
 npm run check      # headless smoke test: boots an app in real Chromium (needs Playwright)
 node scripts/check-app.mjs demo.html         # smoke-test a specific app entry
+npm run bench:pose                           # posing frame times in real Chromium (robot-arm.html, hand.html; --preview for a production build)
 node scripts/time-sheet-inspect.mjs [--browser]    # inspect timing for the sheet-part stress cases (docs/research/sheet-inspect-timing.md)
 node scripts/capture-contact-sheet.mjs --out <dir> # realistic captures of materials.html in every environment + the laser-burn diffs
 ```
@@ -651,8 +652,13 @@ the installed package, so let the publish finish before bumping the dep there.
   `pose-session.js` (the drag state machine and pins, effects injected) are pure;
   `pose-geom.js` is its pure geometry leaf, `pose-scene.js` the three.js overlay,
   `pose-mode.js` the orchestrator, `pose-controls.js` the viewbar's Release pins
-  action, `aim-gizmo.js` the ball-and-rings widget on a goal handle with `aim`. That
-  widget is built on **`src/framework/gizmo/`**, the cutaway control's handle code
+  action, `aim-gizmo.js` the ball-and-rings widget on a goal handle with `aim` and the
+  joint rings (`createJointGizmo`: one ring per rotation of a hovered joint whose
+  parameter a goal handle's `seed` or an angles handle's `joints` names — a ring drag is
+  forward kinematics, `session.jointFrame`; in goal mode param-solve's `jointRingValues`
+  also moves the goal onto the turned pose, through the limb's `ikForward` and
+  `solve/aim.js`'s `anglesFromAim`, so the next solve keeps it). One gizmo shows at a
+  time (pose-mode's `focus`). That widget is built on **`src/framework/gizmo/`**, the cutaway control's handle code
   shared: `gizmo-handles.js` (palette, materials, normal/hovered geometry pairs, the
   hover rule), `gizmo-pick.js` (proxy-vs-centre picking) and `gizmo-rotate.js` (the
   ring drag: plane route, edge-on screen fallback). Change a shared look there and both
@@ -665,6 +671,12 @@ the installed package, so let the publish finish before bumping the dep there.
   shows its new mesh (playback-stale deliveries included), commits once on release
   (`onParamsCommit`), cancels the drag on a host write or a view switch, and makes
   every effect a no-op once dispose starts (pose mode detaches late, LIFO).
+  **`src/framework/derive-memo.js`** (`withDeriveMemo`) memoizes `resolveDerived` by
+  params content inside a scope (a pose drag frame, a pose overlay refresh, mount's
+  `onParamChange`), so one frame derives each distinct params once. It relies on
+  `derive` being pure and on every reader treating `d` as read-only (readers in a scope
+  share one `d`); a derive that writes its params or throws is never stored. Internal:
+  not part of `partforge/derive`.
 - **`src/framework/core/`** + **`native/`** - the native core: C++ ports of the
   hottest per-vertex JS (`creasedNormals` with the fillet-surface evaluators,
   and the oracle's BVH + min-wall), compiled to ONE WebAssembly module embedded
