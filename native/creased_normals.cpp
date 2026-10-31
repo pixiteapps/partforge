@@ -55,7 +55,7 @@ inline int32_t toInt32(double d) {
   return (int32_t)(uint32_t)m;
 }
 
-struct Policy { double creaseCos; bool boundaryLines; bool sameSurfaceLines; int32_t labelId; };
+struct Policy { double creaseCos; bool boundaryLines; bool sameSurfaceLines; bool organic; int32_t labelId; int32_t group; };
 
 }  // namespace
 
@@ -173,7 +173,8 @@ extern "C" void cn_finish(CNState* s, const uint32_t* oids, const double* crease
                           const int32_t* labelIds, uint32_t numOids,
                           double coplanarCos, double analyticCos,
                           const int32_t* runDesc, const double* runXf,
-                          const double* descData, const uint32_t* descOffsets, uint32_t numDesc) {
+                          const double* descData, const uint32_t* descOffsets, uint32_t numDesc,
+                          const int32_t* groups, double siblingCos) {
   const float* vp = s->vp; const uint32_t np = s->np, nTri = s->nTri, nVert = s->nVert;
   const uint32_t* tris = s->tris;
   const std::vector<uint32_t>& weld = s->weld;
@@ -185,7 +186,7 @@ extern "C" void cn_finish(CNState* s, const uint32_t* oids, const double* crease
   for (uint32_t i = 0; i + 1 < numOids; i++) rowOf.insert(oids[i], i);
   std::vector<Policy> pol(numOids);
   for (uint32_t i = 0; i < numOids; i++)
-    pol[i] = {creaseCos[i], (flags[i] & 1) != 0, (flags[i] & 2) != 0, labelIds[i]};
+    pol[i] = {creaseCos[i], (flags[i] & 1) != 0, (flags[i] & 2) != 0, (flags[i] & 4) != 0, labelIds[i], groups[i]};
 
   // What a pass reads about a triangle, together (the facet normal and
   // thinness exactly as the float32 arrays held them).
@@ -287,9 +288,14 @@ extern "C" void cn_finish(CNState* s, const uint32_t* oids, const double* crease
       bool analytic = false, solid = false;
       for (uint32_t i = 0; i < d; i++) {
         const Tri& T2 = nb[i];
-        if (T2.oid != T.oid && !(pol[T2.pol].boundaryLines || P.boundaryLines)) continue;
         const double f0 = T2.fn[0], f1 = T2.fn[1], f2 = T2.fn[2];
-        if (f0 * fx + f1 * fy + f2 * fz < sharpCos) continue;
+        const double d2 = f0 * fx + f1 * fy + f2 * fz;
+        // Sibling surfaces (one group) count across their seam while it bends no more than
+        // SIBLING_SEAM_ANGLE (creased-normals.js).
+        if (T2.oid != T.oid && !(pol[T2.pol].boundaryLines || P.boundaryLines)) {
+          if (!(P.group >= 0 && P.group == pol[T2.pol].group && d2 >= siblingCos)) continue;
+        }
+        if (d2 < sharpCos) continue;
         if (T2.thin < SHADE_SLIVER) { sx += f0; sy += f1; sz += f2; }
         else { nx += f0; ny += f1; nz += f2; solid = true; }
         if (anyEval) {
@@ -386,7 +392,9 @@ extern "C" void cn_finish(CNState* s, const uint32_t* oids, const double* crease
       const double dot = (double)Tp.fn[0] * Tt.fn[0] + (double)Tp.fn[1] * Tt.fn[1] + (double)Tp.fn[2] * Tt.fn[2];
       const bool bends = std::fabs(dot) < coplanarCos;
       const bool bothBlend = !sameOID && Pp.boundaryLines && Pt.boundaryLines;
-      const bool hard = boundary || (bends && ((sameOID || bothBlend) ? (Pt.sameSurfaceLines && dot < Pt.creaseCos) : true));
+      // Two organic surfaces meet skin to skin: no seam line (creased-normals.js).
+      const bool bothOrganic = !sameOID && Pp.organic && Pt.organic;
+      const bool hard = boundary || (bends && !bothOrganic && ((sameOID || bothBlend) ? (Pt.sameSurfaceLines && dot < Pt.creaseCos) : true));
       if (!hard) continue;
       const size_t ai = (size_t)i * np, bj = (size_t)j * np;
       const double dx = (double)vp[ai] - vp[bj], dy = (double)vp[ai + 1] - vp[bj + 1], dz = (double)vp[ai + 2] - vp[bj + 2];

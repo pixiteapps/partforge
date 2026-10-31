@@ -27,9 +27,15 @@ export function backendForFormat(format, defaultBackend) {
 let controllers = 0;
 // Every id any controller mints, so a reply to another controller's job is
 // recognised even though this controller never sent it.
-const CONTROLLER_JOB_ID = /^(?:export|warm)-\d+-\d+$/;
+const CONTROLLER_JOB_ID = /^(?:export|warm|mesh)-\d+-\d+$/;
 
-export function createExportController({ send, currentView, title, defaultBackend = () => "manifold", currentParams = () => ({}) }) {
+// `organicFor({ view, params, parts })` names the export's organic sub-parts (k.implicit;
+// backend-select.js organicExportParts) — mount supplies it, since only it has the part.
+// A STEP export with any runs in two legs: the Manifold worker meshes them
+// (mesh-subparts), then the OCCT worker builds the rest and writes the file with those
+// meshes as tessellated solids (export-step's `meshes`). With none, a STEP export is the
+// single OCCT job it always was.
+export function createExportController({ send, currentView, title, defaultBackend = () => "manifold", currentParams = () => ({}), organicFor = () => [] }) {
   const pending = new Map(); // jobId -> { resolve, reject, onProgress }
   const controller = ++controllers;
   let nextId = 1;
@@ -44,14 +50,25 @@ export function createExportController({ send, currentView, title, defaultBacken
   // read them — and are left off entirely when not, so every other export's message is
   // exactly what it always was.
   function exportParts({ parts, format, quality = "print", onProgress, options } = {}) {
-    const jobId = `export-${controller}-${nextId++}`;
-    const type = `export-${format}`;
-    const backend = backendForFormat(format, defaultBackend);
-    return new Promise((resolve, reject) => {
+    const view = currentView(), params = currentParams();
+    const job = (extra) => {
+      const jobId = `export-${controller}-${nextId++}`;
+      return new Promise((resolve, reject) => {
+        pending.set(jobId, { resolve, reject, onProgress });
+        send({ type: `export-${format}`, jobId, parts, view, params, name: title(), quality,
+          ...(options !== undefined ? { options } : {}), ...extra }, backendForFormat(format, defaultBackend));
+      });
+    };
+    if (format !== "step") return job({});
+    let organic;
+    try { organic = organicFor({ view, params, parts }); } catch (e) { return Promise.reject(e); }
+    if (organic.length === 0) return job({});
+    const jobId = `mesh-${controller}-${nextId++}`;
+    const meshed = new Promise((resolve, reject) => {
       pending.set(jobId, { resolve, reject, onProgress });
-      send({ type, jobId, parts, view: currentView(), params: currentParams(), name: title(), quality,
-        ...(options !== undefined ? { options } : {}) }, backend);
+      send({ type: "mesh-subparts", jobId, parts: organic, view, params, quality: "print" }, "manifold");
     });
+    return meshed.then((meshes) => job({ meshes }));
   }
 
   // Pay a backend's cold boot on purpose, before anything needs it. STEP is
@@ -86,6 +103,7 @@ export function createExportController({ send, currentView, title, defaultBacken
     if (!entry) return typeof jobId === "string" && CONTROLLER_JOB_ID.test(jobId);
     if (m.type === "progress") { entry.onProgress?.(m.phase); return true; }
     if (m.type === "kernel-warm") { pending.delete(m.jobId); entry.resolve(); return true; }
+    if (m.type === "subpart-meshes") { pending.delete(m.jobId); entry.resolve(m.meshes); return true; }
     if (m.type === "download") {
       pending.delete(m.jobId);
       triggerDownload(m.data, m.filename, m.mime, sink);

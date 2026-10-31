@@ -71,6 +71,10 @@
       "types": "./types/kinematics.d.ts",
       "default": "./src/framework/domains/kinematics/index.js"
     },
+    "./organic": {
+      "types": "./types/organic.d.ts",
+      "default": "./src/framework/domains/organic/index.js"
+    },
     "./tokens.css": "./src/framework/tokens.css",
     "./chrome.css": "./src/framework/chrome.css"
   },
@@ -105,6 +109,9 @@
       ],
       "kinematics": [
         "./types/kinematics.d.ts"
+      ],
+      "organic": [
+        "./types/organic.d.ts"
       ]
     }
   },
@@ -125,7 +132,8 @@
     "offset-rates": "node scripts/offset-rates.mjs",
     "bench:softrender": "node scripts/bench-softrender.mjs",
     "check:softrender": "node scripts/check-softrender-parity.mjs",
-    "bench:core": "vitest run --config scripts/bench-core/vitest.config.js"
+    "bench:core": "vitest run --config scripts/bench-core/vitest.config.js",
+    "bench:implicit": "node scripts/bench-implicit.mjs"
   },
   "peerDependencies": {
     "happy-dom": ">=20"

@@ -29,7 +29,7 @@ CNState* cn_create(const float* vertProperties, uint32_t numProp, uint32_t numVe
 
 // Policy table: one row per original surface id seen in the mesh. Every
 // cosine is computed by the CALLER (JS Math.cos), so the C++ never has to
-// agree with another libm. flags: bit 0 boundaryLines, bit 1 sameSurfaceLines.
+// agree with another libm. flags: bit 0 boundaryLines, bit 1 sameSurfaceLines, bit 2 organic.
 // labelIds: interned feature label per row, -1 for none. The LAST row is the
 // SMOOTH default for any surface not in the table (its oid is ignored).
 // Fillet surfaces: runDesc (numRun entries) names each run's descriptor, -1
@@ -37,11 +37,15 @@ CNState* cn_create(const float* vertProperties, uint32_t numProp, uint32_t numVe
 // descData holds the descriptors back to back in blend_surfaces.h's flat
 // layout, descriptor i at [descOffsets[i], descOffsets[i+1]). All may be null
 // with numDesc 0 when the mesh has no fillet surfaces.
+// groups: per policy row, the sibling group (shading-policy.js), -1 for none. Two rows
+// with the same group >= 0 are siblings: across their seam a neighbour counts when its
+// facet normal's dot with the corner's is >= siblingCos (cos SIBLING_SEAM_ANGLE).
 void cn_finish(CNState*, const uint32_t* oids, const double* creaseCos, const uint8_t* flags,
                const int32_t* labelIds, uint32_t numOids,
                double coplanarCos, double analyticCos,
                const int32_t* runDesc, const double* runXf,
-               const double* descData, const uint32_t* descOffsets, uint32_t numDesc);
+               const double* descData, const uint32_t* descOffsets, uint32_t numDesc,
+               const int32_t* groups, double siblingCos);
 
 const float* cn_positions(const CNState*);        // numTri * 9
 const float* cn_normals(const CNState*);          // numTri * 9

@@ -17,7 +17,7 @@ import { isPlainOptions, isZeroMagnitudeCadOp, SOLID_OP_SPECS } from "./op-optio
 const ORIGIN = [0, 0, 0];
 const AXIS = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
 
-const SUGAR = {
+export const SUGAR = {
   rotateX(deg) { return this.rotate(deg, ORIGIN, [1, 0, 0]); },
   rotateY(deg) { return this.rotate(deg, ORIGIN, [0, 1, 0]); },
   rotateZ(deg) { return this.rotate(deg, ORIGIN, [0, 0, 1]); },

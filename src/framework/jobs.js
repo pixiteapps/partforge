@@ -83,6 +83,23 @@ const loadBedLayout = () => import("./export/bed-layout.js");
 // preview generates stay quiet (no callback) to avoid flicker during slider drags.
 const bufferOf = (data) => (ArrayBuffer.isView(data) ? data.buffer : data);
 
+// An organic sub-part's mesh (export-step's `meshes`): its bounds for the bed layout, and
+// a copy moved by the layout's offset.
+function meshBounds(positions) {
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < positions.length; i += 3) for (let a = 0; a < 3; a++) {
+    const v = positions[i + a];
+    if (v < min[a]) min[a] = v;
+    if (v > max[a]) max[a] = v;
+  }
+  return { min, max };
+}
+function shiftMesh({ positions, indices }, o) {
+  const p = Float32Array.from(positions);
+  for (let i = 0; i < p.length; i += 3) { p[i] += o[0]; p[i + 1] += o[1]; p[i + 2] += o[2]; }
+  return { positions: p, indices };
+}
+
 // One caller-supplied match target as a reference mask, or null when it is not one we
 // can score. Every field here is untrusted wire data, so shape is checked rather than
 // assumed — a target the caller got wrong is skipped, never thrown, so one bad entry
@@ -557,16 +574,60 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // 3MF/STEP hold every selected piece in one file; printed views-map pieces export as
       // built, so they are laid out apart (export/bed-layout.js). Sheet pieces keep their
       // assembled pose. STL is one file per piece and is never laid out.
+      //
+      // `msg.meshes` (name → { positions, indices }) are organic sub-parts the Manifold worker
+      // already built and meshed in their export pose (export-controller.js): they are not
+      // built here, they are laid out by their mesh's bounds, and each reaches toSTEP as a
+      // small stand-in solid carrying its mesh, which the writer turns into a tessellated
+      // solid. Without `meshes` this is the export it always was.
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
-      const { layoutExportPieces } = await loadBedLayout();
-      const solids = layoutExportPieces(part, names.map((name) => {
+      const meshes = msg.meshes ?? {};
+      const { layoutExportPieces, laidOutOnBed, exportLayoutOffsets } = await loadBedLayout();
+      // A failed build names its sub-part, as STL and 3MF do — above all a k.implicit
+      // call the probe did not see, which reaches OCCT and throws here.
+      const buildPiece = (name, i) => {
         onProgress(`building ${label(name)}`);
-        return { name, solid: posed(name, "export", onProgress) };
-      })).map(({ name, solid }) => ({ name: exportName(name), solid, color: printColor(part.parts[name]?.display) }));
+        try { return posed(name, "export", onProgress); }
+        catch (thrown) { throw exportPieceError(thrown, { kernel, piece: label(name), index: i, count: names.length }); }
+      };
+      let bodies;
+      if (names.some((name) => meshes[name])) {
+        const pieces = names.map((name, i) => {
+          if (meshes[name]) return { name, mesh: meshes[name], box: meshBounds(meshes[name].positions) };
+          const solid = buildPiece(name, i);
+          return { name, solid, box: laidOutOnBed(part, name) ? solid.boundingBox() : null };
+        });
+        const offsets = exportLayoutOffsets(part, pieces.filter((pc) => laidOutOnBed(part, pc.name)));
+        bodies = pieces.map(({ name, solid, mesh }) => {
+          const o = offsets.get(name);
+          const color = printColor(part.parts[name]?.display);
+          if (!mesh) return { name: exportName(name), solid: o ? solid.translate(o) : solid, color };
+          return { name: exportName(name), solid: kernel.box({ size: [1, 1, 1] }), color, mesh: o ? shiftMesh(mesh, o) : mesh };
+        });
+      } else {
+        bodies = layoutExportPieces(part, names.map((name, i) => ({ name, solid: buildPiece(name, i) }))).map(({ name, solid }) => ({ name: exportName(name), solid, color: printColor(part.parts[name]?.display) }));
+      }
       onProgress("writing STEP file");
-      const data = await kernel.toSTEP(solids);
+      const data = await kernel.toSTEP(bodies);
       post({ type: "download", data, filename: `${fileBase}.step`, mime: "application/step", jobId: msg.jobId }, [bufferOf(data)]);
+    } else if (msg.type === "mesh-subparts") {
+      // The Manifold half of a STEP export with organic sub-parts (export-controller.js):
+      // each named sub-part built in its export pose and meshed at print quality, as
+      // JS-owned arrays the OCCT worker writes into the file as tessellated solids.
+      const meshes = {};
+      for (const [i, name] of msg.parts.entries()) {
+        onProgress(`meshing ${label(name)}`);
+        try {
+          const { positions, indices } = posed(name, "export", onProgress).toIndexedMesh({ quality: "print" });
+          meshes[name] = { positions, indices };
+        } catch (thrown) {
+          throw exportPieceError(thrown, { kernel, piece: label(name), index: i, count: msg.parts.length });
+        }
+        kernel.cleanup?.();
+      }
+      post({ type: "subpart-meshes", jobId: msg.jobId, meshes },
+           Object.values(meshes).flatMap((m) => [m.positions.buffer, m.indices.buffer]));
     } else if (msg.type === "export-3mf") {
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");

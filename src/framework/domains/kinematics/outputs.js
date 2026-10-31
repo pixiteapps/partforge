@@ -2,6 +2,7 @@
 import { resolveFrames, compose, invert } from "../../geometry/xform.js";
 import { hypot3 } from "../../geometry/js-math.js";
 import { axisAngle } from "../../geometry/rotations.js";
+import { implicitAdapters } from "./implicit.js";
 
 /** Round to 0.001 with −0 written as 0 (the frame report's convention). */
 export const r3 = (v) => { const x = Math.round(v * 1000) / 1000; return x === 0 ? 0 : x; };
@@ -58,8 +59,9 @@ export function buildReport(tree, values, clamped, posedFrames, frames, fail, re
 const PLACE_FROM = new Set(["joint", "rest"]);
 
 /**
- * The adapters of one posed limb: world and place for solids. `frames` are the parent frames
- * passed to `pose`; `restFrames` every frame of the chain at rest (`place`'s `from: "rest"`).
+ * The adapters of one posed limb: flesh and attach for k.implicit (implicit.js), world and
+ * place for solids. `frames` are the parent frames passed to `pose`; `restFrames` every
+ * frame of the chain at rest (`place`'s `from: "rest"`).
  */
 export function buildAdapters(tree, posedFrames, frames, restFrames, fail) {
   const { name, joints } = tree;
@@ -98,5 +100,5 @@ export function buildAdapters(tree, posedFrames, frames, restFrames, fail) {
     return rotated.translate([M[9], M[10], M[11]]);
   }
 
-  return { world, place };
+  return { ...implicitAdapters(tree, fail), world, place };
 }

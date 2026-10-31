@@ -553,6 +553,8 @@ export interface MeasureReport {
    */
   measuredPrintBboxes?: boolean;
   subparts: SubPartFacts[];
+  /** The kernel's build warnings (a thin implicit feature, a skipped fillet), per sub-part. */
+  warnings: { part: string; message: string }[];
   aggregate: AggregateFacts;
   overlaps: Overlap[];
   /** Every sub-part pair's minimum surface distance. */

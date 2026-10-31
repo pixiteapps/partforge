@@ -21,7 +21,13 @@
 // document handle passed to Transfer is deliberately never freed: the document
 // itself is owned by its WrappingObj (as replicad's AssemblyExporter owns it),
 // and freeing the handle too would destroy it twice.
+//
+// A body may instead carry a `mesh` ({ positions, indices }: an organic sub-part Manifold
+// meshed). OCCT 7.6 cannot write tessellated geometry, so its `shape` is a small
+// stand-in that OCCT writes with the body's name and colour, and step-tessellated.js then
+// turns the stand-in into an AP242 tessellated solid in the written text.
 import { NO_MATERIAL_COLOR } from "../materials/resolve.js";
+import { spliceTessellated } from "./step-tessellated.js";
 
 const isColor = (c) => Number.isInteger(c) && c >= 0 && c <= 0xffffff;
 
@@ -32,7 +38,7 @@ function srgbChannels(color) {
   return [(c >> 16) & 255, (c >> 8) & 255, c & 255].map((v) => v / 255);
 }
 
-// bodies: [{ name, shape (a replicad Shape), color? (0xRRGGBB) }] → ArrayBuffer.
+// bodies: [{ name, shape (a replicad Shape), color? (0xRRGGBB), mesh? }] → ArrayBuffer.
 export function writeStep(replicad, bodies) {
   const oc = replicad.getOC();
   const r = replicad.GCWithScope();
@@ -76,5 +82,10 @@ export function writeStep(replicad, bodies) {
   if (writer.Write(filename) !== oc.IFSelect_ReturnStatus.IFSelect_RetDone) throw new Error("STEP write failed");
   const file = oc.FS.readFile(`/${filename}`);
   oc.FS.unlink(`/${filename}`);
-  return file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength);
+  // OCCT writes the bodies in the order it was given them, which is how the splice finds
+  // each stand-in.
+  const meshes = bodies.flatMap(({ mesh }, index) => (mesh ? [{ index, ...mesh }] : []));
+  if (meshes.length === 0) return file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength);
+  const spliced = spliceTessellated(new TextDecoder().decode(file), meshes);
+  return spliced.buffer.slice(spliced.byteOffset, spliced.byteOffset + spliced.byteLength);
 }

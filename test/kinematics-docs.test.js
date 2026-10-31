@@ -2,16 +2,19 @@
 // that has nothing else, so every example it shows must be what the code does:
 // - every runnable ```js block is executed, in order, in one scope; a top-level statement
 //   followed by `// <value>` (on its line, or on the `//` lines right after it) must
-//   deep-equal that value, read from the guide text itself;
+//   deep-equal that value, read from the guide text itself; every k.implicit(spec) call
+//   in them is handed a spec the k.implicit grammar accepts;
 // - every message in the Errors block is produced, verbatim, by a real call, and is a
 //   SpecError with code "SPEC";
 // - the edge-case numbers in the prose are what the code reports;
 // - the worked example's excerpt is quoted from src/parts/robot-finger.js line for line;
-// - the guide names no API that main does not ship (flesh, attach, k.implicit).
+// - the guide never names a branch: it is shipped text.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { limb } from "../src/framework/domains/kinematics/index.js";
+import { implicitDistance } from "../src/framework/geometry/polygon.js";
+import { validateSpec } from "../src/framework/geometry/implicit/grammar.js";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const guide = read("../docs/domains/kinematics.md");
@@ -61,8 +64,13 @@ test("every runnable example in the guide returns the value it shows", () => {
     expect(plain(run()), src).toEqual(evalValue(text));
     checked.push(src);
   };
-  new Function("limb", "check", blocks.map(toScript).join("\n"))(limb, check);
-  expect(checked.length).toBe(29);   // every shown value; a parse change that drops one fails here
+  // The guide's k.implicit calls run against the grammar alone (meshing a hand here would
+  // only slow the test): each spec must validate, and every call must be reached.
+  const specs = [];
+  const k = { implicit: (spec) => { validateSpec(spec); specs.push(spec); return {}; } };
+  new Function("limb", "implicitDistance", "k", "check", blocks.map(toScript).join("\n"))(limb, implicitDistance, k, check);
+  expect(checked.length).toBe(32);   // every shown value; a parse change that drops one fails here
+  expect(specs.length).toBe(1);
 });
 
 test("every error message in the guide is the code's own, a SpecError with code SPEC", () => {
@@ -160,10 +168,11 @@ test("the worked example is quoted from src/parts/robot-finger.js", () => {
   }
 });
 
-test("the guide is self-contained for main: the import line, no unshipped API", () => {
+test("the guide is self-contained: the import lines, no branch names", () => {
   expect(guide).toContain('import { limb } from "partforge/kinematics";');
+  expect(guide).toContain('import { implicitDistance } from "partforge/geometry";');
   expect(guide).toContain("src/parts/robot-finger.js");
-  expect(guide).not.toMatch(/\bflesh\b|\battach\b|k\.implicit|implicitDistance|feat\/implicit/);
+  expect(guide).not.toMatch(/feat\/implicit/);
   // The Domains index line in the core guide points here.
   expect(read("../docs/AUTHORING-PARTS.md")).toContain("[`docs/domains/kinematics.md`](domains/kinematics.md)");
 });

@@ -96,6 +96,10 @@ const BASELINE_IDS = [
   "kernel-internal-error",
   "piece-stands-on-nothing",
   "flex-root-sharp",
+  "implicit-blend-eats-child",
+  "implicit-lipschitz-low",
+  "implicit-thin-feature",
+  "implicit-step-export",
 ];
 
 const entries = parsePatterns(doc);

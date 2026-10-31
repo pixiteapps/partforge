@@ -3,6 +3,7 @@ import { bootManifoldKernel } from "../src/testing.js";
 import { measure } from "../src/framework/oracle/measure.js";
 import { buildView } from "../src/framework/oracle/build.js";
 import gapPart from "./fixtures/gap-part.js";
+import { handSpec } from "./fixtures/implicit-trees.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -310,4 +311,30 @@ test("an unclipped fillet's arcs are exact to the grid; a boolean-clipped arc is
   expect(nearTopRight.r).toBeCloseTo(4, 1);          // within 0.05 of the true r=4
   expect(nearTopRight.center[0]).toBeCloseTo(16, 1); // within 0.05 of (16, 16)
   expect(nearTopRight.center[1]).toBeCloseTo(16, 1);
+});
+
+// A k.implicitFrames frame set is reported by its report(), wherever it sits in the value.
+const TWO_LABELS = { root: { kind: "union", children: [
+  { kind: "sphere", r: 5, at: [10, 0, 0], label: "a" },
+  { kind: "box", size: [4, 4, 4], at: [-10, 0, 0], label: "b" },
+] } };
+const framesPart = (probes) => ({ ...probedPart, probes });
+
+test("a probe returning a frame set reports its JSON", () => {
+  const r = measure(k, framesPart({ f: (kk) => kk.implicitFrames(TWO_LABELS).translate([0, 0, 2]) }), "v");
+  expect(r.probes.f).toEqual(k.implicitFrames(TWO_LABELS).translate([0, 0, 2]).report());
+});
+
+test("a frame set nested in a probe object reports whole", () => {
+  const r = measure(k, framesPart({ g: (kk) => ({ hand: { frames: kk.implicitFrames(handSpec()) }, n: 3 }) }), "v");
+  const origin = r.probes.g.hand.frames.frames["index.tip"].origin;
+  expect(origin).toHaveLength(3);
+  origin.forEach((v) => expect(typeof v).toBe("number"));
+  expect(JSON.stringify(r.probes.g)).not.toContain('"error"');
+});
+
+test("a throwing frame-set probe reports error", () => {
+  const bad = { frames: { a: { parent: "nope" } }, root: { kind: "sphere", r: 1 } };
+  const r = measure(k, framesPart({ f: (kk) => kk.implicitFrames(bad) }), "v");
+  expect(r.probes.f.error).toContain("unknown frame");
 });
