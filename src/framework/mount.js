@@ -80,10 +80,11 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
   // meshes back to their exact bases (skin/skin-drag.js), so no capture reads them.
   // beforeCapture may return a release function: the hold it took lasts until the
   // capture is done (an async renderViews awaits assets, and a slider input meanwhile
-  // must not deform the mesh it is about to draw). Returns a release, never throws.
+  // must not deform the mesh it is about to draw). Returns a release. It throws only to
+  // refuse the capture outright (the view on screen is not exact geometry — a
+  // two-stage delivery's provisional stage), and a refusing hook holds nothing.
   const prepare = () => {
-    let release;
-    try { release = beforeCapture?.(); } catch { /* never fails a capture */ }
+    const release = beforeCapture?.();
     return typeof release === "function" ? release : () => {};
   };
   const prepared = (capture) => { const release = prepare(); try { return capture(); } finally { release(); } };
@@ -1044,6 +1045,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     let cameraRestored = false; // saved camera applied once, on the first frame after load
     let partialView = null;        // the view whose first build is shown in batches (showPartial)
     let partialCameraKept = false; // that build must not reframe on completion
+    // Sub-parts whose mesh on screen is a two-stage delivery's PROVISIONAL stage (the
+    // pieces of a union of implicit bodies, concatenated — case "meshes-provisional").
+    // Never current, never cached; no capture runs while one of the view's is shown.
+    const provisional = new Set();
     let cutawayRestored = false; // a carried cutaway, applied once — after any preview, never on one
     let selectionRestored = false; // a carried selection, tried once, after the camera
     function restoreCarriedSelection() {
@@ -1338,6 +1343,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       liveDelivered = true; // only a delivery that is applied beats a preview still decoding
       for (const m of meshes) {
         viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
+        provisional.delete(m.name);
         // The view its job was SENT for, and the frame the worker delivered
         // in: "canonical" (place() not applied — mount poses it below) or
         // "posed". An older worker sends no frame; its meshes are posed.
@@ -1423,6 +1429,28 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           showPartial();
           updateRelevance();
           break;
+        case "meshes-provisional": {
+          // Two-stage delivery (spec 2026-10-31-implicit-pose-drag §5): the pieces of a
+          // union of implicit bodies, concatenated with no boolean, ahead of the union
+          // itself. Shown for the build that is still current, but never AS current:
+          // no cache stamp (the sub-part stays missing, so the loop waits on the union,
+          // exportPreview refuses and captures throw), never a skin base, and not under
+          // the cutaway, whose section cap would be cut from overlapping shells. Dropped
+          // during a pose drag, whose deformed mesh is already at the live pose.
+          if (!loop.isFresh() || viewer.cutawayEnabled?.() || skin.isDragging()) break;
+          const names = data.meshes.map((m) => m.name);
+          for (const m of data.meshes) {
+            viewer.setSubGeometry(m.name, m);
+            fastPath.forget(m.name);
+            skin.forget(m.name); // the skin's base no longer matches the geometry on screen
+            cache.forget(m.name);
+            provisional.add(m.name);
+          }
+          fastPath.apply(names, Object.fromEntries(data.meshes.map((m) => [m.name, m.frame ?? "posed"])));
+          recordFrames(data.meshes);
+          showPartial();
+          break;
+        }
         case "meshes": {
           const fresh = loop.buildDone();
           if (fresh) { // stale results (params changed mid-build) are discarded
@@ -1475,6 +1503,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             // fails this test and is discarded exactly as before.
             for (const m of data.meshes) {
               viewer.setSubGeometry(m.name, m);
+              provisional.delete(m.name);
               fastPath.forget(m.name);
               skin.forget(m.name); // built at params playback has left: never a skin base
               cache.forget(m.name); // the stamp described the last FRESH delivery; this mesh was built at other params, so no stamp may describe it (spec §2)
@@ -1500,6 +1529,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             if (rebased.length) {
               for (const m of rebased) {
                 viewer.setSubGeometry(m.name, m);
+                provisional.delete(m.name);
                 fastPath.forget(m.name);
                 cache.forget(m.name);
                 skin.recordDelivered(m.name, m, dispatched.get(m.name));
@@ -1862,7 +1892,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         measureMode.setEnabled(false);
         annotateMode?.setEnabled(false);
         previewGate.start();
-        for (const m of shown) { viewer.setSubGeometry(m.name, m); skin.forget(m.name); }
+        for (const m of shown) { viewer.setSubGeometry(m.name, m); skin.forget(m.name); provisional.delete(m.name); }
         refreshView();
       }).catch((error) => {
         if (!disposed) console.warn(`partforge: preview ignored — ${error?.message ?? error}`);
@@ -1901,9 +1931,17 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
 
     return makeHandle({
       ready, dispose, viewer, setParams,
-      // No capture reads a pose drag's deformed mesh (Task 8 extends this hook): the
-      // hold keeps a slider input during an async capture from deforming it again.
-      beforeCapture: () => { const release = skin.hold(); skin.restoreAll(); return release; },
+      // No capture reads a pose drag's deformed mesh: the hold keeps a slider input
+      // during an async capture from deforming it again. Nor a two-stage delivery's
+      // provisional stage, which has no exact base to put back: the capture throws
+      // instead — checked BEFORE the hold is taken, so a throw never leaks one.
+      beforeCapture: () => {
+        const inView = viewSubParts(part, view(), params);
+        if (inView.some((n) => provisional.has(n))) throw new Error("captureViews: the view on screen is not fully built");
+        const release = skin.hold();
+        skin.restoreAll();
+        return release;
+      },
       isPreviewActive: () => previewGate.isActive(),
       pendingCutaway: () => (!cutawayRestored ? viewerState?.cutaway ?? null : null),
       exportPreview,

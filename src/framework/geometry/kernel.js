@@ -50,6 +50,10 @@ export const KERNEL_OPTIONAL_OPS = [
   // pre-0.69 behavior (console.warn only). See KERNEL-CONTRACT.md § "Feature-skip
   // warnings channel".
   "takeBuildWarnings",
+  // Two-stage preview delivery for unions of k.implicit bodies (Manifold only; the
+  // generate job arms it for its own duration and reads the union's operands back).
+  // A host that omits them delivers every union in one stage.
+  "setProvisionalUnions", "takeProvisionalPieces",
 ];
 
 // Ops every Solid must implement (including the sugar addSugar() attaches).

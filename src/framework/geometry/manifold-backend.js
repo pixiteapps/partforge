@@ -107,7 +107,32 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // whose result is freed as soon as its one number is read — NOT tracked, so
   // an n-ary union of buried features does not hold n intermediates to cleanup.
   const volumes = new WeakMap();
+  // Two-stage delivery (docs/superpowers/specs/2026-10-31-implicit-pose-drag-design.md §5).
+  // While the generate job arms it (setProvisionalUnions), a preview union with a
+  // k.implicit result among its operands is built as Manifold's LAZY union node with its
+  // judgment below DEFERRED: pendingJudge maps the node to that judgment, and settle() runs
+  // it at the first read of the node's geometry (meshOut, indexedMeshOut, volumeOf, and
+  // every wrap method that reads or builds on it). So the job can mesh the union's
+  // operands first — the provisional stage — and the union is only evaluated when it is
+  // read. A refusing judgment is put back, so it throws again at every later read; the
+  // node is the same Manifold either way, so the union's mesh is byte-identical to an
+  // unarmed build's. Unarmed, or at print, nothing is ever deferred.
+  let provisionalUnions = false;
+  const pendingJudge = new WeakMap();   // deferred union node -> its judgment
+  const implicitMs = new WeakSet();     // the Manifolds k.implicit builds
+  const deferredMs = new WeakSet();     // the deferred union nodes (an operand that counts too)
+  let lastDeferred = null;              // the bracket's last deferred union: { m, pieces }
+  const settle = (mm) => {
+    const judge = mm && pendingJudge.get(mm);
+    if (!judge) return;
+    pendingJudge.delete(mm);            // its own volumeOf(result) must not re-enter
+    try { judge(); } catch (e) { pendingJudge.set(mm, judge); throw e; }
+  };
+  // A solid reaches its node through _m, or through its canonical base when a rigid step
+  // (translate/rotate) followed the union.
+  const settleSolid = (s) => { settle(s?._m); settle(s?._canon?.m); };
   const volumeOf = (mm) => {
+    settle(mm);
     let v = volumes.get(mm);
     if (v === undefined) { v = mm.volume(); volumes.set(mm, v); }
     return v;
@@ -120,6 +145,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // as "a union smaller than its largest operand" or "a cut that emptied
     // its body", and the coaching sends the author hunting for tangent contacts
     // that are not there. It is the operand's failure, so say that instead.
+    // A deferred union among the operands is judged first, so its own refusal is
+    // the one reported.
+    for (const mm of operandMs) settle(mm);
     const bad = operandMs.findIndex((mm) => mm.status() !== "NoError");
     if (bad >= 0) throw invalidOperand(op, bad, operandMs[bad].status());
     const box = (mm) => mm.boundingBox();
@@ -137,6 +165,20 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     return resultM;
   };
   const judgedUnion = (ms) => judged("union", ms, unionRaw(ms));
+  // kernel.union's evaluation over its operand SOLIDS: deferred (above) when armed at
+  // preview and an operand is a k.implicit result or an earlier deferred union, else
+  // judged at once as always.
+  const unionOfSolids = (solids) => {
+    const ms = solids.map((s) => s._m);
+    const deferrable = provisionalUnions && quality === "preview" && ms.length >= 2
+      && solids.some((s) => implicitMs.has(s._canon?.m) || deferredMs.has(s._canon?.m));
+    if (!deferrable) { for (const s of solids) settleSolid(s); return judgedUnion(ms); }
+    const node = unionRaw(ms);
+    pendingJudge.set(node, () => { for (const s of solids) settleSolid(s); judged("union", ms, node); });
+    deferredMs.add(node);
+    lastDeferred = { m: node, pieces: solids };
+    return node;
+  };
 
   // A retained solid's heap, estimated from its counts (solid-cache.js MEMORY BUDGET):
   // Manifold keeps per triangle three half-edges, a face normal, a triangle reference and
@@ -315,6 +357,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // Copy the mesh out into JS-owned arrays (so it survives cleanup) and free the
   // transient mesh handle.
   function meshOut(m, asStl) {
+    settle(m);
     const g = m.getMesh();
     const r = asStl ? stlFromMesh(g) : creasedNormals(g, { policies: oidPolicies, featureLabels, surfaces: blendSurfaces });
     if (!asStl) {
@@ -327,6 +370,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
 
   // Raw indexed mesh (positions x,y,z per vertex + triangle indices) for 3MF.
   function indexedMeshOut(m) {
+    settle(m);
     const g = m.getMesh();
     const np = g.numProp, vp = g.vertProperties;
     const nVert = (vp.length / np) | 0;
@@ -584,11 +628,15 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // the cache key or the capability checks. Declared as a binding the closures
   // capture: every reference runs after addSugar has returned.
   const wrap = (m, hash, canon = { m, hash, chain: [] }) => {
+    // Every method that reads this solid's geometry or builds a new base on it judges a
+    // deferred union under it first (settle, above); translate/rotate/clone carry the
+    // node in their canon instead.
+    const S = () => { settle(m); if (canon.m !== m) settle(canon.m); };
     const self = addSugar({
     _m: m,
     _hash: hash,
     _canon: canon,
-    cut: (t) => cached(h("cut", hash, t._hash), () => judged("cut", [m, t._m], T(m.subtract(t._m)))),
+    cut: (t) => { S(); settleSolid(t); return cached(h("cut", hash, t._hash), () => judged("cut", [m, t._m], T(m.subtract(t._m)))); },
     // THROWING forms. These are the composition primitives — internal callers
     // that have their own recovery (prismRoundAllFast, which answers a failed
     // fillet by falling back to the reference Minkowski roundAll) must use
@@ -598,12 +646,14 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     _filletRaw: (r, selector) => {
       if (typeof selector === "function") throw new KernelCapabilityError("fillet: function selectors need the OCCT backend");
       if (r === 0) return wrap(m, hash); // contract: zero magnitude is the identity
+      S();
       return cached(h("fillet", hash, r, selector ?? null, segs), () =>
         meshCadOp("fillet", m, () => meshFillet(kernel, wrap(m, hash), { r, edges: selector, segs, segsAt })));
     },
     _chamferRaw: (d, selector) => {
       if (typeof selector === "function") throw new KernelCapabilityError("chamfer: function selectors need the OCCT backend");
       if (d === 0) return wrap(m, hash);
+      S();
       return cached(h("chamfer", hash, d, selector ?? null, segs), () =>
         meshCadOp("chamfer", m, () => meshChamfer(kernel, wrap(m, hash), { d, edges: selector, segs, segsAt })));
     },
@@ -617,6 +667,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // same failure → same cheap re-warn, while an upstream geometry change mints
     // a new key and genuinely re-attempts the feature.
     fillet: (r, selector) => {
+      S(); // a refused union must throw here, not degrade into a skipped fillet
       const key = h("fillet", hash, r, selector ?? null, segs);
       const skipped = skippedOps.get(key);
       if (skipped !== undefined) { buildWarnings.push(skipped); return wrap(m, hash); }
@@ -629,6 +680,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       }
     },
     chamfer: (d, selector) => {
+      S();
       const key = h("chamfer", hash, d, selector ?? null, segs);
       const skipped = skippedOps.get(key);
       if (skipped !== undefined) { buildWarnings.push(skipped); return wrap(m, hash); }
@@ -642,6 +694,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     },
     roundAll: (r) => {
       if (r === 0) return wrap(m, hash); // contract: zero magnitude is the identity
+      S();
       // `quality` in the key is redundant but harmless — the cache lives on a
       // per-quality kernel, so it can never collide across tiers (the OCCT twin
       // key omits it for the same reason); it just spells out that the ball
@@ -655,6 +708,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     offset: (d) => {
       if (!Number.isFinite(d)) throw new Error(`offset: d must be a finite number (got ${d})`);
       if (d === 0) return wrap(m, hash); // contract: zero magnitude is the identity
+      S();
       return cached(h("offset", hash, d, quality), () => {
         const { out, support, segs: ballSegs } = meshOffset(wasm, m, d, quality);
         const sign = Math.sign(d); // a dilate moves a face out by h(n), an erode in by h(n)
@@ -663,12 +717,15 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     },
     // batch difference: first minus the union of the rest, evaluated as one boolean
     // tree — no materialized intermediate union (the unionRaw memory note applies)
-    cutAll: (tools) => cached(h("cutAll", hash, tools.map((t) => t._hash)), () => {
-      const ms = [m, ...tools.map((t) => t._m)];
-      return judged("cutAll", ms, T(Manifold.difference(ms)));
-    }),
-    intersect: (t) => cached(h("intersect", hash, t._hash), () => judged("intersect", [m, t._m], T(m.intersect(t._m)))),
-    union: (t) => cached(h("union", [hash, t._hash]), () => judged("union", [m, t._m], unionRaw([m, t._m]))),
+    cutAll: (tools) => {
+      S(); for (const t of tools) settleSolid(t);
+      return cached(h("cutAll", hash, tools.map((t) => t._hash)), () => {
+        const ms = [m, ...tools.map((t) => t._m)];
+        return judged("cutAll", ms, T(Manifold.difference(ms)));
+      });
+    },
+    intersect: (t) => { S(); settleSolid(t); return cached(h("intersect", hash, t._hash), () => judged("intersect", [m, t._m], T(m.intersect(t._m)))); },
+    union: (t) => { S(); settleSolid(t); return cached(h("union", [hash, t._hash]), () => judged("union", [m, t._m], unionRaw([m, t._m]))); },
     clone: () => wrap(m, hash),
     // Name this solid's surface for hover/pick feature attribution. asOriginal()
     // stamps a fresh originalID that survives transforms and booleans, so every
@@ -676,6 +733,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // registry entry lives exactly as long as the cache pins the solid — eviction
     // disposes both, so the registry can't grow unboundedly across regenerates.
     label: (name) => {
+      S();
       // Labeling only re-stamps surface ids, so it commutes with the trailing
       // transform. This is load-bearing rather than an optimization: the common
       // authoring idiom labels each piece AFTER positioning it, which would give every
@@ -809,12 +867,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       });
     },
     boundingBox: () => {
+      S();
       const b = m.boundingBox();           // { min: Vec3, max: Vec3 } — addSugar derives center/size
       return { min: [...b.min], max: [...b.max] };
     },
-    volume: () => m.volume(),
-    genus: () => m.genus(),
-    isEmpty: () => m.isEmpty(),
+    volume: () => { S(); return m.volume(); },
+    genus: () => { S(); return m.genus(); },
+    isEmpty: () => { S(); return m.isEmpty(); },
     translate: (v) => wrap(T(m.translate(v)), h("translate", hash, v),
       { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "translate", v }] }),
     rotate: (deg, center, axis) => {
@@ -826,15 +885,16 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       return wrap(T(b.translate(center)), h("rotate", hash, deg, center, axis),
         { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "rotate", deg, center, axis }] });
     },
-    mirror: (plane) => wrap(T(m.mirror(PLANE_NORMAL[plane])), h("mirror", hash, plane)),
+    mirror: (plane) => { S(); return wrap(T(m.mirror(PLANE_NORMAL[plane])), h("mirror", hash, plane)); },
     scale: (factor, center) => { // factor validated (and center defaulted) by addSugar
+      S();
       const a = T(m.translate([-center[0], -center[1], -center[2]]));
       const b = T(a.scale([factor, factor, factor]));
       return wrap(T(b.translate(center)), h("scale", hash, factor, center));
     },
-    toMesh: () => meshOut(m, false),
-    toSTL: () => Promise.resolve(meshOut(m, true)),
-    toIndexedMesh: () => indexedMeshOut(m),
+    toMesh: () => { S(); return meshOut(m, false); },
+    toSTL: () => { S(); return Promise.resolve(meshOut(m, true)); },
+    toIndexedMesh: () => { S(); return indexedMeshOut(m); },
     });
     return self;
   };
@@ -1073,6 +1133,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
           : manifoldFromWeldedMesh(wasm, out.positions, out.indices, first, null, null, extra));
         const policy = out.triOwner ? Object.freeze({ ...ORGANIC, group: first }) : ORGANIC;
         for (const id of ids) oidPolicies.set(id, policy);
+        implicitMs.add(m); // a union with this operand may be delivered in two stages
         const value = wrap(m, key);
         implicitWarnings.set(value, out.warnings);
         implicitIds.set(value, ids);
@@ -1129,8 +1190,20 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // would pin one WASM object under two entries and eviction would dispose it twice.
     union: (solids) => solids.length === 1
       ? solids[0]
-      : hoistBoolean("union", solids, (ops) => judgedUnion(ops.map((s) => s._m)))
-        ?? cached(h("union", solids.map((s) => s._hash)), () => judgedUnion(solids.map((s) => s._m))),
+      : hoistBoolean("union", solids, (ops) => unionOfSolids(ops))
+        ?? cached(h("union", solids.map((s) => s._hash)), () => unionOfSolids(solids)),
+    // Two-stage delivery (unionOfSolids above): the generate job arms the deferral for its
+    // own duration; nothing else ever does.
+    setProvisionalUnions: (on) => { provisionalUnions = !!on; },
+    // The operands of the bracket's last deferred union, when `solid` IS that union up to
+    // rigid steps (its canonical base is the node): each with those steps replayed, so
+    // their meshes lie where the union's will. Handed out once; null otherwise.
+    takeProvisionalPieces: (solid) => {
+      const last = lastDeferred;
+      lastDeferred = null;
+      if (!last || solid?._canon?.m !== last.m || !pendingJudge.has(last.m)) return null;
+      return last.pieces.map((p) => replay(p, solid._canon.chain));
+    },
     // Imported geometry, registered pre-build by the framework via `_registerImport`
     // (ensureImports, Task 8). The master Manifold is kernel-lifetime (untracked —
     // see `imports` above); wrap() is free, so every call is cheap.
@@ -1217,6 +1290,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       cache.begin(name);
     },
     endSubPart: () => {
+      lastDeferred = null;
       cache.end();
       if (bracketDepth > 0 && --bracketDepth > 0) return;
       implicitCalls = [];

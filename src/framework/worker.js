@@ -138,10 +138,11 @@ export function runWorker(part, opts = {}) {
           // generate that goes stale once dequeued. Both would otherwise post the OLD
           // part's meshes after a rebind. Downgrading them to `superseded` keeps the
           // contract simple: a `meshes` post is current as of the moment it is posted.
-          // A progressive batch that went stale is simply dropped: the job's own
-          // final reply (or its superseded) still settles the cycle.
+          // A progressive batch or a provisional stage (two-stage delivery) that went
+          // stale is simply dropped: the job's own final reply (or its superseded)
+          // still settles the cycle.
           const gated = (m, transfer = []) => {
-            if (m.type === "meshes-partial" && isStale()) return;
+            if ((m.type === "meshes-partial" || m.type === "meshes-provisional") && isStale()) return;
             if (m.type === "meshes" && isStale()) return post({ type: "superseded" });
             post(m, transfer);
           };

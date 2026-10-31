@@ -518,3 +518,97 @@ test("an asset swap with identical implicit specs is not skinnable: base restore
   vi.advanceTimersByTime(30);
   expect(generates(w).length).toBe(n + 1);
 });
+
+// Two-stage delivery (spec §5): a union of implicit bodies arrives first as its pieces
+// concatenated (`meshes-provisional`), then as the real union. The provisional stage is
+// shown but never current: nothing that reads geometry as exact sees it.
+
+const provisional = (w, mesh) => w.onmessage({ data: { type: "meshes-provisional", meshes: [mesh] } });
+const provisionalDelivery = (bend) => delivery(bend, { provisional: true });
+// An ordinary (not frames-only) rebuild goes out: `r` changes the shape.
+const rebuild = (input, r = 5) => { input("r", r); vi.advanceTimersByTime(200); };
+
+test("the provisional stage shows first and leaves the sub-part missing; the union replaces it", async () => {
+  const { runtime, v, w, input, reply } = setup();
+  rebuild(input);
+  const n = generates(w).length;
+  const prov = provisionalDelivery(0);
+  provisional(w, prov);
+  expect(v.setSubGeometry).toHaveBeenLastCalledWith("body", prov);
+  expect(v.setSubGeometry.mock.calls.at(-1)[1].provisional).toBe(true);
+  await expect(runtime.exportPreview()).rejects.toThrow(/not fully built/);
+  expect(generates(w).length).toBe(n); // the loop still waits on the same job
+  const fin = delivery(0);
+  reply([fin]);
+  expect(v.setSubGeometry).toHaveBeenLastCalledWith("body", fin);
+  expect(() => runtime.captureViews(["iso"])).not.toThrow();
+  await expect(runtime.exportPreview()).resolves.toBeTruthy();
+});
+
+test("captureViews during the provisional stage throws, and leaks no hold", () => {
+  const reads = ["bend", "r", "img"];
+  const { runtime, v, w, input, reply } = setup({ images: true, first: delivery(0, { reads }) });
+  input("img", 2); vi.advanceTimersByTime(200); // a rebuild that keeps the call ids: the drag below can skin it
+  provisional(w, delivery(0, { reads, provisional: true }));
+  expect(() => runtime.captureViews(["iso"])).toThrow("captureViews: the view on screen is not fully built");
+  expect(() => runtime.captureCurrent({ size: 64 })).toThrow(/not fully built/);
+  expect(v.captureCanonicalViews).not.toHaveBeenCalled();
+  expect(v.captureCurrent).not.toHaveBeenCalled();
+  reply([delivery(0, { reads })]);
+  input("bend", 30); // a leaked hold would keep this from deforming
+  expect(v.setSubVertices.mock.calls.at(-1)[2]).toEqual({ deformed: true });
+});
+
+test("renderViews during the provisional stage rejects", async () => {
+  const { runtime, w, input } = setup();
+  rebuild(input);
+  provisional(w, provisionalDelivery(0));
+  await expect(runtime.renderViews(["iso"])).rejects.toThrow(/not fully built/);
+});
+
+test("with the cutaway on, the provisional stage is not shown", () => {
+  const { v, w, input } = setup();
+  v.setCutawayEnabled(true);
+  rebuild(input);
+  const geoCalls = v.setSubGeometry.mock.calls.length;
+  provisional(w, provisionalDelivery(0));
+  expect(v.setSubGeometry.mock.calls.length).toBe(geoCalls);
+});
+
+test("a provisional stage of a stale build is dropped", () => {
+  const { v, w, input } = setup();
+  rebuild(input);
+  input("r", 6); // between dispatch and the provisional reply
+  const geoCalls = v.setSubGeometry.mock.calls.length;
+  provisional(w, provisionalDelivery(0));
+  expect(v.setSubGeometry.mock.calls.length).toBe(geoCalls);
+});
+
+test("a provisional reply during a skin drag neither shows nor disturbs the deformed mesh", () => {
+  const { v, w, input, reply } = setup();
+  input("bend", 30);
+  vi.advanceTimersByTime(150); // the pause: the exact build at 30 goes out, the drag goes on
+  const geoCalls = v.setSubGeometry.mock.calls.length;
+  const vertCalls = v.setSubVertices.mock.calls.length;
+  provisional(w, provisionalDelivery(30)); // fresh: no input since dispatch
+  input("bend", 40);
+  provisional(w, provisionalDelivery(30)); // stale too
+  expect(v.setSubGeometry.mock.calls.length).toBe(geoCalls);
+  const newVerts = v.setSubVertices.mock.calls.slice(vertCalls);
+  expect(newVerts.length).toBe(1);
+  expect(Array.from(newVerts[0][1].positions)).toEqual(Array.from(skinOf(0, 40)));
+  reply([delivery(30)]); // the stale-but-exact union still rebases the drag
+  expect(v.setSubVertices.mock.calls.at(-1)[2]).toEqual({ deformed: true });
+  expect(Array.from(v.setSubVertices.mock.calls.at(-1)[1].positions)).toEqual(Array.from(skinOf(30, 40)));
+});
+
+test("a drag input while the provisional stage is on screen does not skin it", () => {
+  const { v, w, input, release } = setup();
+  input("bend", 30);
+  release("bend"); // the exact build at 30 goes out; the drag is over
+  const vertCalls = v.setSubVertices.mock.calls.length;
+  provisional(w, provisionalDelivery(30));
+  expect(v.setSubGeometry.mock.calls.at(-1)[1].provisional).toBe(true);
+  input("bend", 40); // the base (bend 0) is frames-only away, but the screen shows the provisional stage
+  expect(v.setSubVertices.mock.calls.slice(vertCalls).some(([, , o]) => o?.deformed)).toBe(false);
+});
