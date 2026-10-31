@@ -11,6 +11,16 @@
 // (claimsHover / onHoverChange). Touch has no hover: a touch press within TOUCH_HIT_PX
 // of any limb's dot grabs it.
 //
+// A goal handle with `aim` shows the AIM GIZMO (aim-gizmo.js, built on the cutaway
+// control's shared gizmo code) instead of a plain dot: a centre ball on the goal point
+// and a rotate ring per aim parameter, each with the cutaway's hover state. It shows
+// while its limb is hovered and stays up while any of its parts is dragged. Dragging the
+// ball is dragging the dot (the camera-facing plane through the point); dragging a ring
+// writes that aim angle (session.ringFrame) through the shared rotate-drag math. Touch:
+// a touch on the goal point (a tap or a drag) leaves the gizmo up until a touch lands
+// anywhere else, so a finger can reach the rings; the first tap only shows it, a tap on
+// the ball while it is up toggles the pin as a mouse click does.
+//
 // Arbitration copies cutaway-gizmo.js: a CAPTURE-phase pointerdown on the canvas that,
 // on a handle hit, turns orbit off and takes pointer capture before OrbitControls sees
 // the press; orbit comes back on pointerup, pointercancel, lostpointercapture and window
@@ -28,7 +38,9 @@
 import * as THREE from "three";
 import { createDragTracker } from "../selection/drag-tracker.js";
 import { worldPerPx, orthoWorldPerPx } from "../measure/dim3-scene.js";
-import { createPoseScene, AIM_RING_PX } from "./pose-scene.js";
+import { createPoseScene } from "./pose-scene.js";
+import { createAimGizmo, AIM_RING_PX, AIM_RING_HIT_PX } from "./aim-gizmo.js";
+import { beginRotateDrag, rotateDragAngle } from "../gizmo/gizmo-rotate.js";
 import { createPoseSession, pinId, parsePinId } from "./pose-session.js";
 import { dragPlanePoint, hitHandle } from "./pose-geom.js";
 import { limbInfo } from "./param-solve.js";
@@ -40,12 +52,6 @@ export const HANDLE_HIT_PX = 14;
 export const NEAR_LIMB_PX = 32;
 /** A touch press this near any limb's dot grabs it (touch has no hover to show dots first). */
 export const TOUCH_HIT_PX = 24;
-/** How near an aim ring's line counts as on it: a 24 px band. */
-export const RING_HIT_PX = 12;
-/** Edge-on rings turn by pointer travel instead: degrees per CSS px. */
-const RING_DEG_PER_PX = 0.75;
-/** Below this |ray . axis| a ring's plane is too edge-on to intersect usefully. */
-const RING_PLANE_ALIGNMENT = 0.15;
 /** A hinge this near (degrees) its range end reads as clamped. */
 const CLAMP_EPS_DEG = 1e-3;
 const AIM_NAMES = ["pitch", "yaw", "roll"];
@@ -53,7 +59,6 @@ const AIM_NAMES = ["pitch", "yaw", "roll"];
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const len = (a) => Math.hypot(a[0], a[1], a[2]);
 const unit = (a) => { const l = len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
 
@@ -106,7 +111,8 @@ export function aimAxes(toward, angles) {
  * @param opts.orbitControls the viewer's OrbitControls (createViewer's `orbitControls`).
  * @param opts.visibleHandles () => handle ids to show in the current view (default: all).
  * Session effects, passed through to createPoseSession: getParams, write, commit,
- * restore, staleSubParts, ghost, unghost, hold. Optional: schedule (rAF), createScene.
+ * restore, staleSubParts, ghost, unghost, hold. Optional: schedule (rAF), createScene,
+ * createGizmo (the aim gizmo).
  */
 export function createPoseMode(viewer, {
   part,
@@ -122,6 +128,7 @@ export function createPoseMode(viewer, {
   visibleHandles = () => Object.keys(part?.handles ?? {}),
   schedule = (cb) => requestAnimationFrame(cb),
   createScene = createPoseScene,
+  createGizmo = createAimGizmo,
 }) {
   const handles = part?.handles && typeof part.handles === "object" ? part.handles : {};
   const dom = viewer.domElement;
@@ -138,6 +145,8 @@ export function createPoseMode(viewer, {
   let live = false;         // enabled && !suppressed && !detached — applied by applyLive
   let detached = false;
   let scene = null;
+  let gizmo = null;        // the aim gizmo (created with the scene)
+  let touchGizmoLimb = null; // touch: the limb whose aim gizmo a touch left up
   let shown = [];          // [{ handleId, handle, info }] — one per handle with a posed limb
   let stale = true;        // params moved since `shown` was read; re-read lazily (ensureFresh)
   let screenCache = null;  // shown limbs projected to the canvas; dropped every frame
@@ -263,9 +272,8 @@ export function createPoseMode(viewer, {
   const goalAt = (handle) => (typeof handle.at === "string" ? handle.at : "tip");
   const hasAim = (handle) => handle.mode === "goal" && Array.isArray(handle.params?.aim) && handle.params.aim.length >= 2;
 
-  /** The goal handle whose aim rings show: the one being dragged, else the hovered one. */
-  function ringTarget() {
-    const limb = press?.started ? press.limb : hoverLimb;
+  /** The aim gizmo's target on `limb`'s goal handle with `aim`: `{ handleId, handle, info, at, axes }`, or null. */
+  function gizmoTarget(limb) {
     if (!limb) return null;
     const s = shown.find((e) => e.info.name === limb && hasAim(e.handle));
     if (!s) return null;
@@ -276,9 +284,18 @@ export function createPoseMode(viewer, {
     const axes = aimAxes(s.handle.toward, angles);
     return axes.length ? { ...s, at, axes } : null;
   }
+  /** The aim gizmo that shows: the pressed limb's, else the hovered one's, else a touch's. */
+  const ringTarget = () => gizmoTarget(press ? press.limb : hoverLimb ?? touchGizmoLimb);
   function syncRings() {
     const r = ringTarget();
-    scene?.setAimRings(r ? { at: r.at, axes: r.axes } : null);
+    gizmo?.show(r ? { at: r.at, axes: r.axes } : null);
+    scene?.setAimGizmo(r ? { limb: r.info.name, at: goalAt(r.handle) } : null);
+    syncGizmoHover();
+  }
+  /** The gizmo part to style as hovered: the pressed one, else the one under the mouse. */
+  function syncGizmoHover() {
+    const h = press?.hit ?? hoverHit;
+    gizmo?.setHovered(h?.gizmo ?? null);
   }
 
   // ---- hit testing ----------------------------------------------------------
@@ -328,60 +345,50 @@ export function createPoseMode(viewer, {
     return id === null ? null : cands[id].hit;
   }
 
-  function ringHit(x, y) {
-    const r = ringTarget();
-    if (!r) return null;
-    const radius = AIM_RING_PX * mmPerPx(r.at);
-    let best = null;
-    r.axes.forEach((axis, i) => {
-      const a = unit(axis);
-      const ref = Math.abs(a[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
-      const u = unit(cross(a, cross(ref, a)));
-      const v = cross(a, u);
-      let prev = null;
-      for (let k = 0; k <= 48; k++) {
-        const t = (k / 48) * Math.PI * 2;
-        const p = add(r.at, [
-          (u[0] * Math.cos(t) + v[0] * Math.sin(t)) * radius,
-          (u[1] * Math.cos(t) + v[1] * Math.sin(t)) * radius,
-          (u[2] * Math.cos(t) + v[2] * Math.sin(t)) * radius,
-        ]);
-        const s = toScreen(p);
-        if (prev && s) {
-          const dd = segDist(x, y, prev, s);
-          if (dd <= RING_HIT_PX && (!best || dd < best.d)) best = { d: dd, i };
-        }
-        prev = s;
-      }
-    });
-    if (!best) return null;
-    return { kind: "ring", handleId: r.handleId, limb: r.info.name, axis: r.axes[best.i], name: AIM_NAMES[best.i], at: r.at };
+  /**
+   * The aim gizmo part at the canvas point for `target` (gizmoTarget), as a hit: the
+   * ball is the goal point's dot `{ kind: "dot", handleId, at, limb, gizmo: "ball" }`,
+   * a ring `{ kind: "ring", handleId, limb, axis, name, at, gizmo: name }`.
+   */
+  function gizmoHit(target, pt, touch = false) {
+    if (!target || !gizmo) return null;
+    const part = gizmo.pick(pt, { target: { at: target.at, axes: target.axes }, touch });
+    if (!part) return null;
+    const limb = target.info.name;
+    if (part === "ball") return { kind: "dot", handleId: target.handleId, at: goalAt(target.handle), limb, gizmo: "ball" };
+    const i = AIM_NAMES.indexOf(part);
+    return { kind: "ring", handleId: target.handleId, limb, axis: target.axes[i], name: part, at: target.at, gizmo: part };
   }
 
-  /** Inside the hovered goal limb's rings, so they do not vanish on the way to one. */
-  function insideRings(x, y) {
-    const r = ringTarget();
-    if (!r) return null;
-    const s = toScreen(r.at);
-    return s && Math.hypot(x - s.x, y - s.y) <= AIM_RING_PX + RING_HIT_PX ? r.info.name : null;
+  /** Inside the gizmo's rings, so they do not vanish on the way to one. */
+  function insideGizmo(target, x, y) {
+    if (!target) return null;
+    const s = toScreen(target.at);
+    return s && Math.hypot(x - s.x, y - s.y) <= AIM_RING_PX + AIM_RING_HIT_PX ? target.info.name : null;
   }
 
   /**
-   * What the mouse at (x, y) hovers: `{ limb, hit }`. The hovered limb's aim rings are
-   * tried first (they reach past NEAR_LIMB_PX), then the nearest limb's dots, then the
-   * inside of the rings. `hit` is `{ kind: "dot", handleId, at, limb }`,
-   * `{ kind: "ring", handleId, limb, axis, name, at }` or null.
+   * What the mouse at the canvas point `pt` hovers: `{ limb, hit }`. The shown aim
+   * gizmo is tried first (its rings reach past NEAR_LIMB_PX), then the nearest limb —
+   * its aim gizmo if it has one, else its dots — then the inside of the shown gizmo.
+   * `hit` is `{ kind: "dot", handleId, at, limb, gizmo? }`,
+   * `{ kind: "ring", handleId, limb, axis, name, at, gizmo }` or null.
    */
-  function hoverAt(x, y) {
-    const ring = ringHit(x, y);
-    if (ring) return { limb: ring.limb, hit: ring };
+  function hoverAt(pt) {
+    const { x, y } = pt;
+    const cur = ringTarget();
+    const onGizmo = gizmoHit(cur, pt);
+    if (onGizmo) return { limb: onGizmo.limb, hit: onGizmo };
     const limb = nearestLimb(x, y);
-    if (limb) return { limb, hit: dotAt(x, y, limb, HANDLE_HIT_PX) };
-    const inside = insideRings(x, y);
-    return { limb: inside, hit: null };
+    if (limb) {
+      const near = limb === cur?.info.name ? null : gizmoTarget(limb);
+      const hit = gizmoHit(near, pt);
+      return { limb, hit: hit ?? dotAt(x, y, limb, HANDLE_HIT_PX) };
+    }
+    return { limb: insideGizmo(cur, x, y), hit: null };
   }
 
-  const sameHit = (a, b) => (a === b) || (!!a && !!b && a.kind === b.kind && a.handleId === b.handleId && a.at === b.at && a.name === b.name);
+  const sameHit = (a, b) => (a === b) || (!!a && !!b && a.kind === b.kind && a.handleId === b.handleId && a.at === b.at && a.name === b.name && a.gizmo === b.gizmo);
 
   function setHover(limb, hit = null) {
     const limbChanged = limb !== hoverLimb;
@@ -392,6 +399,7 @@ export function createPoseMode(viewer, {
     hoverHit = hit;
     scene?.setHover(limb, hit?.kind === "dot" ? hit.at : null);
     if (limbChanged) syncRings();
+    else syncGizmoHover();
     if (claimsHover() !== claimed) notify(hoverListeners);
   }
 
@@ -414,8 +422,10 @@ export function createPoseMode(viewer, {
     setCursor(ending.touch ? "" : hoverHit ? "grab" : "");
     scene?.setActive(null);
     refresh();
-    // Touch has no hover: the limb its press showed goes away with the finger.
-    if (ending.touch) setHover(null);
+    // Touch has no hover: the limb its press showed goes away with the finger — unless
+    // the touch left its aim gizmo up (touchGizmoLimb), which stays until a touch elsewhere.
+    if (ending.touch) setHover(touchGizmoLimb);
+    syncRings();
     notify(hoverListeners);
   }
 
@@ -438,30 +448,21 @@ export function createPoseMode(viewer, {
       const pressHit = dragPlanePoint(ray.origin, ray.dir, grab, normal, maxDist);
       press.plane = { point: grab, normal, maxDist, offset: sub(grab, pressHit) };
     } else {
-      const a = unit(hit.axis);
-      const align = Math.abs(dot(unit(ray.dir), a));
-      const r0 = align >= RING_PLANE_ALIGNMENT ? ringRadial(ray, hit.at, a) : null;
-      if (r0) press.ring = { mode: "plane", axis: a, at: hit.at, last: r0, angle: 0, name: hit.name };
-      else {
-        const c = toScreen(hit.at), e = toScreen(add(hit.at, a));
-        const s = c && e ? { x: e.x - c.x, y: e.y - c.y } : { x: 1, y: 0 };
-        const l = Math.hypot(s.x, s.y) || 1;
-        press.ring = { mode: "screen", tangent: { x: -s.y / l, y: s.x / l }, name: hit.name };
-      }
+      // the shared rotate drag (gizmo/gizmo-rotate.js), in part coordinates
+      const axis = new THREE.Vector3(...unit(hit.axis));
+      const center = new THREE.Vector3(...hit.at);
+      const rotate = beginRotateDrag({
+        ray: new THREE.Ray(new THREE.Vector3(...ray.origin), new THREE.Vector3(...unit(ray.dir))),
+        center,
+        axis,
+        alignment: Math.abs(dot(unit(ray.dir), axis.toArray())),
+        projectToClient: (v) => { const p = toScreen(v.toArray()); return p ? new THREE.Vector2(p.x, p.y) : null; },
+      });
+      if (!rotate) { session.cancel(); return false; }
+      press.ring = { ...rotate, axis, center, name: hit.name };
     }
     syncRings();
     return true;
-  }
-
-  /** The unit radial from `at` to the ray's hit on the ring's plane, or null. */
-  function ringRadial(ray, at, axis) {
-    const d = unit(ray.dir);
-    const denom = dot(d, axis);
-    if (Math.abs(denom) < 1e-9) return null;
-    const t = dot(sub(at, ray.origin), axis) / denom;
-    if (!(t >= 0)) return null;
-    const r = sub(add(ray.origin, d.map((c) => c * t)), at);
-    return len(r) > 1e-9 ? unit(r) : null;
   }
 
   function dragFrame(ev) {
@@ -474,19 +475,17 @@ export function createPoseMode(viewer, {
       const { point, normal, maxDist, offset } = press.plane;
       target = add(dragPlanePoint(ray.origin, ray.dir, sub(point, offset), normal, maxDist), offset);
       if (!session.frame(target)) return;
-    } else if (press.ring.mode === "plane") {
-      const ring = press.ring;
-      const r1 = ringRadial(ray, ring.at, ring.axis);
-      if (!r1) return;
-      // unwrap: accumulate the signed step, so a full turn past ±180 keeps counting
-      const step = Math.atan2(dot(ring.axis, cross(ring.last, r1)), dot(ring.last, r1));
-      ring.angle += (step * 180) / Math.PI;
-      ring.last = r1;
-      if (!session.ringFrame(ring.name, ring.angle)) return;
     } else {
+      const ring = press.ring;
       const { x, y } = local(ev);
-      const deg = ((x - press.x) * press.ring.tangent.x + (y - press.y) * press.ring.tangent.y) * RING_DEG_PER_PX;
-      if (!session.ringFrame(press.ring.name, deg)) return;
+      const angle = rotateDragAngle(ring, {
+        ray: new THREE.Ray(new THREE.Vector3(...ray.origin), new THREE.Vector3(...unit(ray.dir))),
+        center: ring.center,
+        axis: ring.axis,
+        pointerDelta: new THREE.Vector2(x - press.x, y - press.y),
+        unwrap: true, // a turn past ±180 keeps counting
+      });
+      if (angle == null || !session.ringFrame(ring.name, (angle * 180) / Math.PI)) return;
     }
     refresh();
     const s = shown.find((e) => e.handleId === hit.handleId);
@@ -514,15 +513,23 @@ export function createPoseMode(viewer, {
     clickClaimed = false;
     if (!live || detached || press || (ev.button != null && ev.button !== 0)) return;
     ensureFresh();
-    const { x, y } = local(ev);
+    const pt = local(ev);
+    const { x, y } = pt;
     const touch = ev.pointerType === "touch";
     let hit;
     if (touch) {
-      // No hover came before: any limb's dot within the finger's reach.
-      hit = dotAt(x, y, null, TOUCH_HIT_PX);
+      // No hover came before: the aim gizmo a touch left up, else any limb's dot within
+      // the finger's reach (an aim handle's goal point counts as its ball).
+      hit = gizmoHit(gizmoTarget(touchGizmoLimb), pt, true) ?? dotAt(x, y, null, TOUCH_HIT_PX);
+      if (hit?.kind === "dot" && !hit.gizmo && gizmoTarget(hit.limb)?.handleId === hit.handleId) hit = { ...hit, gizmo: "ball" };
+      if (touchGizmoLimb && hit?.limb !== touchGizmoLimb) {
+        // a touch anywhere else puts the gizmo away
+        touchGizmoLimb = null;
+        if (!hit) { setHover(null); return; }
+      }
     } else {
       // fresh from this press (a press need not follow a move)
-      const h = hoverAt(x, y);
+      const h = hoverAt(pt);
       setHover(h.limb, h.hit);
       hit = h.hit;
     }
@@ -531,10 +538,13 @@ export function createPoseMode(viewer, {
     if (!ray) return;
     press = {
       pointerId: ev.pointerId, hit, limb: hit.limb, ray, x, y, touch,
+      // touch: was this limb's aim gizmo already up? (a first tap only shows it)
+      gizmoWasUp: touch && touchGizmoLimb === hit.limb,
       orbitEnabled: orbitControls?.enabled, started: false, plane: null, ring: null,
     };
     clickClaimed = true;
     if (touch) setHover(hit.limb, hit);
+    syncGizmoHover();
     tracker.onDown(ev);
     if (orbitControls) orbitControls.enabled = false;
     safeCapture(ev.pointerId);
@@ -561,9 +571,9 @@ export function createPoseMode(viewer, {
       return;
     }
     if (ev.pointerType === "touch") return;
+    if (touchGizmoLimb) { touchGizmoLimb = null; syncRings(); } // a mouse took over
     ensureFresh();
-    const { x, y } = local(ev);
-    const { hit, limb } = hoverAt(x, y);
+    const { hit, limb } = hoverAt(local(ev));
     setHover(limb, hit);
     setCursor(hit ? "grab" : "");
   }
@@ -573,14 +583,18 @@ export function createPoseMode(viewer, {
     tracker.onUp(ev);
     const wasDrag = tracker.consumeClick() || press.started;
     const { hit } = press;
+    // A touch on an aim handle's goal point or gizmo leaves its gizmo up.
+    const touchGizmo = press.touch && !!hit.gizmo;
     if (press.started) {
       flushMove();
       session.end();
-    } else if (!wasDrag && hit.kind === "dot") {
-      // a click pins a tip (or a goal handle's point); a click on a joint does nothing
+    } else if (!wasDrag && hit.kind === "dot" && !(touchGizmo && !press.gizmoWasUp)) {
+      // a click pins a tip (or a goal handle's point); a click on a joint does nothing.
+      // A touch's first tap on an aim handle's point only shows its gizmo.
       const handle = handles[hit.handleId];
       if (hit.at === "tip" || (handle?.mode === "goal" && hit.at === goalAt(handle))) session.togglePin(pinId(hit.handleId, hit.at));
     }
+    if (touchGizmo) touchGizmoLimb = hit.limb;
     finishPress();
   }
 
@@ -638,8 +652,9 @@ export function createPoseMode(viewer, {
       else stale = true;
     }
     scene.tick();
+    gizmo?.tick();
   }) ?? (() => {});
-  const offTheme = viewer.onThemeChange?.((mode) => scene?.setTheme(mode)) ?? (() => {});
+  const offTheme = viewer.onThemeChange?.((mode) => { scene?.setTheme(mode); gizmo?.setTheme(mode); }) ?? (() => {});
 
   /** Bring `live` in line with enabled/suppressed; notify on a change. */
   function applyLive() {
@@ -648,19 +663,22 @@ export function createPoseMode(viewer, {
     live = next;
     if (live) {
       scene ??= createScene(viewer);
+      gizmo ??= createGizmo(viewer);
       const theme = viewer.getTheme?.();
-      if (theme) scene.setTheme(theme);
+      if (theme) { scene.setTheme(theme); gizmo.setTheme(theme); }
       refresh();
     } else {
       abort();
       const claimed = claimsHover();
       hoverLimb = null;
       hoverHit = null;
+      touchGizmoLimb = null;
       shown = [];
       screenCache = null;
       stale = true;
       lastParams = null;
       scene?.clear();
+      gizmo?.show(null);
       setCursor("");
       if (claimed) notify(hoverListeners);
     }
@@ -720,6 +738,42 @@ export function createPoseMode(viewer, {
       }
       return out;
     },
+    /**
+     * The aim gizmo on screen, or null when none shows: `{ handleId, hovered, center,
+     * rings: { pitch, yaw, roll? } }`, each a grabbable canvas point (CSS px from its
+     * top-left) — a ring's is the point of it that picks that ring (not where another
+     * ring crosses it) farthest from the centre on screen, with `ahead`, the ring's
+     * point 20 degrees further round (a drag there turns it). For the browser check
+     * (scripts/check-pose.mjs) and tests.
+     */
+    aimGizmoPoints() {
+      const r = ringTarget();
+      if (!r || !gizmo?.state.visible) return null;
+      const c = toScreen(r.at);
+      if (!c) return null;
+      const { width: w, height: h } = dom.getBoundingClientRect();
+      const radius = AIM_RING_PX * mmPerPx(r.at);
+      const rings = {};
+      r.axes.forEach((axis, i) => {
+        const a = unit(axis);
+        const ref = Math.abs(a[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+        const u = unit([ref[0] - a[0] * dot(ref, a), ref[1] - a[1] * dot(ref, a), ref[2] - a[2] * dot(ref, a)]);
+        const v = [a[1] * u[2] - a[2] * u[1], a[2] * u[0] - a[0] * u[2], a[0] * u[1] - a[1] * u[0]];
+        const round = (t) => toScreen(r.at.map((q, j) => q + (u[j] * Math.cos(t) + v[j] * Math.sin(t)) * radius));
+        let best = null;
+        for (let k = 0; k < 48; k++) {
+          const t = (k / 48) * Math.PI * 2;
+          const s = round(t);
+          if (!s) continue;
+          const d = Math.hypot(s.x - c.x, s.y - c.y);
+          if (best && d <= best.d) continue;
+          if (gizmo.pick({ x: s.x, y: s.y, w, h }) === AIM_NAMES[i]) best = { x: s.x, y: s.y, d, t };
+        }
+        const ahead = best && round(best.t + Math.PI / 9);
+        if (best) rings[AIM_NAMES[i]] = { x: best.x, y: best.y, ahead: ahead ? { x: ahead.x, y: ahead.y } : null };
+      });
+      return { handleId: r.handleId, hovered: gizmo.state.hovered, center: { x: c.x, y: c.y }, rings };
+    },
     pinCount: () => session.pins.length,
     getPins: () => session.pins,
     setPins: (ids) => session.setPins(ids),
@@ -738,6 +792,8 @@ export function createPoseMode(viewer, {
       offTheme();
       scene?.dispose();
       scene = null;
+      gizmo?.dispose();
+      gizmo = null;
       setCursor("");
       modeListeners.clear();
       pinListeners.clear();

@@ -49,11 +49,11 @@ describe("createPoseScene", () => {
       expect(scene.group.children.length).toBeGreaterThan(0);
       scene.setActive({ limb: "arm", grab: "elbow", clamped: [false, true], target: [30, 5, 0], residual: 10 });
       scene.setPins(["arm"]);
-      scene.setAimRings({ at: [20, 5, 0], axes: [[1, 0, 0], [0, 1, 0], [0, 0, 1]] });
+      scene.setAimGizmo({ limb: "arm", at: "tip" });
       scene.tick();
       scene.setTheme("light");
       scene.tick();
-      scene.setAimRings(null);
+      scene.setAimGizmo(null);
       scene.setActive(null);
       scene.clear();
       expect(scene.group.children.length).toBe(0);
@@ -96,16 +96,21 @@ describe("createPoseScene", () => {
     scene.dispose();
   });
 
-  it("disposes aim-ring geometry when rebuilt", () => {
+  it("leaves the goal point the aim gizmo's ball stands on undrawn", () => {
     const viewer = fakeViewer();
     const scene = createPoseScene(viewer, { paintLabel: fakePaint });
     scene.setLimbs([INFO]);
-    scene.setAimRings({ at: [20, 5, 0], axes: [[1, 0, 0], [0, 1, 0], [0, 0, 1]] });
-    const root = scene.group.children.find((c) => c.children.length === 3);
-    const geos = root.children.map((c) => c.geometry);
-    const spies = geos.map((g) => vi.spyOn(g, "dispose"));
-    scene.setActive({ limb: "arm", grab: "tip", clamped: [false, false] });
-    for (const s of spies) expect(s).toHaveBeenCalledTimes(1);
+    scene.setHover("arm", "tip");
+    const dots = () => scene.group.children.filter((c) => c.geometry?.type === "SphereGeometry").length;
+    const halos = () => scene.group.children.filter((c) => c.geometry?.type === "RingGeometry").length;
+    expect(dots()).toBe(3);
+    scene.setAimGizmo({ limb: "arm", at: "tip" });
+    expect(dots()).toBe(2); // the joints; the tip is the gizmo's ball
+    expect(halos()).toBe(0);
+    scene.setAimGizmo({ limb: "arm", at: "elbow" });
+    expect(dots()).toBe(2); // the shoulder and the tip
+    scene.setAimGizmo({ limb: "other", at: "tip" });
+    expect(dots()).toBe(3);
     scene.dispose();
   });
 

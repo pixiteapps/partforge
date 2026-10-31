@@ -20,7 +20,11 @@
 //     goes off again.
 //   robot-arm.html, hand.html (both required) — the reference parts. A 20-move drag of the first
 //     handle posts no `generate` job, commits exactly once on release, the committed
-//     values differ from the part's defaults, and the console stays clean.
+//     values differ from the part's defaults, and the console stays clean. robot-arm.html
+//     then drags its tool's aim gizmo: hovering the tool point shows it
+//     (runtime.pose.__aimGizmo(), a test hook), hovering a ring highlights that ring with a
+//     grab cursor, and a drag round the ring writes that aim angle — one commit, no
+//     `generate` job.
 //
 // What it observes, and how:
 //   - worker traffic: an init script wraps window.Worker before the app loads, logging
@@ -339,9 +343,55 @@ async function checkReference(page, url, errors) {
   return { handle: `${h.handleId}:${h.at}`, generatesDuringDrag: duringDrag.length, commits: result.commits?.length ?? null };
 }
 
+/** The reference drag, then a ring of the tool's aim gizmo (pitch, else the first ring). */
+async function checkRobotArm(page, url, errors) {
+  const summary = await checkReference(page, url, errors);
+  const box = await page.locator(VIEWER_CANVAS).boundingBox();
+  const h = await pickHandle(page, box);
+  await page.mouse.move(h.px + 18, h.py, { steps: 3 });
+  await page.mouse.move(h.px, h.py, { steps: 3 });
+  await sleep(50);
+  const g = await page.evaluate(() => window.__pfRuntime.pose.__aimGizmo());
+  if (!g) { errors.push("hovering the tool point shows no aim gizmo"); return summary; }
+  if (g.hovered !== "ball") errors.push(`hovering the tool point hovers "${g.hovered}", not the ball`);
+  const name = g.rings.pitch ? "pitch" : Object.keys(g.rings)[0];
+  const ring = g.rings[name];
+  if (!ring?.ahead) { errors.push(`no grabbable point on the aim gizmo's rings (${JSON.stringify(g.rings)})`); return summary; }
+  const at = (p) => ({ x: box.x + p.x, y: box.y + p.y });
+  const from = at(ring), to = at(ring.ahead);
+  await page.mouse.move(from.x, from.y, { steps: 4 });
+  await sleep(50);
+  const hov = await page.evaluate(() => window.__pfRuntime.pose.__aimGizmo()?.hovered ?? null);
+  if (hov !== name) errors.push(`hovering the ${name} ring hovers "${hov}"`);
+  const cursor = await canvasCursor(page);
+  if (cursor !== "grab") errors.push(`hovering the ${name} ring shows cursor "${cursor}", not "grab"`);
+  const commits0 = await page.evaluate(() => window.__pfCommits.length);
+  const t0 = await page.evaluate(() => performance.now());
+  await page.mouse.down();
+  for (let i = 1; i <= 12; i++) {
+    await page.mouse.move(from.x + ((to.x - from.x) * i) / 12, from.y + ((to.y - from.y) * i) / 12);
+    await sleep(20);
+  }
+  const during = await page.evaluate(() => ({ hovered: window.__pfRuntime.pose.__aimGizmo()?.hovered ?? null }));
+  const grabbing = await canvasCursor(page);
+  await sleep(80);
+  const ringGenerates = generates(await page.evaluate(() => window.__pfWorkerLog), t0);
+  await page.mouse.up();
+  await sleep(600);
+  if (during.hovered !== name) errors.push(`dragging the ${name} ring left "${during.hovered}" highlighted`);
+  if (grabbing !== "grabbing") errors.push(`dragging the ${name} ring shows cursor "${grabbing}", not "grabbing"`);
+  if (ringGenerates.length) errors.push(`${ringGenerates.length} generate job(s) posted during the ring drag`);
+  const commits = await page.evaluate(() => window.__pfCommits);
+  const added = commits.slice(commits0);
+  const aimParam = await page.evaluate((i) => window.__pfPart?.handles?.tool?.params?.aim?.[i] ?? null, ["pitch", "yaw", "roll"].indexOf(name));
+  if (added.length !== 1) errors.push(`${added.length} onParamsCommit calls after the ${name} ring drag, expected exactly 1`);
+  else if (!aimParam || !added[0].changed?.includes(aimParam)) errors.push(`the ${name} ring drag committed ${JSON.stringify(added[0].changed)}, not ${aimParam}`);
+  return { ...summary, ring: name, ringCommit: added[0]?.changed ?? null, ringValue: aimParam ? added[0]?.params?.[aimParam] : null };
+}
+
 const PAGES = [
   { entry: "pose-smoke.html", run: checkSmoke, required: true },
-  { entry: "robot-arm.html", run: checkReference, required: true },
+  { entry: "robot-arm.html", run: checkRobotArm, required: true },
   { entry: "hand.html", run: checkReference, required: true },
 ];
 

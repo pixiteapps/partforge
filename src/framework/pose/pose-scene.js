@@ -1,20 +1,24 @@
 // Pose mode's in-scene overlay: handle dots, the live skeleton, limit arcs, the
-// out-of-reach line, pin badges and aim rings. Modelled on measure/dim3-scene.js:
+// out-of-reach line and pin badges. Modelled on measure/dim3-scene.js:
 // one group parented under the sub-meshes' shared frame (so part coordinates map
 // straight in and the pivot / recentring / pose fast path apply for free),
 // hidden from canonical captures, drawn over the model (depthTest:false) and
 // never cutaway-clipped.
 //
-// At rest it draws nothing but pin badges: a limb's skeleton, dots and rings show
+// At rest it draws nothing but pin badges: a limb's skeleton and dots show
 // only while it is hovered (setHover) or dragged (setActive) — posing is always on
 // in the normal click mode, so an idle overlay would sit on every part with handles.
 //
 // Steady by design (no flashing, no jumping): the state setters rebuild the
 // objects; tick() only re-sizes the screen-constant pieces (dots, badges, labels,
-// dashes, aim rings) from the camera, and a camera move is already a frame.
+// dashes) from the camera, and a camera move is already a frame.
 // A clamped joint is a steady warning colour, never a blink. Hit testing is not
 // done here - Task 7 runs `hitHandle` over `viewer.projectPoint` positions with a
 // 24 CSS px target, so the visuals can stay small.
+//
+// A goal handle with `aim` gets the aim gizmo (aim-gizmo.js: a centre ball and rotate
+// rings, drawn and picked there). setAimGizmo tells this scene which limb's goal point
+// the gizmo's ball stands on, so its dot is not drawn twice.
 import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -28,11 +32,9 @@ import { limitArc } from "./pose-geom.js";
 export const POSE_THEME = {
   dark: {
     handle: 0x65bff5, strong: 0xa8dcff, bone: 0x7d93b8, warn: 0xffb454, target: 0xa8dcff,
-    pitch: 0xff6b7a, yaw: 0x5aa9ff, roll: 0x36d399,
   },
   light: {
     handle: 0x1479b8, strong: 0x075985, bone: 0x5a6c8a, warn: 0xc2410c, target: 0x075985,
-    pitch: 0xc92a3b, yaw: 0x1769aa, roll: 0x087f5b,
   },
 };
 
@@ -48,7 +50,6 @@ export const GRAB_HALO_PX = 11;
 export const TARGET_RING_PX = 7;
 export const PIN_HEAD_PX = 4.5;
 export const PIN_LIFT_PX = 16;
-export const AIM_RING_PX = 36;
 export const DASH_PX = 5;
 export const GAP_PX = 4;
 const LABEL_LIFT_PX = 14;
@@ -84,7 +85,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   if (!POSE_THEME[theme]) theme = "dark";
 
   // ---- materials (shared, recoloured on theme change) ------------------------
-  const colorKeys = ["handle", "strong", "bone", "warn", "target", "pitch", "yaw", "roll"];
+  const colorKeys = ["handle", "strong", "bone", "warn", "target"];
   const fillMats = {};
   const lineMats = {};
   const prep = (m) => { m.depthTest = false; m.depthWrite = false; m.transparent = true; return m; };
@@ -115,14 +116,13 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   let hoverDot = null; // the hovered limb's dot under the pointer (a joint name or "tip")
   let active = null;
   let pins = [];
-  let aim = null;
+  let aimGizmo = null; // { limb, at }: that limb's goal point is the aim gizmo's ball
   let dirty = false;
 
   // ---- per-build records, sized in tick() -------------------------------------
   let dots = [];       // { mesh, pos: Vector3, px }
   let billboards = []; // { mesh, pos, px }   (rings that face the camera)
   let pinRecs = [];    // { head, stem, pos }
-  let aimRoot = null;
   let dashRec = null;  // { line, a, b }
   let labelRec = null; // { mesh, a, b }
   const textureCache = new Map();
@@ -169,14 +169,13 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   function disposeChildren() {
     for (const child of [...group.children]) {
       group.remove(child);
-      // traverse: aim rings are nested under aimRoot, not direct children
       child.traverse((o) => {
         if (o.geometry && !shared.has(o.geometry)) o.geometry.dispose?.();
         const m = o.material;
         if (m && !allMats().includes(m)) m.dispose?.();
       });
     }
-    dots = []; billboards = []; pinRecs = []; aimRoot = null; dashRec = null; labelRec = null;
+    dots = []; billboards = []; pinRecs = []; dashRec = null; labelRec = null;
   }
 
   // ---- build -----------------------------------------------------------------
@@ -231,8 +230,10 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
         addLine(clamped[i] ? "warn" : "faint", [...p, ...arc[0], ...p, ...arc.at(-1)]);
       });
     }
-    // joint dots
+    // joint dots (not the one the aim gizmo's ball stands on)
+    const owned = aimGizmo?.limb === info.name ? aimGizmo.at : null;
     info.joints.forEach((j, i) => {
+      if (j.name === owned) return;
       const isGrab = grab === j.name;
       addDot(clamped[i] ? "warn" : isGrab ? "strong" : "handle", vec(pts[i]), JOINT_DOT_PX);
       if (isGrab) addBillboard(clamped[i] ? "warn" : "strong", vec(pts[i]), GRAB_HALO_PX);
@@ -249,6 +250,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
       if (!isShown) continue; // at rest: nothing but the pin badges below
       const isActive = active?.limb === info.name;
       buildShownLimb(info, isActive ? active : null);
+      if (aimGizmo?.limb === info.name && aimGizmo.at === "tip") continue;
       const tip = vec(info.points.tip);
       const isGrab = isActive ? active.grab === "tip" : hoverDot === "tip";
       addDot(isGrab ? "strong" : "handle", tip, isGrab ? TIP_DOT_ACTIVE_PX : TIP_DOT_PX);
@@ -284,20 +286,6 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
       group.add(head);
       const stem = addLine("strong", [0, 0, 0, 0, 0, 0], RENDER_ORDER_POSE + 1);
       pinRecs.push({ head, stem, pos });
-    }
-    // aim rings about the tool frame's axes: pitch, yaw, (roll only with 3 axes)
-    if (aim?.at && Array.isArray(aim.axes) && aim.axes.length) {
-      aimRoot = new THREE.Group();
-      aimRoot.position.copy(vec(aim.at));
-      const names = ["pitch", "yaw", "roll"];
-      aim.axes.slice(0, 3).forEach((ax, i) => {
-        const ref = Math.abs(ax[0]) < 0.9 * (len(ax) || 1) ? [1, 0, 0] : [0, 1, 0];
-        const ring = limitArc([0, 0, 0], ax, ref, [0, 360], 1, 48);
-        const line = addLine(names[i], polyline(ring));
-        group.remove(line);
-        aimRoot.add(line);
-      });
-      group.add(aimRoot);
     }
     sweepTextures();
     redraw();
@@ -364,7 +352,6 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
       labelRec.mesh.position.copy(_b).addScaledVector(_up, LABEL_LIFT_PX * wpp);
       labelRec.mesh.quaternion.copy(_q);
     }
-    if (aimRoot) aimRoot.scale.setScalar(AIM_RING_PX * wppAt(aimRoot.position));
   }
 
   // ---- public state setters --------------------------------------------------
@@ -380,9 +367,15 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   }
   function setActive(a) { active = a ?? null; rebuild(); }
   function setPins(ids) { pins = Array.isArray(ids) ? [...ids] : []; rebuild(); }
-  function setAimRings(a) { aim = a ?? null; rebuild(); }
+  /** The limb whose goal point (`at`: a joint name or "tip") the aim gizmo draws, or null. */
+  function setAimGizmo(a) {
+    const next = a && a.limb ? { limb: a.limb, at: a.at ?? "tip" } : null;
+    if (next?.limb === aimGizmo?.limb && next?.at === aimGizmo?.at) return;
+    aimGizmo = next;
+    rebuild();
+  }
   function clear() {
-    limbs = []; hover = null; hoverDot = null; active = null; pins = []; aim = null;
+    limbs = []; hover = null; hoverDot = null; active = null; pins = []; aimGizmo = null;
     disposeChildren();
     sweepTextures();
     redraw();
@@ -408,5 +401,5 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     textureCache.clear();
   }
 
-  return { setLimbs, setHover, setActive, setPins, setAimRings, clear, tick, setTheme, group, dispose };
+  return { setLimbs, setHover, setActive, setPins, setAimGizmo, clear, tick, setTheme, group, dispose };
 }

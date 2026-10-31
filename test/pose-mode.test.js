@@ -5,6 +5,9 @@
 import { describe, it, expect, afterEach } from "vitest";
 import * as THREE from "three";
 import { createPoseMode, aimAxes } from "../src/framework/pose/pose-mode.js";
+import { createAimGizmo, AIM_RING_PX } from "../src/framework/pose/aim-gizmo.js";
+import { GIZMO_PALETTE } from "../src/framework/gizmo/gizmo-handles.js";
+import { worldPerPx } from "../src/framework/measure/dim3-scene.js";
 import { limbInfo } from "../src/framework/pose/param-solve.js";
 import { aimFromAngles } from "../src/framework/domains/kinematics/goals.js";
 import hand from "./fixtures/ik-hand-fixture.js";
@@ -50,7 +53,7 @@ function fakeViewer() {
 }
 
 function fakeScene() {
-  const calls = { setLimbs: [], setHover: [], setActive: [], setPins: [], setAimRings: [] };
+  const calls = { setLimbs: [], setHover: [], setActive: [], setPins: [], setAimGizmo: [] };
   return {
     calls,
     setLimbs: (x) => calls.setLimbs.push(x),
@@ -58,7 +61,7 @@ function fakeScene() {
     cleared: 0,
     setActive: (x) => calls.setActive.push(x),
     setPins: (x) => calls.setPins.push(x),
-    setAimRings: (x) => calls.setAimRings.push(x),
+    setAimGizmo: (x) => calls.setAimGizmo.push(x),
     setTheme() {}, tick() {}, dispose() {},
     clear() { this.cleared++; },
   };
@@ -71,6 +74,7 @@ function setup(part = hand) {
   const orbit = { enabled: true };
   const params = { ...part.defaults };
   const log = { write: [], commit: [], hold: [], restore: [] };
+  let gizmo = null;
   const mode = createPoseMode(viewer, {
     part,
     orbitControls: orbit,
@@ -83,6 +87,7 @@ function setup(part = hand) {
     hold: (on) => log.hold.push(on),
     schedule: (cb) => cb(),
     createScene: () => scene,
+    createGizmo: (v) => (gizmo = createAimGizmo(v)),
   });
   live.push(mode);
   const screenOf = (p) => {
@@ -95,7 +100,7 @@ function setup(part = hand) {
   const fire = (type, x, y, extra = {}) => viewer.domElement.dispatchEvent(new PointerEvent(type, {
     clientX: x, clientY: y, pointerId: 1, button: 0, pointerType: "mouse", bubbles: true, ...extra,
   }));
-  return { viewer, scene, orbit, params, log, mode, fire, tipScreen, pointScreen };
+  return { viewer, scene, orbit, params, log, mode, fire, tipScreen, pointScreen, screenOf, info, gizmo: () => gizmo };
 }
 
 afterEach(() => { for (const m of live.splice(0)) m.detach(); document.body.innerHTML = ""; });
@@ -360,35 +365,228 @@ describe("always-on posing: hover, pick arbitration, suppression, touch", () => 
   });
 });
 
-describe("aim rings on a goal handle", () => {
+describe("the aim gizmo on a goal handle", () => {
   // Finger a's tip as a goal handle aimed by pitch/yaw/roll from a +X rest toward.
-  const aimed = (pitch) => ({
+  const aimed = (pitch, aim = ["gPitch", "gYaw", "gRoll"]) => ({
     ...hand,
     defaults: { ...hand.defaults, gx: 0, gy: 0, gz: 0, gPitch: pitch, gYaw: 0, gRoll: 0 },
     handles: { a: { limb: "a", at: "tip", mode: "goal", toward: [1, 0, 0],
-      params: { position: ["gx", "gy", "gz"], aim: ["gPitch", "gYaw", "gRoll"] } } },
+      params: { position: ["gx", "gy", "gz"], aim } } },
   });
+  const close = (a, b) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], 9));
+  const hoverTip = (t) => { const s = t.tipScreen("a"); t.fire("pointermove", s.x, s.y); return s; };
+  // A point on a ring's circle (part coordinates), `deg` round from its reference.
+  function ringPoint(t, axis, deg) {
+    const at = t.info("a").points.tip;
+    const world = new THREE.Vector3(...at).applyMatrix4(t.viewer.partsGroup.matrixWorld);
+    const r = AIM_RING_PX * worldPerPx(t.viewer.camera.position.distanceTo(world), 45, H);
+    const a = new THREE.Vector3(...axis).normalize();
+    const u = new THREE.Vector3(1, 0, 0).projectOnPlane(a);
+    if (u.lengthSq() < 1e-6) u.set(0, 0, 1).projectOnPlane(a);
+    u.normalize();
+    const v = a.clone().cross(u);
+    const th = (deg * Math.PI) / 180;
+    const p = new THREE.Vector3(...at).addScaledVector(u, r * Math.cos(th)).addScaledVector(v, r * Math.sin(th));
+    return t.screenOf(p.toArray());
+  }
+
   for (const pitch of [-90, 90, -89]) {
-    it(`turn about the parameters' axes at pitch ${pitch}, not the posed bone's`, () => {
+    it(`turns about the parameters' axes at pitch ${pitch}, not the posed bone's`, () => {
       const t = setup(aimed(pitch));
-      t.mode.setEnabled(true);
-      const s = t.tipScreen("a");
-      t.fire("pointermove", s.x, s.y);
-      const rings = t.scene.calls.setAimRings.at(-1);
-      expect(rings).toBeTruthy();
-      expect(rings.axes).toHaveLength(3);
-      rings.axes[0].forEach((v, i) => expect(v).toBeCloseTo([0, -1, 0][i], 9));
-      rings.axes[1].forEach((v, i) => expect(v).toBeCloseTo([0, 0, 1][i], 9));
+      hoverTip(t);
+      const g = t.gizmo().state;
+      expect(g.visible).toBe(true);
+      expect(g.axes).toHaveLength(3);
+      close(g.axes[0], [0, -1, 0]);
+      close(g.axes[1], [0, 0, 1]);
+      close(g.at, t.info("a").points.tip);
     });
   }
-  it("show no rings for a goal handle without a toward", () => {
+
+  it("shows no gizmo for a goal handle without a toward", () => {
     const part = aimed(0);
     delete part.handles.a.toward;
     const t = setup(part);
-    t.mode.setEnabled(true);
+    hoverTip(t);
+    expect(t.gizmo().state.visible).toBe(false);
+    expect(t.scene.calls.setAimGizmo.filter(Boolean)).toEqual([]);
+  });
+
+  it("shows on hover of its limb (the ball replaces the tip dot) and goes when the mouse leaves", () => {
+    const t = setup(aimed(0));
+    expect(t.gizmo().state.visible).toBe(false);
+    hoverTip(t);
+    expect(t.gizmo().state.visible).toBe(true);
+    expect(t.scene.calls.setAimGizmo.at(-1)).toEqual({ limb: "a", at: "tip" });
+    t.fire("pointermove", 3, 3);
+    expect(t.gizmo().state.visible).toBe(false);
+    expect(t.scene.calls.setAimGizmo.at(-1)).toBeNull();
+  });
+
+  it("each part has the shared hover state: lifted colour, thick geometry, a grab cursor", () => {
+    const t = setup(aimed(-60));
+    hoverTip(t);
+    const pts = t.mode.aimGizmoPoints();
+    expect(Object.keys(pts.rings)).toEqual(["pitch", "yaw", "roll"]);
+    const P = GIZMO_PALETTE.dark;
+    const base = { ball: P.fill, pitch: P.red, yaw: P.blue, roll: P.green };
+    for (const [part, at] of [["ball", pts.center], ...Object.entries(pts.rings)]) {
+      t.fire("pointermove", at.x, at.y);
+      const g = t.gizmo().state;
+      expect(g.hovered).toBe(part);
+      expect(t.mode.aimGizmoPoints().hovered).toBe(part);
+      expect(t.viewer.domElement.style.cursor).toBe("grab");
+      expect(t.mode.claimsHover()).toBe(true);
+      for (const [name, p] of Object.entries(g.parts)) {
+        const on = name === part;
+        expect(p.thick).toBe(on);
+        expect(p.material.opacity).toBe(1);
+        if (on) expect(p.material.color.getHex()).not.toBe(base[name]);
+        else expect(p.material.color.getHex()).toBe(base[name]);
+      }
+    }
+    // between the ball and the rings, clear of the edge-on yaw and roll rings' bands
+    // (horizontal, and 30 degrees up from it): still shown, nothing hovered, no grab
+    const c = pts.center;
+    t.fire("pointermove", c.x, c.y - 22);
+    expect(t.gizmo().state.visible).toBe(true);
+    expect(t.gizmo().state.hovered).toBeNull();
+    expect(t.viewer.domElement.style.cursor).toBe("");
+  });
+
+  it("has no roll ring with two aim parameters", () => {
+    const t = setup(aimed(0, ["gPitch", "gYaw"]));
+    hoverTip(t);
+    const g = t.gizmo().state;
+    expect(g.axes).toHaveLength(2);
+    expect(g.parts.roll.shown).toBe(false);
+    expect(g.parts.pitch.shown).toBe(true);
+    expect(Object.keys(t.mode.aimGizmoPoints().rings)).toEqual(["pitch", "yaw"]);
+  });
+
+  for (const pitch of [-60, -90]) {
+    it(`dragging the pitch ring at pitch ${pitch} writes gPitch with the turn's sign, one commit`, () => {
+      const t = setup(aimed(pitch));
+      hoverTip(t);
+      const axis = t.gizmo().state.axes[0];
+      // 120 degrees round: clear of where the edge-on yaw and roll rings cross it
+      const p0 = ringPoint(t, axis, 120);
+      t.fire("pointermove", p0.x, p0.y);
+      expect(t.gizmo().state.hovered).toBe("pitch");
+      t.fire("pointerdown", p0.x, p0.y);
+      expect(t.orbit.enabled).toBe(false);
+      for (let d = 5; d <= 20; d += 5) {
+        const p = ringPoint(t, axis, 120 + d);
+        t.fire("pointermove", p.x, p.y);
+        expect(t.gizmo().state.hovered).toBe("pitch"); // steady while dragging
+      }
+      expect(t.viewer.domElement.style.cursor).toBe("grabbing");
+      const p1 = ringPoint(t, axis, 140);
+      t.fire("pointerup", p1.x, p1.y);
+      expect(t.params.gPitch).toBeCloseTo(pitch + 20, 1);
+      expect(t.params.gYaw).toBe(0);
+      expect(t.log.commit).toEqual([["gPitch"]]);
+      expect(t.orbit.enabled).toBe(true);
+      // and back the other way: a negative turn lowers it
+      hoverTip(t);
+      const axis2 = t.gizmo().state.axes[0];
+      const q0 = ringPoint(t, axis2, 120);
+      t.fire("pointermove", q0.x, q0.y);
+      t.fire("pointerdown", q0.x, q0.y);
+      for (let d = 5; d <= 10; d += 5) { const q = ringPoint(t, axis2, 120 - d); t.fire("pointermove", q.x, q.y); }
+      t.fire("pointerup", q0.x, q0.y);
+      expect(t.params.gPitch).toBeCloseTo(pitch + 10, 1);
+    });
+  }
+
+  it("an edge-on ring turns by pointer travel across it (the shared screen fallback)", () => {
+    const t = setup(aimed(-60));
+    hoverTip(t);
+    // the yaw axis is part +Z, straight up the screen: edge-on
+    const p0 = t.mode.aimGizmoPoints().rings.yaw;
+    t.fire("pointermove", p0.x, p0.y);
+    expect(t.gizmo().state.hovered).toBe("yaw");
+    t.fire("pointerdown", p0.x, p0.y);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", p0.x + i * 10, p0.y);
+    t.fire("pointerup", p0.x + 40, p0.y);
+    expect(t.params.gYaw).toBeCloseTo(30, 6); // 0.75 degrees per px
+    expect(t.log.commit).toEqual([["gYaw"]]);
+  });
+
+  it("dragging the centre ball moves the tool point in the camera-facing plane", () => {
+    const t = setup(aimed(-60));
+    const s = hoverTip(t);
+    const tip = t.info("a").points.tip;
+    expect(t.gizmo().state.hovered).toBe("ball");
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 5; i++) t.fire("pointermove", s.x, s.y - i * 6);
+    expect(t.gizmo().state.hovered).toBe("ball");
+    expect(t.gizmo().state.visible).toBe(true);
+    t.fire("pointerup", s.x, s.y - 30);
+    // up the screen is part +Z (the pivot stands Z up); x and y stay with the point
+    expect(t.params.gz).toBeGreaterThan(tip[2] + 5);
+    expect(t.params.gx).toBeCloseTo(tip[0], 6);
+    expect(t.params.gy).toBeCloseTo(tip[1], 6);
+    expect(t.params.gPitch).toBe(-60);
+    expect(t.log.commit).toHaveLength(1);
+    expect(t.log.commit[0].sort()).toEqual(["gx", "gy", "gz"]);
+  });
+
+  it("a mouse click on the ball still pins the goal point", () => {
+    const t = setup(aimed(0));
+    const s = hoverTip(t);
+    t.fire("pointerdown", s.x, s.y);
+    t.fire("pointerup", s.x, s.y);
+    expect(t.mode.getPins()).toEqual(["a:tip"]);
+    expect(t.log.write).toEqual([]);
+  });
+
+  it("touch: a tap on the goal point shows the gizmo, so a finger can drag a ring; a tap elsewhere hides it", () => {
+    const t = setup(aimed(-60));
+    const touch = { pointerType: "touch" };
     const s = t.tipScreen("a");
-    t.fire("pointermove", s.x, s.y);
-    expect(t.scene.calls.setAimRings.filter(Boolean)).toEqual([]);
+    t.fire("pointerdown", s.x + 15, s.y, touch); // inside a finger's reach
+    t.fire("pointerup", s.x + 15, s.y, touch);
+    expect(t.gizmo().state.visible).toBe(true);
+    expect(t.mode.getPins()).toEqual([]); // the first tap only shows it
+    expect(t.log.write).toEqual([]);
+    expect(t.mode.takeClick()).toBe(true);
+    // a finger on the pitch ring drags it
+    const axis = t.gizmo().state.axes[0];
+    const p0 = ringPoint(t, axis, 120);
+    t.fire("pointerdown", p0.x, p0.y, touch);
+    expect(t.gizmo().state.hovered).toBe("pitch");
+    for (let d = 5; d <= 20; d += 5) { const p = ringPoint(t, axis, 120 + d); t.fire("pointermove", p.x, p.y, touch); }
+    t.fire("pointerup", p0.x, p0.y, touch);
+    expect(t.params.gPitch).toBeCloseTo(-40, 1);
+    expect(t.log.commit).toEqual([["gPitch"]]);
+    expect(t.gizmo().state.visible).toBe(true); // still up after the drag
+    expect(t.gizmo().state.hovered).toBeNull(); // touch has no hover
+    // a tap on the ball while it is up pins, as a mouse click does
+    const c = t.tipScreen("a");
+    t.fire("pointerdown", c.x, c.y, touch);
+    t.fire("pointerup", c.x, c.y, touch);
+    expect(t.mode.getPins()).toEqual(["a:tip"]);
+    expect(t.gizmo().state.visible).toBe(true);
+    // a tap anywhere else puts it away, and that press is left to orbit
+    t.fire("pointerdown", 3, 3, touch);
+    expect(t.orbit.enabled).toBe(true);
+    t.fire("pointerup", 3, 3, touch);
+    expect(t.gizmo().state.visible).toBe(false);
+  });
+
+  it("is hidden from captures, follows the theme and goes with detach", () => {
+    const t = setup(aimed(0));
+    hoverTip(t);
+    const g = t.gizmo();
+    expect(g.group.parent).toBe(t.viewer.partsGroup);
+    g.setTheme("light");
+    expect(g.state.parts.pitch.material.color.getHex()).toBe(GIZMO_PALETTE.light.red);
+    t.mode.setSuppressed(true);
+    expect(g.state.visible).toBe(false);
+    t.mode.setSuppressed(false);
+    t.mode.detach();
+    expect(g.group.parent).toBeNull();
   });
 });
 

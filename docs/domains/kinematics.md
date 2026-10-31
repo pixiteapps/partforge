@@ -618,8 +618,10 @@ for example when the upper arm gets longer.
   the arm from flipping between two solutions. An agent sets only the goal parameters.
   The solve then starts from the saved seed, which gives the same pose every time.
   Keep the seed parameters in a collapsed section. They are saved with the goal.
-- Only the `at` point can be grabbed. With `aim`, a set of rotate rings shows on the
-  grabbed handle, to tilt the aim.
+- Only the `at` point can be grabbed. With `aim`, the handle gets an aim gizmo: a centre
+  ball on the `at` point and one rotate ring for each aim parameter (pitch red, yaw
+  blue, roll green; a roll ring only when `aim` lists three). It is the cutaway
+  control's widget, so it acts the same way. See "Pose mode".
 - **`toward`** is required with `aim`: the direction zero pitch and yaw point, the same
   `toward` the part passes `aimFromAngles` (share one constant, as the arm does). The
   rings turn about axes built from it and the aim parameters' values, never from the
@@ -653,6 +655,13 @@ when they are all off.
 - **Hover a dot** to highlight it. The cursor changes to a grab hand, and the model's
   hover label does not show.
 - **Drag a dot, a joint or an aim ring** to pose the limb. Orbit gives way to the grab.
+- **The aim gizmo.** A goal handle with `aim` shows a ball and rotate rings at its `at`
+  point instead of a dot. They show when you hover near the limb, and they stay while
+  you drag any part of them. Hover a part to highlight it: it gets lighter and thicker,
+  and the cursor changes to a grab hand. Drag the ball to move the point, as you drag a
+  dot. Drag a ring to turn the aim parameter of that ring. Seen edge-on, a ring turns
+  as you move the pointer across it. The ball's target is 28 CSS px wide and a ring's
+  band is 24 CSS px wide. Where the ball and a ring overlap, the ball wins.
 - **Every other press is the usual press.** On empty space or on the model away from the
   handles, a drag orbits and a click picks (the chat box opens as before).
 - **Click a tip (no drag)** to pin it. This click does not pick. A drag does not pick
@@ -660,6 +669,10 @@ when they are all off.
   shows in the viewbar while a pin is set and posing is on.
 - **Touch has no hover.** A touch press 24 px or less from a dot of any limb drags that
   dot. A touch press anywhere else orbits or picks.
+- **Touch and the aim gizmo.** A tap on a goal point with `aim` shows its aim gizmo and
+  does not pin it. The gizmo stays until a touch lands somewhere else, so you can then
+  drag a ring with your finger. A drag from the point also leaves it shown. While the
+  gizmo shows, a tap on its ball pins the point, as a mouse click does.
 - **Rigid parts move live.** A sub-part that the pose only places by matrix moves on every
   frame.
 - **A part that must rebuild** fades to a ghost (0.35 opacity) and stays still. A
