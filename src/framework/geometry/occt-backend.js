@@ -815,7 +815,7 @@ export function createOcctKernel(replicad) {
     // Our own writer, not replicad's exportSTEP, so colours come out right (see
     // occt-step.js). `color` per body is optional; jobs.js passes the sub-part's
     // printColor, the same colour its .3mf object gets.
-    toSTEP: async (named) => writeStep(replicad, named.map(({ name, solid, color }) => ({ name, shape: solid._mat()._s, color }))),
+    toSTEP: async (named) => writeStep(replicad, named.map(({ name, solid, color, mesh }) => ({ name, shape: solid._mat()._s, color, mesh }))),
     // Imported geometry, registered pre-build by the framework via `_registerImport`
     // (ensureImports, Task 8). Every call clones the master shape — replicad ops
     // consume their operands, and the master must never be handed out directly, or

@@ -83,6 +83,23 @@ const loadBedLayout = () => import("./export/bed-layout.js");
 // preview generates stay quiet (no callback) to avoid flicker during slider drags.
 const bufferOf = (data) => (ArrayBuffer.isView(data) ? data.buffer : data);
 
+// An organic sub-part's mesh (export-step's `meshes`): its bounds for the bed layout, and
+// a copy moved by the layout's offset.
+function meshBounds(positions) {
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < positions.length; i += 3) for (let a = 0; a < 3; a++) {
+    const v = positions[i + a];
+    if (v < min[a]) min[a] = v;
+    if (v > max[a]) max[a] = v;
+  }
+  return { min, max };
+}
+function shiftMesh({ positions, indices }, o) {
+  const p = Float32Array.from(positions);
+  for (let i = 0; i < p.length; i += 3) { p[i] += o[0]; p[i + 1] += o[1]; p[i + 2] += o[2]; }
+  return { positions: p, indices };
+}
+
 // One caller-supplied match target as a reference mask, or null when it is not one we
 // can score. Every field here is untrusted wire data, so shape is checked rather than
 // assumed — a target the caller got wrong is skipped, never thrown, so one bad entry
@@ -557,15 +574,39 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // 3MF/STEP hold every selected piece in one file; printed views-map pieces export as
       // built, so they are laid out apart (export/bed-layout.js). Sheet pieces keep their
       // assembled pose. STL is one file per piece and is never laid out.
+      //
+      // `msg.meshes` (name → { positions, indices }) are organic sub-parts the Manifold worker
+      // already built and meshed in their export pose (export-controller.js): they are not
+      // built here, they are laid out by their mesh's bounds, and each reaches toSTEP as a
+      // small stand-in solid carrying its mesh, which the writer turns into a tessellated
+      // solid. Without `meshes` this is the export it always was.
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
-      const { layoutExportPieces } = await loadBedLayout();
-      const solids = layoutExportPieces(part, names.map((name) => {
-        onProgress(`building ${label(name)}`);
-        return { name, solid: posed(name, "export", onProgress) };
-      })).map(({ name, solid }) => ({ name: exportName(name), solid, color: printColor(part.parts[name]?.display) }));
+      const meshes = msg.meshes ?? {};
+      const { layoutExportPieces, laidOutOnBed, exportLayoutOffsets } = await loadBedLayout();
+      let bodies;
+      if (names.some((name) => meshes[name])) {
+        const pieces = names.map((name) => {
+          if (meshes[name]) return { name, mesh: meshes[name], box: meshBounds(meshes[name].positions) };
+          onProgress(`building ${label(name)}`);
+          const solid = posed(name, "export", onProgress);
+          return { name, solid, box: laidOutOnBed(part, name) ? solid.boundingBox() : null };
+        });
+        const offsets = exportLayoutOffsets(part, pieces.filter((pc) => laidOutOnBed(part, pc.name)));
+        bodies = pieces.map(({ name, solid, mesh }) => {
+          const o = offsets.get(name);
+          const color = printColor(part.parts[name]?.display);
+          if (!mesh) return { name: exportName(name), solid: o ? solid.translate(o) : solid, color };
+          return { name: exportName(name), solid: kernel.box({ size: [1, 1, 1] }), color, mesh: o ? shiftMesh(mesh, o) : mesh };
+        });
+      } else {
+        bodies = layoutExportPieces(part, names.map((name) => {
+          onProgress(`building ${label(name)}`);
+          return { name, solid: posed(name, "export", onProgress) };
+        })).map(({ name, solid }) => ({ name: exportName(name), solid, color: printColor(part.parts[name]?.display) }));
+      }
       onProgress("writing STEP file");
-      const data = await kernel.toSTEP(solids);
+      const data = await kernel.toSTEP(bodies);
       post({ type: "download", data, filename: `${fileBase}.step`, mime: "application/step", jobId: msg.jobId }, [bufferOf(data)]);
     } else if (msg.type === "export-3mf") {
       const names = selected();
