@@ -8,6 +8,7 @@ const sameKeys = (a, b) => {
   return ka.length === kb.length && ka.every((k, i) => k === kb[i]);
 };
 
+// A caller must require skinnable on both sides AND equal probe shapeHash AND framesOnlyChange.
 /**
  * True when both builds made the same k.implicit calls (same count, same shape per call, same
  * frame names in the same order) and nothing differs but values inside `frames`.

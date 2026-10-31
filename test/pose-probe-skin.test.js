@@ -47,3 +47,22 @@ test("place() steps in full scope do not change skinnable", () => {
   expect(probe(null, "full", sp).skinnable).toBe(true);
   expect(probe(null, "full", sp).trusted).toBe(true);
 });
+
+test("a plain-only union is not skinnable", () => {
+  expect(probe((k) => k.union([k.box([1, 1, 1]), k.box([2, 1, 1])])).skinnable).toBe(false);
+});
+
+test.each([
+  ["a .union with a translated implicit operand", (k) => k.implicit(a).union(k.implicit(b).translate([1, 0, 0]))],
+  ["an intersect", (k) => k.implicit(a).intersect(k.box([1, 1, 1]))],
+])("not skinnable: %s", (_n, build) => expect(probe(build).skinnable).toBe(false));
+
+test("shapeHash ignores frames, but moves with a sibling box or a spec change", () => {
+  const sh = (spec, w = 1) => probe((k) => k.union([k.implicit(spec), k.box([w, 1, 1])])).shapeHash;
+  expect(sh(TWO_BONE(0))).toBeDefined();
+  expect(sh(TWO_BONE(0))).toBe(sh(TWO_BONE(30)));
+  expect(sh(TWO_BONE(0), 1)).not.toBe(sh(TWO_BONE(0), 2));
+  const t = TWO_BONE(0);
+  const fat = { ...t, root: { ...t.root, children: [{ ...t.root.children[0], r: 5 }, t.root.children[1]] } };
+  expect(sh(t)).not.toBe(sh(fat));
+});
