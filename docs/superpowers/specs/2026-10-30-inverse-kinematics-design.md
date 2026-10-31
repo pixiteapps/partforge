@@ -198,7 +198,7 @@ handles: {
     - An optional third, roll, becomes the goal's `up`.
     - The domain exports one helper that turns those angles into `aim`/`up` vectors
       (`aimFromAngles`). The part and the viewer's rotate rings share its convention:
-      zero pitch and yaw is the limb's rest `toward`, yaw is about part +Z, then pitch.
+      zero pitch and yaw is the rest direction the goal handle declares as `toward` (the tool's rest aim, which need not be the limb's `toward`), yaw is about part +Z, then pitch.
     - *(Builder check, settled as my call.)*
 - **`mode: "angles"`**
   - Dragging solves for the listed parameters (section 3) and writes them.
