@@ -495,14 +495,16 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // Two-stage delivery (spec 2026-10-31-implicit-pose-drag §5): armed for this job
       // alone — a union of k.implicit bodies is posted first as its pieces concatenated
       // (`meshes-provisional`, never cached or stamped by mount), then as the real union
-      // in the ordinary reply. capture-generate, inspect and exports never arm it.
-      kernel.setProvisionalUnions?.(true);
+      // in the ordinary reply. capture-generate, inspect and exports never arm it, and
+      // neither does a generate that asks for no stage (`provisional: false` — mount
+      // sends it during a pose drag or playback, where the stage would be dropped).
+      kernel._setProvisionalUnions?.(msg.provisional !== false);
       try {
         for (const [i, name] of msg.subparts.entries()) {
           if (useCache) kernel.beginSubPart?.(name); // open the per-sub-part cache round
           try {
             const { solid, reads, frame } = displayWithReads(name);
-            const pieces = kernel.takeProvisionalPieces?.(solid);
+            const pieces = kernel._takeProvisionalPieces?.(solid);
             if (pieces && !isStale()) {
               const stage = [{ name, ...concatMeshPayloads(pieces.map((pc) => pc.toMesh({ quality: "preview" }))), reads, frame, provisional: true }];
               post({ type: "meshes-provisional", meshes: stage }, transferOf(stage));
@@ -540,7 +542,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
           }
         }
       } finally {
-        kernel.setProvisionalUnions?.(false);
+        kernel._setProvisionalUnions?.(false);
       }
       post({ type: "meshes", meshes, ms: Date.now() - t0, cache: kernel.cacheStats?.(),
              ...(warnings.length ? { warnings } : {}) }, transferOf(meshes));

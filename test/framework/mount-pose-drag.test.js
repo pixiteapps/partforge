@@ -242,7 +242,8 @@ function setup({ lid = false, images = false, first = null, onParamsCommit } = {
   const reply = (meshes) => w.onmessage({ data: { type: "meshes", meshes, ms: 1 } });
   w.onmessage({ data: { type: "ready" } });
   const firstDelivery = first ?? delivery(0);
-  reply(lid ? [firstDelivery, lidDelivery()] : [firstDelivery]);
+  // first: false leaves the first build in flight (nothing on screen yet).
+  if (first !== false) reply(lid ? [firstDelivery, lidDelivery()] : [firstDelivery]);
   const slider = (key) => els.controls.querySelectorAll('input[type="range"]')[{ bend: 0, r: 1, img: 2 }[key]];
   const input = (key, value) => {
     const s = slider(key);
@@ -611,4 +612,62 @@ test("a drag input while the provisional stage is on screen does not skin it", (
   expect(v.setSubGeometry.mock.calls.at(-1)[1].provisional).toBe(true);
   input("bend", 40); // the base (bend 0) is frames-only away, but the screen shows the provisional stage
   expect(v.setSubVertices.mock.calls.slice(vertCalls).some(([, , o]) => o?.deformed)).toBe(false);
+});
+
+// Fix round 1: a provisional stage whose union never lands gives way to the exact mesh it
+// covered; with none (a first build) captures keep refusing.
+
+const fail = (w) => w.onmessage({ data: { type: "error", message: "boom" } });
+
+test("provisional then error: the prior exact mesh is back on screen and captures work", () => {
+  const { runtime, v, w, input, firstDelivery } = setup();
+  rebuild(input);
+  provisional(w, provisionalDelivery(0));
+  fail(w);
+  expect(v.setSubGeometry).toHaveBeenLastCalledWith("body", firstDelivery);
+  expect(() => runtime.captureViews(["iso"])).not.toThrow();
+  expect(v.captureCanonicalViews).toHaveBeenCalledTimes(1);
+});
+
+test("first build provisional then error: captures still refuse", async () => {
+  const { runtime, v, w } = setup({ first: false });
+  runtime.ready.catch(() => {});
+  provisional(w, provisionalDelivery(0));
+  expect(v.setSubGeometry.mock.calls.at(-1)[1].provisional).toBe(true);
+  const geoCalls = v.setSubGeometry.mock.calls.length;
+  fail(w);
+  expect(v.setSubGeometry.mock.calls.length).toBe(geoCalls); // nothing exact to put back
+  expect(() => runtime.captureViews(["iso"])).toThrow(/not fully built/);
+  await expect(runtime.exportPreview()).rejects.toThrow(/not fully built/);
+});
+
+test("a provisional stage whose final is discarded as stale gives way to the prior exact mesh", () => {
+  const { runtime, v, w, input, reply, firstDelivery } = setup();
+  rebuild(input);
+  provisional(w, provisionalDelivery(0));
+  input("r", 6); // the build in flight goes stale
+  reply([delivery(0)]); // its union: discarded
+  expect(v.setSubGeometry).toHaveBeenLastCalledWith("body", firstDelivery);
+  expect(() => runtime.captureViews(["iso"])).not.toThrow();
+});
+
+test("a provisional stage after a drag release puts the exact base back, not the deformed mesh, if it never lands", () => {
+  const { v, w, input, release, firstDelivery } = setup();
+  input("bend", 30); // deforms the delivered payload's arrays in place
+  release("bend");
+  provisional(w, provisionalDelivery(30));
+  fail(w);
+  expect(v.setSubGeometry).toHaveBeenLastCalledWith("body", firstDelivery);
+  expect(Array.from(firstDelivery.positions)).toEqual(Array.from(basePositions(0)));
+});
+
+test("a generate dispatched at the drag pause asks for no provisional stage; an ordinary one does not say", () => {
+  const { w, input, release, reply } = setup();
+  input("bend", 30);
+  vi.advanceTimersByTime(150); // the pause: the exact build goes out mid-drag
+  expect(generates(w).at(-1)[0].provisional).toBe(false);
+  release("bend");
+  reply([delivery(30)]);
+  rebuild(input);
+  expect(generates(w).at(-1)[0].provisional).toBeUndefined();
 });

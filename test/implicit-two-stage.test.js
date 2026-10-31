@@ -33,12 +33,12 @@ const boundsOf = (positions) => {
 describe("the deferred union on the Manifold preview kernel", () => {
   test("an armed preview union of implicit results hands out its pieces once, then the real union", () => {
     const k = kernel();
-    k.setProvisionalUnions(true);
+    k._setProvisionalUnions(true);
     let pieces, again, m;
     inBracket(k, () => {
       const s = pair(k);
-      pieces = k.takeProvisionalPieces(s);
-      again = k.takeProvisionalPieces(s);
+      pieces = k._takeProvisionalPieces(s);
+      again = k._takeProvisionalPieces(s);
       m = s.toMesh();
     });
     expect(pieces).toHaveLength(2);
@@ -51,10 +51,10 @@ describe("the deferred union on the Manifold preview kernel", () => {
 
   test("the pieces' meshes carry their bindings when read inside the bracket", () => {
     const k = kernel();
-    k.setProvisionalUnions(true);
+    k._setProvisionalUnions(true);
     const ms = inBracket(k, () => {
       const s = pair(k);
-      const out = k.takeProvisionalPieces(s).map((p) => p.toMesh({ quality: "preview" }));
+      const out = k._takeProvisionalPieces(s).map((p) => p.toMesh({ quality: "preview" }));
       s.toMesh();
       return out;
     });
@@ -65,12 +65,12 @@ describe("the deferred union on the Manifold preview kernel", () => {
 
   test("a trailing rigid step is replayed onto the pieces", () => {
     const k = kernel();
-    k.setProvisionalUnions(true);
+    k._setProvisionalUnions(true);
     const ref = kernel();
     const plain = inBracket(ref, () => [ref.implicit(TWO_BONE(0)), ref.implicit(BALL("child"))].map((s) => boundsOf(s.toMesh().positions)));
     const moved = inBracket(k, () => {
       const s = pair(k).translate([5, 0, 0]);
-      const pieces = k.takeProvisionalPieces(s);
+      const pieces = k._takeProvisionalPieces(s);
       const out = pieces.map((p) => boundsOf(p.toMesh().positions));
       s.toMesh();
       return out;
@@ -89,10 +89,10 @@ describe("the deferred union on the Manifold preview kernel", () => {
     ["a union of two plain boxes", (k) => k.union([k.box([0, 0, 0], [1, 1, 1]), k.box([2, 0, 0], [3, 1, 1])])],
   ])("no pieces: %s", (_, build) => {
     const k = kernel();
-    k.setProvisionalUnions(true);
+    k._setProvisionalUnions(true);
     inBracket(k, () => {
       const s = build(k);
-      expect(k.takeProvisionalPieces(s)).toBeNull();
+      expect(k._takeProvisionalPieces(s)).toBeNull();
       expect(s.toMesh().triangles).toBeGreaterThan(0);
     });
   });
@@ -101,31 +101,31 @@ describe("the deferred union on the Manifold preview kernel", () => {
     const k = kernel();
     inBracket(k, () => {
       const s = pair(k);
-      expect(k.takeProvisionalPieces(s)).toBeNull();
+      expect(k._takeProvisionalPieces(s)).toBeNull();
     });
   });
 
   test("no pieces: print quality", () => {
     const k = kernel("print");
-    k.setProvisionalUnions(true);
+    k._setProvisionalUnions(true);
     inBracket(k, () => {
       const s = k.union([k.implicit({ ...TWO_BONE(0), resolution: 2 }), k.implicit({ ...BALL("child"), resolution: 2 })]);
-      expect(k.takeProvisionalPieces(s)).toBeNull();
+      expect(k._takeProvisionalPieces(s)).toBeNull();
     });
   });
 
   test("the memory is cleared when the bracket closes", () => {
     const k = kernel();
-    k.setProvisionalUnions(true);
+    k._setProvisionalUnions(true);
     let s;
     inBracket(k, () => { s = pair(k); });
-    expect(k.takeProvisionalPieces(s)).toBeNull();
+    expect(k._takeProvisionalPieces(s)).toBeNull();
     inBracket(k, () => { s.toMesh(); });
   });
 
   test("the deferred judgment still refuses an impossible union, at first read and every later read", () => {
     const k = kernel();
-    k.setProvisionalUnions(true);
+    k._setProvisionalUnions(true);
     const bad = wasm.Manifold.cylinder(0, 1, 1, 8); // InvalidConstruction, as an empty profile's extrude
     expect(bad.status()).not.toBe("NoError");
     const badSolid = { _m: bad, _hash: "bad-operand", _canon: { m: bad, hash: "bad-operand", chain: [] } };
@@ -145,7 +145,7 @@ describe("the deferred union on the Manifold preview kernel", () => {
 
   test("a deferred union's failed judgment reaches an op built on it", () => {
     const k = kernel();
-    k.setProvisionalUnions(true);
+    k._setProvisionalUnions(true);
     const bad = wasm.Manifold.cylinder(0, 1, 1, 8);
     const badSolid = { _m: bad, _hash: "bad-operand-2", _canon: { m: bad, hash: "bad-operand-2", chain: [] } };
     inBracket(k, () => {
@@ -213,7 +213,7 @@ describe("the generate job", () => {
     // The kernel is disarmed after the job: inspect's build gets the union alone.
     const view = buildView(k, part, "v");
     expect(view[0].mesh.triangles).toBe(fin.triangles);
-    expect(k.takeProvisionalPieces(view[0].solid)).toBeNull();
+    expect(k._takeProvisionalPieces(view[0].solid)).toBeNull();
   });
 
   test("the provisional stage of a stale build is not posted", async () => {
@@ -224,6 +224,17 @@ describe("the generate job", () => {
     await handle(k, stalePart, { type: "generate", subparts: ["body"], view: "v", params: {} }, (m) => posted.push(m), { isStale: () => started });
     expect(posted.map((m) => m.type)).not.toContain("meshes-provisional");
     expect(posted.map((m) => m.type)).toContain("meshes");
+  });
+
+  test("a generate that asks for no stage (provisional: false) posts none, and the same union", async () => {
+    const k = kernel();
+    const posted = [];
+    await handle(k, part, { type: "generate", subparts: ["body"], view: "v", params: {}, provisional: false }, (m) => posted.push(m));
+    expect(posted.map((m) => m.type)).not.toContain("meshes-provisional");
+    const fin = posted.find((m) => m.type === "meshes").meshes[0];
+    const k3 = kernel();
+    const union = inBracket(k3, () => pair(k3).toMesh());
+    expect(Array.from(fin.positions)).toEqual(Array.from(union.positions));
   });
 
   test("capture-generate never arms the deferral", async () => {

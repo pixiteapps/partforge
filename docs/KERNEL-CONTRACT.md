@@ -115,8 +115,7 @@ relying on consumption should gate it with a `verify` volume assertion.
 OCCT/replicad backend is the reference.
 
 **Optional ops.** `KERNEL_OPTIONAL_OPS` (`beginSubPart`/`endSubPart`/`sweepCache`/`dropCache`/
-`setCacheBudget`/`trimCache`/`cacheBytes`/`cacheStats`/`resetCacheStats`/`cleanup`/`takeBuildWarnings`/
-`setProvisionalUnions`/`takeProvisionalPieces`) and `SOLID_OPTIONAL_OPS` (`genus`/`isEmpty`) may
+`setCacheBudget`/`trimCache`/`cacheBytes`/`cacheStats`/`resetCacheStats`/`cleanup`/`takeBuildWarnings`) and `SOLID_OPTIONAL_OPS` (`genus`/`isEmpty`) may
 be omitted entirely; callers in the framework guard with `?.`/`typeof`. A host that omits
 them loses sub-part caching and mesh-topology gates (`holes`, emptiness), nothing else.
 `sweepCache()` is the cache's rebind hygiene hook: called once when a worker is rebound to

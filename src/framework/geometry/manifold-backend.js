@@ -108,7 +108,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // an n-ary union of buried features does not hold n intermediates to cleanup.
   const volumes = new WeakMap();
   // Two-stage delivery (docs/superpowers/specs/2026-10-31-implicit-pose-drag-design.md §5).
-  // While the generate job arms it (setProvisionalUnions), a preview union with a
+  // While the generate job arms it (_setProvisionalUnions), a preview union with a
   // k.implicit result among its operands is built as Manifold's LAZY union node with its
   // judgment below DEFERRED: pendingJudge maps the node to that judgment, and settle() runs
   // it at the first read of the node's geometry (meshOut, indexedMeshOut, volumeOf, and
@@ -168,6 +168,12 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // kernel.union's evaluation over its operand SOLIDS: deferred (above) when armed at
   // preview and an operand is a k.implicit result or an earlier deferred union, else
   // judged at once as always.
+  //
+  // Two consequences of deferring, both deliberate: a refusing union that nothing ever
+  // READS (built, then dropped by the part's own build) passes an armed generate where
+  // an unarmed build would have thrown — every read of it still throws; and a node whose
+  // judgment refuses is in the solid cache with that judgment still pending, so a later
+  // build that hits the entry throws at its first read, exactly as the first build did.
   const unionOfSolids = (solids) => {
     const ms = solids.map((s) => s._m);
     const deferrable = provisionalUnions && quality === "preview" && ms.length >= 2
@@ -1194,11 +1200,12 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         ?? cached(h("union", solids.map((s) => s._hash)), () => unionOfSolids(solids)),
     // Two-stage delivery (unionOfSolids above): the generate job arms the deferral for its
     // own duration; nothing else ever does.
-    setProvisionalUnions: (on) => { provisionalUnions = !!on; },
+    // Off-contract (underscore): framework plumbing between this backend and jobs.js.
+    _setProvisionalUnions: (on) => { provisionalUnions = !!on; },
     // The operands of the bracket's last deferred union, when `solid` IS that union up to
     // rigid steps (its canonical base is the node): each with those steps replayed, so
     // their meshes lie where the union's will. Handed out once; null otherwise.
-    takeProvisionalPieces: (solid) => {
+    _takeProvisionalPieces: (solid) => {
       const last = lastDeferred;
       lastDeferred = null;
       if (!last || solid?._canon?.m !== last.m || !pendingJudge.has(last.m)) return null;

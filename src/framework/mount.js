@@ -1048,7 +1048,15 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // Sub-parts whose mesh on screen is a two-stage delivery's PROVISIONAL stage (the
     // pieces of a union of implicit bodies, concatenated — case "meshes-provisional").
     // Never current, never cached; no capture runs while one of the view's is shown.
-    const provisional = new Set();
+    // Maps each such sub-part to the exact mesh it replaced on screen ({ payload, frame,
+    // delivered } — lastExact's record), or null when there was none (a first build).
+    // If the union never lands — the job errors, or its final is discarded as stale —
+    // revertProvisional puts that exact mesh back. With nothing to put back the sub-part
+    // stays flagged (captures keep refusing) and missing until a later build lands:
+    // clearing the flag would let the overlapping shells be read as exact.
+    const provisional = new Map();
+    // name -> the payload of the last exact mesh setSubGeometry drew for it.
+    const lastExact = new Map();
     let cutawayRestored = false; // a carried cutaway, applied once — after any preview, never on one
     let selectionRestored = false; // a carried selection, tried once, after the camera
     function restoreCarriedSelection() {
@@ -1108,7 +1116,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         for (const backend of ["manifold", "occt"]) {
           const subparts = missing.filter((n) => (backends[n] ?? "manifold") === backend);
           if (subparts.length === 0) continue;
-          service.send({ type: "generate", subparts, view: view(), params, cache: cachingOn, cacheBudget: cacheBudgetBytes, ...(progressiveBuild ? { progressive: true } : {}) }, backend);
+          // A two-stage delivery's provisional stage would be dropped during a pose drag
+          // (case "meshes-provisional") and is pointless under playback: ask for none.
+          const noStage = skin.isDragging() || lastAnimApplyVersion === loop.version();
+          service.send({ type: "generate", subparts, view: view(), params, cache: cachingOn, cacheBudget: cacheBudgetBytes, ...(progressiveBuild ? { progressive: true } : {}), ...(noStage ? { provisional: false } : {}) }, backend);
           jobs++;
         }
         return jobs;
@@ -1344,6 +1355,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       for (const m of meshes) {
         viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
         provisional.delete(m.name);
+        lastExact.set(m.name, m);
         // The view its job was SENT for, and the frame the worker delivered
         // in: "canonical" (place() not applied — mount poses it below) or
         // "posed". An older worker sends no frame; its meshes are posed.
@@ -1372,6 +1384,29 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       recordFrames(meshes);
       // The view is exact at the live params: the drag, if any, is over.
       if (missingParts().length === 0) skin.endDrag();
+    }
+
+    // A provisional stage whose union never landed (its job errored, or its final was
+    // discarded as stale): the exact mesh it replaced goes back on screen, posed at the
+    // live params from its own frame, with its material frames' record. It stays missing
+    // (its cache stamp was forgotten), as a stale mesh after a failed build always was,
+    // so captures work and the next change rebuilds it. With no exact mesh to put back (a
+    // first build) the stage stays flagged and on screen: see `provisional` above.
+    function revertProvisional(names = [...provisional.keys()]) {
+      const frames = {};
+      for (const name of names) {
+        const kept = provisional.get(name);
+        if (!kept) continue; // not provisional, or nothing exact to put back
+        provisional.delete(name);
+        viewer.setSubGeometry(name, kept.payload);
+        if (kept.delivered) { deliveredAt.set(name, kept.delivered); undrawnFrames.add(name); }
+        frames[name] = kept.frame;
+      }
+      const reverted = Object.keys(frames);
+      if (!reverted.length) return;
+      viewer.invalidateFrames?.();
+      fastPath.apply(reverted, frames);
+      refreshView();
     }
 
     // Progressive delivery (feedback #212). A view with many sub-parts posts what it has
@@ -1436,15 +1471,28 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           // no cache stamp (the sub-part stays missing, so the loop waits on the union,
           // exportPreview refuses and captures throw), never a skin base, and not under
           // the cutaway, whose section cap would be cut from overlapping shells. Dropped
-          // during a pose drag, whose deformed mesh is already at the live pose.
+          // during a pose drag, whose deformed mesh is already at the live pose (and a
+          // generate dispatched during a drag or playback asks for no stage at all).
+          // Known gap: the cutaway is checked only on arrival, so a cutaway turned on —
+          // or a pick or measurement made — in the ~250 ms before the union lands sees
+          // the overlapping shells.
           if (!loop.isFresh() || viewer.cutawayEnabled?.() || skin.isDragging()) break;
           const names = data.meshes.map((m) => m.name);
           for (const m of data.meshes) {
+            // What goes back if the union never lands: the exact mesh on screen now —
+            // written back to its exact base first if a drag left it deformed. A second
+            // stage keeps the first one's record.
+            if (!provisional.has(m.name)) {
+              if (skin.isDeformed(m.name)) skin.restore(m.name);
+              const payload = lastExact.get(m.name);
+              provisional.set(m.name, payload && viewer.hasSubMesh(m.name)
+                ? { payload, frame: payload.frame ?? "posed", delivered: deliveredAt.get(m.name) }
+                : null);
+            }
             viewer.setSubGeometry(m.name, m);
             fastPath.forget(m.name);
             skin.forget(m.name); // the skin's base no longer matches the geometry on screen
             cache.forget(m.name);
-            provisional.add(m.name);
           }
           fastPath.apply(names, Object.fromEntries(data.meshes.map((m) => [m.name, m.frame ?? "posed"])));
           recordFrames(data.meshes);
@@ -1504,6 +1552,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             for (const m of data.meshes) {
               viewer.setSubGeometry(m.name, m);
               provisional.delete(m.name);
+              lastExact.set(m.name, m);
               fastPath.forget(m.name);
               skin.forget(m.name); // built at params playback has left: never a skin base
               cache.forget(m.name); // the stamp described the last FRESH delivery; this mesh was built at other params, so no stamp may describe it (spec §2)
@@ -1530,6 +1579,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
               for (const m of rebased) {
                 viewer.setSubGeometry(m.name, m);
                 provisional.delete(m.name);
+                lastExact.set(m.name, m);
                 fastPath.forget(m.name);
                 cache.forget(m.name);
                 skin.recordDelivered(m.name, m, dispatched.get(m.name));
@@ -1540,6 +1590,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
               skin.deform();
             }
           }
+          // A final discarded as stale whose provisional stage is on screen: that stage's
+          // union will never land, so the exact mesh it replaced goes back.
+          revertProvisional(data.meshes.map((m) => m.name).filter((n) => provisional.has(n)));
           // stale → rebuild (after the pause while a drag goes on); fresh → the view may
           // still need parts (tab switched mid-build)
           // The pause counts from the last skinned input, not from this reply.
@@ -1627,6 +1680,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           }
           loop.buildDone();
           ui.hideBusy();
+          // A failed build leaves the last exact meshes on screen, as it always has: a
+          // provisional stage its union never replaced gives way to the mesh it covered.
+          // An error does not name its job, so every stage still showing goes back; with a
+          // split dispatch that can include one whose union the other worker is still
+          // building, which then replaces the reverted mesh when it lands.
+          revertProvisional();
           // refreshView FIRST: its all-current branch clears the status line,
           // so writing the failure after it keeps the message on screen.
           refreshView();
@@ -1892,7 +1951,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         measureMode.setEnabled(false);
         annotateMode?.setEnabled(false);
         previewGate.start();
-        for (const m of shown) { viewer.setSubGeometry(m.name, m); skin.forget(m.name); provisional.delete(m.name); }
+        for (const m of shown) { viewer.setSubGeometry(m.name, m); skin.forget(m.name); provisional.delete(m.name); lastExact.set(m.name, m); }
         refreshView();
       }).catch((error) => {
         if (!disposed) console.warn(`partforge: preview ignored — ${error?.message ?? error}`);
