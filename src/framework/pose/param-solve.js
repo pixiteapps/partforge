@@ -23,6 +23,13 @@ const H = 1e-3;
  * cursor must not drag along: when both cannot be met, the grabbed point gives way.
  */
 const HOLD_WEIGHT = 10;
+/**
+ * The solve stops once the residual is this small (mm): world() rounds to 0.001 mm, so
+ * a residual at that size is as met as it can be read, and another Jacobian (2 derives
+ * per DOF) buys nothing. Warm-started from the last frame, a drag usually gets there in
+ * three or four iterations of the eight allowed — about half the derives.
+ */
+const TOL_MM = 1e-3;
 
 const isLimb = (v) => typeof v?.ikInfo === "function";
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
@@ -101,9 +108,9 @@ function dofsOf(handle, allHandles, p) {
  * Returns `{ values, error }` (values: every DOF, clamped to its schema range; error: the
  * residual norm in mm, each hold's share weighted by HOLD_WEIGHT) or null when the start
  * pose itself fails. Never throws for a derive that throws: that evaluation just scores
- * FAILED.
+ * FAILED. It stops early once the residual is at most `tol` (default TOL_MM).
  */
-export function solveAngles({ part, params, handle, grab, target, holds = [], iterations = 8, allHandles = [handle] }) {
+export function solveAngles({ part, params, handle, grab, target, holds = [], iterations = 8, allHandles = [handle], tol = TOL_MM }) {
   const base = { ...part.defaults, ...params };
   const keys = dofsOf(handle, allHandles, base);
   const ranges = rangesOf(part);
@@ -157,7 +164,7 @@ export function solveAngles({ part, params, handle, grab, target, holds = [], it
     const r = residuals(u0);
     return { values: {}, error: Math.hypot(...r) };
   }
-  const { x, error } = solveDLS({ x0: u0, lo, hi, residuals, iterations, h: H, lambda });
+  const { x, error } = solveDLS({ x0: u0, lo, hi, residuals, iterations, h: H, lambda, tol });
   return { values: valuesOf(x), error };
 }
 

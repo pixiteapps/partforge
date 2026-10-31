@@ -94,6 +94,36 @@ describe("solveAngles", () => {
     expect(r.values.aCurl).toBeGreaterThanOrEqual(0);
     expect(r.values.aCurl).toBeLessThanOrEqual(1);
   });
+
+  // The frame budget: every residual evaluation is a derive, and a drag solves once per
+  // frame. A solved point stops the solve (TOL_MM), so a warm-started drag pays for the
+  // iterations it needs, not all eight.
+  it("stops once the residual is met: a warm-started drag derives far less often", () => {
+    let calls = 0;
+    const counted = { ...hand, derive: (p) => { calls++; return hand.derive(p); } };
+    const handle = hand.handles.a;
+    const start = tipOf(hand, {}, "a");
+    const run = (opts) => {
+      calls = 0;
+      let p = {};
+      for (let f = 1; f <= 20; f++) {
+        const target = [start[0] + f * 0.3, start[1] - f * 0.2, start[2] - f * 0.3];
+        const r = solveAngles({ part: counted, params: p, handle, grab: "tip", target, ...opts });
+        expect(r.error).toBeLessThan(0.01);
+        p = { ...p, ...r.values };
+      }
+      return { calls, p };
+    };
+    const full = run({ tol: 0 });
+    const early = run({});
+    expect(early.calls).toBeLessThan(full.calls * 0.7);
+    // the same pose, to well within a drag's readout
+    expect(dist(tipOf(hand, early.p, "a"), tipOf(hand, full.p, "a"))).toBeLessThan(0.01);
+    // a target already met costs only the start pose's evaluations
+    calls = 0;
+    solveAngles({ part: counted, params: {}, handle, grab: "tip", target: start });
+    expect(calls).toBeLessThanOrEqual(3);
+  });
 });
 
 // A one-limb arm posed by goals from its own parameters, seeded from saved angles.
