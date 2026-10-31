@@ -170,6 +170,31 @@ describe("createPoseMode", () => {
     expect(t.mode.isDragging()).toBe(false);
   });
 
+  for (const [name, end] of [
+    ["pointercancel", (t, s) => t.fire("pointercancel", s.x, s.y - 30)],
+    ["lostpointercapture", (t, s) => t.fire("lostpointercapture", s.x, s.y - 30)],
+    ["window blur", () => window.dispatchEvent(new Event("blur"))],
+  ]) {
+    it(`${name} mid-drag reverts the drag with no commit and gives orbit back`, () => {
+      const t = setup();
+      t.mode.setEnabled(true);
+      const before = { ...t.params };
+      const s = t.tipScreen("a");
+      t.fire("pointerdown", s.x, s.y);
+      for (let i = 1; i <= 3; i++) t.fire("pointermove", s.x, s.y - i * 10);
+      expect(t.mode.isDragging()).toBe(true);
+      expect(t.orbit.enabled).toBe(false);
+      end(t, s);
+      expect(t.params).toEqual(before);
+      expect(t.log.commit).toHaveLength(0);
+      expect(t.log.hold).toEqual([true, false]);
+      expect(t.orbit.enabled).toBe(true);
+      expect(t.mode.isDragging()).toBe(false);
+      t.fire("pointerup", s.x, s.y - 30); // a late up after the revert commits nothing
+      expect(t.log.commit).toHaveLength(0);
+    });
+  }
+
   it("externalWrite mid-drag reverts and ends the press", () => {
     const t = setup();
     t.mode.setEnabled(true);

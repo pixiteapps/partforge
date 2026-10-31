@@ -26,8 +26,8 @@ import { limbInfo } from "./param-solve.js";
 export const HANDLE_HIT_PX = 14;
 /** How near a limb's bones the pointer must be to hover the limb (and grab its joints). */
 export const BONE_HOVER_PX = 10;
-/** How near an aim ring's line counts as on it. */
-export const RING_HIT_PX = 8;
+/** How near an aim ring's line counts as on it: a 24 px band. */
+export const RING_HIT_PX = 12;
 /** Edge-on rings turn by pointer travel instead: degrees per CSS px. */
 const RING_DEG_PER_PX = 0.75;
 /** Below this |ray . axis| a ring's plane is too edge-on to intersect usefully. */

@@ -6,12 +6,15 @@
 //   frame(target)          solve (angles) or goal values (+ seed), write, ghost new stale
 //   ringFrame(axis, deg)   goal handles with `aim`: tilt one aim param, then as frame
 //   end()                  write the snapped values, hold(false), commit(changed) once
-//   cancel()               restore(snapshot), hold(false), unghost all, no commit
+//   cancel()               restore(snapshot), hold(false), unghost what is current, no commit
 //   externalWrite()        the same as cancel — something else wrote params mid-drag
-//   delivered(name)        a ghosted sub-part's new mesh landed: unghost it (never mid-drag)
+//   delivered(name)        a ghosted sub-part's new mesh landed: unghost it (mid-drag only
+//                          when the drag has not made it stale again)
 //
-// One drag is one commit, so one host undo step. A ghost is never lifted mid-drag:
-// the ghosted mesh would show its stale shape at full opacity until the release regen.
+// One drag is one commit, so one host undo step. A ghost is lifted only when its
+// sub-part is current (staleSubParts() no longer lists it) — at its delivery, or at
+// end/cancel when the values it was built from are back — never while stale, which
+// would show the old shape at full opacity until the release regen.
 //
 // Pins are ids "<handle>:<at>" (at: a joint name or "tip"). A pin's held point is read
 // at begin, from the params the drag starts from, and stays fixed for that drag.
@@ -143,6 +146,11 @@ export function createPoseSession({
     drag = null;
     const snapped = snap({ ...ending.touched });
     if (Object.keys(snapped).length) write(snapped);
+    // A ghost whose sub-part is current again at the released values (a drag back to
+    // its start, a cache hit, or a delivery that landed during this drag) gets no
+    // delivery to lift it: lift it now. Current means its mesh already shows these
+    // params, so nothing stale appears at full opacity.
+    reconcile();
     hold(false);
     const changed = Object.keys(snapped).filter((k) => snapped[k] !== ending.snapshot[k]);
     if (changed.length) commit(changed);
@@ -154,16 +162,27 @@ export function createPoseSession({
     drag = null;
     restore({ ...ending.snapshot });
     hold(false);
-    if (ghosted.size) {
-      const names = [...ghosted];
-      ghosted.clear();
-      unghost(names);
-    }
+    // Only the ghosts the restore made current again: one still waiting on an earlier
+    // drag's release regen would flash its stale mesh at full opacity.
+    reconcile();
     onCancel();
   }
 
+  /** Unghost every ghosted name staleSubParts() no longer lists. */
+  function reconcile() {
+    if (!ghosted.size) return;
+    const stale = new Set(staleSubParts() ?? []);
+    const names = [...ghosted].filter((n) => !stale.has(n));
+    if (!names.length) return;
+    for (const n of names) ghosted.delete(n);
+    unghost(names);
+  }
+
   function delivered(name) {
-    if (drag || !ghosted.has(name)) return;
+    if (!ghosted.has(name)) return;
+    // Mid-drag a delivery only lifts a ghost the drag has not made stale again (an
+    // earlier drag's regen landing during this one); otherwise it waits for the release.
+    if (drag && (staleSubParts() ?? []).includes(name)) return;
     ghosted.delete(name);
     unghost([name]);
   }

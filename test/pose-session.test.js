@@ -73,12 +73,81 @@ describe("createPoseSession", () => {
     expect(h.only("unghost")).toHaveLength(1);
   });
 
-  it("cancel() restores the snapshot with no commit, and unghosts everything", () => {
-    const h = harness({ stale: () => ["palm"] });
+  it("a ghost from drag 1 whose delivery lands during drag 2 is lifted then (it is current)", () => {
+    let stale = [];
+    const h = harness({ stale: () => stale });
+    h.session.begin("a", "tip");
+    stale = ["X"];
+    h.frame([1, 0, 0]);
+    h.session.end(); // X's regen is dispatched, still stale: stays ghosted
+    expect(h.only("unghost")).toHaveLength(0);
+    h.session.begin("b", "tip");
+    stale = []; // X's delivery lands mid-drag 2; drag 2 does not touch X
+    h.session.delivered("X");
+    expect(h.only("unghost")).toEqual([["unghost", ["X"]]]);
+    h.frame([2, 0, 0]);
+    h.session.end();
+    expect(h.only("unghost")).toHaveLength(1);
+    expect(h.session.ghosted).toEqual([]);
+  });
+
+  it("a delivery ignored mid-drag (stale again) is reconciled when the drag ends current", () => {
+    let stale = [];
+    const h = harness({ stale: () => stale });
+    h.session.begin("a", "tip");
+    stale = ["X"];
+    h.frame([1, 0, 0]);
+    h.session.end();
+    h.session.begin("a", "tip");
+    h.frame([2, 0, 0]);
+    h.session.delivered("X"); // drag 2 keeps X stale: ignored
+    expect(h.only("unghost")).toHaveLength(0);
+    stale = []; // drag 2 ends where X's last delivered mesh was built
+    h.session.end();
+    expect(h.only("unghost")).toEqual([["unghost", ["X"]]]);
+  });
+
+  it("a drag that returns to its start values unghosts at end with no delivery", () => {
+    let stale = [];
+    const h = harness({ stale: () => stale });
+    h.session.begin("a", "tip");
+    stale = ["palm"];
+    h.frame([5, 0, 0]);
+    expect(h.only("ghost")).toEqual([["ghost", ["palm"]]]);
+    stale = []; // back at the start: a cache hit, no job, no delivery
+    h.frame([0, 0, 0]);
+    h.session.end();
+    expect(h.only("unghost")).toEqual([["unghost", ["palm"]]]);
+    expect(h.only("commit")).toHaveLength(0);
+  });
+
+  it("cancel() leaves an earlier drag's ghost (still awaiting its regen) until delivered", () => {
+    let stale = [];
+    const h = harness({ stale: () => stale });
+    h.session.begin("a", "tip");
+    stale = ["X"];
+    h.frame([1, 0, 0]);
+    h.session.end(); // X's regen pending
+    h.session.begin("b", "tip");
+    stale = ["X", "Y"];
+    h.frame([2, 0, 0]);
+    expect(h.only("ghost")).toEqual([["ghost", ["X"]], ["ghost", ["Y"]]]);
+    stale = ["X"]; // the restore makes Y current; X still waits on drag 1's regen
+    h.session.cancel();
+    expect(h.only("unghost")).toEqual([["unghost", ["Y"]]]);
+    stale = [];
+    h.session.delivered("X");
+    expect(h.only("unghost")).toEqual([["unghost", ["Y"]], ["unghost", ["X"]]]);
+  });
+
+  it("cancel() restores the snapshot with no commit, and unghosts what the restore made current", () => {
+    let stale = ["palm"];
+    const h = harness({ stale: () => stale });
     const before = { ...h.params };
     h.session.begin("a", "tip");
     h.frame([10, 3, 0]);
     h.frame([12, 4, 0]);
+    stale = []; // the snapshot's values are the ones palm's mesh was built from
     h.session.cancel();
     expect(h.only("commit")).toHaveLength(0);
     expect(h.only("restore")).toHaveLength(1);
