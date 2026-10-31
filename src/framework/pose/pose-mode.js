@@ -21,6 +21,7 @@ import { createPoseScene, AIM_RING_PX } from "./pose-scene.js";
 import { createPoseSession, pinId, parsePinId } from "./pose-session.js";
 import { dragPlanePoint, hitHandle } from "./pose-geom.js";
 import { limbInfo } from "./param-solve.js";
+import { aimTurn } from "../solve/aim.js";
 
 /** A dot's hit radius, CSS px: a 28 px target around a 12 px dot. */
 export const HANDLE_HIT_PX = 14;
@@ -72,21 +73,17 @@ function clampedFlags(info) {
 }
 
 /**
- * The aim rings' axes at a goal handle, in the aimFromAngles convention (core cannot
- * import it — the domain owns it — so the axes are rebuilt from the posed limb): yaw
- * turns about part +Z, pitch about aim × up (up = +Z off the aim, +Y for a vertical
- * aim), roll about the aim. The aim is read as the last bone's direction.
+ * The aim rings' axes at a goal handle: `[pitch, yaw, roll]` (as many as `angles` has),
+ * the axis each of the handle's aim parameters turns the aim about, from the handle's
+ * rest `toward` and the parameters' current values (the aimFromAngles convention,
+ * solve/aim.js). Read from the values, never from the posed limb: at pitch ±90 the aim is
+ * vertical and the pitch axis cannot be recovered from it. Empty for a bad `toward`.
  */
-export function aimAxes(info, count) {
-  const c = chainOf(info);
-  if (c.length < 2) return [];
-  const aim = unit(sub(c.at(-1), c.at(-2)));
-  const vertical = Math.hypot(aim[0], aim[1]) <= 1e-9;
-  let up = vertical ? [0, 1, 0] : [0, 0, 1];
-  const d = dot(up, aim);
-  up = unit([up[0] - d * aim[0], up[1] - d * aim[1], up[2] - d * aim[2]]);
-  const axes = [unit(cross(aim, up)), [0, 0, 1], aim];
-  return axes.slice(0, Math.max(0, Math.min(3, count)));
+export function aimAxes(toward, angles) {
+  if (!Array.isArray(toward) || toward.length !== 3 || !toward.every(Number.isFinite) || !(len(toward) > 0)) return [];
+  if (!Array.isArray(angles)) return [];
+  const [pitch = 0, yaw = 0, roll = 0] = angles.map((v) => (Number.isFinite(v) ? v : 0));
+  return aimTurn(toward, { pitch, yaw, roll }).axes.slice(0, Math.min(3, angles.length));
 }
 
 /**
@@ -240,7 +237,10 @@ export function createPoseMode(viewer, {
     if (!s) return null;
     const at = s.info.points[goalAt(s.handle)];
     if (!Array.isArray(at)) return null;
-    return { ...s, at, axes: aimAxes(s.info, s.handle.params.aim.length) };
+    const params = getParams?.() ?? {};
+    const angles = s.handle.params.aim.map((k) => (Number.isFinite(params[k]) ? params[k] : part.defaults?.[k]));
+    const axes = aimAxes(s.handle.toward, angles);
+    return axes.length ? { ...s, at, axes } : null;
   }
   function syncRings() {
     const r = ringTarget();

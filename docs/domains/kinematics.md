@@ -581,12 +581,13 @@ the natural gripper roll with the wrist near 0.
 Handles let a person pose the part with the mouse. A handle is a draggable point on a
 posed limb. A part declares them in a top-level `handles` object. Lint checks every
 name (`handle-unknown-limb`, `handle-unknown-param`, `handle-param-count`,
-`handle-unknown-joint`, `handle-bad-mode`).
+`handle-aim-toward`, `handle-unknown-joint`, `handle-bad-mode`).
 
 ```js
 handles: {
   tool:  { limb: "arm", at: "tip", mode: "goal",
            params: { position: ["toolX", "toolY", "toolZ"], aim: ["toolPitch", "toolYaw", "toolRoll"] },
+           toward: [1, 0, 0],
            seed: ["base", "shoulder", "elbow", "wristPitch", "wristYaw", "wristRoll"] },
   index: { limb: "index", mode: "angles", params: ["indexCurl", "indexSpread", "wristPitch"],
            lock: "indexLock" },
@@ -599,7 +600,8 @@ parameter a handle names must be a numeric key of `defaults`.
 ### `mode: "goal"`
 
 Dragging the handle writes the goal parameters: `position` (three parameters) and,
-if declared, `aim` (two parameters for pitch and yaw, three for pitch, yaw and roll).
+if declared, `aim` (two parameters for pitch and yaw, three for pitch, yaw and roll, all
+in degrees, in the `aimFromAngles` convention).
 The part solves in `derive` with `goals`. The goal holds when other parameters change,
 for example when the upper arm gets longer.
 
@@ -612,6 +614,12 @@ for example when the upper arm gets longer.
   Keep the seed parameters in a collapsed section. They are saved with the goal.
 - Only the `at` point can be grabbed. With `aim`, a set of rotate rings shows on the
   grabbed handle, to tilt the aim.
+- **`toward`** is required with `aim`: the direction zero pitch and yaw point, the same
+  `toward` the part passes `aimFromAngles` (share one constant, as the arm does). The
+  rings turn about axes built from it and the aim parameters' values, never from the
+  posed limb, so they stay right at pitch ±90 and on a goal at a joint.
+- At pitch ±90 the yaw and roll rings turn about the same axis. That is gimbal lock, and
+  it is in the angles themselves, not the viewer.
 
 ### `mode: "angles"`
 

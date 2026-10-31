@@ -4,6 +4,7 @@ import { compose } from "../../geometry/xform.js";
 import { hypot3 } from "../../geometry/js-math.js";
 import { SpecError } from "../../geometry/errors.js";
 import { solveDLS } from "../../solve/dls.js";
+import { aimTurn } from "../../solve/aim.js";
 import { couple } from "./tree.js";
 import { forwardLocal } from "./solve.js";
 
@@ -230,20 +231,6 @@ export function aimFromAngles(opts) {
   if (!isVec3(toward) || !(hypot3(...toward) > 0)) fail("toward must be a non-zero [x, y, z]");
   for (const [k, v] of [["pitch", pitch], ["yaw", yaw], ["roll", roll ?? 0]]) if (!isNum(v)) fail(`${k} must be a finite number`);
 
-  let aim = unit(toward);
-  const vertical = hypot3(aim[0], aim[1], 0) <= 1e-9;
-  let up = vertical ? [0, 1, 0] : [0, 0, 1];
-  const d = dot(up, aim);
-  up = unit([up[0] - d * aim[0], up[1] - d * aim[1], up[2] - d * aim[2]]);
-  // Rodrigues: v turned by deg about the unit axis k.
-  const turn = (v, k, deg) => {
-    const t = deg / DEG, c = Math.cos(t), s = Math.sin(t), kv = cross(k, v), kd = dot(k, v) * (1 - c);
-    return [v[0] * c + kv[0] * s + k[0] * kd, v[1] * c + kv[1] * s + k[1] * kd, v[2] * c + kv[2] * s + k[2] * kd];
-  };
-  const Z = [0, 0, 1];
-  aim = turn(aim, Z, yaw); up = turn(up, Z, yaw);
-  const axis = unit(cross(aim, up));
-  aim = turn(aim, axis, pitch); up = turn(up, axis, pitch);
-  if (roll == null) return { aim };
-  return { aim, up: turn(up, aim, roll) };
+  const turned = aimTurn(toward, { pitch, yaw, roll });
+  return roll == null ? { aim: turned.aim } : { aim: turned.aim, up: turned.up };
 }

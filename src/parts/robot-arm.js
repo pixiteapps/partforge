@@ -28,6 +28,7 @@ const SHOULDER_H = 80;    // base joint to the shoulder axis
 const TOOL = 70;          // wrist centre to the tool point (between the fingertips)
 const GAP = 0.4;          // running clearance between neighbouring links
 const WRIST_R = 10;       // the wrist ball, centred on the arm's axis
+const TOOL_TOWARD = [1, 0, 0]; // the tool aim at zero pitch and yaw (derive and the handle share it)
 // The links sit side by side along the hinge axis (local X), each in its own slab, the
 // way most real arms are laid out: a link turning about a shared axis then never sweeps
 // into its neighbour, at any bend. The forearm sits clear of the wrist ball, so the hand
@@ -136,7 +137,7 @@ export default {
     base: 0, shoulder: 39.58, elbow: 104.03, wristPitch: 6.39, wristYaw: 0, wristRoll: 0,
   },
   derive: (p) => {
-    const aim = aimFromAngles({ toward: [1, 0, 0], pitch: p.toolPitch, yaw: p.toolYaw, roll: p.toolRoll });
+    const aim = aimFromAngles({ toward: TOOL_TOWARD, pitch: p.toolPitch, yaw: p.toolYaw, roll: p.toolRoll });
     const arm = ARM(p).pose({
       bend: Object.fromEntries(JOINTS.map((j) => [j, p[j]])),
       goals: [{ at: "tip", position: [p.toolX, p.toolY, p.toolZ], ...aim }],
@@ -187,6 +188,7 @@ export default {
     tool: {
       limb: "arm", at: "tip", mode: "goal",
       params: { position: ["toolX", "toolY", "toolZ"], aim: ["toolPitch", "toolYaw", "toolRoll"] },
+      toward: TOOL_TOWARD,
       seed: JOINTS,
     },
   },

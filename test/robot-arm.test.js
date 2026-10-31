@@ -23,6 +23,7 @@ test("a 6-axis limb, a goal-mode tool handle seeded by the six joint params, and
   expect(part.handles.tool).toEqual({
     limb: "arm", at: "tip", mode: "goal",
     params: { position: ["toolX", "toolY", "toolZ"], aim: ["toolPitch", "toolYaw", "toolRoll"] },
+    toward: [1, 0, 0],
     seed: JOINTS,
   });
   for (const key of ["gripper", "upperLen", "foreLen", ...JOINTS]) expect(typeof part.defaults[key], key).toBe("number");

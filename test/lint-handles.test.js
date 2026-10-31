@@ -44,8 +44,26 @@ test("handle-unknown-param: unknown param, non-numeric default, seed and lock", 
 
 test("handle-param-count: position must be 3, aim 2 or 3", () => {
   expect(rulesOf(handleFindings({ a: goal({ params: { position: ["x", "y"] } }) }))).toEqual(["handle-param-count"]);
-  expect(rulesOf(handleFindings({ a: goal({ params: { position: ["x", "y", "z"], aim: ["x"] } }) }))).toEqual(["handle-param-count"]);
-  expect(handleFindings({ a: goal({ params: { position: ["x", "y", "z"], aim: ["x", "y"] } }) })).toEqual([]);
+  expect(rulesOf(handleFindings({ a: goal({ params: { position: ["x", "y", "z"], aim: ["x"] }, toward: [1, 0, 0] }) }))).toEqual(["handle-param-count"]);
+  expect(handleFindings({ a: goal({ params: { position: ["x", "y", "z"], aim: ["x", "y"] }, toward: [1, 0, 0] }) })).toEqual([]);
+});
+
+test("handle-param-count: the aim hint names angles, not a direction", () => {
+  const [f] = handleFindings({ a: goal({ params: { position: ["x", "y", "z"], aim: ["x"] }, toward: [1, 0, 0] }) });
+  expect(f.hint).toMatch(/pitch, yaw/);
+  expect(f.hint).not.toMatch(/direction vector/);
+});
+
+test("handle-aim-toward: a goal handle with aim names its rest toward", () => {
+  const aim = { position: ["x", "y", "z"], aim: ["x", "y"] };
+  const fs = handleFindings({ a: goal({ params: aim }) });
+  expect(rulesOf(fs)).toEqual(["handle-aim-toward"]);
+  expect(fs[0].path).toBe("handles.a.toward");
+  expect(rulesOf(handleFindings({ a: goal({ params: aim, toward: [0, 0, 0] }) }))).toEqual(["handle-aim-toward"]);
+  expect(rulesOf(handleFindings({ a: goal({ params: aim, toward: [1, 0] }) }))).toEqual(["handle-aim-toward"]);
+  expect(handleFindings({ a: goal({ params: aim, toward: [0, 0, 1] }) })).toEqual([]);
+  // at a joint too: the rings turn the goal's aim parameters, whichever point holds it
+  expect(handleFindings({ a: goal({ at: "pip", params: aim, toward: [0, 0, 1] }) })).toEqual([]);
 });
 
 test("handle-unknown-joint: at must be a joint or tip", () => {

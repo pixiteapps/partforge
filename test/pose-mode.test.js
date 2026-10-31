@@ -6,6 +6,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as THREE from "three";
 import { createPoseMode, aimAxes } from "../src/framework/pose/pose-mode.js";
 import { limbInfo } from "../src/framework/pose/param-solve.js";
+import { aimFromAngles } from "../src/framework/domains/kinematics/goals.js";
 import hand from "./fixtures/ik-hand-fixture.js";
 
 const W = 400, H = 400;
@@ -62,14 +63,14 @@ function fakeScene() {
 }
 
 const live = [];
-function setup() {
+function setup(part = hand) {
   const viewer = fakeViewer();
   const scene = fakeScene();
   const orbit = { enabled: true };
-  const params = { ...hand.defaults };
+  const params = { ...part.defaults };
   const log = { write: [], commit: [], hold: [], restore: [] };
   const mode = createPoseMode(viewer, {
-    part: hand,
+    part,
     orbitControls: orbit,
     getParams: () => params,
     write: (v) => { log.write.push({ ...v }); Object.assign(params, v); },
@@ -86,7 +87,7 @@ function setup() {
     const w = new THREE.Vector3(...p).applyMatrix4(viewer.partsGroup.matrixWorld);
     return viewer.projectPoint(w.toArray());
   };
-  const tipScreen = (limb) => screenOf(limbInfo(hand, params, hand.handles[limb]).points.tip);
+  const tipScreen = (limb) => screenOf(limbInfo(part, params, part.handles[limb]).points.tip);
   const fire = (type, x, y, extra = {}) => viewer.domElement.dispatchEvent(new PointerEvent(type, {
     clientX: x, clientY: y, pointerId: 1, button: 0, pointerType: "mouse", bubbles: true, ...extra,
   }));
@@ -220,13 +221,89 @@ describe("createPoseMode", () => {
   });
 });
 
+describe("aim rings on a goal handle", () => {
+  // Finger a's tip as a goal handle aimed by pitch/yaw/roll from a +X rest toward.
+  const aimed = (pitch) => ({
+    ...hand,
+    defaults: { ...hand.defaults, gx: 0, gy: 0, gz: 0, gPitch: pitch, gYaw: 0, gRoll: 0 },
+    handles: { a: { limb: "a", at: "tip", mode: "goal", toward: [1, 0, 0],
+      params: { position: ["gx", "gy", "gz"], aim: ["gPitch", "gYaw", "gRoll"] } } },
+  });
+  for (const pitch of [-90, 90, -89]) {
+    it(`turn about the parameters' axes at pitch ${pitch}, not the posed bone's`, () => {
+      const t = setup(aimed(pitch));
+      t.mode.setEnabled(true);
+      const s = t.tipScreen("a");
+      t.fire("pointermove", s.x, s.y);
+      const rings = t.scene.calls.setAimRings.at(-1);
+      expect(rings).toBeTruthy();
+      expect(rings.axes).toHaveLength(3);
+      rings.axes[0].forEach((v, i) => expect(v).toBeCloseTo([0, -1, 0][i], 9));
+      rings.axes[1].forEach((v, i) => expect(v).toBeCloseTo([0, 0, 1][i], 9));
+    });
+  }
+  it("show no rings for a goal handle without a toward", () => {
+    const part = aimed(0);
+    delete part.handles.a.toward;
+    const t = setup(part);
+    t.mode.setEnabled(true);
+    const s = t.tipScreen("a");
+    t.fire("pointermove", s.x, s.y);
+    expect(t.scene.calls.setAimRings.filter(Boolean)).toEqual([]);
+  });
+});
+
 describe("aimAxes", () => {
+  const close = (a, b) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], 9));
+  const X = [1, 0, 0];
+
   it("follows aimFromAngles: pitch about aim x up, yaw about +Z, roll about the aim", () => {
-    const info = { joints: [{ name: "j" }], points: { j: [0, 0, 0], tip: [10, 0, 0] } };
-    const [pitch, yaw, roll] = aimAxes(info, 3);
-    expect(pitch.map((v) => v + 0)).toEqual([0, -1, 0]);
-    expect(yaw).toEqual([0, 0, 1]);
-    expect(roll).toEqual([1, 0, 0]);
-    expect(aimAxes(info, 2)).toHaveLength(2);
+    const [pitch, yaw, roll] = aimAxes(X, [0, 0, 0]);
+    close(pitch, [0, -1, 0]);
+    close(yaw, [0, 0, 1]);
+    close(roll, [1, 0, 0]);
+    expect(aimAxes(X, [0, 0])).toHaveLength(2);
+  });
+
+  // The robot arm's tool aim: toward +X, pitch -90 points it straight down.
+  for (const p of [-90, 90, -89]) {
+    it(`keeps the pitch ring about the yawed horizontal at pitch ${p}`, () => {
+      const [pitch, yaw, roll] = aimAxes(X, [p, 0, 0]);
+      close(pitch, [0, -1, 0]);
+      close(yaw, [0, 0, 1]);
+      close(roll, aimFromAngles({ toward: X, pitch: p, yaw: 0, roll: 0 }).aim);
+      const [pitch30] = aimAxes(X, [p, 30, 0]);
+      close(pitch30, [Math.sin(Math.PI / 6), -Math.cos(Math.PI / 6), 0]);
+    });
+  }
+
+  it("turns each angle about its ring's axis, as aimFromAngles does (including at +-90)", () => {
+    const eps = 1e-4;
+    for (const toward of [[1, 0, 0], [0.3, -0.5, 0.8], [0, 0, 1]]) {
+      for (const [pitch, yaw, roll] of [[0, 0, 0], [-90, 20, 10], [90, -45, 30], [-89, 120, -60], [35, 170, 5]]) {
+        const axes = aimAxes(toward, [pitch, yaw, roll]);
+        const base = aimFromAngles({ toward, pitch, yaw, roll });
+        const bumps = [
+          aimFromAngles({ toward, pitch: pitch + eps, yaw, roll }),
+          aimFromAngles({ toward, pitch, yaw: yaw + eps, roll }),
+          aimFromAngles({ toward, pitch, yaw, roll: roll + eps }),
+        ];
+        const rad = (eps * Math.PI) / 180;
+        bumps.forEach((b, i) => {
+          // a small turn about the ring axis k moves v by (k x v) * angle
+          const k = axes[i];
+          for (const key of ["aim", "up"]) {
+            const v = base[key];
+            const kv = [k[1] * v[2] - k[2] * v[1], k[2] * v[0] - k[0] * v[2], k[0] * v[1] - k[1] * v[0]];
+            b[key].forEach((c, j) => expect((c - v[j]) / rad).toBeCloseTo(kv[j], 3));
+          }
+        });
+      }
+    }
+  });
+
+  it("returns no axes for a bad toward", () => {
+    expect(aimAxes(null, [0, 0])).toEqual([]);
+    expect(aimAxes([0, 0, 0], [0, 0])).toEqual([]);
   });
 });

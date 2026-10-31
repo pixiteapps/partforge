@@ -927,9 +927,18 @@ export interface GoalHandle {
   params: {
     /** The three parameters (x, y, z) the handle writes. */
     position: [string, string, string];
-    /** Optional aim: two parameters (angles) or three (a direction). */
+    /**
+     * Optional aim: two parameters (pitch, yaw) or three (pitch, yaw, roll), all in
+     * degrees, in the `aimFromAngles` convention. Needs `toward`.
+     */
     aim?: [string, string] | [string, string, string];
   };
+  /**
+   * With `aim`: the direction zero pitch and yaw point — the `toward` the part passes
+   * `aimFromAngles`. Pose mode's rotate rings turn about axes built from it and the aim
+   * parameters' values, so they agree with the part at any pitch, ±90 included.
+   */
+  toward?: [number, number, number];
   /** Parameters used to seed the solve. */
   seed?: string[];
 }

@@ -25,6 +25,7 @@ function paramRefs(name, h) {
   return refs;
 }
 
+const isDirection = (v) => Array.isArray(v) && v.length === 3 && v.every((c) => typeof c === "number" && Number.isFinite(c)) && v.some((c) => c !== 0);
 const isLimb = (d, key) => typeof d?.[key]?.ikInfo === "function";
 
 export const HANDLE_RULES = [
@@ -74,11 +75,19 @@ export const HANDLE_RULES = [
         }
         if (aim !== undefined && (!Array.isArray(aim) || (aim.length !== 2 && aim.length !== 3))) {
           out.push(err("handle-param-count", `handle "${name}" needs params.aim to name 2 or 3 parameters`,
-            "`aim` is optional; give it two parameters (an aim as two angles) or three (a direction vector).", `handles.${name}.params`));
+            "`aim` is optional; give it two parameters (pitch, yaw in degrees) or three (pitch, yaw, roll in degrees), the angles aimFromAngles reads.", `handles.${name}.params`));
         }
       }
       return out;
     },
+  },
+  {
+    id: "handle-aim-toward",
+    run: ({ part }) => handleEntries(part)
+      .filter(([, h]) => h.mode === "goal" && isPlainObject(h.params) && h.params.aim !== undefined && !isDirection(h.toward))
+      .map(([name]) => err("handle-aim-toward", `handle "${name}" has an aim but no rest \`toward\``,
+        "Set `toward: [x, y, z]` on the handle: the direction zero pitch and yaw point, the same `toward` the part passes aimFromAngles. Pose mode's rotate rings turn about axes built from it.",
+        `handles.${name}.toward`)),
   },
   {
     id: "handle-unknown-joint",
