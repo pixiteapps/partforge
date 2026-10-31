@@ -282,13 +282,15 @@ change to a shape (a radius, a node, the detail, an image) rebuild as before.
 
 **How.** Each vertex of a preview mesh remembers which frame or frames it follows. A
 move blends the frames' rigid motions per vertex, so a finger follows its joints and the
-palm stays put. The bent mesh is approximate: the exact build lands 150 ms after the last
-move, or at once on release. While the mesh is bent its edge lines are hidden. They
-return with the exact mesh. A render or capture waits for the exact mesh first.
+palm stays put. The bent mesh is approximate: the exact build starts after a 150 ms
+pause with no move, or at once on release, and replaces it when it lands. While the mesh
+is bent its edge lines are hidden. They return with the exact mesh. A render or capture
+during a drag draws the last exact mesh, at the pose it was built at, never the bent one;
+if that build fails, the last exact mesh comes back.
 
 **Two-stage union.** A union of `k.implicit` bodies (the hand and its nails) posts its
 pieces joined together as soon as they are built, then the real union. The first mesh has
-overlaps but looks right. It skips the stage during a drag or an animation, and a failed
+overlaps but looks right. It skips the stage during a drag, on its release, or in an animation, and a failed
 build puts the previous exact mesh back.
 
 The View style thumbnails, picking and sketch anchors, and the cutaway cap read the bent

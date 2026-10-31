@@ -1117,8 +1117,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           const subparts = missing.filter((n) => (backends[n] ?? "manifold") === backend);
           if (subparts.length === 0) continue;
           // A two-stage delivery's provisional stage would be dropped during a pose drag
-          // (case "meshes-provisional") and is pointless under playback: ask for none.
-          const noStage = skin.isDragging() || lastAnimApplyVersion === loop.version();
+          // (case "meshes-provisional") and is pointless under playback: ask for none. A
+          // release's build counts too: the deformed mesh is already on screen, and the
+          // stage would only delay the exact one.
+          const noStage = skin.isDragging() || skin.anyDeformed() || lastAnimApplyVersion === loop.version();
           service.send({ type: "generate", subparts, view: view(), params, cache: cachingOn, cacheBudget: cacheBudgetBytes, ...(progressiveBuild ? { progressive: true } : {}), ...(noStage ? { provisional: false } : {}) }, backend);
           jobs++;
         }
@@ -1686,6 +1688,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           // split dispatch that can include one whose union the other worker is still
           // building, which then replaces the reverted mesh when it lands.
           revertProvisional();
+          // Likewise a deformed mesh whose exact build failed: the last exact mesh goes back.
+          if (skin.anyDeformed()) skin.restoreAll();
+          skin.endDrag();
           // refreshView FIRST: its all-current branch clears the status line,
           // so writing the failure after it keeps the message on screen.
           refreshView();

@@ -671,3 +671,21 @@ test("a generate dispatched at the drag pause asks for no provisional stage; an 
   rebuild(input);
   expect(generates(w).at(-1)[0].provisional).toBeUndefined();
 });
+
+test("a release's exact build asks for no provisional stage", () => {
+  const { w, input, release } = setup();
+  input("bend", 30);
+  release("bend"); // the deformed mesh is on screen: the stage would only delay the union
+  expect(generates(w).at(-1)[0].provisional).toBe(false);
+});
+
+test("a failed exact build after a drag puts the exact base back and ends the drag", () => {
+  const { v, w, input, release, firstDelivery } = setup();
+  input("bend", 30);
+  release("bend");
+  fail(w);
+  const last = v.setSubVertices.mock.calls.at(-1);
+  expect(last[2]?.deformed).toBeFalsy();
+  expect(Array.from(last[1].positions)).toEqual(Array.from(basePositions(0)));
+  expect(Array.from(firstDelivery.positions)).toEqual(Array.from(basePositions(0)));
+});
