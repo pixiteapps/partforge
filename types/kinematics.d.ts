@@ -169,6 +169,15 @@ export interface PosedLimb {
   world(joint?: string): LimbWorldFrame;
   /** Plain-JSON view for drag handles, skeletons and limit arcs; throws without the parent frames of a parented limb. */
   ikInfo(): LimbIkInfo;
+  /**
+   * Forward kinematics from this pose for Pose mode's joint rings: this pose's joint values with
+   * `overrides` (`{ joint: value }`; a ball's partial `{ bend?, spread?, twist? }` merges over
+   * its value), coupled and clamped, posed with the same parent frames and no reach, grip or
+   * goal solve. Returns the coupled values and the `at` frame ("tip" by default), unrounded.
+   */
+  ikForward(overrides?: Record<string, number | Partial<LimbBallResult>>, at?: string): {
+    values: Array<number | LimbBallResult>; origin: Point3; x: Point3; y: Point3; z: Point3;
+  };
 }
 
 export interface LimbIkInfo {
@@ -176,12 +185,18 @@ export interface LimbIkInfo {
   name: string;
   /** The tip's frame name. */
   tip: string;
-  joints: Array<{ name: string; frame: string; type: "hinge" | "ball"; range?: [number, number]; cone?: number; follower: boolean }>;
+  joints: Array<{ name: string; frame: string; type: "hinge" | "ball"; range?: [number, number]; cone?: number; axisKind?: "bend" | "spread" | "twist" | "vector"; follower: boolean }>;
   /** Each joint's bare name and `tip` to its origin in part coordinates. */
   points: Record<string, Point3>;
   values: Array<number | LimbBallResult>;
   /** A hinge's world rotation axis (the direction a positive value turns about); none for a ball. */
   axes: Record<string, Point3>;
+  /**
+   * Each ball joint's rotation axes in part coordinates: the direction a positive bend,
+   * spread and twist turn about (bend and spread in the frame before the ball turns, twist
+   * about the swung segment). Absent when the limb has no ball joint.
+   */
+  ballAxes?: Record<string, { bend: Point3; spread: Point3; twist: Point3 }>;
   /** The declared radii, one per joint then the tip, when the limb has them. */
   r?: number[];
 }

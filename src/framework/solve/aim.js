@@ -42,3 +42,52 @@ export function aimTurn(toward, { pitch = 0, yaw = 0, roll } = {}) {
   if (roll != null) up = turn(up, aim, roll);
   return { aim, up, axes: [axis, [...Z], [...aim]] };
 }
+
+/** An angle wrapped into (-180, 180]. */
+const wrap180 = (deg) => { const w = deg - 360 * Math.floor((deg + 180) / 360); return w === -180 ? 180 : w + 0; };
+
+/**
+ * The inverse of aimTurn: the pitch, yaw and roll (degrees) that turn `toward` onto the unit
+ * `aim` and, when `up` is given, `up` onto `up` (taken at right angles to `aim`). Without
+ * `up`, roll is undefined.
+ *
+ * Choices, where the angles are not unique:
+ * - Pitch has two solutions (over the top, with the yaw turned 180). The one inside
+ *   `pitchRange` wins, then the one nearer `near.pitch` (default 0).
+ * - With the aim vertical (|aim · Z| > 1 - 1e-12 for a non-vertical `toward`) yaw and roll turn
+ *   about the same axis — the gimbal lock aimTurn's axes describe: the yaw is kept at
+ *   `near.yaw` (default 0) and the roll takes the rest.
+ * - Yaw and roll are wrapped into (-180, 180].
+ */
+export function anglesFromAim(toward, { aim, up = null }, { near = {}, pitchRange = null } = {}) {
+  const a0 = unit(toward);
+  const vertical = hypot3(a0[0], a0[1], 0) <= 1e-9;
+  let u0 = vertical ? [0, 1, 0] : [0, 0, 1];
+  const d0 = dot(u0, a0);
+  u0 = unit([u0[0] - d0 * a0[0], u0[1] - d0 * a0[1], u0[2] - d0 * a0[2]]);
+  const want = unit(aim);
+  // After yaw (about Z, which keeps z) and pitch (in the aim-up plane):
+  // aim = Rz(yaw) (cos p a0 + sin p u0), so its z is cos p a0z + sin p u0z.
+  const A = a0[2], B = u0[2], h = Math.hypot(A, B);
+  const base = Math.atan2(B, A);
+  const c = Math.acos(Math.max(-1, Math.min(1, want[2] / (h || 1))));
+  const nearPitch = Number.isFinite(near.pitch) ? near.pitch : 0;
+  const cands = [wrap180((base + c) * DEG), wrap180((base - c) * DEG)];
+  const inRange = (p) => !pitchRange || (p >= pitchRange[0] - 1e-9 && p <= pitchRange[1] + 1e-9);
+  const dist = (p) => Math.abs(wrap180(p - nearPitch));
+  cands.sort((p, q) => (inRange(q) - inRange(p)) || (dist(p) - dist(q)));
+  const pitch = cands[0];
+  const t = pitch / DEG;
+  const v = [Math.cos(t) * a0[0] + Math.sin(t) * u0[0], Math.cos(t) * a0[1] + Math.sin(t) * u0[1], 0];
+  const vh = Math.hypot(v[0], v[1]), wh = Math.hypot(want[0], want[1]);
+  const yaw = vh > 1e-9 && wh > 1e-9
+    ? wrap180(Math.atan2(v[0] * want[1] - v[1] * want[0], v[0] * want[0] + v[1] * want[1]) * DEG)
+    : (Number.isFinite(near.yaw) ? near.yaw : 0);
+  if (!up) return { pitch, yaw };
+  const turned = aimTurn(toward, { pitch, yaw });
+  const ax = turned.aim;
+  const d = dot(up, ax);
+  const upN = unit([up[0] - d * ax[0], up[1] - d * ax[1], up[2] - d * ax[2]]);
+  const roll = wrap180(Math.atan2(dot(ax, cross(turned.up, upN)), dot(turned.up, upN)) * DEG);
+  return { pitch, yaw, roll };
+}

@@ -105,35 +105,61 @@ export function buildAdapters(tree, posedFrames, frames, restFrames, fail, value
   }
 
   /**
-   * The posed limb as plain JSON for the viewer (handles, skeleton, limit arcs): joint records,
-   * every joint's and the tip's origin in part coordinates, and each hinge's world rotation axis
-   * (the direction a positive value turns about). Throws without the parent frames, like `world`.
+   * The posed limb as plain JSON for the viewer (handles, skeleton, limit arcs, joint rings):
+   * joint records (a hinge's with its `axisKind`), every joint's and the tip's origin in part
+   * coordinates, each hinge's world rotation axis (the direction a positive value turns about)
+   * and, for a limb with ball joints, each ball's `{ bend, spread, twist }` axes in `ballAxes`.
+   * Throws without the parent frames, like `world`.
    */
   function ikInfo() {
-    const points = {}, axes = {};
+    const points = {}, axes = {}, ballAxes = {};
     const origin = (joint) => world(joint).origin;
+    const all = () => (frames == null ? posedFrames : { ...frames, ...posedFrames });
+    // The direction a positive unit value of one hinge (or one ball component) turns about,
+    // in the frame its step acts in: the step's axis times the sign of its angle.
+    const unitStep = (i, value) => {
+      const unit = joints.map((jt, k) => (k === i ? value : restValue(jt)));
+      const step = jointSteps(tree, unit)[joints[i].frame].at(-1);
+      return step.axis.map((c) => c * (step.deg < 0 ? -1 : 1));
+    };
+    const inWorld = (a, W) => [0, 1, 2].map((k) => r3(a[0] * W.x[k] + a[1] * W.y[k] + a[2] * W.z[k]));
     joints.forEach((j, i) => {
       points[j.name] = origin(j.frame);
-      if (j.type === "ball") return;
+      if (j.type === "ball") {
+        // bend and spread swing the segment about axes of the frame BEFORE the ball turns it
+        // (its own steps are the last in its frame's list: drop them); twist turns about the
+        // swung segment, the posed frame's own y.
+        const v = values[i];
+        const own = (Math.hypot(v.bend, v.spread) !== 0 ? 1 : 0) + (v.twist !== 0 ? 1 : 0);
+        const f = posedFrames[j.frame];
+        const rotate = (f.rotate ?? []).slice(0, (f.rotate ?? []).length - own);
+        const { rotate: _r, ...rest } = f;
+        const M = resolve({ ...all(), [j.frame]: rotate.length ? { ...rest, rotate } : rest }, j.frame);
+        const unitOf = (c) => { const x = M[c], y = M[3 + c], z = M[6 + c], l = hypot3(x, y, z); return [x / l, y / l, z / l]; };
+        const pre = { x: unitOf(0), y: unitOf(1), z: unitOf(2) };
+        const W = world(j.frame);
+        ballAxes[j.name] = {
+          bend: inWorld(unitStep(i, { bend: 1, spread: 0, twist: 0 }), pre),
+          spread: inWorld(unitStep(i, { bend: 0, spread: 1, twist: 0 }), pre),
+          twist: inWorld(unitStep(i, { bend: 0, spread: 0, twist: 1 }), W),
+        };
+        return;
+      }
       // The hinge's own step is the last in its frame's list, so its axis is unchanged by it.
-      const unit = joints.map((_, k) => (k === i ? 1 : 0));
-      const step = jointSteps(tree, unit.map((v, k) => (joints[k].type === "ball" ? restValue(joints[k]) : v)))[j.frame].at(-1);
-      const sign = step.deg < 0 ? -1 : 1;
-      const W = world(j.frame);
-      const a = step.axis.map((c) => c * sign);
-      axes[j.name] = [0, 1, 2].map((k) => r3(a[0] * W.x[k] + a[1] * W.y[k] + a[2] * W.z[k]));
+      axes[j.name] = inWorld(unitStep(i, 1), world(j.frame));
     });
     points.tip = origin(tip);
     const info = {
       kind: "partforge.limb", name, tip,
       joints: joints.map((j) => {
         const rec = { name: j.name, frame: j.frame, type: j.type };
-        if (j.type === "ball") rec.cone = j.cone; else rec.range = [...j.range];
+        if (j.type === "ball") rec.cone = j.cone; else { rec.range = [...j.range]; rec.axisKind = j.axisKind; }
         rec.follower = j.follow != null;
         return rec;
       }),
       points, values: values.map(roundValue), axes,
     };
+    if (Object.keys(ballAxes).length) info.ballAxes = ballAxes;
     if (tree.r) info.r = [...tree.r];
     return info;
   }

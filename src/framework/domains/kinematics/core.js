@@ -172,7 +172,30 @@ export function limb(name, def) {
     const report = buildReport(tree, values, clamped, posedFrames, frames, fail, reach, grip, goals);
     const restFrames = context == null ? restOwn : { ...context.rest, ...restOwn };
     const adapters = buildAdapters(tree, posedFrames, frames, restFrames, fail, values);
-    const posed = { values, frames: posedFrames, joints: [...jointFrames], tip, report, ...adapters };
+    /**
+     * Forward kinematics from this pose for the viewer's joint rings: this pose's values with
+     * `overrides` (`{ joint: value }`, a ball's partial `{ bend?, spread?, twist? }` merged
+     * over its posed value) put through couple (followers, ranges, cones) and posed with the
+     * same parent frames and pose-level spread/twist — no reach, grip or goal solve. Returns
+     * `{ values, origin, x, y, z }`: the coupled values and the `at` frame (a joint name or
+     * "tip") in part coordinates, unrounded.
+     */
+    function ikForward(overrides = {}, at = "tip") {
+      const raw = values.map((v, i) => {
+        const j = tree.joints[i];
+        const o = overrides?.[j.name];
+        if (o === undefined) return j.type === "ball" ? { ...v } : v;
+        return j.type === "ball" ? { ...v, ...o } : o;
+      });
+      const coupled = couple(tree, raw).values;
+      const own = buildFrames(tree, jointSteps(tree, coupled, { spread, twist }));
+      if (tree.parent != null && frames == null) fail("", "ikForward needs the parent frames — pass them as pose(…, frames)");
+      const frame = at === "tip" ? tip : `${name}.${at}`;
+      const M = resolveFrames(frames == null ? own : { ...frames, ...own }).get(frame)?.world;
+      if (!M) fail("", `ikForward: unknown joint ${JSON.stringify(at)}`);
+      return { values: coupled, origin: [M[9], M[10], M[11]], x: [M[0], M[3], M[6]], y: [M[1], M[4], M[7]], z: [M[2], M[5], M[8]] };
+    }
+    const posed = { values, frames: posedFrames, joints: [...jointFrames], tip, report, ...adapters, ikForward };
     CHAINS.set(posed, { all: frames == null ? { ...posedFrames } : { ...frames, ...posedFrames }, rest: restFrames });
     return posed;
   }
