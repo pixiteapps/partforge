@@ -8,6 +8,7 @@ import { h } from "./solid-hash.js";
 import { ensureOutward, openEdgeCount } from "./mesh-repair.js";
 import { manifoldFromMesh, manifoldFromWeldedMesh, ringStackManifold } from "./mesh-build.js";
 import { compileImplicit, meshImplicit, implicitHashable, choosePreviewEdge, IMPLICIT_DEFAULTS } from "./implicit/index.js";
+import { createSampleCache } from "./implicit/sample-cache.js";
 import { implicitFrames } from "./implicit/frame-report.js";
 import { createSolidCache } from "./solid-cache.js";
 import { hoistCommonSuffix } from "./transform-hoist.js";
@@ -173,6 +174,10 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // k.implicit's automatic preview edge per tree hash (a pure function of the tree, so
   // never stale); cleared whole when it reaches AUTO_PREVIEW_MEMO trees.
   const autoPreviewEdges = new Map();
+  // k.implicit's leaf samples across builds (implicit/sample-cache.js): a preview build
+  // anchors its grid to the world lattice and reuses the samples a pose change did not
+  // reach — the same bytes as a cold build. Bounded (SAMPLE_CACHE_BYTES); never used at print.
+  const sampleCache = createSampleCache();
   // Profile-validity warnings (profile-warnings.js): one warner per kernel so a
   // self-crossing profile built six times records ONE line; reset per drain.
   const profileWarner = makeProfileWarner(recordWarning);
@@ -970,7 +975,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // the compiled tree (implicit/preview-edge.js: pure, no clock), remembered per tree
     // so a cache hit does not re-run its probe. The engine's warnings (thin feature,
     // clipped) live beside the cached value and are recorded again on every hit, so
-    // each build that uses the solid reports them.
+    // each build that uses the solid reports them. A preview build hands the engine the
+    // kernel's sample cache (a world-anchored grid, byte-identical warm or cold); print never.
     implicit: (spec) => {
       const compiled = compileImplicit(spec, { images });
       const { preview, resolution, ...rest } = spec;
@@ -987,7 +993,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       const keySpec = quality === "print" ? { ...rest, resolution: edge } : { ...rest, preview: edge };
       const key = h("implicit", implicitHashable(keySpec, compiled), quality);
       const solid = cache.lookup(key, () => {
-        const out = meshImplicit(compiled, edge, { tier: quality });
+        const out = meshImplicit(compiled, edge, { tier: quality, cache: quality === "print" ? undefined : sampleCache });
         if (out.indices.length === 0) {
           for (const w of out.warnings) recordWarning(w);
           throw new Error(`implicit: the shape is empty at a ${edge} mm grid — nothing is inside it (check subtract order and sizes), or it is thinner than the grid`);
@@ -1129,6 +1135,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       for (const name of [...images.keys()]) if (!keep.has(name)) images.delete(name);
     },
     _acceptsMesh: true,
+    _sampleCache: sampleCache,   // tests and the bench: k.implicit's preview sample cache
     shape2d,
     // Backend-internal region adapter: the shared native engine (contour-offset.js)
     // that Shape2D.offset itself runs on — published here for callers that want the
@@ -1138,7 +1145,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),
     sweepCache: () => cache.sweep(),
-    dropCache: () => cache.clear(),
+    dropCache: () => { cache.clear(); sampleCache.clear(); },
     setCacheBudget: (bytes) => cache.setBudget(bytes),
     trimCache: () => cache.trim(),
     cacheBytes: () => cache.retainedBytes(),

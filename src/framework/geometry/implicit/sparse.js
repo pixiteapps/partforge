@@ -8,6 +8,7 @@
 import { blockDecision, fullDecision, decisionKey } from "./interval.js";
 import { emitProgram, evalBatch, evalBatchContact } from "./program.js";
 import { ImplicitSizeError } from "./errors.js";
+import { byteAwareReplacer } from "../solid-hash.js";
 
 export const LEAF = 4, TOP = 32, SNAP_CELLS = 0, PAD_CELLS = 1;
 export const MAX_SAMPLES = 24_000_000, MAX_GRID_CELLS = 2e10;
@@ -30,17 +31,27 @@ export function sampleField(compiled, edge, opts) {
  * a slot the parent pruned firmly is not walked again), which yields exactly the plan a
  * full walk from the IR root per block gives; `inherit: false` is that full walk, kept for
  * test/implicit-plan-inherit.test.js to hold the two equal.
+ *
+ * `anchor` (preview builds with a sample cache, sample-cache.js) puts the grid on a world
+ * lattice: `plan.base` is the grid's first cell in world cells, each a multiple of TOP, and
+ * `origin[a] === base[a] * edge`. A sample's position is then `(base[a] + i) * edge` — one
+ * multiplication of an integer by `edge` — so two anchored grids at one edge agree bit for
+ * bit on every cell they share, whatever their bounds. Without it `base` is null and the
+ * plan is exactly the unanchored one (origin `bounds.min − 2·edge`, positions
+ * `origin[a] + i·edge`): exact builds never anchor.
  */
-export function planLeaves(compiled, edge, { cull = true, inherit = true } = {}) {
+export function planLeaves(compiled, edge, { cull = true, inherit = true, anchor = false } = {}) {
   const { bounds } = compiled;
   const pad = 2 * edge;
-  const origin = bounds.min.map((v) => v - pad);
+  const base = anchor ? bounds.min.map((v) => Math.floor((v - pad) / (TOP * edge)) * TOP) : null;
+  const origin = base ? base.map((b) => b * edge) : bounds.min.map((v) => v - pad);
   const n = [0, 1, 2].map((a) => Math.max(2, Math.ceil((bounds.max[a] + pad - origin[a]) / edge) + 1));
   const cells = (n[0] - 1) * (n[1] - 1) * (n[2] - 1);
   if (cells > MAX_GRID_CELLS) {
     throw new ImplicitSizeError(`a ${edge} mm grid over this shape has ${cells.toExponential(1)} cells (limit ${MAX_GRID_CELLS.toExponential(0)}) — raise \`resolution\`/\`preview\` or split the part`);
   }
   const snap = SNAP_CELLS * edge;
+  const at = base ? (a, i) => (base[a] + i) * edge : (a, i) => origin[a] + i * edge;
   const S = LEAF + 1, S3 = S * S * S;
   const progIndex = new Map(), programs = [], leaves = [];
   const fullDec = cull ? null : fullDecision(compiled);
@@ -51,7 +62,7 @@ export function planLeaves(compiled, edge, { cull = true, inherit = true } = {})
     let dec;
     if (cull) {
       const r = (B * edge * SQRT3) / 2 + PAD_CELLS * edge;
-      const cx = origin[0] + (i0 + B / 2) * edge, cy = origin[1] + (j0 + B / 2) * edge, cz = origin[2] + (l0 + B / 2) * edge;
+      const cx = at(0, i0 + B / 2), cy = at(1, j0 + B / 2), cz = at(2, l0 + B / 2);
       const a = blockDecision(compiled, cx, cy, cz, r, inherit ? parentDec : undefined);
       // No vertex snapping (snap = 0): a block whose interval excludes 0 holds no surface.
       // The inside cull (hi < 0) is only taken for blocks touching no outer-layer
@@ -77,7 +88,7 @@ export function planLeaves(compiled, edge, { cull = true, inherit = true } = {})
   };
 
   for (let l = 0; l < n[2] - 1; l += TOP) for (let j = 0; j < n[1] - 1; j += TOP) for (let i = 0; i < n[0] - 1; i += TOP) visit(i, j, l, TOP, undefined);
-  return { origin, edge, n, snap, leaves, programs, textures: compiled.textures, samples, clipped: false, ownerRoot: compiled.ownerRoot ?? -1, ownerK: compiled.ownerK ?? 0 };
+  return { origin, base, edge, n, snap, leaves, programs, textures: compiled.textures, samples, clipped: false, ownerRoot: compiled.ownerRoot ?? -1, ownerK: compiled.ownerK ?? 0 };
 }
 
 /** A sample's owner where the stored value is ≥ 0 (outside every piece). */
@@ -92,9 +103,17 @@ export const OWNER_AIR = -1;
  * stored value is ≥ 0),
  * captured by the same evaluation: one evalBatchContact replaces the evalBatch, and the
  * zero nudge captures its own. `hooks` swaps the two evaluators (a test counts calls).
+ *
+ * `hooks.cache` (a createSampleCache(), sample-cache.js — anchored plans only key anything): a
+ * leaf whose key (leafKeys) is in the cache takes the entry's `vals`/`owner` and evaluates
+ * nothing; every other keyed leaf is put after its evaluation. Boundary leaves have no key,
+ * so a hit never needs `clipped`. The store's `cacheHits` counts the leaves taken. The
+ * cached arrays are shared, never copied: no stage writes a store's samples.
  */
 export function evaluateLeaves(plan, hooks = {}) {
-  const { origin, edge, n, programs, textures } = plan;
+  const { origin, base, edge, n, programs, textures } = plan;
+  const cache = hooks.cache ?? null, keys = cache ? leafKeys(plan) : null;
+  let cacheHits = 0;
   const run = hooks.evalBatch ?? evalBatch, runContact = hooks.evalBatchContact ?? evalBatchContact;
   const owned = plan.ownerRoot >= 0, K = plan.ownerK;
   const S = LEAF + 1, S3 = S * S * S;
@@ -104,11 +123,25 @@ export function evaluateLeaves(plan, hooks = {}) {
   const nudge = [1e-6 * edge, 1e-6 * edge * ZERO_DIR[1], 1e-6 * edge * ZERO_DIR[2]];
   const leaves = [];
   let clipped = false;
-  for (const { i0, j0, l0, progIndex } of plan.leaves) {
+  for (let leaf = 0; leaf < plan.leaves.length; leaf++) {
+    const { i0, j0, l0, progIndex } = plan.leaves[leaf];
     const prog = programs[progIndex];
+    const key = keys ? keys[leaf] : null;
+    const hit = key === null ? undefined : cache.get(key);
+    if (hit) {
+      cacheHits++;
+      leaves.push(owned ? { i0, j0, l0, progIndex, prog, vals: hit.vals, owner: hit.owner } : { i0, j0, l0, progIndex, prog, vals: hit.vals });
+      continue;
+    }
     let q = 0;
-    for (let l = 0; l < S; l++) for (let j = 0; j < S; j++) for (let i = 0; i < S; i++, q++) {
-      X[q] = origin[0] + (i0 + i) * edge; Y[q] = origin[1] + (j0 + j) * edge; Z[q] = origin[2] + (l0 + l) * edge;
+    if (base) {
+      for (let l = 0; l < S; l++) for (let j = 0; j < S; j++) for (let i = 0; i < S; i++, q++) {
+        X[q] = (base[0] + i0 + i) * edge; Y[q] = (base[1] + j0 + j) * edge; Z[q] = (base[2] + l0 + l) * edge;
+      }
+    } else {
+      for (let l = 0; l < S; l++) for (let j = 0; j < S; j++) for (let i = 0; i < S; i++, q++) {
+        X[q] = origin[0] + (i0 + i) * edge; Y[q] = origin[1] + (j0 + j) * edge; Z[q] = origin[2] + (l0 + l) * edge;
+      }
     }
     const owner = owned ? new Int8Array(S3) : null;
     if (owned) runContact(prog, textures, X, Y, Z, out, { K, piece: owner }); else run(prog, textures, X, Y, Z, out);
@@ -144,7 +177,59 @@ export function evaluateLeaves(plan, hooks = {}) {
       }
     }
     if (owned) for (let s = 0; s < S3; s++) if (vals[s] >= 0) owner[s] = OWNER_AIR;
+    if (key !== null) cache.put(key, { vals, owner });
     leaves.push(owned ? { i0, j0, l0, progIndex, prog, vals, owner } : { i0, j0, l0, progIndex, prog, vals });
   }
-  return { ...plan, leaves, clipped };
+  return { ...plan, leaves, clipped, cacheHits };
+}
+
+// A program's identity for leaf keys: its bytes and the textures it may read, by content
+// (byteAwareReplacer fingerprints the Float64Array). Memoized per program object.
+const programDigests = new WeakMap(), programIds = new WeakMap();
+export function programDigest(plan, i) {
+  const prog = plan.programs[i];
+  let d = programDigests.get(prog);
+  if (d === undefined) {
+    d = JSON.stringify({ prog, tex: plan.textures.map((t) => t.digest) }, byteAwareReplacer);
+    programDigests.set(prog, d);
+  }
+  return d;
+}
+
+// The digest folded to ~64 bits (two FNV-1a streams, as solid-hash.js's byte fingerprint):
+// a key lives for the whole session in a cache of ~10⁵ leaves, where solid-hash's 32-bit h()
+// would collide — and a collision here is silently wrong samples. Not h() for a second reason:
+// h() records into the change tracker's op graph while it is on, and a build keys thousands
+// of leaves. Memoized per program object, so each leaf's key is one string concatenation.
+function programId(plan, i) {
+  const prog = plan.programs[i];
+  let id = programIds.get(prog);
+  if (id === undefined) {
+    const d = programDigest(plan, i);
+    let h1 = 0x811c9dc5, h2 = 0x9e3779b9;
+    for (let c = 0; c < d.length; c++) {
+      const x = d.charCodeAt(c);
+      h1 ^= x; h1 = Math.imul(h1, 0x01000193);
+      h2 ^= x; h2 = Math.imul(h2, 0x01000193);
+    }
+    id = (h1 >>> 0).toString(36) + "." + (h2 >>> 0).toString(36) + "." + d.length;
+    programIds.set(prog, id);
+  }
+  return id;
+}
+
+/**
+ * Each plan leaf's sample-cache key, in plan-leaf order: null for an unanchored plan, and for
+ * a leaf touching the grid's outer layer (the samples evaluateLeaves clamps, which depend on
+ * the grid, not the world); else the leaf's program, its first world cell, the edge and the
+ * owner count — everything its stored samples are a function of. Two anchored plans give a
+ * leaf the same key exactly when it would sample the same bytes.
+ */
+export function leafKeys(plan) {
+  const { base, n, edge, leaves } = plan;
+  if (!base) return leaves.map(() => null);
+  return leaves.map(({ i0, j0, l0, progIndex }) => {
+    if (i0 < 1 || j0 < 1 || l0 < 1 || i0 + LEAF > n[0] - 2 || j0 + LEAF > n[1] - 2 || l0 + LEAF > n[2] - 2) return null;
+    return `leaf|${programId(plan, progIndex)}|${base[0] + i0},${base[1] + j0},${base[2] + l0}|${edge}|${plan.ownerK}`;
+  });
 }

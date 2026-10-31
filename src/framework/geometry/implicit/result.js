@@ -13,7 +13,7 @@ export function implicitResult(compiled, edge, plan, mesh, clipped) {
       : "implicit: the shape reached the edge of its sampling box and was clipped flat there — its derived bounds were too tight (an engine limitation); reduce blend, round, onion or displace sizes");
   }
   return { positions: mesh.positions, indices: mesh.indices, normals: mesh.normals, warnings,
-    stats: { samples: plan.samples, leaves: plan.leaves.length, programs: plan.programs.length } };
+    stats: { samples: plan.samples, leaves: plan.leaves.length, programs: plan.programs.length, cacheHits: 0 } };
 }
 
 /**

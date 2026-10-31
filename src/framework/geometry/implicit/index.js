@@ -22,12 +22,20 @@ export { compileImplicit, IMPLICIT_DEFAULTS } from "./compile.js";
 // (mesher-owners.js) and owner-aware cleanup, and its result gains `vertOwner`,
 // `ownerHeld`, `pinned`, `crease` and `triOwner` (the crease cut, crease.js, after cleanup and before detail),
 // on the core as in JS. `owners: false` meshes the same field with the plain mesher instead: the seam baseline.
-export function meshImplicit(compiled, edge, { tier, owners = true } = {}) {
+//
+// `cache` (a createSampleCache(), sample-cache.js — the preview kernel's) anchors the grid to
+// the world lattice (planLeaves `anchor`) and lets a leaf take its samples from an earlier
+// build: the same bytes a cold build gives, and `stats.cacheHits` counts the leaves taken.
+// Without one the plan is unanchored, exactly as before. The native core does not take the
+// cache yet, so an anchored build runs the JS stages — core on and off alike, the same bytes.
+export function meshImplicit(compiled, edge, { tier, owners = true, cache } = {}) {
   const opts = tier === "preview" ? PREVIEW_CLEANUP : CLEANUP;
-  const plan = planLeaves(compiled, edge);
-  const native = meshImplicitCore(compiled, edge, plan, opts, { owners });
-  if (native) return native;
-  const store = evaluateLeaves(plan);
+  const plan = planLeaves(compiled, edge, { anchor: !!cache });
+  if (!cache) {
+    const native = meshImplicitCore(compiled, edge, plan, opts, { owners });
+    if (native) return native;
+  }
+  const store = evaluateLeaves(plan, { cache });
   const ownerPath = owners && compiled.ownerRoot >= 0;
   const node = ownerPath ? compiled.ir.nodes[compiled.ownerRoot] : null;
   const raw = ownerPath ? meshStoreOwners(store, { gap: node.gap }) : meshStore(store);
@@ -35,6 +43,7 @@ export function meshImplicit(compiled, edge, { tier, owners = true } = {}) {
   if (ownerPath) mesh = untangle(store, cutCreases(store, mesh, node.attWorld));
   if (compiled.detail.length) mesh = applySurfaceDetail(store, mesh, compiled);
   const result = implicitResult(compiled, edge, plan, mesh, store.clipped);
+  result.stats.cacheHits = store.cacheHits;
   if (ownerPath) Object.assign(result, { vertOwner: mesh.vertOwner, ownerHeld: mesh.ownerHeld, pinned: mesh.pinned, crease: mesh.crease, triOwner: triangleOwners(mesh) });
   return result;
 }
