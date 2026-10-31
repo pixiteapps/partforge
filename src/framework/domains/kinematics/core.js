@@ -3,11 +3,12 @@
 import { buildTree, jointSteps, failer, couple, farEnd, nearZero, restValue, ballValue } from "./tree.js";
 import { buildFrames, buildReport, buildAdapters, r3 } from "./outputs.js";
 import { solveReach, solveGrip } from "./solve.js";
+import { goalInputs, solveGoals } from "./goals.js";
 import { distanceFor } from "./shapes.js";
 import { IDENTITY, resolveFrames } from "../../geometry/xform.js";
 import { SpecError } from "../../geometry/errors.js";
 
-const POSE_KEYS = new Set(["bend", "curl", "spread", "twist", "reach", "grip"]);
+const POSE_KEYS = new Set(["bend", "curl", "spread", "twist", "reach", "grip", "goals", "pins"]);
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const isVec3 = (v) => Array.isArray(v) && v.length === 3 && v.every(isNum);
 const GRIP_KEYS = new Set(["around", "clearance", "r"]);
@@ -138,13 +139,15 @@ export function limb(name, def) {
     const context = contextOf(parents, fail);
     const frames = context?.frames ?? null;
     if (opts.reach != null && opts.grip != null) fail("", "use reach or grip, not both");
+    if (opts.goals != null && (opts.reach != null || opts.grip != null)) fail("", "use one of reach, grip or goals");
+    if (opts.pins != null && opts.goals == null) fail("pins", "pins hold joints for goals — pass goals too");
     for (const k of ["spread", "twist"]) if (opts[k] != null && !isNum(opts[k])) fail(k, "must be a finite number");
     let spread = opts.spread ?? 0;
     const twist = opts.twist ?? 0;
     if (tree.base.rotate && (spread !== 0 || twist !== 0)) fail("", "spread/twist need toward/bendToward, not rotate");
 
     const raw = rawValues(tree, opts, fail);
-    let values, clamped, reach = null, grip = null;
+    let values, clamped, reach = null, grip = null, goals = null;
     if (opts.reach != null) {
       if (!isVec3(opts.reach)) fail("reach", "must be [x, y, z]");
       if (tree.parent != null && frames == null) fail("", "reach needs the frames declared so far — pass them as pose(…, frames)");
@@ -160,9 +163,13 @@ export function limb(name, def) {
         joints: solved.joints.map(({ index, touched, skipped }) => ({ joint: tree.joints[index].name, value: values[index], touched, skipped })),
         touching: solved.touching, gap: solved.gap,
       };
+    } else if (opts.goals != null) {
+      const inputs = goalInputs(tree, opts.goals, opts.pins, fail);
+      if (tree.parent != null && frames == null) fail("", "goals needs the frames declared so far — pass them as pose(…, frames)");
+      ({ values, clamped, goals } = solveGoals(tree, parentWorld(frames), inputs.goals, raw, inputs.pinned, { spread, twist }));
     } else ({ values, clamped } = couple(tree, raw));
     const posedFrames = buildFrames(tree, jointSteps(tree, values, { spread, twist }));
-    const report = buildReport(tree, values, clamped, posedFrames, frames, fail, reach, grip);
+    const report = buildReport(tree, values, clamped, posedFrames, frames, fail, reach, grip, goals);
     const restFrames = context == null ? restOwn : { ...context.rest, ...restOwn };
     const adapters = buildAdapters(tree, posedFrames, frames, restFrames, fail);
     const posed = { values, frames: posedFrames, joints: [...jointFrames], tip, report, ...adapters };
