@@ -154,6 +154,8 @@ export interface MountElements {
     cutaway?: HTMLElement | null;
     measure?: HTMLElement | null;
     annotate?: HTMLElement | null;
+    /** Pose mode's toggle (`#pose`). Shown only for a part that declares `handles`. */
+    pose?: HTMLElement | null;
     railToggle?: HTMLElement | null;
   };
 }
@@ -341,6 +343,8 @@ export interface CutawayState {
 export interface ViewerState {
   /** The open selection popover, reopened by the next mount if the sub-part is still in the view. */
   selection?: { subPart: string | null; point: [number, number, number]; page: "spot" | "appearance" };
+  /** Pose mode's pins, as `"<handle>:<at>"` ids; present only while one is set. */
+  pose?: { pins: string[] };
   /** The live camera pose, or `null` when the viewer could not report one. */
   camera: { pos: [number, number, number]; target: [number, number, number] } | null;
   /**
@@ -472,6 +476,17 @@ export interface CaptureViewOptions {
  * the frame natively (canonical-view captures and thumbnails never include
  * them).
  */
+/** Pose mode's runtime-controls API: drag a part's declared `handles` on screen. */
+export interface PoseRuntime {
+  isEnabled(): boolean;
+  setEnabled(on: boolean): void;
+  /** Pinned points (a click on a handle's tip toggles one). */
+  pinCount(): number;
+  releasePins(): void;
+  /** Each shown handle's grab point on the canvas, CSS px from its top-left; empty while the mode is off. */
+  handlePoints(): { handleId: string; at: string; x: number; y: number }[];
+}
+
 export interface MeasureRuntime {
   isEnabled(): boolean;
   setEnabled(on: boolean): void;
@@ -772,6 +787,8 @@ export interface PartRuntime {
   measure: MeasureRuntime;
   /** Annotation mode's runtime-controls API — mode on/off, ink state, and send. Always present; a no-op stand-in when `onAnnotationSend` was not supplied. */
   annotate: AnnotateRuntime;
+  /** Pose mode's runtime-controls API. Always present; a no-op stand-in for a part with no `handles`. */
+  pose: PoseRuntime;
   /** The pick marker's lifetime — hold it on screen and follow it across the canvas. Always present (a no-op stand-in outside `makeHandle` tests). */
   pickMarker: PickMarkerRuntime;
   /** The selection popover, or `null` without the `selectionPopover` option. */

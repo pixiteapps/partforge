@@ -125,6 +125,7 @@
     "offset-rates": "node scripts/offset-rates.mjs",
     "bench:softrender": "node scripts/bench-softrender.mjs",
     "check:softrender": "node scripts/check-softrender-parity.mjs",
+    "check:pose": "node scripts/check-pose.mjs",
     "bench:core": "vitest run --config scripts/bench-core/vitest.config.js"
   },
   "peerDependencies": {

@@ -246,6 +246,7 @@ function makeElements() {
       cutaway: mk("button"),
       measure: mk("button"),
       annotate: mk("button"),
+      pose: mk("button"),
       railToggle: mk("button"),
     },
   };
@@ -253,7 +254,7 @@ function makeElements() {
     els.status.status, els.status.busy, els.status.phase,
     els.exports.stl, els.exports.step, els.exports.threeMf,
     els.chrome.reframe, els.chrome.theme, els.chrome.cutaway, els.chrome.measure,
-    els.chrome.annotate, els.chrome.railToggle);
+    els.chrome.annotate, els.chrome.pose, els.chrome.railToggle);
   return els;
 }
 

@@ -3513,6 +3513,10 @@ export function createViewer(container, part, {
     getProjection: () => projectionMode,
     onProjectionChange,
     domElement: renderer.domElement,
+    // The OrbitControls themselves, for a mode that must take a press away from
+    // orbit (pose mode; cutaway gets them at construction). One instance for the
+    // viewer's life: a projection swap re-targets it, never replaces it.
+    orbitControls: controls,
     _subMeshes: subMesh,
     __subMesh: (n) => subMesh[n],   // test hooks (cf. attachAnimationControls' __viewer)
     __subLines: (n) => subLines[n],

@@ -584,6 +584,21 @@ export function createPoseMode(viewer, {
     delivered: (name) => session.delivered(name),
     /** Mount: params were written from outside mid-drag (setParams) — revert the drag. */
     externalWrite: () => session.externalWrite(),
+    /**
+     * Where each shown handle's always-grabbable point (an angles limb's tip, a goal
+     * handle's `at`) sits on the canvas: `[{ handleId, at, x, y }]`, CSS px from the
+     * canvas's top-left. Empty while the mode is off. For a host's coach marks and the
+     * browser check (scripts/check-pose.mjs).
+     */
+    handlePoints() {
+      const out = [];
+      for (const { handleId, handle, info } of shown) {
+        const at = handle.mode === "goal" ? goalAt(handle) : "tip";
+        const s = toScreen(info.points[at]);
+        if (s && s.visible !== false) out.push({ handleId, at, x: s.x, y: s.y });
+      }
+      return out;
+    },
     pinCount: () => session.pins.length,
     getPins: () => session.pins,
     setPins: (ids) => session.setPins(ids),
