@@ -50,13 +50,21 @@ export all work on it.
 throws:
 
 ```text
-implicit: builds on the Manifold backend only — set `meta.backend: "manifold"` for this part (STEP export of implicit sub-parts is not supported yet)
+implicit: OCCT cannot build k.implicit (it is mesh-native) — this sub-part reached OCCT because meta.backend pins it there, or because the geometry-free probe did not see the call (one made only after reading a geometry query); set `meta.backend: "manifold"` and make the k.implicit call unconditional
 ```
 
-- Set **`meta.backend: "manifold"`** on a part with implicit bodies. Exports and the CLI
-  build the whole part on one backend, and without the pin a `shell` (an OCCT-only op)
-  in any sub-part would send the implicit sub-part to OCCT too.
-- **STEP export of an implicit sub-part is not supported.** STL and 3MF are.
+- Set **`meta.backend: "manifold"`** on a part with implicit bodies. STL, 3MF and the
+  CLI build the whole part on one backend, and without the pin a `shell` (an OCCT-only
+  op) in any sub-part would send the implicit sub-part to OCCT too.
+- **STEP export writes a hybrid file.** The ordinary sub-parts are exact B-rep solids,
+  as always. Each sub-part whose build calls `k.implicit` is meshed on Manifold at the
+  print grid (`resolution`) in its export pose and written as a tessellated solid
+  (AP242's `TESSELLATED_SOLID`), with its name and colour, so the file carries a closed
+  mesh body beside the exact ones. A sub-part that calls `k.implicit` anywhere is one mesh
+  body, including any ordinary ops in it. The pin does not change this split. Expect
+  about 40 bytes per triangle: the reference hand (`src/parts/hand.js`, ~116k triangles
+  at its print grid) adds about 4 MB. A sub-part that calls both
+  `k.implicit` and `shell` cannot export; use an `onion` node for a hollow organic body.
 - A kernel with no implicit engine at all (a host's own kernel) throws
   `implicit: this kernel has no implicit engine — build the part on the Manifold backend`.
 - `k.implicitFrames` meshes nothing, so it works on both backends.

@@ -133,6 +133,8 @@ export default {
   stay out of `print` — they are cut, not printed, and export assembled.
 - Exports write the checked pieces as built. STL is one file per piece; a 3MF or STEP of
   several printed (non-sheet) pieces lays them out on the bed automatically, 10 mm apart.
+  In a STEP, a piece whose build calls `k.implicit` is a tessellated (mesh) solid beside
+  the others' exact B-rep ([`docs/domains/organic.md`](domains/organic.md), "Backend").
 
 The Lattice Box's `lid` shows all of it (helpers elided — see `src/parts/lattice-box.js` for the whole part, whose `swing` is `(s, p, d) => s.rotate(-p.lidAngle, d.hinge, [1, 0, 0])`):
 

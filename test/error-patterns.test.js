@@ -99,6 +99,7 @@ const BASELINE_IDS = [
   "implicit-blend-eats-child",
   "implicit-lipschitz-low",
   "implicit-thin-feature",
+  "implicit-step-export",
 ];
 
 const entries = parsePatterns(doc);

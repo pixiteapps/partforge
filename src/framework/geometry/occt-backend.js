@@ -758,10 +758,12 @@ export function createOcctKernel(replicad) {
   };
 
   // k.implicit is mesh-native: its booleans are mesh booleans, which OCCT cannot
-  // run on a triangulated body. Tessellated STEP (feat/implicit PR 4) routes
-  // implicit sub-parts to Manifold and writes their meshes into the STEP file.
+  // run on a triangulated body. A STEP export meshes implicit sub-parts on Manifold
+  // and writes them as tessellated solids (export-controller.js, occt-step.js), so a
+  // sub-part reaches this throw only when it was routed here: a meta.backend pin, or a
+  // k.implicit call the geometry-free probe could not see.
   const implicit = () => {
-    throw new Error("implicit: builds on the Manifold backend only — set `meta.backend: \"manifold\"` for this part (STEP export of implicit sub-parts is not supported yet)");
+    throw new Error("implicit: OCCT cannot build k.implicit (it is mesh-native) — this sub-part reached OCCT because meta.backend pins it there, or because the geometry-free probe did not see the call (one made only after reading a geometry query); set `meta.backend: \"manifold\"` and make the k.implicit call unconditional");
   };
   // Its frame report meshes nothing, so OCCT runs it like Manifold does.
   const frameReport = (spec) => implicitFrames(spec, { images });

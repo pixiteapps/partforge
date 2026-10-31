@@ -937,6 +937,12 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** The mesher skips space using the field's value: it assumes the value changes by at most `lipschitz` (default 1) per mm. A formula that changes faster — a scaled distance, a gyroid, a warped field — lets it step past the surface.
 - **Fix:** Set `lipschitz` on the `expr` node to at least the slope lint measured (the hint gives a value), or divide the formula by its scale so it is close to a true distance. Lint samples 512 points, so a clean lint is not a proof: if holes remain, raise `lipschitz` further.
 
+## implicit-step-export
+
+- **Symptom:** A STEP export of a part with a `k.implicit` sub-part fails with `implicit: OCCT cannot build k.implicit (it is mesh-native) — this sub-part reached OCCT because …`, or with `sub-part "<name>" calls k.implicit and shell, which no backend can build together`.
+- **Cause:** A STEP export finds the organic sub-parts with the geometry-free probe, meshes them on Manifold and writes them as tessellated solids; every other sub-part is built on OCCT. The first message means a sub-part's `k.implicit` call was not seen — it is made only after reading a geometry query (`boundingBox()`, `contains()`, …), which the probe answers with a placeholder — or `meta.backend: "occt"` pins the part. The second means one sub-part needs both backends.
+- **Fix:** Make the `k.implicit` call unconditional (decide from params, not from a measured solid), and pin `meta.backend: "manifold"` rather than `"occt"`. For a hollow organic body, use an `onion` node inside the `k.implicit` spec instead of `shell`; keep a `shell`ed CAD body in its own sub-part.
+
 ## implicit-thin-feature
 
 - **Symptom:** A thin part of a `k.implicit` body (a plate, a fin, a nail) breaks into pieces, grows holes or handles, or vanishes; the build warns `implicit: thinnest feature (… mm) is under 2 grid cells`, and lint warns `implicit-thin-feature`.

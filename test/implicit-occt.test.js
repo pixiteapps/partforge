@@ -7,8 +7,8 @@ import { handSpec } from "./fixtures/implicit-trees.js";
 let k;
 beforeAll(async () => { k = await bootOcctKernel(); }, 120_000);
 
-test("OCCT refuses k.implicit with a clear message (tessellated STEP lands in PR 4)", () => {
-  expect(() => k.implicit({ root: { kind: "sphere", r: 1 } })).toThrow(/implicit: builds on the Manifold backend/);
+test("OCCT refuses k.implicit, saying how a sub-part got there", () => {
+  expect(() => k.implicit({ root: { kind: "sphere", r: 1 } })).toThrow(/implicit: OCCT cannot build k.implicit/);
 });
 
 test("implicitFrames runs on OCCT", () => {
