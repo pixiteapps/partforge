@@ -252,9 +252,16 @@ from importing a domain folder:
 
 ### 4. Pose mode (on screen)
 
-- **Entering.** A viewbar toggle, shown only when the part declares `handles`. It sits
-  beside the measure ruler and the sketch pencil, and it is exclusive with them.
-  - While Pose mode is on, picking and measure are off.
+- **Entering.** *(Revised 2026-10-31: there is no toggle.)* Posing is always on in the
+  normal click mode of a part that declares `handles`. It stops while measure, sketch or
+  cutaway is on, and starts again when they are all off. A host can turn it off with
+  `runtime.pose.setEnabled(false)`.
+  - At rest only pin badges show. When the pointer is 32 CSS px or less from a limb's
+    bones on screen, that limb's dots and skeleton show (the nearest limb wins).
+  - A press on a dot or an aim ring is a pose grab. Every other press orbits and picks
+    as before. A pin click and a drag never pick. While a dot is hovered, the model's
+    hover label is hidden.
+  - Touch has no hover: a touch press 24 px or less from any limb's dot grabs it.
   - Orbit stays on, but yields to a handle grab (the `cutaway-gizmo.js` pattern):
     capture-phase `pointerdown`, disable orbit, pointer capture, restore on
     end/cancel/blur.

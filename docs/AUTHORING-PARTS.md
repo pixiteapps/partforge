@@ -3283,9 +3283,11 @@ handles: {
 },
 ```
 
-The app then shows a Pose button in the viewbar (give the stage a `#pose` button, as
-`robot-arm.html` does). One drag is one `onParamsCommit`. `runtime.pose` has
-`isEnabled()`, `setEnabled(on)`, `pinCount()`, `releasePins()` and `handlePoints()`. The
+Posing then is always on in the viewer's normal click mode. There is no Pose button.
+Hover near a limb to show its handles, and drag one. Every other press orbits and picks
+as before. Posing stops while measure, sketch or cutaway is on. One drag is one
+`onParamsCommit`. `runtime.pose` has `isEnabled()`, `setEnabled(on)` (on by default),
+`isLive()`, `pinCount()`, `releasePins()` and `handlePoints()`. The
 full contract, with the rules for rebuilding parts, pins and out-of-reach goals, is in
 [`docs/domains/kinematics.md`](domains/kinematics.md), "Handles and Pose mode". Lint
 checks every name (`handle-*`, in the rule catalog). Reference parts:

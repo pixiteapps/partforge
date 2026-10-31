@@ -650,7 +650,11 @@ the installed package, so let the publish finish before bumping the dep there.
   `ikInfo()` only - never `instanceof`, the cloud's worker holds two copies) and
   `pose-session.js` (the drag state machine and pins, effects injected) are pure;
   `pose-geom.js` is its pure geometry leaf, `pose-scene.js` the three.js overlay,
-  `pose-mode.js` the orchestrator, `pose-controls.js` the viewbar chrome. Mount
+  `pose-mode.js` the orchestrator, `pose-controls.js` the viewbar's Release pins
+  action. Posing has NO toggle: it is live in the normal click mode whenever measure,
+  sketch, cutaway and a cached preview are all off (mount's `setSuppressed`); handles
+  show on hover near a limb, a press on one claims its click (`takeClick`, the
+  picker's guard) and a hovered dot hides the hover tooltip (`claimsHover`). Mount
   applies the session's effects: it holds regen jobs during a drag, ghosts the
   sub-parts that must rebuild at 0.35 opacity, lifts each ghost in the delivery that
   shows its new mesh (playback-stale deliveries included), commits once on release

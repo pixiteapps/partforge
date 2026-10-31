@@ -642,12 +642,24 @@ however the listed parameters move it: a `curl` curls the whole finger.
 
 ### Pose mode
 
-A part that declares `handles` gets a Pose button in the viewbar, beside measure and
-sketch. Only one of the three can be on. Pose mode turns picking and measure off.
+Posing has no button. In a part that declares `handles`, posing is always on in the
+normal click mode. It stops while measure, sketch or cutaway is on, and it starts again
+when they are all off.
 
-- **Drag a tip or a joint.** Orbit still works on empty space and gives way to a grab.
-- **Click a tip (no drag)** to pin it. A pin is view state, not a parameter. A "Release
-  pins" button shows while a pin is set.
+- **At rest, no handles show.** Only the pin badges of pinned tips show.
+- **Hover near a limb to show its handles.** When the pointer is 32 CSS px or less from a
+  limb's bones on screen, that limb's skeleton, joint dots and tip dot appear. If two
+  limbs are near, the nearest one shows. Move away and they go.
+- **Hover a dot** to highlight it. The cursor changes to a grab hand, and the model's
+  hover label does not show.
+- **Drag a dot, a joint or an aim ring** to pose the limb. Orbit gives way to the grab.
+- **Every other press is the usual press.** On empty space or on the model away from the
+  handles, a drag orbits and a click picks (the chat box opens as before).
+- **Click a tip (no drag)** to pin it. This click does not pick. A drag does not pick
+  when you release it. A pin is view state, not a parameter. A "Release pins" button
+  shows in the viewbar while a pin is set and posing is on.
+- **Touch has no hover.** A touch press 24 px or less from a dot of any limb drags that
+  dot. A touch press anywhere else orbits or picks.
 - **Rigid parts move live.** A sub-part that the pose only places by matrix moves on every
   frame.
 - **A part that must rebuild** fades to a ghost (0.35 opacity) and stays still. A
@@ -672,9 +684,12 @@ sketch. Only one of the three can be on. Pose mode turns picking and measure off
 Pose mode is a pointer tool. The panel sliders drive the same parameters, so keyboard
 users lose nothing.
 
-`runtime.pose` is the host's view of the mode: `isEnabled()`, `setEnabled(on)`,
-`pinCount()`, `releasePins()` and `handlePoints()` (each shown handle's grab point on the
-canvas, in CSS px).
+`runtime.pose` is the host's view of the mode. `setEnabled(false)` turns posing off and
+`setEnabled(true)` turns it on again (it is on by default). `isEnabled()` reads that
+setting. `isLive()` is true when handles can be used now: posing is enabled and measure,
+sketch, cutaway and a cached preview are all off. `pinCount()` and `releasePins()` read
+and clear the pins. `handlePoints()` gives each handle's grab point on the canvas, in CSS
+px, also when the handle does not show. It is empty while posing is not live.
 
 ## Posing a part as an agent
 
