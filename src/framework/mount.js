@@ -23,7 +23,7 @@ import { createMeshCache } from "./mesh-cache.js";
 import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts, resolveParams } from "./part-model.js";
 import { resolveDerived } from "./derive.js";
-import { createBackendPolicy } from "./backend-select.js";
+import { createBackendPolicy, organicExportParts } from "./backend-select.js";
 import { createDebugOverlay } from "./debug-overlay.js";
 import { createRegenLoop } from "./regen-loop.js";
 import { createPoseFastPath } from "./pose-fast-path.js";
@@ -32,7 +32,7 @@ import { createViewTabs } from "./view-tabs.js";
 import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } from "./selection/index.js";
 import { createPickRequestClient, resolvePickServerUrl, PICK_SERVER_DEFAULT_URL } from "./pick-request/index.js";
 import { exportableRows, exportFormatList } from "./export-rows.js";
-import { createExportController, backendForFormat } from "./export-controller.js";
+import { createExportController } from "./export-controller.js";
 import { createCaptureBuild } from "./capture-build.js";
 import { attachAnimationControls } from "./animation-controls.js";
 import { resolveDefaultView } from "./default-view.js";
@@ -1558,6 +1558,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       title: () => part.meta?.title ?? "parts",
       defaultBackend: () => backendFor(),
       currentParams: () => params,
+      organicFor: ({ view: v, params: q, parts }) => organicExportParts(part, { view: v, params: q, parts }),
     });
     cleanup.defer(() => exportCtl.dispose("viewer disposed"));
 
@@ -1682,9 +1683,20 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       cleanup.defer(() => els.exports.stl.removeEventListener("click", onStlClick));
     }
 
+    // Through the export controller, which runs a part with organic sub-parts in two legs
+    // (mesh them on Manifold, then write on OCCT) and a plain one as the single OCCT job.
     const onStepClick = () => {
       ui.showBusy("exporting STEP");
-      service.send({ type: "export-step", view: view(), params }, backendForFormat("step", backendFor));
+      exportCtl.exportParts({
+        format: "step",
+        onProgress: (phase) => { ui.showBusy(phase); ui.setStatus(`${phase}…`); },
+      }).then(() => {
+        ui.hideBusy();
+        ui.setStatus("STEP downloaded");
+      }, (e) => {
+        ui.hideBusy();
+        ui.setStatus(`failed: ${e?.message ?? e}`, true);
+      });
     };
     if (els.exports.step) {
       els.exports.step.addEventListener("click", onStepClick);

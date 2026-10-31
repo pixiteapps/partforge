@@ -830,6 +830,37 @@ test("a tessellate-imports request never collides with a pending export's jobId"
   await expect(exportPromise).resolves.toBeUndefined();
 });
 
+// The STEP button on a part with an organic (k.implicit) sub-part: the organic sub-part
+// is meshed on the Manifold worker first, then the OCCT worker writes the file with that
+// mesh; the busy state clears and the status says so when the download lands.
+test("the STEP button meshes organic sub-parts on Manifold, then writes on OCCT", async () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const onDownload = vi.fn();
+  const part = makePart();
+  part.parts.grip = { label: "Grip", views: ["main"], build: (k) => k.implicit({ root: { kind: "sphere", r: 5 } }) };
+  mount(part, { createWorker, elements: els, onDownload });
+  finishFirstBuild(workers);
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "grip" }], ms: 42 } });
+  expect(els.exports.step.disabled).toBe(false);
+
+  els.exports.step.click();
+  const meshMsg = workers.manifold.postMessage.mock.calls.map(([m]) => m).find((m) => m.type === "mesh-subparts");
+  expect(meshMsg).toMatchObject({ parts: ["grip"], view: "main", quality: "print" });
+  expect(workers.occt?.postMessage.mock.calls.find(([m]) => m.type === "export-step")).toBeUndefined();
+
+  const mesh = { positions: Float32Array.of(0, 0, 0, 1, 0, 0, 0, 1, 0), indices: Uint32Array.of(0, 1, 2) };
+  workers.manifold.onmessage({ data: { type: "subpart-meshes", jobId: meshMsg.jobId, meshes: { grip: mesh } } });
+  await new Promise((r) => setTimeout(r, 0));
+  const stepMsg = workers.occt.postMessage.mock.calls.map(([m]) => m).find((m) => m.type === "export-step");
+  expect(stepMsg.meshes).toEqual({ grip: mesh });
+
+  workers.occt.onmessage({ data: { type: "download", jobId: stepMsg.jobId, data: new ArrayBuffer(4), filename: "test-part.step", mime: "application/step" } });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(onDownload).toHaveBeenCalledTimes(1);
+  expect(els.status.status.textContent).toBe("STEP downloaded");
+});
+
 // A host that keeps one worker across mounts (partforge-cloud's pool rebinds
 // it with setPart) hands a disposed mount's late replies to the next mount's
 // handler. Exports run to completion, so a STEP export sent before an edit

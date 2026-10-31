@@ -608,6 +608,23 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       onProgress("writing STEP file");
       const data = await kernel.toSTEP(bodies);
       post({ type: "download", data, filename: `${fileBase}.step`, mime: "application/step", jobId: msg.jobId }, [bufferOf(data)]);
+    } else if (msg.type === "mesh-subparts") {
+      // The Manifold half of a STEP export with organic sub-parts (export-controller.js):
+      // each named sub-part built in its export pose and meshed at print quality, as
+      // JS-owned arrays the OCCT worker writes into the file as tessellated solids.
+      const meshes = {};
+      for (const [i, name] of msg.parts.entries()) {
+        onProgress(`meshing ${label(name)}`);
+        try {
+          const { positions, indices } = posed(name, "export", onProgress).toIndexedMesh({ quality: "print" });
+          meshes[name] = { positions, indices };
+        } catch (thrown) {
+          throw exportPieceError(thrown, { kernel, piece: label(name), index: i, count: msg.parts.length });
+        }
+        kernel.cleanup?.();
+      }
+      post({ type: "subpart-meshes", jobId: msg.jobId, meshes },
+           Object.values(meshes).flatMap((m) => [m.positions.buffer, m.indices.buffer]));
     } else if (msg.type === "export-3mf") {
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");

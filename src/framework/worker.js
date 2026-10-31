@@ -37,7 +37,7 @@ async function manifoldKernels() {
 // 105-plate forge's plates ran out of heap (feedback #212). The cost is one cold
 // display build after an export; exports are rare and deliberate, a failed one
 // costs the user the whole job.
-const EXPORT_JOBS = new Set(["export-stl", "export-step", "export-3mf", "export-bundle"]);
+const EXPORT_JOBS = new Set(["export-stl", "export-step", "export-3mf", "export-bundle", "mesh-subparts"]);
 
 async function occtKernel() {
   const [{ default: opencascade }, wasmUrlMod, replicad, { createOcctKernel }] = await Promise.all([
