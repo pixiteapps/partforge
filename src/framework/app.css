@@ -588,9 +588,9 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 #viewbar .pf-cutaway-actions { display: flex; gap: 4px; }
 #viewbar .pf-cutaway-actions[hidden] { display: none; }
 #viewbar .pf-cutaway-actions button { width: auto; min-width: 56px; padding: 0 8px; }
-#viewbar .pf-measure-actions { display: flex; gap: 4px; }
-#viewbar .pf-measure-actions[hidden] { display: none; }
-#viewbar .pf-measure-actions button { width: auto; min-width: 56px; padding: 0 8px; }
+#viewbar .pf-measure-actions, #viewbar .pf-pose-actions { display: flex; gap: 4px; }
+#viewbar .pf-measure-actions[hidden], #viewbar .pf-pose-actions[hidden] { display: none; }
+#viewbar .pf-measure-actions button, #viewbar .pf-pose-actions button { width: auto; min-width: 56px; padding: 0 8px; }
 #viewbar button:disabled { opacity: .38; cursor: not-allowed; }
 #viewbar button:disabled:hover { color: var(--pf-muted-2); background: transparent; }
 #viewbar button:hover { color: var(--pf-text); background: var(--pf-surface-2); }
@@ -915,8 +915,8 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 @media (max-width: 360px) {
   #viewbar { gap: 3px; }
   #viewbar button { width: 30px; height: 30px; font-size: 13px; }
-  #viewbar .pf-cutaway-actions, #viewbar .pf-measure-actions { gap: 3px; }
-  #viewbar .pf-cutaway-actions button, #viewbar .pf-measure-actions button { min-width: 44px; padding: 0 6px; }
+  #viewbar .pf-cutaway-actions, #viewbar .pf-measure-actions, #viewbar .pf-pose-actions { gap: 3px; }
+  #viewbar .pf-cutaway-actions button, #viewbar .pf-measure-actions button, #viewbar .pf-pose-actions button { min-width: 44px; padding: 0 6px; }
 }
 
 /* ---- measurement mode -----------------------------------------------------

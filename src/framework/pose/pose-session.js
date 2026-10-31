@@ -1,0 +1,208 @@
+// Pose mode's drag session: the state machine behind one handle drag, and the pin set.
+// Pure — no DOM, no three.js. Everything effectful is injected, so mount.js decides
+// what "write", "hold" and "ghost" mean and the tests drive it with recording fakes.
+//
+//   begin(handleId, grab)  snapshot params, hold(true), capture each pin's held point
+//   frame(target)          solve (angles) or goal values (+ seed), write, ghost new stale
+//   ringFrame(axis, deg)   goal handles with `aim`: tilt one aim param, then as frame
+//   end()                  write the snapped values, hold(false), commit(changed) once
+//   cancel()               restore(snapshot), hold(false), unghost all, no commit
+//   externalWrite()        the same as cancel — something else wrote params mid-drag
+//   delivered(name)        a ghosted sub-part's new mesh landed: unghost it (never mid-drag)
+//
+// One drag is one commit, so one host undo step. A ghost is never lifted mid-drag:
+// the ghosted mesh would show its stale shape at full opacity until the release regen.
+//
+// Pins are ids "<handle>:<at>" (at: a joint name or "tip"). A pin's held point is read
+// at begin, from the params the drag starts from, and stays fixed for that drag.
+import { limbInfo, solveAngles, goalValues, seedValues, snapValues } from "./param-solve.js";
+
+const AIM_AXES = ["pitch", "yaw", "roll"];
+const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+
+/** Split a pin id at its LAST ":" — a handle id may itself hold one, a joint name rarely. */
+export function parsePinId(id) {
+  const s = String(id);
+  const i = s.lastIndexOf(":");
+  return i <= 0 ? null : { handleId: s.slice(0, i), at: s.slice(i + 1) };
+}
+export const pinId = (handleId, at) => `${handleId}:${at}`;
+
+/**
+ * The drag's values for one frame, from param-solve. Angles mode solves the handle's
+ * listed params through derive (holding every pin); goal mode writes the target (and
+ * the aim angles, for a ring) onto the goal params and the solved joint angles into
+ * the seed. Returns `{ values, error }` or null when the start pose itself fails.
+ */
+export function defaultSolve({ part, params, handle, grab, target, aimAngles, holds, allHandles }) {
+  if (handle.mode === "goal") {
+    const values = goalValues({ handle, point: target, aimAngles, part });
+    const seed = Array.isArray(handle.seed) && handle.seed.length
+      ? seedValues({ part, params: { ...params, ...values }, handle })
+      : null;
+    return { values: { ...values, ...(seed ?? {}) }, error: 0 };
+  }
+  return solveAngles({ part, params, handle, grab, target, holds, allHandles });
+}
+
+/** Where a pinned point sits at these params (part coordinates), or null. */
+function defaultLocate({ part, params, handle, at }) {
+  const p = limbInfo(part, params, handle)?.points?.[at];
+  return Array.isArray(p) ? [...p] : null;
+}
+
+export function createPoseSession({
+  part,
+  getParams,
+  write,
+  commit,
+  restore,
+  solve = defaultSolve,
+  locate = defaultLocate,
+  snap = (values) => snapValues(part, values),
+  staleSubParts = () => [],
+  ghost = () => {},
+  unghost = () => {},
+  hold = () => {},
+  onCancel = () => {},
+  onPinsChange = () => {},
+}) {
+  const handles = part?.handles && typeof part.handles === "object" ? part.handles : {};
+  const allHandles = Object.values(handles);
+  let pins = [];
+  let drag = null;          // { handleId, handle, grab, snapshot, holds, touched }
+  const ghosted = new Set(); // ghosted by any drag, waiting for their delivery
+
+  const notifyPins = () => onPinsChange([...pins]);
+
+  function begin(handleId, grab) {
+    if (drag) cancel();
+    const handle = handles[handleId];
+    if (!handle) return false;
+    const params = getParams();
+    const snapshot = { ...params };
+    const holds = [];
+    for (const id of pins) {
+      const pin = parsePinId(id);
+      const h = pin && handles[pin.handleId];
+      if (!h || (pin.handleId === handleId && pin.at === grab)) continue;
+      const point = locate({ part, params: snapshot, handle: h, at: pin.at });
+      if (point) holds.push({ limb: h.limb, at: pin.at, point });
+    }
+    drag = { handleId, handle, grab, snapshot, holds, touched: {} };
+    hold(true);
+    return true;
+  }
+
+  /** Write one frame's values and ghost whatever just went stale. */
+  function apply(result) {
+    if (!result || !result.values) return null;
+    write(result.values);
+    Object.assign(drag.touched, result.values);
+    const fresh = [];
+    for (const name of staleSubParts() ?? []) {
+      if (ghosted.has(name)) continue;
+      ghosted.add(name);
+      fresh.push(name);
+    }
+    if (fresh.length) ghost(fresh);
+    return result;
+  }
+
+  function frame(target) {
+    if (!drag) return null;
+    const point = Array.isArray(target) ? target : target?.point;
+    if (!Array.isArray(point) || !point.every(isNum)) return null;
+    const result = solve({
+      part, params: { ...getParams() }, handleId: drag.handleId, handle: drag.handle,
+      grab: drag.grab, target: point, holds: drag.holds, allHandles,
+    });
+    return apply(result);
+  }
+
+  function ringFrame(axis, deltaDeg) {
+    if (!drag || drag.handle.mode !== "goal" || !isNum(deltaDeg)) return null;
+    const aim = drag.handle.params?.aim;
+    const i = typeof axis === "number" ? axis : AIM_AXES.indexOf(axis);
+    if (!Array.isArray(aim) || !(i >= 0) || typeof aim[i] !== "string") return null;
+    const params = { ...getParams() };
+    const value = (k) => (isNum(drag.snapshot[k]) ? drag.snapshot[k] : isNum(part.defaults?.[k]) ? part.defaults[k] : 0);
+    // Every aim angle as the grab left it, the dragged one turned by the delta since.
+    const angles = aim.map((k, j) => (isNum(params[k]) ? params[k] : value(k)));
+    angles[i] = value(aim[i]) + deltaDeg;
+    const values = goalValues({ handle: drag.handle, point: null, aimAngles: angles, part });
+    const seed = Array.isArray(drag.handle.seed) && drag.handle.seed.length
+      ? seedValues({ part, params: { ...params, ...values }, handle: drag.handle })
+      : null;
+    return apply({ values: { ...values, ...(seed ?? {}) }, error: 0 });
+  }
+
+  function end() {
+    if (!drag) return;
+    const ending = drag;
+    drag = null;
+    const snapped = snap({ ...ending.touched });
+    if (Object.keys(snapped).length) write(snapped);
+    hold(false);
+    const changed = Object.keys(snapped).filter((k) => snapped[k] !== ending.snapshot[k]);
+    if (changed.length) commit(changed);
+  }
+
+  function cancel() {
+    if (!drag) return;
+    const ending = drag;
+    drag = null;
+    restore({ ...ending.snapshot });
+    hold(false);
+    if (ghosted.size) {
+      const names = [...ghosted];
+      ghosted.clear();
+      unghost(names);
+    }
+    onCancel();
+  }
+
+  function delivered(name) {
+    if (drag || !ghosted.has(name)) return;
+    ghosted.delete(name);
+    unghost([name]);
+  }
+
+  function togglePin(id) {
+    const key = String(id);
+    const had = pins.includes(key);
+    pins = had ? pins.filter((p) => p !== key) : [...pins, key];
+    notifyPins();
+    return !had;
+  }
+
+  function setPins(ids) {
+    pins = [...new Set((Array.isArray(ids) ? ids : []).map(String))];
+    notifyPins();
+  }
+
+  function releasePins() {
+    if (!pins.length) return;
+    pins = [];
+    notifyPins();
+  }
+
+  return {
+    begin,
+    frame,
+    ringFrame,
+    end,
+    cancel,
+    externalWrite: cancel,
+    delivered,
+    togglePin,
+    setPins,
+    releasePins,
+    isActive: () => drag !== null,
+    /** The drag in progress, or null: `{ handleId, grab }`. */
+    get active() { return drag ? { handleId: drag.handleId, grab: drag.grab } : null; },
+    get pins() { return [...pins]; },
+    /** Sub-parts ghosted by a drag and not yet delivered. */
+    get ghosted() { return [...ghosted]; },
+  };
+}
