@@ -38,6 +38,9 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
   const bases = new Map();
   const deformed = new Set();
   let dragging = false;
+  // hold(): while any hold is out, nothing deforms (an async capture is reading the
+  // exact meshes). A counter, so overlapping holders compose.
+  let holds = 0;
 
   // The live build-scope probe and the per-name motions, memoized per (version, view).
   let liveKey = null, liveMap = null, motionMemo = new Map();
@@ -125,6 +128,11 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
   }
 
   function deform() {
+    if (holds > 0) {
+      restoreAll();
+      dragging = false;
+      return [];
+    }
     const inView = viewSubParts(part, getView(), params);
     const skinned = [];
     for (const name of inView) {
@@ -155,6 +163,9 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
     // A deformed sub-part that left the view goes back to its exact base.
     const shown = new Set(inView);
     for (const name of [...deformed]) if (!shown.has(name)) restore(name);
+    // Nothing left deformed (back at the base, or a change skinning cannot follow):
+    // the drag is over, so a release takes the ordinary path.
+    if (deformed.size === 0) dragging = false;
     return skinned;
   }
 
@@ -171,5 +182,14 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
     anyDeformed: () => deformed.size > 0,
     isDragging: () => dragging,
     endDrag: () => { dragging = false; },
+    // Hold deformation off until the returned release is called (idempotent). The
+    // caller restores what is deformed now (restoreAll); later deform() calls restore
+    // and return [] while held.
+    hold() {
+      holds++;
+      let released = false;
+      return () => { if (!released) { released = true; holds--; } };
+    },
+    isHeld: () => holds > 0,
   };
 }

@@ -78,7 +78,15 @@ const importTessellateFailedMessage = (workerMessage) => `STEP import tessellati
 export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState, beforeCapture }) {
   // Run before every capture of the live scene: mount puts a pose drag's deformed
   // meshes back to their exact bases (skin/skin-drag.js), so no capture reads them.
-  const prepare = () => { try { beforeCapture?.(); } catch { /* never fails a capture */ } };
+  // beforeCapture may return a release function: the hold it took lasts until the
+  // capture is done (an async renderViews awaits assets, and a slider input meanwhile
+  // must not deform the mesh it is about to draw). Returns a release, never throws.
+  const prepare = () => {
+    let release;
+    try { release = beforeCapture?.(); } catch { /* never fails a capture */ }
+    return typeof release === "function" ? release : () => {};
+  };
+  const prepared = (capture) => { const release = prepare(); try { return capture(); } finally { release(); } };
   return {
     ready, dispose, setParams,
     // Whether the `preview` GLB handed to mount() is on screen (see mount's
@@ -99,14 +107,18 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // Offscreen render of a named view (default when omitted, or on an unknown name).
     captureView,
     // Always CAD, whatever the live render mode: these are the agent's renders.
-    captureViews: (viewNames) => { prepare(); return viewer.captureCanonicalViews(viewNames); },
+    captureViews: (viewNames) => prepared(() => viewer.captureCanonicalViews(viewNames)),
     // captureViews in a chosen appearance: renderMode "cad" (the default) is
     // exactly captureViews() in either live mode; "realistic" borrows the realistic look for the
     // capture (waiting on the environment's assets) without switching the live
     // view. Rejects if realistic's assets fail to load.
     renderViews: async (viewNames, opts) => {
-      prepare();
-      return renderViews ? renderViews(viewNames, opts) : viewer.captureCanonicalViews(viewNames);
+      const release = prepare();
+      try {
+        return await (renderViews ? renderViews(viewNames, opts) : viewer.captureCanonicalViews(viewNames));
+      } finally {
+        release();
+      }
     },
     // `recenter` reads the sub-part geometry only, so with measurement pins on
     // screen the dimension labels — which sit beside the part, not on it —
@@ -114,7 +126,7 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // keeps the user's exact framing; a host wanting both re-frames first.
     // Follows the live render mode unless opts.renderMode pins one ("realistic"
     // only once the environment has loaded — see viewer.captureCurrent).
-    captureCurrent: (opts) => (prepare(), viewer.captureCurrent(
+    captureCurrent: (opts) => prepared(() => viewer.captureCurrent(
       opts?.recenter && (measure ?? NOOP_MEASURE).isEnabled() && (measure ?? NOOP_MEASURE).pinCount() > 0
         ? { ...opts, recenter: false }
         : opts,
@@ -1112,6 +1124,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     const skin = createSkinDrag(part, viewer, {
       params, getView: view, getParamsVersion: () => loop.version(),
     });
+    let lastSkinInputAt = 0; // Date.now() of the last slider input that skinned
 
     // ?debug: how the in-view meshes were delivered, e.g. "3 canonical / 1 posed".
     const frameSummary = () => {
@@ -1499,7 +1512,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           }
           // stale → rebuild (after the pause while a drag goes on); fresh → the view may
           // still need parts (tab switched mid-build)
-          if (skin.isDragging()) loop.delayKick(SKIN_PAUSE_MS); else loop.kick();
+          // The pause counts from the last skinned input, not from this reply.
+          if (skin.isDragging()) loop.delayKick(Math.max(0, SKIN_PAUSE_MS - (Date.now() - lastSkinInputAt)));
+          else loop.kick();
           break;
         }
         case "download-parts":
@@ -1657,7 +1672,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       updateRelevance();
       if (interactive) {
         const skinned = skin.deform();
-        if (skinned.length) loop.delayKick(SKIN_PAUSE_MS);
+        if (skinned.length) { lastSkinInputAt = Date.now(); loop.delayKick(SKIN_PAUSE_MS); }
       } else {
         if (skin.anyDeformed()) skin.restoreAll();
         skin.endDrag();
@@ -1886,8 +1901,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
 
     return makeHandle({
       ready, dispose, viewer, setParams,
-      // No capture reads a pose drag's deformed mesh (Task 8 extends this hook).
-      beforeCapture: () => { skin.restoreAll(); },
+      // No capture reads a pose drag's deformed mesh (Task 8 extends this hook): the
+      // hold keeps a slider input during an async capture from deforming it again.
+      beforeCapture: () => { const release = skin.hold(); skin.restoreAll(); return release; },
       isPreviewActive: () => previewGate.isActive(),
       pendingCutaway: () => (!cutawayRestored ? viewerState?.cutaway ?? null : null),
       exportPreview,

@@ -161,3 +161,32 @@ test("forget drops the base without touching the viewer", () => {
   expect(skin.restoreAll()).toEqual([]);
   expect(viewer.setSubVertices.mock.calls.length).toBe(calls);
 });
+
+test("while held, deform restores and skins nothing; holds compose and release once", () => {
+  const { skin, viewer, edit } = setup();
+  skin.recordDelivered("body", delivery(), { view: "v", params: { bend: 0 } });
+  edit({ bend: 10 });
+  skin.deform();
+  const a = skin.hold(), b = skin.hold();
+  edit({ bend: 20 });
+  expect(skin.deform()).toEqual([]);
+  expect(skin.isDeformed("body")).toBe(false);
+  expect(viewer.setSubVertices.mock.calls.at(-1)[2]).toEqual({ deformed: false });
+  expect(skin.isDragging()).toBe(false);
+  a(); a(); // idempotent: b still holds
+  expect(skin.isHeld()).toBe(true);
+  expect(skin.deform()).toEqual([]);
+  b();
+  expect(skin.deform()).toEqual(["body"]);
+});
+
+test("nothing left deformed ends the drag", () => {
+  const { skin, edit } = setup();
+  skin.recordDelivered("body", delivery(), { view: "v", params: { bend: 0 } });
+  edit({ bend: 10 });
+  skin.deform();
+  expect(skin.isDragging()).toBe(true);
+  edit({ r: 6 });
+  skin.deform();
+  expect(skin.isDragging()).toBe(false);
+});

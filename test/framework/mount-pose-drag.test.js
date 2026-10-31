@@ -6,6 +6,8 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const fakeViewers = [];
+// An async renderViews the test releases by hand (realistic mode awaits assets there).
+const renderGate = { release: null, seen: null };
 vi.mock("../../src/framework/viewer.js", () => ({
   createViewer: vi.fn(() => {
     const built = new Set();
@@ -115,6 +117,12 @@ vi.mock("../../src/framework/viewer.js", () => ({
         return true;
       }),
       captureCanonicalViews: vi.fn(() => []),
+      captureCurrent: vi.fn(() => "data:image/jpeg;base64,"),
+      renderViews: vi.fn(async () => {
+        await new Promise((r) => { renderGate.release = r; });
+        renderGate.seen = Array.from(payloads.get("body").positions); // what the capture draws
+        return [];
+      }),
       dispose: vi.fn(),
     };
     v.setSubGeometry = vi.fn((name, payload) => { built.add(name); payloads.set(name, payload); });
@@ -152,17 +160,20 @@ const spec = (bend, r = 4) => ({ ...TWO_BONE(bend), root: withRadius(r) });
 const id = implicitCallId(spec(0), []);
 const FRAMES = [null, `${id}:root`, `${id}:child`];
 
-const makePart = ({ lid = false } = {}) => ({
+const makePart = ({ lid = false, images = false } = {}) => ({
   meta: { title: "Drag Part", backend: "manifold" },
-  defaults: { bend: 0, r: 4 },
-  views: { v: { label: "V" } },
+  defaults: { bend: 0, r: 4, img: 1 },
+  views: { v: { label: "V" }, w: { label: "W" } },
+  // An asset the build never names in its specs: swapping it changes no k.implicit spec.
+  ...(images ? { images: (p) => ({ tex: `tex-${p.img}.png` }) } : {}),
   parts: {
-    body: { label: "Body", views: ["v"], build: (k, p) => k.implicit(spec(p.bend, p.r)) },
+    body: { label: "Body", views: ["v", "w"], build: (k, p) => k.implicit(spec(p.bend, p.r)) },
     ...(lid ? { lid: { label: "Lid", views: ["v"], build: (k, p) => k.box({ min: [0, 0, 0], max: [1, 1, 1 + p.bend] }) } } : {}),
   },
   parameters: [{ id: "pose", title: "Pose", advanced: [
     { key: "bend", label: "Bend", min: 0, max: 90, step: 1 },
     { key: "r", label: "Radius", min: 2, max: 6, step: 1 },
+    { key: "img", label: "Image", min: 1, max: 3, step: 1 },
   ] }],
 });
 
@@ -222,27 +233,28 @@ function makeElements() {
 
 const generates = (w) => w.postMessage.mock.calls.filter(([m]) => m?.type === "generate");
 
-function setup({ lid = false, first = null, onParamsCommit } = {}) {
+function setup({ lid = false, images = false, first = null, onParamsCommit } = {}) {
   const els = makeElements();
   const { workers, createWorker } = makeWorkers();
-  const runtime = mount(makePart({ lid }), { createWorker, elements: els, ...(onParamsCommit ? { onParamsCommit } : {}) });
+  const runtime = mount(makePart({ lid, images }), { createWorker, elements: els, ...(onParamsCommit ? { onParamsCommit } : {}) });
   const v = fakeViewers[0];
   const w = workers.manifold;
   const reply = (meshes) => w.onmessage({ data: { type: "meshes", meshes, ms: 1 } });
   w.onmessage({ data: { type: "ready" } });
   const firstDelivery = first ?? delivery(0);
   reply(lid ? [firstDelivery, lidDelivery()] : [firstDelivery]);
-  const slider = (key) => els.controls.querySelectorAll('input[type="range"]')[key === "bend" ? 0 : 1];
+  const slider = (key) => els.controls.querySelectorAll('input[type="range"]')[{ bend: 0, r: 1, img: 2 }[key]];
   const input = (key, value) => {
     const s = slider(key);
     s.value = String(value);
     s.dispatchEvent(new Event("input"));
   };
   const release = (key) => slider(key).dispatchEvent(new Event("change"));
-  return { runtime, v, w, reply, input, release, firstDelivery };
+  return { runtime, v, w, els, reply, input, release, firstDelivery };
 }
 
 beforeEach(() => {
+  renderGate.release = null; renderGate.seen = null;
   localStorage.clear();
   sessionStorage.clear();
   document.body.innerHTML = "";
@@ -409,4 +421,100 @@ test("exportPreview during a drag rejects as not fully built", async () => {
   const { runtime, input } = setup();
   input("bend", 30);
   await expect(runtime.exportPreview()).rejects.toThrow(/not fully built/);
+});
+
+// Fix round 1.
+
+test("an async renderViews holds the drag off: an input while it waits deforms nothing, and the capture draws the base", async () => {
+  const { runtime, v, input } = setup();
+  input("bend", 30); // deformed
+  const pending = runtime.renderViews(["iso"], { renderMode: "realistic" });
+  await Promise.resolve(); await Promise.resolve();
+  expect(v.renderViews).toHaveBeenCalledTimes(1); // waiting on its assets
+  const vertCalls = v.setSubVertices.mock.calls.length;
+  expect(v.setSubVertices.mock.calls.at(-1)[2]).toEqual({ deformed: false }); // restored before it started
+  input("bend", 45); // mid-capture
+  expect(v.setSubVertices.mock.calls.slice(vertCalls).some(([, , o]) => o?.deformed)).toBe(false);
+  renderGate.release();
+  await pending;
+  expect(renderGate.seen).toEqual(Array.from(basePositions(0)));
+  input("bend", 50); // released: the drag deforms again
+  expect(v.setSubVertices.mock.calls.at(-1)[2]).toEqual({ deformed: true });
+});
+
+test("an input held off by a capture takes the ordinary debounce", async () => {
+  const { runtime, w, input } = setup();
+  const pending = runtime.renderViews(["iso"]);
+  await Promise.resolve();
+  const n = generates(w).length;
+  input("bend", 30);
+  vi.advanceTimersByTime(150);
+  expect(generates(w).length).toBe(n);
+  vi.advanceTimersByTime(30);
+  expect(generates(w).length).toBe(n + 1);
+  renderGate.release();
+  await pending;
+});
+
+test("captureCurrent during a drag captures the exact base", () => {
+  const { runtime, v, input } = setup();
+  input("bend", 30);
+  runtime.captureCurrent({ size: 256 });
+  const restoreAt = v.setSubVertices.mock.calls.length - 1;
+  expect(v.setSubVertices.mock.calls[restoreAt][2]).toEqual({ deformed: false });
+  expect(Array.from(v.setSubVertices.mock.calls[restoreAt][1].positions)).toEqual(Array.from(basePositions(0)));
+  expect(v.setSubVertices.mock.invocationCallOrder[restoreAt]).toBeLessThan(v.captureCurrent.mock.invocationCallOrder[0]);
+  input("bend", 40); // a sync capture's hold is released at once
+  expect(v.setSubVertices.mock.calls.at(-1)[2]).toEqual({ deformed: true });
+});
+
+test("a tab switch mid-drag restores the exact base and ends the drag", () => {
+  const { v, w, els, input, release } = setup();
+  input("bend", 30);
+  const tab = [...els.tabs.querySelectorAll("button")].find((b) => b.textContent.includes("W"));
+  tab.click();
+  const last = v.setSubVertices.mock.calls.at(-1);
+  expect(last[2]).toEqual({ deformed: false }); // the viewer shows its edge lines again
+  expect(Array.from(last[1].positions)).toEqual(Array.from(basePositions(0)));
+  const n = generates(w).length;
+  release("bend"); // no drag left to flush
+  expect(generates(w).length).toBe(n);
+});
+
+test("a stale reply mid-drag waits only for the rest of the pause since the last input", () => {
+  const { w, input, reply } = setup();
+  input("bend", 30);
+  vi.advanceTimersByTime(150); // exact build at 30 goes out
+  const n = generates(w).length;
+  input("bend", 40);
+  vi.advanceTimersByTime(100); // the reply lands 100 ms after the last input
+  reply([delivery(30)]);
+  vi.advanceTimersByTime(49);
+  expect(generates(w).length).toBe(n);
+  vi.advanceTimersByTime(1);
+  expect(generates(w).length).toBe(n + 1);
+});
+
+test("returning the slider to its start ends the drag: release flushes nothing", () => {
+  const { w, input, release } = setup();
+  input("bend", 30);
+  input("bend", 0);
+  const n = generates(w).length;
+  release("bend");
+  expect(generates(w).length).toBe(n);
+});
+
+test("an asset swap with identical implicit specs is not skinnable: base restored, ordinary rebuild", () => {
+  const { v, w, input } = setup({ images: true, first: delivery(0, { reads: ["bend", "r", "img"] }) });
+  input("bend", 30);
+  expect(v.setSubVertices.mock.calls.at(-1)[2]).toEqual({ deformed: true });
+  const n = generates(w).length;
+  input("img", 2);
+  const last = v.setSubVertices.mock.calls.at(-1);
+  expect(last[2]).toEqual({ deformed: false });
+  expect(Array.from(last[1].positions)).toEqual(Array.from(basePositions(0)));
+  vi.advanceTimersByTime(150);
+  expect(generates(w).length).toBe(n);
+  vi.advanceTimersByTime(30);
+  expect(generates(w).length).toBe(n + 1);
 });
