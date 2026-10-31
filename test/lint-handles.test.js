@@ -91,3 +91,33 @@ test("a part without handles, or with a malformed handles value, never throws", 
   expect(() => lintPart(partWith("junk"))).not.toThrow();
   expect(() => lintPart(partWith({ a: null, b: 3 }))).not.toThrow();
 });
+
+test("joints (an angles handle's joint rings): valid entries produce no findings", () => {
+  const angles = (joints) => ({ a: { limb: "finger", mode: "angles", params: ["mcp", "pip"], joints } });
+  expect(handleFindings(angles({ mcp: "mcp", pip: { param: "pip", scale: -1 } }))).toEqual([]);
+  expect(handleFindings(angles({ "finger.mcp": "mcp" }))).toEqual([]);
+});
+
+test("handle-unknown-joint: a joints key must name a joint of a posed limb, in the shape it takes", () => {
+  const angles = (joints, mode = "angles") => ({ a: { limb: "finger", mode, params: ["mcp"], joints } });
+  const unknown = handleFindings(angles({ zzz: "mcp" }));
+  expect(rulesOf(unknown)).toEqual(["handle-unknown-joint"]);
+  expect(unknown[0].path).toBe("handles.a.joints.zzz");
+  expect(unknown[0].hint).toMatch(/mcp, pip/);
+  expect(rulesOf(handleFindings(angles({ "ghost.mcp": "mcp" })))).toEqual(["handle-unknown-joint"]);
+  // a hinge takes a name or { param, scale }; a zero scale is refused
+  expect(rulesOf(handleFindings(angles({ mcp: { bend: "mcp" } })))).toContain("handle-unknown-joint");
+  expect(rulesOf(handleFindings(angles({ mcp: { param: "mcp", scale: 0 } })))).toEqual(["handle-unknown-joint"]);
+  // a goal handle maps its rings through seed; `joints` must be an object
+  expect(rulesOf(handleFindings({ a: goal({ joints: { mcp: "mcp" } }) }))).toEqual(["handle-unknown-joint"]);
+  expect(rulesOf(handleFindings(angles(["mcp"])))).toEqual(["handle-unknown-joint"]);
+});
+
+test("handle-unknown-param: a joints entry must name a numeric parameter", () => {
+  const angles = (joints) => ({ a: { limb: "finger", mode: "angles", params: ["mcp"], joints } });
+  const fs = handleFindings(angles({ mcp: "nope" }));
+  expect(rulesOf(fs)).toEqual(["handle-unknown-param"]);
+  expect(fs[0].path).toBe("handles.a.joints.mcp");
+  expect(rulesOf(handleFindings(angles({ mcp: "label" })))).toEqual(["handle-unknown-param"]); // a string default
+  expect(rulesOf(handleFindings(angles({ mcp: { param: "nope" } })))).toEqual(["handle-unknown-param"]);
+});

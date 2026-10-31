@@ -5,6 +5,9 @@
 //   begin(handleId, grab)  snapshot params, hold(true), capture each pin's held point
 //   frame(target)          solve (angles) or goal values (+ seed), write, ghost new stale
 //   ringFrame(axis, deg)   goal handles with `aim`: tilt one aim param, then as frame
+//   jointFrame(ring, slot, deg)  a joint ring: turn that one joint by deg from where the
+//                          drag began (clamped to its range) — forward kinematics; a goal
+//                          handle's goal follows the turned pose (param-solve's jointRingValues)
 //   end()                  write the snapped values, hold(false), commit(changed) once
 //   cancel()               restore(snapshot), hold(false), unghost what is current, no commit
 //   externalWrite()        the same as cancel — something else wrote params mid-drag
@@ -18,7 +21,7 @@
 //
 // Pins are ids "<handle>:<at>" (at: a joint name or "tip"). A pin's held point is read
 // at begin, from the params the drag starts from, and stays fixed for that drag.
-import { limbInfo, solveAngles, goalValues, seedValues, snapValues } from "./param-solve.js";
+import { limbInfo, solveAngles, goalValues, seedValues, snapValues, jointRingValues, posedJointValue } from "./param-solve.js";
 
 const AIM_AXES = ["pitch", "yaw", "roll"];
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
@@ -140,6 +143,26 @@ export function createPoseSession({
     return apply({ values: { ...values, ...(seed ?? {}) }, error: 0 });
   }
 
+  /**
+   * A joint ring's frame: `ring` is one of param-solve's jointRings entries, `slot` its ring
+   * name, `deltaDeg` the turn since the press. The joint goes to its value at begin plus the
+   * turn, clamped to the slot's range; the result's `clamped` says whether the clamp bit.
+   * Pins are not held: a ring turns one joint and nothing else.
+   */
+  function jointFrame(ring, slot, deltaDeg) {
+    if (!drag || !ring?.slots?.[slot] || !isNum(deltaDeg)) return null;
+    const s = ring.slots[slot];
+    if (drag.jointStart === undefined) {
+      drag.jointStart = posedJointValue(part, drag.snapshot, ring.limb, ring.joint, s.component);
+    }
+    if (!isNum(drag.jointStart)) return null;
+    const want = drag.jointStart + deltaDeg;
+    const value = Math.min(s.range[1], Math.max(s.range[0], want));
+    const values = jointRingValues({ part, params: { ...getParams() }, ring, slot, value });
+    if (!values) return null;
+    return apply({ values, error: 0, clamped: value !== want });
+  }
+
   function end() {
     if (!drag) return;
     const ending = drag;
@@ -210,6 +233,7 @@ export function createPoseSession({
     begin,
     frame,
     ringFrame,
+    jointFrame,
     end,
     cancel,
     externalWrite: cancel,

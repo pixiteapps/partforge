@@ -21,8 +21,36 @@ function paramRefs(name, h) {
   } else if (h.mode === "angles") {
     add(h.params, `${base}.params`);
     if (h.lock !== undefined) refs.push([h.lock, `${base}.lock`]);
+    if (isPlainObject(h.joints)) {
+      for (const [key, entry] of Object.entries(h.joints)) {
+        const path = `${base}.joints.${key}`;
+        if (typeof entry === "string") refs.push([entry, path]);
+        else if (isPlainObject(entry) && "param" in entry) refs.push([entry.param, path]);
+        else if (isPlainObject(entry) && BALL_KEYS.some((k) => k in entry)) BALL_KEYS.forEach((k) => { if (k in entry) refs.push([entry[k], `${path}.${k}`]); });
+        else refs.push([entry, path]);
+      }
+    }
   }
   return refs;
+}
+
+const BALL_KEYS = ["bend", "spread", "twist"];
+/** A `joints` key's limb (null: the handle's own) and joint, split at the last ".". */
+const splitJointKey = (key) => { const i = key.lastIndexOf("."); return i < 0 ? { limb: null, joint: key } : { limb: key.slice(0, i), joint: key.slice(i + 1) }; };
+
+/** One `joints` entry's shape problem against its joint record (ikInfo), or null. */
+function jointEntryProblem(entry, joint) {
+  if (joint.type === "ball") {
+    if (isPlainObject(entry) && BALL_KEYS.some((k) => k in entry) && Object.keys(entry).every((k) => BALL_KEYS.includes(k))) return null;
+    return `is a ball joint: map it as { bend?, spread?, twist? }, each a parameter name`;
+  }
+  if (joint.follower) return "follows another joint and takes no value of its own";
+  if (typeof entry === "string") return null;
+  if (isPlainObject(entry) && typeof entry.param === "string" && Object.keys(entry).every((k) => k === "param" || k === "scale")) {
+    if (entry.scale === undefined || (typeof entry.scale === "number" && Number.isFinite(entry.scale) && entry.scale !== 0)) return null;
+    return "has a scale that is not a finite, non-zero number";
+  }
+  return 'is a hinge: map it to a parameter name, or { param, scale? }';
 }
 
 const isDirection = (v) => Array.isArray(v) && v.length === 3 && v.every((c) => typeof c === "number" && Number.isFinite(c)) && v.some((c) => c !== 0);
@@ -102,6 +130,40 @@ export const HANDLE_RULES = [
         if (joints.includes(h.at)) continue;
         out.push(err("handle-unknown-joint", `handle "${name}" has at ${JSON.stringify(h.at)}, which is not a joint of limb "${h.limb}"`,
           `\`at\` must be "tip" or one of the limb's joint names: ${joints.join(", ")}.`, `handles.${name}.at`));
+      }
+      // `joints` (an angles handle's joint rings): each key a joint of the handle's limb or
+      // "<limb>.<joint>" of another posed limb, each entry the shape its joint takes.
+      for (const [name, h] of handleEntries(part)) {
+        if (h.joints === undefined) continue;
+        const base = `handles.${name}.joints`;
+        if (h.mode !== "angles" || !isPlainObject(h.joints)) {
+          out.push(err("handle-unknown-joint", `handle "${name}" has \`joints\` that Pose mode cannot read`,
+            "`joints` is an angles handle's object `{ \"<joint>\" | \"<limb>.<joint>\": \"<param>\" }`; a goal handle gets its joint rings from `seed`.", base));
+          continue;
+        }
+        for (const [key, entry] of Object.entries(h.joints)) {
+          const { limb, joint } = splitJointKey(key);
+          const limbKey = limb ?? h.limb;
+          if (!isLimb(d, limbKey)) {
+            if (limb === null && !isLimb(d, h.limb)) continue; // handle-unknown-limb already says so
+            out.push(err("handle-unknown-joint", `handle "${name}" maps joints ${JSON.stringify(key)}, but derive() returns no posed limb ${JSON.stringify(limbKey)}`,
+              "A `joints` key is a joint of the handle's limb, or \"<limb>.<joint>\" where <limb> is a key of derive's result holding a posed limb.", `${base}.${key}`));
+            continue;
+          }
+          let joints;
+          try { joints = d[limbKey].ikInfo().joints; } catch { continue; }
+          const j = joints.find((x) => x.name === joint);
+          if (!j) {
+            out.push(err("handle-unknown-joint", `handle "${name}" maps joints ${JSON.stringify(key)}, which is not a joint of limb "${limbKey}"`,
+              `Name one of the limb's joints: ${joints.map((x) => x.name).join(", ")}.`, `${base}.${key}`));
+            continue;
+          }
+          const problem = jointEntryProblem(entry, j);
+          if (problem) {
+            out.push(err("handle-unknown-joint", `handle "${name}" maps joints ${JSON.stringify(key)}, which ${problem}`,
+              "A hinge maps to the parameter that drives it in degrees (\"<param>\", or { param, scale } when the joint turns scale × param); a ball to { bend?, spread?, twist? }.", `${base}.${key}`));
+          }
+        }
       }
       return out;
     },

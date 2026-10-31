@@ -9,6 +9,7 @@ import { solveDLS } from "../solve/dls.js";
 import { resolveParams } from "../part-model.js";
 import { controlNodes } from "../panel/model.js";
 import { desugar } from "../panel/legacy.js";
+import { anglesFromAim } from "../solve/aim.js";
 
 /** The residual of an evaluation whose derive threw: far worse than any real pose. */
 const FAILED = 1e6;
@@ -206,6 +207,186 @@ export function seedValues({ part, params, handle }) {
   const out = {};
   (handle.seed ?? []).forEach((k, i) => { if (i < flat.length && isNum(flat[i])) out[k] = flat[i]; });
   return out;
+}
+
+// ---- joint rings ------------------------------------------------------------------
+// A ring turns ONE joint (forward kinematics) by writing the parameter that drives it:
+// a goal handle's seed entry (joint order, a ball taking three), or an angles handle's
+// `joints` entry. These are the pure halves: which joints have a ring, and what a turn
+// writes.
+
+const BALL_SLOTS = ["bend", "spread", "twist"];
+/** The ring a hinge shows: its axis kind's (bend red, spread blue, twist green); a vector axis shows bend's. */
+const hingeSlot = (joint) => (joint.axisKind === "spread" || joint.axisKind === "twist" ? joint.axisKind : "bend");
+const isDirection = (v) => Array.isArray(v) && v.length === 3 && v.every(isNum) && v.some((c) => c !== 0);
+
+/**
+ * A `joints` key split into its limb (a key of derive's result; null: the handle's own) and
+ * joint name, at the LAST "." — "palm.wristPitch" is limb "palm", joint "wristPitch".
+ */
+export function parseJointKey(key) {
+  const s = String(key);
+  const i = s.lastIndexOf(".");
+  return i < 0 ? { limb: null, joint: s } : { limb: s.slice(0, i), joint: s.slice(i + 1) };
+}
+
+/**
+ * A `joints` entry as `{ slot: { param, scale } }`: a parameter name (scale 1), `{ param,
+ * scale? }` for a hinge driven by scale × param, or `{ bend?, spread?, twist? }` (parameter
+ * names) for a ball. Null when malformed (lint reports it).
+ */
+export function jointEntrySlots(entry, joint) {
+  if (typeof entry === "string") return joint.type === "ball" ? null : { [hingeSlot(joint)]: { param: entry, scale: 1 } };
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  if (joint.type === "ball") {
+    const out = {};
+    for (const k of BALL_SLOTS) if (typeof entry[k] === "string") out[k] = { param: entry[k], scale: 1 };
+    return Object.keys(out).length ? out : null;
+  }
+  if (typeof entry.param !== "string") return null;
+  const scale = entry.scale ?? 1;
+  return isNum(scale) && scale !== 0 ? { [hingeSlot(joint)]: { param: entry.param, scale } } : null;
+}
+
+/** Every parameter a locked handle drives: its params and its `joints` entries (a ring writing one is not shown). */
+function lockedParams(handles, p) {
+  const out = new Set();
+  for (const h of handles) {
+    if (h?.lock == null || !p[h.lock]) continue;
+    for (const k of Array.isArray(h.params) ? h.params : []) out.add(k);
+    if (h.joints && typeof h.joints === "object") {
+      for (const e of Object.values(h.joints)) {
+        if (typeof e === "string") out.add(e);
+        else if (e && typeof e === "object") for (const v of Object.values(e)) if (typeof v === "string") out.add(v);
+      }
+    }
+  }
+  return out;
+}
+
+/** A slot's range in joint degrees: a hinge's range; a ball's bend and spread within its cone, twist free. */
+const slotRange = (joint, slot) => (joint.type === "ball"
+  ? (slot === "twist" ? [-Infinity, Infinity] : [-joint.cone, joint.cone])
+  : [...joint.range]);
+
+/**
+ * The joint rings the handles `ids` offer, from each limb's ikInfo (`infoOf(limbKey)`, null
+ * when it has none): `[{ limb (derive's key), joint, handleId, mode, slots: { ring: { param,
+ * scale, range, component } } }]`, one entry per joint (the first handle naming it wins).
+ * `ring` is the joint gizmo's ring name (bend, spread or twist); `component` is the ball
+ * value's key, null for a hinge; `range` is in joint degrees. A goal handle maps its `seed`
+ * (driven joints in order, followers skipped, a ball taking three); an angles handle maps its
+ * `joints`. A slot whose parameter a locked handle drives is left out.
+ */
+export function jointRings({ part, params, ids, infoOf }) {
+  const handles = part?.handles && typeof part.handles === "object" ? part.handles : {};
+  const base = { ...part?.defaults, ...params };
+  const locked = lockedParams(Object.values(handles), base);
+  const out = [];
+  const seen = new Set();
+  const add = (limbKey, joint, handleId, mode, slots) => {
+    const key = `${limbKey}\u0000${joint.name}`;
+    if (seen.has(key) || joint.follower) return;
+    const kept = {};
+    for (const [ring, s] of Object.entries(slots)) {
+      if (locked.has(s.param)) continue;
+      kept[ring] = { ...s, range: slotRange(joint, ring), component: joint.type === "ball" ? ring : null };
+    }
+    if (!Object.keys(kept).length) return;
+    seen.add(key);
+    out.push({ limb: limbKey, joint: joint.name, handleId, mode, slots: kept });
+  };
+  for (const handleId of ids) {
+    const h = handles[handleId];
+    if (!h || typeof h !== "object") continue;
+    if (h.mode === "goal" && Array.isArray(h.seed) && h.seed.length) {
+      const info = infoOf(h.limb);
+      if (!info) continue;
+      let k = 0;
+      for (const j of info.joints) {
+        if (j.follower) continue;
+        if (j.type === "ball") {
+          const slots = {};
+          BALL_SLOTS.forEach((ring, c) => { if (typeof h.seed[k + c] === "string") slots[ring] = { param: h.seed[k + c], scale: 1 }; });
+          k += 3;
+          add(h.limb, j, handleId, "goal", slots);
+        } else {
+          if (typeof h.seed[k] === "string") add(h.limb, j, handleId, "goal", { [hingeSlot(j)]: { param: h.seed[k], scale: 1 } });
+          k += 1;
+        }
+      }
+    } else if (h.mode === "angles" && h.joints && typeof h.joints === "object" && !Array.isArray(h.joints)) {
+      for (const [key, entry] of Object.entries(h.joints)) {
+        const { limb, joint } = parseJointKey(key);
+        const limbKey = limb ?? h.limb;
+        const info = infoOf(limbKey);
+        const j = info?.joints.find((x) => x.name === joint);
+        const slots = j && jointEntrySlots(entry, j);
+        if (slots) add(limbKey, j, handleId, "angles", slots);
+      }
+    }
+  }
+  return out;
+}
+
+/** A joint's exact posed value at these params (a ball's one component), or null. */
+export function posedJointValue(part, params, limbKey, joint, component = null) {
+  const posed = posedLimb(part, params, limbKey);
+  if (!posed) return null;
+  let joints;
+  try { joints = posed.ikInfo().joints; } catch { return null; }
+  const i = joints.findIndex((j) => j.name === joint);
+  const v = i < 0 ? undefined : posed.values?.[i];
+  const out = component ? v?.[component] : v;
+  return isNum(out) ? out : null;
+}
+
+/**
+ * What turning one joint to `value` (joint degrees, already in its range) writes.
+ * Angles mode: the slot's parameter, value / scale, clamped to its schema range.
+ * Goal mode (`handle` the goal handle): every seed parameter at the turned pose — forward
+ * kinematics from the posed limb (its `ikForward`), the other joints as posed — and the goal
+ * parameters at the posed `at` frame: position its origin, aim pitch/yaw/roll (anglesFromAim,
+ * from the handle's `toward`, nearest the current aim parameters) its +Y and, with three aim
+ * parameters, +Z. The next derive's goal solve then starts at its answer, so the limb stays
+ * where the turn put it. Null when the limb cannot be read.
+ */
+export function jointRingValues({ part, params, ring, slot, value }) {
+  const s = ring.slots[slot];
+  if (!s || !isNum(value)) return null;
+  const ranges = rangesOf(part);
+  if (ring.mode !== "goal") return { [s.param]: clamp(value / s.scale, ranges.get(s.param)) };
+  const handle = part.handles?.[ring.handleId];
+  const posed = posedLimb(part, params, handle?.limb);
+  if (!posed || typeof posed.ikForward !== "function") return null;
+  let info, F;
+  try {
+    info = posed.ikInfo();
+    F = posed.ikForward({ [ring.joint]: s.component ? { [s.component]: value } : value }, typeof handle.at === "string" ? handle.at : "tip");
+  } catch {
+    return null;
+  }
+  const flat = [];
+  info.joints.forEach((j, i) => {
+    if (j.follower) return;
+    const v = F.values[i];
+    if (j.type === "ball") flat.push(v.bend, v.spread, v.twist);
+    else flat.push(v);
+  });
+  const seed = {};
+  (handle.seed ?? []).forEach((k, i) => { if (typeof k === "string" && i < flat.length && isNum(flat[i])) seed[k] = clamp(flat[i], ranges.get(k)); });
+  const aim = handle.params?.aim;
+  let aimAngles = null;
+  if (Array.isArray(aim) && aim.length >= 2 && isDirection(handle.toward)) {
+    const cur = (k) => (isNum(params[k]) ? params[k] : part.defaults?.[k]);
+    const r = ranges.get(aim[0]);
+    const a = anglesFromAim(handle.toward, { aim: F.y, up: aim.length >= 3 ? F.z : null }, {
+      near: { pitch: cur(aim[0]), yaw: cur(aim[1]) },
+      pitchRange: r && isNum(r.min) && isNum(r.max) ? [r.min, r.max] : null,
+    });
+    aimAngles = [a.pitch, a.yaw, a.roll];
+  }
+  return { ...goalValues({ handle, point: F.origin, aimAngles, part }), ...seed };
 }
 
 const decimals = (n) => {

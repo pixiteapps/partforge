@@ -10,6 +10,12 @@
 // rotate-drag math). Like pose-scene.js it lives under the sub-meshes' shared parent
 // (PART coordinates), is hidden from canonical captures, draws over the model
 // (depthTest off) and keeps a constant on-screen size: one local unit is one CSS px.
+//
+// The JOINT gizmo is the same widget without the ball: a ring per rotation of one joint
+// (a hinge's one ring, a ball joint's bend, spread and twist), coloured like the aim
+// rings (bend red, spread blue, twist green: pitch, yaw and roll's colours), shown on a
+// hovered joint dot that has a parameter to turn (createJointGizmo). Both are
+// createRingGizmo with a different part list.
 import * as THREE from "three";
 import {
   GIZMO_PALETTE,
@@ -35,20 +41,37 @@ export const AIM_BALL_HIT_PX = 14;
 /** ...and for a finger. */
 export const AIM_BALL_TOUCH_HIT_PX = 24;
 
+/** A joint ring's radius, CSS px: a little inside the aim rings (joints sit closer together). */
+export const JOINT_RING_PX = 30;
+
 /** The gizmo's parts, in aim-parameter order after the ball. */
 export const AIM_GIZMO_PARTS = ["ball", "pitch", "yaw", "roll"];
-const RINGS = ["pitch", "yaw", "roll"];
-const PALETTE_KEY = { ball: "fill", pitch: "red", yaw: "blue", roll: "green" };
+/** The joint gizmo's rings: a hinge shows the one its axis kind names (a vector axis: bend). */
+export const JOINT_GIZMO_PARTS = ["bend", "spread", "twist"];
+const PALETTE_KEY = { ball: "fill", pitch: "red", yaw: "blue", roll: "green", bend: "red", spread: "blue", twist: "green" };
 const Z = new THREE.Vector3(0, 0, 1);
+
+/** The aim gizmo: a centre ball and the pitch, yaw and roll rings. */
+export const createAimGizmo = (viewer) => createRingGizmo(viewer, {
+  name: "pf-pose-aim-gizmo", rings: ["pitch", "yaw", "roll"], ball: true, ringPx: AIM_RING_PX,
+});
+/** The joint gizmo: the bend, spread and twist rings, no ball (the joint dot is the centre). */
+export const createJointGizmo = (viewer) => createRingGizmo(viewer, {
+  name: "pf-pose-joint-gizmo", rings: JOINT_GIZMO_PARTS, ball: false, ringPx: JOINT_RING_PX,
+});
 
 /**
  * @param viewer camera, domElement, projectPoint, _subMeshes, requestRender,
  *   registerCanonicalCaptureHidden, getTheme.
+ * @param o.rings the ring names, in the order `show`'s axes come in.
+ * @param o.ball whether a centre ball draws and picks ("ball").
+ * @param o.ringPx the rings' radius, CSS px.
  */
-export function createAimGizmo(viewer) {
+export function createRingGizmo(viewer, { name, rings: RINGS, ball: hasBall, ringPx }) {
+  const PARTS = hasBall ? ["ball", ...RINGS] : [...RINGS];
   const redraw = () => viewer.requestRender?.();
   const group = new THREE.Group();
-  group.name = "pf-pose-aim-gizmo";
+  group.name = name;
   group.visible = false;
   let attached = false;
   let unregisterCapture = () => {};
@@ -73,28 +96,30 @@ export function createAimGizmo(viewer) {
   const ringRoots = {};
   const proxies = {};
 
-  const ballPair = hoverGeometryPair((k) => new THREE.SphereGeometry(AIM_BALL_PX * k, 18, 12));
-  own(ballPair.normal); own(ballPair.hovered);
-  const ballMaterial = handleMaterial(GIZMO_PALETTE[theme].fill, overlay);
-  materials.add(ballMaterial);
-  const ball = new THREE.Mesh(ballPair.normal, ballMaterial);
-  ball.renderOrder = RENDER_ORDER_POSE + 4; // over the rings it sits inside
-  ball.frustumCulled = false;
-  group.add(ball);
-  appearance.ball = { visual: ball, material: ballMaterial, geometryPairs: [{ mesh: ball, ...ballPair }] };
+  if (hasBall) {
+    const ballPair = hoverGeometryPair((k) => new THREE.SphereGeometry(AIM_BALL_PX * k, 18, 12));
+    own(ballPair.normal); own(ballPair.hovered);
+    const ballMaterial = handleMaterial(GIZMO_PALETTE[theme].fill, overlay);
+    materials.add(ballMaterial);
+    const ball = new THREE.Mesh(ballPair.normal, ballMaterial);
+    ball.renderOrder = RENDER_ORDER_POSE + 4; // over the rings it sits inside
+    ball.frustumCulled = false;
+    group.add(ball);
+    appearance.ball = { visual: ball, material: ballMaterial, geometryPairs: [{ mesh: ball, ...ballPair }] };
+  }
 
   const proxyMaterial = hitMaterial();
   materials.add(proxyMaterial);
   for (const name of RINGS) {
     // a full ring in the root's XY plane: the root turns its +Z onto the axis
-    const pair = hoverGeometryPair((k) => new THREE.TorusGeometry(AIM_RING_PX, AIM_RING_TUBE_PX * k, 8, 96));
+    const pair = hoverGeometryPair((k) => new THREE.TorusGeometry(ringPx, AIM_RING_TUBE_PX * k, 8, 96));
     own(pair.normal); own(pair.hovered);
     const material = handleMaterial(GIZMO_PALETTE[theme][PALETTE_KEY[name]], overlay);
     materials.add(material);
     const ring = new THREE.Mesh(pair.normal, material);
     ring.renderOrder = RENDER_ORDER_POSE + 3;
     ring.frustumCulled = false;
-    const proxy = new THREE.Mesh(own(new THREE.TorusGeometry(AIM_RING_PX, AIM_RING_HIT_PX, 8, 48)), proxyMaterial);
+    const proxy = new THREE.Mesh(own(new THREE.TorusGeometry(ringPx, AIM_RING_HIT_PX, 8, 48)), proxyMaterial);
     proxy.visible = false; // raycast only (the raycaster does not consult visibility)
     proxy.userData.aimPart = name;
     const root = new THREE.Group();
@@ -107,11 +132,11 @@ export function createAimGizmo(viewer) {
 
   // ---- state -----------------------------------------------------------------
   let shown = null;   // { at: [x, y, z], axes: [[x, y, z], ...] } in part coordinates
-  let hovered = null; // one of AIM_GIZMO_PARTS, or null
+  let hovered = null; // one of PARTS, or null
 
   function updateAppearance() {
     const P = GIZMO_PALETTE[theme];
-    for (const name of AIM_GIZMO_PARTS) {
+    for (const name of PARTS) {
       applyHandleAppearance(appearance[name], { color: P[PALETTE_KEY[name]], hovered: name === hovered });
     }
   }
@@ -164,7 +189,7 @@ export function createAimGizmo(viewer) {
   }
 
   function setHovered(part) {
-    const next = AIM_GIZMO_PARTS.includes(part) && (part === "ball" || shown?.axes?.[RINGS.indexOf(part)]) ? part : null;
+    const next = PARTS.includes(part) && (part === "ball" || shown?.axes?.[RINGS.indexOf(part)]) ? part : null;
     if (next === hovered) return;
     hovered = next;
     updateAppearance();
@@ -198,7 +223,7 @@ export function createAimGizmo(viewer) {
       proxies: RINGS.filter((n) => ringRoots[n].visible).map((n) => proxies[n]),
       handleOf: (hit) => hit?.object?.userData?.aimPart ?? null,
       pointer: { x, y },
-      center: centerOnScreen(target),
+      centerOf: () => (hasBall ? centerOnScreen(target) : null),
       centerRadiusPx: touch ? AIM_BALL_TOUCH_HIT_PX : AIM_BALL_HIT_PX,
       centerHandle: "ball",
       centerFirst: true,
@@ -252,7 +277,7 @@ export function createAimGizmo(viewer) {
         at: shown?.at ?? null,
         axes: shown?.axes ?? null,
         hovered,
-        parts: Object.fromEntries(AIM_GIZMO_PARTS.map((n) => [n, {
+        parts: Object.fromEntries(PARTS.map((n) => [n, {
           mesh: appearance[n].visual,
           material: appearance[n].material,
           shown: n === "ball" ? group.visible : group.visible && ringRoots[n].visible,

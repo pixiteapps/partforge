@@ -939,9 +939,19 @@ export interface GoalHandle {
    * parameters' values, so they agree with the part at any pitch, ±90 included.
    */
   toward?: [number, number, number];
-  /** Parameters used to seed the solve. */
+  /**
+   * Parameters used to seed the solve: the driven joints' values in limb order (followers
+   * skipped, a ball joint taking three: bend, spread, twist). Each seeded joint also gets a
+   * rotate ring in Pose mode: turning it turns that joint alone and moves the goal to the
+   * pose it makes, so the solve keeps it.
+   */
   seed?: string[];
 }
+/**
+ * One `AnglesHandle.joints` entry: the parameter that drives a hinge in degrees, `{ param,
+ * scale }` when the joint turns `scale` × the parameter, or a ball's `{ bend?, spread?, twist? }`.
+ */
+export type HandleJoint = string | { param: string; scale?: number } | { bend?: string; spread?: string; twist?: string };
 export interface AnglesHandle {
   limb: string;
   mode: "angles";
@@ -949,4 +959,12 @@ export interface AnglesHandle {
   params: string[];
   /** A parameter name; while truthy, this handle's own parameters stay out of a drag solve. */
   lock?: string;
+  /**
+   * Joint rings in Pose mode: a joint (`"<joint>"` on this handle's limb, or
+   * `"<limb>.<joint>"` on another posed limb of `derive`'s result, such as a parent palm)
+   * mapped to the parameter that drives it directly. Hovering the joint's dot shows a
+   * rotate ring; dragging the ring writes that parameter. A parameter a locked handle drives
+   * gets no ring.
+   */
+  joints?: Record<string, HandleJoint>;
 }

@@ -16,6 +16,9 @@
 // done here - Task 7 runs `hitHandle` over `viewer.projectPoint` positions with a
 // 24 CSS px target, so the visuals can stay small.
 //
+// A limb pose mode shows only for its joint rings (a parent palm an angles handle's
+// `joints` names) arrives with `ringsOnly`, the joints whose dots to draw: no tip dot.
+//
 // A goal handle with `aim` gets the aim gizmo (aim-gizmo.js: a centre ball and rotate
 // rings, drawn and picked there). setAimGizmo tells this scene which limb's goal point
 // the gizmo's ball stands on, so its dot is not drawn twice.
@@ -238,6 +241,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     const owned = aimGizmo?.limb === info.name ? aimGizmo.at : null;
     info.joints.forEach((j, i) => {
       if (j.name === owned) return;
+      if (info.ringsOnly && !info.ringsOnly.includes(j.name)) return; // shown for its rings only
       const isGrab = grab === j.name;
       addDot(clamped[i] ? "warn" : isGrab ? "strong" : "handle", vec(pts[i]), JOINT_DOT_PX);
       if (isGrab) addBillboard(clamped[i] ? "warn" : "strong", vec(pts[i]), GRAB_HALO_PX);
@@ -255,6 +259,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
       const isActive = active?.limb === info.name;
       buildShownLimb(info, isActive ? active : null);
       if (aimGizmo?.limb === info.name && aimGizmo.at === "tip") continue;
+      if (info.ringsOnly) continue; // a limb shown for its joint rings has no tip handle
       const tip = vec(info.points.tip);
       const isGrab = isActive ? active.grab === "tip" : hoverDot === "tip";
       addDot(isGrab ? "strong" : "handle", tip, isGrab ? TIP_DOT_ACTIVE_PX : TIP_DOT_PX);

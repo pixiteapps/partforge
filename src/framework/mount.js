@@ -2076,6 +2076,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // Test hook only (scripts/check-pose.mjs): the aim gizmo on screen, or null —
         // its centre and a grabbable point on each ring, CSS px on the canvas.
         __aimGizmo: () => poseMode.aimGizmoPoints(),
+        // Test hooks only (scripts/check-pose.mjs): the joint gizmo on screen, or null, and
+        // every joint with rings (where to hover to show them), CSS px on the canvas.
+        __jointGizmo: () => poseMode.jointGizmoPoints(),
+        __jointRings: () => poseMode.jointRingPoints(),
         // Test hook only (scripts/check-pose.mjs): what one sub-part's mesh shows
         // right now — its material's opacity and its geometry's identity — so the
         // check can see ghost and delivery land in the same frame.
