@@ -181,6 +181,27 @@ vi.mock("../../src/framework/animation-controls.js", async (importOriginal) => {
   };
 });
 
+// Pose mode, stubbed: mount's side of the contract (which effects it calls, and when)
+// is what these tests pin; the mode itself is covered by test/pose-*.test.js. Only a
+// part declaring `handles` creates one, so every other test is untouched.
+const poseStubs = vi.hoisted(() => []);
+vi.mock("../../src/framework/pose/pose-mode.js", () => ({
+  createPoseMode: vi.fn((viewer, opts) => {
+    const stub = {
+      opts,
+      delivered: vi.fn(), externalWrite: vi.fn(), refresh: vi.fn(), detach: vi.fn(),
+      setPins: vi.fn(), getPins: () => [], pinCount: () => 0, releasePins: vi.fn(),
+      handlePoints: () => [], isEnabled: () => false, setEnabled: vi.fn(),
+      onModeChange: () => () => {},
+    };
+    poseStubs.push(stub);
+    return stub;
+  }),
+}));
+vi.mock("../../src/framework/pose/pose-controls.js", () => ({
+  attachPoseControls: vi.fn(() => ({ detach: () => {} })),
+}));
+
 // The preview decoder, wrapped so a test can await exactly the decodes mount
 // started. mount's own .then is chained on the same promise first, so once a
 // test has awaited the promise, mount's handler has run.
@@ -1582,6 +1603,65 @@ test("a stale-shown playback mesh carries no stamp: returning to the stamped par
   expect(jobs.some((m) => m.type === "generate" && m.subparts?.includes("body"))).toBe(true);
   handle.dispose();
   vi.useRealTimers();
+});
+
+test("a playback-stale delivery lifts the pose ghost on the mesh it replaces", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: els });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  pose.delivered.mockClear();
+
+  handle.animation.play();
+  fakeViewers[0].tickFrame(0.5); // the in-flight build is now stale only by playback
+  fakeViewers[0].tickFrame(0.5);
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+
+  expect(fakeViewers[0].setSubGeometry).toHaveBeenCalledWith("body", expect.anything());
+  expect(els.exports.stl.disabled).toBe(true); // the stale branch: shown, not recorded
+  expect(pose.delivered).toHaveBeenCalledWith("body"); // a ghost left at 0.35 would stay faded through playback
+  handle.dispose();
+});
+
+test("pose effects are no-ops once dispose starts", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  const onParamsCommit = vi.fn();
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements(), onParamsCommit });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  // detach runs late in the LIFO teardown; whatever it fires must land nowhere.
+  pose.detach.mockImplementation(() => {
+    pose.opts.restore({ h: 9 });
+    pose.opts.hold(false);
+    pose.opts.commit(["h"]);
+    pose.opts.unghost(["body"]);
+  });
+  expect(() => handle.dispose()).not.toThrow();
+  expect(pose.detach).toHaveBeenCalledOnce();
+  expect(onParamsCommit).not.toHaveBeenCalled();
+});
+
+test("a view switch cancels a pose drag before the view changes", () => {
+  const part = makePart();
+  part.views = { main: { label: "Main" }, side: { label: "Side" } };
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  let viewAtCancel;
+  pose.externalWrite.mockImplementation(() => { viewAtCancel = handle.getView(); });
+  expect(handle.setView("side")).toBe(true);
+  expect(pose.externalWrite).toHaveBeenCalledOnce();
+  expect(pose.refresh).toHaveBeenCalled();
+  expect(pose.externalWrite.mock.invocationCallOrder[0]).toBeLessThan(pose.refresh.mock.invocationCallOrder.at(-1));
+  expect(viewAtCancel).toBeDefined();
+  handle.dispose();
 });
 
 test("a user edit mid-playback still discards the stale meshes", () => {

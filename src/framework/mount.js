@@ -282,6 +282,9 @@ function createCleanupStack() {
     defer(cleanup) {
       cleanups.push(cleanup);
     },
+    // True from the moment dispose() starts, so a cleanup that runs late (LIFO) can
+    // tell its effects would land in state already torn down.
+    isDisposed: () => disposed,
     dispose() {
       if (disposed) return;
       disposed = true;
@@ -701,6 +704,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // incoming view composes its assembly from un-animated params. Anything
         // that reads params (refreshView / updateRelevance / the loop kick) must
         // run after it. autoplayKick stays LAST — it starts the new view's own.
+        // A drag in progress is cancelled before anything else: its values were
+        // solved against the outgoing view's limbs (a no-op with no drag).
+        poseMode?.externalWrite();
         animCtl?.viewChanged();
         pendingPosed.clear(); cutawayChrome.reset(); refreshView();
         // place() may read `view`: re-pose the incoming view's canonical meshes
@@ -779,17 +785,21 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     const handleIds = part.handles && typeof part.handles === "object" && !Array.isArray(part.handles)
       ? Object.keys(part.handles) : [];
     if (handleIds.length) {
+      // Pose mode is detached late in a teardown (cleanups run LIFO, after the panel
+      // and loop), and detaching mid-drag cancels the drag. Once disposal has begun
+      // every effect is a no-op, so that cancel writes nothing into torn-down state.
+      const live = (fn) => (...args) => (cleanup.isDisposed() ? undefined : fn(...args));
       poseMode = createPoseMode(viewer, {
         part,
         orbitControls: viewer.orbitControls,
         getParams: () => params,
-        write: (values) => writePoseValues(values),
-        restore: (snapshot) => writePoseValues(snapshot),
-        commit: (changed) => onParamsCommit?.({ changed, params: { ...params } }),
+        write: live((values) => writePoseValues(values)),
+        restore: live((snapshot) => writePoseValues(snapshot)),
+        commit: live((changed) => onParamsCommit?.({ changed, params: { ...params } })),
         staleSubParts: () => viewSubParts(part, view(), params).filter((n) => !isCurrent(n)),
-        ghost: (names) => { for (const n of names) viewer.setSubPartOpacity(n, GHOST_OPACITY); },
-        unghost: (names) => { for (const n of names) viewer.setSubPartOpacity(n, 1); },
-        hold: (on) => {
+        ghost: live((names) => { for (const n of names) viewer.setSubPartOpacity(n, GHOST_OPACITY); }),
+        unghost: live((names) => { for (const n of names) viewer.setSubPartOpacity(n, 1); }),
+        hold: live((on) => {
           poseHold = !!on;
           // A drag is the user's own edit: it pauses playback the way a slider does,
           // before the first frame writes anything.
@@ -799,7 +809,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           // cycle in flight and is absorbed.
           onParamChange();
           loop.kick();
-        },
+        }),
         visibleHandles: () => poseVisible ?? handleIds,
       });
       cleanup.defer(() => poseMode.detach());
@@ -1424,9 +1434,6 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       liveDelivered = true; // only a delivery that is applied beats a preview still decoding
       for (const m of meshes) {
         viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
-        // A pose drag's ghost lifts HERE, in the same tick as the new mesh, so the
-        // fresh geometry and the restored opacity reach the screen in one frame.
-        poseMode?.delivered(m.name);
         // The view its job was SENT for, and the frame the worker delivered
         // in: "canonical" (place() not applied — mount poses it below) or
         // "posed". An older worker sends no frame; its meshes are posed.
@@ -1442,6 +1449,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // non-stale branch: the stamp must describe the geometry actually
         // delivered, which buildDone() true guarantees is at the live params.
         fastPath.recordDelivered(m.name);
+        // A pose drag's ghost lifts HERE, in the same tick as the new mesh (so the
+        // fresh geometry and the restored opacity reach the screen in one frame), and
+        // after the stamps above, so isCurrent already reads this name as current.
+        poseMode?.delivered(m.name);
       }
       // setSubGeometry reset every delivered mesh's matrix, so each one gets
       // its display pose now, after its geometry landed: a canonical mesh
@@ -1560,6 +1571,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             // fails this test and is discarded exactly as before.
             for (const m of data.meshes) {
               viewer.setSubGeometry(m.name, m);
+              // A pose ghost on this sub-part has just been replaced by a new mesh;
+              // left at GHOST_OPACITY it would stay faded through playback.
+              poseMode?.delivered(m.name);
               fastPath.forget(m.name);
               cache.forget(m.name); // the stamp described the last FRESH delivery; this mesh was built at other params, so no stamp may describe it (spec §2)
             }
