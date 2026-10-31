@@ -23,6 +23,7 @@ import { createMeshCache } from "./mesh-cache.js";
 import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts, resolveParams } from "./part-model.js";
 import { resolveDerived } from "./derive.js";
+import { withDeriveMemo } from "./derive-memo.js";
 import { createBackendPolicy } from "./backend-select.js";
 import { createDebugOverlay } from "./debug-overlay.js";
 import { createRegenLoop } from "./regen-loop.js";
@@ -1754,6 +1755,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // version, so a repair there would re-stamp everything current off the memoized
     // probe and the forced rebuild would silently no-op.
     function onParamChange({ debounce = true } = {}) {
+      // The pose repair and the relevance pass below each derive the same params:
+      // memoized, one derive serves all three (derive-memo.js).
+      withDeriveMemo(() => applyParamChange(debounce));
+    }
+    function applyParamChange(debounce) {
       loop.markDirty({ debounce }); // bump the version first: refreshView below must see the parts as stale
       // Pose-only edits: re-posed + re-stamped current, no job. Skipped entirely
       // when caching is off — ?debug&nocache is there to measure true uncached

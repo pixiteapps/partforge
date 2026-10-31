@@ -45,6 +45,7 @@ import { createPoseSession, pinId, parsePinId } from "./pose-session.js";
 import { dragPlanePoint, hitHandle } from "./pose-geom.js";
 import { limbInfo } from "./param-solve.js";
 import { aimTurn } from "../solve/aim.js";
+import { withDeriveMemo } from "../derive-memo.js";
 
 /** A dot's hit radius, CSS px: a 28 px target around a 12 px dot. */
 export const HANDLE_HIT_PX = 14;
@@ -222,8 +223,13 @@ export function createPoseMode(viewer, {
   }
 
   // ---- model ----------------------------------------------------------------
+  // Every shown handle's limb comes from one derive of the same params: memoized, so a
+  // part with six handles derives once, not six times (derive-memo.js).
   function refresh() {
     if (!live || !scene) return;
+    withDeriveMemo(readLimbs);
+  }
+  function readLimbs() {
     stale = false;
     screenCache = null;
     const params = getParams();
@@ -465,8 +471,14 @@ export function createPoseMode(viewer, {
     return true;
   }
 
+  // One drag frame resolves the same params several times — the solve's (or goal seed's)
+  // last derive, then mount's write (pose repair, panel relevance), then refresh — so the
+  // whole frame runs with derive memoized (derive-memo.js).
   function dragFrame(ev) {
     if (!press?.started || !session.isActive()) return;
+    withDeriveMemo(() => dragStep(ev));
+  }
+  function dragStep(ev) {
     const ray = partRay(ev);
     if (!ray) return;
     const { hit } = press;
