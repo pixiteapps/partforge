@@ -17,6 +17,7 @@ import { CLEANUP, guardCos2 } from "../geometry/implicit/cleanup.js";
 import { DETAIL_STRIDE, flattenDetail } from "../geometry/implicit/detail.js";
 import { implicitResult } from "../geometry/implicit/result.js";
 import { clearance, CREASE_SNAP, CREASE_TOL, DETAIL_SEAM_FADE } from "../geometry/implicit/contact.js";
+import { LEAF, leafKeys } from "../geometry/implicit/sparse.js";
 
 const isFault = (err) => (typeof WebAssembly === "object" && err instanceof WebAssembly.RuntimeError) || err?.message === OUT_OF_MEMORY;
 const isNumbers = (a) => ArrayBuffer.isView(a) || Array.isArray(a);
@@ -179,12 +180,14 @@ export class NativeSession {
    * An owner plan (`ownerRoot ≥ 0`) also captures each sample's owner, as evaluateLeaves
    * does: read them with leafOwners().
    */
-  sample(plan, { readBack = true } = {}) {
+  sample(plan, { readBack = true, cache = null } = {}) {
     const { c } = this;
     const { origin, edge, n, leaves } = plan ?? {};
+    const base = plan?.base ?? null;
     if (!isNumbers(origin) || origin.length !== 3 || !origin.every(Number.isFinite) || !(edge > 0) || !Number.isFinite(edge)
-      || !isNumbers(n) || n.length !== 3 || !n.every((v) => isInt32(v) && v >= 2) || !Array.isArray(leaves)) {
-      throw refusal("implicit: sample takes a plan with origin, edge, n and leaves");
+      || !isNumbers(n) || n.length !== 3 || !n.every((v) => isInt32(v) && v >= 2) || !Array.isArray(leaves)
+      || (base !== null && (!isNumbers(base) || base.length !== 3 || !base.every((b, a) => isInt32(b) && isInt32(b + n[a] + LEAF))))) {   // base + i0 + i stays an int32
+      throw refusal("implicit: sample takes a plan with origin, edge, n and leaves (and an integer base, if anchored)");
     }
     const ownerK = plan.ownerRoot >= 0 ? plan.ownerK : 0;
     if (!Number.isInteger(ownerK) || ownerK < 0 || ownerK > MAX_OWNER_K) throw refusal(`implicit: a plan's ownerK must be an integer 0..${MAX_OWNER_K}`);
@@ -201,29 +204,62 @@ export class NativeSession {
       }
       L[4 * k] = i0; L[4 * k + 1] = j0; L[4 * k + 2] = l0; L[4 * k + 3] = progIndex;
     }
+    // The cache, as evaluateLeaves takes it: a keyed leaf the cache holds is skipped and
+    // preloaded with the entry's samples (and owners); every other keyed leaf is put after
+    // the sample, from one read-back of the store.
+    const owned = ownerK > 0;
+    const keys = cache ? leafKeys(plan) : null;
+    let skip = null, preVals = null, preOwners = null, cacheHits = 0;
+    if (keys) {
+      for (let k = 0; k < count; k++) {
+        if (keys[k] === null) continue;
+        const e = cache.get(keys[k]);
+        if (e === undefined || e.vals?.length !== LEAF_SAMPLES || (owned && e.owner?.length !== LEAF_SAMPLES)) continue;
+        if (!skip) {
+          skip = new Uint8Array(count);
+          preVals = new Float32Array(count * LEAF_SAMPLES);
+          if (owned) preOwners = new Int8Array(count * LEAF_SAMPLES);
+        }
+        skip[k] = 1;
+        preVals.set(e.vals, k * LEAF_SAMPLES);
+        if (owned) preOwners.set(e.owner, k * LEAF_SAMPLES);
+        cacheHits++;
+      }
+    }
+    const puts = keys ? keys.some((key, k) => key !== null && !(skip && skip[k])) : false;
     let rc = 0;
     const out = this.#call(() => {
-      let pl = 0, po = 0, pn = 0;
+      let pl = 0, po = 0, pn = 0, pb = 0, ps = 0, pv = 0, pw = 0;
       try {
         pl = c.copyIn(L);
         po = c.copyIn(Float64Array.from(origin));
         pn = c.copyIn(Int32Array.from(n));
-        rc = c.x.ip_sample(this.id, pl, count, po, edge, pn, ownerK);
+        if (base !== null) pb = c.copyIn(Int32Array.from(base));
+        if (skip) { ps = c.copyIn(skip); pv = c.copyIn(preVals); if (preOwners) pw = c.copyIn(preOwners); }
+        rc = c.x.ip_sample_cached(this.id, pl, count, po, edge, pn, ownerK, pb, ps, pv, pw);
       } finally {
-        if (pl) c.x.free(pl);
-        if (po) c.x.free(po);
-        if (pn) c.x.free(pn);
+        for (const p of [pl, po, pn, pb, ps, pv, pw]) if (p) c.x.free(p);
       }
       if (rc !== 0) return null;
       const clipped = c.x.ip_clipped(this.id) === 1;
-      return { all: readBack ? c.copyOut(Float32Array, c.x.ip_leaf_vals(this.id), count * LEAF_SAMPLES) : null, clipped };
+      const all = readBack || puts ? c.copyOut(Float32Array, c.x.ip_leaf_vals(this.id), count * LEAF_SAMPLES) : null;
+      const allOwners = puts && owned ? c.copyOut(Int8Array, c.x.ip_leaf_owners(this.id), count * LEAF_SAMPLES) : null;
+      return { all, allOwners, clipped };
     });
     if (rc !== 0) throw refusal("implicit: the core refused the plan (a program index the session lacks, a program it will not run, or a child index past ownerK)");
     this.#leafCount = count;
-    if (!readBack) return { vals: null, clipped: out.clipped };
+    if (puts) {
+      // Copies, not views: an entry must not pin the whole store's buffer.
+      for (let k = 0; k < count; k++) {
+        if (keys[k] === null || (skip && skip[k])) continue;
+        const at = k * LEAF_SAMPLES;
+        cache.put(keys[k], { vals: out.all.slice(at, at + LEAF_SAMPLES), owner: owned ? out.allOwners.slice(at, at + LEAF_SAMPLES) : null });
+      }
+    }
+    if (!readBack) return { vals: null, clipped: out.clipped, cacheHits };
     const vals = new Array(count);
     for (let k = 0; k < count; k++) vals[k] = out.all.subarray(k * LEAF_SAMPLES, (k + 1) * LEAF_SAMPLES);
-    return { vals, clipped: out.clipped };
+    return { vals, clipped: out.clipped, cacheHits };
   }
 
   /**
@@ -529,14 +565,17 @@ function acceptsPlan(plan) {
  * `vertOwner`, `ownerHeld`, `pinned`, `crease` and `triOwner`. Returns null when the JS must
  * answer instead: the core is off or unavailable, it refused the plan (counted, not reported),
  * or it faulted (the instance is poisoned and the fallback reported).
+ *
+ * `cache` (a createSampleCache(), with an anchored plan) is taken as evaluateLeaves takes it,
+ * on the session (NativeSession.sample): `result.stats.cacheHits` counts the leaves it served.
  */
-export function meshImplicitCore(compiled, edge, plan, opts = CLEANUP, { owners = true } = {}) {
+export function meshImplicitCore(compiled, edge, plan, opts = CLEANUP, { owners = true, cache = null } = {}) {
   const c = core();
   if (!c) return null;
   if (!acceptsPlan(plan)) { countRefusedMesh(); return null; }
   const flat = compiled.detail.length ? flattenDetail(compiled) : null;
   const ownerPath = owners && compiled.ownerRoot >= 0;
-  let s = null, mesh, clipped, triOwner = null;
+  let s = null, mesh, clipped, cacheHits = 0, triOwner = null;
   try {
     s = new NativeSession(c);
     // Plan order: a leaf's progIndex and a program's texture slots are session indices
@@ -544,7 +583,7 @@ export function meshImplicitCore(compiled, edge, plan, opts = CLEANUP, { owners 
     plan.textures.forEach((t, i) => { if (s.addTexture(t) !== i) throw refusal("implicit: the core numbered a texture out of plan order"); });
     plan.programs.forEach((p, i) => { if (s.addProgram(p) !== i) throw refusal("implicit: the core numbered a program out of plan order"); });
     if (ownerPath) s.setContact(compiled.ir.nodes[compiled.ownerRoot]);
-    ({ clipped } = s.sample(plan, { readBack: false }));
+    ({ clipped, cacheHits } = s.sample(plan, { readBack: false, cache }));
     if (ownerPath) {
       s.meshOwners({ readBack: false });
       s.cleanup(opts, { readBack: false });
@@ -565,6 +604,7 @@ export function meshImplicitCore(compiled, edge, plan, opts = CLEANUP, { owners 
   }
   // Outside the try: pure JS, so a throw here can never poison the core.
   const result = implicitResult(compiled, edge, plan, mesh, clipped);
+  result.stats.cacheHits = cacheHits;
   if (ownerPath) Object.assign(result, { vertOwner: mesh.vertOwner, ownerHeld: mesh.ownerHeld, pinned: mesh.pinned, crease: mesh.crease, triOwner });
   return result;
 }

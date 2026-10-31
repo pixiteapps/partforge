@@ -33,7 +33,7 @@ export const EXPORTS = [
   "bvh_distance_to", "bvh_min_wall", "bvh_fingerprint", "bvh_destroy",
   "ip_math_probe", "ip_bracket_probe",
   "ip_session_create", "ip_session_destroy", "ip_tex_add", "ip_prog_add", "ip_eval", "ip_eval_contact",
-  "ip_sample", "ip_leaf_vals", "ip_leaf_owners", "ip_clipped",
+  "ip_sample", "ip_sample_cached", "ip_leaf_vals", "ip_leaf_owners", "ip_clipped",
   "ip_mesh", "ip_vertex_count", "ip_positions", "ip_index_count", "ip_indices", "ip_vert_leaf",
   "ip_mesh_load", "ip_project", "ip_cleanup", "ip_normals", "ip_detail",
   "ip_set_contact", "ip_mesh_owners", "ip_crease", "ip_untangle",

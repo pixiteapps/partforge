@@ -108,6 +108,24 @@ mesh is copied out (`ip_positions`, `ip_indices`, `ip_normals`, …).
 inputs before any call, treats a refusal (a nonzero code) as "let the JS
 answer", and poisons the instance only on a trap or failed allocation.
 
+**The cached sample.** A preview build with a sample cache
+(`implicit/sample-cache.js`) samples through `ip_sample_cached`, which is
+`ip_sample` (that one is now `ip_sample_cached` with four nulls) plus two
+inputs. `base3` is an anchored plan's first world cell: a sample's coordinate is
+then `(double)(base3[a] + i0 + i) * edge` — the integer sum first, then one
+multiply, as sparse.js writes `(base[a] + i) * edge`. That is NOT the double
+`origin[a] + (i0 + i) * edge` gives even though `origin = base · edge`, so the
+two formulas must never be mixed. `skip`/`preVals`/`preOwners` (125 per leaf, in
+plan order) carry the leaves the JS cache already holds: a skipped leaf's
+samples (and owners) are copied into the store as they are — no interpreter, no
+outer-layer raise, no zero nudge, and it never sets `clipped`, which is sound
+because `leafKeys` keys no leaf touching the grid's outer layer. The interpreter
+batches hold unskipped leaves only (the interpreter is lane-local, so which
+leaves share a batch decides nothing). `NativeSession.sample` does the cache
+lookups before the call and reads the store back once after it to put every
+keyed, unskipped leaf, so a warm build on the core is byte for byte a cold
+one, and the same bytes as the JS's.
+
 The orders that decide a result, and so must stay the JS's however the data is
 held (each `.cpp`'s top comment has the full list):
 

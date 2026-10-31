@@ -60,16 +60,14 @@ describe.each([["SIMD", true], ["scalar", false]])("meshImplicit on the native c
       const g = solid._m.getMesh();
       return { vp: Buffer.from(Float32Array.from(g.vertProperties).buffer), tv: Buffer.from(Uint32Array.from(g.triVerts).buffer) };
     };
-    // Print-tier kernels: a preview k.implicit samples through the kernel's sample cache, which
-    // runs the JS stages until the core takes the cache (the pose-drag plan's Task 2).
-    const kJs = await bootManifoldKernel({ quality: "print" });
+    const kJs = await bootManifoldKernel();
     const expected = withCore(false, () => meshOf(kJs.implicit(SPHERE)));
     const real = core();
     const broken = { ...real, live: 0, poisoned: false, x: { ...real.x, ip_mesh: () => { throw new Error("boom"); } } };
     setCoreForTesting(broken);
     const seen = [];
     onCoreFallback((f) => seen.push(f));
-    const k = await bootManifoldKernel({ quality: "print" });
+    const k = await bootManifoldKernel();
     const got = meshOf(k.implicit(SPHERE));
     expect(Buffer.compare(got.vp, expected.vp)).toBe(0);
     expect(Buffer.compare(got.tv, expected.tv)).toBe(0);

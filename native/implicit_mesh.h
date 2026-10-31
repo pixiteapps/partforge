@@ -21,7 +21,17 @@ constexpr int S = LEAF + 1, S3 = S * S * S;     // samples per leaf side / per l
 // of ownerK children) each sample's owner is captured too (s.owners). Returns 0, or
 // nonzero (nothing kept) for a program index the session lacks, a program it refuses
 // to run, or an ownerK outside 0..MAX_OWNER_K or below a child index a program names.
-int sample(ipe::Session& s, const int32_t* leaves, int count, const double* origin, double edge, const int32_t* n, int ownerK);
+//
+// The cached sample (the JS's evaluateLeaves with `hooks.cache`): `base` (int3, or null) is
+// an anchored plan's first world cell — a sample's coordinate is then (base[a] + i0 + i) *
+// edge, the integer sum first, as sparse.js writes it; null keeps origin[a] + (i0 + i) * edge.
+// `skip` (or null): a leaf with skip[L] != 0 copies preVals + L*S3 (and preOwners + L*S3 when
+// ownerK > 0) into the store and is not evaluated — no outer-layer rule, no zero nudge, and it
+// never sets clipped (the JS keys no leaf touching the outer layer). Only unskipped leaves
+// ride the interpreter batches. A skip without preVals (or, on an owner plan, preOwners) is
+// refused (1).
+int sample(ipe::Session& s, const int32_t* leaves, int count, const double* origin, double edge, const int32_t* n, int ownerK,
+           const int32_t* base = nullptr, const uint8_t* skip = nullptr, const float* preVals = nullptr, const int8_t* preOwners = nullptr);
 
 // meshStore over the session's leaf store: fills positions, indices, vertLeaf.
 // Returns 0, or nonzero when nothing has been sampled.

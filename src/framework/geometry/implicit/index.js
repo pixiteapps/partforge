@@ -26,15 +26,13 @@ export { compileImplicit, IMPLICIT_DEFAULTS } from "./compile.js";
 // `cache` (a createSampleCache(), sample-cache.js — the preview kernel's) anchors the grid to
 // the world lattice (planLeaves `anchor`) and lets a leaf take its samples from an earlier
 // build: the same bytes a cold build gives, and `stats.cacheHits` counts the leaves taken.
-// Without one the plan is unanchored, exactly as before. The native core does not take the
-// cache yet, so an anchored build runs the JS stages — core on and off alike, the same bytes.
+// Without one the plan is unanchored, exactly as before. The native core takes the cache too
+// (ip_sample_cached): core on and off alike, the same bytes.
 export function meshImplicit(compiled, edge, { tier, owners = true, cache } = {}) {
   const opts = tier === "preview" ? PREVIEW_CLEANUP : CLEANUP;
   const plan = planLeaves(compiled, edge, { anchor: !!cache });
-  if (!cache) {
-    const native = meshImplicitCore(compiled, edge, plan, opts, { owners });
-    if (native) return native;
-  }
+  const native = meshImplicitCore(compiled, edge, plan, opts, { owners, cache: cache ?? null });
+  if (native) return native;
   const store = evaluateLeaves(plan, { cache });
   const ownerPath = owners && compiled.ownerRoot >= 0;
   const node = ownerPath ? compiled.ir.nodes[compiled.ownerRoot] : null;

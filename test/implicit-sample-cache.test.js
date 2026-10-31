@@ -1,10 +1,12 @@
 // The world-anchored preview grid and the sample cache (sample-cache.js): a preview build
 // anchors its grid to a world lattice so a leaf whose program, textures, world cell and edge
 // are unchanged can take its samples from the previous pose — and a warm build is the same
-// bytes as a cold one. The native core does not take the cache yet (core off here).
+// bytes as a cold one. Core off except where a test says otherwise; the warm == cold tests run
+// with the core on too (the native session takes the cache, ip_sample_cached).
 import { createHash } from "node:crypto";
-import { afterAll, beforeAll, expect, test } from "vitest";
-import { setCoreEnabled } from "../src/framework/core/core.js";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
+import { core, coreStatus, setCoreEnabled } from "../src/framework/core/core.js";
+import { NativeSession } from "../src/framework/core/implicit-core.js";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { planLeaves, LEAF, TOP } from "../src/framework/geometry/implicit/sparse.js";
 import { createSampleCache, leafKeys, SAMPLE_CACHE_BYTES } from "../src/framework/geometry/implicit/sample-cache.js";
@@ -45,48 +47,63 @@ test("leaf keys: outer-layer leaves have none; a shared interior cell keys the s
   expect(leafKeys(planLeaves(compileImplicit(TWO_BONE(0)), 1)).every((k) => k === null)).toBe(true);
 });
 
-test("warm == cold: a frames-only pose change reuses samples and meshes the same bytes", () => {
-  const cold = meshImplicit(compileImplicit(TWO_BONE(40)), 1, { tier: "preview", cache: createSampleCache() });
-  expect(cold.stats.cacheHits).toBe(0);
-  const cache = createSampleCache();
-  meshImplicit(compileImplicit(TWO_BONE(0)), 1, { tier: "preview", cache });
-  const warm = meshImplicit(compileImplicit(TWO_BONE(40)), 1, { tier: "preview", cache });
-  expect(warm.stats.cacheHits).toBeGreaterThan(0);
-  expect(digest(warm)).toBe(digest(cold));
-  // The same pose again hits every keyed leaf, still the same bytes.
-  const again = meshImplicit(compileImplicit(TWO_BONE(40)), 1, { tier: "preview", cache });
-  expect(again.stats.cacheHits).toBeGreaterThan(warm.stats.cacheHits);
-  expect(digest(again)).toBe(digest(cold));
-});
+// The warm == cold tests run twice: core off (the JS stages) and core on (ip_sample_cached on
+// the native session). With the core on, every build must stay native — no refused mesh — and
+// both modes must give the same bytes, which the core-off digests recorded here hold.
+const offDigests = new Map();
+describe.each([["core off", false], ["core on", true]])("%s", (_label, on) => {
+  let refusedBefore = 0, sampled = null;
+  beforeEach(() => {
+    setCoreEnabled(on);
+    if (on) expect(core()).not.toBeNull();
+    refusedBefore = coreStatus().refusedMeshes;
+    sampled = vi.spyOn(NativeSession.prototype, "sample");
+  });
+  afterEach(() => {
+    if (on) {
+      expect(coreStatus().refusedMeshes).toBe(refusedBefore);   // no build was refused by the core
+      expect(sampled.mock.calls.length).toBeGreaterThan(0);     // and the builds sampled on it, cache and all
+      expect(sampled.mock.calls.every(([, o]) => o?.cache)).toBe(true);
+    } else {
+      expect(sampled).not.toHaveBeenCalled();
+    }
+    sampled.mockRestore();
+    setCoreEnabled(false);
+  });
+  const matchesOff = (name, d) => {
+    if (!on) offDigests.set(name, d);
+    else if (offDigests.has(name)) expect(d, `${name}: core on vs core off`).toBe(offDigests.get(name));
+  };
 
-test("warm == cold with the core on, and equal to the core-off bytes", () => {
-  const off = meshImplicit(compileImplicit(TWO_BONE(40)), 1, { tier: "preview", cache: createSampleCache() });
-  setCoreEnabled(true);
-  try {
+  test("warm == cold: a frames-only pose change reuses samples and meshes the same bytes", () => {
     const cold = meshImplicit(compileImplicit(TWO_BONE(40)), 1, { tier: "preview", cache: createSampleCache() });
+    expect(cold.stats.cacheHits).toBe(0);
     const cache = createSampleCache();
     meshImplicit(compileImplicit(TWO_BONE(0)), 1, { tier: "preview", cache });
     const warm = meshImplicit(compileImplicit(TWO_BONE(40)), 1, { tier: "preview", cache });
     expect(warm.stats.cacheHits).toBeGreaterThan(0);
     expect(digest(warm)).toBe(digest(cold));
-    expect(digest(cold)).toBe(digest(off));
-  } finally {
-    setCoreEnabled(false);
-  }
-});
+    // The same pose again hits every keyed leaf, still the same bytes.
+    const again = meshImplicit(compileImplicit(TWO_BONE(40)), 1, { tier: "preview", cache });
+    expect(again.stats.cacheHits).toBeGreaterThan(warm.stats.cacheHits);
+    expect(digest(again)).toBe(digest(cold));
+    matchesOff("two bone", digest(cold));
+  });
 
-test("the hand reuses samples across a one-finger flex, byte for byte", () => {
-  const bent = handSpec({ flex: { index: 62 } });
-  const cold = meshImplicit(compileImplicit(bent), 1.5, { tier: "preview", cache: createSampleCache() });
-  const cache = createSampleCache();
-  meshImplicit(compileImplicit(handSpec()), 1.5, { tier: "preview", cache });
-  const warm = meshImplicit(compileImplicit(bent), 1.5, { tier: "preview", cache });
-  expect(warm.stats.cacheHits).toBeGreaterThan(0);
-  expect(digest(warm)).toBe(digest(cold));
-  for (const k of ["vertOwner", "triOwner"]) {
-    if (cold[k]) expect(Buffer.compare(Buffer.from(warm[k].buffer), Buffer.from(cold[k].buffer)), k).toBe(0);
-  }
-}, 120_000);
+  test("the hand reuses samples across a one-finger flex, byte for byte", () => {
+    const bent = handSpec({ flex: { index: 62 } });
+    const cold = meshImplicit(compileImplicit(bent), 1.5, { tier: "preview", cache: createSampleCache() });
+    const cache = createSampleCache();
+    meshImplicit(compileImplicit(handSpec()), 1.5, { tier: "preview", cache });
+    const warm = meshImplicit(compileImplicit(bent), 1.5, { tier: "preview", cache });
+    expect(warm.stats.cacheHits).toBeGreaterThan(0);
+    expect(digest(warm)).toBe(digest(cold));
+    for (const k of ["vertOwner", "triOwner"]) {
+      if (cold[k]) expect(Buffer.compare(Buffer.from(warm[k].buffer), Buffer.from(cold[k].buffer)), k).toBe(0);
+    }
+    matchesOff("hand", digest(cold));
+  }, 120_000);
+});
 
 test("no cache: no anchor, and the result is byte-identical to before", () => {
   expect(planLeaves(compileImplicit(TWO_BONE(0)), 1).base).toBeNull();

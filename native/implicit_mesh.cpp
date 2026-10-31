@@ -3,7 +3,9 @@
 //
 // What bit-exact parity needs, beyond native/README.md's rules:
 //   - a sample's coordinate is origin[a] + (i0 + i) * edge with the INTEGER sum
-//     first (exact in both), then one multiply and one add, as the JS writes it;
+//     first (exact in both), then one multiply and one add, as the JS writes it —
+//     or, on an anchored plan, (base[a] + i0 + i) * edge: the integer sum, then one
+//     multiply (not the same double as origin + i*edge, so the two are never mixed);
 //   - samples run (l, j, i) with i fastest, so the store's layout and the order
 //     zero samples are collected in (the nudge batch) are the JS's;
 //   - consecutive leaves sharing a program ride one interpreter call (the
@@ -33,6 +35,7 @@
 #include "implicit_mesh.h"
 
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 #include "flat_map.h"
@@ -58,9 +61,11 @@ constexpr int RUN = 32;   // leaves per interpreter call (4000 lanes) when conse
 
 // Precondition: every leaf satisfies 0 <= i0,j0,l0 < n-1 (enforced by implicit-core.js;
 // the weld keys rely on it).
-int sample(ipe::Session& s, const int32_t* leaves, int count, const double* origin, double edge, const int32_t* n, int ownerK) {
+int sample(ipe::Session& s, const int32_t* leaves, int count, const double* origin, double edge, const int32_t* n, int ownerK,
+           const int32_t* base, const uint8_t* skip, const float* preVals, const int8_t* preOwners) {
   if (count < 0) return 1;
   if (ownerK < 0 || ownerK > ipe::MAX_OWNER_K) return 5;
+  if (skip && (!preVals || (ownerK > 0 && !preOwners))) return 1;
   // Refuse before touching the store: every leaf's program must be one eval would run.
   for (int L = 0; L < count; L++) {
     const int32_t pi = leaves[4 * L + 3];
@@ -111,23 +116,41 @@ int sample(ipe::Session& s, const int32_t* leaves, int count, const double* orig
   const double nudge0 = 1e-6 * edge, nudge1 = 1e-6 * edge * ZERO_DIR1, nudge2 = 1e-6 * edge * ZERO_DIR2;
   const int n0 = n[0], n1 = n[1], n2 = n[2];
 
+  // A skipped leaf takes its preloaded samples (and owners) as they are: the JS's cache hit.
+  auto preload = [&](int L) {
+    std::memcpy(s.vals.get() + (size_t)L * S3, preVals + (size_t)L * S3, sizeof(float) * S3);
+    if (owned) std::memcpy(s.owners.data() + (size_t)L * S3, preOwners + (size_t)L * S3, S3);
+  };
+  int BL[RUN];   // the batch's leaves: up to RUN unskipped leaves sharing one program, in leaf order
   for (int L0 = 0; L0 < count;) {
+    if (skip && skip[L0]) { preload(L0); L0++; continue; }
     const int32_t pi = leaves[4 * L0 + 3];
-    int R = 1;
-    while (R < RUN && L0 + R < count && leaves[4 * (L0 + R) + 3] == pi) R++;
+    int R = 0;
+    while (R < RUN && L0 < count) {
+      if (skip && skip[L0]) { preload(L0); L0++; continue; }
+      if (leaves[4 * L0 + 3] != pi) break;
+      BL[R++] = L0++;
+    }
     const ipe::Program& prog = s.programs[(size_t)pi];
     for (int r = 0; r < R; r++) {
-      const int L = L0 + r;
+      const int L = BL[r];
       const int32_t i0 = leaves[4 * L], j0 = leaves[4 * L + 1], l0 = leaves[4 * L + 2];
       double *x = X + r * S3, *y = Y + r * S3, *zc = Z + r * S3;
       int q = 0;
-      for (int l = 0; l < S; l++) for (int j = 0; j < S; j++) for (int i = 0; i < S; i++, q++) {
-        x[q] = origin[0] + (double)(i0 + i) * edge; y[q] = origin[1] + (double)(j0 + j) * edge; zc[q] = origin[2] + (double)(l0 + l) * edge;
+      if (base) {   // an anchored plan: (base + i0 + i) * edge, one multiply of an exact integer
+        for (int l = 0; l < S; l++) for (int j = 0; j < S; j++) for (int i = 0; i < S; i++, q++) {
+          x[q] = (double)(base[0] + i0 + i) * edge; y[q] = (double)(base[1] + j0 + j) * edge; zc[q] = (double)(base[2] + l0 + l) * edge;
+        }
+      } else {
+        for (int l = 0; l < S; l++) for (int j = 0; j < S; j++) for (int i = 0; i < S; i++, q++) {
+          x[q] = origin[0] + (double)(i0 + i) * edge; y[q] = origin[1] + (double)(j0 + j) * edge; zc[q] = origin[2] + (double)(l0 + l) * edge;
+        }
       }
     }
+    if (R == 0) continue;
     if (owned) ipe::eval_contact(s, prog, X, Y, Z, R * S3, out, cap); else ipe::eval(s, prog, X, Y, Z, R * S3, out);
     for (int r = 0; r < R; r++) {
-      const int L = L0 + r;
+      const int L = BL[r];
       const int32_t i0 = leaves[4 * L], j0 = leaves[4 * L + 1], l0 = leaves[4 * L + 2];
       const double *x = X + r * S3, *y = Y + r * S3, *zc = Z + r * S3, *o = out + r * S3;
       float* vals = s.vals.get() + (size_t)L * S3;
@@ -159,7 +182,6 @@ int sample(ipe::Session& s, const int32_t* leaves, int count, const double* orig
         for (int k = 0; k < S3; k++) own[k] = vals[k] >= 0 ? (int8_t)-1 : (int8_t)pc[k];
       }
     }
-    L0 += R;
   }
   s.clipped = clipped;
   s.sampled = true;
@@ -1092,13 +1114,22 @@ int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxW
 
 extern "C" {
 
+// evaluateLeaves with a sample cache: an anchored plan's positions from `base3` (null: the
+// origin formula), and the leaves with skip[L] != 0 taken from `preVals`/`preOwners`
+// (125 per leaf, in plan order) instead of evaluated. See ipm_mesh::sample. Return codes
+// as ip_sample's (and 1 for a skip without its preloaded arrays).
+int ip_sample_cached(int id, const int32_t* leaves, int count, const double* origin3, double edge, const int32_t* n3, int ownerK,
+                     const int32_t* base3, const uint8_t* skip, const float* preVals, const int8_t* preOwners) {
+  ipe::Session* s = ipe::session(id);
+  if (!s) return 4;
+  return ipm_mesh::sample(*s, leaves, count, origin3, edge, n3, ownerK, base3, skip, preVals, preOwners);
+}
+
 // evaluateLeaves over `count` leaves (i0, j0, l0, program index each; programs
 // already added in plan order): 0 ok; nonzero for an unknown session, a program
 // index it lacks or a program it refuses (the store is left as it was).
 int ip_sample(int id, const int32_t* leaves, int count, const double* origin3, double edge, const int32_t* n3, int ownerK) {
-  ipe::Session* s = ipe::session(id);
-  if (!s) return 4;
-  return ipm_mesh::sample(*s, leaves, count, origin3, edge, n3, ownerK);
+  return ip_sample_cached(id, leaves, count, origin3, edge, n3, ownerK, nullptr, nullptr, nullptr, nullptr);
 }
 
 // The leaf store's owners (owner plans only): (LEAF+1)^3 int8 per leaf, in plan order.

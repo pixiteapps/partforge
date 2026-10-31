@@ -9,6 +9,9 @@ import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/s
 import { nativeCases, sessionFor } from "./fixtures/implicit-native-cases.js";
 import { compileImplicit } from "../src/framework/geometry/implicit/index.js";
 import { SEAM_CASES } from "./fixtures/implicit-seam-cases.js";
+import { createSampleCache } from "../src/framework/geometry/implicit/sample-cache.js";
+import { TWO_BONE } from "./fixtures/skin-fixtures.js";
+import { BALL_BOARD } from "./fixtures/implicit-trees.js";
 
 afterEach(() => setCoreForTesting(undefined));
 
@@ -94,7 +97,7 @@ describe("native leaf sampling", () => {
     const s = sessionFor(plan);
     try {
       const nat = s.sample(plan, { readBack: false });
-      expect(nat).toEqual({ vals: null, clipped: evaluateLeaves(plan).clipped });
+      expect(nat).toEqual({ vals: null, clipped: evaluateLeaves(plan).clipped, cacheHits: 0 });
       expect(s.mesh().indices.length).toBeGreaterThan(0);
     } finally { s.destroy(); }
   });
@@ -188,5 +191,86 @@ describe("native leaf sampling", () => {
       expect(s.leafOwners()).toBeNull();
     } finally { s.destroy(); }
     expect(core().poisoned).toBe(false);
+  });
+
+  // The cached sample (ip_sample_cached): an anchored plan's positions are (base + i)·edge, and
+  // a leaf the cache holds takes its preloaded samples (and owners) instead of being evaluated.
+  const sampleAll = (plan, opts) => {
+    const s = sessionFor(plan);
+    try {
+      const nat = s.sample(plan, opts);
+      return { ...nat, owners: s.leafOwners() };
+    } finally { s.destroy(); }
+  };
+  const sameLeaves = (got, want, what) => {
+    expect(got.length).toBe(want.length);
+    for (let L = 0; L < want.length; L++) {
+      if (Buffer.compare(bytes(got[L]), bytes(want[L])) !== 0) {
+        const q = want[L].findIndex((v, k) => !Object.is(v, got[L][k]));
+        throw new Error(`${what}: leaf ${L} sample ${q}: native ${got[L][q]} vs expected ${want[L][q]}`);
+      }
+    }
+  };
+
+  // A face on a lattice plane: at 0.7 mm, (base + i)·edge and base·edge + i·edge differ by an
+  // ulp there and the stored float32 shows it, so this case tells the two formulas apart.
+  const PLANE_CUT = { root: { kind: "expr", box: [[-3, -3, -3], [3, 3, 3]], sdf: "return max(length(p) - 2.5, p.x - 2.1);" } };
+  for (const edge of [1, 0.7]) {
+    test(`an anchored plan samples the base formula's bytes at ${edge} mm: the core equals evaluateLeaves`, () => {
+      for (const spec of [TWO_BONE(0), PLANE_CUT]) {
+        const plan = planLeaves(compileImplicit(spec), edge, { anchor: true });
+        expect(plan.base).not.toBeNull();
+        const js = evaluateLeaves(plan);
+        const nat = sampleAll(plan);
+        sameLeaves(nat.vals, js.leaves.map((l) => l.vals), "anchored");
+        expect(nat.clipped).toBe(js.clipped);
+      }
+    });
+  }
+
+  test("the plane cut tells the anchored formula from the origin formula at 0.7 mm", () => {
+    const plan = planLeaves(compileImplicit(PLANE_CUT), 0.7, { anchor: true });
+    const a = evaluateLeaves(plan), b = evaluateLeaves({ ...plan, base: null });
+    expect(a.leaves.some((l, k) => Buffer.compare(bytes(l.vals), bytes(b.leaves[k].vals)) !== 0)).toBe(true);
+  });
+
+  test("skipped leaves take the preloaded values and the rest are evaluated: equal to an unskipped sample", () => {
+    for (const [name, spec, edge] of [["two bone", TWO_BONE(0), 0.7], ["ball board", BALL_BOARD, 1.5]]) {
+      const plan = planLeaves(compileImplicit(spec), edge, { anchor: true });
+      const plain = sampleAll(plan);
+      const cache = createSampleCache();
+      const cold = sampleAll(plan, { cache });
+      expect(cold.cacheHits, name).toBe(0);
+      expect(cache.size, name).toBeGreaterThan(0);
+      sameLeaves(cold.vals, plain.vals, `${name} cold`);
+      const warm = sampleAll(plan, { cache });
+      expect(warm.cacheHits, name).toBe(cache.size);
+      expect(warm.cacheHits, name).toBeLessThan(plan.leaves.length);   // the outer-layer leaves are evaluated
+      sameLeaves(warm.vals, plain.vals, `${name} warm`);
+      expect(warm.clipped).toBe(plain.clipped);
+      if (plan.ownerRoot >= 0) {
+        const js = evaluateLeaves(plan);
+        sameLeaves(warm.owners, js.leaves.map((l) => l.owner), `${name} warm owners`);
+        sameLeaves(cold.owners, js.leaves.map((l) => l.owner), `${name} cold owners`);
+      } else {
+        expect(warm.owners).toBeNull();
+      }
+    }
+  });
+
+  test("a warm cache never changes clipped", () => {
+    // An anchored sphere plan cut short at its far faces: the outer layer runs through the solid.
+    const full = planLeaves(compileImplicit({ root: { kind: "sphere", r: 5 }, preview: 1 }), 1, { anchor: true });
+    const n = full.n.map((v) => v - 4);
+    const plan = { ...full, n, leaves: full.leaves.filter((l) => l.i0 < n[0] - 1 && l.j0 < n[1] - 1 && l.l0 < n[2] - 1) };
+    const js = evaluateLeaves(plan);
+    expect(js.clipped).toBe(true);
+    const cache = createSampleCache();
+    const cold = sampleAll(plan, { cache });
+    expect(cold.clipped).toBe(true);
+    const warm = sampleAll(plan, { cache });
+    expect(warm.cacheHits).toBeGreaterThan(0);
+    expect(warm.clipped).toBe(true);
+    sameLeaves(warm.vals, js.leaves.map((l) => l.vals), "clipped warm");
   });
 });
