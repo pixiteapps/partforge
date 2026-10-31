@@ -7,7 +7,7 @@ import { handle } from "../src/framework/jobs.js";
 import { h } from "../src/framework/geometry/solid-hash.js";
 import { compileImplicit, implicitHashable } from "../src/framework/geometry/implicit/index.js";
 import { implicitCallId, stripFrames } from "../src/framework/geometry/implicit/call-id.js";
-import { decodeBindings, encodeBindingProps, mergeBindings, BIND_CALL_STRIDE } from "../src/framework/geometry/mesh-bindings.js";
+import { decodeBindings, encodeBindingProps, mergeBindings, bindingCheck, BIND_CALL_STRIDE } from "../src/framework/geometry/mesh-bindings.js";
 import { TWO_BONE, BALL } from "./fixtures/skin-fixtures.js";
 
 let k;
@@ -84,6 +84,24 @@ describe("bindings on the Manifold preview kernel", () => {
     expect(seam).toBeGreaterThan(0);   // unbound corners where the box meets the capsule (cut vertices, box faces)
   });
 
+  test("seams between overlapping implicits leave no implicit corner unbound; a box's stay unbound", () => {
+    // A framed ball straddling the joint (its seam with the bones crosses both frames), and a
+    // box cut into the root bone. Every corner off the box is an implicit's and must be bound.
+    const id0 = implicitCallId(TWO_BONE(0), []);
+    const ballSpec = BALL("child", [0, 0, 4]);
+    const m = inBracket(() => k.union([k.implicit(TWO_BONE(0)), k.implicit(ballSpec), k.box([3, 2, -2], [10, 8, 2])]).toMesh());
+    const inBox = ([x, y, z]) => x >= 3 - 1e-4 && x <= 10 + 1e-4 && y >= 2 - 1e-4 && y <= 8 + 1e-4 && z >= -2 - 1e-4 && z <= 2 + 1e-4;
+    let offBoxUnbound = 0, boxOnly = 0;
+    for (let c = 0; c < m.triangles * 3; c++) {
+      const p = corner(m, c), f = m.bindings.frameA[c];
+      if (!inBox(p) && f === 0) offBoxUnbound++;
+      if (p[0] > 4.5) { expect(f).toBe(0); boxOnly++; }
+      if (f !== 0 && p[1] < 10) expect(m.bindings.frames[f]).toBe(`${id0}:root`);
+    }
+    expect(offBoxUnbound).toBe(0);
+    expect(boxOnly).toBeGreaterThan(0);
+  });
+
   test("two calls sharing a frame name decode to their own call ids", () => {
     const a = TWO_BONE(0), b = { ...BALL("child"), frames: TWO_BONE(0).frames };
     const id0 = implicitCallId(a, []), id1 = implicitCallId(b, [a]);
@@ -129,7 +147,7 @@ describe("bindings on the Manifold preview kernel", () => {
 
 describe("decodeBindings", () => {
   const calls = [{ id: "A#0", frames: ["root", "child"] }, { id: "B#0", frames: ["x"] }];
-  const check = (a, b) => (a * 31 + b) % 97;
+  const check = bindingCheck;
   const mesh = (rows) => ({
     numProp: 7,
     vertProperties: Float32Array.from(rows.flatMap((r, i) => [i, 0, 0, ...r])),
@@ -139,7 +157,7 @@ describe("decodeBindings", () => {
   test("an interpolated or check-failing code is unbound", () => {
     const g = mesh([
       [1025.5, 0, 1, 0],                        // interpolated code
-      [1025, 1, 0.5, (check(1025, 1) + 1) % 97], // check fails
+      [1025, 1, 0.5, (check(1025, 1) + 1) % 65521], // check fails
       [1, 2, 0.75, check(1, 2)],                // valid: A#0 root blended toward A#0 child
       [1025, 0, 1, check(1025, 0)],             // valid: B#0 x alone
       [3, 0, 1, check(3, 0)],                   // slot 0 has only 2 frames
@@ -150,6 +168,31 @@ describe("decodeBindings", () => {
     expect(Array.from(b.frameB)).toEqual([0, 0, 2, 0, 0, 0]);
     expect(Array.from(b.weight)).toEqual([1, 1, 0.75, 1, 1, 1]);
     expect(b.frames).toEqual([null, "A#0:root", "A#0:child", "B#0:x"]);
+  });
+
+  test("the midpoint of two valid triples is not a valid third (the check is not affine)", () => {
+    // codes 1 and 3 of slot 0, interpolated at t = ½: integer codes (2, 0), averaged check.
+    // An affine check ((a·31 + b) mod 97) would accept it as frame 2.
+    const mid = [2, 0, 1, (check(1, 0) + check(3, 0)) / 2];
+    const b = decodeBindings(mesh([mid, [1, 0, 1, check(1, 0)], [3, 0, 1, check(3, 0)]]), [{ id: "A#0", frames: ["p", "q", "r"] }]);
+    expect(Array.from(b.frameA)).toEqual([0, 1, 2]);
+  });
+
+  test("repair binds an unbound corner of a call's run through rebind, and leaves other runs unbound", () => {
+    // two triangles, run 0 (a call's) and run 1 (a plain solid's), every vertex interpolated
+    const rows = [[1.5, 0, 1, 0], [1.5, 0, 1, 0], [1.5, 0, 1, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
+    const g = { ...mesh(rows), runIndex: Uint32Array.of(0, 3, 6), runOriginalID: Uint32Array.of(7, 8) };
+    const seen = [];
+    const rebind = (slot, run, xyz) => {
+      seen.push([slot, run, Array.from(xyz)]);
+      return { frameA: Uint16Array.of(2, 1, 0), frameB: Uint16Array.of(1, 0, 0), weight: Float32Array.of(0.8, 1, 1) };
+    };
+    const b = decodeBindings(g, calls, { runSlot: (r) => (r === 0 ? 0 : -1), rebind });
+    expect(seen).toEqual([[0, 0, [0, 0, 0, 1, 0, 0, 2, 0, 0]]]);
+    expect(Array.from(b.frameA)).toEqual([1, 2, 0, 0, 0, 0]);
+    expect(Array.from(b.frameB)).toEqual([2, 0, 0, 0, 0, 0]);
+    expect(Array.from(b.weight)).toEqual([Math.fround(0.8), 1, 1, 1, 1, 1]);
+    expect(b.frames).toEqual([null, "A#0:child", "A#0:root"]);
   });
 
   test("a bad second code keeps the first frame at full weight", () => {
@@ -167,7 +210,7 @@ describe("decodeBindings", () => {
     const bind = { frameA: Uint16Array.of(1, 2, 0), frameB: Uint16Array.of(2, 0, 0), weight: Float32Array.of(0.625, 1, 1) };
     const props = encodeBindingProps(bind, 1);
     expect(Array.from(props.subarray(0, 4))).toEqual([BIND_CALL_STRIDE + 1, BIND_CALL_STRIDE + 2, 0.625, check(1025, 1026)]);
-    expect(Array.from(props.subarray(8, 12))).toEqual([0, 0, 1, 0]);
+    expect(Array.from(props.subarray(8, 12))).toEqual([0, 0, 1, check(0, 0)]);
     const vp = new Float32Array(3 * 7);
     for (let v = 0; v < 3; v++) vp.set(props.subarray(v * 4, v * 4 + 4), v * 7 + 3);
     const b = decodeBindings({ numProp: 7, vertProperties: vp, triVerts: Uint32Array.of(0, 1, 2) },

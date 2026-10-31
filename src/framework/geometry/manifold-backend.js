@@ -174,6 +174,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const recordWarning = (msg) => { buildWarnings.push(msg); console.warn(`partforge: ${msg}`); };
   // k.implicit's engine warnings, keyed by the cached solid they belong to (re-recorded on a hit).
   const implicitWarnings = new WeakMap();
+  // k.implicit solid -> the originalIDs its runs carry (meshOut's binding repair finds a
+  // call's triangles by them).
+  const implicitIds = new WeakMap();
   // k.implicit's automatic preview edge per tree hash (a pure function of the tree, so
   // never stale); cleared whole when it reaches AUTO_PREVIEW_MEMO trees.
   const autoPreviewEdges = new Map();
@@ -185,7 +188,10 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // bindings, mesh-bindings.js): `{ id, frames, shape }`, a call's slot being its index.
   // Reset when the outermost bracket opens and closes (brackets nest, as the solid
   // cache's do); outside a bracket nothing is recorded, so a toMesh there carries no
-  // bindings and a call keys as slot 0.
+  // bindings and a call keys as slot 0. So a generate with `cache: false` (no bracket)
+  // posts no bindings, and the oracle's buildView — one bracket per VIEW — runs slots on
+  // across sub-parts (its framed implicits key apart from the display build's; their
+  // bindings are never read there).
   let implicitCalls = [];
   let bracketDepth = 0;
   // Profile-validity warnings (profile-warnings.js): one warner per kernel so a
@@ -278,13 +284,41 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     return { value: cs, pin: cs, dispose: () => del(cs) };
   });
 
+  // decodeBindings' repair hooks for one MeshGL: a run whose originalID belongs to a bound
+  // k.implicit call of this bracket gets its unbound (boolean-cut) vertices bound afresh by
+  // that call's own bindVertices, after undoing the run's transform (positions are the
+  // posed mesh's; the call bound in its own build frame). A label() or other re-stamp
+  // that gives the run a fresh originalID loses the repair (its seam corners stay unbound).
+  function bindingRepair(g) {
+    if (!implicitCalls.some((c) => c.ids)) return {};
+    const slotOf = new Map();
+    implicitCalls.forEach((c, s) => { for (const id of c.ids ?? []) slotOf.set(id, s); });
+    const roid = g.runOriginalID, rt = g.runTransform;
+    return {
+      runSlot: (r) => slotOf.get(roid[r]) ?? -1,
+      rebind: (slot, r, xyz) => {
+        const c = implicitCalls[slot];
+        const M = rt && rt.length >= (r + 1) * 12 ? invertAffine(affineAt(rt, r)) : IDENTITY;
+        if (!M) return null;
+        const p = new Float64Array(xyz.length);
+        for (let i = 0; i < xyz.length; i += 3) {
+          const x = xyz[i], y = xyz[i + 1], z = xyz[i + 2];
+          p[i] = M[0] * x + M[3] * y + M[6] * z + M[9];
+          p[i + 1] = M[1] * x + M[4] * y + M[7] * z + M[10];
+          p[i + 2] = M[2] * x + M[5] * y + M[8] * z + M[11];
+        }
+        return bindVertices(c.compiled, p, c.edge);
+      },
+    };
+  }
+
   // Copy the mesh out into JS-owned arrays (so it survives cleanup) and free the
   // transient mesh handle.
   function meshOut(m, asStl) {
     const g = m.getMesh();
     const r = asStl ? stlFromMesh(g) : creasedNormals(g, { policies: oidPolicies, featureLabels, surfaces: blendSurfaces });
     if (!asStl) {
-      const bindings = decodeBindings(g, implicitCalls);
+      const bindings = decodeBindings(g, implicitCalls, bindingRepair(g));
       if (bindings) r.bindings = bindings;
     }
     g.delete?.();
@@ -1000,13 +1034,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     implicit: (spec) => {
       const compiled = compileImplicit(spec, { images });
       const isPreview = quality !== "print";
-      let slot = 0;
+      let slot = 0, call = null;
       if (isPreview && bracketDepth > 0) {
         const shape = implicitShapeHash(spec);
         let n = 0;
         for (const c of implicitCalls) if (c.shape === shape) n++;
         slot = implicitCalls.length;
-        implicitCalls.push({ id: `${shape}#${n}`, frames: compiled.frameNames ?? [], shape });
+        implicitCalls.push((call = { id: `${shape}#${n}`, frames: compiled.frameNames ?? [], shape }));
       }
       const binds = isPreview && (compiled.frameNames?.length ?? 0) > 0 && compiled.frameNames.length <= MAX_BIND_FRAMES;
       const { preview, resolution, ...rest } = spec;
@@ -1041,9 +1075,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         for (const id of ids) oidPolicies.set(id, policy);
         const value = wrap(m, key);
         implicitWarnings.set(value, out.warnings);
+        implicitIds.set(value, ids);
         return { value, pin: m, dispose: () => { for (const id of ids) oidPolicies.delete(id); m.delete?.(); } };
       });
       for (const w of implicitWarnings.get(solid) ?? []) recordWarning(w);
+      // What meshOut's seam repair needs to re-bind this call's cut vertices; kept for the
+      // bracket's lifetime (implicitCalls is dropped when it closes).
+      if (call && binds) Object.assign(call, { compiled, edge, ids: implicitIds.get(solid) ?? [] });
       return solid;
     },
     // Where a k.implicit spec's frames and labelled nodes end up (implicit/frame-report.js).
