@@ -4094,7 +4094,12 @@ previously didn't; that's the fix working as intended, not a regression.
 
 **Definition shape** — `missing-meta-title`, `missing-defaults`, `no-buildable-parts`,
 `missing-views`, `part-view-unknown`, `invalid-probes` (all errors); `view-unused`,
-`default-view-ambiguous` (warnings). `invalid-probes` fires when a declared
+`default-view-ambiguous` (warnings). **Handles** — `handle-unknown-limb`,
+`handle-unknown-param`, `handle-param-count`, `handle-unknown-joint`,
+`handle-bad-mode` (all errors): a declared `handles` entry names a limb `derive`
+does not return, a parameter missing from `defaults` (or not numeric), a wrong
+number of position/aim parameters, a joint the limb lacks, or a mode other than
+`goal`/`angles`. `invalid-probes` fires when a declared
 `probes` block isn't an object of functions (see "Probes" above).
 
 **Parameter schema** — `features-requires-sliders`, `features-requires-on`,

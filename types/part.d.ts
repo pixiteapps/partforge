@@ -908,4 +908,36 @@ export interface PartDefinition<P = ResolvedParams, D = Derived> {
    * exported. Each entry returns either a solid to measure or plain JSON.
    */
   probes?: Record<string, (k: GeometryKernel, p: P, d: D) => unknown>;
+  /**
+   * Draggable inverse-kinematics points over a posed limb returned by `derive`
+   * (`limb(...).pose(...)` from `partforge/kinematics`). Parameters named here must be
+   * numeric keys of `defaults`.
+   */
+  handles?: Record<string, Handle>;
+}
+
+/** A draggable IK point. `goal` drags a point on the limb; `angles` drags joint values directly. */
+export type Handle = GoalHandle | AnglesHandle;
+export interface GoalHandle {
+  /** Key of the posed limb in `derive`'s output. */
+  limb: string;
+  /** A joint name, or "tip" (the default). */
+  at?: string;
+  mode: "goal";
+  params: {
+    /** The three parameters (x, y, z) the handle writes. */
+    position: [string, string, string];
+    /** Optional aim: two parameters (angles) or three (a direction). */
+    aim?: [string, string] | [string, string, string];
+  };
+  /** Parameters used to seed the solve. */
+  seed?: string[];
+}
+export interface AnglesHandle {
+  limb: string;
+  mode: "angles";
+  /** The joint-value parameters this handle drags. */
+  params: string[];
+  /** A parameter name; while truthy, this handle's own parameters stay out of a drag solve. */
+  lock?: string;
 }
