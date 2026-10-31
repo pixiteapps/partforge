@@ -224,3 +224,68 @@ describe("place from rest", () => {
     expect(() => p.place(points([0, 0, 0]), "pip", { form: "rest" })).toThrow(/place: unknown option "form"/);
   });
 });
+
+describe("ball joint posed by rotate steps", () => {
+  const base = { at: [3, -2, 5], toward: [1, 1, 0], bendToward: [0, 0, -1] };
+  const ballLimb = (extra = {}) => limb("b", {
+    ...base, joints: [{ name: "ball", type: "ball" }, { name: "mcp", offset: [0, 0, -1], range: [0, 90] }], lengths: [22, 15], ...extra,
+  });
+  const frameOf = (posed, name) => Array.from(worldOf(posed.frames, name));
+  const sameFrames = (a, b, names) => names.forEach((n) => frameOf(a, n).forEach((v, i) => near(v, frameOf(b, n)[i], 1e-9)));
+
+  it("reproduces a four-step swing, yaw, roll and twist made of zero-length hinges", () => {
+    const hinges = limb("b", {
+      ...base,
+      joints: [
+        { name: "swing", range: [-180, 180] }, { name: "yaw", axis: "spread", range: [-180, 180] },
+        { name: "roll", axis: "twist", range: [-180, 180] }, { name: "ball", range: [-180, 180] },
+        { name: "mcp", offset: [0, 0, -1], range: [0, 90] },
+      ],
+      lengths: [0, 0, 0, 22, 15],
+    });
+    for (const [swing, yaw, roll, twist] of [[60, 30, 40, 25], [10, -70, 0, 90], [120, 15, -160, -30]]) {
+      const old = hinges.pose({ bend: { swing, yaw, roll, ball: twist, mcp: 35 } });
+      const steps = [{ axis: "x", deg: -swing }, { axis: "z", deg: yaw }, { axis: "y", deg: roll }, { axis: "x", deg: -twist }];
+      const now = ballLimb().pose({ bend: { ball: { rotate: steps }, mcp: 35 } });
+      sameFrames(now, old, ["b.mcp", "b.tip"]);
+      expect(now.report.clamped).toEqual([false, false]);
+    }
+  });
+
+  it("matches the rotation of its steps for vector axes, and at a 180° swing", () => {
+    const steps = [{ axis: [1, 2, -0.5], deg: 47 }, { axis: "y", deg: 210 }, { axis: [0, 1, 1], deg: -33 }];
+    const turned = limb("b", { ...base, joints: [{ name: "ball", axis: [0, 0, 1], range: [0, 0] }, { name: "mcp", offset: [0, 0, -1], range: [0, 90] }], lengths: [22, 15] });
+    const ref = turned.pose({});
+    ref.frames["b.ball"].rotate = [...(ref.frames["b.ball"].rotate ?? []), ...steps];
+    ref.frames["b.mcp"].rotate = [{ axis: [1, 0, 0], deg: -20 }];
+    sameFrames(ballLimb().pose({ bend: { ball: { rotate: steps }, mcp: 20 } }), ref, ["b.mcp", "b.tip"]);
+    // Straight back: no shortest swing, so it is read as a bend of 180°.
+    const back = ballLimb().pose({ bend: { ball: { rotate: [{ axis: "x", deg: 180 }, { axis: "y", deg: 30 }] } } });
+    expect(Math.abs(back.report.bend[0].bend)).toBe(180);
+    const flip = limb("f", { ...base, joints: [{ name: "a", axis: [1, 0, 0], range: [180, 180] }, { name: "mcp", offset: [0, 0, -1], range: [0, 90] }], lengths: [22, 15] }).pose({});
+    flip.frames["f.a"].rotate.push({ axis: "y", deg: 30 });
+    near3(tipOf(back), tipOf(flip), 1e-9);
+  });
+
+  it("is clamped by the cone and reported as one swing and twist", () => {
+    const p = ballLimb({ joints: [{ name: "ball", type: "ball", cone: 30 }, { name: "mcp", range: [0, 90] }] })
+      .pose({ bend: { ball: { rotate: [{ axis: "x", deg: -40 }, { axis: "y", deg: 15 }] } } });
+    expect(p.report.bend[0]).toEqual({ bend: 30, spread: 0, twist: 15 });
+    expect(p.report.clamped[0]).toBe(true);
+  });
+
+  it("mirrors symmetrically", () => {
+    const def = { at: [5, 0, 0], toward: [1, 0, 0], bendToward: [0, 0, -1], joints: [{ name: "b", type: "ball" }, "k"], lengths: [10, 10] };
+    const pose = { bend: { b: { rotate: [{ axis: "x", deg: -25 }, { axis: "z", deg: 20 }, { axis: "y", deg: 35 }] }, k: 25 } };
+    const r = tipOf(limb("r", def).pose(pose)), l = tipOf(limb("l", { ...def, mirror: "YZ" }).pose(pose));
+    near3(l, [-r[0], r[1], r[2]]);
+  });
+
+  it("validates its steps", () => {
+    const t = ballLimb();
+    expect(() => t.pose({ bend: { ball: { rotate: [{ axis: "x", deg: 10 }], bend: 3 } } })).toThrow(/bend.ball.bend: use rotate or bend\/spread\/twist, not both/);
+    expect(() => t.pose({ bend: { ball: { rotate: [{ axis: "w", deg: 10 }] } } })).toThrow(/bend.ball.rotate\[0\].axis: must be "x", "y", "z" or a non-zero \[x, y, z\]/);
+    expect(() => t.pose({ bend: { ball: { rotate: { axis: "x", deg: "10" } } } })).toThrow(/bend.ball.rotate.deg: must be a finite number/);
+    expect(() => t.pose({ bend: { ball: { rotate: [{ axis: "x", by: 10 }] } } })).toThrow(/bend.ball.rotate\[0\].by: unknown option "by"/);
+  });
+});

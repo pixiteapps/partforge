@@ -34,8 +34,11 @@ export interface LimbJoint {
   offset?: Point3;
 }
 
-/** A ball joint's pose: one swing of √(bend² + spread²) degrees, then a twist about the swung segment; absent keys 0. */
-export interface LimbBallValue { bend?: number; spread?: number; twist?: number }
+/**
+ * A ball joint's pose: one swing of √(bend² + spread²) degrees, then a twist about the swung segment, absent keys 0;
+ * or `{ rotate }`, frame-style steps in the joint's frame (each about the current axes), turned into that swing and twist.
+ */
+export type LimbBallValue = { bend?: number; spread?: number; twist?: number } | { rotate: RotateStep | RotateStep[] };
 
 /** A ball joint's final value, every key present. */
 export interface LimbBallResult { bend: number; spread: number; twist: number }
