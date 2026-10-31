@@ -10,6 +10,9 @@ import { manifoldFromMesh, manifoldFromWeldedMesh, ringStackManifold } from "./m
 import { compileImplicit, meshImplicit, implicitHashable, choosePreviewEdge, IMPLICIT_DEFAULTS } from "./implicit/index.js";
 import { createSampleCache } from "./implicit/sample-cache.js";
 import { implicitFrames } from "./implicit/frame-report.js";
+import { bindVertices, MAX_BIND_FRAMES } from "./implicit/bindings.js";
+import { implicitShapeHash } from "./implicit/call-id.js";
+import { encodeBindingProps, decodeBindings, BIND_PROPS } from "./mesh-bindings.js";
 import { createSolidCache } from "./solid-cache.js";
 import { hoistCommonSuffix } from "./transform-hoist.js";
 import { addSugar } from "./solid-sugar.js";
@@ -178,6 +181,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // anchors its grid to the world lattice and reuses the samples a pose change did not
   // reach — the same bytes as a cold build. Bounded (SAMPLE_CACHE_BYTES); never used at print.
   const sampleCache = createSampleCache();
+  // The preview k.implicit CALLS of the open sub-part bracket, in call order (the pose
+  // bindings, mesh-bindings.js): `{ id, frames, shape }`, a call's slot being its index.
+  // Reset when the outermost bracket opens and closes (brackets nest, as the solid
+  // cache's do); outside a bracket nothing is recorded, so a toMesh there carries no
+  // bindings and a call keys as slot 0.
+  let implicitCalls = [];
+  let bracketDepth = 0;
   // Profile-validity warnings (profile-warnings.js): one warner per kernel so a
   // self-crossing profile built six times records ONE line; reset per drain.
   const profileWarner = makeProfileWarner(recordWarning);
@@ -273,6 +283,10 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   function meshOut(m, asStl) {
     const g = m.getMesh();
     const r = asStl ? stlFromMesh(g) : creasedNormals(g, { policies: oidPolicies, featureLabels, surfaces: blendSurfaces });
+    if (!asStl) {
+      const bindings = decodeBindings(g, implicitCalls);
+      if (bindings) r.bindings = bindings;
+    }
     g.delete?.();
     return r;
   }
@@ -977,8 +991,24 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // clipped) live beside the cached value and are recorded again on every hit, so
     // each build that uses the solid reports them. A preview build hands the engine the
     // kernel's sample cache (a world-anchored grid, byte-identical warm or cold); print never.
+    //
+    // A preview call inside a sub-part bracket also records itself (implicitCalls: its call
+    // id and frame table) and, when its spec has frames, binds every vertex to ≤ 2 of them
+    // (implicit/bindings.js) as four vertex properties coded by its SLOT — its index among
+    // the bracket's calls — which is why such a solid's key holds the slot. A frameless
+    // call binds nothing: no props, and the key it always had. Print never binds.
     implicit: (spec) => {
       const compiled = compileImplicit(spec, { images });
+      const isPreview = quality !== "print";
+      let slot = 0;
+      if (isPreview && bracketDepth > 0) {
+        const shape = implicitShapeHash(spec);
+        let n = 0;
+        for (const c of implicitCalls) if (c.shape === shape) n++;
+        slot = implicitCalls.length;
+        implicitCalls.push({ id: `${shape}#${n}`, frames: compiled.frameNames ?? [], shape });
+      }
+      const binds = isPreview && (compiled.frameNames?.length ?? 0) > 0 && compiled.frameNames.length <= MAX_BIND_FRAMES;
       const { preview, resolution, ...rest } = spec;
       const autoPreview = () => {
         const treeKey = h("implicitPreviewEdge", implicitHashable(rest, compiled));
@@ -991,7 +1021,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       };
       const edge = quality === "print" ? (resolution ?? IMPLICIT_DEFAULTS.resolution) : (preview ?? autoPreview());
       const keySpec = quality === "print" ? { ...rest, resolution: edge } : { ...rest, preview: edge };
-      const key = h("implicit", implicitHashable(keySpec, compiled), quality);
+      const key = binds ? h("implicit", implicitHashable(keySpec, compiled), quality, slot)
+        : h("implicit", implicitHashable(keySpec, compiled), quality);
       const solid = cache.lookup(key, () => {
         const out = meshImplicit(compiled, edge, { tier: quality, cache: quality === "print" ? undefined : sampleCache });
         if (out.indices.length === 0) {
@@ -1003,8 +1034,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         // seams between siblings stay smooth. Anything else is one ORGANIC skin.
         const pieces = out.triOwner ? compiled.ownerK : 1;
         const first = wasm.Manifold.reserveIDs(pieces), ids = Array.from({ length: pieces }, (_, i) => first + i);
-        const m = T(out.triOwner ? manifoldFromWeldedMesh(wasm, out.positions, out.indices, undefined, out.triOwner, ids)
-          : manifoldFromWeldedMesh(wasm, out.positions, out.indices, first));
+        const extra = binds ? { per: BIND_PROPS, data: encodeBindingProps(bindVertices(compiled, out.positions, edge), slot) } : null;
+        const m = T(out.triOwner ? manifoldFromWeldedMesh(wasm, out.positions, out.indices, undefined, out.triOwner, ids, extra)
+          : manifoldFromWeldedMesh(wasm, out.positions, out.indices, first, null, null, extra));
         const policy = out.triOwner ? Object.freeze({ ...ORGANIC, group: first }) : ORGANIC;
         for (const id of ids) oidPolicies.set(id, policy);
         const value = wrap(m, key);
@@ -1142,8 +1174,15 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // region-in/region-out form directly. `_`-prefixed — not part of the public kernel
     // surface.
     _offsetRegions: offsetRegions,
-    beginSubPart: (name) => cache.begin(name),
-    endSubPart: () => cache.end(),
+    beginSubPart: (name) => {
+      if (bracketDepth++ === 0) implicitCalls = [];
+      cache.begin(name);
+    },
+    endSubPart: () => {
+      cache.end();
+      if (bracketDepth > 0 && --bracketDepth > 0) return;
+      implicitCalls = [];
+    },
     sweepCache: () => cache.sweep(),
     dropCache: () => { cache.clear(); sampleCache.clear(); },
     setCacheBudget: (bytes) => cache.setBudget(bytes),

@@ -84,8 +84,23 @@ export function ringStackManifold(wasm, rings, { closed = false } = {}) {
 // `triOwner` (optional, one owner per triangle) with `ids` (owner -> reserved original ID)
 // instead partitions the mesh into one run per owner present, the triangles stably sorted
 // into owner order — a contact's pieces, each its own surface (implicit/index.js).
-export function manifoldFromWeldedMesh(wasm, V, Tr, originalID, triOwner = null, ids = null) {
+// `extra` (optional, `{ per, data }`) interleaves `per` more floats per vertex after its xyz
+// (`numProp = 3 + per`; `data` holds nVert · per) — vertex properties Manifold carries
+// through every boolean, interpolating them at the vertices a cut creates (the pose
+// bindings, mesh-bindings.js).
+export function manifoldFromWeldedMesh(wasm, V, Tr, originalID, triOwner = null, ids = null, extra = null) {
   const opts = { numProp: 3, vertProperties: Float32Array.from(V), triVerts: Uint32Array.from(Tr) };
+  if (extra && extra.per > 0) {
+    const per = extra.per, np = 3 + per, nV = (V.length / 3) | 0, vp = new Float32Array(nV * np), d = extra.data;
+    if (d.length !== nV * per) throw new Error(`manifoldFromWeldedMesh: extra.data has ${d.length} floats, want ${nV * per}`);
+    for (let v = 0; v < nV; v++) {
+      const o = v * np;
+      vp[o] = V[v * 3]; vp[o + 1] = V[v * 3 + 1]; vp[o + 2] = V[v * 3 + 2];
+      for (let j = 0; j < per; j++) vp[o + 3 + j] = d[v * per + j];
+    }
+    opts.numProp = np;
+    opts.vertProperties = vp;
+  }
   if (triOwner) {
     const nTri = Tr.length / 3, order = Uint32Array.from({ length: nTri }, (_, t) => t);
     order.sort((a, b) => triOwner[a] - triOwner[b] || a - b);   // stable: ties keep triangle order

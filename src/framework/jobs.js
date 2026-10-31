@@ -185,7 +185,8 @@ async function scoreMatchTargets(built, targets, onProgress) {
 // A progressive generate hands over its built sub-parts at most this often (ms).
 const PROGRESSIVE_BATCH_MS = 300;
 const transferOf = (meshes) => meshes.flatMap((m) =>
-  [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer].filter(Boolean));
+  [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer,
+    m.bindings?.frameA.buffer, m.bindings?.frameB.buffer, m.bindings?.weight.buffer].filter(Boolean));
 
 // The WASM traps that mean the kernel ran out of heap (or was corrupted by doing so).
 const HEAP_TRAP_RE = /out of bounds memory access|memory access out of bounds|Cannot enlarge memory|out of memory/i;
@@ -495,7 +496,9 @@ export async function handle(kernel, part, msg, post, opts = {}) {
         try {
           const { solid, reads, frame } = displayWithReads(name);
           const m = solid.toMesh({ quality: "preview" });
-          meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features, reads, frame });
+          // `bindings` (a preview k.implicit's pose bindings, mesh-bindings.js) is undefined
+          // when the backend gave none.
+          meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features, reads, frame, bindings: m.bindings });
         } finally {
           for (const message of kernel.takeBuildWarnings?.() ?? []) warnings.push({ part: name, message });
           if (useCache) kernel.endSubPart?.(); // always close the bracket — a throw mid-build must not strand pinned solids

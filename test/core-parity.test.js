@@ -74,6 +74,7 @@ async function run(part, on) {
   const meshes = built.map(({ name, mesh }) => ({
     name, triangles: mesh.triangles, features: mesh.features ?? null,
     positions: bytes(mesh.positions), normals: bytes(mesh.normals), edges: bytes(mesh.edges), featureIds: bytes(mesh.featureIds),
+    bindings: mesh.bindings ? { frames: mesh.bindings.frames, frameA: bytes(mesh.bindings.frameA), frameB: bytes(mesh.bindings.frameB), weight: bytes(mesh.bindings.weight) } : null,
   }));
   kernel.cleanup?.();
   const measured = measure(kernel, part, view, {}, { minWall: true, gaps: true });
@@ -117,6 +118,12 @@ describe.each([["SIMD", true], ["scalar", false]])("%s build", (_, simd) => {
         expect(m.features).toEqual(o.features);
         for (const k of ["positions", "normals", "edges", "featureIds"]) {
           expect(m[k] === null ? null : Buffer.compare(m[k], o[k]), `${m.name}.${k}`).toBe(o[k] === null ? null : 0);
+        }
+        // Pose bindings (a preview k.implicit's, mesh-bindings.js): both sides or neither, equal.
+        expect(m.bindings === null, `${m.name}.bindings present`).toBe(o.bindings === null);
+        if (m.bindings) {
+          expect(m.bindings.frames, `${m.name}.bindings.frames`).toEqual(o.bindings.frames);
+          for (const k of ["frameA", "frameB", "weight"]) expect(Buffer.compare(m.bindings[k], o.bindings[k]), `${m.name}.bindings.${k}`).toBe(0);
         }
       });
       expect(on.measured).toEqual(off.measured);
