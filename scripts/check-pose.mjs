@@ -1,6 +1,7 @@
-// Browser check for Pose mode (spec 2026-10-30 inverse kinematics §4): start a dev
-// server, open each pose page in real Chromium, turn Pose mode on and drag a handle
-// with real pointer events — the arbitration with orbit, pointer capture, the
+// Browser check for posing (spec 2026-10-30 inverse kinematics §4): start a dev
+// server, open each pose page in real Chromium, hover near a limb (posing is always on
+// in the normal click mode — there is no toggle) and drag a handle with real pointer
+// events — the arbitration with orbit and click-to-pick, pointer capture, the
 // rAF-coalesced drag and the regen hold are things happy-dom cannot model.
 //
 //   node scripts/check-pose.mjs [--keep]
@@ -12,6 +13,11 @@
 //     may be posted until release, exactly one is posted after it, and the new mesh
 //     and opacity 1 must reach the screen in the same frame (sampled every frame:
 //     never the new geometry still ghosted, never the old geometry back at full).
+//     Then the pick arbitration (its app counts onPick in `window.__pfPicks`): a click
+//     on a tip dot pins it and picks nothing, a drag picks nothing, a plain click on the
+//     model away from the handles still picks; and turning measure on hides posing
+//     (isLive false, no handle points, a press where a tip was is not a drag) until it
+//     goes off again.
 //   robot-arm.html, hand.html (both required) — the reference parts. A 20-move drag of the first
 //     handle posts no `generate` job, commits exactly once on release, the committed
 //     values differ from the part's defaults, and the console stays clean.
@@ -132,17 +138,17 @@ function instrument() {
 
 const generates = (log, since = -Infinity) => log.filter((e) => e.dir === "out" && e.type === "generate" && e.at > since);
 
-/** Load a page, wait for its first build, turn Pose mode on. Returns the canvas box. */
+/** Load a page and wait for its first build; posing must be live with no toggle. Returns the canvas box. */
 async function openPoseApp(page, url) {
   await page.goto(url, { waitUntil: "load", timeout: 30000 });
   await page.waitForFunction(() => document.getElementById("download")?.disabled === false, { timeout: 60000 });
-  const button = page.locator("#pose");
-  if (!(await button.count())) throw new Error("no #pose button");
-  await button.click();
-  if ((await button.getAttribute("aria-pressed")) !== "true") throw new Error("#pose did not turn on");
-  await sleep(150); // a frame or two: the overlay is built on enable
+  if (await page.locator("#pose:visible").count()) throw new Error("a visible #pose toggle: posing has no toggle");
+  await sleep(150); // a frame or two
+  if (!(await page.evaluate(() => window.__pfRuntime.pose.isLive()))) throw new Error("posing is not live after the first build");
   return page.locator(VIEWER_CANVAS).boundingBox();
 }
+
+const canvasCursor = (page) => page.evaluate((sel) => document.querySelector(sel).style.cursor, VIEWER_CANVAS);
 
 /** The first handle point inside the canvas that the canvas itself receives a press on. */
 async function pickHandle(page, box, preferId) {
@@ -163,8 +169,12 @@ async function dragFrom(page, h, box, onMidDrag) {
   const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
   const len = Math.hypot(cx - h.px, cy - h.py) || 1;
   const dx = ((cx - h.px) / len) * 6, dy = ((cy - h.py) / len) * 6 - 2;
-  await page.mouse.move(h.px, h.py);
+  // Hover in from the side: near the limb its dots show, on the dot the cursor is a grab.
+  await page.mouse.move(h.px + 18, h.py, { steps: 3 });
+  await page.mouse.move(h.px, h.py, { steps: 3 });
   await sleep(50);
+  const cursor = await canvasCursor(page);
+  if (cursor !== "grab") throw new Error(`hovering handle ${h.handleId}:${h.at} shows cursor "${cursor}", not "grab"`);
   await page.mouse.down();
   for (let i = 1; i <= DRAG_MOVES; i++) {
     await page.mouse.move(h.px + dx * i, h.py + dy * i);
@@ -234,7 +244,75 @@ async function checkSmoke(page, url, errors) {
   if (JSON.stringify(pinned.pins) !== JSON.stringify([want])) errors.push(`a click on ${want} left pins ${JSON.stringify(pinned.pins)}`);
   if (pinned.jobs) errors.push(`a pin click posted ${pinned.jobs} generate job(s)`);
   if (pinned.commits !== 1) errors.push(`a pin click committed (${pinned.commits} commits in all)`);
-  return { midOpacity, jobs: result.jobs.length, after: result.after?.opacity, commits: result.commits?.length ?? null, frames: result.samples.length, pins: pinned.pins };
+  const picks = await checkPicks(page, box, errors);
+  const measure = await checkMeasureHides(page, box, errors);
+  return { midOpacity, jobs: result.jobs.length, after: result.after?.opacity, commits: result.commits?.length ?? null, frames: result.samples.length, pins: pinned.pins, ...picks, ...measure };
+}
+
+/**
+ * Pick arbitration, after the drag and the pin click above: neither picked; a plain
+ * click on the model, away from every handle, does. The candidate points are a grid
+ * over the canvas, nearest the centre first, more than 60 px from every handle point
+ * and showing no grab cursor; the first one whose click picks passes.
+ */
+async function checkPicks(page, box, errors) {
+  const picksAfterPose = await page.evaluate(() => window.__pfPicks?.length ?? null);
+  if (picksAfterPose === null) { errors.push("the page exposes no window.__pfPicks (its app must count onPick)"); return {}; }
+  if (picksAfterPose !== 0) errors.push(`a pose drag or pin click opened ${picksAfterPose} pick(s)`);
+  const pinsBefore = await page.evaluate(() => JSON.stringify(window.__pfRuntime.getViewerState().pose?.pins ?? null));
+  const handles = await page.evaluate(() => window.__pfRuntime.pose.handlePoints());
+  const cands = [];
+  for (let gx = 0.2; gx <= 0.8; gx += 0.05) {
+    for (let gy = 0.2; gy <= 0.8; gy += 0.05) {
+      const x = box.width * gx, y = box.height * gy;
+      if (handles.every((p) => Math.hypot(p.x - x, p.y - y) > 60)) cands.push({ x, y });
+    }
+  }
+  cands.sort((a, b) => Math.hypot(a.x - box.width / 2, a.y - box.height / 2) - Math.hypot(b.x - box.width / 2, b.y - box.height / 2));
+  let picked = null;
+  for (const c of cands.slice(0, 40)) {
+    await page.mouse.move(box.x + c.x, box.y + c.y, { steps: 2 });
+    await sleep(30);
+    if ((await canvasCursor(page)) === "grab") continue;
+    await page.mouse.click(box.x + c.x, box.y + c.y);
+    await sleep(120);
+    const n = await page.evaluate(() => window.__pfPicks.length);
+    if (n > picksAfterPose) { picked = { ...c, n: n - picksAfterPose }; break; }
+  }
+  if (!picked) errors.push("no plain click on the model away from the handles picked");
+  else if (picked.n !== 1) errors.push(`a plain click picked ${picked.n} times`);
+  const pinsAfter = await page.evaluate(() => JSON.stringify(window.__pfRuntime.getViewerState().pose?.pins ?? null));
+  if (pinsAfter !== pinsBefore) errors.push(`a plain click changed the pins (${pinsBefore} -> ${pinsAfter})`);
+  return { plainClickPicked: !!picked };
+}
+
+/** Measure on hides posing (handles, Release pins) and a press where a tip was orbits; off restores it. */
+async function checkMeasureHides(page, box, errors) {
+  const button = page.locator("#measure");
+  if (!(await button.count())) { errors.push("no #measure button to check posing stands down"); return {}; }
+  const tip = await pickHandle(page, box, "a");
+  const releaseShown = () => page.evaluate(() => { const a = document.querySelector(".pf-pose-actions"); return !!a && !a.hidden; });
+  const pinsShowRelease = (await page.evaluate(() => window.__pfRuntime.pose.pinCount())) > 0;
+  if (pinsShowRelease && !(await releaseShown())) errors.push("Release pins is hidden while pins exist and posing is live");
+  await button.click();
+  await sleep(150);
+  const off = await page.evaluate(() => ({ live: window.__pfRuntime.pose.isLive(), points: window.__pfRuntime.pose.handlePoints().length }));
+  if (off.live) errors.push("posing is still live with measure on");
+  if (off.points) errors.push(`${off.points} handle point(s) with measure on`);
+  if (await releaseShown()) errors.push("Release pins shows with measure on");
+  const commits = await page.evaluate(() => window.__pfCommits.length);
+  await page.mouse.move(tip.px, tip.py, { steps: 2 });
+  if ((await canvasCursor(page)) === "grab") errors.push("a pose grab cursor with measure on");
+  await page.mouse.down();
+  await page.mouse.move(tip.px + 30, tip.py + 30, { steps: 6 });
+  await page.mouse.up();
+  await sleep(300);
+  if ((await page.evaluate(() => window.__pfCommits.length)) !== commits) errors.push("a drag from a tip committed with measure on");
+  await button.click();
+  await sleep(150);
+  if (!(await page.evaluate(() => window.__pfRuntime.pose.isLive()))) errors.push("posing did not come back when measure went off");
+  if (pinsShowRelease && !(await releaseShown())) errors.push("Release pins did not come back when measure went off");
+  return { measureHides: !off.live && !off.points };
 }
 
 function checkCommits({ commits, defaults }, errors) {

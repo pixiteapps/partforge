@@ -43,10 +43,10 @@ describe("createPoseScene", () => {
       scene.setLimbs([INFO]);
       expect(scene.group.parent).toBe(viewer.__parts);
       expect(viewer.registerCanonicalCaptureHidden).toHaveBeenCalledWith(scene.group);
-      const tipOnly = scene.group.children.length;
+      expect(scene.group.children.length).toBe(0); // at rest: nothing without a pin
       scene.tick();
       scene.setHover("arm");
-      expect(scene.group.children.length).toBeGreaterThan(tipOnly);
+      expect(scene.group.children.length).toBeGreaterThan(0);
       scene.setActive({ limb: "arm", grab: "elbow", clamped: [false, true], target: [30, 5, 0], residual: 10 });
       scene.setPins(["arm"]);
       scene.setAimRings({ at: [20, 5, 0], axes: [[1, 0, 0], [0, 1, 0], [0, 0, 1]] });
@@ -62,6 +62,28 @@ describe("createPoseScene", () => {
       expect(viewer.requestRender).toHaveBeenCalled();
     });
   }
+
+  it("at rest draws only pin badges; a hovered limb shows its dots; a hovered dot gets a halo", () => {
+    const viewer = fakeViewer();
+    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    scene.setLimbs([INFO]);
+    expect(scene.group.children.length).toBe(0);
+    scene.setPins(["arm"]);
+    expect(scene.group.children.length).toBe(2); // the badge: a head and its stem
+    scene.setPins([]);
+    scene.setHover("arm");
+    const dots = () => scene.group.children.filter((c) => c.geometry?.type === "SphereGeometry").length;
+    const halos = () => scene.group.children.filter((c) => c.geometry?.type === "RingGeometry").length;
+    expect(dots()).toBe(3); // two joints and the tip
+    expect(halos()).toBe(0);
+    scene.setHover("arm", "elbow");
+    expect(halos()).toBe(1);
+    scene.setHover("arm", "tip");
+    expect(halos()).toBe(1);
+    scene.setHover(null);
+    expect(scene.group.children.length).toBe(0);
+    scene.dispose();
+  });
 
   it("draws no reach-miss line at or below the residual threshold", () => {
     const viewer = fakeViewer();
@@ -93,6 +115,7 @@ describe("createPoseScene", () => {
     viewer._subMeshes = {};
     const scene = createPoseScene(viewer, { paintLabel: fakePaint });
     scene.setLimbs([INFO]);
+    scene.setHover("arm");
     expect(scene.group.children.length).toBe(0);
     viewer._subMeshes = meshes;
     scene.tick();

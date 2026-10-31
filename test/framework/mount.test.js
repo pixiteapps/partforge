@@ -19,6 +19,7 @@ vi.mock("../../src/framework/viewer.js", () => ({
     const themeCbs = new Set();
     const projectionCbs = new Set();
     const flashAnchorCbs = new Set();
+    const cutawayCbs = new Set();
     let projection = "perspective";
     const v = {
       onFrame: (cb) => { frameCbs.add(cb); return () => frameCbs.delete(cb); },
@@ -83,8 +84,10 @@ vi.mock("../../src/framework/viewer.js", () => ({
       cutawayEnabled: vi.fn(() => cutawayOn),
       setCutawayEnabled: vi.fn((on) => {
         cutawayOn = on;
+        for (const cb of [...cutawayCbs]) cb();
         return true;
       }),
+      onCutawayChange: (cb) => { cutawayCbs.add(cb); return () => cutawayCbs.delete(cb); },
       // State carry-over across a remount. `cutawayOn` is shared with
       // cutawayEnabled above, so a restore here really does light the button
       // the way the real viewer would.
@@ -191,8 +194,17 @@ vi.mock("../../src/framework/pose/pose-mode.js", () => ({
       opts,
       delivered: vi.fn(), externalWrite: vi.fn(), refresh: vi.fn(), detach: vi.fn(),
       setPins: vi.fn(), getPins: () => [], pinCount: () => 0, releasePins: vi.fn(),
-      handlePoints: () => [], isEnabled: () => false, setEnabled: vi.fn(),
+      handlePoints: () => [], isEnabled: () => true, setEnabled: vi.fn(),
       onModeChange: () => () => {},
+      // always-on posing: mount pushes suppression, reads hover claims and the click claim
+      suppressedLog: [],
+      setSuppressed: vi.fn((on) => { stub.suppressedLog.push(!!on); }),
+      isLive: () => stub.suppressedLog.at(-1) === false,
+      claimsHover: vi.fn(() => false),
+      hoverCbs: new Set(),
+      onHoverChange: (cb) => { stub.hoverCbs.add(cb); return () => stub.hoverCbs.delete(cb); },
+      takeClick: vi.fn(() => false),
+      isDragging: vi.fn(() => false),
     };
     poseStubs.push(stub);
     return stub;
@@ -1648,6 +1660,56 @@ test("unghost restores the opacity the ghost replaced, not full opacity", () => 
   layer.set("body", 0.2);
   pose.opts.unghost(["body"]);
   expect(layer.get("body")).toBe(0.2);
+  handle.dispose();
+});
+
+test("posing is always on, and stands down while measure, sketch or cutaway is on", () => {
+  const part = makePart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker, workers } = makeWorkers();
+  const els = makeElements();
+  const handle = mount(part, { createWorker, elements: els, onAnnotationSend: vi.fn() });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  expect(pose.suppressedLog.at(-1)).toBe(false); // live from the start: no toggle
+  expect(els.chrome.pose.hidden).toBe(true); // a leftover #pose toggle is hidden
+  handle.measure.setEnabled(true);
+  expect(pose.suppressedLog.at(-1)).toBe(true);
+  handle.measure.setEnabled(false);
+  expect(pose.suppressedLog.at(-1)).toBe(false);
+  handle.annotate.setEnabled(true);
+  expect(pose.suppressedLog.at(-1)).toBe(true);
+  handle.annotate.setEnabled(false);
+  expect(pose.suppressedLog.at(-1)).toBe(false);
+  fakeViewers[0].setCutawayEnabled(true);
+  expect(pose.suppressedLog.at(-1)).toBe(true);
+  fakeViewers[0].setCutawayEnabled(false);
+  expect(pose.suppressedLog.at(-1)).toBe(false);
+  // posing never turns the other modes off on its own account
+  expect(pose.setEnabled).not.toHaveBeenCalled();
+  handle.dispose();
+  expect(els.chrome.pose.hidden).toBe(false);
+});
+
+test("a click a pose press claimed never picks, and a hovered pose dot hides the hover tooltip", () => {
+  const part = makePart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements(), onPick: vi.fn() });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  const suppressed = attachPicker.mock.calls.at(-1)[1].suppressed;
+  expect(suppressed()).toBe(false);
+  pose.takeClick.mockReturnValueOnce(true); // a pin click, or the end of a drag
+  expect(suppressed()).toBe(true);
+  expect(suppressed()).toBe(false); // the claim is spent: the next plain click picks
+  const hover = attachHoverLabels.mock.results.at(-1).value;
+  pose.claimsHover.mockReturnValue(true);
+  for (const cb of pose.hoverCbs) cb();
+  expect(hover.setSuppressed).toHaveBeenLastCalledWith(true);
+  pose.claimsHover.mockReturnValue(false);
+  for (const cb of pose.hoverCbs) cb();
+  expect(hover.setSuppressed).toHaveBeenLastCalledWith(false);
   handle.dispose();
 });
 

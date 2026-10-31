@@ -1,11 +1,22 @@
-// Pose mode's orchestrator: pointer and orbit arbitration, hover, and the drag loop
+// Posing's orchestrator: pointer and orbit arbitration, hover, and the drag loop
 // that feeds pose-session.js. The one pose module that touches the DOM and three.js
 // together (pose-scene.js draws; pose-session.js decides; this file listens).
+//
+// Posing is ALWAYS ON in the viewer's normal click mode: it is "live" while the host
+// has not switched it off (setEnabled) and mount has not suppressed it (setSuppressed:
+// measure, sketch, cutaway or a cached preview is on). At rest nothing is drawn but pin
+// badges. A mouse pointer within NEAR_LIMB_PX of a limb's projected bones shows that
+// limb's dots (the closest limb wins); a dot under the pointer is highlighted and takes
+// a grab cursor, and while one is, mount suppresses the model's hover tooltip
+// (claimsHover / onHoverChange). Touch has no hover: a touch press within TOUCH_HIT_PX
+// of any limb's dot grabs it.
 //
 // Arbitration copies cutaway-gizmo.js: a CAPTURE-phase pointerdown on the canvas that,
 // on a handle hit, turns orbit off and takes pointer capture before OrbitControls sees
 // the press; orbit comes back on pointerup, pointercancel, lostpointercapture and window
-// blur. A press that misses every handle is left alone, so orbit never fights a handle.
+// blur. A press that misses every handle is left alone, so orbit and click-to-pick never
+// notice posing. A press that hit a handle claims its click: the picker asks takeClick()
+// and opens nothing, whether the press was a click (a pin toggle) or a drag.
 // drag-tracker.js tells a click (toggle a pin on a tip) from a drag (begin a session):
 // the session begins only once the pointer has moved past the threshold, so a click
 // never snapshots, holds or commits anything.
@@ -25,8 +36,10 @@ import { aimTurn } from "../solve/aim.js";
 
 /** A dot's hit radius, CSS px: a 28 px target around a 12 px dot. */
 export const HANDLE_HIT_PX = 14;
-/** How near a limb's bones the pointer must be to hover the limb (and grab its joints). */
-export const BONE_HOVER_PX = 10;
+/** How near a limb's projected bones the mouse must be to show that limb's dots. */
+export const NEAR_LIMB_PX = 32;
+/** A touch press this near any limb's dot grabs it (touch has no hover to show dots first). */
+export const TOUCH_HIT_PX = 24;
 /** How near an aim ring's line counts as on it: a 24 px band. */
 export const RING_HIT_PX = 12;
 /** Edge-on rings turn by pointer travel instead: degrees per CSS px. */
@@ -120,15 +133,23 @@ export function createPoseMode(viewer, {
     }
   };
 
-  let enabled = false;
+  let enabled = true;       // the host's switch (runtime.pose.setEnabled)
+  let suppressed = false;   // mount's: measure, sketch, cutaway or a cached preview is on
+  let live = false;         // enabled && !suppressed && !detached — applied by applyLive
   let detached = false;
   let scene = null;
   let shown = [];          // [{ handleId, handle, info }] — one per handle with a posed limb
+  let stale = true;        // params moved since `shown` was read; re-read lazily (ensureFresh)
+  let screenCache = null;  // shown limbs projected to the canvas; dropped every frame
   let hoverLimb = null;
+  let hoverHit = null;     // the dot or ring under the mouse (null: none)
   let press = null;        // the pointer press on a handle; `started` once it is a drag
+  let clickClaimed = false; // the last press grabbed a handle: its click is not a pick
   let lastParams = null;   // shallow copy, to notice outside param changes per frame
   let pendingMove = null;
   let moveScheduled = false;
+  let cursorSet = false;
+  const hoverListeners = new Set();
 
   const session = createPoseSession({
     part, getParams, write, commit, restore, staleSubParts, ghost, unghost, hold,
@@ -136,6 +157,11 @@ export function createPoseMode(viewer, {
     onPinsChange: () => { syncPins(); notify(pinListeners); },
   });
   const tracker = createDragTracker();
+
+  function setCursor(c) {
+    if (c) { dom.style.cursor = c; cursorSet = true; }
+    else if (cursorSet) { dom.style.cursor = ""; cursorSet = false; }
+  }
 
   // ---- frames ---------------------------------------------------------------
   const partsFrame = () => Object.values(viewer._subMeshes ?? {})[0]?.parent ?? null;
@@ -188,7 +214,9 @@ export function createPoseMode(viewer, {
 
   // ---- model ----------------------------------------------------------------
   function refresh() {
-    if (!enabled || !scene) return;
+    if (!live || !scene) return;
+    stale = false;
+    screenCache = null;
     const params = getParams();
     lastParams = { ...params };
     const ids = (visibleHandles() ?? []).filter((id) => handles[id]);
@@ -206,6 +234,12 @@ export function createPoseMode(viewer, {
     syncPins();
     syncRings();
   }
+  /** Re-read the limbs if params moved since the last read (hit tests call this first). */
+  function ensureFresh() {
+    if (live && scene && (stale || paramsMoved())) refresh();
+  }
+  /** Anything pose-related on screen that a param change must move. */
+  const drawsAnything = () => !!(hoverLimb || press || session.pins.length);
 
   function paramsMoved() {
     if (!lastParams) return true;
@@ -248,40 +282,50 @@ export function createPoseMode(viewer, {
   }
 
   // ---- hit testing ----------------------------------------------------------
-  /** Which limbs' bones run under (x, y). */
-  function limbsNear(x, y) {
-    const out = [];
-    for (const { info } of shown) {
-      const pts = chainOf(info).map(toScreen);
-      for (let i = 1; i < pts.length; i++) {
-        if (pts[i - 1] && pts[i] && segDist(x, y, pts[i - 1], pts[i]) <= BONE_HOVER_PX) { out.push(info.name); break; }
-      }
-    }
-    return out;
-  }
+  /** The dot names a handle offers: a goal handle's `at`; an angles limb's tip and joints. */
+  const dotsOf = (handle, info) => (handle.mode === "goal" ? [goalAt(handle)] : ["tip", ...info.joints.map((j) => j.name)]);
 
   /**
-   * What a press at (x, y) would grab: `{ kind: "dot", handleId, at, limb }`,
-   * `{ kind: "ring", handleId, limb, axis, name }`, or null. Tips (and a goal
-   * handle's `at`) are always grabbable; an angles-mode limb's joints only when that
-   * limb is hovered or its bones are under the pointer — they show on hover.
+   * Every shown limb on the canvas, projected at most once per frame (the frame hook
+   * drops the cache) and once per refresh: `{ limbs: Map(name -> [screen pts of its
+   * bones]), dots: [{ x, y, hit }] }`. Pointer moves read this — never derive.
    */
-  function hitAt(x, y) {
-    const near = new Set(limbsNear(x, y));
-    if (hoverLimb) near.add(hoverLimb);
-    const cands = [];
+  function screen() {
+    if (screenCache) return screenCache;
+    const limbs = new Map();
+    const dots = [];
     for (const { handleId, handle, info } of shown) {
-      const ats = handle.mode === "goal" ? [goalAt(handle)]
-        : ["tip", ...(near.has(info.name) ? info.joints.map((j) => j.name) : [])];
-      for (const at of ats) {
+      if (!limbs.has(info.name)) limbs.set(info.name, chainOf(info).map(toScreen));
+      for (const at of dotsOf(handle, info)) {
         const s = toScreen(info.points[at]);
-        if (s && s.visible !== false) cands.push({ id: cands.length, x: s.x, y: s.y, hit: { kind: "dot", handleId, at, limb: info.name } });
+        if (s && s.visible !== false) dots.push({ x: s.x, y: s.y, hit: { kind: "dot", handleId, at, limb: info.name } });
       }
     }
-    const id = hitHandle(cands, x, y, HANDLE_HIT_PX);
-    if (id !== null) return cands[id].hit;
-    const ring = ringHit(x, y);
-    return ring;
+    screenCache = { limbs, dots };
+    return screenCache;
+  }
+
+  /** The limb whose projected bones run nearest (x, y), within NEAR_LIMB_PX, else null. */
+  function nearestLimb(x, y) {
+    let best = null, bestD = NEAR_LIMB_PX;
+    for (const [name, pts] of screen().limbs) {
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[i + 1] ?? null;
+        if (!a) continue;
+        const d = b ? segDist(x, y, a, b) : Math.hypot(x - a.x, y - a.y);
+        if (d <= bestD) { bestD = d; best = name; }
+      }
+    }
+    return best;
+  }
+
+  /** The dot nearest (x, y) within `radius`, among `limb`'s dots (null: every limb's). */
+  function dotAt(x, y, limb, radius) {
+    const cands = screen().dots
+      .filter((d) => limb === null || d.hit.limb === limb)
+      .map((d, id) => ({ id, x: d.x, y: d.y, hit: d.hit }));
+    const id = hitHandle(cands, x, y, radius);
+    return id === null ? null : cands[id].hit;
   }
 
   function ringHit(x, y) {
@@ -314,27 +358,45 @@ export function createPoseMode(viewer, {
     return { kind: "ring", handleId: r.handleId, limb: r.info.name, axis: r.axes[best.i], name: AIM_NAMES[best.i], at: r.at };
   }
 
-  /** The limb the pointer hovers: a hit's limb, else a limb whose bones it is on, else
-   *  a goal limb whose rings it is inside (so the rings do not vanish on approach). */
-  function hoverAt(x, y) {
-    const hit = hitAt(x, y);
-    if (hit) return { hit, limb: hit.limb };
-    const near = limbsNear(x, y);
-    if (near.length) return { hit: null, limb: near[0] };
+  /** Inside the hovered goal limb's rings, so they do not vanish on the way to one. */
+  function insideRings(x, y) {
     const r = ringTarget();
-    if (r) {
-      const s = toScreen(r.at);
-      if (s && Math.hypot(x - s.x, y - s.y) <= AIM_RING_PX + RING_HIT_PX) return { hit: null, limb: r.info.name };
-    }
-    return { hit: null, limb: null };
+    if (!r) return null;
+    const s = toScreen(r.at);
+    return s && Math.hypot(x - s.x, y - s.y) <= AIM_RING_PX + RING_HIT_PX ? r.info.name : null;
   }
 
-  function setHover(limb) {
-    if (limb === hoverLimb) return;
-    hoverLimb = limb;
-    scene?.setHover(limb);
-    syncRings();
+  /**
+   * What the mouse at (x, y) hovers: `{ limb, hit }`. The hovered limb's aim rings are
+   * tried first (they reach past NEAR_LIMB_PX), then the nearest limb's dots, then the
+   * inside of the rings. `hit` is `{ kind: "dot", handleId, at, limb }`,
+   * `{ kind: "ring", handleId, limb, axis, name, at }` or null.
+   */
+  function hoverAt(x, y) {
+    const ring = ringHit(x, y);
+    if (ring) return { limb: ring.limb, hit: ring };
+    const limb = nearestLimb(x, y);
+    if (limb) return { limb, hit: dotAt(x, y, limb, HANDLE_HIT_PX) };
+    const inside = insideRings(x, y);
+    return { limb: inside, hit: null };
   }
+
+  const sameHit = (a, b) => (a === b) || (!!a && !!b && a.kind === b.kind && a.handleId === b.handleId && a.at === b.at && a.name === b.name);
+
+  function setHover(limb, hit = null) {
+    const limbChanged = limb !== hoverLimb;
+    const hitChanged = !sameHit(hit, hoverHit);
+    if (!limbChanged && !hitChanged) return;
+    const claimed = claimsHover();
+    hoverLimb = limb;
+    hoverHit = hit;
+    scene?.setHover(limb, hit?.kind === "dot" ? hit.at : null);
+    if (limbChanged) syncRings();
+    if (claimsHover() !== claimed) notify(hoverListeners);
+  }
+
+  /** A pose dot or ring is under the mouse, or a pose press is on: the model's hover tooltip stands down. */
+  function claimsHover() { return !!(hoverHit || press); }
 
   // ---- the drag -------------------------------------------------------------
   function safeCapture(id) { try { dom.setPointerCapture?.(id); } catch { /* pointer already gone */ } }
@@ -349,9 +411,12 @@ export function createPoseMode(viewer, {
     if (orbitControls) orbitControls.enabled = ending.orbitEnabled;
     safeRelease(ending.pointerId);
     window.removeEventListener("keydown", onKeyDown, true);
-    dom.style.cursor = "";
+    setCursor(ending.touch ? "" : hoverHit ? "grab" : "");
     scene?.setActive(null);
     refresh();
+    // Touch has no hover: the limb its press showed goes away with the finger.
+    if (ending.touch) setHover(null);
+    notify(hoverListeners);
   }
 
   /** Cross the drag threshold: snapshot, hold, and fix the drag plane / ring frame. */
@@ -362,7 +427,8 @@ export function createPoseMode(viewer, {
     if (!s || (hit.kind === "dot" && !Array.isArray(grab))) { finishPress(); return false; }
     if (!session.begin(hit.handleId, hit.kind === "ring" ? "ring" : hit.at)) { finishPress(); return false; }
     press.started = true;
-    dom.style.cursor = "grabbing";
+    setCursor("grabbing");
+    notify(hoverListeners); // a drag began (mount closes a selection popover)
     const ray = press.ray;
     if (hit.kind === "dot") {
       const maxDist = 4 * Math.max(chainLength(s.info), 1);
@@ -444,29 +510,41 @@ export function createPoseMode(viewer, {
 
   // ---- listeners ------------------------------------------------------------
   function onPointerDown(ev) {
-    if (!enabled || detached || press || (ev.button != null && ev.button !== 0)) return;
+    // Every press starts unclaimed: a claim lives from a handle press to its click.
+    clickClaimed = false;
+    if (!live || detached || press || (ev.button != null && ev.button !== 0)) return;
+    ensureFresh();
     const { x, y } = local(ev);
-    // fresh, from this press: a touch press has no hover before it
-    const near = limbsNear(x, y);
-    if (!hoverLimb && near.length) setHover(near[0]);
-    const hit = hitAt(x, y);
+    const touch = ev.pointerType === "touch";
+    let hit;
+    if (touch) {
+      // No hover came before: any limb's dot within the finger's reach.
+      hit = dotAt(x, y, null, TOUCH_HIT_PX);
+    } else {
+      // fresh from this press (a press need not follow a move)
+      const h = hoverAt(x, y);
+      setHover(h.limb, h.hit);
+      hit = h.hit;
+    }
     if (!hit) return;
     const ray = partRay(ev);
     if (!ray) return;
-    setHover(hit.limb);
     press = {
-      pointerId: ev.pointerId, hit, limb: hit.limb, ray, x, y,
+      pointerId: ev.pointerId, hit, limb: hit.limb, ray, x, y, touch,
       orbitEnabled: orbitControls?.enabled, started: false, plane: null, ring: null,
     };
+    clickClaimed = true;
+    if (touch) setHover(hit.limb, hit);
     tracker.onDown(ev);
     if (orbitControls) orbitControls.enabled = false;
     safeCapture(ev.pointerId);
     window.addEventListener("keydown", onKeyDown, true);
     ev.preventDefault();
+    notify(hoverListeners);
   }
 
   function onPointerMove(ev) {
-    if (!enabled || detached) return;
+    if (!live || detached) return;
     if (press) {
       if (ev.pointerId !== press.pointerId) return;
       tracker.onMove(ev);
@@ -483,10 +561,11 @@ export function createPoseMode(viewer, {
       return;
     }
     if (ev.pointerType === "touch") return;
+    ensureFresh();
     const { x, y } = local(ev);
     const { hit, limb } = hoverAt(x, y);
-    setHover(limb);
-    dom.style.cursor = hit ? "grab" : "";
+    setHover(limb, hit);
+    setCursor(hit ? "grab" : "");
   }
 
   function onPointerUp(ev) {
@@ -523,12 +602,12 @@ export function createPoseMode(viewer, {
   }
   function onBlur() { abort(); }
   function onPointerLeave() {
-    if (press || !enabled) return;
+    if (press || !live) return;
     setHover(null);
-    dom.style.cursor = "";
+    setCursor("");
   }
   // Window capture, armed only during a press: Escape reverts the drag and is consumed,
-  // so pose-controls' Escape (which leaves the mode) does not also fire.
+  // so nothing else on the page (a cutaway's or measure's Escape) also acts on it.
   function onKeyDown(ev) {
     if (ev.key !== "Escape" || !press) return;
     ev.preventDefault();
@@ -548,34 +627,74 @@ export function createPoseMode(viewer, {
   for (const [t, type, fn, o] of listeners) t.addEventListener(type, fn, o);
 
   const offFrame = viewer.onFrame?.(() => {
-    if (!enabled || !scene) return;
-    if (!press?.started && paramsMoved()) refresh();
+    if (!live || !scene) return;
+    // The camera may have moved: projections are re-taken on the next hit test.
+    screenCache = null;
+    // An outside param edit (a slider, setParams, playback) moves the limbs. Re-read
+    // them now only while something pose-related is drawn; at rest just mark them
+    // stale, so a slider drag does not derive every limb per frame for nothing.
+    if (!press?.started && paramsMoved()) {
+      if (drawsAnything()) refresh();
+      else stale = true;
+    }
     scene.tick();
   }) ?? (() => {});
   const offTheme = viewer.onThemeChange?.((mode) => scene?.setTheme(mode)) ?? (() => {});
 
-  function setEnabled(on) {
-    if (detached || !!on === enabled) return;
-    enabled = !!on;
-    if (enabled) {
+  /** Bring `live` in line with enabled/suppressed; notify on a change. */
+  function applyLive() {
+    const next = enabled && !suppressed && !detached;
+    if (next === live) return;
+    live = next;
+    if (live) {
       scene ??= createScene(viewer);
       const theme = viewer.getTheme?.();
       if (theme) scene.setTheme(theme);
       refresh();
     } else {
       abort();
+      const claimed = claimsHover();
       hoverLimb = null;
+      hoverHit = null;
       shown = [];
+      screenCache = null;
+      stale = true;
       lastParams = null;
       scene?.clear();
-      dom.style.cursor = "";
+      setCursor("");
+      if (claimed) notify(hoverListeners);
     }
     notify(modeListeners);
   }
+  function setEnabled(on) {
+    if (detached || !!on === enabled) return;
+    enabled = !!on;
+    applyLive();
+  }
+  /** Mount: measure, sketch, cutaway or a cached preview is on — posing stands down. */
+  function setSuppressed(on) {
+    if (detached || !!on === suppressed) return;
+    suppressed = !!on;
+    applyLive();
+  }
+  applyLive();
 
   return {
     setEnabled,
+    /** The host's switch (default on). Posing is live only while it is on AND not suppressed. */
     isEnabled: () => enabled,
+    setSuppressed,
+    /** Handles can be hovered and dragged right now. */
+    isLive: () => live,
+    /** A pose dot or ring is hovered, or a pose press is on (mount: hide the model's hover tooltip). */
+    claimsHover,
+    /** Fires when claimsHover() or isDragging() may have changed. */
+    onHoverChange: (cb) => { hoverListeners.add(cb); return () => hoverListeners.delete(cb); },
+    /**
+     * The picker's guard: true once for the click that ends a press on a handle (a pin
+     * toggle or a drag), so it never opens a pick. Cleared by the next pointerdown.
+     */
+    takeClick() { const c = clickClaimed; clickClaimed = false; return c; },
     /** A drag (past the threshold) is in progress. */
     isDragging: () => !!press?.started,
     /** Re-read every shown limb (mount: after a view switch; param edits are noticed per frame). */
@@ -587,10 +706,12 @@ export function createPoseMode(viewer, {
     /**
      * Where each shown handle's always-grabbable point (an angles limb's tip, a goal
      * handle's `at`) sits on the canvas: `[{ handleId, at, x, y }]`, CSS px from the
-     * canvas's top-left. Empty while the mode is off. For a host's coach marks and the
+     * canvas's top-left. Drawn or not (at rest they are hidden until hovered). Empty
+     * while posing is not live. For a host's coach marks and the
      * browser check (scripts/check-pose.mjs).
      */
     handlePoints() {
+      ensureFresh();
       const out = [];
       for (const { handleId, handle, info } of shown) {
         const at = handle.mode === "goal" ? goalAt(handle) : "tip";
@@ -610,16 +731,17 @@ export function createPoseMode(viewer, {
       if (detached) return;
       abort();
       detached = true;
-      enabled = false;
+      live = false;
       for (const [t, type, fn, o] of listeners) t.removeEventListener(type, fn, o);
       window.removeEventListener("keydown", onKeyDown, true);
       offFrame();
       offTheme();
       scene?.dispose();
       scene = null;
-      dom.style.cursor = "";
+      setCursor("");
       modeListeners.clear();
       pinListeners.clear();
+      hoverListeners.clear();
     },
   };
 }

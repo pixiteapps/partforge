@@ -66,7 +66,7 @@ const NOOP_ANNOTATE = {
   onInkChange: () => () => {}, onModeChange: () => () => {},
 };
 // Same stance again for Pose mode: a part with no `handles` has no mode to drive.
-const NOOP_POSE = { isEnabled: () => false, setEnabled: () => {}, pinCount: () => 0, releasePins: () => {}, handlePoints: () => [] };
+const NOOP_POSE = { isEnabled: () => false, setEnabled: () => {}, isLive: () => false, pinCount: () => 0, releasePins: () => {}, handlePoints: () => [] };
 // Every schema parameter a pose handle writes: an angles handle's list, a goal
 // handle's position and aim, and its seed. What decides the views it shows in.
 function handleParamKeys(handle) {
@@ -400,10 +400,12 @@ function createCleanupStack() {
 //                                 // subscribes return an unsubscribe; onInkChange fires on
 //                                 // every stroke/undo/clear, which is what a host driving its
 //                                 // own Send button gates that button on (strokeCount() > 0).
-//   runtime.pose: { isEnabled, setEnabled, pinCount, releasePins, handlePoints }
-//                                 // Pose mode (a part with `handles`): drag a handle and
-//                                 // its parameters follow. Exclusive with measure and
-//                                 // annotate. A no-op stand-in for a part with none.
+//   runtime.pose: { isEnabled, setEnabled, isLive, pinCount, releasePins, handlePoints }
+//                                 // Posing (a part with `handles`): always on in the normal
+//                                 // click mode — hover near a limb, drag a handle, and its
+//                                 // parameters follow. Stands down while measure, sketch or
+//                                 // cutaway is on; setEnabled(false) switches it off.
+//                                 // A no-op stand-in for a part with none.
 //   runtime.projection: { get, set, onChange }
 //                                         // "perspective" | "orthographic". AUTOMATIC in the UI
 //                                         // (Fusion 360's "Perspective with Ortho Faces"): a view
@@ -636,7 +638,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // chrome it disables meanwhile; picking and hover consult it per event. See
     // the preview block just above `return makeHandle`.
     const previewGate = createPreviewGate({
-      buttons: [els.chrome.cutaway, els.chrome.measure, els.chrome.annotate, els.chrome.pose],
+      buttons: [els.chrome.cutaway, els.chrome.measure, els.chrome.annotate],
     });
 
     // ?backend=occt|manifold forces the backend; otherwise it's re-detected per
@@ -761,10 +763,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         if (measureMode.isEnabled()) annotateMode.setEnabled(false);
       }));
     }
-    // Pose mode (spec 2026-10-30 inverse kinematics §4): drag a part's declared
+    // Posing (spec 2026-10-30 inverse kinematics §4): drag a part's declared
     // `handles` on screen and the parameters follow. Created only for a part that
-    // declares some; a page without #pose simply has no button (the runtime surface
-    // still drives it). Everything the mode does to the app goes through the effects
+    // declares some, and ALWAYS ON in the normal click mode — no toggle: it stands down
+    // while measure, sketch, cutaway or a cached preview is on (syncPoseSuppression
+    // below) and a host may switch it off (runtime.pose.setEnabled). Hovering near a
+    // limb shows its handles; a press on one drags it; every other press orbits and
+    // picks exactly as without posing. Everything the mode does to the app goes through the effects
     // below — the session (pose/pose-session.js) decides, mount only applies:
     //   write    — one drag frame's values, through the animation path's per-frame
     //              write (applyAnimationValues, minus its playback stamp: a pose
@@ -842,28 +847,25 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           return pin != null && Object.hasOwn(part.handles, pin.handleId);
         }));
       }
-      // Pose, measure and annotate all claim canvas pointer input: whichever turns
-      // on turns the others off (the measure ⇄ annotate rule above, widened).
-      cleanup.defer(poseMode.onModeChange(() => {
-        if (!poseMode.isEnabled()) return;
-        measureMode.setEnabled(false);
-        annotateMode?.setEnabled(false);
-      }));
-      cleanup.defer(measureMode.onModeChange(() => {
-        if (measureMode.isEnabled()) poseMode.setEnabled(false);
-      }));
-      if (annotateMode) {
-        cleanup.defer(annotateMode.onModeChange(() => {
-          if (annotateMode.isEnabled()) poseMode.setEnabled(false);
-        }));
-      }
+      // Measure, sketch and cutaway claim canvas pointer input, and a cached preview
+      // has no live limbs: while any is on, posing hides and stands down; when the last
+      // goes off it comes back. Pulled from the modes' own state, so nothing is turned
+      // off on posing's account.
+      const syncPoseSuppression = live(() => poseMode.setSuppressed(
+        previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false) || !!viewer.cutawayEnabled?.()));
+      syncPoseSuppression();
+      cleanup.defer(measureMode.onModeChange(syncPoseSuppression));
+      if (annotateMode) cleanup.defer(annotateMode.onModeChange(syncPoseSuppression));
+      cleanup.defer(viewer.onCutawayChange?.(syncPoseSuppression) ?? (() => {}));
+      cleanup.defer(previewGate.onChange(syncPoseSuppression));
     }
+    // Release pins sits in the viewbar while pins exist and posing is live.
     const poseChrome = poseMode
-      ? attachPoseControls(viewer, poseMode, { pose: els.chrome.pose }, { tooltip, escapeScope: els.viewer })
+      ? attachPoseControls(viewer, poseMode, { viewbar: els.viewer.querySelector("#viewbar") }, { tooltip })
       : null;
-    // A part with no handles leaves a host's #pose button out of the bar rather than
-    // showing a toggle that does nothing; dispose hands it back as it was.
-    if (!poseMode && els.chrome.pose) {
+    // There is no Pose toggle any more: a host page that still carries a #pose button
+    // (written for the toggle) gets it hidden; dispose hands it back as it was.
+    if (els.chrome.pose) {
       const wasHidden = els.chrome.pose.hidden;
       els.chrome.pose.hidden = true;
       cleanup.defer(() => { els.chrome.pose.hidden = wasHidden; });
@@ -1043,7 +1045,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       // are both created above).
       cleanup.defer(measureMode.onModeChange(() => { if (measureMode.isEnabled()) selPopover.close("gone"); }));
       if (annotateMode) cleanup.defer(annotateMode.onModeChange(() => { if (annotateMode.isEnabled()) selPopover.close("gone"); }));
-      if (poseMode) cleanup.defer(poseMode.onModeChange(() => { if (poseMode.isEnabled()) selPopover.close("gone"); }));
+      // A pose drag moves the part out from under the popover's marker.
+      if (poseMode) cleanup.defer(poseMode.onHoverChange(() => { if (poseMode.isDragging() && !cleanup.isDisposed()) selPopover.close("gone"); }));
     }
     // setHidden takes one boolean, and there are two independent reasons to hide
     // the cube: Sketch mode (below) and a crowded transport bar (wired into the
@@ -1081,16 +1084,17 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     cleanup.defer(() => measureChrome.detach());
     const cutawayChrome = attachCutawayControls(viewer, {
       cutaway: els.chrome.cutaway,
-    }, { tooltip, escapeGuard: () => measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false) || (poseMode?.isEnabled() ?? false) });
+    }, { tooltip, escapeGuard: () => measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false) });
     cleanup.defer(() => cutawayChrome.detach());
-    // Suppress the always-on hover tooltip while measure, annotate OR pose mode is
-    // active — measure's highlight + dims take the pointer; annotate's overlay
-    // canvas takes it entirely; pose's handles and limb hover do.
+    // Suppress the always-on hover tooltip while measure or annotate is active, or
+    // while a pose dot is hovered or pressed — measure's highlight + dims take the
+    // pointer; annotate's overlay canvas takes it entirely; a pose handle does while
+    // the pointer is on it (between handles, the tooltip names the feature as ever).
     const syncHoverSuppression = () =>
-      hover.setSuppressed(previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false) || (poseMode?.isEnabled() ?? false));
+      hover.setSuppressed(previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false) || (poseMode?.claimsHover() ?? false));
     cleanup.defer(measureMode.onModeChange(syncHoverSuppression));
     if (annotateMode) cleanup.defer(annotateMode.onModeChange(syncHoverSuppression));
-    if (poseMode) cleanup.defer(poseMode.onModeChange(syncHoverSuppression));
+    if (poseMode) cleanup.defer(poseMode.onHoverChange(syncHoverSuppression));
     cleanup.defer(previewGate.onChange(syncHoverSuppression));
     // Deferred AFTER the cutaway/measure/annotate chrome attached, so at dispose
     // (LIFO) the gate hands the buttons back before those controls restore the
@@ -1121,7 +1125,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // resync on mode changes. The ?pick/?pickserver harnesses below are
         // deliberately not guarded — one is armed by an explicit dev toggle,
         // the other per agent request.
-        suppressed: () => previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false) || (poseMode?.isEnabled() ?? false),
+        // A press that grabbed a pose handle claims its click (a pin toggle or the end
+        // of a drag), so it never also picks: takeClick() answers once, and comes
+        // first so the claim is spent on this click even when another guard is up.
+        suppressed: () => (poseMode?.takeClick() ?? false) || previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false),
         onPick: (selection, anchor) => {
           onPick({
             selection,
@@ -2052,9 +2059,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       // handle's grab points sit on the canvas (CSS px from its top-left), for a
       // host's own coach marks and for scripts/check-pose.mjs.
       pose: poseMode ? {
+        // The host's switch, on by default. Posing is LIVE only while it is on and no
+        // measure, sketch, cutaway or cached preview holds it off (isLive).
         isEnabled: poseMode.isEnabled,
-        // Held off while a cached preview shows, like measure (no live limbs yet).
-        setEnabled: (on) => { if (on && previewGate.isActive()) return; poseMode.setEnabled(on); },
+        setEnabled: poseMode.setEnabled,
+        isLive: poseMode.isLive,
         pinCount: poseMode.pinCount,
         releasePins: poseMode.releasePins,
         handlePoints: poseMode.handlePoints,

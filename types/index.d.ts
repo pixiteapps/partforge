@@ -154,7 +154,10 @@ export interface MountElements {
     cutaway?: HTMLElement | null;
     measure?: HTMLElement | null;
     annotate?: HTMLElement | null;
-    /** Pose mode's toggle (`#pose`). Shown only for a part that declares `handles`. */
+    /**
+     * @deprecated Posing has no toggle: it is always on in the normal click mode. A
+     * `#pose` element passed here (or found by id) is hidden while mounted.
+     */
     pose?: HTMLElement | null;
     railToggle?: HTMLElement | null;
   };
@@ -483,14 +486,22 @@ export interface CaptureViewOptions {
  * the frame natively (canonical-view captures and thumbnails never include
  * them).
  */
-/** Pose mode's runtime-controls API: drag a part's declared `handles` on screen. */
+/**
+ * Posing's runtime-controls API: drag a part's declared `handles` on screen. Posing is
+ * always on in the normal click mode (hover near a limb to show its handles); it stands
+ * down while measure, sketch or cutaway is on.
+ */
 export interface PoseRuntime {
+  /** The host's switch — on by default. */
   isEnabled(): boolean;
+  /** `false` switches posing off (handles hidden, presses orbit and pick as usual). */
   setEnabled(on: boolean): void;
+  /** Handles can be hovered and dragged right now: enabled, and no measure, sketch, cutaway or cached preview on. */
+  isLive(): boolean;
   /** Pinned points (a click on a handle's tip toggles one). */
   pinCount(): number;
   releasePins(): void;
-  /** Each shown handle's grab point on the canvas, CSS px from its top-left; empty while the mode is off. */
+  /** Each shown handle's grab point on the canvas, CSS px from its top-left (drawn or not); empty while posing is not live. */
   handlePoints(): { handleId: string; at: string; x: number; y: number }[];
 }
 

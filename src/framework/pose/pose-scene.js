@@ -5,6 +5,10 @@
 // hidden from canonical captures, drawn over the model (depthTest:false) and
 // never cutaway-clipped.
 //
+// At rest it draws nothing but pin badges: a limb's skeleton, dots and rings show
+// only while it is hovered (setHover) or dragged (setActive) — posing is always on
+// in the normal click mode, so an idle overlay would sit on every part with handles.
+//
 // Steady by design (no flashing, no jumping): the state setters rebuild the
 // objects; tick() only re-sizes the screen-constant pieces (dots, badges, labels,
 // dashes, aim rings) from the camera, and a camera move is already a frame.
@@ -108,6 +112,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   // ---- state -----------------------------------------------------------------
   let limbs = [];
   let hover = null;
+  let hoverDot = null; // the hovered limb's dot under the pointer (a joint name or "tip")
   let active = null;
   let pins = [];
   let aim = null;
@@ -191,7 +196,8 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
 
   function buildShownLimb(info, act) {
     const pts = orderedPoints(info);
-    const grab = act?.grab ?? null;
+    // the grabbed point while dragging, else the hovered one: same strong dot + halo
+    const grab = act?.grab ?? hoverDot;
     const clamped = act?.clamped ?? [];
     // skeleton
     addLine("bone", polyline(pts));
@@ -240,12 +246,12 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     const shown = active?.limb ?? hover;
     for (const info of limbs) {
       const isShown = info.name === shown;
+      if (!isShown) continue; // at rest: nothing but the pin badges below
       const isActive = active?.limb === info.name;
-      if (isShown) buildShownLimb(info, isActive ? active : null);
-      // tip dot: always
+      buildShownLimb(info, isActive ? active : null);
       const tip = vec(info.points.tip);
-      const isGrab = isActive && active.grab === "tip";
-      addDot(isGrab ? "strong" : "handle", tip, isShown ? TIP_DOT_ACTIVE_PX : TIP_DOT_PX);
+      const isGrab = isActive ? active.grab === "tip" : hoverDot === "tip";
+      addDot(isGrab ? "strong" : "handle", tip, isGrab ? TIP_DOT_ACTIVE_PX : TIP_DOT_PX);
       if (isGrab) addBillboard("strong", tip, GRAB_HALO_PX);
     }
     // reach miss: hollow target + dashed, labelled line
@@ -363,17 +369,20 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
 
   // ---- public state setters --------------------------------------------------
   function setLimbs(infos) { limbs = Array.isArray(infos) ? infos : []; rebuild(); }
-  function setHover(name) {
+  /** The hovered limb (null: none) and, optionally, its dot under the pointer. */
+  function setHover(name, dot = null) {
     const next = name ?? null;
-    if (next === hover) return;
+    const nextDot = next ? dot ?? null : null;
+    if (next === hover && nextDot === hoverDot) return;
     hover = next;
+    hoverDot = nextDot;
     rebuild();
   }
   function setActive(a) { active = a ?? null; rebuild(); }
   function setPins(ids) { pins = Array.isArray(ids) ? [...ids] : []; rebuild(); }
   function setAimRings(a) { aim = a ?? null; rebuild(); }
   function clear() {
-    limbs = []; hover = null; active = null; pins = []; aim = null;
+    limbs = []; hover = null; hoverDot = null; active = null; pins = []; aim = null;
     disposeChildren();
     sweepTextures();
     redraw();

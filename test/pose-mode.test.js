@@ -54,11 +54,13 @@ function fakeScene() {
   return {
     calls,
     setLimbs: (x) => calls.setLimbs.push(x),
-    setHover: (x) => calls.setHover.push(x),
+    setHover: (limb, dot = null) => calls.setHover.push([limb, dot]),
+    cleared: 0,
     setActive: (x) => calls.setActive.push(x),
     setPins: (x) => calls.setPins.push(x),
     setAimRings: (x) => calls.setAimRings.push(x),
-    setTheme() {}, tick() {}, clear() {}, dispose() {},
+    setTheme() {}, tick() {}, dispose() {},
+    clear() { this.cleared++; },
   };
 }
 
@@ -87,11 +89,13 @@ function setup(part = hand) {
     const w = new THREE.Vector3(...p).applyMatrix4(viewer.partsGroup.matrixWorld);
     return viewer.projectPoint(w.toArray());
   };
-  const tipScreen = (limb) => screenOf(limbInfo(part, params, part.handles[limb]).points.tip);
+  const info = (limb) => limbInfo(part, params, part.handles[limb]);
+  const tipScreen = (limb) => screenOf(info(limb).points.tip);
+  const pointScreen = (limb, at) => screenOf(info(limb).points[at]);
   const fire = (type, x, y, extra = {}) => viewer.domElement.dispatchEvent(new PointerEvent(type, {
     clientX: x, clientY: y, pointerId: 1, button: 0, pointerType: "mouse", bubbles: true, ...extra,
   }));
-  return { viewer, scene, orbit, params, log, mode, fire, tipScreen };
+  return { viewer, scene, orbit, params, log, mode, fire, tipScreen, pointScreen };
 }
 
 afterEach(() => { for (const m of live.splice(0)) m.detach(); document.body.innerHTML = ""; });
@@ -209,15 +213,150 @@ describe("createPoseMode", () => {
     expect(t.log.commit).toHaveLength(0);
   });
 
-  it("outside param edits re-read the limbs on the next frame", () => {
+  it("outside param edits re-read the limbs per frame only while something is drawn", () => {
     const t = setup();
-    t.mode.setEnabled(true);
     const n = t.scene.calls.setLimbs.length;
     t.viewer.tick();
     expect(t.scene.calls.setLimbs).toHaveLength(n);
+    // at rest (nothing hovered, no pins): marked stale, not derived per frame
     t.params.aCurl = 0.6;
     t.viewer.tick();
+    expect(t.scene.calls.setLimbs).toHaveLength(n);
+    // the next hover reads them fresh
+    const s = t.tipScreen("a");
+    t.fire("pointermove", s.x, s.y);
     expect(t.scene.calls.setLimbs).toHaveLength(n + 1);
+    // while a limb shows, a frame after an edit re-reads at once
+    t.params.aCurl = 0.4;
+    t.viewer.tick();
+    expect(t.scene.calls.setLimbs).toHaveLength(n + 2);
+  });
+});
+
+describe("always-on posing: hover, pick arbitration, suppression, touch", () => {
+  const far = { x: 3, y: 3 };
+
+  it("is live from creation: nothing hovered, every limb read", () => {
+    const t = setup();
+    expect(t.mode.isEnabled()).toBe(true);
+    expect(t.mode.isLive()).toBe(true);
+    expect(t.scene.calls.setLimbs.at(-1).map((i) => i.name).sort()).toEqual(["a", "b"]);
+    expect(t.scene.calls.setHover).toEqual([]); // at rest nothing shows
+  });
+
+  it("near a limb's bones shows that limb's dots, and leaving hides them", () => {
+    const t = setup();
+    // halfway along finger a's first bone, 20 px off it on the side away from finger b
+    const j0 = t.pointScreen("a", "mcp"), j1 = t.pointScreen("a", "pip");
+    const away = Math.sign(j0.x - t.pointScreen("b", "mcp").x);
+    const mid = { x: (j0.x + j1.x) / 2 + 20 * away, y: (j0.y + j1.y) / 2 };
+    t.fire("pointermove", mid.x, mid.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["a", null]);
+    expect(t.mode.claimsHover()).toBe(false); // near a limb, not on a dot: the model's tooltip stays
+    expect(t.viewer.domElement.style.cursor).toBe("");
+    t.fire("pointermove", far.x, far.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual([null, null]);
+    t.fire("pointermove", mid.x, mid.y);
+    t.fire("pointerleave", mid.x, mid.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual([null, null]);
+  });
+
+  it("a hovered dot is highlighted, takes a grab cursor and claims the hover", () => {
+    const t = setup();
+    let changes = 0;
+    t.mode.onHoverChange(() => changes++);
+    const pip = t.pointScreen("a", "pip");
+    t.fire("pointermove", pip.x + 3, pip.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["a", "pip"]);
+    expect(t.mode.claimsHover()).toBe(true);
+    expect(changes).toBe(1);
+    expect(t.viewer.domElement.style.cursor).toBe("grab");
+    t.fire("pointermove", far.x, far.y);
+    expect(t.mode.claimsHover()).toBe(false);
+    expect(changes).toBe(2);
+    expect(t.viewer.domElement.style.cursor).toBe("");
+  });
+
+  it("a click on a tip dot pins it and claims the click; a press elsewhere claims nothing", () => {
+    const t = setup();
+    const s = t.tipScreen("b");
+    t.fire("pointermove", s.x, s.y);
+    t.fire("pointerdown", s.x, s.y);
+    t.fire("pointerup", s.x, s.y);
+    expect(t.mode.getPins()).toEqual(["b:tip"]);
+    expect(t.mode.takeClick()).toBe(true); // the picker's guard: no pick for this click
+    expect(t.mode.takeClick()).toBe(false); // spent
+    t.fire("pointerdown", far.x, far.y);
+    t.fire("pointerup", far.x, far.y);
+    expect(t.orbit.enabled).toBe(true);
+    expect(t.mode.takeClick()).toBe(false); // a plain click on the model still picks
+  });
+
+  it("a drag claims its click, so release never picks", () => {
+    const t = setup();
+    const s = t.tipScreen("a");
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x, s.y - i * 8);
+    t.fire("pointerup", s.x, s.y - 32);
+    expect(t.log.commit).toHaveLength(1);
+    expect(t.mode.takeClick()).toBe(true);
+    // a stale claim never outlives the next press
+    t.fire("pointerdown", s.x, s.y);
+    t.fire("pointerup", s.x, s.y);
+    t.fire("pointerdown", far.x, far.y);
+    expect(t.mode.takeClick()).toBe(false);
+  });
+
+  it("suppressed (measure, sketch or cutaway on): hidden, presses fall through; back on when lifted", () => {
+    const t = setup();
+    let modeChanges = 0;
+    t.mode.onModeChange(() => modeChanges++);
+    const s = t.tipScreen("a");
+    t.fire("pointermove", s.x, s.y);
+    t.mode.setSuppressed(true);
+    expect(t.mode.isLive()).toBe(false);
+    expect(t.mode.isEnabled()).toBe(true);
+    expect(t.scene.cleared).toBe(1);
+    expect(t.mode.claimsHover()).toBe(false);
+    expect(t.mode.handlePoints()).toEqual([]);
+    expect(modeChanges).toBe(1);
+    t.fire("pointerdown", s.x, s.y);
+    expect(t.orbit.enabled).toBe(true); // orbit keeps the press
+    t.fire("pointerup", s.x, s.y);
+    expect(t.mode.getPins()).toEqual([]);
+    expect(t.mode.takeClick()).toBe(false);
+    t.mode.setSuppressed(false);
+    expect(t.mode.isLive()).toBe(true);
+    expect(t.mode.handlePoints().length).toBe(2);
+    // the host switch is independent: off stays off when suppression lifts
+    t.mode.setEnabled(false);
+    t.mode.setSuppressed(true);
+    t.mode.setSuppressed(false);
+    expect(t.mode.isLive()).toBe(false);
+  });
+
+  it("a touch press near any limb's dot drags it with no hover first; a touch far away does nothing", () => {
+    const t = setup();
+    const touch = { pointerType: "touch" };
+    t.fire("pointerdown", far.x, far.y, touch);
+    expect(t.orbit.enabled).toBe(true);
+    expect(t.mode.takeClick()).toBe(false);
+    const s = t.tipScreen("b");
+    t.fire("pointerdown", s.x + 20, s.y, touch); // inside the 24 px touch reach, outside the mouse's 14
+    expect(t.orbit.enabled).toBe(false);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x + 20, s.y - i * 8, touch);
+    expect(t.mode.isDragging()).toBe(true);
+    t.fire("pointerup", s.x + 20, s.y - 32, touch);
+    expect(t.log.commit).toHaveLength(1);
+    expect(t.orbit.enabled).toBe(true);
+    expect(t.scene.calls.setHover.at(-1)).toEqual([null, null]); // the finger lifted: hidden again
+  });
+
+  it("a mouse press must be on a dot: 20 px off a tip is not a grab", () => {
+    const t = setup();
+    const s = t.tipScreen("b");
+    t.fire("pointerdown", s.x + 20, s.y);
+    expect(t.orbit.enabled).toBe(true);
   });
 });
 
