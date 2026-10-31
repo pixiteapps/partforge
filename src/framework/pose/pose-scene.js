@@ -164,9 +164,12 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   function disposeChildren() {
     for (const child of [...group.children]) {
       group.remove(child);
-      if (!shared.has(child.geometry)) child.geometry?.dispose?.();
-      const m = child.material;
-      if (m && !allMats().includes(m)) m.dispose?.();
+      // traverse: aim rings are nested under aimRoot, not direct children
+      child.traverse((o) => {
+        if (o.geometry && !shared.has(o.geometry)) o.geometry.dispose?.();
+        const m = o.material;
+        if (m && !allMats().includes(m)) m.dispose?.();
+      });
     }
     dots = []; billboards = []; pinRecs = []; aimRoot = null; dashRec = null; labelRec = null;
   }

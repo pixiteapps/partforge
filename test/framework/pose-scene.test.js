@@ -74,6 +74,19 @@ describe("createPoseScene", () => {
     scene.dispose();
   });
 
+  it("disposes aim-ring geometry when rebuilt", () => {
+    const viewer = fakeViewer();
+    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    scene.setLimbs([INFO]);
+    scene.setAimRings({ at: [20, 5, 0], axes: [[1, 0, 0], [0, 1, 0], [0, 0, 1]] });
+    const root = scene.group.children.find((c) => c.children.length === 3);
+    const geos = root.children.map((c) => c.geometry);
+    const spies = geos.map((g) => vi.spyOn(g, "dispose"));
+    scene.setActive({ limb: "arm", grab: "tip", clamped: [false, false] });
+    for (const s of spies) expect(s).toHaveBeenCalledTimes(1);
+    scene.dispose();
+  });
+
   it("keeps state set before the parts exist and builds when they appear", () => {
     const viewer = fakeViewer();
     const meshes = viewer._subMeshes;
