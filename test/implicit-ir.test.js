@@ -2,6 +2,8 @@
 import { describe, test, expect } from "vitest";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { evalReference } from "../src/framework/geometry/implicit/reference.js";
+import { xformPoint } from "../src/framework/geometry/implicit/frames.js";
+import { TWO_BONE } from "./fixtures/skin-fixtures.js";
 
 const lower = (spec, images = new Map()) => lowerSpec(spec, { images });
 const at = (c, p) => evalReference(c, p[0], p[1], p[2]);
@@ -61,5 +63,20 @@ describe("lowering + reference", () => {
     expect(() => lower({ root: { kind: "expr", box: [[-1, -1, -1], [1, 1, 1]], sdf: "return q;" } })).toThrow(/root\.sdf: line 1: unknown name 'q'/);
     expect(() => lower({ root: { kind: "halfspace", normal: "z" } })).toThrow(/unbounded/);
     expect(() => lower({ root: { kind: "bend", radius: 2, child: { kind: "box", size: [10, 1, 1] } } })).toThrow(/bend radius/);
+  });
+});
+
+describe("pose bindings' IR fields", () => {
+  test("each node carries its effective frame, world placement and unit flag; frameNames lists the frames", () => {
+    const c = lowerSpec(TWO_BONE(0));
+    expect(c.frameNames).toEqual(["root", "child"]);
+    const second = c.ir.nodes.filter((n) => n.kind === "prim")[1];
+    expect(second.frame).toBe("child");
+    expect(second.unit).toBe(true);
+    const p = [0, 0, 0];
+    xformPoint(p, second.world, 0, 0, 0);
+    expect(p[0]).toBeCloseTo(0, 12); expect(p[1]).toBeCloseTo(20, 12); expect(p[2]).toBeCloseTo(0, 12);
+    expect(c.ir.nodes[c.ir.root].frame).toBeNull();
+    expect(c.ir.nodes[c.ir.root].unit).toBe(false);
   });
 });

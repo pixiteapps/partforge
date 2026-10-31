@@ -80,20 +80,26 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
   const localInv = (W, Wparent) => { const M = compose(invert(W), Wparent); return isIdentity(M) ? null : M; };
 
   // Returns the node id. Wparent: world transform of the parent's local space.
-  function lower(node, Wparent, path) {
+  // parentFrame: the parent's effective frame (null above the root). rigid: false below a
+  // warp, mirror or repeat, where a frame no longer moves its subtree rigidly — the pose
+  // bindings (bindings.js) start a unit only where `unit` is set. None of these fields
+  // (frame, world, worldBox, unit) is read by the evaluators, the emitter or any digest.
+  function lower(node, Wparent, path, parentFrame = null, rigid = true) {
     const W = placeOf(node, Wparent);
     const inv = localInv(W, Wparent);
     const toParent = inv ? invert(inv) : null;
+    const frame = node.frame ?? parentFrame;
+    const pose = (n, world, unit) => { n.frame = frame; n.world = world; n.worldBox = boxXform(n.box, Wparent); n.unit = unit; return n; };
     const finish = (n, localBox, thin, G = 1) => {
       n.inv = inv; n.label = node.label ?? null; n.path = path; n.G = G;
       n.box = toParent ? boxXform(localBox, toParent) : localBox;
       n.thin = thin;
-      return add(n);
+      return add(pose(n, W, frame !== parentFrame && frame !== null && rigid));
     };
     const prim = (code, P, localBox, thin, G = 1) => finish({ kind: "prim", prim: { code, P }, children: [], L: primLipschitz(code, P) }, localBox, thin, G);
     const minG = (ids) => Math.min(...ids.map((i) => nodes[i].G));
-    const kids = (list, key = "children") => list.map((c, i) => lower(c, W, `${path}.${key}[${i}]`));
-    const child = (c) => lower(c, W, `${path}.child`);
+    const kids = (list, key = "children") => list.map((c, i) => lower(c, W, `${path}.${key}[${i}]`, frame, rigid));
+    const child = (c, childRigid = rigid) => lower(c, W, `${path}.child`, frame, childRigid);
     switch (node.kind) {
       case "sphere": { const r = node.r; return prim(PRIM.SPHERE, Float64Array.of(r), box([-r, -r, -r], [r, r, r]), 2 * r); }
       case "ellipsoid": { const [a, b, c] = node.r; return prim(PRIM.ELLIPSOID, Float64Array.of(a, b, c), box([-a, -b, -c], [a, b, c]), 2 * Math.min(a, b, c), Math.min(a, b, c) / Math.max(a, b, c)); }
@@ -116,7 +122,9 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
           ? { code: PRIM.CYLINDER, P: Float64Array.of(node.h / 2, node.r, node.round ?? 0), lb: box([-node.r, -node.r, -node.h / 2], [node.r, node.r, node.h / 2]), thin: 2 * Math.min(node.r, node.h / 2) }
           : { code: PRIM.TORUS, P: Float64Array.of(node.R, node.r), lb: box([-node.R - node.r, -node.R - node.r, -node.r], [node.R + node.r, node.R + node.r, node.r]), thin: 2 * node.r };
         if (!B) return prim(inner.code, inner.P, inner.lb, inner.thin);
-        const id = add({ kind: "prim", prim: { code: inner.code, P: inner.P }, children: [], L: primLipschitz(inner.code, inner.P), inv: B, label: null, path, box: boxXform(inner.lb, invert(B)), thin: inner.thin, G: 1 });
+        const inner0 = { kind: "prim", prim: { code: inner.code, P: inner.P }, children: [], L: primLipschitz(inner.code, inner.P), inv: B, label: null, path, box: boxXform(inner.lb, invert(B)), thin: inner.thin, G: 1 };
+        // Its parent space is this node's local space (W); it shares this node's frame.
+        const id = add(Object.assign(inner0, { frame, world: compose(W, invert(B)), worldBox: boxXform(inner0.box, W), unit: false }));
         return finish({ kind: "union", k: 0, children: [id], L: nodes[id].L }, nodes[id].box, inner.thin);
       }
       case "halfspace": {
@@ -179,7 +187,7 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
         return finish(n, lb, Math.min(...ids.map((i) => nodes[i].thin)), G0);
       }
       case "mirror": {
-        const id = child(node.child), axis = AXIS_INDEX[node.plane ?? "yz"], cb = nodes[id].box;
+        const id = child(node.child, false), axis = AXIS_INDEX[node.plane ?? "yz"], cb = nodes[id].box;
         const mb = box(cb.min.slice(), cb.max.slice());
         mb.min[axis] = -cb.max[axis]; mb.max[axis] = -cb.min[axis];
         return finish({ kind: "mirror", axis, children: [id], L: nodes[id].L }, boxUnion(cb, mb), nodes[id].thin, nodes[id].G);
@@ -193,7 +201,7 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
         return finish({ kind: "displace", amount: node.amount, by, children: [id], L: nodes[id].L }, boxPad(nodes[id].box, node.amount / G), nodes[id].thin, G);
       }
       case "twist": case "bend": case "taper": {
-        const id = child(node.child);
+        const id = child(node.child, false);
         const B = warpBasis(node.axis ?? "z", node.kind === "bend" ? node.toward : undefined);
         const Bt = B ? invert(B) : null;
         const cb = B ? boxXform(nodes[id].box, B) : nodes[id].box;   // child box in basis coords
@@ -229,14 +237,17 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
         return finish({ kind: "warp", warp: { kind: W.kind, W: W.W, B, Bt }, children: [id], L: nodes[id].L }, lb, nodes[id].thin, G);
       }
       case "repeat": {
-        const id = child(node.child);
+        const id = child(node.child, false);
         const placements = [];
         if (node.linear) for (let i = 0; i < node.linear.count; i++) placements.push(translation(node.linear.step.map((s) => s * i)));
         else for (let i = 0; i < node.polar.count; i++) placements.push(rotation(node.polar.axis ?? "z", (360 * i) / node.polar.count));
-        const refs = placements.map((P, i) => add({
-          kind: "ref", inv: isIdentity(P) ? null : invert(P), children: [id], L: nodes[id].L,
-          box: boxXform(nodes[id].box, P), thin: nodes[id].thin, G: nodes[id].G, label: null, path: `${path}.instance[${i}]`,
-        }));
+        const refs = placements.map((P, i) => {
+          const ref = {
+            kind: "ref", inv: isIdentity(P) ? null : invert(P), children: [id], L: nodes[id].L,
+            box: boxXform(nodes[id].box, P), thin: nodes[id].thin, G: nodes[id].G, label: null, path: `${path}.instance[${i}]`,
+          };
+          return add(Object.assign(ref, { frame, world: compose(W, P), worldBox: boxXform(ref.box, W), unit: false }));
+        });
         return finish({ kind: "union", k: 0, children: refs, L: nodes[id].L }, refs.map((r) => nodes[r].box).reduce(boxUnion), nodes[id].thin, nodes[id].G);
       }
       case "expr": {
@@ -264,7 +275,8 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
   while (nodes[ownerRoot].kind === "ref") ownerRoot = nodes[ownerRoot].children[0];
   if (nodes[ownerRoot].kind !== "contact") ownerRoot = -1;
   const ownerK = ownerRoot >= 0 ? nodes[ownerRoot].children.length : 0;
-  return { ir: { nodes, root }, ownerRoot, ownerK, textures, bounds: rb, thin: nodes[root].thin, hasExpr, detail, digests, warnings };
+  const frameNames = Object.keys(spec.frames ?? {});   // the pose bindings' frame table (bindings.js)
+  return { ir: { nodes, root }, frameNames, ownerRoot, ownerK, textures, bounds: rb, thin: nodes[root].thin, hasExpr, detail, digests, warnings };
 }
 
 const AXIS_OF = { x: 0, y: 1, z: 2 };

@@ -18,6 +18,13 @@ export const TWO_BONE = (bend = 0) => ({
   resolution: 1,
 });
 
+/** A frame root (b) below a twist placed by frame a: b does not start a binding unit, a does. */
+export const TWIST_FRAMES = {
+  frames: { a: { at: [0, 0, 0] }, b: { parent: "a", at: [0, 10, 0] } },
+  root: { kind: "twist", frame: "a", degPerMm: 1, child: { kind: "capsule", frame: "b", b: [0, 10, 0], r: 3 } },
+  preview: 1,
+};
+
 /** A small sphere in one of TWO_BONE's frames. */
 export const BALL = (frame = "child", at = [0, 24, 6]) => ({
   frames: TWO_BONE(0).frames,
