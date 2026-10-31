@@ -54,8 +54,10 @@ export const HANDLE_RULES = [
         for (const [pname, path] of paramRefs(name, h)) {
           const v = typeof pname === "string" ? defaults[pname] : undefined;
           if (typeof v === "number" && Number.isFinite(v)) continue;
+          // A lock is only read for truthiness, so a checkbox's boolean default suits it.
+          if (path.endsWith(".lock") && typeof v === "boolean") continue;
           out.push(err("handle-unknown-param", `handle "${name}" lists parameter ${JSON.stringify(pname)}, which is not a numeric entry in \`defaults\``,
-            "Every parameter a handle drives, seeds or locks must be a key of `defaults` whose default is a finite number.",
+            "Every parameter a handle drives or seeds must be a key of `defaults` whose default is a finite number; a lock's may also be a boolean.",
             path.endsWith(".params.position") || path.endsWith(".params.aim") ? path.replace(/\.(position|aim)$/, "") : path));
         }
       }

@@ -3264,7 +3264,8 @@ mouse. It declares `handles`, a map of draggable points. Each one names a `limb`
 the object `derive` returns that holds a posed limb. A `mode: "goal"` handle drags a
 tool point and writes its goal parameters (use `seed` for the joint values the solve starts
 from). A `mode: "angles"` handle drags joint values and writes them (use `lock` to freeze
-one). Every parameter a handle names must be a numeric key of `defaults`.
+one). Every parameter a handle names must be a numeric key of `defaults` (a `lock`'s default may
+also be a boolean).
 
 ```js
 handles: {
@@ -4125,7 +4126,8 @@ previously didn't; that's the fix working as intended, not a regression.
 `default-view-ambiguous` (warnings). **Handles** — `handle-unknown-limb`,
 `handle-unknown-param`, `handle-param-count`, `handle-aim-toward`, `handle-unknown-joint`,
 `handle-bad-mode` (all errors): a declared `handles` entry names a limb `derive`
-does not return, a parameter missing from `defaults` (or not numeric), a wrong number of position/aim parameters, an `aim`
+does not return, a parameter missing from `defaults` (or not numeric; a `lock` may
+also default to a boolean), a wrong number of position/aim parameters, an `aim`
 without a valid rest `toward`, a joint the limb lacks, or a mode other than
 `goal`/`angles`. `invalid-probes` fires when a declared
 `probes` block isn't an object of functions (see "Probes" above).

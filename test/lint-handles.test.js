@@ -66,6 +66,15 @@ test("handle-aim-toward: a goal handle with aim names its rest toward", () => {
   expect(handleFindings({ a: goal({ at: "pip", params: aim, toward: [0, 0, 1] }) })).toEqual([]);
 });
 
+test("handle-unknown-param: a lock may default to a boolean; nothing else may", () => {
+  const angles = (over) => ({ a: { limb: "finger", mode: "angles", params: ["mcp"], ...over } });
+  expect(handleFindings(angles({ lock: "held" }), { held: false })).toEqual([]);
+  expect(handleFindings(angles({ lock: "held" }), { held: true })).toEqual([]);
+  expect(rulesOf(handleFindings(angles({ lock: "held" }), { held: "no" }))).toEqual(["handle-unknown-param"]);
+  expect(rulesOf(handleFindings(angles({ params: ["held"] }), { held: false }))).toEqual(["handle-unknown-param"]);
+  expect(rulesOf(handleFindings({ a: goal({ seed: ["held"] }) }, { held: false }))).toEqual(["handle-unknown-param"]);
+});
+
 test("handle-unknown-joint: at must be a joint or tip", () => {
   expect(rulesOf(handleFindings({ a: goal({ at: "zzz" }) }))).toEqual(["handle-unknown-joint"]);
   expect(handleFindings({ a: goal({ at: "tip" }) })).toEqual([]);

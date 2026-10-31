@@ -595,7 +595,8 @@ handles: {
 ```
 
 `limb` is a key of the object `derive` returns, and its value is a posed limb. Every
-parameter a handle names must be a numeric key of `defaults`.
+parameter a handle names must be a numeric key of `defaults` (a `lock`'s default may
+also be a boolean).
 
 ### `mode: "goal"`
 
