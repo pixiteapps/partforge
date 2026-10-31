@@ -75,8 +75,10 @@ export function specSig(spec) {
 // instead of overlapping. Lanes are per-placeDims-call and deterministic in
 // item order (overall, pins, hover). The lane's on-screen spacing lives in
 // dim3-scene.
-function laneFor(lanes, ext) {
-  const key = `${ext.x.toFixed(2)},${ext.y.toFixed(2)},${ext.z.toFixed(2)}`;
+// `group` replaces the direction key for dims that must stagger as one set
+// whichever way each one extends (a distance and its X/Y/Z parts).
+function laneFor(lanes, ext, group = null) {
+  const key = group ?? `${ext.x.toFixed(2)},${ext.y.toFixed(2)},${ext.z.toFixed(2)}`;
   const lane = lanes.get(key) ?? 0;
   lanes.set(key, lane + 1);
   return lane;
@@ -122,6 +124,81 @@ function scoreCandidate(ext, n, toCam) {
   // fought the viewer during orbit.
   return Math.abs(n.dot(toCam)) + 0.15 * Math.max(0, ext.dot(toCam));
 }
+
+// --- candidate sides for a two-click span or a straight edge -----------------
+// Both are measured in a frame (a span carries its own `axes`, the frame its
+// two clicks squared to; an edge is drawn in the parts frame, which is the
+// frame placeDims works in). Each candidate is an ext direction ⊥ the measured
+// direction `d`, built from a frame axis k: ±normalize(k − d·(k·d)). The dim
+// plane then holds d and k. When some frame axis is square to d (|k·d| below
+// SQUARE_SNAP) only those axes are offered, and ext is the axis itself, so
+// ext lies ON a frame axis; only in general position (no such axis) does the
+// weaker "the dim plane holds d and a frame axis" rule apply.
+const SQUARE_SNAP = 1e-3;
+const frameAxesOf = (spec) => (spec.anchors.axes ?? AXES.map((a) => a.toArray())).map((k) => v3(k).normalize());
+
+function squareCandidates(d, axes, keep) {
+  const out = [];
+  axes.forEach((k, i) => {
+    if (!keep(Math.abs(k.dot(d)), i)) return;
+    const e = Math.abs(k.dot(d)) < SQUARE_SNAP
+      ? k.clone()
+      : k.clone().addScaledVector(d, -k.dot(d)).normalize();
+    out.push({ key: `k${i}s1`, ext: e });
+    out.push({ key: `k${i}s-1`, ext: e.clone().negate() });
+  });
+  return out;
+}
+
+// span: { d, cands }. Not straight, measured along a frame axis: the box
+// candidates in the span's own axes (± the other two). Not straight but along
+// a face normal off the frame (a gap between tilted parallel faces), or
+// straight: the square candidates. `d` keeps the axis' sign as given — a gap's
+// axis is the first face's normal, which can point away from b.
+function spanCandidates(spec) {
+  const axes = frameAxesOf(spec);
+  const a = v3(spec.anchors.a), b = v3(spec.anchors.b);
+  if (!spec.anchors.straight && spec.anchors.axis) {
+    const axis = v3(spec.anchors.axis).normalize();
+    let i = 0;
+    for (let j = 1; j < 3; j++) if (Math.abs(axes[j].dot(axis)) > Math.abs(axes[i].dot(axis))) i = j;
+    const c = axes[i].dot(axis);
+    if (Math.abs(c) > 1 - 1e-6) {
+      return {
+        d: axes[i].clone().multiplyScalar(Math.sign(c)),
+        cands: boxCandidates(i).map((x) => ({ key: x.key, ext: axes[x.extAxis].clone().multiplyScalar(x.sign) })),
+      };
+    }
+    return { d: axis, cands: squareCandidates(axis, axes, squareKeep(axis, axes)) };
+  }
+  const d = b.clone().sub(a).normalize();
+  return { d, cands: squareCandidates(d, axes, squareKeep(d, axes)) };
+}
+
+// Which frame axes a span offers: only the ones square to d when any exist.
+function squareKeep(d, axes) {
+  return axes.some((k) => Math.abs(k.dot(d)) < SQUARE_SNAP) ? (k) => k < SQUARE_SNAP : (k) => k < 0.99;
+}
+
+// edge: ext is the frame axis least aligned with the edge, made perpendicular
+// to it. Every axis square to the edge (|k·d| below SQUARE_SNAP) is offered,
+// as the axis itself, so an axis-aligned edge offers both perpendicular axes
+// and the camera picks; in general position, the least-aligned axis alone.
+function edgeCandidates(spec) {
+  const a = v3(spec.anchors.a), b = v3(spec.anchors.b);
+  const d = b.clone().sub(a).normalize();
+  const axes = frameAxesOf(spec);
+  if (axes.some((k) => Math.abs(k.dot(d)) < SQUARE_SNAP)) {
+    return { d, cands: squareCandidates(d, axes, (k) => k < SQUARE_SNAP) };
+  }
+  const least = Math.min(...axes.map((k) => Math.abs(k.dot(d))));
+  return { d, cands: squareCandidates(d, axes, (k) => k <= least + 1e-9) };
+}
+
+const scoreSquare = (d, cands, toCam) => cands.map((c) => ({
+  key: c.key,
+  score: scoreCandidate(c.ext, new THREE.Vector3().crossVectors(d, c.ext).normalize(), toCam),
+}));
 
 // Hold the previous choice unless a challenger beats it by HYSTERESIS — and
 // by an absolute margin too: near-degenerate views score every candidate close
@@ -169,6 +246,11 @@ export function evaluateChoices(items, { camPos, center, prev = {} }) {
         ];
         choices[ck] = { key: chooseWithHysteresis(scored, prev[ck]?.key).key };
       }
+    } else if (spec.kind === "span" || spec.kind === "edge") {
+      const { d, cands } = spec.kind === "span" ? spanCandidates(spec) : edgeCandidates(spec);
+      if (!cands.length || !(d.lengthSq() > 0.5)) continue;
+      const ck = `${item.id}|${spec.kind}`;
+      choices[ck] = { key: chooseWithHysteresis(scoreSquare(d, cands, toCam), prev[ck]?.key).key };
     } else if (spec.kind === "cylinder") {
       // ⌀/R direction: radial component of the view direction, re-aimed only
       // past the deadband so the drawing doesn't chase every orbit degree.
@@ -321,7 +403,9 @@ export function extremeVertex(meshData, axis, sign, near) {
 // walking from the nominal endpoint back toward the part (ray nudged 0.05 mm
 // inside the extreme plane so a grazing ray on the extreme face registers);
 // otherwise (feature dims — anchors already ON the surface) it starts at the
-// anchor.
+// anchor. Either way the final anchor is projected onto its base point's ext
+// line, so every record is square: pA − baseA and pB − baseB lie along `ext`.
+// `ext` must be a unit vector perpendicular to baseB − baseA.
 function linearDim(out, {
   pA, pB, baseA, baseB, nomA, nomB, ext, lane, standoffScale = 1,
   text, value, surfaceHit, planeAxis, planeC,
@@ -338,6 +422,15 @@ function linearDim(out, {
       if (planeAxis != null) start.setComponent(planeAxis, planeC); // stay exactly coplanar
       anchors[i] = start;
     }
+  });
+  // Square drawing: each anchor slides onto the line through its base point
+  // along `ext`. A surface hit (or a tie-broken extreme vertex) can then only
+  // move an anchor ALONG its extension line, never tilt it — the 0.05 mm
+  // inward nudge above used to leave pA − baseA with a component along the
+  // dim line, and zoomed in the two extension lines leaned toward each other.
+  [baseA, baseB].forEach((base, i) => {
+    const p = anchors[i];
+    anchors[i] = base.clone().addScaledVector(ext, p.clone().sub(base).dot(ext));
   });
   out.dims.push({
     pA: anchors[0].toArray(), pB: anchors[1].toArray(),
@@ -420,9 +513,16 @@ function placePlane(out, item, spec, choices, { lanes, unit }) {
   }
 }
 
+// A clicked reading (readings.js firstReading) carries `at` and `clickDir`: the
+// ⌀ line then crosses the hole at the clicked depth, starting from the clicked
+// side with its label off that end, and an R leader springs from the clicked
+// spot. Without them (or for a centre click, which has no side) the line sits
+// in the `top` plane along the camera's wide axis, as before.
 function placeCylinder(out, item, spec, choices, { lanes, unit }) {
   const axis = v3(spec.anchors.axis).normalize();
   const top = v3(spec.anchors.top);
+  const level = v3(spec.anchors.at ?? spec.anchors.top); // where the ⌀/R is drawn
+  const clickDir = spec.anchors.clickDir ? v3(spec.anchors.clickDir).normalize() : null;
   const bottom = v3(spec.anchors.bottom);
   const r = spec.values.diameter / 2;
   const du = v3(choices[`${item.id}|du`]?.du ?? spec.anchors.rimDir ?? [1, 0, 0]).normalize();
@@ -430,13 +530,13 @@ function placeCylinder(out, item, spec, choices, { lanes, unit }) {
 
   if (spec.values.partial) {
     // R leader from the covered-arc midpoint, radial, in the top plane
-    const rd = v3(spec.anchors.rimDir ?? du.toArray()).normalize();
-    const rim = top.clone().addScaledVector(rd, r);
+    const rd = clickDir ?? v3(spec.anchors.rimDir ?? du.toArray()).normalize();
+    const rim = level.clone().addScaledVector(rd, r);
     out.leaders.push({
       rim: rim.toArray(), dir: rd.toArray(),
       perp: new THREE.Vector3().crossVectors(axis, rd).normalize().toArray(),
       label: {
-        text: `R${unit.format(r)}`, value: r,
+        text: `R${unit.format(r)}${unit.suffix}`, value: r,
         x: new THREE.Vector3().crossVectors(axis, rd).normalize().toArray(),
         y: rd.clone().negate().toArray(),
       },
@@ -446,16 +546,19 @@ function placeCylinder(out, item, spec, choices, { lanes, unit }) {
     // projected ellipse's WIDE axis (du, the camera radial, is its
     // foreshortened one) — arrows outward at both rim points, ⌀ text
     // continuing off the end of the line
-    const rimA = top.clone().addScaledVector(dv, r);
-    const rimB = top.clone().addScaledVector(dv, -r);
+    // A click picks the side instead: rimA is the clicked rim point.
+    const line = clickDir ?? dv;
+    const across = clickDir ? new THREE.Vector3().crossVectors(clickDir, axis).normalize() : du;
+    const rimA = level.clone().addScaledVector(line, r);
+    const rimB = level.clone().addScaledVector(line, -r);
     out.diams.push({
       // scene contract: `du` is the label-offset direction off rimA (here the
       // line's own direction, so the text runs off the end of the diameter);
       // `dv` is the arrows' in-plane spread direction
-      rimA: rimA.toArray(), rimB: rimB.toArray(), du: dv.toArray(), dv: du.toArray(),
+      rimA: rimA.toArray(), rimB: rimB.toArray(), du: line.toArray(), dv: across.toArray(),
       label: {
-        text: `⌀${unit.format(spec.values.diameter)}`, value: spec.values.diameter,
-        x: dv.toArray(), y: du.clone().negate().toArray(),
+        text: `⌀${unit.format(spec.values.diameter)}${unit.suffix}`, value: spec.values.diameter,
+        x: line.toArray(), y: across.clone().negate().toArray(),
       },
     });
   }
@@ -475,6 +578,48 @@ function placeCylinder(out, item, spec, choices, { lanes, unit }) {
       text: `${unit.format(spec.values.depth)}${unit.suffix}`, value: spec.values.depth, surfaceHit: null,
     });
   }
+}
+
+// Two clicks: one dim along the span's measuring direction. Base points sit in
+// the first point's plane — b is projected along that plane's normal
+// n = d × ext, as placeBox's plane snap does — and the line is offset along
+// ext to clear the farther of the two points.
+function placeSpan(out, item, spec, choices, { lanes, unit }) {
+  const { d, cands } = spanCandidates(spec);
+  if (!cands.length || !(d.lengthSq() > 0.5)) return;
+  const c = cands.find((x) => x.key === choices[`${item.id}|span`]?.key) ?? cands[0];
+  const ext = c.ext.clone();
+  const a = v3(spec.anchors.a), b = v3(spec.anchors.b);
+  const n = new THREE.Vector3().crossVectors(d, ext).normalize();
+  const bp = b.clone().addScaledVector(n, -b.clone().sub(a).dot(n));
+  const t = bp.clone().sub(a).dot(d); // signed: the axis may point away from b
+  if (Math.abs(t) < 1e-9) return;
+  const o = Math.max(0, bp.clone().sub(a).dot(ext));
+  const baseA = a.clone().addScaledVector(ext, o);
+  const baseB = baseA.clone().addScaledVector(d, t);
+  linearDim(out, {
+    pA: a, pB: bp, baseA, baseB, nomA: a, nomB: bp, ext,
+    // one distance's lines stack as a set: the main line first (lane 0),
+    // then each X/Y/Z part further out, so a part running nearly parallel
+    // to the straight line never lands its label on the main one
+    lane: laneFor(lanes, ext, "span"), standoffScale: 0.55,
+    text: `${unit.format(spec.values.distance)}${unit.suffix}`, value: spec.values.distance, surfaceHit: null,
+  });
+}
+
+// One click on a straight edge: one dim from end to end, hugging the edge.
+function placeEdge(out, item, spec, choices, { lanes, unit }) {
+  if (!(spec.values.length > 1e-6)) return;
+  const { d, cands } = edgeCandidates(spec);
+  if (!cands.length || !(d.lengthSq() > 0.5)) return;
+  const c = cands.find((x) => x.key === choices[`${item.id}|edge`]?.key) ?? cands[0];
+  const ext = c.ext.clone();
+  const a = v3(spec.anchors.a), b = v3(spec.anchors.b);
+  linearDim(out, {
+    pA: a, pB: b, baseA: a.clone(), baseB: b.clone(), nomA: a, nomB: b, ext,
+    lane: laneFor(lanes, ext), standoffScale: 0.55,
+    text: `${unit.format(spec.values.length)}${unit.suffix}`, value: spec.values.length, surfaceHit: null,
+  });
 }
 
 // --- entry point --------------------------------------------------------------
@@ -517,6 +662,10 @@ export function placeDims(items, { meshData = [], surfaceHit = null, bounds, sup
       placePlane(out, item, spec, choices, { lanes, unit });
     } else if (spec.kind === "cylinder") {
       placeCylinder(out, item, spec, choices, { lanes, unit });
+    } else if (spec.kind === "span") {
+      placeSpan(out, item, spec, choices, { lanes, unit });
+    } else if (spec.kind === "edge") {
+      placeEdge(out, item, spec, choices, { lanes, unit });
     }
     if (out.dims.length || out.diams.length || out.leaders.length) drawings.push(out);
   });
