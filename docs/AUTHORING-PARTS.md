@@ -474,9 +474,14 @@ colour, flattened so dark materials stay readable. **Realistic** mode — the
 viewer's toggle — shows the full material under environment lighting, with a
 ground and soft shadow and no feature lines. The part never moves when the
 mode changes. The ground is placed under the part when a view is shown and
-after each edit; while an animation plays or is scrubbed it stays where it is
-(dropping lower only if the part would otherwise sink into it), so a motion
-that changes the part's footprint never slides the floor around under it.
+once each edit's geometry is on screen. It belongs to the part's base, not its
+pose: while an animation plays or is scrubbed, and through any edit to a
+parameter a pose `handle` writes (a drag, a joint ring, or the same key typed
+in the panel), it stays where it is, dropping lower only if the part would
+otherwise sink into it. So a motion that changes the part's footprint never
+slides the floor around under it. Any other edit, a place-only slider
+included, places it again. Entering realistic mode or switching environment
+keeps a held floor where it was, rather than under the current pose.
 
 **3D-print layer lines** (`pla-print`, `petg-print`) run perpendicular to the
 **export** pose's +Z — the way the part will be printed, not the way it is

@@ -437,6 +437,10 @@ test("shaders compile under the realistic tone mapping without leaking it into C
   v.dispose();
 });
 
+// The floor a placement asked for, minus the shadow plane's own size: a held
+// floor's shadow may grow to cover a reaching pose while the floor stays put.
+const floorOf = ({ shadowRadius, ...floor }) => floor;
+
 test("a held ground keeps its place and size through rebuilds, and only ever lowers", async () => {
   // Feedback #138: an animation track that rebuilds geometry re-shows the
   // assembly each delivery, and the floor used to chase every frame's bounds.
@@ -448,26 +452,26 @@ test("a held ground keeps its place and size through rebuilds, and only ever low
   const v = shown();
   await v.setRenderMode("realistic");
   const rig = lastRig();
-  const placed = rig.setGround.mock.calls.at(-1)[0];
+  const placed = floorOf(rig.setGround.mock.calls.at(-1)[0]);
 
   v.holdGround(true);
   v.setSubGeometry("body", shifted(40, 0)); // bounds grow and their centre moves
   v.showAssembly(Object.keys(part.parts));
-  expect(rig.setGround.mock.calls.at(-1)[0]).toEqual(placed);
+  expect(floorOf(rig.setGround.mock.calls.at(-1)[0])).toEqual(placed);
 
   v.setSubGeometry("body", shifted(40, -3)); // something now reaches below the floor
   v.showAssembly(Object.keys(part.parts));
-  const lowered = rig.setGround.mock.calls.at(-1)[0];
+  const lowered = floorOf(rig.setGround.mock.calls.at(-1)[0]);
   expect(lowered).toEqual({ ...placed, y: expect.any(Number) });
   expect(lowered.y).toBeLessThan(placed.y);
 
   v.setSubGeometry("body", shifted(40, 0)); // back up: the floor does not follow it up
   v.showAssembly(Object.keys(part.parts));
-  expect(rig.setGround.mock.calls.at(-1)[0]).toEqual(lowered);
+  expect(floorOf(rig.setGround.mock.calls.at(-1)[0])).toEqual(lowered);
 
   v.holdGround(false); // released: the ground comes to the part again
   v.showAssembly(Object.keys(part.parts));
-  const free = rig.setGround.mock.calls.at(-1)[0];
+  const free = floorOf(rig.setGround.mock.calls.at(-1)[0]);
   expect(free.centerX).not.toBeCloseTo(placed.centerX);
   expect(free.y).toBeCloseTo(placed.y);
   v.dispose();
@@ -482,18 +486,18 @@ test("ground holds are per reason: the animation releasing its hold never frees 
   const v = shown();
   await v.setRenderMode("realistic");
   const rig = lastRig();
-  const placed = rig.setGround.mock.calls.at(-1)[0];
+  const placed = floorOf(rig.setGround.mock.calls.at(-1)[0]);
 
   v.holdGround(true, "pose");
   v.holdGround(true); // the animation driver's (default) reason
   v.holdGround(false); // playback stops: mount's pose hold still stands
   v.setSubGeometry("body", shifted(40));
   v.showAssembly(Object.keys(part.parts));
-  expect(rig.setGround.mock.calls.at(-1)[0]).toEqual(placed);
+  expect(floorOf(rig.setGround.mock.calls.at(-1)[0])).toEqual(placed);
 
   v.holdGround(false, "pose");
   v.showAssembly(Object.keys(part.parts));
-  expect(rig.setGround.mock.calls.at(-1)[0].centerX).toBeGreaterThan(placed.centerX + 10);
+  expect(floorOf(rig.setGround.mock.calls.at(-1)[0]).centerX).toBeGreaterThan(placed.centerX + 10);
   v.dispose();
 });
 
@@ -514,6 +518,33 @@ test("an unheld placement in CAD forgets the last ground, so a later hold cannot
   const back = lastRig().setGround.mock.calls.at(-1)[0];
   expect(back.centerX).toBeGreaterThan(placed.centerX + 10); // placed at the new geometry
   v.holdGround(false, "pose");
+  v.dispose();
+});
+
+test("a held floor's shadow plane grows to cover a reaching pose; the floor itself stays", async () => {
+  const shifted = (dx) => {
+    const p = payload();
+    for (let i = 0; i < p.positions.length; i += 3) p.positions[i] += dx;
+    return p;
+  };
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const rig = lastRig();
+  const placed = rig.setGround.mock.calls.at(-1)[0];
+  expect(placed.shadowRadius).toBeUndefined();
+  v.holdGround(true, "pose");
+  v.setSubGeometry("body", shifted(200)); // reaches far past the base's plane
+  v.showAssembly(Object.keys(part.parts));
+  const held = rig.setGround.mock.calls.at(-1)[0];
+  expect(floorOf(held)).toEqual(placed);
+  // half the plane (1.5 × shadowRadius) covers the reach from the floor's centre
+  expect(held.shadowRadius * 1.5).toBeGreaterThan(200);
+  v.setSubGeometry("body", payload()); // back home: grow-only for the hold
+  v.showAssembly(Object.keys(part.parts));
+  expect(rig.setGround.mock.calls.at(-1)[0].shadowRadius).toBe(held.shadowRadius);
+  v.holdGround(false, "pose");
+  v.showAssembly(Object.keys(part.parts));
+  expect(rig.setGround.mock.calls.at(-1)[0].shadowRadius).toBeUndefined(); // re-derived from the base
   v.dispose();
 });
 

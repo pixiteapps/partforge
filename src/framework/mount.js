@@ -1305,15 +1305,21 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // geometry that change asked for has landed (showView, below). A change is
     // pose-only when every key it moved is one a pose handle writes (a drag's
     // release may still rebuild the sub-parts whose build reads those — they
-    // ghost and land under the held floor), or when the fast path moved the
-    // view by matrix alone. Until a real change's geometry lands, the stale
-    // meshes on screen keep the floor where it was. A view switch, and a view
-    // not yet wholly on screen, place the floor afresh. The animation driver's
-    // own hold is separate and unchanged.
+    // ghost and land under the held floor), or when the playing animation wrote
+    // it (its frames, while the driver holds the floor). Anything else is real —
+    // a place-only slider too (an explode or lift moves the part's base, and a
+    // lifted part must not float over a floor left behind). Until a real change's
+    // geometry lands, the stale meshes on screen keep the floor where it was;
+    // when it lands while another hold stands (the animation driver's), the
+    // change stays pending and the first showView after that hold drops re-fits.
+    // A view switch, and a view not yet wholly on screen, place the floor afresh.
+    // Entering realistic and switching environment honour the hold: lastGround
+    // is the base's floor (an unheld CAD placement forgets it), so the floor
+    // lands where it was rather than under the pose of the moment.
     const poseParamKeys = new Set(handleIds.flatMap((id) => handleParamKeys(part.handles[id])));
     let groundParams = { ...params }; // the params the last change was measured from
     let groundRealPending = false; // a real change whose geometry has not landed yet
-    function noteGroundChange() {
+    function noteGroundChange({ animated = false } = {}) {
       const changed = Object.keys({ ...groundParams, ...params }).filter((k) => !Object.is(groundParams[k], params[k]));
       groundParams = { ...params };
       if (!changed.length) return;
@@ -1321,7 +1327,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       // each batch that lands places it, as it always has.
       const needed = viewSubParts(part, view(), params);
       if (!needed.every((n) => viewer.hasSubMesh(n))) { releaseGround(); return; }
-      const poseOnly = changed.every((k) => poseParamKeys.has(k)) || needed.every(isCurrent);
+      const poseOnly = animated || changed.every((k) => poseParamKeys.has(k));
       if (!poseOnly) groundRealPending = true;
       viewer.holdGround?.(true, "pose");
     }
@@ -1332,8 +1338,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
 
     function showView(needed) {
       let frame = view() !== framedView;
-      // The geometry a real change asked for has all landed: the floor comes to it.
-      if (groundRealPending && needed.every(isCurrent)) releaseGround();
+      // The geometry a real change asked for has all landed: the floor comes to it —
+      // unless another hold (the animation driver's) still stands, in which case the
+      // change stays pending until a showView finds the floor free.
+      if (groundRealPending && needed.every(isCurrent)) {
+        const stillHeld = viewer.holdGround?.(false, "pose") ?? false;
+        if (!stillHeld) groundRealPending = false;
+      }
       // A first build shown in batches (showPartial) completes: frame the whole view now,
       // unless the user moved the camera meanwhile or a restored camera stands.
       if (partialView === view()) {
@@ -1789,12 +1800,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // forceRegen path: forceRegen() forgets cache stamps WITHOUT bumping the params
     // version, so a repair there would re-stamp everything current off the memoized
     // probe and the forced rebuild would silently no-op.
-    function onParamChange({ debounce = true } = {}) {
+    function onParamChange({ debounce = true, animated = false } = {}) {
       // The pose repair and the relevance pass below each derive the same params:
       // memoized, one derive serves all three (derive-memo.js).
-      withDeriveMemo(() => applyParamChange(debounce));
+      withDeriveMemo(() => applyParamChange(debounce, animated));
     }
-    function applyParamChange(debounce) {
+    function applyParamChange(debounce, animated) {
       loop.markDirty({ debounce }); // bump the version first: refreshView below must see the parts as stale
       // Pose-only edits: re-posed + re-stamped current, no job. Skipped entirely
       // when caching is off — ?debug&nocache is there to measure true uncached
@@ -1804,7 +1815,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         for (const name of posed) pendingPosed.add(name);
         dbg?.update({ posed: pendingPosed.size }); // partial: merges over the last build's numbers
       }
-      noteGroundChange();
+      noteGroundChange({ animated });
       refreshView();    // keep showing the now-stale mesh (no flicker); disable export
       updateRelevance();
     }
@@ -1830,7 +1841,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     function applyAnimationValues(values) {
       Object.assign(params, values);
       panel.syncValues(Object.keys(values));
-      onParamChange({ debounce: false });
+      // A playing frame is pose-only for the floor; the driver's Reset restore
+      // (written after it drops its hold) is classified like any edit.
+      onParamChange({ debounce: false, animated: viewer.isGroundHeld?.("animation") ?? false });
       lastAnimApplyVersion = loop.version(); // this version came from playback, not a user edit
       loop.kick();
     }

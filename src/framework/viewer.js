@@ -952,6 +952,7 @@ export function createViewer(container, part, {
   function renderShadow(opts, { force = false } = {}) {
     if (!realisticRig || (!active && !force)) return;
     try {
+      growHeldShadow();
       const plane = cutaway.getPlane?.(_shadowClipPlane) ?? null;
       realisticRig.shadow.render(scene, castersNow(), { ...opts, clippingPlanes: plane ? [plane] : null });
       requestRender();
@@ -982,9 +983,13 @@ export function createViewer(container, part, {
   // geometry that has since changed, and a later hold must not bring it back.
   const groundHolds = new Set();
   let lastGround = null;
+  // Returns whether the ground is still held, by any reason, after the call.
   function holdGround(on, reason = "animation") {
     if (on) groundHolds.add(reason); else groundHolds.delete(reason);
+    return groundHolds.size > 0;
   }
+  // Whether `reason` holds the ground — or, with no reason, whether anything does.
+  const isGroundHeld = (reason) => (reason === undefined ? groundHolds.size > 0 : groundHolds.has(reason));
   function placeGround({ force = false } = {}) {
     const groundHeld = groundHolds.size > 0;
     if (!realisticRig) { if (!groundHeld) lastGround = null; return; }
@@ -998,6 +1003,23 @@ export function createViewer(container, part, {
     realisticRig.setGround(lastGround);
     shadowMovedAt = null; // this render is the full-resolution one
     renderShadow(undefined, { force });
+  }
+  // A held floor stays put, but the pose it holds under can reach past the
+  // shadow plane sized from the base (3 × its radius across): an arm stretched
+  // out lost its shadow's far end. So while held, the shadow plane — never the
+  // floor, its centre or its texture — grows to cover the posed bounds as seen
+  // from the floor's centre, with a margin for the blur. Grow-only for the
+  // hold; a re-derived placement starts from the base's size again.
+  function growHeldShadow() {
+    if (!lastGround || groundHolds.size === 0) return;
+    const b = getVisibleWorldBounds();
+    if (b.isEmpty()) return;
+    const { centerX: cx, centerZ: cz } = lastGround;
+    const reach = Math.max(Math.abs(b.min.x - cx), Math.abs(b.max.x - cx), Math.abs(b.min.z - cz), Math.abs(b.max.z - cz));
+    const need = (reach * 1.1) / 1.5; // half the plane (1.5 × radius) covers the reach, plus 10%
+    if (need <= (lastGround.shadowRadius ?? lastGround.radius)) return;
+    lastGround = { ...lastGround, shadowRadius: need };
+    realisticRig.setGround(lastGround);
   }
   // Called once per rendered frame: low-res while a part is moving, one full
   // render once it has settled, nothing while it is still.
@@ -3511,6 +3533,7 @@ export function createViewer(container, part, {
     tweenCameraTo,
     getCameraCue,
     holdGround,
+    isGroundHeld,
     cancelCameraTween,
     orbitBy,
     onCameraStart,
