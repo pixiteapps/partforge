@@ -322,11 +322,11 @@ describe("joint rings in Pose mode", () => {
     expect(counter.derives).toBe(2);
   });
 
-  it("hand: the wrist (on the palm limb) and a spread get rings; a curl-driven knuckle does not", () => {
+  it("hand: the wrist (on the palm limb), a spread and a base knuckle get rings; a curl-driven joint does not", () => {
     const t = setup(hand, {}, "palm");
     const joints = t.mode.jointRingPoints().map((p) => `${p.limb}.${p.joint}`);
-    expect(joints).toEqual(expect.arrayContaining(["palm.wristPitch", "palm.wristYaw", "index.spread", "thumb.oppose"]));
-    expect(joints.some((j) => /\.(mcp|pip|dip|ip)$/.test(j))).toBe(false);
+    expect(joints).toEqual(expect.arrayContaining(["palm.wristPitch", "palm.wristYaw", "index.spread", "index.mcp", "thumb.oppose", "thumb.mcp"]));
+    expect(joints.some((j) => /\.(pip|dip|ip)$/.test(j))).toBe(false);
     // the palm is shown for its rings only: it adds no handle point
     expect(t.mode.handlePoints().map((h) => h.handleId).sort()).toEqual(["index", "middle", "pinky", "ring", "thumb"]);
     // the wrist pitch turns about part X: edge-on to this camera, so the ring turns by
@@ -340,9 +340,9 @@ describe("joint rings in Pose mode", () => {
     t.fire("pointerup", r.x, r.y - 20);
     expect(Math.abs(t.params.wristPitch)).toBeCloseTo(15, 6);
     expect(t.log.commit).toEqual([["wristPitch"]]);
-    // a knuckle dot shows no rings
-    const knuckle = t.screenOf(t.info("index").points.mcp);
-    t.fire("pointermove", knuckle.x, knuckle.y);
+    // a curl-driven joint's dot shows no rings
+    const pip = t.screenOf(t.info("index").points.pip);
+    t.fire("pointermove", pip.x, pip.y);
     expect(t.joint().state.visible).toBe(false);
   });
 
@@ -381,8 +381,8 @@ describe("joint rings in Pose mode", () => {
     const back = Math.hypot(mcp.x - c.x, mcp.y - c.y);
     t.fire("pointermove", mcp.x - ((mcp.x - c.x) * 10) / back, mcp.y - ((mcp.y - c.y) * 10) / back);
     expect(t.joint().state.visible).toBe(true);
-    t.fire("pointermove", mcp.x, mcp.y); // right on the dot: the dot (it has no rings)
-    expect(t.joint().state.visible).toBe(false);
+    t.fire("pointermove", mcp.x, mcp.y); // right on the dot: the dot, and its own (knuckle) rings
+    expect(t.mode.jointGizmoPoints()).toMatchObject({ limb: "index", joint: "mcp" });
     t.hover("spread");
     expect(t.mode.jointGizmoPoints().rings.spread).toBeTruthy(); // still a grabbable point on the ring
   });

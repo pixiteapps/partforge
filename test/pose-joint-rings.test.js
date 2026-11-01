@@ -128,14 +128,14 @@ describe("jointRings: which joints get a ring", () => {
     ]);
   });
 
-  it("hand: the wrist, each spread (ring and pinky negated) and the thumb's oppose; no curl-driven knuckle", () => {
+  it("hand: the wrist, each spread (ring and pinky negated), each base knuckle and the thumb's oppose; no curl-driven joint", () => {
     const list = ringList(hand, hand.defaults);
     expect(list).toEqual([
-      "thumb.oppose:spread=thumbOppose", "palm.wristPitch:bend=wristPitch", "palm.wristYaw:spread=wristYaw",
-      "index.spread:spread=indexSpread", "middle.spread:spread=middleSpread",
-      "ring.spread:spread=ringSpread*-1", "pinky.spread:spread=pinkySpread*-1",
+      "thumb.oppose:spread=thumbOppose", "thumb.mcp:bend=thumbKnuckle", "palm.wristPitch:bend=wristPitch", "palm.wristYaw:spread=wristYaw",
+      "index.spread:spread=indexSpread", "index.mcp:bend=indexKnuckle", "middle.spread:spread=middleSpread", "middle.mcp:bend=middleKnuckle",
+      "ring.spread:spread=ringSpread*-1", "ring.mcp:bend=ringKnuckle", "pinky.spread:spread=pinkySpread*-1", "pinky.mcp:bend=pinkyKnuckle",
     ]);
-    for (const j of ["mcp", "pip", "dip", "ip"]) expect(list.some((r) => r.includes(`.${j}:`))).toBe(false);
+    for (const j of ["pip", "dip", "ip"]) expect(list.some((r) => r.includes(`.${j}:`))).toBe(false);
   });
 
   it("a locked handle's parameters get no ring (its spread, and the wrist every digit drives)", () => {
@@ -146,7 +146,7 @@ describe("jointRings: which joints get a ring", () => {
   });
 
   it("follows `ids` (the visible handles)", () => {
-    expect(ringList(hand, hand.defaults, ["index"])).toEqual(["index.spread:spread=indexSpread", "palm.wristPitch:bend=wristPitch", "palm.wristYaw:spread=wristYaw"]);
+    expect(ringList(hand, hand.defaults, ["index"])).toEqual(["index.spread:spread=indexSpread", "index.mcp:bend=indexKnuckle", "palm.wristPitch:bend=wristPitch", "palm.wristYaw:spread=wristYaw"]);
   });
 });
 
