@@ -32,7 +32,10 @@
 //     goal follows the turned joint). Last on robot-arm, a JOINT PIN: a click on the elbow
 //     dot pins it (pinCount 1, a badge at the elbow — runtime.pose.__pinPoints(), a test
 //     hook — no commit); a tool drag then holds the elbow within 0.5 mm while the tool
-//     moves, one commit; a second click unpins.
+//     moves, one commit; a second click unpins. Then the REALISTIC FLOOR: in realistic
+//     mode a far sideways tool drag leaves the ground's x/z and scale exactly where they
+//     were (runtime.pose.__ground(), a test hook), during the drag and after its release;
+//     its height may only go down. CHECK_POSE_SHOTS=<dir> saves screenshots of it.
 //
 // What it observes, and how:
 //   - worker traffic: an init script wraps window.Worker before the app loads, logging
@@ -396,7 +399,64 @@ async function checkRobotArm(page, url, errors) {
   else if (!aimParam || !added[0].changed?.includes(aimParam)) errors.push(`the ${name} ring drag committed ${JSON.stringify(added[0].changed)}, not ${aimParam}`);
   const joint = await checkJointRing(page, box, { limb: "arm", joint: "elbow", param: "elbow", alsoMoves: ["toolX", "toolY", "toolZ"] }, errors);
   const pin = await checkJointPin(page, box, errors);
-  return { ...summary, ring: name, ringCommit: added[0]?.changed ?? null, ringValue: aimParam ? added[0]?.params?.[aimParam] : null, joint, pin };
+  const floor = await checkRealisticFloor(page, box, errors);
+  return { ...summary, ring: name, ringCommit: added[0]?.changed ?? null, ringValue: aimParam ? added[0]?.params?.[aimParam] : null, joint, pin, floor };
+}
+
+/**
+ * The realistic floor belongs to the part's base, not its pose: in realistic mode, drag
+ * the tool far sideways — the ground's x/z and scale (so its texture) stay put during the
+ * drag and after the release's delivery; its height may only go down. With
+ * CHECK_POSE_SHOTS=<dir>, screenshots before, mid-drag and after land there.
+ */
+async function checkRealisticFloor(page, box, errors) {
+  const shots = process.env.CHECK_POSE_SHOTS;
+  const shot = async (name) => { if (shots) await page.screenshot({ path: join(shots, `robot-arm-floor-${name}.png`) }); };
+  await page.evaluate(() => window.__pfRuntime.renderMode.set("realistic"));
+  await page.waitForFunction(() => window.__pfRuntime.renderMode.get() === "realistic" && window.__pfRuntime.pose.__ground() != null, null, { timeout: 30000 });
+  await sleep(400);
+  const ground = () => page.evaluate(() => window.__pfRuntime.pose.__ground());
+  const g0 = await ground();
+  await shot("before");
+  const h = await pickHandle(page, box, "tool");
+  await page.mouse.move(h.px + 18, h.py, { steps: 3 });
+  await page.mouse.move(h.px, h.py, { steps: 3 });
+  await sleep(50);
+  // Far sideways: toward whichever canvas edge is further, ~40% of the width.
+  const dir = h.px - box.x < box.width / 2 ? 1 : -1;
+  const travel = box.width * 0.4 * dir;
+  const commits0 = await page.evaluate(() => window.__pfCommits.length);
+  const tool0 = { x: h.x, y: h.y };
+  await page.mouse.down();
+  const samples = [];
+  for (let i = 1; i <= DRAG_MOVES; i++) {
+    await page.mouse.move(h.px + (travel * i) / DRAG_MOVES, h.py);
+    await sleep(20);
+    samples.push(await ground());
+    if (i === Math.floor(DRAG_MOVES / 2)) await shot("mid-drag");
+  }
+  await sleep(80);
+  await shot("end-of-drag");
+  await page.mouse.up();
+  await sleep(1200); // the release's build, if any, lands
+  const g1 = await ground();
+  await shot("after");
+  const tool1 = await page.evaluate(() => window.__pfRuntime.pose.handlePoints().find((p) => p.handleId === "tool") ?? null);
+  const toolMoved = tool1 ? Math.hypot(tool1.x - tool0.x, tool1.y - tool0.y) : 0;
+  if (!(toolMoved > 40)) errors.push(`the realistic floor check's tool drag moved the tool only ${toolMoved.toFixed(1)} px`);
+  if ((await page.evaluate(() => window.__pfCommits.length)) - commits0 !== 1) errors.push("the realistic floor drag did not commit exactly once");
+  let slide = 0, rescale = 0, rose = 0;
+  for (const g of [...samples, g1]) {
+    if (!g) { errors.push("the realistic floor vanished during the drag"); break; }
+    slide = Math.max(slide, Math.hypot(g.position[0] - g0.position[0], g.position[2] - g0.position[2]));
+    rescale = Math.max(rescale, ...g.scale.map((v, i) => Math.abs(v - g0.scale[i])));
+    rose = Math.max(rose, g.position[1] - g0.position[1]);
+  }
+  if (slide > 1e-6) errors.push(`posing slid the realistic floor ${slide.toFixed(3)} mm sideways`);
+  if (rescale > 1e-6) errors.push(`posing rescaled the realistic floor by ${rescale.toFixed(4)}`);
+  if (rose > 1e-6) errors.push(`posing lifted the realistic floor ${rose.toFixed(3)} mm`);
+  await page.evaluate(() => window.__pfRuntime.renderMode.set("cad"));
+  return { toolMovedPx: Number(toolMoved.toFixed(1)), floorSlideMm: slide, floorRescale: rescale, floorAt: g0.position.map((v) => Number(v.toFixed(2))) };
 }
 
 /**
