@@ -15,7 +15,7 @@ export { FINGERS, THUMB, FAN, HAND_DEFAULTS, handSpec, nailSpecs } from "../../s
  */
 export const HAND_POSES = {
   fist: { curl: 100, flex: { index: 105, middle: 105, ring: 105, pinky: 105, thumb: 50 } },
-  nearMiss: { spread: -0.1086 },
+  nearMiss: { spread: -3.1718 },
 };
 
 /** A textured vase: taper, twist, onion, polar repeat, an expr gyroid, a blend, and texture detail. */

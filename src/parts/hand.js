@@ -20,7 +20,9 @@ export const FAN = { index: 1, middle: 0.33, ring: -0.33, pinky: -1 };
 
 export const HAND_DEFAULTS = {
   curl: 30, spread: 8, flex: { index: 60, middle: 60, ring: 60, pinky: 60, thumb: 50 }, oppose: 20,
-  handLength: 190, slender: 1, knuckles: 0.5, fingerBlend: 3, palmBlend: 8, creases: true, creaseDepth: 0.5,
+  // fingerBlend: a smooth union swells where its members meet by k/4, so at each joint, where
+  // two phalanges meet, it alone makes a k/4 ring; 1 mm keeps that ring to 0.25 mm.
+  handLength: 190, slender: 1, knuckles: 0.5, fingerBlend: 1, palmBlend: 8, creases: true, creaseDepth: 0.5,
   contactGap: 0, bulge: 1,   // the engine's BULGE_DEFAULT (test/hand-part.test.js holds them equal)
 };
 // Attachments (mm at a 190 mm hand) around each digit's base frame: within `radius` the
@@ -41,25 +43,35 @@ function finger(name, spec, s, { flex, abduct, slender, knuckles, blend }) {
     [`${name}.dip`]: { parent: `${name}.pip`, at: [0, L[1], 0], rotate: { axis: "x", deg: -flex[2] } },
     [`${name}.tip`]: { parent: `${name}.dip`, at: [0, L[2], 0] },
   };
-  const bulge = 1 + 0.18 * knuckles;
+  // The knuckles stand only a little proud of the finger: ~3% at the MCP, ~2% at the PIP.
+  const bulge = 1 + 0.04 * knuckles;
   const distal = { kind: "capsule", frame: `${name}.dip`, b: [0, L[2], 0], r: [R[2], R[3]] };
   const flesh = {
     kind: "union", k: blend, label: name, children: [
       { kind: "capsule", frame: `${name}.mcp`, b: [0, L[0], 0], r: [R[0], R[1]] },
       { kind: "capsule", frame: `${name}.pip`, b: [0, L[1], 0], r: [R[1], R[2]] },
       distal,
-      { kind: "ellipsoid", frame: `${name}.mcp`, at: [0, 0, R[0] * 0.25], r: [R[0] * 0.95, R[0] * 1.1, R[0] * 0.85 * bulge] },
-      { kind: "ellipsoid", frame: `${name}.pip`, r: [R[1] * 1.02 * bulge, R[1] * 1.25, R[1] * 1.02 * bulge] },
+      { kind: "ellipsoid", frame: `${name}.mcp`, at: [0, 0, R[0] * 0.04], r: [R[0] * 0.97, R[0] * 1.05, R[0] * 0.97 * bulge] },
+      { kind: "ellipsoid", frame: `${name}.pip`, r: [R[1] * bulge, R[1] * 1.1, R[1] * bulge] },
     ],
   };
-  return { frames, flesh, distal, tipR: R[3], tipFrame: `${name}.tip`, dorsal: { pip: R[1] * 1.02 * bulge, dip: R[2] } };
+  return { frames, flesh, distal, tipR: R[3], tipFrame: `${name}.tip`, dorsal: { pip: R[1] * bulge, dip: R[2] } };
 }
 
-/** A fingernail: a shell section around the distal phalanx clipped to an oval footprint, meshed on its own fine grid. */
+/**
+ * A fingernail: a shell section around the distal phalanx clipped to an oval footprint, meshed
+ * on its own fine grid. The shell follows a slimmer copy of the phalanx (`sink` mm in at the DIP,
+ * almost none at the tip), so the nail's back edge tucks under the skin like a cuticle while its
+ * free edge stands proud near the fingertip.
+ */
 function nail(frames, distal, tipFrame, tipR, s) {
+  // The nail's outer face is its bed + 0.8 mm (round 0.1, onion 0.7). The bed sits ~1.1 mm
+  // under the skin at the nail's back edge (outer face 0.3 mm below the skin) and 0.4 mm at the
+  // tip (free edge 0.4 mm proud); the nail runs from just over the fingertip's crown back `len`.
   const w = tipR * 1.35, len = 11 * s;
-  const shell = { kind: "onion", t: 0.7, child: { kind: "round", r: 0.1, child: { ...distal } } };
-  const footprint = { kind: "ellipsoid", frame: tipFrame, at: [0, -len * 0.5, tipR * 0.75], r: [w / 2, len / 2, tipR * 1.1] };
+  const bed = { ...distal, r: [distal.r[0] - 2.5 * s, distal.r[1] - 0.4 * s] };
+  const shell = { kind: "onion", t: 0.7, child: { kind: "round", r: 0.1, child: bed } };
+  const footprint = { kind: "ellipsoid", frame: tipFrame, at: [0, tipR * 0.55 - len / 2, tipR * 0.75], r: [w / 2, len / 2, tipR * 1.1] };
   return { frames, root: { kind: "intersect", k: 0.3, children: [shell, footprint] }, resolution: 0.25, preview: 0.35 };
 }
 
