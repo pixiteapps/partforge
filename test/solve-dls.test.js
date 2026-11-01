@@ -72,4 +72,18 @@ describe("solveDLS", () => {
     const c = solveDLS({ ...base, residuals: reach([120, 60]), iterations: 40, tol: 0 });
     a.x.forEach((v, i) => expect(Object.is(v, c.x[i])).toBe(true));
   });
+
+  it("a variable on its bound with an outward step is left out, so the others still take their step", () => {
+    // r = [x0 + x1 - 2, 3 x0 - x1]: the free optimum (0.5, 1.5) is past x0's bound 0.2.
+    // Clamping the joint step lands on (0.2, 1.5) and stays there (error 0.949); the
+    // bounded optimum is x1 = 1.2 (error 0.849), one step away once x0 is dropped.
+    const residuals = (x) => Float64Array.of(x[0] + x[1] - 2, 3 * x[0] - x[1]);
+    for (const [lo, hi, x0, at] of [[[-1, -5], [0.2, 5], [0.2, 0], 0.2], [[0.8, -5], [2, 5], [0.8, 0], 0.8]]) {
+      const r = solveDLS({ x0, lo, hi, residuals, iterations: 2, lambda: 1e-3 });
+      expect(r.x[0]).toBe(at);
+      const best = (2 - at + 3 * at) / 2; // argmin over x1 of (at + x1 - 2)^2 + (3 at - x1)^2
+      expect(r.x[1]).toBeCloseTo(best, 5);
+      expect(r.error).toBeCloseTo(Math.SQRT2 * Math.abs(at + best - 2), 5);
+    }
+  });
 });

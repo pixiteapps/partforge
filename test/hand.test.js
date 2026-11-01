@@ -13,6 +13,9 @@ import { solveAngles, limbInfo } from "../src/framework/pose/param-solve.js";
 import { createPoseSession } from "../src/framework/pose/pose-session.js";
 
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+const sub = (a, b) => a.map((v, i) => v - b[i]);
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const unit = (a) => { const l = Math.hypot(...a); return a.map((v) => v / l); };
 
 const FINGERS = ["index", "middle", "ring", "pinky"];
 const DIGITS = ["thumb", ...FINGERS];
@@ -75,6 +78,32 @@ test("a pull straightens the finger: with the knuckle pinned, the index tip pull
     expect(params.indexCurl, name).toBeLessThan(0.005);
     expect(dist(resolveParams(part, params).d.index.world("tip").origin, goal), name).toBeLessThan(0.1);
   }
+});
+
+test("a fist pulled toward the back of the hand, knuckle pinned, straightens by the time the cursor stops", () => {
+  // The lerped path from the folded tip passes behind the finger, where a fully curled
+  // finger (curl on its upper bound) is a true local minimum. Once the target leaves that
+  // region the curl must come off its bound at once: before the solver's active-set step,
+  // a clamped joint step failed, damping doubled, and it lagged 3+ frames still bent.
+  let params = { ...part.defaults, ...presets().fist };
+  const { d } = resolveParams(part, params);
+  const mcp = d.index.world("mcp").origin, start = d.index.world("tip").origin;
+  const straight = resolveParams(part, { ...params, indexKnuckle: 0, indexCurl: 0 }).d;
+  const tip = straight.index.world("tip").origin;
+  // 30 mm off the straight tip, out the back of the hand
+  const across = sub(straight.index.world("spread").origin, straight.pinky.world("spread").origin);
+  const along = sub(tip, straight.index.world("mcp").origin);
+  const back = unit(cross(along, across));
+  const goal = tip.map((c, i) => c + 30 * back[i]);
+  const holds = [{ limb: "index", at: "mcp", point: mcp }];
+  for (let i = 1; i <= 30; i++) {
+    const target = start.map((c, j) => c + ((goal[j] - c) * i) / 30);
+    params = { ...params, ...solveAngles({ part, params, handle: part.handles.index, grab: "tip", target, holds, allHandles: Object.values(part.handles) }).values };
+  }
+  expect(params.indexCurl).toBeLessThan(0.005);
+  expect(params.indexKnuckle).toBeLessThan(0.5);
+  // as close as the straight finger gets (29.1 mm: the goal is out of its reach)
+  expect(dist(resolveParams(part, params).d.index.world("tip").origin, goal)).toBeLessThan(29.2);
 });
 
 test("the fingers hang off the palm: turning the wrist moves every fingertip", () => {

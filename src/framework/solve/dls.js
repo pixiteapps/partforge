@@ -40,6 +40,47 @@ function gauss(A, b, m) {
 }
 
 /**
+ * One damped least-squares step from x, x + J^T (J J^T + lam^2 I)^-1 (-r), solved over
+ * the ACTIVE variables: a variable sitting on a bound whose step points out through it
+ * is dropped (its column left out) and the rest re-solved, until no step points out.
+ * Clamping such a step afterwards, as a plain solve would, throws away the share of the
+ * step the other variables were given to go with it — the clamped step then fails to
+ * help, damping doubles, and the variable stays pinned to its bound for frames (a fully
+ * curled finger pulled straight). With no variable dropped this is the plain step,
+ * computed in exactly the same order, so an unbounded solve is bit-identical.
+ */
+function activeSetStep(J, r, x, lo, hi, lam, m, n) {
+  const free = new Uint8Array(n).fill(1);
+  const neg = Array.from(r, (v) => -v);
+  for (let pass = 0; ; pass++) {
+    const A = Array.from({ length: m }, (_, i) => {
+      const row = new Float64Array(m);
+      for (let k = 0; k < m; k++) {
+        let s = 0;
+        for (let j = 0; j < n; j++) if (free[j]) s += J[i][j] * J[k][j];
+        row[k] = s;
+      }
+      row[i] += lam * lam;
+      return row;
+    });
+    const y = gauss(A, neg.slice(), m);
+    const xn = Float64Array.from(x);
+    let dropped = false;
+    for (let j = 0; j < n; j++) {
+      if (!free[j]) continue;
+      let s = 0;
+      for (let i = 0; i < m; i++) s += J[i][j] * y[i];
+      if (pass < n && ((x[j] <= lo[j] && s < 0) || (x[j] >= hi[j] && s > 0))) {
+        free[j] = 0;
+        dropped = true;
+      }
+      xn[j] += s;
+    }
+    if (!dropped) return xn;
+  }
+}
+
+/**
  * Minimise ||residuals(x)|| over x in [lo, hi] by damped least squares with a
  * central-difference Jacobian. Returns the result and its residual norm.
  * `tol` (default 0: off) stops before an iteration once the residual norm is at most
@@ -65,23 +106,7 @@ export function solveDLS({ x0, lo, hi, residuals, iterations, lambda = 1, h = 1e
       for (let i = 0; i < m; i++) J[i][j] = (rp[i] - rm[i]) / (2 * h);
     }
     for (let attempt = 0; attempt < 5; attempt++) {
-      const A = Array.from({ length: m }, (_, i) => {
-        const row = new Float64Array(m);
-        for (let k = 0; k < m; k++) {
-          let s = 0;
-          for (let j = 0; j < n; j++) s += J[i][j] * J[k][j];
-          row[k] = s;
-        }
-        row[i] += lam * lam;
-        return row;
-      });
-      const y = gauss(A, Array.from(r, (v) => -v), m);
-      const xn = Float64Array.from(x);
-      for (let j = 0; j < n; j++) {
-        let s = 0;
-        for (let i = 0; i < m; i++) s += J[i][j] * y[i];
-        xn[j] += s;
-      }
+      const xn = activeSetStep(J, r, x, lo, hi, lam, m, n);
       clampTo(xn, lo, hi);
       const rn = residuals(xn);
       const en = norm(rn);
