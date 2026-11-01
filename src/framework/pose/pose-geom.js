@@ -10,22 +10,34 @@ const unit = (a) => { const l = len(a) || 1; return [a[0] / l, a[1] / l, a[2] / 
 
 /**
  * The point a pointer ray drags a handle to: its hit on the plane through
- * `planePoint`, clamped to `maxDist` from it. A ray nearly parallel to the plane
- * (|dir . n| < 0.05, or a plane behind the eye) would shoot the point off to
- * infinity, so it falls back to the ray's closest point to `planePoint` — still
- * continuous with the plane hit as the ray tilts, and always finite.
+ * `planePoint`, clamped to `maxDist` from it. A plane tilted off the view (the drag
+ * plane holds the limb, dragPlaneNormal) has its horizon ON screen in perspective:
+ * as the ray nears it the hit runs out to infinity along the ray's in-plane direction,
+ * and past it the hit is behind the eye. So past the clamp, and past the horizon, the
+ * point is the one maxDist out along the ray's direction projected onto the plane —
+ * the limit the clamped hit runs to, so nothing jumps as the cursor crosses the
+ * horizon. Only a ray square to the plane, with nothing to project (the plane wholly
+ * behind it), falls back to the ray's closest point to `planePoint`. Always finite.
  */
 export function dragPlanePoint(rayOrigin, rayDir, planePoint, planeNormal, maxDist) {
   const d = unit(rayDir);
   const n = unit(planeNormal);
   const denom = dot(d, n);
-  let t = null;
-  if (Math.abs(denom) >= 0.05) {
-    const hit = dot(sub(planePoint, rayOrigin), n) / denom;
-    if (hit >= 0) t = hit;
+  const toPlane = dot(sub(planePoint, rayOrigin), n);
+  const hit = denom !== 0 ? toPlane / denom : -1;
+  let p;
+  if (hit >= 0 && Number.isFinite(hit)) {
+    p = [rayOrigin[0] + d[0] * hit, rayOrigin[1] + d[1] * hit, rayOrigin[2] + d[2] * hit];
+  } else {
+    const inPlane = [d[0] - n[0] * denom, d[1] - n[1] * denom, d[2] - n[2] * denom];
+    const l = len(inPlane);
+    if (l > 1e-9) {
+      const s = maxDist / l;
+      return [planePoint[0] + inPlane[0] * s, planePoint[1] + inPlane[1] * s, planePoint[2] + inPlane[2] * s];
+    }
+    const t = Math.max(0, dot(sub(planePoint, rayOrigin), d));
+    p = [rayOrigin[0] + d[0] * t, rayOrigin[1] + d[1] * t, rayOrigin[2] + d[2] * t];
   }
-  if (t === null) t = Math.max(0, dot(sub(planePoint, rayOrigin), d));
-  const p = [rayOrigin[0] + d[0] * t, rayOrigin[1] + d[1] * t, rayOrigin[2] + d[2] * t];
   const off = sub(p, planePoint);
   const l = len(off);
   if (l <= maxDist) return p;

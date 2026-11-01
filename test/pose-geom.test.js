@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { dragPlaneNormal, dragPlanePoint, hitHandle, limitArc, ALONG_VIEW_LIMIT } from "../src/framework/pose/pose-geom.js";
 
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 
 describe("dragPlanePoint", () => {
   it("intersects the plane for a ray facing it", () => {
@@ -58,6 +59,29 @@ describe("dragPlaneNormal", () => {
     const flat = dragPlanePoint([10, 0, 100], [0, 0, -1], grab, [0, 0, -1], 1000);
     expect(dot(flat, d)).toBeCloseTo(5, 9);
   });
+
+  for (const off of [25, 30]) {
+    it(`perspective, ${off}° off the limb: sweeping the cursor through the plane's horizon never jumps the point`, () => {
+      // An eye at the origin looking +Z; a finger 300 mm out, leaning `off` degrees off the
+      // line of sight. The plane holding it is tilted, so its horizon is on screen: the
+      // cursor's ray turns out past it (0.02° a step, a fraction of a pixel at 45° fov).
+      const th = deg(off), d = [Math.sin(th), 0, Math.cos(th)];
+      const tip = [d[0] * 90, 0, 300 + d[2] * 90];
+      const n = dragPlaneNormal([0, 0, 1], d);
+      const maxDist = 440;
+      const from = Math.atan2(tip[0], tip[2]);
+      let prev = null, worst = 0, last = null;
+      for (let a = from; a <= deg(60); a += deg(0.02)) {
+        last = dragPlanePoint([0, 0, 0], [Math.sin(a), 0, Math.cos(a)], tip, n, maxDist);
+        if (prev) worst = Math.max(worst, dist(last, prev));
+        prev = last;
+      }
+      expect(worst).toBeLessThan(3);
+      // past the horizon it rests at the clamp, out along the limb's in-plane direction
+      expect(dist(last, tip)).toBeCloseTo(maxDist, 6);
+      expect(dot(sub3(last, tip), d) / maxDist).toBeGreaterThan(0.9);
+    });
+  }
 
   it("falls back to the camera-facing plane when the limb points nearly down the line of sight", () => {
     const limit = (Math.acos(ALONG_VIEW_LIMIT) * 180) / Math.PI; // ~18.2°
