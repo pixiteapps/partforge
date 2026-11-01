@@ -2597,6 +2597,22 @@ test("the first live build replaces the preview in place and keeps the camera", 
   runtime.dispose();
 });
 
+test("a preview holds posing off only until the live build lands, never through the host's switch", async () => {
+  const part = makePart();
+  part.handles = { grow: { params: ["h"] } };
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(part, { createWorker, elements: makeElements(), preview: await previewFor() });
+  await settleDecodes();
+  const pose = poseStubs.at(-1);
+  expect(runtime.previewActive).toBe(true);
+  expect(pose.suppressedLog.at(-1)).toBe(true);
+  finishFirstBuild(workers);
+  await runtime.ready;
+  expect(pose.suppressedLog.at(-1)).toBe(false);
+  expect(pose.setEnabled).not.toHaveBeenCalled();
+  runtime.dispose();
+});
+
 test("picking, hover, measure, sketch and cutaway are held while the preview shows", async () => {
   const { workers, createWorker } = makeWorkers();
   const els = makeElements();

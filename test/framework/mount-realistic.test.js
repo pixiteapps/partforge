@@ -931,7 +931,8 @@ async function mountHand() {
   await runtime.renderMode.set("realistic");
   const rig = rigState.rigs.at(-1);
   const generates = () => workers.manifold.postMessage.mock.calls.filter(([m]) => m.type === "generate").length;
-  return { runtime, deliver, generates, last: () => rig.setGround.mock.calls.at(-1)[0] };
+  const fail = (message) => workers.manifold.onmessage({ data: { type: "error", message } });
+  return { runtime, deliver, fail, generates, last: () => rig.setGround.mock.calls.at(-1)[0] };
 }
 
 // Held: same centre and size; the height may only have gone down.
@@ -989,5 +990,17 @@ test("a real change that lands while the animation holds the floor re-fits once 
   viewer.holdGround(false, "animation");
   runtime.setParams({ wrist: 10 }); // a pose-only edit: its showView finds the floor free
   expect(last().radius).toBeGreaterThan(placed.radius + 10);
+  runtime.dispose();
+});
+
+test("a real change whose build fails lets the floor go rather than holding it for good", async () => {
+  const { runtime, fail, generates } = await mountHand();
+  const viewer = viewers.at(-1);
+  const jobs0 = generates();
+  runtime.setParams({ h: 120 });
+  await vi.waitFor(() => expect(generates()).toBeGreaterThan(jobs0));
+  expect(viewer.isGroundHeld()).toBe(true); // the stale mesh keeps the floor meanwhile
+  fail("boom");
+  expect(viewer.isGroundHeld()).toBe(false);
   runtime.dispose();
 });

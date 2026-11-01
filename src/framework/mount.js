@@ -1743,6 +1743,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           }
           loop.buildDone();
           ui.hideBusy();
+          // The change this build was for will never land: a held floor would wait
+          // for it through every later edit, so it is placed afresh instead.
+          if (groundRealPending) releaseGround();
           // refreshView FIRST: its all-current branch clears the status line,
           // so writing the failure after it keeps the message on screen.
           refreshView();
@@ -2024,7 +2027,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         }
         measureMode.setEnabled(false);
         annotateMode?.setEnabled(false);
-        poseMode?.setEnabled(false);
+        // Posing has no toggle to turn back on: the preview gate suppresses it
+        // (syncPoseSuppression) and lets it go when the live build lands.
         previewGate.start();
         for (const m of shown) viewer.setSubGeometry(m.name, m);
         refreshView();
