@@ -158,8 +158,17 @@ async function openPoseApp(page, url) {
   await page.goto(url, { waitUntil: "load", timeout: 30000 });
   await page.waitForFunction(() => document.getElementById("download")?.disabled === false, { timeout: 60000 });
   if (await page.locator("#pose:visible").count()) throw new Error("a visible #pose toggle: posing has no toggle");
-  await sleep(150); // a frame or two
   if (!(await page.evaluate(() => window.__pfRuntime.pose.isLive()))) throw new Error("posing is not live after the first build");
+  // Framing settles over a few frames after the first build: wait until every handle point
+  // is where it was two animation frames ago (and there is one), so a pick is not stale.
+  await page.waitForFunction(() => new Promise((resolve) => {
+    const read = () => JSON.stringify(window.__pfRuntime.pose.handlePoints().map((p) => [p.handleId, Math.round(p.x * 10), Math.round(p.y * 10)]));
+    const a = read();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const pts = window.__pfRuntime.pose.handlePoints();
+      resolve(pts.length > 0 && read() === a);
+    }));
+  }), null, { timeout: 15000, polling: 50 });
   return page.locator(VIEWER_CANVAS).boundingBox();
 }
 
@@ -194,7 +203,13 @@ async function dragFrom(page, h, box, onMidDrag) {
   for (let i = 1; i <= DRAG_MOVES; i++) {
     await page.mouse.move(h.px + dx * i, h.py + dy * i);
     await sleep(20); // let the rAF-coalesced frame run
-    if (i === Math.floor(DRAG_MOVES / 2)) await onMidDrag?.();
+    if (i === Math.floor(DRAG_MOVES / 2)) {
+      if (!(await page.evaluate(() => window.__pfRuntime.pose.__isDragging()))) {
+        await page.mouse.up();
+        throw new Error(`a drag from handle ${h.handleId}:${h.at} never started (pose.isDragging() false mid-drag)`);
+      }
+      await onMidDrag?.();
+    }
   }
   await sleep(80);
 }

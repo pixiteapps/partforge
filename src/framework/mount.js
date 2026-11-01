@@ -2119,6 +2119,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // Test hook only (scripts/check-pose.mjs): every pin badge drawn — the pinned point
         // (part coordinates) and where it sits on the canvas.
         __pinPoints: () => poseMode.pinPoints(),
+        // Test hook only (scripts/check-pose.mjs): a pose drag is past its threshold.
+        __isDragging: () => poseMode.isDragging(),
         // Test hook only (scripts/check-pose.mjs): what one sub-part's mesh shows
         // right now — its material's opacity and its geometry's identity — so the
         // check can see ghost and delivery land in the same frame.
