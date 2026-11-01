@@ -473,6 +473,50 @@ test("a held ground keeps its place and size through rebuilds, and only ever low
   v.dispose();
 });
 
+test("ground holds are per reason: the animation releasing its hold never frees a pose hold", async () => {
+  const shifted = (dx) => {
+    const p = payload();
+    for (let i = 0; i < p.positions.length; i += 3) p.positions[i] += dx;
+    return p;
+  };
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const rig = lastRig();
+  const placed = rig.setGround.mock.calls.at(-1)[0];
+
+  v.holdGround(true, "pose");
+  v.holdGround(true); // the animation driver's (default) reason
+  v.holdGround(false); // playback stops: mount's pose hold still stands
+  v.setSubGeometry("body", shifted(40));
+  v.showAssembly(Object.keys(part.parts));
+  expect(rig.setGround.mock.calls.at(-1)[0]).toEqual(placed);
+
+  v.holdGround(false, "pose");
+  v.showAssembly(Object.keys(part.parts));
+  expect(rig.setGround.mock.calls.at(-1)[0].centerX).toBeGreaterThan(placed.centerX + 10);
+  v.dispose();
+});
+
+test("an unheld placement in CAD forgets the last ground, so a later hold cannot bring back a stale floor", async () => {
+  const shifted = (dx) => {
+    const p = payload();
+    for (let i = 0; i < p.positions.length; i += 3) p.positions[i] += dx;
+    return p;
+  };
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const placed = lastRig().setGround.mock.calls.at(-1)[0];
+  await v.setRenderMode("cad");
+  v.setSubGeometry("body", shifted(40)); // a real edit lands in CAD, unheld
+  v.showAssembly(Object.keys(part.parts));
+  v.holdGround(true, "pose"); // then a pose edit holds the ground
+  await v.setRenderMode("realistic");
+  const back = lastRig().setGround.mock.calls.at(-1)[0];
+  expect(back.centerX).toBeGreaterThan(placed.centerX + 10); // placed at the new geometry
+  v.holdGround(false, "pose");
+  v.dispose();
+});
+
 test("while an animation moves a part the shadow re-renders low-res, then once full on settle", async () => {
   let now = 1000;
   vi.spyOn(performance, "now").mockImplementation(() => now);

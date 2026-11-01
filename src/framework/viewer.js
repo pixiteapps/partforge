@@ -971,11 +971,23 @@ export function createViewer(container, part, {
   // it sideways or resize it, and never lift it into the part. The hold is
   // viewer-wide rather than per rig, so an environment switch mid-playback
   // lands its floor in the same place.
-  let groundHeld = false;
+  //
+  // Posing holds it too (mount's "pose" hold): the floor belongs to the part's
+  // base, not its pose, so a joint dragged sideways must not slide the floor's
+  // texture under the part. Each holder names itself (`reason`), so the
+  // animation driver releasing its hold on a user edit never releases mount's,
+  // and the ground is held while ANY reason holds it.
+  //
+  // An unheld placement with no rig (CAD) forgets the last ground: it described
+  // geometry that has since changed, and a later hold must not bring it back.
+  const groundHolds = new Set();
   let lastGround = null;
-  function holdGround(on) { groundHeld = !!on; }
+  function holdGround(on, reason = "animation") {
+    if (on) groundHolds.add(reason); else groundHolds.delete(reason);
+  }
   function placeGround({ force = false } = {}) {
-    if (!realisticRig) return;
+    const groundHeld = groundHolds.size > 0;
+    if (!realisticRig) { if (!groundHeld) lastGround = null; return; }
     const b = getVisibleWorldBounds(); // shared Box3: read it out before anything else runs
     if (b.isEmpty()) return;
     const center = b.getCenter(new THREE.Vector3());
@@ -3526,6 +3538,13 @@ export function createViewer(container, part, {
     _subMeshes: subMesh,
     __subMesh: (n) => subMesh[n],   // test hooks (cf. attachAnimationControls' __viewer)
     __subLines: (n) => subLines[n],
+    // Test hook (scripts/check-pose.mjs): the realistic floor as placed — the
+    // ground object's position and scale and the last placement — or null in CAD.
+    __ground: () => (realisticRig ? {
+      position: realisticRig.ground.position.toArray(),
+      scale: realisticRig.ground.scale.toArray(),
+      placed: lastGround ? { ...lastGround } : null,
+    } : null),
     flashPoint,
     projectPoint,
     holdFlashPoint,

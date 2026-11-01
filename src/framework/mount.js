@@ -712,6 +712,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // solved against the outgoing view's limbs (a no-op with no drag).
         poseMode?.externalWrite();
         animCtl?.viewChanged();
+        releaseGround(); // a new view places its floor afresh
         pendingPosed.clear(); cutawayChrome.reset(); refreshView();
         // place() may read `view`: re-pose the incoming view's canonical meshes
         // (and clear the posed ones' matrices) before anything else reads them.
@@ -1297,8 +1298,42 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       }
     }
 
+    // The realistic floor belongs to the part's base, not its pose. Every param
+    // change holds it where it is (the viewer's "pose" ground hold: a placement
+    // keeps its centre and size and may only lower it, never lift it into the
+    // part); only a REAL change lets it come to the part again, once the
+    // geometry that change asked for has landed (showView, below). A change is
+    // pose-only when every key it moved is one a pose handle writes (a drag's
+    // release may still rebuild the sub-parts whose build reads those — they
+    // ghost and land under the held floor), or when the fast path moved the
+    // view by matrix alone. Until a real change's geometry lands, the stale
+    // meshes on screen keep the floor where it was. A view switch, and a view
+    // not yet wholly on screen, place the floor afresh. The animation driver's
+    // own hold is separate and unchanged.
+    const poseParamKeys = new Set(handleIds.flatMap((id) => handleParamKeys(part.handles[id])));
+    let groundParams = { ...params }; // the params the last change was measured from
+    let groundRealPending = false; // a real change whose geometry has not landed yet
+    function noteGroundChange() {
+      const changed = Object.keys({ ...groundParams, ...params }).filter((k) => !Object.is(groundParams[k], params[k]));
+      groundParams = { ...params };
+      if (!changed.length) return;
+      // Part of the view has no mesh yet (a first build): no floor to hold, and
+      // each batch that lands places it, as it always has.
+      const needed = viewSubParts(part, view(), params);
+      if (!needed.every((n) => viewer.hasSubMesh(n))) { releaseGround(); return; }
+      const poseOnly = changed.every((k) => poseParamKeys.has(k)) || needed.every(isCurrent);
+      if (!poseOnly) groundRealPending = true;
+      viewer.holdGround?.(true, "pose");
+    }
+    function releaseGround() {
+      groundRealPending = false;
+      viewer.holdGround?.(false, "pose");
+    }
+
     function showView(needed) {
       let frame = view() !== framedView;
+      // The geometry a real change asked for has all landed: the floor comes to it.
+      if (groundRealPending && needed.every(isCurrent)) releaseGround();
       // A first build shown in batches (showPartial) completes: frame the whole view now,
       // unless the user moved the camera meanwhile or a restored camera stands.
       if (partialView === view()) {
@@ -1769,6 +1804,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         for (const name of posed) pendingPosed.add(name);
         dbg?.update({ posed: pendingPosed.size }); // partial: merges over the last build's numbers
       }
+      noteGroundChange();
       refreshView();    // keep showing the now-stale mesh (no flicker); disable export
       updateRelevance();
     }
@@ -2090,6 +2126,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           const m = viewer.__subMesh?.(name);
           return m ? { opacity: m.material?.opacity ?? 1, geometry: m.geometry?.uuid ?? null } : null;
         },
+        // Test hook only (scripts/check-pose.mjs): the realistic floor as placed, or null.
+        __ground: () => viewer.__ground?.() ?? null,
       } : null,
       poseState: () => (poseMode && poseMode.pinCount() > 0 ? { pins: poseMode.getPins() } : null),
       annotate: annotateMode ? {

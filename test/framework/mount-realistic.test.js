@@ -893,3 +893,61 @@ test("a delivery whose params the main thread cannot resolve draws plain wood, n
   expect(uniforms.pfSheetT.value).toBe(0);
   runtime.dispose();
 });
+
+// The floor belongs to the part's base, not its pose (pose-mode feedback: the
+// floor texture slid around while a robot arm's joint moved). A pose-only edit
+// keeps the floor's centre and size; a real change places it afresh once its
+// geometry lands.
+test("a pose-only edit keeps the realistic floor in place; a real change re-derives it once built", async () => {
+  vi.useFakeTimers();
+  const workers = {};
+  const part = makePart(undefined);
+  part.defaults = { h: 4, lift: 0 };
+  part.parameters[0].advanced.push({ key: "lift", label: "Lift", min: 0, max: 200, step: 1 });
+  part.parts.body.place = (s, { p }) => s.translate([p.lift, 0, 0]);
+  const runtime = mount(part, {
+    createWorker: (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null }),
+    elements: makeElements(),
+  });
+  const deliver = (scale = 1) => {
+    const p = payload("body");
+    for (let i = 0; i < p.positions.length; i++) p.positions[i] *= scale;
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ ...p, reads: ["h"], frame: "canonical" }], ms: 1 } });
+  };
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  deliver();
+  await runtime.ready;
+  vi.useRealTimers();
+  await runtime.renderMode.set("realistic");
+  vi.useFakeTimers();
+  const rig = rigState.rigs.at(-1);
+  const last = () => rig.setGround.mock.calls.at(-1)[0];
+  const placed = last();
+
+  // Matrix-only: the fast path slides the body 50mm sideways; the floor stays.
+  workers.manifold.postMessage.mockClear();
+  runtime.setParams({ lift: 50 });
+  vi.advanceTimersByTime(300);
+  expect(workers.manifold.postMessage.mock.calls.map(([m]) => m.type)).not.toContain("generate");
+  expect(viewers[0].__subMesh("body").matrix.elements[12]).toBe(50);
+  expect(last()).toEqual(placed);
+
+  // A real change: the stale mesh on screen keeps the floor until the new one lands…
+  workers.manifold.postMessage.mockClear();
+  runtime.setParams({ h: 8 });
+  vi.advanceTimersByTime(300);
+  expect(last()).toEqual(placed);
+  expect(workers.manifold.postMessage.mock.calls.map(([m]) => m.type)).toContain("generate");
+  // …then the floor comes to the new geometry, where the pose has it.
+  deliver(8);
+  const fresh = last();
+  expect(fresh.centerX).toBeGreaterThan(placed.centerX + 40);
+  expect(fresh.radius).toBeGreaterThan(placed.radius);
+
+  // Pose-only again: held at the new place.
+  runtime.setParams({ lift: 0 });
+  vi.advanceTimersByTime(300);
+  expect(last()).toEqual(fresh);
+  vi.useRealTimers();
+  runtime.dispose();
+});
