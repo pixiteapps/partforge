@@ -15,8 +15,10 @@
 // move and, while dragging, one solve:
 //   hover        no press: back and forth across the first limb (its dots shown)
 //   dragTip      the first handle's point (hand: the index tip; arm: the tool's ball)
-//   dragPinned   hand only: the thumb tip pinned, then the index tip dragged (both
-//                handles list the wrist, so the solve holds the thumb through it)
+//   dragPinned   hand: the thumb tip pinned, then the index tip dragged (both
+//                handles list the wrist, so the solve holds the thumb through it);
+//                arm: the elbow pinned (a click on its dot), then the tool dragged — the
+//                goal drag's pinned solve (forward kinematics over the six seed joints)
 //   aimRing      arm only: round the aim gizmo's pitch ring
 //   jointRing    round a joint ring (arm: the elbow, goal mode; hand: the wrist pitch)
 //   idleOrbit    a tip pinned (its badge drawn), then an orbit drag on the background
@@ -272,6 +274,23 @@ async function benchPage(browser, base, entry) {
         return { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t };
       });
       out.jointRing = { handle: `${limb}.${joint} ring`, ...await dragMeasure(page, cdp, from, pts) };
+    }
+  }
+
+  // arm dragPinned: pin the elbow (a click on its dot), drag the tool, unpin
+  if (entry !== "hand.html") {
+    const elbow = (await page.evaluate(() => window.__pfRuntime.pose.__jointRings())).find((p) => p.limb === "arm" && p.joint === "elbow");
+    if (elbow) {
+      await hoverOnto(page, at(elbow));
+      await page.mouse.click(at(elbow).x, at(elbow).y);
+      await sleep(200);
+      const tool = await find("tool");
+      if (tool && (await page.evaluate(() => window.__pfRuntime.pose.pinCount())) === 1) {
+        await hoverOnto(page, at(tool));
+        out.dragPinned = { handle: "tool, elbow pinned", ...await dragMeasure(page, cdp, at(tool), dragPoints(at(tool), box)) };
+      }
+      await page.evaluate(() => window.__pfRuntime.pose.releasePins());
+      await sleep(100);
     }
   }
 
