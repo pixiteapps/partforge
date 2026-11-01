@@ -5,12 +5,8 @@
 // and oriented, has no zero-volume component, and never crosses a near miss's bisector.
 import { describe, test, expect } from "vitest";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
-import { ATTACH_STRIDE } from "../src/framework/geometry/implicit/contact.js";
 import { edgeCheck, componentCount } from "./helpers/mesh-topology.js";
-import { flippedTriangles, seamFolds, childIndex, sharesAt, gapHolds, worldAttachments, ownerFrame, creaseInAttachment } from "./helpers/seam-quality.js";
-import { xformPoint } from "../src/framework/geometry/implicit/frames.js";
-import { evalNodeAt } from "../src/framework/geometry/implicit/reference.js";
-import { hypot3 } from "../src/framework/geometry/js-math.js";
+import { flippedTriangles, seamFolds, gapHolds, worldAttachments, creaseInAttachment, bisectorCrossings } from "./helpers/seam-quality.js";
 import { capsulePress, threePress, PRESS_OVERLAP, SEAM_CASES, GATE_EXTRA_CASES, MOVED_CASES, fingerAttached } from "./fixtures/implicit-seam-cases.js";
 
 const CLOSED = { boundary: 0, nonManifold: 0, misoriented: 0 };
@@ -45,54 +41,6 @@ function componentVolumes(P, I) {
   return [...vol.values()];
 }
 
-/**
- * Triangles crossing the bisector of the near-miss pair (labels a, b): corners on both sides
- * of d_a = d_b (the pieces' raw values, evalNodeAt), every corner nearer a or b than any other
- * piece. One whose centroid lies inside both pieces' attachment zones is let off only when it
- * lies on the surface (|field| ≤ WEB_TOL there): neighbouring digits web together at the palm,
- * but a triangle across air between them is a bridge wherever it is.
- */
-function bisectorCrossings(compiled, mesh, a, b) {
-  const P = mesh.positions, I = mesh.indices, nv = P.length / 3;
-  const ia = childIndex(compiled, a), ib = childIndex(compiled, b);
-  const node = compiled.ir.nodes[compiled.ownerRoot], att = worldAttachments(compiled), ids = node.children;   // P is world
-  // Raw child distances, so the classification never depends on the mesher's own labels.
-  const X = new Float64Array(nv), Y = new Float64Array(nv), Z = new Float64Array(nv);
-  for (let v = 0; v < nv; v++) { X[v] = P[3 * v]; Y[v] = P[3 * v + 1]; Z[v] = P[3 * v + 2]; }
-  const raw = ids.map((id) => rawAt(compiled, id, X, Y, Z));
-  const side = new Int8Array(nv);
-  for (let v = 0; v < nv; v++) {
-    const da = raw[ia][v], db = raw[ib][v];
-    let nearest = true;
-    for (let k = 0; k < ids.length; k++) if (k !== ia && k !== ib && raw[k][v] < Math.min(da, db)) nearest = false;
-    side[v] = nearest ? Math.sign(da - db) : 0;
-  }
-  const inZone = (o, q) => hypot3(q[0] - att[o + 2], q[1] - att[o + 3], q[2] - att[o + 4]) < att[o + 5] + att[o + 6];
-  const zoneOf = (k, q) => { for (let o = 0; o < att.length; o += ATTACH_STRIDE) if ((att[o] === k || att[o + 1] === k) && inZone(o, q)) return true; return false; };
-  const webbed = [];
-  let n = 0;
-  for (let t = 0; t < I.length; t += 3) {
-    const s = [side[I[t]], side[I[t + 1]], side[I[t + 2]]];
-    if (s.includes(0) || !(s.includes(1) && s.includes(-1))) continue;
-    const q = [0, 1, 2].map((k) => (P[3 * I[t] + k] + P[3 * I[t + 1] + k] + P[3 * I[t + 2] + k]) / 3);
-    if (zoneOf(ia, q) && zoneOf(ib, q)) webbed.push(...q); else n++;
-  }
-  if (webbed.length) {
-    const { out } = sharesAt(compiled, Float64Array.from(webbed.filter((_, i) => i % 3 === 0)), Float64Array.from(webbed.filter((_, i) => i % 3 === 1)), Float64Array.from(webbed.filter((_, i) => i % 3 === 2)));
-    for (const f of out) if (Math.abs(f) > WEB_TOL) n++;
-  }
-  return n;
-}
-
-// A child node's raw value at the (world) points: evalNodeAt reads a child in its parent's frame,
-// so each point is first carried into the owner root's frame (identity unless the root is moved).
-function rawAt(compiled, id, X, Y, Z) {
-  const M = ownerFrame(compiled), q = [0, 0, 0];
-  return Float64Array.from(X, (x, v) => { xformPoint(q, M, x, Y[v], Z[v]); return evalNodeAt(compiled, id, q[0], q[1], q[2]); });
-}
-
-/** A webbed triangle's centroid is on the surface within this (mm); a bridge across the 0.75 mm near miss sits far above it. */
-const WEB_TOL = 0.1;
 const NEAR_MISS = {
   "near miss 0.3 gap 0": ["a", "b"], "hand nearMiss gap 0": ["index", "middle"], "hand nearMiss gap 0.2": ["index", "middle"],
   "hand nearMiss gap 0 (palm last)": ["index", "middle"], "fingers on palm 0.3": ["a", "b"], "fingers on palm 0.3 offset 0.37": ["a", "b"],

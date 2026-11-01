@@ -907,7 +907,8 @@ int eval_points(ipe::Session& s, const Points& pts, double* out, int32_t* piece,
 // then to maxStep); the share step's guards in the JS's order (the try test on the centre
 // share, the finite test over the 7 stencil shares, the gradient cap); the landing at
 // p - (g / gl) * t, judged on predicted = d - gl * t with the continuity bound
-// HELD_CONTINUITY * |t| + tol and mine = landed - field <= tol; and the step applied as
+// HELD_CONTINUITY * |t| + tol, mine = landed - field <= tol and transit = continuous with the
+// field above tol at the landing (the JS's rule, in its order); and the step applied as
 // project() applies it. Lanes are laid out differently here — the centres of a chunk first
 // (evaluated with share capture), then their six stencil points (no capture: the field is
 // evalBatch's either way), and only a candidate's stencil shares evaluated again with
@@ -1049,7 +1050,10 @@ int project_owned(ipe::Session& s, const int32_t* which, int whichCount, double 
         const Step& st = share[k];
         const double predicted = st.d - st.gl * st.t, landed = shL[(size_t)c * K + s.vertOwner[order[q0 + k]]];
         const bool continuous = std::fabs(landed - predicted) <= HELD_CONTINUITY * std::fabs(st.t) + tol, mine = landed - lO[c] <= tol;
-        if (mine && (std::fabs(lO[c]) <= tol || continuous)) accepted[k] = 1;
+        // project.js's transit: a continuous step landing in air (another piece still nearer)
+        // is carried on by the next pass rather than dropped onto that piece's skin.
+        const bool transit = continuous && lO[c] > tol;
+        if ((mine && (std::fabs(lO[c]) <= tol || continuous)) || transit) accepted[k] = 1;
       }
       for (int k = 0; k < m; k++) {
         const size_t v = order[q0 + k];

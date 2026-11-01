@@ -16,7 +16,9 @@
 // step is tried only when the share's stencil gradient is distance-like (≤ HELD_GRAD_MAX), and
 // kept only when the share still makes the field at the landing (no other piece is nearer
 // there) and either the landing is on the surface (|field| ≤ HELD_FIELD_TOL·edge) or the share
-// behaved continuously along the step; otherwise, or when the owner's share is pruned at the
+// behaved continuously along the step — or when it behaved continuously and the landing is in
+// air (the vertex is in transit toward its own skin, further off than one capped step reaches;
+// see projectOwnedGroup); otherwise, or when the owner's share is pruned at the
 // vertex's leaf, the vertex takes the ordinary field step. Every owner-mesh step is also capped at
 // DIST_RATIO × |value|: beside a crease the stencil straddles two pieces' gradients, which average
 // toward zero, and value / |gradient| would throw the vertex far across the crease. `unsettled`
@@ -131,7 +133,16 @@ function projectOwnedGroup(store, prog, positions, verts, owner, held, { X, Y, Z
     tries.forEach((k, q) => {
       const s = shareSteps[k], predicted = s.d - s.gl * s.t, landed = cShares[q * K + owner[verts[k]]];
       const continuous = Math.abs(landed - predicted) <= HELD_CONTINUITY * Math.abs(s.t) + tol, mine = landed - cOut[q] <= tol;
-      if (mine && (Math.abs(cOut[q]) <= tol || continuous)) accepted[k] = 1;
+      // A continuous step that lands in AIR with another piece still nearer is in TRANSIT: the
+      // vertex sits further from its own skin than one capped step reaches (a linear crossing
+      // on a grid edge that runs from inside its piece across a thin gap to an air sample by
+      // the other piece lands by that piece, up to a cell and more from home), and the next
+      // pass carries it on. Rejected instead, it would take the field step — onto the other
+      // piece's skin, where every later pass repeats the rejection — and its triangles would
+      // bridge the gap. A landing inside material (a fused contact's crease, where its own cut
+      // lies within the other piece) still takes the field step.
+      const transit = continuous && cOut[q] > tol;
+      if ((mine && (Math.abs(cOut[q]) <= tol || continuous)) || transit) accepted[k] = 1;
     });
   }
   verts.forEach((v, k) => {
