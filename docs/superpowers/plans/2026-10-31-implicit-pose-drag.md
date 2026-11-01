@@ -63,14 +63,16 @@
 
 | Step | Time |
 |---|---|
-| (a) `skinVertices`, curl 30 to 31, 347,826 corners, 26 frames | 6.2 ms |
-| (b) `bindVertices`, body at 1.5 mm, 39,298 vertices | 10.6 ms |
-| (c) exact rebuild, one finger (`flexIndex` 60 to 62), cold / warm | 751 / 750 ms; sample-cache hits 0% / 74% |
-| (c) exact rebuild, every finger (`curl` 30 to 32), cold / warm | 764 / 793 ms; hits 0% / 19% |
-| (d) first mesh (build + pieces' `toMesh`), cold / warm | 584 / 511 ms |
-| (d) final (build + union `toMesh`), cold / warm | 779 / 738 ms |
+| (a) `skinVertices`, curl 30 to 31, 296,946 corners, 26 frames | 5.3 ms |
+| (b) `bindVertices`, body at 1.5 mm, 38,895 vertices | 12.6 ms |
+| (c) exact rebuild, one finger (`flexIndex` 60 to 62), cold / warm | 723 / 704 ms; sample-cache hits 0% / 76% |
+| (c) exact rebuild, every finger (`curl` 30 to 32), cold / warm | 767 / 777 ms; hits 0% / 21% |
+| (d) first mesh (build + pieces' `toMesh`), cold / warm | 536 / 526 ms |
+| (d) final (build + union `toMesh`), cold / warm | 739 / 704 ms |
 
-The deform is under the 16 ms target. The warm one-finger rebuild equals the cold one end to end: the cache saves sampling, but the nails, the union and the mesh import dominate (the body alone was 218 vs 244 ms in Task 2). The palm blocks' programs carry every finger's bulge regions, so a flex misses them; pruning far regions per block is a later engine change.
+Re-measured 2026-11-01 on the reshaped hand (flatter knuckles, moved nails).
+
+The deform is under the 16 ms target. The warm one-finger rebuild is barely below the cold one end to end: the cache saves sampling, but the nails, the union and the mesh import dominate (the body alone was 218 vs 244 ms in Task 2). The palm blocks' programs carry every finger's bulge regions, so a flex misses them; pruning far regions per block is a later engine change.
 
 Shared test fixture (Task 3 creates it): `test/fixtures/skin-fixtures.js` exporting `TWO_BONE(bend = 0)` — `{ frames: { root: { at: [0, 0, 0] }, child: { parent: "root", at: [0, 20, 0], rotate: { axis: "x", deg: bend } } }, root: { kind: "union", k: 2, children: [{ kind: "capsule", frame: "root", b: [0, 20, 0], r: 4 }, { kind: "capsule", frame: "child", b: [0, 20, 0], r: 4 }] }, preview: 1, resolution: 1 }` — and `BALL(frame = "child", at = [0, 24, 6])` — `{ frames: TWO_BONE(0).frames, root: { kind: "sphere", frame, at, r: 3 }, preview: 1 }`.
 

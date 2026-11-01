@@ -301,15 +301,15 @@ Measured on an Apple M1 Max, native core on, the hand part at its 1.5 mm preview
 
 | Step | Time |
 | --- | --- |
-| Bend the mesh (347,826 corners), curl 30 to 31 | 6.2 ms |
-| Bind a build's vertices (the body, 39,298 vertices) | 10.6 ms |
-| Exact rebuild, one finger (`flexIndex` 60 to 62), cold / warm | 751 / 750 ms |
-| Exact rebuild, every finger (`curl` 30 to 32), cold / warm | 764 / 793 ms |
-| First mesh (the pieces), cold / warm | 584 / 511 ms |
-| Real union mesh, cold / warm | 779 / 738 ms |
+| Bend the mesh (296,946 corners), curl 30 to 31 | 5.3 ms |
+| Bind a build's vertices (the body, 38,895 vertices) | 12.6 ms |
+| Exact rebuild, one finger (`flexIndex` 60 to 62), cold / warm | 723 / 704 ms |
+| Exact rebuild, every finger (`curl` 30 to 32), cold / warm | 767 / 777 ms |
+| First mesh (the pieces), cold / warm | 536 / 526 ms |
+| Real union mesh, cold / warm | 739 / 704 ms |
 
-The warm rebuild reuses the preview sample cache: 74% of the one-finger samples hit and
-19% of the all-finger samples. A palm block's program includes the bulge regions of every
+The warm rebuild reuses the preview sample cache: 76% of the one-finger samples hit and
+21% of the all-finger samples. A palm block's program includes the bulge regions of every
 finger, so a flex misses the palm's blocks and the saving is small once the nails, the
 union and the mesh import are added. Cold and warm meshes are identical.
 
