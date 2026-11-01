@@ -8,7 +8,7 @@
 //
 // Pure and DOM-free (the geometry worker holds it). LRU by Map re-insertion on `get`; `put`
 // evicts the oldest entries until the cache is back inside its byte bound.
-export { leafKeys, programDigest } from "./sparse.js";
+export { leafKeys } from "./sparse.js";
 
 /** The default byte bound: 64 MiB of samples (~130k plain leaves). */
 export const SAMPLE_CACHE_BYTES = 64 * 2 ** 20;
