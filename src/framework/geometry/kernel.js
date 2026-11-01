@@ -29,7 +29,7 @@ export const KERNEL_OPS = [
   "heightfield",
   // Additive (same precedent): a compound default, so neither backend implements it.
   "tappedBore",
-  // Additive in 0.177 (same precedent). Signed-distance tree → solid (implicit/).
+  // Additive in 0.179 (same precedent). Signed-distance tree → solid (implicit/).
   // Mesh-native: required of the core (mesh) class only — a B-rep class may throw
   // (KERNEL-CONTRACT.md "Mesh-native ops"). STEP export meshes it on Manifold and
   // writes a tessellated solid, so OCCT never has to build it.
