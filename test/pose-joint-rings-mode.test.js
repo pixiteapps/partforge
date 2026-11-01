@@ -369,6 +369,34 @@ describe("joint rings in Pose mode", () => {
     expect(t.params.wristYaw).not.toBe(robotArm.defaults.wristYaw);
   });
 
+  it("zoomed out, where the knuckles crowd, a dot's own centre always reaches that dot's rings", () => {
+    // Another finger's bones can pass nearer a dot than its own limb's do (to a pixel's
+    // tie); the dot taken must be the NEAREST dot of any limb, not the nearest limb's.
+    const t = setup(hand, {}, "index");
+    const cam = t.viewer.camera;
+    const misses = [];
+    const views = [];
+    for (let az = 0; az < 360; az += 15) for (const el of [-20, 10, 40]) views.push([az, el]);
+    for (const [az, el] of views) {
+      const a = (az * Math.PI) / 180, e = (el * Math.PI) / 180;
+      cam.position.set(1400 * Math.sin(a) * Math.cos(e), 1400 * Math.sin(e), 1400 * Math.cos(a) * Math.cos(e));
+      cam.lookAt(0, 120, 0);
+      cam.updateMatrixWorld();
+      t.viewer.tick(); // the camera moved: projections are re-taken
+      t.fire("pointermove", 1, 1);
+      const pts = t.mode.jointRingPoints();
+      for (const p of pts.filter((q) => q.limb !== "palm")) {
+        // skip a dot another dot sits on (to a pixel): no rule can tell those apart
+        if (pts.some((q) => q !== p && Math.hypot(q.x - p.x, q.y - p.y) < 1)) continue;
+        t.fire("pointermove", 1, 1);
+        t.fire("pointermove", p.x, p.y);
+        const g = t.mode.jointGizmoPoints();
+        if (g?.limb !== p.limb || g?.joint !== p.joint) misses.push(`${az}/${el}: ${p.limb}.${p.joint} -> ${g ? `${g.limb}.${g.joint}` : "none"}`);
+      }
+    }
+    expect(misses).toEqual([]);
+  });
+
   it("a ring crossing a neighbouring joint's dot: the nearer wins, so both stay reachable", () => {
     const t = setup(hand, {}, "index");
     t.hover("spread");

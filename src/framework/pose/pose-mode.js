@@ -604,7 +604,7 @@ export function createPoseMode(viewer, {
 
   /**
    * What the mouse at the canvas point `pt` hovers: `{ limb, hit, focus }`. In order: the
-   * shown aim gizmo's ball; a dot of the nearest limb (taking the focus to its aim gizmo or
+   * shown aim gizmo's ball; the nearest dot of any limb (taking the focus to its aim gizmo or
    * its joint's rings, or dropping it); the shown gizmo's rings (they reach past
    * NEAR_LIMB_PX); the inside of the shown gizmo (it stays); else the nearest limb alone.
    * `hit` is `{ kind: "dot", handleId, at, limb, gizmo?, ringOnly? }`,
@@ -617,8 +617,12 @@ export function createPoseMode(viewer, {
     const aim = focus?.kind === "aim" ? gizmoTarget(focus.limb) : null;
     const onAim = gizmoHit(aim, pt);
     if (onAim?.gizmo === "ball") return { limb: onAim.limb, hit: onAim, focus };
-    const limb = nearestLimb(x, y);
-    let dotHit = limb ? dotAt(x, y, limb, HANDLE_HIT_PX) : null;
+    // The nearest dot of ANY limb, its limb then the one shown: where the knuckles crowd
+    // (a zoomed-out hand), another finger's bones can pass nearer a dot than its own
+    // limb's do at a pixel's tie, and restricting the dot to the bone-nearest limb left a
+    // dot that hovering its own centre never reached (the index mcp gave the middle's).
+    let dotHit = dotAt(x, y, null, HANDLE_HIT_PX);
+    const limb = dotHit?.limb ?? nearestLimb(x, y);
     const jt = jointTarget(focus);
     const onJoint = onAim ? null : jointRingHit(jt, pt);
     const onRing = onAim ?? onJoint;
