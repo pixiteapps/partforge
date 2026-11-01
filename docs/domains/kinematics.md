@@ -637,6 +637,18 @@ for example when the upper arm gets longer.
   the limb stays put. Where the angles are not unique, the viewer picks the pitch inside
   the pitch parameter's range nearest its current value, and with the aim straight up or
   down it keeps the current yaw and puts the rest of the turn in the roll.
+- **Pins on a goal drag.** With a pin on the goal's own limb (click the elbow, say), a
+  drag of the `at` point no longer writes the goal straight through, because `derive`'s
+  goal solve would pull the limb to it and ignore the pin. The viewer solves the seed
+  joints itself instead (forward kinematics), so the `at` point goes as near the cursor
+  as it can while each pinned point holds still. It then writes the seed and the goal as a
+  joint ring does: the goal where the solved pose puts the `at` point, aim included. The
+  next solve starts at its answer and lands on the same pose. With pins, the aim follows
+  the pose, since a pinned arm has too few joints left to hold both the point and the aim.
+  An aim ring drag with a pin holds the pins too: it pulls the aim toward the ring's angle
+  while the `at` point keeps where the drag began, and a pin can stop the aim short. A
+  goal the schema would clip stops the pose short, as a joint ring does. A pin on another
+  limb is not held by a goal drag. Without a pin on its limb, a goal drag works as before.
 
 ### `mode: "angles"`
 
@@ -671,7 +683,7 @@ Posing has no button. In a part that declares `handles`, posing is always on in 
 normal click mode. It stops while measure, sketch or cutaway is on, and it starts again
 when they are all off.
 
-- **At rest, no handles show.** Only the pin badges of pinned tips show.
+- **At rest, no handles show.** Only the pin badges show, one at each pinned point.
 - **Hover near a limb to show its handles.** When the pointer is 32 CSS px or less from a
   limb's bones on screen, that limb's skeleton, joint dots and tip dot appear. If two
   limbs are near, the nearest one shows. Move away and they go.
@@ -687,9 +699,25 @@ when they are all off.
   band is 24 CSS px wide. Where the ball and a ring overlap, the ball wins.
 - **Every other press is the usual press.** On empty space or on the model away from the
   handles, a drag orbits and a click picks (the chat box opens as before).
-- **Click a tip (no drag)** to pin it. This click does not pick. A drag does not pick
-  when you release it. A pin is view state, not a parameter. A "Release pins" button
-  shows in the viewbar while a pin is set and posing is on.
+- **Click any dot (no drag)** to pin that point: a tip, a joint, a goal handle's `at`
+  point (the aim gizmo's ball) or a ring-only joint. Click it again to unpin it. This
+  click does not pick. A drag does not pick when you release it.
+  - A pinned point holds its position in space through every inverse-kinematics drag:
+    a drag of another point of the same limb, or of another limb's handle (angles mode
+    holds pins on any limb; a goal drag holds pins on its own limb, see "Pins on a goal
+    drag" under `mode: "goal"`). Dragging a pinned dot moves it, and it holds its new
+    place in the next drag.
+  - **Joint rings ignore pins.** A ring turns its one joint and nothing else, so a pinned
+    point past that joint moves with it.
+  - A pin badge (a pink dot and a head on a short stem) sits at each pinned point at all
+    times while posing is on, at rest too, and follows the point as the pose changes.
+    While its limb shows, the pinned dot itself is pink and larger. The badge's head sits
+    inside the dot's 28 px target, so a click on the badge unpins it. Captures never show
+    the badges.
+  - A pin is view state, not a parameter. Its id is `"<handle>:<at>"` (`at` a joint name
+    or `tip`; a joint of a limb only a `joints` entry shows is `"<limb>.<joint>"`), and
+    pins are carried in `getViewerState().pose.pins`. A "Release pins" button shows in the
+    viewbar while a pin is set and posing is on.
 - **Joint rings.** A joint with a parameter to turn (a goal handle's `seed`, an angles
   handle's `joints`) shows a rotate ring about its axis while you hover its dot: a hinge
   shows one ring, a ball joint three (bend, spread and twist). The ring colour follows the
@@ -700,8 +728,9 @@ when they are all off.
   range. The limit arc shows during the drag, and a joint at its stop shows the warning
   colour. Drag the dot itself for the inverse-kinematics drag, as before. A goal handle's
   joints, and a limb that only a `joints` entry names, have ring-only dots: hover one to
-  show its ring; a press on it orbits (a touch on one also puts its rings up, and its tap
-  picks nothing). A ring drag does not hold pins. A goal handle's joint stops where its
+  show its ring; a drag from it orbits and a click on it pins it (the cursor is a
+  pointer, not a grab). A touch on one puts its rings up and its tap picks nothing. A
+  ring drag does not hold pins. A goal handle's joint stops where its
   goal would leave a goal parameter's range (the tool below its lowest Z, say), with the
   warning colour, rather than letting the solve spread the turn over the other joints.
   Inside a shown gizmo, a press within 14 px of another dot, with no ring under it, still
@@ -714,6 +743,10 @@ when they are all off.
 - **Touch has no hover.** A touch press 24 px or less from a dot of any limb drags that
   dot. A touch press anywhere else orbits or picks. A touch on a joint with rings leaves
   its rings up until a touch lands somewhere else, as with the aim gizmo.
+- **Touch and pins.** A tap on a dot with no rings or gizmo (an angles limb's tip) pins it
+  at once. On a dot with rings or a gizmo, the first tap only puts them up; a tap on the
+  dot while they are up toggles its pin. With a mouse or a finger, on the dot's 8 px core
+  the dot wins over a ring seen edge-on through it.
 - **Touch and the aim gizmo.** A tap on a goal point with `aim` shows its aim gizmo and
   does not pin it. The gizmo stays until a touch lands somewhere else, so you can then
   drag a ring with your finger. A drag from the point also leaves it shown. While the
