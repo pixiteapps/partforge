@@ -1125,6 +1125,18 @@ export function createPoseMode(viewer, {
       }
       return out;
     },
+    /**
+     * Every pin badge the scene draws: `[{ limb, at, point, x, y }]` — `point` the pinned
+     * point in part coordinates, (x, y) where it sits on the canvas, CSS px. For the browser
+     * check (scripts/check-pose.mjs) and tests.
+     */
+    pinPoints() {
+      ensureFresh();
+      return (scene?.pinBadges?.() ?? []).map((b) => {
+        const s = toScreen(b.point);
+        return { ...b, x: s?.x ?? null, y: s?.y ?? null };
+      });
+    },
     pinCount: () => session.pins.length,
     getPins: () => session.pins,
     setPins: (ids) => session.setPins(ids),

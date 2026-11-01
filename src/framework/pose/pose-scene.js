@@ -314,7 +314,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
       head.frustumCulled = false;
       group.add(head);
       const stem = addLine("pin", [0, 0, 0, 0, 0, 0], RENDER_ORDER_POSE + 1);
-      pinRecs.push({ head, stem, pos });
+      pinRecs.push({ head, stem, pos, limb: pin.limb, at: pin.at });
     }
     sweepTextures();
     redraw();
@@ -436,5 +436,10 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     textureCache.clear();
   }
 
-  return { setLimbs, setHover, setActive, setPins, setAimGizmo, clear, tick, setTheme, group, dispose };
+  /** The pin badges drawn now: `[{ limb, at, point }]` (point: part coordinates). For tests and the browser check. */
+  function pinBadges() {
+    return pinRecs.map((r) => ({ limb: r.limb, at: r.at, point: r.pos.toArray() }));
+  }
+
+  return { setLimbs, setHover, setActive, setPins, setAimGizmo, clear, tick, setTheme, group, dispose, pinBadges };
 }

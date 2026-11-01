@@ -402,15 +402,22 @@ function goalTurn({ ring, s, value, info, ...rest }) {
  * radian): an aim ring held against pins trades this many mm of goal point for a radian of aim.
  */
 const AIM_WEIGHT_MM = 100;
+/**
+ * A hold's weight in a goal drag (solveGoalPinned): firmer than HOLD_WEIGHT, since the goal
+ * point routinely runs far past what the pinned limb can reach (the elbow pinned leaves the
+ * arm four joints for a six-number goal), and a least-squares hold gives way by about the
+ * miss over the weight squared — 0.35 mm for a 36 mm miss at 10, 0.004 mm at 100.
+ */
+const GOAL_HOLD_WEIGHT = 100;
 
 /**
  * A goal-mode drag that holds pins: solve the handle's seeded joints (forward kinematics on
  * the posed limb, its `ikForward` — derive's own goal solve would pull the limb straight to
  * the goal and ignore the pins) so the goal point `at` reaches `target` while each hold
- * `{ limb, at, point }` on the handle's limb stays at its point (HOLD_WEIGHT, as
- * solveAngles). With `aimAngles` (an aim ring's pitch/yaw/roll) the goal frame's +Y and,
- * with three aim params, +Z are pulled toward that aim as well (AIM_WEIGHT_MM), and
- * `target` is the goal point to keep. Holds on other limbs are not in this residual.
+ * `{ limb, at, point }` on the handle's limb stays at its point (GOAL_HOLD_WEIGHT). With
+ * `aimAngles` (an aim ring's pitch/yaw/roll) the goal frame's +Y and, with three aim params,
+ * +Z are pulled toward that aim as well (AIM_WEIGHT_MM), and `target` is the goal point to
+ * keep. Holds on other limbs are not in this residual.
  *
  * Writes what a joint ring writes (goalFromForward): every seed parameter at the solved
  * pose, and the goal parameters rewritten to the posed `at` frame — so the next derive's
@@ -483,7 +490,7 @@ export function solveGoalPinned({ part, params, handle, target, holds = [], aimA
       }
       for (const h of own) {
         const p = posed.ikForward(o, h.at).origin;
-        for (let c = 0; c < 3; c++) r[n++] = HOLD_WEIGHT * (p[c] - h.point[c]);
+        for (let c = 0; c < 3; c++) r[n++] = GOAL_HOLD_WEIGHT * (p[c] - h.point[c]);
       }
     } catch {
       r.fill(FAILED);

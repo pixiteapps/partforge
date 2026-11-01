@@ -29,7 +29,10 @@
 //     (runtime.pose.__jointRings() / __jointGizmo(), test hooks), hovering the ring
 //     highlights it with a grab cursor, and a drag round it writes that joint's parameter —
 //     one commit, no `generate` job; on robot-arm the commit also moves the tool goal (the
-//     goal follows the turned joint).
+//     goal follows the turned joint). Last on robot-arm, a JOINT PIN: a click on the elbow
+//     dot pins it (pinCount 1, a badge at the elbow — runtime.pose.__pinPoints(), a test
+//     hook — no commit); a tool drag then holds the elbow within 0.5 mm while the tool
+//     moves, one commit; a second click unpins.
 //
 // What it observes, and how:
 //   - worker traffic: an init script wraps window.Worker before the app loads, logging
@@ -392,7 +395,75 @@ async function checkRobotArm(page, url, errors) {
   if (added.length !== 1) errors.push(`${added.length} onParamsCommit calls after the ${name} ring drag, expected exactly 1`);
   else if (!aimParam || !added[0].changed?.includes(aimParam)) errors.push(`the ${name} ring drag committed ${JSON.stringify(added[0].changed)}, not ${aimParam}`);
   const joint = await checkJointRing(page, box, { limb: "arm", joint: "elbow", param: "elbow", alsoMoves: ["toolX", "toolY", "toolZ"] }, errors);
-  return { ...summary, ring: name, ringCommit: added[0]?.changed ?? null, ringValue: aimParam ? added[0]?.params?.[aimParam] : null, joint };
+  const pin = await checkJointPin(page, box, errors);
+  return { ...summary, ring: name, ringCommit: added[0]?.changed ?? null, ringValue: aimParam ? added[0]?.params?.[aimParam] : null, joint, pin };
+}
+
+/**
+ * Pin the arm's elbow by clicking its dot (a goal handle's ring-only joint): one pin, a
+ * badge at the elbow, no commit. Then drag the tool: the elbow holds (within 0.5 mm), the
+ * tool moves, one commit. A second click unpins.
+ */
+async function checkJointPin(page, box, errors) {
+  const at = (p) => ({ x: box.x + p.x, y: box.y + p.y });
+  const elbowDot = async () => (await page.evaluate(() => window.__pfRuntime.pose.__jointRings())).find((p) => p.limb === "arm" && p.joint === "elbow");
+  const dot = await elbowDot();
+  if (!dot) { errors.push("no elbow dot to pin"); return null; }
+  const d = at(dot);
+  await page.mouse.move(d.x + 18, d.y, { steps: 3 });
+  await page.mouse.move(d.x, d.y, { steps: 3 });
+  await sleep(50);
+  const cursor = await canvasCursor(page);
+  if (cursor !== "pointer") errors.push(`hovering the elbow dot shows cursor "${cursor}", not "pointer"`);
+  const commits0 = await page.evaluate(() => window.__pfCommits.length);
+  await page.mouse.down();
+  await page.mouse.up();
+  await sleep(100);
+  const state = await page.evaluate(() => ({
+    count: window.__pfRuntime.pose.pinCount(),
+    pins: window.__pfRuntime.getViewerState().pose?.pins ?? null,
+    badges: window.__pfRuntime.pose.__pinPoints(),
+    commits: window.__pfCommits.length,
+  }));
+  if (state.count !== 1) errors.push(`clicking the elbow dot left pinCount ${state.count}, expected 1`);
+  if (!state.pins?.includes("tool:elbow")) errors.push(`clicking the elbow dot pinned ${JSON.stringify(state.pins)}, not tool:elbow`);
+  const badge = state.badges.find((b) => b.limb === "arm" && b.at === "elbow");
+  if (!badge) errors.push(`no pin badge at the elbow (${JSON.stringify(state.badges)})`);
+  else if (Math.hypot(badge.x - dot.x, badge.y - dot.y) > 1) errors.push(`the elbow's pin badge sits ${Math.hypot(badge.x - dot.x, badge.y - dot.y).toFixed(1)} px off the elbow`);
+  if (state.commits !== commits0) errors.push("pinning the elbow committed params");
+  if (!badge) return null;
+  // drag the tool with the elbow pinned
+  const h = await pickHandle(page, box, "tool");
+  const tool0 = { x: h.x, y: h.y };
+  await dragFrom(page, h, box);
+  const mid = await page.evaluate(() => window.__pfRuntime.pose.__pinPoints().find((b) => b.at === "elbow")?.point ?? null);
+  await page.mouse.up();
+  await sleep(600);
+  const after = await page.evaluate(() => ({
+    elbow: window.__pfRuntime.pose.__pinPoints().find((b) => b.at === "elbow")?.point ?? null,
+    tool: window.__pfRuntime.pose.handlePoints().find((p) => p.handleId === "tool") ?? null,
+    commits: window.__pfCommits.length,
+  }));
+  const off = (p) => (p ? Math.hypot(p[0] - badge.point[0], p[1] - badge.point[1], p[2] - badge.point[2]) : Infinity);
+  if (!(off(mid) <= 0.5)) errors.push(`mid-drag the pinned elbow moved ${off(mid).toFixed(2)} mm`);
+  if (!(off(after.elbow) <= 0.5)) errors.push(`after the tool drag the pinned elbow moved ${off(after.elbow).toFixed(2)} mm`);
+  const toolMoved = after.tool ? Math.hypot(after.tool.x - tool0.x, after.tool.y - tool0.y) : 0;
+  if (!(toolMoved > 5)) errors.push(`the tool moved only ${toolMoved.toFixed(1)} px with the elbow pinned`);
+  if (after.commits - commits0 !== 1) errors.push(`${after.commits - commits0} commits after the pinned tool drag, expected 1`);
+  // unpin: click the elbow again
+  const again = await elbowDot();
+  if (again) {
+    const e = at(again);
+    await page.mouse.move(e.x + 18, e.y, { steps: 3 });
+    await page.mouse.move(e.x, e.y, { steps: 3 });
+    await sleep(50);
+    await page.mouse.down();
+    await page.mouse.up();
+    await sleep(100);
+  }
+  const left = await page.evaluate(() => window.__pfRuntime.pose.pinCount());
+  if (left !== 0) errors.push(`clicking the pinned elbow again left pinCount ${left}`);
+  return { elbowHeldMm: Number(Math.max(off(mid), off(after.elbow)).toFixed(3)), toolMovedPx: Number(toolMoved.toFixed(1)) };
 }
 
 /**
