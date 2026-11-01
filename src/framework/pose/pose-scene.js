@@ -5,7 +5,9 @@
 // hidden from canonical captures, drawn over the model (depthTest:false) and
 // never cutaway-clipped.
 //
-// At rest it draws nothing but pin badges: a limb's skeleton and dots show
+// At rest it draws nothing but pin badges — one AT each pinned point (setPins takes
+// points, `{ limb, at }`: a pin-coloured dot on the point and a head on a short stem above
+// it), following the posed point on every setLimbs — while a limb's skeleton and dots show
 // only while it is hovered (setHover) or dragged (setActive) — posing is always on
 // in the normal click mode, so an idle overlay would sit on every part with handles.
 //
@@ -31,13 +33,14 @@ import { DIM_THEME, defaultPaintLabel, worldPerPx, orthoWorldPerPx, LABEL_SCREEN
 import { limitArc } from "./pose-geom.js";
 
 // Match the measure / cutaway chrome: handle = the cutaway fill blue, active =
-// its border blue, skeleton = the dimension ink, warn = a steady amber.
+// its border blue, skeleton = the dimension ink, warn = a steady amber, pin = a pink no
+// other pose or cutaway chrome uses (a pinned point's dot and its badge).
 export const POSE_THEME = {
   dark: {
-    handle: 0x65bff5, strong: 0xa8dcff, bone: 0x7d93b8, warn: 0xffb454, target: 0xa8dcff,
+    handle: 0x65bff5, strong: 0xa8dcff, bone: 0x7d93b8, warn: 0xffb454, target: 0xa8dcff, pin: 0xf472b6,
   },
   light: {
-    handle: 0x1479b8, strong: 0x075985, bone: 0x5a6c8a, warn: 0xc2410c, target: 0x075985,
+    handle: 0x1479b8, strong: 0x075985, bone: 0x5a6c8a, warn: 0xc2410c, target: 0x075985, pin: 0xbe185d,
   },
 };
 
@@ -52,7 +55,10 @@ export const JOINT_DOT_PX = 3.5;
 export const GRAB_HALO_PX = 11;
 export const TARGET_RING_PX = 7;
 export const PIN_HEAD_PX = 4.5;
-export const PIN_LIFT_PX = 16;
+// The head sits within a dot's 14 px hit radius, so clicking the badge hits the pinned dot.
+export const PIN_LIFT_PX = 10;
+/** The pin-coloured dot on a pinned point at rest (shown limbs draw the point's own dot pinned). */
+export const PIN_BASE_PX = 3;
 export const DASH_PX = 5;
 export const GAP_PX = 4;
 const LABEL_LIFT_PX = 14;
@@ -88,7 +94,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   if (!POSE_THEME[theme]) theme = "dark";
 
   // ---- materials (shared, recoloured on theme change) ------------------------
-  const colorKeys = ["handle", "strong", "bone", "warn", "target"];
+  const colorKeys = ["handle", "strong", "bone", "warn", "target", "pin"];
   const fillMats = {};
   const lineMats = {};
   const prep = (m) => { m.depthTest = false; m.depthWrite = false; m.transparent = true; return m; };
@@ -122,7 +128,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   let hover = null;
   let hoverDot = null; // the hovered limb's dot under the pointer (a joint name or "tip")
   let active = null;
-  let pins = [];
+  let pins = [];       // pinned points: [{ limb, at }]
   let aimGizmo = null; // { limb, at }: that limb's goal point is the aim gizmo's ball
   let dirty = false;
 
@@ -200,6 +206,8 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     return new THREE.Vector3(...v).applyAxisAngle(a, (deg * Math.PI) / 180).toArray();
   }
 
+  const isPinned = (limb, at) => pins.some((p) => p.limb === limb && p.at === at);
+
   function buildShownLimb(info, act) {
     const pts = orderedPoints(info);
     // the grabbed point while dragging, else the hovered one: same strong dot + halo
@@ -243,9 +251,19 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
       if (j.name === owned) return;
       if (info.ringsOnly && !info.ringsOnly.includes(j.name)) return; // shown for its rings only
       const isGrab = grab === j.name;
-      addDot(clamped[i] ? "warn" : isGrab ? "strong" : "handle", vec(pts[i]), JOINT_DOT_PX);
-      if (isGrab) addBillboard(clamped[i] ? "warn" : "strong", vec(pts[i]), GRAB_HALO_PX);
+      const pinned = isPinned(info.name, j.name);
+      // a pinned joint: a bigger dot in the pin colour (a tip's size), its halo pin-coloured too
+      addDot(clamped[i] ? "warn" : pinned ? "pin" : isGrab ? "strong" : "handle", vec(pts[i]), pinned ? TIP_DOT_PX : JOINT_DOT_PX);
+      if (isGrab) addBillboard(clamped[i] ? "warn" : pinned ? "pin" : "strong", vec(pts[i]), GRAB_HALO_PX);
     });
+  }
+
+  /** The shown limb draws its own dot at `at` (so a pin badge adds no base dot there). */
+  function drawsDot(info, at, shownName) {
+    if (info.name !== shownName) return false;
+    if (aimGizmo?.limb === info.name && aimGizmo.at === at) return true; // the gizmo's ball
+    if (at === "tip") return !info.ringsOnly;
+    return !info.ringsOnly || info.ringsOnly.includes(at);
   }
 
   function rebuild() {
@@ -262,8 +280,9 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
       if (info.ringsOnly) continue; // a limb shown for its joint rings has no tip handle
       const tip = vec(info.points.tip);
       const isGrab = isActive ? active.grab === "tip" : hoverDot === "tip";
-      addDot(isGrab ? "strong" : "handle", tip, isGrab ? TIP_DOT_ACTIVE_PX : TIP_DOT_PX);
-      if (isGrab) addBillboard("strong", tip, GRAB_HALO_PX);
+      const pinned = isPinned(info.name, "tip");
+      addDot(pinned ? "pin" : isGrab ? "strong" : "handle", tip, isGrab ? TIP_DOT_ACTIVE_PX : TIP_DOT_PX);
+      if (isGrab) addBillboard(pinned ? "pin" : "strong", tip, GRAB_HALO_PX);
     }
     // reach miss: hollow target + dashed, labelled line
     const act = active && limbs.find((l) => l.name === active.limb);
@@ -282,16 +301,19 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
       group.add(mesh);
       labelRec = { mesh, a, b };
     }
-    // pin badges: a head floating above the pinned limb's tip, on a stem
-    for (const id of pins) {
-      const info = limbs.find((l) => l.name === String(id).split(".")[0]);
-      if (!info) continue;
-      const pos = vec(info.points.tip);
-      const head = new THREE.Mesh(unitDot, fillMats.strong);
+    // pin badges, at each pinned point: a pin-coloured dot on it (unless the shown limb
+    // already draws that point's dot pinned), and a head floating above it on a stem
+    for (const pin of pins) {
+      const info = limbs.find((l) => l.name === pin.limb);
+      const p = info?.points[pin.at];
+      if (!Array.isArray(p)) continue;
+      const pos = vec(p);
+      if (!drawsDot(info, pin.at, shown)) addDot("pin", pos, PIN_BASE_PX);
+      const head = new THREE.Mesh(unitDot, fillMats.pin);
       head.renderOrder = RENDER_ORDER_POSE + 2;
       head.frustumCulled = false;
       group.add(head);
-      const stem = addLine("strong", [0, 0, 0, 0, 0, 0], RENDER_ORDER_POSE + 1);
+      const stem = addLine("pin", [0, 0, 0, 0, 0, 0], RENDER_ORDER_POSE + 1);
       pinRecs.push({ head, stem, pos });
     }
     sweepTextures();
@@ -373,7 +395,13 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     rebuild();
   }
   function setActive(a) { active = a ?? null; rebuild(); }
-  function setPins(ids) { pins = Array.isArray(ids) ? [...ids] : []; rebuild(); }
+  /** The pinned points, `[{ limb (a limb's name), at (a joint name or "tip") }]`: a badge at each. */
+  function setPins(points) {
+    pins = (Array.isArray(points) ? points : [])
+      .filter((p) => p && typeof p.limb === "string" && typeof p.at === "string")
+      .map((p) => ({ limb: p.limb, at: p.at }));
+    rebuild();
+  }
   /** The limb whose goal point (`at`: a joint name or "tip") the aim gizmo draws, or null. */
   function setAimGizmo(a) {
     const next = a && a.limb ? { limb: a.limb, at: a.at ?? "tip" } : null;

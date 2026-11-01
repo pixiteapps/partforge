@@ -150,7 +150,7 @@ describe("createPoseMode", () => {
     t.fire("pointerdown", s.x, s.y);
     t.fire("pointerup", s.x, s.y);
     expect(t.mode.getPins()).toEqual(["b:tip"]);
-    expect(t.scene.calls.setPins.at(-1)).toEqual(["b"]);
+    expect(t.scene.calls.setPins.at(-1)).toEqual([{ limb: "b", at: "tip" }]);
     expect(t.log.hold).toEqual([]);
     expect(t.log.write).toEqual([]);
     expect(t.orbit.enabled).toBe(true);

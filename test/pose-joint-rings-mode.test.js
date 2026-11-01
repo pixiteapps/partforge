@@ -244,12 +244,16 @@ describe("joint rings in Pose mode", () => {
     const t = setup(part);
     t.hover("elbow");
     expect(t.joint().state.visible).toBe(true);
-    expect(t.viewer.domElement.style.cursor).toBe(""); // not a grab: a press orbits
+    expect(t.viewer.domElement.style.cursor).toBe("pointer"); // not a grab (a drag orbits): a click pins
     const s = t.screenOf(t.info().points.elbow);
     t.fire("pointerdown", s.x, s.y);
     expect(t.orbit.enabled).toBe(true);
-    expect(t.mode.takeClick()).toBe(false);
     t.fire("pointerup", s.x, s.y);
+    expect(t.mode.takeClick()).toBe(true);
+    expect(t.mode.getPins()).toEqual(["arm:elbow"]);
+    t.fire("pointerdown", s.x, s.y);
+    t.fire("pointerup", s.x, s.y); // again: unpinned
+    expect(t.mode.getPins()).toEqual([]);
     const before = { ...t.params };
     const p = t.dragRing("elbow", 20);
     t.fire("pointerup", p.x, p.y);
@@ -401,7 +405,7 @@ describe("joint rings in Pose mode", () => {
     expect(t.log.commit).toHaveLength(1);
   });
 
-  it("touch on a ring-only dot puts its rings up and leaves the press to orbit; the tap picks nothing", () => {
+  it("touch on a ring-only dot puts its rings up and leaves the press to orbit; the tap picks nothing and pins nothing", () => {
     const t = setup(goalPart());
     const s = t.screenOf(t.info().points.elbow);
     t.fire("pointerdown", s.x, s.y, { pointerType: "touch" });
@@ -410,10 +414,147 @@ describe("joint rings in Pose mode", () => {
     expect(t.joint().state.visible).toBe(true);
     t.fire("pointerup", s.x, s.y, { pointerType: "touch" });
     expect(t.mode.takeClick()).toBe(true);
+    expect(t.mode.getPins()).toEqual([]); // the first tap only shows the rings
+    // a tap on the dot while its rings are up toggles its pin
+    t.fire("pointerdown", s.x, s.y, { pointerType: "touch" });
+    t.fire("pointerup", s.x, s.y, { pointerType: "touch" });
+    expect(t.mode.getPins()).toEqual(["arm:elbow"]);
+    expect(t.joint().state.visible).toBe(true); // the rings stay up
+    t.fire("pointerdown", s.x, s.y, { pointerType: "touch" });
+    t.fire("pointerup", s.x, s.y, { pointerType: "touch" });
+    expect(t.mode.getPins()).toEqual([]);
     // the next touch can take the ring
     const r = t.mode.jointGizmoPoints().rings.bend;
     t.fire("pointerdown", r.x, r.y, { pointerType: "touch" });
     expect(t.orbit.enabled).toBe(false);
     t.fire("pointerup", r.x, r.y, { pointerType: "touch" });
+  });
+});
+
+// A pin on any dot: a click on a joint (a goal handle's ring-only joint too) pins it, the
+// scene badges that point, and an IK drag of the goal holds it.
+describe("joint pins", () => {
+  const elbowOf = (part, params) => resolveParams(part, params).d.arm.world("elbow").origin;
+
+  it("robot arm: a click on the elbow dot pins it (no write, no pick), badged at the elbow; a second click unpins", () => {
+    const t = setup(robotArm);
+    const s = t.hover("elbow");
+    expect(t.viewer.domElement.style.cursor).toBe("pointer");
+    t.fire("pointerdown", s.x, s.y);
+    t.fire("pointerup", s.x, s.y);
+    expect(t.mode.takeClick()).toBe(true); // the picker opens nothing
+    expect(t.mode.getPins()).toEqual(["tool:elbow"]);
+    expect(t.scene.calls.setPins.at(-1)).toEqual([{ limb: "arm", at: "elbow" }]);
+    expect(t.log.write).toEqual([]);
+    expect(t.log.commit).toEqual([]);
+    t.fire("pointerdown", s.x, s.y);
+    t.fire("pointerup", s.x, s.y);
+    expect(t.mode.getPins()).toEqual([]);
+    expect(t.scene.calls.setPins.at(-1)).toEqual([]);
+  });
+
+  it("a drag from a ring-only dot is not a click: it pins nothing", () => {
+    const t = setup(robotArm);
+    const s = t.hover("elbow");
+    t.fire("pointerdown", s.x, s.y);
+    t.fire("pointermove", s.x + 20, s.y + 5); // an orbit
+    t.fire("pointerup", s.x + 20, s.y + 5);
+    expect(t.mode.getPins()).toEqual([]);
+  });
+
+  it("angles mode: a click on a joint pins it, and a tip drag holds it", () => {
+    const part = anglesPart();
+    const t = setup(part);
+    const s = t.hover("elbow");
+    t.fire("pointerdown", s.x, s.y);
+    t.fire("pointerup", s.x, s.y);
+    expect(t.mode.getPins()).toEqual(["arm:elbow"]);
+    const before = elbowOf(part, t.params);
+    const tip = t.hover("tip");
+    t.fire("pointerdown", tip.x, tip.y);
+    for (let i = 1; i <= 6; i++) t.fire("pointermove", tip.x - i * 4, tip.y + i * 3);
+    t.fire("pointerup", tip.x - 24, tip.y + 18);
+    expect(t.log.commit).toHaveLength(1);
+    const after = elbowOf(part, t.params);
+    expect(Math.hypot(...after.map((v, i) => v - before[i]))).toBeLessThan(0.5);
+  });
+
+  it("robot arm, elbow pinned: a tool drag keeps the elbow put, moves the tool toward the cursor, and derive reproduces the pose", () => {
+    const t = setup(robotArm);
+    t.mode.setPins(["tool:elbow"]);
+    const elbow0 = elbowOf(robotArm, t.params);
+    const tip0 = t.info().points.tip;
+    const s = t.hover("tip");
+    expect(t.aim().state.visible).toBe(true);
+    t.fire("pointerdown", s.x, s.y);
+    // toward the base: the tool tucks in (screen left and up = part -X, +Z)
+    const steps = 8;
+    for (let i = 1; i <= steps; i++) t.fire("pointermove", s.x - i * 3, s.y - i * 2);
+    // mid-drag: seed + goal written so derive's goal solve lands on the pinned pose
+    const arm = resolveParams(robotArm, t.params).d.arm;
+    const g = arm.report.goals[0];
+    expect(g.status).toBe("reached");
+    const tip = arm.world("tip").origin;
+    expect(Math.hypot(tip[0] - t.params.toolX, tip[1] - t.params.toolY, tip[2] - t.params.toolZ)).toBeLessThan(0.01);
+    const elbowMid = arm.world("elbow").origin;
+    expect(Math.hypot(...elbowMid.map((v, i) => v - elbow0[i]))).toBeLessThan(0.5);
+    t.fire("pointerup", s.x - steps * 3, s.y - steps * 2);
+    expect(t.log.commit).toHaveLength(1);
+    // after the release snap the elbow is still held, and the tool moved toward the cursor
+    const elbow1 = elbowOf(robotArm, t.params);
+    expect(Math.hypot(...elbow1.map((v, i) => v - elbow0[i]))).toBeLessThan(0.5);
+    const tip1 = t.info().points.tip;
+    expect(tip1[0]).toBeLessThan(tip0[0] - 3); // toward the cursor: -X
+    expect(t.mode.getPins()).toEqual(["tool:elbow"]); // a drag never toggles a pin
+  });
+
+  it("robot arm without a pin: the tool drag writes the goal directly, as before (the elbow moves)", () => {
+    const t = setup(robotArm);
+    const elbow0 = elbowOf(robotArm, t.params);
+    const s = t.hover("tip");
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 8; i++) t.fire("pointermove", s.x - i * 3, s.y - i * 2);
+    t.fire("pointerup", s.x - 24, s.y - 16);
+    const elbow1 = elbowOf(robotArm, t.params);
+    expect(Math.hypot(...elbow1.map((v, i) => v - elbow0[i]))).toBeGreaterThan(1);
+  });
+
+  it("robot arm, elbow pinned: an aim ring turn holds the elbow too", () => {
+    const t = setup(robotArm);
+    t.mode.setPins(["tool:elbow"]);
+    const elbow0 = elbowOf(robotArm, t.params);
+    t.hover("tip");
+    const r = t.mode.aimGizmoPoints().rings.pitch;
+    t.fire("pointermove", r.x, r.y);
+    t.fire("pointerdown", r.x, r.y);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", r.x + ((r.ahead.x - r.x) * i) / 4, r.y + ((r.ahead.y - r.y) * i) / 4);
+    t.fire("pointerup", r.ahead.x, r.ahead.y);
+    expect(t.log.commit).toHaveLength(1);
+    expect(t.params.toolPitch).not.toBeCloseTo(robotArm.defaults.toolPitch, 0);
+    const elbow1 = elbowOf(robotArm, t.params);
+    expect(Math.hypot(...elbow1.map((v, i) => v - elbow0[i]))).toBeLessThan(0.5);
+    expect(resolveParams(robotArm, t.params).d.arm.report.goals[0].status).toBe("reached");
+  });
+
+  it("touch: a tap on the aim point first shows the gizmo, a tap while it is up pins the tool", () => {
+    const t = setup(robotArm);
+    const s = t.screenOf(t.info().points.tip);
+    t.fire("pointerdown", s.x, s.y, { pointerType: "touch" });
+    t.fire("pointerup", s.x, s.y, { pointerType: "touch" });
+    expect(t.mode.getPins()).toEqual([]);
+    expect(t.aim().state.visible).toBe(true);
+    t.fire("pointerdown", s.x, s.y, { pointerType: "touch" });
+    t.fire("pointerup", s.x, s.y, { pointerType: "touch" });
+    expect(t.mode.getPins()).toEqual(["tool:tip"]);
+  });
+
+  it("hand: a click on the palm's wrist (a limb only a joints entry shows) pins it as <limb>.<joint>", () => {
+    const t = setup(hand, {}, "palm");
+    const s = t.hover("wristPitch");
+    t.fire("pointerdown", s.x, s.y);
+    t.fire("pointerup", s.x, s.y);
+    const [id] = t.mode.getPins();
+    expect(id).toMatch(/:palm\.wristPitch$/);
+    expect(t.scene.calls.setPins.at(-1)).toEqual([{ limb: t.info().name, at: "wristPitch" }]);
   });
 });

@@ -3133,3 +3133,17 @@ test("a batch from a build an edit has overtaken is not shown", () => {
   handle.dispose();
   vi.useRealTimers();
 });
+
+test("carried pose pins come back on a remount: joint pins ('<handle>:<joint>') too, a gone handle's dropped", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(part, {
+    createWorker, elements: makeElements(),
+    viewerState: { pose: { pins: ["grow:tip", "grow:elbow", "grow:palm.wristPitch", "gone:tip"] } },
+  });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  expect(pose.setPins).toHaveBeenCalledWith(["grow:tip", "grow:elbow", "grow:palm.wristPitch"]);
+  handle.dispose();
+});

@@ -5,7 +5,7 @@
 // Posing is ALWAYS ON in the viewer's normal click mode: it is "live" while the host
 // has not switched it off (setEnabled) and mount has not suppressed it (setSuppressed:
 // measure, sketch, cutaway or a cached preview is on). At rest nothing is drawn but pin
-// badges. A mouse pointer within NEAR_LIMB_PX of a limb's projected bones shows that
+// badges, one at each pinned point. A mouse pointer within NEAR_LIMB_PX of a limb's projected bones shows that
 // limb's dots (the closest limb wins); a dot under the pointer is highlighted and takes
 // a grab cursor, and while one is, mount suppresses the model's hover tooltip
 // (claimsHover / onHoverChange). Touch has no hover: a touch press within TOUCH_HIT_PX
@@ -21,13 +21,20 @@
 // anywhere else, so a finger can reach the rings; the first tap only shows it, a tap on
 // the ball while it is up toggles the pin as a mouse click does.
 //
+// PINS: a click (no drag) on ANY dot — a tip, a joint, a goal handle's point (the aim
+// ball), a ring-only joint — toggles a pin on that point (pin id "<handle>:<at>",
+// pinIdOf). A pinned point holds still through every IK drag (pose-session.js); joint
+// rings ignore pins. Touch: a tap on a dot whose gizmo or rings are already up toggles
+// its pin; the first tap that only puts them up does not.
+//
 // JOINT RINGS (the joint gizmo, aim-gizmo.js's createJointGizmo): a joint dot whose joint
 // has a parameter to turn — a goal handle's `seed` entry, an angles handle's `joints`
 // entry (param-solve's jointRings) — shows a rotate ring about that joint's axis while it
 // is hovered (a ball joint: bend, spread and twist rings). Dragging a ring turns that one
 // joint (forward kinematics, session.jointFrame); dragging the dot itself is the IK drag it
 // always was. A joint of a goal handle, or of a limb only a `joints` entry names (a parent
-// palm), is a ring-only dot: hovering it shows its ring, a press on it is not a grab.
+// palm), is a ring-only dot: hovering it shows its ring, a press on it is not a grab (a
+// drag from it orbits) and a click on it toggles its pin.
 // One gizmo shows at a time — the focused one (`focus`): the aim gizmo once its goal point
 // is hovered, or the hovered joint's rings; it stays while the pointer is inside its rings,
 // and a dot under the pointer (other than the aim ball) takes the focus over.
@@ -38,7 +45,7 @@
 // blur. A press that misses every handle is left alone, so orbit and click-to-pick never
 // notice posing. A press that hit a handle claims its click: the picker asks takeClick()
 // and opens nothing, whether the press was a click (a pin toggle) or a drag.
-// drag-tracker.js tells a click (toggle a pin on a tip) from a drag (begin a session):
+// drag-tracker.js tells a click (toggle a pin on the dot) from a drag (begin a session):
 // the session begins only once the pointer has moved past the threshold, so a click
 // never snapshots, holds or commits anything.
 //
@@ -52,7 +59,7 @@ import { worldPerPx, orthoWorldPerPx } from "../measure/dim3-scene.js";
 import { createPoseScene } from "./pose-scene.js";
 import { createAimGizmo, createJointGizmo, AIM_RING_PX, AIM_RING_HIT_PX, JOINT_RING_PX, JOINT_GIZMO_PARTS } from "./aim-gizmo.js";
 import { beginRotateDrag, rotateDragAngle } from "../gizmo/gizmo-rotate.js";
-import { createPoseSession, pinId, parsePinId } from "./pose-session.js";
+import { createPoseSession, pinId, pinTarget } from "./pose-session.js";
 import { dragPlanePoint, hitHandle } from "./pose-geom.js";
 import { limbInfo, jointRings } from "./param-solve.js";
 import { aimTurn } from "../solve/aim.js";
@@ -178,6 +185,8 @@ export function createPoseMode(viewer, {
   // The gizmo that shows: { kind: "aim", limb } or { kind: "joint", limb, joint }, or null.
   let hoverFocus = null;
   let press = null;        // the pointer press on a handle; `started` once it is a drag
+  // A press on a ring-only dot: left to orbit, and a pin toggle if it ends as a click.
+  let tap = null;          // { pointerId, x, y, hit }
   let clickClaimed = false; // the last press grabbed a handle: its click is not a pick
   let lastParams = null;   // shallow copy, to notice outside param changes per frame
   let pendingMove = null;
@@ -315,15 +324,30 @@ export function createPoseMode(viewer, {
     return false;
   }
 
+  /** The scene's pin badges: one per pinned point shown, `{ limb (its name), at }`. */
   function syncPins() {
     if (!scene) return;
-    const limbs = [];
+    const points = [];
     for (const id of session.pins) {
-      const pin = parsePinId(id);
-      const limb = pin && handles[pin.handleId]?.limb;
-      if (limb && !limbs.includes(limb)) limbs.push(limb);
+      const t = pinTarget(id, handles);
+      const entry = t && shown.find((e) => e.limbKey === t.limb);
+      if (!entry || !Array.isArray(entry.info.points[t.at])) continue;
+      if (!points.some((p) => p.limb === entry.info.name && p.at === t.at)) points.push({ limb: entry.info.name, at: t.at });
     }
-    scene.setPins(limbs);
+    scene.setPins(points);
+  }
+  /**
+   * The pin id a click on the dot `hit` toggles: "<handle>:<at>" for a dot of a handle's own
+   * limb; for a limb only a `joints` entry shows, the handle naming that joint and
+   * "<limb>.<joint>" (pose-session's pinTarget). Null for anything else.
+   */
+  function pinIdOf(hit) {
+    if (hit?.kind !== "dot") return null;
+    if (hit.handleId != null) return pinId(hit.handleId, hit.at);
+    const ring = rings.get(ringKey(hit.limb, hit.at));
+    const h = ring && handles[ring.handleId];
+    if (!h) return null;
+    return pinId(ring.handleId, h.limb === ring.limb ? hit.at : `${ring.limb}.${hit.at}`);
   }
 
   const goalAt = (handle) => (typeof handle.at === "string" ? handle.at : "tip");
@@ -579,7 +603,9 @@ export function createPoseMode(viewer, {
     // joint's dot): the nearer wins, a tie to the ring that is up — so moving from a joint
     // out to its ring never hands the focus to a dot the ring runs over (that dot is
     // reached from outside the rings, or where it is nearer than the ring)
-    if (dotHit && onRing) {
+    // — except on the gizmo's own dot's core: a ring seen edge-on runs through its centre,
+    // and the centre is the joint's dot (a click there pins it)
+    if (dotHit && onRing && !(ownDot(focus, dotHit) && dotDistance(dotHit, x, y) <= DOT_CORE_PX)) {
       const radius = onAim ? AIM_RING_PX : JOINT_RING_PX;
       if (ringDistance(onRing.at, onRing.axis, radius, x, y) <= dotDistance(dotHit, x, y)) return { limb: onRing.limb, hit: onRing, focus };
     }
@@ -609,8 +635,8 @@ export function createPoseMode(viewer, {
     else syncGizmoHover();
     if (claimsHover() !== claimed) notify(hoverListeners);
   }
-  /** The cursor over a hover hit: grab on anything a press drags (a ring-only dot is not). */
-  const hoverCursor = (hit) => (hit && !hit.ringOnly ? "grab" : "");
+  /** The cursor over a hover hit: grab on anything a press drags; a ring-only dot is a click (a pin). */
+  const hoverCursor = (hit) => (!hit ? "" : hit.ringOnly ? "pointer" : "grab");
 
   /** A pose dot or ring is under the mouse, or a pose press is on: the model's hover tooltip stands down. */
   function claimsHover() { return !!(hoverHit || press); }
@@ -756,6 +782,7 @@ export function createPoseMode(viewer, {
   function onPointerDown(ev) {
     // Every press starts unclaimed: a claim lives from a handle press to its click.
     clickClaimed = false;
+    tap = null;
     if (!live || detached || press || (ev.button != null && ev.button !== 0)) return;
     ensureFresh();
     const pt = local(ev);
@@ -766,8 +793,11 @@ export function createPoseMode(viewer, {
       // No hover came before: the gizmo a touch left up, else any limb's dot within the
       // finger's reach (an aim handle's goal point counts as its ball).
       const tf = touchFocus;
-      hit = (tf?.kind === "aim" ? gizmoHit(gizmoTarget(tf.limb), pt, true) : jointRingHit(jointTarget(tf), pt, true))
-        ?? dotAt(x, y, null, TOUCH_HIT_PX);
+      const dotHit = dotAt(x, y, null, TOUCH_HIT_PX);
+      // the up gizmo's own dot, on its core, beats a ring seen edge-on through it (a pin tap)
+      const onCore = dotHit && tf && ownDot(tf, dotHit) && dotDistance(dotHit, x, y) <= DOT_CORE_PX;
+      hit = (onCore ? null : tf?.kind === "aim" ? gizmoHit(gizmoTarget(tf.limb), pt, true) : jointRingHit(jointTarget(tf), pt, true))
+        ?? dotHit;
       focus = hit?.kind === "dot" ? focusOfDot(hit) : hit ? tf : null;
       if (hit?.kind === "dot" && !hit.gizmo && focus?.kind === "aim") hit = { ...hit, gizmo: "ball" };
       if (tf && !sameFocus(focus, tf)) {
@@ -776,9 +806,11 @@ export function createPoseMode(viewer, {
         if (!hit) { setHover(null, null, null); return; }
       }
       if (hit?.ringOnly) {
-        // A ring-only dot is not a grab: the press is left to orbit (a drag orbits), and
-        // the touch puts that joint's rings up for the next touch to grab. Its click is
-        // claimed, so a tap shows the rings without also picking the model.
+        // A ring-only dot is not a grab: the press is left to orbit (a drag orbits). The
+        // first touch puts that joint's rings up for the next touch to grab; a tap on it
+        // while they are up toggles its pin. Its click is claimed either way, so a tap
+        // never also picks the model.
+        if (tf && sameFocus(focus, tf)) tap = { pointerId: ev.pointerId, x, y, hit };
         touchFocus = focus;
         clickClaimed = true;
         setHover(null, null, null);
@@ -791,8 +823,13 @@ export function createPoseMode(viewer, {
       setHover(h.limb, h.hit, h.focus);
       hit = h.hit;
       focus = h.focus;
-      // a ring-only dot (a joint shown for its rings) is not a grab: orbit and pick keep it
-      if (hit?.ringOnly) return;
+      // a ring-only dot (a joint shown for its rings) is not a grab: a drag still orbits,
+      // and a click toggles its pin (onPointerUp) — never a pick
+      if (hit?.ringOnly) {
+        tap = { pointerId: ev.pointerId, x, y, hit };
+        clickClaimed = true;
+        return;
+      }
     }
     if (!hit) return;
     const ray = partRay(ev);
@@ -816,6 +853,10 @@ export function createPoseMode(viewer, {
 
   function onPointerMove(ev) {
     if (!live || detached) return;
+    if (tap && ev.pointerId === tap.pointerId) {
+      const { x, y } = local(ev);
+      if ((x - tap.x) ** 2 + (y - tap.y) ** 2 > 16) tap = null; // an orbit, not a click
+    }
     if (press) {
       if (ev.pointerId !== press.pointerId) return;
       tracker.onMove(ev);
@@ -840,6 +881,13 @@ export function createPoseMode(viewer, {
   }
 
   function onPointerUp(ev) {
+    if (tap && (ev.pointerId == null || ev.pointerId === tap.pointerId)) {
+      // a click on a ring-only dot: toggle its pin
+      const id = pinIdOf(tap.hit);
+      tap = null;
+      if (id && live) session.togglePin(id);
+      return;
+    }
     if (!press || (ev.pointerId != null && ev.pointerId !== press.pointerId)) return;
     tracker.onUp(ev);
     const wasDrag = tracker.consumeClick() || press.started;
@@ -850,11 +898,12 @@ export function createPoseMode(viewer, {
     if (press.started) {
       flushMove();
       session.end();
-    } else if (!wasDrag && hit.kind === "dot" && !hit.ringOnly && !(focus?.kind === "aim" && press.touch && !press.gizmoWasUp)) {
-      // a click pins a tip (or a goal handle's point); a click on a joint does nothing.
-      // A touch's first tap on an aim handle's point only shows its gizmo.
-      const handle = handles[hit.handleId];
-      if (hit.at === "tip" || (handle?.mode === "goal" && hit.at === goalAt(handle))) session.togglePin(pinId(hit.handleId, hit.at));
+    } else if (!wasDrag && hit.kind === "dot" && !(focus && press.touch && !press.gizmoWasUp)) {
+      // a click on any dot (a tip, a joint, a goal handle's point) toggles its pin. A
+      // touch's first tap on a dot with a gizmo (the aim point, a joint with rings) only
+      // shows the gizmo; a tap while it is up toggles the pin.
+      const id = pinIdOf(hit);
+      if (id) session.togglePin(id);
     }
     if (touchGizmo) touchFocus = focus;
     finishPress(press.touch ? null : local(ev));
@@ -862,6 +911,7 @@ export function createPoseMode(viewer, {
 
   /** Abandon the press: a started drag reverts (session.cancel -> onCancel -> finishPress). */
   function abort() {
+    tap = null;
     if (!press) return;
     tracker.onCancel({ pointerId: press.pointerId });
     if (press.started && session.isActive()) session.cancel();
@@ -869,6 +919,7 @@ export function createPoseMode(viewer, {
   }
 
   function onPointerCancel(ev) {
+    if (tap && (ev.pointerId == null || ev.pointerId === tap.pointerId)) tap = null;
     if (!press || (ev.pointerId != null && ev.pointerId !== press.pointerId)) return;
     abort();
   }

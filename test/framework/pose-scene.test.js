@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi } from "vitest";
 import * as THREE from "three";
-import { createPoseScene } from "../../src/framework/pose/pose-scene.js";
+import { createPoseScene, POSE_THEME } from "../../src/framework/pose/pose-scene.js";
 
 function fakeViewer(ortho = false) {
   const parts = new THREE.Group();
@@ -48,7 +48,7 @@ describe("createPoseScene", () => {
       scene.setHover("arm");
       expect(scene.group.children.length).toBeGreaterThan(0);
       scene.setActive({ limb: "arm", grab: "elbow", clamped: [false, true], target: [30, 5, 0], residual: 10 });
-      scene.setPins(["arm"]);
+      scene.setPins([{ limb: "arm", at: "tip" }, { limb: "arm", at: "elbow" }]);
       scene.setAimGizmo({ limb: "arm", at: "tip" });
       scene.tick();
       scene.setTheme("light");
@@ -68,8 +68,8 @@ describe("createPoseScene", () => {
     const scene = createPoseScene(viewer, { paintLabel: fakePaint });
     scene.setLimbs([INFO]);
     expect(scene.group.children.length).toBe(0);
-    scene.setPins(["arm"]);
-    expect(scene.group.children.length).toBe(2); // the badge: a head and its stem
+    scene.setPins([{ limb: "arm", at: "tip" }]);
+    expect(scene.group.children.length).toBe(3); // the badge: a dot on the point, a head and its stem
     scene.setPins([]);
     scene.setHover("arm");
     const dots = () => scene.group.children.filter((c) => c.geometry?.type === "SphereGeometry").length;
@@ -81,6 +81,41 @@ describe("createPoseScene", () => {
     scene.setHover("arm", "tip");
     expect(halos()).toBe(1);
     scene.setHover(null);
+    expect(scene.group.children.length).toBe(0);
+    scene.dispose();
+  });
+
+  it("a pin badge sits AT the pinned point (a joint too), follows it, and a shown pinned dot is pin-coloured", () => {
+    const viewer = fakeViewer();
+    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    scene.setLimbs([INFO]);
+    scene.setPins([{ limb: "arm", at: "elbow" }]);
+    const spheres = () => scene.group.children.filter((c) => c.geometry?.type === "SphereGeometry");
+    const pinColor = POSE_THEME.dark.pin;
+    // at rest: the base dot on the elbow and the head above it, both pin-coloured
+    scene.tick();
+    const [base, head] = spheres();
+    expect(base.position.toArray()).toEqual([10, 0, 0]);
+    expect(base.material.color.getHex()).toBe(pinColor);
+    expect(head.material.color.getHex()).toBe(pinColor);
+    expect(head.position.distanceTo(base.position)).toBeGreaterThan(0);
+    // the limb moves: the badge goes with the point
+    scene.setLimbs([{ ...INFO, points: { ...INFO.points, elbow: [12, 3, 0] } }]);
+    scene.tick();
+    expect(spheres()[0].position.toArray()).toEqual([12, 3, 0]);
+    // hovered: the elbow's own dot is drawn pinned (pin colour, a tip's size), no second base dot
+    scene.setLimbs([INFO]);
+    scene.setHover("arm");
+    scene.tick();
+    const atElbow = spheres().filter((m) => m.position.equals(new THREE.Vector3(10, 0, 0)));
+    expect(atElbow).toHaveLength(1);
+    expect(atElbow[0].material.color.getHex()).toBe(pinColor);
+    const shoulder = spheres().find((m) => m.position.equals(new THREE.Vector3(0, 0, 0)));
+    expect(shoulder.material.color.getHex()).not.toBe(pinColor);
+    expect(atElbow[0].scale.x).toBeGreaterThan(shoulder.scale.x);
+    // an unknown limb or point draws nothing
+    scene.setHover(null);
+    scene.setPins([{ limb: "other", at: "tip" }, { limb: "arm", at: "nope" }]);
     expect(scene.group.children.length).toBe(0);
     scene.dispose();
   });
