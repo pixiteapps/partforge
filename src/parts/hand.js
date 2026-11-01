@@ -9,14 +9,18 @@
 //   each finger and the thumb as their parent frames (`pose(…, palm)`).
 // - A finger is spread, mcp, pip and dip, with dip following pip by 0.75. The spread
 //   joint is its own pin, square to the palm, through a short knuckle piece (20 mm)
-//   that carries the mcp pin: a real two-pin universal joint, not a ball. `<f>Curl`
-//   (0..1) closes mcp and pip; `<f>Spread` (degrees) swings the knuckle, positive
-//   fanning away from the middle finger (for the middle finger: toward the index).
+//   that carries the mcp pin: a real two-pin universal joint, not a ball. `<f>Knuckle`
+//   (degrees) bends the base knuckle (mcp) alone; `<f>Curl` (0..1) closes pip, and dip
+//   with it; `<f>Spread` (degrees) swings the knuckle, positive fanning away from the
+//   middle finger (for the middle finger: toward the index). The knuckle and the curl
+//   are separate so a fingertip drag can straighten the finger from the knuckle out:
+//   with one curl for every joint, a tip could move only along that curl's one arc.
 // - The thumb is oppose, mcp and ip. Oppose is a pin in the palm's plane, square to the
-//   thumb: it swings the thumb's metacarpal out of the palm plane toward the palm side,
-//   and then thumbCurl closes mcp and ip across the front of the palm.
-// - Pose mode: one angles-mode handle per digit. A drag solves that digit's curl and
-//   spread plus the wrist. `<f>Lock` (a checkbox the presets never write) leaves every
+//   thumb: it swings the thumb's metacarpal out of the palm plane toward the palm side.
+//   thumbKnuckle (degrees) bends its mcp and thumbCurl (0..1) its ip, across the front
+//   of the palm.
+// - Pose mode: one angles-mode handle per digit. A drag solves that digit's knuckle,
+//   curl and spread (oppose for the thumb) plus the wrist. `<f>Lock` (a checkbox the presets never write) leaves every
 //   param that digit's handle lists out of any drag — the wrist included, so a locked
 //   finger also holds still in space while you drag another.
 // - Each piece is built once in its own joint frame (pin at the origin, the piece along
@@ -285,22 +289,25 @@ const JOINT_PAIRS = [
 // digit's handle writes the wrist. At 1° (or a 0.01 curl) that snap moved a fingertip
 // 0.5–0.85 mm in one frame; at 0.1° and 0.001 it stays under 0.2 mm, which reads as still.
 const deg = (key, label, range, description) => ({ key, label, unit: "°", min: range[0], max: range[1], step: 0.1, description });
-const curl = (key, label) => ({ key, label, min: 0, max: 1, step: 0.001 });
+const curl = (key, label, description) => ({ key, label, min: 0, max: 1, step: 0.001, description });
 
-// A preset is a hand shape: every digit's curl and spread, never the wrist or a lock.
-const shape = (curls, spreads, thumbOppose, thumbCurl) => ({
-  ...Object.fromEntries(FINGERS.flatMap((f, i) => [[`${f.id}Curl`, curls[i]], [`${f.id}Spread`, spreads[i]]])),
-  thumbOppose, thumbCurl,
+// A preset is a hand shape: every digit's knuckle, curl and spread, never the wrist or a
+// lock. Each finger is [knuckle°, curl]; the thumb is [oppose°, knuckle°, curl].
+const shape = (fingers, spreads, [thumbOppose, thumbKnuckle, thumbCurl]) => ({
+  ...Object.fromEntries(FINGERS.flatMap((f, i) => [
+    [`${f.id}Knuckle`, fingers[i][0]], [`${f.id}Curl`, fingers[i][1]], [`${f.id}Spread`, spreads[i]],
+  ])),
+  thumbOppose, thumbKnuckle, thumbCurl,
 });
 const PRESETS = {
-  relaxed: shape([0.2, 0.28, 0.35, 0.42], [3, 0, 3, 6], 25, 0.2),
-  open: shape([0, 0, 0, 0], [8, 0, 6, 12], 0, 0),
+  relaxed: shape([[18, 0.2], [25.2, 0.28], [31.5, 0.35], [37.8, 0.42]], [3, 0, 3, 6], [25, 12, 0.2]),
+  open: shape([[0, 0], [0, 0], [0, 0], [0, 0]], [8, 0, 6, 12], [0, 0, 0]),
   // The thumb wraps across the curled fingers, as far as it goes without touching them.
-  fist: shape([0.9, 0.9, 0.9, 0.9], [0, 0, 0, 0], 80, 0.5),
-  point: shape([0, 0.9, 0.9, 0.9], [0, 0, 0, 0], 80, 0.5),
-  peace: shape([0, 0, 0.9, 0.9], [12, -4, 0, 0], 80, 0.7),
+  fist: shape([[81, 0.9], [81, 0.9], [81, 0.9], [81, 0.9]], [0, 0, 0, 0], [80, 30, 0.5]),
+  point: shape([[0, 0], [81, 0.9], [81, 0.9], [81, 0.9]], [0, 0, 0, 0], [80, 30, 0.5]),
+  peace: shape([[0, 0], [0, 0], [81, 0.9], [81, 0.9]], [12, -4, 0, 0], [80, 42, 0.7]),
   // The thumb and index tips meet (8 mm apart, tip point to tip point).
-  ok: shape([0.65, 0.12, 0.18, 0.25], [0, 2, 5, 10], 60, 0.4),
+  ok: shape([[58.5, 0.65], [10.8, 0.12], [16.2, 0.18], [22.5, 0.25]], [0, 2, 5, 10], [60, 24, 0.4]),
 };
 
 export default {
@@ -308,12 +315,18 @@ export default {
   parameters: [
     { id: "pose", title: "Pose", description: "Pose-only: nothing here rebuilds a piece. In Pose mode, drag a fingertip instead.", controls: [
       { type: "preset", label: "Shape", presets: PRESETS },
+    ] },
+    { id: "fingers", title: "Fingers", controls: [
       ...FINGERS.flatMap((f) => [
-        curl(`${f.id}Curl`, `${f.label} curl`),
+        deg(`${f.id}Knuckle`, `${f.label} knuckle`, RANGE.mcp, "The base knuckle's bend: 0 is in line with the palm."),
+        curl(`${f.id}Curl`, `${f.label} curl`, "Closes the two outer joints, the tip one following the middle one."),
         deg(`${f.id}Spread`, `${f.label} spread`, RANGE.spread, f.id === "middle" ? "Positive leans it toward the index finger." : "Positive fans it away from the middle finger."),
       ]),
+    ] },
+    { id: "thumb", title: "Thumb", controls: [
       deg("thumbOppose", "Thumb oppose", RANGE.oppose, "0 is the thumb in the palm's plane; higher swings it out in front of the palm."),
-      curl("thumbCurl", "Thumb curl"),
+      deg("thumbKnuckle", "Thumb knuckle", RANGE.thumbMcp, "The thumb's base knuckle bend, across the palm."),
+      curl("thumbCurl", "Thumb curl", "Closes the thumb's tip joint."),
     ] },
     { id: "wrist", title: "Wrist", controls: [
       deg("wristPitch", "Pitch", RANGE.wristPitch, "Positive bends the hand toward its palm."),
@@ -332,9 +345,11 @@ export default {
     const palm = PALM.pose({ bend: { wristPitch: p.wristPitch, wristYaw: p.wristYaw } });
     const out = { palm };
     for (const f of FINGERS) {
-      out[f.id] = FINGER_LIMBS[f.id].pose({ curl: p[`${f.id}Curl`], bend: { spread: f.sign * p[`${f.id}Spread`] } }, palm);
+      out[f.id] = FINGER_LIMBS[f.id].pose({ bend: {
+        spread: f.sign * p[`${f.id}Spread`], mcp: p[`${f.id}Knuckle`], pip: p[`${f.id}Curl`] * RANGE.pip[1],
+      } }, palm);
     }
-    out.thumb = THUMB.pose({ curl: p.thumbCurl, bend: { oppose: p.thumbOppose } }, palm);
+    out.thumb = THUMB.pose({ bend: { oppose: p.thumbOppose, mcp: p.thumbKnuckle, ip: p.thumbCurl * RANGE.ip[1] } }, palm);
     return out;
   },
   parts,
@@ -346,15 +361,16 @@ export default {
   // turns it directly. The wrist (on the palm limb) is named by every digit's handle, so a
   // locked digit hides the wrist rings, as it holds the wrist out of every drag. A ring and
   // pinky spread is the negated parameter (`scale: -1`: positive fans away from the middle
-  // finger). The knuckles are curl-driven — one parameter for two joints — so they get no ring.
+  // finger). The base knuckle (mcp) is its own parameter, so it gets a ring; the curl
+  // drives two joints (pip and dip, the thumb's ip alone) and is left to the drag.
   handles: {
     thumb: {
-      limb: "thumb", mode: "angles", params: ["thumbCurl", "thumbOppose", "wristPitch", "wristYaw"], lock: "thumbLock",
-      joints: { oppose: "thumbOppose", ...WRIST_JOINTS },
+      limb: "thumb", mode: "angles", params: ["thumbKnuckle", "thumbCurl", "thumbOppose", "wristPitch", "wristYaw"], lock: "thumbLock",
+      joints: { oppose: "thumbOppose", mcp: "thumbKnuckle", ...WRIST_JOINTS },
     },
     ...Object.fromEntries(FINGERS.map((f) => [f.id, {
-      limb: f.id, mode: "angles", params: [`${f.id}Curl`, `${f.id}Spread`, "wristPitch", "wristYaw"], lock: `${f.id}Lock`,
-      joints: { spread: f.sign === 1 ? `${f.id}Spread` : { param: `${f.id}Spread`, scale: f.sign }, ...WRIST_JOINTS },
+      limb: f.id, mode: "angles", params: [`${f.id}Knuckle`, `${f.id}Curl`, `${f.id}Spread`, "wristPitch", "wristYaw"], lock: `${f.id}Lock`,
+      joints: { spread: f.sign === 1 ? `${f.id}Spread` : { param: `${f.id}Spread`, scale: f.sign }, mcp: `${f.id}Knuckle`, ...WRIST_JOINTS },
     }])),
   },
   // No two pieces interpenetrate, and every pin joint keeps its running clearance (GAP)

@@ -55,7 +55,8 @@ handle for Pose mode and a `tool` probe reporting reached / missed by how much;
 `robot-arm.html`, checked by `scripts/check-pose.mjs`), `hand.js` (the angles-mode
 IK reference part - a printable articulated hand: a palm limb (wrist pitch/yaw) with four
 fingers (spread, mcp, pip, dip following pip) and a thumb (oppose, mcp, ip) parented on
-it, posed by per-digit curl/spread params and six `{ type: "preset" }` shapes, one
+it, posed by per-digit knuckle (mcp alone), curl (pip + dip; the thumb's ip) and
+spread/oppose params and six `{ type: "preset" }` shapes, one
 lockable angles-mode handle per digit; rigid pin-jointed pieces placed by matrix, the
 print view a flat kit the pose never reaches; `hand.html`, checked by
 `scripts/check-pose.mjs`; the dev-only `pose-smoke.html` page, with `test/fixtures/ik-hand-smoke.js`,

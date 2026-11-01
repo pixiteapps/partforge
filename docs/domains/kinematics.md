@@ -594,9 +594,9 @@ handles: {
            params: { position: ["toolX", "toolY", "toolZ"], aim: ["toolPitch", "toolYaw", "toolRoll"] },
            toward: [1, 0, 0],
            seed: ["base", "shoulder", "elbow", "wristPitch", "wristYaw", "wristRoll"] },
-  index: { limb: "index", mode: "angles", params: ["indexCurl", "indexSpread", "wristPitch"],
+  index: { limb: "index", mode: "angles", params: ["indexKnuckle", "indexCurl", "indexSpread", "wristPitch"],
            lock: "indexLock",
-           joints: { spread: "indexSpread", "palm.wristPitch": "wristPitch" } },
+           joints: { spread: "indexSpread", mcp: "indexKnuckle", "palm.wristPitch": "wristPitch" } },
 },
 ```
 
@@ -657,6 +657,12 @@ be anything the pose reads: a joint angle, a `curl`, a `spread`, a parent limb's
 angle. Use it for fingers and legs. Every joint of the limb, and its tip, can be
 grabbed, and the grabbed point follows the cursor. A joint below the grabbed point moves
 however the listed parameters move it: a `curl` curls the whole finger.
+
+A drag can only move the grabbed point where some value of the listed parameters puts
+it. One `curl` that bends every joint of a finger gives its tip a single arc to move
+along, so a pull off that arc stops at the nearest point of it, still bent. Give the
+base joint its own parameter (the hand's `<f>Knuckle`, beside a `<f>Curl` for the outer
+joints) and a tip pulled straight out straightens the finger.
 
 - **`lock`** names a parameter. While it is true, the handle's parameters are frozen in a
   drag of any handle. This includes a parameter that two handles share, such as the
@@ -788,7 +794,8 @@ Do not edit code to pose a part. Set parameters, and read the probe:
 
 - for an arm, the goal parameters (`toolX`, `toolY`, `toolZ`, `toolPitch`, `toolYaw`,
   `toolRoll`);
-- for a hand, `curl` and `spread` per digit, or a preset.
+- for a hand, the knuckle, `curl` and `spread` per digit (the thumb's oppose, knuckle and
+  curl), or a preset.
 
 `partforge measure` has no `--params` flag, so it reads `defaults`. To check another pose,
 write a small module that changes the defaults:
