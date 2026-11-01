@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { limbInfo, solveAngles, goalValues, seedValues, snapValues } from "../src/framework/pose/param-solve.js";
+import { limbInfo, solveAngles, solveGoalPinned, goalValues, seedValues, snapValues } from "../src/framework/pose/param-solve.js";
+import { defaultSolve } from "../src/framework/pose/pose-session.js";
+import robotArm from "../src/parts/robot-arm.js";
 import { resolveParams } from "../src/framework/part-model.js";
 import { limb } from "../src/framework/domains/kinematics/index.js";
 import hand from "./fixtures/ik-hand-fixture.js";
@@ -186,5 +188,52 @@ describe("snapValues", () => {
     expect(snapValues(arm, { tx: 1.26, count: 3.4, ty: 1.234 })).toEqual({ tx: 1.5, count: 3, ty: 1.234 });
     expect(snapValues(arm, { elbow: 999, nope: 1.7 })).toEqual({ elbow: 150, nope: 1.7 });
     expect(snapValues(hand, { aCurl: 0.123456 })).toEqual({ aCurl: 0.12 });
+  });
+});
+
+describe("solveGoalPinned (a goal drag holding pins)", () => {
+  const handle = robotArm.handles.tool;
+  const world = (params, at) => resolveParams(robotArm, params).d.arm.world(at).origin;
+
+  it("moves the tool toward the target while the pinned elbow stays put, and derive lands on the same pose", () => {
+    let p = { ...robotArm.defaults };
+    const elbow = world(p, "elbow");
+    const tip0 = world(p, "tip");
+    const holds = [{ limb: "arm", at: "elbow", point: elbow }];
+    const target = [tip0[0] - 20, tip0[1] + 10, tip0[2] + 15];
+    for (let i = 1; i <= 5; i++) {
+      const step = tip0.map((v, c) => v + ((target[c] - v) * i) / 5);
+      const r = solveGoalPinned({ part: robotArm, params: p, handle, target: step, holds });
+      expect(r).not.toBeNull();
+      p = { ...p, ...r.values };
+    }
+    // seed + goal written: derive's own goal solve reproduces the pose
+    const posed = resolveParams(robotArm, p).d.arm;
+    expect(posed.report.goals[0].status).toBe("reached");
+    expect(dist(posed.world("tip").origin, [p.toolX, p.toolY, p.toolZ])).toBeLessThan(0.01);
+    expect(dist(posed.world("elbow").origin, elbow)).toBeLessThan(0.5);
+    expect(dist(posed.world("tip").origin, target)).toBeLessThan(dist(tip0, target) / 2);
+  });
+
+  it("defaultSolve takes the pinned path only for a pin on the goal's limb", () => {
+    const p = { ...robotArm.defaults };
+    const tip0 = world(p, "tip");
+    const target = [tip0[0] - 30, tip0[1], tip0[2] + 30];
+    const free = defaultSolve({ part: robotArm, params: p, handle, grab: "tip", target, holds: [] });
+    expect(free.values.toolX).toBeCloseTo(target[0], 6); // the direct goal write
+    const other = defaultSolve({ part: robotArm, params: p, handle, grab: "tip", target, holds: [{ limb: "other", at: "tip", point: [0, 0, 0] }] });
+    expect(other.values.toolX).toBeCloseTo(target[0], 6);
+    const pinned = defaultSolve({ part: robotArm, params: p, handle, grab: "tip", target, holds: [{ limb: "arm", at: "elbow", point: world(p, "elbow") }] });
+    expect(pinned.values.toolPitch).toBeDefined(); // the goal rewritten from the solved pose, aim included
+    expect(dist(world({ ...p, ...pinned.values }, "elbow"), world(p, "elbow"))).toBeLessThan(0.5);
+  });
+
+  it("a goal the schema would clip stops the pose short (the tool's lowest Z), still reproducible", () => {
+    const p = { ...robotArm.defaults };
+    const holds = [{ limb: "arm", at: "elbow", point: world(p, "elbow") }];
+    const r = solveGoalPinned({ part: robotArm, params: p, handle, target: [200, 0, -200], holds });
+    expect(r.values.toolZ).toBeGreaterThanOrEqual(-50);
+    const posed = resolveParams(robotArm, { ...p, ...r.values }).d.arm;
+    expect(dist(posed.world("tip").origin, [r.values.toolX, r.values.toolY, r.values.toolZ])).toBeLessThan(0.01);
   });
 });

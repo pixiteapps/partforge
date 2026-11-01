@@ -9,7 +9,7 @@ import { solveDLS } from "../solve/dls.js";
 import { resolveParams } from "../part-model.js";
 import { controlNodes } from "../panel/model.js";
 import { desugar } from "../panel/legacy.js";
-import { anglesFromAim } from "../solve/aim.js";
+import { anglesFromAim, aimTurn } from "../solve/aim.js";
 
 /** The residual of an evaluation whose derive threw: far worse than any real pose. */
 const FAILED = 1e6;
@@ -346,11 +346,19 @@ const valueAt = (values, i, component) => (component ? values?.[i]?.[component] 
 /** Two joint values the same, to rounding (a cone clamp scales both swing components). */
 const same = (a, b) => isNum(a) && isNum(b) && Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a));
 
-/** One goal-mode turn: the values it writes, and whether a goal parameter's schema range clipped the turned pose. */
-function goalTurn({ part, params, handle, posed, info, ring, s, value, ranges }) {
+/** A ball's partial override or a hinge's value for joint `j` at `value` of `component`. */
+const overrideOf = (component, value) => (component ? { [component]: value } : value);
+
+/**
+ * A goal handle's writes for a forward-kinematics pose: `overrides` (`{ joint: value }`, a
+ * ball's partial `{ bend?, spread?, twist? }`) on the posed limb. Returns `{ values (every
+ * seed parameter, then the goal at the posed `at` frame), goalClamped (a goal parameter's
+ * schema range clipped it), F (the ikForward result) }`, or null when FK throws.
+ */
+function goalFromForward({ part, params, handle, posed, info, overrides, ranges }) {
   let F;
   try {
-    F = posed.ikForward({ [ring.joint]: s.component ? { [s.component]: value } : value }, typeof handle.at === "string" ? handle.at : "tip");
+    F = posed.ikForward(overrides, typeof handle.at === "string" ? handle.at : "tip");
   } catch {
     return null;
   }
@@ -378,9 +386,127 @@ function goalTurn({ part, params, handle, posed, info, ring, s, value, ranges })
   const want = goalValues({ handle, point: F.origin, aimAngles });
   const goal = goalValues({ handle, point: F.origin, aimAngles, part });
   const goalClamped = Object.keys(want).some((k) => !same(want[k], goal[k]));
+  return { values: { ...goal, ...seed }, goalClamped, F };
+}
+
+/** One goal-mode turn: the values it writes, and whether a goal parameter's schema range clipped the turned pose. */
+function goalTurn({ ring, s, value, info, ...rest }) {
+  const out = goalFromForward({ ...rest, info, overrides: { [ring.joint]: overrideOf(s.component, value) } });
+  if (!out) return null;
   const i = info.joints.findIndex((j) => j.name === ring.joint);
-  const coupled = valueAt(F.values, i, s.component);
-  return { values: { ...goal, ...seed }, goalClamped, coupled };
+  return { values: out.values, goalClamped: out.goalClamped, coupled: valueAt(out.F.values, i, s.component) };
+}
+
+/**
+ * The orientation residual's weight, mm per unit of direction difference (about mm per
+ * radian): an aim ring held against pins trades this many mm of goal point for a radian of aim.
+ */
+const AIM_WEIGHT_MM = 100;
+
+/**
+ * A goal-mode drag that holds pins: solve the handle's seeded joints (forward kinematics on
+ * the posed limb, its `ikForward` — derive's own goal solve would pull the limb straight to
+ * the goal and ignore the pins) so the goal point `at` reaches `target` while each hold
+ * `{ limb, at, point }` on the handle's limb stays at its point (HOLD_WEIGHT, as
+ * solveAngles). With `aimAngles` (an aim ring's pitch/yaw/roll) the goal frame's +Y and,
+ * with three aim params, +Z are pulled toward that aim as well (AIM_WEIGHT_MM), and
+ * `target` is the goal point to keep. Holds on other limbs are not in this residual.
+ *
+ * Writes what a joint ring writes (goalFromForward): every seed parameter at the solved
+ * pose, and the goal parameters rewritten to the posed `at` frame — so the next derive's
+ * goal solve starts at its answer and lands on this pose. A goal value the schema would clip
+ * stops the pose at the last fraction of the way from the current pose whose goal fits
+ * (bisected, as jointRingValues). Returns `{ values, error }` (error: the weighted residual
+ * norm, mm) or null when the limb cannot be read.
+ */
+export function solveGoalPinned({ part, params, handle, target, holds = [], aimAngles = null, iterations = 8, tol = TOL_MM }) {
+  const posed = posedLimb(part, params, handle?.limb);
+  if (!posed || typeof posed.ikForward !== "function" || !Array.isArray(handle.seed)) return null;
+  let info;
+  try { info = posed.ikInfo(); } catch { return null; }
+  const ranges = rangesOf(part);
+  const at = typeof handle.at === "string" ? handle.at : "tip";
+  // One DOF per seed entry: the joint (and a ball's component) it drives, in joint degrees.
+  const dofs = [];
+  let k = 0;
+  info.joints.forEach((j, i) => {
+    if (j.follower) return;
+    const comps = j.type === "ball" ? BALL_SLOTS : [null];
+    comps.forEach((component, c) => {
+      const param = handle.seed[k + c];
+      if (typeof param !== "string") return;
+      const start = valueAt(posed.values, i, component);
+      if (!isNum(start)) return;
+      const r = ranges.get(param);
+      const range = slotRange(j, component ?? "bend");
+      const lo = Math.max(range[0], isNum(r?.min) ? r.min : -Infinity);
+      const hi = Math.min(range[1], isNum(r?.max) ? r.max : Infinity);
+      dofs.push({ joint: j.name, component, start: Math.min(hi, Math.max(lo, start)), lo, hi });
+    });
+    k += comps.length;
+  });
+  if (!dofs.length) return null;
+  // x = offset + scale * u: u in [0, 1] over a finite range (as solveAngles), else raw degrees
+  const finite = (d) => isNum(d.lo) && isNum(d.hi) && d.hi > d.lo;
+  const offset = dofs.map((d) => (finite(d) ? d.lo : 0));
+  const scale = dofs.map((d) => (finite(d) ? d.hi - d.lo : 1));
+  const lo = dofs.map((d) => (finite(d) ? 0 : d.lo));
+  const hi = dofs.map((d) => (finite(d) ? 1 : d.hi));
+  const u0 = dofs.map((d, i) => (d.start - offset[i]) / scale[i]);
+  const overridesOf = (u) => {
+    const o = {};
+    dofs.forEach((d, i) => {
+      const v = offset[i] + scale[i] * Math.min(hi[i], Math.max(lo[i], u[i]));
+      if (d.component) o[d.joint] = { ...(o[d.joint] ?? {}), [d.component]: v };
+      else o[d.joint] = v;
+    });
+    return o;
+  };
+  let aim = null;
+  if (Array.isArray(aimAngles) && isDirection(handle.toward)) {
+    const [pitch = 0, yaw = 0, roll] = aimAngles;
+    const t = aimTurn(handle.toward, { pitch, yaw, roll: handle.params?.aim?.length >= 3 ? roll ?? 0 : undefined });
+    aim = { y: t.aim, z: handle.params?.aim?.length >= 3 ? t.up : null };
+  }
+  const own = holds.filter((h) => h?.limb === handle.limb && Array.isArray(h.point));
+  const m = 3 + (aim ? (aim.z ? 6 : 3) : 0) + own.length * 3;
+  const residuals = (u) => {
+    const r = new Float64Array(m);
+    try {
+      const o = overridesOf(u);
+      const F = posed.ikForward(o, at);
+      let n = 0;
+      for (let c = 0; c < 3; c++) r[n++] = F.origin[c] - target[c];
+      if (aim) {
+        for (let c = 0; c < 3; c++) r[n++] = AIM_WEIGHT_MM * (F.y[c] - aim.y[c]);
+        if (aim.z) for (let c = 0; c < 3; c++) r[n++] = AIM_WEIGHT_MM * (F.z[c] - aim.z[c]);
+      }
+      for (const h of own) {
+        const p = posed.ikForward(o, h.at).origin;
+        for (let c = 0; c < 3; c++) r[n++] = HOLD_WEIGHT * (p[c] - h.point[c]);
+      }
+    } catch {
+      r.fill(FAILED);
+    }
+    return r;
+  };
+  const { x, error } = solveDLS({ x0: u0, lo, hi, residuals, iterations, h: H, lambda: limbLength(posed), tol });
+  const args = { part, params, handle, posed, info, ranges };
+  const solved = overridesOf(x);
+  const write = goalFromForward({ ...args, overrides: solved });
+  if (!write) return null;
+  if (!write.goalClamped) return { values: write.values, error };
+  // Stop at the last fraction of the way from the current pose whose goal fits.
+  const at01 = (t) => overridesOf(u0.map((v, i) => v + (x[i] - v) * t));
+  const start = goalFromForward({ ...args, overrides: at01(0) });
+  if (!start || start.goalClamped) return { values: {}, error };
+  let a = 0, b = 1, best = start;
+  for (let n = 0; n < 24; n++) {
+    const mid = (a + b) / 2;
+    const t = goalFromForward({ ...args, overrides: at01(mid) });
+    if (t && !t.goalClamped) { a = mid; best = t; } else b = mid;
+  }
+  return { values: best.values, error };
 }
 
 /**

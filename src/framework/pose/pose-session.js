@@ -19,9 +19,13 @@
 // end/cancel when the values it was built from are back — never while stale, which
 // would show the old shape at full opacity until the release regen.
 //
-// Pins are ids "<handle>:<at>" (at: a joint name or "tip"). A pin's held point is read
-// at begin, from the params the drag starts from, and stays fixed for that drag.
-import { limbInfo, solveAngles, goalValues, seedValues, snapValues, jointRingValues, posedJointValue } from "./param-solve.js";
+// Pins are ids "<handle>:<at>" (at: a joint name or "tip"; "<limb>.<joint>" for a joint of
+// another limb the handle's `joints` map names, the hand's palm wrist). A pin's held point
+// is read at begin, from the params the drag starts from, and stays fixed for that drag.
+// Every IK drag holds them: angles mode through solveAngles (any limb), goal mode through
+// solveGoalPinned (the goal handle's own limb) once a pin is on that limb. Joint rings and
+// a goal drag with no pin on its limb do not.
+import { limbInfo, solveAngles, solveGoalPinned, goalValues, seedValues, snapValues, jointRingValues, posedJointValue, parseJointKey } from "./param-solve.js";
 
 const AIM_AXES = ["pitch", "yaw", "roll"];
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
@@ -35,13 +39,31 @@ export function parsePinId(id) {
 export const pinId = (handleId, at) => `${handleId}:${at}`;
 
 /**
+ * Where a pin id points: `{ handleId, handle, limb (derive's key), at }`, or null when its
+ * handle is gone. An `at` of "<limb>.<joint>" names a joint on another limb (a key of
+ * derive's result) — the form a joint of a limb only a `joints` entry shows takes.
+ */
+export function pinTarget(id, handles) {
+  const pin = parsePinId(id);
+  const handle = pin && handles?.[pin.handleId];
+  if (!handle) return null;
+  const { limb, joint } = parseJointKey(pin.at);
+  return { handleId: pin.handleId, handle, limb: limb ?? handle.limb, at: joint };
+}
+
+/**
  * The drag's values for one frame, from param-solve. Angles mode solves the handle's
  * listed params through derive (holding every pin); goal mode writes the target (and
  * the aim angles, for a ring) onto the goal params and the solved joint angles into
  * the seed. Returns `{ values, error }` or null when the start pose itself fails.
  */
-export function defaultSolve({ part, params, handle, grab, target, aimAngles, holds, allHandles }) {
+export function defaultSolve({ part, params, handle, grab, target, aimAngles, holds = [], allHandles }) {
   if (handle.mode === "goal") {
+    // a pin on the goal's own limb: solve the seeded joints around it (solveGoalPinned)
+    if (holds.some((h) => h.limb === handle.limb)) {
+      const pinned = solveGoalPinned({ part, params, handle, target, holds });
+      if (pinned) return pinned;
+    }
     const values = goalValues({ handle, point: target, aimAngles, part });
     const seed = Array.isArray(handle.seed) && handle.seed.length
       ? seedValues({ part, params: { ...params, ...values }, handle })
@@ -89,11 +111,10 @@ export function createPoseSession({
     const snapshot = { ...params };
     const holds = [];
     for (const id of pins) {
-      const pin = parsePinId(id);
-      const h = pin && handles[pin.handleId];
-      if (!h || (pin.handleId === handleId && pin.at === grab)) continue;
-      const point = locate({ part, params: snapshot, handle: h, at: pin.at });
-      if (point) holds.push({ limb: h.limb, at: pin.at, point });
+      const pin = pinTarget(id, handles);
+      if (!pin || (pin.handleId === handleId && pin.limb === handle.limb && pin.at === grab)) continue;
+      const point = locate({ part, params: snapshot, handle: { ...pin.handle, limb: pin.limb }, at: pin.at });
+      if (point) holds.push({ limb: pin.limb, at: pin.at, point });
     }
     drag = { handleId, handle, grab, snapshot, holds, touched: {} };
     hold(true);
@@ -134,8 +155,18 @@ export function createPoseSession({
     const params = { ...getParams() };
     const value = (k) => (isNum(drag.snapshot[k]) ? drag.snapshot[k] : isNum(part.defaults?.[k]) ? part.defaults[k] : 0);
     // Every aim angle as the grab left it, the dragged one turned by the delta since.
-    const angles = aim.map((k, j) => (isNum(params[k]) ? params[k] : value(k)));
+    const angles = aim.map((k) => value(k));
     angles[i] = value(aim[i]) + deltaDeg;
+    // A pin on the goal's limb: hold it, pulling the aim toward these angles while the goal
+    // point stays where the drag began (solveGoalPinned); a pin can stop the aim short.
+    if (drag.holds.some((h) => h.limb === drag.handle.limb)) {
+      const position = drag.handle.params?.position ?? [];
+      const point = position.map((k) => value(k));
+      if (position.length === 3) {
+        const pinned = solveGoalPinned({ part, params, handle: drag.handle, target: point, holds: drag.holds, aimAngles: angles });
+        if (pinned) return apply(pinned);
+      }
+    }
     const values = goalValues({ handle: drag.handle, point: null, aimAngles: angles, part });
     const seed = Array.isArray(drag.handle.seed) && drag.handle.seed.length
       ? seedValues({ part, params: { ...params, ...values }, handle: drag.handle })
