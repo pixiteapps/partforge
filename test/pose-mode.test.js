@@ -10,9 +10,14 @@ import { GIZMO_PALETTE } from "../src/framework/gizmo/gizmo-handles.js";
 import { worldPerPx } from "../src/framework/measure/dim3-scene.js";
 import { limbInfo } from "../src/framework/pose/param-solve.js";
 import { aimFromAngles } from "../src/framework/domains/kinematics/goals.js";
+import { dragPlaneNormal } from "../src/framework/pose/pose-geom.js";
 import hand from "./fixtures/ik-hand-fixture.js";
 
 const W = 400, H = 400;
+const sub = (a, b) => a.map((v, i) => v - b[i]);
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const len = (a) => Math.hypot(a[0], a[1], a[2]);
+const unit = (a) => { const l = len(a) || 1; return a.map((v) => v / l); };
 
 function fakeViewer() {
   const scene = new THREE.Scene();
@@ -127,6 +132,70 @@ describe("createPoseMode", () => {
     expect(t.scene.calls.setActive.at(-1)).toBeNull();
     // the dragged tip moved up the screen, toward the cursor
     expect(t.tipScreen("a").y).toBeLessThan(s.y - 5);
+  });
+
+  // Look down finger a from `off` degrees off its base-to-tip line, from the +X side.
+  function lookDownFinger(t, off) {
+    const info = t.info("a");
+    const m = t.viewer.partsGroup.matrixWorld;
+    const tipW = new THREE.Vector3(...info.points.tip).applyMatrix4(m);
+    const baseW = new THREE.Vector3(...info.points[info.joints[0].name]).applyMatrix4(m);
+    const d = tipW.clone().sub(baseW).normalize();
+    const side = new THREE.Vector3(1, 0, 0).projectOnPlane(d).normalize();
+    const th = (off * Math.PI) / 180;
+    const cam = t.viewer.camera;
+    cam.position.copy(tipW).addScaledVector(d, 300 * Math.cos(th)).addScaledVector(side, 300 * Math.sin(th));
+    cam.up.set(0, 0, -1);
+    cam.lookAt(tipW);
+    cam.updateMatrixWorld();
+    const s0 = t.screenOf(info.points.tip);
+    const s1 = t.screenOf(info.points.tip.map((c, i) => c + (info.points.tip[i] - info.points[info.joints[0].name][i]) * 0.1));
+    const l = Math.hypot(s1.x - s0.x, s1.y - s0.y);
+    return { s0, dir: { x: (s1.x - s0.x) / l, y: (s1.y - s0.y) / l }, along: unit(sub(info.points.tip, info.points[info.joints[0].name])) };
+  }
+  const dragAlong = (t, s0, dir, px) => {
+    t.fire("pointerdown", s0.x, s0.y);
+    for (let i = 1; i <= 6; i++) t.fire("pointermove", s0.x + (dir.x * px * i) / 6, s0.y + (dir.y * px * i) / 6);
+    const active = t.scene.calls.setActive.filter(Boolean).at(-1);
+    t.fire("pointerup", s0.x + dir.x * px, s0.y + dir.y * px);
+    return active;
+  };
+
+  it("end-on: pulling a tip along the finger's screen line pulls it out along the finger", () => {
+    const t = setup();
+    t.mode.setEnabled(true);
+    const tip = t.info("a").points.tip;
+    const { s0, dir, along } = lookDownFinger(t, 30);
+    const curl0 = t.params.aCurl;
+    const active = dragAlong(t, s0, dir, 30);
+    expect(active.grab).toBe("tip");
+    const moved = sub(active.target, tip);
+    // the target runs out along the finger's own line (the camera-facing plane would take
+    // it mostly across the finger: at 30° off, under half of it along)
+    expect(dot(moved, along) / len(moved)).toBeGreaterThan(0.99);
+    expect(t.params.aCurl).toBeLessThan(curl0);
+  });
+
+  it("seen from the side, the drag plane is the camera-facing plane, as before", () => {
+    // a straight finger stands along part +Z, square to the view (part +Y)
+    const t = setup({ ...hand, defaults: { ...hand.defaults, aCurl: 0 } });
+    t.mode.setEnabled(true);
+    const tip = t.info("a").points.tip;
+    const s0 = t.tipScreen("a");
+    const active = dragAlong(t, s0, { x: 0.6, y: -0.8 }, 30);
+    expect(active.target[1]).toBeCloseTo(tip[1], 6);
+    expect(active.target[2]).toBeGreaterThan(tip[2] + 5);
+  });
+
+  it("looking nearly straight down the finger, the drag plane faces the camera", () => {
+    const t = setup();
+    t.mode.setEnabled(true);
+    const tip = t.info("a").points.tip;
+    const { s0, dir } = lookDownFinger(t, 10);
+    const active = dragAlong(t, s0, dir, 30);
+    const fwd = t.viewer.camera.getWorldDirection(new THREE.Vector3())
+      .transformDirection(t.viewer.partsGroup.matrixWorld.clone().invert()).toArray();
+    expect(dot(sub(active.target, tip), fwd)).toBeCloseTo(0, 6);
   });
 
   it("the first drag frame does not jump the grabbed point to the cursor", () => {
@@ -513,7 +582,7 @@ describe("the aim gizmo on a goal handle", () => {
     expect(t.log.commit).toEqual([["gYaw"]]);
   });
 
-  it("dragging the centre ball moves the tool point in the camera-facing plane", () => {
+  it("dragging the centre ball moves the tool point in its drag plane: up the screen is up", () => {
     const t = setup(aimed(-60));
     const s = hoverTip(t);
     const tip = t.info("a").points.tip;
@@ -523,10 +592,14 @@ describe("the aim gizmo on a goal handle", () => {
     expect(t.gizmo().state.hovered).toBe("ball");
     expect(t.gizmo().state.visible).toBe(true);
     t.fire("pointerup", s.x, s.y - 30);
-    // up the screen is part +Z (the pivot stands Z up); x and y stay with the point
+    // up the screen is part +Z (the pivot stands Z up). The plane holds the finger's line,
+    // base joint to tip, which leans toward the camera (-Y), so the point rises along it
+    const info = t.info("a");
+    const n = dragPlaneNormal([0, 1, 0], sub(tip, info.points[info.joints[0].name]));
+    const g = [t.params.gx, t.params.gy, t.params.gz];
+    expect(dot(n, sub(g, tip))).toBeCloseTo(0, 6);
     expect(t.params.gz).toBeGreaterThan(tip[2] + 5);
-    expect(t.params.gx).toBeCloseTo(tip[0], 6);
-    expect(t.params.gy).toBeCloseTo(tip[1], 6);
+    expect(t.params.gy).toBeLessThan(tip[1]);
     expect(t.params.gPitch).toBe(-60);
     expect(t.log.commit).toHaveLength(1);
     expect(t.log.commit[0].sort()).toEqual(["gx", "gy", "gz"]);

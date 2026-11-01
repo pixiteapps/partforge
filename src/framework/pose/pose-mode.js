@@ -15,7 +15,7 @@
 // control's shared gizmo code) instead of a plain dot: a centre ball on the goal point
 // and a rotate ring per aim parameter, each with the cutaway's hover state. It shows
 // while its limb is hovered and stays up while any of its parts is dragged. Dragging the
-// ball is dragging the dot (the camera-facing plane through the point); dragging a ring
+// ball is dragging the dot (the drag plane through the point); dragging a ring
 // writes that aim angle (session.ringFrame) through the shared rotate-drag math. Touch:
 // a touch on the goal point (a tap or a drag) leaves the gizmo up until a touch lands
 // anywhere else, so a finger can reach the rings; the first tap only shows it, a tap on
@@ -60,7 +60,7 @@ import { createPoseScene, PIN_HEAD_PX, PIN_LIFT_PX } from "./pose-scene.js";
 import { createAimGizmo, createJointGizmo, AIM_RING_PX, AIM_RING_HIT_PX, JOINT_RING_PX, JOINT_GIZMO_PARTS } from "./aim-gizmo.js";
 import { beginRotateDrag, rotateDragAngle } from "../gizmo/gizmo-rotate.js";
 import { createPoseSession, pinId, pinTarget } from "./pose-session.js";
-import { dragPlanePoint, hitHandle } from "./pose-geom.js";
+import { dragPlaneNormal, dragPlanePoint, hitHandle } from "./pose-geom.js";
 import { limbInfo, jointRings } from "./param-solve.js";
 import { aimTurn } from "../solve/aim.js";
 import { withDeriveMemo } from "../derive-memo.js";
@@ -720,7 +720,10 @@ export function createPoseMode(viewer, {
     const ray = press.ray;
     if (hit.kind === "dot") {
       const maxDist = 4 * Math.max(chainLength(s.info), 1);
-      const normal = ray.forward;
+      // A plane that holds the limb's line from its base joint to the grabbed point
+      // (pose-geom's dragPlaneNormal), fixed for the whole drag: a pull along the limb's
+      // on-screen line is a pull along the limb, so a finger seen end-on still straightens.
+      const normal = dragPlaneNormal(ray.forward, sub(grab, chainOf(s.info)[0] ?? grab));
       // The press may sit up to HANDLE_HIT_PX off the dot: carry that offset, so the
       // point does not jump to the cursor on the first frame.
       const pressHit = dragPlanePoint(ray.origin, ray.dir, grab, normal, maxDist);

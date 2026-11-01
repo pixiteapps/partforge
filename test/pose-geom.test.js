@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dragPlanePoint, hitHandle, limitArc } from "../src/framework/pose/pose-geom.js";
+import { dragPlaneNormal, dragPlanePoint, hitHandle, limitArc, ALONG_VIEW_LIMIT } from "../src/framework/pose/pose-geom.js";
 
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
@@ -21,6 +21,52 @@ describe("dragPlanePoint", () => {
     const p = dragPlanePoint([0, 0, 10], [0, 0, 1], [0, 0, 0], [0, 0, 1], 30);
     expect(p.every(Number.isFinite)).toBe(true);
     expect(dist(p, [0, 0, 0])).toBeLessThanOrEqual(30 + 1e-9);
+  });
+});
+
+describe("dragPlaneNormal", () => {
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const deg = (d) => (d * Math.PI) / 180;
+  // The camera looks down -Z; the limb leans `off` degrees off the line of sight, toward
+  // the camera, in the XZ plane.
+  const toward = (off) => [Math.sin(deg(off)), 0, Math.cos(deg(off))];
+
+  it("seen from the side, it is the camera-facing plane", () => {
+    expect(dragPlaneNormal([0, 0, -1], [1, 0, 0])).toEqual([0, 0, -1]);
+    const n = dragPlaneNormal([0, 0, -1], [0.6, 0.8, 0]);
+    expect(dist(n, [0, 0, -1])).toBeLessThan(1e-12);
+  });
+
+  it("holds the limb, and faces the camera as squarely as a plane holding it can", () => {
+    const d = toward(30);
+    const n = dragPlaneNormal([0, 0, -1], d);
+    expect(dot(n, d)).toBeCloseTo(0, 12);
+    // the most camera-facing such plane: its normal is the view less its share along d
+    expect(Math.abs(dot(n, [0, 0, -1]))).toBeCloseTo(Math.sin(deg(30)), 12);
+    expect(n[1]).toBeCloseTo(0, 12);
+  });
+
+  it("end-on: a pull along the limb's screen line moves the point along the limb, not across it", () => {
+    // The limb leans 30° off the line of sight; its screen line is +X. An orthographic
+    // cursor ray moved 10 mm along +X lands on the limb, 20 mm out (10 / sin 30°).
+    const d = toward(30), grab = [0, 0, 0];
+    const at = (x) => dragPlanePoint([x, 0, 100], [0, 0, -1], grab, dragPlaneNormal([0, 0, -1], d), 1000);
+    const moved = at(10);
+    expect(dot(moved, d) / Math.hypot(...moved)).toBeCloseTo(1, 9);
+    expect(dot(moved, d)).toBeCloseTo(20, 9);
+    // The camera-facing plane moved it 10 mm across the screen: only 5 mm along the limb.
+    const flat = dragPlanePoint([10, 0, 100], [0, 0, -1], grab, [0, 0, -1], 1000);
+    expect(dot(flat, d)).toBeCloseTo(5, 9);
+  });
+
+  it("falls back to the camera-facing plane when the limb points nearly down the line of sight", () => {
+    const limit = (Math.acos(ALONG_VIEW_LIMIT) * 180) / Math.PI; // ~18.2°
+    expect(dragPlaneNormal([0, 0, -1], toward(limit - 1))).toEqual([0, 0, -1]);
+    expect(dragPlaneNormal([0, 0, -1], toward(-5))).toEqual([0, 0, -1]);
+    expect(dragPlaneNormal([0, 0, -1], toward(180))).toEqual([0, 0, -1]); // pointing away
+    expect(dragPlaneNormal([0, 0, -1], toward(limit + 1))).not.toEqual([0, 0, -1]);
+    // no direction to read (the base joint grabbed)
+    expect(dragPlaneNormal([0, 0, -2], [0, 0, 0])).toEqual([0, 0, -1]);
   });
 });
 

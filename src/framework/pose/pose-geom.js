@@ -33,6 +33,33 @@ export function dragPlanePoint(rayOrigin, rayDir, planePoint, planeNormal, maxDi
   return [planePoint[0] + off[0] * s, planePoint[1] + off[1] * s, planePoint[2] + off[2] * s];
 }
 
+/**
+ * How square to the view the limb may point before its drag plane gives up containing
+ * it: past |view . along| = 0.95 (about 18° off the line of sight) a plane holding the
+ * limb would be nearly edge-on, and a small cursor move would throw the point far.
+ */
+export const ALONG_VIEW_LIMIT = 0.95;
+
+/**
+ * The normal of a handle's drag plane: the plane through the grabbed point that
+ * CONTAINS `along` (the limb's direction there — its base joint to the grabbed point)
+ * and faces the camera as squarely as it can, so pulling the cursor along the limb's
+ * on-screen line pulls the point along the limb itself, out or in, whatever the view.
+ * That normal is the view direction less its component along the limb. Seen from the
+ * side it IS the view direction (the camera-facing plane); with the limb pointing within
+ * about 18° of the line of sight (|view . along| > ALONG_VIEW_LIMIT), or no direction to
+ * read (the base joint grabbed), it falls back to the camera-facing plane.
+ */
+export function dragPlaneNormal(forward, along) {
+  const f = unit(forward);
+  const l = len(along);
+  if (!(l > 1e-9)) return f;
+  const d = [along[0] / l, along[1] / l, along[2] / l];
+  const c = dot(f, d);
+  if (Math.abs(c) > ALONG_VIEW_LIMIT) return f;
+  return unit([f[0] - c * d[0], f[1] - c * d[1], f[2] - c * d[2]]);
+}
+
 /** The id of the screen point nearest (px, py) within `radius` CSS px, else null. */
 export function hitHandle(screenPts, px, py, radius = 12) {
   let best = null;

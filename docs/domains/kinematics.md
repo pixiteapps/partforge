@@ -696,6 +696,11 @@ when they are all off.
 - **Hover a dot** to highlight it. The cursor changes to a grab hand, and the model's
   hover label does not show.
 - **Drag a dot, a joint or an aim ring** to pose the limb. Orbit gives way to the grab.
+  A dragged point (a dot, a joint, the aim ball) moves on a plane fixed when the drag
+  starts. The plane holds the line from the limb's base joint to the point and faces you
+  as squarely as it can. So moving the pointer along the limb's line on screen pulls the
+  point along the limb, out or in, even when you look nearly down the limb. When the limb
+  points within about 18° of your line of sight, the plane faces you instead.
 - **The aim gizmo.** A goal handle with `aim` shows a ball and rotate rings at its `at`
   point instead of a dot. They show when you hover the point, and they stay while the
   pointer is inside the rings and while you drag any part of them. Hover a part to highlight it: it gets lighter and thicker,
