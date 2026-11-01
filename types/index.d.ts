@@ -666,14 +666,18 @@ export interface PartRuntime {
    * Canonical-angle captures (fixed poses, framed to the visible assembly,
    * 1024², grid hidden) — sized for feeding a vision model. Defaults to
    * `["iso", "front", "top"]`; unknown names are dropped. Always the CAD look,
-   * whatever the live render mode — `renderViews` asks for realistic.
+   * whatever the live render mode — `renderViews` asks for realistic. Throws
+   * "captureViews: the view on screen is not fully built" while an organic
+   * union's provisional first stage (its pieces, not yet joined) is in view;
+   * retry once the build lands. During a pose drag it draws the last exact mesh.
    */
   captureViews(viewNames?: CanonicalView[] | string[]): Array<{ view: string; dataUrl: string }>;
   /**
    * One offscreen render of the user's CURRENT framing at a chosen resolution —
    * the showcase capture. Returns a `data:image/jpeg;base64,…` string, or `null`
-   * when disposed or nothing is built yet. Never throws. Follows the live
-   * render mode unless `opts.renderMode` pins one.
+   * when disposed or nothing is built yet. Throws only as `captureViews` does,
+   * while a provisional stage is in view. Follows the live render mode unless
+   * `opts.renderMode` pins one.
    */
   captureCurrent(opts?: CaptureCurrentOptions): string | null;
   /** The active view (tab) name. Never null once mounted. */
@@ -806,7 +810,7 @@ export interface PartRuntime {
   };
   /** True when any sub-part names a display.material. */
   declaresMaterials: boolean;
-  /** Canonical-view renders in a chosen appearance, without switching the live view; "cad" (the default) is exactly captureViews(), CAD in either live mode. */
+  /** Canonical-view renders in a chosen appearance, without switching the live view; "cad" (the default) is exactly captureViews(), CAD in either live mode. Rejects as captureViews throws, while a provisional stage is in view. */
   renderViews(viewNames?: CanonicalView[] | string[], opts?: { renderMode?: RenderMode }): Promise<Array<{ view: string; dataUrl: string }>>;
 }
 
