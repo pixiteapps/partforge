@@ -718,6 +718,10 @@ when they are all off.
     holds pins on any limb; a goal drag holds pins on its own limb, see "Pins on a goal
     drag" under `mode: "goal"`). Dragging a pinned dot moves it, and it holds its new
     place in the next drag.
+  - A pin holds a point's POSITION, not a joint's angle. A pivot turns about its own
+    point, so pinning it (the hand's wrist, say) does not stop it turning. To hold a
+    joint's angle, turn on the digit's lock, or set the angle with the joint's ring
+    alone.
   - **Joint rings ignore pins.** A ring turns its one joint and nothing else, so a pinned
     point past that joint moves with it.
   - A pin badge (a pink dot and a head on a short stem) sits at each pinned point at all
