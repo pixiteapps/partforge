@@ -7,6 +7,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as THREE from "three";
 import { createPoseMode } from "../src/framework/pose/pose-mode.js";
 import { createAimGizmo, createJointGizmo, JOINT_RING_PX } from "../src/framework/pose/aim-gizmo.js";
+import { PIN_LIFT_PX } from "../src/framework/pose/pose-scene.js";
 import { worldPerPx } from "../src/framework/measure/dim3-scene.js";
 import { limbInfo } from "../src/framework/pose/param-solve.js";
 import { resolveParams } from "../src/framework/part-model.js";
@@ -107,7 +108,7 @@ const goalPart = (aim = false) => {
 };
 
 const live = [];
-function setup(part, over = {}, limbKey = "arm") {
+function setup(part, over = {}, limbKey = "arm", opts = {}) {
   const viewer = fakeViewer();
   const scene = fakeScene();
   const orbit = { enabled: true };
@@ -125,6 +126,7 @@ function setup(part, over = {}, limbKey = "arm") {
     createScene: () => scene,
     createGizmo: (v) => (aimGizmo = createAimGizmo(v)),
     createJointRings: (v) => (jointGizmo = createJointGizmo(v)),
+    ...opts,
   });
   live.push(mode);
   const info = (key = limbKey) => limbInfo(part, params, { limb: key });
@@ -546,6 +548,62 @@ describe("joint pins", () => {
     t.fire("pointerdown", s.x, s.y, { pointerType: "touch" });
     t.fire("pointerup", s.x, s.y, { pointerType: "touch" });
     expect(t.mode.getPins()).toEqual(["tool:tip"]);
+  });
+
+  it("a click on a pinned dot's badge head unpins it, even with its ring seen edge-on through the head", () => {
+    // the palm's wrist pitch turns about part X: edge-on to this camera, its ring is a
+    // vertical line on screen straight through the dot and the badge head above it
+    const t = setup(hand, {}, "palm");
+    const s = t.hover("wristPitch");
+    t.fire("pointerdown", s.x, s.y);
+    t.fire("pointerup", s.x, s.y);
+    expect(t.mode.getPins()).toHaveLength(1);
+    const head = { x: s.x, y: s.y - PIN_LIFT_PX };
+    expect(t.joint().pick({ x: head.x, y: head.y, w: W, h: H })).toBe("bend"); // the ring is under the head
+    t.fire("pointermove", head.x, head.y);
+    expect(t.joint().state.hovered).toBeNull(); // the dot, not the ring
+    t.fire("pointerdown", head.x, head.y);
+    t.fire("pointerup", head.x, head.y);
+    expect(t.mode.getPins()).toEqual([]);
+    expect(t.log.commit).toEqual([]);
+    // unpinned, the same point is the ring's again
+    t.fire("pointermove", head.x + 1, head.y);
+    t.fire("pointermove", head.x, head.y);
+    expect(t.joint().state.hovered).toBe("bend");
+  });
+
+  it("touch: a tap on the badge head of a pinned joint with its rings up unpins it", () => {
+    const t = setup(hand, {}, "palm");
+    const s = t.screenOf(t.info().points.wristPitch);
+    const tap = (p) => { t.fire("pointerdown", p.x, p.y, { pointerType: "touch" }); t.fire("pointerup", p.x, p.y, { pointerType: "touch" }); };
+    tap(s); // rings up
+    tap(s); // pinned
+    expect(t.mode.getPins()).toHaveLength(1);
+    tap({ x: s.x, y: s.y - PIN_LIFT_PX });
+    expect(t.mode.getPins()).toEqual([]);
+  });
+
+  it("a pin on a handle this view does not show has no badge and holds nothing", () => {
+    const part = anglesPart();
+    part.handles.other = { limb: "arm", mode: "angles", params: ["sh"] };
+    const elbowMoves = (visible) => {
+      const t = setup(part, {}, "arm", { visibleHandles: () => visible });
+      t.mode.setPins(["other:elbow"]);
+      const badges = t.scene.calls.setPins.at(-1);
+      const before = elbowOf(part, t.params);
+      const tip = t.hover("tip");
+      t.fire("pointerdown", tip.x, tip.y);
+      for (let i = 1; i <= 6; i++) t.fire("pointermove", tip.x - i * 4, tip.y + i * 3);
+      t.fire("pointerup", tip.x - 24, tip.y + 18);
+      const after = elbowOf(part, t.params);
+      return { badges, moved: Math.hypot(...after.map((v, i) => v - before[i])) };
+    };
+    const shownBoth = elbowMoves(["arm", "other"]);
+    expect(shownBoth.badges).toEqual([{ limb: "arm", at: "elbow" }]);
+    expect(shownBoth.moved).toBeLessThan(0.5);
+    const hidden = elbowMoves(["arm"]);
+    expect(hidden.badges).toEqual([]);
+    expect(hidden.moved).toBeGreaterThan(1);
   });
 
   it("hand: a click on the palm's wrist (a limb only a joints entry shows) pins it as <limb>.<joint>", () => {

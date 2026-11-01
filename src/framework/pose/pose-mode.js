@@ -56,7 +56,7 @@
 import * as THREE from "three";
 import { createDragTracker } from "../selection/drag-tracker.js";
 import { worldPerPx, orthoWorldPerPx } from "../measure/dim3-scene.js";
-import { createPoseScene } from "./pose-scene.js";
+import { createPoseScene, PIN_HEAD_PX, PIN_LIFT_PX } from "./pose-scene.js";
 import { createAimGizmo, createJointGizmo, AIM_RING_PX, AIM_RING_HIT_PX, JOINT_RING_PX, JOINT_GIZMO_PARTS } from "./aim-gizmo.js";
 import { beginRotateDrag, rotateDragAngle } from "../gizmo/gizmo-rotate.js";
 import { createPoseSession, pinId, pinTarget } from "./pose-session.js";
@@ -198,6 +198,7 @@ export function createPoseMode(viewer, {
     part, getParams, write, commit, restore, staleSubParts, ghost, unghost, hold,
     onCancel: () => finishPress(),
     onPinsChange: () => { syncPins(); notify(pinListeners); },
+    pinActive: (id) => !!pinPoint(id),
   });
   const tracker = createDragTracker();
 
@@ -268,6 +269,7 @@ export function createPoseMode(viewer, {
     const params = getParams();
     lastParams = { ...params };
     const ids = (visibleHandles() ?? []).filter((id) => handles[id]);
+    shownIds = new Set(ids);
     const seen = new Set();
     shown = [];
     const infos = [];
@@ -324,17 +326,45 @@ export function createPoseMode(viewer, {
     return false;
   }
 
+  /**
+   * Where pin `id` points in this view: `{ limb (its name), at, point }`, or null when its
+   * handle or limb is not shown here — such a pin has no badge, and holds nothing (the
+   * session's pinActive).
+   */
+  function pinPoint(id) {
+    const t = pinTarget(id, handles);
+    if (!t || !shownIds.has(t.handleId)) return null;
+    const entry = shown.find((e) => e.limbKey === t.limb);
+    const point = entry?.info.points[t.at];
+    return Array.isArray(point) ? { limb: entry.info.name, at: t.at, point } : null;
+  }
+  let pinnedPoints = []; // [{ limb, at, point }] as badged now (syncPins)
+  let shownIds = new Set(); // the handles this view shows (readLimbs)
   /** The scene's pin badges: one per pinned point shown, `{ limb (its name), at }`. */
   function syncPins() {
-    if (!scene) return;
-    const points = [];
+    pinnedPoints = [];
     for (const id of session.pins) {
-      const t = pinTarget(id, handles);
-      const entry = t && shown.find((e) => e.limbKey === t.limb);
-      if (!entry || !Array.isArray(entry.info.points[t.at])) continue;
-      if (!points.some((p) => p.limb === entry.info.name && p.at === t.at)) points.push({ limb: entry.info.name, at: t.at });
+      const p = pinPoint(id);
+      if (p && !pinnedPoints.some((q) => q.limb === p.limb && q.at === p.at)) pinnedPoints.push(p);
     }
-    scene.setPins(points);
+    scene?.setPins(pinnedPoints.map(({ limb, at }) => ({ limb, at })));
+  }
+  /** The dot `hit` stands on a pinned point (a coincident joint's pin counts: one badge). */
+  function pinnedDot(hit) {
+    const info = shown.find((e) => e.info.name === hit.limb)?.info;
+    const p = info?.points[hit.at];
+    return Array.isArray(p) && pinnedPoints.some((q) => q.limb === hit.limb && len(sub(q.point, p)) <= COINCIDENT_MM);
+  }
+  /**
+   * The pointer is on the dot's core (DOT_CORE_PX) or, for a pinned dot, on its badge's
+   * head (PIN_LIFT_PX straight up the screen): there the dot beats any ring under the
+   * pointer, so a click on the badge unpins rather than grabbing a ring seen edge-on.
+   */
+  function onDotCore(hit, x, y) {
+    const d = screen().dots.find((c) => c.hit === hit);
+    if (!d) return false;
+    if (Math.hypot(d.x - x, d.y - y) <= DOT_CORE_PX) return true;
+    return pinnedDot(hit) && Math.hypot(d.x - x, d.y - PIN_LIFT_PX - y) <= PIN_HEAD_PX + 3;
   }
   /**
    * The pin id a click on the dot `hit` toggles: "<handle>:<at>" for a dot of a handle's own
@@ -598,14 +628,14 @@ export function createPoseMode(viewer, {
     // the gizmo away. The gizmo's own dots keep their full target, and so does every dot
     // at a PRESS with no ring under the pointer: a grab there is meant for the dot (an IK
     // drag of a knuckle beside a spread ring), and a press cannot flash anything.
-    if (dotHit && focus && !(pressing && !onRing) && !ownDot(focus, dotHit) && insideFocus(focus, x, y) && dotDistance(dotHit, x, y) > DOT_CORE_PX) dotHit = null;
+    if (dotHit && focus && !(pressing && !onRing) && !ownDot(focus, dotHit) && insideFocus(focus, x, y) && !onDotCore(dotHit, x, y)) dotHit = null;
     // a dot and the shown ring both under the pointer (a ring crossing a neighbouring
     // joint's dot): the nearer wins, a tie to the ring that is up — so moving from a joint
     // out to its ring never hands the focus to a dot the ring runs over (that dot is
     // reached from outside the rings, or where it is nearer than the ring)
     // — except on the gizmo's own dot's core: a ring seen edge-on runs through its centre,
     // and the centre is the joint's dot (a click there pins it)
-    if (dotHit && onRing && !(ownDot(focus, dotHit) && dotDistance(dotHit, x, y) <= DOT_CORE_PX)) {
+    if (dotHit && onRing && !(ownDot(focus, dotHit) && onDotCore(dotHit, x, y))) {
       const radius = onAim ? AIM_RING_PX : JOINT_RING_PX;
       if (ringDistance(onRing.at, onRing.axis, radius, x, y) <= dotDistance(dotHit, x, y)) return { limb: onRing.limb, hit: onRing, focus };
     }
@@ -795,7 +825,7 @@ export function createPoseMode(viewer, {
       const tf = touchFocus;
       const dotHit = dotAt(x, y, null, TOUCH_HIT_PX);
       // the up gizmo's own dot, on its core, beats a ring seen edge-on through it (a pin tap)
-      const onCore = dotHit && tf && ownDot(tf, dotHit) && dotDistance(dotHit, x, y) <= DOT_CORE_PX;
+      const onCore = dotHit && tf && ownDot(tf, dotHit) && onDotCore(dotHit, x, y);
       hit = (onCore ? null : tf?.kind === "aim" ? gizmoHit(gizmoTarget(tf.limb), pt, true) : jointRingHit(jointTarget(tf), pt, true))
         ?? dotHit;
       focus = hit?.kind === "dot" ? focusOfDot(hit) : hit ? tf : null;

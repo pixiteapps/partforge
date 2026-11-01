@@ -94,6 +94,9 @@ export function createPoseSession({
   hold = () => {},
   onCancel = () => {},
   onPinsChange = () => {},
+  // Whether a pin acts right now: pose mode passes "its point is badged in this view", so a
+  // pin on a handle the view does not show never holds anything unseen.
+  pinActive = () => true,
 }) {
   const handles = part?.handles && typeof part.handles === "object" ? part.handles : {};
   const allHandles = Object.values(handles);
@@ -112,7 +115,7 @@ export function createPoseSession({
     const holds = [];
     for (const id of pins) {
       const pin = pinTarget(id, handles);
-      if (!pin || (pin.handleId === handleId && pin.limb === handle.limb && pin.at === grab)) continue;
+      if (!pin || !pinActive(id) || (pin.handleId === handleId && pin.limb === handle.limb && pin.at === grab)) continue;
       const point = locate({ part, params: snapshot, handle: { ...pin.handle, limb: pin.limb }, at: pin.at });
       if (point) holds.push({ limb: pin.limb, at: pin.at, point });
     }

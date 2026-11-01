@@ -193,6 +193,28 @@ describe("createPoseSession", () => {
     expect(h.calls).toEqual([]);
   });
 
+  it("an inactive pin (pinActive false: not shown in this view) is never held", () => {
+    const seen = [];
+    const session = createPoseSession({
+      part: hand, getParams: () => ({ ...hand.defaults }), write() {}, commit() {}, restore() {},
+      solve: (req) => { seen.push(req.holds); return { values: {}, error: 0 }; },
+      pinActive: (id) => id !== "b:tip",
+    });
+    session.setPins(["b:tip"]);
+    session.begin("a", "tip");
+    session.frame([1, 2, 3]);
+    expect(seen[0]).toEqual([]);
+    session.cancel();
+    const live = createPoseSession({
+      part: hand, getParams: () => ({ ...hand.defaults }), write() {}, commit() {}, restore() {},
+      solve: (req) => { seen.push(req.holds); return { values: {}, error: 0 }; },
+    });
+    live.setPins(["b:tip"]);
+    live.begin("a", "tip");
+    live.frame([1, 2, 3]);
+    expect(seen[1].map((h) => h.limb)).toEqual(["b"]); // active by default
+  });
+
   it("a pin's held point is captured at begin and passed to the solve as a hold", () => {
     const seen = [];
     const h = harness({ solve: (req) => { seen.push(req); return { values: {}, error: 0 }; } });
