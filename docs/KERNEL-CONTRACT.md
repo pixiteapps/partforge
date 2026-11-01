@@ -887,6 +887,13 @@ maps that protocol onto `setPart` itself.
 - **Re-posts `{type:"ready"}`**, so a remounting host gates its first generate on
   readiness exactly as it would on a freshly spawned worker.
 
+**A failed kernel boot is not kept.** A boot whose WASM fails to load (an interrupted
+download, a 404, an out-of-memory during instantiation) fails the job that was waiting
+on it with an `{type:"error"}` post, and the worker forgets it: the next job that needs
+that kernel boots it again, so a transient failure costs one job, not the worker. The
+manifold worker posts `{type:"ready"}` once its eager boot settles, whether it worked or
+not — a host's first generate is what reports the failure, after booting again.
+
 **Epoch guard.** Generates supersede each other; exports (`export-stl`/`export-step`/
 `export-3mf`/`export-bundle`), `inspect`, and `lint` are **never** epoch-guarded — cancelling a user's
 export because an edit landed would be wrong. A generate that is stale by the time the

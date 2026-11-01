@@ -743,6 +743,12 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** A STEP import used on the Manifold backend needs OCCT-tessellated triangles first (the "crossover" described in [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Importing geometry (STEP/STL/3MF)"). This hop is meant to self-heal — the browser worker requests a `tessellate-imports` job from the OCCT worker, Node hops through a `node:worker_threads` isolate (the two WASM kernels may never share a process) — but it surfaces here when the tessellation either delivered a mesh whose digest didn't match what Manifold now expects (a genuinely broken state, not a retry loop) or the worker/thread exited without completing.
 - **Fix:** This should be rare and self-resolving on the next build; if it persists, confirm the STEP file parses under OCCT on its own (e.g. `meta.backend: "occt"` temporarily, or `npx partforge measure` against an OCCT-routed copy of the part) to rule out a malformed STEP file, and check the console/thread output for the underlying tessellation error being wrapped.
 
+## asset-url-no-module-base
+
+- **Symptom:** `Failed to construct 'URL': Invalid URL` (Node: `TypeError: Invalid URL`) as the part module loads — before any build runs — on a part that declares a `vectors`, `fonts`, `imports` or `images` source as `new URL("./…", import.meta.url)`.
+- **Cause:** The host loaded the part's source from somewhere with no folder to resolve `./…` against — a `data:` or `blob:` URL, or one bundled module made from a part's file tree — so `import.meta.url` is not a hierarchical base and the `URL` constructor throws.
+- **Fix:** Declare the source in a form that needs no base: a vector document as the parsed object itself — `import plate from "./assets/plate.vector.json" with { type: "json" }`, then `vectors: { plate }` — or, for a file the host stores, the host's own asset token. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry" ("A source may also be the parsed file itself").
+
 ## vector-unknown-name
 
 - **Symptom:** `vector2d: unknown vector "` followed by the name and — declare it in the part's `vectors` field — thrown from a build calling `k.vector2d(name)`.
