@@ -5,7 +5,8 @@ import * as THREE from "three";
 import { CUTAWAY_OVERLAY_RENDER_ORDER } from "../cutaway-render.js";
 import { runCleanupSteps } from "../teardown.js";
 
-const HIGHLIGHT = 0x4da3ff;
+export const HIGHLIGHT_COLOR = 0x4da3ff;
+const HIGHLIGHT = HIGHLIGHT_COLOR;
 
 // Extract the subset of a geometry belonging to one feature id. Handles both
 // non-indexed (Manifold) and indexed (OCCT) payloads.

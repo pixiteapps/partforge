@@ -5,7 +5,13 @@
 // resets once every pointer has lifted. Lifted out of selection/pick.js so
 // measure-mode.js shares one implementation and one threshold instead of a
 // second, divergent copy.
-export function createDragTracker({ thresholdSquared = 16 } = {}) {
+// The squared pixel travel past which a press is a drag, not a click (4 px).
+// Exported so a gesture the tracker cannot see (measure mode's touch adjust,
+// which takes its pointer away from every other listener) splits tap from drag
+// at the same distance.
+export const DRAG_THRESHOLD_SQUARED = 16;
+
+export function createDragTracker({ thresholdSquared = DRAG_THRESHOLD_SQUARED } = {}) {
   const pointerStarts = new Map();
   let dragged = false;
 

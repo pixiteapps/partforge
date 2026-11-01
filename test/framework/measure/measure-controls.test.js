@@ -193,3 +193,63 @@ test("escapeScope: Escape from a canvas-sibling button still closes measure", ()
   expect(mode.setEnabled).toHaveBeenLastCalledWith(false);
   expect(mode.isEnabled()).toBe(false);
 });
+
+test("Clear is labelled for one measurement, not pins", () => {
+  const { viewer, button } = fixture();
+  attachMeasureControls(viewer, fakeMode(), { measure: button });
+  const clear = document.querySelector(".pf-measure-actions button");
+  expect(clear.textContent).toBe("Clear");
+  expect(clear.title).toBe("Clear the measurement");
+  expect(clear.getAttribute("aria-label")).toBe("Clear the measurement");
+});
+
+test("the actions row is Clear and the unit tag: distances need no toggle", () => {
+  const { viewer, button } = fixture();
+  attachMeasureControls(viewer, fakeMode(), { measure: button });
+  const names = [...document.querySelectorAll(".pf-measure-actions button")].map((b) => b.textContent);
+  expect(names).toEqual(["Clear", "mm"]);
+});
+
+test("Escape clears a measurement first, then leaves the mode", () => {
+  const { viewer, button } = fixture();
+  const mode = fakeMode();
+  attachMeasureControls(viewer, mode, { measure: button });
+  button.click(); // measure on
+  mode.__setPins(2);
+  viewer.domElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  expect(mode.clearPins).toHaveBeenCalledTimes(1);
+  expect(mode.isEnabled()).toBe(true);
+  viewer.domElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  expect(mode.isEnabled()).toBe(false);
+});
+
+test("a distance's X/Y/Z parts are listed; hover previews, click keeps", () => {
+  const { viewer, button } = fixture();
+  let parts = [];
+  const mode = fakeMode({
+    getUnits: () => "mm",
+    getParts: () => parts,
+    previewPart: vi.fn(),
+    togglePart: vi.fn((axis) => { parts = parts.map((p) => (p.axis === axis ? { ...p, shown: !p.shown } : p)); }),
+  });
+  attachMeasureControls(viewer, mode, { measure: button });
+  button.click();
+  const box = document.querySelector(".pf-measure-parts");
+  expect(box.hasAttribute("data-pf-viewbar-float")).toBe(true);
+  expect(box.hidden).toBe(true);
+  parts = [{ axis: "X", value: 20, shown: false }, { axis: "Y", value: 10, shown: false }];
+  mode.__setPins(2);
+  expect(box.hidden).toBe(false);
+  const [x, y] = box.querySelectorAll("button");
+  expect([x.textContent, y.textContent]).toEqual(["X 20.00", "Y 10.00"]);
+  x.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+  expect(mode.previewPart).toHaveBeenLastCalledWith("X");
+  x.dispatchEvent(new PointerEvent("pointerout", { bubbles: true }));
+  expect(mode.previewPart).toHaveBeenLastCalledWith(null);
+  y.click();
+  expect(mode.togglePart).toHaveBeenCalledWith("Y");
+  expect(box.querySelector('[data-axis="Y"]').getAttribute("aria-pressed")).toBe("true");
+  parts = [];
+  mode.__setPins(0);
+  expect(box.hidden).toBe(true);
+});
