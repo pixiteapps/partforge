@@ -44,8 +44,6 @@ export const AIM_BALL_TOUCH_HIT_PX = 24;
 /** A joint ring's radius, CSS px: a little inside the aim rings (joints sit closer together). */
 export const JOINT_RING_PX = 30;
 
-/** The gizmo's parts, in aim-parameter order after the ball. */
-export const AIM_GIZMO_PARTS = ["ball", "pitch", "yaw", "roll"];
 /** The joint gizmo's rings: a hinge shows the one its axis kind names (a vector axis: bend). */
 export const JOINT_GIZMO_PARTS = ["bend", "spread", "twist"];
 const PALETTE_KEY = { ball: "fill", pitch: "red", yaw: "blue", roll: "green", bend: "red", spread: "blue", twist: "green" };
