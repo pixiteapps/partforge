@@ -214,7 +214,7 @@ test("lint compiles the tree, and the guide lists every organic rule", () => {
   const lintSection = section("What lint and verify check");
   for (const { id } of organicManifest.lintRules) expect(lintSection, id).toContain(`\`${id}\``);
   expect(lintSection).toContain("default pose");
-  expect(lintSection).toContain("src/parts/hand.js");
+  expect(lintSection).toContain("src/parts/organic-hand.js");
 });
 
 test("the worked example builds, measures and verifies as the guide says", () => {

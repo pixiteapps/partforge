@@ -488,6 +488,11 @@ export function createViewer(container, part, {
     lines.visible = linesVisible && meshVisible && !deformedSubs.has(name);
   }
 
+  /** The animation-channel opacity setSubPartOpacity last left on `name` (1 when none). */
+  function getSubPartOpacity(name) {
+    return animOpacity.get(name) ?? 1;
+  }
+
   function setSubPartOpacity(name, value) {
     if (!subMesh[name]) return;
     const wasZero = (animOpacity.get(name) ?? 1) <= 0;
@@ -951,6 +956,7 @@ export function createViewer(container, part, {
   function renderShadow(opts, { force = false } = {}) {
     if (!realisticRig || (!active && !force)) return;
     try {
+      growHeldShadow();
       const plane = cutaway.getPlane?.(_shadowClipPlane) ?? null;
       realisticRig.shadow.render(scene, castersNow(), { ...opts, clippingPlanes: plane ? [plane] : null });
       requestRender();
@@ -970,11 +976,27 @@ export function createViewer(container, part, {
   // it sideways or resize it, and never lift it into the part. The hold is
   // viewer-wide rather than per rig, so an environment switch mid-playback
   // lands its floor in the same place.
-  let groundHeld = false;
+  //
+  // Posing holds it too (mount's "pose" hold): the floor belongs to the part's
+  // base, not its pose, so a joint dragged sideways must not slide the floor's
+  // texture under the part. Each holder names itself (`reason`), so the
+  // animation driver releasing its hold on a user edit never releases mount's,
+  // and the ground is held while ANY reason holds it.
+  //
+  // An unheld placement with no rig (CAD) forgets the last ground: it described
+  // geometry that has since changed, and a later hold must not bring it back.
+  const groundHolds = new Set();
   let lastGround = null;
-  function holdGround(on) { groundHeld = !!on; }
+  // Returns whether the ground is still held, by any reason, after the call.
+  function holdGround(on, reason = "animation") {
+    if (on) groundHolds.add(reason); else groundHolds.delete(reason);
+    return groundHolds.size > 0;
+  }
+  // Whether `reason` holds the ground — or, with no reason, whether anything does.
+  const isGroundHeld = (reason) => (reason === undefined ? groundHolds.size > 0 : groundHolds.has(reason));
   function placeGround({ force = false } = {}) {
-    if (!realisticRig) return;
+    const groundHeld = groundHolds.size > 0;
+    if (!realisticRig) { if (!groundHeld) lastGround = null; return; }
     const b = getVisibleWorldBounds(); // shared Box3: read it out before anything else runs
     if (b.isEmpty()) return;
     const center = b.getCenter(new THREE.Vector3());
@@ -985,6 +1007,23 @@ export function createViewer(container, part, {
     realisticRig.setGround(lastGround);
     shadowMovedAt = null; // this render is the full-resolution one
     renderShadow(undefined, { force });
+  }
+  // A held floor stays put, but the pose it holds under can reach past the
+  // shadow plane sized from the base (3 × its radius across): an arm stretched
+  // out lost its shadow's far end. So while held, the shadow plane — never the
+  // floor, its centre or its texture — grows to cover the posed bounds as seen
+  // from the floor's centre, with a margin for the blur. Grow-only for the
+  // hold; a re-derived placement starts from the base's size again.
+  function growHeldShadow() {
+    if (!lastGround || groundHolds.size === 0) return;
+    const b = getVisibleWorldBounds();
+    if (b.isEmpty()) return;
+    const { centerX: cx, centerZ: cz } = lastGround;
+    const reach = Math.max(Math.abs(b.min.x - cx), Math.abs(b.max.x - cx), Math.abs(b.min.z - cz), Math.abs(b.max.z - cz));
+    const need = (reach * 1.1) / 1.5; // half the plane (1.5 × radius) covers the reach, plus 10%
+    if (need <= (lastGround.shadowRadius ?? lastGround.radius)) return;
+    lastGround = { ...lastGround, shadowRadius: need };
+    realisticRig.setGround(lastGround);
   }
   // Called once per rendered frame: low-res while a part is moving, one full
   // render once it has settled, nothing while it is still.
@@ -3505,6 +3544,7 @@ export function createViewer(container, part, {
     setSubVertices,
     setSubPose,
     setSubPartOpacity,
+    getSubPartOpacity,
     setSubPartDisplay,
     getSubPartDisplayState,
     getDisplayOverrides,
@@ -3529,6 +3569,7 @@ export function createViewer(container, part, {
     tweenCameraTo,
     getCameraCue,
     holdGround,
+    isGroundHeld,
     cancelCameraTween,
     orbitBy,
     onCameraStart,
@@ -3549,9 +3590,20 @@ export function createViewer(container, part, {
     getProjection: () => projectionMode,
     onProjectionChange,
     domElement: renderer.domElement,
+    // The OrbitControls themselves, for a mode that must take a press away from
+    // orbit (pose mode; cutaway gets them at construction). One instance for the
+    // viewer's life: a projection swap re-targets it, never replaces it.
+    orbitControls: controls,
     _subMeshes: subMesh,
     __subMesh: (n) => subMesh[n],   // test hooks (cf. attachAnimationControls' __viewer)
     __subLines: (n) => subLines[n],
+    // Test hook (scripts/check-pose.mjs): the realistic floor as placed — the
+    // ground object's position and scale and the last placement — or null in CAD.
+    __ground: () => (realisticRig ? {
+      position: realisticRig.ground.position.toArray(),
+      scale: realisticRig.ground.scale.toArray(),
+      placed: lastGround ? { ...lastGround } : null,
+    } : null),
     flashPoint,
     projectPoint,
     holdFlashPoint,

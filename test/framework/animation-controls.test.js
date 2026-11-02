@@ -284,6 +284,9 @@ test("playback holds the realistic floor until an edit, reset or view switch —
   ctl.runtime.play(); viewer.frame(0.5);
   switchView("solo");
   expect(held()).toBe(false);
+  // Every hold and release names the driver's own reason, so it never frees
+  // another holder's (mount's "pose", the preview player's "preview").
+  expect(viewer.holdGround.mock.calls.every(([, reason]) => reason === "animation")).toBe(true);
 });
 
 test("reset restores the pre-animation param snapshot", () => {

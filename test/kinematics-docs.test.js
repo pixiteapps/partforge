@@ -12,7 +12,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
-import { limb } from "../src/framework/domains/kinematics/index.js";
+import { aimFromAngles, limb } from "../src/framework/domains/kinematics/index.js";
 import { implicitDistance } from "../src/framework/geometry/polygon.js";
 import { validateSpec } from "../src/framework/geometry/implicit/grammar.js";
 
@@ -57,7 +57,7 @@ function toScript(block) {
 }
 
 test("every runnable example in the guide returns the value it shows", () => {
-  const blocks = fences("js").filter((b) => !/^\s*(derive|parts|views|verify):/m.test(b));
+  const blocks = fences("js").filter((b) => !/^\s*(derive|parts|views|verify|handles):/m.test(b));
   expect(blocks.length).toBeGreaterThanOrEqual(8);
   const checked = [];
   const check = (src, run, text) => {
@@ -68,8 +68,8 @@ test("every runnable example in the guide returns the value it shows", () => {
   // only slow the test): each spec must validate, and every call must be reached.
   const specs = [];
   const k = { implicit: (spec) => { validateSpec(spec); specs.push(spec); return {}; } };
-  new Function("limb", "implicitDistance", "k", "check", blocks.map(toScript).join("\n"))(limb, implicitDistance, k, check);
-  expect(checked.length).toBe(33);   // every shown value; a parse change that drops one fails here
+  new Function("limb", "aimFromAngles", "implicitDistance", "k", "check", blocks.map(toScript).join("\n"))(limb, aimFromAngles, implicitDistance, k, check);
+  expect(checked.length).toBe(38);   // every shown value; a parse change that drops one fails here
   expect(specs.length).toBe(1);
 });
 
@@ -176,4 +176,37 @@ test("the guide is self-contained: the import lines, no branch names", () => {
   expect(guide).not.toMatch(/feat\/implicit/);
   // The Domains index line in the core guide points here.
   expect(read("../docs/AUTHORING-PARTS.md")).toContain("[`docs/domains/kinematics.md`](domains/kinematics.md)");
+});
+
+test("goals: the prose claims about statuses, clamped and read-back values are the code's", async () => {
+  const arm = limb("arm", {
+    at: [0, 0, 0], toward: [0, 0, 1], bendToward: [1, 0, 0],
+    joints: [{ name: "base", axis: "twist", range: [-170, 170] }, { name: "shoulder", range: [-90, 90] }, { name: "elbow", range: [10, 150] }],
+    lengths: [0, 100, 100],
+  });
+  const text = section("Posing by goals: `goals` and `pins`");
+  // Two goals 400 mm apart on a reach of 200 both read conflict.
+  expect(text).toContain("`conflict`");
+  const two = arm.pose({ bend: [0, 30, 60], goals: [{ at: "tip", position: [150, 0, 60], weight: 1 }, { at: "tip", position: [-150, 0, 60] }] });
+  expect(two.report.goals.map((g) => g.status)).toEqual(["conflict", "conflict"]);
+  // A solved joint resting on its limit does not read clamped under goals; a pinned value out of range does.
+  const far = arm.pose({ bend: [0, 30, 60], goals: [{ at: "tip", position: [0, 0, 600] }] });
+  expect(far.report.goals[0].status).toBe("too-far");
+  expect(far.report.clamped).toEqual([false, false, false]);
+  const pinned = arm.pose({ bend: [0, 30, 200], pins: ["elbow"], goals: [{ at: "tip", position: [100, 0, 100] }] });
+  expect(pinned.report.clamped[2]).toBe(true);
+  // pins need goals.
+  expect(() => arm.pose({ pins: ["elbow"] })).toThrow();
+  // The robot-arm roll (no offset) and elbow stop that the guide names are in the part.
+  const src = read("../src/parts/robot-arm.js");
+  expect(src).toContain("roll: p.toolRoll }");
+  expect(src).not.toContain("toolRoll + 180");
+  expect(guide).toContain("roll: p.toolRoll");
+  expect(guide).not.toContain("toolRoll + 180");
+  const part = (await import("../src/parts/robot-arm.js")).default;
+  const elbow = part.derive(part.defaults).arm.ikInfo?.().joints?.find?.((j) => j.name === "elbow");
+  if (elbow) expect(elbow.range).toEqual([10, 150]);
+  // The probe line the guide prints is the part's own at defaults.
+  const line = JSON.stringify(part.probes.tool(null, part.defaults, part.derive(part.defaults)));
+  expect(guide).toContain(line);
 });

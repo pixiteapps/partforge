@@ -62,7 +62,7 @@ implicit: OCCT cannot build k.implicit (it is mesh-native) — this sub-part rea
   (AP242's `TESSELLATED_SOLID`), with its name and colour, so the file carries a closed
   mesh body beside the exact ones. A sub-part that calls `k.implicit` anywhere is one mesh
   body, including any ordinary ops in it. The pin does not change this split. Expect
-  about 40 bytes per triangle: the reference hand (`src/parts/hand.js`, ~116k triangles
+  about 40 bytes per triangle: the reference hand (`src/parts/organic-hand.js`, ~116k triangles
   at its print grid) adds about 4 MB. A sub-part that calls both
   `k.implicit` and `shell` cannot export; use an `onion` node for a hollow organic body.
 - A kernel with no implicit engine at all (a host's own kernel) throws
@@ -425,7 +425,7 @@ The domain adds lint rules and no verify metrics. Lint runs every `k.implicit` a
   `volume`, the process's checks, `overlaps`. A rounded body on a flat bed has little
   bed contact and large overhangs; read the costs.
 
-The reference part, `src/parts/hand.js`, lints with no errors or warnings: a contact
+The reference part, `src/parts/organic-hand.js`, lints with no errors or warnings: a contact
 hand with crease detail, its nails each their own fine-grid `k.implicit` (the fix
 `implicit-thin-feature` suggests), and a probe that reports its frames.
 

@@ -17,12 +17,12 @@ test("the entry's import closure reaches no implicit engine and is worker-safe (
   expectWorkerSafe(graph, ROOT, "the kinematics domain");
 });
 
-test("partforge/kinematics resolves through the package exports and yields limb", async () => {
+test("partforge/kinematics resolves through the package exports and yields limb and aimFromAngles", async () => {
   const pkg = JSON.parse(readFileSync(`${ROOT}/package.json`, "utf8"));
   expect(pkg.exports["./kinematics"].default).toBe("./src/framework/domains/kinematics/index.js");
   const mod = await import("../src/framework/domains/kinematics/index.js");
   expect(typeof mod.limb).toBe("function");
-  expect(Object.keys(mod)).toEqual(["limb"]);
+  expect(Object.keys(mod).sort()).toEqual(["aimFromAngles", "limb"]);
 });
 
 test("the manifest is exactly the interface the domain registry reads", async () => {

@@ -509,7 +509,7 @@ export function attachAnimationControls(viewer, part, {
       // assembly every delivery, and the floor must not chase each frame's
       // bounds. Released by a user edit, reset/stop, or a view switch — NOT by
       // reaching the end, which would just move the jump to the last frame.
-      if (Object.keys(r.values).length || Object.keys(r.opacity ?? {}).length) viewer.holdGround?.(true);
+      if (Object.keys(r.values).length || Object.keys(r.opacity ?? {}).length) viewer.holdGround?.(true, "animation");
       if (Object.keys(r.values).length) {
         if (snapshot == null) snapshot = getParamValues(current.trackedKeys);
         applyValues(r.values);
@@ -547,7 +547,7 @@ export function attachAnimationControls(viewer, part, {
   function doReset() {
     // Before the snapshot is re-applied: the rebuild that restores the user's
     // params is an ordinary placement, so the floor comes back to the part.
-    viewer.holdGround?.(false);
+    viewer.holdGround?.(false, "animation");
     playback?.reset();
     viewer.cancelCameraTween();
     viewer.clearSubPartOpacities?.();
@@ -823,7 +823,7 @@ export function attachAnimationControls(viewer, part, {
     // pause playback rather than fight over them.
     notifyUserEdit() {
       disarmAutoplay();
-      viewer.holdGround?.(false); // a user edit places the floor again, as without animation
+      viewer.holdGround?.(false, "animation"); // a user edit places the floor again, as without animation
       viewer.cancelCameraTween();
       playback?.userEdited();
       syncUi();
@@ -864,7 +864,7 @@ export function attachAnimationControls(viewer, part, {
       if (status !== "playing" && status !== "intro") guarded(() => playback.play());
     },
     detach() {
-      viewer.holdGround?.(false);
+      viewer.holdGround?.(false, "animation");
       offFrame();
       offOrbit();
       viewer.clearSubPartOpacities?.();

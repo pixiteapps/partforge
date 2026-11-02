@@ -819,9 +819,16 @@ try {
 
   // Hover inspection: move the mouse across the canvas and expect the feature
   // tooltip to appear (any hit — labeled features or the sub-part fallback).
+  // A sparse model (a robot arm's thin links) leaves most fixed points over the
+  // background, and a posable part's pose dots and rings claim the hover (rightly
+  // hiding the tooltip) where they sit, so the sweep walks a 9 x 9 grid over the
+  // middle of the canvas, nearest the centre first, until one point shows a tooltip.
   const box = await page.locator(VIEWER_CANVAS).boundingBox();
   if (box) {
-    for (const [fx, fy] of [[0.5, 0.5], [0.4, 0.45], [0.6, 0.55], [0.5, 0.35]]) {
+    const grid = [];
+    for (let i = 0; i < 9; i++) for (let j = 0; j < 9; j++) grid.push([0.15 + (0.7 * i) / 8, 0.15 + (0.7 * j) / 8]);
+    grid.sort((a, b) => Math.hypot(a[0] - 0.5, a[1] - 0.5) - Math.hypot(b[0] - 0.5, b[1] - 0.5));
+    for (const [fx, fy] of grid) {
       await page.mouse.move(box.x + box.width * fx, box.y + box.height * fy);
       await sleep(120);
       if (await page.locator(".pf-hover-tip.show:not(.pf-tooltip-anchored)").count()) { hovered = true; break; }

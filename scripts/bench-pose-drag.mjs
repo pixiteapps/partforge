@@ -11,7 +11,7 @@ import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { compileImplicit } from "../src/framework/geometry/implicit/index.js";
 import { bindVertices } from "../src/framework/geometry/implicit/bindings.js";
 import { frameMotions, skinVertices } from "../src/framework/skin/deform.js";
-import hand, { handSpec } from "../src/parts/hand.js";
+import hand, { handSpec } from "../src/parts/organic-hand.js";
 
 const arg = process.argv.indexOf("--core");
 const coreMode = arg >= 0 ? process.argv[arg + 1] : "on";

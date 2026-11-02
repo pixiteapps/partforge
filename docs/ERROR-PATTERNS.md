@@ -947,7 +947,7 @@ between the Manifold preview and the OCCT STEP export.
 
 - **Symptom:** A thin part of a `k.implicit` body (a plate, a fin, a nail) breaks into pieces, grows holes or handles, or vanishes; the build warns `implicit: thinnest feature (… mm) is under 2 grid cells`, and lint warns `implicit-thin-feature`.
 - **Cause:** The body is meshed on a grid (`preview` for the preview, `resolution` for print and export). A feature thinner than two grid cells falls between samples.
-- **Fix:** Give the thin feature its own `k.implicit` with a finer `preview` and `resolution`, and union it onto the body — a fine grid over a small feature is cheap, a fine grid over the whole body is not (`src/parts/hand.js` does this for its nails). Or thicken the feature. Lowering `preview`/`resolution` for the whole body also works when the body is small.
+- **Fix:** Give the thin feature its own `k.implicit` with a finer `preview` and `resolution`, and union it onto the body — a fine grid over a small feature is cheap, a fine grid over the whole body is not (`src/parts/organic-hand.js` does this for its nails). Or thicken the feature. Lowering `preview`/`resolution` for the whole body also works when the body is small.
 
 ## kernel-internal-error
 

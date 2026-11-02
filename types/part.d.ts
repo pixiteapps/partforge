@@ -908,4 +908,63 @@ export interface PartDefinition<P = ResolvedParams, D = Derived> {
    * exported. Each entry returns either a solid to measure or plain JSON.
    */
   probes?: Record<string, (k: GeometryKernel, p: P, d: D) => unknown>;
+  /**
+   * Draggable inverse-kinematics points over a posed limb returned by `derive`
+   * (`limb(...).pose(...)` from `partforge/kinematics`). Parameters named here must be
+   * numeric keys of `defaults`.
+   */
+  handles?: Record<string, Handle>;
+}
+
+/** A draggable IK point. `goal` drags a point on the limb; `angles` drags joint values directly. */
+export type Handle = GoalHandle | AnglesHandle;
+export interface GoalHandle {
+  /** Key of the posed limb in `derive`'s output. */
+  limb: string;
+  /** A joint name, or "tip" (the default). */
+  at?: string;
+  mode: "goal";
+  params: {
+    /** The three parameters (x, y, z) the handle writes. */
+    position: [string, string, string];
+    /**
+     * Optional aim: two parameters (pitch, yaw) or three (pitch, yaw, roll), all in
+     * degrees, in the `aimFromAngles` convention. Needs `toward`.
+     */
+    aim?: [string, string] | [string, string, string];
+  };
+  /**
+   * With `aim`: the direction zero pitch and yaw point — the `toward` the part passes
+   * `aimFromAngles`. Pose mode's rotate rings turn about axes built from it and the aim
+   * parameters' values, so they agree with the part at any pitch, ±90 included.
+   */
+  toward?: [number, number, number];
+  /**
+   * Parameters used to seed the solve: the driven joints' values in limb order (followers
+   * skipped, a ball joint taking three: bend, spread, twist). Each seeded joint also gets a
+   * rotate ring in Pose mode: turning it turns that joint alone and moves the goal to the
+   * pose it makes, so the solve keeps it.
+   */
+  seed?: string[];
+}
+/**
+ * One `AnglesHandle.joints` entry: the parameter that drives a hinge in degrees, `{ param,
+ * scale }` when the joint turns `scale` × the parameter, or a ball's `{ bend?, spread?, twist? }`.
+ */
+export type HandleJoint = string | { param: string; scale?: number } | { bend?: string; spread?: string; twist?: string };
+export interface AnglesHandle {
+  limb: string;
+  mode: "angles";
+  /** The joint-value parameters this handle drags. */
+  params: string[];
+  /** A parameter name; while truthy, this handle's own parameters stay out of a drag solve. */
+  lock?: string;
+  /**
+   * Joint rings in Pose mode: a joint (`"<joint>"` on this handle's limb, or
+   * `"<limb>.<joint>"` on another posed limb of `derive`'s result, such as a parent palm)
+   * mapped to the parameter that drives it directly. Hovering the joint's dot shows a
+   * rotate ring; dragging the ring writes that parameter. A parameter a locked handle drives
+   * gets no ring.
+   */
+  joints?: Record<string, HandleJoint>;
 }

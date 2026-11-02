@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 const self = fileURLToPath(import.meta.url);
 const arg = (name, fallback) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : fallback; };
 
-const { default: hand } = await import("../src/parts/hand.js");
+const { default: hand } = await import("../src/parts/organic-hand.js");
 const { handle } = await import("../src/framework/jobs.js");
 // The hand's organic body beside a plain plate: one sub-part each.
 const part = {

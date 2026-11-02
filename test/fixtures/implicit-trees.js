@@ -1,10 +1,10 @@
 // test/fixtures/implicit-trees.js
-// Reference fixtures for the implicit engine: the posable hand (src/parts/hand.js, the
+// Reference fixtures for the implicit engine: the posable hand (src/parts/organic-hand.js, the
 // organic reference part, re-exported here so the engine's tests keep one import), a
 // textured vase that touches every grammar feature at once, a few adversarial trees, and a
 // seeded random-tree generator for fuzzing.
 
-export { FINGERS, THUMB, FAN, HAND_DEFAULTS, handSpec, nailSpecs } from "../../src/parts/hand.js";
+export { FINGERS, THUMB, FAN, HAND_DEFAULTS, handSpec, nailSpecs } from "../../src/parts/organic-hand.js";
 
 /**
  * Contact poses. `fist`: every finger curled until its tip pads against the palm (all four

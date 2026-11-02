@@ -1,196 +1,387 @@
-// A posable human hand: the organic domain's reference part. One contact k.implicit
-// (palm, thumb and four fingers pressing against each other, webbing blended into the
-// palm, crease detail over the knuckles), plus a fine-grid nail on every digit.
+// A printable articulated hand: the inverse-kinematics reference part for angles-mode
+// handles. Five limbs — four fingers and a thumb — hang off a palm limb's wrist frame.
+// Every segment is a rigid printed piece on pin joints, placed by matrix, so every pose
+// (a slider, a preset, a drag in Pose mode) moves the pieces and rebuilds none. The print
+// view is a flat kit: the pose never reaches it, and you pose the printed hand yourself.
 //
-// Authoring frame: palm facing -Z, fingers toward +Y, thumb toward -X — a right hand seen
-// from above. Every bone is a capsule along its frame's +Y; flexion is a negative rotation
-// about the frame's X. The builders are named exports too: the engine's tests use this hand
-// as their fixture (test/fixtures/implicit-trees.js re-exports them), so a change here moves
-// pinned mesh hashes.
+// How it fits together:
+// - derive() poses the palm limb (wristPitch, then wristYaw) and hands the posed palm to
+//   each finger and the thumb as their parent frames (`pose(…, palm)`).
+// - A finger is spread, mcp, pip and dip, with dip following pip by 0.75. The spread
+//   joint is its own pin, square to the palm, through a short knuckle piece (20 mm)
+//   that carries the mcp pin: a real two-pin universal joint, not a ball. `<f>Knuckle`
+//   (degrees) bends the base knuckle (mcp) alone; `<f>Curl` (0..1) closes pip, and dip
+//   with it; `<f>Spread` (degrees) swings the knuckle, positive fanning away from the
+//   middle finger (for the middle finger: toward the index). The knuckle and the curl
+//   are separate so a fingertip drag can straighten the finger from the knuckle out:
+//   with one curl for every joint, a tip could move only along that curl's one arc.
+// - The thumb is oppose, mcp and ip. Oppose is a pin in the palm's plane, square to the
+//   thumb: it swings the thumb's metacarpal out of the palm plane toward the palm side.
+//   thumbKnuckle (degrees) bends its mcp and thumbCurl (0..1) its ip, across the front
+//   of the palm.
+// - Pose mode: one angles-mode handle per digit. A drag solves that digit's knuckle,
+//   curl and spread (oppose for the thumb) plus the wrist. `<f>Lock` (a checkbox the presets never write) leaves every
+//   param that digit's handle lists out of any drag — the wrist included, so a locked
+//   finger also holds still in space while you drag another.
+// - Each piece is built once in its own joint frame (pin at the origin, the piece along
+//   +Y, its bending side toward -Z), never reading a pose param.
+import { limb } from "partforge/kinematics";
 
-// Segment lengths (mm) and radii at a 190 mm hand. r = radius at MCP, PIP, DIP, tip.
-export const FINGERS = {
-  index:  { mcp: [-30, 96, 2],  len: [42, 25, 22], r: [9.5, 8.5, 7.4, 6.4] },
-  middle: { mcp: [-10, 101, 3], len: [46, 29, 23], r: [9.6, 8.6, 7.5, 6.5] },
-  ring:   { mcp: [10, 97, 2],   len: [43, 27, 22], r: [9.0, 8.0, 7.0, 6.2] },
-  pinky:  { mcp: [30, 88, 0],   len: [34, 20, 19], r: [7.8, 7.0, 6.2, 5.5] },
+// Section and joint geometry, mm. A finger piece is W wide (along its bend pin) and 2R
+// thick; the thumb is WT wide. GAP is the running clearance at every pin.
+const W = 16, WT = 12, R = 6, GAP = 0.4, PIN_R = 1.6;
+const SLAB = R / 3;        // half-thickness of a tongue that turns about a pin square to the piece's face
+const KNUCKLE = 20;        // spread pin to mcp pin
+const STAND_H = 45;        // the wrist (pitch) pin's height above the table
+const CARPAL = 20;         // pitch pin to yaw pin: the short wrist piece between them
+const PALM_LEN = 69;       // yaw pin to the middle finger's spread pin
+const PALM_BOTTOM = 30, PALM_TOP = 38;   // the palm plate's half-widths at its bottom and top
+const PALM_BASE = W / 2 + 2 * GAP;        // where the plate starts: clear of the wrist piece's yaw cheeks
+
+// The digits, in palm coordinates (x across, thumb side negative; y along the palm from
+// the yaw pin; z out of the back of the hand). `sign` makes a positive spread fan out.
+const FINGERS = [
+  { id: "index", label: "Index", x: -28.5, y: 66, sign: 1, lengths: [38, 24, 20] },
+  { id: "middle", label: "Middle", x: -9.5, y: PALM_LEN, sign: 1, lengths: [42, 27, 22] },
+  { id: "ring", label: "Ring", x: 9.5, y: 66, sign: -1, lengths: [40, 26, 21] },
+  { id: "pinky", label: "Pinky", x: 28.5, y: 59, sign: -1, lengths: [32, 21, 19] },
+];
+const THUMB_AT = [-41, 24, 0];
+const THUMB_TOWARD = [-0.5, Math.sqrt(3) / 2, 0];        // up and out, in the palm's plane
+const THUMB_BEND = [Math.sqrt(3) / 2, 0.5, 0];           // curls across the palm, toward the fingers
+const THUMB_LENGTHS = [28, 26, 22];                       // metacarpal, proximal, distal
+
+const RANGE = {
+  wristPitch: [-60, 60], wristYaw: [-20, 20],
+  spread: [-15, 15], mcp: [0, 90], pip: [0, 90], dip: [0, 80],
+  oppose: [0, 80], thumbMcp: [0, 60], ip: [0, 80],
 };
-export const THUMB = { cmc: [-24, 12, -5], len: [46, 32, 27], r: [13, 11, 9.5, 7.8] };
-export const FAN = { index: 1, middle: 0.33, ring: -0.33, pinky: -1 };
 
-export const HAND_DEFAULTS = {
-  curl: 30, spread: 8, flex: { index: 60, middle: 60, ring: 60, pinky: 60, thumb: 50 }, oppose: 20,
-  // fingerBlend: a smooth union swells where its members meet by k/4, so at each joint, where
-  // two phalanges meet, it alone makes a k/4 ring; 1 mm keeps that ring to 0.25 mm.
-  handLength: 190, slender: 1, knuckles: 0.5, fingerBlend: 1, palmBlend: 8, creases: true, creaseDepth: 0.5,
-  contactGap: 0, bulge: 1,   // the engine's BULGE_DEFAULT (test/hand-part.test.js holds them equal)
-};
-// Attachments (mm at a 190 mm hand) around each digit's base frame: within `radius` the
-// digit blends into the palm (the webbing); beyond radius + band it presses. A finger's
-// radius is a third of its proximal phalanx: in a fist (HAND_POSES.fist) its base overlaps
-// the palm out to 12–15 mm from the knuckle and its tip pad starts 15–24 mm out (the
-// pinky's 12.3 and 15.3), so radius + band must fall between the two — hence the short
-// band (radius/2 would reach the pinky's pad and blend it in). The thumb's metacarpal lies
-// in the thenar out to 47 mm from its root frame.
-const ATTACH = { fingerFrac: 1 / 3, fingerBand: 3, thumb: 40, thumbBand: 10 };
+const PALM = limb("palm", {
+  at: [0, 0, STAND_H],
+  toward: [0, 0, 1],          // the hand stands up off its wrist
+  bendToward: [0, 1, 0],      // the palm faces +Y: wrist pitch and every curl close toward it
+  joints: [
+    { name: "wristPitch", range: RANGE.wristPitch },
+    { name: "wristYaw", axis: "spread", range: RANGE.wristYaw },
+  ],
+  lengths: [CARPAL, PALM_LEN],
+});
+const PALM_FRAME = "palm.wristYaw";
+// The wrist's rings in Pose mode: its joints on the palm limb (derive's `palm`) and the
+// parameters that drive them.
+const WRIST_JOINTS = { "palm.wristPitch": "wristPitch", "palm.wristYaw": "wristYaw" };
 
-/** Frames + flesh for one three-jointed digit. `flex` is [mcp, pip, dip] in degrees. */
-function finger(name, spec, s, { flex, abduct, slender, knuckles, blend }) {
-  const L = spec.len.map((v) => v * s), R = spec.r.map((v) => v * s * slender);
-  const frames = {
-    [`${name}.mcp`]: { parent: "palm", at: spec.mcp.map((v) => v * s), rotate: [{ axis: "z", deg: abduct }, { axis: "x", deg: -flex[0] }] },
-    [`${name}.pip`]: { parent: `${name}.mcp`, at: [0, L[0], 0], rotate: { axis: "x", deg: -flex[1] } },
-    [`${name}.dip`]: { parent: `${name}.pip`, at: [0, L[1], 0], rotate: { axis: "x", deg: -flex[2] } },
-    [`${name}.tip`]: { parent: `${name}.dip`, at: [0, L[2], 0] },
-  };
-  // The knuckles stand only a little proud of the finger: ~3% at the MCP, ~2% at the PIP.
-  const bulge = 1 + 0.04 * knuckles;
-  const distal = { kind: "capsule", frame: `${name}.dip`, b: [0, L[2], 0], r: [R[2], R[3]] };
-  const flesh = {
-    kind: "union", k: blend, label: name, children: [
-      { kind: "capsule", frame: `${name}.mcp`, b: [0, L[0], 0], r: [R[0], R[1]] },
-      { kind: "capsule", frame: `${name}.pip`, b: [0, L[1], 0], r: [R[1], R[2]] },
-      distal,
-      { kind: "ellipsoid", frame: `${name}.mcp`, at: [0, 0, R[0] * 0.04], r: [R[0] * 0.97, R[0] * 1.05, R[0] * 0.97 * bulge] },
-      { kind: "ellipsoid", frame: `${name}.pip`, r: [R[1] * bulge, R[1] * 1.1, R[1] * bulge] },
-    ],
-  };
-  return { frames, flesh, distal, tipR: R[3], tipFrame: `${name}.tip`, dorsal: { pip: R[1] * bulge, dip: R[2] } };
+const fingerLimb = (f) => limb(f.id, {
+  parent: PALM_FRAME,
+  at: [f.x, f.y, 0],
+  toward: [0, 1, 0],
+  bendToward: [0, 0, -1],     // toward the palm side
+  joints: [
+    { name: "spread", axis: "spread", range: RANGE.spread },
+    { name: "mcp", range: RANGE.mcp },
+    { name: "pip", range: RANGE.pip },
+    { name: "dip", range: RANGE.dip, follow: { joint: "pip", ratio: 0.75 } },
+  ],
+  lengths: [KNUCKLE, ...f.lengths],
+});
+const FINGER_LIMBS = Object.fromEntries(FINGERS.map((f) => [f.id, fingerLimb(f)]));
+
+const THUMB = limb("thumb", {
+  parent: PALM_FRAME,
+  at: THUMB_AT,
+  toward: THUMB_TOWARD,
+  bendToward: THUMB_BEND,
+  joints: [
+    // A pin in the palm's plane, square to the thumb: a positive oppose swings the thumb
+    // out toward the palm side.
+    { name: "oppose", axis: "spread", range: RANGE.oppose },
+    { name: "mcp", range: RANGE.thumbMcp },
+    { name: "ip", range: RANGE.ip },
+  ],
+  lengths: THUMB_LENGTHS,
+});
+// The thumb at rest on a palm frame at the origin: where its base pin sits in the palm's
+// own coordinates, for building the palm's thumb bracket.
+const THUMB_IN_PALM = THUMB.pose({}, { [PALM_FRAME]: { at: [0, 0, 0] } });
+
+// ----- geometry --------------------------------------------------------------------
+
+const box = (k, min, max) => k.box({ min, max });
+/** A boss about the X axis centred at height y, across x0..x1. */
+const xBoss = (k, y, x0, x1, r) => k.cylinder({ r, h: x1 - x0 }).along("+X").at([x0, y, 0]);
+/** A boss about the Z axis centred at height y, across z0..z1. */
+const zBoss = (k, y, z0, z1, r) => k.cylinder({ r, h: z1 - z0 }).at([0, y, z0]);
+
+/**
+ * A piece on an X pin: a tongue (the middle third of width w) rounded about its own pin at
+ * the origin, then the body along +Y. With `fork`, the far end carries the next X pin's
+ * cheeks (the outer thirds); without, it ends in a rounded tip at y = len.
+ */
+function link(k, len, fork, w) {
+  const t = w / 6, near = R + GAP;
+  const parts = [box(k, [-t, 0, -R], [t, near, R]), xBoss(k, 0, -t, t, R)];
+  if (fork) parts.push(box(k, [-w / 2, near, -R], [w / 2, len - R - GAP, R]), ...xFork(k, len, w));
+  else parts.push(box(k, [-w / 2, near, -R], [w / 2, len - R, R]), xBoss(k, len - R, -w / 2, w / 2, R));
+  let s = k.union(parts).cut(xBoss(k, 0, -w, w, PIN_R));
+  if (fork) s = s.cut(xBoss(k, len, -w, w, PIN_R));
+  return s;
+}
+
+/** The two cheeks of an X-pin fork at height y, for a tongue of width w / 3. */
+function xFork(k, y, w) {
+  const t = w / 6, far = y - R - GAP;
+  return [[-w / 2, -t - GAP], [t + GAP, w / 2]].flatMap(([x0, x1]) => [box(k, [x0, far, -R], [x1, y, R]), xBoss(k, y, x0, x1, R)]);
 }
 
 /**
- * A fingernail: a shell section around the distal phalanx clipped to an oval footprint, meshed
- * on its own fine grid. The shell follows a slimmer copy of the phalanx (`sink` mm in at the DIP,
- * almost none at the tip), so the nail's back edge tucks under the skin like a cuticle while its
- * free edge stands proud near the fingertip.
+ * A swivel piece (a finger's knuckle, the thumb's metacarpal): a thin tongue (|z| <= SLAB)
+ * rounded about a Z pin at the origin, then the full-thickness body, ending in an X-pin
+ * fork at y = len.
  */
-function nail(frames, distal, tipFrame, tipR, s) {
-  // The nail's outer face is its bed + 0.8 mm (round 0.1, onion 0.7). The bed sits ~1.1 mm
-  // under the skin at the nail's back edge (outer face 0.3 mm below the skin) and 0.4 mm at the
-  // tip (free edge 0.4 mm proud); the nail runs from just over the fingertip's crown back `len`.
-  const w = tipR * 1.35, len = 11 * s;
-  const bed = { ...distal, r: [distal.r[0] - 2.5 * s, distal.r[1] - 0.4 * s] };
-  const shell = { kind: "onion", t: 0.7, child: { kind: "round", r: 0.1, child: bed } };
-  const footprint = { kind: "ellipsoid", frame: tipFrame, at: [0, tipR * 0.55 - len / 2, tipR * 0.75], r: [w / 2, len / 2, tipR * 1.1] };
-  return { frames, root: { kind: "intersect", k: 0.3, children: [shell, footprint] }, resolution: 0.25, preview: 0.35 };
+function swivel(k, len, w) {
+  const rz = w / 2, near = rz + GAP;
+  return k.union([
+    zBoss(k, 0, -SLAB, SLAB, rz),
+    box(k, [-w / 2, 0, -SLAB], [w / 2, near, SLAB]),
+    box(k, [-w / 2, near, -R], [w / 2, len - R - GAP, R]),
+    ...xFork(k, len, w),
+  ]).cut(zBoss(k, 0, -R - 1, R + 1, PIN_R)).cut(xBoss(k, len, -w, w, PIN_R));
 }
 
-function buildHand(pose = {}) {
-  const p = { ...HAND_DEFAULTS, ...pose, flex: { ...HAND_DEFAULTS.flex, ...pose.flex } };
-  const s = p.handLength / 190;
-  const curl = p.curl / 100;
-  const flexOf = (pct) => [pct * 0.85, pct * 1.0, pct * 0.75].map((d) => d * curl);
-  const frames = { palm: { at: [0, 0, 0] } };
-  const fingers = [], nails = [], detail = [];
-  for (const [name, spec] of Object.entries(FINGERS)) {
-    const f = finger(name, spec, s, {
-      flex: flexOf(p.flex[name]), abduct: FAN[name] * p.spread, slender: p.slender,
-      knuckles: p.knuckles, blend: p.fingerBlend,
-    });
-    Object.assign(frames, f.frames);
-    fingers.push(f.flesh);
-    nails.push(() => nail(frames, f.distal, f.tipFrame, f.tipR, s));
-    // A ~6 mm patch of creases on the dorsal skin of each PIP/DIP joint: centred on
-    // the skin above the joint (the PIP knuckle ellipsoid's top; the DIP capsule's),
-    // so the authored radius reaches it; `side` keeps them off the palm side.
-    if (p.creases) for (const joint of ["pip", "dip"]) {
-      detail.push({ kind: "creases", frame: `${name}.${joint}`, at: [0, 0, f.dorsal[joint]], amplitude: p.creaseDepth, wavelength: 1.6 * s, radius: 6 * s, axis: "y", side: [0, 0, 1] });
-    }
-  }
-  const tf = flexOf(p.flex.thumb);
-  const T = { len: THUMB.len.map((v) => v * s), r: THUMB.r.map((v) => v * s * p.slender) };
-  Object.assign(frames, {
-    "thumb.cmc": { parent: "palm", at: THUMB.cmc.map((v) => v * s),
-      rotate: [{ axis: "z", deg: 55 + p.spread * 0.5 }, { axis: "x", deg: -(12 + p.oppose * 0.4) }, { axis: "y", deg: -(45 + p.oppose) }] },
-    "thumb.mcp": { parent: "thumb.cmc", at: [0, T.len[0], 0], rotate: { axis: "x", deg: -tf[1] * 0.6 } },
-    "thumb.ip": { parent: "thumb.mcp", at: [0, T.len[1], 0], rotate: { axis: "x", deg: -tf[2] } },
-    "thumb.tip": { parent: "thumb.ip", at: [0, T.len[2], 0] },
-  });
-  const thumbDistal = { kind: "capsule", frame: "thumb.ip", b: [0, T.len[2], 0], r: [T.r[2], T.r[3]] };
-  const thumb = {
-    kind: "union", k: p.fingerBlend, label: "thumb", children: [
-      { kind: "capsule", frame: "thumb.cmc", b: [0, T.len[0], 0], r: [T.r[0], T.r[1]] },
-      { kind: "capsule", frame: "thumb.mcp", b: [0, T.len[1], 0], r: [T.r[1], T.r[2]] },
-      thumbDistal,
-      { kind: "ellipsoid", frame: "thumb.mcp", r: [T.r[1] * 1.05, T.r[1] * 1.25, T.r[1] * 1.0] },
-    ],
-  };
-  nails.push(() => nail(frames, thumbDistal, "thumb.tip", T.r[3], s));
-  if (p.creases) detail.push({ kind: "creases", frame: "thumb.ip", amplitude: p.creaseDepth, wavelength: 1.8 * s, at: [0, 0, T.r[2]], radius: 7 * s, axis: "y", side: [0, 0, 1] });
+/** A Z-pin fork's cheeks for a swivel of width w (its round end, full thickness)… */
+const zCheeks = (k, w) => zBoss(k, 0, -R, R, w / 2);
+/**
+ * …and what the swivel's tongue needs cut out of them: the pin, and the running slot.
+ * The slot's radius `r` is the tongue's round end plus the clearance; a joint that turns
+ * far (the thumb's oppose) needs it out to the tongue's corners, which sweep behind the
+ * pin. Past the point where the circle has left 1.25 mm of wall beside it, the slot runs
+ * straight out through the sides: a circle crossing a flat side would leave a knife edge.
+ */
+function zSlot(k, w, r = w / 2 + GAP) {
+  const from = -Math.sqrt(r * r - (w / 2 - 1.25) ** 2);
+  return k.union([
+    zBoss(k, 0, -SLAB - GAP, SLAB + GAP, r),
+    box(k, [-w / 2 - 1.5, from, -SLAB - GAP], [w / 2 + 1.5, r, SLAB + GAP]),
+    zBoss(k, 0, -R - 1, R + 1, PIN_R),
+  ]);
+}
 
-  const palm = {
-    kind: "union", k: 10 * s, label: "palm", children: [
-      { kind: "box", frame: "palm", at: [0, 50 * s, 0], size: [78 * s, 92 * s, 20 * s], round: 9 * s },
-      { kind: "ellipsoid", frame: "thumb.cmc", at: [0, 20 * s, -1 * s], r: [15 * s, 27 * s, 11 * s], label: "thenar" },
-      { kind: "ellipsoid", frame: "palm", at: [-28 * s, 42 * s, -2 * s], r: [13 * s, 36 * s, 12 * s], label: "hypothenar" },
-      { kind: "box", frame: "palm", at: [0, -4 * s, 0], size: [62 * s, 44 * s, 21 * s], round: 9 * s, label: "wrist" },
-    ],
-  };
-  // The palm, thumb and fingers press against each other (contact) instead of bridging:
-  // each digit is joined to the palm near its base (the webbing, a palmBlend blend) and
-  // pressed elsewhere — a fist's fingertips pad against the palm, neighbours keep clear.
-  const attach = [
-    { a: "thumb", b: "palm", near: "thumb.cmc", radius: ATTACH.thumb * s, band: ATTACH.thumbBand * s, k: p.palmBlend * s },
-    ...Object.entries(FINGERS).map(([name, spec]) => ({
-      a: name, b: "palm", near: `${name}.mcp`, radius: spec.len[0] * ATTACH.fingerFrac * s, band: ATTACH.fingerBand * s, k: p.palmBlend * s,
-    })),
+/** The palm, in the wrist-yaw frame: a yaw tongue, the plate, a Z-pin fork per finger, and the thumb's bracket. */
+function palm(k) {
+  const plate = k.extrude({
+    profile: [[-PALM_BOTTOM, PALM_BASE], [PALM_BOTTOM, PALM_BASE], [PALM_TOP, PALM_LEN - 12], [-PALM_TOP, PALM_LEN - 12]],
+    h: 2 * R,
+  }).translate([0, 0, -R]);
+  const add = [
+    plate,
+    // The yaw tongue: the palm swivels on the wrist piece's Z-pin fork.
+    zBoss(k, 0, -SLAB, SLAB, W / 2),
+    box(k, [-W / 2, 0, -SLAB], [W / 2, PALM_BASE, SLAB]),
   ];
-  const body = { kind: "contact", gap: p.contactGap, bulge: p.bulge, attach, children: [palm, thumb, ...fingers] };
-  return { frames, body, detail, nails };
+  const cut = [zBoss(k, 0, -R - 1, R + 1, PIN_R)];
+  for (const f of FINGERS) {
+    add.push(box(k, [f.x - W / 2, PALM_LEN - 14, -R], [f.x + W / 2, f.y, R]), zCheeks(k, W).translate([f.x, f.y, 0]));
+    cut.push(zSlot(k, W).translate([f.x, f.y, 0]));
+  }
+  // The thumb's bracket, built in its base frame and placed where the thumb sits at rest.
+  add.push(THUMB_IN_PALM.place(k.union([zCheeks(k, WT), box(k, [-WT / 2, -18, -R], [WT / 2, 0, R])]), "oppose"));
+  cut.push(THUMB_IN_PALM.place(zSlot(k, WT, Math.hypot(WT / 2, WT / 2 + GAP) + GAP), "oppose"));
+  return k.union(add).cut(k.union(cut));
 }
 
-/** The spike's hand as one k.implicit spec (no nails; see nailSpecs). */
-export function handSpec(pose = {}) {
-  const { frames, body, detail } = buildHand(pose);
-  return { frames, root: body, detail, preview: 1.5, resolution: 0.8 };
+/** The wrist piece, in the wrist-pitch frame: a tongue on the pitch pin, a Z-pin fork for the palm's yaw tongue. */
+function carpal(k) {
+  const t = W / 6;
+  return k.union([
+    box(k, [-t, 0, -R], [t, R + GAP, R]), xBoss(k, 0, -t, t, R),
+    box(k, [-W / 2, R + GAP, -R], [W / 2, CARPAL, R]),
+    zCheeks(k, W).translate([0, CARPAL, 0]),
+  ]).cut(xBoss(k, 0, -W, W, PIN_R)).cut(zSlot(k, W).translate([0, CARPAL, 0]));
 }
 
-/** One fine-grid nail spec per digit (index, middle, ring, pinky, thumb), to union onto handSpec's solid. */
-export function nailSpecs(pose = {}) {
-  return buildHand(pose).nails.map((make) => make());
+/** The stand, in part coordinates: a foot, a forearm post and the pitch pin's fork on top. */
+function stand(k) {
+  const t = W / 6, top = STAND_H - R - GAP;
+  const cheeks = [[-W / 2, -t - GAP], [t + GAP, W / 2]].flatMap(([x0, x1]) => [
+    box(k, [x0, -R, top - 4], [x1, R, STAND_H]),
+    k.cylinder({ r: R, h: x1 - x0 }).along("+X").at([x0, 0, STAND_H]),
+  ]);
+  return k.union([
+    k.cylinder({ r: 34, h: 5 }),
+    k.cylinder({ r: 13, h: top }),
+    ...cheeks,
+  ]).cut(k.cylinder({ r: PIN_R, h: 2 * W }).along("+X").at([-W, 0, STAND_H]));
 }
 
-// The part's params, flat, to the pose handSpec takes.
-const pose = (p) => ({
-  curl: p.curl, spread: p.spread, oppose: p.oppose, handLength: p.handLength,
-  flex: { index: p.flexIndex, middle: p.flexMiddle, ring: p.flexRing, pinky: p.flexPinky, thumb: p.flexThumb },
+// ----- the pieces and the print kit ------------------------------------------------
+
+const DIGITS = ["thumb", ...FINGERS.map((f) => f.id)];
+const SEGMENTS = [["Knuckle", "spread"], ["Proximal", "mcp"], ["Middle", "pip"], ["Distal", "dip"]];
+
+// Each digit's pieces, base first: { name, joint, len, w, kind }. A swivel turns on a Z
+// pin (knuckle, metacarpal); a link on an X pin, with a fork for the next one unless it is
+// the tip.
+const DIGIT_PIECES = {
+  thumb: [["Metacarpal", "oppose"], ["Proximal", "mcp"], ["Distal", "ip"]].map(([name, joint], i) => ({
+    name, joint, len: THUMB_LENGTHS[i], w: WT, kind: i === 0 ? "swivel" : i < 2 ? "fork" : "tip",
+  })),
+  ...Object.fromEntries(FINGERS.map((f) => [f.id, SEGMENTS.map(([name, joint], i) => ({
+    name, joint, len: i === 0 ? KNUCKLE : f.lengths[i - 1], w: W, kind: i === 0 ? "swivel" : i < 3 ? "fork" : "tip",
+  }))])),
+};
+const buildPiece = ({ kind, len, w }) => (k) => (kind === "swivel" ? swivel(k, len, w) : link(k, len, kind === "fork", w));
+/** A piece's extent along its own +Y (its length on the bed once laid out). */
+const span = ({ kind, len, w }) => (kind === "swivel" ? [-w / 2, len + R] : [-R, kind === "fork" ? len + R : len]);
+
+// The kit fits a 220 mm bed. Every piece is built with its faces at z = ±R, so `flat`
+// puts its -Z face on the bed. The stand, palm and wrist piece share the bottom row;
+// above them each digit is one row, its pieces turned to lie along X, base first.
+const flat = (x, y) => (s) => s.translate([x, y, R]);
+const KIT_LEFT = -110, KIT_SPACE = 4, KIT_ROW0 = -8, KIT_ROW = 20;
+const KIT = {};
+DIGITS.forEach((id, row) => {
+  let x = KIT_LEFT;
+  for (const piece of DIGIT_PIECES[id]) {
+    const [y0, y1] = span(piece), at = [x - y0, KIT_ROW0 + row * KIT_ROW, R];
+    KIT[`${id}${piece.name}`] = (s) => s.rotate(-90, [0, 0, 0], [0, 0, 1]).translate(at);
+    x += y1 - y0 + KIT_SPACE;
+  }
 });
-const flexControl = (key, label, max) => ({ key, label, unit: "%", min: 0, max, step: 1, description: `${label}'s bend, as a share of a full curl.` });
+
+// ----- the part --------------------------------------------------------------------
+
+const parts = {
+  stand: {
+    label: "Stand",
+    build: (k) => stand(k),
+    views: { assembly: (s) => s, print: (s) => s.translate([-76, -71, 0]) },
+  },
+  palm: {
+    label: "Palm",
+    build: (k) => palm(k),
+    views: { assembly: (s, p, d) => d.palm.place(s, "wristYaw"), print: flat(13, -97) },
+  },
+  carpal: {
+    label: "Wrist",
+    build: (k) => carpal(k),
+    views: { assembly: (s, p, d) => d.palm.place(s, "wristPitch"), print: flat(66, -99) },
+  },
+};
+for (const id of DIGITS) {
+  for (const piece of DIGIT_PIECES[id]) {
+    const name = `${id}${piece.name}`;
+    parts[name] = {
+      label: `${id[0].toUpperCase()}${id.slice(1)} ${piece.name.toLowerCase()}`,
+      build: buildPiece(piece),
+      views: { assembly: (s, p, d) => d[id].place(s, piece.joint), print: KIT[name] },
+    };
+  }
+}
+
+// Every pair of pieces that share a pin.
+const JOINT_PAIRS = [
+  "stand×carpal", "carpal×palm", "palm×thumbMetacarpal", "thumbMetacarpal×thumbProximal", "thumbProximal×thumbDistal",
+  ...FINGERS.flatMap((f) => [`palm×${f.id}Knuckle`, ...SEGMENTS.slice(1).map(([name], i) => `${f.id}${SEGMENTS[i][0]}×${f.id}${name}`)]),
+];
+
+// Fine steps: Pose mode snaps every param a drag wrote to its step on release, and every
+// digit's handle writes the wrist. At 1° (or a 0.01 curl) that snap moved a fingertip
+// 0.5–0.85 mm in one frame; at 0.1° and 0.001 it stays under 0.2 mm, which reads as still.
+const deg = (key, label, range, description) => ({ key, label, unit: "°", min: range[0], max: range[1], step: 0.1, description });
+const curl = (key, label, description) => ({ key, label, min: 0, max: 1, step: 0.001, description });
+
+// A preset is a hand shape: every digit's knuckle, curl and spread, never the wrist or a
+// lock. Each finger is [knuckle°, curl]; the thumb is [oppose°, knuckle°, curl].
+const shape = (fingers, spreads, [thumbOppose, thumbKnuckle, thumbCurl]) => ({
+  ...Object.fromEntries(FINGERS.flatMap((f, i) => [
+    [`${f.id}Knuckle`, fingers[i][0]], [`${f.id}Curl`, fingers[i][1]], [`${f.id}Spread`, spreads[i]],
+  ])),
+  thumbOppose, thumbKnuckle, thumbCurl,
+});
+const PRESETS = {
+  relaxed: shape([[18, 0.2], [25.2, 0.28], [31.5, 0.35], [37.8, 0.42]], [3, 0, 3, 6], [25, 12, 0.2]),
+  open: shape([[0, 0], [0, 0], [0, 0], [0, 0]], [8, 0, 6, 12], [0, 0, 0]),
+  // The thumb wraps across the curled fingers, as far as it goes without touching them.
+  fist: shape([[81, 0.9], [81, 0.9], [81, 0.9], [81, 0.9]], [0, 0, 0, 0], [80, 30, 0.5]),
+  point: shape([[0, 0], [81, 0.9], [81, 0.9], [81, 0.9]], [0, 0, 0, 0], [80, 30, 0.5]),
+  peace: shape([[0, 0], [0, 0], [81, 0.9], [81, 0.9]], [12, -4, 0, 0], [80, 42, 0.7]),
+  // The thumb and index tips meet (8 mm apart, tip point to tip point).
+  ok: shape([[58.5, 0.65], [10.8, 0.12], [16.2, 0.18], [22.5, 0.25]], [0, 2, 5, 10], [60, 24, 0.4]),
+};
 
 export default {
-  meta: { title: "Hand", units: "mm", backend: "manifold" },
+  meta: { title: "Hand", units: "mm" },
   parameters: [
-    { id: "pose", title: "Pose", controls: [
-      { key: "curl", label: "Curl", unit: "%", min: 0, max: 100, step: 1, description: "How far every finger closes, scaling each finger's flex." },
-      { key: "spread", label: "Spread", unit: "°", min: -5, max: 15, step: 0.5, description: "How far the fingers fan apart." },
-      { key: "oppose", label: "Thumb opposition", unit: "°", min: 0, max: 60, step: 1, description: "How far the thumb swings across the palm." },
+    { id: "pose", title: "Pose", description: "Pose-only: nothing here rebuilds a piece. In Pose mode, drag a fingertip instead.", controls: [
+      { type: "preset", label: "Shape", presets: PRESETS },
     ] },
     { id: "fingers", title: "Fingers", controls: [
-      flexControl("flexIndex", "Index", 110), flexControl("flexMiddle", "Middle", 110),
-      flexControl("flexRing", "Ring", 110), flexControl("flexPinky", "Pinky", 110),
-      flexControl("flexThumb", "Thumb", 90),
+      ...FINGERS.flatMap((f) => [
+        deg(`${f.id}Knuckle`, `${f.label} knuckle`, RANGE.mcp, "The base knuckle's bend: 0 is in line with the palm."),
+        curl(`${f.id}Curl`, `${f.label} curl`, "Closes the two outer joints, the tip one following the middle one."),
+        deg(`${f.id}Spread`, `${f.label} spread`, RANGE.spread, f.id === "middle" ? "Positive leans it toward the index finger." : "Positive fans it away from the middle finger."),
+      ]),
     ] },
-    { id: "size", title: "Size", controls: [
-      { key: "handLength", label: "Hand length", unit: "mm", min: 150, max: 230, step: 1, description: "Wrist to middle fingertip; everything scales with it." },
+    { id: "thumb", title: "Thumb", controls: [
+      deg("thumbOppose", "Thumb oppose", RANGE.oppose, "0 is the thumb in the palm's plane; higher swings it out in front of the palm."),
+      deg("thumbKnuckle", "Thumb knuckle", RANGE.thumbMcp, "The thumb's base knuckle bend, across the palm."),
+      curl("thumbCurl", "Thumb curl", "Closes the thumb's tip joint."),
     ] },
+    { id: "wrist", title: "Wrist", controls: [
+      deg("wristPitch", "Pitch", RANGE.wristPitch, "Positive bends the hand toward its palm."),
+      deg("wristYaw", "Yaw", RANGE.wristYaw, "Positive turns the hand toward the thumb."),
+    ] },
+    { id: "locks", title: "Locks", collapsed: true,
+      description: "A locked digit is left out of every drag in Pose mode — along with the wrist, so it holds still while you drag another. The shapes still set it.",
+      controls: DIGITS.map((id) => ({ key: `${id}Lock`, type: "checkbox", label: `Lock ${id}` })) },
   ],
-  // HAND_DEFAULTS' pose, written as literals so a host can save panel edits back into them
-  // (test/hand-part.test.js holds the two equal).
   defaults: {
-    curl: 30, spread: 8, oppose: 20, handLength: 190,
-    flexIndex: 60, flexMiddle: 60, flexRing: 60, flexPinky: 60, flexThumb: 50,
+    ...PRESETS.relaxed,
+    wristPitch: 0, wristYaw: 0,
+    ...Object.fromEntries(DIGITS.map((id) => [`${id}Lock`, 0])),
   },
-  parts: {
-    hand: {
-      label: "Hand",
-      // The body is one contact k.implicit. The nails are each their own k.implicit on a
-      // 0.25 mm grid, unioned on: a feature too thin for the body's grid gets its own.
-      build: (k, p) => k.union([k.implicit(handSpec(pose(p))), ...nailSpecs(pose(p)).map((s) => k.implicit(s))]),
-      views: ["assembly"],
+  derive: (p) => {
+    const palm = PALM.pose({ bend: { wristPitch: p.wristPitch, wristYaw: p.wristYaw } });
+    const out = { palm };
+    for (const f of FINGERS) {
+      out[f.id] = FINGER_LIMBS[f.id].pose({ bend: {
+        spread: f.sign * p[`${f.id}Spread`], mcp: p[`${f.id}Knuckle`], pip: p[`${f.id}Curl`] * RANGE.pip[1],
+      } }, palm);
+    }
+    out.thumb = THUMB.pose({ bend: { oppose: p.thumbOppose, mcp: p.thumbKnuckle, ip: p.thumbCurl * RANGE.ip[1] } }, palm);
+    return out;
+  },
+  parts,
+  views: {
+    assembly: { label: "Assembly" },
+    print: { label: "Print" },
+  },
+  // `joints` gives a joint a rotate ring in Pose mode (hover its dot): the parameter that
+  // turns it directly. The wrist (on the palm limb) is named by every digit's handle, so a
+  // locked digit hides the wrist rings, as it holds the wrist out of every drag. A ring and
+  // pinky spread is the negated parameter (`scale: -1`: positive fans away from the middle
+  // finger). The base knuckle (mcp) is its own parameter, so it gets a ring; the curl
+  // drives two joints (pip and dip, the thumb's ip alone) and is left to the drag.
+  handles: {
+    thumb: {
+      limb: "thumb", mode: "angles", params: ["thumbKnuckle", "thumbCurl", "thumbOppose", "wristPitch", "wristYaw"], lock: "thumbLock",
+      joints: { oppose: "thumbOppose", mcp: "thumbKnuckle", ...WRIST_JOINTS },
     },
+    ...Object.fromEntries(FINGERS.map((f) => [f.id, {
+      limb: f.id, mode: "angles", params: [`${f.id}Knuckle`, `${f.id}Curl`, `${f.id}Spread`, "wristPitch", "wristYaw"], lock: `${f.id}Lock`,
+      joints: { spread: f.sign === 1 ? `${f.id}Spread` : { param: `${f.id}Spread`, scale: f.sign }, mcp: `${f.id}Knuckle`, ...WRIST_JOINTS },
+    }])),
   },
-  views: { assembly: { label: "Hand" } },
-  // Where every joint and fingertip ends up: measure writes the frame report out.
-  probes: { frames: (k, p) => k.implicitFrames(handSpec(pose(p))) },
-  verify: { expect: { hand: { watertight: true } } },
+  // No two pieces interpenetrate, and every pin joint keeps its running clearance (GAP)
+  // between the pieces it joins: those near misses are intended. The assembled hand
+  // stands under 250 mm, so even the assembly view fits the bed it is never printed on.
+  verify: {
+    process: "fdm-pla",
+    expect: { _view: { overlaps: 0, clearance: Object.fromEntries(JOINT_PAIRS.map((pair) => [pair, ">=0.3"])) } },
+  },
+  // The agent's read-out: each digit's joint values, clamps and fingertip.
+  probes: {
+    digits: (k, p, d) => Object.fromEntries(DIGITS.map((id) => [id, d[id].report])),
+  },
 };
