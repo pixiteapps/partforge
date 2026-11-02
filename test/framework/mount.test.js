@@ -1387,6 +1387,69 @@ test("a view switch re-poses canonical sub-parts (place may read view)", () => {
   handle.dispose();
 });
 
+// The camera frames to the bounds of what is on screen, so the incoming view's
+// poses must land BEFORE that framing: framed first, a sub-part whose place()
+// moves it in the new view (a park plate shown on its own) sat off-centre.
+test("a view switch poses the incoming view before framing it", () => {
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePlacedPart(), { createWorker, elements: makeElements() });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  deliverPlaced(workers);
+  const v = fakeViewers[0];
+  v.setSubPose.mockClear();
+  v.showAssembly.mockClear();
+
+  expect(handle.setView("side")).toBe(true);
+
+  const framed = v.showAssembly.mock.calls.findIndex(([, o]) => o?.frame);
+  const posed = v.setSubPose.mock.calls.findIndex(([n, m]) => n === "a" && Array.isArray(m) && m[14] === 7);
+  expect(framed).toBeGreaterThan(-1);
+  expect(posed).toBeGreaterThan(-1);
+  expect(v.setSubPose.mock.invocationCallOrder[posed])
+    .toBeLessThan(v.showAssembly.mock.invocationCallOrder[framed]);
+  handle.dispose();
+});
+
+// A posed sub-part (the worker bakes place() in) cannot be re-posed on the main
+// thread: when its place() reads the view, the switch shows the outgoing mesh,
+// framed, until the rebuild lands. That rebuild frames again — unless the user
+// took the camera in between.
+const makeViewPlacedPart = () => {
+  const part = makePlacedPart();
+  part.parts.b.views = ["main", "side"];
+  part.parts.b.place = (s, { view }) => s.translate([0, 0, s.boundingBox().max[2] + (view === "side" ? 50 : 0)]);
+  return part;
+};
+const switchToStaleSide = () => {
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makeViewPlacedPart(), { createWorker, elements: makeElements() });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  deliverPlaced(workers);
+  const v = fakeViewers[0];
+  v.showAssembly.mockClear();
+  handle.setView("side");
+  expect(v.showAssembly).toHaveBeenLastCalledWith(["a", "b"], { frame: true });
+  const rebuild = () => deliverPlaced(workers);
+  return { handle, v, rebuild };
+};
+
+test("a view switch that must rebuild frames again once the rebuild lands", () => {
+  const { handle, v, rebuild } = switchToStaleSide();
+  rebuild();
+  expect(v.showAssembly).toHaveBeenLastCalledWith(["a", "b"], { frame: true });
+  rebuild(); // later deliveries in the same view leave the camera alone
+  expect(v.showAssembly).toHaveBeenLastCalledWith(["a", "b"], { frame: false });
+  handle.dispose();
+});
+
+test("moving the camera before a view switch's rebuild lands keeps the user's view", () => {
+  const { handle, v, rebuild } = switchToStaleSide();
+  v.emitCameraStart();
+  rebuild();
+  expect(v.showAssembly).toHaveBeenLastCalledWith(["a", "b"], { frame: false });
+  handle.dispose();
+});
+
 // Host and worker place probes agree by construction on a fresh delivery. If
 // they ever disagree (here: b's place() queries, so the host's probe is
 // untrusted, yet the reply says canonical), forgetting the stamp would rebuild

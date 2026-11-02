@@ -736,10 +736,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // meshes go back to their exact bases (the cache may show them again later).
         skin.restoreAll(); skin.endDrag();
         releaseGround(); // a new view places its floor afresh
-        pendingPosed.clear(); cutawayChrome.reset(); refreshView();
+        pendingPosed.clear(); cutawayChrome.reset();
         // place() may read `view`: re-pose the incoming view's canonical meshes
-        // (and clear the posed ones' matrices) before anything else reads them.
+        // (and clear the posed ones' matrices) before anything else reads them —
+        // refreshView included, since it frames the camera to the posed bounds.
         fastPath.apply(viewSubParts(part, view(), params));
+        refreshView();
         updateRelevance(); loop.kick(); animCtl?.autoplayKick();
         poseMode?.refresh(); // the incoming view's limbs (param edits it notices per frame)
         for (const cb of [...viewChangeListeners]) { try { cb(name); } catch { /* listener's problem */ } }
@@ -1212,6 +1214,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     const provisional = new Map();
     // name -> the payload of the last exact mesh setSubGeometry drew for it.
     const lastExact = new Map();
+    let staleView = null;          // a view framed on stale meshes (a switch to a view that must rebuild)
+    let staleCameraKept = false;   // the user moved the camera since: its rebuild must not reframe
     let cutawayRestored = false; // a carried cutaway, applied once — after any preview, never on one
     let selectionRestored = false; // a carried selection, tried once, after the camera
     function restoreCarriedSelection() {
@@ -1387,6 +1391,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
 
     function showView(needed) {
       let frame = view() !== framedView;
+      const wasRestored = cameraRestored;
+      const current = needed.every(isCurrent);
+      // A view switch framed the outgoing geometry because the incoming view had to
+      // rebuild: frame again once it is current, unless the user has taken the camera.
+      if (!frame && staleView === view() && current) frame = !staleCameraKept;
       // The geometry a real change asked for has all landed: the floor comes to it —
       // unless another hold (the animation driver's) still stands, in which case the
       // change stays pending until a showView finds the floor free.
@@ -1403,6 +1412,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       viewer.showAssembly(needed, { frame });
       if (frame) {
         framedView = view();
+        // Not on the first show: a restored camera wins over any refit.
+        staleView = wasRestored && !current ? view() : null;
+        staleCameraKept = false;
         if (!cameraRestored) {
           // A carried camera beats the persisted one: it is this session's live
           // answer, where the stored one is the last page-reload's — and it is
@@ -1623,7 +1635,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // on screen frames to the first batch, and showView frames the whole view when the
     // build completes — unless the user has moved the camera since, or a carried or
     // persisted camera was restored, which win as they always have.
-    cleanup.defer(viewer.onCameraStart(() => { if (partialView === view()) partialCameraKept = true; }));
+    cleanup.defer(viewer.onCameraStart(() => {
+      if (partialView === view()) partialCameraKept = true;
+      if (staleView === view()) staleCameraKept = true;
+    }));
     function showPartial() {
       const needed = viewSubParts(part, view(), params);
       // Everything already on screen (an edit), or a cached preview filling the
