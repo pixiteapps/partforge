@@ -35,22 +35,22 @@ const TOL_MM = 1e-3;
 const isLimb = (v) => typeof v?.ikInfo === "function";
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 
-/** Every numeric control's { min, max, step } by key, hidden ones included (the schema walk lint uses). */
+/** Every numeric control's { min, max, step, wrap } by key, hidden ones included (the schema walk lint uses). */
 const RANGES = new WeakMap();
-function rangesOf(part) {
+export function rangesOf(part) {
   let ranges = RANGES.get(part);
   if (ranges) return ranges;
   ranges = new Map();
   for (const c of controlNodes(desugar(part?.parameters))) {
     if (c.type === "checkbox" || typeof c.key !== "string" || ranges.has(c.key)) continue;
-    ranges.set(c.key, { min: c.min, max: c.max, step: c.step });
+    ranges.set(c.key, { min: c.min, max: c.max, step: c.step, wrap: c.wrap === true });
   }
   if (part && typeof part === "object") RANGES.set(part, ranges);
   return ranges;
 }
 
 const clamp = (v, r) => {
-  if (!r) return v;
+  if (!r || r.wrap) return v;   // a wrapped control turns without end: stored unreduced
   if (isNum(r.min) && v < r.min) v = r.min;
   if (isNum(r.max) && v > r.max) v = r.max;
   return v;

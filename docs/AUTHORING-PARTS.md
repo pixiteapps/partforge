@@ -1146,6 +1146,12 @@ for when a raw linear slider misrepresents the parameter.
   band sits where it does in the control's `description` ("below 1.2 mm a 0.4 mm
   nozzle prints walls poorly"); the band alone is a hint, the description is the
   reason.
+- **`wrap: true`** — the parameter turns without end (an angle). It is stored
+  **unreduced** (720 after two turns); only the slider shows it reduced into
+  `[min, max)`, and a slider drag keeps the turn the value is in. The box shows and
+  accepts the raw value, and the range no longer bounds the value, a `defaults` entry
+  or an animation keyframe. It needs a finite `min < max` (`wrap-needs-range` errors
+  otherwise).
 
 `ticks`, `snap` and `recommended` render on a **linear track only**; combined with
 `scale: "log"` they are ignored, and `slider-refinement-invalid` warns. On a

@@ -17,6 +17,22 @@ export function clampToRange(raw, min, max) {
   return Math.min(max, Math.max(min, v));
 }
 
+/** A wrapped value reduced into [min, max): `min + mod(v - min, max - min)`. */
+export function reduceWrapped(v, min, max) {
+  const span = max - min;
+  return min + (((v - min) % span) + span) % span;
+}
+
+/**
+ * The unreduced value whose reduction is `shown`, in the turn nearest `stored`: a wrapped
+ * slider only knows [min, max), so a drag on it keeps the turn count the parameter has.
+ */
+export function sameTurn(stored, shown, min, max) {
+  const span = max - min;
+  const base = reduceWrapped(shown, min, max);
+  return base + Math.round((stored - base) / span) * span;
+}
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -65,7 +81,8 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
   // Where the thumb sits for a value: pinned at the nearer end when the value
   // is outside [min, max] (a range input sanitises this itself, but jsdom and
   // the log mapping don't, so be explicit).
-  const thumbFor = (v) => log ? toPosSafe(v) : Math.max(node.min, Math.min(node.max, v));
+  const wrapped = node.wrap === true && Number.isFinite(node.min) && Number.isFinite(node.max) && node.max > node.min;
+  const thumbFor = (v) => wrapped ? reduceWrapped(v, node.min, node.max) : log ? toPosSafe(v) : Math.max(node.min, Math.min(node.max, v));
 
   // Edited (an `input`) since the last `change`. A widget torn down mid-edit
   // commits what it holds (dispose below): the DOM fires no `change` for a
@@ -76,9 +93,10 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
     slider = document.createElement("input");
     slider.type = "range";
     slider.min = log ? 0 : node.min; slider.max = log ? LOG_STEPS : node.max; slider.step = log ? 1 : node.step;
-    slider.value = log ? toPosSafe(params[node.key]) : params[node.key];
+    slider.value = log ? toPosSafe(params[node.key]) : thumbFor(params[node.key]);
     slider.addEventListener("input", () => {
-      const v = log ? toValue(+slider.value) : snapTo(+slider.value);
+      const v = wrapped ? sameTurn(params[node.key], +slider.value, node.min, node.max)
+        : log ? toValue(+slider.value) : snapTo(+slider.value);
       params[node.key] = v;
       box.value = numStr(v);
       paintWarn();
@@ -126,7 +144,7 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
   // typed overshoot, or a preset/host value the range never covered.
   const paintWarn = () => {
     const v = params[node.key];
-    box.classList.toggle("warn", v < node.min || v > node.max);
+    box.classList.toggle("warn", !wrapped && (v < node.min || v > node.max));
   };
 
   // live preview while typing; reformat (never clamp) on commit

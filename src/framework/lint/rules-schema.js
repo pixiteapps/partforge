@@ -301,6 +301,8 @@ export const SCHEMA_RULES = [
         // "off", not "out of range". Matching keys alone isn't enough — a mistyped
         // non-zero "on" default (e.g. 999 against an 8..50 slider) is exactly the
         // authoring mistake this rule exists to catch, and must still warn.
+        // A wrapped control is stored unreduced (725 = two turns and a bit), so its range never bounds the value.
+        .filter(({ d }) => d.wrap !== true)
         .filter(({ d, featureKey }) => !(featureKey !== undefined && featureKey === d.key && defaults[d.key] === 0))
         .filter(({ d }) => typeof d.key === "string"
           && typeof defaults[d.key] === "number"
@@ -312,6 +314,17 @@ export const SCHEMA_RULES = [
           `Widen the control's min/max or move \`defaults.${d.key}\` inside the range — as it stands the panel clamps the value on first render, so the geometry the user sees is not the geometry the defaults describe.`,
           path));
     },
+  },
+  {
+    // A wrapped control reduces into [min, max) for display, so both ends are required.
+    id: "wrap-needs-range",
+    run: ({ part }) => collectDescriptors(part)
+      .filter(({ container, d }) => !container && d.wrap === true
+        && !(typeof d.min === "number" && typeof d.max === "number" && d.min < d.max))
+      .map(({ d, path }) => err("wrap-needs-range",
+        `"${d.key ?? "?"}" is \`wrap: true\` but has no finite min < max`,
+        "A wrapped control turns without end and the slider shows it reduced into [min, max) — give it both, e.g. `min: 0, max: 360`.",
+        `${path}.wrap`)),
   },
   {
     id: "unknown-control-field",

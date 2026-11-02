@@ -30,6 +30,7 @@ function authoredControl(c) {
     ticks: c.ticks,
     snap: c.snap,
     recommended: c.recommended,
+    wrap: c.wrap,
     hidden: !!c.hidden,
     when: c.when,
     whenFalse: c.whenFalse,

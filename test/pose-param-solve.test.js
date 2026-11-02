@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { limbInfo, solveAngles, solveGoalPinned, goalValues, seedValues, snapValues } from "../src/framework/pose/param-solve.js";
+import { limbInfo, solveAngles, solveGoalPinned, goalValues, seedValues, snapValues, rangesOf } from "../src/framework/pose/param-solve.js";
 import { defaultSolve } from "../src/framework/pose/pose-session.js";
 import robotArm from "../src/parts/robot-arm.js";
 import { resolveParams } from "../src/framework/part-model.js";
@@ -235,5 +235,20 @@ describe("solveGoalPinned (a goal drag holding pins)", () => {
     expect(r.values.toolZ).toBeGreaterThanOrEqual(-50);
     const posed = resolveParams(robotArm, { ...p, ...r.values }).d.arm;
     expect(dist(posed.world("tip").origin, [r.values.toolX, r.values.toolY, r.values.toolZ])).toBeLessThan(0.01);
+  });
+});
+
+describe("wrap controls", () => {
+  const wrapPart = (wrap) => ({
+    parameters: [{ id: "s", title: "S", controls: [{ key: "a", type: "slider", label: "A", min: 0, max: 360, step: 0.1, wrap }] }],
+    defaults: { a: 0 },
+  });
+  it("snapValues rounds a wrapped key to its step but never clamps it", () => {
+    expect(snapValues(wrapPart(true), { a: 720.04 })).toEqual({ a: 720 });
+    expect(snapValues(wrapPart(false), { a: 400 })).toEqual({ a: 360 });
+  });
+  it("rangesOf carries wrap", () => {
+    expect(rangesOf(wrapPart(true)).get("a").wrap).toBe(true);
+    expect(rangesOf(wrapPart(false)).get("a").wrap).toBe(false);
   });
 });

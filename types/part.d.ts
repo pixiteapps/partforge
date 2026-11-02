@@ -97,6 +97,12 @@ export interface PanelControlEntry {
   /** slider: [lo, hi] band drawn on the track; outside it the value box takes a warning tint. */
   recommended?: [number, number];
   /**
+   * slider / number: the value turns without end. It is stored unreduced (720 after two
+   * turns); only the slider shows it reduced into [min, max). Requires finite `min < max`;
+   * the range no longer bounds the value, a default or an animation keyframe.
+   */
+  wrap?: boolean;
+  /**
    * custom: the widget function. Called once per mount with a host object
    * (see `CustomControlHost` in index.d.ts); draws into `host.el`. The key
    * this control owns may hold a JSON value (arrays and plain objects of
