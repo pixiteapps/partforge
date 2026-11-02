@@ -7,6 +7,11 @@
 // the pointer read as "only this face is clickable", and people stopped
 // clicking elsewhere on the part. `hint` (e.g. "Click to edit") adds a line
 // under the name when a click does something — mount passes it with onPick.
+//
+// hoveredSubPart() reports the sub-part the last pick found under the mouse (null: none,
+// or the mouse left the canvas). Pose mode reads it to reveal a handle whose `showOn` names
+// that sub-part. It outlives a suppression (a pose dot hovered: the pointer is still over
+// the part) and is re-read at the next move's pick.
 import { createTooltipPresenter } from "../tooltip.js";
 import { raycastViewer } from "./raycast.js";
 import { runCleanupSteps } from "../teardown.js";
@@ -21,7 +26,7 @@ export function attachHoverLabels(
   // is on, and a missing method there threw inside notifyMode on every phone —
   // aborting the listener loop before the host application's own relay ran.
   if (globalThis.matchMedia && !matchMedia("(hover: hover)").matches) {
-    return { setSuppressed: () => {}, detach: () => {} };
+    return { setSuppressed: () => {}, hoveredSubPart: () => null, detach: () => {} };
   }
 
   const ownsTooltip = !tooltip;
@@ -63,6 +68,7 @@ export function attachHoverLabels(
   let detached = false;
   let suppressed = false;
   let externallySuppressed = false;
+  let lastSubPart = null; // the last pick's sub-part (hoveredSubPart)
 
   function invalidatePendingWork() {
     pending = null;
@@ -92,12 +98,13 @@ export function attachHoverLabels(
       pending = null;
       if (detached || !p || down || suppressed || externallySuppressed) return;
       const hit = raycastViewer(viewer, p.x, p.y);
+      lastSubPart = hit?.subPart ?? null;
       if (hit) show(hit, p.x, p.y); else hide();
     });
   }
   const onDown = () => { down = true; invalidatePendingWork(); hide(); };
   const onUp = () => { down = false; };
-  const onLeave = () => { invalidatePendingWork(); hide(); };
+  const onLeave = () => { lastSubPart = null; invalidatePendingWork(); hide(); };
 
   viewer.domElement.addEventListener("pointermove", onMove);
   viewer.domElement.addEventListener("pointerdown", onDown);
@@ -109,6 +116,8 @@ export function attachHoverLabels(
       externallySuppressed = !!on;
       if (externallySuppressed) { invalidatePendingWork(); hide(); }
     },
+    /** The sub-part under the mouse at the last pick, or null. */
+    hoveredSubPart: () => lastSubPart,
     detach: () => {
       if (detached) return;
       detached = true;

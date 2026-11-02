@@ -49,6 +49,16 @@
 // the session begins only once the pointer has moved past the threshold, so a click
 // never snapshots, holds or commits anything.
 //
+// GENERIC HANDLES (`on` / `point`, spec 2026-11-02 section 5) ride the same machinery as a
+// pseudo-limb: handle-source.js's handleRecord, named "handle:<id>", with one dot (its
+// "tip") and the source's `lines` as bones. One shows while the mouse is within
+// NEAR_LIMB_PX of its point, or over a sub-part its `showOn` names (mount's
+// hoveredSubPart, re-read per frame, since the hover pick lands a frame after the move).
+// Hovering its dot draws its guides (handle-guides.js: the axis arrow, plane square or
+// rotary ring, and a one-param handle's path); its drag turns the pointer into a target
+// by its drag kind (drag-kinds.js) and shows the readout. A click pins it ("<handle>:<at>"
+// or "<handle>:point"). It has no rings and no miss line (the session exposes no miss).
+//
 // Frames: the overlay and every limb point are in PART coordinates (the sub-meshes'
 // shared parent — the pivot stands model Z up and recentres per view). Pointer rays come
 // from the camera in WORLD coordinates and are carried into the parts frame through that
@@ -62,6 +72,10 @@ import { beginRotateDrag, rotateDragAngle } from "../gizmo/gizmo-rotate.js";
 import { createPoseSession, pinId, pinTarget } from "./pose-session.js";
 import { dragPlaneNormal, dragPlanePoint, hitHandle } from "./pose-geom.js";
 import { limbInfo, jointRings } from "./param-solve.js";
+import { handleKind, handleAt, handleRecord } from "./handle-source.js";
+import { startDrag as startKindDrag, dragTarget } from "./drag-kinds.js";
+import { axisGuide, planeGuide, rotaryGuide, sweepPath, pathKey, pathParam, readoutText } from "./handle-guides.js";
+import { resolveParams } from "../part-model.js";
 import { aimTurn } from "../solve/aim.js";
 import { withDeriveMemo } from "../derive-memo.js";
 
@@ -79,6 +93,9 @@ export const TOUCH_HIT_PX = 24;
 /** A hinge this near (degrees) its range end reads as clamped. */
 const CLAMP_EPS_DEG = 1e-3;
 const AIM_NAMES = ["pitch", "yaw", "roll"];
+/** Guides are re-drawn when the scale at their point moves this much (a zoom). */
+const GUIDE_RESCALE = 0.02;
+const isGeneric = (h) => handleKind(h) === "on" || handleKind(h) === "point";
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -134,6 +151,8 @@ export function aimAxes(toward, angles) {
  * @param opts.part the PartDefinition (its `handles`).
  * @param opts.orbitControls the viewer's OrbitControls (createViewer's `orbitControls`).
  * @param opts.visibleHandles () => handle ids to show in the current view (default: all).
+ * @param opts.hoveredSubPart () => the sub-part under the mouse, or null: reveals a generic
+ *   handle whose `showOn` names it.
  * Session effects, passed through to createPoseSession: getParams, write, commit,
  * restore, staleSubParts, ghost, unghost, hold. Optional: schedule (rAF), createScene,
  * createGizmo (the aim gizmo), createJointRings (the joint gizmo).
@@ -150,6 +169,7 @@ export function createPoseMode(viewer, {
   unghost,
   hold,
   visibleHandles = () => Object.keys(part?.handles ?? {}),
+  hoveredSubPart = () => null,
   schedule = (cb) => requestAnimationFrame(cb),
   createScene = createPoseScene,
   createGizmo = createAimGizmo,
@@ -193,6 +213,12 @@ export function createPoseMode(viewer, {
   let moveScheduled = false;
   let cursorSet = false;
   const hoverListeners = new Set();
+  // generic handles
+  const showOnAny = Object.values(handles).some((h) => isGeneric(h) && h.showOn != null);
+  let lastPt = null;       // the mouse's last canvas point (showOn re-reads the hover per frame)
+  let lastSub = null;      // hoveredSubPart() as the last hover read it
+  let guideScale = null;   // mm per px the shown guides were drawn at (null: none shown)
+  const paths = new Map(); // handleId -> { key, guide } (handle-guides' sweepPath, cached)
 
   const session = createPoseSession({
     part, getParams, write, commit, restore, staleSubParts, ghost, unghost, hold,
@@ -278,7 +304,8 @@ export function createPoseMode(viewer, {
       if (!byKey.has(key)) byKey.set(key, limbInfo(part, params, { limb: key }));
       return byKey.get(key);
     };
-    for (const handleId of ids) {
+    const limbIds = ids.filter((id) => !isGeneric(handles[id]));
+    for (const handleId of limbIds) {
       const handle = handles[handleId];
       const info = infoOf(handle.limb);
       if (!info) continue;
@@ -287,7 +314,7 @@ export function createPoseMode(viewer, {
     }
     rings = new Map();
     const extras = [];
-    for (const ring of jointRings({ part, params, ids, infoOf })) {
+    for (const ring of jointRings({ part, params, ids: limbIds, infoOf })) {
       const info = infoOf(ring.limb);
       if (!info) continue;
       rings.set(`${info.name}\0${ring.joint}`, { ...ring, info });
@@ -299,9 +326,23 @@ export function createPoseMode(viewer, {
     }
     // a limb shown only for its rings draws no tip and only the dots of its joints with rings
     for (const info of extras) infos.push({ ...info, ringsOnly: info.joints.map((j) => j.name).filter((n) => rings.has(`${info.name}\0${n}`)) });
+    readGeneric(params, ids.filter((id) => isGeneric(handles[id])), infos);
     scene.setLimbs(infos);
     syncPins();
     syncRings();
+    syncGuides();
+  }
+  /** One pseudo-limb record per shown generic handle (handleRecord), from one derive. */
+  function readGeneric(params, ids, infos) {
+    if (!ids.length) return;
+    let d;
+    try { ({ d } = resolveParams(part, params)); } catch { return; }
+    for (const handleId of ids) {
+      const info = handleRecord(part, params, d, handleId);
+      if (!info) continue;
+      shown.push({ handleId, handle: handles[handleId], limbKey: null, info, generic: true });
+      infos.push(info);
+    }
   }
   /**
    * Re-read the limbs if params moved since the last read (hit tests call this first). While
@@ -334,6 +375,12 @@ export function createPoseMode(viewer, {
   function pinPoint(id) {
     const t = pinTarget(id, handles);
     if (!t || !shownIds.has(t.handleId)) return null;
+    if (t.ref) {
+      // a generic handle's one point
+      const g = shown.find((e) => e.generic && e.handleId === t.handleId);
+      const p = g?.info.points.tip;
+      return Array.isArray(p) ? { limb: g.info.name, at: "tip", point: p } : null;
+    }
     const entry = shown.find((e) => e.limbKey === t.limb);
     const point = entry?.info.points[t.at];
     return Array.isArray(point) ? { limb: entry.info.name, at: t.at, point } : null;
@@ -382,6 +429,7 @@ export function createPoseMode(viewer, {
    */
   function pinIdOf(hit) {
     if (hit?.kind !== "dot") return null;
+    if (hit.generic) return pinId(hit.handleId, handleAt(handles[hit.handleId]));
     if (hit.handleId != null) return pinId(hit.handleId, hit.at);
     const ring = rings.get(ringKey(hit.limb, hit.at));
     const h = ring && handles[ring.handleId];
@@ -482,7 +530,8 @@ export function createPoseMode(viewer, {
    * goal handle's `at`, plus its joints with rings; an extra limb's joints with rings. A
    * ring-only dot shows its rings when hovered but is not a grab.
    */
-  function dotsOf({ handle, info, extra }) {
+  function dotsOf({ handle, info, extra, generic }) {
+    if (generic) return [{ at: "tip", ringOnly: false }];
     if (extra) return ringJoints(info).map((at) => ({ at, ringOnly: true }));
     if (handle.mode === "goal") {
       const at = goalAt(handle);
@@ -508,6 +557,7 @@ export function createPoseMode(viewer, {
         if (!s || s.visible === false) continue;
         const hit = { kind: "dot", handleId, at, limb: info.name };
         if (ringOnly) hit.ringOnly = true;
+        if (entry.generic) hit.generic = true;
         dots.push({ x: s.x, y: s.y, hit });
       }
     }
@@ -525,6 +575,21 @@ export function createPoseMode(viewer, {
         const d = b ? segDist(x, y, a, b) : Math.hypot(x - a.x, y - a.y);
         if (d <= bestD) { bestD = d; best = name; }
       }
+    }
+    return best ?? showOnAt(x, y);
+  }
+  /** The generic handle a `showOn` reveals for the sub-part under the mouse (the nearest, if several), else null. */
+  function showOnAt(x, y) {
+    if (!showOnAny) return null;
+    const sub = hoveredSubPart();
+    if (sub == null) return null;
+    let best = null, bestD = Infinity;
+    for (const e of shown) {
+      const on = e.generic ? e.handle.showOn : null;
+      if (!(on === sub || (Array.isArray(on) && on.includes(sub)))) continue;
+      const s = screen().limbs.get(e.info.name)?.[0];
+      const d = s ? Math.hypot(x - s.x, y - s.y) : Infinity;
+      if (!best || d < bestD) { bestD = d; best = e.info.name; }
     }
     return best;
   }
@@ -676,7 +741,54 @@ export function createPoseMode(viewer, {
     scene?.setHover(limb, hit?.kind === "dot" ? hit.at : null);
     if (limbChanged || focusChanged) syncRings();
     else syncGizmoHover();
+    if (hitChanged) syncGuides();
     if (claimsHover() !== claimed) notify(hoverListeners);
+  }
+
+  // ---- generic handles' guides ----------------------------------------------
+  /** The generic handle whose guides show: the one dragged, else the one whose dot is hovered. */
+  function guideEntry() {
+    const hit = press?.started ? press.hit : hoverHit;
+    if (!hit?.generic) return null;
+    return shown.find((e) => e.generic && e.handleId === hit.handleId) ?? null;
+  }
+  /** The camera's look in part coordinates. */
+  function partForward() {
+    const m = worldMatrix();
+    if (!m) return null;
+    _inv.copy(m).invert();
+    return viewer.camera.getWorldDirection(new THREE.Vector3()).transformDirection(_inv).toArray();
+  }
+  /** A one-param handle's path, swept once per params other than its own (handle-guides' pathKey). */
+  function pathOf({ handleId, handle }) {
+    const swept = pathParam(handle);
+    if (!swept) return null;
+    const params = { ...part.defaults, ...getParams() };
+    const key = pathKey(params, swept);
+    const hit = paths.get(handleId);
+    if (hit && key !== null && hit.key === key) return hit.guide;
+    const guide = withDeriveMemo(() => sweepPath(part, params, handle));
+    paths.set(handleId, { key, guide });
+    return guide;
+  }
+  function syncGuides() {
+    const e = guideEntry();
+    const out = [];
+    if (e) {
+      const { info } = e;
+      const at = info.points.tip;
+      const s = mmPerPx(at);
+      guideScale = s;
+      const g = info.drag === "axis" && info.axis ? axisGuide(at, info.axis.direction, s, partForward())
+        : info.drag === "plane" && info.axis ? planeGuide(at, info.axis.direction, s)
+        : info.drag === "rotary" && info.axis ? rotaryGuide(at, info.axis, s)
+        : null;
+      if (g) out.push(g);
+      const path = pathOf(e);
+      if (path) out.push(path);
+    } else if (guideScale === null) return; // nothing shown, nothing to clear
+    else guideScale = null;
+    scene?.setGuides?.(out);
   }
   /** The cursor over a hover hit: grab on anything a press drags; a ring-only dot is a click (a pin). */
   const hoverCursor = (hit) => (!hit ? "" : hit.ringOnly ? "pointer" : "grab");
@@ -702,6 +814,7 @@ export function createPoseMode(viewer, {
     safeRelease(ending.pointerId);
     window.removeEventListener("keydown", onKeyDown, true);
     scene?.setActive(null);
+    if (ending.drag) scene?.setReadout?.(null);
     refresh();
     if (ending.touch) {
       // Touch has no hover: the limb its press showed goes away with the finger — unless
@@ -715,6 +828,7 @@ export function createPoseMode(viewer, {
       setCursor(hoverCursor(h.hit));
     } else setCursor(hoverCursor(hoverHit));
     syncRings();
+    syncGuides();
     notify(hoverListeners);
   }
 
@@ -725,6 +839,7 @@ export function createPoseMode(viewer, {
     const s = shown.find((e) => e.handleId === hit.handleId);
     const grab = hit.kind === "dot" ? s?.info.points[hit.at] : null;
     if (!s || (hit.kind === "dot" && !Array.isArray(grab))) { finishPress(); return false; }
+    if (s.generic) return startGenericDrag(s, grab);
     const grabName = hit.kind === "ring" ? "ring" : hit.kind === "jring" ? `ring:${hit.joint}` : hit.at;
     if (!session.begin(hit.handleId, grabName)) { finishPress(); return false; }
     press.started = true;
@@ -759,6 +874,28 @@ export function createPoseMode(viewer, {
     return true;
   }
 
+  /**
+   * A generic handle's drag: the session solves through solveHandle; the pointer becomes a
+   * target by the handle's drag kind (drag-kinds.js), from the press. An axis, plane or
+   * rotary drag with no axis to move on is no grab.
+   */
+  function startGenericDrag(s, grab) {
+    const kind = s.info.drag;
+    if (kind !== "point" && !s.info.axis) { finishPress(); return false; }
+    let drag;
+    try {
+      drag = startKindDrag(kind, { point: grab, axis: s.info.axis, ray: press.ray, screen: { x: press.x, y: press.y, project: toScreen } });
+    } catch { finishPress(); return false; }
+    if (!session.begin(s.handleId, handleAt(s.handle))) { finishPress(); return false; }
+    press.started = true;
+    press.drag = drag;
+    setCursor("grabbing");
+    notify(hoverListeners); // a drag began (mount closes a selection popover)
+    syncRings();
+    syncGuides();
+    return true;
+  }
+
   // One drag frame resolves the same params several times — the solve's (or goal seed's)
   // last derive, then mount's write (pose repair, panel relevance), then refresh — so the
   // whole frame runs with derive memoized (derive-memo.js).
@@ -770,6 +907,7 @@ export function createPoseMode(viewer, {
     const ray = partRay(ev);
     if (!ray) return;
     const { hit } = press;
+    if (press.drag) { genericStep(ev, ray); return; }
     let target = null;
     if (hit.kind === "dot") {
       const { point, normal, maxDist, offset } = press.plane;
@@ -815,6 +953,17 @@ export function createPoseMode(viewer, {
       target: target ?? undefined,
       residual: target && grabbed ? len(sub(grabbed, target)) : undefined,
     });
+    viewer.requestRender?.();
+  }
+
+  function genericStep(ev, ray) {
+    const { x, y } = local(ev);
+    if (!session.frame(dragTarget(press.drag, { ray, screen: { x, y, project: toScreen } }))) return;
+    refresh(); // the guides follow (readLimbs -> syncGuides)
+    const s = shown.find((e) => e.generic && e.handleId === press.hit.handleId);
+    if (!s) return;
+    scene?.setActive({ limb: s.info.name, grab: "tip", clamped: [] });
+    scene?.setReadout?.({ at: s.info.points.tip, text: readoutText(part, { ...part.defaults, ...getParams() }, s.handle) });
     viewer.requestRender?.();
   }
 
@@ -884,7 +1033,7 @@ export function createPoseMode(viewer, {
       pointerId: ev.pointerId, hit, limb: hit.limb, focus, ray, x, y, touch,
       // touch: was this gizmo already up? (a first tap on the aim point only shows it)
       gizmoWasUp: touch && !!focus && sameFocus(touchFocus, focus),
-      orbitEnabled: orbitControls?.enabled, started: false, plane: null, ring: null,
+      orbitEnabled: orbitControls?.enabled, started: false, plane: null, ring: null, drag: null,
     };
     clickClaimed = true;
     if (touch) setHover(hit.limb, hit, focus);
@@ -921,7 +1070,9 @@ export function createPoseMode(viewer, {
     if (ev.pointerType === "touch") return;
     if (touchFocus) { touchFocus = null; syncRings(); } // a mouse took over
     ensureFresh();
-    const { hit, limb, focus } = hoverAt(local(ev));
+    lastPt = local(ev);
+    lastSub = showOnAny ? hoveredSubPart() : null;
+    const { hit, limb, focus } = hoverAt(lastPt);
     setHover(limb, hit, focus);
     setCursor(hoverCursor(hit));
   }
@@ -975,6 +1126,7 @@ export function createPoseMode(viewer, {
   }
   function onBlur() { abort(); }
   function onPointerLeave() {
+    lastPt = null;
     if (press || !live) return;
     setHover(null);
     setCursor("");
@@ -1011,6 +1163,24 @@ export function createPoseMode(viewer, {
       if (drawsAnything()) refresh();
       else stale = true;
     }
+    // The hover pick (mount's hoveredSubPart) lands after the move that asked for it: a
+    // showOn handle is revealed on the frame it changes, under a still pointer.
+    if (showOnAny && !press && lastPt) {
+      const sub = hoveredSubPart();
+      if (sub !== lastSub) {
+        lastSub = sub;
+        ensureFresh();
+        const h = hoverAt(lastPt);
+        setHover(h.limb, h.hit, h.focus);
+        setCursor(hoverCursor(h.hit));
+      }
+    }
+    // a zoom resizes the screen-constant guides
+    if (guideScale !== null && !press?.started) {
+      const e = guideEntry();
+      const s = e && mmPerPx(e.info.points.tip);
+      if (s && Math.abs(s - guideScale) > guideScale * GUIDE_RESCALE) syncGuides();
+    }
     scene.tick();
     gizmo?.tick();
     jointGizmo?.tick();
@@ -1036,6 +1206,8 @@ export function createPoseMode(viewer, {
       hoverHit = null;
       hoverFocus = null;
       touchFocus = null;
+      guideScale = null;
+      lastPt = null;
       shown = [];
       rings = new Map();
       screenCache = null;
@@ -1117,7 +1289,8 @@ export function createPoseMode(viewer, {
     externalWrite: () => session.externalWrite(),
     /**
      * Where each shown handle's always-grabbable point (an angles limb's tip, a goal
-     * handle's `at`) sits on the canvas: `[{ handleId, at, x, y }]`, CSS px from the
+     * handle's `at`, a generic handle's point — `at` "point" or its source's `at`) sits
+     * on the canvas: `[{ handleId, at, x, y }]`, CSS px from the
      * canvas's top-left. Drawn or not (at rest they are hidden until hovered). Empty
      * while posing is not live. For a host's coach marks and the
      * browser check (scripts/check-pose.mjs).
@@ -1125,11 +1298,12 @@ export function createPoseMode(viewer, {
     handlePoints() {
       ensureFresh();
       const out = [];
-      for (const { handleId, handle, info, extra } of shown) {
+      for (const { handleId, handle, info, extra, generic } of shown) {
         if (extra) continue; // a limb shown only for its joint rings has no handle point
-        const at = handle.mode === "goal" ? goalAt(handle) : "tip";
+        const at = generic ? "tip" : handle.mode === "goal" ? goalAt(handle) : "tip";
         const s = toScreen(info.points[at]);
-        if (s && s.visible !== false) out.push({ handleId, at, x: s.x, y: s.y });
+        // a generic handle reports its own point name ("point", or its source's `at`)
+        if (s && s.visible !== false) out.push({ handleId, at: generic ? handleAt(handle) : at, x: s.x, y: s.y });
       }
       return out;
     },

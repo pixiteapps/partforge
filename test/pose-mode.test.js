@@ -58,7 +58,7 @@ function fakeViewer() {
 }
 
 function fakeScene() {
-  const calls = { setLimbs: [], setHover: [], setActive: [], setPins: [], setAimGizmo: [] };
+  const calls = { setLimbs: [], setHover: [], setActive: [], setPins: [], setAimGizmo: [], setGuides: [], setReadout: [] };
   return {
     calls,
     setLimbs: (x) => calls.setLimbs.push(x),
@@ -67,6 +67,8 @@ function fakeScene() {
     setActive: (x) => calls.setActive.push(x),
     setPins: (x) => calls.setPins.push(x),
     setAimGizmo: (x) => calls.setAimGizmo.push(x),
+    setGuides: (x) => calls.setGuides.push(x),
+    setReadout: (x) => calls.setReadout.push(x),
     setTheme() {}, tick() {}, dispose() {},
     clear() { this.cleared++; },
   };
@@ -684,6 +686,182 @@ describe("the aim gizmo on a goal handle", () => {
     t.mode.setSuppressed(false);
     t.mode.detach();
     expect(g.group.parent).toBeNull();
+  });
+});
+
+describe("generic handles", () => {
+  // Part points sit about z = 80 so they land mid-canvas (the fake pivot recentres by -80).
+  const gen = {
+    parameters: [{ id: "g", title: "G", controls: [
+      { key: "width", min: 10, max: 400, step: 0.1 },
+      { key: "depth", min: 10, max: 200, step: 0.1 },
+      { key: "slide", min: 0, max: 100, step: 1 },
+      { key: "lidOpen", min: 0, max: 90, step: 1 },
+    ] }],
+    defaults: { width: 80, depth: 60, slide: 0, lidOpen: 0 },
+    derive: () => ({}),
+    parts: {},
+    handles: {
+      corner: { point: (p) => [p.width / 2, p.depth / 2, 80], params: ["width", "depth"], drag: "plane", normal: [0, 0, 1] },
+      drawer: { point: (p) => [-60, 0, 80 + p.slide], params: ["slide"], drag: "axis", direction: [0, 0, 1] },
+      lid: { point: (p) => [0, 0, 130 + p.lidOpen], params: ["lidOpen"], drag: "axis", direction: [0, 0, 1], showOn: "lid" },
+    },
+  };
+  const at = (t, id) => t.screenOf(gen.handles[id].point({ ...gen.defaults, ...t.params }));
+  const kinds = (t) => (t.scene.calls.setGuides.at(-1) ?? []).map((g) => g.kind);
+
+  it("a point handle shows within 32 px of its point and hides at 40 px", () => {
+    const t = setup(gen);
+    expect(t.scene.calls.setLimbs.at(-1).map((i) => i.name).sort()).toEqual(["handle:corner", "handle:drawer", "handle:lid"]);
+    const s = at(t, "corner");
+    t.fire("pointermove", s.x + 30, s.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:corner", null]);
+    expect(t.mode.claimsHover()).toBe(false);
+    t.fire("pointermove", s.x + 40, s.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual([null, null]);
+    t.fire("pointermove", s.x + 3, s.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:corner", "tip"]);
+    expect(t.viewer.domElement.style.cursor).toBe("grab");
+  });
+
+  it("a showOn handle shows while the pointer is over that sub-part", () => {
+    let sub = null;
+    const t = setup(gen, { hoveredSubPart: () => sub });
+    t.fire("pointermove", 3, 3);
+    expect(t.scene.calls.setHover.at(-1) ?? [null, null]).toEqual([null, null]);
+    sub = "lid";
+    t.fire("pointermove", 4, 3);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:lid", null]);
+    sub = null;
+    t.fire("pointermove", 3, 3);
+    expect(t.scene.calls.setHover.at(-1)).toEqual([null, null]);
+    // the hover pick lands a frame after the move: a frame re-reads it
+    sub = "lid";
+    t.viewer.tick();
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:lid", null]);
+  });
+
+  it("dragging an axis handle writes the solved param, one commit; guides and readout follow", () => {
+    const t = setup(gen);
+    const s = at(t, "drawer");
+    t.fire("pointermove", s.x, s.y);
+    expect(kinds(t)).toEqual(["axis", "path"]);
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 6; i++) t.fire("pointermove", s.x, s.y - i * 6);
+    expect(t.mode.isDragging()).toBe(true);
+    expect(t.log.write.length).toBeGreaterThanOrEqual(5);
+    expect(t.log.write.at(-1).slide).toBeGreaterThan(10);
+    const r = t.scene.calls.setReadout.at(-1);
+    expect(r.text).toMatch(/^slide \d+$/);
+    expect(r.at[2]).toBeCloseTo(80 + t.params.slide, 6);
+    expect(t.scene.calls.setActive.at(-1)).toMatchObject({ limb: "handle:drawer", grab: "tip" });
+    expect(t.scene.calls.setActive.at(-1).residual).toBeUndefined(); // no miss line on a generic handle
+    expect(kinds(t)).toEqual(["axis", "path"]);
+    t.fire("pointerup", s.x, s.y - 36);
+    expect(t.log.commit).toEqual([["slide"]]);
+    expect(Number.isInteger(t.params.slide)).toBe(true);
+    expect(t.scene.calls.setReadout.at(-1)).toBeNull();
+    expect(at(t, "drawer").y).toBeLessThan(s.y - 20); // the dot followed the pointer up
+  });
+
+  it("guides show on hover of the dot and clear on leave", () => {
+    const t = setup(gen);
+    const s = at(t, "corner");
+    t.fire("pointermove", s.x, s.y);
+    expect(kinds(t)).toEqual(["plane"]); // two params: no path
+    t.fire("pointermove", 3, 3);
+    expect(t.scene.calls.setGuides.at(-1)).toEqual([]);
+    t.fire("pointermove", s.x, s.y);
+    t.fire("pointerleave", s.x, s.y);
+    expect(t.scene.calls.setGuides.at(-1)).toEqual([]);
+  });
+
+  it("a plane drag's readout reads each param at its step", () => {
+    const t = setup(gen);
+    const s = at(t, "corner");
+    t.fire("pointermove", s.x, s.y);
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x + i * 5, s.y);
+    expect(t.scene.calls.setReadout.at(-1).text).toMatch(/^width \d+\.\d · depth \d+\.\d$/);
+    t.fire("pointerup", s.x + 20, s.y);
+    expect(t.params.width).toBeGreaterThan(80);
+  });
+
+  it("a click on a generic dot pins it; the badge sits on its point; handlePoints lists it", () => {
+    const t = setup(gen);
+    const s = at(t, "corner");
+    t.fire("pointermove", s.x, s.y);
+    t.fire("pointerdown", s.x, s.y);
+    t.fire("pointerup", s.x, s.y);
+    expect(t.mode.getPins()).toEqual(["corner:point"]);
+    expect(t.scene.calls.setPins.at(-1)).toEqual([{ limb: "handle:corner", at: "tip" }]);
+    expect(t.mode.pinCount()).toBe(1);
+    expect(t.log.write).toEqual([]);
+    const pts = t.mode.handlePoints();
+    expect(pts.map((p) => p.handleId).sort()).toEqual(["corner", "drawer", "lid"]);
+    const c = pts.find((p) => p.handleId === "corner");
+    expect(c.at).toBe("point");
+    expect(c.x).toBeCloseTo(s.x, 6);
+  });
+});
+
+describe("generic handles: rotary and touch", () => {
+  // A gear facing the camera: its axis is part +Y (the fake pivot turns part -Y toward the eye).
+  const rad = (d) => (d * Math.PI) / 180;
+  const gear = {
+    parameters: [{ id: "g", title: "G", controls: [{ key: "driveAngle", min: 0, max: 360, step: 1, wrap: true }] }],
+    defaults: { driveAngle: 0 },
+    derive: (p) => ({
+      train: { handleInfo: () => ({
+        kind: "partforge.points",
+        points: { "g.center": [0, 0, 80], "g.rim": [30 * Math.cos(rad(p.driveAngle)), 0, 80 + 30 * Math.sin(rad(p.driveAngle))] },
+        axes: { g: { origin: [0, 0, 80], direction: [0, -1, 0] } },
+        lines: [["g.center", "g.rim"]],
+      }) },
+    }),
+    parts: {},
+    handles: { drive: { on: "train", at: "g.rim", params: ["driveAngle"], drag: "rotary" } },
+  };
+  const rim = (t) => t.screenOf([30 * Math.cos(rad(t.params.driveAngle)), 0, 80 + 30 * Math.sin(rad(t.params.driveAngle))]);
+
+  it("a rotary drag turns the wrapped param past a full turn; ring, path and lines show", () => {
+    const t = setup(gear);
+    const info = t.scene.calls.setLimbs.at(-1).find((i) => i.name === "handle:drive");
+    expect(info.lines).toHaveLength(1);
+    const c = t.screenOf([0, 0, 80]);
+    const s = rim(t);
+    const r = Math.hypot(s.x - c.x, s.y - c.y);
+    t.fire("pointermove", s.x, s.y);
+    expect(t.scene.calls.setGuides.at(-1).map((g) => g.kind)).toEqual(["rotary", "path"]);
+    t.fire("pointerdown", s.x, s.y);
+    // one and a quarter turns counter-clockwise on screen, in 10 degree steps
+    for (let a = 10; a <= 450; a += 10) t.fire("pointermove", c.x + r * Math.cos(rad(a)), c.y - r * Math.sin(rad(a)));
+    t.fire("pointerup", c.x, c.y - r);
+    expect(t.params.driveAngle).toBeGreaterThan(445);
+    expect(t.params.driveAngle).toBeLessThan(455);
+    expect(t.log.commit).toEqual([["driveAngle"]]);
+    expect(t.mode.getPins()).toEqual([]);
+  });
+
+  it("a click pins it as \"<handle>:<at>\"; a touch within 24 px drags it with no hover first", () => {
+    const t = setup(gear);
+    const s = rim(t);
+    t.fire("pointermove", s.x, s.y);
+    t.fire("pointerdown", s.x, s.y);
+    t.fire("pointerup", s.x, s.y);
+    expect(t.mode.getPins()).toEqual(["drive:g.rim"]);
+    t.mode.releasePins();
+    t.fire("pointerleave", s.x, s.y);
+    const touch = { pointerType: "touch", pointerId: 2 };
+    t.fire("pointerdown", s.x, s.y + 20, touch);
+    expect(t.orbit.enabled).toBe(false);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x - i * 4, s.y + 20 - i * 8, touch);
+    expect(t.mode.isDragging()).toBe(true);
+    t.fire("pointerup", s.x - 16, s.y - 12, touch);
+    expect(t.log.commit).toHaveLength(1);
+    expect(t.params.driveAngle).not.toBe(0);
+    expect(t.scene.calls.setHover.at(-1)).toEqual([null, null]);
+    expect(t.scene.calls.setGuides.at(-1)).toEqual([]);
   });
 });
 

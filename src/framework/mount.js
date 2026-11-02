@@ -832,6 +832,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           loop.kick();
         }),
         visibleHandles: () => poseVisible ?? handleIds,
+        // a handle's `showOn`: the sub-part the hover tooltip's pick found under the mouse
+        hoveredSubPart: () => hover.hoveredSubPart?.() ?? null,
       });
       cleanup.defer(() => poseMode.detach());
       // Pins are viewer state, carried across a remount (getViewerState().pose).
