@@ -382,6 +382,42 @@
     "declared": 24,
     "evaluated": 24
   },
+  "drawer-box.js#cabinet": {
+    "ok": true,
+    "view": "cabinet",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "width": 160,
+          "depth": 120,
+          "height": 150,
+          "drawer1Open": 0,
+          "drawer2Open": 40,
+          "drawer3Open": 0
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "costs": [],
+    "unevaluated": [],
+    "declared": 1,
+    "evaluated": 1
+  },
   "emblem.js#plate": {
     "ok": true,
     "view": "plate",
@@ -1302,6 +1338,92 @@
     "unevaluated": [],
     "declared": 8,
     "evaluated": 8
+  },
+  "gearbox.js#gearbox": {
+    "ok": true,
+    "view": "gearbox",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "driveAngle": 0
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": "plate×gear1",
+            "metric": "clearance",
+            "kind": "gate",
+            "expr": ">=0.29",
+            "actual": 0.299889728,
+            "status": "pass",
+            "pass": true,
+            "message": "0.29988972809834313 >= 0.29"
+          },
+          {
+            "scope": "view",
+            "subpart": "plate×gear2",
+            "metric": "clearance",
+            "kind": "gate",
+            "expr": ">=0.29",
+            "actual": 0.299887513,
+            "status": "pass",
+            "pass": true,
+            "message": "0.2998875126293092 >= 0.29"
+          },
+          {
+            "scope": "view",
+            "subpart": "plate×gear3",
+            "metric": "clearance",
+            "kind": "gate",
+            "expr": ">=0.29",
+            "actual": 0.299884139,
+            "status": "pass",
+            "pass": true,
+            "message": "0.29988413854232554 >= 0.29"
+          },
+          {
+            "scope": "view",
+            "subpart": "gear1×gear2",
+            "metric": "clearance",
+            "kind": "gate",
+            "expr": ">=0.1",
+            "actual": 0.124750839,
+            "status": "pass",
+            "pass": true,
+            "message": "0.12475083905599296 >= 0.1"
+          },
+          {
+            "scope": "view",
+            "subpart": "gear2×gear3",
+            "metric": "clearance",
+            "kind": "gate",
+            "expr": ">=0.1",
+            "actual": 0.174404138,
+            "status": "pass",
+            "pass": true,
+            "message": "0.17440413768266205 >= 0.1"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "costs": [],
+    "unevaluated": [],
+    "declared": 6,
+    "evaluated": 6
   },
   "hand.js#assembly": {
     "ok": true,

@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has twenty-five: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has twenty-seven: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -60,7 +60,13 @@ spread/oppose params and six `{ type: "preset" }` shapes, one
 lockable angles-mode handle per digit; rigid pin-jointed pieces placed by matrix, the
 print view a flat kit the pose never reaches; `hand.html`, checked by
 `scripts/check-pose.mjs`; the dev-only `pose-smoke.html` page, with `test/fixtures/ik-hand-smoke.js`,
-is the fixture that script drags), and `material-swatches.js` (not a reference part: the dev-only
+is the fixture that script drags), `gearbox.js` (the rotary-handle reference part and the
+worked example of `docs/domains/mechanisms.md` - three spur gears placed by one
+`gearTrain` from `partforge/mechanisms` in `derive`, a rotary handle on every gear and a
+crank, all writing one `wrap: true` `driveAngle`, and a `spin` animation that never
+rebuilds; `gearbox.html`), `drawer-box.js` (shape and motion handles on one part - a
+corner `plane` handle writing width and depth, which rebuilds, and an `axis` handle per
+drawer, which only re-places it; no demo page), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`), and `offset-demo.js`
 (not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
 `offset-demo.html`).
@@ -632,9 +638,11 @@ the installed package, so let the publish finish before bumping the dep there.
   worker-safe; a domain never imports another domain. A manifest's `lintRules` may
   import `lint/finding.js` and nothing else from lint - `verify-metrics.js` reads the
   registry at module top level, so a rule reaching `rules-verify.js` would hit the
-  registry before it exists. `DOMAINS` lists one domain, kinematics
-  (`domains/kinematics/`, `partforge/kinematics`), which tags no kernel op and
-  declares no facts, so the registry's other seams are exercised by the test-only
+  registry before it exists. `DOMAINS` lists two domains, kinematics
+  (`domains/kinematics/`, `partforge/kinematics`) and mechanisms
+  (`domains/mechanisms/`, `partforge/mechanisms`: gear trains, belts, racks and
+  crank-sliders as derive-time point sources that also place sub-parts). Neither
+  tags a kernel op or declares facts, so the registry's other seams are exercised by the test-only
   fixture at `test/fixtures/domain-fixture/`, which seam tests reach by
   `vi.mock`-ing `registry.js` - never by a test-only parameter on a public API.
   `partforge/lint` exports the registry as names only (`DOMAINS`) and
