@@ -71,6 +71,10 @@
       "types": "./types/kinematics.d.ts",
       "default": "./src/framework/domains/kinematics/index.js"
     },
+    "./mechanisms": {
+      "types": "./types/mechanisms.d.ts",
+      "default": "./src/framework/domains/mechanisms/index.js"
+    },
     "./tokens.css": "./src/framework/tokens.css",
     "./chrome.css": "./src/framework/chrome.css"
   },
@@ -105,6 +109,9 @@
       ],
       "kinematics": [
         "./types/kinematics.d.ts"
+      ],
+      "mechanisms": [
+        "./types/mechanisms.d.ts"
       ]
     }
   },

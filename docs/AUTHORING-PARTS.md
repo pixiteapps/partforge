@@ -47,6 +47,7 @@ description, read that guide first.
 | Domain | Use it for | Import | Guide |
 |---|---|---|---|
 | Kinematics | jointed limbs, fingers, arms, robot hands; posing links about joints; reach and grip | `import { … } from "partforge/kinematics"` | [`docs/domains/kinematics.md`](domains/kinematics.md) |
+| Mechanisms | gears, gear trains, pulleys and belts, racks, cranks and sliders; parts that move together | `import { … } from "partforge/mechanisms"` | [`docs/domains/mechanisms.md`](domains/mechanisms.md) |
 <!-- end generated -->
 
 ---
