@@ -1762,7 +1762,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           loop.buildDone();
           loop.kick();
           break;
-        case "needs-import-mesh":
+        case "needs-import-mesh": {
           // STEP import on the Manifold worker: an unprimed import threw
           // NEEDS_IMPORT_MESH (Task 8). Settle this build the same way
           // needs-occt does — buildDone() only, no kick() here: the retry can't
@@ -1788,6 +1788,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             service.send({ type: "tessellate-imports", jobId: importTessellateJobId }, "occt");
           }
           break;
+        }
         case "import-meshes":
           // The OCCT worker answered tessellate-imports: prime the Manifold
           // worker's import cache (worker-lifetime, per Task 8) with transferable
