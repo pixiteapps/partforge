@@ -850,6 +850,39 @@ describe("generic handles: rotary and touch", () => {
     expect(t.mode.getPins()).toEqual([]);
   });
 
+  it("onDragEnd says what a released drag did: changed keys, or held by a pin", () => {
+    // a second handle on the same drive, a quarter turn round: pin one and the other is held
+    const two = { ...gear, handles: { drive: gear.handles.drive, knob: { point: (p) => [30 * Math.cos(rad(p.driveAngle + 90)), 0, 80 + 30 * Math.sin(rad(p.driveAngle + 90))], params: ["driveAngle"], drag: "rotary", axis: { origin: [0, 0, 80], direction: [0, -1, 0] } } } };
+    const t = setup(two);
+    const ends = [];
+    t.mode.onDragEnd((e) => ends.push(e));
+    const c = t.screenOf([0, 0, 80]);
+    const turn = (from, by) => {
+      const s = from();
+      const r = Math.hypot(s.x - c.x, s.y - c.y);
+      const a0 = Math.atan2(c.y - s.y, s.x - c.x) * 180 / Math.PI;
+      t.fire("pointermove", s.x, s.y);
+      t.fire("pointerdown", s.x, s.y);
+      for (let a = 10; a <= by; a += 10) t.fire("pointermove", c.x + r * Math.cos(rad(a0 + a)), c.y - r * Math.sin(rad(a0 + a)));
+      t.fire("pointerup", c.x + r * Math.cos(rad(a0 + by)), c.y - r * Math.sin(rad(a0 + by)));
+    };
+    turn(() => rim(t), 40);
+    expect(ends).toEqual([{ handleId: "drive", generic: true, changed: ["driveAngle"], pinHeld: false }]);
+    const knob = () => t.screenOf([30 * Math.cos(rad(t.params.driveAngle + 90)), 0, 80 + 30 * Math.sin(rad(t.params.driveAngle + 90))]);
+    // pin the knob, then turn the drive: nothing moves
+    const k = knob();
+    t.fire("pointermove", k.x, k.y);
+    t.fire("pointerdown", k.x, k.y);
+    t.fire("pointerup", k.x, k.y);
+    expect(t.mode.getPins()).toEqual(["knob:point"]);
+    const before = t.params.driveAngle;
+    turn(() => rim(t), 40);
+    expect(t.params.driveAngle).toBe(before);
+    expect(ends.at(-1)).toEqual({ handleId: "drive", generic: true, changed: [], pinHeld: true });
+    // a click is no drag: nothing
+    expect(ends).toHaveLength(2);
+  });
+
   it("a click pins it as \"<handle>:<at>\"; a touch within 24 px drags it with no hover first", () => {
     const t = setup(gear);
     const s = rim(t);

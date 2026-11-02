@@ -194,6 +194,7 @@ export function createPoseMode(viewer, {
   const dom = viewer.domElement;
   const modeListeners = new Set();
   const pinListeners = new Set();
+  const dragEndListeners = new Set();
   const notify = (set, ...args) => {
     for (const cb of [...set]) {
       try { cb(...args); } catch (err) { console.error("pose mode listener failed", err); }
@@ -1161,9 +1162,10 @@ export function createPoseMode(viewer, {
     // A touch on an aim handle's goal point or gizmo, or on a joint with rings or its
     // rings, leaves that gizmo up.
     const touchGizmo = press.touch && !!focus;
+    let ended = null;
     if (press.started) {
       flushMove();
-      session.end();
+      ended = session.end();
     } else if (!wasDrag && hit.kind === "dot" && !(focus && press.touch && !press.gizmoWasUp)) {
       // a click on any dot (a tip, a joint, a goal handle's point) toggles its pin. A
       // touch's first tap on a dot with a gizmo (the aim point, a joint with rings) only
@@ -1173,6 +1175,15 @@ export function createPoseMode(viewer, {
     }
     if (touchGizmo) touchFocus = focus;
     finishPress(press.touch ? null : local(ev));
+    if (ended) {
+      notify(dragEndListeners, {
+        handleId: ended.handleId,
+        generic: isGeneric(handles[ended.handleId]),
+        changed: ended.changed,
+        // nothing written, no frame moved anything, and a pin was holding: the pin did it
+        pinHeld: ended.changed.length === 0 && !ended.moved && ended.held,
+      });
+    }
   }
 
   /** Abandon the press: a started drag reverts (session.cancel -> onCancel -> finishPress). */
@@ -1434,6 +1445,12 @@ export function createPoseMode(viewer, {
     releasePins: () => session.releasePins(),
     onPinsChange: (cb) => { pinListeners.add(cb); return () => pinListeners.delete(cb); },
     onModeChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },
+    /**
+     * Fires when a drag is released (not cancelled): `{ handleId, generic, changed, pinHeld }`
+     * — `changed` the keys it committed; `pinHeld` when it wrote nothing because a pin held it
+     * (no frame moved a value and a pin was holding). The readout chip listens.
+     */
+    onDragEnd: (cb) => { dragEndListeners.add(cb); return () => dragEndListeners.delete(cb); },
     session,
     detach() {
       if (detached) return;
@@ -1453,6 +1470,7 @@ export function createPoseMode(viewer, {
       setCursor("");
       modeListeners.clear();
       pinListeners.clear();
+      dragEndListeners.clear();
       hoverListeners.clear();
     },
   };

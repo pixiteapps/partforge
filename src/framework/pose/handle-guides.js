@@ -1,12 +1,13 @@
 // What Pose mode draws beside a generic handle (spec 2026-11-02 section 5, section 4
 // item 1): the guide it moves on — a double arrow along an axis drag, a square on a
 // plane drag, a ring about a rotary drag's axis — its path (the curve its point travels
-// as a one-parameter handle's param sweeps its range) and the drag readout's text. Every
+// as a one-parameter handle's param sweeps its range), the drag readout's text, and the
+// values the readout chip writes when it is edited (readoutKeys, chipValues). Every
 // guide is `{ kind, points }` in PART coordinates; the screen-constant ones take the
 // part mm per CSS px at the point. Pure: no DOM, no three.js, no node:.
 import { resolveParams } from "../part-model.js";
 import { locateHandle } from "./handle-source.js";
-import { rangesOf } from "./param-solve.js";
+import { rangesOf, snapValues } from "./param-solve.js";
 
 /** Points on a path preview: the param's range, ends included. */
 export const PATH_SAMPLES = 32;
@@ -136,19 +137,23 @@ function decimals(n) {
   return i < 0 ? 0 : s.length - i - 1;
 }
 
+/** The params a handle's readout shows: its `readout` (one name or a list), else its `params`. */
+export function readoutKeys(handle) {
+  const listed = typeof handle?.readout === "string" ? [handle.readout]
+    : Array.isArray(handle?.readout) ? handle.readout
+    : Array.isArray(handle?.params) ? handle.params : [];
+  return listed.filter((k) => typeof k === "string");
+}
+
 /**
  * The drag readout: each `readout` param (default: the handle's `params`) as
  * "<key> <value>", rounded to its step's decimals (no step: an integer as is, else two
  * places), joined by " · ". A param with no numeric value is left out.
  */
 export function readoutText(part, params, handle) {
-  const listed = typeof handle?.readout === "string" ? [handle.readout]
-    : Array.isArray(handle?.readout) ? handle.readout
-    : Array.isArray(handle?.params) ? handle.params : [];
   const ranges = rangesOf(part);
   const out = [];
-  for (const key of listed) {
-    if (typeof key !== "string") continue;
+  for (const key of readoutKeys(handle)) {
     const v = isNum(params?.[key]) ? params[key] : part?.defaults?.[key];
     if (!isNum(v)) continue;
     const step = ranges.get(key)?.step;
@@ -156,4 +161,31 @@ export function readoutText(part, params, handle) {
     out.push(`${key} ${v.toFixed(Math.min(places, 20))}`);
   }
   return out.join(" · ");
+}
+
+/**
+ * The values the readout chip writes for what was typed into it (`typed`: key -> number),
+ * as a slider would set them: a wrapped param kept in the turn it has now (the panel's
+ * numeric.js sameTurn), then every value snapped to its control's step and clamped to its
+ * range (param-solve's snapValues, which leaves a wrapped one unclamped). A value that is
+ * not a finite number is left out.
+ */
+export function chipValues(part, params, typed) {
+  const ranges = rangesOf(part);
+  const raw = {};
+  for (const [key, v] of Object.entries(typed ?? {})) {
+    if (!isNum(v)) continue;
+    const r = ranges.get(key);
+    const stored = params?.[key];
+    raw[key] = r?.wrap && isNum(r.min) && isNum(r.max) && r.max > r.min && isNum(stored)
+      ? sameTurn(stored, v, r.min, r.max) : v;
+  }
+  return snapValues(part, raw);
+}
+
+/** numeric.js's sameTurn, restated here (that module is DOM chrome): `shown` reduced into [min, max), in the turn nearest `stored`. */
+function sameTurn(stored, shown, min, max) {
+  const span = max - min;
+  const base = min + ((((shown - min) % span) + span) % span);
+  return base + Math.round((stored - base) / span) * span;
 }

@@ -393,6 +393,25 @@ describe("createPoseSession - generic handles", () => {
     expect(h.only("commit")).toHaveLength(0);
   });
 
+  it("end() says what the drag did: the changed keys, whether any frame moved, whether a pin held", () => {
+    const pinned = harness({ part: train, real: true });
+    pinned.session.setPins(["gear2:gear2.rim"]);
+    pinned.session.begin("gear3", "x");
+    pinned.frame(gear3Target(45));
+    expect(pinned.session.end()).toEqual({ handleId: "gear3", changed: [], moved: false, held: true });
+    const free = harness({ part: train, real: true });
+    free.session.begin("gear3", "x");
+    free.frame(gear3Target(45));
+    expect(free.session.end()).toEqual({ handleId: "gear3", changed: ["driveAngle"], moved: true, held: false });
+    // dragged out and back to the start, with a pin elsewhere: it moved, so no pin held it
+    const back = harness({ part: drawer, real: true });
+    back.session.begin("pull", "x");
+    back.frame({ point: [0, -30, 0] });
+    back.frame({ point: [0, 0, 0] });
+    expect(back.session.end()).toMatchObject({ changed: [], moved: true });
+    expect(harness().session.end()).toBeNull(); // no drag on
+  });
+
   it("the same gear3 drag with no pin turns the drive", () => {
     const h = harness({ part: train, real: true });
     h.session.begin("gear3", "x");

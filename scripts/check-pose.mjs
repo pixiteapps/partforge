@@ -769,6 +769,7 @@ async function checkGearbox(page, url, errors) {
  * The drawer box (parts/drawer-box.js): a MOTION drag, then a SHAPE drag, on one part.
  *   - drawer1's pull, along its rail (an axis handle): no `generate` job (a drawer slides
  *     by matrix), one commit opening drawer1 to about 60% of its travel, the other drawers where they were;
+ *   - the readout chip that drag leaves by the pull: typed into, it commits the snapped value once;
  *   - the top corner, across the top plane (a plane handle): the part is cheap (its last
  *     build under LIVE_REBUILD_MS), so it rebuilds LIVE — `generate` jobs during the drag —
  *     yet the host sees none of it: no onBuild until release, exactly one after, and one
@@ -809,6 +810,23 @@ async function checkDrawerBox(page, url, errors) {
     if (slide && !Object.is(slide.params[k], defaults[k])) errors.push(`sliding drawer1 moved ${k} (${defaults[k]} -> ${slide.params[k]})`);
   }
 
+  // The readout chip: it shows by drawer1 after the slide; click it, type 20.3 and Enter —
+  // one commit of the snapped value (step 0.5: 20.5), then the chip goes.
+  const chip = await page.evaluate(() => window.__pfRuntime.pose.__chip());
+  if (chip?.handleId !== "drawer1" || chip.kind !== "values") errors.push(`no readout chip by drawer1 after the slide (${JSON.stringify(chip)})`);
+  let typed = null;
+  if (chip) {
+    commits0 = await page.evaluate(() => window.__pfCommits.length);
+    await page.click(".pf-pose-chip-value");
+    await page.fill('.pf-pose-chip input[name="drawer1Open"]', "20.3");
+    await page.press('.pf-pose-chip input[name="drawer1Open"]', "Enter");
+    await settle(page);
+    const edit = await oneCommit(page, commits0, "the chip edit", errors);
+    typed = edit?.params?.drawer1Open ?? null;
+    if (edit && typed !== 20.5) errors.push(`the chip edit committed drawer1Open ${typed}, not 20.5 (20.3 snapped to its 0.5 step)`);
+    if (await page.evaluate(() => window.__pfRuntime.pose.__chip())) errors.push("the readout chip stayed up after its edit was written");
+  }
+
   // Shape: the top corner outward, live-rebuilt.
   const w = defaults.width, dp = defaults.depth;
   const [c0, c1] = await handleAt(page, "corner", [{ width: w, depth: dp }, { width: w + 40, depth: dp + 40 }], { width: w, depth: dp });
@@ -834,7 +852,7 @@ async function checkDrawerBox(page, url, errors) {
     if (!Object.is(grow.params.height, defaults.height)) errors.push(`the corner drag moved height (${defaults.height} -> ${grow.params.height})`);
   }
   return {
-    drawer: { generatesDuringDrag: drawerJobs.length, drawer1Open: open ?? null },
+    drawer: { generatesDuringDrag: drawerJobs.length, drawer1Open: open ?? null, chipTyped: typed },
     corner: { lastBuildMs, liveGenerates: live.length, buildsDuring, buildsAfter, width: grow?.params?.width ?? null, depth: grow?.params?.depth ?? null },
   };
 }

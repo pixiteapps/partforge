@@ -44,6 +44,7 @@ import { attachAnnotateControls } from "./annotate/annotate-controls.js";
 import { attachSketchToolbar } from "./annotate/sketch-toolbar.js";
 import { createPoseMode } from "./pose/pose-mode.js";
 import { attachPoseControls } from "./pose/pose-controls.js";
+import { attachReadoutChip } from "./pose/readout-chip.js";
 import { parsePinId } from "./pose/pose-session.js";
 import { handleParamKeys } from "./pose/handle-source.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
@@ -1041,6 +1042,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       const c = viewer.domElement.getBoundingClientRect();
       return { x: a.x + c.left - s.left, y: a.y + c.top - s.top, visible: a.visible !== false };
     };
+    // Pose mode's readout chip (pose/readout-chip.js): after a generic handle's drag, the
+    // values by the handle, editable for exact numbers (written as a slider writes them,
+    // one commit), or the pin hint when a pin held the drag.
+    const poseChip = poseMode
+      ? attachReadoutChip(viewer, poseMode, { stage: els.viewer }, { part, getParams: () => params, apply: (values) => writeChipValues(values), toStage })
+      : null;
+    if (poseChip) cleanup.defer(() => poseChip.detach());
     if (selectionOpt) {
       selPopover = attachSelectionPopover({
         stage: els.viewer, canvas: viewer.domElement, slot: selectionOpt.slot, parts: partsSeam,
@@ -1954,6 +1962,19 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       loop.kick();
     }
 
+    // The readout chip's write: what a slider's input and change do (pause playback, write,
+    // re-pose or rebuild, relevance), for every value the chip changed, then one commit.
+    function writeChipValues(values) {
+      const changed = Object.keys(values).filter((k) => !Object.is(params[k], values[k]));
+      if (!changed.length) return;
+      poseMode?.externalWrite(); // no drag holds while the chip is edited; a no-op then
+      animCtl?.notifyUserEdit();
+      for (const k of changed) params[k] = values[k];
+      panel.syncValues(changed);
+      onParamChange();
+      onParamsCommit?.({ changed, params: { ...params } });
+    }
+
     // Which handles Pose mode shows in this view: those with a parameter that
     // something on screen reads — the same relevance the panel dims by. A handle
     // whose limb this view never draws (a print layout) stays hidden. Unknown
@@ -2229,6 +2250,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         __pinPoints: () => poseMode.pinPoints(),
         // Test hook only (scripts/check-pose.mjs): a pose drag is past its threshold.
         __isDragging: () => poseMode.isDragging(),
+        // Test hook only (scripts/check-pose.mjs): what the readout chip shows, or null.
+        __chip: () => poseChip?.state() ?? null,
         // Test hook only (scripts/check-pose.mjs): what one sub-part's mesh shows
         // right now — its material's opacity and its geometry's identity — so the
         // check can see ghost and delivery land in the same frame.
