@@ -407,3 +407,28 @@ test("detach unsubscribes cutaway ownership once and ignores later emissions", (
   expect(() => viewer.emitCutawayHandleHover("rotate-y")).not.toThrow();
   expect(document.getElementById("pf-hover-tip")).toBeNull();
 });
+
+test("hoveredSubPart names the sub-part the last pick found; a miss or leaving clears it; a suppression keeps it", () => {
+  const viewer = makeViewer();
+  const tooltip = makeTooltip();
+  const hover = attachHoverLabels(viewer, { part, schedule: sync, tooltip });
+  expect(hover.hoveredSubPart()).toBeNull();
+  move(viewer.domElement, 100, 100);
+  expect(hover.hoveredSubPart()).toBe("one");
+  hover.setSuppressed(true); // a pose dot hovered: the pointer is still over the part
+  expect(hover.hoveredSubPart()).toBe("one");
+  hover.setSuppressed(false);
+  move(viewer.domElement, 1, 1);
+  expect(hover.hoveredSubPart()).toBeNull();
+  move(viewer.domElement, 100, 100);
+  viewer.domElement.dispatchEvent(new PointerEvent("pointerleave"));
+  expect(hover.hoveredSubPart()).toBeNull();
+  hover.detach();
+});
+
+test("touch-only hover answers hoveredSubPart with null", () => {
+  vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false })));
+  const hover = attachHoverLabels(makeViewer(), { part });
+  expect(hover.hoveredSubPart()).toBeNull();
+  hover.detach();
+});

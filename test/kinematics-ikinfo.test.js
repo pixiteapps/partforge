@@ -56,3 +56,24 @@ describe("ikInfo", () => {
     expect(child.pose({}, { p: { at: [1, 2, 3] } }).ikInfo().points.a).toEqual([1, 2, 3]);
   });
 });
+
+describe("handleInfo", () => {
+  const posed = finger().pose({ curl: 0.5 });
+  const info = posed.ikInfo();
+  const h = posed.handleInfo();
+
+  it("is a point source: the limb's joints and tip, a hinge axis at each hinge, the bone chain", () => {
+    expect(h.kind).toBe("partforge.points");
+    expect(h.points).toEqual(info.points);
+    expect(Object.keys(h.axes)).toEqual(["mcp", "pip", "dip"]);
+    expect(h.axes.pip).toEqual({ origin: info.points.pip, direction: info.axes.pip });
+    expect(h.lines).toEqual([["mcp", "pip"], ["pip", "dip"], ["dip", "tip"]]);
+    expect(JSON.parse(JSON.stringify(h))).toEqual(h);
+  });
+
+  it("a ball joint has a point but no axis", () => {
+    const b = limb("arm", { toward: [0, 0, 1], bendToward: [1, 0, 0], joints: [{ name: "s", type: "ball", cone: 60 }, "e"], lengths: [10, 10] }).pose({}).handleInfo();
+    expect(Object.keys(b.points)).toEqual(["s", "e", "tip"]);
+    expect(Object.keys(b.axes)).toEqual(["e"]);
+  });
+});

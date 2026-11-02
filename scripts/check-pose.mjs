@@ -9,10 +9,12 @@
 // Pages. A `required` page must exist (a missing one fails the check); the others are
 // checked when their file exists and skipped with a message otherwise:
 //   pose-smoke.html — the ghost path. A sub-part built from the pose (a bead chain
-//     whose build reads p.aCurl) must fade to 0.35 during the drag, no `generate` job
-//     may be posted until release, exactly one is posted after it, and the new mesh
-//     and opacity 1 must reach the screen in the same frame (sampled every frame:
-//     never the new geometry still ghosted, never the old geometry back at full).
+//     whose build reads p.aCurl, deliberately slower than mount's LIVE_REBUILD_MS, so
+//     it does not rebuild live) must fade to 0.35 during the drag, no `generate` job
+//     may be posted and no onBuild fire until release, exactly one of each after it,
+//     and the new mesh and opacity 1 must reach the screen in the same frame (sampled
+//     every frame: never the new geometry still ghosted, never the old geometry back
+//     at full).
 //     Then the pick arbitration (its app counts onPick in `window.__pfPicks`): a click
 //     on a tip dot pins it and picks nothing, a drag picks nothing, a plain click on the
 //     model away from the handles still picks; and turning measure on hides posing
@@ -36,12 +38,24 @@
 //     mode a far sideways tool drag leaves the ground's x/z and scale exactly where they
 //     were (runtime.pose.__ground(), a test hook), during the drag and after its release;
 //     its height may only go down. CHECK_POSE_SHOTS=<dir> saves screenshots of it.
+//   gearbox.html (required) — generic rotary handles (spec 2026-11-02 generic handles):
+//     the output gear's rim dot dragged one full turn round its rim writes the wrapped
+//     driveAngle 0 -> ~720, past 360 with no backwards frame and no `generate` job, one
+//     commit (checkGearbox).
+//   drawer-box.html (required, dev-only) — motion and shape on one part: a drawer's pull
+//     along its rail is matrix-only (no `generate` job, the other drawers stay); the
+//     cabinet's corner across its top plane is a shape drag on a CHEAP part, so it
+//     rebuilds live — `generate` jobs during the drag — while the host sees no onBuild
+//     until release and exactly one after (checkDrawerBox).
 //
 // What it observes, and how:
 //   - worker traffic: an init script wraps window.Worker before the app loads, logging
 //     every posted message's `type` (and `subparts`) and every `meshes` reply;
 //   - commits: the page's app pushes each onParamsCommit to `window.__pfCommits` and
 //     exposes its part as `window.__pfPart` (for defaults) — a pose page's app must;
+//   - builds: pose-smoke's and drawer-box's apps push each onBuild to `window.__pfBuilds`;
+//   - which way a generic handle moves on screen: its handlePoints() entry read at a few
+//     param values set through runtime.setParams (handleAt), never the camera;
 //   - handle positions: `runtime.pose.handlePoints()` (CSS px on the canvas);
 //   - opacity / geometry: `runtime.pose.__subPart(name)` (a test hook), sampled once
 //     per animation frame by an in-page rAF loop.
@@ -128,7 +142,7 @@ function instrument() {
       this.addEventListener("message", (e) => {
         const t = e.data?.type;
         if (t === "meshes" || t === "meshes-partial") {
-          window.__pfWorkerLog.push({ dir: "in", type: t, at: performance.now(), names: (e.data.meshes ?? []).map((m) => m.name) });
+          window.__pfWorkerLog.push({ dir: "in", type: t, at: performance.now(), ms: e.data.ms ?? null, names: (e.data.meshes ?? []).map((m) => m.name) });
         }
       });
     }
@@ -149,9 +163,23 @@ function instrument() {
     };
     requestAnimationFrame(tick);
   };
+  // Per-frame samples of one handle's point on the canvas (CSS px).
+  window.__pfSampleHandle = (id) => {
+    window.__pfHandleSamples = [];
+    window.__pfHandleSampling = true;
+    const tick = () => {
+      if (!window.__pfHandleSampling) return;
+      const h = window.__pfRuntime?.pose?.handlePoints?.().find((p) => p.handleId === id);
+      if (h) window.__pfHandleSamples.push({ at: performance.now(), x: h.x, y: h.y });
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  };
 }
 
 const generates = (log, since = -Infinity) => log.filter((e) => e.dir === "out" && e.type === "generate" && e.at > since);
+/** The worker's own time for the last whole build it answered (a `meshes` reply's ms), or null. */
+const lastBuildTime = (log) => log.filter((e) => e.dir === "in" && e.type === "meshes" && Number.isFinite(e.ms)).at(-1)?.ms ?? null;
 
 /** Load a page and wait for its first build; posing must be live with no toggle. Returns the canvas box. */
 async function openPoseApp(page, url) {
@@ -217,6 +245,9 @@ async function dragFrom(page, h, box, onMidDrag) {
 async function checkSmoke(page, url, errors) {
   const box = await openPoseApp(page, url);
   const h = await pickHandle(page, box, "a");
+  // The ghost path needs a part slower than mount's LIVE_REBUILD_MS (the fixture's bead
+  // chains are, on purpose): a cheap one rebuilds live (checkDrawerBox).
+  const lastBuildMs = lastBuildTime(await page.evaluate(() => window.__pfWorkerLog));
   const before = await page.evaluate((n) => window.__pfRuntime.pose.__subPart(n), SMOKE_REBUILT);
   if (!before) throw new Error(`no sub-part "${SMOKE_REBUILT}" on screen`);
   if (Math.abs(before.opacity - 1) > 1e-6) errors.push(`${SMOKE_REBUILT} opacity before the drag is ${before.opacity}, not 1`);
@@ -230,7 +261,9 @@ async function checkSmoke(page, url, errors) {
   const endOfDrag = await page.evaluate((n) => window.__pfRuntime.pose.__subPart(n), SMOKE_REBUILT);
   const tRelease = await page.evaluate(() => performance.now());
   const duringDrag = generates(await page.evaluate(() => window.__pfWorkerLog), t0);
-  if (duringDrag.length) errors.push(`${duringDrag.length} generate job(s) posted during the drag`);
+  if (duringDrag.length) errors.push(`${duringDrag.length} generate job(s) posted during the drag (is the fixture's build still slower than LIVE_REBUILD_MS? last build ${lastBuildMs} ms)`);
+  const buildsDuring = await page.evaluate((t) => (window.__pfBuilds ?? []).filter((b) => b.at > t).length, t0);
+  if (buildsDuring) errors.push(`onBuild fired ${buildsDuring} time(s) during the drag`);
   if (midOpacity == null || Math.abs(midOpacity - GHOST) > 1e-3) errors.push(`${SMOKE_REBUILT} opacity mid-drag is ${midOpacity}, not ${GHOST}`);
   if (endOfDrag?.geometry !== before.geometry) errors.push(`${SMOKE_REBUILT} geometry changed during the drag (it must stay put, ghosted)`);
   await page.mouse.up();
@@ -246,6 +279,7 @@ async function checkSmoke(page, url, errors) {
     return {
       after: window.__pfRuntime.pose.__subPart(name),
       jobs: window.__pfWorkerLog.filter((e) => e.dir === "out" && e.type === "generate" && e.at > tr),
+      builds: (window.__pfBuilds ?? []).filter((b) => b.at > tr).length,
       samples: window.__pfSamples.filter((s) => s.at > tr),
       commits: window.__pfCommits ?? null,
       defaults: window.__pfPart?.defaults ?? null,
@@ -253,6 +287,7 @@ async function checkSmoke(page, url, errors) {
   }, [SMOKE_REBUILT, tRelease]);
   if (result.jobs.length !== 1) errors.push(`${result.jobs.length} generate jobs after release, expected exactly 1`);
   else if (!result.jobs[0].subparts?.includes(SMOKE_REBUILT)) errors.push(`the release job did not rebuild ${SMOKE_REBUILT} (subparts ${JSON.stringify(result.jobs[0].subparts)})`);
+  if (result.builds !== 1) errors.push(`onBuild fired ${result.builds} time(s) after release, expected exactly 1`);
   if (!result.after || Math.abs(result.after.opacity - 1) > 1e-6) errors.push(`${SMOKE_REBUILT} opacity after its mesh landed is ${result.after?.opacity}, not 1`);
   // Same-frame landing: once released, every frame shows either the old mesh still
   // ghosted or the new mesh at full opacity — never a mix.
@@ -276,7 +311,7 @@ async function checkSmoke(page, url, errors) {
   if (pinned.commits !== 1) errors.push(`a pin click committed (${pinned.commits} commits in all)`);
   const picks = await checkPicks(page, box, errors);
   const measure = await checkMeasureHides(page, box, errors);
-  return { midOpacity, jobs: result.jobs.length, after: result.after?.opacity, commits: result.commits?.length ?? null, frames: result.samples.length, pins: pinned.pins, ...picks, ...measure };
+  return { lastBuildMs, midOpacity, jobs: result.jobs.length, builds: result.builds, after: result.after?.opacity, commits: result.commits?.length ?? null, frames: result.samples.length, pins: pinned.pins, ...picks, ...measure };
 }
 
 /**
@@ -604,10 +639,212 @@ async function checkHand(page, url, errors) {
   return { ...summary, joint };
 }
 
+/** Wait until two animation frames have run. */
+const frames = (page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+
+/**
+ * Where handle `id` sits on the canvas with each patch of `patches` applied in turn
+ * (runtime.setParams), then `restore` applied and the page settled: `[{ x, y } | null]`,
+ * CSS px from the canvas's top-left. How the check learns which way a handle moves on
+ * screen without reading the camera.
+ */
+async function handleAt(page, id, patches, restore) {
+  const out = [];
+  for (const patch of patches) {
+    await page.evaluate((p) => window.__pfRuntime.setParams(p), patch);
+    await frames(page);
+    out.push(await page.evaluate((i) => window.__pfRuntime.pose.handlePoints().find((p) => p.handleId === i) ?? null, id));
+  }
+  await page.evaluate((p) => window.__pfRuntime.setParams(p), restore);
+  await settle(page);
+  return out;
+}
+
+/** Let any build the page owes land (past the 180 ms regen debounce), then a frame. */
+async function settle(page) {
+  await sleep(600);
+  await page.waitForFunction(() => document.getElementById("download")?.disabled === false, null, { timeout: 30000 });
+  await frames(page);
+}
+
+/** Hover a handle point (from the side, so its reveal shows it) and require the grab cursor. */
+async function hoverHandle(page, at, label) {
+  await page.mouse.move(at.x + 18, at.y, { steps: 3 });
+  await page.mouse.move(at.x, at.y, { steps: 3 });
+  await sleep(50);
+  const cursor = await canvasCursor(page);
+  if (cursor !== "grab") throw new Error(`hovering ${label} shows cursor "${cursor}", not "grab"`);
+}
+
+const onCanvasAt = (page, at) => page.evaluate(([x, y, sel]) => document.elementFromPoint(x, y) === document.querySelector(sel), [at.x, at.y, VIEWER_CANVAS]);
+
+/** The drag's commits since `since`, as one: errors unless exactly one was made. */
+async function oneCommit(page, since, label, errors) {
+  const added = (await page.evaluate(() => window.__pfCommits)).slice(since);
+  if (added.length !== 1) { errors.push(`${added.length} onParamsCommit calls after ${label}, expected exactly 1`); return null; }
+  return added[0];
+}
+
+const GEAR_TURN_STEPS = 96;
+
+/**
+ * The gearbox (parts/gearbox.js): drag the output gear's rim dot one full turn round its
+ * own rim. gear3 turns at +1/2 the drive, so one turn of it writes driveAngle 0 -> 720:
+ * the drag passes 360 with no stop, no wrap and no backwards frame (sampled every frame
+ * from the dot's place on the rim), posts no `generate` job (turning the train is
+ * matrix-only), and commits once, about 720 — the wrapped param stored unreduced.
+ *
+ * The rim's path on screen comes from the dot itself: with driveAngle 0, 180, 360 and 540
+ * it sits at 0, 90, 180 and 270 degrees round gear3, which fixes the ellipse the rim
+ * projects to (centre, and the 0 and 90 degree axes); the pointer then follows it.
+ */
+async function checkGearbox(page, url, errors) {
+  const box = await openPoseApp(page, url);
+  const ID = "gear3";
+  const pts = await handleAt(page, ID, [0, 180, 360, 540].map((a) => ({ driveAngle: a })), { driveAngle: 0 });
+  if (pts.some((p) => !p)) throw new Error(`no ${ID} handle point at some drive angle (${JSON.stringify(pts)})`);
+  const c = { x: pts.reduce((a, p) => a + p.x, 0) / 4, y: pts.reduce((a, p) => a + p.y, 0) / 4 };
+  const u = { x: pts[0].x - c.x, y: pts[0].y - c.y }, v = { x: pts[1].x - c.x, y: pts[1].y - c.y };
+  const rim = (deg) => {
+    const r = (deg * Math.PI) / 180;
+    return { x: box.x + c.x + u.x * Math.cos(r) + v.x * Math.sin(r), y: box.y + c.y + u.y * Math.cos(r) + v.y * Math.sin(r) };
+  };
+  // A canvas point's angle round the rim's ellipse, degrees (u at 0, v at 90).
+  const det = u.x * v.y - u.y * v.x;
+  if (Math.abs(det) < 100) throw new Error(`${ID}'s rim is edge-on on screen (u ${JSON.stringify(u)}, v ${JSON.stringify(v)})`);
+  const angleOf = (p) => {
+    const dx = p.x - c.x, dy = p.y - c.y;
+    return (Math.atan2((u.x * dy - u.y * dx) / det, (dx * v.y - dy * v.x) / det) * 180) / Math.PI;
+  };
+  const start = rim(0);
+  for (let a = 0; a < 360; a += 15) {
+    if (!(await onCanvasAt(page, rim(a)))) throw new Error(`${ID}'s rim at ${a} degrees is not on the canvas`);
+  }
+  await hoverHandle(page, start, `${ID}'s rim dot`);
+  const commits0 = await page.evaluate(() => window.__pfCommits.length);
+  const t0 = await page.evaluate(() => performance.now());
+  await page.evaluate((id) => window.__pfSampleHandle(id), ID);
+  await page.mouse.down();
+  let grabbing = null;
+  for (let i = 1; i <= GEAR_TURN_STEPS; i++) {
+    const p = rim((360 * i) / GEAR_TURN_STEPS);
+    await page.mouse.move(p.x, p.y);
+    await sleep(20);
+    if (i === GEAR_TURN_STEPS / 2) {
+      if (!(await page.evaluate(() => window.__pfRuntime.pose.__isDragging()))) {
+        await page.mouse.up();
+        throw new Error(`a drag from ${ID}'s rim never started`);
+      }
+      grabbing = await canvasCursor(page);
+    }
+  }
+  await sleep(120);
+  const samples = await page.evaluate(() => { window.__pfHandleSampling = false; return window.__pfHandleSamples; });
+  const during = generates(await page.evaluate(() => window.__pfWorkerLog), t0);
+  await page.mouse.up();
+  await sleep(600);
+  if (grabbing !== "grabbing") errors.push(`turning ${ID} shows cursor "${grabbing}", not "grabbing"`);
+  if (during.length) errors.push(`${during.length} generate job(s) posted while turning ${ID} (a gear train turns by matrix)`);
+  // Unwrap the dot's angle frame by frame: it may only go forward.
+  let turned = 0, back = 0, prev = null;
+  for (const s of samples) {
+    const a = angleOf(s);
+    if (prev != null) {
+      const step = ((a - prev + 540) % 360) - 180;
+      turned += step;
+      back = Math.min(back, step);
+    }
+    prev = a;
+  }
+  if (back < -0.5) errors.push(`${ID}'s dot stepped backwards ${(-back).toFixed(2)} degrees in one frame`);
+  if (Math.abs(turned - 360) > 5) errors.push(`${ID}'s dot turned ${turned.toFixed(1)} degrees on screen, not one turn`);
+  const commit = await oneCommit(page, commits0, `turning ${ID}`, errors);
+  const drive = commit?.params?.driveAngle;
+  if (commit && !commit.changed?.includes("driveAngle")) errors.push(`turning ${ID} committed ${JSON.stringify(commit.changed)}, not driveAngle`);
+  if (commit && !(Math.abs(drive - 720) <= 5)) errors.push(`one turn of ${ID} committed driveAngle ${drive}, not about 720`);
+  return { handle: ID, frames: samples.length, turnedDeg: Number(turned.toFixed(1)), worstBackStepDeg: Number((-back).toFixed(3)), generatesDuringDrag: during.length, driveAngle: drive ?? null };
+}
+
+/**
+ * The drawer box (parts/drawer-box.js): a MOTION drag, then a SHAPE drag, on one part.
+ *   - drawer1's pull, along its rail (an axis handle): no `generate` job (a drawer slides
+ *     by matrix), one commit opening drawer1 about 60 mm, the other drawers where they were;
+ *   - the top corner, across the top plane (a plane handle): the part is cheap (its last
+ *     build under LIVE_REBUILD_MS), so it rebuilds LIVE — `generate` jobs during the drag —
+ *     yet the host sees none of it: no onBuild until release, exactly one after, and one
+ *     commit growing width and depth about 40 mm each.
+ */
+async function checkDrawerBox(page, url, errors) {
+  const box = await openPoseApp(page, url);
+  const defaults = await page.evaluate(() => window.__pfPart.defaults);
+  const canvas = (p) => ({ x: box.x + p.x, y: box.y + p.y });
+  const drag = async (from, to, label) => {
+    await hoverHandle(page, from, label);
+    await page.mouse.down();
+    for (let i = 1; i <= DRAG_MOVES; i++) {
+      await page.mouse.move(from.x + ((to.x - from.x) * i) / DRAG_MOVES, from.y + ((to.y - from.y) * i) / DRAG_MOVES);
+      await sleep(20);
+      if (i === DRAG_MOVES / 2 && !(await page.evaluate(() => window.__pfRuntime.pose.__isDragging()))) {
+        await page.mouse.up();
+        throw new Error(`a drag from ${label} never started`);
+      }
+    }
+    await sleep(120);
+  };
+
+  // Motion: drawer1 out along its rail.
+  const [d0, d1] = await handleAt(page, "drawer1", [{ drawer1Open: 0 }, { drawer1Open: 60 }], { drawer1Open: defaults.drawer1Open });
+  if (!d0 || !d1) throw new Error("no drawer1 handle point");
+  let commits0 = await page.evaluate(() => window.__pfCommits.length);
+  let t0 = await page.evaluate(() => performance.now());
+  await drag(canvas(d0), canvas(d1), "drawer1's pull");
+  const drawerJobs = generates(await page.evaluate(() => window.__pfWorkerLog), t0);
+  await page.mouse.up();
+  await settle(page);
+  if (drawerJobs.length) errors.push(`${drawerJobs.length} generate job(s) posted while sliding drawer1 (a drawer slides by matrix)`);
+  const slide = await oneCommit(page, commits0, "sliding drawer1", errors);
+  const open = slide?.params?.drawer1Open;
+  if (slide && !(Math.abs(open - 60) <= 6)) errors.push(`sliding drawer1 to its 60 mm mark committed drawer1Open ${open}`);
+  for (const k of ["drawer2Open", "drawer3Open", "width", "depth", "height"]) {
+    if (slide && !Object.is(slide.params[k], defaults[k])) errors.push(`sliding drawer1 moved ${k} (${defaults[k]} -> ${slide.params[k]})`);
+  }
+
+  // Shape: the top corner outward, live-rebuilt.
+  const w = defaults.width, dp = defaults.depth;
+  const [c0, c1] = await handleAt(page, "corner", [{ width: w, depth: dp }, { width: w + 40, depth: dp + 40 }], { width: w, depth: dp });
+  if (!c0 || !c1) throw new Error("no corner handle point");
+  const lastBuildMs = lastBuildTime(await page.evaluate(() => window.__pfWorkerLog));
+  commits0 = await page.evaluate(() => window.__pfCommits.length);
+  const builds0 = await page.evaluate(() => window.__pfBuilds.length);
+  t0 = await page.evaluate(() => performance.now());
+  await drag(canvas(c0), canvas(c1), "the cabinet's corner");
+  const live = generates(await page.evaluate(() => window.__pfWorkerLog), t0);
+  const buildsDuring = (await page.evaluate(() => window.__pfBuilds.length)) - builds0;
+  await page.mouse.up();
+  await settle(page);
+  const buildsAfter = (await page.evaluate(() => window.__pfBuilds.length)) - builds0 - buildsDuring;
+  if (!live.length) errors.push(`no generate job during the corner drag: a part this cheap (last build ${lastBuildMs} ms) rebuilds live`);
+  if (buildsDuring) errors.push(`onBuild fired ${buildsDuring} time(s) during the corner drag (mid-drag builds are transient)`);
+  if (buildsAfter !== 1) errors.push(`onBuild fired ${buildsAfter} time(s) after the corner drag's release, expected exactly 1`);
+  const grow = await oneCommit(page, commits0, "the corner drag", errors);
+  if (grow) {
+    for (const [k, want] of [["width", w + 40], ["depth", dp + 40]]) {
+      if (!(Math.abs(grow.params[k] - want) <= 6)) errors.push(`the corner drag committed ${k} ${grow.params[k]}, not about ${want}`);
+    }
+    if (!Object.is(grow.params.height, defaults.height)) errors.push(`the corner drag moved height (${defaults.height} -> ${grow.params.height})`);
+  }
+  return {
+    drawer: { generatesDuringDrag: drawerJobs.length, drawer1Open: open ?? null },
+    corner: { lastBuildMs, liveGenerates: live.length, buildsDuring, buildsAfter, width: grow?.params?.width ?? null, depth: grow?.params?.depth ?? null },
+  };
+}
+
 const PAGES = [
   { entry: "pose-smoke.html", run: checkSmoke, required: true },
   { entry: "robot-arm.html", run: checkRobotArm, required: true },
   { entry: "hand.html", run: checkHand, required: true },
+  { entry: "gearbox.html", run: checkGearbox, required: true },
+  { entry: "drawer-box.html", run: checkDrawerBox, required: true },
 ];
 
 let failed = false;

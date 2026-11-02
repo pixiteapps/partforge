@@ -365,11 +365,11 @@ export default {
   // drives two joints (pip and dip, the thumb's ip alone) and is left to the drag.
   handles: {
     thumb: {
-      limb: "thumb", mode: "angles", params: ["thumbKnuckle", "thumbCurl", "thumbOppose", "wristPitch", "wristYaw"], lock: "thumbLock",
+      on: "thumb", drag: "angles", params: ["thumbKnuckle", "thumbCurl", "thumbOppose", "wristPitch", "wristYaw"], lock: "thumbLock",
       joints: { oppose: "thumbOppose", mcp: "thumbKnuckle", ...WRIST_JOINTS },
     },
     ...Object.fromEntries(FINGERS.map((f) => [f.id, {
-      limb: f.id, mode: "angles", params: [`${f.id}Knuckle`, `${f.id}Curl`, `${f.id}Spread`, "wristPitch", "wristYaw"], lock: `${f.id}Lock`,
+      on: f.id, drag: "angles", params: [`${f.id}Knuckle`, `${f.id}Curl`, `${f.id}Spread`, "wristPitch", "wristYaw"], lock: `${f.id}Lock`,
       joints: { spread: f.sign === 1 ? `${f.id}Spread` : { param: `${f.id}Spread`, scale: f.sign }, mcp: `${f.id}Knuckle`, ...WRIST_JOINTS },
     }])),
   },

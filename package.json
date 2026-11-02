@@ -1,6 +1,6 @@
 {
   "name": "partforge",
-  "version": "0.179.0",
+  "version": "0.180.0",
   "description": "Turn a declarative part definition into a parametric-CAD web app (three.js + Manifold/Replicad). Requires a Vite-based consumer.",
   "type": "module",
   "license": "MIT",
@@ -71,6 +71,10 @@
       "types": "./types/kinematics.d.ts",
       "default": "./src/framework/domains/kinematics/index.js"
     },
+    "./mechanisms": {
+      "types": "./types/mechanisms.d.ts",
+      "default": "./src/framework/domains/mechanisms/index.js"
+    },
     "./organic": {
       "types": "./types/organic.d.ts",
       "default": "./src/framework/domains/organic/index.js"
@@ -109,6 +113,9 @@
       ],
       "kinematics": [
         "./types/kinematics.d.ts"
+      ],
+      "mechanisms": [
+        "./types/mechanisms.d.ts"
       ],
       "organic": [
         "./types/organic.d.ts"

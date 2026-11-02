@@ -162,4 +162,62 @@ describe("createPoseScene", () => {
     expect(scene.group.children.length).toBeGreaterThan(0);
     scene.dispose();
   });
+
+  // A generic handle's pseudo-limb (handle-source.js's handleRecord): one dot, its source's lines.
+  const HANDLE = {
+    kind: "partforge.handle", name: "handle:corner", handleId: "corner", joints: [],
+    points: { tip: [5, 5, 0] }, tip: "tip", values: [], axes: {}, drag: "plane", axis: null,
+    lines: [[[0, 0, 0], [5, 5, 0]], [[5, 5, 0], [9, 0, 0]]],
+  };
+
+  it("a generic handle shows one dot and its source's lines as bones", () => {
+    const viewer = fakeViewer();
+    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    scene.setLimbs([INFO, HANDLE]);
+    scene.setHover("handle:corner", "tip");
+    const spheres = scene.group.children.filter((c) => c.geometry?.type === "SphereGeometry");
+    expect(spheres.map((m) => m.position.toArray())).toEqual([[5, 5, 0]]);
+    const lines = scene.group.children.filter((c) => c.isLineSegments2);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].geometry.attributes.instanceStart.count).toBe(2); // the two source lines
+    scene.setPins([{ limb: "handle:corner", at: "tip" }]);
+    scene.setHover(null);
+    expect(scene.pinBadges()).toEqual([{ limb: "handle:corner", at: "tip", point: [5, 5, 0] }]);
+    scene.dispose();
+  });
+
+  it("guides and the readout draw in their own group, apart from the limbs, and clear", () => {
+    const viewer = fakeViewer();
+    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    scene.setLimbs([HANDLE]);
+    scene.setGuides([
+      { kind: "plane", points: [[1, 1, 0], [-1, 1, 0], [-1, -1, 0], [1, -1, 0]] },
+      { kind: "path", points: [[0, 0, 0], [1, 0, 0], [2, 0, 0]] },
+      { kind: "axis", points: [[0, 0, 0], [NaN, 0, 0]] }, // unreadable: dropped
+    ]);
+    expect(scene.group.children.length).toBe(0); // the limbs' group is untouched
+    expect(scene.guideGroup.parent).toBe(viewer.__parts);
+    expect(viewer.registerCanonicalCaptureHidden).toHaveBeenCalledWith(scene.guideGroup);
+    const segs = scene.guideGroup.children.map((c) => c.geometry.attributes.instanceStart.count);
+    expect(segs).toEqual([4, 2]); // the square closes; the path does not
+    scene.setReadout({ at: [5, 5, 0], text: "width 84.0 · depth 60.5" });
+    expect(scene.guideState().readout).toEqual({ at: [5, 5, 0], text: "width 84.0 · depth 60.5" });
+    const label = scene.guideGroup.children.find((c) => c.geometry?.type === "PlaneGeometry");
+    expect(label.material.map.image.width).toBe(40 * "width 84.0 · depth 60.5".length);
+    scene.tick();
+    expect(label.position.y).toBeGreaterThan(5); // lifted above the point, on screen
+    viewer.requestRender.mockClear();
+    scene.setReadout(null);
+    scene.setGuides([]);
+    expect(scene.guideGroup.children.length).toBe(0);
+    expect(viewer.requestRender).toHaveBeenCalled();
+    viewer.requestRender.mockClear();
+    scene.setGuides([]); // nothing shown, nothing to do
+    expect(viewer.requestRender).not.toHaveBeenCalled();
+    scene.setGuides([{ kind: "rotary", points: [[1, 0, 0], [0, 1, 0], [-1, 0, 0]] }]);
+    scene.clear();
+    expect(scene.guideGroup.children.length).toBe(0);
+    scene.dispose();
+    expect(scene.guideGroup.parent).toBeNull();
+  });
 });

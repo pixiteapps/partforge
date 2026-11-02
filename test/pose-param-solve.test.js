@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { limbInfo, solveAngles, solveGoalPinned, goalValues, seedValues, snapValues } from "../src/framework/pose/param-solve.js";
+import { limbInfo, solveAngles, solveGoalPinned, goalValues, seedValues, snapValues, rangesOf } from "../src/framework/pose/param-solve.js";
 import { defaultSolve } from "../src/framework/pose/pose-session.js";
 import robotArm from "../src/parts/robot-arm.js";
 import { resolveParams } from "../src/framework/part-model.js";
@@ -23,7 +23,7 @@ function drag(params, opts, calls = 5) {
 describe("limbInfo", () => {
   it("returns the posed limb's ikInfo, or null when the limb is missing or derive throws", () => {
     expect(limbInfo(hand, {}, hand.handles.a).name).toBe("a");
-    expect(limbInfo(hand, {}, { limb: "nope", mode: "angles", params: [] })).toBeNull();
+    expect(limbInfo(hand, {}, { on: "nope", drag: "angles", params: [] })).toBeNull();
     expect(limbInfo(hand, { aCurl: 5 }, hand.handles.a)).toBeNull();   // curl > 1: derive throws
   });
 });
@@ -77,7 +77,7 @@ describe("solveAngles", () => {
 
   it("locked handle is skipped", () => {
     // A wrist drag that lists bCurl too, with b's tip held: unlocked, bCurl moves to hold b.
-    const wristDrag = { limb: "a", mode: "angles", params: ["wrist", "aCurl", "bCurl"] };
+    const wristDrag = { on: "a", drag: "angles", params: ["wrist", "aCurl", "bCurl"] };
     const allHandles = [wristDrag, hand.handles.a, hand.handles.b];
     const b0 = tipOf(hand, {}, "b");
     const target = tipOf(hand, { wrist: 25, aCurl: 0.3 }, "a");
@@ -152,7 +152,7 @@ const arm = {
   parts: { body: { build: (k) => k.box({ size: [1, 1, 1] }) } },
   views: { main: { label: "Main" } },
   handles: {
-    tool: { limb: "arm", mode: "goal", params: { position: ["tx", "ty", "tz"], aim: ["pitch", "yaw", "roll"] },
+    tool: { on: "arm", drag: "goal", params: { position: ["tx", "ty", "tz"], aim: ["pitch", "yaw", "roll"] },
       seed: ["sBend", "sSpread", "sTwist", "elbow"] },
   },
 };
@@ -235,5 +235,20 @@ describe("solveGoalPinned (a goal drag holding pins)", () => {
     expect(r.values.toolZ).toBeGreaterThanOrEqual(-50);
     const posed = resolveParams(robotArm, { ...p, ...r.values }).d.arm;
     expect(dist(posed.world("tip").origin, [r.values.toolX, r.values.toolY, r.values.toolZ])).toBeLessThan(0.01);
+  });
+});
+
+describe("wrap controls", () => {
+  const wrapPart = (wrap) => ({
+    parameters: [{ id: "s", title: "S", controls: [{ key: "a", type: "slider", label: "A", min: 0, max: 360, step: 0.1, wrap }] }],
+    defaults: { a: 0 },
+  });
+  it("snapValues rounds a wrapped key to its step but never clamps it", () => {
+    expect(snapValues(wrapPart(true), { a: 720.04 })).toEqual({ a: 720 });
+    expect(snapValues(wrapPart(false), { a: 400 })).toEqual({ a: 360 });
+  });
+  it("rangesOf carries wrap", () => {
+    expect(rangesOf(wrapPart(true)).get("a").wrap).toBe(true);
+    expect(rangesOf(wrapPart(false)).get("a").wrap).toBe(false);
   });
 });

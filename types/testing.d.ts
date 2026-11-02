@@ -535,6 +535,24 @@ export interface ShapeProbeFacts {
   truncated: boolean;
 }
 
+export interface HandleFacts {
+  id: string;
+  label: string;
+  kind: "point" | "axis" | "plane" | "rotary" | "goal" | "angles";
+  /** Part coordinates, rounded to 0.001 mm; null when the point could not be read. */
+  point: [number, number, number] | null;
+  /** Flat list; a goal handle lists position, then aim. */
+  params: string[];
+  /** axis: its direction; plane: its normal; rotary: its axis direction. */
+  direction?: [number, number, number];
+  /** rotary only: a point on the axis. */
+  origin?: [number, number, number];
+  /** True while the handle's `lock` parameter is true. */
+  locked: boolean;
+  /** Short message, present only with `point: null`. */
+  error?: string;
+}
+
 export interface MeasureReport {
   /** `part.meta.title`, falling back to the view name. */
   part: string;
@@ -567,6 +585,11 @@ export interface MeasureReport {
    * Shape2D becomes a `ShapeProbeFacts`, plain JSON passes through, a throw is `{error}`.
    */
   probes?: Record<string, unknown>;
+  /**
+   * Pose-mode handles shown in this view, in declaration order, at the measured params;
+   * absent when the part declares none.
+   */
+  handles?: HandleFacts[];
   /** Every sub-part watertight and nothing interpenetrating. Near misses never affect it. */
   ok: boolean;
 }

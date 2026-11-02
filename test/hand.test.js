@@ -127,12 +127,12 @@ test("handles: one angles-mode handle per digit — its knuckle, curl and spread
   const spread = { index: "indexSpread", middle: "middleSpread", ring: { param: "ringSpread", scale: -1 }, pinky: { param: "pinkySpread", scale: -1 } };
   for (const f of FINGERS) {
     expect(part.handles[f]).toEqual({
-      limb: f, mode: "angles", params: [`${f}Knuckle`, `${f}Curl`, `${f}Spread`, "wristPitch", "wristYaw"], lock: `${f}Lock`,
+      on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`, `${f}Spread`, "wristPitch", "wristYaw"], lock: `${f}Lock`,
       joints: { spread: spread[f], mcp: `${f}Knuckle`, ...wrist },
     });
   }
   expect(part.handles.thumb).toEqual({
-    limb: "thumb", mode: "angles", params: ["thumbKnuckle", "thumbCurl", "thumbOppose", "wristPitch", "wristYaw"], lock: "thumbLock",
+    on: "thumb", drag: "angles", params: ["thumbKnuckle", "thumbCurl", "thumbOppose", "wristPitch", "wristYaw"], lock: "thumbLock",
     joints: { oppose: "thumbOppose", mcp: "thumbKnuckle", ...wrist },
   });
 });

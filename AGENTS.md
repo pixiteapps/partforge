@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has twenty-six: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has twenty-eight: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -64,7 +64,13 @@ is the fixture that script drags), `organic-hand.js` (the organic reference part
 with crease detail and fine-grid nails unioned on, posed by sliders, its frames
 reported by a `k.implicitFrames` probe; its builders are also the implicit
 engine's test fixture, re-exported by `test/fixtures/implicit-trees.js`, so
-editing them moves pinned mesh hashes; no demo page), and `material-swatches.js` (not a reference part: the dev-only
+editing them moves pinned mesh hashes; no demo page), `gearbox.js` (the rotary-handle reference part and the
+worked example of `docs/domains/mechanisms.md` - three spur gears placed by one
+`gearTrain` from `partforge/mechanisms` in `derive`, a rotary handle on every gear and a
+crank, all writing one `wrap: true` `driveAngle`, and a `spin` animation that never
+rebuilds; `gearbox.html`), `drawer-box.js` (shape and motion handles on one part - a
+corner `plane` handle writing width and depth, which rebuilds, and an `axis` handle per
+drawer, which only re-places it; `drawer-box.html`, dev-only and not in `rollupOptions.input`), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`), and `offset-demo.js`
 (not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
 `offset-demo.html`).
@@ -638,14 +644,16 @@ the installed package, so let the publish finish before bumping the dep there.
   worker-safe; a domain never imports another domain. A manifest's `lintRules` may
   import `lint/finding.js` and nothing else from lint - `verify-metrics.js` reads the
   registry at module top level, so a rule reaching `rules-verify.js` would hit the
-  registry before it exists. `DOMAINS` lists two domains. Kinematics
-  (`domains/kinematics/`, `partforge/kinematics`) tags no kernel op. Organic
-  (`domains/organic/`, `partforge/organic`) is registered IN PLACE: it tags
+  registry before it exists. `DOMAINS` lists three domains. Kinematics
+  (`domains/kinematics/`, `partforge/kinematics`) and mechanisms
+  (`domains/mechanisms/`, `partforge/mechanisms`: gear trains, belts, racks and
+  crank-sliders as derive-time point sources that also place sub-parts) tag no kernel
+  op. Organic (`domains/organic/`, `partforge/organic`) is registered IN PLACE: it tags
   `implicit` and `implicitFrames`, but the engine stays in `geometry/implicit/`, since
   both backends and the native core call it and core may not import a domain folder;
   its attaches are only the fallbacks for a kernel without the ops, and its entry
   reaches the grammar's leaf modules alone (no mesher, no native core —
-  `test/organic-domain.test.js`). Neither declares facts, so the registry's other seams are exercised by the test-only
+  `test/organic-domain.test.js`). None declares facts, so the registry's other seams are exercised by the test-only
   fixture at `test/fixtures/domain-fixture/`, which seam tests reach by
   `vi.mock`-ing `registry.js` - never by a test-only parameter on a public API.
   `partforge/lint` exports the registry as names only (`DOMAINS`) and
@@ -675,10 +683,28 @@ the installed package, so let the publish finish before bumping the dep there.
   hover rule), `gizmo-pick.js` (proxy-vs-centre picking) and `gizmo-rotate.js` (the
   ring drag: plane route, edge-on screen fallback). Change a shared look there and both
   widgets move. Posing has NO toggle: it is live in the normal click mode whenever measure,
-  sketch, cutaway and a cached preview are all off (mount's `setSuppressed`); handles
-  show on hover near a limb, a press on one claims its click (`takeClick`, the
-  picker's guard) and a hovered dot hides the hover tooltip (`claimsHover`). Mount
-  applies the session's effects: it holds regen jobs during a drag, ghosts the
+  sketch, cutaway and a cached preview are all off (mount's `setSuppressed`); a press on
+  a handle claims its click (`takeClick`, the picker's guard) and a hovered dot hides the
+  hover tooltip (`claimsHover`). **Generic handles** (spec
+  `docs/superpowers/specs/2026-11-02-generic-handles-design.md`): a `part.handles` entry
+  is `on` (+ `at`) a point source in `derive` (anything with plain-data `handleInfo()`:
+  a posed limb, a mechanisms helper) or a `point(p, d)` function, with `drag` one of
+  point / axis / plane / rotary (or goal / angles on a limb) and the `params` it writes.
+  `pose/handle-source.js` is the pure source layer (`handleKind`, `locateHandle`,
+  `handleAxis` - an axis or rotary drag with no own direction takes the source's
+  `axes[<prefix of at>]` - and `handleRecord`, the pseudo-limb Pose mode draws),
+  `pose/drag-kinds.js` the pure geometric solvers per kind, `pose/handle-guides.js` the
+  guides (arrow, square, ring, travel path) drawn while the dot is hovered or dragged.
+  A handle shows near its point or over its `showOn` sub-part (near a limb's bones for
+  goal / angles), all hidden at rest. Mount applies the session's effects: it holds
+  regen jobs during a drag - except for a cheap part (last build under `LIVE_REBUILD_MS`,
+  120 ms), whose stale sub-parts keep rebuilding live as TRANSIENT cycles
+  (`cycleTransient`: drawn and un-ghosted, no `onBuild`/status/busy/export change, even
+  `progress` is ignored); what they drew goes in the `owed` set, and `isSettled` (current
+  and not owed) - not `isCurrent` - gates export, the floor and `refreshView`, so the
+  release sends exactly one real build. `oracle/handles.js` (`handlesReport`) lists the
+  handles Pose mode would show for `measure().handles` / `report.measure.handles`, which
+  the CLI prints; it never fails on a bad handle. Mount also ghosts the
   sub-parts that must rebuild at 0.35 opacity, lifts each ghost in the delivery that
   shows its new mesh (playback-stale deliveries included), commits once on release
   (`onParamsCommit`), cancels the drag on a host write or a view switch, and makes

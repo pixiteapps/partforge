@@ -10,6 +10,10 @@ import { resolveParams } from "../part-model.js";
 import { controlNodes } from "../panel/model.js";
 import { desugar } from "../panel/legacy.js";
 import { anglesFromAim, aimTurn } from "../solve/aim.js";
+import { angleAbout, axisBasis, wrapTo180 } from "../solve/axis-angle.js";
+import { locateHandle } from "./handle-source.js";
+
+export { angleAbout, axisBasis };
 
 /** The residual of an evaluation whose derive threw: far worse than any real pose. */
 const FAILED = 1e6;
@@ -35,22 +39,22 @@ const TOL_MM = 1e-3;
 const isLimb = (v) => typeof v?.ikInfo === "function";
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 
-/** Every numeric control's { min, max, step } by key, hidden ones included (the schema walk lint uses). */
+/** Every numeric control's { min, max, step, wrap } by key, hidden ones included (the schema walk lint uses). */
 const RANGES = new WeakMap();
-function rangesOf(part) {
+export function rangesOf(part) {
   let ranges = RANGES.get(part);
   if (ranges) return ranges;
   ranges = new Map();
   for (const c of controlNodes(desugar(part?.parameters))) {
     if (c.type === "checkbox" || typeof c.key !== "string" || ranges.has(c.key)) continue;
-    ranges.set(c.key, { min: c.min, max: c.max, step: c.step });
+    ranges.set(c.key, { min: c.min, max: c.max, step: c.step, wrap: c.wrap === true });
   }
   if (part && typeof part === "object") RANGES.set(part, ranges);
   return ranges;
 }
 
 const clamp = (v, r) => {
-  if (!r) return v;
+  if (!r || r.wrap) return v;   // a wrapped control turns without end: stored unreduced
   if (isNum(r.min) && v < r.min) v = r.min;
   if (isNum(r.max) && v > r.max) v = r.max;
   return v;
@@ -87,7 +91,7 @@ function posedLimb(part, params, name) {
 
 /** The handle limb's ikInfo() at these params; null when derive throws or the limb is missing. */
 export function limbInfo(part, params, handle) {
-  const posed = posedLimb(part, params, handle?.limb);
+  const posed = posedLimb(part, params, handle?.on);
   if (!posed) return null;
   try { return posed.ikInfo(); } catch { return null; }
 }
@@ -104,28 +108,28 @@ function dofsOf(handle, allHandles, p) {
 }
 
 /**
- * Solve the handle's angles-mode parameters so the grabbed point (a joint name or "tip")
- * reaches `target` while every hold `{ limb, at, point }` stays at its point.
- * Returns `{ values, error }` (values: every DOF, clamped to its schema range; error: the
- * residual norm in mm, each hold's share weighted by HOLD_WEIGHT) or null when the start
- * pose itself fails. Never throws for a derive that throws: that evaluation just scores
- * FAILED. It stops early once the residual is at most `tol` (default TOL_MM).
+ * The solver's variables for `keys`: per DOF, x = offset + scale * u. A finite schema
+ * range is solved as u in [0, 1] across it, so one step suits degrees and 0..1 curls
+ * alike; a param with no range is solved raw and unbounded. A wrapped param keeps its
+ * range's scale (one turn is one unit, so the Jacobian is on the same footing as a
+ * bounded DOF's and the starting damping means the same) but no bounds: u runs past 1,
+ * and the value past `max`, as a drag turns it on.
  */
-export function solveAngles({ part, params, handle, grab, target, holds = [], iterations = 8, allHandles = [handle], tol = TOL_MM }) {
-  const base = { ...part.defaults, ...params };
-  const keys = dofsOf(handle, allHandles, base);
-  const ranges = rangesOf(part);
-  // Per DOF, x = offset + scale * u: u in [0, 1] over a finite range, else the raw value.
+function dofSpace(ranges, base, keys) {
   const offset = [], scale = [], lo = [], hi = [], u0 = [];
   for (const k of keys) {
     const r = ranges.get(k);
     const v = clamp(isNum(base[k]) ? base[k] : 0, r);
-    if (r && isNum(r.min) && isNum(r.max) && r.max > r.min) {
+    const finite = r && isNum(r.min) && isNum(r.max) && r.max > r.min;
+    if (finite && !r.wrap) {
       offset.push(r.min); scale.push(r.max - r.min); lo.push(0); hi.push(1);
+      u0.push((v - r.min) / (r.max - r.min));
+    } else if (finite) {
+      offset.push(r.min); scale.push(r.max - r.min); lo.push(-Infinity); hi.push(Infinity);
       u0.push((v - r.min) / (r.max - r.min));
     } else {
       offset.push(0); scale.push(1);
-      lo.push(isNum(r?.min) ? r.min : -Infinity); hi.push(isNum(r?.max) ? r.max : Infinity);
+      lo.push(r?.wrap || !isNum(r?.min) ? -Infinity : r.min); hi.push(r?.wrap || !isNum(r?.max) ? Infinity : r.max);
       u0.push(v);
     }
   }
@@ -134,13 +138,61 @@ export function solveAngles({ part, params, handle, grab, target, holds = [], it
     keys.forEach((k, i) => { out[k] = offset[i] + scale[i] * u[i]; });
     return out;
   };
-  const points = [{ limb: handle.limb, at: grab, point: target }, ...holds];
+  return { lo, hi, u0, valuesOf };
+}
+
+/** A hold's point reference: `{ ref, point }`, or the older `{ limb, at, point }`. */
+const refOf = (hold) => hold.ref ?? { limb: hold.limb, at: hold.at };
+
+/**
+ * Where a point reference sits at a resolved (p, d): `{ limb, at }` reads the posed limb's
+ * frame (the limb path, unchanged), `{ handleId, handle }` any handle (locateHandle).
+ * Throws when it cannot be read — the solve scores that evaluation FAILED.
+ */
+function locate(part, p, d, ref) {
+  return ref.handle ? locateHandle(part, p, d, ref.handle) : d[ref.limb].world(ref.at).origin;
+}
+
+/**
+ * Run the DLS over `space` with `evaluate(u)` (which may throw) as the residual.
+ * The Jacobian probes u ± H, past a bound when a DOF sits on one (a straight finger is
+ * curl 0). Outside its range a parameter may make derive throw, which would poison the
+ * whole column, so a probe is clamped back in: the derivative at a bound is one-sided
+ * (half its size), never garbage.
+ */
+function runSolve(space, evaluate, m, { iterations, lambda, tol }) {
+  const { lo, hi, u0 } = space;
+  const residuals = (u) => {
+    const inside = Float64Array.from(u, (v, i) => Math.min(hi[i], Math.max(lo[i], v)));
+    try { return evaluate(inside); } catch { return new Float64Array(m).fill(FAILED); }
+  };
+  if (u0.length === 0) {
+    const r = residuals(u0);
+    return { x: u0, error: Math.hypot(...r) };
+  }
+  return solveDLS({ x0: u0, lo, hi, residuals, iterations, h: H, lambda, tol });
+}
+
+/**
+ * Solve the handle's angles-mode parameters so the grabbed point (a joint name or "tip")
+ * reaches `target` while every hold stays at its point. A hold is `{ ref, point }` (`ref`
+ * `{ limb, at }` or `{ handleId, handle }`, see locate) or the older `{ limb, at, point }`.
+ * Returns `{ values, error }` (values: every DOF, clamped to its schema range; error: the
+ * residual norm in mm, each hold's share weighted by HOLD_WEIGHT) or null when the start
+ * pose itself fails. Never throws for a derive that throws: that evaluation just scores
+ * FAILED. It stops early once the residual is at most `tol` (default TOL_MM).
+ */
+export function solveAngles({ part, params, handle, grab, target, holds = [], iterations = 8, allHandles = [handle], tol = TOL_MM }) {
+  const base = { ...part.defaults, ...params };
+  const keys = dofsOf(handle, allHandles, base);
+  const space = dofSpace(rangesOf(part), base, keys);
+  const points = [{ ref: { limb: handle.on, at: grab }, point: target }, ...holds.map((h) => ({ ref: refOf(h), point: h.point }))];
   const m = points.length * 3;
   const evaluate = (u) => {
-    const { d } = resolveParams(part, { ...base, ...valuesOf(u) });
+    const { p, d } = resolveParams(part, { ...base, ...space.valuesOf(u) });
     const r = new Float64Array(m);
-    points.forEach(({ limb, at, point }, i) => {
-      const o = d[limb].world(at).origin;
+    points.forEach(({ ref, point }, i) => {
+      const o = locate(part, p, d, ref);
       const w = i === 0 ? 1 : HOLD_WEIGHT;
       for (let c = 0; c < 3; c++) r[3 * i + c] = w * (o[c] - point[c]);
     });
@@ -148,25 +200,122 @@ export function solveAngles({ part, params, handle, grab, target, holds = [], it
   };
   let lambda;
   try {
-    evaluate(u0);
-    lambda = limbLength(resolveParams(part, { ...base, ...valuesOf(u0) }).d[handle.limb]);
+    evaluate(space.u0);
+    lambda = limbLength(resolveParams(part, { ...base, ...space.valuesOf(space.u0) }).d[handle.on]);
   } catch {
     return null;
   }
-  // The Jacobian probes u ± H, past a bound when a DOF sits on one (a straight finger is
-  // curl 0). Outside its range a parameter may make derive throw, which would poison the
-  // whole column, so a probe is clamped back in: the derivative at a bound is one-sided
-  // (half its size), never garbage.
-  const residuals = (u) => {
-    const inside = Float64Array.from(u, (v, i) => Math.min(hi[i], Math.max(lo[i], v)));
-    try { return evaluate(inside); } catch { return new Float64Array(m).fill(FAILED); }
-  };
-  if (keys.length === 0) {
-    const r = residuals(u0);
-    return { values: {}, error: Math.hypot(...r) };
+  const { x, error } = runSolve(space, evaluate, m, { iterations, lambda, tol });
+  return { values: keys.length ? space.valuesOf(x) : {}, error };
+}
+
+/**
+ * The hold weights a generic handle's solve tries in turn. A generic handle's params
+ * often move a pinned point exactly as fast as the grabbed one (every rim in a gear train
+ * turns at one pitch-line speed, every corner of a box moves with its width), and a
+ * least-squares hold gives way by about the miss over the weight squared: at HOLD_WEIGHT
+ * a pinned gear would still let the train turn 1% of the way, frame after frame. So when
+ * a hold is left more than TOL_MM off its point, the solve runs again from the start
+ * with the weight ten times firmer, up to 1000 (a 180 degree pull then leaks 0.0002).
+ */
+const HOLD_WEIGHTS = [HOLD_WEIGHT, 100, 1000];
+
+/**
+ * The starting damping for a generic handle — the role limbLength plays for a limb: the
+ * scale of the Jacobian's entries in mm per normalised unit. Rotary: the grab radius
+ * (at least 1 mm). Otherwise how far the point moves when every DOF goes from its min to
+ * its max (one derive at each end); 1 when a DOF is unbounded or wraps, or either end
+ * cannot be read.
+ */
+function handleSpan(part, base, handle, keys, ranges, target) {
+  if (isNum(target?.angleDeg)) return Math.max(1, isNum(target.radius) ? target.radius : 1);
+  const ends = [{}, {}];
+  for (const k of keys) {
+    const r = ranges.get(k);
+    if (!r || r.wrap || !isNum(r.min) || !isNum(r.max)) return 1;
+    ends[0][k] = r.min;
+    ends[1][k] = r.max;
   }
-  const { x, error } = solveDLS({ x0: u0, lo, hi, residuals, iterations, h: H, lambda, tol });
-  return { values: valuesOf(x), error };
+  try {
+    const [a, b] = ends.map((e) => {
+      const { p, d } = resolveParams(part, { ...base, ...e });
+      return locateHandle(part, p, d, handle);
+    });
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    return len > 0 ? len : 1;
+  } catch {
+    return 1;
+  }
+}
+
+/**
+ * Solve a generic handle's (`on` / `point`, or a limb handle read through locateHandle)
+ * listed parameters so its point reaches `target` while every hold (as solveAngles) stays
+ * at its point. `target` is `{ point: [x, y, z] }` for a point, axis or plane drag (the
+ * caller has already put it on the line or plane), or `{ angleDeg, axis: { origin,
+ * direction }, radius }` for a rotary drag: the point's angle about the axis
+ * (angleAbout's convention) should be `angleDeg`. The rotary residual is two numbers in
+ * mm — radius × the wrapped angle miss (-180..180, so a full turn never reads as a step
+ * backwards), and the point's travel along the axis since the start of the solve (so a
+ * slide cannot fake a turn) — and so weighs against a hold as a point's would.
+ *
+ * Returns `{ values, error }` (error: the weighted residual norm, mm) or null when the
+ * start pose cannot be read. A frame whose derive or `point` throws scores FAILED, so the
+ * drag holds the last readable values. Holds are firmed up as HOLD_WEIGHTS says.
+ */
+export function solveHandle({ part, params, handle, target, holds = [], allHandles = [handle], iterations = 8, tol = TOL_MM }) {
+  const base = { ...part.defaults, ...params };
+  const keys = dofsOf(handle, allHandles, base);
+  const ranges = rangesOf(part);
+  const space = dofSpace(ranges, base, keys);
+  const rotary = isNum(target?.angleDeg) && target.axis;
+  const pins = holds.map((h) => ({ ref: refOf(h), point: h.point }));
+  const lead = rotary ? 2 : 3;
+  const m = lead + pins.length * 3;
+  const at = (u) => {
+    const { p, d } = resolveParams(part, { ...base, ...space.valuesOf(u) });
+    return { p, d, o: locateHandle(part, p, d, handle) };
+  };
+  let start;
+  try { start = at(space.u0).o; } catch { return null; }
+  let n = null, radius = 1;
+  if (rotary) {
+    const dir = target.axis.direction;
+    const len = Math.hypot(dir[0], dir[1], dir[2]);
+    n = [dir[0] / len, dir[1] / len, dir[2] / len];
+    radius = isNum(target.radius) && target.radius > 0 ? target.radius : 1;
+  }
+  const evaluate = (u, w) => {
+    const { p, d, o } = at(u);
+    const r = new Float64Array(m);
+    if (rotary) {
+      r[0] = radius * ((wrapTo180(angleAbout(o, target.axis) - target.angleDeg) * Math.PI) / 180);
+      r[1] = (o[0] - start[0]) * n[0] + (o[1] - start[1]) * n[1] + (o[2] - start[2]) * n[2];
+    } else {
+      for (let c = 0; c < 3; c++) r[c] = o[c] - target.point[c];
+    }
+    pins.forEach(({ ref, point }, i) => {
+      const q = locate(part, p, d, ref);
+      for (let c = 0; c < 3; c++) r[lead + 3 * i + c] = w * (q[c] - point[c]);
+    });
+    return r;
+  };
+  try { evaluate(space.u0, HOLD_WEIGHT); } catch { return null; }
+  const lambda = handleSpan(part, base, handle, keys, ranges, target);
+  /** The farthest any hold sits off its point at u, in mm (Infinity when unreadable). */
+  const slip = (u) => {
+    let r;
+    try { r = evaluate(u, 1); } catch { return Infinity; }
+    let worst = 0;
+    for (let i = 0; i < pins.length; i++) worst = Math.max(worst, Math.hypot(r[lead + 3 * i], r[lead + 3 * i + 1], r[lead + 3 * i + 2]));
+    return worst;
+  };
+  let out;
+  for (const w of pins.length ? HOLD_WEIGHTS : [HOLD_WEIGHT]) {
+    out = runSolve(space, (u) => evaluate(u, w), m, { iterations, lambda, tol });
+    if (!pins.length || slip(out.x) <= TOL_MM) break;
+  }
+  return { values: keys.length ? space.valuesOf(out.x) : {}, error: out.error };
 }
 
 /**
@@ -193,7 +342,7 @@ export function goalValues({ handle, point, aimAngles, part }) {
  * ball as bend, spread, twist. Null when derive throws or the limb is missing.
  */
 export function seedValues({ part, params, handle }) {
-  const posed = posedLimb(part, params, handle?.limb);
+  const posed = posedLimb(part, params, handle?.on);
   if (!posed) return null;
   let joints;
   try { joints = posed.ikInfo().joints; } catch { return null; }
@@ -299,8 +448,8 @@ export function jointRings({ part, params, ids, infoOf }) {
   for (const handleId of ids) {
     const h = handles[handleId];
     if (!h || typeof h !== "object") continue;
-    if (h.mode === "goal" && Array.isArray(h.seed) && h.seed.length) {
-      const info = infoOf(h.limb);
+    if (h.drag === "goal" && Array.isArray(h.seed) && h.seed.length) {
+      const info = infoOf(h.on);
       if (!info) continue;
       let k = 0;
       for (const j of info.joints) {
@@ -309,16 +458,16 @@ export function jointRings({ part, params, ids, infoOf }) {
           const slots = {};
           BALL_SLOTS.forEach((ring, c) => { if (typeof h.seed[k + c] === "string") slots[ring] = { param: h.seed[k + c], scale: 1 }; });
           k += 3;
-          add(h.limb, j, handleId, "goal", slots);
+          add(h.on, j, handleId, "goal", slots);
         } else {
-          if (typeof h.seed[k] === "string") add(h.limb, j, handleId, "goal", { [hingeSlot(j)]: { param: h.seed[k], scale: 1 } });
+          if (typeof h.seed[k] === "string") add(h.on, j, handleId, "goal", { [hingeSlot(j)]: { param: h.seed[k], scale: 1 } });
           k += 1;
         }
       }
-    } else if (h.mode === "angles" && h.joints && typeof h.joints === "object" && !Array.isArray(h.joints)) {
+    } else if (h.drag === "angles" && h.joints && typeof h.joints === "object" && !Array.isArray(h.joints)) {
       for (const [key, entry] of Object.entries(h.joints)) {
         const { limb, joint } = parseJointKey(key);
-        const limbKey = limb ?? h.limb;
+        const limbKey = limb ?? h.on;
         const info = infoOf(limbKey);
         const j = info?.joints.find((x) => x.name === joint);
         const slots = j && jointEntrySlots(entry, j);
@@ -427,7 +576,7 @@ const GOAL_HOLD_WEIGHT = 100;
  * norm, mm) or null when the limb cannot be read.
  */
 export function solveGoalPinned({ part, params, handle, target, holds = [], aimAngles = null, iterations = 8, tol = TOL_MM }) {
-  const posed = posedLimb(part, params, handle?.limb);
+  const posed = posedLimb(part, params, handle?.on);
   if (!posed || typeof posed.ikForward !== "function" || !Array.isArray(handle.seed)) return null;
   let info;
   try { info = posed.ikInfo(); } catch { return null; }
@@ -475,7 +624,7 @@ export function solveGoalPinned({ part, params, handle, target, holds = [], aimA
     const t = aimTurn(handle.toward, { pitch, yaw, roll: handle.params?.aim?.length >= 3 ? roll ?? 0 : undefined });
     aim = { y: t.aim, z: handle.params?.aim?.length >= 3 ? t.up : null };
   }
-  const own = holds.filter((h) => h?.limb === handle.limb && Array.isArray(h.point));
+  const own = holds.filter((h) => h?.limb === handle.on && Array.isArray(h.point));
   const m = 3 + (aim ? (aim.z ? 6 : 3) : 0) + own.length * 3;
   const residuals = (u) => {
     const r = new Float64Array(m);
@@ -554,7 +703,7 @@ export function jointRingValues({ part, params, ring, slot, value }) {
     return { values: { [s.param]: written }, clamped };
   }
   const handle = part.handles?.[ring.handleId];
-  const posed = posedLimb(part, params, handle?.limb);
+  const posed = posedLimb(part, params, handle?.on);
   if (!posed || typeof posed.ikForward !== "function") return null;
   let info;
   try { info = posed.ikInfo(); } catch { return null; }

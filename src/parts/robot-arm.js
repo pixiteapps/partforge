@@ -188,7 +188,7 @@ export default {
   views: { assembly: { label: "Assembly" } },
   handles: {
     tool: {
-      limb: "arm", at: "tip", mode: "goal",
+      on: "arm", at: "tip", drag: "goal",
       params: { position: ["toolX", "toolY", "toolZ"], aim: ["toolPitch", "toolYaw", "toolRoll"] },
       toward: TOOL_TOWARD,
       seed: JOINTS,

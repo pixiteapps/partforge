@@ -530,6 +530,13 @@ function printMeasure(r) {
     console.log(`  warnings:`);
     for (const w of r.warnings) console.log(`    ${w.part}: ${w.message}`);
   }
+  if (r.handles) {
+    console.log(`  handles:`);
+    for (const h of r.handles) {
+      const at = h.point ? `[${h.point.map((n) => n.toFixed(1)).join(", ")}]` : `unreadable (${h.error})`;
+      console.log(`    ${h.label} (${h.kind}) at ${at} → ${h.params.join(", ")}`);
+    }
+  }
   if (r.probes) {
     // Solid-fact probes get the sub-part line treatment (in mm³ — probes are
     // localization instruments, a slab's volume in cm³ rounds to noise), one

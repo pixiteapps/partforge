@@ -166,5 +166,19 @@ export function buildAdapters(tree, posedFrames, frames, restFrames, fail, value
     return info;
   }
 
-  return { ...implicitAdapters(tree, fail), world, place, ikInfo };
+  /**
+   * The posed limb as a point source (spec 2026-11-02 section 2), so a handle's geometric
+   * drags ("point", "axis", "plane", "rotary") can sit on a joint or the tip: `points` are
+   * ikInfo's (every joint and `tip`), `axes` each hinge's `{ origin, direction }` (a ball
+   * has none), `lines` the bone chain. Goal and angles drags read the richer ikInfo().
+   */
+  function handleInfo() {
+    const info = ikInfo();
+    const axes = {};
+    for (const [n, direction] of Object.entries(info.axes)) axes[n] = { origin: [...info.points[n]], direction: [...direction] };
+    const chain = [...info.joints.map((j) => j.name), "tip"];
+    return { kind: "partforge.points", points: info.points, axes, lines: chain.slice(1).map((n, i) => [chain[i], n]) };
+  }
+
+  return { ...implicitAdapters(tree, fail), world, place, ikInfo, handleInfo };
 }
