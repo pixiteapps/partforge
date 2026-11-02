@@ -906,24 +906,32 @@ px, also when the handle does not show. It is empty while posing is not live.
 
 ## Posing a part as an agent
 
-Do not edit code to pose a part. Set parameters, and read the probe:
+Do not change `build` or `derive` to pose a part. Set parameters, and read the probe:
 
 - for an arm, the goal parameters (`toolX`, `toolY`, `toolZ`, `toolPitch`, `toolYaw`,
   `toolRoll`);
 - for a hand, the knuckle, `curl` and `spread` per digit (the thumb's oppose, knuckle and
   curl), or a preset.
 
-`partforge measure` has no `--params` flag, so it reads `defaults`. To check another pose,
-write a small module that changes the defaults:
+Then measure the part at that pose and read the probe. Where the measure report comes
+from depends on your setup, but the probe is the same everywhere:
 
-```text
-// far-tool.js
-import arm from "./src/parts/robot-arm.js";
-export default { ...arm, defaults: { ...arm.defaults, toolX: 380 } };
-```
+- **A host with a check loop** (one that reports measure output after each edit) carries
+  the probe in that report under `probes`, keyed by its name. It is measured at the
+  parameters the host builds with, which are often the part's `defaults`.
+- **The CLI:** `partforge measure` has no `--params` flag, so it reads `defaults` too. To
+  check a pose without changing the part, write a small module that changes the defaults:
 
-`npx partforge measure far-tool.js` then prints the probe line of the part. The
-robot-arm's `tool` probe returns the goal's report, so its one line is:
+  ```text
+  // far-tool.js
+  import arm from "./src/parts/robot-arm.js";
+  export default { ...arm, defaults: { ...arm.defaults, toolX: 380 } };
+  ```
+
+  `npx partforge measure far-tool.js` then prints the probe line of the part.
+
+The robot-arm's `tool` probe returns the goal's report. At `toolX: 380`, out of reach,
+it reads:
 
 ```text
 tool  {"at":"tip","residual":39.916,"aimResidual":6.141,"status":"out-of-range"}
