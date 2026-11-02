@@ -1576,6 +1576,30 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       recordFrames(meshes);
     }
 
+    // Show a delivery built at params the live ones have left (playback's best effort, a
+    // shape drag's outdated frame) and record nothing about the LIVE params: cache and
+    // fast-path stamps must describe geometry built at the live params, and this was not
+    // (spec §2). Stamps go first, so a pose ghost lifts only if its sub-part is current
+    // without them — mid-drag it is not, and the ghost stays over the off-params mesh.
+    // Material frames are recorded against the params the job was dispatched with (what
+    // it was built at): a stale frame would lay a sheet's burn over moved geometry.
+    function showBestEffort(meshes) {
+      for (const m of meshes) {
+        viewer.setSubGeometry(m.name, m);
+        fastPath.forget(m.name);
+        cache.forget(m.name);
+        // A pose ghost on this sub-part has just been replaced by a new mesh; left at
+        // GHOST_OPACITY it would stay faded through playback.
+        poseMode?.delivered(m.name);
+      }
+      // With the stamps gone the frame comes from the reply: a canonical mesh is posed
+      // by place() at the LIVE params (a rigid place() needs no geometry at those
+      // params), or cleared when the probe is untrusted.
+      fastPath.apply(meshes.map((m) => m.name),
+        Object.fromEntries(meshes.map((m) => [m.name, m.frame ?? "posed"])));
+      recordFrames(meshes);
+    }
+
     // Progressive delivery (feedback #212). A view with many sub-parts posts what it has
     // built in batches while the job runs, and the view fills in as they land. Framing is
     // the one hazard: showView frames once per view, and framing to the first batch
@@ -1649,16 +1673,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             // continuous drag would otherwise draw nothing until it paused), and recorded
             // as nothing, exactly as the playback branch below. Its sub-parts stay stale,
             // so their ghosts stay and the loop's kick builds the latest params next.
-            for (const m of data.meshes) {
-              viewer.setSubGeometry(m.name, m);
-              poseMode?.delivered(m.name);
-              fastPath.forget(m.name);
-              cache.forget(m.name);
-              owed.delete(m.name); // stale now: missing in its own right
-            }
-            fastPath.apply(data.meshes.map((m) => m.name),
-              Object.fromEntries(data.meshes.map((m) => [m.name, m.frame ?? "posed"])));
-            recordFrames(data.meshes);
+            for (const m of data.meshes) owed.delete(m.name); // stale now: missing in its own right
+            showBestEffort(data.meshes);
             refreshView();
           } else if (fresh) { // stale results (params changed mid-build) are discarded
             applyFreshMeshes(data.meshes);
@@ -1697,31 +1713,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           } else if (lastAnimApplyVersion === loop.version()) {
             // Stale ONLY because animation frames kept bumping the version:
             // show the delivered meshes anyway — that IS best-effort playback —
-            // but record nothing about the LIVE params. Cache and fast-path stamps
-            // must describe geometry built at the live params, and this delivery
-            // wasn't; the fast-path stamp is dropped too, so a later pose-only
-            // repair can never re-pose this newer geometry off an older delivery's
-            // stamp. Its material frames are the exception: those are recorded
-            // against the params its job was dispatched with, which is what it was
-            // built at — keeping the last fresh delivery's frame instead would lay a
-            // sheet's burn over geometry that has moved along its normal.
+            // but record nothing about the LIVE params (showBestEffort). The
+            // fast-path stamp is dropped too, so a later pose-only repair can never
+            // re-pose this newer geometry off an older delivery's stamp.
             // A user edit mid-play pauses playback and bumps the version WITHOUT
             // touching lastAnimApplyVersion, so a genuinely user-stale result
             // fails this test and is discarded exactly as before.
-            for (const m of data.meshes) {
-              viewer.setSubGeometry(m.name, m);
-              // A pose ghost on this sub-part has just been replaced by a new mesh;
-              // left at GHOST_OPACITY it would stay faded through playback.
-              poseMode?.delivered(m.name);
-              fastPath.forget(m.name);
-              cache.forget(m.name); // the stamp described the last FRESH delivery; this mesh was built at other params, so no stamp may describe it (spec §2)
-            }
-            // With the stamps gone the frame comes from the reply: a canonical
-            // mesh is posed by place() at the LIVE params (a rigid place() needs
-            // no geometry at those params), or cleared when the probe is untrusted.
-            fastPath.apply(data.meshes.map((m) => m.name),
-              Object.fromEntries(data.meshes.map((m) => [m.name, m.frame ?? "posed"])));
-            recordFrames(data.meshes);
+            showBestEffort(data.meshes);
             ui.hideBusy();
             refreshView();
           }
@@ -1755,7 +1753,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           // succeed until priming completes, and kicking now would just repeat
           // the same failure before the mesh exists. The "import-meshes" case
           // below is what kicks, once the prime has actually landed.
-          loop.buildDone();
+          const importFresh = loop.buildDone();
           if (importMeshState === "primed") {
             // Tessellation already delivered a mesh but Manifold still can't
             // satisfy the import — the digest didn't match. A genuinely broken
@@ -1763,7 +1761,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             // rather than re-requesting tessellation forever. A mid-drag build's
             // failure stays quiet: the release build hits it again and reports.
             refreshView();
-            if (cycleTransient) break;
+            if (cycleTransient) { if (!importFresh || !poseHold) loop.kick(); break; }
             ui.hideBusy();
             ui.setStatus(`failed: ${IMPORT_MESH_BROKEN_MESSAGE}`, true);
             onBuild?.({ status: "error", error: IMPORT_MESH_BROKEN_MESSAGE });
@@ -1808,9 +1806,16 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             if (!readySettled) { readySettled = true; rejectReady(new Error(tessellateMessage)); }
             break;
           }
-          loop.buildDone();
+          const fresh = loop.buildDone();
           // A mid-drag build's failure is not the host's: the release build reports.
-          if (cycleTransient) { refreshView(); break; }
+          // Outdated (a later frame) or released, it kicks: the release's own kicks were
+          // absorbed while it was in flight. A fresh one mid-drag does not, or it would
+          // re-send the same failing params.
+          if (cycleTransient) {
+            refreshView();
+            if (!fresh || !poseHold) loop.kick();
+            break;
+          }
           ui.hideBusy();
           // The change this build was for will never land: a held floor would wait
           // for it through every later edit, so it is placed afresh instead.

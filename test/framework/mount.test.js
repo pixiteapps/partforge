@@ -1856,6 +1856,33 @@ test("a transient build error is not surfaced; the release build reports", () =>
   t.done();
 });
 
+test("a transient error landing after release, past the debounce, still sends the release build", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  t.pose.opts.hold(false); // the transient job is in flight: the release kick is absorbed
+  vi.advanceTimersByTime(250); // and so is the debounce timer's
+  expect(t.generates()).toBe(before + 1);
+  t.workers.manifold.onmessage({ data: { type: "error", message: "slow mid-drag failure" } });
+  expect(t.onBuild).not.toHaveBeenCalled();
+  expect(t.generates()).toBe(before + 2); // the release build
+  t.deliver(9);
+  expect(t.onBuild).toHaveBeenCalledOnce();
+  expect(t.onBuild).toHaveBeenCalledWith({ status: "success", ms: 9 });
+  t.done();
+});
+
+test("a fresh transient error mid-drag does not re-send the same failing params", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  t.workers.manifold.onmessage({ data: { type: "error", message: "mid-drag failure" } });
+  expect(t.generates()).toBe(before + 1);
+  t.done();
+});
+
 test("a drag that ends where it began after transient builds owes no build", () => {
   const t = shapeDrag(80);
   t.pose.opts.hold(true);
