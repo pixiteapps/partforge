@@ -223,7 +223,8 @@ core-wasm.js>` runs both builds side by side, alternating, so machine load
 hits both alike — absolute timings on a shared machine are not comparable
 run to run). It also checks every result against the JS. The implicit engine
 has its own: `npm run bench:implicit -- --core both` (JS and native per
-stage, CPU time), with CI's gates in `test/implicit-speed.test.js`.
+stage, CPU time; a contact root such as the hand runs the owner path, its crease
+cut and untangle timed as `seam`), with CI's gates in `test/implicit-speed.test.js`.
 
 ## Building
 

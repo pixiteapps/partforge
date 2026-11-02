@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { compileImplicit } from "../src/framework/geometry/implicit/index.js";
 import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
 import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
+import { meshStoreOwners } from "../src/framework/geometry/implicit/mesher-owners.js";
+import { cutCreases, untangle } from "../src/framework/geometry/implicit/crease.js";
 import { cleanupMesh, CLEANUP, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
 import { applySurfaceDetail, flattenDetail } from "../src/framework/geometry/implicit/detail.js";
 import { core, setCoreEnabled } from "../src/framework/core/core.js";
@@ -41,7 +43,9 @@ for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
   console.log(`\ncore ${on ? "on" : "off"}`);
   setCoreEnabled(on);
   if (on && !core()) { console.log("core unavailable"); continue; }
-  console.log("case            compile  sample  mesh  cleanup  detail  total   tris     samples  programs");
+  // A contact root (the hand) runs meshImplicit's owner path: the owner mesher, then `seam`
+  // (the crease cut and untangle) between cleanup and detail. Other cases have no seam stage.
+  console.log("case            compile  sample  mesh  cleanup  seam  detail  total   tris     samples  programs");
   for (const [name, spec, edge, imgs, cleanupOpts] of cases) {
     for (let warm = 0; warm < 2; warm++) {
       const [c, tc] = time(() => compileImplicit(spec, { images: imgs }));
@@ -49,28 +53,34 @@ for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
       // native session (meshImplicitCore's sequence; only the final mesh is read back).
       let st, sess = null;
       const [plan, tp] = time(() => planLeaves(c, edge));
+      const owner = c.ownerRoot >= 0 ? c.ir.nodes[c.ownerRoot] : null;
       try {
-        let ts, tm, tcl, td, d;
+        let ts, tm, tcl, tse = 0, td = 0, d;
         if (on) {
           sess = new NativeSession(core());
-          [, ts] = time(() => { plan.textures.forEach((t) => sess.addTexture(t)); plan.programs.forEach((p) => sess.addProgram(p)); sess.sample(plan, { readBack: false }); });
-          [, tm] = time(() => sess.mesh({ readBack: false }));
-          [d, tcl] = time(() => sess.cleanup(cleanupOpts, { readBack: !c.detail.length }));
+          [, ts] = time(() => {
+            plan.textures.forEach((t) => sess.addTexture(t)); plan.programs.forEach((p) => sess.addProgram(p));
+            if (owner) sess.setContact(owner);
+            sess.sample(plan, { readBack: false });
+          });
+          [, tm] = time(() => (owner ? sess.meshOwners({ readBack: false }) : sess.mesh({ readBack: false })));
+          [d, tcl] = time(() => sess.cleanup(cleanupOpts, { readBack: !owner && !c.detail.length }));
+          if (owner) [d, tse] = time(() => { sess.crease({ readBack: false }); return sess.untangle({ readBack: !c.detail.length }); });
           if (c.detail.length) [d, td] = time(() => sess.detail(flattenDetail(c)));
-          else td = 0;
         } else {
-          let s, m, cl;
+          let s, m;
           [s, ts] = time(() => evaluateLeaves(plan));
-          [m, tm] = time(() => meshStore(s));
-          [cl, tcl] = time(() => cleanupMesh(s, m, cleanupOpts));
-          [d, td] = time(() => (c.detail.length ? applySurfaceDetail(s, cl, c) : cl));
+          [m, tm] = time(() => (owner ? meshStoreOwners(s, { gap: owner.gap }) : meshStore(s)));
+          [d, tcl] = time(() => cleanupMesh(s, m, cleanupOpts));
+          if (owner) [d, tse] = time(() => untangle(s, cutCreases(s, d, owner.attWorld)));
+          if (c.detail.length) [d, td] = time(() => applySurfaceDetail(s, d, c));
         }
-        st = [tp + ts, tm, tcl, td, d];
+        st = [tp + ts, tm, tcl, tse, td, d];
       } finally { sess?.destroy(); }
       if (warm === 0) continue;
-      const [ts, tm, tcl, td, d] = st;
-      const total = tc + ts + tm + tcl + td;
-      console.log(`${name.padEnd(15)} ${tc.toFixed(0).padStart(7)} ${ts.toFixed(0).padStart(7)} ${tm.toFixed(0).padStart(5)} ${tcl.toFixed(0).padStart(8)} ${td.toFixed(0).padStart(7)} ${total.toFixed(0).padStart(6)} ${String(d.indices.length / 3).padStart(8)} ${String(plan.samples).padStart(9)} ${String(plan.programs.length).padStart(9)}`);
+      const [ts, tm, tcl, tse, td, d] = st;
+      const total = tc + ts + tm + tcl + tse + td;
+      console.log(`${name.padEnd(15)} ${tc.toFixed(0).padStart(7)} ${ts.toFixed(0).padStart(7)} ${tm.toFixed(0).padStart(5)} ${tcl.toFixed(0).padStart(8)} ${tse.toFixed(0).padStart(5)} ${td.toFixed(0).padStart(7)} ${total.toFixed(0).padStart(6)} ${String(d.indices.length / 3).padStart(8)} ${String(plan.samples).padStart(9)} ${String(plan.programs.length).padStart(9)}`);
     }
   }
   // A fresh kernel per mode: the solid cache would otherwise answer the second mode.
