@@ -22,10 +22,15 @@
 // Pins are ids "<handle>:<at>" (at: a joint name or "tip"; "<limb>.<joint>" for a joint of
 // another limb the handle's `joints` map names, the hand's palm wrist). A pin's held point
 // is read at begin, from the params the drag starts from, and stays fixed for that drag.
+// On a generic handle (`on` / `point`) the id is "<handle>:<at>" or "<handle>:point", and the
+// pin holds that handle's point still, on every handle kind: a generic handle's drag goes
+// through solveHandle with every pin as a hold. The pinned handle's own pin is skipped.
 // Every IK drag holds them: angles mode through solveAngles (any limb), goal mode through
 // solveGoalPinned (the goal handle's own limb) once a pin is on that limb. Joint rings and
 // a goal drag with no pin on its limb do not.
-import { limbInfo, solveAngles, solveGoalPinned, goalValues, seedValues, snapValues, jointRingValues, posedJointValue, parseJointKey } from "./param-solve.js";
+import { limbInfo, solveAngles, solveGoalPinned, solveHandle, goalValues, seedValues, snapValues, jointRingValues, posedJointValue, parseJointKey } from "./param-solve.js";
+import { handleKind, handleAt, locateHandle } from "./handle-source.js";
+import { resolveParams } from "../part-model.js";
 
 const AIM_AXES = ["pitch", "yaw", "roll"];
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
@@ -47,6 +52,10 @@ export function pinTarget(id, handles) {
   const pin = parsePinId(id);
   const handle = pin && handles?.[pin.handleId];
   if (!handle) return null;
+  // a generic handle's point is read through locateHandle, keyed by handle (no limb)
+  if (handleKind(handle) === "on" || handleKind(handle) === "point") {
+    return { handleId: pin.handleId, handle, ref: { handleId: pin.handleId, handle } };
+  }
   const { limb, joint } = parseJointKey(pin.at);
   return { handleId: pin.handleId, handle, limb: limb ?? handle.limb, at: joint };
 }
@@ -58,6 +67,8 @@ export function pinTarget(id, handles) {
  * the seed. Returns `{ values, error }` or null when the start pose itself fails.
  */
 export function defaultSolve({ part, params, handle, grab, target, aimAngles, holds = [], allHandles }) {
+  const kind = handleKind(handle);
+  if (kind === "on" || kind === "point") return solveHandle({ part, params, handle, target, holds, allHandles });
   if (handle.mode === "goal") {
     // a pin on the goal's own limb: solve the seeded joints around it (solveGoalPinned)
     if (holds.some((h) => h.limb === handle.limb)) {
@@ -75,6 +86,13 @@ export function defaultSolve({ part, params, handle, grab, target, aimAngles, ho
 
 /** Where a pinned point sits at these params (part coordinates), or null. */
 function defaultLocate({ part, params, handle, at }) {
+  const kind = handleKind(handle);
+  if (kind === "on" || kind === "point") {
+    try {
+      const { p, d } = resolveParams(part, { ...part.defaults, ...params });
+      return locateHandle(part, p, d, handle);
+    } catch { return null; }
+  }
   const p = limbInfo(part, params, handle)?.points?.[at];
   return Array.isArray(p) ? [...p] : null;
 }
@@ -112,10 +130,19 @@ export function createPoseSession({
     if (!handle) return false;
     const params = getParams();
     const snapshot = { ...params };
+    const generic = handleKind(handle) === "on" || handleKind(handle) === "point";
+    if (generic) grab = handleAt(handle);
     const holds = [];
     for (const id of pins) {
       const pin = pinTarget(id, handles);
-      if (!pin || !pinActive(id) || (pin.handleId === handleId && pin.limb === handle.limb && pin.at === grab)) continue;
+      if (!pin || !pinActive(id)) continue;
+      if (pin.ref) {
+        if (pin.handleId === handleId) continue;
+        const point = locate({ part, params: snapshot, handle: pin.handle, at: handleAt(pin.handle) });
+        if (point) holds.push({ ref: pin.ref, point });
+        continue;
+      }
+      if (pin.handleId === handleId && pin.limb === handle.limb && pin.at === grab) continue;
       const point = locate({ part, params: snapshot, handle: { ...pin.handle, limb: pin.limb }, at: pin.at });
       if (point) holds.push({ limb: pin.limb, at: pin.at, point });
     }
@@ -141,6 +168,18 @@ export function createPoseSession({
 
   function frame(target) {
     if (!drag) return null;
+    const kind = handleKind(drag.handle);
+    if (kind === "on" || kind === "point") {
+      // generic: the target goes to solveHandle as is (a point, or a rotary angle target)
+      const t = Array.isArray(target) ? { point: target } : target;
+      const ok = Array.isArray(t?.point) ? t.point.length === 3 && t.point.every(isNum)
+        : isNum(t?.angleDeg) && t.axis && Array.isArray(t.axis.origin) && Array.isArray(t.axis.direction);
+      if (!ok) return null;
+      return apply(solve({
+        part, params: { ...getParams() }, handleId: drag.handleId, handle: drag.handle,
+        grab: drag.grab, target: t, holds: drag.holds, allHandles,
+      }));
+    }
     const point = Array.isArray(target) ? target : target?.point;
     if (!Array.isArray(point) || !point.every(isNum)) return null;
     const result = solve({
