@@ -230,7 +230,7 @@ vi.mock("../../src/framework/gltf/decode-preview.js", async (importOriginal) => 
   };
 });
 
-import { mount, makeHandle } from "../../src/framework/mount.js";
+import { mount, makeHandle, LIVE_REBUILD_MS } from "../../src/framework/mount.js";
 import { boxSoup, previewGlbFor } from "../helpers/preview-glb.js";
 import { decodePreviewGlb } from "../../src/framework/gltf/decode-preview.js";
 import { attachPicker, attachPickToggle, attachHoverLabels } from "../../src/framework/selection/index.js";
@@ -1749,6 +1749,181 @@ test("a view switch cancels a pose drag before the view changes", () => {
   expect(pose.externalWrite.mock.invocationCallOrder[0]).toBeLessThan(pose.refresh.mock.invocationCallOrder.at(-1));
   expect(viewAtCancel).toBeDefined();
   handle.dispose();
+});
+
+// Shape drags (spec 2026-11-02 §4): a part whose last build was cheap rebuilds live
+// while the drag holds, and those mid-drag builds are transient — drawn, never reported.
+// `h` is the geometry param, so every drag frame makes `body` stale.
+function shapeDrag(lastMs, { cache } = {}) {
+  vi.useFakeTimers(); // the release's debounce timer must not fire a second kick
+  const part = makePart();
+  part.handles = { grow: { params: ["h"] } };
+  const onBuild = vi.fn();
+  const onParamsCommit = vi.fn();
+  const els = makeElements();
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: els, onBuild, onParamsCommit });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: lastMs, ...(cache ? { cache } : {}) } });
+  onBuild.mockClear();
+  const pose = poseStubs.at(-1);
+  pose.delivered.mockClear();
+  const post = workers.manifold.postMessage;
+  const generates = () => post.mock.calls.filter(([m]) => m.type === "generate").length;
+  const deliver = (ms = 5) => workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms } });
+  const done = () => { handle.dispose(); vi.useRealTimers(); };
+  return { handle, pose, onBuild, onParamsCommit, els, generates, deliver, done, viewer: fakeViewers[0], workers };
+}
+
+test("LIVE_REBUILD_MS is 120", () => {
+  expect(LIVE_REBUILD_MS).toBe(120);
+});
+
+test("a cheap part rebuilds mid-drag, transiently: drawn and un-ghosted, no onBuild until the release builds once", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  expect(t.generates()).toBe(before + 1); // dispatched while the drag holds
+  t.viewer.setSubGeometry.mockClear();
+  t.deliver(80);
+  expect(t.viewer.setSubGeometry).toHaveBeenCalledWith("body", expect.anything()); // drawn
+  expect(t.pose.delivered).toHaveBeenCalledWith("body"); // the session lifts the ghost
+  expect(t.onBuild).not.toHaveBeenCalled();
+  expect(t.els.exports.stl.disabled).toBe(true); // export state untouched by a transient build
+  t.pose.opts.write({ h: 7 });
+  expect(t.generates()).toBe(before + 2);
+  t.deliver(80);
+  expect(t.onBuild).not.toHaveBeenCalled();
+  // Release at the values the last transient build already drew: the drag still owes
+  // the host its one build.
+  t.pose.opts.hold(false);
+  expect(t.generates()).toBe(before + 3);
+  t.deliver(9);
+  expect(t.onBuild).toHaveBeenCalledOnce();
+  expect(t.onBuild).toHaveBeenCalledWith({ status: "success", ms: 9 });
+  expect(t.els.exports.stl.disabled).toBe(false);
+  expect(t.onParamsCommit).not.toHaveBeenCalled(); // commits are the session's, never a build's
+  t.done();
+});
+
+test("a release while a transient build is in flight discards it and builds normally", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  t.pose.opts.hold(false); // the transient job is still in flight: the release waits for it
+  expect(t.generates()).toBe(before + 1);
+  t.deliver(70); // the transient reply: outdated by the release, never reported
+  expect(t.onBuild).not.toHaveBeenCalled();
+  expect(t.generates()).toBe(before + 2); // the release build
+  t.deliver(11);
+  expect(t.onBuild).toHaveBeenCalledOnce();
+  expect(t.onBuild).toHaveBeenCalledWith({ status: "success", ms: 11 });
+  t.done();
+});
+
+test("a transient build outdated by a later drag frame still draws, and the next frame's build goes out", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  t.pose.opts.write({ h: 7 }); // in flight: absorbed
+  expect(t.generates()).toBe(before + 1);
+  t.viewer.setSubGeometry.mockClear();
+  t.deliver(80);
+  expect(t.viewer.setSubGeometry).toHaveBeenCalledWith("body", expect.anything()); // best effort, like playback
+  expect(t.onBuild).not.toHaveBeenCalled();
+  expect(t.generates()).toBe(before + 2); // always for the latest params
+  t.deliver(80);
+  t.pose.opts.hold(false);
+  t.deliver(8);
+  expect(t.onBuild).toHaveBeenCalledOnce();
+  t.done();
+});
+
+test("a transient build error is not surfaced; the release build reports", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  t.pose.opts.write({ h: 6 });
+  t.workers.manifold.onmessage({ data: { type: "error", message: "mid-drag failure" } });
+  expect(t.onBuild).not.toHaveBeenCalled();
+  expect(t.els.status.status.textContent).not.toContain("mid-drag failure");
+  t.pose.opts.hold(false);
+  t.workers.manifold.onmessage({ data: { type: "error", message: "release failure" } });
+  expect(t.onBuild).toHaveBeenCalledOnce();
+  expect(t.onBuild).toHaveBeenCalledWith({ status: "error", error: "release failure" });
+  t.done();
+});
+
+test("a drag that ends where it began after transient builds owes no build", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  t.deliver(80);
+  t.pose.opts.write({ h: 4 }); // back to the start
+  t.deliver(80);
+  t.pose.opts.hold(false);
+  expect(t.generates()).toBe(before + 2);
+  expect(t.onBuild).not.toHaveBeenCalled();
+  t.done();
+});
+
+test("a slow part keeps today's shape drag: no build until release, then one", () => {
+  const t = shapeDrag(200);
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  t.pose.opts.write({ h: 7 });
+  expect(t.generates()).toBe(before);
+  t.pose.opts.hold(false);
+  expect(t.generates()).toBe(before + 1);
+  t.deliver(200);
+  expect(t.onBuild).toHaveBeenCalledOnce();
+  t.done();
+});
+
+test("live rebuild: 119 ms on, 121 ms off", () => {
+  for (const [ms, live] of [[119, true], [121, false]]) {
+    const t = shapeDrag(ms);
+    t.pose.opts.hold(true);
+    const before = t.generates();
+    t.pose.opts.write({ h: 6 });
+    expect(t.generates()).toBe(before + (live ? 1 : 0));
+    t.done();
+  }
+});
+
+test("live rebuild is decided at drag start: a slow mid-drag build does not switch it off", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  t.deliver(300); // this drag's own build ran slow
+  t.pose.opts.write({ h: 7 });
+  expect(t.generates()).toBe(before + 2);
+  t.deliver(300);
+  t.pose.opts.hold(false);
+  t.deliver(300);
+  // ...but the NEXT drag starts from the slow reading
+  t.pose.opts.hold(true);
+  const next = t.generates();
+  t.pose.opts.write({ h: 8 });
+  expect(t.generates()).toBe(next);
+  t.done();
+});
+
+test("a build answered wholly from the worker cache does not count as the last build's time", () => {
+  const t = shapeDrag(200);
+  t.handle.setParams({ h: 5 });
+  vi.advanceTimersByTime(250);
+  t.workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 3, cache: { hits: 4, misses: 0 } } });
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  expect(t.generates()).toBe(before); // still the 200 ms reading
+  t.done();
 });
 
 test("a user edit mid-playback still discards the stale meshes", () => {
