@@ -106,8 +106,8 @@ export default {
   views: { <name>: { label, default?, animations? } },  // view tabs; a view may own animations (below)
   probes?,                                 // { name: (k, p, d) => Solid | Shape2D | plain JSON } — measurements reported by
                                            // measure/inspect, never rendered or exported (see "Probes" below)
-  handles?,                                // { name: { limb, mode: "goal" | "angles", params, seed?, lock?, at? } } — draggable
-                                           // posing points over a posed limb from derive (see "Pose mode" below)
+  handles?,                                // { name: { on | point, at?, drag?, params, ... } } — draggable points on a
+                                           // point source or posed limb from derive (see "Pose mode" below)
 };
 ```
 
@@ -3284,10 +3284,11 @@ mesh/BVH helpers and file parsers (`bounds`, `meshArea`, `meshTriangles`, `parse
 ## Pose mode
 
 A part with jointed limbs (see the Kinematics domain) can let people pose it with the
-mouse. It declares `handles`, a map of draggable points. Each one names a `limb`, a key of
-the object `derive` returns that holds a posed limb. A `mode: "goal"` handle drags a
+mouse. It declares `handles`, a map of draggable points. A limb handle's `on` names a key
+of the object `derive` returns that holds a posed limb, and its `drag` says how it moves. A
+`drag: "goal"` handle drags a
 tool point and writes its goal parameters (use `seed` for the joint values the solve starts
-from). A `mode: "angles"` handle drags joint values and writes them (use `lock` to freeze
+from). A `drag: "angles"` handle drags joint values and writes them (use `lock` to freeze
 one). Joints get rotate rings, which turn one joint alone: every joint a goal handle's
 `seed` names, and every joint an angles handle maps in `joints` (`{ "<joint>" |
 "<limb>.<joint>": "<param>" }`, the parameter that drives the joint in degrees). Every parameter a handle names must be a numeric key of `defaults` (a `lock`'s default may
@@ -3295,7 +3296,7 @@ also be a boolean).
 
 ```js
 handles: {
-  tool: { limb: "arm", at: "tip", mode: "goal",
+  tool: { on: "arm", at: "tip", drag: "goal",
           params: { position: ["toolX", "toolY", "toolZ"], aim: ["toolPitch", "toolYaw", "toolRoll"] },
           toward: [1, 0, 0],
           seed: ["base", "shoulder", "elbow", "wristPitch", "wristYaw", "wristRoll"] },
@@ -4152,18 +4153,18 @@ previously didn't; that's the fix working as intended, not a regression.
 
 **Definition shape** — `missing-meta-title`, `missing-defaults`, `no-buildable-parts`,
 `missing-views`, `part-view-unknown`, `invalid-probes` (all errors); `view-unused`,
-`default-view-ambiguous` (warnings). **Handles** — `handle-unknown-limb`,
-`handle-unknown-param`, `handle-param-count`, `handle-aim-toward`, `handle-unknown-joint`,
-`handle-bad-mode`, `handle-no-source`, `handle-unknown-source`, `handle-on-limb`,
-`handle-bad-drag`, `handle-point-throws` (all errors), `handle-inert`,
-`handle-axis-moves` (warnings); `wrap-needs-range` (error): a declared `handles` entry names a limb `derive`
-does not return, a parameter missing from `defaults` (or not numeric; a `lock` may
-also default to a boolean), a wrong number of position/aim parameters, an `aim`
-without a valid rest `toward`, a joint the limb lacks, or a mode other than
-`goal`/`angles`. For `on` / `point` handles: none or several of `on`/`point`/`limb`; an
-`on` that is not a point source in `derive`'s result, or an `at` it lacks; an `on` naming
-a posed limb (declare a `limb` handle); an unknown `drag`, or axis/plane/rotary without a
-usable direction/normal/axis; a point or axis function that throws at the defaults.
+`default-view-ambiguous` (warnings). **Handles** — `handle-no-source`,
+`handle-unknown-source`, `handle-bad-drag`, `handle-unknown-param`, `handle-param-count`,
+`handle-aim-toward`, `handle-unknown-joint`, `handle-point-throws` (all errors),
+`handle-inert`, `handle-axis-moves` (warnings); `wrap-needs-range` (error): a declared
+`handles` entry with neither or both of `on`/`point`; an `on` that is not a point source
+in `derive`'s result, or an `at` it lacks, or a `"goal"`/`"angles"` handle whose `on` is
+not a posed limb; an unknown `drag`, an `on` naming a posed limb with no `drag`,
+`"goal"`/`"angles"` on a `point`, or axis/plane/rotary without a usable
+direction/normal/axis; a parameter missing from `defaults` (or not numeric; a `lock` may
+also default to a boolean); a wrong number of position/aim parameters, an `aim` without a
+valid rest `toward`, or a joint the limb lacks; a point or axis function that throws at
+the defaults.
 `handle-inert` warns when nudging each listed param by one step moves the point under
 0.01 mm; `handle-axis-moves` when a rotary axis shifts (0.01 mm / 0.1 deg) as the handle's
 own params change. `invalid-probes` fires when a declared

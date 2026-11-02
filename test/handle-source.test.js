@@ -15,12 +15,24 @@ const d = { train: source };
 const mk = (handles) => ({ defaults: { w: 4 }, handles });
 
 test("handleKind", () => {
-  expect(handleKind({ limb: "a" })).toBe("limb");
+  expect(handleKind({ on: "a", drag: "goal" })).toBe("limb");
+  expect(handleKind({ on: "a", drag: "angles" })).toBe("limb");
   expect(handleKind({ on: "t", at: "x" })).toBe("on");
+  expect(handleKind({ on: "t", at: "x", drag: "axis" })).toBe("on");
+  expect(handleKind({ point: () => [0, 0, 0], drag: "goal" })).toBe("point");
   expect(handleKind({ point: () => [0, 0, 0] })).toBe("point");
   expect(handleKind({ on: "t", point: () => [0, 0, 0] })).toBe(null);
   expect(handleKind({})).toBe(null);
   expect(handleKind(null)).toBe(null);
+});
+
+test("handleKind with d: goal / angles are limb drags only on a posed limb", () => {
+  const limbD = { arm: { ikInfo: () => ({}), handleInfo: () => ({ points: {} }) }, train: source };
+  expect(handleKind({ on: "arm", drag: "goal" }, limbD)).toBe("limb");
+  expect(handleKind({ on: "arm", drag: "angles" }, limbD)).toBe("limb");
+  expect(handleKind({ on: "arm", at: "tip", drag: "axis" }, limbD)).toBe("on");
+  expect(handleKind({ on: "arm", at: "tip" }, limbD)).toBe("on");
+  expect(handleKind({ on: "train", at: "gear1.rim", drag: "goal" }, limbD)).toBe("on");
 });
 
 test("handleAt and sourceInfo", () => {
@@ -37,8 +49,9 @@ test("locateHandle: on, point, throwing", () => {
   expect(() => locateHandle(null, {}, d, { point: () => { throw new Error("boom"); } })).toThrow("boom");
   expect(() => locateHandle(null, {}, d, { on: "train", at: "missing" })).toThrow();
   expect(() => locateHandle(null, {}, d, { on: "nope", at: "x" })).toThrow();
-  const limbD = { arm: { world: (at) => ({ origin: [1, 2, at === "tip" ? 3 : 4] }) } };
-  expect(locateHandle(null, {}, limbD, { limb: "arm" })).toEqual([1, 2, 3]);
+  const limbD = { arm: { ikInfo: () => ({}), world: (at) => ({ origin: [1, 2, at === "tip" ? 3 : 4] }) } };
+  expect(locateHandle(null, {}, limbD, { on: "arm", drag: "goal" })).toEqual([1, 2, 3]);
+  expect(locateHandle(null, {}, limbD, { on: "arm", at: "elbow", drag: "angles" })).toEqual([1, 2, 4]);
 });
 
 test("resolveGeom", () => {
@@ -69,7 +82,7 @@ test("handleRecord shape", () => {
   const pt = mk({ c: { point: () => [1, 2, 3], params: ["w"], drag: "point" } });
   expect("lines" in handleRecord(pt, {}, d, "c")).toBe(false);
   expect(handleRecord(mk({ c: { point: () => { throw new Error("x"); }, params: [] } }), {}, d, "c")).toBe(null);
-  expect(handleRecord(mk({ l: { limb: "a" } }), {}, d, "l")).toBe(null);
+  expect(handleRecord(mk({ l: { on: "a", drag: "goal" } }), {}, d, "l")).toBe(null);
 });
 
 test("handleRecord drag defaults to point", () => {
@@ -86,4 +99,19 @@ test("handleParamKeys is unchanged for limb handles", () => {
   expect(handleParamKeys(hand.handles.index)).toEqual(["indexKnuckle", "indexCurl", "indexSpread", "wristPitch", "wristYaw"]);
   expect(handleParamKeys({ on: "t", at: "a", params: ["a", "b"], lock: "l" })).toEqual(["a", "b", "l"]);
   expect(handleParamKeys({ point: () => [0, 0, 0], params: ["a"] })).toEqual(["a"]);
+});
+
+test("a geometric drag on a limb point reads the limb's handleInfo", async () => {
+  const { limb } = await import("../src/framework/domains/kinematics/index.js");
+  const arm = limb("arm", { toward: [0, 0, 1], bendToward: [1, 0, 0], joints: ["s", "e"], lengths: [10, 10] }).pose({ bend: { s: 0, e: 90 } });
+  const limbD = { arm };
+  const h = { on: "arm", at: "tip", drag: "axis", direction: [0, 0, 1], params: ["w"] };
+  expect(handleKind(h, limbD)).toBe("on");
+  expect(locateHandle(null, {}, limbD, h)).toEqual(arm.ikInfo().points.tip);
+  const rec = handleRecord(mk({ h }), {}, limbD, "h");
+  expect(rec.points.tip).toEqual(arm.ikInfo().points.tip);
+  expect(rec.axis).toEqual({ origin: arm.ikInfo().points.tip, direction: [0, 0, 1] });
+  expect(rec.lines.length).toBe(2);
+  const rotary = { on: "arm", at: "e", drag: "rotary", params: ["w"] };
+  expect(handleAxis(rotary, {}, limbD)).toEqual({ origin: arm.ikInfo().points.e, direction: arm.ikInfo().axes.e });
 });

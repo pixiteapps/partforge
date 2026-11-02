@@ -465,7 +465,7 @@ describe("the aim gizmo on a goal handle", () => {
   const aimed = (pitch, aim = ["gPitch", "gYaw", "gRoll"]) => ({
     ...hand,
     defaults: { ...hand.defaults, gx: 0, gy: 0, gz: 0, gPitch: pitch, gYaw: 0, gRoll: 0 },
-    handles: { a: { limb: "a", at: "tip", mode: "goal", toward: [1, 0, 0],
+    handles: { a: { on: "a", at: "tip", drag: "goal", toward: [1, 0, 0],
       params: { position: ["gx", "gy", "gz"], aim } } },
   });
   const close = (a, b) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], 9));

@@ -43,7 +43,7 @@ describe("handles in the measure report", () => {
   it("reports a limb goal handle", () => {
     const h = handlesReport(robotArm, Object.keys(robotArm.views)[0]);
     const tool = h.find((e) => e.id === "tool");
-    expect(tool.kind).toBe("limb-goal");
+    expect(tool.kind).toBe("goal");
     expect(tool.params).toEqual(["toolX", "toolY", "toolZ", "toolPitch", "toolYaw", "toolRoll"]);
     expect(tool.point).toHaveLength(3);
     expect(tool.locked).toBe(false);

@@ -1,6 +1,7 @@
-// Group — `handles`: draggable inverse-kinematics points a part declares over a limb
-// (partforge/kinematics). Every rule reads only the declaration, `defaults` and the
-// resolved `d`, and never throws on a malformed one.
+// Group — `handles`: draggable points a part declares (spec 2026-11-02). Every handle
+// sits `on` a point source in derive's result (a posed limb from partforge/kinematics
+// included) or at a `point` function, and moves by its `drag`. Every rule reads only the
+// declaration, `defaults` and the resolved `d`, and never throws on a malformed one.
 import { err, warn } from "./finding.js";
 import { resolveDerived } from "../derive.js";
 import { rangesOf } from "../pose/param-solve.js";
@@ -8,11 +9,14 @@ import { locateHandle, sourceInfo, resolveGeom, handleAxis } from "../pose/handl
 
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 const handleEntries = (part) => (isPlainObject(part?.handles) ? Object.entries(part.handles).filter(([, h]) => isPlainObject(h)) : []);
-const MODES = ["goal", "angles"];
-const DRAGS = ["point", "axis", "plane", "rotary"];
-/** An `on` / `point` handle (no `limb`): the limb-only rules and `mode` do not apply to it. */
-const isGeneric = (h) => h.limb == null && (h.on != null || h.point != null);
-const limbHandleEntries = (part) => handleEntries(part).filter(([, h]) => !isGeneric(h));
+const LIMB_DRAGS = ["goal", "angles"];
+const GEOM_DRAGS = ["point", "axis", "plane", "rotary"];
+const DRAGS = [...GEOM_DRAGS, ...LIMB_DRAGS];
+/** A limb drag ("goal" / "angles"): the limb-only rules read it. */
+const isLimbDrag = (h) => LIMB_DRAGS.includes(h.drag);
+/** A handle with a source and a geometric (or unknown) drag: the limb-only rules do not apply to it. */
+const isGeneric = (h) => !isLimbDrag(h) && (h.on != null || h.point != null);
+const limbHandleEntries = (part) => handleEntries(part).filter(([, h]) => isLimbDrag(h));
 const genericEntries = (part) => handleEntries(part).filter(([, h]) => isGeneric(h));
 const isVec3 = (v) => Array.isArray(v) && v.length === 3 && v.every((c) => typeof c === "number" && Number.isFinite(c));
 const isDir3 = (v) => isVec3(v) && v.some((c) => c !== 0);
@@ -29,13 +33,13 @@ function paramRefs(name, h) {
     return refs;
   }
   const add = (list, path) => { if (Array.isArray(list)) list.forEach((n) => refs.push([n, path])); };
-  if (h.mode === "goal") {
+  if (h.drag === "goal") {
     if (isPlainObject(h.params)) {
       add(h.params.position, `${base}.params.position`);
       add(h.params.aim, `${base}.params.aim`);
     }
     add(h.seed, `${base}.seed`);
-  } else if (h.mode === "angles") {
+  } else if (h.drag === "angles") {
     add(h.params, `${base}.params`);
     if (h.lock !== undefined) refs.push([h.lock, `${base}.lock`]);
     if (isPlainObject(h.joints)) {
@@ -83,7 +87,9 @@ function sourceProblem(name, h, d) {
     return { finding: err("handle-unknown-source", `handle "${name}" has on ${JSON.stringify(h.on)}, which derive() does not return`,
       "`on` must be a key of the object `derive` returns, holding a point source (a value with a `handleInfo()` method).", `${base}.on`) };
   }
-  if (isLimb(d, h.on)) return { limb: true };
+  // a limb is checked as a point source only under a geometric drag; otherwise
+  // handle-bad-drag says what it is missing
+  if (isLimb(d, h.on) && !GEOM_DRAGS.includes(h.drag)) return { limb: true };
   if (typeof d[h.on]?.handleInfo !== "function") {
     return { finding: err("handle-unknown-source", `handle "${name}" has on ${JSON.stringify(h.on)}, but derive().${h.on} has no handleInfo()`,
       "A point source is a value in derive's result with a `handleInfo()` method returning { kind: \"partforge.points\", points: { name: [x, y, z] }, axes?, lines? }.", `${base}.on`) };
@@ -123,28 +129,12 @@ function derivedNudged(part, p, key, delta) {
 
 export const HANDLE_RULES = [
   {
-    id: "handle-bad-mode",
-    run: ({ part }) => limbHandleEntries(part)
-      .filter(([, h]) => !MODES.includes(h.mode))
-      .map(([name, h]) => err("handle-bad-mode", `handle "${name}" has mode ${JSON.stringify(h.mode)}`,
-        'Set `mode` to "goal" (drag a point; params: { position, aim? }) or "angles" (drag joint values directly; params: [names]).',
-        `handles.${name}.mode`)),
-  },
-  {
-    id: "handle-unknown-limb",
-    run: ({ part, d }) => limbHandleEntries(part)
-      .filter(([, h]) => !isLimb(d, h.limb))
-      .map(([name, h]) => err("handle-unknown-limb", `handle "${name}" names limb ${JSON.stringify(h.limb)}, which derive() does not return as a posed limb`,
-        "`limb` must be a key of the object `derive` returns, holding the result of `limb(...).pose(...)` from partforge/kinematics.",
-        `handles.${name}.limb`)),
-  },
-  {
     id: "handle-unknown-param",
     run: ({ part }) => {
       const defaults = isPlainObject(part?.defaults) ? part.defaults : {};
       const out = [];
       for (const [name, h] of handleEntries(part)) {
-        if (isGeneric(h) && h.params !== undefined && !Array.isArray(h.params)) {
+        if (isGeneric(h) && DRAGS.includes(h.drag ?? "point") && h.params !== undefined && !Array.isArray(h.params)) {
           out.push(err("handle-unknown-param", `handle "${name}" has \`params\` that is not an array of parameter names`,
             "`params` lists the numeric parameters the drag may write: `params: [\"driveAngle\"]`.", `handles.${name}.params`));
         }
@@ -166,7 +156,7 @@ export const HANDLE_RULES = [
     run: ({ part }) => {
       const out = [];
       for (const [name, h] of handleEntries(part)) {
-        if (h.mode !== "goal" || !isPlainObject(h.params)) continue;
+        if (h.drag !== "goal" || !isPlainObject(h.params)) continue;
         const { position, aim } = h.params;
         if (!Array.isArray(position) || position.length !== 3) {
           out.push(err("handle-param-count", `handle "${name}" needs params.position to name exactly 3 parameters (x, y, z)`,
@@ -183,7 +173,7 @@ export const HANDLE_RULES = [
   {
     id: "handle-aim-toward",
     run: ({ part }) => handleEntries(part)
-      .filter(([, h]) => h.mode === "goal" && isPlainObject(h.params) && h.params.aim !== undefined && !isDirection(h.toward))
+      .filter(([, h]) => h.drag === "goal" && isPlainObject(h.params) && h.params.aim !== undefined && !isDirection(h.toward))
       .map(([name]) => err("handle-aim-toward", `handle "${name}" has an aim but no rest \`toward\``,
         "Set `toward: [x, y, z]` on the handle: the direction zero pitch and yaw point, the same `toward` the part passes aimFromAngles. Pose mode's rotate rings turn about axes built from it.",
         `handles.${name}.toward`)),
@@ -193,11 +183,11 @@ export const HANDLE_RULES = [
     run: ({ part, d }) => {
       const out = [];
       for (const [name, h] of limbHandleEntries(part)) {
-        if (h.mode !== "goal" || h.at === undefined || h.at === "tip" || !isLimb(d, h.limb)) continue;
+        if (h.drag !== "goal" || h.at === undefined || h.at === "tip" || !isLimb(d, h.on)) continue;
         let joints;
-        try { joints = d[h.limb].ikInfo().joints.map((j) => j.name); } catch { continue; }
+        try { joints = d[h.on].ikInfo().joints.map((j) => j.name); } catch { continue; }
         if (joints.includes(h.at)) continue;
-        out.push(err("handle-unknown-joint", `handle "${name}" has at ${JSON.stringify(h.at)}, which is not a joint of limb "${h.limb}"`,
+        out.push(err("handle-unknown-joint", `handle "${name}" has at ${JSON.stringify(h.at)}, which is not a joint of limb "${h.on}"`,
           `\`at\` must be "tip" or one of the limb's joint names: ${joints.join(", ")}.`, `handles.${name}.at`));
       }
       // `joints` (an angles handle's joint rings): each key a joint of the handle's limb or
@@ -205,16 +195,16 @@ export const HANDLE_RULES = [
       for (const [name, h] of limbHandleEntries(part)) {
         if (h.joints === undefined) continue;
         const base = `handles.${name}.joints`;
-        if (h.mode !== "angles" || !isPlainObject(h.joints)) {
+        if (h.drag !== "angles" || !isPlainObject(h.joints)) {
           out.push(err("handle-unknown-joint", `handle "${name}" has \`joints\` that Pose mode cannot read`,
             "`joints` is an angles handle's object `{ \"<joint>\" | \"<limb>.<joint>\": \"<param>\" }`; a goal handle gets its joint rings from `seed`.", base));
           continue;
         }
         for (const [key, entry] of Object.entries(h.joints)) {
           const { limb, joint } = splitJointKey(key);
-          const limbKey = limb ?? h.limb;
+          const limbKey = limb ?? h.on;
           if (!isLimb(d, limbKey)) {
-            if (limb === null && !isLimb(d, h.limb)) continue; // handle-unknown-limb already says so
+            if (limb === null && !isLimb(d, h.on)) continue; // handle-unknown-source already says so
             out.push(err("handle-unknown-joint", `handle "${name}" maps joints ${JSON.stringify(key)}, but derive() returns no posed limb ${JSON.stringify(limbKey)}`,
               "A `joints` key is a joint of the handle's limb, or \"<limb>.<joint>\" where <limb> is a key of derive's result holding a posed limb.", `${base}.${key}`));
             continue;
@@ -240,18 +230,21 @@ export const HANDLE_RULES = [
   {
     id: "handle-no-source",
     run: ({ part }) => handleEntries(part)
-      .filter(([, h]) => [h.on, h.point, h.limb].filter((v) => v != null).length !== 1)
-      .map(([name, h]) => {
-        const n = [h.on, h.point, h.limb].filter((v) => v != null).length;
-        return err("handle-no-source", n === 0 ? `handle "${name}" says nothing about where it is` : `handle "${name}" has more than one of on, point and limb`,
-          "Give each handle exactly one source: `on` + `at` (a point source in derive's result), `point: (p, d) => [x, y, z]`, or `limb` (a posed limb).", `handles.${name}`);
-      }),
+      .filter(([, h]) => (h.on != null) === (h.point != null))
+      .map(([name, h]) => err("handle-no-source", h.on == null ? `handle "${name}" says nothing about where it is` : `handle "${name}" has both on and point`,
+        "Give each handle exactly one source: `on` (a key of derive's result: a point source with `at`, or a posed limb) or `point: (p, d) => [x, y, z]`.", `handles.${name}`)),
   },
   {
     id: "handle-unknown-source",
     run: ({ part, d, deriveError }) => {
       if (deriveError) return []; // derive-throws already says so; `d` is empty
       const out = [];
+      for (const [name, h] of limbHandleEntries(part)) {
+        if (h.on == null || isLimb(d, h.on)) continue;
+        out.push(err("handle-unknown-source", `handle "${name}" drags by ${h.drag}, but on ${JSON.stringify(h.on)} is not a posed limb in derive()`,
+          `A "goal" or "angles" handle's \`on\` must be a key of the object \`derive\` returns, holding the result of \`limb(...).pose(...)\` from partforge/kinematics.`,
+          `handles.${name}.on`));
+      }
       for (const [name, h] of genericEntries(part)) {
         if (h.on == null) continue;
         const r = sourceProblem(name, h, d);
@@ -261,22 +254,28 @@ export const HANDLE_RULES = [
     },
   },
   {
-    id: "handle-on-limb",
-    run: ({ part, d }) => genericEntries(part)
-      .filter(([, h]) => h.on != null && typeof h.on === "string" && isLimb(d, h.on))
-      .map(([name, h]) => err("handle-on-limb", `handle "${name}" has on ${JSON.stringify(h.on)}, which is a posed limb`,
-        "`on` never names a limb: declare a limb handle instead - `{ limb: \"" + h.on + "\", at, mode: \"goal\" | \"angles\", ... }`.", `handles.${name}.on`)),
-  },
-  {
     id: "handle-bad-drag",
     run: ({ part, p, d, deriveError }) => {
       const out = [];
-      for (const [name, h] of genericEntries(part)) {
+      for (const [name, h] of handleEntries(part)) {
+        if (h.on == null && h.point == null) continue; // handle-no-source
         const base = `handles.${name}`;
+        if (h.drag === undefined && h.on != null && isLimb(d, h.on)) {
+          out.push(err("handle-bad-drag", `handle "${name}" is on the posed limb ${JSON.stringify(h.on)} but sets no drag`,
+            'A handle on a limb sets `drag: "goal"` (drag a point; params: { position, aim? }) or `drag: "angles"` (drag joint values directly; params: [names]); "point", "axis", "plane" and "rotary" drag one of its points like any source\'s.', `${base}.drag`));
+          continue;
+        }
         const drag = h.drag === undefined ? "point" : h.drag;
         if (!DRAGS.includes(drag)) {
           out.push(err("handle-bad-drag", `handle "${name}" has drag ${JSON.stringify(h.drag)}`,
-            `\`drag\` is one of ${DRAGS.map((x) => `"${x}"`).join(", ")} (default "point").`, `${base}.drag`));
+            `\`drag\` is one of ${DRAGS.map((x) => `"${x}"`).join(", ")} (default "point"; "goal" and "angles" on a posed limb only).`, `${base}.drag`));
+          continue;
+        }
+        if (isLimbDrag(h)) {
+          if (h.on == null) {
+            out.push(err("handle-bad-drag", `handle "${name}" drags by ${drag}, which needs \`on\` naming a posed limb`,
+              `"goal" and "angles" pose a limb: set \`on\` to the derive key of a posed limb, or use a geometric drag ("point", "axis", "plane", "rotary") with \`point\`.`, `${base}.drag`));
+          }
           continue;
         }
         if (drag === "point" || deriveError) continue;
@@ -314,7 +313,7 @@ export const HANDLE_RULES = [
       const out = [];
       for (const [name, h] of genericEntries(part)) {
         const base = `handles.${name}`;
-        if (h.on != null && !sourceProblem(name, h, d).info) continue; // handle-unknown-source / handle-on-limb
+        if (h.on != null && !sourceProblem(name, h, d).info) continue; // handle-unknown-source / handle-bad-drag
         const at = attempt(() => locateHandle(part, p, d, h));
         if (at.error) {
           out.push(err("handle-point-throws", `handle "${name}" has no readable point at the defaults: ${at.error}`,

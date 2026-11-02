@@ -42,7 +42,7 @@ several, and keep working exactly as they do now.
   gear-specific code.
 - Continuous rotation: a rotary handle can turn a parameter without end.
 - Shape handles give live feedback during the drag, even when the part is slow to build.
-- Existing `limb` handles, pins, joint rings, aim gizmos and `runtime.pose` are unchanged.
+- Existing limb handles (now `drag: "goal"` / `"angles"`), pins, joint rings, aim gizmos and `runtime.pose` behave as before.
 
 ### Non-goals (this release)
 
@@ -103,25 +103,31 @@ handles: {
     drag: "axis", direction: [0, -1, 0],
   },
 
-  // unchanged: today's limb handles
-  tool:  { limb: "arm", at: "tip", mode: "goal", params: { position: [...], aim: [...] }, ... },
-  index: { limb: "index", mode: "angles", params: [...], lock: "indexLock", joints: { ... } },
+  // a posed limb: `on` names it, `drag` is "goal" or "angles"
+  tool:  { on: "arm", at: "tip", drag: "goal", params: { position: [...], aim: [...] }, ... },
+  index: { on: "index", drag: "angles", params: [...], lock: "indexLock", joints: { ... } },
 }
 ```
 
 Where it is (exactly one of these):
 
 - `on` + `at`: `on` is a key of `derive`'s result whose value is a **point source**
-  (section 2). `at` names one of its points.
+  (section 2), a posed limb included. `at` names one of its points (a limb's `at` is a
+  joint or `"tip"`, the default for `"goal"` / `"angles"`).
 - `point: (p, d) => [x, y, z]`: a function, in part coordinates, of the resolved params
   and `derive`'s result. Pure, like `derive`.
-- `limb` (+ `at`): today's form. It is the same as `on` for a posed limb, and keeps
-  `mode`, `seed`, `aim`, `joints` and `lock` as documented.
 
-What it drives: `params`, the numeric parameters the drag may write, as in angles mode.
-`lock` works as today.
+What it drives: `params`, the numeric parameters the drag may write, as in angles mode
+(a `"goal"` handle's `params` is `{ position, aim? }`, plus its `seed`). `lock` works as
+today.
 
-How it moves: `drag` (section 3). A `limb` handle keeps `mode` and has no `drag`.
+How it moves: `drag` (section 3), one of `"point"` (the default), `"axis"`, `"plane"`,
+`"rotary"`, `"goal"` and `"angles"`. `"goal"` and `"angles"` need `on` to name a posed
+limb (a value with `ikInfo()`) and keep `seed`, `aim`, `toward`, `joints` and `lock` as
+the kinematics guide documents; the four geometric kinds work on any point source, a
+limb's joints and tip included. A handle whose `on` names a limb always sets `drag`:
+lint refuses one without it rather than guess. There is one form for every handle; the
+old `limb:` / `mode:` keys are gone (no IK handle had shipped).
 
 Optional, all handles:
 
@@ -143,8 +149,10 @@ plain JSON:
 }
 ```
 
-A posed limb is a point source through its existing `ikInfo()`; the viewer adapts it. A
-mechanism helper (section 6) returns one. An author can also return a plain object with
+A posed limb is a point source too: its `handleInfo()` gives its joints and `tip` as
+points, each hinge's `{ origin, direction }` under its joint name, and the bone chain as
+`lines`. Its richer `ikInfo()` stays the view `"goal"` / `"angles"` drags, joint rings
+and the aim gizmo read. A mechanism helper (section 6) returns one. An author can also return a plain object with
 `handleInfo` from `derive`. `at` is a key of `points`. A rotary or axis handle on a source
 takes its axis from `axes[<prefix of at>]` when it does not give one.
 
@@ -219,7 +227,7 @@ supports deliveries mid-drag; the change is in mount's hold on regen jobs.
 
 The current rule is "hover within 32 px of a limb's bones". The general rule:
 
-- A `limb` handle: unchanged.
+- A `"goal"` / `"angles"` handle on a limb: unchanged.
 - A handle with `showOn`: shows while the pointer is over any of those sub-parts.
 - Any other handle: shows while the pointer is within 32 CSS px of its point on screen.
 - A point source with `lines` shows its skeleton with its handles, like a limb.
@@ -241,10 +249,11 @@ maths and need no special cases: a pinned gear in a train locks the whole train 
 drive cannot move without moving it), and a pinned box corner pushes a drag of another
 corner onto whatever listed params leave it still, or stops the drag.
 
-**`on` never names a limb in this release.** A posed limb is reached only through `limb`
-handles, with their existing modes, rings, aim gizmo and bone-hover reveal; lint refuses
-`on` pointing at a value with `ikInfo` (`handle-on-limb`). This keeps the IK path apart.
-`label`, `showOn` and `readout` are new-handle fields only.
+**A limb is one more source.** A `"goal"` or `"angles"` handle on a posed limb keeps its
+rings, aim gizmo and bone-hover reveal. A geometric drag on a limb point (`{ on: "arm",
+at: "tip", drag: "axis", ... }`) reads the limb's `handleInfo()` and behaves like any
+other source's handle: point-proximity and `showOn` reveal it, and it solves its `params`
+through `derive`. `label`, `showOn` and `readout` apply to the geometric kinds.
 
 ### 6. Mechanisms domain (`partforge/mechanisms`)
 
@@ -285,7 +294,7 @@ An agent sets parameters; it never drags. Handles help it in two ways:
 
   ```js
   handles: [
-    { id: "input", label: "input", kind: "rotary",       // "point" | "axis" | "plane" | "rotary" | "limb-goal" | "limb-angles"
+    { id: "input", label: "input", kind: "rotary",       // the handle's `drag`: "point" | "axis" | "plane" | "rotary" | "goal" | "angles"
       point: [x, y, z],                                   // part coordinates, at the inspect's params
       params: ["driveAngle"],                             // flat list; a goal handle lists position, then aim
       direction: [x, y, z],                               // axis: its direction; plane: its normal; rotary: its axis direction
@@ -300,7 +309,8 @@ An agent sets parameters; it never drags. Handles help it in two ways:
     existing relevance filter in mount), in declaration order.
   - A handle whose point throws at those params is listed with `point: null` and
     `error`, a short message; the report never fails because of a handle.
-  - `limb` handles are included too, so the cloud sees one list for every part.
+  - Limb handles (`"goal"`, `"angles"`) are included too, so the cloud sees one list for
+    every part.
   - Absent (not an empty array) on a part with no `handles`, so existing reports are
     byte-identical; `test/verify-golden.test.js` must not move.
   - The cloud's prompt corpus regenerates against the installed package, so the release
@@ -310,11 +320,15 @@ An agent sets parameters; it never drags. Handles help it in two ways:
 
 New rules in `src/framework/lint/rules-handles.js`, next to the existing ones:
 
-- `handle-no-source`: none or more than one of `on`, `point`, `limb`.
+- `handle-no-source`: neither, or both, of `on` and `point`.
 - `handle-unknown-source`: `on` is not a key of `derive`'s result, or the value has no
-  `handleInfo`/`ikInfo`; `at` not in its points.
-- `handle-bad-drag`: unknown `drag`; `axis` without a direction; `plane` without a normal;
-  `rotary` without an axis it can find.
+  `handleInfo`; `at` not in its points; a `"goal"` / `"angles"` handle whose `on` is not
+  a posed limb.
+- `handle-bad-drag`: unknown `drag`; `on` naming a posed limb with no `drag`; `"goal"` /
+  `"angles"` on a `point`; `axis` without a direction; `plane` without a normal; `rotary`
+  without an axis it can find.
+- The limb rules stay as they were, keyed on `drag`: `handle-unknown-param`,
+  `handle-param-count`, `handle-aim-toward`, `handle-unknown-joint`.
 - `handle-point-throws`: the point (or the axis function) throws at the defaults.
 - `handle-inert` (warning): nudging each listed param by one step moves the handle point
   by less than 0.01 mm. The handle does nothing at the defaults.
@@ -347,7 +361,10 @@ Lint runs these by calling `derive` at the defaults, as the existing handle rule
 - Wrapped values are stored unreduced; only the slider shows them reduced.
 - Mid-drag builds are transient: no host callbacks, no export or inspect state.
 - Pins hold a point in space on every handle kind, through one generic hold path.
-- `on` cannot name a limb in this release.
+- One declaration for every handle: `on` names a limb as it names any source, and `drag`
+  takes `"goal"` / `"angles"` in place of the old `mode` (the user approved changing the
+  limb handle interface; nothing with IK handles had shipped). A limb also answers
+  `handleInfo()`, so the geometric kinds work on its points.
 - The `inspect` `handles` entry's exact shape (the user decided it ships to the cloud;
   the fields, frame, view filter and error handling are my call).
 

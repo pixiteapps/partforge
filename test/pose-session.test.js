@@ -274,7 +274,7 @@ describe("goal-mode handles", () => {
     defaults: { ...hand.defaults, gx: 0, gy: 0, gz: 100, gPitch: 10, gYaw: 0 },
     handles: {
       ...hand.handles,
-      g: { limb: "a", mode: "goal", params: { position: ["gx", "gy", "gz"], aim: ["gPitch", "gYaw"] }, seed: ["aCurl", "aSpread"] },
+      g: { on: "a", drag: "goal", params: { position: ["gx", "gy", "gz"], aim: ["gPitch", "gYaw"] }, seed: ["aCurl", "aSpread"] },
     },
   };
 

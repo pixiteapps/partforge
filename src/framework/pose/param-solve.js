@@ -91,7 +91,7 @@ function posedLimb(part, params, name) {
 
 /** The handle limb's ikInfo() at these params; null when derive throws or the limb is missing. */
 export function limbInfo(part, params, handle) {
-  const posed = posedLimb(part, params, handle?.limb);
+  const posed = posedLimb(part, params, handle?.on);
   if (!posed) return null;
   try { return posed.ikInfo(); } catch { return null; }
 }
@@ -186,7 +186,7 @@ export function solveAngles({ part, params, handle, grab, target, holds = [], it
   const base = { ...part.defaults, ...params };
   const keys = dofsOf(handle, allHandles, base);
   const space = dofSpace(rangesOf(part), base, keys);
-  const points = [{ ref: { limb: handle.limb, at: grab }, point: target }, ...holds.map((h) => ({ ref: refOf(h), point: h.point }))];
+  const points = [{ ref: { limb: handle.on, at: grab }, point: target }, ...holds.map((h) => ({ ref: refOf(h), point: h.point }))];
   const m = points.length * 3;
   const evaluate = (u) => {
     const { p, d } = resolveParams(part, { ...base, ...space.valuesOf(u) });
@@ -201,7 +201,7 @@ export function solveAngles({ part, params, handle, grab, target, holds = [], it
   let lambda;
   try {
     evaluate(space.u0);
-    lambda = limbLength(resolveParams(part, { ...base, ...space.valuesOf(space.u0) }).d[handle.limb]);
+    lambda = limbLength(resolveParams(part, { ...base, ...space.valuesOf(space.u0) }).d[handle.on]);
   } catch {
     return null;
   }
@@ -342,7 +342,7 @@ export function goalValues({ handle, point, aimAngles, part }) {
  * ball as bend, spread, twist. Null when derive throws or the limb is missing.
  */
 export function seedValues({ part, params, handle }) {
-  const posed = posedLimb(part, params, handle?.limb);
+  const posed = posedLimb(part, params, handle?.on);
   if (!posed) return null;
   let joints;
   try { joints = posed.ikInfo().joints; } catch { return null; }
@@ -448,8 +448,8 @@ export function jointRings({ part, params, ids, infoOf }) {
   for (const handleId of ids) {
     const h = handles[handleId];
     if (!h || typeof h !== "object") continue;
-    if (h.mode === "goal" && Array.isArray(h.seed) && h.seed.length) {
-      const info = infoOf(h.limb);
+    if (h.drag === "goal" && Array.isArray(h.seed) && h.seed.length) {
+      const info = infoOf(h.on);
       if (!info) continue;
       let k = 0;
       for (const j of info.joints) {
@@ -458,16 +458,16 @@ export function jointRings({ part, params, ids, infoOf }) {
           const slots = {};
           BALL_SLOTS.forEach((ring, c) => { if (typeof h.seed[k + c] === "string") slots[ring] = { param: h.seed[k + c], scale: 1 }; });
           k += 3;
-          add(h.limb, j, handleId, "goal", slots);
+          add(h.on, j, handleId, "goal", slots);
         } else {
-          if (typeof h.seed[k] === "string") add(h.limb, j, handleId, "goal", { [hingeSlot(j)]: { param: h.seed[k], scale: 1 } });
+          if (typeof h.seed[k] === "string") add(h.on, j, handleId, "goal", { [hingeSlot(j)]: { param: h.seed[k], scale: 1 } });
           k += 1;
         }
       }
-    } else if (h.mode === "angles" && h.joints && typeof h.joints === "object" && !Array.isArray(h.joints)) {
+    } else if (h.drag === "angles" && h.joints && typeof h.joints === "object" && !Array.isArray(h.joints)) {
       for (const [key, entry] of Object.entries(h.joints)) {
         const { limb, joint } = parseJointKey(key);
-        const limbKey = limb ?? h.limb;
+        const limbKey = limb ?? h.on;
         const info = infoOf(limbKey);
         const j = info?.joints.find((x) => x.name === joint);
         const slots = j && jointEntrySlots(entry, j);
@@ -576,7 +576,7 @@ const GOAL_HOLD_WEIGHT = 100;
  * norm, mm) or null when the limb cannot be read.
  */
 export function solveGoalPinned({ part, params, handle, target, holds = [], aimAngles = null, iterations = 8, tol = TOL_MM }) {
-  const posed = posedLimb(part, params, handle?.limb);
+  const posed = posedLimb(part, params, handle?.on);
   if (!posed || typeof posed.ikForward !== "function" || !Array.isArray(handle.seed)) return null;
   let info;
   try { info = posed.ikInfo(); } catch { return null; }
@@ -624,7 +624,7 @@ export function solveGoalPinned({ part, params, handle, target, holds = [], aimA
     const t = aimTurn(handle.toward, { pitch, yaw, roll: handle.params?.aim?.length >= 3 ? roll ?? 0 : undefined });
     aim = { y: t.aim, z: handle.params?.aim?.length >= 3 ? t.up : null };
   }
-  const own = holds.filter((h) => h?.limb === handle.limb && Array.isArray(h.point));
+  const own = holds.filter((h) => h?.limb === handle.on && Array.isArray(h.point));
   const m = 3 + (aim ? (aim.z ? 6 : 3) : 0) + own.length * 3;
   const residuals = (u) => {
     const r = new Float64Array(m);
@@ -703,7 +703,7 @@ export function jointRingValues({ part, params, ring, slot, value }) {
     return { values: { [s.param]: written }, clamped };
   }
   const handle = part.handles?.[ring.handleId];
-  const posed = posedLimb(part, params, handle?.limb);
+  const posed = posedLimb(part, params, handle?.on);
   if (!posed || typeof posed.ikForward !== "function") return null;
   let info;
   try { info = posed.ikInfo(); } catch { return null; }

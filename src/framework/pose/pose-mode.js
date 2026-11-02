@@ -301,15 +301,15 @@ export function createPoseMode(viewer, {
     const infos = [];
     const byKey = new Map(); // derive key -> ikInfo (null: none)
     const infoOf = (key) => {
-      if (!byKey.has(key)) byKey.set(key, limbInfo(part, params, { limb: key }));
+      if (!byKey.has(key)) byKey.set(key, limbInfo(part, params, { on: key }));
       return byKey.get(key);
     };
     const limbIds = ids.filter((id) => !isGeneric(handles[id]));
     for (const handleId of limbIds) {
       const handle = handles[handleId];
-      const info = infoOf(handle.limb);
+      const info = infoOf(handle.on);
       if (!info) continue;
-      shown.push({ handleId, handle, limbKey: handle.limb, info });
+      shown.push({ handleId, handle, limbKey: handle.on, info });
       if (!seen.has(info.name)) { seen.add(info.name); infos.push(info); }
     }
     rings = new Map();
@@ -434,11 +434,11 @@ export function createPoseMode(viewer, {
     const ring = rings.get(ringKey(hit.limb, hit.at));
     const h = ring && handles[ring.handleId];
     if (!h) return null;
-    return pinId(ring.handleId, h.limb === ring.limb ? hit.at : `${ring.limb}.${hit.at}`);
+    return pinId(ring.handleId, h.on === ring.limb ? hit.at : `${ring.limb}.${hit.at}`);
   }
 
   const goalAt = (handle) => (typeof handle.at === "string" ? handle.at : "tip");
-  const hasAim = (handle) => handle?.mode === "goal" && Array.isArray(handle.params?.aim) && handle.params.aim.length >= 2;
+  const hasAim = (handle) => handle?.drag === "goal" && Array.isArray(handle.params?.aim) && handle.params.aim.length >= 2;
 
   /** The aim gizmo's target on `limb`'s goal handle with `aim`: `{ handleId, handle, info, at, axes }`, or null. */
   function gizmoTarget(limb) {
@@ -533,7 +533,7 @@ export function createPoseMode(viewer, {
   function dotsOf({ handle, info, extra, generic }) {
     if (generic) return [{ at: "tip", ringOnly: false }];
     if (extra) return ringJoints(info).map((at) => ({ at, ringOnly: true }));
-    if (handle.mode === "goal") {
+    if (handle.drag === "goal") {
       const at = goalAt(handle);
       return [{ at, ringOnly: false }, ...ringJoints(info).filter((n) => n !== at).map((n) => ({ at: n, ringOnly: true }))];
     }
@@ -1300,7 +1300,7 @@ export function createPoseMode(viewer, {
       const out = [];
       for (const { handleId, handle, info, extra, generic } of shown) {
         if (extra) continue; // a limb shown only for its joint rings has no handle point
-        const at = generic ? "tip" : handle.mode === "goal" ? goalAt(handle) : "tip";
+        const at = generic ? "tip" : handle.drag === "goal" ? goalAt(handle) : "tip";
         const s = toScreen(info.points[at]);
         // a generic handle reports its own point name ("point", or its source's `at`)
         if (s && s.visible !== false) out.push({ handleId, at: generic ? handleAt(handle) : at, x: s.x, y: s.y });

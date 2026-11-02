@@ -609,28 +609,37 @@ the natural gripper roll with the wrist near 0.
 
 ## Handles and Pose mode
 
-Handles let a person pose the part with the mouse. A handle is a draggable point on a
-posed limb. A part declares them in a top-level `handles` object. Lint checks every
-name (`handle-unknown-limb`, `handle-unknown-param`, `handle-param-count`,
-`handle-aim-toward`, `handle-unknown-joint`, `handle-bad-mode`).
+Handles let a person pose the part with the mouse. A handle on a limb is a draggable
+point on a posed limb. A part declares them in a top-level `handles` object, in the
+same form as every other handle: `on` names the limb, and `drag` says how it moves
+(`"goal"` or `"angles"`). Lint checks every name (`handle-unknown-source`,
+`handle-unknown-param`, `handle-param-count`, `handle-aim-toward`,
+`handle-unknown-joint`, `handle-bad-drag`).
 
 ```js
 handles: {
-  tool:  { limb: "arm", at: "tip", mode: "goal",
+  tool:  { on: "arm", at: "tip", drag: "goal",
            params: { position: ["toolX", "toolY", "toolZ"], aim: ["toolPitch", "toolYaw", "toolRoll"] },
            toward: [1, 0, 0],
            seed: ["base", "shoulder", "elbow", "wristPitch", "wristYaw", "wristRoll"] },
-  index: { limb: "index", mode: "angles", params: ["indexKnuckle", "indexCurl", "indexSpread", "wristPitch"],
+  index: { on: "index", drag: "angles", params: ["indexKnuckle", "indexCurl", "indexSpread", "wristPitch"],
            lock: "indexLock",
            joints: { spread: "indexSpread", mcp: "indexKnuckle", "palm.wristPitch": "wristPitch" } },
 },
 ```
 
-`limb` is a key of the object `derive` returns, and its value is a posed limb. Every
-parameter a handle names must be a numeric key of `defaults` (a `lock`'s default may
-also be a boolean).
+`on` is a key of the object `derive` returns, and for `"goal"` and `"angles"` its value
+is a posed limb. A limb handle always sets `drag`: lint refuses one without it
+(`handle-bad-drag`) rather than guess. Every parameter a handle names must be a numeric
+key of `defaults` (a `lock`'s default may also be a boolean).
 
-### `mode: "goal"`
+A posed limb is also a point source: its `handleInfo()` gives its joints and `tip` as
+points, each hinge's axis, and the bone chain. So the geometric drags of any handle
+(`"point"`, `"axis"`, `"plane"`, `"rotary"`) work on a limb point too, for example
+`{ on: "arm", at: "tip", drag: "axis", direction: [0, 0, 1], params: ["lift"] }`. They
+write `params` through `derive` like on any source, with no goal or angles behaviour.
+
+### `drag: "goal"`
 
 Dragging the handle writes the goal parameters: `position` (three parameters) and,
 if declared, `aim` (two parameters for pitch and yaw, three for pitch, yaw and roll, all
@@ -676,7 +685,7 @@ for example when the upper arm gets longer.
   goal the schema would clip stops the pose short, as a joint ring does. A pin on another
   limb is not held by a goal drag. Without a pin on its limb, a goal drag works as before.
 
-### `mode: "angles"`
+### `drag: "angles"`
 
 Dragging solves for the listed parameters directly and writes them. The parameters can
 be anything the pose reads: a joint angle, a `curl`, a `spread`, a parent limb's wrist
@@ -742,7 +751,7 @@ when they are all off.
   - A pinned point holds its position in space through every inverse-kinematics drag:
     a drag of another point of the same limb, or of another limb's handle (angles mode
     holds pins on any limb; a goal drag holds pins on its own limb, see "Pins on a goal
-    drag" under `mode: "goal"`). Dragging a pinned dot moves it, and it holds its new
+    drag" under `drag: "goal"`). Dragging a pinned dot moves it, and it holds its new
     place in the next drag.
   - A pin holds a point's POSITION, not a joint's angle. A pivot turns about its own
     point, so pinning it (the hand's wrist, say) does not stop it turning. To hold a

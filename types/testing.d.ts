@@ -538,7 +538,7 @@ export interface ShapeProbeFacts {
 export interface HandleFacts {
   id: string;
   label: string;
-  kind: "point" | "axis" | "plane" | "rotary" | "limb-goal" | "limb-angles";
+  kind: "point" | "axis" | "plane" | "rotary" | "goal" | "angles";
   /** Part coordinates, rounded to 0.001 mm; null when the point could not be read. */
   point: [number, number, number] | null;
   /** Flat list; a goal handle lists position, then aim. */

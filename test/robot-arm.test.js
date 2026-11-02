@@ -22,7 +22,7 @@ test("a 6-axis limb, a goal-mode tool handle seeded by the six joint params, and
   const arm = solve();
   expect(arm.joints).toEqual(JOINTS.map((j) => `arm.${j}`));
   expect(part.handles.tool).toEqual({
-    limb: "arm", at: "tip", mode: "goal",
+    on: "arm", at: "tip", drag: "goal",
     params: { position: ["toolX", "toolY", "toolZ"], aim: ["toolPitch", "toolYaw", "toolRoll"] },
     toward: [1, 0, 0],
     seed: JOINTS,

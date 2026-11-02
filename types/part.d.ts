@@ -915,21 +915,38 @@ export interface PartDefinition<P = ResolvedParams, D = Derived> {
    */
   probes?: Record<string, (k: GeometryKernel, p: P, d: D) => unknown>;
   /**
-   * Draggable inverse-kinematics points over a posed limb returned by `derive`
-   * (`limb(...).pose(...)` from `partforge/kinematics`). Parameters named here must be
-   * numeric keys of `defaults`.
+   * Draggable points (Pose mode). Each sits `on` a point source `derive` returned (a value
+   * with `handleInfo()`, a posed limb from `partforge/kinematics` included) or at a
+   * `point` function, and moves by its `drag`. Parameters named here must be numeric keys
+   * of `defaults`.
    */
   handles?: Record<string, Handle>;
 }
 
-/** A draggable IK point. `goal` drags a point on the limb; `angles` drags joint values directly. */
-export type Handle = GoalHandle | AnglesHandle | PointHandle;
-export interface GoalHandle {
+/**
+ * A draggable point, discriminated on `drag`. "goal" and "angles" pose a limb (`on` names a
+ * posed limb); "point" (the default), "axis", "plane" and "rotary" move any point source's
+ * point, a limb's joints and tip included, or a `point` function's.
+ */
+export type Handle = GoalHandle | AnglesHandle | PointHandle | AxisHandle | PlaneHandle | RotaryHandle;
+/** What every handle may carry. */
+export interface HandleCommon {
+  /** A parameter name; while truthy the handle's parameters stay out of a drag. */
+  lock?: string;
+  /** A short name for the readout and agents (default: the handle's key). */
+  label?: string;
+  /** Sub-part name(s) whose hover reveals the handle. */
+  showOn?: string | string[];
+  /** Parameters shown in the drag readout (default: `params`). */
+  readout?: string[];
+}
+/** Drag a point on a posed limb; the part's derive solves the limb to reach it. */
+export interface GoalHandle extends HandleCommon {
   /** Key of the posed limb in `derive`'s output. */
-  limb: string;
+  on: string;
   /** A joint name, or "tip" (the default). */
   at?: string;
-  mode: "goal";
+  drag: "goal";
   params: {
     /** The three parameters (x, y, z) the handle writes. */
     position: [string, string, string];
@@ -961,42 +978,56 @@ export type HandleJoint = string | { param: string; scale?: number } | { bend?: 
 /** A geometric handle field: a value, or a pure function of the resolved params and `derive`'s result. */
 export type HandleGeom<T, P = Record<string, any>, D = any> = T | ((p: P, d: D) => T);
 /**
- * A draggable point that is not on an IK limb: a point of a source `derive` returned
- * (`on` + `at`; the source answers `handleInfo()`), or one the part computes (`point`).
- * Give exactly one of `on` and `point`.
+ * Where a geometric handle sits: a point of a source `derive` returned (`on` + `at`; the
+ * source answers `handleInfo()`, a posed limb included), or one the part computes
+ * (`point`). Exactly one of `on` and `point`.
  */
-export interface PointHandle {
-  /** Key of a point source in `derive`'s output. */
-  on?: string;
-  /** With `on`: a key of the source's `points`. */
-  at?: string;
-  /** The point, in part coordinates. */
-  point?: (p: any, d: any) => [number, number, number];
+export type HandleSource =
+  | {
+      /** Key of a point source in `derive`'s output. */
+      on: string;
+      /** A key of the source's `points`. */
+      at: string;
+      point?: never;
+    }
+  | {
+      /** The point, in part coordinates. */
+      point: (p: any, d: any) => [number, number, number];
+      on?: never;
+      at?: never;
+    };
+/** What a geometric (non-limb) handle carries besides its source and drag. */
+export interface GeomHandleCommon extends HandleCommon {
   /** Numeric parameters the drag may write. */
   params: string[];
-  drag?: "point" | "axis" | "plane" | "rotary";
-  /** `drag: "axis"`: the direction the point slides along. */
-  direction?: HandleGeom<[number, number, number]>;
-  /** `drag: "plane"`: the plane's normal. */
-  normal?: HandleGeom<[number, number, number]>;
-  /** `drag: "rotary"`: the axis turned about (default: the source's `axes` entry for `at`'s prefix). */
-  axis?: HandleGeom<{ origin: [number, number, number]; direction: [number, number, number] }>;
-  /** A parameter name; while truthy the handle's parameters stay out of a drag. */
-  lock?: string;
-  /** A short name for the readout and agents (default: the handle's key). */
-  label?: string;
-  /** Sub-part name(s) whose hover reveals the handle. */
-  showOn?: string | string[];
-  /** Parameters shown in the drag readout (default: `params`). */
-  readout?: string[];
 }
-export interface AnglesHandle {
-  limb: string;
-  mode: "angles";
+/** Free 3D (the default drag): the target moves on a plane fixed at drag start. */
+export type PointHandle = HandleSource & GeomHandleCommon & { drag?: "point" };
+/** The target slides along a line through the point. */
+export type AxisHandle = HandleSource & GeomHandleCommon & {
+  drag: "axis";
+  /** The direction the point slides along. */
+  direction: HandleGeom<[number, number, number]>;
+};
+/** The target moves on the plane through the point. */
+export type PlaneHandle = HandleSource & GeomHandleCommon & {
+  drag: "plane";
+  /** The plane's normal. */
+  normal: HandleGeom<[number, number, number]>;
+};
+/** The target turns about an axis. */
+export type RotaryHandle = HandleSource & GeomHandleCommon & {
+  drag: "rotary";
+  /** The axis turned about (default: the source's `axes` entry for `at`'s prefix). */
+  axis?: HandleGeom<{ origin: [number, number, number]; direction: [number, number, number] }>;
+};
+/** Drag a limb's joint values directly: the solve writes its `params`. */
+export interface AnglesHandle extends HandleCommon {
+  /** Key of the posed limb in `derive`'s output. */
+  on: string;
+  drag: "angles";
   /** The joint-value parameters this handle drags. */
   params: string[];
-  /** A parameter name; while truthy, this handle's own parameters stay out of a drag solve. */
-  lock?: string;
   /**
    * Joint rings in Pose mode: a joint (`"<joint>"` on this handle's limb, or
    * `"<limb>.<joint>"` on another posed limb of `derive`'s result, such as a parent palm)

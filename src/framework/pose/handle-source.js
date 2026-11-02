@@ -1,21 +1,30 @@
-// Where a handle sits (spec 2026-11-02 sections 1-2). A handle is a point on a posed
-// limb, on any value `derive` returned that answers `handleInfo()`, or one a part
-// function computes. This module reads that point and the axis a rotary or axis drag
-// turns about, and turns it into the pseudo-limb record Pose mode draws. Pure: no DOM,
-// no three.js, no node:, and no domain folder - a source is recognised by plain data
-// (`typeof v?.handleInfo === "function"`), never instanceof, since the cloud's worker
-// holds two copies of this code.
+// Where a handle sits (spec 2026-11-02 sections 1-2). A handle is a point on any value
+// `derive` returned that answers `handleInfo()` (a posed limb, which "goal" and "angles"
+// drags pose, included), or one a part function computes. This module reads that point
+// and the axis a rotary or axis drag turns about, and turns it into the pseudo-limb
+// record Pose mode draws. Pure: no DOM, no three.js, no node:, and no domain folder - a
+// source is recognised by plain data (`typeof v?.handleInfo === "function"`), never
+// instanceof, since the cloud's worker holds two copies of this code.
 
 const isFn = (v) => typeof v === "function";
 
-/** "limb" | "on" | "point" | null: `limb` wins; otherwise exactly one of `on` / `point`. */
-export function handleKind(h) {
+const LIMB_DRAGS = ["goal", "angles"];
+
+/**
+ * "limb" | "on" | "point" | null. Exactly one of `on` / `point` (else null). A `point`
+ * handle is "point"; an `on` handle whose `drag` is "goal" / "angles" is "limb" - when `d`
+ * is given, only if `d[on]` is a posed limb (a value with `ikInfo()`) - and every other
+ * `on` handle is "on" (a limb's own `handleInfo()` points included).
+ */
+export function handleKind(h, d) {
   if (!h || typeof h !== "object") return null;
-  if (h.limb != null) return "limb";
   const hasOn = h.on != null;
   const hasPoint = h.point != null;
   if (hasOn === hasPoint) return null;
-  return hasOn ? "on" : "point";
+  if (hasPoint) return "point";
+  if (!LIMB_DRAGS.includes(h.drag)) return "on";
+  if (d === undefined) return "limb";
+  return isFn(d?.[h.on]?.ikInfo) ? "limb" : "on";
 }
 
 // Every schema parameter a pose handle writes: an angles handle's list, a goal
@@ -56,10 +65,10 @@ const isPoint = (v) => Array.isArray(v) && v.length === 3 && v.every((c) => Numb
 
 /** The handle's point in part coordinates. THROWS when it cannot be read (a solve scores that FAILED). */
 export function locateHandle(part, p, d, handle) {
-  const kind = handleKind(handle);
+  const kind = handleKind(handle, d);
   let out;
   if (kind === "limb") {
-    out = d?.[handle.limb]?.world(handleAt(handle)).origin;
+    out = d?.[handle.on]?.world(handleAt(handle)).origin;
   } else if (kind === "on") {
     const info = sourceInfo(d, handle.on);
     if (!info) throw new Error(`handle: derive().${handle.on} is not a point source`);
@@ -68,7 +77,7 @@ export function locateHandle(part, p, d, handle) {
     if (!isFn(handle.point)) throw new Error("handle: point must be a function");
     out = handle.point(p, d);
   } else {
-    throw new Error("handle: needs exactly one of limb, on, point");
+    throw new Error("handle: needs exactly one of on, point");
   }
   if (!isPoint(out)) throw new Error(`handle: no readable point (${kind})`);
   return [out[0], out[1], out[2]];
@@ -90,7 +99,7 @@ export function handleAxis(handle, p, d) {
   if (drag === "rotary") {
     const given = resolveGeom(handle.axis, p, d);
     if (given && vec(given.origin) && vec(given.direction)) return { origin: given.origin, direction: given.direction };
-    if (handleKind(handle) !== "on") return null;
+    if (handleKind(handle, d) !== "on") return null;
     const ax = sourceInfo(d, handle.on)?.axes?.[String(handle.at).split(".")[0]];
     return ax && vec(ax.origin) && vec(ax.direction) ? { origin: ax.origin, direction: ax.direction } : null;
   }
@@ -103,7 +112,7 @@ export function handleAxis(handle, p, d) {
  */
 export function handleRecord(part, params, d, handleId) {
   const handle = part?.handles?.[handleId];
-  const kind = handleKind(handle);
+  const kind = handleKind(handle, d);
   if (kind !== "on" && kind !== "point") return null;
   const p = { ...part.defaults, ...params };
   let tip;

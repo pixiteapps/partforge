@@ -18,7 +18,7 @@ const angleDeg = (a, b) => (Math.atan2(Math.hypot(...cross(a, b)), dot(a, b)) * 
 
 /** Every ring as "limb.joint:ring=param" for compact comparisons. */
 const ringList = (part, params, ids = Object.keys(part.handles)) => {
-  const infoOf = (key) => limbInfo(part, params, { limb: key });
+  const infoOf = (key) => limbInfo(part, params, { on: key });
   return jointRings({ part, params, ids, infoOf })
     .flatMap((r) => Object.entries(r.slots).map(([ring, s]) => `${r.limb}.${r.joint}:${ring}=${s.param}${s.scale !== 1 ? `*${s.scale}` : ""}`));
 };
@@ -152,7 +152,7 @@ describe("jointRings: which joints get a ring", () => {
 
 describe("jointRingValues: what a turn writes", () => {
   const ringOf = (part, params, limbKey, joint) => {
-    const infoOf = (key) => limbInfo(part, params, { limb: key });
+    const infoOf = (key) => limbInfo(part, params, { on: key });
     return jointRings({ part, params, ids: Object.keys(part.handles), infoOf }).find((r) => r.limb === limbKey && r.joint === joint);
   };
 
@@ -172,7 +172,7 @@ describe("jointRingValues: what a turn writes", () => {
       defaults: { b: 0, sp: 30, tw: 0, el: 0 },
       derive: (p) => ({ arm: BALL.pose({ bend: { s: { bend: p.b, spread: p.sp, twist: p.tw }, e: p.el } }) }),
       parts: {}, views: {},
-      handles: { arm: { limb: "arm", mode: "angles", params: ["b", "sp", "tw", "el"], joints: { s: { bend: "b", spread: "sp", twist: "tw" } } } },
+      handles: { arm: { on: "arm", drag: "angles", params: ["b", "sp", "tw", "el"], joints: { s: { bend: "b", spread: "sp", twist: "tw" } } } },
     };
     const params = { ...part.defaults };
     const ring = ringOf(part, params, "arm", "s");

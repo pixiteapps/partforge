@@ -57,7 +57,7 @@ export function pinTarget(id, handles) {
     return { handleId: pin.handleId, handle, ref: { handleId: pin.handleId, handle } };
   }
   const { limb, joint } = parseJointKey(pin.at);
-  return { handleId: pin.handleId, handle, limb: limb ?? handle.limb, at: joint };
+  return { handleId: pin.handleId, handle, limb: limb ?? handle.on, at: joint };
 }
 
 /**
@@ -69,9 +69,9 @@ export function pinTarget(id, handles) {
 export function defaultSolve({ part, params, handle, grab, target, aimAngles, holds = [], allHandles }) {
   const kind = handleKind(handle);
   if (kind === "on" || kind === "point") return solveHandle({ part, params, handle, target, holds, allHandles });
-  if (handle.mode === "goal") {
+  if (handle.drag === "goal") {
     // a pin on the goal's own limb: solve the seeded joints around it (solveGoalPinned)
-    if (holds.some((h) => h.limb === handle.limb)) {
+    if (holds.some((h) => h.limb === handle.on)) {
       const pinned = solveGoalPinned({ part, params, handle, target, holds });
       if (pinned) return pinned;
     }
@@ -142,8 +142,8 @@ export function createPoseSession({
         if (point) holds.push({ ref: pin.ref, point });
         continue;
       }
-      if (pin.handleId === handleId && pin.limb === handle.limb && pin.at === grab) continue;
-      const point = locate({ part, params: snapshot, handle: { ...pin.handle, limb: pin.limb }, at: pin.at });
+      if (pin.handleId === handleId && pin.limb === handle.on && pin.at === grab) continue;
+      const point = locate({ part, params: snapshot, handle: { ...pin.handle, on: pin.limb }, at: pin.at });
       if (point) holds.push({ limb: pin.limb, at: pin.at, point });
     }
     drag = { handleId, handle, grab, snapshot, holds, touched: {} };
@@ -190,7 +190,7 @@ export function createPoseSession({
   }
 
   function ringFrame(axis, deltaDeg) {
-    if (!drag || drag.handle.mode !== "goal" || !isNum(deltaDeg)) return null;
+    if (!drag || drag.handle.drag !== "goal" || !isNum(deltaDeg)) return null;
     const aim = drag.handle.params?.aim;
     const i = typeof axis === "number" ? axis : AIM_AXES.indexOf(axis);
     if (!Array.isArray(aim) || !(i >= 0) || typeof aim[i] !== "string") return null;
@@ -201,7 +201,7 @@ export function createPoseSession({
     angles[i] = value(aim[i]) + deltaDeg;
     // A pin on the goal's limb: hold it, pulling the aim toward these angles while the goal
     // point stays where the drag began (solveGoalPinned); a pin can stop the aim short.
-    if (drag.holds.some((h) => h.limb === drag.handle.limb)) {
+    if (drag.holds.some((h) => h.limb === drag.handle.on)) {
       const position = drag.handle.params?.position ?? [];
       const point = position.map((k) => value(k));
       if (position.length === 3) {

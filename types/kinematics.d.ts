@@ -173,6 +173,11 @@ export interface PosedLimb {
   /** Plain-JSON view for drag handles, skeletons and limit arcs; throws without the parent frames of a parented limb. */
   ikInfo(): LimbIkInfo;
   /**
+   * The limb as a point source for handles (`{ on: "<key>", at, drag: "point" | "axis" | "plane" | "rotary" }`):
+   * its joints and `tip` as points, each hinge's axis at its joint, the bone chain as lines. Throws like `ikInfo`.
+   */
+  handleInfo(): LimbHandleInfo;
+  /**
    * Forward kinematics from this pose for Pose mode's joint rings: this pose's joint values with
    * `overrides` (`{ joint: value }`; a ball's partial `{ bend?, spread?, twist? }` merges over
    * its value), coupled and clamped, posed with the same parent frames and no reach, grip or
@@ -181,6 +186,17 @@ export interface PosedLimb {
   ikForward(overrides?: Record<string, number | Partial<LimbBallResult>>, at?: string): {
     values: Array<number | LimbBallResult>; origin: Point3; x: Point3; y: Point3; z: Point3;
   };
+}
+
+/** A posed limb's `handleInfo()`: the point-source contract every handle source answers. */
+export interface LimbHandleInfo {
+  kind: "partforge.points";
+  /** Each joint's bare name and `tip`, part coordinates (ikInfo's `points`). */
+  points: Record<string, Point3>;
+  /** One per hinge, keyed by joint name: the joint's origin and the direction a positive value turns about. None for a ball. */
+  axes: Record<string, { origin: Point3; direction: Point3 }>;
+  /** The bone chain: consecutive point names, base joint to `tip`. */
+  lines: Array<[string, string]>;
 }
 
 export interface LimbIkInfo {

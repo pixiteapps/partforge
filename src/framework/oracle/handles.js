@@ -20,11 +20,6 @@ function reportParams(handle) {
   return listed.filter((k) => typeof k === "string");
 }
 
-function reportKind(handle, kind) {
-  if (kind === "limb") return handle.mode === "angles" || Array.isArray(handle.params) ? "limb-angles" : "limb-goal";
-  return handle.drag ?? "point";
-}
-
 const firstLine = (e) => String(e?.message ?? e).split("\n")[0].slice(0, 120);
 
 /** `handles` for one view at `params`, or undefined when the part declares none. */
@@ -43,11 +38,10 @@ export function handlesReport(part, view, params = {}) {
   try { d = resolveParams(part, params).d; } catch (e) { derr = e; }
   return shown.map((id) => {
     const handle = handles[id];
-    const kind = handleKind(handle);
     const entry = {
       id,
       label: handle.label ?? id,
-      kind: reportKind(handle, kind),
+      kind: handle.drag ?? "point",
       point: null,
       params: reportParams(handle),
       locked: typeof handle.lock === "string" && !!p[handle.lock],
@@ -59,7 +53,7 @@ export function handlesReport(part, view, params = {}) {
       entry.error = firstLine(e);
       return entry;
     }
-    if (kind !== "limb") {
+    if (handleKind(handle, d) !== "limb") {
       let axis = null;
       try { axis = handleAxis(handle, p, d); } catch { axis = null; }
       if (axis) {
