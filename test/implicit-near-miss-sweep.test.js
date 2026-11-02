@@ -13,6 +13,7 @@
 // this sweep holds every point of the band.
 import { describe, test, expect } from "vitest";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
+import { evalReference } from "../src/framework/geometry/implicit/reference.js";
 import { edgeCheck } from "./helpers/mesh-topology.js";
 import { gapHolds, bisectorCrossings } from "./helpers/seam-quality.js";
 import { movedRoot } from "./fixtures/implicit-seam-cases.js";
@@ -36,6 +37,12 @@ describe("near-miss sweep: spreads × finger blends × moved root, gap 0.2 at th
       expect(spans, "triangles joining two pieces across the gap").toBe(0);
       expect(shortfall).toBeLessThanOrEqual(0.01);
       expect(bisectorCrossings(compiled, mesh, "index", "middle"), "triangles across the near miss's bisector").toBe(0);
+      // No vertex left floating in the gap: a share step accepted as transit on the last
+      // projection pass would leave one in air (the field there is the distance to the skin).
+      // Skin detail (creases) only carves inward, so it never lifts the field above zero.
+      let highest = -Infinity;
+      for (let i = 0; i < mesh.positions.length; i += 3) highest = Math.max(highest, evalReference(compiled, mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2]));
+      expect(highest, "the field at the vertex farthest off the surface (mm)").toBeLessThan(0.05);
     }, 120_000);
   }
 });
