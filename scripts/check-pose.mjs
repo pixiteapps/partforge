@@ -810,20 +810,20 @@ async function checkDrawerBox(page, url, errors) {
     if (slide && !Object.is(slide.params[k], defaults[k])) errors.push(`sliding drawer1 moved ${k} (${defaults[k]} -> ${slide.params[k]})`);
   }
 
-  // The readout chip: it shows by drawer1 after the slide; click it, type 20.3 and Enter —
-  // one commit of the snapped value (step 0.5: 20.5), then the chip goes.
+  // The readout chip: it shows by drawer1 after the slide; click it, type 20.34 and Enter —
+  // one commit of the snapped value (step 0.1: 20.3), then the chip goes.
   const chip = await page.evaluate(() => window.__pfRuntime.pose.__chip());
   if (chip?.handleId !== "drawer1" || chip.kind !== "values") errors.push(`no readout chip by drawer1 after the slide (${JSON.stringify(chip)})`);
   let typed = null;
   if (chip) {
     commits0 = await page.evaluate(() => window.__pfCommits.length);
     await page.click(".pf-pose-chip-value");
-    await page.fill('.pf-pose-chip input[name="drawer1Open"]', "20.3");
+    await page.fill('.pf-pose-chip input[name="drawer1Open"]', "20.34");
     await page.press('.pf-pose-chip input[name="drawer1Open"]', "Enter");
     await settle(page);
     const edit = await oneCommit(page, commits0, "the chip edit", errors);
     typed = edit?.params?.drawer1Open ?? null;
-    if (edit && typed !== 20.5) errors.push(`the chip edit committed drawer1Open ${typed}, not 20.5 (20.3 snapped to its 0.5 step)`);
+    if (edit && typed !== 20.3) errors.push(`the chip edit committed drawer1Open ${typed}, not 20.3 (20.34 snapped to its 0.1 step)`);
     if (await page.evaluate(() => window.__pfRuntime.pose.__chip())) errors.push("the readout chip stayed up after its edit was written");
   }
 

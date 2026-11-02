@@ -320,7 +320,9 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     // reach miss: hollow target + dashed, labelled line
     const act = active && limbs.find((l) => l.name === active.limb);
     if (act && active.target && typeof active.residual === "number" && active.residual > RESIDUAL_MIN) {
-      const a = vec(act.points.tip), b = vec(active.target);
+      // from the grabbed point (a joint in angles mode, a goal's `at`), the tip if it has none
+      const from = Array.isArray(act.points[active.grab]) ? act.points[active.grab] : act.points.tip;
+      const a = vec(from), b = vec(active.target);
       addBillboard("warn", b, TARGET_RING_PX);
       const line = addLine("dashed", [...a.toArray(), ...b.toArray()]);
       line.computeLineDistances();

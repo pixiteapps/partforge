@@ -11,7 +11,9 @@
 //   end()                  write the snapped values, hold(false), commit(changed) once;
 //                          returns { handleId, changed, moved, held } (null with no drag):
 //                          moved — some frame wrote a value that, snapped, left the start;
-//                          held — a pin held something through the drag
+//                          held — a pin held the drag still: it wrote nothing, and the
+//                          last target solved WITHOUT the pins would have moved a value
+//                          (a pin on an unrelated point, or a range end, holds nothing)
 //   cancel()               restore(snapshot), hold(false), unghost what is current, no commit
 //   externalWrite()        the same as cancel — something else wrote params mid-drag
 //   delivered(name)        a ghosted sub-part's new mesh landed: unghost it (mid-drag only
@@ -182,6 +184,7 @@ export function createPoseSession({
       const ok = Array.isArray(t?.point) ? t.point.length === 3 && t.point.every(isNum)
         : isNum(t?.angleDeg) && t.axis && Array.isArray(t.axis.origin) && Array.isArray(t.axis.direction);
       if (!ok) return null;
+      drag.lastTarget = t;
       return apply(solve({
         part, params: { ...getParams() }, handleId: drag.handleId, handle: drag.handle,
         grab: drag.grab, target: t, holds: drag.holds, allHandles,
@@ -257,7 +260,25 @@ export function createPoseSession({
     hold(false);
     const changed = Object.keys(snapped).filter((k) => snapped[k] !== ending.snapshot[k]);
     if (changed.length) commit(changed);
-    return { handleId: ending.handleId, changed, moved: ending.moved, held: ending.holds.length > 0 };
+    return { handleId: ending.handleId, changed, moved: ending.moved, held: !changed.length && !ending.moved && pinBound(ending) };
+  }
+
+  /**
+   * Whether a pin bound the (generic) drag: its last target, solved from the start with no
+   * holds, moves a value off the start once snapped. One extra solve, at release only.
+   */
+  function pinBound(ending) {
+    if (!ending.holds.length || !ending.lastTarget) return false;
+    let r = null;
+    try {
+      r = solve({
+        part, params: { ...ending.snapshot }, handleId: ending.handleId, handle: ending.handle,
+        grab: ending.grab, target: ending.lastTarget, holds: [], allHandles,
+      });
+    } catch { return false; }
+    if (!r?.values) return false;
+    const free = snap({ ...r.values });
+    return Object.keys(free).some((k) => !Object.is(free[k], ending.snapshot[k]));
   }
 
   function cancel() {

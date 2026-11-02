@@ -6,10 +6,13 @@
 // wrote nothing because a pin held it (pose-mode's onDragEnd `pinHeld`) shows PIN_HINT for
 // HINT_MS instead, not editable. A press on the canvas, posing standing down or detach puts
 // the chip away. Where it sits is pose-mode's handlePoints() (canvas px, through `toStage`),
-// re-read every frame while it shows.
+// re-read every frame while it shows. An edit in progress outlives its handle going off
+// screen (the chip stays, held inside the stage); posing going off, the view dropping the
+// handle, or detach end the edit unwritten. Only the inputs whose text was changed are
+// written; each value is named by its control's label and unit.
 //
 // A sibling of pose-controls.js: DOM chrome only, no three.js; pose-mode owns behaviour.
-import { readoutKeys, readoutText, chipValues } from "./handle-guides.js";
+import { readoutItems, chipValues } from "./handle-guides.js";
 import { rangesOf } from "./param-solve.js";
 
 /** How long the values chip shows after a drag, and the pin hint (ms). */
@@ -42,23 +45,41 @@ export function attachReadoutChip(viewer, mode, { stage } = {}, { part, getParam
 
   let shown = null;   // { handleId, kind: "values" | "hint", editing }
   let timer = null;
+  let lastAt = null;  // the chip's last on-screen spot (stage px), kept by an edit off screen
 
   function clearTimer() { if (timer !== null) { clearTimeout(timer); timer = null; } }
   function hide() {
     clearTimer();
     shown = null;
+    lastAt = null;
     chip.hidden = true;
     chip.replaceChildren();
     delete chip.dataset.kind;
   }
-  /** Put the chip by its handle; hide it when the handle is not on screen. */
+  /**
+   * Put the chip by its handle. A handle this view no longer shows hides it (an edit is
+   * dropped). One that is only off screen hides it too — unless an edit is open, which
+   * keeps the chip where it last was, held inside the stage.
+   */
   function place() {
     if (!shown) return;
-    const p = mode.handlePoints?.().find((h) => h.handleId === shown.handleId);
-    const s = p ? toStage(p) : null;
-    if (!s || s.visible === false) { hide(); return; }
-    chip.style.left = `${Math.round(s.x + OFFSET_PX)}px`;
-    chip.style.top = `${Math.round(s.y - OFFSET_PX)}px`;
+    const p = mode.handlePoints?.({ offscreen: true }).find((h) => h.handleId === shown.handleId);
+    if (!p) { hide(); return; }
+    const s = toStage(p);
+    const w = stage.clientWidth, h = stage.clientHeight;
+    const onScreen = s && s.visible !== false && Number.isFinite(s.x) && Number.isFinite(s.y)
+      && (!(w > 0 && h > 0) || (s.x >= 0 && s.y >= 0 && s.x <= w && s.y <= h));
+    if (!onScreen && !shown.editing) { hide(); return; }
+    let x = onScreen ? s.x + OFFSET_PX : lastAt?.x ?? OFFSET_PX;
+    let y = onScreen ? s.y - OFFSET_PX : lastAt?.y ?? h;
+    if (w > 0 && h > 0) {
+      // inside the stage: the chip hangs above (left, top) by its own height
+      x = Math.max(0, Math.min(w - chip.offsetWidth, x));
+      y = Math.max(chip.offsetHeight, Math.min(h, y));
+    }
+    lastAt = { x, y };
+    chip.style.left = `${Math.round(x)}px`;
+    chip.style.top = `${Math.round(y)}px`;
   }
   function show(handleId, kind, ms) {
     clearTimer();
@@ -73,7 +94,8 @@ export function attachReadoutChip(viewer, mode, { stage } = {}, { part, getParam
       chip.append(hint);
     } else {
       const handle = handles[handleId];
-      const text = readoutText(part, { ...part?.defaults, ...getParams() }, handle);
+      const text = readoutItems(part, { ...part?.defaults, ...getParams() }, handle)
+        .map((i) => `${i.label} ${i.text}${i.unit ? ` ${i.unit}` : ""}`).join(" · ");
       const button = document.createElement("button");
       button.type = "button";
       button.className = "pf-pose-chip-value";
@@ -95,18 +117,25 @@ export function attachReadoutChip(viewer, mode, { stage } = {}, { part, getParam
     const ranges = rangesOf(part);
     const form = document.createElement("div");
     form.className = "pf-pose-chip-edit";
-    for (const key of readoutKeys(handles[shown.handleId])) {
-      if (!Number.isFinite(params[key])) continue;
+    for (const item of readoutItems(part, params, handles[shown.handleId])) {
       const label = document.createElement("label");
       const name = document.createElement("span");
-      name.textContent = key;
+      name.className = "pf-pose-chip-name";
+      name.textContent = item.label;
       const input = document.createElement("input");
       input.type = "number";
-      input.name = key;
-      input.value = numStr(params[key]);
-      const step = ranges.get(key)?.step;
+      input.name = item.key;
+      input.value = numStr(item.value);
+      input.dataset.shown = input.value; // written back only once it is changed
+      const step = ranges.get(item.key)?.step;
       input.step = Number.isFinite(step) && step > 0 ? String(step) : "any";
       label.append(name, input);
+      if (item.unit) {
+        const unit = document.createElement("span");
+        unit.className = "pf-pose-chip-unit";
+        unit.textContent = item.unit;
+        label.append(unit);
+      }
       form.append(label);
     }
     // The clicked button has the focus: removing it would blur it (a focusout), and that
@@ -125,6 +154,7 @@ export function attachReadoutChip(viewer, mode, { stage } = {}, { part, getParam
     if (!shown?.editing) return;
     const typed = {};
     for (const input of chip.querySelectorAll("input")) {
+      if (input.value === input.dataset.shown) continue; // never touched: not written
       const v = parseFloat(input.value);
       if (Number.isFinite(v)) typed[input.name] = v;
     }

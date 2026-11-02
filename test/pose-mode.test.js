@@ -810,6 +810,16 @@ describe("generic handles", () => {
     expect(c.at).toBe("point");
     expect(c.x).toBeCloseTo(s.x, 6);
   });
+
+  it("handlePoints({ offscreen: true }) also lists a shown handle whose point is off screen, marked so", () => {
+    const t = setup(gen);
+    const project = t.viewer.projectPoint;
+    t.viewer.projectPoint = (w) => ({ ...project(w), visible: false }); // everything behind the camera
+    expect(t.mode.handlePoints()).toEqual([]);
+    const all = t.mode.handlePoints({ offscreen: true });
+    expect(all.map((p) => p.handleId).sort()).toEqual(["corner", "drawer", "lid"]);
+    expect(all.every((p) => p.visible === false)).toBe(true);
+  });
 });
 
 describe("generic handles: rotary and touch", () => {

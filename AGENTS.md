@@ -703,7 +703,8 @@ the installed package, so let the publish finish before bumping the dep there.
   shown handle's dot dimmed, `CUE_OPACITY` for `CUE_HOLD_MS`, faded over `CUE_FADE_MS`, drawn by
   pose-scene's `setCue` in its capture-hidden group; on `(hover: none)` it stays until the first
   drag). A released drag fires `onDragEnd` (`pose-session`'s `end()` reports `changed`, `moved`,
-  `held`); `readout-chip.js` (DOM, attached by mount like `pose-controls.js`) shows a generic
+  `held` - a pin held it only when the last target, re-solved with no holds, would have
+  moved a value); `readout-chip.js` (DOM, attached by mount like `pose-controls.js`) shows a generic
   handle's readout by it for `CHIP_MS` — click to type, written through mount's
   `writeChipValues` (the slider path, one commit; `handle-guides`'s `chipValues` snaps, clamps
   and keeps a wrapped param's turn) — or `PIN_HINT` for `HINT_MS` when a pin held the drag.

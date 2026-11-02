@@ -143,7 +143,82 @@ describe("attachReadoutChip", () => {
     w.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: d }));
     expect(t.applied).toEqual([]);
     d.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: null }));
-    expect(t.applied).toEqual([{ width: 90, depth: 40 }]);
+    expect(t.applied).toEqual([{ width: 90 }]); // only what was typed into
+  });
+
+  it("writes only the inputs the user changed; none changed writes and commits nothing", () => {
+    const t = setup();
+    t.mode.end({ handleId: "corner", changed: ["width"] });
+    t.el().querySelector("button").click();
+    const [w] = t.el().querySelectorAll("input");
+    w.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(t.applied).toEqual([]);
+    expect(t.el().hidden).toBe(true);
+    // a value that snaps back to what was shown still counts as typed (the slider would write it too)
+    t.mode.end({ handleId: "corner", changed: ["width"] });
+    t.el().querySelector("button").click();
+    const [, d] = t.el().querySelectorAll("input");
+    d.value = "41.2";
+    d.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(t.applied).toEqual([{ depth: 41 }]);
+  });
+
+  it("an edit survives the handle going off screen (kept at the stage edge); the handle leaving the view drops it", () => {
+    const t = setup();
+    t.mode.end({ handleId: "corner", changed: ["width"] });
+    t.el().querySelector("button").click();
+    const [w] = t.el().querySelectorAll("input");
+    w.value = "99";
+    t.mode.handlePoints = () => [{ handleId: "corner", at: "point", x: -500, y: 9000, visible: false }];
+    t.tick();
+    expect(t.el().hidden).toBe(false);
+    expect(t.el().querySelector("input")).toBe(w);
+    // not editing: off screen hides it
+    const u = setup();
+    u.mode.end({ handleId: "corner", changed: ["width"] });
+    u.mode.handlePoints = () => [{ handleId: "corner", at: "point", x: 1, y: 1, visible: false }];
+    u.tick();
+    expect(u.el().hidden).toBe(true);
+    // the view changed the handle away: the edit is dropped, nothing written
+    t.mode.handlePoints = () => [];
+    t.tick();
+    expect(t.el().hidden).toBe(true);
+    w.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    expect(t.applied).toEqual([]);
+  });
+
+  it("posing going off, or detach, drops an edit unwritten", () => {
+    const t = setup();
+    t.mode.end({ handleId: "corner", changed: ["width"] });
+    t.el().querySelector("button").click();
+    t.el().querySelector("input").value = "99";
+    t.mode.setLive(false);
+    expect(t.applied).toEqual([]);
+    t.mode.setLive(true);
+    t.mode.end({ handleId: "corner", changed: ["width"] });
+    t.el().querySelector("button").click();
+    t.el().querySelector("input").value = "99";
+    t.chip.detach();
+    expect(t.applied).toEqual([]);
+  });
+
+  it("names each value by its control's label and unit, falling back to the key", () => {
+    const labelled = { ...part, parameters: [{ id: "b", title: "Box", controls: [
+      { key: "width", label: "Width", unit: "mm", min: 10, max: 400, step: 1 },
+      { key: "depth", min: 10, max: 200, step: 0.5 },
+    ] }] };
+    const stage = document.createElement("div");
+    const canvas = document.createElement("canvas");
+    stage.append(canvas);
+    document.body.append(stage);
+    const mode = fakeMode();
+    attachReadoutChip({ domElement: canvas, onFrame: () => () => {} }, mode, { stage }, { part: labelled, getParams: () => ({ width: 184, depth: 132 }), apply() {} });
+    mode.end({ handleId: "corner", changed: ["width"] });
+    const chip = stage.querySelector(".pf-pose-chip");
+    expect(chip.textContent).toBe("Width 184 mm · depth 132.0");
+    chip.querySelector("button").click();
+    expect([...chip.querySelectorAll("label")].map((l) => l.textContent)).toEqual(["Widthmm", "depth"]);
+    expect(chip.querySelector("label").querySelector(".pf-pose-chip-unit").textContent).toBe("mm");
   });
 
   it("Escape cancels: nothing written, the chip goes", () => {

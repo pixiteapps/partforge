@@ -3450,7 +3450,8 @@ cached preview), every shown handle's dot appears dimmed for 2 s, then fades out
 **resting cue** that tells a person the part has handles. It shows once per mount, never
 again on a param change or a view switch. On a touch-only device (`(hover: none)`) there is
 no hover to find a handle by, so the dimmed dots stay until the first drag of any handle;
-after that the rules above apply. The cue never shows in a capture.
+after that the rules above apply. The cue never shows in a capture. It shows every handle
+the view shows, `showOn` ones included.
 
 A shown handle is a dot. Hover or drag it and its guide draws: an axis handle a short
 double arrow, a plane handle a small square, a rotary handle a ring about its axis. The
@@ -3462,11 +3463,14 @@ press orbits and picks as usual. On touch, a press within 24 px of a handle's po
 it. Escape, or a host `setParams` mid-drag, restores the values from before the drag.
 
 After a drag that wrote a param, the readout stays by the handle for 4 s as a small
-**chip**. Click or tap it to type exact values: it becomes one number input per `readout`
-param. Enter, or moving the focus out of the chip, writes them the way the panel's slider
-would (snapped to the step and clamped to the range; a `wrap: true` param keeps its turn,
-so 45 typed at 720 stores 765), as one `onParamsCommit`. Escape closes it and writes
-nothing. A drag on a limb (`"goal"` / `"angles"`) shows no chip.
+**chip**, each value named by its control's `label` and `unit` (else its key). Click or tap
+it to type exact values: it becomes one number input per `readout` param. Enter, or moving
+the focus out of the chip, writes the inputs you changed the way the panel's slider would
+(snapped to the step and clamped to the range; a `wrap: true` param keeps its turn, so 45
+typed at 720 stores 765), as one `onParamsCommit`; with none changed it writes and commits
+nothing. Escape closes it and writes nothing. An open edit stays up if the handle goes off
+screen; posing standing down or the view dropping the handle closes it unwritten. A drag on
+a limb (`"goal"` / `"angles"`) shows no chip.
 
 Offer few handles, and use `showOn` so each appears where the user is already looking.
 Ten dots on screen at once is a failure of the part, not of the user: lint warns

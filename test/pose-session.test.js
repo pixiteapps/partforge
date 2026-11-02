@@ -412,6 +412,30 @@ describe("createPoseSession - generic handles", () => {
     expect(harness().session.end()).toBeNull(); // no drag on
   });
 
+  it("held counts only a binding pin: another drawer's pin, or a range end, holds nothing", () => {
+    const drawers = {
+      parameters: [{ id: "d", title: "D", controls: [{ key: "d1", min: 0, max: 100, step: 1 }, { key: "d2", min: 0, max: 100, step: 1 }] }],
+      defaults: { d1: 0, d2: 0 },
+      derive: () => ({}),
+      handles: {
+        drawer1: { point: (p) => [0, -p.d1, 0], params: ["d1"], drag: "axis", direction: [0, -1, 0] },
+        drawer2: { point: (p) => [50, -p.d2, 0], params: ["d2"], drag: "axis", direction: [0, -1, 0] },
+      },
+    };
+    // drawer1 pinned, a tiny drawer2 drag that snaps back: the pin bound nothing
+    const tiny = harness({ part: drawers, real: true });
+    tiny.session.setPins(["drawer1:point"]);
+    tiny.session.begin("drawer2", "x");
+    tiny.frame({ point: [50, -0.2, 0] });
+    expect(tiny.session.end()).toMatchObject({ changed: [], held: false });
+    // drawer2 at its range end, pushed further, with drawer1 pinned: the range held it, not the pin
+    const end = harness({ part: { ...drawers, defaults: { d1: 0, d2: 100 } }, real: true });
+    end.session.setPins(["drawer1:point"]);
+    end.session.begin("drawer2", "x");
+    end.frame({ point: [50, -130, 0] });
+    expect(end.session.end()).toMatchObject({ changed: [], held: false });
+  });
+
   it("the same gear3 drag with no pin turns the drive", () => {
     const h = harness({ part: train, real: true });
     h.session.begin("gear3", "x");

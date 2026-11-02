@@ -64,7 +64,7 @@ export default {
       mm("height", "Height", 60, 300, "Outer height. The three drawers share it equally."),
     ] },
     { id: "drawers", title: "Drawers", description: "How far each drawer is pulled out, as a percentage of its travel (depth - 10). In Pose mode, drag a drawer's pull instead.", controls:
-      DRAWERS.map((i) => ({ key: `drawer${i}Open`, label: `Drawer ${i}`, unit: "%", min: 0, max: 100, step: 0.5,
+      DRAWERS.map((i) => ({ key: `drawer${i}Open`, label: `Drawer ${i}`, unit: "%", min: 0, max: 100, step: 0.1,
         description: ["The top drawer.", "The middle drawer.", "The bottom drawer."][i - 1] })) },
   ],
   defaults: { width: 160, depth: 120, height: 150, drawer1Open: 0, drawer2Open: 40, drawer3Open: 0 },

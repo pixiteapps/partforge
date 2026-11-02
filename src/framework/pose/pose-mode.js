@@ -1373,10 +1373,12 @@ export function createPoseMode(viewer, {
      * handle's `at`, a generic handle's point — `at` "point" or its source's `at`) sits
      * on the canvas: `[{ handleId, at, x, y }]`, CSS px from the
      * canvas's top-left. Drawn or not (at rest they are hidden until hovered). Empty
-     * while posing is not live. For a host's coach marks and the
+     * while posing is not live. `{ offscreen: true }` also lists a shown handle whose point
+     * is off screen (behind the camera), with `visible: false` (the readout chip's test of
+     * "still in this view"). For a host's coach marks and the
      * browser check (scripts/check-pose.mjs).
      */
-    handlePoints() {
+    handlePoints({ offscreen = false } = {}) {
       ensureFresh();
       const out = [];
       for (const { handleId, handle, info, extra, generic } of shown) {
@@ -1384,7 +1386,9 @@ export function createPoseMode(viewer, {
         const at = generic ? "tip" : handle.drag === "goal" ? goalAt(handle) : "tip";
         const s = toScreen(info.points[at]);
         // a generic handle reports its own point name ("point", or its source's `at`)
-        if (s && s.visible !== false) out.push({ handleId, at: generic ? handleAt(handle) : at, x: s.x, y: s.y });
+        const name = generic ? handleAt(handle) : at;
+        if (s && s.visible !== false) out.push({ handleId, at: name, x: s.x, y: s.y });
+        else if (offscreen) out.push({ handleId, at: name, x: s?.x ?? null, y: s?.y ?? null, visible: false });
       }
       return out;
     },

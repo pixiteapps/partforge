@@ -251,3 +251,21 @@ describe("the resting cue (setCue)", () => {
     scene.dispose();
   });
 });
+
+describe("the reach-miss line", () => {
+  it("starts at the grabbed joint, not the tip (falls back to the tip for an unknown grab)", () => {
+    const viewer = fakeViewer();
+    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    scene.setLimbs([INFO]);
+    const start = () => {
+      const line = scene.group.children.find((c) => c.isLineSegments2 && c.material.dashed);
+      const a = line.geometry.attributes.instanceStart;
+      return [a.getX(0), a.getY(0), a.getZ(0)];
+    };
+    scene.setActive({ limb: "arm", grab: "elbow", clamped: [], target: [10, 30, 0], residual: 30 });
+    expect(start()).toEqual([10, 0, 0]);
+    scene.setActive({ limb: "arm", grab: "nope", clamped: [], target: [10, 30, 0], residual: 30 });
+    expect(start()).toEqual([20, 5, 0]);
+    scene.dispose();
+  });
+});

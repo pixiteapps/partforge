@@ -8,6 +8,8 @@
 import { resolveParams } from "../part-model.js";
 import { locateHandle } from "./handle-source.js";
 import { rangesOf, snapValues } from "./param-solve.js";
+import { controlNodes } from "../panel/model.js";
+import { desugar } from "../panel/legacy.js";
 
 /** Points on a path preview: the param's range, ends included. */
 export const PATH_SAMPLES = 32;
@@ -151,16 +153,36 @@ export function readoutKeys(handle) {
  * places), joined by " · ". A param with no numeric value is left out.
  */
 export function readoutText(part, params, handle) {
+  return readoutItems(part, params, handle).map((i) => `${i.key} ${i.text}`).join(" · ");
+}
+
+/**
+ * The readout's values one by one, `[{ key, label, unit, value, text }]`: `text` the value
+ * as readoutText rounds it, `label` the control's label (else the key), `unit` its unit
+ * (else null). The readout chip names its values by these.
+ */
+export function readoutItems(part, params, handle) {
   const ranges = rangesOf(part);
+  const controls = new Map();
+  try {
+    for (const c of controlNodes(desugar(part?.parameters))) if (typeof c.key === "string" && !controls.has(c.key)) controls.set(c.key, c);
+  } catch { /* a malformed schema: keys alone */ }
   const out = [];
   for (const key of readoutKeys(handle)) {
     const v = isNum(params?.[key]) ? params[key] : part?.defaults?.[key];
     if (!isNum(v)) continue;
     const step = ranges.get(key)?.step;
     const places = isNum(step) && step > 0 ? decimals(step) : Number.isInteger(v) ? 0 : 2;
-    out.push(`${key} ${v.toFixed(Math.min(places, 20))}`);
+    const c = controls.get(key);
+    out.push({
+      key,
+      label: typeof c?.label === "string" && c.label ? c.label : key,
+      unit: typeof c?.unit === "string" && c.unit ? c.unit : null,
+      value: v,
+      text: v.toFixed(Math.min(places, 20)),
+    });
   }
-  return out.join(" · ");
+  return out;
 }
 
 /**
