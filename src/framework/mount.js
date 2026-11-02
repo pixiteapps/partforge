@@ -846,7 +846,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         write: live((values) => writePoseValues(values)),
         restore: live((snapshot) => writePoseValues(snapshot)),
         commit: live((changed) => onParamsCommit?.({ changed, params: { ...params } })),
-        staleSubParts: () => viewSubParts(part, view(), params).filter((n) => !isCurrent(n)),
+        // A skinned sub-part already shows the drag's pose: it is no ghost.
+        staleSubParts: () => viewSubParts(part, view(), params).filter((n) => !isCurrent(n) && !skin.isDeformed(n)),
         ghost: live((names) => {
           for (const n of names) {
             if (!ghostReplaced.has(n)) ghostReplaced.set(n, viewer.getSubPartOpacity?.(n) ?? 1);
@@ -881,8 +882,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           holdStart = null;
           // Release (or revert): mark the params dirty and dispatch now — the one
           // build the drag owes. The debounce timer onParamChange arms finds the
-          // cycle in flight and is absorbed.
-          onParamChange();
+          // cycle in flight and is absorbed. A skinned mesh stays on screen until
+          // that build replaces it, as a slider release leaves it (an ordinary
+          // change would put the exact base, the pose before the drag, back first).
+          const skinned = skin.anyDeformed();
+          onParamChange({ interactive: skinned });
+          if (skinned) skin.endDrag();
           loop.kick();
         }),
         visibleHandles: () => poseVisible ?? handleIds,
@@ -2115,11 +2120,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // A drag is a user edit, so a delivery its frames outdate is discarded like any
     // stale build (never shown as best-effort playback), and the kick finds nothing
     // to send while the drag holds — rigid sub-parts still move by matrix (the
-    // fast path's repair in onParamChange), the rest stay ghosted.
+    // fast path's repair in onParamChange), a k.implicit body whose frames alone
+    // changed is skinned like a slider drag's, and the rest stay ghosted.
     function writePoseValues(values) {
       Object.assign(params, values);
       panel.syncValues(Object.keys(values));
-      onParamChange({ debounce: false });
+      onParamChange({ debounce: false, interactive: true });
       loop.kick();
     }
 

@@ -548,6 +548,11 @@ const hand = k.implicit({
 
 Pose the limb in `derive`, as for solid links. But a `k.implicit` body is one solid, not
 a set of placed links, so a pose change rebuilds it: there is no fast path for its pose.
+A slider drag or a handle drag in Pose mode bends the last exact mesh until the rebuild
+lands (`docs/domains/organic.md`, "Dragging a pose"). Handles work as on solid links: the
+organic reference hand, `src/parts/organic-hand.js`, poses each digit with a limb whose
+`rotate` holds the finger's spread, and gives each digit an angles-mode handle on its
+knuckle, curl and spread.
 
 **Gripping an organic shape.** `grip.around` takes the plain shapes listed under "grip".
 For any other `k.implicit` node (a blended union, a warp, a `round`), pass

@@ -270,6 +270,10 @@ A whole body moved rigidly by a `views` placement does not.
 
 While you drag a slider, the app does not rebuild the body on every move. It bends the
 last exact mesh instead, at display rate, and rebuilds exactly when you let go or pause.
+A handle drag in Pose mode bends it the same way (pose the body's frames with limbs and
+declare `handles`, as the reference hand does; see `docs/domains/kinematics.md`, "Organic
+bodies"). A handle drag builds nothing until you let go, and the bent mesh is not faded as a
+rebuilding part is.
 
 **What bends.** A slider bends the mesh only when it changes nothing but `frames` of a
 `k.implicit`, or of a `k.union` of them, and the result is in its canonical place (not
@@ -427,7 +431,9 @@ The domain adds lint rules and no verify metrics. Lint runs every `k.implicit` a
 
 The reference part, `src/parts/organic-hand.js`, lints with no errors or warnings: a contact
 hand with crease detail, its nails each their own fine-grid `k.implicit` (the fix
-`implicit-thin-feature` suggests), and a probe that reports its frames.
+`implicit-thin-feature` suggests), and a probe that reports its frames. Each digit is a
+`limb` posed in `derive`, its frames put into the spec, with one angles-mode handle per
+digit, so you pose the hand by dragging a fingertip or a knuckle in Pose mode.
 
 ## Gotchas
 

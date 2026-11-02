@@ -61,7 +61,8 @@ lockable angles-mode handle per digit; rigid pin-jointed pieces placed by matrix
 print view a flat kit the pose never reaches; `hand.html`, checked by
 `scripts/check-pose.mjs`; the dev-only `pose-smoke.html` page, with `test/fixtures/ik-hand-smoke.js`,
 is the fixture that script drags), `organic-hand.js` (the organic reference part - one contact `k.implicit` hand
-with crease detail and fine-grid nails unioned on, posed by sliders, its frames
+with crease detail and fine-grid nails unioned on, each digit a `limb` posed in `derive`
+with an angles-mode handle (a Pose-mode drag skins the last exact mesh until the rebuild lands), its frames
 reported by a `k.implicitFrames` probe; its builders are also the implicit
 engine's test fixture, re-exported by `test/fixtures/implicit-trees.js`, so
 editing them moves pinned mesh hashes; no demo page), `gearbox.js` (the rotary-handle reference part and the

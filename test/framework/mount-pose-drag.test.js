@@ -146,6 +146,27 @@ vi.mock("../../src/framework/pick-request/index.js", async () => ({
   createPickRequestClient: vi.fn(() => ({ detach: vi.fn() })),
 }));
 
+// Pose mode, stubbed (as in mount.test.js): a part declaring `handles` gets one, and the
+// test drives its effects (hold, write, restore) as a handle drag would.
+const poseStubs = vi.hoisted(() => []);
+vi.mock("../../src/framework/pose/pose-mode.js", () => ({
+  createPoseMode: vi.fn((viewer, opts) => {
+    const stub = {
+      opts,
+      delivered: vi.fn(), externalWrite: vi.fn(), refresh: vi.fn(), detach: vi.fn(),
+      setPins: vi.fn(), getPins: () => [], pinCount: () => 0, releasePins: vi.fn(),
+      handlePoints: () => [], isEnabled: () => true, setEnabled: vi.fn(), isLive: () => true,
+      onModeChange: () => () => {}, setSuppressed: vi.fn(), claimsHover: vi.fn(() => false),
+      onHoverChange: () => () => {}, takeClick: vi.fn(() => false), isDragging: vi.fn(() => false),
+    };
+    poseStubs.push(stub);
+    return stub;
+  }),
+}));
+vi.mock("../../src/framework/pose/pose-controls.js", () => ({
+  attachPoseControls: vi.fn(() => ({ detach: () => {} })),
+}));
+
 import { mount } from "../../src/framework/mount.js";
 import { frameMotions, skinVertices } from "../../src/framework/skin/deform.js";
 import { implicitCallId } from "../../src/framework/geometry/implicit/call-id.js";
@@ -160,9 +181,10 @@ const spec = (bend, r = 4) => ({ ...TWO_BONE(bend), root: withRadius(r) });
 const id = implicitCallId(spec(0), []);
 const FRAMES = [null, `${id}:root`, `${id}:child`];
 
-const makePart = ({ lid = false, images = false } = {}) => ({
+const makePart = ({ lid = false, images = false, handles = false } = {}) => ({
   meta: { title: "Drag Part", backend: "manifold" },
   defaults: { bend: 0, r: 4, img: 1 },
+  ...(handles ? { handles: { arm: { point: () => [0, 0, 0], drag: "point", params: ["bend"] } } } : {}),
   views: { v: { label: "V" }, w: { label: "W" } },
   // An asset the build never names in its specs: swapping it changes no k.implicit spec.
   ...(images ? { images: (p) => ({ tex: `tex-${p.img}.png` }) } : {}),
@@ -233,13 +255,15 @@ function makeElements() {
 
 const generates = (w) => w.postMessage.mock.calls.filter(([m]) => m?.type === "generate");
 
-function setup({ lid = false, images = false, first = null, onParamsCommit } = {}) {
+function setup({ lid = false, images = false, handles = false, first = null, onParamsCommit } = {}) {
   const els = makeElements();
   const { workers, createWorker } = makeWorkers();
-  const runtime = mount(makePart({ lid, images }), { createWorker, elements: els, ...(onParamsCommit ? { onParamsCommit } : {}) });
+  const runtime = mount(makePart({ lid, images, handles }), { createWorker, elements: els, ...(onParamsCommit ? { onParamsCommit } : {}) });
   const v = fakeViewers[0];
   const w = workers.manifold;
-  const reply = (meshes) => w.onmessage({ data: { type: "meshes", meshes, ms: 1 } });
+  // A part with handles builds slowly, as the organic hand does: a Pose-mode drag of a
+  // cheap one rebuilds as it goes instead (mount's LIVE_REBUILD_MS).
+  const reply = (meshes) => w.onmessage({ data: { type: "meshes", meshes, ms: handles ? 2000 : 1 } });
   w.onmessage({ data: { type: "ready" } });
   const firstDelivery = first ?? delivery(0);
   // first: false leaves the first build in flight (nothing on screen yet).
@@ -255,6 +279,7 @@ function setup({ lid = false, images = false, first = null, onParamsCommit } = {
 }
 
 beforeEach(() => {
+  poseStubs.length = 0;
   renderGate.release = null; renderGate.seen = null;
   localStorage.clear();
   sessionStorage.clear();
@@ -405,6 +430,45 @@ test("captureViews during a drag captures the exact base", () => {
   expect(v.setSubVertices.mock.calls[restoreAt][2]).toEqual({ deformed: false });
   expect(Array.from(v.setSubVertices.mock.calls[restoreAt][1].positions)).toEqual(Array.from(basePositions(0)));
   expect(v.setSubVertices.mock.invocationCallOrder[restoreAt]).toBeLessThan(v.captureCanonicalViews.mock.invocationCallOrder[0]);
+});
+
+// A Pose-mode handle drag writes through the session's effects, not the panel: its frames
+// deform like a slider's, nothing it skins is ghosted, and its release keeps the deformed
+// mesh on screen until the exact build replaces it.
+test("a Pose-mode drag deforms instead of ghosting, builds nothing while it holds, and its release builds once without snapping back", () => {
+  const { v, w } = setup({ handles: true });
+  const pose = poseStubs[0].opts;
+  const n = generates(w).length;
+  pose.hold(true);
+  pose.write({ bend: 30 });
+  const last = v.setSubVertices.mock.calls.at(-1);
+  expect(last[2]).toEqual({ deformed: true });
+  expect(Array.from(last[1].positions)).toEqual(Array.from(skinOf(0, 30)));
+  expect(pose.staleSubParts()).toEqual([]); // the skinned mesh is no ghost
+  vi.advanceTimersByTime(1000);
+  expect(generates(w).length).toBe(n);
+  const verts = v.setSubVertices.mock.calls.length;
+  pose.hold(false);
+  expect(generates(w).length).toBe(n + 1);
+  expect(generates(w).at(-1)[0].params.bend).toBe(30);
+  expect(v.setSubVertices.mock.calls.slice(verts).every(([, , o]) => o.deformed)).toBe(true);
+  vi.runAllTimers();
+  expect(generates(w).length).toBe(n + 1);
+});
+
+test("a cancelled Pose-mode drag puts the exact base back and builds nothing", () => {
+  const { v, w } = setup({ handles: true });
+  const pose = poseStubs[0].opts;
+  const n = generates(w).length;
+  pose.hold(true);
+  pose.write({ bend: 30 });
+  pose.restore({ bend: 0 });
+  pose.hold(false);
+  const last = v.setSubVertices.mock.calls.at(-1);
+  expect(last[2]).toEqual({ deformed: false });
+  expect(Array.from(last[1].positions)).toEqual(Array.from(basePositions(0)));
+  vi.runAllTimers();
+  expect(generates(w).length).toBe(n);
 });
 
 test("a posed delivery never becomes a skin base", () => {

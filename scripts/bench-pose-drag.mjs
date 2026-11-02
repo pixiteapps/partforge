@@ -1,9 +1,9 @@
 // scripts/bench-pose-drag.mjs — times the pose-drag path on the hand reference part.
 // Usage: node scripts/bench-pose-drag.mjs [--core on|off|both]   (Node 24; default on)
 // Times are CPU milliseconds. Four groups:
-//   (a) deform: skinVertices over the hand's delivered payload, curl 30 -> 31
+//   (a) deform: skinVertices over the hand's delivered payload, every finger's curl +0.01
 //   (b) bind:   bindVertices on the body at the 1.5 mm preview grid
-//   (c) exact rebuild: one finger (flexIndex 60 -> 62) and every finger (curl 30 -> 32),
+//   (c) exact rebuild: one finger (indexCurl +0.02) and every finger (each curl +0.02),
 //       cold (fresh kernel) and warm (after the base pose built), with the sample cache's hits
 //   (d) provisional stage: pieces' meshes versus the full union's mesh, after the build
 import { core, setCoreEnabled } from "../src/framework/core/core.js";
@@ -11,6 +11,7 @@ import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { compileImplicit } from "../src/framework/geometry/implicit/index.js";
 import { bindVertices } from "../src/framework/geometry/implicit/bindings.js";
 import { frameMotions, skinVertices } from "../src/framework/skin/deform.js";
+import { resolveParams } from "../src/framework/part-model.js";
 import hand, { handSpec } from "../src/parts/organic-hand.js";
 
 const arg = process.argv.indexOf("--core");
@@ -20,8 +21,12 @@ if (!["on", "off", "both"].includes(coreMode)) { console.error("usage: bench-pos
 const cpuMs = (u) => (u.user + u.system) / 1000;
 const time = (f) => { const t = process.cpuUsage(); const r = f(); return [r, cpuMs(process.cpuUsage(t))]; };
 const f1 = (x) => x.toFixed(1);
-const build = hand.parts.hand.build;
+// The part poses its digits in derive: build with the derived limbs, as the worker does.
+const build = (k, p) => hand.parts.hand.build(k, p, resolveParams(hand, p).d);
 const defaults = hand.defaults;
+// Every finger's curl moved by `by`, and one finger's alone.
+const curlAll = (by) => Object.fromEntries(["index", "middle", "ring", "pinky"].map((f) => [`${f}Curl`, defaults[`${f}Curl`] + by]));
+const oneFinger = { indexCurl: defaults.indexCurl + 0.02 };
 const PREVIEW = { quality: "preview" };
 
 // Build the hand inside a sub-part bracket, as the generate job does; records each k.implicit spec.
@@ -48,10 +53,10 @@ for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
   const k0 = await bootManifoldKernel();
   buildHand(k0, defaults);   // warm-up
   let baseMesh, baseSpecs;
-  buildHand(k0, { ...defaults, curl: 29 }, { keep: (s) => s.toMesh(PREVIEW) });   // warm the engine on a nearby pose
+  buildHand(k0, { ...defaults, ...curlAll(-0.01) }, { keep: (s) => s.toMesh(PREVIEW) });   // warm the engine on a nearby pose
   buildHand(k0, defaults, { keep: (s, sp) => { baseMesh = s.toMesh(PREVIEW); baseSpecs = sp; } });
   let liveSpecs;
-  buildHand(k0, { ...defaults, curl: 31 }, { keep: (s, sp) => { liveSpecs = sp; } });
+  buildHand(k0, { ...defaults, ...curlAll(0.01) }, { keep: (s, sp) => { liveSpecs = sp; } });
   const { bindings } = baseMesh;
   const motions = frameMotions(baseSpecs, liveSpecs, bindings.frames);
   const out = { positions: new Float32Array(baseMesh.positions.length), normals: new Float32Array(baseMesh.normals.length) };
@@ -60,10 +65,10 @@ for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
   const runs = [];
   for (let i = 0; i < 20; i++) runs.push(time(() => skinVertices(base, motions, out))[1]);
   runs.sort((a, b) => a - b);
-  console.log(`(a) skinVertices, curl 30 -> 31: ${f1(runs[10])} ms median (min ${f1(runs[0])}, max ${f1(runs[19])}) on ${bindings.frameA.length} corners, ${bindings.frames.length - 1} frames`);
+  console.log(`(a) skinVertices, every curl +0.01:${f1(runs[10])} ms median (min ${f1(runs[0])}, max ${f1(runs[19])}) on ${bindings.frameA.length} corners, ${bindings.frames.length - 1} frames`);
 
   // (b) bind ----------------------------------------------------------------------------
-  const body = handSpec(defaults);
+  const body = handSpec({});   // the fixture's default pose: the part's defaults
   const compiled = compileImplicit(body);
   k0.beginSubPart("body");
   const corners = k0.implicit(body).toMesh(PREVIEW).positions;   // the body alone: bindings are per call
@@ -82,7 +87,7 @@ for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
 
   // (c) exact rebuild -------------------------------------------------------------------
   console.log("(c) exact rebuild (build + preview mesh), ms   cold  warm  cache hits cold/warm");
-  const cases = [["one finger  flexIndex 60 -> 62", { flexIndex: 62 }], ["all fingers curl 30 -> 32", { curl: 32 }]];
+  const cases = [["one finger  indexCurl +0.02", oneFinger], ["all fingers curl +0.02", curlAll(0.02)]];
   for (const [name, change] of cases) {
     const kc = await bootManifoldKernel();
     stats(kc);
@@ -97,7 +102,7 @@ for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
   }
 
   // (d) provisional stage ---------------------------------------------------------------
-  console.log("(d) provisional stage, ms (one finger, flexIndex 60 -> 62)   build  pieces  union   stage-total  final-total");
+  console.log("(d) provisional stage, ms (one finger, indexCurl +0.02)      build  pieces  union   stage-total  final-total");
   for (const warm of [false, true]) {
     const kp = await bootManifoldKernel();
     if (warm) buildHand(kp, defaults);
@@ -105,7 +110,7 @@ for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
     kp.beginSubPart("hand");
     try {
       const rec = Object.create(kp);
-      const [solid, tb] = time(() => build(rec, { ...defaults, flexIndex: 62 }));
+      const [solid, tb] = time(() => build(rec, { ...defaults, ...oneFinger }));
       const pieces = kp._takeProvisionalPieces(solid);
       if (!pieces) { console.log("    no provisional pieces"); continue; }
       const [, tp] = time(() => pieces.map((pc) => pc.toMesh(PREVIEW)));

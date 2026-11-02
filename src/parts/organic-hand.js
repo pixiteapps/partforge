@@ -6,7 +6,9 @@
 // from above. Every bone is a capsule along its frame's +Y; flexion is a negative rotation
 // about the frame's X. The builders are named exports too: the engine's tests use this hand
 // as their fixture (test/fixtures/implicit-trees.js re-exports them), so a change here moves
-// pinned mesh hashes.
+// pinned mesh hashes. The part itself poses each digit as a limb (below), so Pose mode can
+// drag the fingers.
+import { limb } from "partforge/kinematics";
 
 // Segment lengths (mm) and radii at a 190 mm hand. r = radius at MCP, PIP, DIP, tip.
 export const FINGERS = {
@@ -75,7 +77,9 @@ function nail(frames, distal, tipFrame, tipR, s) {
   return { frames, root: { kind: "intersect", k: 0.3, children: [shell, footprint] }, resolution: 0.25, preview: 0.35 };
 }
 
-function buildHand(pose = {}) {
+// `digitFrames`, when given, replaces every digit's frames (the part passes its posed limbs'
+// frames, the same names); the pose's flex, curl, spread and oppose then pose nothing.
+function buildHand(pose = {}, digitFrames = null) {
   const p = { ...HAND_DEFAULTS, ...pose, flex: { ...HAND_DEFAULTS.flex, ...pose.flex } };
   const s = p.handLength / 190;
   const curl = p.curl / 100;
@@ -117,6 +121,9 @@ function buildHand(pose = {}) {
   };
   nails.push(() => nail(frames, thumbDistal, "thumb.tip", T.r[3], s));
   if (p.creases) detail.push({ kind: "creases", frame: "thumb.ip", amplitude: p.creaseDepth, wavelength: 1.8 * s, at: [0, 0, T.r[2]], radius: 7 * s, axis: "y", side: [0, 0, 1] });
+  // Same names, so every key keeps its place in `frames` (a pose drag deforms only when
+  // the frame tables differ in values alone) and the nails see the posed frames too.
+  if (digitFrames) Object.assign(frames, digitFrames);
 
   const palm = {
     kind: "union", k: 10 * s, label: "palm", children: [
@@ -140,57 +147,152 @@ function buildHand(pose = {}) {
 }
 
 /** The spike's hand as one k.implicit spec (no nails; see nailSpecs). */
-export function handSpec(pose = {}) {
-  const { frames, body, detail } = buildHand(pose);
+export function handSpec(pose = {}, digitFrames = null) {
+  const { frames, body, detail } = buildHand(pose, digitFrames);
   return { frames, root: body, detail, preview: 1.5, resolution: 0.8 };
 }
 
 /** One fine-grid nail spec per digit (index, middle, ring, pinky, thumb), to union onto handSpec's solid. */
-export function nailSpecs(pose = {}) {
-  return buildHand(pose).nails.map((make) => make());
+export function nailSpecs(pose = {}, digitFrames = null) {
+  return buildHand(pose, digitFrames).nails.map((make) => make());
 }
 
-// The part's params, flat, to the pose handSpec takes.
-const pose = (p) => ({
-  curl: p.curl, spread: p.spread, oppose: p.oppose, handLength: p.handLength,
-  flex: { index: p.flexIndex, middle: p.flexMiddle, ring: p.flexRing, pinky: p.flexPinky, thumb: p.flexThumb },
+// ----- the part: every digit a limb, posed in derive ---------------------------------
+//
+// Each digit is a limb() on the palm frame, written with the fixture's own numbers (the
+// limb's frames resolve bit for bit to handSpec's — test/kinematics-port.test.js), so
+// Pose mode can drag it. A finger is mcp, pip and dip, dip following pip by 0.75 as the
+// fixture's flex shares do: `<f>Knuckle` bends the mcp alone and `<f>Curl` closes the two
+// outer joints, so a fingertip pulled straight out straightens the finger from the knuckle
+// (one curl would leave the tip a single arc). `<f>Spread` turns the finger's base about
+// the palm's Z, positive fanning away from the middle finger (the middle leans toward the
+// index). The thumb is cmc (fixed), mcp and ip; `thumbOppose` sets its cmc's orientation,
+// as the fixture's oppose does.
+//
+// A pose change reshapes the one k.implicit body, so it rebuilds; a drag in Pose mode
+// shows the last exact mesh skinned to the new frames until the rebuild lands.
+
+const PIP_MAX = 100;        // a curl of 1 closes the pip this far; the dip follows at 0.75
+const THUMB_IP_MAX = 90;    // thumbCurl 1 closes the thumb's ip this far
+const RANGE = { knuckle: [-10, 90], pip: [0, PIP_MAX], dip: [0, PIP_MAX * 0.75], spread: [-10, 20], thumbKnuckle: [0, 60], thumbIp: [0, THUMB_IP_MAX], oppose: [0, 60] };
+// +1: a positive spread turns the finger the way the fixture's positive `spread` does
+const SPREAD_SIGN = { index: 1, middle: 1, ring: -1, pinky: -1 };
+const DIGITS = [...Object.keys(FINGERS), "thumb"];
+const LABEL = { index: "Index", middle: "Middle", ring: "Ring", pinky: "Pinky", thumb: "Thumb" };
+
+/** Every digit posed on the palm frame, from the part's flat params. */
+function poseDigits(p) {
+  const s = p.handLength / 190;
+  const palm = { palm: { at: [0, 0, 0] } };
+  const out = {};
+  for (const [name, spec] of Object.entries(FINGERS)) {
+    out[name] = limb(name, {
+      parent: "palm", at: spec.mcp.map((v) => v * s),
+      rotate: [{ axis: "z", deg: SPREAD_SIGN[name] * p[`${name}Spread`] }],
+      joints: [
+        { name: "mcp", range: RANGE.knuckle },
+        { name: "pip", range: RANGE.pip },
+        { name: "dip", range: RANGE.dip, follow: { joint: "pip", ratio: 0.75 } },
+      ],
+      lengths: spec.len.map((v) => v * s),
+    }).pose({ bend: { mcp: p[`${name}Knuckle`], pip: p[`${name}Curl`] * PIP_MAX } }, palm);
+  }
+  out.thumb = limb("thumb", {
+    parent: "palm", at: THUMB.cmc.map((v) => v * s),
+    rotate: [{ axis: "z", deg: 59 }, { axis: "x", deg: -(12 + p.thumbOppose * 0.4) }, { axis: "y", deg: -(45 + p.thumbOppose) }],
+    joints: [
+      { name: "cmc", range: [0, 0] },
+      { name: "mcp", range: RANGE.thumbKnuckle },
+      { name: "ip", range: RANGE.thumbIp },
+    ],
+    lengths: THUMB.len.map((v) => v * s),
+  }).pose({ bend: { mcp: p.thumbKnuckle, ip: p.thumbCurl * THUMB_IP_MAX } }, palm);
+  return out;
+}
+
+// The posed digits' frames, in the order handSpec writes them.
+const digitFrames = (d) => Object.assign({}, ...DIGITS.map((n) => d[n].frames));
+const sized = (p) => ({ handLength: p.handLength });
+
+// A shape is every digit's knuckle, curl and spread, never a lock. Each finger is
+// [knuckle°, curl, spread°]; the thumb is [oppose°, knuckle°, curl].
+const shape = (fingers, [thumbOppose, thumbKnuckle, thumbCurl]) => ({
+  ...Object.fromEntries(Object.keys(FINGERS).flatMap((f, i) => [
+    [`${f}Knuckle`, fingers[i][0]], [`${f}Curl`, fingers[i][1]], [`${f}Spread`, fingers[i][2]],
+  ])),
+  thumbOppose, thumbKnuckle, thumbCurl,
 });
-const flexControl = (key, label, max) => ({ key, label, unit: "%", min: 0, max, step: 1, description: `${label}'s bend, as a share of a full curl.` });
+// `relaxed` is HAND_DEFAULTS' pose (flex 60 at a 30% curl: mcp 15.3°, pip 18°; spread 8
+// scaled by FAN; the thumb's mcp 9° and ip 11.25°).
+const PRESETS = {
+  relaxed: shape([[15.3, 0.18, 8], [15.3, 0.18, 2.64], [15.3, 0.18, 2.64], [15.3, 0.18, 8]], [20, 9, 0.125]),
+  open: shape([[0, 0, 10], [0, 0, 3], [0, 0, 3], [0, 0, 10]], [0, 0, 0]),
+  // Every fingertip pads against the palm (near HAND_POSES.fist: flex 105 at a full curl).
+  fist: shape([[89.3, 1, 8], [89.3, 1, 2.64], [89.3, 1, 2.64], [89.3, 1, 8]], [20, 30, 0.417]),
+  point: shape([[0, 0, 8], [89.3, 1, 2.64], [89.3, 1, 2.64], [89.3, 1, 8]], [20, 30, 0.417]),
+};
+
+// Fine steps: Pose mode snaps every param a drag wrote to its step on release.
+const deg = (key, label, range, description) => ({ key, label, unit: "°", min: range[0], max: range[1], step: 0.1, description });
+const curl = (key, label, description) => ({ key, label, min: 0, max: 1, step: 0.001, description });
 
 export default {
   meta: { title: "Organic hand", units: "mm", backend: "manifold" },
   parameters: [
-    { id: "pose", title: "Pose", controls: [
-      { key: "curl", label: "Curl", unit: "%", min: 0, max: 100, step: 1, description: "How far every finger closes, scaling each finger's flex." },
-      { key: "spread", label: "Spread", unit: "°", min: -5, max: 15, step: 0.5, description: "How far the fingers fan apart." },
-      { key: "oppose", label: "Thumb opposition", unit: "°", min: 0, max: 60, step: 1, description: "How far the thumb swings across the palm." },
+    { id: "pose", title: "Pose", description: "In Pose mode, drag a fingertip or a knuckle instead.", controls: [
+      { type: "preset", label: "Shape", presets: PRESETS },
     ] },
-    { id: "fingers", title: "Fingers", controls: [
-      flexControl("flexIndex", "Index", 110), flexControl("flexMiddle", "Middle", 110),
-      flexControl("flexRing", "Ring", 110), flexControl("flexPinky", "Pinky", 110),
-      flexControl("flexThumb", "Thumb", 90),
+    { id: "fingers", title: "Fingers", controls: Object.keys(FINGERS).flatMap((f) => [
+      deg(`${f}Knuckle`, `${LABEL[f]} knuckle`, RANGE.knuckle, "The base knuckle's bend: 0 is in line with the palm."),
+      curl(`${f}Curl`, `${LABEL[f]} curl`, "Closes the two outer joints, the tip one following the middle one."),
+      deg(`${f}Spread`, `${LABEL[f]} spread`, RANGE.spread, f === "middle" ? "Positive leans it toward the index finger." : "Positive fans it away from the middle finger."),
+    ]) },
+    { id: "thumb", title: "Thumb", controls: [
+      deg("thumbOppose", "Thumb opposition", RANGE.oppose, "How far the thumb swings across the palm."),
+      deg("thumbKnuckle", "Thumb knuckle", RANGE.thumbKnuckle, "The thumb's base knuckle bend."),
+      curl("thumbCurl", "Thumb curl", "Closes the thumb's tip joint."),
     ] },
     { id: "size", title: "Size", controls: [
       { key: "handLength", label: "Hand length", unit: "mm", min: 150, max: 230, step: 1, description: "Wrist to middle fingertip; everything scales with it." },
     ] },
+    { id: "locks", title: "Locks", collapsed: true,
+      description: "A locked digit is left out of every drag in Pose mode. The shapes still set it.",
+      controls: DIGITS.map((id) => ({ key: `${id}Lock`, type: "checkbox", label: `Lock ${id}` })) },
   ],
-  // HAND_DEFAULTS' pose, written as literals so a host can save panel edits back into them
-  // (test/hand-part.test.js holds the two equal).
   defaults: {
-    curl: 30, spread: 8, oppose: 20, handLength: 190,
-    flexIndex: 60, flexMiddle: 60, flexRing: 60, flexPinky: 60, flexThumb: 50,
+    ...PRESETS.relaxed,
+    handLength: 190,
+    ...Object.fromEntries(DIGITS.map((id) => [`${id}Lock`, 0])),
   },
+  derive: (p) => poseDigits(p),
   parts: {
     hand: {
       label: "Hand",
       // The body is one contact k.implicit. The nails are each their own k.implicit on a
       // 0.25 mm grid, unioned on: a feature too thin for the body's grid gets its own.
-      build: (k, p) => k.union([k.implicit(handSpec(pose(p))), ...nailSpecs(pose(p)).map((s) => k.implicit(s))]),
+      build: (k, p, d) => k.union([
+        k.implicit(handSpec(sized(p), digitFrames(d))),
+        ...nailSpecs(sized(p), digitFrames(d)).map((s) => k.implicit(s)),
+      ]),
       views: ["assembly"],
     },
   },
   views: { assembly: { label: "Hand" } },
+  // One angles-mode handle per digit: drag a fingertip or joint, and the drag solves that
+  // digit's knuckle, curl and spread (the thumb's opposition). The knuckle (mcp) is its
+  // own parameter, so it also gets a rotate ring; the curl drives two joints and is left
+  // to the drag.
+  handles: {
+    ...Object.fromEntries(Object.keys(FINGERS).map((f) => [f, {
+      on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`, `${f}Spread`], lock: `${f}Lock`,
+      joints: { mcp: `${f}Knuckle` },
+    }])),
+    thumb: {
+      on: "thumb", drag: "angles", params: ["thumbKnuckle", "thumbCurl", "thumbOppose"], lock: "thumbLock",
+      joints: { mcp: "thumbKnuckle" },
+    },
+  },
   // Where every joint and fingertip ends up: measure writes the frame report out.
-  probes: { frames: (k, p) => k.implicitFrames(handSpec(pose(p))) },
+  probes: { frames: (k, p, d) => k.implicitFrames(handSpec(sized(p), digitFrames(d))) },
   verify: { expect: { hand: { watertight: true } } },
 };

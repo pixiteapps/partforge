@@ -30096,15 +30096,183 @@
       {
         "name": "defaults",
         "params": {
-          "curl": 30,
-          "spread": 8,
-          "oppose": 20,
+          "indexKnuckle": 15.3,
+          "indexCurl": 0.18,
+          "indexSpread": 8,
+          "middleKnuckle": 15.3,
+          "middleCurl": 0.18,
+          "middleSpread": 2.64,
+          "ringKnuckle": 15.3,
+          "ringCurl": 0.18,
+          "ringSpread": 2.64,
+          "pinkyKnuckle": 15.3,
+          "pinkyCurl": 0.18,
+          "pinkySpread": 8,
+          "thumbOppose": 20,
+          "thumbKnuckle": 9,
+          "thumbCurl": 0.125,
           "handLength": 190,
-          "flexIndex": 60,
-          "flexMiddle": 60,
-          "flexRing": 60,
-          "flexPinky": 60,
-          "flexThumb": 50
+          "indexLock": 0,
+          "middleLock": 0,
+          "ringLock": 0,
+          "pinkyLock": 0,
+          "thumbLock": 0
+        },
+        "checks": [
+          {
+            "scope": "subpart",
+            "subpart": "hand",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          }
+        ]
+      },
+      {
+        "name": "relaxed",
+        "params": {
+          "indexKnuckle": 15.3,
+          "indexCurl": 0.18,
+          "indexSpread": 8,
+          "middleKnuckle": 15.3,
+          "middleCurl": 0.18,
+          "middleSpread": 2.64,
+          "ringKnuckle": 15.3,
+          "ringCurl": 0.18,
+          "ringSpread": 2.64,
+          "pinkyKnuckle": 15.3,
+          "pinkyCurl": 0.18,
+          "pinkySpread": 8,
+          "thumbOppose": 20,
+          "thumbKnuckle": 9,
+          "thumbCurl": 0.125,
+          "handLength": 190,
+          "indexLock": 0,
+          "middleLock": 0,
+          "ringLock": 0,
+          "pinkyLock": 0,
+          "thumbLock": 0
+        },
+        "checks": [
+          {
+            "scope": "subpart",
+            "subpart": "hand",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          }
+        ]
+      },
+      {
+        "name": "open",
+        "params": {
+          "indexKnuckle": 0,
+          "indexCurl": 0,
+          "indexSpread": 10,
+          "middleKnuckle": 0,
+          "middleCurl": 0,
+          "middleSpread": 3,
+          "ringKnuckle": 0,
+          "ringCurl": 0,
+          "ringSpread": 3,
+          "pinkyKnuckle": 0,
+          "pinkyCurl": 0,
+          "pinkySpread": 10,
+          "thumbOppose": 0,
+          "thumbKnuckle": 0,
+          "thumbCurl": 0,
+          "handLength": 190,
+          "indexLock": 0,
+          "middleLock": 0,
+          "ringLock": 0,
+          "pinkyLock": 0,
+          "thumbLock": 0
+        },
+        "checks": [
+          {
+            "scope": "subpart",
+            "subpart": "hand",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          }
+        ]
+      },
+      {
+        "name": "fist",
+        "params": {
+          "indexKnuckle": 89.3,
+          "indexCurl": 1,
+          "indexSpread": 8,
+          "middleKnuckle": 89.3,
+          "middleCurl": 1,
+          "middleSpread": 2.64,
+          "ringKnuckle": 89.3,
+          "ringCurl": 1,
+          "ringSpread": 2.64,
+          "pinkyKnuckle": 89.3,
+          "pinkyCurl": 1,
+          "pinkySpread": 8,
+          "thumbOppose": 20,
+          "thumbKnuckle": 30,
+          "thumbCurl": 0.417,
+          "handLength": 190,
+          "indexLock": 0,
+          "middleLock": 0,
+          "ringLock": 0,
+          "pinkyLock": 0,
+          "thumbLock": 0
+        },
+        "checks": [
+          {
+            "scope": "subpart",
+            "subpart": "hand",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          }
+        ]
+      },
+      {
+        "name": "point",
+        "params": {
+          "indexKnuckle": 0,
+          "indexCurl": 0,
+          "indexSpread": 8,
+          "middleKnuckle": 89.3,
+          "middleCurl": 1,
+          "middleSpread": 2.64,
+          "ringKnuckle": 89.3,
+          "ringCurl": 1,
+          "ringSpread": 2.64,
+          "pinkyKnuckle": 89.3,
+          "pinkyCurl": 1,
+          "pinkySpread": 8,
+          "thumbOppose": 20,
+          "thumbKnuckle": 30,
+          "thumbCurl": 0.417,
+          "handLength": 190,
+          "indexLock": 0,
+          "middleLock": 0,
+          "ringLock": 0,
+          "pinkyLock": 0,
+          "thumbLock": 0
         },
         "checks": [
           {
@@ -30125,8 +30293,8 @@
     "warnings": [],
     "costs": [],
     "unevaluated": [],
-    "declared": 1,
-    "evaluated": 1
+    "declared": 5,
+    "evaluated": 5
   },
   "planter.js#planter": {
     "ok": true,
