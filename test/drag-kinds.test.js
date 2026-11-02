@@ -128,6 +128,19 @@ describe("rotary drag", () => {
     }
     expect(worst).toBeLessThanOrEqual(30);
   });
+  it("a coarse path (20 px per event) across the axis centre never steps more than 30 deg", () => {
+    const c = cam([0, 0, -1], [0, 1, 0]);
+    const p = onCircle(0);
+    const s = startDrag("rotary", { point: p, axis, ...c.pointerAt(p) });
+    let prev = s.angleDeg;
+    let worst = 0;
+    for (let x = 400 + 70; x >= 400 - 70; x -= 20) {
+      const t = dragTarget(s, c.pointerPx(x, 300 - 3));
+      worst = Math.max(worst, Math.abs(t.angleDeg - prev));
+      prev = t.angleDeg;
+    }
+    expect(worst).toBeLessThanOrEqual(30);
+  });
   it("radius-0 point gives radius 1 and a finite target", () => {
     const c = cam([0, 0, -1], [0, 1, 0]);
     const p = [0, 0, 0];
