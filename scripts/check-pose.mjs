@@ -768,7 +768,7 @@ async function checkGearbox(page, url, errors) {
 /**
  * The drawer box (parts/drawer-box.js): a MOTION drag, then a SHAPE drag, on one part.
  *   - drawer1's pull, along its rail (an axis handle): no `generate` job (a drawer slides
- *     by matrix), one commit opening drawer1 about 60 mm, the other drawers where they were;
+ *     by matrix), one commit opening drawer1 to about 60% of its travel, the other drawers where they were;
  *   - the top corner, across the top plane (a plane handle): the part is cheap (its last
  *     build under LIVE_REBUILD_MS), so it rebuilds LIVE — `generate` jobs during the drag —
  *     yet the host sees none of it: no onBuild until release, exactly one after, and one
@@ -804,7 +804,7 @@ async function checkDrawerBox(page, url, errors) {
   if (drawerJobs.length) errors.push(`${drawerJobs.length} generate job(s) posted while sliding drawer1 (a drawer slides by matrix)`);
   const slide = await oneCommit(page, commits0, "sliding drawer1", errors);
   const open = slide?.params?.drawer1Open;
-  if (slide && !(Math.abs(open - 60) <= 6)) errors.push(`sliding drawer1 to its 60 mm mark committed drawer1Open ${open}`);
+  if (slide && !(Math.abs(open - 60) <= 6)) errors.push(`sliding drawer1 to its 60% mark committed drawer1Open ${open}`);
   for (const k of ["drawer2Open", "drawer3Open", "width", "depth", "height"]) {
     if (slide && !Object.is(slide.params[k], defaults[k])) errors.push(`sliding drawer1 moved ${k} (${defaults[k]} -> ${slide.params[k]})`);
   }

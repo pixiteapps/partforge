@@ -12,8 +12,10 @@
 // - Each drawer is built closed, in place, and slid out by its view (a translate), so
 //   opening a drawer is matrix-only. Width, depth and height rebuild the cabinet and the
 //   drawers: that is the shape drag.
-// - A drawer's opening is clamped in derive() to depth - 10, so it never leaves its
-//   cabinet however the slider is set.
+// - A drawer's opening is a percentage of its travel, depth - 10, so it never leaves its
+//   cabinet and every value of the slider moves it: an opening in mm, clamped to a travel
+//   that depends on the depth, left the slider (and the handle) dead past the travel, which
+//   lint's handle-inert samples the range for.
 const WALL = 4;          // cabinet walls, top, bottom and dividers
 const FRONT = 6;         // drawer front thickness
 const SIDE = 2;          // drawer tray walls
@@ -61,13 +63,14 @@ export default {
       mm("depth", "Depth", 60, 300, "Outer depth (Y). The drawers open toward -Y."),
       mm("height", "Height", 60, 300, "Outer height. The three drawers share it equally."),
     ] },
-    { id: "drawers", title: "Drawers", description: "How far each drawer is pulled out. In Pose mode, drag a drawer's pull instead. Each stops at depth - 10.", controls:
-      DRAWERS.map((i) => ({ key: `drawer${i}Open`, label: `Drawer ${i}`, unit: "mm", min: 0, max: 290, step: 0.5,
+    { id: "drawers", title: "Drawers", description: "How far each drawer is pulled out, as a percentage of its travel (depth - 10). In Pose mode, drag a drawer's pull instead.", controls:
+      DRAWERS.map((i) => ({ key: `drawer${i}Open`, label: `Drawer ${i}`, unit: "%", min: 0, max: 100, step: 0.5,
         description: ["The top drawer.", "The middle drawer.", "The bottom drawer."][i - 1] })) },
   ],
   defaults: { width: 160, depth: 120, height: 150, drawer1Open: 0, drawer2Open: 40, drawer3Open: 0 },
   derive: (p) => {
-    const open = DRAWERS.map((i) => Math.min(Math.max(p[`drawer${i}Open`], 0), p.depth - 10));
+    // each drawer's opening in mm: its percentage of the travel, depth - 10
+    const open = DRAWERS.map((i) => (Math.min(Math.max(p[`drawer${i}Open`], 0), 100) / 100) * (p.depth - 10));
     // Each pull's tip, where its handle sits, with the drawer slid out.
     const pulls = DRAWERS.map((i, n) => {
       const [z0, z1] = bay(p, i);
