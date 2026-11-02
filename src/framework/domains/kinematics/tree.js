@@ -7,6 +7,7 @@
 import { hypot3 } from "../../geometry/js-math.js";
 import { SpecError } from "../../geometry/errors.js";
 import { axisAngle } from "../../geometry/rotations.js";
+import { compose, rotation, axisVector, IDENTITY } from "../../geometry/xform.js";
 
 const AXIS_KINDS = { bend: [1, 0, 0], spread: [0, 0, 1], twist: [0, 1, 0] };
 const MIRRORS = { YZ: 0, XZ: 1, XY: 2 };
@@ -194,6 +195,36 @@ function ballSteps({ bend, spread, twist }, mirrored) {
   return steps;
 }
 
+/**
+ * `{ bend, spread, twist }` for a rotation given as rotate steps. Swing–twist decomposition
+ * about the segment's +Y: the swing takes +Y to where the steps take it, by the shortest
+ * turn; the twist is what is left, about the swung +Y. A swing of 180° has no shortest
+ * turn, so it is taken as a bend (about local X).
+ */
+function ballFromRotate(rotate, field, fail) {
+  const steps = Array.isArray(rotate) ? rotate : [rotate];
+  let R = IDENTITY;
+  steps.forEach((st, i) => {
+    const at = Array.isArray(rotate) ? `${field}[${i}]` : field;
+    if (st == null || typeof st !== "object" || Array.isArray(st)) fail(at, "must be { axis, deg }");
+    for (const k of Object.keys(st)) if (k !== "axis" && k !== "deg") fail(`${at}.${k}`, `unknown option "${k}"`);
+    if (st.deg != null && !isNum(st.deg)) fail(`${at}.deg`, "must be a finite number");
+    try { axisVector(st.axis ?? "z"); } catch { fail(`${at}.axis`, 'must be "x", "y", "z" or a non-zero [x, y, z]'); }
+    R = compose(R, rotation(st.axis ?? "z", st.deg ?? 0));
+  });
+  // R's columns are the turned frame's axes; its +Y column is where the segment points.
+  const [yx, yy, yz] = [R[1], R[4], R[7]];
+  const swing = (Math.acos(Math.max(-1, Math.min(1, yy))) * 180) / Math.PI;
+  const side = Math.hypot(yx, yz);
+  // Unit swing axis ŷ × y' = (yz, 0, −yx) / |…|; at 180° (side ≈ 0) take local X.
+  const [ax, az] = side > 1e-12 ? [yz / side, -yx / side] : [1, 0];
+  const S = swing === 0 ? IDENTITY : rotation([ax, 0, az], swing);
+  // T = S⁻¹ R is a turn about Y alone: [[c, 0, s], [0, 1, 0], [−s, 0, c]].
+  const T = compose(Float64Array.of(S[0], S[3], S[6], S[1], S[4], S[7], S[2], S[5], S[8], 0, 0, 0), R);
+  const twist = (Math.atan2(T[2], T[0]) * 180) / Math.PI;
+  return { bend: -ax * swing + 0, spread: az * swing + 0, twist: twist + 0 };
+}
+
 /** A ball value clamped to its cone (bend and spread scaled down together). */
 function clampBall(v, cone) {
   const swing = Math.hypot(v.bend, v.spread);
@@ -205,9 +236,17 @@ function clampBall(v, cone) {
 /** A joint's rest value: 0 for a hinge, no swing and no twist for a ball. */
 export const restValue = (joint) => (joint.type === "ball" ? { ...BALL_REST } : 0);
 
-/** Validate one ball value given to pose: `{ bend?, spread?, twist? }`, absent keys 0. */
+/**
+ * Validate one ball value given to pose: `{ bend?, spread?, twist? }`, absent keys 0, or
+ * `{ rotate }` — frame-style steps in the joint's frame, each about the CURRENT axes —
+ * turned into the one swing and twist that end in the same orientation.
+ */
 export function ballValue(v, field, fail) {
-  if (v == null || typeof v !== "object" || Array.isArray(v)) fail(field, "a ball joint takes { bend?, spread?, twist? }");
+  if (v == null || typeof v !== "object" || Array.isArray(v)) fail(field, "a ball joint takes { bend?, spread?, twist? } or { rotate }");
+  if (Object.hasOwn(v, "rotate")) {
+    for (const k of Object.keys(v)) if (k !== "rotate") fail(`${field}.${k}`, "use rotate or bend/spread/twist, not both");
+    return ballFromRotate(v.rotate, `${field}.rotate`, fail);
+  }
   for (const k of Object.keys(v)) if (!BALL_KEYS.has(k)) fail(`${field}.${k}`, `unknown ball option "${k}"`);
   const out = { ...BALL_REST };
   for (const k of BALL_KEYS) {

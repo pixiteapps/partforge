@@ -62,7 +62,7 @@ test("every runnable example in the guide returns the value it shows", () => {
     checked.push(src);
   };
   new Function("limb", "aimFromAngles", "check", blocks.map(toScript).join("\n"))(limb, aimFromAngles, check);
-  expect(checked.length).toBe(34);   // every shown value; a parse change that drops one fails here
+  expect(checked.length).toBe(35);   // every shown value; a parse change that drops one fails here
 });
 
 test("every error message in the guide is the code's own, a SpecError with code SPEC", () => {
@@ -86,6 +86,7 @@ test("every error message in the guide is the code's own, a SpecError with code 
     () => index.pose({ grip: { around: () => NaN } }),
     () => limb("x", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: [{ name: "a", offset: [0, 0, 1] }], lengths: [1] }),
     () => thumb.pose({ bend: { ball: 30 } }),
+    () => thumb.pose({ bend: { ball: { rotate: [], bend: 3 } } }),
     () => limb("thumb", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: [{ name: "ball", type: "ball", range: [0, 10] }], lengths: [1] }),
     () => index.pose({}).place({ rotate() {}, translate() {} }, "pip", { from: "printed" }),
   ];
