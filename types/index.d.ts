@@ -492,13 +492,13 @@ export interface CaptureViewOptions {
  * down while measure, sketch or cutaway is on.
  */
 export interface PoseRuntime {
-  /** The host's switch — on by default. */
+  /** The host's switch — on by default. Always false for a part with no `handles`, which has no posing to switch. */
   isEnabled(): boolean;
   /** `false` switches posing off (handles hidden, presses orbit and pick as usual). */
   setEnabled(on: boolean): void;
   /** Handles can be hovered and dragged right now: enabled, and no measure, sketch, cutaway or cached preview on. */
   isLive(): boolean;
-  /** Pinned points (a click on a handle's tip toggles one). */
+  /** Pinned points badged in this view (a click on a handle's dot toggles one); a pin on a handle the view hides is kept but not counted. */
   pinCount(): number;
   releasePins(): void;
   /** Each shown handle's grab point on the canvas, CSS px from its top-left (drawn or not); empty while posing is not live. */

@@ -197,7 +197,7 @@ export function createPoseMode(viewer, {
   const session = createPoseSession({
     part, getParams, write, commit, restore, staleSubParts, ghost, unghost, hold,
     onCancel: () => finishPress(),
-    onPinsChange: () => { syncPins(); notify(pinListeners); },
+    onPinsChange: () => { if (!syncPins()) notify(pinListeners); },
     pinActive: (id) => !!pinPoint(id),
   });
   const tracker = createDragTracker();
@@ -340,14 +340,23 @@ export function createPoseMode(viewer, {
   }
   let pinnedPoints = []; // [{ limb, at, point }] as badged now (syncPins)
   let shownIds = new Set(); // the handles this view shows (readLimbs)
-  /** The scene's pin badges: one per pinned point shown, `{ limb (its name), at }`. */
+  /**
+   * The scene's pin badges: one per pinned point shown, `{ limb (its name), at }`.
+   * Returns whether the badged count moved, in which case pin listeners were told.
+   */
   function syncPins() {
+    const before = pinnedPoints.length;
     pinnedPoints = [];
     for (const id of session.pins) {
       const p = pinPoint(id);
       if (p && !pinnedPoints.some((q) => q.limb === p.limb && q.at === p.at)) pinnedPoints.push(p);
     }
     scene?.setPins(pinnedPoints.map(({ limb, at }) => ({ limb, at })));
+    // A view switch can show or hide pinned points with no pin changing: tell the
+    // chrome, whose Release pins counts what is badged (pinCount).
+    if (pinnedPoints.length === before) return false;
+    notify(pinListeners);
+    return true;
   }
   /** The dot `hit` stands on a pinned point (a coincident joint's pin counts: one badge). */
   function pinnedDot(hit) {
@@ -1174,7 +1183,8 @@ export function createPoseMode(viewer, {
         return { ...b, x: s?.x ?? null, y: s?.y ?? null };
       });
     },
-    pinCount: () => session.pins.length,
+    /** The pinned points badged in this view; a pin whose handle this view hides holds nothing and counts for nothing. */
+    pinCount: () => pinnedPoints.length,
     getPins: () => session.pins,
     setPins: (ids) => session.setPins(ids),
     releasePins: () => session.releasePins(),

@@ -792,9 +792,11 @@ users lose nothing.
 
 `runtime.pose` is the host's view of the mode. `setEnabled(false)` turns posing off and
 `setEnabled(true)` turns it on again (it is on by default). `isEnabled()` reads that
-setting. `isLive()` is true when handles can be used now: posing is enabled and measure,
-sketch, cutaway and a cached preview are all off. `pinCount()` and `releasePins()` read
-and clear the pins. `handlePoints()` gives each handle's grab point on the canvas, in CSS
+setting; on a part with no `handles` it is always false, since there is nothing to
+switch. `isLive()` is true when handles can be used now: posing is enabled and measure,
+sketch, cutaway and a cached preview are all off. `pinCount()` counts the pins badged in
+this view (a pin on a handle the view hides is kept, but not counted), and
+`releasePins()` clears every pin. `handlePoints()` gives each handle's grab point on the canvas, in CSS
 px, also when the handle does not show. It is empty while posing is not live.
 
 ## Posing a part as an agent

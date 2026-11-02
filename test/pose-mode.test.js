@@ -73,7 +73,7 @@ function fakeScene() {
 }
 
 const live = [];
-function setup(part = hand) {
+function setup(part = hand, extra = {}) {
   const viewer = fakeViewer();
   const scene = fakeScene();
   const orbit = { enabled: true };
@@ -93,6 +93,7 @@ function setup(part = hand) {
     schedule: (cb) => cb(),
     createScene: () => scene,
     createGizmo: (v) => (gizmo = createAimGizmo(v)),
+    ...extra,
   });
   live.push(mode);
   const screenOf = (p) => {
@@ -225,6 +226,29 @@ describe("createPoseMode", () => {
     expect(t.orbit.enabled).toBe(true);
     t.mode.releasePins();
     expect(t.mode.pinCount()).toBe(0);
+  });
+
+  it("a pin on a handle the view hides is kept, but neither badged nor counted", () => {
+    let visible = Object.keys(hand.handles);
+    const t = setup(hand, { visibleHandles: () => visible });
+    t.mode.setEnabled(true);
+    let told = 0;
+    t.mode.onPinsChange(() => told++);
+    const s = t.tipScreen("b");
+    t.fire("pointerdown", s.x, s.y);
+    t.fire("pointerup", s.x, s.y);
+    expect(t.mode.pinCount()).toBe(1);
+    expect(told).toBe(1);
+    visible = visible.filter((id) => id !== "b");
+    t.mode.refresh();
+    expect(t.mode.getPins()).toEqual(["b:tip"]);
+    expect(t.mode.pinCount()).toBe(0);
+    expect(t.scene.calls.setPins.at(-1)).toEqual([]);
+    expect(told).toBe(2);
+    visible = Object.keys(hand.handles);
+    t.mode.refresh();
+    expect(t.mode.pinCount()).toBe(1);
+    expect(told).toBe(3);
   });
 
   it("a press off every handle leaves orbit alone", () => {
