@@ -923,7 +923,7 @@ export interface PartDefinition<P = ResolvedParams, D = Derived> {
 }
 
 /** A draggable IK point. `goal` drags a point on the limb; `angles` drags joint values directly. */
-export type Handle = GoalHandle | AnglesHandle;
+export type Handle = GoalHandle | AnglesHandle | PointHandle;
 export interface GoalHandle {
   /** Key of the posed limb in `derive`'s output. */
   limb: string;
@@ -958,6 +958,38 @@ export interface GoalHandle {
  * scale }` when the joint turns `scale` × the parameter, or a ball's `{ bend?, spread?, twist? }`.
  */
 export type HandleJoint = string | { param: string; scale?: number } | { bend?: string; spread?: string; twist?: string };
+/** A geometric handle field: a value, or a pure function of the resolved params and `derive`'s result. */
+export type HandleGeom<T, P = Record<string, any>, D = any> = T | ((p: P, d: D) => T);
+/**
+ * A draggable point that is not on an IK limb: a point of a source `derive` returned
+ * (`on` + `at`; the source answers `handleInfo()`), or one the part computes (`point`).
+ * Give exactly one of `on` and `point`.
+ */
+export interface PointHandle {
+  /** Key of a point source in `derive`'s output. */
+  on?: string;
+  /** With `on`: a key of the source's `points`. */
+  at?: string;
+  /** The point, in part coordinates. */
+  point?: (p: any, d: any) => [number, number, number];
+  /** Numeric parameters the drag may write. */
+  params: string[];
+  drag?: "point" | "axis" | "plane" | "rotary";
+  /** `drag: "axis"`: the direction the point slides along. */
+  direction?: HandleGeom<[number, number, number]>;
+  /** `drag: "plane"`: the plane's normal. */
+  normal?: HandleGeom<[number, number, number]>;
+  /** `drag: "rotary"`: the axis turned about (default: the source's `axes` entry for `at`'s prefix). */
+  axis?: HandleGeom<{ origin: [number, number, number]; direction: [number, number, number] }>;
+  /** A parameter name; while truthy the handle's parameters stay out of a drag. */
+  lock?: string;
+  /** A short name for the readout and agents (default: the handle's key). */
+  label?: string;
+  /** Sub-part name(s) whose hover reveals the handle. */
+  showOn?: string | string[];
+  /** Parameters shown in the drag readout (default: `params`). */
+  readout?: string[];
+}
 export interface AnglesHandle {
   limb: string;
   mode: "angles";

@@ -45,6 +45,7 @@ import { attachSketchToolbar } from "./annotate/sketch-toolbar.js";
 import { createPoseMode } from "./pose/pose-mode.js";
 import { attachPoseControls } from "./pose/pose-controls.js";
 import { parsePinId } from "./pose/pose-session.js";
+import { handleParamKeys } from "./pose/handle-source.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
 import { createPreviewGate } from "./preview-gate.js";
 import { samplePreviewAnimation } from "./preview-animation.js";
@@ -68,13 +69,6 @@ const NOOP_ANNOTATE = {
 };
 // Same stance again for Pose mode: a part with no `handles` has no mode to drive.
 const NOOP_POSE = { isEnabled: () => false, setEnabled: () => {}, isLive: () => false, pinCount: () => 0, releasePins: () => {}, handlePoints: () => [] };
-// Every schema parameter a pose handle writes: an angles handle's list, a goal
-// handle's position and aim, and its seed. What decides the views it shows in.
-function handleParamKeys(handle) {
-  const p = handle?.params;
-  const listed = Array.isArray(p) ? p : [...(Array.isArray(p?.position) ? p.position : []), ...(Array.isArray(p?.aim) ? p.aim : [])];
-  return [...listed, ...(Array.isArray(handle?.seed) ? handle.seed : [])].filter((k) => typeof k === "string");
-}
 // The STEP-on-Manifold import crossover's broken-state message (a second
 // needs-import-mesh after the mesh is already primed — see the "needs-import-mesh"
 // case below). One shared string so the status line, onBuild, and the ready
