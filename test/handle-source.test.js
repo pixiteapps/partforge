@@ -72,6 +72,12 @@ test("handleRecord shape", () => {
   expect(handleRecord(mk({ l: { limb: "a" } }), {}, d, "l")).toBe(null);
 });
 
+test("handleRecord drag defaults to point", () => {
+  const rec = handleRecord(mk({ c: { point: () => [1, 2, 3], params: ["w"] } }), {}, d, "c");
+  expect(rec.drag).toBe("point");
+  expect(rec.axis).toBe(null);
+});
+
 test("handleParamKeys is unchanged for limb handles", () => {
   expect(handleParamKeys(robotArm.handles.tool)).toEqual([
     "toolX", "toolY", "toolZ", "toolPitch", "toolYaw", "toolRoll",

@@ -111,7 +111,7 @@ export function handleRecord(part, params, d, handleId) {
   const rec = {
     kind: "partforge.handle", name: `handle:${handleId}`, handleId,
     joints: [], points: { tip }, tip: "tip", values: [], axes: {},
-    drag: handle.drag ?? null, axis: null,
+    drag: handle.drag ?? "point", axis: null,
   };
   try { rec.axis = handleAxis(handle, p, d); } catch { rec.axis = null; }
   if (kind === "on") {
