@@ -3355,13 +3355,15 @@ Optional, on every handle:
 
 | `drag` | The point moves | Extra fields | Pick it for |
 |---|---|---|---|
-| `"point"` (default) | freely, on a plane fixed at drag start that faces you | — | a point with two or three free params whose path you cannot name |
+| `"point"` | freely, on a plane fixed at drag start that faces you | — | a point with two or three free params whose path you cannot name |
 | `"axis"` | along a line through the point | `direction` | a slider, a drawer, a lift, a length along one edge |
 | `"plane"` | on a plane through the point | `normal` | two params that move a point across a face (width and depth from a top corner) |
 | `"rotary"` | round an axis | `axis: { origin, direction }`, or the source's `axes` (an `axis` drag on an `on` source with no `direction` takes `axes[<prefix of at>].direction` too, through the handle's point) | a gear, a lid, a knob, a crank — anything that turns |
 | `"goal"` | anywhere; a posed limb solves to reach it | `params: { position, aim? }`, `seed`, `toward` | a robot arm's tool point |
 | `"angles"` | where the limb's joint params can put it | `joints`, `lock` | fingers and legs |
 
+- Every handle sets `drag`: lint refuses one without it (`handle-bad-drag`). Pose mode
+  still reads a missing `drag` as `"point"`, so a part that was never linted keeps working.
 - `direction`, `normal` and `axis` (or its `origin` and `direction`) may each be a value
   or a function `(p, d) => …`, read when the drag starts. Directions are in part
   coordinates and need not be unit length.
@@ -3421,8 +3423,16 @@ You do not say which a handle is. The viewer knows from the sub-parts its params
 
 Mid-drag builds are transient: no `onBuild`, no change to export, preview or inspect
 state, and no commit. The host sees one `onParamsCommit` and one build per drag, at
-release, as for any edit. Release snaps every written param to its control's `step`, so
-give a handle's params a fine step (0.1 mm, 0.1°), or the release moves the part visibly.
+release, as for any edit. Release snaps every written param to its control's `step`. Give
+a **motion** or IK param a fine step (0.1 mm, 0.1°), or the release moves the part
+visibly. Give a **shape** param a nice-number step (1 mm, not 0.1): the snap lands it on a
+size a person would type, and the release jump is a millimetre at most.
+
+**A motion handle's params never change the export pose.** Export uses each sub-part's
+export pose, so read a motion param only in a view's placement (or `place` for
+`purpose: "display"`), never in `build` or the export placement: a drawer pulled out in
+the viewer still prints closed. `drawer-box.js` slides its drawers by their view's
+`translate` alone.
 
 ### When a handle shows
 
@@ -3435,6 +3445,13 @@ a cached preview is on. At rest no handle shows. A handle shows:
 - for `"goal"` / `"angles"` handles, while the pointer is within 32 px of the limb's
   bones, as before.
 
+When posing first goes live on a part (the first frame with the part on screen and no
+cached preview), every shown handle's dot appears dimmed for 2 s, then fades out: the
+**resting cue** that tells a person the part has handles. It shows once per mount, never
+again on a param change or a view switch. On a touch-only device (`(hover: none)`) there is
+no hover to find a handle by, so the dimmed dots stay until the first drag of any handle;
+after that the rules above apply. The cue never shows in a capture.
+
 A shown handle is a dot. Hover or drag it and its guide draws: an axis handle a short
 double arrow, a plane handle a small square, a rotary handle a ring about its axis. The
 cursor becomes a grab hand, and for a handle with one ranged param its **path** draws,
@@ -3444,8 +3461,16 @@ by the handle shows the `readout` params' values ("width 184 · depth 132"). Eve
 press orbits and picks as usual. On touch, a press within 24 px of a handle's point drags
 it. Escape, or a host `setParams` mid-drag, restores the values from before the drag.
 
+After a drag that wrote a param, the readout stays by the handle for 4 s as a small
+**chip**. Click or tap it to type exact values: it becomes one number input per `readout`
+param. Enter, or moving the focus out of the chip, writes them the way the panel's slider
+would (snapped to the step and clamped to the range; a `wrap: true` param keeps its turn,
+so 45 typed at 720 stores 765), as one `onParamsCommit`. Escape closes it and writes
+nothing. A drag on a limb (`"goal"` / `"angles"`) shows no chip.
+
 Offer few handles, and use `showOn` so each appears where the user is already looking.
-Ten dots on screen at once is a failure of the part, not of the user.
+Ten dots on screen at once is a failure of the part, not of the user: lint warns
+(`handle-crowded`) when more than 5 handles show in one view without a `showOn`.
 
 ### Pins
 
@@ -3456,22 +3481,29 @@ pins ride `getViewerState().pose.pins`. The consequences follow from the maths: 
 gear locks its whole train (the shared drive cannot move without moving it), so a drag
 of another gear writes nothing (the dot just does not move); a pinned box corner pushes a drag of
 another corner onto whatever listed params leave it still. A "Release pins" button shows
-in the viewbar while a pin is set.
+in the viewbar while a pin is set. When a drag ends having written nothing because a pin
+held it, the chip by the handle says "Held by a pin — Release pins to move it" for 3 s.
 
 ### Which handles to offer
 
 Add a handle when grabbing a thing is clearer than finding its slider. Ask what the user
 would reach for:
 
-- **Moving parts first.** A part with a joint, a hinge, a slide or a train gets a handle
+- **Prefer motion handles.** A part with a joint, a hinge, a slide or a train gets a handle
   on each member a person would grab (every gear, the lid's front edge, the drawer pull,
-  the crank knob). These are motion handles: cheap, live and satisfying.
-- **One or two shape handles** for the dimensions a person sizes by eye (a box's
-  footprint from its corner, a shelf's height). Put the point on the feature the param
-  visibly moves, so the dot stays under the pointer.
+  the crank knob). These are cheap, live and satisfying. Their params must never change
+  the export pose (see "Motion and shape").
+- **A shape handle only for a dimension a person would naturally drag** (a box's
+  footprint from its corner, a shelf's height), and give its params nice-number steps
+  (1 mm, not 0.1). Put the point on the feature the param visibly moves, so the dot stays
+  under the pointer. The chip takes an exact value after the drag.
 - **Not every parameter.** Wall thickness, tolerances, counts, fonts and toggles stay
   in the panel. A handle whose point barely moves when its params change does nothing
-  useful; lint warns (`handle-inert`).
+  useful; lint warns (`handle-inert`), at the defaults and anywhere on each param's range.
+- **Keep the point moving over the whole range.** A param clamped to a travel that
+  depends on another param (a drawer opening clamped to `depth - 10`) is dead past it, in
+  the panel and on the handle. Make it a fraction of that travel instead: `drawer-box.js`
+  stores each opening as a percentage of `depth - 10`.
 - Put the point where the motion is largest (a gear's rim, not its centre; the far end
   of a lid), and give a turning member `drag: "rotary"`, not `"point"`.
 
@@ -3480,13 +3512,16 @@ would reach for:
 Lint checks each handle at the defaults by calling `derive` (rule catalog, "Handles"):
 `handle-no-source`, `handle-unknown-source` (`on` is not a point source, `at` is not one
 of its points, or a `"goal"` / `"angles"` `on` is not a posed limb), `handle-bad-drag`
-(an unknown `drag`; a limb `on` with no `drag`; `"goal"` / `"angles"` on a `point`; an
-axis, plane or rotary handle with no usable direction, normal or axis),
-`handle-point-throws`, `handle-unknown-param`, the limb rules `handle-param-count`,
-`handle-aim-toward` and `handle-unknown-joint` (all errors), and the warnings
-`handle-inert` (nudging each param one step moves the point under 0.01 mm) and
-`handle-axis-moves`. `wrap-needs-range` errors on `wrap: true` without a finite
-`min < max`.
+(no `drag`, or an unknown one; `"goal"` / `"angles"` on a `point`; an axis, plane or rotary
+handle with no usable direction, normal or axis), `handle-point-throws`,
+`handle-unknown-param`, the limb rules `handle-param-count`, `handle-aim-toward` and
+`handle-unknown-joint` (all errors), and the warnings `handle-inert`, `handle-axis-moves`
+and `handle-crowded`. `handle-inert` nudges each listed param one step at the defaults, and
+again with each param at 0%, 25%, 50%, 75% and 100% of its range (the others at their
+defaults), and warns where no nudge moves the point 0.01 mm, naming the value: "inert at
+drawerOpen = 0". `handle-crowded` warns when more than 5 handles without a `showOn` show in
+one view (the handles whose params that view reads). `wrap-needs-range` errors on
+`wrap: true` without a finite `min < max`.
 
 `npx partforge measure` prints each handle shown in the view with its label, drag kind,
 point and the params it drives:
@@ -3525,7 +3560,9 @@ default; always false for a part with no `handles`), `isLive()` (enabled, and no
 sketch, cutaway or cached preview on), `pinCount()`, `releasePins()` and
 `handlePoints()`, each shown handle's grab point on the canvas in CSS px (drawn or not;
 empty while posing is not live). One drag is one `onParamsCommit` listing every param
-that changed; a drag that changed nothing commits nothing. Pose mode is a pointer tool:
+that changed; a drag that changed nothing commits nothing, and a value typed into the
+readout chip commits once too. The chip is a `.pf-pose-chip` element in the stage, styled
+by partforge's `app.css`. Pose mode is a pointer tool:
 the panel sliders drive the same parameters, so keyboard users lose nothing.
 
 ## Probes: measuring geometry into the report
@@ -4370,18 +4407,19 @@ previously didn't; that's the fix working as intended, not a regression.
 `default-view-ambiguous` (warnings). **Handles** — `handle-no-source`,
 `handle-unknown-source`, `handle-bad-drag`, `handle-unknown-param`, `handle-param-count`,
 `handle-aim-toward`, `handle-unknown-joint`, `handle-point-throws` (all errors),
-`handle-inert`, `handle-axis-moves` (warnings); `wrap-needs-range` (error): a declared
+`handle-inert`, `handle-axis-moves`, `handle-crowded` (warnings); `wrap-needs-range` (error): a declared
 `handles` entry with neither or both of `on`/`point`; an `on` that is not a point source
 in `derive`'s result, or an `at` it lacks, or a `"goal"`/`"angles"` handle whose `on` is
-not a posed limb; an unknown `drag`, an `on` naming a posed limb with no `drag`,
+not a posed limb; a handle with no `drag` or an unknown one,
 `"goal"`/`"angles"` on a `point`, or axis/plane/rotary without a usable
 direction/normal/axis; a parameter missing from `defaults` (or not numeric; a `lock` may
 also default to a boolean); a wrong number of position/aim parameters, an `aim` without a
 valid rest `toward`, or a joint the limb lacks; a point or axis function that throws at
 the defaults.
 `handle-inert` warns when nudging each listed param by one step moves the point under
-0.01 mm; `handle-axis-moves` when a rotary axis shifts (0.01 mm / 0.1 deg) as the handle's
-own params change. `invalid-probes` fires when a declared
+0.01 mm, at the defaults or with any listed param at 0/25/50/75/100% of its range (it names
+the value); `handle-axis-moves` when a rotary axis shifts (0.01 mm / 0.1 deg) as the handle's
+own params change; `handle-crowded` when more than 5 handles without `showOn` show in one view. `invalid-probes` fires when a declared
 `probes` block isn't an object of functions (see "Probes" above).
 
 **Parameter schema** — `features-requires-sliders`, `features-requires-on`,

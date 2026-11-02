@@ -66,7 +66,8 @@ worked example of `docs/domains/mechanisms.md` - three spur gears placed by one
 crank, all writing one `wrap: true` `driveAngle`, and a `spin` animation that never
 rebuilds; `gearbox.html`), `drawer-box.js` (shape and motion handles on one part - a
 corner `plane` handle writing width and depth, which rebuilds, and an `axis` handle per
-drawer, which only re-places it; `drawer-box.html`, dev-only and not in `rollupOptions.input`), and `material-swatches.js` (not a reference part: the dev-only
+drawer, which only re-places it - each opening a percentage of its `depth - 10` travel, so
+no value of it is dead; `drawer-box.html`, dev-only and not in `rollupOptions.input`), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`), and `offset-demo.js`
 (not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
 `offset-demo.html`).
@@ -697,7 +698,18 @@ the installed package, so let the publish finish before bumping the dep there.
   sub-parts that must rebuild at 0.35 opacity, lifts each ghost in the delivery that
   shows its new mesh (playback-stale deliveries included), commits once on release
   (`onParamsCommit`), cancels the drag on a host write or a view switch, and makes
-  every effect a no-op once dispose starts (pose mode detaches late, LIFO).
+  every effect a no-op once dispose starts (pose mode detaches late, LIFO). Once per mount, the
+  first live frame with the part on screen starts the RESTING CUE (pose-mode's `tickCue`: every
+  shown handle's dot dimmed, `CUE_OPACITY` for `CUE_HOLD_MS`, faded over `CUE_FADE_MS`, drawn by
+  pose-scene's `setCue` in its capture-hidden group; on `(hover: none)` it stays until the first
+  drag). A released drag fires `onDragEnd` (`pose-session`'s `end()` reports `changed`, `moved`,
+  `held`); `readout-chip.js` (DOM, attached by mount like `pose-controls.js`) shows a generic
+  handle's readout by it for `CHIP_MS` — click to type, written through mount's
+  `writeChipValues` (the slider path, one commit; `handle-guides`'s `chipValues` snaps, clamps
+  and keeps a wrapped param's turn) — or `PIN_HINT` for `HINT_MS` when a pin held the drag.
+  Lint requires `drag` on every handle (`handle-bad-drag`; the runtime still defaults it to
+  "point"), `handle-inert` samples each listed param at 0/25/50/75/100% of its range, and
+  `handle-crowded` warns past 5 non-`showOn` handles in a view.
   **`src/framework/derive-memo.js`** (`withDeriveMemo`) memoizes `resolveDerived` by
   params content inside a scope (a pose drag frame, a pose overlay refresh, mount's
   `onParamChange`), so one frame derives each distinct params once. It relies on

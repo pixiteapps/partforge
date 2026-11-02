@@ -1001,8 +1001,11 @@ export interface GeomHandleCommon extends HandleCommon {
   /** Numeric parameters the drag may write. */
   params: string[];
 }
-/** Free 3D (the default drag): the target moves on a plane fixed at drag start. */
-export type PointHandle = HandleSource & GeomHandleCommon & { drag?: "point" };
+/**
+ * Free 3D: the target moves on a plane fixed at drag start. Every handle sets `drag` (lint's
+ * `handle-bad-drag`); Pose mode still reads a missing one as `"point"`.
+ */
+export type PointHandle = HandleSource & GeomHandleCommon & { drag: "point" };
 /** The target slides along a line through the point. */
 export type AxisHandle = HandleSource & GeomHandleCommon & {
   drag: "axis";
