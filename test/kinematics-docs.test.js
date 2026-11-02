@@ -69,7 +69,7 @@ test("every runnable example in the guide returns the value it shows", () => {
   const specs = [];
   const k = { implicit: (spec) => { validateSpec(spec); specs.push(spec); return {}; } };
   new Function("limb", "implicitDistance", "k", "check", blocks.map(toScript).join("\n"))(limb, implicitDistance, k, check);
-  expect(checked.length).toBe(32);   // every shown value; a parse change that drops one fails here
+  expect(checked.length).toBe(33);   // every shown value; a parse change that drops one fails here
   expect(specs.length).toBe(1);
 });
 
@@ -94,6 +94,7 @@ test("every error message in the guide is the code's own, a SpecError with code 
     () => index.pose({ grip: { around: () => NaN } }),
     () => limb("x", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: [{ name: "a", offset: [0, 0, 1] }], lengths: [1] }),
     () => thumb.pose({ bend: { ball: 30 } }),
+    () => thumb.pose({ bend: { ball: { rotate: [], bend: 3 } } }),
     () => limb("thumb", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: [{ name: "ball", type: "ball", range: [0, 10] }], lengths: [1] }),
     () => index.pose({}).place({ rotate() {}, translate() {} }, "pip", { from: "printed" }),
   ];
