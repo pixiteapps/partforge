@@ -37,4 +37,15 @@ describe("wrapped slider widget", () => {
     expect(params.a).toBe(730);
     expect(box.classList.contains("warn")).toBe(false);
   });
+
+  test("writes a clean value, rounded to the step, with no float noise", async () => {
+    const { makeNumeric } = await import("../src/framework/panel/widgets/numeric.js");
+    const node = { type: "slider", key: "a", label: "A", min: -180, max: 180, step: 0.1, wrap: true };
+    const params = { a: 200.1 };
+    const w = makeNumeric(node, params, { onChange() {}, onCommit() {} });
+    const slider = w.el.querySelector("input[type=range]");
+    slider.value = "20.3";
+    slider.dispatchEvent(new Event("input"));
+    expect(params.a).toBe(20.3);
+  });
 });

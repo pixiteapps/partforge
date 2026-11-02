@@ -1644,6 +1644,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           loop.ready(); // auto-build the default view (keeps the busy spinner up)
           break;
         case "progress":
+          if (cycleTransient && poseHold) break; // a mid-drag build shows no status (spec §4)
           ui.showBusy(data.phase);
           ui.setStatus(`${data.phase}…`);
           break;

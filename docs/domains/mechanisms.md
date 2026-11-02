@@ -182,7 +182,7 @@ engine.slider; // [20 cos a + √(50² − 20² sin² a), 0, 0]
 
 A rotary handle at `crank.pin` turns the crank; an axis handle on `slider` along
 `slideDirection` pushes the slider and the solver finds the crank angle (one of two: the
-drag keeps the side it starts on).
+drag keeps the side it starts on). Start the crank off dead centre: at angle 0 or 180 the slider handle is inert (lint's `handle-inert` warns).
 
 A four-bar linkage is not in this release.
 

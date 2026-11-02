@@ -33,6 +33,14 @@ export function sameTurn(stored, shown, min, max) {
   return base + Math.round((stored - base) / span) * span;
 }
 
+/** `v` rounded to the decimals of `step` (a turn offset leaves float noise: 20.299999999999955). */
+function roundToStep(v, step) {
+  const s = String(step ?? "");
+  const dot = s.indexOf(".");
+  if (dot < 0 || /e/i.test(s)) return v;
+  return +v.toFixed(s.length - dot - 1);
+}
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -95,7 +103,7 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
     slider.min = log ? 0 : node.min; slider.max = log ? LOG_STEPS : node.max; slider.step = log ? 1 : node.step;
     slider.value = log ? toPosSafe(params[node.key]) : thumbFor(params[node.key]);
     slider.addEventListener("input", () => {
-      const v = wrapped ? sameTurn(params[node.key], +slider.value, node.min, node.max)
+      const v = wrapped ? roundToStep(sameTurn(params[node.key], +slider.value, node.min, node.max), node.step)
         : log ? toValue(+slider.value) : snapTo(+slider.value);
       params[node.key] = v;
       box.value = numStr(v);

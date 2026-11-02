@@ -90,7 +90,12 @@ export function handleAxis(handle, p, d) {
   const vec = (v) => (Array.isArray(v) && v.length === 3 && v.every((c) => Number.isFinite(c)) ? v : null);
   if (drag === "axis") {
     const direction = vec(resolveGeom(handle.direction, p, d));
-    return direction ? { origin: point(), direction } : null;
+    if (direction) return { origin: point(), direction };
+    // No direction of its own: an `on` source's axes entry for the prefix of `at` gives it.
+    if (handleKind(handle, d) !== "on") return null;
+    const ax = sourceInfo(d, handle.on)?.axes?.[String(handle.at).split(".")[0]];
+    const fromSource = ax && vec(ax.direction);
+    return fromSource ? { origin: point(), direction: ax.direction } : null;
   }
   if (drag === "plane") {
     const direction = vec(resolveGeom(handle.normal, p, d));

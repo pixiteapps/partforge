@@ -185,6 +185,10 @@ test("handle-bad-drag: unknown drag, axis / plane without a direction, rotary wi
   expect(rulesOf(genFindings({ a: { point: (p) => [p.w, 0, 0], params: ["w"], drag: "axis" } }))).toEqual(["handle-bad-drag"]);
   expect(rulesOf(genFindings({ a: { point: (p) => [p.w, 0, 0], params: ["w"], drag: "plane", normal: [0, 0, 0] } }))).toEqual(["handle-bad-drag"]);
   expect(rulesOf(genFindings({ a: { point: (p) => [p.w, 0, 0], params: ["w"], drag: "rotary" } }))).toEqual(["handle-bad-drag"]);
+  // an axis handle on a source whose axes has the prefix of `at` takes that direction
+  expect(genFindings({ a: { on: "gear", at: "g.rim", params: ["ang"], drag: "axis" } })).toEqual([]);
+  const noAxes = { derive: (p) => ({ gear: pts({ "g.rim": [p.ang, 0, 0] }) }) };
+  expect(rulesOf(genFindings({ a: { on: "gear", at: "g.rim", params: ["ang"], drag: "axis" } }, noAxes))).toEqual(["handle-bad-drag"]);
   // a rotary handle on a source with axes, or given its own axis, is fine
   expect(genFindings({ a: { point: (p) => [p.w, 0, 0], params: ["w"], drag: "rotary", axis: { origin: [0, 0, 0], direction: [0, 0, 1] } } })).toEqual([]);
 });

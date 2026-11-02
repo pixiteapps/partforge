@@ -298,9 +298,14 @@ export const HANDLE_RULES = [
         }
         const v = attempt(() => resolveGeom(h[field], p, d));
         if (v.error) continue;
+        if (drag === "axis" && !isDir3(v.v) && h.on != null) {
+          if (!sourceProblem(name, h, d).info) continue; // the source itself is the finding
+          const ax = attempt(() => sourceInfo(d, h.on)?.axes?.[String(h.at).split(".")[0]]).v;
+          if (isPlainObject(ax) && isDir3(ax.direction)) continue; // the source's axis gives the direction
+        }
         if (!isDir3(v.v)) {
           out.push(err("handle-bad-drag", `handle "${name}" drags by ${drag} but has no usable \`${field}\``,
-            `\`${field}\` is a non-zero [x, y, z] in part coordinates, or a \`(p, d) => [x, y, z]\` function.`, `${base}.${field}`));
+            `\`${field}\` is a non-zero [x, y, z] in part coordinates, or a \`(p, d) => [x, y, z]\` function${drag === "axis" ? " (an \`on\` source whose \`axes\` has an entry for the prefix of \`at\` supplies it)" : ""}.`, `${base}.${field}`));
         }
       }
       return out;

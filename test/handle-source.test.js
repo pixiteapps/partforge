@@ -71,6 +71,15 @@ test("handleAxis", () => {
   expect(handleAxis({ point: () => [0, 0, 0], drag: "point" }, {}, d)).toBe(null);
 });
 
+test("handleAxis: an axis drag on a source with no direction takes the source axis, at the handle point", () => {
+  const h = { on: "train", at: "gear1.rim", drag: "axis" };
+  expect(handleAxis(h, {}, d)).toEqual({ origin: [10, 0, 0], direction: [0, 0, 1] });
+  // its own direction wins; an unknown axes prefix, or a `point` handle, stays null
+  expect(handleAxis({ ...h, direction: [1, 0, 0] }, {}, d)).toEqual({ origin: [10, 0, 0], direction: [1, 0, 0] });
+  expect(handleAxis({ on: "train", at: "gear2.center", drag: "axis" }, {}, d)).toBe(null);
+  expect(handleAxis({ point: () => [0, 0, 0], drag: "axis" }, {}, d)).toBe(null);
+});
+
 test("handleRecord shape", () => {
   const part = mk({ input: { on: "train", at: "gear1.rim", params: ["w"], drag: "rotary" } });
   const rec = handleRecord(part, {}, d, "input");

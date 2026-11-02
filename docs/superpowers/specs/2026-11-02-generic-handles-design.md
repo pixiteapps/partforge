@@ -153,8 +153,8 @@ A posed limb is a point source too: its `handleInfo()` gives its joints and `tip
 points, each hinge's `{ origin, direction }` under its joint name, and the bone chain as
 `lines`. Its richer `ikInfo()` stays the view `"goal"` / `"angles"` drags, joint rings
 and the aim gizmo read. A mechanism helper (section 6) returns one. An author can also return a plain object with
-`handleInfo` from `derive`. `at` is a key of `points`. A rotary or axis handle on a source
-takes its axis from `axes[<prefix of at>]` when it does not give one.
+`handleInfo` from `derive`. `at` is a key of `points`. A rotary handle on a source takes its axis, and an axis handle its direction (through
+the handle's point), from `axes[<prefix of at>]` when it does not give one.
 
 ### 3. How a handle moves (`drag`)
 
@@ -269,7 +269,7 @@ return point sources that also place sub-parts (like a limb's `place`):
 - `beltDrive({ pulleys: [...], drive })` — pulleys by diameter ratio, same direction;
   points include a point on the belt.
 - `rack({ pinion, direction })` — the rack's travel from the pinion angle.
-- `crankSlider({ crank, rod, axis })` and `fourBar({ ... })` — the linkage's positions from
+- `crankSlider({ crank, rod, slideDirection })` and `fourBar({ ... })` — the linkage's positions from
   the crank angle.
 
 The helpers compute only angles and positions. They build no geometry (a gear tooth
@@ -325,7 +325,7 @@ New rules in `src/framework/lint/rules-handles.js`, next to the existing ones:
   `handleInfo`; `at` not in its points; a `"goal"` / `"angles"` handle whose `on` is not
   a posed limb.
 - `handle-bad-drag`: unknown `drag`; `on` naming a posed limb with no `drag`; `"goal"` /
-  `"angles"` on a `point`; `axis` without a direction; `plane` without a normal; `rotary`
+  `"angles"` on a `point`; `axis` without a direction (and, on an `on` source, no `axes` entry to give one); `plane` without a normal; `rotary`
   without an axis it can find.
 - The limb rules stay as they were, keyed on `drag`: `handle-unknown-param`,
   `handle-param-count`, `handle-aim-toward`, `handle-unknown-joint`.

@@ -26,7 +26,7 @@ const firstLine = (e) => String(e?.message ?? e).split("\n")[0].slice(0, 120);
 export function handlesReport(part, view, params = {}) {
   const handles = part?.handles;
   if (!handles || typeof handles !== "object" || Array.isArray(handles)) return undefined;
-  const ids = Object.keys(handles);
+  const ids = Object.keys(handles).filter((id) => handles[id] && typeof handles[id] === "object");
   if (!ids.length) return undefined;
   const p = { ...part.defaults, ...params };
   let relevant = RELEVANT_ALL;

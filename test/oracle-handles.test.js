@@ -50,6 +50,15 @@ describe("handles in the measure report", () => {
     expect(tool.direction).toBeUndefined();
   });
 
+  it("skips a null or non-object handles entry instead of throwing", () => {
+    const part = { ...demo, handles: { bad: null, num: 3, ok: { point: () => [0, 0, 0], params: ["od"] } } };
+    expect(handlesReport(part, "spacer", {}).map((e) => e.id)).toEqual(["ok"]);
+    // a failing relevance analysis (RELEVANT_ALL) makes every entry a candidate
+    const sp = Object.values(demo.parts)[0];
+    const all = { ...part, parts: { ...demo.parts, [Object.keys(demo.parts)[0]]: { ...sp, enabled: () => { throw new Error("x"); } } } };
+    expect(handlesReport(all, "spacer", {}).map((e) => e.id)).toEqual(["ok"]);
+  });
+
   it("has no handles key on a part without handles", () => {
     expect("handles" in measure(k, demo, "spacer")).toBe(false);
     expect(handlesReport(demo, "spacer", {})).toBeUndefined();

@@ -1807,6 +1807,22 @@ test("a cheap part rebuilds mid-drag, transiently: drawn and un-ghosted, no onBu
   t.done();
 });
 
+test("progress from a transient build shows no busy chip or status", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  t.pose.opts.write({ h: 6 }); // dispatches a transient build
+  t.els.status.busy.classList.remove("show");
+  const status = t.els.status.status.textContent;
+  t.workers.manifold.onmessage({ data: { type: "progress", phase: "text" } });
+  expect(t.els.status.busy.classList.contains("show")).toBe(false);
+  expect(t.els.status.status.textContent).toBe(status);
+  t.deliver(80);
+  t.pose.opts.hold(false); // the release build is not transient: progress shows again
+  t.workers.manifold.onmessage({ data: { type: "progress", phase: "text" } });
+  expect(t.els.status.busy.classList.contains("show")).toBe(true);
+  t.done();
+});
+
 test("a release while a transient build is in flight discards it and builds normally", () => {
   const t = shapeDrag(80);
   t.pose.opts.hold(true);

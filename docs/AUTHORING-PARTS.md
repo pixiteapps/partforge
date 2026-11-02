@@ -3358,7 +3358,7 @@ Optional, on every handle:
 | `"point"` (default) | freely, on a plane fixed at drag start that faces you | — | a point with two or three free params whose path you cannot name |
 | `"axis"` | along a line through the point | `direction` | a slider, a drawer, a lift, a length along one edge |
 | `"plane"` | on a plane through the point | `normal` | two params that move a point across a face (width and depth from a top corner) |
-| `"rotary"` | round an axis | `axis: { origin, direction }`, or the source's `axes` | a gear, a lid, a knob, a crank — anything that turns |
+| `"rotary"` | round an axis | `axis: { origin, direction }`, or the source's `axes` (an `axis` drag on an `on` source with no `direction` takes `axes[<prefix of at>].direction` too, through the handle's point) | a gear, a lid, a knob, a crank — anything that turns |
 | `"goal"` | anywhere; a posed limb solves to reach it | `params: { position, aim? }`, `seed`, `toward` | a robot arm's tool point |
 | `"angles"` | where the limb's joint params can put it | `joints`, `lock` | fingers and legs |
 
@@ -3435,8 +3435,8 @@ a cached preview is on. At rest no handle shows. A handle shows:
 - for `"goal"` / `"angles"` handles, while the pointer is within 32 px of the limb's
   bones, as before.
 
-A shown handle is a dot. An axis handle's dot has a short double arrow, a plane
-handle's a small square, and a rotary handle's a ring about its axis. Hover the dot: the
+A shown handle is a dot. Hover or drag it and its guide draws: an axis handle a short
+double arrow, a plane handle a small square, a rotary handle a ring about its axis. The
 cursor becomes a grab hand, and for a handle with one ranged param its **path** draws,
 the curve its point travels as that param sweeps its range (32 samples; a wrapped param
 one turn). Drag the dot to move it; a small readout
@@ -3454,7 +3454,7 @@ drag, as a weighted hold in the solve. Click it again to unpin. A pin id is
 `"<handle>:<at>"` for an `on` handle and `"<handle>:point"` for a `point` handle, and
 pins ride `getViewerState().pose.pins`. The consequences follow from the maths: a pinned
 gear locks its whole train (the shared drive cannot move without moving it), so a drag
-of another gear writes nothing and shows the miss; a pinned box corner pushes a drag of
+of another gear writes nothing (the dot just does not move); a pinned box corner pushes a drag of
 another corner onto whatever listed params leave it still. A "Release pins" button shows
 in the viewbar while a pin is set.
 
@@ -3497,8 +3497,10 @@ handles:
   Drawer 1 (axis) at [0.0, -70.0, 123.7] → drawer1Open
 ```
 
-The `inspect` report (and `measure()`) carries the same list as `handles`, one entry per
-handle Pose mode would show in the view, in declaration order:
+The list is `report.measure.handles` in the `inspect` result, and `handles` on what
+`measure()` returns: one entry per handle Pose mode would show in the view, in declaration
+order. `kind` is the handle's `drag` (`"point"`, `"axis"`, `"plane"`, `"rotary"`,
+`"goal"` or `"angles"`):
 
 ```js
 handles: [
