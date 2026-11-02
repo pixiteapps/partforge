@@ -16,7 +16,8 @@ function fakeViewer() {
     cancels: 0,
     tweenCameraTo(view, o) { this.tweens.push({ view, ...o }); },
     cancelCameraTween() { this.cancels++; },
-    holdGround(on) { this.ground = on; },
+    holdGround(on, reason) { this.ground = on; this.groundReasons.add(reason); },
+    groundReasons: new Set(),
     frame(dt) { for (const cb of [...frame]) cb(dt); },
     orbit() { for (const cb of [...cam]) cb(); },
   };
@@ -142,6 +143,7 @@ test("pause/resume and dispose", () => {
   expect(p.state().t).toBeCloseTo(0.5);
   p.dispose();
   expect(v.ground).toBe(false);
+  expect([...v.groundReasons]).toEqual(["preview"]); // its own reason: never frees the animation driver's
   run(v, 0.5);
   expect(p.state().t).toBeCloseTo(0.5);
 });

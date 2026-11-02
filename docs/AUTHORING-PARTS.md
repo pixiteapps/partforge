@@ -105,6 +105,8 @@ export default {
   views: { <name>: { label, default?, animations? } },  // view tabs; a view may own animations (below)
   probes?,                                 // { name: (k, p, d) => Solid | Shape2D | plain JSON } — measurements reported by
                                            // measure/inspect, never rendered or exported (see "Probes" below)
+  handles?,                                // { name: { limb, mode: "goal" | "angles", params, seed?, lock?, at? } } — draggable
+                                           // posing points over a posed limb from derive (see "Pose mode" below)
 };
 ```
 
@@ -472,9 +474,14 @@ colour, flattened so dark materials stay readable. **Realistic** mode — the
 viewer's toggle — shows the full material under environment lighting, with a
 ground and soft shadow and no feature lines. The part never moves when the
 mode changes. The ground is placed under the part when a view is shown and
-after each edit; while an animation plays or is scrubbed it stays where it is
-(dropping lower only if the part would otherwise sink into it), so a motion
-that changes the part's footprint never slides the floor around under it.
+once each edit's geometry is on screen. It belongs to the part's base, not its
+pose: while an animation plays or is scrubbed, and through any edit to a
+parameter a pose `handle` writes (a drag, a joint ring, or the same key typed
+in the panel), it stays where it is, dropping lower only if the part would
+otherwise sink into it. So a motion that changes the part's footprint never
+slides the floor around under it. Any other edit, a place-only slider
+included, places it again. Entering realistic mode or switching environment
+keeps a held floor where it was, rather than under the current pose.
 
 **3D-print layer lines** (`pla-print`, `petg-print`) run perpendicular to the
 **export** pose's +Z — the way the part will be printed, not the way it is
@@ -1534,6 +1541,11 @@ coherently:
   clearer. Outside the part definition (helpers, tests), merge groups with
   `resolveDerived(part, p)` from **`partforge/derive`** — a lean, DOM-free entry safe
   to import from part modules; don't hand-roll the merge.
+- **Treat `d` as read-only everywhere it is read** — in `build`, view functions, probes and
+  `enabled`. The framework memoizes `derive` by parameter content within a frame (a Pose
+  mode drag frame resolves the same params several times), so readers can share one `d`
+  object: a reader that writes into it changes what the next one sees. This relies on
+  `derive` being pure — the same params must always give the same `d`.
 - **Reuse a param `key`** across sub-parts/features so one slider moves all of them.
 - **`enabled(p)`** gates a whole sub-part on a toggle param (the part appears/disappears
   with the control).
@@ -3262,6 +3274,38 @@ mesh/BVH helpers and file parsers (`bounds`, `meshArea`, `meshTriangles`, `parse
 `parse3MF`); those exports are part of its contract.
 
 
+## Pose mode
+
+A part with jointed limbs (see the Kinematics domain) can let people pose it with the
+mouse. It declares `handles`, a map of draggable points. Each one names a `limb`, a key of
+the object `derive` returns that holds a posed limb. A `mode: "goal"` handle drags a
+tool point and writes its goal parameters (use `seed` for the joint values the solve starts
+from). A `mode: "angles"` handle drags joint values and writes them (use `lock` to freeze
+one). Joints get rotate rings, which turn one joint alone: every joint a goal handle's
+`seed` names, and every joint an angles handle maps in `joints` (`{ "<joint>" |
+"<limb>.<joint>": "<param>" }`, the parameter that drives the joint in degrees). Every parameter a handle names must be a numeric key of `defaults` (a `lock`'s default may
+also be a boolean).
+
+```js
+handles: {
+  tool: { limb: "arm", at: "tip", mode: "goal",
+          params: { position: ["toolX", "toolY", "toolZ"], aim: ["toolPitch", "toolYaw", "toolRoll"] },
+          toward: [1, 0, 0],
+          seed: ["base", "shoulder", "elbow", "wristPitch", "wristYaw", "wristRoll"] },
+},
+```
+
+Posing then is always on in the viewer's normal click mode. There is no Pose button.
+Hover near a limb to show its handles, and drag one; hover a joint's dot to show its ring.
+Every other press orbits and picks
+as before. Posing stops while measure, sketch or cutaway is on. One drag is one
+`onParamsCommit`. `runtime.pose` has `isEnabled()`, `setEnabled(on)` (on by default),
+`isLive()`, `pinCount()`, `releasePins()` and `handlePoints()`. The
+full contract, with the rules for rebuilding parts, pins and out-of-reach goals, is in
+[`docs/domains/kinematics.md`](domains/kinematics.md), "Handles and Pose mode". Lint
+checks every name (`handle-*`, in the rule catalog). Reference parts:
+`src/parts/robot-arm.js` (goal mode) and `src/parts/hand.js` (angles mode).
+
 ## Probes: measuring geometry into the report
 
 A `probes` block turns the measure report into an instrument panel. Each probe is
@@ -4101,7 +4145,13 @@ previously didn't; that's the fix working as intended, not a regression.
 
 **Definition shape** — `missing-meta-title`, `missing-defaults`, `no-buildable-parts`,
 `missing-views`, `part-view-unknown`, `invalid-probes` (all errors); `view-unused`,
-`default-view-ambiguous` (warnings). `invalid-probes` fires when a declared
+`default-view-ambiguous` (warnings). **Handles** — `handle-unknown-limb`,
+`handle-unknown-param`, `handle-param-count`, `handle-aim-toward`, `handle-unknown-joint`,
+`handle-bad-mode` (all errors): a declared `handles` entry names a limb `derive`
+does not return, a parameter missing from `defaults` (or not numeric; a `lock` may
+also default to a boolean), a wrong number of position/aim parameters, an `aim`
+without a valid rest `toward`, a joint the limb lacks, or a mode other than
+`goal`/`angles`. `invalid-probes` fires when a declared
 `probes` block isn't an object of functions (see "Probes" above).
 
 **Parameter schema** — `features-requires-sliders`, `features-requires-on`,

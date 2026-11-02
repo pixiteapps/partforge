@@ -2,6 +2,7 @@
 import { resolveFrames, compose, invert } from "../../geometry/xform.js";
 import { hypot3 } from "../../geometry/js-math.js";
 import { axisAngle } from "../../geometry/rotations.js";
+import { jointSteps, restValue } from "./tree.js";
 
 /** Round to 0.001 with −0 written as 0 (the frame report's convention). */
 export const r3 = (v) => { const x = Math.round(v * 1000) / 1000; return x === 0 ? 0 : x; };
@@ -31,13 +32,14 @@ export function buildFrames(tree, steps) {
 }
 
 /**
- * `{ bend, clamped, tip?, reach?, grip? }`. `tip` is in part coordinates, so it needs the
+ * `{ bend, clamped, tip?, reach?, grip?, goals? }`. `tip` is in part coordinates, so it needs the
  * parent's frames (`frames`) when the limb has a parent; it is omitted otherwise. `reach` is
  * `{ target, residual, status }` and `grip` is `{ touching, gap, joints: [{ joint, bend,
  * touched, skipped }] }` (the final pose's whole-limb verdict, read first, then one entry per driven
- * bend joint), each present only when the pose asked for one.
+ * bend joint), each present only when the pose asked for one. `goals` is one
+ * `{ at, residual, aimResidual?, status }` per goal, `aimResidual` only for a goal with an aim or up.
  */
-export function buildReport(tree, values, clamped, posedFrames, frames, fail, reach = null, grip = null) {
+export function buildReport(tree, values, clamped, posedFrames, frames, fail, reach = null, grip = null, goals = null) {
   const report = { bend: values.map(roundValue), clamped: [...clamped] };
   if (tree.parent == null || frames != null) {
     const all = frames == null ? posedFrames : { ...frames, ...posedFrames };
@@ -52,6 +54,10 @@ export function buildReport(tree, values, clamped, posedFrames, frames, fail, re
       joints: grip.joints.map(({ joint, value, touched, skipped }) => ({ joint, bend: r3(value), touched, skipped })),
     };
   }
+  if (goals) {
+    report.goals = goals.map(({ at, residual, aimResidual, status }) =>
+      (aimResidual === undefined ? { at, residual: r3(residual), status } : { at, residual: r3(residual), aimResidual: r3(aimResidual), status }));
+  }
   return report;
 }
 
@@ -61,7 +67,7 @@ const PLACE_FROM = new Set(["joint", "rest"]);
  * The adapters of one posed limb: world and place for solids. `frames` are the parent frames
  * passed to `pose`; `restFrames` every frame of the chain at rest (`place`'s `from: "rest"`).
  */
-export function buildAdapters(tree, posedFrames, frames, restFrames, fail) {
+export function buildAdapters(tree, posedFrames, frames, restFrames, fail, values) {
   const { name, joints } = tree;
   const base = joints[0].frame, tip = `${name}.tip`;
   const known = new Set([...joints.map((j) => j.frame), tip]);
@@ -98,5 +104,65 @@ export function buildAdapters(tree, posedFrames, frames, restFrames, fail) {
     return rotated.translate([M[9], M[10], M[11]]);
   }
 
-  return { world, place };
+  /**
+   * The posed limb as plain JSON for the viewer (handles, skeleton, limit arcs, joint rings):
+   * joint records (a hinge's with its `axisKind`), every joint's and the tip's origin in part
+   * coordinates, each hinge's world rotation axis (the direction a positive value turns about)
+   * and, for a limb with ball joints, each ball's `{ bend, spread, twist }` axes in `ballAxes`.
+   * Throws without the parent frames, like `world`.
+   */
+  function ikInfo() {
+    const points = {}, axes = {}, ballAxes = {};
+    const origin = (joint) => world(joint).origin;
+    const all = () => (frames == null ? posedFrames : { ...frames, ...posedFrames });
+    // The direction a positive unit value of one hinge (or one ball component) turns about,
+    // in the frame its step acts in: the step's axis times the sign of its angle.
+    const unitStep = (i, value) => {
+      const unit = joints.map((jt, k) => (k === i ? value : restValue(jt)));
+      const step = jointSteps(tree, unit)[joints[i].frame].at(-1);
+      return step.axis.map((c) => c * (step.deg < 0 ? -1 : 1));
+    };
+    const inWorld = (a, W) => [0, 1, 2].map((k) => r3(a[0] * W.x[k] + a[1] * W.y[k] + a[2] * W.z[k]));
+    joints.forEach((j, i) => {
+      points[j.name] = origin(j.frame);
+      if (j.type === "ball") {
+        // bend and spread swing the segment about axes of the frame BEFORE the ball turns it
+        // (its own steps are the last in its frame's list: drop them); twist turns about the
+        // swung segment, the posed frame's own y.
+        const v = values[i];
+        const own = (Math.hypot(v.bend, v.spread) !== 0 ? 1 : 0) + (v.twist !== 0 ? 1 : 0);
+        const f = posedFrames[j.frame];
+        const rotate = (f.rotate ?? []).slice(0, (f.rotate ?? []).length - own);
+        const { rotate: _r, ...rest } = f;
+        const M = resolve({ ...all(), [j.frame]: rotate.length ? { ...rest, rotate } : rest }, j.frame);
+        const unitOf = (c) => { const x = M[c], y = M[3 + c], z = M[6 + c], l = hypot3(x, y, z); return [x / l, y / l, z / l]; };
+        const pre = { x: unitOf(0), y: unitOf(1), z: unitOf(2) };
+        const W = world(j.frame);
+        ballAxes[j.name] = {
+          bend: inWorld(unitStep(i, { bend: 1, spread: 0, twist: 0 }), pre),
+          spread: inWorld(unitStep(i, { bend: 0, spread: 1, twist: 0 }), pre),
+          twist: inWorld(unitStep(i, { bend: 0, spread: 0, twist: 1 }), W),
+        };
+        return;
+      }
+      // The hinge's own step is the last in its frame's list, so its axis is unchanged by it.
+      axes[j.name] = inWorld(unitStep(i, 1), world(j.frame));
+    });
+    points.tip = origin(tip);
+    const info = {
+      kind: "partforge.limb", name, tip,
+      joints: joints.map((j) => {
+        const rec = { name: j.name, frame: j.frame, type: j.type };
+        if (j.type === "ball") rec.cone = j.cone; else { rec.range = [...j.range]; rec.axisKind = j.axisKind; }
+        rec.follower = j.follow != null;
+        return rec;
+      }),
+      points, values: values.map(roundValue), axes,
+    };
+    if (Object.keys(ballAxes).length) info.ballAxes = ballAxes;
+    if (tree.r) info.r = [...tree.r];
+    return info;
+  }
+
+  return { world, place, ikInfo };
 }

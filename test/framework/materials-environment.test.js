@@ -198,3 +198,17 @@ test("the outdoor concrete carries a normal map, a tight tile and a detail layer
   expect(shader.fragmentShader).toContain("vMapUv * 7.130");
   rig.dispose();
 });
+
+test("shadowRadius sizes the contact-shadow plane alone; the ground disc and its texture keep the radius", async () => {
+  const rig = await loadEnvironmentRig(fakeRenderer(), "workshop", {
+    loadHdr: async () => new THREE.DataTexture(), loadTexture: () => new THREE.Texture(), pmrem,
+  });
+  rig.setGround({ y: 0, centerX: 3, centerZ: 4, radius: 50 });
+  const scale = rig.ground.scale.x;
+  expect(rig.shadow.setSize.mock.calls.at(-1)).toEqual([150, 200]);
+  rig.setGround({ y: 0, centerX: 3, centerZ: 4, radius: 50, shadowRadius: 120 });
+  expect(rig.ground.scale.x).toBe(scale);
+  expect(rig.ground.position.x).toBeCloseTo(3);
+  expect(rig.shadow.setSize.mock.calls.at(-1)).toEqual([360, 480]);
+  rig.dispose();
+});

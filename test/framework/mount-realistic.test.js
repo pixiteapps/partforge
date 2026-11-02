@@ -100,6 +100,7 @@ vi.mock("../../src/framework/materials/sheet-look.js", async (importOriginal) =>
 });
 
 import { mount } from "../../src/framework/mount.js";
+import handFixture from "../fixtures/ik-hand-fixture.js";
 import { sheetPart } from "../../src/framework/sheet/part.js";
 import { poseSteps } from "../../src/framework/sheet/pose.js";
 import { composePose, invertRigid } from "../../src/framework/geometry/pose.js";
@@ -891,5 +892,115 @@ test("a delivery whose params the main thread cannot resolve draws plain wood, n
   vi.spyOn(console, "warn").mockImplementation(() => {});
   deliver();
   expect(uniforms.pfSheetT.value).toBe(0);
+  runtime.dispose();
+});
+
+// The floor belongs to the part's base, not its pose (pose-mode feedback: the
+// floor texture slid around while a robot arm's joint moved). A change to a key a
+// pose handle writes keeps the floor's centre and size; anything else — a
+// place-only slider too — places it afresh once its geometry is on screen.
+async function mountHand() {
+  const workers = {};
+  const part = {
+    ...handFixture,
+    defaults: { ...handFixture.defaults, h: 40, lift: 0 },
+    parameters: [...handFixture.parameters, { id: "body", title: "Body", controls: [
+      { key: "h", label: "Height", min: 10, max: 200, step: 1 },
+      { key: "lift", label: "Lift", min: 0, max: 200, step: 1 },
+    ] }],
+    parts: { palm: {
+      label: "Palm",
+      build: (k, p) => k.box({ min: [-24, -8, 0], max: [24, 8, p.h] }),
+      views: { hand: (s, p) => s.rotate(p.wrist, [0, 0, 0], [1, 0, 0]).translate([p.lift, 0, 0]) },
+    } },
+  };
+  const runtime = mount(part, {
+    createWorker: (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null }),
+    elements: makeElements(),
+  });
+  const deliver = (h) => {
+    // The palm box at height h, as the worker would deliver it (canonical: place() is the viewer's).
+    const p = payload("palm");
+    const pos = p.positions;
+    for (let i = 0; i < pos.length; i += 3) { pos[i] = pos[i] * 48 - 24; pos[i + 1] = pos[i + 1] * 16 - 8; pos[i + 2] *= h; }
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ ...p, reads: ["h"], frame: "canonical" }], ms: 1 } });
+  };
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  deliver(40);
+  await runtime.ready;
+  await runtime.renderMode.set("realistic");
+  const rig = rigState.rigs.at(-1);
+  const generates = () => workers.manifold.postMessage.mock.calls.filter(([m]) => m.type === "generate").length;
+  const fail = (message) => workers.manifold.onmessage({ data: { type: "error", message } });
+  return { runtime, deliver, fail, generates, last: () => rig.setGround.mock.calls.at(-1)[0] };
+}
+
+// Held: same centre and size; the height may only have gone down.
+const expectHeld = (now, was) => {
+  expect({ ...now, y: 0, shadowRadius: 0 }).toEqual({ ...was, y: 0, shadowRadius: 0 }); // the shadow plane may grow
+  expect(now.y).toBeLessThanOrEqual(was.y);
+};
+
+test("a handle-written edit keeps the realistic floor in place; a real change re-derives it once built", async () => {
+  const { runtime, deliver, generates, last } = await mountHand();
+  const placed = last();
+
+  // Wrist is a handle key: the palm turns by matrix, the floor stays.
+  const jobs0 = generates();
+  runtime.setParams({ wrist: 50 });
+  expect(generates()).toBe(jobs0);
+  expectHeld(last(), placed);
+  const turned = last();
+
+  // A real change: the stale mesh on screen keeps the floor until the new one lands…
+  runtime.setParams({ h: 120 });
+  await vi.waitFor(() => expect(generates()).toBeGreaterThan(jobs0));
+  expect(last()).toEqual(turned);
+  // …then the floor comes to the new geometry, where the pose has it.
+  deliver(120);
+  const fresh = last();
+  expect(fresh.radius).toBeGreaterThan(placed.radius + 10);
+
+  // Handle-written again: held at the new place.
+  runtime.setParams({ wrist: 0 });
+  expectHeld(last(), fresh);
+  runtime.dispose();
+});
+
+test("a place-only slider that no handle writes re-fits the floor at once", async () => {
+  const { runtime, generates, last } = await mountHand();
+  const placed = last();
+  const jobs0 = generates();
+  runtime.setParams({ lift: 50 }); // moves the base by matrix: a lifted part must not float
+  expect(generates()).toBe(jobs0);
+  expect(last().centerX).toBeCloseTo(placed.centerX + 50);
+  runtime.dispose();
+});
+
+test("a real change that lands while the animation holds the floor re-fits once that hold drops", async () => {
+  const { runtime, deliver, generates, last } = await mountHand();
+  const placed = last();
+  const viewer = viewers.at(-1);
+  viewer.holdGround(true, "animation");
+  const jobs0 = generates();
+  runtime.setParams({ h: 120 });
+  await vi.waitFor(() => expect(generates()).toBeGreaterThan(jobs0));
+  deliver(120);
+  expect(last()).toEqual(placed); // the animation's hold still stands
+  viewer.holdGround(false, "animation");
+  runtime.setParams({ wrist: 10 }); // a pose-only edit: its showView finds the floor free
+  expect(last().radius).toBeGreaterThan(placed.radius + 10);
+  runtime.dispose();
+});
+
+test("a real change whose build fails lets the floor go rather than holding it for good", async () => {
+  const { runtime, fail, generates } = await mountHand();
+  const viewer = viewers.at(-1);
+  const jobs0 = generates();
+  runtime.setParams({ h: 120 });
+  await vi.waitFor(() => expect(generates()).toBeGreaterThan(jobs0));
+  expect(viewer.isGroundHeld()).toBe(true); // the stale mesh keeps the floor meanwhile
+  fail("boom");
+  expect(viewer.isGroundHeld()).toBe(false);
   runtime.dispose();
 });
