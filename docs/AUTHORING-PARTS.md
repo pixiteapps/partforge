@@ -4153,11 +4153,19 @@ previously didn't; that's the fix working as intended, not a regression.
 `missing-views`, `part-view-unknown`, `invalid-probes` (all errors); `view-unused`,
 `default-view-ambiguous` (warnings). **Handles** — `handle-unknown-limb`,
 `handle-unknown-param`, `handle-param-count`, `handle-aim-toward`, `handle-unknown-joint`,
-`handle-bad-mode` (all errors): a declared `handles` entry names a limb `derive`
+`handle-bad-mode`, `handle-no-source`, `handle-unknown-source`, `handle-on-limb`,
+`handle-bad-drag`, `handle-point-throws` (all errors), `handle-inert`,
+`handle-axis-moves` (warnings); `wrap-needs-range` (error): a declared `handles` entry names a limb `derive`
 does not return, a parameter missing from `defaults` (or not numeric; a `lock` may
 also default to a boolean), a wrong number of position/aim parameters, an `aim`
 without a valid rest `toward`, a joint the limb lacks, or a mode other than
-`goal`/`angles`. `invalid-probes` fires when a declared
+`goal`/`angles`. For `on` / `point` handles: none or several of `on`/`point`/`limb`; an
+`on` that is not a point source in `derive`'s result, or an `at` it lacks; an `on` naming
+a posed limb (declare a `limb` handle); an unknown `drag`, or axis/plane/rotary without a
+usable direction/normal/axis; a point or axis function that throws at the defaults.
+`handle-inert` warns when nudging each listed param by one step moves the point under
+0.01 mm; `handle-axis-moves` when a rotary axis shifts (0.01 mm / 0.1 deg) as the handle's
+own params change. `invalid-probes` fires when a declared
 `probes` block isn't an object of functions (see "Probes" above).
 
 **Parameter schema** — `features-requires-sliders`, `features-requires-on`,

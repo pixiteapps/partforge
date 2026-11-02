@@ -1,16 +1,33 @@
 // Group — `handles`: draggable inverse-kinematics points a part declares over a limb
 // (partforge/kinematics). Every rule reads only the declaration, `defaults` and the
 // resolved `d`, and never throws on a malformed one.
-import { err } from "./finding.js";
+import { err, warn } from "./finding.js";
+import { resolveDerived } from "../derive.js";
+import { rangesOf } from "../pose/param-solve.js";
+import { locateHandle, sourceInfo, resolveGeom, handleAxis } from "../pose/handle-source.js";
 
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 const handleEntries = (part) => (isPlainObject(part?.handles) ? Object.entries(part.handles).filter(([, h]) => isPlainObject(h)) : []);
 const MODES = ["goal", "angles"];
+const DRAGS = ["point", "axis", "plane", "rotary"];
+/** An `on` / `point` handle (no `limb`): the limb-only rules and `mode` do not apply to it. */
+const isGeneric = (h) => h.limb == null && (h.on != null || h.point != null);
+const limbHandleEntries = (part) => handleEntries(part).filter(([, h]) => !isGeneric(h));
+const genericEntries = (part) => handleEntries(part).filter(([, h]) => isGeneric(h));
+const isVec3 = (v) => Array.isArray(v) && v.length === 3 && v.every((c) => typeof c === "number" && Number.isFinite(c));
+const isDir3 = (v) => isVec3(v) && v.some((c) => c !== 0);
+const NUDGE_MM = 0.01;
+const NUDGE_DEG = 0.1;
 
 // The parameter names a handle lists, each with the path it was found at.
 function paramRefs(name, h) {
   const base = `handles.${name}`;
   const refs = [];
+  if (isGeneric(h)) {
+    if (Array.isArray(h.params)) h.params.forEach((n) => refs.push([n, `${base}.params`]));
+    if (h.lock !== undefined) refs.push([h.lock, `${base}.lock`]);
+    return refs;
+  }
   const add = (list, path) => { if (Array.isArray(list)) list.forEach((n) => refs.push([n, path])); };
   if (h.mode === "goal") {
     if (isPlainObject(h.params)) {
@@ -56,10 +73,58 @@ function jointEntryProblem(entry, joint) {
 const isDirection = (v) => Array.isArray(v) && v.length === 3 && v.every((c) => typeof c === "number" && Number.isFinite(c)) && v.some((c) => c !== 0);
 const isLimb = (d, key) => typeof d?.[key]?.ikInfo === "function";
 
+/** `fn()` or the error it threw: { v } | { error }. */
+const attempt = (fn) => { try { return { v: fn() }; } catch (e) { return { error: e?.message || String(e) }; } };
+
+/** Where an `on` handle's source stands: { ok, finding? } - the shape problem, or the source info. */
+function sourceProblem(name, h, d) {
+  const base = `handles.${name}`;
+  if (typeof h.on !== "string" || !d || !(h.on in d)) {
+    return { finding: err("handle-unknown-source", `handle "${name}" has on ${JSON.stringify(h.on)}, which derive() does not return`,
+      "`on` must be a key of the object `derive` returns, holding a point source (a value with a `handleInfo()` method).", `${base}.on`) };
+  }
+  if (isLimb(d, h.on)) return { limb: true };
+  if (typeof d[h.on]?.handleInfo !== "function") {
+    return { finding: err("handle-unknown-source", `handle "${name}" has on ${JSON.stringify(h.on)}, but derive().${h.on} has no handleInfo()`,
+      "A point source is a value in derive's result with a `handleInfo()` method returning { kind: \"partforge.points\", points: { name: [x, y, z] }, axes?, lines? }.", `${base}.on`) };
+  }
+  const info = attempt(() => sourceInfo(d, h.on));
+  if (info.error || !info.v || !isPlainObject(info.v.points)) {
+    return { finding: err("handle-unknown-source", `handle "${name}": derive().${h.on}.handleInfo() ${info.error ? `throws (${info.error})` : "returns no `points` object"}`,
+      "`handleInfo()` must return plain JSON with a `points` object of named [x, y, z] points.", `${base}.on`) };
+  }
+  const names = Object.keys(info.v.points);
+  if (typeof h.at !== "string" || !names.includes(h.at)) {
+    return { finding: err("handle-unknown-source", `handle "${name}" has at ${JSON.stringify(h.at)}, which is not a point of derive().${h.on}`,
+      `\`at\` must be one of the source's points: ${names.join(", ") || "(none)"}.`, `${base}.at`) };
+  }
+  return { info: info.v };
+}
+
+/** The step a lint nudge moves a parameter by: its step, 1% of its range, or 0.1. */
+function nudgeFor(part, key) {
+  const r = rangesOf(part).get(key);
+  if (r && Number.isFinite(r.step) && r.step > 0) return r.step;
+  if (r && Number.isFinite(r.min) && Number.isFinite(r.max) && r.max > r.min) return 0.01 * (r.max - r.min);
+  return 0.1;
+}
+
+/** The numeric params a generic handle lists that exist in `defaults`. */
+function listedNumeric(part, h) {
+  const defaults = isPlainObject(part?.defaults) ? part.defaults : {};
+  return (Array.isArray(h.params) ? h.params : []).filter((k) => typeof k === "string" && typeof defaults[k] === "number" && Number.isFinite(defaults[k]));
+}
+
+/** The derived value at `p` with `key` moved by `delta`, or null when derive throws there. */
+function derivedNudged(part, p, key, delta) {
+  const r = attempt(() => resolveDerived(part, { ...p, [key]: p[key] + delta }));
+  return r.error ? null : (r.v ?? {});
+}
+
 export const HANDLE_RULES = [
   {
     id: "handle-bad-mode",
-    run: ({ part }) => handleEntries(part)
+    run: ({ part }) => limbHandleEntries(part)
       .filter(([, h]) => !MODES.includes(h.mode))
       .map(([name, h]) => err("handle-bad-mode", `handle "${name}" has mode ${JSON.stringify(h.mode)}`,
         'Set `mode` to "goal" (drag a point; params: { position, aim? }) or "angles" (drag joint values directly; params: [names]).',
@@ -67,7 +132,7 @@ export const HANDLE_RULES = [
   },
   {
     id: "handle-unknown-limb",
-    run: ({ part, d }) => handleEntries(part)
+    run: ({ part, d }) => limbHandleEntries(part)
       .filter(([, h]) => !isLimb(d, h.limb))
       .map(([name, h]) => err("handle-unknown-limb", `handle "${name}" names limb ${JSON.stringify(h.limb)}, which derive() does not return as a posed limb`,
         "`limb` must be a key of the object `derive` returns, holding the result of `limb(...).pose(...)` from partforge/kinematics.",
@@ -79,6 +144,10 @@ export const HANDLE_RULES = [
       const defaults = isPlainObject(part?.defaults) ? part.defaults : {};
       const out = [];
       for (const [name, h] of handleEntries(part)) {
+        if (isGeneric(h) && h.params !== undefined && !Array.isArray(h.params)) {
+          out.push(err("handle-unknown-param", `handle "${name}" has \`params\` that is not an array of parameter names`,
+            "`params` lists the numeric parameters the drag may write: `params: [\"driveAngle\"]`.", `handles.${name}.params`));
+        }
         for (const [pname, path] of paramRefs(name, h)) {
           const v = typeof pname === "string" ? defaults[pname] : undefined;
           if (typeof v === "number" && Number.isFinite(v)) continue;
@@ -123,7 +192,7 @@ export const HANDLE_RULES = [
     id: "handle-unknown-joint",
     run: ({ part, d }) => {
       const out = [];
-      for (const [name, h] of handleEntries(part)) {
+      for (const [name, h] of limbHandleEntries(part)) {
         if (h.mode !== "goal" || h.at === undefined || h.at === "tip" || !isLimb(d, h.limb)) continue;
         let joints;
         try { joints = d[h.limb].ikInfo().joints.map((j) => j.name); } catch { continue; }
@@ -133,7 +202,7 @@ export const HANDLE_RULES = [
       }
       // `joints` (an angles handle's joint rings): each key a joint of the handle's limb or
       // "<limb>.<joint>" of another posed limb, each entry the shape its joint takes.
-      for (const [name, h] of handleEntries(part)) {
+      for (const [name, h] of limbHandleEntries(part)) {
         if (h.joints === undefined) continue;
         const base = `handles.${name}.joints`;
         if (h.mode !== "angles" || !isPlainObject(h.joints)) {
@@ -162,6 +231,164 @@ export const HANDLE_RULES = [
           if (problem) {
             out.push(err("handle-unknown-joint", `handle "${name}" maps joints ${JSON.stringify(key)}, which ${problem}`,
               "A hinge maps to the parameter that drives it in degrees (\"<param>\", or { param, scale } when the joint turns scale × param); a ball to { bend?, spread?, twist? }.", `${base}.${key}`));
+          }
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: "handle-no-source",
+    run: ({ part }) => handleEntries(part)
+      .filter(([, h]) => [h.on, h.point, h.limb].filter((v) => v != null).length !== 1)
+      .map(([name, h]) => {
+        const n = [h.on, h.point, h.limb].filter((v) => v != null).length;
+        return err("handle-no-source", n === 0 ? `handle "${name}" says nothing about where it is` : `handle "${name}" has more than one of on, point and limb`,
+          "Give each handle exactly one source: `on` + `at` (a point source in derive's result), `point: (p, d) => [x, y, z]`, or `limb` (a posed limb).", `handles.${name}`);
+      }),
+  },
+  {
+    id: "handle-unknown-source",
+    run: ({ part, d, deriveError }) => {
+      if (deriveError) return []; // derive-throws already says so; `d` is empty
+      const out = [];
+      for (const [name, h] of genericEntries(part)) {
+        if (h.on == null) continue;
+        const r = sourceProblem(name, h, d);
+        if (r.finding) out.push(r.finding);
+      }
+      return out;
+    },
+  },
+  {
+    id: "handle-on-limb",
+    run: ({ part, d }) => genericEntries(part)
+      .filter(([, h]) => h.on != null && typeof h.on === "string" && isLimb(d, h.on))
+      .map(([name, h]) => err("handle-on-limb", `handle "${name}" has on ${JSON.stringify(h.on)}, which is a posed limb`,
+        "`on` never names a limb: declare a limb handle instead - `{ limb: \"" + h.on + "\", at, mode: \"goal\" | \"angles\", ... }`.", `handles.${name}.on`)),
+  },
+  {
+    id: "handle-bad-drag",
+    run: ({ part, p, d, deriveError }) => {
+      const out = [];
+      for (const [name, h] of genericEntries(part)) {
+        const base = `handles.${name}`;
+        const drag = h.drag === undefined ? "point" : h.drag;
+        if (!DRAGS.includes(drag)) {
+          out.push(err("handle-bad-drag", `handle "${name}" has drag ${JSON.stringify(h.drag)}`,
+            `\`drag\` is one of ${DRAGS.map((x) => `"${x}"`).join(", ")} (default "point").`, `${base}.drag`));
+          continue;
+        }
+        if (drag === "point" || deriveError) continue;
+        const field = drag === "axis" ? "direction" : drag === "plane" ? "normal" : "axis";
+        if (drag === "rotary") {
+          const given = attempt(() => resolveGeom(h.axis, p, d));
+          if (given.error) continue; // handle-point-throws reports the throwing axis function
+          if (isPlainObject(given.v) && isVec3(given.v.origin) && isDir3(given.v.direction)) continue;
+          let fromSource = false;
+          if (h.on != null && !sourceProblem(name, h, d).info) continue; // the source itself is the finding
+          if (h.on != null) {
+            const ax = attempt(() => sourceInfo(d, h.on)?.axes?.[String(h.at).split(".")[0]]).v;
+            fromSource = isPlainObject(ax) && isVec3(ax.origin) && isDir3(ax.direction);
+          }
+          if (!fromSource) {
+            out.push(err("handle-bad-drag", `handle "${name}" turns about an axis, but has none it can find`,
+              "A rotary handle needs `axis: { origin: [x, y, z], direction: [x, y, z] }` (or a `(p, d) => ...` returning it), or an `on` source whose `axes` has an entry for the prefix of `at`.", `${base}.axis`));
+          }
+          continue;
+        }
+        const v = attempt(() => resolveGeom(h[field], p, d));
+        if (v.error) continue;
+        if (!isDir3(v.v)) {
+          out.push(err("handle-bad-drag", `handle "${name}" drags by ${drag} but has no usable \`${field}\``,
+            `\`${field}\` is a non-zero [x, y, z] in part coordinates, or a \`(p, d) => [x, y, z]\` function.`, `${base}.${field}`));
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: "handle-point-throws",
+    run: ({ part, p, d, deriveError }) => {
+      if (deriveError) return [];
+      const out = [];
+      for (const [name, h] of genericEntries(part)) {
+        const base = `handles.${name}`;
+        if (h.on != null && !sourceProblem(name, h, d).info) continue; // handle-unknown-source / handle-on-limb
+        const at = attempt(() => locateHandle(part, p, d, h));
+        if (at.error) {
+          out.push(err("handle-point-throws", `handle "${name}" has no readable point at the defaults: ${at.error}`,
+            "`point` must be a pure `(p, d) => [x, y, z]` returning three finite numbers for every parameter set the drag reaches; `on` + `at` must name a point whose value is [x, y, z].", h.point != null ? `${base}.point` : `${base}.at`));
+          continue;
+        }
+        if (h.drag === "rotary" && typeof h.axis === "function") {
+          const ax = attempt(() => h.axis(p, d));
+          if (ax.error) {
+            out.push(err("handle-point-throws", `handle "${name}": its axis function throws at the defaults: ${ax.error}`,
+              "`axis` as a function must return { origin, direction } for every parameter set.", `${base}.axis`));
+          }
+        }
+        for (const field of ["direction", "normal"]) {
+          if (typeof h[field] !== "function") continue;
+          const r = attempt(() => h[field](p, d));
+          if (r.error) {
+            out.push(err("handle-point-throws", `handle "${name}": its ${field} function throws at the defaults: ${r.error}`,
+              `\`${field}\` as a function must return an [x, y, z] for every parameter set.`, `${base}.${field}`));
+          }
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: "handle-inert",
+    run: ({ part, p, d, deriveError }) => {
+      if (deriveError) return [];
+      const out = [];
+      for (const [name, h] of genericEntries(part)) {
+        if (h.on != null && !sourceProblem(name, h, d).info) continue;
+        const here = attempt(() => locateHandle(part, p, d, h));
+        if (here.error) continue; // handle-point-throws
+        const keys = listedNumeric(part, h);
+        const listed = Array.isArray(h.params) ? h.params.length : 0;
+        if (listed > 0 && keys.length === 0) continue; // handle-unknown-param
+        let moved = false;
+        for (const key of keys) {
+          const d2 = derivedNudged(part, p, key, nudgeFor(part, key));
+          const there = d2 && attempt(() => locateHandle(part, { ...p, [key]: p[key] + nudgeFor(part, key) }, d2, h));
+          if (!there || there.error || Math.hypot(...there.v.map((c, i) => c - here.v[i])) >= NUDGE_MM) { moved = true; break; }
+        }
+        if (!moved) {
+          out.push(warn("handle-inert", `handle "${name}" does nothing at the defaults: ${keys.length ? `nudging each of ${keys.map((k) => JSON.stringify(k)).join(", ")} by one step moves its point less than ${NUDGE_MM} mm` : "it lists no `params` to drive"}`,
+            "List the numeric parameters that move the handle's point in `params`, and make sure `derive` / `point` read them; a handle whose point ignores its params cannot be dragged.", `handles.${name}.params`));
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: "handle-axis-moves",
+    run: ({ part, p, d, deriveError }) => {
+      if (deriveError) return [];
+      const out = [];
+      for (const [name, h] of genericEntries(part)) {
+        if (h.drag !== "rotary") continue;
+        if (h.on != null && !sourceProblem(name, h, d).info) continue;
+        const a0 = attempt(() => handleAxis(h, p, d));
+        if (a0.error || !a0.v) continue;
+        for (const key of listedNumeric(part, h)) {
+          const delta = nudgeFor(part, key);
+          const d2 = derivedNudged(part, p, key, delta);
+          const a1 = d2 && attempt(() => handleAxis(h, { ...p, [key]: p[key] + delta }, d2));
+          if (!a1 || a1.error || !a1.v) continue;
+          const origin = Math.hypot(...a1.v.origin.map((c, i) => c - a0.v.origin[i]));
+          const u = a0.v.direction, w = a1.v.direction;
+          const cos = (u[0] * w[0] + u[1] * w[1] + u[2] * w[2]) / (Math.hypot(...u) * Math.hypot(...w));
+          const angle = Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
+          if (origin > NUDGE_MM || angle > NUDGE_DEG) {
+            out.push(warn("handle-axis-moves", `handle "${name}" turns about an axis that moves when its own parameter ${JSON.stringify(key)} changes`,
+              "A rotary handle's axis must stay put while the handle's `params` change (a gear's centre does not turn with the gear). Make `axis` / the source's `axes` depend on other parameters only.", `handles.${name}.axis`));
+            break;
           }
         }
       }

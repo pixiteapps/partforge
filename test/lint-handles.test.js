@@ -121,3 +121,99 @@ test("handle-unknown-param: a joints entry must name a numeric parameter", () =>
   expect(rulesOf(handleFindings(angles({ mcp: "label" })))).toEqual(["handle-unknown-param"]); // a string default
   expect(rulesOf(handleFindings(angles({ mcp: { param: "nope" } })))).toEqual(["handle-unknown-param"]);
 });
+
+// ---- generic handles: `on` / `point` ----
+const pts = (points, extra = {}) => ({ handleInfo: () => ({ kind: "partforge.points", points, ...extra }) });
+const genPart = (handles, { derive, parameters, defaults } = {}) => ({
+  meta: { title: "T" },
+  defaults: { ang: 0, w: 10, r: 20, ...defaults },
+  derive: derive ?? ((p) => ({
+    gear: pts({ "g.rim": [20 * Math.cos(p.ang * Math.PI / 180), 20 * Math.sin(p.ang * Math.PI / 180), 0], "g.center": [0, 0, 0] },
+      { axes: { g: { origin: [0, 0, 0], direction: [0, 0, 1] } } }),
+    finger: mkLimb({ mcp: 10, pip: 20 }),
+  })),
+  parameters: parameters ?? [{ type: "slider", key: "ang", min: 0, max: 360, step: 1, wrap: true }, { type: "slider", key: "w", min: 0, max: 100 }, { type: "slider", key: "r", min: 0, max: 100 }],
+  parts: { body: { views: ["main"], build: (k) => k.box({ size: [1, 1, 1] }) } },
+  views: { main: { label: "Main" } },
+  handles,
+});
+const genFindings = (handles, opts) => {
+  const r = lintPart(genPart(handles, opts));
+  return [...r.errors, ...r.warnings, ...r.notes].filter((f) => f.rule.startsWith("handle-"));
+};
+const good = { on: "gear", at: "g.rim", params: ["ang"], drag: "rotary" };
+
+test("generic handles: valid on / point handles produce no findings", () => {
+  expect(genFindings({
+    input: good,
+    corner: { point: (p) => [p.w, p.r, 0], params: ["w", "r"], drag: "plane", normal: [0, 0, 1] },
+    slide: { point: (p) => [p.w, 0, 0], params: ["w"], drag: "axis", direction: (p, d) => [1, 0, 0] },
+    free: { point: (p) => [p.w, p.r, 0], params: ["w"] },
+  })).toEqual([]);
+});
+
+test("handle-no-source: none, or more than one, of on / point / limb", () => {
+  expect(rulesOf(genFindings({ a: { params: ["w"] } }))).toContain("handle-no-source");
+  expect(rulesOf(genFindings({ a: { ...good, point: () => [0, 0, 0] } }))).toContain("handle-no-source");
+  expect(rulesOf(genFindings({ a: { ...good, limb: "finger" } }))).toContain("handle-no-source");
+  expect(genFindings({ a: { ...good, point: () => [0, 0, 0] } })[0].path).toBe("handles.a");
+});
+
+test("handle-unknown-source: on not in derive, no handleInfo, or at not a point", () => {
+  expect(rulesOf(genFindings({ a: { ...good, on: "nope" } }))).toEqual(["handle-unknown-source"]);
+  expect(rulesOf(genFindings({ a: { ...good, on: "plain" } }, { derive: () => ({ plain: { x: 1 } }) }))).toEqual(["handle-unknown-source"]);
+  const fs = genFindings({ a: { ...good, at: "g.nope" } });
+  expect(rulesOf(fs)).toEqual(["handle-unknown-source"]);
+  expect(fs[0].path).toBe("handles.a.at");
+  expect(fs[0].hint).toMatch(/g\.rim/);
+});
+
+test("handle-on-limb: on naming a posed limb is an error, not an unknown source", () => {
+  expect(rulesOf(genFindings({ a: { on: "finger", at: "tip", params: ["w"] } }))).toEqual(["handle-on-limb"]);
+});
+
+test("handle-bad-drag: unknown drag, axis / plane without a direction, rotary without an axis", () => {
+  expect(rulesOf(genFindings({ a: { ...good, drag: "spin", axis: undefined } }))).toEqual(["handle-bad-drag"]);
+  expect(rulesOf(genFindings({ a: { point: (p) => [p.w, 0, 0], params: ["w"], drag: "axis" } }))).toEqual(["handle-bad-drag"]);
+  expect(rulesOf(genFindings({ a: { point: (p) => [p.w, 0, 0], params: ["w"], drag: "plane", normal: [0, 0, 0] } }))).toEqual(["handle-bad-drag"]);
+  expect(rulesOf(genFindings({ a: { point: (p) => [p.w, 0, 0], params: ["w"], drag: "rotary" } }))).toEqual(["handle-bad-drag"]);
+  // a rotary handle on a source with axes, or given its own axis, is fine
+  expect(genFindings({ a: { point: (p) => [p.w, 0, 0], params: ["w"], drag: "rotary", axis: { origin: [0, 0, 0], direction: [0, 0, 1] } } })).toEqual([]);
+});
+
+test("handle-point-throws: the point, or an axis function, throws at the defaults", () => {
+  const fs = genFindings({ a: { point: () => { throw new Error("boom"); }, params: ["w"] } });
+  expect(rulesOf(fs)).toEqual(["handle-point-throws"]);
+  expect(fs[0].message).toMatch(/boom/);
+  expect(rulesOf(genFindings({ a: { point: () => [0, 0, 0], params: ["w"], drag: "rotary", axis: () => { throw new Error("x"); } } }))).toContain("handle-point-throws");
+  expect(rulesOf(genFindings({ a: { point: () => ["a", 0, 0], params: ["w"] } }))).toEqual(["handle-point-throws"]);
+});
+
+test("handle-inert (warning): no listed param moves the point", () => {
+  const r = lintPart(genPart({ a: { point: (p) => [1, 2, 3], params: ["w"] } }));
+  expect(r.warnings.map((f) => f.rule).filter((x) => x.startsWith("handle-"))).toEqual(["handle-inert"]);
+  expect(r.errors.filter((f) => f.rule.startsWith("handle-"))).toEqual([]);
+  expect(rulesOf(genFindings({ a: { point: (p) => [p.w, 0, 0], params: [] } }))).toEqual(["handle-inert"]);
+  // a wrapped param nudges by its step; a gear at radius 0 is inert
+  expect(rulesOf(genFindings({ a: { on: "gear", at: "g.center", params: ["ang"], drag: "rotary" } }))).toEqual(["handle-inert"]);
+});
+
+test("handle-axis-moves (warning): a rotary axis that follows the handle's own params", () => {
+  const derive = (p) => ({ gear: pts({ "g.rim": [20, 0, 0] }, { axes: { g: { origin: [p.ang, 0, 0], direction: [0, 0, 1] } } }) });
+  const r = lintPart(genPart({ a: { on: "gear", at: "g.rim", params: ["ang"], drag: "rotary" } }, { derive }));
+  expect(r.warnings.map((f) => f.rule)).toContain("handle-axis-moves");
+  const tilt = { point: (p) => [p.w, 0, 0], params: ["w"], drag: "rotary", axis: (p) => ({ origin: [0, 0, 0], direction: [Math.sin(p.w / 50), 0, 1] }) };
+  expect(rulesOf(genFindings({ a: tilt }))).toContain("handle-axis-moves");
+});
+
+test("handle-unknown-param covers generic handles; limb rules skip them", () => {
+  const fs = genFindings({ a: { ...good, params: ["ang", "nope"] }, b: { ...good, lock: "nope" } });
+  expect(rulesOf(fs)).toEqual(["handle-unknown-param", "handle-unknown-param"]);
+  expect(fs[0].path).toBe("handles.a.params");
+  expect(rulesOf(genFindings({ a: good }))).not.toContain("handle-unknown-limb");
+  expect(rulesOf(genFindings({ a: good }))).not.toContain("handle-bad-mode");
+});
+
+test("generic rules never throw on a malformed declaration", () => {
+  expect(() => genFindings({ a: { on: 5, at: {}, params: "x", drag: null }, b: { point: 3, drag: "rotary", axis: 7 }, c: { on: "gear", at: "g.rim", drag: "axis", direction: () => { throw 1; } } })).not.toThrow();
+});
