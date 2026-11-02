@@ -27,6 +27,20 @@ describe("lowering + reference", () => {
     const u = lower({ root: { kind: "union", k: 2, children: [{ kind: "sphere", r: 1, at: [-1.5, 0, 0] }, { kind: "sphere", r: 1, at: [1.5, 0, 0] }] } });
     expect(at(u, [0, 0, 0])).toBeLessThan(0.5);                                  // blended past the hard union's 0.5
   });
+  test("a tapered capsule whose larger end swallows the other is that end's sphere", () => {
+    // Endpoints no farther apart than |r1 - r2|: the round-cone formula reads +2 outside at
+    // [0,0,-2] (inside the r 4 sphere), and coincident endpoints made it NaN.
+    const nested = lower({ root: { kind: "capsule", a: [0, 0, 0], b: [0, 0, 1], r: [4, 1] } });
+    expect(at(nested, [0, 0, -2])).toBeCloseTo(-2, 12);
+    expect(at(nested, [0, 0, 6])).toBeCloseTo(2, 12);
+    const flipped = lower({ root: { kind: "capsule", a: [0, 0, 0], b: [0, 0, 1], r: [1, 4] } });
+    expect(at(flipped, [0, 0, 1])).toBeCloseTo(-4, 12);
+    const same = lower({ root: { kind: "capsule", a: [1, 2, 3], b: [1, 2, 3], r: [2, 5] } });
+    expect(at(same, [1, 2, 3])).toBeCloseTo(-5, 12);
+    const tube = lower({ root: { kind: "tube", points: [[0, 0, 0], [0, 0, 1], [0, 0, 10]], r: [4, 1, 1] } });
+    expect(at(tube, [0, 0, -2])).toBeCloseTo(-2, 12);
+    expect(Number.isNaN(at(tube, [0, 0, 1]))).toBe(false);
+  });
   test("repeat places count instances; tube is a chain of capsules", () => {
     const c = lower({ root: { kind: "repeat", linear: { step: [10, 0, 0], count: 3 }, child: { kind: "sphere", r: 1 } } });
     expect(at(c, [20, 0, 0])).toBeCloseTo(-1, 12);

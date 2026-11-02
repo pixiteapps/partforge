@@ -109,6 +109,14 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
         const R = Math.max(r1, r2);
         const lb = boxPad(box(a.map((v, i) => Math.min(v, b[i])), a.map((v, i) => Math.max(v, b[i]))), R);
         if (r1 === r2) return prim(PRIM.CAPSULE, Float64Array.of(...a, ...b, r1), lb, 2 * r1);
+        // Endpoints no farther apart than |r1 - r2|: the larger end's sphere holds the other,
+        // and the round-cone formula is wrong there (NaN when they coincide). Lower it to that
+        // sphere, a capsule with both ends on its centre.
+        const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] <= (r1 - r2) * (r1 - r2)) {
+          const c = r1 > r2 ? a : b;
+          return prim(PRIM.CAPSULE, Float64Array.of(...c, ...c, R), boxPad(box(c, c), R), 2 * R);
+        }
         return prim(PRIM.ROUNDCONE, roundConeParams(a, b, r1, r2), lb, 2 * Math.min(r1, r2));
       }
       case "box": {

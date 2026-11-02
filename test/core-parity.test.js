@@ -55,7 +55,13 @@ const IMPLICIT = {
   "implicit touching repeat": implicitPart([{ root: { kind: "repeat", linear: { count: 3, step: [4, 0, 0] }, child: { kind: "box", size: [4, 4, 4] } }, preview: 0.5 }]),
   "implicit hand, print tier": implicitPart([{ ...handSpec(), resolution: 1.2 }], new Map(), "print"),
   "implicit vase, print tier": implicitPart([{ ...vase.spec, resolution: 1.2 }], vase.images, "print"),
-  "implicit flush pocket": implicitPart([{ root: { kind: "subtract", children: [{ kind: "box", size: [10, 10, 10] }, { kind: "box", size: [4, 4, 10], at: [0, 0, 5] }] }, preview: 0.5 }]),
+  // A tapered capsule whose larger end swallows the other, and a tube segment with coincident
+  // endpoints: both lower to the larger end's sphere.
+  "implicit swallowed taper": implicitPart([{ root: { kind: "union", children: [
+    { kind: "capsule", a: [0, 0, 0], b: [0, 0, 1], r: [4, 1] },
+    { kind: "tube", points: [[10, 0, 0], [10, 0, 0], [10, 0, 8]], r: [3, 1, 1] },
+  ] }, preview: 0.8 }]),
+  "implicit flush pocket":implicitPart([{ root: { kind: "subtract", children: [{ kind: "box", size: [10, 10, 10] }, { kind: "box", size: [4, 4, 10], at: [0, 0, 5] }] }, preview: 0.5 }]),
   // The contact node's CONTACT and BULGE ops: every contact tree.
   ...Object.fromEntries(Object.keys(TREES).filter((k) => k.startsWith("contact"))
     .map((k) => [`implicit ${k}`, implicitPart([{ ...TREES[k], preview: 0.8 }])])),
