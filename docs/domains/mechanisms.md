@@ -69,7 +69,7 @@ diameters, and each member is placed by one call.
 
    Turn gear 3 by 90° and the solver writes `driveAngle` + 180 (the train's ratio from
    gear 1 to gear 3 is 20/40). The viewer has no gear-specific code: the coupling is all
-   in `derive`. See `docs/AUTHORING-PARTS.md` for the handle declaration.
+   in `derive`. See `docs/AUTHORING-PARTS.md`, "Handles", for the handle declaration.
 
 A member name must have no `.`, because a point is named `"<member>.<point>"`.
 

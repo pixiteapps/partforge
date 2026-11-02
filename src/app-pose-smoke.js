@@ -5,13 +5,16 @@ import { mount } from "./framework/index.js";
 // stashed for scripts/check-pose.mjs, like the other smoke apps, and every
 // onParamsCommit is counted so the check can assert one commit per drag; the part is
 // exposed for its defaults; and every onPick is counted, so the check can assert that a
-// plain click on the model still picks while a click or drag on a pose handle never does.
+// plain click on the model still picks while a click or drag on a pose handle never does;
+// and every onBuild is counted, so the check can assert the host sees one build per drag.
 window.__pfPart = part;
 window.__pfCommits = [];
 window.__pfPicks = [];
+window.__pfBuilds = [];
 window.__pfRuntime = mount(part, {
   createWorker: (name) =>
     new Worker(new URL("./pose-smoke-worker.js", import.meta.url), { type: "module", name }),
   onParamsCommit: (commit) => { window.__pfCommits.push(commit); },
   onPick: (pick) => { window.__pfPicks.push(pick.token); },
+  onBuild: (build) => { window.__pfBuilds.push({ status: build.status, at: performance.now() }); },
 });

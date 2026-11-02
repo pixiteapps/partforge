@@ -609,6 +609,12 @@ the natural gripper roll with the wrist near 0.
 
 ## Handles and Pose mode
 
+Handles are a general part feature: the declaration (`on` / `point`, `params`, `drag`),
+the four geometric drags, `wrap: true`, motion and shape, when a handle shows, pins, lint
+and the `inspect` entry are in `docs/AUTHORING-PARTS.md`, "Handles". Read that first.
+This section covers what is particular to a posed limb: the `"goal"` and `"angles"`
+drags, their aim gizmos and joint rings, and how pins act on a limb.
+
 Handles let a person pose the part with the mouse. A handle on a limb is a draggable
 point on a posed limb. A part declares them in a top-level `handles` object, in the
 same form as every other handle: `on` names the limb, and `drag` says how it moves
@@ -804,8 +810,11 @@ when they are all off.
 - **Rigid parts move live.** A sub-part that the pose only places by matrix moves on every
   frame.
 - **A part that must rebuild** fades to a ghost (0.35 opacity) and stays still. A
-  skeleton (bones and joints) follows the drag. Nothing is built during the drag. One
-  rebuild runs on release, and the new mesh and the full opacity appear in the same frame.
+  skeleton (bones and joints) follows the drag. A slow part builds nothing during the
+  drag; a cheap one (its last build under 120 ms) rebuilds as the drag goes, and each new
+  mesh lifts its ghost (see "Motion and shape" under "Handles" in
+  `docs/AUTHORING-PARTS.md`). One build runs on release, and the new mesh and the full
+  opacity appear in the same frame.
 - **One drag is one `onParamsCommit`.** It lists every parameter that changed. A drag that
   changed nothing commits nothing.
 - **Release snaps to the schema step.** Every parameter the drag wrote rounds to its
