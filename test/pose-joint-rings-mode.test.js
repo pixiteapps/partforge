@@ -88,7 +88,7 @@ const base = {
 const anglesPart = (joints = { shoulder: "sh", elbow: "el" }, derive = (p) => ARM.pose({ bend: { shoulder: p.sh, elbow: p.el } })) => ({
   ...base,
   derive: (p) => { counter.derives++; return { arm: derive(p) }; },
-  handles: { arm: { limb: "arm", mode: "angles", params: ["sh", "el"], lock: "lk", joints } },
+  handles: { arm: { on: "arm", drag: "angles", params: ["sh", "el"], lock: "lk", joints } },
 });
 // A goal handle at the tip, seeded by the two joints (so both get rings), the goal at the
 // default pose's tip; with `aim`, an aim gizmo too.
@@ -98,7 +98,7 @@ const goalPart = (aim = false) => {
     ...base,
     defaults: { ...base.defaults, gx: tip.origin[0], gy: tip.origin[1], gz: tip.origin[2] },
     derive: (p) => ({ arm: ARM.pose({ bend: { shoulder: p.sh, elbow: p.el }, goals: [{ at: "tip", position: [p.gx, p.gy, p.gz] }] }) }),
-    handles: { arm: { limb: "arm", at: "tip", mode: "goal", params: { position: ["gx", "gy", "gz"] }, seed: ["sh", "el"] } },
+    handles: { arm: { on: "arm", at: "tip", drag: "goal", params: { position: ["gx", "gy", "gz"] }, seed: ["sh", "el"] } },
   };
   if (aim) {
     part.handles.arm.params.aim = ["gp", "gyaw"];
@@ -129,7 +129,7 @@ function setup(part, over = {}, limbKey = "arm", opts = {}) {
     ...opts,
   });
   live.push(mode);
-  const info = (key = limbKey) => limbInfo(part, params, { limb: key });
+  const info = (key = limbKey) => limbInfo(part, params, { on: key });
   const screenOf = (p) => viewer.projectPoint(new THREE.Vector3(...p).applyMatrix4(viewer.partsGroup.matrixWorld).toArray());
   const fire = (type, x, y, extra = {}) => viewer.domElement.dispatchEvent(new PointerEvent(type, {
     clientX: x, clientY: y, pointerId: 1, button: 0, pointerType: "mouse", bubbles: true, ...extra,
@@ -613,7 +613,7 @@ describe("joint pins", () => {
 
   it("a pin on a handle this view does not show has no badge and holds nothing", () => {
     const part = anglesPart();
-    part.handles.other = { limb: "arm", mode: "angles", params: ["sh"] };
+    part.handles.other = { on: "arm", drag: "angles", params: ["sh"] };
     const elbowMoves = (visible) => {
       const t = setup(part, {}, "arm", { visibleHandles: () => visible });
       t.mode.setPins(["other:elbow"]);

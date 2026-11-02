@@ -46,7 +46,7 @@ export default {
   },
   views: { hand: { label: "Hand" } },
   handles: {
-    a: { limb: "a", mode: "angles", params: ["wrist", "aCurl", "aSpread"] },
-    b: { limb: "b", mode: "angles", params: ["bCurl", "bSpread"], lock: "bLock" },
+    a: { on: "a", drag: "angles", params: ["wrist", "aCurl", "aSpread"] },
+    b: { on: "b", drag: "angles", params: ["bCurl", "bSpread"], lock: "bLock" },
   },
 };

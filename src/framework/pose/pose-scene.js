@@ -24,6 +24,12 @@
 // A goal handle with `aim` gets the aim gizmo (aim-gizmo.js: a centre ball and rotate
 // rings, drawn and picked there). setAimGizmo tells this scene which limb's goal point
 // the gizmo's ball stands on, so its dot is not drawn twice.
+//
+// A generic handle (`on` / `point`) arrives as a pseudo-limb (handle-source.js's
+// handleRecord): no joints, one "tip" dot, and its source's `lines` (point pairs) drawn as
+// bones. Its guides (setGuides: the axis arrow, plane square, rotary ring and path, in part
+// coordinates) and its drag readout (setReadout: a label by the point) live in a second
+// group beside the first, so a drag frame redraws them without rebuilding the limbs.
 import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -78,6 +84,9 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   const redraw = () => viewer.requestRender?.();
   const group = new THREE.Group();
   group.name = "pf-pose";
+  // guides and the readout (setGuides / setReadout), redrawn on their own
+  const guideGroup = new THREE.Group();
+  guideGroup.name = "pf-pose-guides";
   let attached = false;
   let unregisterCapture = () => {};
   function ensureAttached() {
@@ -85,7 +94,9 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     const parent = Object.values(viewer._subMeshes ?? {})[0]?.parent;
     if (!parent) return false;
     parent.add(group);
-    unregisterCapture = viewer.registerCanonicalCaptureHidden?.(group) ?? (() => {});
+    parent.add(guideGroup);
+    const offs = [group, guideGroup].map((g) => viewer.registerCanonicalCaptureHidden?.(g) ?? (() => {}));
+    unregisterCapture = () => { for (const off of offs) off(); };
     attached = true;
     return true;
   }
@@ -106,16 +117,20 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   // quieter lines: rings at the limb radii, and arcs that are not the active ones
   lineMats.faint = prep(new LineMaterial({ color: POSE_THEME[theme].bone, linewidth: 1, opacity: 0.55 }));
   lineMats.dashed = prep(new LineMaterial({ color: POSE_THEME[theme].warn, linewidth: 1.5, dashed: true, dashSize: 5, gapSize: 4 }));
+  // a generic handle's guides: the handle colour, lighter than a bone
+  lineMats.guide = prep(new LineMaterial({ color: POSE_THEME[theme].handle, linewidth: 1.5, opacity: 0.8 }));
   // The reach-miss label's material is shared too (its map swapped per text): a material
   // made per rebuild and disposed by the next one released its shader program every drag
   // frame, so three recompiled it every frame (~5 ms of getProgramInfoLog per frame).
   const labelMat = prep(new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide }));
-  const allMats = () => [...Object.values(fillMats), ...Object.values(lineMats), labelMat];
+  const readoutMat = prep(new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide }));
+  const allMats = () => [...Object.values(fillMats), ...Object.values(lineMats), labelMat, readoutMat];
   const paintMats = () => {
     const P = POSE_THEME[theme];
     for (const k of colorKeys) { fillMats[k].color.set(P[k]); lineMats[k].color.set(P[k]); }
     lineMats.faint.color.set(P.bone);
     lineMats.dashed.color.set(P.warn);
+    lineMats.guide.color.set(P.handle);
   };
 
   // shared unit geometries (scaled per frame); never disposed per rebuild
@@ -130,6 +145,8 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   let active = null;
   let pins = [];       // pinned points: [{ limb, at }]
   let aimGizmo = null; // { limb, at }: that limb's goal point is the aim gizmo's ball
+  let guides = [];     // [{ kind, points }] (setGuides)
+  let readout = null;  // { at, text } (setReadout)
   let dirty = false;
 
   // ---- per-build records, sized in tick() -------------------------------------
@@ -138,6 +155,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   let pinRecs = [];    // { head, stem, pos }
   let dashRec = null;  // { line, a, b }
   let labelRec = null; // { mesh, a, b }
+  let readoutRec = null; // { mesh, pos }
   const textureCache = new Map();
 
   function labelTexture(text) {
@@ -169,25 +187,28 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     billboards.push({ mesh, pos, px });
     return mesh;
   }
-  function addLine(matKey, flat, order = RENDER_ORDER_POSE) {
+  function addLine(matKey, flat, order = RENDER_ORDER_POSE, into = group) {
     const geo = new LineSegmentsGeometry();
     geo.setPositions(flat);
     const line = new LineSegments2(geo, lineMats[matKey]);
     line.renderOrder = order;
     line.frustumCulled = false;
-    group.add(line);
+    into.add(line);
     return line;
   }
 
-  function disposeChildren() {
-    for (const child of [...group.children]) {
-      group.remove(child);
+  function disposeGroup(g) {
+    for (const child of [...g.children]) {
+      g.remove(child);
       child.traverse((o) => {
         if (o.geometry && !shared.has(o.geometry)) o.geometry.dispose?.();
         const m = o.material;
         if (m && !allMats().includes(m)) m.dispose?.();
       });
     }
+  }
+  function disposeChildren() {
+    disposeGroup(group);
     dots = []; billboards = []; pinRecs = []; dashRec = null; labelRec = null;
   }
 
@@ -213,8 +234,10 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     // the grabbed point while dragging, else the hovered one: same strong dot + halo
     const grab = act?.grab ?? hoverDot;
     const clamped = act?.clamped ?? [];
-    // skeleton
-    addLine("bone", polyline(pts));
+    // skeleton (a generic handle's record has no joints: only its source's lines)
+    if (pts.length > 1) addLine("bone", polyline(pts));
+    const lines = Array.isArray(info.lines) ? info.lines.flatMap(([a, b]) => [...a, ...b]) : [];
+    if (lines.length) addLine("bone", lines);
     // rings at the limb's radii, perpendicular to the local bone direction
     if (info.r) {
       pts.forEach((p, i) => {
@@ -322,11 +345,37 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
 
   function sweepTextures() {
     const live = labelRec ? new Set([`${theme}|${active.residual.toFixed(1)} mm`]) : new Set();
+    if (readout) live.add(`${theme}|${readout.text}`);
     for (const [k, tex] of textureCache) {
       if (live.has(k)) continue;
       tex.dispose();
       textureCache.delete(k);
     }
+  }
+
+  /** The guides and the readout, in their own group. */
+  function rebuildGuides() {
+    if (!ensureAttached()) { dirty = true; return; }
+    disposeGroup(guideGroup);
+    readoutRec = null;
+    for (const g of guides) {
+      const closed = g.kind === "plane" || g.kind === "rotary";
+      const flat = polyline(g.points, closed);
+      if (flat.length) addLine("guide", flat, RENDER_ORDER_POSE, guideGroup);
+    }
+    if (readout) {
+      const tex = labelTexture(readout.text);
+      const img = tex.image;
+      readoutMat.map = tex;
+      readoutMat.needsUpdate = true;
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(img && img.height ? img.width / img.height : 4, 1), readoutMat);
+      mesh.renderOrder = RENDER_ORDER_POSE_LABEL;
+      mesh.frustumCulled = false;
+      guideGroup.add(mesh);
+      readoutRec = { mesh, pos: vec(readout.at) };
+    }
+    sweepTextures();
+    redraw();
   }
 
   // ---- per-frame sizing ------------------------------------------------------
@@ -337,8 +386,8 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   const _a = new THREE.Vector3();
   const _b = new THREE.Vector3();
   function tick() {
-    if (dirty) rebuild();
-    if (!attached || !group.children.length) return;
+    if (dirty) { rebuild(); rebuildGuides(); }
+    if (!attached || (!group.children.length && !guideGroup.children.length)) return;
     const el = viewer.domElement;
     const h = el?.clientHeight || 1;
     const w = el?.clientWidth || 1;
@@ -381,6 +430,12 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
       labelRec.mesh.position.copy(_b).addScaledVector(_up, LABEL_LIFT_PX * wpp);
       labelRec.mesh.quaternion.copy(_q);
     }
+    if (readoutRec) {
+      const wpp = wppAt(readoutRec.pos);
+      readoutRec.mesh.scale.setScalar(LABEL_SCREEN_PX * wpp);
+      readoutRec.mesh.position.copy(readoutRec.pos).addScaledVector(_up, LABEL_LIFT_PX * wpp);
+      readoutRec.mesh.quaternion.copy(_q);
+    }
   }
 
   // ---- public state setters --------------------------------------------------
@@ -409,8 +464,28 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     aimGizmo = next;
     rebuild();
   }
+  const validPoint = (p) => Array.isArray(p) && p.length === 3 && p.every(Number.isFinite);
+  /** A generic handle's guides, `[{ kind: "axis"|"plane"|"rotary"|"path", points }]` in part coordinates (plane and rotary close). */
+  function setGuides(list) {
+    const next = (Array.isArray(list) ? list : [])
+      .filter((g) => g && Array.isArray(g.points) && g.points.length > 1 && g.points.every(validPoint))
+      .map((g) => ({ kind: g.kind, points: g.points.map((p) => [...p]) }));
+    if (!next.length && !guides.length) return;
+    guides = next;
+    rebuildGuides();
+  }
+  /** The drag readout, `{ at (part coordinates), text }`, or null. */
+  function setReadout(r) {
+    const next = r && validPoint(r.at) && typeof r.text === "string" && r.text ? { at: [...r.at], text: r.text } : null;
+    if (!next && !readout) return;
+    readout = next;
+    rebuildGuides();
+  }
   function clear() {
     limbs = []; hover = null; hoverDot = null; active = null; pins = []; aimGizmo = null;
+    guides = []; readout = null;
+    disposeGroup(guideGroup);
+    readoutRec = null;
     disposeChildren();
     sweepTextures();
     redraw();
@@ -421,13 +496,15 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     theme = mode;
     paintMats();
     rebuild(); // label textures are theme-keyed
+    if (readout) rebuildGuides();
   }
 
   function dispose() {
     redraw();
     disposeChildren();
+    disposeGroup(guideGroup);
     unregisterCapture();
-    if (attached) group.parent?.remove(group);
+    if (attached) { group.parent?.remove(group); guideGroup.parent?.remove(guideGroup); }
     attached = false;
     for (const m of allMats()) m.dispose();
     unitDot.dispose();
@@ -441,5 +518,8 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     return pinRecs.map((r) => ({ limb: r.limb, at: r.at, point: r.pos.toArray() }));
   }
 
-  return { setLimbs, setHover, setActive, setPins, setAimGizmo, clear, tick, setTheme, group, dispose, pinBadges };
+  /** The guides and readout drawn now: `{ guides: [{ kind, points }], readout }`. For tests. */
+  const guideState = () => ({ guides: guides.map((g) => ({ ...g })), readout: readout && { ...readout } });
+
+  return { setLimbs, setHover, setActive, setPins, setAimGizmo, setGuides, setReadout, clear, tick, setTheme, group, guideGroup, dispose, pinBadges, guideState };
 }

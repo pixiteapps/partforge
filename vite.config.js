@@ -31,6 +31,7 @@ export default defineConfig(({ command }) => ({
         relief: "relief.html",
         robotArm: "robot-arm.html",
         hand: "hand.html",
+        gearbox: "gearbox.html",
       },
     },
   },

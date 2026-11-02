@@ -19,6 +19,7 @@ import { flexMembers } from "./flex-members.js";
 import { partBedContact, partFootprint, partGatesMinWall, partHasBed, partOverhangAngle, partWallBands } from "./gates.js";
 import { summarizeContours } from "./shape-probe.js";
 import { DOMAINS } from "../domains/registry.js";
+import { handlesReport } from "./handles.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
 const unionBounds = (list) => list.reduce(
@@ -539,6 +540,11 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     ? evaluateProbes(kernel, part, params, reads)
     : undefined;
 
+  // Pose-mode handles (where each sits and which params it drives), for the view and
+  // params measured. Absent on a part with none, so those reports are unchanged; it
+  // never fails the measurement (a handle that cannot be read is listed with an error).
+  const handles = opts.handles !== false ? handlesReport(part, view, params) : undefined;
+
   // Pair surface distances from the meshes already built — no kernel dependency,
   // so this reads on OCCT too. nearMisses = the issue-#29 signal: pairs that
   // *almost* touch; overlapping pairs are excluded by name (a fully-contained
@@ -627,6 +633,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // Present only when the part declares probes AND this run evaluated them —
     // a probe error stays inside its own entry and never reaches `ok` below.
     ...(probes ? { probes } : {}),
+    ...(handles ? { handles } : {}),
     ok: subparts.every((s) => s.watertight !== false) && overlaps.length === 0,
   };
 }

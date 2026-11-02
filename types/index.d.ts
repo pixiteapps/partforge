@@ -487,9 +487,15 @@ export interface CaptureViewOptions {
  * them).
  */
 /**
- * Posing's runtime-controls API: drag a part's declared `handles` on screen. Posing is
- * always on in the normal click mode (hover near a limb to show its handles); it stands
- * down while measure, sketch or cutaway is on.
+ * Posing's runtime-controls API: drag a part's declared `handles` on screen — a limb's
+ * goal and angles handles, and generic handles on any point (`on` a point source or a
+ * `point` function, dragged as `"point"`, `"axis"`, `"plane"` or `"rotary"`: a gear, a
+ * drawer, a box corner). Posing is always on in the normal click mode: a handle shows
+ * while the pointer is over a sub-part its `showOn` names, within 32 CSS px of its point,
+ * or (a limb's) near the limb's bones. It stands down while measure, sketch, cutaway or a
+ * cached preview is on. One drag is one `onParamsCommit`; a shape drag on a cheap part
+ * rebuilds as it goes, but `onBuild` fires once, at release. See docs/AUTHORING-PARTS.md,
+ * "Handles".
  */
 export interface PoseRuntime {
   /** The host's switch — on by default. Always false for a part with no `handles`, which has no posing to switch. */

@@ -19,3 +19,20 @@ describe("inspect job", () => {
     expect(report.verify).toHaveProperty("failures");
   });
 });
+
+describe("inspect job handles", () => {
+  it("carries the measure report's handles, and omits them for a part without any", async () => {
+    const kernel = await bootManifoldKernel();
+    const run = async (p) => {
+      const posts = [];
+      await handle(kernel, p, { type: "inspect", view: Object.keys(p.views)[0], params: {} }, (m) => posts.push(m));
+      return posts.find((m) => m.type === "report");
+    };
+    const withHandles = { ...part, handles: { rim: { point: () => [1, 2, 3], params: ["dia"] } } };
+    expect((await run(part)).measure).not.toHaveProperty("handles");
+    const r = await run(withHandles);
+    expect(r.measure.handles).toEqual([
+      { id: "rim", label: "rim", kind: "point", point: [1, 2, 3], params: ["dia"], locked: false },
+    ]);
+  });
+});

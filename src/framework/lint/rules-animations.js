@@ -53,7 +53,7 @@ function paramRanges(part) {
   for (const c of controlNodes(desugar(part?.parameters))) {
     // A checkbox has no range; only numeric controls constrain a keyframe.
     if (c.type === "checkbox") continue;
-    if (typeof c.key === "string" && !ranges.has(c.key)) ranges.set(c.key, { min: c.min, max: c.max });
+    if (typeof c.key === "string" && !ranges.has(c.key)) ranges.set(c.key, { min: c.min, max: c.max, wrap: c.wrap === true });
   }
   return ranges;
 }
@@ -223,7 +223,7 @@ export const ANIMATION_RULES = [
         rawSteps(a).forEach((s, i) => {
           for (const [key, kf] of Object.entries(isPlainObject(s.tracks) ? s.tracks : {})) {
             const r = ranges.get(key);
-            if (!r || !validKeyframes(kf)) continue;
+            if (!r || r.wrap || !validKeyframes(kf)) continue;   // a wrapped control turns past its range
             for (const [, v] of kf) {
               if ((typeof r.min === "number" && v < r.min) || (typeof r.max === "number" && v > r.max)) {
                 out.push(err("animation-value-out-of-range",

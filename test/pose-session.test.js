@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { createPoseSession } from "../src/framework/pose/pose-session.js";
+import { createPoseSession, parsePinId, pinTarget } from "../src/framework/pose/pose-session.js";
 import hand from "./fixtures/ik-hand-fixture.js";
 
 /**
  * Fake effects that record every call in order. Params live in a plain store that
  * write/restore mutate, the way mount's live params object does.
  */
-function harness({ part = hand, solve, stale = () => [] } = {}) {
+function harness({ part = hand, solve, real = false, stale = () => [], locate } = {}) {
   const params = { ...part.defaults };
   const calls = [];
   const log = (name) => (...args) => calls.push([name, ...args.map((a) => (Array.isArray(a) ? [...a] : a && typeof a === "object" ? { ...a } : a))]);
@@ -17,7 +17,8 @@ function harness({ part = hand, solve, stale = () => [] } = {}) {
     write: (values) => { Object.assign(params, values); log("write")(values); },
     commit: log("commit"),
     restore: (values) => { Object.assign(params, values); log("restore")(values); },
-    solve: solve ?? (({ target }) => ({ values: { aCurl: 0.2 + target[0] / 100, aSpread: target[1] }, error: 0 })),
+    ...(locate ? { locate } : {}),
+    ...(real ? {} : { solve: solve ?? (({ target }) => ({ values: { aCurl: 0.2 + target[0] / 100, aSpread: target[1] }, error: 0 })) }),
     staleSubParts: () => stale(frameNo),
     ghost: log("ghost"),
     unghost: log("unghost"),
@@ -273,7 +274,7 @@ describe("goal-mode handles", () => {
     defaults: { ...hand.defaults, gx: 0, gy: 0, gz: 100, gPitch: 10, gYaw: 0 },
     handles: {
       ...hand.handles,
-      g: { limb: "a", mode: "goal", params: { position: ["gx", "gy", "gz"], aim: ["gPitch", "gYaw"] }, seed: ["aCurl", "aSpread"] },
+      g: { on: "a", drag: "goal", params: { position: ["gx", "gy", "gz"], aim: ["gPitch", "gYaw"] }, seed: ["aCurl", "aSpread"] },
     },
   };
 
@@ -323,5 +324,120 @@ describe("goal-mode handles", () => {
     session.begin("a", "tip");
     expect(session.ringFrame("pitch", 10)).toBeNull();
     expect(writes).toHaveLength(0);
+  });
+});
+
+
+// ---- generic (`on` / `point`) handles ---------------------------------------------------
+
+const drawer = {
+  parameters: [{ id: "d", title: "Drawer", controls: [{ key: "drawerOpen", min: 0, max: 100, step: 1 }] }],
+  defaults: { drawerOpen: 0 },
+  derive: () => ({}),
+  handles: { pull: { point: (p) => [0, -p.drawerOpen, 0], params: ["drawerOpen"], drag: "axis", direction: [0, -1, 0] } },
+};
+const boxPart = {
+  parameters: [{ id: "b", title: "Box", controls: [
+    { key: "width", min: 10, max: 400, step: 1 },
+    { key: "depth", min: 10, max: 200, step: 1 },
+  ] }],
+  defaults: { width: 80, depth: 40 },
+  derive: () => ({}),
+  handles: { corner: { point: (p) => [p.width / 2, p.depth / 2, 10], params: ["width", "depth"], drag: "plane", normal: [0, 0, 1] } },
+};
+const GEARS = [
+  { name: "gear1", c: [0, 0, 0], r: 20, ratio: 1 },
+  { name: "gear2", c: [50, 0, 0], r: 30, ratio: -20 / 30 },
+  { name: "gear3", c: [120, 0, 0], r: 40, ratio: 20 / 40 },
+];
+const train = {
+  parameters: [{ id: "t", title: "Train", controls: [{ key: "driveAngle", min: 0, max: 360, step: 1, wrap: true }] }],
+  defaults: { driveAngle: 0 },
+  derive: (p) => ({
+    train: {
+      handleInfo() {
+        const points = {};
+        for (const g of GEARS) {
+          const t = (p.driveAngle * g.ratio * Math.PI) / 180;
+          points[`${g.name}.rim`] = [g.c[0] + g.r * Math.cos(t), g.c[1] + g.r * Math.sin(t), g.c[2]];
+        }
+        return { kind: "partforge.points", points };
+      },
+    },
+  }),
+  handles: Object.fromEntries(GEARS.map((g) => [g.name, { on: "train", at: `${g.name}.rim`, params: ["driveAngle"], drag: "rotary" }])),
+};
+const gear3Target = (deg) => ({ angleDeg: deg, axis: { origin: [120, 0, 0], direction: [0, 0, 1] }, radius: 40 });
+
+describe("createPoseSession - generic handles", () => {
+  it("an axis drag writes, ghosts the stale sub-part and commits once on end()", () => {
+    const h = harness({ part: drawer, real: true, stale: (n) => (n >= 1 ? ["drawer"] : []) });
+    expect(h.session.begin("pull", "ignored")).toBe(true);
+    expect(h.session.active.grab).toBe("point");
+    h.frame({ point: [0, -30, 0] });
+    h.frame({ point: [0, -42.4, 0] });
+    expect(h.params.drawerOpen).toBeCloseTo(42.4, 1);
+    expect(h.only("ghost")).toEqual([["ghost", ["drawer"]]]);
+    h.session.end();
+    expect(h.params.drawerOpen).toBe(42);
+    expect(h.only("commit")).toEqual([["commit", ["drawerOpen"]]]);
+  });
+
+  it("a pin on gear2 holds through a gear3 drag: the shared drive does not move", () => {
+    const h = harness({ part: train, real: true });
+    h.session.setPins(["gear2:gear2.rim"]);
+    h.session.begin("gear3", "x");
+    h.frame(gear3Target(45));
+    h.session.end();
+    expect(h.params.driveAngle).toBe(0);
+    expect(h.only("commit")).toHaveLength(0);
+  });
+
+  it("the same gear3 drag with no pin turns the drive", () => {
+    const h = harness({ part: train, real: true });
+    h.session.begin("gear3", "x");
+    h.frame(gear3Target(45));
+    h.session.end();
+    expect(h.params.driveAngle).toBeGreaterThan(80);
+  });
+
+  it("a pin on the dragged handle itself is not a hold", () => {
+    let holds;
+    const h = harness({ part: train, solve: (a) => { holds = a.holds; return null; } });
+    h.session.setPins(["gear3:gear3.rim", "gear2:gear2.rim"]);
+    h.session.begin("gear3", "x");
+    h.frame(gear3Target(10));
+    expect(holds).toHaveLength(1);
+    expect(holds[0].ref.handleId).toBe("gear2");
+    expect(holds[0].point[0]).toBeCloseTo(80, 6);
+  });
+
+  it("a point pin round-trips through parsePinId and pinTarget, and is held by a limb-free drag", () => {
+    expect(parsePinId("corner:point")).toEqual({ handleId: "corner", at: "point" });
+    const pin = pinTarget("corner:point", boxPart.handles);
+    expect(pin.handleId).toBe("corner");
+    expect(pin.ref).toEqual({ handleId: "corner", handle: boxPart.handles.corner });
+    expect(pinTarget("gear2:gear2.rim", train.handles).ref.handleId).toBe("gear2");
+  });
+
+  it("a generic pin is held while a limb handle is dragged", () => {
+    const part = { ...hand, handles: { ...hand.handles, corner: boxPart.handles.corner } };
+    let holds;
+    const h = harness({ part, solve: (a) => { holds = a.holds; return null; }, locate: ({ handle }) => (handle.point ? [1, 2, 3] : null) });
+    h.session.setPins(["corner:point"]);
+    h.session.begin("a", "tip");
+    h.frame([1, 2, 3]);
+    expect(holds).toHaveLength(1);
+    expect(holds[0].ref.handleId).toBe("corner");
+  });
+
+  it("cancel restores the snapshot and commits nothing", () => {
+    const h = harness({ part: drawer, real: true });
+    h.session.begin("pull");
+    h.frame({ point: [0, -30, 0] });
+    h.session.cancel();
+    expect(h.params.drawerOpen).toBe(0);
+    expect(h.only("restore")).toHaveLength(1);
+    expect(h.only("commit")).toHaveLength(0);
   });
 });
