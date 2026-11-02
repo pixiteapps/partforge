@@ -59,6 +59,14 @@
 // by its drag kind (drag-kinds.js) and shows the readout. A click pins it ("<handle>:<at>"
 // or "<handle>:point"). It has no rings and no miss line (the session exposes no miss).
 //
+// THE RESTING CUE: handles show only on hover, so a first look finds none. The first frame
+// posing is live with the part on screen (a build delivered, no cached preview) shows every
+// shown handle's dot dimmed (CUE_OPACITY) for CUE_HOLD_MS, then fades it out over
+// CUE_FADE_MS — once per mount: never again on a param change, a view switch or a suppress
+// round trip. A touch-only device (`(hover: none)`) has no hover to find them by: there the
+// dimmed dots stay until the first drag of any handle, then the hover rules alone apply.
+// The dots are pose-scene's (setCue), in its capture-hidden group.
+//
 // Frames: the overlay and every limb point are in PART coordinates (the sub-meshes'
 // shared parent — the pivot stands model Z up and recentres per view). Pointer rays come
 // from the camera in WORLD coordinates and are carried into the parts frame through that
@@ -90,6 +98,10 @@ export const NEAR_LIMB_PX = 32;
 export const DOT_CORE_PX = 8;
 /** A touch press this near any limb's dot grabs it (touch has no hover to show dots first). */
 export const TOUCH_HIT_PX = 24;
+/** The resting cue: its dots' opacity, how long they hold, and how long they fade (ms). */
+export const CUE_OPACITY = 0.45;
+export const CUE_HOLD_MS = 2000;
+export const CUE_FADE_MS = 400;
 /** A hinge this near (degrees) its range end reads as clamped. */
 const CLAMP_EPS_DEG = 1e-3;
 const AIM_NAMES = ["pitch", "yaw", "roll"];
@@ -171,6 +183,9 @@ export function createPoseMode(viewer, {
   visibleHandles = () => Object.keys(part?.handles ?? {}),
   hoveredSubPart = () => null,
   schedule = (cb) => requestAnimationFrame(cb),
+  // the resting cue's clock, and whether this device has no hover (touch only)
+  now = () => performance.now(),
+  hoverNone = () => !!globalThis.matchMedia?.("(hover: none)")?.matches,
   createScene = createPoseScene,
   createGizmo = createAimGizmo,
   createJointRings = createJointGizmo,
@@ -219,6 +234,9 @@ export function createPoseMode(viewer, {
   let lastSub = null;      // hoveredSubPart() as the last hover read it
   let guideScale = null;   // mm per px the shown guides were drawn at (null: none shown)
   const paths = new Map(); // handleId -> { key, guide } (handle-guides' sweepPath, cached)
+  // the resting cue: "pending" until the first live frame with the part on screen, then
+  // { start, touch } while it shows, then "done" (once per mount)
+  let cue = Object.keys(handles).length ? "pending" : "done";
 
   const session = createPoseSession({
     part, getParams, write, commit, restore, staleSubParts, ghost, unghost, hold,
@@ -331,6 +349,7 @@ export function createPoseMode(viewer, {
     syncPins();
     syncRings();
     syncGuides();
+    syncCue();
   }
   /** One pseudo-limb record per shown generic handle (handleRecord), from one derive. */
   function readGeneric(params, ids, infos) {
@@ -357,7 +376,7 @@ export function createPoseMode(viewer, {
     refresh();
   }
   /** Anything pose-related on screen that a param change must move. */
-  const drawsAnything = () => !!(hoverLimb || press || session.pins.length || touchFocus);
+  const drawsAnything = () => !!(hoverLimb || press || session.pins.length || touchFocus || typeof cue === "object");
 
   function paramsMoved() {
     if (!lastParams) return true;
@@ -745,6 +764,54 @@ export function createPoseMode(viewer, {
     if (claimsHover() !== claimed) notify(hoverListeners);
   }
 
+  // ---- the resting cue --------------------------------------------------------
+  /** Every shown handle's grab point (part coordinates), as handlePoints lists them. */
+  function cuePoints() {
+    const out = [];
+    for (const { handle, info, extra, generic } of shown) {
+      if (extra) continue;
+      const p = info.points[generic ? "tip" : handle.drag === "goal" ? goalAt(handle) : "tip"];
+      if (Array.isArray(p)) out.push(p);
+    }
+    return out;
+  }
+  /** The cue's opacity now (0 once it has faded), from its start. */
+  function cueOpacity() {
+    if (typeof cue !== "object") return 0;
+    if (cue.touch) return CUE_OPACITY;
+    const t = now() - cue.start;
+    if (t <= CUE_HOLD_MS) return CUE_OPACITY;
+    const f = (t - CUE_HOLD_MS) / CUE_FADE_MS;
+    return f >= 1 ? 0 : CUE_OPACITY * 0.5 * (1 + Math.cos(Math.PI * f)); // an eased fade
+  }
+  /** Hand the scene the cue's dots (they follow the handles), or none. */
+  function syncCue() {
+    if (!scene) return;
+    scene.setCue?.(typeof cue === "object" && live ? { points: cuePoints(), opacity: cueOpacity() } : null);
+  }
+  /** Per frame: start the cue on the first live frame with the part on screen; fade it. */
+  function tickCue() {
+    if (cue === "pending") {
+      if (!partsFrame()) return; // nothing built yet: the handles have nowhere to show
+      cue = { start: now(), touch: hoverNone() };
+      syncCue();
+      return;
+    }
+    if (typeof cue !== "object" || cue.touch) return;
+    const o = cueOpacity();
+    if (o <= 0) { endCue(); return; }
+    if (o < CUE_OPACITY) {
+      scene.setCueOpacity?.(o);
+      viewer.requestRender?.();
+    }
+  }
+  function endCue() {
+    if (cue === "done") return;
+    cue = "done";
+    scene?.setCue?.(null);
+    viewer.requestRender?.();
+  }
+
   // ---- generic handles' guides ----------------------------------------------
   /** The generic handle whose guides show: the one dragged, else the one whose dot is hovered. */
   function guideEntry() {
@@ -843,6 +910,7 @@ export function createPoseMode(viewer, {
     const grabName = hit.kind === "ring" ? "ring" : hit.kind === "jring" ? `ring:${hit.joint}` : hit.at;
     if (!session.begin(hit.handleId, grabName)) { finishPress(); return false; }
     press.started = true;
+    if (cue?.touch) endCue(); // touch: the first drag ends the cue
     setCursor("grabbing");
     notify(hoverListeners); // a drag began (mount closes a selection popover)
     const ray = press.ray;
@@ -888,6 +956,7 @@ export function createPoseMode(viewer, {
     } catch { finishPress(); return false; }
     if (!session.begin(s.handleId, handleAt(s.handle))) { finishPress(); return false; }
     press.started = true;
+    if (cue?.touch) endCue(); // touch: the first drag ends the cue
     press.drag = drag;
     setCursor("grabbing");
     notify(hoverListeners); // a drag began (mount closes a selection popover)
@@ -1181,6 +1250,7 @@ export function createPoseMode(viewer, {
       const s = e && mmPerPx(e.info.points.tip);
       if (s && Math.abs(s - guideScale) > guideScale * GUIDE_RESCALE) syncGuides();
     }
+    tickCue();
     scene.tick();
     gizmo?.tick();
     jointGizmo?.tick();

@@ -221,3 +221,33 @@ describe("createPoseScene", () => {
     expect(scene.guideGroup.parent).toBeNull();
   });
 });
+
+describe("the resting cue (setCue)", () => {
+  const spheres = (g) => g.children.filter((c) => c.geometry?.type === "SphereGeometry");
+  it("draws a dimmed dot at each point, in the capture-hidden group, and fades by opacity alone", () => {
+    const viewer = fakeViewer();
+    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    scene.setLimbs([INFO]);
+    scene.setCue({ points: [[1, 2, 3], [4, 5, 6]], opacity: 0.4 });
+    const dots = spheres(scene.group);
+    expect(dots.map((m) => m.position.toArray())).toEqual([[1, 2, 3], [4, 5, 6]]);
+    expect(viewer.registerCanonicalCaptureHidden).toHaveBeenCalledWith(scene.group); // never in a capture
+    expect(dots[0].material.opacity).toBeCloseTo(0.4, 6);
+    // a hover rebuild keeps the cue
+    scene.setHover("arm");
+    expect(spheres(scene.group).length).toBe(2 + 3);
+    scene.setHover(null);
+    viewer.requestRender.mockClear();
+    const before = spheres(scene.group)[0];
+    scene.setCueOpacity(0.1);
+    expect(spheres(scene.group)[0]).toBe(before); // no rebuild
+    expect(spheres(scene.group)[0].material.opacity).toBeCloseTo(0.1, 6);
+    expect(viewer.requestRender).toHaveBeenCalled();
+    scene.setCue(null);
+    expect(spheres(scene.group)).toHaveLength(0);
+    scene.setCue({ points: [[0, 0, 0]], opacity: 0.4 });
+    scene.clear();
+    expect(scene.group.children).toHaveLength(0);
+    scene.dispose();
+  });
+});

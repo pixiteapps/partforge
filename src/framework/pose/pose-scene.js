@@ -30,6 +30,10 @@
 // bones. Its guides (setGuides: the axis arrow, plane square, rotary ring and path, in part
 // coordinates) and its drag readout (setReadout: a label by the point) live in a second
 // group beside the first, so a drag frame redraws them without rebuilding the limbs.
+//
+// The RESTING CUE (setCue, pose-mode.js decides when): a dimmed tip-sized dot at every
+// shown handle's point, in the limbs' group (so never in a capture), with a material of
+// its own whose opacity setCueOpacity fades without a rebuild.
 import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -124,13 +128,16 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   // frame, so three recompiled it every frame (~5 ms of getProgramInfoLog per frame).
   const labelMat = prep(new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide }));
   const readoutMat = prep(new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide }));
-  const allMats = () => [...Object.values(fillMats), ...Object.values(lineMats), labelMat, readoutMat];
+  // the resting cue's dots: the handle colour, faded by opacity alone (setCueOpacity)
+  const cueMat = prep(new THREE.MeshBasicMaterial({ color: POSE_THEME[theme].handle, opacity: 0 }));
+  const allMats = () => [...Object.values(fillMats), ...Object.values(lineMats), labelMat, readoutMat, cueMat];
   const paintMats = () => {
     const P = POSE_THEME[theme];
     for (const k of colorKeys) { fillMats[k].color.set(P[k]); lineMats[k].color.set(P[k]); }
     lineMats.faint.color.set(P.bone);
     lineMats.dashed.color.set(P.warn);
     lineMats.guide.color.set(P.handle);
+    cueMat.color.set(P.handle);
   };
 
   // shared unit geometries (scaled per frame); never disposed per rebuild
@@ -147,6 +154,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   let aimGizmo = null; // { limb, at }: that limb's goal point is the aim gizmo's ball
   let guides = [];     // [{ kind, points }] (setGuides)
   let readout = null;  // { at, text } (setReadout)
+  let cue = [];        // the resting cue's points (setCue)
   let dirty = false;
 
   // ---- per-build records, sized in tick() -------------------------------------
@@ -170,7 +178,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   }
 
   function addDot(matKey, pos, px) {
-    const mesh = new THREE.Mesh(unitDot, fillMats[matKey]);
+    const mesh = new THREE.Mesh(unitDot, matKey === "cue" ? cueMat : fillMats[matKey]);
     mesh.renderOrder = RENDER_ORDER_POSE + 1;
     mesh.frustumCulled = false;
     mesh.position.copy(pos);
@@ -294,6 +302,8 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     if (!ensureAttached()) { dirty = true; return; }
     disposeChildren();
     const shown = active?.limb ?? hover;
+    // the resting cue, under everything else
+    for (const p of cue) addDot("cue", vec(p), TIP_DOT_PX);
     for (const info of limbs) {
       const isShown = info.name === shown;
       if (!isShown) continue; // at rest: nothing but the pin badges below
@@ -481,9 +491,26 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     readout = next;
     rebuildGuides();
   }
+  /**
+   * The resting cue: `{ points: [[x, y, z], ...] (part coordinates), opacity }`, or null.
+   * A dimmed dot at each point, drawn under the limbs; pose-mode fades it (setCueOpacity).
+   */
+  function setCue(c) {
+    const next = c && Array.isArray(c.points) ? c.points.filter(validPoint).map((p) => [...p]) : [];
+    if (c && Number.isFinite(c.opacity)) cueMat.opacity = c.opacity;
+    if (!next.length && !cue.length) return;
+    cue = next;
+    rebuild();
+  }
+  /** The cue's opacity, 0..1: a material change, no rebuild. */
+  function setCueOpacity(o) {
+    if (!Number.isFinite(o) || o === cueMat.opacity) return;
+    cueMat.opacity = Math.max(0, Math.min(1, o));
+    if (cue.length) redraw();
+  }
   function clear() {
     limbs = []; hover = null; hoverDot = null; active = null; pins = []; aimGizmo = null;
-    guides = []; readout = null;
+    guides = []; readout = null; cue = [];
     disposeGroup(guideGroup);
     readoutRec = null;
     disposeChildren();
@@ -521,5 +548,5 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   /** The guides and readout drawn now: `{ guides: [{ kind, points }], readout }`. For tests. */
   const guideState = () => ({ guides: guides.map((g) => ({ ...g })), readout: readout && { ...readout } });
 
-  return { setLimbs, setHover, setActive, setPins, setAimGizmo, setGuides, setReadout, clear, tick, setTheme, group, guideGroup, dispose, pinBadges, guideState };
+  return { setLimbs, setHover, setActive, setPins, setAimGizmo, setGuides, setReadout, setCue, setCueOpacity, clear, tick, setTheme, group, guideGroup, dispose, pinBadges, guideState };
 }

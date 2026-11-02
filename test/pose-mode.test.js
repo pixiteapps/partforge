@@ -4,7 +4,7 @@
 // through the parts frame to land under the pointer (and a ray back through it).
 import { describe, it, expect, afterEach } from "vitest";
 import * as THREE from "three";
-import { createPoseMode, aimAxes } from "../src/framework/pose/pose-mode.js";
+import { createPoseMode, aimAxes, CUE_HOLD_MS, CUE_FADE_MS, CUE_OPACITY } from "../src/framework/pose/pose-mode.js";
 import { createAimGizmo, AIM_RING_PX } from "../src/framework/pose/aim-gizmo.js";
 import { GIZMO_PALETTE } from "../src/framework/gizmo/gizmo-handles.js";
 import { worldPerPx } from "../src/framework/measure/dim3-scene.js";
@@ -58,7 +58,7 @@ function fakeViewer() {
 }
 
 function fakeScene() {
-  const calls = { setLimbs: [], setHover: [], setActive: [], setPins: [], setAimGizmo: [], setGuides: [], setReadout: [] };
+  const calls = { setLimbs: [], setHover: [], setActive: [], setPins: [], setAimGizmo: [], setGuides: [], setReadout: [], setCue: [], setCueOpacity: [] };
   return {
     calls,
     setLimbs: (x) => calls.setLimbs.push(x),
@@ -69,6 +69,8 @@ function fakeScene() {
     setAimGizmo: (x) => calls.setAimGizmo.push(x),
     setGuides: (x) => calls.setGuides.push(x),
     setReadout: (x) => calls.setReadout.push(x),
+    setCue: (x) => calls.setCue.push(x),
+    setCueOpacity: (x) => calls.setCueOpacity.push(x),
     setTheme() {}, tick() {}, dispose() {},
     clear() { this.cleared++; },
   };
@@ -314,7 +316,12 @@ describe("createPoseMode", () => {
   });
 
   it("outside param edits re-read the limbs per frame only while something is drawn", () => {
-    const t = setup();
+    const clock = { t: 0 };
+    const t = setup(hand, { now: () => clock.t, hoverNone: () => false });
+    // the resting cue is drawn (it follows the handles) until it has run its course
+    t.viewer.tick();
+    clock.t = 1e6;
+    t.viewer.tick();
     const n = t.scene.calls.setLimbs.length;
     t.viewer.tick();
     expect(t.scene.calls.setLimbs).toHaveLength(n);
@@ -917,5 +924,97 @@ describe("aimAxes", () => {
   it("returns no axes for a bad toward", () => {
     expect(aimAxes(null, [0, 0])).toEqual([]);
     expect(aimAxes([0, 0, 0], [0, 0])).toEqual([]);
+  });
+});
+
+describe("the resting cue", () => {
+  // three point handles (one behind a showOn) and a clock the test moves
+  const cuePart = {
+    parameters: [{ id: "g", title: "G", controls: [{ key: "a", min: 0, max: 100, step: 1 }, { key: "b", min: 0, max: 100, step: 1 }] }],
+    defaults: { a: 0, b: 0 },
+    derive: () => ({}),
+    parts: {},
+    handles: {
+      one: { point: (p) => [-40, 0, 80 + p.a], params: ["a"], drag: "axis", direction: [0, 0, 1] },
+      two: { point: (p) => [40, 0, 80 + p.b], params: ["b"], drag: "axis", direction: [0, 0, 1] },
+      three: { point: (p) => [0, 0, 60 + p.b], params: ["b"], drag: "axis", direction: [0, 0, 1], showOn: "lid" },
+    },
+  };
+  const clockSetup = (hoverNone = false, extra = {}) => {
+    const clock = { t: 1000 };
+    const t = setup(cuePart, { now: () => clock.t, hoverNone: () => hoverNone, ...extra });
+    return { ...t, clock };
+  };
+  const lastCue = (t) => t.scene.calls.setCue.at(-1);
+
+  it("shows every shown handle's dot dimmed when posing goes live, then fades out after 2 s", () => {
+    const t = clockSetup();
+    t.viewer.tick(); // the first frame live with the part on screen starts it
+    const c = lastCue(t);
+    expect(c.opacity).toBeCloseTo(CUE_OPACITY, 6);
+    expect(t.viewer.domElement.style.cursor).toBe(""); // a cue, not a hover
+    expect(c.points).toHaveLength(3);
+    expect(c.points).toContainEqual([-40, 0, 80]);
+    // the dots follow the handles (playback, a slider) while they show
+    t.params.a = 10;
+    t.viewer.tick();
+    expect(lastCue(t).points).toContainEqual([-40, 0, 90]);
+    const held = lastCue(t);
+    t.clock.t += CUE_HOLD_MS - 10;
+    t.viewer.tick();
+    expect(lastCue(t)).toBe(held); // held
+    t.clock.t += 10 + CUE_FADE_MS / 2;
+    t.viewer.tick();
+    const mid = t.scene.calls.setCueOpacity.at(-1);
+    expect(mid).toBeGreaterThan(0);
+    expect(mid).toBeLessThan(CUE_OPACITY);
+    t.clock.t += CUE_FADE_MS;
+    t.viewer.tick();
+    expect(lastCue(t)).toBeNull();
+    const n = t.scene.calls.setCue.length;
+    // never again in this mount: a param change, a view refresh, a suppress round trip
+    t.params.a = 5;
+    t.viewer.tick();
+    t.mode.refresh();
+    t.mode.setSuppressed(true);
+    t.mode.setSuppressed(false);
+    expect(t.scene.calls.setCue.slice(n).every((x) => x === null)).toBe(true);
+  });
+
+  it("waits for posing to go live with the part on screen (a cached preview, a first build)", () => {
+    const t = clockSetup();
+    t.mode.setSuppressed(true); // mount suppresses at once while a cached preview shows
+    t.clock.t += 5000;
+    t.viewer.tick();
+    expect(t.scene.calls.setCue.filter(Boolean)).toEqual([]);
+    const meshes = t.viewer._subMeshes;
+    t.viewer._subMeshes = {}; // no build delivered yet
+    t.mode.setSuppressed(false);
+    t.clock.t += 5000;
+    t.viewer.tick();
+    expect(t.scene.calls.setCue.filter(Boolean)).toEqual([]);
+    t.viewer._subMeshes = meshes;
+    t.mode.refresh();
+    t.viewer.tick();
+    expect(lastCue(t).opacity).toBeCloseTo(CUE_OPACITY, 6);
+  });
+
+  it("on a touch-only device the cue stays until the first drag, then follows the hover rules", () => {
+    const t = clockSetup(true);
+    t.viewer.tick();
+    t.clock.t += 10000;
+    t.viewer.tick();
+    expect(lastCue(t).points).toHaveLength(3);
+    expect(t.scene.calls.setCueOpacity.filter((o) => o < CUE_OPACITY)).toEqual([]);
+    const s = t.screenOf([-40, 0, 80]);
+    const touch = { pointerType: "touch", pointerId: 3 };
+    t.fire("pointerdown", s.x, s.y, touch);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x, s.y - i * 8, touch);
+    expect(t.mode.isDragging()).toBe(true);
+    expect(lastCue(t)).toBeNull();
+    t.fire("pointerup", s.x, s.y - 32, touch);
+    t.mode.setSuppressed(true);
+    t.mode.setSuppressed(false);
+    expect(lastCue(t)).toBeNull();
   });
 });
