@@ -34,14 +34,16 @@ export function movingSubParts(part, view, params, keys, { step = 1e-3 } = {}) {
  * `{ guard, world, matsAt }` for one drag of `part` in `view`, starting at params `start`.
  * `meshes` (name → mesh, posed at `meshAt`, default `start`) builds a world; or pass a
  * `world` already built over meshes posed at `meshAt`. `matsAt(params)` resolves the part
- * at `{ ...defaults, ...params }` and carries each mesh from `meshAt` to that pose — run
+ * at `{ ...defaults, ...params }` and carries each mesh from `meshAt` to that pose (with
+ * `matsAt(params, names)`, only those names' — the rest read identity) — run
  * the solve inside withDeriveMemo and the evaluation's derive and this one are the same.
  */
 export function createPartGuard({ part, view = "assembly", meshes, world, start, meshAt = start, moving, decl = normalizeCollisions(part) }) {
   const full = (params) => ({ ...part.defaults, ...params });
   const m = resolveParams(part, full(meshAt));
   const relMats = relativeMatsAt(part, view, m.p, m.d);
-  const matsAt = (params) => { const { p, d } = resolveParams(part, full(params)); return relMats(p, d); };
+  // `only` (optional names): just those placements (the guard's rows read no others)
+  const matsAt = (params, only) => { const { p, d } = resolveParams(part, full(params)); return relMats(p, d, only); };
   const w = world ?? createCollisionWorld({ meshes, decl });
   const guard = createDragGuard({ world: w, matsAt, start: full(start), moving, clearance: decl?.clearance });
   return { guard, world: w, matsAt };

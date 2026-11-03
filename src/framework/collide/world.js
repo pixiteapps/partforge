@@ -14,10 +14,16 @@ export { placeMatrix };
 import { viewSubParts, resolveParams } from "../part-model.js";
 import { mulMat4, invertRigid } from "../geometry/pose.js";
 
-/** placeMatrix for every in-view sub-part at an already-resolved (p, d); never derives. */
-export function poseMatrices(part, view, p, d, { deltas } = {}) {
+/**
+ * placeMatrix for every in-view sub-part at an already-resolved (p, d); never derives.
+ * `only` (an iterable of names): just those of them — a map that leaves the others out,
+ * which the mats contract reads as identity, so it is for callers that read no other.
+ */
+export function poseMatrices(part, view, p, d, { deltas, only = null } = {}) {
   const out = new Map();
+  const want = only ? new Set(only) : null;
   for (const name of viewSubParts(part, view, p)) {
+    if (want && !want.has(name)) continue;
     const m = placeMatrix(part.parts[name], view, p, d);
     const delta = deltas?.get(name);
     out.set(name, m && delta ? mulMat4(delta, m) : m);
@@ -26,15 +32,15 @@ export function poseMatrices(part, view, p, d, { deltas } = {}) {
 }
 
 /**
- * For meshes built posed at (startP, startD): returns (p, d) → Map of the matrices that
- * carry each mesh from its start pose to the pose at (p, d).
+ * For meshes built posed at (startP, startD): returns (p, d, only?) → Map of the matrices
+ * that carry each mesh from its start pose to the pose at (p, d) (`only`: as poseMatrices').
  */
 export function relativeMatsAt(part, view, startP, startD) {
   const inverses = new Map();
   for (const [name, m] of poseMatrices(part, view, startP, startD)) inverses.set(name, m ? invertRigid(m) : null);
-  return (p, d) => {
+  return (p, d, only = null) => {
     const out = new Map();
-    for (const [name, m] of poseMatrices(part, view, p, d)) {
+    for (const [name, m] of poseMatrices(part, view, p, d, { only })) {
       const inv = inverses.get(name);
       out.set(name, m && inv ? mulMat4(m, inv) : null);
     }

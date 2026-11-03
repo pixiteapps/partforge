@@ -7,8 +7,9 @@
 // - The hard guarantee. settle walks from the last clear params to the solved ones in
 //   sub-steps no longer than BAND / 2 of travel, and bisects back to contact at the first
 //   step that is not clear.
-// Part-agnostic: the caller hands in matsAt(params) → Map (world.js's mats contract) and
-// the names that can move. Pure, like the world it reads.
+// Part-agnostic: the caller hands in matsAt(params, names?) → Map (world.js's mats
+// contract; with `names`, a map that may hold only those — the guard then reads no other)
+// and the names that can move. Pure, like the world it reads.
 import { pairKey, CONTACT_EPS } from "./pairs.js";
 import { invertRigid } from "../geometry/pose.js";
 
@@ -98,6 +99,8 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
   const accept = ({ next }) => { exempt.clear(); for (const [k, v] of next) exempt.set(k, v); };
 
   let rows = [];
+  let names_ = null; // the rows' sub-parts, cached per beginFrame
+  const rowNames = () => (names_ ??= [...new Set(rows.flatMap((r) => [r.a, r.b]))]);
   let active = false; // some row's exact gap, at the last linearisation, is inside margin
   let lastParams = null;
   let lastTravel = 0;
@@ -140,10 +143,11 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
 
     beginFrame(params) {
       const mats = matsAt(params);
-      lastTravel = lastParams ? world.travel(matsAt(lastParams), mats, moving) : 0;
+      lastTravel = lastParams ? world.travel(matsAt(lastParams, moving), mats, moving) : 0;
       lastParams = params;
       const upper = upperBounds(rows, mats); // last frame's rows bound their pairs' gaps
       rows = [];
+      names_ = null;
       const skip = new Set([...exempt.keys(), ...guardOnly]); // never rows: not worth a query
       // skip drops every pair the loop below would, so the nearest MAX_ROWS are its rows
       for (const r of world.distances(mats, { names: moving, within: windowMm(), skip, limit: MAX_ROWS, upper })) {
@@ -159,8 +163,8 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
 
     linearise(params) {
       if (!rows.length) return;
-      const mats = matsAt(params);
-      const names = [...new Set(rows.flatMap((r) => [r.a, r.b]))];
+      const names = rowNames();
+      const mats = matsAt(params, names); // the pairs filter reads no other placement
       const pairs = new Set(rows.map((r) => r.key)); // the rows' own pairs, never a neighbour's
       const upper = upperBounds(rows, mats);
       const byKey = new Map(world.distances(mats, { names, within: windowMm(), pairs, upper }).map((r) => [pairKey(r.a, r.b), r]));
@@ -171,7 +175,7 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
     rows(params) {
       const out = new Float64Array(rows.length);
       if (!rows.length) return out;
-      const mats = matsAt(params);
+      const mats = matsAt(params, rowNames());
       rows.forEach((row, i) => {
         if (!row.active) return;
         if (!row.normal) { out[i] = COLLIDE_WEIGHT * margin; return; } // at contact: saturated
@@ -187,7 +191,7 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
 
     settle(from, to, { blend = linearBlend(from, to) } = {}) {
       let t0 = 0, p0 = from, m0 = matsAt(from);
-      const total = world.travel(m0, matsAt(blend(1)), moving);
+      const total = world.travel(m0, matsAt(blend(1), moving), moving);
       let dt = total > 0 ? Math.min(1, (0.9 * half) / total) : 1;
       for (let steps = 0; t0 < 1 && steps < MAX_SUBSTEPS; steps++) {
         // A step no longer than BAND / 2 of travel: shrink by the secant until it fits
