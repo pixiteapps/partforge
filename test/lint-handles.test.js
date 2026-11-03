@@ -27,6 +27,20 @@ test("a valid goal handle and a valid angles handle produce no handle findings",
   expect(handleFindings({ tip: goal({ at: "pip", seed: ["mcp"] }), curl: { on: "finger", drag: "angles", params: ["mcp", "pip"], lock: "mcp" } })).toEqual([]);
 });
 
+test("handle-unknown-view: a `views` entry that is not a view of the part, or a malformed list", () => {
+  expect(handleFindings({ a: goal({ views: ["main"] }) })).toEqual([]);
+  expect(handleFindings({ a: goal({ views: "main" }) })).toEqual([]);
+  const fs = handleFindings({ a: goal({ views: ["main", "print"] }) });
+  expect(rulesOf(fs)).toEqual(["handle-unknown-view"]);
+  expect(fs[0].severity ?? "error").toBe("error");
+  expect(fs[0].path).toBe("handles.a.views");
+  expect(fs[0].message).toMatch(/"print"/);
+  expect(fs[0].hint).toMatch(/main/);
+  expect(rulesOf(handleFindings({ a: goal({ views: [] }) }))).toEqual(["handle-unknown-view"]);
+  expect(rulesOf(handleFindings({ a: goal({ views: { main: true } }) }))).toEqual(["handle-unknown-view"]);
+  expect(rulesOf(handleFindings({ a: goal({ views: [3] }) }))).toEqual(["handle-unknown-view"]);
+});
+
 test("handle-unknown-source: a goal / angles handle whose on is missing from derive or not a posed limb", () => {
   const fs = handleFindings({ a: goal({ on: "nope" }), b: goal({ on: "ghost" }) });
   expect(rulesOf(fs)).toEqual(["handle-unknown-source", "handle-unknown-source"]);

@@ -937,6 +937,11 @@ export interface HandleCommon {
   label?: string;
   /** Sub-part name(s) whose hover reveals the handle. */
   showOn?: string | string[];
+  /**
+   * The views the handle shows in (keys of `views`). Default: every view that reads one of
+   * its parameters and draws its source (a sub-part there reads the `d` value it sits on).
+   */
+  views?: string | string[];
   /** Parameters shown in the drag readout (default: `params`). */
   readout?: string[];
 }

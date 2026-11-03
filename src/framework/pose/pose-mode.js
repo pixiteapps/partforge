@@ -346,11 +346,28 @@ export function createPoseMode(viewer, {
     // a limb shown only for its rings draws no tip and only the dots of its joints with rings
     for (const info of extras) infos.push({ ...info, ringsOnly: info.joints.map((j) => j.name).filter((n) => rings.has(`${info.name}\0${n}`)) });
     readGeneric(params, ids.filter((id) => isGeneric(handles[id])), infos);
+    dropStaleHover();
     scene.setLimbs(infos);
     syncPins();
     syncRings();
     syncGuides();
     syncCue();
+  }
+  /**
+   * A hover, focus or touch focus on a limb this re-read no longer shows (a view switch, a
+   * relevance change) is dropped, with its cursor and claim: left set, it kept a grab
+   * cursor, hid the model's tooltip and claimed a press over a handle no longer drawn.
+   * A press keeps its own (the session cancels a drag the view outdates).
+   */
+  function dropStaleHover() {
+    const names = new Set(shown.map((e) => e.info.name));
+    const gone = (limb) => limb != null && !names.has(limb);
+    if (touchFocus && gone(touchFocus.limb)) touchFocus = null;
+    if (press) return;
+    if (gone(hoverLimb) || gone(hoverHit?.limb) || gone(hoverFocus?.limb)) {
+      setHover(null, null, null);
+      setCursor("");
+    }
   }
   /** One pseudo-limb record per shown generic handle (handleRecord), from one derive. */
   function readGeneric(params, ids, infos) {
@@ -1302,6 +1319,25 @@ export function createPoseMode(viewer, {
     }
     notify(modeListeners);
   }
+  /**
+   * Mount: the view changed. Whatever the old layout left under a still pointer — hover,
+   * focus, a touch's gizmo, a pending tap, the grab cursor and the claim — is dropped (the
+   * model under it moved, or is gone), then the incoming view's handles are read.
+   */
+  function viewChanged() {
+    if (detached) return;
+    tap = null;
+    lastPt = null;
+    lastSub = null;
+    if (touchFocus) { touchFocus = null; if (live) syncRings(); }
+    if (!press) {
+      setHover(null, null, null);
+      setCursor("");
+    }
+    screenCache = null;
+    stale = true;
+    refresh();
+  }
   function setEnabled(on) {
     if (detached || !!on === enabled) return;
     enabled = !!on;
@@ -1362,8 +1398,10 @@ export function createPoseMode(viewer, {
     takeClick() { const c = clickClaimed; clickClaimed = false; return c; },
     /** A drag (past the threshold) is in progress. */
     isDragging: () => !!press?.started,
-    /** Re-read every shown limb (mount: after a view switch; param edits are noticed per frame). */
+    /** Re-read every shown limb (mount: when the shown set changes; param edits are noticed per frame). */
     refresh,
+    /** Mount: the view switched — drop the old layout's hover state and re-read (viewChanged). */
+    viewChanged,
     /** Mount: a sub-part's new mesh was shown — lift its ghost (same frame as setSubGeometry). */
     delivered: (name) => session.delivered(name),
     /** Mount: params were written from outside mid-drag (setParams) — revert the drag. */
@@ -1442,6 +1480,8 @@ export function createPoseMode(viewer, {
         return { ...b, x: s?.x ?? null, y: s?.y ?? null };
       });
     },
+    /** How many objects the pose overlay draws now (dots, bones, badges, guides). For the browser check. */
+    drawnObjects: () => (scene?.group?.children.length ?? 0) + (scene?.guideGroup?.children.length ?? 0),
     /** The pinned points badged in this view; a pin whose handle this view hides holds nothing and counts for nothing. */
     pinCount: () => pinnedPoints.length,
     getPins: () => session.pins,

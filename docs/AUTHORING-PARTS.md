@@ -3347,6 +3347,10 @@ Optional, on every handle:
 
 - **`label`**: a short name for the readout and for agents (default: the handle's key).
 - **`showOn`**: a sub-part name, or a list of them. Hovering one reveals the handle.
+- **`views`**: the views the handle shows in, a list of keys of `views` (lint:
+  `handle-unknown-view`). Leave it out and the handle shows wherever its source is drawn
+  (see "When a handle shows"). Declare it when a view lays the part out differently — a
+  print kit, an exploded layout — so the handle never shows there.
 - **`readout`**: the params the drag readout shows (default: `params`).
 - **`lock`**: a parameter name. While it is true, this handle's params are frozen in a
   drag of any handle.
@@ -3438,7 +3442,28 @@ the viewer still prints closed. `drawer-box.js` slides its drawers by their view
 
 Handles live in Pose mode, which has no button: in a part that declares `handles`, it is
 on in the viewer's normal click mode, and stands down while measure, sketch, cutaway or
-a cached preview is on. At rest no handle shows. A handle shows:
+a cached preview is on.
+
+Handles are **view-specific**. A handle with `views` belongs to exactly those views. A
+handle without it belongs to every view that passes three tests:
+
+1. some parameter it writes is one the view reads (the same relevance the panel dims by);
+2. the view draws its source: a sub-part in the view reads the derived value the handle
+   sits on (`on`, or what a `point` function reads of `d`), in its build or its placement
+   there. A print view that lays the pieces flat by fixed offsets reads no limb, so a
+   finger's handle stays out of it. When no view reads that source at all, this test is
+   skipped;
+3. when its `showOn` names sub-parts, at least one of them is in the view.
+
+The second test matters because relevance alone is generous: when `derive` is one
+function, a layout that reads any derived value counts as reading every parameter derive
+uses, the pose parameters included. A source the rule cannot see (a limb read only through
+another derived value) is what `views` is for. The viewer, `npx partforge measure`'s handle
+list and the `handles` of an inspect report all use this rule. A view switch drops the old
+view's hover, pointer cursor and readout; pins on a handle the new view hides are kept, but
+are not drawn and hold nothing until a view shows it again.
+
+At rest no handle shows. A handle shows:
 
 - while the pointer is over a sub-part its `showOn` names;
 - while the pointer is within 32 CSS px of its point on screen;
@@ -3518,13 +3543,14 @@ Lint checks each handle at the defaults by calling `derive` (rule catalog, "Hand
 of its points, or a `"goal"` / `"angles"` `on` is not a posed limb), `handle-bad-drag`
 (no `drag`, or an unknown one; `"goal"` / `"angles"` on a `point`; an axis, plane or rotary
 handle with no usable direction, normal or axis), `handle-point-throws`,
-`handle-unknown-param`, the limb rules `handle-param-count`, `handle-aim-toward` and
+`handle-unknown-param`, `handle-unknown-view` (a `views` entry that is not a key of
+`views`), the limb rules `handle-param-count`, `handle-aim-toward` and
 `handle-unknown-joint` (all errors), and the warnings `handle-inert`, `handle-axis-moves`
 and `handle-crowded`. `handle-inert` nudges each listed param one step at the defaults, and
 again with each param at 0%, 25%, 50%, 75% and 100% of its range (the others at their
 defaults), and warns where no nudge moves the point 0.01 mm, naming the value: "inert at
 drawerOpen = 0". `handle-crowded` warns when more than 5 handles without a `showOn` show in
-one view (the handles whose params that view reads). `wrap-needs-range` errors on
+one view (the handles that view shows, by the rule in "When a handle shows"). `wrap-needs-range` errors on
 `wrap: true` without a finite `min < max`.
 
 `npx partforge measure` prints each handle shown in the view with its label, drag kind,
@@ -4410,7 +4436,7 @@ previously didn't; that's the fix working as intended, not a regression.
 `missing-views`, `part-view-unknown`, `invalid-probes` (all errors); `view-unused`,
 `default-view-ambiguous` (warnings). **Handles** — `handle-no-source`,
 `handle-unknown-source`, `handle-bad-drag`, `handle-unknown-param`, `handle-param-count`,
-`handle-aim-toward`, `handle-unknown-joint`, `handle-point-throws` (all errors),
+`handle-aim-toward`, `handle-unknown-joint`, `handle-point-throws`, `handle-unknown-view` (all errors),
 `handle-inert`, `handle-axis-moves`, `handle-crowded` (warnings); `wrap-needs-range` (error): a declared
 `handles` entry with neither or both of `on`/`point`; an `on` that is not a point source
 in `derive`'s result, or an `at` it lacks, or a `"goal"`/`"angles"` handle whose `on` is
@@ -4419,7 +4445,7 @@ not a posed limb; a handle with no `drag` or an unknown one,
 direction/normal/axis; a parameter missing from `defaults` (or not numeric; a `lock` may
 also default to a boolean); a wrong number of position/aim parameters, an `aim` without a
 valid rest `toward`, or a joint the limb lacks; a point or axis function that throws at
-the defaults.
+the defaults; a `views` list that is empty, not strings, or names a view `views` lacks.
 `handle-inert` warns when nudging each listed param by one step moves the point under
 0.01 mm, at the defaults or with any listed param at 0/25/50/75/100% of its range (it names
 the value); `handle-axis-moves` when a rotary axis shifts (0.01 mm / 0.1 deg) as the handle's

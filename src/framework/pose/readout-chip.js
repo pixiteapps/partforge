@@ -35,7 +35,7 @@ const numStr = (v) => String(Math.round(v * 1e4) / 1e4);
  *   stage px (default: as is).
  */
 export function attachReadoutChip(viewer, mode, { stage } = {}, { part, getParams, apply, toStage = (a) => a } = {}) {
-  if (!stage) return { detach: noop };
+  if (!stage) return { detach: noop, hide: noop, state: () => null };
   const handles = part?.handles ?? {};
 
   const chip = document.createElement("div");
@@ -201,6 +201,8 @@ export function attachReadoutChip(viewer, mode, { stage } = {}, { part, getParam
   return {
     /** What the chip shows now, for tests and the browser check: `{ handleId, kind, editing }` or null. */
     state: () => (shown ? { ...shown } : null),
+    /** Put it away, an open edit unwritten (mount: a view switch — its handle may not be there). */
+    hide: () => { if (!detached) hide(); },
     detach() {
       if (detached) return;
       detached = true;

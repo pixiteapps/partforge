@@ -38,6 +38,11 @@
 //     mode a far sideways tool drag leaves the ground's x/z and scale exactly where they
 //     were (runtime.pose.__ground(), a test hook), during the drag and after its release;
 //     its height may only go down. CHECK_POSE_SHOTS=<dir> saves screenshots of it.
+//   hand.html, after its joint ring — VIEW-SPECIFIC HANDLES (checkViewSwitch): pin a fingertip,
+//     hover it, switch to the print view with the pointer still on it: no handle points,
+//     badges, overlay objects (runtime.pose.__drawn(), a test hook), gizmo, chip, grab cursor
+//     or hover claim, over a sweep of the canvas too, and a press where the dot was does not
+//     drag. Back in the assembly view the handles and the pin return.
 //   gearbox.html (required) — generic rotary handles (spec 2026-11-02 generic handles):
 //     the output gear's rim dot dragged one full turn round its rim writes the wrapped
 //     driveAngle 0 -> ~720, past 360 with no backwards frame and no `generate` job, one
@@ -636,7 +641,86 @@ async function checkHand(page, url, errors) {
   const summary = await checkReference(page, url, errors);
   const box = await page.locator(VIEWER_CANVAS).boundingBox();
   const joint = await checkJointRing(page, box, { limb: "palm", joint: "wristPitch", param: "wristPitch" }, errors);
-  return { ...summary, joint };
+  const viewSwitch = await checkViewSwitch(page, box, errors);
+  return { ...summary, joint, viewSwitch };
+}
+
+/** The pose overlay's state, read in the page: what a view switch must leave empty. */
+const poseState = (page) => page.evaluate((sel) => {
+  const pose = window.__pfRuntime.pose;
+  return {
+    points: pose.handlePoints().length, pins: pose.__pinPoints().length, pinCount: pose.pinCount(),
+    drawn: pose.__drawn(), chip: pose.__chip(), aim: pose.__aimGizmo(), joint: pose.__jointGizmo(),
+    cursor: document.querySelector(sel).style.cursor,
+  };
+}, VIEWER_CANVAS);
+
+/**
+ * Handles are view-specific (pose/handle-views.js): hand.html's print view is a flat kit the
+ * pose never reaches, so after a pin and a hover in the assembly view, a switch to print
+ * (the pointer left on the dot) must leave nothing: no handle points, badges, overlay
+ * objects, gizmo, readout chip, grab cursor or hover claim — and a sweep of the canvas
+ * (the old dots' spots included) claims nothing, and a press where a dot was does not drag.
+ * Back in the assembly view the handles and the pin come back.
+ */
+async function checkViewSwitch(page, box, errors) {
+  const pts = await page.evaluate(() => window.__pfRuntime.pose.handlePoints());
+  const h = pts.find((p) => p.handleId === "index" && p.at === "tip") ?? pts[0];
+  if (!h) { errors.push("view switch: no handle point in the assembly view"); return null; }
+  const at = { x: box.x + h.x, y: box.y + h.y };
+  await hoverHandle(page, at, `${h.handleId}:${h.at}`);
+  await page.mouse.down();
+  await page.mouse.up();
+  await sleep(80);
+  const before = await poseState(page);
+  if (before.pins !== 1) errors.push(`view switch: a click on ${h.handleId}:${h.at} badged ${before.pins} pins, expected 1`);
+  if (!before.drawn.objects || !before.drawn.claims) errors.push(`view switch: hovering ${h.handleId}:${h.at} drew ${before.drawn.objects} objects, claims ${before.drawn.claims}`);
+  const commits = (await page.evaluate(() => window.__pfCommits)).length;
+
+  await page.evaluate(() => window.__pfRuntime.setView("print"));
+  await settle(page);
+  const after = await poseState(page);
+  const stale = (s, label) => {
+    const bad = [];
+    if (s.points) bad.push(`${s.points} handle points`);
+    if (s.pins) bad.push(`${s.pins} pin badges`);
+    if (s.pinCount) bad.push(`pinCount ${s.pinCount}`);
+    if (s.drawn.objects) bad.push(`${s.drawn.objects} overlay objects`);
+    if (s.drawn.claims) bad.push("a hover claim");
+    if (s.chip) bad.push("the readout chip");
+    if (s.aim || s.joint) bad.push("a gizmo");
+    if (s.cursor === "grab" || s.cursor === "grabbing") bad.push(`cursor "${s.cursor}"`);
+    if (bad.length) errors.push(`view switch: ${label} the print view shows ${bad.join(", ")}`);
+    return bad.length;
+  };
+  stale(after, "right after the switch,");
+  // Sweep the canvas, the old dots' spots first: nothing may claim the hover there.
+  const spots = [...pts.map((p) => ({ x: box.x + p.x, y: box.y + p.y }))];
+  for (let i = 1; i < 8; i++) for (let j = 1; j < 6; j++) spots.push({ x: box.x + (box.width * i) / 8, y: box.y + (box.height * j) / 6 });
+  let claimed = 0;
+  for (const s of spots) {
+    await page.mouse.move(s.x, s.y);
+    const st = await poseState(page);
+    if (st.drawn.claims || st.drawn.objects || st.cursor === "grab") claimed++;
+  }
+  if (claimed) errors.push(`view switch: ${claimed} of ${spots.length} pointer spots in the print view showed or claimed a handle`);
+  // a press where the dot was is an orbit, never a drag
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 6; i++) { await page.mouse.move(at.x + i * 6, at.y); await sleep(20); }
+  const dragging = await page.evaluate(() => window.__pfRuntime.pose.__isDragging());
+  await page.mouse.up();
+  if (dragging) errors.push("view switch: a press where a dot was in the assembly view dragged a handle in the print view");
+  const commitsAfter = (await page.evaluate(() => window.__pfCommits)).length;
+  if (commitsAfter !== commits) errors.push(`view switch: ${commitsAfter - commits} commits in the print view, expected none`);
+
+  await page.evaluate(() => window.__pfRuntime.setView("assembly"));
+  await settle(page);
+  const back = await poseState(page);
+  if (!back.points) errors.push("view switch: no handle points back in the assembly view");
+  if (back.pins !== 1) errors.push(`view switch: ${back.pins} pin badges back in the assembly view, expected 1 (the pin is kept)`);
+  await page.evaluate(() => window.__pfRuntime.pose.releasePins());
+  return { printPoints: after.points, printObjects: after.drawn.objects, spots: spots.length, claimed, backPoints: back.points };
 }
 
 /** Wait until two animation frames have run. */

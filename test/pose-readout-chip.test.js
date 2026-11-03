@@ -202,6 +202,17 @@ describe("attachReadoutChip", () => {
     expect(t.applied).toEqual([]);
   });
 
+  it("a view switch drops it, an open edit unwritten (hide)", () => {
+    const t = setup();
+    t.mode.end({ handleId: "corner", changed: ["width"] });
+    t.el().querySelector("button").click();
+    t.el().querySelector("input").value = "99";
+    t.chip.hide();
+    expect(t.chip.state()).toBeNull();
+    expect(t.el().hidden).toBe(true);
+    expect(t.applied).toEqual([]);
+  });
+
   it("names each value by its control's label and unit, falling back to the key", () => {
     const labelled = { ...part, parameters: [{ id: "b", title: "Box", controls: [
       { key: "width", label: "Width", unit: "mm", min: 10, max: 400, step: 1 },

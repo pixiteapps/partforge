@@ -5,8 +5,8 @@
 import { err, warn } from "./finding.js";
 import { resolveDerived } from "../derive.js";
 import { rangesOf } from "../pose/param-solve.js";
-import { locateHandle, sourceInfo, resolveGeom, handleAxis, handleParamKeys } from "../pose/handle-source.js";
-import { relevantParamKeys, RELEVANT_ALL } from "../param-deps.js";
+import { locateHandle, sourceInfo, resolveGeom, handleAxis } from "../pose/handle-source.js";
+import { handlesShownInView } from "../pose/handle-views.js";
 
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 const handleEntries = (part) => (isPlainObject(part?.handles) ? Object.entries(part.handles).filter(([, h]) => isPlainObject(h)) : []);
@@ -174,12 +174,11 @@ function inertSample(part, p, h, keys) {
   return null;
 }
 
-/** The handle ids a view shows, as mount's syncPoseVisible picks them (predicted relevance; unknown: all). */
+/** The handle ids a view shows, as mount's syncPoseVisible picks them (pose/handle-views.js, predicted relevance). */
 function handlesInView(part, view, ids) {
-  let relevant;
-  try { relevant = relevantParamKeys(part, view, { ...part.defaults }); } catch { relevant = RELEVANT_ALL; }
-  if (relevant === RELEVANT_ALL || !(relevant instanceof Set)) return ids;
-  return ids.filter((id) => handleParamKeys(part.handles[id]).some((k) => relevant.has(k)));
+  let shown;
+  try { shown = new Set(handlesShownInView(part, view, { ...part.defaults })); } catch { return ids; }
+  return ids.filter((id) => shown.has(id));
 }
 
 export const HANDLE_RULES = [
@@ -277,6 +276,27 @@ export const HANDLE_RULES = [
             out.push(err("handle-unknown-joint", `handle "${name}" maps joints ${JSON.stringify(key)}, which ${problem}`,
               "A hinge maps to the parameter that drives it in degrees (\"<param>\", or { param, scale } when the joint turns scale × param); a ball to { bend?, spread?, twist? }.", `${base}.${key}`));
           }
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: "handle-unknown-view",
+    run: ({ part }) => {
+      const known = isPlainObject(part?.views) ? Object.keys(part.views) : [];
+      const hint = `\`views\` lists the views the handle shows in, by their keys in \`views\`${known.length ? ` (${known.map((v) => JSON.stringify(v)).join(", ")})` : ""}; leave it out to show the handle wherever its source is drawn.`;
+      const out = [];
+      for (const [name, h] of handleEntries(part)) {
+        if (h.views === undefined) continue;
+        const path = `handles.${name}.views`;
+        const list = typeof h.views === "string" ? [h.views] : h.views;
+        if (!Array.isArray(list) || !list.length || list.some((v) => typeof v !== "string")) {
+          out.push(err("handle-unknown-view", `handle "${name}" has \`views\` that is not a non-empty list of view names`, hint, path));
+          continue;
+        }
+        for (const v of list) {
+          if (!known.includes(v)) out.push(err("handle-unknown-view", `handle "${name}" lists view ${JSON.stringify(v)}, which is not a key of \`views\``, hint, path));
         }
       }
       return out;

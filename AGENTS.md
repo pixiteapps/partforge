@@ -686,7 +686,15 @@ the installed package, so let the publish finish before bumping the dep there.
   `pose/drag-kinds.js` the pure geometric solvers per kind, `pose/handle-guides.js` the
   guides (arrow, square, ring, travel path) drawn while the dot is hovered or dragged.
   A handle shows near its point or over its `showOn` sub-part (near a limb's bones for
-  goal / angles), all hidden at rest. Mount applies the session's effects: it holds
+  goal / angles), all hidden at rest. Handles are VIEW-SPECIFIC (`pose/handle-views.js`,
+  `handlesShownInView`, the one rule mount's `syncPoseVisible`, `oracle/handles.js` and
+  lint's `handle-crowded` share): a handle's declared `views` (lint `handle-unknown-view`),
+  else relevance AND a drawn source - some in-view sub-part's build or placement reads
+  the `d` key its point sits on (a geometry-free probe, cached per view in mount), skipped
+  when no view reads it. Relevance alone showed a hand's handles in its print kit at the
+  assembly pose: a one-function derive attributes any derived read to every input. A view
+  switch calls pose-mode's `viewChanged()` (drops hover, focus, cursor and claim) and hides
+  the readout chip. Mount applies the session's effects: it holds
   regen jobs during a drag - except for a cheap part (last build under `LIVE_REBUILD_MS`,
   120 ms), whose stale sub-parts keep rebuilding live as TRANSIENT cycles
   (`cycleTransient`: drawn and un-ghosted, no `onBuild`/status/busy/export change, even

@@ -18,7 +18,7 @@ import { realisticDisplay, sheetFrameFor, wantsSheetFrame } from "./materials/sh
 import { pruneOverrides } from "./materials/overrides.js";
 import { subPartRows } from "./sub-part-list.js";
 import { buildControls } from "./controls.js";
-import { recordedRelevantKeys, subPartParamKeys, RELEVANT_ALL } from "./param-deps.js";
+import { recordedRelevantKeys, subPartParamKeys } from "./param-deps.js";
 import { createMeshCache } from "./mesh-cache.js";
 import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts, resolveParams } from "./part-model.js";
@@ -47,6 +47,7 @@ import { attachPoseControls } from "./pose/pose-controls.js";
 import { attachReadoutChip } from "./pose/readout-chip.js";
 import { parsePinId } from "./pose/pose-session.js";
 import { handleParamKeys } from "./pose/handle-source.js";
+import { handlesShownInView, viewSourceReads } from "./pose/handle-views.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
 import { createPreviewGate } from "./preview-gate.js";
 import { samplePreviewAnimation } from "./preview-animation.js";
@@ -718,7 +719,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         fastPath.apply(viewSubParts(part, view(), params));
         refreshView();
         updateRelevance(); loop.kick(); animCtl?.autoplayKick();
-        poseMode?.refresh(); // the incoming view's limbs (param edits it notices per frame)
+        // The outgoing layout's hover, focus, cursor and claim go, and the incoming view's
+        // handles are read (syncPoseVisible above re-read only if the shown SET changed).
+        // The readout chip goes too: its handle may not be in this view.
+        poseMode?.viewChanged();
+        poseChipHide?.();
         for (const cb of [...viewChangeListeners]) { try { cb(name); } catch { /* listener's problem */ } }
         onViewChange?.(name);
       },
@@ -809,6 +814,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     const owed = new Set(); // sub-parts a transient build made current: the host has not seen them built
     let poseVisible = null; // handle ids shown in this view (null: all), set by updateRelevance
     let poseVisibleKey = null; // poseVisible joined, to tell a real change (syncPoseVisible)
+    let poseChipHide = null; // the readout chip's hide, once it exists (a view switch calls it)
+    // Per view: the derived keys its shown sub-parts read (pose/handle-views.js), probed once
+    // per view and set of shown sub-parts — never per drag frame.
+    const poseSourceReads = new Map();
     let poseMode = null;
     const handleIds = part.handles && typeof part.handles === "object" && !Array.isArray(part.handles)
       ? Object.keys(part.handles) : [];
@@ -1048,7 +1057,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     const poseChip = poseMode
       ? attachReadoutChip(viewer, poseMode, { stage: els.viewer }, { part, getParams: () => params, apply: (values) => writeChipValues(values), toStage })
       : null;
-    if (poseChip) cleanup.defer(() => poseChip.detach());
+    if (poseChip) {
+      poseChipHide = () => poseChip.hide();
+      cleanup.defer(() => poseChip.detach());
+    }
     if (selectionOpt) {
       selPopover = attachSelectionPopover({
         stage: els.viewer, canvas: viewer.domElement, slot: selectionOpt.slot, parts: partsSeam,
@@ -1975,15 +1987,22 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       onParamsCommit?.({ changed, params: { ...params } });
     }
 
-    // Which handles Pose mode shows in this view: those with a parameter that
-    // something on screen reads — the same relevance the panel dims by. A handle
-    // whose limb this view never draws (a print layout) stays hidden. Unknown
-    // relevance shows them all. The mode re-reads only when the set changes, so a
-    // drag frame (which runs updateRelevance through onParamChange) costs nothing.
+    // Which handles Pose mode shows in this view (pose/handle-views.js, the rule the oracle's
+    // report and lint share): a handle's declared `views`, else those with a parameter
+    // something on screen reads — the same relevance the panel dims by — whose source (the
+    // limb or derived value its point sits on) this view draws, when any view draws it. A
+    // handle whose limb this view never draws (a print layout) stays hidden, even when the
+    // layout reads a derived value that makes every pose parameter "relevant". The mode
+    // re-reads only when the set changes, so a drag frame (which runs updateRelevance
+    // through onParamChange) costs nothing beyond the relevance it already had.
     function syncPoseVisible(relevant) {
-      const ids = relevant === RELEVANT_ALL || !(relevant instanceof Set)
-        ? handleIds
-        : handleIds.filter((id) => handleParamKeys(part.handles[id]).some((k) => relevant.has(k)));
+      const sourceReads = (v) => {
+        const key = `${v}\u0000${viewSubParts(part, v, params).join("\u0000")}`;
+        if (!poseSourceReads.has(key)) poseSourceReads.set(key, viewSourceReads(part, v, params));
+        return poseSourceReads.get(key);
+      };
+      let ids = handleIds;
+      try { ids = handlesShownInView(part, view(), params, { relevant, sourceReads }); } catch { /* all show */ }
       const key = ids.join("\u0000");
       if (key === poseVisibleKey) return;
       poseVisibleKey = key;
@@ -2252,6 +2271,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         __isDragging: () => poseMode.isDragging(),
         // Test hook only (scripts/check-pose.mjs): what the readout chip shows, or null.
         __chip: () => poseChip?.state() ?? null,
+        // Test hook only (scripts/check-pose.mjs): what the pose overlay draws now and whether
+        // it claims the hover (a grab cursor, the model's tooltip held off).
+        __drawn: () => ({ objects: poseMode.drawnObjects(), claims: poseMode.claimsHover() }),
         // Test hook only (scripts/check-pose.mjs): what one sub-part's mesh shows
         // right now — its material's opacity and its geometry's identity — so the
         // check can see ghost and delivery land in the same frame.

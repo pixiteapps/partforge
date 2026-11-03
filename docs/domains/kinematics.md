@@ -620,7 +620,7 @@ point on a posed limb. A part declares them in a top-level `handles` object, in 
 same form as every other handle: `on` names the limb, and `drag` says how it moves
 (`"goal"` or `"angles"`). Lint checks every name (`handle-unknown-source`,
 `handle-unknown-param`, `handle-param-count`, `handle-aim-toward`,
-`handle-unknown-joint`, `handle-bad-drag`).
+`handle-unknown-joint`, `handle-bad-drag`, `handle-unknown-view`).
 
 ```js
 handles: {
@@ -638,6 +638,12 @@ handles: {
 is a posed limb. A limb handle always sets `drag`: lint refuses one without it
 (`handle-bad-drag`) rather than guess. Every parameter a handle names must be a numeric
 key of `defaults` (a `lock`'s default may also be a boolean).
+
+A limb handle shows only in the views that draw its limb: a view whose sub-parts read
+`d.<on>` (most often `d.finger.place(s, joint)`). A print kit that lays the pieces flat
+by fixed offsets does not, so the handle stays out of it. To say it outright, give the
+handle `views: ["assembly"]` (keys of `views`; lint: `handle-unknown-view`). The authoring
+guide's "When a handle shows" has the whole rule.
 
 A posed limb is also a point source: its `handleInfo()` gives its joints and `tip` as
 points, each hinge's axis, and the bone chain. So the geometric drags of any handle

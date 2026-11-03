@@ -384,6 +384,60 @@ describe("always-on posing: hover, pick arbitration, suppression, touch", () => 
     expect(t.viewer.domElement.style.cursor).toBe("");
   });
 
+  it("a view switch leaves no hover, claim, cursor or grab behind", () => {
+    let visible = Object.keys(hand.handles);
+    const t = setup(hand, { visibleHandles: () => visible });
+    let changes = 0;
+    t.mode.onHoverChange(() => changes++);
+    const s = t.tipScreen("a");
+    t.fire("pointermove", s.x, s.y);
+    expect(t.mode.claimsHover()).toBe(true);
+    expect(t.viewer.domElement.style.cursor).toBe("grab");
+    // the new view draws none of these limbs (a print layout): nothing survives the switch
+    visible = [];
+    t.mode.viewChanged();
+    expect(t.mode.claimsHover()).toBe(false);
+    expect(changes).toBe(2);
+    expect(t.viewer.domElement.style.cursor).toBe("");
+    expect(t.scene.calls.setHover.at(-1)).toEqual([null, null]);
+    expect(t.scene.calls.setLimbs.at(-1)).toEqual([]);
+    expect(t.scene.calls.setCue.at(-1)?.points ?? []).toEqual([]);
+    expect(t.mode.handlePoints()).toEqual([]);
+    // a press where the dot was is not a grab: orbit keeps it, and the click is not claimed
+    t.fire("pointerdown", s.x, s.y);
+    expect(t.orbit.enabled).toBe(true);
+    t.fire("pointerup", s.x, s.y);
+    expect(t.mode.takeClick()).toBe(false);
+    expect(t.log.write).toEqual([]);
+  });
+
+  it("a view switch that keeps the handles still drops the hover the old layout had", () => {
+    const t = setup();
+    const s = t.tipScreen("a");
+    t.fire("pointermove", s.x, s.y);
+    expect(t.mode.claimsHover()).toBe(true);
+    t.mode.viewChanged();
+    expect(t.mode.claimsHover()).toBe(false);
+    expect(t.viewer.domElement.style.cursor).toBe("");
+    expect(t.scene.calls.setHover.at(-1)).toEqual([null, null]);
+    // the handles are still there to hover again
+    t.fire("pointermove", s.x, s.y);
+    expect(t.mode.claimsHover()).toBe(true);
+  });
+
+  it("a re-read that hides the hovered handle drops its hover and claim", () => {
+    let visible = Object.keys(hand.handles);
+    const t = setup(hand, { visibleHandles: () => visible });
+    const s = t.tipScreen("a");
+    t.fire("pointermove", s.x, s.y);
+    expect(t.mode.claimsHover()).toBe(true);
+    visible = ["b"];
+    t.mode.refresh();
+    expect(t.mode.claimsHover()).toBe(false);
+    expect(t.viewer.domElement.style.cursor).toBe("");
+    expect(t.scene.calls.setHover.at(-1)).toEqual([null, null]);
+  });
+
   it("a click on a tip dot pins it and claims the click; a press elsewhere claims nothing", () => {
     const t = setup();
     const s = t.tipScreen("b");
