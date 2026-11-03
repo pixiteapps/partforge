@@ -23,6 +23,7 @@ import { savePickToken, loadPickToken, clearPickToken, pickTokenPath } from "../
 import { matchPattern } from "../src/testing/error-patterns.js";
 import { lintPart } from "../src/lint.js";
 import { pairKey } from "../src/framework/collide/pairs.js";
+import { parseSweepBudget } from "./sweep-budget.js";
 import { sniffMediaType } from "../src/framework/ingest/sniff.js";
 import { ASSET_KINDS, rowFor, convertFor } from "../src/framework/ingest/registry.js";
 import { installNodeDom } from "../src/framework/ingest/node-dom.js";
@@ -37,10 +38,8 @@ import { normalizeOpentype, parseFont } from "../src/framework/geometry/opentype
 // PARTFORGE_SWEEP_BUDGET_MS overrides it, in ms or "Infinity" (no deadline): the verify
 // golden (test/verify-golden.test.js) runs every sweep to its end, so what it records
 // never depends on how fast the machine is.
-const CLI_SWEEP_BUDGET_MS = (() => {
-  const env = Number(process.env.PARTFORGE_SWEEP_BUDGET_MS);
-  return env > 0 ? env : 60_000;
-})();
+// Parsed by parseSweepBudget (bin/sweep-budget.js, held by test/cli-sweep-budget.test.js).
+const CLI_SWEEP_BUDGET_MS = parseSweepBudget(process.env.PARTFORGE_SWEEP_BUDGET_MS);
 
 const die = (msg) => { console.error(msg); process.exit(1); };
 
