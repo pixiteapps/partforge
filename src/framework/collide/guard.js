@@ -11,7 +11,9 @@
 // contract; with `names`, a map that may hold only those — the guard then reads no other)
 // and the names that can move. Pure, like the world it reads.
 import { pairKey, CONTACT_EPS } from "./pairs.js";
-import { invertRigid } from "../geometry/pose.js";
+import { invertRigid, mulMat4 } from "../geometry/pose.js";
+
+const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
 export const COLLIDE_BAND_MM = 2;     // rows start this far out, so the solver turns away early
 export const COLLIDE_WEIGHT = 100;    // a row's weight: param-solve.js's HOLD_WEIGHTS scale
@@ -37,7 +39,7 @@ function boxUnder(box, m) {
 
 /** The farthest a corner of `box` moves placed by m1 instead of m0 (world.travel's rule). */
 function cornerTravel(box, m0, m1) {
-  if (!box) return 0;
+  if (!box) return Infinity; // no box, no bound
   let worst = 0;
   for (const x of [box[0], box[3]]) for (const y of [box[1], box[4]]) for (const z of [box[2], box[5]]) {
     const p = apply(m0, [x, y, z]), q = apply(m1, [x, y, z]);
@@ -73,7 +75,8 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
   const guardOnly = new Set();
 
   const startMats = matsAt(start);
-  for (const r of world.distances(startMats, { names: moving, within: COLLIDE_BAND_MM })) {
+  const startReadings = world.distances(startMats, { names: moving, within: COLLIDE_BAND_MM });
+  for (const r of startReadings) {
     const key = pairKey(r.a, r.b);
     if (r.distance < COLLIDE_BAND_MM) guardOnly.add(key);
     if (r.distance <= clearance) exempt.set(key, "near");
@@ -93,8 +96,12 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
 
   // One clearance query at mats: clear unless a non-exempt pair is inside clearance;
   // `next` is the exemption map as it stands once this pose is accepted.
+  // Lower bounds on pair gaps by relative placement, kept for the drag (world.distances'
+  // `bounds`): most pairs a check meets have not moved relative to each other since the
+  // last one, or by less than its pad.
+  const clearBounds = new Map();
   function check(mats) {
-    const hits = world.distances(mats, { names: moving, within: clearance });
+    const hits = world.distances(mats, { names: moving, within: clearance, bounds: clearBounds });
     const next = new Map(exempt);
     const touching = new Set();
     let blocked = null;
@@ -117,54 +124,149 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
   let lastTravel = 0;
   const windowMm = () => margin + lastTravel;
 
+  // What the drag has learned about each pair, kept across frames:
+  // - `seen`: its last closest points, in each mesh's own frame — two points on its
+  //   surfaces, so wherever the pair is placed their distance bounds its gap from above;
+  // - `known`: a lower bound on its gap, by RELATIVE placement — R carries b's mesh into
+  //   a's (a, b as distances() orders them), so the bound holds wherever the two are
+  //   placed with that R, and at another R' it holds less the farthest b's box corners
+  //   move from R to R' (a point's motion is affine, so a box's worst is at a corner).
+  //   A whole hand turning on its wrist moves no pair relative to another.
+  const seen = new Map(), known = new Map();
+  const relOf = (ma, mb) => mulMat4(invertRigid(ma ?? IDENTITY), mb ?? IDENTITY);
+  /** A lower bound on the a×b gap at (ma, mb) from `known`, or -Infinity. */
+  function lowerBound(key, b, ma, mb) {
+    const e = known.get(key);
+    if (!e || ma === null || mb === null) return -Infinity;
+    return e.d - cornerTravel(world.boundsOf(b), e.R, relOf(ma, mb));
+  }
+  /** The `seen` points' distance at mats, or Infinity. */
+  function upperBound(key, mats) {
+    const e = seen.get(key);
+    if (!e || !mats.has(e.a) || !mats.has(e.b)) return Infinity; // a names-limited map: unknown
+    const ma = mats.get(e.a), mb = mats.get(e.b);
+    if (ma === null || mb === null) return Infinity;
+    const wa = apply(ma, e.pa), wb = apply(mb, e.pb);
+    return Math.hypot(wa[0] - wb[0], wa[1] - wb[1], wa[2] - wb[2]);
+  }
+  // `upper` for world.distances: the seen points bound each pair's gap, which lets the
+  // exact query cut its search there and still read the exact answer.
+  function upperBounds(mats, keys = seen.keys()) {
+    const out = new Map();
+    for (const key of keys) { const u = upperBound(key, mats); if (u < Infinity) out.set(key, u); }
+    return out;
+  }
+
   // Store a distances() result on its row, mapped into each mesh's own frame. `within` is
   // the cutoff the query ran under: a pair it did not return is at least that far apart.
-  // `row.ref` keeps the pose that reading was taken at and a lower bound on the gap there,
-  // for the lazy linearisation below.
   function store(row, r, mats, within) {
     const ma = mats.get(row.a), mb = mats.get(row.b);
     row.pend = null;
-    if (ma === null || mb === null) { row.active = false; row.ref = null; return; }
-    row.ref = { ma, mb, d: r ? r.distance : within - 1e-9 };
+    if (ma === null || mb === null) { row.active = false; return; }
+    known.set(row.key, { R: relOf(ma, mb), d: r ? r.distance : within - 1e-9 });
     if (!r) { row.active = false; return; }
     row.active = true;
     row.gap = r.distance;
     row.pa = apply(ma ? invertRigid(ma) : undefined, row.a === r.a ? r.pointA : r.pointB);
     row.pb = apply(mb ? invertRigid(mb) : undefined, row.a === r.a ? r.pointB : r.pointA);
     row.normal = r.normal && (row.a === r.a ? r.normal : r.normal.map((x) => -x));
+    seen.set(row.key, { a: row.a, b: row.b, pa: row.pa, pb: row.pb });
   }
 
-  // Lazy linearisation. A row's value is w·max(0, margin − gap), so a pair that cannot be
-  // inside the margin reads exactly 0 whatever its closest points are. Placed by mats1
-  // instead of mats0, no point of a pair moves the gap more than `drift` (the farthest
-  // its pieces' box corners move: a point's motion is affine, so a box's worst is at a
-  // corner). So at linearise, a row whose last reading, less the drift since, is past
-  // the margin is not queried: it keeps the pose (`pend`) and that lower bound, and it
-  // reads 0 at every evaluation whose own drift keeps the bound past the margin. Only
-  // when one does not is it measured — at the pend pose, exactly the query linearise
-  // would have run — so every row reads bit for bit what eager linearisation gives.
+  // Lazy rows. A row's value is w·max(0, margin − gap), so a pair that cannot be inside
+  // the margin reads exactly 0 whatever its closest points are. A row whose lower bound
+  // (`known`) is past the margin is therefore not measured: it keeps the pose it would
+  // have been measured at (`pend`: beginFrame's or a linearisation's) and that bound, and
+  // reads 0 at every evaluation whose own relative drift keeps the bound past the margin.
+  // Only when one does not is it measured — at the pend pose, exactly the query eager
+  // linearisation would have run there — so every row reads bit for bit what it would.
+  //
+  // beginFrame goes lazy too when it can: the rows are the pairs within the window
+  // (when there are at most MAX_ROWS of them, every one is a row), found from the bounds
+  // and a boolean query where those cannot tell, with no exact query. The eager order
+  // (nearest first at the frame's start) is only needed once a row can read non-zero:
+  // until then every row reads 0 in either order, and a residual of zeros is the same
+  // in any order. The first measurement in the frame therefore orders the rows first
+  // (`order()`), from their exact readings at the frame's start pose.
   const LAZY_SLACK_MM = 1e-6; // past any rounding in a row's own arithmetic
-  const drift = (row, ma0, mb0, ma1, mb1) => cornerTravel(world.boundsOf(row.a), ma0, ma1) + cornerTravel(world.boundsOf(row.b), mb0, mb1);
+  let frameMats = null; // the frame's start placements (a lazy beginFrame's), for order()
+  let ordered = true;
+  function order() {
+    if (ordered) return;
+    ordered = true;
+    const within = windowMm(), byKey = new Map();
+    const keyed = rows.filter((row) => !row.pend?.begin); // measured or pending since: read only
+    if (keyed.length) {
+      const pairs = new Set(keyed.map((r) => r.key));
+      for (const r of world.distances(frameMats, { within, pairs, upper: upperBounds(frameMats, pairs) })) byKey.set(pairKey(r.a, r.b), r.distance);
+    }
+    for (const row of rows) {
+      if (row.pend?.begin) { resolve(row); row.beginD = row.active ? row.gap : Infinity; }
+      else row.beginD = byKey.get(row.key) ?? Infinity;
+    }
+    rows.sort((x, y) => x.beginD - y.beginD || x.order - y.order);
+  }
   function resolve(row) {
     const { mats, within } = row.pend;
-    const upper = upperBounds([row], mats);
-    const [r = null] = world.distances(mats, { names: [row.a, row.b], within, pairs: new Set([row.key]), upper });
+    const [r = null] = world.distances(mats, { names: [row.a, row.b], within, pairs: new Set([row.key]), upper: upperBounds(mats, [row.key]) });
     store(row, r, mats, within);
   }
+  /** Keep `row` pending at mats (its a and b) if its bound is past the margin; else false. */
+  function defer(row, mats, within, begin = false) {
+    const ma = mats.get(row.a), mb = mats.get(row.b);
+    const lb = lowerBound(row.key, row.b, ma, mb);
+    if (!(lb > margin + LAZY_SLACK_MM)) return false;
+    row.pend = { mats: new Map([[row.a, ma], [row.b, mb]]), within, lb, R: relOf(ma, mb), begin };
+    return true;
+  }
 
-  // Each row's stored closest points, placed by mats, are two points on its pair's
-  // surfaces: their distance bounds the pair's gap from above, which lets the exact query
-  // cut its search there (world.distances' `upper`) and still read the exact answer.
-  function upperBounds(list, mats) {
-    const out = new Map();
-    for (const row of list) {
-      if (!row.active || !row.pa) continue;
-      const ma = mats.get(row.a), mb = mats.get(row.b);
-      if (ma === null || mb === null) continue;
-      const wa = apply(ma, row.pa), wb = apply(mb, row.pb);
-      out.set(row.key, Math.hypot(wa[0] - wb[0], wa[1] - wb[1], wa[2] - wb[2]));
+  // What the start's query already tells: each pair it read, and that every other pair
+  // that can move is past the band.
+  {
+    const read = new Map(startReadings.map((r) => [pairKey(r.a, r.b), r]));
+    for (const c of world.candidates(startMats, { names: moving })) {
+      const ma = startMats.get(c.a), mb = startMats.get(c.b), r = read.get(c.key);
+      known.set(c.key, { R: relOf(ma, mb), d: r ? r.distance : COLLIDE_BAND_MM - 1e-9 });
+      if (r && r.distance > 0) {
+        const flip = r.a !== c.a;
+        seen.set(c.key, {
+          a: c.a, b: c.b,
+          pa: apply(ma ? invertRigid(ma) : undefined, flip ? r.pointB : r.pointA),
+          pb: apply(mb ? invertRigid(mb) : undefined, flip ? r.pointA : r.pointB),
+        });
+      }
     }
-    return out;
+  }
+
+  // The eager beginFrame: the nearest MAX_ROWS pairs in the window, each measured.
+  function beginEager(mats, skip) {
+    // skip drops every pair the loop below would, so the nearest MAX_ROWS are its rows
+    for (const r of world.distances(mats, { names: moving, within: windowMm(), skip, limit: MAX_ROWS, upper: upperBounds(mats) })) {
+      const key = pairKey(r.a, r.b);
+      if (exempt.has(key) || guardOnly.has(key)) continue;
+      const row = { a: r.a, b: r.b, key };
+      store(row, r, mats, windowMm());
+      rows.push(row);
+      if (rows.length === MAX_ROWS) break;
+    }
+  }
+  /** The lazy beginFrame, or false (nothing changed) when it cannot tell the rows apart. */
+  function beginLazy(mats, skip) {
+    const within = windowMm();
+    const inside = [];
+    for (const c of world.candidates(mats, { names: moving, within, skip })) {
+      const ma = mats.get(c.a), mb = mats.get(c.b);
+      if (lowerBound(c.key, c.b, ma, mb) > within + LAZY_SLACK_MM) continue;   // provably out
+      if (!(upperBound(c.key, mats) < within - LAZY_SLACK_MM) && !world.within(mats, c.a, c.b, within)) continue;
+      inside.push(c);
+      if (inside.length > MAX_ROWS) return false; // which are the nearest needs the readings
+    }
+    const lazy = inside.map((c) => ({ a: c.a, b: c.b, key: c.key, order: c.order }));
+    for (const row of lazy) if (!defer(row, mats, within, true)) return false;
+    rows = lazy;
+    frameMats = mats;
+    ordered = false;
+    return true;
   }
 
   return {
@@ -180,20 +282,14 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
       const mats = matsAt(params);
       lastTravel = lastParams ? world.travel(matsAt(lastParams, moving), mats, moving) : 0;
       lastParams = params;
-      const upper = upperBounds(rows, mats); // last frame's rows bound their pairs' gaps
       rows = [];
       names_ = null;
+      ordered = true;
+      frameMats = null;
       const skip = new Set([...exempt.keys(), ...guardOnly]); // never rows: not worth a query
-      // skip drops every pair the loop below would, so the nearest MAX_ROWS are its rows
-      for (const r of world.distances(mats, { names: moving, within: windowMm(), skip, limit: MAX_ROWS, upper })) {
-        const key = pairKey(r.a, r.b);
-        if (exempt.has(key) || guardOnly.has(key)) continue;
-        const row = { a: r.a, b: r.b, key };
-        store(row, r, mats, windowMm());
-        rows.push(row);
-        if (rows.length === MAX_ROWS) break;
-      }
-      active = rows.some((row) => row.active && row.gap < margin);
+      if (!beginLazy(mats, skip)) { rows = []; beginEager(mats, skip); }
+      // a pending row's gap is past the margin: it is never the active one
+      active = rows.some((row) => !row.pend && row.active && row.gap < margin);
     },
 
     linearise(params) {
@@ -201,23 +297,13 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
       const names = rowNames();
       const mats = matsAt(params, names); // the pairs filter reads no other placement
       const within = windowMm();
-      const now = [];
-      for (const row of rows) {
-        const ma = mats.get(row.a), mb = mats.get(row.b);
-        const ref = row.ref;
-        if (ref && ma !== null && mb !== null) {
-          const lb = ref.d - drift(row, ref.ma, ref.mb, ma, mb);
-          if (lb > margin + LAZY_SLACK_MM) { row.pend = { mats: new Map([[row.a, ma], [row.b, mb]]), within, lb }; continue; }
-        }
-        now.push(row);
-      }
+      const now = rows.filter((row) => !defer(row, mats, within));
       if (now.length) {
+        order();
         const pairs = new Set(now.map((r) => r.key)); // the rows' own pairs, never a neighbour's
-        const upper = upperBounds(now, mats);
-        const byKey = new Map(world.distances(mats, { names, within, pairs, upper }).map((r) => [pairKey(r.a, r.b), r]));
+        const byKey = new Map(world.distances(mats, { names, within, pairs, upper: upperBounds(mats, pairs) }).map((r) => [pairKey(r.a, r.b), r]));
         for (const row of now) store(row, byKey.get(row.key), mats, within);
       }
-      // a pending row's gap is past the margin: it is never the active one
       active = rows.some((row) => !row.pend && row.active && row.gap < margin);
     },
 
@@ -225,10 +311,12 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
       const out = new Float64Array(rows.length);
       if (!rows.length) return out;
       const mats = matsAt(params, rowNames());
+      // a row that must be measured orders the rows first: then the layout is the eager one
+      const due = (row) => row.pend.lb - cornerTravel(world.boundsOf(row.b), row.pend.R, relOf(mats.get(row.a), mats.get(row.b))) <= margin + LAZY_SLACK_MM;
+      if (!ordered && rows.some((row) => row.pend && due(row))) order();
       rows.forEach((row, i) => {
         if (row.pend) {
-          const { mats: m0, lb } = row.pend;
-          if (lb - drift(row, m0.get(row.a), m0.get(row.b), mats.get(row.a), mats.get(row.b)) > margin + LAZY_SLACK_MM) return; // reads 0
+          if (!due(row)) return; // reads 0
           resolve(row);
         }
         if (!row.active) return;
