@@ -530,8 +530,12 @@ async function checkRobotArm(page, url, errors) {
  * the tool far sideways — the ground's x/z and scale (so its texture) stay put during the
  * drag and after the release's delivery; its height may only go down. With
  * CHECK_POSE_SHOTS=<dir>, screenshots before, mid-drag and after land there.
+ * It starts from the defaults: the poses the checks before it leave (the mid-joint grab's
+ * fold, its gripper near the upper arm) can put a sideways drag into contact, which the
+ * collision guard rightly stops short.
  */
 async function checkRealisticFloor(page, box, errors) {
+  await resetParams(page);
   const shots = process.env.CHECK_POSE_SHOTS;
   const shot = async (name) => { if (shots) await page.screenshot({ path: join(shots, `robot-arm-floor-${name}.png`) }); };
   await page.evaluate(() => window.__pfRuntime.renderMode.set("realistic"));
