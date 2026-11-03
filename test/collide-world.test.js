@@ -69,6 +69,30 @@ describe("collision world", () => {
   });
 });
 
+describe("mats contract", () => {
+  it("travel skips a name that is null in either set; a missing key is the identity", () => {
+    const w = createCollisionWorld({ meshes: new Map([["a", cube(10)]]) });
+    const far = new Map([["a", T(50)]]);
+    expect(w.travel(new Map([["a", null]]), far, ["a"])).toBe(0);
+    expect(w.travel(far, new Map([["a", null]]), ["a"])).toBe(0);
+    expect(w.travel(new Map(), far, ["a"])).toBeCloseTo(50);
+    w.dispose();
+  });
+  it("inside is false when either matrix is null; a missing key is the identity", () => {
+    const w = createCollisionWorld({ meshes: new Map([["a", cube(10)], ["b", cube(2)]]) });
+    const nested = new Map([["b", T(4, 4, 4)]]); // a missing -> identity
+    expect(w.inside(nested, "a", "b")).toBe(true);
+    expect(w.inside(new Map([["a", null], ["b", T(4, 4, 4)]]), "a", "b")).toBe(false);
+    expect(w.inside(new Map([["a", T(0)], ["b", null]]), "a", "b")).toBe(false);
+    w.dispose();
+  });
+  it("distances treats a missing key as the identity", () => {
+    const w = createCollisionWorld({ meshes: new Map([["a", cube()], ["b", cube()]]) });
+    expect(w.distances(new Map([["b", T(15)]]))[0].distance).toBeCloseTo(5);
+    w.dispose();
+  });
+});
+
 describe("pose matrices", () => {
   it("moves a drawer on the drawer box", () => {
     const { p, d } = resolveParams(drawerBox, { drawer1Open: 50 });

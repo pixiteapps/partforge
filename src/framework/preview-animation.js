@@ -32,7 +32,7 @@
 // closure stays DOM-, three- and node:-free (test/oracle-entry.test.js).
 import { viewAnimations, evaluate } from "./animation.js";
 import { viewSubParts, resolveParams } from "./part-model.js";
-import { placeMatrix } from "./collide/world.js";
+import { placeMatrix } from "./collide/place.js";
 
 export const PREVIEW_SAMPLE_HZ = 30;
 export const PREVIEW_SAMPLE_CAP = 600;

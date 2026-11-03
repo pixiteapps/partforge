@@ -2,19 +2,16 @@
 // Meshes stay in each sub-part's own frame; a placement is a column-major mat4 handed in
 // per query, so a pose change never rebuilds a BVH. Pose mode and the sweep checker both
 // read it. Pure (no DOM, three or node:), and loaded lazily by the worker.
+//
+// The mats contract, the same in every method: a `mats` Map with a name MISSING places
+// it at the identity; a name mapped to `null` EXCLUDES it (an untrusted or non-rigid
+// placement), so it is skipped by distances, inside and travel alike.
 import { buildBVH, disposeBVHs } from "../oracle/bvh.js";
 import { isAllowed } from "./declaration.js";
-import { CANONICAL, probeSubPartPose } from "../pose-probe-core.js";
+import { placeMatrix } from "./place.js";
+export { placeMatrix };
 import { viewSubParts, resolveParams } from "../part-model.js";
-import { composePose, isRigid, mulMat4, invertRigid } from "../geometry/pose.js";
-
-/** One sub-part's place() as a rigid mat4, or null when it is not a trusted rigid motion. */
-export function placeMatrix(sp, view, p, d) {
-  const probe = probeSubPartPose(sp, { view, purpose: "display", p, d }, { scope: "place" });
-  if (!probe?.trusted || probe.baseHash !== CANONICAL) return null;
-  const m = Array.from(composePose(probe.pose));
-  return isRigid(m) ? m : null;
-}
+import { mulMat4, invertRigid } from "../geometry/pose.js";
 
 /** placeMatrix for every in-view sub-part at an already-resolved (p, d); never derives. */
 export function poseMatrices(part, view, p, d, { deltas } = {}) {
@@ -97,6 +94,7 @@ export function createCollisionWorld({ meshes, decl = null }) {
     bvhs.set(name, buildBVH(mesh));
     boxes.set(name, boxOf(mesh.positions));
   }
+  const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
   const matOf = (mats, name) => mats.get(name); // undefined = identity, null = excluded
 
   return {
@@ -113,7 +111,7 @@ export function createCollisionWorld({ meshes, decl = null }) {
           if (wanted && !wanted.has(a) && !wanted.has(b)) continue;
           if (isAllowed(decl, a, b)) continue;
           if (boxGap(moved.get(a), moved.get(b)) > within) continue;
-          const r = bvhs.get(a).distanceToPosed(bvhs.get(b), matOf(mats, a) ?? null, matOf(mats, b) ?? null);
+          const r = bvhs.get(a).distanceToPosed(bvhs.get(b), matOf(mats, a) ?? IDENTITY, matOf(mats, b) ?? IDENTITY);
           if (!(r.distance <= within)) continue;
           let normal = null;
           if (r.distance > 0) {
@@ -129,8 +127,9 @@ export function createCollisionWorld({ meshes, decl = null }) {
     },
 
     inside(mats, a, b) {
-      const ma = matOf(mats, a) ?? null, mb = matOf(mats, b) ?? null;
-      return bvhs.get(a).insideOf(bvhs.get(b), ma, mb) || bvhs.get(b).insideOf(bvhs.get(a), mb, ma);
+      const ma = matOf(mats, a), mb = matOf(mats, b);
+      if (ma === null || mb === null) return false;
+      return bvhs.get(a).insideOf(bvhs.get(b), ma ?? IDENTITY, mb ?? IDENTITY) || bvhs.get(b).insideOf(bvhs.get(a), mb ?? IDENTITY, ma ?? IDENTITY);
     },
 
     travel(matsA, matsB, travelNames) {
@@ -138,9 +137,10 @@ export function createCollisionWorld({ meshes, decl = null }) {
       for (const name of travelNames) {
         const box = boxes.get(name);
         if (!box) continue;
-        const ma = matOf(matsA, name) ?? null, mb = matOf(matsB, name) ?? null;
+        const ma = matOf(matsA, name), mb = matOf(matsB, name);
+        if (ma === null || mb === null) continue;
         for (const c of cornersOf(box)) {
-          const p = ma ? apply(ma, c) : c, q = mb ? apply(mb, c) : c;
+          const p = ma ? apply(ma, c) : c, q = mb ? apply(mb, c) : c; // undefined = identity
           worst = Math.max(worst, Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]));
         }
       }
