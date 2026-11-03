@@ -684,7 +684,11 @@ the installed package, so let the publish finish before bumping the dep there.
   `handleAxis` - an axis or rotary drag with no own direction takes the source's
   `axes[<prefix of at>]` - and `handleRecord`, the pseudo-limb Pose mode draws),
   `pose/drag-kinds.js` the pure geometric solvers per kind, `pose/handle-guides.js` the
-  guides (arrow, square, ring, travel path) drawn while the dot is hovered or dragged.
+  guides (square, ring, travel path) drawn while the dot is hovered or dragged. An `axis`
+  handle has no dot and no guide: pose-scene draws it as a two-sided arrow along its axis
+  (`gizmo/gizmo-handles.js`'s `arrowGeometryPairs`/`arrowMeshes`, the cutaway's arrow with a
+  head at each end, `ARROW_UNIT_PX` per unit), and pose-mode picks it through its hit proxy
+  (`arrowHitGeometry` via `gizmo-pick.js`), so a press anywhere on it starts the drag.
   A handle shows near its point or over its `showOn` sub-part (near a limb's bones for
   goal / angles), all hidden at rest. Handles are VIEW-SPECIFIC (`pose/handle-views.js`,
   `handlesShownInView`, the one rule mount's `syncPoseVisible`, `oracle/handles.js` and
@@ -708,7 +712,7 @@ the installed package, so let the publish finish before bumping the dep there.
   (`onParamsCommit`), cancels the drag on a host write or a view switch, and makes
   every effect a no-op once dispose starts (pose mode detaches late, LIFO). Once per mount, the
   first live frame with the part on screen starts the RESTING CUE (pose-mode's `tickCue`: every
-  shown handle's dot dimmed, `CUE_OPACITY` for `CUE_HOLD_MS`, faded over `CUE_FADE_MS`, drawn by
+  shown handle's dot - an axis handle's arrow - dimmed, `CUE_OPACITY` for `CUE_HOLD_MS`, faded over `CUE_FADE_MS`, drawn by
   pose-scene's `setCue` in its capture-hidden group; on `(hover: none)` it stays until the first
   drag). A released drag fires `onDragEnd` (`pose-session`'s `end()` reports `changed`, `moved`,
   `held` - a pin held it only when the last target, re-solved with no holds, would have

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { sameTurn } from "../src/framework/panel/widgets/numeric.js";
 import {
-  axisGuide, planeGuide, rotaryGuide, sweepPath, pathKey, pathParam, readoutText, readoutKeys, chipValues,
+  planeGuide, rotaryGuide, sweepPath, pathKey, pathParam, readoutText, readoutKeys, chipValues,
   PATH_SAMPLES, AXIS_ARROW_PX, PLANE_SQUARE_PX,
 } from "../src/framework/pose/handle-guides.js";
 
@@ -33,16 +33,6 @@ const train = {
 };
 
 describe("guides", () => {
-  it("axis: a double arrow AXIS_ARROW_PX each way along the direction, heads facing the camera", () => {
-    const g = axisGuide([1, 2, 3], [0, 0, 2], 0.5, [0, 1, 0]);
-    expect(g.kind).toBe("axis");
-    const zs = g.points.map((p) => p[2]);
-    expect(Math.min(...zs)).toBeCloseTo(3 - AXIS_ARROW_PX * 0.5, 9);
-    expect(Math.max(...zs)).toBeCloseTo(3 + AXIS_ARROW_PX * 0.5, 9);
-    for (const p of g.points) expect(p[1]).toBeCloseTo(2, 9); // heads lie square to the view
-    expect(axisGuide([0, 0, 0], [0, 0, 0], 1)).toBeNull();
-  });
-
   it("plane: a PLANE_SQUARE_PX square on the plane, centred on the point", () => {
     const g = planeGuide([5, 5, 10], [0, 0, 1], 2);
     expect(g.kind).toBe("plane");

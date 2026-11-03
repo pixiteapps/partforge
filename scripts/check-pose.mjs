@@ -851,8 +851,10 @@ async function checkGearbox(page, url, errors) {
 
 /**
  * The drawer box (parts/drawer-box.js): a MOTION drag, then a SHAPE drag, on one part.
- *   - drawer1's pull, along its rail (an axis handle): no `generate` job (a drawer slides
- *     by matrix), one commit opening drawer1 to about 60% of its travel, the other drawers where they were;
+ *   - drawer1's pull, along its rail (an axis handle): grabbed on its two-sided arrow's
+ *     shaft, at its far end toward a head (past the 14 px a dot's centre would pick), no
+ *     `generate` job (a drawer slides by matrix), one commit opening drawer1 to about 60%
+ *     of its travel, the other drawers where they were;
  *   - while it slides, its value in the viewbar's readout slot (measure's spot), gone on release;
  *   - the readout chip that drag leaves by the pull: typed into, it commits the snapped value once;
  *   - the top corner, across the top plane (a plane handle): the part is cheap (its last
@@ -881,9 +883,17 @@ async function checkDrawerBox(page, url, errors) {
   // Motion: drawer1 out along its rail.
   const [d0, d1] = await handleAt(page, "drawer1", [{ drawer1Open: 0 }, { drawer1Open: 60 }], { drawer1Open: defaults.drawer1Open });
   if (!d0 || !d1) throw new Error("no drawer1 handle point");
+  if (!d0.arrow) throw new Error(`drawer1's axis handle reports no arrow (${JSON.stringify(d0)})`);
+  // on the shaft, near its end toward the head the pull runs toward (the shaft is the inner
+  // 60% of each half: ARROW_HALF_LENGTH less ARROW_HEAD_LENGTH)
+  const toward = Math.hypot(d0.arrow.to.x - d1.x, d0.arrow.to.y - d1.y) < Math.hypot(d0.arrow.from.x - d1.x, d0.arrow.from.y - d1.y) ? d0.arrow.to : d0.arrow.from;
+  const SHAFT_AT = 0.56;
+  const shaft = { x: d0.x + (toward.x - d0.x) * SHAFT_AT, y: d0.y + (toward.y - d0.y) * SHAFT_AT };
+  const shaftOff = Math.hypot(shaft.x - d0.x, shaft.y - d0.y);
+  if (shaftOff <= 14) errors.push(`drawer1's arrow's shaft end is ${shaftOff.toFixed(1)} px from its centre: within a dot's 14 px, so the press tests nothing`);
   let commits0 = await page.evaluate(() => window.__pfCommits.length);
   let t0 = await page.evaluate(() => performance.now());
-  await drag(canvas(d0), canvas(d1), "drawer1's pull");
+  await drag(canvas(shaft), canvas({ x: shaft.x + d1.x - d0.x, y: shaft.y + d1.y - d0.y }), "drawer1's arrow, mid-shaft");
   const drawerJobs = generates(await page.evaluate(() => window.__pfWorkerLog), t0);
   // The live readout: in the viewbar's readout slot (measure's X/Y/Z spot), floated just
   // above the bar with right edges flush, the view cube stepped up over it.
@@ -950,7 +960,7 @@ async function checkDrawerBox(page, url, errors) {
     if (!Object.is(grow.params.height, defaults.height)) errors.push(`the corner drag moved height (${defaults.height} -> ${grow.params.height})`);
   }
   return {
-    drawer: { generatesDuringDrag: drawerJobs.length, drawer1Open: open ?? null, chipTyped: typed },
+    drawer: { pressPxFromCentre: Number(shaftOff.toFixed(1)), generatesDuringDrag: drawerJobs.length, drawer1Open: open ?? null, chipTyped: typed },
     corner: { lastBuildMs, liveGenerates: live.length, buildsDuring, buildsAfter, width: grow?.params?.width ?? null, depth: grow?.params?.depth ?? null },
   };
 }

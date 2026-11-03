@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { snapQuaternionToAxis } from "./cutaway-math.js";
 import { buildGizmoScene } from "./cutaway-gizmo-scene.js";
-import { GIZMO_PALETTE, applyHandleAppearance } from "./gizmo/gizmo-handles.js";
+import { ARROW_UNIT_PX, GIZMO_PALETTE, applyHandleAppearance } from "./gizmo/gizmo-handles.js";
 import { pickGizmoHandle, projectToRect } from "./gizmo/gizmo-pick.js";
 import {
   axisParameterFromRay,
@@ -447,7 +447,7 @@ export function createCutawayGizmo({
 
   function updateForCamera() {
     if (disposed) return;
-    const screenScale = worldUnitsPerPixelAt(group.position) * 72;
+    const screenScale = worldUnitsPerPixelAt(group.position) * ARROW_UNIT_PX;
     handleRoot.scale.setScalar(THREE.MathUtils.clamp(
       screenScale,
       poseSize * 0.06,

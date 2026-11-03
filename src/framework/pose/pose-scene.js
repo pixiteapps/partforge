@@ -32,9 +32,17 @@
 // rebuilding the limbs. Its drag values are not drawn here: they read out in the DOM, in the
 // viewbar's readout slot (drag-readout.js).
 //
+// An AXIS handle (`drag: "axis"`, a record whose `axis` has a direction) draws as a
+// two-sided arrow instead of a dot: the cutaway's translate arrow with a head at each end
+// (gizmo/gizmo-handles.js's arrowGeometryPairs / arrowMeshes), centred on its point, turned
+// onto its axis and ARROW_UNIT_PX per arrow unit on screen. Hovered or dragged it follows
+// the gizmo hover rule (colour lifted toward white, thicker geometry); pinned it takes the
+// pin colour. pose-mode picks it through the same arrow's hit proxy (arrowHitGeometry).
+//
 // The RESTING CUE (setCue, pose-mode.js decides when): a dimmed tip-sized dot at every
-// shown handle's point, in the limbs' group (so never in a capture), with a material of
-// its own whose opacity setCueOpacity fades without a rebuild.
+// shown handle's point — a dimmed arrow for an axis handle — in the limbs' group (so never
+// in a capture), with a material of its own whose opacity setCueOpacity fades without a
+// rebuild.
 import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -42,6 +50,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { CUTAWAY_OVERLAY_RENDER_ORDER } from "../cutaway-render.js";
 import { DIM_THEME, defaultPaintLabel, worldPerPx, orthoWorldPerPx, LABEL_SCREEN_PX } from "../measure/dim3-scene.js";
 import { limitArc } from "./pose-geom.js";
+import { ARROW_UNIT_PX, applyHandleAppearance, arrowGeometryPairs, arrowMeshes } from "../gizmo/gizmo-handles.js";
 
 // Match the measure / cutaway chrome: handle = the cutaway fill blue, active =
 // its border blue, skeleton = the dimension ink, warn = a steady amber, pin = a pink no
@@ -130,7 +139,20 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   const labelMat = prep(new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide }));
   // the resting cue's dots: the handle colour, faded by opacity alone (setCueOpacity)
   const cueMat = prep(new THREE.MeshBasicMaterial({ color: POSE_THEME[theme].handle, opacity: 0 }));
-  const allMats = () => [...Object.values(fillMats), ...Object.values(lineMats), labelMat, cueMat];
+  // an axis handle's arrow, one material per look (the hover rule paints them): the handle
+  // colour, and pinned, each plain and hovered
+  const arrowMats = {
+    handle: prep(new THREE.MeshBasicMaterial()),
+    hot: prep(new THREE.MeshBasicMaterial()),
+    pin: prep(new THREE.MeshBasicMaterial()),
+    pinHot: prep(new THREE.MeshBasicMaterial()),
+  };
+  const arrowLook = (key) => ({ color: POSE_THEME[theme][key.startsWith("pin") ? "pin" : "handle"], hovered: key.endsWith("ot") });
+  const paintArrowMats = () => {
+    for (const [key, material] of Object.entries(arrowMats)) applyHandleAppearance({ material, geometryPairs: [] }, arrowLook(key));
+  };
+  paintArrowMats();
+  const allMats = () => [...Object.values(fillMats), ...Object.values(lineMats), ...Object.values(arrowMats), labelMat, cueMat];
   const paintMats = () => {
     const P = POSE_THEME[theme];
     for (const k of colorKeys) { fillMats[k].color.set(P[k]); lineMats[k].color.set(P[k]); }
@@ -138,12 +160,14 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     lineMats.dashed.color.set(P.warn);
     lineMats.guide.color.set(P.handle);
     cueMat.color.set(P.handle);
+    paintArrowMats();
   };
 
   // shared unit geometries (scaled per frame); never disposed per rebuild
   const unitDot = new THREE.SphereGeometry(1, 14, 10);
   const unitRing = new THREE.RingGeometry(0.62, 1, 28);
-  const shared = new Set([unitDot, unitRing]);
+  const arrowPairs = arrowGeometryPairs({ twoSided: true });
+  const shared = new Set([unitDot, unitRing, ...Object.values(arrowPairs).flatMap((p) => [p.normal, p.hovered])]);
 
   // ---- state -----------------------------------------------------------------
   let limbs = [];
@@ -154,12 +178,14 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   let aimGizmo = null; // { limb, at }: that limb's goal point is the aim gizmo's ball
   let guides = [];     // [{ kind, points }] (setGuides)
   let cue = [];        // the resting cue's points (setCue)
+  let cueArrows = [];  // ...and its axis handles' arrows: [{ point, direction }]
   let dirty = false;
 
   // ---- per-build records, sized in tick() -------------------------------------
   let dots = [];       // { mesh, pos: Vector3, px }
   let billboards = []; // { mesh, pos, px }   (rings that face the camera)
   let pinRecs = [];    // { head, stem, pos }
+  let arrows = [];     // { root, pos, direction, look }   (axis handles' arrows)
   let dashRec = null;  // { line, a, b }
   let labelRec = null; // { mesh, a, b }
   const textureCache = new Map();
@@ -193,6 +219,19 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     billboards.push({ mesh, pos, px });
     return mesh;
   }
+  const _z = new THREE.Vector3(0, 0, 1);
+  /** A two-sided arrow at `pos` along `direction`, in the look `look` (an arrowMats key, or "cue"). */
+  function addArrow(look, pos, direction) {
+    const material = look === "cue" ? cueMat : arrowMats[look];
+    const { root, meshes, geometryPairs } = arrowMeshes(arrowPairs, material, { twoSided: true });
+    for (const m of meshes) { m.renderOrder = RENDER_ORDER_POSE + 1; m.frustumCulled = false; }
+    if (look !== "cue") applyHandleAppearance({ material, geometryPairs }, arrowLook(look));
+    root.position.copy(pos);
+    root.quaternion.setFromUnitVectors(_z, new THREE.Vector3(...direction).normalize());
+    group.add(root);
+    arrows.push({ root, pos, direction: [...direction], look });
+    return root;
+  }
   function addLine(matKey, flat, order = RENDER_ORDER_POSE, into = group) {
     const geo = new LineSegmentsGeometry();
     geo.setPositions(flat);
@@ -215,7 +254,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   }
   function disposeChildren() {
     disposeGroup(group);
-    dots = []; billboards = []; pinRecs = []; dashRec = null; labelRec = null;
+    dots = []; billboards = []; pinRecs = []; arrows = []; dashRec = null; labelRec = null;
   }
 
   // ---- build -----------------------------------------------------------------
@@ -234,6 +273,8 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   }
 
   const isPinned = (limb, at) => pins.some((p) => p.limb === limb && p.at === at);
+  /** An axis handle's record: its arrow's direction, else null (it draws a dot). */
+  const arrowDirection = (info) => (info.drag === "axis" && validDirection(info.axis?.direction) ? info.axis.direction : null);
 
   function buildShownLimb(info, act) {
     const pts = orderedPoints(info);
@@ -302,6 +343,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     const shown = active?.limb ?? hover;
     // the resting cue, under everything else
     for (const p of cue) addDot("cue", vec(p), TIP_DOT_PX);
+    for (const a of cueArrows) addArrow("cue", vec(a.point), a.direction);
     for (const info of limbs) {
       const isShown = info.name === shown;
       if (!isShown) continue; // at rest: nothing but the pin badges below
@@ -312,6 +354,12 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
       const tip = vec(info.points.tip);
       const isGrab = isActive ? active.grab === "tip" : hoverDot === "tip";
       const pinned = isPinned(info.name, "tip");
+      const direction = arrowDirection(info);
+      if (direction) {
+        // an axis handle: its arrow is the grab target (hovered or dragged: the hover look)
+        addArrow(pinned ? (isGrab ? "pinHot" : "pin") : isGrab ? "hot" : "handle", tip, direction);
+        continue;
+      }
       addDot(pinned ? "pin" : isGrab ? "strong" : "handle", tip, isGrab ? TIP_DOT_ACTIVE_PX : TIP_DOT_PX);
       if (isGrab) addBillboard(pinned ? "pin" : "strong", tip, GRAB_HALO_PX);
     }
@@ -401,6 +449,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     cam.getWorldQuaternion(_q);
     _q.premultiply(_gq.invert()); // _gq is re-read every tick: invert it in place
     for (const d of dots) d.mesh.scale.setScalar(Math.max(d.px * wppAt(d.pos), 1e-6));
+    for (const a of arrows) a.root.scale.setScalar(Math.max(ARROW_UNIT_PX * wppAt(a.pos), 1e-6));
     for (const b of billboards) {
       b.mesh.scale.setScalar(Math.max(b.px * wppAt(b.pos), 1e-6));
       b.mesh.quaternion.copy(_q);
@@ -455,6 +504,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     rebuild();
   }
   const validPoint = (p) => Array.isArray(p) && p.length === 3 && p.every(Number.isFinite);
+  function validDirection(v) { return validPoint(v) && Math.hypot(v[0], v[1], v[2]) > 1e-12; }
   /** A generic handle's guides, `[{ kind: "axis"|"plane"|"rotary"|"path", points }]` in part coordinates (plane and rotary close). */
   function setGuides(list) {
     const next = (Array.isArray(list) ? list : [])
@@ -465,25 +515,30 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     rebuildGuides();
   }
   /**
-   * The resting cue: `{ points: [[x, y, z], ...] (part coordinates), opacity }`, or null.
-   * A dimmed dot at each point, drawn under the limbs; pose-mode fades it (setCueOpacity).
+   * The resting cue: `{ points: [[x, y, z], ...], arrows: [{ point, direction }], opacity }`
+   * (part coordinates), or null. A dimmed dot at each point and a dimmed arrow for each axis
+   * handle, drawn under the limbs; pose-mode fades them (setCueOpacity).
    */
   function setCue(c) {
     const next = c && Array.isArray(c.points) ? c.points.filter(validPoint).map((p) => [...p]) : [];
+    const nextArrows = c && Array.isArray(c.arrows)
+      ? c.arrows.filter((a) => validPoint(a?.point) && validDirection(a.direction)).map((a) => ({ point: [...a.point], direction: [...a.direction] }))
+      : [];
     if (c && Number.isFinite(c.opacity)) cueMat.opacity = c.opacity;
-    if (!next.length && !cue.length) return;
+    if (!next.length && !cue.length && !nextArrows.length && !cueArrows.length) return;
     cue = next;
+    cueArrows = nextArrows;
     rebuild();
   }
   /** The cue's opacity, 0..1: a material change, no rebuild. */
   function setCueOpacity(o) {
     if (!Number.isFinite(o) || o === cueMat.opacity) return;
     cueMat.opacity = Math.max(0, Math.min(1, o));
-    if (cue.length) redraw();
+    if (cue.length || cueArrows.length) redraw();
   }
   function clear() {
     limbs = []; hover = null; hoverDot = null; active = null; pins = []; aimGizmo = null;
-    guides = []; cue = [];
+    guides = []; cue = []; cueArrows = [];
     disposeGroup(guideGroup);
     disposeChildren();
     sweepTextures();
@@ -505,8 +560,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     if (attached) { group.parent?.remove(group); guideGroup.parent?.remove(guideGroup); }
     attached = false;
     for (const m of allMats()) m.dispose();
-    unitDot.dispose();
-    unitRing.dispose();
+    for (const g of shared) g.dispose();
     for (const t of textureCache.values()) t.dispose();
     textureCache.clear();
   }
@@ -516,8 +570,19 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     return pinRecs.map((r) => ({ limb: r.limb, at: r.at, point: r.pos.toArray() }));
   }
 
+  /**
+   * The arrows drawn now: `[{ point, direction, look, hovered }]` — look "handle", "hot",
+   * "pin", "pinHot" or "cue"; `hovered` whether it wears the hovered (thick) geometry. For tests.
+   */
+  function arrowState() {
+    return arrows.map((a) => ({
+      point: a.pos.toArray(), direction: [...a.direction], look: a.look,
+      hovered: a.root.children[0].geometry === arrowPairs.shaft.hovered,
+    }));
+  }
+
   /** The guides drawn now: `{ guides: [{ kind, points }] }`. For tests. */
   const guideState = () => ({ guides: guides.map((g) => ({ ...g })) });
 
-  return { setLimbs, setHover, setActive, setPins, setAimGizmo, setGuides, setCue, setCueOpacity, clear, tick, setTheme, group, guideGroup, dispose, pinBadges, guideState };
+  return { setLimbs, setHover, setActive, setPins, setAimGizmo, setGuides, setCue, setCueOpacity, clear, tick, setTheme, group, guideGroup, dispose, pinBadges, guideState, arrowState };
 }

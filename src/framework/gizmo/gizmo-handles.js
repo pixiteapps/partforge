@@ -85,3 +85,75 @@ export function applyHandleAppearance(entry, { color, hovered, idleOpacity = 1 }
     pair.mesh.geometry = hovered ? pair.hovered : pair.normal;
   }
 }
+
+// ---- the arrow ----------------------------------------------------------------------
+// The cutaway's translate arrow, in its own units: the cutaway scales one unit to
+// ARROW_UNIT_PX CSS px (clamped to its plane's size), Pose mode's axis handles to exactly
+// that. Along +Z: a shaft and a cone head. One-sided (the cutaway's) the shaft runs from
+// the origin and the head caps its end; two-sided (Pose mode's axis handle) the arrow is
+// centred on the origin with a head at each end, ARROW_HALF_LENGTH from it to each tip.
+
+/** CSS px per arrow unit. */
+export const ARROW_UNIT_PX = 72;
+/** The shaft's radius, the head's radius and length, and a one-sided arrow's shaft length (arrow units). */
+export const ARROW_SHAFT_RADIUS = 0.025;
+export const ARROW_HEAD_RADIUS = 0.075;
+export const ARROW_HEAD_LENGTH = 0.2;
+export const ARROW_SHAFT_LENGTH = 0.58;
+/** A two-sided arrow's reach each way from its centre to a head's tip (arrow units). */
+export const ARROW_HALF_LENGTH = 0.5;
+
+/**
+ * The arrow's normal/hovered geometry pairs (hoverGeometryPair): `{ shaft, head }`, built
+ * along three's cylinder axis (+Y) — arrowMeshes turns them onto +Z. A two-sided arrow's
+ * shaft runs between its two heads.
+ */
+export function arrowGeometryPairs({ twoSided = false } = {}) {
+  const shaftLength = twoSided ? 2 * (ARROW_HALF_LENGTH - ARROW_HEAD_LENGTH) : ARROW_SHAFT_LENGTH;
+  return {
+    shaft: hoverGeometryPair((k) => new THREE.CylinderGeometry(ARROW_SHAFT_RADIUS * k, ARROW_SHAFT_RADIUS * k, shaftLength, 12)),
+    head: hoverGeometryPair((k) => new THREE.ConeGeometry(ARROW_HEAD_RADIUS * k, ARROW_HEAD_LENGTH, 16)),
+  };
+}
+
+/**
+ * An arrow along +Z from `pairs` (arrowGeometryPairs, built with the same `twoSided`):
+ * `{ root, meshes, geometryPairs }` — `root` the group holding the shaft then the head(s),
+ * `geometryPairs` the hover rule's (applyHandleAppearance) entries. The geometry is the
+ * caller's: the meshes share it, so many arrows can be built from one pair set.
+ */
+export function arrowMeshes(pairs, material, { twoSided = false } = {}) {
+  const root = new THREE.Group();
+  const shaft = new THREE.Mesh(pairs.shaft.normal, material);
+  shaft.rotation.x = Math.PI / 2; // +Y onto +Z
+  const meshes = [shaft];
+  const geometryPairs = [{ mesh: shaft, ...pairs.shaft }];
+  const tipAt = (sign) => {
+    const head = new THREE.Mesh(pairs.head.normal, material);
+    head.rotation.x = sign * Math.PI / 2; // the cone's point (+Y) onto +-Z
+    meshes.push(head);
+    geometryPairs.push({ mesh: head, ...pairs.head });
+    return head;
+  };
+  if (twoSided) {
+    const reach = ARROW_HALF_LENGTH - ARROW_HEAD_LENGTH / 2;
+    tipAt(1).position.z = reach;
+    tipAt(-1).position.z = -reach;
+  } else {
+    shaft.position.z = ARROW_SHAFT_LENGTH / 2;
+    tipAt(1).position.z = ARROW_SHAFT_LENGTH + ARROW_HEAD_LENGTH / 2;
+  }
+  root.add(...meshes);
+  return { root, meshes, geometryPairs };
+}
+
+/**
+ * A two-sided arrow's hit proxy, along +Z and centred on the origin: a cylinder of
+ * `radius` (arrow units) reaching `radius` past each head's tip, so its ends are as
+ * forgiving as its sides.
+ */
+export function arrowHitGeometry(radius) {
+  const geometry = new THREE.CylinderGeometry(radius, radius, 2 * (ARROW_HALF_LENGTH + radius), 10);
+  geometry.rotateX(Math.PI / 2);
+  return geometry;
+}

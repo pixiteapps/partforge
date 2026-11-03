@@ -3476,7 +3476,7 @@ At rest no handle shows. A handle shows:
   bones, as before.
 
 When posing first goes live on a part (the first frame with the part on screen and no
-cached preview), every shown handle's dot appears dimmed for 2 s, then fades out: the
+cached preview), every shown handle's dot (an axis handle's arrow) appears dimmed for 2 s, then fades out: the
 **resting cue** that tells a person the part has handles. It shows once per mount, never
 again on a param change or a view switch. On a touch-only device (`(hover: none)`) there is
 no hover to find a handle by, so the dimmed dots stay until the first drag of any handle;
@@ -3488,11 +3488,17 @@ looping autoplay that nobody stops never ends, so that part gets no cue; hover s
 reveals the handles. A later view's autoplay never brings the cue back. Under reduced
 motion, where autoplay does not play, the cue shows as for a part with no autoplay.
 
-A shown handle is a dot. Hover or drag it and its guide draws: an axis handle a short
-double arrow, a plane handle a small square, a rotary handle a ring about its axis. The
-cursor becomes a grab hand, and for a handle with one ranged param its **path** draws,
+A shown handle is a dot, except an `axis` handle: it draws as a two-sided arrow centred
+on its point and laid along its axis (the cutaway's translate arrow with a head at each
+end, 72 CSS px tip to tip when seen side-on), so it shows by itself which way it slides.
+The arrow is the grab target: a press anywhere on it (10 px either side of its line for a
+mouse, 24 px for a finger) drags it, and hovered or dragged it thickens and lifts toward
+white, as the cutaway's arrow does. Hover or drag any other handle's dot and its guide
+draws: a plane handle a small square, a rotary handle a ring about its axis. The cursor
+becomes a grab hand, and for a non-axis handle with one ranged param its **path** draws,
 the curve its point travels as that param sweeps its range (32 samples; a wrapped param
-one turn). Drag the dot to move it; while it moves, the `readout` params' values show at
+one turn). An axis handle draws neither: its arrow already shows that line. Drag the dot
+(or the arrow) to move it; while it moves, the `readout` params' values show at
 the bottom of the stage, in the same readout pill measure mode's X/Y/Z parts use (floated
 just above `#viewbar`, right edges flush; the view cube steps up to clear it), each named
 by its control's `label` and `unit` ("Width 184 mm  Depth 132 mm"). Every other

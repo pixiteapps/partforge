@@ -1,6 +1,7 @@
 // What Pose mode draws beside a generic handle (spec 2026-11-02 section 5, section 4
-// item 1): the guide it moves on — a double arrow along an axis drag, a square on a
-// plane drag, a ring about a rotary drag's axis — its path (the curve its point travels
+// item 1): the guide it moves on — a square on a plane drag, a ring about a rotary drag's
+// axis (an axis drag needs none: its handle is itself a two-sided arrow, pose-scene.js) —
+// its path (the curve its point travels
 // as a one-parameter handle's param sweeps its range), the drag readout's text, and the
 // values the readout chip writes when it is edited (readoutKeys, chipValues). Every
 // guide is `{ kind, points }` in PART coordinates; the screen-constant ones take the
@@ -13,13 +14,10 @@ import { desugar } from "../panel/legacy.js";
 
 /** Points on a path preview: the param's range, ends included. */
 export const PATH_SAMPLES = 32;
-/** An axis guide's arrows reach this far (CSS px) each way from the point. */
+/** A rotary guide about an axis through the point itself is a ring this far (CSS px) round it. */
 export const AXIS_ARROW_PX = 12;
 /** A plane guide's square, side in CSS px, centred on the point. */
 export const PLANE_SQUARE_PX = 24;
-/** Arrow heads on an axis guide: back along the shaft, and out to each side (CSS px). */
-const HEAD_BACK_PX = 4;
-const HEAD_SIDE_PX = 3;
 /** Points round a rotary guide's ring. */
 const RING_SAMPLES = 48;
 
@@ -38,25 +36,6 @@ function basis(a) {
   const ref = Math.abs(a[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
   const u = unit(sub(ref, scale(a, dot(ref, a))));
   return { u, v: cross(a, u) };
-}
-
-/**
- * An axis drag's double arrow: one polyline (it retraces itself at each head) from
- * AXIS_ARROW_PX behind the point to AXIS_ARROW_PX ahead along `direction`, with a head at
- * each end. `forward` (the camera's look, part coordinates) turns the heads to face it.
- */
-export function axisGuide(point, direction, mmPerPx, forward = null) {
-  const d = unit(direction ?? [0, 0, 0]);
-  if (!isVec(point) || !d || !(mmPerPx > 0)) return null;
-  const reach = AXIS_ARROW_PX * mmPerPx;
-  const a = add(point, scale(d, -reach)), b = add(point, scale(d, reach));
-  const f = isVec(forward) ? unit(cross(d, forward)) : null;
-  const side = f ?? basis(d).u;
-  const back = HEAD_BACK_PX * mmPerPx, out = HEAD_SIDE_PX * mmPerPx;
-  const head = (tip, dir) => [add(add(tip, scale(dir, -back)), scale(side, out)), add(add(tip, scale(dir, -back)), scale(side, -out))];
-  const [a1, a2] = head(a, scale(d, -1));
-  const [b1, b2] = head(b, d);
-  return { kind: "axis", points: [a1, a, a2, a, b, b1, b, b2] };
 }
 
 /** A plane drag's square: PLANE_SQUARE_PX a side, centred on the point, square to `normal`. Closed (the last corner joins the first). */
