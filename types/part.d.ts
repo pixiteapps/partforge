@@ -921,6 +921,18 @@ export interface PartDefinition<P = ResolvedParams, D = Derived> {
    * of `defaults`.
    */
   handles?: Record<string, Handle>;
+  /**
+   * Collision rules: how close counts as touching (`clearance`, mm), which sub-part pairs
+   * may touch (`allow`, entries `"a×b"` naming two sub-parts), and whether Pose mode keeps
+   * pieces solid (`pose`, default true).
+   */
+  collisions?: CollisionsBlock;
+}
+
+export interface CollisionsBlock {
+  clearance?: number;
+  allow?: string[];
+  pose?: boolean;
 }
 
 /**

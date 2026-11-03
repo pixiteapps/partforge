@@ -158,3 +158,13 @@ test("every domain entry's closure obeys the worker's bans", () => {
     }
   }
 });
+
+// Lint reads the collisions declaration, so its rules must stay a leaf: a closure that
+// reached the BVH or the native core would drag the oracle's heaviest modules into lint.
+test("lint does not reach the BVH", () => {
+  const { files } = walk(`${ROOT}/src/framework/lint/rules-collisions.js`, "collisions lint walk");
+  for (const file of files) {
+    expect(/\/oracle\/bvh\.js$|\/core-wasm\.js$/.test(file), `rules-collisions.js reaches ${file}`).toBe(false);
+  }
+  expect(files.has(`${ROOT}/src/framework/lint/finding.js`)).toBe(true);
+});
