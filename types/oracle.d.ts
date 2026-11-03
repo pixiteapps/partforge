@@ -107,3 +107,46 @@ export function samplePreviewAnimation(
   params?: Record<string, ParamValue>,
   options?: { buildReads: (name: string) => ReadonlySet<string> | null },
 ): PreviewAnimationInput | null;
+
+/** What `dragHandle` plays: one handle, a target, and where the drag starts. */
+export interface DragRequest {
+  /** The handle id (a key of the part's `handles`). */
+  handle: string;
+  /** point / goal / angles: where the grab point goes. An axis drag projects it onto its axis line, a plane drag onto its plane. */
+  to?: [number, number, number];
+  /** rotary: degrees about the handle's axis, right-handed; accumulated, so 720 is two turns. */
+  turn?: number;
+  /** goal / angles: the joint (or "tip") grabbed. Default: a goal handle's `at`, an angles limb's tip. */
+  grab?: string;
+  /** Starting param overrides, merged over the part's defaults. */
+  params?: Record<string, ParamValue>;
+  /** The view the drag happens in (default the part's first); it must show the handle. */
+  view?: string;
+  /** Frames from start to target, each solved warm from the last (default 12). */
+  steps?: number;
+}
+
+/** A played drag. Points are part coordinates in mm, rounded to 0.001. */
+export interface DragResult {
+  handle: string;
+  /** The handle's drag kind: "point" | "axis" | "plane" | "rotary" | "goal" | "angles". */
+  drag: string;
+  /** The point grabbed: a joint name or "tip" on a limb, the handle's `at` (or "point") otherwise. */
+  grab: string;
+  /** The grab point at the starting params. */
+  from: [number, number, number];
+  /** Where it was asked to go (axis / plane: projected; rotary: the start point turned by `turn`). */
+  target: [number, number, number];
+  /** The grab point after the release, at the snapped values. */
+  reached: [number, number, number];
+  /** reached's distance from target, mm (rotary: the arc miss at the grab radius). */
+  missMm: number;
+  /** The snapped params whose value changed from the start. Empty: the handle wrote nothing. */
+  values: Record<string, ParamValue>;
+}
+
+/**
+ * Play a handle drag the way Pose mode would, with no pins: derive only, no kernel, no
+ * browser. Never throws — a bad request or a failed solve returns `{ handle, error }`.
+ */
+export function dragHandle(part: PartDefinition, request: DragRequest): DragResult | { handle: string; error: string };

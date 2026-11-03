@@ -162,6 +162,66 @@ const bootKernel = async (part, params = {}) => {
   return bootManifoldKernel(opts);
 };
 
+// `measure --drag`: oracle/drag.js's dragHandle, printed. Exit 1 only on its `error`.
+async function dragCommand(part, view, flags, usage) {
+  const request = { handle: flags.drag, view };
+  if (flags.to !== undefined) {
+    const to = flags.to.split(",").map((s) => Number(s.trim()));
+    if (to.length !== 3 || !to.every(Number.isFinite)) die(`--to takes x,y,z in mm\n${usage}`);
+    request.to = to;
+  }
+  if (flags.turn !== undefined) {
+    const turn = Number(flags.turn);
+    if (flags.turn.trim() === "" || !Number.isFinite(turn)) die(`--turn takes degrees\n${usage}`);
+    request.turn = turn;
+  }
+  if (flags.grab !== undefined) request.grab = flags.grab;
+  let params = {};
+  if (flags.params !== undefined) {
+    try { params = JSON.parse(flags.params); } catch { die(`--params takes a JSON object of param overrides\n${usage}`); }
+    if (params === null || typeof params !== "object" || Array.isArray(params)) die(`--params takes a JSON object of param overrides\n${usage}`);
+    request.params = params;
+  }
+  const { dragHandle } = await import("../src/framework/oracle/drag.js");
+  const result = dragHandle(part, request);
+  if (result.error) result.error = cliDragError(result.error);
+  if (flags.out) {
+    mkdirSync(dirname(resolve(flags.out)), { recursive: true });
+    writeFileSync(flags.out, JSON.stringify(result, null, 2));
+  }
+  if (flags.json) console.log(JSON.stringify(result, null, 2));
+  else printDrag(result, { ...(part.defaults ?? {}), ...params });
+  if (flags.out && !flags.json) console.log(`\nwrote ${flags.out}`);
+  process.exit(result.error ? 1 : 0);
+}
+
+/** dragHandle's error, its request fields (`to`, `turn`, `grab`, `view`) renamed to the flags that set them. */
+function cliDragError(message) {
+  return message
+    .replace(/\bto: \[x, y, z\]/g, "--to x,y,z")
+    .replace(/\bturn: <degrees>/g, "--turn <deg>")
+    .replace(/\btakes to, not turn\b/g, "takes --to, not --turn")
+    .replace(/\btakes turn, not to\b/g, "takes --turn, not --to")
+    .replace(/; grab one of:/g, "; --grab one of:")
+    .replace(/^grab is for\b/, "--grab is for")
+    .replace(/\bpass one as view\b/g, "pass one after the part module");
+}
+
+function printDrag(r, start) {
+  if (r.error) { console.log(`drag ${r.handle}: ✗ ${r.error}`); return; }
+  const vec = (v) => `[${v.join(", ")}]`;
+  console.log(`drag ${r.handle} (${r.drag}, grab ${r.grab})`);
+  console.log(`  from    ${vec(r.from)}`);
+  console.log(`  target  ${vec(r.target)}`);
+  console.log(`  reached ${vec(r.reached)}   miss ${r.missMm} mm`);
+  const keys = Object.keys(r.values);
+  if (!keys.length) console.log("  values  (none changed: this drag writes nothing)");
+  else {
+    console.log("  values");
+    for (const k of keys) console.log(`    ${k}: ${start[k]} → ${r.values[k]}`);
+  }
+}
+
 const commands = {
   async lint(args) {
     const usage = "usage: partforge lint <part-module> [--params <json>] [--json] [--out <file>] [--strict]";
@@ -195,16 +255,33 @@ const commands = {
   },
 
   async measure(args) {
-    const usage = "usage: partforge measure <part-module> [view] [--process <profile>] [--no-verify] [--no-lint] [--json] [--out <file>]";
+    const usage = "usage: partforge measure <part-module> [view] [--process <profile>] [--no-verify] [--no-lint] [--json] [--out <file>]\n" +
+      "       partforge measure <part-module> [view] --drag <handle> (--to x,y,z | --turn <deg>) [--grab <joint>] [--params <json>] [--json] [--out <file>]";
     const { values: flags, positionals: [partPath, view] } = parse(args, {
       process: { type: "string" },
       "no-verify": { type: "boolean" },
       "no-lint": { type: "boolean" },
       json: { type: "boolean" },
       out: { type: "string" },
+      drag: { type: "string" },
+      to: { type: "string" },
+      turn: { type: "string" },
+      grab: { type: "string" },
+      params: { type: "string" },
     }, usage);
+    if (flags.drag === undefined && (flags.to || flags.turn || flags.grab || flags.params)) {
+      die(`--to/--turn/--grab/--params require --drag\n${usage}`);
+    }
+    if (flags.drag !== undefined) {
+      for (const f of ["process", "no-verify"]) {
+        if (flags[f] !== undefined) die(`--${f} does not apply with --drag (a drag runs no measure or verify)\n${usage}`);
+      }
+    }
     try {
       const part = await loadPart(partPath, usage);
+      // --drag: play one handle drag headlessly (derive only) and report it — no lint,
+      // no kernel boot, no verify.
+      if (flags.drag !== undefined) return dragCommand(part, view, flags, usage);
       // Error-tier lint before the kernel boots: a statically broken part fails in
       // milliseconds with a precise message rather than after a WASM boot and a
       // downstream error that doesn't name the cause. Warnings never gate measure.
@@ -528,7 +605,7 @@ function printMeasure(r) {
     console.log(`  handles:`);
     for (const h of r.handles) {
       const at = h.point ? `[${h.point.map((n) => n.toFixed(1)).join(", ")}]` : `unreadable (${h.error})`;
-      console.log(`    ${h.label} (${h.kind}) at ${at} → ${h.params.join(", ")}`);
+      console.log(`    ${h.label} (${h.kind}${h.group ? `, group ${h.group}` : ""}) at ${at} → ${h.params.join(", ")}`);
     }
   }
   if (r.probes) {

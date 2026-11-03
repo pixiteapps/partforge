@@ -3353,9 +3353,12 @@ Optional, on every handle:
   `handle-unknown-view`). Leave it out and the handle shows wherever its source is drawn
   (see "When a handle shows"). Declare it when a view lays the part out differently — a
   print kit, an exploded layout — so the handle never shows there.
-- **`readout`**: the params the drag readout shows (default: `params`).
+- **`readout`**: the params the drag readout shows (default: `params`; for a `"goal"`
+  handle, its `position` params, then its `aim` params).
 - **`lock`**: a parameter name. While it is true, this handle's params are frozen in a
   drag of any handle.
+- **`group`**: a name (a non-empty string; lint: `handle-bad-group`) shared by handles
+  that show one at a time. See "Handle groups" below.
 
 ### How it moves: `drag`
 
@@ -3517,7 +3520,27 @@ a limb (`"goal"` / `"angles"`) shows no chip.
 
 Offer few handles, and use `showOn` so each appears where the user is already looking.
 Ten dots on screen at once is a failure of the part, not of the user: lint warns
-(`handle-crowded`) when more than 5 handles show in one view without a `showOn`.
+(`handle-crowded`) when more than 5 handles show in one view without a `showOn`, a
+group counting once.
+
+### Handle groups
+
+Give handles the same `group` when a part has many of one kind close together — one per
+gear, per drawer pull, per peg on a pegboard — so their dots would crowd each other. Where
+more than one of a group would show under the pointer, only the one nearest the pointer
+shows its dots (or arrow) and can be pressed — nearest by the closest dot or arrow it
+offers, so a finger's knuckle under the pointer keeps that finger even when another
+finger's tip is nearer than its own; the others come back as the pointer moves nearer them. A drag keeps its handle until release. The resting cue shows
+one mark per group, on its first-declared handle that the view shows. Handles with no
+`group` are not affected. A handle that already has its own `showOn` sub-part rarely needs
+a group: its hover already picks it out.
+
+```js
+handles: {
+  peg1: { point: (p) => [p.peg1X, 0, 10], params: ["peg1X"], drag: "axis", direction: [1, 0, 0], group: "pegs" },
+  peg2: { point: (p) => [p.peg2X, 0, 10], params: ["peg2X"], drag: "axis", direction: [1, 0, 0], group: "pegs" },
+},
+```
 
 ### Pins
 
@@ -3544,7 +3567,7 @@ would reach for:
   `ikInfo()` from `partforge/kinematics` (a finger, a leg, an arm), give each chain ONE
   `drag: "angles"` handle (or `drag: "goal"` for an arm's tool point). With it every joint
   and the tip are draggable, the solve moves the chain's joints together, joint rings show
-  limit arcs, and no value readouts show. Twenty-one `rotary` handles on a hand's joints
+  limit arcs, and one readout at the bottom shows the values the drag moves. Twenty-one `rotary` handles on a hand's joints
   give none of that. Per-joint `rotary` / `axis` handles on a limb are for a lone hinge
   with no chain to solve; lint warns (`handle-limb-per-joint`) on two or more. See
   `src/parts/hand.js` and `src/parts/robot-arm.js`.
@@ -3568,15 +3591,16 @@ Lint checks each handle at the defaults by calling `derive` (rule catalog, "Hand
 `handle-no-source`, `handle-unknown-source` (`on` is not a point source, `at` is not one
 of its points, or a `"goal"` / `"angles"` `on` is not a posed limb), `handle-bad-drag`
 (no `drag`, or an unknown one; `"goal"` / `"angles"` on a `point`; an axis, plane or rotary
-handle with no usable direction, normal or axis), `handle-point-throws`,
+handle with no usable direction, normal or axis), `handle-bad-group` (a `group` that is
+not a non-empty string), `handle-point-throws`,
 `handle-unknown-param`, `handle-unknown-view` (a `views` entry that is not a key of
 `views`), the limb rules `handle-param-count`, `handle-aim-toward` and
 `handle-unknown-joint` (all errors), and the warnings `handle-inert`, `handle-axis-moves`
-`handle-crowded` and `handle-limb-per-joint`. `handle-inert` nudges each listed param one step at the defaults, and
+`handle-crowded`, `handle-limb-per-joint` and `handle-joint-range`. `handle-joint-range` warns when an `angles` handle's `joints` entry is driven by a slider whose `min`/`max` reaches past its joint's range (a hinge's `range / scale`, a ball's `±cone`): a drag stops at the joint's own range, so set the slider's range to it. `handle-inert` nudges each listed param one step at the defaults, and
 again with each param at 0%, 25%, 50%, 75% and 100% of its range (the others at their
 defaults), and warns where no nudge moves the point 0.01 mm, naming the value: "inert at
 drawerOpen = 0". `handle-crowded` warns when more than 5 handles without a `showOn` show in
-one view (the handles that view shows, by the rule in "When a handle shows"). `wrap-needs-range` errors on
+one view (the handles that view shows, by the rule in "When a handle shows"; a group counts once). `wrap-needs-range` errors on
 `wrap: true` without a finite `min < max`.
 
 `npx partforge measure` prints each handle shown in the view with its label, drag kind,
@@ -3601,16 +3625,58 @@ handles: [
     direction: [0, 0, 1],            // axis: its direction; plane: its normal; rotary: its axis
     origin: [x, y, z],               // rotary only: a point on the axis
     locked: false },                 // true while the handle's `lock` param is true
+                                     // (+ group: "pegs", only when the handle sets one)
 ]
 ```
 
 A handle whose point throws at those params is listed with `point: null` and `error`; the
 report never fails because of a handle. `handles` is absent (not `[]`) on a part with no
-`handles`. An agent never drags: it sets the params a handle lists, and reads the point
-back. To check where handles sit, read `measure().handles` (inspect:
+`handles`. To pose a part, an agent sets the params a handle lists and reads the point
+back; to check that a handle drags the right way, it plays the drag ("Testing a drag"
+below). To check where handles sit, read `measure().handles` (inspect:
 `report.measure.handles`): it gives each handle's point and, for a rotary one, its origin
 and direction. Do not return `handleInfo()` from a probe for this. A host may cut a deeply
 nested probe value: partforge-cloud drops what nests past its depth cap.
+
+### Testing a drag
+
+`measure --drag` plays one drag the way Pose mode would, with no pins, and reports where it
+lands. It reads `derive` only: no kernel boots, and nothing is measured or verified.
+
+```bash
+npx partforge measure src/parts/gearbox.js --drag gear1 --turn 90          # rotary: degrees, right-handed about its axis
+npx partforge measure src/parts/drawer-box.js --drag drawer1 --to 0,-110,124 # point / axis / plane / goal / angles
+npx partforge measure src/parts/robot-arm.js --drag tool --grab elbow --to 100,30,230
+```
+
+```
+drag gear1 (rotary, grab gear1.rim)
+  from    [20, 0, 11]
+  target  [0, 20, 11]
+  reached [0, 20, 11]   miss 0 mm
+  values
+    driveAngle: 0 → 90
+```
+
+An axis drag projects `--to` onto its axis line, and a plane drag onto its plane, so you can
+pass a rough point. `--grab` (goal and angles handles) names the joint to drag, or `tip`.
+`--params <json>` sets the starting params, `[view]` the view (it must show the handle; when
+the default view does not, the error names the views that do), and `--json` / `--out` give
+the result as JSON. `--process` and `--no-verify` do not apply and are refused. A rotary
+drag's turn is tracked whole turns and all: `--turn 720` on a slider that stops at 360
+reports a miss of one turn's arc. It exits 1 only when the request or the solve fails
+(`error`). In code: `dragHandle(part, { handle, to | turn, grab, params, view })`
+from `partforge/oracle` or `partforge/testing`.
+
+What to look for:
+
+- **The sign.** A `--turn 90` that writes `-90` turns the wrong way. Turning a driven gear
+  writes the input at the train's ratio, with the sign flipped for each mesh.
+- **The reach.** `miss` is how far the grab point ended from the target (rotary: the arc at
+  its radius). A large miss is a range end, or a target the handle cannot reach.
+- **Which params move.** Only the params you expect should be in `values`.
+- **A handle that writes nothing.** `(none changed)` means that the drag does not move the
+  handle's point, so the user cannot drag it.
 
 ### For hosts: `runtime.pose`
 
@@ -4352,7 +4418,9 @@ without touching (`near-misses:` in the output; reported for judgment, never an
 exit-code gate by itself). It exits non-zero
 if any sub-part isn't watertight or any parts interpenetrate — so it doubles as a
 CI/agent gate. Add `--json` to also dump the report as JSON on stdout, or
-`--out report.json` to write it to a file (nothing is written otherwise). (Manifold output is
+`--out report.json` to write it to a file (nothing is written otherwise).
+`--drag <handle>` (with `--to x,y,z` or `--turn <deg>`) plays a handle drag instead of
+measuring: see "Testing a drag" under Handles. (Manifold output is
 manifold by construction, so `watertight` is mainly a build-sanity check for
 empty/degenerate results; `holes` is the informative topology number.)
 
@@ -4465,21 +4533,21 @@ previously didn't; that's the fix working as intended, not a regression.
 **Definition shape** — `missing-meta-title`, `missing-defaults`, `no-buildable-parts`,
 `missing-views`, `part-view-unknown`, `invalid-probes` (all errors); `view-unused`,
 `default-view-ambiguous` (warnings). **Handles** — `handle-no-source`,
-`handle-unknown-source`, `handle-bad-drag`, `handle-unknown-param`, `handle-param-count`,
+`handle-unknown-source`, `handle-bad-drag`, `handle-bad-group`, `handle-unknown-param`, `handle-param-count`,
 `handle-aim-toward`, `handle-unknown-joint`, `handle-point-throws`, `handle-unknown-view` (all errors),
-`handle-inert`, `handle-axis-moves`, `handle-crowded`, `handle-limb-per-joint` (warnings); `wrap-needs-range` (error): a declared
+`handle-inert`, `handle-axis-moves`, `handle-crowded`, `handle-limb-per-joint`, `handle-joint-range` (warnings); `wrap-needs-range` (error): a declared
 `handles` entry with neither or both of `on`/`point`; an `on` that is not a point source
 in `derive`'s result, or an `at` it lacks, or a `"goal"`/`"angles"` handle whose `on` is
 not a posed limb; a handle with no `drag` or an unknown one,
 `"goal"`/`"angles"` on a `point`, or axis/plane/rotary without a usable
-direction/normal/axis; a parameter missing from `defaults` (or not numeric; a `lock` may
+direction/normal/axis; a `group` that is not a non-empty string; a parameter missing from `defaults` (or not numeric; a `lock` may
 also default to a boolean); a wrong number of position/aim parameters, an `aim` without a
 valid rest `toward`, or a joint the limb lacks; a point or axis function that throws at
 the defaults; a `views` list that is empty, not strings, or names a view `views` lacks.
 `handle-inert` warns when nudging each listed param by one step moves the point under
 0.01 mm, at the defaults or with any listed param at 0/25/50/75/100% of its range (it names
 the value); `handle-axis-moves` when a rotary axis shifts (0.01 mm / 0.1 deg) as the handle's
-own params change; `handle-crowded` when more than 5 handles without `showOn` show in one view; `handle-limb-per-joint` when two or more geometric handles sit on one posed limb (use one `"angles"` handle). `invalid-probes` fires when a declared
+own params change; `handle-crowded` when more than 5 handles without `showOn` show in one view (a group counting once); `handle-limb-per-joint` when two or more geometric handles sit on one posed limb (use one `"angles"` handle). `invalid-probes` fires when a declared
 `probes` block isn't an object of functions (see "Probes" above).
 
 **Parameter schema** — `features-requires-sliders`, `features-requires-on`,
