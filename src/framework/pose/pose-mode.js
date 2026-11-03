@@ -90,7 +90,7 @@ import { beginRotateDrag, rotateDragAngle } from "../gizmo/gizmo-rotate.js";
 import { ARROW_HALF_LENGTH, ARROW_UNIT_PX, arrowHitGeometry, hitMaterial } from "../gizmo/gizmo-handles.js";
 import { pickGizmoHandle } from "../gizmo/gizmo-pick.js";
 import { createPoseSession, pinId, pinTarget } from "./pose-session.js";
-import { dragPlaneNormal, dragPlanePoint, hitHandle } from "./pose-geom.js";
+import { dragPlaneNormal, dragPlanePoint, hitHandle, reachMissed } from "./pose-geom.js";
 import { limbInfo, jointRings, goalGrabJoints } from "./param-solve.js";
 import { handleKind, handleAt, handleRecord } from "./handle-source.js";
 import { startDrag as startKindDrag, dragTarget } from "./drag-kinds.js";
@@ -120,8 +120,6 @@ export const CUE_FADE_MS = 400;
 /** A hinge this near (degrees) its range end reads as clamped. */
 const CLAMP_EPS_DEG = 1e-3;
 const AIM_NAMES = ["pitch", "yaw", "roll"];
-// A limb drag reads out "Out of reach" once its grabbed point misses the target by more than this, mm.
-const REACH_MIN_MM = 0.05;
 /** Guides are re-drawn when the scale at their point moves this much (a zoom). */
 const GUIDE_RESCALE = 0.02;
 const isGeneric = (h) => handleKind(h) === "on" || handleKind(h) === "point";
@@ -1211,22 +1209,26 @@ export function createPoseMode(viewer, {
     if (!s) return;
     const grabbed = hit.kind === "dot" ? s.info.points[hit.at] : null;
     const residual = target && grabbed ? len(sub(grabbed, target)) : undefined;
+    // one test for the scene's miss line and the readout's "Out of reach" (pose-geom)
+    const missed = reachMissed(residual, target ? mmPerPx(target) : NaN);
     scene?.setActive({
       limb: s.info.name,
       grab: hit.kind === "dot" ? hit.at : goalAt(s.handle),
       clamped: clampedFlags(s.info),
       target: target ?? undefined,
       residual,
+      missed,
     });
-    limbReadout(hit, residual);
+    limbReadout(hit, missed ? residual : undefined);
     viewer.requestRender?.();
   }
 
   /**
    * A limb drag's readout (angles or goal handle): a dot drag shows the handle's `readout`,
    * else its params (an angles handle's list; a goal's position, then aim); a joint ring
-   * its own parameter; an aim ring that aim parameter. Out of reach by more than
-   * REACH_MIN_MM, one "Out of reach" item last. The scene draws no text.
+   * its own parameter; an aim ring that aim parameter. `residual` (mm) is given only when
+   * the drag misses (pose-geom's reachMissed, the scene's `missed`): one "Out of reach"
+   * item last. The scene draws no text.
    */
   function limbReadout(hit, residual) {
     const handle = handles[hit.handleId];
@@ -1235,7 +1237,7 @@ export function createPoseMode(viewer, {
       : hit.kind === "ring" ? { readout: handle.params?.aim?.[AIM_NAMES.indexOf(hit.name)] }
       : handle;
     const items = readoutItems(part, { ...part.defaults, ...getParams() }, source);
-    if (Number.isFinite(residual) && residual > REACH_MIN_MM) {
+    if (Number.isFinite(residual)) {
       items.push({ key: "reach", label: "Out of reach", unit: "mm", value: residual, text: residual.toFixed(1) });
     }
     setReadout({ handleId: hit.handleId, text: items.map((i) => `${i.key} ${i.text}`).join(" · "), items });

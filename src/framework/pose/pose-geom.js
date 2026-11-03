@@ -104,3 +104,21 @@ export function limitArc(origin, axis, refDir, [lo, hi], radius, segments = 32) 
   }
   return out;
 }
+
+/** A limb drag's miss counts once the grabbed point is at least this far off its target, mm... */
+export const REACH_MIN_MM = 0.5;
+/** ...and at least this many CSS px on screen, so an ordinary lag behind the pointer never reads as one. */
+export const REACH_MIN_PX = 4;
+
+/**
+ * Whether a limb drag's grabbed point misses its target (`residual`, mm) by enough to say
+ * so: more than REACH_MIN_MM and more than REACH_MIN_PX on screen (`mmPerPx` at the
+ * target). The ONE test for both the readout's "Out of reach" item and the scene's hollow
+ * target and dashed miss line (pose-mode passes it to the scene as `missed`), so the two
+ * appear and disappear together.
+ */
+export function reachMissed(residual, mmPerPx) {
+  if (!Number.isFinite(residual)) return false;
+  const px = Number.isFinite(mmPerPx) && mmPerPx > 0 ? REACH_MIN_PX * mmPerPx : 0;
+  return residual > Math.max(REACH_MIN_MM, px);
+}

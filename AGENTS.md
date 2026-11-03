@@ -725,7 +725,8 @@ the installed package, so let the publish finish before bumping the dep there.
   sits at that clearance + 8px). A limb drag reads its handle's `readout`, else its params (a
   goal's position then aim; handle-guides' `readoutKeys`), a ring only its own parameter, and
   an out-of-reach drag adds "Out of reach" in mm last; the scene draws no text (the miss is
-  only the hollow target and dashed line). On release
+  only the hollow target and dashed line). Both show exactly when pose-geom's `reachMissed`
+  says so — a miss past 0.5 mm and 4 px on screen — so a drag lagging the pointer shows neither. On release
   `readout-chip.js` (DOM, attached by mount like `pose-controls.js`) shows a generic
   handle's readout by it for `CHIP_MS` — click to type, written through mount's
   `writeChipValues` (the slider path, one commit; `handle-guides`'s `chipValues` snaps, clamps

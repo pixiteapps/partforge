@@ -81,7 +81,6 @@ export const PIN_LIFT_PX = 10;
 export const PIN_BASE_PX = 3;
 export const DASH_PX = 5;
 export const GAP_PX = 4;
-const RESIDUAL_MIN = 0.01;
 
 function polyline(points, closed = false) {
   const out = [];
@@ -345,9 +344,11 @@ export function createPoseScene(viewer) {
       addDot(pinned ? "pin" : isGrab ? "strong" : "handle", tip, isGrab ? TIP_DOT_ACTIVE_PX : TIP_DOT_PX);
       if (isGrab) addBillboard(pinned ? "pin" : "strong", tip, GRAB_HALO_PX);
     }
-    // reach miss: hollow target + dashed line (how far it misses: the bottom readout)
+    // reach miss: hollow target + dashed line (how far it misses: the bottom readout). The
+    // caller decides `missed` (pose-geom's reachMissed), the same test the readout's
+    // "Out of reach" uses, so the two show together.
     const act = active && limbs.find((l) => l.name === active.limb);
-    if (act && active.target && typeof active.residual === "number" && active.residual > RESIDUAL_MIN) {
+    if (act && active.target && active.missed === true) {
       // from the grabbed point (a joint in angles mode, a goal's `at`), the tip if it has none
       const from = Array.isArray(act.points[active.grab]) ? act.points[active.grab] : act.points.tip;
       const a = vec(from), b = vec(active.target);

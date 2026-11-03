@@ -47,7 +47,7 @@ describe("createPoseScene", () => {
       scene.tick();
       scene.setHover("arm");
       expect(scene.group.children.length).toBeGreaterThan(0);
-      scene.setActive({ limb: "arm", grab: "elbow", clamped: [false, true], target: [30, 5, 0], residual: 10 });
+      scene.setActive({ limb: "arm", grab: "elbow", clamped: [false, true], target: [30, 5, 0], residual: 10, missed: true });
       scene.setPins([{ limb: "arm", at: "tip" }, { limb: "arm", at: "elbow" }]);
       scene.setAimGizmo({ limb: "arm", at: "tip" });
       scene.tick();
@@ -120,13 +120,13 @@ describe("createPoseScene", () => {
     scene.dispose();
   });
 
-  it("draws no reach-miss line at or below the residual threshold", () => {
+  it("draws the reach-miss line only when told the drag missed (pose-geom's reachMissed, decided by pose-mode)", () => {
     const viewer = fakeViewer();
     const scene = createPoseScene(viewer);
     scene.setLimbs([INFO]);
-    scene.setActive({ limb: "arm", grab: "tip", clamped: [false, false], target: [20, 5, 0], residual: 0.005 });
+    scene.setActive({ limb: "arm", grab: "tip", clamped: [false, false], target: [20, 5, 0], residual: 4, missed: false });
     const small = scene.group.children.length;
-    scene.setActive({ limb: "arm", grab: "tip", clamped: [false, false], target: [30, 5, 0], residual: 4 });
+    scene.setActive({ limb: "arm", grab: "tip", clamped: [false, false], target: [30, 5, 0], residual: 4, missed: true });
     expect(scene.group.children.length).toBeGreaterThan(small);
     scene.dispose();
   });
@@ -135,7 +135,7 @@ describe("createPoseScene", () => {
     const viewer = fakeViewer();
     const scene = createPoseScene(viewer);
     scene.setLimbs([INFO]);
-    scene.setActive({ limb: "arm", grab: "tip", clamped: [false, false], target: [30, 5, 0], residual: 10 });
+    scene.setActive({ limb: "arm", grab: "tip", clamped: [false, false], target: [30, 5, 0], residual: 10, missed: true });
     scene.tick();
     const kids = scene.group.children;
     expect(kids.some((c) => c.material?.dashed)).toBe(true);
@@ -345,9 +345,9 @@ describe("the reach-miss line", () => {
       const a = line.geometry.attributes.instanceStart;
       return [a.getX(0), a.getY(0), a.getZ(0)];
     };
-    scene.setActive({ limb: "arm", grab: "elbow", clamped: [], target: [10, 30, 0], residual: 30 });
+    scene.setActive({ limb: "arm", grab: "elbow", clamped: [], target: [10, 30, 0], residual: 30, missed: true });
     expect(start()).toEqual([10, 0, 0]);
-    scene.setActive({ limb: "arm", grab: "nope", clamped: [], target: [10, 30, 0], residual: 30 });
+    scene.setActive({ limb: "arm", grab: "nope", clamped: [], target: [10, 30, 0], residual: 30, missed: true });
     expect(start()).toEqual([20, 5, 0]);
     scene.dispose();
   });

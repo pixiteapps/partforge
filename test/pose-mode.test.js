@@ -10,7 +10,7 @@ import { GIZMO_PALETTE, ARROW_HALF_LENGTH, ARROW_UNIT_PX } from "../src/framewor
 import { worldPerPx } from "../src/framework/measure/dim3-scene.js";
 import { limbInfo } from "../src/framework/pose/param-solve.js";
 import { aimFromAngles } from "../src/framework/domains/kinematics/goals.js";
-import { dragPlaneNormal } from "../src/framework/pose/pose-geom.js";
+import { dragPlaneNormal, reachMissed, REACH_MIN_MM, REACH_MIN_PX } from "../src/framework/pose/pose-geom.js";
 import hand from "./fixtures/ik-hand-fixture.js";
 
 const W = 400, H = 400;
@@ -156,9 +156,15 @@ describe("createPoseMode", () => {
     expect(far.map((i) => i.key)).toEqual([...hand.handles.a.params, "reach"]);
     const reach = far.at(-1);
     expect(reach).toMatchObject({ key: "reach", label: "Out of reach", unit: "mm" });
-    expect(reach.value).toBeGreaterThan(0.05);
     expect(reach.text).toBe(reach.value.toFixed(1));
-    expect(t.scene.calls.setActive.filter(Boolean).at(-1).residual).toBe(reach.value);
+    const act = t.scene.calls.setActive.filter(Boolean).at(-1);
+    expect(act.residual).toBe(reach.value);
+    expect(act.missed).toBe(true); // the scene draws the miss line exactly when the readout says so
+    // every frame: "Out of reach" shows exactly when the scene is told to draw the miss
+    const actives = t.scene.calls.setActive.filter((a) => a?.target);
+    const reads = t.readouts.filter(Boolean);
+    expect(actives.length).toBe(reads.length);
+    actives.forEach((a, i) => expect(reads[i].items.some((x) => x.key === "reach")).toBe(a.missed === true));
     t.fire("pointerup", s.x, s.y - 338);
     expect(t.readouts.at(-1)).toBeNull();
     expect(t.mode.getReadout()).toBeNull();
@@ -1068,6 +1074,29 @@ describe("generic handles: rotary and touch", () => {
     expect(t.params.driveAngle).not.toBe(0);
     expect(t.scene.calls.setHover.at(-1)).toEqual([null, null]);
     expect(t.scene.calls.setGuides.at(-1)).toEqual([]);
+  });
+});
+
+describe("reachMissed", () => {
+  it("a miss counts past REACH_MIN_MM and REACH_MIN_PX on screen, whichever is larger", () => {
+    expect(reachMissed(0.3, 0.01)).toBe(false);            // a lag of a fraction of a mm
+    expect(reachMissed(REACH_MIN_MM + 0.1, 0.01)).toBe(true);
+    expect(reachMissed(3, 1)).toBe(false);                  // 3 mm is 3 px zoomed out
+    expect(reachMissed(REACH_MIN_PX + 1, 1)).toBe(true);
+    expect(reachMissed(NaN, 1)).toBe(false);
+    expect(reachMissed(undefined, 1)).toBe(false);
+  });
+
+  it("a drag lagging the pointer by a little shows no miss, in the readout or the scene", () => {
+    const t = setup();
+    t.mode.setEnabled(true);
+    const s = t.tipScreen("a");
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 3; i++) t.fire("pointermove", s.x, s.y - i * 6);
+    for (const a of t.scene.calls.setActive.filter((x) => x?.target)) {
+      if (a.residual <= REACH_MIN_MM) expect(a.missed).toBe(false);
+    }
+    expect(t.readouts.at(-1).items.some((x) => x.key === "reach")).toBe(t.scene.calls.setActive.at(-1).missed === true);
   });
 });
 
