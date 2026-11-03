@@ -615,6 +615,13 @@ and the `inspect` entry are in `docs/AUTHORING-PARTS.md`, "Handles". Read that f
 This section covers what is particular to a posed limb: the `"goal"` and `"angles"`
 drags, their aim gizmos and joint rings, and how pins act on a limb.
 
+Give each finger, leg or chain ONE `"angles"` handle (or one `"goal"` handle for an
+arm's tool point), not a `rotary` handle per joint. With it every joint and the tip are
+draggable, the solve moves the chain's joints together, joint rings show limit arcs, and
+no value readouts show. Per-joint `rotary` / `axis` handles on a limb are for a lone
+hinge with no chain to solve (lint: `handle-limb-per-joint`). See `src/parts/hand.js`
+and `src/parts/robot-arm.js`.
+
 Handles let a person pose the part with the mouse. A handle on a limb is a draggable
 point on a posed limb. A part declares them in a top-level `handles` object, in the
 same form as every other handle: `on` names the limb, and `drag` says how it moves

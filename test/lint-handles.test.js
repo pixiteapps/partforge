@@ -313,3 +313,26 @@ test("handle-bad-drag: every handle sets a drag (the runtime default stays \"poi
   expect(rulesOf(genFindings({ a: { on: "gear", at: "g.rim", params: ["ang"] } }))).toEqual(["handle-bad-drag"]);
   expect(genFindings({ a: { point: (p) => [p.w, p.r, 0], params: ["w"], drag: "point" } })).toEqual([]);
 });
+
+test("handle-limb-per-joint (warning): two or more geometric handles on one posed limb", () => {
+  const rot = (over = {}) => ({ on: "finger", at: "pip", drag: "rotary", axis: { origin: [0, 0, 0], direction: [0, 1, 0] }, params: ["pip"], ...over });
+  const only = (hs) => handleFindings(hs).filter((f) => f.rule === "handle-limb-per-joint");
+  const fs = only({ a: rot(), b: rot({ at: "mcp", params: ["mcp"] }) });
+  expect(rulesOf(fs)).toEqual(["handle-limb-per-joint"]);
+  expect(fs[0].message).toMatch(/finger/);
+  expect(fs[0].message).toMatch(/"a"/);
+  expect(fs[0].message).toMatch(/"b"/);
+  expect(fs[0].hint).toMatch(/angles/);
+  expect(rulesOf(handleFindings({ a: rot() }))).not.toContain("handle-limb-per-joint");
+  const angles = { on: "finger", drag: "angles", params: ["mcp", "pip"] };
+  expect(rulesOf(handleFindings({ a: angles, b: rot() }))).not.toContain("handle-limb-per-joint");
+  expect(() => lintPart({ ...partWith({ a: rot(), b: null }), derive: () => { throw new Error("x"); } })).not.toThrow();
+});
+
+test("handle-limb-per-joint: the limb reference parts lint clean", async () => {
+  for (const f of ["hand", "robot-arm"]) {
+    const part = (await import(`../src/parts/${f}.js`)).default;
+    const r = lintPart(part);
+    expect([...r.errors, ...r.warnings].filter((x) => x.rule === "handle-limb-per-joint")).toEqual([]);
+  }
+});

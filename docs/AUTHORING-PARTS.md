@@ -3364,9 +3364,9 @@ Optional, on every handle:
 | `"point"` | freely, on a plane fixed at drag start that faces you | — | a point with two or three free params whose path you cannot name |
 | `"axis"` | along a line through the point | `direction` | a slider, a drawer, a lift, a length along one edge |
 | `"plane"` | on a plane through the point | `normal` | two params that move a point across a face (width and depth from a top corner) |
-| `"rotary"` | round an axis | `axis: { origin, direction }`, or the source's `axes` (an `axis` drag on an `on` source with no `direction` takes `axes[<prefix of at>].direction` too, through the handle's point) | a gear, a lid, a knob, a crank — anything that turns |
+| `"rotary"` | round an axis | `axis: { origin, direction }`, or the source's `axes` (an `axis` drag on an `on` source with no `direction` takes `axes[<prefix of at>].direction` too, through the handle's point) | a gear, a lid, a knob, a crank — a mechanism's turning member (not a posed limb's joints: use `"angles"`) |
 | `"goal"` | anywhere; a posed limb solves to reach it | `params: { position, aim? }`, `seed`, `toward` | a robot arm's tool point |
-| `"angles"` | where the limb's joint params can put it | `joints`, `lock` | fingers and legs |
+| `"angles"` | where the limb's joint params can put it | `joints`, `lock` | fingers and legs: ONE handle per chain, never one `rotary` per joint |
 
 - Every handle sets `drag`: lint refuses one without it (`handle-bad-drag`). Pose mode
   still reads a missing `drag` as `"point"`, so a part that was never linted keeps working.
@@ -3528,10 +3528,18 @@ held it, the chip by the handle says "Held by a pin — Release pins to move it"
 Add a handle when grabbing a thing is clearer than finding its slider. Ask what the user
 would reach for:
 
-- **Prefer motion handles.** A part with a joint, a hinge, a slide or a train gets a handle
+- **Prefer motion handles.** A mechanism (a hinge, a slide, a train) gets a handle
   on each member a person would grab (every gear, the lid's front edge, the drawer pull,
   the crank knob). These are cheap, live and satisfying. Their params must never change
   the export pose (see "Motion and shape").
+- **A posed limb gets one handle per chain, not one per joint.** For a value with
+  `ikInfo()` from `partforge/kinematics` (a finger, a leg, an arm), give each chain ONE
+  `drag: "angles"` handle (or `drag: "goal"` for an arm's tool point). With it every joint
+  and the tip are draggable, the solve moves the chain's joints together, joint rings show
+  limit arcs, and no value readouts show. Twenty-one `rotary` handles on a hand's joints
+  give none of that. Per-joint `rotary` / `axis` handles on a limb are for a lone hinge
+  with no chain to solve; lint warns (`handle-limb-per-joint`) on two or more. See
+  `src/parts/hand.js` and `src/parts/robot-arm.js`.
 - **A shape handle only for a dimension a person would naturally drag** (a box's
   footprint from its corner, a shelf's height), and give its params nice-number steps
   (1 mm, not 0.1). Put the point on the feature the param visibly moves, so the dot stays
@@ -3544,7 +3552,7 @@ would reach for:
   the panel and on the handle. Make it a fraction of that travel instead: `drawer-box.js`
   stores each opening as a percentage of `depth - 10`.
 - Put the point where the motion is largest (a gear's rim, not its centre; the far end
-  of a lid), and give a turning member `drag: "rotary"`, not `"point"`.
+  of a lid), and give a turning member of a mechanism (a gear, a lid) `drag: "rotary"`, not `"point"`.
 
 ### What lint and inspect report
 
@@ -3556,7 +3564,7 @@ handle with no usable direction, normal or axis), `handle-point-throws`,
 `handle-unknown-param`, `handle-unknown-view` (a `views` entry that is not a key of
 `views`), the limb rules `handle-param-count`, `handle-aim-toward` and
 `handle-unknown-joint` (all errors), and the warnings `handle-inert`, `handle-axis-moves`
-and `handle-crowded`. `handle-inert` nudges each listed param one step at the defaults, and
+`handle-crowded` and `handle-limb-per-joint`. `handle-inert` nudges each listed param one step at the defaults, and
 again with each param at 0%, 25%, 50%, 75% and 100% of its range (the others at their
 defaults), and warns where no nudge moves the point 0.01 mm, naming the value: "inert at
 drawerOpen = 0". `handle-crowded` warns when more than 5 handles without a `showOn` show in
@@ -4450,7 +4458,7 @@ previously didn't; that's the fix working as intended, not a regression.
 `default-view-ambiguous` (warnings). **Handles** — `handle-no-source`,
 `handle-unknown-source`, `handle-bad-drag`, `handle-unknown-param`, `handle-param-count`,
 `handle-aim-toward`, `handle-unknown-joint`, `handle-point-throws`, `handle-unknown-view` (all errors),
-`handle-inert`, `handle-axis-moves`, `handle-crowded` (warnings); `wrap-needs-range` (error): a declared
+`handle-inert`, `handle-axis-moves`, `handle-crowded`, `handle-limb-per-joint` (warnings); `wrap-needs-range` (error): a declared
 `handles` entry with neither or both of `on`/`point`; an `on` that is not a point source
 in `derive`'s result, or an `at` it lacks, or a `"goal"`/`"angles"` handle whose `on` is
 not a posed limb; a handle with no `drag` or an unknown one,
@@ -4462,7 +4470,7 @@ the defaults; a `views` list that is empty, not strings, or names a view `views`
 `handle-inert` warns when nudging each listed param by one step moves the point under
 0.01 mm, at the defaults or with any listed param at 0/25/50/75/100% of its range (it names
 the value); `handle-axis-moves` when a rotary axis shifts (0.01 mm / 0.1 deg) as the handle's
-own params change; `handle-crowded` when more than 5 handles without `showOn` show in one view. `invalid-probes` fires when a declared
+own params change; `handle-crowded` when more than 5 handles without `showOn` show in one view; `handle-limb-per-joint` when two or more geometric handles sit on one posed limb (use one `"angles"` handle). `invalid-probes` fires when a declared
 `probes` block isn't an object of functions (see "Probes" above).
 
 **Parameter schema** — `features-requires-sliders`, `features-requires-on`,

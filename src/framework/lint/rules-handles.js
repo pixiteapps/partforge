@@ -502,4 +502,23 @@ export const HANDLE_RULES = [
       return out;
     },
   },
+  {
+    id: "handle-limb-per-joint",
+    run: ({ part, d, deriveError }) => {
+      if (deriveError || !d) return [];
+      const byLimb = new Map();
+      for (const [name, h] of genericEntries(part)) {
+        if (!GEOM_DRAGS.includes(h.drag) || typeof h.on !== "string" || !isLimb(d, h.on)) continue;
+        if (!byLimb.has(h.on)) byLimb.set(h.on, []);
+        byLimb.get(h.on).push(name);
+      }
+      const out = [];
+      for (const [limb, names] of byLimb) {
+        if (names.length < 2) continue;
+        out.push(warn("handle-limb-per-joint", `handles ${names.map((n) => JSON.stringify(n)).join(", ")} each drag one joint of the posed limb "${limb}" with a geometric drag`,
+          `Give "${limb}" one \`drag: "angles"\` handle (or \`drag: "goal"\` for a tool point) instead: every joint and the tip become draggable, the solve moves the chain together, joint rings show limit arcs and no value readouts show. Per-joint rotary / axis handles suit a lone hinge with no chain to solve.`, "handles"));
+      }
+      return out;
+    },
+  },
 ];
