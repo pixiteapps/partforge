@@ -40,6 +40,7 @@
 
 import { core, poisonCore } from "../core/core.js";
 import { buildCoreBVH } from "../core/bvh-core.js";
+import { invertRigid, mulMat4 } from "../geometry/pose.js";
 
 // The build (buildBVH): a binned surface-area heuristic. Each node is split
 // where the two children's box areas, weighted by their triangle counts, sum
@@ -287,6 +288,61 @@ function rayTri(ox, oy, oz, dx, dy, dz, V, base, tMin) {
   if (v < 0 || u + v > 1) return Infinity;
   const t = (e2x * qx + e2y * qy + e2z * qz) * inv;
   return t > tMin ? t : Infinity;
+}
+
+// AABB of node `nb` of B under the column-major rigid R, into out[o..o+5] —
+// the box of its 8 corners, a (looser, so still conservative) bound on the
+// moved subtree.
+function boxUnder(B, nb, R, out, o) {
+  let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+  for (let c = 0; c < 8; c++) {
+    const x = B[nb + (c & 1 ? 3 : 0)], y = B[nb + (c & 2 ? 4 : 1)], z = B[nb + (c & 4 ? 5 : 2)];
+    const px = R[0] * x + R[4] * y + R[8] * z + R[12];
+    const py = R[1] * x + R[5] * y + R[9] * z + R[13];
+    const pz = R[2] * x + R[6] * y + R[10] * z + R[14];
+    if (px < x0) x0 = px; if (px > x1) x1 = px;
+    if (py < y0) y0 = py; if (py > y1) y1 = py;
+    if (pz < z0) z0 = pz; if (pz > z1) z1 = pz;
+  }
+  out[o] = x0; out[o + 1] = y0; out[o + 2] = z0; out[o + 3] = x1; out[o + 4] = y1; out[o + 5] = z1;
+}
+
+// Directions insideOf casts along, in order: +X, then fixed oblique ones for a
+// ray that grazes an edge or vertex of the surface (which counts a crossing
+// twice, or not at all).
+const INSIDE_DIRS = [[1, 0, 0], [0.5773, 0.3217, 0.7489], [-0.2676, 0.8231, -0.5005], [0.1393, -0.4421, 0.8860]];
+const GRAZE_EPS = 1e-7;
+
+// Crossings of the ray from p along dir through `other` (any index with raycast),
+// or -1 if two consecutive hits are within GRAZE_EPS (the ray runs along an edge).
+function crossings(other, p, dir) {
+  let n = 0, tMin = 1e-6, skipTri = -1;
+  for (;;) {
+    const hit = other.raycast(p, dir, { tMin, skipTri });
+    if (!hit) return n;
+    if (n > 0 && hit.t - tMin < GRAZE_EPS + 1e-9) return -1;
+    n++;
+    // look back a hair so a neighbour sharing this hit's edge is found (and flagged)
+    tMin = hit.t - 1e-9; skipTri = hit.tri;
+    if (n > 1e6) return -1;
+  }
+}
+
+// Is the shared-frame point `w` inside `other` placed by mOther? Used by insideOf on
+// both index kinds (the core index forwards to its JS twin).
+export function insideShared(other, w, mOther) {
+  const inv = invertRigid(mOther);
+  const p = [
+    inv[0] * w[0] + inv[4] * w[1] + inv[8] * w[2] + inv[12],
+    inv[1] * w[0] + inv[5] * w[1] + inv[9] * w[2] + inv[13],
+    inv[2] * w[0] + inv[6] * w[1] + inv[10] * w[2] + inv[14],
+  ];
+  let n = -1;
+  for (const dir of INSIDE_DIRS) {
+    n = crossings(other, p, dir);
+    if (n >= 0) break;
+  }
+  return n > 0 && n % 2 === 1;
 }
 
 // The BVH for `mesh`, memoized in a CALLER-OWNED Map keyed on the mesh object.
@@ -605,8 +661,79 @@ export function buildBVH(mesh) {
     return { distance: Math.sqrt(best.d2), at, pointA: best.a, pointB: best.b };
   }
 
+  // distanceTo with each mesh moved by a column-major rigid mat4 (geometry/pose.js)
+  // into a shared frame; neither index is rebuilt. The traversal runs in THIS
+  // mesh's frame under R = mSelf⁻¹·mOther: an `other` node's box is the AABB of its
+  // 8 corners under R, and its leaf triangles are moved by R into a scratch buffer
+  // before triTriDist. Same pruning and descent order as distanceTo; the result's
+  // points are mapped back by mSelf, so `at`/`pointA`/`pointB` are in the shared frame.
+  function distanceToPosed(other, mSelf, mOther) {
+    if (other?.jsIndex) other = other.jsIndex();
+    const oV = other.vertices, oB = other._bounds, oM = other._meta, oO = other._order;
+    const R = mulMat4(invertRigid(mSelf), mOther);
+    const nbox = new Float64Array(18); // [0..5] other's node, [6..11] its left child, [12..17] its right child
+    let leafV = new Float64Array(9 * MAX_LEAF);
+    let best = { d2: Infinity, a: null, b: null };
+    const stack = [0, 0];
+    while (stack.length && best.d2 > 0) {
+      const nb = stack.pop(), na = stack.pop();
+      boxUnder(oB, nb * 6, R, nbox, 0);
+      if (boxBoxDistSq(bounds, na * 6, nbox, 0) >= best.d2) continue;
+      const pa = meta[na * 2 + 1], pb = oM[nb * 2 + 1];
+      if (pa && pb) {
+        const sa = meta[na * 2], sb = oM[nb * 2], nj = pb - 1;
+        if (leafV.length < nj * 9) leafV = new Float64Array(nj * 9);
+        for (let j = 0; j < nj; j++) {
+          const b = oO[sb + j] * 9, o = j * 9;
+          for (let v = 0; v < 9; v += 3) {
+            const x = oV[b + v], y = oV[b + v + 1], z = oV[b + v + 2];
+            leafV[o + v] = R[0] * x + R[4] * y + R[8] * z + R[12];
+            leafV[o + v + 1] = R[1] * x + R[5] * y + R[9] * z + R[13];
+            leafV[o + v + 2] = R[2] * x + R[6] * y + R[10] * z + R[14];
+          }
+        }
+        for (let i = 0; i < pa - 1; i++) for (let j = 0; j < nj; j++) {
+          const r = triTriDist(verts, order[sa + i] * 9, leafV, j * 9);
+          if (r.d2 < best.d2) best = r;
+        }
+      } else if (!pa && (pb || nodeExtent(bounds, na * 6) >= nodeExtent(nbox, 0))) {
+        const l = na + 1, r = meta[na * 2];
+        const dl = boxBoxDistSq(bounds, l * 6, nbox, 0), dr = boxBoxDistSq(bounds, r * 6, nbox, 0);
+        if (dl < dr) stack.push(r, nb, l, nb); else stack.push(l, nb, r, nb);
+      } else {
+        const l = nb + 1, r = oM[nb * 2];
+        boxUnder(oB, l * 6, R, nbox, 6); boxUnder(oB, r * 6, R, nbox, 12);
+        const dl = boxBoxDistSq(bounds, na * 6, nbox, 6), dr = boxBoxDistSq(bounds, na * 6, nbox, 12);
+        if (dl < dr) stack.push(na, r, na, l); else stack.push(na, l, na, r);
+      }
+    }
+    if (best.a === null) return { distance: Infinity, at: null, pointA: null, pointB: null };
+    const place = (p) => [
+      mSelf[0] * p[0] + mSelf[4] * p[1] + mSelf[8] * p[2] + mSelf[12],
+      mSelf[1] * p[0] + mSelf[5] * p[1] + mSelf[9] * p[2] + mSelf[13],
+      mSelf[2] * p[0] + mSelf[6] * p[1] + mSelf[10] * p[2] + mSelf[14],
+    ];
+    const pointA = place(best.a), pointB = place(best.b);
+    const at = [(pointA[0] + pointB[0]) / 2, (pointA[1] + pointB[1]) / 2, (pointA[2] + pointB[2]) / 2];
+    return { distance: Math.sqrt(best.d2), at, pointA, pointB };
+  }
+
+  // Whether this mesh's first vertex, placed by mSelf, lies inside `other` placed by
+  // mOther: an odd number of crossings of a ray through `other` (raycast, in other's
+  // own frame). A ray that grazes an edge is retried along the next fixed direction.
+  function insideOf(other, mSelf, mOther) {
+    if (!count) return false;
+    const x = verts[0], y = verts[1], z = verts[2];
+    const w = [
+      mSelf[0] * x + mSelf[4] * y + mSelf[8] * z + mSelf[12],
+      mSelf[1] * x + mSelf[5] * y + mSelf[9] * z + mSelf[13],
+      mSelf[2] * x + mSelf[6] * y + mSelf[10] * z + mSelf[14],
+    ];
+    return insideShared(other, w, mOther);
+  }
+
   return {
-    raycast, closestPoint, distanceTo,
+    raycast, closestPoint, distanceTo, distanceToPosed, insideOf,
     triangleCount: count,
     // Flat, 9 per triangle, mesh order — min-wall casts from these. READ-ONLY (see
     // the STORAGE note up top); decode a triangle with readTriangleInto().

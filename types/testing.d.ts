@@ -245,6 +245,17 @@ export interface BVH {
     pointA: number[] | null;
     pointB: number[] | null;
   };
+  /**
+   * `distanceTo` with each mesh placed by a column-major rigid mat4 into a shared frame
+   * (neither index is rebuilt); `at`/`pointA`/`pointB` are in that frame.
+   */
+  distanceToPosed(
+    other: BVH,
+    mSelf: ArrayLike<number>,
+    mOther: ArrayLike<number>,
+  ): { distance: number; at: number[] | null; pointA: number[] | null; pointB: number[] | null };
+  /** Whether this mesh's first vertex, placed by `mSelf`, lies inside `other` placed by `mOther`. */
+  insideOf(other: BVH, mSelf: ArrayLike<number>, mOther: ArrayLike<number>): boolean;
   triangleCount: number;
   /** Flat, 9 coords per triangle, in mesh order. READ-ONLY — writing invalidates the tree. */
   vertices: Float32Array | Float64Array;
