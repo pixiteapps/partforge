@@ -1,0 +1,655 @@
+{
+  "robot-arm.html": {
+    "hover": {
+      "frames": 62,
+      "medianMs": 0.6,
+      "p95Ms": 1.9,
+      "maxMs": 6.3,
+      "fps": 114.5,
+      "derivesPerFrame": 0,
+      "top": [
+        {
+          "fn": "(anon) ",
+          "ms": 4.5
+        },
+        {
+          "fn": "getProgramInfoLog ",
+          "ms": 3.7
+        },
+        {
+          "fn": "getParameters three.module-CrWrTb0W.js:45310",
+          "ms": 2.6
+        },
+        {
+          "fn": "updateMatrixWorld three.module-CrWrTb0W.js:9861",
+          "ms": 1.5
+        },
+        {
+          "fn": "getProgramCacheKey three.module-CrWrTb0W.js:45522",
+          "ms": 1.4
+        },
+        {
+          "fn": "getProgram three.module-CrWrTb0W.js:51335",
+          "ms": 1.3
+        },
+        {
+          "fn": "PointerEvent ",
+          "ms": 1.3
+        },
+        {
+          "fn": "checkGeometryIntersection three.module-CrWrTb0W.js:17020",
+          "ms": 1.2
+        },
+        {
+          "fn": "WebGLRenderer.renderBufferDirect three.module-CrWrTb0W.js:50908",
+          "ms": 1.2
+        },
+        {
+          "fn": "projectObject three.module-CrWrTb0W.js:51191",
+          "ms": 1.1
+        },
+        {
+          "fn": "getBoundingClientRect ",
+          "ms": 1.1
+        },
+        {
+          "fn": "tick pose-scene.js:432",
+          "ms": 1.1
+        }
+      ]
+    },
+    "dragTip": {
+      "handle": "tool",
+      "frames": 62,
+      "medianMs": 3.4,
+      "p95Ms": 4.5,
+      "maxMs": 5,
+      "fps": 120,
+      "derivesPerFrame": 2,
+      "top": [
+        {
+          "fn": "compose xform.js:11",
+          "ms": 28
+        },
+        {
+          "fn": "rotation xform.js:41",
+          "ms": 17.5
+        },
+        {
+          "fn": "invert xform.js:21",
+          "ms": 10.7
+        },
+        {
+          "fn": "(garbage collector) ",
+          "ms": 10.7
+        },
+        {
+          "fn": "token pose-probe-core.js:66",
+          "ms": 9.3
+        },
+        {
+          "fn": "translation xform.js:30",
+          "ms": 7.8
+        },
+        {
+          "fn": "get xform.js:77",
+          "ms": 6.7
+        },
+        {
+          "fn": "Object3D three.module-CrWrTb0W.js:9070",
+          "ms": 4.7
+        },
+        {
+          "fn": "getParameters three.module-CrWrTb0W.js:45310",
+          "ms": 3.7
+        },
+        {
+          "fn": "localOf xform.js:66",
+          "ms": 3.7
+        },
+        {
+          "fn": "(anon) ",
+          "ms": 3.6
+        },
+        {
+          "fn": "sync numeric.js:180",
+          "ms": 3.6
+        }
+      ]
+    },
+    "aimRing": {
+      "handle": "pitch ring",
+      "frames": 62,
+      "medianMs": 2.7,
+      "p95Ms": 3.1,
+      "maxMs": 3.7,
+      "fps": 120.4,
+      "derivesPerFrame": 2,
+      "top": [
+        {
+          "fn": "compose xform.js:11",
+          "ms": 24.1
+        },
+        {
+          "fn": "rotation xform.js:41",
+          "ms": 13.4
+        },
+        {
+          "fn": "translation xform.js:30",
+          "ms": 10.8
+        },
+        {
+          "fn": "invert xform.js:21",
+          "ms": 10
+        },
+        {
+          "fn": "get xform.js:77",
+          "ms": 6.7
+        },
+        {
+          "fn": "(garbage collector) ",
+          "ms": 5.5
+        },
+        {
+          "fn": "token pose-probe-core.js:66",
+          "ms": 4.5
+        },
+        {
+          "fn": "sync numeric.js:180",
+          "ms": 3.9
+        },
+        {
+          "fn": "getParameters three.module-CrWrTb0W.js:45310",
+          "ms": 3.2
+        },
+        {
+          "fn": "Object3D three.module-CrWrTb0W.js:9070",
+          "ms": 3.1
+        },
+        {
+          "fn": "bufferData ",
+          "ms": 2.4
+        },
+        {
+          "fn": "gauss dls.js:16",
+          "ms": 2
+        }
+      ]
+    },
+    "jointRing": {
+      "handle": "arm.elbow ring",
+      "frames": 62,
+      "medianMs": 2,
+      "p95Ms": 2.5,
+      "maxMs": 3,
+      "fps": 119.9,
+      "derivesPerFrame": 2,
+      "top": [
+        {
+          "fn": "compose xform.js:11",
+          "ms": 9.2
+        },
+        {
+          "fn": "rotation xform.js:41",
+          "ms": 6.9
+        },
+        {
+          "fn": "translation xform.js:30",
+          "ms": 5
+        },
+        {
+          "fn": "getParameters three.module-CrWrTb0W.js:45310",
+          "ms": 4.8
+        },
+        {
+          "fn": "sync numeric.js:180",
+          "ms": 4.4
+        },
+        {
+          "fn": "token pose-probe-core.js:66",
+          "ms": 3.2
+        },
+        {
+          "fn": "invert xform.js:21",
+          "ms": 3.1
+        },
+        {
+          "fn": "get xform.js:77",
+          "ms": 2.9
+        },
+        {
+          "fn": "Object3D three.module-CrWrTb0W.js:9070",
+          "ms": 2.8
+        },
+        {
+          "fn": "(garbage collector) ",
+          "ms": 2.5
+        },
+        {
+          "fn": "getProgram three.module-CrWrTb0W.js:51335",
+          "ms": 2.3
+        },
+        {
+          "fn": "addSugar solid-sugar.js:43",
+          "ms": 2.3
+        }
+      ]
+    },
+    "dragPinned": {
+      "handle": "tool, elbow pinned",
+      "frames": 62,
+      "medianMs": 4.3,
+      "p95Ms": 10.2,
+      "maxMs": 10.9,
+      "fps": 120.1,
+      "derivesPerFrame": 2,
+      "top": [
+        {
+          "fn": "compose xform.js:11",
+          "ms": 75.2
+        },
+        {
+          "fn": "rotation xform.js:41",
+          "ms": 42.6
+        },
+        {
+          "fn": "translation xform.js:30",
+          "ms": 39.8
+        },
+        {
+          "fn": "invert xform.js:21",
+          "ms": 31.6
+        },
+        {
+          "fn": "get xform.js:77",
+          "ms": 13.9
+        },
+        {
+          "fn": "(garbage collector) ",
+          "ms": 6.2
+        },
+        {
+          "fn": "getParameters three.module-CrWrTb0W.js:45310",
+          "ms": 4.8
+        },
+        {
+          "fn": "ikForward core.js:183",
+          "ms": 4.5
+        },
+        {
+          "fn": "sync numeric.js:180",
+          "ms": 4.4
+        },
+        {
+          "fn": "token pose-probe-core.js:66",
+          "ms": 3.5
+        },
+        {
+          "fn": "(anon) tree.js:281",
+          "ms": 2.4
+        },
+        {
+          "fn": "Object3D three.module-CrWrTb0W.js:9070",
+          "ms": 2.2
+        }
+      ]
+    },
+    "idleOrbit": {
+      "frames": 62,
+      "medianMs": 0.6,
+      "p95Ms": 0.8,
+      "maxMs": 1.1,
+      "fps": 119.9,
+      "derivesPerFrame": 0,
+      "top": [
+        {
+          "fn": "tick pose-scene.js:432",
+          "ms": 2.4
+        },
+        {
+          "fn": "getParameters three.module-CrWrTb0W.js:45310",
+          "ms": 2
+        },
+        {
+          "fn": "(anon) ",
+          "ms": 1.9
+        },
+        {
+          "fn": "projectCube cube-geom.js:254",
+          "ms": 1.4
+        },
+        {
+          "fn": "fill ",
+          "ms": 1.3
+        },
+        {
+          "fn": "projectObject three.module-CrWrTb0W.js:51191",
+          "ms": 1.3
+        },
+        {
+          "fn": "updateMatrixWorld three.module-CrWrTb0W.js:9861",
+          "ms": 1.2
+        },
+        {
+          "fn": "redraw viewcube-mode.js:56",
+          "ms": 1.1
+        },
+        {
+          "fn": "draw cube-canvas.js:284",
+          "ms": 1.1
+        },
+        {
+          "fn": "paramsMoved pose-mode.js:421",
+          "ms": 1
+        },
+        {
+          "fn": "PointerEvent ",
+          "ms": 0.9
+        },
+        {
+          "fn": "polygon cube-canvas.js:189",
+          "ms": 0.9
+        }
+      ]
+    },
+    "gl": "ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Max, Unspecified Version)",
+    "errors": []
+  },
+  "hand.html": {
+    "hover": {
+      "frames": 62,
+      "medianMs": 0.6,
+      "p95Ms": 0.9,
+      "maxMs": 6,
+      "fps": 120.2,
+      "derivesPerFrame": 0,
+      "top": [
+        {
+          "fn": "(anon) ",
+          "ms": 4
+        },
+        {
+          "fn": "getParameters three.module-CrWrTb0W.js:45310",
+          "ms": 3.1
+        },
+        {
+          "fn": "getProgramInfoLog ",
+          "ms": 2.9
+        },
+        {
+          "fn": "setProgram three.module-CrWrTb0W.js:51432",
+          "ms": 2
+        },
+        {
+          "fn": "updateMatrixWorld three.module-CrWrTb0W.js:9861",
+          "ms": 1.9
+        },
+        {
+          "fn": "needsUpdate three.module-CrWrTb0W.js:42110",
+          "ms": 1.6
+        },
+        {
+          "fn": "projectObject three.module-CrWrTb0W.js:51191",
+          "ms": 1.3
+        },
+        {
+          "fn": "setup three.module-CrWrTb0W.js:42039",
+          "ms": 1.3
+        },
+        {
+          "fn": "getProgramCacheKey three.module-CrWrTb0W.js:45522",
+          "ms": 1.2
+        },
+        {
+          "fn": "WebGLRenderer.renderBufferDirect three.module-CrWrTb0W.js:50908",
+          "ms": 1.1
+        },
+        {
+          "fn": "multiplyMatrices three.module-CrWrTb0W.js:8090",
+          "ms": 1.1
+        },
+        {
+          "fn": "(garbage collector) ",
+          "ms": 1
+        }
+      ]
+    },
+    "dragTip": {
+      "handle": "index",
+      "frames": 62,
+      "medianMs": 8.6,
+      "p95Ms": 16.4,
+      "maxMs": 19.3,
+      "fps": 95.4,
+      "derivesPerFrame": 53.1,
+      "top": [
+        {
+          "fn": "compose xform.js:11",
+          "ms": 123.5
+        },
+        {
+          "fn": "translation xform.js:30",
+          "ms": 73.7
+        },
+        {
+          "fn": "rotation xform.js:41",
+          "ms": 67.4
+        },
+        {
+          "fn": "invert xform.js:21",
+          "ms": 61.4
+        },
+        {
+          "fn": "(garbage collector) ",
+          "ms": 36.5
+        },
+        {
+          "fn": "get xform.js:77",
+          "ms": 33.2
+        },
+        {
+          "fn": "token pose-probe-core.js:66",
+          "ms": 12.5
+        },
+        {
+          "fn": "pose core.js:136",
+          "ms": 11.9
+        },
+        {
+          "fn": "rawValues core.js:59",
+          "ms": 7.1
+        },
+        {
+          "fn": "buildReport outputs.js:42",
+          "ms": 6.7
+        },
+        {
+          "fn": "addSugar solid-sugar.js:43",
+          "ms": 5.1
+        },
+        {
+          "fn": "localOf xform.js:66",
+          "ms": 4.7
+        }
+      ]
+    },
+    "dragPinned": {
+      "handle": "index, thumb pinned",
+      "frames": 62,
+      "medianMs": 13.7,
+      "p95Ms": 23.8,
+      "maxMs": 29,
+      "fps": 63.2,
+      "derivesPerFrame": 80.7,
+      "top": [
+        {
+          "fn": "compose xform.js:11",
+          "ms": 230.4
+        },
+        {
+          "fn": "translation xform.js:30",
+          "ms": 130.4
+        },
+        {
+          "fn": "rotation xform.js:41",
+          "ms": 124.4
+        },
+        {
+          "fn": "invert xform.js:21",
+          "ms": 119.6
+        },
+        {
+          "fn": "get xform.js:77",
+          "ms": 45.3
+        },
+        {
+          "fn": "(garbage collector) ",
+          "ms": 24.7
+        },
+        {
+          "fn": "pose core.js:136",
+          "ms": 16.6
+        },
+        {
+          "fn": "derive hand.js:344",
+          "ms": 9.5
+        },
+        {
+          "fn": "buildReport outputs.js:42",
+          "ms": 9
+        },
+        {
+          "fn": "token pose-probe-core.js:66",
+          "ms": 9
+        },
+        {
+          "fn": "getParameters three.module-CrWrTb0W.js:45310",
+          "ms": 6.4
+        },
+        {
+          "fn": "projectObject three.module-CrWrTb0W.js:51191",
+          "ms": 6
+        }
+      ]
+    },
+    "jointRing": {
+      "handle": "palm.wristPitch ring",
+      "frames": 62,
+      "medianMs": 2.8,
+      "p95Ms": 4.3,
+      "maxMs": 6,
+      "fps": 120,
+      "derivesPerFrame": 1,
+      "top": [
+        {
+          "fn": "compose xform.js:11",
+          "ms": 23.3
+        },
+        {
+          "fn": "translation xform.js:30",
+          "ms": 16.6
+        },
+        {
+          "fn": "rotation xform.js:41",
+          "ms": 13.2
+        },
+        {
+          "fn": "invert xform.js:21",
+          "ms": 10.8
+        },
+        {
+          "fn": "token pose-probe-core.js:66",
+          "ms": 10.5
+        },
+        {
+          "fn": "get xform.js:77",
+          "ms": 6.2
+        },
+        {
+          "fn": "(garbage collector) ",
+          "ms": 3.8
+        },
+        {
+          "fn": "getParameters three.module-CrWrTb0W.js:45310",
+          "ms": 3.2
+        },
+        {
+          "fn": "Object3D three.module-CrWrTb0W.js:9070",
+          "ms": 2.7
+        },
+        {
+          "fn": "sync numeric.js:180",
+          "ms": 2.5
+        },
+        {
+          "fn": "addSugar solid-sugar.js:43",
+          "ms": 2.5
+        },
+        {
+          "fn": "bufferData ",
+          "ms": 2.2
+        }
+      ]
+    },
+    "idleOrbit": {
+      "frames": 62,
+      "medianMs": 0.7,
+      "p95Ms": 0.8,
+      "maxMs": 1.3,
+      "fps": 119.9,
+      "derivesPerFrame": 0,
+      "top": [
+        {
+          "fn": "(anon) ",
+          "ms": 2.5
+        },
+        {
+          "fn": "updateMatrixWorld three.module-CrWrTb0W.js:9861",
+          "ms": 2.2
+        },
+        {
+          "fn": "projectCube cube-geom.js:254",
+          "ms": 2.1
+        },
+        {
+          "fn": "getParameters three.module-CrWrTb0W.js:45310",
+          "ms": 1.5
+        },
+        {
+          "fn": "polygon cube-canvas.js:189",
+          "ms": 1.2
+        },
+        {
+          "fn": "setup three.module-CrWrTb0W.js:42039",
+          "ms": 1.2
+        },
+        {
+          "fn": "projectObject three.module-CrWrTb0W.js:51191",
+          "ms": 1.2
+        },
+        {
+          "fn": "paramsMoved pose-mode.js:421",
+          "ms": 1.2
+        },
+        {
+          "fn": "(anon) cube-canvas.js:191",
+          "ms": 1.1
+        },
+        {
+          "fn": "cubeCells cube-geom.js:143",
+          "ms": 1.1
+        },
+        {
+          "fn": "getProgramCacheKey three.module-CrWrTb0W.js:45522",
+          "ms": 1
+        },
+        {
+          "fn": "needsUpdate three.module-CrWrTb0W.js:42110",
+          "ms": 1
+        }
+      ]
+    },
+    "gl": "ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Max, Unspecified Version)",
+    "errors": []
+  }
+}
