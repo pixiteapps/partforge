@@ -150,3 +150,66 @@ test("maxDistance: a pair within it reads the uncut answer exactly; one past it 
   const T = [1,0,0,0, 0,1,0,0, 0,0,1,0, 5,0,0,1];
   expect(buildBVH(boxMesh(5, 5, 5)).distanceToPosed(buildBVH(boxMesh(5, 5, 5)), I, T, 0).distance).toBe(0);
 });
+
+// Two curved meshes close together: many near-tied triangle pairs, piercing and not —
+// what the scalar twins and the triangle-level prunes must read exactly as before.
+const I4 = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+const nearPoses = (n, gap) => Array.from({ length: n }, () => [randPose(2), composePose([
+  { t: "rotate", axis: [rnd() - 0.5, rnd() - 0.5, rnd() + 0.1], deg: rnd() * 360, center: [0, 0, 0] },
+  { t: "translate", v: [11 + gap * (rnd() - 0.5), (rnd() - 0.5) * 4, (rnd() - 0.5) * 4] },
+])]);
+
+test("the posed query reads bit for bit what distanceTo reads on the same placed meshes", () => {
+  // distanceTo still runs the allocating triTriDist with no triangle-level prune: the
+  // reference the scalar path and its prunes are held to
+  const A = sphereMesh(6, 24, 14), B = sphereMesh(5, 20, 12);
+  for (const [mA, mB] of nearPoses(30, 3)) {
+    const pa = moved(A, mA), pb = moved(B, mB);
+    const a = buildBVH(pa), b = buildBVH(pb);
+    const want = a.distanceTo(b), got = a.distanceToPosed(b, I4, I4);
+    expect(Object.is(got.distance, want.distance)).toBe(true);
+    expect(got.pointA).toEqual(want.pointA);
+    expect(got.pointB).toEqual(want.pointB);
+    expect(got.at).toEqual(want.at);
+  }
+});
+
+test("withinDistancePosed agrees with distanceToPosed(…, eps) <= eps, and its bound never exceeds the distance", () => {
+  const A = sphereMesh(6, 24, 14), B = sphereMesh(5, 20, 12);
+  const a = buildBVH(A), b = buildBVH(B);
+  let near = 0, far = 0;
+  for (const [mA, mB] of nearPoses(40, 3)) {
+    const exact = a.distanceToPosed(b, mA, mB).distance;
+    for (const eps of [1e-3, 0.05, 0.4, 2, exact, exact * 0.999, exact * 1.001]) {
+      const out = {};
+      const got = a.withinDistancePosed(b, mA, mB, eps, out);
+      expect(got, `eps ${eps} exact ${exact}`).toBe(a.distanceToPosed(b, mA, mB, eps).distance <= eps);
+      if (got) { near++; expect(out.bound).toBe(0); }
+      else { far++; expect(out.bound).toBeLessThanOrEqual(exact); expect(out.bound).toBeGreaterThanOrEqual(0); }
+    }
+  }
+  expect(near).toBeGreaterThan(10);
+  expect(far).toBeGreaterThan(10);
+  // touching boxes are within 0; an empty mesh is never within anything
+  const T = [1,0,0,0, 0,1,0,0, 0,0,1,0, 5,0,0,1];
+  expect(buildBVH(boxMesh(5, 5, 5)).withinDistancePosed(buildBVH(boxMesh(5, 5, 5)), I4, T, 0)).toBe(true);
+  const empty = buildBVH({ positions: [] }), out = {};
+  expect(empty.withinDistancePosed(a, I4, I4, 10, out)).toBe(false);
+  expect(out.bound).toBe(Infinity);
+});
+
+test("a core index threads the cutoff and the boolean query through to its JS twin", () => {
+  setCoreEnabled(true);
+  const cache = coreBVHCache();
+  const A = sphereMesh(6), B = boxMesh(5, 7, 3);
+  const coreA = cachedBVH(A, cache), jsA = buildBVH(A), jsB = buildBVH(B);
+  for (let n = 0; n < 8; n++) {
+    const mA = randPose(10), mB = randPose(30);
+    const d = jsA.distanceToPosed(jsB, mA, mB).distance;
+    if (d < 0.1) continue;
+    expect(coreA.distanceToPosed(jsB, mA, mB, d * 0.9).distance).toBe(jsA.distanceToPosed(jsB, mA, mB, d * 0.9).distance);
+    expect(coreA.withinDistancePosed(jsB, mA, mB, d * 1.01)).toBe(true);
+    expect(coreA.withinDistancePosed(jsB, mA, mB, d * 0.99)).toBe(false);
+  }
+  disposeBVHs(cache.values());
+});

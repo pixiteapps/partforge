@@ -114,6 +114,21 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
     row.normal = r.normal && (row.a === r.a ? r.normal : r.normal.map((x) => -x));
   }
 
+  // Each row's stored closest points, placed by mats, are two points on its pair's
+  // surfaces: their distance bounds the pair's gap from above, which lets the exact query
+  // cut its search there (world.distances' `upper`) and still read the exact answer.
+  function upperBounds(list, mats) {
+    const out = new Map();
+    for (const row of list) {
+      if (!row.active || !row.pa) continue;
+      const ma = mats.get(row.a), mb = mats.get(row.b);
+      if (ma === null || mb === null) continue;
+      const wa = apply(ma, row.pa), wb = apply(mb, row.pb);
+      out.set(row.key, Math.hypot(wa[0] - wb[0], wa[1] - wb[1], wa[2] - wb[2]));
+    }
+    return out;
+  }
+
   return {
     get rowCount() { return rows.length; },
     /**
@@ -127,9 +142,11 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
       const mats = matsAt(params);
       lastTravel = lastParams ? world.travel(matsAt(lastParams), mats, moving) : 0;
       lastParams = params;
+      const upper = upperBounds(rows, mats); // last frame's rows bound their pairs' gaps
       rows = [];
       const skip = new Set([...exempt.keys(), ...guardOnly]); // never rows: not worth a query
-      for (const r of world.distances(mats, { names: moving, within: windowMm(), skip })) {
+      // skip drops every pair the loop below would, so the nearest MAX_ROWS are its rows
+      for (const r of world.distances(mats, { names: moving, within: windowMm(), skip, limit: MAX_ROWS, upper })) {
         const key = pairKey(r.a, r.b);
         if (exempt.has(key) || guardOnly.has(key)) continue;
         const row = { a: r.a, b: r.b, key };
@@ -145,7 +162,8 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
       const mats = matsAt(params);
       const names = [...new Set(rows.flatMap((r) => [r.a, r.b]))];
       const pairs = new Set(rows.map((r) => r.key)); // the rows' own pairs, never a neighbour's
-      const byKey = new Map(world.distances(mats, { names, within: windowMm(), pairs }).map((r) => [pairKey(r.a, r.b), r]));
+      const upper = upperBounds(rows, mats);
+      const byKey = new Map(world.distances(mats, { names, within: windowMm(), pairs, upper }).map((r) => [pairKey(r.a, r.b), r]));
       for (const row of rows) store(row, byKey.get(row.key), mats);
       active = rows.some((row) => row.active && row.gap < margin);
     },

@@ -90,7 +90,8 @@ export function buildCoreBVH(c, verts, makeJsIndex) {
       }, viaJs);
     },
     // The posed queries (collisions) have no native twin: they meet through the JS index.
-    distanceToPosed(other, mSelf, mOther) { return jsIndex().distanceToPosed(other, mSelf, mOther); },
+    distanceToPosed(other, mSelf, mOther, maxDistance) { return jsIndex().distanceToPosed(other, mSelf, mOther, maxDistance); },
+    withinDistancePosed(other, mSelf, mOther, eps, out) { return jsIndex().withinDistancePosed(other, mSelf, mOther, eps, out); },
     insideOf(other, mSelf, mOther) { return jsIndex().insideOf(other, mSelf, mOther); },
     // minWall over this index, min-wall.js's result shape exactly. min-wall.js
     // dispatches here with its own resolved options; `undefined` means "the core

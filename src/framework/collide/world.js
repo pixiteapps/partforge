@@ -87,6 +87,10 @@ function boxGap(a, b) {
   return Math.sqrt(s);
 }
 
+// Below this cutoff (mm) distances() asks the boolean query first: most pairs a small
+// cutoff meets are clear, and withinDistancePosed proves that without the minimum.
+const WITHIN_FIRST_MM = 0.5;
+
 export function createCollisionWorld({ meshes, decl = null }) {
   const names = [...meshes.keys()];
   const bvhs = new Map();
@@ -104,33 +108,64 @@ export function createCollisionWorld({ meshes, decl = null }) {
 
     // `pairs` (a Set of pairKeys): only those pairs; `skip`: never those. Both filter
     // before any BVH query, so a caller that knows which pairs it wants pays for no other.
-    distances(mats, { names: only, within = Infinity, limit = Infinity, pairs = null, skip = null } = {}) {
+    // `upper` (a Map of pairKey → mm): a distance each pair is known to be within (the
+    // gap between two of its surface points, say); it only tightens that pair's cutoff,
+    // so a pair still reads exactly what it would without it. A value that is not a true
+    // upper bound would lose the pair: only pass ones that are.
+    // `limit` keeps the nearest `limit`; pairs are measured in order of box gap with the
+    // cutoff shrunk to the limit-th nearest so far, which cannot change which pairs are
+    // kept or what they read (a pair past the limit-th nearest is never among them).
+    distances(mats, { names: only, within = Infinity, limit = Infinity, pairs = null, skip = null, upper = null } = {}) {
       const wanted = only ? new Set(only) : null;
       const live = names.filter((n) => matOf(mats, n) !== null);
       const moved = new Map(live.map((n) => [n, movedBox(boxes.get(n), matOf(mats, n))]));
-      const out = [];
+      const cands = [];
       for (let i = 0; i < live.length; i++) {
         for (let j = i + 1; j < live.length; j++) {
           const a = live[i], b = live[j];
           if (wanted && !wanted.has(a) && !wanted.has(b)) continue;
           if (isAllowed(decl, a, b)) continue;
-          if (pairs || skip) {
-            const key = pairKey(a, b);
+          let key = null;
+          if (pairs || skip || upper) {
+            key = pairKey(a, b);
             if ((pairs && !pairs.has(key)) || skip?.has(key)) continue;
           }
-          if (boxGap(moved.get(a), moved.get(b)) > within) continue;
-          const r = bvhs.get(a).distanceToPosed(bvhs.get(b), matOf(mats, a) ?? IDENTITY, matOf(mats, b) ?? IDENTITY, within);
-          if (!(r.distance <= within)) continue;
-          let normal = null;
-          if (r.distance > 0) {
-            const v = [0, 1, 2].map((k) => r.pointA[k] - r.pointB[k]);
-            const len = Math.hypot(...v);
-            if (len > 0) normal = v.map((x) => x / len);
-          }
-          out.push({ a, b, distance: r.distance, at: r.at, pointA: r.pointA, pointB: r.pointB, normal });
+          const gap = boxGap(moved.get(a), moved.get(b));
+          if (gap > within) continue;
+          cands.push({ a, b, key, gap, order: cands.length });
         }
       }
-      out.sort((x, y) => x.distance - y.distance);
+      const bounded = limit < cands.length;
+      if (bounded) cands.sort((x, y) => x.gap - y.gap || x.order - y.order);
+      const found = [];
+      let kth = Infinity; // the limit-th nearest distance so far (bounded only)
+      for (const c of cands) {
+        const { a, b } = c;
+        let cut = within;
+        const u = c.key !== null ? upper?.get(c.key) : undefined;
+        if (u !== undefined && u < cut) cut = u * (1 + 1e-9) + 1e-9; // slack past rounding
+        if (bounded && kth < cut) cut = kth;
+        if (c.gap > cut) continue;
+        const ma = matOf(mats, a) ?? IDENTITY, mb = matOf(mats, b) ?? IDENTITY;
+        // a small cutoff is mostly a clear answer: the boolean query says so far sooner
+        if (cut < WITHIN_FIRST_MM && !bvhs.get(a).withinDistancePosed(bvhs.get(b), ma, mb, cut)) continue;
+        const r = bvhs.get(a).distanceToPosed(bvhs.get(b), ma, mb, cut);
+        if (!(r.distance <= within)) continue;
+        let normal = null;
+        if (r.distance > 0) {
+          const v = [0, 1, 2].map((k) => r.pointA[k] - r.pointB[k]);
+          const len = Math.hypot(...v);
+          if (len > 0) normal = v.map((x) => x / len);
+        }
+        found.push({ order: c.order, r: { a, b, distance: r.distance, at: r.at, pointA: r.pointA, pointB: r.pointB, normal } });
+        if (bounded) {
+          const ds = found.map((f) => f.r.distance).sort((x, y) => x - y);
+          if (ds.length >= limit) kth = ds[limit - 1];
+        }
+      }
+      // nearest first; ties keep pair order, as one stable sort over every pair would
+      found.sort((x, y) => x.r.distance - y.r.distance || x.order - y.order);
+      const out = found.map((f) => f.r);
       return out.length > limit ? out.slice(0, limit) : out;
     },
 
