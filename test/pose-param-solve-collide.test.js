@@ -189,6 +189,41 @@ describe("robot arm: goal drags", () => {
     expect(tool[0]).toBeLessThan(180);             // and slid along it toward the goal
   }, SLOW);
 
+  it("a mid-joint grab is guarded too: the elbow stops under a block", () => {
+    // A goal limb grabbed by a middle joint solves the seeded joints for the elbow; the
+    // guard's rows ride in that solve and its settle stops the frame, so the upper arm
+    // stops short of a block above it while the unguarded grab lifts it into the block.
+    const blocked = { ...arm, parts: { ...arm.parts, block: { label: "Block", build: (kk) => kk.box({ min: [-20, -40, 275], max: [140, 40, 320] }), views: { assembly: (sol) => sol } } } };
+    const start = { ...blocked.defaults };
+    const guard = guardFor(blocked, start, movingSubParts(blocked, "assembly", start, [...goalKeys, ...handle.seed]));
+    expect(guard.isClear(start)).toBe(true);
+    const elbow = (q) => resolveParams(blocked, { ...blocked.defaults, ...q }).d.arm.world("elbow").origin;
+    const from = elbow(start), goal = [40, 0, 330];
+    const drag = (collide) => {
+      let params = { ...start };
+      const N = 12;
+      for (let i = 1; i <= N; i++) {
+        const target = from.map((v, c) => v + ((goal[c] - v) * i) / N);
+        withDeriveMemo(() => {
+          const r = defaultSolve({ part: blocked, params, handle, grab: "elbow", target, collide });
+          params = collide ? collide.settle(params, r.blend(1), { blend: r.blend }).params : { ...params, ...r.values };
+        });
+      }
+      return params;
+    };
+    const free = drag(null);
+    const guarded = drag(guard);
+    expect(guard.isClear(free)).toBe(false);
+    expect(guard.isClear(guarded)).toBe(true);
+    expect(elbow(guarded)[2]).toBeGreaterThan(from[2] + 5);       // it still rose toward the pointer
+    expect(elbow(guarded)[2]).toBeLessThan(elbow(free)[2] - 1);  // but short of the free grab
+    // and the rows reach the mid-joint solve itself (not only the settle after it): at the
+    // pose against the block, a fresh guard's frame starts inside defaultSolve, with rows
+    const fresh = guardFor(blocked, start, movingSubParts(blocked, "assembly", start, [...goalKeys, ...handle.seed]));
+    withDeriveMemo(() => defaultSolve({ part: blocked, params: guarded, handle, grab: "elbow", target: goal, collide: fresh }));
+    expect(fresh.rowCount).toBeGreaterThan(0);
+  }, SLOW);
+
   it("a fast open-air drag whose travel slack windows a pair still writes the goal directly", () => {
     // Frame 1's long travel widens frame 2's window: rows come in, but no gap is inside
     // the margin, so frame 2 stays a direct write and reads its miss.
