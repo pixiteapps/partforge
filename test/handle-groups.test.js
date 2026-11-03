@@ -12,40 +12,39 @@ describe("groupOf", () => {
 });
 
 describe("groupHidden", () => {
-  const pointer = { x: 100, y: 100 };
-  it("keeps only the candidate of each group whose grab point is nearest the pointer", () => {
+  it("keeps only the candidate of each group nearest the pointer (its nearest dot)", () => {
     const hidden = groupHidden([
-      { id: "a", group: "g", x: 130, y: 100 },
-      { id: "b", group: "g", x: 105, y: 100 },
-      { id: "c", group: "g", x: 0, y: 0 },
-    ], pointer);
+      { id: "a", group: "g", dist: 30 },
+      { id: "b", group: "g", dist: 5 },
+      { id: "c", group: "g", dist: 140 },
+    ]);
     expect([...hidden].sort()).toEqual(["a", "c"]);
   });
   it("leaves handles with no group, and a group's lone candidate, alone", () => {
     expect(groupHidden([
-      { id: "a", group: null, x: 130, y: 100 },
-      { id: "b", group: null, x: 105, y: 100 },
-      { id: "c", group: "g", x: 500, y: 500 },
-    ], pointer).size).toBe(0);
+      { id: "a", group: null, dist: 30 },
+      { id: "b", group: null, dist: 5 },
+      { id: "c", group: "g", dist: 500 },
+    ]).size).toBe(0);
   });
   it("judges each group on its own", () => {
     const hidden = groupHidden([
-      { id: "a1", group: "a", x: 110, y: 100 },
-      { id: "a2", group: "a", x: 120, y: 100 },
-      { id: "b1", group: "b", x: 300, y: 100 },
-      { id: "b2", group: "b", x: 200, y: 100 },
-    ], pointer);
+      { id: "a1", group: "a", dist: 10 },
+      { id: "a2", group: "a", dist: 20 },
+      { id: "b1", group: "b", dist: 200 },
+      { id: "b2", group: "b", dist: 100 },
+    ]);
     expect([...hidden].sort()).toEqual(["a2", "b1"]);
   });
-  it("a tie goes to the first candidate; one with no screen point never wins over one that has it", () => {
+  it("a tie goes to the first candidate; one with no distance never wins over one that has it", () => {
     expect([...groupHidden([
-      { id: "a", group: "g", x: 110, y: 100 },
-      { id: "b", group: "g", x: 90, y: 100 },
-    ], pointer)]).toEqual(["b"]);
+      { id: "a", group: "g", dist: 10 },
+      { id: "b", group: "g", dist: 10 },
+    ])]).toEqual(["b"]);
     expect([...groupHidden([
-      { id: "a", group: "g", x: NaN, y: NaN },
-      { id: "b", group: "g", x: 400, y: 100 },
-    ], pointer)]).toEqual(["a"]);
+      { id: "a", group: "g", dist: NaN },
+      { id: "b", group: "g", dist: 300 },
+    ])]).toEqual(["a"]);
   });
 });
 

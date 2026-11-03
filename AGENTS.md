@@ -734,8 +734,9 @@ the installed package, so let the publish finish before bumping the dep there.
   "point"), `handle-inert` samples each listed param at 0/25/50/75/100% of its range, and
   `handle-crowded` warns past 5 non-`showOn` handles in a view (a `group` counting once).
   A handle `group` (`pose/handle-groups.js`, pure) shows one member at a time: of the
-  members that would show under the pointer, only the one whose grab point is nearest
-  shows and can be pressed (pose-mode's `groupSkip`); the resting cue marks each group's
+  members that would show under the pointer, only the one nearest it — by the nearest dot
+  or arrow it offers (a limb's knuckles count, not just its tip), else its bones — shows
+  and can be pressed (pose-mode's `groupSkip`); the resting cue marks each group's
   first-declared shown handle; lint `handle-bad-group`; `measure().handles` carries `group`.
   An angles drag is bounded by each joint its `joints` map drives (param-solve's
   `jointBounds`: `range / scale`, a ball's cone) as well as by the slider, so it stops at

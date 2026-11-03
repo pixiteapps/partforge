@@ -65,7 +65,7 @@
 // the axis drag. Its proxy is ARROW_HIT_PX thick for a mouse, TOUCH_HIT_PX for a finger.
 //
 // HANDLE GROUPS (`group`, handle-groups.js): of a group's handles that would show under the
-// pointer, only the one whose grab point is nearest it shows and can be pressed — the rest
+// pointer, only the one nearest it (its nearest dot or arrow) shows and can be pressed — the rest
 // are passed over by every hover and grab test (groupSkip), dots and arrows alike. A press
 // keeps its handle until release; the resting cue marks one handle per group.
 //
@@ -621,15 +621,11 @@ export function createPoseMode(viewer, {
     if (screenCache) return screenCache;
     const limbs = new Map();
     const dots = [];
-    const grabs = []; // a grouped handle's grab point on screen (groupSkip)
+    const grouped = []; // the grouped handles' entries (groupSkip)
     for (const entry of shown) {
       const { handleId, info } = entry;
       const group = groupsAny && !entry.extra ? groupOf(entry.handle) : null;
-      if (group != null) {
-        const p = grabPoint(entry);
-        const g = p ? toScreen(p) : null;
-        grabs.push({ entry, group, x: g && g.visible !== false ? g.x : NaN, y: g && g.visible !== false ? g.y : NaN });
-      }
+      if (group != null) grouped.push({ entry, group });
       // an axis handle's arrow: [centre, one tip, the other] (the tip to tip segment is
       // what NEAR_LIMB_PX measures to; the centre stays first, showOnAt's anchor)
       const arrow = entry.generic ? arrowScreen(info) : null;
@@ -643,7 +639,7 @@ export function createPoseMode(viewer, {
         dots.push(arrow ? { x: s.x, y: s.y, hit, arrow } : { x: s.x, y: s.y, hit });
       }
     }
-    screenCache = { limbs, dots, grabs };
+    screenCache = { limbs, dots, grouped };
     return screenCache;
   }
   /** A shown handle's grab point (part coordinates): a goal handle's `at`, else its tip; null if none. */
@@ -668,13 +664,16 @@ export function createPoseMode(viewer, {
   /**
    * Handle groups (handle-groups.js): the limb names hover and grabs must pass over at the
    * canvas point — of the grouped handles that would show there (bones within NEAR_LIMB_PX,
-   * a dot or arrow within `radius`, a `showOn` sub-part hovered), all but the one whose grab
-   * point is nearest. A limb name is skipped only when every handle on it is. Null: none.
+   * a dot or arrow within `radius`, a `showOn` sub-part hovered), all but the one nearest
+   * it: ranked by the nearest dot (an arrow: its line) the handle offers, else by its
+   * bones — never by one grab point alone, which hid a knuckle dot under the pointer when
+   * another finger's tip sat nearer than its own. A limb name is skipped only when every
+   * handle on it is. Null: none.
    */
   function groupSkip(x, y, radius) {
     if (!groupsAny) return null;
-    const { limbs, dots, grabs } = screen();
-    if (grabs.length < 2) return null;
+    const { limbs, dots, grouped } = screen();
+    if (grouped.length < 2) return null;
     const sub = showOnAny ? hoveredSubPart() : null;
     const touch = radius >= TOUCH_HIT_PX;
     const near = (entry) => {
@@ -685,8 +684,19 @@ export function createPoseMode(viewer, {
       return dots.some((d) => d.hit.limb === name && d.hit.handleId === entry.handleId
         && (d.arrow ? arrowPicks(d, x, y, touch) : Math.hypot(d.x - x, d.y - y) <= radius));
     };
-    const cands = grabs.filter((g) => near(g.entry)).map((g) => ({ id: g.entry.handleId, group: g.group, x: g.x, y: g.y }));
-    const hidden = groupHidden(cands, { x, y });
+    /** How far (px) the canvas point is from the nearest dot or arrow `entry` offers, else from its bones. */
+    const distance = (entry) => {
+      let best = Infinity;
+      for (const d of dots) {
+        if (d.hit.limb !== entry.info.name || d.hit.handleId !== entry.handleId) continue;
+        best = Math.min(best, d.arrow ? arrowDistance(d.arrow, x, y) : Math.hypot(d.x - x, d.y - y));
+      }
+      if (best < Infinity) return best;
+      const pts = limbs.get(entry.info.name);
+      return pts ? bonesDistance(pts, x, y) : Infinity;
+    };
+    const cands = grouped.filter((g) => near(g.entry)).map((g) => ({ id: g.entry.handleId, group: g.group, dist: distance(g.entry) }));
+    const hidden = groupHidden(cands);
     if (!hidden.size) return null;
     const kept = new Set(shown.filter((e) => !hidden.has(e.handleId)).map((e) => e.info.name));
     const skip = new Set(shown.filter((e) => hidden.has(e.handleId) && !kept.has(e.info.name)).map((e) => e.info.name));

@@ -3527,9 +3527,10 @@ group counting once.
 
 Give handles the same `group` when a part has many of one kind close together — one per
 gear, per drawer pull, per peg on a pegboard — so their dots would crowd each other. Where
-more than one of a group would show under the pointer, only the one whose grab point is
-nearest the pointer shows its dot (or arrow) and can be pressed; the others come back as
-the pointer moves nearer them. A drag keeps its handle until release. The resting cue shows
+more than one of a group would show under the pointer, only the one nearest the pointer
+shows its dots (or arrow) and can be pressed — nearest by the closest dot or arrow it
+offers, so a finger's knuckle under the pointer keeps that finger even when another
+finger's tip is nearer than its own; the others come back as the pointer moves nearer them. A drag keeps its handle until release. The resting cue shows
 one mark per group, on its first-declared handle that the view shows. Handles with no
 `group` are not affected. A handle that already has its own `showOn` sub-part rarely needs
 a group: its hover already picks it out.

@@ -31,8 +31,8 @@ limb visuals / limit arcs.
    The miss line starts at the grabbed joint (already so). The `at` dot keeps today's
    behaviour exactly.
 3. **Handle groups.** Any handle may carry `group: "<name>"`. Within one group:
-   - On hover, when more than one handle of the group would show, only the one whose grab
-     point is nearest the pointer on screen shows its dot (or arrow) and can be grabbed;
+   - On hover, when more than one handle of the group would show, only the one whose
+     nearest dot (or arrow) is nearest the pointer on screen shows its dots and can be grabbed;
      the others stay hidden until the pointer is nearer them.
    - The resting cue shows one mark per group: the first-declared handle of the group
      that the view shows (builder's call: the first, not a centroid, so the mark sits on

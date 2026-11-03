@@ -1097,34 +1097,63 @@ describe("handle groups", () => {
     expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:slider", "tip"]);
   });
 
-  it("grouped, only the handle whose grab point is nearest shows and can be grabbed", () => {
+  it("grouped, only the handle nearest the pointer (its dot, an arrow's line) shows and can be grabbed", () => {
     const part = groupPart("controls");
     const t = setup(part);
     const s = at(t, part, "slider"), k = at(t, part, "knob");
-    // on the arrow's shaft, but the knob's point is nearer than the arrow's centre
-    t.fire("pointermove", s.x, k.y);
+    // on the knob's dot, beside the arrow's shaft: the knob, not the shaft
+    t.fire("pointermove", k.x, k.y);
     expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:knob", "tip"]);
-    // nearer the arrow's centre, the arrow comes back
-    t.fire("pointermove", s.x, s.y - 4);
-    expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:slider", "tip"]);
-    // a press where the knob is nearest grabs the knob, and the drag keeps it the whole way,
-    // even past the arrow's centre
+    // on the arrow's shaft at the knob's height: the arrow's line is nearer than the dot
     t.fire("pointermove", s.x, k.y);
-    t.fire("pointerdown", s.x, k.y);
-    for (let i = 1; i <= 6; i++) t.fire("pointermove", s.x - i * 6, k.y + i * 6);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:slider", "tip"]);
+    // a press on the knob grabs the knob, and the drag keeps it the whole way, even across
+    // the arrow
+    t.fire("pointermove", k.x, k.y);
+    t.fire("pointerdown", k.x, k.y);
+    for (let i = 1; i <= 6; i++) t.fire("pointermove", k.x - i * 6, k.y + i * 6);
     expect(t.mode.isDragging()).toBe(true);
-    t.fire("pointerup", s.x - 36, k.y + 36);
+    t.fire("pointerup", k.x - 36, k.y + 36);
     expect(t.log.commit).toEqual([["b"]]);
-    // a touch where the knob is nearest grabs the knob too, never the hidden arrow
+    // a touch on the knob grabs the knob too, never the hidden arrow
     // (the knob back where it was, beside the shaft)
     const touch = { pointerType: "touch", pointerId: 2 };
     t.params.b = 0;
     t.viewer.tick();
     t.fire("pointerleave", 0, 0);
-    t.fire("pointerdown", s.x, k.y, touch);
-    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x + i * 8, k.y, touch);
-    t.fire("pointerup", s.x + 32, k.y, touch);
+    t.fire("pointerdown", k.x, k.y, touch);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", k.x + i * 8, k.y, touch);
+    t.fire("pointerup", k.x + 32, k.y, touch);
     expect(t.log.commit).toEqual([["b"], ["b"]]);
+  });
+
+  it("grouped limbs: a knuckle dot under the pointer wins, though another limb's tip is nearer than its own", () => {
+    // both fingers straight, b spread across toward a: b's tip ends nearer a's knuckle
+    // than a's own tip does, and b's bones pass within reach of that knuckle
+    const part = {
+      ...hand,
+      defaults: { ...hand.defaults, aCurl: 0, bCurl: 0, bSpread: -20 },
+      handles: { a: { ...hand.handles.a, group: "fingers" }, b: { ...hand.handles.b, group: "fingers" } },
+    };
+    const t = setup(part);
+    t.mode.setEnabled(true);
+    const d2 = (p, q) => Math.hypot(p.x - q.x, p.y - q.y);
+    const aTip = t.tipScreen("a"), bTip = t.tipScreen("b");
+    // finger a's middle knuckle sits nearer finger b's tip than a's own: the grab-point
+    // rule hid finger a there, knuckle dot and all
+    const s = t.pointScreen("a", "pip");
+    expect(d2(s, bTip)).toBeLessThan(d2(s, aTip));
+    t.fire("pointermove", s.x, s.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["a", "pip"]);
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x - i * 5, s.y);
+    expect(t.mode.isDragging()).toBe(true);
+    t.fire("pointerup", s.x - 20, s.y);
+    expect(t.log.commit).toHaveLength(1);
+    for (const k of t.log.commit[0]) expect(hand.handles.a.params).toContain(k);
+    // and on finger b's tip, b shows
+    t.fire("pointermove", bTip.x, bTip.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["b", "tip"]);
   });
 
   it("the resting cue shows one mark per group, its first-declared handle", () => {

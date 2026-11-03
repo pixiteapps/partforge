@@ -9,18 +9,19 @@ export function groupOf(handle) {
 }
 
 /**
- * Of the candidates that would show under the pointer, `[{ id, group, x, y }]` (`x`, `y`
- * the handle's grab point on screen), the ids to hide: in each group with more than one
- * candidate, every one but the one whose grab point is nearest `pointer` (a tie: the first
- * listed). A candidate with no group, or alone in its group, is never hidden.
+ * Of the candidates that would show under the pointer, `[{ id, group, dist }]` (`dist`
+ * how far the pointer is, in px, from the nearest dot or arrow the handle offers — every
+ * dot of a limb handle, not one grab point, so a knuckle under the pointer wins), the ids
+ * to hide: in each group with more than one candidate, every one but the nearest (a tie:
+ * the first listed; a dist that is not a finite number counts as infinitely far). A
+ * candidate with no group, or alone in its group, is never hidden.
  */
-export function groupHidden(candidates, pointer) {
+export function groupHidden(candidates) {
   const best = new Map(); // group -> { id, dist }
   const hidden = new Set();
   for (const c of candidates) {
     if (c.group == null) continue;
-    const dist = Math.hypot(c.x - pointer.x, c.y - pointer.y);
-    const d = Number.isFinite(dist) ? dist : Infinity;
+    const d = Number.isFinite(c.dist) ? c.dist : Infinity;
     const cur = best.get(c.group);
     if (!cur) { best.set(c.group, { id: c.id, dist: d }); continue; }
     if (d < cur.dist) { hidden.add(cur.id); best.set(c.group, { id: c.id, dist: d }); }
