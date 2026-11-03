@@ -421,23 +421,6 @@ function triBoxDistSq(V1, b1, V2, b2) {
 const PRUNE_MARGIN_MM = 1e-9;
 const pastSq = (d2) => { const d = Math.sqrt(d2) + PRUNE_MARGIN_MM; return d * d; };
 
-// Whether the plane of triangle `b1` of V1 has all of triangle `b2` of V2 more than
-// `gap` (+ margin) to one side: then the triangles are more than `gap` apart. Exact, and
-// no use on a degenerate first triangle (returns false).
-function planeSeparates(V1, b1, V2, b2, gap) {
-  const ax = V1[b1], ay = V1[b1 + 1], az = V1[b1 + 2];
-  const ux = V1[b1 + 3] - ax, uy = V1[b1 + 4] - ay, uz = V1[b1 + 5] - az;
-  const vx = V1[b1 + 6] - ax, vy = V1[b1 + 7] - ay, vz = V1[b1 + 8] - az;
-  const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-  const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-  if (!(len > 0)) return false;
-  const lim = (gap + PRUNE_MARGIN_MM) * len;
-  const s0 = nx * (V2[b2] - ax) + ny * (V2[b2 + 1] - ay) + nz * (V2[b2 + 2] - az);
-  const s1 = nx * (V2[b2 + 3] - ax) + ny * (V2[b2 + 4] - ay) + nz * (V2[b2 + 5] - az);
-  const s2 = nx * (V2[b2 + 6] - ax) + ny * (V2[b2 + 7] - ay) + nz * (V2[b2 + 8] - az);
-  return (s0 > lim && s1 > lim && s2 > lim) || (s0 < -lim && s1 < -lim && s2 < -lim);
-}
-
 // Möller–Trumbore against triangle `base` of `V`; returns t>tMin or Infinity.
 // Scalars throughout — this is the inner loop of every raycast, and min-wall casts
 // one ray per sampled triangle.
@@ -481,7 +464,6 @@ function boxUnder(B, nb, R, out, o) {
 const POSED_NBOX = new Float64Array(18);
 const POSED_BEST = new Float64Array(6), POSED_PTS = new Float64Array(6), POSED_TMP = new Float64Array(6);
 let POSED_STACK = new Uint32Array(256);
-let POSED_LEAF = new Float64Array(9 * MAX_LEAF);
 
 // Push node pairs (a0, b0) and (a1, b1) onto the shared stack, in that order when
 // `inOrder`, else reversed — the caller passes the nearer pair second so it pops first,
@@ -494,20 +476,60 @@ function pushPair(sp, inOrder, a0, b0, a1, b1) {
   return sp + 4;
 }
 
-// A leaf's `n` triangles of oV (order oO from sb), moved by R into the shared leaf scratch.
-function leafInto(oV, oO, sb, n, R) {
-  if (POSED_LEAF.length < n * 9) POSED_LEAF = new Float64Array(n * 9);
-  const L = POSED_LEAF;
+// The other mesh's triangles, moved by R, for the query in progress: each is moved once
+// per query, on first touch (a leaf of the other tree meets many of this tree's leaves),
+// into the shared MOVED buffer at its own triangle id, with its plane beside it in
+// MOVED_PLANE. An index's `_stamp` (one slot per triangle) holds the query count `_q` at
+// which each was last moved, so a slot left by an earlier query is never read.
+let MOVED = new Float64Array(9 * 64), MOVED_PLANE = new Float64Array(4 * 64);
+function beginMoved(other) {
+  const n = other.triangleCount;
+  if (MOVED.length < n * 9) { MOVED = new Float64Array(n * 9); MOVED_PLANE = new Float64Array(n * 4); }
+  if (!other._stamp) other._stamp = new Uint32Array(n);
+  if (++other._q === 0xffffffff) { other._q = 1; other._stamp.fill(0); }
+  return other._q;
+}
+// Move triangles oO[sb .. sb+n) of `other` by R into MOVED (and their planes), unless
+// query q moved them already.
+function moveLeaf(other, oO, sb, n, R, q) {
+  const oV = other.vertices, stamp = other._stamp, L = MOVED, P = MOVED_PLANE;
   for (let j = 0; j < n; j++) {
-    const b = oO[sb + j] * 9, o = j * 9;
+    const t = oO[sb + j];
+    if (stamp[t] === q) continue;
+    stamp[t] = q;
+    const b = t * 9;
     for (let v = 0; v < 9; v += 3) {
       const x = oV[b + v], y = oV[b + v + 1], z = oV[b + v + 2];
-      L[o + v] = R[0] * x + R[4] * y + R[8] * z + R[12];
-      L[o + v + 1] = R[1] * x + R[5] * y + R[9] * z + R[13];
-      L[o + v + 2] = R[2] * x + R[6] * y + R[10] * z + R[14];
+      L[b + v] = R[0] * x + R[4] * y + R[8] * z + R[12];
+      L[b + v + 1] = R[1] * x + R[5] * y + R[9] * z + R[13];
+      L[b + v + 2] = R[2] * x + R[6] * y + R[10] * z + R[14];
     }
+    planeInto(L, b, P, t * 4);
   }
-  return L;
+}
+
+// Triangle `b` of V's plane, into P[o..o+3]: its unit normal and offset (n·x = offset on
+// the plane). A degenerate triangle gets NaN, which no plane test below passes.
+function planeInto(V, b, P, o) {
+  const ax = V[b], ay = V[b + 1], az = V[b + 2];
+  const ux = V[b + 3] - ax, uy = V[b + 4] - ay, uz = V[b + 5] - az;
+  const vx = V[b + 6] - ax, vy = V[b + 7] - ay, vz = V[b + 8] - az;
+  const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+  const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+  const ix = len > 0 ? 1 / len : NaN;
+  const ux2 = nx * ix, uy2 = ny * ix, uz2 = nz * ix;
+  P[o] = ux2; P[o + 1] = uy2; P[o + 2] = uz2; P[o + 3] = ux2 * ax + uy2 * ay + uz2 * az;
+}
+
+// Whether the plane P[o..o+3] has all of triangle `b2` of V2 more than `gap` (+ margin)
+// to one side: then that triangle is more than `gap` from the plane's own triangle.
+// Exact as a bound: every point of a triangle is a convex mix of its vertices.
+function planeSeparatesP(P, o, V2, b2, gap) {
+  const nx = P[o], ny = P[o + 1], nz = P[o + 2], off = P[o + 3], lim = gap + PRUNE_MARGIN_MM;
+  const s0 = nx * V2[b2] + ny * V2[b2 + 1] + nz * V2[b2 + 2] - off;
+  if (s0 > lim) return nx * V2[b2 + 3] + ny * V2[b2 + 4] + nz * V2[b2 + 5] - off > lim && nx * V2[b2 + 6] + ny * V2[b2 + 7] + nz * V2[b2 + 8] - off > lim;
+  if (s0 < -lim) return nx * V2[b2 + 3] + ny * V2[b2 + 4] + nz * V2[b2 + 5] - off < -lim && nx * V2[b2 + 6] + ny * V2[b2 + 7] + nz * V2[b2 + 8] - off < -lim;
+  return false;
 }
 
 // Directions insideOf casts along, in order: +X, then fixed oblique ones for a
@@ -874,34 +896,128 @@ export function buildBVH(mesh) {
   // Infinity (no points), and the traversal prunes every node pair at least that far
   // apart from the start. A pair within it gets exactly the uncut answer: a pruned node
   // pair can only hold triangle pairs at or past the cutoff, never the closest one.
+  // This mesh's triangle planes (planeInto, by triangle id), built on the first posed
+  // query: a collision world asks many, an oracle index none.
+  let planes = null;
+  const selfPlanes = () => {
+    if (!planes) { planes = new Float64Array(count * 4); for (let t = 0; t < count; t++) planeInto(verts, t * 9, planes, t * 4); }
+    return planes;
+  };
+
+  // Every node's SLAB, built on the first posed query: a unit direction and the interval
+  // its triangles' vertices span along it — 5 numbers a node, [nx, ny, nz, lo, hi]. The
+  // direction is the node's area-weighted normal, so a node on a flat face is a slab of
+  // no thickness and a node on a gently curved one a thin slab, where its box can be
+  // fat: two faces a hair apart at an angle to the axes have boxes that overlap all along
+  // them. Any direction bounds its node, so the choice never matters to correctness.
+  let slabs = null;
+  function selfSlabs() {
+    if (slabs) return slabs;
+    const nodes = meta.length / 2;
+    const S = new Float64Array(nodes * 5), start = new Uint32Array(nodes), len = new Uint32Array(nodes);
+    // each node's run of `order` (a subtree's leaves are contiguous: pre-order, partitioned)
+    const walk = (n) => {
+      const packed = meta[n * 2 + 1];
+      if (packed) { start[n] = meta[n * 2]; len[n] = packed - 1; return; }
+      const l = n + 1, r = meta[n * 2];
+      walk(l); walk(r);
+      start[n] = start[l]; len[n] = len[l] + len[r];
+    };
+    if (count) walk(0);
+    const cross = new Float64Array(count * 3);
+    for (let t = 0; t < count; t++) {
+      const b = t * 9, ax = verts[b], ay = verts[b + 1], az = verts[b + 2];
+      const ux = verts[b + 3] - ax, uy = verts[b + 4] - ay, uz = verts[b + 5] - az;
+      const vx = verts[b + 6] - ax, vy = verts[b + 7] - ay, vz = verts[b + 8] - az;
+      cross[t * 3] = uy * vz - uz * vy; cross[t * 3 + 1] = uz * vx - ux * vz; cross[t * 3 + 2] = ux * vy - uy * vx;
+    }
+    for (let n = 0; n < nodes; n++) {
+      let nx = 0, ny = 0, nz = 0;
+      for (let k = start[n]; k < start[n] + len[n]; k++) { const t = order[k]; nx += cross[t * 3]; ny += cross[t * 3 + 1]; nz += cross[t * 3 + 2]; }
+      let l = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      if (!(l > 0)) { nx = 0; ny = 0; nz = 1; l = 1; }
+      nx /= l; ny /= l; nz /= l;
+      let lo = Infinity, hi = -Infinity;
+      for (let k = start[n]; k < start[n] + len[n]; k++) {
+        const b = order[k] * 9;
+        for (let v = 0; v < 9; v += 3) {
+          const d = nx * verts[b + v] + ny * verts[b + v + 1] + nz * verts[b + v + 2];
+          if (d < lo) lo = d; if (d > hi) hi = d;
+        }
+      }
+      const o = n * 5;
+      S[o] = nx; S[o + 1] = ny; S[o + 2] = nz; S[o + 3] = lo; S[o + 4] = hi;
+    }
+    return (slabs = S);
+  }
+
+  // A lower bound on the distance between what node `na` of this tree and node `nb` of
+  // `other` hold, with `other` moved by R (rotation part R, translation R[12..14]): the
+  // larger gap along this node's slab direction (the other node's box projected onto it)
+  // and along the other node's (this node's box projected), or <= 0 when both overlap.
+  // A box's projection is exact: its support along a direction is per-axis.
+  function slabGap(na, SA, oB, nb, SB, R) {
+    // this node's slab against the other node's box, both in this frame
+    let o = na * 5;
+    const ax = SA[o], ay = SA[o + 1], az = SA[o + 2];
+    // the direction in the other's own frame: Rᵀ·n
+    const mx = R[0] * ax + R[1] * ay + R[2] * az, my = R[4] * ax + R[5] * ay + R[6] * az, mz = R[8] * ax + R[9] * ay + R[10] * az;
+    const c = ax * R[12] + ay * R[13] + az * R[14];
+    let b = nb * 6;
+    let lo = c, hi = c;
+    if (mx > 0) { lo += mx * oB[b]; hi += mx * oB[b + 3]; } else { lo += mx * oB[b + 3]; hi += mx * oB[b]; }
+    if (my > 0) { lo += my * oB[b + 1]; hi += my * oB[b + 4]; } else { lo += my * oB[b + 4]; hi += my * oB[b + 1]; }
+    if (mz > 0) { lo += mz * oB[b + 2]; hi += mz * oB[b + 5]; } else { lo += mz * oB[b + 5]; hi += mz * oB[b + 2]; }
+    let gap = lo - SA[o + 4] > SA[o + 3] - hi ? lo - SA[o + 4] : SA[o + 3] - hi;
+    // the other node's slab against this node's box, both in the other's frame: this
+    // frame's point y is Rᵀ(y − t) there, so project this box onto R·n and shift by R·n·t
+    o = nb * 5;
+    const bx = SB[o], by = SB[o + 1], bz = SB[o + 2];
+    const kx = R[0] * bx + R[4] * by + R[8] * bz, ky = R[1] * bx + R[5] * by + R[9] * bz, kz = R[2] * bx + R[6] * by + R[10] * bz;
+    const shift = kx * R[12] + ky * R[13] + kz * R[14];
+    b = na * 6;
+    lo = -shift; hi = -shift;
+    if (kx > 0) { lo += kx * bounds[b]; hi += kx * bounds[b + 3]; } else { lo += kx * bounds[b + 3]; hi += kx * bounds[b]; }
+    if (ky > 0) { lo += ky * bounds[b + 1]; hi += ky * bounds[b + 4]; } else { lo += ky * bounds[b + 4]; hi += ky * bounds[b + 1]; }
+    if (kz > 0) { lo += kz * bounds[b + 2]; hi += kz * bounds[b + 5]; } else { lo += kz * bounds[b + 5]; hi += kz * bounds[b + 2]; }
+    const g2 = lo - SB[o + 4] > SB[o + 3] - hi ? lo - SB[o + 4] : SB[o + 3] - hi;
+    return g2 > gap ? g2 : gap;
+  }
+
   function distanceToPosed(other, mSelf, mOther, maxDistance = Infinity) {
     if (other?.jsIndex) other = other.jsIndex();
-    const oV = other.vertices, oB = other._bounds, oM = other._meta, oO = other._order;
+    const oB = other._bounds, oM = other._meta, oO = other._order;
     const R = mulMat4(invertRigid(mSelf), mOther);
     const nbox = POSED_NBOX; // [0..5] other's node, [6..11] its left child, [12..17] its right child
+    const SA = selfSlabs(), SB = other._slabs();
     // a hair past the cutoff, so a pair exactly at it is kept (and a cutoff of 0 still
     // visits touching boxes)
     const cut = maxDistance < Infinity ? Math.max(Number.MIN_VALUE, maxDistance * maxDistance * (1 + 1e-12)) : Infinity;
     let bestD2 = cut, found = false, thr = pastSq(cut), gap = Math.sqrt(cut);
     const bestPts = POSED_BEST, pts = POSED_PTS, tmp = POSED_TMP;
+    const AP = selfPlanes(), q = beginMoved(other), MV = MOVED, MP = MOVED_PLANE;
     let sp = 0;
     POSED_STACK[sp++] = 0; POSED_STACK[sp++] = 0;
     while (sp && bestD2 > 0) {
       const nb = POSED_STACK[--sp], na = POSED_STACK[--sp];
       boxUnder(oB, nb * 6, R, nbox, 0);
       if (boxBoxDistSq(bounds, na * 6, nbox, 0) >= bestD2) continue;
+      // the same pruning as distanceTo's, plus pairs the slabs put past the best by more
+      // than rounding: neither can drop a pair that would have become the best
+      if (thr < Infinity) { const g = slabGap(na, SA, oB, nb, SB, R) - PRUNE_MARGIN_MM; if (g > 0 && g * g > thr) continue; }
       const pa = meta[na * 2 + 1], pb = oM[nb * 2 + 1];
       if (pa && pb) {
         const sa = meta[na * 2], sb = oM[nb * 2], nj = pb - 1;
-        const leafV = leafInto(oV, oO, sb, nj, R);
+        moveLeaf(other, oO, sb, nj, R, q);
         for (let i = 0; i < pa - 1; i++) {
-          const ai = order[sa + i] * 9;
+          const ta = order[sa + i], ai = ta * 9;
           for (let j = 0; j < nj; j++) {
-            // a pair whose boxes are past the best by more than rounding cannot beat it,
-            // so the search keeps exactly the pair triTriDist alone would have kept
-            if (triBoxDistSq(verts, ai, leafV, j * 9) > thr) continue;
-            if (gap < Infinity && (planeSeparates(verts, ai, leafV, j * 9, gap) || planeSeparates(leafV, j * 9, verts, ai, gap))) continue;
-            const d2 = triTriDistS(verts, ai, leafV, j * 9, pts, tmp);
+            const tb = oO[sb + j], bj = tb * 9;
+            // a pair whose boxes or planes are past the best by more than rounding cannot
+            // beat it, so the search keeps exactly the pair triTriDist alone would have kept
+            if (triBoxDistSq(verts, ai, MV, bj) > thr) continue;
+            if (gap < Infinity && (planeSeparatesP(AP, ta * 4, MV, bj, gap) || planeSeparatesP(MP, tb * 4, verts, ai, gap))) continue;
+            const d2 = triTriDistS(verts, ai, MV, bj, pts, tmp);
             if (d2 < bestD2) { bestD2 = d2; found = true; thr = pastSq(d2); gap = Math.sqrt(d2); for (let k = 0; k < 6; k++) bestPts[k] = pts[k]; }
           }
         }
@@ -929,42 +1045,45 @@ export function buildBVH(mesh) {
 
   // Whether the two meshes, posed as distanceToPosed's are, come within `eps` (mm):
   // exactly `distanceToPosed(other, mSelf, mOther, eps).distance <= eps`, without the
-  // minimum. Every node pair whose boxes are more than eps apart is pruned, a triangle
-  // pair is skipped when its boxes or either triangle's plane put it past eps (each a
-  // lower bound, trusted only past PRUNE_MARGIN_MM), and the first triangle pair within
-  // eps ends the search. Nothing a pruned or skipped pair holds can be within eps, so
-  // the answer never reads clear when the exact distance is not.
+  // minimum. Every node pair whose boxes (either way round) are more than eps apart is
+  // pruned, a triangle pair is skipped when its boxes or either triangle's plane put it
+  // past eps (each a lower bound, trusted only past PRUNE_MARGIN_MM), and the first
+  // triangle pair within eps ends the search. Nothing a pruned or skipped pair holds can
+  // be within eps, so the answer never reads clear when the exact distance is not.
   //
   // `out` (optional, an object) gets `bound`: a lower bound on the distance when the
   // answer is false (the least of every pruned or skipped pair's lower bound, less the
   // margin; Infinity for an empty mesh), 0 when it is true.
   function withinDistancePosed(other, mSelf, mOther, eps, out = null) {
     if (other?.jsIndex) other = other.jsIndex();
-    const oV = other.vertices, oB = other._bounds, oM = other._meta, oO = other._order;
+    const oB = other._bounds, oM = other._meta, oO = other._order;
     if (!count || !other.triangleCount) { if (out) out.bound = Infinity; return false; }
     const R = mulMat4(invertRigid(mSelf), mOther);
     const nbox = POSED_NBOX, pts = POSED_PTS, tmp = POSED_TMP;
+    const SA = selfSlabs(), SB = other._slabs();
     const e2 = Math.max(Number.MIN_VALUE, eps * eps * (1 + 1e-12)), thr = pastSq(e2); // distanceToPosed's cut
+    const AP = selfPlanes(), q = beginMoved(other), MV = MOVED, MP = MOVED_PLANE;
     let low2 = Infinity; // least squared lower bound over everything pruned or skipped
     let sp = 0;
     POSED_STACK[sp++] = 0; POSED_STACK[sp++] = 0;
     while (sp) {
       const nb = POSED_STACK[--sp], na = POSED_STACK[--sp];
       boxUnder(oB, nb * 6, R, nbox, 0);
-      const g2 = boxBoxDistSq(bounds, na * 6, nbox, 0);
+      let g2 = boxBoxDistSq(bounds, na * 6, nbox, 0);
+      if (g2 <= thr) { const g = slabGap(na, SA, oB, nb, SB, R) - PRUNE_MARGIN_MM; if (g > 0 && g * g > g2) g2 = g * g; }
       if (g2 > thr) { if (g2 < low2) low2 = g2; continue; }
       const pa = meta[na * 2 + 1], pb = oM[nb * 2 + 1];
       if (pa && pb) {
         const sa = meta[na * 2], sb = oM[nb * 2], nj = pb - 1;
-        const leafV = leafInto(oV, oO, sb, nj, R);
+        moveLeaf(other, oO, sb, nj, R, q);
         for (let i = 0; i < pa - 1; i++) {
-          const ai = order[sa + i] * 9;
+          const ta = order[sa + i], ai = ta * 9;
           for (let j = 0; j < nj; j++) {
-            const bj = j * 9;
-            const t2 = triBoxDistSq(verts, ai, leafV, bj);
+            const tb = oO[sb + j], bj = tb * 9;
+            const t2 = triBoxDistSq(verts, ai, MV, bj);
             if (t2 > thr) { if (t2 < low2) low2 = t2; continue; }
-            if (planeSeparates(verts, ai, leafV, bj, eps) || planeSeparates(leafV, bj, verts, ai, eps)) { if (e2 < low2) low2 = e2; continue; }
-            const d2 = triTriDistS(verts, ai, leafV, bj, pts, tmp);
+            if (planeSeparatesP(AP, ta * 4, MV, bj, eps) || planeSeparatesP(MP, tb * 4, verts, ai, eps)) { if (e2 < low2) low2 = e2; continue; }
+            const d2 = triTriDistS(verts, ai, MV, bj, pts, tmp);
             if (d2 < e2 && Math.sqrt(d2) <= eps) { if (out) out.bound = 0; return true; }
             if (d2 < low2) low2 = d2;
           }
@@ -1021,5 +1140,8 @@ export function buildBVH(mesh) {
     // access to reach for. Nothing outside bvh.js touches them, and nothing should:
     // they are raw node storage whose meaning is the packing rules in the header.
     _bounds: bounds, _meta: meta, _order: order,
+    // The posed queries' per-index scratch (beginMoved): which triangles a query moved.
+    _stamp: null, _q: 0,
+    _slabs: selfSlabs,
   };
 }
