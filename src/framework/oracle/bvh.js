@@ -481,10 +481,10 @@ function pushPair(sp, inOrder, a0, b0, a1, b1) {
 // into the shared MOVED buffer at its own triangle id, with its plane beside it in
 // MOVED_PLANE. An index's `_stamp` (one slot per triangle) holds the query count `_q` at
 // which each was last moved, so a slot left by an earlier query is never read.
-let MOVED = new Float64Array(9 * 64), MOVED_PLANE = new Float64Array(4 * 64);
+let MOVED = new Float64Array(9 * 64), MOVED_PLANE = new Float64Array(4 * 64), MOVED_SPHERE = new Float64Array(4 * 64);
 function beginMoved(other) {
   const n = other.triangleCount;
-  if (MOVED.length < n * 9) { MOVED = new Float64Array(n * 9); MOVED_PLANE = new Float64Array(n * 4); }
+  if (MOVED.length < n * 9) { MOVED = new Float64Array(n * 9); MOVED_PLANE = new Float64Array(n * 4); MOVED_SPHERE = new Float64Array(n * 4); }
   if (!other._stamp) other._stamp = new Uint32Array(n);
   if (++other._q === 0xffffffff) { other._q = 1; other._stamp.fill(0); }
   return other._q;
@@ -505,7 +505,43 @@ function moveLeaf(other, oO, sb, n, R, q) {
       L[b + v + 2] = R[2] * x + R[6] * y + R[10] * z + R[14];
     }
     planeInto(L, b, P, t * 4);
+    sphereInto(L, b, MOVED_SPHERE, t * 4);
   }
+}
+
+// Triangle `b` of V's bounding sphere, into S[o..o+3]: its centroid and the farthest
+// vertex's distance from it. |cA − cB| − rA − rB bounds two triangles' distance from below.
+function sphereInto(V, b, S, o) {
+  const cx = (V[b] + V[b + 3] + V[b + 6]) / 3, cy = (V[b + 1] + V[b + 4] + V[b + 7]) / 3, cz = (V[b + 2] + V[b + 5] + V[b + 8]) / 3;
+  let r2 = 0;
+  for (let v = 0; v < 9; v += 3) {
+    const dx = V[b + v] - cx, dy = V[b + v + 1] - cy, dz = V[b + v + 2] - cz, d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 > r2) r2 = d2;
+  }
+  S[o] = cx; S[o + 1] = cy; S[o + 2] = cz; S[o + 3] = Math.sqrt(r2);
+}
+
+// The gap between triangle `b1` of V1 and triangle `b2` of V2 along the unit direction
+// joining their centroids (S1[o1], S2[o2]): a lower bound on their distance (any unit
+// direction's separation is one), nearly tight for two small triangles side by side,
+// where neither one's plane separates them.
+function centreAxisGap(V1, b1, S1, o1, V2, b2, S2, o2) {
+  let ux = S2[o2] - S1[o1], uy = S2[o2 + 1] - S1[o1 + 1], uz = S2[o2 + 2] - S1[o1 + 2];
+  const l = Math.sqrt(ux * ux + uy * uy + uz * uz);
+  if (!(l > 0)) return -Infinity;
+  ux /= l; uy /= l; uz /= l;
+  const a0 = ux * V1[b1] + uy * V1[b1 + 1] + uz * V1[b1 + 2], a1 = ux * V1[b1 + 3] + uy * V1[b1 + 4] + uz * V1[b1 + 5], a2 = ux * V1[b1 + 6] + uy * V1[b1 + 7] + uz * V1[b1 + 8];
+  const c0 = ux * V2[b2] + uy * V2[b2 + 1] + uz * V2[b2 + 2], c1 = ux * V2[b2 + 3] + uy * V2[b2 + 4] + uz * V2[b2 + 5], c2 = ux * V2[b2 + 6] + uy * V2[b2 + 7] + uz * V2[b2 + 8];
+  const hiA = a0 > a1 ? (a0 > a2 ? a0 : a2) : (a1 > a2 ? a1 : a2);
+  const loB = c0 < c1 ? (c0 < c2 ? c0 : c2) : (c1 < c2 ? c1 : c2);
+  return loB - hiA;
+}
+
+// The sphere bound for triangle spheres A[oa] and B[ob]: a lower bound on their
+// triangles' distance (may be negative).
+function sphereGap(A, oa, B, ob) {
+  const dx = A[oa] - B[ob], dy = A[oa + 1] - B[ob + 1], dz = A[oa + 2] - B[ob + 2];
+  return Math.sqrt(dx * dx + dy * dy + dz * dz) - A[oa + 3] - B[ob + 3];
 }
 
 // Triangle `b` of V's plane, into P[o..o+3]: its unit normal and offset (n·x = offset on
@@ -896,11 +932,14 @@ export function buildBVH(mesh) {
   // Infinity (no points), and the traversal prunes every node pair at least that far
   // apart from the start. A pair within it gets exactly the uncut answer: a pruned node
   // pair can only hold triangle pairs at or past the cutoff, never the closest one.
-  // This mesh's triangle planes (planeInto, by triangle id), built on the first posed
-  // query: a collision world asks many, an oracle index none.
-  let planes = null;
+  // This mesh's triangle planes and spheres (planeInto, sphereInto; by triangle id),
+  // built on the first posed query: a collision world asks many, an oracle index none.
+  let planes = null, spheres = null;
   const selfPlanes = () => {
-    if (!planes) { planes = new Float64Array(count * 4); for (let t = 0; t < count; t++) planeInto(verts, t * 9, planes, t * 4); }
+    if (!planes) {
+      planes = new Float64Array(count * 4); spheres = new Float64Array(count * 4);
+      for (let t = 0; t < count; t++) { planeInto(verts, t * 9, planes, t * 4); sphereInto(verts, t * 9, spheres, t * 4); }
+    }
     return planes;
   };
 
@@ -951,6 +990,39 @@ export function buildBVH(mesh) {
     return (slabs = S);
   }
 
+  // For a LEAF pair, once the other leaf's triangles are moved (MOVED): the gap between
+  // this leaf's slab and the other leaf's moved vertices along this slab's direction, and
+  // between the other leaf's slab (turned into this frame) and this leaf's vertices — the
+  // exact supports, where slabGap projects boxes. A lower bound on the leaves' distance.
+  function leafSlabGap(na, SA, sa, la, nb, SB, oO, sb, lb, R) {
+    let o = na * 5;
+    let nx = SA[o], ny = SA[o + 1], nz = SA[o + 2];
+    let lo = Infinity, hi = -Infinity;
+    for (let j = 0; j < lb; j++) {
+      const b = oO[sb + j] * 9;
+      for (let v = 0; v < 9; v += 3) {
+        const d = nx * MOVED[b + v] + ny * MOVED[b + v + 1] + nz * MOVED[b + v + 2];
+        if (d < lo) lo = d; if (d > hi) hi = d;
+      }
+    }
+    let gap = lo - SA[o + 4] > SA[o + 3] - hi ? lo - SA[o + 4] : SA[o + 3] - hi;
+    // the other's slab: direction R·n, its interval shifted by (R·n)·t into this frame
+    o = nb * 5;
+    const bx = SB[o], by = SB[o + 1], bz = SB[o + 2];
+    nx = R[0] * bx + R[4] * by + R[8] * bz; ny = R[1] * bx + R[5] * by + R[9] * bz; nz = R[2] * bx + R[6] * by + R[10] * bz;
+    const shift = nx * R[12] + ny * R[13] + nz * R[14];
+    lo = Infinity; hi = -Infinity;
+    for (let i = 0; i < la; i++) {
+      const b = order[sa + i] * 9;
+      for (let v = 0; v < 9; v += 3) {
+        const d = nx * verts[b + v] + ny * verts[b + v + 1] + nz * verts[b + v + 2];
+        if (d < lo) lo = d; if (d > hi) hi = d;
+      }
+    }
+    const g2 = lo - (SB[o + 4] + shift) > (SB[o + 3] + shift) - hi ? lo - (SB[o + 4] + shift) : (SB[o + 3] + shift) - hi;
+    return g2 > gap ? g2 : gap;
+  }
+
   // A lower bound on the distance between what node `na` of this tree and node `nb` of
   // `other` hold, with `other` moved by R (rotation part R, translation R[12..14]): the
   // larger gap along this node's slab direction (the other node's box projected onto it)
@@ -995,7 +1067,7 @@ export function buildBVH(mesh) {
     const cut = maxDistance < Infinity ? Math.max(Number.MIN_VALUE, maxDistance * maxDistance * (1 + 1e-12)) : Infinity;
     let bestD2 = cut, found = false, thr = pastSq(cut), gap = Math.sqrt(cut);
     const bestPts = POSED_BEST, pts = POSED_PTS, tmp = POSED_TMP;
-    const AP = selfPlanes(), q = beginMoved(other), MV = MOVED, MP = MOVED_PLANE;
+    const AP = selfPlanes(), q = beginMoved(other), MV = MOVED, MP = MOVED_PLANE, MS = MOVED_SPHERE;
     let sp = 0;
     POSED_STACK[sp++] = 0; POSED_STACK[sp++] = 0;
     while (sp && bestD2 > 0) {
@@ -1009,6 +1081,7 @@ export function buildBVH(mesh) {
       if (pa && pb) {
         const sa = meta[na * 2], sb = oM[nb * 2], nj = pb - 1;
         moveLeaf(other, oO, sb, nj, R, q);
+        if (thr < Infinity) { const g = leafSlabGap(na, SA, sa, pa - 1, nb, SB, oO, sb, nj, R) - PRUNE_MARGIN_MM; if (g > 0 && g * g > thr) continue; }
         for (let i = 0; i < pa - 1; i++) {
           const ta = order[sa + i], ai = ta * 9;
           for (let j = 0; j < nj; j++) {
@@ -1016,7 +1089,9 @@ export function buildBVH(mesh) {
             // a pair whose boxes or planes are past the best by more than rounding cannot
             // beat it, so the search keeps exactly the pair triTriDist alone would have kept
             if (triBoxDistSq(verts, ai, MV, bj) > thr) continue;
-            if (gap < Infinity && (planeSeparatesP(AP, ta * 4, MV, bj, gap) || planeSeparatesP(MP, tb * 4, verts, ai, gap))) continue;
+            if (gap < Infinity && (sphereGap(spheres, ta * 4, MS, tb * 4) > gap + PRUNE_MARGIN_MM
+              || centreAxisGap(verts, ai, spheres, ta * 4, MV, bj, MS, tb * 4) > gap + PRUNE_MARGIN_MM
+              || planeSeparatesP(AP, ta * 4, MV, bj, gap) || planeSeparatesP(MP, tb * 4, verts, ai, gap))) continue;
             const d2 = triTriDistS(verts, ai, MV, bj, pts, tmp);
             if (d2 < bestD2) { bestD2 = d2; found = true; thr = pastSq(d2); gap = Math.sqrt(d2); for (let k = 0; k < 6; k++) bestPts[k] = pts[k]; }
           }
@@ -1062,7 +1137,7 @@ export function buildBVH(mesh) {
     const nbox = POSED_NBOX, pts = POSED_PTS, tmp = POSED_TMP;
     const SA = selfSlabs(), SB = other._slabs();
     const e2 = Math.max(Number.MIN_VALUE, eps * eps * (1 + 1e-12)), thr = pastSq(e2); // distanceToPosed's cut
-    const AP = selfPlanes(), q = beginMoved(other), MV = MOVED, MP = MOVED_PLANE;
+    const AP = selfPlanes(), q = beginMoved(other), MV = MOVED, MP = MOVED_PLANE, MS = MOVED_SPHERE;
     let low2 = Infinity; // least squared lower bound over everything pruned or skipped
     let sp = 0;
     POSED_STACK[sp++] = 0; POSED_STACK[sp++] = 0;
@@ -1076,12 +1151,17 @@ export function buildBVH(mesh) {
       if (pa && pb) {
         const sa = meta[na * 2], sb = oM[nb * 2], nj = pb - 1;
         moveLeaf(other, oO, sb, nj, R, q);
+        { const g = leafSlabGap(na, SA, sa, pa - 1, nb, SB, oO, sb, nj, R) - PRUNE_MARGIN_MM; if (g > eps) { if (g * g < low2) low2 = g * g; continue; } }
         for (let i = 0; i < pa - 1; i++) {
           const ta = order[sa + i], ai = ta * 9;
           for (let j = 0; j < nj; j++) {
             const tb = oO[sb + j], bj = tb * 9;
             const t2 = triBoxDistSq(verts, ai, MV, bj);
             if (t2 > thr) { if (t2 < low2) low2 = t2; continue; }
+            let sg = sphereGap(spheres, ta * 4, MS, tb * 4);
+            if (!(sg > eps)) { const cg = centreAxisGap(verts, ai, spheres, ta * 4, MV, bj, MS, tb * 4); if (cg > sg) sg = cg; }
+            sg -= PRUNE_MARGIN_MM;
+            if (sg > eps) { if (sg * sg < low2) low2 = sg * sg; continue; }
             if (planeSeparatesP(AP, ta * 4, MV, bj, eps) || planeSeparatesP(MP, tb * 4, verts, ai, eps)) { if (e2 < low2) low2 = e2; continue; }
             const d2 = triTriDistS(verts, ai, MV, bj, pts, tmp);
             if (d2 < e2 && Math.sqrt(d2) <= eps) { if (out) out.bound = 0; return true; }
