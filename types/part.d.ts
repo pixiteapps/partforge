@@ -664,6 +664,12 @@ export interface ViewExpectations {
   bbox?: Expectation;
   volume?: Expectation;
   overlaps?: Expectation;
+  /**
+   * Declared sweeps (`verify.sweeps`) that came closer than their clearance to another
+   * sub-part — usually `0`. A gate; only sweeps that ran count (one the time budget
+   * stopped is a warning instead).
+   */
+  sweepContacts?: Expectation;
   centerOfMass?: Expectation;
   /** The axis-aligned corners: `{ min: ">=[x,y,z]", max: "<=[x,y,z]" }`, as `measure` reports `bounds`. */
   bounds?: BoundsExpectation;
@@ -687,6 +693,26 @@ export interface ExpectMap {
   _view?: ViewExpectations;
   [subPart: string]: SubPartExpectations | ViewExpectations | undefined;
 }
+
+/** What every sweep may carry. */
+export interface SweepCommon {
+  /** mm: closer than this counts as contact (default `collisions.clearance`). */
+  clearance?: number;
+  /** The views it runs in (default: every view where its target moves something). */
+  views?: string[];
+}
+/**
+ * One declared motion: a param over its range (or `range`), a handle (one sweep per param
+ * it lists; a goal handle is never swept), a path between two presets or through
+ * waypoints, or an animation's timeline.
+ */
+export type SweepSpec = SweepCommon & (
+  | { param: string; range?: [number, number] }
+  | { handle: string; range?: [number, number] }
+  | { from: string; to: string }
+  | { path: Array<Record<string, unknown>> }
+  | { animation: string }
+);
 
 export interface VerifyBlock<P = ResolvedParams, D = Derived> {
   /** A named DFM profile or an inline one. */
@@ -715,6 +741,11 @@ export interface VerifyBlock<P = ResolvedParams, D = Derived> {
    * the body it grows from.
    */
   flex?: (string | string[] | { feature: string; labels?: string[]; deflection?: number; thickness?: number })[];
+  /**
+   * Motions to step end to end for contact, by name; `measure` reports each as a sweep
+   * row and `_view: { sweepContacts: 0 }` gates them. Each names one target.
+   */
+  sweeps?: Record<string, SweepSpec>;
   /** Which cases to check; default is `"defaults"` plus every preset name. */
   cases?: string[];
   /**

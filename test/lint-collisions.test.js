@@ -43,3 +43,60 @@ test("collisions-bad-clearance: negative or non-numeric", () => {
     expect(f[0].severity).toBe("error");
   }
 });
+
+// ── sweeps ──────────────────────────────────────────────────────────────────
+const control = (key, min, max) => ({ key, label: key, min, max, step: 1, description: key });
+const sweepPart = (sweeps, extra = {}) => ({
+  meta: { title: "S" },
+  parameters: [{ id: "g", title: "G", description: "d", controls: [
+    control("swing", 0, 90), control("size", 1, 10), { key: "loose", label: "loose", description: "no range" },
+    { type: "preset", label: "Shape", presets: { open: { swing: 0 }, shut: { swing: 90 } } },
+  ] }],
+  defaults: { swing: 0, size: 5, loose: 1 },
+  parts: {
+    base: { views: { main: (s) => s }, build: (k, p) => k.box({ size: [p.size, 1, 1] }) },
+    lid: { views: { main: (s, p) => s.rotate(p.swing, [0, 0, 0], [0, 1, 0]) }, build: (k) => k.box({ size: [1, 1, 1] }) },
+  },
+  views: { main: { label: "Main", animations: { close: { steps: [{ duration: 1, tracks: { swing: [[0, 0], [1, 90]] } }] } } } },
+  handles: {
+    hinge: { point: () => [0, 0, 0], drag: "rotary", axis: [0, 1, 0], params: ["swing"] },
+    reach: { point: () => [0, 0, 0], drag: "goal", params: ["swing"] },
+  },
+  collisions: {},
+  verify: { sweeps },
+  ...extra,
+});
+const sweepFindings = (sweeps, extra) => {
+  const r = lintPart(sweepPart(sweeps, extra));
+  return [...r.errors, ...r.warnings, ...r.notes].filter((f) => f.rule.startsWith("sweep-"));
+};
+
+test("valid sweeps are clean", () => {
+  expect(sweepFindings({
+    p: { param: "swing" }, h: { handle: "hinge" }, path: { from: "open", to: "shut" },
+    wp: { path: [{ swing: 0 }, { swing: 45 }] }, a: { animation: "close" }, r: { param: "swing", range: [0, 45] },
+  })).toEqual([]);
+  expect(sweepFindings(undefined)).toEqual([]);
+});
+
+test("sweep-unknown-target: an unknown param, handle, preset or animation, or a param with no range", () => {
+  for (const spec of [{ param: "ghost" }, { param: "loose" }, { handle: "ghost" }, { from: "open", to: "ghost" }, { animation: "ghost" }, {}]) {
+    const f = sweepFindings({ s: spec });
+    expect(f.map((x) => x.rule), JSON.stringify(spec)).toEqual(["sweep-unknown-target"]);
+    expect(f[0].severity).toBe("error");
+    expect(f[0].path).toBe("verify.sweeps.s");
+  }
+});
+
+test("sweep-goal-handle warns: a goal handle is a target, not a motion", () => {
+  const f = sweepFindings({ s: { handle: "reach" } });
+  expect(f.map((x) => x.rule)).toEqual(["sweep-goal-handle"]);
+  expect(f[0].severity).toBe("warning");
+});
+
+test("sweep-rebuilds warns when the motion changes a build", () => {
+  const f = sweepFindings({ s: { param: "size" } });
+  expect(f.map((x) => x.rule)).toEqual(["sweep-rebuilds"]);
+  expect(f[0].severity).toBe("warning");
+  expect(f[0].message).toContain("this sweep rebuilds geometry at every step and runs slower");
+});

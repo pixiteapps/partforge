@@ -3619,7 +3619,14 @@ millimetres under which two sub-parts count as touching (default 0.001), `allow`
 may touch as `"a×b"` strings, and `pose` (default true) keeps pieces solid in Pose mode. Lint
 errors: `collisions-bad-clearance` (not a number at or above 0), `collisions-bad-pair` (an `allow`
 entry without `×`, or naming one sub-part twice) and `collisions-unknown-part` (a name that is not a
-key of `parts`).
+key of `parts`). An `allow`ed pair is also left out of the `overlaps` gate.
+
+`verify.sweeps` declares motions to step end to end for contact, `measure` reports them as
+`sweeps` (the CLI's `sweeps:` line) and the `sweepContacts` gate (`_view: { sweepContacts: 0 }`)
+fails on one that comes closer than its clearance. Lint: `sweep-unknown-target` (an error: an
+unknown param, handle, preset or animation, or a param with no finite min and max),
+`sweep-goal-handle` (a warning: a goal handle is never swept) and `sweep-rebuilds` (a warning: a
+build changes along the motion, so the sweep rebuilds geometry at every step).
 
 ### For hosts: `runtime.pose`
 

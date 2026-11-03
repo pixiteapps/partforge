@@ -564,6 +564,48 @@ export interface HandleFacts {
   error?: string;
 }
 
+/**
+ * One declared sweep's reading (`verify.sweeps`, src/framework/oracle/sweep.js). A handle
+ * sweep gives one row per param, named `<sweep>.<param>`.
+ */
+export interface SweepRow {
+  name: string;
+  /** No blocked pair came within `clearance` along the motion; `null` when the sweep was skipped. */
+  clear: boolean | null;
+  /** mm: the sweep's own, else `collisions.clearance`, else 0.001. */
+  clearance: number;
+  steps: number;
+  /** Some sub-part's build changes along the motion, so it was rebuilt at fixed steps. */
+  rebuilds: boolean;
+  /** The tightest blocked-pair distance along the motion and where; `value` is the motion value. */
+  minClearance: { distance: number; a: string; b: string; at: [number, number, number] | null; value: number } | null;
+  /** Each interval of the motion value where a blocked pair is in contact. */
+  contacts: SweepContact[];
+  /** A param sweep only: the contact-free interval around the param's current value. */
+  freeRange: [number, number] | null;
+  /** Wall time in ms. Not deterministic: never compare or hash it. */
+  ms: number;
+  /** The step cap forced steps longer than the travel bound. */
+  capped?: true;
+  /** Why the sweep stopped short (`clear` is then null). */
+  skipped?: "timeout" | "unreadable" | "no-motion";
+  /** The thrown message, with `skipped: "unreadable"`. */
+  error?: string;
+}
+
+export interface SweepContact {
+  /** Motion values (the param's own value, or t in [0, 1] for a path or an animation). */
+  from: number;
+  to: number;
+  a: string;
+  b: string;
+  at: [number, number, number] | null;
+  /** The param closing the pair fastest at first contact. */
+  driver: string | null;
+  /** Advancement could not prove the pair clear over the interval; reported as a contact. */
+  unresolved?: true;
+}
+
 export interface MeasureReport {
   /** `part.meta.title`, falling back to the view name. */
   part: string;
@@ -599,6 +641,12 @@ export interface MeasureReport {
    * absent when the part declares none.
    */
   handles?: HandleFacts[];
+  /**
+   * Declared sweeps for this view, in declaration order: `[]` when none moves anything in
+   * it, absent when the part declares none or the run passed `sweeps: false`. Never
+   * folded into `ok` (`sweepContacts` gates it).
+   */
+  sweeps?: SweepRow[];
   /** Every sub-part watertight and nothing interpenetrating. Near misses never affect it. */
   ok: boolean;
 }
@@ -650,6 +698,14 @@ export function measure(
      * nothing else.
      */
     memo?: unknown;
+    /** Run the declared sweeps (default true). verify's per-case re-measures pass false. */
+    sweeps?: boolean;
+    /**
+     * When the sweeps must stop, as a reading of `now` (default `Date.now`): a sweep it
+     * stops is `skipped: "timeout"`. Default: 6 s (the inspect report's share) from this
+     * call's start.
+     */
+    deadline?: number;
   },
 ): MeasureReport;
 

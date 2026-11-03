@@ -260,6 +260,17 @@ export const VIEW_METRICS = {
   overlaps: { kind: "gate", extract: (r) => r.overlaps.length,
     hint: "sub-parts interpenetrate near the reported location — adjust placement or add clearance in derive()",
     locate: (r) => r.overlaps[0]?.location ?? null },
+  // The declared motions (verify.sweeps, oracle/sweep.js) that met another sub-part. Only
+  // rows that ran count: a sweep the deadline stopped (`skipped`) is verify's volunteered
+  // `sweeps` warning, never a contact. No `sweeps` key (none declared, or a measurement
+  // taken with `sweeps: false`, as verify's per-case re-measures are) reads as no reading.
+  sweepContacts: { kind: "gate", extract: (r) => (r.sweeps ? r.sweeps.filter((s) => !s.clear && !s.skipped).length : null),
+    hint: "a declared motion comes closer than its clearance to another sub-part — the first contact, its pair and the param driving it are reported; add clearance, narrow that param's range (freeRange is the contact-free span), or allow the pair in collisions.allow",
+    skipMessage: "not measured — verify runs the declared sweeps on one case only (the first it measures), and none when verify.sweeps declares none",
+    locate: (r) => {
+      const row = r.sweeps?.find((s) => s.clear === false && !s.skipped);
+      return row ? row.contacts[0]?.at ?? row.minClearance?.at ?? null : null;
+    } },
   centerOfMass: { kind: "gate", form: "vector", extract: (r) => r.aggregate.centerOfMass,
     hint: "the assembly's center of mass is outside the expected region — a sub-part is mis-placed or mis-scaled" },
   bounds: boundsMetric((r) => r.aggregate.bounds,

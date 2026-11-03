@@ -667,7 +667,10 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // unrecognized value must never quietly buy less checking than the caller
       // asked for.
       const quick = msg.checks === "quick";
-      const [{ buildView }, { measure }, { verify }, { createChangeTracker }] = await loadInspect();
+      // The report's deadline counts from here (the inspect's start): the sweeps get
+      // the share change tracking gets, never a budget of their own (spec "Sweeps").
+      const inspectStart = Date.now();
+      const [{ buildView }, { measure }, { verify }, { createChangeTracker, REPORT_SHARE_MS }] = await loadInspect();
       const view = msg.view ?? Object.keys(part.views)[0];
       // Only the defaults-params inspect is tracked: `msg.params` non-empty means a
       // parameterized inspect, which is a different geometry and must never become
@@ -687,7 +690,8 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       }
       if (tracking) changeTracker.endBuild(built);
       const measured = measure(kernel, part, view, msg.params ?? {},
-        { minWall: !quick, gaps: !quick, built, reads, ...(tracking ? { memo: changeTracker.memo } : {}) });
+        // A quick lap does not sweep (verify withholds a declared sweep gate there).
+        { minWall: !quick, gaps: !quick, sweeps: !quick, deadline: inspectStart + REPORT_SHARE_MS, built, reads, ...(tracking ? { memo: changeTracker.memo } : {}) });
       const report = {
         measure: measured,
         verify: verify(kernel, part, {
