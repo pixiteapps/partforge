@@ -144,6 +144,7 @@ function pairTravel(world, a, b, matsL, matsR, clearance) {
   const R0 = mulMat4(invertRigid(matsL.get(a) ?? IDENTITY), matsL.get(b) ?? IDENTITY);
   const R1 = mulMat4(invertRigid(matsR.get(a) ?? IDENTITY), matsR.get(b) ?? IDENTITY);
   const boxB = world.boundsOf(b), boxA = world.boundsOf(a);
+  if (!boxA || !boxB) return { T: 0, theta: 0 }; // an empty mesh (no box) reaches nothing
   const D = mulMat4(R1, invertRigid(R0)); // a-frame position of a b point at pose L → at pose R
   const theta = turnOf(D), f = arcFactor(theta);
   const full = cornerTravel(boxB, R0, R1) * f;
@@ -176,7 +177,9 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill,
     // the sub-parts built once, at the start; a rebuilt one is built per step instead
     const meshes = new Map();
     for (const name of viewSubParts(part, view, start.p)) {
-      if (!rebuildSet.has(name)) meshes.set(name, buildPosed(kernel, part, name, { purpose: "display", view, p: start.p, d: start.d }).toMesh());
+      if (rebuildSet.has(name)) continue;
+      const mesh = buildPosed(kernel, part, name, { purpose: "display", view, p: start.p, d: start.d }).toMesh();
+      if (mesh?.positions?.length) meshes.set(name, mesh); // an empty sub-part touches nothing (as Pose mode skips it)
     }
     const relMats = relativeMatsAt(part, view, start.p, start.d);
     const matsOf = (q) => {

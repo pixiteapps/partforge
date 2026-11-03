@@ -94,6 +94,17 @@ describe("sweep engine", () => {
     expect(Math.abs(row.freeRange[1] - 60)).toBeLessThan(0.1);
   }, SLOW);
 
+  it("an empty sub-part in the view does not stop a sweep", () => {
+    // slab, swinging bar, and a sub-part whose solid is empty: the bar's contact is still found
+    const empty = (kk) => kk.box({ min: [0, 0, 0], max: [1, 1, 1] }).cut(kk.box({ min: [-1, -1, -1], max: [2, 2, 2] }));
+    const base = withSweeps(collideBar, { swing: { param: "angle", range: [0, 90] } });
+    const part = { ...base, parts: { ...base.parts, hollow: { label: "hollow", build: empty, views: { assembly: (s) => s } } } };
+    const [row] = runSweeps(k, part, "assembly", { angle: 0 });
+    expect(row.skipped).toBeUndefined();
+    expect(row.clear).toBe(false);
+    expect(Math.abs(row.contacts[0].from - 60)).toBeLessThan(0.1);
+  }, SLOW);
+
   it("a graze between two clear steps is found", () => {
     const part = grazePart(0.05, 35);
     const [row] = runSweeps(k, part, "assembly", { angle: 0 });

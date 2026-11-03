@@ -64,6 +64,7 @@ export function budgetFrame(guard, { budgetMs = COLLIDE_FRAME_BUDGET_MS, now = c
 const apply = applyMat; // undefined = identity (the mats contract)
 
 function boxUnder(box, m) {
+  if (!box) return null; // an empty mesh: no box
   const out = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
   for (const x of [box[0], box[3]]) for (const y of [box[1], box[4]]) for (const z of [box[2], box[5]]) {
     const q = apply(m, [x, y, z]);
@@ -72,7 +73,7 @@ function boxUnder(box, m) {
   return out;
 }
 
-const boxesOverlap = (a, b) => [0, 1, 2].every((j) => a[j] <= b[j + 3] && b[j] <= a[j + 3]);
+const boxesOverlap = (a, b) => !!a && !!b && [0, 1, 2].every((j) => a[j] <= b[j + 3] && b[j] <= a[j + 3]);
 
 /** Linear blend of every numeric param `from` and `to` share; others take `to`'s value. */
 function linearBlend(from, to) {

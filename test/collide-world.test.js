@@ -21,6 +21,19 @@ describe("collision world", () => {
     expect(r.length).toBe(2);
     w.dispose();
   });
+  it("an empty member reads clear, never throws, and moves nothing", () => {
+    const empty = { positions: new Float64Array(0), indices: new Uint32Array(0) };
+    const w = createCollisionWorld({ meshes: new Map([["a", cube()], ["b", cube()], ["e", empty]]) });
+    const R = [0,1,0,0, -1,0,0,0, 0,0,1,0, 3,4,5,1]; // a turn: an Infinity box would go NaN under it
+    const mats = new Map([["a", T(0)], ["b", T(15)], ["e", R]]);
+    const r = w.distances(mats, { within: Infinity });
+    expect(r.map((x) => [x.a, x.b].join())).toEqual(["a,b"]);
+    expect(r[0].distance).toBeCloseTo(5);
+    expect(w.distances(mats, { within: Infinity, names: ["e"] })).toEqual([]);
+    expect(w.boundsOf("e")).toBeNull();
+    expect(w.travel(new Map([["e", T(0)]]), new Map([["e", R]]), ["e"])).toBe(0);
+    w.dispose();
+  });
   it("names lists every indexed mesh", () => {
     const w = createCollisionWorld({ meshes: meshes() });
     expect(w.names()).toEqual(["a", "b", "c"]);

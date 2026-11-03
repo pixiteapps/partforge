@@ -33,7 +33,9 @@ export function relativeMatsAt(part, view, startP, startD) {
   };
 }
 
+// null for an empty mesh: it has no box, and an Infinity box would turn to NaN when moved
 function boxOf(positions) {
+  if (!positions?.length) return null;
   const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
   for (let i = 0; i < positions.length; i += 3) {
     for (let j = 0; j < 3; j++) {
@@ -58,6 +60,7 @@ const apply = (m, [x, y, z]) => [
 ];
 
 function movedBox(box, m) {
+  if (!box) return null;
   const out = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
   for (const c of cornersOf(box)) {
     const q = m ? apply(m, c) : c;
@@ -137,6 +140,7 @@ export function createCollisionWorld({ meshes = new Map(), indexes = null, decl 
         if (isAllowed(decl, a, b)) continue;
         const key = pairKey(a, b);
         if ((pairs && !pairs.has(key)) || skip?.has(key)) continue;
+        if (!moved.get(a) || !moved.get(b)) continue; // an empty mesh is near nothing
         const gap = boxGap(moved.get(a), moved.get(b));
         if (gap > within) continue;
         cands.push({ a, b, key, gap, order: cands.length });
@@ -207,7 +211,8 @@ export function createCollisionWorld({ meshes = new Map(), indexes = null, decl 
         // a small cutoff is mostly a clear answer: the boolean query says so far sooner
         if (cut < WITHIN_FIRST_MM && !bvhs.get(a).withinDistancePosed(bvhs.get(b), ma, mb, cut)) continue;
         const r = bvhs.get(a).distanceToPosed(bvhs.get(b), ma, mb, cut);
-        if (!(r.distance <= within)) continue;
+        // not found (Infinity, no points) reads as clear even when `within` is Infinity
+        if (!(r.distance < Infinity) || !(r.distance <= within)) continue;
         let normal = null;
         if (r.distance > 0) {
           const v = [0, 1, 2].map((k) => r.pointA[k] - r.pointB[k]);
