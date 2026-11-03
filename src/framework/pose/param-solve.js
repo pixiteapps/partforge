@@ -114,9 +114,13 @@ function dofsOf(handle, allHandles, p) {
  * range's scale (one turn is one unit, so the Jacobian is on the same footing as a
  * bounded DOF's and the starting damping means the same) but no bounds: u runs past 1,
  * and the value past `max`, as a drag turns it on.
+ *
+ * A DOF the joint bounds (`bounds`, jointLimits) is solved from its start clamped into
+ * them; `start` keeps the unclamped value and `outside` marks a start the clamp moved, so
+ * the caller can leave it where it was when the solve does not move it (keepStill).
  */
 function dofSpace(ranges, base, keys, bounds) {
-  const offset = [], scale = [], lo = [], hi = [], u0 = [];
+  const offset = [], scale = [], lo = [], hi = [], u0 = [], start = [], outside = [];
   for (const k of keys) {
     const r = ranges.get(k);
     const b = bounds?.get(k);
@@ -130,6 +134,8 @@ function dofSpace(ranges, base, keys, bounds) {
     const bounded = b && bMin <= bMax;
     const v0 = isNum(base[k]) ? base[k] : 0;
     const v = bounded ? Math.min(bMax, Math.max(bMin, v0)) : clamp(v0, r);
+    start.push(v0);
+    outside.push(bounded && v !== v0);
     const finite = r && isNum(r.min) && isNum(r.max) && r.max > r.min;
     if (finite && !r.wrap) {
       const span = r.max - r.min;
@@ -152,7 +158,46 @@ function dofSpace(ranges, base, keys, bounds) {
     keys.forEach((k, i) => { out[k] = offset[i] + scale[i] * u[i]; });
     return out;
   };
-  return { lo, hi, u0, valuesOf };
+  return { lo, hi, u0, start, outside, valuesOf };
+}
+
+/** How far (in u, a whole range per unit) a DOF may drift and still count as not moved by the solve. */
+const STILL_U = 1e-9;
+
+/**
+ * The solved values of `space` at `x`, with each DOF whose start sat outside its joint
+ * bounds (dofSpace's `outside`) left at that start when the solve did not move it: the
+ * limb clamps it, so the pose is the same either way, and a slider parked past its joint
+ * must not jump on a drag that never touched it. One the solve moved is written as solved
+ * (inside the joint's range: the pose is continuous, the param catches up).
+ */
+function keepStill(space, keys, x) {
+  const values = space.valuesOf(x);
+  keys.forEach((k, i) => {
+    if (space.outside[i] && Math.abs(x[i] - space.u0[i]) <= STILL_U) values[k] = space.start[i];
+  });
+  return values;
+}
+
+/**
+ * A ball's bend and spread are bounded ±cone each (a box), but the limb clamps their
+ * combined swing to the cone, scaling both down together (kinematics/tree.js clampBall):
+ * in the box's corners the params would drift with no change in pose. A pair the solve
+ * moved, swinging past its cone, is scaled back onto it the same way, so what is written
+ * is what the limb poses with. A pair the solve left alone keeps its values (keepStill).
+ * Ball slots are always scale 1 (jointEntrySlots), so param and joint degrees agree.
+ */
+function onCones(values, cones, base) {
+  for (const { bend, spread, cone } of cones) {
+    if (!isNum(values[bend]) || !isNum(values[spread])) continue;
+    if (Object.is(values[bend], base[bend]) && Object.is(values[spread], base[spread])) continue;
+    const swing = Math.hypot(values[bend], values[spread]);
+    if (swing <= cone) continue;
+    const k = cone / swing;
+    values[bend] *= k;
+    values[spread] *= k;
+  }
+  return values;
 }
 
 /** A hold's point reference: `{ ref, point }`, or the older `{ limb, at, point }`. */
@@ -199,7 +244,8 @@ function runSolve(space, evaluate, m, { iterations, lambda, tol }) {
 export function solveAngles({ part, params, handle, grab, target, holds = [], iterations = 8, allHandles = [handle], tol = TOL_MM }) {
   const base = { ...part.defaults, ...params };
   const keys = dofsOf(handle, allHandles, base);
-  const space = dofSpace(rangesOf(part), base, keys, jointBounds(part, base, handle));
+  const limits = jointLimits(part, base, handle);
+  const space = dofSpace(rangesOf(part), base, keys, limits.bounds);
   const points = [{ ref: { limb: handle.on, at: grab }, point: target }, ...holds.map((h) => ({ ref: refOf(h), point: h.point }))];
   const m = points.length * 3;
   const evaluate = (u) => {
@@ -220,7 +266,7 @@ export function solveAngles({ part, params, handle, grab, target, holds = [], it
     return null;
   }
   const { x, error } = runSolve(space, evaluate, m, { iterations, lambda, tol });
-  return { values: keys.length ? space.valuesOf(x) : {}, error };
+  return { values: keys.length ? onCones(keepStill(space, keys, x), limits.cones, base) : {}, error };
 }
 
 /**
@@ -441,10 +487,33 @@ function paramBounds(range, scale) {
  * handle maps none, or derive / the limbs cannot be read.
  */
 export function jointBounds(part, base, handle) {
-  const out = new Map();
-  if (handle?.drag !== "angles" || !handle.joints || typeof handle.joints !== "object" || Array.isArray(handle.joints)) return out;
+  return jointLimits(part, base, handle).bounds;
+}
+
+/**
+ * jointLimits' answers per (handle, part): a WeakMap keyed on the handle object (then the
+ * part), so a drag's frames, dragHandle's and lint's calls each derive once rather than
+ * once per solve. This ASSUMES a limb's joint ranges and cones do not depend on the params
+ * — true of every limb declared at module scope, the documented way to write one (a
+ * limb's ranges are its declaration, not its pose). A part whose derive declares joint
+ * ranges from params would see the first call's ranges. A read that fails is not cached.
+ */
+const limitsCache = new WeakMap();
+
+/**
+ * The joint limits an angles handle's `joints` map puts on its params: `{ bounds }` as
+ * jointBounds, and `cones: [{ bend, spread, cone }]`, each ball entry naming both a bend
+ * and a spread param (their swing shares the cone, onCones). Cached (limitsCache).
+ */
+function jointLimits(part, base, handle) {
+  const none = { bounds: new Map(), cones: [] };
+  if (handle?.drag !== "angles" || !handle.joints || typeof handle.joints !== "object" || Array.isArray(handle.joints)) return none;
+  const byPart = limitsCache.get(handle);
+  const hit = byPart?.get(part);
+  if (hit) return hit;
   let d;
-  try { ({ d } = resolveParams(part, base)); } catch { return out; }
+  try { ({ d } = resolveParams(part, base)); } catch { return none; }
+  const out = { bounds: new Map(), cones: [] };
   for (const [key, entry] of Object.entries(handle.joints)) {
     try {
       const { limb, joint } = parseJointKey(key);
@@ -454,10 +523,16 @@ export function jointBounds(part, base, handle) {
       for (const [slot, { param, scale }] of Object.entries(slots)) {
         const b = paramBounds(slotRange(j, slot), scale);
         if (!b) continue;
-        const prev = out.get(param);
-        out.set(param, prev ? { min: Math.max(prev.min, b.min), max: Math.min(prev.max, b.max) } : b);
+        const prev = out.bounds.get(param);
+        out.bounds.set(param, prev ? { min: Math.max(prev.min, b.min), max: Math.min(prev.max, b.max) } : b);
       }
+      if (j.type === "ball" && slots.bend && slots.spread && isNum(j.cone)) out.cones.push({ bend: slots.bend.param, spread: slots.spread.param, cone: j.cone });
     } catch { /* an unreadable entry bounds nothing */ }
+  }
+  if (part && typeof part === "object") {
+    const m = byPart ?? new WeakMap();
+    m.set(part, out);
+    if (!byPart) limitsCache.set(handle, m);
   }
   return out;
 }
@@ -621,7 +696,8 @@ function lineDist(p, o, d) {
  * 2): every joint whose origin some seeded (driven, non-follower) joint above it in the
  * chain moves — a hinge whose axis line misses the origin, a ball off it. The first driven
  * joint's origin cannot move, nor can one on a twist axis above it (the robot arm's
- * shoulder over its base): those stay ring-only. `info` is the posed limb's ikInfo().
+ * shoulder over its base): those stay ring-only, and a follower joint is never a grab
+ * (Pose mode draws it no dot). `info` is the posed limb's ikInfo().
  */
 export function goalGrabJoints(info, handle) {
   if (!info || !Array.isArray(info.joints) || !Array.isArray(handle?.seed)) return [];
@@ -630,7 +706,7 @@ export function goalGrabJoints(info, handle) {
   let k = 0;
   for (const j of info.joints) {
     const o = info.points?.[j.name];
-    if (Array.isArray(o) && movers.some((m) => (m.axis ? lineDist(o, m.origin, m.axis) : Math.hypot(o[0] - m.origin[0], o[1] - m.origin[1], o[2] - m.origin[2])) > 1e-6)) out.push(j.name);
+    if (!j.follower && Array.isArray(o) && movers.some((m) => (m.axis ? lineDist(o, m.origin, m.axis) : Math.hypot(o[0] - m.origin[0], o[1] - m.origin[1], o[2] - m.origin[2])) > 1e-6)) out.push(j.name);
     if (j.follower) continue;
     const n = j.type === "ball" ? 3 : 1;
     const driven = handle.seed.slice(k, k + n).some((p) => typeof p === "string");

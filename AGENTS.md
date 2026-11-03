@@ -740,8 +740,11 @@ the installed package, so let the publish finish before bumping the dep there.
   first-declared shown handle; lint `handle-bad-group`; `measure().handles` carries `group`.
   An angles drag is bounded by each joint its `joints` map drives (param-solve's
   `jointBounds`: `range / scale`, a ball's cone) as well as by the slider, so it stops at
-  the joint's limit instead of sticking past it; lint `handle-joint-range` warns when a
-  slider reaches past its joint. A goal handle's joints that a driven joint above can move
+  the joint's limit instead of sticking past it; a slider parked past its joint keeps its
+  value until the solve moves it, and a ball's bend and spread are written scaled onto the
+  cone as the limb poses them (joint limits are cached per handle object, assuming a limb's
+  ranges do not depend on params); lint `handle-joint-range` warns when a
+  slider reaches past its joint. A goal handle's non-follower joints that a driven joint above can move
   (`goalGrabJoints`) are grabs too: `solveGoalPinned({ grab })` turns the seed joints so
   that joint follows the pointer and rewrites the goal at the new tool frame.
   `oracle/drag.js`'s `dragHandle` (`partforge/oracle`; `partforge measure --drag`) plays a

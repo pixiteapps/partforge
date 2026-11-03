@@ -323,10 +323,22 @@ describe("goalGrabJoints", () => {
     // the base twists about the shoulder's own axis line: the shoulder never moves
     expect(goalGrabJoints(info, robotArm.handles.tool)).toEqual(["elbow", "wristPitch", "wristYaw", "wristRoll"]);
     const armInfo = limbInfo(arm, arm.defaults, arm.handles.tool);
-    expect(goalGrabJoints(armInfo, arm.handles.tool)).toEqual(["elbow", "wrist"]);
-    // unseeded joints drive nothing
-    expect(goalGrabJoints(armInfo, { ...arm.handles.tool, seed: [null, null, null, "elbow"] })).toEqual(["wrist"]);
+    // the wrist follows the elbow: no grab
+    expect(goalGrabJoints(armInfo, arm.handles.tool)).toEqual(["elbow"]);
+    // unseeded joints drive nothing (the shoulder unseeded: the elbow cannot move)
+    expect(goalGrabJoints(armInfo, { ...arm.handles.tool, seed: [null, null, null, "elbow"] })).toEqual([]);
     expect(goalGrabJoints(info, { ...robotArm.handles.tool, seed: undefined })).toEqual([]);
+  });
+
+  it("a follower joint is never a grab (Pose mode shows it no dot)", () => {
+    const L = limb("f", {
+      at: [0, 0, 0], toward: [0, 0, 1], bendToward: [0, -1, 0],
+      joints: [{ name: "a", range: [0, 90] }, { name: "b", range: [0, 90] }, { name: "c", range: [0, 90], follow: { joint: "b", ratio: 1 } }],
+      lengths: [30, 20, 10],
+    });
+    const info = L.pose({ bend: [20, 30] }).ikInfo();
+    expect(info.joints.find((j) => j.name === "c").follower).toBeTruthy();
+    expect(goalGrabJoints(info, { on: "f", drag: "goal", seed: ["a", "b"] })).toEqual(["b"]);
   });
 });
 

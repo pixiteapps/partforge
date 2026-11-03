@@ -80,9 +80,50 @@ describe("solveAngles stops at a joint's range", () => {
     expect(p.eb).toBeLessThanOrEqual(100);                  // schema only: not clipped to -60..0
   });
 
-  it("clamps a starting value that sits past the joint into the bounds", () => {
-    const r = solveAngles({ part, params: { sh: 140 }, handle, grab: "tip", target: tipOf({ sh: 90 }) });
-    expect(r.values.sh).toBeLessThanOrEqual(90 + 1e-9);
+  it("a starting value past the joint stays put when the drag does not move it", () => {
+    // the limb poses sh 140 as 90: the tip is already on the target
+    const r = solveAngles({ part, params: { ...part.defaults, sh: 140 }, handle, grab: "tip", target: tipOf({ sh: 140 }) });
+    expect(r.values.sh).toBe(140);
+    // and a ball past its cone likewise (swing 42 on a 20 cone)
+    const b = solveAngles({ part, params: { ...part.defaults, wb: 30, ws: 30 }, handle, grab: "tip", target: tipOf({ wb: 30, ws: 30 }) });
+    expect(b.values.wb).toBe(30);
+    expect(b.values.ws).toBe(30);
+  });
+
+  it("a starting value past the joint moves into its range when the drag moves it", () => {
+    const p = pull({ sh: 140 }, tipOf({ sh: 30, eb: -10 }));
+    expect(p.sh).toBeLessThan(90);
+  });
+
+  it("a ball's bend and spread are written on the cone, as the limb uses them", () => {
+    for (const target of [[300, 0, 0], [-300, 100, 0], [0, 300, 100], [300, 300, 300], [-300, -300, 50], [200, -200, -100]]) {
+      const p = pull({}, target);
+      expect(Math.hypot(p.wb, p.ws)).toBeLessThanOrEqual(20 + 1e-9);
+      // the values written are the ones the limb poses with
+      const posed = resolveParams(part, p).d.arm.values[2];
+      expect(posed.bend).toBeCloseTo(p.wb, 9);
+      expect(posed.spread).toBeCloseTo(p.ws, 9);
+    }
+  });
+});
+
+describe("joint limits are read once per part and handle", () => {
+  it("a second solve does not derive again for the joint ranges", () => {
+    let calls = 0;
+    const counted = { ...part, derive: (p) => { calls++; return part.derive(p); } };
+    const h = { ...handle };
+    const solve = () => {
+      const before = calls;
+      solveAngles({ part: counted, params: counted.defaults, handle: h, grab: "tip", target: tipOf({}) });
+      return calls - before;
+    };
+    const first = solve();
+    expect(solve()).toBe(first - 1);
+    // another handle object reads them afresh
+    const other = { ...handle };
+    const before = calls;
+    solveAngles({ part: counted, params: counted.defaults, handle: other, grab: "tip", target: tipOf({}) });
+    expect(calls - before).toBe(first);
   });
 });
 
