@@ -308,7 +308,12 @@ describe("joint rings in Pose mode", () => {
   });
 
   it("while params change every frame, hover re-reads the limbs at most once per frame", () => {
-    const t = setup(anglesPart());
+    const clock = { t: 0 };
+    const t = setup(anglesPart(), {}, "arm", { now: () => clock.t, hoverNone: () => false });
+    // the resting cue is drawn (so it re-reads per frame) until it has run its course
+    t.viewer.tick();
+    clock.t = 1e6;
+    t.viewer.tick();
     t.hover("tip");
     counter.derives = 0;
     for (let i = 1; i <= 4; i++) {

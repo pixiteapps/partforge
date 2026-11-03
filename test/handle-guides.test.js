@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { sameTurn } from "../src/framework/panel/widgets/numeric.js";
 import {
-  axisGuide, planeGuide, rotaryGuide, sweepPath, pathKey, pathParam, readoutText,
+  planeGuide, rotaryGuide, sweepPath, pathKey, pathParam, readoutText, readoutKeys, chipValues,
   PATH_SAMPLES, AXIS_ARROW_PX, PLANE_SQUARE_PX,
 } from "../src/framework/pose/handle-guides.js";
 
@@ -32,16 +33,6 @@ const train = {
 };
 
 describe("guides", () => {
-  it("axis: a double arrow AXIS_ARROW_PX each way along the direction, heads facing the camera", () => {
-    const g = axisGuide([1, 2, 3], [0, 0, 2], 0.5, [0, 1, 0]);
-    expect(g.kind).toBe("axis");
-    const zs = g.points.map((p) => p[2]);
-    expect(Math.min(...zs)).toBeCloseTo(3 - AXIS_ARROW_PX * 0.5, 9);
-    expect(Math.max(...zs)).toBeCloseTo(3 + AXIS_ARROW_PX * 0.5, 9);
-    for (const p of g.points) expect(p[1]).toBeCloseTo(2, 9); // heads lie square to the view
-    expect(axisGuide([0, 0, 0], [0, 0, 0], 1)).toBeNull();
-  });
-
   it("plane: a PLANE_SQUARE_PX square on the plane, centred on the point", () => {
     const g = planeGuide([5, 5, 10], [0, 0, 1], 2);
     expect(g.kind).toBe("plane");
@@ -121,5 +112,32 @@ describe("readoutText", () => {
   it("guides stay in the plane they are drawn on", () => {
     const g = planeGuide([0, 0, 0], [1, 1, 0], 1);
     for (const p of g.points) expect(dot(p, [1, 1, 0])).toBeCloseTo(0, 9);
+  });
+});
+
+describe("the readout chip's values (readoutKeys, chipValues)", () => {
+  it("readoutKeys: the readout params, else the handle's params, as readoutText reads them", () => {
+    expect(readoutKeys(box.handles.corner)).toEqual(["width", "depth"]);
+    expect(readoutKeys({ params: ["width"], readout: "count" })).toEqual(["count"]);
+    expect(readoutKeys({ params: ["width"], readout: ["count", 3, "depth"] })).toEqual(["count", "depth"]);
+    expect(readoutKeys({})).toEqual([]);
+  });
+
+  it("clamps and snaps a typed value as the slider does", () => {
+    expect(chipValues(box, { width: 80, depth: 40 }, { width: 85.04, depth: 41.3 })).toEqual({ width: 85, depth: 41.5 });
+    expect(chipValues(box, { width: 80 }, { width: 9000 })).toEqual({ width: 400 });
+    expect(chipValues(box, { width: 80 }, { width: -5 })).toEqual({ width: 10 });
+    expect(chipValues(box, { count: 3 }, { count: 4.4 })).toEqual({ count: 4 });
+    // not a number: left out
+    expect(chipValues(box, { width: 80 }, { width: NaN, depth: "x" })).toEqual({});
+  });
+
+  it("stores a wrapped param in the same turn as now (the slider's sameTurn)", () => {
+    expect(chipValues(train, { driveAngle: 720 }, { driveAngle: 45 })).toEqual({ driveAngle: 765 });
+    expect(chipValues(train, { driveAngle: 720 }, { driveAngle: 350 })).toEqual({ driveAngle: 710 });
+    expect(chipValues(train, { driveAngle: 720 }, { driveAngle: 45.4 })).toEqual({ driveAngle: 765 });
+    for (const [stored, typed] of [[720, 45], [-30, 200], [1000, 359.5], [5, 0]]) {
+      expect(chipValues(train, { driveAngle: stored }, { driveAngle: typed }).driveAngle).toBe(Math.round(sameTurn(stored, typed, 0, 360)));
+    }
   });
 });

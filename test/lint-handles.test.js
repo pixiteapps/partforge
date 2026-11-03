@@ -27,6 +27,20 @@ test("a valid goal handle and a valid angles handle produce no handle findings",
   expect(handleFindings({ tip: goal({ at: "pip", seed: ["mcp"] }), curl: { on: "finger", drag: "angles", params: ["mcp", "pip"], lock: "mcp" } })).toEqual([]);
 });
 
+test("handle-unknown-view: a `views` entry that is not a view of the part, or a malformed list", () => {
+  expect(handleFindings({ a: goal({ views: ["main"] }) })).toEqual([]);
+  expect(handleFindings({ a: goal({ views: "main" }) })).toEqual([]);
+  const fs = handleFindings({ a: goal({ views: ["main", "print"] }) });
+  expect(rulesOf(fs)).toEqual(["handle-unknown-view"]);
+  expect(fs[0].severity ?? "error").toBe("error");
+  expect(fs[0].path).toBe("handles.a.views");
+  expect(fs[0].message).toMatch(/"print"/);
+  expect(fs[0].hint).toMatch(/main/);
+  expect(rulesOf(handleFindings({ a: goal({ views: [] }) }))).toEqual(["handle-unknown-view"]);
+  expect(rulesOf(handleFindings({ a: goal({ views: { main: true } }) }))).toEqual(["handle-unknown-view"]);
+  expect(rulesOf(handleFindings({ a: goal({ views: [3] }) }))).toEqual(["handle-unknown-view"]);
+});
+
 test("handle-unknown-source: a goal / angles handle whose on is missing from derive or not a posed limb", () => {
   const fs = handleFindings({ a: goal({ on: "nope" }), b: goal({ on: "ghost" }) });
   expect(rulesOf(fs)).toEqual(["handle-unknown-source", "handle-unknown-source"]);
@@ -157,7 +171,7 @@ test("generic handles: valid on / point handles produce no findings", () => {
     input: good,
     corner: { point: (p) => [p.w, p.r, 0], params: ["w", "r"], drag: "plane", normal: [0, 0, 1] },
     slide: { point: (p) => [p.w, 0, 0], params: ["w"], drag: "axis", direction: (p, d) => [1, 0, 0] },
-    free: { point: (p) => [p.w, p.r, 0], params: ["w"] },
+    free: { point: (p) => [p.w, p.r, 0], params: ["w"], drag: "point" },
   })).toEqual([]);
 });
 
@@ -194,18 +208,18 @@ test("handle-bad-drag: unknown drag, axis / plane without a direction, rotary wi
 });
 
 test("handle-point-throws: the point, or an axis function, throws at the defaults", () => {
-  const fs = genFindings({ a: { point: () => { throw new Error("boom"); }, params: ["w"] } });
+  const fs = genFindings({ a: { point: () => { throw new Error("boom"); }, params: ["w"], drag: "point" } });
   expect(rulesOf(fs)).toEqual(["handle-point-throws"]);
   expect(fs[0].message).toMatch(/boom/);
   expect(rulesOf(genFindings({ a: { point: () => [0, 0, 0], params: ["w"], drag: "rotary", axis: () => { throw new Error("x"); } } }))).toContain("handle-point-throws");
-  expect(rulesOf(genFindings({ a: { point: () => ["a", 0, 0], params: ["w"] } }))).toEqual(["handle-point-throws"]);
+  expect(rulesOf(genFindings({ a: { point: () => ["a", 0, 0], params: ["w"], drag: "point" } }))).toEqual(["handle-point-throws"]);
 });
 
 test("handle-inert (warning): no listed param moves the point", () => {
-  const r = lintPart(genPart({ a: { point: (p) => [1, 2, 3], params: ["w"] } }));
+  const r = lintPart(genPart({ a: { point: (p) => [1, 2, 3], params: ["w"], drag: "point" } }));
   expect(r.warnings.map((f) => f.rule).filter((x) => x.startsWith("handle-"))).toEqual(["handle-inert"]);
   expect(r.errors.filter((f) => f.rule.startsWith("handle-"))).toEqual([]);
-  expect(rulesOf(genFindings({ a: { point: (p) => [p.w, 0, 0], params: [] } }))).toEqual(["handle-inert"]);
+  expect(rulesOf(genFindings({ a: { point: (p) => [p.w, 0, 0], params: [], drag: "point" } }))).toEqual(["handle-inert"]);
   // a wrapped param nudges by its step; a gear at radius 0 is inert
   expect(rulesOf(genFindings({ a: { on: "gear", at: "g.center", params: ["ang"], drag: "rotary" } }))).toEqual(["handle-inert"]);
 });
@@ -228,4 +242,97 @@ test("handle-unknown-param covers generic handles; limb rules skip them", () => 
 
 test("generic rules never throw on a malformed declaration", () => {
   expect(() => genFindings({ a: { on: 5, at: {}, params: "x", drag: null }, b: { point: 3, drag: "rotary", axis: 7 }, c: { on: "gear", at: "g.rim", drag: "axis", direction: () => { throw 1; } } })).not.toThrow();
+});
+
+// ---- follow-ups (spec 2026-11-02 handles UX follow-ups, goal 4) ----
+test("a rotary handle on a limb joint: at \"<joint>.child\" it moves; at the joint itself (on its own axis) it is handle-inert", () => {
+  const derive = (p) => ({ finger: limb("finger", {
+    at: [0, 0, 0], toward: [0, 0, 1], bendToward: [0, -1, 0],
+    joints: [{ name: "mcp", range: [0, 90] }, { name: "pip", range: [0, 90] }],
+    lengths: [40, 30],
+  }).pose({ bend: { mcp: 10, pip: p.r } }) });
+  expect(genFindings({ a: { on: "finger", at: "pip.child", params: ["r"], drag: "rotary" } }, { derive })).toEqual([]);
+  expect(rulesOf(genFindings({ a: { on: "finger", at: "pip", params: ["r"], drag: "rotary" } }, { derive }))).toEqual(["handle-inert"]);
+});
+
+test("handle-inert samples each listed param at 0/25/50/75/100% of its range and names the inert value", () => {
+  // the point moves at the defaults (w = 10) but sticks once w passes 40: inert at 50, 75 and 100
+  // a real control section, so the sampler reads w's and r's ranges (0..100, no step: 1% nudges)
+  const parameters = [{ id: "s", title: "S", controls: [
+    { type: "slider", key: "ang", min: 0, max: 360, step: 1, wrap: true },
+    { type: "slider", key: "w", min: 0, max: 100 }, { type: "slider", key: "r", min: 0, max: 100 }] }];
+  const genFindings = (handles) => { const r = lintPart(genPart(handles, { parameters })); return [...r.errors, ...r.warnings, ...r.notes].filter((f) => f.rule.startsWith("handle-")); };
+  const clamped = { point: (p) => [Math.min(p.w, 40), 0, 0], params: ["w"], drag: "axis", direction: [1, 0, 0] };
+  const fs = genFindings({ a: clamped });
+  expect(rulesOf(fs)).toEqual(["handle-inert"]);
+  expect(fs[0].severity).toBe("warning");
+  expect(fs[0].message).toMatch(/inert at w = 50/);
+  expect(fs[0].path).toBe("handles.a.params");
+  // at the range's top end the nudge goes down into the range: a clean linear handle is quiet
+  expect(genFindings({ a: { point: (p) => [p.w, 0, 0], params: ["w"], drag: "axis", direction: [1, 0, 0] } })).toEqual([]);
+  // a dead start: inert at w = 0 only
+  const deadZero = { point: (p) => [p.w > 5 ? p.w : 5, 0, 0], params: ["w"], drag: "axis", direction: [1, 0, 0] };
+  expect(genFindings({ a: deadZero })[0].message).toMatch(/inert at w = 0\b/);
+  // a two-param plane handle is inert only where NO listed param moves the point
+  const plane = { point: (p) => [Math.min(p.w, 40), p.r, 0], params: ["w", "r"], drag: "plane", normal: [0, 0, 1] };
+  expect(genFindings({ a: plane })).toEqual([]);
+});
+
+test("handle-crowded (warning): more than 5 handles in a view without showOn", () => {
+  const slide = (k) => ({ point: (p) => [p[k], 0, 0], params: [k], drag: "axis", direction: [1, 0, 0] });
+  const keys = ["a1", "a2", "a3", "a4", "a5", "a6"];
+  const defaults = Object.fromEntries(keys.map((k) => [k, 1]));
+  const parameters = [{ id: "s", title: "S", controls: keys.map((k) => ({ type: "slider", key: k, min: 0, max: 10, step: 1 })) }];
+  // a body that reads every key (so every handle shows in "main"), and a "side" view that reads one
+  const crowdPart = (handles) => ({
+    meta: { title: "T" }, defaults, parameters, handles,
+    parts: {
+      body: { views: ["main"], build: (k, p) => k.box({ size: [1 + keys.reduce((s, x) => s + p[x], 0), 1, 1] }) },
+      side: { views: ["side"], build: (k, p) => k.box({ size: [1 + p.a1, 1, 1] }) },
+    },
+    views: { main: { label: "Main" }, side: { label: "Side" } },
+  });
+  const crowdFindings = (handles) => { const r = lintPart(crowdPart(handles)); return [...r.errors, ...r.warnings, ...r.notes].filter((f) => f.rule.startsWith("handle-")); };
+  const six = Object.fromEntries(keys.map((k) => [k, slide(k)]));
+  const fs = crowdFindings(six);
+  expect(rulesOf(fs)).toEqual(["handle-crowded"]); // "main" only: "side" shows one
+  expect(fs[0].severity).toBe("warning");
+  expect(fs[0].message).toMatch(/6 handles/);
+  expect(fs[0].message).toMatch(/"main"/);
+  // five is fine; a showOn takes a handle out of the count
+  const five = Object.fromEntries(keys.slice(0, 5).map((k) => [k, slide(k)]));
+  expect(crowdFindings(five)).toEqual([]);
+  expect(crowdFindings({ ...six, a6: { ...slide("a6"), showOn: "body" } })).toEqual([]);
+});
+
+test("handle-bad-drag: every handle sets a drag (the runtime default stays \"point\")", () => {
+  const fs = genFindings({ a: { point: (p) => [p.w, p.r, 0], params: ["w"] } });
+  expect(rulesOf(fs)).toEqual(["handle-bad-drag"]);
+  expect(fs[0].severity).toBe("error");
+  expect(fs[0].path).toBe("handles.a.drag");
+  expect(rulesOf(genFindings({ a: { on: "gear", at: "g.rim", params: ["ang"] } }))).toEqual(["handle-bad-drag"]);
+  expect(genFindings({ a: { point: (p) => [p.w, p.r, 0], params: ["w"], drag: "point" } })).toEqual([]);
+});
+
+test("handle-limb-per-joint (warning): two or more geometric handles on one posed limb", () => {
+  const rot = (over = {}) => ({ on: "finger", at: "pip", drag: "rotary", axis: { origin: [0, 0, 0], direction: [0, 1, 0] }, params: ["pip"], ...over });
+  const only = (hs) => handleFindings(hs).filter((f) => f.rule === "handle-limb-per-joint");
+  const fs = only({ a: rot(), b: rot({ at: "mcp", params: ["mcp"] }) });
+  expect(rulesOf(fs)).toEqual(["handle-limb-per-joint"]);
+  expect(fs[0].message).toMatch(/finger/);
+  expect(fs[0].message).toMatch(/"a"/);
+  expect(fs[0].message).toMatch(/"b"/);
+  expect(fs[0].hint).toMatch(/angles/);
+  expect(rulesOf(handleFindings({ a: rot() }))).not.toContain("handle-limb-per-joint");
+  const angles = { on: "finger", drag: "angles", params: ["mcp", "pip"] };
+  expect(rulesOf(handleFindings({ a: angles, b: rot() }))).not.toContain("handle-limb-per-joint");
+  expect(() => lintPart({ ...partWith({ a: rot(), b: null }), derive: () => { throw new Error("x"); } })).not.toThrow();
+});
+
+test("handle-limb-per-joint: the limb reference parts lint clean", async () => {
+  for (const f of ["hand", "robot-arm"]) {
+    const part = (await import(`../src/parts/${f}.js`)).default;
+    const r = lintPart(part);
+    expect([...r.errors, ...r.warnings].filter((x) => x.rule === "handle-limb-per-joint")).toEqual([]);
+  }
 });

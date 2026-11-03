@@ -6,6 +6,7 @@ import { err, warn } from "./finding.js";
 import { resolveDerived } from "../derive.js";
 import { rangesOf } from "../pose/param-solve.js";
 import { locateHandle, sourceInfo, resolveGeom, handleAxis } from "../pose/handle-source.js";
+import { handlesShownInView } from "../pose/handle-views.js";
 
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 const handleEntries = (part) => (isPlainObject(part?.handles) ? Object.entries(part.handles).filter(([, h]) => isPlainObject(h)) : []);
@@ -22,6 +23,10 @@ const isVec3 = (v) => Array.isArray(v) && v.length === 3 && v.every((c) => typeo
 const isDir3 = (v) => isVec3(v) && v.some((c) => c !== 0);
 const NUDGE_MM = 0.01;
 const NUDGE_DEG = 0.1;
+/** Where handle-inert samples each listed param, as fractions of its range. */
+const INERT_SAMPLES = [0, 0.25, 0.5, 0.75, 1];
+/** More handles than this in one view, none behind a `showOn`, is handle-crowded. */
+const CROWDED_MAX = 5;
 
 // The parameter names a handle lists, each with the path it was found at.
 function paramRefs(name, h) {
@@ -127,6 +132,55 @@ function derivedNudged(part, p, key, delta) {
   return r.error ? null : (r.v ?? {});
 }
 
+/** A sampled value as the warning names it: the step's decimals at most, no trailing zeros. */
+function sampleText(part, key, v) {
+  const step = rangesOf(part).get(key)?.step;
+  const places = Number.isFinite(step) && step > 0 ? Math.min(6, (String(step).split(".")[1] ?? "").length) : 4;
+  return String(Number(v.toFixed(places)));
+}
+
+/**
+ * Whether nudging any of `keys` by one step from `at` moves the handle's point at least
+ * NUDGE_MM (toward the range's inside at its top end). Null when the point cannot be read
+ * at `at` (derive or the point throws there: handle-point-throws' business at the defaults,
+ * nothing to say elsewhere).
+ */
+function movesAt(part, h, at, keys) {
+  const d0 = attempt(() => resolveDerived(part, at));
+  if (d0.error) return null;
+  const here = attempt(() => locateHandle(part, at, d0.v ?? {}, h));
+  if (here.error || !isVec3(here.v)) return null;
+  for (const key of keys) {
+    const r = rangesOf(part).get(key);
+    let delta = nudgeFor(part, key);
+    if (r && Number.isFinite(r.max) && at[key] + delta > r.max && !r.wrap) delta = -delta;
+    const d2 = derivedNudged(part, at, key, delta);
+    const there = d2 && attempt(() => locateHandle(part, { ...at, [key]: at[key] + delta }, d2, h));
+    if (!there || there.error || !isVec3(there.v) || Math.hypot(...there.v.map((c, i) => c - here.v[i])) >= NUDGE_MM) return true;
+  }
+  return false;
+}
+
+/** The first listed param value (0/25/50/75/100% of its range, others at the defaults) where the handle is inert, or null. */
+function inertSample(part, p, h, keys) {
+  for (const key of keys) {
+    const r = rangesOf(part).get(key);
+    if (!r || !Number.isFinite(r.min) || !Number.isFinite(r.max) || !(r.max > r.min)) continue;
+    for (const f of INERT_SAMPLES) {
+      const v = r.min + (r.max - r.min) * f;
+      if (movesAt(part, h, { ...p, [key]: v }, keys) === false) return { key, value: v };
+    }
+  }
+  return null;
+}
+
+/** The handle ids a view shows, as mount's syncPoseVisible picks them (pose/handle-views.js, predicted relevance). */
+function handlesInView(part, view, ids) {
+  let shown;
+  try { shown = new Set(handlesShownInView(part, view, { ...part.defaults })); } catch { return ids; }
+  return ids.filter((id) => shown.has(id));
+}
+
 export const HANDLE_RULES = [
   {
     id: "handle-unknown-param",
@@ -228,6 +282,27 @@ export const HANDLE_RULES = [
     },
   },
   {
+    id: "handle-unknown-view",
+    run: ({ part }) => {
+      const known = isPlainObject(part?.views) ? Object.keys(part.views) : [];
+      const hint = `\`views\` lists the views the handle shows in, by their keys in \`views\`${known.length ? ` (${known.map((v) => JSON.stringify(v)).join(", ")})` : ""}; leave it out to show the handle wherever its source is drawn.`;
+      const out = [];
+      for (const [name, h] of handleEntries(part)) {
+        if (h.views === undefined) continue;
+        const path = `handles.${name}.views`;
+        const list = typeof h.views === "string" ? [h.views] : h.views;
+        if (!Array.isArray(list) || !list.length || list.some((v) => typeof v !== "string")) {
+          out.push(err("handle-unknown-view", `handle "${name}" has \`views\` that is not a non-empty list of view names`, hint, path));
+          continue;
+        }
+        for (const v of list) {
+          if (!known.includes(v)) out.push(err("handle-unknown-view", `handle "${name}" lists view ${JSON.stringify(v)}, which is not a key of \`views\``, hint, path));
+        }
+      }
+      return out;
+    },
+  },
+  {
     id: "handle-no-source",
     run: ({ part }) => handleEntries(part)
       .filter(([, h]) => (h.on != null) === (h.point != null))
@@ -265,10 +340,15 @@ export const HANDLE_RULES = [
             'A handle on a limb sets `drag: "goal"` (drag a point; params: { position, aim? }) or `drag: "angles"` (drag joint values directly; params: [names]); "point", "axis", "plane" and "rotary" drag one of its points like any source\'s.', `${base}.drag`));
           continue;
         }
-        const drag = h.drag === undefined ? "point" : h.drag;
+        if (h.drag === undefined) {
+          out.push(err("handle-bad-drag", `handle "${name}" sets no drag`,
+            `Every handle says how it moves: \`drag\` is one of ${DRAGS.map((x) => `"${x}"`).join(", ")} ("goal" and "angles" on a posed limb only). Pose mode reads a missing one as "point", but say so.`, `${base}.drag`));
+          continue;
+        }
+        const drag = h.drag;
         if (!DRAGS.includes(drag)) {
           out.push(err("handle-bad-drag", `handle "${name}" has drag ${JSON.stringify(h.drag)}`,
-            `\`drag\` is one of ${DRAGS.map((x) => `"${x}"`).join(", ")} (default "point"; "goal" and "angles" on a posed limb only).`, `${base}.drag`));
+            `\`drag\` is one of ${DRAGS.map((x) => `"${x}"`).join(", ")} ("goal" and "angles" on a posed limb only).`, `${base}.drag`));
           continue;
         }
         if (isLimbDrag(h)) {
@@ -365,6 +445,13 @@ export const HANDLE_RULES = [
         if (!moved) {
           out.push(warn("handle-inert", `handle "${name}" does nothing at the defaults: ${keys.length ? `nudging each of ${keys.map((k) => JSON.stringify(k)).join(", ")} by one step moves its point less than ${NUDGE_MM} mm` : "it lists no `params` to drive"}`,
             "List the numeric parameters that move the handle's point in `params`, and make sure `derive` / `point` read them; a handle whose point ignores its params cannot be dragged.", `handles.${name}.params`));
+          continue;
+        }
+        // away from the defaults: each listed param at 0/25/50/75/100% of its range
+        const dead = inertSample(part, p, h, keys);
+        if (dead) {
+          out.push(warn("handle-inert", `handle "${name}" is inert at ${dead.key} = ${sampleText(part, dead.key, dead.value)}: nudging each of ${keys.map((k) => JSON.stringify(k)).join(", ")} by one step there moves its point less than ${NUDGE_MM} mm`,
+            "A drag that reaches this value sticks there. Keep the point moving over the whole range: clamp the parameter's range to where it acts (a range that depends on another parameter is better as a fraction of it), or start a crank off its dead centres.", `handles.${name}.params`));
         }
       }
       return out;
@@ -395,6 +482,41 @@ export const HANDLE_RULES = [
             break;
           }
         }
+      }
+      return out;
+    },
+  },
+  {
+    id: "handle-crowded",
+    run: ({ part }) => {
+      const loose = handleEntries(part).filter(([, h]) => h.showOn == null).map(([name]) => name);
+      if (loose.length <= CROWDED_MAX) return [];
+      const views = isPlainObject(part?.views) ? Object.keys(part.views) : [];
+      const out = [];
+      for (const view of views.length ? views : [null]) {
+        const shown = view == null ? loose : handlesInView(part, view, loose);
+        if (shown.length <= CROWDED_MAX) continue;
+        out.push(warn("handle-crowded", `${shown.length} handles show in ${view == null ? "the part" : `view ${JSON.stringify(view)}`} without a \`showOn\` (more than ${CROWDED_MAX})`,
+          "Too many dots crowd the model and hide each other. Give the handles a `showOn` (the sub-part whose hover reveals them), keep only the ones a person would reach for, or split them across views.", "handles"));
+      }
+      return out;
+    },
+  },
+  {
+    id: "handle-limb-per-joint",
+    run: ({ part, d, deriveError }) => {
+      if (deriveError || !d) return [];
+      const byLimb = new Map();
+      for (const [name, h] of genericEntries(part)) {
+        if (!GEOM_DRAGS.includes(h.drag) || typeof h.on !== "string" || !isLimb(d, h.on)) continue;
+        if (!byLimb.has(h.on)) byLimb.set(h.on, []);
+        byLimb.get(h.on).push(name);
+      }
+      const out = [];
+      for (const [limb, names] of byLimb) {
+        if (names.length < 2) continue;
+        out.push(warn("handle-limb-per-joint", `handles ${names.map((n) => JSON.stringify(n)).join(", ")} each drag one joint of the posed limb "${limb}" with a geometric drag`,
+          `Give "${limb}" one \`drag: "angles"\` handle (or \`drag: "goal"\` for a tool point) instead: every joint and the tip become draggable, the solve moves the chain together, joint rings show limit arcs and no value readouts show. Per-joint rotary / axis handles suit a lone hinge with no chain to solve.`, "handles"));
       }
       return out;
     },

@@ -4,9 +4,9 @@
 // through the parts frame to land under the pointer (and a ray back through it).
 import { describe, it, expect, afterEach } from "vitest";
 import * as THREE from "three";
-import { createPoseMode, aimAxes } from "../src/framework/pose/pose-mode.js";
+import { createPoseMode, aimAxes, CUE_HOLD_MS, CUE_FADE_MS, CUE_OPACITY } from "../src/framework/pose/pose-mode.js";
 import { createAimGizmo, AIM_RING_PX } from "../src/framework/pose/aim-gizmo.js";
-import { GIZMO_PALETTE } from "../src/framework/gizmo/gizmo-handles.js";
+import { GIZMO_PALETTE, ARROW_HALF_LENGTH, ARROW_UNIT_PX } from "../src/framework/gizmo/gizmo-handles.js";
 import { worldPerPx } from "../src/framework/measure/dim3-scene.js";
 import { limbInfo } from "../src/framework/pose/param-solve.js";
 import { aimFromAngles } from "../src/framework/domains/kinematics/goals.js";
@@ -58,7 +58,7 @@ function fakeViewer() {
 }
 
 function fakeScene() {
-  const calls = { setLimbs: [], setHover: [], setActive: [], setPins: [], setAimGizmo: [], setGuides: [], setReadout: [] };
+  const calls = { setLimbs: [], setHover: [], setActive: [], setPins: [], setAimGizmo: [], setGuides: [], setCue: [], setCueOpacity: [] };
   return {
     calls,
     setLimbs: (x) => calls.setLimbs.push(x),
@@ -68,7 +68,8 @@ function fakeScene() {
     setPins: (x) => calls.setPins.push(x),
     setAimGizmo: (x) => calls.setAimGizmo.push(x),
     setGuides: (x) => calls.setGuides.push(x),
-    setReadout: (x) => calls.setReadout.push(x),
+    setCue: (x) => calls.setCue.push(x),
+    setCueOpacity: (x) => calls.setCueOpacity.push(x),
     setTheme() {}, tick() {}, dispose() {},
     clear() { this.cleared++; },
   };
@@ -98,6 +99,8 @@ function setup(part = hand, extra = {}) {
     ...extra,
   });
   live.push(mode);
+  const readouts = [];
+  mode.onReadout?.((r) => readouts.push(r));
   const screenOf = (p) => {
     const w = new THREE.Vector3(...p).applyMatrix4(viewer.partsGroup.matrixWorld);
     return viewer.projectPoint(w.toArray());
@@ -108,7 +111,7 @@ function setup(part = hand, extra = {}) {
   const fire = (type, x, y, extra = {}) => viewer.domElement.dispatchEvent(new PointerEvent(type, {
     clientX: x, clientY: y, pointerId: 1, button: 0, pointerType: "mouse", bubbles: true, ...extra,
   }));
-  return { viewer, scene, orbit, params, log, mode, fire, tipScreen, pointScreen, screenOf, info, gizmo: () => gizmo };
+  return { viewer, scene, orbit, params, log, mode, readouts, fire, tipScreen, pointScreen, screenOf, info, gizmo: () => gizmo };
 }
 
 afterEach(() => { for (const m of live.splice(0)) m.detach(); document.body.innerHTML = ""; });
@@ -314,7 +317,12 @@ describe("createPoseMode", () => {
   });
 
   it("outside param edits re-read the limbs per frame only while something is drawn", () => {
-    const t = setup();
+    const clock = { t: 0 };
+    const t = setup(hand, { now: () => clock.t, hoverNone: () => false });
+    // the resting cue is drawn (it follows the handles) until it has run its course
+    t.viewer.tick();
+    clock.t = 1e6;
+    t.viewer.tick();
     const n = t.scene.calls.setLimbs.length;
     t.viewer.tick();
     expect(t.scene.calls.setLimbs).toHaveLength(n);
@@ -375,6 +383,60 @@ describe("always-on posing: hover, pick arbitration, suppression, touch", () => 
     expect(t.mode.claimsHover()).toBe(false);
     expect(changes).toBe(2);
     expect(t.viewer.domElement.style.cursor).toBe("");
+  });
+
+  it("a view switch leaves no hover, claim, cursor or grab behind", () => {
+    let visible = Object.keys(hand.handles);
+    const t = setup(hand, { visibleHandles: () => visible });
+    let changes = 0;
+    t.mode.onHoverChange(() => changes++);
+    const s = t.tipScreen("a");
+    t.fire("pointermove", s.x, s.y);
+    expect(t.mode.claimsHover()).toBe(true);
+    expect(t.viewer.domElement.style.cursor).toBe("grab");
+    // the new view draws none of these limbs (a print layout): nothing survives the switch
+    visible = [];
+    t.mode.viewChanged();
+    expect(t.mode.claimsHover()).toBe(false);
+    expect(changes).toBe(2);
+    expect(t.viewer.domElement.style.cursor).toBe("");
+    expect(t.scene.calls.setHover.at(-1)).toEqual([null, null]);
+    expect(t.scene.calls.setLimbs.at(-1)).toEqual([]);
+    expect(t.scene.calls.setCue.at(-1)?.points ?? []).toEqual([]);
+    expect(t.mode.handlePoints()).toEqual([]);
+    // a press where the dot was is not a grab: orbit keeps it, and the click is not claimed
+    t.fire("pointerdown", s.x, s.y);
+    expect(t.orbit.enabled).toBe(true);
+    t.fire("pointerup", s.x, s.y);
+    expect(t.mode.takeClick()).toBe(false);
+    expect(t.log.write).toEqual([]);
+  });
+
+  it("a view switch that keeps the handles still drops the hover the old layout had", () => {
+    const t = setup();
+    const s = t.tipScreen("a");
+    t.fire("pointermove", s.x, s.y);
+    expect(t.mode.claimsHover()).toBe(true);
+    t.mode.viewChanged();
+    expect(t.mode.claimsHover()).toBe(false);
+    expect(t.viewer.domElement.style.cursor).toBe("");
+    expect(t.scene.calls.setHover.at(-1)).toEqual([null, null]);
+    // the handles are still there to hover again
+    t.fire("pointermove", s.x, s.y);
+    expect(t.mode.claimsHover()).toBe(true);
+  });
+
+  it("a re-read that hides the hovered handle drops its hover and claim", () => {
+    let visible = Object.keys(hand.handles);
+    const t = setup(hand, { visibleHandles: () => visible });
+    const s = t.tipScreen("a");
+    t.fire("pointermove", s.x, s.y);
+    expect(t.mode.claimsHover()).toBe(true);
+    visible = ["b"];
+    t.mode.refresh();
+    expect(t.mode.claimsHover()).toBe(false);
+    expect(t.viewer.domElement.style.cursor).toBe("");
+    expect(t.scene.calls.setHover.at(-1)).toEqual([null, null]);
   });
 
   it("a click on a tip dot pins it and claims the click; a press elsewhere claims nothing", () => {
@@ -741,27 +803,87 @@ describe("generic handles", () => {
     expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:lid", null]);
   });
 
-  it("dragging an axis handle writes the solved param, one commit; guides and readout follow", () => {
+  it("dragging an axis handle writes the solved param, one commit; the readout follows, no guides", () => {
     const t = setup(gen);
     const s = at(t, "drawer");
     t.fire("pointermove", s.x, s.y);
-    expect(kinds(t)).toEqual(["axis", "path"]);
+    expect(kinds(t)).toEqual([]); // its arrow shows the line: no guide arrow, no path
     t.fire("pointerdown", s.x, s.y);
     for (let i = 1; i <= 6; i++) t.fire("pointermove", s.x, s.y - i * 6);
     expect(t.mode.isDragging()).toBe(true);
     expect(t.log.write.length).toBeGreaterThanOrEqual(5);
     expect(t.log.write.at(-1).slide).toBeGreaterThan(10);
-    const r = t.scene.calls.setReadout.at(-1);
+    const r = t.readouts.at(-1);
+    expect(r.handleId).toBe("drawer");
     expect(r.text).toMatch(/^slide \d+$/);
-    expect(r.at[2]).toBeCloseTo(80 + t.params.slide, 6);
+    expect(r.items).toEqual([expect.objectContaining({ key: "slide", value: t.params.slide })]);
+    expect(t.mode.getReadout()).toEqual(r);
     expect(t.scene.calls.setActive.at(-1)).toMatchObject({ limb: "handle:drawer", grab: "tip" });
     expect(t.scene.calls.setActive.at(-1).residual).toBeUndefined(); // no miss line on a generic handle
-    expect(kinds(t)).toEqual(["axis", "path"]);
+    expect(kinds(t)).toEqual([]);
     t.fire("pointerup", s.x, s.y - 36);
     expect(t.log.commit).toEqual([["slide"]]);
     expect(Number.isInteger(t.params.slide)).toBe(true);
-    expect(t.scene.calls.setReadout.at(-1)).toBeNull();
+    expect(t.readouts.at(-1)).toBeNull(); // the drag's end takes the readout away
+    expect(t.mode.getReadout()).toBeNull();
     expect(at(t, "drawer").y).toBeLessThan(s.y - 20); // the dot followed the pointer up
+  });
+
+  // The drawer's arrow runs up the screen (part +Z is world +Y through the fake pivot).
+  const arrowOf = (t, id) => t.mode.handlePoints().find((p) => p.handleId === id).arrow;
+
+  it("an axis handle's arrow: handlePoints gives its head tips, ARROW_HALF_LENGTH x ARROW_UNIT_PX each way", () => {
+    const t = setup(gen);
+    const s = at(t, "drawer");
+    const a = arrowOf(t, "drawer");
+    expect(Math.hypot(a.to.x - s.x, a.to.y - s.y)).toBeCloseTo(ARROW_HALF_LENGTH * ARROW_UNIT_PX, 0);
+    expect(Math.hypot(a.from.x - s.x, a.from.y - s.y)).toBeCloseTo(ARROW_HALF_LENGTH * ARROW_UNIT_PX, 0);
+    expect(a.to.y).toBeLessThan(s.y - 30); // +Z: up the screen
+    expect(Math.abs(a.to.x - s.x)).toBeLessThan(1e-6);
+    expect(arrowOf(t, "corner")).toBeUndefined(); // a plane handle keeps its dot
+  });
+
+  it("a press on the arrow's shaft, away from its centre, grabs it: hover, grab cursor, axis drag", () => {
+    const t = setup(gen);
+    const s = at(t, "drawer");
+    const on = { x: s.x, y: s.y - 24 }; // on the shaft, past the centre's 14 px
+    t.fire("pointermove", on.x + 30, on.y); // near it: shown, not hovered
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:drawer", null]);
+    t.fire("pointermove", on.x + 16, on.y); // off the arrow's side by more than its proxy
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:drawer", null]);
+    t.fire("pointermove", on.x + 6, on.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:drawer", "tip"]);
+    expect(t.mode.claimsHover()).toBe(true);
+    expect(t.viewer.domElement.style.cursor).toBe("grab");
+    t.fire("pointerdown", on.x, on.y);
+    for (let i = 1; i <= 6; i++) t.fire("pointermove", on.x, on.y - i * 6);
+    expect(t.mode.isDragging()).toBe(true);
+    t.fire("pointerup", on.x, on.y - 36);
+    expect(t.log.commit).toEqual([["slide"]]);
+    // the drag is a delta from the press: the point moved as far as the pointer did
+    expect(s.y - at(t, "drawer").y).toBeGreaterThan(30);
+    expect(s.y - at(t, "drawer").y).toBeLessThan(42);
+  });
+
+  it("a click on the arrow toggles its pin; a touch 20 px off its shaft grabs it", () => {
+    const t = setup(gen);
+    const s = at(t, "drawer");
+    t.fire("pointermove", s.x, s.y + 26);
+    t.fire("pointerdown", s.x, s.y + 26);
+    t.fire("pointerup", s.x, s.y + 26);
+    expect(t.mode.getPins()).toEqual(["drawer:point"]);
+    expect(t.scene.calls.setPins.at(-1)).toEqual([{ limb: "handle:drawer", at: "tip" }]);
+    t.fire("pointerdown", s.x, s.y + 26);
+    t.fire("pointerup", s.x, s.y + 26);
+    expect(t.mode.getPins()).toEqual([]);
+    t.fire("pointerleave", s.x, s.y);
+    const touch = { pointerType: "touch", pointerId: 2 };
+    t.fire("pointerdown", s.x + 20, s.y - 24, touch);
+    expect(t.orbit.enabled).toBe(false);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x + 20, s.y - 24 - i * 8, touch);
+    expect(t.mode.isDragging()).toBe(true);
+    t.fire("pointerup", s.x + 20, s.y - 56, touch);
+    expect(t.log.commit).toEqual([["slide"]]);
   });
 
   it("guides show on hover of the dot and clear on leave", () => {
@@ -782,7 +904,7 @@ describe("generic handles", () => {
     t.fire("pointermove", s.x, s.y);
     t.fire("pointerdown", s.x, s.y);
     for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x + i * 5, s.y);
-    expect(t.scene.calls.setReadout.at(-1).text).toMatch(/^width \d+\.\d · depth \d+\.\d$/);
+    expect(t.readouts.at(-1).text).toMatch(/^width \d+\.\d · depth \d+\.\d$/);
     t.fire("pointerup", s.x + 20, s.y);
     expect(t.params.width).toBeGreaterThan(80);
   });
@@ -802,6 +924,16 @@ describe("generic handles", () => {
     const c = pts.find((p) => p.handleId === "corner");
     expect(c.at).toBe("point");
     expect(c.x).toBeCloseTo(s.x, 6);
+  });
+
+  it("handlePoints({ offscreen: true }) also lists a shown handle whose point is off screen, marked so", () => {
+    const t = setup(gen);
+    const project = t.viewer.projectPoint;
+    t.viewer.projectPoint = (w) => ({ ...project(w), visible: false }); // everything behind the camera
+    expect(t.mode.handlePoints()).toEqual([]);
+    const all = t.mode.handlePoints({ offscreen: true });
+    expect(all.map((p) => p.handleId).sort()).toEqual(["corner", "drawer", "lid"]);
+    expect(all.every((p) => p.visible === false)).toBe(true);
   });
 });
 
@@ -841,6 +973,39 @@ describe("generic handles: rotary and touch", () => {
     expect(t.params.driveAngle).toBeLessThan(455);
     expect(t.log.commit).toEqual([["driveAngle"]]);
     expect(t.mode.getPins()).toEqual([]);
+  });
+
+  it("onDragEnd says what a released drag did: changed keys, or held by a pin", () => {
+    // a second handle on the same drive, a quarter turn round: pin one and the other is held
+    const two = { ...gear, handles: { drive: gear.handles.drive, knob: { point: (p) => [30 * Math.cos(rad(p.driveAngle + 90)), 0, 80 + 30 * Math.sin(rad(p.driveAngle + 90))], params: ["driveAngle"], drag: "rotary", axis: { origin: [0, 0, 80], direction: [0, -1, 0] } } } };
+    const t = setup(two);
+    const ends = [];
+    t.mode.onDragEnd((e) => ends.push(e));
+    const c = t.screenOf([0, 0, 80]);
+    const turn = (from, by) => {
+      const s = from();
+      const r = Math.hypot(s.x - c.x, s.y - c.y);
+      const a0 = Math.atan2(c.y - s.y, s.x - c.x) * 180 / Math.PI;
+      t.fire("pointermove", s.x, s.y);
+      t.fire("pointerdown", s.x, s.y);
+      for (let a = 10; a <= by; a += 10) t.fire("pointermove", c.x + r * Math.cos(rad(a0 + a)), c.y - r * Math.sin(rad(a0 + a)));
+      t.fire("pointerup", c.x + r * Math.cos(rad(a0 + by)), c.y - r * Math.sin(rad(a0 + by)));
+    };
+    turn(() => rim(t), 40);
+    expect(ends).toEqual([{ handleId: "drive", generic: true, changed: ["driveAngle"], pinHeld: false }]);
+    const knob = () => t.screenOf([30 * Math.cos(rad(t.params.driveAngle + 90)), 0, 80 + 30 * Math.sin(rad(t.params.driveAngle + 90))]);
+    // pin the knob, then turn the drive: nothing moves
+    const k = knob();
+    t.fire("pointermove", k.x, k.y);
+    t.fire("pointerdown", k.x, k.y);
+    t.fire("pointerup", k.x, k.y);
+    expect(t.mode.getPins()).toEqual(["knob:point"]);
+    const before = t.params.driveAngle;
+    turn(() => rim(t), 40);
+    expect(t.params.driveAngle).toBe(before);
+    expect(ends.at(-1)).toEqual({ handleId: "drive", generic: true, changed: [], pinHeld: true });
+    // a click is no drag: nothing
+    expect(ends).toHaveLength(2);
   });
 
   it("a click pins it as \"<handle>:<at>\"; a touch within 24 px drags it with no hover first", () => {
@@ -917,5 +1082,136 @@ describe("aimAxes", () => {
   it("returns no axes for a bad toward", () => {
     expect(aimAxes(null, [0, 0])).toEqual([]);
     expect(aimAxes([0, 0, 0], [0, 0])).toEqual([]);
+  });
+});
+
+describe("the resting cue", () => {
+  // three handles (one behind a showOn; two axis handles, cued as arrows) and a clock the test moves
+  const cuePart = {
+    parameters: [{ id: "g", title: "G", controls: [{ key: "a", min: 0, max: 100, step: 1 }, { key: "b", min: 0, max: 100, step: 1 }] }],
+    defaults: { a: 0, b: 0 },
+    derive: () => ({}),
+    parts: {},
+    handles: {
+      one: { point: (p) => [-40, 0, 80 + p.a], params: ["a"], drag: "axis", direction: [0, 0, 1] },
+      two: { point: (p) => [40, 0, 80 + p.b], params: ["b"] },
+      three: { point: (p) => [0, 0, 60 + p.b], params: ["b"], drag: "axis", direction: [0, 0, 1], showOn: "lid" },
+    },
+  };
+  const clockSetup = (hoverNone = false, extra = {}) => {
+    const clock = { t: 1000 };
+    const t = setup(cuePart, { now: () => clock.t, hoverNone: () => hoverNone, ...extra });
+    return { ...t, clock };
+  };
+  const lastCue = (t) => t.scene.calls.setCue.at(-1);
+
+  it("shows every shown handle's dot dimmed when posing goes live, then fades out after 2 s", () => {
+    const t = clockSetup();
+    t.viewer.tick(); // the first frame live with the part on screen starts it
+    const c = lastCue(t);
+    expect(c.opacity).toBeCloseTo(CUE_OPACITY, 6);
+    expect(t.viewer.domElement.style.cursor).toBe(""); // a cue, not a hover
+    // the point handle's dot; the axis handles' arrows, along their axes
+    expect(c.points).toEqual([[40, 0, 80]]);
+    expect(c.arrows).toHaveLength(2);
+    expect(c.arrows).toContainEqual({ point: [-40, 0, 80], direction: [0, 0, 1] });
+    // the dots and arrows follow the handles (playback, a slider) while they show
+    t.params.a = 10;
+    t.viewer.tick();
+    expect(lastCue(t).arrows).toContainEqual({ point: [-40, 0, 90], direction: [0, 0, 1] });
+    const held = lastCue(t);
+    t.clock.t += CUE_HOLD_MS - 10;
+    t.viewer.tick();
+    expect(lastCue(t)).toBe(held); // held
+    t.clock.t += 10 + CUE_FADE_MS / 2;
+    t.viewer.tick();
+    const mid = t.scene.calls.setCueOpacity.at(-1);
+    expect(mid).toBeGreaterThan(0);
+    expect(mid).toBeLessThan(CUE_OPACITY);
+    t.clock.t += CUE_FADE_MS;
+    t.viewer.tick();
+    expect(lastCue(t)).toBeNull();
+    const n = t.scene.calls.setCue.length;
+    // never again in this mount: a param change, a view refresh, a suppress round trip
+    t.params.a = 5;
+    t.viewer.tick();
+    t.mode.refresh();
+    t.mode.setSuppressed(true);
+    t.mode.setSuppressed(false);
+    expect(t.scene.calls.setCue.slice(n).every((x) => x === null)).toBe(true);
+  });
+
+  it("waits for posing to go live with the part on screen (a cached preview, a first build)", () => {
+    const t = clockSetup();
+    t.mode.setSuppressed(true); // mount suppresses at once while a cached preview shows
+    t.clock.t += 5000;
+    t.viewer.tick();
+    expect(t.scene.calls.setCue.filter(Boolean)).toEqual([]);
+    const meshes = t.viewer._subMeshes;
+    t.viewer._subMeshes = {}; // no build delivered yet
+    t.mode.setSuppressed(false);
+    t.clock.t += 5000;
+    t.viewer.tick();
+    expect(t.scene.calls.setCue.filter(Boolean)).toEqual([]);
+    t.viewer._subMeshes = meshes;
+    t.mode.refresh();
+    t.viewer.tick();
+    expect(lastCue(t).opacity).toBeCloseTo(CUE_OPACITY, 6);
+  });
+
+  it("waits while an opening autoplay plays, then starts its hold and fade when it ends", () => {
+    let blocked = true; // mount's cueBlocked: the opening autoplay is pending or playing
+    const t = clockSetup(false, { cueBlocked: () => blocked });
+    t.viewer.tick();
+    t.clock.t += 8000;
+    t.viewer.tick();
+    expect(t.scene.calls.setCue.filter(Boolean)).toEqual([]);
+    blocked = false; // the autoplay finished (or the user paused it)
+    t.viewer.tick();
+    expect(lastCue(t).opacity).toBeCloseTo(CUE_OPACITY, 6);
+    const held = lastCue(t);
+    t.clock.t += CUE_HOLD_MS - 10; // the hold counts from the end, not from the first frame
+    t.viewer.tick();
+    expect(lastCue(t)).toBe(held);
+    t.clock.t += 10 + CUE_FADE_MS + 1;
+    t.viewer.tick();
+    expect(lastCue(t)).toBeNull();
+    // once per mount: a later autoplay (a view switch's) blocking and clearing again shows nothing
+    blocked = true;
+    t.viewer.tick();
+    blocked = false;
+    t.viewer.tick();
+    expect(lastCue(t)).toBeNull();
+  });
+
+  it("a looping autoplay never ends: no cue", () => {
+    const t = clockSetup(false, { cueBlocked: () => true });
+    for (let i = 0; i < 10; i++) { t.clock.t += 5000; t.viewer.tick(); }
+    expect(t.scene.calls.setCue.filter(Boolean)).toEqual([]);
+  });
+
+  it("with no autoplay (cueBlocked false) the cue starts on the first live frame as before", () => {
+    const t = clockSetup(false, { cueBlocked: () => false });
+    t.viewer.tick();
+    expect(lastCue(t).opacity).toBeCloseTo(CUE_OPACITY, 6);
+  });
+
+  it("on a touch-only device the cue stays until the first drag, then follows the hover rules", () => {
+    const t = clockSetup(true);
+    t.viewer.tick();
+    t.clock.t += 10000;
+    t.viewer.tick();
+    expect(lastCue(t).points.length + lastCue(t).arrows.length).toBe(3);
+    expect(t.scene.calls.setCueOpacity.filter((o) => o < CUE_OPACITY)).toEqual([]);
+    const s = t.screenOf([-40, 0, 80]);
+    const touch = { pointerType: "touch", pointerId: 3 };
+    t.fire("pointerdown", s.x, s.y, touch);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x, s.y - i * 8, touch);
+    expect(t.mode.isDragging()).toBe(true);
+    expect(lastCue(t)).toBeNull();
+    t.fire("pointerup", s.x, s.y - 32, touch);
+    t.mode.setSuppressed(true);
+    t.mode.setSuppressed(false);
+    expect(lastCue(t)).toBeNull();
   });
 });

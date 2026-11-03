@@ -14,6 +14,21 @@ import { stageClearFor } from "./stage-clear.js";
 
 export const VIEWBAR_FLOAT_ATTR = "data-pf-viewbar-float";
 
+/**
+ * The viewbar's READOUT SLOT: a pill floated just off the bar, right edges flush (above a
+ * bottom-anchored bar, below the legacy top-right one) — app.css's `.pf-viewbar-readout`.
+ * Measure mode's X/Y/Z parts and pose mode's live drag values both show there; the two
+ * modes are never live at once (measure suppresses posing). Marked as a float, so the
+ * view cube's clearance counts it. Starts hidden; the caller puts it in the bar.
+ */
+export function createViewbarReadout(tag, className) {
+  const el = document.createElement(tag);
+  el.className = `pf-viewbar-readout ${className}`;
+  el.setAttribute(VIEWBAR_FLOAT_ATTR, "");
+  el.hidden = true;
+  return el;
+}
+
 // The highest claim among the bar and its floats. A hidden bar claims nothing
 // whatever its floats say, and a hidden float drops out on stageClearFor's own
 // empty-box terms.

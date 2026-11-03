@@ -192,7 +192,7 @@ vi.mock("../../src/framework/pose/pose-mode.js", () => ({
   createPoseMode: vi.fn((viewer, opts) => {
     const stub = {
       opts,
-      delivered: vi.fn(), externalWrite: vi.fn(), refresh: vi.fn(), detach: vi.fn(),
+      delivered: vi.fn(), externalWrite: vi.fn(), refresh: vi.fn(), viewChanged: vi.fn(), detach: vi.fn(),
       setPins: vi.fn(), getPins: () => [], pinCount: () => 0, releasePins: vi.fn(),
       handlePoints: () => [], isEnabled: () => true, setEnabled: vi.fn(),
       onModeChange: () => () => {},
@@ -1701,6 +1701,31 @@ test("a playback-stale delivery lifts the pose ghost on the mesh it replaces", (
   handle.dispose();
 });
 
+test("the pose cue is blocked while the opening autoplay is to come or playing, then freed", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  part.views.main.animations.grow.autoplay = true;
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  const pose = poseStubs.at(-1);
+  expect(pose.opts.cueBlocked()).toBe(true); // before the first whole delivery's kick
+  finishFirstBuild(workers);
+  expect(handle.animation.state().status).toBe("playing");
+  expect(pose.opts.cueBlocked()).toBe(true);
+  handle.animation.pause();
+  expect(pose.opts.cueBlocked()).toBe(false);
+  handle.dispose();
+});
+
+test("with no autoplay the pose cue is never blocked", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  expect(poseStubs.at(-1).opts.cueBlocked()).toBe(false);
+  handle.dispose();
+});
+
 test("unghost restores the opacity the ghost replaced, not full opacity", () => {
   const part = makeAnimatedPart();
   part.handles = { grow: { params: ["h"] } };
@@ -1808,9 +1833,35 @@ test("a view switch cancels a pose drag before the view changes", () => {
   pose.externalWrite.mockImplementation(() => { viewAtCancel = handle.getView(); });
   expect(handle.setView("side")).toBe(true);
   expect(pose.externalWrite).toHaveBeenCalledOnce();
-  expect(pose.refresh).toHaveBeenCalled();
-  expect(pose.externalWrite.mock.invocationCallOrder[0]).toBeLessThan(pose.refresh.mock.invocationCallOrder.at(-1));
+  // the old layout's hover state goes and the incoming view's handles are read
+  expect(pose.viewChanged).toHaveBeenCalledOnce();
+  expect(pose.externalWrite.mock.invocationCallOrder[0]).toBeLessThan(pose.viewChanged.mock.invocationCallOrder[0]);
   expect(viewAtCancel).toBeDefined();
+  handle.dispose();
+});
+
+test("handles are view-specific: a declared `views` list, else the views that draw their source", () => {
+  const part = makePart();
+  part.views = { main: { label: "Main" }, flat: { label: "Flat" } };
+  // one derive function: the flat layout's read of `gap` counts as a read of every input
+  part.derive = (p) => ({ lift: { handleInfo: () => ({ points: { top: [0, 0, p.h] } }) }, gap: 5 });
+  part.parts = {
+    body: { label: "Body", build: (k) => k.box({ min: [0, 0, 0], max: [1, 1, 1] }),
+      views: { main: (s, p, d) => s.translate([0, 0, d.lift ? 0 : 1]), flat: (s, p, d) => s.translate([d.gap, 0, 0]) } },
+  };
+  part.handles = {
+    top: { on: "lift", at: "top", params: ["h"], drag: "axis", direction: [0, 0, 1] },
+    pinned: { point: (p) => [0, 0, p.h], params: ["h"], views: ["flat"] },
+  };
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  expect(pose.opts.visibleHandles()).toEqual(["top"]);
+  expect(handle.setView("flat")).toBe(true);
+  expect(pose.opts.visibleHandles()).toEqual(["pinned"]);
+  expect(handle.setView("main")).toBe(true);
+  expect(pose.opts.visibleHandles()).toEqual(["top"]);
   handle.dispose();
 });
 

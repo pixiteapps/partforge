@@ -66,7 +66,8 @@ worked example of `docs/domains/mechanisms.md` - three spur gears placed by one
 crank, all writing one `wrap: true` `driveAngle`, and a `spin` animation that never
 rebuilds; `gearbox.html`), `drawer-box.js` (shape and motion handles on one part - a
 corner `plane` handle writing width and depth, which rebuilds, and an `axis` handle per
-drawer, which only re-places it; `drawer-box.html`, dev-only and not in `rollupOptions.input`), and `material-swatches.js` (not a reference part: the dev-only
+drawer, which only re-places it - each opening a percentage of its `depth - 10` travel, so
+no value of it is dead; `drawer-box.html`, dev-only and not in `rollupOptions.input`), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`), and `offset-demo.js`
 (not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
 `offset-demo.html`).
@@ -683,9 +684,21 @@ the installed package, so let the publish finish before bumping the dep there.
   `handleAxis` - an axis or rotary drag with no own direction takes the source's
   `axes[<prefix of at>]` - and `handleRecord`, the pseudo-limb Pose mode draws),
   `pose/drag-kinds.js` the pure geometric solvers per kind, `pose/handle-guides.js` the
-  guides (arrow, square, ring, travel path) drawn while the dot is hovered or dragged.
+  guides (square, ring, travel path) drawn while the dot is hovered or dragged. An `axis`
+  handle has no dot and no guide: pose-scene draws it as a two-sided arrow along its axis
+  (`gizmo/gizmo-handles.js`'s `arrowGeometryPairs`/`arrowMeshes`, the cutaway's arrow with a
+  head at each end, `ARROW_UNIT_PX` per unit), and pose-mode picks it through its hit proxy
+  (`arrowHitGeometry` via `gizmo-pick.js`), so a press anywhere on it starts the drag.
   A handle shows near its point or over its `showOn` sub-part (near a limb's bones for
-  goal / angles), all hidden at rest. Mount applies the session's effects: it holds
+  goal / angles), all hidden at rest. Handles are VIEW-SPECIFIC (`pose/handle-views.js`,
+  `handlesShownInView`, the one rule mount's `syncPoseVisible`, `oracle/handles.js` and
+  lint's `handle-crowded` share): a handle's declared `views` (lint `handle-unknown-view`),
+  else relevance AND a drawn source - some in-view sub-part's build or placement reads
+  the `d` key its point sits on (a geometry-free probe, cached per view in mount), skipped
+  when no view reads it. Relevance alone showed a hand's handles in its print kit at the
+  assembly pose: a one-function derive attributes any derived read to every input. A view
+  switch calls pose-mode's `viewChanged()` (drops hover, focus, cursor and claim) and hides
+  the readout chip. Mount applies the session's effects: it holds
   regen jobs during a drag - except for a cheap part (last build under `LIVE_REBUILD_MS`,
   120 ms), whose stale sub-parts keep rebuilding live as TRANSIENT cycles
   (`cycleTransient`: drawn and un-ghosted, no `onBuild`/status/busy/export change, even
@@ -697,7 +710,24 @@ the installed package, so let the publish finish before bumping the dep there.
   sub-parts that must rebuild at 0.35 opacity, lifts each ghost in the delivery that
   shows its new mesh (playback-stale deliveries included), commits once on release
   (`onParamsCommit`), cancels the drag on a host write or a view switch, and makes
-  every effect a no-op once dispose starts (pose mode detaches late, LIFO).
+  every effect a no-op once dispose starts (pose mode detaches late, LIFO). Once per mount, the
+  first live frame with the part on screen starts the RESTING CUE (pose-mode's `tickCue`: every
+  shown handle's dot - an axis handle's arrow - dimmed, `CUE_OPACITY` for `CUE_HOLD_MS`, faded over `CUE_FADE_MS`, drawn by
+  pose-scene's `setCue` in its capture-hidden group; on `(hover: none)` it stays until the first
+  drag). A released drag fires `onDragEnd` (`pose-session`'s `end()` reports `changed`, `moved`,
+  `held` - a pin held it only when the last target, re-solved with no holds, would have
+  moved a value). While a generic handle drags, pose-mode's `onReadout` feeds `drag-readout.js`,
+  which shows its values in the viewbar's readout slot (`viewbar-clear.js`'s
+  `createViewbarReadout`, the `.pf-viewbar-readout` pill measure's X/Y/Z parts also use — the
+  view cube clears it through `--pf-viewbar-clear`, and on a narrow stage the transport bar
+  sits at that clearance + 8px); the scene draws no readout label. On release
+  `readout-chip.js` (DOM, attached by mount like `pose-controls.js`) shows a generic
+  handle's readout by it for `CHIP_MS` — click to type, written through mount's
+  `writeChipValues` (the slider path, one commit; `handle-guides`'s `chipValues` snaps, clamps
+  and keeps a wrapped param's turn) — or `PIN_HINT` for `HINT_MS` when a pin held the drag.
+  Lint requires `drag` on every handle (`handle-bad-drag`; the runtime still defaults it to
+  "point"), `handle-inert` samples each listed param at 0/25/50/75/100% of its range, and
+  `handle-crowded` warns past 5 non-`showOn` handles in a view.
   **`src/framework/derive-memo.js`** (`withDeriveMemo`) memoizes `resolveDerived` by
   params content inside a scope (a pose drag frame, a pose overlay refresh, mount's
   `onParamChange`), so one frame derives each distinct params once. It relies on
