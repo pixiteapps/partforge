@@ -64,16 +64,25 @@ describe("handleInfo", () => {
 
   it("is a point source: the limb's joints and tip, a hinge axis at each hinge, the bone chain", () => {
     expect(h.kind).toBe("partforge.points");
-    expect(h.points).toEqual(info.points);
+    for (const [n, pt] of Object.entries(info.points)) expect(h.points[n]).toEqual(pt);
     expect(Object.keys(h.axes)).toEqual(["mcp", "pip", "dip"]);
     expect(h.axes.pip).toEqual({ origin: info.points.pip, direction: info.axes.pip });
     expect(h.lines).toEqual([["mcp", "pip"], ["pip", "dip"], ["dip", "tip"]]);
     expect(JSON.parse(JSON.stringify(h))).toEqual(h);
   });
 
+  it("each joint's \"<joint>.child\" point is the next joint's origin, the tip for the last", () => {
+    expect(h.points["mcp.child"]).toEqual(info.points.pip);
+    expect(h.points["pip.child"]).toEqual(info.points.dip);
+    expect(h.points["dip.child"]).toEqual(info.points.tip);
+    expect(h.points["tip.child"]).toBeUndefined();
+    // a copy: the limb's own points are not touched
+    expect(info.points["pip.child"]).toBeUndefined();
+  });
+
   it("a ball joint has a point but no axis", () => {
     const b = limb("arm", { toward: [0, 0, 1], bendToward: [1, 0, 0], joints: [{ name: "s", type: "ball", cone: 60 }, "e"], lengths: [10, 10] }).pose({}).handleInfo();
-    expect(Object.keys(b.points)).toEqual(["s", "e", "tip"]);
+    expect(Object.keys(b.points)).toEqual(["s", "e", "tip", "s.child", "e.child"]);
     expect(Object.keys(b.axes)).toEqual(["e"]);
   });
 });

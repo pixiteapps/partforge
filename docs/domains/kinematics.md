@@ -651,6 +651,13 @@ points, each hinge's axis, and the bone chain. So the geometric drags of any han
 `{ on: "arm", at: "tip", drag: "axis", direction: [0, 0, 1], params: ["lift"] }`. They
 write `params` through `derive` like on any source, with no goal or angles behaviour.
 
+To turn one joint with a rotary handle, put the handle at `"<joint>.child"`. That point is
+the next joint's origin, or the tip for the last joint, so it sits on the bone the joint
+turns. The `"pip"` prefix of `at` picks `axes.pip`, so the handle turns about that joint:
+`{ on: "index", at: "pip.child", drag: "rotary", params: ["indexCurl"] }`. At `"pip"`
+itself the dot is on its own axis and does not move when the joint turns, and lint warns
+(`handle-inert`).
+
 ### `drag: "goal"`
 
 Dragging the handle writes the goal parameters: `position` (three parameters) and,

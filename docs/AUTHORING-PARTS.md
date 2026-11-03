@@ -3323,9 +3323,11 @@ Give exactly one of these (lint: `handle-no-source`).
   lines?: [["<a>", "<b>"], …] }`. `at` is a key of its `points`. The helpers of
   [`partforge/mechanisms`](domains/mechanisms.md) return point sources (a gear's
   `"gear3.rim"` and `"gear3.center"`), and so does a posed limb from
-  [`partforge/kinematics`](domains/kinematics.md) (its joints and `"tip"`). You can return
-  your own: any plain object with a `handleInfo` function. When a source has `lines`, they
-  draw as a skeleton while its handles show.
+  [`partforge/kinematics`](domains/kinematics.md) (its joints, `"tip"`, and a
+  `"<joint>.child"` per joint: the end of the bone that joint turns). You can return
+  your own: any plain object with a `handleInfo` function. Its axes are plain arrays:
+  `axes: { gear1: { origin: [0, 0, 0], direction: [0, 0, 1] } }`. When a source has
+  `lines`, they draw as a skeleton while its handles show.
 - **`point: (p, d) => [x, y, z]`.** A pure function of the resolved params and `derive`'s
   result, in part coordinates. Use it when the coupling is a formula you can write: a
   drawer pull at `[0, -depth / 2 - pull - open, z]`, a box corner at `[w / 2, d / 2, h]`.
@@ -3370,7 +3372,10 @@ Optional, on every handle:
   still reads a missing `drag` as `"point"`, so a part that was never linted keeps working.
 - `direction`, `normal` and `axis` (or its `origin` and `direction`) may each be a value
   or a function `(p, d) => …`, read when the drag starts. Directions are in part
-  coordinates and need not be unit length.
+  coordinates and need not be unit length. An `axis` function returns
+  `{ origin, direction }`: `axis: (p, d) => ({ origin: [0, 0, 0], direction: [0, 0, 1] })`.
+  A `direction` or `normal` function returns `[x, y, z]`:
+  `direction: (p, d) => [Math.cos(p.tilt), 0, Math.sin(p.tilt)]`.
 - A **rotary** handle on a source needs no `axis` when the source names one: it takes
   `axes[<the part of at before the first ".">]`, so `at: "gear3.rim"` turns about the
   train's `gear3` axis. A `point` handle always gives its own `axis`. The axis must stay
@@ -3581,7 +3586,10 @@ handles: [
 A handle whose point throws at those params is listed with `point: null` and `error`; the
 report never fails because of a handle. `handles` is absent (not `[]`) on a part with no
 `handles`. An agent never drags: it sets the params a handle lists, and reads the point
-back.
+back. To check where handles sit, read `measure().handles` (inspect:
+`report.measure.handles`): it gives each handle's point and, for a rotary one, its origin
+and direction. Do not return `handleInfo()` from a probe for this. A host may cut a deeply
+nested probe value: partforge-cloud drops what nests past its depth cap.
 
 ### For hosts: `runtime.pose`
 

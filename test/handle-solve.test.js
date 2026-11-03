@@ -3,6 +3,7 @@ import { solveHandle, solveAngles, angleAbout, axisBasis } from "../src/framewor
 import { resolveParams } from "../src/framework/part-model.js";
 import { locateHandle, handleAxis } from "../src/framework/pose/handle-source.js";
 import hand from "./fixtures/ik-hand-fixture.js";
+import { limb } from "../src/framework/domains/kinematics/index.js";
 
 // ---- in-file fixtures: derive returns hand-written handleInfo() sources ----------------
 
@@ -69,6 +70,20 @@ const axisOf = (part, params, id) => {
 };
 const wrap180 = (a) => { const r = ((a + 180) % 360 + 360) % 360 - 180; return r === -180 ? 180 : r; };
 
+// A finger whose pip bend is its own parameter: a rotary handle at "pip.child" (the dip
+// joint, on the child bone) turns about axes.pip, picked by the "pip" prefix of `at`.
+const bentFinger = limb("index", {
+  at: [0, 0, 0], toward: [0, 1, 0], bendToward: [0, 0, -1],
+  joints: [{ name: "mcp", range: [-10, 90] }, { name: "pip", range: [0, 110] }, { name: "dip", range: [0, 80] }],
+  lengths: [42, 25, 22],
+});
+const pipPart = {
+  parameters: [{ id: "f", title: "Finger", controls: [{ key: "pipBend", min: 0, max: 110, step: 1 }] }],
+  defaults: { pipBend: 20 },
+  derive: (p) => ({ index: bentFinger.pose({ bend: { mcp: 10, pip: p.pipBend, dip: 0 } }) }),
+  handles: { pip: { on: "index", at: "pip.child", params: ["pipBend"], drag: "rotary" } },
+};
+
 // ---- angle convention --------------------------------------------------------------
 
 describe("angleAbout / axisBasis", () => {
@@ -113,6 +128,21 @@ describe("solveHandle", () => {
     expect(r.values.width).toBeCloseTo(100, 2);
     expect(r.values.depth).toBeCloseTo(60, 2);
     expect(r.error).toBeLessThan(1e-2);
+  });
+
+  it("rotary at \"pip.child\": the dot sits on the child bone and turning it bends pip", () => {
+    const params = { pipBend: 20 };
+    const axis = axisOf(pipPart, params, "pip");
+    const { d } = resolveParams(pipPart, params);
+    expect(axis.origin).toEqual(d.index.handleInfo().axes.pip.origin);
+    const now = at(pipPart, params, "pip");
+    expect(now).toEqual(d.index.handleInfo().points.dip);
+    const before = angleAbout(now, axis);
+    const radius = Math.hypot(...now.map((v, i) => v - axis.origin[i]));
+    expect(radius).toBeGreaterThan(20); // off its own axis
+    const r = solveHandle({ part: pipPart, params, handle: pipPart.handles.pip, target: { angleDeg: wrap180(before + 30), axis, radius } });
+    expect(Math.abs(r.values.pipBend - 20)).toBeCloseTo(30, 1);
+    expect(wrap180(angleAbout(at(pipPart, { pipBend: r.values.pipBend }, "pip"), axis) - before)).toBeCloseTo(30, 1);
   });
 
   it("rotary: grabbing gear 3 and turning it 90 degrees drives the input 180", () => {

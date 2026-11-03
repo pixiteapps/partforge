@@ -245,6 +245,16 @@ test("generic rules never throw on a malformed declaration", () => {
 });
 
 // ---- follow-ups (spec 2026-11-02 handles UX follow-ups, goal 4) ----
+test("a rotary handle on a limb joint: at \"<joint>.child\" it moves; at the joint itself (on its own axis) it is handle-inert", () => {
+  const derive = (p) => ({ finger: limb("finger", {
+    at: [0, 0, 0], toward: [0, 0, 1], bendToward: [0, -1, 0],
+    joints: [{ name: "mcp", range: [0, 90] }, { name: "pip", range: [0, 90] }],
+    lengths: [40, 30],
+  }).pose({ bend: { mcp: 10, pip: p.r } }) });
+  expect(genFindings({ a: { on: "finger", at: "pip.child", params: ["r"], drag: "rotary" } }, { derive })).toEqual([]);
+  expect(rulesOf(genFindings({ a: { on: "finger", at: "pip", params: ["r"], drag: "rotary" } }, { derive }))).toEqual(["handle-inert"]);
+});
+
 test("handle-inert samples each listed param at 0/25/50/75/100% of its range and names the inert value", () => {
   // the point moves at the defaults (w = 10) but sticks once w passes 40: inert at 50, 75 and 100
   // a real control section, so the sampler reads w's and r's ranges (0..100, no step: 1% nudges)
