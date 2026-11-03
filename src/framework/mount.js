@@ -875,6 +875,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         visibleHandles: () => poseVisible ?? handleIds,
         // a handle's `showOn`: the sub-part the hover tooltip's pick found under the mouse
         hoveredSubPart: () => hover.hoveredSubPart?.() ?? null,
+        // the resting cue waits out the opening view's autoplay (animCtl is assigned
+        // below; the cue first asks once a build is on screen)
+        cueBlocked: () => !!animCtl?.openingAutoplay(),
       });
       cleanup.defer(() => poseMode.detach());
       // Pins are viewer state, carried across a remount (getViewerState().pose).

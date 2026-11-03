@@ -220,6 +220,10 @@ export function attachAnimationControls(viewer, part, {
   const autoplayFor = (view) => animsFor(view).find((a) => a.autoplay) ?? null;
   let autoplayArmed = [...byView.values()].some((set) => set.some((a) => a.autoplay)) && !reducedMotion;
   const disarmAutoplay = () => { autoplayArmed = false; };
+  // The OPENING view's autoplay, for the pose cue to wait out (openingAutoplay
+  // below): "waiting" until the first kick plays it, "playing" while it runs,
+  // then "over" — latched, so a later view's autoplay never re-opens it.
+  let opening = autoplayArmed && autoplayFor(getView()) ? "waiting" : "over";
 
   // --- DOM --------------------------------------------------------------------
   const bar = el("div", "pf-anim-bar");
@@ -862,6 +866,22 @@ export function attachAnimationControls(viewer, part, {
       if (current !== target || !playback) return;
       const { status } = playback.state();
       if (status !== "playing" && status !== "intro") guarded(() => playback.play());
+      if (opening === "waiting") opening = "playing";
+    },
+    // True while the opening view's autoplay is still to come (before the first
+    // kick) or still running; false once it ends — it finishes, the user pauses,
+    // stops or edits — or when there is none (reduced motion included). A loop
+    // nobody stops stays true. Mount hands it to pose mode as `cueBlocked`.
+    openingAutoplay() {
+      if (opening === "over") return false;
+      if (opening === "waiting") {
+        // disarmed (the user took the transport) or moved to a view without one
+        if (!autoplayArmed || !autoplayFor(getView())) opening = "over";
+      } else {
+        const status = playback?.state().status;
+        if (status !== "playing" && status !== "intro") opening = "over";
+      }
+      return opening !== "over";
     },
     detach() {
       viewer.holdGround?.(false, "animation");

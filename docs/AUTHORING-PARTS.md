@@ -3481,7 +3481,12 @@ cached preview), every shown handle's dot appears dimmed for 2 s, then fades out
 again on a param change or a view switch. On a touch-only device (`(hover: none)`) there is
 no hover to find a handle by, so the dimmed dots stay until the first drag of any handle;
 after that the rules above apply. The cue never shows in a capture. It shows every handle
-the view shows, `showOn` ones included.
+the view shows, `showOn` ones included. When the opening view has an `autoplay` animation,
+the cue waits for that playback to end — it finishes, or the person pauses, stops or edits
+— and then starts its 2 s hold and fade (on touch, it then stays until the first drag). A
+looping autoplay that nobody stops never ends, so that part gets no cue; hover still
+reveals the handles. A later view's autoplay never brings the cue back. Under reduced
+motion, where autoplay does not play, the cue shows as for a part with no autoplay.
 
 A shown handle is a dot. Hover or drag it and its guide draws: an axis handle a short
 double arrow, a plane handle a small square, a rotary handle a ring about its axis. The

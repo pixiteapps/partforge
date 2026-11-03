@@ -165,6 +165,8 @@ export function aimAxes(toward, angles) {
  * @param opts.visibleHandles () => handle ids to show in the current view (default: all).
  * @param opts.hoveredSubPart () => the sub-part under the mouse, or null: reveals a generic
  *   handle whose `showOn` names it.
+ * @param opts.cueBlocked () => true while the resting cue must wait (mount: the opening
+ *   view's autoplay is pending or playing). Default: never.
  * Session effects, passed through to createPoseSession: getParams, write, commit,
  * restore, staleSubParts, ghost, unghost, hold. Optional: schedule (rAF), createScene,
  * createGizmo (the aim gizmo), createJointRings (the joint gizmo).
@@ -186,6 +188,9 @@ export function createPoseMode(viewer, {
   // the resting cue's clock, and whether this device has no hover (touch only)
   now = () => performance.now(),
   hoverNone = () => !!globalThis.matchMedia?.("(hover: none)")?.matches,
+  // true while the cue must wait: mount's, while the opening view's autoplay is
+  // pending or playing (the cue starts once it ends; a loop nobody stops: never)
+  cueBlocked = () => false,
   createScene = createPoseScene,
   createGizmo = createAimGizmo,
   createJointRings = createJointGizmo,
@@ -235,8 +240,9 @@ export function createPoseMode(viewer, {
   let lastSub = null;      // hoveredSubPart() as the last hover read it
   let guideScale = null;   // mm per px the shown guides were drawn at (null: none shown)
   const paths = new Map(); // handleId -> { key, guide } (handle-guides' sweepPath, cached)
-  // the resting cue: "pending" until the first live frame with the part on screen, then
-  // { start, touch } while it shows, then "done" (once per mount)
+  // the resting cue: "pending" until the first live frame with the part on screen (and
+  // no opening autoplay pending or playing — cueBlocked), then { start, touch } while it
+  // shows, then "done" (once per mount)
   let cue = Object.keys(handles).length ? "pending" : "done";
 
   const session = createPoseSession({
@@ -807,10 +813,12 @@ export function createPoseMode(viewer, {
     if (!scene) return;
     scene.setCue?.(typeof cue === "object" && live ? { points: cuePoints(), opacity: cueOpacity() } : null);
   }
-  /** Per frame: start the cue on the first live frame with the part on screen; fade it. */
+  /** Per frame: start the cue on the first live frame with the part on screen and no
+   *  opening autoplay to wait out; fade it. */
   function tickCue() {
     if (cue === "pending") {
       if (!partsFrame()) return; // nothing built yet: the handles have nowhere to show
+      if (cueBlocked()) return;  // the opening autoplay has the stage until it ends
       cue = { start: now(), touch: hoverNone() };
       syncCue();
       return;

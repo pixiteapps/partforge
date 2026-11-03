@@ -1563,3 +1563,48 @@ test("setHidden does not resurrect the bar for a view that declares no animation
   ctl.detach();
   container.remove();
 });
+
+describe("openingAutoplay (the pose cue waits it out)", () => {
+  const oneShot = {
+    views: { box: { label: "Box", animations: {
+      show: { label: "Show", duration: 1, easing: "linear", autoplay: true,
+        tracks: { lidAngle: [[0, 0], [1, 90]] } },
+    } } },
+  };
+
+  it("is true before the kick and while playing, false once a one-shot finishes; latched", () => {
+    const { ctl } = setup(oneShot); handles.push(ctl);
+    expect(ctl.openingAutoplay()).toBe(true); // the gap before the first whole delivery
+    ctl.autoplayKick();
+    ctl.__viewer.frame(0.5);
+    expect(ctl.openingAutoplay()).toBe(true);
+    ctl.__viewer.frame(1);
+    expect(ctl.runtime.state().status).not.toBe("playing");
+    expect(ctl.openingAutoplay()).toBe(false);
+    ctl.runtime.play(); // a later playback is not the opening one
+    expect(ctl.openingAutoplay()).toBe(false);
+  });
+
+  it("a loop stays true until the user pauses it (or edits)", () => {
+    const { container, ctl } = setup(autoPart); handles.push(ctl);
+    ctl.autoplayKick();
+    for (let i = 0; i < 10; i++) ctl.__viewer.frame(0.7);
+    expect(ctl.openingAutoplay()).toBe(true);
+    container.querySelector(".pf-anim-play").click();
+    expect(ctl.openingAutoplay()).toBe(false);
+    const b = setup(autoPart); handles.push(b.ctl);
+    b.ctl.autoplayKick();
+    b.ctl.notifyUserEdit();
+    expect(b.ctl.openingAutoplay()).toBe(false);
+  });
+
+  it("is false with no autoplay, and under reduced motion", () => {
+    const { ctl } = setup(); handles.push(ctl);
+    expect(ctl.openingAutoplay()).toBe(false);
+    const spy = vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true });
+    try {
+      const r = setup(autoPart); handles.push(r.ctl);
+      expect(r.ctl.openingAutoplay()).toBe(false);
+    } finally { spy.mockRestore(); }
+  });
+});

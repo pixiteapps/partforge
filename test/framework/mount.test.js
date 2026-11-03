@@ -1701,6 +1701,31 @@ test("a playback-stale delivery lifts the pose ghost on the mesh it replaces", (
   handle.dispose();
 });
 
+test("the pose cue is blocked while the opening autoplay is to come or playing, then freed", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  part.views.main.animations.grow.autoplay = true;
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  const pose = poseStubs.at(-1);
+  expect(pose.opts.cueBlocked()).toBe(true); // before the first whole delivery's kick
+  finishFirstBuild(workers);
+  expect(handle.animation.state().status).toBe("playing");
+  expect(pose.opts.cueBlocked()).toBe(true);
+  handle.animation.pause();
+  expect(pose.opts.cueBlocked()).toBe(false);
+  handle.dispose();
+});
+
+test("with no autoplay the pose cue is never blocked", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  expect(poseStubs.at(-1).opts.cueBlocked()).toBe(false);
+  handle.dispose();
+});
+
 test("unghost restores the opacity the ghost replaced, not full opacity", () => {
   const part = makeAnimatedPart();
   part.handles = { grow: { params: ["h"] } };

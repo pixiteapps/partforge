@@ -1096,6 +1096,43 @@ describe("the resting cue", () => {
     expect(lastCue(t).opacity).toBeCloseTo(CUE_OPACITY, 6);
   });
 
+  it("waits while an opening autoplay plays, then starts its hold and fade when it ends", () => {
+    let blocked = true; // mount's cueBlocked: the opening autoplay is pending or playing
+    const t = clockSetup(false, { cueBlocked: () => blocked });
+    t.viewer.tick();
+    t.clock.t += 8000;
+    t.viewer.tick();
+    expect(t.scene.calls.setCue.filter(Boolean)).toEqual([]);
+    blocked = false; // the autoplay finished (or the user paused it)
+    t.viewer.tick();
+    expect(lastCue(t).opacity).toBeCloseTo(CUE_OPACITY, 6);
+    const held = lastCue(t);
+    t.clock.t += CUE_HOLD_MS - 10; // the hold counts from the end, not from the first frame
+    t.viewer.tick();
+    expect(lastCue(t)).toBe(held);
+    t.clock.t += 10 + CUE_FADE_MS + 1;
+    t.viewer.tick();
+    expect(lastCue(t)).toBeNull();
+    // once per mount: a later autoplay (a view switch's) blocking and clearing again shows nothing
+    blocked = true;
+    t.viewer.tick();
+    blocked = false;
+    t.viewer.tick();
+    expect(lastCue(t)).toBeNull();
+  });
+
+  it("a looping autoplay never ends: no cue", () => {
+    const t = clockSetup(false, { cueBlocked: () => true });
+    for (let i = 0; i < 10; i++) { t.clock.t += 5000; t.viewer.tick(); }
+    expect(t.scene.calls.setCue.filter(Boolean)).toEqual([]);
+  });
+
+  it("with no autoplay (cueBlocked false) the cue starts on the first live frame as before", () => {
+    const t = clockSetup(false, { cueBlocked: () => false });
+    t.viewer.tick();
+    expect(lastCue(t).opacity).toBeCloseTo(CUE_OPACITY, 6);
+  });
+
   it("on a touch-only device the cue stays until the first drag, then follows the hover rules", () => {
     const t = clockSetup(true);
     t.viewer.tick();
