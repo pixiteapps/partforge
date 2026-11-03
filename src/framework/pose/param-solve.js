@@ -608,6 +608,40 @@ const AIM_WEIGHT_MM = 100;
  */
 const GOAL_HOLD_WEIGHT = 100;
 
+/** A point's distance from the line through `o` along unit-ish `d`. */
+function lineDist(p, o, d) {
+  const v = [p[0] - o[0], p[1] - o[1], p[2] - o[2]];
+  const l = Math.hypot(d[0], d[1], d[2]) || 1;
+  const t = (v[0] * d[0] + v[1] * d[1] + v[2] * d[2]) / l;
+  return Math.sqrt(Math.max(0, v[0] * v[0] + v[1] * v[1] + v[2] * v[2] - t * t));
+}
+
+/**
+ * The joints a goal handle can be grabbed by besides its `at` point (spec 2026-11-02, goal
+ * 2): every joint whose origin some seeded (driven, non-follower) joint above it in the
+ * chain moves — a hinge whose axis line misses the origin, a ball off it. The first driven
+ * joint's origin cannot move, nor can one on a twist axis above it (the robot arm's
+ * shoulder over its base): those stay ring-only. `info` is the posed limb's ikInfo().
+ */
+export function goalGrabJoints(info, handle) {
+  if (!info || !Array.isArray(info.joints) || !Array.isArray(handle?.seed)) return [];
+  const movers = [];
+  const out = [];
+  let k = 0;
+  for (const j of info.joints) {
+    const o = info.points?.[j.name];
+    if (Array.isArray(o) && movers.some((m) => (m.axis ? lineDist(o, m.origin, m.axis) : Math.hypot(o[0] - m.origin[0], o[1] - m.origin[1], o[2] - m.origin[2])) > 1e-6)) out.push(j.name);
+    if (j.follower) continue;
+    const n = j.type === "ball" ? 3 : 1;
+    const driven = handle.seed.slice(k, k + n).some((p) => typeof p === "string");
+    k += n;
+    if (!driven || !Array.isArray(o)) continue;
+    const axis = j.type === "ball" ? null : info.axes?.[j.name];
+    if (j.type === "ball" || Array.isArray(axis)) movers.push({ origin: o, axis });
+  }
+  return out;
+}
+
 /**
  * A goal-mode drag that holds pins: solve the handle's seeded joints (forward kinematics on
  * the posed limb, its `ikForward` — derive's own goal solve would pull the limb straight to
@@ -617,6 +651,10 @@ const GOAL_HOLD_WEIGHT = 100;
  * +Z are pulled toward that aim as well (AIM_WEIGHT_MM), and `target` is the goal point to
  * keep. Holds on other limbs are not in this residual.
  *
+ * `grab` (a joint name; default the handle's `at`) is the point that follows `target`: a
+ * goal limb grabbed by a middle joint (goalGrabJoints). Joints below it do not move it, so
+ * they keep their angles and the tool rides along rigidly. The write is the same either way.
+ *
  * Writes what a joint ring writes (goalFromForward): every seed parameter at the solved
  * pose, and the goal parameters rewritten to the posed `at` frame — so the next derive's
  * goal solve starts at its answer and lands on this pose. A goal value the schema would clip
@@ -624,13 +662,13 @@ const GOAL_HOLD_WEIGHT = 100;
  * (bisected, as jointRingValues). Returns `{ values, error }` (error: the weighted residual
  * norm, mm) or null when the limb cannot be read.
  */
-export function solveGoalPinned({ part, params, handle, target, holds = [], aimAngles = null, iterations = 8, tol = TOL_MM }) {
+export function solveGoalPinned({ part, params, handle, target, holds = [], aimAngles = null, grab = null, iterations = 8, tol = TOL_MM }) {
   const posed = posedLimb(part, params, handle?.on);
   if (!posed || typeof posed.ikForward !== "function" || !Array.isArray(handle.seed)) return null;
   let info;
   try { info = posed.ikInfo(); } catch { return null; }
   const ranges = rangesOf(part);
-  const at = typeof handle.at === "string" ? handle.at : "tip";
+  const at = typeof grab === "string" ? grab : typeof handle.at === "string" ? handle.at : "tip";
   // One DOF per seed entry: the joint (and a ball's component) it drives, in joint degrees.
   const dofs = [];
   let k = 0;
@@ -673,7 +711,8 @@ export function solveGoalPinned({ part, params, handle, target, holds = [], aimA
     const t = aimTurn(handle.toward, { pitch, yaw, roll: handle.params?.aim?.length >= 3 ? roll ?? 0 : undefined });
     aim = { y: t.aim, z: handle.params?.aim?.length >= 3 ? t.up : null };
   }
-  const own = holds.filter((h) => h?.limb === handle.on && Array.isArray(h.point));
+  // a hold on the grabbed point itself is no hold (as pose-session's begin skips that pin)
+  const own = holds.filter((h) => h?.limb === handle.on && Array.isArray(h.point) && h.at !== at);
   const m = 3 + (aim ? (aim.z ? 6 : 3) : 0) + own.length * 3;
   const residuals = (u) => {
     const r = new Float64Array(m);

@@ -75,6 +75,12 @@ export function defaultSolve({ part, params, handle, grab, target, aimAngles, ho
   const kind = handleKind(handle);
   if (kind === "on" || kind === "point") return solveHandle({ part, params, handle, target, holds, allHandles });
   if (handle.drag === "goal") {
+    // grabbed by a middle joint: the seeded joints carry that joint to the target and the
+    // tool rides along. A failed solve holds still — never the goal write below, which
+    // would put the tool on the cursor.
+    if (typeof grab === "string" && grab !== (typeof handle.at === "string" ? handle.at : "tip")) {
+      return solveGoalPinned({ part, params, handle, target, holds, grab });
+    }
     // a pin on the goal's own limb: solve the seeded joints around it (solveGoalPinned)
     if (holds.some((h) => h.limb === handle.on)) {
       const pinned = solveGoalPinned({ part, params, handle, target, holds });

@@ -86,7 +86,7 @@ import { ARROW_HALF_LENGTH, ARROW_UNIT_PX, arrowHitGeometry, hitMaterial } from 
 import { pickGizmoHandle } from "../gizmo/gizmo-pick.js";
 import { createPoseSession, pinId, pinTarget } from "./pose-session.js";
 import { dragPlaneNormal, dragPlanePoint, hitHandle } from "./pose-geom.js";
-import { limbInfo, jointRings } from "./param-solve.js";
+import { limbInfo, jointRings, goalGrabJoints } from "./param-solve.js";
 import { handleKind, handleAt, handleRecord } from "./handle-source.js";
 import { startDrag as startKindDrag, dragTarget } from "./drag-kinds.js";
 import { planeGuide, rotaryGuide, sweepPath, pathKey, pathParam, readoutText, readoutItems } from "./handle-guides.js";
@@ -586,15 +586,19 @@ export function createPoseMode(viewer, {
   const ringJoints = (info) => info.joints.map((j) => j.name).filter((n) => rings.has(ringKey(info.name, n)));
   /**
    * The dots a shown entry offers, `[{ at, ringOnly }]`: an angles limb's tip and joints; a
-   * goal handle's `at`, plus its joints with rings; an extra limb's joints with rings. A
-   * ring-only dot shows its rings when hovered but is not a grab.
+   * goal handle's `at`, plus its joints with rings (a grab when a driven joint above moves
+   * it, param-solve's goalGrabJoints); an extra limb's joints with rings. A ring-only dot
+   * shows its rings when hovered but is not a grab.
    */
   function dotsOf({ handle, info, extra, generic }) {
     if (generic) return [{ at: "tip", ringOnly: false }];
     if (extra) return ringJoints(info).map((at) => ({ at, ringOnly: true }));
     if (handle.drag === "goal") {
       const at = goalAt(handle);
-      return [{ at, ringOnly: false }, ...ringJoints(info).filter((n) => n !== at).map((n) => ({ at: n, ringOnly: true }))];
+      // a joint some driven joint above it moves is a grab too (a mid-joint drag); the rest
+      // (the first driven joint, one on a twist axis above it) stay ring-only
+      const grabs = new Set(goalGrabJoints(info, handle));
+      return [{ at, ringOnly: false }, ...ringJoints(info).filter((n) => n !== at).map((n) => ({ at: n, ringOnly: !grabs.has(n) }))];
     }
     return ["tip", ...info.joints.map((j) => j.name)].map((at) => ({ at, ringOnly: false }));
   }

@@ -772,7 +772,7 @@ when they are all off.
 - **Every other press is the usual press.** On empty space or on the model away from the
   handles, a drag orbits and a click picks (the chat box opens as before).
 - **Click any dot (no drag)** to pin that point: a tip, a joint, a goal handle's `at`
-  point (the aim gizmo's ball) or a ring-only joint. Click it again to unpin it. This
+  point (the aim gizmo's ball), a goal limb's middle joint or a ring-only joint. Click it again to unpin it. This
   click does not pick. A drag does not pick when you release it.
   - A pinned point holds its position in space through every inverse-kinematics drag:
     a drag of another point of the same limb, or of another limb's handle (angles mode
@@ -803,9 +803,14 @@ when they are all off.
   joint (forward kinematics): it writes that joint's parameter, clamped to the joint's
   range. The limit arc shows during the drag, and a joint at its stop shows the warning
   colour. Drag the dot itself for the inverse-kinematics drag, as before. A goal handle's
-  joints, and a limb that only a `joints` entry names, have ring-only dots: hover one to
-  show its ring; a drag from it orbits and a click on it pins it (the cursor is a
-  pointer, not a grab). A touch on one puts its rings up and its tap picks nothing. A
+  joint that a seeded joint above it moves (the robot arm's elbow and wrist) is a grab
+  too: drag it and the seeded joints carry THAT joint toward the pointer, the joints
+  below it keep their angles and the tool rides along; the drag writes every seed
+  parameter and the goal at the new tool frame, as a joint ring does, and holds pins on
+  the limb. A goal handle's other joints (the first driven joint, or one on a twist axis
+  above it, like the arm's shoulder over its base), and a limb that only a `joints`
+  entry names, have ring-only dots: hover one to show its ring; a drag from it orbits
+  and a click on it pins it (the cursor is a pointer, not a grab). A touch on one puts its rings up and its tap picks nothing. A
   ring drag does not hold pins. A goal handle's joint stops where its
   goal would leave a goal parameter's range (the tool below its lowest Z, say), with the
   warning colour, rather than letting the solve spread the turn over the other joints.

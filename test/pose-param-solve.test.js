@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { limbInfo, solveAngles, solveGoalPinned, goalValues, seedValues, snapValues, rangesOf } from "../src/framework/pose/param-solve.js";
+import { limbInfo, solveAngles, solveGoalPinned, goalGrabJoints, goalValues, seedValues, snapValues, rangesOf } from "../src/framework/pose/param-solve.js";
 import { defaultSolve } from "../src/framework/pose/pose-session.js";
 import robotArm from "../src/parts/robot-arm.js";
 import { resolveParams } from "../src/framework/part-model.js";
@@ -235,6 +235,98 @@ describe("solveGoalPinned (a goal drag holding pins)", () => {
     expect(r.values.toolZ).toBeGreaterThanOrEqual(-50);
     const posed = resolveParams(robotArm, { ...p, ...r.values }).d.arm;
     expect(dist(posed.world("tip").origin, [r.values.toolX, r.values.toolY, r.values.toolZ])).toBeLessThan(0.01);
+  });
+});
+
+describe("solveGoalPinned with a mid-joint grab (spec 2026-11-02 goal 2)", () => {
+  const handle = robotArm.handles.tool;
+  const posedOf = (params) => resolveParams(robotArm, params).d.arm;
+  const world = (params, at) => posedOf(params).world(at).origin;
+  /** Five warm-started calls stepping the elbow from where it is to `target`. */
+  function dragElbow(p0, target, holds = []) {
+    let p = { ...p0 };
+    const e0 = world(p, "elbow");
+    for (let i = 1; i <= 5; i++) {
+      const step = e0.map((v, c) => v + ((target[c] - v) * i) / 5);
+      const r = solveGoalPinned({ part: robotArm, params: p, handle, target: step, holds, grab: "elbow" });
+      expect(r).not.toBeNull();
+      p = { ...p, ...r.values };
+    }
+    return p;
+  }
+
+  it("moves the elbow onto a reachable target; the joints below it keep their angles; derive lands on the same pose", () => {
+    const p0 = { ...robotArm.defaults };
+    const v0 = posedOf(p0).values;
+    // where the elbow sits with the base and shoulder turned a little: reachable
+    const turned = posedOf(p0);
+    const target = turned.ikForward({ base: v0[0] + 15, shoulder: v0[1] - 10 }, "elbow").origin;
+    const tip0 = world(p0, "tip");
+    const p = dragElbow(p0, target);
+    const posed = posedOf(p);
+    expect(dist(posed.world("elbow").origin, target)).toBeLessThan(0.5);
+    for (let i = 2; i < 6; i++) expect(posed.values[i]).toBeCloseTo(v0[i], 3);
+    // seed and goal written: the goal is the tool frame, and derive's goal solve reaches it
+    for (const k of [...handle.seed, "toolX", "toolY", "toolZ", "toolPitch", "toolYaw", "toolRoll"]) expect(p[k]).toBeTypeOf("number");
+    expect(posed.report.goals[0].status).toBe("reached");
+    expect(dist(posed.world("tip").origin, [p.toolX, p.toolY, p.toolZ])).toBeLessThan(0.01);
+    expect(dist(posed.world("tip").origin, tip0)).toBeGreaterThan(5); // the tool rode along
+  });
+
+  it("an unreachable target stops the elbow as near as it gets", () => {
+    const p0 = { ...robotArm.defaults };
+    const shoulder = world(p0, "shoulder");
+    const target = [100, 0, 400];
+    const p = dragElbow(p0, target);
+    const elbow = world(p, "elbow");
+    const nearest = dist(shoulder, target) - p0.upperLen;
+    expect(dist(elbow, target)).toBeLessThan(nearest + 1);
+  });
+
+  it("a goal the schema would clip stops at the fraction that fits", () => {
+    const p0 = { ...robotArm.defaults };
+    const r = solveGoalPinned({ part: robotArm, params: p0, handle, target: [250, 0, -150], grab: "elbow" });
+    expect(r).not.toBeNull();
+    expect(r.values.toolZ).toBeGreaterThanOrEqual(-50);
+    const posed = posedOf({ ...p0, ...r.values });
+    expect(dist(posed.world("tip").origin, [r.values.toolX, r.values.toolY, r.values.toolZ])).toBeLessThan(0.01);
+  });
+
+  it("a pin on the grabbed joint itself is no hold", () => {
+    const p0 = { ...robotArm.defaults };
+    const e0 = world(p0, "elbow");
+    const v0 = posedOf(p0).values;
+    const target = posedOf(p0).ikForward({ base: v0[0] - 12, shoulder: v0[1] + 8 }, "elbow").origin;
+    const self = dragElbow(p0, target, [{ limb: "arm", at: "elbow", point: e0 }]);
+    expect(dist(world(self, "elbow"), target)).toBeLessThan(0.5);
+  });
+
+  it("defaultSolve routes a mid-joint grab to the pinned solve, never the goal-point write", () => {
+    const p0 = { ...robotArm.defaults };
+    const e0 = world(p0, "elbow");
+    const target = [e0[0] - 10, e0[1], e0[2] + 5];
+    const r = defaultSolve({ part: robotArm, params: p0, handle, grab: "elbow", target, holds: [] });
+    expect(r.values.toolX).not.toBeCloseTo(target[0], 1); // not the tool moved to the cursor
+    expect(dist(world({ ...p0, ...r.values }, "elbow"), target)).toBeLessThan(dist(e0, target));
+    // the `at` grab is unchanged: the direct goal write
+    const tip = defaultSolve({ part: robotArm, params: p0, handle, grab: "tip", target, holds: [] });
+    expect(tip.values.toolX).toBeCloseTo(target[0], 6);
+    // a limb that cannot be solved holds still: null, never the goal write
+    const noSeed = { ...handle, seed: undefined };
+    expect(defaultSolve({ part: robotArm, params: p0, handle: noSeed, grab: "elbow", target, holds: [] })).toBeNull();
+  });
+});
+
+describe("goalGrabJoints", () => {
+  it("a joint is a grab when a seeded joint above it moves its origin", () => {
+    const info = limbInfo(robotArm, robotArm.defaults, robotArm.handles.tool);
+    // the base twists about the shoulder's own axis line: the shoulder never moves
+    expect(goalGrabJoints(info, robotArm.handles.tool)).toEqual(["elbow", "wristPitch", "wristYaw", "wristRoll"]);
+    const armInfo = limbInfo(arm, arm.defaults, arm.handles.tool);
+    expect(goalGrabJoints(armInfo, arm.handles.tool)).toEqual(["elbow", "wrist"]);
+    // unseeded joints drive nothing
+    expect(goalGrabJoints(armInfo, { ...arm.handles.tool, seed: [null, null, null, "elbow"] })).toEqual(["wrist"]);
+    expect(goalGrabJoints(info, { ...robotArm.handles.tool, seed: undefined })).toEqual([]);
   });
 });
 
