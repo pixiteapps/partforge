@@ -124,3 +124,19 @@ test("--out writes the measure half even when a later verify throw crashes the r
   expect(report.subparts).toBeTruthy();
   expect(report.verify).toBeUndefined();
 });
+
+test("CLI measure --drag plays a handle drag without a kernel and prints the result", () => {
+  const r = JSON.parse(run(["measure", "src/parts/gearbox.js", "--drag", "gear1", "--turn", "90", "--json"]));
+  expect(r.handle).toBe("gear1");
+  expect(r.drag).toBe("rotary");
+  expect(r.values.driveAngle).toBeCloseTo(90, 0);
+  expect(r.verify).toBeUndefined(); // no measure, no verify
+  const human = run(["measure", "src/parts/gearbox.js", "--drag", "gear1", "--turn", "90"]);
+  expect(human).toMatch(/driveAngle: 0 → 90/);
+});
+
+test("CLI measure --drag exits 1 with the error on a bad request", () => {
+  const err = runFail(["measure", "src/parts/gearbox.js", "--drag", "nope", "--turn", "90", "--json"]);
+  expect(JSON.parse(`${err.stdout}`).error).toMatch(/unknown handle/);
+  expect(`${runFail(["measure", "src/parts/gearbox.js", "--turn", "90"]).stderr}`).toMatch(/require --drag/);
+});

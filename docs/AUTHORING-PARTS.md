@@ -3629,11 +3629,49 @@ handles: [
 
 A handle whose point throws at those params is listed with `point: null` and `error`; the
 report never fails because of a handle. `handles` is absent (not `[]`) on a part with no
-`handles`. An agent never drags: it sets the params a handle lists, and reads the point
-back. To check where handles sit, read `measure().handles` (inspect:
+`handles`. To pose a part, an agent sets the params a handle lists and reads the point
+back; to check that a handle drags the right way, it plays the drag ("Testing a drag"
+below). To check where handles sit, read `measure().handles` (inspect:
 `report.measure.handles`): it gives each handle's point and, for a rotary one, its origin
 and direction. Do not return `handleInfo()` from a probe for this. A host may cut a deeply
 nested probe value: partforge-cloud drops what nests past its depth cap.
+
+### Testing a drag
+
+`measure --drag` plays one drag the way Pose mode would, with no pins, and reports where it
+lands. It reads `derive` only: no kernel boots, and nothing is measured or verified.
+
+```bash
+npx partforge measure src/parts/gearbox.js --drag gear1 --turn 90          # rotary: degrees, right-handed about its axis
+npx partforge measure src/parts/drawer-box.js --drag drawer1 --to 0,-110,124 # point / axis / plane / goal / angles
+npx partforge measure src/parts/robot-arm.js --drag tool --grab elbow --to 100,30,230
+```
+
+```
+drag gear1 (rotary, grab gear1.rim)
+  from    [20, 0, 11]
+  target  [0, 20, 11]
+  reached [0, 20, 11]   miss 0 mm
+  values
+    driveAngle: 0 → 90
+```
+
+An axis drag projects `--to` onto its axis line, and a plane drag onto its plane, so you can
+pass a rough point. `--grab` (goal and angles handles) names the joint to drag, or `tip`.
+`--params <json>` sets the starting params, `[view]` the view (it must show the handle),
+and `--json` / `--out` give the result as JSON. It exits 1 only when the request or the
+solve fails (`error`). In code: `dragHandle(part, { handle, to | turn, grab, params, view })`
+from `partforge/oracle` or `partforge/testing`.
+
+What to look for:
+
+- **The sign.** A `--turn 90` that writes `-90` turns the wrong way. Turning a driven gear
+  writes the input at the train's ratio, with the sign flipped for each mesh.
+- **The reach.** `miss` is how far the grab point ended from the target (rotary: the arc at
+  its radius). A large miss is a range end, or a target the handle cannot reach.
+- **Which params move.** Only the params you expect should be in `values`.
+- **A handle that writes nothing.** `(none changed)` means that the drag does not move the
+  handle's point, so the user cannot drag it.
 
 ### For hosts: `runtime.pose`
 
@@ -4375,7 +4413,9 @@ without touching (`near-misses:` in the output; reported for judgment, never an
 exit-code gate by itself). It exits non-zero
 if any sub-part isn't watertight or any parts interpenetrate — so it doubles as a
 CI/agent gate. Add `--json` to also dump the report as JSON on stdout, or
-`--out report.json` to write it to a file (nothing is written otherwise). (Manifold output is
+`--out report.json` to write it to a file (nothing is written otherwise).
+`--drag <handle>` (with `--to x,y,z` or `--turn <deg>`) plays a handle drag instead of
+measuring: see "Testing a drag" under Handles. (Manifold output is
 manifold by construction, so `watertight` is mainly a build-sanity check for
 empty/degenerate results; `holes` is the informative topology number.)
 

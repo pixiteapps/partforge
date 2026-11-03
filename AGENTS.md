@@ -99,6 +99,7 @@ The CLI (also the agent-facing surface) builds parts in pure Node - no browser:
 ```bash
 npx partforge lint    src/parts/<part>.js          # static checks, no kernel boot; exits non-zero on errors
 npx partforge measure src/parts/<part>.js [view]   # bbox/volume/holes/watertight + verify gate; exits non-zero on failure
+npx partforge measure src/parts/<part>.js [view] --drag <handle> (--to x,y,z | --turn deg)  # play a handle drag (derive only, no kernel)
 npx partforge render  src/parts/<part>.js [view]   # canonical-angle PNGs -> render/
 npx partforge pick-serve                           # request-a-pick: agent asks user to click geometry
 npx partforge ingest   <file> --out <output-file>  # SVG -> partforge-vector JSON, PNG pass-through, font validation - no browser

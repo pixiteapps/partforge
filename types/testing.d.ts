@@ -16,6 +16,7 @@ export {
   samplePreviewAnimation, PREVIEW_SAMPLE_HZ, PREVIEW_SAMPLE_CAP,
   type PreviewAnimationInput, type PreviewAnimationSample, type NormalizedAnimation,
   type NormalizedAnimationStep, type NormalizedAnimationCue,
+  dragHandle, type DragRequest, type DragResult,
 } from "./oracle.js";
 
 // --- kernels ----------------------------------------------------------------

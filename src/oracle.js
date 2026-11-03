@@ -22,6 +22,8 @@ export { buildView } from "./framework/oracle/build.js";
 export { samplePreviewAnimation, PREVIEW_SAMPLE_HZ, PREVIEW_SAMPLE_CAP } from "./framework/preview-animation.js";
 export { measure } from "./framework/oracle/measure.js";
 export { verify } from "./framework/oracle/verify.js";
+// A handle drag played headlessly (derive only): which params a handle writes, and whether it reaches.
+export { dragHandle } from "./framework/oracle/drag.js";
 // Change tracking — the `inspect` job's opt-in "what changed since my last
 // inspect of this view" signal, re-exported so a downstream harness can run the
 // same tracker outside the job loop (e.g. across a scripted sequence of builds).
