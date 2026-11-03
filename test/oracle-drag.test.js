@@ -8,6 +8,7 @@ import gearbox from "../src/parts/gearbox.js";
 import drawerBox from "../src/parts/drawer-box.js";
 import robotArm from "../src/parts/robot-arm.js";
 import hand from "../src/parts/hand.js";
+import dragViews from "./fixtures/drag-views-part.js";
 import { resolveParams } from "../src/framework/part-model.js";
 
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
@@ -150,6 +151,13 @@ describe("dragHandle: bad requests return error, never throw", () => {
 
   it("a handle the view does not show", () => {
     expect(dragHandle(hand, { handle: "index", view: "print", to: [0, 0, 0] }).error).toMatch(/view/);
+  });
+
+  it("a default view that does not show the handle names the views that do", () => {
+    const r = dragHandle(dragViews, { handle: "slide", to: [20, 0, 0] });
+    expect(r.error).toMatch(/view "print" does not show handle "slide"/);
+    expect(r.error).toMatch(/views that show it: assembly — pass one as view/);
+    expect(dragHandle(dragViews, { handle: "slide", view: "assembly", to: [20, 0, 0] }).values.x).toBeCloseTo(20, 1);
   });
 
   it("an unknown view", () => {

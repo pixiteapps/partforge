@@ -89,7 +89,12 @@ function play(part, { id, to, turn, grab, params, view, steps }, fail) {
   let shown;
   try { shown = handlesShownInView(part, v, base); } catch { shown = [id]; }
   if (!shown.includes(id)) {
-    return fail(`view "${v}" does not show handle "${id}" (it shows: ${shown.join(", ") || "none"}); pass view`);
+    const showing = views.filter((w) => {
+      if (w === v) return false;
+      try { return handlesShownInView(part, w, base).includes(id); } catch { return false; }
+    });
+    const where = showing.length ? `; views that show it: ${showing.join(", ")} — pass one as view` : "; no view shows it";
+    return fail(`view "${v}" does not show handle "${id}" (it shows: ${shown.join(", ") || "none"})${where}`);
   }
   let start;
   try { start = resolveParams(part, base); } catch (e) { return fail(`derive throws at the starting params: ${firstLine(e)}`); }

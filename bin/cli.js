@@ -184,6 +184,7 @@ async function dragCommand(part, view, flags, usage) {
   }
   const { dragHandle } = await import("../src/framework/oracle/drag.js");
   const result = dragHandle(part, request);
+  if (result.error) result.error = cliDragError(result.error);
   if (flags.out) {
     mkdirSync(dirname(resolve(flags.out)), { recursive: true });
     writeFileSync(flags.out, JSON.stringify(result, null, 2));
@@ -192,6 +193,18 @@ async function dragCommand(part, view, flags, usage) {
   else printDrag(result, { ...(part.defaults ?? {}), ...params });
   if (flags.out && !flags.json) console.log(`\nwrote ${flags.out}`);
   process.exit(result.error ? 1 : 0);
+}
+
+/** dragHandle's error, its request fields (`to`, `turn`, `grab`, `view`) renamed to the flags that set them. */
+function cliDragError(message) {
+  return message
+    .replace(/\bto: \[x, y, z\]/g, "--to x,y,z")
+    .replace(/\bturn: <degrees>/g, "--turn <deg>")
+    .replace(/\btakes to, not turn\b/g, "takes --to, not --turn")
+    .replace(/\btakes turn, not to\b/g, "takes --turn, not --to")
+    .replace(/; grab one of:/g, "; --grab one of:")
+    .replace(/^grab is for\b/, "--grab is for")
+    .replace(/\bpass one as view\b/g, "pass one after the part module");
 }
 
 function printDrag(r, start) {
@@ -258,6 +271,11 @@ const commands = {
     }, usage);
     if (flags.drag === undefined && (flags.to || flags.turn || flags.grab || flags.params)) {
       die(`--to/--turn/--grab/--params require --drag\n${usage}`);
+    }
+    if (flags.drag !== undefined) {
+      for (const f of ["process", "no-verify"]) {
+        if (flags[f] !== undefined) die(`--${f} does not apply with --drag (a drag runs no measure or verify)\n${usage}`);
+      }
     }
     try {
       const part = await loadPart(partPath, usage);

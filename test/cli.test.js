@@ -135,6 +135,31 @@ test("CLI measure --drag plays a handle drag without a kernel and prints the res
   expect(human).toMatch(/driveAngle: 0 → 90/);
 });
 
+test("CLI measure --drag names its flags in a missing-target error", () => {
+  const turn = runFail(["measure", "src/parts/gearbox.js", "--drag", "gear1", "--json"]);
+  expect(JSON.parse(`${turn.stdout}`).error).toMatch(/--turn <deg>/);
+  const to = runFail(["measure", "src/parts/robot-arm.js", "--drag", "tool"]);
+  expect(`${to.stdout}`).toMatch(/--to x,y,z/);
+  const both = runFail(["measure", "src/parts/robot-arm.js", "--drag", "tool", "--to", "0,0,0", "--turn", "9"]);
+  expect(`${both.stdout}`).toMatch(/takes --to, not --turn/);
+});
+
+test("CLI measure --drag refuses the measure-only flags", () => {
+  for (const extra of [["--process", "fdm-pla"], ["--no-verify"]]) {
+    const err = runFail(["measure", "src/parts/gearbox.js", "--drag", "gear1", "--turn", "90", ...extra]);
+    expect(`${err.stderr}`).toMatch(new RegExp(`${extra[0]}.*--drag`));
+    expect(`${err.stderr}`).toMatch(/usage: partforge measure/);
+  }
+});
+
+test("CLI measure --drag with no view names a view that shows the handle", () => {
+  const err = runFail(["measure", "test/fixtures/drag-views-part.js", "--drag", "slide", "--to", "20,0,0"]);
+  expect(`${err.stdout}`).toMatch(/view "print" does not show handle "slide"/);
+  expect(`${err.stdout}`).toMatch(/assembly/);
+  const ok = JSON.parse(run(["measure", "test/fixtures/drag-views-part.js", "assembly", "--drag", "slide", "--to", "20,0,0", "--json"]));
+  expect(ok.values.x).toBeCloseTo(20, 1);
+});
+
 test("CLI measure --drag exits 1 with the error on a bad request", () => {
   const err = runFail(["measure", "src/parts/gearbox.js", "--drag", "nope", "--turn", "90", "--json"]);
   expect(JSON.parse(`${err.stdout}`).error).toMatch(/unknown handle/);

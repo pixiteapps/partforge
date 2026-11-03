@@ -3660,9 +3660,12 @@ drag gear1 (rotary, grab gear1.rim)
 
 An axis drag projects `--to` onto its axis line, and a plane drag onto its plane, so you can
 pass a rough point. `--grab` (goal and angles handles) names the joint to drag, or `tip`.
-`--params <json>` sets the starting params, `[view]` the view (it must show the handle),
-and `--json` / `--out` give the result as JSON. It exits 1 only when the request or the
-solve fails (`error`). In code: `dragHandle(part, { handle, to | turn, grab, params, view })`
+`--params <json>` sets the starting params, `[view]` the view (it must show the handle; when
+the default view does not, the error names the views that do), and `--json` / `--out` give
+the result as JSON. `--process` and `--no-verify` do not apply and are refused. A rotary
+drag's turn is tracked whole turns and all: `--turn 720` on a slider that stops at 360
+reports a miss of one turn's arc. It exits 1 only when the request or the solve fails
+(`error`). In code: `dragHandle(part, { handle, to | turn, grab, params, view })`
 from `partforge/oracle` or `partforge/testing`.
 
 What to look for:
