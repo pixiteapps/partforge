@@ -3579,15 +3579,6 @@ drawerOpen = 0". `handle-crowded` warns when more than 5 handles without a `show
 one view (the handles that view shows, by the rule in "When a handle shows"). `wrap-needs-range` errors on
 `wrap: true` without a finite `min < max`.
 
-### Collisions
-
-`collisions: { clearance?, allow?, pose? }` says what may touch: `clearance` is the distance in
-millimetres under which two sub-parts count as touching (default 0.001), `allow` lists pairs that
-may touch as `"a×b"` strings, and `pose` (default true) keeps pieces solid in Pose mode. Lint
-errors: `collisions-bad-clearance` (not a number at or above 0), `collisions-bad-pair` (an `allow`
-entry without `×`, or naming one sub-part twice) and `collisions-unknown-part` (a name that is not a
-key of `parts`).
-
 `npx partforge measure` prints each handle shown in the view with its label, drag kind,
 point and the params it drives:
 
@@ -3620,6 +3611,15 @@ back. To check where handles sit, read `measure().handles` (inspect:
 `report.measure.handles`): it gives each handle's point and, for a rotary one, its origin
 and direction. Do not return `handleInfo()` from a probe for this. A host may cut a deeply
 nested probe value: partforge-cloud drops what nests past its depth cap.
+
+### Collisions
+
+`collisions: { clearance?, allow?, pose? }` says what may touch: `clearance` is the distance in
+millimetres under which two sub-parts count as touching (default 0.001), `allow` lists pairs that
+may touch as `"a×b"` strings, and `pose` (default true) keeps pieces solid in Pose mode. Lint
+errors: `collisions-bad-clearance` (not a number at or above 0), `collisions-bad-pair` (an `allow`
+entry without `×`, or naming one sub-part twice) and `collisions-unknown-part` (a name that is not a
+key of `parts`).
 
 ### For hosts: `runtime.pose`
 
