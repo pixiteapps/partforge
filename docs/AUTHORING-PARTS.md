@@ -3572,7 +3572,7 @@ handle with no usable direction, normal or axis), `handle-point-throws`,
 `handle-unknown-param`, `handle-unknown-view` (a `views` entry that is not a key of
 `views`), the limb rules `handle-param-count`, `handle-aim-toward` and
 `handle-unknown-joint` (all errors), and the warnings `handle-inert`, `handle-axis-moves`
-`handle-crowded` and `handle-limb-per-joint`. `handle-inert` nudges each listed param one step at the defaults, and
+`handle-crowded`, `handle-limb-per-joint` and `handle-joint-range`. `handle-joint-range` warns when an `angles` handle's `joints` entry is driven by a slider whose `min`/`max` reaches past its joint's range (a hinge's `range / scale`, a ball's `±cone`): a drag stops at the joint's own range, so set the slider's range to it. `handle-inert` nudges each listed param one step at the defaults, and
 again with each param at 0%, 25%, 50%, 75% and 100% of its range (the others at their
 defaults), and warns where no nudge moves the point 0.01 mm, naming the value: "inert at
 drawerOpen = 0". `handle-crowded` warns when more than 5 handles without a `showOn` show in
@@ -4467,7 +4467,7 @@ previously didn't; that's the fix working as intended, not a regression.
 `default-view-ambiguous` (warnings). **Handles** — `handle-no-source`,
 `handle-unknown-source`, `handle-bad-drag`, `handle-unknown-param`, `handle-param-count`,
 `handle-aim-toward`, `handle-unknown-joint`, `handle-point-throws`, `handle-unknown-view` (all errors),
-`handle-inert`, `handle-axis-moves`, `handle-crowded`, `handle-limb-per-joint` (warnings); `wrap-needs-range` (error): a declared
+`handle-inert`, `handle-axis-moves`, `handle-crowded`, `handle-limb-per-joint`, `handle-joint-range` (warnings); `wrap-needs-range` (error): a declared
 `handles` entry with neither or both of `on`/`point`; an `on` that is not a point source
 in `derive`'s result, or an `at` it lacks, or a `"goal"`/`"angles"` handle whose `on` is
 not a posed limb; a handle with no `drag` or an unknown one,

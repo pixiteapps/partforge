@@ -4,7 +4,7 @@
 // declaration, `defaults` and the resolved `d`, and never throws on a malformed one.
 import { err, warn } from "./finding.js";
 import { resolveDerived } from "../derive.js";
-import { rangesOf } from "../pose/param-solve.js";
+import { rangesOf, jointBounds } from "../pose/param-solve.js";
 import { locateHandle, sourceInfo, resolveGeom, handleAxis } from "../pose/handle-source.js";
 import { handlesShownInView } from "../pose/handle-views.js";
 
@@ -79,6 +79,7 @@ function jointEntryProblem(entry, joint) {
   return 'is a hinge: map it to a parameter name, or { param, scale? }';
 }
 
+const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const isDirection = (v) => Array.isArray(v) && v.length === 3 && v.every((c) => typeof c === "number" && Number.isFinite(c)) && v.some((c) => c !== 0);
 const isLimb = (d, key) => typeof d?.[key]?.ikInfo === "function";
 
@@ -275,6 +276,34 @@ export const HANDLE_RULES = [
           if (problem) {
             out.push(err("handle-unknown-joint", `handle "${name}" maps joints ${JSON.stringify(key)}, which ${problem}`,
               "A hinge maps to the parameter that drives it in degrees (\"<param>\", or { param, scale } when the joint turns scale × param); a ball to { bend?, spread?, twist? }.", `${base}.${key}`));
+          }
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: "handle-joint-range",
+    run: ({ part }) => {
+      // An angles handle's joint is driven by a slider that reaches past the joint's own
+      // range: the drag stops at the joint, but the slider moves where it cannot follow.
+      const out = [];
+      const defaults = isPlainObject(part?.defaults) ? part.defaults : {};
+      const ranges = rangesOf(part);
+      for (const [name, h] of limbHandleEntries(part)) {
+        if (h.drag !== "angles" || !isPlainObject(h.joints)) continue;
+        const entries = Object.entries(h.joints);
+        for (const [key, entry] of entries) {
+          // one entry at a time, so the finding names its key
+          const bounds = jointBounds(part, defaults, { ...h, joints: { [key]: entry } });
+          for (const [param, b] of bounds) {
+            const r = ranges.get(param);
+            if (!r || r.wrap) continue;
+            const past = (isNum(r.min) && r.min < b.min - 1e-9) || (isNum(r.max) && r.max > b.max + 1e-9);
+            if (!past) continue;
+            const fmt = (v) => (Number.isFinite(v) ? String(Math.round(v * 1e6) / 1e6) : "unbounded");
+            out.push(warn("handle-joint-range", `handle "${name}" maps joint ${JSON.stringify(key)} to "${param}", whose slider (${fmt(r.min)} to ${fmt(r.max)}) goes where the joint cannot follow (${fmt(b.min)} to ${fmt(b.max)})`,
+              `Set "${param}"'s \`min\`/\`max\` to the joint's range${b.min === -b.max ? "" : ` (${fmt(b.min)} to ${fmt(b.max)} after the \`scale\`)`}, so the slider and the drag stop in the same place.`, `handles.${name}.joints.${key}`));
           }
         }
       }

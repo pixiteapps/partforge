@@ -115,21 +115,35 @@ function dofsOf(handle, allHandles, p) {
  * bounded DOF's and the starting damping means the same) but no bounds: u runs past 1,
  * and the value past `max`, as a drag turns it on.
  */
-function dofSpace(ranges, base, keys) {
+function dofSpace(ranges, base, keys, bounds) {
   const offset = [], scale = [], lo = [], hi = [], u0 = [];
   for (const k of keys) {
     const r = ranges.get(k);
-    const v = clamp(isNum(base[k]) ? base[k] : 0, r);
+    const b = bounds?.get(k);
+    // The joint's own bounds, intersected with the schema's (never wider); a wrapped
+    // control is bounded by the joint alone.
+    let bMin = b?.min, bMax = b?.max;
+    if (b && r && !r.wrap) {
+      if (isNum(r.min)) bMin = Math.max(bMin, r.min);
+      if (isNum(r.max)) bMax = Math.min(bMax, r.max);
+    }
+    const bounded = b && bMin <= bMax;
+    const v0 = isNum(base[k]) ? base[k] : 0;
+    const v = bounded ? Math.min(bMax, Math.max(bMin, v0)) : clamp(v0, r);
     const finite = r && isNum(r.min) && isNum(r.max) && r.max > r.min;
     if (finite && !r.wrap) {
-      offset.push(r.min); scale.push(r.max - r.min); lo.push(0); hi.push(1);
-      u0.push((v - r.min) / (r.max - r.min));
+      const span = r.max - r.min;
+      offset.push(r.min); scale.push(span);
+      lo.push(bounded ? (bMin - r.min) / span : 0); hi.push(bounded ? (bMax - r.min) / span : 1);
+      u0.push((v - r.min) / span);
     } else if (finite) {
-      offset.push(r.min); scale.push(r.max - r.min); lo.push(-Infinity); hi.push(Infinity);
-      u0.push((v - r.min) / (r.max - r.min));
+      const span = r.max - r.min;
+      offset.push(r.min); scale.push(span);
+      lo.push(bounded ? (bMin - r.min) / span : -Infinity); hi.push(bounded ? (bMax - r.min) / span : Infinity);
+      u0.push((v - r.min) / span);
     } else {
       offset.push(0); scale.push(1);
-      lo.push(r?.wrap || !isNum(r?.min) ? -Infinity : r.min); hi.push(r?.wrap || !isNum(r?.max) ? Infinity : r.max);
+      lo.push(bounded ? bMin : r?.wrap || !isNum(r?.min) ? -Infinity : r.min); hi.push(bounded ? bMax : r?.wrap || !isNum(r?.max) ? Infinity : r.max);
       u0.push(v);
     }
   }
@@ -185,7 +199,7 @@ function runSolve(space, evaluate, m, { iterations, lambda, tol }) {
 export function solveAngles({ part, params, handle, grab, target, holds = [], iterations = 8, allHandles = [handle], tol = TOL_MM }) {
   const base = { ...part.defaults, ...params };
   const keys = dofsOf(handle, allHandles, base);
-  const space = dofSpace(rangesOf(part), base, keys);
+  const space = dofSpace(rangesOf(part), base, keys, jointBounds(part, base, handle));
   const points = [{ ref: { limb: handle.on, at: grab }, point: target }, ...holds.map((h) => ({ ref: refOf(h), point: h.point }))];
   const m = points.length * 3;
   const evaluate = (u) => {
@@ -409,6 +423,41 @@ function lockedParams(handles, p) {
         else if (e && typeof e === "object") for (const v of Object.values(e)) if (typeof v === "string") out.add(v);
       }
     }
+  }
+  return out;
+}
+
+/** A joint range in joint degrees as the bounds of its param (value = param * scale), ordered; null when unbounded. */
+function paramBounds(range, scale) {
+  const a = range[0] / scale, b = range[1] / scale;
+  const min = Math.min(a, b), max = Math.max(a, b);
+  return Number.isFinite(min) || Number.isFinite(max) ? { min, max } : null;
+}
+
+/**
+ * The bounds the joints an angles handle's `joints` map put on its params, in param units:
+ * `Map<param, { min, max }>`, a hinge's `range / scale`, a ball's bend and spread within
+ * the cone, twist none. A param two entries name gets their intersection. Empty when the
+ * handle maps none, or derive / the limbs cannot be read.
+ */
+export function jointBounds(part, base, handle) {
+  const out = new Map();
+  if (handle?.drag !== "angles" || !handle.joints || typeof handle.joints !== "object" || Array.isArray(handle.joints)) return out;
+  let d;
+  try { ({ d } = resolveParams(part, base)); } catch { return out; }
+  for (const [key, entry] of Object.entries(handle.joints)) {
+    try {
+      const { limb, joint } = parseJointKey(key);
+      const j = d[limb ?? handle.on]?.ikInfo().joints.find((x) => x.name === joint);
+      const slots = j && jointEntrySlots(entry, j);
+      if (!slots) continue;
+      for (const [slot, { param, scale }] of Object.entries(slots)) {
+        const b = paramBounds(slotRange(j, slot), scale);
+        if (!b) continue;
+        const prev = out.get(param);
+        out.set(param, prev ? { min: Math.max(prev.min, b.min), max: Math.min(prev.max, b.max) } : b);
+      }
+    } catch { /* an unreadable entry bounds nothing */ }
   }
   return out;
 }
@@ -689,7 +738,9 @@ export function jointRingValues({ part, params, ring, slot, value }) {
   const ranges = rangesOf(part);
   if (ring.mode !== "goal") {
     const raw = value / s.scale;
-    const written = clamp(raw, ranges.get(s.param));
+    let written = clamp(raw, ranges.get(s.param));
+    const jb = paramBounds(s.range, s.scale);
+    if (jb) written = Math.min(jb.max, Math.max(jb.min, written));
     let clamped = !same(written, raw);
     if (s.component) {
       // a ball: bend and spread share one cone (couple scales the swing down)
