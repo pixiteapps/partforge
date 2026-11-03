@@ -3734,7 +3734,7 @@ until the drag turns away. Other rules:
   further in. A piece wholly inside another at the start is found and exempted the same way.
 - A goal drag (the robot arm's `tool`) writes the goal as before, and the guard stops the
   arm where it meets a piece; in open air nothing changes, so an out-of-reach goal still
-  reads "missed by". (With `COLLIDE_IN_SOLVE` on, a goal drag within 2 mm of contact,
+  reads "Out of reach". (With `COLLIDE_IN_SOLVE` on, a goal drag within 2 mm of contact,
   `COLLIDE_BAND_MM`, solves the arm's joints itself so it slides, and writes the goal back.)
 - While a drag is held at contact, the live readout shows **Stopped at <piece>** in place
   of "Out of reach" (and no miss line), and the release chip shows the same for `CHIP_MS`.
@@ -3806,8 +3806,10 @@ verify: {
   moves something; a view where nothing moves gets no row (the hand's print kit reports no
   sweeps).
 
-Lint: `sweep-unknown-target` (an error: an unknown param, handle, preset or animation, or a
-param with no finite min and max), `sweep-goal-handle` (a warning: a goal handle is never
+Lint: `sweep-unknown-target` (an error: an unknown param, handle, preset or animation; a
+param with no finite min and max; a `range` that is not `[lo, hi]` with lo < hi; a handle
+whose point cannot be read; a `path` of fewer than two param objects; a spec that is not an
+object, or names no motion), `sweep-goal-handle` (a warning: a goal handle is never
 swept) and `sweep-rebuilds` (a warning: a build changes along the motion, so the sweep
 rebuilds geometry at every step).
 

@@ -6,7 +6,7 @@
 //
 // A BVH-free leaf: geometry-free probes and the placement rule only, never the collision
 // world or the native core, so the lint closure and the worker's eager closure may load it
-// (test/lint-purity.test.js, test/worker-layering.test.js). It sits outside oracle/ for
+// (test/worker-layering.test.js). It sits outside oracle/ for
 // that reason; oracle/cases.js re-exports presetMap from here.
 import { viewSubParts, resolveParams } from "../part-model.js";
 import { probePoses } from "../pose-probe.js";

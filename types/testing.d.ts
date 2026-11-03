@@ -254,7 +254,25 @@ export interface BVH {
     other: BVH,
     mSelf: ArrayLike<number>,
     mOther: ArrayLike<number>,
+    /**
+     * A cutoff (mm, default Infinity): a pair farther apart than it reads `distance:
+     * Infinity` with null points; a pair within it gets exactly the uncut answer.
+     */
+    maxDistance?: number,
   ): { distance: number; at: number[] | null; pointA: number[] | null; pointB: number[] | null };
+  /**
+   * Whether the two meshes, placed as `distanceToPosed`'s are, come within `eps` (mm):
+   * exactly `distanceToPosed(other, mSelf, mOther, eps).distance <= eps`, without the
+   * minimum. `out`, when given, gets `bound`: 0 when the answer is true; otherwise a lower
+   * bound on the distance (Infinity when either mesh is empty).
+   */
+  withinDistancePosed(
+    other: BVH,
+    mSelf: ArrayLike<number>,
+    mOther: ArrayLike<number>,
+    eps: number,
+    out?: { bound?: number } | null,
+  ): boolean;
   /** Whether this mesh's first vertex, placed by `mSelf`, lies inside `other` placed by `mOther`. */
   insideOf(other: BVH, mSelf: ArrayLike<number>, mOther: ArrayLike<number>): boolean;
   triangleCount: number;
