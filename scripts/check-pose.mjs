@@ -21,8 +21,10 @@
 //     (isLive false, no handle points, a press where a tip was is not a drag) until it
 //     goes off again.
 //   robot-arm.html, hand.html (both required) — the reference parts. A 20-move drag of the first
-//     handle posts no `generate` job, commits exactly once on release, the committed
-//     values differ from the part's defaults, and the console stays clean. robot-arm.html
+//     handle posts no `generate` job, shows its values in the viewbar's readout slot while it
+//     moves (runtime.pose.__dragReadout(), gone on release, no readout chip after), commits
+//     exactly once on release, the committed values differ from the part's defaults, and
+//     the console stays clean. robot-arm.html
 //     then drags its tool's aim gizmo: hovering the tool point shows it
 //     (runtime.pose.__aimGizmo(), a test hook), hovering a ring highlights that ring with a
 //     grab cursor, and a drag round the ring writes that aim angle — one commit, no
@@ -40,7 +42,9 @@
 //     Then the REALISTIC FLOOR: in realistic
 //     mode a far sideways tool drag leaves the ground's x/z and scale exactly where they
 //     were (runtime.pose.__ground(), a test hook), during the drag and after its release;
-//     its height may only go down. CHECK_POSE_SHOTS=<dir> saves screenshots of it.
+//     its height may only go down. CHECK_POSE_SHOTS=<dir> saves screenshots of it. Last, an
+//     UNREACHABLE tool drag (checkOutOfReach) out to the canvas edge reads "Out of reach
+//     <n.n> mm" in the readout slot — the scene draws no text — and the slot clears on release.
 //   hand.html, after its joint ring — VIEW-SPECIFIC HANDLES (checkViewSwitch): pin a fingertip,
 //     hover it, switch to the print view with the pointer still on it: no handle points,
 //     badges, overlay objects (runtime.pose.__drawn(), a test hook), gizmo, chip, grab cursor
@@ -402,14 +406,57 @@ async function checkReference(page, url, errors) {
   const box = await openPoseApp(page, url);
   const h = await pickHandle(page, box);
   const t0 = await page.evaluate(() => performance.now());
-  await dragFrom(page, h, box);
+  // A limb drag reads out at the bottom (the viewbar's readout slot), as a generic one does.
+  let readout = null;
+  await dragFrom(page, h, box, async () => { readout = await page.evaluate(() => window.__pfRuntime.pose.__dragReadout()); });
+  if (!readout) errors.push(`no live readout in the viewbar slot while dragging ${h.handleId}:${h.at}`);
   const duringDrag = generates(await page.evaluate(() => window.__pfWorkerLog), t0);
   if (duringDrag.length) errors.push(`${duringDrag.length} generate job(s) posted during the drag`);
   await page.mouse.up();
   await sleep(600);
+  const after = await page.evaluate(() => ({ readout: window.__pfRuntime.pose.__dragReadout(), chip: window.__pfRuntime.pose.__chip() }));
+  if (after.readout) errors.push(`the live readout stayed up after the ${h.handleId} drag ended (${JSON.stringify(after.readout)})`);
+  if (after.chip) errors.push(`a limb drag left a readout chip (${JSON.stringify(after.chip)}): the chip is for generic handles`);
   const result = await page.evaluate(() => ({ commits: window.__pfCommits ?? null, defaults: window.__pfPart?.defaults ?? null }));
   checkCommits(result, errors);
-  return { handle: `${h.handleId}:${h.at}`, generatesDuringDrag: duringDrag.length, commits: result.commits?.length ?? null };
+  return { handle: `${h.handleId}:${h.at}`, readout, generatesDuringDrag: duringDrag.length, commits: result.commits?.length ?? null };
+}
+
+/**
+ * An unreachable tool drag: pull the tool point out from the canvas centre to near the
+ * canvas edge. While it misses, the bottom readout says "Out of reach" (the scene draws no
+ * text); after release it is gone.
+ */
+async function checkOutOfReach(page, box, errors) {
+  const h = await pickHandle(page, box, "tool");
+  await page.mouse.move(h.px + 18, h.py, { steps: 3 });
+  await page.mouse.move(h.px, h.py, { steps: 3 });
+  await sleep(50);
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  const len = Math.hypot(h.px - cx, h.py - cy) || 1;
+  const ux = (h.px - cx) / len, uy = (h.py - cy) / len;
+  // as far out along centre -> tool as the canvas allows, 12 px in from its edge
+  const room = Math.min(
+    ux > 0 ? (box.x + box.width - 12 - h.px) / ux : ux < 0 ? (box.x + 12 - h.px) / ux : Infinity,
+    uy > 0 ? (box.y + box.height - 12 - h.py) / uy : uy < 0 ? (box.y + 12 - h.py) / uy : Infinity,
+  );
+  const to = { x: h.px + ux * room, y: h.py + uy * room };
+  await page.mouse.down();
+  const texts = [];
+  for (let i = 1; i <= DRAG_MOVES; i++) {
+    await page.mouse.move(h.px + ((to.x - h.px) * i) / DRAG_MOVES, h.py + ((to.y - h.py) * i) / DRAG_MOVES);
+    await sleep(20);
+    texts.push(await page.evaluate(() => window.__pfRuntime.pose.__dragReadout()));
+  }
+  await sleep(80);
+  texts.push(await page.evaluate(() => window.__pfRuntime.pose.__dragReadout()));
+  await page.mouse.up();
+  await sleep(600);
+  const reach = texts.filter((t) => /Out of reach/.test(t ?? "")).at(-1) ?? null;
+  if (!reach) errors.push(`an unreachable tool drag never read "Out of reach" (last readout ${JSON.stringify(texts.at(-1))})`);
+  else if (!/Out of reach\s*\d+\.\d mm/.test(reach)) errors.push(`the "Out of reach" readout is not "<n.n> mm" (${JSON.stringify(reach)})`);
+  if (await page.evaluate(() => window.__pfRuntime.pose.__dragReadout())) errors.push("the live readout stayed up after the unreachable tool drag ended");
+  return { reach };
 }
 
 /** The reference drag, then a ring of the tool's aim gizmo (pitch, else the first ring). */
@@ -459,7 +506,8 @@ async function checkRobotArm(page, url, errors) {
   const pin = await checkJointPin(page, box, errors);
   const midJoint = await checkMidJointGrab(page, box, errors);
   const floor = await checkRealisticFloor(page, box, errors);
-  return { ...summary, ring: name, ringCommit: added[0]?.changed ?? null, ringValue: aimParam ? added[0]?.params?.[aimParam] : null, joint, pin, midJoint, floor };
+  const outOfReach = await checkOutOfReach(page, box, errors);
+  return { ...summary, ring: name, ringCommit: added[0]?.changed ?? null, ringValue: aimParam ? added[0]?.params?.[aimParam] : null, joint, pin, midJoint, floor, outOfReach };
 }
 
 /**

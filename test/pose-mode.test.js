@@ -140,6 +140,41 @@ describe("createPoseMode", () => {
     expect(t.tipScreen("a").y).toBeLessThan(s.y - 5);
   });
 
+  it("an angles drag reads out its params at the bottom, then how far it misses when out of reach", () => {
+    const t = setup();
+    t.mode.setEnabled(true);
+    const s = t.tipScreen("a");
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 3; i++) t.fire("pointermove", s.x, s.y - i * 6);
+    const r = t.readouts.at(-1);
+    expect(r.handleId).toBe("a");
+    expect(r.items.map((i) => i.key).slice(0, 3)).toEqual(hand.handles.a.params);
+    expect(t.mode.getReadout()).toEqual(r);
+    // far past the finger's reach: one "Out of reach" item, last, in mm to one place
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x, s.y - 18 - i * 80);
+    const far = t.readouts.at(-1).items;
+    expect(far.map((i) => i.key)).toEqual([...hand.handles.a.params, "reach"]);
+    const reach = far.at(-1);
+    expect(reach).toMatchObject({ key: "reach", label: "Out of reach", unit: "mm" });
+    expect(reach.value).toBeGreaterThan(0.05);
+    expect(reach.text).toBe(reach.value.toFixed(1));
+    expect(t.scene.calls.setActive.filter(Boolean).at(-1).residual).toBe(reach.value);
+    t.fire("pointerup", s.x, s.y - 338);
+    expect(t.readouts.at(-1)).toBeNull();
+    expect(t.mode.getReadout()).toBeNull();
+  });
+
+  it("Escape mid-drag takes a limb drag's readout away too", () => {
+    const t = setup();
+    const s = t.tipScreen("a");
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 3; i++) t.fire("pointermove", s.x, s.y - i * 6);
+    expect(t.mode.getReadout()).not.toBeNull();
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(t.mode.isDragging()).toBe(false);
+    expect(t.mode.getReadout()).toBeNull();
+  });
+
   // Look down finger a from `off` degrees off its base-to-tip line, from the +X side.
   function lookDownFinger(t, off) {
     const info = t.info("a");
@@ -665,7 +700,10 @@ describe("the aim gizmo on a goal handle", () => {
     expect(t.gizmo().state.hovered).toBe("yaw");
     t.fire("pointerdown", p0.x, p0.y);
     for (let i = 1; i <= 4; i++) t.fire("pointermove", p0.x + i * 10, p0.y);
+    // an aim ring reads out that one aim parameter
+    expect(t.readouts.at(-1).items.map((i) => i.key)).toEqual(["gYaw"]);
     t.fire("pointerup", p0.x + 40, p0.y);
+    expect(t.readouts.at(-1)).toBeNull();
     expect(t.params.gYaw).toBeCloseTo(30, 6); // 0.75 degrees per px
     expect(t.log.commit).toEqual([["gYaw"]]);
   });
@@ -679,6 +717,9 @@ describe("the aim gizmo on a goal handle", () => {
     for (let i = 1; i <= 5; i++) t.fire("pointermove", s.x, s.y - i * 6);
     expect(t.gizmo().state.hovered).toBe("ball");
     expect(t.gizmo().state.visible).toBe(true);
+    // the goal's position, then its aim, in the bottom readout (plus a miss, if any)
+    expect(t.readouts.at(-1).items.map((i) => i.key).filter((k) => k !== "reach"))
+      .toEqual(["gx", "gy", "gz", "gPitch", "gYaw", "gRoll"]);
     t.fire("pointerup", s.x, s.y - 30);
     // up the screen is part +Z (the pivot stands Z up). The plane holds the finger's line,
     // base joint to tip, which leans toward the camera (-Y), so the point rises along it

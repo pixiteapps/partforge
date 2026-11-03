@@ -186,11 +186,17 @@ describe("joint rings in Pose mode", () => {
 
   it("dragging the ring turns that joint by the ring's angle, positive about its axis, one commit", () => {
     const t = setup(anglesPart());
+    const readouts = [];
+    t.mode.onReadout((r) => readouts.push(r));
     const p = t.dragRing("elbow", 20);
+    // the bottom readout shows the ring's one parameter, live
+    expect(readouts.at(-1).items.map((i) => i.key)).toEqual(["el"]);
+    expect(readouts.at(-1).items[0].value).toBeCloseTo(60, 1);
     expect(t.joint().state.hovered).toBe("bend"); // steady while dragging
     expect(t.viewer.domElement.style.cursor).toBe("grabbing");
     expect(t.orbit.enabled).toBe(false);
     t.fire("pointerup", p.x, p.y);
+    expect(readouts.at(-1)).toBeNull(); // gone with the drag
     expect(t.params.el).toBeCloseTo(60, 1);
     expect(t.params.sh).toBe(20); // only that joint
     expect(t.log.commit).toEqual([["el"]]);

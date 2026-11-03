@@ -22,7 +22,6 @@ function fakeViewer(ortho = false) {
     __parts: parts,
   };
 }
-const fakePaint = ({ text }) => { const c = document.createElement("canvas"); c.width = 40 * text.length; c.height = 128; return c; };
 
 const INFO = {
   kind: "partforge.limb", name: "arm",
@@ -39,7 +38,7 @@ describe("createPoseScene", () => {
   for (const ortho of [false, true]) {
     it(`runs the whole lifecycle without throwing (${ortho ? "ortho" : "persp"})`, () => {
       const viewer = fakeViewer(ortho);
-      const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+      const scene = createPoseScene(viewer);
       expect(viewer.registerCanonicalCaptureHidden).not.toHaveBeenCalled();
       scene.setLimbs([INFO]);
       expect(scene.group.parent).toBe(viewer.__parts);
@@ -66,7 +65,7 @@ describe("createPoseScene", () => {
 
   it("at rest draws only pin badges; a hovered limb shows its dots; a hovered dot gets a halo", () => {
     const viewer = fakeViewer();
-    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    const scene = createPoseScene(viewer);
     scene.setLimbs([INFO]);
     expect(scene.group.children.length).toBe(0);
     scene.setPins([{ limb: "arm", at: "tip" }]);
@@ -88,7 +87,7 @@ describe("createPoseScene", () => {
 
   it("a pin badge sits AT the pinned point (a joint too), follows it, and a shown pinned dot is pin-coloured", () => {
     const viewer = fakeViewer();
-    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    const scene = createPoseScene(viewer);
     scene.setLimbs([INFO]);
     scene.setPins([{ limb: "arm", at: "elbow" }]);
     const spheres = () => scene.group.children.filter((c) => c.geometry?.type === "SphereGeometry");
@@ -123,7 +122,7 @@ describe("createPoseScene", () => {
 
   it("draws no reach-miss line at or below the residual threshold", () => {
     const viewer = fakeViewer();
-    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    const scene = createPoseScene(viewer);
     scene.setLimbs([INFO]);
     scene.setActive({ limb: "arm", grab: "tip", clamped: [false, false], target: [20, 5, 0], residual: 0.005 });
     const small = scene.group.children.length;
@@ -132,9 +131,22 @@ describe("createPoseScene", () => {
     scene.dispose();
   });
 
+  it("an out-of-reach drag draws the target and dashed line, and no text (the readout says by how much)", () => {
+    const viewer = fakeViewer();
+    const scene = createPoseScene(viewer);
+    scene.setLimbs([INFO]);
+    scene.setActive({ limb: "arm", grab: "tip", clamped: [false, false], target: [30, 5, 0], residual: 10 });
+    scene.tick();
+    const kids = scene.group.children;
+    expect(kids.some((c) => c.material?.dashed)).toBe(true);
+    expect(kids.some((c) => c.geometry?.type === "PlaneGeometry")).toBe(false);
+    expect(kids.some((c) => c.material?.map)).toBe(false);
+    scene.dispose();
+  });
+
   it("leaves the goal point the aim gizmo's ball stands on undrawn", () => {
     const viewer = fakeViewer();
-    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    const scene = createPoseScene(viewer);
     scene.setLimbs([INFO]);
     scene.setHover("arm", "tip");
     const dots = () => scene.group.children.filter((c) => c.geometry?.type === "SphereGeometry").length;
@@ -154,7 +166,7 @@ describe("createPoseScene", () => {
     const viewer = fakeViewer();
     const meshes = viewer._subMeshes;
     viewer._subMeshes = {};
-    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    const scene = createPoseScene(viewer);
     scene.setLimbs([INFO]);
     scene.setHover("arm");
     expect(scene.group.children.length).toBe(0);
@@ -173,7 +185,7 @@ describe("createPoseScene", () => {
 
   it("a generic handle shows one dot and its source's lines as bones", () => {
     const viewer = fakeViewer();
-    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    const scene = createPoseScene(viewer);
     scene.setLimbs([INFO, HANDLE]);
     scene.setHover("handle:corner", "tip");
     const spheres = scene.group.children.filter((c) => c.geometry?.type === "SphereGeometry");
@@ -192,7 +204,7 @@ describe("createPoseScene", () => {
 
   it("an axis handle draws a two-sided arrow (no dot) on its point, along its axis, ARROW_UNIT_PX per unit", () => {
     const viewer = fakeViewer();
-    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    const scene = createPoseScene(viewer);
     scene.setLimbs([DRAWER]);
     expect(scene.arrowState()).toEqual([]); // at rest: nothing
     scene.setHover("handle:drawer");
@@ -216,7 +228,7 @@ describe("createPoseScene", () => {
 
   it("a hovered or dragged arrow wears the gizmo hover look; a pinned one the pin colour", () => {
     const viewer = fakeViewer();
-    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    const scene = createPoseScene(viewer);
     scene.setLimbs([DRAWER]);
     scene.setHover("handle:drawer", "tip");
     expect(scene.arrowState()[0]).toMatchObject({ look: "hot", hovered: true });
@@ -242,7 +254,7 @@ describe("createPoseScene", () => {
 
   it("guides draw in their own group, apart from the limbs, and clear (no readout label)", () => {
     const viewer = fakeViewer();
-    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    const scene = createPoseScene(viewer);
     scene.setLimbs([HANDLE]);
     scene.setGuides([
       { kind: "plane", points: [[1, 1, 0], [-1, 1, 0], [-1, -1, 0], [1, -1, 0]] },
@@ -277,7 +289,7 @@ describe("the resting cue (setCue)", () => {
   const spheres = (g) => g.children.filter((c) => c.geometry?.type === "SphereGeometry");
   it("draws a dimmed dot at each point, in the capture-hidden group, and fades by opacity alone", () => {
     const viewer = fakeViewer();
-    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    const scene = createPoseScene(viewer);
     scene.setLimbs([INFO]);
     scene.setCue({ points: [[1, 2, 3], [4, 5, 6]], opacity: 0.4 });
     const dots = spheres(scene.group);
@@ -306,7 +318,7 @@ describe("the resting cue (setCue)", () => {
 describe("the resting cue's arrows", () => {
   it("draws a dimmed arrow for each axis handle, faded with the dots", () => {
     const viewer = fakeViewer();
-    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    const scene = createPoseScene(viewer);
     scene.setLimbs([INFO]);
     scene.setCue({ points: [[1, 2, 3]], arrows: [{ point: [4, 5, 6], direction: [0, 0, 1] }, { point: [0, 0, 0], direction: [0, 0, 0] }], opacity: 0.4 });
     expect(scene.arrowState()).toEqual([{ point: [4, 5, 6], direction: [0, 0, 1], look: "cue", hovered: false }]); // no direction: dropped
@@ -326,7 +338,7 @@ describe("the resting cue's arrows", () => {
 describe("the reach-miss line", () => {
   it("starts at the grabbed joint, not the tip (falls back to the tip for an unknown grab)", () => {
     const viewer = fakeViewer();
-    const scene = createPoseScene(viewer, { paintLabel: fakePaint });
+    const scene = createPoseScene(viewer);
     scene.setLimbs([INFO]);
     const start = () => {
       const line = scene.group.children.find((c) => c.isLineSegments2 && c.material.dashed);

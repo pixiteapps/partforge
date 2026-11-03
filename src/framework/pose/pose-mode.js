@@ -120,6 +120,8 @@ export const CUE_FADE_MS = 400;
 /** A hinge this near (degrees) its range end reads as clamped. */
 const CLAMP_EPS_DEG = 1e-3;
 const AIM_NAMES = ["pitch", "yaw", "roll"];
+// A limb drag reads out "Out of reach" once its grabbed point misses the target by more than this, mm.
+const REACH_MIN_MM = 0.05;
 /** Guides are re-drawn when the scale at their point moves this much (a zoom). */
 const GUIDE_RESCALE = 0.02;
 const isGeneric = (h) => handleKind(h) === "on" || handleKind(h) === "point";
@@ -1063,7 +1065,7 @@ export function createPoseMode(viewer, {
     safeRelease(ending.pointerId);
     window.removeEventListener("keydown", onKeyDown, true);
     scene?.setActive(null);
-    if (ending.drag) setReadout(null);
+    setReadout(null); // a generic or a limb drag's readout: the drag is over
     refresh();
     if (ending.touch) {
       // Touch has no hover: the limb its press showed goes away with the finger — unless
@@ -1187,6 +1189,7 @@ export function createPoseMode(viewer, {
         const i = info.joints.findIndex((j) => j.name === hit.joint);
         if (i >= 0 && result.clamped) clamped[i] = true;
         scene?.setActive({ limb: info.name, grab: hit.joint, clamped });
+        limbReadout(hit);
         syncRings();
         viewer.requestRender?.();
         return;
@@ -1197,14 +1200,35 @@ export function createPoseMode(viewer, {
     const s = shown.find((e) => e.handleId === hit.handleId);
     if (!s) return;
     const grabbed = hit.kind === "dot" ? s.info.points[hit.at] : null;
+    const residual = target && grabbed ? len(sub(grabbed, target)) : undefined;
     scene?.setActive({
       limb: s.info.name,
       grab: hit.kind === "dot" ? hit.at : goalAt(s.handle),
       clamped: clampedFlags(s.info),
       target: target ?? undefined,
-      residual: target && grabbed ? len(sub(grabbed, target)) : undefined,
+      residual,
     });
+    limbReadout(hit, residual);
     viewer.requestRender?.();
+  }
+
+  /**
+   * A limb drag's readout (angles or goal handle): a dot drag shows the handle's `readout`,
+   * else its params (an angles handle's list; a goal's position, then aim); a joint ring
+   * its own parameter; an aim ring that aim parameter. Out of reach by more than
+   * REACH_MIN_MM, one "Out of reach" item last. The scene draws no text.
+   */
+  function limbReadout(hit, residual) {
+    const handle = handles[hit.handleId];
+    if (!handle) return;
+    const source = hit.kind === "jring" ? { readout: hit.ring?.slots?.[hit.name]?.param }
+      : hit.kind === "ring" ? { readout: handle.params?.aim?.[AIM_NAMES.indexOf(hit.name)] }
+      : handle;
+    const items = readoutItems(part, { ...part.defaults, ...getParams() }, source);
+    if (Number.isFinite(residual) && residual > REACH_MIN_MM) {
+      items.push({ key: "reach", label: "Out of reach", unit: "mm", value: residual, text: residual.toFixed(1) });
+    }
+    setReadout({ handleId: hit.handleId, text: items.map((i) => `${i.key} ${i.text}`).join(" · "), items });
   }
 
   function genericStep(ev, ray) {
@@ -1219,8 +1243,9 @@ export function createPoseMode(viewer, {
     viewer.requestRender?.();
   }
 
-  // The live drag readout: the dragged generic handle's values, or null. Not drawn in the
-  // scene: the bottom readout slot (drag-readout.js) shows it, as measure shows its X/Y/Z.
+  // The live drag readout: the dragged handle's values, or null. Not drawn in the scene
+  // (pose mode draws no text): the bottom readout slot (drag-readout.js) shows it, as
+  // measure shows its X/Y/Z.
   let readout = null;
   function setReadout(r) {
     if (!r && !readout) return;
@@ -1674,8 +1699,9 @@ export function createPoseMode(viewer, {
      */
     onDragEnd: (cb) => { dragEndListeners.add(cb); return () => dragEndListeners.delete(cb); },
     /**
-     * Fires on every frame of a generic handle's drag with `{ handleId, text, items }`
-     * (handle-guides' readoutText / readoutItems), and with null when the drag ends.
+     * Fires on every frame of a drag (a generic handle's, or a limb's dot, joint ring or aim
+     * ring) with `{ handleId, text, items }` (handle-guides' readoutText / readoutItems; a
+     * limb drag out of reach adds a last `reach` item), and with null when the drag ends.
      * The bottom readout (drag-readout.js) listens.
      */
     onReadout: (cb) => { readoutListeners.add(cb); return () => readoutListeners.delete(cb); },

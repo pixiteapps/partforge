@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { sameTurn } from "../src/framework/panel/widgets/numeric.js";
 import {
-  planeGuide, rotaryGuide, sweepPath, pathKey, pathParam, readoutText, readoutKeys, chipValues,
+  planeGuide, rotaryGuide, sweepPath, pathKey, pathParam, readoutText, readoutKeys, readoutItems, chipValues,
   PATH_SAMPLES, AXIS_ARROW_PX, PLANE_SQUARE_PX,
 } from "../src/framework/pose/handle-guides.js";
 
@@ -121,6 +121,28 @@ describe("the readout chip's values (readoutKeys, chipValues)", () => {
     expect(readoutKeys({ params: ["width"], readout: "count" })).toEqual(["count"]);
     expect(readoutKeys({ params: ["width"], readout: ["count", 3, "depth"] })).toEqual(["count", "depth"]);
     expect(readoutKeys({})).toEqual([]);
+  });
+
+  it("readoutKeys / readoutItems: a goal handle's { position, aim } params, position's then aim's", () => {
+    const goal = { on: "arm", drag: "goal", params: { position: ["x", "y", "z"], aim: ["pitch", "yaw"] } };
+    expect(readoutKeys(goal)).toEqual(["x", "y", "z", "pitch", "yaw"]);
+    expect(readoutKeys({ ...goal, params: { position: ["x", "y", "z"] } })).toEqual(["x", "y", "z"]);
+    expect(readoutKeys({ ...goal, readout: "pitch" })).toEqual(["pitch"]);
+    const arm = {
+      parameters: [{ id: "g", title: "Goal", controls: [
+        { key: "x", label: "Tool X", unit: "mm", min: -100, max: 100, step: 0.5 },
+        { key: "y", min: -100, max: 100, step: 0.5 },
+        { key: "z", min: 0, max: 100, step: 0.5 },
+        { key: "pitch", label: "Pitch", unit: "°", min: -90, max: 90, step: 1 },
+        { key: "yaw", min: -180, max: 180, step: 1 },
+      ] }],
+      defaults: { x: 10, y: 0, z: 50, pitch: 0, yaw: 0 },
+      derive: () => ({}),
+    };
+    const items = readoutItems(arm, { ...arm.defaults, x: 12.5, pitch: 30 }, goal);
+    expect(items.map((i) => i.key)).toEqual(["x", "y", "z", "pitch", "yaw"]);
+    expect(items[0]).toEqual({ key: "x", label: "Tool X", unit: "mm", value: 12.5, text: "12.5" });
+    expect(items[3]).toEqual({ key: "pitch", label: "Pitch", unit: "°", value: 30, text: "30" });
   });
 
   it("clamps and snaps a typed value as the slider does", () => {

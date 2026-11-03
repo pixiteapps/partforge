@@ -118,11 +118,18 @@ function decimals(n) {
   return i < 0 ? 0 : s.length - i - 1;
 }
 
-/** The params a handle's readout shows: its `readout` (one name or a list), else its `params`. */
+/**
+ * The params a handle's readout shows: its `readout` (one name or a list), else its
+ * `params` — a list, or a goal handle's `{ position, aim }`, position's then aim's.
+ */
 export function readoutKeys(handle) {
+  const params = handle?.params;
+  const goal = params && typeof params === "object" && !Array.isArray(params)
+    ? [...(Array.isArray(params.position) ? params.position : []), ...(Array.isArray(params.aim) ? params.aim : [])]
+    : [];
   const listed = typeof handle?.readout === "string" ? [handle.readout]
     : Array.isArray(handle?.readout) ? handle.readout
-    : Array.isArray(handle?.params) ? handle.params : [];
+    : Array.isArray(params) ? params : goal;
   return listed.filter((k) => typeof k === "string");
 }
 

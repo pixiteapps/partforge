@@ -3353,7 +3353,8 @@ Optional, on every handle:
   `handle-unknown-view`). Leave it out and the handle shows wherever its source is drawn
   (see "When a handle shows"). Declare it when a view lays the part out differently — a
   print kit, an exploded layout — so the handle never shows there.
-- **`readout`**: the params the drag readout shows (default: `params`).
+- **`readout`**: the params the drag readout shows (default: `params`; for a `"goal"`
+  handle, its `position` params, then its `aim` params).
 - **`lock`**: a parameter name. While it is true, this handle's params are frozen in a
   drag of any handle.
 - **`group`**: a name (a non-empty string; lint: `handle-bad-group`) shared by handles
@@ -3565,7 +3566,7 @@ would reach for:
   `ikInfo()` from `partforge/kinematics` (a finger, a leg, an arm), give each chain ONE
   `drag: "angles"` handle (or `drag: "goal"` for an arm's tool point). With it every joint
   and the tip are draggable, the solve moves the chain's joints together, joint rings show
-  limit arcs, and no value readouts show. Twenty-one `rotary` handles on a hand's joints
+  limit arcs, and one readout at the bottom shows the values the drag moves. Twenty-one `rotary` handles on a hand's joints
   give none of that. Per-joint `rotary` / `axis` handles on a limb are for a lone hinge
   with no chain to solve; lint warns (`handle-limb-per-joint`) on two or more. See
   `src/parts/hand.js` and `src/parts/robot-arm.js`.

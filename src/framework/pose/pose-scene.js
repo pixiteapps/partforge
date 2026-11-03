@@ -12,8 +12,9 @@
 // in the normal click mode, so an idle overlay would sit on every part with handles.
 //
 // Steady by design (no flashing, no jumping): the state setters rebuild the
-// objects; tick() only re-sizes the screen-constant pieces (dots, badges, labels,
-// dashes) from the camera, and a camera move is already a frame.
+// objects; tick() only re-sizes the screen-constant pieces (dots, badges, dashes) from
+// the camera, and a camera move is already a frame. It draws no text: a drag's values,
+// and how far an out-of-reach drag misses, show in the bottom readout (drag-readout.js).
 // A clamped joint is a steady warning colour, never a blink. Hit testing is not
 // done here - Task 7 runs `hitHandle` over `viewer.projectPoint` positions with a
 // 24 CSS px target, so the visuals can stay small.
@@ -48,7 +49,7 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { CUTAWAY_OVERLAY_RENDER_ORDER } from "../cutaway-render.js";
-import { DIM_THEME, defaultPaintLabel, worldPerPx, orthoWorldPerPx, LABEL_SCREEN_PX } from "../measure/dim3-scene.js";
+import { worldPerPx, orthoWorldPerPx } from "../measure/dim3-scene.js";
 import { limitArc } from "./pose-geom.js";
 import { ARROW_UNIT_PX, applyHandleAppearance, arrowGeometryPairs, arrowMeshes } from "../gizmo/gizmo-handles.js";
 
@@ -66,7 +67,6 @@ export const POSE_THEME = {
 
 // Above the dimension ink, below nothing: pose mode and measure mode are exclusive.
 export const RENDER_ORDER_POSE = CUTAWAY_OVERLAY_RENDER_ORDER + 4;
-export const RENDER_ORDER_POSE_LABEL = CUTAWAY_OVERLAY_RENDER_ORDER + 5;
 
 // Screen-constant sizes, CSS px (radius for dots).
 export const TIP_DOT_PX = 6;
@@ -81,7 +81,6 @@ export const PIN_LIFT_PX = 10;
 export const PIN_BASE_PX = 3;
 export const DASH_PX = 5;
 export const GAP_PX = 4;
-const LABEL_LIFT_PX = 14;
 const RESIDUAL_MIN = 0.01;
 
 function polyline(points, closed = false) {
@@ -94,7 +93,7 @@ function polyline(points, closed = false) {
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const len = (a) => Math.hypot(a[0], a[1], a[2]);
 
-export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {}) {
+export function createPoseScene(viewer) {
   const redraw = () => viewer.requestRender?.();
   const group = new THREE.Group();
   group.name = "pf-pose";
@@ -133,10 +132,6 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   lineMats.dashed = prep(new LineMaterial({ color: POSE_THEME[theme].warn, linewidth: 1.5, dashed: true, dashSize: 5, gapSize: 4 }));
   // a generic handle's guides: the handle colour, lighter than a bone
   lineMats.guide = prep(new LineMaterial({ color: POSE_THEME[theme].handle, linewidth: 1.5, opacity: 0.8 }));
-  // The reach-miss label's material is shared too (its map swapped per text): a material
-  // made per rebuild and disposed by the next one released its shader program every drag
-  // frame, so three recompiled it every frame (~5 ms of getProgramInfoLog per frame).
-  const labelMat = prep(new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide }));
   // the resting cue's dots: the handle colour, faded by opacity alone (setCueOpacity)
   const cueMat = prep(new THREE.MeshBasicMaterial({ color: POSE_THEME[theme].handle, opacity: 0 }));
   // an axis handle's arrow, one material per look (the hover rule paints them): the handle
@@ -152,7 +147,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     for (const [key, material] of Object.entries(arrowMats)) applyHandleAppearance({ material, geometryPairs: [] }, arrowLook(key));
   };
   paintArrowMats();
-  const allMats = () => [...Object.values(fillMats), ...Object.values(lineMats), ...Object.values(arrowMats), labelMat, cueMat];
+  const allMats = () => [...Object.values(fillMats), ...Object.values(lineMats), ...Object.values(arrowMats), cueMat];
   const paintMats = () => {
     const P = POSE_THEME[theme];
     for (const k of colorKeys) { fillMats[k].color.set(P[k]); lineMats[k].color.set(P[k]); }
@@ -187,19 +182,6 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   let pinRecs = [];    // { head, stem, pos }
   let arrows = [];     // { root, pos, direction, look }   (axis handles' arrows)
   let dashRec = null;  // { line, a, b }
-  let labelRec = null; // { mesh, a, b }
-  const textureCache = new Map();
-
-  function labelTexture(text) {
-    const k = `${theme}|${text}`;
-    let tex = textureCache.get(k);
-    if (!tex) {
-      tex = new THREE.CanvasTexture(paintLabel({ text, palette: DIM_THEME[theme] }));
-      tex.colorSpace = THREE.SRGBColorSpace;
-      textureCache.set(k, tex);
-    }
-    return tex;
-  }
 
   function addDot(matKey, pos, px) {
     const mesh = new THREE.Mesh(unitDot, matKey === "cue" ? cueMat : fillMats[matKey]);
@@ -254,7 +236,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   }
   function disposeChildren() {
     disposeGroup(group);
-    dots = []; billboards = []; pinRecs = []; arrows = []; dashRec = null; labelRec = null;
+    dots = []; billboards = []; pinRecs = []; arrows = []; dashRec = null;
   }
 
   // ---- build -----------------------------------------------------------------
@@ -363,7 +345,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
       addDot(pinned ? "pin" : isGrab ? "strong" : "handle", tip, isGrab ? TIP_DOT_ACTIVE_PX : TIP_DOT_PX);
       if (isGrab) addBillboard(pinned ? "pin" : "strong", tip, GRAB_HALO_PX);
     }
-    // reach miss: hollow target + dashed, labelled line
+    // reach miss: hollow target + dashed line (how far it misses: the bottom readout)
     const act = active && limbs.find((l) => l.name === active.limb);
     if (act && active.target && typeof active.residual === "number" && active.residual > RESIDUAL_MIN) {
       // from the grabbed point (a joint in angles mode, a goal's `at`), the tip if it has none
@@ -373,14 +355,6 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
       const line = addLine("dashed", [...a.toArray(), ...b.toArray()]);
       line.computeLineDistances();
       dashRec = { line, a, b };
-      const tex = labelTexture(`${active.residual.toFixed(1)} mm`);
-      const img = tex.image;
-      labelMat.map = tex;
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(img && img.height ? img.width / img.height : 4, 1), labelMat);
-      mesh.renderOrder = RENDER_ORDER_POSE_LABEL;
-      mesh.frustumCulled = false;
-      group.add(mesh);
-      labelRec = { mesh, a, b };
     }
     // pin badges, at each pinned point: a pin-coloured dot on it (unless the shown limb
     // already draws that point's dot pinned), and a head floating above it on a stem
@@ -397,17 +371,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
       const stem = addLine("pin", [0, 0, 0, 0, 0, 0], RENDER_ORDER_POSE + 1);
       pinRecs.push({ head, stem, pos, limb: pin.limb, at: pin.at });
     }
-    sweepTextures();
     redraw();
-  }
-
-  function sweepTextures() {
-    const live = labelRec ? new Set([`${theme}|${active.residual.toFixed(1)} mm`]) : new Set();
-    for (const [k, tex] of textureCache) {
-      if (live.has(k)) continue;
-      tex.dispose();
-      textureCache.delete(k);
-    }
   }
 
   /** The guides, in their own group. */
@@ -428,7 +392,6 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
   const _gq = new THREE.Quaternion();
   const _up = new THREE.Vector3();
   const _a = new THREE.Vector3();
-  const _b = new THREE.Vector3();
   function tick() {
     if (dirty) { rebuild(); rebuildGuides(); }
     if (!attached || (!group.children.length && !guideGroup.children.length)) return;
@@ -467,13 +430,6 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
       const wpp = wppAt(_a.copy(dashRec.a).add(dashRec.b).multiplyScalar(0.5));
       lineMats.dashed.dashSize = DASH_PX * wpp;
       lineMats.dashed.gapSize = GAP_PX * wpp;
-    }
-    if (labelRec) {
-      _b.copy(labelRec.a).add(labelRec.b).multiplyScalar(0.5);
-      const wpp = wppAt(_b);
-      labelRec.mesh.scale.setScalar(LABEL_SCREEN_PX * wpp);
-      labelRec.mesh.position.copy(_b).addScaledVector(_up, LABEL_LIFT_PX * wpp);
-      labelRec.mesh.quaternion.copy(_q);
     }
   }
 
@@ -541,7 +497,6 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     guides = []; cue = []; cueArrows = [];
     disposeGroup(guideGroup);
     disposeChildren();
-    sweepTextures();
     redraw();
   }
 
@@ -549,7 +504,7 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     if (!POSE_THEME[mode] || mode === theme) return;
     theme = mode;
     paintMats();
-    rebuild(); // label textures are theme-keyed
+    rebuild();
   }
 
   function dispose() {
@@ -561,8 +516,6 @@ export function createPoseScene(viewer, { paintLabel = defaultPaintLabel } = {})
     attached = false;
     for (const m of allMats()) m.dispose();
     for (const g of shared) g.dispose();
-    for (const t of textureCache.values()) t.dispose();
-    textureCache.clear();
   }
 
   /** The pin badges drawn now: `[{ limb, at, point }]` (point: part coordinates). For tests and the browser check. */

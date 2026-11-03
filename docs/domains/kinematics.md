@@ -618,7 +618,7 @@ drags, their aim gizmos and joint rings, and how pins act on a limb.
 Give each finger, leg or chain ONE `"angles"` handle (or one `"goal"` handle for an
 arm's tool point), not a `rotary` handle per joint. With it every joint and the tip are
 draggable, the solve moves the chain's joints together, joint rings show limit arcs, and
-no value readouts show. Per-joint `rotary` / `axis` handles on a limb are for a lone
+one readout at the bottom of the stage shows the values the drag moves. Per-joint `rotary` / `axis` handles on a limb are for a lone
 hinge with no chain to solve (lint: `handle-limb-per-joint`). See `src/parts/hand.js`
 and `src/parts/robot-arm.js`.
 
@@ -848,9 +848,16 @@ when they are all off.
   at 1° a wrist step moved the hand's fingertips up to 0.85 mm.
 - **Escape or a cancel** restores the values from before the drag. A `setParams` from
   the host in the middle of a drag cancels the drag.
+- **The values show at the bottom.** While a limb drag moves, the viewbar's readout pill
+  (the one a generic handle's drag and measure's X/Y/Z use) shows the values it writes,
+  each named by its control's `label` and `unit`: the handle's `readout` params if it sets
+  them, else its `params` (a `"goal"` handle's `position`, then its `aim`). A joint ring
+  shows only its own parameter, an aim ring only that aim angle. The readout goes on
+  release; a limb drag leaves no chip. Pose mode draws no text in the scene.
 - **Out of reach.** The chain stops at the nearest pose it can make. A dashed line runs
-  from the tip to the cursor's point and shows the miss in mm. The chain does not jump
-  to another solution to catch up.
+  from the grabbed point to the cursor's point, ending in a hollow target, and the readout
+  adds a last value, "Out of reach", the miss in mm. The chain does not jump to another
+  solution to catch up.
 - **Straight limbs can jump.** A limb whose elbow can go fully straight has no bend to
   push on there. When the goal comes back into reach, the solver may jump to the bent
   pose in one step. `src/parts/robot-arm.js` stops its elbow 10 degrees short of
