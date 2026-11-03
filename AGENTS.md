@@ -57,17 +57,17 @@ IK reference part - a printable articulated hand: a palm limb (wrist pitch/yaw) 
 fingers (spread, mcp, pip, dip following pip) and a thumb (oppose, mcp, ip) parented on
 it, posed by per-digit knuckle (mcp alone), curl (pip + dip; the thumb's ip) and
 spread/oppose params and six `{ type: "preset" }` shapes, one
-lockable angles-mode handle per digit; rigid pin-jointed pieces placed by matrix, the
+lockable angles-mode handle per digit, a knuckle and a curl sweep per digit (reported, not gated); rigid pin-jointed pieces placed by matrix, the
 print view a flat kit the pose never reaches; `hand.html`, checked by
 `scripts/check-pose.mjs`; the dev-only `pose-smoke.html` page, with `test/fixtures/ik-hand-smoke.js`,
 is the fixture that script drags), `gearbox.js` (the rotary-handle reference part and the
 worked example of `docs/domains/mechanisms.md` - three spur gears placed by one
 `gearTrain` from `partforge/mechanisms` in `derive`, a rotary handle on every gear and a
 crank, all writing one `wrap: true` `driveAngle`, and a `spin` animation that never
-rebuilds; `gearbox.html`), `drawer-box.js` (shape and motion handles on one part - a
+rebuilds, swept for contact and gated, its meshing and bearing pairs in `collisions.allow`; `gearbox.html`), `drawer-box.js` (shape and motion handles on one part - a
 corner `plane` handle writing width and depth, which rebuilds, and an `axis` handle per
 drawer, which only re-places it - each opening a percentage of its `depth - 10` travel, so
-no value of it is dead; `drawer-box.html`, dev-only and not in `rollupOptions.input`), and `material-swatches.js` (not a reference part: the dev-only
+no value of it is dead, and each drawer's handle swept and gated; `drawer-box.html`, dev-only and not in `rollupOptions.input`), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`), and `offset-demo.js`
 (not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
 `offset-demo.html`).
@@ -760,6 +760,37 @@ the installed package, so let the publish finish before bumping the dep there.
   `derive` being pure and on every reader treating `d` as read-only (readers in a scope
   share one `d`); a derive that writes its params or throws is never stored. Internal:
   not part of `partforge/derive`.
+- **`src/framework/collide/`** + **`pose/pose-collide.js`** + **`oracle/sweep.js`** -
+  collisions (spec `docs/superpowers/specs/2026-11-02-collisions-design.md`; guide
+  "Collisions and sweeps"): a part's `collisions: { clearance, allow, pose }` keeps pieces
+  solid in Pose mode, and `verify.sweeps` steps declared motions (a param, a handle's
+  params one at a time, a preset/waypoint path, an animation) for contact, reported as
+  `measure().sweeps` (the CLI's `sweeps:` line, `CLI_SWEEP_BUDGET_MS` 60 s, overridable by
+  `PARTFORGE_SWEEP_BUDGET_MS`, which the verify golden sets to Infinity) and gated by the
+  `sweepContacts` view metric. The LEAVES are BVH-free, so lint and the worker's eager
+  closure may load them: `pairs.js` (`pairKey`, `CONTACT_EPS`; `oracle/gaps.js` re-exports
+  both), `declaration.js` (`normalizeCollisions`), `motion.js` (rigid-matrix helpers),
+  `place.js` (a sub-part's `place()` as a matrix, `poseMatrices`) and `sweep-targets.js`
+  (what a sweep moves or rebuilds; lint's `rules-collisions.js` and the engine read sweeps
+  through it alone). The BVH side: `world.js` (each sub-part indexed ONCE in its own mesh
+  frame, moved by matrix per query; a `null` mat excludes a piece), `guard.js` (the drag
+  guard: per-frame solver rows, at most `MAX_ROWS`, linearised once per DLS iteration, and
+  `settle`, sub-stepped to `COLLIDE_BAND_MM / 2` of travel, at most `MAX_SUBSTEPS`, bisecting
+  back to contact) and `part-guard.js` (a guard over a part's own params). `pose-collide.js`
+  is mount's half: idle-time indexing over the viewer's meshes, a guard per drag, the
+  contact tint. `oracle/sweep.js` is the engine: rigid motion by matrix with conservative
+  advancement between samples (a screw-motion assumption), a rebuild path on
+  `SWEEP_REBUILD_STEPS` (24) steps, `SWEEP_MAX_STEPS` (2000) marking a row `capped`; its time
+  comes out of the inspect's `REPORT_SHARE_MS`. Invariants: `place.js` and `sweep-targets.js`
+  never reach the BVH (`test/lint-purity.test.js`, `test/worker-layering.test.js`);
+  `settle` is the hard guarantee - whatever the solver returns, a frame never moves a
+  blocked pair from clear to inside, and a pair inside at drag start can move out, never
+  in; output never depends on the native core (the world builds JS BVHs through the public
+  `buildBVH`). Pose mode ships stop-at-contact: `COLLIDE_IN_SOLVE = false` in `guard.js`
+  keeps the solver rows (sliding along contact, built and tested) off pending the frame
+  budget. A drag held at contact reads "Stopped at <piece>" in the live readout (never "Out
+  of reach") and on the release chip. A sweep exempts no pair, so its `clearance` must sit
+  below every start gap it moves (a pin's) - lint, geometry-free, cannot check it.
 - **`src/framework/core/`** + **`native/`** - the native core: C++ ports of the
   hottest per-vertex JS (`creasedNormals` with the fillet-surface evaluators,
   and the oracle's BVH + min-wall), compiled to ONE WebAssembly module embedded

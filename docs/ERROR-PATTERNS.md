@@ -931,6 +931,18 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** The links are chained with hand-written `rotate` calls about hinge points that do not move with the parent joint, so a bend at the base turns the child links about a pivot left at its rest position.
 - **Fix:** Declare the chain once with `limb(...)` from `partforge/kinematics`, pose it in `derive`, and place each link with `d.<limb>.place(solid, joint)`. `place` carries the solid through every parent joint, so the hinges stay joined. Build each link at the origin along +y and let `place` do all the moving — or, for a link built where it prints (the limb at rest), pass `{ from: "rest" }`. Hinges at different heights take a joint `offset`, a ball-and-socket is one `type: "ball"` joint (posed by `{ bend, spread, twist }` or by the same `{ rotate: [...] }` steps you would have chained), and a limb on another limb takes that posed limb as its frames — so one limb per chain, never a chain of one-joint limbs.
 
+## sweep-contacts
+
+- **Symptom:** `_view sweepContacts 0  (1 != 0)` fails in verify, and measure's `sweeps:` line reads `<name> CONTACT at <value> <a>×<b> driven by <param>` (with `, free [lo, hi]` on a param sweep); `report.measure.sweeps[i].clear` is `false`.
+- **Cause:** A motion declared in `verify.sweeps` (a param, a handle, a path or an animation, stepped end to end) brings two sub-parts closer than the sweep's clearance somewhere along it; the row's first contact names the pair, where it starts, and the param closing the gap fastest there (`driver`).
+- **Fix:** Read the contact before changing anything ([AUTHORING-PARTS.md](AUTHORING-PARTS.md) "Collisions and sweeps"). A real clash: move or resize a piece (the gearbox lifted its crank arm 0.5 mm off the idler's tooth tips), or narrow the driving param's range to the row's `freeRange`. A contact that is the design (meshing teeth, a bearing face, a keyed hub): add the pair to `collisions.allow`. A contact at the sweep's very start on a pinned part is usually the clearance, not the motion — see [sweep-contact-at-start](#sweep-contact-at-start). A row with `skipped: "timeout"` and no contact found is not a failure: it is the `sweeps` warning, and `npx partforge measure` (a 60 s sweep budget) runs it in full.
+
+## sweep-contact-at-start
+
+- **Symptom:** A sweep on a pinned or tightly fitted part reports `CONTACT at 0` (or at the start of its range, `from` equal to the range's low end) between two pieces that share a pin, though the part's static `overlaps` and `clearance` checks pass and the pieces never move closer.
+- **Cause:** The sweep's `clearance` is above the running gap of a pair it moves (the hand's pins sit about 0.4 mm apart): a sweep counts a pair inside its clearance as in contact from the start and exempts no pair, unlike a Pose mode drag, which only refuses to push a pair further in. Lint cannot catch it, because it does not build geometry.
+- **Fix:** Set the sweep's `clearance` below the start gap of every pair it moves (the hand's `fist` path uses 0.3 under 0.4 mm pins), or leave it at the default (`collisions.clearance`, 0.001 mm). To hold a joint's running gap, state it statically with `verify.expect._view.clearance: { "a×b": ">=0.3" }` ([AUTHORING-PARTS.md](AUTHORING-PARTS.md) "Collisions and sweeps").
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.

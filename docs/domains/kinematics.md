@@ -1010,6 +1010,32 @@ the core `handle-*` lint rules (see "Handles and Pose mode"). Use the ordinary o
   intend. Without the pair, the gap is a near-miss warning.
 - To check other poses, run verify with other params. The `robot-finger` test verifies
   at `curl` 0 and 0.9.
+- To check a whole motion, declare a sweep (`verify.sweeps`): a joint param end to end, a
+  handle, a path between presets, or an animation. See "Collisions and sweeps" in
+  [`docs/AUTHORING-PARTS.md`](../AUTHORING-PARTS.md#collisions-and-sweeps).
+
+### Hinge limits: a range, or collision
+
+A hinge's limit is your choice. Either write its `range` as before, or leave the range wide
+and let the pieces stop it: with a `collisions` block, a Pose mode drag stops a link at the
+piece it meets (it never passes through), and a sweep reports where that happens.
+
+- **A range** is a hard limit everywhere: sliders, presets, derive and Pose mode all clamp
+  to it. Write one when the joint's travel is a design fact (a hinge stop, a servo's arc).
+- **Collision** stops only Pose mode drags. A slider can still push a finger into the palm,
+  and only a sweep or the `overlaps` gate says so.
+- **Read the limit off a sweep.** Sweep the joint's param
+  (`verify.sweeps: { indexKnuckle: { param: "indexKnuckle" } }`) and run
+  `npx partforge measure`. A param sweep's row carries `freeRange`, the contact-free span
+  around the param's current value. Write that span as the joint's `range` (less a margin
+  for print tolerance), and the limit comes from the geometry instead of a guess.
+
+`src/parts/hand.js` declares a knuckle and a curl sweep per digit, REPORTED, not gated
+(no `sweepContacts` in its `expect`): its joints could leave their ranges wide and use
+collision as their limit, and a sweep that meets would then be expected. Pin joints stay
+blocked pairs: their ~0.4 mm running gap is above the default clearance (0.001 mm), so they
+read clear. A sweep's own `clearance` must stay below that gap, or every pin reads as a
+contact at the start of the sweep.
 
 ## Worked example: `src/parts/robot-finger.js`
 
