@@ -86,4 +86,24 @@ describe("solveDLS", () => {
       expect(r.error).toBeCloseTo(Math.SQRT2 * Math.abs(at + best - 2), 5);
     }
   });
+  it("onIteration is called once per iteration with x", () => {
+    const seen = [];
+    const r = solveDLS({ ...base, residuals: reach([60, 140]), iterations: 5, onIteration: (x) => seen.push(Array.from(x)) });
+    expect(seen).toHaveLength(5);
+    expect(seen[0]).toEqual([0.3, 0.5]);
+    for (const x of seen) expect(x).toHaveLength(2);
+    expect(r.error).toBeGreaterThanOrEqual(0);
+  });
+
+  it("no hook is bit-identical", () => {
+    // Recorded before onIteration existed: the no-hook path must not move by an ulp.
+    const opts = { x0: [0.3, 0.5], lo: [-Math.PI, -Math.PI], hi: [Math.PI, 1.2], residuals: reach([60, 140]), iterations: 6 };
+    const want = [0.6704508462827152, 1.131834441185641];
+    const r = solveDLS(opts);
+    want.forEach((v, i) => expect(Object.is(r.x[i], v)).toBe(true));
+    expect(Object.is(r.error, 2.4189717564098627e-11)).toBe(true);
+    // a hook that changes nothing (the residual is the same function) leaves it too
+    const hooked = solveDLS({ ...opts, onIteration: () => {} });
+    want.forEach((v, i) => expect(Object.is(hooked.x[i], v)).toBe(true));
+  });
 });

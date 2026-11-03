@@ -8,6 +8,7 @@
 // placement), so it is skipped by distances, inside and travel alike.
 import { buildBVH, disposeBVHs } from "../oracle/bvh.js";
 import { isAllowed } from "./declaration.js";
+import { pairKey } from "./pairs.js";
 import { placeMatrix } from "./place.js";
 export { placeMatrix };
 import { viewSubParts, resolveParams } from "../part-model.js";
@@ -101,7 +102,9 @@ export function createCollisionWorld({ meshes, decl = null }) {
     names: () => [...names],
     boundsOf: (name) => boxes.get(name) ?? null,
 
-    distances(mats, { names: only, within = Infinity, limit = Infinity } = {}) {
+    // `pairs` (a Set of pairKeys): only those pairs; `skip`: never those. Both filter
+    // before any BVH query, so a caller that knows which pairs it wants pays for no other.
+    distances(mats, { names: only, within = Infinity, limit = Infinity, pairs = null, skip = null } = {}) {
       const wanted = only ? new Set(only) : null;
       const live = names.filter((n) => matOf(mats, n) !== null);
       const moved = new Map(live.map((n) => [n, movedBox(boxes.get(n), matOf(mats, n))]));
@@ -111,8 +114,12 @@ export function createCollisionWorld({ meshes, decl = null }) {
           const a = live[i], b = live[j];
           if (wanted && !wanted.has(a) && !wanted.has(b)) continue;
           if (isAllowed(decl, a, b)) continue;
+          if (pairs || skip) {
+            const key = pairKey(a, b);
+            if ((pairs && !pairs.has(key)) || skip?.has(key)) continue;
+          }
           if (boxGap(moved.get(a), moved.get(b)) > within) continue;
-          const r = bvhs.get(a).distanceToPosed(bvhs.get(b), matOf(mats, a) ?? IDENTITY, matOf(mats, b) ?? IDENTITY);
+          const r = bvhs.get(a).distanceToPosed(bvhs.get(b), matOf(mats, a) ?? IDENTITY, matOf(mats, b) ?? IDENTITY, within);
           if (!(r.distance <= within)) continue;
           let normal = null;
           if (r.distance > 0) {

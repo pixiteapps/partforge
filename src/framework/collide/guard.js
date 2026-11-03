@@ -120,7 +120,8 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
       lastTravel = lastParams ? world.travel(matsAt(lastParams), mats, moving) : 0;
       lastParams = params;
       rows = [];
-      for (const r of world.distances(mats, { names: moving, within: windowMm() })) {
+      const skip = new Set([...exempt.keys(), ...guardOnly]); // never rows: not worth a query
+      for (const r of world.distances(mats, { names: moving, within: windowMm(), skip })) {
         const key = pairKey(r.a, r.b);
         if (exempt.has(key) || guardOnly.has(key)) continue;
         const row = { a: r.a, b: r.b, key };
@@ -134,7 +135,8 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
       if (!rows.length) return;
       const mats = matsAt(params);
       const names = [...new Set(rows.flatMap((r) => [r.a, r.b]))];
-      const byKey = new Map(world.distances(mats, { names, within: windowMm() }).map((r) => [pairKey(r.a, r.b), r]));
+      const pairs = new Set(rows.map((r) => r.key)); // the rows' own pairs, never a neighbour's
+      const byKey = new Map(world.distances(mats, { names, within: windowMm(), pairs }).map((r) => [pairKey(r.a, r.b), r]));
       for (const row of rows) store(row, byKey.get(row.key), mats);
     },
 

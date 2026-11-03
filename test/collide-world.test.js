@@ -33,6 +33,17 @@ describe("collision world", () => {
     expect(w.distances(mats, { within: 20 })[0].distance).toBeCloseTo(10);
     w.dispose();
   });
+  it("pairs and skip pick pairs before any query", () => {
+    const w = createCollisionWorld({ meshes: meshes() });
+    const mats = new Map([["a", T(0)], ["b", T(12)], ["c", T(24)]]);
+    const keys = (r) => r.map((x) => [x.a, x.b].join());
+    expect(keys(w.distances(mats))).toEqual(["a,b", "b,c", "a,c"]);
+    expect(keys(w.distances(mats, { pairs: new Set(["b×c"]) }))).toEqual(["b,c"]);
+    expect(keys(w.distances(mats, { skip: new Set(["a×b"]) }))).toEqual(["b,c", "a,c"]);
+    // same numbers as the unfiltered query
+    expect(w.distances(mats, { pairs: new Set(["a×c"]) })[0]).toEqual(w.distances(mats)[2]);
+    w.dispose();
+  });
   it("limit keeps the nearest", () => {
     const w = createCollisionWorld({ meshes: meshes() });
     const r = w.distances(new Map([["a", T(0)], ["b", T(12)], ["c", T(40)]]), { limit: 1 });

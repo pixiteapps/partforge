@@ -667,13 +667,20 @@ export function buildBVH(mesh) {
   // 8 corners under R, and its leaf triangles are moved by R into a scratch buffer
   // before triTriDist. Same pruning and descent order as distanceTo; the result's
   // points are mapped back by mSelf, so `at`/`pointA`/`pointB` are in the shared frame.
-  function distanceToPosed(other, mSelf, mOther) {
+  // `maxDistance` (default Infinity) is a cutoff: a pair farther apart than it reads
+  // Infinity (no points), and the traversal prunes every node pair at least that far
+  // apart from the start. A pair within it gets exactly the uncut answer: a pruned node
+  // pair can only hold triangle pairs at or past the cutoff, never the closest one.
+  function distanceToPosed(other, mSelf, mOther, maxDistance = Infinity) {
     if (other?.jsIndex) other = other.jsIndex();
     const oV = other.vertices, oB = other._bounds, oM = other._meta, oO = other._order;
     const R = mulMat4(invertRigid(mSelf), mOther);
     const nbox = new Float64Array(18); // [0..5] other's node, [6..11] its left child, [12..17] its right child
     let leafV = new Float64Array(9 * MAX_LEAF);
-    let best = { d2: Infinity, a: null, b: null };
+    // a hair past the cutoff, so a pair exactly at it is kept (and a cutoff of 0 still
+    // visits touching boxes)
+    const cut = maxDistance < Infinity ? Math.max(Number.MIN_VALUE, maxDistance * maxDistance * (1 + 1e-12)) : Infinity;
+    let best = { d2: cut, a: null, b: null };
     const stack = [0, 0];
     while (stack.length && best.d2 > 0) {
       const nb = stack.pop(), na = stack.pop();

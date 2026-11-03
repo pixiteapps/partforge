@@ -33,7 +33,7 @@
 // Every IK drag holds them: angles mode through solveAngles (any limb), goal mode through
 // solveGoalPinned (the goal handle's own limb) once a pin is on that limb. Joint rings and
 // a goal drag with no pin on its limb do not.
-import { limbInfo, solveAngles, solveGoalPinned, solveHandle, goalValues, seedValues, snapValues, jointRingValues, posedJointValue, parseJointKey } from "./param-solve.js";
+import { limbInfo, solveAngles, solveGoalPinned, solveHandle, goalValues, seedValues, snapValues, linearBlend, withBlend, jointRingValues, posedJointValue, parseJointKey } from "./param-solve.js";
 import { handleKind, handleAt, locateHandle } from "./handle-source.js";
 import { resolveParams } from "../part-model.js";
 
@@ -69,24 +69,49 @@ export function pinTarget(id, handles) {
  * The drag's values for one frame, from param-solve. Angles mode solves the handle's
  * listed params through derive (holding every pin); goal mode writes the target (and
  * the aim angles, for a ring) onto the goal params and the solved joint angles into
- * the seed. Returns `{ values, error }` or null when the start pose itself fails.
+ * the seed. Returns `{ values, error }` (with a non-enumerable `blend`, withBlend) or null
+ * when the start pose itself fails; `blend(t)` is the path the drag guard's settle walks
+ * from `params` to the result.
+ *
+ * `collide` (a drag guard, or null) adds its collision rows to the solve. A goal drag
+ * with one starts the guard's frame first: in open air (no rows) it writes the goal
+ * directly, as without one, so a goal can still be dragged out of reach; near an
+ * obstacle it solves the seeded joints instead (solveGoalPinned, holding the current aim
+ * unless a ring gives one), so the arm slides along it, and writes that pose back as goal
+ * params. A solve that cannot read the limb falls back to the direct write.
  */
-export function defaultSolve({ part, params, handle, grab, target, aimAngles, holds = [], allHandles }) {
+export function defaultSolve({ part, params, handle, grab, target, aimAngles, holds = [], allHandles, collide = null }) {
   const kind = handleKind(handle);
-  if (kind === "on" || kind === "point") return solveHandle({ part, params, handle, target, holds, allHandles });
+  if (kind === "on" || kind === "point") return solveHandle({ part, params, handle, target, holds, allHandles, collide });
   if (handle.drag === "goal") {
-    // a pin on the goal's own limb: solve the seeded joints around it (solveGoalPinned)
-    if (holds.some((h) => h.limb === handle.on)) {
-      const pinned = solveGoalPinned({ part, params, handle, target, holds });
+    const pinnedHold = holds.some((h) => h.limb === handle.on);
+    // a start pose whose derive throws gets no rows: the frame then runs as without a guard
+    if (collide) try { collide.beginFrame({ ...part.defaults, ...params }); } catch { collide = null; }
+    if (collide && collide.rowCount > 0) {
+      const aim = aimAngles ?? currentAim(part, params, handle);
+      const slid = solveGoalPinned({ part, params, handle, target, holds, aimAngles: aim, collide, collideFramed: true });
+      if (slid) return slid;
+    } else if (pinnedHold) {
+      // a pin on the goal's own limb: solve the seeded joints around it (solveGoalPinned)
+      const pinned = solveGoalPinned({ part, params, handle, target, holds, collide, collideFramed: true });
       if (pinned) return pinned;
     }
     const values = goalValues({ handle, point: target, aimAngles, part });
     const seed = Array.isArray(handle.seed) && handle.seed.length
       ? seedValues({ part, params: { ...params, ...values }, handle })
       : null;
-    return { values: { ...values, ...(seed ?? {}) }, error: 0 };
+    const written = { ...values, ...(seed ?? {}) };
+    return withBlend({ values: written, error: 0 }, linearBlend({ ...part.defaults, ...params }, written));
   }
-  return solveAngles({ part, params, handle, grab, target, holds, allHandles });
+  return solveAngles({ part, params, handle, grab, target, holds, allHandles, collide });
+}
+
+/** A goal handle's aim params as they stand ([pitch, yaw, roll]), or null when it has none. */
+function currentAim(part, params, handle) {
+  const aim = handle.params?.aim;
+  if (!Array.isArray(aim) || aim.length < 2) return null;
+  const at = (k) => (isNum(params[k]) ? params[k] : part.defaults?.[k] ?? 0);
+  return aim.map(at);
 }
 
 /** Where a pinned point sits at these params (part coordinates), or null. */

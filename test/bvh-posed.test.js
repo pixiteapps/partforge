@@ -126,3 +126,27 @@ test("insideOf survives a ray that grazes an edge", () => {
   const at = composePose([{ t: "translate", v: [10, 10, 10] }]);
   expect(small.insideOf(big, at, I)).toBe(true);
 });
+
+test("maxDistance: a pair within it reads the uncut answer exactly; one past it reads Infinity", () => {
+  const A = sphereMesh(6), B = boxMesh(5, 7, 3);
+  const a = buildBVH(A), b = buildBVH(B);
+  for (let n = 0; n < 20; n++) {
+    const mA = randPose(10), mB = randPose(30);
+    const want = a.distanceToPosed(b, mA, mB);
+    const within = a.distanceToPosed(b, mA, mB, want.distance + 0.5);
+    expect(Object.is(within.distance, want.distance)).toBe(true);
+    expect(within.pointA).toEqual(want.pointA);
+    expect(within.pointB).toEqual(want.pointB);
+    const exact = a.distanceToPosed(b, mA, mB, want.distance);
+    expect(exact.distance).toBe(want.distance);
+    if (want.distance > 0.1) {
+      const past = a.distanceToPosed(b, mA, mB, want.distance - 0.05);
+      expect(past.distance).toBe(Infinity);
+      expect(past.pointA).toBeNull();
+    }
+  }
+  // a cutoff of 0 still finds a touch
+  const I = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+  const T = [1,0,0,0, 0,1,0,0, 0,0,1,0, 5,0,0,1];
+  expect(buildBVH(boxMesh(5, 5, 5)).distanceToPosed(buildBVH(boxMesh(5, 5, 5)), I, T, 0).distance).toBe(0);
+});
