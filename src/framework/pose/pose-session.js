@@ -35,9 +35,10 @@
 //     before this point.
 //   - `blockedChange(pair | null)` fires when the pair a frame stopped at changes (mount
 //     tints it), and with null when the drag ends or is cancelled.
-//   - a settle that throws holds the frame at lastClear (writes nothing new), logs once and
-//     drops the guard for the rest of the drag: a guard that cannot place a pose is not
-//     consulted again, and a frame it could not check is never written.
+//   - a settle that throws holds that frame at lastClear (writes nothing new; lastClear
+//     stays) and keeps the guard: later frames try it again, and the first throw of a drag
+//     is logged, the rest are not. A frame the guard could not check is never written, and
+//     a drag is never left unguarded by one bad frame.
 //   - end()'s snap is checked too: the nearest snap can round a value toward contact, so if
 //     the snapped pose is not clear (guard.isClear over lastClear) each touched key snaps
 //     toward its value at the drag's start instead, and if that is not clear either the
@@ -222,7 +223,7 @@ export function createPoseSession({
     let guard = null;
     try { guard = collide({ handle, handleId, snapshot }) ?? null; } catch (err) { console.error("pose collisions: no guard for this drag", err); }
     const lastClear = { ...part?.defaults, ...snapshot };
-    drag = { handleId, handle, grab, snapshot, holds, touched: {}, moved: false, guard, lastClear, blocked: null };
+    drag = { handleId, handle, grab, snapshot, holds, touched: {}, moved: false, guard, lastClear, blocked: null, settleLogged: false };
     hold(true);
     return true;
   }
@@ -245,9 +246,12 @@ export function createPoseSession({
       const end = typeof blend === "function" ? blend(1) : { ...from, ...result.values };
       s = guard.settle(from, end, typeof blend === "function" ? { blend } : undefined);
     } catch (err) {
-      // a pose the guard cannot place: hold at the last clear values, and stop guarding
-      console.error("pose collisions: settle failed; this drag goes on unguarded", err);
-      dropGuard(drag);
+      // a pose the guard cannot place: hold this frame at the last clear values, keep the
+      // guard (the next frame tries again), and log the drag's first such throw only
+      if (!drag.settleLogged) {
+        drag.settleLogged = true;
+        console.error("pose collisions: settle failed; holding this frame at the last clear pose", err);
+      }
       return {};
     }
     const values = {};
@@ -259,13 +263,6 @@ export function createPoseSession({
     drag.blocked = blocked;
     if ((was?.a ?? null) !== (blocked?.a ?? null) || (was?.b ?? null) !== (blocked?.b ?? null)) blockedChange(blocked);
     return values;
-  }
-
-  /** The drag stops consulting its guard: let it go now (and clear the tint). */
-  function dropGuard(d) {
-    releaseGuard(d);
-    d.guard = null;
-    d.blocked = null;
   }
 
   /** Write one frame's values and ghost whatever just went stale. */

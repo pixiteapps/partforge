@@ -229,24 +229,60 @@ describe("the release snap and a settle that throws", () => {
     expect(h.writes.at(-1)).toEqual({ angle: 60 });
   });
 
-  it("a settle that throws holds the frame at lastClear, drops the guard and logs once", () => {
+  it("a settle that throws holds that frame and keeps the guard: the next frame settles, one log", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     let settles = 0, released = 0;
-    const g = { ...halfGuard(), settle() { settles++; throw new Error("cannot place"); }, release() { released++; } };
+    const half = halfGuard();
+    const g = { ...half, settle(...a) { settles++; if (settles === 1) throw new Error("cannot place"); return half.settle(...a); }, release() { released++; } };
     const h = session({ collide: () => g });
     h.s.begin("swing");
     h.s.frame({ point: [40, 0, 0] });
-    expect(h.writes).toEqual([]);                    // held: nothing new written
+    expect(h.writes).toEqual([]);                    // held: nothing written on frame 1
     expect(h.params.angle).toBe(0);
-    expect(released).toBe(1);                        // the guard is let go at once
-    h.s.frame({ point: [30, 0, 0] });
-    h.s.frame({ point: [20, 0, 0] });
-    expect(settles).toBe(1);                         // later frames run unguarded
-    expect(h.solves.at(-1).collide).toBeNull();
-    expect(h.writes).toEqual([{ angle: 30 }, { angle: 20 }]);
+    expect(released).toBe(0);                        // the guard is kept
+    h.s.frame({ point: [40, 0, 0] });
+    expect(settles).toBe(2);                         // frame 2 goes through the guard again
+    expect(h.solves.at(-1).collide).not.toBeNull();
+    expect(half.calls[0].from.angle).toBe(0);        // from the unchanged lastClear
+    expect(h.writes).toEqual([{ angle: 20 }]);       // settled half way
+    h.s.frame({ point: [40, 0, 0] });
+    expect(h.writes.at(-1)).toEqual({ angle: 30 });
     expect(err).toHaveBeenCalledTimes(1);
     h.s.end();
     expect(released).toBe(1);
+    err.mockRestore();
+  });
+
+  it("a guard that always throws writes nothing for the whole drag, and release leaves lastClear", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    let settles = 0;
+    const g = { ...halfGuard(), settle() { settles++; throw new Error("cannot place"); }, isClear() { throw new Error("cannot place"); } };
+    const h = session({ collide: () => g });
+    h.s.begin("swing");
+    for (const x of [40, 30, 20]) h.s.frame({ point: [x, 0, 0] });
+    expect(settles).toBe(3);
+    expect(h.writes).toEqual([]);
+    const out = h.s.end();
+    expect(h.writes).toEqual([]);                    // nothing touched: the snapshot (lastClear) stands
+    expect(h.params.angle).toBe(0);
+    expect(out.changed).toEqual([]);
+    expect(err).toHaveBeenCalledTimes(1);
+    err.mockRestore();
+  });
+
+  it("a guard that settles, then throws, releases to lastClear when isClear throws too", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    let settles = 0;
+    const half = halfGuard();
+    const g = { ...half, settle(...a) { if (++settles > 1) throw new Error("cannot place"); return half.settle(...a); }, isClear() { throw new Error("cannot place"); } };
+    const h = session({ collide: () => g });
+    h.s.begin("swing");
+    h.s.frame({ point: [40.04, 0, 0] });             // settles to 20.02: lastClear
+    h.s.frame({ point: [10, 0, 0] });                // throws: held
+    expect(h.writes).toEqual([{ angle: 20.02 }]);
+    h.s.end();
+    expect(h.writes.at(-1)).toEqual({ angle: 20.02 }); // isClear threw on both snaps: lastClear, unsnapped
+    expect(err).toHaveBeenCalledTimes(1);
     err.mockRestore();
   });
 });
