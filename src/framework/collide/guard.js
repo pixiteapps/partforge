@@ -35,6 +35,17 @@ function boxUnder(box, m) {
   return out;
 }
 
+/** The farthest a corner of `box` moves placed by m1 instead of m0 (world.travel's rule). */
+function cornerTravel(box, m0, m1) {
+  if (!box) return 0;
+  let worst = 0;
+  for (const x of [box[0], box[3]]) for (const y of [box[1], box[4]]) for (const z of [box[2], box[5]]) {
+    const p = apply(m0, [x, y, z]), q = apply(m1, [x, y, z]);
+    worst = Math.max(worst, Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]));
+  }
+  return worst;
+}
+
 const boxesOverlap = (a, b) => [0, 1, 2].every((j) => a[j] <= b[j + 3] && b[j] <= a[j + 3]);
 
 /** Linear blend of every numeric param `from` and `to` share; others take `to`'s value. */
@@ -106,15 +117,39 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
   let lastTravel = 0;
   const windowMm = () => margin + lastTravel;
 
-  // Store a distances() result on its row, mapped into each mesh's own frame.
-  function store(row, r, mats) {
+  // Store a distances() result on its row, mapped into each mesh's own frame. `within` is
+  // the cutoff the query ran under: a pair it did not return is at least that far apart.
+  // `row.ref` keeps the pose that reading was taken at and a lower bound on the gap there,
+  // for the lazy linearisation below.
+  function store(row, r, mats, within) {
     const ma = mats.get(row.a), mb = mats.get(row.b);
-    if (!r || ma === null || mb === null) { row.active = false; return; }
+    row.pend = null;
+    if (ma === null || mb === null) { row.active = false; row.ref = null; return; }
+    row.ref = { ma, mb, d: r ? r.distance : within - 1e-9 };
+    if (!r) { row.active = false; return; }
     row.active = true;
     row.gap = r.distance;
     row.pa = apply(ma ? invertRigid(ma) : undefined, row.a === r.a ? r.pointA : r.pointB);
     row.pb = apply(mb ? invertRigid(mb) : undefined, row.a === r.a ? r.pointB : r.pointA);
     row.normal = r.normal && (row.a === r.a ? r.normal : r.normal.map((x) => -x));
+  }
+
+  // Lazy linearisation. A row's value is w·max(0, margin − gap), so a pair that cannot be
+  // inside the margin reads exactly 0 whatever its closest points are. Placed by mats1
+  // instead of mats0, no point of a pair moves the gap more than `drift` (the farthest
+  // its pieces' box corners move: a point's motion is affine, so a box's worst is at a
+  // corner). So at linearise, a row whose last reading, less the drift since, is past
+  // the margin is not queried: it keeps the pose (`pend`) and that lower bound, and it
+  // reads 0 at every evaluation whose own drift keeps the bound past the margin. Only
+  // when one does not is it measured — at the pend pose, exactly the query linearise
+  // would have run — so every row reads bit for bit what eager linearisation gives.
+  const LAZY_SLACK_MM = 1e-6; // past any rounding in a row's own arithmetic
+  const drift = (row, ma0, mb0, ma1, mb1) => cornerTravel(world.boundsOf(row.a), ma0, ma1) + cornerTravel(world.boundsOf(row.b), mb0, mb1);
+  function resolve(row) {
+    const { mats, within } = row.pend;
+    const upper = upperBounds([row], mats);
+    const [r = null] = world.distances(mats, { names: [row.a, row.b], within, pairs: new Set([row.key]), upper });
+    store(row, r, mats, within);
   }
 
   // Each row's stored closest points, placed by mats, are two points on its pair's
@@ -154,7 +189,7 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
         const key = pairKey(r.a, r.b);
         if (exempt.has(key) || guardOnly.has(key)) continue;
         const row = { a: r.a, b: r.b, key };
-        store(row, r, mats);
+        store(row, r, mats, windowMm());
         rows.push(row);
         if (rows.length === MAX_ROWS) break;
       }
@@ -165,11 +200,25 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
       if (!rows.length) return;
       const names = rowNames();
       const mats = matsAt(params, names); // the pairs filter reads no other placement
-      const pairs = new Set(rows.map((r) => r.key)); // the rows' own pairs, never a neighbour's
-      const upper = upperBounds(rows, mats);
-      const byKey = new Map(world.distances(mats, { names, within: windowMm(), pairs, upper }).map((r) => [pairKey(r.a, r.b), r]));
-      for (const row of rows) store(row, byKey.get(row.key), mats);
-      active = rows.some((row) => row.active && row.gap < margin);
+      const within = windowMm();
+      const now = [];
+      for (const row of rows) {
+        const ma = mats.get(row.a), mb = mats.get(row.b);
+        const ref = row.ref;
+        if (ref && ma !== null && mb !== null) {
+          const lb = ref.d - drift(row, ref.ma, ref.mb, ma, mb);
+          if (lb > margin + LAZY_SLACK_MM) { row.pend = { mats: new Map([[row.a, ma], [row.b, mb]]), within, lb }; continue; }
+        }
+        now.push(row);
+      }
+      if (now.length) {
+        const pairs = new Set(now.map((r) => r.key)); // the rows' own pairs, never a neighbour's
+        const upper = upperBounds(now, mats);
+        const byKey = new Map(world.distances(mats, { names, within, pairs, upper }).map((r) => [pairKey(r.a, r.b), r]));
+        for (const row of now) store(row, byKey.get(row.key), mats, within);
+      }
+      // a pending row's gap is past the margin: it is never the active one
+      active = rows.some((row) => !row.pend && row.active && row.gap < margin);
     },
 
     rows(params) {
@@ -177,6 +226,11 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
       if (!rows.length) return out;
       const mats = matsAt(params, rowNames());
       rows.forEach((row, i) => {
+        if (row.pend) {
+          const { mats: m0, lb } = row.pend;
+          if (lb - drift(row, m0.get(row.a), m0.get(row.b), mats.get(row.a), mats.get(row.b)) > margin + LAZY_SLACK_MM) return; // reads 0
+          resolve(row);
+        }
         if (!row.active) return;
         if (!row.normal) { out[i] = COLLIDE_WEIGHT * margin; return; } // at contact: saturated
         const wa = apply(mats.get(row.a), row.pa), wb = apply(mats.get(row.b), row.pb);
