@@ -44,6 +44,19 @@ describe("handlesShownInView", () => {
     expect([...viewSourceReads(twoViews, "print", {})]).toEqual(["gap"]);
   });
 
+  it("a sub-part whose probe throws does not blind the view: the others' reads still count", () => {
+    const boom = { label: "Boom", build: () => { throw new Error("probe cannot build this"); }, views: { hand: (s) => s, print: flat(3) } };
+    const part = { ...twoViews, parts: { ...twoViews.parts, boom } };
+    expect([...viewSourceReads(part, "hand", {})].sort()).toEqual(["a", "b"]);
+    expect([...viewSourceReads(part, "print", {})]).toEqual(["gap"]);
+    expect(handlesShownInView(part, "print", {})).toEqual([]);
+    // the reads made before the throw are kept
+    const early = { label: "Early", build: (k, p, d) => { if (d.a) throw new Error("late"); }, views: { print: flat(4) } };
+    expect([...viewSourceReads({ ...part, parts: { ...part.parts, early } }, "print", {})].sort()).toEqual(["a", "gap"]);
+    // only when every sub-part fails is the view unknown
+    expect(viewSourceReads({ ...part, parts: { boom } }, "hand", {})).toBeNull();
+  });
+
   it("a source no view draws says nothing: relevance alone decides", () => {
     // the plain fixture draws only the palm: neither finger limb is read by any view, so
     // `a` shows (the palm reads its `wrist`) and `b` does not (nothing reads its params)

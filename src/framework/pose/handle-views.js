@@ -40,24 +40,34 @@ export function declaredViews(handle) {
 /**
  * The derived keys (`d.<key>`) the sub-parts shown in `view` read, in their build or their
  * placement there, from a geometry-free probe: a Set, or null when the probe cannot tell
- * (derive or a build throws). `d` may be passed in when the caller already resolved it.
+ * (derive throws, or every sub-part's probe does). A sub-part whose probe throws keeps the
+ * reads it made before the throw, and the others still count: one unprobeable sub-part
+ * must not blind the view (it would show every handle there again). `d` may be passed in
+ * when the caller already resolved it.
  */
 export function viewSourceReads(part, view, params = {}, d = undefined) {
+  let p, derived, kernel, names;
   try {
-    const p = { ...part.defaults, ...params };
-    const derived = d ?? resolveDerived(part, p);
-    const { kernel } = createProbeKernel();
-    const seen = new Set();
-    for (const name of viewSubParts(part, view, p)) {
+    p = { ...part.defaults, ...params };
+    derived = d ?? resolveDerived(part, p);
+    ({ kernel } = createProbeKernel());
+    names = viewSubParts(part, view, p);
+  } catch {
+    return null;
+  }
+  const seen = new Set();
+  let failed = 0;
+  for (const name of names) {
+    try {
       const sp = part.parts[name];
       const built = sp.build(kernel, recorder(p, new Set()), recorder(derived, seen));
       const place = placeOf(sp);
       if (place) place(built, { view, purpose: "display", p: recorder(p, new Set()), d: recorder(derived, seen) });
+    } catch {
+      failed++;
     }
-    return seen;
-  } catch {
-    return null;
   }
+  return names.length && failed === names.length ? null : seen;
 }
 
 /** The derived keys a handle's point comes from: `[on]`, or what a `point` function reads of `d`. */

@@ -1996,6 +1996,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // re-reads only when the set changes, so a drag frame (which runs updateRelevance
     // through onParamChange) costs nothing beyond the relevance it already had.
     function syncPoseVisible(relevant) {
+      // Keyed by view + its shown sub-parts, NOT params: what a view draws rarely depends on them.
       const sourceReads = (v) => {
         const key = `${v}\u0000${viewSubParts(part, v, params).join("\u0000")}`;
         if (!poseSourceReads.has(key)) poseSourceReads.set(key, viewSourceReads(part, v, params));
