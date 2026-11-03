@@ -113,6 +113,50 @@ describe("sweep engine", () => {
     expect(Math.abs(row.freeRange[1] - truth)).toBeLessThan(0.1);
   }, SLOW);
 
+  it("two grazes of one pair inside a single step are both found", () => {
+    // a 2 mm square rotor spinning about the origin, and one block whose two outer corners
+    // sit 0.02 mm inside the arc its corners sweep, 8° apart: a rotor corner grazes them at
+    // ≈76° and ≈84°, both inside the sweep's last step (68° → 90°), so only advancing the
+    // clear piece a first graze's bisection leaves finds the second
+    const s = 1, r = s * Math.SQRT2, p = 0.02;
+    const corner = (deg) => [(r - p) * Math.cos((deg * Math.PI) / 180), (r - p) * Math.sin((deg * Math.PI) / 180)];
+    const [q1, q2] = [corner(50), corner(58)];
+    const part = boxPart({
+      boxes: {
+        block: (kk) => kk.union([
+          kk.box({ min: [q1[0], -5, q1[1]], max: [q1[0] + 5, 5, q1[1] + 5] }),
+          kk.box({ min: [q2[0], -5, q2[1]], max: [q2[0] + 5, 5, q2[1] + 5] }),
+        ]),
+        rotor: (kk) => kk.box({ min: [-s, -5, -s], max: [s, 5, s] }),
+      },
+      views: { rotor: (q, pp) => q.rotate(pp.angle, [0, 0, 0], [0, 1, 0]) },
+      controls: [control("angle", 0, 360)],
+      defaults: { angle: 0 },
+      sweeps: { spin: { param: "angle", range: [0, 90] } },
+    });
+    const [row] = runSweeps(k, part, "assembly", { angle: 0 });
+    const truth = denseFirstContact(part, "angle", 0, 90, 0.01);
+    expect(row.clear).toBe(false);
+    expect(row.contacts).toHaveLength(2);
+    const [c1, c2] = row.contacts;
+    expect(Math.abs(c1.from - truth)).toBeLessThan(0.1);
+    expect(c2.from).toBeGreaterThan(c1.to);
+    expect(c1.from).toBeGreaterThan(68);
+    expect(c2.from - c1.from).toBeGreaterThan(6);
+    expect(c2.from - c1.from).toBeLessThan(10);
+    expect(row.freeRange[0]).toBe(0);
+    expect(row.freeRange[1]).toBeLessThanOrEqual(c1.from);
+    expect(Math.abs(row.freeRange[1] - truth)).toBeLessThan(0.1);
+  }, SLOW);
+
+  it("a sweep capped short of its travel bound says so, and still finds contact", () => {
+    const part = withSweeps(collideBar, { swing: { param: "angle", range: [0, 90] } });
+    const [row] = runSweeps(k, part, "assembly", { angle: 0 }, { maxSteps: 4 });
+    expect(row.capped).toBe(true);
+    expect(row.steps).toBeLessThanOrEqual(4);
+    expect(Math.abs(row.contacts[0].from - 60)).toBeLessThan(0.1);
+  }, SLOW);
+
   it("a clearance requirement fails a close pass", () => {
     const part = withSweeps(drawerBox, { d1: { handle: "drawer1", clearance: 2 } });
     const [row] = runSweeps(k, part, "cabinet", part.defaults);

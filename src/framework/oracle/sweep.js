@@ -12,14 +12,18 @@
 // all the way along it when d_k + d_{k+1} > 2·clearance + T; when that fails the pair's
 // interval is sub-stepped until it is proven or a contact is found, so a graze between two
 // clear checks is never missed. T comes from the step's endpoint poses (a chord), padded by
-// ARC_SLACK for the arc the motion actually takes: it assumes each step turns a pair by
-// well under ~30°, which the travel bound gives any piece bigger than a few millimetres.
+// the arc a screw motion through those two poses takes: (θ/2)/sin(θ/2) for the relative
+// rotation θ (arcFactor), with a pair whose relative turn passes π/2 sub-stepped before it
+// is bounded. The one assumption left: between two samples the relative motion of a and b
+// is close to a screw motion. A single joint between them, any translation and a constant-
+// axis spin are exactly that; a coupled chain, a derive or an IK solve can break it.
 // REBUILD (some sub-part's build changes, or its placement is untrusted): those sub-parts
 // are rebuilt per step, on SWEEP_REBUILD_STEPS evenly spaced steps, checked at the steps
 // only (a rebuilt mesh has no placement to bound its motion by).
 //
 // A step SWEEP_MAX_STEPS forces past the travel bound marks the row `capped: true`; the
-// advancement above still holds each pair across it.
+// advancement above still holds each pair across it, under the same screw-motion
+// assumption (a longer step leans on it harder).
 //
 // A pair counts as in contact at distance <= the sweep's clearance. A pair inside it at the
 // sweep's start is a contact from the start, never exempt: a sweep asks "never closer than
@@ -56,8 +60,19 @@ const STILL_MM = 1e-9;
 // within it of the sampled minimum. Chasing every hundredth of a micron re-measured each pin
 // pair's wobble exactly at every step, two thirds of a hand sweep's time.
 const MIN_RES_MM = 0.01;
-// The arc a step's motion takes over the chord its endpoints give (see the module comment).
-const ARC_SLACK = 1.01;
+// A relative turn past this between two samples is sub-stepped before it is bounded.
+const MAX_TURN = Math.PI / 2;
+
+/** The arc over the chord of a screw motion turning by `theta`: (θ/2)/sin(θ/2), 1 at 0. */
+function arcFactor(theta) {
+  const h = theta / 2;
+  return h < 1e-8 ? 1 : Math.max(1, h / Math.sin(h));
+}
+
+/** The rotation angle of a rigid mat4's 3×3 part: cos θ = (trace − 1)/2, clamped. */
+function turnOf(m) {
+  return Math.acos(Math.min(1, Math.max(-1, (m[0] + m[5] + m[10] - 1) / 2)));
+}
 // A pair advancement cannot prove clear by an interval this small (a share of BISECT_TOL)
 // is reported as a contact over it: conservative, and at most T/2 inside clearance.
 const ADVANCE_FLOOR = 1 / 8;
@@ -200,9 +215,10 @@ const emptyRow = (s, extra) => ({
  * `skipped: "timeout"`, with what it read so far. A sweep that throws is `skipped:
  * "unreadable"` with its `error` message; the others still run. A skipped row's `clear` is
  * null. `skipStill: false` measures every pair at every step (a check that the still-pair
- * skip changes nothing; slower).
+ * skip changes nothing; slower). `maxSteps` (default SWEEP_MAX_STEPS) caps a rigid sweep's
+ * steps, as SWEEP_MAX_STEPS does.
  */
-export function runSweeps(kernel, part, view, params = {}, { deadline = Infinity, now = clockNow, skipStill = true } = {}) {
+export function runSweeps(kernel, part, view, params = {}, { deadline = Infinity, now = clockNow, skipStill = true, maxSteps = SWEEP_MAX_STEPS } = {}) {
   const rows = [];
   const full = { ...part.defaults, ...params };
   const decl = normalizeCollisions(part);
@@ -212,7 +228,7 @@ export function runSweeps(kernel, part, view, params = {}, { deadline = Infinity
     const t0 = now();
     let row;
     try {
-      row = sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill });
+      row = sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill, maxSteps });
     } catch (e) {
       row = emptyRow(s, { skipped: "unreadable", error: String(e?.message ?? e) });
     }
@@ -234,7 +250,8 @@ function movedBox(box, m) {
 
 /**
  * How far, at most, any point of b that could reach within `clearance` of a moves relative
- * to a between two placements (mm, chord × ARC_SLACK). The points of b's box (placed in a's
+ * to a between two placements, along a screw motion through them: `{ T, theta }`, T in mm
+ * (chord × arcFactor(theta)), theta the relative turn. The points of b's box (placed in a's
  * frame at the first pose) farther than clearance + T_full from a's box cannot reach it in
  * the step, so only the rest — clipped to a's box grown by that much — needs bounding; the
  * displacement is affine in the point, so the clip's corners bound it.
@@ -243,22 +260,23 @@ function pairTravel(world, a, b, matsL, matsR, clearance) {
   const R0 = mulMat4(invertRigid(matsL.get(a) ?? IDENTITY), matsL.get(b) ?? IDENTITY);
   const R1 = mulMat4(invertRigid(matsR.get(a) ?? IDENTITY), matsR.get(b) ?? IDENTITY);
   const boxB = world.boundsOf(b), boxA = world.boundsOf(a);
-  const full = cornerTravel(boxB, R0, R1) * ARC_SLACK;
-  if (full <= STILL_MM) return 0;
+  const D = mulMat4(R1, invertRigid(R0)); // a-frame position of a b point at pose L → at pose R
+  const theta = turnOf(D), f = arcFactor(theta);
+  const full = cornerTravel(boxB, R0, R1) * f;
+  if (full <= STILL_MM) return { T: 0, theta };
   const m = clearance + full + 1e-6;
   const placed = movedBox(boxB, R0);
   const clip = [0, 1, 2].map((j) => [Math.max(placed[j], boxA[j] - m), Math.min(placed[j + 3], boxA[j + 3] + m)]);
-  if (clip.some(([lo, hi]) => lo > hi)) return 0; // nothing of b within reach of a this step
-  const D = mulMat4(R1, invertRigid(R0)); // a-frame position of a b point at pose L → at pose R
+  if (clip.some(([lo, hi]) => lo > hi)) return { T: 0, theta }; // nothing of b within reach of a this step
   let worst = 0;
   for (const x of clip[0]) for (const y of clip[1]) for (const z of clip[2]) {
     const q = applyMat(D, [x, y, z]);
     worst = Math.max(worst, Math.hypot(q[0] - x, q[1] - y, q[2] - z));
   }
-  return Math.min(full, worst * ARC_SLACK);
+  return { T: Math.min(full, worst * f), theta };
 }
 
-function sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill }) {
+function sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill, maxSteps }) {
   const motion = motionOf(part, view, full, s);
   const { lo, hi } = motion;
   const tol = BISECT_TOL * (hi - lo);
@@ -330,11 +348,14 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill 
       try { return pairAt(pose, key, within); } finally { pose.release(); }
     };
     const driverAt = (v, a, b) => (s.kind === "param" ? s.param : closingDriver(motion, matsOf, v, a, b, readAt(v, pairKey(a, b), Infinity), tol));
-    const addContact = (a, b, from, to, before, after, atV = from) => {
+    // `unresolved`: advancement could not prove the pair clear over [from, to] at its floor
+    // width; the contact is reported, and minClearance is capped at clearance there.
+    const addContact = (a, b, from, to, before, after, atV = from, unresolved = false) => {
       const key = pairKey(a, b);
       const r = readAt(atV, key, Infinity);
       offer(r, atV);
-      const c = { from, to, a, b, at: r?.at ?? null, driver: driverAt(before ?? from, a, b), before, after };
+      if (unresolved && (!best || best.distance > clearance)) best = { distance: clearance, a, b, at: r?.at ?? null, value: atV };
+      const c = { from, to, a, b, at: r?.at ?? null, driver: driverAt(before ?? from, a, b), before, after, ...(unresolved ? { unresolved: true } : {}) };
       contacts.push(c);
       return c;
     };
@@ -388,18 +409,41 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill 
     // Conservative advancement of one pair over [left, right], both clear: null when it is
     // proven clear across, else where it touches.
     const advance = (key, a, b, left, right) => {
-      const T = pairTravel(shared, a, b, left.mats, right.mats, clearance);
+      const { T, theta } = pairTravel(shared, a, b, left.mats, right.mats, clearance);
       const need = 2 * clearance + T;
-      if (left.lb + right.lb > need) return null;
+      const bounded = theta <= MAX_TURN; // past it, sub-step before trusting the bound
+      if (bounded && left.lb + right.lb > need) return null;
       tighten(left, key, need);
       tighten(right, key, need);
-      if (left.lb + right.lb > need) return null;
+      if (bounded && left.lb + right.lb > need) return null;
       if (right.v - left.v <= tol * ADVANCE_FLOOR) return { unresolved: true, left: left.v, right: right.v };
       const v = (left.v + right.v) / 2;
       const mid = { v, mats: matsOf(motion.at(v)), world: shared, lb: 0, exact: false };
       tighten(mid, key, need);
       if (mid.lb <= clearance) return { contact: v, clearL: left.v, clearR: right.v };
       return advance(key, a, b, left, mid) ?? advance(key, a, b, mid, right);
+    };
+    const sideAt = (v) => ({ v, mats: matsOf(motion.at(v)), world: shared, lb: 0, exact: false });
+    // Every contact of one pair inside [left, right] (both ends clear): advancement finds
+    // the first, its ends are bisected, and the clear pieces bisection leaves on either side
+    // are advanced in turn, so a second graze or a re-entry inside one step is found too.
+    const scan = (key, a, b, left, right) => {
+      for (let from = left; ;) {
+        const g = advance(key, a, b, from, right);
+        if (!g) return;
+        if (g.unresolved) {
+          addContact(a, b, g.left, g.right, g.left, g.right, g.left, true);
+          if (g.right >= right.v) return;
+          from = sideAt(g.right);
+          continue;
+        }
+        const enter = bisect(g.clearL, g.contact, a, b);
+        const exit = bisect(g.clearR, g.contact, a, b);
+        if (enter.vClear > from.v) scan(key, a, b, from, sideAt(enter.vClear));
+        addContact(a, b, enter.vContact, exit.vContact, enter.vClear, exit.vClear);
+        if (exit.vClear >= right.v) return;
+        from = sideAt(exit.vClear);
+      }
     };
     const grazes = (prev, cur) => {
       for (const c of cur.cands) {
@@ -409,12 +453,7 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill 
         const left = prev.sides.get(c.key) ?? { v: prev.v, mats: prev.pose.mats, world: shared, lb: prev.L.get(c.key) ?? 0, exact: prev.exact.has(c.key) };
         const right = { v: cur.v, mats: cur.pose.mats, world: shared, lb: cur.L.get(c.key), exact: cur.exact.has(c.key) };
         cur.sides.set(c.key, right);
-        const g = advance(c.key, c.a, c.b, left, right);
-        if (!g) continue;
-        if (g.unresolved) { addContact(c.a, c.b, g.left, g.right, g.left, g.right); continue; }
-        const enter = bisect(g.clearL, g.contact, c.a, c.b);
-        const exit = bisect(g.clearR, g.contact, c.a, c.b);
-        addContact(c.a, c.b, enter.vContact, exit.vContact, enter.vClear, exit.vClear);
+        scan(c.key, c.a, c.b, left, right);
       }
     };
 
@@ -425,6 +464,8 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill 
         const r = cur.exact.get(key);
         if (!prev) { open.set(key, addContact(r.a, r.b, cur.v, hi, null, null)); continue; }
         const cut = bisect(prev.v, cur.v, r.a, r.b);
+        // an earlier graze in the clear piece before the entry
+        if (rigid && cut.vClear > prev.v) scan(key, r.a, r.b, prev.sides.get(key) ?? sideAt(prev.v), sideAt(cut.vClear));
         open.set(key, addContact(r.a, r.b, cut.vContact, hi, cut.vClear, null));
       }
       for (const [key, c] of open) {
@@ -433,13 +474,19 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill 
         const cut = bisect(cur.v, prev.v, c.a, c.b);
         c.to = cut.vContact; c.after = cut.vClear;
         open.delete(key);
+        // a re-entry in the clear piece after the exit
+        if (rigid && cut.vClear < cur.v) {
+          const right = { v: cur.v, mats: cur.pose.mats, world: shared, lb: cur.L.get(key) ?? 0, exact: cur.exact.has(key) };
+          cur.sides.set(key, right);
+          scan(key, c.a, c.b, sideAt(cut.vClear), right);
+        }
       }
     };
 
     let last = null;
     if (rigid) {
       const maxTravel = (clearance + COLLIDE_BAND_MM) / 2;
-      const minH = (hi - lo) / (SWEEP_MAX_STEPS - 1);
+      const minH = (hi - lo) / (Math.max(2, maxSteps) - 1);
       let v = lo, h = minH;
       last = measure(lo, poseAt(lo));
       transitions(null, last);
@@ -476,18 +523,41 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill 
     }
 
     if (timedOut) for (const c of open.values()) c.to = last.v; // read up to here
-    contacts.sort((x, y) => x.from - y.from);
     row.minClearance = best;
-    row.contacts = contacts.map(({ before: _b, after: _a, ...c }) => c);
+    const merged = mergeContacts(contacts);
+    row.contacts = merged.map(({ before: _b, after: _a, ...c }) => c);
     if (timedOut) return { ...row, clear: null, skipped: "timeout" };
     row.clear = contacts.length === 0;
-    if (s.kind === "param") row.freeRange = freeRange(contacts, Math.min(Math.max(full[s.param] ?? lo, lo), hi), lo, hi);
+    if (s.kind === "param") row.freeRange = freeRange(merged, Math.min(Math.max(full[s.param] ?? lo, lo), hi), lo, hi);
     return row;
   } finally {
     shared?.dispose();
     disposeIndexes(owned);
     kernel.endSubPart?.();
   }
+}
+
+/**
+ * Contacts by first value, a pair's pieces with no proven-clear gap between them joined into
+ * one: a floor-width interval advancement could not prove clear, beside a real contact (a
+ * graze leaving at a shallow angle reads so for a few floors past its bisected exit), is part
+ * of that contact. A merged contact is `unresolved` only when every piece of it was.
+ */
+function mergeContacts(contacts) {
+  const sorted = [...contacts].sort((x, y) => x.from - y.from);
+  const out = [], lastOf = new Map();
+  for (const c of sorted) {
+    const key = pairKey(c.a, c.b), prev = lastOf.get(key);
+    if (prev && (c.before ?? c.from) <= (prev.after ?? prev.to) + 1e-12) {
+      if (c.to > prev.to) { prev.to = c.to; prev.after = c.after; }
+      if (!c.unresolved) delete prev.unresolved;
+      continue;
+    }
+    const copy = { ...c };
+    out.push(copy);
+    lastOf.set(key, copy);
+  }
+  return out;
 }
 
 /**
