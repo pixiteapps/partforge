@@ -21,8 +21,10 @@
 //     (isLive false, no handle points, a press where a tip was is not a drag) until it
 //     goes off again.
 //   robot-arm.html, hand.html (both required) — the reference parts. A 20-move drag of the first
-//     handle posts no `generate` job, commits exactly once on release, the committed
-//     values differ from the part's defaults, and the console stays clean. robot-arm.html
+//     handle posts no `generate` job, shows its values in the viewbar's readout slot while it
+//     moves (runtime.pose.__dragReadout(), gone on release, no readout chip after), commits
+//     exactly once on release, the committed values differ from the part's defaults, and
+//     the console stays clean. robot-arm.html
 //     then drags its tool's aim gizmo: hovering the tool point shows it
 //     (runtime.pose.__aimGizmo(), a test hook), hovering a ring highlights that ring with a
 //     grab cursor, and a drag round the ring writes that aim angle — one commit, no
@@ -34,10 +36,15 @@
 //     goal follows the turned joint). Last on robot-arm, a JOINT PIN: a click on the elbow
 //     dot pins it (pinCount 1, a badge at the elbow — runtime.pose.__pinPoints(), a test
 //     hook — no commit); a tool drag then holds the elbow within 0.5 mm while the tool
-//     moves, one commit; a second click unpins. Then the REALISTIC FLOOR: in realistic
+//     moves, one commit; a second click unpins. Then a MID-JOINT GRAB: a drag from the
+//     elbow dot (a goal limb grabbed by a middle joint) carries the elbow toward the
+//     pointer, moves the tool, changes a seed joint, one commit, no `generate` job.
+//     Then the REALISTIC FLOOR: in realistic
 //     mode a far sideways tool drag leaves the ground's x/z and scale exactly where they
 //     were (runtime.pose.__ground(), a test hook), during the drag and after its release;
-//     its height may only go down. CHECK_POSE_SHOTS=<dir> saves screenshots of it.
+//     its height may only go down. CHECK_POSE_SHOTS=<dir> saves screenshots of it. Last, an
+//     UNREACHABLE tool drag (checkOutOfReach) out to the canvas edge reads "Out of reach
+//     <n.n> mm" in the readout slot — the scene draws no text — and the slot clears on release.
 //   hand.html, after its joint ring — VIEW-SPECIFIC HANDLES (checkViewSwitch): pin a fingertip,
 //     hover it, switch to the print view with the pointer still on it: no handle points,
 //     badges, overlay objects (runtime.pose.__drawn(), a test hook), gizmo, chip, grab cursor
@@ -413,14 +420,57 @@ async function checkReference(page, url, errors) {
   const box = await openPoseApp(page, url);
   const h = await pickHandle(page, box);
   const t0 = await page.evaluate(() => performance.now());
-  await dragFrom(page, h, box);
+  // A limb drag reads out at the bottom (the viewbar's readout slot), as a generic one does.
+  let readout = null;
+  await dragFrom(page, h, box, async () => { readout = await page.evaluate(() => window.__pfRuntime.pose.__dragReadout()); });
+  if (!readout) errors.push(`no live readout in the viewbar slot while dragging ${h.handleId}:${h.at}`);
   const duringDrag = generates(await page.evaluate(() => window.__pfWorkerLog), t0);
   if (duringDrag.length) errors.push(`${duringDrag.length} generate job(s) posted during the drag`);
   await page.mouse.up();
   await sleep(600);
+  const after = await page.evaluate(() => ({ readout: window.__pfRuntime.pose.__dragReadout(), chip: window.__pfRuntime.pose.__chip() }));
+  if (after.readout) errors.push(`the live readout stayed up after the ${h.handleId} drag ended (${JSON.stringify(after.readout)})`);
+  if (after.chip) errors.push(`a limb drag left a readout chip (${JSON.stringify(after.chip)}): the chip is for generic handles`);
   const result = await page.evaluate(() => ({ commits: window.__pfCommits ?? null, defaults: window.__pfPart?.defaults ?? null }));
   checkCommits(result, errors);
-  return { handle: `${h.handleId}:${h.at}`, generatesDuringDrag: duringDrag.length, commits: result.commits?.length ?? null };
+  return { handle: `${h.handleId}:${h.at}`, readout, generatesDuringDrag: duringDrag.length, commits: result.commits?.length ?? null };
+}
+
+/**
+ * An unreachable tool drag: pull the tool point out from the canvas centre to near the
+ * canvas edge. While it misses, the bottom readout says "Out of reach" (the scene draws no
+ * text); after release it is gone.
+ */
+async function checkOutOfReach(page, box, errors) {
+  const h = await pickHandle(page, box, "tool");
+  await page.mouse.move(h.px + 18, h.py, { steps: 3 });
+  await page.mouse.move(h.px, h.py, { steps: 3 });
+  await sleep(50);
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  const len = Math.hypot(h.px - cx, h.py - cy) || 1;
+  const ux = (h.px - cx) / len, uy = (h.py - cy) / len;
+  // as far out along centre -> tool as the canvas allows, 12 px in from its edge
+  const room = Math.min(
+    ux > 0 ? (box.x + box.width - 12 - h.px) / ux : ux < 0 ? (box.x + 12 - h.px) / ux : Infinity,
+    uy > 0 ? (box.y + box.height - 12 - h.py) / uy : uy < 0 ? (box.y + 12 - h.py) / uy : Infinity,
+  );
+  const to = { x: h.px + ux * room, y: h.py + uy * room };
+  await page.mouse.down();
+  const texts = [];
+  for (let i = 1; i <= DRAG_MOVES; i++) {
+    await page.mouse.move(h.px + ((to.x - h.px) * i) / DRAG_MOVES, h.py + ((to.y - h.py) * i) / DRAG_MOVES);
+    await sleep(20);
+    texts.push(await page.evaluate(() => window.__pfRuntime.pose.__dragReadout()));
+  }
+  await sleep(80);
+  texts.push(await page.evaluate(() => window.__pfRuntime.pose.__dragReadout()));
+  await page.mouse.up();
+  await sleep(600);
+  const reach = texts.filter((t) => /Out of reach/.test(t ?? "")).at(-1) ?? null;
+  if (!reach) errors.push(`an unreachable tool drag never read "Out of reach" (last readout ${JSON.stringify(texts.at(-1))})`);
+  else if (!/Out of reach\s*\d+\.\d mm/.test(reach)) errors.push(`the "Out of reach" readout is not "<n.n> mm" (${JSON.stringify(reach)})`);
+  if (await page.evaluate(() => window.__pfRuntime.pose.__dragReadout())) errors.push("the live readout stayed up after the unreachable tool drag ended");
+  return { reach };
 }
 
 /** The reference drag, then a ring of the tool's aim gizmo (pitch, else the first ring). */
@@ -468,9 +518,11 @@ async function checkRobotArm(page, url, errors) {
   else if (!aimParam || !added[0].changed?.includes(aimParam)) errors.push(`the ${name} ring drag committed ${JSON.stringify(added[0].changed)}, not ${aimParam}`);
   const joint = await checkJointRing(page, box, { limb: "arm", joint: "elbow", param: "elbow", alsoMoves: ["toolX", "toolY", "toolZ"] }, errors);
   const pin = await checkJointPin(page, box, errors);
+  const midJoint = await checkMidJointGrab(page, box, errors);
   const floor = await checkRealisticFloor(page, box, errors);
   const collisions = await checkArmCollisions(page, box, errors);
-  return { ...summary, ring: name, ringCommit: added[0]?.changed ?? null, ringValue: aimParam ? added[0]?.params?.[aimParam] : null, joint, pin, floor, collisions };
+  const outOfReach = await checkOutOfReach(page, box, errors);
+  return { ...summary, ring: name, ringCommit: added[0]?.changed ?? null, ringValue: aimParam ? added[0]?.params?.[aimParam] : null, joint, pin, midJoint, floor, collisions, outOfReach };
 }
 
 /**
@@ -530,7 +582,7 @@ async function checkRealisticFloor(page, box, errors) {
 }
 
 /**
- * Pin the arm's elbow by clicking its dot (a goal handle's ring-only joint): one pin, a
+ * Pin the arm's elbow by clicking its dot (a goal handle's mid-joint grab): one pin, a
  * badge at the elbow, no commit. Then drag the tool: the elbow holds (within 0.5 mm), the
  * tool moves, one commit. A second click unpins.
  */
@@ -544,7 +596,7 @@ async function checkJointPin(page, box, errors) {
   await page.mouse.move(d.x, d.y, { steps: 3 });
   await sleep(50);
   const cursor = await canvasCursor(page);
-  if (cursor !== "pointer") errors.push(`hovering the elbow dot shows cursor "${cursor}", not "pointer"`);
+  if (cursor !== "grab") errors.push(`hovering the elbow dot shows cursor "${cursor}", not "grab" (a mid-joint grab; a click still pins)`);
   const commits0 = await page.evaluate(() => window.__pfCommits.length);
   await page.mouse.down();
   await page.mouse.up();
@@ -594,6 +646,58 @@ async function checkJointPin(page, box, errors) {
   const left = await page.evaluate(() => window.__pfRuntime.pose.pinCount());
   if (left !== 0) errors.push(`clicking the pinned elbow again left pinCount ${left}`);
   return { elbowHeldMm: Number(Math.max(off(mid), off(after.elbow)).toFixed(3)), toolMovedPx: Number(toolMoved.toFixed(1)) };
+}
+
+/**
+ * A goal limb grabbed by a middle joint (spec 2026-11-02 goal 2): press the elbow dot and
+ * drag across the upper arm's on-screen line (the way the elbow can swing). The elbow
+ * follows the pointer (it ends nearer it than it started), the tool rides along, the
+ * commit writes seed joints, and no `generate` job posts during the drag.
+ */
+async function checkMidJointGrab(page, box, errors) {
+  const at = (p) => ({ x: box.x + p.x, y: box.y + p.y });
+  const dotOf = async (joint) => (await page.evaluate(() => window.__pfRuntime.pose.__jointRings())).find((p) => p.limb === "arm" && p.joint === joint);
+  const elbow0 = await dotOf("elbow"), shoulder = await dotOf("shoulder");
+  if (!elbow0 || !shoulder) { errors.push("no elbow / shoulder dot for the mid-joint grab"); return null; }
+  const d = at(elbow0);
+  await page.mouse.move(d.x + 18, d.y, { steps: 3 });
+  await page.mouse.move(d.x, d.y, { steps: 3 });
+  await sleep(50);
+  const cursor = await canvasCursor(page);
+  if (cursor !== "grab") errors.push(`hovering the elbow dot shows cursor "${cursor}", not "grab"`);
+  // across the upper arm: perpendicular to shoulder -> elbow on screen, 50 px
+  const ux = elbow0.x - shoulder.x, uy = elbow0.y - shoulder.y, ul = Math.hypot(ux, uy) || 1;
+  const travel = { x: (-uy / ul) * 50, y: (ux / ul) * 50 };
+  const end = { x: d.x + travel.x, y: d.y + travel.y };
+  const tool0 = await page.evaluate(() => window.__pfRuntime.pose.handlePoints().find((p) => p.handleId === "tool") ?? null);
+  const before = await page.evaluate(() => ({ ...window.__pfPart?.defaults, ...window.__pfCommits.at(-1)?.params }));
+  const commits0 = await page.evaluate(() => window.__pfCommits.length);
+  const t0 = await page.evaluate(() => performance.now());
+  await page.mouse.down();
+  for (let i = 1; i <= 12; i++) {
+    await page.mouse.move(d.x + (travel.x * i) / 12, d.y + (travel.y * i) / 12);
+    await sleep(20);
+  }
+  const grabbing = await canvasCursor(page);
+  await sleep(80);
+  const during = generates(await page.evaluate(() => window.__pfWorkerLog), t0);
+  await page.mouse.up();
+  await sleep(600);
+  if (grabbing !== "grabbing") errors.push(`dragging the elbow shows cursor "${grabbing}", not "grabbing"`);
+  if (during.length) errors.push(`${during.length} generate job(s) posted during the elbow drag`);
+  const elbow1 = await dotOf("elbow");
+  const tool1 = await page.evaluate(() => window.__pfRuntime.pose.handlePoints().find((p) => p.handleId === "tool") ?? null);
+  const gap0 = Math.hypot(d.x - end.x, d.y - end.y);
+  const gap1 = elbow1 ? Math.hypot(box.x + elbow1.x - end.x, box.y + elbow1.y - end.y) : Infinity;
+  if (!(gap1 < gap0 - 15)) errors.push(`the elbow drag left the elbow ${gap1.toFixed(1)} px from the pointer (started ${gap0.toFixed(1)} px)`);
+  const toolMoved = tool0 && tool1 ? Math.hypot(tool1.x - tool0.x, tool1.y - tool0.y) : 0;
+  if (!(toolMoved > 5)) errors.push(`the elbow drag moved the tool only ${toolMoved.toFixed(1)} px`);
+  const added = (await page.evaluate(() => window.__pfCommits)).slice(commits0);
+  if (added.length !== 1) { errors.push(`${added.length} onParamsCommit calls after the elbow drag, expected exactly 1`); return null; }
+  const seed = await page.evaluate(() => window.__pfPart?.handles?.tool?.seed ?? []);
+  const seedMoved = seed.filter((k) => Math.abs((added[0].params[k] ?? 0) - (before[k] ?? 0)) > 0.05);
+  if (!seedMoved.length) errors.push(`the elbow drag changed no seed joint (committed ${JSON.stringify(added[0].changed)})`);
+  return { elbowGapPx: [Number(gap0.toFixed(1)), Number(gap1.toFixed(1))], toolMovedPx: Number(toolMoved.toFixed(1)), seedMoved };
 }
 
 /**

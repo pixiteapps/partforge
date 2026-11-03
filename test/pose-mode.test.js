@@ -10,7 +10,7 @@ import { GIZMO_PALETTE, ARROW_HALF_LENGTH, ARROW_UNIT_PX } from "../src/framewor
 import { worldPerPx } from "../src/framework/measure/dim3-scene.js";
 import { limbInfo } from "../src/framework/pose/param-solve.js";
 import { aimFromAngles } from "../src/framework/domains/kinematics/goals.js";
-import { dragPlaneNormal } from "../src/framework/pose/pose-geom.js";
+import { dragPlaneNormal, reachMissed, REACH_MIN_MM, REACH_MIN_PX } from "../src/framework/pose/pose-geom.js";
 import hand from "./fixtures/ik-hand-fixture.js";
 
 const W = 400, H = 400;
@@ -138,6 +138,47 @@ describe("createPoseMode", () => {
     expect(t.scene.calls.setActive.at(-1)).toBeNull();
     // the dragged tip moved up the screen, toward the cursor
     expect(t.tipScreen("a").y).toBeLessThan(s.y - 5);
+  });
+
+  it("an angles drag reads out its params at the bottom, then how far it misses when out of reach", () => {
+    const t = setup();
+    t.mode.setEnabled(true);
+    const s = t.tipScreen("a");
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 3; i++) t.fire("pointermove", s.x, s.y - i * 6);
+    const r = t.readouts.at(-1);
+    expect(r.handleId).toBe("a");
+    expect(r.items.map((i) => i.key).slice(0, 3)).toEqual(hand.handles.a.params);
+    expect(t.mode.getReadout()).toEqual(r);
+    // far past the finger's reach: one "Out of reach" item, last, in mm to one place
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x, s.y - 18 - i * 80);
+    const far = t.readouts.at(-1).items;
+    expect(far.map((i) => i.key)).toEqual([...hand.handles.a.params, "reach"]);
+    const reach = far.at(-1);
+    expect(reach).toMatchObject({ key: "reach", label: "Out of reach", unit: "mm" });
+    expect(reach.text).toBe(reach.value.toFixed(1));
+    const act = t.scene.calls.setActive.filter(Boolean).at(-1);
+    expect(act.residual).toBe(reach.value);
+    expect(act.missed).toBe(true); // the scene draws the miss line exactly when the readout says so
+    // every frame: "Out of reach" shows exactly when the scene is told to draw the miss
+    const actives = t.scene.calls.setActive.filter((a) => a?.target);
+    const reads = t.readouts.filter(Boolean);
+    expect(actives.length).toBe(reads.length);
+    actives.forEach((a, i) => expect(reads[i].items.some((x) => x.key === "reach")).toBe(a.missed === true));
+    t.fire("pointerup", s.x, s.y - 338);
+    expect(t.readouts.at(-1)).toBeNull();
+    expect(t.mode.getReadout()).toBeNull();
+  });
+
+  it("Escape mid-drag takes a limb drag's readout away too", () => {
+    const t = setup();
+    const s = t.tipScreen("a");
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 3; i++) t.fire("pointermove", s.x, s.y - i * 6);
+    expect(t.mode.getReadout()).not.toBeNull();
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(t.mode.isDragging()).toBe(false);
+    expect(t.mode.getReadout()).toBeNull();
   });
 
   // Look down finger a from `off` degrees off its base-to-tip line, from the +X side.
@@ -665,7 +706,10 @@ describe("the aim gizmo on a goal handle", () => {
     expect(t.gizmo().state.hovered).toBe("yaw");
     t.fire("pointerdown", p0.x, p0.y);
     for (let i = 1; i <= 4; i++) t.fire("pointermove", p0.x + i * 10, p0.y);
+    // an aim ring reads out that one aim parameter
+    expect(t.readouts.at(-1).items.map((i) => i.key)).toEqual(["gYaw"]);
     t.fire("pointerup", p0.x + 40, p0.y);
+    expect(t.readouts.at(-1)).toBeNull();
     expect(t.params.gYaw).toBeCloseTo(30, 6); // 0.75 degrees per px
     expect(t.log.commit).toEqual([["gYaw"]]);
   });
@@ -679,6 +723,9 @@ describe("the aim gizmo on a goal handle", () => {
     for (let i = 1; i <= 5; i++) t.fire("pointermove", s.x, s.y - i * 6);
     expect(t.gizmo().state.hovered).toBe("ball");
     expect(t.gizmo().state.visible).toBe(true);
+    // the goal's position, then its aim, in the bottom readout (plus a miss, if any)
+    expect(t.readouts.at(-1).items.map((i) => i.key).filter((k) => k !== "reach"))
+      .toEqual(["gx", "gy", "gz", "gPitch", "gYaw", "gRoll"]);
     t.fire("pointerup", s.x, s.y - 30);
     // up the screen is part +Z (the pivot stands Z up). The plane holds the finger's line,
     // base joint to tip, which leans toward the camera (-Y), so the point rises along it
@@ -1027,6 +1074,124 @@ describe("generic handles: rotary and touch", () => {
     expect(t.params.driveAngle).not.toBe(0);
     expect(t.scene.calls.setHover.at(-1)).toEqual([null, null]);
     expect(t.scene.calls.setGuides.at(-1)).toEqual([]);
+  });
+});
+
+describe("reachMissed", () => {
+  it("a miss counts past REACH_MIN_MM and REACH_MIN_PX on screen, whichever is larger", () => {
+    expect(reachMissed(0.3, 0.01)).toBe(false);            // a lag of a fraction of a mm
+    expect(reachMissed(REACH_MIN_MM + 0.1, 0.01)).toBe(true);
+    expect(reachMissed(3, 1)).toBe(false);                  // 3 mm is 3 px zoomed out
+    expect(reachMissed(REACH_MIN_PX + 1, 1)).toBe(true);
+    expect(reachMissed(NaN, 1)).toBe(false);
+    expect(reachMissed(undefined, 1)).toBe(false);
+  });
+
+  it("a drag lagging the pointer by a little shows no miss, in the readout or the scene", () => {
+    const t = setup();
+    t.mode.setEnabled(true);
+    const s = t.tipScreen("a");
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 3; i++) t.fire("pointermove", s.x, s.y - i * 6);
+    for (const a of t.scene.calls.setActive.filter((x) => x?.target)) {
+      if (a.residual <= REACH_MIN_MM) expect(a.missed).toBe(false);
+    }
+    expect(t.readouts.at(-1).items.some((x) => x.key === "reach")).toBe(t.scene.calls.setActive.at(-1).missed === true);
+  });
+});
+
+describe("handle groups", () => {
+  // A vertical axis arrow (`slider`) and a point handle (`knob`) beside its shaft, about
+  // 10 px right of it and 24 px above its centre; `lone` sits far off on its own.
+  const groupPart = (group) => ({
+    parameters: [{ id: "g", title: "G", controls: [
+      { key: "a", min: 0, max: 100, step: 1 }, { key: "b", min: -50, max: 50, step: 1 }, { key: "c", min: 0, max: 100, step: 1 },
+    ] }],
+    defaults: { a: 0, b: 0, c: 0 },
+    derive: () => ({}),
+    parts: {},
+    handles: {
+      slider: { point: (p) => [0, 0, 80 + p.a], params: ["a"], drag: "axis", direction: [0, 0, 1], ...(group ? { group } : {}) },
+      knob: { point: (p) => [8 + p.b, 0, 100], params: ["b"], drag: "point", ...(group ? { group } : {}) },
+      lone: { point: (p) => [-120, 0, 80 + p.c], params: ["c"], drag: "point" },
+    },
+  });
+  const at = (t, part, id) => t.screenOf(part.handles[id].point(t.params));
+
+  it("ungrouped, the arrow's shaft under the pointer wins over a dot beside it (as before)", () => {
+    const part = groupPart(null);
+    const t = setup(part);
+    const s = at(t, part, "slider"), k = at(t, part, "knob");
+    t.fire("pointermove", s.x, k.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:slider", "tip"]);
+  });
+
+  it("grouped, only the handle nearest the pointer (its dot, an arrow's line) shows and can be grabbed", () => {
+    const part = groupPart("controls");
+    const t = setup(part);
+    const s = at(t, part, "slider"), k = at(t, part, "knob");
+    // on the knob's dot, beside the arrow's shaft: the knob, not the shaft
+    t.fire("pointermove", k.x, k.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:knob", "tip"]);
+    // on the arrow's shaft at the knob's height: the arrow's line is nearer than the dot
+    t.fire("pointermove", s.x, k.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:slider", "tip"]);
+    // a press on the knob grabs the knob, and the drag keeps it the whole way, even across
+    // the arrow
+    t.fire("pointermove", k.x, k.y);
+    t.fire("pointerdown", k.x, k.y);
+    for (let i = 1; i <= 6; i++) t.fire("pointermove", k.x - i * 6, k.y + i * 6);
+    expect(t.mode.isDragging()).toBe(true);
+    t.fire("pointerup", k.x - 36, k.y + 36);
+    expect(t.log.commit).toEqual([["b"]]);
+    // a touch on the knob grabs the knob too, never the hidden arrow
+    // (the knob back where it was, beside the shaft)
+    const touch = { pointerType: "touch", pointerId: 2 };
+    t.params.b = 0;
+    t.viewer.tick();
+    t.fire("pointerleave", 0, 0);
+    t.fire("pointerdown", k.x, k.y, touch);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", k.x + i * 8, k.y, touch);
+    t.fire("pointerup", k.x + 32, k.y, touch);
+    expect(t.log.commit).toEqual([["b"], ["b"]]);
+  });
+
+  it("grouped limbs: a knuckle dot under the pointer wins, though another limb's tip is nearer than its own", () => {
+    // both fingers straight, b spread across toward a: b's tip ends nearer a's knuckle
+    // than a's own tip does, and b's bones pass within reach of that knuckle
+    const part = {
+      ...hand,
+      defaults: { ...hand.defaults, aCurl: 0, bCurl: 0, bSpread: -20 },
+      handles: { a: { ...hand.handles.a, group: "fingers" }, b: { ...hand.handles.b, group: "fingers" } },
+    };
+    const t = setup(part);
+    t.mode.setEnabled(true);
+    const d2 = (p, q) => Math.hypot(p.x - q.x, p.y - q.y);
+    const aTip = t.tipScreen("a"), bTip = t.tipScreen("b");
+    // finger a's middle knuckle sits nearer finger b's tip than a's own: the grab-point
+    // rule hid finger a there, knuckle dot and all
+    const s = t.pointScreen("a", "pip");
+    expect(d2(s, bTip)).toBeLessThan(d2(s, aTip));
+    t.fire("pointermove", s.x, s.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["a", "pip"]);
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x - i * 5, s.y);
+    expect(t.mode.isDragging()).toBe(true);
+    t.fire("pointerup", s.x - 20, s.y);
+    expect(t.log.commit).toHaveLength(1);
+    for (const k of t.log.commit[0]) expect(hand.handles.a.params).toContain(k);
+    // and on finger b's tip, b shows
+    t.fire("pointermove", bTip.x, bTip.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["b", "tip"]);
+  });
+
+  it("the resting cue shows one mark per group, its first-declared handle", () => {
+    const part = groupPart("controls");
+    const t = setup(part, { now: () => 1000, hoverNone: () => false });
+    t.viewer.tick();
+    const c = t.scene.calls.setCue.at(-1);
+    expect(c.arrows).toEqual([{ point: [0, 0, 80], direction: [0, 0, 1] }]); // slider, declared first
+    expect(c.points).toEqual([[-120, 0, 80]]); // lone; the knob is the group's, not cued
   });
 });
 

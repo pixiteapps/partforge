@@ -4,9 +4,10 @@
 // declaration, `defaults` and the resolved `d`, and never throws on a malformed one.
 import { err, warn } from "./finding.js";
 import { resolveDerived } from "../derive.js";
-import { rangesOf } from "../pose/param-solve.js";
+import { rangesOf, jointBounds } from "../pose/param-solve.js";
 import { locateHandle, sourceInfo, resolveGeom, handleAxis } from "../pose/handle-source.js";
 import { handlesShownInView } from "../pose/handle-views.js";
+import { groupOf } from "../pose/handle-groups.js";
 
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 const handleEntries = (part) => (isPlainObject(part?.handles) ? Object.entries(part.handles).filter(([, h]) => isPlainObject(h)) : []);
@@ -25,7 +26,7 @@ const NUDGE_MM = 0.01;
 const NUDGE_DEG = 0.1;
 /** Where handle-inert samples each listed param, as fractions of its range. */
 const INERT_SAMPLES = [0, 0.25, 0.5, 0.75, 1];
-/** More handles than this in one view, none behind a `showOn`, is handle-crowded. */
+/** More handles than this in one view, none behind a `showOn` (a group counting once), is handle-crowded. */
 const CROWDED_MAX = 5;
 
 // The parameter names a handle lists, each with the path it was found at.
@@ -79,6 +80,7 @@ function jointEntryProblem(entry, joint) {
   return 'is a hinge: map it to a parameter name, or { param, scale? }';
 }
 
+const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const isDirection = (v) => Array.isArray(v) && v.length === 3 && v.every((c) => typeof c === "number" && Number.isFinite(c)) && v.some((c) => c !== 0);
 const isLimb = (d, key) => typeof d?.[key]?.ikInfo === "function";
 
@@ -275,6 +277,34 @@ export const HANDLE_RULES = [
           if (problem) {
             out.push(err("handle-unknown-joint", `handle "${name}" maps joints ${JSON.stringify(key)}, which ${problem}`,
               "A hinge maps to the parameter that drives it in degrees (\"<param>\", or { param, scale } when the joint turns scale × param); a ball to { bend?, spread?, twist? }.", `${base}.${key}`));
+          }
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: "handle-joint-range",
+    run: ({ part }) => {
+      // An angles handle's joint is driven by a slider that reaches past the joint's own
+      // range: the drag stops at the joint, but the slider moves where it cannot follow.
+      const out = [];
+      const defaults = isPlainObject(part?.defaults) ? part.defaults : {};
+      const ranges = rangesOf(part);
+      for (const [name, h] of limbHandleEntries(part)) {
+        if (h.drag !== "angles" || !isPlainObject(h.joints)) continue;
+        const entries = Object.entries(h.joints);
+        for (const [key, entry] of entries) {
+          // one entry at a time, so the finding names its key
+          const bounds = jointBounds(part, defaults, { ...h, joints: { [key]: entry } });
+          for (const [param, b] of bounds) {
+            const r = ranges.get(param);
+            if (!r || r.wrap) continue;
+            const past = (isNum(r.min) && r.min < b.min - 1e-9) || (isNum(r.max) && r.max > b.max + 1e-9);
+            if (!past) continue;
+            const fmt = (v) => (Number.isFinite(v) ? String(Math.round(v * 1e6) / 1e6) : "unbounded");
+            out.push(warn("handle-joint-range", `handle "${name}" maps joint ${JSON.stringify(key)} to "${param}", whose slider (${fmt(r.min)} to ${fmt(r.max)}) goes where the joint cannot follow (${fmt(b.min)} to ${fmt(b.max)})`,
+              `Set "${param}"'s \`min\`/\`max\` to the joint's range${b.min === -b.max ? "" : ` (${fmt(b.min)} to ${fmt(b.max)} after the \`scale\`)`}, so the slider and the drag stop in the same place.`, `handles.${name}.joints.${key}`));
           }
         }
       }
@@ -487,17 +517,41 @@ export const HANDLE_RULES = [
     },
   },
   {
+    id: "handle-bad-group",
+    run: ({ part }) => {
+      const out = [];
+      for (const [name, h] of handleEntries(part)) {
+        if (h.group === undefined || groupOf(h) != null) continue;
+        out.push(err("handle-bad-group", `handle "${name}" has group ${JSON.stringify(h.group) ?? String(h.group)}`,
+          "`group` names the handles that show one at a time: a non-empty string shared by each of them.", `handles.${name}.group`));
+      }
+      return out;
+    },
+  },
+  {
     id: "handle-crowded",
     run: ({ part }) => {
-      const loose = handleEntries(part).filter(([, h]) => h.showOn == null).map(([name]) => name);
-      if (loose.length <= CROWDED_MAX) return [];
+      const entries = handleEntries(part);
+      const loose = entries.filter(([, h]) => h.showOn == null).map(([name]) => name);
+      // a group shows one handle at a time: it counts once
+      const countOf = (ids) => {
+        const groups = new Set();
+        let n = 0;
+        for (const id of ids) {
+          const g = groupOf(part.handles[id]);
+          if (g == null) n++;
+          else if (!groups.has(g)) { groups.add(g); n++; }
+        }
+        return n;
+      };
+      if (countOf(loose) <= CROWDED_MAX) return [];
       const views = isPlainObject(part?.views) ? Object.keys(part.views) : [];
       const out = [];
       for (const view of views.length ? views : [null]) {
-        const shown = view == null ? loose : handlesInView(part, view, loose);
-        if (shown.length <= CROWDED_MAX) continue;
-        out.push(warn("handle-crowded", `${shown.length} handles show in ${view == null ? "the part" : `view ${JSON.stringify(view)}`} without a \`showOn\` (more than ${CROWDED_MAX})`,
-          "Too many dots crowd the model and hide each other. Give the handles a `showOn` (the sub-part whose hover reveals them), keep only the ones a person would reach for, or split them across views.", "handles"));
+        const count = countOf(view == null ? loose : handlesInView(part, view, loose));
+        if (count <= CROWDED_MAX) continue;
+        out.push(warn("handle-crowded", `${count} handles show in ${view == null ? "the part" : `view ${JSON.stringify(view)}`} without a \`showOn\` (more than ${CROWDED_MAX})`,
+          "Too many dots crowd the model and hide each other. Give the handles a `showOn` (the sub-part whose hover reveals them), put many of one kind in a `group` (one shows at a time, and a group counts once), keep only the ones a person would reach for, or split them across views.", "handles"));
       }
       return out;
     },

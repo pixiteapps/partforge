@@ -8,6 +8,7 @@
 import { resolveParams } from "../part-model.js";
 import { handleKind, handleAxis, locateHandle } from "../pose/handle-source.js";
 import { handlesShownInView } from "../pose/handle-views.js";
+import { groupOf } from "../pose/handle-groups.js";
 
 const round = (v) => Math.round(v * 1000) / 1000 + 0; // + 0 turns -0 into 0
 const roundVec = (v) => v.map(round);
@@ -46,6 +47,8 @@ export function handlesReport(part, view, params = {}) {
       params: reportParams(handle),
       locked: typeof handle.lock === "string" && !!p[handle.lock],
     };
+    const group = groupOf(handle);
+    if (group != null) entry.group = group;
     try {
       if (derr) throw derr;
       entry.point = roundVec(locateHandle(part, p, d, handle));

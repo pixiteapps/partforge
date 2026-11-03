@@ -618,7 +618,7 @@ drags, their aim gizmos and joint rings, and how pins act on a limb.
 Give each finger, leg or chain ONE `"angles"` handle (or one `"goal"` handle for an
 arm's tool point), not a `rotary` handle per joint. With it every joint and the tip are
 draggable, the solve moves the chain's joints together, joint rings show limit arcs, and
-no value readouts show. Per-joint `rotary` / `axis` handles on a limb are for a lone
+one readout at the bottom of the stage shows the values the drag moves. Per-joint `rotary` / `axis` handles on a limb are for a lone
 hinge with no chain to solve (lint: `handle-limb-per-joint`). See `src/parts/hand.js`
 and `src/parts/robot-arm.js`.
 
@@ -772,7 +772,7 @@ when they are all off.
 - **Every other press is the usual press.** On empty space or on the model away from the
   handles, a drag orbits and a click picks (the chat box opens as before).
 - **Click any dot (no drag)** to pin that point: a tip, a joint, a goal handle's `at`
-  point (the aim gizmo's ball) or a ring-only joint. Click it again to unpin it. This
+  point (the aim gizmo's ball), a goal limb's middle joint or a ring-only joint. Click it again to unpin it. This
   click does not pick. A drag does not pick when you release it.
   - A pinned point holds its position in space through every inverse-kinematics drag:
     a drag of another point of the same limb, or of another limb's handle (angles mode
@@ -803,9 +803,14 @@ when they are all off.
   joint (forward kinematics): it writes that joint's parameter, clamped to the joint's
   range. The limit arc shows during the drag, and a joint at its stop shows the warning
   colour. Drag the dot itself for the inverse-kinematics drag, as before. A goal handle's
-  joints, and a limb that only a `joints` entry names, have ring-only dots: hover one to
-  show its ring; a drag from it orbits and a click on it pins it (the cursor is a
-  pointer, not a grab). A touch on one puts its rings up and its tap picks nothing. A
+  joint that a seeded joint above it moves (the robot arm's elbow and wrist) is a grab
+  too: drag it and the seeded joints carry THAT joint toward the pointer, the joints
+  below it keep their angles and the tool rides along; the drag writes every seed
+  parameter and the goal at the new tool frame, as a joint ring does, and holds pins on
+  the limb. A goal handle's other joints (the first driven joint, or one on a twist axis
+  above it, like the arm's shoulder over its base), and a limb that only a `joints`
+  entry names, have ring-only dots: hover one to show its ring; a drag from it orbits
+  and a click on it pins it (the cursor is a pointer, not a grab). A touch on one puts its rings up and its tap picks nothing. A
   ring drag does not hold pins. A goal handle's joint stops where its
   goal would leave a goal parameter's range (the tool below its lowest Z, say), with the
   warning colour, rather than letting the solve spread the turn over the other joints.
@@ -843,9 +848,16 @@ when they are all off.
   at 1° a wrist step moved the hand's fingertips up to 0.85 mm.
 - **Escape or a cancel** restores the values from before the drag. A `setParams` from
   the host in the middle of a drag cancels the drag.
+- **The values show at the bottom.** While a limb drag moves, the viewbar's readout pill
+  (the one a generic handle's drag and measure's X/Y/Z use) shows the values it writes,
+  each named by its control's `label` and `unit`: the handle's `readout` params if it sets
+  them, else its `params` (a `"goal"` handle's `position`, then its `aim`). A joint ring
+  shows only its own parameter, an aim ring only that aim angle. The readout goes on
+  release; a limb drag leaves no chip. Pose mode draws no text in the scene.
 - **Out of reach.** The chain stops at the nearest pose it can make. A dashed line runs
-  from the tip to the cursor's point and shows the miss in mm. The chain does not jump
-  to another solution to catch up.
+  from the grabbed point to the cursor's point, ending in a hollow target, and the readout
+  adds a last value, "Out of reach", the miss in mm. The chain does not jump to another
+  solution to catch up.
 - **Straight limbs can jump.** A limb whose elbow can go fully straight has no bend to
   push on there. When the goal comes back into reach, the solver may jump to the bent
   pose in one step. `src/parts/robot-arm.js` stops its elbow 10 degrees short of

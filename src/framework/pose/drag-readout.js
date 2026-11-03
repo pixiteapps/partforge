@@ -1,10 +1,12 @@
-// Pose mode's live drag readout: while a generic handle (`on` / `point`) is dragged, its
+// Pose mode's live drag readout: while any handle is dragged — a generic one (`on` /
+// `point`), or a limb's angles or goal handle (its dot, a joint ring, an aim ring) — its
 // readout values — each named by its control's label and unit, as handle-guides'
-// readoutItems gives them — show in the viewbar's readout slot (viewbar-clear.js's
+// readoutItems gives them, and for a limb drag out of reach an "Out of reach" item in mm —
+// show in the viewbar's readout slot (viewbar-clear.js's
 // createViewbarReadout), the pill measure mode's X/Y/Z parts use: same spot, same look, and
 // the view cube steps up to clear it the same way. It updates every drag frame
-// (pose-mode's onReadout) and goes away when the drag ends; the values chip by the handle
-// (readout-chip.js) takes over from there. Display only: no focus, no pointer.
+// (pose-mode's onReadout) and goes away when the drag ends; for a generic handle the
+// values chip by the handle (readout-chip.js) takes over from there. The scene draws no text. Display only: no focus, no pointer.
 //
 // A sibling of pose-controls.js: DOM chrome only, no three.js; pose-mode owns behaviour.
 // A no-op without a #viewbar (the slot floats off the bar).

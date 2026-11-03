@@ -16,6 +16,7 @@ export {
   samplePreviewAnimation, PREVIEW_SAMPLE_HZ, PREVIEW_SAMPLE_CAP,
   type PreviewAnimationInput, type PreviewAnimationSample, type NormalizedAnimation,
   type NormalizedAnimationStep, type NormalizedAnimationCue,
+  dragHandle, type DragRequest, type DragResult,
 } from "./oracle.js";
 
 // --- kernels ----------------------------------------------------------------
@@ -560,6 +561,8 @@ export interface HandleFacts {
   origin?: [number, number, number];
   /** True while the handle's `lock` parameter is true. */
   locked: boolean;
+  /** The handle's `group`, present only when it sets one. */
+  group?: string;
   /** Short message, present only with `point: null`. */
   error?: string;
 }

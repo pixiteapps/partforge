@@ -111,6 +111,13 @@ export function defaultSolve({ part, params, handle, grab, target, aimAngles, ho
   const kind = handleKind(handle);
   if (kind === "on" || kind === "point") return solveHandle({ part, params, handle, target, holds, allHandles, collide });
   if (handle.drag === "goal") {
+    // grabbed by a middle joint: the seeded joints carry that joint to the target and the
+    // tool rides along, against the guard's rows when there is one (solveGoalPinned starts
+    // its frame). A failed solve holds still — never the goal write below, which would put
+    // the tool on the cursor.
+    if (typeof grab === "string" && grab !== (typeof handle.at === "string" ? handle.at : "tip")) {
+      return solveGoalPinned({ part, params, handle, target, holds, grab, collide });
+    }
     const pinnedHold = holds.some((h) => h.limb === handle.on);
     // a start pose whose derive throws gets no rows: the frame then runs as without a guard
     if (collide) try { collide.beginFrame({ ...part.defaults, ...params }); } catch { collide = null; }

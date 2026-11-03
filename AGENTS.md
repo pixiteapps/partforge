@@ -99,6 +99,7 @@ The CLI (also the agent-facing surface) builds parts in pure Node - no browser:
 ```bash
 npx partforge lint    src/parts/<part>.js          # static checks, no kernel boot; exits non-zero on errors
 npx partforge measure src/parts/<part>.js [view]   # bbox/volume/holes/watertight + verify gate; exits non-zero on failure
+npx partforge measure src/parts/<part>.js [view] --drag <handle> (--to x,y,z | --turn deg)  # play a handle drag (derive only, no kernel)
 npx partforge render  src/parts/<part>.js [view]   # canonical-angle PNGs -> render/
 npx partforge pick-serve                           # request-a-pick: agent asks user to click geometry
 npx partforge ingest   <file> --out <output-file>  # SVG -> partforge-vector JSON, PNG pass-through, font validation - no browser
@@ -720,18 +721,39 @@ the installed package, so let the publish finish before bumping the dep there.
   pose-scene's `setCue` in its capture-hidden group; on `(hover: none)` it stays until the first
   drag). A released drag fires `onDragEnd` (`pose-session`'s `end()` reports `changed`, `moved`,
   `held` - a pin held it only when the last target, re-solved with no holds, would have
-  moved a value). While a generic handle drags, pose-mode's `onReadout` feeds `drag-readout.js`,
+  moved a value). While any handle drags - a generic one, or a limb's dot, joint ring or aim
+  ring - pose-mode's `onReadout` feeds `drag-readout.js`,
   which shows its values in the viewbar's readout slot (`viewbar-clear.js`'s
   `createViewbarReadout`, the `.pf-viewbar-readout` pill measure's X/Y/Z parts also use — the
   view cube clears it through `--pf-viewbar-clear`, and on a narrow stage the transport bar
-  sits at that clearance + 8px); the scene draws no readout label. On release
+  sits at that clearance + 8px). A limb drag reads its handle's `readout`, else its params (a
+  goal's position then aim; handle-guides' `readoutKeys`), a ring only its own parameter, and
+  an out-of-reach drag adds "Out of reach" in mm last; the scene draws no text (the miss is
+  only the hollow target and dashed line). Both show exactly when pose-geom's `reachMissed`
+  says so — a miss past 0.5 mm and 4 px on screen — so a drag lagging the pointer shows neither. On release
   `readout-chip.js` (DOM, attached by mount like `pose-controls.js`) shows a generic
   handle's readout by it for `CHIP_MS` — click to type, written through mount's
   `writeChipValues` (the slider path, one commit; `handle-guides`'s `chipValues` snaps, clamps
   and keeps a wrapped param's turn) — or `PIN_HINT` for `HINT_MS` when a pin held the drag.
   Lint requires `drag` on every handle (`handle-bad-drag`; the runtime still defaults it to
   "point"), `handle-inert` samples each listed param at 0/25/50/75/100% of its range, and
-  `handle-crowded` warns past 5 non-`showOn` handles in a view.
+  `handle-crowded` warns past 5 non-`showOn` handles in a view (a `group` counting once).
+  A handle `group` (`pose/handle-groups.js`, pure) shows one member at a time: of the
+  members that would show under the pointer, only the one nearest it — by the nearest dot
+  or arrow it offers (a limb's knuckles count, not just its tip), else its bones — shows
+  and can be pressed (pose-mode's `groupSkip`); the resting cue marks each group's
+  first-declared shown handle; lint `handle-bad-group`; `measure().handles` carries `group`.
+  An angles drag is bounded by each joint its `joints` map drives (param-solve's
+  `jointBounds`: `range / scale`, a ball's cone) as well as by the slider, so it stops at
+  the joint's limit instead of sticking past it; a slider parked past its joint keeps its
+  value until the solve moves it, and a ball's bend and spread are written scaled onto the
+  cone as the limb poses them (joint limits are cached per handle object, assuming a limb's
+  ranges do not depend on params); lint `handle-joint-range` warns when a
+  slider reaches past its joint. A goal handle's non-follower joints that a driven joint above can move
+  (`goalGrabJoints`) are grabs too: `solveGoalPinned({ grab })` turns the seed joints so
+  that joint follows the pointer and rewrites the goal at the new tool frame.
+  `oracle/drag.js`'s `dragHandle` (`partforge/oracle`; `partforge measure --drag`) plays a
+  drag in Node through the same `defaultSolve`, derive only, and reports what it writes.
   **`src/framework/derive-memo.js`** (`withDeriveMemo`) memoizes `resolveDerived` by
   params content inside a scope (a pose drag frame, a pose overlay refresh, mount's
   `onParamChange`), so one frame derives each distinct params once. It relies on
