@@ -13,6 +13,8 @@ import { placeMatrix } from "./place.js";
 export { placeMatrix };
 import { viewSubParts, resolveParams } from "../part-model.js";
 import { mulMat4, invertRigid } from "../geometry/pose.js";
+import { IDENTITY, cornerTravel } from "./motion.js";
+export { IDENTITY, cornerTravel };
 
 /**
  * placeMatrix for every in-view sub-part at an already-resolved (p, d); never derives.
@@ -103,16 +105,6 @@ const BOUND_PAD_MIN_MM = 1e-6; // still past a still pair's rounding drift (~1e-
 // Past any rounding in a relative placement and its corner motion (mm).
 const BOUND_SLACK_MM = 1e-9;
 
-/** The farthest a corner of `box` moves placed by m1 instead of m0 (both column-major). */
-function cornerTravel(box, m0, m1) {
-  let worst = 0;
-  for (const c of cornersOf(box)) {
-    const p = apply(m0, c), q = apply(m1, c);
-    worst = Math.max(worst, Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]));
-  }
-  return worst;
-}
-
 export function createCollisionWorld({ meshes, decl = null }) {
   const names = [...meshes.keys()];
   const bvhs = new Map();
@@ -121,7 +113,6 @@ export function createCollisionWorld({ meshes, decl = null }) {
     bvhs.set(name, buildBVH(mesh));
     boxes.set(name, boxOf(mesh.positions));
   }
-  const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
   const matOf = (mats, name) => mats.get(name); // undefined = identity, null = excluded
 
   // The pairs distances() would measure, in its order: every live pair (a before b in
@@ -184,6 +175,7 @@ export function createCollisionWorld({ meshes, decl = null }) {
       if (bounded) cands.sort((x, y) => x.gap - y.gap || x.order - y.order);
       const found = [];
       let kth = Infinity; // the limit-th nearest distance so far (bounded only)
+      const nearest = [];
       for (const c of cands) {
         const { a, b } = c;
         let cut = within;
@@ -217,8 +209,12 @@ export function createCollisionWorld({ meshes, decl = null }) {
         }
         found.push({ order: c.order, r: { a, b, distance: r.distance, at: r.at, pointA: r.pointA, pointB: r.pointB, normal } });
         if (bounded) {
-          const ds = found.map((f) => f.r.distance).sort((x, y) => x - y);
-          if (ds.length >= limit) kth = ds[limit - 1];
+          // the `limit` nearest so far, kept sorted: their last is the cutoff
+          let i = nearest.length;
+          while (i > 0 && nearest[i - 1] > r.distance) i--;
+          nearest.splice(i, 0, r.distance);
+          if (nearest.length > limit) nearest.length = limit;
+          if (nearest.length === limit) kth = nearest[limit - 1];
         }
       }
       // nearest first; ties keep pair order, as one stable sort over every pair would

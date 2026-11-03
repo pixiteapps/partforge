@@ -12,8 +12,8 @@
 // and the names that can move. Pure, like the world it reads.
 import { pairKey, CONTACT_EPS } from "./pairs.js";
 import { invertRigid, mulMat4 } from "../geometry/pose.js";
+import { IDENTITY, applyMat, cornerTravel } from "./motion.js";
 
-const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
 export const COLLIDE_BAND_MM = 2;     // rows start this far out, so the solver turns away early
 export const COLLIDE_WEIGHT = 100;    // a row's weight: param-solve.js's HOLD_WEIGHTS scale
@@ -22,11 +22,7 @@ export const MAX_SUBSTEPS = 32;       // settle's sub-steps per frame; a flick p
 export const SETTLE_BISECTIONS = 12;  // 1 mm step → ~0.25 µm of contact
 export const COLLIDE_IN_SOLVE = true; // false: settle alone, no solver rows (the fallback)
 
-const apply = (m, [x, y, z]) => (m ? [
-  m[0] * x + m[4] * y + m[8] * z + m[12],
-  m[1] * x + m[5] * y + m[9] * z + m[13],
-  m[2] * x + m[6] * y + m[10] * z + m[14],
-] : [x, y, z]); // undefined = identity (the mats contract)
+const apply = applyMat; // undefined = identity (the mats contract)
 
 function boxUnder(box, m) {
   const out = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
@@ -35,17 +31,6 @@ function boxUnder(box, m) {
     for (let j = 0; j < 3; j++) { out[j] = Math.min(out[j], q[j]); out[j + 3] = Math.max(out[j + 3], q[j]); }
   }
   return out;
-}
-
-/** The farthest a corner of `box` moves placed by m1 instead of m0 (world.travel's rule). */
-function cornerTravel(box, m0, m1) {
-  if (!box) return Infinity; // no box, no bound
-  let worst = 0;
-  for (const x of [box[0], box[3]]) for (const y of [box[1], box[4]]) for (const z of [box[2], box[5]]) {
-    const p = apply(m0, [x, y, z]), q = apply(m1, [x, y, z]);
-    worst = Math.max(worst, Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]));
-  }
-  return worst;
 }
 
 const boxesOverlap = (a, b) => [0, 1, 2].every((j) => a[j] <= b[j + 3] && b[j] <= a[j + 3]);
@@ -78,7 +63,8 @@ function memoMats(matsAt) {
   return (params, names) => {
     for (const e of memo) if (sameParams(e.params, params)) return e.mats;
     const mats = matsAt(params, names);
-    if (!names) { memo.unshift({ params, mats }); if (memo.length > MATS_MEMO) memo.length = MATS_MEMO; }
+    // the key is a snapshot: a caller that edits its params object later cannot alias it
+    if (!names) { memo.unshift({ params: { ...params }, mats }); if (memo.length > MATS_MEMO) memo.length = MATS_MEMO; }
     return mats;
   };
 }
@@ -202,7 +188,14 @@ export function createDragGuard({ world, matsAt: rawMatsAt, start, moving, clear
   // have been measured at (`pend`: beginFrame's or a linearisation's) and that bound, and
   // reads 0 at every evaluation whose own relative drift keeps the bound past the margin.
   // Only when one does not is it measured — at the pend pose, exactly the query eager
-  // linearisation would have run there — so every row reads bit for bit what it would.
+  // linearisation would have run there.
+  //
+  // This reads the pair's RELATIVE gap, and an eager row does not quite: it keeps its
+  // normal in the shared frame, so when both pieces turn together (a wrist turning a
+  // finger and its neighbour alike) its n·(a − b) shrinks by cos θ though the pieces have
+  // not moved relative to each other, and it can read a spurious push. A lazy row reads 0
+  // there, the true answer. With no pair turning in common, lazy and eager rows read the
+  // same, bit for bit (test/collide-guard-lazy.test.js holds both cases).
   //
   // beginFrame goes lazy too when it can: the rows are the pairs within the window
   // (when there are at most MAX_ROWS of them, every one is a row), found from the bounds

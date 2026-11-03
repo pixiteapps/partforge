@@ -690,6 +690,21 @@ function indexFor(mesh, allowCore) {
 // indexes need nothing. Safe to call twice.
 export function disposeBVHs(bvhs) {
   for (const b of bvhs) b?.dispose?.();
+  releasePosedScratch();
+}
+
+// The posed queries' shared scratch (MOVED*, POSED_STACK) grows to the largest mesh a
+// query has met — 9 + 4 + 4 doubles per triangle and 6 per node, about 140 bytes a
+// triangle — and is otherwise kept between queries. Disposing indexes (disposeBVHs, and so
+// a collision world's dispose) drops any of it past SCRATCH_KEEP_TRIANGLES' worth; the
+// next query grows it again.
+const SCRATCH_KEEP_TRIANGLES = 4096;
+function releasePosedScratch() {
+  if (MOVED.length > 9 * SCRATCH_KEEP_TRIANGLES) {
+    MOVED = new Float64Array(9 * 64); MOVED_PLANE = new Float64Array(4 * 64); MOVED_SPHERE = new Float64Array(4 * 64);
+  }
+  if (MOVED_NODE.length > 6 * 2 * SCRATCH_KEEP_TRIANGLES) MOVED_NODE = new Float64Array(6 * 64);
+  if (POSED_STACK.length > 4096) POSED_STACK = new Uint32Array(256);
 }
 
 export function buildBVH(mesh) {
@@ -1248,7 +1263,12 @@ export function buildBVH(mesh) {
     // knows it allocated, and cannot see a regression that reintroduces per-triangle
     // JS objects (test/bvh.test.js weighs that in a child process). What it does
     // pin, and the child-process bound is too loose to catch, is the index's
-    // COMPOSITION — widening `vertices` to Float64 would show up here.
+    // COMPOSITION — widening `vertices` to Float64 would show up here. Not counted
+    // either: what the first POSED query (collisions) builds on demand and keeps for the
+    // index's life — triangle planes and bounding spheres (8 doubles a triangle), node
+    // slabs (5 doubles a node, about 1.25 a triangle) and the query stamps (one Uint32 a
+    // triangle and a node), about 85 bytes a triangle. An index the oracle alone uses
+    // never builds them.
     bytesAllocated: verts.byteLength + order.byteLength + bounds.byteLength + meta.byteLength,
     // Private to this module: only distanceTo reads them, off the OTHER BVH — a
     // dual traversal walks two trees at once, and JS has no cross-instance private
