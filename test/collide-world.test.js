@@ -65,6 +65,43 @@ describe("collision world", () => {
     for (const within of [0.29, 0.3, 0.31, 0.4]) expect(w.distances(mats, { within })).toEqual(all.filter((r) => r.distance <= within));
     w.dispose();
   });
+  it("a bounds map reused across a walk of poses reads exactly what the plain query reads", () => {
+    // three cubes jiggling near a fourth: relative moves both under and past the bound
+    // pad (0.05 mm), turns included, gaps crossing the cutoffs; one bounds map for the walk
+    const w = createCollisionWorld({ meshes: new Map(["a", "b", "c", "d"].map((n) => [n, cube()])) });
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+    // a cube turned about z through its own centre (5, 5), then moved by (x, y, z)
+    const pose = (deg, x, y, z) => { const t = (deg * Math.PI) / 180, c = Math.cos(t), s = Math.sin(t); return [c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, x + 5 - (5 * c - 5 * s), y + 5 - (5 * s + 5 * c), z, 1]; };
+    // each cube's offset from its base pose wanders (clamped) and turns a few degrees, so
+    // the pairs stay close: touching, a hair apart, or a few tenths
+    const base = { b: [10.6, 0, 0, 0], c: [0, 10.5, 0, 0], d: [10.8, 10.8, 0, 0] }; // x, y, z, deg
+    for (const within of [1e-3, 0.3, 0.45]) {
+      const bounds = new Map();
+      const off = { b: [0, 0, 0, 0], c: [0, 0, 0, 0], d: [0, 0, 0, 0] };
+      let hits = 0, candidates = 0;
+      for (let step = 0; step < 200; step++) {
+        const size = step % 7 === 0 ? 0.4 : step % 3 === 0 ? 0.08 : 0.01; // past the pad, near it, well inside it
+        for (const k of Object.keys(off)) {
+          off[k] = off[k].map((v, i) => { const lim = i === 3 ? 6 : 0.35; return Math.max(-lim, Math.min(lim, v + (i === 3 ? 20 * size : size) * (rnd() - 0.5))); });
+        }
+        const mats = new Map([["a", T(0)], ...Object.entries(base).map(([k, p]) => {
+          const [x, y, z, deg] = p.map((v, i) => v + off[k][i]);
+          return [k, pose(deg, x, y, z)];
+        })]);
+        const got = w.distances(mats, { within, bounds });
+        const want = w.distances(mats, { within });
+        expect(got).toEqual(want);
+        hits += want.length;
+        candidates += w.candidates(mats, { within }).length;
+      }
+      // the walk met pairs whose boxes were within the cutoff (so bounds were kept and read)
+      expect(candidates).toBeGreaterThan(100);
+      expect(bounds.size).toBeGreaterThan(0);
+      if (within > 0.1) expect(hits).toBeGreaterThan(0);
+    }
+    w.dispose();
+  });
   it("null matrix excludes a name", () => {
     const w = createCollisionWorld({ meshes: meshes() });
     const r = w.distances(new Map([["a", T(0)], ["b", null], ["c", T(40)]]));
