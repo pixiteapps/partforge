@@ -528,7 +528,7 @@ function printMeasure(r) {
     console.log(`  handles:`);
     for (const h of r.handles) {
       const at = h.point ? `[${h.point.map((n) => n.toFixed(1)).join(", ")}]` : `unreadable (${h.error})`;
-      console.log(`    ${h.label} (${h.kind}) at ${at} → ${h.params.join(", ")}`);
+      console.log(`    ${h.label} (${h.kind}${h.group ? `, group ${h.group}` : ""}) at ${at} → ${h.params.join(", ")}`);
     }
   }
   if (r.probes) {

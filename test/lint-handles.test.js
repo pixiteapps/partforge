@@ -305,6 +305,34 @@ test("handle-crowded (warning): more than 5 handles in a view without showOn", (
   expect(crowdFindings({ ...six, a6: { ...slide("a6"), showOn: "body" } })).toEqual([]);
 });
 
+test("handle-crowded counts a group once", () => {
+  const slide = (k, over = {}) => ({ point: (p) => [p[k], 0, 0], params: [k], drag: "axis", direction: [1, 0, 0], ...over });
+  const keys = ["a1", "a2", "a3", "a4", "a5", "a6", "a7"];
+  const defaults = Object.fromEntries(keys.map((k) => [k, 1]));
+  const parameters = [{ id: "s", title: "S", controls: keys.map((k) => ({ type: "slider", key: k, min: 0, max: 10, step: 1 })) }];
+  const part = (handles) => ({
+    meta: { title: "T" }, defaults, parameters, handles,
+    parts: { body: { views: ["main"], build: (k, p) => k.box({ size: [1 + keys.reduce((s, x) => s + p[x], 0), 1, 1] }) } },
+    views: { main: { label: "Main" } },
+  });
+  const crowd = (handles) => { const r = lintPart(part(handles)); return [...r.errors, ...r.warnings, ...r.notes].filter((f) => f.rule.startsWith("handle-")); };
+  // seven loose handles crowd; four of them in one group count as one (four in all)
+  expect(rulesOf(crowd(Object.fromEntries(keys.map((k) => [k, slide(k)]))))).toEqual(["handle-crowded"]);
+  const grouped = Object.fromEntries(keys.map((k, i) => [k, slide(k, i < 4 ? { group: "pulls" } : {})]));
+  expect(crowd(grouped)).toEqual([]);
+});
+
+test("handle-bad-group: a group that is not a non-empty string is an error", () => {
+  const ok = { point: (p) => [p.x, 0, 0], params: ["x"], drag: "point" };
+  expect(handleFindings({ a: { ...ok, group: "pulls" } })).toEqual([]);
+  for (const group of ["", 3, ["pulls"], null]) {
+    const fs = handleFindings({ a: { ...ok, group } });
+    expect(rulesOf(fs)).toEqual(["handle-bad-group"]);
+    expect(fs[0].severity).toBe("error");
+    expect(fs[0].path).toBe("handles.a.group");
+  }
+});
+
 test("handle-bad-drag: every handle sets a drag (the runtime default stays \"point\")", () => {
   const fs = genFindings({ a: { point: (p) => [p.w, p.r, 0], params: ["w"] } });
   expect(rulesOf(fs)).toEqual(["handle-bad-drag"]);

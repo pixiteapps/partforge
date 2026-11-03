@@ -64,6 +64,11 @@
 // gizmo-pick.js's pickGizmoHandle, its centre as the dot's): a press anywhere on it starts
 // the axis drag. Its proxy is ARROW_HIT_PX thick for a mouse, TOUCH_HIT_PX for a finger.
 //
+// HANDLE GROUPS (`group`, handle-groups.js): of a group's handles that would show under the
+// pointer, only the one whose grab point is nearest it shows and can be pressed — the rest
+// are passed over by every hover and grab test (groupSkip), dots and arrows alike. A press
+// keeps its handle until release; the resting cue marks one handle per group.
+//
 // THE RESTING CUE: handles show only on hover, so a first look finds none. The first frame
 // posing is live with the part on screen (a build delivered, no cached preview) shows every
 // shown handle's dot (an axis handle's arrow) dimmed (CUE_OPACITY) for CUE_HOLD_MS, then fades it out over
@@ -93,6 +98,7 @@ import { planeGuide, rotaryGuide, sweepPath, pathKey, pathParam, readoutText, re
 import { resolveParams } from "../part-model.js";
 import { aimTurn } from "../solve/aim.js";
 import { withDeriveMemo } from "../derive-memo.js";
+import { groupOf, groupHidden, cueHandleIds } from "./handle-groups.js";
 
 /** A dot's hit radius, CSS px: a 28 px target around a 12 px dot. */
 export const HANDLE_HIT_PX = 14;
@@ -252,6 +258,7 @@ export function createPoseMode(viewer, {
   const hoverListeners = new Set();
   // generic handles
   const showOnAny = Object.values(handles).some((h) => isGeneric(h) && h.showOn != null);
+  const groupsAny = Object.values(handles).some((h) => groupOf(h) != null);
   let lastPt = null;       // the mouse's last canvas point (showOn re-reads the hover per frame)
   let lastSub = null;      // hoveredSubPart() as the last hover read it
   let guideScale = null;   // mm per px the shown guides were drawn at (null: none shown)
@@ -612,8 +619,15 @@ export function createPoseMode(viewer, {
     if (screenCache) return screenCache;
     const limbs = new Map();
     const dots = [];
+    const grabs = []; // a grouped handle's grab point on screen (groupSkip)
     for (const entry of shown) {
       const { handleId, info } = entry;
+      const group = groupsAny && !entry.extra ? groupOf(entry.handle) : null;
+      if (group != null) {
+        const p = grabPoint(entry);
+        const g = p ? toScreen(p) : null;
+        grabs.push({ entry, group, x: g && g.visible !== false ? g.x : NaN, y: g && g.visible !== false ? g.y : NaN });
+      }
       // an axis handle's arrow: [centre, one tip, the other] (the tip to tip segment is
       // what NEAR_LIMB_PX measures to; the centre stays first, showOnAt's anchor)
       const arrow = entry.generic ? arrowScreen(info) : null;
@@ -627,32 +641,74 @@ export function createPoseMode(viewer, {
         dots.push(arrow ? { x: s.x, y: s.y, hit, arrow } : { x: s.x, y: s.y, hit });
       }
     }
-    screenCache = { limbs, dots };
+    screenCache = { limbs, dots, grabs };
     return screenCache;
   }
+  /** A shown handle's grab point (part coordinates): a goal handle's `at`, else its tip; null if none. */
+  function grabPoint({ handle, info, generic }) {
+    const p = info.points[generic ? "tip" : handle.drag === "goal" ? goalAt(handle) : "tip"];
+    return Array.isArray(p) ? p : null;
+  }
+  /** How far (px) the canvas point is from a limb's projected bones (`pts`, screen().limbs). */
+  function bonesDistance(pts, x, y) {
+    let best = Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[i + 1] ?? null;
+      if (!a) continue;
+      best = Math.min(best, b ? segDist(x, y, a, b) : Math.hypot(x - a.x, y - a.y));
+    }
+    return best;
+  }
+  const showsOn = (handle, sub) => {
+    const on = handle?.showOn;
+    return sub != null && (on === sub || (Array.isArray(on) && on.includes(sub)));
+  };
+  /**
+   * Handle groups (handle-groups.js): the limb names hover and grabs must pass over at the
+   * canvas point — of the grouped handles that would show there (bones within NEAR_LIMB_PX,
+   * a dot or arrow within `radius`, a `showOn` sub-part hovered), all but the one whose grab
+   * point is nearest. A limb name is skipped only when every handle on it is. Null: none.
+   */
+  function groupSkip(x, y, radius) {
+    if (!groupsAny) return null;
+    const { limbs, dots, grabs } = screen();
+    if (grabs.length < 2) return null;
+    const sub = showOnAny ? hoveredSubPart() : null;
+    const touch = radius >= TOUCH_HIT_PX;
+    const near = (entry) => {
+      const name = entry.info.name;
+      const pts = limbs.get(name);
+      if (pts && bonesDistance(pts, x, y) <= NEAR_LIMB_PX) return true;
+      if (entry.generic && showsOn(entry.handle, sub)) return true;
+      return dots.some((d) => d.hit.limb === name && d.hit.handleId === entry.handleId
+        && (d.arrow ? arrowPicks(d, x, y, touch) : Math.hypot(d.x - x, d.y - y) <= radius));
+    };
+    const cands = grabs.filter((g) => near(g.entry)).map((g) => ({ id: g.entry.handleId, group: g.group, x: g.x, y: g.y }));
+    const hidden = groupHidden(cands, { x, y });
+    if (!hidden.size) return null;
+    const kept = new Set(shown.filter((e) => !hidden.has(e.handleId)).map((e) => e.info.name));
+    const skip = new Set(shown.filter((e) => hidden.has(e.handleId) && !kept.has(e.info.name)).map((e) => e.info.name));
+    return skip.size ? skip : null;
+  }
 
-  /** The limb whose projected bones run nearest (x, y), within NEAR_LIMB_PX, else null. */
-  function nearestLimb(x, y) {
+  /** The limb whose projected bones run nearest (x, y), within NEAR_LIMB_PX, else null (`skip`: limb names to pass over). */
+  function nearestLimb(x, y, skip = null) {
     let best = null, bestD = NEAR_LIMB_PX;
     for (const [name, pts] of screen().limbs) {
-      for (let i = 0; i < pts.length; i++) {
-        const a = pts[i], b = pts[i + 1] ?? null;
-        if (!a) continue;
-        const d = b ? segDist(x, y, a, b) : Math.hypot(x - a.x, y - a.y);
-        if (d <= bestD) { bestD = d; best = name; }
-      }
+      if (skip?.has(name)) continue;
+      const d = bonesDistance(pts, x, y);
+      if (d <= bestD) { bestD = d; best = name; }
     }
-    return best ?? showOnAt(x, y);
+    return best ?? showOnAt(x, y, skip);
   }
   /** The generic handle a `showOn` reveals for the sub-part under the mouse (the nearest, if several), else null. */
-  function showOnAt(x, y) {
+  function showOnAt(x, y, skip = null) {
     if (!showOnAny) return null;
     const sub = hoveredSubPart();
     if (sub == null) return null;
     let best = null, bestD = Infinity;
     for (const e of shown) {
-      const on = e.generic ? e.handle.showOn : null;
-      if (!(on === sub || (Array.isArray(on) && on.includes(sub)))) continue;
+      if (!e.generic || !showsOn(e.handle, sub) || skip?.has(e.info.name)) continue;
       const s = screen().limbs.get(e.info.name)?.[0];
       const d = s ? Math.hypot(x - s.x, y - s.y) : Infinity;
       if (!best || d < bestD) { bestD = d; best = e.info.name; }
@@ -664,9 +720,10 @@ export function createPoseMode(viewer, {
    * The dot nearest (x, y) within `radius`, among `limb`'s dots (null: every limb's). An
    * axis handle's dot is its arrow: picked by its hit proxy (arrowPicks), a finger's
    * (`radius` TOUCH_HIT_PX or more) fatter, and its distance is to the arrow's line.
+   * `skip`: limb names to pass over (a handle group's hidden members, groupSkip).
    */
-  function dotAt(x, y, limb, radius) {
-    const all = screen().dots.filter((d) => limb === null || d.hit.limb === limb);
+  function dotAt(x, y, limb, radius, skip = null) {
+    const all = screen().dots.filter((d) => (limb === null || d.hit.limb === limb) && !skip?.has(d.hit.limb));
     const cands = all.filter((d) => !d.arrow).map((d, id) => ({ id, x: d.x, y: d.y, hit: d.hit }));
     const id = hitHandle(cands, x, y, radius);
     let best = id === null ? null : { hit: cands[id].hit, dist: Math.hypot(cands[id].x - x, cands[id].y - y) };
@@ -829,8 +886,10 @@ export function createPoseMode(viewer, {
     // (a zoomed-out hand), another finger's bones can pass nearer a dot than its own
     // limb's do at a pixel's tie, and restricting the dot to the bone-nearest limb left a
     // dot that hovering its own centre never reached (the index mcp gave the middle's).
-    let dotHit = dotAt(x, y, null, HANDLE_HIT_PX);
-    const limb = dotHit?.limb ?? nearestLimb(x, y);
+    // a handle group shows only its member nearest the pointer: the rest are passed over
+    const skip = groupSkip(x, y, HANDLE_HIT_PX);
+    let dotHit = dotAt(x, y, null, HANDLE_HIT_PX, skip);
+    const limb = dotHit?.limb ?? nearestLimb(x, y, skip);
     const jt = jointTarget(focus);
     const onJoint = onAim ? null : jointRingHit(jt, pt);
     const onRing = onAim ?? onJoint;
@@ -882,14 +941,17 @@ export function createPoseMode(viewer, {
   // ---- the resting cue --------------------------------------------------------
   /**
    * Every shown handle's grab point (part coordinates), as handlePoints lists them:
-   * `{ points, arrows }` — an axis handle's as `{ point, direction }` (its arrow).
+   * `{ points, arrows }` — an axis handle's as `{ point, direction }` (its arrow). A handle
+   * group gets one mark: its first-declared handle the view shows (cueHandleIds).
    */
   function cueMarks() {
     const points = [], arrows = [];
-    for (const { handle, info, extra, generic } of shown) {
-      if (extra) continue;
-      const p = info.points[generic ? "tip" : handle.drag === "goal" ? goalAt(handle) : "tip"];
-      if (!Array.isArray(p)) continue;
+    const cued = groupsAny ? cueHandleIds(handles, shown.filter((e) => !e.extra).map((e) => e.handleId)) : null;
+    for (const entry of shown) {
+      const { info, extra, generic } = entry;
+      if (extra || (cued && !cued.has(entry.handleId))) continue;
+      const p = grabPoint(entry);
+      if (!p) continue;
       const direction = generic ? arrowDir(info) : null;
       if (direction) arrows.push({ point: p, direction });
       else points.push(p);
@@ -1187,7 +1249,7 @@ export function createPoseMode(viewer, {
       // No hover came before: the gizmo a touch left up, else any limb's dot within the
       // finger's reach (an aim handle's goal point counts as its ball).
       const tf = touchFocus;
-      const dotHit = dotAt(x, y, null, TOUCH_HIT_PX);
+      const dotHit = dotAt(x, y, null, TOUCH_HIT_PX, groupSkip(x, y, TOUCH_HIT_PX));
       // the up gizmo's own dot, on its core, beats a ring seen edge-on through it (a pin tap)
       const onCore = dotHit && tf && ownDot(tf, dotHit) && onDotCore(dotHit, x, y);
       hit = (onCore ? null : tf?.kind === "aim" ? gizmoHit(gizmoTarget(tf.limb), pt, true) : jointRingHit(jointTarget(tf), pt, true))

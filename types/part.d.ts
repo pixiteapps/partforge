@@ -937,6 +937,8 @@ export interface HandleCommon {
   label?: string;
   /** Sub-part name(s) whose hover reveals the handle. */
   showOn?: string | string[];
+  /** Handles sharing a group show one at a time: the one whose grab point is nearest the pointer. */
+  group?: string;
   /**
    * The views the handle shows in (keys of `views`). Default: every view that reads one of
    * its parameters and draws its source (a sub-part there reads the `d` value it sits on).

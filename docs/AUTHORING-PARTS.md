@@ -3356,6 +3356,8 @@ Optional, on every handle:
 - **`readout`**: the params the drag readout shows (default: `params`).
 - **`lock`**: a parameter name. While it is true, this handle's params are frozen in a
   drag of any handle.
+- **`group`**: a name (a non-empty string; lint: `handle-bad-group`) shared by handles
+  that show one at a time. See "Handle groups" below.
 
 ### How it moves: `drag`
 
@@ -3517,7 +3519,26 @@ a limb (`"goal"` / `"angles"`) shows no chip.
 
 Offer few handles, and use `showOn` so each appears where the user is already looking.
 Ten dots on screen at once is a failure of the part, not of the user: lint warns
-(`handle-crowded`) when more than 5 handles show in one view without a `showOn`.
+(`handle-crowded`) when more than 5 handles show in one view without a `showOn`, a
+group counting once.
+
+### Handle groups
+
+Give handles the same `group` when a part has many of one kind close together — one per
+gear, per drawer pull, per peg on a pegboard — so their dots would crowd each other. Where
+more than one of a group would show under the pointer, only the one whose grab point is
+nearest the pointer shows its dot (or arrow) and can be pressed; the others come back as
+the pointer moves nearer them. A drag keeps its handle until release. The resting cue shows
+one mark per group, on its first-declared handle that the view shows. Handles with no
+`group` are not affected. A handle that already has its own `showOn` sub-part rarely needs
+a group: its hover already picks it out.
+
+```js
+handles: {
+  peg1: { point: (p) => [p.peg1X, 0, 10], params: ["peg1X"], drag: "axis", direction: [1, 0, 0], group: "pegs" },
+  peg2: { point: (p) => [p.peg2X, 0, 10], params: ["peg2X"], drag: "axis", direction: [1, 0, 0], group: "pegs" },
+},
+```
 
 ### Pins
 
@@ -3568,7 +3589,8 @@ Lint checks each handle at the defaults by calling `derive` (rule catalog, "Hand
 `handle-no-source`, `handle-unknown-source` (`on` is not a point source, `at` is not one
 of its points, or a `"goal"` / `"angles"` `on` is not a posed limb), `handle-bad-drag`
 (no `drag`, or an unknown one; `"goal"` / `"angles"` on a `point`; an axis, plane or rotary
-handle with no usable direction, normal or axis), `handle-point-throws`,
+handle with no usable direction, normal or axis), `handle-bad-group` (a `group` that is
+not a non-empty string), `handle-point-throws`,
 `handle-unknown-param`, `handle-unknown-view` (a `views` entry that is not a key of
 `views`), the limb rules `handle-param-count`, `handle-aim-toward` and
 `handle-unknown-joint` (all errors), and the warnings `handle-inert`, `handle-axis-moves`
@@ -3576,7 +3598,7 @@ handle with no usable direction, normal or axis), `handle-point-throws`,
 again with each param at 0%, 25%, 50%, 75% and 100% of its range (the others at their
 defaults), and warns where no nudge moves the point 0.01 mm, naming the value: "inert at
 drawerOpen = 0". `handle-crowded` warns when more than 5 handles without a `showOn` show in
-one view (the handles that view shows, by the rule in "When a handle shows"). `wrap-needs-range` errors on
+one view (the handles that view shows, by the rule in "When a handle shows"; a group counts once). `wrap-needs-range` errors on
 `wrap: true` without a finite `min < max`.
 
 `npx partforge measure` prints each handle shown in the view with its label, drag kind,
@@ -3601,6 +3623,7 @@ handles: [
     direction: [0, 0, 1],            // axis: its direction; plane: its normal; rotary: its axis
     origin: [x, y, z],               // rotary only: a point on the axis
     locked: false },                 // true while the handle's `lock` param is true
+                                     // (+ group: "pegs", only when the handle sets one)
 ]
 ```
 
@@ -4465,21 +4488,21 @@ previously didn't; that's the fix working as intended, not a regression.
 **Definition shape** — `missing-meta-title`, `missing-defaults`, `no-buildable-parts`,
 `missing-views`, `part-view-unknown`, `invalid-probes` (all errors); `view-unused`,
 `default-view-ambiguous` (warnings). **Handles** — `handle-no-source`,
-`handle-unknown-source`, `handle-bad-drag`, `handle-unknown-param`, `handle-param-count`,
+`handle-unknown-source`, `handle-bad-drag`, `handle-bad-group`, `handle-unknown-param`, `handle-param-count`,
 `handle-aim-toward`, `handle-unknown-joint`, `handle-point-throws`, `handle-unknown-view` (all errors),
 `handle-inert`, `handle-axis-moves`, `handle-crowded`, `handle-limb-per-joint`, `handle-joint-range` (warnings); `wrap-needs-range` (error): a declared
 `handles` entry with neither or both of `on`/`point`; an `on` that is not a point source
 in `derive`'s result, or an `at` it lacks, or a `"goal"`/`"angles"` handle whose `on` is
 not a posed limb; a handle with no `drag` or an unknown one,
 `"goal"`/`"angles"` on a `point`, or axis/plane/rotary without a usable
-direction/normal/axis; a parameter missing from `defaults` (or not numeric; a `lock` may
+direction/normal/axis; a `group` that is not a non-empty string; a parameter missing from `defaults` (or not numeric; a `lock` may
 also default to a boolean); a wrong number of position/aim parameters, an `aim` without a
 valid rest `toward`, or a joint the limb lacks; a point or axis function that throws at
 the defaults; a `views` list that is empty, not strings, or names a view `views` lacks.
 `handle-inert` warns when nudging each listed param by one step moves the point under
 0.01 mm, at the defaults or with any listed param at 0/25/50/75/100% of its range (it names
 the value); `handle-axis-moves` when a rotary axis shifts (0.01 mm / 0.1 deg) as the handle's
-own params change; `handle-crowded` when more than 5 handles without `showOn` show in one view; `handle-limb-per-joint` when two or more geometric handles sit on one posed limb (use one `"angles"` handle). `invalid-probes` fires when a declared
+own params change; `handle-crowded` when more than 5 handles without `showOn` show in one view (a group counting once); `handle-limb-per-joint` when two or more geometric handles sit on one posed limb (use one `"angles"` handle). `invalid-probes` fires when a declared
 `probes` block isn't an object of functions (see "Probes" above).
 
 **Parameter schema** — `features-requires-sliders`, `features-requires-on`,

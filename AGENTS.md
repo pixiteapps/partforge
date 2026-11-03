@@ -727,7 +727,11 @@ the installed package, so let the publish finish before bumping the dep there.
   and keeps a wrapped param's turn) — or `PIN_HINT` for `HINT_MS` when a pin held the drag.
   Lint requires `drag` on every handle (`handle-bad-drag`; the runtime still defaults it to
   "point"), `handle-inert` samples each listed param at 0/25/50/75/100% of its range, and
-  `handle-crowded` warns past 5 non-`showOn` handles in a view.
+  `handle-crowded` warns past 5 non-`showOn` handles in a view (a `group` counting once).
+  A handle `group` (`pose/handle-groups.js`, pure) shows one member at a time: of the
+  members that would show under the pointer, only the one whose grab point is nearest
+  shows and can be pressed (pose-mode's `groupSkip`); the resting cue marks each group's
+  first-declared shown handle; lint `handle-bad-group`; `measure().handles` carries `group`.
   **`src/framework/derive-memo.js`** (`withDeriveMemo`) memoizes `resolveDerived` by
   params content inside a scope (a pose drag frame, a pose overlay refresh, mount's
   `onParamChange`), so one frame derives each distinct params once. It relies on

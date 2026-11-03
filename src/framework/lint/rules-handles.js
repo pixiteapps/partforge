@@ -7,6 +7,7 @@ import { resolveDerived } from "../derive.js";
 import { rangesOf, jointBounds } from "../pose/param-solve.js";
 import { locateHandle, sourceInfo, resolveGeom, handleAxis } from "../pose/handle-source.js";
 import { handlesShownInView } from "../pose/handle-views.js";
+import { groupOf } from "../pose/handle-groups.js";
 
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 const handleEntries = (part) => (isPlainObject(part?.handles) ? Object.entries(part.handles).filter(([, h]) => isPlainObject(h)) : []);
@@ -25,7 +26,7 @@ const NUDGE_MM = 0.01;
 const NUDGE_DEG = 0.1;
 /** Where handle-inert samples each listed param, as fractions of its range. */
 const INERT_SAMPLES = [0, 0.25, 0.5, 0.75, 1];
-/** More handles than this in one view, none behind a `showOn`, is handle-crowded. */
+/** More handles than this in one view, none behind a `showOn` (a group counting once), is handle-crowded. */
 const CROWDED_MAX = 5;
 
 // The parameter names a handle lists, each with the path it was found at.
@@ -516,17 +517,41 @@ export const HANDLE_RULES = [
     },
   },
   {
+    id: "handle-bad-group",
+    run: ({ part }) => {
+      const out = [];
+      for (const [name, h] of handleEntries(part)) {
+        if (h.group === undefined || groupOf(h) != null) continue;
+        out.push(err("handle-bad-group", `handle "${name}" has group ${JSON.stringify(h.group) ?? String(h.group)}`,
+          "`group` names the handles that show one at a time: a non-empty string shared by each of them.", `handles.${name}.group`));
+      }
+      return out;
+    },
+  },
+  {
     id: "handle-crowded",
     run: ({ part }) => {
-      const loose = handleEntries(part).filter(([, h]) => h.showOn == null).map(([name]) => name);
-      if (loose.length <= CROWDED_MAX) return [];
+      const entries = handleEntries(part);
+      const loose = entries.filter(([, h]) => h.showOn == null).map(([name]) => name);
+      // a group shows one handle at a time: it counts once
+      const countOf = (ids) => {
+        const groups = new Set();
+        let n = 0;
+        for (const id of ids) {
+          const g = groupOf(part.handles[id]);
+          if (g == null) n++;
+          else if (!groups.has(g)) { groups.add(g); n++; }
+        }
+        return n;
+      };
+      if (countOf(loose) <= CROWDED_MAX) return [];
       const views = isPlainObject(part?.views) ? Object.keys(part.views) : [];
       const out = [];
       for (const view of views.length ? views : [null]) {
-        const shown = view == null ? loose : handlesInView(part, view, loose);
-        if (shown.length <= CROWDED_MAX) continue;
-        out.push(warn("handle-crowded", `${shown.length} handles show in ${view == null ? "the part" : `view ${JSON.stringify(view)}`} without a \`showOn\` (more than ${CROWDED_MAX})`,
-          "Too many dots crowd the model and hide each other. Give the handles a `showOn` (the sub-part whose hover reveals them), keep only the ones a person would reach for, or split them across views.", "handles"));
+        const count = countOf(view == null ? loose : handlesInView(part, view, loose));
+        if (count <= CROWDED_MAX) continue;
+        out.push(warn("handle-crowded", `${count} handles show in ${view == null ? "the part" : `view ${JSON.stringify(view)}`} without a \`showOn\` (more than ${CROWDED_MAX})`,
+          "Too many dots crowd the model and hide each other. Give the handles a `showOn` (the sub-part whose hover reveals them), put many of one kind in a `group` (one shows at a time, and a group counts once), keep only the ones a person would reach for, or split them across views.", "handles"));
       }
       return out;
     },

@@ -1030,6 +1030,72 @@ describe("generic handles: rotary and touch", () => {
   });
 });
 
+describe("handle groups", () => {
+  // A vertical axis arrow (`slider`) and a point handle (`knob`) beside its shaft, about
+  // 10 px right of it and 24 px above its centre; `lone` sits far off on its own.
+  const groupPart = (group) => ({
+    parameters: [{ id: "g", title: "G", controls: [
+      { key: "a", min: 0, max: 100, step: 1 }, { key: "b", min: -50, max: 50, step: 1 }, { key: "c", min: 0, max: 100, step: 1 },
+    ] }],
+    defaults: { a: 0, b: 0, c: 0 },
+    derive: () => ({}),
+    parts: {},
+    handles: {
+      slider: { point: (p) => [0, 0, 80 + p.a], params: ["a"], drag: "axis", direction: [0, 0, 1], ...(group ? { group } : {}) },
+      knob: { point: (p) => [8 + p.b, 0, 100], params: ["b"], drag: "point", ...(group ? { group } : {}) },
+      lone: { point: (p) => [-120, 0, 80 + p.c], params: ["c"], drag: "point" },
+    },
+  });
+  const at = (t, part, id) => t.screenOf(part.handles[id].point(t.params));
+
+  it("ungrouped, the arrow's shaft under the pointer wins over a dot beside it (as before)", () => {
+    const part = groupPart(null);
+    const t = setup(part);
+    const s = at(t, part, "slider"), k = at(t, part, "knob");
+    t.fire("pointermove", s.x, k.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:slider", "tip"]);
+  });
+
+  it("grouped, only the handle whose grab point is nearest shows and can be grabbed", () => {
+    const part = groupPart("controls");
+    const t = setup(part);
+    const s = at(t, part, "slider"), k = at(t, part, "knob");
+    // on the arrow's shaft, but the knob's point is nearer than the arrow's centre
+    t.fire("pointermove", s.x, k.y);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:knob", "tip"]);
+    // nearer the arrow's centre, the arrow comes back
+    t.fire("pointermove", s.x, s.y - 4);
+    expect(t.scene.calls.setHover.at(-1)).toEqual(["handle:slider", "tip"]);
+    // a press where the knob is nearest grabs the knob, and the drag keeps it the whole way,
+    // even past the arrow's centre
+    t.fire("pointermove", s.x, k.y);
+    t.fire("pointerdown", s.x, k.y);
+    for (let i = 1; i <= 6; i++) t.fire("pointermove", s.x - i * 6, k.y + i * 6);
+    expect(t.mode.isDragging()).toBe(true);
+    t.fire("pointerup", s.x - 36, k.y + 36);
+    expect(t.log.commit).toEqual([["b"]]);
+    // a touch where the knob is nearest grabs the knob too, never the hidden arrow
+    // (the knob back where it was, beside the shaft)
+    const touch = { pointerType: "touch", pointerId: 2 };
+    t.params.b = 0;
+    t.viewer.tick();
+    t.fire("pointerleave", 0, 0);
+    t.fire("pointerdown", s.x, k.y, touch);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x + i * 8, k.y, touch);
+    t.fire("pointerup", s.x + 32, k.y, touch);
+    expect(t.log.commit).toEqual([["b"], ["b"]]);
+  });
+
+  it("the resting cue shows one mark per group, its first-declared handle", () => {
+    const part = groupPart("controls");
+    const t = setup(part, { now: () => 1000, hoverNone: () => false });
+    t.viewer.tick();
+    const c = t.scene.calls.setCue.at(-1);
+    expect(c.arrows).toEqual([{ point: [0, 0, 80], direction: [0, 0, 1] }]); // slider, declared first
+    expect(c.points).toEqual([[-120, 0, 80]]); // lone; the knob is the group's, not cued
+  });
+});
+
 describe("aimAxes", () => {
   const close = (a, b) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], 9));
   const X = [1, 0, 0];

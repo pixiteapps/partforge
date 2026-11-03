@@ -50,6 +50,13 @@ describe("handles in the measure report", () => {
     expect(tool.direction).toBeUndefined();
   });
 
+  it("an entry carries the handle's group when it sets one, and only then", () => {
+    const part = { ...demo, handles: { a: { point: () => [0, 0, 0], params: ["od"], group: "rims" }, b: { point: () => [1, 0, 0], params: ["od"] } } };
+    const r = handlesReport(part, "spacer", {});
+    expect(r.find((e) => e.id === "a").group).toBe("rims");
+    expect("group" in r.find((e) => e.id === "b")).toBe(false);
+  });
+
   it("skips a null or non-object handles entry instead of throwing", () => {
     const part = { ...demo, handles: { bad: null, num: 3, ok: { point: () => [0, 0, 0], params: ["od"] } } };
     expect(handlesReport(part, "spacer", {}).map((e) => e.id)).toEqual(["ok"]);

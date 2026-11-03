@@ -549,6 +549,8 @@ export interface HandleFacts {
   origin?: [number, number, number];
   /** True while the handle's `lock` parameter is true. */
   locked: boolean;
+  /** The handle's `group`, present only when it sets one. */
+  group?: string;
   /** Short message, present only with `point: null`. */
   error?: string;
 }
