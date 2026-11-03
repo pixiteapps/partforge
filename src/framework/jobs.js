@@ -667,8 +667,11 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // unrecognized value must never quietly buy less checking than the caller
       // asked for.
       const quick = msg.checks === "quick";
-      // The report's deadline counts from here (the inspect's start): the sweeps get
-      // the share change tracking gets, never a budget of their own (spec "Sweeps").
+      // The report's deadline counts from here (the inspect's start). Change tracking
+      // and the sweeps share it, in that order: measure() calls beforeSweeps (below)
+      // before it sweeps, the diffs run there, and the sweeps get only what is left —
+      // never a budget of their own, and never a deadline past the shared one (spec
+      // "Sweeps"). Sweeps first let a sweep-heavy part (the hand) starve the diffs.
       const inspectStart = Date.now();
       const [{ buildView }, { measure }, { verify }, { createChangeTracker, REPORT_SHARE_MS }] = await loadInspect();
       const view = msg.view ?? Object.keys(part.views)[0];
@@ -689,9 +692,16 @@ export async function handle(kernel, part, msg, post, opts = {}) {
         throw e;
       }
       if (tracking) changeTracker.endBuild(built);
+      // Past measure()'s own kernel.cleanup() (beforeSweeps runs after it): finish()
+      // reads only `_hash` strings, shape hashes, placement matrices, and JS-owned
+      // mesh/volume data — measure's per-sub-part volumes — never a live solid.
+      let changeFields = null;
+      const finishChanges = (m) => { changeFields ??= tracking ? changeTracker.finish(kernel, view, built, m) : {}; };
       const measured = measure(kernel, part, view, msg.params ?? {},
         // A quick lap does not sweep (verify withholds a declared sweep gate there).
-        { minWall: !quick, gaps: !quick, sweeps: !quick, deadline: inspectStart + REPORT_SHARE_MS, built, reads, ...(tracking ? { memo: changeTracker.memo } : {}) });
+        { minWall: !quick, gaps: !quick, sweeps: !quick, deadline: inspectStart + REPORT_SHARE_MS, built, reads,
+          beforeSweeps: finishChanges, ...(tracking ? { memo: changeTracker.memo } : {}) });
+      finishChanges(measured); // a no-op once beforeSweeps has run
       const report = {
         measure: measured,
         verify: verify(kernel, part, {
@@ -711,9 +721,6 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // an inspect with no `matchTargets` answers on exactly the shape it always has.
       const match = await scoreMatchTargets(built, msg.matchTargets, onProgress);
       if (match) report.match = match;
-      // Past measure()'s own kernel.cleanup(): finish() reads only `_hash` strings,
-      // shape hashes, placement matrices, and JS-owned mesh/volume data, never a live solid.
-      const changeFields = tracking ? changeTracker.finish(kernel, view, built, measured) : {};
       post({ type: "report", ...report, ...changeFields }, match?.map((m) => m.delta.data.buffer) ?? []);
     } else if (opts.jobs && Object.hasOwn(opts.jobs, msg.type)) {
       await opts.jobs[msg.type](kernel, part, msg, post, { isStale: opts.isStale });

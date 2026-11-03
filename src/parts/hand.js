@@ -217,6 +217,8 @@ function stand(k) {
 // ----- the pieces and the print kit ------------------------------------------------
 
 const DIGITS = ["thumb", ...FINGERS.map((f) => f.id)];
+// The digits `verify.sweeps` declares (see verify below): the others sweep from the CLI.
+const SWEPT_DIGITS = ["index", "thumb"];
 const SEGMENTS = [["Knuckle", "spread"], ["Proximal", "mcp"], ["Middle", "pip"], ["Distal", "dip"]];
 
 // Each digit's pieces, base first: { name, joint, len, w, kind }. A swivel turns on a Z
@@ -386,13 +388,17 @@ export default {
   // The sweeps are REPORTED, never gated (no sweepContacts in expect): a joint may leave
   // its range wide and let collision be its limit, and then a sweep that meets is expected,
   // and its freeRange (the contact-free span around the current value) is the reading that
-  // matters. Each digit's knuckle and curl sweep on their own, the others held at the
-  // defaults; at today's ranges all ten read clear. The whole open → fist path is not
-  // declared: at ~17 s it is a CLI run, not an every-measure check (docs/AUTHORING-PARTS.md
-  // "Collisions and sweeps" has it, `fist: { from: "open", to: "fist", clearance: 0.3 }`).
+  // matters. The index and thumb knuckle and curl sweep on their own, the others held at
+  // the defaults; at today's ranges all four read clear. Only those two digits are declared
+  // so the sweeps fit inside the inspect's report share beside change tracking: the middle,
+  // ring and little fingers sweep the same way from the CLI (add `middleKnuckle: { param:
+  // "middleKnuckle" }` and so on, then `npx partforge measure src/parts/hand.js`). The whole
+  // open → fist path is not declared either: at ~17 s it is a CLI run, not an every-measure
+  // check (docs/AUTHORING-PARTS.md "Collisions and sweeps" has it, `fist: { from: "open",
+  // to: "fist", clearance: 0.3 }`).
   verify: {
     process: "fdm-pla",
-    sweeps: Object.fromEntries(DIGITS.flatMap((id) => [[`${id}Knuckle`, { param: `${id}Knuckle` }], [`${id}Curl`, { param: `${id}Curl` }]])),
+    sweeps: Object.fromEntries(SWEPT_DIGITS.flatMap((id) => [[`${id}Knuckle`, { param: `${id}Knuckle` }], [`${id}Curl`, { param: `${id}Curl` }]])),
     expect: { _view: { overlaps: 0, clearance: Object.fromEntries(JOINT_PAIRS.map((pair) => [pair, ">=0.3"])) } },
   },
   // The agent's read-out: each digit's joint values, clamps and fingertip.

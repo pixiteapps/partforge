@@ -594,6 +594,11 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // sweep. Absent when none is declared, so other reports are unchanged; `[]` in a view
   // where no declared sweep moves anything (a print kit).
   // A row's `ms` is wall time: never compare or hash it.
+  //
+  // `opts.beforeSweeps({ subparts })` runs first, whether or not any sweep is declared:
+  // the inspect job finishes its change tracking there, so the diffs take the shared
+  // report deadline before the sweeps do, and the sweeps get only what is left of it.
+  opts.beforeSweeps?.({ subparts });
   const sweeps = opts.sweeps !== false && part.verify?.sweeps
     ? runSweeps(kernel, part, view, params, { deadline: sweepDeadline, now: sweepNow })
     : undefined;

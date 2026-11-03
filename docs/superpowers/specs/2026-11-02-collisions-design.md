@@ -284,7 +284,9 @@ Sweeps run once per `measure` call that asks for them. `verify` passes
 presets do not re-run every sweep. Their time comes out of the same
 report deadline change tracking uses (`changes.js`'s pattern, counted from the
 inspect's start). They do not get a separate budget, because the cloud's 8 s
-inspect already gives 6 s of its time to change tracking.
+inspect already gives 6 s of its time to change tracking. Change tracking
+finishes first and the sweeps get only what is left of that deadline, so a part
+with heavy sweeps cannot starve the change report.
 
 Step size: each step moves no point of any moving piece more than half the
 clearance-band (bounded from the pieces' bounding boxes and the placement change

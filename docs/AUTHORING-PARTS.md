@@ -3869,7 +3869,10 @@ long for every `measure`, so `hand.js` does not declare it. To run it, add
 `fist: { from: "open", to: "fist", clearance: 0.3 }` to `verify.sweeps` and run
 `npx partforge measure src/parts/hand.js`: it reads `fist CONTACT at 0.78
 indexDistal×thumbDistal driven by indexKnuckle` (the straight-line blend's thumb crossing,
-above).
+above). For the same reason the hand declares only the index and thumb knuckle and curl
+sweeps: the middle, ring and little fingers sweep the same way from the CLI. Add
+`middleKnuckle: { param: "middleKnuckle" }`, `middleCurl: { param: "middleCurl" }` and so
+on to `verify.sweeps` and run the same command.
 
 ### Reading `sweepContacts`
 

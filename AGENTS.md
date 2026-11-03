@@ -781,7 +781,8 @@ the installed package, so let the publish finish before bumping the dep there.
   contact tint. `oracle/sweep.js` is the engine: rigid motion by matrix with conservative
   advancement between samples (a screw-motion assumption), a rebuild path on
   `SWEEP_REBUILD_STEPS` (24) steps, `SWEEP_MAX_STEPS` (2000) marking a row `capped`; its time
-  comes out of the inspect's `REPORT_SHARE_MS`. Invariants: `place.js` and `sweep-targets.js`
+  comes out of the inspect's `REPORT_SHARE_MS`, after change tracking has finished with it
+  (measure's `beforeSweeps` hook). Invariants: `place.js` and `sweep-targets.js`
   never reach the BVH (`test/lint-purity.test.js`, `test/worker-layering.test.js`);
   `settle` is the hard guarantee - whatever the solver returns, a frame never moves a
   blocked pair from clear to inside, and a pair inside at drag start can move out, never
