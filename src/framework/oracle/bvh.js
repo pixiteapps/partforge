@@ -483,11 +483,25 @@ function pushPair(sp, inOrder, a0, b0, a1, b1) {
 // which each was last moved, so a slot left by an earlier query is never read.
 let MOVED = new Float64Array(9 * 64), MOVED_PLANE = new Float64Array(4 * 64), MOVED_SPHERE = new Float64Array(4 * 64);
 function beginMoved(other) {
-  const n = other.triangleCount;
+  const n = other.triangleCount, nodes = other._meta.length / 2;
   if (MOVED.length < n * 9) { MOVED = new Float64Array(n * 9); MOVED_PLANE = new Float64Array(n * 4); MOVED_SPHERE = new Float64Array(n * 4); }
-  if (!other._stamp) other._stamp = new Uint32Array(n);
-  if (++other._q === 0xffffffff) { other._q = 1; other._stamp.fill(0); }
+  if (MOVED_NODE.length < nodes * 6) MOVED_NODE = new Float64Array(nodes * 6);
+  if (!other._stamp) { other._stamp = new Uint32Array(n); other._nstamp = new Uint32Array(nodes); }
+  if (++other._q === 0xffffffff) { other._q = 1; other._stamp.fill(0); other._nstamp.fill(0); }
   return other._q;
+}
+// The other tree's node boxes moved by R, likewise once per query (a node meets many of
+// this tree's nodes): node nb's box at MOVED_NODE[nb * 6 ..]. `A` (|R|) picks
+// boxUnderFast, else boxUnder — so the exact query reads exactly the boxes it always did.
+let MOVED_NODE = new Float64Array(6 * 64);
+const MN = () => MOVED_NODE; // read through: beginMoved may have grown it
+function movedNode(other, nb, R, A, q) {
+  const o = nb * 6;
+  if (other._nstamp[nb] !== q) {
+    other._nstamp[nb] = q;
+    if (A) boxUnderFast(other._bounds, o, R, A, MOVED_NODE, o); else boxUnder(other._bounds, o, R, MOVED_NODE, o);
+  }
+  return o;
 }
 // Move triangles oO[sb .. sb+n) of `other` by R into MOVED (and their planes), unless
 // query q moved them already.
@@ -567,6 +581,22 @@ function planeSeparatesP(P, o, V2, b2, gap) {
   if (s0 < -lim) return nx * V2[b2 + 3] + ny * V2[b2 + 4] + nz * V2[b2 + 5] - off < -lim && nx * V2[b2 + 6] + ny * V2[b2 + 7] + nz * V2[b2 + 8] - off < -lim;
   return false;
 }
+
+// boxUnder by centre and half-extents: the AABB of R·box is R·c + t ± |R|·h, the same
+// box up to rounding (~1e-14 of the coordinates, far inside PRUNE_MARGIN_MM) for a ninth
+// of the work. `A` is |R|'s 3×3, column-major like R. The within query uses it; the exact
+// query keeps boxUnder, so its pruning — and so which of two tied pairs it keeps — stays
+// bit for bit distanceTo's.
+function boxUnderFast(B, nb, R, A, out, o) {
+  const cx = (B[nb] + B[nb + 3]) * 0.5, cy = (B[nb + 1] + B[nb + 4]) * 0.5, cz = (B[nb + 2] + B[nb + 5]) * 0.5;
+  const hx = (B[nb + 3] - B[nb]) * 0.5, hy = (B[nb + 4] - B[nb + 1]) * 0.5, hz = (B[nb + 5] - B[nb + 2]) * 0.5;
+  const px = R[0] * cx + R[4] * cy + R[8] * cz + R[12];
+  const py = R[1] * cx + R[5] * cy + R[9] * cz + R[13];
+  const pz = R[2] * cx + R[6] * cy + R[10] * cz + R[14];
+  const ex = A[0] * hx + A[3] * hy + A[6] * hz, ey = A[1] * hx + A[4] * hy + A[7] * hz, ez = A[2] * hx + A[5] * hy + A[8] * hz;
+  out[o] = px - ex; out[o + 1] = py - ey; out[o + 2] = pz - ez; out[o + 3] = px + ex; out[o + 4] = py + ey; out[o + 5] = pz + ez;
+}
+const POSED_ABS = new Float64Array(9);
 
 // Directions insideOf casts along, in order: +X, then fixed oblique ones for a
 // ray that grazes an edge or vertex of the surface (which counts a crossing
@@ -1072,8 +1102,8 @@ export function buildBVH(mesh) {
     POSED_STACK[sp++] = 0; POSED_STACK[sp++] = 0;
     while (sp && bestD2 > 0) {
       const nb = POSED_STACK[--sp], na = POSED_STACK[--sp];
-      boxUnder(oB, nb * 6, R, nbox, 0);
-      if (boxBoxDistSq(bounds, na * 6, nbox, 0) >= bestD2) continue;
+      const ob = movedNode(other, nb, R, null, q);
+      if (boxBoxDistSq(bounds, na * 6, MN(), ob) >= bestD2) continue;
       // the same pruning as distanceTo's, plus pairs the slabs put past the best by more
       // than rounding: neither can drop a pair that would have become the best
       if (thr < Infinity) { const g = slabGap(na, SA, oB, nb, SB, R) - PRUNE_MARGIN_MM; if (g > 0 && g * g > thr) continue; }
@@ -1096,14 +1126,14 @@ export function buildBVH(mesh) {
             if (d2 < bestD2) { bestD2 = d2; found = true; thr = pastSq(d2); gap = Math.sqrt(d2); for (let k = 0; k < 6; k++) bestPts[k] = pts[k]; }
           }
         }
-      } else if (!pa && (pb || nodeExtent(bounds, na * 6) >= nodeExtent(nbox, 0))) {
+      } else if (!pa && (pb || nodeExtent(bounds, na * 6) >= nodeExtent(MN(), ob))) {
         const l = na + 1, r = meta[na * 2];
-        const dl = boxBoxDistSq(bounds, l * 6, nbox, 0), dr = boxBoxDistSq(bounds, r * 6, nbox, 0);
+        const dl = boxBoxDistSq(bounds, l * 6, MN(), ob), dr = boxBoxDistSq(bounds, r * 6, MN(), ob);
         sp = pushPair(sp, dl < dr, r, nb, l, nb);
       } else {
         const l = nb + 1, r = oM[nb * 2];
-        boxUnder(oB, l * 6, R, nbox, 6); boxUnder(oB, r * 6, R, nbox, 12);
-        const dl = boxBoxDistSq(bounds, na * 6, nbox, 6), dr = boxBoxDistSq(bounds, na * 6, nbox, 12);
+        const ol = movedNode(other, l, R, null, q), or = movedNode(other, r, R, null, q);
+        const dl = boxBoxDistSq(bounds, na * 6, MN(), ol), dr = boxBoxDistSq(bounds, na * 6, MN(), or);
         sp = pushPair(sp, dl < dr, na, r, na, l);
       }
     }
@@ -1134,48 +1164,53 @@ export function buildBVH(mesh) {
     const oB = other._bounds, oM = other._meta, oO = other._order;
     if (!count || !other.triangleCount) { if (out) out.bound = Infinity; return false; }
     const R = mulMat4(invertRigid(mSelf), mOther);
+    const A = POSED_ABS;
+    A[0] = Math.abs(R[0]); A[1] = Math.abs(R[1]); A[2] = Math.abs(R[2]);
+    A[3] = Math.abs(R[4]); A[4] = Math.abs(R[5]); A[5] = Math.abs(R[6]);
+    A[6] = Math.abs(R[8]); A[7] = Math.abs(R[9]); A[8] = Math.abs(R[10]);
     const nbox = POSED_NBOX, pts = POSED_PTS, tmp = POSED_TMP;
     const SA = selfSlabs(), SB = other._slabs();
     const e2 = Math.max(Number.MIN_VALUE, eps * eps * (1 + 1e-12)), thr = pastSq(e2); // distanceToPosed's cut
     const AP = selfPlanes(), q = beginMoved(other), MV = MOVED, MP = MOVED_PLANE, MS = MOVED_SPHERE;
     let low2 = Infinity; // least squared lower bound over everything pruned or skipped
+    const note = (v) => { if (v < low2) low2 = v; };
     let sp = 0;
     POSED_STACK[sp++] = 0; POSED_STACK[sp++] = 0;
     while (sp) {
       const nb = POSED_STACK[--sp], na = POSED_STACK[--sp];
-      boxUnder(oB, nb * 6, R, nbox, 0);
-      let g2 = boxBoxDistSq(bounds, na * 6, nbox, 0);
+      const ob = movedNode(other, nb, R, A, q);
+      let g2 = boxBoxDistSq(bounds, na * 6, MN(), ob);
       if (g2 <= thr) { const g = slabGap(na, SA, oB, nb, SB, R) - PRUNE_MARGIN_MM; if (g > 0 && g * g > g2) g2 = g * g; }
-      if (g2 > thr) { if (g2 < low2) low2 = g2; continue; }
+      if (g2 > thr) { note(g2); continue; }
       const pa = meta[na * 2 + 1], pb = oM[nb * 2 + 1];
       if (pa && pb) {
         const sa = meta[na * 2], sb = oM[nb * 2], nj = pb - 1;
         moveLeaf(other, oO, sb, nj, R, q);
-        { const g = leafSlabGap(na, SA, sa, pa - 1, nb, SB, oO, sb, nj, R) - PRUNE_MARGIN_MM; if (g > eps) { if (g * g < low2) low2 = g * g; continue; } }
+        { const g = leafSlabGap(na, SA, sa, pa - 1, nb, SB, oO, sb, nj, R) - PRUNE_MARGIN_MM; if (g > eps) { note(g * g); continue; } }
         for (let i = 0; i < pa - 1; i++) {
           const ta = order[sa + i], ai = ta * 9;
           for (let j = 0; j < nj; j++) {
             const tb = oO[sb + j], bj = tb * 9;
             const t2 = triBoxDistSq(verts, ai, MV, bj);
-            if (t2 > thr) { if (t2 < low2) low2 = t2; continue; }
+            if (t2 > thr) { note(t2); continue; }
             let sg = sphereGap(spheres, ta * 4, MS, tb * 4);
             if (!(sg > eps)) { const cg = centreAxisGap(verts, ai, spheres, ta * 4, MV, bj, MS, tb * 4); if (cg > sg) sg = cg; }
             sg -= PRUNE_MARGIN_MM;
-            if (sg > eps) { if (sg * sg < low2) low2 = sg * sg; continue; }
-            if (planeSeparatesP(AP, ta * 4, MV, bj, eps) || planeSeparatesP(MP, tb * 4, verts, ai, eps)) { if (e2 < low2) low2 = e2; continue; }
+            if (sg > eps) { note(sg * sg); continue; }
+            if (planeSeparatesP(AP, ta * 4, MV, bj, eps) || planeSeparatesP(MP, tb * 4, verts, ai, eps)) { note(e2); continue; }
             const d2 = triTriDistS(verts, ai, MV, bj, pts, tmp);
             if (d2 < e2 && Math.sqrt(d2) <= eps) { if (out) out.bound = 0; return true; }
-            if (d2 < low2) low2 = d2;
+            note(d2);
           }
         }
-      } else if (!pa && (pb || nodeExtent(bounds, na * 6) >= nodeExtent(nbox, 0))) {
+      } else if (!pa && (pb || nodeExtent(bounds, na * 6) >= nodeExtent(MN(), ob))) {
         const l = na + 1, r = meta[na * 2];
-        const dl = boxBoxDistSq(bounds, l * 6, nbox, 0), dr = boxBoxDistSq(bounds, r * 6, nbox, 0);
+        const dl = boxBoxDistSq(bounds, l * 6, MN(), ob), dr = boxBoxDistSq(bounds, r * 6, MN(), ob);
         sp = pushPair(sp, dl < dr, r, nb, l, nb);
       } else {
         const l = nb + 1, r = oM[nb * 2];
-        boxUnder(oB, l * 6, R, nbox, 6); boxUnder(oB, r * 6, R, nbox, 12);
-        const dl = boxBoxDistSq(bounds, na * 6, nbox, 6), dr = boxBoxDistSq(bounds, na * 6, nbox, 12);
+        const ol = movedNode(other, l, R, A, q), or = movedNode(other, r, R, A, q);
+        const dl = boxBoxDistSq(bounds, na * 6, MN(), ol), dr = boxBoxDistSq(bounds, na * 6, MN(), or);
         sp = pushPair(sp, dl < dr, na, r, na, l);
       }
     }
@@ -1221,7 +1256,7 @@ export function buildBVH(mesh) {
     // they are raw node storage whose meaning is the packing rules in the header.
     _bounds: bounds, _meta: meta, _order: order,
     // The posed queries' per-index scratch (beginMoved): which triangles a query moved.
-    _stamp: null, _q: 0,
+    _stamp: null, _nstamp: null, _q: 0,
     _slabs: selfSlabs,
   };
 }

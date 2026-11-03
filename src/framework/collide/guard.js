@@ -61,7 +61,30 @@ function linearBlend(from, to) {
   };
 }
 
-export function createDragGuard({ world, matsAt, start, moving, clearance = CONTACT_EPS }) {
+// matsAt with its last few whole-view answers kept: a frame asks for the same params'
+// placements several times over (beginFrame and the settle that ends the last frame, the
+// travel's end and the last sub-step). Keyed by params content, as derive's memo is; a
+// names-limited ask is answered from a whole one when it can be.
+const MATS_MEMO = 6;
+const sameParams = (a, b) => {
+  if (a === b) return true;
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  for (const k of ka) if (!Object.hasOwn(b, k) || !Object.is(a[k], b[k])) return false;
+  return true;
+};
+function memoMats(matsAt) {
+  const memo = []; // { params, mats }, newest first, whole-view maps only
+  return (params, names) => {
+    for (const e of memo) if (sameParams(e.params, params)) return e.mats;
+    const mats = matsAt(params, names);
+    if (!names) { memo.unshift({ params, mats }); if (memo.length > MATS_MEMO) memo.length = MATS_MEMO; }
+    return mats;
+  };
+}
+
+export function createDragGuard({ world, matsAt: rawMatsAt, start, moving, clearance = CONTACT_EPS }) {
+  const matsAt = memoMats(rawMatsAt);
   const margin = clearance + COLLIDE_BAND_MM;
   const half = COLLIDE_BAND_MM / 2;
   // pairKey → "near" (inside clearance: exempt until it opens past clearance once) or
@@ -333,7 +356,7 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
 
     settle(from, to, { blend = linearBlend(from, to) } = {}) {
       let t0 = 0, p0 = from, m0 = matsAt(from);
-      const total = world.travel(m0, matsAt(blend(1), moving), moving);
+      const total = world.travel(m0, matsAt(blend(1)), moving); // whole: the last sub-step reuses it
       let dt = total > 0 ? Math.min(1, (0.9 * half) / total) : 1;
       for (let steps = 0; t0 < 1 && steps < MAX_SUBSTEPS; steps++) {
         // A step no longer than BAND / 2 of travel: shrink by the secant until it fits

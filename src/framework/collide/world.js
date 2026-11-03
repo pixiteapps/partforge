@@ -99,6 +99,7 @@ const WITHIN_FIRST_MM = 0.5;
 // The room a `bounds` refresh asks for past the cutoff (mm): the bound it keeps then
 // covers relative motion up to about this much. Larger covers more and costs more.
 const BOUND_PAD_MM = 0.05;
+const BOUND_PAD_MIN_MM = 1e-6; // still past a still pair's rounding drift (~1e-12 mm)
 // Past any rounding in a relative placement and its corner motion (mm).
 const BOUND_SLACK_MM = 1e-9;
 
@@ -194,10 +195,14 @@ export function createCollisionWorld({ meshes, decl = null }) {
         if (bounds) {
           const R = mulMat4(invertRigid(ma), mb);
           const e = bounds.get(c.key);
-          if (e && e.lb - cornerTravel(boxes.get(b), e.R, R) > cut + BOUND_SLACK_MM) continue;
+          const drift = e ? cornerTravel(boxes.get(b), e.R, R) : Infinity;
+          if (e && e.lb - drift > cut + BOUND_SLACK_MM) continue;
           if (cut < WITHIN_FIRST_MM) {
+            // a pair that outran the pad since its last bound (a joint turning) gets only
+            // the room rounding needs: the pad would cost a wider search for nothing
+            const pad = e && drift > BOUND_PAD_MM ? BOUND_PAD_MIN_MM : BOUND_PAD_MM;
             const o = {};
-            if (!bvhs.get(a).withinDistancePosed(bvhs.get(b), ma, mb, cut + BOUND_PAD_MM, o)) { bounds.set(c.key, { R, lb: o.bound }); continue; }
+            if (!bvhs.get(a).withinDistancePosed(bvhs.get(b), ma, mb, cut + pad, o)) { bounds.set(c.key, { R, lb: o.bound }); continue; }
           }
         }
         // a small cutoff is mostly a clear answer: the boolean query says so far sooner
