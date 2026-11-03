@@ -21,6 +21,11 @@ describe("collision world", () => {
     expect(r.length).toBe(2);
     w.dispose();
   });
+  it("names lists every indexed mesh", () => {
+    const w = createCollisionWorld({ meshes: meshes() });
+    expect(w.names()).toEqual(["a", "b", "c"]);
+    w.dispose();
+  });
   it("within prunes far pairs", () => {
     const w = createCollisionWorld({ meshes: new Map([["a", cube()], ["b", cube()]]) });
     const mats = new Map([["a", T(0)], ["b", T(20)]]);

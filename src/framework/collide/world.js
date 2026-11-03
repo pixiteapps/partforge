@@ -98,6 +98,7 @@ export function createCollisionWorld({ meshes, decl = null }) {
   const matOf = (mats, name) => mats.get(name); // undefined = identity, null = excluded
 
   return {
+    names: () => [...names],
     boundsOf: (name) => boxes.get(name) ?? null,
 
     distances(mats, { names: only, within = Infinity, limit = Infinity } = {}) {
