@@ -699,12 +699,19 @@ and the `inspect` entry are in `docs/AUTHORING-PARTS.md`, "Handles". Read that f
 This section covers what is particular to a posed limb: the `"goal"` and `"angles"`
 drags, their aim gizmos and joint rings, and how pins act on a limb.
 
+Give each finger, leg or chain ONE `"angles"` handle (or one `"goal"` handle for an
+arm's tool point), not a `rotary` handle per joint. With it every joint and the tip are
+draggable, the solve moves the chain's joints together, joint rings show limit arcs, and
+one readout at the bottom of the stage shows the values the drag moves. Per-joint `rotary` / `axis` handles on a limb are for a lone
+hinge with no chain to solve (lint: `handle-limb-per-joint`). See `src/parts/hand.js`
+and `src/parts/robot-arm.js`.
+
 Handles let a person pose the part with the mouse. A handle on a limb is a draggable
 point on a posed limb. A part declares them in a top-level `handles` object, in the
 same form as every other handle: `on` names the limb, and `drag` says how it moves
 (`"goal"` or `"angles"`). Lint checks every name (`handle-unknown-source`,
 `handle-unknown-param`, `handle-param-count`, `handle-aim-toward`,
-`handle-unknown-joint`, `handle-bad-drag`).
+`handle-unknown-joint`, `handle-bad-drag`, `handle-unknown-view`).
 
 ```js
 handles: {
@@ -723,11 +730,24 @@ is a posed limb. A limb handle always sets `drag`: lint refuses one without it
 (`handle-bad-drag`) rather than guess. Every parameter a handle names must be a numeric
 key of `defaults` (a `lock`'s default may also be a boolean).
 
+A limb handle shows only in the views that draw its limb: a view whose sub-parts read
+`d.<on>` (most often `d.finger.place(s, joint)`). A print kit that lays the pieces flat
+by fixed offsets does not, so the handle stays out of it. To say it outright, give the
+handle `views: ["assembly"]` (keys of `views`; lint: `handle-unknown-view`). The authoring
+guide's "When a handle shows" has the whole rule.
+
 A posed limb is also a point source: its `handleInfo()` gives its joints and `tip` as
 points, each hinge's axis, and the bone chain. So the geometric drags of any handle
 (`"point"`, `"axis"`, `"plane"`, `"rotary"`) work on a limb point too, for example
 `{ on: "arm", at: "tip", drag: "axis", direction: [0, 0, 1], params: ["lift"] }`. They
 write `params` through `derive` like on any source, with no goal or angles behaviour.
+
+To turn one joint with a rotary handle, put the handle at `"<joint>.child"`. That point is
+the next joint's origin, or the tip for the last joint, so it sits on the bone the joint
+turns. The `"pip"` prefix of `at` picks `axes.pip`, so the handle turns about that joint:
+`{ on: "index", at: "pip.child", drag: "rotary", params: ["indexCurl"] }`. At `"pip"`
+itself the dot is on its own axis and does not move when the joint turns, and lint warns
+(`handle-inert`).
 
 ### `drag: "goal"`
 
@@ -836,7 +856,7 @@ when they are all off.
 - **Every other press is the usual press.** On empty space or on the model away from the
   handles, a drag orbits and a click picks (the chat box opens as before).
 - **Click any dot (no drag)** to pin that point: a tip, a joint, a goal handle's `at`
-  point (the aim gizmo's ball) or a ring-only joint. Click it again to unpin it. This
+  point (the aim gizmo's ball), a goal limb's middle joint or a ring-only joint. Click it again to unpin it. This
   click does not pick. A drag does not pick when you release it.
   - A pinned point holds its position in space through every inverse-kinematics drag:
     a drag of another point of the same limb, or of another limb's handle (angles mode
@@ -867,9 +887,14 @@ when they are all off.
   joint (forward kinematics): it writes that joint's parameter, clamped to the joint's
   range. The limit arc shows during the drag, and a joint at its stop shows the warning
   colour. Drag the dot itself for the inverse-kinematics drag, as before. A goal handle's
-  joints, and a limb that only a `joints` entry names, have ring-only dots: hover one to
-  show its ring; a drag from it orbits and a click on it pins it (the cursor is a
-  pointer, not a grab). A touch on one puts its rings up and its tap picks nothing. A
+  joint that a seeded joint above it moves (the robot arm's elbow and wrist) is a grab
+  too: drag it and the seeded joints carry THAT joint toward the pointer, the joints
+  below it keep their angles and the tool rides along; the drag writes every seed
+  parameter and the goal at the new tool frame, as a joint ring does, and holds pins on
+  the limb. A goal handle's other joints (the first driven joint, or one on a twist axis
+  above it, like the arm's shoulder over its base), and a limb that only a `joints`
+  entry names, have ring-only dots: hover one to show its ring; a drag from it orbits
+  and a click on it pins it (the cursor is a pointer, not a grab). A touch on one puts its rings up and its tap picks nothing. A
   ring drag does not hold pins. A goal handle's joint stops where its
   goal would leave a goal parameter's range (the tool below its lowest Z, say), with the
   warning colour, rather than letting the solve spread the turn over the other joints.
@@ -902,14 +927,21 @@ when they are all off.
 - **One drag is one `onParamsCommit`.** It lists every parameter that changed. A drag that
   changed nothing commits nothing.
 - **Release snaps to the schema step.** Every parameter the drag wrote rounds to its
-  control's `step`. Give the parameters a handle writes a fine step (the reference parts
+  control's `step`. Give the parameters a limb handle writes a fine step (the reference parts
   use 0.1° and 0.1 mm, and 0.001 for a 0..1 curl), or the release moves the limb visibly:
   at 1° a wrist step moved the hand's fingertips up to 0.85 mm.
 - **Escape or a cancel** restores the values from before the drag. A `setParams` from
   the host in the middle of a drag cancels the drag.
+- **The values show at the bottom.** While a limb drag moves, the viewbar's readout pill
+  (the one a generic handle's drag and measure's X/Y/Z use) shows the values it writes,
+  each named by its control's `label` and `unit`: the handle's `readout` params if it sets
+  them, else its `params` (a `"goal"` handle's `position`, then its `aim`). A joint ring
+  shows only its own parameter, an aim ring only that aim angle. The readout goes on
+  release; a limb drag leaves no chip. Pose mode draws no text in the scene.
 - **Out of reach.** The chain stops at the nearest pose it can make. A dashed line runs
-  from the tip to the cursor's point and shows the miss in mm. The chain does not jump
-  to another solution to catch up.
+  from the grabbed point to the cursor's point, ending in a hollow target, and the readout
+  adds a last value, "Out of reach", the miss in mm. The chain does not jump to another
+  solution to catch up.
 - **Straight limbs can jump.** A limb whose elbow can go fully straight has no bend to
   push on there. When the goal comes back into reach, the solver may jump to the bent
   pose in one step. `src/parts/robot-arm.js` stops its elbow 10 degrees short of

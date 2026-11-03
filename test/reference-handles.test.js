@@ -83,11 +83,11 @@ describe("the solver drives them as a drag would", () => {
     expect(r.values.depth).toBeCloseTo(80, 2);
   });
 
-  it("a drawer pull dragged 50 mm out opens that drawer alone", () => {
+  it("a drawer pull dragged 55 mm out opens that drawer alone, to half its 110 mm travel", () => {
     const start = at(drawerBox, {}, "drawer1");
-    const r = solveHandle({ part: drawerBox, params: {}, handle: drawerBox.handles.drawer1, target: { point: [start[0], start[1] - 50, start[2]] } });
+    const r = solveHandle({ part: drawerBox, params: {}, handle: drawerBox.handles.drawer1, target: { point: [start[0], start[1] - 55, start[2]] } });
     expect(Object.keys(r.values)).toEqual(["drawer1Open"]);
-    expect(r.values.drawer1Open).toBeCloseTo(50, 2);
+    expect(r.values.drawer1Open).toBeCloseTo(50, 2); // percent of depth - 10
   });
 });
 

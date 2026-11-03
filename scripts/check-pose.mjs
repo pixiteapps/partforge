@@ -21,8 +21,10 @@
 //     (isLive false, no handle points, a press where a tip was is not a drag) until it
 //     goes off again.
 //   robot-arm.html, hand.html (both required) — the reference parts. A 20-move drag of the first
-//     handle posts no `generate` job, commits exactly once on release, the committed
-//     values differ from the part's defaults, and the console stays clean. robot-arm.html
+//     handle posts no `generate` job, shows its values in the viewbar's readout slot while it
+//     moves (runtime.pose.__dragReadout(), gone on release, no readout chip after), commits
+//     exactly once on release, the committed values differ from the part's defaults, and
+//     the console stays clean. robot-arm.html
 //     then drags its tool's aim gizmo: hovering the tool point shows it
 //     (runtime.pose.__aimGizmo(), a test hook), hovering a ring highlights that ring with a
 //     grab cursor, and a drag round the ring writes that aim angle — one commit, no
@@ -34,10 +36,20 @@
 //     goal follows the turned joint). Last on robot-arm, a JOINT PIN: a click on the elbow
 //     dot pins it (pinCount 1, a badge at the elbow — runtime.pose.__pinPoints(), a test
 //     hook — no commit); a tool drag then holds the elbow within 0.5 mm while the tool
-//     moves, one commit; a second click unpins. Then the REALISTIC FLOOR: in realistic
+//     moves, one commit; a second click unpins. Then a MID-JOINT GRAB: a drag from the
+//     elbow dot (a goal limb grabbed by a middle joint) carries the elbow toward the
+//     pointer, moves the tool, changes a seed joint, one commit, no `generate` job.
+//     Then the REALISTIC FLOOR: in realistic
 //     mode a far sideways tool drag leaves the ground's x/z and scale exactly where they
 //     were (runtime.pose.__ground(), a test hook), during the drag and after its release;
-//     its height may only go down. CHECK_POSE_SHOTS=<dir> saves screenshots of it.
+//     its height may only go down. CHECK_POSE_SHOTS=<dir> saves screenshots of it. Last, an
+//     UNREACHABLE tool drag (checkOutOfReach) out to the canvas edge reads "Out of reach
+//     <n.n> mm" in the readout slot — the scene draws no text — and the slot clears on release.
+//   hand.html, after its joint ring — VIEW-SPECIFIC HANDLES (checkViewSwitch): pin a fingertip,
+//     hover it, switch to the print view with the pointer still on it: no handle points,
+//     badges, overlay objects (runtime.pose.__drawn(), a test hook), gizmo, chip, grab cursor
+//     or hover claim, over a sweep of the canvas too, and a press where the dot was does not
+//     drag. Back in the assembly view the handles and the pin return.
 //   gearbox.html (required) — generic rotary handles (spec 2026-11-02 generic handles):
 //     the output gear's rim dot dragged one full turn round its rim writes the wrapped
 //     driveAngle 0 -> ~720, past 360 with no backwards frame and no `generate` job, one
@@ -394,14 +406,57 @@ async function checkReference(page, url, errors) {
   const box = await openPoseApp(page, url);
   const h = await pickHandle(page, box);
   const t0 = await page.evaluate(() => performance.now());
-  await dragFrom(page, h, box);
+  // A limb drag reads out at the bottom (the viewbar's readout slot), as a generic one does.
+  let readout = null;
+  await dragFrom(page, h, box, async () => { readout = await page.evaluate(() => window.__pfRuntime.pose.__dragReadout()); });
+  if (!readout) errors.push(`no live readout in the viewbar slot while dragging ${h.handleId}:${h.at}`);
   const duringDrag = generates(await page.evaluate(() => window.__pfWorkerLog), t0);
   if (duringDrag.length) errors.push(`${duringDrag.length} generate job(s) posted during the drag`);
   await page.mouse.up();
   await sleep(600);
+  const after = await page.evaluate(() => ({ readout: window.__pfRuntime.pose.__dragReadout(), chip: window.__pfRuntime.pose.__chip() }));
+  if (after.readout) errors.push(`the live readout stayed up after the ${h.handleId} drag ended (${JSON.stringify(after.readout)})`);
+  if (after.chip) errors.push(`a limb drag left a readout chip (${JSON.stringify(after.chip)}): the chip is for generic handles`);
   const result = await page.evaluate(() => ({ commits: window.__pfCommits ?? null, defaults: window.__pfPart?.defaults ?? null }));
   checkCommits(result, errors);
-  return { handle: `${h.handleId}:${h.at}`, generatesDuringDrag: duringDrag.length, commits: result.commits?.length ?? null };
+  return { handle: `${h.handleId}:${h.at}`, readout, generatesDuringDrag: duringDrag.length, commits: result.commits?.length ?? null };
+}
+
+/**
+ * An unreachable tool drag: pull the tool point out from the canvas centre to near the
+ * canvas edge. While it misses, the bottom readout says "Out of reach" (the scene draws no
+ * text); after release it is gone.
+ */
+async function checkOutOfReach(page, box, errors) {
+  const h = await pickHandle(page, box, "tool");
+  await page.mouse.move(h.px + 18, h.py, { steps: 3 });
+  await page.mouse.move(h.px, h.py, { steps: 3 });
+  await sleep(50);
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  const len = Math.hypot(h.px - cx, h.py - cy) || 1;
+  const ux = (h.px - cx) / len, uy = (h.py - cy) / len;
+  // as far out along centre -> tool as the canvas allows, 12 px in from its edge
+  const room = Math.min(
+    ux > 0 ? (box.x + box.width - 12 - h.px) / ux : ux < 0 ? (box.x + 12 - h.px) / ux : Infinity,
+    uy > 0 ? (box.y + box.height - 12 - h.py) / uy : uy < 0 ? (box.y + 12 - h.py) / uy : Infinity,
+  );
+  const to = { x: h.px + ux * room, y: h.py + uy * room };
+  await page.mouse.down();
+  const texts = [];
+  for (let i = 1; i <= DRAG_MOVES; i++) {
+    await page.mouse.move(h.px + ((to.x - h.px) * i) / DRAG_MOVES, h.py + ((to.y - h.py) * i) / DRAG_MOVES);
+    await sleep(20);
+    texts.push(await page.evaluate(() => window.__pfRuntime.pose.__dragReadout()));
+  }
+  await sleep(80);
+  texts.push(await page.evaluate(() => window.__pfRuntime.pose.__dragReadout()));
+  await page.mouse.up();
+  await sleep(600);
+  const reach = texts.filter((t) => /Out of reach/.test(t ?? "")).at(-1) ?? null;
+  if (!reach) errors.push(`an unreachable tool drag never read "Out of reach" (last readout ${JSON.stringify(texts.at(-1))})`);
+  else if (!/Out of reach\s*\d+\.\d mm/.test(reach)) errors.push(`the "Out of reach" readout is not "<n.n> mm" (${JSON.stringify(reach)})`);
+  if (await page.evaluate(() => window.__pfRuntime.pose.__dragReadout())) errors.push("the live readout stayed up after the unreachable tool drag ended");
+  return { reach };
 }
 
 /** The reference drag, then a ring of the tool's aim gizmo (pitch, else the first ring). */
@@ -449,8 +504,10 @@ async function checkRobotArm(page, url, errors) {
   else if (!aimParam || !added[0].changed?.includes(aimParam)) errors.push(`the ${name} ring drag committed ${JSON.stringify(added[0].changed)}, not ${aimParam}`);
   const joint = await checkJointRing(page, box, { limb: "arm", joint: "elbow", param: "elbow", alsoMoves: ["toolX", "toolY", "toolZ"] }, errors);
   const pin = await checkJointPin(page, box, errors);
+  const midJoint = await checkMidJointGrab(page, box, errors);
   const floor = await checkRealisticFloor(page, box, errors);
-  return { ...summary, ring: name, ringCommit: added[0]?.changed ?? null, ringValue: aimParam ? added[0]?.params?.[aimParam] : null, joint, pin, floor };
+  const outOfReach = await checkOutOfReach(page, box, errors);
+  return { ...summary, ring: name, ringCommit: added[0]?.changed ?? null, ringValue: aimParam ? added[0]?.params?.[aimParam] : null, joint, pin, midJoint, floor, outOfReach };
 }
 
 /**
@@ -510,7 +567,7 @@ async function checkRealisticFloor(page, box, errors) {
 }
 
 /**
- * Pin the arm's elbow by clicking its dot (a goal handle's ring-only joint): one pin, a
+ * Pin the arm's elbow by clicking its dot (a goal handle's mid-joint grab): one pin, a
  * badge at the elbow, no commit. Then drag the tool: the elbow holds (within 0.5 mm), the
  * tool moves, one commit. A second click unpins.
  */
@@ -524,7 +581,7 @@ async function checkJointPin(page, box, errors) {
   await page.mouse.move(d.x, d.y, { steps: 3 });
   await sleep(50);
   const cursor = await canvasCursor(page);
-  if (cursor !== "pointer") errors.push(`hovering the elbow dot shows cursor "${cursor}", not "pointer"`);
+  if (cursor !== "grab") errors.push(`hovering the elbow dot shows cursor "${cursor}", not "grab" (a mid-joint grab; a click still pins)`);
   const commits0 = await page.evaluate(() => window.__pfCommits.length);
   await page.mouse.down();
   await page.mouse.up();
@@ -574,6 +631,58 @@ async function checkJointPin(page, box, errors) {
   const left = await page.evaluate(() => window.__pfRuntime.pose.pinCount());
   if (left !== 0) errors.push(`clicking the pinned elbow again left pinCount ${left}`);
   return { elbowHeldMm: Number(Math.max(off(mid), off(after.elbow)).toFixed(3)), toolMovedPx: Number(toolMoved.toFixed(1)) };
+}
+
+/**
+ * A goal limb grabbed by a middle joint (spec 2026-11-02 goal 2): press the elbow dot and
+ * drag across the upper arm's on-screen line (the way the elbow can swing). The elbow
+ * follows the pointer (it ends nearer it than it started), the tool rides along, the
+ * commit writes seed joints, and no `generate` job posts during the drag.
+ */
+async function checkMidJointGrab(page, box, errors) {
+  const at = (p) => ({ x: box.x + p.x, y: box.y + p.y });
+  const dotOf = async (joint) => (await page.evaluate(() => window.__pfRuntime.pose.__jointRings())).find((p) => p.limb === "arm" && p.joint === joint);
+  const elbow0 = await dotOf("elbow"), shoulder = await dotOf("shoulder");
+  if (!elbow0 || !shoulder) { errors.push("no elbow / shoulder dot for the mid-joint grab"); return null; }
+  const d = at(elbow0);
+  await page.mouse.move(d.x + 18, d.y, { steps: 3 });
+  await page.mouse.move(d.x, d.y, { steps: 3 });
+  await sleep(50);
+  const cursor = await canvasCursor(page);
+  if (cursor !== "grab") errors.push(`hovering the elbow dot shows cursor "${cursor}", not "grab"`);
+  // across the upper arm: perpendicular to shoulder -> elbow on screen, 50 px
+  const ux = elbow0.x - shoulder.x, uy = elbow0.y - shoulder.y, ul = Math.hypot(ux, uy) || 1;
+  const travel = { x: (-uy / ul) * 50, y: (ux / ul) * 50 };
+  const end = { x: d.x + travel.x, y: d.y + travel.y };
+  const tool0 = await page.evaluate(() => window.__pfRuntime.pose.handlePoints().find((p) => p.handleId === "tool") ?? null);
+  const before = await page.evaluate(() => ({ ...window.__pfPart?.defaults, ...window.__pfCommits.at(-1)?.params }));
+  const commits0 = await page.evaluate(() => window.__pfCommits.length);
+  const t0 = await page.evaluate(() => performance.now());
+  await page.mouse.down();
+  for (let i = 1; i <= 12; i++) {
+    await page.mouse.move(d.x + (travel.x * i) / 12, d.y + (travel.y * i) / 12);
+    await sleep(20);
+  }
+  const grabbing = await canvasCursor(page);
+  await sleep(80);
+  const during = generates(await page.evaluate(() => window.__pfWorkerLog), t0);
+  await page.mouse.up();
+  await sleep(600);
+  if (grabbing !== "grabbing") errors.push(`dragging the elbow shows cursor "${grabbing}", not "grabbing"`);
+  if (during.length) errors.push(`${during.length} generate job(s) posted during the elbow drag`);
+  const elbow1 = await dotOf("elbow");
+  const tool1 = await page.evaluate(() => window.__pfRuntime.pose.handlePoints().find((p) => p.handleId === "tool") ?? null);
+  const gap0 = Math.hypot(d.x - end.x, d.y - end.y);
+  const gap1 = elbow1 ? Math.hypot(box.x + elbow1.x - end.x, box.y + elbow1.y - end.y) : Infinity;
+  if (!(gap1 < gap0 - 15)) errors.push(`the elbow drag left the elbow ${gap1.toFixed(1)} px from the pointer (started ${gap0.toFixed(1)} px)`);
+  const toolMoved = tool0 && tool1 ? Math.hypot(tool1.x - tool0.x, tool1.y - tool0.y) : 0;
+  if (!(toolMoved > 5)) errors.push(`the elbow drag moved the tool only ${toolMoved.toFixed(1)} px`);
+  const added = (await page.evaluate(() => window.__pfCommits)).slice(commits0);
+  if (added.length !== 1) { errors.push(`${added.length} onParamsCommit calls after the elbow drag, expected exactly 1`); return null; }
+  const seed = await page.evaluate(() => window.__pfPart?.handles?.tool?.seed ?? []);
+  const seedMoved = seed.filter((k) => Math.abs((added[0].params[k] ?? 0) - (before[k] ?? 0)) > 0.05);
+  if (!seedMoved.length) errors.push(`the elbow drag changed no seed joint (committed ${JSON.stringify(added[0].changed)})`);
+  return { elbowGapPx: [Number(gap0.toFixed(1)), Number(gap1.toFixed(1))], toolMovedPx: Number(toolMoved.toFixed(1)), seedMoved };
 }
 
 /**
@@ -636,7 +745,86 @@ async function checkHand(page, url, errors) {
   const summary = await checkReference(page, url, errors);
   const box = await page.locator(VIEWER_CANVAS).boundingBox();
   const joint = await checkJointRing(page, box, { limb: "palm", joint: "wristPitch", param: "wristPitch" }, errors);
-  return { ...summary, joint };
+  const viewSwitch = await checkViewSwitch(page, box, errors);
+  return { ...summary, joint, viewSwitch };
+}
+
+/** The pose overlay's state, read in the page: what a view switch must leave empty. */
+const poseState = (page) => page.evaluate((sel) => {
+  const pose = window.__pfRuntime.pose;
+  return {
+    points: pose.handlePoints().length, pins: pose.__pinPoints().length, pinCount: pose.pinCount(),
+    drawn: pose.__drawn(), chip: pose.__chip(), aim: pose.__aimGizmo(), joint: pose.__jointGizmo(),
+    cursor: document.querySelector(sel).style.cursor,
+  };
+}, VIEWER_CANVAS);
+
+/**
+ * Handles are view-specific (pose/handle-views.js): hand.html's print view is a flat kit the
+ * pose never reaches, so after a pin and a hover in the assembly view, a switch to print
+ * (the pointer left on the dot) must leave nothing: no handle points, badges, overlay
+ * objects, gizmo, readout chip, grab cursor or hover claim — and a sweep of the canvas
+ * (the old dots' spots included) claims nothing, and a press where a dot was does not drag.
+ * Back in the assembly view the handles and the pin come back.
+ */
+async function checkViewSwitch(page, box, errors) {
+  const pts = await page.evaluate(() => window.__pfRuntime.pose.handlePoints());
+  const h = pts.find((p) => p.handleId === "index" && p.at === "tip") ?? pts[0];
+  if (!h) { errors.push("view switch: no handle point in the assembly view"); return null; }
+  const at = { x: box.x + h.x, y: box.y + h.y };
+  await hoverHandle(page, at, `${h.handleId}:${h.at}`);
+  await page.mouse.down();
+  await page.mouse.up();
+  await sleep(80);
+  const before = await poseState(page);
+  if (before.pins !== 1) errors.push(`view switch: a click on ${h.handleId}:${h.at} badged ${before.pins} pins, expected 1`);
+  if (!before.drawn.objects || !before.drawn.claims) errors.push(`view switch: hovering ${h.handleId}:${h.at} drew ${before.drawn.objects} objects, claims ${before.drawn.claims}`);
+  const commits = (await page.evaluate(() => window.__pfCommits)).length;
+
+  await page.evaluate(() => window.__pfRuntime.setView("print"));
+  await settle(page);
+  const after = await poseState(page);
+  const stale = (s, label) => {
+    const bad = [];
+    if (s.points) bad.push(`${s.points} handle points`);
+    if (s.pins) bad.push(`${s.pins} pin badges`);
+    if (s.pinCount) bad.push(`pinCount ${s.pinCount}`);
+    if (s.drawn.objects) bad.push(`${s.drawn.objects} overlay objects`);
+    if (s.drawn.claims) bad.push("a hover claim");
+    if (s.chip) bad.push("the readout chip");
+    if (s.aim || s.joint) bad.push("a gizmo");
+    if (s.cursor === "grab" || s.cursor === "grabbing") bad.push(`cursor "${s.cursor}"`);
+    if (bad.length) errors.push(`view switch: ${label} the print view shows ${bad.join(", ")}`);
+    return bad.length;
+  };
+  stale(after, "right after the switch,");
+  // Sweep the canvas, the old dots' spots first: nothing may claim the hover there.
+  const spots = [...pts.map((p) => ({ x: box.x + p.x, y: box.y + p.y }))];
+  for (let i = 1; i < 8; i++) for (let j = 1; j < 6; j++) spots.push({ x: box.x + (box.width * i) / 8, y: box.y + (box.height * j) / 6 });
+  let claimed = 0;
+  for (const s of spots) {
+    await page.mouse.move(s.x, s.y);
+    const st = await poseState(page);
+    if (st.drawn.claims || st.drawn.objects || st.cursor === "grab") claimed++;
+  }
+  if (claimed) errors.push(`view switch: ${claimed} of ${spots.length} pointer spots in the print view showed or claimed a handle`);
+  // a press where the dot was is an orbit, never a drag
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 6; i++) { await page.mouse.move(at.x + i * 6, at.y); await sleep(20); }
+  const dragging = await page.evaluate(() => window.__pfRuntime.pose.__isDragging());
+  await page.mouse.up();
+  if (dragging) errors.push("view switch: a press where a dot was in the assembly view dragged a handle in the print view");
+  const commitsAfter = (await page.evaluate(() => window.__pfCommits)).length;
+  if (commitsAfter !== commits) errors.push(`view switch: ${commitsAfter - commits} commits in the print view, expected none`);
+
+  await page.evaluate(() => window.__pfRuntime.setView("assembly"));
+  await settle(page);
+  const back = await poseState(page);
+  if (!back.points) errors.push("view switch: no handle points back in the assembly view");
+  if (back.pins !== 1) errors.push(`view switch: ${back.pins} pin badges back in the assembly view, expected 1 (the pin is kept)`);
+  await page.evaluate(() => window.__pfRuntime.pose.releasePins());
+  return { printPoints: after.points, printObjects: after.drawn.objects, spots: spots.length, claimed, backPoints: back.points };
 }
 
 /** Wait until two animation frames have run. */
@@ -767,8 +955,12 @@ async function checkGearbox(page, url, errors) {
 
 /**
  * The drawer box (parts/drawer-box.js): a MOTION drag, then a SHAPE drag, on one part.
- *   - drawer1's pull, along its rail (an axis handle): no `generate` job (a drawer slides
- *     by matrix), one commit opening drawer1 about 60 mm, the other drawers where they were;
+ *   - drawer1's pull, along its rail (an axis handle): grabbed on its two-sided arrow's
+ *     shaft, at its far end toward a head (past the 14 px a dot's centre would pick), no
+ *     `generate` job (a drawer slides by matrix), one commit opening drawer1 to about 60%
+ *     of its travel, the other drawers where they were;
+ *   - while it slides, its value in the viewbar's readout slot (measure's spot), gone on release;
+ *   - the readout chip that drag leaves by the pull: typed into, it commits the snapped value once;
  *   - the top corner, across the top plane (a plane handle): the part is cheap (its last
  *     build under LIVE_REBUILD_MS), so it rebuilds LIVE — `generate` jobs during the drag —
  *     yet the host sees none of it: no onBuild until release, exactly one after, and one
@@ -795,18 +987,56 @@ async function checkDrawerBox(page, url, errors) {
   // Motion: drawer1 out along its rail.
   const [d0, d1] = await handleAt(page, "drawer1", [{ drawer1Open: 0 }, { drawer1Open: 60 }], { drawer1Open: defaults.drawer1Open });
   if (!d0 || !d1) throw new Error("no drawer1 handle point");
+  if (!d0.arrow) throw new Error(`drawer1's axis handle reports no arrow (${JSON.stringify(d0)})`);
+  // on the shaft, near its end toward the head the pull runs toward (the shaft is the inner
+  // 60% of each half: ARROW_HALF_LENGTH less ARROW_HEAD_LENGTH)
+  const toward = Math.hypot(d0.arrow.to.x - d1.x, d0.arrow.to.y - d1.y) < Math.hypot(d0.arrow.from.x - d1.x, d0.arrow.from.y - d1.y) ? d0.arrow.to : d0.arrow.from;
+  const SHAFT_AT = 0.56;
+  const shaft = { x: d0.x + (toward.x - d0.x) * SHAFT_AT, y: d0.y + (toward.y - d0.y) * SHAFT_AT };
+  const shaftOff = Math.hypot(shaft.x - d0.x, shaft.y - d0.y);
+  if (shaftOff <= 14) errors.push(`drawer1's arrow's shaft end is ${shaftOff.toFixed(1)} px from its centre: within a dot's 14 px, so the press tests nothing`);
   let commits0 = await page.evaluate(() => window.__pfCommits.length);
   let t0 = await page.evaluate(() => performance.now());
-  await drag(canvas(d0), canvas(d1), "drawer1's pull");
+  await drag(canvas(shaft), canvas({ x: shaft.x + d1.x - d0.x, y: shaft.y + d1.y - d0.y }), "drawer1's arrow, mid-shaft");
   const drawerJobs = generates(await page.evaluate(() => window.__pfWorkerLog), t0);
+  // The live readout: in the viewbar's readout slot (measure's X/Y/Z spot), floated just
+  // above the bar with right edges flush, the view cube stepped up over it.
+  const liveReadout = await page.evaluate(() => {
+    const rect = (sel) => { const r = document.querySelector(sel)?.getBoundingClientRect(); return r && { top: r.top, bottom: r.bottom, right: r.right }; };
+    return { text: window.__pfRuntime.pose.__dragReadout(), slot: rect("#viewbar .pf-pose-readout"), bar: rect("#viewbar"), cube: rect(".pf-viewcube-stack") };
+  });
+  if (!/Drawer 1/i.test(liveReadout.text ?? "")) errors.push(`no live readout in the viewbar slot while sliding drawer1 (${JSON.stringify(liveReadout.text)})`);
+  else if (!liveReadout.slot || !liveReadout.bar || Math.abs(liveReadout.slot.right - liveReadout.bar.right) > 2 || liveReadout.slot.bottom > liveReadout.bar.top) {
+    errors.push(`the live readout is not floated above the viewbar, right edges flush (${JSON.stringify(liveReadout)})`);
+  } else if (liveReadout.cube && liveReadout.cube.bottom > liveReadout.slot.top + 0.5) {
+    errors.push(`the view cube overlaps the live readout (${JSON.stringify(liveReadout)})`);
+  }
   await page.mouse.up();
   await settle(page);
+  if (await page.evaluate(() => window.__pfRuntime.pose.__dragReadout())) errors.push("the live readout stayed up after the drag ended");
   if (drawerJobs.length) errors.push(`${drawerJobs.length} generate job(s) posted while sliding drawer1 (a drawer slides by matrix)`);
   const slide = await oneCommit(page, commits0, "sliding drawer1", errors);
   const open = slide?.params?.drawer1Open;
-  if (slide && !(Math.abs(open - 60) <= 6)) errors.push(`sliding drawer1 to its 60 mm mark committed drawer1Open ${open}`);
+  if (slide && !(Math.abs(open - 60) <= 6)) errors.push(`sliding drawer1 to its 60% mark committed drawer1Open ${open}`);
   for (const k of ["drawer2Open", "drawer3Open", "width", "depth", "height"]) {
     if (slide && !Object.is(slide.params[k], defaults[k])) errors.push(`sliding drawer1 moved ${k} (${defaults[k]} -> ${slide.params[k]})`);
+  }
+
+  // The readout chip: it shows by drawer1 after the slide; click it, type 20.34 and Enter —
+  // one commit of the snapped value (step 0.1: 20.3), then the chip goes.
+  const chip = await page.evaluate(() => window.__pfRuntime.pose.__chip());
+  if (chip?.handleId !== "drawer1" || chip.kind !== "values") errors.push(`no readout chip by drawer1 after the slide (${JSON.stringify(chip)})`);
+  let typed = null;
+  if (chip) {
+    commits0 = await page.evaluate(() => window.__pfCommits.length);
+    await page.click(".pf-pose-chip-value");
+    await page.fill('.pf-pose-chip input[name="drawer1Open"]', "20.34");
+    await page.press('.pf-pose-chip input[name="drawer1Open"]', "Enter");
+    await settle(page);
+    const edit = await oneCommit(page, commits0, "the chip edit", errors);
+    typed = edit?.params?.drawer1Open ?? null;
+    if (edit && typed !== 20.3) errors.push(`the chip edit committed drawer1Open ${typed}, not 20.3 (20.34 snapped to its 0.1 step)`);
+    if (await page.evaluate(() => window.__pfRuntime.pose.__chip())) errors.push("the readout chip stayed up after its edit was written");
   }
 
   // Shape: the top corner outward, live-rebuilt.
@@ -834,7 +1064,7 @@ async function checkDrawerBox(page, url, errors) {
     if (!Object.is(grow.params.height, defaults.height)) errors.push(`the corner drag moved height (${defaults.height} -> ${grow.params.height})`);
   }
   return {
-    drawer: { generatesDuringDrag: drawerJobs.length, drawer1Open: open ?? null },
+    drawer: { pressPxFromCentre: Number(shaftOff.toFixed(1)), generatesDuringDrag: drawerJobs.length, drawer1Open: open ?? null, chipTyped: typed },
     corner: { lastBuildMs, liveGenerates: live.length, buildsDuring, buildsAfter, width: grow?.params?.width ?? null, depth: grow?.params?.depth ?? null },
   };
 }

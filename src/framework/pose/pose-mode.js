@@ -54,10 +54,28 @@
 // "tip") and the source's `lines` as bones. One shows while the mouse is within
 // NEAR_LIMB_PX of its point, or over a sub-part its `showOn` names (mount's
 // hoveredSubPart, re-read per frame, since the hover pick lands a frame after the move).
-// Hovering its dot draws its guides (handle-guides.js: the axis arrow, plane square or
-// rotary ring, and a one-param handle's path); its drag turns the pointer into a target
-// by its drag kind (drag-kinds.js) and shows the readout. A click pins it ("<handle>:<at>"
-// or "<handle>:point"). It has no rings and no miss line (the session exposes no miss).
+// Hovering its dot draws its guides (handle-guides.js: the plane square or rotary ring,
+// and a one-param handle's path); its drag turns the pointer into a target by its drag
+// kind (drag-kinds.js) and shows the readout. A click pins it ("<handle>:<at>" or
+// "<handle>:point"). It has no rings and no miss line (the session exposes no miss).
+// An AXIS handle has no dot and no guides: it draws as a two-sided arrow along its axis
+// (pose-scene.js), which shows the way it slides by itself. The arrow is its grab target,
+// picked through the arrow's hit proxy (gizmo/gizmo-handles.js's arrowHitGeometry, by
+// gizmo-pick.js's pickGizmoHandle, its centre as the dot's): a press anywhere on it starts
+// the axis drag. Its proxy is ARROW_HIT_PX thick for a mouse, TOUCH_HIT_PX for a finger.
+//
+// HANDLE GROUPS (`group`, handle-groups.js): of a group's handles that would show under the
+// pointer, only the one nearest it (its nearest dot or arrow) shows and can be pressed — the rest
+// are passed over by every hover and grab test (groupSkip), dots and arrows alike. A press
+// keeps its handle until release; the resting cue marks one handle per group.
+//
+// THE RESTING CUE: handles show only on hover, so a first look finds none. The first frame
+// posing is live with the part on screen (a build delivered, no cached preview) shows every
+// shown handle's dot (an axis handle's arrow) dimmed (CUE_OPACITY) for CUE_HOLD_MS, then fades it out over
+// CUE_FADE_MS — once per mount: never again on a param change, a view switch or a suppress
+// round trip. A touch-only device (`(hover: none)`) has no hover to find them by: there the
+// dimmed dots stay until the first drag of any handle, then the hover rules alone apply.
+// The dots are pose-scene's (setCue), in its capture-hidden group.
 //
 // Frames: the overlay and every limb point are in PART coordinates (the sub-meshes'
 // shared parent — the pivot stands model Z up and recentres per view). Pointer rays come
@@ -69,15 +87,18 @@ import { worldPerPx, orthoWorldPerPx } from "../measure/dim3-scene.js";
 import { createPoseScene, PIN_HEAD_PX, PIN_LIFT_PX } from "./pose-scene.js";
 import { createAimGizmo, createJointGizmo, AIM_RING_PX, AIM_RING_HIT_PX, JOINT_RING_PX, JOINT_GIZMO_PARTS } from "./aim-gizmo.js";
 import { beginRotateDrag, rotateDragAngle } from "../gizmo/gizmo-rotate.js";
+import { ARROW_HALF_LENGTH, ARROW_UNIT_PX, arrowHitGeometry, hitMaterial } from "../gizmo/gizmo-handles.js";
+import { pickGizmoHandle } from "../gizmo/gizmo-pick.js";
 import { createPoseSession, pinId, pinTarget } from "./pose-session.js";
-import { dragPlaneNormal, dragPlanePoint, hitHandle } from "./pose-geom.js";
-import { limbInfo, jointRings } from "./param-solve.js";
+import { dragPlaneNormal, dragPlanePoint, hitHandle, reachMissed } from "./pose-geom.js";
+import { limbInfo, jointRings, goalGrabJoints } from "./param-solve.js";
 import { handleKind, handleAt, handleRecord } from "./handle-source.js";
 import { startDrag as startKindDrag, dragTarget } from "./drag-kinds.js";
-import { axisGuide, planeGuide, rotaryGuide, sweepPath, pathKey, pathParam, readoutText } from "./handle-guides.js";
+import { planeGuide, rotaryGuide, sweepPath, pathKey, pathParam, readoutText, readoutItems } from "./handle-guides.js";
 import { resolveParams } from "../part-model.js";
 import { aimTurn } from "../solve/aim.js";
 import { withDeriveMemo } from "../derive-memo.js";
+import { groupOf, groupHidden, cueHandleIds } from "./handle-groups.js";
 
 /** A dot's hit radius, CSS px: a 28 px target around a 12 px dot. */
 export const HANDLE_HIT_PX = 14;
@@ -90,6 +111,12 @@ export const NEAR_LIMB_PX = 32;
 export const DOT_CORE_PX = 8;
 /** A touch press this near any limb's dot grabs it (touch has no hover to show dots first). */
 export const TOUCH_HIT_PX = 24;
+/** An axis handle's arrow picks this far (CSS px) from its line for a mouse (a finger: TOUCH_HIT_PX). */
+export const ARROW_HIT_PX = 10;
+/** The resting cue: its dots' opacity, how long they hold, and how long they fade (ms). */
+export const CUE_OPACITY = 0.45;
+export const CUE_HOLD_MS = 2000;
+export const CUE_FADE_MS = 400;
 /** A hinge this near (degrees) its range end reads as clamped. */
 const CLAMP_EPS_DEG = 1e-3;
 const AIM_NAMES = ["pitch", "yaw", "roll"];
@@ -102,6 +129,12 @@ const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const len = (a) => Math.hypot(a[0], a[1], a[2]);
 const unit = (a) => { const l = len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+/** An axis handle's record: its unit slide direction (its arrow's), else null. */
+function arrowDir(info) {
+  const d = info?.drag === "axis" ? info.axis?.direction : null;
+  return Array.isArray(d) && d.length === 3 && d.every(Number.isFinite) && len(d) > 1e-12 ? unit(d) : null;
+}
 
 /** Distance in px from (px, py) to the segment a-b. */
 function segDist(px, py, a, b) {
@@ -153,6 +186,8 @@ export function aimAxes(toward, angles) {
  * @param opts.visibleHandles () => handle ids to show in the current view (default: all).
  * @param opts.hoveredSubPart () => the sub-part under the mouse, or null: reveals a generic
  *   handle whose `showOn` names it.
+ * @param opts.cueBlocked () => true while the resting cue must wait (mount: the opening
+ *   view's autoplay is pending or playing). Default: never.
  * Session effects, passed through to createPoseSession: getParams, write, commit,
  * restore, staleSubParts, ghost, unghost, hold. Optional: schedule (rAF), createScene,
  * createGizmo (the aim gizmo), createJointRings (the joint gizmo).
@@ -171,6 +206,12 @@ export function createPoseMode(viewer, {
   visibleHandles = () => Object.keys(part?.handles ?? {}),
   hoveredSubPart = () => null,
   schedule = (cb) => requestAnimationFrame(cb),
+  // the resting cue's clock, and whether this device has no hover (touch only)
+  now = () => performance.now(),
+  hoverNone = () => !!globalThis.matchMedia?.("(hover: none)")?.matches,
+  // true while the cue must wait: mount's, while the opening view's autoplay is
+  // pending or playing (the cue starts once it ends; a loop nobody stops: never)
+  cueBlocked = () => false,
   createScene = createPoseScene,
   createGizmo = createAimGizmo,
   createJointRings = createJointGizmo,
@@ -179,6 +220,8 @@ export function createPoseMode(viewer, {
   const dom = viewer.domElement;
   const modeListeners = new Set();
   const pinListeners = new Set();
+  const dragEndListeners = new Set();
+  const readoutListeners = new Set();
   const notify = (set, ...args) => {
     for (const cb of [...set]) {
       try { cb(...args); } catch (err) { console.error("pose mode listener failed", err); }
@@ -215,10 +258,15 @@ export function createPoseMode(viewer, {
   const hoverListeners = new Set();
   // generic handles
   const showOnAny = Object.values(handles).some((h) => isGeneric(h) && h.showOn != null);
+  const groupsAny = Object.values(handles).some((h) => groupOf(h) != null);
   let lastPt = null;       // the mouse's last canvas point (showOn re-reads the hover per frame)
   let lastSub = null;      // hoveredSubPart() as the last hover read it
   let guideScale = null;   // mm per px the shown guides were drawn at (null: none shown)
   const paths = new Map(); // handleId -> { key, guide } (handle-guides' sweepPath, cached)
+  // the resting cue: "pending" until the first live frame with the part on screen (and
+  // no opening autoplay pending or playing — cueBlocked), then { start, touch } while it
+  // shows, then "done" (once per mount)
+  let cue = Object.keys(handles).length ? "pending" : "done";
 
   const session = createPoseSession({
     part, getParams, write, commit, restore, staleSubParts, ghost, unghost, hold,
@@ -327,10 +375,28 @@ export function createPoseMode(viewer, {
     // a limb shown only for its rings draws no tip and only the dots of its joints with rings
     for (const info of extras) infos.push({ ...info, ringsOnly: info.joints.map((j) => j.name).filter((n) => rings.has(`${info.name}\0${n}`)) });
     readGeneric(params, ids.filter((id) => isGeneric(handles[id])), infos);
+    dropStaleHover();
     scene.setLimbs(infos);
     syncPins();
     syncRings();
     syncGuides();
+    syncCue();
+  }
+  /**
+   * A hover, focus or touch focus on a limb this re-read no longer shows (a view switch, a
+   * relevance change) is dropped, with its cursor and claim: left set, it kept a grab
+   * cursor, hid the model's tooltip and claimed a press over a handle no longer drawn.
+   * A press keeps its own (the session cancels a drag the view outdates).
+   */
+  function dropStaleHover() {
+    const names = new Set(shown.map((e) => e.info.name));
+    const gone = (limb) => limb != null && !names.has(limb);
+    if (touchFocus && gone(touchFocus.limb)) touchFocus = null;
+    if (press) return;
+    if (gone(hoverLimb) || gone(hoverHit?.limb) || gone(hoverFocus?.limb)) {
+      setHover(null, null, null);
+      setCursor("");
+    }
   }
   /** One pseudo-limb record per shown generic handle (handleRecord), from one derive. */
   function readGeneric(params, ids, infos) {
@@ -357,7 +423,7 @@ export function createPoseMode(viewer, {
     refresh();
   }
   /** Anything pose-related on screen that a param change must move. */
-  const drawsAnything = () => !!(hoverLimb || press || session.pins.length || touchFocus);
+  const drawsAnything = () => !!(hoverLimb || press || session.pins.length || touchFocus || typeof cue === "object");
 
   function paramsMoved() {
     if (!lastParams) return true;
@@ -527,15 +593,19 @@ export function createPoseMode(viewer, {
   const ringJoints = (info) => info.joints.map((j) => j.name).filter((n) => rings.has(ringKey(info.name, n)));
   /**
    * The dots a shown entry offers, `[{ at, ringOnly }]`: an angles limb's tip and joints; a
-   * goal handle's `at`, plus its joints with rings; an extra limb's joints with rings. A
-   * ring-only dot shows its rings when hovered but is not a grab.
+   * goal handle's `at`, plus its joints with rings (a grab when a driven joint above moves
+   * it, param-solve's goalGrabJoints); an extra limb's joints with rings. A ring-only dot
+   * shows its rings when hovered but is not a grab.
    */
   function dotsOf({ handle, info, extra, generic }) {
     if (generic) return [{ at: "tip", ringOnly: false }];
     if (extra) return ringJoints(info).map((at) => ({ at, ringOnly: true }));
     if (handle.drag === "goal") {
       const at = goalAt(handle);
-      return [{ at, ringOnly: false }, ...ringJoints(info).filter((n) => n !== at).map((n) => ({ at: n, ringOnly: true }))];
+      // a joint some driven joint above it moves is a grab too (a mid-joint drag); the rest
+      // (the first driven joint, one on a twist axis above it) stay ring-only
+      const grabs = new Set(goalGrabJoints(info, handle));
+      return [{ at, ringOnly: false }, ...ringJoints(info).filter((n) => n !== at).map((n) => ({ at: n, ringOnly: !grabs.has(n) }))];
     }
     return ["tip", ...info.joints.map((j) => j.name)].map((at) => ({ at, ringOnly: false }));
   }
@@ -549,44 +619,106 @@ export function createPoseMode(viewer, {
     if (screenCache) return screenCache;
     const limbs = new Map();
     const dots = [];
+    const grouped = []; // the grouped handles' entries (groupSkip)
     for (const entry of shown) {
       const { handleId, info } = entry;
-      if (!limbs.has(info.name)) limbs.set(info.name, chainOf(info).map(toScreen));
+      const group = groupsAny && !entry.extra ? groupOf(entry.handle) : null;
+      if (group != null) grouped.push({ entry, group });
+      // an axis handle's arrow: [centre, one tip, the other] (the tip to tip segment is
+      // what NEAR_LIMB_PX measures to; the centre stays first, showOnAt's anchor)
+      const arrow = entry.generic ? arrowScreen(info) : null;
+      if (!limbs.has(info.name)) limbs.set(info.name, arrow ? [arrow.center, arrow.a, arrow.b] : chainOf(info).map(toScreen));
       for (const { at, ringOnly } of dotsOf(entry)) {
         const s = toScreen(info.points[at]);
         if (!s || s.visible === false) continue;
         const hit = { kind: "dot", handleId, at, limb: info.name };
         if (ringOnly) hit.ringOnly = true;
         if (entry.generic) hit.generic = true;
-        dots.push({ x: s.x, y: s.y, hit });
+        dots.push(arrow ? { x: s.x, y: s.y, hit, arrow } : { x: s.x, y: s.y, hit });
       }
     }
-    screenCache = { limbs, dots };
+    screenCache = { limbs, dots, grouped };
     return screenCache;
   }
+  /** A shown handle's grab point (part coordinates): a goal handle's `at`, else its tip; null if none. */
+  function grabPoint({ handle, info, generic }) {
+    const p = info.points[generic ? "tip" : handle.drag === "goal" ? goalAt(handle) : "tip"];
+    return Array.isArray(p) ? p : null;
+  }
+  /** How far (px) the canvas point is from a limb's projected bones (`pts`, screen().limbs). */
+  function bonesDistance(pts, x, y) {
+    let best = Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[i + 1] ?? null;
+      if (!a) continue;
+      best = Math.min(best, b ? segDist(x, y, a, b) : Math.hypot(x - a.x, y - a.y));
+    }
+    return best;
+  }
+  const showsOn = (handle, sub) => {
+    const on = handle?.showOn;
+    return sub != null && (on === sub || (Array.isArray(on) && on.includes(sub)));
+  };
+  /**
+   * Handle groups (handle-groups.js): the limb names hover and grabs must pass over at the
+   * canvas point — of the grouped handles that would show there (bones within NEAR_LIMB_PX,
+   * a dot or arrow within `radius`, a `showOn` sub-part hovered), all but the one nearest
+   * it: ranked by the nearest dot (an arrow: its line) the handle offers, else by its
+   * bones — never by one grab point alone, which hid a knuckle dot under the pointer when
+   * another finger's tip sat nearer than its own. A limb name is skipped only when every
+   * handle on it is. Null: none.
+   */
+  function groupSkip(x, y, radius) {
+    if (!groupsAny) return null;
+    const { limbs, dots, grouped } = screen();
+    if (grouped.length < 2) return null;
+    const sub = showOnAny ? hoveredSubPart() : null;
+    const touch = radius >= TOUCH_HIT_PX;
+    const near = (entry) => {
+      const name = entry.info.name;
+      const pts = limbs.get(name);
+      if (pts && bonesDistance(pts, x, y) <= NEAR_LIMB_PX) return true;
+      if (entry.generic && showsOn(entry.handle, sub)) return true;
+      return dots.some((d) => d.hit.limb === name && d.hit.handleId === entry.handleId
+        && (d.arrow ? arrowPicks(d, x, y, touch) : Math.hypot(d.x - x, d.y - y) <= radius));
+    };
+    /** How far (px) the canvas point is from the nearest dot or arrow `entry` offers, else from its bones. */
+    const distance = (entry) => {
+      let best = Infinity;
+      for (const d of dots) {
+        if (d.hit.limb !== entry.info.name || d.hit.handleId !== entry.handleId) continue;
+        best = Math.min(best, d.arrow ? arrowDistance(d.arrow, x, y) : Math.hypot(d.x - x, d.y - y));
+      }
+      if (best < Infinity) return best;
+      const pts = limbs.get(entry.info.name);
+      return pts ? bonesDistance(pts, x, y) : Infinity;
+    };
+    const cands = grouped.filter((g) => near(g.entry)).map((g) => ({ id: g.entry.handleId, group: g.group, dist: distance(g.entry) }));
+    const hidden = groupHidden(cands);
+    if (!hidden.size) return null;
+    const kept = new Set(shown.filter((e) => !hidden.has(e.handleId)).map((e) => e.info.name));
+    const skip = new Set(shown.filter((e) => hidden.has(e.handleId) && !kept.has(e.info.name)).map((e) => e.info.name));
+    return skip.size ? skip : null;
+  }
 
-  /** The limb whose projected bones run nearest (x, y), within NEAR_LIMB_PX, else null. */
-  function nearestLimb(x, y) {
+  /** The limb whose projected bones run nearest (x, y), within NEAR_LIMB_PX, else null (`skip`: limb names to pass over). */
+  function nearestLimb(x, y, skip = null) {
     let best = null, bestD = NEAR_LIMB_PX;
     for (const [name, pts] of screen().limbs) {
-      for (let i = 0; i < pts.length; i++) {
-        const a = pts[i], b = pts[i + 1] ?? null;
-        if (!a) continue;
-        const d = b ? segDist(x, y, a, b) : Math.hypot(x - a.x, y - a.y);
-        if (d <= bestD) { bestD = d; best = name; }
-      }
+      if (skip?.has(name)) continue;
+      const d = bonesDistance(pts, x, y);
+      if (d <= bestD) { bestD = d; best = name; }
     }
-    return best ?? showOnAt(x, y);
+    return best ?? showOnAt(x, y, skip);
   }
   /** The generic handle a `showOn` reveals for the sub-part under the mouse (the nearest, if several), else null. */
-  function showOnAt(x, y) {
+  function showOnAt(x, y, skip = null) {
     if (!showOnAny) return null;
     const sub = hoveredSubPart();
     if (sub == null) return null;
     let best = null, bestD = Infinity;
     for (const e of shown) {
-      const on = e.generic ? e.handle.showOn : null;
-      if (!(on === sub || (Array.isArray(on) && on.includes(sub)))) continue;
+      if (!e.generic || !showsOn(e.handle, sub) || skip?.has(e.info.name)) continue;
       const s = screen().limbs.get(e.info.name)?.[0];
       const d = s ? Math.hypot(x - s.x, y - s.y) : Infinity;
       if (!best || d < bestD) { bestD = d; best = e.info.name; }
@@ -594,18 +726,87 @@ export function createPoseMode(viewer, {
     return best;
   }
 
-  /** The dot nearest (x, y) within `radius`, among `limb`'s dots (null: every limb's). */
-  function dotAt(x, y, limb, radius) {
-    const cands = screen().dots
-      .filter((d) => limb === null || d.hit.limb === limb)
-      .map((d, id) => ({ id, x: d.x, y: d.y, hit: d.hit }));
+  /**
+   * The dot nearest (x, y) within `radius`, among `limb`'s dots (null: every limb's). An
+   * axis handle's dot is its arrow: picked by its hit proxy (arrowPicks), a finger's
+   * (`radius` TOUCH_HIT_PX or more) fatter, and its distance is to the arrow's line.
+   * `skip`: limb names to pass over (a handle group's hidden members, groupSkip).
+   */
+  function dotAt(x, y, limb, radius, skip = null) {
+    const all = screen().dots.filter((d) => (limb === null || d.hit.limb === limb) && !skip?.has(d.hit.limb));
+    const cands = all.filter((d) => !d.arrow).map((d, id) => ({ id, x: d.x, y: d.y, hit: d.hit }));
     const id = hitHandle(cands, x, y, radius);
-    return id === null ? null : cands[id].hit;
+    let best = id === null ? null : { hit: cands[id].hit, dist: Math.hypot(cands[id].x - x, cands[id].y - y) };
+    for (const d of all) {
+      if (!d.arrow || !arrowPicks(d, x, y, radius >= TOUCH_HIT_PX)) continue;
+      const dist = arrowDistance(d.arrow, x, y);
+      if (!best || dist < best.dist) best = { hit: d.hit, dist };
+    }
+    return best?.hit ?? null;
   }
-  /** How far (px) the canvas point is from where the dot `hit` sits on screen. */
+  /** How far (px) the canvas point is from where the dot `hit` sits on screen (an arrow: its line). */
   function dotDistance(hit, x, y) {
     const d = screen().dots.find((c) => c.hit === hit);
+    if (d?.arrow) return arrowDistance(d.arrow, x, y);
     return d ? Math.hypot(d.x - x, d.y - y) : Infinity;
+  }
+
+  // ---- axis handles' arrows -------------------------------------------------
+  /**
+   * An axis handle's arrow on the canvas: `{ at, dir, center, a, b }` — its point and unit
+   * direction (part coordinates), and its centre and two head tips on screen (a tip off the
+   * depth range: null). Null for any other record, or a point off screen.
+   */
+  function arrowScreen(info) {
+    const dir = arrowDir(info);
+    const at = info.points.tip;
+    const center = dir && Array.isArray(at) ? toScreen(at) : null;
+    if (!center || center.visible === false) return null;
+    const reach = ARROW_HALF_LENGTH * ARROW_UNIT_PX * mmPerPx(at);
+    const tip = (sign) => toScreen(at.map((q, i) => q + dir[i] * reach * sign));
+    return { at, dir, center, a: tip(-1), b: tip(1) };
+  }
+  /** How far (px) the canvas point is from the arrow's line on screen (its centre, if a tip is off screen). */
+  function arrowDistance(arrow, x, y) {
+    return arrow.a && arrow.b ? segDist(x, y, arrow.a, arrow.b) : Math.hypot(arrow.center.x - x, arrow.center.y - y);
+  }
+  // The arrows' hit proxies (one shared by every arrow, posed per pick): a mouse's, a finger's.
+  const arrowProxies = {};
+  const _pq = new THREE.Quaternion();
+  const _pp = new THREE.Vector3();
+  const _ps = new THREE.Vector3();
+  const Z_AXIS = new THREE.Vector3(0, 0, 1);
+  function arrowProxy(touch) {
+    const key = touch ? "touch" : "mouse";
+    arrowProxies[key] ??= new THREE.Mesh(arrowHitGeometry((touch ? TOUCH_HIT_PX : ARROW_HIT_PX) / ARROW_UNIT_PX), hitMaterial());
+    return arrowProxies[key];
+  }
+  /**
+   * The arrow of screen dot `d` is under the canvas point: its hit proxy, posed on the
+   * arrow as pose-scene draws it, meets the pointer's ray, or the point is within the dot's
+   * radius of its centre (gizmo-pick.js's proxy-then-centre order).
+   */
+  function arrowPicks(d, x, y, touch) {
+    const m = worldMatrix();
+    const { width: w, height: h } = dom.getBoundingClientRect();
+    if (!m || !(w > 0) || !(h > 0)) return false;
+    const proxy = arrowProxy(touch);
+    const { at, dir } = d.arrow;
+    _pq.setFromUnitVectors(Z_AXIS, _ps.set(dir[0], dir[1], dir[2]));
+    proxy.matrix.compose(_pp.set(at[0], at[1], at[2]), _pq, _ps.setScalar(ARROW_UNIT_PX * mmPerPx(at)));
+    proxy.matrixWorld.multiplyMatrices(m, proxy.matrix);
+    const cam = viewer.camera;
+    cam.updateMatrixWorld?.();
+    raycaster.setFromCamera({ x: (x / w) * 2 - 1, y: -(y / h) * 2 + 1 }, cam);
+    return pickGizmoHandle({
+      raycaster,
+      proxies: [proxy],
+      handleOf: (i) => (i ? d.hit : null),
+      pointer: { x, y },
+      center: d.arrow.center,
+      centerRadiusPx: touch ? TOUCH_HIT_PX : HANDLE_HIT_PX,
+      centerHandle: d.hit,
+    }) !== null;
   }
   /** How far (px) the canvas point is from ring `i` of a gizmo at `at` (its circle, projected). */
   function ringDistance(at, axis, radiusPx, x, y) {
@@ -695,8 +896,10 @@ export function createPoseMode(viewer, {
     // (a zoomed-out hand), another finger's bones can pass nearer a dot than its own
     // limb's do at a pixel's tie, and restricting the dot to the bone-nearest limb left a
     // dot that hovering its own centre never reached (the index mcp gave the middle's).
-    let dotHit = dotAt(x, y, null, HANDLE_HIT_PX);
-    const limb = dotHit?.limb ?? nearestLimb(x, y);
+    // a handle group shows only its member nearest the pointer: the rest are passed over
+    const skip = groupSkip(x, y, HANDLE_HIT_PX);
+    let dotHit = dotAt(x, y, null, HANDLE_HIT_PX, skip);
+    const limb = dotHit?.limb ?? nearestLimb(x, y, skip);
     const jt = jointTarget(focus);
     const onJoint = onAim ? null : jointRingHit(jt, pt);
     const onRing = onAim ?? onJoint;
@@ -745,19 +948,76 @@ export function createPoseMode(viewer, {
     if (claimsHover() !== claimed) notify(hoverListeners);
   }
 
+  // ---- the resting cue --------------------------------------------------------
+  /**
+   * Every shown handle's grab point (part coordinates), as handlePoints lists them:
+   * `{ points, arrows }` — an axis handle's as `{ point, direction }` (its arrow). A handle
+   * group gets one mark: its first-declared handle the view shows (cueHandleIds).
+   */
+  function cueMarks() {
+    const points = [], arrows = [];
+    const cued = groupsAny ? cueHandleIds(handles, shown.filter((e) => !e.extra).map((e) => e.handleId)) : null;
+    for (const entry of shown) {
+      const { info, extra, generic } = entry;
+      if (extra || (cued && !cued.has(entry.handleId))) continue;
+      const p = grabPoint(entry);
+      if (!p) continue;
+      const direction = generic ? arrowDir(info) : null;
+      if (direction) arrows.push({ point: p, direction });
+      else points.push(p);
+    }
+    return { points, arrows };
+  }
+  /** The cue's opacity now (0 once it has faded), from its start. */
+  function cueOpacity() {
+    if (typeof cue !== "object") return 0;
+    if (cue.touch) return CUE_OPACITY;
+    const t = now() - cue.start;
+    if (t <= CUE_HOLD_MS) return CUE_OPACITY;
+    const f = (t - CUE_HOLD_MS) / CUE_FADE_MS;
+    return f >= 1 ? 0 : CUE_OPACITY * 0.5 * (1 + Math.cos(Math.PI * f)); // an eased fade
+  }
+  /** Hand the scene the cue's dots (they follow the handles), or none. */
+  function syncCue() {
+    if (!scene) return;
+    scene.setCue?.(typeof cue === "object" && live ? { ...cueMarks(), opacity: cueOpacity() } : null);
+  }
+  /** Per frame: start the cue on the first live frame with the part on screen and no
+   *  opening autoplay to wait out; fade it. */
+  function tickCue() {
+    if (cue === "pending") {
+      if (!partsFrame()) return; // nothing built yet: the handles have nowhere to show
+      if (cueBlocked()) return;  // the opening autoplay has the stage until it ends
+      cue = { start: now(), touch: hoverNone() };
+      syncCue();
+      return;
+    }
+    if (typeof cue !== "object" || cue.touch) return;
+    const o = cueOpacity();
+    if (o <= 0) { endCue(); return; }
+    if (o < CUE_OPACITY) {
+      scene.setCueOpacity?.(o);
+      viewer.requestRender?.();
+    }
+  }
+  function endCue() {
+    if (cue === "done") return;
+    cue = "done";
+    scene?.setCue?.(null);
+    viewer.requestRender?.();
+  }
+
   // ---- generic handles' guides ----------------------------------------------
-  /** The generic handle whose guides show: the one dragged, else the one whose dot is hovered. */
+  /**
+   * The generic handle whose guides show: the one dragged, else the one whose dot is
+   * hovered. Never an axis handle: its arrow already shows the line it slides on, and its
+   * one-param path would be that same line.
+   */
   function guideEntry() {
     const hit = press?.started ? press.hit : hoverHit;
     if (!hit?.generic) return null;
-    return shown.find((e) => e.generic && e.handleId === hit.handleId) ?? null;
-  }
-  /** The camera's look in part coordinates. */
-  function partForward() {
-    const m = worldMatrix();
-    if (!m) return null;
-    _inv.copy(m).invert();
-    return viewer.camera.getWorldDirection(new THREE.Vector3()).transformDirection(_inv).toArray();
+    const e = shown.find((s) => s.generic && s.handleId === hit.handleId) ?? null;
+    return e && e.info.drag !== "axis" ? e : null;
   }
   /** A one-param handle's path, swept once per params other than its own (handle-guides' pathKey). */
   function pathOf({ handleId, handle }) {
@@ -779,8 +1039,7 @@ export function createPoseMode(viewer, {
       const at = info.points.tip;
       const s = mmPerPx(at);
       guideScale = s;
-      const g = info.drag === "axis" && info.axis ? axisGuide(at, info.axis.direction, s, partForward())
-        : info.drag === "plane" && info.axis ? planeGuide(at, info.axis.direction, s)
+      const g = info.drag === "plane" && info.axis ? planeGuide(at, info.axis.direction, s)
         : info.drag === "rotary" && info.axis ? rotaryGuide(at, info.axis, s)
         : null;
       if (g) out.push(g);
@@ -814,7 +1073,7 @@ export function createPoseMode(viewer, {
     safeRelease(ending.pointerId);
     window.removeEventListener("keydown", onKeyDown, true);
     scene?.setActive(null);
-    if (ending.drag) scene?.setReadout?.(null);
+    setReadout(null); // a generic or a limb drag's readout: the drag is over
     refresh();
     if (ending.touch) {
       // Touch has no hover: the limb its press showed goes away with the finger — unless
@@ -843,6 +1102,7 @@ export function createPoseMode(viewer, {
     const grabName = hit.kind === "ring" ? "ring" : hit.kind === "jring" ? `ring:${hit.joint}` : hit.at;
     if (!session.begin(hit.handleId, grabName)) { finishPress(); return false; }
     press.started = true;
+    if (cue?.touch) endCue(); // touch: the first drag ends the cue
     setCursor("grabbing");
     notify(hoverListeners); // a drag began (mount closes a selection popover)
     const ray = press.ray;
@@ -888,6 +1148,7 @@ export function createPoseMode(viewer, {
     } catch { finishPress(); return false; }
     if (!session.begin(s.handleId, handleAt(s.handle))) { finishPress(); return false; }
     press.started = true;
+    if (cue?.touch) endCue(); // touch: the first drag ends the cue
     press.drag = drag;
     setCursor("grabbing");
     notify(hoverListeners); // a drag began (mount closes a selection popover)
@@ -936,6 +1197,7 @@ export function createPoseMode(viewer, {
         const i = info.joints.findIndex((j) => j.name === hit.joint);
         if (i >= 0 && result.clamped) clamped[i] = true;
         scene?.setActive({ limb: info.name, grab: hit.joint, clamped });
+        limbReadout(hit);
         syncRings();
         viewer.requestRender?.();
         return;
@@ -946,14 +1208,39 @@ export function createPoseMode(viewer, {
     const s = shown.find((e) => e.handleId === hit.handleId);
     if (!s) return;
     const grabbed = hit.kind === "dot" ? s.info.points[hit.at] : null;
+    const residual = target && grabbed ? len(sub(grabbed, target)) : undefined;
+    // one test for the scene's miss line and the readout's "Out of reach" (pose-geom)
+    const missed = reachMissed(residual, target ? mmPerPx(target) : NaN);
     scene?.setActive({
       limb: s.info.name,
       grab: hit.kind === "dot" ? hit.at : goalAt(s.handle),
       clamped: clampedFlags(s.info),
       target: target ?? undefined,
-      residual: target && grabbed ? len(sub(grabbed, target)) : undefined,
+      residual,
+      missed,
     });
+    limbReadout(hit, missed ? residual : undefined);
     viewer.requestRender?.();
+  }
+
+  /**
+   * A limb drag's readout (angles or goal handle): a dot drag shows the handle's `readout`,
+   * else its params (an angles handle's list; a goal's position, then aim); a joint ring
+   * its own parameter; an aim ring that aim parameter. `residual` (mm) is given only when
+   * the drag misses (pose-geom's reachMissed, the scene's `missed`): one "Out of reach"
+   * item last. The scene draws no text.
+   */
+  function limbReadout(hit, residual) {
+    const handle = handles[hit.handleId];
+    if (!handle) return;
+    const source = hit.kind === "jring" ? { readout: hit.ring?.slots?.[hit.name]?.param }
+      : hit.kind === "ring" ? { readout: handle.params?.aim?.[AIM_NAMES.indexOf(hit.name)] }
+      : handle;
+    const items = readoutItems(part, { ...part.defaults, ...getParams() }, source);
+    if (Number.isFinite(residual)) {
+      items.push({ key: "reach", label: "Out of reach", unit: "mm", value: residual, text: residual.toFixed(1) });
+    }
+    setReadout({ handleId: hit.handleId, text: items.map((i) => `${i.key} ${i.text}`).join(" · "), items });
   }
 
   function genericStep(ev, ray) {
@@ -963,8 +1250,19 @@ export function createPoseMode(viewer, {
     const s = shown.find((e) => e.generic && e.handleId === press.hit.handleId);
     if (!s) return;
     scene?.setActive({ limb: s.info.name, grab: "tip", clamped: [] });
-    scene?.setReadout?.({ at: s.info.points.tip, text: readoutText(part, { ...part.defaults, ...getParams() }, s.handle) });
+    const params = { ...part.defaults, ...getParams() };
+    setReadout({ handleId: s.handleId, text: readoutText(part, params, s.handle), items: readoutItems(part, params, s.handle) });
     viewer.requestRender?.();
+  }
+
+  // The live drag readout: the dragged handle's values, or null. Not drawn in the scene
+  // (pose mode draws no text): the bottom readout slot (drag-readout.js) shows it, as
+  // measure shows its X/Y/Z.
+  let readout = null;
+  function setReadout(r) {
+    if (!r && !readout) return;
+    readout = r;
+    notify(readoutListeners, r ? { ...r, items: r.items.map((i) => ({ ...i })) } : null);
   }
 
   function flushMove() {
@@ -988,7 +1286,7 @@ export function createPoseMode(viewer, {
       // No hover came before: the gizmo a touch left up, else any limb's dot within the
       // finger's reach (an aim handle's goal point counts as its ball).
       const tf = touchFocus;
-      const dotHit = dotAt(x, y, null, TOUCH_HIT_PX);
+      const dotHit = dotAt(x, y, null, TOUCH_HIT_PX, groupSkip(x, y, TOUCH_HIT_PX));
       // the up gizmo's own dot, on its core, beats a ring seen edge-on through it (a pin tap)
       const onCore = dotHit && tf && ownDot(tf, dotHit) && onDotCore(dotHit, x, y);
       hit = (onCore ? null : tf?.kind === "aim" ? gizmoHit(gizmoTarget(tf.limb), pt, true) : jointRingHit(jointTarget(tf), pt, true))
@@ -1092,9 +1390,10 @@ export function createPoseMode(viewer, {
     // A touch on an aim handle's goal point or gizmo, or on a joint with rings or its
     // rings, leaves that gizmo up.
     const touchGizmo = press.touch && !!focus;
+    let ended = null;
     if (press.started) {
       flushMove();
-      session.end();
+      ended = session.end();
     } else if (!wasDrag && hit.kind === "dot" && !(focus && press.touch && !press.gizmoWasUp)) {
       // a click on any dot (a tip, a joint, a goal handle's point) toggles its pin. A
       // touch's first tap on a dot with a gizmo (the aim point, a joint with rings) only
@@ -1104,6 +1403,15 @@ export function createPoseMode(viewer, {
     }
     if (touchGizmo) touchFocus = focus;
     finishPress(press.touch ? null : local(ev));
+    if (ended) {
+      notify(dragEndListeners, {
+        handleId: ended.handleId,
+        generic: isGeneric(handles[ended.handleId]),
+        changed: ended.changed,
+        // nothing written, no frame moved anything, and a pin was holding: the pin did it
+        pinHeld: ended.changed.length === 0 && !ended.moved && ended.held,
+      });
+    }
   }
 
   /** Abandon the press: a started drag reverts (session.cancel -> onCancel -> finishPress). */
@@ -1181,6 +1489,7 @@ export function createPoseMode(viewer, {
       const s = e && mmPerPx(e.info.points.tip);
       if (s && Math.abs(s - guideScale) > guideScale * GUIDE_RESCALE) syncGuides();
     }
+    tickCue();
     scene.tick();
     gizmo?.tick();
     jointGizmo?.tick();
@@ -1220,6 +1529,25 @@ export function createPoseMode(viewer, {
       if (claimed) notify(hoverListeners);
     }
     notify(modeListeners);
+  }
+  /**
+   * Mount: the view changed. Whatever the old layout left under a still pointer — hover,
+   * focus, a touch's gizmo, a pending tap, the grab cursor and the claim — is dropped (the
+   * model under it moved, or is gone), then the incoming view's handles are read.
+   */
+  function viewChanged() {
+    if (detached) return;
+    tap = null;
+    lastPt = null;
+    lastSub = null;
+    if (touchFocus) { touchFocus = null; if (live) syncRings(); }
+    if (!press) {
+      setHover(null, null, null);
+      setCursor("");
+    }
+    screenCache = null;
+    stale = true;
+    refresh();
   }
   function setEnabled(on) {
     if (detached || !!on === enabled) return;
@@ -1281,8 +1609,10 @@ export function createPoseMode(viewer, {
     takeClick() { const c = clickClaimed; clickClaimed = false; return c; },
     /** A drag (past the threshold) is in progress. */
     isDragging: () => !!press?.started,
-    /** Re-read every shown limb (mount: after a view switch; param edits are noticed per frame). */
+    /** Re-read every shown limb (mount: when the shown set changes; param edits are noticed per frame). */
     refresh,
+    /** Mount: the view switched — drop the old layout's hover state and re-read (viewChanged). */
+    viewChanged,
     /** Mount: a sub-part's new mesh was shown — lift its ghost (same frame as setSubGeometry). */
     delivered: (name) => session.delivered(name),
     /** Mount: params were written from outside mid-drag (setParams) — revert the drag. */
@@ -1291,11 +1621,14 @@ export function createPoseMode(viewer, {
      * Where each shown handle's always-grabbable point (an angles limb's tip, a goal
      * handle's `at`, a generic handle's point — `at` "point" or its source's `at`) sits
      * on the canvas: `[{ handleId, at, x, y }]`, CSS px from the
-     * canvas's top-left. Drawn or not (at rest they are hidden until hovered). Empty
-     * while posing is not live. For a host's coach marks and the
+     * canvas's top-left. An axis handle adds `arrow: { from, to }`, its arrow's two head
+     * tips on the canvas. Drawn or not (at rest they are hidden until hovered). Empty
+     * while posing is not live. `{ offscreen: true }` also lists a shown handle whose point
+     * is off screen (behind the camera), with `visible: false` (the readout chip's test of
+     * "still in this view"). For a host's coach marks and the
      * browser check (scripts/check-pose.mjs).
      */
-    handlePoints() {
+    handlePoints({ offscreen = false } = {}) {
       ensureFresh();
       const out = [];
       for (const { handleId, handle, info, extra, generic } of shown) {
@@ -1303,7 +1636,12 @@ export function createPoseMode(viewer, {
         const at = generic ? "tip" : handle.drag === "goal" ? goalAt(handle) : "tip";
         const s = toScreen(info.points[at]);
         // a generic handle reports its own point name ("point", or its source's `at`)
-        if (s && s.visible !== false) out.push({ handleId, at: generic ? handleAt(handle) : at, x: s.x, y: s.y });
+        const name = generic ? handleAt(handle) : at;
+        // an axis handle: where its arrow's two head tips sit too (a press anywhere between grabs it)
+        const arrow = generic && s && s.visible !== false ? arrowScreen(info) : null;
+        if (arrow?.a && arrow.b) out.push({ handleId, at: name, x: s.x, y: s.y, arrow: { from: { x: arrow.a.x, y: arrow.a.y }, to: { x: arrow.b.x, y: arrow.b.y } } });
+        else if (s && s.visible !== false) out.push({ handleId, at: name, x: s.x, y: s.y });
+        else if (offscreen) out.push({ handleId, at: name, x: s?.x ?? null, y: s?.y ?? null, visible: false });
       }
       return out;
     },
@@ -1357,6 +1695,8 @@ export function createPoseMode(viewer, {
         return { ...b, x: s?.x ?? null, y: s?.y ?? null };
       });
     },
+    /** How many objects the pose overlay draws now (dots, bones, badges, guides). For the browser check. */
+    drawnObjects: () => (scene?.group?.children.length ?? 0) + (scene?.guideGroup?.children.length ?? 0),
     /** The pinned points badged in this view; a pin whose handle this view hides holds nothing and counts for nothing. */
     pinCount: () => pinnedPoints.length,
     getPins: () => session.pins,
@@ -1364,6 +1704,21 @@ export function createPoseMode(viewer, {
     releasePins: () => session.releasePins(),
     onPinsChange: (cb) => { pinListeners.add(cb); return () => pinListeners.delete(cb); },
     onModeChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },
+    /**
+     * Fires when a drag is released (not cancelled): `{ handleId, generic, changed, pinHeld }`
+     * — `changed` the keys it committed; `pinHeld` when it wrote nothing because a pin held it
+     * (no frame moved a value and a pin was holding). The readout chip listens.
+     */
+    onDragEnd: (cb) => { dragEndListeners.add(cb); return () => dragEndListeners.delete(cb); },
+    /**
+     * Fires on every frame of a drag (a generic handle's, or a limb's dot, joint ring or aim
+     * ring) with `{ handleId, text, items }` (handle-guides' readoutText / readoutItems; a
+     * limb drag out of reach adds a last `reach` item), and with null when the drag ends.
+     * The bottom readout (drag-readout.js) listens.
+     */
+    onReadout: (cb) => { readoutListeners.add(cb); return () => readoutListeners.delete(cb); },
+    /** The live drag readout now, as onReadout last gave it, or null. */
+    getReadout: () => (readout ? { ...readout, items: readout.items.map((i) => ({ ...i })) } : null),
     session,
     detach() {
       if (detached) return;
@@ -1380,9 +1735,12 @@ export function createPoseMode(viewer, {
       gizmo = null;
       jointGizmo?.dispose();
       jointGizmo = null;
+      for (const p of Object.values(arrowProxies)) { p.geometry.dispose(); p.material.dispose(); }
       setCursor("");
       modeListeners.clear();
       pinListeners.clear();
+      dragEndListeners.clear();
+      readoutListeners.clear();
       hoverListeners.clear();
     },
   };

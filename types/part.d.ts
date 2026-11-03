@@ -937,6 +937,13 @@ export interface HandleCommon {
   label?: string;
   /** Sub-part name(s) whose hover reveals the handle. */
   showOn?: string | string[];
+  /** Handles sharing a group show one at a time: the one whose nearest dot (or arrow) is nearest the pointer. */
+  group?: string;
+  /**
+   * The views the handle shows in (keys of `views`). Default: every view that reads one of
+   * its parameters and draws its source (a sub-part there reads the `d` value it sits on).
+   */
+  views?: string | string[];
   /** Parameters shown in the drag readout (default: `params`). */
   readout?: string[];
 }
@@ -1001,8 +1008,11 @@ export interface GeomHandleCommon extends HandleCommon {
   /** Numeric parameters the drag may write. */
   params: string[];
 }
-/** Free 3D (the default drag): the target moves on a plane fixed at drag start. */
-export type PointHandle = HandleSource & GeomHandleCommon & { drag?: "point" };
+/**
+ * Free 3D: the target moves on a plane fixed at drag start. Every handle sets `drag` (lint's
+ * `handle-bad-drag`); Pose mode still reads a missing one as `"point"`.
+ */
+export type PointHandle = HandleSource & GeomHandleCommon & { drag: "point" };
 /** The target slides along a line through the point. */
 export type AxisHandle = HandleSource & GeomHandleCommon & {
   drag: "axis";

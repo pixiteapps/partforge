@@ -136,8 +136,8 @@ export default {
       animations: {
         spin: {
           label: "Spin",
-          description: "One turn of the input. Pose-only: the gears turn by matrix, never rebuilt.",
-          duration: 6, loop: true, easing: "linear",
+          description: "One turn of the input, played once on open; the handle dots show when it ends. Pose-only: the gears turn by matrix, never rebuilt.",
+          duration: 6, autoplay: true, easing: "linear",
           tracks: { driveAngle: [[0, 0], [1, 360]] },
         },
       },

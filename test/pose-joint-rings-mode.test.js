@@ -186,11 +186,17 @@ describe("joint rings in Pose mode", () => {
 
   it("dragging the ring turns that joint by the ring's angle, positive about its axis, one commit", () => {
     const t = setup(anglesPart());
+    const readouts = [];
+    t.mode.onReadout((r) => readouts.push(r));
     const p = t.dragRing("elbow", 20);
+    // the bottom readout shows the ring's one parameter, live
+    expect(readouts.at(-1).items.map((i) => i.key)).toEqual(["el"]);
+    expect(readouts.at(-1).items[0].value).toBeCloseTo(60, 1);
     expect(t.joint().state.hovered).toBe("bend"); // steady while dragging
     expect(t.viewer.domElement.style.cursor).toBe("grabbing");
     expect(t.orbit.enabled).toBe(false);
     t.fire("pointerup", p.x, p.y);
+    expect(readouts.at(-1)).toBeNull(); // gone with the drag
     expect(t.params.el).toBeCloseTo(60, 1);
     expect(t.params.sh).toBe(20); // only that joint
     expect(t.log.commit).toEqual([["el"]]);
@@ -241,18 +247,21 @@ describe("joint rings in Pose mode", () => {
     expect(Object.keys(t.mode.jointGizmoPoints().rings).sort()).toEqual(["bend", "spread", "twist"].sort());
   });
 
-  it("goal mode: a seeded joint is a ring-only dot; its ring turns it and the goal follows, no spring-back", () => {
+  it("goal mode: the first seeded joint is a ring-only dot, a joint it moves is a grab; a ring turns its joint and the goal follows, no spring-back", () => {
     const part = goalPart();
     const t = setup(part);
     t.hover("elbow");
     expect(t.joint().state.visible).toBe(true);
-    expect(t.viewer.domElement.style.cursor).toBe("pointer"); // not a grab (a drag orbits): a click pins
-    const s = t.screenOf(t.info().points.elbow);
+    expect(t.viewer.domElement.style.cursor).toBe("grab"); // the shoulder moves it: a mid-joint grab
+    t.hover("shoulder");
+    expect(t.joint().state.visible).toBe(true);
+    expect(t.viewer.domElement.style.cursor).toBe("pointer"); // nothing above moves it: not a grab (a drag orbits), a click pins
+    const s = t.screenOf(t.info().points.shoulder);
     t.fire("pointerdown", s.x, s.y);
     expect(t.orbit.enabled).toBe(true);
     t.fire("pointerup", s.x, s.y);
     expect(t.mode.takeClick()).toBe(true);
-    expect(t.mode.getPins()).toEqual(["arm:elbow"]);
+    expect(t.mode.getPins()).toEqual(["arm:shoulder"]);
     t.fire("pointerdown", s.x, s.y);
     t.fire("pointerup", s.x, s.y); // again: unpinned
     expect(t.mode.getPins()).toEqual([]);
@@ -308,7 +317,12 @@ describe("joint rings in Pose mode", () => {
   });
 
   it("while params change every frame, hover re-reads the limbs at most once per frame", () => {
-    const t = setup(anglesPart());
+    const clock = { t: 0 };
+    const t = setup(anglesPart(), {}, "arm", { now: () => clock.t, hoverNone: () => false });
+    // the resting cue is drawn (so it re-reads per frame) until it has run its course
+    t.viewer.tick();
+    clock.t = 1e6;
+    t.viewer.tick();
     t.hover("tip");
     counter.derives = 0;
     for (let i = 1; i <= 4; i++) {
@@ -437,7 +451,7 @@ describe("joint rings in Pose mode", () => {
 
   it("touch on a ring-only dot puts its rings up and leaves the press to orbit; the tap picks nothing and pins nothing", () => {
     const t = setup(goalPart());
-    const s = t.screenOf(t.info().points.elbow);
+    const s = t.screenOf(t.info().points.shoulder);
     t.fire("pointerdown", s.x, s.y, { pointerType: "touch" });
     expect(t.orbit.enabled).toBe(true);
     expect(t.mode.isDragging()).toBe(false);
@@ -448,7 +462,7 @@ describe("joint rings in Pose mode", () => {
     // a tap on the dot while its rings are up toggles its pin
     t.fire("pointerdown", s.x, s.y, { pointerType: "touch" });
     t.fire("pointerup", s.x, s.y, { pointerType: "touch" });
-    expect(t.mode.getPins()).toEqual(["arm:elbow"]);
+    expect(t.mode.getPins()).toEqual(["arm:shoulder"]);
     expect(t.joint().state.visible).toBe(true); // the rings stay up
     t.fire("pointerdown", s.x, s.y, { pointerType: "touch" });
     t.fire("pointerup", s.x, s.y, { pointerType: "touch" });
@@ -469,7 +483,7 @@ describe("joint pins", () => {
   it("robot arm: a click on the elbow dot pins it (no write, no pick), badged at the elbow; a second click unpins", () => {
     const t = setup(robotArm);
     const s = t.hover("elbow");
-    expect(t.viewer.domElement.style.cursor).toBe("pointer");
+    expect(t.viewer.domElement.style.cursor).toBe("grab"); // a mid-joint grab; a click still pins
     t.fire("pointerdown", s.x, s.y);
     t.fire("pointerup", s.x, s.y);
     expect(t.mode.takeClick()).toBe(true); // the picker opens nothing
@@ -485,7 +499,8 @@ describe("joint pins", () => {
 
   it("a drag from a ring-only dot is not a click: it pins nothing", () => {
     const t = setup(robotArm);
-    const s = t.hover("elbow");
+    const s = t.hover("shoulder"); // on the base's twist axis: nothing above moves it
+    expect(t.viewer.domElement.style.cursor).toBe("pointer");
     t.fire("pointerdown", s.x, s.y);
     t.fire("pointermove", s.x + 20, s.y + 5); // an orbit
     t.fire("pointerup", s.x + 20, s.y + 5);
@@ -547,6 +562,27 @@ describe("joint pins", () => {
     t.fire("pointerup", s.x - 24, s.y - 16);
     const elbow1 = elbowOf(robotArm, t.params);
     expect(Math.hypot(...elbow1.map((v, i) => v - elbow0[i]))).toBeGreaterThan(1);
+  });
+
+  it("robot arm: a drag from the elbow dot carries the elbow toward the cursor, the tool riding along; seed and goal written, one commit", () => {
+    const t = setup(robotArm);
+    const elbow0 = elbowOf(robotArm, t.params);
+    const tip0 = t.info().points.tip;
+    const s = t.hover("elbow");
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 8; i++) t.fire("pointermove", s.x - i * 3, s.y - i * 2);
+    expect(t.mode.isDragging()).toBe(true);
+    expect(t.scene.calls.setActive.at(-1).grab).toBe("elbow"); // the miss line starts at the elbow
+    t.fire("pointerup", s.x - 24, s.y - 16);
+    expect(t.log.commit).toHaveLength(1);
+    expect(t.log.commit[0]).toEqual(expect.arrayContaining(["shoulder", "toolX", "toolZ"]));
+    const elbow1 = elbowOf(robotArm, t.params);
+    expect(elbow1[0]).toBeLessThan(elbow0[0] - 3); // toward the cursor: -X
+    const tip1 = t.info().points.tip;
+    expect(Math.hypot(...tip1.map((v, i) => v - tip0[i]))).toBeGreaterThan(3); // the tool rode along
+    const arm = resolveParams(robotArm, t.params).d.arm;
+    expect(arm.report.goals[0].status).toBe("reached");
+    expect(t.mode.getPins()).toEqual([]); // a drag never toggles a pin
   });
 
   it("robot arm, elbow pinned: an aim ring turn holds the elbow too", () => {

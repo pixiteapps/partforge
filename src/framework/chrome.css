@@ -302,8 +302,8 @@
    viewer, and a stray hit on it (its padding-free edges, or a future child
    before it opts in) should reach the model behind rather than be swallowed.
 
-   The clearance also counts a float the bar shows above itself (measure's
-   X/Y/Z readout, viewbar-clear.js), so the cube steps up while one is shown;
+   The clearance also counts a float the bar shows above itself (the readout
+   slot: measure's X/Y/Z, pose's drag values; viewbar-clear.js), so the cube steps up while one is shown;
    the short transition keeps that from reading as a jump. */
 .pf-viewcube-stack {
   position: absolute;
@@ -449,8 +449,11 @@
      the transport bar paints straight over cutaway/reframe/theme and
      makes them unclickable. The viewbar occupies 12px…56px from the bottom
      (12px offset + 4px padding + 34px button + 4px padding + 2px border);
-     64px clears it with an 8px gap. */
-  .pf-anim-bar { bottom: 64px; }
+     64px clears it with an 8px gap — measured, like the cube's step: the
+     viewbar's claim (--pf-viewbar-clear, 56px without one) counts a readout
+     floated above the bar (measure's X/Y/Z, pose's drag values), so the bar
+     steps up over it rather than sitting on it. */
+  .pf-anim-bar { bottom: calc(var(--pf-viewbar-clear, 56px) + 8px); }
 }
 
 /* Placement half of app.css's touch layout — same query, so the two must be
@@ -470,7 +473,7 @@
    unbounded stacked bar would span 700px+ and strand the reset button across a
    mostly empty row. A phone is narrower than the cap and still fills its width. */
 @media (max-width: 719px), (pointer: coarse) {
-  .pf-anim-bar { width: calc(100% - 24px); max-width: 520px; bottom: 64px; }
+  .pf-anim-bar { width: calc(100% - 24px); max-width: 520px; bottom: calc(var(--pf-viewbar-clear, 56px) + 8px); }
 }
 
 /* ---- host-driven rail layouts (partforge-cloud) ---------------------------

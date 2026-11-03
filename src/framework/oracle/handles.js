@@ -6,8 +6,9 @@
 // DOM-free, three-free and node:-free like the rest of the oracle.
 
 import { resolveParams } from "../part-model.js";
-import { relevantParamKeys, RELEVANT_ALL } from "../param-deps.js";
-import { handleKind, handleParamKeys, handleAxis, locateHandle } from "../pose/handle-source.js";
+import { handleKind, handleAxis, locateHandle } from "../pose/handle-source.js";
+import { handlesShownInView } from "../pose/handle-views.js";
+import { groupOf } from "../pose/handle-groups.js";
 
 const round = (v) => Math.round(v * 1000) / 1000 + 0; // + 0 turns -0 into 0
 const roundVec = (v) => v.map(round);
@@ -29,10 +30,10 @@ export function handlesReport(part, view, params = {}) {
   const ids = Object.keys(handles).filter((id) => handles[id] && typeof handles[id] === "object");
   if (!ids.length) return undefined;
   const p = { ...part.defaults, ...params };
-  let relevant = RELEVANT_ALL;
-  try { relevant = relevantParamKeys(part, view, p); } catch { /* everything shows */ }
-  const shown = ids.filter((id) => relevant === RELEVANT_ALL || !(relevant instanceof Set)
-    || handleParamKeys(handles[id]).some((k) => relevant.has(k)));
+  // Pose mode's own rule (pose/handle-views.js): a declared `views` list, else relevance
+  // and a drawn source. It never throws: an analysis that fails shows the handle.
+  let shown = ids;
+  try { shown = handlesShownInView(part, view, p); } catch { /* everything shows */ }
   let d = null;
   let derr = null;
   try { d = resolveParams(part, params).d; } catch (e) { derr = e; }
@@ -46,6 +47,8 @@ export function handlesReport(part, view, params = {}) {
       params: reportParams(handle),
       locked: typeof handle.lock === "string" && !!p[handle.lock],
     };
+    const group = groupOf(handle);
+    if (group != null) entry.group = group;
     try {
       if (derr) throw derr;
       entry.point = roundVec(locateHandle(part, p, d, handle));

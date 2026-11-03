@@ -11,6 +11,11 @@ import {
   handleMaterial,
   hitMaterial,
   hoverGeometryPair,
+  arrowGeometryPairs,
+  arrowMeshes,
+  arrowHitGeometry,
+  ARROW_HALF_LENGTH,
+  ARROW_HEAD_RADIUS,
 } from "../../src/framework/gizmo/gizmo-handles.js";
 import { pickGizmoHandle } from "../../src/framework/gizmo/gizmo-pick.js";
 import {
@@ -176,5 +181,42 @@ describe("rotate drag", () => {
     const axis = new THREE.Vector3(0, 0, 1);
     const drag = beginRotateDrag({ ray: rayTo({ x: 0, y: 0 }), center, axis, alignment: 1, projectToClient: project });
     expect(drag).toBeNull(); // the ray hits the centre: no radial, and +Z projects to a point
+  });
+});
+
+describe("the arrow", () => {
+  const extentZ = (root) => {
+    root.updateMatrixWorld(true);
+    return new THREE.Box3().setFromObject(root);
+  };
+
+  it("one-sided is the cutaway's: shaft from the origin, one head, to z 0.78", () => {
+    const { root, geometryPairs } = arrowMeshes(arrowGeometryPairs(), handleMaterial(0x00ff00));
+    expect(root.children).toHaveLength(2);
+    expect(geometryPairs).toHaveLength(2);
+    const box = extentZ(root);
+    expect(box.min.z).toBeCloseTo(0, 6);
+    expect(box.max.z).toBeCloseTo(0.78, 6);
+  });
+
+  it("two-sided is centred: a head at each end, ARROW_HALF_LENGTH each way, hover-thickened", () => {
+    const pairs = arrowGeometryPairs({ twoSided: true });
+    const material = handleMaterial(0x00ff00);
+    const { root, meshes, geometryPairs } = arrowMeshes(pairs, material, { twoSided: true });
+    expect(meshes).toHaveLength(3);
+    const box = extentZ(root);
+    expect(box.min.z).toBeCloseTo(-ARROW_HALF_LENGTH, 6);
+    expect(box.max.z).toBeCloseTo(ARROW_HALF_LENGTH, 6);
+    expect(box.max.x).toBeCloseTo(ARROW_HEAD_RADIUS, 2);
+    applyHandleAppearance({ material, geometryPairs }, { color: 0x00ff00, hovered: true });
+    expect(meshes.every((m, i) => m.geometry === geometryPairs[i].hovered)).toBe(true);
+  });
+
+  it("its hit proxy runs along Z, reaching its radius past each tip", () => {
+    const g = arrowHitGeometry(0.2);
+    g.computeBoundingBox();
+    expect(g.boundingBox.max.z).toBeCloseTo(ARROW_HALF_LENGTH + 0.2, 6);
+    expect(g.boundingBox.min.z).toBeCloseTo(-(ARROW_HALF_LENGTH + 0.2), 6);
+    expect(g.boundingBox.max.x).toBeCloseTo(0.2, 1); // a 10-gon
   });
 });
