@@ -7,8 +7,19 @@
 // Two paths. RIGID (only place() changes along the motion): each in-view sub-part is built
 // once, posed at the start, and moved by relative matrices (relativeMatsAt), with steps
 // halved until no moving point travels more than (clearance + COLLIDE_BAND_MM) / 2 between
-// checks. REBUILD (some sub-part's build changes, or its placement is untrusted): those
-// sub-parts are rebuilt per step, on SWEEP_REBUILD_STEPS evenly spaced steps.
+// checks. Between two checks every pair is held by conservative advancement: with T a bound
+// on how far b's points near a move relative to a over the step, a pair is proven clear
+// all the way along it when d_k + d_{k+1} > 2·clearance + T; when that fails the pair's
+// interval is sub-stepped until it is proven or a contact is found, so a graze between two
+// clear checks is never missed. T comes from the step's endpoint poses (a chord), padded by
+// ARC_SLACK for the arc the motion actually takes: it assumes each step turns a pair by
+// well under ~30°, which the travel bound gives any piece bigger than a few millimetres.
+// REBUILD (some sub-part's build changes, or its placement is untrusted): those sub-parts
+// are rebuilt per step, on SWEEP_REBUILD_STEPS evenly spaced steps, checked at the steps
+// only (a rebuilt mesh has no placement to bound its motion by).
+//
+// A step SWEEP_MAX_STEPS forces past the travel bound marks the row `capped: true`; the
+// advancement above still holds each pair across it.
 //
 // A pair counts as in contact at distance <= the sweep's clearance. A pair inside it at the
 // sweep's start is a contact from the start, never exempt: a sweep asks "never closer than
@@ -16,7 +27,6 @@
 //
 // Shared runtime: DOM-free, three-free and node:-free, loaded lazily by the worker. The
 // caller owns the kernel round: built solids stay live until its kernel.cleanup().
-import { buildView } from "./build.js";
 import { viewSubParts, resolveParams, buildPosed } from "../part-model.js";
 import { probePoses } from "../pose-probe.js";
 import { viewAnimations, evaluate } from "../animation.js";
@@ -24,40 +34,35 @@ import { createCollisionWorld, poseMatrices, relativeMatsAt, buildIndex, dispose
 import { normalizeCollisions } from "../collide/declaration.js";
 import { COLLIDE_BAND_MM } from "../collide/guard.js";
 import { CONTACT_EPS, pairKey } from "../collide/pairs.js";
-import { applyMat, cornerTravel } from "../collide/motion.js";
+import { applyMat, cornerTravel, sameMat } from "../collide/motion.js";
 import { invertRigid, mulMat4 } from "../geometry/pose.js";
 import { rangesOf, dofsOf } from "../pose/param-solve.js";
-import { handleKind } from "../pose/handle-source.js";
-import { desugar } from "../panel/legacy.js";
+import { locateHandle } from "../pose/handle-source.js";
+import { presetMap } from "./cases.js";
 
 export const SWEEP_REBUILD_STEPS = 24;
 export const SWEEP_MAX_STEPS = 2000;
 
 // The motion is sampled at this many intervals (plus a path's waypoints) to tell what it
-// moves: comparing the two ends alone would drop a full turn, whose ends place alike.
+// moves: comparing the two ends alone would drop a full turn, whose ends place alike. Its
+// blind spots: a sub-part that moves only inside a window narrower than 1/16 of the range,
+// or whose motion is periodic at 1/16 of it, reads as still (and its sweep may be dropped).
 const MOTION_SAMPLES = 16;
 const BISECT_TOL = 1e-3; // a contact's ends, as a share of the range
+// A pair whose relative placement moved no more than this (mm, at its box corners) since
+// its last reading has not moved.
 const STILL_MM = 1e-9;
 // minClearance chases a nearer pair only when it is nearer by this much (mm): the reading is
 // within it of the sampled minimum. Chasing every hundredth of a micron re-measured each pin
 // pair's wobble exactly at every step, two thirds of a hand sweep's time.
-const MIN_RES_MM = 0.01;   // a pair whose relative placement moved no more than this has not moved
-const sameMat = (a, b) => a === b || (!!a && !!b && a.every((v, i) => Math.abs(v - b[i]) <= 1e-9));
+const MIN_RES_MM = 0.01;
+// The arc a step's motion takes over the chord its endpoints give (see the module comment).
+const ARC_SLACK = 1.01;
+// A pair advancement cannot prove clear by an interval this small (a share of BISECT_TOL)
+// is reported as a contact over it: conservative, and at most T/2 inside clearance.
+const ADVANCE_FLOOR = 1 / 8;
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const clockNow = () => globalThis.performance?.now?.() ?? Date.now();
-
-/** Preset name → overrides, from the desugared schema (oracle/cases.js's walk). */
-function presetMap(part) {
-  const map = {};
-  const walk = (nodes) => {
-    for (const n of nodes ?? []) {
-      if (n.kind === "preset") for (const [name, o] of Object.entries(n.presets ?? {})) map[name] ??= o;
-      if (n.kind === "group") walk(n.children);
-    }
-  };
-  walk(desugar(part.parameters ?? []));
-  return map;
-}
 
 /** Waypoints blended linearly over t ∈ [0, 1]; a value that is not a number on both sides holds. */
 function pathAt(waypoints) {
@@ -90,27 +95,31 @@ function motionOf(part, view, full, s) {
 function scanMotion(part, view, motion, extra = []) {
   const ts = [...Array.from({ length: MOTION_SAMPLES + 1 }, (_, i) => i / MOTION_SAMPLES), ...extra];
   const vs = ts.map((t) => motion.lo + (motion.hi - motion.lo) * t);
-  let names = null, mats0 = null, hash0 = null;
+  const names = new Set();
+  const mats0 = new Map(), hash0 = new Map(); // each name's first sampled placement and hash
   const moving = new Set(), rebuild = new Set();
   for (const v of vs) {
     const q = motion.at(v);
     const { p, d } = resolveParams(part, q);
     const mats = poseMatrices(part, view, p, d);
     const hashes = probePoses(part, view, q, { scope: "build" });
-    if (!names) { names = viewSubParts(part, view, p); mats0 = mats; hash0 = hashes; }
-    for (const name of names) {
+    // the union over every sample: a sub-part enabled part of the way still counts
+    for (const name of viewSubParts(part, view, p)) {
       const m = mats.get(name), h = hashes.get(name);
-      if (m === null || m === undefined || !h?.trusted || h.baseHash !== hash0.get(name)?.baseHash) rebuild.add(name);
+      if (!names.has(name)) { names.add(name); mats0.set(name, m); hash0.set(name, h?.baseHash); }
+      if (m === null || m === undefined || !h?.trusted || h.baseHash !== hash0.get(name)) rebuild.add(name);
       else if (!sameMat(m, mats0.get(name))) moving.add(name);
     }
   }
-  return { moving: names.filter((n) => moving.has(n) && !rebuild.has(n)), rebuild: names.filter((n) => rebuild.has(n)) };
+  const order = Object.keys(part.parts).filter((n) => names.has(n));
+  return { moving: order.filter((n) => moving.has(n) && !rebuild.has(n)), rebuild: order.filter((n) => rebuild.has(n)) };
 }
 
 /**
  * The sweeps `part.verify.sweeps` declares for `view`, at `params`. A handle expands to one
  * param sweep per DOF ("<name>.<param>"); a goal handle yields none. A sweep whose target
- * cannot be read keeps `skip: "unreadable"`, a zero-length animation `skip: "no-motion"`;
+ * cannot be read (an unknown param, preset or animation; a handle whose point cannot be
+ * located) keeps `skip: "unreadable"`, a zero-length animation `skip: "no-motion"`;
  * a sweep that moves nothing in this view, or whose `views` leave it out, is dropped.
  */
 export function normalizeSweeps(part, view, params = {}) {
@@ -139,15 +148,18 @@ export function normalizeSweeps(part, view, params = {}) {
     } else if (typeof spec.handle === "string") {
       const handle = part.handles?.[spec.handle];
       if (!handle || typeof handle !== "object") { unreadable("param"); continue; }
-      let d;
-      try { d = resolveParams(part, full).d; } catch { unreadable("param"); continue; }
-      if (handle.drag === "goal" || handleKind(handle, d) === null) continue; // a target, not a motion
+      if (handle.drag === "goal") continue; // a target, not a motion
+      try {
+        const { p, d } = resolveParams(part, full);
+        locateHandle(part, p, d, handle);
+      } catch { unreadable("param"); continue; }
       entries = dofsOf(handle, Object.values(part.handles), full).map((k) => paramSweep(`${name}.${k}`, k, spec.range));
     } else if (typeof spec.from === "string" || typeof spec.to === "string" || Array.isArray(spec.path)) {
       let waypoints;
       if (Array.isArray(spec.path)) waypoints = spec.path;
       else {
-        const presets = presetMap(part);
+        let presets;
+        try { presets = presetMap(part); } catch { unreadable("path"); continue; } // a duplicated name
         waypoints = [presets[spec.from], presets[spec.to]];
       }
       if (waypoints.length < 2 || !waypoints.every((w) => w && typeof w === "object" && !Array.isArray(w))) { unreadable("path"); continue; }
@@ -185,9 +197,12 @@ const emptyRow = (s, extra) => ({
 /**
  * Run every sweep `normalizeSweeps` gives for `view` at `params`, with `kernel` (the
  * oracle's build kernel). `deadline` is an absolute `now()` reading: a sweep it stops is
- * `skipped: "timeout"`, with what it read so far. A skipped row's `clear` is null.
+ * `skipped: "timeout"`, with what it read so far. A sweep that throws is `skipped:
+ * "unreadable"` with its `error` message; the others still run. A skipped row's `clear` is
+ * null. `skipStill: false` measures every pair at every step (a check that the still-pair
+ * skip changes nothing; slower).
  */
-export function runSweeps(kernel, part, view, params = {}, { deadline = Infinity, now = clockNow } = {}) {
+export function runSweeps(kernel, part, view, params = {}, { deadline = Infinity, now = clockNow, skipStill = true } = {}) {
   const rows = [];
   const full = { ...part.defaults, ...params };
   const decl = normalizeCollisions(part);
@@ -195,26 +210,72 @@ export function runSweeps(kernel, part, view, params = {}, { deadline = Infinity
     if (s.skip) { rows.push(emptyRow(s, { skipped: s.skip })); continue; }
     if (now() > deadline) { rows.push(emptyRow(s, { skipped: "timeout" })); continue; }
     const t0 = now();
-    const row = sweepOne(kernel, part, view, full, decl, s, { deadline, now });
+    let row;
+    try {
+      row = sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill });
+    } catch (e) {
+      row = emptyRow(s, { skipped: "unreadable", error: String(e?.message ?? e) });
+    }
     row.ms = now() - t0;
     rows.push(row);
   }
   return rows;
 }
 
-function sweepOne(kernel, part, view, full, decl, s, { deadline, now }) {
+/** AABB of `box` placed by m. */
+function movedBox(box, m) {
+  const out = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+  for (const x of [box[0], box[3]]) for (const y of [box[1], box[4]]) for (const z of [box[2], box[5]]) {
+    const q = applyMat(m, [x, y, z]);
+    for (let j = 0; j < 3; j++) { if (q[j] < out[j]) out[j] = q[j]; if (q[j] > out[j + 3]) out[j + 3] = q[j]; }
+  }
+  return out;
+}
+
+/**
+ * How far, at most, any point of b that could reach within `clearance` of a moves relative
+ * to a between two placements (mm, chord × ARC_SLACK). The points of b's box (placed in a's
+ * frame at the first pose) farther than clearance + T_full from a's box cannot reach it in
+ * the step, so only the rest — clipped to a's box grown by that much — needs bounding; the
+ * displacement is affine in the point, so the clip's corners bound it.
+ */
+function pairTravel(world, a, b, matsL, matsR, clearance) {
+  const R0 = mulMat4(invertRigid(matsL.get(a) ?? IDENTITY), matsL.get(b) ?? IDENTITY);
+  const R1 = mulMat4(invertRigid(matsR.get(a) ?? IDENTITY), matsR.get(b) ?? IDENTITY);
+  const boxB = world.boundsOf(b), boxA = world.boundsOf(a);
+  const full = cornerTravel(boxB, R0, R1) * ARC_SLACK;
+  if (full <= STILL_MM) return 0;
+  const m = clearance + full + 1e-6;
+  const placed = movedBox(boxB, R0);
+  const clip = [0, 1, 2].map((j) => [Math.max(placed[j], boxA[j] - m), Math.min(placed[j + 3], boxA[j + 3] + m)]);
+  if (clip.some(([lo, hi]) => lo > hi)) return 0; // nothing of b within reach of a this step
+  const D = mulMat4(R1, invertRigid(R0)); // a-frame position of a b point at pose L → at pose R
+  let worst = 0;
+  for (const x of clip[0]) for (const y of clip[1]) for (const z of clip[2]) {
+    const q = applyMat(D, [x, y, z]);
+    worst = Math.max(worst, Math.hypot(q[0] - x, q[1] - y, q[2] - z));
+  }
+  return Math.min(full, worst * ARC_SLACK);
+}
+
+function sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill }) {
   const motion = motionOf(part, view, full, s);
   const { lo, hi } = motion;
   const tol = BISECT_TOL * (hi - lo);
   const clearance = s.clearance;
   const rebuildSet = new Set(s.rebuild);
+  const rigid = rebuildSet.size === 0;
   const active = [...s.moving, ...s.rebuild];
   const owned = [];   // indexes this sweep built
   let shared = null;  // the rigid path's one world
   kernel.beginSubPart?.(`oracle:sweep:${view}`);
   try {
     const start = resolveParams(part, motion.at(lo));
-    const built = buildView(kernel, part, view, motion.at(lo));
+    // the sub-parts built once, at the start; a rebuilt one is built per step instead
+    const meshes = new Map();
+    for (const name of viewSubParts(part, view, start.p)) {
+      if (!rebuildSet.has(name)) meshes.set(name, buildPosed(kernel, part, name, { purpose: "display", view, p: start.p, d: start.d }).toMesh());
+    }
     const relMats = relativeMatsAt(part, view, start.p, start.d);
     const matsOf = (q) => {
       const { p, d } = resolveParams(part, q);
@@ -223,57 +284,70 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now }) {
       return mats;
     };
     let poseAt;
-    if (!rebuildSet.size) {
-      shared = createCollisionWorld({ meshes: new Map(built.map((b) => [b.name, b.mesh])), decl });
+    if (rigid) {
+      shared = createCollisionWorld({ meshes, decl });
       const bounds = new Map();
       poseAt = (v) => ({ world: shared, mats: matsOf(motion.at(v)), bounds, release() {} });
     } else {
       const indexes = new Map();
-      for (const b of built) if (!rebuildSet.has(b.name)) { const ix = buildIndex(b.mesh); owned.push(ix); indexes.set(b.name, ix); }
+      for (const [name, mesh] of meshes) { const ix = buildIndex(mesh); owned.push(ix); indexes.set(name, ix); }
       poseAt = (v) => {
         const q = motion.at(v);
         const { p, d } = resolveParams(part, q);
-        const meshes = new Map();
-        for (const n of rebuildSet) meshes.set(n, buildPosed(kernel, part, n, { purpose: "display", view, p, d }).toMesh());
-        const world = createCollisionWorld({ meshes, indexes, decl });
+        const built = new Map();
+        for (const n of rebuildSet) built.set(n, buildPosed(kernel, part, n, { purpose: "display", view, p, d }).toMesh());
+        const world = createCollisionWorld({ meshes: built, indexes, decl });
         return { world, mats: matsOf(q), bounds: new Map(), release: () => world.dispose() };
       };
     }
 
-    const nearest = (pose, keys, within) => pose.world.distances(pose.mats, { pairs: new Set(keys), within })[0] ?? null;
-    const inContact = (v, key, a, b) => {
+    const row = emptyRow(s, { clear: true, rebuilds: !rigid });
+    const contacts = [];
+    const open = new Map(); // pairKey → its contact so far
+    let best = null;
+    let timedOut = false;
+    // a reading becomes the minimum when it beats it by MIN_RES_MM, or is a contact nearer than it
+    const offer = (r, v) => {
+      if (!r || (best && r.distance > best.distance - MIN_RES_MM && !(r.distance <= clearance && r.distance < best.distance))) return;
+      best = { distance: r.distance, a: r.a, b: r.b, at: r.at, value: v };
+    };
+
+    const pairAt = (pose, key, within) => pose.world.distances(pose.mats, { pairs: new Set([key]), within })[0] ?? null;
+    const inContact = (v, a, b) => {
       const pose = poseAt(v);
       try { return pose.world.within(pose.mats, a, b, clearance); } finally { pose.release(); }
     };
     // Bisect between a clear value and a contact value of one pair → both sides, to tol.
-    const bisect = (vClear, vContact, key, a, b) => {
+    const bisect = (vClear, vContact, a, b) => {
       while (Math.abs(vContact - vClear) > tol) {
         const mid = (vClear + vContact) / 2;
-        if (inContact(mid, key, a, b)) vContact = mid; else vClear = mid;
+        if (inContact(mid, a, b)) vContact = mid; else vClear = mid;
       }
       return { vClear, vContact };
     };
     const readAt = (v, key, within) => {
       const pose = poseAt(v);
-      try { return nearest(pose, [key], within); } finally { pose.release(); }
+      try { return pairAt(pose, key, within); } finally { pose.release(); }
     };
-    const driverAt = (v, a, b) => (s.kind === "param" ? s.param : closingDriver(part, view, motion, matsOf, v, a, b, readAt(v, pairKey(a, b), Infinity), tol));
+    const driverAt = (v, a, b) => (s.kind === "param" ? s.param : closingDriver(motion, matsOf, v, a, b, readAt(v, pairKey(a, b), Infinity), tol));
+    const addContact = (a, b, from, to, before, after, atV = from) => {
+      const key = pairKey(a, b);
+      const r = readAt(atV, key, Infinity);
+      offer(r, atV);
+      const c = { from, to, a, b, at: r?.at ?? null, driver: driverAt(before ?? from, a, b), before, after };
+      contacts.push(c);
+      return c;
+    };
 
-    const row = emptyRow(s, { clear: true, rebuilds: rebuildSet.size > 0 });
-    const contacts = [];
-    const open = new Map(); // pairKey → its contact so far
-    let best = null;
-    let prevV = null;
-    let timedOut = false;
-
-    // Rigid path only: a pair whose relative placement has not changed since the last step
-    // reads what it read there, so it is skipped and its contact state carried. Exact: its
-    // distance is unchanged, and it was already no nearer than the best so far.
+    // Rigid path only: a pair whose relative placement has not changed since its last
+    // reading reads what it read there, so it is skipped and its contact state carried.
+    // Exact: its distance is unchanged, and it was already no nearer than the best so far.
     const lastR = new Map();
-    const stillPairs = (pose) => {
-      if (rebuildSet.size) return null;
+    const lastL = new Map(); // pairKey → a lower bound on its distance at the last step
+    const stillPairs = (pose, cands) => {
       const still = new Set();
-      for (const c of pose.world.candidates(pose.mats, { names: active })) {
+      if (!rigid || !skipStill) return still;
+      for (const c of cands) {
         const R = mulMat4(invertRigid(pose.mats.get(c.a) ?? IDENTITY), pose.mats.get(c.b) ?? IDENTITY);
         const prev = lastR.get(c.key);
         if (prev && cornerTravel(pose.world.boundsOf(c.b), prev, R) <= STILL_MM) still.add(c.key);
@@ -282,42 +356,93 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now }) {
       return still;
     };
 
-    const visit = (v, pose) => {
+    // One step's reading: one distances call at max(clearance, best − MIN_RES_MM), split
+    // into the pairs in contact and the minimum; plus, per candidate pair, a lower bound on
+    // its distance (exact when read, else past the cutoff or its box gap) for advancement.
+    const measure = (v, pose) => {
       row.steps++;
-      const skip = stillPairs(pose);
-      const touching = pose.world.distances(pose.mats, { names: active, within: clearance, bounds: pose.bounds, skip });
-      const m = pose.world.distances(pose.mats, { names: active, within: best ? best.distance - MIN_RES_MM : Infinity, limit: 1, bounds: pose.bounds, skip })[0];
-      if (m && (!best || m.distance < best.distance)) best = { distance: m.distance, a: m.a, b: m.b, at: m.at, value: v };
-      const seen = new Set();
-      for (const key of skip ?? []) if (open.has(key)) seen.add(key);
-      for (const r of touching) {
-        const key = pairKey(r.a, r.b);
-        seen.add(key);
+      const cands = pose.world.candidates(pose.mats, { names: active });
+      const skip = stillPairs(pose, cands);
+      const w = Math.max(clearance, best ? best.distance - MIN_RES_MM : Infinity);
+      const found = pose.world.distances(pose.mats, { names: active, within: w, bounds: pose.bounds, skip });
+      offer(found[0], v);
+      const exact = new Map(found.map((r) => [pairKey(r.a, r.b), r]));
+      const L = new Map();
+      for (const c of cands) {
+        const r = exact.get(c.key);
+        const lb = r ? r.distance : skip.has(c.key) ? (lastL.get(c.key) ?? Math.max(w, c.gap)) : Math.max(w, c.gap);
+        L.set(c.key, lb);
+        lastL.set(c.key, lb);
+      }
+      const touching = new Set(found.filter((r) => r.distance <= clearance).map((r) => pairKey(r.a, r.b)));
+      return { v, pose, cands, L, touching, exact, skip, sides: new Map() };
+    };
+
+    // Tighten a side's lower bound to the pair's exact distance, when that is under `cut`
+    // (else to just past it). A side already exact, or already past `cut`, is not re-read.
+    const tighten = (side, key, cut) => {
+      if (side.exact || side.lb > cut) return;
+      const r = pairAt(side, key, cut);
+      if (r) { offer(r, side.v); side.lb = r.distance; side.exact = true; } else side.lb = Math.max(side.lb, cut + 1e-9);
+    };
+    // Conservative advancement of one pair over [left, right], both clear: null when it is
+    // proven clear across, else where it touches.
+    const advance = (key, a, b, left, right) => {
+      const T = pairTravel(shared, a, b, left.mats, right.mats, clearance);
+      const need = 2 * clearance + T;
+      if (left.lb + right.lb > need) return null;
+      tighten(left, key, need);
+      tighten(right, key, need);
+      if (left.lb + right.lb > need) return null;
+      if (right.v - left.v <= tol * ADVANCE_FLOOR) return { unresolved: true, left: left.v, right: right.v };
+      const v = (left.v + right.v) / 2;
+      const mid = { v, mats: matsOf(motion.at(v)), world: shared, lb: 0, exact: false };
+      tighten(mid, key, need);
+      if (mid.lb <= clearance) return { contact: v, clearL: left.v, clearR: right.v };
+      return advance(key, a, b, left, mid) ?? advance(key, a, b, mid, right);
+    };
+    const grazes = (prev, cur) => {
+      for (const c of cur.cands) {
+        if (open.has(c.key) || cur.touching.has(c.key)) continue; // only pairs clear at both ends
+        // each step's side of a pair is kept, so what one step's advancement read there is
+        // the next step's left side
+        const left = prev.sides.get(c.key) ?? { v: prev.v, mats: prev.pose.mats, world: shared, lb: prev.L.get(c.key) ?? 0, exact: prev.exact.has(c.key) };
+        const right = { v: cur.v, mats: cur.pose.mats, world: shared, lb: cur.L.get(c.key), exact: cur.exact.has(c.key) };
+        cur.sides.set(c.key, right);
+        const g = advance(c.key, c.a, c.b, left, right);
+        if (!g) continue;
+        if (g.unresolved) { addContact(c.a, c.b, g.left, g.right, g.left, g.right); continue; }
+        const enter = bisect(g.clearL, g.contact, c.a, c.b);
+        const exit = bisect(g.clearR, g.contact, c.a, c.b);
+        addContact(c.a, c.b, enter.vContact, exit.vContact, enter.vClear, exit.vClear);
+      }
+    };
+
+    // Contact state changes between the previous step and this one.
+    const transitions = (prev, cur) => {
+      for (const key of cur.touching) {
         if (open.has(key)) continue;
-        let from = v, before = null, at = r.at;
-        if (prevV !== null) {
-          const cut = bisect(prevV, v, key, r.a, r.b);
-          from = cut.vContact; before = cut.vClear;
-          at = readAt(from, key, clearance)?.at ?? at;
-        }
-        const c = { from, to: hi, a: r.a, b: r.b, at, driver: driverAt(before ?? from, r.a, r.b), before, after: null };
-        open.set(key, c);
-        contacts.push(c);
+        const r = cur.exact.get(key);
+        if (!prev) { open.set(key, addContact(r.a, r.b, cur.v, hi, null, null)); continue; }
+        const cut = bisect(prev.v, cur.v, r.a, r.b);
+        open.set(key, addContact(r.a, r.b, cut.vContact, hi, cut.vClear, null));
       }
       for (const [key, c] of open) {
-        if (seen.has(key)) continue;
-        const cut = bisect(v, prevV, key, c.a, c.b);
+        // a still pair was not re-read: its contact carries on
+        if (cur.touching.has(key) || cur.skip.has(key)) continue;
+        const cut = bisect(cur.v, prev.v, c.a, c.b);
         c.to = cut.vContact; c.after = cut.vClear;
         open.delete(key);
       }
-      prevV = v;
     };
 
-    if (!rebuildSet.size) {
+    let last = null;
+    if (rigid) {
       const maxTravel = (clearance + COLLIDE_BAND_MM) / 2;
       const minH = (hi - lo) / (SWEEP_MAX_STEPS - 1);
-      let v = lo, pose = poseAt(lo), h = minH;
-      visit(v, pose);
+      let v = lo, h = minH;
+      last = measure(lo, poseAt(lo));
+      transitions(null, last);
       while (v < hi) {
         if (now() > deadline) { timedOut = true; break; }
         h = Math.min(h * 2, hi - v);
@@ -326,22 +451,32 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now }) {
           const v2 = h >= hi - v ? hi : v + h;
           next = poseAt(v2);
           next.v = v2;
-          if (h <= minH || shared.travel(pose.mats, next.mats, active) <= maxTravel) break;
+          const travel = shared.travel(last.pose.mats, next.mats, active);
+          if (travel <= maxTravel) break;
+          if (h <= minH) { row.capped = true; break; }
           h /= 2;
         }
-        v = next.v; pose = next;
-        visit(v, pose);
+        v = next.v;
+        const cur = measure(v, next);
+        grazes(last, cur);
+        transitions(last, cur);
+        last = cur;
       }
     } else {
       for (let i = 0; i < SWEEP_REBUILD_STEPS; i++) {
         if (now() > deadline) { timedOut = true; break; }
         const v = i === SWEEP_REBUILD_STEPS - 1 ? hi : lo + ((hi - lo) * i) / (SWEEP_REBUILD_STEPS - 1);
         const pose = poseAt(v);
-        try { visit(v, pose); } finally { pose.release(); }
+        try {
+          const cur = measure(v, pose);
+          transitions(last, cur);
+          last = { ...cur, pose: null }; // its world is released below
+        } finally { pose.release(); }
       }
     }
 
-    if (timedOut) for (const c of open.values()) c.to = prevV; // read up to here
+    if (timedOut) for (const c of open.values()) c.to = last.v; // read up to here
+    contacts.sort((x, y) => x.from - y.from);
     row.minClearance = best;
     row.contacts = contacts.map(({ before: _b, after: _a, ...c }) => c);
     if (timedOut) return { ...row, clear: null, skipped: "timeout" };
@@ -355,7 +490,11 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now }) {
   }
 }
 
-/** The contact-free interval around `v0`, from the clear side of each bisected contact end. */
+/**
+ * The contact-free interval around `v0`, from the clear side of each bisected contact end.
+ * `v0` is the param's current value clamped into the sweep's range, so a current value
+ * outside it reads the interval at the nearer end.
+ */
 function freeRange(contacts, v0, lo, hi) {
   let a = lo, b = hi;
   for (const c of contacts) {
@@ -371,7 +510,7 @@ function freeRange(contacts, v0, lo, hi) {
  * nudged at its own rate along the motion, the separation n·(M_a p_a − M_b p_b) read from
  * placement matrices alone. Null when the pair has no separating normal there (overlap).
  */
-function closingDriver(part, view, motion, matsOf, v, a, b, r, tol) {
+function closingDriver(motion, matsOf, v, a, b, r, tol) {
   if (!r?.normal) return null;
   const q0 = motion.at(v);
   const m0 = matsOf(q0);

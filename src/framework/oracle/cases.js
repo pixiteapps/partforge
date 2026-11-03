@@ -7,7 +7,7 @@ import { desugar } from "../panel/legacy.js";
 // legacy `presets:` field and authored `{ type: "preset" }` nodes count. The
 // duplicate-name guard predates the duplicate-preset-name lint rule and stays:
 // verify must fail loudly even on an unlinted part.
-function presetMap(part) {
+export function presetMap(part) {
   const map = {};
   const walk = (nodes) => {
     for (const node of nodes ?? []) {

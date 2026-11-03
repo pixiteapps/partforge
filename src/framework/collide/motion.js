@@ -4,6 +4,9 @@
 
 export const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
+/** Two placements (mat4s, or null/undefined) equal to within 1e-9 per entry. */
+export const sameMat = (a, b) => a === b || (!!a && !!b && a.every((v, i) => Math.abs(v - b[i]) <= 1e-9));
+
 /** Point [x, y, z] placed by m (undefined: identity). */
 export const applyMat = (m, [x, y, z]) => (m ? [
   m[0] * x + m[4] * y + m[8] * z + m[12],

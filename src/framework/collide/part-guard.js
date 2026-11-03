@@ -5,8 +5,7 @@ import { createDragGuard } from "./guard.js";
 import { createCollisionWorld, poseMatrices, relativeMatsAt } from "./world.js";
 import { normalizeCollisions } from "./declaration.js";
 import { resolveParams } from "../part-model.js";
-
-const sameMat = (a, b) => a === b || (!!a && !!b && a.every((v, i) => Math.abs(v - b[i]) <= 1e-9));
+import { sameMat } from "./motion.js";
 
 /**
  * The in-view sub-parts whose placement any of `keys` moves at `params`: each key nudged
