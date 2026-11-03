@@ -252,6 +252,18 @@ export const SUBPART_METRICS = withDomainMetrics({
   refBboxDelta: { kind: "gate", form: "vector", extract: (s) => s.deviation?.bboxDelta ?? null,
     hint: "the rebuild's bounding-box corners drift from the reference import — check overall dimensions and that the rebuild is aligned to the reference's coordinates" },
 });
+// A sweep row that found a contact: a finished one that is not clear, or one the deadline
+// stopped after it found one.
+const sweepHit = (s) => s.clear === false || (s.skipped === "timeout" && s.contacts?.length > 0);
+// A row that answered: it ran (a no-motion animation has nothing to run, so it answers
+// clear), or it stopped with a contact in hand.
+const sweepRan = (s) => !s.skipped || s.skipped === "no-motion" || sweepHit(s);
+function sweepContacts(r) {
+  if (!r.sweeps) return null;
+  if (r.sweeps.length && !r.sweeps.some(sweepRan)) return null;
+  return r.sweeps.filter(sweepHit).length;
+}
+
 export const VIEW_METRICS = {
   bbox: { kind: "gate", form: "vector", extract: (r) => r.aggregate.bbox,
     hint: "the assembled view exceeds its size limit — shrink the assembly or pick a process with a larger bed" },
@@ -260,15 +272,21 @@ export const VIEW_METRICS = {
   overlaps: { kind: "gate", extract: (r) => r.overlaps.length,
     hint: "sub-parts interpenetrate near the reported location — adjust placement or add clearance in derive()",
     locate: (r) => r.overlaps[0]?.location ?? null },
-  // The declared motions (verify.sweeps, oracle/sweep.js) that met another sub-part. Only
-  // rows that ran count: a sweep the deadline stopped (`skipped`) is verify's volunteered
-  // `sweeps` warning, never a contact. No `sweeps` key (none declared, or a measurement
-  // taken with `sweeps: false`, as verify's per-case re-measures are) reads as no reading.
-  sweepContacts: { kind: "gate", extract: (r) => (r.sweeps ? r.sweeps.filter((s) => !s.clear && !s.skipped).length : null),
+  // The declared motions (verify.sweeps, oracle/sweep.js) that met another sub-part. A row
+  // that ran counts when it found a contact, and so does one the deadline stopped AFTER it
+  // found one (that contact is real); a stopped or unreadable row with none is verify's
+  // volunteered `sweeps` warning instead. When every row stopped short so none ran, there
+  // is no reading and the gate is withheld (`withheld`), never a 0; `[]` (no declared sweep
+  // moves anything in this view) reads 0. No `sweeps` key (none declared, or a measurement
+  // taken with `sweeps: false`, as verify's other cases are) is a plain skip.
+  sweepContacts: { kind: "gate", extract: sweepContacts,
+    withheld: (r) => (r.sweeps?.length && sweepContacts(r) === null
+      ? "not evaluated — every declared sweep stopped short (time budget or unreadable), so none was checked" : null),
+    withheldHint: "no declared sweep ran to its end, so this gate has no verdict and verify.ok is withheld — see the `sweeps` warning for which sweeps stopped and why; run them alone with `npx partforge measure <part>` (a longer budget) or fix the unreadable ones `npx partforge lint` names",
     hint: "a declared motion comes closer than its clearance to another sub-part — the first contact, its pair and the param driving it are reported; add clearance, narrow that param's range (freeRange is the contact-free span), or allow the pair in collisions.allow",
     skipMessage: "not measured — verify runs the declared sweeps on one case only (the first it measures), and none when verify.sweeps declares none",
     locate: (r) => {
-      const row = r.sweeps?.find((s) => s.clear === false && !s.skipped);
+      const row = r.sweeps?.find(sweepHit);
       return row ? row.contacts[0]?.at ?? row.minClearance?.at ?? null : null;
     } },
   centerOfMass: { kind: "gate", form: "vector", extract: (r) => r.aggregate.centerOfMass,

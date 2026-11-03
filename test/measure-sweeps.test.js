@@ -62,8 +62,10 @@ describe("verify and sweeps", () => {
     verify(k, part, { view: "assembly", measureFn: spy });
     expect(spy.mock.calls.length).toBeGreaterThan(1);
     const flags = spy.mock.calls.map((c) => c[4]?.sweeps);
-    expect(flags[0]).not.toBe(false);
+    expect(flags[0]).toBe(true);
+    expect(Array.isArray(spy.mock.results[0].value.sweeps)).toBe(true); // the first call swept
     expect(flags.slice(1).every((f) => f === false)).toBe(true);
+    expect(spy.mock.results.slice(1).every((r) => !("sweeps" in r.value))).toBe(true);
   }, SLOW);
 
   it("a seed's sweeps are reused, not re-run", () => {
@@ -89,7 +91,7 @@ describe("verify and sweeps", () => {
     expect(ok.failures).toEqual([]);
   }, SLOW);
 
-  it("a timed-out sweep is one volunteered warning and moves nothing", () => {
+  it("every sweep timed out: the gate is withheld, with one volunteered warning", () => {
     const part = barSweep(gated);
     const seed = measure(k, part, "assembly", {}, { deadline: -Infinity });
     const v = verify(k, part, { view: "assembly", seed: { params: {}, result: seed } });
@@ -98,9 +100,76 @@ describe("verify and sweeps", () => {
     expect(w[0].volunteered).toBe(true);
     expect(w[0].message).toContain("swing");
     expect(w[0].hint).toMatch(/partforge measure/);
-    // Only the gate counts toward declared/evaluated, and it read no ran row.
+    // Only the gate counts toward declared, and it has no reading: withheld, never a 0.
     expect(v.declared).toBe(1);
+    expect(v.ok).toBe(null);
+    const gate = v.unevaluated.find((c) => c.metric === "sweepContacts");
+    expect(gate).toMatchObject({ status: "skip", actual: null, unevaluated: true });
+  }, SLOW);
+
+  // Crafted rows on a real measurement, as a seed: what the gate and the notices read.
+  const row = (name, extra = {}) => ({ name, clear: true, clearance: 0.001, steps: 4, rebuilds: false,
+    minClearance: null, contacts: [], freeRange: null, ms: 0, ...extra });
+  const contact = { from: 60.06, to: 180, a: "palm", b: "bar", at: [1, 2, 3], driver: "angle" };
+  const withRows = (rows) => {
+    const part = barSweep(gated);
+    const seed = { ...measure(k, part, "assembly", {}, { sweeps: false }), sweeps: rows };
+    return verify(k, part, { view: "assembly", seed: { params: {}, result: seed } });
+  };
+  const gateOf = (v) => v.cases[0].checks.find((c) => c.metric === "sweepContacts");
+  const notice = (v) => v.warnings.filter((c) => c.metric === "sweeps").map((c) => c.message);
+
+  it("some ran and some timed out: the ran ones count, the rest warn", () => {
+    const v = withRows([row("a"), row("b", { clear: null, skipped: "timeout" })]);
+    expect(gateOf(v)).toMatchObject({ status: "pass", actual: 0 });
+    expect(notice(v)).toEqual(["1 sweep(s) stopped at the time budget: b"]);
     expect(v.ok).toBe(true);
+  }, SLOW);
+
+  it("every sweep unreadable: the gate is withheld", () => {
+    const v = withRows([row("a", { clear: null, skipped: "unreadable", error: "boom" }), row("b", { clear: null, skipped: "unreadable" })]);
+    expect(gateOf(v)).toMatchObject({ status: "skip", actual: null, unevaluated: true });
+    expect(v.ok).toBe(null);
+    expect(notice(v)).toEqual(["2 sweep(s) could not run: a (boom), b"]);
+  }, SLOW);
+
+  it("a timed-out sweep that already found a contact counts, and the warning names it", () => {
+    const v = withRows([row("b", { clear: null, skipped: "timeout", contacts: [contact] })]);
+    expect(gateOf(v)).toMatchObject({ status: "fail", actual: 1, location: [1, 2, 3] });
+    expect(v.ok).toBe(false);
+    expect(notice(v)).toEqual(["1 sweep(s) stopped at the time budget: b (contact found at 60.06: bar×palm)"]);
+  }, SLOW);
+
+  it("a seed measured without sweeps is not admitted for a part that declares them", () => {
+    const part = barSweep(gated);
+    const seed = measure(k, part, "assembly", {}, { sweeps: false });
+    const spy = vi.fn((...args) => measure(...args));
+    const v = verify(k, part, { view: "assembly", measureFn: spy, seed: { params: {}, result: seed } });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][4].sweeps).toBe(true);
+    expect(v.ok).toBe(false); // the bar meets the slab
+  }, SLOW);
+
+  it("a seed not admitted (no min wall) still gives its sweep rows, whatever the case order", () => {
+    // A min-wall profile, a seed measured without min wall, and a preset case listed first.
+    const part = withPreset(barSweep({ verify: { process: "fdm-pla", cases: ["tilted", "defaults"], expect: { _view: { sweepContacts: 0 } } } }));
+    const measured = measure(k, part, "assembly");
+    expect(measured.measuredMinWall).toBe(false);
+    const seed = { ...measured, sweeps: [row("seeded", { clear: null, skipped: "timeout", contacts: [contact] })] };
+    const spy = vi.fn((...args) => measure(...args));
+    const v = verify(k, part, { view: "assembly", measureFn: spy, seed: { params: {}, result: seed } });
+    expect(spy.mock.calls.length).toBe(2);
+    expect(spy.mock.calls.every((c) => c[4].minWall === true && c[4].sweeps === false)).toBe(true);
+    const def = v.cases.find((c) => c.name === "defaults");
+    expect(def.checks.find((c) => c.metric === "sweepContacts")).toMatchObject({ status: "fail", actual: 1 });
+    expect(notice(v)).toEqual(["1 sweep(s) stopped at the time budget: seeded (contact found at 60.06: bar×palm)"]);
+  }, SLOW);
+
+  it("the caller's deadline reaches the one measure that sweeps", () => {
+    const spy = vi.fn((...args) => measure(...args));
+    verify(k, withPreset(barSweep()), { view: "assembly", measureFn: spy, deadline: 12345 });
+    expect(spy.mock.calls[0][4]).toMatchObject({ sweeps: true, deadline: 12345 });
+    expect(spy.mock.calls.slice(1).every((c) => !("deadline" in c[4]))).toBe(true);
   }, SLOW);
 
   it("a part that declares no sweeps verifies as before (no sweeps warning)", () => {

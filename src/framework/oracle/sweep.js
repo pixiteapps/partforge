@@ -32,26 +32,17 @@
 // Shared runtime: DOM-free, three-free and node:-free, loaded lazily by the worker. The
 // caller owns the kernel round: built solids stay live until its kernel.cleanup().
 import { viewSubParts, resolveParams, buildPosed } from "../part-model.js";
-import { probePoses } from "../pose-probe.js";
-import { viewAnimations, evaluate } from "../animation.js";
-import { createCollisionWorld, poseMatrices, relativeMatsAt, buildIndex, disposeIndexes, IDENTITY } from "../collide/world.js";
+import { createCollisionWorld, relativeMatsAt, buildIndex, disposeIndexes, IDENTITY } from "../collide/world.js";
 import { normalizeCollisions } from "../collide/declaration.js";
 import { COLLIDE_BAND_MM } from "../collide/guard.js";
 import { CONTACT_EPS, pairKey } from "../collide/pairs.js";
-import { applyMat, cornerTravel, sameMat } from "../collide/motion.js";
+import { applyMat, cornerTravel } from "../collide/motion.js";
 import { invertRigid, mulMat4 } from "../geometry/pose.js";
-import { rangesOf, dofsOf } from "../pose/param-solve.js";
-import { locateHandle } from "../pose/handle-source.js";
-import { presetMap } from "./cases.js";
+import { motionOf, sweepsInView } from "../collide/sweep-targets.js";
 
 export const SWEEP_REBUILD_STEPS = 24;
 export const SWEEP_MAX_STEPS = 2000;
 
-// The motion is sampled at this many intervals (plus a path's waypoints) to tell what it
-// moves: comparing the two ends alone would drop a full turn, whose ends place alike. Its
-// blind spots: a sub-part that moves only inside a window narrower than 1/16 of the range,
-// or whose motion is periodic at 1/16 of it, reads as still (and its sweep may be dropped).
-const MOTION_SAMPLES = 16;
 const BISECT_TOL = 1e-3; // a contact's ends, as a share of the range
 // A pair whose relative placement moved no more than this (mm, at its box corners) since
 // its last reading has not moved.
@@ -79,129 +70,22 @@ const ADVANCE_FLOOR = 1 / 8;
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const clockNow = () => globalThis.performance?.now?.() ?? Date.now();
 
-/** Waypoints blended linearly over t ∈ [0, 1]; a value that is not a number on both sides holds. */
-function pathAt(waypoints) {
-  const n = waypoints.length - 1;
-  return (t) => {
-    const s = Math.min(Math.max(t, 0), 1) * n;
-    const i = Math.min(Math.floor(s), n - 1), u = s - i;
-    const a = waypoints[i], b = waypoints[i + 1], out = { ...a };
-    for (const k of Object.keys(b)) {
-      if (isNum(a[k]) && isNum(b[k])) out[k] = a[k] + (b[k] - a[k]) * u;
-      else if (u >= 1) out[k] = b[k];
-    }
-    return out;
-  };
-}
-
-/** The motion as `{ lo, hi, at(v) → params }`, or null when its target cannot be read. */
-function motionOf(part, view, full, s) {
-  if (s.kind === "param") return { lo: s.range[0], hi: s.range[1], at: (v) => ({ ...full, [s.param]: v }) };
-  if (s.kind === "path") return { lo: 0, hi: 1, at: pathAt(s.waypoints.map((w) => ({ ...full, ...w }))) };
-  const anim = (viewAnimations(part).get(view) ?? []).find((a) => a.name === s.animation);
-  return { lo: 0, hi: 1, at: (t) => ({ ...full, ...evaluate(anim, t).values }) };
-}
-
-/**
- * What a motion moves in `view`: `moving` (sub-parts whose placement changes, rigidly) and
- * `rebuild` (sub-parts whose build-scope probe hash changes, whose build or place is
- * untrusted at some sample). Throws when a sample cannot be resolved.
- */
-function scanMotion(part, view, motion, extra = []) {
-  const ts = [...Array.from({ length: MOTION_SAMPLES + 1 }, (_, i) => i / MOTION_SAMPLES), ...extra];
-  const vs = ts.map((t) => motion.lo + (motion.hi - motion.lo) * t);
-  const names = new Set();
-  const mats0 = new Map(), hash0 = new Map(); // each name's first sampled placement and hash
-  const moving = new Set(), rebuild = new Set();
-  for (const v of vs) {
-    const q = motion.at(v);
-    const { p, d } = resolveParams(part, q);
-    const mats = poseMatrices(part, view, p, d);
-    const hashes = probePoses(part, view, q, { scope: "build" });
-    // the union over every sample: a sub-part enabled part of the way still counts
-    for (const name of viewSubParts(part, view, p)) {
-      const m = mats.get(name), h = hashes.get(name);
-      if (!names.has(name)) { names.add(name); mats0.set(name, m); hash0.set(name, h?.baseHash); }
-      if (m === null || m === undefined || !h?.trusted || h.baseHash !== hash0.get(name)) rebuild.add(name);
-      else if (!sameMat(m, mats0.get(name))) moving.add(name);
-    }
-  }
-  const order = Object.keys(part.parts).filter((n) => names.has(n));
-  return { moving: order.filter((n) => moving.has(n) && !rebuild.has(n)), rebuild: order.filter((n) => rebuild.has(n)) };
-}
-
 /**
  * The sweeps `part.verify.sweeps` declares for `view`, at `params`. A handle expands to one
  * param sweep per DOF ("<name>.<param>"); a goal handle yields none. A sweep whose target
  * cannot be read (an unknown param, preset or animation; a handle whose point cannot be
  * located) keeps `skip: "unreadable"`, a zero-length animation `skip: "no-motion"`;
  * a sweep that moves nothing in this view, or whose `views` leave it out, is dropped.
+ * The reading lives in collide/sweep-targets.js, which lint shares.
  */
 export function normalizeSweeps(part, view, params = {}) {
   const decl = part?.verify?.sweeps;
   if (!decl || typeof decl !== "object" || Array.isArray(decl)) return [];
   const full = { ...part.defaults, ...params };
   const declClear = normalizeCollisions(part)?.clearance ?? CONTACT_EPS;
-  const ranges = rangesOf(part);
-  const out = [];
-  for (const [name, spec] of Object.entries(decl)) {
-    if (!spec || typeof spec !== "object") { out.push({ name, kind: null, skip: "unreadable", clearance: declClear, views: null }); continue; }
-    const views = Array.isArray(spec.views) ? spec.views : null;
-    if (views && !views.includes(view)) continue;
-    const clearance = isNum(spec.clearance) && spec.clearance >= 0 ? spec.clearance : declClear;
-    const base = { clearance, views };
-    const unreadable = (kind) => out.push({ name, kind, ...base, skip: "unreadable" });
-    const paramSweep = (sweepName, key, range) => {
-      const r = ranges.get(key);
-      const span = range ?? (r ? [r.min, r.max] : null);
-      if (!Array.isArray(span) || !isNum(span[0]) || !isNum(span[1]) || !(span[1] > span[0])) return { name: sweepName, kind: "param", param: key, ...base, skip: "unreadable" };
-      return { name: sweepName, kind: "param", param: key, range: [span[0], span[1]], ...base };
-    };
-    let entries;
-    if (typeof spec.param === "string") {
-      entries = [paramSweep(name, spec.param, spec.range)];
-    } else if (typeof spec.handle === "string") {
-      const handle = part.handles?.[spec.handle];
-      if (!handle || typeof handle !== "object") { unreadable("param"); continue; }
-      if (handle.drag === "goal") continue; // a target, not a motion
-      try {
-        const { p, d } = resolveParams(part, full);
-        locateHandle(part, p, d, handle);
-      } catch { unreadable("param"); continue; }
-      entries = dofsOf(handle, Object.values(part.handles), full).map((k) => paramSweep(`${name}.${k}`, k, spec.range));
-    } else if (typeof spec.from === "string" || typeof spec.to === "string" || Array.isArray(spec.path)) {
-      let waypoints;
-      if (Array.isArray(spec.path)) waypoints = spec.path;
-      else {
-        let presets;
-        try { presets = presetMap(part); } catch { unreadable("path"); continue; } // a duplicated name
-        waypoints = [presets[spec.from], presets[spec.to]];
-      }
-      if (waypoints.length < 2 || !waypoints.every((w) => w && typeof w === "object" && !Array.isArray(w))) { unreadable("path"); continue; }
-      entries = [{ name, kind: "path", waypoints, ...base }];
-    } else if (typeof spec.animation === "string") {
-      const anims = viewAnimations(part);
-      const anim = (anims.get(view) ?? []).find((a) => a.name === spec.animation);
-      if (!anim) {
-        if (![...anims.values()].some((list) => list.some((a) => a.name === spec.animation))) unreadable("animation");
-        continue; // declared in another view: nothing it moves is here
-      }
-      const duration = anim.steps.reduce((s, st) => s + (isNum(st.duration) ? st.duration : 0), 0);
-      if (!(duration > 0)) { out.push({ name, kind: "animation", animation: spec.animation, ...base, skip: "no-motion" }); continue; }
-      entries = [{ name, kind: "animation", animation: spec.animation, ...base }];
-    } else { unreadable(null); continue; }
-    for (const s of entries) {
-      if (s.skip) { out.push(s); continue; }
-      let scan;
-      try {
-        const extra = s.kind === "path" ? s.waypoints.map((_, i) => i / (s.waypoints.length - 1)) : [];
-        scan = scanMotion(part, view, motionOf(part, view, full, s), extra);
-      } catch { out.push({ ...s, skip: "unreadable" }); continue; }
-      if (!scan.moving.length && !scan.rebuild.length) continue; // nothing moves in this view
-      out.push({ ...s, moving: scan.moving, rebuild: scan.rebuild });
-    }
-  }
-  return out;
+  // `why` (lint's wording) and `animViews` are the reader's; a sweep entry carries neither.
+  return Object.entries(decl).flatMap(([name, spec]) => sweepsInView(part, view, name, spec, full, declClear)
+    .map(({ why: _w, animViews: _v, ...s }) => s));
 }
 
 const emptyRow = (s, extra) => ({

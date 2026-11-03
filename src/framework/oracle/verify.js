@@ -155,6 +155,11 @@ function check(scope, subpart, metric, spec, registry, factsObj, accept = []) {
       if (note) out.note = note;
       return out;
     }
+    // `reg.withheld` marks a "no reading" that must withhold ok rather than skip past it
+    // (sweepContacts when every declared sweep stopped short): unevaluated, as a quick
+    // lap's gates are.
+    const withheld = reg.withheld?.(factsObj);
+    if (withheld) return { ...base, actual, status: "skip", pass: null, unevaluated: true, message: withheld, hint: partHint ?? reg.withheldHint };
     return { ...base, actual, status: "skip", pass: null, message: reg.skipMessage ?? "unavailable" };
   }
   const { pass, message } = evaluateAssertion(parseAssertion(expr), actual);
@@ -283,7 +288,11 @@ function sweepNotices(rows) {
   const out = [];
   const note = (expr, message, hint) => out.push({ scope: "view", subpart: null, metric: "sweeps", kind: "warn", expr,
     actual: null, status: "warn", pass: null, message, hint, volunteered: true });
-  const timedOut = rows.filter((r) => r.skipped === "timeout").map((r) => r.name);
+  // A row stopped after it found a contact names it: that contact is real, and the gate counts it.
+  const timedOut = rows.filter((r) => r.skipped === "timeout").map((r) => {
+    const c = r.contacts?.[0];
+    return c ? `${r.name} (contact found at ${Number.isInteger(c.from) ? c.from : c.from.toFixed(2)}: ${pairKey(c.a, c.b)})` : r.name;
+  });
   if (timedOut.length) note("ran", `${timedOut.length} sweep(s) stopped at the time budget: ${timedOut.join(", ")}`, SWEEP_TIMEOUT_HINT);
   const unreadable = rows.filter((r) => r.skipped === "unreadable").map((r) => (r.error ? `${r.name} (${r.error})` : r.name));
   if (unreadable.length) note("readable", `${unreadable.length} sweep(s) could not run: ${unreadable.join(", ")}`, SWEEP_UNREADABLE_HINT);
@@ -456,7 +465,7 @@ function flexChecks(facts, flex) {
 // supports and MEASURE NOTHING. What that leaves unchecked is reported as
 // `unevaluated` rather than quietly downgraded, and one unevaluated gate withholds
 // `ok` — a fast lap yields facts, never a verdict.
-export function verify(kernel, part, { process, view, measureFn = defaultMeasure, seed, quick = false } = {}) {
+export function verify(kernel, part, { process, view, measureFn = defaultMeasure, seed, quick = false, deadline } = {}) {
   view = view ?? Object.keys(part.views)[0];
   const profileSpec = process ?? part.verify?.process;
   const profile = profileSpec ? resolveProfile(profileSpec) : null;
@@ -553,18 +562,21 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   const printBboxesMatch = !needPrintBboxes || seed?.result?.measuredPrintBboxes !== false;
   // The flex half: a seed that read every declared member (a superset is free).
   const flexMatches = flex.every(({ labels }) => (seed?.result?.measuredFlex ?? []).some((m) => sameGroup(m, labels)));
+  // The sweeps' half: a seed measured with `sweeps: false` cannot answer a part that
+  // declares them (a quick lap never sweeps, and withholds the gate instead).
+  const sweepsMatch = quick || !part.verify?.sweeps || Array.isArray(seed?.result?.sweeps);
   const seedAdmitted = !!(seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && (quick || overhangMatches) && (quick || bedContactMatches) && (quick || flexMatches) && printBboxesMatch
-    && seed.result.view === view);
+    && sweepsMatch && seed.result.view === view);
   if (seedAdmitted) entries.push({ params: full(seed.params), result: seed.result });
 
-  // SWEEPS (verify.sweeps, sweep.js) run once per verify: an admitted seed already
-  // measured them (or chose not to), else the first case this verify measures runs them
-  // and every later one passes `sweeps: false`, as it passes `probes: false`. A seed
-  // that was NOT admitted (it skipped a pass this run needs) still answers for its
-  // sweeps when the case is measured at the seed's exact params and view: a sweep reads
-  // the motion and the part, never min wall or overhang. That keeps the CLI, which
-  // seeds verify with a measurement taken without min wall, from sweeping twice.
-  let sweepsLeft = !seedAdmitted;
+  // SWEEPS (verify.sweeps, sweep.js) run once per verify, on ONE case: an admitted seed
+  // already carries them; else the SWEEP CASE is measured first, with sweeps, and every
+  // other case passes `sweeps: false`, as it passes `probes: false`. The sweep case is the
+  // one at a not-admitted seed's exact params (a seed that skipped a pass this run needs
+  // still answers for its sweeps: they read the motion and the part, never min wall or
+  // overhang — so the CLI, which seeds verify with a measurement taken without min wall,
+  // never sweeps twice, whatever the case order), else "defaults", else the first case.
+  // `deadline` (the caller's, e.g. the CLI's longer budget) reaches that one measure.
   const seedSweeps = !seedAdmitted && seed?.result?.view === view && Array.isArray(seed.result.sweeps)
     ? { params: full(seed.params), rows: seed.result.sweeps } : null;
   const sameParams = (a, b) => {
@@ -572,19 +584,19 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     return ka.length === kb.length && ka.every((k) => Object.hasOwn(b, k) && JSON.stringify(a[k]) === JSON.stringify(b[k]));
   };
 
-  const measureCase = (params) => {
+  const measureCase = (params, swept = false) => {
     const fp = full(params);
     const hit = findEntry(fp);
     if (hit) return hit.result;
     if (quick) return null;   // a case the seed does not cover — reported, never built
-    const graft = sweepsLeft && seedSweeps && sameParams(fp, seedSweeps.params) ? seedSweeps.rows : null;
-    const sweeps = sweepsLeft && !graft;
-    sweepsLeft = false;
+    const graft = swept && seedSweeps && sameParams(fp, seedSweeps.params) ? seedSweeps.rows : null;
+    const sweeps = swept && !graft;
     // `probes: false` — no gate reads probe values, so re-running their booleans
     // for every case buys nothing. (A seed measured WITH probes is a superset in
     // the same way a min-wall seed is: the extra key is simply never read here.)
     const measured = measureFn(kernel, part, view, params,
-      { minWall: needMinWall, probes: false, overhang: overhangAngle, bedContact: armsBedPass, printBboxes: needPrintBboxes, flex, sweeps });
+      { minWall: needMinWall, probes: false, overhang: overhangAngle, bedContact: armsBedPass, printBboxes: needPrintBboxes, flex, sweeps,
+        ...(sweeps && deadline !== undefined ? { deadline } : {}) });
     const result = graft ? { ...measured, sweeps: graft } : measured;
     entries.push({ params: fp, result });
     return result;
@@ -604,6 +616,11 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     message: "not measured (quick check)",
     hint: "re-run this check without `quick` to evaluate this case",
   }];
+  if (part.verify?.sweeps && !seedAdmitted && !quick && expanded.length) {
+    let i = seedSweeps ? expanded.findIndex((c) => sameParams(full(c.params), seedSweeps.params)) : -1;
+    if (i < 0) i = expanded.findIndex((c) => c.name === "defaults");
+    measureCase(expanded[Math.max(i, 0)].params, true);
+  }
   // The sweep rows reach one case only (the one that ran them, or the reused seed), so
   // their stopped-short notices are raised once, on the first case whose facts carry them.
   let sweepsNoticed = false;

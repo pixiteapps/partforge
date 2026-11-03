@@ -23,6 +23,11 @@ import { savePickToken, loadPickToken, clearPickToken, pickTokenPath } from "../
 import { matchPattern } from "../src/testing/error-patterns.js";
 import { lintPart } from "../src/lint.js";
 import { pairKey } from "../src/framework/collide/pairs.js";
+import { sniffMediaType } from "../src/framework/ingest/sniff.js";
+import { ASSET_KINDS, rowFor, convertFor } from "../src/framework/ingest/registry.js";
+import { installNodeDom } from "../src/framework/ingest/node-dom.js";
+import * as opentypeNamespace from "opentype.js";
+import { normalizeOpentype, parseFont } from "../src/framework/geometry/opentype-interop.js";
 
 // The sweeps' budget in `partforge measure` (pure Node, no inspect around it), counted
 // from the measure's start. The inspect job's report share is 6 s, which a part with
@@ -30,11 +35,6 @@ import { pairKey } from "../src/framework/collide/pairs.js";
 // or curl sweep 0.5–1.4 s — and the CLI is where an agent is told to run them in full.
 // A minute fits every shipped part's sweeps with room, and still ends a runaway one.
 const CLI_SWEEP_BUDGET_MS = 60_000;
-import { sniffMediaType } from "../src/framework/ingest/sniff.js";
-import { ASSET_KINDS, rowFor, convertFor } from "../src/framework/ingest/registry.js";
-import { installNodeDom } from "../src/framework/ingest/node-dom.js";
-import * as opentypeNamespace from "opentype.js";
-import { normalizeOpentype, parseFont } from "../src/framework/geometry/opentype-interop.js";
 
 const die = (msg) => { console.error(msg); process.exit(1); };
 
@@ -237,7 +237,8 @@ const commands = {
       const [{ measure }, { verify }] = await importOracle();
       // The CLI is the place to run sweeps the inspect's report share cannot fit (a
       // hand's full set is ~17 s), so they get a budget of their own here.
-      const report = measure(kernel, part, view, {}, { deadline: Date.now() + CLI_SWEEP_BUDGET_MS });
+      const sweepDeadline = Date.now() + CLI_SWEEP_BUDGET_MS;
+      const report = measure(kernel, part, view, {}, { deadline: sweepDeadline });
       if (!flags.json) printMeasure(report);
       // Write --out right after measure succeeds, then re-write once verify has
       // attached report.verify. If verify throws (unknown metric, per-case build
@@ -255,7 +256,7 @@ const commands = {
       if (!flags["no-verify"]) {
         // Seeded with the report above, as the inspect job seeds it: verify reuses the
         // measurement where it can and its sweep rows always, so nothing sweeps twice.
-        const v = verify(kernel, part, { process: flags.process, view: report.view, seed: { params: {}, result: report } });
+        const v = verify(kernel, part, { process: flags.process, view: report.view, seed: { params: {}, result: report }, deadline: sweepDeadline });
         if (!flags.json) printVerify(v);
         report.verify = v;
         // Tri-state: `null` is a withheld verdict (nothing declared, or a check

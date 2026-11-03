@@ -100,3 +100,35 @@ test("sweep-rebuilds warns when the motion changes a build", () => {
   expect(f[0].severity).toBe("warning");
   expect(f[0].message).toContain("this sweep rebuilds geometry at every step and runs slower");
 });
+
+test("sweep-rebuilds samples the whole motion, as the engine does, not only its ends", () => {
+  // The base's build reads swing only inside (40, 50): its two ends build alike.
+  const parts = {
+    base: { views: { main: (s) => s }, build: (k, p) => k.box({ size: [p.swing > 40 && p.swing < 50 ? 2 : 1, 1, 1] }) },
+    lid: { views: { main: (s, p) => s.rotate(p.swing, [0, 0, 0], [0, 1, 0]) }, build: (k) => k.box({ size: [1, 1, 1] }) },
+  };
+  const f = sweepFindings({ s: { param: "swing" } }, { parts });
+  expect(f.map((x) => x.rule)).toEqual(["sweep-rebuilds"]);
+});
+
+test("sweep-rebuilds counts a placement that is no rigid transform", () => {
+  const parts = {
+    base: { views: { main: (s) => s }, build: (k) => k.box({ size: [1, 1, 1] }) },
+    lid: { views: { main: (s, p) => s.scale(1 + p.swing / 90) }, build: (k) => k.box({ size: [1, 1, 1] }) },
+  };
+  const f = sweepFindings({ s: { param: "swing" } }, { parts });
+  expect(f.map((x) => x.rule)).toEqual(["sweep-rebuilds"]);
+});
+
+test("each sweep is read once per lint pass, whatever the number of sweep rules", () => {
+  let reads = 0;
+  const handles = { hinge: { point: () => { reads++; return [0, 0, 0]; }, drag: "rotary", axis: [0, 1, 0], params: ["swing"] } };
+  const r = lintPart(sweepPart({ h: { handle: "hinge" } }, { handles }));
+  const before = reads;
+  expect(r.errors.filter((x) => x.rule.startsWith("sweep-"))).toEqual([]);
+  // The handle rules read the point too; the sweep rules add exactly one read (readSweep's).
+  const { verify: _v, ...noSweeps } = sweepPart({}, { handles });
+  reads = 0;
+  lintPart(noSweeps);
+  expect(before - reads).toBe(1);
+});

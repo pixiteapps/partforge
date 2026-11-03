@@ -1,10 +1,12 @@
-// One sub-part's place() as a rigid matrix. An import-light leaf (pose-probe-core and
-// geometry/pose only) so the main-thread bundle can share the rule with the collision
-// world without carrying the BVH or the native core.
+// One sub-part's place() as a rigid matrix, and every in-view sub-part's (poseMatrices).
+// An import-light leaf (pose-probe-core, geometry/pose and the part model) so the
+// main-thread bundle and lint can share the rule with the collision world without
+// carrying the BVH or the native core.
 import { CANONICAL, probeSubPartPose } from "../pose-probe-core.js";
 import { addSugar } from "../geometry/solid-sugar.js";
 import { MAX_PROBE_OPS } from "../geometry/probe.js";
-import { composePose, isRigid } from "../geometry/pose.js";
+import { composePose, isRigid, mulMat4 } from "../geometry/pose.js";
+import { viewSubParts } from "../part-model.js";
 import { placeOf } from "../sub-part-views.js";
 
 // The rigid case, fast. The collision guard asks for placements on every solver
@@ -56,4 +58,21 @@ export function placeMatrix(sp, view, p, d) {
   }
   const m = Array.from(composePose(steps));
   return isRigid(m) ? m : null;
+}
+
+/**
+ * placeMatrix for every in-view sub-part at an already-resolved (p, d); never derives.
+ * `only` (an iterable of names): just those of them — a map that leaves the others out,
+ * which the mats contract reads as identity, so it is for callers that read no other.
+ */
+export function poseMatrices(part, view, p, d, { deltas, only = null } = {}) {
+  const out = new Map();
+  const want = only ? new Set(only) : null;
+  for (const name of viewSubParts(part, view, p)) {
+    if (want && !want.has(name)) continue;
+    const m = placeMatrix(part.parts[name], view, p, d);
+    const delta = deltas?.get(name);
+    out.set(name, m && delta ? mulMat4(delta, m) : m);
+  }
+  return out;
 }

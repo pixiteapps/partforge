@@ -796,6 +796,10 @@ export function verify(
     view?: string;
     measureFn?: typeof measure;
     seed?: { params?: ResolvedParams; result: MeasureReport };
+    /** The fast lap: evaluate only what the seed already measured. */
+    quick?: boolean;
+    /** When the declared sweeps must stop (a `Date.now()` reading), for the one case that runs them. */
+    deadline?: number;
   },
 ): VerifyReport;
 
