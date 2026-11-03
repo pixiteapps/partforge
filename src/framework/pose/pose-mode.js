@@ -272,9 +272,12 @@ export function createPoseMode(viewer, {
   // shows, then "done" (once per mount)
   let cue = Object.keys(handles).length ? "pending" : "done";
 
+  // The pair the held drag stopped at (the session's blockedChange), or null: while set, a
+  // limb drag reads "Stopped at <b>" rather than "Out of reach", and draws no miss line.
+  let blockedPair = null;
   const session = createPoseSession({
     part, getParams, write, commit, restore, staleSubParts, ghost, unghost, hold,
-    collide, blockedChange: onBlocked,
+    collide, blockedChange: (pair) => { blockedPair = pair; onBlocked(pair); },
     onCancel: () => finishPress(),
     onPinsChange: () => { if (!syncPins()) notify(pinListeners); },
     pinActive: (id) => !!pinPoint(id),
@@ -1202,7 +1205,7 @@ export function createPoseMode(viewer, {
         const i = info.joints.findIndex((j) => j.name === hit.joint);
         if (i >= 0 && result.clamped) clamped[i] = true;
         scene?.setActive({ limb: info.name, grab: hit.joint, clamped });
-        limbReadout(hit);
+        limbReadout(hit, undefined, blockedPair);
         syncRings();
         viewer.requestRender?.();
         return;
@@ -1214,8 +1217,10 @@ export function createPoseMode(viewer, {
     if (!s) return;
     const grabbed = hit.kind === "dot" ? s.info.points[hit.at] : null;
     const residual = target && grabbed ? len(sub(grabbed, target)) : undefined;
-    // one test for the scene's miss line and the readout's "Out of reach" (pose-geom)
-    const missed = reachMissed(residual, target ? mmPerPx(target) : NaN);
+    // one test for the scene's miss line and the readout's "Out of reach" (pose-geom); a
+    // drag the guard stopped at contact misses because of the contact, not its reach
+    const blocked = blockedPair;
+    const missed = !blocked && reachMissed(residual, target ? mmPerPx(target) : NaN);
     scene?.setActive({
       limb: s.info.name,
       grab: hit.kind === "dot" ? hit.at : goalAt(s.handle),
@@ -1224,7 +1229,7 @@ export function createPoseMode(viewer, {
       residual,
       missed,
     });
-    limbReadout(hit, missed ? residual : undefined);
+    limbReadout(hit, missed ? residual : undefined, blocked);
     viewer.requestRender?.();
   }
 
@@ -1233,16 +1238,19 @@ export function createPoseMode(viewer, {
    * else its params (an angles handle's list; a goal's position, then aim); a joint ring
    * its own parameter; an aim ring that aim parameter. `residual` (mm) is given only when
    * the drag misses (pose-geom's reachMissed, the scene's `missed`): one "Out of reach"
-   * item last. The scene draws no text.
+   * item last. `blocked` (the pair the guard stopped the drag at) replaces it with one
+   * "Stopped at <b's label>" item, the release chip's wording. The scene draws no text.
    */
-  function limbReadout(hit, residual) {
+  function limbReadout(hit, residual, blocked = null) {
     const handle = handles[hit.handleId];
     if (!handle) return;
     const source = hit.kind === "jring" ? { readout: hit.ring?.slots?.[hit.name]?.param }
       : hit.kind === "ring" ? { readout: handle.params?.aim?.[AIM_NAMES.indexOf(hit.name)] }
       : handle;
     const items = readoutItems(part, { ...part.defaults, ...getParams() }, source);
-    if (Number.isFinite(residual)) {
+    if (blocked?.b) {
+      items.push({ key: "blocked", label: "Stopped at", text: part?.parts?.[blocked.b]?.label ?? blocked.b });
+    } else if (Number.isFinite(residual)) {
       items.push({ key: "reach", label: "Out of reach", unit: "mm", value: residual, text: residual.toFixed(1) });
     }
     setReadout({ handleId: hit.handleId, text: items.map((i) => `${i.key} ${i.text}`).join(" · "), items });

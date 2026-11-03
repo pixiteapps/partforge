@@ -1100,6 +1100,47 @@ describe("reachMissed", () => {
   });
 });
 
+describe("a drag stopped at contact", () => {
+  // A guard that lets every frame through (settle lands on the solve's answer) and reports
+  // `blocked` while blocked() says so: what the collision guard hands back at contact.
+  const passGuard = (blocked) => () => ({
+    rowCount: 0, active: false,
+    beginFrame() {}, linearise() {}, rows: () => new Float64Array(0),
+    settle: (from, to, opts) => ({ params: opts?.blend ? opts.blend(1) : { ...to }, blocked: blocked() }),
+    release() {},
+  });
+  const farDrag = (t) => {
+    const s = t.tipScreen("a");
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 3; i++) t.fire("pointermove", s.x, s.y - i * 6);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x, s.y - 18 - i * 80);
+    return s;
+  };
+
+  it("reads 'Stopped at <label>' instead of 'Out of reach', with no miss line, while the guard holds it", () => {
+    const t = setup(hand, { collide: passGuard(() => ({ a: "a", b: "palm" })) });
+    t.mode.setEnabled(true);
+    const s = farDrag(t);
+    const items = t.readouts.at(-1).items;
+    expect(items.map((i) => i.key)).toEqual([...hand.handles.a.params, "blocked"]);
+    expect(items.at(-1)).toMatchObject({ key: "blocked", label: "Stopped at", text: "Palm" });
+    for (const r of t.readouts.filter(Boolean)) expect(r.items.some((x) => x.key === "reach")).toBe(false);
+    for (const a of t.scene.calls.setActive.filter((x) => x?.target)) expect(a.missed).toBe(false);
+    t.fire("pointerup", s.x, s.y - 338);
+    expect(t.readouts.at(-1)).toBeNull();
+  });
+
+  it("a guarded drag that is out of reach with nothing blocked still reads 'Out of reach'", () => {
+    const t = setup(hand, { collide: passGuard(() => null) });
+    t.mode.setEnabled(true);
+    farDrag(t);
+    const items = t.readouts.at(-1).items;
+    expect(items.at(-1)).toMatchObject({ key: "reach", label: "Out of reach", unit: "mm" });
+    expect(items.some((x) => x.key === "blocked")).toBe(false);
+    expect(t.scene.calls.setActive.filter(Boolean).at(-1).missed).toBe(true);
+  });
+});
+
 describe("handle groups", () => {
   // A vertical axis arrow (`slider`) and a point handle (`knob`) beside its shaft, about
   // 10 px right of it and 24 px above its centre; `lone` sits far off on its own.
