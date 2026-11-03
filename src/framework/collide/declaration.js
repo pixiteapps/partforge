@@ -17,7 +17,8 @@ export function normalizeCollisions(part) {
   return {
     clearance: typeof c.clearance === "number" && Number.isFinite(c.clearance) ? c.clearance : CONTACT_EPS,
     allow,
-    pose: c.pose === undefined ? true : c.pose !== false,
+    // a boolean, default true; anything else reads as the default (lint: collisions-bad-pose)
+    pose: typeof c.pose === "boolean" ? c.pose : true,
   };
 }
 

@@ -44,6 +44,20 @@ test("collisions-bad-clearance: negative or non-numeric", () => {
   }
 });
 
+test("collisions-bad-pose: pose is a boolean", () => {
+  for (const pose of [0, "off", null, {}]) {
+    const f = findings({ pose });
+    expect(f.map((x) => x.rule)).toEqual(["collisions-bad-pose"]);
+    expect(f[0].severity).toBe("error");
+  }
+  for (const pose of [true, false, undefined]) expect(findings({ pose })).toEqual([]);
+});
+
+test("collisions-unknown-part: an inherited key is no sub-part", () => {
+  const f = findings({ allow: ["toString×lid"] });
+  expect(f.map((x) => x.rule)).toContain("collisions-unknown-part");
+});
+
 // ── sweeps ──────────────────────────────────────────────────────────────────
 const control = (key, min, max) => ({ key, label: key, min, max, step: 1, description: key });
 const sweepPart = (sweeps, extra = {}) => ({

@@ -57,7 +57,7 @@ IK reference part - a printable articulated hand: a palm limb (wrist pitch/yaw) 
 fingers (spread, mcp, pip, dip following pip) and a thumb (oppose, mcp, ip) parented on
 it, posed by per-digit knuckle (mcp alone), curl (pip + dip; the thumb's ip) and
 spread/oppose params and six `{ type: "preset" }` shapes, one
-lockable angles-mode handle per digit, a knuckle and a curl sweep per digit (reported, not gated); rigid pin-jointed pieces placed by matrix, the
+lockable angles-mode handle per digit, a knuckle and a curl sweep for the index and thumb (reported, not gated; the other digits sweep the same way from the CLI); rigid pin-jointed pieces placed by matrix, the
 print view a flat kit the pose never reaches; `hand.html`, checked by
 `scripts/check-pose.mjs`; the dev-only `pose-smoke.html` page, with `test/fixtures/ik-hand-smoke.js`,
 is the fixture that script drags), `gearbox.js` (the rotary-handle reference part and the

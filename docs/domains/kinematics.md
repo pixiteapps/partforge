@@ -1030,8 +1030,9 @@ piece it meets (it never passes through), and a sweep reports where that happens
   around the param's current value. Write that span as the joint's `range` (less a margin
   for print tolerance), and the limit comes from the geometry instead of a guess.
 
-`src/parts/hand.js` declares a knuckle and a curl sweep per digit, REPORTED, not gated
-(no `sweepContacts` in its `expect`): its joints could leave their ranges wide and use
+`src/parts/hand.js` declares a knuckle and a curl sweep for the index and thumb (the
+other digits sweep the same way from the CLI, so the declared ones fit the inspect's report
+share), REPORTED, not gated (no `sweepContacts` in its `expect`): its joints could leave their ranges wide and use
 collision as their limit, and a sweep that meets would then be expected. Pin joints stay
 blocked pairs: their ~0.4 mm running gap is above the default clearance (0.001 mm), so they
 read clear. A sweep's own `clearance` must stay below that gap, or every pin reads as a

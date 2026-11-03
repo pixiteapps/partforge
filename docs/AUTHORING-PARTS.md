@@ -3705,7 +3705,7 @@ motion**: `verify.sweeps` declares motions that `measure` steps end to end, repo
 they stay clear, the tightest clearance along them, where first contact happens and which
 param drives it. A part with neither behaves exactly as before. The reference parts are
 `gearbox.js` (an animation sweep, allowed meshing pairs), `drawer-box.js` (a handle sweep per
-drawer) and `hand.js` (a knuckle and a curl sweep per digit, reported only).
+drawer) and `hand.js` (a knuckle and a curl sweep for the index and thumb, reported only).
 
 ### The `collisions` block
 
@@ -3718,7 +3718,8 @@ collisions: {
 ```
 
 Every pair of sub-parts in the view is a **blocked pair** unless `allow` names it. Lint
-errors: `collisions-bad-clearance` (not a number at or above 0), `collisions-bad-pair` (an
+errors: `collisions-bad-clearance` (not a number at or above 0), `collisions-bad-pose` (`pose`
+is not `true` or `false`), `collisions-bad-pair` (an
 `allow` entry without `×`, or naming one sub-part twice) and `collisions-unknown-part` (a
 name that is not a key of `parts`). `collisions: {}` is the whole opt-in: every pair
 blocked, default clearance.

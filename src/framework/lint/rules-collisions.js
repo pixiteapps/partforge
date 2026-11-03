@@ -68,6 +68,15 @@ export const COLLISION_RULES = [
     },
   },
   {
+    id: "collisions-bad-pose",
+    run: ({ part }) => {
+      const c = part?.collisions;
+      if (!isPlainObject(c) || c.pose === undefined || typeof c.pose === "boolean") return [];
+      return [err("collisions-bad-pose", `collisions.pose is ${JSON.stringify(c.pose)}, not true or false`,
+        "`pose` says whether Pose mode keeps pieces solid: `collisions: { pose: false }` turns that off; leave it out for the default (true).", "collisions.pose")];
+    },
+  },
+  {
     id: "collisions-bad-pair",
     run: ({ part }) => {
       const c = part?.collisions;
@@ -99,7 +108,7 @@ export const COLLISION_RULES = [
         const sides = entry.split("×");
         if (sides.length !== 2) return;
         for (const name of sides) {
-          if (!name || name in names) continue;
+          if (!name || Object.hasOwn(names, name)) continue;
           out.push(err("collisions-unknown-part", `collisions.allow entry ${JSON.stringify(entry)} names "${name}", which is not a sub-part of \`parts\``,
             "Every name in a pair must be a key of `parts`; fix the spelling or remove the entry.", `collisions.allow[${i}]`));
         }
